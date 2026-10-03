@@ -28,7 +28,14 @@ func TestCheckedStartupFailureUnwindsBeforeServing(t *testing.T) {
 		startHooks, shutdownHooks = oldStart, oldShutdown
 		hooksMu.Unlock()
 	})
-	dir := t.TempDir()
+	// t.TempDir includes the full test name; under macOS hosted TMPDIR that
+	// exceeds the Unix socket path limit before the intended startup failure.
+	// Keep the directory inside TestMain's isolated temp root, with a short name.
+	dir, err := os.MkdirTemp("", "sf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	socket := filepath.Join(dir, "d.sock")
 	if runtime.GOOS == "windows" {
 		socket = fmt.Sprintf(`\\.\pipe\oberth-start-failure-%d-%d`, os.Getpid(), time.Now().UnixNano())
