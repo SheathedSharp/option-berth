@@ -58,37 +58,19 @@ enum AppIcon {
     }
 }
 
-/// 图标本体：一块象牙白底 + 标志。
-///
-/// 底用标志自己的纸色（`Mark.paper` 同一族）—— 标志在界面里是直接落在界面的底上，
-/// 在图标里则始终带着自己那块纸，这样 Dock 里那三个颜色不会受桌面壁纸的色温影响。
-///
-/// 圆角的比例照 macOS 的图标网格来（内容占 824/1024，圆角 185/1024），
-/// 这样它和系统里别的图标放在一起是齐的 —— 不然一眼就能看出是外行画的。
+/// 平面象牙白底 + 暖炭双轨 + 陶土运行单元。无渐变、描边或阴影。
+/// 固定品牌配色，不让用户的深色主题改变导出的 Dock 图标。
+/// 图标比例与 SVG 预览共用 BerthGeometry 的归一化参数。
 struct AppIconView: View {
     let side: CGFloat
 
-    /// 16pt 那一档笔宽加粗一档（`compact`）：真字符 8.86% 的笔宽缩到 16 个像素
-    /// 只有 1.2px，会把气口吃掉。这是尺寸上的取舍，不是两套标志。
-    private var compact: Bool { side < 32 }
-
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: side * 0.1807, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [Color(hex: 0xFDFBF7), Color(hex: 0xF1EADB)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: side * 0.1807, style: .continuous)
-                        .strokeBorder(Color(hex: 0xE2D9C8), lineWidth: max(1, side * 0.0022))
-                )
-                .padding(side * 0.0977)
+            RoundedRectangle(cornerRadius: side * CGFloat(BerthGeometry.iconRadius), style: .circular)
+                .fill(Mark.paper)
+                .padding(side * CGFloat(BerthGeometry.iconInset))
 
-            BerthMark(size: side * (compact ? 0.64 : 0.62), compact: compact)
+            BerthMark(size: side * CGFloat(BerthGeometry.iconMarkScale), fixedPalette: true)
         }
         .frame(width: side, height: side)
     }
