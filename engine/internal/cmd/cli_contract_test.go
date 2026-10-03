@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/internal/display"
 )
 
 // The exit codes docs/cli.md documents, and the classification behind them.
@@ -125,11 +127,13 @@ func TestReportErrorWritesJSONToStderr(t *testing.T) {
 }
 
 // The human rendering is the two lines the spec asks for: the detail, then the
-// hint beneath it.
+// hint beneath it. With color on, the labels are tinted but the shape is the
+// same two lines — pinned here with color off.
 func TestReportErrorWritesDetailThenHint(t *testing.T) {
-	prev := jsonMode
+	prev, prevColor := jsonMode, display.NoColor
 	jsonMode = false
-	t.Cleanup(func() { jsonMode = prev })
+	display.NoColor = true
+	t.Cleanup(func() { jsonMode, display.NoColor = prev, prevColor })
 
 	var buf bytes.Buffer
 	reportError(&buf, failHint("not_found", "no process is listening", "run `oberth status`"))
@@ -137,6 +141,44 @@ func TestReportErrorWritesDetailThenHint(t *testing.T) {
 	if buf.String() != want {
 		t.Fatalf("got %q, want %q", buf.String(), want)
 	}
+}
+
+// With color on, the shape is unchanged: exactly two lines, the labels tinted
+// and the message itself untouched.
+func TestReportErrorColorsLabelsButKeepsTwoLines(t *testing.T) {
+	prev, prevColor := jsonMode, display.NoColor
+	jsonMode = false
+	display.NoColor = false
+	t.Cleanup(func() { jsonMode, display.NoColor = prev, prevColor })
+
+	var buf bytes.Buffer
+	reportError(&buf, failHint("not_found", "no process is listening", "run `oberth status`"))
+	out := buf.String()
+	if n := strings.Count(out, "\n"); n != 2 {
+		t.Fatalf("colored error is %d lines, want 2:\n%q", n, out)
+	}
+	// Strip the ANSI sequences and compare the words: the color must not
+	// change what the error says, only how the two labels look.
+	if want := "error: no process is listening\nhint: run `oberth status`\n"; stripANSI(out) != want {
+		t.Fatalf("colored error says %q, want %q", stripANSI(out), want)
+	}
+}
+
+// stripANSI removes the color codes reportError wraps its labels in.
+func stripANSI(s string) string {
+	out := strings.Builder{}
+	inEscape := false
+	for _, r := range s {
+		switch {
+		case r == '\x1b':
+			inEscape = true
+		case inEscape && r == 'm':
+			inEscape = false
+		case !inEscape:
+			out.WriteRune(r)
+		}
+	}
+	return out.String()
 }
 
 // errSilent means "already reported" — non-zero, and quiet.

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 
 	"github.com/sheathedsharp/option-berth/internal/daemon/client"
@@ -119,6 +120,9 @@ func restartRun(cmd *cobra.Command, args []string) error {
 	if err := reportKill(os.Stdout, stopped.Results, snapshot, false, false); err != nil {
 		return err
 	}
+	// The stop half and the start half are two acts; a blank line keeps the
+	// start rows from reading as more rows of the stop report.
+	fmt.Println()
 	for _, chunk := range chunks {
 		printStartChunk(chunk)
 	}

@@ -51,6 +51,8 @@ type Target struct {
 	PID         int
 	RunID       string
 	StartedAt   time.Time
+	// Name carries the caller's service label, never a selector or identity claim.
+	Name string
 }
 
 // Options controls how targets are killed. The zero value is the documented
@@ -274,7 +276,15 @@ func (e *engine) kill(ctx context.Context, snapshot []ports.ListeningPort, targe
 
 // resolve turns one selector into the units it addresses. A run id can address
 // several listeners, so this returns a slice.
-func (e *engine) resolve(t Target, snapshot []ports.ListeningPort, opts Options) []*unit {
+func (e *engine) resolve(t Target, snapshot []ports.ListeningPort, opts Options) (resolved []*unit) {
+	// Presentation is applied after resolution, retaining every identity check.
+	defer func() {
+		if t.Name != "" {
+			for _, u := range resolved {
+				u.name = t.Name
+			}
+		}
+	}()
 	switch {
 	case t.RunID != "":
 		var out []*unit
@@ -481,7 +491,7 @@ func (e *engine) plan(u *unit, opts Options, results []Result) []Result {
 			// socket; every other process in the tree is named from the
 			// process table, so a run root reads as "npm", not as its port.
 			name := e.table.Name(pid)
-			if pid == u.listenPID && u.name != "" {
+			if u.name != "" && (pid == u.listenPID || pid == u.root) {
 				name = u.name
 			}
 			add(pid, name, signalMethod(opts.Force))

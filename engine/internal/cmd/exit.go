@@ -7,6 +7,7 @@ import (
 	"io"
 
 	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/internal/display"
 )
 
 // Exit codes — the table in docs/cli.md. A caller branches on the status
@@ -129,9 +130,9 @@ func reportError(w io.Writer, err error) int {
 		_ = encodeJSON(w, map[string]any{"error": body})
 		return code
 	}
-	fmt.Fprintf(w, "error: %s\n", msg)
+	fmt.Fprintf(w, "%s %s\n", display.Red("error:"), msg)
 	if hint != "" {
-		fmt.Fprintf(w, "hint: %s\n", hint)
+		fmt.Fprintf(w, "%s %s\n", display.Dim("hint:"), hint)
 	}
 	return code
 }

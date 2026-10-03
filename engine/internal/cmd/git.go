@@ -31,8 +31,8 @@ var gitCmd = &cobra.Command{
 		"Two subcommands go further: `files` lists which files changed and by how\n" +
 		"many lines, and `diff` shows what they say line by line.\n\n" +
 		"This command only ever reads: option-berth does not commit, stage, switch\n" +
-		"branches or push. Writing code has better authors — see docs/product.md,\n" +
-		"「写的边界」.\n\n" +
+		"branches or push. Writing code has better authors — see the write boundary\n" +
+		"in docs/product.md.\n\n" +
 		"Exit codes:\n" +
 		"  0  the directory is in a repository\n" +
 		"  1  it is not, or git could not be asked",
@@ -194,7 +194,7 @@ func renderGit(w io.Writer, s git.Snapshot) {
 
 	// One worktree is the normal case and naming it adds nothing; several is
 	// exactly when a person needs to know which one they are standing in
-	// (docs/product.md, 「worktree 是并列的泊位」).
+	// (docs/product.md: parallel berths).
 	if len(s.Worktrees) > 1 {
 		fmt.Fprintf(w, "\n%s\n", display.Dim("berths"))
 		for _, wt := range s.Worktrees {

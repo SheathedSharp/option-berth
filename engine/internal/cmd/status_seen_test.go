@@ -92,7 +92,8 @@ func TestCompareStatusSeenIsEmptyWhenNothingMoved(t *testing.T) {
 }
 
 // TestStatusSeenMarkDoesNotMoveWhileNothingChanges: the mark's time is when
-// this state was *first* seen, which is what makes 「从那以后没变」 true.
+// this state was *first* seen, which is what makes "nothing changed since"
+// true.
 func TestStatusSeenMarkDoesNotMoveWhileNothingChanges(t *testing.T) {
 	t.Setenv("BERTH_HOME", t.TempDir())
 

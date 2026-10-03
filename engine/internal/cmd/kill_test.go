@@ -142,12 +142,12 @@ func TestReportKillText(t *testing.T) {
 	}
 	got := buf.String()
 	for _, want := range []string{
-		"sigterm esbuild (PID 400) on port 3000",
-		"sigkill vite (PID 300) on port 3000",
-		"docker_stop db on port 5432 (container)",
+		"stopped (SIGTERM) esbuild (PID 400) on port 3000",
+		"stopped (SIGKILL) vite (PID 300) on port 3000",
+		"stopped container db on port 5432",
 		"error: not permitted to signal PID 900",
-		"Freed http://127.0.0.1:3000",
-		"Freed http://localhost:5432",
+		"released http://127.0.0.1:3000",
+		"released http://localhost:5432",
 		"3/4 stopped.",
 	} {
 		if !strings.Contains(got, want) {
@@ -166,10 +166,10 @@ func TestReportKillDryRunSaysWould(t *testing.T) {
 	if !strings.Contains(got, "Dry run: 1 action(s), children first.") {
 		t.Errorf("missing the dry-run header:\n%s", got)
 	}
-	if !strings.Contains(got, "would sigterm esbuild") {
+	if !strings.Contains(got, "would stop (SIGTERM) esbuild") {
 		t.Errorf("a dry run reports what would happen:\n%s", got)
 	}
-	if strings.Contains(got, "stopped.") || strings.Contains(got, "Freed") {
+	if strings.Contains(got, "stopped.") || strings.Contains(got, "released") {
 		t.Errorf("a dry run must not claim anything happened:\n%s", got)
 	}
 }

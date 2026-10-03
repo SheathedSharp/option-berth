@@ -108,7 +108,7 @@ func initDraftRun(cmd *cobra.Command, args []string) error {
 	var progress *draftProgress
 	if initDraftProgressFlag {
 		progress = newDraftProgress(os.Stdout)
-		progress.emit("preparing", "正在读取项目事实")
+		progress.emit("preparing", "reading project facts")
 	}
 	root, err := initRoot()
 	if err != nil {
@@ -125,7 +125,7 @@ func initDraftRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if progress != nil {
-		progress.emit("starting", "项目事实已准备好，正在启动 agent")
+		progress.emit("starting", "project facts ready, starting the agent")
 	}
 	agent := agentAuto
 	if len(args) == 1 {
@@ -286,7 +286,7 @@ func initAgentRun(cmd *cobra.Command, root string, cfg *groups.Config, agent str
 		return err
 	}
 	if progress != nil {
-		progress.emit("running", fmt.Sprintf("%s 已启动，正在检查项目文件", cli.Name))
+		progress.emit("running", fmt.Sprintf("%s started, inspecting project files", cli.Name))
 	}
 	facts := draft.Facts{Root: root, Group: cfg.Name, CLI: cli.Name, Candidates: cfg.Candidates}
 	if data, err := os.ReadFile(groups.TargetIn(root)); err == nil {
@@ -318,7 +318,7 @@ func initAgentRun(cmd *cobra.Command, root string, cfg *groups.Config, agent str
 	}
 	if progress != nil {
 		progress.flush()
-		progress.emit("validating", "agent 已返回，正在校验并整理清单")
+		progress.emit("validating", "agent returned, validating and tidying the manifest")
 	}
 
 	if jsonOutput || progress != nil {
@@ -437,34 +437,34 @@ func (p *draftProgress) agentLine(line string) {
 		} `json:"message"`
 	}
 	if json.Unmarshal([]byte(line), &frame) != nil {
-		p.emitLocked("running", "agent 正在工作")
+		p.emitLocked("running", "agent is working")
 		return
 	}
 	switch frame.Type {
 	case "system":
-		p.emitLocked("running", "agent 已连接，正在分析项目")
+		p.emitLocked("running", "agent connected, analyzing the project")
 	case "thread.started", "turn.started":
-		p.emitLocked("running", "agent 正在分析项目")
+		p.emitLocked("running", "agent is analyzing the project")
 	case "item.started", "item.completed":
 		if frame.Item.Command != "" {
-			p.emitLocked("inspecting", "正在检查："+shortProgress(frame.Item.Command))
+			p.emitLocked("inspecting", "inspecting: "+shortProgress(frame.Item.Command))
 		} else if frame.Item.Name != "" {
-			p.emitLocked("inspecting", "正在使用："+frame.Item.Name)
+			p.emitLocked("inspecting", "using: "+frame.Item.Name)
 		} else {
-			p.emitLocked("running", "agent 正在整理项目信息")
+			p.emitLocked("running", "agent is tidying project info")
 		}
 	case "assistant":
 		for _, content := range frame.Message.Content {
 			if content.Name != "" {
-				p.emitLocked("inspecting", "正在使用："+content.Name)
+				p.emitLocked("inspecting", "using: "+content.Name)
 				return
 			}
 		}
-		p.emitLocked("running", "agent 正在整理项目信息")
+		p.emitLocked("running", "agent is tidying project info")
 	case "turn.completed", "result":
-		p.emitLocked("validating", "agent 已返回，正在校验清单")
+		p.emitLocked("validating", "agent returned, validating the manifest")
 	default:
-		p.emitLocked("running", "agent 正在工作")
+		p.emitLocked("running", "agent is working")
 	}
 }
 

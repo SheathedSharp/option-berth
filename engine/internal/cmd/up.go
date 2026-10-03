@@ -164,6 +164,9 @@ func consumeStartWithWait(ctx context.Context, c *client.Client, stream *client.
 	}
 	var cleanupErr error
 	if wait {
+		if !asJSON {
+			fmt.Println(display.Dim("waiting for services to be ready…"))
+		}
 		timedOut, err := waitForStartReady(ctx, params, cfg, chunks, &summary, waitTimeout)
 		if err != nil {
 			return err
@@ -267,7 +270,7 @@ func printStartChunk(c rpc.GroupsStartChunk) {
 	case c.Error != "":
 		fmt.Printf("  %s %s  %s\n", display.Red("x"), display.Bold(c.Service), display.Dim(c.Error))
 		if c.Hint != "" {
-			fmt.Printf("    %s\n", display.Dim("下一步  "+c.Hint))
+			fmt.Printf("    %s\n", display.Dim("next: "+c.Hint))
 		}
 	case c.Skipped:
 		reason := c.Reason

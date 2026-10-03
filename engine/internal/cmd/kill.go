@@ -321,7 +321,7 @@ func reportKill(w io.Writer, results []killer.Result, snapshot []ports.Listening
 	}
 	if !dryRun {
 		for _, url := range freedURLs(results, snapshot) {
-			fmt.Fprintf(w, "Freed %s\n", display.Underline(url))
+			fmt.Fprintf(w, "released %s\n", display.Underline(url))
 		}
 		fmt.Fprintf(w, "\n%d/%d stopped.\n", len(results)-failed, len(results))
 	}
@@ -335,13 +335,39 @@ func reportKill(w io.Writer, results []killer.Result, snapshot []ports.Listening
 // reads the row's code, not its error prose.
 func alreadyGone(r killer.Result) bool { return r.Code == killer.CodeNotFound }
 
-// killVerb is the leading word of a result line: what was done, or — in a dry
-// run — what would be.
+// killVerb is the leading word of a result line: what was done in the
+// reader's vocabulary, or — in a dry run — what would be. The signal name is
+// the wire's word for it; on screen the verb is "stop"/"stopped", with the
+// method in parentheses only when the caller explicitly asked for the
+// harsher one.
 func killVerb(r killer.Result, dryRun bool) string {
-	if dryRun {
-		return "would " + string(r.Method)
+	switch r.Method {
+	case state.MethodDockerStop:
+		if dryRun {
+			return "would stop container"
+		}
+		return "stopped container"
+	case state.MethodSIGKILL:
+		if dryRun {
+			return "would stop (SIGKILL)"
+		}
+		return "stopped (SIGKILL)"
+	case state.MethodSIGTERM:
+		if dryRun {
+			return "would stop (SIGTERM)"
+		}
+		return "stopped (SIGTERM)"
+	case state.MethodNone:
+		if dryRun {
+			return "would do nothing"
+		}
+		return "nothing done"
+	default:
+		if dryRun {
+			return "would stop"
+		}
+		return "stopped"
 	}
-	return string(r.Method)
 }
 
 // describeResult names the process or container a row acted on.
@@ -360,9 +386,6 @@ func describeResult(r killer.Result, snapshot []ports.ListeningPort) string {
 		if bindAmbiguous(snapshot, r.Port) && r.BindAddress != "" {
 			fmt.Fprintf(&b, " [%s]", r.BindAddress)
 		}
-	}
-	if r.Method == state.MethodDockerStop {
-		b.WriteString(" (container)")
 	}
 	return b.String()
 }

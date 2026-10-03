@@ -3,6 +3,9 @@
 这份文档描述产品主线：一个 worktree 的清单、运行记录和运行实况、起停和日志，以及并行开发
 所需的只读事件流。其余命令以 oberth <command> --help 为准，不在这里另建一套契约。
 
+无参数运行 `oberth` 显示首屏：logo、一句定位、三条最常用命令（status / up / down）
+和到完整帮助的指引；它是指路牌不是手册，分组命令清单只在 `oberth --help`。
+
 ## 共通规则
 
 - 命令在当前目录（或显式的路径 / 项目名）上工作。没有清单时，先运行 oberth init。
@@ -39,8 +42,11 @@ CLI 只有三层。核心层围绕当前 worktree 的清单和运行闭环；支
 （`port_occupied`），也会标出命令尚未启动就失败的服务（`start_failed`），因此“启动后退出”、
 “端口冲突”和“启动前失败”不会混成同一种状态。
 
-人读输出按项目、服务、依赖、代码和失败原因排列。每个服务单独一行，同时给出声明端口与当前
-运行实况；无端口 worker 会明确标为无端口，`port: auto` 尚未分配时会显示自动端口未分配。
+人读输出按项目、服务、依赖、代码和失败原因排列，标签是英文的固定宽度列（services ·
+depends on · listeners · code · failed · next · drafts · last look），按终端显示宽度对齐。
+每个服务单独一行，同时给出声明端口与当前运行实况；服务状态词带颜色（running 绿、
+失败红、常规停止 dim），在 NO_COLOR 下退化为纯文字。无端口 worker 会明确标为 no port，
+`port: auto` 尚未分配时会显示 auto port unassigned。
 只有清单没有声明的监听才单独列出。多个服务同时失败时，失败证据按退出记录逐条显示，并给出
 对应的 `oberth logs <service> --once` 下一步。正常退出和被 `down` 停止的服务不进入失败区，
 即使强制停止留下了非零信号退出码也一样。
@@ -126,9 +132,11 @@ Jev 调用、缓存命中和无事件轮询数量；没有真实反馈时指标�
 已经在运行的服务跳过；每个服务有自己的
 日志文件和运行记录。无参数时使用当前目录最近的清单，也可以显式给项目名。
 
-成功时人读输出逐服务报告并给出汇总；--json 输出一个包含 services 和汇总字段的值。每个
+成功时人读输出逐服务报告并给出汇总；`--wait` 等待期间先输出一行 dim 提示再逐行出结果。
+--json 输出一个包含 services 和汇总字段的值。每个
 `services[]` 都有结构化的 `state`：`started`、`skipped` 或 `failed`，失败时还给出机器可分支的
 `reason` 和可直接执行的 `hint`（通常是 `oberth logs <service> --once`），原有 `error` 保留给人读。
+等待判定只认**等待开始之后**记录的退出：`down` 留下的旧退出记录不会被 `up --wait` 读成本轮启动失败。
 `--wait`（`--ready` 的别名）会在返回前等待已启动服务真正监听；声明了 `health:` 的服务还必须
 通过健康检查。无端口 worker 以运行记录活跃作为 ready。默认不等待，`--wait-timeout` 默认 30s；
 超时的服务状态为 `failed`、原因是 `ready_timeout`，命令退出码为 1；引擎随后停止这批未就绪的运行，
@@ -152,7 +160,8 @@ Jev 调用、缓存命中和无事件轮询数量；没有真实反馈时指标�
 
 ### oberth restart [project] [--only name,...] [--force] [--allow-outside-home] [--json]
 
-先停止再按清单重新启动项目服务。`--only` 只重启点名的服务，依赖和其他服务保持运行；
+先停止再按清单重新启动项目服务。人读输出先报告停止结果，空一行后报告启动结果。
+`--only` 只重启点名的服务，依赖和其他服务保持运行；
 这类重启保留 `port: auto` 的 worktree 占用，让服务重新拿回原地址。`--force` 跳过优雅停止。
 --json 返回一个值，其中 `stopped` 是停止结果，`services` 和汇总字段是重新启动结果。
 
@@ -230,6 +239,10 @@ oberth init [--dry-run] [--json]
   成员变化会以 `changed: ["workspace_changed"]` 提醒现有订阅者。若连接到旧 daemon，先执行
   `oberth daemon restart` 以取得 `state.scope` 能力。
 - oberth kill <port|pid>...：点名停止监听者；--all 是明确的整批操作，仍会确认。
+  人读的结果行用读者词汇：`stopped (SIGTERM)` / `stopped (SIGKILL)` / `stopped container`，
+  不直接打印信号名；`down` 停无端口 run 时显示服务名（清单里的名字），不是进程表里的解释器名。
+  被释放的地址行写作 `released <url>`。`--json` 的 `method` 字段仍是 wire 枚举
+  （sigterm/sigkill/docker_stop/none），人读与机器读各用各的词汇表。
 - oberth git [path]：在 status 之外按需读取代码摘要、文件列表或 diff。
 
 `start` 只运行 `oberth start [flags] -- <command> [args...]` 这一种低级入口；日常项目服务

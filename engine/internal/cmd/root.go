@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/sheathedsharp/option-berth/internal/buildinfo"
@@ -27,10 +28,21 @@ const banner = `
   ██████   ███   ██  ██ ██  ██ ██  ██
 `
 
+const rootTagline = "Read a worktree's manifest and runtime, then start or stop its services."
+
+// quickStart is the first screen's whole point: the commands a work session
+// actually runs, so the screen answers "what do I type" before "what exists".
+// Everything else stays one --help away.
+var quickStart = []struct{ cmd, what string }{
+	{"oberth status", "What this worktree declares, what is running, what changed"},
+	{"oberth up", "Start this worktree's services"},
+	{"oberth down", "Stop them and give the ports back"},
+}
+
 var rootCmd = &cobra.Command{
 	Use:   "oberth",
 	Short: "Manage services for the current worktree",
-	Long:  display.Cyan(banner) + "\n  " + display.Dim("Read a worktree's manifest and runtime, then start or stop its services."),
+	Long:  display.Cyan(banner) + "\n  " + display.Dim(rootTagline),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if versionFlag {
 			// Keep the shell-facing version probe deliberately small. Detailed
@@ -38,8 +50,36 @@ var rootCmd = &cobra.Command{
 			fmt.Printf("option-berth %s\n", buildinfo.VersionValue())
 			return nil
 		}
-		return cmd.Help()
+		printWelcome(cmd.OutOrStdout())
+		return nil
 	},
+}
+
+// printWelcome renders the bare-`oberth` screen: the logo, one line of what
+// this is, the commands a session starts with, and the way out to everything
+// else. It is a signpost, not the manual — the grouped command list stays on
+// `oberth --help` (gh's split between first screen and help).
+func printWelcome(w io.Writer) {
+	fmt.Fprintln(w, display.Cyan(banner))
+	fmt.Fprintf(w, "  %s\n\n", display.Dim(rootTagline))
+	fmt.Fprintln(w, "  Start here:")
+	width := 0
+	for _, q := range quickStart {
+		if n := len(q.cmd); n > width {
+			width = n
+		}
+	}
+	for _, q := range quickStart {
+		fmt.Fprintf(w, "    %s  %s\n", display.Bold(display.PadDisplay(q.cmd, width)), display.Dim(q.what))
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "  Learn more:")
+	for _, q := range []struct{ cmd, what string }{
+		{"oberth --help", "Every command, grouped by what it is for"},
+		{"oberth doctor", "Check this installation"},
+	} {
+		fmt.Fprintf(w, "    %s  %s\n", display.Bold(display.PadDisplay(q.cmd, width)), display.Dim(q.what))
+	}
 }
 
 const (
@@ -54,6 +94,12 @@ func init() {
 		&cobra.Group{ID: commandGroupSupport, Title: "Inspection and explicit controls:"},
 		&cobra.Group{ID: commandGroupInfra, Title: "Runtime and setup:"},
 	)
+	// cobra's built-in help command would otherwise land in a lone
+	// "Additional Commands" section, which breaks the three-ring grouping the
+	// contract test pins. It is setup tooling, so it belongs with the rest of
+	// Runtime and setup.
+	rootCmd.SetHelpCommandGroupID(commandGroupInfra)
+	rootCmd.SetCompletionCommandGroupID(commandGroupInfra)
 	rootCmd.PersistentFlags().Bool("no-color", false, "Disable colored output")
 	rootCmd.Flags().BoolVarP(&versionFlag, "version", "v", false,
 		"Print the version and exit")

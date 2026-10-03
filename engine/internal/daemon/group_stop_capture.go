@@ -66,7 +66,7 @@ func captureSilentGroupStop(rt *Runtime, snap state.Snapshot, group string, only
 		if run.StartedAt.IsZero() && !dryRun {
 			return nil, nil, errors.New("no-port run has no recorded birth identity; refusing PID-only stop")
 		}
-		targets = append(targets, killer.Target{PID: pid, StartedAt: run.StartedAt})
+		targets = append(targets, killer.Target{PID: pid, StartedAt: run.StartedAt, Name: run.Owner.Name})
 	}
 	if dryRun {
 		return targets, nil, nil

@@ -34,6 +34,11 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 	}
 
 	deadline := time.Now().Add(timeout)
+	// A retained last_exit can predate this start: the run `down` stopped a
+	// minute ago still says "stopped, exit 143", and reading it as a fresh
+	// failure would flunk every `up --wait` that follows a `down`. Only an
+	// exit recorded after the wait began counts as this run's death.
+	waitStarted := time.Now().UTC()
 	for {
 		pp, gg, err := groupRows(ctx)
 		if err == nil {
@@ -45,7 +50,8 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 				for name := range pending {
 					if ready, _ := serviceReady(*group, portsNow, name); ready {
 						delete(pending, name)
-					} else if svc := serviceIn(*group, name); svc != nil && svc.LastExit != nil {
+					} else if svc := serviceIn(*group, name); svc != nil &&
+						exitAfter(svc.LastExit, waitStarted) {
 						markStartChunkFailed(chunks, summary, name, svc.LastExit.Reason,
 							fmt.Sprintf("service exited with code %d (%s)", svc.LastExit.Code, svc.LastExit.Reason))
 						delete(pending, name)
@@ -72,6 +78,21 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
+}
+
+// exitAfter reports whether an exit record belongs to a run that died after
+// the moment a readiness wait began. A nil exit is no evidence either way;
+// an unparseable timestamp is treated as fresh, because a malformed record
+// the daemon did produce is more likely this run's than a stale one's.
+func exitAfter(exit *state.ServiceExit, waitStarted time.Time) bool {
+	if exit == nil {
+		return false
+	}
+	at, err := time.Parse(time.RFC3339, exit.At)
+	if err != nil {
+		return true
+	}
+	return !at.Before(waitStarted)
 }
 
 func startTargetGroup(params rpc.GroupsStartParams, cfg *groups.Config, all []state.Group) *state.Group {
