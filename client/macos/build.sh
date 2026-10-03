@@ -54,6 +54,7 @@ sed \
 # 等宽字体跟应用一起走：不要求用户先装字体，也不去猜系统里那版是哪一个。
 # 许可是 SIL OFL 1.1，要求随附许可原文 —— Fonts/LICENSE-Monaspace.txt 就是为这条留的。
 cp "$here"/Fonts/*.otf "$app/Contents/Resources/Fonts/"
+cp "$here/Fonts/LICENSE-Monaspace.txt" "$app/Contents/Resources/Fonts/"
 
 # 图标从标志生成，不存手画的图 —— 这样 Dock 里的形状和界面里的形状不可能走开。
 # iconutil 只有 macOS 上有；生成不出来就跳过，不影响应用本身。
@@ -71,7 +72,7 @@ codesign --force --sign - "$app" >/dev/null 2>&1 \
   && echo "已做 ad-hoc 签名" \
   || echo "跳过签名（本地运行不受影响）"
 
-echo "版本：$version（build $build_number）"
+echo "版本：${version}（build ${build_number}）"
 echo "好了：$app"
 if [ "${1:-}" = "--run" ]; then
   open "$app"

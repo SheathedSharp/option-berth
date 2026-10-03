@@ -241,135 +241,88 @@ enum Motion {
 
 // MARK: - 标志
 
-/// 标志自己的三个色。它和界面那套 `Ink` **分开**：界面只有「活着」一处颜色，
-/// 标志是三个角色，每个有自己的名字和工作 —— 要改标志的颜色，改这里。
-///
-/// 三个角色：陆地和船都是暖的，深陶土负责开口；底是象牙白。
-/// 这条关系是配了很多轮才定的：底一暖，陶土才不显得突兀。
+/// 品牌色不表示服务健康；实时状态继续由 StatusDot / 运行事实呈现。
 enum Mark {
-    static let land = Color(hex: 0x23262B)       // 陆地：暖炭
-    static let water = Color(hex: 0xA8543E)      // 河与水：深陶土
-    static let boat = Color(hex: 0xC97954)       // 船：陶土
-    static let paper = Color(hex: 0xFAF7F1)      // 标志自己的底：象牙白
+    static let ink = Color(hex: BerthGeometry.ink)
+    static let paper = Color(hex: BerthGeometry.paper)
+    static let accent = Color(hex: BerthGeometry.accent)
+    static var adaptiveAccent: Color {
+        let dark = UISettings.shared.theme == .midnight || UISettings.shared.theme == .forest
+        return Color(hex: dark ? BerthGeometry.darkAccent : BerthGeometry.accent)
+    }
 }
 
-/// 泊位标志：Option 键那个字符，照它的实测比例重画，给了三个角色。
-///
-/// 左上一横是**陆地**，一笔斜线接底横是**河与水**，右上那个向下的梯形是**船**；
-/// 三块之间留气口，谁也不贴着谁。左上与右上之间那道断口就是**泊位入口**。
-///
-/// 比例全部来自那个字符本身（font-size 420 下逐行扫描墨段量的，不是估的）：
-/// 笔宽 = 可见宽的 8.86%、斜线斜率正好 2.0、左上横 3.0 个笔宽、右上横 3.55 个、
-/// 底横 2.95 个、两段顶横的断口 2.7 个笔宽。这几组数之间本来就是配好的 ——
-/// 所以长度和宽度不用再自己编。几何画在 24×24 网格上再等比缩放，
-/// 16pt（角标）和 1024px（图标）是同一张图。
+/// 各自成泊：对称双轨围出泊位，独立胶囊代表有明确归属的运行单元。
+/// 保留 size / occupied / compact 接口；Dock 和界面都消费同一份几何。
 struct BerthMark: View {
     var size: CGFloat = 18
-    /// 泊位空着的时候船画成灰的。用在空态和连不上 daemon 的时候 ——
-    /// 那时候标志本身也在说同一句话：没有东西停在这儿。
+    /// 由调用方的真实界面状态决定；静态品牌强调色不意味着服务正在运行。
     var occupied: Bool = true
-    /// 小尺寸那一档：笔宽加粗一档。真字符的 8.86% 缩到 16pt 只有 1.2px，
-    /// 加粗到 2.15 才立得住；再小就把气口吃掉了。
     var compact: Bool = false
+    /// AppIconView 固定使用纸底配色，不受用户界面主题影响。
+    var fixedPalette: Bool = false
 
-    // —— 24 网格上的骨架（字符实测值换算来的）——
+    private var useCompact: Bool { compact || size <= 20 }
     private var unit: CGFloat { size / 24 }
-    private var inkU: CGFloat { compact ? 2.15 : 1.86 }   // 笔宽（网格单位）
-    private var ink: CGFloat { inkU * unit }              // 笔宽（点）
-
-    private let ly: CGFloat = 3.783      // 两段顶横的中心线
-    private let l1x0: CGFloat = 2.433    // 陆地左端
-    private let l1x1: CGFloat = 8.013    // 陆地右端（= 河水起笔该在的地方）
-    private let kx: CGFloat = 9.072      // 河水实际起笔（退开一个气口）
-    private let ky: CGFloat = 5.948
-    private let ebx: CGFloat = 16.014    // 肘
-    private let ba: CGFloat = 20.139     // 底横的 y
-    private let rx: CGFloat = 21.504     // 底横右端
-    private let b0: CGFloat = 14.904     // 船左端
-    private let b1: CGFloat = 21.504     // 船右端（与底横右端对齐）
-    private let bin: CGFloat = 1.05      // 船底每侧内收
-    private let bd: CGFloat = 1.30       // 船高 = 1.30 个笔宽
-    private let br: CGFloat = 0.50       // 船的转角半径
 
     var body: some View {
         ZStack {
-            line(Mark.land) { p in
-                p.move(to: pt(l1x0, ly))
-                p.addLine(to: pt(l1x1, ly))
-            }
-            line(Mark.water) { p in
-                p.move(to: pt(kx, ky))
-                p.addLine(to: pt(ebx, ba))
-                p.addLine(to: pt(rx, ba))
-            }
-            boatBody.fill(occupied ? Mark.boat : Ink.dormant)
+            outline(useCompact ? BerthGeometry.compactRail : BerthGeometry.standardRail)
+                .fill(fixedPalette ? Mark.ink : Ink.ink)
+            outline(useCompact ? BerthGeometry.compactToken : BerthGeometry.standardToken)
+                .fill(occupied ? (fixedPalette ? Mark.accent : Mark.adaptiveAccent) : Ink.dormant)
         }
         .frame(width: size, height: size)
+        .accessibilityHidden(true)
     }
 
-    /// 船：向下的梯形（宽顶窄底 = 船体剪影），四角倒成小圆角。
-    private var boatBody: Path {
-        let top = ly - inkU / 2
-        let bot = top + inkU * bd
-        return roundedPolygon(
-            [pt(b0, top), pt(b1, top), pt(b1 - bin, bot), pt(b0 + bin, bot)],
-            radius: br * unit
-        )
-    }
-
-    private func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-        CGPoint(x: x * unit, y: y * unit)
-    }
-
-    /// 一笔：等宽、两端圆头、转角圆。整个标志只用这一种笔画语法。
-    private func line(_ color: Color, _ build: (inout Path) -> Void) -> some View {
-        Path { build(&$0) }
-            .stroke(color, style: StrokeStyle(lineWidth: ink, lineCap: .round, lineJoin: .round))
-    }
-
-    /// 圆角多边形。倒角用二次曲线，和别的元素同一套圆角语法。
-    private func roundedPolygon(_ points: [CGPoint], radius: CGFloat) -> Path {
-        var path = Path()
-        let n = points.count
-        for i in 0..<n {
-            let p0 = points[(i - 1 + n) % n], p1 = points[i], p2 = points[(i + 1) % n]
-            let v1 = CGVector(dx: p0.x - p1.x, dy: p0.y - p1.y)
-            let v2 = CGVector(dx: p2.x - p1.x, dy: p2.y - p1.y)
-            let len1 = max(hypot(v1.dx, v1.dy), 0.0001)
-            let len2 = max(hypot(v2.dx, v2.dy), 0.0001)
-            let u1 = CGVector(dx: v1.dx / len1, dy: v1.dy / len1)
-            let u2 = CGVector(dx: v2.dx / len2, dy: v2.dy / len2)
-            let cosA = max(-1, min(1, u1.dx * u2.dx + u1.dy * u2.dy))
-            let t = min(radius / max(tan(acos(cosA) / 2), 0.0001), len1 / 2, len2 / 2)
-            let a = CGPoint(x: p1.x + u1.dx * t, y: p1.y + u1.dy * t)
-            let b = CGPoint(x: p1.x + u2.dx * t, y: p1.y + u2.dy * t)
-            if i == 0 { path.move(to: a) } else { path.addLine(to: a) }
-            path.addQuadCurve(to: b, control: p1)
+    private func outline(_ commands: [BerthGeometry.Command]) -> Path {
+        Path { path in
+            for command in commands {
+                switch command {
+                case let .move(x, y):
+                    path.move(to: point(x, y))
+                case let .line(x, y):
+                    path.addLine(to: point(x, y))
+                case let .curve(x1, y1, x2, y2, x, y):
+                    path.addCurve(to: point(x, y), control1: point(x1, y1), control2: point(x2, y2))
+                case .close:
+                    path.closeSubpath()
+                }
+            }
         }
-        path.closeSubpath()
-        return path
+    }
+
+    private func point(_ x: Double, _ y: Double) -> CGPoint {
+        CGPoint(x: CGFloat(x) * unit, y: CGFloat(y) * unit)
     }
 }
 
-/// 字标。中间那一横用标志里那条深陶土 —— 它是「标志」和「名字」之间
-/// 唯一的那处呼应，也是整个界面上最小的一点颜色。
-///
-/// **名字是拆成三段写的，这是刻意的**（只有连字符是彩色的，得单独一个 Text）。
-/// 代价是任何按字符串改名的脚本都看不见它 —— 全仓库搜 `code-berth` 搜不到这里，
-/// 两次改名都漏过这一处，所以改名字时记得手改这一行。
+/// 字标连字符采用运行单元的胶囊形；UI 继续尊重用户的字体与字号设置。
+/// 宣传用的固定轮廓字标在 brand/wordmark.svg，不随界面字体偏好改变。
 struct Wordmark: View {
     var size: CGFloat = 12.5
 
+    private var scaledSize: CGFloat { size * UISettings.shared.interfaceScale }
+
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(alignment: .firstTextBaseline, spacing: 0) {
             Text("option").foregroundStyle(Ink.ink)
-            Text("-").foregroundStyle(Mark.water)
+            Capsule()
+                .fill(Mark.adaptiveAccent)
+                .frame(width: scaledSize * 0.34, height: scaledSize * 0.092)
+                .padding(.horizontal, scaledSize * 0.10)
+                .alignmentGuide(.firstTextBaseline) { dimensions in
+                    dimensions[VerticalAlignment.center] + scaledSize * 0.30
+                }
             Text("berth").foregroundStyle(Ink.ink)
         }
         .font(Face.sans(size, .semibold))
         .tracking(0.1)
         .lineLimit(1)
         .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("option-berth")
     }
 }
 

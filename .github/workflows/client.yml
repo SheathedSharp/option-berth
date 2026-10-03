@@ -1,0 +1,32 @@
+name: Client and brand verification
+on:
+  pull_request:
+    branches: [main]
+    paths: ['client/macos/**', 'brand/**', '.github/workflows/client.yml']
+  push:
+    branches: [main]
+    paths: ['client/macos/**', 'brand/**', '.github/workflows/client.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: client-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    name: macOS client and shared brand geometry
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Check generated assets
+        run: |
+          python3 brand/build-option-berth.py --check
+          python3 -m unittest discover -s brand -p 'test_*.py'
+      - name: Build native application and icon
+        run: |
+          client/macos/build.sh
+          test -s client/macos/build/OptionBerth.app/Contents/Resources/AppIcon.icns
+          test -s client/macos/build/OptionBerth.app/Contents/Resources/Fonts/LICENSE-Monaspace.txt

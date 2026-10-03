@@ -1,16 +1,20 @@
-# brand · 标志与图标资产
+# 各自成泊
 
-这里保存 option-berth 标志的 SVG/PNG 稿件、预览页和生成脚本。
-应用使用的标志源在 `client/macos/Sources/Brand.swift` 的 `BerthMark`；
-应用图标在构建时渲染，不应另外维护一套不同的形状。
+**Option：保留选择。Berth：运行有归属。** 对称双轨围出泊位，独立胶囊表示有明确归属的运行。
+品牌图形不是进程拓扑；陶土色不是服务健康状态。深浅色和单色版本保持同一语义。
 
-视觉约束是浅深色和单色均可辨识、使用统一网格与笔宽、保持 Option 符号的结构。
-具体度量和客户端视觉规范见 [客户端 README](../client/macos/README.md)。
-修改实际图形后需要渲染验证；纯文档整理不能被记录为已经验证图形。
-输出写入忽略的缓存或构建目录，不提交本机截图和临时产物。
+唯一几何源是 `client/macos/Sources/BerthGeometry.swift`，包含标准与小尺寸轮廓、色板和图标布局。
+`BerthMark`、原生图标和13个SVG导出共用它；固定轮廓字标在 `wordmark.svg`。
+标准轨宽为3.2/24，20及以下尺寸使用3.6/24的光学校正；保持封闭轮廓与相切曲线。
 
-## 第三方素材
+```sh
+python3 brand/build-option-berth.py --check
+python3 -m unittest discover -s brand -p 'test_*.py'
+mage client
+mage states
+```
 
-不再分发无当前消费者的第三方标志或其转换脚本。项目自身图标保留；PNG/ICNS 的
-说明、时间与 EXIF 元数据在公开准备中移除，图像像素和颜色信息不变。历史中的第三方
-名称与标志不因此获得项目 MIT 许可；分发边界见根目录 THIRD_PARTY_NOTICES.md。
+修改几何后运行导出脚本并提交SVG。PNG/ICNS由原生 `--write-icon` 与 `iconutil` 生成到构建目录，
+不保留旧位图作为第二套品牌源。`preview-option-berth.html` 可离线查看深浅、单色及小尺寸版本。
+原生渲染需检查空态、字体缩放、字标基线和主题对比；离屏结果不等于已检查Dock或全部交互。
+不恢复已移除的第三方标志目录；许可见根目录 THIRD_PARTY_NOTICES.md。
