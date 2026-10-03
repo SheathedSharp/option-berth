@@ -66,6 +66,8 @@ mage states
 mage window
 ~~~
 
+截图前先执行 `mage client` 或 `mage buildClient`；截图目标不再隐式构建。
+
 mage states 生成 01-empty、02-services-live、03-services-idle、04-runtime-facts、
 05-connection-error、06-manifest-review、07-settings、07-settings-jev、07-settings-typography 和 08-code。改界面后必须运行 mage states
 并查看 PNG；需要验证真实 daemon 数据时再运行 mage snapshot。mage window 用于检查标题栏、

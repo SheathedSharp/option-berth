@@ -107,7 +107,7 @@ func RunApp() error {
 	if err := installApp(p); err != nil {
 		return err
 	}
-	return command(p.root, "open", "/Applications/OptionBerth.app")
+	return openInstalledClient(p.root)
 }
 
 // Test runs the Go test suite.
@@ -206,70 +206,17 @@ func Clean() error {
 	return nil
 }
 
-// Snapshot renders the current daemon state to a PNG.
-func Snapshot() error {
-	p, err := loadProject()
-	if err != nil {
-		return err
-	}
-	if err := buildClient(p); err != nil {
-		return err
-	}
-	app := clientBinary(p)
-	out := filepath.Join(p.root, "client", "macos", ".cache", "board.png")
-	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
-		return err
-	}
-	return command(p.root, app, "--snapshot", out)
-}
+// Snapshot renders current daemon state with an already-built client.
+func Snapshot() error { return Shot(nil) }
 
-// States renders the deterministic client state gallery.
-func States() error {
-	p, err := loadProject()
-	if err != nil {
-		return err
-	}
-	if err := buildClient(p); err != nil {
-		return err
-	}
-	out := filepath.Join(p.root, "client", "macos", ".cache", "states")
-	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
-		return err
-	}
-	return command(p.root, clientBinary(p), "--render-states", out, "--size", "900x640")
-}
+// States renders frozen UI fixtures without building or installing anything.
+func States() error { return renderClient("--render-states", "states", "--size", "900x640") }
 
-// Window renders the client window chrome to a PNG.
-func Window() error {
-	p, err := loadProject()
-	if err != nil {
-		return err
-	}
-	if err := buildClient(p); err != nil {
-		return err
-	}
-	out := filepath.Join(p.root, "client", "macos", ".cache", "window.png")
-	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
-		return err
-	}
-	return command(p.root, clientBinary(p), "--dump-window", out)
-}
+// Window captures the current client window without an implicit build.
+func Window() error { return renderClient("--dump-window", "window.png") }
 
-// Service renders one project's service view. Pass the project name as the argument.
-func Service(projectName string) error {
-	p, err := loadProject()
-	if err != nil {
-		return err
-	}
-	if err := buildClient(p); err != nil {
-		return err
-	}
-	out := filepath.Join(p.root, "client", "macos", ".cache", "services-"+projectName+".png")
-	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
-		return err
-	}
-	return command(p.root, clientBinary(p), "--snapshot", out, "--scope", "services:"+projectName)
-}
+// Service is the compatible spelling of `mage shot -scope=services:NAME`.
+func Service(name string) error { scope := "services:" + name; return Shot(&scope) }
 
 // ReleasePatch increments PATCH, commits VERSION, and creates an annotated tag.
 func ReleasePatch(dryRun *bool) error {
