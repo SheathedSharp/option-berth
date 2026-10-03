@@ -9,6 +9,7 @@ import (
 	"github.com/sheathedsharp/option-berth/internal/buildinfo"
 	"github.com/sheathedsharp/option-berth/internal/daemon/client"
 	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/internal/display"
 	"github.com/sheathedsharp/option-berth/internal/ports"
 	"github.com/sheathedsharp/option-berth/internal/state"
 )
@@ -24,7 +25,7 @@ var fallbackNoteOnce sync.Once
 
 func noteFallback() {
 	fallbackNoteOnce.Do(func() {
-		fmt.Fprintln(os.Stderr, "note: daemon unavailable, using direct scan")
+		fmt.Fprintln(os.Stderr, display.Dim("note: daemon unavailable, using direct scan"))
 	})
 }
 

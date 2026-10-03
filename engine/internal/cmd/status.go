@@ -468,10 +468,10 @@ func gitOrEmpty(tree *git.Tree) git.Tree {
 
 // printStatus renders the aggregate for a person.
 //
-// The labels are a column, one line each — the same reading posture as a
-// reading table, so a glance down the left edge answers "what kinds of things
-// are in here" before any of it is read. Nothing is phrased as a verdict: the
-// change line lists what moved, not whether it should have.
+// The labels are a fixed-width column, one line each — the same reading posture
+// as a reading table, so a glance down the left edge answers "what kinds of
+// things are in here" before any of it is read. Nothing is phrased as a
+// verdict: the change line lists what moved, not whether it should have.
 func printStatus(doc statusDocument) {
 	head := display.Bold(doc.Worktree.Name)
 	if doc.Scope.Root != "" {
@@ -491,54 +491,75 @@ func printStatus(doc statusDocument) {
 	printStatusChange(doc)
 }
 
+// statusLabels are every label the reading table can carry. The column width
+// is measured once from the widest, in terminal cells rather than runes, so
+// every row's value starts at the same cell.
+var statusLabels = []string{
+	"services", "depends on", "listeners", "code", "failed", "next", "drafts", "last look",
+}
+
+func statusLabelWidth() int {
+	w := 0
+	for _, l := range statusLabels {
+		if n := display.DisplayWidth(l); n > w {
+			w = n
+		}
+	}
+	return w
+}
+
 func statusLine(label, value string) {
-	fmt.Printf("  %-6s  %s\n", display.Dim(label), value)
+	fmt.Printf("  %s  %s\n", display.PadDisplay(display.Dim(label), statusLabelWidth()), value)
 }
 
 // printStatusServices answers "what is supposed to run, and is it".
 func printStatusServices(doc statusDocument) {
 	if len(doc.Worktree.Services) == 0 {
-		statusLine("服务", display.Dim("清单里还没有服务 —— `oberth init` 之后在项目页里填"))
+		statusLine("services", display.Dim("none declared — `oberth init` writes the starter, `oberth init draft` asks an agent"))
 		return
 	}
 	for _, s := range doc.Worktree.Services {
 		parts := []string{s.Name, serviceStateText(s)}
 		if s.PortActual != nil {
-			parts = append(parts, "监听 "+fmt.Sprint(*s.PortActual))
+			parts = append(parts, "listening on "+fmt.Sprint(*s.PortActual))
 		} else if s.Port != nil {
-			parts = append(parts, "声明 "+fmt.Sprint(*s.Port))
+			parts = append(parts, "declared "+fmt.Sprint(*s.Port))
 		} else if s.PortAuto {
-			parts = append(parts, "自动端口未分配")
+			parts = append(parts, "auto port unassigned")
 		} else if s.Running {
-			parts = append(parts, "无端口")
+			parts = append(parts, "no port")
 		}
 		if s.PID != nil {
 			parts = append(parts, "pid "+fmt.Sprint(*s.PID))
 		}
-		statusLine("服务", strings.Join(parts, " · "))
+		statusLine("services", strings.Join(parts, " · "))
 	}
 }
 
+// serviceStateText is the state word for one service, colored so a column of
+// them can be swept: running is green, failure red, routine stops dim. The
+// word carries the meaning on its own — color is the second channel, not the
+// only one, so NO_COLOR loses nothing.
 func serviceStateText(s state.Service) string {
 	if s.Running {
-		return "在跑"
+		return display.Green("running")
 	}
 	if s.LastExit == nil {
-		return "没跑"
+		return display.Dim("not running")
 	}
 	switch s.LastExit.Reason {
 	case "stopped":
-		return "已停止"
+		return display.Dim("stopped")
 	case "exited":
-		return "已退出"
+		return display.Dim("exited")
 	case "port_occupied":
-		return fmt.Sprintf("失败 · 端口被占用 · 退出码 %d", s.LastExit.Code)
+		return display.Red(fmt.Sprintf("failed · port occupied · exit %d", s.LastExit.Code))
 	case "start_failed":
-		return fmt.Sprintf("失败 · 启动失败 · 退出码 %d", s.LastExit.Code)
+		return display.Red(fmt.Sprintf("failed · start failed · exit %d", s.LastExit.Code))
 	case "crashed":
-		return fmt.Sprintf("失败 · 崩溃 · 退出码 %d", s.LastExit.Code)
+		return display.Red(fmt.Sprintf("failed · crashed · exit %d", s.LastExit.Code))
 	default:
-		return fmt.Sprintf("失败 · %s · 退出码 %d", s.LastExit.Reason, s.LastExit.Code)
+		return display.Red(fmt.Sprintf("failed · %s · exit %d", s.LastExit.Reason, s.LastExit.Code))
 	}
 }
 
@@ -553,12 +574,12 @@ func printStatusMachine(doc statusDocument) {
 	for _, m := range doc.Worktree.Machine {
 		who := fmt.Sprintf("%s %d", m.Name, m.Port)
 		if m.Listening {
-			parts = append(parts, who+" 在听")
+			parts = append(parts, who+" listening")
 		} else {
-			parts = append(parts, who+" 没听")
+			parts = append(parts, who+" not listening")
 		}
 	}
-	statusLine("依赖", strings.Join(parts, " · "))
+	statusLine("depends on", strings.Join(parts, " · "))
 }
 
 // printStatusUnclaimedPorts keeps the normal status path service-centered. A
@@ -588,13 +609,13 @@ func printStatusUnclaimedPorts(doc statusDocument) {
 	for _, p := range unclaimed {
 		names = append(names, strconv.Itoa(p))
 	}
-	statusLine("监听", strings.Join(names, "、")+" 没有服务声明它")
+	statusLine("listeners", strings.Join(names, ", ")+" — no service declares "+pluralWord(len(unclaimed), "it"))
 }
 
 // printStatusCode is the repository half: how much moved, not which lines.
 func printStatusCode(doc statusDocument) {
 	if doc.Git == nil {
-		statusLine("代码", display.Dim("不是一个 git 检出"))
+		statusLine("code", display.Dim("not a git checkout"))
 		return
 	}
 	snap := doc.Git.Snapshot
@@ -603,29 +624,29 @@ func printStatusCode(doc statusDocument) {
 		count int
 		label string
 	}{
-		{snap.Staged, "已暂存"}, {snap.Unstaged, "未暂存"},
-		{snap.Untracked, "未跟踪"}, {snap.Conflicts, "冲突"},
+		{snap.Staged, "staged"}, {snap.Unstaged, "unstaged"},
+		{snap.Untracked, "untracked"}, {snap.Conflicts, "conflicted"},
 	} {
 		if c.count > 0 {
 			parts = append(parts, fmt.Sprintf("%s %d", c.label, c.count))
 		}
 	}
 	if snap.Ahead > 0 {
-		parts = append(parts, fmt.Sprintf("领先上游 %d", snap.Ahead))
+		parts = append(parts, fmt.Sprintf("ahead %d", snap.Ahead))
 	}
 	if snap.Behind > 0 {
-		parts = append(parts, fmt.Sprintf("落后上游 %d", snap.Behind))
+		parts = append(parts, fmt.Sprintf("behind %d", snap.Behind))
 	}
 	if snap.Detached {
-		parts = append(parts, "HEAD 游离")
+		parts = append(parts, "detached HEAD")
 	}
 	if len(parts) == 0 {
-		parts = append(parts, "干净")
+		parts = append(parts, "clean")
 	}
 	if snap.Last != nil {
 		parts = append(parts, display.Dim(snap.Last.Hash+" "+snap.Last.Subject))
 	}
-	statusLine("代码", strings.Join(parts, " · "))
+	statusLine("code", strings.Join(parts, " · "))
 }
 
 // printStatusFailure is C3's "上次为何失败": the daemon kept the exit code and
@@ -643,12 +664,12 @@ func printStatusFailure(doc statusDocument) {
 		}
 		line := lastNonEmpty(run.LastLines)
 		if line == "" {
-			statusLine("失败", fmt.Sprintf("%s 退出码 %s · 没有保留日志行", run.Name, code))
+			statusLine("failed", fmt.Sprintf("%s exit %s · no log lines kept", run.Name, code))
 		} else {
-			statusLine("失败", fmt.Sprintf("%s 退出码 %s · %s", run.Name, code, display.Dim(line)))
+			statusLine("failed", fmt.Sprintf("%s exit %s · %s", run.Name, code, display.Dim(line)))
 		}
 		if run.Name != "" {
-			statusLine("下一步", display.Dim("oberth logs "+run.Name+" --once"))
+			statusLine("next", display.Dim("oberth logs "+run.Name+" --once"))
 		}
 	}
 }
@@ -681,26 +702,28 @@ func printStatusDraft(doc statusDocument) {
 	for _, p := range doc.Drafts {
 		who := p.Agent
 		if who == "" {
-			who = "未知的 agent"
+			who = "an unknown agent"
 		}
 		when := p.At
 		if when != "" && len(when) >= 16 {
 			when = when[5:] // "09-23 16:58": the year is not what a glance needs
 		}
-		statusLine("草稿", fmt.Sprintf("%s %s · 待采纳 —— `oberth init adopt`", who, when))
+		statusLine("drafts", fmt.Sprintf("%s %s · waiting — `oberth init adopt`", who, when))
 	}
 }
 
 // printStatusChange is the second run's half. 「没有基线」和「一条都没动」不能
 // 长得一样（GUI 那条教训），所以第一次跑也要说话。
+// printStatusChange is the second run's half. "No baseline" and "nothing
+// moved" must not look the same (the GUI lesson), so the first run speaks too.
 func printStatusChange(doc statusDocument) {
 	if doc.Changed == nil {
-		statusLine("上次看", display.Dim("第一次看，记了一笔 —— 再跑一次就是「和上次比」"))
+		statusLine("last look", display.Dim("first look recorded — the next run compares against it"))
 		return
 	}
 	at, err := time.Parse(time.RFC3339, doc.Changed.At)
 	if err != nil {
 		at = time.Now()
 	}
-	statusLine("上次看", seenSummary(*doc.Changed, at))
+	statusLine("last look", seenSummary(*doc.Changed, at))
 }

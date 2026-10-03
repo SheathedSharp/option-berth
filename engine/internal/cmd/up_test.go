@@ -103,6 +103,27 @@ func TestWaitForStartReadyUsesTimeoutAsStructuredFailure(t *testing.T) {
 	}
 }
 
+// TestExitAfterTreatsAPreWaitExitAsStale: the exit `down` recorded before an
+// `up --wait` began is the previous run's business. Reading it as this run's
+// failure flunked every wait that followed a stop.
+func TestExitAfterTreatsAPreWaitExitAsStale(t *testing.T) {
+	waitStarted := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	stale := &state.ServiceExit{Code: 143, Reason: "stopped", At: waitStarted.Add(-time.Minute).Format(time.RFC3339)}
+	fresh := &state.ServiceExit{Code: 1, Reason: "crashed", At: waitStarted.Add(time.Second).Format(time.RFC3339)}
+	if exitAfter(stale, waitStarted) {
+		t.Fatal("an exit recorded before the wait began is the previous run's, not this one's")
+	}
+	if !exitAfter(fresh, waitStarted) {
+		t.Fatal("an exit recorded after the wait began is this run's death")
+	}
+	if exitAfter(nil, waitStarted) {
+		t.Fatal("a nil exit is no evidence")
+	}
+	if !exitAfter(&state.ServiceExit{Reason: "crashed"}, waitStarted) {
+		t.Fatal("an unparseable timestamp is treated as fresh, not as stale")
+	}
+}
+
 // TestUpParamsUsesTheConfigInTheWorkingDirectory: with no argument, `oberth up`
 // starts the project you are standing in.
 func TestUpParamsUsesTheConfigInTheWorkingDirectory(t *testing.T) {

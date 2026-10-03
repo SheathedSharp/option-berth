@@ -42,8 +42,8 @@ type statusSeen struct {
 // statusSeenEntry is what one root looked like when it was last shown.
 type statusSeenEntry struct {
 	// At is when this state was first seen. It does not move while the state
-	// does not: "上次看 14:20 · 从那以后没变" reads as the time the look
-	// started, which is the honest one.
+	// does not: "last look 14:20 · nothing changed since" reads as the time
+	// the look started, which is the honest one.
 	At       string           `json:"at"`
 	Head     string           `json:"head"`
 	Files    []statusSeenFile `json:"files"`
@@ -248,9 +248,9 @@ func loadStatusSeen() statusSeen {
 // itself).
 //
 // A state identical to the last one does not move the mark: the time in `at` is
-// when this state was first seen, which is what makes "从那以后没变" true.
-// A write that fails is not an error — the answer is already in hand, and the
-// only thing lost is the next comparison.
+// when this state was first seen, which is what makes "nothing changed since"
+// true. A write that fails is not an error — the answer is already in hand,
+// and the only thing lost is the next comparison.
 func (d *statusSeen) mark(root string, now statusSeenEntry) (before statusSeenEntry, had bool) {
 	before, had = d.Roots[root]
 	if had && sameSeenState(before, now) {
@@ -325,14 +325,14 @@ func (d statusSeen) save() error {
 }
 
 // seenSummary is the one human line for a comparison, in the app's voice —
-// 「上次看 14:20 · api 起来了 · 多了 2 个文件 · HEAD 从 a 到了 b」.
+// "last look 14:20 · api started · 2 files appeared · HEAD moved a..b".
 //
 // Only the kinds of change that actually happened get a clause: a line that
 // listed the empty ones would be a template, not an answer.
 func seenSummary(change statusChange, at time.Time) string {
-	when := "上次看 " + at.Local().Format("15:04")
+	when := "last look " + at.Local().Format("15:04")
 	if change.Empty {
-		return when + " · 从那以后没变"
+		return when + " · nothing changed since"
 	}
 	parts := make([]string, 0, 7)
 	add := func(s string) {
@@ -340,18 +340,18 @@ func seenSummary(change statusChange, at time.Time) string {
 			parts = append(parts, s)
 		}
 	}
-	add(namedPart(change.ServicesStarted, "起来了", "个服务"))
-	add(namedPart(change.ServicesStopped, "停了", "个服务"))
-	add(countedPart(change.PortsOpened, "新听", "个端口"))
-	add(countedPart(change.PortsClosed, "不再听", "个端口"))
-	add(namedPart(change.Files.Appeared, "多了", "个文件"))
-	add(namedPart(change.Files.Touched, "又改了", "个文件"))
-	add(namedPart(change.Files.Gone, "落定了", "个文件"))
+	add(namedPart(change.ServicesStarted, "started", " services"))
+	add(namedPart(change.ServicesStopped, "stopped", " services"))
+	add(countedPart(change.PortsOpened, "listening", " ports"))
+	add(countedPart(change.PortsClosed, "no longer listening", " ports"))
+	add(namedPart(change.Files.Appeared, "appeared", " files"))
+	add(namedPart(change.Files.Touched, "changed", " files"))
+	add(namedPart(change.Files.Gone, "gone", " files"))
 	if change.HeadFrom != "" {
-		add("HEAD 从 " + change.HeadFrom + " 到了 " + change.HeadTo)
+		add("HEAD moved " + change.HeadFrom + ".." + change.HeadTo)
 	}
 	if len(parts) == 0 {
-		return when + " · 从那以后没变"
+		return when + " · nothing changed since"
 	}
 	return when + " · " + strings.Join(parts, " · ")
 }
@@ -367,13 +367,13 @@ func namedPart(names []string, verb, unit string) string {
 		short = short[:2]
 	}
 	if len(names) > len(short) {
-		return strings.Join(short, "\u3001") + " 等 " + fmt.Sprint(len(names)) + unit + verb
+		return strings.Join(short, ", ") + " +" + fmt.Sprint(len(names)-len(short)) + " more " + strings.TrimPrefix(unit, " ")
 	}
-	return strings.Join(short, "\u3001") + " " + verb
+	return strings.Join(short, ", ") + " " + verb
 }
 
 // countedPart is the same for numbers, where the verb reads better first —
-// 「新听 8080」, not 「8080 新听」.
+// "listening 8080", not "8080 listening".
 func countedPart(values []int, verb, unit string) string {
 	if len(values) == 0 {
 		return ""
@@ -383,7 +383,7 @@ func countedPart(values []int, verb, unit string) string {
 		names = append(names, fmt.Sprint(v))
 	}
 	if len(names) > 2 {
-		return verb + " " + strings.Join(names[:2], "\u3001") + " 等 " + fmt.Sprint(len(names)) + unit
+		return verb + " " + strings.Join(names[:2], ", ") + " +" + fmt.Sprint(len(names)-2) + " more" + strings.TrimPrefix(unit, " ")
 	}
-	return verb + " " + strings.Join(names, "\u3001")
+	return verb + " " + strings.Join(names, ", ")
 }

@@ -29,7 +29,7 @@ func TestSilentGroupStopUsesCapturedBirthAndScope(t *testing.T) {
 	rt.SetRuns(reg)
 	snap := state.Snapshot{Ports: []state.Port{{PID: 424241, Port: 12501, Group: ptr("demo")}}}
 	targets, receipt, err := captureSilentGroupStop(rt, snap, "demo", map[string]bool{"web": true, "worker": true}, "stopped", false)
-	if err != nil || len(targets) != 1 || targets[0].PID != 424242 || !targets[0].StartedAt.Equal(at) || receipt == nil {
+	if err != nil || len(targets) != 1 || targets[0].PID != 424242 || targets[0].Name != "worker" || !targets[0].StartedAt.Equal(at) || receipt == nil {
 		t.Fatalf("targets=%+v error=%v", targets, err)
 	}
 	receipt(424242)

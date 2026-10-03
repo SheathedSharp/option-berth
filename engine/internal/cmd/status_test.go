@@ -144,10 +144,10 @@ func TestPrintStatusFailureShowsEveryRetainedRun(t *testing.T) {
 	if !strings.Contains(out, "missing") || !strings.Contains(out, "crashed") {
 		t.Fatalf("failure output = %q, want both service failures", out)
 	}
-	if strings.Count(out, "失败") != 2 {
+	if strings.Count(out, "failed") != 2 {
 		t.Fatalf("failure output = %q, want two failure rows", out)
 	}
-	if strings.Count(out, "下一步") != 2 || !strings.Contains(out, "oberth logs missing --once") {
+	if strings.Count(out, "next") != 2 || !strings.Contains(out, "oberth logs missing --once") {
 		t.Fatalf("failure output = %q, want one actionable next step per failure", out)
 	}
 }
@@ -172,7 +172,7 @@ func TestPrintStatusFailureStillSuggestsLogsWithoutTail(t *testing.T) {
 			{Name: "silent", Reason: "start_failed", ExitCode: &code},
 		}})
 	})
-	if !strings.Contains(out, "silent") || !strings.Contains(out, "没有保留日志行") ||
+	if !strings.Contains(out, "silent") || !strings.Contains(out, "no log lines kept") ||
 		!strings.Contains(out, "oberth logs silent --once") {
 		t.Fatalf("failure output = %q, want evidence placeholder and next step", out)
 	}
@@ -197,18 +197,18 @@ func TestPrintStatusServicesUsesOneRowPerService(t *testing.T) {
 		t.Fatalf("service output = %q, want one row for each service", out)
 	}
 	for _, want := range []string{
-		"api · 在跑 · 监听 18121",
-		"worker · 在跑 · 无端口 · pid 4242",
-		"gateway · 没跑 · 自动端口未分配",
-		"crashed · 失败 · 崩溃 · 退出码 17",
-		"stopped · 已停止",
-		"auto-running · 在跑 · 监听 22000",
+		"api · running · listening on 18121",
+		"worker · running · no port · pid 4242",
+		"gateway · not running · auto port unassigned",
+		"crashed · failed · crashed · exit 17",
+		"stopped · stopped",
+		"auto-running · running · listening on 22000",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("service output = %q, want %q", out, want)
 		}
 	}
-	if strings.Contains(out, "stopped · 已停止 · 退出码") {
+	if strings.Contains(out, "stopped · stopped · exit") {
 		t.Errorf("service output = %q, stopped rows should not surface a signal code", out)
 	}
 }
