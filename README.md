@@ -25,6 +25,18 @@ oberth doctor
 不希望改动 shell 配置时使用 `NO_MODIFY_PATH=1`，并自行将安装目录加入 PATH。
 安装后用 `oberth version --json` 核对实际执行的构建，避免读取 PATH 上的旧版本。
 
+构建目标 `build / engine / jev / client` 只生成产物；`run / runApp / runDaemon / stop`
+明确起停，`stop` 不隐式构建。`shot / states / window` 只使用已经构建的客户端；缺少客户端时
+明确提示先构建，不写安装目录。`mage shot -scope=services:example-project` 可限定截图范围。
+
+三个模块也可以分别构建，不依赖 Mage：
+
+```bash
+(cd engine && go build -o ../bin/oberth .)
+(cd engine && go build -o ../bin/jev-attention ./cmd/jev-attention)
+(cd client/macos && ./build.sh)
+```
+
 只构建引擎可运行 `mage buildEngine`；客户端的构建和平台要求见
 [client/macos/README.md](client/macos/README.md)。
 
