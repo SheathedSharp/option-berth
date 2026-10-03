@@ -1,40 +1,36 @@
 # 验证范围
 
-日期：2026-10-04。开发预览版，不提供稳定性或长期性能保证。
-本轮代码身份为 `engine/internal` 内容树 `8167f3343d6c39787e98e07062e1d7843a750893`。
+当前工作流均记录实际源码身份；检查结论只对应运行中的 commit，不沿用旧库或本机的历史结果。
 
-## 本轮结果
-
-| 检查 | macOS arm64 / Go 1.25.0 |
+| 工作流 | 平台与内容 |
 |---|---|
-| `go build ./...` | 通过 |
-| `go vet ./...` | 通过 |
-| `go test -count=1 -timeout=5m ./...` | 通过 |
-| 关键包 `go test -race -count=1 -timeout=5m` | 通过 |
-| `go test -tags integration -count=1 -timeout=5m ./internal/scenario/...` | 完整场景通过 |
-| worker 原失败场景连续三次执行 | 通过 |
+| Engine verification | macOS / Ubuntu：原生构建、vet、全引擎单元、核心 race、真实服务场景、Mage 工作流回归、Python 辅助测试。 |
+| Git read verification | macOS / Ubuntu：Git、worktree、归因与观察的重复测试和 race。 |
+| Windows build verification | Windows x64：原生构建、vet、CLI/Jev 构建、version JSON/帮助页冒烟及事实/持久化测试；Ubuntu：Windows arm64 交叉构建。 |
+| Client and brand verification | macOS：共享几何源与13个SVG一致性、8项生成器测试、原生客户端/ICNS构建及随包OFL检查。 |
 
-race 包包括 claims、runs、spawn、daemon/...、git、groups、ports、scanner、servicefacts、
-state、store、killer。测试使用隔离 HOME、账本、socket 和自建服务，不操作日常服务。
-首次运行因额外嵌套的临时目录使一个 Unix socket 路径过长；缩短测试根后完整复测通过。
+CLI、Mage 与品牌迁移分别审查、验证、合并，没有引入旧私人 Git 祖先。
+Windows 的编译/冒烟与所选原生测试，不等于全部服务起停、Windows GUI 或 arm64 原生执行验收。
 
-Linux 前一轮代码曾通过全引擎单元与关键包 race。本轮新代码的本机 Linux 复测在容器
-编译器下载阶段超时，尚未执行，不能沿用前轮结果称其通过；专用容器已回收。
-公开 CI 配置继续覆盖 Ubuntu 与 macOS，以具体运行结果为准。Windows 未做原生验证
-或交叉构建。客户端 GUI、安装包和长期负载不在本轮验收范围内。
+## 本机复现
 
-## worker 修复
+Go 版本按 `engine/go.mod`。服务测试使用独立 HOME/BERTH_HOME、socket 和自建服务。
+macOS Unix socket 路径较短，测试不能把长测试名和多层临时目录全部拼到 socket 路径。
 
-daemon 重启后导入的运行没有当前 daemon 的 child reaper。停止后先按真实存活证据
-清理登记，再执行既有强制扫描并发布，避免启动查重继续消费旧的 Running 快照。
-新增回归确认清理先于发布，dry-run 不清理、不扫描；实际 scoped restart 场景通过。
-没有新增后台任务、第二份运行事实或协议字段，也不把信号回执当作退出证明。
+```sh
+cd engine
+go build ./...
+go vet ./...
+go test -count=1 -timeout=8m ./...
+go test -race -count=1 -timeout=10m ./internal/claims ./internal/runs ./internal/spawn ./internal/daemon/... ./internal/git ./internal/groups ./internal/ports ./internal/scanner ./internal/servicefacts ./internal/state ./internal/store ./internal/killer
+go test -tags integration -count=1 -timeout=8m ./internal/scenario/...
+```
 
-## 源码公开检查
+Mage 与品牌检查分别位于各自PR及CI。品牌迁移已生成10个冻结界面与7档图标，并查看代表性
+空态、服务态、字号页和图标；没有把离屏渲染称为真实Dock、菜单或全部交互验收。
+构建、截图、安装和服务起停是不同副作用，普通检查不操作日常用户服务。
 
-当前源码导出不包含旧 Git 历史。Gitleaks 8.30.1 的目录扫描未检出密钥；另检查个人路径、
-邮箱、URL 凭证、符号链接与图片文本/EXIF 元数据。扫描无命中不构成不存在任何漏洞或
-隐私问题的绝对保证。原始报告和日志不入仓库。
+## 不作出的保证
 
-许可证及分发范围见 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)，
-系统权限、IO 和进程身份的已知边界见 [architecture.md](architecture.md)。
+GUI全部交互、签名安装包和长期负载仍需独立验收；没有可靠对照不宣传整体加速或长期无泄漏。
+自动密钥扫描、许可证输入保留和CI成功各自有边界，不能替代安全审查或完整分发审核。

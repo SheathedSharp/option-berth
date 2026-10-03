@@ -5,7 +5,7 @@
 ## 验证
 
 固定待发布提交与源码树，在 macOS/Linux 执行编译、vet、全引擎单元测试、关键包 race
-及真实服务场景。命令和已知限制见 [validation.md](validation.md)。Windows 未验收，
+及真实服务场景。命令和已知限制见 [validation.md](validation.md)。Windows 原生构建/冒烟及 arm64 交叉构建已纳入CI，完整Windows服务场景未验收，
 不通过交叉编译冒充原生测试。未改 GUI 时不声称已经完成视觉验收。
 
 ## 内容与许可
