@@ -1,0 +1,620 @@
+// Package killer is option-berth's single implementation of "stop what is listening
+// here". The CLI (`oberth kill`, and the `kill-all` / `down` aliases), the
+// daemon's ports.kill / groups.kill, and the desktop app all
+// go through KillPorts, so the rules below hold everywhere:
+//
+//   - Docker-published ports are stopped with `docker stop`, never signalled.
+//   - A listener option-berth started is stopped by its process group when it has one
+//     of its own, otherwise by walking the run root's process tree, so the
+//     whole `npm → vite → esbuild` tree dies rather than just the leaf.
+//   - A tree is signalled children before parents. This is deterministic order,
+//     not a promise to freeze a concurrently changing OS process tree.
+//   - SIGTERM first; if the port is still listening after the grace period,
+//     SIGKILL — unless the caller opted out of escalation.
+//   - A dry run reports exactly the actions a real run would take, and takes
+//     none of them.
+package killer
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/sheathedsharp/option-berth/internal/docker"
+	"github.com/sheathedsharp/option-berth/internal/ports"
+	"github.com/sheathedsharp/option-berth/internal/state"
+)
+
+// DefaultGrace is how long a target gets to shut down after SIGTERM before the
+// killer escalates to SIGKILL (daemon spec: `--grace`, default 5s).
+const DefaultGrace = 5 * time.Second
+
+// pollInterval is how often the escalation wait re-checks a target.
+const pollInterval = 100 * time.Millisecond
+
+// Target addresses one thing to kill. Exactly one of Port, PID and RunID is set; BindAddress only disambiguates a Port that is bound to
+// several addresses (contract §3 selectors).
+//
+// StartedAt is an optional identity claim for a PID target: the caller records
+// when the process it means started. Before signalling, the killer checks the
+// live process started no later than that (plus tolerance), so a recycled pid
+// is reported instead of killed. Zero means no claim — an explicit `kill --pid`
+// says "this pid, now".
+type Target struct {
+	Port        int
+	BindAddress string
+	PID         int
+	RunID       string
+	StartedAt   time.Time
+}
+
+// Options controls how targets are killed. The zero value is the documented
+// default: SIGTERM, escalate to SIGKILL after DefaultGrace, no tree walk
+// beyond what a option-berth-started run implies.
+type Options struct {
+	// Tree signals the target's whole process tree, not just the listener.
+	// A listener attributed to a option-berth-started run is always treated as a
+	// tree, with or without this flag.
+	Tree bool
+	// Force sends SIGKILL immediately and skips the escalation wait.
+	Force bool
+	// Grace is how long to wait after SIGTERM before escalating. Zero means
+	// DefaultGrace.
+	Grace time.Duration
+	// Escalate opts out of SIGTERM → SIGKILL escalation when set to false.
+	// Nil means the default, which is to escalate.
+	Escalate *bool
+	// DryRun plans the actions and performs none of them.
+	DryRun bool
+	// Ports is an optional pre-collected scan (enriched with Docker and
+	// process information). When nil, KillPorts takes its own scan.
+	Ports []ports.ListeningPort
+	// OnSignal receives the unit's root PID synchronously after a process,
+	// group or native-tree signal adapter returned success. It is not proof
+	// of exit. Dry runs, refused identities and failed signals never notify.
+	// Already accepted signals still notify if the request just cancelled.
+	// This internal observer must return; it cannot authorize another action.
+	OnSignal func(rootPID int)
+}
+
+// grace resolves the escalation window.
+func (o Options) grace() time.Duration {
+	if o.Grace <= 0 {
+		return DefaultGrace
+	}
+	return o.Grace
+}
+
+// escalating reports whether SIGTERM should be followed by SIGKILL.
+func (o Options) escalating() bool {
+	if o.Force {
+		return false // already the strongest signal
+	}
+	return o.Escalate == nil || *o.Escalate
+}
+
+// Result is one row of the outcome: what was done (or, for a dry run, would be
+// done) to a single process or container. It is the contract §3 kill row.
+type Result = state.KillResult
+
+// Clock is the killer's view of time, injected so escalation can be tested
+// without waiting for a real grace period.
+type Clock interface {
+	Now() time.Time
+	Sleep(d time.Duration)
+}
+
+type realClock struct{}
+
+func (realClock) Now() time.Time        { return time.Now() }
+func (realClock) Sleep(d time.Duration) { time.Sleep(d) }
+
+// engine holds the machine-facing dependencies so tests can substitute them.
+type engine struct {
+	ctx        context.Context
+	tableErr   error
+	table      ProcessTable
+	clock      Clock
+	signalProc func(pid int, force bool) error
+	signalGrp  func(pgid int, force bool) error
+	signalTree func(pid int, force bool) error
+	groupOf    func(pid int) (int, bool)
+	alive      func(pid int) bool
+	// startTime reports when the process behind a pid started, for the
+	// recycle check on identity-claiming targets (ports.ProcessStartFreshContext).
+	startTime  func(pid int) (time.Time, bool)
+	probe      func(port int, bind string) portState
+	dockerStop func(container string) error
+	nativeTree bool
+	onSignal   func(int)
+}
+
+func newEngine(ctx context.Context) *engine {
+	table, err := scanProcessTableContext(ctx)
+	return &engine{
+		ctx:        ctx,
+		tableErr:   err,
+		table:      table,
+		clock:      realClock{},
+		signalProc: func(pid int, force bool) error { return signalProcessContext(ctx, pid, force) },
+		signalGrp:  func(pid int, force bool) error { return signalGroupContext(ctx, pid, force) },
+		signalTree: func(pid int, force bool) error { return signalTreeContext(ctx, pid, force) },
+		groupOf:    processGroup,
+		alive:      pidAlive,
+		startTime:  func(pid int) (time.Time, bool) { return ports.ProcessStartFreshContext(ctx, pid) },
+		probe:      func(port int, bind string) portState { return probePortContext(ctx, port, bind) },
+		dockerStop: func(name string) error { return docker.StopContainerContext(ctx, name) },
+		nativeTree: hasNativeTreeKill(),
+	}
+}
+
+// KillPorts stops every target and returns one row per action, children before
+// parents. It never returns an error: a target that could not be resolved or
+// signalled comes back as a row with OK false, so partial failures are
+// reportable per target (daemon spec, "Error handling").
+func KillPorts(ctx context.Context, targets []Target, opts Options) []Result {
+	if len(targets) == 0 {
+		return []Result{}
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// One request budget, including collection and commands; grace is not
+	// restarted per target. In-flight synchronous syscalls still must return.
+	budget := controlBudget(opts)
+	ctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return failedTargets(targets, err)
+	}
+	snapshot := opts.Ports
+	if snapshot == nil {
+		var err error
+		snapshot, err = scanPortsContext(ctx)
+		if err != nil {
+			return failedTargets(targets, err)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return failedTargets(targets, err)
+	}
+	rows := newEngine(ctx).kill(ctx, snapshot, targets, opts)
+	for i := range rows {
+		rows[i].Host = state.LocalhostName
+	}
+	return rows
+}
+
+func failedTargets(targets []Target, err error) []Result {
+	out := make([]Result, 0, len(targets))
+	for _, t := range targets {
+		out = append(out, Result{Host: state.LocalhostName, Port: t.Port,
+			BindAddress: t.BindAddress, PID: t.PID, Name: t.RunID,
+			Method: state.MethodNone, Error: err.Error(), Code: Code(err)})
+	}
+	return out
+}
+
+// Collection failure is not an empty successful observation. Context reaches
+// listeners, Docker and metadata without adding a detached worker.
+func scanPortsContext(ctx context.Context) ([]ports.ListeningPort, error) {
+	found, err := ports.ScanContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := docker.EnrichPortsContext(ctx, found); err != nil {
+		return nil, err
+	}
+	if err := ports.EnrichContext(ctx, found); err != nil {
+		return nil, err
+	}
+	return found, ctx.Err()
+}
+
+// unit is one resolved thing to kill: a container, a process group, or an
+// ordered list of pids (children first, root last).
+type unit struct {
+	tree      bool
+	claims    map[int]time.Time // recorded run/listener evidence, never replaced
+	observed  map[int]time.Time // live births captured for this plan only
+	port      int
+	bind      string
+	name      string
+	container string // non-empty for a Docker target
+	pgid      int    // non-zero when the whole process group is signalled
+	pids      []int  // children-first order; ignored when pgid or container is set
+	root      int    // the listener (or run root) this unit is anchored on
+	listenPID int    // the pid actually holding the socket, when there is one
+	depth     int    // ancestry depth of root, used to order units children-first
+	err       error  // resolution failure: emits a single failed row
+	rows      []int  // indexes into the result slice, filled during execution
+}
+
+// kill runs the four phases: resolve, order, signal, escalate.
+func (e *engine) kill(ctx context.Context, snapshot []ports.ListeningPort, targets []Target, opts Options) []Result {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	e.ctx = ctx
+	e.onSignal = opts.OnSignal
+	if err := ctx.Err(); err != nil {
+		return failedTargets(targets, err)
+	}
+	var units []*unit
+	for _, t := range targets {
+		units = append(units, e.resolve(t, snapshot, opts)...)
+	}
+	for _, u := range units {
+		e.captureIdentity(u)
+	}
+	units = e.dedupe(units)
+	e.order(units)
+
+	results := make([]Result, 0, len(units))
+	for _, u := range units {
+		results = e.plan(u, opts, results)
+	}
+	if opts.DryRun {
+		return results
+	}
+
+	for _, u := range units {
+		e.execute(u, opts, results)
+	}
+	if opts.escalating() {
+		e.escalate(ctx, units, opts, results)
+	}
+	return results
+}
+
+// resolve turns one selector into the units it addresses. A run id can address
+// several listeners, so this returns a slice.
+func (e *engine) resolve(t Target, snapshot []ports.ListeningPort, opts Options) []*unit {
+	switch {
+	case t.RunID != "":
+		var out []*unit
+		for i := range snapshot {
+			if snapshot[i].RunID == t.RunID || snapshot[i].Tag == t.RunID {
+				out = append(out, e.unitFor(&snapshot[i], opts))
+			}
+		}
+		if len(out) == 0 {
+			return []*unit{{name: t.RunID, err: codedf(CodeNotFound, "", "no listening port belongs to run %s", t.RunID)}}
+		}
+		return out
+	case t.Port > 0:
+		matches := matchPort(snapshot, t.Port, t.BindAddress)
+		switch len(matches) {
+		case 0:
+			where := strconv.Itoa(t.Port)
+			if t.BindAddress != "" {
+				where = t.BindAddress + ":" + where
+			}
+			return []*unit{{port: t.Port, bind: t.BindAddress,
+				err: codedf(CodeNotFound, "", "no process is listening on %s", where)}}
+		case 1:
+			return []*unit{e.unitFor(matches[0], opts)}
+		default:
+			var addrs []string
+			for _, m := range matches {
+				addrs = append(addrs, m.BindAddress)
+			}
+			return []*unit{{port: t.Port,
+				err: codedf(CodeAmbiguous, "re-run with --ip "+addrs[0], "port %d is bound to %d addresses: %s",
+					t.Port, len(addrs), strings.Join(addrs, ", "))}}
+		}
+	case t.PID > 0:
+		if !validSignalPID(t.PID) {
+			return []*unit{{root: t.PID, err: codedf(CodeInvalidSelector, "", "invalid PID %d", t.PID)}}
+		}
+		var u *unit
+		for i := range snapshot {
+			if snapshot[i].PID == t.PID {
+				u = e.unitFor(&snapshot[i], opts)
+				break
+			}
+		}
+		if u == nil {
+			if !e.alive(t.PID) {
+				return []*unit{{root: t.PID, err: codedf(CodeNotFound, "", "no process with PID %d", t.PID)}}
+			}
+			u = &unit{root: t.PID, name: e.table.Name(t.PID), listenPID: t.PID}
+			e.fillProcesses(u, t.PID, opts.Tree)
+		}
+		// Keep this claim even when PID matched a listener. Selection is not
+		// the final signal boundary, and a listener must not erase run evidence.
+		u.addClaim(t.PID, t.StartedAt)
+		return []*unit{u}
+	}
+	return []*unit{{err: codedf(CodeInvalidSelector, "", "empty target: set one of port, pid or run_id")}}
+}
+
+// unitFor builds the unit for a scanned listener.
+func (e *engine) unitFor(lp *ports.ListeningPort, opts Options) *unit {
+	u := &unit{port: lp.Port, bind: lp.BindAddress, name: lp.DisplayName(), listenPID: lp.PID}
+	if !state.IsLocalhost(lp.Host) {
+		u.err = codedf(CodeInvalidSelector, "", "refusing to signal a listener from another host")
+		return u
+	}
+	if born, err := time.Parse(time.RFC3339, lp.StartedAt); err == nil {
+		u.addClaim(lp.PID, born)
+	}
+
+	if lp.Type == ports.PortTypeDocker && lp.DockerContainer != "" {
+		u.container = lp.DockerContainer
+		return u
+	}
+	if !validSignalPID(lp.PID) {
+		u.err = &CodedError{
+			Code:   CodePermissionDenied,
+			Detail: fmt.Sprintf("could not resolve the process listening on port %d", lp.Port),
+			Hint:   "re-run with sudo for full visibility",
+		}
+		return u
+	}
+
+	// A listener option-berth started is killed as a whole run: its process group
+	// when it leads one, otherwise its tree. Either way the supervisor and its
+	// workers go together.
+	root := lp.PID
+	tree := opts.Tree
+	if lp.RunRootPID > 0 {
+		root = lp.RunRootPID
+		tree = true
+	}
+	u.root = root
+	if !validSignalPID(root) {
+		u.err = codedf(CodeInvalidSelector, "", "invalid run root PID %d", root)
+		return u
+	}
+	if pgid, ok := e.groupOf(root); ok {
+		u.pgid = pgid
+		u.depth = len(e.table.Ancestors(root))
+		return u
+	}
+	e.fillProcesses(u, root, tree)
+	return u
+}
+
+// fillProcesses records the pids this unit will signal, children first.
+func (e *engine) fillProcesses(u *unit, root int, tree bool) {
+	u.root = root
+	u.tree = tree
+	if tree && !e.nativeTree && e.tableErr != nil {
+		u.err = e.tableErr
+		return
+	}
+	u.depth = len(e.table.Ancestors(root))
+	switch {
+	case !tree:
+		u.pids = []int{root}
+	case e.nativeTree:
+		// taskkill /T terminates the tree in one call; there is no PPID table
+		// to walk and no ordering for us to impose.
+		u.pids = []int{root}
+	default:
+		u.pids = e.table.Descendants(root)
+		if len(u.pids) == 0 {
+			u.pids = []int{root}
+		}
+	}
+}
+
+// dedupe drops pids already claimed by an earlier unit so overlapping targets
+// (a port and its own child port, `--all` over a whole tree) signal each
+// process exactly once.
+func (e *engine) dedupe(units []*unit) []*unit {
+	claimed := map[int]bool{}
+	claimedGroups := map[int]bool{}
+	keptUnits := units[:0]
+	for _, u := range units {
+		if u.err != nil {
+			keptUnits = append(keptUnits, u)
+			continue
+		}
+		if u.pgid != 0 {
+			if claimedGroups[u.pgid] {
+				continue
+			}
+			claimedGroups[u.pgid] = true
+			keptUnits = append(keptUnits, u)
+			claimed[u.pgid] = true
+			continue
+		}
+		kept := u.pids[:0]
+		for _, pid := range u.pids {
+			if claimed[pid] {
+				continue
+			}
+			claimed[pid] = true
+			kept = append(kept, pid)
+		}
+		u.pids = kept
+		if u.err != nil || u.container != "" || len(u.pids) > 0 {
+			keptUnits = append(keptUnits, u)
+		}
+	}
+	return keptUnits
+}
+
+// order sorts units so a unit rooted deeper in the process tree runs before its
+// own ancestor: children before parents across targets, not just within one.
+// The sort is stable, so unrelated targets keep the caller's order.
+func (e *engine) order(units []*unit) {
+	sort.SliceStable(units, func(i, j int) bool { return units[i].depth > units[j].depth })
+}
+
+// plan appends this unit's rows in the order they will be acted on, and records
+// where they landed so execute and escalate can update them in place.
+func (e *engine) plan(u *unit, opts Options, results []Result) []Result {
+	add := func(pid int, name string, method state.KillMethod) {
+		u.rows = append(u.rows, len(results))
+		results = append(results, Result{
+			Port:        u.port,
+			BindAddress: u.bind,
+			PID:         pid,
+			Name:        name,
+			Method:      method,
+			OK:          true,
+		})
+	}
+
+	switch {
+	case u.err != nil:
+		u.rows = append(u.rows, len(results))
+		results = append(results, Result{
+			Port: u.port, BindAddress: u.bind, PID: u.root, Name: u.name,
+			Method: state.MethodNone, OK: false, Error: u.err.Error(), Code: Code(u.err),
+		})
+	case u.container != "":
+		add(0, u.name, state.MethodDockerStop)
+	case u.pgid != 0:
+		add(u.pgid, u.name, signalMethod(opts.Force))
+	default:
+		for _, pid := range u.pids {
+			// The scanner's display name belongs to the process holding the
+			// socket; every other process in the tree is named from the
+			// process table, so a run root reads as "npm", not as its port.
+			name := e.table.Name(pid)
+			if pid == u.listenPID && u.name != "" {
+				name = u.name
+			}
+			add(pid, name, signalMethod(opts.Force))
+		}
+	}
+	return results
+}
+
+// execute performs the planned actions for one unit and records failures.
+func (e *engine) execute(u *unit, opts Options, results []Result) {
+	if u.err != nil {
+		return
+	}
+	fail := func(row int, err error) {
+		results[row].OK = false
+		results[row].Error = err.Error()
+		results[row].Code = Code(err)
+	}
+
+	switch {
+	case u.container != "":
+		if err := e.guard(u, 0); err != nil {
+			fail(u.rows[0], err)
+			results[u.rows[0]].Method = state.MethodNone
+		} else if err := e.dockerStop(u.container); err != nil {
+			fail(u.rows[0], err)
+		}
+	case u.pgid != 0:
+		if err := e.guard(u, u.pgid); err != nil {
+			fail(u.rows[0], err)
+			results[u.rows[0]].Method = state.MethodNone
+		} else if err := e.signalResult(u, e.signalGrp(u.pgid, opts.Force)); err != nil {
+			fail(u.rows[0], err)
+		}
+	default:
+		for i, pid := range u.pids {
+			if err := e.guard(u, pid); err != nil {
+				fail(u.rows[i], err)
+				results[u.rows[i]].Method = state.MethodNone
+				continue
+			}
+			var err error
+			if e.nativeTree && u.tree {
+				err = e.signalResult(u, e.signalTree(pid, opts.Force))
+			} else {
+				err = e.signalResult(u, e.signalProc(pid, opts.Force))
+			}
+			if err != nil {
+				fail(u.rows[i], err)
+			}
+		}
+	}
+}
+
+// signalMethod names the signal a non-escalated kill sends.
+func signalMethod(force bool) state.KillMethod {
+	if force {
+		return state.MethodSIGKILL
+	}
+	return state.MethodSIGTERM
+}
+
+// matchPort returns the scanned listeners on a port, filtered by bind address
+// when one was given.
+func matchPort(snapshot []ports.ListeningPort, port int, bind string) []*ports.ListeningPort {
+	var out []*ports.ListeningPort
+	for i := range snapshot {
+		if snapshot[i].Port != port {
+			continue
+		}
+		if bind != "" && snapshot[i].BindAddress != bind {
+			continue
+		}
+		out = append(out, &snapshot[i])
+	}
+	return out
+}
+
+// portState is what one connection attempt can establish about a port. It is
+// three-valued on purpose, because "could not connect" is two different facts.
+type portState int
+
+const (
+	// portClosed is a refused connection: the kernel answered for a port with
+	// no listener, so nothing is holding it any more.
+	portClosed portState = iota
+	// portOpen is an accepted connection: something is listening and answering.
+	portOpen
+	// portUnknown is an attempt that timed out. The listener is there and not
+	// answering — a full accept queue, because nobody is calling accept — which
+	// is exactly the state a leftover gets into. Reading this as "the port is
+	// free" is what used to make `kill` report success while the row was still
+	// on the table.
+	portUnknown
+)
+
+// probeTimeout bounds one probe. A hung connect is the signal we are looking
+// for, so waiting much longer buys nothing.
+const probeTimeout = 300 * time.Millisecond
+
+// probePort reports what one TCP connection to a port establishes. A wildcard
+// bind is probed on loopback, which is where a dev server is reached from
+// anyway.
+func probePort(port int, bind string) portState {
+	return probeWith(net.DialTimeout, port, bind)
+}
+
+// probeWith is probePort with the dialer injected, so the three outcomes can be
+// tested without a machine that can produce a hung listener on demand.
+func probeWith(dial func(network, address string, timeout time.Duration) (net.Conn, error),
+	port int, bind string) portState {
+	host := bind
+	switch host {
+	case "", "0.0.0.0", "*":
+		host = "127.0.0.1"
+	case "::", "[::]":
+		host = "::1"
+	}
+	conn, err := dial("tcp", net.JoinHostPort(host, strconv.Itoa(port)), probeTimeout)
+	if err == nil {
+		_ = conn.Close()
+		return portOpen
+	}
+	// A timeout is not a refusal: the listener is still there, it just is not
+	// answering. Everything else (a refusal above all) is the kernel telling us
+	// nobody is listening.
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return portUnknown
+	}
+	return portClosed
+}
+
+// Alive reports whether a process with this pid currently exists. Callers use
+// it to tell a pid from a port when a bare number could be either.
+func Alive(pid int) bool { return pidAlive(pid) }

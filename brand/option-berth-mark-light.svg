@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-label="option-berth">
+  <!-- option-berth · 标志
+       照 Option 字符的实测比例：笔宽 1.86（可见宽的 8.86%）、斜线斜率 2.0（63.9°）、
+       左上横 2.43->8.01、右上横 14.91->21.51、底横 -> 21.51，两段顶横断口 = 2.7 个笔宽。
+       底 象牙白 #FAF7F1；陆地 #23262B / 河与水 #2F5AA8 / 船 #C0703F；气口 0.55。 -->
+  <path d="M 2.43 3.78 L 8.01 3.78" stroke="#23262B" stroke-width="1.86" stroke-linecap="round" fill="none"/><path d="M 9.070 5.944 L 16.02 20.13 L 21.51 20.13" stroke="#2F5AA8" stroke-width="1.86" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M 15.214 3.549 Q 14.910 2.850 15.672 2.850 L 20.748 2.850 Q 21.510 2.850 21.206 3.549 L 20.591 4.967 Q 20.460 5.268 20.132 5.268 L 16.288 5.268 Q 15.960 5.268 15.829 4.967 Z" fill="#C0703F"/>
+</svg>

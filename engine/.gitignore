@@ -1,0 +1,9 @@
+*.DS_Store
+
+# Build output
+oberth
+*.tar.gz
+dist/
+install-local.sh
+.claude
+*.dash

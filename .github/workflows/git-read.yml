@@ -1,0 +1,72 @@
+name: Git read verification
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'engine/internal/git/**'
+      - 'engine/internal/groups/**'
+      - 'engine/internal/scanner/**'
+      - 'engine/internal/ports/**'
+      - 'engine/internal/runs/**'
+      - 'engine/internal/daemon/**'
+      - 'engine/internal/spawn/**'
+      - '.github/workflows/git-read.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: git-read-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Git read / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    env:
+      GOMAXPROCS: '4'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: engine/go.mod
+          cache-dependency-path: engine/go.sum
+      - name: Record exact input and versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p git-read-evidence
+          git rev-parse HEAD > git-read-evidence/commit.txt
+          git rev-parse 'HEAD^{tree}' > git-read-evidence/tree.txt
+          go version | tee git-read-evidence/go-version.txt
+          git --version | tee git-read-evidence/git-version.txt
+      - name: Native Git, worktree, and observation tests
+        shell: bash
+        working-directory: engine
+        run: |
+          set -euo pipefail
+          test -z "$(gofmt -l internal/git internal/groups internal/scanner)"
+          go vet ./internal/git ./internal/groups ./internal/scanner 2>&1 | tee ../git-read-evidence/vet.log
+          go test -count=3 -timeout=5m ./internal/git ./internal/groups ./internal/scanner 2>&1 | tee ../git-read-evidence/unit.log
+      - name: Native attribution and observation race tests
+        shell: bash
+        working-directory: engine
+        run: |
+          set -euo pipefail
+          go test -race -count=3 -timeout=5m ./internal/git ./internal/groups ./internal/scanner 2>&1 | tee ../git-read-evidence/race.log
+      - name: Retain complete verification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: git-read-${{ matrix.os }}-${{ github.run_id }}
+          path: git-read-evidence/
+          retention-days: 7

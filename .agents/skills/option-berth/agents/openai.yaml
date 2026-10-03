@@ -1,0 +1,6 @@
+interface:
+  display_name: "Oberth Worktree Operations"
+  short_description: "Operate and observe local worktree services"
+  default_prompt: "Use $option-berth to inspect and operate the current worktree or observe an explicitly related local worktree; arm its task-scoped attention session when services stay active."
+policy:
+  allow_implicit_invocation: true

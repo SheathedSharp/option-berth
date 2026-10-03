@@ -1,0 +1,225 @@
+package client
+
+import (
+	"context"
+	"encoding/json"
+	"sync"
+
+	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/internal/state"
+)
+
+// SubscribeOptions mirrors state.subscribe's params.
+type SubscribeOptions struct {
+	// Stats and Health map onto the wire's include: ["stats", "health"].
+	Stats  bool
+	Health bool
+	// Events asks for notifications. Unscoped subscriptions receive legacy
+	// state.event values; scoped subscriptions receive redacted state.changed
+	// values on Changes.
+	Events bool
+	// AfterSeq resumes from the last sequence the caller applied. A zero value
+	// requests the historical snapshot-only behavior; if the daemon has already
+	// evicted that sequence it safely returns a fresh snapshot.
+	AfterSeq uint64
+	// Scope limits the snapshot and notifications to explicitly selected
+	// worktrees, repositories, or an ephemeral workspace. Nil preserves the
+	// daemon-wide view.
+	Scope *state.Scope
+	// Buffer sizes the delta and event channels. Zero uses 64.
+	Buffer int
+}
+
+func (o SubscribeOptions) include() rpc.Include {
+	inc := rpc.Include{}
+	if o.Stats {
+		inc = append(inc, "stats")
+	}
+	if o.Health {
+		inc = append(inc, "health")
+	}
+	return inc
+}
+
+// Subscription is a live view of daemon state: the snapshot that opened it plus
+// the notification channels. Channels close when the subscription is cancelled
+// or the connection drops.
+type Subscription struct {
+	// Snapshot is the full state at the moment an unscoped subscription was
+	// made. Its first delta on Deltas continues from Seq.
+	Snapshot state.Snapshot
+	// StreamSnapshot is the redacted opening snapshot of a scoped subscription.
+	StreamSnapshot state.StreamSnapshot
+	// Deltas carries state.delta notifications.
+	Deltas <-chan state.Delta
+	// Events carries legacy state.event notifications; nil unless an unscoped
+	// subscription asked for them.
+	Events <-chan state.Event
+	// Changes carries redacted state.changed notifications for scoped streams.
+	Changes <-chan state.StateChanged
+
+	c       *Client
+	deltas  chan state.Delta
+	events  chan state.Event
+	changes chan state.StateChanged
+
+	// mu makes delivery and close mutually exclusive: the read loop must not
+	// send on a channel that Unsubscribe (or a dropped connection) is closing
+	// at the same moment.
+	mu      sync.Mutex
+	closed  bool
+	dropped bool
+}
+
+// Subscribe registers for state deltas. The returned Subscription carries the
+// opening snapshot and the delta and event channels.
+func (c *Client) Subscribe(ctx context.Context, opts SubscribeOptions) (*Subscription, error) {
+	buffer := opts.Buffer
+	if buffer <= 0 {
+		buffer = 64
+	}
+	s := &Subscription{
+		c:      c,
+		deltas: make(chan state.Delta, buffer),
+	}
+	s.Deltas = s.deltas
+	scoped := opts.Scope != nil && !opts.Scope.Empty()
+	if opts.Events && !scoped {
+		s.events = make(chan state.Event, buffer)
+		s.Events = s.events
+	}
+	if opts.Events && scoped {
+		s.changes = make(chan state.StateChanged, buffer)
+		s.Changes = s.changes
+	}
+
+	// Register before calling, so a delta that arrives between the daemon
+	// queuing our snapshot and our reading the reply is not dropped.
+	c.mu.Lock()
+	c.subs = append(c.subs, s)
+	c.mu.Unlock()
+
+	var result rpc.StateSnapshotResult
+	err := c.Call(ctx, "state.subscribe", rpc.StateSubscribeParams{
+		Include:  opts.include(),
+		Events:   opts.Events,
+		AfterSeq: opts.AfterSeq,
+		Scope:    opts.Scope,
+	}, &result)
+	if err != nil {
+		s.remove()
+		s.close()
+		return nil, err
+	}
+	if result.Type == "state.snapshot" || len(result.Worktrees) > 0 || result.StateRevision != "" {
+		s.StreamSnapshot = result.Stream()
+	} else {
+		s.Snapshot = result.Legacy()
+	}
+	return s, nil
+}
+
+// Unsubscribe stops the subscription and closes its channels.
+func (s *Subscription) Unsubscribe(ctx context.Context) error {
+	err := s.c.Call(ctx, "state.unsubscribe", rpc.Empty{}, nil)
+	s.remove()
+	s.close()
+	return err
+}
+
+// Dropped reports whether the subscription lost notifications because the
+// consumer stopped reading its channels.
+func (s *Subscription) Dropped() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.dropped
+}
+
+func (s *Subscription) remove() {
+	s.c.mu.Lock()
+	kept := s.c.subs[:0]
+	for _, other := range s.c.subs {
+		if other != s {
+			kept = append(kept, other)
+		}
+	}
+	s.c.subs = kept
+	s.c.mu.Unlock()
+}
+
+func (s *Subscription) close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	s.closed = true
+	close(s.deltas)
+	if s.events != nil {
+		close(s.events)
+	}
+	if s.changes != nil {
+		close(s.changes)
+	}
+}
+
+// deliver routes one notification onto the right channel. A full channel drops
+// the message and sets Dropped rather than blocking the read loop, which would
+// stall every other call on this connection. The sends hold s.mu so they cannot
+// race a concurrent close; they are non-blocking, so holding it cannot stall
+// the read loop either.
+func (s *Subscription) deliver(msg rpc.Message) {
+	switch msg.Method {
+	case rpc.MethodStateDelta:
+		var d state.Delta
+		if err := json.Unmarshal(msg.Params, &d); err != nil {
+			return
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.closed {
+			return
+		}
+		select {
+		case s.deltas <- d:
+		default:
+			s.dropped = true
+		}
+	case rpc.MethodStateEvent:
+		if s.events == nil {
+			return
+		}
+		var e state.Event
+		if err := json.Unmarshal(msg.Params, &e); err != nil {
+			return
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.closed {
+			return
+		}
+		select {
+		case s.events <- e:
+		default:
+			s.dropped = true
+		}
+	case rpc.MethodStateChanged:
+		if s.changes == nil {
+			return
+		}
+		var change state.StateChanged
+		if err := json.Unmarshal(msg.Params, &change); err != nil {
+			return
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.closed {
+			return
+		}
+		select {
+		case s.changes <- change:
+		default:
+			s.dropped = true
+		}
+	}
+}

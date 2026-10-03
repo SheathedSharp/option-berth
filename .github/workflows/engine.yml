@@ -1,0 +1,84 @@
+name: Engine verification
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: engine-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Engine / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    env:
+      GOMAXPROCS: '4'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Record the exact verification input
+        shell: bash
+        run: |
+          # TestMain owns each test binary's state directory; do not share one
+          # BERTH_HOME across packages or the unit/race/scenario steps.
+          mkdir -p verification
+          git rev-parse HEAD > verification/commit.txt
+          git rev-parse HEAD^{tree} > verification/tree.txt
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: engine/go.mod
+          cache-dependency-path: engine/go.sum
+      - name: Native build
+        working-directory: engine
+        run: go build ./...
+      - name: Vet
+        working-directory: engine
+        shell: bash
+        run: |
+          set -o pipefail
+          go version | tee ../verification/go-version.txt
+          go vet ./... 2>&1 | tee ../verification/vet.log
+      - name: Full engine tests
+        if: success() || failure()
+        working-directory: engine
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -count=1 -timeout=8m ./... 2>&1 | tee ../verification/unit.log
+      - name: Core concurrency tests
+        if: success() || failure()
+        working-directory: engine
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -race -count=1 -timeout=10m ./internal/claims ./internal/runs ./internal/spawn ./internal/daemon/... ./internal/git ./internal/groups ./internal/ports ./internal/scanner ./internal/servicefacts ./internal/state ./internal/store ./internal/killer 2>&1 | tee ../verification/race.log
+      - name: Real service scenarios
+        if: success() || failure()
+        working-directory: engine
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -tags integration -count=1 -timeout=8m ./internal/scenario/... 2>&1 | tee ../verification/scenario.log
+      - name: Measurement helper tests
+        shell: bash
+        run: python3 -m unittest discover -s scripts -p '*_test.py'
+      - name: Retain verification logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: engine-verification-${{ matrix.os }}-${{ github.run_id }}
+          path: verification/
+          retention-days: 7

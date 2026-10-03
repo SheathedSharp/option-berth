@@ -1,0 +1,46 @@
+# ---- 引擎（engine/，Go 源码）----
+# 源码就是仓库的一部分，二进制一律现编，不进 git。
+bin/
+engine/oberth
+engine/*.test
+engine/*.out
+
+# ---- 原生客户端（client/macos）----
+# .app 和离屏渲染出来的图都是现做现看，不进 git。
+# 注意 Fonts/ 里的 .otf **要提交** —— 那是构建输入，不是产物。
+client/macos/build/
+client/macos/.cache/
+
+# ---- 验证台的产物 ----
+# 每次跑都会重新生成；冻结数据写在代码里（Snapshot.frozenPorts），不在这里。
+.cache/
+.workbuddy/preview/
+
+# ---- 编辑器与系统 ----
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# ---- 日志 ----
+*.log
+
+# ---- 本地凭证、运行账本与未经脱敏的诊断材料 ----
+# 忽略规则只防止新文件误入库，不清除已跟踪文件或 Git 历史。
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+.option-berth/
+privacy-audit.local/
+/engine/internal/draft/testdata/codex-events.jsonl
+
+# Private assistant memories and retired real-world recordings
+.workbuddy/
+.commandcode/
+scripts/render-check/
+
+# Local Python verification output
+__pycache__/
+*.py[cod]

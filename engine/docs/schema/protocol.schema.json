@@ -1,0 +1,2967 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/sheathedsharp/option-berth/docs/schema/protocol.schema.json",
+  "title": "option-berth daemon protocol",
+  "description": "Generated from the Go types in internal/state and internal/daemon/rpc. Do not edit by hand; run `go generate ./...`.",
+  "protocol_version": "1.1.0",
+  "definitions": {
+    "ChangeGroup": {
+      "properties": {
+        "added": {
+          "items": {
+            "$ref": "#/definitions/Group"
+          },
+          "type": "array"
+        },
+        "updated": {
+          "items": {
+            "$ref": "#/definitions/Group"
+          },
+          "type": "array"
+        },
+        "removed": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "added",
+        "updated",
+        "removed"
+      ]
+    },
+    "ChangePort": {
+      "properties": {
+        "added": {
+          "items": {
+            "$ref": "#/definitions/Port"
+          },
+          "type": "array"
+        },
+        "updated": {
+          "items": {
+            "$ref": "#/definitions/Port"
+          },
+          "type": "array"
+        },
+        "removed": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "added",
+        "updated",
+        "removed"
+      ]
+    },
+    "ChangeSessionRecord": {
+      "properties": {
+        "added": {
+          "items": {
+            "$ref": "#/definitions/SessionRecord"
+          },
+          "type": "array"
+        },
+        "updated": {
+          "items": {
+            "$ref": "#/definitions/SessionRecord"
+          },
+          "type": "array"
+        },
+        "removed": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "added",
+        "updated",
+        "removed"
+      ]
+    },
+    "ConfigGetResult": {
+      "properties": {
+        "config": {
+          "type": "object"
+        }
+      },
+      "type": "object",
+      "required": [
+        "config"
+      ]
+    },
+    "ConfigPathResult": {
+      "properties": {
+        "path": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "path"
+      ]
+    },
+    "ConfigProblem": {
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "path",
+        "error"
+      ]
+    },
+    "ConfigSetParams": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "patch": {
+          "type": "object"
+        }
+      },
+      "type": "object",
+      "required": [
+        "patch"
+      ]
+    },
+    "ConfigSetResult": {
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "config": {
+          "type": "object"
+        }
+      },
+      "type": "object",
+      "required": [
+        "ok",
+        "config"
+      ]
+    },
+    "DaemonDoctorParams": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "only": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "project": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "DaemonDoctorResult": {
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "checks": {
+          "items": {
+            "$ref": "#/definitions/DoctorCheck"
+          },
+          "type": "array"
+        },
+        "version": {
+          "type": "string"
+        },
+        "daemon_version": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "ok",
+        "checks",
+        "version",
+        "daemon_version"
+      ]
+    },
+    "DaemonHelloParams": {
+      "properties": {
+        "client": {
+          "type": "string"
+        },
+        "client_version": {
+          "type": "string"
+        },
+        "keepalive": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "required": [
+        "client",
+        "client_version"
+      ]
+    },
+    "DaemonHelloResult": {
+      "properties": {
+        "protocol_version": {
+          "type": "string"
+        },
+        "daemon_version": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "socket": {
+          "type": "string"
+        },
+        "binary_path": {
+          "type": "string"
+        },
+        "keepalive": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "required": [
+        "protocol_version",
+        "daemon_version",
+        "pid",
+        "started_at",
+        "capabilities",
+        "socket",
+        "binary_path",
+        "keepalive"
+      ]
+    },
+    "DaemonSchemaResult": {
+      "properties": {
+        "schema": true
+      },
+      "type": "object",
+      "required": [
+        "schema"
+      ]
+    },
+    "DaemonStatusResult": {
+      "properties": {
+        "pid": {
+          "type": "integer"
+        },
+        "uptime": {
+          "type": "string"
+        },
+        "subscribers": {
+          "type": "integer"
+        },
+        "last_scan_at": {
+          "type": "string"
+        },
+        "commit": {
+          "type": "string"
+        },
+        "built": {
+          "type": "string"
+        },
+        "scan_interval_ms": {
+          "type": "integer"
+        },
+        "scan_base_interval_ms": {
+          "type": "integer"
+        },
+        "stats_interval_ms": {
+          "type": "integer"
+        },
+        "scans": {
+          "type": "integer"
+        },
+        "db_path": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "pid",
+        "uptime",
+        "subscribers",
+        "last_scan_at",
+        "commit",
+        "built",
+        "scan_interval_ms",
+        "scan_base_interval_ms",
+        "stats_interval_ms",
+        "scans",
+        "db_path"
+      ]
+    },
+    "Delta": {
+      "properties": {
+        "seq": {
+          "type": "integer"
+        },
+        "at": {
+          "type": "string"
+        },
+        "ports": {
+          "$ref": "#/definitions/ChangePort"
+        },
+        "groups": {
+          "$ref": "#/definitions/ChangeGroup"
+        },
+        "sessions": {
+          "$ref": "#/definitions/ChangeSessionRecord"
+        }
+      },
+      "type": "object",
+      "required": [
+        "seq",
+        "at",
+        "ports",
+        "groups",
+        "sessions"
+      ]
+    },
+    "Docker": {
+      "properties": {
+        "container": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "compose_service": {
+          "type": "string"
+        },
+        "compose_project": {
+          "type": "string"
+        },
+        "container_port": {
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "required": [
+        "container",
+        "image",
+        "compose_service",
+        "compose_project",
+        "container_port"
+      ]
+    },
+    "DoctorCheck": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "fix": {
+          "type": "string"
+        },
+        "fixable": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "status",
+        "summary",
+        "fixable"
+      ]
+    },
+    "Empty": {
+      "properties": {},
+      "type": "object"
+    },
+    "Error": {
+      "properties": {
+        "code": {
+          "type": "integer"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/definitions/ErrorData"
+        }
+      },
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "data"
+      ]
+    },
+    "ErrorData": {
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "hint": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "code",
+        "detail",
+        "hint"
+      ]
+    },
+    "Event": {
+      "properties": {
+        "event_id": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/definitions/EventSource"
+        },
+        "port": {
+          "$ref": "#/definitions/Port"
+        },
+        "group": {
+          "type": "string"
+        },
+        "data": {
+          "type": "object"
+        }
+      },
+      "type": "object",
+      "required": [
+        "kind",
+        "at"
+      ]
+    },
+    "EventSource": {
+      "properties": {
+        "repo_id": {
+          "type": "string"
+        },
+        "worktree_id": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Group": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "worktree": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "file",
+            "start"
+          ]
+        },
+        "root_dir": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "config_path": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "members": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "services": {
+          "items": {
+            "$ref": "#/definitions/Service"
+          },
+          "type": "array"
+        },
+        "machine": {
+          "items": {
+            "$ref": "#/definitions/MachineRef"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "host",
+        "name",
+        "repo",
+        "worktree",
+        "branch",
+        "source",
+        "root_dir",
+        "config_path",
+        "status",
+        "members",
+        "services",
+        "machine"
+      ]
+    },
+    "GroupConfig": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "services": {
+          "items": {
+            "$ref": "#/definitions/Service"
+          },
+          "type": "array"
+        },
+        "ports": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "worktree_ports": {
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "services",
+        "ports",
+        "worktree_ports"
+      ]
+    },
+    "GroupsConfigGetParams": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "GroupsConfigGetResult": {
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "config": {
+          "$ref": "#/definitions/GroupConfig"
+        }
+      },
+      "type": "object",
+      "required": [
+        "path",
+        "config"
+      ]
+    },
+    "GroupsConfigSetParams": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "services": {
+          "items": {
+            "$ref": "#/definitions/ServiceEdit"
+          },
+          "type": "array"
+        },
+        "add": {
+          "items": {
+            "$ref": "#/definitions/ServiceAdd"
+          },
+          "type": "array"
+        },
+        "rename": {
+          "items": {
+            "$ref": "#/definitions/ServiceRename"
+          },
+          "type": "array"
+        },
+        "remove": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "worktree_ports": {
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object",
+      "required": [
+        "path"
+      ]
+    },
+    "GroupsConfigSetResult": {
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "affected": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "path": {
+          "type": "string"
+        },
+        "config": {
+          "$ref": "#/definitions/GroupConfig"
+        }
+      },
+      "type": "object",
+      "required": [
+        "ok",
+        "affected",
+        "path",
+        "config"
+      ]
+    },
+    "GroupsInitParams": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "root_dir": {
+          "type": "string"
+        },
+        "write": {
+          "type": "boolean"
+        },
+        "force": {
+          "type": "boolean"
+        },
+        "merge": {
+          "type": "boolean"
+        },
+        "services": {
+          "items": {
+            "$ref": "#/definitions/ServiceAdd"
+          },
+          "type": "array"
+        },
+        "yaml": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "root_dir"
+      ]
+    },
+    "GroupsInitResult": {
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "affected": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "path": {
+          "type": "string"
+        },
+        "yaml": {
+          "type": "string"
+        },
+        "proposal": {
+          "$ref": "#/definitions/Group"
+        }
+      },
+      "type": "object",
+      "required": [
+        "ok",
+        "affected",
+        "path",
+        "yaml",
+        "proposal"
+      ]
+    },
+    "GroupsKillParams": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "config_path": {
+          "type": "string"
+        },
+        "force": {
+          "type": "boolean"
+        },
+        "grace_ms": {
+          "type": "integer"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "only": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "release": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "stopped",
+            "ready_timeout"
+          ]
+        }
+      },
+      "type": "object",
+      "required": [
+        "name"
+      ]
+    },
+    "GroupsListResult": {
+      "properties": {
+        "groups": {
+          "items": {
+            "$ref": "#/definitions/Group"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "groups"
+      ]
+    },
+    "GroupsReloadResult": {
+      "properties": {
+        "loaded": {
+          "type": "integer"
+        },
+        "errors": {
+          "items": {
+            "$ref": "#/definitions/ConfigProblem"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "loaded",
+        "errors"
+      ]
+    },
+    "GroupsRenameParams": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "to"
+      ]
+    },
+    "GroupsRenameResult": {
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "affected": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "ok",
+        "affected",
+        "name"
+      ]
+    },
+    "GroupsStartChunk": {
+      "properties": {
+        "service": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "started",
+            "skipped",
+            "failed",
+            "ready_timeout"
+          ]
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "log_path": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "log_offset": {
+          "type": "integer"
+        },
+        "skipped": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "hint": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "service"
+      ]
+    },
+    "GroupsStartEnd": {
+      "properties": {
+        "started": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "skipped": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "errors": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "started",
+        "skipped",
+        "errors"
+      ]
+    },
+    "GroupsStartParams": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "config_path": {
+          "type": "string"
+        },
+        "only": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allow_outside_home": {
+          "type": "boolean"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "GroupsStartResult": {
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "affected": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "subscription_id": {
+          "type": "string"
+        },
+        "start_id": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "ok",
+        "affected",
+        "subscription_id"
+      ]
+    },
+    "Health": {
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "fail",
+            "unknown"
+          ]
+        },
+        "code": {
+          "type": "integer"
+        },
+        "latency_ms": {
+          "type": "integer"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "observed_at": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "status",
+        "code",
+        "latency_ms",
+        "observed_at"
+      ]
+    },
+    "HostParams": {
+      "properties": {
+        "host": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Include": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "KillEnvelope": {
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "affected": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "results": {
+          "items": {
+            "$ref": "#/definitions/KillResult"
+          },
+          "type": "array"
+        },
+        "released": {
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "required": [
+        "ok",
+        "affected",
+        "results"
+      ]
+    },
+    "KillResult": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "bind_address": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "sigterm",
+            "sigkill",
+            "docker_stop",
+            "none"
+          ]
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "error": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "host",
+        "port",
+        "bind_address",
+        "pid",
+        "name",
+        "method",
+        "ok"
+      ]
+    },
+    "MachineRef": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "listening": {
+          "type": "boolean"
+        },
+        "unit": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "port",
+        "listening",
+        "unit"
+      ]
+    },
+    "MutationResult": {
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "affected": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "ok",
+        "affected"
+      ]
+    },
+    "OKResult": {
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "required": [
+        "ok"
+      ]
+    },
+    "Port": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "bind_address": {
+          "type": "string"
+        },
+        "bind_addresses": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "ip_version": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "ppid": {
+          "type": "integer"
+        },
+        "process": {
+          "type": "string"
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "name": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "command": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "cwd_in_trash": {
+          "type": "boolean"
+        },
+        "cwd_gone": {
+          "type": "boolean"
+        },
+        "project_root": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "group": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "group_source": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "auto",
+                "file",
+                "manual",
+                "start"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "session": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Session"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "user",
+            "docker"
+          ]
+        },
+        "user": {
+          "type": "string"
+        },
+        "run": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Run"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stats": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Stats"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "health": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Health"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "docker": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Docker"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "started_at": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object",
+      "required": [
+        "host",
+        "port",
+        "bind_address",
+        "ip_version",
+        "url",
+        "pid",
+        "ppid",
+        "process",
+        "display_name",
+        "name",
+        "command",
+        "cwd",
+        "cwd_in_trash",
+        "cwd_gone",
+        "project_root",
+        "group",
+        "group_source",
+        "session",
+        "type",
+        "user",
+        "run",
+        "stats",
+        "health",
+        "docker",
+        "started_at"
+      ]
+    },
+    "PortsKillParams": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "targets": {
+          "items": {
+            "$ref": "#/definitions/Selector"
+          },
+          "type": "array"
+        },
+        "tree": {
+          "type": "boolean"
+        },
+        "force": {
+          "type": "boolean"
+        },
+        "grace_ms": {
+          "type": "integer"
+        },
+        "escalate": {
+          "type": "boolean"
+        },
+        "dry_run": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "required": [
+        "targets"
+      ]
+    },
+    "PortsLogsChunk": {
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "line": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "source",
+        "line"
+      ]
+    },
+    "PortsLogsParams": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "bind_address": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "lines": {
+          "type": "integer"
+        },
+        "follow": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "PortsLogsResult": {
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "lines": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "subscription_id": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "source",
+        "lines",
+        "truncated"
+      ]
+    },
+    "Run": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "group": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "root_pid": {
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "group",
+        "name",
+        "root_pid"
+      ]
+    },
+    "RunRecord": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "group": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "cmd": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "ports": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "port_hint": {
+          "type": "integer"
+        },
+        "url": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "config_path": {
+          "type": "string"
+        },
+        "start_id": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string"
+        },
+        "spec_hash": {
+          "type": "string"
+        },
+        "log_path": {
+          "type": "string"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "exited_at": {
+          "type": "string"
+        },
+        "last_lines": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "pid",
+        "group",
+        "name",
+        "cmd",
+        "cwd",
+        "started_at",
+        "ports",
+        "status"
+      ]
+    },
+    "RunsListResult": {
+      "properties": {
+        "runs": {
+          "items": {
+            "$ref": "#/definitions/RunRecord"
+          },
+          "type": "array"
+        },
+        "exited": {
+          "items": {
+            "$ref": "#/definitions/RunRecord"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "runs",
+        "exited"
+      ]
+    },
+    "RunsRegisterParams": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "ppid": {
+          "type": "integer"
+        },
+        "group": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "cmd": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "port_hint": {
+          "type": "integer"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "session": {
+          "$ref": "#/definitions/Session"
+        },
+        "allow_outside_home": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "required": [
+        "pid",
+        "ppid",
+        "group",
+        "name",
+        "cmd",
+        "cwd",
+        "started_at"
+      ]
+    },
+    "RunsRegisterResult": {
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id"
+      ]
+    },
+    "RunsSpawnParams": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "argv": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "group": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "port_hint": {
+          "type": "integer"
+        },
+        "session": {
+          "$ref": "#/definitions/Session"
+        },
+        "allow_outside_home": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "required": [
+        "argv",
+        "cwd"
+      ]
+    },
+    "RunsSpawnResult": {
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "affected": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "log_path": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "ok",
+        "affected",
+        "run_id",
+        "pid",
+        "log_path"
+      ]
+    },
+    "RunsUnregisterParams": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "stopped": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "required": [
+        "pid"
+      ]
+    },
+    "Scope": {
+      "properties": {
+        "worktrees": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "repositories": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "workspace": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Selector": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "bind_address": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Service": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "prepare": {
+          "type": "string"
+        },
+        "cmd": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "port": {
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "port_auto": {
+          "type": "boolean"
+        },
+        "health": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "health_status": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Health"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runtime_cmd": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runtime_cwd": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "manifest_hash": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runtime_spec_hash": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "manifest_runtime_mismatch": {
+          "type": "boolean"
+        },
+        "description": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "icon": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "color": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "depends_on": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "running": {
+          "type": "boolean"
+        },
+        "port_actual": {
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pid": {
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "run_id": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "started_at": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "log_path": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_exit": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/ServiceExit"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "prepare",
+        "cmd",
+        "cwd",
+        "port",
+        "port_auto",
+        "health",
+        "health_status",
+        "runtime_cmd",
+        "runtime_cwd",
+        "manifest_hash",
+        "runtime_spec_hash",
+        "manifest_runtime_mismatch",
+        "description",
+        "icon",
+        "color",
+        "depends_on",
+        "running",
+        "port_actual",
+        "pid",
+        "run_id",
+        "started_at",
+        "log_path",
+        "last_exit"
+      ]
+    },
+    "ServiceAdd": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "prepare": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "cmd": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "health": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "icon": {
+          "type": "string"
+        },
+        "color": {
+          "type": "string"
+        },
+        "depends_on": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "name"
+      ]
+    },
+    "ServiceEdit": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "patch": {
+          "$ref": "#/definitions/ServicePatch"
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "patch"
+      ]
+    },
+    "ServiceExit": {
+      "properties": {
+        "code": {
+          "type": "integer"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "exited",
+            "crashed",
+            "port_occupied",
+            "start_failed",
+            "stopped",
+            "ready_timeout",
+            "dependency_timeout",
+            "dependency_not_ready"
+          ]
+        },
+        "at": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "code",
+        "reason",
+        "at",
+        "run_id"
+      ]
+    },
+    "ServicePatch": {
+      "properties": {
+        "description": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "icon": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "color": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "health": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "port": {
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ServiceRename": {
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "from",
+        "to"
+      ]
+    },
+    "Session": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "worktree": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "detected": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "tool",
+        "label",
+        "worktree",
+        "branch",
+        "detected"
+      ]
+    },
+    "SessionRecord": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "worktree": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "detected": {
+          "type": "boolean"
+        },
+        "host": {
+          "type": "string"
+        },
+        "first_seen": {
+          "type": "string"
+        },
+        "last_seen": {
+          "type": "string"
+        },
+        "runs": {
+          "type": "integer"
+        },
+        "ports": {
+          "type": "integer"
+        },
+        "groups": {
+          "type": "integer"
+        },
+        "active": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "tool",
+        "label",
+        "worktree",
+        "branch",
+        "detected",
+        "host",
+        "first_seen",
+        "last_seen",
+        "runs",
+        "ports",
+        "groups",
+        "active"
+      ]
+    },
+    "SessionsKillParams": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "tree": {
+          "type": "boolean"
+        },
+        "force": {
+          "type": "boolean"
+        },
+        "dry_run": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id"
+      ]
+    },
+    "Snapshot": {
+      "properties": {
+        "seq": {
+          "type": "integer"
+        },
+        "at": {
+          "type": "string"
+        },
+        "daemon_version": {
+          "type": "string"
+        },
+        "ports": {
+          "items": {
+            "$ref": "#/definitions/Port"
+          },
+          "type": "array"
+        },
+        "groups": {
+          "items": {
+            "$ref": "#/definitions/Group"
+          },
+          "type": "array"
+        },
+        "sessions": {
+          "items": {
+            "$ref": "#/definitions/SessionRecord"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "seq",
+        "at",
+        "daemon_version",
+        "ports",
+        "groups",
+        "sessions"
+      ]
+    },
+    "StateChanged": {
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/definitions/EventSource"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "state_revision": {
+          "type": "string"
+        },
+        "changed": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "observed_at": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "event_id",
+        "seq",
+        "state_revision",
+        "changed",
+        "observed_at"
+      ]
+    },
+    "StateSnapshotParams": {
+      "properties": {
+        "include": {
+          "$ref": "#/definitions/Include"
+        },
+        "filter": {
+          "$ref": "#/definitions/Scope"
+        }
+      },
+      "type": "object"
+    },
+    "StateSnapshotResult": {
+      "properties": {
+        "seq": {
+          "type": "integer"
+        },
+        "at": {
+          "type": "string"
+        },
+        "daemon_version": {
+          "type": "string"
+        },
+        "ports": {
+          "items": {
+            "$ref": "#/definitions/Port"
+          },
+          "type": "array"
+        },
+        "groups": {
+          "items": {
+            "$ref": "#/definitions/Group"
+          },
+          "type": "array"
+        },
+        "sessions": {
+          "items": {
+            "$ref": "#/definitions/SessionRecord"
+          },
+          "type": "array"
+        },
+        "type": {
+          "type": "string"
+        },
+        "state_revision": {
+          "type": "string"
+        },
+        "observed_at": {
+          "type": "string"
+        },
+        "worktrees": {
+          "items": {
+            "$ref": "#/definitions/StreamWorktree"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "StateSubscribeParams": {
+      "properties": {
+        "include": {
+          "$ref": "#/definitions/Include"
+        },
+        "events": {
+          "type": "boolean"
+        },
+        "after_seq": {
+          "type": "integer"
+        },
+        "filter": {
+          "$ref": "#/definitions/Scope"
+        }
+      },
+      "type": "object"
+    },
+    "Stats": {
+      "properties": {
+        "cpu_percent": {
+          "type": "number"
+        },
+        "memory_rss_bytes": {
+          "type": "integer"
+        },
+        "thread_count": {
+          "type": "integer"
+        },
+        "uptime": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "connections": {
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "required": [
+        "cpu_percent",
+        "memory_rss_bytes",
+        "thread_count",
+        "uptime",
+        "state",
+        "connections"
+      ]
+    },
+    "StreamCancel": {
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id"
+      ]
+    },
+    "StreamChunk": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "data": true
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "data"
+      ]
+    },
+    "StreamEnd": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "data": true,
+        "error": {
+          "$ref": "#/definitions/Error"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id"
+      ]
+    },
+    "StreamPort": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "bind_address": {
+          "type": "string"
+        },
+        "ip_version": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "ppid": {
+          "type": "integer"
+        },
+        "process": {
+          "type": "string"
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "stats": {
+          "$ref": "#/definitions/Stats"
+        },
+        "health": {
+          "$ref": "#/definitions/Health"
+        },
+        "started_at": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "host",
+        "port",
+        "bind_address",
+        "ip_version",
+        "url",
+        "pid",
+        "ppid",
+        "process",
+        "display_name",
+        "type"
+      ]
+    },
+    "StreamService": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "running": {
+          "type": "boolean"
+        },
+        "port_actual": {
+          "type": "integer"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "last_exit": {
+          "$ref": "#/definitions/ServiceExit"
+        },
+        "health_status": {
+          "$ref": "#/definitions/Health"
+        },
+        "manifest_hash": {
+          "type": "string"
+        },
+        "runtime_spec_hash": {
+          "type": "string"
+        },
+        "manifest_runtime_mismatch": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "running",
+        "manifest_runtime_mismatch"
+      ]
+    },
+    "StreamSnapshot": {
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "state_revision": {
+          "type": "string"
+        },
+        "observed_at": {
+          "type": "string"
+        },
+        "worktrees": {
+          "items": {
+            "$ref": "#/definitions/StreamWorktree"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "seq",
+        "state_revision",
+        "observed_at",
+        "worktrees"
+      ]
+    },
+    "StreamStart": {
+      "properties": {
+        "subscription_id": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "subscription_id"
+      ]
+    },
+    "StreamWorktree": {
+      "properties": {
+        "source": {
+          "$ref": "#/definitions/EventSource"
+        },
+        "status": {
+          "type": "string"
+        },
+        "services": {
+          "items": {
+            "$ref": "#/definitions/StreamService"
+          },
+          "type": "array"
+        },
+        "ports": {
+          "items": {
+            "$ref": "#/definitions/StreamPort"
+          },
+          "type": "array"
+        },
+        "machine": {
+          "items": {
+            "$ref": "#/definitions/MachineRef"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "source",
+        "status",
+        "services",
+        "ports",
+        "machine"
+      ]
+    }
+  },
+  "methods": {
+    "config.get": {
+      "params": {
+        "$ref": "#/definitions/HostParams"
+      },
+      "result": {
+        "$ref": "#/definitions/ConfigGetResult"
+      }
+    },
+    "config.path": {
+      "params": {
+        "$ref": "#/definitions/HostParams"
+      },
+      "result": {
+        "$ref": "#/definitions/ConfigPathResult"
+      }
+    },
+    "config.set": {
+      "params": {
+        "$ref": "#/definitions/ConfigSetParams"
+      },
+      "result": {
+        "$ref": "#/definitions/ConfigSetResult"
+      }
+    },
+    "daemon.doctor": {
+      "params": {
+        "$ref": "#/definitions/DaemonDoctorParams"
+      },
+      "result": {
+        "$ref": "#/definitions/DaemonDoctorResult"
+      }
+    },
+    "daemon.hello": {
+      "params": {
+        "$ref": "#/definitions/DaemonHelloParams"
+      },
+      "result": {
+        "$ref": "#/definitions/DaemonHelloResult"
+      }
+    },
+    "daemon.schema": {
+      "params": {
+        "$ref": "#/definitions/Empty"
+      },
+      "result": {
+        "$ref": "#/definitions/DaemonSchemaResult"
+      }
+    },
+    "daemon.shutdown": {
+      "params": {
+        "$ref": "#/definitions/Empty"
+      },
+      "result": {
+        "$ref": "#/definitions/OKResult"
+      }
+    },
+    "daemon.status": {
+      "params": {
+        "$ref": "#/definitions/HostParams"
+      },
+      "result": {
+        "$ref": "#/definitions/DaemonStatusResult"
+      }
+    },
+    "groups.config.get": {
+      "params": {
+        "$ref": "#/definitions/GroupsConfigGetParams"
+      },
+      "result": {
+        "$ref": "#/definitions/GroupsConfigGetResult"
+      }
+    },
+    "groups.config.set": {
+      "params": {
+        "$ref": "#/definitions/GroupsConfigSetParams"
+      },
+      "result": {
+        "$ref": "#/definitions/GroupsConfigSetResult"
+      }
+    },
+    "groups.init": {
+      "params": {
+        "$ref": "#/definitions/GroupsInitParams"
+      },
+      "result": {
+        "$ref": "#/definitions/GroupsInitResult"
+      }
+    },
+    "groups.kill": {
+      "params": {
+        "$ref": "#/definitions/GroupsKillParams"
+      },
+      "result": {
+        "$ref": "#/definitions/KillEnvelope"
+      }
+    },
+    "groups.list": {
+      "params": {
+        "$ref": "#/definitions/HostParams"
+      },
+      "result": {
+        "$ref": "#/definitions/GroupsListResult"
+      }
+    },
+    "groups.reload": {
+      "params": {
+        "$ref": "#/definitions/HostParams"
+      },
+      "result": {
+        "$ref": "#/definitions/GroupsReloadResult"
+      }
+    },
+    "groups.rename": {
+      "params": {
+        "$ref": "#/definitions/GroupsRenameParams"
+      },
+      "result": {
+        "$ref": "#/definitions/GroupsRenameResult"
+      }
+    },
+    "groups.start": {
+      "params": {
+        "$ref": "#/definitions/GroupsStartParams"
+      },
+      "result": {
+        "$ref": "#/definitions/GroupsStartResult"
+      },
+      "stream_chunk": {
+        "$ref": "#/definitions/GroupsStartChunk"
+      },
+      "stream_end": {
+        "$ref": "#/definitions/GroupsStartEnd"
+      }
+    },
+    "ports.kill": {
+      "params": {
+        "$ref": "#/definitions/PortsKillParams"
+      },
+      "result": {
+        "$ref": "#/definitions/KillEnvelope"
+      }
+    },
+    "ports.logs": {
+      "params": {
+        "$ref": "#/definitions/PortsLogsParams"
+      },
+      "result": {
+        "$ref": "#/definitions/PortsLogsResult"
+      },
+      "stream_chunk": {
+        "$ref": "#/definitions/PortsLogsChunk"
+      },
+      "stream_end": {
+        "$ref": "#/definitions/StreamEnd"
+      }
+    },
+    "runs.list": {
+      "params": {
+        "$ref": "#/definitions/HostParams"
+      },
+      "result": {
+        "$ref": "#/definitions/RunsListResult"
+      }
+    },
+    "runs.register": {
+      "params": {
+        "$ref": "#/definitions/RunsRegisterParams"
+      },
+      "result": {
+        "$ref": "#/definitions/RunsRegisterResult"
+      }
+    },
+    "runs.spawn": {
+      "params": {
+        "$ref": "#/definitions/RunsSpawnParams"
+      },
+      "result": {
+        "$ref": "#/definitions/RunsSpawnResult"
+      }
+    },
+    "runs.unregister": {
+      "params": {
+        "$ref": "#/definitions/RunsUnregisterParams"
+      },
+      "result": {
+        "$ref": "#/definitions/OKResult"
+      }
+    },
+    "sessions.kill": {
+      "params": {
+        "$ref": "#/definitions/SessionsKillParams"
+      },
+      "result": {
+        "$ref": "#/definitions/KillEnvelope"
+      }
+    },
+    "state.snapshot": {
+      "params": {
+        "$ref": "#/definitions/StateSnapshotParams"
+      },
+      "result": {
+        "$ref": "#/definitions/StateSnapshotResult"
+      }
+    },
+    "state.subscribe": {
+      "params": {
+        "$ref": "#/definitions/StateSubscribeParams"
+      },
+      "result": {
+        "$ref": "#/definitions/StateSnapshotResult"
+      }
+    },
+    "state.unsubscribe": {
+      "params": {
+        "$ref": "#/definitions/Empty"
+      },
+      "result": {
+        "$ref": "#/definitions/OKResult"
+      }
+    },
+    "stream.cancel": {
+      "params": {
+        "$ref": "#/definitions/StreamCancel"
+      },
+      "result": {
+        "$ref": "#/definitions/OKResult"
+      }
+    }
+  },
+  "notifications": {
+    "state.changed": {
+      "params": {
+        "$ref": "#/definitions/StateChanged"
+      }
+    },
+    "state.delta": {
+      "params": {
+        "$ref": "#/definitions/Delta"
+      }
+    },
+    "state.event": {
+      "params": {
+        "$ref": "#/definitions/Event"
+      }
+    },
+    "stream.chunk": {
+      "params": {
+        "$ref": "#/definitions/StreamChunk"
+      }
+    },
+    "stream.end": {
+      "params": {
+        "$ref": "#/definitions/StreamEnd"
+      }
+    }
+  }
+}

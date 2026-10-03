@@ -1,0 +1,64 @@
+package store_test
+
+// A sibling package filling in one of the reserved migration versions, exactly
+// as spec 3 will for shares (cross-spec contract §8): register from outside
+// internal/store, then open a store and find the table there.
+
+import (
+	"path/filepath"
+	"testing"
+
+	"github.com/sheathedsharp/option-berth/internal/store"
+)
+
+func TestReservedMigrationFromAnotherPackage(t *testing.T) {
+	// The migration registry is global to the process and refuses a version
+	// twice — which is the last thing this test asserts. A second run in the
+	// same binary (`go test -count=2`) would therefore panic on the very first
+	// registration, so it stands aside once the slot is filled.
+	if store.LatestVersion() >= store.VersionShares {
+		t.Skip("migration 003 is already registered in this process")
+	}
+
+	before := store.LatestVersion()
+	if before < store.VersionIndexes {
+		t.Fatalf("LatestVersion = %d before registering, want at least %d", before, store.VersionIndexes)
+	}
+
+	store.RegisterMigration(store.VersionShares, "shares", `
+		CREATE TABLE shares (
+			id         TEXT PRIMARY KEY,
+			port       INTEGER NOT NULL,
+			url        TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		);`)
+
+	if got := store.LatestVersion(); got != store.VersionShares {
+		t.Fatalf("LatestVersion = %d after registering 003, want %d", got, store.VersionShares)
+	}
+
+	s, err := store.Open(filepath.Join(t.TempDir(), "option-berth.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	if v, err := s.Version(); err != nil || v != store.VersionShares {
+		t.Fatalf("version = %d (%v), want %d", v, err, store.VersionShares)
+	}
+	if _, err := s.DB().Exec(
+		`INSERT INTO shares(id, port, url, created_at) VALUES('t1', 3000, 'https://x.example', '2026-01-01T00:00:00.000000000Z')`,
+	); err != nil {
+		t.Fatalf("writing to the externally registered table: %v", err)
+	}
+
+	// Registering the same version twice is refused, whoever asks.
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("a second registration of 003 did not panic")
+			}
+		}()
+		store.RegisterMigration(store.VersionShares, "shares-again", "CREATE TABLE nope(x);")
+	}()
+}

@@ -1,0 +1,192 @@
+package daemon
+
+import (
+	"context"
+	"strings"
+	"time"
+
+	"github.com/sheathedsharp/option-berth/internal/buildinfo"
+	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/internal/scanner"
+	"github.com/sheathedsharp/option-berth/internal/state"
+)
+
+// The core method set for step 1A.1. Namespaces owned by later steps register
+// their own handlers from their own init(), so this list only grows sideways.
+func init() {
+	RegisterHandler("daemon.hello", handleHello)
+	RegisterHandler("daemon.status", handleStatus)
+	RegisterHandler("daemon.shutdown", handleShutdown)
+	RegisterHandler("daemon.schema", handleSchema)
+
+	RegisterHandler("state.snapshot", handleSnapshot)
+	RegisterHandler("state.subscribe", handleSubscribe)
+	RegisterHandler("state.unsubscribe", handleUnsubscribe)
+
+	RegisterHandler("stream.cancel", handleStreamCancel)
+}
+
+// parseInclude turns the wire's ["stats","health"] into the scanner's struct.
+// An unknown entry is a client error rather than a silent no-op, so a typo in
+// `include` is caught immediately.
+func parseInclude(in rpc.Include) (scanner.Include, error) {
+	var out scanner.Include
+	for _, item := range in {
+		switch strings.ToLower(strings.TrimSpace(string(item))) {
+		case "":
+			continue
+		case "stats":
+			out.Stats = true
+		case "health":
+			out.Health = true
+		default:
+			return out, rpc.NewError(rpc.CodeInvalidParams,
+				"unknown include "+item, `include accepts "stats" and "health"`)
+		}
+	}
+	return out, nil
+}
+
+func handleHello(_ context.Context, req *Request) (any, error) {
+	var p rpc.DaemonHelloParams
+	if err := req.Bind(&p); err != nil {
+		return nil, err
+	}
+	if p.Client == "" {
+		return nil, rpc.NewError(rpc.CodeInvalidParams, "client is required",
+			`send {"client": "cli", "client_version": "..."}`)
+	}
+	req.Conn.setHello(p.Client, p.ClientVersion, p.Keepalive)
+	req.Runtime.Logger.Debug("hello", "conn", req.Conn.ID(),
+		"client", p.Client, "client_version", p.ClientVersion, "keepalive", p.Keepalive)
+
+	rt := req.Runtime
+	return rpc.DaemonHelloResult{
+		ProtocolVersion: rpc.ProtocolVersion,
+		DaemonVersion:   rt.Version,
+		PID:             rt.PID,
+		StartedAt:       rt.StartedAt.Format(time.RFC3339),
+		Capabilities:    Capabilities(),
+		Socket:          rt.Socket,
+		BinaryPath:      rt.BinaryPath,
+		Keepalive:       p.Keepalive,
+	}, nil
+}
+
+func handleStatus(_ context.Context, req *Request) (any, error) {
+	rt := req.Runtime
+	st := rt.Scanner.Status()
+	lastScan := ""
+	if !st.LastScanAt.IsZero() {
+		lastScan = st.LastScanAt.Format(time.RFC3339)
+	}
+	return rpc.DaemonStatusResult{
+		PID:                rt.PID,
+		Uptime:             rt.Uptime().Round(time.Second).String(),
+		Subscribers:        rt.Subscribers(),
+		LastScanAt:         lastScan,
+		Commit:             buildinfo.Commit,
+		Built:              buildinfo.Date,
+		ScanIntervalMs:     st.IntervalMs,
+		ScanBaseIntervalMs: st.BaseIntervalMs,
+		StatsIntervalMs:    st.StatsIntervalMs,
+		Scans:              st.Scans,
+		DBPath:             rt.DBPath(),
+	}, nil
+}
+
+func handleShutdown(_ context.Context, req *Request) (any, error) {
+	req.Runtime.Logger.Info("shutdown requested by client", "conn", req.Conn.ID())
+	// The dispatcher stops the daemon once this reply is queued, so the client
+	// gets its {ok: true} before the socket goes away.
+	req.Conn.requestShutdown()
+	return rpc.OKResult{OK: true}, nil
+}
+
+func handleSchema(_ context.Context, _ *Request) (any, error) {
+	return rpc.DaemonSchemaResult{Schema: rpc.Marshal()}, nil
+}
+
+func handleSnapshot(_ context.Context, req *Request) (any, error) {
+	var p rpc.StateSnapshotParams
+	if err := req.Bind(&p); err != nil {
+		return nil, err
+	}
+	include, err := parseInclude(p.Include)
+	if err != nil {
+		return nil, err
+	}
+	snap, err := req.Runtime.Scanner.SnapshotAll(include)
+	if err != nil {
+		return nil, rpc.NewError(rpc.CodeInternal, "scan failed: "+err.Error(),
+			"check `oberth daemon log` for the scanner error")
+	}
+	scope := scopeOf(p.Scope)
+	if !scope.Empty() {
+		if scope.Workspace != "" && !scope.HasSelectors() && !req.Runtime.Server().workspaceAvailable(scope.Workspace) {
+			return nil, rpc.NewError(rpc.CodeInvalidParams,
+				"workspace has no registered worktrees or repositories",
+				"subscribe once with --workspace and an explicit --worktree or --repository")
+		}
+		scope = req.Runtime.Server().effectiveScope(scope)
+		snap.Ports = filterPorts(snap.Ports, include)
+		return state.StreamSnapshotFor(snap, scope), nil
+	}
+	return filterSnapshot(snap, include, scope), nil
+}
+
+func handleSubscribe(_ context.Context, req *Request) (any, error) {
+	var p rpc.StateSubscribeParams
+	if err := req.Bind(&p); err != nil {
+		return nil, err
+	}
+	include, err := parseInclude(p.Include)
+	if err != nil {
+		return nil, err
+	}
+	scope := scopeOf(p.Scope)
+	if !scope.Empty() && !p.Events {
+		return nil, rpc.NewError(rpc.CodeInvalidParams,
+			"scoped subscriptions require events=true",
+			"set events to true to receive state.changed notifications")
+	}
+
+	// No scan here. subscribe replies from the cached snapshot and wakes the
+	// loop, so a subscriber that asked for stats or health is answered at once
+	// and gets those fields in the delta the woken tick publishes. Scanning
+	// first would hold the reply for the length of a stats collection — seconds
+	// on a busy machine — and the first snapshot would still be a delta behind
+	// by the time it arrived.
+	if err := req.Runtime.Server().subscribe(req.Conn, req.ID, include, p.Events, scope, p.AfterSeq); err != nil {
+		return nil, err
+	}
+	return nil, ErrResponseSent
+}
+
+func scopeOf(scope *state.Scope) state.Scope {
+	if scope == nil {
+		return state.Scope{}
+	}
+	return *scope
+}
+
+func handleUnsubscribe(_ context.Context, req *Request) (any, error) {
+	req.Runtime.Server().unsubscribe(req.Conn)
+	return rpc.OKResult{OK: true}, nil
+}
+
+func handleStreamCancel(_ context.Context, req *Request) (any, error) {
+	var p rpc.StreamCancel
+	if err := req.Bind(&p); err != nil {
+		return nil, err
+	}
+	if p.ID == "" {
+		return nil, rpc.NewError(rpc.CodeInvalidParams, "id is required", "")
+	}
+	if !req.Conn.CancelStream(p.ID) {
+		return nil, rpc.NewError(rpc.CodeNotFound,
+			"no stream "+p.ID+" on this connection",
+			"streams end on their own with stream.end; cancelling twice is not an error worth retrying")
+	}
+	return rpc.OKResult{OK: true}, nil
+}
