@@ -66,7 +66,7 @@ func TestOpenCreatesDatabase(t *testing.T) {
 }
 
 func TestOpenIsIdempotent(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "shop")
+	root := aliasFixtureRoot(t)
 	path := filepath.Join(t.TempDir(), "option-berth.db")
 
 	first, err := Open(path)
@@ -216,7 +216,7 @@ func TestIsCorruptionIgnoresOrdinaryErrors(t *testing.T) {
 // directory — a stopping daemon, a test's t.TempDir cleanup — otherwise races
 // a `-wal` recreated behind the delete and fails with "directory not empty".
 func TestCloseLeavesNoWALSidecars(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "shop")
+	root := aliasFixtureRoot(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "option-berth.db")
 

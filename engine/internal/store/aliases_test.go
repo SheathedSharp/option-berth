@@ -9,7 +9,7 @@ import (
 
 func TestGroupAliases(t *testing.T) {
 	s := openTemp(t)
-	root := filepath.Join(t.TempDir(), "shop")
+	root := aliasFixtureRoot(t)
 
 	if err := s.SetGroupAlias(root, "market"); err != nil {
 		t.Fatalf("SetGroupAlias: %v", err)
@@ -41,4 +41,15 @@ func TestGroupAliases(t *testing.T) {
 	if got, _ := s.GroupAliases(); len(got) != 0 {
 		t.Fatalf("aliases after clearing = %v", got)
 	}
+}
+
+// Resolve the existing parent using the standard library, independently of
+// store.cleanRoot: macOS /var links and Windows 8.3 temp aliases are not keys.
+func aliasFixtureRoot(t *testing.T) string {
+	t.Helper()
+	parent, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(parent, "shop")
 }
