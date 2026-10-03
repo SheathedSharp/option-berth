@@ -1,0 +1,75 @@
+name: Windows build verification
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    name: Windows x64 native build and smoke
+    runs-on: windows-2025
+    timeout-minutes: 15
+    env:
+      GOTOOLCHAIN: local
+      GOMAXPROCS: '4'
+    defaults:
+      run:
+        working-directory: engine
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: engine/go.mod
+          cache-dependency-path: engine/go.sum
+      - name: Native compile and vet
+        run: |
+          go version
+          go build ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go vet ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go build -o ../bin/oberth.exe .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go build -o ../bin/jev-attention.exe ./cmd/jev-attention
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Native CLI smoke without starting services
+        run: |
+          $json = & ../bin/oberth.exe version --json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = $json | ConvertFrom-Json -ErrorAction Stop
+          if (-not $version.version) { throw 'version JSON has no version' }
+          & ../bin/oberth.exe --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Native fact and persistence tests
+        run: |
+          go test -count=1 -timeout=5m ./internal/claims ./internal/store ./internal/state ./internal/servicefacts ./internal/git
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  arm64:
+    name: Windows arm64 cross-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: engine/go.mod
+          cache-dependency-path: engine/go.sum
+      - name: Compile every engine package for Windows arm64
+        working-directory: engine
+        env:
+          GOTOOLCHAIN: local
+          GOOS: windows
+          GOARCH: arm64
+          CGO_ENABLED: '0'
+        run: go build ./...
