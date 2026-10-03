@@ -66,13 +66,14 @@ func TestOpenCreatesDatabase(t *testing.T) {
 }
 
 func TestOpenIsIdempotent(t *testing.T) {
+	root := aliasFixtureRoot(t)
 	path := filepath.Join(t.TempDir(), "option-berth.db")
 
 	first, err := Open(path)
 	if err != nil {
 		t.Fatalf("first Open: %v", err)
 	}
-	if err := first.SetGroupAlias("/code/shop", "shop"); err != nil {
+	if err := first.SetGroupAlias(root, "shop"); err != nil {
 		t.Fatalf("SetGroupAlias: %v", err)
 	}
 	v1, err := first.Version()
@@ -96,8 +97,8 @@ func TestOpenIsIdempotent(t *testing.T) {
 	if v1 != v2 {
 		t.Errorf("version changed on reopen: %d -> %d", v1, v2)
 	}
-	if aliases, err := second.GroupAliases(); err != nil || aliases["/code/shop"] != "shop" {
-		t.Errorf("GroupAliases after reopen = %v (%v); want /code/shop -> shop", aliases, err)
+	if aliases, err := second.GroupAliases(); err != nil || aliases[root] != "shop" {
+		t.Errorf("GroupAliases after reopen = %v (%v); want %q -> shop", aliases, err, root)
 	}
 
 	// Each migration is recorded exactly once, never re-applied. Versions
@@ -215,6 +216,7 @@ func TestIsCorruptionIgnoresOrdinaryErrors(t *testing.T) {
 // directory — a stopping daemon, a test's t.TempDir cleanup — otherwise races
 // a `-wal` recreated behind the delete and fails with "directory not empty".
 func TestCloseLeavesNoWALSidecars(t *testing.T) {
+	root := aliasFixtureRoot(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "option-berth.db")
 
@@ -223,7 +225,7 @@ func TestCloseLeavesNoWALSidecars(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	// Write something, so there is a WAL to leave behind.
-	if err := s.SetGroupAlias("/code/shop", "shop"); err != nil {
+	if err := s.SetGroupAlias(root, "shop"); err != nil {
 		t.Fatalf("SetGroupAlias: %v", err)
 	}
 	if err := s.Close(); err != nil {
@@ -246,7 +248,7 @@ func TestCloseLeavesNoWALSidecars(t *testing.T) {
 		t.Fatalf("reopening: %v", err)
 	}
 	defer func() { _ = again.Close() }()
-	if aliases, err := again.GroupAliases(); err != nil || aliases["/code/shop"] != "shop" {
-		t.Errorf("alias after reopen = %v (%v), want /code/shop -> shop", aliases, err)
+	if aliases, err := again.GroupAliases(); err != nil || aliases[root] != "shop" {
+		t.Errorf("alias after reopen = %v (%v), want %q -> shop", aliases, err, root)
 	}
 }

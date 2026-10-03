@@ -35,8 +35,8 @@ claimsMu → runtime.runsMu 读锁 → registry.mirrorMu → Store.wmu 排序，
 
 ## 本次支持范围
 
-维护目标是本机开发服务，macOS 为主要使用环境，Linux 为引擎验证环境。Windows 源码
-暂留，但本轮不运行、不交叉编译，也不承诺 Windows 验证通过。
+维护目标是本机开发服务，macOS 为主要使用环境，Linux 为引擎验证环境。Windows 在托管 runner 验证 x64 原生构建、CLI 冒烟和事实/持久化测试，并交叉构建 arm64；
+不将这些检查等同于全部服务起停或 GUI 的 Windows 验收。
 
 每个 BERTH_HOME 使用一个受 daemon 锁管理的写入实例；升级时先停止旧实例。不支持
 不遵守锁协议的旧写者、多个 daemon 强行共享账本或外部直接写数据库；这些不是首次合并
