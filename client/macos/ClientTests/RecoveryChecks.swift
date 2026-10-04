@@ -78,7 +78,12 @@ extension ClientChecks {
         let recovery = WorkspaceRecovery(defaults: defaults, directory: directory, sessions: registry)
         recovery.loadOnce(); recovery.restoreLayout()
         require(recovery.remembered.count == 2 && registry.sessions.isEmpty, "restore fabricated a live session")
-        // No manual watch()/saveNow(): restoration must reconnect its own observers.
+        // Drain the registry's initial queued save before changing a restored
+        // instance, so that startup work cannot masquerade as a live observer.
+        pump(0.8)
+        let beforeEdit = try store.read()
+        require(beforeEdit?.workspaces.first?.providerID == "codex", "unexpected startup provider")
+        // No manual watch()/saveNow(): restoration reconnects its own observers.
         registry.workspace(path).providerID = "pi"
         eventually("restored workspace changes did not auto-save") {
             (try? store.read())?.workspaces.first?.providerID == "pi"
