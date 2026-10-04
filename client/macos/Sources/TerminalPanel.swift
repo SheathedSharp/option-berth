@@ -8,6 +8,7 @@ struct TerminalPanel: View {
     @ObservedObject private var sessions = TerminalSessions.shared
     @ObservedObject var workspace: ConsoleWorkspace
     @State private var problem: String?
+    @State private var integrationEnabled = false
     private var scoped: [TerminalSession] { sessions.inWorktree(root).filter { $0.kind == "terminal" } }
     private var selected: TerminalSession? { scoped.first { $0.id == workspace.terminalSelection } ?? scoped.last }
 
@@ -29,6 +30,9 @@ struct TerminalPanel: View {
                     Button { showTerminalFind(selected.terminal) } label: { Image(systemName: "magnifyingglass") }
                         .help("查找终端输出 / Find terminal output")
                 }
+                Toggle("命令块", isOn: $integrationEnabled)
+                    .toggleStyle(.checkbox).help("仅为新建 zsh 启用临时集成，不修改 shell 配置；命令仅留在内存")
+                    .disabled(frozen || URL(fileURLWithPath: TerminalSession.shell).lastPathComponent != "zsh")
                 Button("新建终端 / New terminal", action: newShell).disabled(frozen)
             }
             .padding(12)
@@ -89,7 +93,7 @@ struct TerminalPanel: View {
     private func newShell() {
         do {
             let session = try sessions.add(worktree: root, title: "Shell \(scoped.count + 1)",
-                                           executable: TerminalSession.shell, arguments: ["-i"])
+                                           executable: TerminalSession.shell, arguments: ["-i"], shellIntegration: integrationEnabled)
             workspace.terminalSelection = session.id
             problem = nil
             DispatchQueue.main.async { session.terminal.window?.makeFirstResponder(session.terminal) }

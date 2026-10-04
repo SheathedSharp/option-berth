@@ -63,11 +63,11 @@ public final class TerminalSessions: ObservableObject {
     }
     @discardableResult
     public func add(worktree: String, title: String, kind: String = "terminal", executable: String,
-                    arguments: [String], environment: [String: String]? = nil) throws -> TerminalSession {
+                    arguments: [String], environment: [String: String]? = nil, shellIntegration: Bool = false) throws -> TerminalSession {
         guard sessions.count < 16 else { throw TerminalFailure("先关闭一个会话 / Close a session before opening another (16 maximum)") }
         let session = TerminalSession(worktree: worktree, title: title, kind: kind)
         session.onChange = { [weak self] in self?.objectWillChange.send() }
-        try session.start(executable: executable, arguments: arguments, environment: environment)
+        try session.start(executable: executable, arguments: arguments, environment: environment, shellIntegration: shellIntegration)
         sessions.append(session)
         select(session)
         return session
