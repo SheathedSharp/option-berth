@@ -1,0 +1,12 @@
+# Explicit demo services, not commands inferred from a running process.
+name: hello-worktree
+services:
+  - name: api
+    cmd: python3 -u api.py
+    port: auto
+    health: /health
+  - name: worker
+    cmd: python3 -u worker.py
+    depends_on: [api]
+    env:
+      API_URL: ${api.url}
