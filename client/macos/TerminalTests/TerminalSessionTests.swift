@@ -85,12 +85,49 @@ enum TerminalChecks {
                 capture.waitUntilExit()
                 try check(capture.terminationStatus == 0, "window capture unavailable; PTY checks remain separate")
             }
+            let flood = TerminalSession(worktree: root.path)
+            owned.append(flood)
+            var floodBytes = 0
+            var floodTail = ""
+            flood.terminal.onBytes = {
+                floodBytes += $0.count
+                floodTail = String((floodTail + String(decoding: $0, as: UTF8.self)).suffix(128))
+            }
+            try flood.start(executable: "/bin/sh", arguments: ["-c", "/usr/bin/yes terminal-row | /usr/bin/head -c 1048576; printf '\\nPTY-FLOOD-END\\n'"], environment: ["PATH": "/usr/bin:/bin"])
+            try check(until { !flood.isActive && floodBytes >= 1_048_576 && floodTail.contains("PTY-FLOOD-END") },
+                      "bounded large-output stream lost its final bytes or exit")
+            // Closing sessions must release their PTYs, not accumulate file descriptors.
+            let baselineFDs = try FileManager.default.contentsOfDirectory(atPath: "/dev/fd").count
+            for _ in 0..<24 {
+                // A synchronous test does not return to AppKit's outer event
+                // loop. Drain its per-event Cocoa autoreleases explicitly.
+                try autoreleasepool {
+                    var transient: TerminalSession? = TerminalSession(worktree: root.path)
+                    try transient!.start(executable: "/usr/bin/true", arguments: [], environment: ["PATH": "/usr/bin:/bin"])
+                    try check(until { transient?.isActive == false }, "short-lived child was not reaped")
+                    transient = nil
+                }
+                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            }
+            print("FD CHECK baseline=\(baselineFDs), observed=\(try FileManager.default.contentsOfDirectory(atPath: "/dev/fd").count)")
+            try check(until {
+                ((try? FileManager.default.contentsOfDirectory(atPath: "/dev/fd").count) ?? Int.max) <= baselineFDs + 3
+            }, "PTY descriptors accumulated after sessions were released")
+            // Native text/IME commits use the terminal's own input path. No global clipboard is touched.
+            let inputSession = TerminalSession(worktree: root.path)
+            owned.append(inputSession)
+            var inputOutput = ""
+            inputSession.terminal.onBytes = { inputOutput += String(decoding: $0, as: UTF8.self) }
+            try inputSession.start(executable: "/bin/sh", arguments: ["-c", "read -r line; printf 'TEXT:%s\\n' \"$line\""], environment: ["PATH": "/usr/bin:/bin"])
+            inputSession.terminal.insertText("中文 native input", replacementRange: NSRange(location: NSNotFound, length: 0))
+            inputSession.terminal.send(source: inputSession.terminal, data: [13][...])
+            try check(until { !inputSession.isActive && inputOutput.contains("TEXT:中文 native input") }, "native text insertion was lost")
             let invalid = TerminalSession(worktree: root.appendingPathComponent("missing").path)
             do {
                 try invalid.start(executable: "/bin/sh", arguments: [])
                 throw CheckFailure(reason: "invalid worktree accepted")
             } catch is TerminalFailure {}
-            print("PASS: real PTY, literal argv, cwd, exit code, independent stop, native window keyboard input, invalid input, OSC policy, owned cleanup")
+            print("PASS: real PTY, literal argv, cwd, exit code, independent stop, native window keyboard/text input, 1 MiB output, 24-cycle PTY reclamation, invalid input, OSC policy, owned cleanup")
         } catch {
             fputs("terminal checks failed: \(error)\n", stderr)
             for session in owned { session.stop(force: true) }

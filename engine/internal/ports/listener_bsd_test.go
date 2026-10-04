@@ -46,3 +46,16 @@ func TestDarwinTCPTableDoesNotTurnMalformedOutputIntoEmptySuccess(t *testing.T) 
 		}
 	}
 }
+
+func TestDarwinTCPTablePreservesFullIPv6Address(t *testing.T) {
+	const full = "2001:db8:1234:5678:abcd:ef01:2345:6789"
+	rows, err := decodeDarwinNetstat(darwinTCPHeader + "tcp6 0 0 " + full + ".8123 *.* LISTEN 0 0 131072 131072 fixture:42 0 0\n")
+	if err != nil || len(rows) != 1 || rows[0].BindAddress != full || rows[0].PID != 42 {
+		t.Fatalf("full IPv6 identity lost: rows=%+v err=%v", rows, err)
+	}
+	// This is the truncation Darwin emits without -l. Keep rejecting it;
+	// do not repair unknown bytes or silently discard the observation.
+	if _, err := decodeDarwinNetstat(darwinTCPHeader + "tcp6 0 0 " + full[:16] + ".8123 *.* LISTEN 0 0 131072 131072 fixture:42 0 0\n"); err == nil {
+		t.Fatal("truncated IPv6 address was accepted")
+	}
+}

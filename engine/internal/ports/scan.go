@@ -64,7 +64,9 @@ func collectListeners(platform string, run listenerCommand) ([]ListeningPort, er
 	var format listenerFormat
 	switch platform {
 	case "darwin":
-		name, args, format = "netstat", []string{"-anv", "-p", "tcp"}, darwinNetstatListeners
+		// -l is required: Darwin otherwise truncates numeric IPv6 addresses
+		// to 16 characters, even with -n/-v/-W. Never parse a shortened identity.
+		name, args, format = "netstat", []string{"-anvl", "-p", "tcp"}, darwinNetstatListeners
 	case "linux":
 		name, args, format = "ss", []string{"-tlnp"}, ssListeners
 	case "windows":

@@ -358,57 +358,54 @@ func clientBinary(p project) string {
 }
 
 func release(level string, dryRun bool) error {
+	kinds := map[string]string{"major": "protocol", "minor": "feature", "patch": "fix"}
+	kind, ok := kinds[level]
+	if !ok {
+		return fmt.Errorf("unknown release level %q", level)
+	}
+	return releaseScript(kind, dryRun, false)
+}
+
+func releaseScript(kind string, dryRun, publish bool) error {
 	p, err := loadProject()
 	if err != nil {
 		return err
 	}
-	if level != "major" && level != "minor" && level != "patch" {
-		return fmt.Errorf("unknown release level %q", level)
+	action := "--execute"
+	if publish {
+		action = "--publish"
 	}
-	if err := requireCleanTree(p.root); err != nil {
-		return err
-	}
-	if err := command(p.engine, "go", "vet", "./..."); err != nil {
-		return fmt.Errorf("release verification failed: %w", err)
-	}
-	next, err := bumpVersion(p.version, level)
-	if err != nil {
-		return err
-	}
-	tag := "v" + next
-	if _, err := gitOutput(p.root, "rev-parse", "--verify", "refs/tags/"+tag); err == nil {
-		return fmt.Errorf("tag %s already exists", tag)
-	}
-	message := "chore(release): " + tag
 	if dryRun {
-		fmt.Printf("would write VERSION=%s, commit %q, and create annotated tag %s\n", next, message, tag)
-		return nil
+		action = "--dry-run"
 	}
-
-	versionPath := filepath.Join(p.root, "VERSION")
-	old := []byte(p.version + "\n")
-	if err := os.WriteFile(versionPath, []byte(next+"\n"), 0o644); err != nil {
-		return err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = os.WriteFile(versionPath, old, 0o644)
-		}
-	}()
-	if err := command(p.root, "git", "add", "VERSION"); err != nil {
-		return err
-	}
-	if err := command(p.root, "git", "commit", "-m", message); err != nil {
-		return err
-	}
-	committed = true
-	if err := command(p.root, "git", "tag", "-a", tag, "-m", "Release "+tag); err != nil {
-		return fmt.Errorf("release commit created but tag failed: %w", err)
-	}
-	fmt.Printf("released %s (%s)\n", tag, message)
-	return nil
+	return command(p.root, "python3", filepath.Join(p.root, "scripts", "release.py"), "--kind", kind, action)
 }
+
+// ReleaseProtocol increments X1 and the independently versioned daemon protocol.
+func ReleaseProtocol(dryRun *bool) error {
+	return releaseScript("protocol", dryRun != nil && *dryRun, false)
+}
+
+// ReleaseFeature increments X2, resetting X3.
+func ReleaseFeature(dryRun *bool) error {
+	return releaseScript("feature", dryRun != nil && *dryRun, false)
+}
+
+// ReleaseFix increments X3.
+func ReleaseFix(dryRun *bool) error { return releaseScript("fix", dryRun != nil && *dryRun, false) }
+
+// PublishProtocol verifies, tags and atomically pushes a protocol release.
+func PublishProtocol(dryRun *bool) error {
+	return releaseScript("protocol", dryRun != nil && *dryRun, true)
+}
+
+// PublishFeature verifies, tags and atomically pushes a feature release.
+func PublishFeature(dryRun *bool) error {
+	return releaseScript("feature", dryRun != nil && *dryRun, true)
+}
+
+// PublishFix verifies, tags and atomically pushes a bug-fix release.
+func PublishFix(dryRun *bool) error { return releaseScript("fix", dryRun != nil && *dryRun, true) }
 
 func bumpVersion(version, level string) (string, error) {
 	parts := strings.Split(version, ".")

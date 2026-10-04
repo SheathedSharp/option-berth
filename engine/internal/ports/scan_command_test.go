@@ -61,7 +61,7 @@ func TestListenerCommandUsesOnlyFixedPlatformArguments(t *testing.T) {
 		platform, tool string
 		args           []string
 	}{
-		{"darwin", "netstat", []string{"-anv", "-p", "tcp"}},
+		{"darwin", "netstat", []string{"-anvl", "-p", "tcp"}},
 		{"linux", "ss", []string{"-tlnp"}},
 		{"windows", "netstat", []string{"-ano"}},
 	} {

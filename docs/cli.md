@@ -281,3 +281,19 @@ group/session 选择器只为迁移保留，不出现在公开帮助中。
 
 `doctor --only project_config` 可额外报告被忽略的清单键及行列位置（warn），不回显字段值；
 `env` 自定义键与顶层 `x-` 扩展不被误报。不改写清单、不执行命令，也不为补充报告元数据连接 daemon。
+
+### oberth agent: external coding-agent handoff
+
+`agent list --json` lists OpenCode, Codex, Claude Code, DeepSeek Harness and Pi without executing them.
+`agent plan codex --worktree <path> --json` returns an exact executable/argv/cwd plan; it does not launch,
+log in, install hooks, modify configuration, or send a model request. `--prompt-stdin` is plan-only and
+avoids putting the initial prompt in shell history. The resulting JSON can contain that prompt: keep it local.
+`agent run codex --worktree <path>` explicitly replaces the CLI with the native agent on macOS/Linux.
+The agent keeps its own permissions, authentication, tools and conversation history; no approval bypass is added.
+
+Native prompts are supported for OpenCode, Codex, Claude Code and Pi. DeepSeek uses `dsh --profile tui`
+for an already installed custom native profile; it is not a shipped-profile guarantee. Use `--mode task`
+with a prompt to select its documented headless profile. That one-shot task is not a resumed native conversation.
+No implicit “resume last” crosses worktree boundaries. The selected cwd is not an operating-system sandbox.
+Windows currently supports plan/list, not native process handoff. Merely finding a binary does not validate login
+or a particular installed version; a provider failure remains a provider failure, never a silent shell fallback.

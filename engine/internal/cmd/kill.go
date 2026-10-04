@@ -219,12 +219,16 @@ func killTargets(args []string, snapshot []ports.ListeningPort, bindIP string) (
 // positionalTarget reads a bare number as a port, falling back to a pid when
 // nothing is listening on it but a process with that id exists.
 func positionalTarget(n int, snapshot []ports.ListeningPort, bindIP string) killer.Target {
+	return positionalTargetWithProbe(n, snapshot, bindIP, killer.Alive)
+}
+
+func positionalTargetWithProbe(n int, snapshot []ports.ListeningPort, bindIP string, alive func(int) bool) killer.Target {
 	for _, p := range snapshot {
 		if p.Port == n {
 			return killer.Target{Port: n, BindAddress: bindIP}
 		}
 	}
-	if n > 65535 || killer.Alive(n) {
+	if n > 65535 || alive(n) {
 		return killer.Target{PID: n}
 	}
 	return killer.Target{Port: n, BindAddress: bindIP}
