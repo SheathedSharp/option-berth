@@ -1,0 +1,164 @@
+import AppKit
+import SwiftTerm
+import SwiftUI
+
+/// A client-owned PTY, not a service run or an alternative daemon ledger.
+/// Its starting worktree is immutable, even when the host UI selects another project.
+@MainActor
+public final class TerminalSession: ObservableObject, Identifiable {
+    public let id = UUID()
+    public let worktree: String
+    public let title: String
+    public let kind: String
+    public let terminal: HostedTerminalView
+    @Published public private(set) var state = "未启动 / Not started"
+    @Published public private(set) var isActive = false
+    @Published public private(set) var isStopping = false
+    public var onChange: (() -> Void)?
+
+    public init(worktree: String, title: String = "Terminal", kind: String = "terminal") {
+        self.worktree = worktree.hasPrefix("/") ? URL(fileURLWithPath: worktree).standardizedFileURL.resolvingSymlinksInPath().path : ""
+        self.title = title
+        self.kind = kind
+        terminal = HostedTerminalView(frame: NSRect(x: 0, y: 0, width: 760, height: 340))
+        terminal.onExit = { [weak self] status in
+            guard let self else { return }
+            isActive = false
+            isStopping = false
+            if let status {
+                let signal = status & 0x7f
+                state = signal == 0 ? "已退出 / Exit \((status >> 8) & 0xff)" : "信号退出 / Signal \(signal)"
+            } else {
+                state = "退出结果未知 / Exit unknown"
+            }
+            onChange?()
+        }
+    }
+
+    public func start(executable: String, arguments: [String], environment: [String: String]? = nil) throws {
+        guard !isActive, terminal.process == nil else { throw TerminalFailure("此会话不能重复启动 / Session already used") }
+        var isDirectory: ObjCBool = false
+        guard worktree.hasPrefix("/"), FileManager.default.fileExists(atPath: worktree, isDirectory: &isDirectory), isDirectory.boolValue else {
+            throw TerminalFailure("工作目录不存在 / Worktree directory is unavailable")
+        }
+        guard executable.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: executable),
+              !arguments.contains(where: { $0.utf8.contains(0) }) else {
+            throw TerminalFailure("可执行文件或参数无效 / Invalid executable or arguments")
+        }
+        var env = environment ?? Self.environment()
+        env["TERM"] = "xterm-256color"
+        env["COLORTERM"] = "truecolor"
+        isActive = true
+        state = "运行中 / Running"
+        terminal.launch(executable: executable, arguments: arguments, environment: env, directory: worktree)
+        if terminal.process?.shellPid == 0 {
+            isActive = false
+            state = "启动失败 / Launch failed"
+            throw TerminalFailure(state)
+        }
+        onChange?()
+    }
+
+    public func stop(force: Bool = false) {
+        guard isActive, (!isStopping || force), let process = terminal.process, process.shellPid > 0 else { return }
+        // Signal only our unreaped direct child. Closing a shell should not become
+        // a broad kill-by-name or an implicit `oberth down` for project services.
+        if Darwin.kill(process.shellPid, force ? SIGKILL : SIGHUP) == 0 {
+            isStopping = true
+            state = "等待退出 / Waiting for exit"
+        } else {
+            state = "无法请求退出 / Stop request failed"
+        }
+        // Keep the view/process retained until the library's reaper reports exit.
+        // LocalProcess.terminate() cancels that monitor, so it is not used here.
+        onChange?()
+    }
+
+    public static func environment() -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        var paths = (env["PATH"] ?? "").split(separator: ":").map(String.init).filter { $0.hasPrefix("/") }
+        for path in [home + "/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"] where !paths.contains(path) {
+            paths.append(path)
+        }
+        env["PATH"] = paths.joined(separator: ":")
+        return env
+    }
+
+    public static var shell: String {
+        let candidate = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        return candidate.hasPrefix("/") && FileManager.default.isExecutableFile(atPath: candidate) ? candidate : "/bin/zsh"
+    }
+}
+
+public struct TerminalFailure: LocalizedError {
+    let message: String
+    public init(_ message: String) { self.message = message }
+    public var errorDescription: String? { message }
+}
+
+/// SwiftTerm owns emulation and PTY transport. This delegate supplies the host's
+/// security policy: OSC data cannot read/write the clipboard or retarget a session.
+public final class HostedTerminalView: TerminalView, TerminalViewDelegate, LocalProcessDelegate {
+    public private(set) var process: LocalProcess?
+    public var onExit: ((Int32?) -> Void)?
+    public var onBytes: ((ArraySlice<UInt8>) -> Void)?
+
+    public override init(frame: CGRect) {
+        super.init(frame: frame, font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
+                   options: TerminalOptions(cols: 96, rows: 24, cursorStyle: .steadyBar,
+                                            scrollback: 5000, enableSixelReported: false,
+                                            kittyImageCacheLimitBytes: 16 * 1024 * 1024))
+        terminalDelegate = self
+        nativeBackgroundColor = NSColor.textBackgroundColor
+        nativeForegroundColor = NSColor.labelColor
+    }
+    public required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    public func launch(executable: String, arguments: [String], environment: [String: String], directory: String) {
+        let child = LocalProcess(delegate: self)
+        process = child
+        child.startProcess(executable: executable, args: arguments,
+                           environment: environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" },
+                           currentDirectory: directory)
+    }
+
+    public func processTerminated(_ source: LocalProcess, exitCode: Int32?) { onExit?(exitCode) }
+    public func dataReceived(slice: ArraySlice<UInt8>) { feed(byteArray: slice); onBytes?(slice) }
+    public func getWindowSize() -> winsize {
+        winsize(ws_row: UInt16(clamping: terminal.rows), ws_col: UInt16(clamping: terminal.cols), ws_xpixel: 0, ws_ypixel: 0)
+    }
+    public func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
+        guard let process, process.running else { return }
+        var size = getWindowSize()
+        _ = PseudoTerminalHelpers.setWinSize(masterPtyDescriptor: process.childfd, windowSize: &size)
+    }
+    public func send(source: TerminalView, data: ArraySlice<UInt8>) { process?.send(data: data) }
+    public func setTerminalTitle(source: TerminalView, title: String) { /* Untrusted OSC title is not identity. */ }
+    public func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) { /* Never retarget. */ }
+    public func scrolled(source: TerminalView, position: Double) {}
+    public func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+    public func clipboardCopy(source: TerminalView, content: Data) { /* OSC 52 writes are denied. */ }
+    public func clipboardRead(source: TerminalView) -> Data? { nil }
+    public func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
+        guard let url = URL(string: link), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return }
+        let alert = NSAlert()
+        alert.messageText = "打开终端链接？ / Open terminal link?"
+        alert.informativeText = url.absoluteString
+        alert.addButton(withTitle: "取消 / Cancel")
+        alert.addButton(withTitle: "打开 / Open")
+        if alert.runModal() == .alertSecondButtonReturn { NSWorkspace.shared.open(url) }
+    }
+    public override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command {
+            switch event.charactersIgnoringModifiers {
+            case "c": copy(self); return true
+            case "v": paste(self); return true
+            case "a": selectAll(self); return true
+            default: break
+            }
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+}
+

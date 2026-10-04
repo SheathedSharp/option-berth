@@ -29,6 +29,8 @@ jobs:
         run: |
           swiftc client/macos/Sources/DaemonLaunch.swift client/macos/Tests/DaemonLaunchTests.swift -o "$RUNNER_TEMP/daemon-launch-tests"
           "$RUNNER_TEMP/daemon-launch-tests"
+      - name: Verify real isolated PTY sessions
+        run: swift run --package-path client/macos --force-resolved-versions TerminalChecks
       - name: Build native application and icon
         run: |
           client/macos/build.sh

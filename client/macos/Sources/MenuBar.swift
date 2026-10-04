@@ -71,6 +71,24 @@ enum MenuBar {
 /// 为什么要有这一层：菜单是 SwiftUI 按 `.commands` 建的，建完长什么样只有运行起来才知道 ——
 /// 这份 delegate 唯一的事就是把「建好的那一刻」接住。
 final class MenuBarDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        MainActor.assumeIsolated {
+            guard TerminalSessions.shared.activeCount > 0 else { return .terminateNow }
+            let alert = NSAlert()
+            alert.messageText = "仍有终端会话 / Terminal sessions are still running"
+            alert.informativeText = "请先在终端页结束会话并确认退出，再退出应用。不会在后台强制停止未知进程。\nEnd the sessions and wait for their exit before quitting."
+            alert.addButton(withTitle: "返回 / Cancel")
+            let force = TerminalSessions.shared.sessions.contains { $0.isStopping }
+            alert.addButton(withTitle: force ? "强制结束会话 / Force end sessions" : "结束会话 / End sessions")
+            if alert.runModal() == .alertSecondButtonReturn {
+                for session in TerminalSessions.shared.sessions { session.stop(force: force) }
+            }
+            // A stop request is not an exit acknowledgment; quitting can be retried
+            // after the observed exits even when the last window was closed.
+            return .terminateCancel
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated {
             MenuBar.prune()

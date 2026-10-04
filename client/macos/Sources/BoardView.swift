@@ -7,18 +7,19 @@ import SwiftUI
 enum Scope: Hashable {
     case services(String)
     case code(String)
+    case terminal(String)
     case project(String)
 
     var title: String {
         switch self {
-        case .services(let name), .code(let name), .project(let name):
+        case .services(let name), .code(let name), .terminal(let name), .project(let name):
             return name.isEmpty ? "项目" : name
         }
     }
 
     var projectName: String? {
         switch self {
-        case .services(let name), .code(let name), .project(let name):
+        case .services(let name), .code(let name), .terminal(let name), .project(let name):
             return name.isEmpty ? nil : name
         }
     }
@@ -30,6 +31,7 @@ enum Scope: Hashable {
             return
         }
         switch parts[0] {
+        case "terminal": self = .terminal(parts[1])
         case "code", "git": self = .code(parts[1])
         case "ports", "project": self = .project(parts[1])
         case "services": self = .services(parts[1])
@@ -257,6 +259,8 @@ struct BoardView: View {
                              ports: ports(for: project), scrolls: scrolls)
             case .code:
                 CodeView(git: git, project: project, scrolls: scrolls)
+            case .terminal:
+                TerminalPanel(root: project.rootDir ?? "", frozen: !scrolls).id(project.rootDir ?? project.name)
             case .project:
                 // Keep the old command-line scope as a compatibility alias. Runtime
                 // facts now live on the service page instead of a separate port tab.
@@ -306,6 +310,9 @@ struct BoardView: View {
             tab("代码\(changed > 0 ? " \(changed)" : "")",
                 selected: { if case .code = scope { return true }; return false }) {
                 views.scope = .code(project.name)
+            }
+            tab("终端 / Terminal", selected: { if case .terminal = scope { return true }; return false }) {
+                views.scope = .terminal(project.name)
             }
             Spacer(minLength: 0)
         }

@@ -2,9 +2,8 @@
 #
 # 把原生客户端打成一个 .app。
 #
-# 只用 CommandLineTools 里的 swiftc —— 不需要 Xcode（.app 的骨架自己拼，
-# Info.plist 自己写）。这样一个 600 KB 的二进制 + 随包的字体，比 200 MB 的
-# Electron 运行时好交代得多，代价是每个平台的窗口各写一份。
+# 使用 Swift Package Manager 构建 AppKit/SwiftUI 与固定版本 SwiftTerm；
+# 不使用 Electron，不自行实现终端仿真器。首次构建会解析固定依赖。
 #
 # 用法：
 #   ./build.sh            # 构建到 build/OptionBerth.app
@@ -36,15 +35,18 @@ sdk="$(xcrun --show-sdk-path)"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/Fonts"
 
-echo "编译 Sources/*.swift → $app"
-swiftc \
-  -swift-version 5 \
-  -parse-as-library \
-  -O \
-  -target "$target" \
-  -sdk "$sdk" \
-  -o "$app/Contents/MacOS/OptionBerth" \
-  "$here"/Sources/*.swift
+echo "构建原生客户端与固定版本终端组件 → $app"
+swift build --package-path "$here" -c release --product OptionBerth --arch arm64 --force-resolved-versions
+bin_dir="$(swift build --package-path "$here" -c release --show-bin-path --arch arm64)"
+cp "$bin_dir/OptionBerth" "$app/Contents/MacOS/OptionBerth"
+# SwiftPM resource bundles are resolved relative to the application bundle.
+for resource in "$bin_dir"/*.bundle; do
+  [[ -d "$resource" ]] || continue
+  cp -R "$resource" "$app/Contents/Resources/"
+done
+mkdir -p "$app/Contents/Resources/Licenses"
+cp "$here/.build/checkouts/SwiftTerm/LICENSE" "$app/Contents/Resources/Licenses/SwiftTerm-LICENSE.txt"
+cp "$repo/LICENSE" "$app/Contents/Resources/Licenses/option-berth-LICENSE.txt"
 
 sed \
   -e "s/@VERSION@/$version/g" \
