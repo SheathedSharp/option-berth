@@ -51,6 +51,12 @@ public struct PaneLayout: Codable, Equatable {
         guard let focused, let index = nodes.firstIndex(where: { $0.session == focused }) else { self = PaneLayout(session: session); return }
         nodes[index].session = session; self.focused = session
     }
+    public mutating func replaceReference(_ old: UUID, with new: UUID) throws {
+        guard !sessions.contains(new) else { throw LayoutFailure.invalid }
+        guard let index = nodes.firstIndex(where: { $0.session == old }) else { return }
+        nodes[index].session = new
+        if focused == old { focused = new }
+    }
     public mutating func split(_ session: UUID, beside target: UUID, axis: Axis) throws {
         guard sessions.count < Self.maximumPanes, !sessions.contains(session), let i = nodes.firstIndex(where: { $0.session == target }) else { throw LayoutFailure.invalid }
         var next = self

@@ -35,7 +35,7 @@ struct WorkspaceConsole: View {
             if workspace.agentMode { AgentPanel(root: root, frozen: frozen, workspace: workspace).id(root) }
             else { TerminalPanel(root: root, frozen: frozen, workspace: workspace).id(root) }
         }
-
+        .onAppear { if !frozen { WorkspaceRecovery.shared.watch(workspace) } }
     }
 }
 

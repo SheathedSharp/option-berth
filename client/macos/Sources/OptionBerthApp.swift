@@ -103,6 +103,7 @@ struct OptionBerthApp: App {
     @StateObject private var git = GitStore()
     @StateObject private var settings = UISettings.shared
     @StateObject private var shortcuts = WorkspaceShortcuts.shared
+    @StateObject private var recovery = WorkspaceRecovery.shared
     @StateObject private var views = ViewState(scope: Entry.scope(from: CommandLine.arguments))
     @NSApplicationDelegateAdaptor(MenuBarDelegate.self) private var menuBar
 
@@ -112,10 +113,13 @@ struct OptionBerthApp: App {
                 .environmentObject(settings)
                 .frame(minWidth: 720, minHeight: 420)
                 .onAppear {
+                    recovery.loadOnce()
                     store.start()
                     services.start()
                 }
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in recovery.saveNow() }
                 .onDisappear {
+                    recovery.saveNow()
                     store.stop()
                     services.stop()
                 }
@@ -136,6 +140,7 @@ struct OptionBerthApp: App {
             CommandMenu(MenuBar.viewTitle) {
                 Button("命令面板… / Command panel…") { views.showingActions = true }
                     .keyboardShortcut("p", modifiers: [.command, .shift])
+                Button("工作区恢复… / Workspace recovery…") { views.showingRecovery = true }
                 Divider()
                 ForEach(WorkspaceAction.allCases.filter { $0 != .settings }) { action in
                     Button(action.title) { perform(action) }

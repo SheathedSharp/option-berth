@@ -8,6 +8,7 @@ final class ViewState: ObservableObject {
     @Published var showingSettings = false
     @Published var showingSessions = false
     @Published var showingActions = false
+    @Published var showingRecovery = false
 
     init(scope: Scope = .services("")) {
         self.scope = scope
