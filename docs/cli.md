@@ -137,10 +137,12 @@ Jev 调用、缓存命中和无事件轮询数量；没有真实反馈时指标�
 `services[]` 都有结构化的 `state`：`started`、`skipped` 或 `failed`，失败时还给出机器可分支的
 `reason` 和可直接执行的 `hint`（通常是 `oberth logs <service> --once`），原有 `error` 保留给人读。
 等待判定只认**等待开始之后**记录的退出：`down` 留下的旧退出记录不会被 `up --wait` 读成本轮启动失败。
-`--wait`（`--ready` 的别名）会在返回前等待已启动服务真正监听；声明了 `health:` 的服务还必须
+`--wait`（`--ready` 的别名）会在返回前等待本次选择的服务（包括已经在运行、未重新启动的服务）真正监听；声明了 `health:` 的服务还必须
 通过健康检查。无端口 worker 以运行记录活跃作为 ready。默认不等待，`--wait-timeout` 默认 30s；
-超时的服务状态为 `failed`、原因是 `ready_timeout`，命令退出码为 1；引擎随后停止这批未就绪的运行，
-并把同一个 `ready_timeout` 写入服务的最后退出事实，因此 `status`、桌面服务行、attention 和事件流
+超时的服务状态为 `failed`、原因是 `ready_timeout`，命令退出码为 1。只有本次新启动的超时运行才进入停止清理；
+已经存在的运行不会因这次等待失败而被停止或重启。`started` / `skipped` 汇总描述启动动作，
+就绪判定失败另外出现在 `errors` 与逐服务 `state` 中。对本次新启动且被清理的运行，
+引擎把同一个 `ready_timeout` 写入服务的最后退出事实，因此 `status`、桌面服务行、attention 和事件流
 不会把它显示成普通的手动停止。健康事实带有 `status`、`code`、`reason` 与 `observed_at`，
 依赖声明了 `health:` 时，后继服务会等待该依赖的健康状态为 `ok`。
 依赖等待本身失败时，服务最后退出原因分别是 `dependency_timeout` 或 `dependency_not_ready`，

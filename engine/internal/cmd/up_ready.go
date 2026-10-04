@@ -24,9 +24,11 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 		timeout = 30 * time.Second
 	}
 	pending := make(map[string]bool)
+	owned := make(map[string]bool)
 	for _, chunk := range chunks {
-		if chunk.Error == "" && !chunk.Skipped {
+		if chunk.Error == "" {
 			pending[chunk.Service] = true
+			owned[chunk.Service] = !chunk.Skipped
 		}
 	}
 	if len(pending) == 0 {
@@ -67,7 +69,10 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 			for name := range pending {
 				markStartChunkFailed(chunks, summary, name, "ready_timeout",
 					fmt.Sprintf("timed out after %s waiting for %s to be ready", timeout, name))
-				timedOut = append(timedOut, name)
+				// Waiting on an existing run does not authorize stopping it.
+				if owned[name] {
+					timedOut = append(timedOut, name)
+				}
 			}
 			sort.Strings(timedOut)
 			return timedOut, nil

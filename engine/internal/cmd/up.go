@@ -52,7 +52,7 @@ func init() {
 	upCmd.Flags().BoolVar(&upAllowOutsideHome, "allow-outside-home", false,
 		"Allow services whose worktree is outside the user's home directory")
 	upCmd.Flags().BoolVar(&upWait, "wait", false,
-		"Wait until started services are listening and configured health checks pass")
+		"Wait until selected services, including already-running ones, are ready")
 	upCmd.Flags().BoolVar(&upWait, "ready", false,
 		"Alias for --wait")
 	upCmd.Flags().DurationVar(&upWaitTimeout, "wait-timeout", upWaitTimeout,
