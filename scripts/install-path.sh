@@ -43,7 +43,7 @@ mentions() {
 candidates=".zshrc .zshenv .bashrc .bash_profile .bash_login .profile"
 
 if [ "${NO_MODIFY_PATH:-0}" != "0" ]; then
-	echo "PATH       没动你的启动文件（NO_MODIFY_PATH=$NO_MODIFY_PATH）。要让 option-berth 在终端里能用，把这一行加到你的启动文件："
+	echo "PATH       没动你的启动文件（NO_MODIFY_PATH=${NO_MODIFY_PATH}）。要让 option-berth 在终端里能用，把这一行加到你的启动文件："
 	echo
 	echo "    $line"
 	exit 0
@@ -66,6 +66,8 @@ done
 
 if [ -n "$wrote" ]; then
 	echo "PATH       往 ${wrote# } 各加了一行 —— 新开的终端里生效（当前这个 shell 要先 . ~/.zshrc）"
-else
+elif [ -n "$kept" ]; then
 	echo "PATH       ~/.local/bin 已经在 ${kept# } 里了 —— 没动"
+else
+	printf '%s\n\n    %s\n' "PATH       没有找到已有的 shell 启动文件；未修改 PATH。请手动添加：" "$line"
 fi
