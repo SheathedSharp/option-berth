@@ -61,6 +61,13 @@ func init() {
 }
 
 func upRun(cmd *cobra.Command, args []string) error {
+	// Validate before resolving a project or issuing any mutating RPC.
+	if (upWait || cmd.Flags().Changed("wait-timeout")) && upWaitTimeout <= 0 {
+		return usageError{fmt.Errorf("--wait-timeout must be positive")}
+	}
+	if cmd.Flags().Changed("wait-timeout") && !upWait {
+		return usageError{fmt.Errorf("--wait-timeout requires --wait or --ready")}
+	}
 	params, cfg, err := upParams(args)
 	if err != nil {
 		return err
