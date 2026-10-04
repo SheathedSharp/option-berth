@@ -21,6 +21,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -76,8 +77,9 @@ type Options struct {
 // and ordinary writes are serialised behind a mutex. Conditional control
 // release refuses contention; other Store handles can still cause SQLITE_BUSY.
 type Store struct {
-	db   *sql.DB
-	path string
+	db       *sql.DB
+	path     string
+	readOnly bool
 
 	wmu sync.Mutex
 
@@ -111,7 +113,16 @@ func OpenReadOnly(path string) (*Store, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, err
 	}
-	dsn := fmt.Sprintf("file:%s?mode=ro&_pragma=busy_timeout(1000)", path)
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	uriPath := filepath.ToSlash(abs)
+	if !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	uri := url.URL{Scheme: "file", Path: uriPath, RawQuery: "mode=ro&_pragma=busy_timeout(1000)"}
+	dsn := uri.String()
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("opening %s read-only: %w", path, err)
@@ -123,7 +134,7 @@ func OpenReadOnly(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("opening %s read-only: %w", path, err)
 	}
-	return &Store{db: db, path: path}, nil
+	return &Store{db: db, path: path, readOnly: true}, nil
 }
 
 // OpenWith is Open with options.
@@ -274,6 +285,9 @@ func isCorruption(err error) bool {
 func (s *Store) Close() error {
 	if s == nil || s.db == nil {
 		return nil
+	}
+	if s.readOnly {
+		return s.db.Close()
 	}
 	// Drop the idle pool: journal_mode can only change when one connection is
 	// left to change it.
