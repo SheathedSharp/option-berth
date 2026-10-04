@@ -94,9 +94,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          args=()
-          if [[ "$TARGET_OS/$TARGET_ARCH" == darwin/arm64 ]]; then args+=(--include-app); fi
-          python3 scripts/package_release.py --os "$TARGET_OS" --arch "$TARGET_ARCH" --output dist "${args[@]}"
+          # System Bash 3.2 treats an empty array as unset with nounset.
+          # Keep a nonempty positional argv; only the arm64 Mac target adds App.
+          set -- --os "$TARGET_OS" --arch "$TARGET_ARCH" --output dist
+          if [[ "$TARGET_OS/$TARGET_ARCH" == darwin/arm64 ]]; then set -- "$@" --include-app; fi
+          python3 scripts/package_release.py "$@"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: release-${{ matrix.os }}-${{ matrix.arch }}
