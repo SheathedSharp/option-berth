@@ -16,7 +16,7 @@ func TestProviderPlansKeepPromptAsOneLiteralArgument(t *testing.T) {
 		id, mode string
 		want     []string
 	}{
-		{"opencode", "native", []string{"--prompt", prompt}},
+		{"opencode", "native", []string{"--prompt=" + prompt}},
 		{"codex", "native", []string{"--", prompt}},
 		{"claude", "native", []string{"--", prompt}},
 		{"pi", "native", []string{"--", prompt}},
@@ -83,6 +83,23 @@ func TestPlanningRejectsUnsafeOrUnsupportedInputs(t *testing.T) {
 	} {
 		if _, err := Build(good, resolver); err == nil {
 			t.Fatal("accepted unavailable or relative binary")
+		}
+	}
+}
+
+// An argv boundary alone is not an option-value boundary in yargs: a message
+// beginning with --continue would otherwise resume a session instead of being
+// sent literally. Attached values keep provider options outside user messages.
+func TestOpenCodeNativeMessageCannotBecomeAnOption(t *testing.T) {
+	for _, message := range []string{"--continue", "--session=other", "--auto", "--help", "-x", "a=b\n中文 'literal'"} {
+		root := t.TempDir()
+		plan, err := Build(Options{Provider: "opencode", Worktree: root, Prompt: message},
+			func(string) (string, error) { return filepath.Join(root, "opencode"), nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(plan.Arguments, []string{"--prompt=" + message}) {
+			t.Fatalf("message may be parsed as provider policy: %q", plan.Arguments)
 		}
 	}
 }
