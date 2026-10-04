@@ -112,7 +112,7 @@ func (p *servicePortRelease) release(ctx context.Context, rt *Runtime, group str
 
 func finishGroupStop(ctx context.Context, req *Request, group string, plan *servicePortRelease, after state.Snapshot, scanErr error, results []state.KillResult) (any, error) {
 	env := killEnvelope(results)
-	released, err := plan.release(ctx, req.Runtime, group, after, scanErr, results)
+	released, err := plan.releaseAfterContention(ctx, req.Runtime, group, after, scanErr, results)
 	if err != nil {
 		if req.Runtime.Logger != nil {
 			req.Runtime.Logger.Warn("retaining group port reservations after stop", "group", group, "error", err)

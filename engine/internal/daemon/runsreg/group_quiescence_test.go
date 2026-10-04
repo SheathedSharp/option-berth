@@ -99,3 +99,20 @@ func TestNoGroupRunsPropagatesStoreFailureAndUnlocks(t *testing.T) {
 	}
 	r.mirrorMu.Unlock()
 }
+
+func TestOnlyBusyRegistryAdvertisesReleaseRetry(t *testing.T) {
+	r := New()
+	r.Mirror = false
+	r.mirrorMu.Lock()
+	_, err := r.WithNoGroupRuns(context.Background(), "demo", "", func() (int, error) { t.Fatal("busy mutation ran"); return 0, nil })
+	r.mirrorMu.Unlock()
+	var marker interface{ RetryableReservationRelease() bool }
+	if !errors.As(err, &marker) || !marker.RetryableReservationRelease() {
+		t.Fatalf("busy error lost retry identity: %v", err)
+	}
+	r.Register(Record{PID: 424242, Group: "demo", StartedAt: time.Now()})
+	_, err = r.WithNoGroupRuns(context.Background(), "demo", "", func() (int, error) { t.Fatal("live group mutation ran"); return 0, nil })
+	if errors.As(err, &marker) {
+		t.Fatal("remaining runs must not be treated as transient contention")
+	}
+}

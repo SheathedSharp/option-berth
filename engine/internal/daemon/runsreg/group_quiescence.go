@@ -25,7 +25,7 @@ func (r *Registry) WithNoGroupRuns(ctx context.Context, group, configPath string
 		return 0, errors.New("run release requires a group and a mutation")
 	}
 	if !r.mirrorMu.TryLock() {
-		return 0, errors.New("run registry is changing; retain reservations and retry")
+		return 0, reservationBusyError{}
 	}
 	defer r.mirrorMu.Unlock()
 	r.mu.Lock()
@@ -47,3 +47,12 @@ func (r *Registry) WithNoGroupRuns(ctx context.Context, group, configPath string
 	}
 	return mutate()
 }
+
+// Only lock contention is retryable; recorded runs or store failures are not.
+// The marker keeps the release caller independent of the concrete registry.
+type reservationBusyError struct{}
+
+func (reservationBusyError) Error() string {
+	return "run registry is changing; retain reservations and retry"
+}
+func (reservationBusyError) RetryableReservationRelease() bool { return true }
