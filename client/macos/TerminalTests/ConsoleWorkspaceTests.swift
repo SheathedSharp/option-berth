@@ -17,13 +17,16 @@ extension TerminalChecks {
         try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: other)
         try check(registry.workspace(alias.path) === b, "symlink aliases duplicated console state")
         let one = UUID(), two = UUID()
-        a.terminalSelection = one; a.terminalSplit = two
+        a.single(one, agent: false)
+        try a.split(two, beside: one, agent: false, axis: .horizontal)
         a.select(two, agent: false)
-        try check(a.terminalSelection == two && a.terminalSplit == one, "selecting the secondary duplicated a pane")
+        try check(a.terminalSelection == two && Set(a.terminalLayout.sessions) == Set([one, two]), "selecting a pane duplicated or lost a layout reference")
         a.forget(two)
-        try check(a.terminalSelection == one && a.terminalSplit == nil, "closing the primary lost the remaining pane")
-        a.agentSelection = one; a.agentSplit = two; a.select(two, agent: true); a.forget(one)
-        try check(a.agentSelection == two && a.agentSplit == nil && a.terminalSelection == nil, "split cleanup left stale ids")
+        try check(a.terminalSelection == one && a.terminalLayout.sessions == [one], "closing the selected pane lost the survivor")
+        a.single(one, agent: true)
+        try a.split(two, beside: one, agent: true, axis: .vertical)
+        a.select(two, agent: true); a.forget(one)
+        try check(a.agentSelection == two && a.agentLayout.sessions == [two] && a.terminalSelection == nil, "layout cleanup left stale ids")
         var owned: [TerminalSession] = []
         defer { for s in owned { s.stop(force: true) }; _ = until { owned.allSatisfy { !$0.isActive } } }
         let first = try registry.add(worktree: root.path, title: "first", kind: "agent:pi:native",
@@ -41,6 +44,8 @@ extension TerminalChecks {
         try check(first.title == "Review API", "invalid rename mutated title")
         registry.forgetWorkspace(root.path)
         try check(registry.sessions.contains { $0.id == first.id }, "removing a project orphaned a process")
+        let detachedArchive = try registry.snapshot()
+        try check(detachedArchive.sessions.contains { $0.id == first.id }, "removed manifest prevented preserving standalone session metadata")
         registry.select(first)
         try check(registry.workspace(root.path).agentSelection == first.id && registry.workspace(root.path).agentMode,
                   "session manager cannot reopen a detached project's session")

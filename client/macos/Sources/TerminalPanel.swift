@@ -15,25 +15,19 @@ struct TerminalPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Label("Terminal", systemImage: "terminal")
+                Label("Shell", systemImage: "terminal")
                     .font(Face.sans(12, .semibold))
-                Text("独立会话 · 原生输入 / Native input")
+                Text("输入互不广播")
                     .font(Face.sans(10)).foregroundStyle(Ink.inkFaint).lineLimit(1).layoutPriority(-1)
                 Spacer()
-                if let selected {
-                    Menu("并排 / Split") {
-                        Button("单窗格 / Single pane") { workspace.single(selected.id, agent: false) }
-                        ForEach(sessions.inWorktree(root).filter { $0.id != selected.id }) { session in
-                            Button(session.title) { do { try workspace.split(session.id, beside: selected.id, agent: false, axis: .horizontal) } catch { problem = error.localizedDescription } }
-                        }
-                    }.fixedSize()
-                    Button { showTerminalFind(selected.terminal) } label: { Image(systemName: "magnifyingglass") }
-                        .help("查找终端输出 / Find terminal output")
-                }
+
+                if frozen { Label("命令块", systemImage: "square").font(Face.sans(10)).foregroundStyle(Ink.inkMuted) }
+                else {
                 Toggle("命令块", isOn: $integrationEnabled)
                     .toggleStyle(.checkbox).help("仅为新建 zsh 启用临时集成，不修改 shell 配置；命令仅留在内存")
                     .disabled(frozen || URL(fileURLWithPath: TerminalSession.shell).lastPathComponent != "zsh")
-                Button("新建终端 / New terminal", action: newShell).disabled(frozen)
+                }
+                Button("新建终端", action: newShell).disabled(frozen)
             }
             .padding(12)
             if !scoped.isEmpty {
@@ -59,7 +53,7 @@ struct TerminalPanel: View {
                 ViewThatFits(in: .vertical) {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("在这份 checkout 中工作。")
-                        .font(Face.display(20, .medium)).foregroundStyle(Ink.ink)
+                        .font(Face.sans(20, .semibold)).foregroundStyle(Ink.ink)
                     Text("Start a native shell in this worktree.")
                         .font(Face.sans(12)).foregroundStyle(Ink.inkMuted)
                     Text(root).font(Face.mono(11)).foregroundStyle(Ink.inkFaint)

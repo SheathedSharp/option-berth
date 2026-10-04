@@ -29,7 +29,7 @@ struct WorkspaceConsole: View {
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 235)
                 }
                 Spacer()
-                Text("Worktree · Git · Runtime").font(Face.mono(10)).foregroundStyle(Ink.inkFaint)
+                Text(workspace.agentMode ? "⌘↩ 新会话" : "原生输入").font(Face.mono(10)).foregroundStyle(Ink.inkFaint)
             }.padding(.horizontal, 12).padding(.vertical, 8)
             Hairline()
             if workspace.agentMode { AgentPanel(root: root, frozen: frozen, workspace: workspace).id(root) }
@@ -48,12 +48,14 @@ struct AgentPanel: View {
     @State private var issue: String?
     @State private var loading = false
     @State private var planning: Task<Void, Never>?
+    @State private var operationID = UUID()
+    @State private var resumedIdentity: String?
 
     init(root: String, frozen: Bool = false, workspace: ConsoleWorkspace) {
         self.root = root; self.frozen = frozen
         self.workspace = workspace
         if frozen {
-            _providers = State(initialValue: [ExternalAgent(id: "codex", name: "Codex", command: "codex", installed: true, nativePrompt: true)])
+            _providers = State(initialValue: [ExternalAgent(id: "codex", name: "Codex", command: "codex", installed: true, nativePrompt: true, resumeFile: true)])
             workspace.draft = "检查当前 worktree 的服务状态，并说明失败原因。"
         }
     }
@@ -76,19 +78,18 @@ struct AgentPanel: View {
                         ForEach(providers) { provider in
                             Text(provider.name + (provider.installed ? "" : " · 未安装 / Missing")).tag(provider.id)
                         }
-                    }.labelsHidden().frame(maxWidth: 210)
+                    }.labelsHidden().frame(maxWidth: 185).disabled(loading)
                 }
                 Spacer()
-                if let selected {
-                    Menu("并排 / Split") {
-                        Button("单窗格 / Single pane") { workspace.single(selected.id, agent: true) }
-                        ForEach(sessions.inWorktree(root).filter { $0.id != selected.id }) { session in
-                            Button(session.title) { do { try workspace.split(session.id, beside: selected.id, agent: true, axis: .horizontal) } catch { issue = error.localizedDescription } }
-                        }
-                    }.fixedSize()
-                    Button { showTerminalFind(selected.terminal) } label: { Image(systemName: "magnifyingglass") }
-                        .help("查找终端输出 / Find terminal output")
+
+                if loading {
+                    ProgressView().controlSize(.small)
+                    Button("取消") { planning?.cancel() }.help("取消当前计划读取，不结束已运行会话")
                 }
+                Button("续接…", action: chooseResumeFile)
+                    .disabled(!available || provider?.supportsResume != true)
+                    .help("选择当前 worktree 的原始会话文件，不使用最近对话 / Resume explicit session file")
+                    .accessibilityIdentifier("workspace.agent.resume")
                 nativeButton
             }.padding(12)
             if !scoped.isEmpty {
@@ -107,6 +108,11 @@ struct AgentPanel: View {
                         }
                     }.padding(.horizontal, 12)
                 }
+            }
+            if let resumedIdentity {
+                Label(resumedIdentity, systemImage: "arrow.uturn.backward")
+                    .font(Face.mono(10)).foregroundStyle(Ink.inkMuted)
+                    .lineLimit(1).padding(.horizontal, 12).padding(.bottom, 8)
             }
             Hairline()
             if let selected {
@@ -136,22 +142,24 @@ struct AgentPanel: View {
                 .overlay(RoundedRectangle(cornerRadius: 4).stroke(Ink.line, lineWidth: 1))
                 .accessibilityLabel("给 coding agent 的新会话消息 / New agent-session message")
                 HStack {
-                    Text("不自动恢复其他 worktree 会话 · No implicit resume")
+                    Text("新消息新建会话；续接须选择原始文件")
                         .font(Face.sans(9.5)).foregroundStyle(Ink.inkFaint).lineLimit(1).truncationMode(.tail).layoutPriority(-1)
                     Spacer()
-                    if loading { Button("取消 / Cancel") { planning?.cancel() } }
                     if !loading && !frozen { Button("刷新 / Refresh") {
                         refreshProviders()
                     } }
                     sendButton
                 }
-                if let issue { Text(issue).font(Face.sans(10)).foregroundStyle(Ink.ink).textSelection(.enabled) }
             }.padding(12)
+            }
+            if let issue {
+                Text(issue).font(Face.sans(11)).foregroundStyle(Ink.ink).textSelection(.enabled)
+                    .padding(10).frame(maxWidth: .infinity, alignment: .leading).background(Ink.surface)
             }
         }
         .background(Ink.canvas)
         .onAppear { refreshProviders() }
-        .onDisappear { planning?.cancel(); planning = nil }
+        .onDisappear { planning?.cancel(); planning = nil; operationID = UUID(); loading = false }
     }
 
     private var emptyState: some View {
@@ -160,7 +168,7 @@ struct AgentPanel: View {
         ViewThatFits(in: .vertical) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("你的 agent，它自己的原生会话。")
-                    .font(Face.display(19, .medium))
+                    .font(Face.sans(19, .semibold))
                 Text("Your coding agent. Its own native session.")
                     .font(Face.sans(12)).foregroundStyle(Ink.inkMuted)
                 Text("消息建立新会话；后续交流在原生终端中继续。\nA message starts a new session; continue in the native terminal.")
@@ -192,61 +200,66 @@ struct AgentPanel: View {
 
     private func refreshProviders() {
         guard !loading, !frozen else { return }
-        loading = true
-        planning = Task { @MainActor in
-            await loadProviders()
-            planning = nil
-        }
-    }
-
-    private func loadProviders() async {
-        if frozen {
-            providers = [ExternalAgent(id: "codex", name: "Codex", command: "codex", installed: true, nativePrompt: true),
-                         ExternalAgent(id: "deepseek", name: "DeepSeek Harness", command: "dsh", installed: false, nativePrompt: false)]
-            workspace.draft = "检查当前 worktree 的服务状态，并说明失败原因。"
-            return
-        }
-        loading = true
-        issue = nil
-        defer { loading = false }
         guard let binary = DaemonLaunch.binaryPath() else {
-            issue = "需要支持 agent list/plan 的 oberth / A compatible oberth is required"
-            return
+            issue = "需要支持 agent list/plan 的 oberth / A compatible oberth is required"; return
         }
-        do {
-            let values = try await AgentBridge.providers(binary: binary, environment: TerminalSession.environment())
-            try Task.checkCancellation()
-            providers = values
-            if !values.contains(where: { $0.id == workspace.providerID }),
-               let first = values.first(where: { $0.installed }) ?? values.first { workspace.providerID = first.id }
-        } catch is CancellationError {} catch { issue = error.localizedDescription }
+        let id = UUID(); operationID = id
+        loading = true; issue = nil
+        planning = Task { @MainActor in
+            defer { if operationID == id { loading = false; planning = nil } }
+            do {
+                let values = try await AgentBridge.providers(binary: binary, environment: TerminalSession.environment())
+                try Task.checkCancellation()
+                guard operationID == id else { return }
+                providers = values
+                if !values.contains(where: { $0.id == workspace.providerID }),
+                   let first = values.first(where: { $0.installed }) ?? values.first { workspace.providerID = first.id }
+            } catch is CancellationError {} catch {
+                if operationID == id { issue = error.localizedDescription }
+            }
+        }
     }
 
-    private func launch(withPrompt: Bool) {
+    private func chooseResumeFile() {
+        guard available, provider?.supportsResume == true else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true; panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false; panel.canCreateDirectories = false
+        panel.prompt = "校验并续接"
+        panel.message = "选择原始会话文件或 OpenCode 导出。只续接当前 worktree；登录、审批和后续输入留在 agent 的原生界面。"
+        guard panel.runModal() == .OK, let source = panel.url else { return }
+        launch(withPrompt: false, resumeFile: source.path)
+    }
+
+    private func launch(withPrompt: Bool, resumeFile: String? = nil) {
         guard available, let provider, let binary = DaemonLaunch.binaryPath() else { return }
         if withPrompt && workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return }
+        if resumeFile != nil && provider.supportsResume != true { return }
         let message = withPrompt ? workspace.draft : nil
         let mode = withPrompt && !provider.nativePrompt ? "task" : "native"
         let selectedRoot = root
+        let id = UUID(); operationID = id
         loading = true
         issue = nil
         planning?.cancel()
         planning = Task { @MainActor in
-            defer { loading = false }
+            defer { if operationID == id { loading = false; planning = nil } }
             do {
                 let plan = try await AgentBridge.plan(binary: binary, provider: provider.id, root: selectedRoot,
-                                                     mode: mode, prompt: message, environment: TerminalSession.environment())
+                                                     mode: mode, prompt: message, environment: TerminalSession.environment(), resumeFile: resumeFile)
                 try Task.checkCancellation()
-                let title = "\(provider.name) \(scoped.count + 1)" + (mode == "task" ? " · task" : "")
+                guard operationID == id else { return }
+                let title = "\(provider.name) \(scoped.count + 1)" + (resumeFile != nil ? " · 续接" : (mode == "task" ? " · task" : ""))
                 let session = try sessions.add(worktree: plan.worktree, title: title,
                                                 kind: "agent:\(provider.id):\(mode)", executable: plan.executable, arguments: plan.arguments)
+                resumedIdentity = plan.resume.map { "\(provider.name) · \($0.sessionID.prefix(12)) · 原生审批" }
                 workspace.agentSelection = session.id
                 if withPrompt && workspace.draft == message { workspace.draft = "" }
                 workspace.nativeExpanded = mode == "native"
                 focus(session)
             } catch is CancellationError {
-                issue = "已取消，未启动 agent / Cancelled before agent launch"
-            } catch { issue = error.localizedDescription }
+                if operationID == id { issue = "已取消，未启动 agent / Cancelled before agent launch" }
+            } catch { if operationID == id { issue = error.localizedDescription } }
         }
     }
 

@@ -9,7 +9,16 @@ import SwiftUI
 /// token based views lightweight while the published properties make changes
 /// in the settings sheet take effect immediately.
 final class UISettings: ObservableObject {
-    static let shared = UISettings()
+    static let shared: UISettings = {
+        // Frozen renders must not read/write a person's persisted UI choices.
+        // A unique nonpersistent preference domain supplies deterministic tokens.
+        guard CommandLine.arguments.contains("--render-states") else { return UISettings() }
+        let arguments = CommandLine.arguments
+        let theme = arguments.firstIndex(of: "--render-theme").flatMap { index in
+            index + 1 < arguments.count ? Theme(rawValue: arguments[index + 1]) : nil
+        } ?? .paper
+        return UISettings(frozenTheme: theme)
+    }()
 
     enum Theme: String, CaseIterable, Identifiable {
         case glacier
@@ -136,6 +145,13 @@ final class UISettings: ObservableObject {
         static let accent = "ui.accent"
     }
 
+    private init(frozenTheme: Theme) {
+        defaults = UserDefaults(suiteName: "option-berth.frozen." + UUID().uuidString)!
+        // Initial assignments do not invoke didSet, so no preference file is written.
+        theme = frozenTheme; interfaceFontName = "__system__"; dataFontName = "Monaspace Neon"
+        interfaceScale = 1; dataScale = 1; logScale = 1; accentHex = nil
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         // Paper is the calmest reading surface for a service board on first launch.
@@ -147,6 +163,8 @@ final class UISettings: ObservableObject {
         logScale = defaults.object(forKey: Keys.logScale) as? Double ?? 1.0
         accentHex = defaults.string(forKey: Keys.accent)
     }
+
+    var colorScheme: ColorScheme { theme == .midnight || theme == .forest ? .dark : .light }
 
     fileprivate var palette: ThemePalette { theme.palette }
 

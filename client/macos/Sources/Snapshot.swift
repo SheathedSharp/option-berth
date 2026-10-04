@@ -79,7 +79,15 @@ enum Snapshot {
 
         let left = TerminalSession(worktree: "/workspace/demo", title: "Shell · feature/api")
         let right = TerminalSession(worktree: "/workspace/demo", title: "Codex · feature/api", kind: "agent:codex:native")
-        let splitCode = write(SessionCanvas(primary: left, secondary: right, frozen: true),
+        let nested = TerminalSession(worktree: "/workspace/demo", title: "Shell · tests")
+        let layout = ConsoleWorkspace()
+        layout.single(left.id, agent: false)
+        do {
+            try layout.split(right.id, beside: left.id, agent: false, axis: .horizontal)
+            try layout.split(nested.id, beside: right.id, agent: false, axis: .vertical)
+        } catch { return 1 }
+        let splitCode = write(PaneWorkspaceView(primary: left, workspace: layout, agent: false, frozen: true,
+                                                frozenSessions: [left, right, nested]),
                               to: url.appendingPathComponent("11-console-split.png").path,
                               width: width, height: height)
         if splitCode != 0 { return splitCode }
@@ -93,7 +101,7 @@ enum Snapshot {
             width: width, height: 440)
         if sheetCode != 0 { return sheetCode }
 
-        let settingsCode = write(SettingsSheet(scrolls: false),
+        let settingsCode = write(SettingsSheet(scrolls: false, previewJev: true),
                                  to: url.appendingPathComponent("07-settings.png").path,
                                  width: 720, height: 560)
         if settingsCode != 0 { return settingsCode }
@@ -111,7 +119,7 @@ enum Snapshot {
     private static func write(_ view: some View, to path: String,
                               width: CGFloat, height: CGFloat? = nil) -> Int32 {
         let sized = height.map { view.frame(width: width, height: $0) } ?? view.frame(width: width)
-        let renderer = ImageRenderer(content: sized.background(Ink.canvas))
+        let renderer = ImageRenderer(content: sized.background(Ink.canvas).environment(\.colorScheme, UISettings.shared.colorScheme))
         renderer.scale = 2
         guard let image = renderer.cgImage else {
             FileHandle.standardError.write(Data("离屏渲染没产出图像：\(path)\n".utf8))
