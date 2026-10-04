@@ -72,7 +72,7 @@ func TestVersionStillComesFromVersionFile(t *testing.T) {
 
 func TestRunCLIRejectsAmbiguousArgumentsBeforeBuild(t *testing.T) {
 	root := mageFixture(t)
-	err := RunCLI(`status --project 'project with spaces'`)
+	err := RunCLI(`doctor --project 'project with spaces'`)
 	if err == nil || !strings.Contains(err.Error(), "JSON") {
 		t.Fatalf("expected exact-argv guidance before build: %v", err)
 	}

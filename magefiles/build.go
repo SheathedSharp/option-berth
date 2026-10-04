@@ -485,7 +485,7 @@ func splitArgs(args string) ([]string, error) {
 		return argv, nil
 	}
 	if strings.ContainsAny(args, "\"'\\") {
-		return nil, errors.New("quoted or escaped CLI arguments require a JSON string array; for example [\"status\",\"--project\",\"project with spaces\"]")
+		return nil, errors.New("quoted or escaped CLI arguments require a JSON string array; for example [\"doctor\",\"--project\",\"project with spaces\"]")
 	}
 	return strings.Fields(args), nil
 }
