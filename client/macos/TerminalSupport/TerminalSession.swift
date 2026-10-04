@@ -8,7 +8,7 @@ import SwiftUI
 public final class TerminalSession: ObservableObject, Identifiable {
     public let id = UUID()
     public let worktree: String
-    public let title: String
+    @Published public private(set) var title: String
     public let kind: String
     public let terminal: HostedTerminalView
     @Published public private(set) var state = "未启动 / Not started"
@@ -17,7 +17,7 @@ public final class TerminalSession: ObservableObject, Identifiable {
     public var onChange: (() -> Void)?
 
     public init(worktree: String, title: String = "Terminal", kind: String = "terminal") {
-        self.worktree = worktree.hasPrefix("/") ? URL(fileURLWithPath: worktree).standardizedFileURL.resolvingSymlinksInPath().path : ""
+        self.worktree = worktree.hasPrefix("/") && !worktree.utf8.contains(0) ? URL(fileURLWithPath: worktree).standardizedFileURL.resolvingSymlinksInPath().path : ""
         self.title = title
         self.kind = kind
         terminal = HostedTerminalView(frame: NSRect(x: 0, y: 0, width: 760, height: 340))
@@ -41,11 +41,15 @@ public final class TerminalSession: ObservableObject, Identifiable {
         guard worktree.hasPrefix("/"), FileManager.default.fileExists(atPath: worktree, isDirectory: &isDirectory), isDirectory.boolValue else {
             throw TerminalFailure("工作目录不存在 / Worktree directory is unavailable")
         }
-        guard executable.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: executable),
+        guard executable.hasPrefix("/"), !executable.utf8.contains(0), FileManager.default.isExecutableFile(atPath: executable),
               !arguments.contains(where: { $0.utf8.contains(0) }) else {
             throw TerminalFailure("可执行文件或参数无效 / Invalid executable or arguments")
         }
         var env = environment ?? Self.environment()
+        guard env.allSatisfy({ !$0.key.isEmpty && !$0.key.contains("=") && !$0.key.utf8.contains(0) && !$0.value.utf8.contains(0) }) else {
+            throw TerminalFailure("终端环境变量无效 / Invalid terminal environment")
+        }
+        env["PWD"] = worktree
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
         isActive = true
@@ -56,6 +60,16 @@ public final class TerminalSession: ObservableObject, Identifiable {
             state = "启动失败 / Launch failed"
             throw TerminalFailure(state)
         }
+        onChange?()
+    }
+
+    public func rename(_ name: String) throws {
+        let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, value.count <= 64,
+              value.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) else {
+            throw TerminalFailure("会话名称须为 1–64 字且不含控制字符 / Use 1–64 characters without control codes")
+        }
+        title = value
         onChange?()
     }
 
@@ -149,12 +163,25 @@ public final class HostedTerminalView: TerminalView, TerminalViewDelegate, Local
         alert.addButton(withTitle: "打开 / Open")
         if alert.runModal() == .alertSecondButtonReturn { NSWorkspace.shared.open(url) }
     }
+    public static func containing(_ responder: NSResponder?) -> HostedTerminalView? {
+        var view = responder as? NSView
+        while let current = view {
+            if let terminal = current as? HostedTerminalView { return terminal }
+            view = current.superview
+        }
+        return nil
+    }
     public override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command {
             switch event.charactersIgnoringModifiers {
             case "c": copy(self); return true
             case "v": paste(self); return true
             case "a": selectAll(self); return true
+            case "f":
+                let item = NSMenuItem()
+                item.tag = NSTextFinder.Action.showFindInterface.rawValue
+                performTextFinderAction(item)
+                return true
             default: break
             }
         }

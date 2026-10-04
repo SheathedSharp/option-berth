@@ -70,7 +70,7 @@ mage window
 截图前先执行 `mage client` 或 `mage buildClient`；截图目标不再隐式构建。
 
 mage states 生成 01-empty、02-services-live、03-services-idle、04-runtime-facts、
-05-connection-error、06-manifest-review、07-settings、07-settings-jev、07-settings-typography 、08-code、09-terminal 和 10-agent-console。改界面后必须运行 mage states
+05-connection-error、06-manifest-review、07-settings、07-settings-jev、07-settings-typography 、08-code、09-terminal 、10-agent-console 和 11-console-split。改界面后必须运行 mage states
 并查看 PNG；需要验证真实 daemon 数据时再运行 mage snapshot。mage window 用于检查标题栏、
 弹窗和窗口尺寸等离屏渲染看不到的部分。
 
@@ -119,7 +119,7 @@ SwiftTerm 固定版本负责终端仿真与 PTY；构建需要 Swift 6+，首次
 
 在终端页切换 **Terminal / Agent session**。Terminal 只显示 shell 会话，Agent session
 只显示 agent 会话；两者都固定归属于创建时选择的 worktree。切换页面不会结束原生进程，
-也不会把会话迁移到另一个项目。草稿输入不跨页面持久保存。
+也不会把会话迁移到另一个项目。草稿、provider、模式与选中会话按 worktree 在应用内存中保留，切换页面不会丢失；退出应用后不恢复。
 
 先自行安装并登录所需的 OpenCode、Codex、Claude Code、DeepSeek Harness 或 Pi。
 客户端使用同一份 `oberth agent list/plan` 契约；未安装会标记 Missing，不自动安装或登录。
@@ -147,7 +147,7 @@ its initial worktree. Install/authenticate your coding agent yourself; Refresh o
 In the message composer, Cmd+Enter starts a new session with a literal initial prompt. Shift+Cmd+Enter
 focuses the selected live native session, or opens a new native session when none is available.
 Continue subsequent turns in the agent's own terminal. Return inserts a newline; marked IME text is not
-submitted. Composer shortcuts are not installed in native terminals. Draft text is not persisted across pages.
+submitted. Composer shortcuts are not installed in native terminals. Drafts, provider choice, mode and selection survive page changes in memory, not app restarts.
 DeepSeek uses headless for messages and requires an existing tui profile for native mode; switching
 between them does not resume the same conversation. No agent reasoning loop, credential store,
 automatic installation, approval bypass, shell prompt interpolation, or implicit cross-worktree resume is added.
@@ -166,3 +166,40 @@ BERTH_AGENT_TEST_BINARY="$PWD/bin/oberth" \
 AgentChecks 的默认路径使用合成 CLI 协议；显式二进制路径验证实际 CLI→计划→PTY 链路。
 两种路径均检查真实窗口按键、组合文字保护、原生编辑/撤销、字面参数、会话连续性、
 错误边界与取消。不把这些回归等同于已登录的五个 provider、完整输入法或长时间交互验收。
+
+## 会话工作区 / Session workspace
+
+**⇧⌘O** 打开全局会话管理。可以按名称、worktree、agent 类型搜索，重命名并打开、结束或关闭
+本应用拥有的会话。即使原项目清单被移除，活动 PTY 仍可从这里找到；未关联清单的会话页明确
+提示没有项目服务事实，不把会话存在冒充服务正常。移除项目会丢弃该项目的输入草稿与导航状态，
+但不会静默杀掉终端进程。关闭已退出会话才释放会话名额（总共最多 16 个）。
+
+**并排 / Split** 选择同一 worktree 内另一个已有会话，最多同时显示两栏；可将 shell 与 agent
+并排。它不隐式创建进程，也不广播键盘输入；每栏有自己的名称、状态、查找和结束入口。
+选择当前副栏会与主栏交换，关闭主栏会回到剩下的会话。原生分隔线可调整宽度。
+这不是任意递归布局，也不是跨工作区拼接终端。
+
+进入 **原生 / Native** 时隐藏消息输入框，给 agent 原生界面更多空间；点击 **消息框 / Compose**
+返回首条消息编辑。后续对话继续在 agent 自己的终端内进行，没有向未知 TUI 状态模拟发送。
+**⌘F** 对当前焦点终端使用 SwiftTerm 原生历史搜索；每栏的放大镜只搜索该栏。
+原生 Edit/Window 菜单保留，复制、粘贴、选择、撤销交给响应链。代码页快捷键为 **⌥⌘G**，
+避免占用常见的查找下一项按键。字体/字号和主题变更同步已打开终端。
+
+当前采用一个工作区窗口承载 PTY，避免同一原生视图同时被两个窗口抢占；关闭窗口后可从
+Window 菜单重新打开。多窗口与可转移的 pane ownership 尚未实现。退出应用仍先请求会话退出；
+允许强制结束时只升级那些已经处于 stopping 的会话，新会话先收到正常退出请求。
+
+**English.** Shift+Cmd+O opens the application-owned session manager, including sessions whose manifest
+was removed. Search by name, worktree or agent; rename, reopen, stop and close explicitly. Drafts and
+navigation choices stay in memory per canonical worktree and are cleared on explicit project removal or
+app exit. There is no process or transcript restoration after restart.
+Split shows up to two existing sessions from the same worktree (shell and agent may be mixed), with
+independent keyboard input and per-pane find/stop actions. Native mode collapses the composer without
+creating another agent process. Cmd+F searches the focused terminal through SwiftTerm. Standard Edit and
+Window menus remain available; Option+Cmd+G opens the code page. The app uses one workspace window so
+one PTY view cannot be reparented into two windows. Multi-window and recursive pane layouts are not implemented.
+
+冻结 split 图用静态 HStack 表达几何（ImageRenderer 不能捕获 NSSplitView），不是实际终端截图。
+TerminalChecks 另用真实 NSWindow/NSSplitView/PTY 检查分隔尺寸、焦点、独立输入、历史查找、字体
+更新、工作目录、状态保留和混合退出升级；不读取用户剪贴板，不把这些检查等同于所有鼠标菜单、
+实际输入法与长期负载验收。

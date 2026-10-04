@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import BerthTerminal
 
 /// The project views: declared services, their runtime facts, and read-only Git context.
 /// There is no machine-wide port scope. A port only appears inside the
@@ -8,10 +9,12 @@ enum Scope: Hashable {
     case services(String)
     case code(String)
     case terminal(String)
+    case console(String)
     case project(String)
 
     var title: String {
         switch self {
+        case .console: return "会话 / Sessions"
         case .services(let name), .code(let name), .terminal(let name), .project(let name):
             return name.isEmpty ? "项目" : name
         }
@@ -19,6 +22,7 @@ enum Scope: Hashable {
 
     var projectName: String? {
         switch self {
+        case .console: return nil
         case .services(let name), .code(let name), .terminal(let name), .project(let name):
             return name.isEmpty ? nil : name
         }
@@ -99,6 +103,16 @@ struct BoardView: View {
         }
         .ignoresSafeArea(.container, edges: .top)
         .background(Ink.canvas)
+        .sheet(isPresented: $views.showingSessions) {
+            SessionManager { session in
+                TerminalSessions.shared.select(session)
+                if let project = projects.first(where: { project in
+                    guard let root = project.rootDir else { return false }
+                    return TerminalSessions.shared.inWorktree(root).contains(where: { $0.id == session.id })
+                }) { views.scope = .terminal(project.name) }
+                else { views.scope = .console(session.worktree) }
+            }
+        }
         .sheet(item: $proposal) { result in
             AddProjectSheet(result: result, problem: proposalProblem,
                             scrolls: scrolls,
@@ -227,11 +241,20 @@ struct BoardView: View {
     }
 
     @ViewBuilder private var content: some View {
-        if let selected {
-            projectContent(selected)
-        } else {
-            emptyContent
-        }
+        if case .console(let root) = scope {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Text("独立会话 / Standalone sessions").font(Face.sans(12, .semibold))
+                    Spacer()
+                    Button("全部会话 / All sessions") { views.showingSessions = true }
+                }.padding(12)
+                Text(root).font(Face.mono(10)).lineLimit(1).truncationMode(.middle).padding(.horizontal, 12)
+                Text("未关联已登记清单；会话不代表项目服务状态。 / No registered manifest is associated.")
+                    .font(Face.sans(10)).foregroundStyle(Ink.inkMuted).padding(12)
+                WorkspaceConsole(root: root, frozen: !scrolls).id(root)
+            }
+        } else if let selected { projectContent(selected) }
+        else { emptyContent }
     }
 
     private var emptyContent: some View {
@@ -245,6 +268,7 @@ struct BoardView: View {
                 .foregroundStyle(Ink.inkFaint)
                 .fixedSize(horizontal: false, vertical: true)
             SheetButton(title: "接入项目", primary: true, action: addProject)
+            Button("打开会话管理 / Open session manager") { views.showingSessions = true }
         }
         .frame(maxWidth: 460, alignment: .leading)
         .padding(Metrics.gutter + 8)
@@ -262,7 +286,7 @@ struct BoardView: View {
                              ports: ports(for: project), scrolls: scrolls)
             case .code:
                 CodeView(git: git, project: project, scrolls: scrolls)
-            case .terminal:
+            case .terminal, .console:
                 WorkspaceConsole(root: project.rootDir ?? "", frozen: !scrolls, initialAgent: initialConsoleAgent).id(project.rootDir ?? project.name)
             case .project:
                 // Keep the old command-line scope as a compatibility alias. Runtime
@@ -438,6 +462,7 @@ struct BoardView: View {
               let config = project.configPath, !config.isEmpty else { return }
         let outcome = ProjectRegistry.remove(name: project.name, config: config)
         removing = nil
+        if outcome.registryRemoved, let root = project.rootDir { TerminalSessions.shared.forgetWorkspace(root) }
         if scope.projectName == project.name { views.scope = .services("") }
         services.refresh()
         if !outcome.registryRemoved || (!outcome.configRemoved && FileManager.default.fileExists(atPath: config)) {
