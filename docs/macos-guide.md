@@ -3,7 +3,7 @@
 ## 参考与取舍 / Reference boundaries
 
 [Warp quickstart](https://docs.warp.dev/quickstart/) 提供渐进发现的交互参考。
-当前已有分屏、命令面板、终端退出保护和显式恢复，不重复实现；首次使用指引独立跟踪 #47。
+当前已有分屏、命令面板、终端退出保护和显式恢复，不重复实现；首次使用指引从空态、工具栏“更多”或 Help 菜单打开，可随时跳过和重开。
 引导选择 [Apple TipKit](https://developer.apple.com/documentation/tipkit) 的原生提示，
 而不是导入第三方 tour 引擎；macOS 14 与客户端最低版本一致。产品步骤使用 SwiftUI，
 提示失败不能阻止用户打开帮助。不会启用 CloudKit 或遥测。

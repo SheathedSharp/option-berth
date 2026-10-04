@@ -305,3 +305,23 @@ client/macos/build/OptionBerth.app/Contents/MacOS/OptionBerth \
 默认窗口为 1060×720，最小为760×520。原生交互检查使用隔离 HOME/CFFIXED_USER_HOME/BERTH_HOME；
 发布检查包含 ClientChecks，测试不会读取真实 provider 账号。全部输入法、系统辅助功能和
 长期资源趋势仍属于单独验收范围，不由冻结截图代替。
+
+
+## 首次使用指引 / Getting started
+
+从空工作区、“更多”或 Help 菜单打开五步中英指引。TipKit 负责空态提示的展示和消隐，
+元数据只写 `$BERTH_HOME/client-tips`（默认 `~/.option-berth/client-tips`），不启用 CloudKit。
+TipKit 配置失败时，常驻帮助入口仍可用；冻结渲染不会配置提示数据库。
+
+“稍后”只关闭；“读完”只表示阅读过，不代表安装、登录或环境验证通过。下一步/上一步
+不会执行命令；只有“接入项目”明确请求关闭指引后打开原有目录选择器，仍须审阅清单。
+不新增默认快捷键，避免覆盖已有自定义按键。详细步骤见 [首次使用](../../docs/macos-guide.md)。
+
+`ClientChecks` 在隔离环境验证原生 TipKit 配置、真实窗口中的下一步/上一步/接入/读完/
+稍后/重开和无隐式进程启动；冻结图新增 `12-guide-1` 至 `12-guide-5`。
+辅助功能完整验收仍属独立范围：无辅助技术连接的测试宿主未暴露 SwiftUI AX 子节点，
+本回归使用仅发送至测试窗口的原生事件，不据此宣称 VoiceOver 验收通过。
+
+**English.** Open Getting started from the empty workspace, More or Help menu. TipKit uses local
+metadata only. The replayable guide remains available when TipKit is unavailable or dismissed.
+Reading never installs tools or validates readiness; Connect explicitly hands off to the existing picker.
