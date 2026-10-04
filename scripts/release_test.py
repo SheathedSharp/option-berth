@@ -154,3 +154,42 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(len(builds), 1)
         self.assertEqual(builds[0][0], self.root / "engine")
         self.assertLess(calls.index(builds[0]), calls.index(agent[0]))
+
+    def test_release_workflow_pins_event_sha_and_keeps_full_tag_objects(self):
+        workflow = (release.ROOT / ".github/workflows/release.yml").read_text()
+        checkouts = workflow.split("- uses: actions/checkout@")[1:]
+        self.assertEqual(len(checkouts), 4)
+        for block in checkouts:
+            settings = block.split("      - ", 1)[0]
+            self.assertIn("ref: ${{ github.sha }}", settings)
+            self.assertIn("fetch-depth: 0", settings)
+            self.assertIn("persist-credentials: false", settings)
+
+    def test_checkout_fallback_can_peel_a_local_tag_but_sha_only_preserves_it(self):
+        tag = "v1.2.3"
+        self.git("tag", "-a", tag, "-m", "annotated fixture")
+        annotation = self.git("rev-parse", "refs/tags/" + tag)
+        self.git("push", "origin", "refs/tags/" + tag)
+        def checkout(name):
+            directory = Path(self.tmp.name) / name
+            directory.mkdir()
+            def command(*args):
+                return subprocess.check_output(["git", *args], cwd=directory, text=True,
+                                               stderr=subprocess.DEVNULL).strip()
+            command("init")
+            command("remote", "add", "origin", str(self.remote))
+            command("fetch", "origin", "+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*")
+            command("checkout", "--detach", self.head)
+            self.assertEqual(command("cat-file", "-t", "refs/tags/" + tag), "tag")
+            return directory, command
+        old, old_git = checkout("old-checkout")
+        # Reproduce actions/checkout's ref+peeled-commit fallback from the failed
+        # real release. This is only a disposable local clone, never origin.
+        old_git("fetch", "--no-tags", "origin", "+" + self.head + ":refs/tags/" + tag)
+        with self.assertRaisesRegex(ValueError, "must be annotated"):
+            release.validate_tag(old, tag)
+        current, current_git = checkout("sha-only-checkout")
+        current_git("fetch", "--no-tags", "origin", self.head)
+        release.validate_tag(current, tag)
+        self.assertEqual(current_git("rev-parse", "refs/tags/" + tag), annotation)
+        self.assertIn(annotation, self.git("ls-remote", "origin", "refs/tags/" + tag))
