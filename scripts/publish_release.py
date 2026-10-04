@@ -60,7 +60,12 @@ def publish(directory: Path, tag: str) -> None:
     for path in files:
         with path.open("rb") as stream:
             local_hashes[path.name] = hashlib.file_digest(stream, "sha256").hexdigest()
-    notes = ("Protocol / feature / fix versioning. See the repository release guide.\n\n"
+    notes = ("## 使用前 / Before use\n\n"
+             "版本按协议 / 功能 / 修复步进。终端与外部 coding agent 使用同一份 worktree 上下文；"
+             "agent 需自行安装登录，后续对话与审批留在其原生界面。\n\n"
+             "macOS App 内含匹配引擎，但仅 ad-hoc 签名，尚无 Developer ID 或 Apple 公证。"
+             "Windows 构建包不等于完整生命周期支持。请先核对 SHA256SUMS，许可随包附带。\n\n"
+             "Protocol / feature / fix versioning. See the repository release guide.\n\n"
              "The macOS app includes the matching engine and has an ad-hoc signature only: "
              "it is not Developer ID signed or notarized. Windows ARM64 and some CLI archives are "
              "cross-built; build availability is not a claim of full native lifecycle coverage. "
