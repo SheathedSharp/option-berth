@@ -65,3 +65,21 @@ swiftc client/macos/Sources/CLI.swift client/macos/Sources/DaemonLaunch.swift \
 ```
 
 这些是有限合成回归，不是所有 provider、内核不可杀状态或长期资源趋势的验收。
+
+### Git 请求与草稿窗口
+
+`GitCancellationTests` 将真实 GitStore、队列、解码器和 CLI 与合成自执行夹具连接，验证
+切换 worktree、切换文件、移除选择以及 Store 销毁四条路径。下一请求发布前验证旧直接
+子进程已被回收；取消错误不能覆盖当前页面，已丢弃的排队读取不能再启动。
+
+`DraftRunStateTests` 的 14 项检查覆盖候选不等于成功、失败/取消、旧代际、一次性结果、
+空/非法候选、错误后零退出和 YAML 字节保真。
+
+`DraftSheetInteractionTests` 编译实际 SwiftUI 草稿窗口、CLI 与品牌组件，使用独立 HOME、
+CFFIXED_USER_HOME、BERTH_HOME 和合成命令，在固定 600×440 的自有 NSWindow 内发送
+原生鼠标事件。覆盖成功/失败/取消/视图消失四种场景，验证待退出时写入按钮禁用、成功后
+编辑器回填，以及子进程真实回收。事件仅发送给夹具窗口，不操作全局鼠标或用户剪贴板。
+该检查需要可创建 AppKit 窗口的 macOS 会话，已接入 Client workflow 和发版 verify。
+
+本轮另生成 13 张冻结状态图并检查草稿审查与 Git 页面；冻结图不代替上述原生事件检查。
+这些检查不声称覆盖所有输入法、系统辅助功能、真实 provider 账号、崩溃恢复或长期负载。
