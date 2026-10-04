@@ -15,6 +15,9 @@ public final class TerminalSession: ObservableObject, Identifiable {
     @Published public private(set) var isActive = false
     @Published public private(set) var isStopping = false
     public var onChange: (() -> Void)?
+    @Published public private(set) var commandBlocks: [CommandBlock] = []
+    private var commandParser: CommandBlockParser?
+    private var shellLease: ShellIntegrationLease?
 
     public init(worktree: String, title: String = "Terminal", kind: String = "terminal") {
         self.worktree = worktree.hasPrefix("/") && !worktree.utf8.contains(0) ? URL(fileURLWithPath: worktree).standardizedFileURL.resolvingSymlinksInPath().path : ""
@@ -23,6 +26,9 @@ public final class TerminalSession: ObservableObject, Identifiable {
         terminal = HostedTerminalView(frame: NSRect(x: 0, y: 0, width: 760, height: 340))
         terminal.onExit = { [weak self] status in
             guard let self else { return }
+            commandParser?.interrupt()
+            commandBlocks = commandParser?.blocks ?? []
+            shellLease = nil
             isActive = false
             isStopping = false
             if let status {
@@ -33,9 +39,19 @@ public final class TerminalSession: ObservableObject, Identifiable {
             }
             onChange?()
         }
+        terminal.onProtocolBytes = { [weak self] bytes in
+            guard let self, commandParser != nil else { return }
+            commandParser?.consume(bytes)
+            let next = commandParser?.blocks ?? []
+            if commandBlocks != next { commandBlocks = next; onChange?() }
+        }
     }
 
-    public func start(executable: String, arguments: [String], environment: [String: String]? = nil) throws {
+    public func clearCommandHistory() {
+        commandParser?.clear(); commandBlocks = []; onChange?()
+    }
+
+    public func start(executable: String, arguments: [String], environment: [String: String]? = nil, shellIntegration: Bool = false) throws {
         guard !isActive, terminal.process == nil else { throw TerminalFailure("此会话不能重复启动 / Session already used") }
         var isDirectory: ObjCBool = false
         guard worktree.hasPrefix("/"), FileManager.default.fileExists(atPath: worktree, isDirectory: &isDirectory), isDirectory.boolValue else {
@@ -49,6 +65,15 @@ public final class TerminalSession: ObservableObject, Identifiable {
         guard env.allSatisfy({ !$0.key.isEmpty && !$0.key.contains("=") && !$0.key.utf8.contains(0) && !$0.value.utf8.contains(0) }) else {
             throw TerminalFailure("终端环境变量无效 / Invalid terminal environment")
         }
+        if shellIntegration {
+            guard kind == "terminal", URL(fileURLWithPath: executable).lastPathComponent == "zsh", arguments == ["-i"] else {
+                throw TerminalFailure("命令块集成目前只支持显式启用的 zsh / Shell integration currently requires an opted-in interactive zsh")
+            }
+            let lease = try ShellIntegrationLease(environment: env)
+            shellLease = lease
+            commandParser = CommandBlockParser(nonce: lease.nonce)
+            env = lease.environment
+        }
         env["PWD"] = worktree
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
@@ -57,6 +82,7 @@ public final class TerminalSession: ObservableObject, Identifiable {
         terminal.launch(executable: executable, arguments: arguments, environment: env, directory: worktree)
         if terminal.process?.shellPid == 0 {
             isActive = false
+            shellLease = nil
             state = "启动失败 / Launch failed"
             throw TerminalFailure(state)
         }
@@ -117,6 +143,7 @@ public final class HostedTerminalView: TerminalView, TerminalViewDelegate, Local
     public private(set) var process: LocalProcess?
     public var onExit: ((Int32?) -> Void)?
     public var onBytes: ((ArraySlice<UInt8>) -> Void)?
+    var onProtocolBytes: ((ArraySlice<UInt8>) -> Void)?
 
     public override init(frame: CGRect) {
         super.init(frame: frame, font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
@@ -138,7 +165,7 @@ public final class HostedTerminalView: TerminalView, TerminalViewDelegate, Local
     }
 
     public func processTerminated(_ source: LocalProcess, exitCode: Int32?) { onExit?(exitCode) }
-    public func dataReceived(slice: ArraySlice<UInt8>) { feed(byteArray: slice); onBytes?(slice) }
+    public func dataReceived(slice: ArraySlice<UInt8>) { feed(byteArray: slice); onProtocolBytes?(slice); onBytes?(slice) }
     public func getWindowSize() -> winsize {
         winsize(ws_row: UInt16(clamping: terminal.rows), ws_col: UInt16(clamping: terminal.cols), ws_xpixel: 0, ws_ypixel: 0)
     }
