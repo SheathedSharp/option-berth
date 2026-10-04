@@ -49,3 +49,19 @@ GUI全部交互、签名安装包和长期负载仍需独立验收；没有可�
 `11-console-split` 冻结图只表达两栏布局；原生分隔控件和终端内容必须由独立原生检查验证。
 完整窗口的鼠标菜单、系统输入法、辅助功能及长时间负载仍需继续真实使用验收。
 不要将“页面切换保留内存状态”写成“应用重启恢复进程与会话”。
+
+## 有限 CLI 回收回归
+
+`CLIIOTests.swift` 由 Client workflow 和发版检查直接编译运行，使用自身可执行文件作为
+合成 CLI，不启动用户服务或真实 provider。覆盖双流压力、输出/进度帧上限、UTF-8、隐私
+诊断、信号退出、拒绝 TERM、关闭管道后挂起、直接子进程改变进程组、后代持有/关闭管道、
+主动脱组的有界夹具、预取消、非法输入与时限、工作目录，以及 12 次跨线程取消后的直接
+子进程 reap 和文件描述符稳定性。后代退出用进程状态验证，不把 kill 返回值当作退出证明。
+
+```sh
+swiftc client/macos/Sources/CLI.swift client/macos/Sources/DaemonLaunch.swift \
+  client/macos/Tests/CLIIOTests.swift -o /tmp/oberth-cli-io-tests
+/tmp/oberth-cli-io-tests
+```
+
+这些是有限合成回归，不是所有 provider、内核不可杀状态或长期资源趋势的验收。
