@@ -530,11 +530,11 @@ func initAdoptDraft(root, source string, replace, merge, dryRun, diff, jsonOutpu
 	}
 
 	if merge && exists {
-		adds := groups.AddsFrom(cfg)
+		adds := cfg.Services
 		if len(adds) == 0 {
 			return fmt.Errorf("nothing to merge into %s: the draft declares no services", target)
 		}
-		out, merged, err := groups.RenderEdit(target, groups.ConfigEdit{Add: adds})
+		out, merged, err := groups.RenderServiceMerge(target, adds)
 		if err != nil {
 			return err
 		}
