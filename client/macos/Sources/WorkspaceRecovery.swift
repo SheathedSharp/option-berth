@@ -50,8 +50,18 @@ final class WorkspaceRecovery: ObservableObject {
         do {
             try store.remove()
             defaults.removeObject(forKey: key); enabled = false
-            archive = nil; remembered = []; reviewPending = false; problem = nil
+            discardRememberedReferences()
+            archive = nil; reviewPending = false; problem = nil
         } catch { problem = error.localizedDescription }
+    }
+    // Discarding historical entries must also prune their layout references.
+    // Keep current registry-owned sessions and never signal or stop a process.
+    private func discardRememberedReferences() {
+        let current = Set(sessions.sessions.map(\.id))
+        for record in remembered where !current.contains(record.id) {
+            sessions.workspace(record.worktree).forget(record.id)
+        }
+        remembered = []
     }
     func watch(_ workspace: ConsoleWorkspace) {
         let id = ObjectIdentifier(workspace)
@@ -79,11 +89,15 @@ final class WorkspaceRecovery: ObservableObject {
             try sessions.restoreMetadata(archive)
             subscriptions.removeAll()
             remembered = archive.sessions; reviewPending = false; problem = nil
+            // Restoration replaces ConsoleWorkspace instances. Observe those
+            // instances now, not only after a later page's onAppear callback.
+            for workspace in archive.workspaces { watch(sessions.workspace(workspace.root)) }
             // Never launch a shell/agent or mark an old process as running.
         } catch { problem = error.localizedDescription }
     }
     func useCurrentLayout() {
-        remembered = []; reviewPending = false; problem = nil; saveNow()
+        discardRememberedReferences()
+        reviewPending = false; problem = nil; saveNow()
     }
     func newShell(for record: SavedSession, executable: String? = nil, environment: [String: String]? = nil) {
         guard !reviewPending, record.kind == "terminal", remembered.contains(record) else { return }
