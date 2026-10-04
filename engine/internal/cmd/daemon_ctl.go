@@ -263,46 +263,72 @@ func daemonLogRun(cmd *cobra.Command, _ []string) error {
 
 // printTail writes the last n lines of f to stdout and leaves the file offset
 // at the end, ready for follow mode.
-func printTail(f *os.File, n int) error {
+func printTail(f *os.File, n int) error { return printTailTo(f, n, os.Stdout) }
+func printTailTo(f *os.File, n int, out io.Writer) error {
 	if n <= 0 {
 		_, err := f.Seek(0, io.SeekEnd)
 		return err
 	}
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	ring := make([]string, 0, n)
+	// Allocate for actual observed lines rather than a potentially enormous flag.
+	ring := make([]string, 0, min(n, 128))
+	next := 0
 	for scanner.Scan() {
-		if len(ring) == n {
-			ring = ring[1:]
+		if len(ring) < n {
+			ring = append(ring, scanner.Text())
+		} else {
+			ring[next] = scanner.Text()
+			next = (next + 1) % n
 		}
-		ring = append(ring, scanner.Text())
 	}
 	if err := scanner.Err(); err != nil {
 		return err
 	}
-	for _, line := range ring {
-		fmt.Println(line)
+	for i := range ring {
+		if err := writeLogBytes(out, []byte(ring[(next+i)%len(ring)]+"\n")); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-// followFile polls for appended bytes, like `tail -f`. Polling keeps this the
-// same code on every platform.
-func followFile(ctx context.Context, f *os.File) error {
+// A closed consumer is a delivery failure, not a reason to keep following.
+func followFile(ctx context.Context, f *os.File) error { return followFileTo(ctx, f, os.Stdout) }
+func followFileTo(ctx context.Context, f *os.File, out io.Writer) error {
 	buf := make([]byte, 32*1024)
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		n, err := f.Read(buf)
 		if n > 0 {
-			os.Stdout.Write(buf[:n])
-			continue
+			if err := writeLogBytes(out, buf[:n]); err != nil {
+				return err
+			}
 		}
 		if err != nil && !errors.Is(err, io.EOF) {
 			return err
 		}
+		if n > 0 {
+			continue
+		}
 		select {
 		case <-ctx.Done():
-			return nil
-		case <-time.After(200 * time.Millisecond):
+			return ctx.Err()
+		case <-ticker.C:
 		}
 	}
+}
+func writeLogBytes(out io.Writer, data []byte) error {
+	n, err := out.Write(data)
+	if err != nil {
+		return err
+	}
+	if n != len(data) {
+		return io.ErrShortWrite
+	}
+	return nil
 }
