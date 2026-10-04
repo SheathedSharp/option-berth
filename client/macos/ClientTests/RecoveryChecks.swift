@@ -50,5 +50,50 @@ extension ClientChecks {
         recovery.disableAndDelete()
         require(!recovery.enabled && !fm.fileExists(atPath: file.path), "opt-out failed to delete snapshot")
         print("PASS: consent-gated restore, pending snapshot preserved, no automatic process/secret retention, explicit fresh-shell remap and opt-out deletion")
+        try recoveryResetChecks()
+    }
+
+    // These checks never start a process: remembered IDs are presentation-only.
+    static func recoveryResetChecks() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("recovery-reset-" + UUID().uuidString)
+        try fm.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? fm.removeItem(at: root) }
+        let suite = "recovery-reset-test-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let path = root.resolvingSymlinksInPath().path
+        let first = UUID(), second = UUID()
+        var layout = PaneLayout(session: first)
+        try layout.split(second, beside: first, axis: .horizontal)
+        let initial = WorkspaceArchive(workspaces: [SavedWorkspace(root: path, agentMode: false, providerID: "codex", nativeExpanded: false,
+                terminalLayout: layout, agentLayout: PaneLayout())], sessions: [
+                    SavedSession(id: first, worktree: path, title: "remembered-one", kind: "terminal"),
+                    SavedSession(id: second, worktree: path, title: "remembered-two", kind: "terminal")])
+        let directory = root.appendingPathComponent("saved")
+        let store = WorkspaceArchiveStore(directory: directory)
+        try store.write(initial)
+        defaults.set(true, forKey: "workspace.restore-layout-consent.v1")
+        let registry = TerminalSessions()
+        let recovery = WorkspaceRecovery(defaults: defaults, directory: directory, sessions: registry)
+        recovery.loadOnce(); recovery.restoreLayout()
+        require(recovery.remembered.count == 2 && registry.sessions.isEmpty, "restore fabricated a live session")
+        // No manual watch()/saveNow(): restoration must reconnect its own observers.
+        registry.workspace(path).providerID = "pi"
+        eventually("restored workspace changes did not auto-save") {
+            (try? store.read())?.workspaces.first?.providerID == "pi"
+        }
+        recovery.disableAndDelete()
+        require(!recovery.enabled && recovery.remembered.isEmpty, "opt-out kept recovery records")
+        require(registry.workspace(path).terminalLayout.sessions.isEmpty, "opt-out left dangling remembered pane references")
+        let afterOptOut = try registry.snapshot()
+        try afterOptOut.validate()
+        require(afterOptOut.sessions.isEmpty, "opt-out turned old identities into current sessions")
+        recovery.enable()
+        require(recovery.enabled && recovery.problem == nil, "saving could not be re-enabled after discarding old panes")
+        let reenabled = try store.read()
+        require(reenabled?.sessions.isEmpty == true, "re-enable resurrected forgotten identities")
+        recovery.disableAndDelete()
+        print("PASS: restored observers auto-save; opt-out prunes only remembered panes and can be enabled again")
     }
 }
