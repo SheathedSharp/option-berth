@@ -143,6 +143,8 @@ struct OptionBerthApp: App {
                 Button("代码") { views.show(.code, projects: projectNames) }
                     .keyboardShortcut("g", modifiers: .command)
                 Divider()
+                Button("终端 / Terminal") { views.show(.terminal, projects: projectNames) }
+                    .keyboardShortcut("t", modifiers: .command)
                 Button("查找日志") { services.beginLogFind() }
                     .keyboardShortcut("f", modifiers: .command)
                     .disabled(services.focused == nil)

@@ -14,6 +14,7 @@ final class ViewState: ObservableObject {
     enum Face {
         case services
         case code
+        case terminal
     }
 
     var project: String? { scope.projectName }
@@ -23,6 +24,7 @@ final class ViewState: ObservableObject {
         switch face {
         case .services: scope = .services(name)
         case .code: scope = .code(name)
+        case .terminal: scope = .terminal(name)
         }
     }
 }

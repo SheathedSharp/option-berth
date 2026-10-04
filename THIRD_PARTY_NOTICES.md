@@ -31,3 +31,9 @@ License 1.1。原版权、保留字体名和许可全文见
 
 第三方名称仅用于说明兼容、依赖和来源，不表示认可或背书。代码许可证不授予第三方
 商标权。新增素材必须记录来源及分发许可；项目图形资产与字体的许可分别处理。
+
+## SwiftTerm
+
+macOS 终端使用 SwiftTerm v1.20.0（提交 `5d14406844143538cd8f8851d2d8a67c1fe443e5`），
+适用其 MIT 许可证；源码由 Swift Package Manager 获取，版本由 Package.resolved 固定。
+客户端构建将上游 LICENSE 原文附入应用 Resources/Licenses，不将上游终端实现宣称为本项目原创。

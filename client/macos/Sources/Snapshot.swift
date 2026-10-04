@@ -54,6 +54,8 @@ enum Snapshot {
              ServicesStore(fixture: groups, runs: runs), GitStore(), .services(demo.name)),
             ("05-connection-error", BoardStore(fixture: ports, problem: "连接被拒绝 —— 后台没在跑"),
              ServicesStore(fixture: groups, runs: runs), GitStore(), .services(demo.name)),
+            ("09-terminal", BoardStore(fixture: ports),
+             ServicesStore(fixture: groups, runs: runs), GitStore(), .terminal(demo.name)),
             ("08-code", BoardStore(fixture: ports),
              ServicesStore(fixture: groups, runs: runs), git, .code(demo.name)),
         ]
