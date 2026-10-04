@@ -43,25 +43,39 @@ import BerthTerminal
         try fm.createDirectory(at: root, withIntermediateDirectories: false)
         defer { try? fm.removeItem(at: root) }
         let profile = root.appendingPathComponent(".zshrc")
-        let original = "export OBERTH_TEST_PROFILE=retained\nPS1='fixture> '\n"
+        let original = """
+        export OBERTH_TEST_PROFILE=retained
+        PS1='fixture> '
+        __fixture_prompt_observer() {
+          local result=$?
+          print -r -- "$result" > "$HOME/prompt-status"
+          return 0
+        }
+        precmd_functions+=(__fixture_prompt_observer)
+        """ + "\n"
         try original.write(to: profile, atomically: true, encoding: .utf8)
-        let env = ["HOME": root.path, "PATH":"/usr/bin:/bin", "SHELL":"/bin/zsh"]
+        let env = ["HOME": root.path, "PATH":"/usr/bin:/bin", "SHELL":"/bin/zsh", "TMOUT":"15"]
         let session = TerminalSession(worktree: root.path)
         try session.start(executable: "/bin/zsh", arguments: ["-i"], environment: env, shellIntegration: true)
         defer { if session.isActive { session.stop(force: true); eventually("fixture cleanup") { !session.isActive } } }
-        // The shell sends its own prompt before input. This is native PTY input,
-        // not a command runner guessing prompt strings from rendered output.
-        pump(0.3)
+        let promptStatus = root.appendingPathComponent("prompt-status")
+        eventually("original prompt hook never ran at startup") { fm.fileExists(atPath: promptStatus.path) }
         let command = Array("false\r".utf8)
         session.terminal.send(source: session.terminal, data: command[...])
         eventually("zsh command block never completed") { session.commandBlocks.last?.exitCode == 1 }
         require(session.commandBlocks.last?.command == "false", "preexec text missing")
+        eventually("failed command suppressed a later precmd hook or changed its input status") {
+            (try? String(contentsOf: promptStatus, encoding: .utf8)) == "1\n"
+        }
         session.terminal.send(source: session.terminal, data: Array("[[ $OBERTH_TEST_PROFILE == retained ]]\r".utf8)[...])
         eventually("original profile not sourced") { session.commandBlocks.count >= 2 && session.commandBlocks.last?.exitCode == 0 }
+        eventually("successful command did not preserve the later prompt hook") {
+            (try? String(contentsOf: promptStatus, encoding: .utf8)) == "0\n"
+        }
         session.terminal.send(source: session.terminal, data: Array("exit\r".utf8)[...])
         eventually("integrated shell did not exit") { !session.isActive }
         let after = try String(contentsOf: profile, encoding: .utf8)
         require(after == original, "user profile modified")
-        print("PASS: real isolated zsh PTY command/exit markers, original rc retained, native process exit")
+        print("PASS: real isolated zsh PTY command/exit markers, existing prompt hooks after success/failure, original rc retained, native process exit")
     }
 }
