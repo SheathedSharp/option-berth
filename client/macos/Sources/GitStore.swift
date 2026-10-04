@@ -14,7 +14,7 @@ final class GitStore: ObservableObject {
     @Published private(set) var loading = false
     @Published private(set) var patchLoading = false
 
-    private let queue = DispatchQueue(label: "option-berth.git", qos: .utility)
+    private let queue = GitReadQueue()
     private var root = ""
     private var generation = 0
     private var patchRequest = 0
@@ -47,7 +47,7 @@ final class GitStore: ObservableObject {
         overviewInFlight = true
         lastOverviewAt = Date()
         let requestGeneration = generation
-        queue.async { [weak self] in
+        queue.submit(.overview) { [weak self] in
             let result = CLI.decode(GitOverview.self, arguments: ["git", requestedRoot, "--json"])
             Task { @MainActor [weak self] in
                 guard let self, self.generation == requestGeneration else { return }
@@ -68,7 +68,7 @@ final class GitStore: ObservableObject {
         lastTreeAt = Date()
         loading = true
         let requestGeneration = generation
-        queue.async { [weak self] in
+        queue.submit(.tree) { [weak self] in
             let result = CLI.decode(GitTree.self, arguments: ["git", "files", requestedRoot, "--json"])
             Task { @MainActor [weak self] in
                 guard let self, self.generation == requestGeneration else { return }
@@ -118,7 +118,7 @@ final class GitStore: ObservableObject {
         let requestGeneration = generation
         patchLoading = true
         patchProblem = nil
-        queue.async { [weak self] in
+        queue.submit(.patch) { [weak self] in
             let result = CLI.decode(GitPatch.self,
                                     arguments: ["git", "diff", root, "--json", "--file", path])
             Task { @MainActor [weak self] in
@@ -137,6 +137,7 @@ final class GitStore: ObservableObject {
         let next = project?.rootDir ?? ""
         if next != root {
             generation += 1
+            queue.discardPending()
             root = next
             overview = nil
             tree = nil

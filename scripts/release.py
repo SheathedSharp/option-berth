@@ -92,6 +92,11 @@ def verify(root: Path) -> None:
                 "client/macos/Tests/CLIIOTests.swift", "-o", binary, capture=False)
             run(root, binary, capture=False)
         run(root, "bash", "client/macos/build.sh", capture=False)
+        with tempfile.TemporaryDirectory(prefix="oberth-git-queue-") as tmp:
+            binary = str(Path(tmp) / "checks")
+            run(root, "swiftc", "client/macos/Sources/GitReadQueue.swift",
+                "client/macos/Tests/GitReadQueueTests.swift", "-o", binary, capture=False)
+            run(root, binary, capture=False)
         if (root / "client/macos/TerminalTests").is_dir():
             run(root, "swift", "run", "--package-path", "client/macos", "--force-resolved-versions", "TerminalChecks", capture=False)
         if (root / "client/macos/AgentTests").is_dir():
