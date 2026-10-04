@@ -137,3 +137,20 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(self.git("cat-file", "-t", "v1.2.4"), "tag")
         self.assertTrue(self.git("ls-remote", "origin", "refs/heads/main").startswith(self.head))
         self.assertEqual(self.git("ls-remote", "origin", "refs/tags/v1.2.4"), "")
+
+    def test_macos_release_checks_real_agent_planner_when_gui_exists(self):
+        (self.root / "client/macos/AgentTests").mkdir(parents=True)
+        calls = []
+        def record(root, *args, **kwargs):
+            calls.append((root, args, kwargs))
+            return ""
+        with patch.object(release.sys, "platform", "darwin"), patch.object(release, "run", side_effect=record):
+            release.verify(self.root)
+        agent = [call for call in calls if "AgentChecks" in call[1]]
+        self.assertEqual(len(agent), 1)
+        binary = agent[0][2]["environment"]["BERTH_AGENT_TEST_BINARY"]
+        self.assertTrue(Path(binary).is_absolute())
+        builds = [call for call in calls if call[1] == ("go", "build", "-o", binary, ".")]
+        self.assertEqual(len(builds), 1)
+        self.assertEqual(builds[0][0], self.root / "engine")
+        self.assertLess(calls.index(builds[0]), calls.index(agent[0]))

@@ -25,8 +25,10 @@ ACCEPTED_REMOTES = {
 }
 
 
-def run(root: Path, *args: str, capture: bool = True) -> str:
+def run(root: Path, *args: str, capture: bool = True, environment: dict[str, str] | None = None) -> str:
     env = dict(os.environ, GOMAXPROCS="4")
+    if environment:
+        env.update(environment)
     result = subprocess.run(args, cwd=root, env=env, text=True,
                             stdout=subprocess.PIPE if capture else None,
                             stderr=subprocess.PIPE if capture else None, check=False)
@@ -87,6 +89,14 @@ def verify(root: Path) -> None:
         run(root, "bash", "client/macos/build.sh", capture=False)
         if (root / "client/macos/TerminalTests").is_dir():
             run(root, "swift", "run", "--package-path", "client/macos", "--force-resolved-versions", "TerminalChecks", capture=False)
+        if (root / "client/macos/AgentTests").is_dir():
+            # Validate the product planner and GUI together, not only a synthetic
+            # replacement. AgentChecks creates its own fake providers and HOME.
+            with tempfile.TemporaryDirectory(prefix="oberth-release-agent-") as tmp:
+                binary = str(Path(tmp) / "oberth")
+                run(engine, "go", "build", "-o", binary, ".", capture=False)
+                run(root, "swift", "run", "--package-path", "client/macos", "--force-resolved-versions",
+                    "AgentChecks", capture=False, environment={"BERTH_AGENT_TEST_BINARY": binary})
 
 
 def clean(root: Path) -> None:

@@ -44,7 +44,7 @@ Mage 提供 `releaseProtocol / releaseFeature / releaseFix`（本地提交和 ta
 ## 发布前的强制验证
 
 脚本锁定本次本地操作，在仓库外创建可丢弃 checkout，生成候选版本后执行构建、vet、完整单元测试、
-核心竞态测试、真实服务场景、Mage/Python 辅助测试、品牌一致性，以及 macOS 上的客户端构建。
+核心竞态测试、真实服务场景、Mage/Python 辅助测试、品牌一致性，以及 macOS 上的客户端构建、原生 PTY 和实际 CLI→agent 界面交接回归（外部 provider 使用临时替身，不调用模型）。
 验证失败不修改日常工作区，不创建标签。没有跳过测试或强制发布选项。
 
 验证通过后仍重新检查工作区、main 提交、origin/main 与标签，防止验证期间的并行工作被覆盖。
@@ -63,7 +63,7 @@ Mage 提供 `releaseProtocol / releaseFeature / releaseFix`（本地提交和 ta
 2. 在 macOS/Linux 运行原生发布验证，复用 Windows 原生构建与事实/持久化检查。
 3. 构建 Darwin/Linux/Windows 的 amd64 与 arm64 CLI 压缩包；macOS arm64 额外生成应用包。
 4. 每个 CLI 包包含 `oberth`、可选 `jev-attention`、构建清单、目标实际运行依赖的许可原文和 SHA256SUMS。
-5. 验证全部目标齐全及散列后创建 GitHub draft release，上传，再下载校验；最后才转为正式 release。
+5. 验证全部目标齐全及散列后创建 GitHub draft release，上传，再下载校验并逐项比对上传前的本地散列；最后才转为正式 release。
 
 Mac 应用包携带同一提交构建的 `oberth`，优先使用随包引擎；显式 `BERTH_BIN` 仍可覆盖。
 应用和引擎的版本/提交身份必须一致，避免只升级界面而悄悄调用另一份旧引擎。

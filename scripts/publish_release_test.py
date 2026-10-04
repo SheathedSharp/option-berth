@@ -3,6 +3,9 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+import shutil
+import subprocess
+from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location("berth_publish", Path(__file__).with_name("publish_release.py"))
 release = importlib.util.module_from_spec(SPEC)
@@ -45,3 +48,33 @@ class PublishAssetsTests(unittest.TestCase):
         for tag in ("../main", "v1.2", "v01.2.3", "v1.2.3;echo"):
             with self.assertRaises(ValueError):
                 release.expected_assets(tag)
+
+    def test_roundtrip_must_match_local_assets_not_just_remote_checksums(self):
+        self._roundtrip(replace_archive=True)
+
+    def test_publish_occurs_only_after_matching_roundtrip(self):
+        self._roundtrip(replace_archive=False)
+
+    def _roundtrip(self, replace_archive):
+        published = []
+        def fake_gh(*args):
+            if args[:2] == ("release", "download"):
+                target = Path(args[args.index("--dir") + 1])
+                for path in self.root.iterdir():
+                    shutil.copyfile(path, target / path.name)
+                if replace_archive:
+                    archive = next(target.glob("*.zip"))
+                    archive.write_bytes(b"different but internally consistent remote build")
+                    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+                    (target / (archive.name + ".sha256")).write_text(digest + "  " + archive.name + "\n")
+                    (target / "SHA256SUMS").write_text("".join(p.read_text() for p in sorted(target.glob("*.sha256"))))
+            if args[:2] == ("release", "edit"):
+                published.append(args)
+        with patch.object(release, "gh", side_effect=fake_gh), patch.object(release.subprocess, "run", return_value=subprocess.CompletedProcess([], 1)):
+            if replace_archive:
+                with self.assertRaisesRegex(ValueError, "local"):
+                    release.publish(self.root, self.tag)
+                self.assertEqual(published, [])
+            else:
+                release.publish(self.root, self.tag)
+                self.assertEqual(len(published), 1)
