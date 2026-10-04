@@ -34,6 +34,13 @@ func newAgentCommand() *cobra.Command {
 		var worktree, mode, prompt string
 		var promptStdin, jsonOutput bool
 		sub := &cobra.Command{Use: verb + " <provider>", Args: cobra.ExactArgs(1), Short: "Build an exact native argv; run executes it with inherited terminal input", RunE: func(cmd *cobra.Command, args []string) error {
+			// Reject plan-only flags before consuming input or resolving a provider.
+			if verb == "run" && jsonOutput {
+				return usageError{fmt.Errorf("--json is for agent plan/list; run preserves the agent's native output")}
+			}
+			if verb == "run" && promptStdin {
+				return usageError{fmt.Errorf("--prompt-stdin is plan-only; native run must retain terminal stdin")}
+			}
 			if promptStdin && cmd.Flags().Changed("prompt") {
 				return usageError{fmt.Errorf("use either --prompt or --prompt-stdin")}
 			}
@@ -57,12 +64,6 @@ func newAgentCommand() *cobra.Command {
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "%s: %s mode in %s\nExecutable: %s\nArguments are not printed; use --json to inspect locally.\n", plan.Provider, plan.Mode, plan.Worktree, plan.Executable)
 				return nil
-			}
-			if jsonOutput {
-				return usageError{fmt.Errorf("--json is for agent plan/list; run preserves the agent's native output")}
-			}
-			if promptStdin {
-				return usageError{fmt.Errorf("--prompt-stdin is plan-only; native run must retain terminal stdin")}
 			}
 			return executeAgent(plan)
 		}}

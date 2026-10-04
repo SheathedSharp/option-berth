@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,5 +49,32 @@ func TestAgentPlanReadsPromptWithoutExecutingProvider(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatal("planning ran external tool")
+	}
+}
+
+// Invalid run flags must fail before reading terminal input or resolving a tool.
+type forbiddenAgentInput struct{ reads int }
+
+func (r *forbiddenAgentInput) Read(_ []byte) (int, error) {
+	r.reads++
+	return 0, fmt.Errorf("stdin must not be consumed")
+}
+func TestAgentRunRejectsPlanFlagsBeforeReadingInput(t *testing.T) {
+	for _, flags := range [][]string{{"--prompt-stdin"}, {"--json", "--prompt-stdin"}, {"--json"}} {
+		t.Run(strings.Join(flags, " "), func(t *testing.T) {
+			input := &forbiddenAgentInput{}
+			command := newAgentCommand()
+			command.SetIn(input)
+			command.SetOut(&bytes.Buffer{})
+			command.SetErr(&bytes.Buffer{})
+			command.SetArgs(append([]string{"run", "codex", "--worktree", t.TempDir()}, flags...))
+			err := command.Execute()
+			if _, ok := err.(usageError); !ok {
+				t.Fatalf("expected usage error before any I/O, got %v", err)
+			}
+			if input.reads != 0 {
+				t.Fatal("invalid run consumed stdin")
+			}
+		})
 	}
 }
