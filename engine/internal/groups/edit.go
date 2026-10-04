@@ -326,6 +326,10 @@ func renameService(abs string, root *yaml.Node, r ServiceRename) error {
 // addService appends a service, refusing a name or a port the file already
 // uses. A file with no `services:` key at all grows one.
 func addService(abs string, root *yaml.Node, add ServiceAdd) error {
+	return appendServiceNode(abs, root, add.Service(), serviceNode(add))
+}
+
+func appendServiceNode(abs string, root *yaml.Node, add Service, node *yaml.Node) error {
 	services := mappingValue(root, "services")
 	if services == nil || services.Kind != yaml.SequenceNode {
 		if services != nil {
@@ -344,7 +348,7 @@ func addService(abs string, root *yaml.Node, add ServiceAdd) error {
 			return &ServiceConflictError{Path: abs, Name: holder, Port: add.Port}
 		}
 	}
-	services.Content = append(services.Content, serviceNode(add))
+	services.Content = append(services.Content, node)
 	return nil
 }
 
@@ -495,4 +499,22 @@ func proposedForPort(cfg *Config, port int) (Service, bool) {
 		}
 	}
 	return Service{}, false
+}
+
+// RenderServiceMerge uses complete parsed services for local draft adoption.
+// The public ServiceAdd RPC shape remains unchanged; draft execution fields
+// must not be projected through that intentionally narrower editing model.
+func RenderServiceMerge(path string, services []Service) ([]byte, *Config, error) {
+	return render(path, func(abs string, root *yaml.Node) error {
+		for _, service := range services {
+			var node yaml.Node
+			if err := node.Encode(service); err != nil {
+				return err
+			}
+			if err := appendServiceNode(abs, root, service, &node); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
