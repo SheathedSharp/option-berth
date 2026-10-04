@@ -193,3 +193,55 @@ class ReleaseTests(unittest.TestCase):
         release.validate_tag(current, tag)
         self.assertEqual(current_git("rev-parse", "refs/tags/" + tag), annotation)
         self.assertIn(annotation, self.git("ls-remote", "origin", "refs/tags/" + tag))
+
+
+class PackagingWorkflowTests(unittest.TestCase):
+    def packaging_script(self):
+        workflow = (release.ROOT / ".github/workflows/release.yml").read_text()
+        block = workflow.split("      - name: Build archives with per-target notices\n", 1)[1]
+        block = block.split("      - ", 1)[0]
+        script = block.split("        run: |\n", 1)[1]
+        lines = script.splitlines()
+        self.assertTrue(lines and all(not line.strip() or line.startswith("          ") for line in lines))
+        return "\n".join(line[10:] for line in lines) + "\n"
+
+    def test_all_six_targets_use_exact_argv_on_system_bash(self):
+        # Execute the actual workflow block, not a parallel shell implementation.
+        # /bin/bash is 3.2 on macOS; no build, network, credentials or model call.
+        script = self.packaging_script()
+        with tempfile.TemporaryDirectory(prefix="berth-package-argv-") as temporary:
+            root = Path(temporary)
+            tools = root / "tools with spaces"
+            tools.mkdir()
+            capture = tools / "python3"
+            capture.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n")
+            capture.chmod(0o700)
+            for system in ("darwin", "linux", "windows"):
+                for arch in ("amd64", "arm64"):
+                    with self.subTest(system=system, arch=arch):
+                        env = {"HOME": str(root), "PATH": str(tools) + ":/usr/bin:/bin",
+                               "TARGET_OS": system, "TARGET_ARCH": arch}
+                        result = subprocess.run(["/bin/bash", "--noprofile", "--norc", "-c", script],
+                                                cwd=root, env=env, text=True, capture_output=True, timeout=10)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        expected = ["scripts/package_release.py", "--os", system, "--arch", arch, "--output", "dist"]
+                        if (system, arch) == ("darwin", "arm64"):
+                            expected.append("--include-app")
+                        self.assertEqual(result.stdout.splitlines(), expected)
+
+    def test_missing_target_is_still_rejected_before_packaging(self):
+        script = self.packaging_script()
+        with tempfile.TemporaryDirectory(prefix="berth-package-unset-") as temporary:
+            root = Path(temporary)
+            capture = root / "python3"
+            capture.write_text("#!/bin/sh\nprintf 'PACKAGER-MUST-NOT-RUN'\n")
+            capture.chmod(0o700)
+            for missing in ("TARGET_OS", "TARGET_ARCH"):
+                with self.subTest(missing=missing):
+                    env = {"HOME": str(root), "PATH": str(root) + ":/usr/bin:/bin", "TARGET_OS": "darwin", "TARGET_ARCH": "amd64"}
+                    del env[missing]
+                    result = subprocess.run(["/bin/bash", "--noprofile", "--norc", "-c", script],
+                                            cwd=root, env=env, text=True, capture_output=True, timeout=10)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(missing, result.stderr)
+                    self.assertEqual(result.stdout, "")
