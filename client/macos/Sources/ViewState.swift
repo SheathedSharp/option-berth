@@ -7,6 +7,7 @@ final class ViewState: ObservableObject {
     @Published var railVisible = true
     @Published var showingSettings = false
     @Published var showingSessions = false
+    @Published var showingActions = false
 
     init(scope: Scope = .services("")) {
         self.scope = scope

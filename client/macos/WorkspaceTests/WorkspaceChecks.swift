@@ -12,6 +12,7 @@ import BerthTerminal
     }
     @MainActor static func main() throws {
         parserChecks()
+        try layoutChecks()
         try shellChecks()
     }
     static func parserChecks() {

@@ -12,10 +12,23 @@ public final class ConsoleWorkspace: ObservableObject {
     @Published public var agentSelection: UUID?
     @Published public var terminalSplit: UUID?
     @Published public var agentSplit: UUID?
+    @Published public var terminalLayout = PaneLayout()
+    @Published public var agentLayout = PaneLayout()
 
     public init() {}
 
+    public func split(_ id: UUID, beside target: UUID, agent: Bool, axis: PaneLayout.Axis) throws {
+        var layout = agent ? agentLayout : terminalLayout
+        if layout.nodes.isEmpty { layout = PaneLayout(session: target) }
+        try layout.split(id, beside: target, axis: axis)
+        if agent { agentLayout = layout } else { terminalLayout = layout }
+    }
+    public func single(_ id: UUID, agent: Bool) {
+        if agent { agentLayout = PaneLayout(session: id); agentSplit = nil }
+        else { terminalLayout = PaneLayout(session: id); terminalSplit = nil }
+    }
     public func select(_ id: UUID, agent: Bool) {
+        if agent { agentLayout.show(id) } else { terminalLayout.show(id) }
         if agent {
             if agentSplit == id { agentSplit = agentSelection }
             agentSelection = id
@@ -25,6 +38,7 @@ public final class ConsoleWorkspace: ObservableObject {
         }
     }
     public func forget(_ id: UUID) {
+        terminalLayout.remove(id); agentLayout.remove(id)
         if terminalSelection == id { terminalSelection = terminalSplit; terminalSplit = nil }
         if agentSelection == id { agentSelection = agentSplit; agentSplit = nil }
         if terminalSplit == id { terminalSplit = nil }

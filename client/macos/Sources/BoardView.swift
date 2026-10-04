@@ -55,6 +55,7 @@ struct BoardView: View {
     static let railRange: ClosedRange<Double> = 140...320
     var scrolls: Bool = true
     private let initialConsoleAgent: Bool
+    private let performAction: (WorkspaceAction) -> Void
 
     init(
         store: BoardStore,
@@ -64,8 +65,10 @@ struct BoardView: View {
         initialScope: Scope = .services(""),
         initialConsoleAgent: Bool = false,
         views: ViewState? = nil,
-        settings: UISettings = .shared
+        settings: UISettings = .shared,
+        performAction: @escaping (WorkspaceAction) -> Void = { _ in }
     ) {
+        self.performAction = performAction
         self.store = store
         self.services = services
         _settings = ObservedObject(wrappedValue: settings)
@@ -103,6 +106,9 @@ struct BoardView: View {
         }
         .ignoresSafeArea(.container, edges: .top)
         .background(Ink.canvas)
+        .sheet(isPresented: $views.showingActions) {
+            WorkspaceActionPanel(perform: performAction, shortcuts: .shared)
+        }
         .sheet(isPresented: $views.showingSessions) {
             SessionManager { session in
                 TerminalSessions.shared.select(session)

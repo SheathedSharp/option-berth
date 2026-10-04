@@ -81,9 +81,9 @@ struct AgentPanel: View {
                 Spacer()
                 if let selected {
                     Menu("并排 / Split") {
-                        Button("单窗格 / Single pane") { workspace.agentSplit = nil }
+                        Button("单窗格 / Single pane") { workspace.single(selected.id, agent: true) }
                         ForEach(sessions.inWorktree(root).filter { $0.id != selected.id }) { session in
-                            Button(session.title) { workspace.agentSplit = session.id }
+                            Button(session.title) { do { try workspace.split(session.id, beside: selected.id, agent: true, axis: .horizontal) } catch { issue = error.localizedDescription } }
                         }
                     }.fixedSize()
                     Button { showTerminalFind(selected.terminal) } label: { Image(systemName: "magnifyingglass") }
@@ -110,7 +110,7 @@ struct AgentPanel: View {
             }
             Hairline()
             if let selected {
-                SessionCanvas(primary: selected, secondary: sessions.inWorktree(root).first { $0.id == workspace.agentSplit })
+                PaneWorkspaceView(primary: selected, workspace: workspace, agent: true)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             } else {

@@ -112,6 +112,15 @@ def verify(root: Path) -> None:
             berth.mkdir()
             run(root, binary, capture=False, environment={"HOME": str(home), "CFFIXED_USER_HOME": str(home),
                                                           "BERTH_HOME": str(berth)})
+        run(root, "swift", "run", "--package-path", "client/macos", "--force-resolved-versions", "WorkspaceChecks", capture=False)
+        run(root, "swift", "build", "--package-path", "client/macos", "--force-resolved-versions", "--product", "ClientChecks", capture=False)
+        client_checks_dir = run(root, "swift", "build", "--package-path", "client/macos", "--show-bin-path")
+        with tempfile.TemporaryDirectory(prefix="oberth-client-checks-") as tmp:
+            home, berth = Path(tmp) / "home", Path(tmp) / "berth"
+            home.mkdir()
+            berth.mkdir()
+            run(root, str(Path(client_checks_dir) / "ClientChecks"), capture=False,
+                environment={"HOME": str(home), "CFFIXED_USER_HOME": str(home), "BERTH_HOME": str(berth)})
         run(root, "bash", "client/macos/build.sh", capture=False)
         with tempfile.TemporaryDirectory(prefix="oberth-git-queue-") as tmp:
             binary = str(Path(tmp) / "checks")

@@ -52,6 +52,14 @@ jobs:
           "$RUNNER_TEMP/agent-resume-tests"
       - name: Verify workspace command blocks and isolated shell integration
         run: swift run --package-path client/macos --force-resolved-versions WorkspaceChecks
+      - name: Verify native workspace actions, panes and window ownership
+        run: |
+          swift build --package-path client/macos --force-resolved-versions --product ClientChecks
+          binary_dir=$(swift build --package-path client/macos --show-bin-path)
+          isolation=$(mktemp -d "$RUNNER_TEMP/client-checks.XXXXXX")
+          trap 'rm -rf "$isolation"' EXIT
+          mkdir -p "$isolation/home" "$isolation/berth"
+          HOME="$isolation/home" CFFIXED_USER_HOME="$isolation/home" BERTH_HOME="$isolation/berth" "$binary_dir/ClientChecks"
       - name: Verify real isolated PTY sessions
         run: swift run --package-path client/macos --force-resolved-versions TerminalChecks
       - name: Verify isolated agent planner, composer and native handoff
