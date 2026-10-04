@@ -3,68 +3,50 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-
+	"github.com/sheathedsharp/option-berth/internal/doctor"
 	"github.com/sheathedsharp/option-berth/internal/groups"
 	"github.com/spf13/cobra"
+	"os"
+	"path/filepath"
 )
 
-// fixLegacyConfigName renames this project's `.oberth.yaml` to oberth.yaml. It
-// looks where `project_config` looks — the working directory, then the git
-// root — and uses `git mv` when the file is tracked, so the rename is staged
-// as one. It refuses when a file with the new name is already there: the two
-// have to be reconciled by hand, and a rename would overwrite one of them.
+// Repair uses the same explicit project and nearest-manifest selection as the
+// diagnosis. A filesystem rename must never stage or otherwise write to Git.
 func fixLegacyConfigName(context.Context, *cobra.Command) (string, error) {
-	cwd, err := os.Getwd()
+	project, err := doctorProject()
 	if err != nil {
 		return "", err
 	}
-	dirs := []string{cwd}
-	if root, _, ok := groups.Find(cwd); ok && root != cwd {
-		dirs = append(dirs, root)
+	present := doctor.ProjectConfigFiles(project)
+	if len(present) == 0 {
+		return "", fmt.Errorf("no %s found for %s", groups.LegacyConfigName, project)
 	}
-	for _, dir := range dirs {
-		present := groups.FilesIn(dir)
-		if len(present) == 0 {
-			continue
-		}
-		return renameLegacyConfig(dir, present)
-	}
-	return "", fmt.Errorf("no %s found at %s or its git root", groups.LegacyConfigName, cwd)
+	return renameLegacyConfig(filepath.Dir(present[0]), present)
 }
 
-// renameLegacyConfig moves the file option-berth reads in dir to ConfigName.
 func renameLegacyConfig(dir string, present []string) (string, error) {
-	from := present[0]
-	if len(present) > 1 {
-		return "", fmt.Errorf("%s has more than one config file; keep one by hand", dir)
+	if len(present) != 1 {
+		return "", fmt.Errorf("%s must have exactly one config file; reconcile it manually", dir)
 	}
+	from := present[0]
 	if !groups.IsLegacyName(filepath.Base(from)) {
 		return "", fmt.Errorf("%s already uses a current name", from)
 	}
-	to := filepath.Join(dir, groups.ConfigName)
-
-	if tracked(dir, filepath.Base(from)) {
-		out, err := exec.Command("git", "-C", dir, "mv", filepath.Base(from), groups.ConfigName).CombinedOutput()
-		if err != nil {
-			return "", fmt.Errorf("git mv: %v: %s", err, out)
-		}
-		return fmt.Sprintf("ran `git mv %s %s` in %s", filepath.Base(from), groups.ConfigName, dir), nil
-	}
-	// Lstat before Rename: on Unix a rename replaces an existing file silently.
-	if _, err := os.Lstat(to); err == nil {
-		return "", fmt.Errorf("%s already exists", to)
-	}
-	if err := os.Rename(from, to); err != nil {
+	info, err := os.Lstat(from)
+	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("renamed %s to %s", from, to), nil
-}
-
-// tracked reports whether git tracks name in dir. No git, or no repository,
-// is simply "not tracked".
-func tracked(dir, name string) bool {
-	return exec.Command("git", "-C", dir, "ls-files", "--error-unmatch", "--", name).Run() == nil
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%s is not a regular file; rename it manually", from)
+	}
+	to := filepath.Join(dir, groups.ConfigName)
+	// Link is an atomic no-replace publication. Never fall back to an overwriting
+	// rename if the filesystem cannot support it; both names remain recoverable.
+	if err := os.Link(from, to); err != nil {
+		return "", fmt.Errorf("cannot create %s without replacing it: %w", to, err)
+	}
+	if err := os.Remove(from); err != nil {
+		return "", fmt.Errorf("created %s but could not remove %s; both names remain: %w", to, from, err)
+	}
+	return fmt.Sprintf("renamed %s to %s; Git index unchanged", from, to), nil
 }

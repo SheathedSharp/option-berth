@@ -27,9 +27,8 @@ func TestRenameLegacyConfigPlain(t *testing.T) {
 	}
 }
 
-// TestRenameLegacyConfigTracked: a tracked file is moved with git mv, so the
-// rename is staged.
-func TestRenameLegacyConfigTracked(t *testing.T) {
+// The repair changes the selected file, never the Git index.
+func TestRenameLegacyConfigPreservesGitIndex(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not installed")
 	}
@@ -49,11 +48,11 @@ func TestRenameLegacyConfigTracked(t *testing.T) {
 	if _, err := renameLegacyConfig(dir, groups.FilesIn(dir)); err != nil {
 		t.Fatalf("rename: %v", err)
 	}
-	if !tracked(dir, groups.ConfigName) {
-		t.Errorf("%s is not staged after the fix", groups.ConfigName)
+	if tracked(dir, groups.ConfigName) {
+		t.Errorf("%s was unexpectedly staged by the fix", groups.ConfigName)
 	}
-	if tracked(dir, groups.LegacyConfigName) {
-		t.Errorf("%s is still tracked after the fix", groups.LegacyConfigName)
+	if !tracked(dir, groups.LegacyConfigName) {
+		t.Errorf("%s was unexpectedly removed from the Git index", groups.LegacyConfigName)
 	}
 }
 
@@ -71,5 +70,30 @@ func TestRenameLegacyConfigRefusesTwoFiles(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(filepath.Join(dir, groups.ConfigName)); string(data) != "name: new\n" {
 		t.Errorf("%s changed: %q", groups.ConfigName, data)
+	}
+}
+
+func tracked(dir, name string) bool {
+	return exec.Command("git", "-C", dir, "ls-files", "--error-unmatch", "--", name).Run() == nil
+}
+func TestRenameLegacyDoesNotOverwriteConcurrentTarget(t *testing.T) {
+	dir := t.TempDir()
+	old := filepath.Join(dir, groups.LegacyConfigName)
+	if err := os.WriteFile(old, []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	selected := groups.FilesIn(dir)
+	target := filepath.Join(dir, groups.ConfigName)
+	if err := os.WriteFile(target, []byte("new"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := renameLegacyConfig(dir, selected); err == nil {
+		t.Fatal("overwrote a late-created target")
+	}
+	if data, _ := os.ReadFile(target); string(data) != "new" {
+		t.Fatal("target modified")
+	}
+	if data, _ := os.ReadFile(old); string(data) != "old" {
+		t.Fatal("source modified")
 	}
 }

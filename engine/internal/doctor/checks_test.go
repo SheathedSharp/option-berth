@@ -143,8 +143,8 @@ func TestProjectConfig(t *testing.T) {
 		write(t, filepath.Join(env.Project, groups.LegacyConfigName), "name: demo\n")
 		got := run(t, env, checkProjectConfig)
 		wantStatus(t, got, StatusWarn)
-		if !got.Fixable || !strings.Contains(got.Fix, "git mv "+groups.LegacyConfigName+" "+groups.ConfigName) {
-			t.Errorf("fix = %q (fixable %v), want the git mv to the new name", got.Fix, got.Fixable)
+		if !got.Fixable || !strings.Contains(got.Fix, "oberth doctor --fix --only project_config") {
+			t.Errorf("fix = %q (fixable %v), want an explicit filesystem-only repair", got.Fix, got.Fixable)
 		}
 		if !strings.Contains(got.Summary, "demo") {
 			t.Errorf("summary = %q, want the group it still loads", got.Summary)

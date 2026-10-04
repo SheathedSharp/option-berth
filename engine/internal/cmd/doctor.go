@@ -52,7 +52,7 @@ var doctorCmd = &cobra.Command{
 func init() {
 	doctorCmd.Flags().BoolVar(&doctorJSONFlag, "json", false, "Output as JSON")
 	doctorCmd.Flags().BoolVar(&doctorFixFlag, "fix", false,
-		"Apply the safe fixes from the working directory, then check again")
+		"Apply safe fixes to the selected project, then check again")
 	doctorCmd.Flags().BoolVar(&doctorYesFlag, "yes", false, "Do not ask before applying a fix")
 	doctorCmd.Flags().StringSliceVar(&doctorOnlyFlag, "only", nil,
 		"Run only these checks (comma separated)")
@@ -260,9 +260,7 @@ func padRight(s string, width int) string {
 // user could have made themselves from the check's own fix hint; nothing here
 // deletes anything, and the broken config is moved aside rather than replaced.
 //
-// The install commands resolve project scope from the working directory, the
-// way they do when a user types them, so `--fix` repairs the project you run it
-// in — not the one `--project` pointed the checks at.
+// Project-scoped fixes honor --project; machine configuration repairs remain local.
 type doctorFix struct {
 	// id is the check it repairs; a dotted id matches by prefix too.
 	id  string
