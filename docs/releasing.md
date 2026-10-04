@@ -1,34 +1,98 @@
-# 发布检查
+# 发布流程 / Release process
 
-当前发布范围为源码。二进制、macOS 安装包和正式版本标签需单独完成产物检查。
+## 版本含义
 
-## 验证
+产品版本为 **X1.X2.X3**，根目录 `VERSION` 是产品版本的唯一来源，不加 `v`。
+Git 标签使用 `vX1.X2.X3`，必须为注释标签，指向已经验证且属于 `main` 历史的提交。
 
-固定待发布提交与源码树，在 macOS/Linux 执行编译、vet、全引擎单元测试、关键包 race
-及真实服务场景。命令和已知限制见 [validation.md](validation.md)。Windows 原生构建/冒烟及 arm64 交叉构建已纳入CI，完整Windows服务场景未验收，
-不通过交叉编译冒充原生测试。未改 GUI 时不声称已经完成视觉验收。
+| 变化 | 步进 | 示例 |
+| --- | --- | --- |
+| 协议更新 | X1 + 1，清零 X2/X3 | 1.2.3 → 2.0.0 |
+| 功能更新 | X2 + 1，清零 X3 | 1.2.3 → 1.3.0 |
+| 缺陷修复 | X3 + 1 | 1.2.3 → 1.2.4 |
 
-## 内容与许可
+这是本项目的版本约定，不把“功能更新”自动等同于协议兼容。涉及 daemon wire contract 的变化按协议更新处理。
+RPC 自身有历史上独立的计数：`engine/internal/daemon/rpc/types.go` 中的 `ProtocolVersion`。
+协议级发布同时提升该 RPC major，并重新生成既有协议 schema；功能与修复发布不擅自改变 RPC 版本。
+例如产品 0.1.0、RPC 1.1.0 的协议步进分别得到产品 1.0.0、RPC 2.0.0，并非两者必须字符串相等。
+协议兼容代码与消费者必须先完成并通过验证；脚本不能替代协议设计和兼容性审查。
 
-仅导出 Git 跟踪的源码、构建输入、合成测试夹具和当前文档。不得包含私人账本、日志、
-截图、缓存、凭证、环境配置、历史备份或未经审查的附件。检查文本、图像元数据和符号链接。
-发现真实凭证先撤销或轮换，删除文件不能使凭证失效。
+## 先预览，再执行
 
-保留根 MIT、[上游 MIT](../engine/LICENSE) 和所有第三方版权。
-Monaspace 字体维持原 OFL，不改名、不子集化。依赖许可输入见
-[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)。分发编译产物时按实际模块清单
-附带许可证和 NOTICE；源码发布不等于二进制或安装包已经验收。
+从干净且与远端一致的已审阅 `main` 发起。需要 Git、Python 3.11+、Go，以及本地验证所需工具。
+macOS 客户端构建还需要对应 Swift 工具链，详见 [客户端说明](../client/macos/README.md)。
 
-## 独立公开历史
+```sh
+# 默认只读预览：不构建、不联网、不写版本或 Git 引用
+scripts/release-protocol.sh
+scripts/release-feature.sh
+scripts/release-fix.sh
 
-需要隔离私人开发历史时，从经审查的最终源码建立独立仓库和根提交，先私有检查再公开。
-不能 fork/mirror、复制旧 `.git`，或把旧分支、PR、标签、讨论与工件并入新库。
-重用仓库名称后，旧 URL 不再可靠指向历史库；维护者应更新自己的旧 clone remote。
+# 完成验证，创建本地版本提交和注释标签；暂不推送
+scripts/release-feature.sh --execute
 
-## CI 与版本
+# 一次调用：验证 → 版本提交 → tag → 原子推送 → 托管构建与发布
+scripts/release-feature.sh --publish
+```
 
-工作流仅读取当前源码，权限最小化，不拉取私人旧 SHA，不上传源码历史和凭证。
-改变可见性不会自动补跑跳过的检查；以实际工作流事件和结果为准。
+每次选择一种类型，不要连续执行三条发布命令。Python 等价入口是
+`python3 scripts/release.py --kind feature --publish`。
+Mage 提供 `releaseProtocol / releaseFeature / releaseFix`（本地提交和 tag）与
+`publishProtocol / publishFeature / publishFix`（包括推送）；均接受 `-dry-run`。
+旧的 `releaseMajor / releaseMinor / releasePatch` 保留为协议/功能/修复的本地发布别名。
 
-`VERSION` 是版本号唯一来源。创建标签或安装包前，检查安装流程、平台、依赖许可、
-校验和与产物元数据。测试结果只对应其实际源码输入，不以旧版本绿灯证明新版本通过。
+## 发布前的强制验证
+
+脚本锁定本次本地操作，在仓库外创建可丢弃 checkout，生成候选版本后执行构建、vet、完整单元测试、
+核心竞态测试、真实服务场景、Mage/Python 辅助测试、品牌一致性，以及 macOS 上的客户端构建。
+验证失败不修改日常工作区，不创建标签。没有跳过测试或强制发布选项。
+
+验证通过后仍重新检查工作区、main 提交、origin/main 与标签，防止验证期间的并行工作被覆盖。
+只允许候选中的版本与协议文件发生预期变化；其他生成或修改必须先被审查。
+代码与环境中的真实错误不通过删断言、放宽超时或自动无限重试处理。
+
+推送使用 `git push --atomic`，main 和标签一起成功或一起失败，不使用 force。
+远端需为本项目，发布者必须有正常写入权限；分支保护拒绝时停止，不更改保护规则或绕过审查。
+要求版本变更也走 PR 的仓库，应先按保护规则完成版本 PR，再由有权限的维护者创建相应注释标签。
+
+## GitHub Actions 发布链路
+
+`.github/workflows/release.yml` 对标签执行以下步骤：
+
+1. 校验版本、协议 schema、注释标签及 main 归属，并运行发布策略测试。
+2. 在 macOS/Linux 运行原生发布验证，复用 Windows 原生构建与事实/持久化检查。
+3. 构建 Darwin/Linux/Windows 的 amd64 与 arm64 CLI 压缩包；macOS arm64 额外生成应用包。
+4. 每个 CLI 包包含 `oberth`、可选 `jev-attention`、构建清单、目标实际运行依赖的许可原文和 SHA256SUMS。
+5. 验证全部目标齐全及散列后创建 GitHub draft release，上传，再下载校验；最后才转为正式 release。
+
+Mac 应用包携带同一提交构建的 `oberth`，优先使用随包引擎；显式 `BERTH_BIN` 仍可覆盖。
+应用和引擎的版本/提交身份必须一致，避免只升级界面而悄悄调用另一份旧引擎。
+Windows arm64 与部分 CLI 包是交叉构建；有下载包不等于已经验证所有平台生命周期。
+
+**当前 macOS 包只有 ad-hoc 签名，没有 Developer ID 签名或公证。** 文件名与发布说明明确标记 `adhoc`。
+它不等于受 Apple 信任的安装包；不提供关闭 Gatekeeper 的安装建议。Developer ID/公证需要维护者另行
+配置证书主体与凭证并完成验收，本流程不会创建证书、上传个人密钥或伪称已经完成这一步。
+
+## 失败与恢复
+
+验证前失败：处理真实问题后重新发起，没有版本或 tag 需要清理。
+本地提交/tag 已建立但原子推送失败：保留结果，先核对两端 refs，再决定如何重试；不要重写标签。
+上传/校验失败：检查遗留 draft 和资产，不直接把失败的 draft 标为正式版。
+网络中断可能造成客户端无法确认最终状态，必须读取远端核实，不能只根据本地报错推断“完全没发生”。
+已经公开的版本不覆盖资产或移动标签；修复后按类别发布下一个版本。既有安装不会自动升级或停止用户服务。
+
+## English quick reference
+
+`VERSION` follows **protocol.feature.fix**. Higher-component increments reset lower components.
+Protocol releases also advance the independently versioned daemon protocol major and regenerate its existing schema.
+This does not make an incompatible consumer compatible: all implementation and compatibility checks must pass first.
+
+The shell scripts default to a read-only plan. `--execute` creates a verified local version commit and annotated tag;
+`--publish` also atomically pushes main and the tag. Run from clean, reviewed main matching the expected origin.
+There is no force-publish or skip-verification flag. Validation uses a disposable checkout and does not overwrite
+concurrent user changes. Existing tags are immutable.
+
+Tag CI verifies native platforms, packages six CLI targets plus the macOS ARM64 app, includes build identities and
+licenses, verifies SHA-256, and publishes a draft only after uploaded assets are downloaded and rechecked.
+The application embeds its matching engine. Current macOS artifacts are **ad-hoc signed, not notarized**;
+Developer ID distribution remains an explicitly separate credential-dependent step.
