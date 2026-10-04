@@ -50,6 +50,7 @@ struct BoardView: View {
     @AppStorage("railWidth") private var railWidth: Double = Double(Metrics.railWidth)
     static let railRange: ClosedRange<Double> = 140...320
     var scrolls: Bool = true
+    private let initialConsoleAgent: Bool
 
     init(
         store: BoardStore,
@@ -57,6 +58,7 @@ struct BoardView: View {
         git: GitStore? = nil,
         scrolls: Bool = true,
         initialScope: Scope = .services(""),
+        initialConsoleAgent: Bool = false,
         views: ViewState? = nil,
         settings: UISettings = .shared
     ) {
@@ -65,6 +67,7 @@ struct BoardView: View {
         _settings = ObservedObject(wrappedValue: settings)
         _git = StateObject(wrappedValue: git ?? GitStore())
         self.scrolls = scrolls
+        self.initialConsoleAgent = initialConsoleAgent
         _views = ObservedObject(wrappedValue: views ?? ViewState(scope: initialScope))
     }
 
@@ -260,7 +263,7 @@ struct BoardView: View {
             case .code:
                 CodeView(git: git, project: project, scrolls: scrolls)
             case .terminal:
-                TerminalPanel(root: project.rootDir ?? "", frozen: !scrolls).id(project.rootDir ?? project.name)
+                WorkspaceConsole(root: project.rootDir ?? "", frozen: !scrolls, initialAgent: initialConsoleAgent).id(project.rootDir ?? project.name)
             case .project:
                 // Keep the old command-line scope as a compatibility alias. Runtime
                 // facts now live on the service page instead of a separate port tab.

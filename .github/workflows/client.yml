@@ -1,7 +1,7 @@
 name: Client and brand verification
 on:
   pull_request:
-    branches: [main]
+    # Validate stacked UI PRs as well as changes targeting main.
     paths: ['client/macos/**', 'brand/**', '.github/workflows/client.yml']
   push:
     branches: [main]
@@ -31,6 +31,8 @@ jobs:
           "$RUNNER_TEMP/daemon-launch-tests"
       - name: Verify real isolated PTY sessions
         run: swift run --package-path client/macos --force-resolved-versions TerminalChecks
+      - name: Verify isolated agent planner, composer and native handoff
+        run: swift run --package-path client/macos --force-resolved-versions AgentChecks
       - name: Build native application and icon
         run: |
           client/macos/build.sh

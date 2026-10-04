@@ -157,6 +157,16 @@ enum MonoWeight {
 /// 中文不进取 —— Monaspace 没有汉字，混排时汉字本来就会回落到系统字体，
 /// 与其让一列字在中英之间换度量，不如一开始就分清楚谁用哪套。
 enum Face {
+    /// AppKit text inputs use the same data-font preference and scale as SwiftUI.
+    static func nativeMono(_ size: CGFloat) -> NSFont {
+        let scaled = size * UISettings.shared.dataScale
+        let selected = UISettings.shared.dataFontName
+        if selected != "Monaspace Neon" && selected != "__system__",
+           let font = NSFont(name: selected, size: scaled) { return font }
+        if FontBook.monoAvailable, let font = NSFont(name: MonoWeight.regular.postScript, size: scaled) { return font }
+        return NSFont.monospacedSystemFont(ofSize: scaled, weight: .regular)
+    }
+
     static func mono(_ size: CGFloat, _ weight: MonoWeight = .regular) -> Font {
         let scaled = size * UISettings.shared.dataScale
         let selected = UISettings.shared.dataFontName

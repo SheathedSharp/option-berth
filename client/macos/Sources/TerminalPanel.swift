@@ -8,7 +8,7 @@ struct TerminalPanel: View {
     @ObservedObject private var sessions = TerminalSessions.shared
     @State private var selection: UUID?
     @State private var problem: String?
-    private var scoped: [TerminalSession] { sessions.inWorktree(root) }
+    private var scoped: [TerminalSession] { sessions.inWorktree(root).filter { $0.kind == "terminal" } }
     private var selected: TerminalSession? { scoped.first { $0.id == selection } ?? scoped.last }
 
     var body: some View {
@@ -46,6 +46,7 @@ struct TerminalPanel: View {
                     Button(selected.isStopping ? "强制结束 / Force end" : (selected.isActive ? "结束会话 / End session" : "关闭 / Close")) { close(selected) }
                 }.padding(10)
             } else {
+                ViewThatFits(in: .vertical) {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("在这份 checkout 中工作。")
                         .font(Face.display(20, .medium)).foregroundStyle(Ink.ink)
@@ -60,8 +61,16 @@ struct TerminalPanel: View {
                             .font(Face.mono(12)).foregroundStyle(Ink.ink).padding(16)
                             .frame(maxWidth: .infinity, alignment: .leading).background(Ink.surface)
                     }
-                    Spacer(minLength: 0)
-                }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                }.padding(18).fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("在当前 worktree 新建终端 / Open a terminal in this worktree")
+                            .font(Face.sans(12))
+                        Text(root).font(Face.mono(10)).lineLimit(1).truncationMode(.middle)
+                        Text("会话不随项目切换迁移 / Sessions keep their initial worktree")
+                            .font(Face.sans(10)).foregroundStyle(Ink.inkMuted)
+                    }.padding(16).fixedSize(horizontal: false, vertical: true)
+                }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
             }
             if let problem {
                 Text(problem).font(Face.sans(11)).foregroundStyle(Ink.ink)
