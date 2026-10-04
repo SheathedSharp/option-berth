@@ -33,6 +33,13 @@ enum Snapshot {
             return 1
         }
 
+        for step in GettingStartedStep.allCases {
+            let code = write(GettingStartedGuide(initialStep: step, frozen: true, onClose: {}, onConnect: {}),
+                             to: url.appendingPathComponent("12-guide-\(step.rawValue + 1).png").path,
+                             width: 640, height: 510)
+            if code != 0 { return code }
+        }
+
         let ports = frozenPorts()
         let groups = frozenGroups()
         let runs = frozenRuns()

@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import BerthTerminal
+import TipKit
 
 /// The project views: declared services, their runtime facts, and read-only Git context.
 /// There is no machine-wide port scope. A port only appears inside the
@@ -85,6 +86,8 @@ struct BoardView: View {
     @State private var removing: BerthGroup?
     @State private var problem: String?
     @State private var projectQuery = ""
+    @State private var tipsEnabled = false
+    @State private var guideConnectPending = false
     @ObservedObject private var terminalSessions = TerminalSessions.shared
     @ObservedObject private var recovery = WorkspaceRecovery.shared
 
@@ -110,7 +113,8 @@ struct BoardView: View {
                                  openSessions: { views.showingSessions = true },
                                  openRecovery: { views.showingRecovery = true },
                                  openUpdates: { views.showingUpdates = true },
-                                 openSettings: { views.showingSettings = true })
+                                 openSettings: { views.showingSettings = true },
+                                 openGuide: { views.showingGuide = true })
                 Hairline()
                 content
             }.padding(.top, views.railVisible ? 0 : Metrics.trafficLightInset)
@@ -118,6 +122,13 @@ struct BoardView: View {
         .ignoresSafeArea(.container, edges: .top)
         .background(Ink.canvas)
         .preferredColorScheme(settings.colorScheme)
+        .sheet(isPresented: $views.showingGuide, onDismiss: {
+            if guideConnectPending { guideConnectPending = false; addProject() }
+        }) {
+            GettingStartedGuide(onClose: { views.showingGuide = false }, onConnect: {
+                guideConnectPending = true; views.showingGuide = false
+            })
+        }
         .sheet(isPresented: $views.showingUpdates) { ReleaseUpdateSheet() }
         .sheet(isPresented: $views.showingRecovery) {
             WorkspaceRecoverySheet(recovery: .shared) { root in views.scope = .console(root) }
@@ -165,7 +176,7 @@ struct BoardView: View {
         } message: {
             Text(problem ?? "")
         }
-        .onAppear { if scrolls { refreshGit(force: true) } }
+        .onAppear { if scrolls { tipsEnabled = OnboardingTips.configure(); refreshGit(force: true) } }
         .onChange(of: services.updatedAt) { _, _ in
             refreshGit()
         }
@@ -302,6 +313,13 @@ struct BoardView: View {
                 .font(Face.sans(11.5))
                 .foregroundStyle(Ink.inkFaint)
                 .fixedSize(horizontal: false, vertical: true)
+            if scrolls && tipsEnabled {
+                TipView(FirstWorktreeTip()) { action in
+                    if action.id == "guide" { views.showingGuide = true }
+                }.tipBackground(Ink.surface)
+            }
+            Button("使用指引 / Getting started") { views.showingGuide = true }
+                .accessibilityIdentifier("workspace.guide")
             SheetButton(title: "接入项目", primary: true, action: addProject)
             Button("打开会话管理 / Open session manager") { views.showingSessions = true }
         }
