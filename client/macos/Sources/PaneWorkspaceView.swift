@@ -12,11 +12,19 @@ struct PaneWorkspaceView: View {
     @ObservedObject private var registry = TerminalSessions.shared
     @State private var problem: String?
     private var scoped: [TerminalSession] { frozen ? frozenSessions : registry.inWorktree(primary.worktree) }
-    private var layout: PaneLayout {
+    // The editable tree may contain historical references whose replacement
+    // processes have not been explicitly started. Never overwrite it with the
+    // smaller set that can currently be displayed as live terminal views.
+    private var sourceLayout: PaneLayout {
         let candidate = agent ? workspace.agentLayout : workspace.terminalLayout
-        let allowed = Set(scoped.map(\.id))
-        if candidate.root != nil, (try? candidate.validate(allowed: allowed)) != nil { return candidate }
+        if candidate.root != nil, (try? candidate.validate()) != nil { return candidate }
         return PaneLayout(session: primary.id)
+    }
+    private var layout: PaneLayout {
+        var visible = sourceLayout
+        let available = Set(scoped.map(\.id))
+        for id in visible.sessions where !available.contains(id) { visible.remove(id) }
+        return visible.root == nil ? PaneLayout(session: primary.id) : visible
     }
     var body: some View {
         VStack(spacing: 0) {
@@ -100,14 +108,19 @@ struct PaneWorkspaceView: View {
         } label: { Image(systemName: "rectangle.split.2x1") }
             .menuStyle(.borderlessButton).fixedSize().help("分屏仅呈现已有会话，不广播输入")
     }
+    // Shared by actual pane actions and the regression harness. Existing
+    // historical references may remain; new references must be registry-owned
+    // in this worktree. Invalid edits cannot partially mutate the source tree.
+    func applyLayoutChange(_ mutation: (inout PaneLayout) throws -> Void) throws {
+        var next = sourceLayout
+        let allowed = Set(next.sessions).union(scoped.map(\.id))
+        try mutation(&next)
+        try next.validate(allowed: allowed)
+        if agent { workspace.agentLayout = next } else { workspace.terminalLayout = next }
+    }
     private func update(_ mutation: (inout PaneLayout) throws -> Void) {
-        var next = layout
-        do {
-            try mutation(&next)
-            try next.validate(allowed: Set(scoped.map(\.id)))
-            if agent { workspace.agentLayout = next } else { workspace.terminalLayout = next }
-            problem = nil
-        } catch { problem = error.localizedDescription }
+        do { try applyLayoutChange(mutation); problem = nil }
+        catch { problem = error.localizedDescription }
     }
 }
 
