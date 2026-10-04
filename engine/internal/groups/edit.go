@@ -1,7 +1,10 @@
 package groups
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -198,8 +201,20 @@ func render(path string, apply func(abs string, root *yaml.Node) error) ([]byte,
 	}
 
 	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	if err := decoder.Decode(&doc); err != nil {
 		return nil, nil, &ConfigError{Path: abs, Problems: []string{err.Error()}}
+	}
+	// Validate the document boundary before editing. Checking only the rendered
+	// output would silently erase every document after the first. Semantic
+	// validation remains after edits so a rename can still repair an invalid name.
+	var extra yaml.Node
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		problem := "expected a single YAML document"
+		if err != nil {
+			problem += ": " + err.Error()
+		}
+		return nil, nil, &ConfigError{Path: abs, Problems: []string{problem}}
 	}
 	root := documentRoot(&doc)
 	if root == nil || root.Kind != yaml.MappingNode {
