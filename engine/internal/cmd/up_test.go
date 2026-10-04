@@ -222,3 +222,59 @@ func TestUpParamsReportsABrokenConfig(t *testing.T) {
 		t.Errorf("error = %v, want it to name the validation problem", err)
 	}
 }
+
+// Readiness is a desired-state check, not just a receipt for newly spawned runs.
+// A pre-existing service that is not ready must fail without becoming our cleanup target.
+func TestWaitForStartReadyChecksSkippedWithoutAuthorizingCleanup(t *testing.T) {
+	t.Setenv("BERTH_HOME", t.TempDir())
+	old := noDaemonFlag
+	noDaemonFlag = true
+	t.Cleanup(func() { noDaemonFlag = old })
+	dir := t.TempDir()
+	path := filepath.Join(dir, groups.ConfigName)
+	if err := os.WriteFile(path, []byte("name: demo\nservices:\n  - name: api\n    cmd: echo api\n    port: 19001\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dir)
+	chunks := []rpc.GroupsStartChunk{{Service: "api", State: "skipped", Skipped: true}}
+	summary := rpc.GroupsStartEnd{Skipped: []string{"api"}}
+	cleanup, err := waitForStartReady(context.Background(), rpc.GroupsStartParams{ConfigPath: &path}, nil, chunks, &summary, time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cleanup) != 0 {
+		t.Fatalf("pre-existing run authorized for cleanup: %v", cleanup)
+	}
+	if chunks[0].State != "failed" || chunks[0].Reason != "ready_timeout" || len(summary.Errors) != 1 {
+		t.Fatalf("unready reused service silently accepted: chunks=%+v summary=%+v", chunks, summary)
+	}
+	if !chunks[0].Skipped {
+		t.Fatal("lost the original no-spawn fact")
+	}
+}
+
+func TestWaitForStartReadyMixedTimeoutCleansOnlyNewStarts(t *testing.T) {
+	t.Setenv("BERTH_HOME", t.TempDir())
+	old := noDaemonFlag
+	noDaemonFlag = true
+	t.Cleanup(func() { noDaemonFlag = old })
+	dir := t.TempDir()
+	path := filepath.Join(dir, groups.ConfigName)
+	data := "name: demo\nservices:\n  - name: old\n    cmd: echo old\n    port: 19001\n  - name: new\n    cmd: echo new\n    port: 19002\n"
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dir)
+	chunks := []rpc.GroupsStartChunk{{Service: "old", State: "skipped", Skipped: true}, {Service: "new", State: "started"}}
+	summary := rpc.GroupsStartEnd{Skipped: []string{"old"}, Started: []string{"new"}}
+	cleanup, err := waitForStartReady(context.Background(), rpc.GroupsStartParams{ConfigPath: &path}, nil, chunks, &summary, time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cleanup) != 1 || cleanup[0] != "new" {
+		t.Fatalf("cleanup=%v, must exclude existing service", cleanup)
+	}
+	if len(summary.Errors) != 2 {
+		t.Fatalf("both services must fail readiness: %+v", summary)
+	}
+}
