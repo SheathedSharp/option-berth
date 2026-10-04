@@ -1,4 +1,5 @@
 import SwiftUI
+import BerthTerminal
 
 /// 入口。默认起窗口；几个无头开关用来把「窗口是空的」拆成几段看，
 /// 以及把图标从标志里生成出来：
@@ -106,7 +107,7 @@ struct OptionBerthApp: App {
     @NSApplicationDelegateAdaptor(MenuBarDelegate.self) private var menuBar
 
     var body: some Scene {
-        WindowGroup("option-berth") {
+        Window("option-berth", id: "workspace") {
             BoardView(store: store, services: services, git: git, views: views, settings: settings)
                 .environmentObject(settings)
                 .frame(minWidth: 720, minHeight: 420)
@@ -141,13 +142,17 @@ struct OptionBerthApp: App {
                 Button("服务") { views.show(.services, projects: projectNames) }
                     .keyboardShortcut("s", modifiers: .command)
                 Button("代码") { views.show(.code, projects: projectNames) }
-                    .keyboardShortcut("g", modifiers: .command)
+                    .keyboardShortcut("g", modifiers: [.command, .option])
                 Divider()
                 Button("终端 / Terminal") { views.show(.terminal, projects: projectNames) }
                     .keyboardShortcut("t", modifiers: .command)
-                Button("查找日志") { services.beginLogFind() }
-                    .keyboardShortcut("f", modifiers: .command)
-                    .disabled(services.focused == nil)
+                Button("会话… / Sessions…") { views.showingSessions = true }
+                    .keyboardShortcut("o", modifiers: [.command, .shift])
+                Button("查找 / Find") {
+                    if let terminal = HostedTerminalView.containing(NSApp.keyWindow?.firstResponder) {
+                        showTerminalFind(terminal)
+                    } else { services.beginLogFind() }
+                }.keyboardShortcut("f", modifiers: .command)
                 Button("刷新") {
                     store.refresh()
                     services.refresh()

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import BerthTerminal
 
 /// Headless rendering for real data and a small deterministic state set.
 /// The frozen states follow the product surface: projects, services, runs,
@@ -75,6 +76,13 @@ enum Snapshot {
                               to: url.appendingPathComponent("10-agent-console.png").path,
                               width: width, height: height)
         if agentCode != 0 { return agentCode }
+
+        let left = TerminalSession(worktree: "/workspace/demo", title: "Shell · feature/api")
+        let right = TerminalSession(worktree: "/workspace/demo", title: "Codex · feature/api", kind: "agent:codex:native")
+        let splitCode = write(SessionCanvas(primary: left, secondary: right, frozen: true),
+                              to: url.appendingPathComponent("11-console-split.png").path,
+                              width: width, height: height)
+        if splitCode != 0 { return splitCode }
 
         let proposal = GroupInitResult(path: "/Users/you/code/new-worktree/oberth.yaml",
                                        yaml: "name: new-worktree\nservices: []\n",

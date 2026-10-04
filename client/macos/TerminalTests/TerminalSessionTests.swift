@@ -26,6 +26,8 @@ enum TerminalChecks {
         }
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            try workspaceChecks(root: root)
+            try nativeConsoleChecks(root: root)
             let session = TerminalSession(worktree: root.path)
             owned.append(session)
             try check(session.terminal.process == nil && !session.isActive, "construction launched a process")

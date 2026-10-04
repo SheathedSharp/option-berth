@@ -6,10 +6,10 @@ struct TerminalPanel: View {
     let root: String
     var frozen = false
     @ObservedObject private var sessions = TerminalSessions.shared
-    @State private var selection: UUID?
+    @ObservedObject var workspace: ConsoleWorkspace
     @State private var problem: String?
     private var scoped: [TerminalSession] { sessions.inWorktree(root).filter { $0.kind == "terminal" } }
-    private var selected: TerminalSession? { scoped.first { $0.id == selection } ?? scoped.last }
+    private var selected: TerminalSession? { scoped.first { $0.id == workspace.terminalSelection } ?? scoped.last }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -17,8 +17,18 @@ struct TerminalPanel: View {
                 Label("Terminal", systemImage: "terminal")
                     .font(Face.sans(12, .semibold))
                 Text("独立会话 · 原生输入 / Native input")
-                    .font(Face.sans(10)).foregroundStyle(Ink.inkFaint)
+                    .font(Face.sans(10)).foregroundStyle(Ink.inkFaint).lineLimit(1).layoutPriority(-1)
                 Spacer()
+                if let selected {
+                    Menu("并排 / Split") {
+                        Button("单窗格 / Single pane") { workspace.terminalSplit = nil }
+                        ForEach(sessions.inWorktree(root).filter { $0.id != selected.id }) { session in
+                            Button(session.title) { workspace.terminalSplit = session.id }
+                        }
+                    }.fixedSize()
+                    Button { showTerminalFind(selected.terminal) } label: { Image(systemName: "magnifyingglass") }
+                        .help("查找终端输出 / Find terminal output")
+                }
                 Button("新建终端 / New terminal", action: newShell).disabled(frozen)
             }
             .padding(12)
@@ -26,7 +36,7 @@ struct TerminalPanel: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         ForEach(scoped) { session in
-                            Button { selection = session.id } label: {
+                            Button { workspace.select(session.id, agent: false) } label: {
                                 Text(session.title + (session.isActive ? " ●" : " ○"))
                                     .font(Face.mono(11))
                                     .padding(.horizontal, 10).padding(.vertical, 5)
@@ -39,12 +49,8 @@ struct TerminalPanel: View {
             }
             Hairline()
             if let selected {
-                TerminalSurface(session: selected).id(selected.id)
-                HStack {
-                    Text(selected.state).font(Face.mono(10)).foregroundStyle(Ink.inkMuted)
-                    Spacer()
-                    Button(selected.isStopping ? "强制结束 / Force end" : (selected.isActive ? "结束会话 / End session" : "关闭 / Close")) { close(selected) }
-                }.padding(10)
+                SessionCanvas(primary: selected, secondary: sessions.inWorktree(root).first { $0.id == workspace.terminalSplit })
+
             } else {
                 ViewThatFits(in: .vertical) {
                 VStack(alignment: .leading, spacing: 14) {
@@ -84,23 +90,10 @@ struct TerminalPanel: View {
         do {
             let session = try sessions.add(worktree: root, title: "Shell \(scoped.count + 1)",
                                            executable: TerminalSession.shell, arguments: ["-i"])
-            selection = session.id
+            workspace.terminalSelection = session.id
             problem = nil
             DispatchQueue.main.async { session.terminal.window?.makeFirstResponder(session.terminal) }
         } catch { problem = error.localizedDescription }
     }
 
-    private func close(_ session: TerminalSession) {
-        if session.isActive {
-            let alert = NSAlert()
-            alert.messageText = "结束这个终端会话？ / End this terminal session?"
-            alert.informativeText = session.isStopping ? "将强制结束此会话的直接子进程（SIGKILL），未保存工作可能丢失。 / Force this session child to exit; unsaved work may be lost." : "会向此终端的直接子进程发送 SIGHUP。项目服务不会由这里停止；脱离终端的进程需单独管理。"
-            alert.addButton(withTitle: "取消 / Cancel")
-            alert.addButton(withTitle: "结束 / End")
-            if alert.runModal() == .alertSecondButtonReturn { session.stop(force: session.isStopping) }
-        } else {
-            sessions.remove(session)
-            selection = nil
-        }
-    }
 }

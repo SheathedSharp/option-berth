@@ -7,21 +7,23 @@ struct WorkspaceConsole: View {
     let root: String
     var frozen = false
     var initialAgent = false
-    @State private var agent: Bool
+    @ObservedObject private var workspace: ConsoleWorkspace
     init(root: String, frozen: Bool = false, initialAgent: Bool = false) {
         self.root = root; self.frozen = frozen; self.initialAgent = initialAgent
-        _agent = State(initialValue: initialAgent)
+        let state = frozen ? ConsoleWorkspace() : TerminalSessions.shared.workspace(root)
+        if frozen { state.agentMode = initialAgent }
+        _workspace = ObservedObject(wrappedValue: state)
     }
     var body: some View {
         VStack(spacing: 0) {
             HStack {
                 if frozen {
                     HStack(spacing: 0) {
-                        Text("Terminal").padding(.horizontal, 14).padding(.vertical, 5).background(agent ? Ink.surface : Ink.accentSoft)
-                        Text("Agent session").padding(.horizontal, 14).padding(.vertical, 5).background(agent ? Ink.accentSoft : Ink.surface)
+                        Text("Terminal").padding(.horizontal, 14).padding(.vertical, 5).background(workspace.agentMode ? Ink.surface : Ink.accentSoft)
+                        Text("Agent session").padding(.horizontal, 14).padding(.vertical, 5).background(workspace.agentMode ? Ink.accentSoft : Ink.surface)
                     }.font(Face.sans(11)).background(Ink.surface).clipShape(RoundedRectangle(cornerRadius: 5))
                 } else {
-                    Picker("会话模式 / Session mode", selection: $agent) {
+                    Picker("会话模式 / Session mode", selection: $workspace.agentMode) {
                         Text("Terminal").tag(false)
                         Text("Agent session").tag(true)
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 235)
@@ -30,8 +32,8 @@ struct WorkspaceConsole: View {
                 Text("Worktree · Git · Runtime").font(Face.mono(10)).foregroundStyle(Ink.inkFaint)
             }.padding(.horizontal, 12).padding(.vertical, 8)
             Hairline()
-            if agent { AgentPanel(root: root, frozen: frozen).id(root) }
-            else { TerminalPanel(root: root, frozen: frozen).id(root) }
+            if workspace.agentMode { AgentPanel(root: root, frozen: frozen, workspace: workspace).id(root) }
+            else { TerminalPanel(root: root, frozen: frozen, workspace: workspace).id(root) }
         }
 
     }
@@ -42,26 +44,25 @@ struct AgentPanel: View {
     var frozen = false
     @ObservedObject private var sessions = TerminalSessions.shared
     @State private var providers: [ExternalAgent] = []
-    @State private var providerID = "codex"
-    @State private var selection: UUID?
-    @State private var prompt = ""
+    @ObservedObject private var workspace: ConsoleWorkspace
     @State private var issue: String?
     @State private var loading = false
     @State private var planning: Task<Void, Never>?
 
-    init(root: String, frozen: Bool = false) {
+    init(root: String, frozen: Bool = false, workspace: ConsoleWorkspace) {
         self.root = root; self.frozen = frozen
+        self.workspace = workspace
         if frozen {
             _providers = State(initialValue: [ExternalAgent(id: "codex", name: "Codex", command: "codex", installed: true, nativePrompt: true)])
-            _prompt = State(initialValue: "检查当前 worktree 的服务状态，并说明失败原因。")
+            workspace.draft = "检查当前 worktree 的服务状态，并说明失败原因。"
         }
     }
 
-    private var provider: ExternalAgent? { providers.first { $0.id == providerID } }
+    private var provider: ExternalAgent? { providers.first { $0.id == workspace.providerID } }
     private var scoped: [TerminalSession] {
         sessions.inWorktree(root).filter { $0.kind.hasPrefix("agent:") }
     }
-    private var selected: TerminalSession? { scoped.first { $0.id == selection } ?? scoped.last }
+    private var selected: TerminalSession? { scoped.first { $0.id == workspace.agentSelection } ?? scoped.last }
     private var available: Bool { provider?.installed == true && !loading && !frozen }
 
     var body: some View {
@@ -71,13 +72,23 @@ struct AgentPanel: View {
                     Label(provider?.name ?? "Codex", systemImage: "chevron.down")
                         .font(Face.sans(12)).padding(.horizontal, 10).padding(.vertical, 5).background(Ink.surface)
                 } else {
-                    Picker("Coding agent", selection: $providerID) {
+                    Picker("Coding agent", selection: $workspace.providerID) {
                         ForEach(providers) { provider in
                             Text(provider.name + (provider.installed ? "" : " · 未安装 / Missing")).tag(provider.id)
                         }
-                    }.labelsHidden().frame(maxWidth: 260)
+                    }.labelsHidden().frame(maxWidth: 210)
                 }
                 Spacer()
+                if let selected {
+                    Menu("并排 / Split") {
+                        Button("单窗格 / Single pane") { workspace.agentSplit = nil }
+                        ForEach(sessions.inWorktree(root).filter { $0.id != selected.id }) { session in
+                            Button(session.title) { workspace.agentSplit = session.id }
+                        }
+                    }.fixedSize()
+                    Button { showTerminalFind(selected.terminal) } label: { Image(systemName: "magnifyingglass") }
+                        .help("查找终端输出 / Find terminal output")
+                }
                 nativeButton
             }.padding(12)
             if !scoped.isEmpty {
@@ -85,7 +96,7 @@ struct AgentPanel: View {
                     HStack(spacing: 6) {
                         ForEach(scoped) { session in
                             Button {
-                                selection = session.id
+                                workspace.select(session.id, agent: true)
                                 focus(session)
                             } label: {
                                 Text(session.title + (session.isActive ? " ●" : " ○"))
@@ -99,27 +110,22 @@ struct AgentPanel: View {
             }
             Hairline()
             if let selected {
-                TerminalSurface(session: selected).id(selected.id)
+                SessionCanvas(primary: selected, secondary: sessions.inWorktree(root).first { $0.id == workspace.agentSplit })
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                HStack {
-                    Text(selected.state).font(Face.mono(10)).foregroundStyle(Ink.inkMuted)
-                    Spacer()
-                    Button(selected.isStopping ? "强制结束 / Force end" : (selected.isActive ? "结束 / End" : "关闭 / Close")) {
-                        close(selected)
-                    }
-                }.padding(.horizontal, 12).padding(.vertical, 6)
+
             } else {
                 emptyState
             }
             Hairline()
+            if !workspace.nativeExpanded || selected == nil {
             VStack(alignment: .leading, spacing: 7) {
-                Text(providerID == "deepseek" ? "DeepSeek：消息使用 headless；原生模式要求已有 tui profile。" : "⌘↩ 新会话 / New session · 后续输入交给原生 agent")
+                Text(workspace.providerID == "deepseek" ? "DeepSeek：消息使用 headless；原生模式要求已有 tui profile。" : "⌘↩ 新会话 / New session · 后续输入交给原生 agent")
                     .font(Face.sans(10)).foregroundStyle(Ink.inkFaint)
                 Group {
                     if frozen {
-                        Text(prompt).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        Text(workspace.draft).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     } else {
-                        AgentComposer(text: $prompt, enabled: !loading,
+                        AgentComposer(text: $workspace.draft, enabled: !loading,
                                       font: Face.nativeMono(12),
                                       foreground: NSColor(Ink.ink),
                                       onSubmit: { launch(withPrompt: true) }, onNative: openNative)
@@ -135,15 +141,16 @@ struct AgentPanel: View {
                     Spacer()
                     if loading { Button("取消 / Cancel") { planning?.cancel() } }
                     if !loading && !frozen { Button("刷新 / Refresh") {
-                        planning = Task { await loadProviders() }
+                        refreshProviders()
                     } }
                     sendButton
                 }
                 if let issue { Text(issue).font(Face.sans(10)).foregroundStyle(Ink.ink).textSelection(.enabled) }
             }.padding(12)
+            }
         }
         .background(Ink.canvas)
-        .task(id: root) { await loadProviders() }
+        .onAppear { refreshProviders() }
         .onDisappear { planning?.cancel(); planning = nil }
     }
 
@@ -171,20 +178,32 @@ struct AgentPanel: View {
     }
 
     private var nativeButton: some View {
-        Button("原生界面 / Native UI ⇧⌘↩") { openNative() }
-            .disabled(!available && !(selected?.isActive == true && selected?.kind.hasSuffix(":native") == true))
+        Button(workspace.nativeExpanded ? "消息框 / Compose" : "原生 / Native") {
+            if workspace.nativeExpanded { workspace.nativeExpanded = false }
+            else { openNative() }
+        }
+            .disabled(!workspace.nativeExpanded && !available && !(selected?.isActive == true && selected?.kind.hasSuffix(":native") == true))
     }
 
     private var sendButton: some View {
         Button("发送到新会话 / Send ⌘↩") { launch(withPrompt: true) }
-            .disabled(!available || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .disabled(!available || workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    private func refreshProviders() {
+        guard !loading, !frozen else { return }
+        loading = true
+        planning = Task { @MainActor in
+            await loadProviders()
+            planning = nil
+        }
     }
 
     private func loadProviders() async {
         if frozen {
             providers = [ExternalAgent(id: "codex", name: "Codex", command: "codex", installed: true, nativePrompt: true),
                          ExternalAgent(id: "deepseek", name: "DeepSeek Harness", command: "dsh", installed: false, nativePrompt: false)]
-            prompt = "检查当前 worktree 的服务状态，并说明失败原因。"
+            workspace.draft = "检查当前 worktree 的服务状态，并说明失败原因。"
             return
         }
         loading = true
@@ -198,15 +217,15 @@ struct AgentPanel: View {
             let values = try await AgentBridge.providers(binary: binary, environment: TerminalSession.environment())
             try Task.checkCancellation()
             providers = values
-            if !values.contains(where: { $0.id == providerID && $0.installed }),
-               let first = values.first(where: { $0.installed }) ?? values.first { providerID = first.id }
+            if !values.contains(where: { $0.id == workspace.providerID && $0.installed }),
+               let first = values.first(where: { $0.installed }) ?? values.first { workspace.providerID = first.id }
         } catch is CancellationError {} catch { issue = error.localizedDescription }
     }
 
     private func launch(withPrompt: Bool) {
         guard available, let provider, let binary = DaemonLaunch.binaryPath() else { return }
-        if withPrompt && prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return }
-        let message = withPrompt ? prompt : nil
+        if withPrompt && workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return }
+        let message = withPrompt ? workspace.draft : nil
         let mode = withPrompt && !provider.nativePrompt ? "task" : "native"
         let selectedRoot = root
         loading = true
@@ -221,8 +240,9 @@ struct AgentPanel: View {
                 let title = "\(provider.name) \(scoped.count + 1)" + (mode == "task" ? " · task" : "")
                 let session = try sessions.add(worktree: plan.worktree, title: title,
                                                 kind: "agent:\(provider.id):\(mode)", executable: plan.executable, arguments: plan.arguments)
-                selection = session.id
-                if withPrompt { prompt = "" }
+                workspace.agentSelection = session.id
+                if withPrompt && workspace.draft == message { workspace.draft = "" }
+                workspace.nativeExpanded = mode == "native"
                 focus(session)
             } catch is CancellationError {
                 issue = "已取消，未启动 agent / Cancelled before agent launch"
@@ -231,19 +251,10 @@ struct AgentPanel: View {
     }
 
     private func openNative() {
-        if let selected, selected.isActive, selected.kind.hasSuffix(":native") { focus(selected) }
+        if let selected, selected.isActive, selected.kind.hasSuffix(":native") { workspace.nativeExpanded = true; focus(selected) }
         else { launch(withPrompt: false) }
     }
     private func focus(_ session: TerminalSession) {
         DispatchQueue.main.async { session.terminal.window?.makeFirstResponder(session.terminal) }
-    }
-    private func close(_ session: TerminalSession) {
-        if !session.isActive { sessions.remove(session); selection = nil; return }
-        let alert = NSAlert()
-        alert.messageText = "结束这个 agent 会话？ / End this agent session?"
-        alert.informativeText = session.isStopping ? "强制结束可能丢失未保存工作。 / Force termination may lose unsaved work." : "只结束这个会话的直接子进程，不停止项目服务。 / This does not stop project services."
-        alert.addButton(withTitle: "取消 / Cancel")
-        alert.addButton(withTitle: "结束 / End")
-        if alert.runModal() == .alertSecondButtonReturn { session.stop(force: session.isStopping) }
     }
 }
