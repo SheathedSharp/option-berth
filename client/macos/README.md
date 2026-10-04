@@ -108,7 +108,7 @@ schema，再重新构建客户端。
 ## 原生终端 / Native terminal
 
 终端页按 worktree 保留独立 PTY，点击新建才启动 shell；切换项目不会改变已有会话。
-`⌘T` 打开终端页。结束按钮只向该会话的直接子进程发送 SIGHUP，等待退出回执后才允许关闭；
+`⌘3` 打开终端页。结束按钮只向该会话的直接子进程发送 SIGHUP，等待退出回执后才允许关闭；
 退出应用前必须先结束活动会话。脱离终端的子进程需用户另行管理，项目服务仍通过 `oberth down` 停止。
 
 SwiftTerm 固定版本负责终端仿真与 PTY；构建需要 Swift 6+，首次构建需要下载依赖。
@@ -119,7 +119,7 @@ SwiftTerm 固定版本负责终端仿真与 PTY；构建需要 Swift 6+，首次
 
 在终端页切换 **Terminal / Agent session**。Terminal 只显示 shell 会话，Agent session
 只显示 agent 会话；两者都固定归属于创建时选择的 worktree。切换页面不会结束原生进程，
-也不会把会话迁移到另一个项目。草稿、provider、模式与选中会话按 worktree 在应用内存中保留，切换页面不会丢失；退出应用后不恢复。
+也不会把会话迁移到另一个项目。草稿仅在内存中保留，切换页面不会丢失；布局和 provider 选择可经用户同意保存，重启后先确认恢复，不自动恢复进程。
 
 先自行安装并登录所需的 OpenCode、Codex、Claude Code、DeepSeek Harness 或 Pi。
 客户端使用同一份 `oberth agent list/plan` 契约；未安装会标记 Missing，不自动安装或登录。
@@ -147,7 +147,7 @@ its initial worktree. Install/authenticate your coding agent yourself; Refresh o
 In the message composer, Cmd+Enter starts a new session with a literal initial prompt. Shift+Cmd+Enter
 focuses the selected live native session, or opens a new native session when none is available.
 Continue subsequent turns in the agent's own terminal. Return inserts a newline; marked IME text is not
-submitted. Composer shortcuts are not installed in native terminals. Drafts, provider choice, mode and selection survive page changes in memory, not app restarts.
+submitted. Composer shortcuts are not installed in native terminals. Drafts remain in memory only; layout and provider metadata can be saved with explicit consent and reviewed after restart, without automatically launching processes.
 DeepSeek uses headless for messages and requires an existing tui profile for native mode; switching
 between them does not resume the same conversation. No agent reasoning loop, credential store,
 automatic installation, approval bypass, shell prompt interpolation, or implicit cross-worktree resume is added.
@@ -174,35 +174,23 @@ AgentChecks 的默认路径使用合成 CLI 协议；显式二进制路径验证
 提示没有项目服务事实，不把会话存在冒充服务正常。移除项目会丢弃该项目的输入草稿与导航状态，
 但不会静默杀掉终端进程。关闭已退出会话才释放会话名额（总共最多 16 个）。
 
-**并排 / Split** 选择同一 worktree 内另一个已有会话，最多同时显示两栏；可将 shell 与 agent
-并排。它不隐式创建进程，也不广播键盘输入；每栏有自己的名称、状态、查找和结束入口。
-选择当前副栏会与主栏交换，关闭主栏会回到剩下的会话。原生分隔线可调整宽度。
-这不是任意递归布局，也不是跨工作区拼接终端。
+每个窗格的分屏菜单可呈现同 worktree 的已有会话，并支持左右/上下递归拆分。标题拖放可
+重排；隐藏窗格不结束会话，结束则仍需确认真实退出。每个会话只有一个 PTY，独立窗口与
+工作区之间移动的是其呈现权，不复制进程、不广播输入。具体操作与上限见下方“动作、布局与窗口”。
 
-进入 **原生 / Native** 时隐藏消息输入框，给 agent 原生界面更多空间；点击 **消息框 / Compose**
-返回首条消息编辑。后续对话继续在 agent 自己的终端内进行，没有向未知 TUI 状态模拟发送。
-**⌘F** 对当前焦点终端使用 SwiftTerm 原生历史搜索；每栏的放大镜只搜索该栏。
-原生 Edit/Window 菜单保留，复制、粘贴、选择、撤销交给响应链。代码页快捷键为 **⌥⌘G**，
-避免占用常见的查找下一项按键。字体/字号和主题变更同步已打开终端。
+进入 **原生 / Native** 时可收起消息框；后续对话仍由外部 agent 处理。计划读取进度/取消和
+错误提示位于消息框之外，收起后也可访问。**⌘F** 搜索当前焦点终端，**⌘2** 打开只读 Git。
+标准 Edit/Window/App 菜单保留，复制、粘贴、全选和撤销仍走原生响应链。
 
-当前采用一个工作区窗口承载 PTY，避免同一原生视图同时被两个窗口抢占；关闭窗口后可从
-Window 菜单重新打开。多窗口与可转移的 pane ownership 尚未实现。退出应用仍先请求会话退出；
-允许强制结束时只升级那些已经处于 stopping 的会话，新会话先收到正常退出请求。
+**English.** Shift+Cmd+O opens session management, including sessions whose manifest was removed.
+Recursive same-worktree panes can be split horizontally/vertically or moved to a detached window.
+There is one native PTY per session, not one process per view. Closing a detached window returns its
+presentation to the workspace; ending a session still requires observing its exit. Cmd+1/2/3 selects
+services/Git/terminal. Standard native editing and window actions remain available.
 
-**English.** Shift+Cmd+O opens the application-owned session manager, including sessions whose manifest
-was removed. Search by name, worktree or agent; rename, reopen, stop and close explicitly. Drafts and
-navigation choices stay in memory per canonical worktree and are cleared on explicit project removal or
-app exit. There is no process or transcript restoration after restart.
-Split shows up to two existing sessions from the same worktree (shell and agent may be mixed), with
-independent keyboard input and per-pane find/stop actions. Native mode collapses the composer without
-creating another agent process. Cmd+F searches the focused terminal through SwiftTerm. Standard Edit and
-Window menus remain available; Option+Cmd+G opens the code page. The app uses one workspace window so
-one PTY view cannot be reparented into two windows. Multi-window and recursive pane layouts are not implemented.
-
-冻结 split 图用静态 HStack 表达几何（ImageRenderer 不能捕获 NSSplitView），不是实际终端截图。
-TerminalChecks 另用真实 NSWindow/NSSplitView/PTY 检查分隔尺寸、焦点、独立输入、历史查找、字体
-更新、工作目录、状态保留和混合退出升级；不读取用户剪贴板，不把这些检查等同于所有鼠标菜单、
-实际输入法与长期负载验收。
+冻结图与原生 UI 共用布局模型，但用静态 H/V 栈绘制分隔，去掉 ImageRenderer 无法捕获的
+原生菜单/拖放宿主；这不等于原生窗口或终端输出截图。TerminalChecks / ClientChecks 另用
+实际 NSWindow、NSSplitView 和 PTY 验证查找、输入、焦点、窗口所有权与进程退出。
 
 ## 有限 CLI 读取的取消边界
 
@@ -251,7 +239,7 @@ OSC、UTF-8、历史/帧上限、未知退出码以及隔离的真实 zsh PTY �
 
 `⇧⌘P` 打开可搜索命令面板；输入关键词后 Return 执行选中项，上下键选择，Escape 关闭。
 同一动作目录生成菜单与面板。默认 `⌘1/2/3` 切换服务/Git/终端，`⇧⌘O` 打开会话，
-`⌘F` 查找，`⌘R` 刷新，`⌥⌘S` 切换侧栏，`⌘,` 打开设置。面板中的“快捷键”可修改
+`⌘F` 查找，`⌘R` 刷新，`⌥⌘S` 切换侧栏，`⌘,` 打开设置，`⇧⌥⌘O` 打开恢复，`⌥⌘U` 检查更新。面板中的“快捷键”可修改
 工作区动作按键；重复按键、原生编辑/退出/关闭窗口快捷键和固定 `⇧⌘P` 被拒绝。
 
 每个窗格可将同 worktree 的已有会话左右或上下分屏；嵌套布局最多 16 个会话，输入不广播。
@@ -285,3 +273,35 @@ OSC、UTF-8、历史/帧上限、未知退出码以及隔离的真实 zsh PTY �
 崩溃后后台进程接管。分隔条的精确像素位置目前不保存。已存在当前会话时拒绝覆盖恢复布局。
 `WorkspaceChecks` 验证存储边界；`ClientChecks` 验证用户同意、待确认文件不被覆盖、草稿不落盘、
 没有隐式进程恢复、显式新建与引用映射，以及关闭后删除。所有夹具均在隔离目录运行。
+
+
+## 当前 macOS 工作区界面
+
+顶部工具栏始终提供命令面板、会话管理、恢复和更多操作；更多菜单包含检查更新与设置。
+左栏可按项目名/分支筛选 worktree。切换 worktree 保留当前服务/Git/终端页，不把会话移动到
+其他代码目录。项目标题区分名称、分支、路径和服务数量；清单与项目级动作集中在项目菜单。
+终端窗格只保留一套标题/焦点/状态/查找/分屏/独立窗口/结束入口，移除旧双栏状态与重复控制。
+
+Agent 页的“续接…”选择原始会话文件，复用 `oberth agent plan --resume-file` 的身份校验；
+旧引擎未声明该能力或 provider 不支持时禁用入口，不猜测最近对话。续接后显示会话标识摘要，
+输入、登录和审批保留在原生界面；点击新消息仍创建新会话。恢复页的历史 agent 入口只导航，
+对话恢复仍须在 Agent 页选择原始文件。
+
+“检查更新”仅在明确打开后读取官方仓库公开发布元数据。它不会上传工作目录、自动下载/安装、
+替换二进制或重启服务。发布页面 URL 由仓库与合法版本组成，不接受响应里的任意跳转地址；
+结果受读取大小/时限约束。安装包名和 SHA256SUMS 的存在，不等于已经下载或验证签名/校验和。
+
+界面沿用现有主题、字体与动效令牌，深色主题同步 SwiftUI/AppKit 颜色方案，不修改用户字体
+设置或随附字体。冻结渲染使用独立默认配置且不启动 daemon/agent，不读取个人主题偏好：
+
+```sh
+# 已构建后执行；冻结截图不会隐式构建
+client/macos/build/OptionBerth.app/Contents/MacOS/OptionBerth \
+  --render-states /tmp/oberth-states --size 1060x720
+client/macos/build/OptionBerth.app/Contents/MacOS/OptionBerth \
+  --render-states /tmp/oberth-dark --render-theme midnight --size 900x640
+```
+
+默认窗口为 1060×720，最小为760×520。原生交互检查使用隔离 HOME/CFFIXED_USER_HOME/BERTH_HOME；
+发布检查包含 ClientChecks，测试不会读取真实 provider 账号。全部输入法、系统辅助功能和
+长期资源趋势仍属于单独验收范围，不由冻结截图代替。

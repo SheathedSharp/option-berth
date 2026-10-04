@@ -104,6 +104,13 @@ oberth agent plan codex --worktree "$PWD" --json
 oberth agent run codex --worktree "$PWD"
 ```
 
+**Shift+Cmd+P** opens the shared action palette; **Cmd+1/2/3** selects services, read-only Git and terminal.
+Same-worktree sessions support recursive panes and exclusive detached-window presentation. The toolbar
+exposes session management, layout recovery and an explicit release check. Resume requires a selected
+original session file and matching worktree metadata, never the latest conversation. Layout metadata is
+opt-in; drafts, terminal output and old processes are not automatically restored. Command blocks are an
+explicit per-shell zsh integration and do not modify the user's shell profiles.
+
 DeepSeek messages use headless; native mode requires an existing tui profile. These are not seamless modes
 of the same conversation. No new reasoning loop, model credential store, automatic plugin installation,
 approval bypass, or sandbox bypass is introduced. See the [client guide](client/macos/README.md).
