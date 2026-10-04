@@ -284,18 +284,34 @@ func TestKillTargetsRejectsMixedSelectors(t *testing.T) {
 }
 
 func TestPositionalTargetReadsAPortFirst(t *testing.T) {
-	snapshot := killSnapshot()
-	if got := positionalTarget(3000, snapshot, ""); got.Port != 3000 || got.PID != 0 {
-		t.Errorf("3000 = %+v, want the listening port", got)
-	}
-	// Nothing listens on this number and no such process exists: still a port,
-	// so the user gets "no process is listening on 4321" rather than a pid error.
-	if got := positionalTarget(4321, snapshot, ""); got.Port != 4321 {
-		t.Errorf("4321 = %+v, want a port target", got)
-	}
-	// Out of port range: it can only be a pid.
-	if got := positionalTarget(70000, snapshot, ""); got.PID != 70000 || got.Port != 0 {
-		t.Errorf("70000 = %+v, want a pid target", got)
+	for _, tc := range []struct {
+		name      string
+		n         int
+		alive     bool
+		port, pid int
+		probes    int
+	}{
+		{"listener wins over same PID", 3000, true, 3000, 0, 0},
+		{"no listener or process", 4321, false, 4321, 0, 1},
+		{"live PID without listener", 4321, true, 0, 4321, 1},
+		{"outside port range", 70000, false, 0, 70000, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			got := positionalTargetWithProbe(tc.n, killSnapshot(), "127.0.0.1", func(pid int) bool {
+				calls++
+				if pid != tc.n {
+					t.Fatal(pid)
+				}
+				return tc.alive
+			})
+			if got.Port != tc.port || got.PID != tc.pid || calls != tc.probes {
+				t.Fatalf("target=%+v probes=%d; expected port=%d PID=%d probes=%d", got, calls, tc.port, tc.pid, tc.probes)
+			}
+			if got.Port != 0 && got.BindAddress != "127.0.0.1" {
+				t.Fatal("bind selector lost")
+			}
+		})
 	}
 }
 
