@@ -1,177 +1,109 @@
-# option-berth
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="brand/option-berth-lockup-dark.svg">
+    <img src="brand/option-berth-lockup-light.svg" alt="option-berth — 各自成泊" width="420">
+  </picture>
+</p>
+<p align="center"><strong>每份代码，各自成泊。</strong><br>面向 Git worktree 的本地服务运行工作台。</p>
+<p align="center">简体中文 · <a href="README.en.md">English</a></p>
 
-**本地 Git worktree 的服务运行泊位。** 命令是 `oberth`：在同一套 CLI 契约中查看服务声明、
-运行事实和日志，并执行明确授权的启动、重启与停止。人和 coding agent 使用相同的事实来源。
+## 为什么需要 option-berth
 
-开发预览版，当前重点支持 macOS 与 Linux 引擎。使用前查看 [验证范围](docs/validation.md)
-和 [已知边界](docs/architecture.md)。许可采用 [MIT](LICENSE)，不提供稳定性担保。
+同时开发几个分支，或让 coding agent 在多个 worktree 中工作时，难点不止是代码：
+哪个服务属于哪份 checkout？它真的健康了吗？一个 worker 没有监听端口，是否还在运行？
+停止当前项目，会不会影响另一个分支？
 
-## 安装
+option-berth 把**服务声明、实际运行、日志和 Git 上下文**放到同一条工作流中。
+你确认项目应该运行什么；`oberth` 负责启动、观察和有边界地停止。
+人和外部 coding agent 读取相同的事实，不需要各自猜测系统状态。
 
-Go 版本以 [engine/go.mod](engine/go.mod) 为准，当前要求 Go 1.25.0 或兼容的后续版本。
-开发构建使用 Mage；macOS 客户端还需要 Xcode Command Line Tools。
+## 它带来的改变
 
-```bash
+| 你要做的事 | option-berth 如何帮助 |
+| --- | --- |
+| 同时运行多个 worktree | 自动端口与独立运行归属，减少分支之间的干扰 |
+| 确认服务可用 | 区分进程、监听和健康；`up --wait` 等待实际就绪 |
+| 排查失败 | 从服务进入日志、退出结果与诊断，而不是重新拼接系统命令 |
+| 使用无端口 worker | 通过运行记录观察，不把“没有端口”当成“没有运行” |
+| 与 coding agent 协作 | 相同 CLI 提供结构化 JSON；不内置另一套模型或 agent 推理系统 |
+| 使用原生桌面界面 | macOS 客户端呈现同一份服务事实与只读 Git 信息 |
+
+**不是全机端口雷达，也不是另一个 AI IDE。** `machine:` 依赖只读；项目起停不会接管它们。
+worktree 隔离指运行归属和生命周期边界，不是操作系统安全沙箱。
+
+## 安装与构建
+
+当前可以从源码构建。引擎使用 [Go 1.25 或后续兼容版本](engine/go.mod) 和 Mage；
+macOS 客户端需要系统开发工具。正式发布说明见 [发布流程](docs/releasing.md)。
+
+```sh
 git clone https://github.com/SheathedSharp/option-berth.git
 cd option-berth
-# macOS：安装构建工具；其他平台使用相应的 Mage 安装方式
-brew install mage
-mage install
-oberth doctor
+# macOS 的构建工具；其他系统使用对应的 Go / Mage 安装方式
+brew install go mage
+mage buildEngine
+./bin/oberth version --json
 ```
 
-`mage install` 会安装 CLI、可选 Jev adapter，
-并在 macOS 安装客户端；它还会配置 PATH。不要把安装步骤当成只读操作。
-不希望改动 shell 配置时使用 `NO_MODIFY_PATH=1`，并自行将安装目录加入 PATH。
-安装后用 `oberth version --json` 核对实际执行的构建，避免读取 PATH 上的旧版本。
+构建不会安装软件或启动日常服务。确认需要安装后执行 `mage install`；它会写入安装目录、
+配置 PATH，并在 macOS 安装桌面客户端。用 `NO_MODIFY_PATH=1 mage install` 可跳过 PATH 修改。
 
-构建目标 `build / engine / jev / client` 只生成产物；`run / runApp / runDaemon / stop`
-明确起停，`stop` 不隐式构建。`shot / states / window` 只使用已经构建的客户端；缺少客户端时
-明确提示先构建，不写安装目录。`mage shot -scope=services:example-project` 可限定截图范围。
+引擎的完整服务场景面向 **macOS / Linux**。Windows 已有原生构建、冒烟及部分事实与持久化测试，
+不能视为完整生命周期支持。桌面客户端目前是 **macOS 14+ / Apple Silicon**。
 
-包含空格、反斜杠或空参数的开发调用使用精确 JSON argv，例如
-`mage runCLI '["doctor","--project","项目 with spaces","--json"]'`。
-简单调用 `mage runCLI "version --json"` 保持兼容；不会执行 shell 展开，歧义引号会在构建前报错。
+## 第一次跑通
 
-三个模块也可以分别构建，不依赖 Mage：
+仓库自带 [Hello Worktree](examples/hello-worktree/README.md)：一个只监听本机的 API 和一个
+无端口 worker。只需 Python 3 标准库，不需要模型账号、容器或 pip 依赖。
 
-```bash
-(cd engine && go build -o ../bin/oberth .)
-(cd engine && go build -o ../bin/jev-attention ./cmd/jev-attention)
-(cd client/macos && ./build.sh)
-```
-
-只构建引擎可运行 `mage buildEngine`；客户端的构建和平台要求见
-[client/macos/README.md](client/macos/README.md)。
-
-## 第一次接入项目
-
-在目标 worktree 中创建并确认 `oberth.yaml`。下面仅是运行本地 Python HTTP 服务的示例，
-不代表任何真实部署，也不应替代项目维护者对启动命令的确认。
-
-```yaml
-name: example-project
-services:
-  - name: api
-    cmd: python3 -m http.server 18080 --bind 127.0.0.1
-    port: 18080
-```
-
-在该清单所在目录执行：
-
-```bash
-oberth status --json
+```sh
+# 已安装 oberth 后，从仓库根目录开始
+cd examples/hello-worktree
 oberth up --wait --json
-oberth logs api --once --json
-oberth restart --only api --json
+oberth status --json
+oberth logs worker --once
 oberth down --json
 ```
 
-`prepare` 可用于启动前的准备工作，成功后才启动服务；`machine:` 依赖仅显示监听事实，
-不会被 `up` 或 `down` 起停。完整字段和命令语义见 [CLI 契约](docs/cli.md)。
+接入自己的项目时，先运行 `oberth init`，再审阅并编辑生成的 `oberth.yaml`。
+也可以让已有 agent 起草，但 **draft 不等于授权**：只有你确认并执行 `init adopt` 后才落盘。
+完整字段、自动端口、依赖和健康检查见 [CLI 使用说明](docs/cli.md)。
 
-agent 可以通过 `oberth init draft codex --progress --json` 起草清单，但草稿不是授权。
-使用 `init adopt` 前必须检查并确认草稿路径、启动命令和变更内容；具体用法以 CLI 契约为准。
+## 每天使用的几条命令
 
-## 给 Codex 安装 skill
-
-skill 的唯一源是 [.agents/skills/option-berth/](.agents/skills/option-berth/)。
-需要安装整个目录，包括 `references/` 和 `agents/`，不能只下载 `SKILL.md`。
-从仓库根目录显式执行以下命令，会创建或更新全局安装副本：
-
-```bash
-mkdir -p "$HOME/.agents/skills/option-berth"
-cp -R .agents/skills/option-berth/. "$HOME/.agents/skills/option-berth/"
+```sh
+oberth status --json            # 当前 worktree 的声明与运行事实
+oberth doctor                  # 安装、清单与后台服务诊断
+oberth up --wait                # 启动并等待就绪
+oberth restart --only api       # 只重启点名服务
+oberth logs api --once          # 读取服务日志
+oberth down                    # 停止当前项目并安全处理端口预留
 ```
 
-已有本地定制时先自行保留差异。仅供一个项目使用时，将完整目录安装到该项目的
-`.agents/skills/option-berth/`。安装副本不应另行维护一套产品契约。
+`oberth git` 提供只读 Git 上下文；需要跨项目观察时，使用带明确 worktree 筛选的 `oberth events`。
+命令不会自动安装其他工具的 hooks、skills 或 MCP 配置。可选 [Jev adapter](docs/jev-adapter.md)
+不进入引擎的运行事实与控制链路，缺少模型配置也能使用核心功能。
 
-日常任务从目标 worktree 的 `oberth status --json` 开始，再按需要读取日志或执行用户授权
-的起停操作；操作后重新读状态。产品 CLI 的 Git 能力只读，不替用户提交、暂存或切换分支。
+## 版本与贡献
 
-## 并行 worktree 联调
+版本为 **X1.X2.X3**：X1 表示协议更新，X2 表示功能更新，X3 表示缺陷修复；
+增加较高位时清零较低位。发布脚本与验证规则以 [发布流程](docs/releasing.md) 为准。
 
-`status` 回答当前 worktree。需要跨项目观察时，用任务中明确给出的路径建立只读订阅：
+贡献请提交一个主题明确的 PR，说明问题、实现、TODO、测试及兼容性；
+不要提交私人配置、凭证、运行日志或真实项目截图。开发约定见 [AGENTS.md](AGENTS.md)。
 
-```bash
-oberth events --worktree /path/to/project-a --worktree /path/to/project-b
+```sh
+mage test
+mage vet
+python3 -m unittest discover -s scripts -p '*_test.py'
 ```
 
-路径是占位示例，必须替换为任务实际授权的 worktree。事件订阅不能根据进程名、端口或
-分支名称猜测项目关系，也不能自动执行控制操作。收到重新同步要求后先重新取快照；
-任务结束时回收自己建立的订阅。筛选、workspace 和恢复语义见 skill 与 CLI 文档。
-
-## 启用 Jev 增强
-
-Jev 是可选的 attention adapter：只读取代码发布的异常，提供固定选项的升级建议，
-不采集运行事实、不生成任意 shell 命令，也不能替用户授权执行。
-
-macOS 客户端可在设置中配置 Jev；凭证保存在用户本地，不应进入仓库、项目清单或公开日志。
-完整配置、任务级订阅、脱敏范围及人工反馈方式见 [docs/jev-adapter.md](docs/jev-adapter.md)。
-Jev 不可用时仍可直接依据 `oberth` 的事实和日志工作。
-
-## 运行原理与边界
-
-```text
-worktree → manifest → service → run → runtime facts
-                 ↑                         ↓
-             用户确认清单             CLI / 客户端 / agent
-```
-
-声明说明应该运行什么，运行事实说明实际发生什么；不能把声明、旧缓存或模型建议当成
-已观察到的成功。服务身份、采集新鲜度、并发发布和持久化边界由引擎负责。
-客户端与外挂复用这些事实，不维护第二套运行真相。
-
-核心按本项目的服务事实和生命周期需求设计。Sonar 是参考及历史代码来源，不决定后续
-骨架；来源及原版权保留在 [engine/UPSTREAM.md](engine/UPSTREAM.md)。
-
-## 开发与验证
-
-```bash
-mage buildEngine    # 构建 CLI / daemon
-mage buildJev       # 构建可选 adapter
-mage buildClient    # 构建 macOS 客户端
-mage test           # Go 测试
-mage vet            # Go 静态检查
-```
-
-端到端运行使用独立 `BERTH_HOME` 和自己创建的可丢弃项目；不要触碰用户的真实账本或服务。
-运行截图、日志、错误和性能工件都可能包含本机路径、参数或项目内容，公开前必须审查。
-
-`VERSION` 是版本号唯一来源。`mage releasePatch`、`releaseMinor`、`releaseMajor` 会执行
-发布前检查，并产生版本提交和本地标签，不应作为普通构建步骤自动运行。
-
-局部基准入口为 `scripts/benchmark-core.py`，真实链路入口为 `scripts/verify-e2e.py`。
-重复 Go benchmark 的聚合 min/median/max 不是单次请求延迟 p95；局部加速不能替代完整
-起停、重连、资源保留和跨平台结论。测试延期必须明确记录，不能把静态检查写成测试通过。
-
-## 文档
-
-| 文档 | 用途 |
-|---|---|
-| [产品定义](docs/product.md) | 目标、对象模型与明确不做的事情 |
-| [CLI 契约](docs/cli.md) | 命令、JSON 与使用边界 |
-| [唯一待办](docs/backlog.md) | 当前缺口和验收状态 |
-| [当前架构](docs/architecture.md) | 生产职责、支持范围与安全边界 |
-| [验证记录](docs/validation.md) | 实际平台、输入和验证结果 |
-| [Jev adapter](docs/jev-adapter.md) | 可选增强、凭证、订阅与质量反馈 |
-| [开发约定](AGENTS.md) | 构建、验证和贡献规则 |
-| [发布与历史去敏](docs/releasing.md) | 发布前检查顺序和操作边界 |
-
-## 参考来源
-
-历史来源与迁移边界见 [engine/UPSTREAM.md](engine/UPSTREAM.md)。
-保留来源不意味着继续以参考项目为骨架；文档清理也不能抹掉已有代码的许可义务。
+项目核心围绕 worktree、manifest、service、run 和运行事实自主设计。
+[产品边界](docs/product.md) 与 [架构说明](docs/architecture.md) 记录当前契约，
+历史来源在 [UPSTREAM](engine/UPSTREAM.md) 中如实保留。
 
 ## 许可证
 
-项目代码和文档采用 [MIT License](LICENSE)，允许在遵守版权与许可保留条件下使用、修改
-和分发，不提供担保。原引擎 MIT 声明保留于 [engine/LICENSE](engine/LICENSE)。
-Monaspace 字体另按 OFL 1.1；第三方标志与依赖遵循各自条款，详见
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。不要将整个素材目录统一标记为 MIT。
-
-## 第一次体验
-
-[Hello Worktree 示例](examples/hello-worktree/README.md)：用 Python 标准库运行一个本地 API 和无端口 worker，
-看见健康检查、自动端口、跨 worktree 隔离与完整停止流程。无需模型账号、容器或额外 Python 依赖。
+由 **SheathedSharp** 与项目贡献者维护。项目代码适用 [MIT License](LICENSE)；
+第三方代码、字体及素材保留各自许可和版权，见 [第三方声明](THIRD_PARTY_NOTICES.md)。
+外部 coding agent 的名称仅说明兼容性，不表示其开发者为本项目背书。
