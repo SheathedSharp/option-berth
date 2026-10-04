@@ -1,0 +1,60 @@
+name: Bounded ancestry comparison
+on:
+  pull_request:
+    paths:
+      - 'engine/internal/groups/directruns.go'
+      - 'engine/internal/groups/directruns_scratch_test.go'
+      - '.github/workflows/ancestry-benchmark.yml'
+permissions:
+  contents: read
+concurrency:
+  group: ancestry-benchmark-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GOMAXPROCS: '4'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          path: after
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: before
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: after/engine/go.mod
+          cache-dependency-path: after/engine/go.sum
+      - name: Compare identical benchmark inputs on one runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p measurements
+          go version > measurements/toolchain.txt
+          git -C before rev-parse HEAD > measurements/before-commit.txt
+          git -C after rev-parse HEAD > measurements/after-commit.txt
+          # Only the measurement/oracle harness is shared. Production source
+          # remains the PR base versus its merge candidate, in separate trees.
+          cp after/engine/internal/groups/directruns_scratch_test.go before/engine/internal/groups/
+          for tree in before after; do
+            (
+              cd "$tree/engine"
+              go test ./internal/groups -run TestDirectRuns -count=1
+              go test ./internal/groups -run '^$' -bench BenchmarkDirectRunsScratch -benchmem -benchtime=200ms -count=5
+            ) 2>&1 | tee "measurements/$tree.txt"
+          done
+          # Timing is evidence, not a flaky wall-clock gate. Review allocations,
+          # the distributions and the independent correctness/race CI together.
+      - name: Retain exact comparison inputs and results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ancestry-comparison-${{ github.run_id }}
+          path: measurements/*.txt
+          retention-days: 7
+          if-no-files-found: error
