@@ -155,13 +155,7 @@ func TestStreamCancelStopsTheProducer(t *testing.T) {
 	}
 	<-p.started
 
-	var ok rpc.OKResult
-	if e := c.call("stream.cancel", rpc.StreamCancel{ID: start.SubscriptionID}, &ok); e != nil {
-		t.Fatalf("stream.cancel: %v", e)
-	}
-	if !ok.OK {
-		t.Fatal("stream.cancel did not acknowledge")
-	}
+	end := c.cancelStreamAndAwaitEnd(start.SubscriptionID)
 
 	select {
 	case err := <-p.done:
@@ -172,11 +166,6 @@ func TestStreamCancelStopsTheProducer(t *testing.T) {
 		t.Fatal("cancelling the stream did not stop the producer")
 	}
 
-	msg := c.nextNotification(rpc.MethodStreamEnd)
-	var end rpc.StreamEnd
-	if err := json.Unmarshal(msg.Params, &end); err != nil {
-		t.Fatalf("decoding stream.end: %v", err)
-	}
 	if end.Error != nil {
 		t.Fatalf("a cancelled stream must end cleanly, got %v", end.Error)
 	}
@@ -298,4 +287,43 @@ func TestSubscribeRepliesWithoutWaitingForAScan(t *testing.T) {
 	if delta.Seq != snap.Seq+1 {
 		t.Errorf("delta seq = %d, want the snapshot's %d plus one", delta.Seq, snap.Seq)
 	}
+}
+
+// A producer may finish before the cancel handler's acknowledgment is queued.
+// c.call deliberately skips notifications, so this test must collect BOTH
+// frames rather than assuming a response-before-notification ordering.
+func (c *testClient) cancelStreamAndAwaitEnd(subscription string) rpc.StreamEnd {
+	c.t.Helper()
+	request := c.send("stream.cancel", rpc.StreamCancel{ID: subscription})
+	replied, ended := false, false
+	var end rpc.StreamEnd
+	for !replied || !ended {
+		msg := c.read()
+		if msg.IsResponse() && string(msg.ID) == request {
+			if msg.Error != nil {
+				c.t.Fatalf("stream.cancel: %v", msg.Error)
+			}
+			var ok rpc.OKResult
+			if err := json.Unmarshal(msg.Result, &ok); err != nil || !ok.OK {
+				c.t.Fatalf("invalid cancellation acknowledgment: %v", err)
+			}
+			if replied {
+				c.t.Fatal("duplicate cancellation acknowledgment")
+			}
+			replied = true
+		} else if msg.IsNotification() && msg.Method == rpc.MethodStreamEnd {
+			var next rpc.StreamEnd
+			if err := json.Unmarshal(msg.Params, &next); err != nil {
+				c.t.Fatal(err)
+			}
+			if next.ID != subscription {
+				continue
+			}
+			if ended {
+				c.t.Fatal("duplicate stream end")
+			}
+			end, ended = next, true
+		}
+	}
+	return end
 }
