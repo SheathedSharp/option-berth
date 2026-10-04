@@ -41,8 +41,9 @@ func TestPublicCommandSurfaceHasOneProductRing(t *testing.T) {
 	want := map[string]string{
 		"status": commandGroupCore, "init": commandGroupCore, "up": commandGroupCore,
 		"down": commandGroupCore, "restart": commandGroupCore, "logs": commandGroupCore,
-		"events": commandGroupSupport, "git": commandGroupSupport, "doctor": commandGroupSupport,
-		"start": commandGroupSupport, "kill": commandGroupSupport,
+		"events": commandGroupSupport, "git": commandGroupSupport, "agent": commandGroupSupport,
+		"doctor": commandGroupSupport,
+		"start":  commandGroupSupport, "kill": commandGroupSupport,
 		"daemon": commandGroupInfra, "serve": commandGroupInfra,
 		"config": commandGroupInfra, "version": commandGroupInfra,
 		"completion": commandGroupInfra,
