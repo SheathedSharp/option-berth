@@ -30,6 +30,21 @@ class PublishAssetsTests(unittest.TestCase):
         (self.root / "SHA256SUMS").write_text(text)
         self.assertEqual(len(release.verify_assets(self.root, self.tag, True)), 15)
 
+    def test_notarized_asset_mode_never_silently_accepts_adhoc(self):
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            release.verify_assets(self.root, self.tag, macos_trust="notarized")
+        for path in list(self.root.iterdir()):
+            if "-adhoc.zip" in path.name:
+                name = path.name.replace("-adhoc.zip", "-notarized.zip")
+                if path.name.endswith(".sha256"):
+                    path.write_text(path.read_text().replace("-adhoc.zip", "-notarized.zip"))
+                path.rename(self.root / name)
+        self.assertEqual(len(release.verify_assets(self.root, self.tag, macos_trust="notarized")), 14)
+        with self.assertRaises(ValueError):
+            release.verify_assets(self.root, self.tag)
+        with self.assertRaises(ValueError):
+            release.expected_assets(self.tag, "unknown")
+
     def test_missing_extra_corrupt_and_path_injection_are_rejected(self):
         archive = next(path for path in self.root.iterdir() if path.name.endswith(".zip"))
         data = archive.read_bytes()
