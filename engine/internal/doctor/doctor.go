@@ -63,6 +63,8 @@ type DaemonInfo struct {
 	// Local is true when the answer came from inside the daemon process.
 	Local bool
 
+	Commit          string
+	StatusErr       error
 	Version         string
 	ProtocolVersion string
 	Socket          string
@@ -83,6 +85,7 @@ type Env struct {
 	GOOS string
 	// Version is the running process's own version string.
 	Version string
+	Commit  string
 	// Project is the directory the project-scoped checks look at. Empty means
 	// the process's working directory.
 	Project string
@@ -130,6 +133,7 @@ func checks() []check {
 		{id: "config_dir_writable", run: checkConfigDirWritable},
 		{id: "daemon_reachable", run: checkDaemonReachable},
 		{id: "daemon_version_matches", cliOnly: true, run: checkDaemonVersionMatches},
+		{id: "daemon_build_matches", cliOnly: true, run: checkDaemonBuildMatches},
 		{id: "daemon_protocol", run: checkDaemonProtocol},
 		{id: "socket_permissions", run: checkSocketPermissions},
 		{id: "db_ok", run: checkDBOK},

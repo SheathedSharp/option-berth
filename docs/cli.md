@@ -225,6 +225,8 @@ oberth init [--dry-run] [--json]
 这些命令服务于核心闭环，保持可用但不再扩展产品模型：
 
 - oberth doctor：检查清单、daemon、CLI 路径和日志目录，给出可操作的修复提示。
+  `--only daemon_build_matches` 对比 CLI 与 daemon 的构建提交；同版本号不代表同构建。
+  缺少提交身份或状态 RPC 失败会报告 warn，不会标记匹配，也不会自动重启 daemon。
 - oberth events：供 agent 订阅本机 daemon 的状态变化。并行联调时 agent 应根据任务中明确给出的
   关系主动建立并消费订阅；人手执行此命令主要用于排障。`--worktree PATH_OR_ID` 会沿已有 Repo 关系包含同仓库
   的其他 worktree；`--repository REPO_ID` 是可重复的加法过滤器，`--workspace NAME` 加入显式的临时联调关系；
