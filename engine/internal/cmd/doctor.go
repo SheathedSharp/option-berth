@@ -124,6 +124,7 @@ func doctorEnv(project string) doctor.Env {
 	return doctor.Env{
 		Mode:    doctor.ModeCLI,
 		Version: buildinfo.Version,
+		Commit:  buildinfo.Commit,
 		Project: project,
 		Daemon:  doctorDaemonProbe,
 		Docker:  doctor.DockerProbe,
@@ -147,9 +148,11 @@ func doctorDaemonProbe(ctx context.Context) doctor.DaemonInfo {
 
 	hello := c.Hello()
 	var status rpc.DaemonStatusResult
-	_ = c.Call(ctx, "daemon.status", rpc.Empty{}, &status)
+	statusErr := c.Call(ctx, "daemon.status", rpc.Empty{}, &status)
 	info := doctor.DaemonInfo{
 		Reachable:       true,
+		Commit:          status.Commit,
+		StatusErr:       statusErr,
 		Version:         hello.DaemonVersion,
 		ProtocolVersion: hello.ProtocolVersion,
 		Socket:          hello.Socket,
