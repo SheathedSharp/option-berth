@@ -36,6 +36,13 @@ enum DaemonLaunch {
         if let override = environment["BERTH_BIN"], !override.isEmpty {
             candidates.append(override)
         }
+        // Distributed app archives contain the matching engine beside the app
+        // executable. An explicit BERTH_BIN still has the highest precedence.
+        if let executable = executableURL?.resolvingSymlinksInPath(),
+           executable.deletingLastPathComponent().lastPathComponent == "MacOS",
+           executable.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent == "Contents" {
+            candidates.append(executable.deletingLastPathComponent().appendingPathComponent("oberth").path)
+        }
         candidates += [
             "\(home)/.local/bin/oberth",
             "/usr/local/bin/oberth",

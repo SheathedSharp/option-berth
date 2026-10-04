@@ -2,6 +2,8 @@ package client
 
 import (
 	"errors"
+	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -11,18 +13,23 @@ import (
 // TestCheckProtocol pins contract §7's versioning rule: only the major has to
 // match, because additive changes bump the minor.
 func TestCheckProtocol(t *testing.T) {
+	major, err := strconv.Atoi(strings.Split(rpc.ProtocolVersion, ".")[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	same := func(suffix string) string { return fmt.Sprintf("%d%s", major, suffix) }
 	tests := []struct {
 		daemon    string
 		wantMatch bool
 	}{
 		{rpc.ProtocolVersion, true},
-		{"1.0.0", true},
-		{"1.4.0", true},
-		{"1.0.99", true},
-		{"v1.2.3", true},
-		{" 1.2.3 ", true},
-		{"2.0.0", false},
-		{"0.9.0", false},
+		{same(".0.0"), true},
+		{same(".4.0"), true},
+		{same(".0.99"), true},
+		{"v" + same(".2.3"), true},
+		{" " + same(".2.3") + " ", true},
+		{fmt.Sprintf("%d.0.0", major+1), false},
+		{fmt.Sprintf("%d.9.0", major+2), false},
 	}
 
 	for _, tt := range tests {

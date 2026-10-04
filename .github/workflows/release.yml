@@ -1,0 +1,120 @@
+name: Verified release
+on:
+  pull_request:
+    paths:
+      - 'scripts/*release*.py'
+      - 'scripts/release-*.sh'
+      - '.github/workflows/release.yml'
+      - 'magefiles/**'
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  policy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Validate release policy with disposable repositories
+        run: python3 -m unittest discover -s scripts -p '*release*_test.py'
+      - name: Validate immutable version input
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: python3 scripts/release.py --validate-tag "$TAG"
+  verify:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: policy
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: engine/go.mod
+          cache-dependency-path: engine/go.sum
+      - name: Native release gates
+        env:
+          GOTOOLCHAIN: local
+        run: python3 scripts/release.py --verify-only
+  windows:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: policy
+    uses: ./.github/workflows/windows.yml
+  package:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [verify, windows]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: linux, arch: amd64, runner: ubuntu-24.04}
+          - {os: linux, arch: arm64, runner: ubuntu-24.04}
+          - {os: windows, arch: amd64, runner: ubuntu-24.04}
+          - {os: windows, arch: arm64, runner: ubuntu-24.04}
+          - {os: darwin, arch: amd64, runner: macos-15}
+          - {os: darwin, arch: arm64, runner: macos-15}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: engine/go.mod
+          cache-dependency-path: engine/go.sum
+      - name: Build macOS application carrier
+        if: matrix.os == 'darwin' && matrix.arch == 'arm64'
+        run: bash client/macos/build.sh
+      - name: Build archives with per-target notices
+        env:
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=()
+          if [[ "$TARGET_OS/$TARGET_ARCH" == darwin/arm64 ]]; then args+=(--include-app); fi
+          python3 scripts/package_release.py --os "$TARGET_OS" --arch "$TARGET_ARCH" --output dist "${args[@]}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+      - name: Publish only after uploaded assets verify on download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: python3 scripts/publish_release.py --tag "$TAG" --assets dist

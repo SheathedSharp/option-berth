@@ -24,6 +24,7 @@ if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; th
   exit 2
 fi
 build_number="${BUILD_NUMBER:-$(git -C "$repo" rev-list --count HEAD 2>/dev/null || printf '0')}"
+commit="$(git -C "$repo" rev-parse HEAD 2>/dev/null || printf unknown)"
 if [[ ! "$build_number" =~ ^[0-9]+$ ]]; then
   echo "invalid build number: $build_number" >&2
   exit 2
@@ -50,6 +51,7 @@ cp "$repo/LICENSE" "$app/Contents/Resources/Licenses/option-berth-LICENSE.txt"
 
 sed \
   -e "s/@VERSION@/$version/g" \
+  -e "s/__COMMIT__/$commit/g" \
   -e "s/@BUILD_NUMBER@/$build_number/g" \
   "$here/Info.plist.in" > "$app/Contents/Info.plist"
 
