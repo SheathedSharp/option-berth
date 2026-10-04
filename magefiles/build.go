@@ -463,10 +463,24 @@ func splitArgs(args string) ([]string, error) {
 	if args == "" {
 		return nil, nil
 	}
+	if strings.ContainsRune(args, 0) {
+		return nil, errors.New("CLI arguments cannot contain NUL")
+	}
 	if strings.HasPrefix(args, "[") {
-		var argv []string
-		if err := json.Unmarshal([]byte(args), &argv); err != nil {
+		var values []any
+		if err := json.Unmarshal([]byte(args), &values); err != nil {
 			return nil, fmt.Errorf("CLI arguments must be a JSON array of strings: %w", err)
+		}
+		argv := make([]string, len(values))
+		for i, value := range values {
+			argument, ok := value.(string)
+			if !ok {
+				return nil, fmt.Errorf("CLI argument %d must be a JSON string", i)
+			}
+			if strings.ContainsRune(argument, 0) {
+				return nil, fmt.Errorf("CLI argument %d contains NUL", i)
+			}
+			argv[i] = argument
 		}
 		return argv, nil
 	}

@@ -102,3 +102,11 @@ func TestSplitArgsPreservesExactJSONArgv(t *testing.T) {
 		}
 	}
 }
+
+func TestSplitArgsRejectsNullAndNUL(t *testing.T) {
+	for _, input := range []string{`["ok",null]`, `["ok","\u0000"]`, "status\x00"} {
+		if _, err := splitArgs(input); err == nil {
+			t.Fatalf("invalid argv accepted: %q", input)
+		}
+	}
+}
