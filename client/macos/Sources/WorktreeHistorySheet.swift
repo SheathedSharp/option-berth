@@ -24,10 +24,15 @@ struct WorktreeHistorySheet: View {
                 Label("命令历史 / Command history", systemImage: "clock.arrow.circlepath")
                     .font(Face.sans(14, .semibold))
                 Spacer()
-                Button("清空此 worktree… / Clear…") { confirmingClear = true }
-                    .disabled(frozen || sessions.commandHistory(in: root).isEmpty)
-                    .accessibilityIdentifier("history.clear")
-                Button("关闭 / Close") { dismiss() }.keyboardShortcut(.cancelAction)
+                if frozen {
+                    frozenAction("清空此 worktree… / Clear…")
+                    frozenAction("关闭 / Close")
+                } else {
+                    Button("清空此 worktree… / Clear…") { confirmingClear = true }
+                        .disabled(sessions.commandHistory(in: root).isEmpty)
+                        .accessibilityIdentifier("history.clear")
+                    Button("关闭 / Close") { dismiss() }.keyboardShortcut(.cancelAction)
+                }
             }
             Text(root).font(Face.mono(10)).foregroundStyle(Ink.inkMuted).lineLimit(1).truncationMode(.middle)
             Text("仅此 worktree 的自有终端 · 事先启用命令块才会记录 · 选择只复制，不执行")
@@ -78,14 +83,24 @@ struct WorktreeHistorySheet: View {
                             Text(entry.block.command ?? "命令文本不可用 / Command text unavailable")
                                 .font(Face.mono(11)).lineLimit(3).frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        Button("复制 / Copy") {
-                            notice = Self.copy(entry, to: pasteboard) ? "已复制；未执行 / Copied, not executed" : "无法复制 / Copy unavailable"
-                        }.disabled(entry.block.command == nil || frozen)
-                            .accessibilityIdentifier("history.copy." + entry.id)
+                        if frozen {
+                            frozenAction("复制 / Copy")
+                        } else {
+                            Button("复制 / Copy") {
+                                notice = Self.copy(entry, to: pasteboard) ? "已复制；未执行 / Copied, not executed" : "无法复制 / Copy unavailable"
+                            }.disabled(entry.block.command == nil)
+                                .accessibilityIdentifier("history.copy." + entry.id)
+                        }
                     }.padding(10).background(Ink.surface).clipShape(RoundedRectangle(cornerRadius: 6))
                 }
             }
         }
+    }
+    // Static labels are only for ImageRenderer, which cannot paint AppKit
+    // buttons. Native controls and their side effects are tested in real windows.
+    private func frozenAction(_ title: String) -> some View {
+        Text(title).font(Face.sans(11)).padding(.horizontal, 8).padding(.vertical, 4)
+            .background(Ink.surface).clipShape(RoundedRectangle(cornerRadius: 4))
     }
     @discardableResult
     static func copy(_ entry: CommandHistoryEntry, to pasteboard: NSPasteboard) -> Bool {
