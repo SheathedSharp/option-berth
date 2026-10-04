@@ -68,6 +68,14 @@ enum Snapshot {
             if code != 0 { return code }
         }
 
+        let agentCode = write(BoardView(store: BoardStore(fixture: ports),
+                                             services: ServicesStore(fixture: groups, runs: runs),
+                                             git: git, scrolls: false, initialScope: .terminal(demo.name),
+                                             initialConsoleAgent: true),
+                              to: url.appendingPathComponent("10-agent-console.png").path,
+                              width: width, height: height)
+        if agentCode != 0 { return agentCode }
+
         let proposal = GroupInitResult(path: "/Users/you/code/new-worktree/oberth.yaml",
                                        yaml: "name: new-worktree\nservices: []\n",
                                        proposal: emptyGroup(name: "new-worktree"))

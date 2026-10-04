@@ -1,6 +1,7 @@
 # option-berth · 原生客户端（macOS）
 
-客户端只呈现一个 worktree 的清单和运行状态，并提供启动、停止、日志和清单编辑入口。
+客户端围绕一个 worktree 呈现服务、Git、终端与外部 coding agent 会话，
+并提供启动、停止、日志和清单编辑入口。
 左栏只列出已经发现 oberth.yaml 的项目；监听情况跟在服务运行实况里，不是整机端口列表。
 产品边界和 CLI 契约见 ../../docs/product.md 与 ../../docs/cli.md。
 
@@ -69,7 +70,7 @@ mage window
 截图前先执行 `mage client` 或 `mage buildClient`；截图目标不再隐式构建。
 
 mage states 生成 01-empty、02-services-live、03-services-idle、04-runtime-facts、
-05-connection-error、06-manifest-review、07-settings、07-settings-jev、07-settings-typography 和 08-code。改界面后必须运行 mage states
+05-connection-error、06-manifest-review、07-settings、07-settings-jev、07-settings-typography 、08-code、09-terminal 和 10-agent-console。改界面后必须运行 mage states
 并查看 PNG；需要验证真实 daemon 数据时再运行 mage snapshot。mage window 用于检查标题栏、
 弹窗和窗口尺寸等离屏渲染看不到的部分。
 
@@ -113,3 +114,55 @@ schema，再重新构建客户端。
 SwiftTerm 固定版本负责终端仿真与 PTY；构建需要 Swift 6+，首次构建需要下载依赖。
 复制、粘贴、选择保留原生按键；OSC 52 剪贴板读写默认拒绝，终端链接需确认且仅允许 HTTP(S)。
 滚动历史保存在进程内，不自动保存或上传终端输出。原生终端不是操作系统安全沙箱。
+
+## Coding agent 会话 / Agent sessions
+
+在终端页切换 **Terminal / Agent session**。Terminal 只显示 shell 会话，Agent session
+只显示 agent 会话；两者都固定归属于创建时选择的 worktree。切换页面不会结束原生进程，
+也不会把会话迁移到另一个项目。草稿输入不跨页面持久保存。
+
+先自行安装并登录所需的 OpenCode、Codex、Claude Code、DeepSeek Harness 或 Pi。
+客户端使用同一份 `oberth agent list/plan` 契约；未安装会标记 Missing，不自动安装或登录。
+旧引擎缺少这些命令时会报错，不会回退拼接 shell。需要与客户端匹配的 oberth 版本；
+安装/替换引擎仍由用户明确执行。
+
+在消息框内，**⌘Enter** 用该消息建立一个新 agent 会话；**⇧⌘Enter** 将焦点交给当前活动的
+原生会话，没有可继续的原生会话时才新建。普通 Enter 插入换行。只有消息框处理这些快捷键，
+中文输入法组合文字时不会误提交；进入原生终端后，输入和审批交给 agent 自己。
+这不是第二套聊天协议：后续对话直接在原生界面继续，再次点击「发送到新会话」会另建会话。
+不猜测 TUI 屏幕、不向未知输入状态模拟粘贴、不按“最近一次对话”跨 worktree 恢复。
+
+DeepSeek 的消息入口运行 `dsh --profile headless`；原生入口要求用户已有 `tui` profile。
+两者是不同模式，不承诺同一对话的 headless/TUI 无缝切换。客户端不创建 profile，
+不存储模型凭证，不新增工具调用循环，也不添加跳过审批或禁用沙箱的参数。
+worktree 是启动归属，不是限制 agent 文件权限的操作系统沙箱。
+
+启动计划的消息与输出临时文件使用私有目录/权限，计划进程退出后清理；不持久保存会话记录，
+不上传输出，不把错误输出中的原始消息显示出来。取消只针对计划进程并等待实际退出，
+不是对忽略退出信号的故障程序承诺硬超时。agent 启动后的结束操作仍遵守上面的 PTY 规则。
+外部 agent 自身的日志、会话存储和文件改动遵循它自己的配置。
+
+**English.** Switch between Terminal and Agent session in the workspace console. Each process keeps
+its initial worktree. Install/authenticate your coding agent yourself; Refresh only discovers executables.
+In the message composer, Cmd+Enter starts a new session with a literal initial prompt. Shift+Cmd+Enter
+focuses the selected live native session, or opens a new native session when none is available.
+Continue subsequent turns in the agent's own terminal. Return inserts a newline; marked IME text is not
+submitted. Composer shortcuts are not installed in native terminals. Draft text is not persisted across pages.
+DeepSeek uses headless for messages and requires an existing tui profile for native mode; switching
+between them does not resume the same conversation. No agent reasoning loop, credential store,
+automatic installation, approval bypass, shell prompt interpolation, or implicit cross-worktree resume is added.
+A worktree is not an OS sandbox; external agents retain their own permissions, storage and side effects.
+
+无需模型账号的原生回归 / Native checks without model credentials:
+
+```sh
+swift run --package-path client/macos --force-resolved-versions TerminalChecks
+swift run --package-path client/macos --force-resolved-versions AgentChecks
+# 对接实际兼容版本的 oberth；外部 provider 仍使用临时测试替身，不调用付费模型
+BERTH_AGENT_TEST_BINARY="$PWD/bin/oberth" \
+  swift run --package-path client/macos --force-resolved-versions AgentChecks
+```
+
+AgentChecks 的默认路径使用合成 CLI 协议；显式二进制路径验证实际 CLI→计划→PTY 链路。
+两种路径均检查真实窗口按键、组合文字保护、原生编辑/撤销、字面参数、会话连续性、
+错误边界与取消。不把这些回归等同于已登录的五个 provider、完整输入法或长时间交互验收。
