@@ -5,6 +5,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -66,5 +67,46 @@ func TestVersionStillComesFromVersionFile(t *testing.T) {
 	p, err := loadProject()
 	if err != nil || p.version != "1.2.3" {
 		t.Fatalf("version=%q error=%v", p.version, err)
+	}
+}
+
+func TestRunCLIRejectsAmbiguousArgumentsBeforeBuild(t *testing.T) {
+	root := mageFixture(t)
+	err := RunCLI(`doctor --project 'project with spaces'`)
+	if err == nil || !strings.Contains(err.Error(), "JSON") {
+		t.Fatalf("expected exact-argv guidance before build: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "bin")); !os.IsNotExist(err) {
+		t.Fatal("invalid arguments triggered a build")
+	}
+}
+
+func TestSplitArgsPreservesExactJSONArgv(t *testing.T) {
+	for _, tc := range []struct {
+		input string
+		want  []string
+	}{
+		{"version --json", []string{"version", "--json"}},
+		{`["status","--project","项目 with spaces"]`, []string{"status", "--project", "项目 with spaces"}},
+		{`["logs","","C:\\work\\api","$HOME","$(echo no)"]`, []string{"logs", "", `C:\work\api`, "$HOME", "$(echo no)"}},
+		{`[]`, []string{}}, {" ", nil},
+	} {
+		got, err := splitArgs(tc.input)
+		if err != nil || !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("%q: got=%q err=%v want=%q", tc.input, got, err, tc.want)
+		}
+	}
+	for _, input := range []string{`["unterminated"`, `["ok",1]`, `["ok"] trailing`, `status "broken`, `status C:\work`} {
+		if _, err := splitArgs(input); err == nil {
+			t.Fatalf("ambiguous or invalid argv accepted: %q", input)
+		}
+	}
+}
+
+func TestSplitArgsRejectsNullAndNUL(t *testing.T) {
+	for _, input := range []string{`["ok",null]`, `["ok","\u0000"]`, "status\x00"} {
+		if _, err := splitArgs(input); err == nil {
+			t.Fatalf("invalid argv accepted: %q", input)
+		}
 	}
 }

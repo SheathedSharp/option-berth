@@ -5,6 +5,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -74,8 +75,13 @@ func BuildClient() error {
 }
 
 // RunCLI builds and runs the CLI. Pass one quoted argument string, for example
-// `mage runCLI "version --json"`.
+// `mage runCLI "version --json"`. For exact argv (including spaces, empty
+// arguments and backslashes), pass a JSON string array instead.
 func RunCLI(args string) error {
+	argv, err := splitArgs(args)
+	if err != nil {
+		return err
+	}
 	p, err := loadProject()
 	if err != nil {
 		return err
@@ -83,7 +89,7 @@ func RunCLI(args string) error {
 	if err := buildEngine(p); err != nil {
 		return err
 	}
-	return commandWithIO(p.root, filepath.Join(p.root, "bin", "oberth"), splitArgs(args)...)
+	return commandWithIO(p.root, filepath.Join(p.root, "bin", "oberth"), argv...)
 }
 
 // RunDaemon builds the CLI and starts the background collector.
@@ -452,11 +458,36 @@ func buildNumber(root string) string {
 	return value
 }
 
-func splitArgs(args string) []string {
-	if strings.TrimSpace(args) == "" {
-		return nil
+func splitArgs(args string) ([]string, error) {
+	args = strings.TrimSpace(args)
+	if args == "" {
+		return nil, nil
 	}
-	return strings.Fields(args)
+	if strings.ContainsRune(args, 0) {
+		return nil, errors.New("CLI arguments cannot contain NUL")
+	}
+	if strings.HasPrefix(args, "[") {
+		var values []any
+		if err := json.Unmarshal([]byte(args), &values); err != nil {
+			return nil, fmt.Errorf("CLI arguments must be a JSON array of strings: %w", err)
+		}
+		argv := make([]string, len(values))
+		for i, value := range values {
+			argument, ok := value.(string)
+			if !ok {
+				return nil, fmt.Errorf("CLI argument %d must be a JSON string", i)
+			}
+			if strings.ContainsRune(argument, 0) {
+				return nil, fmt.Errorf("CLI argument %d contains NUL", i)
+			}
+			argv[i] = argument
+		}
+		return argv, nil
+	}
+	if strings.ContainsAny(args, "\"'\\") {
+		return nil, errors.New("quoted or escaped CLI arguments require a JSON string array; for example [\"doctor\",\"--project\",\"project with spaces\"]")
+	}
+	return strings.Fields(args), nil
 }
 
 func gitOutput(root string, args ...string) (string, error) {

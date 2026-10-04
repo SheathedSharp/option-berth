@@ -29,6 +29,10 @@ oberth doctor
 明确起停，`stop` 不隐式构建。`shot / states / window` 只使用已经构建的客户端；缺少客户端时
 明确提示先构建，不写安装目录。`mage shot -scope=services:example-project` 可限定截图范围。
 
+包含空格、反斜杠或空参数的开发调用使用精确 JSON argv，例如
+`mage runCLI '["doctor","--project","项目 with spaces","--json"]'`。
+简单调用 `mage runCLI "version --json"` 保持兼容；不会执行 shell 展开，歧义引号会在构建前报错。
+
 三个模块也可以分别构建，不依赖 Mage：
 
 ```bash
