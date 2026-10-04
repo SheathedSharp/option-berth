@@ -45,6 +45,21 @@ class PublishAssetsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             release.expected_assets(self.tag, "unknown")
 
+    def test_mixed_trust_assets_fail_before_network_or_release_writes(self):
+        # A matching checksum does not make a second, differently-labelled app
+        # part of the selected release contract. Never upload an ambiguous set.
+        name = f"OptionBerth-{self.tag}-macos-arm64-notarized.zip"
+        data = b"synthetic second app"
+        (self.root / name).write_bytes(data)
+        (self.root / (name + ".sha256")).write_text(hashlib.sha256(data).hexdigest() + "  " + name + "\n")
+        for trust in ("adhoc", "notarized"):
+            with self.subTest(trust=trust), patch.object(release, "gh") as gh, patch.object(release.subprocess, "run") as run:
+                with self.assertRaisesRegex(ValueError, "incomplete or unexpected"):
+                    release.publish(self.root, self.tag, macos_trust=trust)
+                gh.assert_not_called()
+                run.assert_not_called()
+                self.assertFalse((self.root / "SHA256SUMS").exists())
+
     def test_missing_extra_corrupt_and_path_injection_are_rejected(self):
         archive = next(path for path in self.root.iterdir() if path.name.endswith(".zip"))
         data = archive.read_bytes()
