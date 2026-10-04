@@ -108,6 +108,7 @@ struct GettingStartedGuide: View {
         _step = State(initialValue: initialStep)
         self.frozen = frozen; self.onClose = onClose; self.onConnect = onConnect
     }
+    private var nextTitle: String { step == .recovery ? "读完 / Done" : "下一步 / Next" }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
@@ -122,23 +123,40 @@ struct GettingStartedGuide: View {
             Text("阅读完成 ≠ 环境验证通过 / Reading is not a readiness check")
                 .font(Face.sans(10)).foregroundStyle(Ink.inkMuted)
             Hairline()
-            HStack {
-                Button("稍后 / Later", action: onClose).keyboardShortcut(.cancelAction)
-                    .accessibilityIdentifier("guide.close")
-                if step == .worktree {
-                    Button("接入项目… / Connect…", action: onConnect).accessibilityIdentifier("guide.connect")
+            if frozen {
+                // ImageRenderer cannot paint AppKit buttons. These inert labels
+                // describe navigation only; native fixtures verify real controls.
+                HStack {
+                    frozenAction("稍后 / Later")
+                    if step == .worktree { frozenAction("接入项目… / Connect…") }
+                    Spacer()
+                    frozenAction("上一步 / Back", enabled: step != .setup)
+                    frozenAction(nextTitle)
                 }
-                Spacer()
-                Button("上一步 / Back") { step = GettingStartedStep(rawValue: step.rawValue - 1) ?? .setup }
-                    .disabled(step == .setup).accessibilityIdentifier("guide.back")
-                Button(step == .recovery ? "读完 / Done" : "下一步 / Next") {
-                    if step == .recovery {
-                        if OnboardingTips.enabled { FirstWorktreeTip().invalidate(reason: .actionPerformed) }
-                        onClose()
-                    } else { step = GettingStartedStep(rawValue: step.rawValue + 1) ?? .recovery }
-                }.keyboardShortcut(.defaultAction).accessibilityIdentifier("guide.next")
-            }.controlSize(.small)
+            } else {
+                HStack {
+                    Button("稍后 / Later", action: onClose).keyboardShortcut(.cancelAction)
+                        .accessibilityIdentifier("guide.close")
+                    if step == .worktree {
+                        Button("接入项目… / Connect…", action: onConnect).accessibilityIdentifier("guide.connect")
+                    }
+                    Spacer()
+                    Button("上一步 / Back") { step = GettingStartedStep(rawValue: step.rawValue - 1) ?? .setup }
+                        .disabled(step == .setup).accessibilityIdentifier("guide.back")
+                    Button(nextTitle) {
+                        if step == .recovery {
+                            if OnboardingTips.enabled { FirstWorktreeTip().invalidate(reason: .actionPerformed) }
+                            onClose()
+                        } else { step = GettingStartedStep(rawValue: step.rawValue + 1) ?? .recovery }
+                    }.keyboardShortcut(.defaultAction).accessibilityIdentifier("guide.next")
+                }.controlSize(.small)
+            }
         }.padding(20).frame(width: 600, height: 470)
             .background(Ink.canvas).foregroundStyle(Ink.ink)
+    }
+    private func frozenAction(_ title: String, enabled: Bool = true) -> some View {
+        Text(title).font(Face.sans(11)).foregroundStyle(enabled ? Ink.ink : Ink.inkFaint)
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(Ink.surface).clipShape(RoundedRectangle(cornerRadius: 4))
     }
 }
