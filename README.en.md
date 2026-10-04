@@ -4,7 +4,7 @@
     <img src="brand/option-berth-lockup-light.svg" alt="option-berth — a berth for every worktree" width="420">
   </picture>
 </p>
-<p align="center"><strong>A berth for every worktree.</strong><br>A local service workspace for Git worktrees.</p>
+<p align="center"><strong>A berth for every worktree.</strong><br>A local development and runtime workspace for Git worktrees.</p>
 <p align="center"><a href="README.md">简体中文</a> · English</p>
 
 ## Why option-berth
@@ -13,7 +13,7 @@ Working on several branches—or running coding agents in parallel worktrees—c
 cannot answer. Which checkout owns this service? Is it actually healthy? Is a worker without a listening port
 still running? Can you stop this project without disrupting another branch?
 
-option-berth brings **service declarations, observed runs, logs, and Git context** into one workflow.
+option-berth brings **service declarations, observed runs, logs, Git context, and terminal sessions** into one workflow.
 You approve what a project should run. `oberth` starts it, observes it, and stops it within explicit ownership
 boundaries. People and external coding agents use the same facts rather than guessing separately.
 
@@ -34,7 +34,7 @@ operating-system security sandbox.
 
 ## Build and install
 
-Source builds are available now. The engine requires [Go 1.25 or a compatible later version](engine/go.mod)
+Release archives are listed in [GitHub Releases](https://github.com/SheathedSharp/option-berth/releases); source builds remain available. The engine requires [Go 1.25 or a compatible later version](engine/go.mod)
 and Mage; the macOS client also needs system development tools. See the [release process](docs/releasing.md).
 
 ```sh
@@ -87,6 +87,30 @@ oberth down                    # Stop this project and safely handle port reserv
 worktree filters. The product does not automatically install other tools' hooks, skills, or MCP configuration.
 The optional [Jev adapter](docs/jev-adapter.md) stays outside the engine's runtime facts and control path;
 core functionality does not require model configuration.
+
+## Terminal and coding agents
+
+The macOS workspace separates **Terminal / Agent session**, alongside the selected worktree's service facts
+and read-only Git context. Every session keeps its initial worktree when you switch projects.
+
+Install and authenticate **OpenCode, Codex, Claude Code, DeepSeek Harness, or Pi** yourself.
+In the agent composer, **Cmd+Enter** starts a new session with your initial message; **Shift+Cmd+Enter** focuses
+the selected live native session. Return inserts a newline. Continue subsequent turns and permissions in the
+agent's own interface. Sending another composer message creates another session, not an implicit resume.
+
+```sh
+oberth agent list --json
+oberth agent plan codex --worktree "$PWD" --json
+oberth agent run codex --worktree "$PWD"
+```
+
+DeepSeek messages use headless; native mode requires an existing tui profile. These are not seamless modes
+of the same conversation. No new reasoning loop, model credential store, automatic plugin installation,
+approval bypass, or sandbox bypass is introduced. See the [client guide](client/macos/README.md).
+
+The macOS release app embeds its matching engine, but is currently **ad-hoc signed, not Developer ID signed
+or notarized by Apple**. Verify SHA256SUMS; do not treat it as a notarized installer. Closing a terminal session
+does not stop project services and does not replace `oberth down`.
 
 ## Versioning and contributing
 

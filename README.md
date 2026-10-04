@@ -4,7 +4,7 @@
     <img src="brand/option-berth-lockup-light.svg" alt="option-berth — 各自成泊" width="420">
   </picture>
 </p>
-<p align="center"><strong>每份代码，各自成泊。</strong><br>面向 Git worktree 的本地服务运行工作台。</p>
+<p align="center"><strong>每份代码，各自成泊。</strong><br>面向 Git worktree 的本地开发运行工作台。</p>
 <p align="center">简体中文 · <a href="README.en.md">English</a></p>
 
 ## 为什么需要 option-berth
@@ -13,7 +13,7 @@
 哪个服务属于哪份 checkout？它真的健康了吗？一个 worker 没有监听端口，是否还在运行？
 停止当前项目，会不会影响另一个分支？
 
-option-berth 把**服务声明、实际运行、日志和 Git 上下文**放到同一条工作流中。
+option-berth 把**服务声明、实际运行、日志、Git 上下文与终端会话**放到同一条工作流中。
 你确认项目应该运行什么；`oberth` 负责启动、观察和有边界地停止。
 人和外部 coding agent 读取相同的事实，不需要各自猜测系统状态。
 
@@ -33,7 +33,7 @@ worktree 隔离指运行归属和生命周期边界，不是操作系统安全�
 
 ## 安装与构建
 
-当前可以从源码构建。引擎使用 [Go 1.25 或后续兼容版本](engine/go.mod) 和 Mage；
+版本发布包见 [GitHub Releases](https://github.com/SheathedSharp/option-berth/releases)；也可以从源码构建。引擎使用 [Go 1.25 或后续兼容版本](engine/go.mod) 和 Mage；
 macOS 客户端需要系统开发工具。正式发布说明见 [发布流程](docs/releasing.md)。
 
 ```sh
@@ -83,6 +83,29 @@ oberth down                    # 停止当前项目并安全处理端口预留
 `oberth git` 提供只读 Git 上下文；需要跨项目观察时，使用带明确 worktree 筛选的 `oberth events`。
 命令不会自动安装其他工具的 hooks、skills 或 MCP 配置。可选 [Jev adapter](docs/jev-adapter.md)
 不进入引擎的运行事实与控制链路，缺少模型配置也能使用核心功能。
+
+## 终端与 coding agent
+
+macOS 工作区中的 **Terminal / Agent session** 区分 shell 与外部 agent 会话，
+共用当前 worktree 的服务事实和只读 Git 上下文。会话固定归属于创建时的 worktree，
+切换项目不会把原会话迁移到另一份代码中。
+
+自行安装并登录 **OpenCode、Codex、Claude Code、DeepSeek Harness 或 Pi** 后，
+在 agent 消息框按 **⌘Enter** 发送首条消息并创建新会话；**⇧⌘Enter** 进入当前活动会话的原生界面。
+普通 Enter 换行，后续对话和权限确认交给 agent 自己。再次发送会建立新会话，不自动跨 worktree 恢复历史对话。
+
+```sh
+oberth agent list --json
+oberth agent plan codex --worktree "$PWD" --json
+oberth agent run codex --worktree "$PWD"
+```
+
+DeepSeek 的消息入口使用 headless，原生入口要求已有 tui profile；两种模式不是同一对话的无缝切换。
+option-berth 不实现另一套 agent 推理系统、不保存模型凭证、不自动安装插件，也不添加绕过审批或沙箱的参数。
+完整交互与验证边界见 [客户端说明](client/macos/README.md)。
+
+发布包内的 macOS App 带有匹配版本的引擎，但目前只有 **ad-hoc 签名，没有 Developer ID 或 Apple 公证**。
+下载后核对 SHA256SUMS；不要把它当成已公证安装包。使用终端不替代 `oberth down`，关闭会话不会自动停止项目服务。
 
 ## 版本与贡献
 
