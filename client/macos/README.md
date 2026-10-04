@@ -305,3 +305,19 @@ client/macos/build/OptionBerth.app/Contents/MacOS/OptionBerth \
 默认窗口为 1060×720，最小为760×520。原生交互检查使用隔离 HOME/CFFIXED_USER_HOME/BERTH_HOME；
 发布检查包含 ClientChecks，测试不会读取真实 provider 账号。全部输入法、系统辅助功能和
 长期资源趋势仍属于单独验收范围，不由冻结截图代替。
+
+
+## 跨会话历史的设计边界
+
+[Warp 命令历史](https://docs.warp.dev/terminal/entry/command-history/) 提供搜索交互参考，
+本项目不复制实现、不同步云端、不扫描 shell 历史文件。跨会话搜索由 #48 跟踪：
+数据只投影同一 worktree 的已有终端命令块，必须由用户事先启用；Agent 会话不参加。
+只复制命令，不执行或向原生输入框模拟粘贴。未知退出码不能显示成功。
+
+每会话最多256块、整个应用最多16个会话；退出的会话在被关闭前仍有内存历史，
+关闭会话或退出应用则不再保留。清空必须确认，且不能清理其他 worktree。
+这不等于输出历史恢复、Bash/Fish支持或完整shell交互验收。
+
+**English.** Worktree history is a read-only projection of opted-in terminal command blocks,
+not a second history database. It excludes other worktrees and agents. Copy is never execute.
+Closing a session or quitting the app discards its in-memory history.
