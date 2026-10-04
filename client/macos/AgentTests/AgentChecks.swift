@@ -56,7 +56,7 @@ enum AgentChecks {
                     try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: tool.path)
                 }
                 let cases: [(String, String, String?, [String])] = [
-                    ("opencode", "native", prompt, ["--prompt", prompt]),
+                    ("opencode", "native", prompt, ["--prompt=" + prompt]),
                     ("codex", "native", prompt, ["--", prompt]),
                     ("claude", "native", prompt, ["--", prompt]),
                     ("pi", "native", prompt, ["--", prompt]),

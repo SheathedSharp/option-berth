@@ -105,7 +105,9 @@ func Build(opts Options, lookPath func(string) (string, error)) (Plan, error) {
 		switch opts.Provider {
 		case "opencode":
 			if opts.Prompt != "" {
-				args = append(args, "--prompt", opts.Prompt)
+				// yargs treats a separate leading-dash value as another option.
+				// Keep the value attached so natural language cannot enable flags.
+				args = append(args, "--prompt="+opts.Prompt)
 			}
 		case "codex", "claude", "pi":
 			if opts.Prompt != "" {
