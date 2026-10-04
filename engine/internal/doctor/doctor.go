@@ -224,8 +224,7 @@ func Run(ctx context.Context, env Env, only []string) rpc.DaemonDoctorResult {
 	sel := normalize(only)
 
 	// The daemon is dialled at most once per run, however many checks ask
-	// about it, and once more at the end for daemon_version — a doctor run
-	// must not open a connection per check.
+	// about it. Project-only checks never dial just to populate metadata.
 	var info DaemonInfo
 	var haveInfo bool
 	probe := env.Daemon
@@ -260,8 +259,8 @@ func Run(ctx context.Context, env Env, only []string) rpc.DaemonDoctorResult {
 		}
 		result.Checks = append(result.Checks, got)
 	}
-	if d := daemonOnce(ctx); d.Reachable {
-		result.DaemonVersion = d.Version
+	if haveInfo && info.Reachable {
+		result.DaemonVersion = info.Version
 	}
 	return result
 }

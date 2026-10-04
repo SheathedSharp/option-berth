@@ -155,7 +155,7 @@ func checkProjectConfig(_ context.Context, env *Env) rpc.DoctorCheck {
 // are the other spellings sitting next to it, which option-berth ignores; a file under
 // the old dotfile name still works, and the check says how to rename it.
 func projectConfigResult(path string, shadowed []string) rpc.DoctorCheck {
-	cfg, err := groups.Load(path)
+	cfg, warnings, err := groups.LoadWithWarnings(path)
 	if err != nil {
 		return rpc.DoctorCheck{
 			Status:  StatusFail,
@@ -163,6 +163,13 @@ func projectConfigResult(path string, shadowed []string) rpc.DoctorCheck {
 			Detail:  err.Error(),
 			Fix:     "edit " + path,
 		}
+	}
+	if len(warnings) > 0 {
+		details := make([]string, 0, len(warnings))
+		for _, warning := range warnings {
+			details = append(details, warning.String())
+		}
+		return rpc.DoctorCheck{Status: StatusWarn, Summary: "manifest contains ignored fields", Detail: strings.Join(details, "\n"), Fix: "edit " + path}
 	}
 	summary := fmt.Sprintf("group %q, %d %s", cfg.Name, len(cfg.Services),
 		plural(len(cfg.Services), "service"))
