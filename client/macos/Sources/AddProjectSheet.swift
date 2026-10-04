@@ -14,8 +14,10 @@ struct AddProjectSheet: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduce
     @State private var text: String
-    @State private var drafting = false
-    @State private var draftProblem: String?
+    @State private var draftRun = DraftRunState()
+    @State private var draftCancellation: CLI.Cancellation?
+    private var drafting: Bool { draftRun.isRunning }
+    private var draftProblem: String? { draftRun.problem }
     @State private var draftStage = "准备中"
     @State private var draftMessage = "正在读取项目事实"
     @State private var draftStartedAt = Date()
@@ -121,7 +123,7 @@ struct AddProjectSheet: View {
                     SheetButton(title: drafting ? "agent 起草中…" : "让 agent 起草",
                                 enabled: !drafting) { draftWithAgent() }
                 }
-                SheetButton(title: "取消", action: onCancel)
+                SheetButton(title: "取消") { cancelDraft(); onCancel() }
                 SheetButton(title: mode == .edit ? "保存" : "写进 oberth.yaml",
                             primary: true, enabled: !drafting) { onWrite(text) }
             }
@@ -131,6 +133,7 @@ struct AddProjectSheet: View {
         }
         .frame(width: 600, height: 440)
         .background(Ink.canvas)
+        .onDisappear { cancelDraft() }
     }
 
     private func short(_ path: String) -> String {
@@ -146,59 +149,59 @@ struct AddProjectSheet: View {
     /// this review sheet. `--dry-run` is deliberate: the person still decides
     /// when the edited bytes become the project's manifest.
     private func draftWithAgent() {
-        guard mode == .create else { return }
-        drafting = true
-        draftProblem = nil
+        guard mode == .create, !drafting else { return }
+        draftCancellation?.cancel()
+        let cancellation = CLI.Cancellation()
+        draftCancellation = cancellation
+        let request = draftRun.begin()
         draftStage = "准备中"
         draftMessage = "正在读取项目事实"
         draftStartedAt = Date()
         let root = URL(fileURLWithPath: result.path).deletingLastPathComponent().path
         DispatchQueue.global(qos: .userInitiated).async {
             let outcome = CLI.stream(["init", "draft", "--dry-run", "--json", "--progress"],
-                                     workingDirectory: root) { line in
+                                     workingDirectory: root, cancellation: cancellation) { line in
                 guard let data = line.data(using: .utf8),
                       let event = try? JSONDecoder().decode(DraftProgressEvent.self, from: data)
                 else { return }
-                DispatchQueue.main.async {
-                    accept(event)
-                }
+                DispatchQueue.main.async { accept(event, request: request) }
             }
             DispatchQueue.main.async {
+                guard draftRun.accepts(request), !cancellation.isCancelled else { return }
+                let failure: String?
                 switch outcome {
-                case .success:
-                    if drafting {
-                        drafting = false
-                        draftProblem = "agent 没有返回可用的 oberth.yaml 草稿。"
-                    }
-                case .failure(let failure):
-                    drafting = false
-                    draftProblem = failure.message
+                case .success: failure = nil
+                case .failure(let error): failure = error.message
                 }
+                if let yaml = draftRun.finish(request, failure: failure) {
+                    text = yaml
+                    draftStage = "草稿已就绪"
+                    draftMessage = "已回填编辑器，检查后再写入文件"
+                }
+                draftCancellation = nil
             }
         }
     }
 
-    private func accept(_ event: DraftProgressEvent) {
+    private func cancelDraft() {
+        draftCancellation?.cancel()
+        draftCancellation = nil
+        draftRun.cancel()
+    }
+
+    private func accept(_ event: DraftProgressEvent, request: UUID) {
+        guard draftRun.accepts(request) else { return }
         switch event.type {
         case "progress":
             draftStage = stageTitle(event.stage ?? "")
             draftMessage = event.message ?? "agent 正在工作"
         case "done":
-            guard let yaml = event.yaml,
-                  !yaml.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                drafting = false
-                draftProblem = "agent 没有返回可用的 oberth.yaml 草稿。"
-                return
-            }
-            text = yaml
-            drafting = false
-            draftStage = "草稿已就绪"
-            draftMessage = "已回填编辑器，检查后再写入文件"
+            draftRun.offer(event.yaml, for: request)
+            draftStage = "等待命令结束"
+            draftMessage = "草稿候选已返回，确认命令成功后再回填"
         case "error":
-            drafting = false
-            draftProblem = event.message
-        default:
-            break
+            draftRun.reject(event.message, for: request)
+        default: break
         }
     }
 
