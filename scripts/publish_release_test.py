@@ -30,6 +30,36 @@ class PublishAssetsTests(unittest.TestCase):
         (self.root / "SHA256SUMS").write_text(text)
         self.assertEqual(len(release.verify_assets(self.root, self.tag, True)), 15)
 
+    def test_notarized_asset_mode_never_silently_accepts_adhoc(self):
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            release.verify_assets(self.root, self.tag, macos_trust="notarized")
+        for path in list(self.root.iterdir()):
+            if "-adhoc.zip" in path.name:
+                name = path.name.replace("-adhoc.zip", "-notarized.zip")
+                if path.name.endswith(".sha256"):
+                    path.write_text(path.read_text().replace("-adhoc.zip", "-notarized.zip"))
+                path.rename(self.root / name)
+        self.assertEqual(len(release.verify_assets(self.root, self.tag, macos_trust="notarized")), 14)
+        with self.assertRaises(ValueError):
+            release.verify_assets(self.root, self.tag)
+        with self.assertRaises(ValueError):
+            release.expected_assets(self.tag, "unknown")
+
+    def test_mixed_trust_assets_fail_before_network_or_release_writes(self):
+        # A matching checksum does not make a second, differently-labelled app
+        # part of the selected release contract. Never upload an ambiguous set.
+        name = f"OptionBerth-{self.tag}-macos-arm64-notarized.zip"
+        data = b"synthetic second app"
+        (self.root / name).write_bytes(data)
+        (self.root / (name + ".sha256")).write_text(hashlib.sha256(data).hexdigest() + "  " + name + "\n")
+        for trust in ("adhoc", "notarized"):
+            with self.subTest(trust=trust), patch.object(release, "gh") as gh, patch.object(release.subprocess, "run") as run:
+                with self.assertRaisesRegex(ValueError, "incomplete or unexpected"):
+                    release.publish(self.root, self.tag, macos_trust=trust)
+                gh.assert_not_called()
+                run.assert_not_called()
+                self.assertFalse((self.root / "SHA256SUMS").exists())
+
     def test_missing_extra_corrupt_and_path_injection_are_rejected(self):
         archive = next(path for path in self.root.iterdir() if path.name.endswith(".zip"))
         data = archive.read_bytes()

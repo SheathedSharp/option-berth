@@ -14,6 +14,7 @@ import subprocess
 import tarfile
 import tempfile
 import zipfile
+from macos_release_signing import SigningConfiguration, sign_application
 
 ROOT = Path(__file__).resolve().parent.parent
 TARGETS = {(system, arch) for system in ("darwin", "linux", "windows") for arch in ("amd64", "arm64")}
@@ -66,7 +67,11 @@ def checksum_sidecar(path: Path) -> None:
     path.with_name(path.name + ".sha256").write_text(checksum(path) + "  " + path.name + "\n")
 
 
-def package(root: Path, system: str, arch: str, output: Path, include_app: bool = False) -> list[Path]:
+def package(root: Path, system: str, arch: str, output: Path, include_app: bool = False, signing: SigningConfiguration | None = None) -> list[Path]:
+    signing = signing or SigningConfiguration()
+    signing.validate()
+    if signing.mode != "adhoc" and not include_app:
+        raise ValueError("Developer ID options require --include-app")
     if (system, arch) not in TARGETS:
         raise ValueError("unsupported release target")
     if include_app and (system, arch) != ("darwin", "arm64"):
@@ -134,11 +139,10 @@ def package(root: Path, system: str, arch: str, output: Path, include_app: bool 
             app_notices = app / "Contents/Resources/Licenses"
             shutil.copytree(notices, app_notices, dirs_exist_ok=True)
             shutil.copyfile(root / "LICENSE", app_notices / "option-berth-LICENSE.txt")
-            # Ad-hoc signatures support local integrity checks, not Developer ID trust.
-            command(root, env, "codesign", "--force", "--sign", "-", str(app / "Contents/MacOS/oberth"))
-            command(root, env, "codesign", "--force", "--deep", "--sign", "-", str(app))
-            command(root, env, "codesign", "--verify", "--deep", "--strict", str(app))
-            app_archive = output / f"OptionBerth-v{version}-macos-arm64-adhoc.zip"
+            # The trust suffix is returned only after signing and (when
+            # explicitly selected) acceptance, stapling and Gatekeeper checks.
+            trust = sign_application(app, signing)
+            app_archive = output / f"OptionBerth-v{version}-macos-arm64-{trust}.zip"
             if app_archive.exists():
                 raise FileExistsError("refusing to overwrite an application archive")
             command(root, env, "ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(app), str(app_archive))
@@ -153,9 +157,14 @@ if __name__ == "__main__":
     parser.add_argument("--arch", choices=("amd64", "arm64"), required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--include-app", action="store_true")
+    parser.add_argument("--macos-signing", choices=("adhoc", "developer-id"), default="adhoc")
+    parser.add_argument("--signing-identity", help="Existing certificate identity or SHA1; never imported")
+    parser.add_argument("--team-id", help="Expected Developer ID Team Identifier")
+    parser.add_argument("--notary-profile", help="Existing notarytool Keychain profile; no credentials on argv")
     args = parser.parse_args()
     try:
-        for artifact in package(ROOT, args.os, args.arch, args.output.resolve(), args.include_app):
+        for artifact in package(ROOT, args.os, args.arch, args.output.resolve(), args.include_app,
+                                SigningConfiguration(args.macos_signing, args.signing_identity, args.team_id, args.notary_profile)):
             print(artifact.name)
     except (OSError, ValueError, RuntimeError) as error:
         parser.exit(1, f"packaging refused: {error}\n")

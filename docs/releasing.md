@@ -100,3 +100,40 @@ Tag CI verifies native platforms, packages six CLI targets plus the macOS ARM64 
 licenses, verifies SHA-256, and publishes a draft only after uploaded assets are downloaded and rechecked.
 The application embeds its matching engine. Current macOS artifacts are **ad-hoc signed, not notarized**;
 Developer ID distribution remains an explicitly separate credential-dependent step.
+
+
+## 显式 Developer ID / Apple 公证
+
+默认发布仍使用 `adhoc`，不会读取、导入或创建开发者凭证。具备已有 Developer ID 证书和
+notarytool Keychain profile 的授权 macOS runner，可在明确选定的打包操作中使用：
+
+```sh
+python3 scripts/package_release.py --os darwin --arch arm64 --include-app --output dist \
+  --macos-signing developer-id --signing-identity '<certificate SHA1>' \
+  --team-id '<10-character Team ID>' --notary-profile '<existing profile>'
+```
+
+代码先校验参数，逐个签署嵌套 Mach-O 和应用包并启用 hardened runtime、timestamp，再核对
+TeamIdentifier。只有 notarytool 返回 `Accepted`、staple/validate、严格签名验证和 Gatekeeper
+检查全部成功，才生成 `-notarized.zip`；任何失败都不降级伪装成已公证。原始构建应用不会被
+修改，签名发生在暂存副本。`--deep` 仅用于验证，不作为隐式递归签名策略。
+
+发布资产校验默认只接受 ad-hoc 资产集合。发布经过上述完整流程产生的公证包时，须显式使用
+`publish_release.py --macos-trust notarized`。这项参数只选定预期资产名称集合，不独立证明
+签名、公证或下载完整性；原有下载回验与 SHA256 对照仍执行。CI 默认不自动使用开发者账号，
+证书/公证环境尚未配置或实机验收时，不能把准备好的脚本写成已完成真实公证。
+
+依据：[Apple 自定义公证工作流](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow)。
+`macos_release_signing_test.py` 通过注入命令响应验证拒绝、正确顺序、Team ID 不符和各关卡失败；
+隔离临时 Mach-O 的真实 ad-hoc 签名另行验证。模拟 Accepted 结果不等于向 Apple 实际提交。
+
+## 原生 Windows 服务回归
+
+Windows workflow 在构建 CLI 后运行 `verify_service_lifecycle.py`，使用临时 HOME/BERTH_HOME、
+独立 named pipe、自己生成的 API 与无端口 worker。覆盖端口/运行身份、重复 up、采集器退出后的
+只读状态、采集器恢复、限定项目 down，以及不相关监听保持存活。Windows 在启动阶段校验
+夹具可执行文件并持有内核 process handle，之后按同一 handle 确认退出，不凭旧 PID 重选停止目标。
+失败时只清理自己的临时夹具和显式启动的 daemon，所有夹具另有有限自退出期限。
+
+这项检查不涵盖 Windows/Linux 桌面端、所有终端/权限/服务树场景，也不代表 Windows arm64
+已经原生执行。客户端升级入口只检查公开发布信息，自动替换安装与状态迁移仍须单独验收。

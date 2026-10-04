@@ -50,6 +50,10 @@ jobs:
           if (-not $version.version) { throw 'version JSON has no version' }
           & ../bin/oberth.exe --help
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Native service lifecycle and collector recovery
+        run: |
+          python ../scripts/verify_service_lifecycle.py --binary ../bin/oberth.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native fact and persistence tests
         run: |
           go test -count=1 -timeout=5m ./internal/claims ./internal/store ./internal/state ./internal/servicefacts ./internal/git
