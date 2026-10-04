@@ -124,7 +124,7 @@ func checkProjectConfig(_ context.Context, env *Env) rpc.DoctorCheck {
 	root := gitRootOf(dir)
 
 	var looked []string
-	for _, base := range []string{dir, root} {
+	for _, base := range projectConfigDirs(dir) {
 		if base == "" {
 			continue
 		}
@@ -185,7 +185,7 @@ func projectConfigResult(path string, shadowed []string) rpc.DoctorCheck {
 			Status:  StatusWarn,
 			Summary: fmt.Sprintf("%s, under the old name %s", summary, base),
 			Detail:  path + " still works; new projects get " + groups.ConfigName,
-			Fix:     "git mv " + base + " " + groups.ConfigName,
+			Fix:     "oberth doctor --fix --only project_config",
 			Fixable: true,
 		}
 	}
@@ -214,4 +214,32 @@ func dedupe(in []string) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+// ProjectConfigFiles selects the nearest manifest within this checkout. Repair
+// and diagnosis share the same selection, including nested project directories.
+func ProjectConfigFiles(dir string) []string {
+	for _, base := range projectConfigDirs(dir) {
+		if files := groups.FilesIn(base); len(files) > 0 {
+			return files
+		}
+	}
+	return nil
+}
+func projectConfigDirs(dir string) []string {
+	dir = groups.Canonical(dir)
+	if dir == "" {
+		return nil
+	}
+	root := gitRootOf(dir)
+	var dirs []string
+	for {
+		dirs = append(dirs, dir)
+		parent := filepath.Dir(dir)
+		if root == "" || dir == root || parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return dirs
 }
