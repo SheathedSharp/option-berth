@@ -18,6 +18,7 @@ type Provider struct {
 	Installed    bool   `json:"installed"`
 	NativePrompt bool   `json:"native_prompt"`
 	Note         string `json:"note,omitempty"`
+	ResumeFile   bool   `json:"resume_file"`
 }
 
 func Providers(lookPath func(string) (string, error)) []Provider {
@@ -34,19 +35,21 @@ func Providers(lookPath func(string) (string, error)) []Provider {
 	for i := range result {
 		p, err := lookPath(result[i].Command)
 		result[i].Installed = err == nil && filepath.IsAbs(p)
+		result[i].ResumeFile = result[i].ID != "deepseek"
 	}
 	return result
 }
 
 type Plan struct {
-	Provider   string   `json:"provider"`
-	Executable string   `json:"executable"`
-	Arguments  []string `json:"arguments"`
-	Worktree   string   `json:"worktree"`
-	Mode       string   `json:"mode"`
+	Provider   string           `json:"provider"`
+	Executable string           `json:"executable"`
+	Arguments  []string         `json:"arguments"`
+	Worktree   string           `json:"worktree"`
+	Mode       string           `json:"mode"`
+	Resume     *ResumeReference `json:"resume,omitempty"`
 }
 
-type Options struct{ Provider, Worktree, Prompt, Mode string }
+type Options struct{ Provider, Worktree, Prompt, Mode, ResumeFile string }
 
 // Build is read-only. It never runs --help, logs in, creates a profile or starts a
 // daemon. The caller must explicitly execute the returned argv in its own PTY.
@@ -93,6 +96,16 @@ func Build(opts Options, lookPath func(string) (string, error)) (Plan, error) {
 	if !info.IsDir() {
 		return plan, errors.New("selected worktree is not a directory")
 	}
+	var resume *ResumeReference
+	if opts.ResumeFile != "" {
+		if opts.Mode != "native" {
+			return plan, errors.New("explicit continuation currently requires native mode")
+		}
+		resume, err = inspectResume(opts.Provider, opts.ResumeFile, abs)
+		if err != nil {
+			return plan, err
+		}
+	}
 	executable, err := lookPath(provider.Command)
 	if err != nil || !filepath.IsAbs(executable) {
 		return plan, fmt.Errorf("%s is not installed on an absolute PATH; install and authenticate it explicitly", provider.Name)
@@ -133,5 +146,8 @@ func Build(opts Options, lookPath func(string) (string, error)) (Plan, error) {
 			args = []string{"--profile", "headless", "--", opts.Prompt}
 		}
 	}
-	return Plan{Provider: opts.Provider, Executable: executable, Arguments: args, Worktree: abs, Mode: opts.Mode}, nil
+	if resume != nil {
+		args = resumeArguments(opts.Provider, resume, opts.Prompt)
+	}
+	return Plan{Provider: opts.Provider, Executable: executable, Arguments: args, Worktree: abs, Mode: opts.Mode, Resume: resume}, nil
 }

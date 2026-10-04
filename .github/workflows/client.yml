@@ -46,6 +46,10 @@ jobs:
           trap 'rm -rf "$isolation"' EXIT
           mkdir -p "$isolation/home" "$isolation/berth"
           HOME="$isolation/home" CFFIXED_USER_HOME="$isolation/home" BERTH_HOME="$isolation/berth" "$RUNNER_TEMP/draft-native-tests"
+      - name: Verify explicit agent continuation identity
+        run: |
+          swiftc client/macos/AgentSupport/AgentBridge.swift client/macos/Tests/AgentResumeTests.swift -o "$RUNNER_TEMP/agent-resume-tests"
+          "$RUNNER_TEMP/agent-resume-tests"
       - name: Verify real isolated PTY sessions
         run: swift run --package-path client/macos --force-resolved-versions TerminalChecks
       - name: Verify isolated agent planner, composer and native handoff

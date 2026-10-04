@@ -31,7 +31,7 @@ func newAgentCommand() *cobra.Command {
 	command.AddCommand(list)
 	for _, verb := range []string{"plan", "run"} {
 		verb := verb
-		var worktree, mode, prompt string
+		var worktree, mode, prompt, resumeFile string
 		var promptStdin, jsonOutput bool
 		sub := &cobra.Command{Use: verb + " <provider>", Args: cobra.ExactArgs(1), Short: "Build an exact native argv; run executes it with inherited terminal input", RunE: func(cmd *cobra.Command, args []string) error {
 			// Reject plan-only flags before consuming input or resolving a provider.
@@ -54,7 +54,7 @@ func newAgentCommand() *cobra.Command {
 				}
 				prompt = string(raw)
 			}
-			plan, err := agentlaunch.Build(agentlaunch.Options{Provider: args[0], Worktree: worktree, Mode: mode, Prompt: prompt}, nil)
+			plan, err := agentlaunch.Build(agentlaunch.Options{Provider: args[0], Worktree: worktree, Mode: mode, Prompt: prompt, ResumeFile: resumeFile}, nil)
 			if err != nil {
 				return usageError{err}
 			}
@@ -68,6 +68,7 @@ func newAgentCommand() *cobra.Command {
 			return executeAgent(plan)
 		}}
 		sub.Flags().StringVar(&worktree, "worktree", "", "Explicit selected checkout directory")
+		sub.Flags().StringVar(&resumeFile, "resume-file", "", "Explicit original provider session file/export; validates recorded worktree before native continuation")
 		sub.Flags().StringVar(&mode, "mode", "native", "native interactive UI or task (one-shot)")
 		sub.Flags().StringVar(&prompt, "prompt", "", "Initial prompt; not interpreted as shell text")
 		sub.Flags().BoolVar(&promptStdin, "prompt-stdin", false, "Read plan prompt from stdin (not shell history)")

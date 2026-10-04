@@ -297,3 +297,30 @@ with a prompt to select its documented headless profile. That one-shot task is n
 No implicit “resume last” crosses worktree boundaries. The selected cwd is not an operating-system sandbox.
 Windows currently supports plan/list, not native process handoff. Merely finding a binary does not validate login
 or a particular installed version; a provider failure remains a provider failure, never a silent shell fallback.
+
+
+### Explicit native continuation / 显式原生续接
+
+`oberth agent plan <provider> --worktree /workspace/project --resume-file /absolute/session-file --json`
+produces a structured continuation plan; `agent run` accepts the same file option and hands the
+terminal to the provider. There is no implicit `--last`, partial ID search, shell interpolation,
+automatic login, conversation import, or approval bypass.
+
+Supported metadata: Codex JSONL `session_meta` header; Claude Code JSONL records containing
+`sessionId`, `cwd`, and a semantic `version`; Pi session-format v3 UUID headers; OpenCode JSON
+exports with `info.id`, `info.directory`, and `info.version`. Metadata reads are bounded to 256 KiB;
+transcript messages are not copied into plans or another conversation database. The recorded
+worktree must resolve to the same directory as `--worktree`. Plan `resume` reports the exact ID,
+source metadata version, source file, worktree, and `approval_owner: provider_native`.
+
+The person must select an original provider session file or a trusted OpenCode export. This checks
+that file's metadata, not the authenticity of a user-edited export or the currently installed CLI's
+version. The external CLI remains responsible for finding the ID, enforcing permissions and
+reading its actual conversation. Unknown formats, task-mode continuation and DeepSeek file-based
+continuation fail closed. This is a structured **launch** contract, not a unified live event/approval
+protocol; those capabilities remain in backlog.
+
+Provider contracts: [OpenCode CLI](https://opencode.ai/docs/cli/),
+[Codex CLI](https://developers.openai.com/codex/cli/reference/),
+[Claude Code CLI](https://code.claude.com/docs/en/cli-reference), and
+[Pi CLI](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md).
