@@ -41,9 +41,11 @@ public final class TerminalSession: ObservableObject, Identifiable {
         }
         terminal.onProtocolBytes = { [weak self] bytes in
             guard let self, commandParser != nil else { return }
+            let revision = commandParser?.revision
             commandParser?.consume(bytes)
-            let next = commandParser?.blocks ?? []
-            if commandBlocks != next { commandBlocks = next; onChange?() }
+            if commandParser?.revision != revision {
+                commandBlocks = commandParser?.blocks ?? []; onChange?()
+            }
         }
     }
 
@@ -72,6 +74,7 @@ public final class TerminalSession: ObservableObject, Identifiable {
             let lease = try ShellIntegrationLease(environment: env)
             shellLease = lease
             commandParser = CommandBlockParser(nonce: lease.nonce)
+            terminal.getTerminal().registerOscHandler(code: 633) { _ in /* Host parser consumes command metadata. */ }
             env = lease.environment
         }
         env["PWD"] = worktree

@@ -16,6 +16,7 @@ public struct CommandBlock: Identifiable, Equatable {
 /// Markers are display metadata only, never service facts or execution authority.
 public struct CommandBlockParser {
     public private(set) var blocks: [CommandBlock] = []
+    public private(set) var revision: UInt64 = 0
     private let nonce: String
     private var mode = 0 // ground / ESC / OSC / OSC-ESC / discard / discard-ESC
     private var frame: [UInt8] = []
@@ -60,10 +61,12 @@ public struct CommandBlockParser {
         guard fields.first == "133", fields.last == nonce else { return }
         if fields.count == 3, fields[1] == "C" {
             interrupt(now: now)
+            revision &+= 1
             blocks.append(CommandBlock(id: UUID(), command: pendingCommand, startedAt: now, interrupted: false))
             pendingCommand = nil
             if blocks.count > Self.maximumBlocks { blocks.removeFirst(blocks.count - Self.maximumBlocks) }
         } else if fields.count == 4, fields[1] == "D", let last = blocks.indices.last, blocks[last].isRunning {
+            revision &+= 1
             blocks[last].endedAt = now
             if let code = Int(fields[2]), (0...255).contains(code), String(code) == fields[2] {
                 blocks[last].exitCode = code
@@ -75,10 +78,11 @@ public struct CommandBlockParser {
     }
     public mutating func interrupt(now: Date = Date()) {
         if let last = blocks.indices.last, blocks[last].isRunning {
+            revision &+= 1
             blocks[last].endedAt = now; blocks[last].interrupted = true
         }
     }
-    public mutating func clear() { blocks.removeAll(); pendingCommand = nil }
+    public mutating func clear() { revision &+= 1; blocks.removeAll(); pendingCommand = nil }
     private static func decodeCommand(_ value: String) -> String? {
         guard value.utf8.count <= 12 * 1024 else { return nil }
         var result = [UInt8](), bytes = Array(value.utf8), i = 0

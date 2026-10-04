@@ -6,11 +6,11 @@
 |---|---|
 | Engine verification | macOS / Ubuntu：原生构建、vet、全引擎单元、核心 race、真实服务场景、Mage 工作流回归、Python 辅助测试。 |
 | Git read verification | macOS / Ubuntu：Git、worktree、归因与观察的重复测试和 race。 |
-| Windows build verification | Windows x64：原生构建、vet、CLI/Jev 构建、version JSON/帮助页冒烟及事实/持久化测试；Ubuntu：Windows arm64 交叉构建。 |
+| Windows build verification | Windows x64：原生构建、vet、CLI/Jev 构建、version JSON/帮助页、事实/持久化，以及隔离 API/无端口 worker 的启动、重复启动、采集器恢复和限定停止；Ubuntu：Windows arm64 交叉构建。 |
 | Client and brand verification | macOS：共享几何源与13个SVG一致性、8项生成器测试、原生客户端/ICNS构建、PTY/输入框/会话导航回归及随包OFL检查。 |
 
 CLI、Mage 与品牌迁移分别审查、验证、合并，没有引入旧私人 Git 祖先。
-Windows 的编译/冒烟与所选原生测试，不等于全部服务起停、Windows GUI 或 arm64 原生执行验收。
+Windows 的基础服务场景与所选原生测试，不等于全部服务树、Windows GUI 或 arm64 原生执行验收。
 
 ## 本机复现
 
@@ -26,8 +26,7 @@ go test -race -count=1 -timeout=10m ./internal/claims ./internal/runs ./internal
 go test -tags integration -count=1 -timeout=8m ./internal/scenario/...
 ```
 
-Mage 与品牌检查分别位于各自PR及CI。品牌迁移已生成10个冻结界面与7档图标，并查看代表性
-空态、服务态、字号页和图标；没有把离屏渲染称为真实Dock、菜单或全部交互验收。
+Mage 与品牌检查分别位于各自PR及CI。冻结呈现与真实Dock、菜单或交互验收分开。
 构建、截图、安装和服务起停是不同副作用，普通检查不操作日常用户服务。
 
 ## 不作出的保证
@@ -46,7 +45,7 @@ GUI全部交互、签名安装包和长期负载仍需独立验收；没有可�
 对照五个 provider 的 native/task 参数计划，再用临时 provider 替身验证原生 PTY 交接。
 这不是登录五个真实模型账号，也不等于验收所有 provider 版本。
 
-`11-console-split` 冻结图只表达两栏布局；原生分隔控件和终端内容必须由独立原生检查验证。
+`11-console-split` 冻结图表达当前递归窗格模型；原生分隔控件和终端内容由独立原生检查验证。
 完整窗口的鼠标菜单、系统输入法、辅助功能及长时间负载仍需继续真实使用验收。
 不要将“页面切换保留内存状态”写成“应用重启恢复进程与会话”。
 
@@ -81,5 +80,35 @@ CFFIXED_USER_HOME、BERTH_HOME 和合成命令，在固定 600×440 的自有 NS
 编辑器回填，以及子进程真实回收。事件仅发送给夹具窗口，不操作全局鼠标或用户剪贴板。
 该检查需要可创建 AppKit 窗口的 macOS 会话，已接入 Client workflow 和发版 verify。
 
-本轮另生成 13 张冻结状态图并检查草稿审查与 Git 页面；冻结图不代替上述原生事件检查。
-这些检查不声称覆盖所有输入法、系统辅助功能、真实 provider 账号、崩溃恢复或长期负载。
+冻结状态图不代替上述原生事件检查。这些检查不声称覆盖所有输入法、系统辅助功能、
+真实 provider 账号、崩溃恢复或长期负载。
+
+## macOS 功能入口与样式整合
+
+`ClientChecks` 编译实际 BerthClient，在隔离的原生窗口中验证命令查询/Return、快捷键冲突与
+原生按键保留、递归窗格/焦点/分隔、同一 PTY 独立窗口归还、恢复确认与显式新 Shell，以及
+更新请求的代际/取消/错误隔离。更新测试用可控异步载入器，不发起联网查询。工作区导航检查
+保留 `project:` / `ports:` 旧参数兼容，但统一映射到服务页，不保留重复内部页面分支。
+
+命令块元数据仅在协议状态改变时发布；普通终端输出不再逐块比较整个历史数组。
+`TerminalChecks` 重跑工作区移除、混合窗格关闭、24次PTY回收和原生输入；旧双栏状态已移除，
+测试直接验证当前布局模型。项目移除后仍有会话时，布局快照继续保留其独立 worktree 入口。
+
+冻结渲染覆盖 paper 1060×720、midnight 900×640 及最小窗口 760×520，各13张状态图，
+查看代表性的 agent、服务、Git 与递归分屏图。ImageRenderer 不承载原生菜单/拖放视图；
+冻结路径只画相同内容和几何，不启动真实服务或使用个人偏好。原生渲染与真实输入路径分开验收。
+
+### 复审补充的状态边界
+
+`RecoveryChecks` 验证关闭恢复时剪除已丢弃历史入口的布局引用、保留当前注册会话，并可重新
+启用保存；恢复后重新订阅新的工作区对象。自动保存用例先排空启动时排队的保存，再编辑
+provider，避免把旧排队任务误认为监听仍有效。这些用例不通过旧 PID 启动或停止进程。
+
+`ChromeChecks` 将部分恢复的完整布局与可呈现终端集合分开，调用实际窗格动作共用的
+`applyLayoutChange` 入口验证：普通焦点变化保留未打开的历史引用，未知新增引用原子拒绝，
+只有显式单窗格操作可以丢弃其他布局引用；同时在原生窗口验证现有终端仍可获得焦点。
+该用例不依赖固定鼠标坐标，也不声称覆盖全部鼠标拖放行为。
+
+`WorkspaceChecks` 的实际 zsh 夹具还检查失败与成功命令之后既有提示钩子继续执行，并收到
+原始退出码；不凭猜测修改正常的 shell hook 行为。分发回归验证混合 ad-hoc/notarized 资产
+在任何网络写入前被拒绝，不把模拟公证结果或文件名当作真实 Apple 公证验收。

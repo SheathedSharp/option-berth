@@ -4,7 +4,7 @@ import SwiftUI
 /// One action catalogue drives the menu and searchable command panel. Actions
 /// never evaluate shell strings or call a provider implicitly.
 enum WorkspaceAction: String, CaseIterable, Codable, Identifiable {
-    case services, code, terminal, sessions, find, refresh, sidebar, settings
+    case services, code, terminal, sessions, recovery, updates, find, refresh, sidebar, settings
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -12,6 +12,8 @@ enum WorkspaceAction: String, CaseIterable, Codable, Identifiable {
         case .code: return "代码 / Git"
         case .terminal: return "终端 / Terminal"
         case .sessions: return "会话管理 / Sessions"
+        case .recovery: return "恢复工作区 / Recovery"
+        case .updates: return "检查更新 / Updates"
         case .find: return "查找当前内容 / Find"
         case .refresh: return "刷新运行事实 / Refresh"
         case .sidebar: return "切换项目侧栏 / Sidebar"
@@ -24,6 +26,8 @@ enum WorkspaceAction: String, CaseIterable, Codable, Identifiable {
         case .code: return "chevron.left.forwardslash.chevron.right"
         case .terminal: return "terminal"
         case .sessions: return "rectangle.on.rectangle"
+        case .recovery: return "clock.arrow.circlepath"
+        case .updates: return "arrow.down.circle"
         case .find: return "magnifyingglass"
         case .refresh: return "arrow.clockwise"
         case .sidebar: return "sidebar.left"
@@ -36,6 +40,8 @@ enum WorkspaceAction: String, CaseIterable, Codable, Identifiable {
         case .code: return .init(key: "2")
         case .terminal: return .init(key: "3")
         case .sessions: return .init(key: "o", shift: true)
+        case .recovery: return .init(key: "o", shift: true, option: true)
+        case .updates: return .init(key: "u", option: true)
         case .find: return .init(key: "f")
         case .refresh: return .init(key: "r")
         case .sidebar: return .init(key: "s", option: true)
@@ -131,6 +137,8 @@ struct WorkspaceActionPanel: View {
                     if direction == .down { selected = (selected + 1) % actions.count }
                     if direction == .up { selected = (selected + actions.count - 1) % actions.count }
                 }
+            ScrollViewReader { proxy in
+                ScrollView {
             VStack(spacing: 3) {
                 ForEach(Array(actions.enumerated()), id: \.element.id) { index, action in
                     Button { choose(action) } label: {
@@ -141,9 +149,14 @@ struct WorkspaceActionPanel: View {
                         }.padding(9).contentShape(Rectangle())
                             .background(index == selected ? Ink.accentSoft : Ink.surface)
                             .clipShape(RoundedRectangle(cornerRadius: 5))
-                    }.buttonStyle(.plain).accessibilityIdentifier("workspace.action." + action.rawValue)
+                    }.buttonStyle(.plain).id(action.id).accessibilityIdentifier("workspace.action." + action.rawValue)
                 }
                 if actions.isEmpty { Text("没有匹配的操作 / No matching action").foregroundStyle(Ink.inkMuted).padding() }
+            }
+                }.frame(height: min(340, CGFloat(max(1, actions.count)) * 40))
+                    .onChange(of: selected) { _, index in
+                        if actions.indices.contains(index) { proxy.scrollTo(actions[index].id, anchor: .center) }
+                    }
             }
         }.padding(18).frame(width: 480).background(Ink.canvas).foregroundStyle(Ink.ink)
             .onAppear { searchFocused = true }

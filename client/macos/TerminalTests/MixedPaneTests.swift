@@ -13,7 +13,7 @@ extension TerminalChecks {
         try check(until { !agent.isActive && !shell.isActive }, "short-lived pane fixtures did not exit")
         registry.select(agent)
         let state = registry.workspace(root.path)
-        state.agentSplit = shell.id
+        try state.split(shell.id, beside: agent.id, agent: true, axis: .horizontal)
         try check(registry.remove(agent), "exited primary could not close")
         try check(!state.agentMode && state.terminalSelection == shell.id && state.agentSelection == nil,
                   "surviving shell disappeared after closing a mixed agent primary")

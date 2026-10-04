@@ -9,6 +9,7 @@ final class ViewState: ObservableObject {
     @Published var showingSessions = false
     @Published var showingActions = false
     @Published var showingRecovery = false
+    @Published var showingUpdates = false
 
     init(scope: Scope = .services("")) {
         self.scope = scope
@@ -21,6 +22,14 @@ final class ViewState: ObservableObject {
     }
 
     var project: String? { scope.projectName }
+
+    func selectProject(_ name: String) {
+        switch scope {
+        case .code: scope = .code(name)
+        case .terminal, .console: scope = .terminal(name)
+        case .services: scope = .services(name)
+        }
+    }
 
     func show(_ face: Face, projects: [String]) {
         guard let name = project ?? projects.first else { return }

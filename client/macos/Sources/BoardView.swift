@@ -10,12 +10,11 @@ enum Scope: Hashable {
     case code(String)
     case terminal(String)
     case console(String)
-    case project(String)
 
     var title: String {
         switch self {
         case .console: return "会话 / Sessions"
-        case .services(let name), .code(let name), .terminal(let name), .project(let name):
+        case .services(let name), .code(let name), .terminal(let name):
             return name.isEmpty ? "项目" : name
         }
     }
@@ -23,7 +22,7 @@ enum Scope: Hashable {
     var projectName: String? {
         switch self {
         case .console: return nil
-        case .services(let name), .code(let name), .terminal(let name), .project(let name):
+        case .services(let name), .code(let name), .terminal(let name):
             return name.isEmpty ? nil : name
         }
     }
@@ -37,7 +36,7 @@ enum Scope: Hashable {
         switch parts[0] {
         case "terminal": self = .terminal(parts[1])
         case "code", "git": self = .code(parts[1])
-        case "ports", "project": self = .project(parts[1])
+        case "ports", "project": self = .services(parts[1])
         case "services": self = .services(parts[1])
         default: self = .services("")
         }
@@ -85,6 +84,9 @@ struct BoardView: View {
     @State private var configProblem: String?
     @State private var removing: BerthGroup?
     @State private var problem: String?
+    @State private var projectQuery = ""
+    @ObservedObject private var terminalSessions = TerminalSessions.shared
+    @ObservedObject private var recovery = WorkspaceRecovery.shared
 
     private var scope: Scope { views.scope }
     private var projects: [BerthGroup] { services.projects.sorted { $0.name < $1.name } }
@@ -97,15 +99,26 @@ struct BoardView: View {
         HStack(spacing: 0) {
             if views.railVisible {
                 rail
-                    .frame(width: railWidth, alignment: .leading)
+                    .frame(width: scrolls ? railWidth : Double(Metrics.railWidth), alignment: .leading)
                     .clipped()
                 SplitHandle(width: $railWidth, range: Self.railRange)
             }
-            content
-                .padding(.top, views.railVisible ? 0 : Metrics.trafficLightInset)
+            VStack(spacing: 0) {
+                WorkspaceToolbar(frozen: !scrolls, sessionCount: scrolls ? terminalSessions.sessions.count : 0,
+                                 recoveryPending: scrolls && recovery.reviewPending,
+                                 openActions: { views.showingActions = true },
+                                 openSessions: { views.showingSessions = true },
+                                 openRecovery: { views.showingRecovery = true },
+                                 openUpdates: { views.showingUpdates = true },
+                                 openSettings: { views.showingSettings = true })
+                Hairline()
+                content
+            }.padding(.top, views.railVisible ? 0 : Metrics.trafficLightInset)
         }
         .ignoresSafeArea(.container, edges: .top)
         .background(Ink.canvas)
+        .preferredColorScheme(settings.colorScheme)
+        .sheet(isPresented: $views.showingUpdates) { ReleaseUpdateSheet() }
         .sheet(isPresented: $views.showingRecovery) {
             WorkspaceRecoverySheet(recovery: .shared) { root in views.scope = .console(root) }
         }
@@ -152,7 +165,7 @@ struct BoardView: View {
         } message: {
             Text(problem ?? "")
         }
-        .onAppear { refreshGit(force: true) }
+        .onAppear { if scrolls { refreshGit(force: true) } }
         .onChange(of: services.updatedAt) { _, _ in
             refreshGit()
         }
@@ -162,6 +175,7 @@ struct BoardView: View {
     }
 
     private func refreshGit(force: Bool = false) {
+        guard scrolls else { return }
         if case .code = scope {
             git.loadTree(project: selected, force: force)
         } else {
@@ -172,8 +186,8 @@ struct BoardView: View {
     private var rail: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                BerthMark(size: 16, occupied: !projects.isEmpty)
-                Text("项目")
+                Image(systemName: "square.stack.3d.up").font(.system(size: 12, weight: .medium)).foregroundStyle(Ink.inkMuted)
+                Text("Worktrees")
                     .font(Face.sans(13, .semibold))
                     .foregroundStyle(Ink.ink)
                 Spacer()
@@ -199,8 +213,19 @@ struct BoardView: View {
                 }
                 .padding(Metrics.gutter)
             } else {
-                ForEach(projects) { project in
-                    projectRow(project)
+                if scrolls {
+                    TextField("筛选 worktree", text: $projectQuery).textFieldStyle(.roundedBorder)
+                        .font(Face.sans(11)).padding(.horizontal, 10).padding(.vertical, 9)
+                    ScrollView {
+                        LazyVStack(spacing: 3) {
+                            ForEach(projects.filter { projectQuery.isEmpty || ($0.displayName + " " + $0.branch).localizedCaseInsensitiveContains(projectQuery) }) { project in
+                                projectRow(project)
+                            }
+                        }.padding(.horizontal, 6)
+                    }
+                } else {
+                    VStack(spacing: 3) { ForEach(projects) { project in projectRow(project) } }
+                        .padding(.horizontal, 6).padding(.top, 9)
                 }
             }
             Spacer(minLength: 0)
@@ -221,7 +246,7 @@ struct BoardView: View {
         let isSelected = scope.projectName == project.name
         let live = services.liveCount(in: project)
         return Button {
-            withAnimation(Motion.selection(reduced: reduce)) { views.scope = .services(project.name) }
+            withAnimation(Motion.selection(reduced: reduce)) { views.selectProject(project.name) }
         } label: {
             HStack(spacing: 8) {
                 StatusDot(tone: live > 0 ? Ink.live : Ink.dormant)
@@ -242,8 +267,9 @@ struct BoardView: View {
                     .foregroundStyle(Ink.inkMuted)
             }
             .padding(.horizontal, Metrics.gutter)
-            .frame(height: 42)
+            .frame(height: 48)
             .background(isSelected ? Ink.accentSoft : Ink.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -270,7 +296,7 @@ struct BoardView: View {
         VStack(alignment: .leading, spacing: 12) {
             BerthMark(size: 28, occupied: false)
             Text("选择一个 worktree")
-                .font(Face.display(20, .medium))
+                .font(Face.sans(20, .semibold))
                 .foregroundStyle(Ink.ink)
             Text("状态只从清单、运行记录和运行实况组成。左栏只列有 oberth.yaml 的项目。")
                 .font(Face.sans(11.5))
@@ -297,76 +323,68 @@ struct BoardView: View {
                 CodeView(git: git, project: project, scrolls: scrolls)
             case .terminal, .console:
                 WorkspaceConsole(root: project.rootDir ?? "", frozen: !scrolls, initialAgent: initialConsoleAgent).id(project.rootDir ?? project.name)
-            case .project:
-                // Keep the old command-line scope as a compatibility alias. Runtime
-                // facts now live on the service page instead of a separate port tab.
-                ServicesView(store: services, group: project,
-                             ports: ports(for: project), scrolls: scrolls)
+
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func projectHeader(_ project: BerthGroup) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(project.displayName)
-                .font(Face.display(19, .semibold))
-                .foregroundStyle(Ink.ink)
-                .lineLimit(1)
-            Text(projectFact(project))
-                .font(Face.sans(11))
-                .foregroundStyle(Ink.inkFaint)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Rectangle().fill(Ink.line).frame(height: 1)
-            if services.isWorking(project) {
-                Text("处理中…").font(Face.sans(10.5)).foregroundStyle(Ink.inkFaint)
-            } else {
-                if !project.services.isEmpty {
-                    RowAction(title: "启动全部", tone: Ink.accent) { services.start(project) }
-                    if services.stoppableCount(in: project) > 0 {
-                        RowAction(title: "全部停止") { services.stop(project) }
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    Text(project.displayName).font(Face.sans(17, .semibold)).foregroundStyle(Ink.ink).lineLimit(1)
+                    if !project.branch.isEmpty {
+                        Label(project.branch, systemImage: "arrow.triangle.branch")
+                            .font(Face.mono(10)).foregroundStyle(Ink.inkMuted).lineLimit(1)
+                            .padding(.horizontal, 7).padding(.vertical, 3).background(Ink.surface)
+                            .clipShape(Capsule()).layoutPriority(-1)
                     }
                 }
-                RowAction(title: "清单") { openConfig(project) }
-                RowAction(title: "移除", tone: Ink.inkFaint) { removing = project }
+                Text(shortPath(project.rootDir ?? "目录不可用"))
+                    .font(Face.mono(10)).foregroundStyle(Ink.inkFaint).lineLimit(1).truncationMode(.middle)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 5) {
+                StatusDot(tone: services.liveCount(in: project) > 0 ? Ink.live : Ink.dormant)
+                Text(verbatim: "\(services.liveCount(in: project))/\(project.services.count) 服务")
+                    .font(Face.mono(10)).foregroundStyle(Ink.inkMuted)
+            }.fixedSize()
+            if services.isWorking(project) {
+                ProgressView().controlSize(.small).help("正在处理项目服务")
+            } else {
+                if !scrolls {
+                    Label("项目", systemImage: "slider.horizontal.3").font(Face.sans(11)).foregroundStyle(Ink.inkMuted)
+                } else {
+                Menu {
+                    Button("编辑清单…") { openConfig(project) }
+                    if !project.services.isEmpty {
+                        Divider()
+                        Button("启动全部服务") { services.start(project) }
+                        Button("停止项目服务") { services.stop(project) }.disabled(services.stoppableCount(in: project) == 0)
+                    }
+                    Divider()
+                    Button("移除项目…", role: .destructive) { removing = project }
+                } label: { Label("项目", systemImage: "slider.horizontal.3").font(Face.sans(11)) }
+                    .menuStyle(.borderlessButton).fixedSize()
+                }
             }
-        }
-        .padding(.horizontal, Metrics.gutter)
-        .padding(.top, 12)
-        .padding(.bottom, 8)
+        }.padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 12)
     }
 
     private func tabBar(_ project: BerthGroup) -> some View {
         HStack(spacing: 4) {
-            tab("服务", selected: { if case .services = scope { return true }; return false }) {
+            WorkspaceTab(title: "服务", symbol: "server.rack", selected: scope == .services(project.name)) {
                 views.scope = .services(project.name)
             }
             let changed = git.tree?.files.count ?? 0
-            tab("代码\(changed > 0 ? " \(changed)" : "")",
-                selected: { if case .code = scope { return true }; return false }) {
+            WorkspaceTab(title: "Git" + (changed > 0 ? " · \(changed)" : ""), symbol: "chevron.left.forwardslash.chevron.right", selected: scope == .code(project.name)) {
                 views.scope = .code(project.name)
             }
-            tab("终端 / Terminal", selected: { if case .terminal = scope { return true }; return false }) {
+            WorkspaceTab(title: "终端与 Agent", symbol: "terminal", selected: scope == .terminal(project.name)) {
                 views.scope = .terminal(project.name)
             }
             Spacer(minLength: 0)
-        }
-        .padding(.horizontal, Metrics.gutter)
-        .padding(.bottom, 7)
-    }
-
-    private func tab(_ title: String, selected: () -> Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(Face.sans(11, selected() ? .medium : .regular))
-                .foregroundStyle(selected() ? Ink.accent : Ink.inkMuted)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(selected() ? Ink.accentSoft : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-        }
-        .buttonStyle(.plain)
+        }.padding(.horizontal, 12).padding(.bottom, 9)
     }
 
     private func ports(for project: BerthGroup) -> [Port] {
@@ -376,13 +394,6 @@ struct BoardView: View {
         }.sorted { a, b in
             a.port == b.port ? a.bindAddress < b.bindAddress : a.port < b.port
         }
-    }
-
-    private func projectFact(_ project: BerthGroup) -> String {
-        var parts: [String] = []
-        if let root = project.rootDir, !root.isEmpty { parts.append(shortPath(root)) }
-        parts.append("\(services.liveCount(in: project))/\(project.services.count) 服务在跑")
-        return parts.joined(separator: " · ")
     }
 
     private func addProject() {

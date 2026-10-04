@@ -100,6 +100,11 @@ oberth agent plan codex --worktree "$PWD" --json
 oberth agent run codex --worktree "$PWD"
 ```
 
+**⇧⌘P** 打开统一命令面板；**⌘1/2/3** 切换服务、只读 Git 与终端。工作区支持同一 worktree 的
+递归分屏与独立终端窗口；顶部可访问会话、恢复和检查更新。Agent 的“续接…”要求选择原始会话
+文件并核对 worktree，不使用最近对话。可明确允许保存布局元数据，但草稿、终端输出和旧进程
+不会自动恢复。命令块集成对新建 zsh 显式启用，不修改用户 shell 配置。
+
 DeepSeek 的消息入口使用 headless，原生入口要求已有 tui profile；两种模式不是同一对话的无缝切换。
 option-berth 不实现另一套 agent 推理系统、不保存模型凭证、不自动安装插件，也不添加绕过审批或沙箱的参数。
 完整交互与验证边界见 [客户端说明](client/macos/README.md)。

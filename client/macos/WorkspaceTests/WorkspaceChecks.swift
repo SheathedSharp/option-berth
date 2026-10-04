@@ -36,6 +36,9 @@ import BerthTerminal
         require(parser.blocks.last?.exitCode == nil && parser.blocks.last?.interrupted == true, "unknown exit became success")
         send("\u{1b}]633;E;" + String(repeating: "x", count: 20000) + ";nonce\u{7}\u{1b}]133;C;nonce\u{7}")
         require(parser.blocks.last?.command == nil, "oversized OSC leaked stale command")
+        let revision = parser.revision
+        send(String(repeating: "ordinary output ", count: 4096))
+        require(parser.revision == revision, "ordinary output republished command history")
         parser.clear(); require(parser.blocks.isEmpty, "clear failed")
         print("PASS: 32 chunk boundaries, OSC BEL/ST, foreign nonce, bounded history/frame, unknown exit")
     }

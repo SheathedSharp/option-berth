@@ -111,7 +111,7 @@ struct OptionBerthApp: App {
         Window("option-berth", id: "workspace") {
             BoardView(store: store, services: services, git: git, views: views, settings: settings, performAction: perform)
                 .environmentObject(settings)
-                .frame(minWidth: 720, minHeight: 420)
+                .frame(minWidth: 760, minHeight: 520)
                 .onAppear {
                     recovery.loadOnce()
                     store.start()
@@ -125,14 +125,14 @@ struct OptionBerthApp: App {
                 }
         }
         .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 900, height: 560)
+        .defaultSize(width: 1060, height: 720)
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandGroup(replacing: .printItem) {}
             CommandGroup(replacing: .sidebar) {}
-            CommandGroup(replacing: .appInfo) {}
-            CommandGroup(replacing: .systemServices) {}
-            CommandGroup(replacing: .appVisibility) {}
+            CommandGroup(after: .appInfo) {
+                Button("检查更新… / Check for updates…") { views.showingUpdates = true }
+            }
             CommandGroup(replacing: .appSettings) {
                 Button(WorkspaceAction.settings.title) { perform(.settings) }
                     .keyboardShortcut(shortcuts.shortcut(.settings).equivalent, modifiers: shortcuts.shortcut(.settings).modifiers)
@@ -140,7 +140,6 @@ struct OptionBerthApp: App {
             CommandMenu(MenuBar.viewTitle) {
                 Button("命令面板… / Command panel…") { views.showingActions = true }
                     .keyboardShortcut("p", modifiers: [.command, .shift])
-                Button("工作区恢复… / Workspace recovery…") { views.showingRecovery = true }
                 Divider()
                 ForEach(WorkspaceAction.allCases.filter { $0 != .settings }) { action in
                     Button(action.title) { perform(action) }
@@ -156,6 +155,8 @@ struct OptionBerthApp: App {
         case .code: views.show(.code, projects: projectNames)
         case .terminal: views.show(.terminal, projects: projectNames)
         case .sessions: views.showingSessions = true
+        case .recovery: views.showingRecovery = true
+        case .updates: views.showingUpdates = true
         case .settings: views.showingSettings = true
         case .sidebar: views.railVisible.toggle()
         case .refresh: store.refresh(); services.refresh()

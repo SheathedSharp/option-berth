@@ -10,8 +10,6 @@ public final class ConsoleWorkspace: ObservableObject {
     @Published public var nativeExpanded = false
     @Published public var terminalSelection: UUID?
     @Published public var agentSelection: UUID?
-    @Published public var terminalSplit: UUID?
-    @Published public var agentSplit: UUID?
     @Published public var terminalLayout = PaneLayout()
     @Published public var agentLayout = PaneLayout()
 
@@ -24,25 +22,21 @@ public final class ConsoleWorkspace: ObservableObject {
         if agent { agentLayout = layout } else { terminalLayout = layout }
     }
     public func single(_ id: UUID, agent: Bool) {
-        if agent { agentLayout = PaneLayout(session: id); agentSplit = nil }
-        else { terminalLayout = PaneLayout(session: id); terminalSplit = nil }
+        if agent { agentLayout = PaneLayout(session: id); agentSelection = id }
+        else { terminalLayout = PaneLayout(session: id); terminalSelection = id }
     }
     public func select(_ id: UUID, agent: Bool) {
         if agent { agentLayout.show(id) } else { terminalLayout.show(id) }
         if agent {
-            if agentSplit == id { agentSplit = agentSelection }
             agentSelection = id
         } else {
-            if terminalSplit == id { terminalSplit = terminalSelection }
             terminalSelection = id
         }
     }
     public func forget(_ id: UUID) {
         terminalLayout.remove(id); agentLayout.remove(id)
-        if terminalSelection == id { terminalSelection = terminalSplit; terminalSplit = nil }
-        if agentSelection == id { agentSelection = agentSplit; agentSplit = nil }
-        if terminalSplit == id { terminalSplit = nil }
-        if agentSplit == id { agentSplit = nil }
+        if terminalSelection == id { terminalSelection = terminalLayout.focused }
+        if agentSelection == id { agentSelection = agentLayout.focused }
     }
 }
 
@@ -90,8 +84,12 @@ public final class TerminalSessions: ObservableObject {
         var records = sessions.map { SavedSession(id: $0.id, worktree: $0.worktree, title: $0.title, kind: $0.kind) }
         let current = Set(records.map(\.id))
         records += remembered.filter { !current.contains($0.id) }
-        let values = workspaces.filter { !$0.key.isEmpty }.map { root, state in
-            SavedWorkspace(root: root, agentMode: state.agentMode, providerID: state.providerID, nativeExpanded: state.nativeExpanded,
+        // Removing a manifest may discard its UI cache, but must not prevent
+        // saving the still-owned standalone session's navigation metadata.
+        let roots = Set(workspaces.keys.filter { !$0.isEmpty }).union(records.map(\.worktree))
+        let values = roots.map { root in
+            let state = workspaces[root] ?? ConsoleWorkspace()
+            return SavedWorkspace(root: root, agentMode: state.agentMode, providerID: state.providerID, nativeExpanded: state.nativeExpanded,
                            terminalLayout: state.terminalLayout, agentLayout: state.agentLayout)
         }.sorted { $0.root < $1.root }
         let result = WorkspaceArchive(workspaces: values, sessions: records)
