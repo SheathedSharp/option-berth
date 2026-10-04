@@ -1,7 +1,10 @@
 package groups
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -127,10 +130,18 @@ func (s *Service) UnmarshalYAML(n *yaml.Node) error {
 		return nil
 	}
 	auto := false
+	portLine := 0
 	stripped := *n
 	stripped.Content = make([]*yaml.Node, 0, len(n.Content))
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		k, v := n.Content[i], n.Content[i+1]
+		// Check before removing auto: otherwise the custom decoder hides duplicates.
+		if k.Value == "port" {
+			if portLine != 0 {
+				return fmt.Errorf(`line %d: mapping key "port" already defined at line %d`, k.Line, portLine)
+			}
+			portLine = k.Line
+		}
 		if k.Value == "port" && v.Kind == yaml.ScalarNode {
 			switch tag := v.ShortTag(); {
 			case tag == "!!int" || tag == "!!null":
@@ -321,8 +332,18 @@ func parse(abs string, data []byte) (*Config, error) {
 	dir := filepath.Dir(abs)
 
 	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	if err := decoder.Decode(&doc); err != nil && !errors.Is(err, io.EOF) {
 		return nil, &ConfigError{Path: abs, Problems: []string{err.Error()}}
+	}
+	// A manifest is one document. Never silently discard trailing service declarations.
+	var extra yaml.Node
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		problem := "expected a single YAML document"
+		if err != nil {
+			problem += ": " + err.Error()
+		}
+		return nil, &ConfigError{Path: abs, Problems: []string{problem}}
 	}
 	if err := rejectShareKey(&doc); err != nil {
 		return nil, &ConfigError{Path: abs, Problems: []string{err.Error()}}
@@ -332,7 +353,7 @@ func parse(abs string, data []byte) (*Config, error) {
 	}
 
 	cfg := &Config{Path: abs, Dir: dir}
-	if err := yaml.Unmarshal(data, cfg); err != nil {
+	if err := doc.Decode(cfg); err != nil {
 		return nil, &ConfigError{Path: abs, Problems: []string{err.Error()}}
 	}
 	cfg.Path, cfg.Dir = abs, dir
