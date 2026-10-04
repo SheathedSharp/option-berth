@@ -9,6 +9,7 @@ struct TerminalPanel: View {
     @ObservedObject var workspace: ConsoleWorkspace
     @State private var problem: String?
     @State private var integrationEnabled = false
+    @State private var showingHistory = false
     private var scoped: [TerminalSession] { sessions.inWorktree(root).filter { $0.kind == "terminal" } }
     private var selected: TerminalSession? { scoped.first { $0.id == workspace.terminalSelection } ?? scoped.last }
 
@@ -27,6 +28,8 @@ struct TerminalPanel: View {
                     .toggleStyle(.checkbox).help("仅为新建 zsh 启用临时集成，不修改 shell 配置；命令仅留在内存")
                     .disabled(frozen || URL(fileURLWithPath: TerminalSession.shell).lastPathComponent != "zsh")
                 }
+                Button("搜索历史… / History…") { showingHistory = true }.disabled(frozen)
+                    .accessibilityIdentifier("terminal.history")
                 Button("新建终端", action: newShell).disabled(frozen)
             }
             .padding(12)
@@ -82,6 +85,7 @@ struct TerminalPanel: View {
             }
         }
         .background(Ink.canvas)
+        .sheet(isPresented: $showingHistory) { WorktreeHistorySheet(root: root, sessions: sessions) }
     }
 
     private func newShell() {
