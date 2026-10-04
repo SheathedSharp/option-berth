@@ -26,6 +26,7 @@ enum TerminalChecks {
         }
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            try mixedPaneChecks(root: root)
             try workspaceChecks(root: root)
             try nativeConsoleChecks(root: root)
             let session = TerminalSession(worktree: root.path)

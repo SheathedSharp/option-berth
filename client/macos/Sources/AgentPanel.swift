@@ -217,7 +217,7 @@ struct AgentPanel: View {
             let values = try await AgentBridge.providers(binary: binary, environment: TerminalSession.environment())
             try Task.checkCancellation()
             providers = values
-            if !values.contains(where: { $0.id == workspace.providerID && $0.installed }),
+            if !values.contains(where: { $0.id == workspace.providerID }),
                let first = values.first(where: { $0.installed }) ?? values.first { workspace.providerID = first.id }
         } catch is CancellationError {} catch { issue = error.localizedDescription }
     }
