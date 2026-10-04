@@ -203,3 +203,18 @@ one PTY view cannot be reparented into two windows. Multi-window and recursive p
 TerminalChecks 另用真实 NSWindow/NSSplitView/PTY 检查分隔尺寸、焦点、独立输入、历史查找、字体
 更新、工作目录、状态保留和混合退出升级；不读取用户剪贴板，不把这些检查等同于所有鼠标菜单、
 实际输入法与长期负载验收。
+
+## 有限 CLI 读取的取消边界
+
+只读 Git 请求默认 30 秒、清单草稿默认 300 秒后开始取消。执行器在专属进程组中启动
+直接子进程，非阻塞排空 stdout/stderr；保留 8 MiB 输出、256 KiB 错误和 1 MiB 进度行上限。
+取消、超限、读取失败与超时都不是成功。TERM 后仍存活则升级 KILL，并观察退出、核对原
+进程组内的存活后代，最后 reap 直接子进程；没有延迟发信号或遗留读取 worker。
+
+子进程身份在信号阶段通过 `waitid(WNOWAIT)` 保留，不对已回收 PID 追加信号。即使直接
+子进程自行换组，仍可按保留的直接身份取消。主动脱离原组的后代不按猜测 PID 追杀；如果
+它继续持有管道，命令返回失败并关闭应用的读端，而不是无限等待 EOF。
+
+这些时限是**开始取消的截止时间**，不是操作系统不可杀状态、启动系统调用或用户回调的
+硬实时保证；stream 回调必须及时返回。该执行器不接管 daemon、用户已有服务或终端 PTY。
+实现依据为 POSIX 的 `posix_spawn` 进程组属性与 `waitid` 的 WNOWAIT 语义，未引入外部实现。
