@@ -12,10 +12,9 @@ import BerthTerminal
 ///
 /// 前三个画的是**视图**（`ImageRenderer` 里没有窗口），所以量不到标题栏、
 /// 安全区这些「窗口才有」的东西。要量窗口本身用 `--dump-window`（见 WindowDump）。
-@main
-enum Entry {
+public enum Entry {
     @MainActor
-    static func main() {
+    public static func main() {
         let arguments = CommandLine.arguments
 
         if arguments.contains("--probe") {
@@ -103,12 +102,13 @@ struct OptionBerthApp: App {
     @StateObject private var services = ServicesStore()
     @StateObject private var git = GitStore()
     @StateObject private var settings = UISettings.shared
+    @StateObject private var shortcuts = WorkspaceShortcuts.shared
     @StateObject private var views = ViewState(scope: Entry.scope(from: CommandLine.arguments))
     @NSApplicationDelegateAdaptor(MenuBarDelegate.self) private var menuBar
 
     var body: some Scene {
         Window("option-berth", id: "workspace") {
-            BoardView(store: store, services: services, git: git, views: views, settings: settings)
+            BoardView(store: store, services: services, git: git, views: views, settings: settings, performAction: perform)
                 .environmentObject(settings)
                 .frame(minWidth: 720, minHeight: 420)
                 .onAppear {
@@ -130,35 +130,33 @@ struct OptionBerthApp: App {
             CommandGroup(replacing: .systemServices) {}
             CommandGroup(replacing: .appVisibility) {}
             CommandGroup(replacing: .appSettings) {
-                Button("设置…") { views.showingSettings = true }
-                    .keyboardShortcut(",", modifiers: .command)
+                Button(WorkspaceAction.settings.title) { perform(.settings) }
+                    .keyboardShortcut(shortcuts.shortcut(.settings).equivalent, modifiers: shortcuts.shortcut(.settings).modifiers)
             }
             CommandMenu(MenuBar.viewTitle) {
-                Button(views.railVisible ? "隐藏左栏" : "显示左栏") {
-                    views.railVisible.toggle()
-                }
-                .keyboardShortcut("l", modifiers: .command)
+                Button("命令面板… / Command panel…") { views.showingActions = true }
+                    .keyboardShortcut("p", modifiers: [.command, .shift])
                 Divider()
-                Button("服务") { views.show(.services, projects: projectNames) }
-                    .keyboardShortcut("s", modifiers: .command)
-                Button("代码") { views.show(.code, projects: projectNames) }
-                    .keyboardShortcut("g", modifiers: [.command, .option])
-                Divider()
-                Button("终端 / Terminal") { views.show(.terminal, projects: projectNames) }
-                    .keyboardShortcut("t", modifiers: .command)
-                Button("会话… / Sessions…") { views.showingSessions = true }
-                    .keyboardShortcut("o", modifiers: [.command, .shift])
-                Button("查找 / Find") {
-                    if let terminal = HostedTerminalView.containing(NSApp.keyWindow?.firstResponder) {
-                        showTerminalFind(terminal)
-                    } else { services.beginLogFind() }
-                }.keyboardShortcut("f", modifiers: .command)
-                Button("刷新") {
-                    store.refresh()
-                    services.refresh()
+                ForEach(WorkspaceAction.allCases.filter { $0 != .settings }) { action in
+                    Button(action.title) { perform(action) }
+                        .keyboardShortcut(shortcuts.shortcut(action).equivalent, modifiers: shortcuts.shortcut(action).modifiers)
                 }
-                .keyboardShortcut("r", modifiers: .command)
             }
+        }
+    }
+
+    private func perform(_ action: WorkspaceAction) {
+        switch action {
+        case .services: views.show(.services, projects: projectNames)
+        case .code: views.show(.code, projects: projectNames)
+        case .terminal: views.show(.terminal, projects: projectNames)
+        case .sessions: views.showingSessions = true
+        case .settings: views.showingSettings = true
+        case .sidebar: views.railVisible.toggle()
+        case .refresh: store.refresh(); services.refresh()
+        case .find:
+            if let terminal = HostedTerminalView.containing(NSApp.keyWindow?.firstResponder) { showTerminalFind(terminal) }
+            else { services.beginLogFind() }
         }
     }
 

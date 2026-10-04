@@ -4,12 +4,16 @@ import BerthTerminal
 
 struct TerminalSurface: NSViewRepresentable {
     let session: TerminalSession
+    var detached = false
     @ObservedObject private var settings = UISettings.shared
-    func makeNSView(context: Context) -> HostedTerminalView {
-        applyAppearance(session.terminal)
-        return session.terminal
+    @ObservedObject private var windows = TerminalWindows.shared
+    func makeNSView(context: Context) -> TerminalHost {
+        let host = TerminalHost(); host.present(session, detached: detached); applyAppearance(session.terminal); return host
     }
-    func updateNSView(_ view: HostedTerminalView, context: Context) { applyAppearance(view) }
+    func updateNSView(_ host: TerminalHost, context: Context) {
+        host.present(session, detached: detached); applyAppearance(session.terminal)
+    }
+    static func dismantleNSView(_ host: TerminalHost, coordinator: ()) { host.releasePresentation() }
     private func applyAppearance(_ view: HostedTerminalView) {
         let font = Face.nativeMono(12)
         if view.font.fontName != font.fontName || view.font.pointSize != font.pointSize { view.font = font }
@@ -44,9 +48,10 @@ struct SessionCanvas: View {
     }
 }
 
-private struct SessionPane: View {
+struct SessionPane: View {
     @ObservedObject var session: TerminalSession
     var frozen: Bool
+    @ObservedObject private var windows = TerminalWindows.shared
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
@@ -71,6 +76,13 @@ private struct SessionPane: View {
                 Text("$ pwd\n/workspace/demo\n$ echo 'native session'\nnative session")
                     .font(Face.mono(11)).padding(10)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else if windows.windows[session.id] != nil {
+                VStack(spacing: 10) {
+                    Image(systemName: "macwindow")
+                    Text("此会话在独立窗口中 / Detached window")
+                    Button("显示窗口") { windows.detach(session) }
+                    Button("返回工作区") { windows.bringBack(session) }
+                }.font(Face.sans(11)).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else { TerminalSurface(session: session).id(session.id) }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }

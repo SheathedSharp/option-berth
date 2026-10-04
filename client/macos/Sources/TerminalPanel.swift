@@ -22,9 +22,9 @@ struct TerminalPanel: View {
                 Spacer()
                 if let selected {
                     Menu("并排 / Split") {
-                        Button("单窗格 / Single pane") { workspace.terminalSplit = nil }
+                        Button("单窗格 / Single pane") { workspace.single(selected.id, agent: false) }
                         ForEach(sessions.inWorktree(root).filter { $0.id != selected.id }) { session in
-                            Button(session.title) { workspace.terminalSplit = session.id }
+                            Button(session.title) { do { try workspace.split(session.id, beside: selected.id, agent: false, axis: .horizontal) } catch { problem = error.localizedDescription } }
                         }
                     }.fixedSize()
                     Button { showTerminalFind(selected.terminal) } label: { Image(systemName: "magnifyingglass") }
@@ -53,7 +53,7 @@ struct TerminalPanel: View {
             }
             Hairline()
             if let selected {
-                SessionCanvas(primary: selected, secondary: sessions.inWorktree(root).first { $0.id == workspace.terminalSplit })
+                PaneWorkspaceView(primary: selected, workspace: workspace, agent: false)
 
             } else {
                 ViewThatFits(in: .vertical) {
