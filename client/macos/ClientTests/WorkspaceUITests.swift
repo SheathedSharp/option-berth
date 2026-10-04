@@ -62,7 +62,6 @@ enum ClientChecks {
         require(session.terminal.window === window, "same terminal not moved into detached window")
         embedded.present(session, detached: false)
         require(session.terminal.window === window, "embedded update stole detached terminal")
-        require(session.terminal.window === window, "detached ownership changed")
         require(session.terminal.process == nil, "presentation unexpectedly started a process")
         window.close(); pump()
         require(TerminalWindows.shared.windows[session.id] == nil, "closed window retained")
