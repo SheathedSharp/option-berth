@@ -15,6 +15,8 @@ final class GitStore: ObservableObject {
     @Published private(set) var patchLoading = false
 
     private let queue = GitReadQueue()
+    private var rootCancellation = CLI.Cancellation()
+    private var patchCancellation: CLI.Cancellation?
     private var root = ""
     private var generation = 0
     private var patchRequest = 0
@@ -40,6 +42,12 @@ final class GitStore: ObservableObject {
         self.isFixture = true
     }
 
+    deinit {
+        rootCancellation.cancel()
+        patchCancellation?.cancel()
+        queue.discardPending()
+    }
+
     func refresh(project: BerthGroup?, force: Bool = false) {
         guard !isFixture, let requestedRoot = prepare(project) else { return }
         guard !overviewInFlight,
@@ -47,8 +55,8 @@ final class GitStore: ObservableObject {
         overviewInFlight = true
         lastOverviewAt = Date()
         let requestGeneration = generation
-        queue.submit(.overview) { [weak self] in
-            let result = CLI.decode(GitOverview.self, arguments: ["git", requestedRoot, "--json"])
+        queue.submit(.overview) { [weak self, cancellation = rootCancellation] in
+            let result = CLI.decode(GitOverview.self, arguments: ["git", requestedRoot, "--json"], cancellation: cancellation)
             Task { @MainActor [weak self] in
                 guard let self, self.generation == requestGeneration else { return }
                 self.overviewInFlight = false
@@ -68,8 +76,8 @@ final class GitStore: ObservableObject {
         lastTreeAt = Date()
         loading = true
         let requestGeneration = generation
-        queue.submit(.tree) { [weak self] in
-            let result = CLI.decode(GitTree.self, arguments: ["git", "files", requestedRoot, "--json"])
+        queue.submit(.tree) { [weak self, cancellation = rootCancellation] in
+            let result = CLI.decode(GitTree.self, arguments: ["git", "files", requestedRoot, "--json"], cancellation: cancellation)
             Task { @MainActor [weak self] in
                 guard let self, self.generation == requestGeneration else { return }
                 self.treeInFlight = false
@@ -102,6 +110,8 @@ final class GitStore: ObservableObject {
     }
 
     func clearSelection() {
+        patchCancellation?.cancel()
+        patchCancellation = nil
         patchRequest += 1
         selectedPath = nil
         patch = nil
@@ -118,9 +128,13 @@ final class GitStore: ObservableObject {
         let requestGeneration = generation
         patchLoading = true
         patchProblem = nil
+        let cancellation = CLI.Cancellation()
+        patchCancellation?.cancel()
+        patchCancellation = cancellation
         queue.submit(.patch) { [weak self] in
             let result = CLI.decode(GitPatch.self,
-                                    arguments: ["git", "diff", root, "--json", "--file", path])
+                                    arguments: ["git", "diff", root, "--json", "--file", path],
+                                    cancellation: cancellation)
             Task { @MainActor [weak self] in
                 guard let self, self.generation == requestGeneration,
                       self.patchRequest == request else { return }
@@ -136,6 +150,8 @@ final class GitStore: ObservableObject {
     private func prepare(_ project: BerthGroup?) -> String? {
         let next = project?.rootDir ?? ""
         if next != root {
+            rootCancellation.cancel()
+            rootCancellation = CLI.Cancellation()
             generation += 1
             queue.discardPending()
             root = next

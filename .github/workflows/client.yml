@@ -33,6 +33,19 @@ jobs:
         run: |
           swiftc client/macos/Sources/CLI.swift client/macos/Sources/DaemonLaunch.swift client/macos/Tests/CLIIOTests.swift -o "$RUNNER_TEMP/cli-io-tests"
           "$RUNNER_TEMP/cli-io-tests"
+      - name: Verify Git cancellation and draft result ownership
+        run: |
+          swiftc client/macos/Sources/CLI.swift client/macos/Sources/DaemonLaunch.swift client/macos/Sources/GitStore.swift client/macos/Sources/GitReadQueue.swift client/macos/Sources/GitModel.swift client/macos/Tests/GitCancellationTests.swift -o "$RUNNER_TEMP/git-cancellation-tests"
+          "$RUNNER_TEMP/git-cancellation-tests"
+          swiftc client/macos/Sources/DraftRunState.swift client/macos/Tests/DraftRunStateTests.swift -o "$RUNNER_TEMP/draft-state-tests"
+          "$RUNNER_TEMP/draft-state-tests"
+      - name: Verify native draft buttons and window cancellation
+        run: |
+          swiftc client/macos/Sources/{AddProjectSheet,DraftRunState,CLI,DaemonLaunch,Brand,UISettings,BerthGeometry}.swift client/macos/Tests/DraftSheetInteractionTests.swift -o "$RUNNER_TEMP/draft-native-tests"
+          isolation=$(mktemp -d "$RUNNER_TEMP/draft-native.XXXXXX")
+          trap 'rm -rf "$isolation"' EXIT
+          mkdir -p "$isolation/home" "$isolation/berth"
+          HOME="$isolation/home" CFFIXED_USER_HOME="$isolation/home" BERTH_HOME="$isolation/berth" "$RUNNER_TEMP/draft-native-tests"
       - name: Verify real isolated PTY sessions
         run: swift run --package-path client/macos --force-resolved-versions TerminalChecks
       - name: Verify isolated agent planner, composer and native handoff

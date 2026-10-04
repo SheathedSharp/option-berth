@@ -91,6 +91,27 @@ def verify(root: Path) -> None:
             run(root, "swiftc", "client/macos/Sources/CLI.swift", "client/macos/Sources/DaemonLaunch.swift",
                 "client/macos/Tests/CLIIOTests.swift", "-o", binary, capture=False)
             run(root, binary, capture=False)
+        with tempfile.TemporaryDirectory(prefix="oberth-read-lifetime-") as tmp:
+            binary = str(Path(tmp) / "git-checks")
+            run(root, "swiftc", "client/macos/Sources/CLI.swift", "client/macos/Sources/DaemonLaunch.swift",
+                "client/macos/Sources/GitStore.swift", "client/macos/Sources/GitReadQueue.swift",
+                "client/macos/Sources/GitModel.swift", "client/macos/Tests/GitCancellationTests.swift",
+                "-o", binary, capture=False)
+            run(root, binary, capture=False)
+            binary = str(Path(tmp) / "draft-checks")
+            run(root, "swiftc", "client/macos/Sources/DraftRunState.swift",
+                "client/macos/Tests/DraftRunStateTests.swift", "-o", binary, capture=False)
+            run(root, binary, capture=False)
+        with tempfile.TemporaryDirectory(prefix="oberth-draft-native-") as tmp:
+            binary = str(Path(tmp) / "checks")
+            sources = ["AddProjectSheet", "DraftRunState", "CLI", "DaemonLaunch", "Brand", "UISettings", "BerthGeometry"]
+            run(root, "swiftc", *(f"client/macos/Sources/{name}.swift" for name in sources),
+                "client/macos/Tests/DraftSheetInteractionTests.swift", "-o", binary, capture=False)
+            home, berth = Path(tmp) / "home", Path(tmp) / "berth"
+            home.mkdir()
+            berth.mkdir()
+            run(root, binary, capture=False, environment={"HOME": str(home), "CFFIXED_USER_HOME": str(home),
+                                                          "BERTH_HOME": str(berth)})
         run(root, "bash", "client/macos/build.sh", capture=False)
         with tempfile.TemporaryDirectory(prefix="oberth-git-queue-") as tmp:
             binary = str(Path(tmp) / "checks")
