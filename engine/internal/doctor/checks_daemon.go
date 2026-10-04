@@ -129,13 +129,13 @@ func checkDBOK(_ context.Context, env *Env) rpc.DoctorCheck {
 		}
 	}
 
-	db, err := store.Open(path)
+	db, err := store.OpenReadOnly(path)
 	if err != nil {
 		return rpc.DoctorCheck{
 			Status:  StatusFail,
 			Summary: "cannot open the database",
 			Detail:  fmt.Sprintf("%s: %v", path, err),
-			Fix:     "move it aside and let the daemon recreate it: mv " + path + " " + path + ".bad",
+			Fix:     "preserve the database and inspect it before choosing a repair",
 		}
 	}
 	defer db.Close()
@@ -150,6 +150,14 @@ func checkDBOK(_ context.Context, env *Env) rpc.DoctorCheck {
 	}
 	latest := store.LatestVersion()
 	size := humanBytes(info.Size())
+	if version > latest {
+		return rpc.DoctorCheck{
+			Status:  StatusFail,
+			Summary: fmt.Sprintf("schema v%d is newer than supported v%d", version, latest),
+			Detail:  path + " was left unchanged",
+			Fix:     "upgrade the CLI to match the database; do not restart an older daemon",
+		}
+	}
 	if version != latest {
 		return rpc.DoctorCheck{
 			Status:  StatusWarn,
