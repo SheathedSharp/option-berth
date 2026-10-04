@@ -1,6 +1,6 @@
 # Third-party notices
 
-本项目代码和文档采用根目录 [MIT](LICENSE)。第三方材料保留各自许可，不因本项目采用
+option-berth 的自研代码由 SheathedSharp 及项目贡献者维护，适用根目录 [MIT](LICENSE)。第三方材料保留各自许可，不因本项目采用
 MIT 而重新许可。当前公开的是源码，不包含预编译 CLI 或 macOS 安装包。
 
 ## 历史代码来源
