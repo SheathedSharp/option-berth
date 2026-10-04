@@ -2,23 +2,40 @@ import AppKit
 import SwiftUI
 import TipKit
 import BerthTerminal
+import Darwin
 @testable import BerthClient
 
 extension ClientChecks {
-    // Events go only to our own synthetic window, never the system mouse.
+    // A native button can track synchronously inside mouseDown on older macOS.
+    // Queue the release first so its tracking loop can consume it. Newer
+    // nontracking implementations leave it for the explicit dispatch below.
     static func guideClick(_ window: NSWindow, x: CGFloat, y: CGFloat = 30) {
-        for kind in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-            window.sendEvent(NSEvent.mouseEvent(with: kind, location: NSPoint(x: x, y: y), modifierFlags: [],
+        func event(_ kind: NSEvent.EventType) -> NSEvent {
+            NSEvent.mouseEvent(with: kind, location: NSPoint(x: x, y: y), modifierFlags: [],
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-                context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!)
+                context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+        }
+        NSApp.postEvent(event(.leftMouseUp), atStart: false)
+        window.sendEvent(event(.leftMouseDown))
+        if let release = NSApp.nextEvent(matching: .leftMouseUp, until: Date(), inMode: .default, dequeue: true) {
+            require(release.windowNumber == window.windowNumber, "unexpected test-window mouse release")
+            window.sendEvent(release)
         }
         pump()
     }
     static func gettingStartedChecks() throws {
+        let timeout = DispatchWorkItem {
+            FileHandle.standardError.write(Data("FAIL: native getting-started checks stalled for 30 seconds\n".utf8))
+            Darwin.exit(1)
+        }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 30, execute: timeout)
+        defer { timeout.cancel() }
         guard let berth = ProcessInfo.processInfo.environment["BERTH_HOME"], berth.hasPrefix("/") else {
             fatalError("onboarding checks require isolated BERTH_HOME")
         }
+        FileHandle.standardError.write(Data("CHECK: configuring isolated TipKit\n".utf8))
         require(OnboardingTips.configure(), "native TipKit configuration failed")
+        FileHandle.standardError.write(Data("CHECK: TipKit configured; opening native guide\n".utf8))
         require(FileManager.default.fileExists(atPath: berth + "/client-tips"), "TipKit escaped isolated BERTH_HOME")
         require(WorkspaceShortcuts.valid([:]), "onboarding changed default shortcuts")
         let before = TerminalSessions.shared.sessions.count
@@ -36,12 +53,13 @@ extension ClientChecks {
             host.cacheDisplay(in: host.bounds, to: bitmap)
             try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: berth).appendingPathComponent("guide-native.png"))
         }
+        FileHandle.standardError.write(Data("CHECK: guide rendered; exercising native buttons\n".utf8))
         require(closeCount == 0 && connectCount == 0, "opening guide performed an action")
-        guideClick(window, x: 445) // Back disabled on the first page.
-        guideClick(window, x: 545) // Next -> worktree.
-        guideClick(window, x: 445) // Back -> setup.
-        guideClick(window, x: 545) // Next -> worktree again.
-        guideClick(window, x: 210) // Explicit Connect.
+        guideClick(window, x: 445)
+        guideClick(window, x: 545)
+        guideClick(window, x: 445)
+        guideClick(window, x: 545)
+        guideClick(window, x: 210)
         require(connectCount == 1 && closeCount == 0, "native Next/Back/Connect did not request exactly one picker")
         for _ in 0..<3 { guideClick(window, x: 545) }
         require(closeCount == 0 && connectCount == 1, "reading steps performed a side effect")
