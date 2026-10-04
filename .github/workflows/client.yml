@@ -29,6 +29,10 @@ jobs:
         run: |
           swiftc client/macos/Sources/DaemonLaunch.swift client/macos/Tests/DaemonLaunchTests.swift -o "$RUNNER_TEMP/daemon-launch-tests"
           "$RUNNER_TEMP/daemon-launch-tests"
+      - name: Verify bounded CLI stdout and stderr
+        run: |
+          swiftc client/macos/Sources/CLI.swift client/macos/Sources/DaemonLaunch.swift client/macos/Tests/CLIIOTests.swift -o "$RUNNER_TEMP/cli-io-tests"
+          "$RUNNER_TEMP/cli-io-tests"
       - name: Verify real isolated PTY sessions
         run: swift run --package-path client/macos --force-resolved-versions TerminalChecks
       - name: Verify isolated agent planner, composer and native handoff

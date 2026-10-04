@@ -42,10 +42,13 @@ enum CLI {
         } catch {
             return .failure(Failure(message: "跑不起来 \(binary)：\(error.localizedDescription)"))
         }
-        // 先读完再等退出：输出很小，但反过来写会在管道满时互相等。
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+        let captured = drain(process: process, stdout: out, stderr: err)
+        if let failure = captured.failure { return .failure(failure) }
+        let outData = captured.stdout
+        let errData = captured.stderr
+        if process.terminationReason == .uncaughtSignal {
+            return .failure(Failure(message: "option-berth 被信号终止 / Signal \(process.terminationStatus)"))
+        }
 
         guard process.terminationStatus == 0 else {
             if let doc = try? JSONDecoder().decode(ErrorDocument.self, from: errData) {
@@ -54,7 +57,7 @@ enum CLI {
                 }
                 return .failure(Failure(message: doc.error.message))
             }
-            return .failure(Failure(message: "option-berth \(arguments.joined(separator: " ")) 退出码 \(process.terminationStatus)"))
+            return .failure(Failure(message: "option-berth 退出码 / Exit \(process.terminationStatus)"))
         }
         return .success(outData)
     }
@@ -99,55 +102,100 @@ enum CLI {
             return .failure(Failure(message: "跑不起来 \(binary)：\(error.localizedDescription)"))
         }
 
-        // Drain both pipes concurrently. Progress is normally small, but a
-        // long agent session must never deadlock because stderr filled while
-        // the UI was reading stdout.
-        let group = DispatchGroup()
-        var stderrData = Data()
-        let stderrLock = NSLock()
-        group.enter()
-        DispatchQueue.global(qos: .utility).async {
-            defer { group.leave() }
-            while true {
-                let chunk = err.fileHandleForReading.readData(ofLength: 4096)
-                if chunk.isEmpty { break }
-                stderrLock.lock()
-                stderrData.append(chunk)
-                stderrLock.unlock()
-            }
+        let captured = drain(process: process, stdout: out, stderr: err, onLine: onLine)
+        if let failure = captured.failure { return .failure(failure) }
+        let errData = captured.stderr
+        if process.terminationReason == .uncaughtSignal {
+            return .failure(Failure(message: "option-berth 被信号终止 / Signal \(process.terminationStatus)"))
         }
 
-        group.enter()
-        DispatchQueue.global(qos: .userInitiated).async {
-            defer { group.leave() }
-            var pending = Data()
-            while true {
-                let chunk = out.fileHandleForReading.readData(ofLength: 4096)
-                if chunk.isEmpty { break }
-                pending.append(chunk)
-                while let newline = pending.firstIndex(of: 10) {
-                    let line = String(decoding: pending[..<newline], as: UTF8.self)
-                    onLine(line)
-                    pending.removeSubrange(...newline)
-                }
-            }
-            if !pending.isEmpty {
-                onLine(String(decoding: pending, as: UTF8.self))
-            }
-        }
-
-        process.waitUntilExit()
-        group.wait()
         guard process.terminationStatus == 0 else {
-            if let doc = try? JSONDecoder().decode(ErrorDocument.self, from: stderrData) {
+            if let doc = try? JSONDecoder().decode(ErrorDocument.self, from: errData) {
                 if let hint = doc.error.hint, !hint.isEmpty {
                     return .failure(Failure(message: "\(doc.error.message)（\(hint)）"))
                 }
                 return .failure(Failure(message: doc.error.message))
             }
-            return .failure(Failure(message: "option-berth \(arguments.joined(separator: " ")) 退出码 \(process.terminationStatus)"))
+            return .failure(Failure(message: "option-berth 退出码 / Exit \(process.terminationStatus)"))
         }
         return .success(())
+    }
+
+    private struct Captured {
+        let stdout: Data
+        let stderr: Data
+        let failure: Failure?
+    }
+
+    /// Drain stdout and stderr independently, including after an output limit.
+    /// The process must really exit before we return; no orphan timeout worker.
+    /// Capture keeps at most 8 MiB stdout / 256 KiB stderr. Progress keeps only
+    /// one incomplete frame (1 MiB maximum), not the whole conversation.
+    private static func drain(process: Process, stdout: Pipe, stderr: Pipe,
+                              onLine: ((String) -> Void)? = nil) -> Captured {
+        let group = DispatchGroup()
+        let output = Reader(limit: onLine == nil ? 8 * 1024 * 1024 : 1024 * 1024, onLine: onLine)
+        let errors = Reader(limit: 256 * 1024)
+        for (reader, handle) in [(output, stdout.fileHandleForReading), (errors, stderr.fileHandleForReading)] {
+            group.enter()
+            DispatchQueue.global(qos: .utility).async {
+                defer { group.leave() }
+                reader.read(handle)
+            }
+        }
+        process.waitUntilExit()
+        group.wait()
+        // Readers have completed; no asynchronous mutation escapes this boundary.
+        let failure: Failure?
+        if output.overflow || errors.overflow {
+            failure = Failure(message: "命令输出或进度行过大 / Command output limit exceeded")
+        } else if output.failed || errors.failed {
+            failure = Failure(message: "读取命令输出失败 / Failed to read command output")
+        } else { failure = nil }
+        return Captured(stdout: output.data, stderr: errors.data, failure: failure)
+    }
+
+    /// Exactly one worker owns each Reader; the caller observes it only after
+    /// DispatchGroup.wait. File bytes are never included in overflow diagnostics.
+    private final class Reader: @unchecked Sendable {
+        let limit: Int
+        let onLine: ((String) -> Void)?
+        private(set) var data = Data()
+        private(set) var overflow = false
+        private(set) var failed = false
+        init(limit: Int, onLine: ((String) -> Void)? = nil) { self.limit = limit; self.onLine = onLine }
+
+        func read(_ handle: FileHandle) {
+            defer { try? handle.close() }
+            do {
+                while let chunk = try handle.read(upToCount: 16 * 1024), !chunk.isEmpty {
+                    guard !overflow else { continue }
+                    if let onLine {
+                        var start = chunk.startIndex
+                        for newline in chunk.indices where chunk[newline] == 10 {
+                            guard append(chunk[start..<newline]) else { break }
+                            onLine(String(decoding: data, as: UTF8.self))
+                            data.removeAll(keepingCapacity: true)
+                            start = chunk.index(after: newline)
+                        }
+                        if !overflow { _ = append(chunk[start..<chunk.endIndex]) }
+                    } else { _ = append(chunk) }
+                }
+                if let onLine, !overflow, !data.isEmpty {
+                    onLine(String(decoding: data, as: UTF8.self))
+                    data.removeAll(keepingCapacity: false)
+                }
+            } catch { failed = true }
+        }
+        @discardableResult private func append(_ bytes: Data) -> Bool {
+            guard bytes.count <= limit - data.count else {
+                overflow = true
+                data.removeAll(keepingCapacity: false)
+                return false
+            }
+            data.append(bytes)
+            return true
+        }
     }
 
     /// 跑一条命令并解码成 `T`。
