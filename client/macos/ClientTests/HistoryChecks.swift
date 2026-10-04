@@ -79,7 +79,19 @@ extension ClientChecks {
         require(board.string(forType: .string) == "echo '历史 safe'", "native filtered Copy failed or copied an unfiltered command")
         pump(0.1)
         require(registry.commandHistory(in: first.path).map(\.id) == before, "search/copy executed a command or changed source history")
-        registry.clearCommandHistory(in: first.path)
+        historyClick(window, x: 450, y: 450)
+        eventually("native clear confirmation did not open") { window.attachedSheet != nil }
+        guard let cancelSheet = window.attachedSheet,
+              let cancel = find(NSButton.self, in: cancelSheet.contentView!).first(where: { $0.title.contains("Cancel") || $0.title.contains("取消") }) else { fatalError("native confirmation Cancel missing") }
+        cancel.performClick(nil)
+        eventually("native cancel confirmation did not close") { window.attachedSheet == nil }
+        require(registry.commandHistory(in: first.path).map(\.id) == before, "cancel cleared history")
+        historyClick(window, x: 450, y: 450)
+        eventually("second clear confirmation did not open") { window.attachedSheet != nil }
+        guard let clearSheet = window.attachedSheet,
+              let clear = find(NSButton.self, in: clearSheet.contentView!).first(where: { $0.title.contains("Clear") || $0.title.contains("清空") }) else { fatalError("native confirmation Clear missing") }
+        clear.performClick(nil)
+        eventually("native clear confirmation did not close") { window.attachedSheet == nil }
         require(registry.commandHistory(in: first.path).isEmpty && c.commandBlocks.count == 1, "clear crossed worktree boundaries")
         command(a, "echo retained-until-close", exit: 0)
         a.stop(force: true); eventually("exited history fixture not observed") { !a.isActive }
@@ -87,6 +99,6 @@ extension ClientChecks {
         registry.remove(a)
         require(registry.commandHistory(in: first.path).isEmpty, "closed session retained duplicate history")
         require(host.fittingSize.width <= 650 && host.fittingSize.height <= 480, "history exceeds native window")
-        print("PASS: real zsh cross-session/canonical scope, Unicode/duplicates/order, native filtered Copy, multiline/unknown, scoped clear and close lifetime")
+        print("PASS: real zsh cross-session/canonical scope, Unicode/duplicates/order, native filtered Copy, multiline/unknown, native confirm/cancel, scoped clear and close lifetime")
     }
 }
