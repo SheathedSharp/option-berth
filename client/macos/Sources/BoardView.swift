@@ -106,6 +106,9 @@ struct BoardView: View {
         }
         .ignoresSafeArea(.container, edges: .top)
         .background(Ink.canvas)
+        .sheet(isPresented: $views.showingRecovery) {
+            WorkspaceRecoverySheet(recovery: .shared) { root in views.scope = .console(root) }
+        }
         .sheet(isPresented: $views.showingActions) {
             WorkspaceActionPanel(perform: performAction, shortcuts: .shared)
         }

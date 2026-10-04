@@ -86,6 +86,39 @@ public final class TerminalSessions: ObservableObject {
         select(session)
         return session
     }
+    public func snapshot(remembered: [SavedSession] = []) throws -> WorkspaceArchive {
+        var records = sessions.map { SavedSession(id: $0.id, worktree: $0.worktree, title: $0.title, kind: $0.kind) }
+        let current = Set(records.map(\.id))
+        records += remembered.filter { !current.contains($0.id) }
+        let values = workspaces.filter { !$0.key.isEmpty }.map { root, state in
+            SavedWorkspace(root: root, agentMode: state.agentMode, providerID: state.providerID, nativeExpanded: state.nativeExpanded,
+                           terminalLayout: state.terminalLayout, agentLayout: state.agentLayout)
+        }.sorted { $0.root < $1.root }
+        let result = WorkspaceArchive(workspaces: values, sessions: records)
+        try result.validate(); return result
+    }
+    public func restoreMetadata(_ archive: WorkspaceArchive) throws {
+        try archive.validate()
+        guard sessions.isEmpty else { throw TerminalFailure("请先关闭当前会话再恢复布局 / Close current sessions before restoring layout") }
+        var restored: [String: ConsoleWorkspace] = [:]
+        for saved in archive.workspaces {
+            let state = ConsoleWorkspace()
+            state.agentMode = saved.agentMode; state.providerID = saved.providerID; state.nativeExpanded = saved.nativeExpanded
+            state.terminalLayout = saved.terminalLayout; state.agentLayout = saved.agentLayout
+            state.terminalSelection = saved.terminalLayout.focused; state.agentSelection = saved.agentLayout.focused
+            restored[saved.root] = state
+        }
+        workspaces = restored; objectWillChange.send()
+    }
+    public func replaceRestoredReference(_ old: UUID, with session: TerminalSession) throws {
+        let state = workspace(session.worktree)
+        var terminal = state.terminalLayout, agent = state.agentLayout
+        if terminal.sessions.contains(old) { try terminal.replaceReference(old, with: session.id) }
+        if agent.sessions.contains(old) { try agent.replaceReference(old, with: session.id) }
+        state.terminalLayout = terminal; state.agentLayout = agent
+        if state.terminalSelection == old { state.terminalSelection = session.id }
+        if state.agentSelection == old { state.agentSelection = session.id }
+    }
     public func stopAll(allowForce: Bool) {
         // A stubborn session must not escalate another newly started session.
         for session in sessions { session.stop(force: allowForce && session.isStopping) }

@@ -28,6 +28,7 @@ enum ClientChecks {
         try windowChecks()
         paletteChecks()
         try splitChecks()
+        try recoveryChecks()
     }
     static func shortcutChecks() throws {
         let suite = "workspace-shortcut-test-" + UUID().uuidString
