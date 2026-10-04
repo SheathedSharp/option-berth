@@ -50,6 +50,8 @@ jobs:
         run: |
           swiftc client/macos/AgentSupport/AgentBridge.swift client/macos/Tests/AgentResumeTests.swift -o "$RUNNER_TEMP/agent-resume-tests"
           "$RUNNER_TEMP/agent-resume-tests"
+      - name: Verify workspace command blocks and isolated shell integration
+        run: swift run --package-path client/macos --force-resolved-versions WorkspaceChecks
       - name: Verify real isolated PTY sessions
         run: swift run --package-path client/macos --force-resolved-versions TerminalChecks
       - name: Verify isolated agent planner, composer and native handoff
