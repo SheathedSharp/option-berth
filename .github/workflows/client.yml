@@ -38,3 +38,7 @@ jobs:
           client/macos/build.sh
           test -s client/macos/build/OptionBerth.app/Contents/Resources/AppIcon.icns
           test -s client/macos/build/OptionBerth.app/Contents/Resources/Fonts/LICENSE-Monaspace.txt
+      - name: Verify bounded Git read scheduling
+        run: |
+          swiftc client/macos/Sources/GitReadQueue.swift client/macos/Tests/GitReadQueueTests.swift -o "$RUNNER_TEMP/git-read-queue-tests"
+          "$RUNNER_TEMP/git-read-queue-tests"
