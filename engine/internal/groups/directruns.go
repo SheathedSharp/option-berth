@@ -66,7 +66,10 @@ func (d *DirectRuns) runForPID(pid int) (state.Run, bool) {
 		return hit.run, hit.ok
 	}
 
-	var visited []int
+	// Ancestor invokes the visitor at most MaxAncestry times. Keep scratch
+	// bounded to this call; no pooled state or cache survives a publication.
+	var path [ports.MaxAncestry]int
+	visited := path[:0]
 	// The walk's bool means "resolved", not "owned": a cached negative is
 	// terminal too. Positive cache entries carry distance so warming a cache
 	// cannot make a later query jump beyond MaxAncestry.
