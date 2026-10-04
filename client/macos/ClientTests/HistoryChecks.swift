@@ -1,18 +1,33 @@
 import AppKit
 import SwiftUI
 import BerthTerminal
+import Darwin
 @testable import BerthClient
 
 extension ClientChecks {
     static func historyClick(_ window: NSWindow, x: CGFloat, y: CGFloat) {
-        for kind in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-            window.sendEvent(NSEvent.mouseEvent(with: kind, location: NSPoint(x: x, y: y), modifierFlags: [],
+        func event(_ kind: NSEvent.EventType) -> NSEvent {
+            NSEvent.mouseEvent(with: kind, location: NSPoint(x: x, y: y), modifierFlags: [],
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-                context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!)
+                context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+        }
+        // Older AppKit buttons synchronously track mouseDown until a release.
+        let down = event(.leftMouseDown)
+        NSApp.postEvent(event(.leftMouseUp), atStart: false)
+        window.sendEvent(down)
+        if let release = NSApp.nextEvent(matching: .leftMouseUp, until: Date(), inMode: .default, dequeue: true) {
+            require(release.windowNumber == window.windowNumber, "unexpected test-window mouse release")
+            window.sendEvent(release)
         }
         pump()
     }
     static func historyChecks() throws {
+        let timeout = DispatchWorkItem {
+            FileHandle.standardError.write(Data("FAIL: native command-history checks stalled for 30 seconds\n".utf8))
+            Darwin.exit(1)
+        }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 30, execute: timeout)
+        defer { timeout.cancel() }
         let base = FileManager.default.temporaryDirectory.appendingPathComponent("history-check-" + UUID().uuidString)
         let first = base.appendingPathComponent("first"), other = base.appendingPathComponent("other")
         for root in [first, other] { try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true) }
@@ -75,6 +90,7 @@ extension ClientChecks {
             host.cacheDisplay(in: host.bounds, to: bitmap)
             try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: berth).appendingPathComponent("history-native.png"))
         }
+        FileHandle.standardError.write(Data("CHECK: history rendered; exercising filtered copy and native confirmation\n".utf8))
         historyClick(window, x: 595, y: 304)
         require(board.string(forType: .string) == "echo '历史 safe'", "native filtered Copy failed or copied an unfiltered command")
         pump(0.1)
