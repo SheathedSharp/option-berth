@@ -166,3 +166,8 @@ mage vet            # Go 静态检查
 和分发，不提供担保。原引擎 MIT 声明保留于 [engine/LICENSE](engine/LICENSE)。
 Monaspace 字体另按 OFL 1.1；第三方标志与依赖遵循各自条款，详见
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。不要将整个素材目录统一标记为 MIT。
+
+## 第一次体验
+
+[Hello Worktree 示例](examples/hello-worktree/README.md)：用 Python 标准库运行一个本地 API 和无端口 worker，
+看见健康检查、自动端口、跨 worktree 隔离与完整停止流程。无需模型账号、容器或额外 Python 依赖。
