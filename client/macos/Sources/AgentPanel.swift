@@ -3,271 +3,130 @@ import BerthAgent
 import BerthTerminal
 import SwiftUI
 
-struct WorkspaceConsole: View {
-    let root: String
-    var frozen = false
-    var initialAgent = false
-    @ObservedObject private var workspace: ConsoleWorkspace
-    init(root: String, frozen: Bool = false, initialAgent: Bool = false) {
-        self.root = root; self.frozen = frozen; self.initialAgent = initialAgent
-        let state = frozen ? ConsoleWorkspace() : TerminalSessions.shared.workspace(root)
-        if frozen { state.agentMode = initialAgent }
-        _workspace = ObservedObject(wrappedValue: state)
-    }
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                if frozen {
-                    HStack(spacing: 0) {
-                        Text("Terminal").padding(.horizontal, 14).padding(.vertical, 5).background(workspace.agentMode ? Ink.surface : Ink.accentSoft)
-                        Text("Agent session").padding(.horizontal, 14).padding(.vertical, 5).background(workspace.agentMode ? Ink.accentSoft : Ink.surface)
-                    }.font(Face.sans(11)).background(Ink.surface).clipShape(RoundedRectangle(cornerRadius: 5))
-                } else {
-                    Picker("会话模式 / Session mode", selection: $workspace.agentMode) {
-                        Text("Terminal").tag(false)
-                        Text("Agent session").tag(true)
-                    }.labelsHidden().pickerStyle(.segmented).frame(width: 235)
-                }
-                Spacer()
-                Text(workspace.agentMode ? "⌘↩ 新会话" : "原生输入").font(Face.mono(10)).foregroundStyle(Ink.inkFaint)
-            }.padding(.horizontal, 12).padding(.vertical, 8)
-            Hairline()
-            if workspace.agentMode { AgentPanel(root: root, frozen: frozen, workspace: workspace).id(root) }
-            else { TerminalPanel(root: root, frozen: frozen, workspace: workspace).id(root) }
-        }
-        .onAppear { if !frozen { WorkspaceRecovery.shared.watch(workspace) } }
-    }
-}
+/// Owns only the cancellable external-agent launch plan. Live PTYs remain in the
+/// sole TerminalSessions registry and are never owned by a composer/view mode.
+@MainActor
+final class AgentLaunchController: ObservableObject {
+    @Published private(set) var providers: [ExternalAgent] = []
+    @Published private(set) var loading = false
+    @Published private(set) var problem: String?
+    private var operation: Task<Void, Never>?
+    private var generation = UUID()
+    deinit { operation?.cancel() }
+    func provider(_ workspace: ConsoleWorkspace) -> ExternalAgent? { providers.first { $0.id == workspace.providerID } }
+    func available(_ workspace: ConsoleWorkspace) -> Bool { !loading && provider(workspace)?.installed == true }
+    func cancel() { generation = UUID(); operation?.cancel(); operation = nil; loading = false }
 
-struct AgentPanel: View {
-    let root: String
-    var frozen = false
-    @ObservedObject private var sessions = TerminalSessions.shared
-    @State private var providers: [ExternalAgent] = []
-    @ObservedObject private var workspace: ConsoleWorkspace
-    @State private var issue: String?
-    @State private var loading = false
-    @State private var planning: Task<Void, Never>?
-    @State private var operationID = UUID()
-    @State private var resumedIdentity: String?
-
-    init(root: String, frozen: Bool = false, workspace: ConsoleWorkspace) {
-        self.root = root; self.frozen = frozen
-        self.workspace = workspace
-        if frozen {
-            _providers = State(initialValue: [ExternalAgent(id: "codex", name: "Codex", command: "codex", installed: true, nativePrompt: true, resumeFile: true)])
-            workspace.draft = "检查当前 worktree 的服务状态，并说明失败原因。"
-        }
-    }
-
-    private var provider: ExternalAgent? { providers.first { $0.id == workspace.providerID } }
-    private var scoped: [TerminalSession] {
-        sessions.inWorktree(root).filter { $0.kind.hasPrefix("agent:") }
-    }
-    private var selected: TerminalSession? { scoped.first { $0.id == workspace.agentSelection } ?? scoped.last }
-    private var available: Bool { provider?.installed == true && !loading && !frozen }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                if frozen {
-                    Label(provider?.name ?? "Codex", systemImage: "chevron.down")
-                        .font(Face.sans(12)).padding(.horizontal, 10).padding(.vertical, 5).background(Ink.surface)
-                } else {
-                    Picker("Coding agent", selection: $workspace.providerID) {
-                        ForEach(providers) { provider in
-                            Text(provider.name + (provider.installed ? "" : " · 未安装 / Missing")).tag(provider.id)
-                        }
-                    }.labelsHidden().frame(maxWidth: 185).disabled(loading)
-                }
-                Spacer()
-
-                if loading {
-                    ProgressView().controlSize(.small)
-                    Button("取消") { planning?.cancel() }.help("取消当前计划读取，不结束已运行会话")
-                }
-                Button("续接…", action: chooseResumeFile)
-                    .disabled(!available || provider?.supportsResume != true)
-                    .help("选择当前 worktree 的原始会话文件，不使用最近对话 / Resume explicit session file")
-                    .accessibilityIdentifier("workspace.agent.resume")
-                nativeButton
-            }.padding(12)
-            if !scoped.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(scoped) { session in
-                            Button {
-                                workspace.select(session.id, agent: true)
-                                focus(session)
-                            } label: {
-                                Text(session.title + (session.isActive ? " ●" : " ○"))
-                                    .font(Face.mono(10)).padding(6)
-                                    .background(selected?.id == session.id ? Ink.accentSoft : Ink.surface)
-                                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                            }.buttonStyle(.plain)
-                        }
-                    }.padding(.horizontal, 12)
-                }
-            }
-            if let resumedIdentity {
-                Label(resumedIdentity, systemImage: "arrow.uturn.backward")
-                    .font(Face.mono(10)).foregroundStyle(Ink.inkMuted)
-                    .lineLimit(1).padding(.horizontal, 12).padding(.bottom, 8)
-            }
-            Hairline()
-            if let selected {
-                PaneWorkspaceView(primary: selected, workspace: workspace, agent: true)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            } else {
-                emptyState
-            }
-            Hairline()
-            if !workspace.nativeExpanded || selected == nil {
-            VStack(alignment: .leading, spacing: 7) {
-                Text(workspace.providerID == "deepseek" ? "DeepSeek：消息使用 headless；原生模式要求已有 tui profile。" : "⌘↩ 新会话 / New session · 后续输入交给原生 agent")
-                    .font(Face.sans(10)).foregroundStyle(Ink.inkFaint)
-                Group {
-                    if frozen {
-                        Text(workspace.draft).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    } else {
-                        AgentComposer(text: $workspace.draft, enabled: !loading,
-                                      font: Face.nativeMono(12),
-                                      foreground: NSColor(Ink.ink),
-                                      onSubmit: { launch(withPrompt: true) }, onNative: openNative)
-                    }
-                }
-                .font(Face.mono(12)).frame(minHeight: 54, maxHeight: 76)
-                .padding(5).background(Ink.surface)
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Ink.line, lineWidth: 1))
-                .accessibilityLabel("给 coding agent 的新会话消息 / New agent-session message")
-                HStack {
-                    Text("新消息新建会话；续接须选择原始文件")
-                        .font(Face.sans(9.5)).foregroundStyle(Ink.inkFaint).lineLimit(1).truncationMode(.tail).layoutPriority(-1)
-                    Spacer()
-                    if !loading && !frozen { Button("刷新 / Refresh") {
-                        refreshProviders()
-                    } }
-                    sendButton
-                }
-            }.padding(12)
-            }
-            if let issue {
-                Text(issue).font(Face.sans(11)).foregroundStyle(Ink.ink).textSelection(.enabled)
-                    .padding(10).frame(maxWidth: .infinity, alignment: .leading).background(Ink.surface)
-            }
-        }
-        .background(Ink.canvas)
-        .onAppear { refreshProviders() }
-        .onDisappear { planning?.cancel(); planning = nil; operationID = UUID(); loading = false }
-    }
-
-    private var emptyState: some View {
-        // The input and actions must remain reachable in the full workspace,
-        // not only when the console is rendered without its surrounding chrome.
-        ViewThatFits(in: .vertical) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("你的 agent，它自己的原生会话。")
-                    .font(Face.sans(19, .semibold))
-                Text("Your coding agent. Its own native session.")
-                    .font(Face.sans(12)).foregroundStyle(Ink.inkMuted)
-                Text("消息建立新会话；后续交流在原生终端中继续。\nA message starts a new session; continue in the native terminal.")
-                    .font(Face.sans(11)).foregroundStyle(Ink.inkMuted)
-                Text(root).font(Face.mono(10)).foregroundStyle(Ink.inkFaint)
-                    .lineLimit(1).truncationMode(.middle)
-            }.padding(16).fixedSize(horizontal: false, vertical: true)
-            VStack(alignment: .leading, spacing: 5) {
-                Text("新消息，新会话 / New message, new session").font(Face.sans(12))
-                Text("后续在原生界面继续 / Continue in the native terminal")
-                    .font(Face.sans(10)).foregroundStyle(Ink.inkMuted)
-            }.padding(12).fixedSize(horizontal: false, vertical: true)
-            Text("新会话 / New session").font(Face.sans(11)).padding(8)
-        }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    private var nativeButton: some View {
-        Button(workspace.nativeExpanded ? "消息框 / Compose" : "原生 / Native") {
-            if workspace.nativeExpanded { workspace.nativeExpanded = false }
-            else { openNative() }
-        }
-            .disabled(!workspace.nativeExpanded && !available && !(selected?.isActive == true && selected?.kind.hasSuffix(":native") == true))
-    }
-
-    private var sendButton: some View {
-        Button("发送到新会话 / Send ⌘↩") { launch(withPrompt: true) }
-            .disabled(!available || workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-    }
-
-    private func refreshProviders() {
-        guard !loading, !frozen else { return }
-        guard let binary = DaemonLaunch.binaryPath() else {
-            issue = "需要支持 agent list/plan 的 oberth / A compatible oberth is required"; return
-        }
-        let id = UUID(); operationID = id
-        loading = true; issue = nil
-        planning = Task { @MainActor in
-            defer { if operationID == id { loading = false; planning = nil } }
+    func refresh(_ workspace: ConsoleWorkspace) {
+        guard !loading else { return }
+        guard let binary = DaemonLaunch.binaryPath() else { problem = "找不到兼容的 oberth"; return }
+        let id = UUID(); generation = id; loading = true; problem = nil
+        operation = Task { @MainActor in
+            defer { if generation == id { loading = false; operation = nil } }
             do {
                 let values = try await AgentBridge.providers(binary: binary, environment: TerminalSession.environment())
                 try Task.checkCancellation()
-                guard operationID == id else { return }
+                guard generation == id else { return }
                 providers = values
                 if !values.contains(where: { $0.id == workspace.providerID }),
                    let first = values.first(where: { $0.installed }) ?? values.first { workspace.providerID = first.id }
-            } catch is CancellationError {} catch {
-                if operationID == id { issue = error.localizedDescription }
-            }
+            } catch is CancellationError {} catch { if generation == id { problem = error.localizedDescription } }
         }
     }
-
-    private func chooseResumeFile() {
-        guard available, provider?.supportsResume == true else { return }
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true; panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false; panel.canCreateDirectories = false
-        panel.prompt = "校验并续接"
-        panel.message = "选择原始会话文件或 OpenCode 导出。只续接当前 worktree；登录、审批和后续输入留在 agent 的原生界面。"
-        guard panel.runModal() == .OK, let source = panel.url else { return }
-        launch(withPrompt: false, resumeFile: source.path)
-    }
-
-    private func launch(withPrompt: Bool, resumeFile: String? = nil) {
-        guard available, let provider, let binary = DaemonLaunch.binaryPath() else { return }
-        if withPrompt && workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return }
-        if resumeFile != nil && provider.supportsResume != true { return }
-        let message = withPrompt ? workspace.draft : nil
-        let mode = withPrompt && !provider.nativePrompt ? "task" : "native"
-        let selectedRoot = root
-        let id = UUID(); operationID = id
-        loading = true
-        issue = nil
-        planning?.cancel()
-        planning = Task { @MainActor in
-            defer { if operationID == id { loading = false; planning = nil } }
+    func launch(root: String, workspace: ConsoleWorkspace, prompt: Bool, resumeFile: String? = nil,
+                didLaunch: @escaping (TerminalSession) -> Void) {
+        guard available(workspace), let provider = provider(workspace), let binary = DaemonLaunch.binaryPath() else { return }
+        let message = prompt ? workspace.draft : nil
+        guard !prompt || !(message ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              resumeFile == nil || provider.supportsResume else { return }
+        let mode = prompt && !provider.nativePrompt ? "task" : "native"
+        let id = UUID(); generation = id; loading = true; problem = nil
+        operation = Task { @MainActor in
+            defer { if generation == id { loading = false; operation = nil } }
             do {
-                let plan = try await AgentBridge.plan(binary: binary, provider: provider.id, root: selectedRoot,
-                                                     mode: mode, prompt: message, environment: TerminalSession.environment(), resumeFile: resumeFile)
+                let plan = try await AgentBridge.plan(binary: binary, provider: provider.id, root: root, mode: mode,
+                    prompt: message, environment: TerminalSession.environment(), resumeFile: resumeFile)
                 try Task.checkCancellation()
-                guard operationID == id else { return }
-                let title = "\(provider.name) \(scoped.count + 1)" + (resumeFile != nil ? " · 续接" : (mode == "task" ? " · task" : ""))
-                let session = try sessions.add(worktree: plan.worktree, title: title,
-                                                kind: "agent:\(provider.id):\(mode)", executable: plan.executable, arguments: plan.arguments)
-                resumedIdentity = plan.resume.map { "\(provider.name) · \($0.sessionID.prefix(12)) · 原生审批" }
-                workspace.agentSelection = session.id
-                if withPrompt && workspace.draft == message { workspace.draft = "" }
+                guard generation == id else { return }
+                let count = TerminalSessions.shared.inWorktree(root).filter { $0.kind.hasPrefix("agent:") }.count
+                let title = "\(provider.name) \(count + 1)" + (resumeFile == nil ? (mode == "task" ? " · task" : "") : " · 续接")
+                let session = try TerminalSessions.shared.add(worktree: plan.worktree, title: title,
+                    kind: "agent:\(provider.id):\(mode)", executable: plan.executable, arguments: plan.arguments, select: false)
+                if prompt && workspace.draft == message { workspace.draft = "" }
                 workspace.nativeExpanded = mode == "native"
-                focus(session)
-            } catch is CancellationError {
-                if operationID == id { issue = "已取消，未启动 agent / Cancelled before agent launch" }
-            } catch { if operationID == id { issue = error.localizedDescription } }
+                didLaunch(session)
+            } catch is CancellationError {} catch { if generation == id { problem = error.localizedDescription } }
         }
     }
+}
 
-    private func openNative() {
-        if let selected, selected.isActive, selected.kind.hasSuffix(":native") { workspace.nativeExpanded = true; focus(selected) }
-        else { launch(withPrompt: false) }
+struct AgentLaunchPanel: View {
+    let root: String
+    @ObservedObject var workspace: ConsoleWorkspace
+    @ObservedObject var launcher: AgentLaunchController
+    let selected: TerminalSession?
+    let activate: (TerminalSession) -> Void
+    let close: () -> Void
+    var frozen = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                if frozen { Text("Codex ▾").font(Face.sans(11)) }
+                else {
+                    Picker("Agent", selection: $workspace.providerID) {
+                        ForEach(launcher.providers) { item in Text(item.name + (item.installed ? "" : " · 未安装")).tag(item.id) }
+                    }.labelsHidden().frame(maxWidth: 180).disabled(launcher.loading)
+                }
+                Text("新会话").font(Face.sans(10)).foregroundStyle(Ink.inkMuted)
+                Spacer(minLength: 0)
+                if launcher.loading { ProgressView().controlSize(.small); Button("取消") { launcher.cancel() } }
+                if frozen { Text("原生  ·  续接…").font(Face.sans(10)) }
+                else {
+                    Button("原生", action: openNative).disabled(!launcher.available(workspace) && !canFocusNative)
+                        .help("进入所选 Agent 的原生界面，或显式启动新的原生会话 · ⇧⌘↩")
+                    Button("续接…", action: resume).disabled(!launcher.available(workspace) || launcher.provider(workspace)?.supportsResume != true)
+                        .accessibilityIdentifier("workspace.agent.resume")
+                    Button { launcher.cancel(); close() } label: { Image(systemName: "xmark") }.buttonStyle(.plain)
+                        .accessibilityLabel("收起新会话输入")
+                }
+            }
+            if frozen {
+                Text("检查当前 worktree 的改动和服务状态。")
+                    .font(Face.mono(12)).frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
+            } else {
+                AgentComposer(text: $workspace.draft, enabled: !launcher.loading, font: Face.nativeMono(12),
+                    foreground: NSColor(Ink.ink), focusOnAttach: true,
+                    onSubmit: send, onNative: openNative)
+                    .frame(minHeight: 44, maxHeight: 72).padding(4).background(Ink.surface)
+                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(Ink.line, lineWidth: 1))
+            }
+            HStack(spacing: 8) {
+                if let problem = launcher.problem { Text(problem).font(Face.sans(10)).foregroundStyle(Change.changed).lineLimit(2).textSelection(.enabled) }
+                Spacer(minLength: 0)
+                if frozen { Text("发送到新会话 ⌘↩").font(Face.sans(11)) }
+                else {
+                    Button { launcher.refresh(workspace) } label: { Image(systemName: "arrow.clockwise") }
+                        .buttonStyle(.plain).disabled(launcher.loading).help("重新检测已安装的 Agent")
+                    Button("发送 ⌘↩", action: send)
+                        .disabled(!launcher.available(workspace) || workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .help("建立新会话；后续消息在 Agent 原生终端继续")
+                }
+            }
+        }.padding(10).background(Ink.canvas)
     }
-    private func focus(_ session: TerminalSession) {
-        DispatchQueue.main.async { session.terminal.window?.makeFirstResponder(session.terminal) }
+    private var canFocusNative: Bool { selected?.isActive == true && selected?.kind == "agent:\(workspace.providerID):native" }
+    private func send() { launcher.launch(root: root, workspace: workspace, prompt: true, didLaunch: activate) }
+    private func openNative() {
+        if canFocusNative, let selected { activate(selected) }
+        else { launcher.launch(root: root, workspace: workspace, prompt: false, didLaunch: activate) }
+    }
+    private func resume() {
+        guard launcher.available(workspace), launcher.provider(workspace)?.supportsResume == true else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true; panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
+        panel.prompt = "校验并续接"
+        panel.message = "只续接当前 worktree 的原始会话文件；审批与后续输入保留在原生 Agent。"
+        guard panel.runModal() == .OK, let file = panel.url else { return }
+        launcher.launch(root: root, workspace: workspace, prompt: false, resumeFile: file.path, didLaunch: activate)
     }
 }
