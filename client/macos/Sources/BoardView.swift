@@ -440,7 +440,7 @@ struct BoardView: View {
             WorkspaceTab(title: "Git" + (changed > 0 ? " · \(changed)" : ""), symbol: "chevron.left.forwardslash.chevron.right", selected: scope == .code(project.name)) {
                 views.scope = .code(project.name)
             }.help(shortcuts.shortcut(.code).label)
-            WorkspaceTab(title: "终端与 Agent", symbol: "terminal", selected: scope == .terminal(project.name)) {
+            WorkspaceTab(title: "工作台", symbol: "terminal", selected: scope == .terminal(project.name)) {
                 views.scope = .terminal(project.name)
             }.help(shortcuts.shortcut(.terminal).label)
             Spacer(minLength: 0)

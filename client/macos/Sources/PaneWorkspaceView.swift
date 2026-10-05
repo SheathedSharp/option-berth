@@ -7,6 +7,7 @@ struct PaneWorkspaceView: View {
     let primary: TerminalSession
     @ObservedObject var workspace: ConsoleWorkspace
     let agent: Bool
+    var focusIntent: TerminalFocusIntent?
     var frozen = false
     var frozenSessions: [TerminalSession] = []
     @ObservedObject private var registry = TerminalSessions.shared
@@ -67,7 +68,7 @@ struct PaneWorkspaceView: View {
                 }.padding(.horizontal, 8).padding(.vertical, 7)
                     .background(layout.focused == sessionID ? Ink.accentSoft : Ink.surface).disabled(frozen)
                 Hairline()
-                TerminalPaneBody(session: session, frozen: frozen)
+                TerminalPaneBody(session: session, frozen: frozen, focusIntent: focusIntent)
             }.frame(minWidth: 140, minHeight: 100)
             if frozen { return AnyView(pane) }
             return AnyView(pane

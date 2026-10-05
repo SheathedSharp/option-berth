@@ -105,15 +105,15 @@
 |---|---|
 | 界面/数据/日志字体、缩放，界面/diff/终端颜色 | `theme.json`；旧 `ui.*` 偏好仅作兼容回退。 |
 | 侧栏宽度、减弱动态、新 Shell 集成、新 worktree 默认 Agent | `settings.json`；上述生命周期已接入。 |
-| 快捷键 | `keybindings.json` 与旧 `workspace.shortcuts.v1` 迁移已接入；原生菜单键和输入法仍须组合验收。 |
+| 快捷键 | `keybindings.json` 与旧 `workspace.shortcuts.v1` 迁移已接入；原生命令、编辑器/终端组合文本与 Git 查找由同候选检查覆盖。 |
 | 服务/Git 详情区宽度 | `settings.json` 的独立字段；原共享 `detailWidth` 只作兼容回退，拖动使用分开的 `ui.servicesDetailWidth.v1` / `ui.gitDetailWidth.v1`。 |
 | 布局恢复/记住会话 | 原有显式授权与 `client-recovery`；涉及路径元数据和删除操作，不因外观配置变化自动开启或删除。 |
 | Jev 外部 adapter | 继续使用独立 `jev.json`；不搬运密钥到主题、普通偏好、截图或诊断。 |
 | 首次指引、当前选择、命令历史 | 首次指引标记是使用状态；当前选择/历史按既有内存与显式恢复边界管理，不当作主题配置执行。 |
 
-Schema 与详情宽度已接入本分支；与新 Git 审查 #73、统一工作台 #75 的配置组合验收尚未完成。
-#73 的自适应布局不能被旧 CodeView 覆盖，#75 的新会话入口须消费同一偏好。#66 继续跟踪组合边界；
-单项测试通过不是全部个人化需求已经闭环。
+Schema、独立详情宽度、新 Git 自适应布局及统一工作台的新会话入口消费同一配置。
+宽窄窗口、文件热更新、原生命令/组合文本、同一 PTY 与新会话默认值分别有检查，全部属于发版门槛。
+未读取真实 provider 账号；最终日常使用与安装由用户验收，不能用合成场景替代真实账号和长期负载。
 
 ## JSON Schema 与编辑器 / Editor assistance
 
@@ -152,6 +152,8 @@ Schema 的 `maxLength` 按 Unicode 字符而非 UTF-8 字节计数；字体/元�
 `--render-theme-file client/macos/Fixtures/theme-dark.json` 检查用户文件式深色夹具。
 坏夹具退出失败，不静默回退。冻结视图、原生视图位图和真正窗口合成需分开说明：
 原生终端的 cacheDisplay 位图可能没有背景层，不能据此声称背景的窗口合成已验证。
+`PersonalizationChecks/WindowCompositionChecks.swift` 另行捕获测试自有终端窗口，并断言背景合成像素，
+不截取其他窗口或用户项目；颜色更新保持同一 PTY。
 
 当前依据：VS Code 的配置默认值/用户覆盖与声明式贡献边界，以及 Apple 的只读 accessibilityReduceMotion / 自定义 EnvironmentKey。
 不移植它们的项目级执行或完整扩展体系。

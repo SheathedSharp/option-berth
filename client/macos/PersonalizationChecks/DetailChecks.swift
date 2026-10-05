@@ -52,14 +52,17 @@ extension PersonalizationChecks {
                                   styleMask: [.titled, .resizable], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
             window.contentView = host; window.makeKeyAndOrderFront(nil)
-            defer { window.contentView = nil; window.close() }
+            defer {
+                try? capture(host, at: root.appendingPathComponent("personalization-" + pane.rawValue + "-final-native.png"))
+                window.contentView = nil; window.close()
+            }
             try await eventually("detail test window not key") { window.isKeyWindow }
             host.layoutSubtreeIfNeeded()
             let before = settings.detailWidth(for: pane)
             let other: ClientDetailPane = pane == .services ? .git : .services
             let otherWidth = settings.detailWidth(for: other)
             await drag(window, x: host.bounds.width - before - SplitHandle.hitWidth / 2, delta: 24)
-            try await eventually("rightward divider drag did not shrink its trailing pane") {
+            try await eventually("rightward " + pane.rawValue + " divider drag did not shrink its trailing pane") {
                 settings.detailWidth(for: pane) < before - 10
             }
             try expect(settings.detailWidth(for: other) == otherWidth, "native drag changed the other detail module")
@@ -106,7 +109,10 @@ extension PersonalizationChecks {
                 location: NSPoint(x: x + (index == 0 ? 0 : delta), y: 220), modifierFlags: [],
                 timestamp: ProcessInfo.processInfo.systemUptime + Double(index) * 0.02,
                 windowNumber: window.windowNumber, context: nil, eventNumber: index + 1, clickCount: 1, pressure: 1)!
-            NSApp.postEvent(event, atStart: false)
+            // Preserve the NSEvent's window-local coordinates and AppKit's
+            // current-event dispatch. Requeueing synthesised CGEvents can
+            // reproject coordinates on scaled or multi-display systems.
+            NSApp.sendEvent(event)
         }
         try? await Task.sleep(nanoseconds: 30_000_000)
     }

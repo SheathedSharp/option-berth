@@ -38,6 +38,12 @@ import BerthTerminal
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let file = directory.appendingPathComponent("settings.json")
         let theme = directory.appendingPathComponent("theme.json")
+        // This executable owns its preference domain. Establish the complete
+        // legacy fixture before UISettings is initialized; macOS may retain
+        // this test process's prior preferences across repeated invocations.
+        for pane in [ClientDetailPane.services, .git] {
+            UserDefaults.standard.removeObject(forKey: pane.storageKey)
+        }
         UserDefaults.standard.set(188.0, forKey: "railWidth")
         UserDefaults.standard.set(412.0, forKey: "detailWidth")
         let settings = UISettings.shared

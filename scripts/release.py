@@ -142,6 +142,25 @@ def verify(root: Path) -> None:
             run(root, str(Path(client_checks_dir) / "PersonalizationChecks"), capture=False,
                 environment={"HOME": str(home), "CFFIXED_USER_HOME": str(home),
                              "BERTH_HOME": str(berth), "BERTH_PERSONALIZATION_TEST": "1"})
+        # The worktree review and unified console must pass in the same release
+        # candidate, not just on separate feature-branch CI runs.
+        with tempfile.TemporaryDirectory(prefix="oberth-review-facts-") as tmp:
+            binary = str(Path(tmp) / "checks")
+            run(root, "swiftc", "-swift-version", "5", "client/macos/Sources/GitModel.swift",
+                "client/macos/Tests/GitReviewTests.swift", "-o", binary, capture=False)
+            run(root, binary, capture=False)
+        for product, flag in (("GitReviewChecks", "BERTH_GIT_REVIEW_TEST"),
+                              ("ConsoleChecks", "BERTH_CONSOLE_TEST")):
+            run(root, "swift", "build", "--package-path", "client/macos", "--force-resolved-versions",
+                "--product", product, capture=False)
+            with tempfile.TemporaryDirectory(prefix="oberth-workspace-native-") as tmp:
+                home = Path(tmp) / "home"
+                berth = home / ".option-berth"
+                berth.mkdir(parents=True)
+                run(root, str(Path(client_checks_dir) / product), capture=False,
+                    environment={"HOME": str(home), "CFFIXED_USER_HOME": str(home),
+                                 "BERTH_HOME": str(berth), "SHELL": "/bin/zsh",
+                                 "ZDOTDIR": str(home), flag: "1"})
         # Native menu equivalents/IME and their pure command policy are release
         # gates, not only standalone PR evidence.
         with tempfile.TemporaryDirectory(prefix="oberth-command-policy-") as tmp:

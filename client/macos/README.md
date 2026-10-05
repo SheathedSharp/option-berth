@@ -42,8 +42,10 @@ VERSION=0.1.0 ./build.sh
 - 服务对应的运行实况，以及清单未声明的监听；
 - 启动全部、停止全部、编辑清单和移除项目等动作。
 
-设置窗口提供客户端外观偏好：可切换冰川、午夜、纸张和森林主题，自定义强调色，选择已安装的
-界面与数据字体，并分别调整界面、数据和日志字号。偏好实时生效并保存在本机；工作区一栏仍只
+Paper（纸张）是唯一内置默认。设置 → 外观可以打开 `theme.json`、`settings.json` 和 `keybindings.json`，
+覆盖语义颜色、已安装字体、模块字号、独立面板宽度和会话默认值；有效文件保存后热更新，坏编辑保留上次有效值。
+配置位于 `$BERTH_HOME/config/`（默认 `~/.option-berth/config/`），不读项目内同名文件，客户端不覆盖用户文件。
+完整字段、Schema 和迁移规则见 [个性化配置](../../docs/client-configuration.md)。工作区一栏仍只
 显示产品路径和连接信息。Jev 增强一栏可以启用 agent-side Jev、保存或清除 OpenRouter key，
 配置写入 `~/.option-berth/jev.json`，供任务级 `jev-attention --session` 读取。客户端不维护模型目录、daemon
 判断结果或另一套事实模型。新建项目的清单审阅框可以调用本机 agent 起草，并显示它正在检查的
@@ -179,14 +181,14 @@ AgentChecks 的默认路径使用合成 CLI 协议；显式二进制路径验证
 工作区之间移动的是其呈现权，不复制进程、不广播输入。具体操作与上限见下方“动作、布局与窗口”。
 
 进入 **原生 / Native** 时可收起消息框；后续对话仍由外部 agent 处理。计划读取进度/取消和
-错误提示位于消息框之外，收起后也可访问。**⌘F** 搜索当前焦点终端，**⌘2** 打开只读 Git。
+错误提示位于消息框之外，收起后也可访问。**⌘F** 搜索当前焦点终端，**⌥⌘G** 打开只读 Git。
 标准 Edit/Window/App 菜单保留，复制、粘贴、全选和撤销仍走原生响应链。
 
 **English.** Shift+Cmd+O opens session management, including sessions whose manifest was removed.
 Recursive same-worktree panes can be split horizontally/vertically or moved to a detached window.
 There is one native PTY per session, not one process per view. Closing a detached window returns its
-presentation to the workspace; ending a session still requires observing its exit. Cmd+1/2/3 selects
-services/Git/terminal. Standard native editing and window actions remain available.
+presentation to the workspace; ending a session still requires observing its exit. Cmd+1…9 selects
+the visible worktree; Option+Cmd+S/G/T selects services/Git/Console. Standard native editing and window actions remain available.
 
 冻结图与原生 UI 共用布局模型，但用静态 H/V 栈绘制分隔，去掉 ImageRenderer 无法捕获的
 原生菜单/拖放宿主；这不等于原生窗口或终端输出截图。TerminalChecks / ClientChecks 另用
@@ -238,9 +240,10 @@ OSC、UTF-8、历史/帧上限、未知退出码以及隔离的真实 zsh PTY �
 ## 动作、布局与窗口
 
 `⇧⌘P` 打开可搜索命令面板；输入关键词后 Return 执行选中项，上下键选择，Escape 关闭。
-同一动作目录生成菜单与面板。默认 `⌘1/2/3` 切换服务/Git/终端，`⇧⌘O` 打开会话，
-`⌘F` 查找，`⌘R` 刷新，`⌥⌘S` 切换侧栏，`⌘,` 打开设置，`⇧⌥⌘O` 打开恢复，`⌥⌘U` 检查更新。面板中的“快捷键”可修改
-工作区动作按键；重复按键、原生编辑/退出/关闭窗口快捷键和固定 `⇧⌘P` 被拒绝。
+同一动作目录生成菜单与面板。默认 `⌘N` 接入项目，`⌘1…9` 选择当前可见 Worktrees 并保留模块，
+`⌥⌘S/G/T` 切换服务/Git/工作台，`⇧⌘O` 打开会话，`⌘F` 查找，`⌘R` 刷新，`⌘B` 切换侧栏，`⌘,` 打开设置，`⇧⌥⌘O` 打开恢复，`⌥⌘U` 检查更新。面板中的“快捷键”可修改
+工作区动作按键；文件存在时改由 `keybindings.json` 管理，GUI 不覆盖它。重复按键、原生编辑/退出/关闭窗口快捷键
+和固定 `⇧⌘P` 被拒绝。菜单、命令面板与原生终端均保护组合文本；目录面板和独立终端窗口不会误切工作区。
 
 每个窗格可将同 worktree 的已有会话左右或上下分屏；嵌套布局最多 16 个会话，输入不广播。
 拖动原生分隔条调整尺寸；拖动窗格标题到另一个窗格可左右重排。拖入未知/跨 worktree
@@ -299,11 +302,12 @@ Agent 页的“续接…”选择原始会话文件，复用 `oberth agent plan 
 client/macos/build/OptionBerth.app/Contents/MacOS/OptionBerth \
   --render-states /tmp/oberth-states --size 1060x720
 client/macos/build/OptionBerth.app/Contents/MacOS/OptionBerth \
-  --render-states /tmp/oberth-dark --render-theme midnight --size 900x640
+  --render-states /tmp/oberth-dark --render-theme-file client/macos/Fixtures/theme-dark.json --size 900x640
 ```
 
 默认窗口为 1060×720，最小为760×520。原生交互检查使用隔离 HOME/CFFIXED_USER_HOME/BERTH_HOME；
-发布检查包含 ClientChecks，测试不会读取真实 provider 账号。全部输入法、系统辅助功能和
+发布检查包含 ClientChecks、PersonalizationChecks、CommandChecks、GitReviewChecks 和 ConsoleChecks，
+在同一候选提交上验证菜单/输入法、独立详情宽度、文件热更新、统一工作台和终端窗口合成；测试不会读取真实 provider 账号。全部输入法、系统辅助功能和
 长期资源趋势仍属于单独验收范围，不由冻结截图代替。
 
 

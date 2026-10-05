@@ -15,6 +15,19 @@ public final class ConsoleWorkspace: ObservableObject {
 
     public init() {}
 
+    public var activeLayout: PaneLayout { agentMode ? agentLayout : terminalLayout }
+    public var activeSelection: UUID? { activeLayout.focused ?? (agentMode ? agentSelection : terminalSelection) }
+
+    /// Carry the currently visible tree across session kinds. Archive fields stay
+    /// compatible, but switching shell/agent no longer selects an unrelated page.
+    public func activate(_ id: UUID, agent: Bool) {
+        var layout = activeLayout
+        layout.show(id)
+        agentMode = agent
+        if agent { agentLayout = layout; agentSelection = id }
+        else { terminalLayout = layout; terminalSelection = id }
+    }
+
     public func split(_ id: UUID, beside target: UUID, agent: Bool, axis: PaneLayout.Axis) throws {
         var layout = agent ? agentLayout : terminalLayout
         if layout.nodes.isEmpty { layout = PaneLayout(session: target) }
@@ -74,13 +87,13 @@ public final class TerminalSessions: ObservableObject {
     }
     @discardableResult
     public func add(worktree: String, title: String, kind: String = "terminal", executable: String,
-                    arguments: [String], environment: [String: String]? = nil, shellIntegration: Bool = false) throws -> TerminalSession {
+                    arguments: [String], environment: [String: String]? = nil, shellIntegration: Bool = false, select: Bool = true) throws -> TerminalSession {
         guard sessions.count < 16 else { throw TerminalFailure("先关闭一个会话 / Close a session before opening another (16 maximum)") }
         let session = TerminalSession(worktree: worktree, title: title, kind: kind)
         session.onChange = { [weak self] in self?.objectWillChange.send() }
         try session.start(executable: executable, arguments: arguments, environment: environment, shellIntegration: shellIntegration)
         sessions.append(session)
-        select(session)
+        if select { self.select(session) }
         return session
     }
     public func snapshot(remembered: [SavedSession] = []) throws -> WorkspaceArchive {
@@ -128,8 +141,7 @@ public final class TerminalSessions: ObservableObject {
         guard sessions.contains(where: { $0.id == session.id }) else { return }
         let state = workspace(session.worktree)
         let agent = session.kind.hasPrefix("agent:")
-        state.agentMode = agent
-        state.select(session.id, agent: agent)
+        state.activate(session.id, agent: agent)
     }
     @discardableResult
     public func remove(_ session: TerminalSession) -> Bool {

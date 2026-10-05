@@ -142,3 +142,20 @@ Windows workflow 在构建 CLI 后运行 `verify_service_lifecycle.py`，使用�
 ## macOS 安装容器
 
 新客户端使用 DMG（[安装与替换](macos-install.md)）。打包器验证只读挂载、Applications 拖放入口、复制后的签名、内置引擎身份和许可。完成全部关卡及自有挂载清理后才暴露最终资产。CLI 压缩包不变，旧 Release 的 ZIP 不覆盖。PR 的 macOS 原生验证不等于发布。
+
+
+## 无可用前台 Mac 时的完整 CI 预检
+
+`Verified release` 支持在 **main** 上显式 `workflow_dispatch`，运行与 tag 完全相同的
+Linux/macOS 原生 `scripts/release.py --verify-only` 及 Windows 门槛。此入口仅验证，
+不更改版本、创建 tag、打包或发布；非 main 调用拒绝，不接受任意脚本/跳过检查输入。
+
+```sh
+gh workflow run release.yml --ref main
+```
+
+需要从 CI 完成发版时：先以单独 PR 提交 VERSION 更新并合入 main；对该精确 SHA 运行上述完整预检，
+逐项确认所有必需 verify/Windows/policy 作业成功而非跳过，并确认 main 没有移动。
+然后只给这个已验证的 SHA 创建与 VERSION 一致的**注释 tag**，非强制推送。tag 触发的既有工作流
+会再次执行完整验证，全部成功后才进行包构建、下载回验和公开发布。失败时不重用/覆盖 tag，不把
+普通 PR policy 的成功当作完整验证。此路径不需要更改本机录屏/辅助功能权限或跳过原生检查。

@@ -112,3 +112,14 @@ provider，避免把旧排队任务误认为监听仍有效。这些用例不通
 `WorkspaceChecks` 的实际 zsh 夹具还检查失败与成功命令之后既有提示钩子继续执行，并收到
 原始退出码；不凭猜测修改正常的 shell hook 行为。分发回归验证混合 ad-hoc/notarized 资产
 在任何网络写入前被拒绝，不把模拟公证结果或文件名当作真实 Apple 公证验收。
+
+
+### 发布候选的原生验证台
+
+CommandChecks、GitReviewChecks、ConsoleChecks 与 PersonalizationChecks 必须在同一候选提交运行。
+前者记录各原生交互阶段，并对测试菜单跟踪的取消设五秒硬边界；不重发业务按键。
+详情拖动使用真实宿主布局，鼠标事件保持窗口本地坐标，经 NSApplication.sendEvent 派发到测试自有窗口，
+避免重新排队后的缩放/多显示器重投影；方向、目标宽度、固定范围与压缩迟滞的原有断言全部保留。
+重复运行先建立完整测试宽度偏好。窗口合成只捕获测试拥有的终端窗口，使用 CoreGraphics 将原始图像色彩空间
+转为明确的 sRGB RGBA 字节，保持九个背景样点和同一 PTY 断言；不以 NSCalibratedRGB 转换替代采集图像的色彩配置。
+无法获得本机前台焦点时，不修改系统隐私授权；使用主分支 Verified release 的只读完整 CI 预检。

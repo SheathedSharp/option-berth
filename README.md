@@ -88,8 +88,8 @@ oberth down                    # 停止当前项目并安全处理端口预留
 
 ## 终端与 coding agent
 
-macOS 工作区中的 **Terminal / Agent session** 区分 shell 与外部 agent 会话，
-共用当前 worktree 的服务事实和只读 Git 上下文。会话固定归属于创建时的 worktree，
+macOS **工作台 / Console** 将 Shell 与外部 agent 放在同一会话栏和原生显示区，
+共用当前 worktree 的服务事实和只读 Git 上下文；新 Agent 消息是就地展开的入口，不是另一层页面。会话固定归属于创建时的 worktree，
 切换项目不会把原会话迁移到另一份代码中。
 
 自行安装并登录 **OpenCode、Codex、Claude Code、DeepSeek Harness 或 Pi** 后，
@@ -102,14 +102,18 @@ oberth agent plan codex --worktree "$PWD" --json
 oberth agent run codex --worktree "$PWD"
 ```
 
-**⇧⌘P** 打开统一命令面板；**⌘1/2/3** 切换服务、只读 Git 与终端。工作区支持同一 worktree 的
+**⌘N** 接入项目，**⌘1…9** 按侧栏当前可见顺序选择 worktree，保留正在查看的模块。
+**⌥⌘S/G/T** 分别切换服务、只读 Git 与工作台，**⌘B** 切换侧栏，**⇧⌘P** 打开命令面板。工作区支持同一 worktree 的
 递归分屏与独立终端窗口；顶部可访问会话、恢复和检查更新。Agent 的“续接…”要求选择原始会话
 文件并核对 worktree，不使用最近对话。可明确允许保存布局元数据，但草稿、终端输出和旧进程
 不会自动恢复。命令块集成对新建 zsh 显式启用，不修改用户 shell 配置。
 
 DeepSeek 的消息入口使用 headless，原生入口要求已有 tui profile；两种模式不是同一对话的无缝切换。
 option-berth 不实现另一套 agent 推理系统、不保存模型凭证、不自动安装插件，也不添加绕过审批或沙箱的参数。
-完整交互与验证边界见 [客户端说明](client/macos/README.md)。
+Paper 是唯一内置默认主题；编辑 `~/.option-berth/config/theme.json`、`settings.json` 与 `keybindings.json`
+可调整语义颜色、字体、模块字号、独立面板宽度、会话默认值和快捷键；保存即热更新，错误编辑保留上次有效值。
+配置遵循 `BERTH_HOME`，不覆盖用户文件、不加载插件代码。见 [个性化配置](docs/client-configuration.md)
+及 [客户端说明](client/macos/README.md)。
 
 发布包内的 macOS App 带有匹配版本的引擎，但目前只有 **ad-hoc 签名，没有 Developer ID 或 Apple 公证**。
 下载后核对 SHA256SUMS；不要把它当成已公证安装包。使用终端不替代 `oberth down`，关闭会话不会自动停止项目服务。
