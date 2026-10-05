@@ -46,6 +46,7 @@ extension PersonalizationChecks {
         let tree = try JSONDecoder().decode(GitTree.self, from: Data(#"{"root":"/fixture/widths","branch":"feature/layout","staged":0,"unstaged":0,"untracked":0,"conflicts":0,"files":[]}"#.utf8))
         let serviceHost = NSHostingView(rootView: ServicesView(store: ServicesStore(fixture: [project]), group: project, ports: []))
         let gitHost = NSHostingView(rootView: CodeView(git: GitStore(overview: tree.overview, tree: tree), project: project))
+        serviceHost.sizingOptions = []; gitHost.sizingOptions = []
         for (pane, host) in [(ClientDetailPane.services, serviceHost as NSView), (.git, gitHost as NSView)] {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1060, height: 500),
                                   styleMask: [.titled, .resizable], backing: .buffered, defer: false)
@@ -57,15 +58,7 @@ extension PersonalizationChecks {
             let before = settings.detailWidth(for: pane)
             let other: ClientDetailPane = pane == .services ? .git : .services
             let otherWidth = settings.detailWidth(for: other)
-            let x = host.bounds.width - before - SplitHandle.hitWidth / 2
-            for (index, kind) in [NSEvent.EventType.leftMouseDown, .leftMouseDragged, .leftMouseUp].enumerated() {
-                guard let event = NSEvent.mouseEvent(with: kind, location: NSPoint(x: x + (index == 0 ? 0 : 24), y: 220),
-                    modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime + Double(index) * 0.02,
-                    windowNumber: window.windowNumber, context: nil, eventNumber: index + 1, clickCount: 1, pressure: 1) else {
-                    throw Failure(message: "detail drag event unavailable")
-                }
-                NSApp.postEvent(event, atStart: false)
-            }
+            await drag(window, x: host.bounds.width - before - SplitHandle.hitWidth / 2, delta: 24)
             try await eventually("rightward divider drag did not shrink its trailing pane") {
                 settings.detailWidth(for: pane) < before - 10
             }
@@ -77,19 +70,32 @@ extension PersonalizationChecks {
             host.layoutSubtreeIfNeeded()
             try expect(settings.detailWidth(for: pane) == preferred, "viewport resize overwrote preferred width")
             try capture(host, at: root.appendingPathComponent("personalization-" + pane.rawValue + "-narrow-native.png"))
-            // A fixed clamped range must not write a different preference merely
-            // because the user touched a divider that has no room to move.
-            await drag(window, x: host.bounds.width - 253 - SplitHandle.hitWidth / 2, delta: 16)
-            try expect(settings.detailWidth(for: pane) == preferred, "fixed-range drag rewrote preferred width")
-            window.setContentSize(NSSize(width: 707, height: 460))
-            try await Task.sleep(nanoseconds: 30_000_000)
-            host.layoutSubtreeIfNeeded()
-            // At 707 points the presented trailing pane is 360 points; the
-            // preference remains wider. A small drag must start at 360, not at
-            // the invisible preferred width, and move immediately to 348.
-            await drag(window, x: host.bounds.width - 360 - SplitHandle.hitWidth / 2, delta: 12)
-            try await eventually("clamped pane has an initial dead drag zone") {
-                (344...352).contains(settings.detailWidth(for: pane))
+            if pane == .git {
+                // The Git review stays usable at narrow widths by switching to a
+                // vertical native split; horizontal preferences must remain intact.
+                func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+                try expect(descendants(host).compactMap { $0 as? NSSplitView }.contains { !$0.isVertical },
+                           "narrow Git review lost its native vertical split")
+                settings.resizeDetail(480, for: .git)
+                window.setContentSize(NSSize(width: 747, height: 460))
+                try await Task.sleep(nanoseconds: 30_000_000)
+                host.layoutSubtreeIfNeeded()
+                // 747 - 340 leading - 7 divider = 400 displayed, not the 480
+                // preference. A 12-point rightward drag must immediately reach 388.
+                await drag(window, x: host.bounds.width - 400 - SplitHandle.hitWidth / 2, delta: 12)
+                try await eventually("clamped Git pane has an initial dead drag zone") {
+                    (384...392).contains(settings.detailWidth(for: .git))
+                }
+            } else {
+                await drag(window, x: host.bounds.width - 253 - SplitHandle.hitWidth / 2, delta: 16)
+                try expect(settings.detailWidth(for: pane) == preferred, "fixed-range drag rewrote preferred width")
+                window.setContentSize(NSSize(width: 707, height: 460))
+                try await Task.sleep(nanoseconds: 30_000_000)
+                host.layoutSubtreeIfNeeded()
+                await drag(window, x: host.bounds.width - 360 - SplitHandle.hitWidth / 2, delta: 12)
+                try await eventually("clamped pane has an initial dead drag zone") {
+                    (344...352).contains(settings.detailWidth(for: pane))
+                }
             }
             try expect(settings.detailWidth(for: other) == otherWidth, "clamped drag changed another module")
         }

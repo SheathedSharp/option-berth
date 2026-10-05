@@ -18,6 +18,7 @@ let package = Package(
         .target(name: "BerthAgent", path: "AgentSupport"),
         .target(name: "BerthClient", dependencies: ["BerthTerminal", "BerthAgent"], path: "Sources"),
         .executableTarget(name: "CommandChecks", dependencies: ["BerthClient", "BerthTerminal"], path: "CommandChecks"),
+        .executableTarget(name: "GitReviewChecks", dependencies: ["BerthClient"], path: "GitReviewTests"),
         .executableTarget(name: "PersonalizationChecks", dependencies: ["BerthClient", "BerthTerminal"], path: "PersonalizationChecks"),
         .executableTarget(name: "SiteCapture", dependencies: ["BerthClient", "BerthTerminal"], path: "SiteCapture"),
         .executableTarget(name: "OptionBerth", dependencies: ["BerthClient"], path: "Application"),
