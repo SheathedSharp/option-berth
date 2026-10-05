@@ -17,6 +17,7 @@ let package = Package(
         .target(name: "BerthTerminal", dependencies: ["SwiftTerm"], path: "TerminalSupport"),
         .target(name: "BerthAgent", path: "AgentSupport"),
         .target(name: "BerthClient", dependencies: ["BerthTerminal", "BerthAgent"], path: "Sources"),
+        .executableTarget(name: "SiteCapture", dependencies: ["BerthClient", "BerthTerminal"], path: "SiteCapture"),
         .executableTarget(name: "OptionBerth", dependencies: ["BerthClient"], path: "Application"),
         .executableTarget(name: "TerminalChecks", dependencies: ["BerthTerminal"], path: "TerminalTests"),
         .executableTarget(name: "ClientChecks", dependencies: ["BerthClient", "BerthTerminal", "BerthAgent"], path: "ClientTests"),
