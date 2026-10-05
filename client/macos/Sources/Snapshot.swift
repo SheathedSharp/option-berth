@@ -33,10 +33,13 @@ enum Snapshot {
             return 1
         }
 
-        for step in GettingStartedStep.allCases {
-            let code = write(GettingStartedGuide(initialStep: step, frozen: true, onClose: {}, onConnect: {}),
-                             to: url.appendingPathComponent("12-guide-\(step.rawValue + 1).png").path,
-                             width: 640, height: 510)
+        for target in TourTarget.allCases where target != .facts {
+            let navigation = ViewState()
+            navigation.showingGuide = true; navigation.guideTarget = target
+            let board = BoardView(store: BoardStore(fixture: []), services: ServicesStore(fixture: []),
+                                  scrolls: false, views: navigation)
+            let code = write(board, to: url.appendingPathComponent("12-guide-\(target.rawValue + 1).png").path,
+                             width: width, height: height)
             if code != 0 { return code }
         }
 

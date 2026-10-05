@@ -11,6 +11,7 @@ final class ViewState: ObservableObject {
     @Published var showingRecovery = false
     @Published var showingUpdates = false
     @Published var showingGuide = false
+    @Published var guideTarget: TourTarget = .connect
 
     init(scope: Scope = .services("")) {
         self.scope = scope

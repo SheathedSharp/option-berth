@@ -109,7 +109,7 @@ struct OptionBerthApp: App {
 
     var body: some Scene {
         Window("option-berth", id: "workspace") {
-            BoardView(store: store, services: services, git: git, views: views, settings: settings, performAction: perform)
+            BoardView(store: store, services: services, git: git, automaticGuide: true, views: views, settings: settings, performAction: perform)
                 .environmentObject(settings)
                 .frame(minWidth: 760, minHeight: 520)
                 .onAppear {
@@ -131,7 +131,7 @@ struct OptionBerthApp: App {
             CommandGroup(replacing: .printItem) {}
             CommandGroup(replacing: .sidebar) {}
             CommandGroup(after: .appInfo) {
-                Button("检查更新… / Check for updates…") { views.showingUpdates = true }
+                Button("检查更新… / Check for updates…") { if !views.showingGuide { views.showingUpdates = true } }
             }
             CommandGroup(replacing: .appSettings) {
                 Button(WorkspaceAction.settings.title) { perform(.settings) }
@@ -141,7 +141,7 @@ struct OptionBerthApp: App {
                 Button("使用指引… / Getting started…") { views.showingGuide = true }
             }
             CommandMenu(MenuBar.viewTitle) {
-                Button("命令面板… / Command panel…") { views.showingActions = true }
+                Button("命令面板… / Command panel…") { if !views.showingGuide { views.showingActions = true } }
                     .keyboardShortcut("p", modifiers: [.command, .shift])
                 Divider()
                 ForEach(WorkspaceAction.allCases.filter { $0 != .settings }) { action in
@@ -153,6 +153,7 @@ struct OptionBerthApp: App {
     }
 
     private func perform(_ action: WorkspaceAction) {
+        guard !views.showingGuide else { return }
         switch action {
         case .services: views.show(.services, projects: projectNames)
         case .code: views.show(.code, projects: projectNames)

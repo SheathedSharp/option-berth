@@ -90,7 +90,9 @@ import BerthTerminal
         try capture(board, to: output.appendingPathComponent("terminal.png"), size: NSSize(width: 1240, height: 800))
         settings.theme = .paper
         try capture(WorktreeHistorySheet(root: root, sessions: registry), to: output.appendingPathComponent("history.png"), size: NSSize(width: 650, height: 480))
-        try capture(GettingStartedGuide(initialStep: .worktree, onClose: {}, onConnect: {}), to: output.appendingPathComponent("guide.png"), size: NSSize(width: 600, height: 470))
+        views.scope = .services(project.name); views.showingGuide = true; views.guideTarget = .facts
+        try capture(board, to: output.appendingPathComponent("guide.png"), size: NSSize(width: 1240, height: 800))
+        views.showingGuide = false
         print("Native capture complete; owned sessions are being reclaimed.")
     }
 }

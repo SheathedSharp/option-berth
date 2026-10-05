@@ -22,6 +22,15 @@ enum ClientChecks {
         require(condition(), message)
     }
     static func main() throws {
+        // A separate-process check, not another UserDefaults object sharing the
+        // parent's in-memory cache. This mode exists only in the test binary.
+        if CommandLine.arguments.count == 4 && CommandLine.arguments[1] == "--tour-eligibility" {
+            let defaults = UserDefaults(suiteName: CommandLine.arguments[2])!
+            let result = TourFirstUse.claim(defaults: defaults, legacyUser: false)
+            require(result == (CommandLine.arguments[3] == "first"), "cross-process first-use eligibility regressed")
+            require(defaults.synchronize(), "isolated preference persistence failed")
+            return
+        }
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory); app.finishLaunching()
         try shortcutChecks()
