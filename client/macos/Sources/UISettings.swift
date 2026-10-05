@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// Paper defaults + explicit user files. Existing GUI preferences are a legacy
-/// fallback; user-file fields take precedence and are never overwritten by UI.
+/// Paper defaults + explicit user files. Files take precedence and are never
+/// overwritten by GUI controls. Window navigation is not a second runtime model.
 final class UISettings: ObservableObject {
     static let shared: UISettings = {
         let args = CommandLine.arguments
@@ -10,8 +10,7 @@ final class UISettings: ObservableObject {
             if args.contains("--render-theme") {
                 fputs("Use --render-theme-file instead of a retired built-in theme name\n", stderr); exit(2)
             }
-            let isolated = UserDefaults(suiteName: "option-berth-render-" + UUID().uuidString)!
-            let value = UISettings(defaults: isolated)
+            let value = UISettings(defaults: UserDefaults(suiteName: "option-berth-render-" + UUID().uuidString)!)
             if let index = args.firstIndex(of: "--render-theme-file") {
                 guard index + 1 < args.count else { fputs("Missing --render-theme-file argument\n", stderr); exit(2) }
                 do {
@@ -19,10 +18,7 @@ final class UISettings: ObservableObject {
                         throw ClientConfigurationError.invalid("render theme does not exist")
                     }
                     value.previewTheme = try ClientConfigurationIO.decode(ThemeConfiguration.self, data: data)
-                } catch {
-                    // An explicit fixture must not silently render a different theme.
-                    fputs("Invalid --render-theme-file\n", stderr); exit(2)
-                }
+                } catch { fputs("Invalid --render-theme-file\n", stderr); exit(2) }
             }
             return value
         }
@@ -32,13 +28,15 @@ final class UISettings: ObservableObject {
     @Published private(set) var configuration = ClientConfigurationSnapshot()
     @Published var previewTheme: ThemeConfiguration?
     @Published private var legacy = ThemeConfiguration()
+    @Published private var sidebarOverride: Double?
+    @Published private var legacyShellIntegration = false
+    private var legacySidebarWidth: Double = 172
     private let defaults: UserDefaults
     private var monitor: ClientConfigurationMonitor?
     let configurationDirectory: URL?
 
     init(defaults: UserDefaults = .standard, configurationDirectory: URL? = nil) {
-        self.defaults = defaults
-        self.configurationDirectory = configurationDirectory
+        self.defaults = defaults; self.configurationDirectory = configurationDirectory
         legacy.interfaceFont = defaults.string(forKey: "ui.interfaceFont")
         legacy.dataFont = defaults.string(forKey: "ui.dataFont")
         func scale(_ key: String) -> Double? {
@@ -52,13 +50,40 @@ final class UISettings: ObservableObject {
         if let raw = defaults.string(forKey: "ui.accent"), let value = Self.parseHex(raw) {
             legacy.colors = ["accent": String(format: "#%06X", value)]
         }
-        // Retired theme names deliberately do not select another built-in palette.
+        if let width = defaults.object(forKey: "railWidth") as? Double, width.isFinite {
+            legacySidebarWidth = min(max(width, 140), 320)
+        }
+        legacyShellIntegration = defaults.bool(forKey: "terminal.shellIntegration.v1")
         if let configurationDirectory {
-            let observer = ClientConfigurationMonitor(directory: configurationDirectory) { [weak self] in self?.configuration = $0 }
+            let observer = ClientConfigurationMonitor(directory: configurationDirectory) { [weak self] in self?.applyConfiguration($0) }
             configuration = observer.initial; monitor = observer
         }
     }
+    private func applyConfiguration(_ next: ClientConfigurationSnapshot) {
+        // A manual resize remains local until this field changes. Other config
+        // edits cannot move a divider under the user's pointer.
+        if next.preferences.sidebarWidth != configuration.preferences.sidebarWidth { sidebarOverride = nil }
+        configuration = next
+    }
     func reloadConfiguration() { monitor?.reload() }
+    var sidebarWidth: Double {
+        get { sidebarOverride ?? configuration.preferences.sidebarWidth ?? legacySidebarWidth }
+        set {
+            guard newValue.isFinite else { return }
+            let value = min(max(newValue, 140), 320)
+            if configuration.preferences.sidebarWidth == nil {
+                legacySidebarWidth = value; defaults.set(value, forKey: "railWidth")
+            }
+            sidebarOverride = value
+        }
+    }
+    var shellIntegration: Bool {
+        get { configuration.preferences.shellIntegration ?? legacyShellIntegration }
+        set {
+            guard configuration.preferences.shellIntegration == nil else { return }
+            legacyShellIntegration = newValue; defaults.set(newValue, forKey: "terminal.shellIntegration.v1")
+        }
+    }
     private var theme: ThemeConfiguration { previewTheme ?? configuration.theme }
     var themeFilePresent: Bool { configuration.themeFilePresent }
     var colorScheme: ColorScheme { theme.appearance == "dark" ? .dark : .light }
@@ -113,14 +138,11 @@ final class UISettings: ObservableObject {
     func resetAccent() { legacy.colors = nil; defaults.removeObject(forKey: "ui.accent") }
     func reset() {
         legacy = ThemeConfiguration()
-        for key in ["ui.theme", "ui.interfaceFont", "ui.dataFont", "ui.interfaceScale", "ui.dataScale", "ui.logScale", "ui.accent"] {
-            defaults.removeObject(forKey: key)
-        }
+        for key in ["ui.theme", "ui.interfaceFont", "ui.dataFont", "ui.interfaceScale", "ui.dataScale", "ui.logScale", "ui.accent"] { defaults.removeObject(forKey: key) }
     }
     var availableFontFamilies: [String] {
         _ = FontBook.monoAvailable
-        return ["__system__", "Monaspace Neon"] + NSFontManager.shared.availableFontFamilies
-            .filter { !$0.hasPrefix(".") && $0 != "Monaspace Neon" }.sorted()
+        return ["__system__", "Monaspace Neon"] + NSFontManager.shared.availableFontFamilies.filter { !$0.hasPrefix(".") && $0 != "Monaspace Neon" }.sorted()
     }
     static func parseHex(_ text: String) -> UInt32? {
         let raw = text.trimmingCharacters(in: .whitespacesAndNewlines)

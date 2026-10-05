@@ -47,6 +47,8 @@ public final class TerminalSessions: ObservableObject {
     public static let shared = TerminalSessions()
     @Published public private(set) var sessions: [TerminalSession] = []
     private var workspaces: [String: ConsoleWorkspace] = [:]
+    /// Default for newly created UI workspaces only; never changes an existing selection.
+    public var defaultProviderID = "codex"
     public var activeCount: Int { sessions.filter(\.isActive).count }
     public init() {}
 
@@ -58,6 +60,7 @@ public final class TerminalSessions: ObservableObject {
         let key = canonical(root)
         if let value = workspaces[key] { return value }
         let value = ConsoleWorkspace()
+        value.providerID = defaultProviderID
         workspaces[key] = value
         return value
     }
