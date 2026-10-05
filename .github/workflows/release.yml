@@ -6,6 +6,8 @@ on:
       - 'scripts/release-*.sh'
       - '.github/workflows/release.yml'
       - 'magefiles/**'
+  # Explicit main-only verification has no packaging or publication side effect.
+  workflow_dispatch:
   push:
     tags: ['v*']
 permissions:
@@ -25,13 +27,18 @@ jobs:
           fetch-depth: 0
       - name: Validate release policy with disposable repositories
         run: python3 -m unittest discover -s scripts -p '*release*_test.py'
+      - name: Require main for explicit preflight
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          SOURCE_REF: ${{ github.ref }}
+        run: test "$SOURCE_REF" = refs/heads/main
       - name: Validate immutable version input
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           TAG: ${{ github.ref_name }}
         run: python3 scripts/release.py --validate-tag "$TAG"
   verify:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     needs: policy
     strategy:
       fail-fast: false
@@ -55,7 +62,7 @@ jobs:
           GOTOOLCHAIN: local
         run: python3 scripts/release.py --verify-only
   windows:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     needs: policy
     uses: ./.github/workflows/windows.yml
   package:
