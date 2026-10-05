@@ -230,7 +230,7 @@ services/Git/terminal. Standard native editing and window actions remain availab
 不写磁盘、不上传，也不把命令块用于服务归属或权限判断。
 
 标记用于隔离正常的远端提示和其他会话，不是对同一 shell 内恶意程序的安全隔离。
-Bash/Fish、复杂提示插件、跨会话统一历史与块级输出定位仍需后续实现/验收。
+同一 worktree 的跨会话搜索从“搜索历史”打开；Bash/Fish、复杂提示插件与块级输出定位仍需后续实现/验收。
 `swift run --package-path client/macos --force-resolved-versions WorkspaceChecks` 覆盖分片
 OSC、UTF-8、历史/帧上限、未知退出码以及隔离的真实 zsh PTY 起止与原配置保留。
 
@@ -325,3 +325,18 @@ TipKit 配置失败时，常驻帮助入口仍可用；冻结渲染不会配置�
 **English.** Open Getting started from the empty workspace, More or Help menu. TipKit uses local
 metadata only. The replayable guide remains available when TipKit is unavailable or dismissed.
 Reading never installs tools or validates readiness; Connect explicitly hands off to the existing picker.
+
+## 跨会话历史的设计边界
+
+[Warp 命令历史](https://docs.warp.dev/terminal/entry/command-history/) 提供搜索交互参考，
+本项目不复制实现、不同步云端、不扫描 shell 历史文件。跨会话搜索由 #48 跟踪：
+数据只投影同一 worktree 的已有终端命令块，必须由用户事先启用；Agent 会话不参加。
+只复制命令，不执行或向原生输入框模拟粘贴。未知退出码不能显示成功。
+
+每会话最多256块、整个应用最多16个会话；退出的会话在被关闭前仍有内存历史，
+关闭会话或退出应用则不再保留。清空必须确认，且不能清理其他 worktree。
+这不等于输出历史恢复、Bash/Fish支持或完整shell交互验收。
+
+**English.** Worktree history is a read-only projection of opted-in terminal command blocks,
+not a second history database. It excludes other worktrees and agents. Copy is never execute.
+Closing a session or quitting the app discards its in-memory history.
