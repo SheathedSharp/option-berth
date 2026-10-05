@@ -44,29 +44,43 @@ extension PersonalizationChecks {
 
         let project = try JSONDecoder().decode(BerthGroup.self, from: Data(#"{"name":"width-fixture","root_dir":"/fixture/widths","services":[],"members":[]}"#.utf8))
         let tree = try JSONDecoder().decode(GitTree.self, from: Data(#"{"root":"/fixture/widths","branch":"feature/layout","staged":0,"unstaged":0,"untracked":0,"conflicts":0,"files":[]}"#.utf8))
-        let serviceHost = NSHostingView(rootView: ServicesView(store: ServicesStore(fixture: [project]), group: project, ports: []))
-        let gitHost = NSHostingView(rootView: CodeView(git: GitStore(overview: tree.overview, tree: tree), project: project))
+        var serviceRendered: CGFloat = 0, gitRendered: CGFloat = 0
+        func measured<V: View>(_ view: V, changed: @escaping (CGFloat) -> Void) -> some View {
+            view.background { GeometryReader { geometry in
+                Color.clear.preference(key: NativeDetailFixtureWidth.self, value: geometry.size.width)
+            } }.onPreferenceChange(NativeDetailFixtureWidth.self, perform: changed)
+        }
+        let serviceHost = NSHostingView(rootView: measured(ServicesView(store: ServicesStore(fixture: [project]), group: project, ports: [])) { serviceRendered = $0 })
+        let gitHost = NSHostingView(rootView: measured(CodeView(git: GitStore(overview: tree.overview, tree: tree), project: project)) { gitRendered = $0 })
         serviceHost.sizingOptions = []; gitHost.sizingOptions = []
         for (pane, host) in [(ClientDetailPane.services, serviceHost as NSView), (.git, gitHost as NSView)] {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1060, height: 500),
                                   styleMask: [.titled, .resizable], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
             window.contentView = host; window.makeKeyAndOrderFront(nil)
-            defer { window.contentView = nil; window.close() }
+            defer {
+                try? capture(host, at: root.appendingPathComponent("personalization-" + pane.rawValue + "-final-native.png"))
+                window.contentView = nil; window.close()
+            }
             try await eventually("detail test window not key") { window.isKeyWindow }
             host.layoutSubtreeIfNeeded()
+            try await eventually("detail fixture layout was not committed") {
+                abs((pane == .services ? serviceRendered : gitRendered) - 1060) < 1
+            }
             let before = settings.detailWidth(for: pane)
             let other: ClientDetailPane = pane == .services ? .git : .services
             let otherWidth = settings.detailWidth(for: other)
             await drag(window, x: host.bounds.width - before - SplitHandle.hitWidth / 2, delta: 24)
-            try await eventually("rightward divider drag did not shrink its trailing pane") {
+            try await eventually("rightward " + pane.rawValue + " divider drag did not shrink its trailing pane (host " + String(describing: host.bounds) + ", before " + String(before) + ")") {
                 settings.detailWidth(for: pane) < before - 10
             }
             try expect(settings.detailWidth(for: other) == otherWidth, "native drag changed the other detail module")
             try capture(host, at: root.appendingPathComponent("personalization-" + pane.rawValue + "-detail-native.png"))
             let preferred = settings.detailWidth(for: pane)
             window.setContentSize(NSSize(width: 600, height: 460))
-            try await Task.sleep(nanoseconds: 30_000_000)
+            try await eventually("narrow detail geometry was not committed") {
+                abs((pane == .services ? serviceRendered : gitRendered) - 600) < 1
+            }
             host.layoutSubtreeIfNeeded()
             try expect(settings.detailWidth(for: pane) == preferred, "viewport resize overwrote preferred width")
             try capture(host, at: root.appendingPathComponent("personalization-" + pane.rawValue + "-narrow-native.png"))
@@ -78,7 +92,7 @@ extension PersonalizationChecks {
                            "narrow Git review lost its native vertical split")
                 settings.resizeDetail(480, for: .git)
                 window.setContentSize(NSSize(width: 747, height: 460))
-                try await Task.sleep(nanoseconds: 30_000_000)
+                try await eventually("clamped Git geometry was not committed") { abs(gitRendered - 747) < 1 }
                 host.layoutSubtreeIfNeeded()
                 // 747 - 340 leading - 7 divider = 400 displayed, not the 480
                 // preference. A 12-point rightward drag must immediately reach 388.
@@ -90,7 +104,7 @@ extension PersonalizationChecks {
                 await drag(window, x: host.bounds.width - 253 - SplitHandle.hitWidth / 2, delta: 16)
                 try expect(settings.detailWidth(for: pane) == preferred, "fixed-range drag rewrote preferred width")
                 window.setContentSize(NSSize(width: 707, height: 460))
-                try await Task.sleep(nanoseconds: 30_000_000)
+                try await eventually("clamped service geometry was not committed") { abs(serviceRendered - 707) < 1 }
                 host.layoutSubtreeIfNeeded()
                 await drag(window, x: host.bounds.width - 360 - SplitHandle.hitWidth / 2, delta: 12)
                 try await eventually("clamped pane has an initial dead drag zone") {
@@ -101,13 +115,21 @@ extension PersonalizationChecks {
         }
     }
     private static func drag(_ window: NSWindow, x: CGFloat, delta: CGFloat) async {
+        // Target the test-owned NSWindow with window-local coordinates. On a
+        // scaled/multi-display Mac, reposting a synthetic NSEvent through NSApp
+        // can reproject it using a different screen; it then misses the pane.
         for (index, kind) in [NSEvent.EventType.leftMouseDown, .leftMouseDragged, .leftMouseUp].enumerated() {
             let event = NSEvent.mouseEvent(with: kind,
                 location: NSPoint(x: x + (index == 0 ? 0 : delta), y: 220), modifierFlags: [],
                 timestamp: ProcessInfo.processInfo.systemUptime + Double(index) * 0.02,
                 windowNumber: window.windowNumber, context: nil, eventNumber: index + 1, clickCount: 1, pressure: 1)!
-            NSApp.postEvent(event, atStart: false)
+            window.sendEvent(event)
         }
         try? await Task.sleep(nanoseconds: 30_000_000)
     }
+}
+
+private struct NativeDetailFixtureWidth: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }

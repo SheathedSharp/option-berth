@@ -25,7 +25,9 @@ import BerthTerminal
             fputs("PersonalizationChecks requires an explicitly isolated HOME and BERTH_HOME\n", stderr); exit(2)
         }
         let app = NSApplication.shared
-        app.setActivationPolicy(.accessory); app.finishLaunching()
+        // A real application activation policy is required for deterministic
+        // key-window ownership on the user's newer macOS as well as CI.
+        app.setActivationPolicy(.regular); app.finishLaunching()
         Task { @MainActor in
             do { try await run(home: home, berth: berth); print("PersonalizationChecks: \(checks) checks passed"); exit(0) }
             catch { fputs("PersonalizationChecks failed: \(error.localizedDescription)\n", stderr); exit(1) }
@@ -38,6 +40,12 @@ import BerthTerminal
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let file = directory.appendingPathComponent("settings.json")
         let theme = directory.appendingPathComponent("theme.json")
+        // This executable owns its preference domain. Establish the complete
+        // legacy fixture before UISettings is initialized; macOS may retain
+        // this test process's prior preferences across repeated invocations.
+        for pane in [ClientDetailPane.services, .git] {
+            UserDefaults.standard.removeObject(forKey: pane.storageKey)
+        }
         UserDefaults.standard.set(188.0, forKey: "railWidth")
         UserDefaults.standard.set(412.0, forKey: "detailWidth")
         let settings = UISettings.shared
