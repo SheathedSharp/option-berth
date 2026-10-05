@@ -22,8 +22,12 @@ struct DaemonLaunchTests {
         check("canonical CLI on custom PATH", ["PATH": custom], [custom + "/oberth"], custom + "/oberth")
         check("override wins", ["PATH": custom, "BERTH_BIN": "/fixture/pinned"],
               ["/fixture/pinned", custom + "/oberth"], "/fixture/pinned")
-        check("missing override falls back", ["PATH": custom, "BERTH_BIN": "/missing"],
-              [custom + "/oberth"], custom + "/oberth")
+        check("missing override fails closed", ["PATH": custom, "BERTH_BIN": "/missing"],
+              [custom + "/oberth"], nil)
+        check("relative override cannot select another PATH installation", ["PATH": custom, "BERTH_BIN": "oberth"],
+              ["oberth", custom + "/oberth"], nil)
+        check("relative PATH is not an implicit current-directory lookup", ["PATH": "tools"],
+              ["tools/oberth"], nil)
         check("user installation wins", ["PATH": custom],
               [home + "/.local/bin/oberth", custom + "/oberth"], home + "/.local/bin/oberth")
         check("PATH ordering", ["PATH": "/first:" + custom],

@@ -38,10 +38,12 @@ enum DaemonLaunch {
         executableURL: URL? = Bundle.main.executableURL,
         isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
     ) -> String? {
-        var candidates: [String] = []
+        // A broken explicit pin must not silently select an older installation.
+        // Absolute paths also give posix_spawn and the env launcher one identity.
         if let override = environment["BERTH_BIN"], !override.isEmpty {
-            candidates.append(override)
+            return override.hasPrefix("/") && !override.utf8.contains(0) && isExecutable(override) ? override : nil
         }
+        var candidates: [String] = []
         if let executable = executableURL?.resolvingSymlinksInPath(),
            executable.deletingLastPathComponent().lastPathComponent == "MacOS",
            executable.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent == "Contents" {
@@ -56,7 +58,7 @@ enum DaemonLaunch {
         for entry in (environment["PATH"] ?? "").split(separator: ":") {
             candidates.append("\(entry)/oberth")
         }
-        return candidates.first(where: isExecutable)
+        return candidates.first { $0.hasPrefix("/") && !$0.utf8.contains(0) && isExecutable($0) }
     }
 
     // Multiple windows can report the same unavailable endpoint at once. A
