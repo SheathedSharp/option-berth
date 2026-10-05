@@ -34,6 +34,7 @@ final class TerminalWindows: NSObject, ObservableObject, NSWindowDelegate {
     }
     private struct DetachedTerminalContent: View {
         @ObservedObject var session: TerminalSession
+        @ObservedObject private var settings = UISettings.shared
         var body: some View {
             VStack(spacing: 0) {
                 HStack {
@@ -44,7 +45,8 @@ final class TerminalWindows: NSObject, ObservableObject, NSWindowDelegate {
                 }.padding(10)
                 Hairline()
                 TerminalSurface(session: session, detached: true)
-            }.background(Ink.canvas)
+            }.background(Ink.canvas).preferredColorScheme(settings.colorScheme)
+                .modifier(ClientMotionPreferences(settings: settings))
         }
     }
 }
@@ -59,7 +61,8 @@ final class TerminalFocusIntent {
     func fulfill(in host: TerminalHost) {
         guard !consumed, let session = host.session, session.id == sessionID,
               session.terminal.superview === host, let window = host.window, window.isKeyWindow,
-              (window.firstResponder as? NSTextView)?.hasMarkedText() != true else { return }
+              window.attachedSheet == nil, window.sheetParent == nil,
+              (window.firstResponder as? NSTextInputClient)?.hasMarkedText() != true else { return }
         if window.makeFirstResponder(session.terminal) { consumed = true }
     }
 }

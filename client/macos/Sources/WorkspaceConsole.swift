@@ -13,7 +13,6 @@ struct WorkspaceConsole: View {
     @StateObject private var launcher = AgentLaunchController()
     @State private var composing = false
     @State private var history = false
-    @State private var integrationEnabled = false
     @State private var problem: String?
     @State private var focusIntent: TerminalFocusIntent?
     init(root: String, frozen: Bool = false, initialAgent: Bool = false) {
@@ -69,10 +68,10 @@ struct WorkspaceConsole: View {
                 Spacer()
                 Text("历史"); Image(systemName: "ellipsis")
             } else {
-                Button(action: newShell) { Label("Shell", systemImage: "plus") }.help("在当前 worktree 新建原生 Shell")
-                    .accessibilityIdentifier("console.newShell")
-                Button(action: beginAgent) { Label("Agent", systemImage: "plus") }.help("展开新 Agent 会话输入，不执行草稿")
-                    .accessibilityIdentifier("console.newAgent")
+                ConsoleToolbarAction(title: "Shell", identifier: "console.newShell", symbol: "plus", perform: newShell)
+                    .fixedSize(horizontal: true, vertical: false).frame(height: 24).help("在当前 worktree 新建原生 Shell")
+                ConsoleToolbarAction(title: "Agent", identifier: "console.newAgent", symbol: "plus", perform: beginAgent)
+                    .fixedSize(horizontal: true, vertical: false).frame(height: 24).help("展开新 Agent 会话输入，不执行草稿")
                 if launcher.loading { ProgressView().controlSize(.small) }
                 Spacer(minLength: 0)
                 ConsoleToolbarAction(title: "历史", identifier: "terminal.history") { history = true }
@@ -80,8 +79,9 @@ struct WorkspaceConsole: View {
                     .help("仅搜索当前 worktree 的内存命令历史")
                 Menu {
                     if launcher.loading { Button("取消 Agent 启动计划") { launcher.cancel() } }
-                    Toggle("新 Shell 启用命令块", isOn: $integrationEnabled)
-                        .disabled(URL(fileURLWithPath: TerminalSession.shell).lastPathComponent != "zsh")
+                    Toggle("新 Shell 启用命令块", isOn: $settings.shellIntegration)
+                        .disabled(settings.configuration.preferences.shellIntegration != nil || URL(fileURLWithPath: TerminalSession.shell).lastPathComponent != "zsh")
+                        .help("settings.json 指定此项时请编辑文件；只影响新建 zsh，不重启已运行的会话")
                     if let selected {
                         Button("聚焦当前会话") { activate(selected) }
                         Button("在独立窗口显示") { TerminalWindows.shared.detach(selected) }
@@ -108,7 +108,7 @@ struct WorkspaceConsole: View {
     }
     private var frozenStrip: some View {
         HStack(spacing: 8) {
-            Text("⌘ Shell 1").padding(7).background(composing ? Ink.surface : Ink.accentSoft)
+            Text("›_ Shell 1").padding(7).background(composing ? Ink.surface : Ink.accentSoft)
             Text("◇ Codex 1").padding(7).background(composing ? Ink.accentSoft : Ink.surface)
             Spacer()
         }.font(Face.mono(10)).padding(.horizontal, 10).padding(.vertical, 6)
@@ -130,7 +130,7 @@ struct WorkspaceConsole: View {
         do {
             let number = scoped.filter { $0.kind == "terminal" }.count + 1
             let session = try sessions.add(worktree: root, title: "Shell \(number)", executable: TerminalSession.shell,
-                                           arguments: ["-i"], shellIntegration: integrationEnabled)
+                                           arguments: ["-i"], shellIntegration: settings.shellIntegration && URL(fileURLWithPath: TerminalSession.shell).lastPathComponent == "zsh")
             problem = nil; activate(session)
         } catch { problem = error.localizedDescription }
     }
@@ -169,10 +169,17 @@ private final class ConsoleSessionButton: NSButton {
 private struct ConsoleToolbarAction: NSViewRepresentable {
     let title: String
     let identifier: String
+    var symbol: String? = nil
     let perform: () -> Void
     func makeNSView(context: Context) -> ConsoleSessionButton { ConsoleSessionButton() }
     func updateNSView(_ button: ConsoleSessionButton, context: Context) {
-        button.title = title; button.font = NSFont.systemFont(ofSize: 11)
+        let settings = UISettings.shared
+        let size = 11 * settings.interfaceScale
+        button.title = title
+        button.font = settings.interfaceFontName == "__system__" ? NSFont.systemFont(ofSize: size)
+            : (NSFont(name: settings.interfaceFontName, size: size) ?? NSFont.systemFont(ofSize: size))
+        button.image = symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
+        button.imagePosition = symbol == nil ? .noImage : .imageLeading
         button.contentTintColor = NSColor(Ink.inkMuted)
         button.setAccessibilityIdentifier(identifier); button.activate = perform
     }

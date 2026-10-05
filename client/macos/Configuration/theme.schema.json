@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Option Berth theme v1",
+  "description": "Paper defaults plus local overrides. Maximum file size: 64 KiB. Additional runtime byte/control-character limits apply to fonts.",
+  "type": "object",
+  "required": [
+    "schemaVersion"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "description": "Editor-only metadata; never fetched or executed by the client. Runtime limit: 2048 UTF-8 bytes, no control/format characters.",
+      "not": {
+        "type": "string",
+        "pattern": "[\\u0000-\\u001F\\u007F-\\u009F]"
+      }
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "appearance": {
+      "enum": [
+        "light",
+        "dark",
+        null
+      ]
+    },
+    "colors": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "canvas": { "$ref": "#/$defs/color" },
+        "surface": { "$ref": "#/$defs/color" },
+        "sunken": { "$ref": "#/$defs/color" },
+        "ink": { "$ref": "#/$defs/color" },
+        "inkMuted": { "$ref": "#/$defs/color" },
+        "inkFaint": { "$ref": "#/$defs/color" },
+        "dormant": { "$ref": "#/$defs/color" },
+        "line": { "$ref": "#/$defs/color" },
+        "lineStrong": { "$ref": "#/$defs/color" },
+        "accent": { "$ref": "#/$defs/color" },
+        "accentSoft": { "$ref": "#/$defs/color" },
+        "live": { "$ref": "#/$defs/color" },
+        "diff.added": { "$ref": "#/$defs/color" },
+        "diff.addedBackground": { "$ref": "#/$defs/color" },
+        "diff.removed": { "$ref": "#/$defs/color" },
+        "diff.removedBackground": { "$ref": "#/$defs/color" },
+        "diff.changed": { "$ref": "#/$defs/color" },
+        "diff.changedBackground": { "$ref": "#/$defs/color" },
+        "terminal.background": { "$ref": "#/$defs/color" },
+        "terminal.foreground": { "$ref": "#/$defs/color" }
+      }
+    },
+    "interfaceFont": { "$ref": "#/$defs/font" },
+    "dataFont": { "$ref": "#/$defs/font" },
+    "interfaceScale": { "type": ["number", "null"], "minimum": 0.75, "maximum": 2 },
+    "dataScale": { "type": ["number", "null"], "minimum": 0.75, "maximum": 2 },
+    "logScale": { "type": ["number", "null"], "minimum": 0.75, "maximum": 2 }
+  },
+  "$defs": {
+    "color": {
+      "type": "string",
+      "minLength": 7,
+      "maxLength": 7,
+      "pattern": "^#[0-9a-fA-F]{6}$"
+    },
+    "font": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Installed font family or __system__. Additionally limited to 128 UTF-8 bytes and no Unicode control/format characters at runtime.",
+      "not": { "type": "string", "pattern": "[\\u0000-\\u001F\\u007F-\\u009F]" }
+    }
+  }
+}

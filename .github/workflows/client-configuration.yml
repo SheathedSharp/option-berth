@@ -1,0 +1,44 @@
+name: Client configuration verification
+on:
+  pull_request:
+    paths: ['client/macos/**', '.github/workflows/client-configuration.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: client-configuration-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  configuration:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Verify bounded configuration and last-good reloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/configuration-evidence"
+          swiftc -swift-version 5 client/macos/Sources/ClientConfiguration.swift client/macos/Tests/ClientConfigurationTests.swift -o "$RUNNER_TEMP/configuration-checks"
+          "$RUNNER_TEMP/configuration-checks" | tee "$RUNNER_TEMP/configuration-evidence/checks.txt"
+      - name: Verify native directory and file event reloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          swiftc -swift-version 5 client/macos/Sources/ClientConfiguration.swift client/macos/Sources/ClientConfigurationMonitor.swift client/macos/Tests/ClientConfigurationWatchTests.swift -o "$RUNNER_TEMP/configuration-watch-checks"
+          "$RUNNER_TEMP/configuration-watch-checks" | tee "$RUNNER_TEMP/configuration-evidence/watch-checks.txt"
+      - name: Record exact test input
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/configuration-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/configuration-evidence/source-commit.txt"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: client-configuration-${{ github.run_id }}
+          path: ${{ runner.temp }}/configuration-evidence
+          retention-days: 3
+          if-no-files-found: error

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Option Berth keybindings v1",
+  "description": "Structural contract only. The command catalogue additionally rejects unknown commands, reserved native keys and conflicts with the effective defaults. Maximum file size: 64 KiB.",
+  "type": "object",
+  "required": ["schemaVersion"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "description": "Editor-only metadata; never fetched or executed by the client. Runtime limit: 2048 UTF-8 bytes, no control/format characters.",
+      "not": { "type": "string", "pattern": "[\\u0000-\\u001F\\u007F-\\u009F]" }
+    },
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "bindings": {
+      "type": ["object", "null"],
+      "maxProperties": 64,
+      "propertyNames": {
+        "minLength": 1,
+        "maxLength": 80,
+        "description": "Stable command ID; the catalogue is the final authority. Runtime byte limit: 80."
+      },
+      "additionalProperties": {
+        "type": "object",
+        "required": ["key"],
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "enum": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ",", ".", "/", ";", "[", "]", "=", "-"]
+          },
+          "shift": { "type": ["boolean", "null"] },
+          "option": { "type": ["boolean", "null"] },
+          "control": { "type": ["boolean", "null"] }
+        }
+      }
+    }
+  }
+}

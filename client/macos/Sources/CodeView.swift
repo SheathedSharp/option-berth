@@ -6,9 +6,9 @@ struct CodeView: View {
     let project: BerthGroup
     var scrolls = true
 
-    @AppStorage("detailWidth") private var detailWidth: Double = 380
-    private static let defaultDetailWidth: Double = 380
-    private static let detailRange: ClosedRange<Double> = 340...500
+    @ClientDetailWidth(.git) private var detailWidth: Double
+    private static let defaultDetailWidth = ClientDetailPane.defaultWidth
+    private static let detailRange = ClientDetailPane.range
     private static let minimumMainWidth: CGFloat = 340
 
     var body: some View {
@@ -107,7 +107,7 @@ struct CodeView: View {
                 fileList(files, project: project)
                     .frame(width: max(0, space.size.width - width - SplitHandle.hitWidth),
                            alignment: .topLeading)
-                SplitHandle(width: $detailWidth, range: range)
+                SplitHandle(width: $detailWidth, range: range, controlsTrailingPane: true)
                 diffPanel
                     .frame(width: width, alignment: .topLeading)
                     .frame(maxHeight: .infinity, alignment: .topLeading)

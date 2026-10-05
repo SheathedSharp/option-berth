@@ -18,8 +18,8 @@ struct TerminalSurface: NSViewRepresentable {
     private func applyAppearance(_ view: HostedTerminalView) {
         let font = Face.nativeMono(12)
         if view.font.fontName != font.fontName || view.font.pointSize != font.pointSize { view.font = font }
-        view.nativeBackgroundColor = NSColor(Ink.canvas)
-        view.nativeForegroundColor = NSColor(Ink.ink)
+        view.nativeBackgroundColor = NSColor(settings.terminalBackground)
+        view.nativeForegroundColor = NSColor(settings.terminalForeground)
     }
 }
 
