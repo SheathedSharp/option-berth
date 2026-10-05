@@ -11,6 +11,7 @@ struct WorkspaceToolbar: View {
     let openRecovery: () -> Void
     let openUpdates: () -> Void
     let openSettings: () -> Void
+    var openGuide: () -> Void = {}
     var body: some View {
         HStack(spacing: 8) {
             Wordmark(size: 12)
@@ -32,6 +33,7 @@ struct WorkspaceToolbar: View {
             Menu {
                 Button("检查更新… / Check for updates…", action: openUpdates)
                 Button("设置… / Settings…", action: openSettings)
+                Button("使用指引… / Getting started…", action: openGuide)
             } label: { Image(systemName: "ellipsis.circle").font(.system(size: 13)) }
                 .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("更多工作区操作")
                 .accessibilityIdentifier("workspace.toolbar.more")

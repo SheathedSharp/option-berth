@@ -33,6 +33,13 @@ enum Snapshot {
             return 1
         }
 
+        for step in GettingStartedStep.allCases {
+            let code = write(GettingStartedGuide(initialStep: step, frozen: true, onClose: {}, onConnect: {}),
+                             to: url.appendingPathComponent("12-guide-\(step.rawValue + 1).png").path,
+                             width: 640, height: 510)
+            if code != 0 { return code }
+        }
+
         var historyParser = CommandBlockParser(nonce: "fixture")
         historyParser.consume(Array("\u{1b}]633;E;git status --short;fixture\u{7}\u{1b}]133;C;fixture\u{7}\u{1b}]133;D;0;fixture\u{7}".utf8)[...], now: Date(timeIntervalSince1970: 10))
         historyParser.consume(Array("\u{1b}]633;E;go test ./...;fixture\u{7}\u{1b}]133;C;fixture\u{7}\u{1b}]133;D;1;fixture\u{7}".utf8)[...], now: Date(timeIntervalSince1970: 20))
