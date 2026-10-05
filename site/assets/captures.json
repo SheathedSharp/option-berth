@@ -6,27 +6,37 @@
     "services.png": {
       "width": 2480,
       "height": 1600,
-      "sha256": "a1305fd52a9c6f02ad01483c504aef4d1e363f7fb90186a9f2d8130392cb48dc"
+      "sha256": "fa5e5e601264220f46a0c1ffd3b0f0b2a0374d3789fdcb92a1fcc74af78c0c5b",
+      "source_sha256": "a1305fd52a9c6f02ad01483c504aef4d1e363f7fb90186a9f2d8130392cb48dc",
+      "encoding": "lossless PNG optimization; complete decoded sRGB RGBA pixels verified identical to source"
     },
     "git.png": {
       "width": 2480,
       "height": 1600,
-      "sha256": "80420f15c023d5661160728b582ff753be7b525db2cd11cc4ee46dddfb58ae8f"
+      "sha256": "2bcae4fb3091b9f0281287e831e8bcd2c67154bee9b31beafbb77645e1a93e0f",
+      "source_sha256": "80420f15c023d5661160728b582ff753be7b525db2cd11cc4ee46dddfb58ae8f",
+      "encoding": "lossless PNG optimization; complete decoded sRGB RGBA pixels verified identical to source"
     },
     "terminal.png": {
       "width": 2480,
       "height": 1600,
-      "sha256": "41f40d640a2bab7c9efb4a14a7e80a915363ae0e04fe2f60cf79a839fe6683bf"
+      "sha256": "b5059dd59d4e89d8a19f71d13d0b18cc32794e33f525078094bb2d5112fdfc49",
+      "source_sha256": "41f40d640a2bab7c9efb4a14a7e80a915363ae0e04fe2f60cf79a839fe6683bf",
+      "encoding": "lossless PNG optimization; complete decoded sRGB RGBA pixels verified identical to source"
     },
     "history.png": {
       "width": 1300,
       "height": 1024,
-      "sha256": "ca5af2398d96b5f98c7bd2e7884b3f4cbfeeaa8acfd1ba19e334b8e34857f091"
+      "sha256": "296f6dae9d05fc53b27046ca59b33071fca5d45d147057a88d2362019c14fa79",
+      "source_sha256": "ca5af2398d96b5f98c7bd2e7884b3f4cbfeeaa8acfd1ba19e334b8e34857f091",
+      "encoding": "lossless PNG optimization; complete decoded sRGB RGBA pixels verified identical to source"
     },
     "guide.png": {
       "width": 1200,
       "height": 1004,
-      "sha256": "44435444a9b03c2f7478ce9bd6a7523cdfd7b4d543ab33b967184e5a16ca9f31"
+      "sha256": "b09dfc742ae81939aa1867a2bc46f44b5d903026eeb5ffcee0745f9d677e4a2f",
+      "source_sha256": "44435444a9b03c2f7478ce9bd6a7523cdfd7b4d543ab33b967184e5a16ca9f31",
+      "encoding": "lossless PNG optimization; complete decoded sRGB RGBA pixels verified identical to source"
     }
   }
 }
