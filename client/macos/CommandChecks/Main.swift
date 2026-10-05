@@ -149,15 +149,17 @@ import BerthTerminal
 
         let sheet = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
         sheet.isReleasedWhenClosed = false
-        window.beginSheet(sheet)
+        // Explicit completion handler selects the non-suspending overload so the
+        // test can exercise the sheet while it is presented, then dismiss it.
+        window.beginSheet(sheet, completionHandler: nil)
         try await eventually("native sheet did not attach") { window.attachedSheet === sheet }
         try await rejected("1", "workspace navigation escaped a native sheet")
         window.endSheet(sheet); sheet.orderOut(nil)
         window.makeKeyAndOrderFront(nil)
         try await eventually("native sheet did not detach") { window.attachedSheet == nil && window.isKeyWindow }
 
-        // A timer registered in modal-panel mode can cancel the genuine directory
-        // chooser while its nested AppKit loop is running. Never choose a path.
+        // Cancel the genuine directory chooser while its AppKit loop runs;
+        // never select a real directory or start a manifest operation.
         var observedPanel = false
         var correctPanel = false
         let before = views.scope
