@@ -53,6 +53,15 @@ extension CommandFixture {
         try expect(TerminalSessions.shared.sessions.isEmpty, "command navigation started a PTY")
         try FileManager.default.removeItem(at: file)
         try await eventually("deleting keybindings did not restore defaults") { shortcuts.shortcut(.code).key == "g" }
+        // The model publishes before SwiftUI commits its native menu tree.
+        // Send exactly one key after the native equivalent (not merely the
+        // decoded setting) is ready. Never open a menu to make the test pass.
+        try await eventually("native default equivalent was not restored") {
+            items(NSApp.mainMenu).contains {
+                $0.title == WorkspaceAction.code.title && $0.keyEquivalent == "g"
+                    && $0.keyEquivalentModifierMask.contains([.command, .option])
+            }
+        }
         key("g", modifiers: [.command, .option])
         try await eventually("restored default shortcut did not route") { views.scope == .code("beta") }
         try trackMenu(MenuBar.viewTitle, window: window)
@@ -162,6 +171,12 @@ extension CommandFixture {
         key("n")
         try await eventually("Cmd+N did not open and cancel the native directory chooser") { observedPanel && !views.projectOperationPending }
         try expect(correctPanel && views.scope == before, "directory chooser allowed file selection or concurrent navigation")
+        // runModal returning and clearing the operation are not the native
+        // key-window handoff. Wait for this exact owner, without forcing focus
+        // or dispatching the next command into the dismissed panel.
+        try await eventually("cancelled chooser did not return focus to its owner") {
+            NSApp.modalWindow == nil && NSApp.keyWindow === window && window.isKeyWindow
+        }
     }
 }
 
