@@ -5,13 +5,14 @@ import BerthTerminal
 struct TerminalSurface: NSViewRepresentable {
     let session: TerminalSession
     var detached = false
+    var focusIntent: TerminalFocusIntent?
     @ObservedObject private var settings = UISettings.shared
     @ObservedObject private var windows = TerminalWindows.shared
     func makeNSView(context: Context) -> TerminalHost {
-        let host = TerminalHost(); host.present(session, detached: detached); applyAppearance(session.terminal); return host
+        let host = TerminalHost(); host.present(session, detached: detached); applyAppearance(session.terminal); host.focusIntent = focusIntent?.consumed == false ? focusIntent : windows.returnFocus; return host
     }
     func updateNSView(_ host: TerminalHost, context: Context) {
-        host.present(session, detached: detached); applyAppearance(session.terminal)
+        host.present(session, detached: detached); applyAppearance(session.terminal); host.focusIntent = focusIntent?.consumed == false ? focusIntent : windows.returnFocus
     }
     static func dismantleNSView(_ host: TerminalHost, coordinator: ()) { host.releasePresentation() }
     private func applyAppearance(_ view: HostedTerminalView) {
@@ -25,6 +26,7 @@ struct TerminalSurface: NSViewRepresentable {
 struct TerminalPaneBody: View {
     @ObservedObject var session: TerminalSession
     var frozen: Bool
+    var focusIntent: TerminalFocusIntent?
     @ObservedObject private var windows = TerminalWindows.shared
     var body: some View {
         VStack(spacing: 0) {
@@ -43,7 +45,7 @@ struct TerminalPaneBody: View {
                     Button("显示窗口") { windows.detach(session) }
                     Button("返回工作区") { windows.bringBack(session) }
                 }.font(Face.sans(11)).frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else { TerminalSurface(session: session).id(session.id) }
+            } else { TerminalSurface(session: session, focusIntent: focusIntent).id(session.id) }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

@@ -6,6 +6,11 @@ import SwiftUI
 public final class AgentComposerTextView: NSTextView {
     public var onSubmit: (() -> Void)?
     public var onNative: (() -> Void)?
+    public var focusOnAttach = false
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if focusOnAttach, let window, window.isKeyWindow, window.makeFirstResponder(self) { focusOnAttach = false }
+    }
 
     public enum Action { case submit, native }
     public static func action(keyCode: UInt16, modifiers: NSEvent.ModifierFlags,
@@ -41,15 +46,17 @@ public struct AgentComposer: NSViewRepresentable {
     private let enabled: Bool
     private let font: NSFont
     private let foreground: NSColor
+    private let focusOnAttach: Bool
     private let onSubmit: () -> Void
     private let onNative: () -> Void
 
-    public init(text: Binding<String>, enabled: Bool, font: NSFont, foreground: NSColor,
+    public init(text: Binding<String>, enabled: Bool, font: NSFont, foreground: NSColor, focusOnAttach: Bool = false,
                 onSubmit: @escaping () -> Void, onNative: @escaping () -> Void) {
         _text = text
         self.enabled = enabled
         self.font = font
         self.foreground = foreground
+        self.focusOnAttach = focusOnAttach
         self.onSubmit = onSubmit
         self.onNative = onNative
     }
@@ -61,6 +68,7 @@ public struct AgentComposer: NSViewRepresentable {
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         let editor = AgentComposerTextView(frame: scroll.bounds)
+        editor.focusOnAttach = focusOnAttach
         editor.isRichText = false
         editor.allowsUndo = true
         editor.isAutomaticQuoteSubstitutionEnabled = false

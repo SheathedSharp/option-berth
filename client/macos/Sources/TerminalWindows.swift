@@ -8,6 +8,7 @@ import SwiftUI
 final class TerminalWindows: NSObject, ObservableObject, NSWindowDelegate {
     static let shared = TerminalWindows()
     @Published private(set) var windows: [UUID: NSWindow] = [:]
+    @Published private(set) var returnFocus: TerminalFocusIntent?
     private var sessions: [UUID: TerminalSession] = [:]
     func detach(_ session: TerminalSession) {
         if let window = windows[session.id] { window.makeKeyAndOrderFront(nil); return }
@@ -29,6 +30,7 @@ final class TerminalWindows: NSObject, ObservableObject, NSWindowDelegate {
         sessions[id]?.terminal.removeFromSuperview()
         window.contentView = nil
         sessions.removeValue(forKey: id); windows.removeValue(forKey: id)
+        returnFocus = TerminalFocusIntent(id)
     }
     private struct DetachedTerminalContent: View {
         @ObservedObject var session: TerminalSession
@@ -47,12 +49,42 @@ final class TerminalWindows: NSObject, ObservableObject, NSWindowDelegate {
     }
 }
 
+/// An explicit focus request can be consumed once, even if SwiftUI rebuilds a
+/// host during resizing. Ordinary state/theme refreshes never create one.
+@MainActor
+final class TerminalFocusIntent {
+    let sessionID: UUID
+    private(set) var consumed = false
+    init(_ sessionID: UUID) { self.sessionID = sessionID }
+    func fulfill(in host: TerminalHost) {
+        guard !consumed, let session = host.session, session.id == sessionID,
+              session.terminal.superview === host, let window = host.window, window.isKeyWindow,
+              (window.firstResponder as? NSTextView)?.hasMarkedText() != true else { return }
+        if window.makeFirstResponder(session.terminal) { consumed = true }
+    }
+}
+
 /// A separate container is created for each presentation, never a second PTY.
 /// The detached-window flag prevents an embedded SwiftUI update stealing it.
 @MainActor
 final class TerminalHost: NSView {
     private(set) var session: TerminalSession?
     var detached = false
+    var focusIntent: TerminalFocusIntent? { didSet { focusIntent?.fulfill(in: self) } }
+    private var keyObserver: NSObjectProtocol?
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let keyObserver { NotificationCenter.default.removeObserver(keyObserver) }
+        keyObserver = nil
+        if let window {
+            keyObserver = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in guard let self else { return }; self.focusIntent?.fulfill(in: self) }
+            }
+        }
+        focusIntent?.fulfill(in: self)
+    }
+    override func layout() { super.layout(); focusIntent?.fulfill(in: self) }
+    deinit { if let keyObserver { NotificationCenter.default.removeObserver(keyObserver) } }
     func present(_ session: TerminalSession, detached: Bool) {
         self.session = session; self.detached = detached
         guard (TerminalWindows.shared.windows[session.id] != nil) == detached else {
