@@ -62,11 +62,19 @@ import BerthTerminal
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 570), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
         defer { window.contentView = nil; window.close() }
+        app.activate(ignoringOtherApps: true)
         pump(0.25)
         func choose(_ session: TerminalSession) {
             guard let button = find(NSButton.self, in: host).first(where: { $0.accessibilityIdentifier() == "console.session." + session.id.uuidString }) else { fatalError("native shared session button missing") }
             button.performClick(nil)
-            eventually("native tab did not claim its own terminal focus") { window.firstResponder === session.terminal }
+            let end = Date().addingTimeInterval(5)
+            while window.firstResponder !== session.terminal, Date() < end { pump(0.01) }
+            if window.firstResponder !== session.terminal {
+                let presentations = find(TerminalHost.self, in: host).map { host in
+                    "session=\(host.session?.title ?? "nil") active=\(host.session?.id == workspace.activeSelection) intent=\(host.focusIntent?.sessionID == session.id) consumed=\(host.focusIntent?.consumed ?? false) attached=\(host.session?.terminal.superview === host)"
+                }.joined(separator: "; ")
+                fatalError("native focus: selected=\(session.title) workspace=\(workspace.activeSelection == session.id) key=\(window.isKeyWindow) responder=\(String(describing: window.firstResponder)) hosts: " + presentations)
+            }
         }
         require(!find(NSButton.self, in: host).contains { $0.accessibilityIdentifier() == "console.session." + foreign.id.uuidString }, "session strip crossed worktrees")
         func type(_ text: String) {

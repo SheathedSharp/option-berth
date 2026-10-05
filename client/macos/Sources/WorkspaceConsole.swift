@@ -75,7 +75,8 @@ struct WorkspaceConsole: View {
                     .accessibilityIdentifier("console.newAgent")
                 if launcher.loading { ProgressView().controlSize(.small) }
                 Spacer(minLength: 0)
-                Button("历史") { history = true }.accessibilityIdentifier("terminal.history")
+                ConsoleToolbarAction(title: "历史", identifier: "terminal.history") { history = true }
+                    .fixedSize(horizontal: true, vertical: false).frame(height: 24)
                     .help("仅搜索当前 worktree 的内存命令历史")
                 Menu {
                     if launcher.loading { Button("取消 Agent 启动计划") { launcher.cancel() } }
@@ -163,4 +164,16 @@ private final class ConsoleSessionButton: NSButton {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     @objc private func pressed() { activate?() }
+}
+
+private struct ConsoleToolbarAction: NSViewRepresentable {
+    let title: String
+    let identifier: String
+    let perform: () -> Void
+    func makeNSView(context: Context) -> ConsoleSessionButton { ConsoleSessionButton() }
+    func updateNSView(_ button: ConsoleSessionButton, context: Context) {
+        button.title = title; button.font = NSFont.systemFont(ofSize: 11)
+        button.contentTintColor = NSColor(Ink.inkMuted)
+        button.setAccessibilityIdentifier(identifier); button.activate = perform
+    }
 }
