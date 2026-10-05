@@ -40,6 +40,7 @@ import BerthTerminal
         let file = directory.appendingPathComponent("settings.json")
         let theme = directory.appendingPathComponent("theme.json")
         UserDefaults.standard.set(188.0, forKey: "railWidth")
+        UserDefaults.standard.set(412.0, forKey: "detailWidth")
         let settings = UISettings.shared
         let registry = TerminalSessions()
         var rail: CGFloat = 0
@@ -108,6 +109,8 @@ import BerthTerminal
         try expect(reduced == systemReduced && existing.providerID == "opencode" && existing.draft == "preserve this draft", "deletion changed system preference or existing draft")
         try await eventually("removed user motion override persisted") { reduced == systemReduced }
         try capture(host, at: root.appendingPathComponent("personalization-sidebar-native.png"))
+
+        try await detailChecks(settings: settings, root: root)
 
         let session = TerminalSession(worktree: home, title: "Personalization fixture")
         let terminalHost = NSHostingView(rootView: TerminalSurface(session: session))

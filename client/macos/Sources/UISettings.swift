@@ -29,6 +29,8 @@ final class UISettings: ObservableObject {
     @Published var previewTheme: ThemeConfiguration?
     @Published private var legacy = ThemeConfiguration()
     @Published private var sidebarOverride: Double?
+    @Published private var detailOverrides: [ClientDetailPane: Double] = [:]
+    private var legacyDetails: [ClientDetailPane: Double] = [:]
     @Published private var legacyShellIntegration = false
     private var legacySidebarWidth: Double = 172
     private let defaults: UserDefaults
@@ -53,6 +55,15 @@ final class UISettings: ObservableObject {
         if let width = defaults.object(forKey: "railWidth") as? Double, width.isFinite {
             legacySidebarWidth = min(max(width, 140), 320)
         }
+        // Read the shared legacy width once for each module. Future drags write
+        // separate keys; never rewrite the old shared value or the user file.
+        for pane in ClientDetailPane.allCases {
+            let raw = (defaults.object(forKey: pane.storageKey) as? Double)
+                ?? (defaults.object(forKey: "detailWidth") as? Double)
+            let fallback = ClientDetailPane.defaultWidth
+            legacyDetails[pane] = raw.map { $0.isFinite && $0 >= ClientDetailPane.range.lowerBound
+                ? min($0, ClientDetailPane.range.upperBound) : fallback } ?? fallback
+        }
         legacyShellIntegration = defaults.bool(forKey: "terminal.shellIntegration.v1")
         if let configurationDirectory {
             let observer = ClientConfigurationMonitor(directory: configurationDirectory) { [weak self] in self?.applyConfiguration($0) }
@@ -63,6 +74,11 @@ final class UISettings: ObservableObject {
         // A manual resize remains local until this field changes. Other config
         // edits cannot move a divider under the user's pointer.
         if next.preferences.sidebarWidth != configuration.preferences.sidebarWidth { sidebarOverride = nil }
+        for pane in ClientDetailPane.allCases {
+            if pane.configured(in: next.preferences) != pane.configured(in: configuration.preferences) {
+                detailOverrides[pane] = nil
+            }
+        }
         configuration = next
     }
     func reloadConfiguration() { monitor?.reload() }
@@ -76,6 +92,19 @@ final class UISettings: ObservableObject {
             }
             sidebarOverride = value
         }
+    }
+    func detailWidth(for pane: ClientDetailPane) -> Double {
+        detailOverrides[pane] ?? pane.configured(in: configuration.preferences)
+            ?? legacyDetails[pane] ?? ClientDetailPane.defaultWidth
+    }
+    func resizeDetail(_ width: Double, for pane: ClientDetailPane) {
+        guard width.isFinite else { return }
+        let value = min(max(width, ClientDetailPane.range.lowerBound), ClientDetailPane.range.upperBound)
+        if pane.configured(in: configuration.preferences) == nil {
+            legacyDetails[pane] = value
+            defaults.set(value, forKey: pane.storageKey)
+        }
+        detailOverrides[pane] = value
     }
     var shellIntegration: Bool {
         get { configuration.preferences.shellIntegration ?? legacyShellIntegration }

@@ -66,12 +66,31 @@ struct ClientPreferencesConfiguration: ClientConfigurationDocument {
     var reduceMotion: Bool?
     var shellIntegration: Bool?
     var sidebarWidth: Double?
+    var servicesDetailWidth: Double?
+    var gitDetailWidth: Double?
     var defaultAgent: String?
-    static let keys: Set<String> = ["schemaVersion", "reduceMotion", "shellIntegration", "sidebarWidth", "defaultAgent"]
+    static let keys: Set<String> = ["schemaVersion", "reduceMotion", "shellIntegration", "sidebarWidth", "servicesDetailWidth", "gitDetailWidth", "defaultAgent"]
     func validate() throws {
         guard schemaVersion == 1 else { throw ClientConfigurationError.invalid("settings.schemaVersion must be 1") }
         if let sidebarWidth, !sidebarWidth.isFinite || !(140...320).contains(sidebarWidth) { throw ClientConfigurationError.invalid("settings.sidebarWidth must be between 140 and 320") }
+        for pane in ClientDetailPane.allCases {
+            if let width = pane.configured(in: self), !width.isFinite || !ClientDetailPane.range.contains(width) {
+                throw ClientConfigurationError.invalid("settings.\(pane.rawValue)DetailWidth must be between 340 and 500")
+            }
+        }
         if let defaultAgent, !["codex", "claude", "opencode", "deepseek", "pi"].contains(defaultAgent) { throw ClientConfigurationError.invalid("settings.defaultAgent is not a supported provider ID") }
+    }
+}
+
+/// User widths describe reading preferences, not the current viewport size.
+/// The view clamps its presentation without rewriting this preference on resize.
+enum ClientDetailPane: String, CaseIterable {
+    case services, git
+    static let range: ClosedRange<Double> = 340...500
+    static let defaultWidth: Double = 380
+    var storageKey: String { "ui." + rawValue + "DetailWidth.v1" }
+    func configured(in preferences: ClientPreferencesConfiguration) -> Double? {
+        self == .services ? preferences.servicesDetailWidth : preferences.gitDetailWidth
     }
 }
 
