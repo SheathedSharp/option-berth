@@ -25,13 +25,13 @@ jobs:
           set -euo pipefail
           binary_dir=$(swift build --package-path client/macos --show-bin-path)
           isolation=$(mktemp -d "$RUNNER_TEMP/console-checks.XXXXXX")
-          mkdir -p "$isolation/home" "$isolation/berth" "$RUNNER_TEMP/console-evidence"
-          trap 'cp "$isolation/berth/"*-native.png "$RUNNER_TEMP/console-evidence/" 2>/dev/null || true; rm -rf "$isolation"' EXIT
-          HOME="$isolation/home" CFFIXED_USER_HOME="$isolation/home" BERTH_HOME="$isolation/berth" "$binary_dir/ConsoleChecks"
+          mkdir -p "$isolation/home/.option-berth" "$RUNNER_TEMP/console-evidence"
+          trap 'cp "$isolation/home/.option-berth/"*-native.png "$RUNNER_TEMP/console-evidence/" 2>/dev/null || true; rm -rf "$isolation"' EXIT
+          HOME="$isolation/home" CFFIXED_USER_HOME="$isolation/home" BERTH_HOME="$isolation/home/.option-berth" SHELL=/bin/zsh ZDOTDIR="$isolation/home" BERTH_CONSOLE_TEST=1 "$binary_dir/ConsoleChecks" | tee "$RUNNER_TEMP/console-evidence/checks.txt"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: console-native-${{ github.run_id }}
-          path: ${{ runner.temp }}/console-evidence/*.png
+          path: ${{ runner.temp }}/console-evidence
           retention-days: 7
           if-no-files-found: error

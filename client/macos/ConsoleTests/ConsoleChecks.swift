@@ -30,8 +30,16 @@ import BerthTerminal
         return values
     }
     static func main() throws {
+        let envInput = ProcessInfo.processInfo.environment
+        guard envInput["BERTH_CONSOLE_TEST"] == "1", let userHome = envInput["HOME"],
+              envInput["CFFIXED_USER_HOME"] == userHome, envInput["ZDOTDIR"] == userHome,
+              envInput["SHELL"] == "/bin/zsh", let home = envInput["BERTH_HOME"], home.hasPrefix(userHome + "/") else {
+            fputs("ConsoleChecks requires explicit isolated HOME, BERTH_HOME and zsh startup directory\n", stderr); exit(2)
+        }
+        let deadline = DispatchWorkItem { fputs("ConsoleChecks native deadline exceeded\n", stderr); exit(1) }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 90, execute: deadline)
+        defer { deadline.cancel() }
         let app = NSApplication.shared; app.setActivationPolicy(.accessory); app.finishLaunching()
-        guard let home = ProcessInfo.processInfo.environment["BERTH_HOME"] else { fatalError("isolated BERTH_HOME required") }
         let root = URL(fileURLWithPath: home).appendingPathComponent("console-fixture")
         let other = root.appendingPathComponent("other")
         try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
@@ -127,6 +135,7 @@ import BerthTerminal
         require(host.bounds.width <= 600 && host.bounds.height <= 440, "console forced the minimum window larger")
         try capture("console-narrow")
         require(registry.sessions.count == 3 && owned.allSatisfy(\.isActive), "presentation started or stopped an unexpected process")
+        try configurationChecks(parentRoot: root)
         print("PASS: real native shared tabs, mixed layout identity, cwd/draft retention, independent key input, one-shot focus, detached return and background launch isolation")
     }
 }
