@@ -7,6 +7,8 @@
 <p align="center"><strong>每份代码，各自成泊。</strong><br>面向 Git worktree 的本地开发运行工作台。</p>
 <p align="center">简体中文 · <a href="README.en.md">English</a></p>
 
+<p align="center"><a href="https://sheathedsharp.github.io/option-berth/">产品官网与真实截图</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">下载最新版本</a></p>
+
 ## 为什么需要 option-berth
 
 同时开发几个分支，或让 coding agent 在多个 worktree 中工作时，难点不止是代码：

@@ -7,6 +7,8 @@
 <p align="center"><strong>A berth for every worktree.</strong><br>A local development and runtime workspace for Git worktrees.</p>
 <p align="center"><a href="README.md">简体中文</a> · English</p>
 
+<p align="center"><a href="https://sheathedsharp.github.io/option-berth/en/">Product website and native screenshots</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">Latest release</a></p>
+
 ## Why option-berth
 
 Working on several branches—or running coding agents in parallel worktrees—creates questions that Git alone
