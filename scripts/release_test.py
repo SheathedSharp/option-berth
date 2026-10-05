@@ -25,7 +25,9 @@ class ReleaseTests(unittest.TestCase):
         self.root.mkdir()
         self.remote = base / "remote.git"
         subprocess.run(["git", "init", "--bare", str(self.remote)], check=True, capture_output=True)
+        self.configure_fixture_git(self.remote)
         self.git("init", "-b", "main")
+        self.configure_fixture_git(self.root)
         self.git("config", "user.name", "Fixture")
         self.git("config", "user.email", "fixture@example.invalid")
         (self.root / "VERSION").write_text("1.2.3\n")
@@ -44,8 +46,27 @@ class ReleaseTests(unittest.TestCase):
         self.allowed.start()
         self.addCleanup(self.allowed.stop)
 
+    def configure_fixture_git(self, directory):
+        # Git's maintenance/receive-pack defaults may launch detached writers
+        # after a successful commit/fetch/push. These tiny throwaway repositories
+        # need no maintenance, and strict cleanup must own their entire lifetime.
+        # This is local fixture configuration only, never the user's repository.
+        self.assertTrue(Path(directory).resolve().is_relative_to(Path(self.tmp.name).resolve()))
+        for key, value in (("maintenance.auto", "false"), ("receive.autogc", "false"), ("gc.auto", "0")):
+            subprocess.run(["git", "-C", str(directory), "config", "--local", key, value],
+                           check=True, capture_output=True)
+
     def git(self, *args):
         return subprocess.check_output(["git", *args], cwd=self.root, text=True, stderr=subprocess.DEVNULL).strip()
+
+    def test_fixture_git_configuration_is_local_and_complete(self):
+        for directory in (self.root, self.remote):
+            for key, expected in (("maintenance.auto", "false"), ("receive.autogc", "false"), ("gc.auto", "0")):
+                with self.subTest(repository=directory.name, key=key):
+                    value = subprocess.check_output(["git", "-C", str(directory), "config", "--local", "--get", key], text=True).strip()
+                    self.assertEqual(value, expected)
+        with self.assertRaises(AssertionError):
+            self.configure_fixture_git(Path(self.tmp.name).parent)
 
     def test_all_version_steps_and_protocol_separation(self):
         for kind, version, protocol in (("protocol", "2.0.0", "3.0.0"), ("feature", "1.3.0", "2.1.0"), ("fix", "1.2.4", "2.1.0")):
@@ -194,6 +215,7 @@ class ReleaseTests(unittest.TestCase):
                 return subprocess.check_output(["git", *args], cwd=directory, text=True,
                                                stderr=subprocess.DEVNULL).strip()
             command("init")
+            self.configure_fixture_git(directory)
             command("remote", "add", "origin", str(self.remote))
             command("fetch", "origin", "+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*")
             command("checkout", "--detach", self.head)
