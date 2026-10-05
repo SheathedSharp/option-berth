@@ -318,10 +318,18 @@ struct BoardView: View {
                     if action.id == "guide" { views.showingGuide = true }
                 }.tipBackground(Ink.surface)
             }
-            Button("使用指引 / Getting started") { views.showingGuide = true }
-                .accessibilityIdentifier("workspace.guide")
-            SheetButton(title: "接入项目", primary: true, action: addProject)
-            Button("打开会话管理 / Open session manager") { views.showingSessions = true }
+            if scrolls {
+                Button("使用指引 / Getting started") { views.showingGuide = true }
+                    .accessibilityIdentifier("workspace.guide")
+                SheetButton(title: "接入项目", primary: true, action: addProject)
+                Button("打开会话管理 / Open session manager") { views.showingSessions = true }
+            } else {
+                // Frozen captures cannot render AppKit-backed buttons. Keep
+                // inert labels here; real controls are exercised in NSWindow.
+                Text("使用指引 / Getting started").font(Face.sans(11)).foregroundStyle(Ink.accent)
+                SheetButton(title: "接入项目", primary: true, action: {})
+                Text("打开会话管理 / Open session manager").font(Face.sans(11)).foregroundStyle(Ink.inkMuted)
+            }
         }
         .frame(maxWidth: 460, alignment: .leading)
         .padding(Metrics.gutter + 8)
