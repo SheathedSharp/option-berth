@@ -9,7 +9,15 @@ import BerthTerminal
     }
     static func pump(_ seconds: TimeInterval = 0.12) {
         let end = Date().addingTimeInterval(seconds)
-        while Date() < end { RunLoop.main.run(until: Date().addingTimeInterval(0.005)) }
+        // Foundation timers alone do not dispatch AppKit activation/window-server
+        // events. Exercise the same dequeue/send path as NSApplication.run().
+        while Date() < end {
+            let slice = min(end, Date().addingTimeInterval(0.005))
+            if let event = NSApp.nextEvent(matching: .any, until: slice, inMode: .default, dequeue: true) {
+                NSApp.sendEvent(event)
+            }
+            NSApp.updateWindows()
+        }
     }
     static func eventually(_ message: String, _ condition: () -> Bool) {
         let end = Date().addingTimeInterval(5)
@@ -63,6 +71,8 @@ import BerthTerminal
         window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
         defer { window.contentView = nil; window.close() }
         app.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        eventually("the native test window never became key") { window.isKeyWindow }
         pump(0.25)
         func choose(_ session: TerminalSession) {
             guard let button = find(NSButton.self, in: host).first(where: { $0.accessibilityIdentifier() == "console.session." + session.id.uuidString }) else { fatalError("native shared session button missing") }
@@ -83,7 +93,7 @@ import BerthTerminal
                 let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                     windowNumber: window.windowNumber, context: nil, characters: key, charactersIgnoringModifiers: key,
                     isARepeat: false, keyCode: char == "\r" ? 36 : 0)!
-                window.sendEvent(event)
+                NSApp.sendEvent(event)
             }
         }
         choose(shell); type("shell-only")
