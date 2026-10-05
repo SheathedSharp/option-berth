@@ -25,9 +25,7 @@ import BerthTerminal
             fputs("PersonalizationChecks requires an explicitly isolated HOME and BERTH_HOME\n", stderr); exit(2)
         }
         let app = NSApplication.shared
-        // A real application activation policy is required for deterministic
-        // key-window ownership on the user's newer macOS as well as CI.
-        app.setActivationPolicy(.regular); app.finishLaunching()
+        app.setActivationPolicy(.accessory); app.finishLaunching()
         Task { @MainActor in
             do { try await run(home: home, berth: berth); print("PersonalizationChecks: \(checks) checks passed"); exit(0) }
             catch { fputs("PersonalizationChecks failed: \(error.localizedDescription)\n", stderr); exit(1) }
