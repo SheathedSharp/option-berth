@@ -1,7 +1,10 @@
 {
+  "$schema": "./settings.schema.json",
   "schemaVersion": 1,
   "reduceMotion": true,
   "sidebarWidth": 220,
   "shellIntegration": false,
-  "defaultAgent": "codex"
+  "defaultAgent": "codex",
+  "servicesDetailWidth": 420,
+  "gitDetailWidth": 380
 }

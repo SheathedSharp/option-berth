@@ -86,6 +86,7 @@ def verify(root: Path) -> None:
     run(root, sys.executable, "-m", "unittest", "discover", "-s", "scripts", "-p", "*_test.py", capture=False)
     run(root, sys.executable, "brand/build-option-berth.py", "--check", capture=False)
     if sys.platform == "darwin":
+        run(root, sys.executable, "scripts/check_client_configuration.py", capture=False)
         with tempfile.TemporaryDirectory(prefix="oberth-cli-io-") as tmp:
             binary = str(Path(tmp) / "checks")
             run(root, "swiftc", "client/macos/Sources/CLI.swift", "client/macos/Sources/DaemonLaunch.swift",

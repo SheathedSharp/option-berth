@@ -66,12 +66,31 @@ struct ClientPreferencesConfiguration: ClientConfigurationDocument {
     var reduceMotion: Bool?
     var shellIntegration: Bool?
     var sidebarWidth: Double?
+    var servicesDetailWidth: Double?
+    var gitDetailWidth: Double?
     var defaultAgent: String?
-    static let keys: Set<String> = ["schemaVersion", "reduceMotion", "shellIntegration", "sidebarWidth", "defaultAgent"]
+    static let keys: Set<String> = ["schemaVersion", "reduceMotion", "shellIntegration", "sidebarWidth", "servicesDetailWidth", "gitDetailWidth", "defaultAgent"]
     func validate() throws {
         guard schemaVersion == 1 else { throw ClientConfigurationError.invalid("settings.schemaVersion must be 1") }
         if let sidebarWidth, !sidebarWidth.isFinite || !(140...320).contains(sidebarWidth) { throw ClientConfigurationError.invalid("settings.sidebarWidth must be between 140 and 320") }
+        for pane in ClientDetailPane.allCases {
+            if let width = pane.configured(in: self), !width.isFinite || !ClientDetailPane.range.contains(width) {
+                throw ClientConfigurationError.invalid("settings.\(pane.rawValue)DetailWidth must be between 340 and 500")
+            }
+        }
         if let defaultAgent, !["codex", "claude", "opencode", "deepseek", "pi"].contains(defaultAgent) { throw ClientConfigurationError.invalid("settings.defaultAgent is not a supported provider ID") }
+    }
+}
+
+/// User widths describe reading preferences, not the current viewport size.
+/// The view clamps its presentation without rewriting this preference on resize.
+enum ClientDetailPane: String, CaseIterable {
+    case services, git
+    static let range: ClosedRange<Double> = 340...500
+    static let defaultWidth: Double = 380
+    var storageKey: String { "ui." + rawValue + "DetailWidth.v1" }
+    func configured(in preferences: ClientPreferencesConfiguration) -> Double? {
+        self == .services ? preferences.servicesDetailWidth : preferences.gitDetailWidth
     }
 }
 
@@ -127,7 +146,14 @@ enum ClientConfigurationIO {
     static func decode<Value: ClientConfigurationDocument>(_ type: Value.Type, data: Data) throws -> Value {
         guard data.count <= limit else { throw ClientConfigurationError.invalid("configuration exceeds 64 KiB") }
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              Set(object.keys).isSubset(of: Value.keys) else { throw ClientConfigurationError.invalid("configuration must be an object with known keys") }
+              Set(object.keys).subtracting(["$schema"]).isSubset(of: Value.keys) else { throw ClientConfigurationError.invalid("configuration must be an object with known keys") }
+        if let metadata = object["$schema"] {
+            // Editor metadata is inert. The client never fetches this URI.
+            guard let text = metadata as? String, !text.isEmpty, text.utf8.count <= 2048,
+                  !text.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
+                throw ClientConfigurationError.invalid("$schema must be a nonempty string without control characters")
+            }
+        }
         let value = try JSONDecoder().decode(type, from: data)
         try value.validate()
         return value
