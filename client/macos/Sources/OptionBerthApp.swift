@@ -137,6 +137,9 @@ struct OptionBerthApp: App {
                 Button(WorkspaceAction.settings.title) { perform(.settings) }
                     .keyboardShortcut(shortcuts.shortcut(.settings).equivalent, modifiers: shortcuts.shortcut(.settings).modifiers)
             }
+            CommandGroup(replacing: .help) {
+                Button("使用指引… / Getting started…") { views.showingGuide = true }
+            }
             CommandMenu(MenuBar.viewTitle) {
                 Button("命令面板… / Command panel…") { views.showingActions = true }
                     .keyboardShortcut("p", modifiers: [.command, .shift])
