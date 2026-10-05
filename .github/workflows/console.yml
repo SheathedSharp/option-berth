@@ -1,0 +1,37 @@
+name: Unified console interaction
+on:
+  pull_request:
+    paths: ['client/macos/**', '.github/workflows/console.yml']
+  push:
+    branches: [main]
+    paths: ['client/macos/**', '.github/workflows/console.yml']
+permissions:
+  contents: read
+concurrency:
+  group: unified-console-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  console:
+    runs-on: macos-15
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Build native console checks
+        run: swift build --package-path client/macos --force-resolved-versions --product ConsoleChecks
+      - name: Verify mixed PTY identity, actual key input and focus lifecycle
+        run: |
+          set -euo pipefail
+          binary_dir=$(swift build --package-path client/macos --show-bin-path)
+          isolation=$(mktemp -d "$RUNNER_TEMP/console-checks.XXXXXX")
+          mkdir -p "$isolation/home" "$isolation/berth" "$RUNNER_TEMP/console-evidence"
+          trap 'cp "$isolation/berth/"*-native.png "$RUNNER_TEMP/console-evidence/" 2>/dev/null || true; rm -rf "$isolation"' EXIT
+          HOME="$isolation/home" CFFIXED_USER_HOME="$isolation/home" BERTH_HOME="$isolation/berth" "$binary_dir/ConsoleChecks"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: console-native-${{ github.run_id }}
+          path: ${{ runner.temp }}/console-evidence/*.png
+          retention-days: 7
+          if-no-files-found: error
