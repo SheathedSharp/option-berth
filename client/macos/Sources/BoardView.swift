@@ -50,7 +50,9 @@ struct BoardView: View {
     @StateObject private var git: GitStore
     @ObservedObject private var views: ViewState
 
-    @AppStorage("railWidth") private var railWidth: Double = Double(Metrics.railWidth)
+    private var railWidth: Binding<Double> {
+        Binding(get: { settings.sidebarWidth }, set: { settings.sidebarWidth = $0 })
+    }
     static let railRange: ClosedRange<Double> = 140...320
     var scrolls: Bool = true
     private let automaticGuide: Bool
@@ -107,9 +109,9 @@ struct BoardView: View {
         HStack(spacing: 0) {
             if views.railVisible {
                 rail.tourAnchor(.worktrees)
-                    .frame(width: scrolls ? railWidth : Double(Metrics.railWidth), alignment: .leading)
+                    .frame(width: scrolls ? settings.sidebarWidth : Double(Metrics.railWidth), alignment: .leading)
                     .clipped()
-                SplitHandle(width: $railWidth, range: Self.railRange)
+                SplitHandle(width: railWidth, range: Self.railRange)
             }
             VStack(spacing: 0) {
                 WorkspaceToolbar(frozen: !scrolls, sessionCount: scrolls ? terminalSessions.sessions.count : 0,
