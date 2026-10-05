@@ -71,9 +71,6 @@ extension PersonalizationChecks {
             try expect(settings.detailWidth(for: pane) == preferred, "viewport resize overwrote preferred width")
             try capture(host, at: root.appendingPathComponent("personalization-" + pane.rawValue + "-narrow-native.png"))
             if pane == .git {
-                func splitViews(_ view: NSView) -> [NSSplitView] {
-                    (view as? NSSplitView).map { [$0] } ?? [] + view.subviews.flatMap(splitViews)
-                }
                 // The Git review stays usable at narrow widths by switching to a
                 // vertical native split; horizontal preferences must remain intact.
                 func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }

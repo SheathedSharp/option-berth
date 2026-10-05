@@ -38,6 +38,9 @@ import SwiftUI
         app.run()
     }
     static func run(berth: String) async throws {
+        var measured: CGFloat = 380
+        GitReviewDetailWidthKey.reduce(value: &measured, nextValue: { GitReviewDetailWidthKey.defaultValue })
+        try require(measured == 380, "implicit preference default erased a measured width")
         let project = try JSONDecoder().decode(BerthGroup.self, from: Data(#"{"name":"review-fixture","branch":"feature/review","root_dir":"/fixture/review","services":[],"members":[]}"#.utf8))
         let tree = try JSONDecoder().decode(GitTree.self, from: Data(#"{"root":"/fixture/review","branch":"feature/review","head":"abcdef0123456789","upstream":"origin/feature/review","ahead":2,"behind":1,"staged":1,"unstaged":0,"untracked":0,"conflicts":1,"worktrees":[{"path":"/fixture/review","branch":"feature/review","current":true}],"files":[{"path":"conflict.swift","status":"DU"},{"path":"new.swift","old_path":"旧文件.swift","status":"R ","additions":2,"deletions":0}]}"#.utf8))
         let git = GitStore(overview: tree.overview, tree: tree, selectedPath: "conflict.swift")
