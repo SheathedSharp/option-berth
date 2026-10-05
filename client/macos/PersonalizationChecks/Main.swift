@@ -42,11 +42,11 @@ import BerthTerminal
         UserDefaults.standard.set(188.0, forKey: "railWidth")
         let settings = UISettings.shared
         let registry = TerminalSessions()
-        let environment = ProbeEnvironment()
         var rail: CGFloat = 0
         var reduced = false
-        let board = PreferenceBoard(settings: settings, environment: environment, registry: registry,
-                                    railChanged: { rail = $0 }, motionChanged: { reduced = $0 })
+        var systemReduced = false
+        let board = PreferenceBoard(settings: settings, registry: registry,
+                                    railChanged: { rail = $0 }, motionChanged: { reduced = $0; systemReduced = $1 })
         let host = NSHostingView(rootView: board)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1060, height: 720),
                               styleMask: [.titled, .resizable], backing: .buffered, defer: false)
@@ -92,17 +92,21 @@ import BerthTerminal
         try expect(settings.sidebarWidth == dragged, "unrelated edit moved the divider")
         try expect(registry.workspace("/fixture/new").providerID == "claude" && registry.workspace("/fixture/third").providerID == "pi", "default-agent change rewrote existing selection")
         try write(#"{"schemaVersion":1,"reduceMotion":false,"sidebarWidth":230,"shellIntegration":false,"defaultAgent":"pi"}"#)
-        try await eventually("updated width did not supersede the local drag") { abs(rail - 230) < 1 && !reduced && !settings.shellIntegration }
-        environment.systemReduced = true
-        try await eventually("file disabled the system Reduce Motion preference") { reduced }
+        try await eventually("updated width did not supersede the local drag") { abs(rail - 230) < 1 && reduced == systemReduced && !settings.shellIntegration }
+        // System preferences are read-only. Test both policy branches without
+        // changing the machine setting; the native probe reads the real value.
+        for system in [false, true] {
+            for preference: Bool? in [nil, false, true] {
+                try expect(ClientMotionPolicy.reduced(system: system, preference: preference) == (system || preference == true), "Reduce Motion policy matrix")
+            }
+        }
         try write("{")
         try await eventually("invalid settings did not produce a visible diagnostic") { !settings.configuration.problems.isEmpty }
         try expect(settings.sidebarWidth == 230 && registry.defaultProviderID == "pi", "invalid edit lost last-good preferences")
         try FileManager.default.removeItem(at: file)
         try await eventually("deleting settings did not restore fallbacks") { settings.sidebarWidth == 188 && registry.defaultProviderID == "codex" && settings.configuration.problems.isEmpty }
-        try expect(reduced && existing.providerID == "opencode" && existing.draft == "preserve this draft", "deletion changed system preference or existing draft")
-        environment.systemReduced = false
-        try await eventually("system motion transition not observed") { !reduced }
+        try expect(reduced == systemReduced && existing.providerID == "opencode" && existing.draft == "preserve this draft", "deletion changed system preference or existing draft")
+        try await eventually("removed user motion override persisted") { reduced == systemReduced }
         try capture(host, at: root.appendingPathComponent("personalization-sidebar-native.png"))
 
         let session = TerminalSession(worktree: home, title: "Personalization fixture")
@@ -139,22 +143,21 @@ import BerthTerminal
     }
 }
 
-@MainActor private final class ProbeEnvironment: ObservableObject {
-    @Published var systemReduced = false
-}
 private struct MotionProbe: View {
-    @Environment(\.accessibilityReduceMotion) private var reduced
-    let changed: (Bool) -> Void
+    @Environment(\.accessibilityReduceMotion) private var systemReduced
+    @Environment(\.clientReduceMotion) private var reduced
+    let changed: (Bool, Bool) -> Void
     var body: some View {
-        Color.clear.frame(width: 1, height: 1).onChange(of: reduced, initial: true) { _, value in changed(value) }
+        Color.clear.frame(width: 1, height: 1)
+            .onChange(of: reduced, initial: true) { _, value in changed(value, systemReduced) }
+            .onChange(of: systemReduced) { _, value in changed(reduced, value) }
     }
 }
 private struct PreferenceBoard: View {
     @ObservedObject var settings: UISettings
-    @ObservedObject var environment: ProbeEnvironment
     let registry: TerminalSessions
     let railChanged: (CGFloat) -> Void
-    let motionChanged: (Bool) -> Void
+    let motionChanged: (Bool, Bool) -> Void
     @StateObject private var views = ViewState()
     @StateObject private var store = BoardStore(fixture: [])
     @StateObject private var services = ServicesStore(fixture: [])
@@ -169,7 +172,6 @@ private struct PreferenceBoard: View {
             }
             .overlay(alignment: .bottomTrailing) { MotionProbe(changed: motionChanged).allowsHitTesting(false) }
             .modifier(ClientMotionPreferences(settings: settings))
-            .environment(\.accessibilityReduceMotion, environment.systemReduced)
             .onReceive(settings.$configuration) { ClientSessionPreferences.apply($0.preferences, to: registry) }
     }
 }

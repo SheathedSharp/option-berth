@@ -213,6 +213,21 @@ enum Face {
 
 // MARK: - 动效
 
+/// The SDK's accessibilityReduceMotion value is read-only. Publish the merged
+/// application policy through our own key; never alter the user's OS setting.
+private struct ClientReduceMotionKey: EnvironmentKey {
+    static let defaultValue = false
+}
+extension EnvironmentValues {
+    var clientReduceMotion: Bool {
+        get { self[ClientReduceMotionKey.self] }
+        set { self[ClientReduceMotionKey.self] = newValue }
+    }
+}
+enum ClientMotionPolicy {
+    static func reduced(system: Bool, preference: Bool?) -> Bool { system || preference == true }
+}
+
 /// 动效令牌。所有数字都从这里取，不许在视图里现编。
 ///
 /// 原则来自 Apple 流体界面那一套：**能被抓住、能从当前值接上、能被中途反悔**。
@@ -410,17 +425,19 @@ struct StatusDot: View {
     var tone: Color
     var breathing: Bool = false
     var reduced: Bool = false
-
+    @Environment(\.clientReduceMotion) private var clientReduced
     @State private var dim = false
+    private var isReduced: Bool { reduced || clientReduced }
 
     var body: some View {
         Circle()
             .fill(tone)
             .frame(width: 6, height: 6)
-            .opacity(breathing && dim ? 0.25 : 1)
-            .animation(breathing ? Motion.breathe(reduced: reduced) : nil, value: dim)
-            .onAppear { if breathing && !reduced { dim = true } }
-            .onChange(of: breathing) { _, now in dim = now && !reduced }
+            .opacity(breathing && dim && !isReduced ? 0.25 : 1)
+            .animation(breathing ? Motion.breathe(reduced: isReduced) : nil, value: dim)
+            .onAppear { if breathing && !isReduced { dim = true } }
+            .onChange(of: breathing) { _, now in dim = now && !isReduced }
+            .onChange(of: isReduced) { _, now in dim = breathing && !now }
     }
 }
 

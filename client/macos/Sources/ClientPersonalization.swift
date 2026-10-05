@@ -6,8 +6,8 @@ struct ClientMotionPreferences: ViewModifier {
     @ObservedObject var settings: UISettings
     @Environment(\.accessibilityReduceMotion) private var systemReduced
     func body(content: Content) -> some View {
-        let reduced = systemReduced || settings.configuration.preferences.reduceMotion == true
-        content.environment(\.accessibilityReduceMotion, reduced)
+        let reduced = ClientMotionPolicy.reduced(system: systemReduced, preference: settings.configuration.preferences.reduceMotion)
+        content.environment(\.clientReduceMotion, reduced)
             .transaction { transaction in
                 if reduced { transaction.animation = nil; transaction.disablesAnimations = true }
             }
