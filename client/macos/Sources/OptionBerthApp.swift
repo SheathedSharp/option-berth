@@ -135,46 +135,12 @@ struct OptionBerthApp: App {
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1060, height: 720)
         .commands {
-            CommandGroup(replacing: .newItem) {
-                Button(WorkspaceAction.connect.title) { perform(.connect) }
-                    .keyboardShortcut(shortcuts.shortcut(.connect).equivalent, modifiers: shortcuts.shortcut(.connect).modifiers)
-                    .disabled(!views.allowsCommands)
-            }
-            CommandGroup(replacing: .printItem) {}
-            CommandGroup(replacing: .sidebar) {}
-            CommandGroup(after: .appInfo) {
-                Button("检查更新… / Check for updates…") { if views.allowsCommands { views.showingUpdates = true } }
-            }
-            CommandGroup(replacing: .appSettings) {
-                Button(WorkspaceAction.settings.title) { perform(.settings) }
-                    .keyboardShortcut(shortcuts.shortcut(.settings).equivalent, modifiers: shortcuts.shortcut(.settings).modifiers)
-            }
-            CommandGroup(replacing: .help) {
-                Button("使用指引… / Getting started…") { views.showingGuide = true }
-            }
-            CommandMenu(MenuBar.viewTitle) {
-                Button("命令面板… / Command panel…") { if views.allowsCommands { views.showingActions = true } }
-                    .keyboardShortcut("p", modifiers: [.command, .shift])
-                Divider()
-                ForEach(WorkspaceAction.allCases.filter { $0 != .settings && $0 != .connect && $0.ordinal == nil }) { action in
-                    Button(action.title) { perform(action) }
-                        .keyboardShortcut(shortcuts.shortcut(action).equivalent, modifiers: shortcuts.shortcut(action).modifiers)
-                        .disabled(!views.allowsCommands)
-                }
-            }
-            CommandMenu("Worktrees") {
-                ForEach(WorkspaceAction.worktrees) { action in
-                    Button(worktreeTitle(action)) { perform(action) }
-                        .keyboardShortcut(shortcuts.shortcut(action).equivalent, modifiers: shortcuts.shortcut(action).modifiers)
-                        .disabled(!views.allowsCommands || worktreeName(action) == nil)
-                }
-            }
+            WorkspaceCommandMenus(views: views, shortcuts: shortcuts, services: services, perform: perform)
         }
     }
 
     private func perform(_ action: WorkspaceAction) {
-        guard views.allowsCommands,
-              (NSApp.keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() != true else { return }
+        guard views.allowsCommands, WorkspaceInputContext.allowsNavigation(in: NSApp.keyWindow) else { return }
         if let ordinal = action.ordinal {
             views.selectVisibleProject(at: ordinal, in: services.projects); return
         }
@@ -201,12 +167,4 @@ struct OptionBerthApp: App {
         }
     }
     private var projectNames: [String] { views.orderedProjects(services.projects, filtered: false).map(\.name) }
-    private func worktreeName(_ action: WorkspaceAction) -> String? {
-        guard let ordinal = action.ordinal else { return nil }
-        return WorkspaceProjectNavigation.project(at: ordinal, in: views.orderedProjects(services.projects).map(\.name))
-    }
-    private func worktreeTitle(_ action: WorkspaceAction) -> String {
-        guard let name = worktreeName(action) else { return action.title }
-        return "\(action.ordinal!) · " + name
-    }
 }
