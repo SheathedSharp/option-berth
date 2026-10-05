@@ -24,10 +24,29 @@ for (const locale of ['', 'en/']) for (const width of [360, 390, 768, 1440]) {
     await page.evaluate(() => scrollTo(0, 0));
     if (width === 1440 || width === 390) {
       await mkdir('test-results/previews', {recursive: true});
-      // Do not inject Playwright's caret-hiding stylesheet into a strict-CSP page.
+      // Application assertions retain strict CSP and require zero console errors.
+      expect(errors).toEqual([]);
+      // Playwright 1.63 WebKit unconditionally inserts "body {}" to synchronize
+      // animation state. Track that exact capture-only mutation; do not relax
+      // CSP or filter unrelated page errors to make the screenshot pass.
+      await page.evaluate(() => {
+        window.captureStyles = [];
+        window.captureObserver = new MutationObserver(records => {
+          for (const record of records) for (const node of record.addedNodes)
+            if (node.nodeName === 'STYLE') window.captureStyles.push(node.textContent);
+        });
+        window.captureObserver.observe(document.head, {childList: true});
+      });
       await page.screenshot({path: `test-results/previews/${testInfo.project.name}-${locale ? 'en' : 'zh'}-${width}.png`, fullPage: true, caret: 'initial'});
-    }
-    expect(errors).toEqual([]);
+      const injected = await page.evaluate(() => { window.captureObserver.disconnect(); return window.captureStyles; });
+      if (testInfo.project.name === 'webkit') {
+        expect(injected).toEqual(['body {}']);
+        expect(errors).toEqual(["Refused to apply a stylesheet because its hash, its nonce, or 'unsafe-inline' does not appear in the style-src directive of the Content Security Policy."]);
+      } else {
+        expect(injected).toEqual([]);
+        expect(errors).toEqual([]);
+      }
+    } else expect(errors).toEqual([]);
   });
 }
 
