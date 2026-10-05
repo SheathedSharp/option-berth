@@ -41,8 +41,35 @@
 保留当前进程的最后有效配置，设置页显示错误；冷启动遇到坏文件使用默认值。每份文件上限 64 KiB，
 只接受普通文件，不跟随叶子符号链接，不读取 FIFO。配置错误不会关闭会话或启动任何进程。
 
-`settings.json` 与 `keybindings.json` 的解析契约同时版本化；消费端接线与完整示例在本 PR 后续提交补齐。
-不把目前尚未接通的字段声明为可用功能。
+`settings.json` 的解析契约同时版本化；其消费端仍待后续提交，不把未接通的字段声明为可用功能。
+
+## 快捷键 / Keybindings
+
+`keybindings.json` 覆盖默认命令。所有键位包含 Command；修饰键为可选布尔值，不支持脚本或 when 表达式。
+
+```json
+{
+  "schemaVersion": 1,
+  "bindings": {
+    "services": {"key": "j", "option": true},
+    "worktree.1": {"key": "1"}
+  }
+}
+```
+
+默认：`connect` ⌘N，`worktree.1`…`worktree.9` ⌘1…⌘9；数字遵循侧栏当前筛选后的名称排序，
+保留所选模块；没有对应项目时不执行。`services` ⌥⌘S、`code` ⌥⌘G、`terminal` ⌥⌘T、`sidebar` ⌘B。
+其余命令：`sessions` ⇧⌘O、`recovery` ⌥⇧⌘O、`updates` ⌥⌘U、`find` ⌘F、`refresh` ⌘R、`settings` ⌘,。
+命令面板固定 ⇧⌘P。菜单和侧栏提示随有效键位同步更新。
+
+文件是“默认映射 + 文件覆盖”，不是再叠加旧 GUI 键位。未知 command ID、未知修饰键、重复键位或
+覆盖受保护的原生编辑键会拒绝整份变更并保留此前有效映射。设置页和快捷键编辑器显示诊断。
+文件存在时 GUI 不写入或重置它；删除文件后恢复旧 GUI 自定义值（再回退默认）。
+旧 services/code/terminal 的 ⌘1/2/3 与侧栏的 ⌥⌘S 默认拷贝会迁移；真正的用户改动尽量保留。
+若旧自定义与新默认冲突，使用新默认并明确提示，原始偏好字节不删除。
+
+项目接入等待或弹窗期间禁止并行导航命令；原生输入法有组合文本时不派发操作。Git 中的 ⌘F 路由
+预留给文件检索视图（该视图在 Git 审查 PR 中接入），不会错误地打开服务日志搜索。
 
 ## 扩展边界 / Extension boundary
 

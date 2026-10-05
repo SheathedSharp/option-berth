@@ -25,6 +25,10 @@ jobs:
         run: |
           python3 brand/build-option-berth.py --check
           python3 -m unittest discover -s brand -p 'test_*.py'
+      - name: Verify command data and visible-worktree indexing
+        run: |
+          swiftc -swift-version 5 client/macos/Sources/ClientConfiguration.swift client/macos/Sources/WorkspaceCommands.swift client/macos/Tests/WorkspaceCommandTests.swift -o "$RUNNER_TEMP/workspace-command-tests"
+          "$RUNNER_TEMP/workspace-command-tests"
       - name: Test isolated daemon readiness and executable resolution
         run: |
           swiftc client/macos/Sources/CLI.swift client/macos/Sources/DaemonLaunch.swift client/macos/Tests/DaemonLaunchTests.swift -o "$RUNNER_TEMP/daemon-launch-tests"

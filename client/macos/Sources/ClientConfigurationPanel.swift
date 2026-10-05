@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ClientConfigurationPanel: View {
     @ObservedObject var settings: UISettings
+    @ObservedObject private var shortcuts = WorkspaceShortcuts.shared
     var frozen = false
     @State private var problem: String?
     var body: some View {
@@ -21,6 +22,9 @@ struct ClientConfigurationPanel: View {
             }
             ForEach(settings.configuration.problems, id: \.self) { message in
                 Text(message).font(Face.sans(10)).foregroundStyle(Change.changed).textSelection(.enabled)
+            }
+            if let diagnostic = shortcuts.problem, !settings.configuration.problems.contains(diagnostic) {
+                Text(diagnostic).font(Face.sans(10)).foregroundStyle(Change.changed)
             }
             if let problem { Text(problem).font(Face.sans(10)).foregroundStyle(Change.changed) }
         }

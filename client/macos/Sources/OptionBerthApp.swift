@@ -127,11 +127,15 @@ struct OptionBerthApp: App {
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1060, height: 720)
         .commands {
-            CommandGroup(replacing: .newItem) {}
+            CommandGroup(replacing: .newItem) {
+                Button(WorkspaceAction.connect.title) { perform(.connect) }
+                    .keyboardShortcut(shortcuts.shortcut(.connect).equivalent, modifiers: shortcuts.shortcut(.connect).modifiers)
+                    .disabled(!views.allowsCommands)
+            }
             CommandGroup(replacing: .printItem) {}
             CommandGroup(replacing: .sidebar) {}
             CommandGroup(after: .appInfo) {
-                Button("检查更新… / Check for updates…") { if !views.showingGuide { views.showingUpdates = true } }
+                Button("检查更新… / Check for updates…") { if views.allowsCommands { views.showingUpdates = true } }
             }
             CommandGroup(replacing: .appSettings) {
                 Button(WorkspaceAction.settings.title) { perform(.settings) }
@@ -141,20 +145,33 @@ struct OptionBerthApp: App {
                 Button("使用指引… / Getting started…") { views.showingGuide = true }
             }
             CommandMenu(MenuBar.viewTitle) {
-                Button("命令面板… / Command panel…") { if !views.showingGuide { views.showingActions = true } }
+                Button("命令面板… / Command panel…") { if views.allowsCommands { views.showingActions = true } }
                     .keyboardShortcut("p", modifiers: [.command, .shift])
                 Divider()
-                ForEach(WorkspaceAction.allCases.filter { $0 != .settings }) { action in
+                ForEach(WorkspaceAction.allCases.filter { $0 != .settings && $0 != .connect && $0.ordinal == nil }) { action in
                     Button(action.title) { perform(action) }
                         .keyboardShortcut(shortcuts.shortcut(action).equivalent, modifiers: shortcuts.shortcut(action).modifiers)
+                        .disabled(!views.allowsCommands)
+                }
+            }
+            CommandMenu("Worktrees") {
+                ForEach(WorkspaceAction.worktrees) { action in
+                    Button(worktreeTitle(action)) { perform(action) }
+                        .keyboardShortcut(shortcuts.shortcut(action).equivalent, modifiers: shortcuts.shortcut(action).modifiers)
+                        .disabled(!views.allowsCommands || worktreeName(action) == nil)
                 }
             }
         }
     }
 
     private func perform(_ action: WorkspaceAction) {
-        guard !views.showingGuide else { return }
+        guard views.allowsCommands,
+              (NSApp.keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() != true else { return }
+        if let ordinal = action.ordinal {
+            views.selectVisibleProject(at: ordinal, in: services.projects); return
+        }
         switch action {
+        case .connect: views.requestConnection()
         case .services: views.show(.services, projects: projectNames)
         case .code: views.show(.code, projects: projectNames)
         case .terminal: views.show(.terminal, projects: projectNames)
@@ -163,12 +180,25 @@ struct OptionBerthApp: App {
         case .updates: views.showingUpdates = true
         case .settings: views.showingSettings = true
         case .sidebar: views.railVisible.toggle()
-        case .refresh: store.refresh(); services.refresh()
+        case .refresh:
+            store.refresh(); services.refresh()
+            if case .code = views.scope { git.loadTree(project: services.projects.first { $0.name == views.project }, force: true) }
         case .find:
             if let terminal = HostedTerminalView.containing(NSApp.keyWindow?.firstResponder) { showTerminalFind(terminal) }
-            else { services.beginLogFind() }
+            else if case .services = views.scope { services.beginLogFind() }
+            else if case .code = views.scope {
+                NotificationCenter.default.post(name: .init("option-berth.git.find"), object: views.project)
+            }
+        default: break // Ordinal commands were handled above.
         }
     }
-
-    private var projectNames: [String] { services.projects.map(\.name).sorted() }
+    private var projectNames: [String] { views.orderedProjects(services.projects, filtered: false).map(\.name) }
+    private func worktreeName(_ action: WorkspaceAction) -> String? {
+        guard let ordinal = action.ordinal else { return nil }
+        return WorkspaceProjectNavigation.project(at: ordinal, in: views.orderedProjects(services.projects).map(\.name))
+    }
+    private func worktreeTitle(_ action: WorkspaceAction) -> String {
+        guard let name = worktreeName(action) else { return action.title }
+        return "\(action.ordinal!) · " + name
+    }
 }

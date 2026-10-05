@@ -81,6 +81,25 @@ struct ClientKeybinding: Decodable, Equatable, Hashable {
     var option: Bool?
     var control: Bool?
 }
+extension ClientKeybinding {
+    private struct Key: CodingKey {
+        let stringValue: String
+        var intValue: Int? { nil }
+        init(_ value: String) { stringValue = value }
+        init?(stringValue: String) { self.init(stringValue) }
+        init?(intValue: Int) { return nil }
+    }
+    init(from decoder: Decoder) throws {
+        let fields = try decoder.container(keyedBy: Key.self)
+        guard fields.allKeys.allSatisfy({ ["key", "shift", "option", "control"].contains($0.stringValue) }) else {
+            throw ClientConfigurationError.invalid("keybindings contain an unknown modifier field")
+        }
+        key = try fields.decode(String.self, forKey: Key("key"))
+        shift = try fields.decodeIfPresent(Bool.self, forKey: Key("shift"))
+        option = try fields.decodeIfPresent(Bool.self, forKey: Key("option"))
+        control = try fields.decodeIfPresent(Bool.self, forKey: Key("control"))
+    }
+}
 struct ClientKeybindingsConfiguration: ClientConfigurationDocument {
     var schemaVersion = 1
     var bindings: [String: ClientKeybinding]?

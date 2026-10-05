@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 extension WorkspaceShortcut {
@@ -12,33 +13,64 @@ extension WorkspaceShortcut {
 
 @MainActor
 final class WorkspaceShortcuts: ObservableObject {
-    static let shared = WorkspaceShortcuts()
+    static let shared: WorkspaceShortcuts = {
+        if CommandLine.arguments.contains("--render-states") || CommandLine.arguments.contains("--write-icon") {
+            return WorkspaceShortcuts(defaults: UserDefaults(suiteName: "option-berth-keys-render-" + UUID().uuidString)!)
+        }
+        return WorkspaceShortcuts(configuration: .shared)
+    }()
     @Published private(set) var bindings: [WorkspaceAction: WorkspaceShortcut] = [:]
+    @Published private(set) var fileManaged = false
+    @Published private(set) var problem: String?
     private let defaults: UserDefaults
     private let storageKey = "workspace.shortcuts.v1"
-    init(defaults: UserDefaults = .standard) {
+    private var legacy: [WorkspaceAction: WorkspaceShortcut] = [:]
+    private var legacyProblem: String?
+    private var observation: AnyCancellable?
+    init(defaults: UserDefaults = .standard, configuration: UISettings? = nil) {
         self.defaults = defaults
-        if let data = defaults.data(forKey: storageKey), data.count <= 8192,
-           let saved = try? JSONDecoder().decode([String: WorkspaceShortcut].self, from: data) {
-            let known = Dictionary(uniqueKeysWithValues: saved.compactMap { key, value in WorkspaceAction(rawValue: key).map { ($0, value) } })
-            if Self.valid(known) { bindings = known }
+        if let data = defaults.data(forKey: storageKey) {
+            if data.count <= 8192, let saved = try? JSONDecoder().decode([String: WorkspaceShortcut].self, from: data),
+               saved.keys.allSatisfy({ WorkspaceAction(rawValue: $0) != nil }) {
+                let known = Dictionary(uniqueKeysWithValues: saved.map { (WorkspaceAction(rawValue: $0.key)!, $0.value) })
+                let migrated = WorkspaceBindingPolicy.migrate(known)
+                if Self.valid(migrated) { legacy = migrated }
+                else { legacyProblem = "旧快捷键与新映射冲突，已使用默认值；原始偏好未删除。" }
+            } else { legacyProblem = "旧快捷键配置无法读取，已使用默认值；原始偏好未删除。" }
+        }
+        bindings = legacy; problem = legacyProblem
+        if let configuration {
+            observation = configuration.$configuration.sink { [weak self] in self?.apply($0) }
         }
     }
     func shortcut(_ action: WorkspaceAction) -> WorkspaceShortcut { bindings[action] ?? action.defaultShortcut }
-    static func valid(_ bindings: [WorkspaceAction: WorkspaceShortcut]) -> Bool {
-        let all = WorkspaceAction.allCases.map { bindings[$0] ?? $0.defaultShortcut }
-        return all.allSatisfy(\.isAllowed) && Set(all).count == all.count
+    static func valid(_ bindings: [WorkspaceAction: WorkspaceShortcut]) -> Bool { WorkspaceBindingPolicy.valid(bindings) }
+    func apply(_ snapshot: ClientConfigurationSnapshot) {
+        fileManaged = snapshot.keybindingsFilePresent
+        guard fileManaged else { bindings = legacy; problem = legacyProblem; return }
+        if let error = snapshot.problems.first(where: { $0.hasPrefix("keybindings.json:") }) { problem = error; return }
+        do { bindings = try WorkspaceBindingPolicy.resolve(snapshot.keybindings.bindings ?? [:]); problem = nil }
+        catch { problem = error.localizedDescription }
     }
     func set(_ shortcut: WorkspaceShortcut, for action: WorkspaceAction) throws {
+        guard !fileManaged else { throw ShortcutFailure.fileManaged }
         var next = bindings; next[action] = shortcut
         guard Self.valid(next) else { throw ShortcutFailure.invalid }
         let data = try JSONEncoder().encode(Dictionary(uniqueKeysWithValues: next.map { ($0.key.rawValue, $0.value) }))
-        defaults.set(data, forKey: storageKey); bindings = next
+        defaults.set(data, forKey: storageKey); legacy = next; bindings = next; legacyProblem = nil; problem = nil
     }
-    func reset() { defaults.removeObject(forKey: storageKey); bindings = [:] }
+    func reset() {
+        guard !fileManaged else { return }
+        defaults.removeObject(forKey: storageKey); legacy = [:]; bindings = [:]; legacyProblem = nil; problem = nil
+    }
     enum ShortcutFailure: LocalizedError {
-        case invalid
-        var errorDescription: String? { "快捷键无效、重复或占用原生编辑快捷键 / Invalid, duplicate or reserved shortcut" }
+        case invalid, fileManaged
+        var errorDescription: String? {
+            switch self {
+            case .invalid: return "快捷键无效、重复或占用原生编辑快捷键 / Invalid, duplicate or reserved shortcut"
+            case .fileManaged: return "请编辑 keybindings.json；客户端不会覆盖用户文件。"
+            }
+        }
     }
 }
 
@@ -116,6 +148,11 @@ struct WorkspaceShortcutEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("工作区快捷键 / Workspace shortcuts").font(Face.sans(14, .semibold))
+            if shortcuts.fileManaged {
+                Text("快捷键由 keybindings.json 管理；请在设置 → 外观中打开文件。")
+                    .font(Face.sans(11)).foregroundStyle(Ink.inkMuted)
+            }
+            if let diagnostic = shortcuts.problem { Text(diagnostic).font(Face.sans(11)).foregroundStyle(Change.changed) }
             Picker("操作", selection: $action) { ForEach(WorkspaceAction.allCases) { Text($0.title).tag($0) } }
                 .onChange(of: action) { _, _ in load() }
             HStack {
@@ -126,13 +163,13 @@ struct WorkspaceShortcutEditor: View {
                 .font(Face.sans(11)).foregroundStyle(Ink.inkMuted).fixedSize(horizontal: false, vertical: true)
             if let problem { Text(problem).font(Face.sans(11)).foregroundStyle(Ink.ink) }
             HStack {
-                Button("恢复默认") { shortcuts.reset(); load(); problem = nil }
+                Button("恢复默认") { shortcuts.reset(); load(); problem = nil }.disabled(shortcuts.fileManaged)
                 Spacer()
                 Button("关闭") { dismiss() }
                 Button("保存") {
                     do { try shortcuts.set(.init(key: key.lowercased(), shift: shift, option: option, control: control), for: action); problem = nil }
                     catch { problem = error.localizedDescription }
-                }.keyboardShortcut(.defaultAction)
+                }.keyboardShortcut(.defaultAction).disabled(shortcuts.fileManaged)
             }
         }.padding(20).frame(width: 460).background(Ink.canvas).foregroundStyle(Ink.ink)
             .onAppear { load() }

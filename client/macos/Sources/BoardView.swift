@@ -90,12 +90,14 @@ struct BoardView: View {
     @State private var configProblem: String?
     @State private var removing: BerthGroup?
     @State private var problem: String?
-    @State private var projectQuery = ""
+    @ObservedObject private var shortcuts = WorkspaceShortcuts.shared
     @ObservedObject private var terminalSessions = TerminalSessions.shared
     @ObservedObject private var recovery = WorkspaceRecovery.shared
 
     private var scope: Scope { views.scope }
-    private var projects: [BerthGroup] { services.projects.sorted { $0.name < $1.name } }
+    private var projects: [BerthGroup] { views.orderedProjects(services.projects, filtered: false) }
+    private var visibleProjects: [BerthGroup] { views.orderedProjects(services.projects, filtered: scrolls) }
+    private var projectDialogPresented: Bool { proposal != nil || editingConfig != nil || removing != nil || problem != nil }
     private var selected: BerthGroup? {
         guard let name = scope.projectName else { return nil }
         return projects.first { $0.name == name }
@@ -188,6 +190,8 @@ struct BoardView: View {
                 refreshGit(force: true)
             }
         }
+        .onChange(of: views.connectionRequest) { _, _ in if scrolls { addProject() } }
+        .onChange(of: projectDialogPresented) { _, shown in views.projectDialogPresented = shown }
         .onChange(of: views.showingGuide) { _, shown in
             if shown { views.guideTarget = .connect }
         }
@@ -217,7 +221,7 @@ struct BoardView: View {
                     .font(Face.sans(13, .semibold))
                     .foregroundStyle(Ink.ink)
                 Spacer()
-                Button("+") { addProject() }
+                Button("+") { views.requestConnection() }
                     .buttonStyle(.plain)
                     .font(Face.mono(15, .medium))
                     .foregroundStyle(Ink.accent)
@@ -240,17 +244,17 @@ struct BoardView: View {
                 .padding(Metrics.gutter)
             } else {
                 if scrolls {
-                    TextField("筛选 worktree", text: $projectQuery).textFieldStyle(.roundedBorder)
+                    TextField("筛选 worktree", text: $views.projectQuery).textFieldStyle(.roundedBorder)
                         .font(Face.sans(11)).padding(.horizontal, 10).padding(.vertical, 9)
                     ScrollView {
                         LazyVStack(spacing: 3) {
-                            ForEach(projects.filter { projectQuery.isEmpty || ($0.displayName + " " + $0.branch).localizedCaseInsensitiveContains(projectQuery) }) { project in
-                                projectRow(project)
+                            ForEach(Array(visibleProjects.enumerated()), id: \.element.id) { index, project in
+                                projectRow(project, ordinal: index + 1)
                             }
                         }.padding(.horizontal, 6)
                     }
                 } else {
-                    VStack(spacing: 3) { ForEach(projects) { project in projectRow(project) } }
+                    VStack(spacing: 3) { ForEach(Array(visibleProjects.enumerated()), id: \.element.id) { index, project in projectRow(project, ordinal: index + 1) } }
                         .padding(.horizontal, 6).padding(.top, 9)
                 }
             }
@@ -268,7 +272,7 @@ struct BoardView: View {
         .background(Ink.surface)
     }
 
-    private func projectRow(_ project: BerthGroup) -> some View {
+    private func projectRow(_ project: BerthGroup, ordinal: Int) -> some View {
         let isSelected = scope.projectName == project.name
         let live = services.liveCount(in: project)
         return Button {
@@ -288,9 +292,14 @@ struct BoardView: View {
                         .truncationMode(.middle)
                 }
                 Spacer(minLength: 4)
-                Text(verbatim: "\(live)/\(project.services.count)")
-                    .font(Face.mono(10))
-                    .foregroundStyle(Ink.inkMuted)
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text(verbatim: "\(live)/\(project.services.count)")
+                        .font(Face.mono(10)).foregroundStyle(Ink.inkMuted)
+                    if let action = WorkspaceAction(rawValue: "worktree.\(ordinal)") {
+                        Text(scrolls ? shortcuts.shortcut(action).label : action.defaultShortcut.label)
+                            .font(Face.mono(9)).foregroundStyle(Ink.inkFaint)
+                    }
+                }
             }
             .padding(.horizontal, Metrics.gutter)
             .frame(height: 48)
@@ -331,7 +340,7 @@ struct BoardView: View {
             if scrolls {
                 Button("使用指引 / Getting started") { views.showingGuide = true }
                     .accessibilityIdentifier("workspace.guide")
-                SheetButton(title: "接入项目", primary: true, action: addProject).tourAnchor(.connect)
+                SheetButton(title: "接入项目", primary: true, action: { views.requestConnection() }).tourAnchor(.connect)
                 Button("打开会话管理 / Open session manager") { views.showingSessions = true }
             } else {
                 // Frozen captures cannot render AppKit-backed buttons. Keep
@@ -411,14 +420,14 @@ struct BoardView: View {
         HStack(spacing: 4) {
             WorkspaceTab(title: "服务", symbol: "server.rack", selected: scope == .services(project.name)) {
                 views.scope = .services(project.name)
-            }
+            }.help(shortcuts.shortcut(.services).label)
             let changed = git.tree?.files.count ?? 0
             WorkspaceTab(title: "Git" + (changed > 0 ? " · \(changed)" : ""), symbol: "chevron.left.forwardslash.chevron.right", selected: scope == .code(project.name)) {
                 views.scope = .code(project.name)
-            }
+            }.help(shortcuts.shortcut(.code).label)
             WorkspaceTab(title: "终端与 Agent", symbol: "terminal", selected: scope == .terminal(project.name)) {
                 views.scope = .terminal(project.name)
-            }
+            }.help(shortcuts.shortcut(.terminal).label)
             Spacer(minLength: 0)
         }.padding(.horizontal, 12).padding(.bottom, 9)
     }
@@ -433,13 +442,15 @@ struct BoardView: View {
     }
 
     private func addProject() {
+        guard views.allowsCommands else { return }
+        views.projectOperationPending = true
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
         panel.prompt = "选它"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard panel.runModal() == .OK, let url = panel.url else { views.projectOperationPending = false; return }
         proposeOrAdopt(rootDir: url.path)
     }
 
@@ -450,15 +461,16 @@ struct BoardView: View {
                 if FileManager.default.fileExists(atPath: result.path) {
                     adopt(configPath: result.path)
                 } else {
-                    proposal = result
+                    proposal = result; views.projectOperationPending = false
                 }
-            case .failure(let error): problem = error.localizedDescription
+            case .failure(let error): problem = error.localizedDescription; views.projectOperationPending = false
             }
         }
     }
 
     private func adopt(configPath: String) {
         services.adopt(configPath: configPath) { outcome in
+            defer { views.projectOperationPending = false }
             switch outcome {
             case .success(let read):
                 let name = read.config.name.isEmpty
