@@ -19,6 +19,23 @@ class PersonalizationReleaseTests(unittest.TestCase):
             release.verify(Path(__file__).resolve().parent.parent)
         return calls
 
+    def test_review_and_console_gate_isolated_and_required(self):
+        calls = self.commands()
+        for product, flag in (("GitReviewChecks", "BERTH_GIT_REVIEW_TEST"), ("ConsoleChecks", "BERTH_CONSOLE_TEST")):
+            with self.subTest(product=product):
+                self.assertTrue(any("--product" in args and product in args for args, _ in calls))
+                executed = [(args, options) for args, options in calls if args and args[0].endswith("/" + product)]
+                self.assertEqual(len(executed), 1)
+                env = executed[0][1]["environment"]
+                self.assertEqual(env["HOME"], env["CFFIXED_USER_HOME"])
+                self.assertTrue(Path(env["BERTH_HOME"]).is_relative_to(Path(env["HOME"])))
+                self.assertEqual(env[flag], "1")
+                self.assertEqual(env["ZDOTDIR"], env["HOME"])
+                self.assertEqual(env["SHELL"], "/bin/zsh")
+        compiler = next(args for args, _ in calls if "client/macos/Tests/GitReviewTests.swift" in args)
+        binary = compiler[compiler.index("-o") + 1]
+        self.assertTrue(any(args == (binary,) for args, _ in calls))
+
     def test_schema_gate_is_shared_and_required(self):
         calls = self.commands()
         executed = [(args, options) for args, options in calls if "scripts/check_client_configuration.py" in args]
