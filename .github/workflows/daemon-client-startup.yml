@@ -1,0 +1,39 @@
+name: macOS daemon client startup
+on:
+  pull_request:
+    paths: ['client/macos/Sources/DaemonLaunch.swift', 'client/macos/Sources/CLI.swift', 'client/macos/Tests/Daemon*Tests.swift', 'engine/**', '.github/workflows/daemon-client-startup.yml']
+  push:
+    branches: [main]
+    paths: ['client/macos/Sources/DaemonLaunch.swift', 'client/macos/Sources/CLI.swift', 'client/macos/Tests/Daemon*Tests.swift', 'engine/**', '.github/workflows/daemon-client-startup.yml']
+permissions:
+  contents: read
+concurrency:
+  group: daemon-client-startup-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Retain exact text sources for isolated regression review
+        run: |
+          git archive --format=tar --output="$RUNNER_TEMP/startup-review-source.tar" HEAD -- . ':!*.otf' ':!*.ttf' ':!*.woff*' ':!*.png' ':!*.jpg' ':!*.jpeg' ':!*.icns'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: startup-review-source-${{ github.run_id }}
+          path: ${{ runner.temp }}/startup-review-source.tar
+          retention-days: 1
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: engine/go.mod
+          cache-dependency-path: engine/go.sum
+      - name: Build a test engine without installation
+        working-directory: engine
+        run: go build -o "$RUNNER_TEMP/startup-oberth" .
+      - name: Verify isolated native client to engine startup
+        run: |
+          swiftc client/macos/Sources/CLI.swift client/macos/Sources/DaemonLaunch.swift client/macos/Tests/DaemonStartupTests.swift -o "$RUNNER_TEMP/daemon-startup-tests"
+          "$RUNNER_TEMP/daemon-startup-tests" "$RUNNER_TEMP/startup-oberth"
