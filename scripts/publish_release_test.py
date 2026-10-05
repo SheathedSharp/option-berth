@@ -30,14 +30,27 @@ class PublishAssetsTests(unittest.TestCase):
         (self.root / "SHA256SUMS").write_text(text)
         self.assertEqual(len(release.verify_assets(self.root, self.tag, True)), 15)
 
+    def test_new_releases_require_dmg_but_keep_windows_zip(self):
+        expected = release.expected_assets(self.tag)
+        self.assertIn("OptionBerth-v1.2.3-macos-arm64-adhoc.dmg", expected)
+        self.assertIn("option-berth-v1.2.3-windows-amd64.zip", expected)
+        for path in list(self.root.iterdir()):
+            if path.name.startswith("OptionBerth-"):
+                path.rename(path.with_name(path.name.replace(".dmg", ".zip")))
+        with patch.object(release, "gh") as gh, patch.object(release.subprocess, "run") as run:
+            with self.assertRaisesRegex(ValueError, "incomplete or unexpected"):
+                release.publish(self.root, self.tag)
+            gh.assert_not_called()
+            run.assert_not_called()
+
     def test_notarized_asset_mode_never_silently_accepts_adhoc(self):
         with self.assertRaisesRegex(ValueError, "incomplete"):
             release.verify_assets(self.root, self.tag, macos_trust="notarized")
         for path in list(self.root.iterdir()):
-            if "-adhoc.zip" in path.name:
-                name = path.name.replace("-adhoc.zip", "-notarized.zip")
+            if "-adhoc.dmg" in path.name:
+                name = path.name.replace("-adhoc.dmg", "-notarized.dmg")
                 if path.name.endswith(".sha256"):
-                    path.write_text(path.read_text().replace("-adhoc.zip", "-notarized.zip"))
+                    path.write_text(path.read_text().replace("-adhoc.dmg", "-notarized.dmg"))
                 path.rename(self.root / name)
         self.assertEqual(len(release.verify_assets(self.root, self.tag, macos_trust="notarized")), 14)
         with self.assertRaises(ValueError):
@@ -48,7 +61,7 @@ class PublishAssetsTests(unittest.TestCase):
     def test_mixed_trust_assets_fail_before_network_or_release_writes(self):
         # A matching checksum does not make a second, differently-labelled app
         # part of the selected release contract. Never upload an ambiguous set.
-        name = f"OptionBerth-{self.tag}-macos-arm64-notarized.zip"
+        name = f"OptionBerth-{self.tag}-macos-arm64-notarized.dmg"
         data = b"synthetic second app"
         (self.root / name).write_bytes(data)
         (self.root / (name + ".sha256")).write_text(hashlib.sha256(data).hexdigest() + "  " + name + "\n")

@@ -16,8 +16,11 @@ for (const locale of ['', 'en/']) for (const width of [360, 390, 768, 1440]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
     for (const image of await page.locator('main img:visible').all()) {
       await image.scrollIntoViewIfNeeded();
-      await expect(image).toHaveJSProperty('complete', true);
-      expect(await image.evaluate(img => img.naturalWidth)).toBeGreaterThan(0);
+      // A lazy image may report complete before its request has started.
+      // Require actual decoded pixels, not two racy sequential snapshots.
+      await expect.poll(() => image.evaluate(img => img.complete && img.naturalWidth > 0), {
+        message: `Image did not load: ${await image.getAttribute('src')}`, timeout: 10000
+      }).toBe(true);
       if (await image.evaluate(el => Boolean(el.closest('[aria-hidden="true"]')))) expect(await image.getAttribute('alt')).toBe('');
       else expect(await image.getAttribute('alt')).toBeTruthy();
     }

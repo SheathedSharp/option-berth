@@ -48,6 +48,13 @@ final class GitStore: ObservableObject {
         queue.discardPending()
     }
 
+    /// Compare the requested root, not the CLI's canonical output path. This is
+    /// a pure ownership check for the render before navigation's reload fires.
+    func isFor(_ project: BerthGroup) -> Bool {
+        let candidate = project.rootDir ?? ""
+        return !candidate.isEmpty && candidate == root
+    }
+
     func refresh(project: BerthGroup?, force: Bool = false) {
         guard !isFixture, let requestedRoot = prepare(project) else { return }
         guard !overviewInFlight,

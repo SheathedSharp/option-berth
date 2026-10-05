@@ -21,10 +21,10 @@ extension ClientChecks {
         // title-safe-area size vary across supported macOS versions.
         let point = board.convert(NSPoint(x: 290, y: board.isFlipped ? 180 : board.bounds.height - 180), to: nil)
         guideClick(window, x: point.x, y: point.y)
-        eventually("empty workspace button did not open guide") { navigation.showingGuide && window.attachedSheet != nil }
+        eventually("empty workspace button did not open guide") { navigation.showingGuide && find(TourControlsView.self, in: board).count == 1 }
         navigation.showingGuide = false
-        eventually("guide sheet did not close") { window.attachedSheet == nil }
+        eventually("guide overlay did not close") { find(TourControlsView.self, in: board).isEmpty }
         require(TerminalSessions.shared.sessions.count == before, "guide entry created a process")
-        print("PASS: real empty workspace guide button opens and dismisses actual sheet without process creation")
+        print("PASS: real empty workspace guide button opens and dismisses actual spotlight overlay without process creation")
     }
 }

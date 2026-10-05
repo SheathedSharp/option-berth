@@ -1,0 +1,52 @@
+name: Client personalization interaction
+on:
+  pull_request:
+    paths: ['client/macos/**', 'scripts/release.py', 'scripts/client_personalization_release_test.py', 'scripts/check_client_configuration.py', '.github/workflows/client-personalization.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: client-personalization-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Record exact source for offline reproduction
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/personalization-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/personalization-evidence/source-commit.txt"
+          # Only tracked source and contracts. Never archive fonts, builds,
+          # credentials, runner HOME, live app data or user screenshots.
+          git archive --format=tar HEAD AGENTS.md client/macos/AGENTS.md client/macos/Package.swift client/macos/Package.resolved client/macos/Sources client/macos/TerminalSupport client/macos/AgentSupport client/macos/Tests client/macos/ClientTests client/macos/PersonalizationChecks client/macos/Configuration client/macos/Fixtures scripts docs .github/workflows | gzip > "$RUNNER_TEMP/personalization-evidence/source.tar.gz"
+      - name: Verify schema contracts against the actual parser
+        run: python3 scripts/check_client_configuration.py
+      - name: Verify release gates without publishing
+        run: python3 -m unittest discover -s scripts -p 'client_personalization_release_test.py'
+      - name: Validate personal setting types and bounds
+        run: |
+          swiftc -swift-version 5 client/macos/Sources/ClientConfiguration.swift client/macos/Tests/ClientPreferencesTests.swift -o "$RUNNER_TEMP/client-preferences-tests"
+          "$RUNNER_TEMP/client-preferences-tests"
+      - name: Exercise live preferences, native drag and the same PTY
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift build --package-path client/macos --force-resolved-versions --product PersonalizationChecks
+          binary_dir=$(swift build --package-path client/macos --show-bin-path)
+          isolation=$(mktemp -d "$RUNNER_TEMP/personalization.XXXXXX")
+          mkdir -p "$isolation/home/.option-berth" "$RUNNER_TEMP/personalization-evidence"
+          trap 'find "$isolation/home/.option-berth" -maxdepth 1 -name "personalization-*-native.png" -type f -exec cp {} "$RUNNER_TEMP/personalization-evidence/" \; ; rm -rf "$isolation"' EXIT
+          HOME="$isolation/home" CFFIXED_USER_HOME="$isolation/home" BERTH_HOME="$isolation/home/.option-berth" BERTH_PERSONALIZATION_TEST=1 "$binary_dir/PersonalizationChecks" | tee "$RUNNER_TEMP/personalization-evidence/checks.txt"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: personalization-${{ github.run_id }}
+          path: ${{ runner.temp }}/personalization-evidence
+          retention-days: 3
+          if-no-files-found: error

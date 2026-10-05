@@ -6,7 +6,7 @@ import BerthTerminal
 ///   --probe                只走数据那一段，命令行里打印结果
 ///   --snapshot <path>      把界面离屏画成 PNG，不开窗口
 ///   --render-states <dir>  用冻结数据把全部界面状态各画一张（可带 `--size 宽x高`）
-///   --write-icon <dir>     把标志画成各档尺寸的 .iconset，交给 iconutil 打包
+///   --write-icon <dir>     把标志从几何生成各档尺寸的 .iconset，交给 iconutil 打包
 ///   --remove-project <名>  撤销一个项目的纳管（删清单 + 删登记），跑完打印动了什么
 ///   --parse-log <文件>     把一份日志按客户端认的规则解剖一遍，打印每一行
 ///
@@ -107,10 +107,18 @@ struct OptionBerthApp: App {
     @StateObject private var views = ViewState(scope: Entry.scope(from: CommandLine.arguments))
     @NSApplicationDelegateAdaptor(MenuBarDelegate.self) private var menuBar
 
+    init() {
+        ClientSessionPreferences.apply(UISettings.shared.configuration.preferences, to: .shared)
+    }
+
     var body: some Scene {
         Window("option-berth", id: "workspace") {
-            BoardView(store: store, services: services, git: git, views: views, settings: settings, performAction: perform)
+            BoardView(store: store, services: services, git: git, automaticGuide: true, views: views, settings: settings, performAction: perform)
                 .environmentObject(settings)
+                .modifier(ClientMotionPreferences(settings: settings))
+                .onReceive(settings.$configuration) { snapshot in
+                    ClientSessionPreferences.apply(snapshot.preferences, to: .shared)
+                }
                 .frame(minWidth: 760, minHeight: 520)
                 .onAppear {
                     recovery.loadOnce()
@@ -131,7 +139,7 @@ struct OptionBerthApp: App {
             CommandGroup(replacing: .printItem) {}
             CommandGroup(replacing: .sidebar) {}
             CommandGroup(after: .appInfo) {
-                Button("检查更新… / Check for updates…") { views.showingUpdates = true }
+                Button("检查更新… / Check for updates…") { if !views.showingGuide { views.showingUpdates = true } }
             }
             CommandGroup(replacing: .appSettings) {
                 Button(WorkspaceAction.settings.title) { perform(.settings) }
@@ -141,7 +149,7 @@ struct OptionBerthApp: App {
                 Button("使用指引… / Getting started…") { views.showingGuide = true }
             }
             CommandMenu(MenuBar.viewTitle) {
-                Button("命令面板… / Command panel…") { views.showingActions = true }
+                Button("命令面板… / Command panel…") { if !views.showingGuide { views.showingActions = true } }
                     .keyboardShortcut("p", modifiers: [.command, .shift])
                 Divider()
                 ForEach(WorkspaceAction.allCases.filter { $0 != .settings }) { action in
@@ -153,6 +161,7 @@ struct OptionBerthApp: App {
     }
 
     private func perform(_ action: WorkspaceAction) {
+        guard !views.showingGuide else { return }
         switch action {
         case .services: views.show(.services, projects: projectNames)
         case .code: views.show(.code, projects: projectNames)

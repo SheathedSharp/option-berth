@@ -309,22 +309,28 @@ client/macos/build/OptionBerth.app/Contents/MacOS/OptionBerth \
 
 ## 首次使用指引 / Getting started
 
-从空工作区、“更多”或 Help 菜单打开五步中英指引。TipKit 负责空态提示的展示和消隐，
-元数据只写 `$BERTH_HOME/client-tips`（默认 `~/.option-berth/client-tips`），不启用 CloudKit。
-TipKit 配置失败时，常驻帮助入口仍可用；冻结渲染不会配置提示数据库。
+首次打开工作区自动展示原生聚光导览：真实控件锚点、遮罩挖空、就近弹窗和中英说明，
+不是单独的文字 sheet，也不是套在截图上的假按钮。左栏接入、项目列表、已存在的页签和
+工具栏分步骤说明；未出现的目标不会悬空高亮。窗口缩放会重新计算位置。
 
-“稍后”只关闭；“读完”只表示阅读过，不代表安装、登录或环境验证通过。下一步/上一步
-不会执行命令；只有“接入项目”明确请求关闭指引后打开原有目录选择器，仍须审阅清单。
-不新增默认快捷键，避免覆盖已有自定义按键。详细步骤见 [首次使用](../../docs/macos-guide.md)。
+展示资格使用稳定的本地 `workspaceTourPresented` 偏好，出现时立即记录。
+跳过、关闭窗口、重启和升级都不自动重播。已有旧 TipKit 元数据的用户保守迁移为已使用，
+不再打开 TipKit 数据库；空态、“更多”和 Help 菜单仍可显式重看。
 
-`ClientChecks` 在隔离环境验证原生 TipKit 配置、真实窗口中的下一步/上一步/接入/读完/
-稍后/重开和无隐式进程启动；冻结图新增 `12-guide-1` 至 `12-guide-5`。
-辅助功能完整验收仍属独立范围：无辅助技术连接的测试宿主未暴露 SwiftUI AX 子节点，
-本回归使用仅发送至测试窗口的原生事件，不据此宣称 VoiceOver 验收通过。
+原生按钮支持继续、返回、跳过、完成，Return/Escape 和左右方向键；Tab 焦点留在导览内，
+关闭后只恢复同一窗口仍存活的编辑控件。底层工作区禁用，遮罩挖空也不会让点击穿透。
+大号界面字体只滚动说明区，操作按钮保持可见。Reduce Motion 禁用定位动画。导览不会启动 shell/Agent、写清单或打开项目选择器；
+看完后再通过真实入口操作，仍须逐项确认。详见 [首次使用](../../docs/macos-guide.md)。
 
-**English.** Open Getting started from the empty workspace, More or Help menu. TipKit uses local
-metadata only. The replayable guide remains available when TipKit is unavailable or dismissed.
-Reading never installs tools or validates readiness; Connect explicitly hands off to the existing picker.
+`ClientChecks` 使用独立 HOME/BERTH_HOME，验证跨真实进程的首次资格持久化、旧用户迁移、
+原生鼠标/键盘/跳过/重看、焦点归属、760×520 缩放与已接入项目锚点，保存 paper/midnight
+实际测试窗口图。冻结导览图补充布局审查，不代替原生交互。完整 VoiceOver/输入法验收仍属
+独立范围；Reduce Motion 的分支受测，但测试不会改动用户系统辅助功能设置。
+
+**English.** A native spotlight tour opens once over the real workspace. Its presentation is remembered
+immediately; skipping, reopening or upgrading does not replay it. More and Help remain explicit replay
+entries. The tour follows visible controls, blocks click-through and keeps keyboard focus inside it.
+Reading never launches tools, writes a manifest, installs software or certifies readiness.
 
 ## 跨会话历史的设计边界
 

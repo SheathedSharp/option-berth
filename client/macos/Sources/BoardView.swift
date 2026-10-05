@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 import BerthTerminal
-import TipKit
 
 /// The project views: declared services, their runtime facts, and read-only Git context.
 /// There is no machine-wide port scope. A port only appears inside the
@@ -51,9 +50,13 @@ struct BoardView: View {
     @StateObject private var git: GitStore
     @ObservedObject private var views: ViewState
 
-    @AppStorage("railWidth") private var railWidth: Double = Double(Metrics.railWidth)
+    private var railWidth: Binding<Double> {
+        Binding(get: { settings.sidebarWidth }, set: { settings.sidebarWidth = $0 })
+    }
     static let railRange: ClosedRange<Double> = 140...320
     var scrolls: Bool = true
+    private let automaticGuide: Bool
+    private let guideDefaults: UserDefaults
     private let initialConsoleAgent: Bool
     private let performAction: (WorkspaceAction) -> Void
 
@@ -64,10 +67,14 @@ struct BoardView: View {
         scrolls: Bool = true,
         initialScope: Scope = .services(""),
         initialConsoleAgent: Bool = false,
+        automaticGuide: Bool = false,
+        guideDefaults: UserDefaults = .standard,
         views: ViewState? = nil,
         settings: UISettings = .shared,
         performAction: @escaping (WorkspaceAction) -> Void = { _ in }
     ) {
+        self.automaticGuide = automaticGuide
+        self.guideDefaults = guideDefaults
         self.performAction = performAction
         self.store = store
         self.services = services
@@ -86,8 +93,6 @@ struct BoardView: View {
     @State private var removing: BerthGroup?
     @State private var problem: String?
     @State private var projectQuery = ""
-    @State private var tipsEnabled = false
-    @State private var guideConnectPending = false
     @ObservedObject private var terminalSessions = TerminalSessions.shared
     @ObservedObject private var recovery = WorkspaceRecovery.shared
 
@@ -101,10 +106,10 @@ struct BoardView: View {
     var body: some View {
         HStack(spacing: 0) {
             if views.railVisible {
-                rail
-                    .frame(width: scrolls ? railWidth : Double(Metrics.railWidth), alignment: .leading)
+                rail.tourAnchor(.worktrees)
+                    .frame(width: scrolls ? settings.sidebarWidth : Double(Metrics.railWidth), alignment: .leading)
                     .clipped()
-                SplitHandle(width: $railWidth, range: Self.railRange)
+                SplitHandle(width: railWidth, range: Self.railRange)
             }
             VStack(spacing: 0) {
                 WorkspaceToolbar(frozen: !scrolls, sessionCount: scrolls ? terminalSessions.sessions.count : 0,
@@ -122,12 +127,15 @@ struct BoardView: View {
         .ignoresSafeArea(.container, edges: .top)
         .background(Ink.canvas)
         .preferredColorScheme(settings.colorScheme)
-        .sheet(isPresented: $views.showingGuide, onDismiss: {
-            if guideConnectPending { guideConnectPending = false; addProject() }
-        }) {
-            GettingStartedGuide(onClose: { views.showingGuide = false }, onConnect: {
-                guideConnectPending = true; views.showingGuide = false
-            })
+        .disabled(views.showingGuide)
+        .accessibilityHidden(views.showingGuide)
+        .overlayPreferenceValue(TourAnchors.self) { anchors in
+            GeometryReader { geometry in
+                if views.showingGuide {
+                    WorkspaceTour(navigation: views, frames: anchors.mapValues { geometry[$0] },
+                                  size: geometry.size, frozen: !scrolls)
+                }
+            }
         }
         .sheet(isPresented: $views.showingUpdates) { ReleaseUpdateSheet() }
         .sheet(isPresented: $views.showingRecovery) {
@@ -176,7 +184,16 @@ struct BoardView: View {
         } message: {
             Text(problem ?? "")
         }
-        .onAppear { if scrolls { tipsEnabled = OnboardingTips.configure(); refreshGit(force: true) } }
+        .onAppear {
+            if scrolls {
+                if automaticGuide && TourFirstUse.claim(defaults: guideDefaults) { views.showingGuide = true }
+                refreshGit(force: true)
+            }
+        }
+        .onChange(of: views.showingGuide) { _, shown in
+            if shown { views.guideTarget = .connect }
+        }
+        .onDisappear { if scrolls { views.showingGuide = false } }
         .onChange(of: services.updatedAt) { _, _ in
             refreshGit()
         }
@@ -206,7 +223,7 @@ struct BoardView: View {
                     .buttonStyle(.plain)
                     .font(Face.mono(15, .medium))
                     .foregroundStyle(Ink.accent)
-                    .help("接入一个 worktree")
+                    .help("接入一个 worktree").tourAnchor(.connect)
             }
             .padding(.horizontal, Metrics.gutter)
             .padding(.top, 14)
@@ -313,21 +330,16 @@ struct BoardView: View {
                 .font(Face.sans(11.5))
                 .foregroundStyle(Ink.inkFaint)
                 .fixedSize(horizontal: false, vertical: true)
-            if scrolls && tipsEnabled {
-                TipView(FirstWorktreeTip()) { action in
-                    if action.id == "guide" { views.showingGuide = true }
-                }.tipBackground(Ink.surface)
-            }
             if scrolls {
                 Button("使用指引 / Getting started") { views.showingGuide = true }
                     .accessibilityIdentifier("workspace.guide")
-                SheetButton(title: "接入项目", primary: true, action: addProject)
+                SheetButton(title: "接入项目", primary: true, action: addProject).tourAnchor(.connect)
                 Button("打开会话管理 / Open session manager") { views.showingSessions = true }
             } else {
                 // Frozen captures cannot render AppKit-backed buttons. Keep
                 // inert labels here; real controls are exercised in NSWindow.
                 Text("使用指引 / Getting started").font(Face.sans(11)).foregroundStyle(Ink.accent)
-                SheetButton(title: "接入项目", primary: true, action: {})
+                SheetButton(title: "接入项目", primary: true, action: {}).tourAnchor(.connect)
                 Text("打开会话管理 / Open session manager").font(Face.sans(11)).foregroundStyle(Ink.inkMuted)
             }
         }
@@ -339,7 +351,7 @@ struct BoardView: View {
     private func projectContent(_ project: BerthGroup) -> some View {
         VStack(spacing: 0) {
             projectHeader(project)
-            tabBar(project)
+            tabBar(project).tourAnchor(.facts)
             Hairline()
             switch scope {
             case .services:

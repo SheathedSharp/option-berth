@@ -115,7 +115,7 @@ python3 scripts/package_release.py --os darwin --arch arm64 --include-app --outp
 
 代码先校验参数，逐个签署嵌套 Mach-O 和应用包并启用 hardened runtime、timestamp，再核对
 TeamIdentifier。只有 notarytool 返回 `Accepted`、staple/validate、严格签名验证和 Gatekeeper
-检查全部成功，才生成 `-notarized.zip`；任何失败都不降级伪装成已公证。原始构建应用不会被
+检查全部成功后，再生成外层 DMG 并对镜像执行签名、公证、staple/validate 和 Gatekeeper open 检查；全部通过才生成 `-notarized.dmg`；任何失败都不降级伪装成已公证。原始构建应用不会被
 修改，签名发生在暂存副本。`--deep` 仅用于验证，不作为隐式递归签名策略。
 
 发布资产校验默认只接受 ad-hoc 资产集合。发布经过上述完整流程产生的公证包时，须显式使用
@@ -137,3 +137,8 @@ Windows workflow 在构建 CLI 后运行 `verify_service_lifecycle.py`，使用�
 
 这项检查不涵盖 Windows/Linux 桌面端、所有终端/权限/服务树场景，也不代表 Windows arm64
 已经原生执行。客户端升级入口只检查公开发布信息，自动替换安装与状态迁移仍须单独验收。
+
+
+## macOS 安装容器
+
+新客户端使用 DMG（[安装与替换](macos-install.md)）。打包器验证只读挂载、Applications 拖放入口、复制后的签名、内置引擎身份和许可。完成全部关卡及自有挂载清理后才暴露最终资产。CLI 压缩包不变，旧 Release 的 ZIP 不覆盖。PR 的 macOS 原生验证不等于发布。
