@@ -140,7 +140,7 @@ struct OptionBerthApp: App {
     }
 
     private func perform(_ action: WorkspaceAction) {
-        guard views.allowsCommands, WorkspaceInputContext.allowsNavigation(in: NSApp.keyWindow) else { return }
+        guard views.allowsCommands, WorkspaceInputContext.allowsNavigation(in: NSApp.keyWindow, action: action) else { return }
         if let ordinal = action.ordinal {
             views.selectVisibleProject(at: ordinal, in: services.projects); return
         }

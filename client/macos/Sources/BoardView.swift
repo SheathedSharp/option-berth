@@ -86,6 +86,7 @@ struct BoardView: View {
     }
 
     @Environment(\.accessibilityReduceMotion) private var reduce
+    @State private var pendingAction: WorkspaceAction?
     @State private var proposal: GroupInitResult?
     @State private var proposalProblem: String?
     @State private var editingConfig: PendingConfig?
@@ -143,8 +144,12 @@ struct BoardView: View {
         .sheet(isPresented: $views.showingRecovery) {
             WorkspaceRecoverySheet(recovery: .shared) { root in views.scope = .console(root) }
         }
-        .sheet(isPresented: $views.showingActions) {
-            WorkspaceActionPanel(perform: performAction, shortcuts: .shared)
+        .sheet(isPresented: $views.showingActions, onDismiss: {
+            guard let action = pendingAction else { return }
+            pendingAction = nil
+            performAction(action)
+        }) {
+            WorkspaceActionPanel(perform: { pendingAction = $0 }, shortcuts: .shared)
         }
         .sheet(isPresented: $views.showingSessions) {
             SessionManager { session in

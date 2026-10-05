@@ -97,11 +97,11 @@ struct WorkspaceActionPanel: View {
                 .textFieldStyle(.roundedBorder).focused($searchFocused)
                 .onChange(of: query) { _, _ in selected = 0 }
                 .onSubmit {
-                    guard (NSApp.keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() != true else { return }
+                    guard !WorkspaceInputContext.hasMarkedText(in: NSApp.keyWindow) else { return }
                     guard !actions.isEmpty else { return }; choose(actions[min(selected, actions.count - 1)])
                 }
                 .onMoveCommand { direction in
-                    guard !actions.isEmpty else { return }
+                    guard !actions.isEmpty, !WorkspaceInputContext.hasMarkedText(in: NSApp.keyWindow) else { return }
                     if direction == .down { selected = (selected + 1) % actions.count }
                     if direction == .up { selected = (selected + actions.count - 1) % actions.count }
                 }
@@ -131,8 +131,10 @@ struct WorkspaceActionPanel: View {
             .sheet(isPresented: $editingShortcuts) { WorkspaceShortcutEditor(shortcuts: shortcuts) }
     }
     private func choose(_ action: WorkspaceAction) {
+        // The parent records this action and dispatches it from sheet.onDismiss,
+        // after native input ownership has actually returned to the workspace.
+        perform(action)
         dismiss()
-        DispatchQueue.main.async { perform(action) }
     }
 }
 

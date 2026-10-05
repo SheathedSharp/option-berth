@@ -38,7 +38,9 @@ struct WorkspaceCommandMenus: Commands {
         }
     }
     private var allowed: Bool { views.allowsCommands && WorkspaceInputContext.allowsNavigation(in: NSApp.keyWindow) }
-    private func send(_ action: WorkspaceAction) { if allowed { perform(action) } }
+    private func send(_ action: WorkspaceAction) {
+        if views.allowsCommands && WorkspaceInputContext.allowsNavigation(in: NSApp.keyWindow, action: action) { perform(action) }
+    }
     private func worktreeName(_ action: WorkspaceAction) -> String? {
         guard let ordinal = action.ordinal else { return nil }
         return WorkspaceProjectNavigation.project(at: ordinal, in: views.orderedProjects(services.projects).map(\.name))
