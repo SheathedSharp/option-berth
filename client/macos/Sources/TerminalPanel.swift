@@ -8,7 +8,7 @@ struct TerminalPanel: View {
     @ObservedObject private var sessions = TerminalSessions.shared
     @ObservedObject var workspace: ConsoleWorkspace
     @State private var problem: String?
-    @State private var integrationEnabled = false
+    @ObservedObject private var settings = UISettings.shared
     @State private var showingHistory = false
     private var scoped: [TerminalSession] { sessions.inWorktree(root).filter { $0.kind == "terminal" } }
     private var selected: TerminalSession? { scoped.first { $0.id == workspace.terminalSelection } ?? scoped.last }
@@ -24,9 +24,9 @@ struct TerminalPanel: View {
 
                 if frozen { Label("命令块", systemImage: "square").font(Face.sans(10)).foregroundStyle(Ink.inkMuted) }
                 else {
-                Toggle("命令块", isOn: $integrationEnabled)
-                    .toggleStyle(.checkbox).help("仅为新建 zsh 启用临时集成，不修改 shell 配置；命令仅留在内存")
-                    .disabled(frozen || URL(fileURLWithPath: TerminalSession.shell).lastPathComponent != "zsh")
+                Toggle("命令块", isOn: $settings.shellIntegration)
+                    .toggleStyle(.checkbox).help("只影响新建 zsh，不修改 shell 配置。settings.json 指定此项时请编辑文件；命令只留在内存")
+                    .disabled(frozen || settings.configuration.preferences.shellIntegration != nil || URL(fileURLWithPath: TerminalSession.shell).lastPathComponent != "zsh")
                 }
                 if frozen {
                     Text("搜索历史… / History…").font(Face.sans(11)).foregroundStyle(Ink.inkMuted)
@@ -96,7 +96,7 @@ struct TerminalPanel: View {
     private func newShell() {
         do {
             let session = try sessions.add(worktree: root, title: "Shell \(scoped.count + 1)",
-                                           executable: TerminalSession.shell, arguments: ["-i"], shellIntegration: integrationEnabled)
+                                           executable: TerminalSession.shell, arguments: ["-i"], shellIntegration: settings.shellIntegration && URL(fileURLWithPath: TerminalSession.shell).lastPathComponent == "zsh")
             workspace.terminalSelection = session.id
             problem = nil
             DispatchQueue.main.async { session.terminal.window?.makeFirstResponder(session.terminal) }

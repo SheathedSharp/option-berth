@@ -26,7 +26,7 @@ jobs:
           mkdir -p "$isolation/home" "$isolation/berth" "$RUNNER_TEMP/ui-evidence/native"
           HOME="$isolation/home" CFFIXED_USER_HOME="$isolation/home" BERTH_HOME="$isolation/berth" "$binary_dir/ClientChecks"
           find "$isolation/berth" -maxdepth 1 -name '*-native.png' -type f -exec cp {} "$RUNNER_TEMP/ui-evidence/native/" \;
-      - name: Build without installing and render both themes
+      - name: Build without installing and render paper plus a user-file fixture
         shell: bash
         run: |
           set -euo pipefail
@@ -37,7 +37,7 @@ jobs:
           export HOME="$isolation/home" CFFIXED_USER_HOME="$isolation/home" BERTH_HOME="$isolation/berth"
           app=client/macos/build/OptionBerth.app/Contents/MacOS/OptionBerth
           "$app" --render-states "$RUNNER_TEMP/ui-evidence/paper" --size 1060x720
-          "$app" --render-states "$RUNNER_TEMP/ui-evidence/midnight" --render-theme midnight --size 900x640
+          "$app" --render-states "$RUNNER_TEMP/ui-evidence/midnight" --render-theme-file client/macos/Fixtures/theme-dark.json --size 900x640
       - name: Retain synthetic images, never app binaries or fonts
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

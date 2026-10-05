@@ -7,6 +7,7 @@ struct CodeView: View {
     @ObservedObject var git: GitStore
     let project: BerthGroup
     var scrolls = true
+    @ClientDetailWidth(.git) private var detailWidth
     @State private var query = ""
     @State private var filter = GitReviewFilter.all
     @State private var showingWorktrees = false
@@ -24,7 +25,7 @@ struct CodeView: View {
         .onChange(of: filter) { _, _ in reconcileSelection() }
         .onChange(of: project.rootDir) { _, _ in query = ""; filter = .all; showingWorktrees = false }
         .onReceive(NotificationCenter.default.publisher(for: .init("option-berth.git.find"))) { event in
-            guard scrolls, git.isFor(project), event.object as? String == project.name else { return }
+            guard scrolls, git.isFor(project), event.object as? String == project.name, !hasMarkedText else { return }
             searching = true
         }
     }
@@ -35,8 +36,7 @@ struct CodeView: View {
             if let problem = git.problem {
                 HStack(alignment: .top) {
                     Image(systemName: "exclamationmark.triangle")
-                    Text((git.tree == nil ? "读取失败：" : "刷新失败，当前为上次结果：") + problem)
-                        .textSelection(.enabled)
+                    Text((git.tree == nil ? "读取失败：" : "刷新失败，当前为上次结果：") + problem).textSelection(.enabled)
                     Spacer(minLength: 0)
                     Button("重试") { git.loadTree(project: project, force: true) }.disabled(git.loading || !scrolls)
                 }.font(Face.sans(11)).foregroundStyle(Change.changed).padding(10).background(Ink.surface)
@@ -47,9 +47,13 @@ struct CodeView: View {
                 GeometryReader { geometry in
                     if geometry.size.width >= 740 {
                         if scrolls {
-                            HSplitView {
-                                fileList.frame(minWidth: 260, idealWidth: 320)
-                                diffPanel.frame(minWidth: 320, maxWidth: .infinity)
+                            let maximum = min(500.0, Double(max(0, geometry.size.width - 340 - SplitHandle.hitWidth)))
+                            let range = min(340.0, maximum)...maximum
+                            let width = min(max(detailWidth, range.lowerBound), range.upperBound)
+                            HStack(spacing: 0) {
+                                fileList.frame(width: max(0, geometry.size.width - width - SplitHandle.hitWidth))
+                                SplitHandle(width: $detailWidth, range: range, controlsTrailingPane: true)
+                                diffPanel.frame(width: width)
                             }
                         } else {
                             HStack(spacing: 0) {
@@ -59,6 +63,8 @@ struct CodeView: View {
                             }
                         }
                     } else if scrolls {
+                        // Width is a preference for side-by-side review. Small
+                        // windows keep both panes readable in a native vertical split.
                         VSplitView {
                             fileList.frame(minHeight: 85, idealHeight: 150)
                             diffPanel.frame(minHeight: 100, maxHeight: .infinity)
@@ -169,9 +175,10 @@ struct CodeView: View {
                             if direction == .down { moveSelection(1) }
                             if direction == .up { moveSelection(-1) }
                         }
+                    // The application's command catalogue owns key equivalents;
+                    // keeping a second hard-coded Cmd+F here breaks user overrides.
                     Button { searching = true } label: { Image(systemName: "magnifyingglass") }
-                        .buttonStyle(.plain).keyboardShortcut("f", modifiers: .command)
-                        .help("查找当前 worktree 的变更文件")
+                        .buttonStyle(.plain).help("查找当前 worktree 的变更文件")
                 } else { Label("筛选文件或原路径", systemImage: "magnifyingglass") }
                 Text(verbatim: "\(visible.count)/\(files.count)").foregroundStyle(Ink.inkFaint)
             }.font(Face.sans(11)).padding(10).background(Ink.surface)
@@ -235,7 +242,11 @@ struct CodeView: View {
                     ScrollView([.horizontal, .vertical]) { patchLines(file).textSelection(.enabled) }
                 } else { patchLines(file).frame(maxHeight: .infinity, alignment: .top).clipped() }
             } else { message("选择文件查看差异") }
-        }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).foregroundStyle(Ink.ink).background(Ink.canvas)
+        }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .foregroundStyle(Ink.ink).background(Ink.canvas)
+            .background { GeometryReader { geometry in
+                Color.clear.preference(key: GitReviewDetailWidthKey.self, value: geometry.size.width)
+            } }
     }
     private func message(_ text: String) -> some View {
         Text(text).font(Face.sans(12)).foregroundStyle(Ink.inkMuted).textSelection(.enabled)
@@ -251,7 +262,7 @@ struct CodeView: View {
             }
         }
     }
-    private var hasMarkedText: Bool { (NSApp.keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() == true }
+    private var hasMarkedText: Bool { (NSApp.keyWindow?.firstResponder as? NSTextInputClient)?.hasMarkedText() == true }
     private func reconcileSelection() {
         if git.isFor(project), let path = git.selectedPath, !visible.contains(where: { $0.path == path }) { git.clearSelection() }
     }
@@ -261,4 +272,9 @@ struct CodeView: View {
         let index = current.map { max(0, min(visible.count - 1, $0 + offset)) } ?? (offset > 0 ? 0 : visible.count - 1)
         git.select(visible[index], project: project)
     }
+}
+
+struct GitReviewDetailWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }

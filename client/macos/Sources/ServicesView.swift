@@ -18,10 +18,10 @@ struct ServicesView: View {
     var scrolls: Bool = true
 
     // Logs need enough room for the fixed time/level columns and a readable message.
-    // Keep this shared with CodeView so both detail surfaces open at the same width.
-    @AppStorage("detailWidth") private var detailWidth: Double = 380
-    private static let defaultDetailWidth: Double = 380
-    private static let detailRange: ClosedRange<Double> = 340...500
+    // Services and Git have independent file-backed widths and drag preferences.
+    @ClientDetailWidth(.services) private var detailWidth: Double
+    private static let defaultDetailWidth = ClientDetailPane.defaultWidth
+    private static let detailRange = ClientDetailPane.range
     private static let minimumMainWidth: CGFloat = 340
 
     @Environment(\.accessibilityReduceMotion) private var reduce
@@ -34,7 +34,7 @@ struct ServicesView: View {
     /// 停在第 0 条时再按一次「下一个」（只有一条命中）也得动。
     @State private var scrollTicket = 0
     /// 查找之前跟没跟着尾巴。关掉查找时按**他自己**那一档恢复 ——
-    /// 进来查找会按停跟随，但「本来就没跟着」的人不该被我们按着跟上。
+    /// 查找会按停跟随，但「本来就没跟着」的人不该被我们按着跟上。
     @State private var followingBeforeFind = false
     @FocusState private var findFocused: Bool
 
@@ -57,7 +57,7 @@ struct ServicesView: View {
     /// 日志那三列。**宽度是定值，不跟窗口走** —— 一列时间一列级别，扫的是一条竖线；
     /// 让它随窗口伸缩的话，同一条日志在不同窗口里断在不同的字上。
     private enum LogCol {
-        /// 色条那一格：2pt 的条 + 1pt 让位。两条记录之间的色条连不连得上，
+        /// 色条那一格：2pt 的条 + 1pt 的让位。两条记录之间的色条连不连得上，
         /// 决定「一屏扫下来是不是一条竖线」。
         static let rail: CGFloat = 3
         static let railWidth: CGFloat = 2
@@ -80,7 +80,7 @@ struct ServicesView: View {
                     servicePanel
                         .frame(width: max(0, space.size.width - width - SplitHandle.hitWidth),
                                alignment: .topLeading)
-                    SplitHandle(width: $detailWidth, range: range)
+                    SplitHandle(width: $detailWidth, range: range, controlsTrailingPane: true)
                     logPanel(hits)
                         .frame(width: width, alignment: .topLeading)
                         .frame(maxHeight: .infinity, alignment: .topLeading)

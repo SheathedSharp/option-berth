@@ -8,6 +8,7 @@ import SwiftUI
 struct SplitHandle: View {
     @Binding var width: Double
     let range: ClosedRange<Double>
+    var controlsTrailingPane = false
 
     @State private var hovering = false
     /// 拖之前那条线的宽度。手势给的位移是从**开始拖**那一刻算的，而宽度每次事件
@@ -30,11 +31,16 @@ struct SplitHandle: View {
                 }
             }
             .gesture(
-                DragGesture(minimumDistance: 1)
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { value in
-                        let base = start ?? width
+                        // No room to resize: keep the preferred width intact.
+                        guard range.lowerBound < range.upperBound else { return }
+                        // The preference may be wider than its current viewport.
+                        // Begin at the displayed width to avoid a dead drag zone.
+                        let base = start ?? min(max(width, range.lowerBound), range.upperBound)
                         if start == nil { start = base }
-                        let moved = base + Double(value.translation.width)
+                        let delta = Double(value.translation.width)
+                        let moved = base + (controlsTrailingPane ? -delta : delta)
                         width = min(max(moved, range.lowerBound), range.upperBound)
                     }
                     .onEnded { _ in start = nil }

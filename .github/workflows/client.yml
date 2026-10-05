@@ -41,7 +41,7 @@ jobs:
           "$RUNNER_TEMP/draft-state-tests"
       - name: Verify native draft buttons and window cancellation
         run: |
-          swiftc client/macos/Sources/{AddProjectSheet,DraftRunState,CLI,DaemonLaunch,Brand,UISettings,BerthGeometry}.swift client/macos/Tests/DraftSheetInteractionTests.swift -o "$RUNNER_TEMP/draft-native-tests"
+          swiftc client/macos/Sources/{AddProjectSheet,DraftRunState,CLI,DaemonLaunch,Brand,UISettings,ClientConfiguration,ClientConfigurationMonitor,BerthGeometry}.swift client/macos/Tests/DraftSheetInteractionTests.swift -o "$RUNNER_TEMP/draft-native-tests"
           isolation=$(mktemp -d "$RUNNER_TEMP/draft-native.XXXXXX")
           trap 'rm -rf "$isolation"' EXIT
           mkdir -p "$isolation/home" "$isolation/berth"
