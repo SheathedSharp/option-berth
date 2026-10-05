@@ -65,8 +65,16 @@ func (d *DirectRuns) runForPID(pid int) (state.Run, bool) {
 	if hit, ok := d.resolved[pid]; ok {
 		return hit.run, hit.ok
 	}
+	return d.resolveRunForPID(pid)
+}
 
-	var visited []int
+// Keep the bounded scratch frame off the high-frequency memo-hit path.
+// The caller has already checked the registry and the starting PID cache.
+func (d *DirectRuns) resolveRunForPID(pid int) (state.Run, bool) {
+	// Ancestor invokes the visitor at most MaxAncestry times. Keep scratch
+	// bounded to this call; no pooled state or cache survives a publication.
+	var path [ports.MaxAncestry]int
+	visited := path[:0]
 	// The walk's bool means "resolved", not "owned": a cached negative is
 	// terminal too. Positive cache entries carry distance so warming a cache
 	// cannot make a later query jump beyond MaxAncestry.
