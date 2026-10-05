@@ -30,7 +30,6 @@ import BerthTerminal
             do { try await run(home: home, berth: berth); print("PersonalizationChecks: \(checks) checks passed"); exit(0) }
             catch { fputs("PersonalizationChecks failed: \(error.localizedDescription)\n", stderr); exit(1) }
         }
-        // Exercise real AppKit event dispatch, not a nested Foundation test loop.
         app.run()
     }
     static func run(home: String, berth: String) async throws {
@@ -72,7 +71,6 @@ import BerthTerminal
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         try await eventually("native test window is not key") { window.isKeyWindow }
-        // Send actual mouse events through the application's event loop.
         let start = NSPoint(x: rail + SplitHandle.hitWidth / 2, y: 280)
         for (index, kind) in [NSEvent.EventType.leftMouseDown, .leftMouseDragged, .leftMouseUp].enumerated() {
             let point = NSPoint(x: start.x + (index == 0 ? 0 : 24), y: start.y)
@@ -94,8 +92,6 @@ import BerthTerminal
         try expect(registry.workspace("/fixture/new").providerID == "claude" && registry.workspace("/fixture/third").providerID == "pi", "default-agent change rewrote existing selection")
         try write(#"{"schemaVersion":1,"reduceMotion":false,"sidebarWidth":230,"shellIntegration":false,"defaultAgent":"pi"}"#)
         try await eventually("updated width did not supersede the local drag") { abs(rail - 230) < 1 && reduced == systemReduced && !settings.shellIntegration }
-        // System preferences are read-only. Test both policy branches without
-        // changing the machine setting; the native probe reads the real value.
         for system in [false, true] {
             for preference: Bool? in [nil, false, true] {
                 try expect(ClientMotionPolicy.reduced(system: system, preference: preference) == (system || preference == true), "Reduce Motion policy matrix")
@@ -109,7 +105,6 @@ import BerthTerminal
         try expect(reduced == systemReduced && existing.providerID == "opencode" && existing.draft == "preserve this draft", "deletion changed system preference or existing draft")
         try await eventually("removed user motion override persisted") { reduced == systemReduced }
         try capture(host, at: root.appendingPathComponent("personalization-sidebar-native.png"))
-
         try await detailChecks(settings: settings, root: root)
 
         let session = TerminalSession(worktree: home, title: "Personalization fixture")
@@ -131,6 +126,8 @@ import BerthTerminal
             }
             try expect(session.isActive && session.terminal.process?.shellPid == pid, "theme reload restarted the PTY")
             try capture(terminalHost, at: root.appendingPathComponent("personalization-terminal-native.png"))
+            try await checkTerminalComposition(terminalWindow, output: root.appendingPathComponent("personalization-terminal-composited-native.png"))
+            try expect(session.isActive && session.terminal.process?.shellPid == pid, "composition capture changed PTY ownership")
             try capture(host, at: root.appendingPathComponent("personalization-custom-native.png"))
         } catch { failure = error }
         session.stop(force: true)
