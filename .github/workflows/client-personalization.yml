@@ -1,7 +1,7 @@
 name: Client personalization interaction
 on:
   pull_request:
-    paths: ['client/macos/**', '.github/workflows/client-personalization.yml']
+    paths: ['client/macos/**', 'scripts/release.py', 'scripts/client_personalization_release_test.py', '.github/workflows/client-personalization.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -16,6 +16,8 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
+      - name: Verify release gates without publishing
+        run: python3 -m unittest discover -s scripts -p 'client_personalization_release_test.py'
       - name: Validate personal setting types and bounds
         run: |
           swiftc -swift-version 5 client/macos/Sources/ClientConfiguration.swift client/macos/Tests/ClientPreferencesTests.swift -o "$RUNNER_TEMP/client-preferences-tests"

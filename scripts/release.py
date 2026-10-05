@@ -104,7 +104,7 @@ def verify(root: Path) -> None:
             run(root, binary, capture=False)
         with tempfile.TemporaryDirectory(prefix="oberth-draft-native-") as tmp:
             binary = str(Path(tmp) / "checks")
-            sources = ["AddProjectSheet", "DraftRunState", "CLI", "DaemonLaunch", "Brand", "UISettings", "BerthGeometry"]
+            sources = ["AddProjectSheet", "DraftRunState", "CLI", "DaemonLaunch", "Brand", "UISettings", "ClientConfiguration", "ClientConfigurationMonitor", "BerthGeometry"]
             run(root, "swiftc", *(f"client/macos/Sources/{name}.swift" for name in sources),
                 "client/macos/Tests/DraftSheetInteractionTests.swift", "-o", binary, capture=False)
             home, berth = Path(tmp) / "home", Path(tmp) / "berth"
@@ -121,6 +121,26 @@ def verify(root: Path) -> None:
             berth.mkdir()
             run(root, str(Path(client_checks_dir) / "ClientChecks"), capture=False,
                 environment={"HOME": str(home), "CFFIXED_USER_HOME": str(home), "BERTH_HOME": str(berth)})
+        # File parsing, native file events and actual consumer updates are release
+        # gates as well as PR checks. They run without touching daily user state.
+        with tempfile.TemporaryDirectory(prefix="oberth-configuration-") as tmp:
+            for name in ("ClientConfigurationTests", "ClientPreferencesTests", "ClientConfigurationWatchTests"):
+                binary = str(Path(tmp) / name)
+                sources = ["client/macos/Sources/ClientConfiguration.swift"]
+                if name == "ClientConfigurationWatchTests":
+                    sources.append("client/macos/Sources/ClientConfigurationMonitor.swift")
+                run(root, "swiftc", "-swift-version", "5", *sources,
+                    f"client/macos/Tests/{name}.swift", "-o", binary, capture=False)
+                run(root, binary, capture=False)
+        run(root, "swift", "build", "--package-path", "client/macos", "--force-resolved-versions",
+            "--product", "PersonalizationChecks", capture=False)
+        with tempfile.TemporaryDirectory(prefix="oberth-personalization-") as tmp:
+            home = Path(tmp) / "home"
+            berth = home / ".option-berth"
+            berth.mkdir(parents=True)
+            run(root, str(Path(client_checks_dir) / "PersonalizationChecks"), capture=False,
+                environment={"HOME": str(home), "CFFIXED_USER_HOME": str(home),
+                             "BERTH_HOME": str(berth), "BERTH_PERSONALIZATION_TEST": "1"})
         run(root, "bash", "client/macos/build.sh", capture=False)
         with tempfile.TemporaryDirectory(prefix="oberth-git-queue-") as tmp:
             binary = str(Path(tmp) / "checks")
