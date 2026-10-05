@@ -47,8 +47,11 @@ extension CommandFixture {
         try await eventually("custom key failed to activate Git") { views.scope == .code("beta") }
         try trackMenu(MenuBar.viewTitle, window: window)
         try expect(items(NSApp.mainMenu).contains { $0.title == WorkspaceAction.code.title && $0.keyEquivalent == "j" }, "opened menu lost the custom shortcut")
+        print("Native check: inputChecks"); fflush(stdout)
         try await inputChecks(window: window, home: home)
+        print("Native check: paletteChecks"); fflush(stdout)
         try await paletteChecks(window: window)
+        print("Native check: connectionChecks"); fflush(stdout)
         try await connectionChecks(window: window)
         try expect(TerminalSessions.shared.sessions.isEmpty, "command navigation started a PTY")
         try FileManager.default.removeItem(at: file)
@@ -66,6 +69,7 @@ extension CommandFixture {
         try await eventually("restored default shortcut did not route") { views.scope == .code("beta") }
         try trackMenu(MenuBar.viewTitle, window: window)
         try expect(items(NSApp.mainMenu).contains { $0.title == WorkspaceAction.code.title && $0.keyEquivalent == "g" }, "opened menu did not restore default equivalent")
+        print("Native check: gitFindChecks"); fflush(stdout)
         try await gitFindChecks(window: window, configuration: file)
         window.contentView?.layoutSubtreeIfNeeded()
         if let host = window.contentView, let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
@@ -187,7 +191,18 @@ extension CommandFixture {
     func trackMenu(_ title: String, window: NSWindow) throws {
         guard let menu = NSApp.mainMenu?.items.first(where: { $0.title == title })?.submenu,
               let view = window.contentView else { throw Failure(message: "missing native menu " + title) }
-        let timer = Timer(timeInterval: 0.04, repeats: false) { _ in menu.cancelTracking() }
+        // Initial menu population may take longer than one timer interval. A
+        // one-shot cancel can run before tracking starts and strand popUp().
+        // Cancel only this test menu, with the same bounded five-second limit.
+        let deadline = Date().addingTimeInterval(5)
+        let timer = Timer(timeInterval: 0.04, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                if Date() >= deadline {
+                    fputs("CommandChecks: menu tracking cancellation deadline exceeded\n", stderr); exit(1)
+                }
+                menu.cancelTrackingWithoutAnimation()
+            }
+        }
         RunLoop.main.add(timer, forMode: .eventTracking)
         defer { timer.invalidate() }
         menu.popUp(positioning: nil, at: NSPoint(x: 30, y: 30), in: view)
