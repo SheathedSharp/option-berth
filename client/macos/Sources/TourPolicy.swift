@@ -14,7 +14,7 @@ enum TourFirstUse {
         return !(legacyUser ?? legacyStoreExists())
     }
     static func legacyStoreExists() -> Bool {
-        let home = ProcessInfo.processInfo.environment["BERTH_HOME"]
+        let home = ProcessInfo.processInfo.environment["BERTH_HOME"].flatMap { $0.isEmpty ? nil : $0 }
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".option-berth").path
         // Old clients configured TipKit on opening the workspace. Conservatively
         // migrate existing users without a surprise automatic tour on upgrade.

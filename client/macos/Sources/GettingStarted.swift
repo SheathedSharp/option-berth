@@ -67,12 +67,15 @@ struct WorkspaceTour: View {
                         Spacer()
                         Text("\(index + 1) / \(available.count)").font(Face.mono(11)).foregroundStyle(Ink.accent)
                     }
-                    Text(target.title).font(Face.sans(17, .semibold)).fixedSize(horizontal: false, vertical: true)
-                        .accessibilityAddTraits(.isHeader)
-                    Text(target.chinese).font(Face.sans(12.5)).fixedSize(horizontal: false, vertical: true)
-                    Text(target.english).font(Face.sans(11.5)).foregroundStyle(Ink.inkMuted)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
+                    if frozen {
+                        explanation(target)
+                        Spacer(minLength: 0)
+                    } else {
+                        // Stored larger UI fonts must not push Skip/Next outside
+                        // the card. Only the explanation scrolls; controls stay put.
+                        ScrollView { explanation(target).frame(maxWidth: .infinity, alignment: .leading) }
+                            .scrollBounceBehavior(.basedOnSize)
+                    }
                     if frozen {
                         HStack {
                             Text("跳过 / Skip"); Spacer(); Text("返回 / Back"); Text(index + 1 == available.count ? "完成 / Done" : "继续 / Next")
@@ -105,6 +108,15 @@ struct WorkspaceTour: View {
             // Never show an unanchored popover. A window without any targets can
             // still dismiss the layer; it does not gain permission to run actions.
             Color.clear.onAppear { navigation.showingGuide = false }
+        }
+    }
+    private func explanation(_ target: TourTarget) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(target.title).font(Face.sans(17, .semibold)).fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+            Text(target.chinese).font(Face.sans(12.5)).fixedSize(horizontal: false, vertical: true)
+            Text(target.english).font(Face.sans(11.5)).foregroundStyle(Ink.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
     private func move(to index: Int) {

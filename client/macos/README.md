@@ -319,7 +319,7 @@ client/macos/build/OptionBerth.app/Contents/MacOS/OptionBerth \
 
 原生按钮支持继续、返回、跳过、完成，Return/Escape 和左右方向键；Tab 焦点留在导览内，
 关闭后只恢复同一窗口仍存活的编辑控件。底层工作区禁用，遮罩挖空也不会让点击穿透。
-Reduce Motion 禁用定位动画。导览不会启动 shell/Agent、写清单或打开项目选择器；
+大号界面字体只滚动说明区，操作按钮保持可见。Reduce Motion 禁用定位动画。导览不会启动 shell/Agent、写清单或打开项目选择器；
 看完后再通过真实入口操作，仍须逐项确认。详见 [首次使用](../../docs/macos-guide.md)。
 
 `ClientChecks` 使用独立 HOME/BERTH_HOME，验证跨真实进程的首次资格持久化、旧用户迁移、

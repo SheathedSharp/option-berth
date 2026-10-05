@@ -71,8 +71,9 @@ extension ClientChecks {
         require(TourLayout.visible(CGRect(x: -100, y: -100, width: 10, height: 10), in: CGSize(width: 760, height: 520)) == nil, "offscreen target is eligible")
         let visualSettings = UISettings.shared
         let priorTheme = visualSettings.theme
+        let priorScale = visualSettings.interfaceScale
         visualSettings.theme = .paper
-        defer { visualSettings.theme = priorTheme }
+        defer { visualSettings.theme = priorTheme; visualSettings.interfaceScale = priorScale }
         let before = TerminalSessions.shared.sessions.count
         let navigation = ViewState()
         var measurement: TourMeasurement?
@@ -103,6 +104,10 @@ extension ClientChecks {
         require(window.firstResponder === controls.skipButton, "tour keyboard focus escaped into the workspace")
         window.selectNextKeyView(nil)
         require(window.firstResponder === controls.nextButton, "disabled Back interrupted first-step focus cycle")
+        window.selectPreviousKeyView(nil)
+        require(window.firstResponder === controls.skipButton, "reverse Tab escaped the tour")
+        window.selectPreviousKeyView(nil)
+        require(window.firstResponder === controls.nextButton, "reverse focus cycle included disabled Back")
 
         clickTour("guide.next", in: window)
         eventually("native Next did not select worktrees") { measurement?.target == .worktrees }
@@ -174,6 +179,16 @@ extension ClientChecks {
         eventually("Left arrow did not navigate back") { loadedMeasurement?.target == .connect }
         tourKey("\u{f703}", code: 124, in: window)
         eventually("Right arrow did not navigate forward") { loadedMeasurement?.target == .worktrees }
+        visualSettings.interfaceScale = 1.3
+        loaded.guideTarget = .recovery; pump(0.3)
+        guard let scaled = loadedHost.bitmapImageRepForCachingDisplay(in: loadedHost.bounds) else { fatalError("scaled native bitmap unavailable") }
+        loadedHost.cacheDisplay(in: loadedHost.bounds, to: scaled)
+        try scaled.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: berth).appendingPathComponent("guide-scaled-midnight-native.png"))
+        guard let scaledControls = find(TourControlsView.self, in: loadedHost).first else { fatalError("scaled guide controls missing") }
+        let actionPoint = scaledControls.nextButton.convert(NSPoint(x: scaledControls.nextButton.bounds.midX, y: scaledControls.nextButton.bounds.midY), to: loadedHost)
+        require(loadedHost.bounds.contains(actionPoint), "large fonts moved controls outside the window")
+        visualSettings.interfaceScale = priorScale
+        loaded.guideTarget = .worktrees; pump(0.25)
         loaded.railVisible = false; pump()
         require(loadedMeasurement?.target != .worktrees, "missing sidebar retained a floating spotlight")
         clickTour("guide.skip", in: window)
