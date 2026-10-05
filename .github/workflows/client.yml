@@ -25,9 +25,9 @@ jobs:
         run: |
           python3 brand/build-option-berth.py --check
           python3 -m unittest discover -s brand -p 'test_*.py'
-      - name: Test isolated daemon executable resolution
+      - name: Test isolated daemon readiness and executable resolution
         run: |
-          swiftc client/macos/Sources/DaemonLaunch.swift client/macos/Tests/DaemonLaunchTests.swift -o "$RUNNER_TEMP/daemon-launch-tests"
+          swiftc client/macos/Sources/CLI.swift client/macos/Sources/DaemonLaunch.swift client/macos/Tests/DaemonLaunchTests.swift -o "$RUNNER_TEMP/daemon-launch-tests"
           "$RUNNER_TEMP/daemon-launch-tests"
       - name: Verify bounded CLI stdout and stderr
         run: |

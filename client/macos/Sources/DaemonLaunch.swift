@@ -1,106 +1,158 @@
 import Foundation
+import Darwin
 
-/// 把 daemon 起起来。
-///
-/// 客户端本来只连不拉，结果是「第一次打开应用看到一句『连不上』」—— 这不是使用者的错，
-/// 是应用少做了一步。daemon 是这套东西的常驻进程，而 `oberth serve --detach`
-/// **会等到它开始接受连接才返回**，所以这里同步等它一下就够了，不用自己写轮询。
+/// The engine owns its socket, lock and detached daemon. The client only probes
+/// the endpoint and asks the matching CLI to start it; it never unlinks or kills.
 enum DaemonLaunch {
     enum Failure: LocalizedError {
         case binaryNotFound
         case launchFailed(String)
         case didNotComeUp(String)
+        case probeFailed(Int32)
+        case invalidSocketPath
+        case autostartDisabled
 
         var errorDescription: String? {
             switch self {
             case .binaryNotFound:
-                return "找不到 option-berth 二进制。先跑一次 mage install（装到 ~/.local/bin），或者用 BERTH_BIN 指一个"
+                return "找不到可执行的 oberth。请重新安装完整客户端或检查 BERTH_BIN。 / Reinstall the complete app or check BERTH_BIN."
             case .launchFailed(let detail):
-                return "起不来后台：\(detail)"
+                return "后台启动失败 / Daemon launch failed: \(detail)"
             case .didNotComeUp(let path):
-                return "后台起来了但 socket 没出现：\(path)"
+                return "后台尚未接受连接 / Daemon is not accepting connections: \(path)"
+            case .probeFailed(let code):
+                return "无法确认后台连接，不自动替换现有后台 / Cannot verify daemon; leaving it unchanged (errno \(code))."
+            case .invalidSocketPath:
+                return "无效的后台 socket 路径 / Invalid daemon socket path."
+            case .autostartDisabled:
+                return "后台未运行，BERTH_NO_AUTOSTART=1 已禁止自动启动。 / Daemon is unavailable; automatic start is disabled."
             }
         }
     }
 
-    /// 找 option-berth 二进制。顺序按「使用者最可能把它放哪儿」排：
-    /// 环境变量 → `mage install` 的家目录 → 包管理器目录 → 开发时仓库里的构建产物 → PATH。
+    /// Explicit override, matching bundled engine, user installation, package
+    /// manager, development build, then PATH. No shell or login-script execution.
     static func binaryPath(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         home: String = FileManager.default.homeDirectoryForCurrentUser.path,
         executableURL: URL? = Bundle.main.executableURL,
         isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
     ) -> String? {
-
-        var candidates: [String] = []
+        // A broken explicit pin must not silently select an older installation.
+        // Absolute paths also give posix_spawn and the env launcher one identity.
         if let override = environment["BERTH_BIN"], !override.isEmpty {
-            candidates.append(override)
+            return override.hasPrefix("/") && !override.utf8.contains(0) && isExecutable(override) ? override : nil
         }
-        // Distributed app archives contain the matching engine beside the app
-        // executable. An explicit BERTH_BIN still has the highest precedence.
+        var candidates: [String] = []
         if let executable = executableURL?.resolvingSymlinksInPath(),
            executable.deletingLastPathComponent().lastPathComponent == "MacOS",
            executable.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent == "Contents" {
             candidates.append(executable.deletingLastPathComponent().appendingPathComponent("oberth").path)
         }
-        candidates += [
-            "\(home)/.local/bin/oberth",
-            "/usr/local/bin/oberth",
-            "/opt/homebrew/bin/oberth",
-        ]
-        // 开发时的构建产物：这个可执行文件在 <repo>/client/macos/build/OptionBerth.app/Contents/MacOS/，
-        // 往上是 Contents → .app → build → macos → client → <repo>，再进 bin/。
+        candidates += ["\(home)/.local/bin/oberth", "/usr/local/bin/oberth", "/opt/homebrew/bin/oberth"]
         if let executable = executableURL?.resolvingSymlinksInPath() {
             var directory = executable.deletingLastPathComponent()
-            for _ in 0..<6 {
-                directory = directory.deletingLastPathComponent()
-            }
+            for _ in 0..<6 { directory = directory.deletingLastPathComponent() }
             candidates.append(directory.appendingPathComponent("bin/oberth").path)
         }
         for entry in (environment["PATH"] ?? "").split(separator: ":") {
             candidates.append("\(entry)/oberth")
         }
-
-        return candidates.first(where: isExecutable)
+        return candidates.first { $0.hasPrefix("/") && !$0.utf8.contains(0) && isExecutable($0) }
     }
 
-    /// 确认 daemon 在跑；没在跑就用 `serve --detach` 起一个。
-    /// 返回它用的 socket 路径，失败时抛错并且错误里写清下一步。
+    // Multiple windows can report the same unavailable endpoint at once. A
+    // finite launch owns this lock; the next caller probes again before spawning.
+    private static let launchLock = NSLock()
+
     static func ensureRunning(socketPath: String) throws {
-        let fileManager = FileManager.default
-        if fileManager.fileExists(atPath: socketPath) {
-            return
-        }
+        launchLock.lock()
+        defer { launchLock.unlock() }
+        try ensureRunning(socketPath: socketPath,
+                          autostart: ProcessInfo.processInfo.environment["BERTH_NO_AUTOSTART"] != "1",
+                          resolveBinary: { binaryPath() },
+                          probe: { try canConnect(socketPath) }, launch: launchDetached)
+    }
 
-        // 和引擎自己的约定一致：测试和 CI 里设了这个变量就不许自动拉进程。
-        if ProcessInfo.processInfo.environment["BERTH_NO_AUTOSTART"] == "1" {
-            throw Failure.didNotComeUp(socketPath)
-        }
-
-        guard let binary = binaryPath() else { throw Failure.binaryNotFound }
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: binary)
-        process.arguments = ["serve", "--detach"]
-        // 环境原样带过去：socket 路径、数据库位置都是 daemon 从环境里读的。
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        process.standardInput = FileHandle.nullDevice
-
-        do {
-            try process.run()
-        } catch {
-            throw Failure.launchFailed(error.localizedDescription)
-        }
-        process.waitUntilExit()
-
-        // `--detach` 返回时理论上已经能连了，但 socket 文件落盘偶尔慢半拍 ——
-        // 等它出现，而不是立刻报错。
-        let deadline = Date().addingTimeInterval(5)
-        while Date() < deadline {
-            if fileManager.fileExists(atPath: socketPath) { return }
-            Thread.sleep(forTimeInterval: 0.1)
-        }
+    /// Dependency-injected policy for failure/race tests. A protocol, permission,
+    /// timeout or unknown probe failure is not permission to replace a daemon.
+    static func ensureRunning(socketPath: String, autostart: Bool,
+                              resolveBinary: () -> String?, probe: () throws -> Bool,
+                              launch: (String, String) throws -> Void) throws {
+        if try probe() { return }
+        guard autostart else { throw Failure.autostartDisabled }
+        guard let binary = resolveBinary() else { throw Failure.binaryNotFound }
+        let launched = Result { try launch(binary, socketPath) }
+        // Another application may win the engine's single-instance lock. The
+        // transport observation, not a zero exit or an existing file, decides.
+        if try probe() { return }
+        if case .failure(let error) = launched { throw error }
         throw Failure.didNotComeUp(socketPath)
+    }
+
+    private static func launchDetached(_ binary: String, _ socketPath: String) throws {
+        // env is executed directly, never through a shell. Pin the requested
+        // socket without mutating the app's process-wide environment. The bounded
+        // runner reclaims only its launcher group; the engine detaches its daemon.
+        let result = CLI.run(binary: "/usr/bin/env",
+                             arguments: ["BERTH_SOCKET=\(socketPath)", binary, "serve", "--detach"],
+                             limits: CLI.Limits(timeout: 15))
+        if case .failure(let error) = result {
+            throw Failure.launchFailed("\(binary): \(error.message)")
+        }
+    }
+
+    /// A bounded nonblocking transport probe. Only an absent or refused socket
+    /// permits autostart; an existing non-socket/symlink is never removed here.
+    static func canConnect(_ path: String) throws -> Bool {
+        var address = sockaddr_un()
+        let capacity = MemoryLayout.size(ofValue: address.sun_path)
+        guard !path.isEmpty, !path.utf8.contains(0), path.utf8.count < capacity else {
+            throw Failure.invalidSocketPath
+        }
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { throw Failure.probeFailed(errno) }
+        defer { close(fd) }
+        guard fcntl(fd, F_SETFD, FD_CLOEXEC) == 0,
+              fcntl(fd, F_SETFL, O_NONBLOCK) == 0 else { throw Failure.probeFailed(errno) }
+        address.sun_family = sa_family_t(AF_UNIX)
+        address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+        withUnsafeMutablePointer(to: &address.sun_path) { slot in
+            slot.withMemoryRebound(to: CChar.self, capacity: capacity) { destination in
+                _ = path.withCString { strcpy(destination, $0) }
+            }
+        }
+        let connected = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        if connected == 0 { return true }
+        var code = errno
+        if code == EINPROGRESS || code == EALREADY || code == EINTR {
+            let deadline = ProcessInfo.processInfo.systemUptime + 0.5
+            while true {
+                let remaining = deadline - ProcessInfo.processInfo.systemUptime
+                guard remaining > 0 else { throw Failure.probeFailed(ETIMEDOUT) }
+                var descriptor = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+                let ready = poll(&descriptor, 1, Int32(max(1, ceil(remaining * 1000))))
+                if ready < 0 && errno == EINTR { continue }
+                guard ready > 0 else { throw Failure.probeFailed(ready == 0 ? ETIMEDOUT : errno) }
+                var length = socklen_t(MemoryLayout<Int32>.size)
+                guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &code, &length) == 0 else {
+                    throw Failure.probeFailed(errno)
+                }
+                break
+            }
+            if code == 0 { return true }
+        }
+        guard code == ENOENT || code == ECONNREFUSED else { throw Failure.probeFailed(code) }
+        var info = stat()
+        if lstat(path, &info) == 0 {
+            guard (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFSOCK) else {
+                throw Failure.probeFailed(ENOTSOCK)
+            }
+        } else if errno != ENOENT { throw Failure.probeFailed(errno) }
+        return false
     }
 }

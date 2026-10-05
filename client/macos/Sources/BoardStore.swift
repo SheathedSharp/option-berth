@@ -111,6 +111,9 @@ final class BoardStore: ObservableObject {
 
     func refresh() {
         if let stream {
+            // Explicit refresh is also an explicit retry after a failed launch.
+            // Subscription backoff never resets this budget on its own.
+            if !starting { launchAttempted = false }
             stream.refresh()
             return
         }
