@@ -92,8 +92,8 @@ core functionality does not require model configuration.
 
 ## Terminal and coding agents
 
-The macOS workspace separates **Terminal / Agent session**, alongside the selected worktree's service facts
-and read-only Git context. Every session keeps its initial worktree when you switch projects.
+The macOS **Console** unifies Shell and external agent sessions in one session strip and native display,
+alongside the selected worktree's service facts and read-only Git context. The new-agent composer opens in place. Every session keeps its initial worktree when you switch projects.
 
 Install and authenticate **OpenCode, Codex, Claude Code, DeepSeek Harness, or Pi** yourself.
 In the agent composer, **Cmd+Enter** starts a new session with your initial message; **Shift+Cmd+Enter** focuses
@@ -106,7 +106,8 @@ oberth agent plan codex --worktree "$PWD" --json
 oberth agent run codex --worktree "$PWD"
 ```
 
-**Shift+Cmd+P** opens the shared action palette; **Cmd+1/2/3** selects services, read-only Git and terminal.
+**Cmd+N** connects a project. **Cmd+1…9** selects the currently visible sidebar worktree without resetting its module.
+**Option+Cmd+S/G/T** selects services, Git, or Console; **Cmd+B** toggles the sidebar, and **Shift+Cmd+P** opens the action palette.
 Same-worktree sessions support recursive panes and exclusive detached-window presentation. The toolbar
 exposes session management, layout recovery and an explicit release check. Resume requires a selected
 original session file and matching worktree metadata, never the latest conversation. Layout metadata is
@@ -115,7 +116,13 @@ explicit per-shell zsh integration and do not modify the user's shell profiles.
 
 DeepSeek messages use headless; native mode requires an existing tui profile. These are not seamless modes
 of the same conversation. No new reasoning loop, model credential store, automatic plugin installation,
-approval bypass, or sandbox bypass is introduced. See the [client guide](client/macos/README.md).
+approval bypass, or sandbox bypass is introduced.
+
+Paper is the only built-in default theme. Edit `~/.option-berth/config/theme.json`, `settings.json`, and
+`keybindings.json` for semantic colors, fonts, scales, independent panel widths, new-session defaults, and commands.
+Valid edits reload live; invalid edits retain the last valid values. Files follow `BERTH_HOME` and are never
+overwritten by the client. This does not install or execute plugins. See [personalization](docs/client-configuration.md)
+and the [client guide](client/macos/README.md).
 
 The macOS release app embeds its matching engine, but is currently **ad-hoc signed, not Developer ID signed
 or notarized by Apple**. Verify SHA256SUMS; do not treat it as a notarized installer. Closing a terminal session
