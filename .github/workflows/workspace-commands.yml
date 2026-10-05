@@ -1,0 +1,42 @@
+name: Native workspace command interaction
+on:
+  pull_request:
+    paths: ['client/macos/**', '.github/workflows/workspace-commands.yml']
+  push:
+    branches: [main]
+    paths: ['client/macos/**', '.github/workflows/workspace-commands.yml']
+permissions:
+  contents: read
+concurrency:
+  group: workspace-commands-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Exercise the application's native Commands tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift build --package-path client/macos --force-resolved-versions --product CommandChecks
+          binary_dir=$(swift build --package-path client/macos --show-bin-path)
+          isolation=$(mktemp -d "$RUNNER_TEMP/command-checks.XXXXXX")
+          mkdir -p "$isolation/home/.option-berth" "$RUNNER_TEMP/command-evidence"
+          trap 'find "$isolation/home/.option-berth" -maxdepth 1 -name "commands-native.png" -type f -exec cp {} "$RUNNER_TEMP/command-evidence/" \; ; rm -rf "$isolation"' EXIT
+          HOME="$isolation/home" CFFIXED_USER_HOME="$isolation/home" BERTH_HOME="$isolation/home/.option-berth" BERTH_COMMAND_TEST=1 "$binary_dir/CommandChecks" | tee "$RUNNER_TEMP/command-evidence/checks.txt"
+      - name: Record exact test input
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/command-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/command-evidence/source-commit.txt"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: commands-${{ github.run_id }}
+          path: ${{ runner.temp }}/command-evidence
+          retention-days: 7
+          if-no-files-found: error

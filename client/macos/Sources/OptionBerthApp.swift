@@ -135,34 +135,17 @@ struct OptionBerthApp: App {
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1060, height: 720)
         .commands {
-            CommandGroup(replacing: .newItem) {}
-            CommandGroup(replacing: .printItem) {}
-            CommandGroup(replacing: .sidebar) {}
-            CommandGroup(after: .appInfo) {
-                Button("检查更新… / Check for updates…") { if !views.showingGuide { views.showingUpdates = true } }
-            }
-            CommandGroup(replacing: .appSettings) {
-                Button(WorkspaceAction.settings.title) { perform(.settings) }
-                    .keyboardShortcut(shortcuts.shortcut(.settings).equivalent, modifiers: shortcuts.shortcut(.settings).modifiers)
-            }
-            CommandGroup(replacing: .help) {
-                Button("使用指引… / Getting started…") { views.showingGuide = true }
-            }
-            CommandMenu(MenuBar.viewTitle) {
-                Button("命令面板… / Command panel…") { if !views.showingGuide { views.showingActions = true } }
-                    .keyboardShortcut("p", modifiers: [.command, .shift])
-                Divider()
-                ForEach(WorkspaceAction.allCases.filter { $0 != .settings }) { action in
-                    Button(action.title) { perform(action) }
-                        .keyboardShortcut(shortcuts.shortcut(action).equivalent, modifiers: shortcuts.shortcut(action).modifiers)
-                }
-            }
+            WorkspaceCommandMenus(views: views, shortcuts: shortcuts, services: services, perform: perform)
         }
     }
 
     private func perform(_ action: WorkspaceAction) {
-        guard !views.showingGuide else { return }
+        guard views.allowsCommands, WorkspaceInputContext.allowsNavigation(in: NSApp.keyWindow, action: action) else { return }
+        if let ordinal = action.ordinal {
+            views.selectVisibleProject(at: ordinal, in: services.projects); return
+        }
         switch action {
+        case .connect: views.requestConnection()
         case .services: views.show(.services, projects: projectNames)
         case .code: views.show(.code, projects: projectNames)
         case .terminal: views.show(.terminal, projects: projectNames)
@@ -171,12 +154,17 @@ struct OptionBerthApp: App {
         case .updates: views.showingUpdates = true
         case .settings: views.showingSettings = true
         case .sidebar: views.railVisible.toggle()
-        case .refresh: store.refresh(); services.refresh()
+        case .refresh:
+            store.refresh(); services.refresh()
+            if case .code = views.scope { git.loadTree(project: services.projects.first { $0.name == views.project }, force: true) }
         case .find:
             if let terminal = HostedTerminalView.containing(NSApp.keyWindow?.firstResponder) { showTerminalFind(terminal) }
-            else { services.beginLogFind() }
+            else if case .services = views.scope { services.beginLogFind() }
+            else if case .code = views.scope {
+                NotificationCenter.default.post(name: .init("option-berth.git.find"), object: views.project)
+            }
+        default: break // Ordinal commands were handled above.
         }
     }
-
-    private var projectNames: [String] { services.projects.map(\.name).sorted() }
+    private var projectNames: [String] { views.orderedProjects(services.projects, filtered: false).map(\.name) }
 }

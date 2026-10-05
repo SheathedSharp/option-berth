@@ -161,6 +161,23 @@ def verify(root: Path) -> None:
                     environment={"HOME": str(home), "CFFIXED_USER_HOME": str(home),
                                  "BERTH_HOME": str(berth), "SHELL": "/bin/zsh",
                                  "ZDOTDIR": str(home), flag: "1"})
+        # Native menu equivalents/IME and their pure command policy are release
+        # gates, not only standalone PR evidence.
+        with tempfile.TemporaryDirectory(prefix="oberth-command-policy-") as tmp:
+            binary = str(Path(tmp) / "checks")
+            run(root, "swiftc", "-swift-version", "5", "client/macos/Sources/ClientConfiguration.swift",
+                "client/macos/Sources/WorkspaceCommands.swift", "client/macos/Tests/WorkspaceCommandTests.swift",
+                "-o", binary, capture=False)
+            run(root, binary, capture=False)
+        run(root, "swift", "build", "--package-path", "client/macos", "--force-resolved-versions",
+            "--product", "CommandChecks", capture=False)
+        with tempfile.TemporaryDirectory(prefix="oberth-command-interaction-") as tmp:
+            home = Path(tmp) / "home"
+            berth = home / ".option-berth"
+            berth.mkdir(parents=True)
+            run(root, str(Path(client_checks_dir) / "CommandChecks"), capture=False,
+                environment={"HOME": str(home), "CFFIXED_USER_HOME": str(home),
+                             "BERTH_HOME": str(berth), "BERTH_COMMAND_TEST": "1"})
         run(root, "bash", "client/macos/build.sh", capture=False)
         with tempfile.TemporaryDirectory(prefix="oberth-git-queue-") as tmp:
             binary = str(Path(tmp) / "checks")
