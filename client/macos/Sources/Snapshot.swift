@@ -33,6 +33,22 @@ enum Snapshot {
             return 1
         }
 
+        for step in GettingStartedStep.allCases {
+            let code = write(GettingStartedGuide(initialStep: step, frozen: true, onClose: {}, onConnect: {}),
+                             to: url.appendingPathComponent("12-guide-\(step.rawValue + 1).png").path,
+                             width: 640, height: 510)
+            if code != 0 { return code }
+        }
+
+        var historyParser = CommandBlockParser(nonce: "fixture")
+        historyParser.consume(Array("\u{1b}]633;E;git status --short;fixture\u{7}\u{1b}]133;C;fixture\u{7}\u{1b}]133;D;0;fixture\u{7}".utf8)[...], now: Date(timeIntervalSince1970: 10))
+        historyParser.consume(Array("\u{1b}]633;E;go test ./...;fixture\u{7}\u{1b}]133;C;fixture\u{7}\u{1b}]133;D;1;fixture\u{7}".utf8)[...], now: Date(timeIntervalSince1970: 20))
+        let historyID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        let history = historyParser.blocks.map { CommandHistoryEntry(sessionID: historyID, sessionTitle: "Shell · feature/api", block: $0) }
+        let historyCode = write(WorktreeHistorySheet(root: "/workspace/demo", sessions: TerminalSessions(), frozen: true, frozenEntries: history),
+                                to: url.appendingPathComponent("13-command-history.png").path, width: 690, height: 520)
+        if historyCode != 0 { return historyCode }
+
         let ports = frozenPorts()
         let groups = frozenGroups()
         let runs = frozenRuns()

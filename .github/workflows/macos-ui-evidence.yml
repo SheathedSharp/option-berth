@@ -1,0 +1,48 @@
+name: macOS UI evidence
+on:
+  pull_request:
+    paths: ['client/macos/**', '.github/workflows/macos-ui-evidence.yml']
+permissions:
+  contents: read
+concurrency:
+  group: macos-ui-evidence-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  capture:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Exercise native windows and capture only synthetic fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift build --package-path client/macos --force-resolved-versions --product ClientChecks
+          binary_dir=$(swift build --package-path client/macos --show-bin-path)
+          isolation=$(mktemp -d "$RUNNER_TEMP/ui-checks.XXXXXX")
+          trap 'rm -rf "$isolation"' EXIT
+          mkdir -p "$isolation/home" "$isolation/berth" "$RUNNER_TEMP/ui-evidence/native"
+          HOME="$isolation/home" CFFIXED_USER_HOME="$isolation/home" BERTH_HOME="$isolation/berth" "$binary_dir/ClientChecks"
+          find "$isolation/berth" -maxdepth 1 -name '*-native.png' -type f -exec cp {} "$RUNNER_TEMP/ui-evidence/native/" \;
+      - name: Build without installing and render both themes
+        shell: bash
+        run: |
+          set -euo pipefail
+          client/macos/build.sh
+          isolation=$(mktemp -d "$RUNNER_TEMP/ui-render.XXXXXX")
+          trap 'rm -rf "$isolation"' EXIT
+          mkdir -p "$isolation/home" "$isolation/berth"
+          export HOME="$isolation/home" CFFIXED_USER_HOME="$isolation/home" BERTH_HOME="$isolation/berth"
+          app=client/macos/build/OptionBerth.app/Contents/MacOS/OptionBerth
+          "$app" --render-states "$RUNNER_TEMP/ui-evidence/paper" --size 1060x720
+          "$app" --render-states "$RUNNER_TEMP/ui-evidence/midnight" --render-theme midnight --size 900x640
+      - name: Retain synthetic images, never app binaries or fonts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: macos-ui-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/ui-evidence/**/*.png
+          retention-days: 7
+          if-no-files-found: error
