@@ -28,9 +28,14 @@ struct TerminalPanel: View {
                     .toggleStyle(.checkbox).help("仅为新建 zsh 启用临时集成，不修改 shell 配置；命令仅留在内存")
                     .disabled(frozen || URL(fileURLWithPath: TerminalSession.shell).lastPathComponent != "zsh")
                 }
-                Button("搜索历史… / History…") { showingHistory = true }.disabled(frozen)
-                    .accessibilityIdentifier("terminal.history")
-                Button("新建终端", action: newShell).disabled(frozen)
+                if frozen {
+                    Text("搜索历史… / History…").font(Face.sans(11)).foregroundStyle(Ink.inkMuted)
+                    Text("新建终端").font(Face.sans(11)).foregroundStyle(Ink.inkMuted)
+                } else {
+                    Button("搜索历史… / History…") { showingHistory = true }
+                        .accessibilityIdentifier("terminal.history")
+                    Button("新建终端", action: newShell)
+                }
             }
             .padding(12)
             if !scoped.isEmpty {
