@@ -11,10 +11,25 @@ struct CodeView: View {
     @State private var filter = GitReviewFilter.all
     @State private var showingWorktrees = false
     @FocusState private var searching: Bool
-    private var files: [GitFile] { git.tree?.files ?? [] }
+    private var files: [GitFile] { git.isFor(project) ? (git.tree?.files ?? []) : [] }
     private var visible: [GitFile] { filter.files(files, query: query) }
 
     var body: some View {
+        Group {
+            if git.isFor(project) { reviewContent }
+            else { message("正在读取当前 worktree…") }
+        }
+        .background(Ink.canvas)
+        .onChange(of: query) { _, _ in reconcileSelection() }
+        .onChange(of: filter) { _, _ in reconcileSelection() }
+        .onChange(of: project.rootDir) { _, _ in query = ""; filter = .all; showingWorktrees = false }
+        .onReceive(NotificationCenter.default.publisher(for: .init("option-berth.git.find"))) { event in
+            guard scrolls, git.isFor(project), event.object as? String == project.name else { return }
+            searching = true
+        }
+    }
+
+    private var reviewContent: some View {
         VStack(spacing: 0) {
             if let overview = git.overview { overviewHeader(overview); Hairline() }
             if let problem = git.problem {
@@ -61,14 +76,6 @@ struct CodeView: View {
                     .font(Face.sans(12)).foregroundStyle(Ink.inkMuted)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(16)
             }
-        }
-        .background(Ink.canvas)
-        .onChange(of: query) { _, _ in reconcileSelection() }
-        .onChange(of: filter) { _, _ in reconcileSelection() }
-        .onChange(of: project.rootDir) { _, _ in query = ""; filter = .all; showingWorktrees = false }
-        .onReceive(NotificationCenter.default.publisher(for: .init("option-berth.git.find"))) { event in
-            guard scrolls, event.object as? String == project.name else { return }
-            searching = true
         }
     }
 
@@ -246,7 +253,7 @@ struct CodeView: View {
     }
     private var hasMarkedText: Bool { (NSApp.keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() == true }
     private func reconcileSelection() {
-        if let path = git.selectedPath, !visible.contains(where: { $0.path == path }) { git.clearSelection() }
+        if git.isFor(project), let path = git.selectedPath, !visible.contains(where: { $0.path == path }) { git.clearSelection() }
     }
     private func moveSelection(_ offset: Int) {
         guard !visible.isEmpty else { return }

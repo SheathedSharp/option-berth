@@ -53,6 +53,12 @@ import SwiftUI
         require(find(NSSplitView.self, in: host).contains { !$0.isVertical }, "narrow Git review did not switch to a draggable vertical layout")
         require(host.bounds.width <= 560, "narrow Git content forced the window wider")
         try capture("git-review-narrow")
+        let other = try JSONDecoder().decode(BerthGroup.self, from: Data(#"{"name":"other-worktree","root_dir":"/fixture/other","services":[],"members":[]}"#.utf8))
+        require(git.isFor(project) && !git.isFor(other), "cached facts lost their requested-root identity")
+        host.rootView = CodeView(git: git, project: other)
+        pump(0.2)
+        require(!find(NSTextField.self, in: host).contains { $0.placeholderString == "筛选文件或原路径" },
+                "new worktree rendered the old worktree's searchable changes before reload")
         print("PASS: native Git find routing, Unicode filtering and selection reconciliation, wide/narrow native splits with synthetic screenshots")
     }
 }
