@@ -42,7 +42,11 @@ struct ReleaseOffer: Equatable {
         guard Set(names).count == names.count, names.allSatisfy({ $0.utf8.count <= 256 && !$0.contains("/") && !$0.contains("\\") && !$0.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) }) else {
             throw UpdateFailure.invalid
         }
-        let candidates = ["OptionBerth-v\(version.description)-macos-arm64-notarized.zip", "OptionBerth-v\(version.description)-macos-arm64-adhoc.zip"]
+        // New releases use DMG. Read-only fallback keeps immutable older ZIP
+        // releases discoverable; container format must not downgrade trust.
+        let candidates = ["notarized.dmg", "notarized.zip", "adhoc.dmg", "adhoc.zip"].map {
+            "OptionBerth-v\(version.description)-macos-arm64-" + $0
+        }
         return ReleaseOffer(version: version, appAssetName: candidates.first(where: names.contains), hasChecksums: names.contains("SHA256SUMS"))
     }
 }
