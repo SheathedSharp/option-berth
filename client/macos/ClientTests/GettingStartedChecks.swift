@@ -47,6 +47,14 @@ extension ClientChecks {
         let suite = "workspace-tour-test-" + UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
+        for expectation in ["first", "later"] {
+            let child = Process()
+            child.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+            child.arguments = ["--tour-eligibility", suite, expectation]
+            try child.run(); child.waitUntilExit()
+            require(child.terminationStatus == 0, "tour repeated across an actual process restart")
+        }
+        defaults.removePersistentDomain(forName: suite)
         require(TourFirstUse.claim(defaults: defaults, legacyUser: false), "fresh user missed first presentation")
         require(!TourFirstUse.claim(defaults: UserDefaults(suiteName: suite)!, legacyUser: false), "second window or restart repeats tour")
         defaults.removePersistentDomain(forName: suite)
@@ -61,6 +69,10 @@ extension ClientChecks {
             }
         }
         require(TourLayout.visible(CGRect(x: -100, y: -100, width: 10, height: 10), in: CGSize(width: 760, height: 520)) == nil, "offscreen target is eligible")
+        let visualSettings = UISettings.shared
+        let priorTheme = visualSettings.theme
+        visualSettings.theme = .paper
+        defer { visualSettings.theme = priorTheme }
         let before = TerminalSessions.shared.sessions.count
         let navigation = ViewState()
         var measurement: TourMeasurement?
@@ -85,6 +97,13 @@ extension ClientChecks {
             try png.write(to: URL(fileURLWithPath: berth).appendingPathComponent(name + "-native.png"))
         }
         try capture("guide-empty-paper")
+        guard let controls = find(TourControlsView.self, in: host).first else { fatalError("native controls missing") }
+        require(window.makeFirstResponder(controls.nextButton), "primary guide control cannot receive keyboard focus")
+        window.selectNextKeyView(nil)
+        require(window.firstResponder === controls.skipButton, "tour keyboard focus escaped into the workspace")
+        window.selectNextKeyView(nil)
+        require(window.firstResponder === controls.nextButton, "disabled Back interrupted first-step focus cycle")
+
         clickTour("guide.next", in: window)
         eventually("native Next did not select worktrees") { measurement?.target == .worktrees }
         try capture("guide-worktrees-paper")
@@ -117,9 +136,63 @@ extension ClientChecks {
         require(find(TourControlsView.self, in: window.contentView!).count == 1, "manual replay unavailable")
         for _ in 0..<6 { clickTour("guide.next", in: window) }
         require(!second.showingGuide, "Done did not close tour or missing targets were not skipped")
+        second.showingGuide = true; pump(0.2)
+        clickTour("guide.skip", in: window)
+        require(!second.showingGuide, "native Skip did not close tour")
+        window.contentView = nil; pump()
+
+        // A synthetic project is injected into the actual BoardView. No daemon,
+        // Git subprocess or created on-disk project is required for this check.
+        let project = try JSONDecoder().decode(BerthGroup.self, from: Data(#"{"name":"demo@feature","repo":"demo","worktree":"feature","branch":"feature/onboarding","root_dir":"/fixture/demo","config_path":"/fixture/demo/oberth.yaml","services":[],"members":[]}"#.utf8))
+        require(TourMotion.animation(reduced: true) == nil && TourMotion.animation(reduced: false) != nil, "Reduce Motion policy ignored")
+        visualSettings.theme = .midnight
+        let loaded = ViewState(scope: .services(project.name))
+        var loadedMeasurement: TourMeasurement?
+        let loadedHost = NSHostingView(rootView: BoardView(store: BoardStore(fixture: []),
+            services: ServicesStore(fixture: [project]), git: GitStore(overview: nil), views: loaded)
+            .onPreferenceChange(TourMeasurementKey.self) { loadedMeasurement = $0 })
+        loadedHost.sizingOptions = []
+        window.contentView = loadedHost; window.setContentSize(NSSize(width: 900, height: 640)); pump(0.2)
+        loaded.showingGuide = true; pump(0.2)
+        clickTour("guide.next", in: window)
+        clickTour("guide.next", in: window)
+        eventually("existing-project tabs did not receive a real anchor") { loadedMeasurement?.target == .facts }
+        require(window.attachedSheet == nil, "project guidance unexpectedly uses a sheet")
+        require(CGRect(origin: .zero, size: loadedMeasurement!.viewport).contains(loadedMeasurement!.card), "dark guide card escaped viewport")
+        require(!loadedMeasurement!.card.intersects(loadedMeasurement!.highlight), "dark card obscures project tabs")
+        pump(0.3) // Capture the settled page, not an intermediate animation frame.
+        guard let image = loadedHost.bitmapImageRepForCachingDisplay(in: loadedHost.bounds) else { fatalError("dark native bitmap unavailable") }
+        loadedHost.cacheDisplay(in: loadedHost.bounds, to: image)
+        try image.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: berth).appendingPathComponent("guide-project-midnight-native.png"))
+        loaded.guideTarget = .commands; pump(0.06)
+        guard let transition = loadedHost.bitmapImageRepForCachingDisplay(in: loadedHost.bounds) else { fatalError("transition bitmap unavailable") }
+        loadedHost.cacheDisplay(in: loadedHost.bounds, to: transition)
+        try transition.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: berth).appendingPathComponent("guide-transition-midnight-native.png"))
+        pump(0.2)
+        loaded.guideTarget = .worktrees; pump(0.25)
+        tourKey("\u{f702}", code: 123, in: window)
+        eventually("Left arrow did not navigate back") { loadedMeasurement?.target == .connect }
+        tourKey("\u{f703}", code: 124, in: window)
+        eventually("Right arrow did not navigate forward") { loadedMeasurement?.target == .worktrees }
+        loaded.railVisible = false; pump()
+        require(loadedMeasurement?.target != .worktrees, "missing sidebar retained a floating spotlight")
+        clickTour("guide.skip", in: window)
+        require(!loaded.showingGuide, "dark native Skip did not dismiss")
+        // Native focus ownership is returned only to a live view in this window.
+        let focusRoot = NSView(frame: NSRect(x: 0, y: 0, width: 500, height: 100))
+        let editor = NSTextView(frame: NSRect(x: 0, y: 0, width: 100, height: 40))
+        focusRoot.addSubview(editor); window.contentView = focusRoot
+        window.makeFirstResponder(editor)
+        let focusControls = TourControlsView()
+        focusControls.frame = NSRect(x: 0, y: 50, width: 330, height: 28)
+        focusRoot.addSubview(focusControls)
+        require(window.firstResponder === focusControls.nextButton, "guide did not claim native keyboard focus")
+        focusControls.restoreFocus()
+        require(window.firstResponder === editor, "guide failed to restore the previous live editor")
+
         require(TerminalSessions.shared.sessions.count == before, "tour created a shell or agent")
         require(WorkspaceShortcuts.valid([:]), "tour changed editing/window shortcuts")
         for step in TourTarget.allCases { require(!step.chinese.isEmpty && !step.english.isEmpty, "missing bilingual guidance") }
-        print("PASS: first-use/upgrade/skip/restart/manual replay; native Next/Back/Return/Escape/Done, click shield, resize and no processes")
+        print("PASS: first-use/upgrade/skip/actual process restart/manual replay; native Next/Back/Return/Escape/arrows/Done, focus loop/restore, real project tabs, dark/reduce-motion, resize and no processes")
     }
 }

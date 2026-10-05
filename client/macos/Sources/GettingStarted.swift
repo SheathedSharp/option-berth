@@ -1,6 +1,12 @@
 import AppKit
 import SwiftUI
 
+enum TourMotion {
+    static func animation(reduced: Bool) -> Animation? {
+        reduced ? nil : .easeInOut(duration: 0.16)
+    }
+}
+
 struct TourMeasurement: Equatable {
     let target: TourTarget
     let highlight: CGRect
@@ -20,7 +26,10 @@ struct TourAnchors: PreferenceKey {
 }
 extension View {
     func tourAnchor(_ target: TourTarget) -> some View {
-        anchorPreference(key: TourAnchors.self, value: .bounds) { [target: $0] }
+        // Preserve nested controls when the containing rail is also a target.
+        transformAnchorPreference(key: TourAnchors.self, value: .bounds) { values, anchor in
+            values[target] = anchor
+        }
     }
 }
 
@@ -47,11 +56,11 @@ struct WorkspaceTour: View {
                 .fill(.black.opacity(0.58), style: FillStyle(eoFill: true))
                 .contentShape(Rectangle()).onTapGesture { }
                 .accessibilityHidden(true)
-                .animation(reduce ? nil : .easeInOut(duration: 0.16), value: hole)
+                .animation(TourMotion.animation(reduced: reduce), value: hole)
                 RoundedRectangle(cornerRadius: 8).stroke(Ink.accent, lineWidth: 2)
                     .frame(width: hole.width, height: hole.height).position(x: hole.midX, y: hole.midY)
                     .allowsHitTesting(false).accessibilityHidden(true)
-                    .animation(reduce ? nil : .easeInOut(duration: 0.16), value: hole)
+                    .animation(TourMotion.animation(reduced: reduce), value: hole)
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Text("WORKSPACE TOUR").font(Face.mono(9)).tracking(1.3).foregroundStyle(Ink.inkMuted)
@@ -83,8 +92,11 @@ struct WorkspaceTour: View {
                 .foregroundStyle(Ink.ink).background(Ink.surface, in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(Ink.line, lineWidth: 1))
                 .shadow(color: .black.opacity(0.25), radius: 16, y: 6)
+                // Move the complete card as one group, never let new text or
+                // native buttons jump ahead of its animated background.
+                .geometryGroup()
                 .position(x: card.midX, y: card.midY)
-                .animation(reduce ? nil : .easeInOut(duration: 0.16), value: card)
+                .animation(TourMotion.animation(reduced: reduce), value: card)
                 .accessibilityElement(children: .contain).accessibilityLabel("工作区使用指引 / Workspace tour")
             }
             .frame(width: size.width, height: size.height)
@@ -129,17 +141,31 @@ private struct TourControls: NSViewRepresentable {
         view.skipAction = skip; view.backAction = back; view.nextAction = next
         view.backButton.isEnabled = !first
         view.nextButton.title = last ? "完成 / Done" : "继续 / Next"
-        view.skipButton.nextKeyView = first ? view.nextButton : view.backButton
-        view.backButton.nextKeyView = view.nextButton
-        view.nextButton.nextKeyView = view.skipButton
+        view.skipButton.tourNext = first ? view.nextButton : view.backButton
+        view.backButton.tourNext = view.nextButton
+        view.nextButton.tourNext = view.skipButton
+        view.skipButton.tourPrevious = view.nextButton
+        view.backButton.tourPrevious = view.skipButton
+        view.nextButton.tourPrevious = first ? view.skipButton : view.backButton
     }
     static func dismantleNSView(_ view: TourControlsView, coordinator: ()) { view.restoreFocus() }
 }
 
+/// AppKit's automatic key-view recalculation and the system's full-keyboard-
+/// access setting must not send Tab into the dimmed workspace behind this tour.
+final class TourButton: NSButton {
+    weak var tourNext: NSView?
+    weak var tourPrevious: NSView?
+    override var acceptsFirstResponder: Bool { isEnabled }
+    override var canBecomeKeyView: Bool { isEnabled }
+    override var nextValidKeyView: NSView? { tourNext ?? super.nextValidKeyView }
+    override var previousValidKeyView: NSView? { tourPrevious ?? super.previousValidKeyView }
+}
+
 final class TourControlsView: NSStackView {
-    let skipButton = NSButton(title: "跳过 / Skip", target: nil, action: nil)
-    let backButton = NSButton(title: "返回 / Back", target: nil, action: nil)
-    let nextButton = NSButton(title: "继续 / Next", target: nil, action: nil)
+    let skipButton = TourButton(title: "跳过 / Skip", target: nil, action: nil)
+    let backButton = TourButton(title: "返回 / Back", target: nil, action: nil)
+    let nextButton = TourButton(title: "继续 / Next", target: nil, action: nil)
     var skipAction: () -> Void = {}
     var backAction: () -> Void = {}
     var nextAction: () -> Void = {}
@@ -174,7 +200,7 @@ final class TourControlsView: NSStackView {
         previous = nil; owningWindow = nil
     }
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        guard event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty else { return super.performKeyEquivalent(with: event) }
+        guard event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty else { return super.performKeyEquivalent(with: event) }
         switch event.charactersIgnoringModifiers {
         case "\u{f702}": if backButton.isEnabled { back() }; return true
         case "\u{f703}": next(); return true
