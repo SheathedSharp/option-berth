@@ -18,9 +18,13 @@ extension CommandFixture {
         key("1")
         try await eventually("worktree selection reset the Git module") { views.scope == .code("alpha") }
         views.projectQuery = "SECOND"
-        try await eventually("filtered rail did not update the native menu") { items(NSApp.mainMenu).contains { $0.title == "1 · beta" } }
+        // Closed AppKit menus materialize labels when tracking starts. Verify
+        // the keyboard route before opening the menu, then its visible label.
+        try await Task.sleep(nanoseconds: 50_000_000)
         key("1")
         try await eventually("filtered Cmd+1 selected a hidden project") { views.scope == .code("beta") }
+        try trackMenu("Worktrees", window: window)
+        try expect(items(NSApp.mainMenu).contains { $0.title == "1 · beta" }, "opened menu does not match the filtered rail")
         try await rejected("9", "out-of-range worktree command executed")
         views.projectQuery = ""
         key("t", modifiers: [.command, .option])
@@ -36,18 +40,23 @@ extension CommandFixture {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let file = directory.appendingPathComponent("keybindings.json")
         try Data(#"{"schemaVersion":1,"bindings":{"code":{"key":"j","option":true}}}"#.utf8).write(to: file, options: .atomic)
-        try await eventually("file keybinding did not reach the native menu") {
-            items(NSApp.mainMenu).contains { $0.title == WorkspaceAction.code.title && $0.keyEquivalent == "j" }
-        }
+        try await eventually("file keybinding was not observed") { shortcuts.shortcut(.code).key == "j" }
+        try await Task.sleep(nanoseconds: 50_000_000)
         try await rejected("g", "retired default remained active", modifiers: [.command, .option])
         key("j", modifiers: [.command, .option])
         try await eventually("custom key failed to activate Git") { views.scope == .code("beta") }
+        try trackMenu(MenuBar.viewTitle, window: window)
+        try expect(items(NSApp.mainMenu).contains { $0.title == WorkspaceAction.code.title && $0.keyEquivalent == "j" }, "opened menu lost the custom shortcut")
         try await inputChecks(window: window, home: home)
         try await paletteChecks(window: window)
         try await connectionChecks(window: window)
         try expect(TerminalSessions.shared.sessions.isEmpty, "command navigation started a PTY")
         try FileManager.default.removeItem(at: file)
-        try await eventually("deleting keybindings did not restore native defaults") { items(NSApp.mainMenu).contains { $0.title == WorkspaceAction.code.title && $0.keyEquivalent == "g" } }
+        try await eventually("deleting keybindings did not restore defaults") { shortcuts.shortcut(.code).key == "g" }
+        key("g", modifiers: [.command, .option])
+        try await eventually("restored default shortcut did not route") { views.scope == .code("beta") }
+        try trackMenu(MenuBar.viewTitle, window: window)
+        try expect(items(NSApp.mainMenu).contains { $0.title == WorkspaceAction.code.title && $0.keyEquivalent == "g" }, "opened menu did not restore default equivalent")
         window.contentView?.layoutSubtreeIfNeeded()
         if let host = window.contentView, let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
             host.cacheDisplay(in: host.bounds, to: bitmap)
@@ -153,5 +162,18 @@ extension CommandFixture {
         key("n")
         try await eventually("Cmd+N did not open and cancel the native directory chooser") { observedPanel && !views.projectOperationPending }
         try expect(correctPanel && views.scope == before, "directory chooser allowed file selection or concurrent navigation")
+    }
+}
+
+// Native menu tracking calls its delegate and materializes SwiftUI's deferred
+// menu content. The timer cancels this test-owned menu without selecting an item.
+extension CommandFixture {
+    func trackMenu(_ title: String, window: NSWindow) throws {
+        guard let menu = NSApp.mainMenu?.items.first(where: { $0.title == title })?.submenu,
+              let view = window.contentView else { throw Failure(message: "missing native menu " + title) }
+        let timer = Timer(timeInterval: 0.04, repeats: false) { _ in menu.cancelTracking() }
+        RunLoop.main.add(timer, forMode: .eventTracking)
+        defer { timer.invalidate() }
+        menu.popUp(positioning: nil, at: NSPoint(x: 30, y: 30), in: view)
     }
 }

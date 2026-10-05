@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import BerthTerminal
 @testable import BerthClient
@@ -28,6 +29,7 @@ import BerthTerminal
     let settings = UISettings.shared
     let shortcuts = WorkspaceShortcuts.shared
     private var started = false
+    private var sceneChanges = Set<AnyCancellable>()
     var performed: [WorkspaceAction] = []
     var checks = 0
     init() {
@@ -35,6 +37,12 @@ import BerthTerminal
         // be promoted into the sidebar merely because it appears in a fixture.
         let data = Data(#"[{"name":"beta","repo":"beta","worktree":"feature","branch":"fix/second","root_dir":"/fixture/beta","config_path":"/fixture/beta/oberth.yaml","services":[],"members":[]},{"name":"alpha","repo":"alpha","worktree":"feature","branch":"feature/first","root_dir":"/fixture/alpha","config_path":"/fixture/alpha/oberth.yaml","services":[],"members":[]}]"#.utf8)
         services = ServicesStore(fixture: try! JSONDecoder().decode([BerthGroup].self, from: data))
+        // The production App owns these as separate StateObjects. This fixture
+        // groups them for assertions, so forward their changes to the Scene owner
+        // as well as to the already observing BoardView.
+        for publisher in [views.objectWillChange, services.objectWillChange, shortcuts.objectWillChange] {
+            publisher.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &sceneChanges)
+        }
     }
     func perform(_ action: WorkspaceAction) {
         guard views.allowsCommands, WorkspaceInputContext.allowsNavigation(in: NSApp.keyWindow, action: action) else { return }

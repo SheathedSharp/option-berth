@@ -87,6 +87,7 @@ struct BoardView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduce
     @State private var pendingAction: WorkspaceAction?
+    @StateObject private var commandDelivery = WorkspaceCommandDelivery()
     @State private var proposal: GroupInitResult?
     @State private var proposalProblem: String?
     @State private var editingConfig: PendingConfig?
@@ -129,6 +130,13 @@ struct BoardView: View {
         }
         .ignoresSafeArea(.container, edges: .top)
         .background(Ink.canvas)
+        .background {
+            if scrolls {
+                WorkspaceCommandDeliveryAnchor(delivery: commandDelivery).frame(width: 0, height: 0)
+                WorkspaceMenuRefresh(bindings: shortcuts.bindings, worktrees: visibleProjects.map(\.name), allowed: views.allowsCommands)
+                    .frame(width: 0, height: 0).allowsHitTesting(false)
+            }
+        }
         .preferredColorScheme(settings.colorScheme)
         .disabled(views.showingGuide)
         .accessibilityHidden(views.showingGuide)
@@ -147,7 +155,7 @@ struct BoardView: View {
         .sheet(isPresented: $views.showingActions, onDismiss: {
             guard let action = pendingAction else { return }
             pendingAction = nil
-            performAction(action)
+            commandDelivery.submit(action, perform: performAction)
         }) {
             WorkspaceActionPanel(perform: { pendingAction = $0 }, shortcuts: .shared)
         }
@@ -202,7 +210,7 @@ struct BoardView: View {
         .onChange(of: views.showingGuide) { _, shown in
             if shown { views.guideTarget = .connect }
         }
-        .onDisappear { if scrolls { views.showingGuide = false } }
+        .onDisappear { commandDelivery.cancel(); if scrolls { views.showingGuide = false } }
         .onChange(of: services.updatedAt) { _, _ in
             refreshGit()
         }

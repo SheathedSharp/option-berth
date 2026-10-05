@@ -155,3 +155,11 @@ Schema 的 `maxLength` 按 Unicode 字符而非 UTF-8 字节计数；字体/元�
 
 当前依据：VS Code 的配置默认值/用户覆盖与声明式贡献边界，以及 Apple 的只读 accessibilityReduceMotion / 自定义 EnvironmentKey。
 不移植它们的项目级执行或完整扩展体系。
+
+### 原生命令更新与焦点
+
+有效键位或当前可见 Worktrees 变化后，客户端按事件刷新自己贡献的原生菜单内容。
+新的键位立即生效，旧键位立即卸载；不要求用户先打开菜单，不轮询，也不接管原生编辑键。
+命令面板的选择等待所属窗口真正结束 sheet 并重新成为 key window 后，只派发一次。
+NSTextView 与原生终端的 NSTextInputClient 组合文本均受保护；原生面板中不切项目。
+独立终端仍可查找自身内容，但不能重定向主工作区。没有新的全局按键监听器。
