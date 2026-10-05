@@ -18,7 +18,7 @@ def expected_assets(tag: str, macos_trust: str = "adhoc") -> set[str]:
         raise ValueError("invalid version tag")
     archives = {f"option-berth-{tag}-{system}-{arch}." + ("zip" if system == "windows" else "tar.gz")
                 for system in ("darwin", "linux", "windows") for arch in ("amd64", "arm64")}
-    archives.add(f"OptionBerth-{tag}-macos-arm64-{macos_trust}.zip")
+    archives.add(f"OptionBerth-{tag}-macos-arm64-{macos_trust}.dmg")
     return archives | {name + ".sha256" for name in archives}
 
 
@@ -67,7 +67,11 @@ def publish(directory: Path, tag: str, macos_trust: str = "adhoc") -> None:
              "agent 需自行安装登录，后续对话与审批留在其原生界面。\n\n"
              "macOS App 内含匹配引擎，但仅 ad-hoc 签名，尚无 Developer ID 或 Apple 公证。"
              "Windows 构建包不等于完整生命周期支持。请先核对 SHA256SUMS，许可随包附带。\n\n"
+             "macOS 客户端使用 DMG：将应用拖入 Applications。替换前结束自有会话并退出应用；"
+             "这不会替换独立安装的 CLI 或自动重启现有后台。\n\n"
              "Protocol / feature / fix versioning. See the repository release guide.\n\n"
+             "Open the DMG and drag the app to Applications. Quit the old app before replacing it; "
+             "standalone CLI installations and running daemons are not silently replaced.\n\n"
              "The macOS app includes the matching engine and has an ad-hoc signature only: "
              "it is not Developer ID signed or notarized. Windows ARM64 and some CLI archives are "
              "cross-built; build availability is not a claim of full native lifecycle coverage. "

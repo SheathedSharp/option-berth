@@ -15,6 +15,7 @@ import tarfile
 import tempfile
 import zipfile
 from macos_release_signing import SigningConfiguration, sign_application
+from macos_release_dmg import create_disk_image
 
 ROOT = Path(__file__).resolve().parent.parent
 TARGETS = {(system, arch) for system in ("darwin", "linux", "windows") for arch in ("amd64", "arm64")}
@@ -142,10 +143,12 @@ def package(root: Path, system: str, arch: str, output: Path, include_app: bool 
             # The trust suffix is returned only after signing and (when
             # explicitly selected) acceptance, stapling and Gatekeeper checks.
             trust = sign_application(app, signing)
-            app_archive = output / f"OptionBerth-v{version}-macos-arm64-{trust}.zip"
+            app_archive = output / f"OptionBerth-v{version}-macos-arm64-{trust}.dmg"
             if app_archive.exists():
                 raise FileExistsError("refusing to overwrite an application archive")
-            command(root, env, "ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(app), str(app_archive))
+            # The image itself must pass its signing/notary gates, read-only
+            # mount, private installation copy and bundled-engine identity check.
+            create_disk_image(app, app_archive, signing)
             checksum_sidecar(app_archive)
             created.append(app_archive)
     return created
