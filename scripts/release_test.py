@@ -78,6 +78,23 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn(result["commit"], self.git("ls-remote", "origin", "refs/heads/main"))
         self.assertIn("refs/tags/v1.3.0", self.git("ls-remote", "origin", "refs/tags/v1.3.0"))
 
+    def test_publication_and_fetch_do_not_spawn_automatic_maintenance(self):
+        # Trace the real Git commands, not a mocked subprocess. A tiny temporary
+        # remote must have no writer that can outlive push and race strict rmtree.
+        trace = Path(self.tmp.name) / "git-events.json"
+        with patch.dict(os.environ, {"GIT_TRACE2_EVENT": str(trace)}):
+            result = release.release(self.root, "feature", True, release.check_versions)
+            self.git("fetch", "origin")
+        events = [json.loads(line) for line in trace.read_text().splitlines()]
+        children = [event["argv"] for event in events if event.get("event") == "child_start"]
+        self.assertTrue(any(any("receive-pack" in arg for arg in argv) for argv in children),
+                        "Trace2 did not observe the actual fixture remote")
+        automatic = [argv for argv in children if "--auto" in argv and any(
+            Path(arg).name in {"maintenance", "gc"} for arg in argv)]
+        self.assertEqual(automatic, [], "fixture spawned unowned automatic Git maintenance")
+        self.assertIn(result["commit"], self.git("ls-remote", "origin", "refs/heads/main"))
+        self.assertIn("refs/tags/v1.3.0", self.git("ls-remote", "origin", "refs/tags/v1.3.0"))
+
     def test_failed_verification_leaves_main_and_tags_untouched(self):
         def fail(_):
             raise RuntimeError("fixture failed")
