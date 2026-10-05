@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 
 for (const locale of ['', 'en/']) for (const width of [360, 390, 768, 1440]) {
-  test(`${locale || 'zh'} layout at ${width}`, async ({ page }) => {
+  test(`${locale || 'zh'} layout at ${width}`, async ({ page }, testInfo) => {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
@@ -24,7 +24,8 @@ for (const locale of ['', 'en/']) for (const width of [360, 390, 768, 1440]) {
     await page.evaluate(() => scrollTo(0, 0));
     if (width === 1440 || width === 390) {
       await mkdir('test-results/previews', {recursive: true});
-      await page.screenshot({path: `test-results/previews/${locale ? 'en' : 'zh'}-${width}.png`, fullPage: true});
+      // Do not inject Playwright's caret-hiding stylesheet into a strict-CSP page.
+      await page.screenshot({path: `test-results/previews/${testInfo.project.name}-${locale ? 'en' : 'zh'}-${width}.png`, fullPage: true, caret: 'initial'});
     }
     expect(errors).toEqual([]);
   });
