@@ -33,7 +33,11 @@ struct SplitHandle: View {
             .gesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { value in
-                        let base = start ?? width
+                        // No room to resize: keep the preferred width intact.
+                        guard range.lowerBound < range.upperBound else { return }
+                        // The preference may be wider than its current viewport.
+                        // Begin at the displayed width to avoid a dead drag zone.
+                        let base = start ?? min(max(width, range.lowerBound), range.upperBound)
                         if start == nil { start = base }
                         let delta = Double(value.translation.width)
                         let moved = base + (controlsTrailingPane ? -delta : delta)

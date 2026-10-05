@@ -77,6 +77,31 @@ extension PersonalizationChecks {
             host.layoutSubtreeIfNeeded()
             try expect(settings.detailWidth(for: pane) == preferred, "viewport resize overwrote preferred width")
             try capture(host, at: root.appendingPathComponent("personalization-" + pane.rawValue + "-narrow-native.png"))
+            // A fixed clamped range must not write a different preference merely
+            // because the user touched a divider that has no room to move.
+            await drag(window, x: host.bounds.width - 253 - SplitHandle.hitWidth / 2, delta: 16)
+            try expect(settings.detailWidth(for: pane) == preferred, "fixed-range drag rewrote preferred width")
+            window.setContentSize(NSSize(width: 707, height: 460))
+            try await Task.sleep(nanoseconds: 30_000_000)
+            host.layoutSubtreeIfNeeded()
+            // At 707 points the presented trailing pane is 360 points; the
+            // preference remains wider. A small drag must start at 360, not at
+            // the invisible preferred width, and move immediately to 348.
+            await drag(window, x: host.bounds.width - 360 - SplitHandle.hitWidth / 2, delta: 12)
+            try await eventually("clamped pane has an initial dead drag zone") {
+                (344...352).contains(settings.detailWidth(for: pane))
+            }
+            try expect(settings.detailWidth(for: other) == otherWidth, "clamped drag changed another module")
         }
+    }
+    private static func drag(_ window: NSWindow, x: CGFloat, delta: CGFloat) async {
+        for (index, kind) in [NSEvent.EventType.leftMouseDown, .leftMouseDragged, .leftMouseUp].enumerated() {
+            let event = NSEvent.mouseEvent(with: kind,
+                location: NSPoint(x: x + (index == 0 ? 0 : delta), y: 220), modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime + Double(index) * 0.02,
+                windowNumber: window.windowNumber, context: nil, eventNumber: index + 1, clickCount: 1, pressure: 1)!
+            NSApp.postEvent(event, atStart: false)
+        }
+        try? await Task.sleep(nanoseconds: 30_000_000)
     }
 }
