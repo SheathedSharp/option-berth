@@ -62,9 +62,31 @@
 
 ## 快捷键 / Keybindings
 
-`keybindings.json` 使用 `schemaVersion` 和 `bindings`，按稳定命令 ID 配置。解析/监听与上面的文件共用，
-菜单/命令面板的消费、原生保留键、冲突检测和旧映射迁移在独立命令路由 PR #71 中交付。
-仅合入主题 PR 不代表快捷键改造已交付；最终按该 PR 的命令契约验收。
+`keybindings.json` 覆盖默认命令。所有键位包含 Command；修饰键为可选布尔值，不支持脚本或 when 表达式。
+
+```json
+{
+  "schemaVersion": 1,
+  "bindings": {
+    "services": {"key": "j", "option": true},
+    "worktree.1": {"key": "1"}
+  }
+}
+```
+
+默认：`connect` ⌘N，`worktree.1`…`worktree.9` ⌘1…⌘9；数字遵循侧栏当前筛选后的名称排序，
+保留所选模块；没有对应项目时不执行。`services` ⌥⌘S、`code` ⌥⌘G、`terminal` ⌥⌘T、`sidebar` ⌘B。
+其余命令：`sessions` ⇧⌘O、`recovery` ⌥⇧⌘O、`updates` ⌥⌘U、`find` ⌘F、`refresh` ⌘R、`settings` ⌘,。
+命令面板固定 ⇧⌘P。菜单和侧栏提示随有效键位同步更新。
+
+文件是“默认映射 + 文件覆盖”，不是再叠加旧 GUI 键位。未知 command ID、未知修饰键、重复键位或
+覆盖受保护的原生编辑键会拒绝整份变更并保留此前有效映射。设置页和快捷键编辑器显示诊断。
+文件存在时 GUI 不写入或重置它；删除文件后恢复旧 GUI 自定义值（再回退默认）。
+旧 services/code/terminal 的 ⌘1/2/3 与侧栏的 ⌥⌘S 默认拷贝会迁移；真正的用户改动尽量保留。
+若旧自定义与新默认冲突，使用新默认并明确提示，原始偏好字节不删除。
+
+项目接入等待或弹窗期间禁止并行导航命令；原生输入法有组合文本时不派发操作。Git 中的 ⌘F 路由
+预留给文件检索视图（该视图在 Git 审查 PR 中接入），不会错误地打开服务日志搜索。
 
 ## 更新和错误 / Reloads
 
@@ -83,7 +105,7 @@
 |---|---|
 | 界面/数据/日志字体、缩放，界面/diff/终端颜色 | `theme.json`；旧 `ui.*` 偏好仅作兼容回退。 |
 | 侧栏宽度、减弱动态、新 Shell 集成、新 worktree 默认 Agent | `settings.json`；上述生命周期已接入。 |
-| 快捷键 | 文件契约与原有 `workspace.shortcuts.v1` 迁移由 #71 负责。 |
+| 快捷键 | `keybindings.json` 与旧 `workspace.shortcuts.v1` 迁移已接入；原生菜单键和输入法仍须组合验收。 |
 | 服务/Git 详情区宽度 | `settings.json` 的独立字段；原共享 `detailWidth` 只作兼容回退，拖动使用分开的 `ui.servicesDetailWidth.v1` / `ui.gitDetailWidth.v1`。 |
 | 布局恢复/记住会话 | 原有显式授权与 `client-recovery`；涉及路径元数据和删除操作，不因外观配置变化自动开启或删除。 |
 | Jev 外部 adapter | 继续使用独立 `jev.json`；不搬运密钥到主题、普通偏好、截图或诊断。 |
@@ -133,3 +155,11 @@ Schema 的 `maxLength` 按 Unicode 字符而非 UTF-8 字节计数；字体/元�
 
 当前依据：VS Code 的配置默认值/用户覆盖与声明式贡献边界，以及 Apple 的只读 accessibilityReduceMotion / 自定义 EnvironmentKey。
 不移植它们的项目级执行或完整扩展体系。
+
+### 原生命令更新与焦点
+
+有效键位或当前可见 Worktrees 变化后，客户端按事件刷新自己贡献的原生菜单内容。
+新的键位立即生效，旧键位立即卸载；不要求用户先打开菜单，不轮询，也不接管原生编辑键。
+命令面板的选择等待所属窗口真正结束 sheet 并重新成为 key window 后，只派发一次。
+NSTextView 与原生终端的 NSTextInputClient 组合文本均受保护；原生面板中不切项目。
+独立终端仍可查找自身内容，但不能重定向主工作区。没有新的全局按键监听器。

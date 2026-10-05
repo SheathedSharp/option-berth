@@ -28,6 +28,7 @@ extension ClientChecks {
         require(calls.isEmpty, "toolbar appearance performed an action or update check")
         require(host.fittingSize.width <= 700 && host.fittingSize.height <= 80, "toolbar exceeds its native test window")
         print("PASS: compatibility aliases canonicalized, worktree tab retained, recovery/update actions discoverable, toolbar causes no implicit effects")
+        do { try worktreeRoutingChecks() } catch { fatalError("worktree routing fixture failed: \(error)") }
         do { try partialLayoutChecks() } catch { fatalError("partial layout fixture failed: \(error)") }
     }
 

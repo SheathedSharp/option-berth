@@ -1,108 +1,76 @@
 import AppKit
+import Combine
 import SwiftUI
 
-/// One action catalogue drives the menu and searchable command panel. Actions
-/// never evaluate shell strings or call a provider implicitly.
-enum WorkspaceAction: String, CaseIterable, Codable, Identifiable {
-    case services, code, terminal, sessions, recovery, updates, find, refresh, sidebar, settings
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .services: return "服务 / Services"
-        case .code: return "代码 / Git"
-        case .terminal: return "终端 / Terminal"
-        case .sessions: return "会话管理 / Sessions"
-        case .recovery: return "恢复工作区 / Recovery"
-        case .updates: return "检查更新 / Updates"
-        case .find: return "查找当前内容 / Find"
-        case .refresh: return "刷新运行事实 / Refresh"
-        case .sidebar: return "切换项目侧栏 / Sidebar"
-        case .settings: return "设置 / Settings"
-        }
-    }
-    var symbol: String {
-        switch self {
-        case .services: return "server.rack"
-        case .code: return "chevron.left.forwardslash.chevron.right"
-        case .terminal: return "terminal"
-        case .sessions: return "rectangle.on.rectangle"
-        case .recovery: return "clock.arrow.circlepath"
-        case .updates: return "arrow.down.circle"
-        case .find: return "magnifyingglass"
-        case .refresh: return "arrow.clockwise"
-        case .sidebar: return "sidebar.left"
-        case .settings: return "gearshape"
-        }
-    }
-    var defaultShortcut: WorkspaceShortcut {
-        switch self {
-        case .services: return .init(key: "1")
-        case .code: return .init(key: "2")
-        case .terminal: return .init(key: "3")
-        case .sessions: return .init(key: "o", shift: true)
-        case .recovery: return .init(key: "o", shift: true, option: true)
-        case .updates: return .init(key: "u", option: true)
-        case .find: return .init(key: "f")
-        case .refresh: return .init(key: "r")
-        case .sidebar: return .init(key: "s", option: true)
-        case .settings: return .init(key: ",")
-        }
-    }
-}
-
-struct WorkspaceShortcut: Codable, Equatable, Hashable {
-    var key: String
-    var shift = false
-    var option = false
-    var control = false
+extension WorkspaceShortcut {
     var modifiers: EventModifiers {
         var result: EventModifiers = .command
         if shift { result.insert(.shift) }; if option { result.insert(.option) }; if control { result.insert(.control) }
         return result
     }
     var equivalent: KeyEquivalent { KeyEquivalent(key.first ?? " ") }
-    var label: String { (control ? "⌃" : "") + (option ? "⌥" : "") + (shift ? "⇧" : "") + "⌘" + key.uppercased() }
-    var isAllowed: Bool {
-        guard key.utf8.count == 1, "abcdefghijklmnopqrstuvwxyz0123456789,./;[]=-".contains(key) else { return false }
-        // Preserve native text editing, window/app management and the fixed
-        // panel shortcut. A custom workspace action must not intercept them.
-        if !option && !control {
-            if !shift && ["c", "v", "x", "a", "z", "q", "w", "h", "m"].contains(key) { return false }
-            if shift && ["z", "q", "w", "p"].contains(key) { return false }
-        }
-        return true
-    }
 }
 
 @MainActor
 final class WorkspaceShortcuts: ObservableObject {
-    static let shared = WorkspaceShortcuts()
+    static let shared: WorkspaceShortcuts = {
+        if CommandLine.arguments.contains("--render-states") || CommandLine.arguments.contains("--write-icon") {
+            return WorkspaceShortcuts(defaults: UserDefaults(suiteName: "option-berth-keys-render-" + UUID().uuidString)!)
+        }
+        return WorkspaceShortcuts(configuration: .shared)
+    }()
     @Published private(set) var bindings: [WorkspaceAction: WorkspaceShortcut] = [:]
+    @Published private(set) var fileManaged = false
+    @Published private(set) var problem: String?
     private let defaults: UserDefaults
     private let storageKey = "workspace.shortcuts.v1"
-    init(defaults: UserDefaults = .standard) {
+    private var legacy: [WorkspaceAction: WorkspaceShortcut] = [:]
+    private var legacyProblem: String?
+    private var observation: AnyCancellable?
+    init(defaults: UserDefaults = .standard, configuration: UISettings? = nil) {
         self.defaults = defaults
-        if let data = defaults.data(forKey: storageKey), data.count <= 8192,
-           let saved = try? JSONDecoder().decode([String: WorkspaceShortcut].self, from: data) {
-            let known = Dictionary(uniqueKeysWithValues: saved.compactMap { key, value in WorkspaceAction(rawValue: key).map { ($0, value) } })
-            if Self.valid(known) { bindings = known }
+        if let data = defaults.data(forKey: storageKey) {
+            if data.count <= 8192, let saved = try? JSONDecoder().decode([String: WorkspaceShortcut].self, from: data),
+               saved.keys.allSatisfy({ WorkspaceAction(rawValue: $0) != nil }) {
+                let known = Dictionary(uniqueKeysWithValues: saved.map { (WorkspaceAction(rawValue: $0.key)!, $0.value) })
+                let migrated = WorkspaceBindingPolicy.migrate(known)
+                if Self.valid(migrated) { legacy = migrated }
+                else { legacyProblem = "旧快捷键与新映射冲突，已使用默认值；原始偏好未删除。" }
+            } else { legacyProblem = "旧快捷键配置无法读取，已使用默认值；原始偏好未删除。" }
+        }
+        bindings = legacy; problem = legacyProblem
+        if let configuration {
+            observation = configuration.$configuration.sink { [weak self] in self?.apply($0) }
         }
     }
     func shortcut(_ action: WorkspaceAction) -> WorkspaceShortcut { bindings[action] ?? action.defaultShortcut }
-    static func valid(_ bindings: [WorkspaceAction: WorkspaceShortcut]) -> Bool {
-        let all = WorkspaceAction.allCases.map { bindings[$0] ?? $0.defaultShortcut }
-        return all.allSatisfy(\.isAllowed) && Set(all).count == all.count
+    static func valid(_ bindings: [WorkspaceAction: WorkspaceShortcut]) -> Bool { WorkspaceBindingPolicy.valid(bindings) }
+    func apply(_ snapshot: ClientConfigurationSnapshot) {
+        fileManaged = snapshot.keybindingsFilePresent
+        guard fileManaged else { bindings = legacy; problem = legacyProblem; return }
+        if let error = snapshot.problems.first(where: { $0.hasPrefix("keybindings.json:") }) { problem = error; return }
+        do { bindings = try WorkspaceBindingPolicy.resolve(snapshot.keybindings.bindings ?? [:]); problem = nil }
+        catch { problem = error.localizedDescription }
     }
     func set(_ shortcut: WorkspaceShortcut, for action: WorkspaceAction) throws {
+        guard !fileManaged else { throw ShortcutFailure.fileManaged }
         var next = bindings; next[action] = shortcut
         guard Self.valid(next) else { throw ShortcutFailure.invalid }
         let data = try JSONEncoder().encode(Dictionary(uniqueKeysWithValues: next.map { ($0.key.rawValue, $0.value) }))
-        defaults.set(data, forKey: storageKey); bindings = next
+        defaults.set(data, forKey: storageKey); legacy = next; bindings = next; legacyProblem = nil; problem = nil
     }
-    func reset() { defaults.removeObject(forKey: storageKey); bindings = [:] }
+    func reset() {
+        guard !fileManaged else { return }
+        defaults.removeObject(forKey: storageKey); legacy = [:]; bindings = [:]; legacyProblem = nil; problem = nil
+    }
     enum ShortcutFailure: LocalizedError {
-        case invalid
-        var errorDescription: String? { "快捷键无效、重复或占用原生编辑快捷键 / Invalid, duplicate or reserved shortcut" }
+        case invalid, fileManaged
+        var errorDescription: String? {
+            switch self {
+            case .invalid: return "快捷键无效、重复或占用原生编辑快捷键 / Invalid, duplicate or reserved shortcut"
+            case .fileManaged: return "请编辑 keybindings.json；客户端不会覆盖用户文件。"
+            }
+        }
     }
 }
 
@@ -129,11 +97,11 @@ struct WorkspaceActionPanel: View {
                 .textFieldStyle(.roundedBorder).focused($searchFocused)
                 .onChange(of: query) { _, _ in selected = 0 }
                 .onSubmit {
-                    guard (NSApp.keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() != true else { return }
+                    guard !WorkspaceInputContext.hasMarkedText(in: NSApp.keyWindow) else { return }
                     guard !actions.isEmpty else { return }; choose(actions[min(selected, actions.count - 1)])
                 }
                 .onMoveCommand { direction in
-                    guard !actions.isEmpty else { return }
+                    guard !actions.isEmpty, !WorkspaceInputContext.hasMarkedText(in: NSApp.keyWindow) else { return }
                     if direction == .down { selected = (selected + 1) % actions.count }
                     if direction == .up { selected = (selected + actions.count - 1) % actions.count }
                 }
@@ -163,8 +131,10 @@ struct WorkspaceActionPanel: View {
             .sheet(isPresented: $editingShortcuts) { WorkspaceShortcutEditor(shortcuts: shortcuts) }
     }
     private func choose(_ action: WorkspaceAction) {
+        // The parent records this action and dispatches it from sheet.onDismiss,
+        // after native input ownership has actually returned to the workspace.
+        perform(action)
         dismiss()
-        DispatchQueue.main.async { perform(action) }
     }
 }
 
@@ -180,6 +150,11 @@ struct WorkspaceShortcutEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("工作区快捷键 / Workspace shortcuts").font(Face.sans(14, .semibold))
+            if shortcuts.fileManaged {
+                Text("快捷键由 keybindings.json 管理；请在设置 → 外观中打开文件。")
+                    .font(Face.sans(11)).foregroundStyle(Ink.inkMuted)
+            }
+            if let diagnostic = shortcuts.problem { Text(diagnostic).font(Face.sans(11)).foregroundStyle(Change.changed) }
             Picker("操作", selection: $action) { ForEach(WorkspaceAction.allCases) { Text($0.title).tag($0) } }
                 .onChange(of: action) { _, _ in load() }
             HStack {
@@ -190,13 +165,13 @@ struct WorkspaceShortcutEditor: View {
                 .font(Face.sans(11)).foregroundStyle(Ink.inkMuted).fixedSize(horizontal: false, vertical: true)
             if let problem { Text(problem).font(Face.sans(11)).foregroundStyle(Ink.ink) }
             HStack {
-                Button("恢复默认") { shortcuts.reset(); load(); problem = nil }
+                Button("恢复默认") { shortcuts.reset(); load(); problem = nil }.disabled(shortcuts.fileManaged)
                 Spacer()
                 Button("关闭") { dismiss() }
                 Button("保存") {
                     do { try shortcuts.set(.init(key: key.lowercased(), shift: shift, option: option, control: control), for: action); problem = nil }
                     catch { problem = error.localizedDescription }
-                }.keyboardShortcut(.defaultAction)
+                }.keyboardShortcut(.defaultAction).disabled(shortcuts.fileManaged)
             }
         }.padding(20).frame(width: 460).background(Ink.canvas).foregroundStyle(Ink.ink)
             .onAppear { load() }
