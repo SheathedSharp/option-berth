@@ -66,6 +66,7 @@ extension CommandFixture {
         try await eventually("restored default shortcut did not route") { views.scope == .code("beta") }
         try trackMenu(MenuBar.viewTitle, window: window)
         try expect(items(NSApp.mainMenu).contains { $0.title == WorkspaceAction.code.title && $0.keyEquivalent == "g" }, "opened menu did not restore default equivalent")
+        try await gitFindChecks(window: window, configuration: file)
         window.contentView?.layoutSubtreeIfNeeded()
         if let host = window.contentView, let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
             host.cacheDisplay(in: host.bounds, to: bitmap)

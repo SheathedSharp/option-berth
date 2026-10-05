@@ -24,7 +24,7 @@ import BerthTerminal
 @MainActor final class CommandFixture: ObservableObject {
     let store = BoardStore(fixture: [])
     let services: ServicesStore
-    let git = GitStore(overview: nil)
+    let git: GitStore
     let views = ViewState(scope: .services("alpha"))
     let settings = UISettings.shared
     let shortcuts = WorkspaceShortcuts.shared
@@ -37,6 +37,8 @@ import BerthTerminal
         // be promoted into the sidebar merely because it appears in a fixture.
         let data = Data(#"[{"name":"beta","repo":"beta","worktree":"feature","branch":"fix/second","root_dir":"/fixture/beta","config_path":"/fixture/beta/oberth.yaml","services":[],"members":[]},{"name":"alpha","repo":"alpha","worktree":"feature","branch":"feature/first","root_dir":"/fixture/alpha","config_path":"/fixture/alpha/oberth.yaml","services":[],"members":[]}]"#.utf8)
         services = ServicesStore(fixture: try! JSONDecoder().decode([BerthGroup].self, from: data))
+        let review = try! JSONDecoder().decode(GitTree.self, from: Data(#"{"root":"/fixture/beta","branch":"fix/second","head":"abcdef0123456789","staged":0,"unstaged":1,"untracked":0,"conflicts":0,"files":[{"path":"native.swift","status":" M","additions":1,"deletions":0}]}"#.utf8))
+        git = GitStore(overview: review.overview, tree: review)
         // The production App owns these as separate StateObjects. This fixture
         // groups them for assertions, so forward their changes to the Scene owner
         // as well as to the already observing BoardView.
@@ -79,7 +81,7 @@ import BerthTerminal
     }
     func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
     @discardableResult func key(_ text: String, modifiers: NSEvent.ModifierFlags = .command) -> Bool {
-        let codes: [String: UInt16] = ["1":18,"2":19,"9":25,"s":1,"g":5,"t":17,"b":11,"j":38,"p":35,"n":45,"c":8,"v":9,"a":0,"z":6,"f":3]
+        let codes: [String: UInt16] = ["1":18,"2":19,"9":25,"s":1,"g":5,"t":17,"b":11,"j":38,"k":40,"p":35,"n":45,"c":8,"v":9,"a":0,"z":6,"f":3]
         let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: NSApp.keyWindow?.windowNumber ?? 0,
             context: nil, characters: modifiers.contains(.shift) ? text.uppercased() : text,
