@@ -4,6 +4,8 @@ from pathlib import Path
 import plistlib
 import shutil
 import tempfile
+import subprocess
+import macos_release_signing as signing
 import unittest
 from unittest.mock import patch
 
@@ -137,6 +139,13 @@ class DiskImageTests(unittest.TestCase):
                 self.build(reject, self.developer)
             self.assertFalse(self.destination.exists())
             self.assertFalse(any(a[:2] == ("xcrun", "stapler") for a in self.calls))
+
+    def test_timeout_diagnostic_does_not_expose_command_arguments(self):
+        with patch.object(signing.subprocess, "run", side_effect=subprocess.TimeoutExpired(["xcrun", "private-profile-canary"], 1)):
+            with self.assertRaises(RuntimeError) as failure:
+                signing.run("xcrun", "private-profile-canary", timeout=1)
+        self.assertIn("timed out", str(failure.exception))
+        self.assertNotIn("private-profile-canary", str(failure.exception))
 
     def test_missing_engine_notice_external_symlink_and_wrong_platform_fail_closed(self):
         engine = self.app / "Contents/MacOS/oberth"

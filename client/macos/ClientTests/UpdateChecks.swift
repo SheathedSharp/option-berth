@@ -15,6 +15,18 @@ extension ClientChecks {
         let offer = try ReleaseOffer.decode(accepted)
         require(offer.hasChecksums && offer.appAssetName?.hasSuffix("-adhoc.zip") == true, "trusted asset name not selected")
         require(offer.page.absoluteString == "https://github.com/SheathedSharp/option-berth/releases/tag/v1.2.3", "release URL accepted an external destination")
+        let prefix = "OptionBerth-v1.2.3-macos-arm64-"
+        for (assets, expected) in [
+            (["adhoc.zip", "adhoc.dmg"], "adhoc.dmg"),
+            (["adhoc.dmg", "notarized.dmg"], "notarized.dmg"),
+            (["notarized.zip", "adhoc.dmg"], "notarized.zip"),
+            (["notarized.zip", "notarized.dmg"], "notarized.dmg")
+        ] {
+            let result = try ReleaseOffer.decode(data("v1.2.3", assets: ["SHA256SUMS"] + assets.map { prefix + $0 }))
+            require(result.appAssetName == prefix + expected, "DMG preference or legacy trust ordering regressed")
+        }
+        let wrongVersion = try ReleaseOffer.decode(data("v1.2.4"))
+        require(wrongVersion.appAssetName == nil, "asset from another version accepted")
         for source in [try data("v1.2.3", draft: true), try data("v1.2.3", assets: ["SHA256SUMS", "SHA256SUMS"]),
                        try data("v1.2.3", assets: ["../../outside"]), try data("v1.2.3", assets: ["bad\u{1b}file"]),
                        Data(repeating: 32, count: 256 * 1024 + 1)] {

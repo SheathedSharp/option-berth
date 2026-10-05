@@ -48,6 +48,8 @@ def app_identity(app: Path) -> tuple[str, str]:
     code_files(app)  # Reject missing code and symlinks escaping the bundle.
     with (app / "Contents/Info.plist").open("rb") as stream:
         metadata = plistlib.load(stream)
+    if not isinstance(metadata, dict):
+        raise ValueError("application metadata must be a dictionary")
     version, commit = metadata.get("CFBundleShortVersionString", ""), metadata.get("BerthBuildCommit", "")
     if not isinstance(version, str) or not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version):
         raise ValueError("application version is not a stable release")

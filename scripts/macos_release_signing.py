@@ -41,7 +41,10 @@ Runner = Callable[..., str]
 
 def run(*arguments: str, timeout: int = 120, diagnostic: bool = False) -> str:
     """Do not echo subprocess stderr or arguments that may mention account data."""
-    result = subprocess.run(arguments, text=True, capture_output=True, timeout=timeout)
+    try:
+        result = subprocess.run(arguments, text=True, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"{Path(arguments[0]).name} timed out; no trusted package produced") from None
     if result.returncode:
         raise RuntimeError(f"{Path(arguments[0]).name} failed ({result.returncode}); no trusted package produced")
     return result.stderr if diagnostic else result.stdout
