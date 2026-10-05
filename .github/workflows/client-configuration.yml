@@ -23,13 +23,18 @@ jobs:
           mkdir -p "$RUNNER_TEMP/configuration-evidence"
           swiftc -swift-version 5 client/macos/Sources/ClientConfiguration.swift client/macos/Tests/ClientConfigurationTests.swift -o "$RUNNER_TEMP/configuration-checks"
           "$RUNNER_TEMP/configuration-checks" | tee "$RUNNER_TEMP/configuration-evidence/checks.txt"
-      - name: Retain reproducible public source and test evidence
+      - name: Verify native directory and file event reloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          swiftc -swift-version 5 client/macos/Sources/ClientConfiguration.swift client/macos/Sources/ClientConfigurationMonitor.swift client/macos/Tests/ClientConfigurationWatchTests.swift -o "$RUNNER_TEMP/configuration-watch-checks"
+          "$RUNNER_TEMP/configuration-watch-checks" | tee "$RUNNER_TEMP/configuration-evidence/watch-checks.txt"
+      - name: Record exact test input
         if: always()
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/configuration-evidence"
           git rev-parse HEAD > "$RUNNER_TEMP/configuration-evidence/source-commit.txt"
-          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/configuration-evidence/source.tar.gz"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:

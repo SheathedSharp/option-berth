@@ -33,7 +33,11 @@ struct ThemeConfiguration: ClientConfigurationDocument {
         "canvas": 0xF8F4EE, "surface": 0xEFE7DC, "sunken": 0xE5DACD,
         "ink": 0x292521, "inkMuted": 0x6B6259, "inkFaint": 0x968A7D,
         "dormant": 0xC5B8A9, "line": 0xDED3C7, "lineStrong": 0xC9B9A8,
-        "accent": 0xC56A4A, "accentSoft": 0xF4DED3, "live": 0x5E7D68
+        "accent": 0xC56A4A, "accentSoft": 0xF4DED3, "live": 0x5E7D68,
+        "diff.added": 0x1B7F4B, "diff.addedBackground": 0xE9F5ED,
+        "diff.removed": 0xB3261E, "diff.removedBackground": 0xFDECEA,
+        "diff.changed": 0x9A5B00, "diff.changedBackground": 0xFBF3E4,
+        "terminal.background": 0xF8F4EE, "terminal.foreground": 0x292521
     ]
     static func hex(_ text: String) -> UInt32? {
         let bytes = Array(text.utf8)

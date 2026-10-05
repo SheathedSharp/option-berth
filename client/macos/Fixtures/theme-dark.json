@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "appearance": "dark",
+  "colors": {
+    "canvas": "#16191E", "surface": "#1F242B", "sunken": "#12151A",
+    "ink": "#E8EBF0", "inkMuted": "#B8C0CC", "inkFaint": "#8B96A5",
+    "dormant": "#505C6A", "line": "#343B46", "lineStrong": "#556275",
+    "accent": "#8CB3FF", "accentSoft": "#283B59", "live": "#86CFA0",
+    "diff.added": "#86CFA0", "diff.addedBackground": "#173828",
+    "diff.removed": "#FFA199", "diff.removedBackground": "#46272B",
+    "diff.changed": "#E6C48A", "diff.changedBackground": "#44371E"
+  }
+}

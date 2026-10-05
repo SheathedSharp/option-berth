@@ -21,7 +21,7 @@ extension Color {
     }
 }
 
-/// 当前主题的基础色板。默认主题是暖纸浅色板，设置页也可以切换到冷白、深色和森林方案。
+/// 当前主题的基础色板。纸张是唯一内置默认，用户通过语义令牌文件覆盖。
 ///
 /// 纸张灰阶全部带一点暖底 —— 纯灰放在纸上会显脏，轻微的棕灰更像真实的阅读材料。
 /// 强调色只有一个，且只用在**状态**上（还活着 / 选中 / 主操作），
@@ -40,9 +40,7 @@ enum Ink {
     static var lineStrong: Color { UISettings.shared.lineStrongColor }   // 强规则线、刻度
 
     static var accent: Color { UISettings.shared.accentColor }       // 强调：选中、主操作
-    static var accentSoft: Color { UISettings.shared.accentHex == nil
-        ? UISettings.shared.accentSoftColor
-        : UISettings.shared.accentColor.opacity(UISettings.shared.theme == .midnight || UISettings.shared.theme == .forest ? 0.22 : 0.10) }
+    static var accentSoft: Color { UISettings.shared.accentSoftColor }
     static var live: Color { UISettings.shared.liveColor }         // 实时：还在监听的那个点
 
 }
@@ -57,12 +55,12 @@ enum Ink {
 /// 三个色都压得比 git 的默认色深、底比它的浅：要在白底上读一整屏代码，
 /// 不能像报错那样喊。冲突（`UU`）用红 —— 它是这一面唯一真的需要停下来的状态。
 enum Change {
-    static let added = Color(hex: 0x1B7F4B)        // 加：绿
-    static let addedBand = Color(hex: 0xE9F5ED)    // 加行的底
-    static let removed = Color(hex: 0xB3261E)      // 删：红
-    static let removedBand = Color(hex: 0xFDECEA)  // 删行的底
-    static let changed = Color(hex: 0x9A5B00)      // 改了：琥珀
-    static let changedBand = Color(hex: 0xFBF3E4)  // 改行的底；端口表上那枚琥珀标签的底
+    static var added: Color { UISettings.shared.token("diff.added") }        // 加：绿
+    static var addedBand: Color { UISettings.shared.token("diff.addedBackground") }    // 加行的底
+    static var removed: Color { UISettings.shared.token("diff.removed") }      // 删：红
+    static var removedBand: Color { UISettings.shared.token("diff.removedBackground") }  // 删行的底
+    static var changed: Color { UISettings.shared.token("diff.changed") }      // 改了：琥珀
+    static var changedBand: Color { UISettings.shared.token("diff.changedBackground") }  // 改行的底；端口表上那枚琥珀标签的底
 }
 
 /// 历史树上分道的颜色 —— 八个，白底上分得开，也都不抢 `Change` 那三色的语义：
@@ -257,7 +255,7 @@ enum Mark {
     static let paper = Color(hex: BerthGeometry.paper)
     static let accent = Color(hex: BerthGeometry.accent)
     static var adaptiveAccent: Color {
-        let dark = UISettings.shared.theme == .midnight || UISettings.shared.theme == .forest
+        let dark = UISettings.shared.colorScheme == .dark
         return Color(hex: dark ? BerthGeometry.darkAccent : BerthGeometry.accent)
     }
 }

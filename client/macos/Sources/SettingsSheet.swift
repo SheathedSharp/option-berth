@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Settings for the local client. Preferences apply to the whole window as
-/// soon as they change and are kept in UserDefaults for the next launch.
+/// soon as they change. Explicit user files override legacy GUI preferences.
 struct SettingsSheet: View {
     let onClose: () -> Void
     @ObservedObject var settings: UISettings
@@ -148,14 +148,14 @@ struct SettingsSheet: View {
 
     private var appearanceContent: some View {
         VStack(alignment: .leading, spacing: 22) {
-            settingHeading("主题", detail: "选择一套完整的界面色板")
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                ForEach(UISettings.Theme.allCases) { theme in
-                    themeCard(theme)
-                }
+            ClientConfigurationPanel(settings: settings, frozen: !scrolls)
+            if settings.themeFilePresent {
+                Text("theme.json 正在管理外观；编辑文件可即时修改。文件不会被客户端覆盖。")
+                    .font(Face.sans(11)).foregroundStyle(Ink.inkMuted)
             }
 
-            settingHeading("强调色", detail: "用于选中项、实时状态和主要操作")
+            VStack(alignment: .leading, spacing: 16) {
+            settingHeading("强调色", detail: "未提供主题文件时，可在此调整纸张默认色")
             HStack(spacing: 12) {
                 if scrolls {
                     ColorPicker("自定义强调色", selection: accentBinding, supportsOpacity: false)
@@ -202,12 +202,17 @@ struct SettingsSheet: View {
                 Spacer()
             }
 
+            }.disabled(settings.themeFilePresent)
             previewCard
         }
     }
 
     private var typographyContent: some View {
         VStack(alignment: .leading, spacing: 20) {
+            if settings.themeFilePresent {
+                Text("字体与缩放由 theme.json 管理，请在外观页打开配置文件。")
+                    .font(Face.sans(11)).foregroundStyle(Ink.inkMuted)
+            }
             VStack(alignment: .leading, spacing: 12) {
                 settingHeading("字体家族", detail: "从已安装字体中选择，改动会即时应用")
                 FontPreviewPicker(title: "界面字体", selection: $settings.interfaceFontName,
@@ -245,7 +250,7 @@ struct SettingsSheet: View {
                 .background(Ink.surface)
                 .overlay { RoundedRectangle(cornerRadius: 7).strokeBorder(Ink.line, lineWidth: 1) }
             }
-        }
+        }.disabled(settings.themeFilePresent)
     }
 
     private var workspaceContent: some View {
@@ -265,7 +270,7 @@ struct SettingsSheet: View {
                     Text("恢复默认外观")
                         .font(Face.sans(11.5, .medium))
                         .foregroundStyle(Ink.ink)
-                    Text("主题、字体、字号和强调色恢复为初始值")
+                    Text("清除旧界面偏好；不会删除或覆盖配置文件")
                         .font(Face.sans(10))
                         .foregroundStyle(Ink.inkFaint)
                 }
@@ -429,39 +434,6 @@ struct SettingsSheet: View {
         return "~/.option-berth/jev.json"
     }
 
-    private func themeCard(_ theme: UISettings.Theme) -> some View {
-        Button {
-            settings.theme = theme
-        } label: {
-            HStack(spacing: 10) {
-                HStack(spacing: 3) {
-                    ForEach(Array(theme.swatches.enumerated()), id: \.offset) { _, color in
-                        Circle().fill(color).frame(width: 13, height: 13)
-                    }
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(theme.title).font(Face.sans(11, .medium))
-                    Text(theme.subtitle).font(Face.sans(9.5))
-                        .foregroundStyle(Ink.inkFaint)
-                }
-                Spacer()
-                if settings.theme == theme {
-                    Text("✓")
-                        .font(Face.sans(12, .semibold))
-                        .foregroundStyle(Ink.accent)
-                }
-            }
-            .foregroundStyle(Ink.ink)
-            .padding(11)
-            .background(settings.theme == theme ? Ink.accentSoft : Ink.surface)
-            .overlay {
-                RoundedRectangle(cornerRadius: 7)
-                    .strokeBorder(settings.theme == theme ? Ink.accent : Ink.line, lineWidth: 1)
-            }
-        }
-        .buttonStyle(.plain)
-    }
-
     private func settingHeading(_ title: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
@@ -558,7 +530,7 @@ struct SettingsSheet: View {
     }
 
     private var settingsColorScheme: ColorScheme {
-        settings.theme == .midnight || settings.theme == .forest ? .dark : .light
+        settings.colorScheme
     }
 
     private static let accentOptions: [(String, UInt32)] = [
