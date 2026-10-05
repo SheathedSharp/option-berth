@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "reduceMotion": true,
+  "sidebarWidth": 220,
+  "shellIntegration": false,
+  "defaultAgent": "codex"
+}
