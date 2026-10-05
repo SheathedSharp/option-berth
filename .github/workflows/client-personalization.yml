@@ -1,7 +1,7 @@
 name: Client personalization interaction
 on:
   pull_request:
-    paths: ['client/macos/**', 'scripts/release.py', 'scripts/client_personalization_release_test.py', '.github/workflows/client-personalization.yml']
+    paths: ['client/macos/**', 'scripts/release.py', 'scripts/client_personalization_release_test.py', 'scripts/check_client_configuration.py', '.github/workflows/client-personalization.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -25,6 +25,8 @@ jobs:
           # Only tracked source and contracts. Never archive fonts, builds,
           # credentials, runner HOME, live app data or user screenshots.
           git archive --format=tar HEAD AGENTS.md client/macos/AGENTS.md client/macos/Package.swift client/macos/Package.resolved client/macos/Sources client/macos/TerminalSupport client/macos/AgentSupport client/macos/Tests client/macos/ClientTests client/macos/PersonalizationChecks client/macos/Configuration client/macos/Fixtures scripts docs .github/workflows | gzip > "$RUNNER_TEMP/personalization-evidence/source.tar.gz"
+      - name: Verify schema contracts against the actual parser
+        run: python3 scripts/check_client_configuration.py
       - name: Verify release gates without publishing
         run: python3 -m unittest discover -s scripts -p 'client_personalization_release_test.py'
       - name: Validate personal setting types and bounds

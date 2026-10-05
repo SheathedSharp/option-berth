@@ -19,6 +19,12 @@ class PersonalizationReleaseTests(unittest.TestCase):
             release.verify(Path(__file__).resolve().parent.parent)
         return calls
 
+    def test_schema_gate_is_shared_and_required(self):
+        calls = self.commands()
+        executed = [(args, options) for args, options in calls if "scripts/check_client_configuration.py" in args]
+        self.assertEqual(len(executed), 1)
+        self.assertIs(executed[0][1]["capture"], False)
+
     def test_draft_compile_contains_configuration_dependencies(self):
         calls = self.commands()
         command = next(args for args, _ in calls if "client/macos/Tests/DraftSheetInteractionTests.swift" in args)

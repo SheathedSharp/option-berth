@@ -42,6 +42,8 @@
   "schemaVersion": 1,
   "reduceMotion": true,
   "sidebarWidth": 220,
+  "servicesDetailWidth": 420,
+  "gitDetailWidth": 380,
   "shellIntegration": false,
   "defaultAgent": "codex"
 }
@@ -51,6 +53,7 @@
 |---|---|
 | `reduceMotion` | 布尔值。与只读系统设置取 OR；`false` 不得关闭系统已开启的减弱动态。应用动画事务与呼吸状态使用合并结果，不改系统偏好。 |
 | `sidebarWidth` | 140–320 的数值，单位为点。编辑后即时生效；仍可拖动分隔条。文件指定该值时，拖动只是本进程覆盖，不写回文件或旧偏好。此字段变化/删除时重新应用配置；修改其他字段不让分隔条跳位。 |
+| `servicesDetailWidth` / `gitDetailWidth` | 各自 340–500 点，分别控制服务日志与 Git 差异阅读区，互不影响。未配置时，各自读取新偏好键，再只读兼容旧共享 `detailWidth`；以后拖动写入各自键。文件覆盖期间拖动只改变本进程值；对应字段改变/删除时重新解析。窄窗口只压缩显示，不改写偏好。 |
 | `shellIntegration` | 布尔值，只影响以后新建的受支持 zsh。已有 PTY 不重启，不修改 shell 启动文件。文件指定此项时，GUI 开关只读；未指定时沿用本机开关。 |
 | `defaultAgent` | `codex`、`claude`、`opencode`、`deepseek` 或 `pi`。只为新创建的 worktree UI 状态提供默认值；不改变已有 provider、草稿、布局或恢复记录，不自动安装/启动 agent。 |
 
@@ -70,7 +73,9 @@
 
 无效 JSON、未知顶层键、未知版本或非法值会在设置页显示错误，并保留当前进程的最后有效配置；
 冷启动遇到坏文件则使用默认/兼容回退。文件错误不会结束会话或启动进程。
-客户端不重写用户文件，因此不会覆盖编辑器中的并行修改。当前 v1 不接受实例中的 `$schema` 或任意扩展键。
+客户端不重写用户文件，因此不会覆盖编辑器中的并行修改。`$schema` 是可选、惰性的编辑器元数据；
+只接受非空且最多 2048 UTF-8 字节、无控制字符的字符串。客户端不解析 URI、不联网、不执行它。
+除明确列出的字段和 `$schema` 外，v1 仍拒绝未知键。
 
 ## 个性设置盘点与剩余边界 / Inventory
 
@@ -79,13 +84,35 @@
 | 界面/数据/日志字体、缩放，界面/diff/终端颜色 | `theme.json`；旧 `ui.*` 偏好仅作兼容回退。 |
 | 侧栏宽度、减弱动态、新 Shell 集成、新 worktree 默认 Agent | `settings.json`；上述生命周期已接入。 |
 | 快捷键 | 文件契约与原有 `workspace.shortcuts.v1` 迁移由 #71 负责。 |
-| 服务/Git 详情区宽度 | 仍使用旧共享 `detailWidth`，尚未文件化；后续须拆分模块偏好并保持拖动能力，不能把此项标记完成。 |
+| 服务/Git 详情区宽度 | `settings.json` 的独立字段；原共享 `detailWidth` 只作兼容回退，拖动使用分开的 `ui.servicesDetailWidth.v1` / `ui.gitDetailWidth.v1`。 |
 | 布局恢复/记住会话 | 原有显式授权与 `client-recovery`；涉及路径元数据和删除操作，不因外观配置变化自动开启或删除。 |
 | Jev 外部 adapter | 继续使用独立 `jev.json`；不搬运密钥到主题、普通偏好、截图或诊断。 |
 | 首次指引、当前选择、命令历史 | 首次指引标记是使用状态；当前选择/历史按既有内存与显式恢复边界管理，不当作主题配置执行。 |
 
-统一 JSON Schema、剩余详情宽度配置和与统一工作台 #75 的组合验收尚未完成。#66 继续跟踪这些缺口；
+Schema 与详情宽度已接入本分支；与新 Git 审查 #73、统一工作台 #75 的配置组合验收尚未完成。
+#73 的自适应布局不能被旧 CodeView 覆盖，#75 的新会话入口须消费同一偏好。#66 继续跟踪组合边界；
 单项测试通过不是全部个人化需求已经闭环。
+
+## JSON Schema 与编辑器 / Editor assistance
+
+`client/macos/Configuration/` 包含 `theme.schema.json`、`settings.schema.json`、`keybindings.schema.json`
+和对应示例，采用 JSON Schema 2020-12。把示例与相应 Schema 放在同一目录，示例中的相对 `$schema`
+即可由支持它的编辑器提供字段补全和错误标注。也可在编辑器的 JSON 文件关联配置中指定仓库内 Schema，
+不向个人配置加入元数据。客户端不替编辑器下载 Schema，也不把它当作插件。
+
+键位 Schema 描述结构；未知命令 ID、原生保留键及与默认值合并后的冲突由 #71 的命令目录进一步校验。
+Schema 的 `maxLength` 按 Unicode 字符而非 UTF-8 字节计数；字体/元数据/命令 ID 的字节上限、
+完整 Unicode 控制字符与整个文件的 64 KiB 上限仍由本机解析器强制执行。Schema 验证通过不替代运行时校验。
+
+`python3 scripts/check_client_configuration.py` 在一次性虚拟环境中安装固定版本的测试验证器，
+编译真实 Swift 解析器，再对同一组合成样例进行双向对照，并核对全部顶层键和颜色令牌，防止静态文档漂移。
+这也是 PR CI 和 macOS 发版验证使用的同一个入口；失败会阻止继续，不提供跳过开关。
+需要 Python venv、Swift 和测试依赖索引访问；依赖只装入临时目录，不进入应用或全局 Python。
+
+参考：
+- https://json-schema.org/draft/2020-12/json-schema-validation
+- https://code.visualstudio.com/docs/languages/json#_json-schemas-and-settings
+- https://python-jsonschema.readthedocs.io/en/stable/validate/
 
 ## 扩展边界 / Extension boundary
 

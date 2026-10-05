@@ -1,0 +1,2 @@
+# Test-only reference validator; never bundled in the macOS application.
+jsonschema==4.25.1

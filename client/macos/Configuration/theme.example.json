@@ -1,4 +1,5 @@
 {
+  "$schema": "./theme.schema.json",
   "schemaVersion": 1,
   "appearance": "light",
   "colors": {

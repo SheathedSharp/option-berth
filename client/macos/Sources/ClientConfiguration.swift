@@ -100,6 +100,25 @@ struct ClientKeybinding: Decodable, Equatable, Hashable {
     var option: Bool?
     var control: Bool?
 }
+extension ClientKeybinding {
+    private struct Key: CodingKey {
+        let stringValue: String
+        var intValue: Int? { nil }
+        init(_ value: String) { stringValue = value }
+        init?(stringValue: String) { self.init(stringValue) }
+        init?(intValue: Int) { return nil }
+    }
+    init(from decoder: Decoder) throws {
+        let fields = try decoder.container(keyedBy: Key.self)
+        guard fields.allKeys.allSatisfy({ ["key", "shift", "option", "control"].contains($0.stringValue) }) else {
+            throw ClientConfigurationError.invalid("keybindings contain an unknown modifier field")
+        }
+        key = try fields.decode(String.self, forKey: Key("key"))
+        shift = try fields.decodeIfPresent(Bool.self, forKey: Key("shift"))
+        option = try fields.decodeIfPresent(Bool.self, forKey: Key("option"))
+        control = try fields.decodeIfPresent(Bool.self, forKey: Key("control"))
+    }
+}
 struct ClientKeybindingsConfiguration: ClientConfigurationDocument {
     var schemaVersion = 1
     var bindings: [String: ClientKeybinding]?
@@ -127,7 +146,14 @@ enum ClientConfigurationIO {
     static func decode<Value: ClientConfigurationDocument>(_ type: Value.Type, data: Data) throws -> Value {
         guard data.count <= limit else { throw ClientConfigurationError.invalid("configuration exceeds 64 KiB") }
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              Set(object.keys).isSubset(of: Value.keys) else { throw ClientConfigurationError.invalid("configuration must be an object with known keys") }
+              Set(object.keys).subtracting(["$schema"]).isSubset(of: Value.keys) else { throw ClientConfigurationError.invalid("configuration must be an object with known keys") }
+        if let metadata = object["$schema"] {
+            // Editor metadata is inert. The client never fetches this URI.
+            guard let text = metadata as? String, !text.isEmpty, text.utf8.count <= 2048,
+                  !text.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
+                throw ClientConfigurationError.invalid("$schema must be a nonempty string without control characters")
+            }
+        }
         let value = try JSONDecoder().decode(type, from: data)
         try value.validate()
         return value
