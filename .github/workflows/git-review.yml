@@ -1,0 +1,46 @@
+name: Git review projection
+on:
+  pull_request:
+    paths: ['client/macos/**', '.github/workflows/git-review.yml']
+  push:
+    branches: [main]
+    paths: ['client/macos/**', '.github/workflows/git-review.yml']
+permissions:
+  contents: read
+concurrency:
+  group: git-review-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  projection:
+    runs-on: macos-15
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Verify strict facts, all conflict states, filtered paths and honest totals
+        run: |
+          swiftc -swift-version 5 client/macos/Sources/GitModel.swift client/macos/Tests/GitReviewTests.swift -o "$RUNNER_TEMP/git-review-tests"
+          "$RUNNER_TEMP/git-review-tests"
+      - name: Verify real search focus, selection and responsive native splits
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift build --package-path client/macos --force-resolved-versions --product GitReviewChecks
+          binary_dir=$(swift build --package-path client/macos --show-bin-path)
+          isolation=$(mktemp -d "$RUNNER_TEMP/git-review.XXXXXX")
+          mkdir -p "$isolation/home/.option-berth" "$RUNNER_TEMP/git-review-evidence"
+          trap 'find "$isolation/home/.option-berth" -maxdepth 1 -name "git-review-*-native.png" -type f -exec cp {} "$RUNNER_TEMP/git-review-evidence/" \; ; rm -rf "$isolation"' EXIT
+          HOME="$isolation/home" CFFIXED_USER_HOME="$isolation/home" BERTH_HOME="$isolation/home/.option-berth" BERTH_GIT_REVIEW_TEST=1 "$binary_dir/GitReviewChecks" | tee "$RUNNER_TEMP/git-review-evidence/checks.txt"
+      - name: Record test revision
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/git-review-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/git-review-evidence/source-commit.txt"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: git-review-${{ github.run_id }}
+          path: ${{ runner.temp }}/git-review-evidence
+          retention-days: 7
+          if-no-files-found: error
