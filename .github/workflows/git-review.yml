@@ -1,0 +1,21 @@
+name: Git review projection
+on:
+  pull_request:
+    paths: ['client/macos/Sources/GitModel.swift', 'client/macos/Sources/CodeView.swift', 'client/macos/Tests/GitReviewTests.swift', '.github/workflows/git-review.yml']
+  push:
+    branches: [main]
+    paths: ['client/macos/Sources/GitModel.swift', 'client/macos/Tests/GitReviewTests.swift', '.github/workflows/git-review.yml']
+permissions:
+  contents: read
+jobs:
+  projection:
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Verify strict facts, all conflict states, filtered paths and honest totals
+        run: |
+          swiftc -swift-version 5 client/macos/Sources/GitModel.swift client/macos/Tests/GitReviewTests.swift -o "$RUNNER_TEMP/git-review-tests"
+          "$RUNNER_TEMP/git-review-tests"
