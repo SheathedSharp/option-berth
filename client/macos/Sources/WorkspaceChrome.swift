@@ -24,11 +24,11 @@ struct WorkspaceToolbar: View {
                     Text("命令").font(Face.sans(11))
                     Text("⇧⌘P").font(Face.mono(9)).foregroundStyle(Ink.inkFaint)
                 }
-            }.accessibilityIdentifier("workspace.toolbar.commands").help("搜索工作区动作 / Command panel")
-            toolbarButton("会话 \(sessionCount)", symbol: "rectangle.on.rectangle", id: "sessions", action: openSessions)
-            toolbarButton(recoveryPending ? "恢复 · 待确认" : "恢复", symbol: "clock.arrow.circlepath", id: "recovery", action: openRecovery)
+            }.tourAnchor(.commands).accessibilityIdentifier("workspace.toolbar.commands").help("搜索工作区动作 / Command panel")
+            toolbarButton("会话 \(sessionCount)", symbol: "rectangle.on.rectangle", id: "sessions", action: openSessions).tourAnchor(.sessions)
+            toolbarButton(recoveryPending ? "恢复 · 待确认" : "恢复", symbol: "clock.arrow.circlepath", id: "recovery", action: openRecovery).tourAnchor(.recovery)
             if frozen {
-                Image(systemName: "ellipsis.circle").font(.system(size: 13))
+                Image(systemName: "ellipsis.circle").font(.system(size: 13)).tourAnchor(.more)
             } else {
             Menu {
                 Button("检查更新… / Check for updates…", action: openUpdates)
@@ -36,7 +36,7 @@ struct WorkspaceToolbar: View {
                 Button("使用指引… / Getting started…", action: openGuide)
             } label: { Image(systemName: "ellipsis.circle").font(.system(size: 13)) }
                 .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("更多工作区操作")
-                .accessibilityIdentifier("workspace.toolbar.more")
+                .accessibilityIdentifier("workspace.toolbar.more").tourAnchor(.more)
             }
         }
         .controlSize(.small).buttonStyle(.plain)

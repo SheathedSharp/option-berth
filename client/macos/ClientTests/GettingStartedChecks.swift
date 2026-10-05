@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import TipKit
 import BerthTerminal
 import Darwin
 @testable import BerthClient
@@ -23,59 +22,104 @@ extension ClientChecks {
         }
         pump()
     }
-    static func gettingStartedChecks() throws {
-        let timeout = DispatchWorkItem {
-            FileHandle.standardError.write(Data("FAIL: native getting-started checks stalled for 30 seconds\n".utf8))
-            Darwin.exit(1)
+    static func clickTour(_ id: String, in window: NSWindow) {
+        pump(0.25) // Wait for the target relocation animation before hit-testing.
+        guard let root = window.contentView, let button = find(NSButton.self, in: root).first(where: { $0.accessibilityIdentifier() == id }) else {
+            fatalError("Missing native tour button: " + id)
         }
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 30, execute: timeout)
+        let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
+        guideClick(window, x: point.x, y: point.y)
+    }
+    static func tourKey(_ character: String, code: UInt16, in window: NSWindow) {
+        let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber, context: nil, characters: character, charactersIgnoringModifiers: character,
+            isARepeat: false, keyCode: code)!
+        if !window.performKeyEquivalent(with: event) { window.sendEvent(event) }
+        pump()
+    }
+    static func gettingStartedChecks() throws {
+        let timeout = DispatchWorkItem { Darwin.exit(1) }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 60, execute: timeout)
         defer { timeout.cancel() }
         guard let berth = ProcessInfo.processInfo.environment["BERTH_HOME"], berth.hasPrefix("/") else {
-            fatalError("onboarding checks require isolated BERTH_HOME")
+            fatalError("tour checks require isolated BERTH_HOME")
         }
-        FileHandle.standardError.write(Data("CHECK: configuring isolated TipKit\n".utf8))
-        require(OnboardingTips.configure(), "native TipKit configuration failed")
-        FileHandle.standardError.write(Data("CHECK: TipKit configured; opening native guide\n".utf8))
-        require(FileManager.default.fileExists(atPath: berth + "/client-tips"), "TipKit escaped isolated BERTH_HOME")
-        require(WorkspaceShortcuts.valid([:]), "onboarding changed default shortcuts")
+        let suite = "workspace-tour-test-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        require(TourFirstUse.claim(defaults: defaults, legacyUser: false), "fresh user missed first presentation")
+        require(!TourFirstUse.claim(defaults: UserDefaults(suiteName: suite)!, legacyUser: false), "second window or restart repeats tour")
+        defaults.removePersistentDomain(forName: suite)
+        require(!TourFirstUse.claim(defaults: defaults, legacyUser: true), "upgrade unexpectedly replays tutorial")
+        require(defaults.bool(forKey: TourFirstUse.key), "legacy migration not persistent")
+        defaults.removePersistentDomain(forName: suite)
+        for size in [CGSize(width: 760, height: 520), CGSize(width: 900, height: 640), CGSize(width: 1060, height: 720)] {
+            for target in [CGRect(x: 12, y: 50, width: 160, height: size.height - 60), CGRect(x: size.width - 28, y: 12, width: 14, height: 14), CGRect(x: 210, y: 90, width: 450, height: 40)] {
+                let card = TourLayout.card(near: target, in: size)
+                require(CGRect(origin: .zero, size: size).contains(card), "tour card escaped viewport")
+                require(!card.intersects(target), "tour card obscured target")
+            }
+        }
+        require(TourLayout.visible(CGRect(x: -100, y: -100, width: 10, height: 10), in: CGSize(width: 760, height: 520)) == nil, "offscreen target is eligible")
         let before = TerminalSessions.shared.sessions.count
-        var closeCount = 0, connectCount = 0
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 470), styleMask: [.titled], backing: .buffered, defer: false)
+        let navigation = ViewState()
+        var measurement: TourMeasurement?
+        let content = BoardView(store: BoardStore(fixture: []), services: ServicesStore(fixture: []),
+            automaticGuide: true, guideDefaults: defaults, views: navigation)
+            .onPreferenceChange(TourMeasurementKey.self) { measurement = $0 }
+        let host = NSHostingView(rootView: content)
+        host.sizingOptions = [] // The test window, not intrinsic fitting, owns the resize.
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1060, height: 720), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
+        window.contentView = host; window.makeKeyAndOrderFront(nil); pump(0.3)
         defer { window.contentView = nil; window.close() }
-        func mount() -> NSHostingView<GettingStartedGuide> {
-            let host = NSHostingView(rootView: GettingStartedGuide(onClose: { closeCount += 1 }, onConnect: { connectCount += 1 }))
-            window.contentView = host; window.makeKeyAndOrderFront(nil); pump(0.2)
-            return host
-        }
-        let host = mount()
-        if let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+        eventually("first-use native tour did not appear") { navigation.showingGuide && measurement != nil }
+        require(window.attachedSheet == nil, "tour is still a text sheet")
+        require(defaults.bool(forKey: TourFirstUse.key), "presentation did not persist eligibility")
+        require(measurement?.target == .connect, "first highlight is not the actual connect control")
+        func capture(_ name: String) throws {
+            pump(0.25)
+            guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { fatalError("native tour bitmap unavailable") }
             host.cacheDisplay(in: host.bounds, to: bitmap)
-            try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: berth).appendingPathComponent("guide-native.png"))
+            guard let png = bitmap.representation(using: .png, properties: [:]) else { fatalError("native tour PNG unavailable") }
+            try png.write(to: URL(fileURLWithPath: berth).appendingPathComponent(name + "-native.png"))
         }
-        FileHandle.standardError.write(Data("CHECK: guide rendered; exercising native buttons\n".utf8))
-        require(closeCount == 0 && connectCount == 0, "opening guide performed an action")
-        guideClick(window, x: 445)
-        guideClick(window, x: 545)
-        guideClick(window, x: 445)
-        guideClick(window, x: 545)
-        guideClick(window, x: 210)
-        require(connectCount == 1 && closeCount == 0, "native Next/Back/Connect did not request exactly one picker")
-        for _ in 0..<3 { guideClick(window, x: 545) }
-        require(closeCount == 0 && connectCount == 1, "reading steps performed a side effect")
-        guideClick(window, x: 545)
-        require(closeCount == 1, "native Done did not close the guide")
-        let reopened = mount()
-        guideClick(window, x: 545)
-        guideClick(window, x: 210)
-        require(connectCount == 2 && closeCount == 1, "reopened guide did not start at first step")
-        guideClick(window, x: 65)
-        require(closeCount == 2 && connectCount == 2, "native Later invoked a setup action")
-        require(TerminalSessions.shared.sessions.count == before, "guide created a shell or agent")
-        require(reopened.fittingSize.width <= 600 && reopened.fittingSize.height <= 470, "guide exceeds its native window")
-        for step in GettingStartedStep.allCases {
-            require(!step.chinese.isEmpty && !step.english.isEmpty, "missing bilingual guidance")
+        try capture("guide-empty-paper")
+        clickTour("guide.next", in: window)
+        eventually("native Next did not select worktrees") { measurement?.target == .worktrees }
+        try capture("guide-worktrees-paper")
+        clickTour("guide.back", in: window)
+        eventually("native Back did not return to connect") { measurement?.target == .connect }
+        // Clicking the highlighted real control must not execute through the mask.
+        if let hit = measurement?.highlight {
+            let point = host.convert(NSPoint(x: hit.midX, y: host.isFlipped ? hit.midY : host.bounds.height - hit.midY), to: nil)
+            guideClick(window, x: point.x, y: point.y)
+            require(navigation.showingGuide && window.attachedSheet == nil, "spotlight leaked a click into workspace")
         }
-        print("PASS: isolated native TipKit; real Next/Back/Connect/Done/Later/reopen; no implicit processes or changed shortcuts")
+        tourKey("\r", code: 36, in: window)
+        eventually("Return did not advance native tour") { measurement?.target == .worktrees }
+        let oldCard = measurement!.card
+        window.setContentSize(NSSize(width: 760, height: 520)); pump(0.35)
+        require(measurement!.viewport.width <= 760, "resizing kept stale target coordinates")
+        require(measurement!.card != oldCard, "resizing did not reposition the card")
+        require(CGRect(origin: .zero, size: measurement!.viewport).contains(measurement!.card), "minimum-window card is clipped")
+        require(!measurement!.card.intersects(measurement!.highlight), "minimum-window card covers highlight")
+        try capture("guide-minimum-paper")
+        tourKey("\u{1b}", code: 53, in: window)
+        eventually("Escape did not dismiss native tour") { !navigation.showingGuide }
+        window.contentView = nil; pump()
+        let second = ViewState()
+        window.contentView = NSHostingView(rootView: BoardView(store: BoardStore(fixture: []), services: ServicesStore(fixture: []),
+            automaticGuide: true, guideDefaults: UserDefaults(suiteName: suite)!, views: second))
+        pump(0.2)
+        require(!second.showingGuide, "second presentation ignored durable skip")
+        second.showingGuide = true; pump(0.2)
+        require(find(TourControlsView.self, in: window.contentView!).count == 1, "manual replay unavailable")
+        for _ in 0..<6 { clickTour("guide.next", in: window) }
+        require(!second.showingGuide, "Done did not close tour or missing targets were not skipped")
+        require(TerminalSessions.shared.sessions.count == before, "tour created a shell or agent")
+        require(WorkspaceShortcuts.valid([:]), "tour changed editing/window shortcuts")
+        for step in TourTarget.allCases { require(!step.chinese.isEmpty && !step.english.isEmpty, "missing bilingual guidance") }
+        print("PASS: first-use/upgrade/skip/restart/manual replay; native Next/Back/Return/Escape/Done, click shield, resize and no processes")
     }
 }
