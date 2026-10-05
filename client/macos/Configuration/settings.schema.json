@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Option Berth settings v1",
+  "description": "Local workspace preferences; no project code or agent execution. Maximum file size: 64 KiB.",
+  "type": "object",
+  "required": ["schemaVersion"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "description": "Editor-only metadata; never fetched or executed by the client. Runtime limit: 2048 UTF-8 bytes, no control/format characters.",
+      "not": { "type": "string", "pattern": "[\\u0000-\\u001F\\u007F-\\u009F]" }
+    },
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "reduceMotion": {
+      "type": ["boolean", "null"],
+      "description": "User true OR read-only system reduction; false cannot disable the OS preference."
+    },
+    "shellIntegration": {
+      "type": ["boolean", "null"],
+      "description": "Only new supported zsh sessions; never restarts running PTYs."
+    },
+    "sidebarWidth": { "type": ["number", "null"], "minimum": 140, "maximum": 320 },
+    "servicesDetailWidth": { "type": ["number", "null"], "minimum": 340, "maximum": 500 },
+    "gitDetailWidth": { "type": ["number", "null"], "minimum": 340, "maximum": 500 },
+    "defaultAgent": {
+      "enum": ["codex", "claude", "opencode", "deepseek", "pi", null],
+      "description": "Default for new worktree UI state; existing drafts and selections are unchanged."
+    }
+  }
+}

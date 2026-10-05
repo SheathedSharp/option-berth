@@ -1,0 +1,14 @@
+{
+  "$schema": "./theme.schema.json",
+  "schemaVersion": 1,
+  "appearance": "light",
+  "colors": {
+    "accent": "#A35F42",
+    "accentSoft": "#F2DED3"
+  },
+  "interfaceFont": "__system__",
+  "dataFont": "Monaspace Neon",
+  "interfaceScale": 1.0,
+  "dataScale": 1.1,
+  "logScale": 1.1
+}

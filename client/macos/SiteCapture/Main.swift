@@ -45,7 +45,7 @@ import BerthTerminal
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory); app.finishLaunching()
-        let settings = UISettings.shared; settings.theme = .paper
+        let settings = UISettings.shared; settings.previewTheme = ThemeConfiguration()
         let store = BoardStore(), services = ServicesStore(), git = GitStore()
         let registry = TerminalSessions.shared
         store.start(); services.start()
@@ -86,9 +86,9 @@ import BerthTerminal
         let workspace = registry.workspace(root)
         workspace.single(a.id, agent: false)
         try workspace.split(b.id, beside: a.id, agent: false, axis: .horizontal)
-        views.scope = .terminal(project.name); settings.theme = .midnight
+        views.scope = .terminal(project.name); settings.previewTheme = ThemeConfiguration()
         try capture(board, to: output.appendingPathComponent("terminal.png"), size: NSSize(width: 1240, height: 800))
-        settings.theme = .paper
+        settings.previewTheme = ThemeConfiguration()
         try capture(WorktreeHistorySheet(root: root, sessions: registry), to: output.appendingPathComponent("history.png"), size: NSSize(width: 650, height: 480))
         views.scope = .services(project.name); views.showingGuide = true; views.guideTarget = .facts
         try capture(board, to: output.appendingPathComponent("guide.png"), size: NSSize(width: 1240, height: 800))

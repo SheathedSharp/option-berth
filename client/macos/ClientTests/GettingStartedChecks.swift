@@ -70,10 +70,10 @@ extension ClientChecks {
         }
         require(TourLayout.visible(CGRect(x: -100, y: -100, width: 10, height: 10), in: CGSize(width: 760, height: 520)) == nil, "offscreen target is eligible")
         let visualSettings = UISettings.shared
-        let priorTheme = visualSettings.theme
+        let priorTheme = visualSettings.previewTheme
         let priorScale = visualSettings.interfaceScale
-        visualSettings.theme = .paper
-        defer { visualSettings.theme = priorTheme; visualSettings.interfaceScale = priorScale }
+        visualSettings.previewTheme = ThemeConfiguration()
+        defer { visualSettings.previewTheme = priorTheme; visualSettings.interfaceScale = priorScale }
         let before = TerminalSessions.shared.sessions.count
         let navigation = ViewState()
         var measurement: TourMeasurement?
@@ -150,7 +150,7 @@ extension ClientChecks {
         // Git subprocess or created on-disk project is required for this check.
         let project = try JSONDecoder().decode(BerthGroup.self, from: Data(#"{"name":"demo@feature","repo":"demo","worktree":"feature","branch":"feature/onboarding","root_dir":"/fixture/demo","config_path":"/fixture/demo/oberth.yaml","services":[],"members":[]}"#.utf8))
         require(TourMotion.animation(reduced: true) == nil && TourMotion.animation(reduced: false) != nil, "Reduce Motion policy ignored")
-        visualSettings.theme = .midnight
+        visualSettings.previewTheme = try ClientConfigurationIO.decode(ThemeConfiguration.self, data: Data(##"{"schemaVersion":1,"appearance":"dark","colors":{"canvas":"#16191E","surface":"#1F242B","ink":"#E8EBF0","inkMuted":"#B8C0CC","inkFaint":"#8B96A5","line":"#343B46","accent":"#8CB3FF","accentSoft":"#283B59"}}"##.utf8))
         let loaded = ViewState(scope: .services(project.name))
         var loadedMeasurement: TourMeasurement?
         let loadedHost = NSHostingView(rootView: BoardView(store: BoardStore(fixture: []),
