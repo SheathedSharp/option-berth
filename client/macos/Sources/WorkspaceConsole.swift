@@ -18,7 +18,7 @@ struct WorkspaceConsole: View {
     @State private var switcherPresented = false
     @State private var switcherQuery = ""
     @State private var terminalReturnID: UUID?
-    @State private var keyMonitor: Any?
+    @StateObject private var keyRouter = SessionKeyRouter()
     @Environment(\.clientReduceMotion) private var reduced
     init(root: String, frozen: Bool = false, initialAgent: Bool = false) {
         self.root = root; self.frozen = frozen
@@ -75,7 +75,7 @@ struct WorkspaceConsole: View {
             .onAppear {
                 guard !frozen else { return }
                 WorkspaceRecovery.shared.watch(workspace)
-                installKeyMonitor()
+                configureKeyRouter()
                 if let selected { focusIntent = TerminalFocusIntent(selected.id) }
                 else { launcher.refresh(workspace) }
             }
@@ -85,7 +85,7 @@ struct WorkspaceConsole: View {
                     if let selected { focusIntent = TerminalFocusIntent(selected.id) }
                 }
             }
-            .onDisappear { launcher.cancel(); removeKeyMonitor() }
+            .onDisappear { launcher.cancel(); keyRouter.remove() }
     }
     private var launchSurface: SessionLaunchPanel {
         SessionLaunchPanel(root: root, workspace: workspace, launcher: launcher, selected: selected,
@@ -170,7 +170,8 @@ struct WorkspaceConsole: View {
     private func openSwitcher() {
         switcherQuery = ""
         switcherPresented = true
-        installKeyMonitor()
+        configureKeyRouter()
+        keyRouter.install(windowNumber: NSApp.keyWindow?.windowNumber)
     }
 
     private func closeSwitcher() {
@@ -201,31 +202,17 @@ struct WorkspaceConsole: View {
         activate(values[next])
     }
 
-    private func installKeyMonitor() {
-        guard keyMonitor == nil, !frozen else { return }
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard let window = event.window, window.isKeyWindow else { return event }
-            let command = event.modifierFlags.contains(.command) || event.modifierFlags.contains(.control)
-            let option = event.modifierFlags.contains(.option)
-            if event.keyCode == 48 && command && option {
-                openSwitcher()
-                return nil
-            }
-            if event.keyCode == 48 && command && scoped.count > 1 {
-                cycleSession(event.modifierFlags.contains(.shift) ? -1 : 1)
-                return nil
-            }
-            if event.keyCode == 53 {
-                guard switcherPresented || selected?.kind != "terminal" else { return event }
-                closeSwitcher()
-                return nil
-            }
-            return event
-        }
-    }
-
-    private func removeKeyMonitor() {
-        if let keyMonitor { NSEvent.removeMonitor(keyMonitor); self.keyMonitor = nil }
+    private func configureKeyRouter() {
+        keyRouter.configure(root: root, workspace: workspace,
+            open: {
+                switcherQuery = ""
+                switcherPresented = true
+            },
+            cycle: { offset in cycleSession(offset) },
+            escape: { closeSwitcher() },
+            canCycle: { scoped.count > 1 },
+            canEscape: { switcherPresented || selected?.kind != "terminal" })
+        keyRouter.install(windowNumber: NSApp.keyWindow?.windowNumber)
     }
 
     @ViewBuilder private func splitItems(_ target: TerminalSession) -> some View {
