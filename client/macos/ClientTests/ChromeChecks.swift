@@ -27,9 +27,22 @@ extension ClientChecks {
         pump(0.15)
         require(calls.isEmpty, "toolbar appearance performed an action or update check")
         require(host.fittingSize.width <= 700 && host.fittingSize.height <= 80, "toolbar exceeds its native test window")
+        popoverChromeChecks()
         print("PASS: compatibility aliases canonicalized, worktree tab retained, recovery/update actions discoverable, toolbar causes no implicit effects")
         do { try worktreeRoutingChecks() } catch { fatalError("worktree routing fixture failed: \(error)") }
         do { try partialLayoutChecks() } catch { fatalError("partial layout fixture failed: \(error)") }
+    }
+
+    static func popoverChromeChecks() {
+        let popover = NSPopover()
+        let controller = NSViewController()
+        controller.view = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 260))
+        popover.contentViewController = controller
+        SessionLauncherPopover.Coordinator.applyNativeAppearance(to: popover, settings: .shared)
+        require(popover.appearance != nil, "session launcher popover did not receive a native appearance")
+        require(controller.view.wantsLayer && controller.view.layer?.backgroundColor != nil,
+                "session launcher popover content did not receive the configured canvas")
+        print("PASS: session launcher popover inherits the configured native appearance and canvas")
     }
 
     static func partialLayoutChecks() throws {
