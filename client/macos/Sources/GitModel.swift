@@ -149,7 +149,102 @@ struct GitTree: Decodable, Sendable {
 
 struct GitPatch: Decodable, Sendable {
     let root: String
+    let commit: String?
+    let base: String?
     let files: [GitFileDiff]
+}
+
+struct GitGraph: Decodable, Sendable {
+    let root: String
+    let observedHead: String?
+    let branch: String?
+    let detached: Bool
+    let upstream: String?
+    let ahead: Int
+    let behind: Int
+    let truncated: Bool
+    let limit: Int
+    let commits: [GitGraphCommit]
+    let refs: [GitGraphRef]
+    let worktrees: [GitWorktree]
+
+    var branchName: String { detached ? "detached" : (branch ?? "(no branch)") }
+    var shortHead: String { String((observedHead ?? "").prefix(8)) }
+
+    private enum CodingKeys: String, CodingKey {
+        case root, branch, detached, upstream, ahead, behind, truncated, limit, commits, refs, worktrees
+        case observedHead = "observed_head"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        root = try c.decode(String.self, forKey: .root)
+        observedHead = try c.decodeIfPresent(String.self, forKey: .observedHead)
+        branch = try c.decodeIfPresent(String.self, forKey: .branch)
+        detached = try c.decodeIfPresent(Bool.self, forKey: .detached) ?? false
+        upstream = try c.decodeIfPresent(String.self, forKey: .upstream)
+        ahead = try c.decodeIfPresent(Int.self, forKey: .ahead) ?? 0
+        behind = try c.decodeIfPresent(Int.self, forKey: .behind) ?? 0
+        truncated = try c.decodeIfPresent(Bool.self, forKey: .truncated) ?? false
+        limit = try c.decode(Int.self, forKey: .limit)
+        commits = try c.decodeIfPresent([GitGraphCommit].self, forKey: .commits) ?? []
+        refs = try c.decodeIfPresent([GitGraphRef].self, forKey: .refs) ?? []
+        worktrees = try c.decodeIfPresent([GitWorktree].self, forKey: .worktrees) ?? []
+        guard (1...500).contains(limit), ahead >= 0, behind >= 0,
+              Set(commits.map(\.hash)).count == commits.count,
+              Set(refs.map(\.id)).count == refs.count else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Invalid Git graph bounds or duplicate IDs"))
+        }
+    }
+}
+
+struct GitGraphCommit: Decodable, Identifiable, Sendable {
+    let hash: String
+    let parents: [String]
+    let author: String?
+    let when: String?
+    let subject: String
+    let refs: [String]
+
+    var id: String { hash }
+    var shortHash: String { String(hash.prefix(8)) }
+
+    private enum CodingKeys: String, CodingKey { case hash, parents, author, when, subject, refs }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        hash = try c.decode(String.self, forKey: .hash)
+        parents = try c.decodeIfPresent([String].self, forKey: .parents) ?? []
+        author = try c.decodeIfPresent(String.self, forKey: .author)
+        when = try c.decodeIfPresent(String.self, forKey: .when)
+        subject = try c.decode(String.self, forKey: .subject)
+        refs = try c.decodeIfPresent([String].self, forKey: .refs) ?? []
+        guard !hash.isEmpty, parents.allSatisfy({ !$0.isEmpty }) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Invalid Git graph commit"))
+        }
+    }
+}
+
+struct GitGraphRef: Decodable, Identifiable, Sendable {
+    let name: String
+    let target: String
+    let kind: String
+    let current: Bool
+
+    var id: String { kind + ":" + name }
+
+    private enum CodingKeys: String, CodingKey { case name, target, kind, current }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        target = try c.decode(String.self, forKey: .target)
+        kind = try c.decode(String.self, forKey: .kind)
+        current = try c.decodeIfPresent(Bool.self, forKey: .current) ?? false
+        guard !name.isEmpty, !target.isEmpty, ["branch", "remote", "tag", "ref"].contains(kind) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Invalid Git graph ref"))
+        }
+    }
 }
 
 struct GitFileDiff: Decodable, Identifiable, Sendable {
