@@ -8,21 +8,24 @@ import SwiftUI
 @MainActor
 final class AgentLaunchController: ObservableObject {
     @Published private(set) var providers: [ExternalAgent] = []
-    @Published private(set) var loading = false
+    private enum Phase { case idle, discovery, plan }
+    @Published private var phase = Phase.idle
+    var loading: Bool { phase != .idle }
+    var planning: Bool { phase == .plan }
     @Published private(set) var problem: String?
     private var operation: Task<Void, Never>?
     private var generation = UUID()
     deinit { operation?.cancel() }
     func provider(_ workspace: ConsoleWorkspace) -> ExternalAgent? { providers.first { $0.id == workspace.providerID } }
     func available(_ workspace: ConsoleWorkspace) -> Bool { !loading && provider(workspace)?.installed == true }
-    func cancel() { generation = UUID(); operation?.cancel(); operation = nil; loading = false }
+    func cancel() { generation = UUID(); operation?.cancel(); operation = nil; phase = .idle }
 
     func refresh(_ workspace: ConsoleWorkspace) {
         guard !loading else { return }
         guard let binary = DaemonLaunch.binaryPath() else { problem = "找不到兼容的 oberth"; return }
-        let id = UUID(); generation = id; loading = true; problem = nil
+        let id = UUID(); generation = id; phase = .discovery; problem = nil
         operation = Task { @MainActor in
-            defer { if generation == id { loading = false; operation = nil } }
+            defer { if generation == id { phase = .idle; operation = nil } }
             do {
                 let values = try await AgentBridge.providers(binary: binary, environment: TerminalSession.environment())
                 try Task.checkCancellation()
@@ -40,9 +43,9 @@ final class AgentLaunchController: ObservableObject {
         guard !prompt || !(message ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               resumeFile == nil || provider.supportsResume else { return }
         let mode = prompt && !provider.nativePrompt ? "task" : "native"
-        let id = UUID(); generation = id; loading = true; problem = nil
+        let id = UUID(); generation = id; phase = .plan; problem = nil
         operation = Task { @MainActor in
-            defer { if generation == id { loading = false; operation = nil } }
+            defer { if generation == id { phase = .idle; operation = nil } }
             do {
                 let plan = try await AgentBridge.plan(binary: binary, provider: provider.id, root: root, mode: mode,
                     prompt: message, environment: TerminalSession.environment(), resumeFile: resumeFile)
@@ -83,7 +86,7 @@ struct SessionLaunchPanel: View {
             HStack(spacing: 8) {
                 Image(systemName: shell ? "terminal" : "sparkle").foregroundStyle(Ink.accent)
                 if frozen { Text("Codex ▾").font(Face.sans(12, .medium)) }
-                else { SessionTargetPicker(target: target, providers: launcher.providers).frame(height: 26).disabled(launcher.loading) }
+                else { SessionTargetPicker(target: target, providers: launcher.providers).frame(height: 26).disabled(launcher.planning) }
                 Spacer(minLength: 0)
                 if let close {
                     ConsoleToolbarAction(title: "", identifier: "console.cancelLaunch", symbol: "xmark") { launcher.cancel(); close() }
@@ -98,7 +101,7 @@ struct SessionLaunchPanel: View {
                 Text("检查当前改动，再运行相关测试。")
                     .font(Face.mono(12)).frame(maxWidth: .infinity, minHeight: 76, alignment: .topLeading)
             } else {
-                AgentComposer(text: $workspace.draft, enabled: !launcher.loading, font: Face.nativeMono(12),
+                AgentComposer(text: $workspace.draft, enabled: !launcher.planning, font: Face.nativeMono(12),
                     foreground: NSColor(Ink.ink), focusOnAttach: true, onSubmit: start, onNative: openNative)
                     .frame(height: 76).padding(4).background(Ink.surface)
                     .overlay(alignment: .topLeading) {
@@ -132,7 +135,7 @@ struct SessionLaunchPanel: View {
                     ConsoleToolbarAction(title: shell ? "打开 Shell" : "开始新会话 ⌘↩", identifier: "console.launch", perform: start)
                         .fixedSize().frame(height: 28).padding(.horizontal, 9).background(Ink.accentSoft)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
-                        .disabled(launcher.loading || (!shell && !launcher.available(workspace)))
+                        .disabled(launcher.planning || (!shell && !launcher.available(workspace)))
                         .help("显式创建会话；后续输入与审批保留在原生终端")
                 }
             }
@@ -140,7 +143,7 @@ struct SessionLaunchPanel: View {
     }
     private var canFocusNative: Bool { selected?.isActive == true && selected?.kind == "agent:\(workspace.providerID):native" }
     private func start() {
-        guard !launcher.loading else { return }
+        guard !launcher.planning else { return }
         if shell { newShell() }
         else { launcher.launch(root: root, workspace: workspace,
             prompt: !workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, didLaunch: activate) }

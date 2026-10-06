@@ -50,6 +50,7 @@ import BerthTerminal
         try Data(#"""
 #!/bin/sh
 [ "$#" = 3 ] && [ "$1" = agent ] && [ "$2" = list ] && [ "$3" = --json ] || exit 97
+/bin/sleep 0.5
 printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"codex","installed":true,"native_prompt":true}]}'
 """#.utf8).write(to: catalogue)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: catalogue.path)
@@ -139,6 +140,9 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
                     .flatMap { find(NSButton.self, in: $0) }.first { $0.accessibilityIdentifier() == "console.cancelLaunch" }
                 return cancel != nil
             }
+            let targetPicker = NSApp.windows.filter(\.isVisible).compactMap(\.contentView)
+                .flatMap { find(NSPopUpButton.self, in: $0) }.first { $0.accessibilityIdentifier() == "console.launchTarget" }
+            require(targetPicker?.isEnabled == true, "provider discovery blocked the Shell selector")
             pump(0.03)
             require(shell.terminal.bounds == shellBounds && agent.terminal.bounds == agentBounds, "creation resized live PTYs")
             require(shell.terminal.superview === shellHost && agent.terminal.superview === agentHost, "creation remounted native hosts")
@@ -147,6 +151,7 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
                 eventually("synthetic provider was not loaded in the popover") {
                     NSApp.windows.filter(\.isVisible).compactMap(\.contentView).flatMap { find(NSPopUpButton.self, in: $0) }.contains { $0.titleOfSelectedItem == "Codex fixture" }
                 }
+                pump(0.3) // Capture settled native presentation, not the show animation.
                 try captureOwnedWindow(window, to: URL(fileURLWithPath: home).appendingPathComponent("session-launcher-composited-native.png"))
             }
             cancel?.performClick(nil)

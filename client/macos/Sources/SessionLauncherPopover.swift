@@ -22,6 +22,7 @@ struct SessionLauncherPopover: NSViewRepresentable {
     }
     func updateNSView(_ button: ConsoleSessionButton, context: Context) {
         context.coordinator.parent = self
+        context.coordinator.popover?.animates = !reduced
         let size = 11 * settings.interfaceScale
         button.font = settings.interfaceFontName == "__system__" ? NSFont.systemFont(ofSize: size)
             : (NSFont(name: settings.interfaceFontName, size: size) ?? NSFont.systemFont(ofSize: size))
@@ -50,6 +51,7 @@ struct SessionLauncherPopover: NSViewRepresentable {
         init(_ parent: SessionLauncherPopover) { self.parent = parent }
         var content: AnyView {
             AnyView(parent.panel.frame(width: 460, height: 260, alignment: .top)
+                .background(Ink.canvas)
                 .preferredColorScheme(parent.settings.colorScheme)
                 .environment(\.clientReduceMotion, parent.reduced))
         }
@@ -69,7 +71,7 @@ struct SessionLauncherPopover: NSViewRepresentable {
             popover.contentSize = NSSize(width: 460, height: 260)
             popover.behavior = .transient; popover.animates = !parent.reduced; popover.delegate = self
             self.host = host; self.popover = popover
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: button.isFlipped ? .maxY : .minY)
             // This is an explicit native click, outside any SwiftUI layout pass.
             // Only the newly opened composer receives this one-shot request.
             func composer(in view: NSView) -> AgentComposerTextView? {
@@ -86,6 +88,12 @@ struct SessionLauncherPopover: NSViewRepresentable {
             // cannot reset the binding or release a subsequently opened host.
             previous.delegate = nil
             previous.close()
+        }
+        func popoverShouldClose(_ popover: NSPopover) -> Bool {
+            // The explicit resume-file chooser temporarily owns keyboard input.
+            // Its modal session must not dismiss the creation UI or hide errors.
+            // Explicit cancellation/dismantling still uses close(), not this veto.
+            NSApp.modalWindow == nil
         }
         func popoverWillClose(_ notification: Notification) {
             guard let closing = notification.object as? NSPopover, closing === popover else { return }

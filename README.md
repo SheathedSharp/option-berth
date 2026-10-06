@@ -88,7 +88,7 @@ oberth down                    # 停止当前项目并安全处理端口预留
 
 ## 终端与 coding agent
 
-macOS **工作台 / Console** 将 Shell 与外部 agent 放在同一会话栏和原生显示区，
+macOS **会话 / Sessions** 将 Shell 与外部 agent 放在同一会话栏和原生显示区，
 共用当前 worktree 的服务事实和只读 Git 上下文；新 Agent 消息是就地展开的入口，不是另一层页面。会话固定归属于创建时的 worktree，
 切换项目不会把原会话迁移到另一份代码中。
 
