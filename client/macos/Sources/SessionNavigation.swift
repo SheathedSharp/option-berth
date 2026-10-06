@@ -241,9 +241,14 @@ final class SessionKeyRouter: ObservableObject {
     }
 
     func install(windowNumber: Int?) {
-        if monitor != nil, self.windowNumber == windowNumber { return }
+        // AppKit reports 0 before the hosting window has joined the window
+        // server. Keep that interim state unscoped so a synthetic key event
+        // can still match the current key window; tighten the monitor as
+        // soon as the binder sees a concrete number.
+        let concreteWindowNumber = windowNumber.flatMap { $0 > 0 ? $0 : nil }
+        if monitor != nil, self.windowNumber == concreteWindowNumber { return }
         if let monitor { NSEvent.removeMonitor(monitor) }
-        self.windowNumber = windowNumber
+        self.windowNumber = concreteWindowNumber
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             return self.handle(event)
