@@ -85,9 +85,9 @@ func ReadGraph(ctx context.Context, dir string, limit int) (Graph, error) {
 
 	logArgs := []string{"log"}
 	if snap.Head != "" {
-		// Put the observed HEAD first even when --all adds other refs. The
-		// client can then reject a response whose first row no longer pins the
-		// status observation.
+		// Include the observed HEAD revision alongside --all. Git may still
+		// order a newer side branch first; the pinned pass below restores a
+		// stable current-checkout row.
 		logArgs = append(logArgs, snap.Head)
 	}
 	logArgs = append(logArgs, "--all", "--date-order", "--topo-order",
@@ -97,8 +97,26 @@ func ReadGraph(ctx context.Context, dir string, limit int) (Graph, error) {
 		return Graph{}, err
 	}
 	commits := parseGraphCommits(logOut)
-	if snap.Head != "" && (len(commits) == 0 || commits[0].Hash != snap.Head) {
-		return Graph{}, fmt.Errorf("git HEAD changed during graph read")
+	if snap.Head != "" {
+		// --all may order a newer side branch before the checked-out branch.
+		// Pin the observed HEAD as the first row so a small limit can never
+		// return a graph that omits the checkout the user is reviewing.
+		headOut, headErr := gitOut(ctx, dir, "log", "-1", snap.Head, "--format=%H%x00%P%x00%an%x00%cI%x00%s%x00")
+		if headErr != nil {
+			return Graph{}, headErr
+		}
+		pinned := parseGraphCommits(headOut)
+		if len(pinned) == 0 {
+			return Graph{}, fmt.Errorf("git HEAD changed during graph read")
+		}
+		ordered := make([]GraphCommit, 0, len(commits)+1)
+		ordered = append(ordered, pinned[0])
+		for _, commit := range commits {
+			if commit.Hash != snap.Head {
+				ordered = append(ordered, commit)
+			}
+		}
+		commits = ordered
 	}
 	truncated := len(commits) > limit
 	if truncated {
@@ -128,7 +146,7 @@ func parseGraphCommits(out []byte) []GraphCommit {
 	commits := make([]GraphCommit, 0, len(records)/5)
 	for i := 0; i+4 < len(records); i += 5 {
 		hash := strings.TrimSpace(records[i])
-		if hash == "" || len(hash) < 7 {
+		if hash == "" {
 			continue
 		}
 		parents := strings.Fields(records[i+1])
