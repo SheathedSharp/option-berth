@@ -169,7 +169,6 @@ final class SessionKeyRouter: ObservableObject {
     }
 
     func install(windowNumber: Int?) {
-        guard let windowNumber else { return }
         if monitor != nil, self.windowNumber == windowNumber { return }
         if let monitor { NSEvent.removeMonitor(monitor) }
         self.windowNumber = windowNumber
@@ -187,10 +186,20 @@ final class SessionKeyRouter: ObservableObject {
     }
 
     private func handle(_ event: NSEvent) -> NSEvent? {
-        guard let windowNumber else { return event }
-        let matchesWindow = event.window?.windowNumber == windowNumber
-            || event.windowNumber == windowNumber
-            || (event.window == nil && NSApp.keyWindow?.windowNumber == windowNumber)
+        let matchesWindow: Bool
+        if let windowNumber {
+            matchesWindow = event.window?.windowNumber == windowNumber
+                || event.windowNumber == windowNumber
+                || (event.window == nil && NSApp.keyWindow?.windowNumber == windowNumber)
+        } else {
+            // SwiftUI may install the representable before its host window has
+            // become key. Keep the monitor alive in that interim, but scope it
+            // to whichever window is key when the event arrives; the binder
+            // will tighten this to a concrete number on the next update.
+            matchesWindow = event.window?.isKeyWindow == true
+                || event.windowNumber == NSApp.keyWindow?.windowNumber
+                || (event.window == nil && NSApp.keyWindow != nil)
+        }
         guard matchesWindow else { return event }
         let flags = event.modifierFlags
         let command = flags.contains(.command) || flags.contains(.control)
