@@ -65,6 +65,12 @@ import ScreenCaptureKit
         let saved = try Data(contentsOf: url)
         replace("{")
         try await eventually("invalid native edit has no diagnostic") { model.problem && !model.isSaving }
+        var prompted = false
+        let cancelledQuit = ConfigurationEditorWindows.allowTermination(models: [model]) { saving, names in
+            prompted = !saving && names == ["theme.json"]
+            return false
+        }
+        try expect(prompted && !cancelledQuit && model.isLoaded, "application quit discarded invalid configuration without consent")
         let invalidBytes = try Data(contentsOf: url)
         try expect(invalidBytes == saved && model.hasUnsavedChanges && editor.string == "{", "invalid edit changed disk or discarded draft")
         let external = Data("{\"schemaVersion\":1,\"colors\":{\"accent\":\"#ABCDEF\"}}\n".utf8)
@@ -97,7 +103,15 @@ import ScreenCaptureKit
         try await Task.sleep(nanoseconds: 100_000_000)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try await captureOwnedWindow(window, to: root.appendingPathComponent("configuration-editor-composited-native.png"))
+        let cleanQuit = ConfigurationEditorWindows.allowTermination(models: [model]) { _, _ in false }
+        try expect(cleanQuit, "saved editor blocks application quit")
         try expect(controller.windowShouldClose(window), "clean editor cannot close")
+        let draftModel = ConfigurationEditorModel(document: .settings, directory: directory, settings: settings)
+        try await eventually("termination fixture did not load") { draftModel.isLoaded }
+        draftModel.edited("{", composing: true)
+        try expect(ConfigurationEditorWindows.allowTermination(models: [draftModel], ask: { _, _ in true }), "explicit draft discard cannot quit")
+        try await Task.sleep(nanoseconds: 350_000_000)
+        try expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("settings.json").path), "discarding a draft queued a file write")
     }
     /// Capture only this harness's explicitly owned window. A view bitmap omits
     /// composited SwiftUI/AppKit layers and is not a visual-acceptance artifact.

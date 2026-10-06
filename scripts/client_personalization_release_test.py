@@ -50,12 +50,22 @@ class PersonalizationReleaseTests(unittest.TestCase):
 
     def test_configuration_regressions_are_release_gates(self):
         calls = self.commands()
-        for name in ("ClientConfigurationTests", "ClientPreferencesTests", "ClientConfigurationWatchTests"):
+        for name in ("ClientConfigurationTests", "ClientPreferencesTests", "ClientConfigurationWatchTests", "ConfigurationEditingTests"):
             with self.subTest(name=name):
                 compile_command = next((args for args, _ in calls if f"client/macos/Tests/{name}.swift" in args), None)
                 self.assertIsNotNone(compile_command)
                 binary = compile_command[compile_command.index("-o") + 1]
                 self.assertTrue(any(args == (binary,) for args, _ in calls))
+
+    def test_native_configuration_editor_is_a_required_release_gate(self):
+        calls = self.commands()
+        self.assertTrue(any("--product" in args and "ConfigurationEditorChecks" in args for args, _ in calls))
+        executed = [(args, options) for args, options in calls if args and args[0].endswith("/ConfigurationEditorChecks")]
+        self.assertEqual(len(executed), 1)
+        env = executed[0][1]["environment"]
+        self.assertEqual(env["HOME"], env["CFFIXED_USER_HOME"])
+        self.assertTrue(Path(env["BERTH_HOME"]).is_relative_to(Path(env["HOME"])))
+        self.assertEqual(env["BERTH_EDITOR_TEST"], "1")
 
     def test_native_preferences_gate_isolated_and_required(self):
         calls = self.commands()

@@ -44,7 +44,7 @@ jobs:
           isolation=$(mktemp -d "$RUNNER_TEMP/config-editor.XXXXXX")
           mkdir -p "$isolation/home/berth"
           trap 'cp "$isolation/home/berth/"*-native.png "$RUNNER_TEMP/configuration-evidence/" 2>/dev/null || true; rm -rf "$isolation"' EXIT
-          HOME="$isolation/home" CFFIXED_USER_HOME="$isolation/home" BERTH_HOME="$isolation/home/berth" BERTH_EDITOR_TEST=1 "$binary_dir/ConfigurationEditorChecks" | tee "$RUNNER_TEMP/configuration-evidence/editor-native.txt"
+          HOME="$isolation/home" CFFIXED_USER_HOME="$isolation/home" BERTH_HOME="$isolation/home/berth" BERTH_EDITOR_TEST=1 "$binary_dir/ConfigurationEditorChecks" 2>&1 | tee "$RUNNER_TEMP/configuration-evidence/editor-native.txt"
       - name: Record exact test input
         if: always()
         shell: bash

@@ -92,6 +92,34 @@ import SwiftUI
 @MainActor final class ConfigurationEditorWindows {
     static let shared = ConfigurationEditorWindows()
     private var windows: [String: ConfigurationEditorWindow] = [:]
+    /// Application termination does not send windowShouldClose to utility
+    /// panels. Do not silently lose invalid drafts or exit during a disk write.
+    func confirmTermination() -> Bool {
+        let models = windows.values.map(\.model)
+        return Self.allowTermination(models: models) { saving, names in
+            let alert = NSAlert()
+            alert.messageText = saving ? "配置正在保存" : "仍有未保存的配置草稿"
+            alert.informativeText = saving ? "请等待保存结束后再退出。" : names.joined(separator: "、") + " 的当前编辑尚未保存。"
+            alert.addButton(withTitle: "返回编辑")
+            if !saving { alert.addButton(withTitle: "丢弃草稿并退出") }
+            let discard = alert.runModal() == .alertSecondButtonReturn
+            if !discard, let editor = windows.values.first(where: { $0.model.hasUnsavedChanges }) {
+                editor.showWindow(nil); editor.window?.makeKeyAndOrderFront(nil)
+            }
+            return discard
+        }
+    }
+    static func allowTermination(models: [ConfigurationEditorModel], ask: (Bool, [String]) -> Bool) -> Bool {
+        let pending = models.filter { $0.hasUnsavedChanges }
+        if pending.isEmpty { return true }
+        let saving = pending.contains { $0.isSaving }
+        let discard = ask(saving, pending.map { $0.document.filename }.sorted())
+        // An NSAlert runs a nested event loop: autosave may have begun while
+        // the confirmation was visible. Re-read ownership after it returns.
+        guard !saving, !models.contains(where: { $0.isSaving }), discard else { return false }
+        models.forEach { $0.abandon() }
+        return true
+    }
     func open(_ document: ConfigurationDocument, settings: UISettings) {
         guard let directory = settings.configurationDirectory else { return }
         let key = directory.appendingPathComponent(document.filename).standardizedFileURL.path
@@ -129,7 +157,8 @@ import SwiftUI
         alert.messageText = "保留未保存的编辑？"
         alert.informativeText = "最近有效修改已自动保存。当前草稿尚未保存，丢弃后无法恢复。"
         alert.addButton(withTitle: "继续编辑"); alert.addButton(withTitle: "丢弃未保存草稿")
-        return alert.runModal() == .alertSecondButtonReturn
+        let discard = alert.runModal() == .alertSecondButtonReturn
+        return discard && !model.isSaving
     }
     private func reload() { if mayDiscard() { model.reload() } }
     func windowShouldClose(_ sender: NSWindow) -> Bool {

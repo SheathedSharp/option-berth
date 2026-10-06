@@ -125,14 +125,25 @@ def verify(root: Path) -> None:
         # File parsing, native file events and actual consumer updates are release
         # gates as well as PR checks. They run without touching daily user state.
         with tempfile.TemporaryDirectory(prefix="oberth-configuration-") as tmp:
-            for name in ("ClientConfigurationTests", "ClientPreferencesTests", "ClientConfigurationWatchTests"):
+            for name in ("ClientConfigurationTests", "ClientPreferencesTests", "ClientConfigurationWatchTests", "ConfigurationEditingTests"):
                 binary = str(Path(tmp) / name)
                 sources = ["client/macos/Sources/ClientConfiguration.swift"]
                 if name == "ClientConfigurationWatchTests":
                     sources.append("client/macos/Sources/ClientConfigurationMonitor.swift")
+                if name == "ConfigurationEditingTests":
+                    sources += ["client/macos/Sources/WorkspaceCommands.swift", "client/macos/Sources/ClientConfigurationEditing.swift"]
                 run(root, "swiftc", "-swift-version", "5", *sources,
                     f"client/macos/Tests/{name}.swift", "-o", binary, capture=False)
                 run(root, binary, capture=False)
+        run(root, "swift", "build", "--package-path", "client/macos", "--force-resolved-versions",
+            "--product", "ConfigurationEditorChecks", capture=False)
+        with tempfile.TemporaryDirectory(prefix="oberth-config-editor-") as tmp:
+            home = Path(tmp) / "home"
+            berth = home / ".option-berth"
+            berth.mkdir(parents=True)
+            run(root, str(Path(client_checks_dir) / "ConfigurationEditorChecks"), capture=False,
+                environment={"HOME": str(home), "CFFIXED_USER_HOME": str(home),
+                             "BERTH_HOME": str(berth), "BERTH_EDITOR_TEST": "1"})
         run(root, "swift", "build", "--package-path", "client/macos", "--force-resolved-versions",
             "--product", "PersonalizationChecks", capture=False)
         with tempfile.TemporaryDirectory(prefix="oberth-personalization-") as tmp:
