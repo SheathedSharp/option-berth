@@ -125,7 +125,7 @@ import SwiftUI
         let key = directory.appendingPathComponent(document.filename).standardizedFileURL.path
         if let controller = windows[key] { controller.showWindow(nil); controller.window?.makeKeyAndOrderFront(nil); return }
         let model = ConfigurationEditorModel(document: document, directory: directory, settings: settings)
-        let controller = ConfigurationEditorWindow(model: model)
+        let controller = ConfigurationEditorWindow(model: model, settings: settings)
         controller.didClose = { [weak self] in self?.windows.removeValue(forKey: key) }
         windows[key] = controller
         controller.showWindow(nil); controller.window?.makeKeyAndOrderFront(nil)
@@ -134,9 +134,10 @@ import SwiftUI
 
 @MainActor final class ConfigurationEditorWindow: NSWindowController, NSWindowDelegate {
     let model: ConfigurationEditorModel
+    private let settings: UISettings
     var didClose: (() -> Void)?
-    init(model: ConfigurationEditorModel) {
-        self.model = model
+    init(model: ConfigurationEditorModel, settings: UISettings) {
+        self.model = model; self.settings = settings
         // A utility document must not dispatch project-navigation commands.
         let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 760, height: 550),
             styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
@@ -144,9 +145,12 @@ import SwiftUI
         window.becomesKeyOnlyIfNeeded = false; window.hidesOnDeactivate = false
         window.minSize = NSSize(width: 520, height: 340)
         window.title = model.document.title + " · " + model.document.filename
+        window.isOpaque = true
+        window.backgroundColor = NSColor(settings.canvasColor)
+        window.appearance = NSAppearance(named: settings.colorScheme == .dark ? .darkAqua : .aqua)
         super.init(window: window)
         window.delegate = self
-        window.contentView = NSHostingView(rootView: ConfigurationEditorView(model: model, reload: { [weak self] in self?.reload() }))
+        window.contentView = NSHostingView(rootView: ConfigurationEditorView(model: model, settings: settings, reload: { [weak self] in self?.reload() }))
         window.center()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -170,6 +174,7 @@ import SwiftUI
 
 struct ConfigurationEditorView: View {
     @ObservedObject var model: ConfigurationEditorModel
+    @ObservedObject var settings: UISettings
     let reload: () -> Void
     var body: some View {
         VStack(spacing: 0) {
@@ -185,7 +190,7 @@ struct ConfigurationEditorView: View {
                 Button("重新载入", action: reload).disabled(model.isSaving)
             }.padding(16)
             Divider()
-            ConfigurationEditorText(model: model)
+            ConfigurationEditorText(model: model, settings: settings)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             Divider()
             HStack(alignment: .top, spacing: 8) {
@@ -195,6 +200,9 @@ struct ConfigurationEditorView: View {
                 Text(model.document.filename).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
             }.foregroundStyle(model.problem ? Color.orange : Color.secondary).padding(12)
         }.frame(minWidth: 500, minHeight: 300)
+            .background(settings.canvasColor)
+            .foregroundStyle(settings.inkColor)
+            .preferredColorScheme(settings.colorScheme)
     }
 }
 
@@ -218,16 +226,22 @@ final class ConfigurationTextView: NSTextView {
 
 private struct ConfigurationEditorText: NSViewRepresentable {
     @ObservedObject var model: ConfigurationEditorModel
+    @ObservedObject var settings: UISettings
     func makeCoordinator() -> Coordinator { Coordinator(model) }
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
+        scroll.drawsBackground = true; scroll.backgroundColor = NSColor(settings.canvasColor)
         let editor = ConfigurationTextView(frame: scroll.bounds)
         editor.isRichText = false; editor.allowsUndo = true; editor.usesFindBar = true
         editor.isAutomaticQuoteSubstitutionEnabled = false; editor.isAutomaticDashSubstitutionEnabled = false
         editor.isAutomaticTextReplacementEnabled = false; editor.isAutomaticSpellingCorrectionEnabled = false
         editor.isContinuousSpellCheckingEnabled = false
         editor.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        editor.drawsBackground = true
+        editor.backgroundColor = NSColor(settings.canvasColor)
+        editor.textColor = NSColor(settings.inkColor)
+        editor.insertionPointColor = NSColor(settings.inkColor)
         editor.textContainerInset = NSSize(width: 14, height: 12)
         editor.isVerticallyResizable = true; editor.isHorizontallyResizable = false
         editor.autoresizingMask = [.width]; editor.textContainer?.widthTracksTextView = true
@@ -241,6 +255,10 @@ private struct ConfigurationEditorText: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let editor = scroll.documentView as? ConfigurationTextView else { return }
         context.coordinator.model = model
+        scroll.backgroundColor = NSColor(settings.canvasColor)
+        editor.backgroundColor = NSColor(settings.canvasColor)
+        editor.textColor = NSColor(settings.inkColor)
+        editor.insertionPointColor = NSColor(settings.inkColor)
         editor.isEditable = model.isLoaded
         if editor.string != model.text, !editor.hasMarkedText() {
             editor.string = model.text

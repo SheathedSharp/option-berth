@@ -69,6 +69,11 @@ import ScreenCaptureKit
         }
         let controller = opened!, model = controller.model
         guard let window = controller.window, let host = window.contentView else { fatalError("native editor window missing") }
+        let expectedAppearance: NSAppearance.Name = settings.colorScheme == .dark ? .darkAqua : .aqua
+        try expect(window.isOpaque && window.backgroundColor?.isEqual(NSColor(settings.canvasColor)) == true,
+                   "configuration editor window did not use the configured canvas")
+        try expect(window.appearance?.name == expectedAppearance,
+                   "configuration editor window did not use the configured appearance")
         defer { window.contentView = nil; window.close() }
         source.attachedSheet?.makeKeyAndOrderFront(nil)
         try pressEntry()
