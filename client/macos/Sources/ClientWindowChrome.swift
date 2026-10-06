@@ -15,7 +15,7 @@ struct ClientWindowChrome: NSViewRepresentable {
     init(color: NSColor, dark: Bool) { self.color = color; self.dark = dark }
 
     func makeNSView(context: Context) -> WindowObserver {
-        WindowObserver(color: color)
+        WindowObserver(color: color, dark: dark)
     }
 
     func updateNSView(_ nsView: WindowObserver, context: Context) {
