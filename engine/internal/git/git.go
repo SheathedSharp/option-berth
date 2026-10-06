@@ -235,7 +235,14 @@ func gitOutDiff(ctx context.Context, dir string, args ...string) ([]byte, error)
 // gitRun keeps stdout/stderr separate and suppresses optional index refresh
 // writes. It never changes repository configuration or stages user files.
 func gitRun(ctx context.Context, dir string, args ...string) ([]byte, []byte, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"--no-optional-locks", "-C", dir}, args...)...)
+	// Optional locks alone do not stop a configured fsmonitor hook/daemon.
+	// UI reads must not start repository monitoring or background maintenance.
+	// These overrides belong to this invocation (including Git's children), not
+	// .git/config. Keep ignore/attribute/index semantics and existing filters.
+	prefix := []string{"--no-pager", "--no-optional-locks",
+		"-c", "core.fsmonitor=false", "-c", "maintenance.auto=false",
+		"-c", "gc.auto=0", "-c", "log.showSignature=false", "-C", dir}
+	cmd := exec.CommandContext(ctx, "git", append(prefix, args...)...)
 	cmd.WaitDelay = 100 * time.Millisecond
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
