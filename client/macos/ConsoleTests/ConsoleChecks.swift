@@ -76,6 +76,10 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
         owned.append(agent)
         let workspace = registry.workspace(root.path)
         require(workspace.activeSelection == shell.id, "background launch stole selection")
+        require(SessionNavigationModel.group(for: "terminal") == .shell, "shell session was not grouped as terminal")
+        require(SessionNavigationModel.group(for: "agent:codex:native") == .agent, "agent session was not grouped as agent")
+        require(SessionNavigationModel.matches(query: "codex", title: "Codex 1", kind: "agent:codex:native", state: "running"), "session search missed provider")
+        require(!SessionNavigationModel.matches(query: "missing", title: "Codex 1", kind: "agent:codex:native", state: "running"), "session search accepted an unrelated term")
         let foreign = try registry.add(worktree: other.path, title: "Other worktree", executable: "/bin/sh", arguments: ["-c", script], environment: env)
         owned.append(foreign)
         var shellOutput = "", agentOutput = ""
