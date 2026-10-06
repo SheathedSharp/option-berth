@@ -56,3 +56,26 @@ func TestStopReleaseQueuesForMirrorHandoffWithinExistingBudget(t *testing.T) {
 		t.Fatal(result)
 	}
 }
+
+func TestStopReleaseHandoffRetainsChangedReservations(t *testing.T) {
+	rt, plan, guard := releaseFixture(t)
+	guard.err = busyReleaseFixture{}
+	rt.Scanner = scanner.New(scanner.Options{Runs: rt.RunRegistry, ScanContext: func(context.Context, scanner.Include) ([]ports.ListeningPort, error) { return nil, nil }})
+	queued := &queuedReleaseFixture{releaseGuardFixture: guard}
+	queued.wait = func(ctx context.Context, mutate func() (int, error)) (int, error) {
+		changed := plan.observed.Rows[0]
+		changed.ExpiresAt = changed.ExpiresAt.Add(time.Second)
+		if err := rt.Store.Claims().Put(changed); err != nil {
+			t.Fatal(err)
+		}
+		return mutate()
+	}
+	rt.SetRuns(queued)
+	if _, err := finishGroupStop(context.Background(), &Request{Runtime: rt}, "demo", plan, state.Snapshot{}, nil, []state.KillResult{{OK: true}}); err == nil {
+		t.Fatal("changed reservation was deleted")
+	}
+	rows, err := rt.Store.Claims().List()
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("reservation lost: %v %v", rows, err)
+	}
+}

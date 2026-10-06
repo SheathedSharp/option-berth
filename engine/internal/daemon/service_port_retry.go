@@ -37,7 +37,7 @@ func (p *servicePortRelease) releaseAfterContention(ctx context.Context, rt *Run
 		case <-tick.C:
 		}
 		after, scanErr = rt.Scanner.RescanContext(retryCtx, scanner.Include{})
-		n, err = p.release(retryCtx, rt, group, after, scanErr, results)
+		n, err = p.releaseWithWait(retryCtx, rt, group, after, scanErr, results, true)
 		if n != 0 || !reservationReleaseBusy(err) {
 			return n, err
 		}

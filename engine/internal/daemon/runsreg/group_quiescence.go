@@ -28,6 +28,27 @@ func (r *Registry) WithNoGroupRuns(ctx context.Context, group, configPath string
 		return 0, reservationBusyError{}
 	}
 	defer r.mirrorMu.Unlock()
+	return r.noGroupRunsLocked(ctx, group, configPath, mutate)
+}
+
+// WithNoGroupRunsWait is only the final retry after a fresh stop observation.
+// The caller must supply its existing bounded retry context. Waiting holds no
+// memory lock, and every raw record is checked again after acquiring ownership.
+func (r *Registry) WithNoGroupRunsWait(ctx context.Context, group, configPath string, mutate func() (int, error)) (int, error) {
+	if _, bounded := ctx.Deadline(); !bounded {
+		return 0, errors.New("reservation handoff requires a deadline")
+	}
+	if group == "" || mutate == nil {
+		return 0, errors.New("run release requires a group and a mutation")
+	}
+	if err := r.mirrorMu.LockContext(ctx); err != nil {
+		return 0, err
+	}
+	defer r.mirrorMu.Unlock()
+	return r.noGroupRunsLocked(ctx, group, configPath, mutate)
+}
+
+func (r *Registry) noGroupRunsLocked(ctx context.Context, group, configPath string, mutate func() (int, error)) (int, error) {
 	r.mu.Lock()
 	present := false
 	for _, rec := range r.runs {
