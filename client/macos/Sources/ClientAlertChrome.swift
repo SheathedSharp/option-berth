@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 /// Keeps native alerts in the same visual system as the client surface.
 ///
