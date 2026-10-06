@@ -157,9 +157,12 @@ struct SessionShortcutBridge: NSViewRepresentable {
         private let cycleButton = NSButton(frame: .zero)
         private let reverseButton = NSButton(frame: .zero)
         private let escapeButton = NSButton(frame: .zero)
+        private var monitor: Any?
         private var openAction: (() -> Void)?
         private var cycleAction: ((Int) -> Void)?
         private var escapeAction: (() -> Void)?
+        private var canCycle = false
+        private var canEscape = false
 
         override init(frame frameRect: NSRect) {
             super.init(frame: frameRect)
@@ -174,6 +177,15 @@ struct SessionShortcutBridge: NSViewRepresentable {
 
         required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
+        deinit {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            installMonitorIfNeeded()
+        }
+
         override func layout() {
             super.layout()
             for button in [openButton, cycleButton, reverseButton, escapeButton] {
@@ -184,6 +196,8 @@ struct SessionShortcutBridge: NSViewRepresentable {
         func apply(open: @escaping () -> Void, cycle: @escaping (Int) -> Void,
                    escape: @escaping () -> Void, canCycle: Bool, canEscape: Bool) {
             openAction = open; cycleAction = cycle; escapeAction = escape
+            self.canCycle = canCycle; self.canEscape = canEscape
+            installMonitorIfNeeded()
             configure(openButton, key: canCycle ? "\t" : "", modifiers: [.command, .option], action: #selector(openPressed))
             configure(cycleButton, key: canCycle ? "\t" : "", modifiers: [.command], action: #selector(cyclePressed))
             configure(reverseButton, key: canCycle ? "\t" : "", modifiers: [.command, .shift], action: #selector(reversePressed))
@@ -197,6 +211,39 @@ struct SessionShortcutBridge: NSViewRepresentable {
             button.target = self
             button.action = action
             button.isEnabled = !key.isEmpty
+        }
+
+        private func installMonitorIfNeeded() {
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self else { return event }
+                return self.handle(event)
+            }
+        }
+
+        private func handle(_ event: NSEvent) -> NSEvent? {
+            guard let window else { return event }
+            let number = window.windowNumber
+            let matchesWindow: Bool
+            if number > 0 {
+                matchesWindow = event.windowNumber == number || event.window?.windowNumber == number
+            } else {
+                matchesWindow = event.window?.isKeyWindow == true
+                    || event.windowNumber == NSApp.keyWindow?.windowNumber
+            }
+            guard matchesWindow else { return event }
+            let flags = event.modifierFlags
+            let command = flags.contains(.command) || flags.contains(.control)
+            if event.keyCode == 48, command, flags.contains(.option), canCycle {
+                openAction?(); return nil
+            }
+            if event.keyCode == 48, command, canCycle {
+                cycleAction?(flags.contains(.shift) ? -1 : 1); return nil
+            }
+            if event.keyCode == 53, canEscape {
+                escapeAction?(); return nil
+            }
+            return event
         }
 
         @objc private func openPressed() { openAction?() }
