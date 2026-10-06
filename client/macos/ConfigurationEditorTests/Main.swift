@@ -85,6 +85,8 @@ import ScreenCaptureKit
         try expect(!FileManager.default.fileExists(atPath: url.path), "open wrote a configuration")
         try expect(!model.hasUnsavedChanges, "template is dirty before editing")
         guard let editor = find(ConfigurationTextView.self, in: host).first else { fatalError("native text view missing") }
+        try expect(editor.backgroundColor?.isEqual(NSColor(settings.canvasColor)) == true && editor.textColor?.isEqual(NSColor(settings.inkColor)) == true,
+                   "native editor text view did not use the configured canvas and ink")
         try await eventually("native editor did not become editable with the loaded text") { editor.isEditable && editor.string == model.text }
         window.makeFirstResponder(editor)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
