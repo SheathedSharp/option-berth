@@ -211,13 +211,13 @@ struct WorkspaceConsole: View {
                 openSwitcher()
                 return nil
             }
-            if event.keyCode == 48 && command {
+            if event.keyCode == 48 && command && scoped.count > 1 {
                 cycleSession(event.modifierFlags.contains(.shift) ? -1 : 1)
                 return nil
             }
             if event.keyCode == 53 {
-                if switcherPresented { closeSwitcher() }
-                else if selected?.kind != "terminal" { closeSwitcher() }
+                guard switcherPresented || selected?.kind != "terminal" else { return event }
+                closeSwitcher()
                 return nil
             }
             return event
