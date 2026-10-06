@@ -4,7 +4,7 @@ import Foundation
 /// worktree changes replace obsolete queued work instead of building an unbounded
 /// DispatchQueue backlog. In-flight OS/CLI work is not falsely declared cancelled.
 final class GitReadQueue: @unchecked Sendable {
-    enum Kind: Hashable { case overview, tree, patch }
+    enum Kind: Hashable { case overview, tree, graph, patch }
     private let lock = NSLock()
     private let queue = DispatchQueue(label: "option-berth.git", qos: .utility)
     private var pending: [Kind: () -> Void] = [:]
@@ -34,7 +34,7 @@ final class GitReadQueue: @unchecked Sendable {
                 lock.unlock()
                 return
             }
-            let kind = order.removeFirst() // At most three keys; no history scan.
+            let kind = order.removeFirst() // At most four keys; no history scan.
             let work = pending.removeValue(forKey: kind)
             lock.unlock()
             work?()

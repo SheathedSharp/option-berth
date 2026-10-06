@@ -1,6 +1,12 @@
 import AppKit
 import SwiftUI
 
+enum GitReviewMode: String, CaseIterable, Identifiable {
+    case changes, history
+    var id: String { rawValue }
+    var title: String { self == .changes ? "Changes" : "History" }
+}
+
 /// One read-only review surface for the selected worktree. All facts and patches
 /// come from GitStore/oberth, never a second client-side Git process.
 struct CodeView: View {
@@ -10,6 +16,7 @@ struct CodeView: View {
     @ClientDetailWidth(.git) private var detailWidth
     @State private var query = ""
     @State private var filter = GitReviewFilter.all
+    @State private var mode = GitReviewMode.changes
     @State private var showingWorktrees = false
     @FocusState private var searching: Bool
     private var files: [GitFile] { git.isFor(project) ? (git.tree?.files ?? []) : [] }
@@ -23,7 +30,11 @@ struct CodeView: View {
         .background(Ink.canvas)
         .onChange(of: query) { _, _ in reconcileSelection() }
         .onChange(of: filter) { _, _ in reconcileSelection() }
-        .onChange(of: project.rootDir) { _, _ in query = ""; filter = .all; showingWorktrees = false }
+        .onChange(of: mode) { _, value in
+            if value == .history { git.loadGraph(project: project) }
+            else { git.clearSelection() }
+        }
+        .onChange(of: project.rootDir) { _, _ in query = ""; filter = .all; mode = .changes; showingWorktrees = false }
         .onReceive(NotificationCenter.default.publisher(for: .init("option-berth.git.find"))) { event in
             guard scrolls, git.isFor(project), event.object as? String == project.name, !hasMarkedText else { return }
             searching = true
@@ -42,9 +53,29 @@ struct CodeView: View {
                 }.font(Face.sans(11)).foregroundStyle(Change.changed).padding(10).background(Ink.surface)
             }
             if git.tree != nil {
-                filterBar
+                reviewModeBar
                 Hairline()
-                GeometryReader { geometry in
+                if mode == .history {
+                    graphPanel
+                } else {
+                    filterBar
+                    Hairline()
+                    changesPanel
+                }
+            } else if mode == .history {
+                reviewModeBar
+                Hairline()
+                graphPanel
+            } else {
+                Text(git.loading ? "正在读取变更…" : "Git 状态暂不可用")
+                    .font(Face.sans(12)).foregroundStyle(Ink.inkMuted)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(16)
+            }
+        }
+    }
+
+    private var changesPanel: some View {
+        GeometryReader { geometry in
                     if geometry.size.width >= 740 {
                         if scrolls {
                             let maximum = min(500.0, Double(max(0, geometry.size.width - 340 - SplitHandle.hitWidth)))
@@ -77,12 +108,194 @@ struct CodeView: View {
                         }
                     }
                 }
+        }
+    }
+
+    private var reviewModeBar: some View {
+        HStack(spacing: 4) {
+            ForEach(GitReviewMode.allCases) { item in
+                Button {
+                    mode = item
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: item == .changes ? "square.stack.3d.up" : "point.3.filled.connected.trianglepath.dotted")
+                        Text(item.title)
+                        if item == .history, let graph = git.graph { Text("\(graph.commits.count)").foregroundStyle(Ink.inkFaint) }
+                    }
+                    .font(Face.sans(10, mode == item ? .semibold : .regular))
+                    .padding(.horizontal, 9).padding(.vertical, 6)
+                    .foregroundStyle(mode == item ? Ink.accent : Ink.inkMuted)
+                    .background(mode == item ? Ink.accentSoft : Color.clear)
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                }.buttonStyle(.plain).disabled(!scrolls)
+                    .accessibilityIdentifier("git.review.mode." + item.rawValue)
+            }
+            Spacer(minLength: 0)
+            if mode == .history, git.graphLoading { ProgressView().controlSize(.small) }
+        }.padding(.horizontal, 8).padding(.vertical, 4).background(Ink.surface)
+    }
+
+    private var graphPanel: some View {
+        GeometryReader { geometry in
+            if geometry.size.width >= 740 {
+                let maximum = min(500.0, Double(max(0, geometry.size.width - 340 - SplitHandle.hitWidth)))
+                let range = min(340.0, maximum)...maximum
+                let width = min(max(detailWidth, range.lowerBound), range.upperBound)
+                HStack(spacing: 0) {
+                    graphList.frame(width: max(0, geometry.size.width - width - SplitHandle.hitWidth))
+                    SplitHandle(width: $detailWidth, range: range, controlsTrailingPane: true)
+                    historicalDiffPanel.frame(width: width)
+                }
+            } else if scrolls {
+                VSplitView {
+                    graphList.frame(minHeight: 150, idealHeight: 250)
+                    historicalDiffPanel.frame(minHeight: 120, maxHeight: .infinity)
+                }
             } else {
-                Text(git.loading ? "正在读取变更…" : "Git 状态暂不可用")
-                    .font(Face.sans(12)).foregroundStyle(Ink.inkMuted)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(16)
+                VStack(spacing: 0) {
+                    graphList.frame(height: max(100, geometry.size.height * 0.52))
+                    Hairline()
+                    historicalDiffPanel
+                }
             }
         }
+    }
+
+    private var graphList: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "point.3.filled.connected.trianglepath.dotted").foregroundStyle(Ink.accent)
+                if let graph = git.graph {
+                    Text(graph.branchName).font(Face.mono(11, .semibold)).lineLimit(1)
+                    if !graph.shortHead.isEmpty { Text(graph.shortHead).font(Face.mono(9)).foregroundStyle(Ink.inkMuted) }
+                    Spacer(minLength: 0)
+                    if graph.truncated { Text("前 \(graph.limit) 条").font(Face.mono(9)).foregroundStyle(Change.changed) }
+                    Text("\(graph.commits.count) commits").font(Face.mono(9)).foregroundStyle(Ink.inkMuted)
+                } else {
+                    Text("Git graph").font(Face.mono(11, .semibold))
+                    Spacer(minLength: 0)
+                }
+                Button { git.loadGraph(project: project, force: true) } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.plain).disabled(git.graphLoading || !scrolls).help("刷新只读 graph，不自动 fetch")
+            }.padding(.horizontal, 10).padding(.vertical, 8).background(Ink.surface)
+            Hairline()
+            if let problem = git.graphProblem {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Graph 读取失败", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(Change.changed)
+                    Text(problem).font(Face.sans(11)).foregroundStyle(Ink.inkMuted).textSelection(.enabled)
+                    Button("重试") { git.loadGraph(project: project, force: true) }
+                        .buttonStyle(.bordered).controlSize(.small).disabled(git.graphLoading || !scrolls)
+                }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(14)
+            } else if git.graphLoading && git.graph == nil {
+                message("正在读取有界提交 graph…")
+            } else if let graph = git.graph {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            if let upstream = graph.upstream, !upstream.isEmpty {
+                                HStack(spacing: 8) {
+                                    Text("upstream").font(Face.mono(9, .semibold)).foregroundStyle(Ink.inkFaint)
+                                    Text(upstream).font(Face.mono(9)).foregroundStyle(Ink.inkMuted).lineLimit(1)
+                                    Text("↑\(graph.ahead) ↓\(graph.behind)").font(Face.mono(9)).foregroundStyle(Ink.inkMuted)
+                                    Spacer(minLength: 0)
+                                }.padding(.horizontal, 11).padding(.vertical, 7)
+                                Hairline()
+                            }
+                            ForEach(Array(graph.commits.enumerated()), id: \.element.id) { index, commit in
+                                graphRow(commit, index: index, total: graph.commits.count)
+                                    .id(commit.id)
+                            }
+                        }
+                    }
+                    .onChange(of: git.selectedCommit) { _, hash in
+                        if let hash { proxy.scrollTo(hash, anchor: .center) }
+                    }
+                }
+            } else {
+                message("没有可用的提交 graph")
+            }
+        }.background(Ink.canvas)
+    }
+
+    @ViewBuilder private func graphRow(_ commit: GitGraphCommit, index: Int, total: Int) -> some View {
+        Button { git.select(commit, project: project) } label: {
+            HStack(alignment: .top, spacing: 9) {
+                VStack(spacing: 0) {
+                    Circle().fill(commit.hash == git.graph?.observedHead ? Ink.accent : Ink.inkMuted)
+                        .frame(width: 8, height: 8).padding(.top, 4)
+                    if index + 1 < total { Rectangle().fill(Ink.line).frame(width: 1, height: 34) }
+                }.frame(width: 14)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 7) {
+                        Text(commit.shortHash).font(Face.mono(10, .semibold)).foregroundStyle(Ink.accent)
+                        if commit.hash == git.graph?.observedHead {
+                            Text("HEAD").font(Face.mono(8, .semibold)).foregroundStyle(Ink.live)
+                        }
+                        ForEach(commit.refs, id: \.self) { ref in
+                            Text(ref).font(Face.mono(8)).foregroundStyle(Ink.accent)
+                                .padding(.horizontal, 4).padding(.vertical, 2)
+                                .background(Ink.accentSoft).clipShape(Capsule())
+                        }
+                        Spacer(minLength: 0)
+                        if let when = commit.when { Text(when).font(Face.mono(8)).foregroundStyle(Ink.inkFaint).lineLimit(1) }
+                    }
+                    Text(commit.subject).font(Face.sans(11, commit.hash == git.selectedCommit ? .semibold : .regular))
+                        .foregroundStyle(Ink.ink).lineLimit(2)
+                    HStack(spacing: 8) {
+                        if let author = commit.author { Text(author).lineLimit(1) }
+                        if !commit.parents.isEmpty { Text(commit.parents.count == 1 ? "1 parent" : "\(commit.parents.count) parents") }
+                    }.font(Face.mono(9)).foregroundStyle(Ink.inkMuted)
+                }
+            }.padding(.horizontal, 10).padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(commit.hash == git.selectedCommit ? Ink.accentSoft : Color.clear)
+        }.buttonStyle(.plain).disabled(!scrolls)
+            .accessibilityIdentifier("git.review.commit." + commit.hash)
+        Hairline()
+    }
+
+    private var historicalDiffPanel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text("COMMIT DIFF").font(Face.mono(10, .semibold))
+                if let commit = git.patch?.commit {
+                    Text(String(commit.prefix(8)) + " → first parent")
+                        .font(Face.mono(9)).foregroundStyle(Ink.inkMuted).lineLimit(1)
+                } else { Text("选择 graph 节点").font(Face.sans(10)).foregroundStyle(Ink.inkMuted) }
+                Spacer(minLength: 0)
+                if scrolls, git.selectedCommit != nil { Button("关闭") { git.clearSelection() }.buttonStyle(.plain).font(Face.sans(10)) }
+            }.padding(10).background(Ink.surface)
+            Hairline()
+            if git.patchLoading { message("正在读取提交差异…") }
+            else if let problem = git.patchProblem { message(problem) }
+            else if let patch = git.patch, patch.commit != nil {
+                if patch.files.isEmpty { message("该提交没有文件差异") }
+                else if scrolls {
+                    ScrollView([.horizontal, .vertical]) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(patch.files) { file in historicalFile(file) }
+                        }.padding(.bottom, 12)
+                    }.textSelection(.enabled)
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(patch.files) { file in historicalFile(file) }
+                    }.frame(maxHeight: .infinity, alignment: .top).clipped()
+                }
+            } else { message("选择提交查看相对 first parent 的只读差异") }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .foregroundStyle(Ink.ink).background(Ink.canvas)
+    }
+
+    private func historicalFile(_ file: GitFileDiff) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(file.oldPath.map { "\($0) → \(file.path)" } ?? file.path)
+                .font(Face.mono(11, .medium)).lineLimit(2).padding(.horizontal, 10).padding(.vertical, 7)
+                .frame(maxWidth: .infinity, alignment: .leading).background(Ink.surface)
+            if file.binary { message("二进制文件，没有可显示的文本差异").frame(minHeight: 60) }
+            else if file.lines.isEmpty { message("当前没有可显示的文本差异").frame(minHeight: 60) }
+            else { patchLines(file).padding(.bottom, 5) }
+        }.overlay(RoundedRectangle(cornerRadius: 5).stroke(Ink.line, lineWidth: 1))
     }
 
     private func overviewHeader(_ overview: GitOverview) -> some View {

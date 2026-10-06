@@ -41,6 +41,18 @@ import Foundation
         let clean: [String: Any] = ["root":"/fixture/repo", "staged":0, "unstaged":0, "untracked":0, "conflicts":0, "files":NSNull()]
         let cleanTree = try decode(GitTree.self, clean)
         expect(cleanTree.files.isEmpty && cleanTree.overview.clean, "Go nil slice is valid empty array")
+        let graphJSON: [String: Any] = [
+            "root":"/fixture/repo", "observed_head":"abcdef0123456789", "branch":"feature/review",
+            "ahead":2, "behind":1, "truncated":true, "limit":2,
+            "commits":[["hash":"abcdef0123456789", "parents":["0123456789abcdef"], "author":"Ada", "when":"2026-10-06T00:00:00Z", "subject":"graph head", "refs":["feature/review"]]],
+            "refs":[["name":"feature/review", "target":"abcdef0123456789", "kind":"branch", "current":true]],
+            "worktrees":[["path":"/fixture/repo", "branch":"feature/review", "current":true]]
+        ]
+        let graph = try decode(GitGraph.self, graphJSON)
+        expect(graph.branchName == "feature/review" && graph.commits.count == 1 && graph.truncated,
+               "graph snake_case decode and bounded facts")
+        expect(graph.commits[0].id == graph.commits[0].hash && graph.refs[0].current,
+               "graph IDs and current ref")
         let unknownOverview = try decode(GitOverview.self, ["root":"/fixture/repo"])
         expect(!unknownOverview.clean && !unknownOverview.countsComplete, "missing counters looked clean")
         let invalid: [[String: Any]] = [
@@ -51,10 +63,19 @@ import Foundation
             clean.merging(["files":[["path":"x", "status":"MM"], ["path":"x", "status":"M "]]]) { _, v in v },
             clean.merging(["files":[["path":"x", "status":"M ", "additions":-1]]]) { _, v in v },
             clean.merging(["worktrees":"bad"]) { _, v in v },
+            graphJSON.merging(["limit":0]) { _, v in v },
+            graphJSON.merging(["commits":[["hash":"abcdef0123456789", "subject":"one"], ["hash":"abcdef0123456789", "subject":"two"]]]) { _, v in v },
             ["root":"/fixture/repo"]
         ]
         for json in invalid {
             do { _ = try decode(GitTree.self, json); fatalError("invalid Git facts accepted") }
+            catch { checks += 1 }
+        }
+        for json in [
+            graphJSON.merging(["limit":0]) { _, v in v },
+            graphJSON.merging(["commits":[["hash":"abcdef0123456789", "subject":"one"], ["hash":"abcdef0123456789", "subject":"two"]]]) { _, v in v }
+        ] {
+            do { _ = try decode(GitGraph.self, json); fatalError("invalid Git graph accepted") }
             catch { checks += 1 }
         }
         // A large in-memory list is filtered, not rendered eagerly or re-read from Git.
