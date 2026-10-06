@@ -49,8 +49,8 @@ type GraphCommit struct {
 }
 
 // GraphRef is a local ref observed during the graph read. Kind is one of
-// branch, remote, tag, or ref; current identifies refs pointing at observed
-// HEAD without claiming that the ref moved atomically with the log.
+// branch, remote, tag, or ref; current identifies the local branch pointing at
+// observed HEAD. Tags and remotes are reported separately by kind and target.
 type GraphRef struct {
 	Name    string `json:"name"`
 	Target  string `json:"target"`
@@ -177,7 +177,7 @@ func parseGraphRefs(out []byte, observedHead string) []GraphRef {
 		case strings.HasPrefix(full, "refs/tags/"):
 			name, kind = strings.TrimPrefix(full, "refs/tags/"), "tag"
 		}
-		refs = append(refs, GraphRef{Name: name, Target: target, Kind: kind, Current: target == observedHead})
+		refs = append(refs, GraphRef{Name: name, Target: target, Kind: kind, Current: kind == "branch" && target == observedHead})
 	}
 	return refs
 }
