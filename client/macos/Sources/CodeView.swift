@@ -107,7 +107,6 @@ struct CodeView: View {
                             diffPanel
                         }
                     }
-                }
         }
     }
 
