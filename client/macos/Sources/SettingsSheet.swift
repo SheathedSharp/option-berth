@@ -150,7 +150,7 @@ struct SettingsSheet: View {
         VStack(alignment: .leading, spacing: 22) {
             ClientConfigurationPanel(settings: settings, frozen: !scrolls)
             if settings.themeFilePresent {
-                Text("theme.json 正在管理外观；编辑文件可即时修改。文件不会被客户端覆盖。")
+                Text("theme.json 正在管理外观；从上方打开内置编辑器可即时修改。")
                     .font(Face.sans(11)).foregroundStyle(Ink.inkMuted)
             }
 
