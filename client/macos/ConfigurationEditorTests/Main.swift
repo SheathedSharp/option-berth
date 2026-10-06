@@ -69,6 +69,11 @@ import ScreenCaptureKit
         }
         let controller = opened!, model = controller.model
         guard let window = controller.window, let host = window.contentView else { fatalError("native editor window missing") }
+        let expectedAppearance: NSAppearance.Name = settings.colorScheme == .dark ? .darkAqua : .aqua
+        try expect(window.isOpaque && window.backgroundColor?.isEqual(NSColor(settings.canvasColor)) == true,
+                   "configuration editor window did not use the configured canvas")
+        try expect(window.appearance?.name == expectedAppearance,
+                   "configuration editor window did not use the configured appearance")
         defer { window.contentView = nil; window.close() }
         source.attachedSheet?.makeKeyAndOrderFront(nil)
         try pressEntry()
@@ -80,6 +85,8 @@ import ScreenCaptureKit
         try expect(!FileManager.default.fileExists(atPath: url.path), "open wrote a configuration")
         try expect(!model.hasUnsavedChanges, "template is dirty before editing")
         guard let editor = find(ConfigurationTextView.self, in: host).first else { fatalError("native text view missing") }
+        try expect(editor.backgroundColor.isEqual(NSColor(settings.canvasColor)) && editor.textColor?.isEqual(NSColor(settings.inkColor)) == true,
+                   "native editor text view did not use the configured canvas and ink")
         try await eventually("native editor did not become editable with the loaded text") { editor.isEditable && editor.string == model.text }
         window.makeFirstResponder(editor)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
