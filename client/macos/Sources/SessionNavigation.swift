@@ -227,6 +227,7 @@ struct SessionShortcutBridge: NSViewRepresentable {
             let matchesWindow: Bool
             if number > 0 {
                 matchesWindow = event.windowNumber == number || event.window?.windowNumber == number
+                    || (event.window == nil && NSApp.keyWindow?.windowNumber == number)
             } else {
                 matchesWindow = event.window?.isKeyWindow == true
                     || event.windowNumber == NSApp.keyWindow?.windowNumber
