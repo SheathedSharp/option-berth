@@ -19,6 +19,7 @@ https://git-scm.com/docs/git-status#_short_format
 5. 未知或坏数据不能通过宽松解码伪装成干净仓库；未知行数不按零合计。
 6. 原生查找入口与 #71 的 Git 命令接通，复制文本不被导航键抢走。
 7. Graph 是只读、有界、可取消的事实读取：不 fetch、不刷新 index、不启用 fsmonitor；超过 limit 时明确标记 `truncated`。
+8. commit diff 由 `oberth git diff --commit <hex> [--file path] --json` 提供；它固定使用该 commit 的第一个 parent，root commit 使用空树，merge commit 不生成 combined diff，并在响应中返回 `commit`/`base` 以便 UI 显示真实基线。历史 patch 不读取当前 worktree 或 index；重命名同时保留 `old_path` 与新路径。
 
 Graph contract 已在独立 PR 中落地；此前“没有 CLI 事实支撑就不画 DAG”的限制仍适用于未返回的提交、refs 和任何客户端猜测。未检出分支和分层 index/worktree patch 仍不能由客户端伪造。
 
