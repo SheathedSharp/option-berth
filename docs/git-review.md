@@ -13,15 +13,16 @@ https://git-scm.com/docs/git-status#_short_format
 ## 本 PR 的实现目标
 
 1. 复用 `oberth git files --json` 的分支、HEAD、上游、最近提交、同仓库 worktree 与文件事实。
-2. 文件状态筛选和路径检索（包含重命名前路径）；清楚标出已选择文件、合并差异基线及读取错误。
-3. diff 与文件列表随窄窗口上下排列，允许拖动分隔线，不让文件列把 diff 挤成不可读窄条。
-4. 未知或坏数据不能通过宽松解码伪装成干净仓库；未知行数不按零合计。
-5. 原生查找入口与 #71 的 Git 命令接通，复制文本不被导航键抢走。
+2. 通过独立的 `oberth git graph --json --limit N` 读取有界提交拓扑、完整 parent IDs、本地 refs 和 worktree；Graph 返回 `observed_head` 与 `truncated`，客户端不得把旧图冒充当前完整历史。
+3. 文件状态筛选和路径检索（包含重命名前路径）；清楚标出已选择文件、合并差异基线及读取错误。
+4. diff 与文件列表随窄窗口上下排列，允许拖动分隔线，不让文件列把 diff 挤成不可读窄条。
+5. 未知或坏数据不能通过宽松解码伪装成干净仓库；未知行数不按零合计。
+6. 原生查找入口与 #71 的 Git 命令接通，复制文本不被导航键抢走。
+7. Graph 是只读、有界、可取消的事实读取：不 fetch、不刷新 index、不启用 fsmonitor；超过 limit 时明确标记 `truncated`。
 
-当前 CLI 只提供最近一条提交和已检出的 worktree 引用，不能据此伪造完整提交 DAG。
-历史图、未检出分支和分层 index/worktree patch 若要加入，需先做 CLI 新事实契约；本轮不新增无效占位面板。
+Graph contract 已在独立 PR 中落地；此前“没有 CLI 事实支撑就不画 DAG”的限制仍适用于未返回的提交、refs 和任何客户端猜测。未检出分支和分层 index/worktree patch 仍不能由客户端伪造。
 
 ## 验证门槛
 
 纯 Swift 状态/过滤/统计回归，现有 Git 取消归属检查，macOS 原生搜索与布局检查，合成冻结截图。
-实现和验证状态只在 PR/issue #69 更新，未完成前不合并或关闭。
+Graph contract 的 Go parser/CLI 回归与只读边界在 PR #98 更新；Graph UI 将在后续独立 PR 实现。实现和验证状态未完成前不合并或关闭 issue #94。
