@@ -17,7 +17,7 @@ enum WorkspaceAction: String, CaseIterable, Codable, Identifiable {
         case .connect: return "接入项目… / Connect project…"
         case .services: return "服务 / Services"
         case .code: return "Git / Review"
-        case .terminal: return "工作台 / Console"
+        case .terminal: return "会话 / Sessions"
         case .sessions: return "会话管理 / Sessions"
         case .recovery: return "恢复工作区 / Recovery"
         case .updates: return "检查更新 / Updates"

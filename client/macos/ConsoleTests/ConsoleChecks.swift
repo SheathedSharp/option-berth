@@ -113,6 +113,25 @@ import BerthTerminal
         workspace.draft = "fixture draft"
         choose(shell); choose(agent)
         require(workspace.draft == "fixture draft", "switching lost the unsent draft")
+        // Opening a creation surface must not resize live alternate-screen TUIs,
+        // replace hosts, mutate the active split, or implicitly launch a process.
+        let shellBounds = shell.terminal.bounds, agentBounds = agent.terminal.bounds
+        let shellHost = shell.terminal.superview, agentHost = agent.terminal.superview
+        guard let create = find(NSButton.self, in: host).first(where: { $0.accessibilityIdentifier() == "console.newSession" }) else { fatalError("unified creation entry missing") }
+        create.performClick(nil)
+        var cancel: NSButton?
+        eventually("native creation popover did not open") {
+            cancel = NSApp.windows.filter(\.isVisible).compactMap(\.contentView)
+                .flatMap { find(NSButton.self, in: $0) }.first { $0.accessibilityIdentifier() == "console.cancelLaunch" }
+            return cancel != nil
+        }
+        pump(0.2)
+        require(shell.terminal.bounds == shellBounds && agent.terminal.bounds == agentBounds, "creation resized live PTYs")
+        require(shell.terminal.superview === shellHost && agent.terminal.superview === agentHost, "creation remounted native hosts")
+        require(registry.sessions.count == 3 && workspace.activeLayout.root == treeRoot, "creation changed runtime ownership")
+        cancel?.performClick(nil)
+        eventually("cancel did not return focus to selected native PTY") { window.firstResponder === agent.terminal && window.isKeyWindow }
+        require(workspace.draft == "fixture draft", "cancel discarded an unsent draft")
         let editor = NSTextView(frame: NSRect(x: 20, y: 20, width: 140, height: 30))
         host.addSubview(editor); window.makeFirstResponder(editor)
         workspace.draft = "changed draft"; registry.objectWillChange.send(); pump()

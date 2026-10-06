@@ -60,62 +60,91 @@ final class AgentLaunchController: ObservableObject {
     }
 }
 
-struct AgentLaunchPanel: View {
+/// Shell and external agents share one creation surface. This is not a second
+/// conversation protocol: after launch, the selected native PTY owns all input.
+struct SessionLaunchPanel: View {
     let root: String
     @ObservedObject var workspace: ConsoleWorkspace
     @ObservedObject var launcher: AgentLaunchController
     let selected: TerminalSession?
+    let newShell: () -> Void
     let activate: (TerminalSession) -> Void
-    let close: () -> Void
+    let close: (() -> Void)?
     var frozen = false
+    @State private var shell = false
+    private var target: Binding<String> {
+        Binding(get: { shell ? "shell" : workspace.providerID }, set: {
+            shell = $0 == "shell"
+            if !shell { workspace.providerID = $0 }
+        })
+    }
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                if frozen { Text("Codex ▾").font(Face.sans(11)) }
-                else {
-                    Picker("Agent", selection: $workspace.providerID) {
-                        ForEach(launcher.providers) { item in Text(item.name + (item.installed ? "" : " · 未安装")).tag(item.id) }
-                    }.labelsHidden().frame(maxWidth: 180).disabled(launcher.loading)
-                }
-                Text("新会话").font(Face.sans(10)).foregroundStyle(Ink.inkMuted)
+                Image(systemName: shell ? "terminal" : "sparkle").foregroundStyle(Ink.accent)
+                if frozen { Text("Codex ▾").font(Face.sans(12, .medium)) }
+                else { SessionTargetPicker(target: target, providers: launcher.providers).frame(height: 26).disabled(launcher.loading) }
                 Spacer(minLength: 0)
-                if launcher.loading { ProgressView().controlSize(.small); Button("取消") { launcher.cancel() } }
-                if frozen { Text("原生  ·  续接…").font(Face.sans(10)) }
-                else {
-                    Button("原生", action: openNative).disabled(!launcher.available(workspace) && !canFocusNative)
-                        .help("进入所选 Agent 的原生界面，或显式启动新的原生会话 · ⇧⌘↩")
-                    Button("续接…", action: resume).disabled(!launcher.available(workspace) || launcher.provider(workspace)?.supportsResume != true)
-                        .accessibilityIdentifier("workspace.agent.resume")
-                    Button { launcher.cancel(); close() } label: { Image(systemName: "xmark") }.buttonStyle(.plain)
-                        .accessibilityLabel("收起新会话输入")
+                if let close {
+                    ConsoleToolbarAction(title: "", identifier: "console.cancelLaunch", symbol: "xmark") { launcher.cancel(); close() }
+                        .frame(width: 22, height: 22).help("取消并返回当前会话；草稿保留")
                 }
             }
-            if frozen {
-                Text("检查当前 worktree 的改动和服务状态。")
-                    .font(Face.mono(12)).frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
+            if shell {
+                Text(URL(fileURLWithPath: TerminalSession.shell).lastPathComponent)
+                    .font(Face.mono(13)).foregroundStyle(Ink.inkMuted)
+                    .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
+            } else if frozen {
+                Text("检查当前改动，再运行相关测试。")
+                    .font(Face.mono(12)).frame(maxWidth: .infinity, minHeight: 76, alignment: .topLeading)
             } else {
                 AgentComposer(text: $workspace.draft, enabled: !launcher.loading, font: Face.nativeMono(12),
-                    foreground: NSColor(Ink.ink), focusOnAttach: true,
-                    onSubmit: send, onNative: openNative)
-                    .frame(minHeight: 44, maxHeight: 72).padding(4).background(Ink.surface)
-                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(Ink.line, lineWidth: 1))
+                    foreground: NSColor(Ink.ink), focusOnAttach: true, onSubmit: start, onNative: openNative)
+                    .frame(height: 76).padding(4).background(Ink.surface)
+                    .overlay(alignment: .topLeading) {
+                        if workspace.draft.isEmpty {
+                            Text("初始任务（可选）").font(Face.mono(12)).foregroundStyle(Ink.inkFaint)
+                                .padding(10).allowsHitTesting(false)
+                        }
+                    }
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Ink.line, lineWidth: 1))
             }
-            HStack(spacing: 8) {
-                if let problem = launcher.problem { Text(problem).font(Face.sans(10)).foregroundStyle(Change.changed).lineLimit(2).textSelection(.enabled) }
-                Spacer(minLength: 0)
-                if frozen { Text("发送到新会话 ⌘↩").font(Face.sans(11)) }
-                else {
+            if let problem = launcher.problem, !shell {
+                Text(problem).font(Face.sans(10)).foregroundStyle(Change.changed).lineLimit(3).textSelection(.enabled)
+            }
+            HStack(spacing: 10) {
+                if launcher.loading { ProgressView().controlSize(.small); Button("取消") { launcher.cancel() } }
+                else if !frozen {
                     Button { launcher.refresh(workspace) } label: { Image(systemName: "arrow.clockwise") }
-                        .buttonStyle(.plain).disabled(launcher.loading).help("重新检测已安装的 Agent")
-                    Button("发送 ⌘↩", action: send)
-                        .disabled(!launcher.available(workspace) || workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .help("建立新会话；后续消息在 Agent 原生终端继续")
+                        .buttonStyle(.plain).help("重新检测本机 Agent")
+                    if !shell {
+                        Menu {
+                            Button(canFocusNative ? "返回当前原生会话" : "打开原生会话", action: openNative)
+                                .disabled(!launcher.available(workspace) && !canFocusNative)
+                            Button("从文件续接…", action: resume)
+                                .disabled(!launcher.available(workspace) || launcher.provider(workspace)?.supportsResume != true)
+                        } label: { Text("会话选项") }.menuStyle(.borderlessButton).fixedSize()
+                    }
+                }
+                Spacer(minLength: 0)
+                if frozen { Text("开始新会话 ⌘↩").font(Face.sans(11)) }
+                else {
+                    ConsoleToolbarAction(title: shell ? "打开 Shell" : "开始新会话 ⌘↩", identifier: "console.launch", perform: start)
+                        .fixedSize().frame(height: 28).padding(.horizontal, 9).background(Ink.accentSoft)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .disabled(launcher.loading || (!shell && !launcher.available(workspace)))
+                        .help("显式创建会话；后续输入与审批保留在原生终端")
                 }
             }
-        }.padding(10).background(Ink.canvas)
+        }.padding(16).background(Ink.canvas)
     }
     private var canFocusNative: Bool { selected?.isActive == true && selected?.kind == "agent:\(workspace.providerID):native" }
-    private func send() { launcher.launch(root: root, workspace: workspace, prompt: true, didLaunch: activate) }
+    private func start() {
+        guard !launcher.loading else { return }
+        if shell { newShell() }
+        else { launcher.launch(root: root, workspace: workspace,
+            prompt: !workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, didLaunch: activate) }
+    }
     private func openNative() {
         if canFocusNative, let selected { activate(selected) }
         else { launcher.launch(root: root, workspace: workspace, prompt: false, didLaunch: activate) }
@@ -125,8 +154,42 @@ struct AgentLaunchPanel: View {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true; panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
         panel.prompt = "校验并续接"
-        panel.message = "只续接当前 worktree 的原始会话文件；审批与后续输入保留在原生 Agent。"
+        panel.message = "只续接当前 worktree 的原始会话文件。"
         guard panel.runModal() == .OK, let file = panel.url else { return }
         launcher.launch(root: root, workspace: workspace, prompt: false, resumeFile: file.path, didLaunch: activate)
     }
+}
+
+private struct SessionTargetPicker: NSViewRepresentable {
+    @Binding var target: String
+    let providers: [ExternalAgent]
+    @Environment(\.isEnabled) private var enabled
+    func makeNSView(context: Context) -> SessionTargetButton { SessionTargetButton() }
+    func updateNSView(_ button: SessionTargetButton, context: Context) {
+        let values = [("shell", "Shell", true)] + providers.map { ($0.id, $0.name + ($0.installed ? "" : " · 未安装"), $0.installed) }
+        let choices = values.contains(where: { $0.0 == target }) ? values : values + [(target, "检测 Agent…", false)]
+        let signature = choices.map { "\($0.0):\($0.1):\($0.2)" }
+        if button.signature != signature {
+            button.removeAllItems()
+            for (id, title, available) in choices {
+                button.addItem(withTitle: title); button.lastItem?.representedObject = id; button.lastItem?.isEnabled = available
+            }
+            button.signature = signature
+        }
+        if let item = button.itemArray.first(where: { $0.representedObject as? String == target }) { button.select(item) }
+        button.isEnabled = enabled; button.font = Face.nativeMono(12)
+        button.changed = { target = $0 }
+        button.setAccessibilityIdentifier("console.launchTarget")
+        button.setAccessibilityLabel("新会话运行方式")
+    }
+}
+private final class SessionTargetButton: NSPopUpButton {
+    var signature: [String] = []
+    var changed: ((String) -> Void)?
+    init() {
+        super.init(frame: .zero, pullsDown: false)
+        autoenablesItems = false; target = self; action = #selector(selected)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+    @objc private func selected() { if let id = selectedItem?.representedObject as? String { changed?(id) } }
 }

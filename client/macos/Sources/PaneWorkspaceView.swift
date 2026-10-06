@@ -8,6 +8,7 @@ struct PaneWorkspaceView: View {
     @ObservedObject var workspace: ConsoleWorkspace
     let agent: Bool
     var focusIntent: TerminalFocusIntent?
+    var compactSinglePane = false
     var frozen = false
     var frozenSessions: [TerminalSession] = []
     @ObservedObject private var registry = TerminalSessions.shared
@@ -38,6 +39,7 @@ struct PaneWorkspaceView: View {
         if let sessionID = value.session,
            let session = scoped.first(where: { $0.id == sessionID }) ?? (primary.id == sessionID ? primary : nil) {
             let pane = VStack(spacing: 0) {
+                if !compactSinglePane || layout.sessions.count > 1 {
                 HStack(spacing: 8) {
                     Button {
                         update { $0.focus(sessionID) }
@@ -68,6 +70,7 @@ struct PaneWorkspaceView: View {
                 }.padding(.horizontal, 8).padding(.vertical, 7)
                     .background(layout.focused == sessionID ? Ink.accentSoft : Ink.surface).disabled(frozen)
                 Hairline()
+                }
                 TerminalPaneBody(session: session, frozen: frozen, focusIntent: focusIntent)
             }.frame(minWidth: 140, minHeight: 100)
             if frozen { return AnyView(pane) }
