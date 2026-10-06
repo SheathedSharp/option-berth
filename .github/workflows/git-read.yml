@@ -12,6 +12,9 @@ on:
       - 'engine/internal/runs/**'
       - 'engine/internal/daemon/**'
       - 'engine/internal/spawn/**'
+      - 'client/macos/Sources/CLI.swift'
+      - 'client/macos/Sources/DaemonLaunch.swift'
+      - 'client/macos/Tests/GitReadIntegrationTests.swift'
       - '.github/workflows/git-read.yml'
 
 permissions:
@@ -63,6 +66,14 @@ jobs:
         run: |
           set -euo pipefail
           go test -race -count=3 -timeout=5m ./internal/git ./internal/groups ./internal/scanner 2>&1 | tee ../git-read-evidence/race.log
+      - name: Verify production macOS CLI to Git lifecycle
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run github.com/magefile/mage@v1.16.0 buildEngine
+          swiftc client/macos/Sources/CLI.swift client/macos/Sources/DaemonLaunch.swift client/macos/Tests/GitReadIntegrationTests.swift -o "$RUNNER_TEMP/git-read-integration"
+          BERTH_GIT_TEST_BINARY="$PWD/bin/oberth" "$RUNNER_TEMP/git-read-integration" 2>&1 | tee git-read-evidence/client-integration.log
       - name: Retain complete verification evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
