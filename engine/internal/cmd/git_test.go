@@ -200,6 +200,58 @@ func TestGitDiffJSONCarriesTheLines(t *testing.T) {
 	}
 }
 
+func TestGitDiffCommitJSONCarriesHistoricalIdentity(t *testing.T) {
+	dir := gitTestRepo(t)
+	gitIn(t, dir, "add", "kept.txt")
+	gitIn(t, dir, "commit", "-qm", "second")
+	commitOut := gitInOutput(t, dir, "rev-parse", "HEAD")
+	chdir(t, dir)
+
+	prevJSON, prevFile, prevCommit := gitDiffJSONFlag, gitDiffFileFlag, gitDiffCommitFlag
+	gitDiffJSONFlag, gitDiffFileFlag, gitDiffCommitFlag = true, "kept.txt", strings.TrimSpace(commitOut)
+	t.Cleanup(func() { gitDiffJSONFlag, gitDiffFileFlag, gitDiffCommitFlag = prevJSON, prevFile, prevCommit })
+
+	out, err := runGit(t, gitDiffCmd, gitDiffRun)
+	if err != nil {
+		t.Fatalf("git diff --commit: %v", err)
+	}
+	var doc struct {
+		Root   string `json:"root"`
+		Commit string `json:"commit"`
+		Base   string `json:"base"`
+		Files  []struct {
+			Path string `json:"path"`
+			Lines []struct {
+				Kind string `json:"kind"`
+				Text string `json:"text"`
+			} `json:"lines"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("stdout is not commit diff JSON: %v\n%s", err, out)
+	}
+	if doc.Root != dir || doc.Commit != strings.TrimSpace(commitOut) || doc.Base == "" {
+		t.Fatalf("identity = %+v, want root/commit/base", doc)
+	}
+	if len(doc.Files) != 1 || doc.Files[0].Path != "kept.txt" {
+		t.Fatalf("files = %+v", doc.Files)
+	}
+}
+
+func TestGitDiffCommitRejectsRefLikeIDAsUsage(t *testing.T) {
+	dir := gitTestRepo(t)
+	chdir(t, dir)
+	prevCommit := gitDiffCommitFlag
+	gitDiffCommitFlag = "refs/heads/main"
+	t.Cleanup(func() { gitDiffCommitFlag = prevCommit })
+
+	_, err := runGit(t, gitDiffCmd, gitDiffRun)
+	var usage usageError
+	if !errors.As(err, &usage) {
+		t.Fatalf("err = %v, want usageError", err)
+	}
+}
+
 // A file the repository has, with nothing moved: not an empty answer, an answer
 // with a reason. It exits 1 either way — a caller that asked for a patch and
 // got nothing would otherwise wait for output that is never coming.
@@ -292,6 +344,16 @@ func gitIn(t *testing.T, dir string, args ...string) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
+}
+
+func gitInOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-c", "commit.gpgsign=false", "-C", dir}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return string(out)
 }
 
 func writeIn(t *testing.T, dir, name, content string) {
