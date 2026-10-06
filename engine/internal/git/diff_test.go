@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -88,6 +89,85 @@ func TestDiffOfOneFile(t *testing.T) {
 	}
 	if !strings.Contains(joined, "-two") {
 		t.Errorf("the removed line is not verbatim in the patch: %q", joined)
+	}
+}
+
+func TestDiffCommitUsesFirstParentAndIgnoresDirtyWorktree(t *testing.T) {
+	requireGit(t)
+	dir := newRepo(t)
+	write(t, dir, "kept.txt", "one\ntwo\n")
+	run(t, dir, "add", ".")
+	run(t, dir, "commit", "-qm", "first")
+	write(t, dir, "kept.txt", "one\nTWO\nthree\n")
+	run(t, dir, "add", "kept.txt")
+	run(t, dir, "commit", "-qm", "second")
+	commit := head(t, dir)
+	write(t, dir, "kept.txt", "dirty only\n")
+
+	patch, err := DiffCommit(context.Background(), dir, commit, "kept.txt")
+	if err != nil {
+		t.Fatalf("DiffCommit: %v", err)
+	}
+	if patch.Commit != commit || patch.Base == "" {
+		t.Fatalf("identity = %+v, want commit and first parent", patch)
+	}
+	if len(patch.Files) != 1 || patch.Files[0].Path != "kept.txt" {
+		t.Fatalf("files = %+v", patch.Files)
+	}
+	text := linesText(patch.Files[0])
+	if !strings.Contains(text, "+three") || strings.Contains(text, "dirty only") {
+		t.Fatalf("historical patch was not pinned: %q", text)
+	}
+}
+
+func TestDiffCommitRootCommitUsesEmptyBase(t *testing.T) {
+	requireGit(t)
+	dir := newRepo(t)
+	write(t, dir, "root.txt", "root\n")
+	run(t, dir, "add", ".")
+	run(t, dir, "commit", "-qm", "root")
+	commit := head(t, dir)
+
+	patch, err := DiffCommit(context.Background(), dir, commit, "")
+	if err != nil {
+		t.Fatalf("DiffCommit root: %v", err)
+	}
+	if patch.Base != "" || len(patch.Files) != 1 || patch.Files[0].Path != "root.txt" {
+		t.Fatalf("root patch = %+v", patch)
+	}
+	if !strings.Contains(linesText(patch.Files[0]), "+root") {
+		t.Fatalf("root addition missing: %q", linesText(patch.Files[0]))
+	}
+}
+
+func TestDiffCommitRenameKeepsBothPaths(t *testing.T) {
+	requireGit(t)
+	dir := newRepo(t)
+	write(t, dir, "old.txt", "one\ntwo\nthree\n")
+	run(t, dir, "add", ".")
+	run(t, dir, "commit", "-qm", "first")
+	run(t, dir, "mv", "old.txt", "new.txt")
+	run(t, dir, "commit", "-qm", "rename")
+	commit := head(t, dir)
+
+	patch, err := DiffCommit(context.Background(), dir, commit, "new.txt")
+	if err != nil {
+		t.Fatalf("DiffCommit rename: %v", err)
+	}
+	if len(patch.Files) != 1 || patch.Files[0].Path != "new.txt" || patch.Files[0].OldPath != "old.txt" {
+		t.Fatalf("rename file = %+v", patch.Files)
+	}
+	text := linesText(patch.Files[0])
+	if !strings.Contains(text, "rename from old.txt") || !strings.Contains(text, "rename to new.txt") {
+		t.Fatalf("rename metadata missing: %q", text)
+	}
+}
+
+func TestDiffCommitRejectsRefLikeObjectIDs(t *testing.T) {
+	requireGit(t)
+	dir := newRepo(t)
+	if _, err := DiffCommit(context.Background(), dir, "refs/heads/main", ""); !errors.Is(err, ErrInvalidCommit) {
+		t.Fatalf("err = %v, want ErrInvalidCommit", err)
 	}
 }
 
@@ -297,6 +377,15 @@ func linesText(fd FileDiff) string {
 		texts = append(texts, l.Text)
 	}
 	return strings.Join(texts, "\n")
+}
+
+func head(t *testing.T, dir string) string {
+	t.Helper()
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func mkdirAll(t *testing.T, path string) error {
