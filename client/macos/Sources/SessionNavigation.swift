@@ -193,6 +193,14 @@ struct SessionShortcutBridge: NSViewRepresentable {
             }
         }
 
+        // AppKit sends command-tab through key-equivalent traversal before the
+        // local monitor in some native test and accessibility paths. Keep the
+        // same mounted bridge as a direct responder fallback.
+        override func performKeyEquivalent(with event: NSEvent) -> Bool {
+            if handle(event) == nil { return true }
+            return super.performKeyEquivalent(with: event)
+        }
+
         func apply(open: @escaping () -> Void, cycle: @escaping (Int) -> Void,
                    escape: @escaping () -> Void, canCycle: Bool, canEscape: Bool) {
             openAction = open; cycleAction = cycle; escapeAction = escape
@@ -308,6 +316,10 @@ final class SessionKeyRouter: ObservableObject {
         monitor = nil; windowNumber = nil
         openAction = nil; cycleAction = nil; escapeAction = nil; canCycle = nil; canEscape = nil
         workspace = nil
+    }
+
+    func routeKeyEquivalent(_ event: NSEvent) -> Bool {
+        handle(event) == nil
     }
 
     private func handle(_ event: NSEvent) -> NSEvent? {
