@@ -49,8 +49,9 @@ type GraphCommit struct {
 }
 
 // GraphRef is a local ref observed during the graph read. Kind is one of
-// branch, remote, tag, or ref; current identifies the local branch pointing at
-// observed HEAD. Tags and remotes are reported separately by kind and target.
+// branch, remote, tag, or ref; current identifies the checked-out local branch
+// pointing at observed HEAD. Tags, remotes, and other local branches are
+// reported separately by kind and target.
 type GraphRef struct {
 	Name    string `json:"name"`
 	Target  string `json:"target"`
@@ -123,11 +124,11 @@ func ReadGraph(ctx context.Context, dir string, limit int) (Graph, error) {
 		commits = commits[:limit]
 	}
 
-	refOut, err := gitOut(ctx, dir, "for-each-ref", "--format=%(objectname)%x00%(*objectname)%x00%(refname)%x00")
+	refOut, err := gitOut(ctx, dir, "for-each-ref", "--format=%(objectname)%00%(*objectname)%00%(refname)%00")
 	if err != nil {
 		return Graph{}, err
 	}
-	refs := parseGraphRefs(refOut, snap.Head)
+	refs := parseGraphRefs(refOut, snap.Head, snap.Branch)
 	byHash := map[string][]string{}
 	for _, ref := range refs {
 		byHash[ref.Target] = append(byHash[ref.Target], ref.Name)
@@ -156,7 +157,7 @@ func parseGraphCommits(out []byte) []GraphCommit {
 	return commits
 }
 
-func parseGraphRefs(out []byte, observedHead string) []GraphRef {
+func parseGraphRefs(out []byte, observedHead, currentBranch string) []GraphRef {
 	records := splitNUL(out)
 	refs := make([]GraphRef, 0, len(records)/3)
 	for i := 0; i+2 < len(records); i += 3 {
@@ -177,7 +178,8 @@ func parseGraphRefs(out []byte, observedHead string) []GraphRef {
 		case strings.HasPrefix(full, "refs/tags/"):
 			name, kind = strings.TrimPrefix(full, "refs/tags/"), "tag"
 		}
-		refs = append(refs, GraphRef{Name: name, Target: target, Kind: kind, Current: kind == "branch" && target == observedHead})
+		refs = append(refs, GraphRef{Name: name, Target: target, Kind: kind,
+			Current: kind == "branch" && name == currentBranch && target == observedHead})
 	}
 	return refs
 }

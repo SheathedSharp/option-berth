@@ -18,7 +18,7 @@ func TestParseGraphCommitsKeepsParentsAndFields(t *testing.T) {
 
 func TestParseGraphRefsClassifiesAndMarksCurrent(t *testing.T) {
 	out := []byte("head\x00\x00refs/heads/main\x00head\x00\x00refs/remotes/origin/main\x00tag-object\x00head\x00refs/tags/v1\x00")
-	refs := parseGraphRefs(out, "head")
+	refs := parseGraphRefs(out, "head", "main")
 	if len(refs) != 3 {
 		t.Fatalf("got %d refs, want 3: %+v", len(refs), refs)
 	}
