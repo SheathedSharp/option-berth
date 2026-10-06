@@ -15,10 +15,12 @@ import (
 )
 
 var (
-	gitJSONFlag      bool
-	gitFilesJSONFlag bool
-	gitDiffJSONFlag  bool
-	gitDiffFileFlag  string
+	gitJSONFlag       bool
+	gitFilesJSONFlag  bool
+	gitDiffJSONFlag   bool
+	gitGraphJSONFlag  bool
+	gitDiffFileFlag   string
+	gitGraphLimitFlag int
 )
 
 var gitCmd = &cobra.Command{
@@ -56,6 +58,17 @@ var gitFilesCmd = &cobra.Command{
 	RunE: gitFilesRun,
 }
 
+var gitGraphCmd = &cobra.Command{
+	Use:   "graph [path]",
+	Short: "Show a bounded commit graph and refs (read-only)",
+	Long: "Read a bounded, topology-ordered history with full parent IDs and local refs.\n" +
+		"The answer is explicitly bounded; truncated history is marked in JSON.\n" +
+		"This command never fetches, stages, commits, switches branches or updates\n" +
+		"repository maintenance state.",
+	Args: cobra.MaximumNArgs(1),
+	RunE: gitGraphRun,
+}
+
 var gitDiffCmd = &cobra.Command{
 	Use:   "diff [path]",
 	Short: "Show what changed, line by line (read-only)",
@@ -80,7 +93,9 @@ func init() {
 	gitDiffCmd.Flags().BoolVar(&gitDiffJSONFlag, "json", false, "Output as JSON")
 	gitDiffCmd.Flags().StringVar(&gitDiffFileFlag, "file", "",
 		"Only this path, relative to the repository root")
-	gitCmd.AddCommand(gitFilesCmd, gitDiffCmd)
+	gitGraphCmd.Flags().BoolVar(&gitGraphJSONFlag, "json", false, "Output as JSON")
+	gitGraphCmd.Flags().IntVar(&gitGraphLimitFlag, "limit", 200, "Maximum number of commits to return (1-500)")
+	gitCmd.AddCommand(gitFilesCmd, gitGraphCmd, gitDiffCmd)
 	rootCmd.AddCommand(gitCmd)
 }
 
@@ -117,6 +132,24 @@ func gitFilesRun(cmd *cobra.Command, args []string) error {
 		return printJSON(tree)
 	}
 	renderGitFiles(os.Stdout, tree)
+	return nil
+}
+
+func gitGraphRun(cmd *cobra.Command, args []string) error {
+	dir, err := gitDir(args)
+	if err != nil {
+		return err
+	}
+
+	graph, err := git.ReadGraph(cmd.Context(), dir, gitGraphLimitFlag)
+	if err != nil {
+		return gitFail(err, dir)
+	}
+
+	if gitGraphJSONFlag {
+		return printJSON(graph)
+	}
+	renderGitGraph(os.Stdout, graph)
 	return nil
 }
 
@@ -233,6 +266,29 @@ func renderGitFiles(w io.Writer, t git.Tree) {
 			renderFileRow(w, f, names, adds, dels)
 		}
 	}
+}
+
+func renderGitGraph(w io.Writer, graph git.Graph) {
+	fmt.Fprintln(w, display.Dim(shortPath(graph.Root)))
+	fmt.Fprintf(w, "graph %d commits", len(graph.Commits))
+	if graph.Truncated {
+		fmt.Fprint(w, display.Dim(" (truncated)"))
+	}
+	fmt.Fprintln(w)
+	for _, commit := range graph.Commits {
+		refs := ""
+		if len(commit.Refs) > 0 {
+			refs = " " + display.Dim("["+strings.Join(commit.Refs, ", ")+"]")
+		}
+		fmt.Fprintf(w, "* %s %s%s\n", commit.Hash[:minGraphHash(len(commit.Hash))], commit.Subject, refs)
+	}
+}
+
+func minGraphHash(length int) int {
+	if length < 8 {
+		return length
+	}
+	return 8
 }
 
 // renderGitDiff prints a patch the way a person reads one: git's own text, with
