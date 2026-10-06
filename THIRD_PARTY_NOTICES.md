@@ -22,8 +22,9 @@ License 1.1。原版权、保留字体名和许可全文见
 实际版本由 [engine/go.mod](engine/go.mod) 与 [engine/go.sum](engine/go.sum) 固定。
 源码通过模块依赖引用这些库，没有将模块缓存或编译结果作为本仓库内容分发。
 
-当前原生引擎构建引用的19个外部模块，其许可与 NOTICE 原文汇总在
+原生引擎运行依赖的许可与 NOTICE 原文汇总在
 [go-runtime-licenses.txt](third_party/go-runtime-licenses.txt)，包括相关嵌入式第三方许可。
+其中 `golang.org/x/sync/semaphore` 复用原有 v0.20.0 模块版本，为镜像变更锁提供有界可取消交接，适用 Go Authors 的 BSD 许可。
 这份清单限定于原生运行依赖，不冒充所有可选、测试和未验收平台的完整物料清单。
 发布二进制、安装包或增加依赖时，应重新根据实际产物核对模块、版权及 NOTICE，并随产物分发。
 

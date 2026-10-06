@@ -16,6 +16,12 @@ type groupRunReleaseGuard interface {
 	WithNoGroupRuns(context.Context, string, string, func() (int, error)) (int, error)
 }
 
+// New registries can queue only the final retry within its existing budget;
+// older/extension registries retain the conservative nonblocking fallback.
+type groupRunReleaseWaitGuard interface {
+	WithNoGroupRunsWait(context.Context, string, string, func() (int, error)) (int, error)
+}
+
 // One operation's observed reservation values, not another runtime registry.
 // Keep the original store, keys and manifest path; do not derive replacement
 // keys from a config or checkout that changed while stopping the services.
@@ -63,6 +69,10 @@ func captureServicePortRelease(ctx context.Context, rt *Runtime, cfg *groups.Con
 }
 
 func (p *servicePortRelease) release(ctx context.Context, rt *Runtime, group string, after state.Snapshot, scanErr error, results []state.KillResult) (int, error) {
+	return p.releaseWithWait(ctx, rt, group, after, scanErr, results, false)
+}
+
+func (p *servicePortRelease) releaseWithWait(ctx context.Context, rt *Runtime, group string, after state.Snapshot, scanErr error, results []state.KillResult, wait bool) (int, error) {
 	if p == nil || len(p.observed.Rows) == 0 {
 		return 0, nil
 	}
@@ -105,7 +115,13 @@ func (p *servicePortRelease) release(ctx context.Context, rt *Runtime, group str
 	if !ok {
 		return 0, errors.New("run registry cannot confirm safe reservation release")
 	}
-	return guard.WithNoGroupRuns(ctx, group, p.configPath, func() (int, error) {
+	commit := guard.WithNoGroupRuns
+	if wait {
+		if queued, ok := rt.runs.(groupRunReleaseWaitGuard); ok {
+			commit = queued.WithNoGroupRunsWait
+		}
+	}
+	return commit(ctx, group, p.configPath, func() (int, error) {
 		return p.store.Claims().DeleteObservedContext(ctx, p.observed)
 	})
 }

@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/semaphore"
+
 	"github.com/sheathedsharp/option-berth/internal/ports"
 	"github.com/sheathedsharp/option-berth/internal/runs"
 	"github.com/sheathedsharp/option-berth/internal/sessions"
@@ -71,7 +73,7 @@ type Registry struct {
 
 	// mirrorMu orders each mirrored mutation through its disk effect. Reads
 	// use mu only. Lock order is mirrorMu -> mu; never hold mu during I/O.
-	mirrorMu sync.Mutex
+	mirrorMu mirrorMutex
 
 	// Alive reports whether a pid is still running. Tests replace it.
 	Alive func(pid int) bool
@@ -104,6 +106,7 @@ type Registry struct {
 // New returns an empty registry that mirrors to runs.json.
 func New() *Registry {
 	return &Registry{
+		mirrorMu:  mirrorMutex{gate: semaphore.NewWeighted(1)},
 		runs:      map[int]Record{},
 		Alive:     runs.PIDAlive,
 		Parents:   ports.ParentTable,
