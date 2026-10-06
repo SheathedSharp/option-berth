@@ -97,7 +97,7 @@ import SwiftUI
     func confirmTermination() -> Bool {
         let models = windows.values.map(\.model)
         return Self.allowTermination(models: models) { saving, names in
-            let alert = NSAlert()
+            let alert = ClientAlert.make()
             alert.messageText = saving ? "配置正在保存" : "仍有未保存的配置草稿"
             alert.informativeText = saving ? "请等待保存结束后再退出。" : names.joined(separator: "、") + " 的当前编辑尚未保存。"
             alert.addButton(withTitle: "返回编辑")
@@ -153,7 +153,7 @@ import SwiftUI
     private func mayDiscard() -> Bool {
         guard !model.isSaving else { NSSound.beep(); return false }
         guard model.hasUnsavedChanges else { return true }
-        let alert = NSAlert()
+        let alert = ClientAlert.make()
         alert.messageText = "保留未保存的编辑？"
         alert.informativeText = "最近有效修改已自动保存。当前草稿尚未保存，丢弃后无法恢复。"
         alert.addButton(withTitle: "继续编辑"); alert.addButton(withTitle: "丢弃未保存草稿")

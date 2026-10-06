@@ -53,7 +53,7 @@ struct SessionManager: View {
             .background(Ink.canvas)
     }
     private func rename(_ session: TerminalSession) {
-        let alert = NSAlert()
+        let alert = ClientAlert.make()
         alert.messageText = "会话名称 / Session name"
         let field = NSTextField(string: session.title)
         field.frame = NSRect(x: 0, y: 0, width: 280, height: 26)
@@ -72,7 +72,7 @@ struct SessionManager: View {
 func confirmSessionStop(_ session: TerminalSession) {
     guard session.isActive else { return }
     let force = session.isStopping
-    let alert = NSAlert()
+    let alert = ClientAlert.make()
     alert.messageText = force ? "强制结束此会话？ / Force end this session?" : "结束此会话？ / End this session?"
     alert.informativeText = force
         ? "未保存的工作可能丢失。只操作这个会话，不停止项目服务。 / Unsaved work may be lost. Project services are unaffected."
