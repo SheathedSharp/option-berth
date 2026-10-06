@@ -131,10 +131,7 @@ else:
         eventually("plain shell fixture command did not finish") { output.contains("PLAIN-SHELL-DONE") }
         require(plain.commandBlocks.isEmpty && shell.terminal.process === process, "new-shell setting modified existing integration or ignored opt-out")
         pump()
-        if let image = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
-            host.cacheDisplay(in: host.bounds, to: image)
-            try image.representation(using: .png, properties: [:])!.write(to: directory.deletingLastPathComponent().appendingPathComponent("console-configured-native.png"))
-        }
+        try captureOwnedWindow(window, to: directory.deletingLastPathComponent().appendingPathComponent("console-configured-composited-native.png"))
         print("PASS: file defaults -> native Agent picker -> Cmd+Enter plan -> native PTY; new zsh integration on/off; existing provider/draft/process identity preserved")
     }
 }

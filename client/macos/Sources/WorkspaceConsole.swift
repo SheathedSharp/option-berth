@@ -59,7 +59,7 @@ struct WorkspaceConsole: View {
             }
             .onDisappear { launcher.cancel() }
     }
-    private var launchSurface: some View {
+    private var launchSurface: SessionLaunchPanel {
         SessionLaunchPanel(root: root, workspace: workspace, launcher: launcher, selected: selected,
             newShell: newShell, activate: activate, close: selected == nil ? nil : { creating = false }, frozen: frozen)
     }
@@ -69,10 +69,9 @@ struct WorkspaceConsole: View {
                 Text("＋ 新会话"); Spacer(); Text("历史"); Image(systemName: "ellipsis")
             } else {
                 if !scoped.isEmpty {
-                    ConsoleToolbarAction(title: "新会话", identifier: "console.newSession", symbol: "plus", perform: beginSession)
+                    SessionLauncherPopover(isPresented: $creating, panel: launchSurface, reduced: reduced, beforeOpen: beginSession)
                         .fixedSize(horizontal: true, vertical: false).frame(height: 24)
                         .help("在当前 worktree 创建 Shell 或外部 Agent 会话")
-                        .popover(isPresented: $creating, arrowEdge: .bottom) { launchSurface.frame(width: 460) }
                 } else { Text("新会话").font(Face.sans(11, .medium)) }
                 Spacer(minLength: 0)
                 ConsoleToolbarAction(title: "历史", identifier: "terminal.history") { history = true }
