@@ -43,7 +43,8 @@ import SwiftUI
         try require(measured == 380, "implicit preference default erased a measured width")
         let project = try JSONDecoder().decode(BerthGroup.self, from: Data(#"{"name":"review-fixture","branch":"feature/review","root_dir":"/fixture/review","services":[],"members":[]}"#.utf8))
         let tree = try JSONDecoder().decode(GitTree.self, from: Data(#"{"root":"/fixture/review","branch":"feature/review","head":"abcdef0123456789","upstream":"origin/feature/review","ahead":2,"behind":1,"staged":1,"unstaged":0,"untracked":0,"conflicts":1,"worktrees":[{"path":"/fixture/review","branch":"feature/review","current":true}],"files":[{"path":"conflict.swift","status":"DU"},{"path":"new.swift","old_path":"旧文件.swift","status":"R ","additions":2,"deletions":0}]}"#.utf8))
-        let git = GitStore(overview: tree.overview, tree: tree, selectedPath: "conflict.swift")
+        let graph = try JSONDecoder().decode(GitGraph.self, from: Data(#"{"root":"/fixture/review","observed_head":"abcdef0123456789","branch":"feature/review","ahead":2,"behind":1,"truncated":true,"limit":2,"commits":[{"hash":"abcdef0123456789","parents":["0123456789abcdef"],"author":"Ada","when":"2026-10-06T00:00:00Z","subject":"graph head","refs":["feature/review"]}],"refs":[{"name":"feature/review","target":"abcdef0123456789","kind":"branch","current":true}],"worktrees":[{"path":"/fixture/review","branch":"feature/review","current":true}]}"#.utf8))
+        let git = GitStore(overview: tree.overview, tree: tree, graph: graph, selectedPath: "conflict.swift")
         var detailWidth: CGFloat = 0
         func content(_ value: BerthGroup) -> some View {
             CodeView(git: git, project: value).onPreferenceChange(GitReviewDetailWidthKey.self) { detailWidth = $0 }
