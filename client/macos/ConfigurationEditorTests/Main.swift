@@ -35,11 +35,46 @@ import ScreenCaptureKit
         defer { try? FileManager.default.removeItem(at: directory) }
         let defaults = UserDefaults(suiteName: "oberth-editor-tests-" + UUID().uuidString)!
         let settings = UISettings(defaults: defaults, configurationDirectory: directory)
-        let model = ConfigurationEditorModel(document: .theme, directory: directory, settings: settings)
-        let controller = ConfigurationEditorWindow(model: model)
+        let source = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 640),
+            styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        source.isReleasedWhenClosed = false
+        let sourceHost = NSHostingView(rootView: SettingsEntryFixture(settings: settings))
+        sourceHost.sizingOptions = []; source.contentView = sourceHost
+        NSApp.activate(ignoringOtherApps: true); source.makeKeyAndOrderFront(nil)
+        defer {
+            if let sheet = source.attachedSheet { source.endSheet(sheet) }
+            source.contentView = nil; source.close()
+        }
+        var entry: NSView?
+        try await eventually("real settings sheet did not expose the internal editor entry geometry") {
+            guard let content = source.attachedSheet?.contentView else { return false }
+            entry = find(NSView.self, in: content).first { $0.identifier?.rawValue == "configuration.entry.theme" }
+            return entry?.bounds.isEmpty == false
+        }
+        func pressEntry() throws {
+            guard let entry, let target = entry.window else { throw CocoaError(.coderInvalidValue) }
+            let point = entry.convert(NSPoint(x: entry.bounds.midX, y: entry.bounds.midY), to: nil)
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: target.windowNumber,
+                    context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)!
+                NSApp.postEvent(event, atStart: false)
+            }
+        }
+        try pressEntry()
+        var opened: ConfigurationEditorWindow?
+        try await eventually("settings button did not open the native configuration window") {
+            opened = NSApp.windows.compactMap { $0.delegate as? ConfigurationEditorWindow }.first { $0.model.document == .theme }
+            return opened?.window?.isKeyWindow == true
+        }
+        let controller = opened!, model = controller.model
         guard let window = controller.window, let host = window.contentView else { fatalError("native editor window missing") }
         defer { window.contentView = nil; window.close() }
-        NSApp.activate(ignoringOtherApps: true); window.makeKeyAndOrderFront(nil)
+        source.attachedSheet?.makeKeyAndOrderFront(nil)
+        try pressEntry()
+        try await eventually("reopening an existing editor did not return its window") { window.isKeyWindow }
+        try expect(NSApp.windows.compactMap { $0.delegate as? ConfigurationEditorWindow }.filter { $0.model.document == .theme }.count == 1,
+                   "opening the same document duplicated its editor")
         try await eventually("editor did not load") { model.isLoaded && window.isKeyWindow }
         let url = directory.appendingPathComponent("theme.json")
         try expect(!FileManager.default.fileExists(atPath: url.path), "open wrote a configuration")
@@ -47,6 +82,8 @@ import ScreenCaptureKit
         guard let editor = find(ConfigurationTextView.self, in: host).first else { fatalError("native text view missing") }
         try await eventually("native editor did not become editable with the loaded text") { editor.isEditable && editor.string == model.text }
         window.makeFirstResponder(editor)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try await captureOwnedWindow(window, to: root.appendingPathComponent("configuration-template-composited-native.png"))
         let initial = editor.string
         let candidate = "{\n  // native editing fixture\n  \"schemaVersion\": 1,\n  \"colors\": {\"accent\": \"#123456\",},\n}\n"
         func replace(_ text: String) {
@@ -129,4 +166,30 @@ import ScreenCaptureKit
         try png.write(to: url)
     }
 
+}
+
+private struct SettingsEntryFixture: View {
+    let settings: UISettings
+    @State private var presented = true
+    var body: some View {
+        Color.clear.sheet(isPresented: $presented) {
+            SettingsSheet(settings: settings, onClose: { presented = false })
+                .overlayPreferenceValue(ConfigurationEntryAnchors.self) { anchors in
+                    GeometryReader { geometry in
+                        if let anchor = anchors["theme"] {
+                            let rect = geometry[anchor]
+                            ConfigurationEntryMarker().frame(width: rect.width, height: rect.height)
+                                .position(x: rect.midX, y: rect.midY)
+                        }
+                    }.allowsHitTesting(false)
+                }
+        }
+    }
+}
+
+private struct ConfigurationEntryMarker: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(); view.identifier = NSUserInterfaceItemIdentifier("configuration.entry.theme"); return view
+    }
+    func updateNSView(_ view: NSView, context: Context) {}
 }

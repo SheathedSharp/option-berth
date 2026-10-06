@@ -32,7 +32,18 @@ struct ClientConfigurationPanel: View {
     @ViewBuilder private var fileButtons: some View {
         ForEach(ConfigurationDocument.allCases) { document in
             Button(document.filename) { ConfigurationEditorWindows.shared.open(document, settings: settings) }.font(Face.mono(10))
+                .accessibilityIdentifier("configuration.open." + document.rawValue)
+                .anchorPreference(key: ConfigurationEntryAnchors.self, value: .bounds) { [document.rawValue: $0] }
                 .help("在内置编辑器中修改，支持注释；打开不会改写文件")
         }
+    }
+}
+
+/// Actual control geometry for native mouse-routing verification. Reading a
+/// preference does not replace the SwiftUI Button or intercept its input.
+struct ConfigurationEntryAnchors: PreferenceKey {
+    static var defaultValue: [String: Anchor<CGRect>] = [:]
+    static func reduce(value: inout [String: Anchor<CGRect>], nextValue: () -> [String: Anchor<CGRect>]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, next in next })
     }
 }
