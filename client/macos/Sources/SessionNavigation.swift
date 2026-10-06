@@ -149,3 +149,61 @@ enum SessionNavigationModel {
         return term.isEmpty || (title + " " + kind + " " + state).localizedCaseInsensitiveContains(term)
     }
 }
+
+@MainActor
+final class SessionKeyRouter: ObservableObject {
+    private var monitor: Any?
+    private var windowNumber: Int?
+    private var root = ""
+    private weak var workspace: ConsoleWorkspace?
+    private var openAction: (() -> Void)?
+    private var cycleAction: ((Int) -> Void)?
+    private var escapeAction: (() -> Void)?
+    private var canCycle: (() -> Bool)?
+    private var canEscape: (() -> Bool)?
+
+    func configure(root: String, workspace: ConsoleWorkspace,
+                   open: @escaping () -> Void, cycle: @escaping (Int) -> Void,
+                   escape: @escaping () -> Void, canCycle: @escaping () -> Bool,
+                   canEscape: @escaping () -> Bool) {
+        self.root = root
+        self.workspace = workspace
+        self.openAction = open
+        self.cycleAction = cycle
+        self.escapeAction = escape
+        self.canCycle = canCycle
+        self.canEscape = canEscape
+    }
+
+    func install(windowNumber: Int?) {
+        guard monitor == nil, let windowNumber else { return }
+        self.windowNumber = windowNumber
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            return self.handle(event)
+        }
+    }
+
+    func remove() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil; windowNumber = nil
+        openAction = nil; cycleAction = nil; escapeAction = nil; canCycle = nil; canEscape = nil
+        workspace = nil
+    }
+
+    private func handle(_ event: NSEvent) -> NSEvent? {
+        guard let windowNumber, event.window?.windowNumber == windowNumber else { return event }
+        let flags = event.modifierFlags
+        let command = flags.contains(.command) || flags.contains(.control)
+        if event.keyCode == 48, command, flags.contains(.option) {
+            openAction?(); return nil
+        }
+        if event.keyCode == 48, command, canCycle?() == true {
+            cycleAction?(flags.contains(.shift) ? -1 : 1); return nil
+        }
+        if event.keyCode == 53, canEscape?() == true {
+            escapeAction?(); return nil
+        }
+        return event
+    }
+}
