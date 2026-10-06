@@ -37,7 +37,16 @@ struct WorkspaceConsole: View {
                 Text("$ git status --short\n M Sources/API.swift\n$ _")
                     .font(Face.mono(12)).foregroundStyle(Ink.ink).padding(18)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .overlay { if creating { launchSurface.frame(width: 440).background(Ink.canvas).clipShape(RoundedRectangle(cornerRadius: 10)).padding(12) } }
+                    .overlay(alignment: .topLeading) {
+                        if creating {
+                            // Frozen evidence draws the creation surface near
+                            // its real toolbar anchor, not as a second mode page.
+                            launchSurface.frame(width: 440, height: 260, alignment: .top)
+                                .background(Ink.canvas).clipShape(RoundedRectangle(cornerRadius: 10))
+                                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Ink.lineStrong, lineWidth: 1))
+                                .padding(10)
+                        }
+                    }
             } else {
                 launchSurface.frame(maxWidth: 470).padding(20)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
