@@ -247,7 +247,7 @@ oberth init [--dry-run] [--json]
   不直接打印信号名；`down` 停无端口 run 时显示服务名（清单里的名字），不是进程表里的解释器名。
   被释放的地址行写作 `released <url>`。`--json` 的 `method` 字段仍是 wire 枚举
   （sigterm/sigkill/docker_stop/none），人读与机器读各用各的词汇表。
-- oberth git [path]：在 status 之外按需读取代码摘要、文件列表或 diff；`oberth git graph [path] --json --limit N` 返回有界提交拓扑、parent IDs、refs 与 worktree。Graph 明确标出 `observed_head`/`truncated`，仍保持只读，不 fetch、不刷新 index。
+- oberth git [path]：在 status 之外按需读取代码摘要、文件列表或 diff；`oberth git graph [path] --json --limit N` 返回有界提交拓扑、parent IDs、refs 与 worktree。Graph 明确标出 `observed_head`/`truncated`，仍保持只读，不 fetch、不刷新 index。`oberth git diff [path] --commit <hex> [--file <repo-relative-path>] --json` 审查指定 commit 相对第一个 parent 的 patch；root commit 相对空树，merge 不使用 combined diff。commit 只接受 7–64 位十六进制 object ID，响应带 `commit` 与 `base` 字段。
 
 `start` 只运行 `oberth start [flags] -- <command> [args...]` 这一种低级入口；日常项目服务
 使用 `up` / `down`。`kill` 以端口或 pid 为主语，`--all` 是仍需明确确认的整批例外；旧的
