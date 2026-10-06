@@ -91,7 +91,12 @@ struct WorkspaceConsole: View {
                     if let selected { focusIntent = TerminalFocusIntent(selected.id) }
                 }
             }
-            .overlay(SessionKeyWindowBinder(router: keyRouter).frame(width: 0, height: 0))
+            .background(alignment: .topLeading) {
+                SessionKeyWindowBinder(router: keyRouter)
+                    .frame(width: 1, height: 1)
+                    .opacity(0)
+                    .allowsHitTesting(false)
+            }
             .onDisappear { launcher.cancel(); keyRouter.remove() }
     }
     private var launchSurface: SessionLaunchPanel {
