@@ -122,6 +122,20 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
                 NSApp.sendEvent(event)
             }
         }
+        func press(_ keyCode: UInt16, flags: NSEvent.ModifierFlags = [], characters: String = "") {
+            let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, characters: characters, charactersIgnoringModifiers: characters,
+                isARepeat: false, keyCode: keyCode)!
+            NSApp.sendEvent(event)
+        }
+        choose(agent); press(53, characters: "\u{1b}")
+        eventually("Escape did not return from the agent to the remembered Shell") { workspace.activeSelection == shell.id && window.firstResponder === shell.terminal }
+        choose(shell); press(48, flags: [.command], characters: "\t")
+        eventually("Command-Tab did not cycle to the parallel agent") { workspace.activeSelection == agent.id && window.firstResponder === agent.terminal }
+        choose(shell); press(48, flags: [.command, .option], characters: "\t")
+        eventually("Command-Option-Tab did not open the session palette") { find(NSView.self, in: host).contains { $0.accessibilityIdentifier() == "console.sessionPalette" } }
+        press(53, characters: "\u{1b}")
+        eventually("Escape did not dismiss the session palette") { !find(NSView.self, in: host).contains { $0.accessibilityIdentifier() == "console.sessionPalette" } }
         choose(shell); type("shell-only")
         choose(agent); type("agent-only")
         eventually("native typing did not reach selected PTYs") { shellOutput.contains("INPUT:shell-only") && agentOutput.contains("INPUT:agent-only") }
