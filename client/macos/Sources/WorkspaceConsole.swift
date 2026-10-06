@@ -319,6 +319,11 @@ struct SessionKeyWindowBinder: NSViewRepresentable {
             installIfNeeded()
         }
 
+        override func performKeyEquivalent(with event: NSEvent) -> Bool {
+            if router.routeKeyEquivalent(event) { return true }
+            return super.performKeyEquivalent(with: event)
+        }
+
         func installIfNeeded() {
             router.install(windowNumber: window?.windowNumber)
         }
