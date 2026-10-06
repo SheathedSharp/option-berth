@@ -145,7 +145,13 @@ enum ClientConfigurationIO {
     }
     static func decode<Value: ClientConfigurationDocument>(_ type: Value.Type, data: Data) throws -> Value {
         guard data.count <= limit else { throw ClientConfigurationError.invalid("configuration exceeds 64 KiB") }
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+        // Use the platform parser for comments/trailing commas, not a custom
+        // comment stripper (which can corrupt URLs and escaped string literals).
+        var options: JSONSerialization.ReadingOptions = []
+        #if canImport(Darwin)
+        options.insert(.json5Allowed)
+        #endif
+        guard let object = try JSONSerialization.jsonObject(with: data, options: options) as? [String: Any],
               Set(object.keys).subtracting(["$schema"]).isSubset(of: Value.keys) else { throw ClientConfigurationError.invalid("configuration must be an object with known keys") }
         if let metadata = object["$schema"] {
             // Editor metadata is inert. The client never fetches this URI.
@@ -154,7 +160,11 @@ enum ClientConfigurationIO {
                 throw ClientConfigurationError.invalid("$schema must be a nonempty string without control characters")
             }
         }
-        let value = try JSONDecoder().decode(type, from: data)
+        let decoder = JSONDecoder()
+        #if canImport(Darwin)
+        decoder.allowsJSON5 = true
+        #endif
+        let value = try decoder.decode(type, from: data)
         try value.validate()
         return value
     }
