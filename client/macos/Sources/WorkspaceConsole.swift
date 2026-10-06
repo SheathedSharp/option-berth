@@ -76,6 +76,12 @@ struct WorkspaceConsole: View {
                 guard !frozen else { return }
                 WorkspaceRecovery.shared.watch(workspace)
                 configureKeyRouter()
+                // onAppear can precede window keying. Rebind on the next main
+                // run-loop turn as a deterministic fallback for native events.
+                DispatchQueue.main.async {
+                    configureKeyRouter()
+                    keyRouter.install(windowNumber: NSApp.keyWindow?.windowNumber)
+                }
                 if let selected { focusIntent = TerminalFocusIntent(selected.id) }
                 else { launcher.refresh(workspace) }
             }

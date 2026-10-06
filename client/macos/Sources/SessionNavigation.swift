@@ -187,7 +187,9 @@ final class SessionKeyRouter: ObservableObject {
     }
 
     private func handle(_ event: NSEvent) -> NSEvent? {
-        guard let windowNumber, event.window?.windowNumber == windowNumber else { return event }
+        guard let windowNumber else { return event }
+        let eventWindowNumber = event.window?.windowNumber ?? event.windowNumber
+        guard eventWindowNumber == windowNumber else { return event }
         let flags = event.modifierFlags
         let command = flags.contains(.command) || flags.contains(.control)
         if event.keyCode == 48, command, flags.contains(.option) {
