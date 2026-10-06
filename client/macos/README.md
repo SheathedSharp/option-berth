@@ -110,7 +110,7 @@ schema，再重新构建客户端。
 ## 原生终端 / Native terminal
 
 终端页按 worktree 保留独立 PTY，点击新建才启动 shell；切换项目不会改变已有会话。
-`⌘3` 打开终端页。结束按钮只向该会话的直接子进程发送 SIGHUP，等待退出回执后才允许关闭；
+`⌥⌘T` 打开会话页。结束按钮只向该会话的直接子进程发送 SIGHUP，等待退出回执后才允许关闭；
 退出应用前必须先结束活动会话。脱离终端的子进程需用户另行管理，项目服务仍通过 `oberth down` 停止。
 
 SwiftTerm 固定版本负责终端仿真与 PTY；构建需要 Swift 6+，首次构建需要下载依赖。
@@ -119,19 +119,21 @@ SwiftTerm 固定版本负责终端仿真与 PTY；构建需要 Swift 6+，首次
 
 ## Coding agent 会话 / Agent sessions
 
-在终端页切换 **Terminal / Agent session**。Terminal 只显示 shell 会话，Agent session
-只显示 agent 会话；两者都固定归属于创建时选择的 worktree。切换页面不会结束原生进程，
-也不会把会话迁移到另一个项目。草稿仅在内存中保留，切换页面不会丢失；布局和 provider 选择可经用户同意保存，重启后先确认恢复，不自动恢复进程。
+在 **会话 / Sessions** 中，Shell 与外部 Agent 共用一个会话栏。首次进入直接选择运行方式；
+已有会话时用「新会话」打开原生浮层，选择 Shell 或本机 Agent。浮层不会挤压现有终端、
+重启 PTY 或广播输入；关闭后草稿留在内存，焦点返回当前会话。
+每个会话固定归属于创建时的 worktree。切换项目不迁移进程；布局和 provider 选择可经用户
+同意保存，重启后先确认恢复，不自动恢复进程。
 
 先自行安装并登录所需的 OpenCode、Codex、Claude Code、DeepSeek Harness 或 Pi。
 客户端使用同一份 `oberth agent list/plan` 契约；未安装会标记 Missing，不自动安装或登录。
 旧引擎缺少这些命令时会报错，不会回退拼接 shell。需要与客户端匹配的 oberth 版本；
 安装/替换引擎仍由用户明确执行。
 
-在消息框内，**⌘Enter** 用该消息建立一个新 agent 会话；**⇧⌘Enter** 将焦点交给当前活动的
+在消息框内，**⌘Enter** 建立新 agent 会话；填写的初始任务按字面传入，留空则直接打开原生会话。**⇧⌘Enter** 将焦点交给当前活动的
 原生会话，没有可继续的原生会话时才新建。普通 Enter 插入换行。只有消息框处理这些快捷键，
 中文输入法组合文字时不会误提交；进入原生终端后，输入和审批交给 agent 自己。
-这不是第二套聊天协议：后续对话直接在原生界面继续，再次点击「发送到新会话」会另建会话。
+这不是第二套聊天协议：后续对话直接在原生界面继续，再次点击「开始新会话」会另建会话。
 不猜测 TUI 屏幕、不向未知输入状态模拟粘贴、不按“最近一次对话”跨 worktree 恢复。
 
 DeepSeek 的消息入口运行 `dsh --profile headless`；原生入口要求用户已有 `tui` profile。
@@ -144,9 +146,10 @@ worktree 是启动归属，不是限制 agent 文件权限的操作系统沙箱�
 不是对忽略退出信号的故障程序承诺硬超时。agent 启动后的结束操作仍遵守上面的 PTY 规则。
 外部 agent 自身的日志、会话存储和文件改动遵循它自己的配置。
 
-**English.** Switch between Terminal and Agent session in the workspace console. Each process keeps
-its initial worktree. Install/authenticate your coding agent yourself; Refresh only discovers executables.
-In the message composer, Cmd+Enter starts a new session with a literal initial prompt. Shift+Cmd+Enter
+**English.** Shells and external agents share one session strip. The native New session popover
+selects a shell or provider without resizing running terminals. Each process keeps its initial worktree. Install/authenticate your coding agent yourself; Refresh only discovers executables.
+In the message composer, Cmd+Enter starts a new session; a nonempty initial task is passed literally,
+and an empty task opens the native interface. Shift+Cmd+Enter
 focuses the selected live native session, or opens a new native session when none is available.
 Continue subsequent turns in the agent's own terminal. Return inserts a newline; marked IME text is not
 submitted. Composer shortcuts are not installed in native terminals. Drafts remain in memory only; layout and provider metadata can be saved with explicit consent and reviewed after restart, without automatically launching processes.
@@ -180,8 +183,8 @@ AgentChecks 的默认路径使用合成 CLI 协议；显式二进制路径验证
 重排；隐藏窗格不结束会话，结束则仍需确认真实退出。每个会话只有一个 PTY，独立窗口与
 工作区之间移动的是其呈现权，不复制进程、不广播输入。具体操作与上限见下方“动作、布局与窗口”。
 
-进入 **原生 / Native** 时可收起消息框；后续对话仍由外部 agent 处理。计划读取进度/取消和
-错误提示位于消息框之外，收起后也可访问。**⌘F** 搜索当前焦点终端，**⌥⌘G** 打开只读 Git。
+开始会话后自动关闭创建浮层；后续对话仍由外部 agent 处理。创建期间可取消计划，
+关闭浮层也会取消未完成计划，不留下隐藏的启动任务。**⌘F** 搜索当前焦点终端，**⌥⌘G** 打开只读 Git。
 标准 Edit/Window/App 菜单保留，复制、粘贴、全选和撤销仍走原生响应链。
 
 **English.** Shift+Cmd+O opens session management, including sessions whose manifest was removed.

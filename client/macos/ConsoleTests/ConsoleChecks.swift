@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import ScreenCaptureKit
 import BerthTerminal
 @testable import BerthClient
 
@@ -43,6 +44,19 @@ import BerthTerminal
         let root = URL(fileURLWithPath: home).appendingPathComponent("console-fixture")
         let other = root.appendingPathComponent("other")
         try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        // Initial discovery is a synthetic local catalogue too, not whichever
+        // daily oberth happens to be installed on the developer's machine.
+        let catalogue = root.appendingPathComponent("fixture-catalogue")
+        try Data(#"""
+#!/bin/sh
+[ "$#" = 3 ] && [ "$1" = agent ] && [ "$2" = list ] && [ "$3" = --json ] || exit 97
+/bin/sleep 0.5
+printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"codex","installed":true,"native_prompt":true}]}'
+"""#.utf8).write(to: catalogue)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: catalogue.path)
+        setenv("BERTH_BIN", catalogue.path, 1)
+        // A synthetic prompt prevents machine/user identity in visual evidence.
+        setenv("PROMPT", "fixture> ", 1); setenv("PS1", "fixture> ", 1)
         let registry = TerminalSessions.shared
         let env = ["HOME":root.path, "PATH":"/usr/bin:/bin"]
         let script = "printf 'READY:%s\\n' \"$PWD\"; while IFS= read -r value; do printf 'INPUT:%s\\n' \"$value\"; done"
@@ -113,6 +127,38 @@ import BerthTerminal
         workspace.draft = "fixture draft"
         choose(shell); choose(agent)
         require(workspace.draft == "fixture draft", "switching lost the unsent draft")
+        // Opening a creation surface must not resize live alternate-screen TUIs,
+        // replace hosts, mutate the active split, or implicitly launch a process.
+        let shellBounds = shell.terminal.bounds, agentBounds = agent.terminal.bounds
+        let shellHost = shell.terminal.superview, agentHost = agent.terminal.superview
+        guard let create = find(NSButton.self, in: host).first(where: { $0.accessibilityIdentifier() == "console.newSession" }) else { fatalError("unified creation entry missing") }
+        for attempt in 0..<4 {
+            create.performClick(nil)
+            var cancel: NSButton?
+            eventually("native creation popover did not open/reopen") {
+                cancel = NSApp.windows.filter(\.isVisible).compactMap(\.contentView)
+                    .flatMap { find(NSButton.self, in: $0) }.first { $0.accessibilityIdentifier() == "console.cancelLaunch" }
+                return cancel != nil
+            }
+            let targetPicker = NSApp.windows.filter(\.isVisible).compactMap(\.contentView)
+                .flatMap { find(NSPopUpButton.self, in: $0) }.first { $0.accessibilityIdentifier() == "console.launchTarget" }
+            require(targetPicker?.isEnabled == true, "provider discovery blocked the Shell selector")
+            pump(0.03)
+            require(shell.terminal.bounds == shellBounds && agent.terminal.bounds == agentBounds, "creation resized live PTYs")
+            require(shell.terminal.superview === shellHost && agent.terminal.superview === agentHost, "creation remounted native hosts")
+            require(registry.sessions.count == 3 && workspace.activeLayout.root == treeRoot, "creation changed runtime ownership")
+            if attempt == 0 {
+                eventually("synthetic provider was not loaded in the popover") {
+                    NSApp.windows.filter(\.isVisible).compactMap(\.contentView).flatMap { find(NSPopUpButton.self, in: $0) }.contains { $0.titleOfSelectedItem == "Codex fixture" }
+                }
+                pump(0.3) // Capture settled native presentation, not the show animation.
+                try captureOwnedWindow(window, to: URL(fileURLWithPath: home).appendingPathComponent("session-launcher-composited-native.png"))
+            }
+            cancel?.performClick(nil)
+            eventually("cancel did not return focus to selected native PTY") { window.firstResponder === agent.terminal && window.isKeyWindow }
+            require(workspace.draft == "fixture draft", "cancel discarded an unsent draft")
+            // Reopen before a prior hide animation's callback can own the new one.
+        }
         let editor = NSTextView(frame: NSRect(x: 20, y: 20, width: 140, height: 30))
         host.addSubview(editor); window.makeFirstResponder(editor)
         workspace.draft = "changed draft"; registry.objectWillChange.send(); pump()
@@ -126,9 +172,7 @@ import BerthTerminal
         eventually("returning the detached terminal did not restore focus") { agent.terminal.window === window && window.firstResponder === agent.terminal }
         func capture(_ name: String) throws {
             pump()
-            guard let image = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { fatalError("console bitmap unavailable") }
-            host.cacheDisplay(in: host.bounds, to: image)
-            try image.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: home).appendingPathComponent(name + "-native.png"))
+            try captureOwnedWindow(window, to: URL(fileURLWithPath: home).appendingPathComponent(name + "-composited-native.png"))
         }
         try capture("console-mixed")
         window.setContentSize(NSSize(width: 600, height: 440)); pump(0.25)
@@ -138,4 +182,28 @@ import BerthTerminal
         try configurationChecks(parentRoot: root)
         print("PASS: real native shared tabs, mixed layout identity, cwd/draft retention, independent key input, one-shot focus, detached return and background launch isolation")
     }
+    static func captureOwnedWindow(_ window: NSWindow, to output: URL) throws {
+        var completed: Result<Void, Error>?
+        let task = Task { @MainActor in
+            do {
+                let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
+                guard let owned = content.windows.first(where: {
+                    $0.windowID == CGWindowID(window.windowNumber) && $0.owningApplication?.processID == ProcessInfo.processInfo.processIdentifier
+                }) else { throw CocoaError(.fileReadUnknown) }
+                let config = SCStreamConfiguration()
+                config.width = Int(window.frame.width * window.backingScaleFactor)
+                config.height = Int(window.frame.height * window.backingScaleFactor)
+                config.showsCursor = false
+                let image = try await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: owned), configuration: config)
+                try Task.checkCancellation()
+                guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else { throw CocoaError(.fileWriteUnknown) }
+                try png.write(to: output)
+                completed = .success(())
+            } catch { completed = .failure(error) }
+        }
+        defer { task.cancel() }
+        eventually("owned native window composition capture timed out") { completed != nil }
+        try completed!.get()
+    }
+
 }

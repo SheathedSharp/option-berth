@@ -70,7 +70,27 @@ else:
             guard let button = find(NSButton.self, in: host).first(where: { $0.accessibilityIdentifier() == id }) else { fatalError("missing native console action " + id) }
             button.performClick(nil)
         }
-        press("console.newAgent")
+        func openShell() {
+            press("console.newSession")
+            var picker: NSPopUpButton?
+            eventually("unified target picker missing") {
+                picker = NSApp.windows.filter(\.isVisible).compactMap(\.contentView)
+                    .flatMap { find(NSPopUpButton.self, in: $0) }
+                    .first { $0.accessibilityIdentifier() == "console.launchTarget" }
+                return picker != nil
+            }
+            guard let picker, let item = picker.itemArray.first(where: { $0.representedObject as? String == "shell" }),
+                  let action = picker.action else { fatalError("Shell target unavailable") }
+            picker.select(item); NSApp.sendAction(action, to: picker.target, from: picker)
+            var launch: NSButton?
+            eventually("unified Shell launch action missing") {
+                launch = NSApp.windows.filter(\.isVisible).compactMap(\.contentView)
+                    .flatMap { find(NSButton.self, in: $0) }
+                    .first { $0.accessibilityIdentifier() == "console.launch" && $0.title == "打开 Shell" }
+                return launch?.isEnabled == true
+            }
+            launch?.performClick(nil)
+        }
         eventually("configured provider did not reach the native Agent picker") {
             find(NSPopUpButton.self, in: host).contains { $0.titleOfSelectedItem == "Claude fixture" }
         }
@@ -88,7 +108,7 @@ else:
         }
         let agent = registry.inWorktree(root.path).first { $0.kind == "agent:claude:native" }!
         eventually("Agent launch did not hand off to its own native terminal") { window.firstResponder === agent.terminal && state.draft.isEmpty }
-        press("console.newShell")
+        openShell()
         eventually("configured Shell action did not create a PTY") { registry.inWorktree(root.path).contains { $0.kind == "terminal" } }
         let shell = registry.inWorktree(root.path).first { $0.kind == "terminal" }!
         let process = shell.terminal.process
@@ -101,7 +121,7 @@ else:
         eventually("console did not consume updated future-session defaults") { registry.defaultProviderID == "pi" && !settings.shellIntegration }
         require(state.providerID == "claude" && registry.workspace(later.path).providerID == "pi", "default Agent change rewrote existing console or missed the next one")
         require(shell.terminal.process === process && shell.isActive && agent.isActive, "configuration restarted a running PTY")
-        press("console.newShell")
+        openShell()
         eventually("second explicit Shell action missing") { registry.inWorktree(root.path).filter { $0.kind == "terminal" }.count == 2 }
         let plain = registry.inWorktree(root.path).last { $0.kind == "terminal" }!
         var output = ""
@@ -111,10 +131,7 @@ else:
         eventually("plain shell fixture command did not finish") { output.contains("PLAIN-SHELL-DONE") }
         require(plain.commandBlocks.isEmpty && shell.terminal.process === process, "new-shell setting modified existing integration or ignored opt-out")
         pump()
-        if let image = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
-            host.cacheDisplay(in: host.bounds, to: image)
-            try image.representation(using: .png, properties: [:])!.write(to: directory.deletingLastPathComponent().appendingPathComponent("console-configured-native.png"))
-        }
+        try captureOwnedWindow(window, to: directory.deletingLastPathComponent().appendingPathComponent("console-configured-composited-native.png"))
         print("PASS: file defaults -> native Agent picker -> Cmd+Enter plan -> native PTY; new zsh integration on/off; existing provider/draft/process identity preserved")
     }
 }
