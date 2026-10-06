@@ -10,8 +10,9 @@ import SwiftUI
 /// view to its window.
 struct ClientWindowChrome: NSViewRepresentable {
     let color: NSColor
+    let dark: Bool
 
-    init(color: NSColor) { self.color = color }
+    init(color: NSColor, dark: Bool) { self.color = color; self.dark = dark }
 
     func makeNSView(context: Context) -> WindowObserver {
         WindowObserver(color: color)
@@ -19,14 +20,16 @@ struct ClientWindowChrome: NSViewRepresentable {
 
     func updateNSView(_ nsView: WindowObserver, context: Context) {
         nsView.color = color
+        nsView.dark = dark
         nsView.apply()
     }
 
     final class WindowObserver: NSView {
         var color: NSColor
+        var dark: Bool
 
-        init(color: NSColor) {
-            self.color = color
+        init(color: NSColor, dark: Bool) {
+            self.color = color; self.dark = dark
             super.init(frame: .zero)
             setAccessibilityElement(false)
         }
@@ -42,6 +45,7 @@ struct ClientWindowChrome: NSViewRepresentable {
             guard let window else { return }
             window.isOpaque = true
             window.backgroundColor = color
+            window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
             // Sheets otherwise retain a translucent titlebar material above a
             // solid paper surface. Keep native buttons and dismissal intact.
             if window.sheetParent != nil {
@@ -60,7 +64,7 @@ private struct ClientWindowChromeModifier: ViewModifier {
             .background {
                 // A tiny non-interactive view is enough to observe the native
                 // presentation window without changing SwiftUI layout.
-                ClientWindowChrome(color: NSColor(settings.canvasColor))
+                ClientWindowChrome(color: NSColor(settings.canvasColor), dark: settings.colorScheme == .dark)
                     .frame(width: 1, height: 1)
                     .allowsHitTesting(false)
             }

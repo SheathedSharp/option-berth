@@ -138,6 +138,7 @@ struct BoardView: View {
             }
         }
         .preferredColorScheme(settings.colorScheme)
+        .clientWindowChrome()
         .disabled(views.showingGuide)
         .accessibilityHidden(views.showingGuide)
         .overlayPreferenceValue(TourAnchors.self) { anchors in
