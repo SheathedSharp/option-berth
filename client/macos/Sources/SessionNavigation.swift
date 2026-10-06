@@ -9,25 +9,18 @@ struct SessionRailItem: View {
     let selected: Bool
     let activate: () -> Void
 
-    private var isTerminal: Bool { session.kind == "terminal" }
-    private var symbol: String { isTerminal ? "terminal" : "sparkle" }
-
     var body: some View {
-        Button(action: activate) {
-            ZStack(alignment: .bottomTrailing) {
-                Image(systemName: symbol)
-                    .font(.system(size: 13, weight: selected ? .semibold : .regular))
-                    .foregroundStyle(selected ? Ink.accent : Ink.inkMuted)
-                    .frame(width: 30, height: 28)
-                    .background(selected ? Ink.accentSoft : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                Circle()
-                    .fill(session.isActive ? Ink.live : Ink.dormant)
-                    .frame(width: 5, height: 5)
-                    .offset(x: -4, y: -4)
-            }
+        ZStack(alignment: .bottomTrailing) {
+            ConsoleSessionTab(session: session, selected: selected, compact: true, activate: activate)
+                .frame(width: 30, height: 28)
+                .background(selected ? Ink.accentSoft : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            Circle()
+                .fill(session.isActive ? Ink.live : Ink.dormant)
+                .frame(width: 5, height: 5)
+                .offset(x: -4, y: -4)
         }
-        .buttonStyle(.plain)
+        .frame(width: 30, height: 28)
         .help(session.title + " · " + session.state)
         .accessibilityIdentifier("console.session." + session.id.uuidString)
         .accessibilityLabel(session.title)
@@ -176,7 +169,9 @@ final class SessionKeyRouter: ObservableObject {
     }
 
     func install(windowNumber: Int?) {
-        guard monitor == nil, let windowNumber else { return }
+        guard let windowNumber else { return }
+        if monitor != nil, self.windowNumber == windowNumber { return }
+        if let monitor { NSEvent.removeMonitor(monitor) }
         self.windowNumber = windowNumber
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }

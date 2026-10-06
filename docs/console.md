@@ -5,7 +5,7 @@
 ## 交互决定
 
 - Shell 与 coding-agent 会话共用一个 terminal 主画布和同一 PTY registry。左侧窄 rail 只负责跳转；选择会话只是切换既有 PTY 的呈现与焦点，不重新创建进程。
-- rail 按 Shell / Agent 分组显示运行态；⌘⌥Tab 打开当前 worktree 的非模态会话切换器，⌘Tab / ⇧⌘Tab 在既有会话间循环。切换器支持名称、provider、状态和路径检索。
+- rail 按 Shell → Agent 排列并显示运行态；⌘⌥Tab 打开当前 worktree 的非模态会话切换器，⌘Tab / ⇧⌘Tab 在既有会话间循环。切换器按 Shell / Agent 分组，并支持名称、provider、状态和路径检索。
 - 当焦点在 agent session 时，Esc 返回进入该 agent 前记住的 Shell；没有 Shell 时只关闭切换器。快捷键只绑定当前工作区主窗口，不拦截独立窗口或 terminal 已选中的普通 Esc。
 - 新建 Shell 是明确动作；新建 Agent 使用可收起的输入区。输入区明确表示“新会话”，后续交流与审批仍在原生 agent 内进行，不把启动参数伪装成续聊。
 - 保留当前混合分屏，选中已有窗格只移动焦点；选择不在分屏中的会话替换当前焦点窗格，不广播输入。
