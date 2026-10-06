@@ -97,6 +97,13 @@ struct WorkspaceConsole: View {
                     .opacity(0)
                     .allowsHitTesting(false)
             }
+            .background(alignment: .topLeading) {
+                SessionShortcutBridge(open: openSwitcher, cycle: cycleSession,
+                                      escape: closeSwitcher, canCycle: { scoped.count > 1 },
+                                      canEscape: { switcherPresented || selected?.kind != "terminal" })
+                    .frame(width: 2, height: 2)
+                    .allowsHitTesting(false)
+            }
             .onDisappear { launcher.cancel(); keyRouter.remove() }
     }
     private var launchSurface: SessionLaunchPanel {

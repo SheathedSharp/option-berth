@@ -134,6 +134,78 @@ struct SessionSwitcherPalette: View {
     }
 }
 
+/// AppKit key equivalents provide a deterministic path for synthetic and
+/// accessibility-generated events. The local monitor remains the first path,
+/// but a hidden native button is more reliable than relying on SwiftUI's focus
+/// tree to discover a tab key in a terminal responder.
+struct SessionShortcutBridge: NSViewRepresentable {
+    let open: () -> Void
+    let cycle: (Int) -> Void
+    let escape: () -> Void
+    let canCycle: () -> Bool
+    let canEscape: () -> Bool
+
+    func makeNSView(context: Context) -> ShortcutView { ShortcutView() }
+
+    func updateNSView(_ view: ShortcutView, context: Context) {
+        view.apply(open: open, cycle: cycle, escape: escape,
+                   canCycle: canCycle(), canEscape: canEscape())
+    }
+
+    final class ShortcutView: NSView {
+        private let openButton = NSButton(frame: .zero)
+        private let cycleButton = NSButton(frame: .zero)
+        private let reverseButton = NSButton(frame: .zero)
+        private let escapeButton = NSButton(frame: .zero)
+        private var openAction: (() -> Void)?
+        private var cycleAction: ((Int) -> Void)?
+        private var escapeAction: (() -> Void)?
+
+        override init(frame frameRect: NSRect) {
+            super.init(frame: frameRect)
+            for button in [openButton, cycleButton, reverseButton, escapeButton] {
+                button.isBordered = false
+                button.setButtonType(.momentaryPushIn)
+                button.alphaValue = 0.01
+                button.setAccessibilityElement(false)
+                addSubview(button)
+            }
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+        override func layout() {
+            super.layout()
+            for button in [openButton, cycleButton, reverseButton, escapeButton] {
+                button.frame = NSRect(x: 0, y: 0, width: 1, height: 1)
+            }
+        }
+
+        func apply(open: @escaping () -> Void, cycle: @escaping (Int) -> Void,
+                   escape: @escaping () -> Void, canCycle: Bool, canEscape: Bool) {
+            openAction = open; cycleAction = cycle; escapeAction = escape
+            configure(openButton, key: canCycle ? "\t" : "", modifiers: [.command, .option], action: #selector(openPressed))
+            configure(cycleButton, key: canCycle ? "\t" : "", modifiers: [.command], action: #selector(cyclePressed))
+            configure(reverseButton, key: canCycle ? "\t" : "", modifiers: [.command, .shift], action: #selector(reversePressed))
+            configure(escapeButton, key: canEscape ? "\u{1b}" : "", modifiers: [], action: #selector(escapePressed))
+        }
+
+        private func configure(_ button: NSButton, key: String,
+                               modifiers: NSEvent.ModifierFlags, action: Selector) {
+            button.keyEquivalent = key
+            button.keyEquivalentModifierMask = modifiers
+            button.target = self
+            button.action = action
+            button.isEnabled = !key.isEmpty
+        }
+
+        @objc private func openPressed() { openAction?() }
+        @objc private func cyclePressed() { cycleAction?(1) }
+        @objc private func reversePressed() { cycleAction?(-1) }
+        @objc private func escapePressed() { escapeAction?() }
+    }
+}
+
 enum SessionNavigationModel {
     enum Group: Equatable { case shell, agent }
     static func group(for kind: String) -> Group { kind == "terminal" ? .shell : .agent }
