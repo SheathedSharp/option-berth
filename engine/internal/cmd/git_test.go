@@ -238,6 +238,41 @@ func TestGitDiffCommitJSONCarriesHistoricalIdentity(t *testing.T) {
 	}
 }
 
+
+func TestGitDiffCommitJSONRootUsesEmptyBase(t *testing.T) {
+	dir := t.TempDir()
+	gitIn(t, dir, "init", "-q")
+	gitIn(t, dir, "config", "user.email", "test@example.com")
+	gitIn(t, dir, "config", "user.name", "Test")
+	writeIn(t, dir, "root.txt", "root\n")
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-qm", "root")
+	commitOut := strings.TrimSpace(gitInOutput(t, dir, "rev-parse", "HEAD"))
+	chdir(t, dir)
+
+	prevJSON, prevFile, prevCommit := gitDiffJSONFlag, gitDiffFileFlag, gitDiffCommitFlag
+	gitDiffJSONFlag, gitDiffFileFlag, gitDiffCommitFlag = true, "", commitOut
+	t.Cleanup(func() { gitDiffJSONFlag, gitDiffFileFlag, gitDiffCommitFlag = prevJSON, prevFile, prevCommit })
+
+	out, err := runGit(t, gitDiffCmd, gitDiffRun)
+	if err != nil {
+		t.Fatalf("git diff --commit root: %v", err)
+	}
+	var doc struct {
+		Commit string `json:"commit"`
+		Base   string `json:"base"`
+		Files  []struct {
+			Path string `json:"path"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("stdout is not root commit diff JSON: %v\n%s", err, out)
+	}
+	if doc.Commit != commitOut || doc.Base != "" || len(doc.Files) != 1 || doc.Files[0].Path != "root.txt" {
+		t.Fatalf("root identity = %+v, want commit, empty base, and root.txt", doc)
+	}
+}
+
 func TestGitDiffCommitRejectsRefLikeIDAsUsage(t *testing.T) {
 	dir := gitTestRepo(t)
 	chdir(t, dir)
