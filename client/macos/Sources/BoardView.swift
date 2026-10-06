@@ -148,9 +148,10 @@ struct BoardView: View {
                 }
             }
         }
-        .sheet(isPresented: $views.showingUpdates) { ReleaseUpdateSheet() }
+        .sheet(isPresented: $views.showingUpdates) { ReleaseUpdateSheet().clientWindowChrome() }
         .sheet(isPresented: $views.showingRecovery) {
             WorkspaceRecoverySheet(recovery: .shared) { root in views.scope = .console(root) }
+                .clientWindowChrome()
         }
         .sheet(isPresented: $views.showingActions, onDismiss: {
             guard let action = pendingAction else { return }
@@ -158,6 +159,7 @@ struct BoardView: View {
             commandDelivery.submit(action, perform: performAction)
         }) {
             WorkspaceActionPanel(perform: { pendingAction = $0 }, shortcuts: .shared)
+                .clientWindowChrome()
         }
         .sheet(isPresented: $views.showingSessions) {
             SessionManager { session in
@@ -167,13 +169,14 @@ struct BoardView: View {
                     return TerminalSessions.shared.inWorktree(root).contains(where: { $0.id == session.id })
                 }) { views.scope = .terminal(project.name) }
                 else { views.scope = .console(session.worktree) }
-            }
+            }.clientWindowChrome()
         }
         .sheet(item: $proposal) { result in
             AddProjectSheet(result: result, problem: proposalProblem,
                             scrolls: scrolls,
                             onWrite: { writeProposal(result, yaml: $0) },
                             onCancel: { proposal = nil; proposalProblem = nil })
+                .clientWindowChrome()
         }
         .sheet(item: $editingConfig) { pending in
             AddProjectSheet(result: GroupInitResult(path: pending.path, yaml: pending.yaml,
@@ -182,9 +185,11 @@ struct BoardView: View {
                             scrolls: scrolls,
                             onWrite: { saveConfig(pending, yaml: $0) },
                             onCancel: { editingConfig = nil; configProblem = nil })
+                .clientWindowChrome()
         }
         .sheet(isPresented: $views.showingSettings) {
             SettingsSheet(settings: settings, onClose: { views.showingSettings = false })
+                .clientWindowChrome()
         }
         .alert("移除项目", isPresented: Binding(
             get: { removing != nil }, set: { if !$0 { removing = nil } })) {

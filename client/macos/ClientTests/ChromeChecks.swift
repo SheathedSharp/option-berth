@@ -27,6 +27,22 @@ extension ClientChecks {
         pump(0.15)
         require(calls.isEmpty, "toolbar appearance performed an action or update check")
         require(host.fittingSize.width <= 700 && host.fittingSize.height <= 80, "toolbar exceeds its native test window")
+        let chromeHost = NSHostingView(rootView: Text("paper").clientWindowChrome())
+        let chromeWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 120),
+                                    styleMask: [.titled], backing: .buffered, defer: false)
+        chromeWindow.isReleasedWhenClosed = false; chromeWindow.contentView = chromeHost; chromeWindow.makeKeyAndOrderFront(nil)
+        defer { chromeWindow.contentView = nil; chromeWindow.close() }
+        pump(0.1)
+        let actual = chromeWindow.backgroundColor?.usingColorSpace(.sRGB)
+        let expected = NSColor(Ink.canvas).usingColorSpace(.sRGB)
+        require(chromeWindow.isOpaque && actual != nil && expected != nil,
+                "client window chrome did not bind an opaque canvas")
+        if let actual, let expected {
+            require(abs(actual.redComponent - expected.redComponent) < 0.01 &&
+                    abs(actual.greenComponent - expected.greenComponent) < 0.01 &&
+                    abs(actual.blueComponent - expected.blueComponent) < 0.01,
+                    "client window chrome used a different canvas color")
+        }
         print("PASS: compatibility aliases canonicalized, worktree tab retained, recovery/update actions discoverable, toolbar causes no implicit effects")
         do { try worktreeRoutingChecks() } catch { fatalError("worktree routing fixture failed: \(error)") }
         do { try partialLayoutChecks() } catch { fatalError("partial layout fixture failed: \(error)") }

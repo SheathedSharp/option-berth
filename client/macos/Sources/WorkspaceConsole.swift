@@ -53,7 +53,7 @@ struct WorkspaceConsole: View {
             }
             if let problem { Text(problem).font(Face.sans(11)).foregroundStyle(Change.changed).textSelection(.enabled).padding(10) }
         }.background(Ink.canvas).foregroundStyle(Ink.ink)
-            .sheet(isPresented: $history) { WorktreeHistorySheet(root: root, sessions: sessions) }
+            .sheet(isPresented: $history) { WorktreeHistorySheet(root: root, sessions: sessions).clientWindowChrome() }
             .onAppear {
                 guard !frozen else { return }
                 WorkspaceRecovery.shared.watch(workspace)
