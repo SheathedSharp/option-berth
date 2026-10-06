@@ -75,7 +75,7 @@ func ReadGraph(ctx context.Context, dir string, limit int) (Graph, error) {
 	ctx, cancel := context.WithTimeout(ctx, graphTimeout)
 	defer cancel()
 
-	snap, _, err := readStatus(ctx, dir)
+	snap, err := readGraphStatus(ctx, dir)
 	if err != nil {
 		return Graph{}, err
 	}
@@ -119,6 +119,12 @@ func ReadGraph(ctx context.Context, dir string, limit int) (Graph, error) {
 		}
 		commits = ordered
 	}
+	if snap.Head != "" {
+		currentHead, headErr := gitOut(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+		if headErr != nil || strings.TrimSpace(string(currentHead)) != snap.Head {
+			return Graph{}, fmt.Errorf("git HEAD changed during graph read")
+		}
+	}
 	truncated := len(commits) > limit
 	if truncated {
 		commits = commits[:limit]
@@ -140,6 +146,20 @@ func ReadGraph(ctx context.Context, dir string, limit int) (Graph, error) {
 	return Graph{Root: root, ObservedHead: snap.Head, Branch: snap.Branch, Detached: snap.Detached,
 		Upstream: snap.Upstream, Ahead: snap.Ahead, Behind: snap.Behind, Truncated: truncated,
 		Limit: limit, Commits: commits, Refs: refs, Worktrees: snap.Worktrees}, nil
+}
+
+// readGraphStatus asks only for branch identity. Enumerating every untracked
+// file is useful for a files view but makes a bounded history query scale with
+// a generated tree, so graph reads deliberately use -uno and parse headers
+// only. The later worktree read still supplies the checkout list.
+func readGraphStatus(ctx context.Context, dir string) (Snapshot, error) {
+	out, err := gitOut(ctx, dir, "status", "--porcelain=v2", "--branch", "-z", "-uno")
+	if err != nil {
+		return Snapshot{}, err
+	}
+	var snap Snapshot
+	parseStatus(out, &snap)
+	return snap, nil
 }
 
 func parseGraphCommits(out []byte) []GraphCommit {
