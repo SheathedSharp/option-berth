@@ -97,6 +97,7 @@ struct SessionSwitcherPalette: View {
         .shadow(color: .black.opacity(0.22), radius: 20, y: 8)
         .onAppear { focused = true }
         .accessibilityIdentifier("console.sessionPalette")
+            .background(SessionPaletteMarker().frame(width: 1, height: 1))
     }
 
     @ViewBuilder private func section(_ title: String, sessions: [TerminalSession]) -> some View {
@@ -260,6 +261,16 @@ struct SessionShortcutBridge: NSViewRepresentable {
         @objc private func reversePressed() { cycleAction?(-1) }
         @objc private func escapePressed() { escapeAction?() }
     }
+}
+
+private struct SessionPaletteMarker: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        view.setAccessibilityIdentifier("console.sessionPalette")
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {}
 }
 
 enum SessionNavigationModel {
