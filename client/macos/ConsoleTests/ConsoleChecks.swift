@@ -128,6 +128,17 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
                 isARepeat: false, keyCode: keyCode)!
             NSApp.sendEvent(event)
         }
+        // Exercise the router before a rail click or palette open can install
+        // it as a side effect. The host view must bind after this window became
+        // key, even though SwiftUI's onAppear ran earlier.
+        press(48, flags: [.command, .option], characters: "\t")
+        eventually("initial Command-Option-Tab did not open the session palette") {
+            find(NSView.self, in: host).contains { $0.accessibilityIdentifier() == "console.sessionPalette" }
+        }
+        press(53, characters: "\u{1b}")
+        eventually("initial Escape did not dismiss the session palette") {
+            !find(NSView.self, in: host).contains { $0.accessibilityIdentifier() == "console.sessionPalette" }
+        }
         choose(agent); press(53, characters: "\u{1b}")
         eventually("Escape did not return from the agent to the remembered Shell") { workspace.activeSelection == shell.id && window.firstResponder === shell.terminal }
         choose(shell); press(48, flags: [.command], characters: "\t")

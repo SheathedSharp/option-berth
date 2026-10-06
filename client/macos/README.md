@@ -110,7 +110,7 @@ schema，再重新构建客户端。
 ## 原生终端 / Native terminal
 
 终端页按 worktree 保留独立 PTY，点击新建才启动 shell；切换项目不会改变已有会话。
-`⌥⌘T` 打开会话页。结束按钮只向该会话的直接子进程发送 SIGHUP，等待退出回执后才允许关闭；
+`⌥⌘T` 打开当前 worktree 工作台（terminal 主画布）。结束按钮只向该会话的直接子进程发送 SIGHUP，等待退出回执后才允许关闭；
 退出应用前必须先结束活动会话。脱离终端的子进程需用户另行管理，项目服务仍通过 `oberth down` 停止。
 
 SwiftTerm 固定版本负责终端仿真与 PTY；构建需要 Swift 6+，首次构建需要下载依赖。
@@ -119,9 +119,10 @@ SwiftTerm 固定版本负责终端仿真与 PTY；构建需要 Swift 6+，首次
 
 ## Coding agent 会话 / Agent sessions
 
-在 **会话 / Sessions** 中，Shell 与外部 Agent 共用一个会话栏。首次进入直接选择运行方式；
-已有会话时用「新会话」打开原生浮层，选择 Shell 或本机 Agent。浮层不会挤压现有终端、
-重启 PTY 或广播输入；关闭后草稿留在内存，焦点返回当前会话。
+在 **会话 / Sessions** 中，terminal 是主画布。每个 worktree 左侧的窄 vertical rail 按
+Shell → Agent 排列会话，用运行/休眠点标记状态；⌘⌥Tab 打开非模态、可搜索的 Shell/Agent
+切换器，结果显示 provider、状态和路径。切换不会挤压现有终端、重启 PTY 或广播输入；
+关闭切换器后草稿留在内存，焦点返回当前会话。Agent session 的审批仍归属它自己的 CLI。
 每个会话固定归属于创建时的 worktree。切换项目不迁移进程；布局和 provider 选择可经用户
 同意保存，重启后先确认恢复，不自动恢复进程。
 
@@ -146,8 +147,11 @@ worktree 是启动归属，不是限制 agent 文件权限的操作系统沙箱�
 不是对忽略退出信号的故障程序承诺硬超时。agent 启动后的结束操作仍遵守上面的 PTY 规则。
 外部 agent 自身的日志、会话存储和文件改动遵循它自己的配置。
 
-**English.** Shells and external agents share one session strip. The native New session popover
-selects a shell or provider without resizing running terminals. Each process keeps its initial worktree. Install/authenticate your coding agent yourself; Refresh only discovers executables.
+**English.** The terminal is the primary canvas. A narrow per-worktree rail orders Shell sessions
+before Agent sessions and marks live/dormant state. Cmd+Option+Tab opens a non-modal searchable
+Shell/Agent switcher with provider, state, and path context. Switching does not resize running
+terminals, restart a PTY, or broadcast input; provider-native approvals stay with the agent CLI.
+The native New session popover selects a shell or provider without resizing running terminals. Each process keeps its initial worktree. Install/authenticate your coding agent yourself; Refresh only discovers executables.
 In the message composer, Cmd+Enter starts a new session; a nonempty initial task is passed literally,
 and an empty task opens the native interface. Shift+Cmd+Enter
 focuses the selected live native session, or opens a new native session when none is available.
@@ -174,7 +178,8 @@ AgentChecks 的默认路径使用合成 CLI 协议；显式二进制路径验证
 
 ## 会话工作区 / Session workspace
 
-**⇧⌘O** 打开全局会话管理。可以按名称、worktree、agent 类型搜索，重命名并打开、结束或关闭
+日常切换使用 worktree 内的 vertical rail 或 ⌘⌥Tab palette；**⇧⌘O** 仍打开全局会话管理。
+可以按名称、worktree、agent 类型搜索，重命名并打开、结束或关闭
 本应用拥有的会话。即使原项目清单被移除，活动 PTY 仍可从这里找到；未关联清单的会话页明确
 提示没有项目服务事实，不把会话存在冒充服务正常。移除项目会丢弃该项目的输入草稿与导航状态，
 但不会静默杀掉终端进程。关闭已退出会话才释放会话名额（总共最多 16 个）。
@@ -187,7 +192,8 @@ AgentChecks 的默认路径使用合成 CLI 协议；显式二进制路径验证
 关闭浮层也会取消未完成计划，不留下隐藏的启动任务。**⌘F** 搜索当前焦点终端，**⌥⌘G** 打开只读 Git。
 标准 Edit/Window/App 菜单保留，复制、粘贴、全选和撤销仍走原生响应链。
 
-**English.** Shift+Cmd+O opens session management, including sessions whose manifest was removed.
+**English.** The per-worktree rail and Cmd+Option+Tab palette are the daily session entry points.
+Shift+Cmd+O still opens global session management, including sessions whose manifest was removed.
 Recursive same-worktree panes can be split horizontally/vertically or moved to a detached window.
 There is one native PTY per session, not one process per view. Closing a detached window returns its
 presentation to the workspace; ending a session still requires observing its exit. Cmd+1…9 selects
@@ -244,7 +250,10 @@ OSC、UTF-8、历史/帧上限、未知退出码以及隔离的真实 zsh PTY �
 
 `⇧⌘P` 打开可搜索命令面板；输入关键词后 Return 执行选中项，上下键选择，Escape 关闭。
 同一动作目录生成菜单与面板。默认 `⌘N` 接入项目，`⌘1…9` 选择当前可见 Worktrees 并保留模块，
-`⌥⌘S/G/T` 切换服务/Git/工作台，`⇧⌘O` 打开会话，`⌘F` 查找，`⌘R` 刷新，`⌘B` 切换侧栏，`⌘,` 打开设置，`⇧⌥⌘O` 打开恢复，`⌥⌘U` 检查更新。面板中的“快捷键”可修改
+`⌥⌘S/G/T` 切换服务/Git/工作台，`⇧⌘O` 打开全局会话，`⌘⌥Tab` 打开当前 worktree 的会话 palette，
+`⌘Tab/⇧⌘Tab` 循环会话；Agent session 中按 `Esc` 回到进入它之前记住的 Shell。上述三组会话
+快捷键只绑定当前工作区主窗口，不拦截 detached window 的输入或 terminal 已选中的普通 Esc。
+其余为 `⌘F` 查找，`⌘R` 刷新，`⌘B` 切换侧栏，`⌘,` 打开设置，`⇧⌥⌘O` 打开恢复，`⌥⌘U` 检查更新。面板中的“快捷键”可修改
 工作区动作按键；文件存在时改由 `keybindings.json` 管理，GUI 不覆盖它。重复按键、原生编辑/退出/关闭窗口快捷键
 和固定 `⇧⌘P` 被拒绝。菜单、命令面板与原生终端均保护组合文本；目录面板和独立终端窗口不会误切工作区。
 

@@ -85,6 +85,7 @@ struct WorkspaceConsole: View {
                     if let selected { focusIntent = TerminalFocusIntent(selected.id) }
                 }
             }
+            .overlay(SessionKeyWindowBinder(router: keyRouter).frame(width: 0, height: 0))
             .onDisappear { launcher.cancel(); keyRouter.remove() }
     }
     private var launchSurface: SessionLaunchPanel {
@@ -253,13 +254,14 @@ struct WorkspaceConsole: View {
 
 /// Native buttons keep keyboard/accessibility activation and hit testing inside
 /// AppKit, while SwiftUI owns their identity and the shared worktree layout.
-private struct ConsoleSessionTab: NSViewRepresentable {
+struct ConsoleSessionTab: NSViewRepresentable {
     let session: TerminalSession
     let selected: Bool
+    var compact = false
     let activate: () -> Void
     func makeNSView(context: Context) -> ConsoleSessionButton { ConsoleSessionButton() }
     func updateNSView(_ button: ConsoleSessionButton, context: Context) {
-        button.title = session.title + (session.isActive ? " ●" : " ○")
+        button.title = compact ? "" : session.title + (session.isActive ? " ●" : " ○")
         button.font = Face.nativeMono(11)
         button.image = NSImage(systemSymbolName: session.kind == "terminal" ? "terminal" : "sparkle", accessibilityDescription: nil)
         button.imagePosition = .imageLeading
@@ -268,6 +270,40 @@ private struct ConsoleSessionTab: NSViewRepresentable {
         button.setAccessibilityIdentifier("console.session." + session.id.uuidString)
         button.setAccessibilityValue(selected ? "选中" : "")
         button.activate = activate
+    }
+}
+
+/// Binds the local event monitor after the hosting view has entered its key
+/// window. SwiftUI can run onAppear before NSWindow.makeKeyAndOrderFront, so
+/// installing from onAppear alone can silently leave the shortcuts inactive.
+struct SessionKeyWindowBinder: NSViewRepresentable {
+    let router: SessionKeyRouter
+
+    func makeNSView(context: Context) -> BindingView { BindingView(router: router) }
+
+    func updateNSView(_ view: BindingView, context: Context) {
+        view.router = router
+        view.installIfNeeded()
+    }
+
+    final class BindingView: NSView {
+        var router: SessionKeyRouter
+
+        init(router: SessionKeyRouter) {
+            self.router = router
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            installIfNeeded()
+        }
+
+        func installIfNeeded() {
+            router.install(windowNumber: window?.windowNumber)
+        }
     }
 }
 final class ConsoleSessionButton: NSButton {
