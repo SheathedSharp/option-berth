@@ -158,6 +158,7 @@ def verify(root: Path) -> None:
         with tempfile.TemporaryDirectory(prefix="oberth-review-facts-") as tmp:
             binary = str(Path(tmp) / "checks")
             run(root, "swiftc", "-swift-version", "5", "client/macos/Sources/GitModel.swift",
+                "client/macos/Sources/GitGraphLayout.swift",
                 "client/macos/Tests/GitReviewTests.swift", "-o", binary, capture=False)
             run(root, binary, capture=False)
         for product, flag in (("GitReviewChecks", "BERTH_GIT_REVIEW_TEST"),

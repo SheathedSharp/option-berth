@@ -87,6 +87,10 @@ enum Snapshot {
                              width: width, height: height)
             if code != 0 { return code }
         }
+        let historyCodeView = write(CodeView(git: frozenHistory(), project: demo, scrolls: false, initialMode: .history),
+                                    to: url.appendingPathComponent("08-code-history.png").path,
+                                    width: width, height: height)
+        if historyCodeView != 0 { return historyCodeView }
 
         let agentCode = write(BoardView(store: BoardStore(fixture: ports),
                                              services: ServicesStore(fixture: groups, runs: runs),
@@ -273,5 +277,37 @@ enum Snapshot {
         let tree = try! decoder.decode(GitTree.self, from: Data(treeJSON.utf8))
         let patch = try! decoder.decode(GitPatch.self, from: Data(patchJSON.utf8))
         return GitStore(overview: overview, tree: tree, patch: patch, selectedPath: "Sources/API.swift")
+    }
+
+    /// Synthetic merge so the frozen history state shows two lanes, HEAD, and the
+    /// existing commit diff pane. Hashes are not a real repository.
+    @MainActor
+    private static func frozenHistory() -> GitStore {
+        let graphJSON = """
+        {"root":"/Users/you/code/berth-demo","observed_head":"mmmmmmmmmmmmmmmm","branch":"feature/checkout",
+         "upstream":"origin/feature/checkout","ahead":1,"behind":0,"truncated":false,"limit":4,
+         "commits":[
+           {"hash":"mmmmmmmmmmmmmmmm","parents":["aaaaaaaaaaaaaaaa","bbbbbbbbbbbbbbbb"],"author":"Ada","when":"2026-10-06T00:00:00Z","subject":"Merge branch side into feature/checkout","refs":["feature/checkout"]},
+           {"hash":"aaaaaaaaaaaaaaaa","parents":["cccccccccccccccc"],"author":"Ada","when":"2026-10-05T00:00:00Z","subject":"Keep the checkout lane straight"},
+           {"hash":"bbbbbbbbbbbbbbbb","parents":["cccccccccccccccc"],"author":"Grace","when":"2026-10-04T00:00:00Z","subject":"Side work","refs":["side"]},
+           {"hash":"cccccccccccccccc","parents":[],"author":"Ada","when":"2026-10-03T00:00:00Z","subject":"Root"}
+         ],
+         "refs":[
+           {"name":"feature/checkout","target":"mmmmmmmmmmmmmmmm","kind":"branch","current":true},
+           {"name":"side","target":"bbbbbbbbbbbbbbbb","kind":"branch"}
+         ]}
+        """
+        let patchJSON = """
+        {"root":"/Users/you/code/berth-demo","commit":"mmmmmmmmmmmmmmmm","base":"aaaaaaaaaaaaaaaa","files":[{"path":"Sources/API.swift","lines":[
+          {"kind":"meta","text":"diff --git a/Sources/API.swift b/Sources/API.swift"},
+          {"kind":"hunk","text":"@@ -1 +1,2 @@"},
+          {"kind":"context","text":" let server = Server()"},
+          {"kind":"add","text":"+server.ready()"}
+        ]}]}
+        """
+        let decoder = JSONDecoder()
+        let graph = try! decoder.decode(GitGraph.self, from: Data(graphJSON.utf8))
+        let patch = try! decoder.decode(GitPatch.self, from: Data(patchJSON.utf8))
+        return GitStore(overview: nil, graph: graph, patch: patch, selectedCommit: "mmmmmmmmmmmmmmmm")
     }
 }
