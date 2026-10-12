@@ -50,7 +50,7 @@ final class GitStore: ObservableObject {
         self.patchProblem = patchProblem
         self.loading = loading
         self.graphLoading = graphLoading
-        self.root = overview?.root ?? tree?.overview.root ?? ""
+        self.root = overview?.root ?? tree?.overview.root ?? graph?.root ?? ""
         self.isFixture = true
     }
 
