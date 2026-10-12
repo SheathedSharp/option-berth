@@ -123,8 +123,10 @@ import Foundation
                 ["hash": "bbbbbbbbbbbbbbbb", "parents": ["cccccccccccccccc"], "subject": "parent"]
             ]
         ])
-        expect(GitGraphLink.connects(chain.commits[0], to: chain.commits[1]), "declared parent edge")
-        expect(!GitGraphLink.connects(chain.commits[1], to: chain.commits[0]), "reverse log order became an edge")
+        let fromContract = GitGraphLayout.layout(chain.commits.map { GitGraphNode(hash: $0.hash, parents: $0.parents) })
+        expect(fromContract.rows[0].parentDepartures == chain.commits[0].parents.count
+               && fromContract.rows[0].dotColumn == fromContract.rows[1].dotColumn, "declared parent edge")
+        expect(fromContract.rows[1].parentDepartures == chain.commits[1].parents.count, "reverse log order became an edge")
         let side = try decode(GitGraph.self, [
             "root": "/fixture/repo", "limit": 2,
             "commits": [
@@ -132,7 +134,75 @@ import Foundation
                 ["hash": "bbbbbbbbbbbbbbbb", "subject": "other"]
             ]
         ])
-        expect(!GitGraphLink.connects(side.commits[0], to: side.commits[1]), "adjacent rows invented a parent edge")
+        let sideLayout = GitGraphLayout.layout(side.commits.map { GitGraphNode(hash: $0.hash, parents: $0.parents) })
+        expect(sideLayout.rows[1].parentDepartures == 0 && sideLayout.rows[0].dotColumn != sideLayout.rows[1].dotColumn,
+               "adjacent rows invented a parent edge")
+        let chainLayout = GitGraphLayout.layout([
+            GitGraphNode(hash: "a", parents: ["b"]),
+            GitGraphNode(hash: "b", parents: ["c"]),
+            GitGraphNode(hash: "c", parents: [])
+        ])
+        expect(chainLayout.rows.map(\.dotColumn) == [0, 0, 0], "first parent left its lane")
+        expect(chainLayout.rows.map(\.dotColor) == [0, 0, 0], "lane color followed the column instead of the branch")
+        expect(chainLayout.rows[0].lines == [GitGraphLayout.Line(childIndex: nil, parentIndex: 0, colorIndex: 0)], "chain edge")
+        expect(chainLayout.rows[1].lines == [
+            GitGraphLayout.Line(childIndex: 0, parentIndex: nil, colorIndex: 0),
+            GitGraphLayout.Line(childIndex: nil, parentIndex: 0, colorIndex: 0)
+        ], "middle of a chain dropped a parent or child segment")
+        expect(chainLayout.columnCount == 1, "straight history opened a second lane")
+        let unrelated = GitGraphLayout.layout([
+            GitGraphNode(hash: "a", parents: ["d"]),
+            GitGraphNode(hash: "b", parents: [])
+        ])
+        expect(unrelated.rows[0].dotColumn == 0 && unrelated.rows[0].parentDepartures == 1, "declared external parent lost its lane")
+        expect(unrelated.rows[1].dotColumn == 1 && unrelated.rows[1].parentDepartures == 0, "adjacent row became a parent")
+        let merge = GitGraphLayout.layout([
+            GitGraphNode(hash: "m", parents: ["a", "b"]),
+            GitGraphNode(hash: "a", parents: ["c"]),
+            GitGraphNode(hash: "b", parents: ["c"]),
+            GitGraphNode(hash: "c", parents: [])
+        ])
+        expect(merge.rows.map(\.dotColumn) == [0, 0, 1, 0], "merge lanes")
+        expect(merge.rows.map(\.dotColor) == [0, 0, 1, 0], "second parent reused the first lane color")
+        expect(merge.rows[0].lines == [
+            GitGraphLayout.Line(childIndex: nil, parentIndex: 0, colorIndex: 0),
+            GitGraphLayout.Line(childIndex: nil, parentIndex: 1, colorIndex: 1)
+        ], "merge did not open a lane per parent")
+        expect(merge.rows[2].dotColumn == 1 && merge.rows[2].lines.contains {
+            $0.childIndex == nil && $0.parentIndex == 0 && $0.colorIndex == 1
+        }, "side branch did not join the first parent")
+        let parentCounts = [2, 1, 1, 0]
+        expect(zip(merge.rows, parentCounts).allSatisfy { $0.0.parentDepartures == $0.1 }, "a lane was drawn for a parent the commit does not have")
+        let diverge = GitGraphLayout.layout([
+            GitGraphNode(hash: "a", parents: ["c"]),
+            GitGraphNode(hash: "b", parents: ["c"]),
+            GitGraphNode(hash: "c", parents: [])
+        ])
+        expect(diverge.rows.map(\.dotColumn) == [0, 1, 0], "divergent branches shared a column")
+        expect(diverge.rows[1].lines.contains { $0.childIndex == nil && $0.parentIndex == diverge.rows[2].dotColumn },
+               "divergent branch missed the common ancestor")
+        expect(diverge.columnCount == 2, "two heads collapsed to one lane")
+        var wide: [GitGraphNode] = []
+        wide.reserveCapacity(4_000)
+        for index in 0..<4_000 {
+            let hash = String(format: "%04d", index)
+            let parents: [String]
+            if index + 1 >= 4_000 {
+                parents = []
+            } else if index % 17 == 0 && index + 8 < 4_000 {
+                parents = [String(format: "%04d", index + 1), String(format: "%04d", index + 8)]
+            } else {
+                parents = [String(format: "%04d", index + 1)]
+            }
+            wide.append(GitGraphNode(hash: hash, parents: parents))
+        }
+        let started = Date()
+        let wideLayout = GitGraphLayout.layout(wide)
+        let elapsed = Date().timeIntervalSince(started)
+        expect(elapsed < 1, "4000-commit layout took \(elapsed)s")
+        expect(wideLayout.rows.count == 4_000 && wideLayout.columnCount == 2, "medium history lane count")
+        expect(zip(wideLayout.rows, wide).allSatisfy { $0.0.parentDepartures == $0.1.parents.count }, "medium history invented a parent edge")
+        print(String(format: "graph layout 4000 commits: %.1f ms, columns %d", elapsed * 1000, wideLayout.columnCount))
         print("GitReviewTests: \(checks) checks passed")
     }
 }

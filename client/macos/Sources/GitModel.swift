@@ -392,14 +392,6 @@ struct GitHunkHeader: Equatable, Sendable {
     }
 }
 
-/// A visible graph edge exists only when the contract lists `next` as a parent.
-/// Log order alone is not a parent relationship.
-enum GitGraphLink {
-    static func connects(_ commit: GitGraphCommit, to next: GitGraphCommit) -> Bool {
-        commit.parents.contains(next.hash)
-    }
-}
-
 /// A projection of existing CLI facts, not another Git reader. A dual-state file
 /// can match two filters but appears exactly once in the all-files view.
 enum GitReviewFilter: String, CaseIterable, Identifiable {
