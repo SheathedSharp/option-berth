@@ -40,13 +40,13 @@ private struct GitPatchLineRow: View {
                     .padding(.leading, 4)
             }
             Text(row.text.isEmpty ? " " : row.text)
-                .font(Face.mono(row.kind == "meta" || row.kind == "hunk" ? 10 : 11, row.kind == "hunk" ? .medium : .regular))
+                .font(Face.mono(row.kind == "meta" || row.kind == "hunk" ? Metrics.meta : Metrics.chrome, row.kind == "hunk" ? .medium : .regular))
                 .foregroundStyle(foreground)
                 .fixedSize(horizontal: true, vertical: false)
-                .padding(.leading, showsGutter ? 8 : 10)
-                .padding(.trailing, 12)
+                .padding(.leading, showsGutter ? Metrics.inline : Metrics.gutter)
+                .padding(.trailing, Metrics.gutter)
         }
-        .padding(.vertical, row.kind == "hunk" || row.kind == "meta" ? 3 : 1)
+        .padding(.vertical, row.kind == "hunk" || row.kind == "meta" ? 2 : 0)
         .frame(maxWidth: fillsWidth ? .infinity : nil, alignment: .leading)
         .background(background)
         .accessibilityIdentifier(row.kind == "hunk" ? "git.review.hunk" : "git.review.patch.line")
@@ -76,12 +76,12 @@ private struct GitPatchLineRow: View {
 
     private func number(_ value: Int?, color: Color) -> some View {
         Text(value.map(String.init) ?? "")
-            .font(Face.mono(10))
+            .font(Face.mono(Metrics.meta))
             .foregroundStyle(color)
             .frame(width: gutterWidth, alignment: .trailing)
     }
 
     private var gutterWidth: CGFloat {
-        CGFloat(digits) * 7 * CGFloat(UISettings.shared.dataScale) + 6
+        CGFloat(digits) * 7 * CGFloat(UISettings.shared.dataScale) + Metrics.unit
     }
 }

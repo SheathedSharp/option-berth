@@ -91,9 +91,9 @@ struct WorkspaceActionPanel: View {
         WorkspaceAction.allCases.filter { query.isEmpty || ($0.title + " " + $0.rawValue).localizedCaseInsensitiveContains(query) }
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: Metrics.section) {
             HStack {
-                Label("命令面板 / Command panel", systemImage: "command").font(Face.sans(14, .semibold))
+                Label("命令面板 / Command panel", systemImage: "command").font(Face.sans(Metrics.display, .semibold))
                 Spacer()
                 Button("快捷键…") { editingShortcuts = true }
                 Button("关闭") { dismiss() }.keyboardShortcut(.cancelAction)
@@ -112,26 +112,26 @@ struct WorkspaceActionPanel: View {
                 }
             ScrollViewReader { proxy in
                 ScrollView {
-            VStack(spacing: 3) {
+            VStack(spacing: Metrics.rowGap) {
                 ForEach(Array(actions.enumerated()), id: \.element.id) { index, action in
                     Button { choose(action) } label: {
                         HStack {
                             Image(systemName: action.symbol).frame(width: 20)
                             Text(action.title); Spacer()
-                            Text(shortcuts.shortcut(action).label).font(Face.mono(11)).foregroundStyle(Ink.inkMuted)
-                        }.padding(9).contentShape(Rectangle())
+                            Text(shortcuts.shortcut(action).label).font(Face.mono(Metrics.chrome)).foregroundStyle(Ink.inkMuted)
+                        }.padding(.horizontal, Metrics.gutter).frame(minHeight: Metrics.listRow).contentShape(Rectangle())
                             .background(index == selected ? Ink.accentSoft : Ink.surface)
                             .clipShape(RoundedRectangle(cornerRadius: 5))
                     }.buttonStyle(.plain).id(action.id).accessibilityIdentifier("workspace.action." + action.rawValue)
                 }
                 if actions.isEmpty { Text("没有匹配的操作 / No matching action").foregroundStyle(Ink.inkMuted).padding() }
             }
-                }.frame(height: min(340, CGFloat(max(1, actions.count)) * 40))
+                }.frame(height: min(340, CGFloat(max(1, actions.count)) * (Metrics.listRow + Metrics.rowGap)))
                     .onChange(of: selected) { _, index in
                         if actions.indices.contains(index) { proxy.scrollTo(actions[index].id, anchor: .center) }
                     }
             }
-        }.padding(18).frame(width: 480).background(Ink.canvas).foregroundStyle(Ink.ink)
+        }.padding(Metrics.panelPad).frame(width: 480).background(Ink.canvas).foregroundStyle(Ink.ink)
             .onAppear { searchFocused = true }
             .sheet(isPresented: $editingShortcuts) { WorkspaceShortcutEditor(shortcuts: shortcuts).clientWindowChrome() }
     }
@@ -153,8 +153,8 @@ struct WorkspaceShortcutEditor: View {
     @State private var control = false
     @State private var problem: String?
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("工作区快捷键 / Workspace shortcuts").font(Face.sans(14, .semibold))
+        VStack(alignment: .leading, spacing: Metrics.section) {
+            Text("工作区快捷键 / Workspace shortcuts").font(Face.sans(Metrics.display, .semibold))
             if shortcuts.fileManaged {
                 Text("快捷键由 keybindings.json 管理；请在设置 → 外观中打开文件。")
                     .font(Face.sans(11)).foregroundStyle(Ink.inkMuted)
@@ -178,7 +178,7 @@ struct WorkspaceShortcutEditor: View {
                     catch { problem = error.localizedDescription }
                 }.keyboardShortcut(.defaultAction).disabled(shortcuts.fileManaged)
             }
-        }.padding(20).frame(width: 460).background(Ink.canvas).foregroundStyle(Ink.ink)
+        }.padding(Metrics.panelPad).frame(width: 460).background(Ink.canvas).foregroundStyle(Ink.ink)
             .onAppear { load() }
     }
     private func load() { let value = shortcuts.shortcut(action); key = value.key; shift = value.shift; option = value.option; control = value.control }
