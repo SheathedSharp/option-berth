@@ -17,9 +17,12 @@ extension ClientChecks {
         window.contentView = board; window.makeKeyAndOrderFront(nil); pump(0.25)
         defer { navigation.showingGuide = false; window.contentView = nil; window.close() }
         require(!navigation.showingGuide && TerminalSessions.shared.sessions.count == before, "empty workspace performed an implicit action")
-        // Convert a point in the actual hosting view, whose flipped origin and
-        // title-safe-area size vary across supported macOS versions.
-        let point = board.convert(NSPoint(x: 290, y: board.isFlipped ? 180 : board.bounds.height - 180), to: nil)
+        // Hit the real control by accessibility id. Density / Metrics changes move
+        // the empty-state stack; a fixed (290, 180) point no longer lands on it.
+        guard let guide = find(NSButton.self, in: board).first(where: { $0.accessibilityIdentifier() == "workspace.guide" }) else {
+            fatalError("empty workspace guide button missing")
+        }
+        let point = guide.convert(NSPoint(x: guide.bounds.midX, y: guide.bounds.midY), to: nil)
         guideClick(window, x: point.x, y: point.y)
         eventually("empty workspace button did not open guide") { navigation.showingGuide && find(TourControlsView.self, in: board).count == 1 }
         navigation.showingGuide = false
