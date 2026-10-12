@@ -76,6 +76,10 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
         owned.append(agent)
         let workspace = registry.workspace(root.path)
         require(workspace.activeSelection == shell.id, "background launch stole selection")
+        require(SessionNavigationModel.group(for: "terminal") == .shell, "shell session was not grouped as terminal")
+        require(SessionNavigationModel.group(for: "agent:codex:native") == .agent, "agent session was not grouped as agent")
+        require(SessionNavigationModel.matches(query: "codex", title: "Codex 1", kind: "agent:codex:native", state: "running"), "session search missed provider")
+        require(!SessionNavigationModel.matches(query: "missing", title: "Codex 1", kind: "agent:codex:native", state: "running"), "session search accepted an unrelated term")
         let foreign = try registry.add(worktree: other.path, title: "Other worktree", executable: "/bin/sh", arguments: ["-c", script], environment: env)
         owned.append(foreign)
         var shellOutput = "", agentOutput = ""
@@ -118,6 +122,30 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
                 NSApp.sendEvent(event)
             }
         }
+        func press(_ keyCode: UInt16, flags: NSEvent.ModifierFlags = [], characters: String = "") {
+            let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, characters: characters, charactersIgnoringModifiers: characters,
+                isARepeat: false, keyCode: keyCode)!
+            NSApp.sendEvent(event)
+        }
+        // Exercise delivery before a rail click can open the palette as a side
+        // effect. The mounted view has to be inside this key window already.
+        press(48, flags: [.command, .option], characters: "\t")
+        eventually("initial Command-Option-Tab did not open the session palette") {
+            find(NSView.self, in: host).contains { $0.accessibilityIdentifier() == "console.sessionPalette" }
+        }
+        press(53, characters: "\u{1b}")
+        eventually("initial Escape did not dismiss the session palette") {
+            !find(NSView.self, in: host).contains { $0.accessibilityIdentifier() == "console.sessionPalette" }
+        }
+        choose(agent); press(53, characters: "\u{1b}")
+        eventually("Escape did not return from the agent to the remembered Shell") { workspace.activeSelection == shell.id && window.firstResponder === shell.terminal }
+        choose(shell); press(48, flags: [.command], characters: "\t")
+        eventually("Command-Tab did not cycle to the parallel agent") { workspace.activeSelection == agent.id && window.firstResponder === agent.terminal }
+        choose(shell); press(48, flags: [.command, .option], characters: "\t")
+        eventually("Command-Option-Tab did not open the session palette") { find(NSView.self, in: host).contains { $0.accessibilityIdentifier() == "console.sessionPalette" } }
+        press(53, characters: "\u{1b}")
+        eventually("Escape did not dismiss the session palette") { !find(NSView.self, in: host).contains { $0.accessibilityIdentifier() == "console.sessionPalette" } }
         choose(shell); type("shell-only")
         choose(agent); type("agent-only")
         eventually("native typing did not reach selected PTYs") { shellOutput.contains("INPUT:shell-only") && agentOutput.contains("INPUT:agent-only") }
@@ -168,6 +196,17 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
         guard let detached = TerminalWindows.shared.windows[agent.id] else { fatalError("detached native window unavailable") }
         registry.objectWillChange.send(); pump()
         require(agent.terminal.window === detached, "embedded update stole detached terminal")
+        func detachedKey(_ keyCode: UInt16, flags: NSEvent.ModifierFlags = [], characters: String = "") {
+            let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: detached.windowNumber, context: nil, characters: characters, charactersIgnoringModifiers: characters,
+                isARepeat: false, keyCode: keyCode)!
+            NSApp.sendEvent(event)
+        }
+        detachedKey(48, flags: [.command, .option], characters: "\t")
+        detachedKey(53, characters: "\u{1b}")
+        pump(0.2)
+        require(!find(NSView.self, in: host).contains { $0.accessibilityIdentifier() == "console.sessionPalette" }, "detached window opened the session palette")
+        require(workspace.activeSelection == agent.id && agent.terminal.window === detached, "detached shortcut changed session ownership")
         TerminalWindows.shared.bringBack(agent); window.makeKeyAndOrderFront(nil)
         eventually("returning the detached terminal did not restore focus") { agent.terminal.window === window && window.firstResponder === agent.terminal }
         func capture(_ name: String) throws {
@@ -180,7 +219,7 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
         try capture("console-narrow")
         require(registry.sessions.count == 3 && owned.allSatisfy(\.isActive), "presentation started or stopped an unexpected process")
         try configurationChecks(parentRoot: root)
-        print("PASS: real native shared tabs, mixed layout identity, cwd/draft retention, independent key input, one-shot focus, detached return and background launch isolation")
+        print("PASS: real native shared tabs, mixed layout identity, cwd/draft retention, independent key input, one-shot focus, detached shortcut isolation, detached return and background launch isolation")
     }
     static func captureOwnedWindow(_ window: NSWindow, to output: URL) throws {
         var completed: Result<Void, Error>?

@@ -15,6 +15,9 @@ struct WorkspaceConsole: View {
     @State private var history = false
     @State private var problem: String?
     @State private var focusIntent: TerminalFocusIntent?
+    @State private var switcherPresented = false
+    @State private var switcherQuery = ""
+    @State private var terminalReturnID: UUID?
     @Environment(\.clientReduceMotion) private var reduced
     init(root: String, frozen: Bool = false, initialAgent: Bool = false) {
         self.root = root; self.frozen = frozen
@@ -28,11 +31,24 @@ struct WorkspaceConsole: View {
             toolbar
             Hairline()
             if frozen { frozenStrip }
-            else if !scoped.isEmpty { sessionStrip }
             if let selected {
-                PaneWorkspaceView(primary: selected, workspace: workspace, agent: workspace.agentMode,
-                                  focusIntent: focusIntent, compactSinglePane: true)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                HStack(spacing: 0) {
+                    sessionRail
+                    Hairline(axis: .vertical)
+                    PaneWorkspaceView(primary: selected, workspace: workspace, agent: workspace.agentMode,
+                                      focusIntent: focusIntent, compactSinglePane: true)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay(alignment: .topLeading) {
+                    if switcherPresented {
+                        SessionSwitcherPalette(root: root, sessions: scoped, query: $switcherQuery,
+                                               selected: selected, activate: activate,
+                                               close: closeSwitcher)
+                            .frame(width: 430, height: 380)
+                            .padding(.leading, 44).padding(.top, 10)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                }
             } else if frozen {
                 Text("$ git status --short\n M Sources/API.swift\n$ _")
                     .font(Face.mono(12)).foregroundStyle(Ink.ink).padding(18)
@@ -53,6 +69,7 @@ struct WorkspaceConsole: View {
             }
             if let problem { Text(problem).font(Face.sans(11)).foregroundStyle(Change.changed).textSelection(.enabled).padding(10) }
         }.background(Ink.canvas).foregroundStyle(Ink.ink)
+            .animation(Motion.selection(reduced: reduced), value: switcherPresented)
             .sheet(isPresented: $history) { WorktreeHistorySheet(root: root, sessions: sessions).clientWindowChrome() }
             .onAppear {
                 guard !frozen else { return }
@@ -65,6 +82,13 @@ struct WorkspaceConsole: View {
                     launcher.cancel()
                     if let selected { focusIntent = TerminalFocusIntent(selected.id) }
                 }
+            }
+            .background(alignment: .topLeading) {
+                SessionShortcutDelivery(open: openSwitcher, cycle: cycleSession, escape: closeSwitcher,
+                                        canCycle: { scoped.count > 1 },
+                                        canEscape: { switcherPresented || selected?.kind != "terminal" })
+                    .frame(width: 1, height: 1)
+                    .allowsHitTesting(false)
             }
             .onDisappear { launcher.cancel() }
     }
@@ -107,26 +131,80 @@ struct WorkspaceConsole: View {
             }
         }.font(Face.sans(11)).padding(.horizontal, 10).padding(.vertical, 6).background(Ink.surface)
     }
-    private var sessionStrip: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
-                    ForEach(scoped) { session in
-                        ConsoleSessionTab(session: session, selected: selected?.id == session.id) { activate(session) }
-                            .fixedSize(horizontal: true, vertical: false).frame(height: 29).id(session.id)
-                            .background(selected?.id == session.id ? Ink.accentSoft : Ink.surface)
-                            .clipShape(RoundedRectangle(cornerRadius: 5))
-                            .animation(Motion.selection(reduced: reduced), value: selected?.id == session.id)
-                            .contextMenu {
-                                Button("聚焦") { activate(session) }
-                                Button("在独立窗口显示") { TerminalWindows.shared.detach(session) }
-                                splitItems(session)
-                            }
+    private var sessionRail: some View {
+        VStack(spacing: 6) {
+            Button { openSwitcher() } label: {
+                Image(systemName: "rectangle.on.rectangle")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(switcherPresented ? Ink.accent : Ink.inkMuted)
+                    .frame(width: 30, height: 28)
+                    .background(switcherPresented ? Ink.accentSoft : Color.clear)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }.buttonStyle(.plain).help("切换会话 / Switch session · ⌘⌥Tab")
+
+            Hairline()
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 5) {
+                    ForEach(orderedSessions) { session in
+                        SessionRailItem(session: session, selected: selected?.id == session.id,
+                                        activate: { activate(session) })
                     }
-                }.padding(.horizontal, 10).padding(.vertical, 6)
-            }.onChange(of: workspace.activeSelection) { _, id in if let id { proxy.scrollTo(id, anchor: .center) } }
+                }.padding(.vertical, 2)
+            }
+            Spacer(minLength: 0)
+            Text("⌘⌥")
+                .font(Face.mono(8, .medium)).foregroundStyle(Ink.inkFaint)
+                .rotationEffect(.degrees(-90))
+                .frame(width: 30, height: 24)
+        }
+        .padding(.horizontal, 5).padding(.vertical, 7)
+        .frame(width: 42)
+        .background(Ink.surface)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("当前 worktree 会话")
+    }
+
+    private var orderedSessions: [TerminalSession] {
+        scoped.sorted { lhs, rhs in
+            let lc = lhs.kind == "terminal" ? 0 : 1
+            let rc = rhs.kind == "terminal" ? 0 : 1
+            return lc == rc ? lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending : lc < rc
         }
     }
+
+    private func openSwitcher() {
+        switcherQuery = ""
+        switcherPresented = true
+    }
+
+    private func closeSwitcher() {
+        switcherPresented = false
+        switcherQuery = ""
+        if let selected, selected.kind != "terminal" {
+            let terminal = terminalReturnID.flatMap { id in scoped.first(where: { $0.id == id }) }
+                ?? scoped.first(where: { $0.kind == "terminal" })
+            if let terminal { activate(terminal) }
+        }
+    }
+
+    private func activate(_ session: TerminalSession) {
+        guard !frozen, scoped.contains(where: { $0.id == session.id }) else { return }
+        if session.kind != "terminal", let current = selected, current.kind == "terminal" {
+            terminalReturnID = current.id
+        }
+        sessions.select(session); creating = false; switcherPresented = false
+        focusIntent = TerminalFocusIntent(session.id)
+        if TerminalWindows.shared.windows[session.id] != nil { TerminalWindows.shared.detach(session) }
+    }
+
+    private func cycleSession(_ offset: Int) {
+        guard !scoped.isEmpty else { return }
+        let values = orderedSessions
+        let current = values.firstIndex { $0.id == selected?.id } ?? 0
+        let next = (current + offset + values.count) % values.count
+        activate(values[next])
+    }
+
     @ViewBuilder private func splitItems(_ target: TerminalSession) -> some View {
         ForEach([PaneLayout.Axis.horizontal, .vertical], id: \.self) { axis in
             Menu(axis == .horizontal ? "左右分屏" : "上下分屏") {
@@ -145,12 +223,6 @@ struct WorkspaceConsole: View {
             Text("◇ Codex 1").padding(7).background(Ink.surface)
             Spacer()
         }.font(Face.mono(10)).padding(.horizontal, 10).padding(.vertical, 6)
-    }
-    private func activate(_ session: TerminalSession) {
-        guard !frozen, scoped.contains(where: { $0.id == session.id }) else { return }
-        sessions.select(session); creating = false
-        focusIntent = TerminalFocusIntent(session.id)
-        if TerminalWindows.shared.windows[session.id] != nil { TerminalWindows.shared.detach(session) }
     }
     private func beginSession() {
         guard !frozen else { return }
@@ -171,13 +243,14 @@ struct WorkspaceConsole: View {
 
 /// Native buttons keep keyboard/accessibility activation and hit testing inside
 /// AppKit, while SwiftUI owns their identity and the shared worktree layout.
-private struct ConsoleSessionTab: NSViewRepresentable {
+struct ConsoleSessionTab: NSViewRepresentable {
     let session: TerminalSession
     let selected: Bool
+    var compact = false
     let activate: () -> Void
     func makeNSView(context: Context) -> ConsoleSessionButton { ConsoleSessionButton() }
     func updateNSView(_ button: ConsoleSessionButton, context: Context) {
-        button.title = session.title + (session.isActive ? " ●" : " ○")
+        button.title = compact ? "" : session.title + (session.isActive ? " ●" : " ○")
         button.font = Face.nativeMono(11)
         button.image = NSImage(systemSymbolName: session.kind == "terminal" ? "terminal" : "sparkle", accessibilityDescription: nil)
         button.imagePosition = .imageLeading
@@ -188,6 +261,7 @@ private struct ConsoleSessionTab: NSViewRepresentable {
         button.activate = activate
     }
 }
+
 final class ConsoleSessionButton: NSButton {
     var activate: (() -> Void)?
     init() {
