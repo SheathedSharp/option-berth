@@ -22,24 +22,33 @@ extension ClientChecks {
         pump()
     }
     static func historyClearButton(in root: NSView) -> NSButton {
-        eventually("history clear control missing") {
-            accessibleButton("history.clear", in: root) != nil
-        }
-        guard let button = accessibleButton("history.clear", in: root) else {
-            fatalError("history clear control missing")
-        }
+        eventually("history clear control missing") { findHistoryClear(in: root) != nil }
+        guard let button = findHistoryClear(in: root) else { fatalError("history clear control missing") }
         require(button.isEnabled, "history clear disabled while entries remain")
         return button
     }
-    static func accessibleButton(_ id: String, in root: NSView) -> NSButton? {
-        if let button = root as? NSButton, button.accessibilityIdentifier() == id { return button }
+    static func findHistoryClear(in root: NSView) -> NSButton? {
+        if let button = root as? NSButton {
+            let id = button.accessibilityIdentifier() ?? ""
+            let title = button.title
+            if id == "history.clear" || title.contains("清空此 worktree") || title.contains("Clear") {
+                // Prefer the toolbar Clear, not the alert's destructive Clear.
+                if title.contains("取消") || title.contains("Cancel") { return nil }
+                if id == "history.clear" || title.contains("worktree") || title.contains("此 worktree") {
+                    return button
+                }
+            }
+        }
         for child in root.subviews {
-            if let hit = accessibleButton(id, in: child) { return hit }
+            if let hit = findHistoryClear(in: child) { return hit }
         }
         return nil
     }
     static func clickHistoryClear(_ window: NSWindow, in root: NSView) {
         let button = historyClearButton(in: root)
+        button.performClick(nil)
+        pump(0.05)
+        if window.attachedSheet != nil { return }
         let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
         historyClick(window, x: point.x, y: point.y)
     }
