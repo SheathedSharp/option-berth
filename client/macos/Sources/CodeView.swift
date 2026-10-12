@@ -16,15 +16,29 @@ enum GitReviewMode: String, CaseIterable, Identifiable {
 struct CodeView: View {
     @ObservedObject var git: GitStore
     let project: BerthGroup
-    var scrolls = true
+    var scrolls: Bool
     @ClientDetailWidth(.git) private var detailWidth
-    @State private var query = ""
-    @State private var filter = GitReviewFilter.all
-    @State private var mode = GitReviewMode.changes
-    @State private var showingWorktrees = false
+    @State private var query: String
+    @State private var filter: GitReviewFilter
+    @State private var mode: GitReviewMode
+    @State private var showingWorktrees: Bool
     @FocusState private var searching: Bool
+    @FocusState private var graphFocused: Bool
     private var files: [GitFile] { git.isFor(project) ? (git.tree?.files ?? []) : [] }
     private var visible: [GitFile] { filter.files(files, query: query) }
+
+    init(git: GitStore, project: BerthGroup, scrolls: Bool = true, initialMode: GitReviewMode = .changes) {
+        self.git = git
+        self.project = project
+        self.scrolls = scrolls
+        _detailWidth = ClientDetailWidth(.git)
+        _query = State(initialValue: "")
+        _filter = State(initialValue: .all)
+        _mode = State(initialValue: initialMode)
+        _showingWorktrees = State(initialValue: false)
+        _searching = FocusState()
+        _graphFocused = FocusState()
+    }
 
     var body: some View {
         Group {
@@ -388,70 +402,137 @@ extension CodeView {
             } else if git.graphLoading && git.graph == nil {
                 message("正在读取有界提交 graph…")
             } else if let graph = git.graph {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 0) {
-                            if let upstream = graph.upstream, !upstream.isEmpty {
-                                HStack(spacing: 8) {
-                                    Text("upstream").font(Face.mono(9, .semibold)).foregroundStyle(Ink.inkFaint)
-                                    Text(upstream).font(Face.mono(9)).foregroundStyle(Ink.inkMuted).lineLimit(1)
-                                    Text("↑\(graph.ahead) ↓\(graph.behind)").font(Face.mono(9)).foregroundStyle(Ink.inkMuted)
-                                    Spacer(minLength: 0)
-                                }.padding(.horizontal, 10).padding(.vertical, 5)
-                                Hairline()
-                            }
-                            ForEach(Array(graph.commits.enumerated()), id: \.element.id) { index, commit in
-                                let next = index + 1 < graph.commits.count ? graph.commits[index + 1] : nil
-                                graphRow(commit, linkedBelow: next.map { GitGraphLink.connects(commit, to: $0) } ?? false)
-                                    .id(commit.id)
-                            }
-                        }
-                    }
-                    .onChange(of: git.selectedCommit) { _, hash in
-                        if let hash { proxy.scrollTo(hash, anchor: .center) }
-                    }
-                }
+                graphScroller(graph, layout: GitGraphLayout.layout(graph.commits.map { GitGraphNode(hash: $0.hash, parents: $0.parents) }))
             } else {
                 message("没有可用的提交 graph")
             }
         }.background(Ink.canvas)
     }
 
-    @ViewBuilder private func graphRow(_ commit: GitGraphCommit, linkedBelow: Bool) -> some View {
-        Button { git.select(commit, project: project) } label: {
-            HStack(alignment: .top, spacing: 8) {
-                VStack(spacing: 0) {
-                    Circle().fill(commit.hash == git.graph?.observedHead ? Ink.accent : Ink.inkMuted)
-                        .frame(width: 7, height: 7).padding(.top, 4)
-                    if linkedBelow { Rectangle().fill(Ink.line).frame(width: 1, height: 20) }
-                }.frame(width: 12)
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(commit.shortHash).font(Face.mono(10, .semibold)).foregroundStyle(Ink.accent)
-                        if commit.hash == git.graph?.observedHead {
-                            Text("HEAD").font(Face.mono(8, .semibold)).foregroundStyle(Ink.live)
-                        }
-                        ForEach(commit.refs, id: \.self) { ref in
-                            Text(ref).font(Face.mono(8)).foregroundStyle(Ink.accent)
-                                .padding(.horizontal, 4).padding(.vertical, 1)
-                                .background(Ink.accentSoft).clipShape(Capsule())
-                        }
-                        Spacer(minLength: 0)
-                        if let when = commit.when { Text(when).font(Face.mono(8)).foregroundStyle(Ink.inkFaint).lineLimit(1) }
+    @ViewBuilder private func graphScroller(_ graph: GitGraph, layout: GitGraphLayout) -> some View {
+        if scrolls {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        graphPreface(graph)
+                        graphCommits(graph, layout: layout)
                     }
-                    Text(commit.subject).font(Face.sans(11, commit.hash == git.selectedCommit ? .semibold : .regular))
-                        .foregroundStyle(Ink.ink).lineLimit(2)
-                    HStack(spacing: 8) {
-                        if let author = commit.author { Text(author).lineLimit(1) }
-                        if !commit.parents.isEmpty { Text(commit.parents.count == 1 ? "1 parent" : "\(commit.parents.count) parents") }
-                    }.font(Face.mono(9)).foregroundStyle(Ink.inkMuted)
                 }
-            }.padding(.horizontal, 10).padding(.vertical, 5)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(commit.hash == git.selectedCommit ? Ink.accentSoft : Color.clear)
+                .focusable()
+                .focused($graphFocused)
+                .onMoveCommand { direction in
+                    guard !hasMarkedText else { return }
+                    if direction == .down { moveCommit(1, in: graph) }
+                    if direction == .up { moveCommit(-1, in: graph) }
+                }
+                .onChange(of: git.selectedCommit) { _, hash in
+                    if let hash { proxy.scrollTo(hash, anchor: .center) }
+                }
+            }
+        } else {
+            VStack(spacing: 0) {
+                graphPreface(graph)
+                graphCommits(graph, layout: layout)
+            }
+                .frame(maxHeight: .infinity, alignment: .top).clipped()
+        }
+    }
+
+    private func graphPreface(_ graph: GitGraph) -> some View {
+        VStack(spacing: 0) {
+            if let upstream = graph.upstream, !upstream.isEmpty {
+                HStack(spacing: 8) {
+                    Text("upstream").font(Face.mono(9, .semibold)).foregroundStyle(Ink.inkFaint)
+                    Text(upstream).font(Face.mono(9)).foregroundStyle(Ink.inkMuted).lineLimit(1)
+                    Text("↑\(graph.ahead) ↓\(graph.behind)").font(Face.mono(9)).foregroundStyle(Ink.inkMuted)
+                    Spacer(minLength: 0)
+                }.padding(.horizontal, 10).padding(.vertical, 5)
+                Hairline()
+            }
+        }
+    }
+
+    private func graphCommits(_ graph: GitGraph, layout: GitGraphLayout) -> some View {
+        ForEach(Array(graph.commits.enumerated()), id: \.element.id) { index, commit in
+            graphRow(commit, in: graph, row: layout.rows[index], columns: layout.columnCount)
+                .id(commit.id)
+        }
+    }
+
+    private func moveCommit(_ offset: Int, in graph: GitGraph) {
+        guard scrolls, !graph.commits.isEmpty else { return }
+        let current = graph.commits.firstIndex { $0.hash == git.selectedCommit }
+        let index = current.map { max(0, min(graph.commits.count - 1, $0 + offset)) } ?? (offset > 0 ? 0 : graph.commits.count - 1)
+        git.select(graph.commits[index], project: project)
+    }
+
+    private func graphRow(_ commit: GitGraphCommit, in graph: GitGraph, row: GitGraphLayout.Row, columns: Int) -> some View {
+        let head = commit.hash == graph.observedHead
+        let width = GitGraphMetrics.width(columns: columns)
+        return VStack(spacing: 0) {
+        Button {
+            git.select(commit, project: project)
+            graphFocused = true
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(commit.shortHash).font(Face.mono(10, .semibold)).foregroundStyle(Ink.accent)
+                    if head {
+                        Text("HEAD").font(Face.mono(8, .semibold)).foregroundStyle(Ink.live)
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .overlay(Capsule().stroke(Ink.live, lineWidth: 1))
+                    }
+                    ForEach(refMarks(commit, graph: graph)) { mark in
+                        Text(mark.name).font(Face.mono(8, mark.current ? .semibold : .regular))
+                            .foregroundStyle(mark.current ? Ink.live : (mark.kind == "branch" ? Ink.accent : Ink.inkMuted))
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(mark.current ? Ink.accentSoft : (mark.kind == "branch" ? Ink.accentSoft : Ink.sunken))
+                            .clipShape(Capsule())
+                    }
+                    Spacer(minLength: 0)
+                    if let when = commit.when { Text(when).font(Face.mono(8)).foregroundStyle(Ink.inkFaint).lineLimit(1) }
+                }
+                Text(commit.subject).font(Face.sans(11, commit.hash == git.selectedCommit ? .semibold : .regular))
+                    .foregroundStyle(Ink.ink).lineLimit(2)
+                HStack(spacing: 8) {
+                    if let author = commit.author { Text(author).lineLimit(1) }
+                    if commit.parents.count > 1 { Text("\(commit.parents.count) parents") }
+                }.font(Face.mono(9)).foregroundStyle(Ink.inkMuted)
+            }
+            .padding(.leading, width + 8).padding(.trailing, 10).padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(alignment: .leading) {
+                GitGraphColumn(row: row, head: head, merge: commit.parents.count > 1)
+                    .frame(width: width, maxHeight: .infinity).padding(.leading, 6)
+            }
+            .background(commit.hash == git.selectedCommit ? Ink.accentSoft : Color.clear)
         }.buttonStyle(.plain).disabled(!scrolls)
             .accessibilityIdentifier("git.review.commit." + commit.hash)
-        Hairline()
+        HStack(spacing: 0) {
+            Color.clear.frame(width: width + 6)
+            Hairline()
+        }
+        }
+    }
+
+    private func refMarks(_ commit: GitGraphCommit, graph: GitGraph) -> [RefMark] {
+        commit.refs.map { name in
+            if let ref = graph.refs.first(where: { $0.name == name && $0.target == commit.hash }) {
+                return RefMark(name: ref.name, kind: ref.kind, current: ref.current)
+            }
+            return RefMark(name: name, kind: "ref", current: false)
+        }.sorted { lhs, rhs in
+            if lhs.current != rhs.current { return lhs.current }
+            if lhs.kind != rhs.kind { return lhs.kind == "branch" }
+            return lhs.name < rhs.name
+        }
+    }
+
+    private struct RefMark: Identifiable {
+        var name: String
+        var kind: String
+        var current: Bool
+        var id: String { kind + ":" + name }
     }
 
     private var historicalDiffPanel: some View {
