@@ -73,8 +73,8 @@ extension CodeView {
                 if mode == .history { graphPanel } else { changesPanel }
             } else {
                 Text(git.loading ? "正在读取变更…" : "Git 状态暂不可用")
-                    .font(Face.sans(12)).foregroundStyle(Ink.inkMuted)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(12)
+                    .font(Face.sans(Metrics.row)).foregroundStyle(Ink.inkMuted)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(Metrics.gutter)
             }
         }
     }
@@ -86,21 +86,22 @@ extension CodeView {
             Spacer(minLength: 0)
             Button("重试") { git.loadTree(project: project, force: true) }.disabled(git.loading || !scrolls)
         }
-        .font(Face.sans(11)).foregroundStyle(Change.changed)
-        .padding(.horizontal, 10).padding(.vertical, 6).background(Ink.surface)
+        .font(Face.sans(Metrics.chrome)).foregroundStyle(Change.changed)
+        .padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV).background(Ink.surface)
     }
 
     private var reviewToolbar: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: Metrics.unit) {
             ForEach(GitReviewMode.allCases) { item in
                 Button { mode = item } label: {
-                    HStack(spacing: 5) {
+                    HStack(spacing: Metrics.unit) {
                         Image(systemName: item == .changes ? "square.stack.3d.up" : "point.3.filled.connected.trianglepath.dotted")
                         Text(item.title)
                         if item == .history, let graph = git.graph { Text("\(graph.commits.count)").foregroundStyle(Ink.inkFaint) }
                     }
-                    .font(Face.sans(10, mode == item ? .semibold : .regular))
-                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .font(Face.sans(Metrics.meta, mode == item ? .semibold : .regular))
+                    .padding(.horizontal, Metrics.tabPadH).padding(.vertical, Metrics.tabPadV)
+                    .frame(minHeight: Metrics.hit)
                     .foregroundStyle(mode == item ? Ink.accent : Ink.inkMuted)
                     .background(mode == item ? Ink.accentSoft : Color.clear)
                     .clipShape(RoundedRectangle(cornerRadius: 5))
@@ -112,8 +113,9 @@ extension CodeView {
                 ForEach(GitReviewFilter.allCases) { item in
                     let count = files.filter(item.matches).count
                     Button { filter = item } label: {
-                        Text(item.title + " \(count)").font(Face.sans(10, filter == item ? .semibold : .regular))
-                            .padding(.horizontal, 7).padding(.vertical, 4)
+                        Text(item.title + " \(count)").font(Face.sans(Metrics.meta, filter == item ? .semibold : .regular))
+                            .padding(.horizontal, Metrics.controlPadH).padding(.vertical, Metrics.tabPadV)
+                            .frame(minHeight: Metrics.hit)
                             .foregroundStyle(filter == item ? Ink.accent : Ink.inkMuted)
                             .background(filter == item ? Ink.accentSoft : Color.clear)
                             .clipShape(RoundedRectangle(cornerRadius: 5))
@@ -123,24 +125,24 @@ extension CodeView {
             }
             Spacer(minLength: 0)
             if mode == .history, git.graphLoading { ProgressView().controlSize(.small) }
-        }.padding(.horizontal, 8).padding(.vertical, 3).background(Ink.surface)
+        }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.stack).background(Ink.surface)
     }
 
     private func overviewHeader(_ overview: GitOverview) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: Metrics.stack) {
+            HStack(spacing: Metrics.inline) {
                 Label(overview.branchName, systemImage: "arrow.triangle.branch")
-                    .font(Face.mono(12, .semibold)).lineLimit(1)
+                    .font(Face.mono(Metrics.row, .semibold)).lineLimit(1)
                 Text(overview.shortHead.isEmpty ? "尚无提交" : overview.shortHead)
-                    .font(Face.mono(10)).foregroundStyle(Ink.inkMuted).textSelection(.enabled)
+                    .font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkMuted).textSelection(.enabled)
                 Spacer(minLength: 0)
                 if git.loading && scrolls { ProgressView().controlSize(.small) }
                 Text(!overview.countsComplete ? "计数未知" : (overview.clean ? "干净" : "有变更"))
-                    .font(Face.sans(10)).foregroundStyle(overview.clean ? Ink.live : Change.changed)
+                    .font(Face.sans(Metrics.meta)).foregroundStyle(overview.clean ? Ink.live : Change.changed)
                 if scrolls { Button { git.loadTree(project: project, force: true) } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.plain).disabled(git.loading).help("刷新当前 worktree，不自动 fetch") }
             }
-            HStack(spacing: 10) {
+            HStack(spacing: Metrics.inline) {
                 if let upstream = overview.upstream, !upstream.isEmpty {
                     Text("上游 " + upstream).lineLimit(1).truncationMode(.middle)
                     Text(verbatim: "↑\(overview.ahead)  ↓\(overview.behind)")
@@ -155,36 +157,36 @@ extension CodeView {
                             .help("二进制、冲突或缺失统计；没有按零计算")
                     }
                 }
-            }.font(Face.mono(10)).foregroundStyle(Ink.inkMuted)
-            HStack(spacing: 8) {
+            }.font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkMuted)
+            HStack(spacing: Metrics.inline) {
                 if let commit = overview.lastCommit {
-                    Text(commit.subject).font(Face.sans(11)).lineLimit(1)
+                    Text(commit.subject).font(Face.sans(Metrics.chrome)).lineLimit(1)
                         .help(commit.hash + (commit.when.map { " · " + $0 } ?? ""))
                 }
                 Spacer(minLength: 0)
                 if !overview.worktrees.isEmpty {
                     Button { showingWorktrees.toggle() } label: {
                         Label("Worktrees · \(overview.worktrees.count)", systemImage: showingWorktrees ? "chevron.up" : "chevron.down")
-                    }.buttonStyle(.plain).font(Face.sans(10)).disabled(!scrolls)
+                    }.buttonStyle(.plain).font(Face.sans(Metrics.meta)).disabled(!scrolls)
                         .accessibilityIdentifier("git.review.worktrees")
                 }
             }.foregroundStyle(Ink.inkMuted)
             if showingWorktrees {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 3) {
+                    VStack(alignment: .leading, spacing: Metrics.stack) {
                         ForEach(overview.worktrees) { worktree in
-                            HStack(spacing: 8) {
+                            HStack(spacing: Metrics.inline) {
                                 Image(systemName: worktree.current ? "circle.inset.filled" : "circle")
                                 Text(worktree.bare ? "bare" : worktree.displayBranch).frame(minWidth: 70, alignment: .leading)
                                 Text(worktree.path).lineLimit(1).truncationMode(.middle)
                                 Spacer(minLength: 0)
                                 Text(String((worktree.head ?? "").prefix(8)))
-                            }.font(Face.mono(10)).textSelection(.enabled)
+                            }.font(Face.mono(Metrics.meta)).textSelection(.enabled)
                         }
                     }
-                }.frame(maxHeight: 72)
+                }.frame(maxHeight: 64)
             }
-        }.padding(.horizontal, 10).padding(.vertical, 6).foregroundStyle(Ink.ink).background(Ink.surface)
+        }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV).foregroundStyle(Ink.ink).background(Ink.surface)
     }
 
     @ViewBuilder
@@ -234,8 +236,8 @@ extension CodeView {
 
     func patchFileHeader(_ file: GitFileDiff) -> some View {
         Text(file.oldPath.map { "\($0) → \(file.path)" } ?? file.path)
-            .font(Face.mono(11, .medium)).lineLimit(2).textSelection(.enabled)
-            .padding(.horizontal, 10).padding(.vertical, 6)
+            .font(Face.mono(Metrics.chrome, .medium)).lineLimit(2).textSelection(.enabled)
+            .padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV)
             .frame(maxWidth: .infinity, alignment: .leading).background(Ink.surface)
     }
 
@@ -256,8 +258,8 @@ extension CodeView {
     }
 
     func message(_ text: String, fills: Bool = true) -> some View {
-        Text(text).font(Face.sans(12)).foregroundStyle(Ink.inkMuted).textSelection(.enabled)
-            .frame(maxWidth: .infinity, maxHeight: fills ? .infinity : nil, alignment: .topLeading).padding(12)
+        Text(text).font(Face.sans(Metrics.row)).foregroundStyle(Ink.inkMuted).textSelection(.enabled)
+            .frame(maxWidth: .infinity, maxHeight: fills ? .infinity : nil, alignment: .topLeading).padding(Metrics.gutter)
     }
 }
 
@@ -273,7 +275,7 @@ extension CodeView {
 
     private var fileList: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
+            HStack(spacing: Metrics.inline) {
                 if scrolls {
                     TextField("筛选文件或原路径", text: $query).textFieldStyle(.plain).focused($searching)
                         .accessibilityIdentifier("git.review.search")
@@ -289,12 +291,12 @@ extension CodeView {
                         .buttonStyle(.plain).help("查找当前 worktree 的变更文件")
                 } else { Label("筛选文件或原路径", systemImage: "magnifyingglass") }
                 Text(verbatim: "\(visible.count)/\(files.count)").foregroundStyle(Ink.inkFaint)
-            }.font(Face.sans(11)).padding(.horizontal, 10).padding(.vertical, 7).background(Ink.surface)
+            }.font(Face.sans(Metrics.chrome)).padding(.horizontal, Metrics.gutter).padding(.vertical, 7).background(Ink.surface)
             Hairline()
             if visible.isEmpty {
                 Text(files.isEmpty ? "没有变更文件" : "没有匹配的文件")
-                    .font(Face.sans(12)).foregroundStyle(Ink.inkMuted)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(12)
+                    .font(Face.sans(Metrics.row)).foregroundStyle(Ink.inkMuted)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(Metrics.gutter)
             } else if scrolls {
                 ScrollViewReader { proxy in
                     ScrollView { LazyVStack(spacing: 0) { rows } }
@@ -307,19 +309,19 @@ extension CodeView {
     @ViewBuilder private var rows: some View {
         ForEach(visible) { file in
             Button { git.select(file, project: project) } label: {
-                HStack(spacing: 8) {
-                    Text(file.status).font(Face.mono(10, .medium)).frame(width: 24)
+                HStack(spacing: Metrics.inline) {
+                    Text(file.status).font(Face.mono(Metrics.meta, .medium)).frame(width: 24)
                         .foregroundStyle(file.isConflict ? Change.removed : Ink.accent)
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: Metrics.stack) {
                         Text(file.displayPath).font(Face.mono(11)).lineLimit(1).truncationMode(.middle)
                         Text(file.statusLabel).font(Face.sans(9)).foregroundStyle(Ink.inkMuted)
                     }
                     Spacer(minLength: 4)
-                    if file.binary { Text("binary").font(Face.mono(9)).foregroundStyle(Ink.inkFaint) }
+                    if file.binary { Text("binary").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint) }
                     else if let plus = file.additions, let minus = file.deletions, !file.isConflict {
-                        Text(verbatim: "+\(plus) −\(minus)").font(Face.mono(9)).foregroundStyle(Ink.inkMuted)
+                        Text(verbatim: "+\(plus) −\(minus)").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkMuted)
                     }
-                }.padding(.horizontal, 10).padding(.vertical, 5).foregroundStyle(Ink.ink)
+                }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.headerPad).foregroundStyle(Ink.ink)
                     .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                     .background(git.selectedPath == file.path ? Ink.accentSoft : Ink.canvas)
             }.buttonStyle(.plain).id(file.path).disabled(!scrolls)
@@ -330,15 +332,15 @@ extension CodeView {
 
     private var diffPanel: some View {
         reportDetailWidth(VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Text("DIFF").font(Face.mono(10, .semibold))
+            HStack(spacing: Metrics.inline) {
+                Text("DIFF").font(Face.mono(Metrics.meta, .semibold))
                 Text(git.overview?.head == nil ? "初始变更" : "HEAD → 工作区（含暂存）")
-                    .font(Face.sans(10)).foregroundStyle(Ink.inkMuted).lineLimit(1)
+                    .font(Face.sans(Metrics.meta)).foregroundStyle(Ink.inkMuted).lineLimit(1)
                 Spacer(minLength: 0)
                 if scrolls, git.selectedPath != nil {
-                    Button("关闭") { git.clearSelection() }.buttonStyle(.plain).font(Face.sans(10))
+                    Button("关闭") { git.clearSelection() }.buttonStyle(.plain).font(Face.sans(Metrics.meta))
                 }
-            }.padding(.horizontal, 10).padding(.vertical, 6).background(Ink.surface)
+            }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV).background(Ink.surface)
             Hairline()
             if git.patchLoading { message("正在读取差异…") }
             else if let problem = git.patchProblem { message(problem) }
@@ -375,30 +377,30 @@ extension CodeView {
 
     private var graphList: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
+            HStack(spacing: Metrics.inline) {
                 Image(systemName: "point.3.filled.connected.trianglepath.dotted").foregroundStyle(Ink.accent)
                 if let graph = git.graph {
                     Text(graph.branchName).font(Face.mono(11, .semibold)).lineLimit(1)
-                    if !graph.shortHead.isEmpty { Text(graph.shortHead).font(Face.mono(9)).foregroundStyle(Ink.inkMuted) }
+                    if !graph.shortHead.isEmpty { Text(graph.shortHead).font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkMuted) }
                     Spacer(minLength: 0)
-                    if graph.truncated { Text("前 \(graph.limit) 条").font(Face.mono(9)).foregroundStyle(Change.changed) }
-                    Text("\(graph.commits.count) commits").font(Face.mono(9)).foregroundStyle(Ink.inkMuted)
+                    if graph.truncated { Text("前 \(graph.limit) 条").font(Face.mono(Metrics.caption)).foregroundStyle(Change.changed) }
+                    Text("\(graph.commits.count) commits").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkMuted)
                 } else {
                     Text("Git graph").font(Face.mono(11, .semibold))
                     Spacer(minLength: 0)
                 }
                 Button { git.loadGraph(project: project, force: true) } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.plain).disabled(git.graphLoading || !scrolls).help("刷新只读 graph，不自动 fetch")
-            }.padding(.horizontal, 10).padding(.vertical, 6).background(Ink.surface)
+            }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV).background(Ink.surface)
             Hairline()
             if let problem = git.graphProblem {
                 VStack(alignment: .leading, spacing: 8) {
                     Label("Graph 读取失败", systemImage: "exclamationmark.triangle")
                         .foregroundStyle(Change.changed)
-                    Text(problem).font(Face.sans(11)).foregroundStyle(Ink.inkMuted).textSelection(.enabled)
+                    Text(problem).font(Face.sans(Metrics.chrome)).foregroundStyle(Ink.inkMuted).textSelection(.enabled)
                     Button("重试") { git.loadGraph(project: project, force: true) }
                         .buttonStyle(.bordered).controlSize(.small).disabled(git.graphLoading || !scrolls)
-                }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(12)
+                }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(Metrics.gutter)
             } else if git.graphLoading && git.graph == nil {
                 message("正在读取有界提交 graph…")
             } else if let graph = git.graph {
@@ -441,12 +443,12 @@ extension CodeView {
     private func graphPreface(_ graph: GitGraph) -> some View {
         VStack(spacing: 0) {
             if let upstream = graph.upstream, !upstream.isEmpty {
-                HStack(spacing: 8) {
+                HStack(spacing: Metrics.inline) {
                     Text("upstream").font(Face.mono(9, .semibold)).foregroundStyle(Ink.inkFaint)
-                    Text(upstream).font(Face.mono(9)).foregroundStyle(Ink.inkMuted).lineLimit(1)
-                    Text("↑\(graph.ahead) ↓\(graph.behind)").font(Face.mono(9)).foregroundStyle(Ink.inkMuted)
+                    Text(upstream).font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkMuted).lineLimit(1)
+                    Text("↑\(graph.ahead) ↓\(graph.behind)").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkMuted)
                     Spacer(minLength: 0)
-                }.padding(.horizontal, 10).padding(.vertical, 5)
+                }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.headerPad)
                 Hairline()
             }
         }
@@ -474,9 +476,9 @@ extension CodeView {
             git.select(commit, project: project)
             graphFocused = true
         } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(commit.shortHash).font(Face.mono(10, .semibold)).foregroundStyle(Ink.accent)
+            VStack(alignment: .leading, spacing: Metrics.stack) {
+                HStack(spacing: Metrics.inline) {
+                    Text(commit.shortHash).font(Face.mono(Metrics.meta, .semibold)).foregroundStyle(Ink.accent)
                     if head {
                         Text("HEAD").font(Face.mono(8, .semibold)).foregroundStyle(Ink.live)
                             .padding(.horizontal, 4).padding(.vertical, 1)
@@ -492,18 +494,18 @@ extension CodeView {
                     Spacer(minLength: 0)
                     if let when = commit.when { Text(when).font(Face.mono(8)).foregroundStyle(Ink.inkFaint).lineLimit(1) }
                 }
-                Text(commit.subject).font(Face.sans(11, commit.hash == git.selectedCommit ? .semibold : .regular))
+                Text(commit.subject).font(Face.sans(Metrics.chrome, commit.hash == git.selectedCommit ? .semibold : .regular))
                     .foregroundStyle(Ink.ink).lineLimit(2)
-                HStack(spacing: 8) {
+                HStack(spacing: Metrics.inline) {
                     if let author = commit.author { Text(author).lineLimit(1) }
                     if commit.parents.count > 1 { Text("\(commit.parents.count) parents") }
-                }.font(Face.mono(9)).foregroundStyle(Ink.inkMuted)
+                }.font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkMuted)
             }
-            .padding(.leading, width + 8).padding(.trailing, 10).padding(.vertical, 5)
+            .padding(.leading, width + 8).padding(.trailing, 10).padding(.vertical, Metrics.headerPad)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(alignment: .leading) {
                 GitGraphColumn(row: row, head: head, merge: commit.parents.count > 1)
-                    .frame(width: width).frame(maxHeight: .infinity).padding(.leading, 6)
+                    .frame(width: width).frame(maxHeight: .infinity).padding(.leading, Metrics.inline)
             }
             .background(commit.hash == git.selectedCommit ? Ink.accentSoft : Color.clear)
         }.buttonStyle(.plain).disabled(!scrolls)
@@ -537,15 +539,15 @@ extension CodeView {
 
     private var historicalDiffPanel: some View {
         reportDetailWidth(VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Text("COMMIT DIFF").font(Face.mono(10, .semibold))
+            HStack(spacing: Metrics.inline) {
+                Text("COMMIT DIFF").font(Face.mono(Metrics.meta, .semibold))
                 if let commit = git.patch?.commit {
                     Text(String(commit.prefix(8)) + " → first parent")
-                        .font(Face.mono(9)).foregroundStyle(Ink.inkMuted).lineLimit(1)
-                } else { Text("选择 graph 节点").font(Face.sans(10)).foregroundStyle(Ink.inkMuted) }
+                        .font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkMuted).lineLimit(1)
+                } else { Text("选择 graph 节点").font(Face.sans(Metrics.meta)).foregroundStyle(Ink.inkMuted) }
                 Spacer(minLength: 0)
-                if scrolls, git.selectedCommit != nil { Button("关闭") { git.clearSelection() }.buttonStyle(.plain).font(Face.sans(10)) }
-            }.padding(.horizontal, 10).padding(.vertical, 6).background(Ink.surface)
+                if scrolls, git.selectedCommit != nil { Button("关闭") { git.clearSelection() }.buttonStyle(.plain).font(Face.sans(Metrics.meta)) }
+            }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV).background(Ink.surface)
             Hairline()
             if git.patchLoading { message("正在读取提交差异…") }
             else if let problem = git.patchProblem { message(problem) }

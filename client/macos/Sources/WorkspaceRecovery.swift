@@ -128,9 +128,9 @@ struct WorkspaceRecoverySheet: View {
     @State private var confirmingEnable = false
     @State private var reopening: SavedSession?
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: Metrics.section) {
             HStack {
-                Label("工作区恢复 / Workspace recovery", systemImage: "clock.arrow.circlepath").font(Face.sans(14, .semibold))
+                Label("工作区恢复 / Workspace recovery", systemImage: "clock.arrow.circlepath").font(Face.sans(Metrics.display, .semibold))
                 Spacer(); Button("关闭") { dismiss() }.keyboardShortcut(.cancelAction)
             }
             Text("只保存 worktree 路径、会话名称、模式与布局。不保存消息、命令、终端输出、环境变量或凭证。恢复入口不会自动启动进程。")
@@ -167,18 +167,19 @@ struct WorkspaceRecoverySheet: View {
                                 else { Text("对话续接需选择 provider 原始会话文件").font(Face.sans(10)).foregroundStyle(Ink.inkMuted) }
                                 Spacer(); Button("移除入口") { recovery.forget(record) }
                             }
-                        }.padding(10).background(Ink.surface).clipShape(RoundedRectangle(cornerRadius: 6))
+                        }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.headerPad)
+                            .background(Ink.surface).clipShape(RoundedRectangle(cornerRadius: 4))
                     }
                     if recovery.remembered.isEmpty {
                         Text(recovery.reviewPending ? "尚未应用上次布局。" : "没有待打开的历史会话入口。")
-                            .foregroundStyle(Ink.inkMuted).padding(.vertical, 14)
+                            .foregroundStyle(Ink.inkMuted).padding(.vertical, Metrics.headerPad)
                     }
                 }
             }.frame(minHeight: 160, maxHeight: 320)
             Text("旧 PTY 不会按保存的 PID 重新附着；旧进程的存活状态未知。命令/对话历史仍由 shell 或外部 agent 管理。")
                 .font(Face.sans(10)).foregroundStyle(Ink.inkFaint).fixedSize(horizontal: false, vertical: true)
             if let problem = recovery.problem { Text(problem).font(Face.sans(11)).foregroundStyle(Ink.ink) }
-        }.padding(18).frame(width: 680).background(Ink.canvas).foregroundStyle(Ink.ink)
+        }.padding(Metrics.panelPad).frame(width: 680).background(Ink.canvas).foregroundStyle(Ink.ink)
             .onAppear { recovery.loadOnce() }
             .alert("保存工作区路径与会话名称？", isPresented: $confirmingEnable) {
                 Button("取消", role: .cancel) {}

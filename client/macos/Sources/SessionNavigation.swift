@@ -54,41 +54,42 @@ struct SessionSwitcherPalette: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
+            HStack(spacing: Metrics.inline) {
                 Image(systemName: "rectangle.on.rectangle")
                     .foregroundStyle(Ink.accent)
-                Text("切换会话").font(Face.sans(13, .semibold))
+                Text("切换会话").font(Face.sans(Metrics.heading, .semibold))
                 Spacer(minLength: 0)
-                Text("Esc 返回 terminal").font(Face.mono(9)).foregroundStyle(Ink.inkFaint)
+                Text("Esc 返回 terminal").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
                 Button(action: close) { Image(systemName: "xmark") }
                     .buttonStyle(.plain).foregroundStyle(Ink.inkMuted)
-            }.padding(.horizontal, 13).padding(.vertical, 10)
+                    .frame(minWidth: Metrics.hit, minHeight: Metrics.hit)
+            }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.headerPad)
             Hairline()
-            HStack(spacing: 7) {
+            HStack(spacing: Metrics.inline) {
                 Image(systemName: "magnifyingglass").foregroundStyle(Ink.inkFaint)
                 TextField("搜索名称、agent、状态或路径", text: $query)
-                    .textFieldStyle(.plain).font(Face.sans(11)).focused($focused)
+                    .textFieldStyle(.plain).font(Face.sans(Metrics.chrome)).focused($focused)
                     .accessibilityIdentifier("console.sessionSearch")
-                Text("⌘Tab").font(Face.mono(9)).foregroundStyle(Ink.inkFaint)
-            }.padding(10).background(Ink.sunken)
+                Text("⌘Tab").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
+            }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.headerPad).background(Ink.sunken)
             Hairline()
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
+                LazyVStack(alignment: .leading, spacing: Metrics.inline) {
                     section("Shell", sessions: shells)
                     section("Agent", sessions: agents)
                     if matches.isEmpty {
                         Text("没有匹配会话 / No matching sessions")
-                            .font(Face.sans(11)).foregroundStyle(Ink.inkMuted).padding(14)
+                            .font(Face.sans(Metrics.chrome)).foregroundStyle(Ink.inkMuted).padding(Metrics.gutter)
                     }
-                }.padding(10)
+                }.padding(Metrics.gutter)
             }
-            HStack(spacing: 8) {
-                Text(root).font(Face.mono(9)).foregroundStyle(Ink.inkFaint)
+            HStack(spacing: Metrics.inline) {
+                Text(root).font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
                     .lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 0)
                 Text("⌘⌥Tab 打开 · ⌘Tab 循环")
-                    .font(Face.mono(9)).foregroundStyle(Ink.inkFaint)
-            }.padding(.horizontal, 11).padding(.vertical, 8)
+                    .font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
+            }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.headerPad)
             .background(Ink.surface)
         }
         .background(Ink.canvas)
@@ -105,26 +106,26 @@ struct SessionSwitcherPalette: View {
 
     @ViewBuilder private func section(_ title: String, sessions: [TerminalSession]) -> some View {
         if !sessions.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title.uppercased()).font(Face.mono(9, .semibold)).foregroundStyle(Ink.inkFaint)
+            VStack(alignment: .leading, spacing: Metrics.rowGap) {
+                Text(title.uppercased()).font(Face.mono(Metrics.caption, .semibold)).foregroundStyle(Ink.inkFaint)
                 ForEach(sessions) { session in
                     Button { activate(session) } label: {
-                        HStack(spacing: 9) {
+                        HStack(spacing: Metrics.inline) {
                             Image(systemName: session.kind == "terminal" ? "terminal" : "sparkle")
                                 .foregroundStyle(session.id == selected.id ? Ink.accent : Ink.inkMuted)
-                                .frame(width: 17)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(session.title).font(Face.sans(11, session.id == selected.id ? .semibold : .regular))
+                                .frame(width: 16)
+                            VStack(alignment: .leading, spacing: Metrics.stack) {
+                                Text(session.title).font(Face.sans(Metrics.chrome, session.id == selected.id ? .semibold : .regular))
                                     .foregroundStyle(Ink.ink).lineLimit(1)
                                 Text(session.kind == "terminal" ? session.state : providerLabel(session))
-                                    .font(Face.mono(9)).foregroundStyle(Ink.inkMuted).lineLimit(1)
+                                    .font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkMuted).lineLimit(1)
                             }
                             Spacer(minLength: 0)
                             if session.isActive { Circle().fill(Ink.live).frame(width: 5, height: 5) }
                             if session.id == selected.id { Image(systemName: "checkmark").foregroundStyle(Ink.accent) }
-                        }.padding(.horizontal, 8).padding(.vertical, 7)
+                        }.padding(.horizontal, Metrics.inline).padding(.vertical, Metrics.tabPadV)
                         .background(session.id == selected.id ? Ink.accentSoft : Color.clear)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
                     }.buttonStyle(.plain)
                         .accessibilityIdentifier("console.session." + session.id.uuidString)
                 }
