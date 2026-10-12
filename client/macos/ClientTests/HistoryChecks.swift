@@ -21,37 +21,6 @@ extension ClientChecks {
         }
         pump()
     }
-    static func historyClearButton(in root: NSView) -> NSButton {
-        eventually("history clear control missing") { findHistoryClear(in: root) != nil }
-        guard let button = findHistoryClear(in: root) else { fatalError("history clear control missing") }
-        require(button.isEnabled, "history clear disabled while entries remain")
-        return button
-    }
-    static func findHistoryClear(in root: NSView) -> NSButton? {
-        if let button = root as? NSButton {
-            let id = button.accessibilityIdentifier() ?? ""
-            let title = button.title
-            if id == "history.clear" || title.contains("清空此 worktree") || title.contains("Clear") {
-                // Prefer the toolbar Clear, not the alert's destructive Clear.
-                if title.contains("取消") || title.contains("Cancel") { return nil }
-                if id == "history.clear" || title.contains("worktree") || title.contains("此 worktree") {
-                    return button
-                }
-            }
-        }
-        for child in root.subviews {
-            if let hit = findHistoryClear(in: child) { return hit }
-        }
-        return nil
-    }
-    static func clickHistoryClear(_ window: NSWindow, in root: NSView) {
-        let button = historyClearButton(in: root)
-        button.performClick(nil)
-        pump(0.05)
-        if window.attachedSheet != nil { return }
-        let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
-        historyClick(window, x: point.x, y: point.y)
-    }
     static func historyChecks() throws {
         let timeout = DispatchWorkItem {
             FileHandle.standardError.write(Data("FAIL: native command-history checks stalled for 30 seconds\n".utf8))
@@ -126,16 +95,17 @@ extension ClientChecks {
         require(board.string(forType: .string) == "echo '历史 safe'", "native filtered Copy failed or copied an unfiltered command")
         pump(0.1)
         require(registry.commandHistory(in: first.path).map(\.id) == before, "search/copy executed a command or changed source history")
-        // Density Metrics moved chrome; hit the real Clear control by accessibility id.
-        clickHistoryClear(window, in: host)
+        // Window coords are bottom-left origin: y≈450 hits the top Clear control in a 480pt sheet.
+        historyClick(window, x: 450, y: 450)
         eventually("native clear confirmation did not open") { window.attachedSheet != nil }
         guard let cancelSheet = window.attachedSheet,
               let cancel = find(NSButton.self, in: cancelSheet.contentView!).first(where: { $0.title.contains("Cancel") || $0.title.contains("取消") }) else { fatalError("native confirmation Cancel missing") }
         cancel.performClick(nil)
         eventually("native cancel confirmation did not close") { window.attachedSheet == nil }
         require(registry.commandHistory(in: first.path).map(\.id) == before, "cancel cleared history")
-        pump(0.25) // let SwiftUI finish tearing down isPresented before the second open
-        clickHistoryClear(window, in: host)
+        // WorktreeHistorySheet bounces confirmingClear through the next runloop; settle first.
+        pump(0.35)
+        historyClick(window, x: 450, y: 450)
         eventually("second clear confirmation did not open") { window.attachedSheet != nil }
         guard let clearSheet = window.attachedSheet,
               let clear = find(NSButton.self, in: clearSheet.contentView!).first(where: { $0.title.contains("Clear") || $0.title.contains("清空") }) else { fatalError("native confirmation Clear missing") }
