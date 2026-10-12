@@ -18,7 +18,6 @@ struct WorkspaceConsole: View {
     @State private var switcherPresented = false
     @State private var switcherQuery = ""
     @State private var terminalReturnID: UUID?
-    @StateObject private var keyRouter = SessionKeyRouter()
     @Environment(\.clientReduceMotion) private var reduced
     init(root: String, frozen: Bool = false, initialAgent: Bool = false) {
         self.root = root; self.frozen = frozen
@@ -75,13 +74,6 @@ struct WorkspaceConsole: View {
             .onAppear {
                 guard !frozen else { return }
                 WorkspaceRecovery.shared.watch(workspace)
-                configureKeyRouter()
-                // onAppear can precede window keying. Rebind on the next main
-                // run-loop turn as a deterministic fallback for native events.
-                DispatchQueue.main.async {
-                    configureKeyRouter()
-                    keyRouter.install(windowNumber: NSApp.keyWindow?.windowNumber)
-                }
                 if let selected { focusIntent = TerminalFocusIntent(selected.id) }
                 else { launcher.refresh(workspace) }
             }
@@ -92,19 +84,13 @@ struct WorkspaceConsole: View {
                 }
             }
             .background(alignment: .topLeading) {
-                SessionKeyWindowBinder(router: keyRouter)
+                SessionShortcutDelivery(open: openSwitcher, cycle: cycleSession, escape: closeSwitcher,
+                                        canCycle: { scoped.count > 1 },
+                                        canEscape: { switcherPresented || selected?.kind != "terminal" })
                     .frame(width: 1, height: 1)
-                    .opacity(0)
                     .allowsHitTesting(false)
             }
-            .background(alignment: .topLeading) {
-                SessionShortcutBridge(open: openSwitcher, cycle: cycleSession,
-                                      escape: closeSwitcher, canCycle: { scoped.count > 1 },
-                                      canEscape: { switcherPresented || selected?.kind != "terminal" })
-                    .frame(width: 2, height: 2)
-                    .allowsHitTesting(false)
-            }
-            .onDisappear { launcher.cancel(); keyRouter.remove() }
+            .onDisappear { launcher.cancel() }
     }
     private var launchSurface: SessionLaunchPanel {
         SessionLaunchPanel(root: root, workspace: workspace, launcher: launcher, selected: selected,
@@ -189,8 +175,6 @@ struct WorkspaceConsole: View {
     private func openSwitcher() {
         switcherQuery = ""
         switcherPresented = true
-        configureKeyRouter()
-        keyRouter.install(windowNumber: NSApp.keyWindow?.windowNumber)
     }
 
     private func closeSwitcher() {
@@ -219,19 +203,6 @@ struct WorkspaceConsole: View {
         let current = values.firstIndex { $0.id == selected?.id } ?? 0
         let next = (current + offset + values.count) % values.count
         activate(values[next])
-    }
-
-    private func configureKeyRouter() {
-        keyRouter.configure(root: root, workspace: workspace,
-            open: {
-                switcherQuery = ""
-                switcherPresented = true
-            },
-            cycle: { offset in cycleSession(offset) },
-            escape: { closeSwitcher() },
-            canCycle: { scoped.count > 1 },
-            canEscape: { switcherPresented || selected?.kind != "terminal" })
-        keyRouter.install(windowNumber: NSApp.keyWindow?.windowNumber)
     }
 
     @ViewBuilder private func splitItems(_ target: TerminalSession) -> some View {
@@ -291,44 +262,6 @@ struct ConsoleSessionTab: NSViewRepresentable {
     }
 }
 
-/// Binds the local event monitor after the hosting view has entered its key
-/// window. SwiftUI can run onAppear before NSWindow.makeKeyAndOrderFront, so
-/// installing from onAppear alone can silently leave the shortcuts inactive.
-struct SessionKeyWindowBinder: NSViewRepresentable {
-    let router: SessionKeyRouter
-
-    func makeNSView(context: Context) -> BindingView { BindingView(router: router) }
-
-    func updateNSView(_ view: BindingView, context: Context) {
-        view.router = router
-        view.installIfNeeded()
-    }
-
-    final class BindingView: NSView {
-        var router: SessionKeyRouter
-
-        init(router: SessionKeyRouter) {
-            self.router = router
-            super.init(frame: .zero)
-        }
-
-        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            installIfNeeded()
-        }
-
-        override func performKeyEquivalent(with event: NSEvent) -> Bool {
-            if router.routeKeyEquivalent(event) { return true }
-            return super.performKeyEquivalent(with: event)
-        }
-
-        func installIfNeeded() {
-            router.install(windowNumber: window?.windowNumber)
-        }
-    }
-}
 final class ConsoleSessionButton: NSButton {
     var activate: (() -> Void)?
     init() {
