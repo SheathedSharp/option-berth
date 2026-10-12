@@ -72,7 +72,7 @@ mage window
 截图前先执行 `mage client` 或 `mage buildClient`；截图目标不再隐式构建。
 
 mage states 生成 01-empty、02-services-live、03-services-idle、04-runtime-facts、
-05-connection-error、06-manifest-review、07-settings、07-settings-jev、07-settings-typography 、08-code、09-terminal 、10-agent-console 和 11-console-split。改界面后必须运行 mage states
+05-connection-error、06-manifest-review、07-settings、07-settings-jev、07-settings-typography 、08-code、08-code-history、09-terminal 、10-agent-console 和 11-console-split。改界面后必须运行 mage states
 并查看 PNG；需要验证真实 daemon 数据时再运行 mage snapshot。mage window 用于检查标题栏、
 弹窗和窗口尺寸等离屏渲染看不到的部分。
 
@@ -97,8 +97,8 @@ DaemonClient 通过 `state.subscribe` 长连接接收首帧快照和端口 / 项
 `state.snapshot`。其它调用是 groups.config.get、groups.start、groups.kill 和 ports.logs。
 Git 面板调用 `oberth git --json`、`oberth git files --json`、按需的
 `oberth git diff --json`，以及 History 模式下的 `oberth git graph --json` 和
-`oberth git diff --commit --json`。行号只从返回的 hunk 头推算。客户端不另开 Git 进程，
-也不新增 daemon Git 状态。ServicesStore 和
+`oberth git diff --commit --json`。行号只从返回的 hunk 头推算。History 的车道和折线采用
+Xit 的提交图算法，只布局这份有界 parent 列表，不另开 Git 进程，也不新增 daemon Git 状态。ServicesStore 和
 GitStore 只缓存当前界面需要的数据；它们不另建产品模型。引擎协议变更后，先更新 daemon
 schema，再重新构建客户端。
 
