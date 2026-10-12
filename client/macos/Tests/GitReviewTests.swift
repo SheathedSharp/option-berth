@@ -81,6 +81,58 @@ import Foundation
         // A large in-memory list is filtered, not rendered eagerly or re-read from Git.
         let many = try (0..<10_000).map { try file("file-\($0).swift", " M") }
         expect(GitReviewFilter.all.files(many, query: "file-9999").count == 1, "large-list filtering")
+        let rows = GitPatchRows.make([
+            GitPatchLine(kind: "meta", text: "diff --git a/a.swift b/a.swift"),
+            GitPatchLine(kind: "hunk", text: "@@ -8,3 +8,4 @@ func start()"),
+            GitPatchLine(kind: "context", text: " let server = Server()"),
+            GitPatchLine(kind: "del", text: "-server.start()"),
+            GitPatchLine(kind: "add", text: "+server.start(port: port)"),
+            GitPatchLine(kind: "add", text: "+"),
+            GitPatchLine(kind: "meta", text: "\\ No newline at end of file"),
+            GitPatchLine(kind: "hunk", text: "@@ -0,0 +1 @@"),
+            GitPatchLine(kind: "add", text: "+only"),
+            GitPatchLine(kind: "hunk", text: "@@ -4 +0,0 @@"),
+            GitPatchLine(kind: "del", text: "-gone"),
+            GitPatchLine(kind: "hunk", text: "@@ -1, +1 @@"),
+            GitPatchLine(kind: "add", text: "+skipped"),
+            GitPatchLine(kind: "hunk", text: "@@ -" + String(repeating: "9", count: 40) + " +1 @@"),
+            GitPatchLine(kind: "context", text: " overflow")
+        ])
+        expect(rows.count == 15, "patch projection dropped a contract line")
+        expect(rows[0].kind == "meta" && rows[0].oldNumber == nil && rows[0].text.hasPrefix("diff --git"), "file metadata numbered")
+        expect(rows[1].kind == "hunk" && rows[1].oldNumber == nil && rows[1].newNumber == nil, "hunk header consumed a line number")
+        expect(rows[2] == GitPatchRow(kind: "context", text: "let server = Server()", oldNumber: 8, newNumber: 8), "context numbers")
+        expect(rows[3] == GitPatchRow(kind: "del", text: "server.start()", oldNumber: 9, newNumber: nil), "deletion numbers")
+        expect(rows[4] == GitPatchRow(kind: "add", text: "server.start(port: port)", oldNumber: nil, newNumber: 9), "addition numbers")
+        expect(rows[5] == GitPatchRow(kind: "add", text: "", oldNumber: nil, newNumber: 10), "empty addition")
+        expect(rows[6].kind == "meta" && rows[6].oldNumber == nil && rows[6].newNumber == nil, "newline note shifted the cursor")
+        expect(rows[8] == GitPatchRow(kind: "add", text: "only", oldNumber: nil, newNumber: 1), "new file invented an old number")
+        expect(rows[10] == GitPatchRow(kind: "del", text: "gone", oldNumber: 4, newNumber: nil), "deleted file invented a new number")
+        expect(rows[12].newNumber == nil && rows[14].oldNumber == nil, "malformed hunk invented numbers")
+        expect(GitPatchRows.digits(rows) == 2, "gutter width")
+        let omitted = GitPatchRows.make([
+            GitPatchLine(kind: "hunk", text: "@@ -1 +1,2 @@"),
+            GitPatchLine(kind: "context", text: " a"),
+            GitPatchLine(kind: "add", text: "+b")
+        ])
+        expect(omitted[1].oldNumber == 1 && omitted[1].newNumber == 1 && omitted[2].newNumber == 2, "omitted hunk count is not 1")
+        let chain = try decode(GitGraph.self, [
+            "root": "/fixture/repo", "limit": 2,
+            "commits": [
+                ["hash": "aaaaaaaaaaaaaaaa", "parents": ["bbbbbbbbbbbbbbbb"], "subject": "child"],
+                ["hash": "bbbbbbbbbbbbbbbb", "parents": ["cccccccccccccccc"], "subject": "parent"]
+            ]
+        ])
+        expect(GitGraphLink.connects(chain.commits[0], to: chain.commits[1]), "declared parent edge")
+        expect(!GitGraphLink.connects(chain.commits[1], to: chain.commits[0]), "reverse log order became an edge")
+        let side = try decode(GitGraph.self, [
+            "root": "/fixture/repo", "limit": 2,
+            "commits": [
+                ["hash": "aaaaaaaaaaaaaaaa", "parents": ["dddddddddddddddd"], "subject": "head"],
+                ["hash": "bbbbbbbbbbbbbbbb", "subject": "other"]
+            ]
+        ])
+        expect(!GitGraphLink.connects(side.commits[0], to: side.commits[1]), "adjacent rows invented a parent edge")
         print("GitReviewTests: \(checks) checks passed")
     }
 }
