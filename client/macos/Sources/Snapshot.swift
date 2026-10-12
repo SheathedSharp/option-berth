@@ -260,10 +260,12 @@ enum Snapshot {
         let patchJSON = """
         {"root":"/Users/you/code/berth-demo","files":[{"path":"Sources/API.swift","lines":[
           {"kind":"meta","text":"diff --git a/Sources/API.swift b/Sources/API.swift"},
-          {"kind":"hunk","text":"@@ -8,3 +8,5 @@"},
+          {"kind":"meta","text":"index 1111111..2222222 100644"},
+          {"kind":"hunk","text":"@@ -8,3 +8,5 @@ Server"},
           {"kind":"context","text":" let server = Server()"},
           {"kind":"del","text":"-server.start()"},
-          {"kind":"add","text":"+server.start(port: port)"}
+          {"kind":"add","text":"+server.start(port: port)"},
+          {"kind":"add","text":"+server.ready()"}
         ]}]}
         """
         let decoder = JSONDecoder()
