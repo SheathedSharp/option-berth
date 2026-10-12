@@ -74,6 +74,9 @@ struct SessionLaunchPanel: View {
     let activate: (TerminalSession) -> Void
     let close: (() -> Void)?
     var frozen = false
+    /// Started from the live shell. The shell target is absent: this surface
+    /// only plans a new external-agent PTY.
+    var agentOnly = false
     @State private var shell = false
     private var target: Binding<String> {
         Binding(get: { shell ? "shell" : workspace.providerID }, set: {
@@ -86,14 +89,23 @@ struct SessionLaunchPanel: View {
             HStack(spacing: 8) {
                 Image(systemName: shell ? "terminal" : "sparkle").foregroundStyle(Ink.accent)
                 if frozen { Text("Codex ▾").font(Face.sans(12, .medium)) }
-                else { SessionTargetPicker(target: target, providers: launcher.providers).frame(height: 26).disabled(launcher.planning) }
+                else {
+                    SessionTargetPicker(target: agentOnly ? Binding(get: { workspace.providerID }, set: { workspace.providerID = $0 }) : target,
+                                        providers: launcher.providers, includeShell: !agentOnly)
+                        .frame(height: 26).disabled(launcher.planning)
+                }
                 Spacer(minLength: 0)
                 if let close {
                     ConsoleToolbarAction(title: "", identifier: "console.cancelLaunch", symbol: "xmark") { launcher.cancel(); close() }
                         .frame(width: 22, height: 22).help("取消并返回当前会话；草稿保留")
                 }
             }
-            if shell {
+            if agentOnly && !frozen {
+                Text("新的外部 Agent 会话。回到 Shell 后它继续运行。")
+                    .font(Face.sans(10)).foregroundStyle(Ink.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !agentOnly && shell {
                 Text(URL(fileURLWithPath: TerminalSession.shell).lastPathComponent)
                     .font(Face.mono(13)).foregroundStyle(Ink.inkMuted)
                     .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
@@ -132,7 +144,7 @@ struct SessionLaunchPanel: View {
                 Spacer(minLength: 0)
                 if frozen { Text("开始新会话 ⌘↩").font(Face.sans(11)) }
                 else {
-                    ConsoleToolbarAction(title: shell ? "打开 Shell" : "开始新会话 ⌘↩", identifier: "console.launch", perform: start)
+                    ConsoleToolbarAction(title: agentOnly ? "开始 Agent ⌘↩" : (shell ? "打开 Shell" : "开始新会话 ⌘↩"), identifier: "console.launch", perform: start)
                         .fixedSize().frame(height: 28).padding(.horizontal, 9).background(Ink.accentSoft)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .disabled(launcher.planning || (!shell && !launcher.available(workspace)))
@@ -144,7 +156,7 @@ struct SessionLaunchPanel: View {
     private var canFocusNative: Bool { selected?.isActive == true && selected?.kind == "agent:\(workspace.providerID):native" }
     private func start() {
         guard !launcher.planning else { return }
-        if shell { newShell() }
+        if shell && !agentOnly { newShell() }
         else { launcher.launch(root: root, workspace: workspace,
             prompt: !workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, didLaunch: activate) }
     }
@@ -166,10 +178,11 @@ struct SessionLaunchPanel: View {
 private struct SessionTargetPicker: NSViewRepresentable {
     @Binding var target: String
     let providers: [ExternalAgent]
+    var includeShell = true
     @Environment(\.isEnabled) private var enabled
     func makeNSView(context: Context) -> SessionTargetButton { SessionTargetButton() }
     func updateNSView(_ button: SessionTargetButton, context: Context) {
-        let values = [("shell", "Shell", true)] + providers.map { ($0.id, $0.name + ($0.installed ? "" : " · 未安装"), $0.installed) }
+        let values = (includeShell ? [("shell", "Shell", true)] : []) + providers.map { ($0.id, $0.name + ($0.installed ? "" : " · 未安装"), $0.installed) }
         let choices = values.contains(where: { $0.0 == target }) ? values : values + [(target, "检测 Agent…", false)]
         let signature = choices.map { "\($0.0):\($0.1):\($0.2)" }
         if button.signature != signature {

@@ -159,13 +159,16 @@ struct SessionShortcutDelivery: NSViewRepresentable {
     let open: () -> Void
     let cycle: (Int) -> Void
     let escape: () -> Void
+    let startAgent: () -> Void
     let canCycle: () -> Bool
     let canEscape: () -> Bool
+    let canStartAgent: () -> Bool
 
     func makeNSView(context: Context) -> DeliveryView { DeliveryView() }
 
     func updateNSView(_ view: DeliveryView, context: Context) {
-        view.apply(open: open, cycle: cycle, escape: escape, canCycle: canCycle, canEscape: canEscape)
+        view.apply(open: open, cycle: cycle, escape: escape, startAgent: startAgent,
+                   canCycle: canCycle, canEscape: canEscape, canStartAgent: canStartAgent)
     }
 
     static func dismantleNSView(_ view: DeliveryView, coordinator: ()) { view.removeMonitor() }
@@ -176,8 +179,10 @@ struct SessionShortcutDelivery: NSViewRepresentable {
         private var openAction: (() -> Void)?
         private var cycleAction: ((Int) -> Void)?
         private var escapeAction: (() -> Void)?
+        private var startAgentAction: (() -> Void)?
         private var canCycle: (() -> Bool)?
         private var canEscape: (() -> Bool)?
+        private var canStartAgent: (() -> Bool)?
 
         override init(frame frameRect: NSRect) {
             super.init(frame: frameRect)
@@ -193,13 +198,16 @@ struct SessionShortcutDelivery: NSViewRepresentable {
         override var acceptsFirstResponder: Bool { false }
 
         func apply(open: @escaping () -> Void, cycle: @escaping (Int) -> Void,
-                   escape: @escaping () -> Void, canCycle: @escaping () -> Bool,
-                   canEscape: @escaping () -> Bool) {
+                   escape: @escaping () -> Void, startAgent: @escaping () -> Void,
+                   canCycle: @escaping () -> Bool, canEscape: @escaping () -> Bool,
+                   canStartAgent: @escaping () -> Bool) {
             openAction = open
             cycleAction = cycle
             escapeAction = escape
+            startAgentAction = startAgent
             self.canCycle = canCycle
             self.canEscape = canEscape
+            self.canStartAgent = canStartAgent
         }
 
         func removeMonitor() {
@@ -255,6 +263,11 @@ struct SessionShortcutDelivery: NSViewRepresentable {
             if event.keyCode == Self.tab, command, canCycle?() == true {
                 return .cycle(flags.contains(.shift) ? -1 : 1)
             }
+            // Command-Return starts an agent from the shell, matching the
+            // terminal-mode shortcut. Control-Return stays with the PTY.
+            let keys = flags.intersection([.command, .shift, .control, .option])
+            if (event.keyCode == Self.returnKey || event.keyCode == Self.keypadEnter),
+               keys == .command, canStartAgent?() == true { return .startAgent }
             if event.keyCode == Self.escape, canEscape?() == true { return .escape }
             return nil
         }
@@ -264,15 +277,18 @@ struct SessionShortcutDelivery: NSViewRepresentable {
             case .open: openAction?()
             case .cycle(let offset): cycleAction?(offset)
             case .escape: escapeAction?()
+            case .startAgent: startAgentAction?()
             }
         }
 
         private static let tab: UInt16 = 48
         private static let escape: UInt16 = 53
+        private static let returnKey: UInt16 = 36
+        private static let keypadEnter: UInt16 = 76
     }
 }
 
-private enum SessionShortcut { case open, cycle(Int), escape }
+private enum SessionShortcut { case open, cycle(Int), escape, startAgent }
 
 private struct SessionPaletteMarker: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
