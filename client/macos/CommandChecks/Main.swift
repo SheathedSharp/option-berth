@@ -14,6 +14,7 @@ import BerthTerminal
                 .task { await fixture.runOnce() }
         }
         .defaultSize(width: 1060, height: 720)
+        .keyboardShortcut(nil as KeyboardShortcut?)
         .commands {
             WorkspaceCommandMenus(views: fixture.views, shortcuts: fixture.shortcuts,
                                   services: fixture.services, perform: fixture.perform)
@@ -80,14 +81,22 @@ import BerthTerminal
         return menu.items.flatMap { [$0] + items($0.submenu) }
     }
     func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
-    @discardableResult func key(_ text: String, modifiers: NSEvent.ModifierFlags = .command) -> Bool {
+    func keyEvent(_ text: String, modifiers: NSEvent.ModifierFlags = .command) -> NSEvent {
         let codes: [String: UInt16] = ["1":18,"2":19,"9":25,"s":1,"g":5,"t":17,"b":11,"j":38,"k":40,"p":35,"n":45,"c":8,"v":9,"a":0,"z":6,"f":3]
-        let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
+        return NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: NSApp.keyWindow?.windowNumber ?? 0,
             context: nil, characters: modifiers.contains(.shift) ? text.uppercased() : text,
             charactersIgnoringModifiers: text, isARepeat: false, keyCode: codes[text] ?? 0)!
+    }
+    @discardableResult func key(_ text: String, modifiers: NSEvent.ModifierFlags = .command) -> Bool {
+        let event = keyEvent(text, modifiers: modifiers)
         NSApp.mainMenu?.update()
         return NSApp.mainMenu?.performKeyEquivalent(with: event) ?? false
+    }
+    /// Real keystrokes enter through `sendEvent`, which asks the key window
+    /// before the main menu. Menu-only `performKeyEquivalent` hides that race.
+    func sendUserKey(_ text: String, modifiers: NSEvent.ModifierFlags = .command) {
+        NSApp.sendEvent(keyEvent(text, modifiers: modifiers))
     }
     func rejected(_ text: String, _ message: String, modifiers: NSEvent.ModifierFlags = .command) async throws {
         let count = performed.count
@@ -109,7 +118,10 @@ import BerthTerminal
         catch {
             fputs("CommandChecks failed: \(error.localizedDescription)\n", stderr)
             // Only this synthetic test application's menu is included.
-            for item in items(NSApp.mainMenu) { print("MENU \(item.title) | \(item.keyEquivalent) | \(item.isEnabled)") }
+            for item in items(NSApp.mainMenu) {
+                let action = item.action.map { String(describing: $0) } ?? "nil"
+                print("MENU \(item.title) | \(item.keyEquivalent) | enabled=\(item.isEnabled) hidden=\(item.isHidden) action=\(action)")
+            }
             exit(1)
         }
     }
