@@ -503,7 +503,7 @@ extension CodeView {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(alignment: .leading) {
                 GitGraphColumn(row: row, head: head, merge: commit.parents.count > 1)
-                    .frame(width: width, maxHeight: .infinity).padding(.leading, 6)
+                    .frame(width: width).frame(maxHeight: .infinity).padding(.leading, 6)
             }
             .background(commit.hash == git.selectedCommit ? Ink.accentSoft : Color.clear)
         }.buttonStyle(.plain).disabled(!scrolls)

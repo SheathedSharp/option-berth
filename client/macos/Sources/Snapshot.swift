@@ -308,6 +308,6 @@ enum Snapshot {
         let decoder = JSONDecoder()
         let graph = try! decoder.decode(GitGraph.self, from: Data(graphJSON.utf8))
         let patch = try! decoder.decode(GitPatch.self, from: Data(patchJSON.utf8))
-        return GitStore(graph: graph, patch: patch, selectedCommit: "mmmmmmmmmmmmmmmm")
+        return GitStore(overview: nil, graph: graph, patch: patch, selectedCommit: "mmmmmmmmmmmmmmmm")
     }
 }
