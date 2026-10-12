@@ -91,27 +91,40 @@ else:
             }
             launch?.performClick(nil)
         }
-        eventually("configured provider did not reach the native Agent picker") {
-            find(NSPopUpButton.self, in: host).contains { $0.titleOfSelectedItem == "Claude fixture" }
+        eventually("opening the worktree session did not present a shell") {
+            registry.inWorktree(root.path).contains { $0.kind == "terminal" && $0.isActive }
         }
-        require(registry.inWorktree(root.path).isEmpty, "opening the Agent composer launched a process")
-        guard let editor = find(NSTextView.self, in: host).first(where: { $0.isEditable }) else { fatalError("configured Agent composer missing") }
-        window.makeFirstResponder(editor)
+        require(!registry.inWorktree(root.path).contains { $0.kind.hasPrefix("agent:") }, "shell-first open launched an agent")
+        let shell = registry.inWorktree(root.path).first { $0.kind == "terminal" }!
+        let process = shell.terminal.process
+        press("console.newSession")
+        var editor: NSTextView?
+        eventually("session launcher did not expose the Agent composer") {
+            editor = NSApp.windows.filter(\.isVisible).compactMap(\.contentView)
+                .flatMap { find(NSTextView.self, in: $0) }.first { $0.isEditable }
+            return editor != nil
+        }
+        eventually("configured provider did not reach the native Agent picker") {
+            NSApp.windows.filter(\.isVisible).compactMap(\.contentView)
+                .flatMap { find(NSPopUpButton.self, in: $0) }
+                .contains { $0.accessibilityIdentifier() == "console.launchTarget" && $0.titleOfSelectedItem == "Claude fixture" }
+        }
+        require(registry.inWorktree(root.path).filter { $0.kind.hasPrefix("agent:") }.isEmpty, "opening the Agent composer launched an agent")
+        guard let editor else { fatalError("configured Agent composer missing") }
+        editor.window?.makeFirstResponder(editor)
         editor.insertText("configured fixture prompt", replacementRange: NSRange(location: NSNotFound, length: 0))
         eventually("native composer did not keep its draft") { state.draft == "configured fixture prompt" }
         let submit = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
-            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: editor.window?.windowNumber ?? window.windowNumber, context: nil,
             characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)!
-        if !window.performKeyEquivalent(with: submit) { window.sendEvent(submit) }
+        let composerWindow = editor.window ?? window
+        if !composerWindow.performKeyEquivalent(with: submit) { composerWindow.sendEvent(submit) }
         eventually("Cmd+Enter did not launch the configured Agent through its plan") {
             registry.inWorktree(root.path).contains { $0.kind == "agent:claude:native" && $0.isActive }
         }
         let agent = registry.inWorktree(root.path).first { $0.kind == "agent:claude:native" }!
         eventually("Agent launch did not hand off to its own native terminal") { window.firstResponder === agent.terminal && state.draft.isEmpty }
-        openShell()
-        eventually("configured Shell action did not create a PTY") { registry.inWorktree(root.path).contains { $0.kind == "terminal" } }
-        let shell = registry.inWorktree(root.path).first { $0.kind == "terminal" }!
-        let process = shell.terminal.process
+        require(shell.terminal.process === process && shell.isActive, "agent launch replaced the shell")
         pump(0.15)
         shell.terminal.send(source: shell.terminal, data: Array("printf 'CONFIGURED-SHELL\\n'\n".utf8)[...])
         eventually("file-enabled shell integration did not produce command metadata") { shell.commandBlocks.contains { $0.command?.contains("CONFIGURED-SHELL") == true && $0.endedAt != nil } }
