@@ -97,6 +97,9 @@ struct SessionSwitcherPalette: View {
         .shadow(color: .black.opacity(0.22), radius: 20, y: 8)
         .onAppear { focused = true }
         .accessibilityIdentifier("console.sessionPalette")
+            // SwiftUI's modifier does not reliably appear as an NSView. The
+            // harness walks NSView.accessibilityIdentifier, so this marker is
+            // the observation point only; it does not receive keys.
             .background(SessionPaletteMarker().frame(width: 1, height: 1))
     }
 
@@ -135,133 +138,141 @@ struct SessionSwitcherPalette: View {
     }
 }
 
-/// AppKit key equivalents provide a deterministic path for synthetic and
-/// accessibility-generated events. The local monitor remains the first path,
-/// but a hidden native button is more reliable than relying on SwiftUI's focus
-/// tree to discover a tab key in a terminal responder.
-struct SessionShortcutBridge: NSViewRepresentable {
+/// Session shortcuts for one console window.
+///
+/// Primary path: one local monitor. AppKit calls it from `NSApp.sendEvent`
+/// before dispatch, which is how both real keystrokes and the native harness
+/// enter the app. The monitor reads the view's window at event time and
+/// accepts the event only when that window has a positive `windowNumber` and
+/// the event is addressed to it (`event.window` identity, or the same positive
+/// window number when the window object is still unresolved). Zero is not a
+/// window and never matches. A detached terminal is a different window, so its
+/// keys fall through.
+///
+/// Fallback: `performKeyEquivalent` on this same view, using the same
+/// recognizer and the same positive window number. It covers a direct
+/// key-equivalent call that never entered `sendEvent`. An event the monitor
+/// already claimed is consumed here but not acted on twice. Hidden
+/// key-equivalent buttons are absent: several `\t` buttons compete, and Tab
+/// equivalents are not a second policy.
+struct SessionShortcutDelivery: NSViewRepresentable {
     let open: () -> Void
     let cycle: (Int) -> Void
     let escape: () -> Void
     let canCycle: () -> Bool
     let canEscape: () -> Bool
 
-    func makeNSView(context: Context) -> ShortcutView { ShortcutView() }
+    func makeNSView(context: Context) -> DeliveryView { DeliveryView() }
 
-    func updateNSView(_ view: ShortcutView, context: Context) {
-        view.apply(open: open, cycle: cycle, escape: escape,
-                   canCycle: canCycle(), canEscape: canEscape())
+    func updateNSView(_ view: DeliveryView, context: Context) {
+        view.apply(open: open, cycle: cycle, escape: escape, canCycle: canCycle, canEscape: canEscape)
     }
 
-    final class ShortcutView: NSView {
-        private let openButton = NSButton(frame: .zero)
-        private let cycleButton = NSButton(frame: .zero)
-        private let reverseButton = NSButton(frame: .zero)
-        private let escapeButton = NSButton(frame: .zero)
+    static func dismantleNSView(_ view: DeliveryView, coordinator: ()) { view.removeMonitor() }
+
+    final class DeliveryView: NSView {
         private var monitor: Any?
+        private var consumed: NSEvent?
         private var openAction: (() -> Void)?
         private var cycleAction: ((Int) -> Void)?
         private var escapeAction: (() -> Void)?
-        private var canCycle = false
-        private var canEscape = false
+        private var canCycle: (() -> Bool)?
+        private var canEscape: (() -> Bool)?
 
         override init(frame frameRect: NSRect) {
             super.init(frame: frameRect)
-            for button in [openButton, cycleButton, reverseButton, escapeButton] {
-                button.isBordered = false
-                button.setButtonType(.momentaryPushIn)
-                button.alphaValue = 0.01
-                button.setAccessibilityElement(false)
-                addSubview(button)
-            }
+            setAccessibilityElement(false)
+            installMonitor()
         }
 
         required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-        deinit {
-            if let monitor { NSEvent.removeMonitor(monitor) }
-        }
+        deinit { removeMonitor() }
 
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            installMonitorIfNeeded()
-        }
-
-        override func layout() {
-            super.layout()
-            for button in [openButton, cycleButton, reverseButton, escapeButton] {
-                button.frame = NSRect(x: 0, y: 0, width: 1, height: 1)
-            }
-        }
-
-        // AppKit sends command-tab through key-equivalent traversal before the
-        // local monitor in some native test and accessibility paths. Keep the
-        // same mounted bridge as a direct responder fallback.
-        override func performKeyEquivalent(with event: NSEvent) -> Bool {
-            if handle(event) == nil { return true }
-            return super.performKeyEquivalent(with: event)
-        }
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override var acceptsFirstResponder: Bool { false }
 
         func apply(open: @escaping () -> Void, cycle: @escaping (Int) -> Void,
-                   escape: @escaping () -> Void, canCycle: Bool, canEscape: Bool) {
-            openAction = open; cycleAction = cycle; escapeAction = escape
-            self.canCycle = canCycle; self.canEscape = canEscape
-            installMonitorIfNeeded()
-            configure(openButton, key: canCycle ? "\t" : "", modifiers: [.command, .option], action: #selector(openPressed))
-            configure(cycleButton, key: canCycle ? "\t" : "", modifiers: [.command], action: #selector(cyclePressed))
-            configure(reverseButton, key: canCycle ? "\t" : "", modifiers: [.command, .shift], action: #selector(reversePressed))
-            configure(escapeButton, key: canEscape ? "\u{1b}" : "", modifiers: [], action: #selector(escapePressed))
+                   escape: @escaping () -> Void, canCycle: @escaping () -> Bool,
+                   canEscape: @escaping () -> Bool) {
+            openAction = open
+            cycleAction = cycle
+            escapeAction = escape
+            self.canCycle = canCycle
+            self.canEscape = canEscape
         }
 
-        private func configure(_ button: NSButton, key: String,
-                               modifiers: NSEvent.ModifierFlags, action: Selector) {
-            button.keyEquivalent = key
-            button.keyEquivalentModifierMask = modifiers
-            button.target = self
-            button.action = action
-            button.isEnabled = !key.isEmpty
+        func removeMonitor() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
         }
 
-        private func installMonitorIfNeeded() {
+        /// Command-key traversal on the key window. Escape reaches this only
+        /// when AppKit includes it in that walk; otherwise the monitor handles
+        /// it. The same `consumed` event is not acted on twice.
+        override func performKeyEquivalent(with event: NSEvent) -> Bool {
+            guard fallbackAccepts(event), let shortcut = recognize(event) else {
+                return super.performKeyEquivalent(with: event)
+            }
+            if claim(event) { run(shortcut) }
+            return true
+        }
+
+        private func installMonitor() {
             guard monitor == nil else { return }
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
                 guard let self else { return event }
-                return self.handle(event)
+                guard self.monitorAccepts(event), let shortcut = self.recognize(event) else { return event }
+                if self.claim(event) { self.run(shortcut) }
+                return nil
             }
         }
 
-        private func handle(_ event: NSEvent) -> NSEvent? {
-            guard let window else { return event }
-            let number = window.windowNumber
-            let matchesWindow: Bool
-            if number > 0 {
-                matchesWindow = event.windowNumber == number || event.window?.windowNumber == number
-                    || (event.window == nil && NSApp.keyWindow?.windowNumber == number)
-            } else {
-                matchesWindow = event.window?.isKeyWindow == true
-                    || event.windowNumber == NSApp.keyWindow?.windowNumber
-            }
-            guard matchesWindow else { return event }
+        private func monitorAccepts(_ event: NSEvent) -> Bool {
+            guard let host = window, host.windowNumber > 0 else { return false }
+            if event.window === host { return true }
+            return event.window == nil && event.windowNumber == host.windowNumber
+        }
+
+        private func fallbackAccepts(_ event: NSEvent) -> Bool {
+            guard let host = window, host.isKeyWindow else { return false }
+            return monitorAccepts(event)
+        }
+
+        private func claim(_ event: NSEvent) -> Bool {
+            if consumed === event { return false }
+            consumed = event
+            return true
+        }
+
+        private func recognize(_ event: NSEvent) -> SessionShortcut? {
             let flags = event.modifierFlags
+            // Control is accepted with Command. The system reserves Command-Tab;
+            // the harness still synthesizes Command, and Control remains a chord
+            // that can reach this window.
             let command = flags.contains(.command) || flags.contains(.control)
-            if event.keyCode == 48, command, flags.contains(.option), canCycle {
-                openAction?(); return nil
+            if event.keyCode == Self.tab, command, flags.contains(.option), openAction != nil { return .open }
+            if event.keyCode == Self.tab, command, canCycle?() == true {
+                return .cycle(flags.contains(.shift) ? -1 : 1)
             }
-            if event.keyCode == 48, command, canCycle {
-                cycleAction?(flags.contains(.shift) ? -1 : 1); return nil
-            }
-            if event.keyCode == 53, canEscape {
-                escapeAction?(); return nil
-            }
-            return event
+            if event.keyCode == Self.escape, canEscape?() == true { return .escape }
+            return nil
         }
 
-        @objc private func openPressed() { openAction?() }
-        @objc private func cyclePressed() { cycleAction?(1) }
-        @objc private func reversePressed() { cycleAction?(-1) }
-        @objc private func escapePressed() { escapeAction?() }
+        private func run(_ shortcut: SessionShortcut) {
+            switch shortcut {
+            case .open: openAction?()
+            case .cycle(let offset): cycleAction?(offset)
+            case .escape: escapeAction?()
+            }
+        }
+
+        private static let tab: UInt16 = 48
+        private static let escape: UInt16 = 53
     }
 }
+
+private enum SessionShortcut { case open, cycle(Int), escape }
 
 private struct SessionPaletteMarker: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
@@ -279,87 +290,5 @@ enum SessionNavigationModel {
     static func matches(query: String, title: String, kind: String, state: String) -> Bool {
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return term.isEmpty || (title + " " + kind + " " + state).localizedCaseInsensitiveContains(term)
-    }
-}
-
-@MainActor
-final class SessionKeyRouter: ObservableObject {
-    private var monitor: Any?
-    private var windowNumber: Int?
-    private var root = ""
-    private weak var workspace: ConsoleWorkspace?
-    private var openAction: (() -> Void)?
-    private var cycleAction: ((Int) -> Void)?
-    private var escapeAction: (() -> Void)?
-    private var canCycle: (() -> Bool)?
-    private var canEscape: (() -> Bool)?
-
-    func configure(root: String, workspace: ConsoleWorkspace,
-                   open: @escaping () -> Void, cycle: @escaping (Int) -> Void,
-                   escape: @escaping () -> Void, canCycle: @escaping () -> Bool,
-                   canEscape: @escaping () -> Bool) {
-        self.root = root
-        self.workspace = workspace
-        self.openAction = open
-        self.cycleAction = cycle
-        self.escapeAction = escape
-        self.canCycle = canCycle
-        self.canEscape = canEscape
-    }
-
-    func install(windowNumber: Int?) {
-        // AppKit reports 0 before the hosting window has joined the window
-        // server. Keep that interim state unscoped so a synthetic key event
-        // can still match the current key window; tighten the monitor as
-        // soon as the binder sees a concrete number.
-        let concreteWindowNumber = windowNumber.flatMap { $0 > 0 ? $0 : nil }
-        if monitor != nil, self.windowNumber == concreteWindowNumber { return }
-        if let monitor { NSEvent.removeMonitor(monitor) }
-        self.windowNumber = concreteWindowNumber
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self else { return event }
-            return self.handle(event)
-        }
-    }
-
-    func remove() {
-        if let monitor { NSEvent.removeMonitor(monitor) }
-        monitor = nil; windowNumber = nil
-        openAction = nil; cycleAction = nil; escapeAction = nil; canCycle = nil; canEscape = nil
-        workspace = nil
-    }
-
-    func routeKeyEquivalent(_ event: NSEvent) -> Bool {
-        handle(event) == nil
-    }
-
-    private func handle(_ event: NSEvent) -> NSEvent? {
-        let matchesWindow: Bool
-        if let windowNumber {
-            matchesWindow = event.window?.windowNumber == windowNumber
-                || event.windowNumber == windowNumber
-                || (event.window == nil && NSApp.keyWindow?.windowNumber == windowNumber)
-        } else {
-            // SwiftUI may install the representable before its host window has
-            // become key. Keep the monitor alive in that interim, but scope it
-            // to whichever window is key when the event arrives; the binder
-            // will tighten this to a concrete number on the next update.
-            matchesWindow = event.window?.isKeyWindow == true
-                || event.windowNumber == NSApp.keyWindow?.windowNumber
-                || (event.window == nil && NSApp.keyWindow != nil)
-        }
-        guard matchesWindow else { return event }
-        let flags = event.modifierFlags
-        let command = flags.contains(.command) || flags.contains(.control)
-        if event.keyCode == 48, command, flags.contains(.option) {
-            openAction?(); return nil
-        }
-        if event.keyCode == 48, command, canCycle?() == true {
-            cycleAction?(flags.contains(.shift) ? -1 : 1); return nil
-        }
-        if event.keyCode == 53, canEscape?() == true {
-            escapeAction?(); return nil
-        }
-        return event
     }
 }
