@@ -53,6 +53,9 @@ extension CommandFixture {
         try await paletteChecks(window: window)
         print("Native check: connectionChecks"); fflush(stdout)
         try await connectionChecks(window: window)
+        // Session tabs bootstrap a shell only when the worktree directory exists.
+        // These fixture roots are not directories, so module navigation must not
+        // leave a process in the registry.
         try expect(TerminalSessions.shared.sessions.isEmpty, "command navigation started a PTY")
         try FileManager.default.removeItem(at: file)
         try await eventually("deleting keybindings did not restore defaults") { shortcuts.shortcut(.code).key == "g" }

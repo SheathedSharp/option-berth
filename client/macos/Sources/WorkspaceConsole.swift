@@ -2,8 +2,10 @@ import AppKit
 import BerthTerminal
 import SwiftUI
 
-/// A single worktree session surface. Creation is transient presentation above
-/// the terminal, not another mode or a panel that resizes every running TUI.
+/// A single worktree session surface. Opening it presents that worktree's
+/// interactive shell. An external agent is another PTY started from the shell;
+/// leaving its view does not signal it. Creation stays a transient surface
+/// above the terminal, not a second page that resizes every running TUI.
 struct WorkspaceConsole: View {
     let root: String
     var frozen = false
@@ -64,8 +66,7 @@ struct WorkspaceConsole: View {
                         }
                     }
             } else {
-                launchSurface.frame(maxWidth: 470).padding(20)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                shellFirstEmpty
             }
             if let problem { Text(problem).font(Face.sans(11)).foregroundStyle(Change.changed).textSelection(.enabled).padding(10) }
         }.background(Ink.canvas).foregroundStyle(Ink.ink)
@@ -74,8 +75,8 @@ struct WorkspaceConsole: View {
             .onAppear {
                 guard !frozen else { return }
                 WorkspaceRecovery.shared.watch(workspace)
+                ensureShellFirst()
                 if let selected { focusIntent = TerminalFocusIntent(selected.id) }
-                else { launcher.refresh(workspace) }
             }
             .onChange(of: creating) { _, value in
                 if !value {
@@ -94,7 +95,7 @@ struct WorkspaceConsole: View {
     }
     private var launchSurface: SessionLaunchPanel {
         SessionLaunchPanel(root: root, workspace: workspace, launcher: launcher, selected: selected,
-            newShell: newShell, activate: activate, close: selected == nil ? nil : { creating = false }, frozen: frozen)
+            newShell: { newShell() }, activate: activate, close: selected == nil ? nil : { creating = false }, frozen: frozen)
     }
     private var toolbar: some View {
         HStack(spacing: 9) {
@@ -111,7 +112,7 @@ struct WorkspaceConsole: View {
                     .fixedSize(horizontal: true, vertical: false).frame(height: 24)
                     .help("搜索当前 worktree 的内存命令历史")
                 Menu {
-                    Button("新建 Shell", action: newShell)
+                    Button("新建 Shell") { newShell() }
                     Toggle("新 Shell 启用命令块", isOn: $settings.shellIntegration)
                         .disabled(settings.configuration.preferences.shellIntegration != nil || URL(fileURLWithPath: TerminalSession.shell).lastPathComponent != "zsh")
                     if let selected {
@@ -229,16 +230,57 @@ struct WorkspaceConsole: View {
         creating = true
         if launcher.providers.isEmpty { launcher.refresh(workspace) }
     }
-    private func newShell() {
+    /// The live canvas when this worktree has no session yet. The primary action
+    /// is a shell; agent launch stays on that shell after it exists.
+    private var shellFirstEmpty: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Shell").font(Face.sans(16, .semibold))
+            Text("此 worktree 的会话从交互式终端开始。Agent 在 Shell 里启动；回到 Shell 不会结束它。")
+                .font(Face.sans(12)).foregroundStyle(Ink.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+            ConsoleToolbarAction(title: "打开 Shell", identifier: "console.openShell", perform: { newShell() })
+                .fixedSize().frame(height: 28).padding(.horizontal, 10)
+                .background(Ink.accentSoft).clipShape(RoundedRectangle(cornerRadius: 6))
+                .help("在当前 worktree 启动交互式 Shell")
+        }
+        .frame(maxWidth: 470, alignment: .leading).padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// One interactive shell is the default presentation. A missing directory or
+    /// a full registry reports the existing error and does not leave a half-started
+    /// session. An agent the user is already viewing stays in front; the shell is
+    /// still started underneath so they can return to it.
+    private func ensureShellFirst() {
+        guard !frozen, root.hasPrefix("/") else { return }
+        if Self.bootstrapping.contains(root) { return }
+        let shells = scoped.filter { $0.kind == "terminal" }
+        let showingAgent = workspace.agentMode && scoped.contains { $0.kind.hasPrefix("agent:") && $0.id == workspace.activeSelection }
+        if !shells.isEmpty {
+            if !showingAgent, selected?.kind != "terminal", let shell = shells.first(where: \.isActive) ?? shells.first {
+                activate(shell)
+            }
+            return
+        }
+        Self.bootstrapping.insert(root)
+        defer { Self.bootstrapping.remove(root) }
+        newShell(select: !showingAgent)
+    }
+
+    private func newShell(select: Bool = true) {
         guard !frozen else { return }
         launcher.cancel()
         do {
             let number = scoped.filter { $0.kind == "terminal" }.count + 1
             let session = try sessions.add(worktree: root, title: "Shell \(number)", executable: TerminalSession.shell,
-                arguments: ["-i"], shellIntegration: settings.shellIntegration && URL(fileURLWithPath: TerminalSession.shell).lastPathComponent == "zsh")
-            problem = nil; activate(session)
+                arguments: ["-i"], shellIntegration: settings.shellIntegration && URL(fileURLWithPath: TerminalSession.shell).lastPathComponent == "zsh",
+                select: select)
+            problem = nil
+            if select { activate(session) }
         } catch { problem = error.localizedDescription }
     }
+
+    private static var bootstrapping: Set<String> = []
 }
 
 /// Native buttons keep keyboard/accessibility activation and hit testing inside
