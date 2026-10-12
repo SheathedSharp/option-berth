@@ -85,7 +85,7 @@ struct SessionLaunchPanel: View {
         })
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: Metrics.section) {
             HStack(spacing: 8) {
                 Image(systemName: shell ? "terminal" : "sparkle").foregroundStyle(Ink.accent)
                 if frozen { Text("Codex ▾").font(Face.sans(12, .medium)) }
@@ -151,7 +151,7 @@ struct SessionLaunchPanel: View {
                         .help("显式创建会话；后续输入与审批保留在原生终端")
                 }
             }
-        }.padding(16).background(Ink.canvas)
+        }.padding(Metrics.panelPad).background(Ink.canvas)
     }
     private var canFocusNative: Bool { selected?.isActive == true && selected?.kind == "agent:\(workspace.providerID):native" }
     private func start() {

@@ -237,28 +237,29 @@ struct BoardView: View {
     private var rail: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Image(systemName: "square.stack.3d.up").font(.system(size: 12, weight: .medium)).foregroundStyle(Ink.inkMuted)
+                Image(systemName: "square.stack.3d.up").font(.system(size: 11, weight: .medium)).foregroundStyle(Ink.inkMuted)
                 Text("Worktrees")
-                    .font(Face.sans(13, .semibold))
+                    .font(Face.sans(Metrics.heading, .semibold))
                     .foregroundStyle(Ink.ink)
                 Spacer()
                 Button("+") { views.requestConnection() }
                     .buttonStyle(.plain)
-                    .font(Face.mono(15, .medium))
+                    .font(Face.mono(Metrics.display, .medium))
+                    .frame(minWidth: Metrics.hit, minHeight: Metrics.hit)
                     .foregroundStyle(Ink.accent)
                     .help("接入一个 worktree").tourAnchor(.connect)
             }
             .padding(.horizontal, Metrics.gutter)
-            .padding(.top, 14)
-            .padding(.bottom, 10)
+            .padding(.top, Metrics.headerPad + Metrics.unit)
+            .padding(.bottom, Metrics.headerPad)
             Hairline()
             if projects.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: Metrics.inline) {
                     Text("还没有清单项目")
-                        .font(Face.sans(11.5, .medium))
+                        .font(Face.sans(Metrics.chrome, .medium))
                         .foregroundStyle(Ink.ink)
                     Text("接入一个目录，或者先运行 oberth init。")
-                        .font(Face.sans(10.5))
+                        .font(Face.sans(Metrics.meta))
                         .foregroundStyle(Ink.inkFaint)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -266,23 +267,25 @@ struct BoardView: View {
             } else {
                 if scrolls {
                     TextField("筛选 worktree", text: $views.projectQuery).textFieldStyle(.roundedBorder)
-                        .font(Face.sans(11)).padding(.horizontal, 10).padding(.vertical, 9)
+                        .font(Face.sans(Metrics.chrome))
+                        .padding(.horizontal, Metrics.gutter)
+                        .padding(.vertical, Metrics.tabPadV)
                     ScrollView {
-                        LazyVStack(spacing: 3) {
+                        LazyVStack(spacing: Metrics.rowGap) {
                             ForEach(Array(visibleProjects.enumerated()), id: \.element.id) { index, project in
                                 projectRow(project, ordinal: index + 1)
                             }
-                        }.padding(.horizontal, 6)
+                        }.padding(.horizontal, Metrics.unit)
                     }
                 } else {
-                    VStack(spacing: 3) { ForEach(Array(visibleProjects.enumerated()), id: \.element.id) { index, project in projectRow(project, ordinal: index + 1) } }
-                        .padding(.horizontal, 6).padding(.top, 9)
+                    VStack(spacing: Metrics.rowGap) { ForEach(Array(visibleProjects.enumerated()), id: \.element.id) { index, project in projectRow(project, ordinal: index + 1) } }
+                        .padding(.horizontal, Metrics.unit).padding(.top, Metrics.headerPad)
                 }
             }
             Spacer(minLength: 0)
             if services.updatedAt != nil {
                 Text("已更新")
-                    .font(Face.mono(9.5))
+                    .font(Face.mono(Metrics.caption))
                     .foregroundStyle(Ink.inkFaint)
                     .padding(Metrics.gutter)
             }
@@ -299,31 +302,31 @@ struct BoardView: View {
         return Button {
             withAnimation(Motion.selection(reduced: reduce)) { views.selectProject(project.name) }
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: Metrics.inline) {
                 StatusDot(tone: live > 0 ? Ink.live : Ink.dormant)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: Metrics.stack) {
                     Text(project.displayName)
-                        .font(Face.sans(12.5, .medium))
+                        .font(Face.sans(Metrics.row, .medium))
                         .foregroundStyle(Ink.ink)
                         .lineLimit(1)
                     Text(project.branch.isEmpty ? shortPath(project.rootDir ?? "") : project.branch)
-                        .font(Face.mono(9.5))
+                        .font(Face.mono(Metrics.caption))
                         .foregroundStyle(Ink.inkFaint)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
-                Spacer(minLength: 4)
-                VStack(alignment: .trailing, spacing: 3) {
+                Spacer(minLength: Metrics.unit)
+                VStack(alignment: .trailing, spacing: Metrics.stack) {
                     Text(verbatim: "\(live)/\(project.services.count)")
-                        .font(Face.mono(10)).foregroundStyle(Ink.inkMuted)
+                        .font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkMuted)
                     if let action = WorkspaceAction(rawValue: "worktree.\(ordinal)") {
                         Text(scrolls ? shortcuts.shortcut(action).label : action.defaultShortcut.label)
-                            .font(Face.mono(9)).foregroundStyle(Ink.inkFaint)
+                            .font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
                     }
                 }
             }
             .padding(.horizontal, Metrics.gutter)
-            .frame(height: 48)
+            .frame(height: Metrics.sidebarRow)
             .background(isSelected ? Ink.accentSoft : Ink.surface)
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .contentShape(Rectangle())
@@ -335,13 +338,14 @@ struct BoardView: View {
         if case .console(let root) = scope {
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
-                    Text("独立会话 / Standalone sessions").font(Face.sans(12, .semibold))
+                    Text("独立会话 / Standalone sessions").font(Face.sans(Metrics.row, .semibold))
                     Spacer()
                     Button("全部会话 / All sessions") { views.showingSessions = true }
-                }.padding(12)
-                Text(root).font(Face.mono(10)).lineLimit(1).truncationMode(.middle).padding(.horizontal, 12)
+                }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.headerPad)
+                Text(root).font(Face.mono(Metrics.meta)).lineLimit(1).truncationMode(.middle).padding(.horizontal, Metrics.gutter)
                 Text("未关联已登记清单；会话不代表项目服务状态。 / No registered manifest is associated.")
-                    .font(Face.sans(10)).foregroundStyle(Ink.inkMuted).padding(12)
+                    .font(Face.sans(Metrics.meta)).foregroundStyle(Ink.inkMuted)
+                    .padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.headerPad)
                 WorkspaceConsole(root: root, frozen: !scrolls).id(root)
             }
         } else if let selected { projectContent(selected) }
@@ -349,13 +353,13 @@ struct BoardView: View {
     }
 
     private var emptyContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            BerthMark(size: 28, occupied: false)
+        VStack(alignment: .leading, spacing: Metrics.section) {
+            BerthMark(size: 22, occupied: false)
             Text("选择一个 worktree")
-                .font(Face.sans(20, .semibold))
+                .font(Face.sans(16, .semibold))
                 .foregroundStyle(Ink.ink)
             Text("状态只从清单、运行记录和运行实况组成。左栏只列有 oberth.yaml 的项目。")
-                .font(Face.sans(11.5))
+                .font(Face.sans(Metrics.chrome))
                 .foregroundStyle(Ink.inkFaint)
                 .fixedSize(horizontal: false, vertical: true)
             if scrolls {
@@ -366,13 +370,13 @@ struct BoardView: View {
             } else {
                 // Frozen captures cannot render AppKit-backed buttons. Keep
                 // inert labels here; real controls are exercised in NSWindow.
-                Text("使用指引 / Getting started").font(Face.sans(11)).foregroundStyle(Ink.accent)
+                Text("使用指引 / Getting started").font(Face.sans(Metrics.chrome)).foregroundStyle(Ink.accent)
                 SheetButton(title: "接入项目", primary: true, action: {}).tourAnchor(.connect)
-                Text("打开会话管理 / Open session manager").font(Face.sans(11)).foregroundStyle(Ink.inkMuted)
+                Text("打开会话管理 / Open session manager").font(Face.sans(Metrics.chrome)).foregroundStyle(Ink.inkMuted)
             }
         }
         .frame(maxWidth: 460, alignment: .leading)
-        .padding(Metrics.gutter + 8)
+        .padding(Metrics.panelPad + Metrics.unit)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
@@ -396,30 +400,30 @@ struct BoardView: View {
     }
 
     private func projectHeader(_ project: BerthGroup) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 8) {
-                    Text(project.displayName).font(Face.sans(17, .semibold)).foregroundStyle(Ink.ink).lineLimit(1)
+        HStack(alignment: .center, spacing: Metrics.inline) {
+            VStack(alignment: .leading, spacing: Metrics.stack) {
+                HStack(spacing: Metrics.inline) {
+                    Text(project.displayName).font(Face.sans(Metrics.display, .semibold)).foregroundStyle(Ink.ink).lineLimit(1)
                     if !project.branch.isEmpty {
                         Label(project.branch, systemImage: "arrow.triangle.branch")
-                            .font(Face.mono(10)).foregroundStyle(Ink.inkMuted).lineLimit(1)
-                            .padding(.horizontal, 7).padding(.vertical, 3).background(Ink.surface)
+                            .font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkMuted).lineLimit(1)
+                            .padding(.horizontal, Metrics.controlPadH).padding(.vertical, 2).background(Ink.surface)
                             .clipShape(Capsule()).layoutPriority(-1)
                     }
                 }
                 Text(shortPath(project.rootDir ?? "目录不可用"))
-                    .font(Face.mono(10)).foregroundStyle(Ink.inkFaint).lineLimit(1).truncationMode(.middle)
+                    .font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkFaint).lineLimit(1).truncationMode(.middle)
             }.frame(maxWidth: .infinity, alignment: .leading)
-            HStack(spacing: 5) {
+            HStack(spacing: Metrics.unit) {
                 StatusDot(tone: services.liveCount(in: project) > 0 ? Ink.live : Ink.dormant)
                 Text(verbatim: "\(services.liveCount(in: project))/\(project.services.count) 服务")
-                    .font(Face.mono(10)).foregroundStyle(Ink.inkMuted)
+                    .font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkMuted)
             }.fixedSize()
             if services.isWorking(project) {
                 ProgressView().controlSize(.small).help("正在处理项目服务")
             } else {
                 if !scrolls {
-                    Label("项目", systemImage: "slider.horizontal.3").font(Face.sans(11)).foregroundStyle(Ink.inkMuted)
+                    Label("项目", systemImage: "slider.horizontal.3").font(Face.sans(Metrics.chrome)).foregroundStyle(Ink.inkMuted)
                 } else {
                 Menu {
                     Button("编辑清单…") { openConfig(project) }
@@ -430,15 +434,15 @@ struct BoardView: View {
                     }
                     Divider()
                     Button("移除项目…", role: .destructive) { removing = project }
-                } label: { Label("项目", systemImage: "slider.horizontal.3").font(Face.sans(11)) }
+                } label: { Label("项目", systemImage: "slider.horizontal.3").font(Face.sans(Metrics.chrome)) }
                     .menuStyle(.borderlessButton).fixedSize()
                 }
             }
-        }.padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 12)
+        }.padding(.horizontal, Metrics.gutter + Metrics.unit).padding(.top, Metrics.headerPad + Metrics.unit).padding(.bottom, Metrics.headerPad)
     }
 
     private func tabBar(_ project: BerthGroup) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: Metrics.unit) {
             WorkspaceTab(title: "服务", symbol: "server.rack", selected: scope == .services(project.name)) {
                 views.scope = .services(project.name)
             }.help(shortcuts.shortcut(.services).label)
@@ -450,7 +454,7 @@ struct BoardView: View {
                 views.scope = .terminal(project.name)
             }.help(shortcuts.shortcut(.terminal).label)
             Spacer(minLength: 0)
-        }.padding(.horizontal, 12).padding(.bottom, 9)
+        }.padding(.horizontal, Metrics.gutter).padding(.bottom, Metrics.tabPadV)
     }
 
     private func ports(for project: BerthGroup) -> [Port] {

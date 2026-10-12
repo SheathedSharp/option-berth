@@ -14,42 +14,46 @@ struct SessionManager: View {
         }
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("会话 / Sessions").font(Face.display(20))
+        VStack(alignment: .leading, spacing: Metrics.section) {
+            HStack(spacing: Metrics.inline) {
+                Text("会话 / Sessions").font(Face.sans(Metrics.display, .semibold))
                 Spacer()
-                Text("\(sessions.activeCount) running · \(sessions.sessions.count)/16").font(Face.mono(11))
+                Text("\(sessions.activeCount) running · \(sessions.sessions.count)/16").font(Face.mono(Metrics.chrome))
                 Button("完成 / Done") { dismiss() }.keyboardShortcut(.cancelAction)
             }
             TextField("搜索名称、worktree 或 agent / Search", text: $query)
+                .textFieldStyle(.roundedBorder).font(Face.sans(Metrics.chrome))
             Text("仅显示本应用拥有的会话；项目清单被移除后仍可打开或结束。\nOnly this application's sessions. Removing a manifest does not orphan a terminal.")
-                .font(Face.sans(11)).foregroundStyle(Ink.inkMuted)
+                .font(Face.sans(Metrics.meta)).foregroundStyle(Ink.inkMuted)
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
+                LazyVStack(alignment: .leading, spacing: Metrics.rowGap) {
                     ForEach(filtered) { session in
-                        VStack(alignment: .leading, spacing: 5) {
-                            HStack {
-                                Text(session.title).font(Face.sans(12, .semibold)).lineLimit(1)
-                                Text(session.kind).font(Face.mono(10)).foregroundStyle(Ink.inkMuted)
-                                Spacer()
+                        VStack(alignment: .leading, spacing: Metrics.stack) {
+                            HStack(spacing: Metrics.inline) {
+                                Text(session.title).font(Face.sans(Metrics.row, .semibold)).lineLimit(1)
+                                Text(session.kind).font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkMuted).lineLimit(1)
+                                Spacer(minLength: Metrics.unit)
                                 Button("打开 / Open") { onOpen(session); dismiss() }
                                 Button { rename(session) } label: { Image(systemName: "pencil") }
                                     .help("重命名 / Rename")
+                                    .frame(minWidth: Metrics.hit, minHeight: Metrics.hit)
                                 Button(session.isActive ? "结束 / End" : "关闭 / Close") {
                                     if session.isActive { confirmSessionStop(session) }
                                     else { sessions.remove(session) }
                                 }
                             }
-                            Text(session.worktree).font(Face.mono(10)).lineLimit(1).truncationMode(.middle)
+                            Text(session.worktree).font(Face.mono(Metrics.meta)).lineLimit(1).truncationMode(.middle)
                                 .textSelection(.enabled)
-                            Text(session.state).font(Face.mono(10)).foregroundStyle(Ink.inkMuted)
-                        }.padding(10).background(Ink.surface).clipShape(RoundedRectangle(cornerRadius: 6))
+                            Text(session.state).font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkMuted).lineLimit(1)
+                        }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.headerPad)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Ink.surface).clipShape(RoundedRectangle(cornerRadius: 4))
                     }
-                    if filtered.isEmpty { Text("没有匹配会话 / No matching sessions").font(Face.sans(12)).padding(.vertical) }
+                    if filtered.isEmpty { Text("没有匹配会话 / No matching sessions").font(Face.sans(Metrics.row)).padding(.vertical, Metrics.headerPad) }
                 }
             }
-            if let problem { Text(problem).font(Face.sans(11)) }
-        }.padding(18).frame(minWidth: 620, idealWidth: 700, minHeight: 380, idealHeight: 460)
+            if let problem { Text(problem).font(Face.sans(Metrics.chrome)) }
+        }.padding(Metrics.panelPad).frame(minWidth: 620, idealWidth: 700, minHeight: 380, idealHeight: 460)
             .background(Ink.canvas)
     }
     private func rename(_ session: TerminalSession) {
