@@ -20,7 +20,7 @@ jobs:
           persist-credentials: false
       - name: Verify strict facts, all conflict states, filtered paths and honest totals
         run: |
-          swiftc -swift-version 5 client/macos/Sources/GitModel.swift client/macos/Tests/GitReviewTests.swift -o "$RUNNER_TEMP/git-review-tests"
+          swiftc -swift-version 5 client/macos/Sources/GitModel.swift client/macos/Sources/GitGraphLayout.swift client/macos/Tests/GitReviewTests.swift -o "$RUNNER_TEMP/git-review-tests"
           "$RUNNER_TEMP/git-review-tests"
       - name: Verify real search focus, selection and responsive native splits
         shell: bash
