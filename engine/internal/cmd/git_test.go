@@ -89,6 +89,62 @@ func TestGitFilesJSONCarriesTheRows(t *testing.T) {
 
 // A line-by-line answer, in the shape docs/cli.md documents: the kind is
 // derived, the text is git's own word for word.
+func TestGitGraphJSONCarriesParentsRefsAndLimit(t *testing.T) {
+	dir := gitTestRepo(t)
+	gitIn(t, dir, "add", "kept.txt")
+	gitIn(t, dir, "commit", "-qm", "second")
+	chdir(t, dir)
+
+	prevJSON, prevLimit := gitGraphJSONFlag, gitGraphLimitFlag
+	gitGraphJSONFlag, gitGraphLimitFlag = true, 1
+	t.Cleanup(func() { gitGraphJSONFlag, gitGraphLimitFlag = prevJSON, prevLimit })
+
+	out, err := runGit(t, gitGraphCmd, gitGraphRun)
+	if err != nil {
+		t.Fatalf("git graph: %v", err)
+	}
+	var doc struct {
+		Root         string `json:"root"`
+		ObservedHead string `json:"observed_head"`
+		Branch       string `json:"branch"`
+		Upstream     string `json:"upstream"`
+		Ahead        int `json:"ahead"`
+		Behind       int `json:"behind"`
+		Truncated    bool `json:"truncated"`
+		Limit        int `json:"limit"`
+		Commits      []struct {
+			Hash    string   `json:"hash"`
+			Parents []string `json:"parents"`
+			Subject string   `json:"subject"`
+			Refs    []string `json:"refs"`
+		} `json:"commits"`
+		Refs []struct {
+			Name string `json:"name"`
+			Kind string `json:"kind"`
+			Current bool `json:"current"`
+		} `json:"refs"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("stdout is not the documented graph document: %v\n%s", err, out)
+	}
+	if doc.Root != dir || doc.ObservedHead == "" || doc.Branch == "" || doc.Limit != 1 {
+		t.Fatalf("identity = %+v, want root/head/limit", doc)
+	}
+	if len(doc.Commits) != 1 || !doc.Truncated {
+		t.Fatalf("commits = %+v, want one commit and truncated=true", doc.Commits)
+	}
+	if len(doc.Commits[0].Parents) != 1 || doc.Commits[0].Subject != "second" {
+		t.Fatalf("head commit = %+v, want parent and subject", doc.Commits[0])
+	}
+	foundCurrent := false
+	for _, ref := range doc.Refs {
+		if ref.Kind == "branch" && ref.Current { foundCurrent = true }
+	}
+	if !foundCurrent {
+		t.Fatalf("refs = %+v, no current branch", doc.Refs)
+	}
+}
+
 func TestGitDiffJSONCarriesTheLines(t *testing.T) {
 	dir := gitTestRepo(t)
 	chdir(t, dir)
