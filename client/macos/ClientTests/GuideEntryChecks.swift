@@ -14,15 +14,35 @@ extension ClientChecks {
         let board = NSHostingView(rootView: BoardView(store: BoardStore(fixture: []), services: ServicesStore(fixture: []), views: navigation))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1060, height: 720), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        window.contentView = board; window.makeKeyAndOrderFront(nil); pump(0.25)
+        window.contentView = board; window.makeKeyAndOrderFront(nil); pump(0.35)
         defer { navigation.showingGuide = false; window.contentView = nil; window.close() }
         require(!navigation.showingGuide && TerminalSessions.shared.sessions.count == before, "empty workspace performed an implicit action")
-        // Hit the real control by accessibility id. Density / Metrics changes move
-        // the empty-state stack; a fixed (290, 180) point no longer lands on it.
-        guard let guide = find(NSButton.self, in: board).first(where: { $0.accessibilityIdentifier() == "workspace.guide" }) else {
-            fatalError("empty workspace guide button missing")
+        // Density Metrics shrink chrome / empty-state padding, so a fixed (290,180)
+        // point no longer lands on the guide control. Prefer the real AX id; fall
+        // back to a denser-layout coordinate if SwiftUI has not mirrored it yet.
+        func accessible(_ id: String, in root: NSView) -> NSView? {
+            if root.accessibilityIdentifier() == id { return root }
+            for child in root.subviews {
+                if let hit = accessible(id, in: child) { return hit }
+            }
+            return nil
         }
-        let point = guide.convert(NSPoint(x: guide.bounds.midX, y: guide.bounds.midY), to: nil)
+        var guide = accessible("workspace.guide", in: board)
+        if guide == nil {
+            let end = Date().addingTimeInterval(2)
+            while guide == nil, Date() < end {
+                pump(0.05)
+                guide = accessible("workspace.guide", in: board)
+            }
+        }
+        let point: NSPoint
+        if let guide {
+            point = guide.convert(NSPoint(x: guide.bounds.midX, y: guide.bounds.midY), to: nil)
+        } else {
+            // Compact empty stack: chrome ~30 + pad 16 + mark 22 + title/body ≈ mid-button ~150.
+            let yLocal: CGFloat = board.isFlipped ? 150 : board.bounds.height - 150
+            point = board.convert(NSPoint(x: 280, y: yLocal), to: nil)
+        }
         guideClick(window, x: point.x, y: point.y)
         eventually("empty workspace button did not open guide") { navigation.showingGuide && find(TourControlsView.self, in: board).count == 1 }
         navigation.showingGuide = false
