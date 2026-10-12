@@ -97,34 +97,55 @@ else:
         require(!registry.inWorktree(root.path).contains { $0.kind.hasPrefix("agent:") }, "shell-first open launched an agent")
         let shell = registry.inWorktree(root.path).first { $0.kind == "terminal" }!
         let process = shell.terminal.process
-        press("console.newSession")
+        eventually("shell surface was not attached") { shell.terminal.window === window && shell.terminal.bounds.width > 40 }
+        pump(0.2)
+        let shellBounds = shell.terminal.bounds
+        press("console.startAgent")
         var editor: NSTextView?
-        eventually("session launcher did not expose the Agent composer") {
-            editor = NSApp.windows.filter(\.isVisible).compactMap(\.contentView)
-                .flatMap { find(NSTextView.self, in: $0) }.first { $0.isEditable }
+        eventually("shell did not open the Agent composer") {
+            editor = find(NSTextView.self, in: host).first { $0.isEditable }
             return editor != nil
         }
         eventually("configured provider did not reach the native Agent picker") {
-            NSApp.windows.filter(\.isVisible).compactMap(\.contentView)
-                .flatMap { find(NSPopUpButton.self, in: $0) }
-                .contains { $0.accessibilityIdentifier() == "console.launchTarget" && $0.titleOfSelectedItem == "Claude fixture" }
+            find(NSPopUpButton.self, in: host).contains {
+                $0.accessibilityIdentifier() == "console.launchTarget" && $0.titleOfSelectedItem == "Claude fixture"
+            }
         }
+        require(shell.terminal.bounds == shellBounds, "agent composer resized the live shell")
         require(registry.inWorktree(root.path).filter { $0.kind.hasPrefix("agent:") }.isEmpty, "opening the Agent composer launched an agent")
         guard let editor else { fatalError("configured Agent composer missing") }
         editor.window?.makeFirstResponder(editor)
         editor.insertText("configured fixture prompt", replacementRange: NSRange(location: NSNotFound, length: 0))
         eventually("native composer did not keep its draft") { state.draft == "configured fixture prompt" }
         let submit = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
-            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: editor.window?.windowNumber ?? window.windowNumber, context: nil,
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
             characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)!
-        let composerWindow = editor.window ?? window
-        if !composerWindow.performKeyEquivalent(with: submit) { composerWindow.sendEvent(submit) }
+        if !window.performKeyEquivalent(with: submit) { window.sendEvent(submit) }
         eventually("Cmd+Enter did not launch the configured Agent through its plan") {
             registry.inWorktree(root.path).contains { $0.kind == "agent:claude:native" && $0.isActive }
         }
         let agent = registry.inWorktree(root.path).first { $0.kind == "agent:claude:native" }!
+        let agentProcess = agent.terminal.process
         eventually("Agent launch did not hand off to its own native terminal") { window.firstResponder === agent.terminal && state.draft.isEmpty }
         require(shell.terminal.process === process && shell.isActive, "agent launch replaced the shell")
+        press("console.returnToShell")
+        eventually("return to shell stopped the agent or lost the shell") {
+            state.activeSelection == shell.id && window.firstResponder === shell.terminal
+                && agent.isActive && agent.terminal.process === agentProcess && shell.terminal.process === process
+        }
+        press("console.reenter." + agent.id.uuidString)
+        eventually("re-enter did not attach the same agent session") {
+            state.activeSelection == agent.id && window.firstResponder === agent.terminal
+                && agent.terminal.process === agentProcess && shell.isActive && shell.terminal.process === process
+        }
+        let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+            characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
+        NSApp.sendEvent(escape)
+        eventually("Escape did not return to the live shell") {
+            state.activeSelection == shell.id && window.firstResponder === shell.terminal
+                && agent.isActive && agent.terminal.process === agentProcess
+        }
         pump(0.15)
         shell.terminal.send(source: shell.terminal, data: Array("printf 'CONFIGURED-SHELL\\n'\n".utf8)[...])
         eventually("file-enabled shell integration did not produce command metadata") { shell.commandBlocks.contains { $0.command?.contains("CONFIGURED-SHELL") == true && $0.endedAt != nil } }
@@ -145,7 +166,7 @@ else:
         require(plain.commandBlocks.isEmpty && shell.terminal.process === process, "new-shell setting modified existing integration or ignored opt-out")
         pump()
         try captureOwnedWindow(window, to: directory.deletingLastPathComponent().appendingPathComponent("console-configured-composited-native.png"))
-        print("PASS: file defaults -> native Agent picker -> Cmd+Enter plan -> native PTY; new zsh integration on/off; existing provider/draft/process identity preserved")
+        print("PASS: shell-first open; Agent from shell; return and re-enter keep both PTYs; file defaults; zsh integration on/off")
     }
 }
 
