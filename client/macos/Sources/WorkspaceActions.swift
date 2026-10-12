@@ -8,6 +8,11 @@ extension WorkspaceShortcut {
         if shift { result.insert(.shift) }; if option { result.insert(.option) }; if control { result.insert(.control) }
         return result
     }
+    var modifierMask: NSEvent.ModifierFlags {
+        var result: NSEvent.ModifierFlags = .command
+        if shift { result.insert(.shift) }; if option { result.insert(.option) }; if control { result.insert(.control) }
+        return result
+    }
     var equivalent: KeyEquivalent { KeyEquivalent(key.first ?? " ") }
 }
 
