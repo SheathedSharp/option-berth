@@ -134,6 +134,9 @@ struct OptionBerthApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1060, height: 720)
+        // A singleton Window otherwise keeps ⌘N to bring itself forward, and that
+        // scene shortcut wins over the connect command. The menu still draws ⌘N.
+        .keyboardShortcut(nil as KeyboardShortcut?)
         .commands {
             WorkspaceCommandMenus(views: views, shortcuts: shortcuts, services: services, perform: perform)
         }
