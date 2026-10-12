@@ -3,6 +3,7 @@ package git
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,8 +46,10 @@ type FileDiff struct {
 
 // Patch is the answer to "what changed, line by line".
 type Patch struct {
-	Root  string     `json:"root"`
-	Files []FileDiff `json:"files"`
+	Root   string     `json:"root"`
+	Commit string     `json:"commit,omitempty"`
+	Base   string     `json:"base,omitempty"`
+	Files  []FileDiff `json:"files"`
 }
 
 // ErrNoChanges is what Diff says about a path that exists but differs from HEAD
@@ -56,6 +59,11 @@ var ErrNoChanges = errors.New("no changes to show for that path")
 
 // ErrNoSuchFile is what Diff says about a path the repository does not have.
 var ErrNoSuchFile = errors.New("no such path in the repository")
+
+// ErrInvalidCommit is returned before invoking Git when a caller supplies a
+// ref-like value or an argument that cannot be an object ID. Commit review is
+// intentionally pinned to hexadecimal IDs returned by the graph contract.
+var ErrInvalidCommit = errors.New("commit must be a 7-64 character hexadecimal object ID")
 
 // Diff reads the patch for one path, or for everything that changed when file
 // is empty.
@@ -98,6 +106,145 @@ func Diff(ctx context.Context, dir, file string) (Patch, error) {
 		patch.Files = append(patch.Files, one)
 	}
 	return patch, nil
+}
+
+// DiffCommit reads a historical patch relative to commit's first parent. It
+// never consults the index or worktree, so a dirty checkout cannot change the
+// answer. A root commit is compared with the empty tree; merge commits use the
+// first parent rather than Git's combined diff, which gives the UI one stable
+// two-sided patch to render.
+func DiffCommit(ctx context.Context, dir, objectID, file string) (Patch, error) {
+	root, _, ok := groups.Find(dir)
+	if !ok {
+		return Patch{}, ErrNotARepository
+	}
+	if !validCommitID(objectID) {
+		return Patch{}, ErrInvalidCommit
+	}
+	ctx, cancel := context.WithTimeout(ctx, diffTimeout)
+	defer cancel()
+
+	canonicalBytes, err := gitOut(ctx, dir, "rev-parse", "--verify", objectID+"^{commit}")
+	if err != nil {
+		return Patch{}, err
+	}
+	commit := strings.TrimSpace(string(canonicalBytes))
+	if commit == "" {
+		return Patch{}, fmt.Errorf("git returned an empty commit ID")
+	}
+	parentsBytes, err := gitOut(ctx, dir, "rev-list", "--parents", "-n", "1", commit)
+	if err != nil {
+		return Patch{}, err
+	}
+	parentFields := strings.Fields(string(parentsBytes))
+	base := ""
+	if len(parentFields) > 1 {
+		base = parentFields[1]
+	}
+
+	list, err := commitFileList(ctx, dir, commit, base)
+	if err != nil {
+		return Patch{}, err
+	}
+	if file != "" {
+		rel, ok := resolvePath(root, file)
+		if !ok {
+			return Patch{}, ErrNoSuchFile
+		}
+		filtered := list[:0]
+		for _, f := range list {
+			if f.Path == rel || f.OldPath == rel {
+				filtered = append(filtered, f)
+			}
+		}
+		if len(filtered) == 0 {
+			return Patch{}, ErrNoChanges
+		}
+		list = filtered
+	}
+
+	patch := Patch{Root: root, Commit: commit, Base: base, Files: []FileDiff{}}
+	for _, f := range list {
+		out, err := commitDiffText(ctx, root, commit, base, f)
+		if err != nil {
+			return Patch{}, err
+		}
+		lines := patchLines(string(out))
+		patch.Files = append(patch.Files, FileDiff{Path: f.Path, OldPath: f.OldPath,
+			Binary: patchIsBinary(lines), Lines: lines})
+	}
+	return patch, nil
+}
+
+func validCommitID(value string) bool {
+	if len(value) < 7 || len(value) > 64 {
+		return false
+	}
+	for _, r := range value {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+func commitFileList(ctx context.Context, dir, commit, base string) ([]File, error) {
+	args := []string{"-c", "core.quotepath=false"}
+	if base == "" {
+		args = append(args, "diff-tree", "--root", "--no-commit-id", "-r", "-M", "--name-status", "-z", commit, "--")
+	} else {
+		args = append(args, "diff", "--name-status", "-z", "-M", base, commit, "--")
+	}
+	out, err := gitOut(ctx, dir, args...)
+	if err != nil {
+		return nil, err
+	}
+	return parseCommitFiles(out), nil
+}
+
+func parseCommitFiles(out []byte) []File {
+	recs := splitNUL(out)
+	files := make([]File, 0, len(recs)/2)
+	for i := 0; i < len(recs); {
+		status := recs[i]
+		i++
+		if status == "" {
+			continue
+		}
+		code := status[0]
+		if code == 'R' || code == 'C' {
+			if i+1 >= len(recs) {
+				break
+			}
+			oldPath, newPath := recs[i], recs[i+1]
+			i += 2
+			files = append(files, File{Path: newPath, OldPath: oldPath, Status: string(code) + " "})
+			continue
+		}
+		if i >= len(recs) {
+			break
+		}
+		files = append(files, File{Path: recs[i], Status: string(code) + " "})
+		i++
+	}
+	return files
+}
+
+func commitDiffText(ctx context.Context, root, commit, base string, f File) ([]byte, error) {
+	args := []string{"-c", "core.quotepath=false"}
+	if base == "" {
+		args = append(args, "diff-tree", "--root", "--no-commit-id", "-r")
+		args = append(args, diffArgs...)
+		args = append(args, commit)
+	} else {
+		args = append(args, "diff", base, commit)
+		args = append(args, diffArgs...)
+	}
+	args = append(args, "--", f.Path)
+	if f.OldPath != "" {
+		args = append(args, f.OldPath)
+	}
+	return gitOut(ctx, root, args...)
 }
 
 // changedFile finds the status row for one path.

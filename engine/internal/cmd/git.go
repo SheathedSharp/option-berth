@@ -20,6 +20,7 @@ var (
 	gitDiffJSONFlag   bool
 	gitGraphJSONFlag  bool
 	gitDiffFileFlag   string
+	gitDiffCommitFlag string
 	gitGraphLimitFlag int
 )
 
@@ -78,7 +79,9 @@ var gitDiffCmd = &cobra.Command{
 		"--file names one path **relative to the repository root** (the shape\n" +
 		"`oberth git files` prints), or an absolute path. Without it, every\n" +
 		"changed file is read — one git call each, so on a large change set naming\n" +
-		"the file you want is much cheaper.\n\n" +
+		"the file you want is much cheaper. `--commit` switches the baseline to a\n" +
+		"historical commit ID from `oberth git graph`; its first parent is used,\n" +
+		"and a root commit is compared with the empty tree.\n\n" +
 		"Exit codes:\n" +
 		"  0  there is a patch, or nothing changed at all\n" +
 		"  1  not a repository, git could not be asked, no such path, or that path\n" +
@@ -93,6 +96,8 @@ func init() {
 	gitDiffCmd.Flags().BoolVar(&gitDiffJSONFlag, "json", false, "Output as JSON")
 	gitDiffCmd.Flags().StringVar(&gitDiffFileFlag, "file", "",
 		"Only this path, relative to the repository root")
+	gitDiffCmd.Flags().StringVar(&gitDiffCommitFlag, "commit", "",
+		"Review this hexadecimal commit ID against its first parent")
 	gitGraphCmd.Flags().BoolVar(&gitGraphJSONFlag, "json", false, "Output as JSON")
 	gitGraphCmd.Flags().IntVar(&gitGraphLimitFlag, "limit", 200, "Maximum number of commits to return (1-500)")
 	gitCmd.AddCommand(gitFilesCmd, gitGraphCmd, gitDiffCmd)
@@ -159,7 +164,12 @@ func gitDiffRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	patch, err := readGitDiff(cmd.Context(), dir, gitDiffFileFlag)
+	var patch git.Patch
+	if gitDiffCommitFlag != "" {
+		patch, err = readGitCommitDiff(cmd.Context(), dir, gitDiffCommitFlag, gitDiffFileFlag)
+	} else {
+		patch, err = readGitDiff(cmd.Context(), dir, gitDiffFileFlag)
+	}
 	if err != nil {
 		return err
 	}
@@ -175,6 +185,18 @@ func gitDiffRun(cmd *cobra.Command, args []string) error {
 // sentinels turned into the codes a caller branches on.
 func readGitDiff(ctx context.Context, dir, file string) (git.Patch, error) {
 	patch, err := git.Diff(ctx, dir, file)
+	return mapGitDiffError(patch, err, dir, file)
+}
+
+func readGitCommitDiff(ctx context.Context, dir, commit, file string) (git.Patch, error) {
+	patch, err := git.DiffCommit(ctx, dir, commit, file)
+	if errors.Is(err, git.ErrInvalidCommit) {
+		return git.Patch{}, usageError{err}
+	}
+	return mapGitDiffError(patch, err, dir, file)
+}
+
+func mapGitDiffError(patch git.Patch, err error, dir, file string) (git.Patch, error) {
 	switch {
 	case errors.Is(err, git.ErrNoChanges):
 		return git.Patch{}, failHint("not_found",
