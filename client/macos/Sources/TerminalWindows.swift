@@ -15,6 +15,14 @@ final class TerminalWindows: NSObject, ObservableObject, NSWindowDelegate {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 460),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = session.title
+        // Detached sessions use the same paper surface as the workspace. Keep
+        // the native traffic-light/titlebar controls, but remove their default
+        // translucent strip so a detached terminal does not become a second
+        // white-glass visual system.
+        window.isOpaque = true
+        window.backgroundColor = NSColor(UISettings.shared.canvasColor)
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
         window.isReleasedWhenClosed = false; window.delegate = self
         sessions[session.id] = session; windows[session.id] = window
         session.terminal.removeFromSuperview()
@@ -45,7 +53,8 @@ final class TerminalWindows: NSObject, ObservableObject, NSWindowDelegate {
                 }.padding(10)
                 Hairline()
                 TerminalSurface(session: session, detached: true)
-            }.background(Ink.canvas).preferredColorScheme(settings.colorScheme)
+            }.clientWindowChrome()
+                .foregroundStyle(Ink.ink)
                 .modifier(ClientMotionPreferences(settings: settings))
         }
     }
