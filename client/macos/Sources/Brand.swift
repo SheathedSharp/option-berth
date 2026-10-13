@@ -94,12 +94,68 @@ enum Metrics {
     //
     // **只有左栏用这一条**：那三个点在 x 9..69，正好坐在左栏上；内容区从 x=173
     // 才开始，头顶是空的，给它让位就是在右上角白留一片。详见 BoardView.body。
+    // 这一条跟系统标题栏走，不随界面字号缩放。
     static let trafficLightInset: CGFloat = 36
+    /// 冻结渲染没有用户偏好时的左栏宽度。拖动范围仍是 140...320。
     static let railWidth: CGFloat = 172
-    static let rowHeight: CGFloat = 40
-    static let gutter: CGFloat = 16
-    /// 端口列。等宽之后这个宽度就是「6 位端口 + 两个字符的余量」。
-    static let portColumn: CGFloat = 62
+
+    /// 界面字号。间距和行高跟着它走，用户把字放大时行不会被裁切。
+    private static var interface: CGFloat {
+        let value = UISettings.shared.interfaceScale
+        return value.isFinite && value > 0 ? CGFloat(value) : 1
+    }
+    /// 数据字号。端口列跟着等宽字走。
+    private static var data: CGFloat {
+        let value = UISettings.shared.dataScale
+        return value.isFinite && value > 0 ? CGFloat(value) : 1
+    }
+
+    /// 4pt 密度网格。侧栏、列表、工具栏、Git 和会话的留白都从这里取，
+    /// 默认档靠近 IDE / 终端：能扫读，控件仍留得住命中区。
+    /// 颜色不在这里；深浅主题继续走 Ink。
+    static var unit: CGFloat { 4 * interface }
+    /// 面板与列表的水平内边距。
+    static var gutter: CGFloat { 10 * interface }
+    /// 同一行里相邻控件的间距。
+    static var inline: CGFloat { 6 * interface }
+    /// 表列间距。比 inline 略宽，避免端口和命令贴住。
+    static var columnGap: CGFloat { 8 * interface }
+    /// 一行里两行字之间的间距。
+    static var stack: CGFloat { 1 * interface }
+    /// 列表行之间的缝。
+    static var rowGap: CGFloat { 2 * interface }
+    /// 分区之间的垂直间距。
+    static var section: CGFloat { 12 * interface }
+    /// 面板与表单的外圈留白。
+    static var panelPad: CGFloat { 12 * interface }
+
+    /// 服务、依赖、未声明监听。默认档放得下「命令 + 一条事实」。
+    static var rowHeight: CGFloat { max(28, 32 * interface) }
+    /// 左栏项目行：名称一行、分支一行。
+    static var sidebarRow: CGFloat { max(30, 34 * interface) }
+    /// 单行列表（变更文件、命令、会话切换）。整行可点，不低于命中下限。
+    static var listRow: CGFloat { max(22, 24 * interface) }
+    /// 工作区与会话工具栏。
+    static var chromeHeight: CGFloat { max(28, 30 * interface) }
+    /// 行内按钮的最小命中高度。
+    static var hit: CGFloat { max(22, 22 * interface) }
+
+    static var headerPad: CGFloat { 5 * interface }
+    static var controlPadH: CGFloat { 7 * interface }
+    static var controlPadV: CGFloat { 3 * interface }
+    static var tabPadH: CGFloat { 8 * interface }
+    static var tabPadV: CGFloat { 3 * interface }
+
+    /// 端口列。等宽之后这个宽度就是「6 位端口 + 一个字符的余量」。
+    static var portColumn: CGFloat { 56 * data }
+
+    // 未缩放的字号档。Face 会再乘上用户的界面 / 数据缩放。
+    static let display: CGFloat = 14
+    static let heading: CGFloat = 12.5
+    static let row: CGFloat = 12
+    static let chrome: CGFloat = 11
+    static let meta: CGFloat = 10
+    static let caption: CGFloat = 9.5
 }
 
 // MARK: - 字体
@@ -371,7 +427,7 @@ struct Hairline: View {
 struct ColumnLabel: View {
     let text: String
     var tone: Color = Ink.inkFaint
-    var size: CGFloat = 9.5
+    var size: CGFloat = Metrics.caption
 
     var body: some View {
         Text(text.uppercased())
@@ -411,10 +467,10 @@ struct Tag: View {
 
     var body: some View {
         Text(text)
-            .font(Face.sans(10.5, .medium))
+            .font(Face.sans(Metrics.meta, .medium))
             .foregroundStyle(tone.fg)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1.5)
+            .padding(.horizontal, Metrics.inline)
+            .padding(.vertical, 1)
             .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(tone.bg))
             .fixedSize()
     }
@@ -472,11 +528,11 @@ struct TipCard: View {
 
     var body: some View {
         Text(text)
-            .font(Face.sans(11))
+            .font(Face.sans(Metrics.chrome))
             .foregroundStyle(Ink.ink)
             .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(.horizontal, Metrics.gutter)
+            .padding(.vertical, Metrics.headerPad + Metrics.unit)
             .frame(width: 300, alignment: .leading)
             .background {
                 RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Ink.surface)

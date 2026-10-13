@@ -41,18 +41,18 @@ struct AddProjectSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: Metrics.stack) {
                 Text(mode == .edit ? "改这份清单" : "写一份清单")
-                    .font(Face.sans(13.5, .medium))
+                    .font(Face.sans(Metrics.display, .medium))
                     .foregroundStyle(Ink.ink)
                 Text(short(result.path))
-                    .font(Face.mono(10.5))
+                    .font(Face.mono(Metrics.meta))
                     .foregroundStyle(Ink.inkFaint)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            .padding(.horizontal, Metrics.gutter + 2)
-            .padding(.vertical, 12)
+            .padding(.horizontal, Metrics.gutter)
+            .padding(.vertical, Metrics.headerPad + Metrics.unit)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Ink.surface)
             Hairline()
@@ -127,8 +127,8 @@ struct AddProjectSheet: View {
                 SheetButton(title: mode == .edit ? "保存" : "写进 oberth.yaml",
                             primary: true, enabled: !drafting) { onWrite(text) }
             }
-            .padding(.horizontal, Metrics.gutter + 2)
-            .padding(.vertical, 10)
+            .padding(.horizontal, Metrics.gutter)
+            .padding(.vertical, Metrics.headerPad)
             .background(Ink.surface)
         }
         .frame(width: 600, height: 440)
@@ -234,10 +234,11 @@ struct SheetButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(Face.sans(12, .medium))
+                .font(Face.sans(Metrics.row, .medium))
                 .foregroundStyle(primary ? Color.white : Ink.ink)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
+                .padding(.horizontal, Metrics.gutter)
+                .padding(.vertical, Metrics.controlPadV)
+                .frame(minHeight: Metrics.hit)
                 .background {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(primary

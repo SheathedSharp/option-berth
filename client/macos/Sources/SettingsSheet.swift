@@ -63,12 +63,12 @@ struct SettingsSheet: View {
                     ScrollView {
                         content
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(24)
+                            .padding(Metrics.panelPad + Metrics.unit)
                     }
                 } else {
                     content
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                        .padding(24)
+                        .padding(Metrics.panelPad + Metrics.unit)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -79,41 +79,41 @@ struct SettingsSheet: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 9) {
-                BerthMark(size: 22)
+            HStack(spacing: Metrics.inline) {
+                BerthMark(size: 18)
                 Text("设置")
-                    .font(Face.display(17, .semibold))
+                    .font(Face.sans(Metrics.display, .semibold))
                     .foregroundStyle(Ink.ink)
             }
-            .padding(.horizontal, 18)
-            .padding(.top, 26)
-            .padding(.bottom, 20)
+            .padding(.horizontal, Metrics.panelPad)
+            .padding(.top, Metrics.section + Metrics.unit)
+            .padding(.bottom, Metrics.gutter)
 
             ForEach(Section.allCases) { item in
                 Button {
                     withAnimation(Motion.selection(reduced: reduce)) { section = item }
                 } label: {
-                    VStack(alignment: .leading, spacing: 3) {
+                    VStack(alignment: .leading, spacing: Metrics.stack) {
                         Text(item.title)
-                            .font(Face.sans(11.5, section == item ? .medium : .regular))
+                            .font(Face.sans(Metrics.chrome, section == item ? .medium : .regular))
                         Text(item.subtitle)
-                            .font(Face.sans(9.5))
+                            .font(Face.sans(Metrics.caption))
                             .foregroundStyle(section == item ? Ink.accent.opacity(0.82) : Ink.inkFaint)
                     }
                     .foregroundStyle(section == item ? Ink.accent : Ink.inkMuted)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 11)
+                    .padding(.horizontal, Metrics.panelPad)
+                    .padding(.vertical, Metrics.headerPad)
                     .background(section == item ? Ink.accentSoft : Color.clear)
                 }
                 .buttonStyle(.plain)
             }
             Spacer(minLength: 0)
             Text("外观只影响此客户端；Jev 配置供本机 agent 使用")
-                .font(Face.sans(9.5))
+                .font(Face.sans(Metrics.caption))
                 .foregroundStyle(Ink.inkFaint)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(18)
+                .padding(Metrics.panelPad)
         }
         .frame(width: 172, alignment: .leading)
         .background(Ink.surface)
@@ -121,19 +121,19 @@ struct SettingsSheet: View {
 
     private var header: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: Metrics.stack) {
                 Text(section.title)
-                    .font(Face.display(18, .medium))
+                    .font(Face.sans(15, .medium))
                     .foregroundStyle(Ink.ink)
                 Text(section.subtitle)
-                    .font(Face.sans(10))
+                    .font(Face.sans(Metrics.meta))
                     .foregroundStyle(Ink.inkFaint)
             }
             Spacer()
             SheetButton(title: "完成", primary: true, action: onClose)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
+        .padding(.horizontal, Metrics.panelPad + Metrics.unit)
+        .padding(.vertical, Metrics.headerPad + Metrics.unit)
         .background(Ink.surface)
     }
 
@@ -147,7 +147,7 @@ struct SettingsSheet: View {
     }
 
     private var appearanceContent: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: Metrics.section) {
             ClientConfigurationPanel(settings: settings, frozen: !scrolls)
             if settings.themeFilePresent {
                 Text("theme.json 正在管理外观；从上方打开内置编辑器可即时修改。")
@@ -208,7 +208,7 @@ struct SettingsSheet: View {
     }
 
     private var typographyContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: Metrics.section) {
             if settings.themeFilePresent {
                 Text("字体与缩放由 theme.json 管理，请在外观页打开配置文件。")
                     .font(Face.sans(11)).foregroundStyle(Ink.inkMuted)

@@ -19,10 +19,10 @@ struct WorktreeHistorySheet: View {
     }
     var body: some View {
         let visible = entries
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: Metrics.section) {
             HStack {
                 Label("命令历史 / Command history", systemImage: "clock.arrow.circlepath")
-                    .font(Face.sans(14, .semibold))
+                    .font(Face.sans(Metrics.display, .semibold))
                 Spacer()
                 if frozen {
                     frozenAction("清空此 worktree… / Clear…")
@@ -34,25 +34,25 @@ struct WorktreeHistorySheet: View {
                     Button("关闭 / Close") { dismiss() }.keyboardShortcut(.cancelAction)
                 }
             }
-            Text(root).font(Face.mono(10)).foregroundStyle(Ink.inkMuted).lineLimit(1).truncationMode(.middle)
+            Text(root).font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkMuted).lineLimit(1).truncationMode(.middle)
             Text("仅此 worktree 的自有终端 · 事先启用命令块才会记录 · 选择只复制，不执行")
-                .font(Face.sans(11)).foregroundStyle(Ink.inkMuted).fixedSize(horizontal: false, vertical: true)
+                .font(Face.sans(Metrics.chrome)).foregroundStyle(Ink.inkMuted).fixedSize(horizontal: false, vertical: true)
             if frozen {
-                Text("搜索命令或会话 / Search commands or sessions").font(Face.sans(12)).foregroundStyle(Ink.inkFaint)
-                    .padding(8).frame(maxWidth: .infinity, alignment: .leading).background(Ink.surface)
+                Text("搜索命令或会话 / Search commands or sessions").font(Face.sans(Metrics.row)).foregroundStyle(Ink.inkFaint)
+                    .padding(Metrics.headerPad).frame(maxWidth: .infinity, alignment: .leading).background(Ink.surface)
             } else {
                 TextField("搜索命令或会话 / Search commands or sessions", text: $query)
                     .textFieldStyle(.roundedBorder).focused($searchFocused)
                     .accessibilityIdentifier("history.search")
             }
-            Text("\(visible.count) 条 / entries").font(Face.mono(10)).foregroundStyle(Ink.inkMuted)
+            Text("\(visible.count) 条 / entries").font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkMuted)
                 .accessibilityIdentifier("history.count")
             if frozen { rows(visible).frame(maxHeight: .infinity, alignment: .top) }
             else { ScrollView { rows(visible) } }
             if let notice { Text(notice).font(Face.sans(11)).accessibilityIdentifier("history.notice") }
             Text("内存历史随会话关闭或应用退出丢弃；不导入 shell 历史，不保存到布局快照。\nMemory only. Closing a session or quitting discards its history. No shell-history import or cloud sync.")
-                .font(Face.sans(10)).foregroundStyle(Ink.inkMuted).fixedSize(horizontal: false, vertical: true)
-        }.padding(18).frame(width: 650, height: 480).background(Ink.canvas).foregroundStyle(Ink.ink)
+                .font(Face.sans(Metrics.meta)).foregroundStyle(Ink.inkMuted).fixedSize(horizontal: false, vertical: true)
+        }.padding(Metrics.panelPad).frame(width: 650, height: 480).background(Ink.canvas).foregroundStyle(Ink.ink)
             .onAppear { if !frozen { searchFocused = true } }
             .alert("清空此 worktree 的命令历史？ / Clear this worktree's history?", isPresented: $confirmingClear) {
                 Button("取消 / Cancel", role: .cancel) {}
@@ -65,23 +65,23 @@ struct WorktreeHistorySheet: View {
     }
     @ViewBuilder private func rows(_ values: [CommandHistoryEntry]) -> some View {
         if values.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("没有匹配的命令 / No matching commands").font(Face.sans(13, .medium))
+            VStack(alignment: .leading, spacing: Metrics.inline) {
+                Text("没有匹配的命令 / No matching commands").font(Face.sans(Metrics.row, .medium))
                 Text("新建 zsh 前显式启用“命令块”；尚未启用的历史不会被补采。")
-                    .font(Face.sans(11)).foregroundStyle(Ink.inkMuted)
-            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                    .font(Face.sans(Metrics.chrome)).foregroundStyle(Ink.inkMuted)
+            }.padding(Metrics.gutter).frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            LazyVStack(alignment: .leading, spacing: 8) {
+            LazyVStack(alignment: .leading, spacing: Metrics.rowGap) {
                 ForEach(values) { entry in
-                    HStack(alignment: .top, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .top, spacing: Metrics.inline) {
+                        VStack(alignment: .leading, spacing: Metrics.stack) {
                             HStack {
                                 Text(entry.sessionTitle).lineLimit(1)
                                 Spacer()
                                 Text(entry.status)
-                            }.font(Face.sans(10)).foregroundStyle(Ink.inkMuted)
+                            }.font(Face.sans(Metrics.meta)).foregroundStyle(Ink.inkMuted)
                             Text(entry.block.command ?? "命令文本不可用 / Command text unavailable")
-                                .font(Face.mono(11)).lineLimit(3).frame(maxWidth: .infinity, alignment: .leading)
+                                .font(Face.mono(Metrics.chrome)).lineLimit(3).frame(maxWidth: .infinity, alignment: .leading)
                         }
                         if frozen {
                             frozenAction("复制 / Copy")
@@ -91,7 +91,8 @@ struct WorktreeHistorySheet: View {
                             }.disabled(entry.block.command == nil)
                                 .accessibilityIdentifier("history.copy." + entry.id)
                         }
-                    }.padding(10).background(Ink.surface).clipShape(RoundedRectangle(cornerRadius: 6))
+                    }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.headerPad)
+                        .background(Ink.surface).clipShape(RoundedRectangle(cornerRadius: 4))
                 }
             }
         }
@@ -99,7 +100,8 @@ struct WorktreeHistorySheet: View {
     // Static labels are only for ImageRenderer, which cannot paint AppKit
     // buttons. Native controls and their side effects are tested in real windows.
     private func frozenAction(_ title: String) -> some View {
-        Text(title).font(Face.sans(11)).padding(.horizontal, 8).padding(.vertical, 4)
+        Text(title).font(Face.sans(Metrics.chrome)).padding(.horizontal, Metrics.inline).padding(.vertical, Metrics.tabPadV)
+            .frame(minHeight: Metrics.hit)
             .background(Ink.surface).clipShape(RoundedRectangle(cornerRadius: 4))
     }
     @discardableResult

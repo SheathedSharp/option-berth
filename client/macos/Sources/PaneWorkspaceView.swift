@@ -40,16 +40,16 @@ struct PaneWorkspaceView: View {
            let session = scoped.first(where: { $0.id == sessionID }) ?? (primary.id == sessionID ? primary : nil) {
             let pane = VStack(spacing: 0) {
                 if !compactSinglePane || layout.sessions.count > 1 {
-                HStack(spacing: 8) {
+                HStack(spacing: Metrics.inline) {
                     Button {
                         update { $0.focus(sessionID) }
                         session.terminal.window?.makeFirstResponder(session.terminal)
                     } label: {
                         Image(systemName: layout.focused == sessionID ? "circle.inset.filled" : "circle")
-                        Text(session.title).font(Face.mono(10)).lineLimit(1)
+                        Text(session.title).font(Face.mono(Metrics.meta)).lineLimit(1)
                     }.buttonStyle(.plain)
                     .modifier(PaneDragSource(id: sessionID, enabled: !frozen))
-                    Text(frozen ? "布局示例" : session.state).font(Face.mono(9)).foregroundStyle(Ink.inkFaint).lineLimit(1).layoutPriority(-1)
+                    Text(frozen ? "布局示例" : session.state).font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint).lineLimit(1).layoutPriority(-1)
                     Spacer(minLength: 0)
                     Button { showTerminalFind(session.terminal) } label: { Image(systemName: "magnifyingglass") }
                         .help("查找此窗格 / Find in pane")
@@ -67,7 +67,7 @@ struct PaneWorkspaceView: View {
                     } label: { Image(systemName: session.isActive ? "stop.fill" : "xmark") }
                         .accessibilityLabel((session.isActive ? "结束 " : "关闭 ") + session.title)
                         .help("仅操作当前会话 / This session only")
-                }.padding(.horizontal, 8).padding(.vertical, 7)
+                }.padding(.horizontal, Metrics.gutter).frame(minHeight: Metrics.listRow)
                     .background(layout.focused == sessionID ? Ink.accentSoft : Ink.surface).disabled(frozen)
                 Hairline()
                 }

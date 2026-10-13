@@ -66,7 +66,7 @@ struct WorkspaceConsole: View {
                 }
             } else if frozen {
                 Text("$ git status --short\n M Sources/API.swift\n$ _")
-                    .font(Face.mono(12)).foregroundStyle(Ink.ink).padding(18)
+                    .font(Face.mono(Metrics.row)).foregroundStyle(Ink.ink).padding(Metrics.panelPad)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .overlay(alignment: .topLeading) {
                         if creating {
@@ -75,13 +75,13 @@ struct WorkspaceConsole: View {
                             launchSurface.frame(width: 440, height: 260, alignment: .top)
                                 .background(Ink.canvas).clipShape(RoundedRectangle(cornerRadius: 10))
                                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(Ink.lineStrong, lineWidth: 1))
-                                .padding(10)
+                                .padding(Metrics.gutter)
                         }
                     }
             } else {
                 shellFirstEmpty
             }
-            if let problem { Text(problem).font(Face.sans(11)).foregroundStyle(Change.changed).textSelection(.enabled).padding(10) }
+            if let problem { Text(problem).font(Face.sans(Metrics.chrome)).foregroundStyle(Change.changed).textSelection(.enabled).padding(Metrics.gutter) }
         }.background(Ink.canvas).foregroundStyle(Ink.ink)
             .animation(Motion.selection(reduced: reduced), value: switcherPresented)
             .sheet(isPresented: $history) { WorktreeHistorySheet(root: root, sessions: sessions).clientWindowChrome() }
@@ -124,7 +124,7 @@ struct WorkspaceConsole: View {
             } : nil, frozen: frozen, agentOnly: agentOnly)
     }
     private var toolbar: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: Metrics.inline) {
             if frozen {
                 Text("＋ 新会话"); Text("Agent ⌘↩").foregroundStyle(Ink.inkMuted)
                 Spacer(); Text("历史"); Image(systemName: "ellipsis")
@@ -133,7 +133,7 @@ struct WorkspaceConsole: View {
                     SessionLauncherPopover(isPresented: $creating, panel: launchSurface, reduced: reduced, beforeOpen: beginSession)
                         .fixedSize(horizontal: true, vertical: false).frame(height: 24)
                         .help("再开一个 Shell，或开始外部 Agent 会话")
-                } else { Text("新会话").font(Face.sans(11, .medium)) }
+                } else { Text("新会话").font(Face.sans(Metrics.chrome, .medium)) }
                 sessionModeControl
                 Spacer(minLength: 0)
                 ConsoleToolbarAction(title: "历史", identifier: "terminal.history") { history = true }
@@ -160,7 +160,7 @@ struct WorkspaceConsole: View {
                 } label: { Image(systemName: "ellipsis") }
                     .menuStyle(.borderlessButton).fixedSize().help("会话操作")
             }
-        }.font(Face.sans(11)).padding(.horizontal, 10).padding(.vertical, 6).background(Ink.surface)
+        }.font(Face.sans(Metrics.chrome)).padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV).background(Ink.surface)
     }
     private var sessionRail: some View {
         VStack(spacing: 6) {
@@ -269,11 +269,11 @@ struct WorkspaceConsole: View {
         }
     }
     private var frozenStrip: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Metrics.inline) {
             Text("›_ Shell 1").padding(7).background(Ink.accentSoft)
             Text("◇ Codex 1").padding(7).background(Ink.surface)
             Spacer()
-        }.font(Face.mono(10)).padding(.horizontal, 10).padding(.vertical, 6)
+        }.font(Face.mono(Metrics.meta)).padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV)
     }
     private func beginSession() {
         guard !frozen else { return }
@@ -327,10 +327,10 @@ struct WorkspaceConsole: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Shell").font(Face.sans(16, .semibold))
             Text("此 worktree 的会话从交互式终端开始。Agent 在 Shell 里启动；回到 Shell 不会结束它。")
-                .font(Face.sans(12)).foregroundStyle(Ink.inkMuted)
+                .font(Face.sans(Metrics.row)).foregroundStyle(Ink.inkMuted)
                 .fixedSize(horizontal: false, vertical: true)
             ConsoleToolbarAction(title: "打开 Shell", identifier: "console.openShell", perform: { newShell() })
-                .fixedSize().frame(height: 28).padding(.horizontal, 10)
+                .fixedSize().frame(height: 28).padding(.horizontal, Metrics.gutter)
                 .background(Ink.accentSoft).clipShape(RoundedRectangle(cornerRadius: 6))
                 .help("在当前 worktree 启动交互式 Shell")
         }
