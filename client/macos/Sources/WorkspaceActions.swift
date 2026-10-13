@@ -128,7 +128,7 @@ struct WorkspaceActionPanel: View {
             }
         }.padding(18).frame(width: 480).background(Ink.canvas).foregroundStyle(Ink.ink)
             .onAppear { searchFocused = true }
-            .sheet(isPresented: $editingShortcuts) { WorkspaceShortcutEditor(shortcuts: shortcuts) }
+            .sheet(isPresented: $editingShortcuts) { WorkspaceShortcutEditor(shortcuts: shortcuts).clientWindowChrome() }
     }
     private func choose(_ action: WorkspaceAction) {
         // The parent records this action and dispatches it from sheet.onDismiss,
