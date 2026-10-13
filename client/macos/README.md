@@ -95,8 +95,10 @@ BERTH_PROBE_ADOPT 仅在明确需要端到端起停或采纳清单时设置；�
 
 DaemonClient 通过 `state.subscribe` 长连接接收首帧快照和端口 / 项目增量；显式刷新仍读取
 `state.snapshot`。其它调用是 groups.config.get、groups.start、groups.kill 和 ports.logs。
-Git 面板调用 `oberth git --json`、`oberth git files --json` 和按需的
-`oberth git diff --json`，复用 CLI 契约，不新增 daemon Git 状态。ServicesStore 和
+Git 面板调用 `oberth git --json`、`oberth git files --json`、按需的
+`oberth git diff --json`，以及 History 模式下的 `oberth git graph --json` 和
+`oberth git diff --commit --json`。行号只从返回的 hunk 头推算。客户端不另开 Git 进程，
+也不新增 daemon Git 状态。ServicesStore 和
 GitStore 只缓存当前界面需要的数据；它们不另建产品模型。引擎协议变更后，先更新 daemon
 schema，再重新构建客户端。
 

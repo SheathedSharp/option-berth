@@ -20,10 +20,11 @@ https://git-scm.com/docs/git-status#_short_format
 6. 原生查找入口与 #71 的 Git 命令接通，复制文本不被导航键抢走。
 7. Graph 是只读、有界、可取消的事实读取：不 fetch、不刷新 index、不启用 fsmonitor；超过 limit 时明确标记 `truncated`。
 8. commit diff 由 `oberth git diff --commit <hex> [--file path] --json` 提供；它固定使用该 commit 的第一个 parent，root commit 使用空树，merge commit 不生成 combined diff，并在响应中返回 `commit`/`base` 以便 UI 显示真实基线。历史 patch 不读取当前 worktree 或 index；重命名同时保留 `old_path` 与新路径。
+9. Changes 与 History 共用同一套 patch 呈现：行号只从契约里的 `@@ -l[,s] +l[,s] @@` 推算，省略的计数按 unified diff 视为 1；解析不了的 hunk 头不编号。文件元信息、hunk 和增删行分层上色。相邻 graph 行只有在返回的 `parents` 里才连线，不把日志顺序画成不存在的边。
 
-Graph contract 已在独立 PR 中落地；此前“没有 CLI 事实支撑就不画 DAG”的限制仍适用于未返回的提交、refs 和任何客户端猜测。未检出分支和分层 index/worktree patch 仍不能由客户端伪造。
+History 模式只绘制返回的 commit/parent/ref 事实，并在选中节点后请求对应 commit diff。未返回的提交、refs 和任何客户端猜测仍然不画。未检出分支和分层 index/worktree patch 仍不能由客户端伪造。多车道 DAG 不在本轮；父提交数量和真实的下一条 parent 连线就是当前拓扑。
 
 ## 验证门槛
 
 纯 Swift 状态/过滤/统计回归，现有 Git 取消归属检查，macOS 原生搜索与布局检查，合成冻结截图。
-Graph contract 的 Go parser/CLI 回归与只读边界在 PR #98 更新；Graph UI 将在后续独立 PR 实现。实现和验证状态未完成前不合并或关闭 issue #94。
+行号、省略计数、坏 hunk 头和“相邻行不是 parent”由 `GitReviewTests` 覆盖。原生搜索、窄窗口分隔和冻结图仍由 git-review workflow 与 `mage states` 验收。那些检查通过并且栈下契约合入前，不合并本 PR，也不关闭 issue #94。

@@ -149,7 +149,102 @@ struct GitTree: Decodable, Sendable {
 
 struct GitPatch: Decodable, Sendable {
     let root: String
+    let commit: String?
+    let base: String?
     let files: [GitFileDiff]
+}
+
+struct GitGraph: Decodable, Sendable {
+    let root: String
+    let observedHead: String?
+    let branch: String?
+    let detached: Bool
+    let upstream: String?
+    let ahead: Int
+    let behind: Int
+    let truncated: Bool
+    let limit: Int
+    let commits: [GitGraphCommit]
+    let refs: [GitGraphRef]
+    let worktrees: [GitWorktree]
+
+    var branchName: String { detached ? "detached" : (branch ?? "(no branch)") }
+    var shortHead: String { String((observedHead ?? "").prefix(8)) }
+
+    private enum CodingKeys: String, CodingKey {
+        case root, branch, detached, upstream, ahead, behind, truncated, limit, commits, refs, worktrees
+        case observedHead = "observed_head"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        root = try c.decode(String.self, forKey: .root)
+        observedHead = try c.decodeIfPresent(String.self, forKey: .observedHead)
+        branch = try c.decodeIfPresent(String.self, forKey: .branch)
+        detached = try c.decodeIfPresent(Bool.self, forKey: .detached) ?? false
+        upstream = try c.decodeIfPresent(String.self, forKey: .upstream)
+        ahead = try c.decodeIfPresent(Int.self, forKey: .ahead) ?? 0
+        behind = try c.decodeIfPresent(Int.self, forKey: .behind) ?? 0
+        truncated = try c.decodeIfPresent(Bool.self, forKey: .truncated) ?? false
+        limit = try c.decode(Int.self, forKey: .limit)
+        commits = try c.decodeIfPresent([GitGraphCommit].self, forKey: .commits) ?? []
+        refs = try c.decodeIfPresent([GitGraphRef].self, forKey: .refs) ?? []
+        worktrees = try c.decodeIfPresent([GitWorktree].self, forKey: .worktrees) ?? []
+        guard (1...500).contains(limit), ahead >= 0, behind >= 0,
+              Set(commits.map(\.hash)).count == commits.count,
+              Set(refs.map(\.id)).count == refs.count else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Invalid Git graph bounds or duplicate IDs"))
+        }
+    }
+}
+
+struct GitGraphCommit: Decodable, Identifiable, Sendable {
+    let hash: String
+    let parents: [String]
+    let author: String?
+    let when: String?
+    let subject: String
+    let refs: [String]
+
+    var id: String { hash }
+    var shortHash: String { String(hash.prefix(8)) }
+
+    private enum CodingKeys: String, CodingKey { case hash, parents, author, when, subject, refs }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        hash = try c.decode(String.self, forKey: .hash)
+        parents = try c.decodeIfPresent([String].self, forKey: .parents) ?? []
+        author = try c.decodeIfPresent(String.self, forKey: .author)
+        when = try c.decodeIfPresent(String.self, forKey: .when)
+        subject = try c.decode(String.self, forKey: .subject)
+        refs = try c.decodeIfPresent([String].self, forKey: .refs) ?? []
+        guard !hash.isEmpty, parents.allSatisfy({ !$0.isEmpty }) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Invalid Git graph commit"))
+        }
+    }
+}
+
+struct GitGraphRef: Decodable, Identifiable, Sendable {
+    let name: String
+    let target: String
+    let kind: String
+    let current: Bool
+
+    var id: String { kind + ":" + name }
+
+    private enum CodingKeys: String, CodingKey { case name, target, kind, current }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        target = try c.decode(String.self, forKey: .target)
+        kind = try c.decode(String.self, forKey: .kind)
+        current = try c.decodeIfPresent(Bool.self, forKey: .current) ?? false
+        guard !name.isEmpty, !target.isEmpty, ["branch", "remote", "tag", "ref"].contains(kind) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Invalid Git graph ref"))
+        }
+    }
 }
 
 struct GitFileDiff: Decodable, Identifiable, Sendable {
@@ -177,6 +272,132 @@ struct GitFileDiff: Decodable, Identifiable, Sendable {
 struct GitPatchLine: Decodable, Sendable {
     let kind: String
     let text: String
+}
+
+/// One rendered patch row. Numbers are copied from a parsed `@@` header in the
+/// diff contract; a header that is not Git's unified form leaves them empty.
+struct GitPatchRow: Equatable, Sendable {
+    let kind: String
+    let text: String
+    let oldNumber: Int?
+    let newNumber: Int?
+}
+
+enum GitPatchRows {
+    static func make(_ lines: [GitPatchLine]) -> [GitPatchRow] {
+        var rows: [GitPatchRow] = []
+        rows.reserveCapacity(lines.count)
+        var oldCursor: Int?
+        var newCursor: Int?
+        for line in lines {
+            switch line.kind {
+            case "hunk":
+                let header = GitHunkHeader(line.text)
+                oldCursor = header?.oldCount == 0 ? nil : header?.oldStart
+                newCursor = header?.newCount == 0 ? nil : header?.newStart
+                rows.append(GitPatchRow(kind: line.kind, text: line.text, oldNumber: nil, newNumber: nil))
+            case "add":
+                rows.append(GitPatchRow(kind: line.kind, text: body(line.text, marker: "+"), oldNumber: nil, newNumber: advance(&newCursor)))
+            case "del":
+                rows.append(GitPatchRow(kind: line.kind, text: body(line.text, marker: "-"), oldNumber: advance(&oldCursor), newNumber: nil))
+            case "context":
+                let oldNumber = advance(&oldCursor)
+                let newNumber = advance(&newCursor)
+                rows.append(GitPatchRow(kind: line.kind, text: body(line.text, marker: " "), oldNumber: oldNumber, newNumber: newNumber))
+            default:
+                rows.append(GitPatchRow(kind: line.kind, text: line.text, oldNumber: nil, newNumber: nil))
+            }
+        }
+        return rows
+    }
+
+    static func digits(_ rows: [GitPatchRow]) -> Int {
+        var maxValue = 0
+        for row in rows {
+            if let oldNumber = row.oldNumber, oldNumber > maxValue { maxValue = oldNumber }
+            if let newNumber = row.newNumber, newNumber > maxValue { maxValue = newNumber }
+        }
+        var count = 2
+        var probe = 100
+        while maxValue >= probe && count < 9 {
+            count += 1
+            probe *= 10
+        }
+        return count
+    }
+
+    private static func body(_ text: String, marker: Character) -> String {
+        guard text.first == marker else { return text }
+        return String(text.dropFirst())
+    }
+
+    private static func advance(_ cursor: inout Int?) -> Int? {
+        guard let current = cursor else { return nil }
+        cursor = current + 1
+        return current
+    }
+}
+
+/// `@@ -l[,s] +l[,s] @@`. A missing count is 1, matching unified diff. Anything
+/// else is not a header, so the caller must not invent line numbers from it.
+struct GitHunkHeader: Equatable, Sendable {
+    let oldStart: Int
+    let oldCount: Int
+    let newStart: Int
+    let newCount: Int
+
+    init?(_ text: String) {
+        var rest = Substring(text)
+        guard rest.hasPrefix("@@ -") else { return nil }
+        rest = rest.dropFirst(4)
+        guard let oldStart = Self.takeInt(&rest) else { return nil }
+        let oldCount: Int
+        if rest.first == "," {
+            rest = rest.dropFirst()
+            guard let count = Self.takeInt(&rest) else { return nil }
+            oldCount = count
+        } else {
+            oldCount = 1
+        }
+        guard rest.hasPrefix(" +") else { return nil }
+        rest = rest.dropFirst(2)
+        guard let newStart = Self.takeInt(&rest) else { return nil }
+        let newCount: Int
+        if rest.first == "," {
+            rest = rest.dropFirst()
+            guard let count = Self.takeInt(&rest) else { return nil }
+            newCount = count
+        } else {
+            newCount = 1
+        }
+        guard rest.hasPrefix(" @@") else { return nil }
+        self.oldStart = oldStart
+        self.oldCount = oldCount
+        self.newStart = newStart
+        self.newCount = newCount
+    }
+
+    private static func takeInt(_ rest: inout Substring) -> Int? {
+        var value = 0
+        var seen = false
+        while let first = rest.first, first.isASCII, let digit = first.wholeNumberValue, digit < 10 {
+            let scaled = value.multipliedReportingOverflow(by: 10)
+            let added = scaled.partialValue.addingReportingOverflow(digit)
+            guard !scaled.overflow, !added.overflow else { return nil }
+            value = added.partialValue
+            seen = true
+            rest = rest.dropFirst()
+        }
+        return seen ? value : nil
+    }
+}
+
+/// A visible graph edge exists only when the contract lists `next` as a parent.
+/// Log order alone is not a parent relationship.
+enum GitGraphLink {
+    static func connects(_ commit: GitGraphCommit, to next: GitGraphCommit) -> Bool {
+        commit.parents.contains(next.hash)
+    }
 }
 
 /// A projection of existing CLI facts, not another Git reader. A dual-state file
