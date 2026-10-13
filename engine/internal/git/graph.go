@@ -9,19 +9,16 @@ import (
 	"github.com/sheathedsharp/option-berth/internal/groups"
 )
 
-// graphTimeout bounds a bounded history read. A graph is deliberately a
-// separate read from status/files/diff so callers can request history without
-// making the normal worktree review slower.
-const graphTimeout = 12 * time.Second
+// graphTimeout bounds a history read. A graph is deliberately a separate read
+// from status/files/diff so callers can request history without making the
+// normal worktree review slower. The budget stays inside the client CLI's
+// 30s read timeout so a stuck git fails here, with the context still cancellable.
+const graphTimeout = 25 * time.Second
 
-const (
-	defaultGraphLimit = 200
-	maxGraphLimit     = 500
-)
-
-// Graph is a bounded, read-only commit topology. observed_head pins the HEAD
-// observed by the same status read that discovers the repository root; callers
-// must not present an older graph as the current checkout after navigation.
+// Graph is a read-only commit topology. Limit 0 is the full history.
+// A positive limit caps the result and sets truncated. observed_head pins the
+// HEAD observed by the same status read that discovers the repository root;
+// callers must not present an older graph as the current checkout after navigation.
 type Graph struct {
 	Root         string        `json:"root"`
 	ObservedHead string        `json:"observed_head,omitempty"`
@@ -59,18 +56,16 @@ type GraphRef struct {
 	Current bool   `json:"current,omitempty"`
 }
 
-// ReadGraph reads a bounded commit graph and local refs. It never fetches,
+// ReadGraph reads a commit graph and local refs. It never fetches,
 // refreshes the index, enables fsmonitor, or writes repository state.
+// limit 0 returns every commit; a positive limit keeps the previous cap.
 func ReadGraph(ctx context.Context, dir string, limit int) (Graph, error) {
 	root, _, ok := groups.Find(dir)
 	if !ok {
 		return Graph{}, ErrNotARepository
 	}
-	if limit == 0 {
-		limit = defaultGraphLimit
-	}
-	if limit < 1 || limit > maxGraphLimit {
-		return Graph{}, fmt.Errorf("graph limit must be between 1 and %d", maxGraphLimit)
+	if limit < 0 {
+		return Graph{}, fmt.Errorf("graph limit must be 0 for the full history or a positive count")
 	}
 	ctx, cancel := context.WithTimeout(ctx, graphTimeout)
 	defer cancel()
@@ -86,22 +81,26 @@ func ReadGraph(ctx context.Context, dir string, limit int) (Graph, error) {
 
 	logArgs := []string{"log"}
 	if snap.Head != "" {
-		// Include the observed HEAD revision alongside --all. Git may still
-		// order a newer side branch first; the pinned pass below restores a
-		// stable current-checkout row.
+		// Include the observed HEAD revision alongside --all. A positive limit
+		// pins that checkout to the first row so the cap cannot drop it.
 		logArgs = append(logArgs, snap.Head)
 	}
-	logArgs = append(logArgs, "--all", "--date-order", "--topo-order",
-		fmt.Sprintf("--max-count=%d", limit+1), "--format=%H%x00%P%x00%an%x00%cI%x00%s%x00")
+	logArgs = append(logArgs, "--all", "--date-order", "--topo-order")
+	if limit > 0 {
+		// One extra commit is how truncation is detected without a second walk.
+		logArgs = append(logArgs, fmt.Sprintf("--max-count=%d", limit+1))
+	}
+	logArgs = append(logArgs, "--format=%H%x00%P%x00%an%x00%cI%x00%s%x00")
 	logOut, err := gitOut(ctx, dir, logArgs...)
 	if err != nil {
 		return Graph{}, err
 	}
 	commits := parseGraphCommits(logOut)
-	if snap.Head != "" {
+	if limit > 0 && snap.Head != "" {
 		// --all may order a newer side branch before the checked-out branch.
 		// Pin the observed HEAD as the first row so a small limit can never
 		// return a graph that omits the checkout the user is reviewing.
+		// A full history (limit 0) keeps git's newest-first order instead.
 		headOut, headErr := gitOut(ctx, dir, "log", "-1", snap.Head, "--format=%H%x00%P%x00%an%x00%cI%x00%s%x00")
 		if headErr != nil {
 			return Graph{}, headErr
@@ -125,8 +124,9 @@ func ReadGraph(ctx context.Context, dir string, limit int) (Graph, error) {
 			return Graph{}, fmt.Errorf("git HEAD changed during graph read")
 		}
 	}
-	truncated := len(commits) > limit
-	if truncated {
+	truncated := false
+	if limit > 0 && len(commits) > limit {
+		truncated = true
 		commits = commits[:limit]
 	}
 
@@ -149,7 +149,7 @@ func ReadGraph(ctx context.Context, dir string, limit int) (Graph, error) {
 }
 
 // readGraphStatus asks only for branch identity. Enumerating every untracked
-// file is useful for a files view but makes a bounded history query scale with
+// file is useful for a files view but makes a history query scale with
 // a generated tree, so graph reads deliberately use -uno and parse headers
 // only. The later worktree read still supplies the checkout list.
 func readGraphStatus(ctx context.Context, dir string) (Snapshot, error) {
