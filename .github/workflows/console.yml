@@ -1,10 +1,6 @@
 name: Unified console interaction
 on:
-  pull_request:
-    paths: ['client/macos/**', '.github/workflows/console.yml']
-  push:
-    branches: [main]
-    paths: ['client/macos/**', '.github/workflows/console.yml']
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:

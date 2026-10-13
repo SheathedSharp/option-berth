@@ -1,8 +1,5 @@
 name: Hello worktree example
 on:
-  pull_request:
-    branches: [main]
-    paths: ["examples/hello-worktree/**", "scripts/verify-example.py", "scripts/example_api_test.py", "scripts/verify-e2e.py", "engine/**", ".github/workflows/examples.yml"]
   workflow_dispatch:
 permissions:
   contents: read

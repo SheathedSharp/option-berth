@@ -1,10 +1,6 @@
 name: Bounded ancestry comparison
 on:
-  pull_request:
-    paths:
-      - 'engine/internal/groups/directruns.go'
-      - 'engine/internal/groups/directruns_scratch_test.go'
-      - '.github/workflows/ancestry-benchmark.yml'
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:

@@ -1,7 +1,5 @@
 name: Client configuration verification
 on:
-  pull_request:
-    paths: ['client/macos/**', '.github/workflows/client-configuration.yml']
   workflow_dispatch:
 permissions:
   contents: read

@@ -2,20 +2,6 @@ name: Git read verification
 
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'engine/internal/git/**'
-      - 'engine/internal/groups/**'
-      - 'engine/internal/scanner/**'
-      - 'engine/internal/ports/**'
-      - 'engine/internal/runs/**'
-      - 'engine/internal/daemon/**'
-      - 'engine/internal/spawn/**'
-      - 'client/macos/Sources/CLI.swift'
-      - 'client/macos/Sources/DaemonLaunch.swift'
-      - 'client/macos/Tests/GitReadIntegrationTests.swift'
-      - '.github/workflows/git-read.yml'
 
 permissions:
   contents: read

@@ -1,7 +1,5 @@
 name: Client personalization interaction
 on:
-  pull_request:
-    paths: ['client/macos/**', 'scripts/release.py', 'scripts/client_personalization_release_test.py', 'scripts/check_client_configuration.py', '.github/workflows/client-personalization.yml']
   workflow_dispatch:
 permissions:
   contents: read

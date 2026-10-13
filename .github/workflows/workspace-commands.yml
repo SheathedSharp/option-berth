@@ -1,10 +1,6 @@
 name: Native workspace command interaction
 on:
-  pull_request:
-    paths: ['client/macos/**', '.github/workflows/workspace-commands.yml']
-  push:
-    branches: [main]
-    paths: ['client/macos/**', '.github/workflows/workspace-commands.yml']
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:

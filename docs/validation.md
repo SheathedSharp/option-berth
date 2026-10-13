@@ -1,6 +1,7 @@
 # 验证范围
 
 当前工作流均记录实际源码身份；检查结论只对应运行中的 commit，不沿用旧库或本机的历史结果。
+GitHub Actions 的自动验证仅在推送 `v*` 注释标签时由 `Verified release` 触发；日常 PR 与 `main` 推送不再启动 CI。需要分项检查时可在 Actions 里手动 `workflow_dispatch` 对应工作流，发版前仍应跑本地 `scripts/release-*.sh` 预览与 `--execute` 验证。
 
 | 工作流 | 平台与内容 |
 |---|---|
@@ -123,4 +124,4 @@ CommandChecks、GitReviewChecks、ConsoleChecks 与 PersonalizationChecks 必须
 避免重新排队后的缩放/多显示器重投影；方向、目标宽度、固定范围与压缩迟滞的原有断言全部保留。
 重复运行先建立完整测试宽度偏好。窗口合成只捕获测试拥有的终端窗口，使用 CoreGraphics 将原始图像色彩空间
 转为明确的 sRGB RGBA 字节，保持九个背景样点和同一 PTY 断言；不以 NSCalibratedRGB 转换替代采集图像的色彩配置。
-无法获得本机前台焦点时，不修改系统隐私授权；使用主分支 Verified release 的只读完整 CI 预检。
+无法获得本机前台焦点时，不修改系统隐私授权；可对目标提交打 `v*` 注释 tag，由 Verified release 在 runner 上执行完整预检（会进入发版链路，失败时不应重用该 tag）。

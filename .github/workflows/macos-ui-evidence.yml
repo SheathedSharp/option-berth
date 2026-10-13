@@ -1,7 +1,6 @@
 name: macOS UI evidence
 on:
-  pull_request:
-    paths: ['client/macos/**', '.github/workflows/macos-ui-evidence.yml']
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:

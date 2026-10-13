@@ -1,10 +1,6 @@
 name: macOS daemon client startup
 on:
-  pull_request:
-    paths: ['client/macos/Sources/DaemonLaunch.swift', 'client/macos/Sources/CLI.swift', 'client/macos/Tests/Daemon*Tests.swift', 'engine/**', '.github/workflows/daemon-client-startup.yml']
-  push:
-    branches: [main]
-    paths: ['client/macos/Sources/DaemonLaunch.swift', 'client/macos/Sources/CLI.swift', 'client/macos/Tests/Daemon*Tests.swift', 'engine/**', '.github/workflows/daemon-client-startup.yml']
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:

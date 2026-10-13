@@ -1,11 +1,5 @@
 name: Client and brand verification
 on:
-  pull_request:
-    # Validate stacked UI PRs as well as changes targeting main.
-    paths: ['client/macos/**', 'brand/**', '.github/workflows/client.yml']
-  push:
-    branches: [main]
-    paths: ['client/macos/**', 'brand/**', '.github/workflows/client.yml']
   workflow_dispatch:
 permissions:
   contents: read

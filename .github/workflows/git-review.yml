@@ -1,10 +1,6 @@
 name: Git review projection
 on:
-  pull_request:
-    paths: ['client/macos/**', '.github/workflows/git-review.yml']
-  push:
-    branches: [main]
-    paths: ['client/macos/**', '.github/workflows/git-review.yml']
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
