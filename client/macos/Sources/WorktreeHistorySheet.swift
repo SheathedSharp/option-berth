@@ -28,7 +28,13 @@ struct WorktreeHistorySheet: View {
                     frozenAction("清空此 worktree… / Clear…")
                     frozenAction("关闭 / Close")
                 } else {
-                    Button("清空此 worktree… / Clear…") { confirmingClear = true }
+                    Button("清空此 worktree… / Clear…") {
+                            // SwiftUI drops a same-turn true→false→true on isPresented
+                            // after Cancel; bounce through the next runloop so a second
+                            // clear can open the native confirmation again.
+                            confirmingClear = false
+                            DispatchQueue.main.async { confirmingClear = true }
+                        }
                         .disabled(sessions.commandHistory(in: root).isEmpty)
                         .accessibilityIdentifier("history.clear")
                     Button("关闭 / Close") { dismiss() }.keyboardShortcut(.cancelAction)

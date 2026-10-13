@@ -95,6 +95,7 @@ extension ClientChecks {
         require(board.string(forType: .string) == "echo '历史 safe'", "native filtered Copy failed or copied an unfiltered command")
         pump(0.1)
         require(registry.commandHistory(in: first.path).map(\.id) == before, "search/copy executed a command or changed source history")
+        // Window coords are bottom-left origin: y≈450 hits the top Clear control in a 480pt sheet.
         historyClick(window, x: 450, y: 450)
         eventually("native clear confirmation did not open") { window.attachedSheet != nil }
         guard let cancelSheet = window.attachedSheet,
@@ -102,6 +103,8 @@ extension ClientChecks {
         cancel.performClick(nil)
         eventually("native cancel confirmation did not close") { window.attachedSheet == nil }
         require(registry.commandHistory(in: first.path).map(\.id) == before, "cancel cleared history")
+        // WorktreeHistorySheet bounces confirmingClear through the next runloop; settle first.
+        pump(0.35)
         historyClick(window, x: 450, y: 450)
         eventually("second clear confirmation did not open") { window.attachedSheet != nil }
         guard let clearSheet = window.attachedSheet,
