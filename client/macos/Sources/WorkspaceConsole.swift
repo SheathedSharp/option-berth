@@ -2,8 +2,10 @@ import AppKit
 import BerthTerminal
 import SwiftUI
 
-/// A single worktree session surface. Creation is transient presentation above
-/// the terminal, not another mode or a panel that resizes every running TUI.
+/// A single worktree session surface. Opening it presents that worktree's
+/// interactive shell. An external agent is another PTY started from the shell;
+/// leaving its view does not signal it. Creation stays a transient surface
+/// above the terminal, not a second page that resizes every running TUI.
 struct WorkspaceConsole: View {
     let root: String
     var frozen = false
@@ -12,6 +14,7 @@ struct WorkspaceConsole: View {
     @ObservedObject private var settings = UISettings.shared
     @StateObject private var launcher = AgentLaunchController()
     @State private var creating = false
+    @State private var startingAgent = false
     @State private var history = false
     @State private var problem: String?
     @State private var focusIntent: TerminalFocusIntent?
@@ -40,13 +43,25 @@ struct WorkspaceConsole: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay(alignment: .topLeading) {
-                    if switcherPresented {
-                        SessionSwitcherPalette(root: root, sessions: scoped, query: $switcherQuery,
-                                               selected: selected, activate: activate,
-                                               close: closeSwitcher)
-                            .frame(width: 430, height: 380)
-                            .padding(.leading, 44).padding(.top, 10)
-                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    ZStack(alignment: .topLeading) {
+                        if switcherPresented {
+                            SessionSwitcherPalette(root: root, sessions: scoped, query: $switcherQuery,
+                                                   selected: selected, activate: activate,
+                                                   close: closeSwitcher)
+                                .frame(width: 430, height: 380)
+                                .padding(.leading, 44).padding(.top, 10)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
+                        if startingAgent {
+                            // Floats above the live shell. The shell's frame does not change,
+                            // and dismissing this does not signal either PTY.
+                            agentLaunchSurface
+                                .frame(width: 440, height: 300, alignment: .top)
+                                .background(Ink.canvas)
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Ink.lineStrong, lineWidth: 1))
+                                .padding(.leading, 52).padding(.top, 8)
+                        }
                     }
                 }
             } else if frozen {
@@ -64,8 +79,7 @@ struct WorkspaceConsole: View {
                         }
                     }
             } else {
-                launchSurface.frame(maxWidth: 470).padding(20)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                shellFirstEmpty
             }
             if let problem { Text(problem).font(Face.sans(11)).foregroundStyle(Change.changed).textSelection(.enabled).padding(10) }
         }.background(Ink.canvas).foregroundStyle(Ink.ink)
@@ -74,48 +88,65 @@ struct WorkspaceConsole: View {
             .onAppear {
                 guard !frozen else { return }
                 WorkspaceRecovery.shared.watch(workspace)
+                ensureShellFirst()
                 if let selected { focusIntent = TerminalFocusIntent(selected.id) }
-                else { launcher.refresh(workspace) }
             }
             .onChange(of: creating) { _, value in
-                if !value {
+                if !value, !startingAgent {
                     launcher.cancel()
                     if let selected { focusIntent = TerminalFocusIntent(selected.id) }
                 }
             }
+            .onChange(of: startingAgent) { _, value in
+                // Launch focuses the new PTY itself. This only aborts a plan that
+                // was still in flight when the surface closed.
+                if !value, !creating { launcher.cancel() }
+            }
             .background(alignment: .topLeading) {
-                SessionShortcutDelivery(open: openSwitcher, cycle: cycleSession, escape: closeSwitcher,
+                SessionShortcutDelivery(open: openSwitcher, cycle: cycleSession, escape: handleEscape,
+                                        startAgent: beginAgent,
                                         canCycle: { scoped.count > 1 },
-                                        canEscape: { switcherPresented || selected?.kind != "terminal" })
+                                        canEscape: { switcherPresented || startingAgent || selected?.kind != "terminal" },
+                                        canStartAgent: commandReturnStartsAgent)
                     .frame(width: 1, height: 1)
                     .allowsHitTesting(false)
             }
             .onDisappear { launcher.cancel() }
     }
-    private var launchSurface: SessionLaunchPanel {
+    private var launchSurface: SessionLaunchPanel { launchPanel(agentOnly: false) }
+    private var agentLaunchSurface: SessionLaunchPanel { launchPanel(agentOnly: true) }
+    private func launchPanel(agentOnly: Bool) -> SessionLaunchPanel {
         SessionLaunchPanel(root: root, workspace: workspace, launcher: launcher, selected: selected,
-            newShell: newShell, activate: activate, close: selected == nil ? nil : { creating = false }, frozen: frozen)
+            newShell: { newShell() }, activate: activate,
+            close: (agentOnly || selected != nil) ? {
+                if agentOnly { startingAgent = false } else { creating = false }
+                if let selected { focusIntent = TerminalFocusIntent(selected.id) }
+            } : nil, frozen: frozen, agentOnly: agentOnly)
     }
     private var toolbar: some View {
         HStack(spacing: 9) {
             if frozen {
-                Text("＋ 新会话"); Spacer(); Text("历史"); Image(systemName: "ellipsis")
+                Text("＋ 新会话"); Text("Agent ⌘↩").foregroundStyle(Ink.inkMuted)
+                Spacer(); Text("历史"); Image(systemName: "ellipsis")
             } else {
                 if !scoped.isEmpty {
                     SessionLauncherPopover(isPresented: $creating, panel: launchSurface, reduced: reduced, beforeOpen: beginSession)
                         .fixedSize(horizontal: true, vertical: false).frame(height: 24)
-                        .help("在当前 worktree 创建 Shell 或外部 Agent 会话")
+                        .help("再开一个 Shell，或开始外部 Agent 会话")
                 } else { Text("新会话").font(Face.sans(11, .medium)) }
+                sessionModeControl
                 Spacer(minLength: 0)
                 ConsoleToolbarAction(title: "历史", identifier: "terminal.history") { history = true }
                     .fixedSize(horizontal: true, vertical: false).frame(height: 24)
                     .help("搜索当前 worktree 的内存命令历史")
                 Menu {
-                    Button("新建 Shell", action: newShell)
+                    Button("新建 Shell") { newShell() }
                     Toggle("新 Shell 启用命令块", isOn: $settings.shellIntegration)
                         .disabled(settings.configuration.preferences.shellIntegration != nil || URL(fileURLWithPath: TerminalSession.shell).lastPathComponent != "zsh")
                     if let selected {
                         Divider()
+                        if selected.kind == "terminal" { Button("开始 Agent") { beginAgent() } }
+                        else { Button("返回 Shell") { returnToShell() } }
                         Button("聚焦当前会话") { activate(selected) }
                         Button("查找当前终端") { showTerminalFind(selected.terminal) }
                         Button("在独立窗口显示") { TerminalWindows.shared.detach(selected) }
@@ -173,18 +204,37 @@ struct WorkspaceConsole: View {
     }
 
     private func openSwitcher() {
+        startingAgent = false
         switcherQuery = ""
         switcherPresented = true
     }
 
+    private func handleEscape() {
+        if startingAgent {
+            startingAgent = false
+            if let selected, selected.kind == "terminal" { focusIntent = TerminalFocusIntent(selected.id) }
+            if switcherPresented { closeSwitcher() }
+            return
+        }
+        closeSwitcher()
+    }
+
     private func closeSwitcher() {
+        let leaveAgent = selected?.kind != "terminal"
         switcherPresented = false
         switcherQuery = ""
-        if let selected, selected.kind != "terminal" {
-            let terminal = terminalReturnID.flatMap { id in scoped.first(where: { $0.id == id }) }
-                ?? scoped.first(where: { $0.kind == "terminal" })
-            if let terminal { activate(terminal) }
-        }
+        if leaveAgent { returnToShell() }
+    }
+
+    /// Show the shell again. The agent PTY stays in the registry, still running.
+    private func returnToShell() {
+        switcherPresented = false
+        switcherQuery = ""
+        startingAgent = false
+        let shell = terminalReturnID.flatMap { id in scoped.first { $0.id == id && $0.kind == "terminal" } }
+            ?? scoped.first { $0.kind == "terminal" }
+        if let shell { activate(shell) }
+        else { newShell() }
     }
 
     private func activate(_ session: TerminalSession) {
@@ -192,7 +242,8 @@ struct WorkspaceConsole: View {
         if session.kind != "terminal", let current = selected, current.kind == "terminal" {
             terminalReturnID = current.id
         }
-        sessions.select(session); creating = false; switcherPresented = false
+        // Selection only. Stopping an agent is the explicit end-session action.
+        sessions.select(session); creating = false; startingAgent = false; switcherPresented = false
         focusIntent = TerminalFocusIntent(session.id)
         if TerminalWindows.shared.windows[session.id] != nil { TerminalWindows.shared.detach(session) }
     }
@@ -226,19 +277,96 @@ struct WorkspaceConsole: View {
     }
     private func beginSession() {
         guard !frozen else { return }
+        launcher.cancel()
+        startingAgent = false
         creating = true
         if launcher.providers.isEmpty { launcher.refresh(workspace) }
     }
-    private func newShell() {
+    private func beginAgent() {
+        guard !frozen, selected?.kind == "terminal" else { return }
+        launcher.cancel()
+        creating = false
+        switcherPresented = false
+        switcherQuery = ""
+        startingAgent = true
+        if launcher.providers.isEmpty { launcher.refresh(workspace) }
+    }
+    private func commandReturnStartsAgent() -> Bool {
+        guard !frozen, !startingAgent, !switcherPresented, !creating, selected?.kind == "terminal" else { return false }
+        if selected?.terminal.window?.firstResponder is NSTextView { return false }
+        return true
+    }
+    @ViewBuilder private var sessionModeControl: some View {
+        if let selected {
+            if selected.kind == "terminal" {
+                ConsoleToolbarAction(title: "Agent", identifier: "console.startAgent", symbol: "sparkle", perform: beginAgent)
+                    .fixedSize().frame(height: 24)
+                    .help("从当前 Shell 开始外部 Agent · ⌘↩。返回 Shell 不会结束它。")
+                Text("⌘↩").font(Face.mono(9)).foregroundStyle(Ink.inkFaint)
+                ForEach(backgroundAgents.prefix(2)) { agent in
+                    ConsoleToolbarAction(title: agent.title, identifier: "console.reenter." + agent.id.uuidString,
+                                         perform: { activate(agent) })
+                        .fixedSize().frame(height: 24)
+                        .help("重新进入此 Agent 会话。进程仍是离开前的那一个。")
+                }
+            } else {
+                ConsoleToolbarAction(title: "返回 Shell", identifier: "console.returnToShell", symbol: "terminal",
+                                     perform: returnToShell)
+                    .fixedSize().frame(height: 24)
+                    .help("回到 Shell。当前 Agent 继续在后台运行，可再次进入同一会话。")
+            }
+        }
+    }
+    private var backgroundAgents: [TerminalSession] {
+        scoped.filter { $0.kind.hasPrefix("agent:") }
+            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+    /// The live canvas when this worktree has no session yet. The primary action
+    /// is a shell; agent launch stays on that shell after it exists.
+    private var shellFirstEmpty: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Shell").font(Face.sans(16, .semibold))
+            Text("此 worktree 的会话从交互式终端开始。Agent 在 Shell 里启动；回到 Shell 不会结束它。")
+                .font(Face.sans(12)).foregroundStyle(Ink.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+            ConsoleToolbarAction(title: "打开 Shell", identifier: "console.openShell", perform: { newShell() })
+                .fixedSize().frame(height: 28).padding(.horizontal, 10)
+                .background(Ink.accentSoft).clipShape(RoundedRectangle(cornerRadius: 6))
+                .help("在当前 worktree 启动交互式 Shell")
+        }
+        .frame(maxWidth: 470, alignment: .leading).padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// One interactive shell is the default presentation. A missing directory or
+    /// a full registry reports the existing error and does not leave a half-started
+    /// session. An agent the user is already viewing stays in front; the shell is
+    /// still started underneath so they can return to it.
+    private func ensureShellFirst() {
+        guard !frozen, root.hasPrefix("/") else { return }
+        if Self.bootstrapping.contains(root) { return }
+        let shells = scoped.filter { $0.kind == "terminal" }
+        let showingAgent = workspace.agentMode && scoped.contains { $0.kind.hasPrefix("agent:") && $0.id == workspace.activeSelection }
+        if !shells.isEmpty { return }
+        Self.bootstrapping.insert(root)
+        defer { Self.bootstrapping.remove(root) }
+        newShell(select: !showingAgent)
+    }
+
+    private func newShell(select: Bool = true) {
         guard !frozen else { return }
         launcher.cancel()
         do {
             let number = scoped.filter { $0.kind == "terminal" }.count + 1
             let session = try sessions.add(worktree: root, title: "Shell \(number)", executable: TerminalSession.shell,
-                arguments: ["-i"], shellIntegration: settings.shellIntegration && URL(fileURLWithPath: TerminalSession.shell).lastPathComponent == "zsh")
-            problem = nil; activate(session)
+                arguments: ["-i"], shellIntegration: settings.shellIntegration && URL(fileURLWithPath: TerminalSession.shell).lastPathComponent == "zsh",
+                select: select)
+            problem = nil
+            if select { activate(session) }
         } catch { problem = error.localizedDescription }
     }
+
+    private static var bootstrapping: Set<String> = []
 }
 
 /// Native buttons keep keyboard/accessibility activation and hit testing inside
