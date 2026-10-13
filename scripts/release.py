@@ -96,7 +96,8 @@ def verify(root: Path) -> None:
             binary = str(Path(tmp) / "git-checks")
             run(root, "swiftc", "client/macos/Sources/CLI.swift", "client/macos/Sources/DaemonLaunch.swift",
                 "client/macos/Sources/GitStore.swift", "client/macos/Sources/GitReadQueue.swift",
-                "client/macos/Sources/GitModel.swift", "client/macos/Tests/GitCancellationTests.swift",
+                "client/macos/Sources/GitModel.swift", "client/macos/Sources/GitGraphLayout.swift",
+                "client/macos/Tests/GitCancellationTests.swift",
                 "-o", binary, capture=False)
             run(root, binary, capture=False)
             binary = str(Path(tmp) / "draft-checks")

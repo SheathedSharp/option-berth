@@ -190,7 +190,7 @@ struct GitGraph: Decodable, Sendable {
         commits = try c.decodeIfPresent([GitGraphCommit].self, forKey: .commits) ?? []
         refs = try c.decodeIfPresent([GitGraphRef].self, forKey: .refs) ?? []
         worktrees = try c.decodeIfPresent([GitWorktree].self, forKey: .worktrees) ?? []
-        guard (1...500).contains(limit), ahead >= 0, behind >= 0,
+        guard limit >= 0, ahead >= 0, behind >= 0,
               Set(commits.map(\.hash)).count == commits.count,
               Set(refs.map(\.id)).count == refs.count else {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Invalid Git graph bounds or duplicate IDs"))

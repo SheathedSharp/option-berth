@@ -287,14 +287,16 @@ enum Snapshot {
         {"root":"/Users/you/code/berth-demo","observed_head":"mmmmmmmmmmmmmmmm","branch":"feature/checkout",
          "upstream":"origin/feature/checkout","ahead":1,"behind":0,"truncated":false,"limit":4,
          "commits":[
-           {"hash":"mmmmmmmmmmmmmmmm","parents":["aaaaaaaaaaaaaaaa","bbbbbbbbbbbbbbbb"],"author":"Ada","when":"2026-10-06T00:00:00Z","subject":"Merge branch side into feature/checkout","refs":["feature/checkout"]},
-           {"hash":"aaaaaaaaaaaaaaaa","parents":["cccccccccccccccc"],"author":"Ada","when":"2026-10-05T00:00:00Z","subject":"Keep the checkout lane straight"},
-           {"hash":"bbbbbbbbbbbbbbbb","parents":["cccccccccccccccc"],"author":"Grace","when":"2026-10-04T00:00:00Z","subject":"Side work","refs":["side"]},
-           {"hash":"cccccccccccccccc","parents":[],"author":"Ada","when":"2026-10-03T00:00:00Z","subject":"Root"}
+           {"hash":"mmmmmmmmmmmmmmmm","parents":["aaaaaaaaaaaaaaaa","bbbbbbbbbbbbbbbb"],"author":"Ada Lovelace","when":"2026-10-06T00:00:00Z","subject":"Merge branch side into feature/checkout","refs":["feature/checkout","origin/feature/checkout"]},
+           {"hash":"aaaaaaaaaaaaaaaa","parents":["cccccccccccccccc"],"author":"Ada Lovelace","when":"2026-10-05T00:00:00Z","subject":"Keep the checkout lane straight"},
+           {"hash":"bbbbbbbbbbbbbbbb","parents":["cccccccccccccccc"],"author":"Grace Hopper","when":"2026-10-04T00:00:00Z","subject":"Side work","refs":["side"]},
+           {"hash":"cccccccccccccccc","parents":[],"author":"Ada Lovelace","when":"2026-10-03T00:00:00Z","subject":"Root","refs":["v1"]}
          ],
          "refs":[
            {"name":"feature/checkout","target":"mmmmmmmmmmmmmmmm","kind":"branch","current":true},
-           {"name":"side","target":"bbbbbbbbbbbbbbbb","kind":"branch"}
+           {"name":"origin/feature/checkout","target":"mmmmmmmmmmmmmmmm","kind":"remote"},
+           {"name":"side","target":"bbbbbbbbbbbbbbbb","kind":"branch"},
+           {"name":"v1","target":"cccccccccccccccc","kind":"tag"}
          ]}
         """
         let patchJSON = """

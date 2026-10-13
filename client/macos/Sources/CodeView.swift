@@ -368,6 +368,26 @@ extension CodeView {
 // MARK: - History
 
 extension CodeView {
+    /// Which trailing columns fit. Ref labels keep their width; the subject
+    /// truncates before a branch name collapses to a glyph.
+    private struct HistoryColumns {
+        var author: Bool
+        var date: Bool
+        var maxRefs: Int
+        static let gap: CGFloat = 8
+        static let trailing: CGFloat = 12
+        static let authorWidth: CGFloat = 108
+        static let dateWidth: CGFloat = 72
+        static let shaWidth: CGFloat = 56
+        init(_ width: CGFloat) {
+            author = width >= 520
+            date = width >= 400
+            if width >= 880 { maxRefs = 3 }
+            else if width >= 720 { maxRefs = 2 }
+            else { maxRefs = 1 }
+        }
+    }
+
     private var graphPanel: some View {
         GeometryReader { geometry in
             reviewColumns(in: geometry, narrowMin: 150, narrowIdeal: 250, trailingMin: 120,
@@ -383,7 +403,9 @@ extension CodeView {
                     Text(graph.branchName).font(Face.mono(11, .semibold)).lineLimit(1)
                     if !graph.shortHead.isEmpty { Text(graph.shortHead).font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkMuted) }
                     Spacer(minLength: 0)
-                    if graph.truncated { Text("前 \(graph.limit) 条").font(Face.mono(Metrics.caption)).foregroundStyle(Change.changed) }
+                    if graph.truncated {
+                        Text("截断于 \(graph.limit)").font(Face.mono(Metrics.caption)).foregroundStyle(Change.changed)
+                    }
                     Text("\(graph.commits.count) commits").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkMuted)
                 } else {
                     Text("Git graph").font(Face.mono(11, .semibold))
@@ -402,22 +424,27 @@ extension CodeView {
                         .buttonStyle(.bordered).controlSize(.small).disabled(git.graphLoading || !scrolls)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(Metrics.gutter)
             } else if git.graphLoading && git.graph == nil {
-                message("正在读取有界提交 graph…")
+                message("正在读取提交历史…")
             } else if let graph = git.graph {
-                graphScroller(graph, layout: GitGraphLayout.layout(graph.commits.map { GitGraphNode(hash: $0.hash, parents: $0.parents) }))
+                GeometryReader { proxy in
+                    graphScroller(graph, layout: git.graphLayout, width: proxy.size.width)
+                }
             } else {
-                message("没有可用的提交 graph")
+                message("没有可用的提交历史")
             }
         }.background(Ink.canvas)
     }
 
-    @ViewBuilder private func graphScroller(_ graph: GitGraph, layout: GitGraphLayout) -> some View {
-        if scrolls {
+    @ViewBuilder private func graphScroller(_ graph: GitGraph, layout: GitGraphLayout, width: CGFloat) -> some View {
+        if layout.rows.count != graph.commits.count {
+            message("提交图和返回的历史对不上")
+        } else if scrolls {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         graphPreface(graph)
-                        graphCommits(graph, layout: layout)
+                        graphHeader(columns: layout.columnCount, width: width)
+                        graphCommits(graph, layout: layout, width: width)
                     }
                 }
                 .focusable()
@@ -434,7 +461,8 @@ extension CodeView {
         } else {
             VStack(spacing: 0) {
                 graphPreface(graph)
-                graphCommits(graph, layout: layout)
+                graphHeader(columns: layout.columnCount, width: width)
+                graphCommits(graph, layout: layout, width: width)
             }
                 .frame(maxHeight: .infinity, alignment: .top).clipped()
         }
@@ -454,9 +482,28 @@ extension CodeView {
         }
     }
 
-    private func graphCommits(_ graph: GitGraph, layout: GitGraphLayout) -> some View {
+    private func graphHeader(columns: Int, width: CGFloat) -> some View {
+        let fields = HistoryColumns(width)
+        let graphWidth = GitGraphMetrics.width(columns: columns)
+        return VStack(spacing: 0) {
+            HStack(spacing: HistoryColumns.gap) {
+                Color.clear.frame(width: graphWidth, height: 1)
+                Text("Description").frame(maxWidth: .infinity, alignment: .leading)
+                if fields.author { Text("Author").frame(width: HistoryColumns.authorWidth, alignment: .leading) }
+                if fields.date { Text("Date").frame(width: HistoryColumns.dateWidth, alignment: .trailing) }
+                Text("SHA").frame(width: HistoryColumns.shaWidth, alignment: .trailing)
+            }
+            .font(Face.mono(Metrics.caption, .semibold))
+            .foregroundStyle(Ink.inkFaint)
+            .padding(.trailing, HistoryColumns.trailing)
+            .frame(height: 22)
+            Hairline()
+        }.background(Ink.surface)
+    }
+
+    private func graphCommits(_ graph: GitGraph, layout: GitGraphLayout, width: CGFloat) -> some View {
         ForEach(Array(graph.commits.enumerated()), id: \.element.id) { index, commit in
-            graphRow(commit, in: graph, row: layout.rows[index], columns: layout.columnCount)
+            graphRow(commit, in: graph, row: layout.rows[index], columns: layout.columnCount, width: width)
                 .id(commit.id)
         }
     }
@@ -468,53 +515,107 @@ extension CodeView {
         git.select(graph.commits[index], project: project)
     }
 
-    private func graphRow(_ commit: GitGraphCommit, in graph: GitGraph, row: GitGraphLayout.Row, columns: Int) -> some View {
+    private func graphRow(_ commit: GitGraphCommit, in graph: GitGraph, row: GitGraphLayout.Row, columns: Int, width: CGFloat) -> some View {
         let head = commit.hash == graph.observedHead
-        let width = GitGraphMetrics.width(columns: columns)
-        return VStack(spacing: 0) {
-        Button {
+        let selected = commit.hash == git.selectedCommit
+        let fields = HistoryColumns(width)
+        let graphWidth = GitGraphMetrics.width(columns: columns)
+        let marks = refMarks(commit, graph: graph)
+        let shown = Array(marks.prefix(fields.maxRefs))
+        let extra = marks.count - shown.count
+        return Button {
             git.select(commit, project: project)
             graphFocused = true
         } label: {
-            VStack(alignment: .leading, spacing: Metrics.stack) {
-                HStack(spacing: Metrics.inline) {
-                    Text(commit.shortHash).font(Face.mono(Metrics.meta, .semibold)).foregroundStyle(Ink.accent)
-                    if head {
-                        Text("HEAD").font(Face.mono(8, .semibold)).foregroundStyle(Ink.live)
-                            .padding(.horizontal, 4).padding(.vertical, 1)
-                            .overlay(Capsule().stroke(Ink.live, lineWidth: 1))
+            HStack(spacing: HistoryColumns.gap) {
+                GitGraphColumn(row: row, head: head, selected: selected)
+                    .frame(width: graphWidth, height: GitGraphMetrics.rowHeight)
+                HStack(spacing: 4) {
+                    ForEach(shown) { mark in
+                        refChip(mark, laneID: row.dotColor)
                     }
-                    ForEach(refMarks(commit, graph: graph)) { mark in
-                        Text(mark.name).font(Face.mono(8, mark.current ? .semibold : .regular))
-                            .foregroundStyle(mark.current ? Ink.live : (mark.kind == "branch" ? Ink.accent : Ink.inkMuted))
-                            .padding(.horizontal, 4).padding(.vertical, 1)
-                            .background(mark.current ? Ink.accentSoft : (mark.kind == "branch" ? Ink.accentSoft : Ink.sunken))
-                            .clipShape(Capsule())
+                    if extra > 0 {
+                        Text("+\(extra)")
+                            .font(Face.mono(Metrics.caption, .semibold))
+                            .foregroundStyle(Ink.inkMuted)
+                            .fixedSize(horizontal: true, vertical: true)
                     }
-                    Spacer(minLength: 0)
-                    if let when = commit.when { Text(when).font(Face.mono(8)).foregroundStyle(Ink.inkFaint).lineLimit(1) }
+                    Text(commit.subject)
+                        .font(Face.sans(Metrics.row, selected ? .semibold : .regular))
+                        .foregroundStyle(Ink.ink)
+                        .lineLimit(1)
+                        .layoutPriority(-1)
                 }
-                Text(commit.subject).font(Face.sans(Metrics.chrome, commit.hash == git.selectedCommit ? .semibold : .regular))
-                    .foregroundStyle(Ink.ink).lineLimit(2)
-                HStack(spacing: Metrics.inline) {
-                    if let author = commit.author { Text(author).lineLimit(1) }
-                    if commit.parents.count > 1 { Text("\(commit.parents.count) parents") }
-                }.font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkMuted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .clipped()
+                if fields.author {
+                    Text(commit.author ?? "")
+                        .font(Face.sans(Metrics.caption))
+                        .foregroundStyle(Ink.inkMuted)
+                        .lineLimit(1)
+                        .frame(width: HistoryColumns.authorWidth, alignment: .leading)
+                }
+                if fields.date {
+                    Text(TimeText.relative(commit.when) ?? String((commit.when ?? "").prefix(10)))
+                        .font(Face.mono(Metrics.caption))
+                        .foregroundStyle(Ink.inkFaint)
+                        .lineLimit(1)
+                        .frame(width: HistoryColumns.dateWidth, alignment: .trailing)
+                }
+                Text(String(commit.hash.prefix(7)))
+                    .font(Face.mono(Metrics.meta))
+                    .foregroundStyle(Ink.inkFaint)
+                    .lineLimit(1)
+                    .frame(width: HistoryColumns.shaWidth, alignment: .trailing)
             }
-            .padding(.leading, width + 8).padding(.trailing, 10).padding(.vertical, Metrics.headerPad)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(alignment: .leading) {
-                GitGraphColumn(row: row, head: head, merge: commit.parents.count > 1)
-                    .frame(width: width).frame(maxHeight: .infinity).padding(.leading, Metrics.inline)
+            .padding(.trailing, HistoryColumns.trailing)
+            .frame(maxWidth: .infinity, minHeight: GitGraphMetrics.rowHeight, alignment: .leading)
+            .background(selected ? Ink.accentSoft : Color.clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .allowsHitTesting(scrolls)
+        .accessibilityIdentifier("git.review.commit." + commit.hash)
+    }
+
+    private func refChip(_ mark: RefMark, laneID: Int) -> some View {
+        let tone = chipTone(mark, laneID: laneID)
+        return Text(mark.name)
+            .font(Face.mono(Metrics.caption, mark.current ? .semibold : .medium))
+            .foregroundStyle(tone.text)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(tone.fill, in: RoundedRectangle(cornerRadius: 3, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .strokeBorder(tone.stroke, lineWidth: 1)
             }
-            .background(commit.hash == git.selectedCommit ? Ink.accentSoft : Color.clear)
-        }.buttonStyle(.plain).disabled(!scrolls)
-            .accessibilityIdentifier("git.review.commit." + commit.hash)
-        HStack(spacing: 0) {
-            Color.clear.frame(width: width + 6)
-            Hairline()
+            .fixedSize(horizontal: true, vertical: true)
+    }
+
+    private func chipTone(_ mark: RefMark, laneID: Int) -> (fill: Color, text: Color, stroke: Color) {
+        if mark.kind == "tag" {
+            return (Change.changed.opacity(0.16), Change.changed, Change.changed.opacity(0.45))
         }
+        let lane = Lane.color(forLaneID: mark.current ? laneID : stableLaneID(mark.name))
+        if mark.current {
+            return (lane, .white, lane)
         }
+        if mark.kind == "remote" {
+            return (.clear, lane, lane.opacity(0.55))
+        }
+        return (lane.opacity(0.16), lane, lane.opacity(0.28))
+    }
+
+    private func stableLaneID(_ name: String) -> Int {
+        var hash = 2_166_136_261
+        for byte in name.utf8 {
+            hash ^= Int(byte)
+            hash = hash &* 16_777_619
+        }
+        return hash
     }
 
     private func refMarks(_ commit: GitGraphCommit, graph: GitGraph) -> [RefMark] {

@@ -108,10 +108,10 @@ func TestGitGraphJSONCarriesParentsRefsAndLimit(t *testing.T) {
 		ObservedHead string `json:"observed_head"`
 		Branch       string `json:"branch"`
 		Upstream     string `json:"upstream"`
-		Ahead        int `json:"ahead"`
-		Behind       int `json:"behind"`
-		Truncated    bool `json:"truncated"`
-		Limit        int `json:"limit"`
+		Ahead        int    `json:"ahead"`
+		Behind       int    `json:"behind"`
+		Truncated    bool   `json:"truncated"`
+		Limit        int    `json:"limit"`
 		Commits      []struct {
 			Hash    string   `json:"hash"`
 			Parents []string `json:"parents"`
@@ -119,9 +119,9 @@ func TestGitGraphJSONCarriesParentsRefsAndLimit(t *testing.T) {
 			Refs    []string `json:"refs"`
 		} `json:"commits"`
 		Refs []struct {
-			Name string `json:"name"`
-			Kind string `json:"kind"`
-			Current bool `json:"current"`
+			Name    string `json:"name"`
+			Kind    string `json:"kind"`
+			Current bool   `json:"current"`
 		} `json:"refs"`
 	}
 	if err := json.Unmarshal([]byte(out), &doc); err != nil {
@@ -138,10 +138,57 @@ func TestGitGraphJSONCarriesParentsRefsAndLimit(t *testing.T) {
 	}
 	foundCurrent := false
 	for _, ref := range doc.Refs {
-		if ref.Kind == "branch" && ref.Current { foundCurrent = true }
+		if ref.Kind == "branch" && ref.Current {
+			foundCurrent = true
+		}
 	}
 	if !foundCurrent {
 		t.Fatalf("refs = %+v, no current branch", doc.Refs)
+	}
+}
+
+func TestGitGraphZeroLimitReturnsEveryCommit(t *testing.T) {
+	dir := gitTestRepo(t)
+	gitIn(t, dir, "add", "kept.txt")
+	gitIn(t, dir, "commit", "-qm", "second")
+	chdir(t, dir)
+
+	prevJSON, prevLimit := gitGraphJSONFlag, gitGraphLimitFlag
+	gitGraphJSONFlag, gitGraphLimitFlag = true, 0
+	t.Cleanup(func() { gitGraphJSONFlag, gitGraphLimitFlag = prevJSON, prevLimit })
+
+	out, err := runGit(t, gitGraphCmd, gitGraphRun)
+	if err != nil {
+		t.Fatalf("git graph: %v", err)
+	}
+	var doc struct {
+		Truncated bool `json:"truncated"`
+		Limit     int  `json:"limit"`
+		Commits   []struct {
+			Subject string `json:"subject"`
+		} `json:"commits"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("stdout is not the documented graph document: %v\n%s", err, out)
+	}
+	if doc.Limit != 0 || doc.Truncated {
+		t.Fatalf("limit/truncated = %d/%v, want 0/false", doc.Limit, doc.Truncated)
+	}
+	if len(doc.Commits) != 2 || doc.Commits[0].Subject != "second" || doc.Commits[1].Subject != "first" {
+		t.Fatalf("commits = %+v, want the full newest-first history", doc.Commits)
+	}
+}
+
+func TestGitGraphRejectsNegativeLimit(t *testing.T) {
+	dir := gitTestRepo(t)
+	chdir(t, dir)
+
+	prev := gitGraphLimitFlag
+	gitGraphLimitFlag = -1
+	t.Cleanup(func() { gitGraphLimitFlag = prev })
+
+	if _, err := runGit(t, gitGraphCmd, gitGraphRun); err == nil {
+		t.Fatal("negative graph limit was accepted")
 	}
 }
 
@@ -220,7 +267,7 @@ func TestGitDiffCommitJSONCarriesHistoricalIdentity(t *testing.T) {
 		Commit string `json:"commit"`
 		Base   string `json:"base"`
 		Files  []struct {
-			Path string `json:"path"`
+			Path  string `json:"path"`
 			Lines []struct {
 				Kind string `json:"kind"`
 				Text string `json:"text"`
@@ -237,7 +284,6 @@ func TestGitDiffCommitJSONCarriesHistoricalIdentity(t *testing.T) {
 		t.Fatalf("files = %+v", doc.Files)
 	}
 }
-
 
 func TestGitDiffCommitJSONRootUsesEmptyBase(t *testing.T) {
 	dir := t.TempDir()

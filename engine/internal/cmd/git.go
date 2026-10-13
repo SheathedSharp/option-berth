@@ -61,9 +61,10 @@ var gitFilesCmd = &cobra.Command{
 
 var gitGraphCmd = &cobra.Command{
 	Use:   "graph [path]",
-	Short: "Show a bounded commit graph and refs (read-only)",
-	Long: "Read a bounded, topology-ordered history with full parent IDs and local refs.\n" +
-		"The answer is explicitly bounded; truncated history is marked in JSON.\n" +
+	Short: "Show the commit graph and refs (read-only)",
+	Long: "Read a topology-ordered history with full parent IDs and local refs.\n" +
+		"The default is the full history. --limit N caps the result, and a capped\n" +
+		"history is marked truncated in JSON. --limit 0 keeps every commit.\n" +
 		"This command never fetches, stages, commits, switches branches or updates\n" +
 		"repository maintenance state.",
 	Args: cobra.MaximumNArgs(1),
@@ -99,7 +100,7 @@ func init() {
 	gitDiffCmd.Flags().StringVar(&gitDiffCommitFlag, "commit", "",
 		"Review this hexadecimal commit ID against its first parent")
 	gitGraphCmd.Flags().BoolVar(&gitGraphJSONFlag, "json", false, "Output as JSON")
-	gitGraphCmd.Flags().IntVar(&gitGraphLimitFlag, "limit", 200, "Maximum number of commits to return (1-500)")
+	gitGraphCmd.Flags().IntVar(&gitGraphLimitFlag, "limit", 0, "Maximum commits to return; 0 returns the full history")
 	gitCmd.AddCommand(gitFilesCmd, gitGraphCmd, gitDiffCmd)
 	rootCmd.AddCommand(gitCmd)
 }
