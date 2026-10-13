@@ -8,6 +8,7 @@ final class GitStore: ObservableObject {
     @Published private(set) var overview: GitOverview?
     @Published private(set) var tree: GitTree?
     @Published private(set) var graph: GitGraph?
+    private(set) var graphLayout = GitGraphLayout(rows: [])
     @Published private(set) var patch: GitPatch?
     @Published private(set) var selectedPath: String?
     @Published private(set) var selectedCommit: String?
@@ -42,6 +43,7 @@ final class GitStore: ObservableObject {
         self.overview = overview
         self.tree = tree
         self.graph = graph
+        self.graphLayout = Self.layout(of: graph)
         self.patch = patch
         self.selectedPath = selectedPath
         self.selectedCommit = selectedCommit
@@ -202,7 +204,7 @@ final class GitStore: ObservableObject {
         }
     }
 
-    func loadGraph(project: BerthGroup?, force: Bool = false, limit: Int = 200) {
+    func loadGraph(project: BerthGroup?, force: Bool = false) {
         guard !isFixture, let requestedRoot = prepare(project) else { return }
         guard !graphInFlight,
               force || Date().timeIntervalSince(lastGraphAt) >= 5 else { return }
@@ -216,18 +218,32 @@ final class GitStore: ObservableObject {
         graphCancellation = cancellation
         queue.submit(.graph) { [weak self] in
             let result = CLI.decode(GitGraph.self,
-                                    arguments: ["git", "graph", requestedRoot, "--json", "--limit", String(limit)],
+                                    arguments: ["git", "graph", requestedRoot, "--json", "--limit", "0"],
                                     cancellation: cancellation)
             Task { @MainActor [weak self] in
                 guard let self, self.generation == requestGeneration else { return }
                 self.graphInFlight = false
                 self.graphLoading = false
                 switch result {
-                case .success(let value): self.graph = value; self.graphProblem = nil
-                case .failure(let error): self.graph = nil; self.graphProblem = error.message
+                case .success(let value):
+                    self.adopt(value)
+                case .failure(let error):
+                    self.adopt(nil)
+                    self.graphProblem = error.message
                 }
             }
         }
+    }
+
+    private func adopt(_ graph: GitGraph?) {
+        graphLayout = Self.layout(of: graph)
+        self.graph = graph
+        if graph != nil { graphProblem = nil }
+    }
+
+    private static func layout(of graph: GitGraph?) -> GitGraphLayout {
+        guard let graph else { return GitGraphLayout(rows: []) }
+        return GitGraphLayout.layout(graph.commits.map { GitGraphNode(hash: $0.hash, parents: $0.parents) })
     }
 
     private func prepare(_ project: BerthGroup?) -> String? {
@@ -241,6 +257,7 @@ final class GitStore: ObservableObject {
             root = next
             overview = nil
             tree = nil
+            graphLayout = GitGraphLayout(rows: [])
             graph = nil
             problem = nil
             graphProblem = nil

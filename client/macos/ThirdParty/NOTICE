@@ -7,12 +7,10 @@ Copyright 2013 David Catmull
 Licensed under the Apache License, Version 2.0 (see Xit-Apache-2.0.txt).
 
 Adapted code: client/macos/Sources/GitGraphLayout.swift
-Column drawing: client/macos/Sources/GitGraphColumn.swift follows
-Xit HistoryCellView path geometry, in SwiftUI coordinates, and adds a
-HEAD ring plus a hollow merge node.
 
 Changes from Xit: the layout is a pure function of newest-first
 (hash, parent hashes) already returned by `oberth git graph`. It does
 not use libgit2, a repository, locks, or incremental batches. A commit
 that no connection touches still receives a dot in the next free column
-so every returned commit stays visible.
+so every returned commit stays visible. GitGraphColumn.swift draws those
+lane indexes with its own curves; it does not copy Xit's polyline.

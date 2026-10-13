@@ -51,6 +51,9 @@ import Foundation
         let graph = try decode(GitGraph.self, graphJSON)
         expect(graph.branchName == "feature/review" && graph.commits.count == 1 && graph.truncated,
                "graph snake_case decode and bounded facts")
+        let unlimited = try decode(GitGraph.self, graphJSON.merging(["limit": 0, "truncated": false]) { _, v in v })
+        expect(unlimited.limit == 0 && !unlimited.truncated && unlimited.commits.count == graph.commits.count,
+               "limit 0 is the full history")
         expect(graph.commits[0].id == graph.commits[0].hash && graph.refs[0].current,
                "graph IDs and current ref")
         let unknownOverview = try decode(GitOverview.self, ["root":"/fixture/repo"])
@@ -72,7 +75,7 @@ import Foundation
             catch { checks += 1 }
         }
         for json in [
-            graphJSON.merging(["limit":0]) { _, v in v },
+            graphJSON.merging(["limit": -1]) { _, v in v },
             graphJSON.merging(["commits":[["hash":"abcdef0123456789", "subject":"one"], ["hash":"abcdef0123456789", "subject":"two"]]]) { _, v in v }
         ] {
             do { _ = try decode(GitGraph.self, json); fatalError("invalid Git graph accepted") }
