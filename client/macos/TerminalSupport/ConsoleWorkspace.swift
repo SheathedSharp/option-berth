@@ -6,6 +6,11 @@ import SwiftUI
 public final class ConsoleWorkspace: ObservableObject {
     @Published public var agentMode = false
     @Published public var providerID = "codex"
+    /// False until the person picks a provider, or settings name one for a new workspace.
+    /// A fallback id alone is not a selection.
+    @Published public var providerChosen = false
+    /// Agent PTY that ⌘↩ resumes. Not archived: process identity does not survive restart.
+    @Published public var resumeAgentID: UUID?
     @Published public var draft = ""
     @Published public var nativeExpanded = false
     @Published public var terminalSelection: UUID?
@@ -62,6 +67,8 @@ public final class TerminalSessions: ObservableObject {
     private var workspaces: [String: ConsoleWorkspace] = [:]
     /// Default for newly created UI workspaces only; never changes an existing selection.
     public var defaultProviderID = "codex"
+    /// True only when settings name a provider. The codex fallback is not a selection.
+    public var defaultProviderChosen = false
     public var activeCount: Int { sessions.filter(\.isActive).count }
     public init() {}
 
@@ -74,6 +81,7 @@ public final class TerminalSessions: ObservableObject {
         if let value = workspaces[key] { return value }
         let value = ConsoleWorkspace()
         value.providerID = defaultProviderID
+        value.providerChosen = defaultProviderChosen
         workspaces[key] = value
         return value
     }
@@ -117,7 +125,7 @@ public final class TerminalSessions: ObservableObject {
         var restored: [String: ConsoleWorkspace] = [:]
         for saved in archive.workspaces {
             let state = ConsoleWorkspace()
-            state.agentMode = saved.agentMode; state.providerID = saved.providerID; state.nativeExpanded = saved.nativeExpanded
+            state.agentMode = saved.agentMode; state.providerID = saved.providerID; state.providerChosen = true; state.nativeExpanded = saved.nativeExpanded
             state.terminalLayout = saved.terminalLayout; state.agentLayout = saved.agentLayout
             state.terminalSelection = saved.terminalLayout.focused; state.agentSelection = saved.agentLayout.focused
             restored[saved.root] = state

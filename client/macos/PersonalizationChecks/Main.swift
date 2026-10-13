@@ -68,8 +68,9 @@ import BerthTerminal
         try await eventually("live preference consumers did not update") {
             abs(rail - 220) < 1 && reduced && settings.shellIntegration && registry.defaultProviderID == "claude"
         }
-        try expect(registry.workspace("/fixture/new").providerID == "claude", "new workspace ignored default agent")
-        try expect(existing.providerID == "opencode" && existing.draft == "preserve this draft" && existing.terminalLayout == layout, "config mutated existing workspace")
+        let created = registry.workspace("/fixture/new")
+        try expect(created.providerID == "claude" && created.providerChosen, "new workspace ignored the configured default agent")
+        try expect(!existing.providerChosen && existing.providerID == "opencode" && existing.draft == "preserve this draft" && existing.terminalLayout == layout, "config mutated existing workspace")
         try expect(registry.sessions.isEmpty, "config implicitly launched an agent or shell")
         let originalBytes = try Data(contentsOf: file)
         settings.shellIntegration = false

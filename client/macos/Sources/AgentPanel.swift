@@ -15,14 +15,28 @@ final class AgentLaunchController: ObservableObject {
     @Published private(set) var problem: String?
     private var operation: Task<Void, Never>?
     private var generation = UUID()
+    private var pending: (() -> Void)?
     deinit { operation?.cancel() }
     func provider(_ workspace: ConsoleWorkspace) -> ExternalAgent? { providers.first { $0.id == workspace.providerID } }
     func available(_ workspace: ConsoleWorkspace) -> Bool { !loading && provider(workspace)?.installed == true }
-    func cancel() { generation = UUID(); operation?.cancel(); operation = nil; phase = .idle }
+    func cancel() {
+        generation = UUID(); operation?.cancel(); operation = nil; phase = .idle; pending = nil
+    }
+
+    /// Runs `body` once the provider catalogue is loaded. A chosen provider is not replaced.
+    func whenReady(_ workspace: ConsoleWorkspace, _ body: @escaping () -> Void) {
+        if !providers.isEmpty { body(); return }
+        pending = body
+        refresh(workspace)
+    }
 
     func refresh(_ workspace: ConsoleWorkspace) {
         guard !loading else { return }
-        guard let binary = DaemonLaunch.binaryPath() else { problem = "找不到兼容的 oberth"; return }
+        guard let binary = DaemonLaunch.binaryPath() else {
+            problem = "找不到兼容的 oberth"
+            pending = nil
+            return
+        }
         let id = UUID(); generation = id; phase = .discovery; problem = nil
         operation = Task { @MainActor in
             defer { if generation == id { phase = .idle; operation = nil } }
@@ -31,9 +45,18 @@ final class AgentLaunchController: ObservableObject {
                 try Task.checkCancellation()
                 guard generation == id else { return }
                 providers = values
-                if !values.contains(where: { $0.id == workspace.providerID }),
+                if !workspace.providerChosen,
+                   !values.contains(where: { $0.id == workspace.providerID }),
                    let first = values.first(where: { $0.installed }) ?? values.first { workspace.providerID = first.id }
-            } catch is CancellationError {} catch { if generation == id { problem = error.localizedDescription } }
+                if generation == id { phase = .idle; operation = nil }
+                let follow = pending
+                pending = nil
+                follow?()
+            } catch is CancellationError {
+                if generation == id { pending = nil }
+            } catch {
+                if generation == id { problem = error.localizedDescription; pending = nil }
+            }
         }
     }
     func launch(root: String, workspace: ConsoleWorkspace, prompt: Bool, resumeFile: String? = nil,

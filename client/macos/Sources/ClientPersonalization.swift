@@ -19,5 +19,6 @@ struct ClientMotionPreferences: ViewModifier {
 @MainActor enum ClientSessionPreferences {
     static func apply(_ preferences: ClientPreferencesConfiguration, to sessions: TerminalSessions) {
         sessions.defaultProviderID = preferences.defaultAgent ?? "codex"
+        sessions.defaultProviderChosen = preferences.defaultAgent != nil
     }
 }

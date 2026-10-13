@@ -133,11 +133,8 @@ Shell → Agent 排列会话，用运行/休眠点标记状态；⌘⌥Tab 打�
 旧引擎缺少这些命令时会报错，不会回退拼接 shell。需要与客户端匹配的 oberth 版本；
 安装/替换引擎仍由用户明确执行。
 
-在消息框内，**⌘Enter** 建立新 agent 会话；填写的初始任务按字面传入，留空则直接打开原生会话。**⇧⌘Enter** 将焦点交给当前活动的
-原生会话，没有可继续的原生会话时才新建。普通 Enter 插入换行。只有消息框处理这些快捷键，
-中文输入法组合文字时不会误提交；进入原生终端后，输入和审批交给 agent 自己。
-这不是第二套聊天协议：后续对话直接在原生界面继续，再次点击「开始新会话」会另建会话。
-不猜测 TUI 屏幕、不向未知输入状态模拟粘贴、不按“最近一次对话”跨 worktree 恢复。
+工作台底部有一条会话输入。普通 **Enter** 把文字写入当前 Shell 的 PTY。**⌘Enter** 把同一段文字写入右侧选中 Agent 的 stdin，作为这一会话的新一轮输入，不新建进程，也不在 Shell 里运行 provider 命令。**⇧⌘Enter** 经 `oberth agent plan` 新建一个 Agent PTY，初始任务按字面从 stdin 交给计划，留空则打开原生会话；新会话出现在右侧状态列表，点一行才查看它的终端。还没有默认 Agent 时，这两条快捷键会要求先选择，已输入的文字保留。输入 **`/`** 列出命令，`/agent-select` 选择 Codex、Claude Code、OpenCode、DeepSeek 或 Pi；`/agent-new` 等同 ⇧⌘Enter。`settings.json` 的 `defaultAgent` 会让新建工作区带上这个选择。只有这条输入处理这些快捷键，中文输入法组合文字时不会误提交；焦点在原生终端时，输入和审批仍交给那个 PTY。
+这不是第二套聊天协议：⌘Enter 只是把用户写下的一行交给已经在跑的 Agent PTY，不猜测屏幕、不绕过审批、不按“最近一次对话”跨 worktree 恢复。「新会话」弹层仍可另开 Shell，或用它自己的消息框开始一次新的 Agent 启动。
 
 DeepSeek 的消息入口运行 `dsh --profile headless`；原生入口要求用户已有 `tui` profile。
 两者是不同模式，不承诺同一对话的 headless/TUI 无缝切换。客户端不创建 profile，
@@ -154,11 +151,12 @@ before Agent sessions and marks live/dormant state. Cmd+Option+Tab opens a non-m
 Shell/Agent switcher with provider, state, and path context. Switching does not resize running
 terminals, restart a PTY, or broadcast input; provider-native approvals stay with the agent CLI.
 The native New session popover selects a shell or provider without resizing running terminals. Each process keeps its initial worktree. Install/authenticate your coding agent yourself; Refresh only discovers executables.
-In the message composer, Cmd+Enter starts a new session; a nonempty initial task is passed literally,
-and an empty task opens the native interface. Shift+Cmd+Enter
-focuses the selected live native session, or opens a new native session when none is available.
-Continue subsequent turns in the agent's own terminal. Return inserts a newline; marked IME text is not
-submitted. Composer shortcuts are not installed in native terminals. Drafts remain in memory only; layout and provider metadata can be saved with explicit consent and reviewed after restart, without automatically launching processes.
+The session field under the terminal is the bridge. Return writes the line to the current shell PTY.
+Cmd+Return writes that line to the selected agent's stdin as a new turn; it does not start a process or type the provider command into the shell.
+Shift+Cmd+Return asks `oberth agent plan` for a new agent PTY, passes a nonempty task literally, and lists the session on the right. Click a row to view that terminal.
+Until a default agent is chosen, both agent chords ask for `/agent-select` and keep the draft. `/agent-new` matches Shift+Cmd+Return.
+A `defaultAgent` in `settings.json` selects the provider for new workspaces. Marked IME text is not submitted.
+These chords belong to the field; a focused native terminal keeps its own input and approvals. Drafts remain in memory only; layout and provider metadata can be saved with explicit consent and reviewed after restart, without automatically launching processes.
 DeepSeek uses headless for messages and requires an existing tui profile for native mode; switching
 between them does not resume the same conversation. No agent reasoning loop, credential store,
 automatic installation, approval bypass, shell prompt interpolation, or implicit cross-worktree resume is added.

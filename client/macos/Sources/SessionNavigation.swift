@@ -160,16 +160,18 @@ struct SessionShortcutDelivery: NSViewRepresentable {
     let open: () -> Void
     let cycle: (Int) -> Void
     let escape: () -> Void
-    let startAgent: () -> Void
+    let focusComposer: () -> Void
+    let newAgent: () -> Void
     let canCycle: () -> Bool
     let canEscape: () -> Bool
-    let canStartAgent: () -> Bool
+    let canFocusComposer: () -> Bool
+    let canNewAgent: () -> Bool
 
     func makeNSView(context: Context) -> DeliveryView { DeliveryView() }
 
     func updateNSView(_ view: DeliveryView, context: Context) {
-        view.apply(open: open, cycle: cycle, escape: escape, startAgent: startAgent,
-                   canCycle: canCycle, canEscape: canEscape, canStartAgent: canStartAgent)
+        view.apply(open: open, cycle: cycle, escape: escape, focusComposer: focusComposer, newAgent: newAgent,
+                   canCycle: canCycle, canEscape: canEscape, canFocusComposer: canFocusComposer, canNewAgent: canNewAgent)
     }
 
     static func dismantleNSView(_ view: DeliveryView, coordinator: ()) { view.removeMonitor() }
@@ -180,10 +182,12 @@ struct SessionShortcutDelivery: NSViewRepresentable {
         private var openAction: (() -> Void)?
         private var cycleAction: ((Int) -> Void)?
         private var escapeAction: (() -> Void)?
-        private var startAgentAction: (() -> Void)?
+        private var focusComposerAction: (() -> Void)?
+        private var newAgentAction: (() -> Void)?
         private var canCycle: (() -> Bool)?
         private var canEscape: (() -> Bool)?
-        private var canStartAgent: (() -> Bool)?
+        private var canFocusComposer: (() -> Bool)?
+        private var canNewAgent: (() -> Bool)?
 
         override init(frame frameRect: NSRect) {
             super.init(frame: frameRect)
@@ -199,16 +203,18 @@ struct SessionShortcutDelivery: NSViewRepresentable {
         override var acceptsFirstResponder: Bool { false }
 
         func apply(open: @escaping () -> Void, cycle: @escaping (Int) -> Void,
-                   escape: @escaping () -> Void, startAgent: @escaping () -> Void,
+                   escape: @escaping () -> Void, focusComposer: @escaping () -> Void, newAgent: @escaping () -> Void,
                    canCycle: @escaping () -> Bool, canEscape: @escaping () -> Bool,
-                   canStartAgent: @escaping () -> Bool) {
+                   canFocusComposer: @escaping () -> Bool, canNewAgent: @escaping () -> Bool) {
             openAction = open
             cycleAction = cycle
             escapeAction = escape
-            startAgentAction = startAgent
+            focusComposerAction = focusComposer
+            newAgentAction = newAgent
             self.canCycle = canCycle
             self.canEscape = canEscape
-            self.canStartAgent = canStartAgent
+            self.canFocusComposer = canFocusComposer
+            self.canNewAgent = canNewAgent
         }
 
         func removeMonitor() {
@@ -264,11 +270,13 @@ struct SessionShortcutDelivery: NSViewRepresentable {
             if event.keyCode == Self.tab, command, canCycle?() == true {
                 return .cycle(flags.contains(.shift) ? -1 : 1)
             }
-            // Command-Return starts an agent from the shell, matching the
-            // terminal-mode shortcut. Control-Return stays with the PTY.
+            // ⌘↩ focuses the bridge. ⇧⌘↩ creates an agent PTY. The bridge field
+            // owns those chords while it is first responder. Control-Return stays with the PTY.
             let keys = flags.intersection([.command, .shift, .control, .option])
-            if (event.keyCode == Self.returnKey || event.keyCode == Self.keypadEnter),
-               keys == .command, canStartAgent?() == true { return .startAgent }
+            if event.keyCode == Self.returnKey || event.keyCode == Self.keypadEnter {
+                if keys == [.command, .shift], canNewAgent?() == true { return .newAgent }
+                if keys == .command, canFocusComposer?() == true { return .focusComposer }
+            }
             if event.keyCode == Self.escape, canEscape?() == true { return .escape }
             return nil
         }
@@ -278,7 +286,8 @@ struct SessionShortcutDelivery: NSViewRepresentable {
             case .open: openAction?()
             case .cycle(let offset): cycleAction?(offset)
             case .escape: escapeAction?()
-            case .startAgent: startAgentAction?()
+            case .focusComposer: focusComposerAction?()
+            case .newAgent: newAgentAction?()
             }
         }
 
@@ -289,7 +298,7 @@ struct SessionShortcutDelivery: NSViewRepresentable {
     }
 }
 
-private enum SessionShortcut { case open, cycle(Int), escape, startAgent }
+private enum SessionShortcut { case open, cycle(Int), escape, focusComposer, newAgent }
 
 private struct SessionPaletteMarker: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {

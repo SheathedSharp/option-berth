@@ -57,6 +57,7 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
         setenv("BERTH_BIN", catalogue.path, 1)
         // A synthetic prompt prevents machine/user identity in visual evidence.
         setenv("PROMPT", "fixture> ", 1); setenv("PS1", "fixture> ", 1)
+        composerModelChecks()
         let registry = TerminalSessions.shared
         let env = ["HOME":root.path, "PATH":"/usr/bin:/bin"]
         let script = "printf 'READY:%s\\n' \"$PWD\"; while IFS= read -r value; do printf 'INPUT:%s\\n' \"$value\"; done"
@@ -109,7 +110,8 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
                 let presentations = find(TerminalHost.self, in: host).map { host in
                     "session=\(host.session?.title ?? "nil") active=\(host.session?.id == workspace.activeSelection) intent=\(host.focusIntent?.sessionID == session.id) consumed=\(host.focusIntent?.consumed ?? false) attached=\(host.session?.terminal.superview === host)"
                 }.joined(separator: "; ")
-                fatalError("native focus: selected=\(session.title) workspace=\(workspace.activeSelection == session.id) key=\(window.isKeyWindow) responder=\(String(describing: window.firstResponder)) hosts: " + presentations)
+                let others = NSApp.windows.map { "\($0.title)#\($0.windowNumber) key=\($0.isKeyWindow) vis=\($0.isVisible)" }.joined(separator: " | ")
+                fatalError("native focus: selected=\(session.title) workspace=\(workspace.activeSelection == session.id) key=\(window.isKeyWindow) responder=\(String(describing: window.firstResponder)) windows=[\(others)] hosts: " + presentations)
             }
         }
         require(!find(NSButton.self, in: host).contains { $0.accessibilityIdentifier() == "console.session." + foreign.id.uuidString }, "session strip crossed worktrees")
@@ -220,6 +222,34 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
         require(registry.sessions.count == 3 && owned.allSatisfy(\.isActive), "presentation started or stopped an unexpected process")
         try configurationChecks(parentRoot: root)
         print("PASS: real native shared tabs, mixed layout identity, cwd/draft retention, independent key input, one-shot focus, detached shortcut isolation, detached return and background launch isolation")
+    }
+    static func composerModelChecks() {
+        func route(_ text: String, _ chord: SessionComposerModel.Chord, _ providerChosen: Bool, _ resumeReady: Bool) -> SessionComposerModel.Route {
+            SessionComposerModel.route(text: text, chord: chord, providerChosen: providerChosen, resumeReady: resumeReady)
+        }
+        require(route("ls -la", .plain, false, false) == .shell("ls -la"), "Enter did not route to the shell")
+        require(route("  ", .plain, true, true) == .none, "blank Enter was treated as input")
+        require(route("/usr/bin/true", .plain, true, true) == .shell("/usr/bin/true"), "a path was captured as a slash command")
+        require(route("/", .plain, false, false) == .none, "a bare slash was sent to the shell")
+        require(route("/agent", .plain, true, true) == .none, "an ambiguous slash prefix was executed")
+        require(route("/agent-select", .plain, false, false) == .openProviders, "/agent-select did not open providers")
+        require(route("/agent-select claude", .plain, false, false) == .selectProvider("claude"), "/agent-select did not carry the provider")
+        require(route("/agent-new fix tests", .plain, false, false) == .needProvider, "/agent-new skipped provider selection")
+        require(route("/agent-new fix tests", .plain, true, false) == .newAgent("fix tests"), "/agent-new dropped its prompt")
+        require(route("继续看测试", .command, false, false) == .needProvider, "⌘↩ sent text before an agent was selected")
+        require(route("继续看测试", .command, true, false) == .needSession, "⌘↩ created a session instead of asking to resume")
+        require(route("继续看测试", .command, true, true) == .resume("继续看测试"), "⌘↩ did not resume the selected agent")
+        require(route("  ", .command, true, true) == .none, "blank ⌘↩ was sent to the agent")
+        require(route("新的任务", .commandShift, false, true) == .needProvider, "⇧⌘↩ skipped provider selection")
+        require(route("新的任务", .commandShift, true, true) == .newAgent("新的任务"), "⇧⌘↩ did not start a new agent session")
+        require(route("", .commandShift, true, false) == .newAgent(""), "⇧⌘↩ required text to create a session")
+        require(SessionComposerModel.matches("/").map(\.token) == ["/agent-select", "/agent-new"], "slash menu did not list both commands")
+        require(SessionComposerModel.matches("ls").isEmpty, "ordinary text opened the slash menu")
+        require(SessionBridgeTextView.action(keyCode: 36, modifiers: [], composing: false, editable: true) == .shell, "Return was not the shell chord")
+        require(SessionBridgeTextView.action(keyCode: 36, modifiers: .command, composing: false, editable: true) == .resume, "⌘↩ was not the resume chord")
+        require(SessionBridgeTextView.action(keyCode: 36, modifiers: [.command, .shift], composing: false, editable: true) == .newAgent, "⇧⌘↩ was not the new-session chord")
+        require(SessionBridgeTextView.action(keyCode: 36, modifiers: .command, composing: true, editable: true) == nil, "marked text was submitted")
+        require(SessionBridgeTextView.action(keyCode: 36, modifiers: [.command, .option], composing: false, editable: true) == nil, "an unrelated chord was captured")
     }
     static func captureOwnedWindow(_ window: NSWindow, to output: URL) throws {
         var completed: Result<Void, Error>?

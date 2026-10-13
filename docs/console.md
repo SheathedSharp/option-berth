@@ -6,9 +6,9 @@
 
 - Shell 与 coding-agent 会话共用一个 terminal 主画布和同一 PTY registry。左侧窄 rail 只负责跳转；选择会话只是切换既有 PTY 的呈现与焦点，不重新创建进程。
 - rail 按 Shell → Agent 排列并显示运行态；⌘⌥Tab 打开当前 worktree 的非模态会话切换器，⌘Tab / ⇧⌘Tab 在既有会话间循环。切换器按 Shell / Agent 分组，并支持名称、provider、状态和路径检索。
-- 当焦点在 agent session 时，Esc 或「返回 Shell」切回进入该 agent 前记住的 Shell；还没有 Shell 时补一个，不向 Agent 发信号。Agent 留在会话栏，工具栏上的同一会话可以再次进入。启动输入打开时，Esc 只关闭输入并留在 Shell。快捷键只绑定当前工作区主窗口，不拦截独立窗口或 terminal 已选中的普通 Esc。投递只有一条：该窗口里实际挂载的视图在 `NSApp.sendEvent` 上安装本地监视器，用同一识别函数处理 ⌘⌥Tab、⌘Tab / ⇧⌘Tab、⌘↩ 和 Esc。同一视图的 `performKeyEquivalent` 是唯一后备，只接监视器没有消费的事件。`windowNumber == 0` 不代表窗口，也不再单独放行。⌘↩ 只在 Shell 且启动输入未打开时开始 Agent；文本编辑里的 ⌘↩ 仍交给那个编辑器。
+- 当焦点在 agent session 时，Esc 或「返回 Shell」切回进入该 agent 前记住的 Shell；还没有 Shell 时补一个，不向 Agent 发信号。Agent 留在会话栏和右侧状态列表，工具栏上的同一会话可以再次进入。快捷键只绑定当前工作区主窗口，不拦截独立窗口或 terminal 已选中的普通 Esc。投递只有一条：该窗口里实际挂载的视图在 `NSApp.sendEvent` 上安装本地监视器，用同一识别函数处理 ⌘⌥Tab、⌘Tab / ⇧⌘Tab、⌘↩、⇧⌘↩ 和 Esc。同一视图的 `performKeyEquivalent` 是唯一后备，只接监视器没有消费的事件。`windowNumber == 0` 不代表窗口，也不再单独放行。终端焦点上的 ⌘↩ 只把焦点交给会话输入条；⇧⌘↩ 在那里新建 Agent。输入条自己处理 Enter、⌘↩ 和 ⇧⌘↩。其它文本编辑器里的这些键仍交给那个编辑器。
 - 打开 worktree 会话时，若该目录还没有 Shell，并且目录真实存在，界面启动一个交互式 Shell 并聚焦它。这是默认界面，不是 Agent 输入页。目录不存在或会话已满时不留下半启动进程。用户已经正在查看的 Agent 保持在前台，Shell 在其下准备好。
-- 从 Shell 用「Agent」或 ⌘↩ 打开启动输入。输入区明确表示“新会话”，后续交流与审批仍在原生 agent 内进行，不把启动参数伪装成续聊。再开一个 Shell 仍是「新会话」里的明确动作。
+- 会话输入条是 Shell 和 Agent 之间的中间层，不另建运行事实。Enter 把当前文字写入当前 Shell 的 PTY。⌘↩ 把同一段文字写入右侧选中的 Agent PTY，作为这一会话的新一轮输入，不新建进程，也不在 Shell 里执行 `codex` / `claude`。⇧⌘↩ 才通过既有 `agent plan` 新建一个 Agent PTY，并放进右侧状态列表；点一行才把主画布切到那个终端。还没有默认 Agent 时，⌘↩ 和 ⇧⌘↩ 都先要求选择，文字保留。输入 `/` 列出命令，其中 `/agent-select` 选择 Codex、Claude Code 等；`settings.json` 里的 `defaultAgent` 对新建工作区算已选择。再开一个 Shell 仍是「新会话」里的明确动作。
 - 保留当前混合分屏，选中已有窗格只移动焦点；选择不在分屏中的会话替换当前焦点窗格，不广播输入。
 - 去除长篇空态说明。命令块、历史、续接等选项就地提供，安全说明放到帮助/提示。
 - 原生焦点由实际挂载的终端视图处理一次性请求，不能在每次状态刷新时夺走文本编辑焦点。

@@ -21,6 +21,10 @@ struct WorkspaceConsole: View {
     @State private var switcherPresented = false
     @State private var switcherQuery = ""
     @State private var terminalReturnID: UUID?
+    @State private var pickingProvider = false
+    @State private var composerNotice = ""
+    @State private var composerFocus = 0
+    @State private var agentColumnWidth = 212.0
     @Environment(\.clientReduceMotion) private var reduced
     init(root: String, frozen: Bool = false, initialAgent: Bool = false) {
         self.root = root; self.frozen = frozen
@@ -38,8 +42,19 @@ struct WorkspaceConsole: View {
                 HStack(spacing: 0) {
                     sessionRail
                     Hairline(axis: .vertical)
-                    PaneWorkspaceView(primary: selected, workspace: workspace, agent: workspace.agentMode,
-                                      focusIntent: focusIntent, compactSinglePane: true)
+                    VStack(spacing: 0) {
+                        HStack(spacing: 0) {
+                            PaneWorkspaceView(primary: selected, workspace: workspace, agent: workspace.agentMode,
+                                              focusIntent: focusIntent, compactSinglePane: true)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            SplitHandle(width: $agentColumnWidth, range: 168...280, controlsTrailingPane: true)
+                            AgentStatusColumn(sessions: agentSessions, resumeID: workspace.resumeAgentID, onSelect: inspectAgent)
+                                .frame(width: CGFloat(agentColumnWidth))
+                                .frame(maxHeight: .infinity)
+                        }
+                        Hairline()
+                        composerBar
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay(alignment: .topLeading) {
@@ -65,19 +80,18 @@ struct WorkspaceConsole: View {
                     }
                 }
             } else if frozen {
-                Text("$ git status --short\n M Sources/API.swift\n$ _")
-                    .font(Face.mono(Metrics.row)).foregroundStyle(Ink.ink).padding(Metrics.panelPad)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .overlay(alignment: .topLeading) {
-                        if creating {
-                            // Frozen evidence draws the creation surface near
-                            // its real toolbar anchor, not as a second mode page.
-                            launchSurface.frame(width: 440, height: 260, alignment: .top)
-                                .background(Ink.canvas).clipShape(RoundedRectangle(cornerRadius: 10))
-                                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Ink.lineStrong, lineWidth: 1))
-                                .padding(Metrics.gutter)
-                        }
+                HStack(spacing: 0) {
+                    VStack(spacing: 0) {
+                        Text("$ git status --short\n M Sources/API.swift\n$ _")
+                            .font(Face.mono(Metrics.row)).foregroundStyle(Ink.ink).padding(Metrics.panelPad)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        Hairline()
+                        SessionComposerFrozen(slash: creating)
                     }
+                    Hairline(axis: .vertical)
+                    SessionStatusFrozen(active: creating)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 shellFirstEmpty
             }
@@ -104,10 +118,10 @@ struct WorkspaceConsole: View {
             }
             .background(alignment: .topLeading) {
                 SessionShortcutDelivery(open: openSwitcher, cycle: cycleSession, escape: handleEscape,
-                                        startAgent: beginAgent,
+                                        focusComposer: focusComposer, newAgent: { composerAct(.commandShift) },
                                         canCycle: { scoped.count > 1 },
                                         canEscape: { switcherPresented || startingAgent || selected?.kind != "terminal" },
-                                        canStartAgent: commandReturnStartsAgent)
+                                        canFocusComposer: canUseComposerShortcut, canNewAgent: canUseComposerShortcut)
                     .frame(width: 1, height: 1)
                     .allowsHitTesting(false)
             }
@@ -126,7 +140,7 @@ struct WorkspaceConsole: View {
     private var toolbar: some View {
         HStack(spacing: Metrics.inline) {
             if frozen {
-                Text("＋ 新会话"); Text("Agent ⌘↩").foregroundStyle(Ink.inkMuted)
+                Text("＋ 新会话"); Text("输入 ⌘↩").foregroundStyle(Ink.inkMuted)
                 Spacer(); Text("历史"); Image(systemName: "ellipsis")
             } else {
                 if !scoped.isEmpty {
@@ -145,7 +159,7 @@ struct WorkspaceConsole: View {
                         .disabled(settings.configuration.preferences.shellIntegration != nil || URL(fileURLWithPath: TerminalSession.shell).lastPathComponent != "zsh")
                     if let selected {
                         Divider()
-                        if selected.kind == "terminal" { Button("开始 Agent") { beginAgent() } }
+                        if selected.kind == "terminal" { Button("聚焦输入") { focusComposer() } }
                         else { Button("返回 Shell") { returnToShell() } }
                         Button("聚焦当前会话") { activate(selected) }
                         Button("查找当前终端") { showTerminalFind(selected.terminal) }
@@ -271,7 +285,6 @@ struct WorkspaceConsole: View {
     private var frozenStrip: some View {
         HStack(spacing: Metrics.inline) {
             Text("›_ Shell 1").padding(7).background(Ink.accentSoft)
-            Text("◇ Codex 1").padding(7).background(Ink.surface)
             Spacer()
         }.font(Face.mono(Metrics.meta)).padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV)
     }
@@ -282,26 +295,177 @@ struct WorkspaceConsole: View {
         creating = true
         if launcher.providers.isEmpty { launcher.refresh(workspace) }
     }
-    private func beginAgent() {
-        guard !frozen, selected?.kind == "terminal" else { return }
-        launcher.cancel()
+    private var agentSessions: [TerminalSession] {
+        scoped.filter { $0.kind.hasPrefix("agent:") }
+            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+    private var providerLabel: String {
+        launcher.providers.first { $0.id == workspace.providerID }?.name ?? SessionComposerModel.providerName(workspace.providerID)
+    }
+    private var composerBar: some View {
+        SessionComposerBar(draft: $workspace.draft, notice: composerNotice, providerLabel: providerLabel,
+                           providerChosen: workspace.providerChosen,
+                           commands: pickingProvider ? [] : SessionComposerModel.matches(workspace.draft),
+                           providers: SessionProviderChoices.merge(launcher.providers),
+                           pickingProvider: pickingProvider, enabled: !launcher.planning, focusToken: composerFocus,
+                           onShell: { composerAct(.plain) }, onResume: { composerAct(.command) },
+                           onNew: { composerAct(.commandShift) }, onEscape: composerEscape,
+                           onCommand: runSlash, onProvider: chooseProvider, onPickProvider: {
+                               pickingProvider = true
+                               if launcher.providers.isEmpty { launcher.refresh(workspace) }
+                           })
+    }
+    private func focusComposer() {
+        guard !frozen, selected != nil else { return }
         creating = false
+        startingAgent = false
         switcherPresented = false
         switcherQuery = ""
-        startingAgent = true
+        composerFocus += 1
         if launcher.providers.isEmpty { launcher.refresh(workspace) }
     }
-    private func commandReturnStartsAgent() -> Bool {
-        guard !frozen, !startingAgent, !switcherPresented, !creating, selected?.kind == "terminal" else { return false }
+    private func canUseComposerShortcut() -> Bool {
+        guard !frozen, !startingAgent, !switcherPresented, !creating, selected != nil else { return false }
         if selected?.terminal.window?.firstResponder is NSTextView { return false }
+        return true
+    }
+    private func composerEscape() {
+        if pickingProvider { pickingProvider = false; return }
+        if workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("/"),
+           !SessionComposerModel.matches(workspace.draft).isEmpty {
+            workspace.draft = ""
+            return
+        }
+        if let shell = shellTarget() { focusIntent = TerminalFocusIntent(shell.id) }
+    }
+    private func composerAct(_ chord: SessionComposerModel.Chord) {
+        guard !frozen, !launcher.planning else { return }
+        let route = SessionComposerModel.route(text: workspace.draft, chord: chord,
+                                               providerChosen: workspace.providerChosen,
+                                               resumeReady: resumeTarget() != nil)
+        apply(route)
+    }
+    private func apply(_ route: SessionComposerModel.Route) {
+        switch route {
+        case .none:
+            break
+        case .shell(let text):
+            guard let shell = shellTarget() else { composerNotice = "没有正在运行的 Shell"; return }
+            guard deliver(text, to: shell) else { return }
+            workspace.draft = ""
+            pickingProvider = false
+            composerNotice = ""
+        case .resume(let text):
+            guard let agent = resumeTarget() else {
+                composerNotice = "还没有可续接的 Agent 会话。⇧⌘↩ 会用这段文字新建。"
+                return
+            }
+            guard deliver(text, to: agent) else { return }
+            workspace.resumeAgentID = agent.id
+            workspace.draft = ""
+            pickingProvider = false
+            composerNotice = "已送入 \(agent.title)"
+        case .newAgent(let prompt):
+            pickingProvider = false
+            workspace.draft = prompt
+            beginNewAgent()
+        case .openProviders:
+            pickingProvider = true
+            composerNotice = "选择默认 Agent"
+            if workspace.draft.hasPrefix("/") { workspace.draft = "" }
+            if launcher.providers.isEmpty { launcher.refresh(workspace) }
+        case .selectProvider(let id):
+            chooseProvider(id)
+        case .needProvider:
+            pickingProvider = true
+            composerNotice = "还没有默认 Agent。先选择，这段文字会保留。"
+            if launcher.providers.isEmpty { launcher.refresh(workspace) }
+        case .needSession:
+            composerNotice = "还没有可续接的 Agent 会话。⇧⌘↩ 会用这段文字新建。"
+        }
+    }
+    private func runSlash(_ command: SessionComposerModel.Command) {
+        let argument = commandArgument(command.token)
+        if command.token == "/agent-select" {
+            apply(argument.isEmpty ? .openProviders : .selectProvider(argument))
+        } else {
+            apply(SessionComposerModel.route(text: command.token + (argument.isEmpty ? "" : " " + argument),
+                                            chord: .plain, providerChosen: workspace.providerChosen,
+                                            resumeReady: resumeTarget() != nil))
+        }
+    }
+    private func commandArgument(_ token: String) -> String {
+        let trimmed = workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = trimmed.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+        guard parts.first.map(String.init) == token, parts.count > 1 else { return "" }
+        return String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    private func chooseProvider(_ id: String) {
+        let known = SessionProviderChoices.merge(launcher.providers).contains { $0.id == id }
+        guard known || SessionComposerModel.knownProviderIDs.contains(id) else {
+            composerNotice = "未知的 Agent"
+            return
+        }
+        if SessionProviderChoices.merge(launcher.providers).first(where: { $0.id == id })?.installed == false {
+            composerNotice = "\(SessionComposerModel.providerName(id)) 未安装。不会自动安装。"
+            return
+        }
+        workspace.providerID = id
+        workspace.providerChosen = true
+        pickingProvider = false
+        if workspace.draft.hasPrefix("/") { workspace.draft = "" }
+        composerNotice = "默认 Agent：" + (launcher.providers.first { $0.id == id }?.name ?? SessionComposerModel.providerName(id))
+    }
+    private func beginNewAgent() {
+        guard workspace.providerChosen else {
+            apply(.needProvider)
+            return
+        }
+        let prompt = workspace.draft
+        launcher.whenReady(workspace) {
+            guard launcher.available(workspace) else {
+                composerNotice = launcher.problem ?? "所选 Agent 未安装或还不能启动"
+                return
+            }
+            launcher.launch(root: root, workspace: workspace,
+                            prompt: !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) { session in
+                workspace.resumeAgentID = session.id
+                composerNotice = "已新建 \(session.title)。⌘↩ 续接这一会话"
+            }
+        }
+    }
+    private func inspectAgent(_ session: TerminalSession) {
+        workspace.resumeAgentID = session.id
+        activate(session)
+    }
+    private func shellTarget() -> TerminalSession? {
+        if let selected, selected.kind == "terminal" { return selected }
+        if let id = terminalReturnID, let shell = scoped.first(where: { $0.id == id && $0.kind == "terminal" }) { return shell }
+        return scoped.first { $0.kind == "terminal" }
+    }
+    private func resumeTarget() -> TerminalSession? {
+        let agents = scoped.filter { $0.kind.hasPrefix("agent:") && $0.isActive }
+        if let id = workspace.resumeAgentID, let match = agents.first(where: { $0.id == id }) { return match }
+        if agents.count == 1 { return agents[0] }
+        return nil
+    }
+    @discardableResult
+    private func deliver(_ text: String, to session: TerminalSession) -> Bool {
+        guard session.isActive, !text.utf8.contains(0), text.utf8.count <= 64 * 1024 else {
+            composerNotice = "这段文字不能送入会话"
+            return false
+        }
+        var bytes = Array(text.utf8)
+        if bytes.last != 10 { bytes.append(10) }
+        session.terminal.send(source: session.terminal, data: bytes[...])
         return true
     }
     @ViewBuilder private var sessionModeControl: some View {
         if let selected {
             if selected.kind == "terminal" {
-                ConsoleToolbarAction(title: "Agent", identifier: "console.startAgent", symbol: "sparkle", perform: beginAgent)
+                ConsoleToolbarAction(title: "输入", identifier: "console.focusComposer", symbol: "text.cursor", perform: focusComposer)
                     .fixedSize().frame(height: 24)
-                    .help("从当前 Shell 开始外部 Agent · ⌘↩。返回 Shell 不会结束它。")
+                    .help("聚焦会话输入。Enter 到 Shell，⌘↩ 续接 Agent，⇧⌘↩ 新建。")
                 Text("⌘↩").font(Face.mono(9)).foregroundStyle(Ink.inkFaint)
                 ForEach(backgroundAgents.prefix(2)) { agent in
                     ConsoleToolbarAction(title: agent.title, identifier: "console.reenter." + agent.id.uuidString,
