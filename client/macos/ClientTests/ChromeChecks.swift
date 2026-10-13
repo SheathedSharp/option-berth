@@ -43,6 +43,7 @@ extension ClientChecks {
                     abs(actual.blueComponent - expected.blueComponent) < 0.01,
                     "client window chrome used a different canvas color")
         }
+        popoverChromeChecks()
         print("PASS: compatibility aliases canonicalized, worktree tab retained, recovery/update actions discoverable, toolbar causes no implicit effects")
         alertChromeChecks()
         do { try worktreeRoutingChecks() } catch { fatalError("worktree routing fixture failed: \(error)") }
@@ -74,6 +75,18 @@ extension ClientChecks {
                     "native alert did not adopt the configured canvas color")
         }
         print("PASS: native alerts inherit the configured appearance and canvas without replacing AppKit semantics")
+    }
+
+    static func popoverChromeChecks() {
+        let popover = NSPopover()
+        let controller = NSViewController()
+        controller.view = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 260))
+        popover.contentViewController = controller
+        SessionLauncherPopover.Coordinator.applyNativeAppearance(to: popover, settings: .shared)
+        require(popover.appearance != nil, "session launcher popover did not receive a native appearance")
+        require(controller.view.wantsLayer && controller.view.layer?.backgroundColor != nil,
+                "session launcher popover content did not receive the configured canvas")
+        print("PASS: session launcher popover inherits the configured native appearance and canvas")
     }
 
     static func partialLayoutChecks() throws {

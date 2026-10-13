@@ -22,7 +22,10 @@ struct SessionLauncherPopover: NSViewRepresentable {
     }
     func updateNSView(_ button: ConsoleSessionButton, context: Context) {
         context.coordinator.parent = self
-        context.coordinator.popover?.animates = !reduced
+        if let popover = context.coordinator.popover {
+            popover.animates = !reduced
+            Coordinator.applyNativeAppearance(to: popover, settings: settings)
+        }
         let size = 11 * settings.interfaceScale
         button.font = settings.interfaceFontName == "__system__" ? NSFont.systemFont(ofSize: size)
             : (NSFont(name: settings.interfaceFontName, size: size) ?? NSFont.systemFont(ofSize: size))
@@ -70,6 +73,7 @@ struct SessionLauncherPopover: NSViewRepresentable {
             let popover = NSPopover(); popover.contentViewController = controller
             popover.contentSize = NSSize(width: 460, height: 260)
             popover.behavior = .transient; popover.animates = !parent.reduced; popover.delegate = self
+            Self.applyNativeAppearance(to: popover, settings: parent.settings)
             self.host = host; self.popover = popover
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: button.isFlipped ? .maxY : .minY)
             // This is an explicit native click, outside any SwiftUI layout pass.
@@ -80,6 +84,18 @@ struct SessionLauncherPopover: NSViewRepresentable {
                 return nil
             }
             if let editor = composer(in: host), editor.window?.makeFirstResponder(editor) == true { editor.focusOnAttach = false }
+        }
+
+        /// Keep the native popover frame in the same theme as its SwiftUI
+        /// surface. `NSPopover` otherwise keeps AppKit's default aqua material
+        /// while the content is rendered from the user's canvas token, which
+        /// is most visible when opening the launcher in a dark theme.
+        static func applyNativeAppearance(to popover: NSPopover, settings: UISettings) {
+            popover.appearance = NSAppearance(named: settings.colorScheme == .dark ? .darkAqua : .aqua)
+            guard let view = popover.contentViewController?.view else { return }
+            view.wantsLayer = true
+            view.layer?.backgroundColor = NSColor(settings.canvasColor).cgColor
+            view.layer?.isOpaque = true
         }
         func closePresentation() {
             guard let previous = popover else { return }
