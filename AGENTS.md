@@ -1,7 +1,8 @@
 # 开发约定
 
 产品定义见 [docs/product.md](docs/product.md)，接口见 [docs/cli.md](docs/cli.md)，
-实现边界见 [docs/architecture.md](docs/architecture.md)。以当前契约为准，不恢复历史扩展要求。
+实现边界见 [docs/architecture.md](docs/architecture.md)。日常开发见 [docs/develop.md](docs/develop.md)。
+以当前契约为准，不恢复历史扩展要求。
 
 ## 实现
 
