@@ -16,6 +16,10 @@ import (
 // file at a time; this is the ceiling on a single call, not on the whole read.
 const diffTimeout = 15 * time.Second
 
+// maxCommitDiffFiles caps how many paths a commit diff reads in one answer.
+// Larger commits stay selectable; the UI can ask for one path with --file.
+const maxCommitDiffFiles = 48
+
 // Line kinds. Exactly one of these per line of a Patch.
 const (
 	KindAdd     = "add"
@@ -49,7 +53,10 @@ type Patch struct {
 	Root   string     `json:"root"`
 	Commit string     `json:"commit,omitempty"`
 	Base   string     `json:"base,omitempty"`
-	Files  []FileDiff `json:"files"`
+	// Truncated is set when a commit diff stopped after maxCommitDiffFiles.
+	Truncated  bool `json:"truncated,omitempty"`
+	TotalFiles int  `json:"total_files,omitempty"`
+	Files      []FileDiff `json:"files"`
 }
 
 // ErrNoChanges is what Diff says about a path that exists but differs from HEAD
@@ -146,6 +153,12 @@ func DiffCommit(ctx context.Context, dir, objectID, file string) (Patch, error) 
 	if err != nil {
 		return Patch{}, err
 	}
+	totalFiles := len(list)
+	truncated := false
+	if file == "" && len(list) > maxCommitDiffFiles {
+		truncated = true
+		list = list[:maxCommitDiffFiles]
+	}
 	if file != "" {
 		rel, ok := resolvePath(root, file)
 		if !ok {
@@ -163,7 +176,8 @@ func DiffCommit(ctx context.Context, dir, objectID, file string) (Patch, error) 
 		list = filtered
 	}
 
-	patch := Patch{Root: root, Commit: commit, Base: base, Files: []FileDiff{}}
+	patch := Patch{Root: root, Commit: commit, Base: base, Truncated: truncated,
+		TotalFiles: totalFiles, Files: []FileDiff{}}
 	for _, f := range list {
 		out, err := commitDiffText(ctx, root, commit, base, f)
 		if err != nil {
