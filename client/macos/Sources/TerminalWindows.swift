@@ -67,11 +67,14 @@ final class TerminalFocusIntent {
     let sessionID: UUID
     private(set) var consumed = false
     init(_ sessionID: UUID) { self.sessionID = sessionID }
+    func markFulfilled() { consumed = true }
     func fulfill(in host: TerminalHost) {
         guard !consumed, let session = host.session, session.id == sessionID,
               session.terminal.superview === host, let window = host.window, window.isKeyWindow,
               window.attachedSheet == nil, window.sheetParent == nil,
               (window.firstResponder as? NSTextInputClient)?.hasMarkedText() != true else { return }
+        if let responder = window.firstResponder as? NSView, responder !== session.terminal,
+           !responder.isDescendant(of: host) { return }
         if window.makeFirstResponder(session.terminal) { consumed = true }
     }
 }

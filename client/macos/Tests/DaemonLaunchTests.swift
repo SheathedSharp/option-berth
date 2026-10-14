@@ -14,8 +14,9 @@ struct DaemonLaunchTests {
             }
             checks += 1
         }
-        func check(_ name: String, _ env: [String: String], _ executables: Set<String>, _ expected: String?) {
-            let result = DaemonLaunch.binaryPath(environment: env, home: home, executableURL: nil,
+        func check(_ name: String, _ env: [String: String], _ executables: Set<String>, _ expected: String?,
+                   executableURL: URL? = nil) {
+            let result = DaemonLaunch.binaryPath(environment: env, home: home, executableURL: executableURL,
                 isExecutable: { executables.contains($0) })
             require(result == expected, name)
         }
@@ -30,6 +31,13 @@ struct DaemonLaunchTests {
               ["tools/oberth"], nil)
         check("user installation wins", ["PATH": custom],
               [home + "/.local/bin/oberth", custom + "/oberth"], home + "/.local/bin/oberth")
+        let devApp = URL(fileURLWithPath: "/fixture/option-berth/client/macos/.build/debug/BerthClient")
+        let repoBinary = "/fixture/option-berth/bin/oberth"
+        check("checkout bin beats stale user install",
+              ["PATH": custom],
+              [repoBinary, home + "/.local/bin/oberth", custom + "/oberth"],
+              repoBinary,
+              executableURL: devApp)
         check("PATH ordering", ["PATH": "/first:" + custom],
               ["/first/oberth", custom + "/oberth"], "/first/oberth")
         check("legacy command is not canonical", ["PATH": custom], [custom + "/option-berth"], nil)

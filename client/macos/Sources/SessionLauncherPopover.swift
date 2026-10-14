@@ -10,6 +10,9 @@ struct SessionLauncherPopover: NSViewRepresentable {
     let panel: SessionLaunchPanel
     let reduced: Bool
     let beforeOpen: () -> Void
+    var onPresented: (() -> Void)?
+    /// Runs after the native popover has fully closed so focus can return to the live session.
+    var onDismiss: (() -> Void)?
     @ObservedObject private var settings = UISettings.shared
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> ConsoleSessionButton {
@@ -76,14 +79,7 @@ struct SessionLauncherPopover: NSViewRepresentable {
             Self.applyNativeAppearance(to: popover, settings: parent.settings)
             self.host = host; self.popover = popover
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: button.isFlipped ? .maxY : .minY)
-            // This is an explicit native click, outside any SwiftUI layout pass.
-            // Only the newly opened composer receives this one-shot request.
-            func composer(in view: NSView) -> AgentComposerTextView? {
-                if let editor = view as? AgentComposerTextView { return editor }
-                for child in view.subviews { if let editor = composer(in: child) { return editor } }
-                return nil
-            }
-            if let editor = composer(in: host), editor.window?.makeFirstResponder(editor) == true { editor.focusOnAttach = false }
+            parent.onPresented?()
         }
 
         /// Keep the native popover frame in the same theme as its SwiftUI
@@ -104,6 +100,7 @@ struct SessionLauncherPopover: NSViewRepresentable {
             // cannot reset the binding or release a subsequently opened host.
             previous.delegate = nil
             previous.close()
+            if !detaching { restoreConsoleFocus() }
         }
         func popoverShouldClose(_ popover: NSPopover) -> Bool {
             // The explicit resume-file chooser temporarily owns keyboard input.
@@ -119,6 +116,15 @@ struct SessionLauncherPopover: NSViewRepresentable {
             guard let closing = notification.object as? NSPopover, closing === popover else { return }
             host = nil; popover = nil
             if !detaching { parent.isPresented = false }
+        }
+        private func restoreConsoleFocus() {
+            let window = button?.window
+            window?.makeKeyAndOrderFront(nil)
+            parent.onDismiss?()
+            DispatchQueue.main.async { [parent] in
+                window?.makeKeyAndOrderFront(nil)
+                parent.onDismiss?()
+            }
         }
     }
 }

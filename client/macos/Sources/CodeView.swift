@@ -253,7 +253,8 @@ extension CodeView {
         } else if file.lines.isEmpty {
             message("当前没有可显示的文本差异", fills: !embedded).frame(minHeight: embedded ? 48 : nil)
         } else {
-            GitPatchView(lines: file.lines, scrolls: embedded ? false : scrolls, fills: !embedded && !scrolls)
+            GitPatchView(lines: file.lines, scrolls: embedded || scrolls, fills: !embedded && !scrolls,
+                         maxLines: embedded && file.lines.count > 120 ? 120 : nil)
         }
     }
 
@@ -656,7 +657,13 @@ extension CodeView {
                 if patch.files.isEmpty { message("该提交没有文件差异") }
                 else if scrolls {
                     ScrollView([.horizontal, .vertical]) {
-                        VStack(alignment: .leading, spacing: 0) {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            if patch.truncated, let total = patch.totalFiles {
+                                Text("仅显示前 \(patch.files.count) / \(total) 个文件。在 Changes 用路径筛选可查看单个文件。")
+                                    .font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkMuted)
+                                    .padding(Metrics.gutter)
+                                Hairline()
+                            }
                             ForEach(patch.files) { file in historicalFile(file) }
                         }
                     }.textSelection(.enabled)

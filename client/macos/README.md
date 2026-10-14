@@ -96,7 +96,7 @@ BERTH_PROBE_ADOPT 仅在明确需要端到端起停或采纳清单时设置；�
 DaemonClient 通过 `state.subscribe` 长连接接收首帧快照和端口 / 项目增量；显式刷新仍读取
 `state.snapshot`。其它调用是 groups.config.get、groups.start、groups.kill 和 ports.logs。
 Git 面板调用 `oberth git --json`、`oberth git files --json`、按需的
-`oberth git diff --json`，以及 History 模式下的 `oberth git graph --json --limit 0` 和
+`oberth git diff --json`，以及 History 模式下的 `oberth git graph --json` 和
 `oberth git diff --commit --json`。行号只从返回的 hunk 头推算。History 的车道采用
 Xit 的提交图算法，只布局这份 parent 列表，再用平滑曲线画出分叉与合并；默认读取完整历史。
 不另开 Git 进程，也不新增 daemon Git 状态。ServicesStore 和 GitStore 只缓存当前界面需要的数据；它们不另建产品模型。引擎协议变更后，先更新 daemon
@@ -133,7 +133,7 @@ Shell → Agent 排列会话，用运行/休眠点标记状态；⌘⌥Tab 打�
 旧引擎缺少这些命令时会报错，不会回退拼接 shell。需要与客户端匹配的 oberth 版本；
 安装/替换引擎仍由用户明确执行。
 
-工作台底部有一条会话输入。普通 **Enter** 把文字写入当前 Shell 的 PTY。**⌘Enter** 把同一段文字写入右侧选中 Agent 的 stdin，作为这一会话的新一轮输入，不新建进程，也不在 Shell 里运行 provider 命令。**⇧⌘Enter** 经 `oberth agent plan` 新建一个 Agent PTY，初始任务按字面从 stdin 交给计划，留空则打开原生会话；新会话出现在右侧状态列表，点一行才查看它的终端。还没有默认 Agent 时，这两条快捷键会要求先选择，已输入的文字保留。输入 **`/`** 列出命令，`/agent-select` 选择 Codex、Claude Code、OpenCode、DeepSeek 或 Pi；`/agent-new` 等同 ⇧⌘Enter。`settings.json` 的 `defaultAgent` 会让新建工作区带上这个选择。只有这条输入处理这些快捷键，中文输入法组合文字时不会误提交；焦点在原生终端时，输入和审批仍交给那个 PTY。
+工作台底部有一条会话输入。普通 **Enter** 把文字写入当前 Shell 的 PTY（Shell 前台有命令或全屏 TUI 时键盘直接交给 PTY）。**⌘Enter** 把同一段文字送入续接目标的 Agent stdin；尚无 Agent 但已选 provider 时会用这段文字新建首个会话；已有可续接会话时不必再选 provider。**⇧⌘Enter** 始终经 `oberth agent plan` 新建 Agent PTY。右侧状态列表可单击设为续接目标并预览输出尾部，「进入」才切主画布。未选 provider 时 ⌘Enter / ⇧⌘Enter 会先打开选择，选定后保留文字并继续原操作。输入 **`/`** 列出命令（含 `/agent-select`、`/agent`、`/agent-new`、`/open` 等），可用方向键与 Enter 选择。`settings.json` 的 `defaultAgent` 会让新建工作区带上 provider 选择。只有这条输入处理这些快捷键，中文输入法组合文字时不会误提交；焦点在原生终端时，输入和审批仍交给那个 PTY。
 这不是第二套聊天协议：⌘Enter 只是把用户写下的一行交给已经在跑的 Agent PTY，不猜测屏幕、不绕过审批、不按“最近一次对话”跨 worktree 恢复。「新会话」弹层仍可另开 Shell，或用它自己的消息框开始一次新的 Agent 启动。
 
 DeepSeek 的消息入口运行 `dsh --profile headless`；原生入口要求用户已有 `tui` profile。

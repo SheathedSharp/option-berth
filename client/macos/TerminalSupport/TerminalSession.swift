@@ -16,6 +16,8 @@ public final class TerminalSession: ObservableObject, Identifiable {
     @Published public private(set) var isStopping = false
     public var onChange: (() -> Void)?
     @Published public private(set) var commandBlocks: [CommandBlock] = []
+    @Published public private(set) var activity = SessionActivitySnapshot()
+    @Published public private(set) var needsAttention = false
     private var commandParser: CommandBlockParser?
     private var shellLease: ShellIntegrationLease?
 
@@ -47,6 +49,61 @@ public final class TerminalSession: ObservableObject, Identifiable {
                 commandBlocks = commandParser?.blocks ?? []; onChange?()
             }
         }
+        terminal.onBell = { [weak self] in
+            guard let self else { return }
+            activity.lastBellAt = Date()
+            needsAttention = true
+            onChange?()
+            objectWillChange.send()
+        }
+        terminal.onBytes = { [weak self] bytes in
+            guard let self else { return }
+            activity.lastOutputAt = Date()
+            if bytes.contains(7) {
+                activity.lastBellAt = Date()
+                needsAttention = true
+            }
+            activity.outputTail = AgentActivityInference.appendTail(activity.outputTail, bytes: bytes)
+            activity.alternateScreen = terminal.getTerminal().isCurrentBufferAlternate
+            onChange?()
+            objectWillChange.send()
+        }
+        let priorProtocol = terminal.onProtocolBytes
+        terminal.onProtocolBytes = { [weak self] bytes in
+            priorProtocol?(bytes)
+            guard let self else { return }
+            if Self.containsNotify(bytes) {
+                activity.lastNotifyAt = Date()
+                needsAttention = true
+                objectWillChange.send()
+            }
+        }
+    }
+
+    public func clearAttention() {
+        needsAttention = false
+        objectWillChange.send()
+    }
+
+    private static func containsNotify(_ bytes: ArraySlice<UInt8>) -> Bool {
+        // Warp/iTerm-style OSC 777 notify and ConEmu-style OSC 9;4 progress hooks.
+        let markers = ["777;notify", "9;4;"]
+        let text = String(decoding: bytes, as: UTF8.self)
+        return markers.contains { text.contains($0) }
+    }
+
+    public var isTaskAgent: Bool { kind.hasSuffix(":task") }
+
+    public var acceptsComposerTurn: Bool { isActive && !isTaskAgent }
+
+    public var inferredAgentState: AgentInferredState {
+        AgentActivityInference.infer(isActive: isActive, isTaskMode: isTaskAgent, snapshot: activity)
+    }
+
+    public var shellForegroundBusy: Bool {
+        guard kind == "terminal", isActive else { return false }
+        if activity.alternateScreen { return true }
+        return commandBlocks.last?.isRunning == true
     }
 
     public func clearCommandHistory() {
@@ -147,6 +204,7 @@ public final class HostedTerminalView: TerminalView, TerminalViewDelegate, Local
     public var onExit: ((Int32?) -> Void)?
     public var onBytes: ((ArraySlice<UInt8>) -> Void)?
     var onProtocolBytes: ((ArraySlice<UInt8>) -> Void)?
+    var onBell: (() -> Void)?
 
     public override init(frame: CGRect) {
         super.init(frame: frame, font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
@@ -169,6 +227,8 @@ public final class HostedTerminalView: TerminalView, TerminalViewDelegate, Local
 
     public func processTerminated(_ source: LocalProcess, exitCode: Int32?) { onExit?(exitCode) }
     public func dataReceived(slice: ArraySlice<UInt8>) { feed(byteArray: slice); onProtocolBytes?(slice); onBytes?(slice) }
+    public func bell(source: TerminalView) { onBell?() }
+    public func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
     public func getWindowSize() -> winsize {
         winsize(ws_row: UInt16(clamping: terminal.rows), ws_col: UInt16(clamping: terminal.cols), ws_xpixel: 0, ws_ypixel: 0)
     }

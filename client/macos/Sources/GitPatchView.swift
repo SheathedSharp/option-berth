@@ -8,9 +8,12 @@ struct GitPatchView: View {
     var scrolls = true
     /// Fills the single-file changes pane when that pane is not scrolling.
     var fills = false
+    var maxLines: Int?
 
     var body: some View {
-        let rows = GitPatchRows.make(lines)
+        let capped = maxLines.map { min($0, lines.count) } ?? lines.count
+        let slice = Array(lines.prefix(capped))
+        let rows = GitPatchRows.make(slice)
         let digits = GitPatchRows.digits(rows)
         let stack = VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
@@ -18,7 +21,16 @@ struct GitPatchView: View {
             }
         }
         if scrolls {
-            ScrollView([.horizontal, .vertical]) { stack.textSelection(.enabled) }
+            ScrollView([.horizontal, .vertical]) {
+                VStack(alignment: .leading, spacing: 0) {
+                    stack
+                    if capped < lines.count {
+                        Text("… 还有 \(lines.count - capped) 行未显示")
+                            .font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkMuted)
+                            .padding(Metrics.gutter)
+                    }
+                }.textSelection(.enabled)
+            }
         } else if fills {
             stack.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).clipped()
         } else {

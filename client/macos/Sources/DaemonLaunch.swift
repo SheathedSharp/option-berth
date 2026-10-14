@@ -49,12 +49,16 @@ enum DaemonLaunch {
            executable.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent == "Contents" {
             candidates.append(executable.deletingLastPathComponent().appendingPathComponent("oberth").path)
         }
-        candidates += ["\(home)/.local/bin/oberth", "/usr/local/bin/oberth", "/opt/homebrew/bin/oberth"]
         if let executable = executableURL?.resolvingSymlinksInPath() {
             var directory = executable.deletingLastPathComponent()
-            for _ in 0..<6 { directory = directory.deletingLastPathComponent() }
-            candidates.append(directory.appendingPathComponent("bin/oberth").path)
+            for _ in 0..<8 {
+                candidates.append(directory.appendingPathComponent("bin/oberth").path)
+                let parent = directory.deletingLastPathComponent()
+                if parent.path == directory.path { break }
+                directory = parent
+            }
         }
+        candidates += ["\(home)/.local/bin/oberth", "/usr/local/bin/oberth", "/opt/homebrew/bin/oberth"]
         for entry in (environment["PATH"] ?? "").split(separator: ":") {
             candidates.append("\(entry)/oberth")
         }

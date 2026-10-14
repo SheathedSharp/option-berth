@@ -9,10 +9,19 @@ struct TerminalSurface: NSViewRepresentable {
     @ObservedObject private var settings = UISettings.shared
     @ObservedObject private var windows = TerminalWindows.shared
     func makeNSView(context: Context) -> TerminalHost {
-        let host = TerminalHost(); applyAppearance(session.terminal); host.present(session, detached: detached); host.focusIntent = focusIntent?.consumed == false ? focusIntent : windows.returnFocus; return host
+        let host = TerminalHost(); applyAppearance(session.terminal); host.present(session, detached: detached); host.focusIntent = resolvedFocusIntent(host: host); return host
     }
     func updateNSView(_ host: TerminalHost, context: Context) {
-        host.present(session, detached: detached); applyAppearance(session.terminal); host.focusIntent = focusIntent?.consumed == false ? focusIntent : windows.returnFocus
+        host.present(session, detached: detached); applyAppearance(session.terminal); host.focusIntent = resolvedFocusIntent(host: host)
+    }
+    private func resolvedFocusIntent(host: TerminalHost) -> TerminalFocusIntent? {
+        if let window = host.window, let responder = window.firstResponder as? NSView,
+           let terminal = host.session?.terminal, responder !== terminal, !responder.isDescendant(of: host) {
+            return nil
+        }
+        if focusIntent?.consumed == false { return focusIntent }
+        if windows.returnFocus?.consumed == false { return windows.returnFocus }
+        return nil
     }
     static func dismantleNSView(_ host: TerminalHost, coordinator: ()) { host.releasePresentation() }
     private func applyAppearance(_ view: HostedTerminalView) {

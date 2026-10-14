@@ -133,10 +133,19 @@ final class GitStore: ObservableObject {
 
     func select(_ commit: GitGraphCommit, project: BerthGroup?) {
         guard !isFixture, let projectRoot = prepare(project) else { return }
-        clearSelection()
-        selectedCommit = commit.hash
-        patch = nil
+        beginCommitSelection(commit.hash)
         readCommitPatch(commit.hash, root: projectRoot)
+    }
+
+    private func beginCommitSelection(_ hash: String) {
+        patchCancellation?.cancel()
+        patchCancellation = nil
+        patchRequest += 1
+        selectedPath = nil
+        selectedCommit = hash
+        patch = nil
+        patchProblem = nil
+        patchLoading = true
     }
 
     func clearSelection() {
@@ -151,9 +160,6 @@ final class GitStore: ObservableObject {
     }
 
     private func readPatch(_ path: String, root: String) {
-        // The current selection's request is already pending. Do not pile up
-        // another patch read on each tree poll while Git is slow.
-        guard !patchLoading else { return }
         patchRequest += 1
         let request = patchRequest
         let requestGeneration = generation
@@ -179,7 +185,6 @@ final class GitStore: ObservableObject {
     }
 
     private func readCommitPatch(_ commit: String, root: String) {
-        guard !patchLoading else { return }
         patchRequest += 1
         let request = patchRequest
         let requestGeneration = generation
@@ -218,7 +223,7 @@ final class GitStore: ObservableObject {
         graphCancellation = cancellation
         queue.submit(.graph) { [weak self] in
             let result = CLI.decode(GitGraph.self,
-                                    arguments: ["git", "graph", requestedRoot, "--json", "--limit", "0"],
+                                    arguments: ["git", "graph", "--json", requestedRoot],
                                     cancellation: cancellation)
             Task { @MainActor [weak self] in
                 guard let self, self.generation == requestGeneration else { return }
@@ -229,7 +234,7 @@ final class GitStore: ObservableObject {
                     self.adopt(value)
                 case .failure(let error):
                     self.adopt(nil)
-                    self.graphProblem = error.message
+                    self.graphProblem = Self.graphFailureMessage(error)
                 }
             }
         }
@@ -244,6 +249,13 @@ final class GitStore: ObservableObject {
     private static func layout(of graph: GitGraph?) -> GitGraphLayout {
         guard let graph else { return GitGraphLayout(rows: []) }
         return GitGraphLayout.layout(graph.commits.map { GitGraphNode(hash: $0.hash, parents: $0.parents) })
+    }
+
+    private static func graphFailureMessage(_ error: CLI.Failure) -> String {
+        if error.message.contains("Exit 2") {
+            return "无法读取提交图：当前 oberth 过旧或不支持 git graph（退出码 2）。请在仓库根目录运行 mage install，或将 BERTH_BIN 指向与本客户端同版本构建的 oberth。"
+        }
+        return error.message
     }
 
     private func prepare(_ project: BerthGroup?) -> String? {

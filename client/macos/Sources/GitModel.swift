@@ -151,7 +151,24 @@ struct GitPatch: Decodable, Sendable {
     let root: String
     let commit: String?
     let base: String?
+    let truncated: Bool
+    let totalFiles: Int?
     let files: [GitFileDiff]
+
+    private enum CodingKeys: String, CodingKey {
+        case root, commit, base, truncated, files
+        case totalFiles = "total_files"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        root = try c.decode(String.self, forKey: .root)
+        commit = try c.decodeIfPresent(String.self, forKey: .commit)
+        base = try c.decodeIfPresent(String.self, forKey: .base)
+        truncated = try c.decodeIfPresent(Bool.self, forKey: .truncated) ?? false
+        totalFiles = try c.decodeIfPresent(Int.self, forKey: .totalFiles)
+        files = try c.decodeIfPresent([GitFileDiff].self, forKey: .files) ?? []
+    }
 }
 
 struct GitGraph: Decodable, Sendable {

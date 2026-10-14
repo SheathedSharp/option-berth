@@ -130,7 +130,15 @@ enum TerminalChecks {
                 try invalid.start(executable: "/bin/sh", arguments: [])
                 throw CheckFailure(reason: "invalid worktree accepted")
             } catch is TerminalFailure {}
-            print("PASS: real PTY, literal argv, cwd, exit code, independent stop, native window keyboard/text input, 1 MiB output, 24-cycle PTY reclamation, invalid input, OSC policy, owned cleanup")
+            var snap = SessionActivitySnapshot()
+            snap.alternateScreen = true
+            try check(AgentActivityInference.infer(isActive: true, isTaskMode: false, snapshot: snap) == .working,
+                      "alternate screen did not infer working")
+            snap.alternateScreen = false
+            snap.lastBellAt = Date()
+            try check(AgentActivityInference.infer(isActive: true, isTaskMode: false, snapshot: snap) == .waitingInput,
+                      "recent bell did not infer waiting input")
+            print("PASS: real PTY, literal argv, cwd, exit code, independent stop, native window keyboard/text input, 1 MiB output, 24-cycle PTY reclamation, invalid input, OSC policy, agent activity inference, owned cleanup")
         } catch {
             fputs("terminal checks failed: \(error)\n", stderr)
             for session in owned { session.stop(force: true) }

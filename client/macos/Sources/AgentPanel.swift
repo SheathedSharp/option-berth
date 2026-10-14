@@ -31,7 +31,8 @@ final class AgentLaunchController: ObservableObject {
     }
 
     func refresh(_ workspace: ConsoleWorkspace) {
-        guard !loading else { return }
+        if loading, !providers.isEmpty { return }
+        if loading { operation?.cancel(); operation = nil; phase = .idle }
         guard let binary = DaemonLaunch.binaryPath() else {
             problem = "找不到兼容的 oberth"
             pending = nil
@@ -136,15 +137,9 @@ struct SessionLaunchPanel: View {
                 Text("检查当前改动，再运行相关测试。")
                     .font(Face.mono(12)).frame(maxWidth: .infinity, minHeight: 76, alignment: .topLeading)
             } else {
-                AgentComposer(text: $workspace.draft, enabled: !launcher.planning, font: Face.nativeMono(12),
-                    foreground: NSColor(Ink.ink), focusOnAttach: true, onSubmit: start, onNative: openNative)
-                    .frame(height: 76).padding(4).background(Ink.surface)
-                    .overlay(alignment: .topLeading) {
-                        if workspace.draft.isEmpty {
-                            Text("初始任务（可选）").font(Face.mono(12)).foregroundStyle(Ink.inkFaint)
-                                .padding(10).allowsHitTesting(false)
-                        }
-                    }
+                launchDraftHint
+                    .frame(maxWidth: .infinity, minHeight: 76, alignment: .topLeading)
+                    .padding(10).background(Ink.surface)
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Ink.line, lineWidth: 1))
             }
             if let problem = launcher.problem, !shell {
@@ -177,10 +172,22 @@ struct SessionLaunchPanel: View {
         }.padding(Metrics.panelPad).background(Ink.canvas)
     }
     private var canFocusNative: Bool { selected?.isActive == true && selected?.kind == "agent:\(workspace.providerID):native" }
+    @ViewBuilder private var launchDraftHint: some View {
+        let trimmed = workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            Text("在底部输入框写初始任务（可选）。Enter 进 Shell，⌘↩ 开始 Agent。")
+                .font(Face.sans(11)).foregroundStyle(Ink.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            Text(trimmed).font(Face.mono(12)).foregroundStyle(Ink.ink).lineLimit(4).textSelection(.enabled)
+        }
+    }
     private func start() {
         guard !launcher.planning else { return }
-        if shell && !agentOnly { newShell() }
-        else { launcher.launch(root: root, workspace: workspace,
+        if shell && !agentOnly {
+            newShell()
+            DispatchQueue.main.async { close?() }
+        } else { launcher.launch(root: root, workspace: workspace,
             prompt: !workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, didLaunch: activate) }
     }
     private func openNative() {

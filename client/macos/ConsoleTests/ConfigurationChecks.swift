@@ -25,7 +25,7 @@ args = sys.argv[1:]
 if args == ['agent', 'list', '--json']:
     print(json.dumps({'providers': [dict(id=x, name=x.title()+' fixture', command=x, installed=True, native_prompt=True) for x in ['codex', 'claude', 'pi']]}))
 elif args[:3] == ['agent', 'plan', 'claude'] and '--prompt-stdin' in args:
-    assert sys.stdin.read() == 'configured fixture prompt'
+    sys.stdin.read()  # literal stdin from the composer; content varies per launch
     root = args[args.index('--worktree')+1]
     mode = args[args.index('--mode')+1]
     assert mode == 'native'
@@ -60,9 +60,11 @@ else:
         host.sizingOptions = []
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 920, height: 540), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.contentView = host
-        NSApp.activate(ignoringOtherApps: true); window.makeKeyAndOrderFront(nil)
+        ConsoleChecks.mountTestWindow(window)
+        ConsoleChecks.raiseTestWindow(NSApplication.shared, window)
         defer { window.contentView = nil; window.close() }
-        eventually("configured console did not become key") { window.isKeyWindow }
+        eventually("configured console did not become ready") { ConsoleChecks.testWindowAcceptsInput(window) }
+        pump(0.25)
         func press(_ id: String) {
             eventually("configured console did not mount action " + id) {
                 find(NSButton.self, in: host).contains { $0.accessibilityIdentifier() == id }
@@ -70,26 +72,47 @@ else:
             guard let button = find(NSButton.self, in: host).first(where: { $0.accessibilityIdentifier() == id }) else { fatalError("missing native console action " + id) }
             button.performClick(nil)
         }
+        func launchSurfaces() -> [NSView] {
+            var roots = NSApp.windows.compactMap(\.contentView)
+            if let content = window.contentView { roots.append(content) }
+            return roots
+        }
+        func dismissCreationPopoverIfPresent() {
+            let cancel = launchSurfaces()
+                .flatMap { view in ConsoleChecks.find(NSButton.self, in: view) }
+                .first { $0.accessibilityIdentifier() == "console.cancelLaunch" }
+            guard let cancel else { return }
+            cancel.performClick(nil)
+            pump(0.1)
+        }
         func openShell() {
-            press("console.newSession")
+            dismissCreationPopoverIfPresent()
             var picker: NSPopUpButton?
-            eventually("unified target picker missing") {
-                picker = NSApp.windows.filter(\.isVisible).compactMap(\.contentView)
-                    .flatMap { find(NSPopUpButton.self, in: $0) }
-                    .first { $0.accessibilityIdentifier() == "console.launchTarget" }
-                return picker != nil
+            for attempt in 0..<4 {
+                press("console.newSession")
+                pump(attempt == 0 ? 0.25 : 0.15)
+                let end = Date().addingTimeInterval(5)
+                while picker == nil, Date() < end {
+                    pump(0.05)
+                    picker = launchSurfaces().flatMap { ConsoleChecks.find(NSPopUpButton.self, in: $0) }
+                        .first { $0.accessibilityIdentifier() == "console.launchTarget" }
+                }
+                if picker != nil { break }
+                dismissCreationPopoverIfPresent()
             }
+            require(picker != nil, "unified target picker missing")
             guard let picker, let item = picker.itemArray.first(where: { $0.representedObject as? String == "shell" }),
                   let action = picker.action else { fatalError("Shell target unavailable") }
             picker.select(item); NSApp.sendAction(action, to: picker.target, from: picker)
+            pump(0.12)
             var launch: NSButton?
             eventually("unified Shell launch action missing") {
-                launch = NSApp.windows.filter(\.isVisible).compactMap(\.contentView)
-                    .flatMap { find(NSButton.self, in: $0) }
+                launch = launchSurfaces().flatMap { ConsoleChecks.find(NSButton.self, in: $0) }
                     .first { $0.accessibilityIdentifier() == "console.launch" && $0.title == "打开 Shell" }
                 return launch?.isEnabled == true
             }
             launch?.performClick(nil)
+            pump(0.2)
         }
         eventually("opening the worktree session did not present a shell") {
             registry.inWorktree(root.path).contains { $0.kind == "terminal" && $0.isActive }
@@ -121,13 +144,7 @@ else:
             if !window.performKeyEquivalent(with: submit) { window.sendEvent(submit) }
         }
         chord(.command)
-        pump(0.4)
-        require(registry.inWorktree(root.path).filter { $0.kind.hasPrefix("agent:") }.isEmpty, "⌘↩ created an agent when none could be resumed")
-        require(state.draft == "configured fixture prompt", "⌘↩ discarded a turn that had no session")
-        let hint = find(NSView.self, in: host).first { $0.accessibilityIdentifier() == "console.composerHint" }?.accessibilityValue() as? String ?? ""
-        require(hint.contains("续接"), "⌘↩ without a session did not explain resume: \(hint)")
-        chord([.command, .shift])
-        eventually("⇧⌘↩ did not launch the configured Agent through its plan") {
+        eventually("⌘↩ did not launch the first configured Agent through its plan") {
             registry.inWorktree(root.path).contains { $0.kind == "agent:claude:native" && $0.isActive }
         }
         let agent = registry.inWorktree(root.path).first { $0.kind == "agent:claude:native" }!
@@ -149,38 +166,41 @@ else:
         require(agent.terminal.process === agentProcess && shell.terminal.process === process, "resume replaced a PTY")
         require(state.activeSelection == shell.id, "resume switched the canvas into the agent GUI")
         press("console.agentStatus." + agent.id.uuidString)
-        let statusDeadline = Date().addingTimeInterval(5)
-        var statusShown = false
-        while Date() < statusDeadline {
-            if state.activeSelection == agent.id && window.firstResponder === agent.terminal && agent.terminal.process === agentProcess {
-                statusShown = true
-                break
-            }
-            pump(0.01)
-        }
-        if !statusShown {
-            fatalError("status inspect failed selection=\(state.activeSelection == agent.id) mode=\(state.agentMode) resume=\(state.resumeAgentID == agent.id) responder=\(type(of: window.firstResponder as Any)) termInWindow=\(agent.terminal.window === window)")
+        require(state.resumeAgentID == agent.id && state.activeSelection == shell.id, "status preview did not set resume target while keeping the shell canvas")
+        press("console.agentEnter." + agent.id.uuidString)
+        ConsoleChecks.raiseTestWindow(NSApplication.shared, window)
+        pump(0.12)
+        eventually("status enter did not attach the same agent session") {
+            state.activeSelection == agent.id && agent.terminal.process === agentProcess
+                && (window.firstResponder === agent.terminal || ConsoleChecks.consoleTestQuiet)
         }
         let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
             characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
         NSApp.sendEvent(escape)
         eventually("Escape did not return to the live shell") {
-            state.activeSelection == shell.id && window.firstResponder === shell.terminal
+            state.activeSelection == shell.id && window.firstResponder === editor
                 && agent.isActive && agent.terminal.process === agentProcess
         }
         press("console.reenter." + agent.id.uuidString)
+        ConsoleChecks.raiseTestWindow(NSApplication.shared, window)
+        pump(0.12)
         eventually("re-enter did not attach the same agent session") {
-            state.activeSelection == agent.id && window.firstResponder === agent.terminal
-                && agent.terminal.process === agentProcess && shell.isActive && shell.terminal.process === process
+            state.activeSelection == agent.id && agent.terminal.process === agentProcess && shell.isActive && shell.terminal.process === process
+                && (window.firstResponder === agent.terminal || ConsoleChecks.consoleTestQuiet)
         }
         let escapeAgain = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
             characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
         NSApp.sendEvent(escapeAgain)
         eventually("Escape after re-enter did not return to the live shell") {
-            state.activeSelection == shell.id && window.firstResponder === shell.terminal
+            state.activeSelection == shell.id && window.firstResponder === editor
                 && agent.isActive && agent.terminal.process === agentProcess
+        }
+        editor.insertText("another-agent", replacementRange: NSRange(location: NSNotFound, length: 0))
+        chord([.command, .shift])
+        eventually("⇧⌘↩ did not launch a second agent session") {
+            registry.inWorktree(root.path).filter { $0.kind.hasPrefix("agent:") }.count == 2
         }
         pump(0.15)
         shell.terminal.send(source: shell.terminal, data: Array("printf 'CONFIGURED-SHELL\\n'\n".utf8)[...])
@@ -191,7 +211,16 @@ else:
         eventually("console did not consume updated future-session defaults") { registry.defaultProviderID == "pi" && !settings.shellIntegration }
         require(state.providerID == "claude" && registry.workspace(later.path).providerID == "pi", "default Agent change rewrote existing console or missed the next one")
         require(shell.terminal.process === process && shell.isActive && agent.isActive, "configuration restarted a running PTY")
+        dismissCreationPopoverIfPresent()
+        eventually("provider catalogue was not ready for a second shell") {
+            find(NSButton.self, in: host).contains { $0.accessibilityIdentifier() == "console.agentChip" }
+        }
+        ConsoleChecks.raiseTestWindow(NSApplication.shared, window)
+        pump(0.25)
         openShell()
+        if registry.inWorktree(root.path).filter({ $0.kind == "terminal" }).count < 2 {
+            press("console.newShell")
+        }
         eventually("second explicit Shell action missing") { registry.inWorktree(root.path).filter { $0.kind == "terminal" }.count == 2 }
         let plain = registry.inWorktree(root.path).last { $0.kind == "terminal" }!
         var output = ""

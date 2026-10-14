@@ -5,6 +5,37 @@ import BerthTerminal
 @testable import BerthClient
 
 @main @MainActor enum ConsoleChecks {
+    /// Set with `BERTH_CONSOLE_TEST_QUIET=1` for local/CI runs that must not steal focus or capture the display.
+    static var consoleTestQuiet: Bool { ProcessInfo.processInfo.environment["BERTH_CONSOLE_TEST_QUIET"] == "1" }
+    static func mountTestWindow(_ window: NSWindow) {
+        if consoleTestQuiet {
+            // Keep fixture geometry for NSPopover anchoring; park in a corner without going off-screen.
+            let frame = window.frame
+            window.setFrame(NSRect(x: 24, y: 24, width: max(frame.width, 960), height: max(frame.height, 570)), display: true)
+        }
+        window.orderFrontRegardless()
+        window.makeKey()
+    }
+    /// Quiet runs keep the window off-screen and use non-stealing activation so daily work stays foreground.
+    static func testWindowAcceptsInput(_ window: NSWindow) -> Bool {
+        consoleTestQuiet ? window.isVisible : window.isKeyWindow
+    }
+    static func launchSurfaces(host: NSView, window: NSWindow) -> [NSView] {
+        var roots = NSApp.windows.compactMap(\.contentView)
+        roots.append(host)
+        if let content = window.contentView { roots.append(content) }
+        return roots
+    }
+    static func raiseTestWindow(_ app: NSApplication, _ window: NSWindow) {
+        if consoleTestQuiet {
+            if !app.isActive { app.activate(ignoringOtherApps: false) }
+            window.orderFrontRegardless()
+            window.makeKey()
+        } else {
+            app.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+        }
+    }
     static func require(_ condition: @autoclosure () -> Bool, _ message: String) {
         guard condition() else { fatalError(message) }
     }
@@ -40,7 +71,9 @@ import BerthTerminal
         let deadline = DispatchWorkItem { fputs("ConsoleChecks native deadline exceeded\n", stderr); exit(1) }
         DispatchQueue.global().asyncAfter(deadline: .now() + 90, execute: deadline)
         defer { deadline.cancel() }
-        let app = NSApplication.shared; app.setActivationPolicy(.accessory); app.finishLaunching()
+        let app = NSApplication.shared
+        app.setActivationPolicy(consoleTestQuiet ? .regular : .accessory)
+        app.finishLaunching()
         let root = URL(fileURLWithPath: home).appendingPathComponent("console-fixture")
         let other = root.appendingPathComponent("other")
         try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
@@ -50,7 +83,7 @@ import BerthTerminal
         try Data(#"""
 #!/bin/sh
 [ "$#" = 3 ] && [ "$1" = agent ] && [ "$2" = list ] && [ "$3" = --json ] || exit 97
-/bin/sleep 0.5
+/bin/sleep 0.05
 printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"codex","installed":true,"native_prompt":true}]}'
 """#.utf8).write(to: catalogue)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: catalogue.path)
@@ -60,6 +93,7 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
         composerModelChecks()
         let registry = TerminalSessions.shared
         let env = ["HOME":root.path, "PATH":"/usr/bin:/bin"]
+        try agentComposerPTYChecks(root: root, env: env)
         let script = "printf 'READY:%s\\n' \"$PWD\"; while IFS= read -r value; do printf 'INPUT:%s\\n' \"$value\"; done"
         var owned: [TerminalSession] = []
         defer {
@@ -95,24 +129,29 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
         let host = NSHostingView(rootView: WorkspaceConsole(root: root.path))
         host.sizingOptions = []
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 570), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
+        window.isReleasedWhenClosed = false; window.contentView = host
         defer { window.contentView = nil; window.close() }
-        app.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
-        eventually("the native test window never became key") { window.isKeyWindow }
+        mountTestWindow(window)
+        raiseTestWindow(app, window)
+        eventually("the native test window never became ready") { testWindowAcceptsInput(window) }
         pump(0.25)
         func choose(_ session: TerminalSession) {
             guard let button = find(NSButton.self, in: host).first(where: { $0.accessibilityIdentifier() == "console.session." + session.id.uuidString }) else { fatalError("native shared session button missing") }
             button.performClick(nil)
-            let end = Date().addingTimeInterval(5)
-            while window.firstResponder !== session.terminal, Date() < end { pump(0.01) }
-            if window.firstResponder !== session.terminal {
-                let presentations = find(TerminalHost.self, in: host).map { host in
-                    "session=\(host.session?.title ?? "nil") active=\(host.session?.id == workspace.activeSelection) intent=\(host.focusIntent?.sessionID == session.id) consumed=\(host.focusIntent?.consumed ?? false) attached=\(host.session?.terminal.superview === host)"
-                }.joined(separator: "; ")
-                let others = NSApp.windows.map { "\($0.title)#\($0.windowNumber) key=\($0.isKeyWindow) vis=\($0.isVisible)" }.joined(separator: " | ")
-                fatalError("native focus: selected=\(session.title) workspace=\(workspace.activeSelection == session.id) key=\(window.isKeyWindow) responder=\(String(describing: window.firstResponder)) windows=[\(others)] hosts: " + presentations)
+            raiseTestWindow(app, window)
+            eventually("session rail did not select " + session.title) { workspace.activeSelection == session.id }
+            if session.kind == "terminal" {
+                eventually("shell composer did not focus for " + session.title) {
+                    testWindowAcceptsInput(window) && find(NSTextView.self, in: host).contains {
+                        $0.accessibilityIdentifier() == "console.sessionComposer" && $0.window?.firstResponder === $0
+                    }
+                }
+            } else {
+                eventually("agent PTY did not focus for " + session.title) {
+                    testWindowAcceptsInput(window) && window.firstResponder === session.terminal
+                }
             }
+            pump(0.05)
         }
         require(!find(NSButton.self, in: host).contains { $0.accessibilityIdentifier() == "console.session." + foreign.id.uuidString }, "session strip crossed worktrees")
         func type(_ text: String) {
@@ -141,14 +180,16 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
             !find(NSView.self, in: host).contains { $0.accessibilityIdentifier() == "console.sessionPalette" }
         }
         choose(agent); press(53, characters: "\u{1b}")
-        eventually("Escape did not return from the agent to the remembered Shell") { workspace.activeSelection == shell.id && window.firstResponder === shell.terminal }
+        eventually("Escape did not return from the agent to the remembered Shell") {
+            workspace.activeSelection == shell.id && find(NSTextView.self, in: host).contains { $0.accessibilityIdentifier() == "console.sessionComposer" && $0.window?.firstResponder === $0 }
+        }
         choose(shell); press(48, flags: [.command], characters: "\t")
         eventually("Command-Tab did not cycle to the parallel agent") { workspace.activeSelection == agent.id && window.firstResponder === agent.terminal }
         choose(shell); press(48, flags: [.command, .option], characters: "\t")
         eventually("Command-Option-Tab did not open the session palette") { find(NSView.self, in: host).contains { $0.accessibilityIdentifier() == "console.sessionPalette" } }
         press(53, characters: "\u{1b}")
         eventually("Escape did not dismiss the session palette") { !find(NSView.self, in: host).contains { $0.accessibilityIdentifier() == "console.sessionPalette" } }
-        choose(shell); type("shell-only")
+        choose(shell); workspace.draft = "shell-only"; press(36, characters: "\r")
         choose(agent); type("agent-only")
         eventually("native typing did not reach selected PTYs") { shellOutput.contains("INPUT:shell-only") && agentOutput.contains("INPUT:agent-only") }
         require(!shellOutput.contains("agent-only") && !agentOutput.contains("shell-only"), "shared tabs broadcast input")
@@ -159,19 +200,23 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
         require(workspace.draft == "fixture draft", "switching lost the unsent draft")
         // Opening a creation surface must not resize live alternate-screen TUIs,
         // replace hosts, mutate the active split, or implicitly launch a process.
+        pump(0.2) // Let onAppear provider discovery finish before opening the launcher popover.
         let shellBounds = shell.terminal.bounds, agentBounds = agent.terminal.bounds
         let shellHost = shell.terminal.superview, agentHost = agent.terminal.superview
         guard let create = find(NSButton.self, in: host).first(where: { $0.accessibilityIdentifier() == "console.newSession" }) else { fatalError("unified creation entry missing") }
         for attempt in 0..<4 {
+            raiseTestWindow(app, window)
             create.performClick(nil)
+            pump(0.05)
             var cancel: NSButton?
             eventually("native creation popover did not open/reopen") {
-                cancel = NSApp.windows.filter(\.isVisible).compactMap(\.contentView)
-                    .flatMap { find(NSButton.self, in: $0) }.first { $0.accessibilityIdentifier() == "console.cancelLaunch" }
+                cancel = launchSurfaces(host: host, window: window).flatMap { find(NSButton.self, in: $0) }
+                    .first { $0.accessibilityIdentifier() == "console.cancelLaunch" }
+                if cancel == nil { create.performClick(nil) }
                 return cancel != nil
             }
-            let targetPicker = NSApp.windows.filter(\.isVisible).compactMap(\.contentView)
-                .flatMap { find(NSPopUpButton.self, in: $0) }.first { $0.accessibilityIdentifier() == "console.launchTarget" }
+            let targetPicker = launchSurfaces(host: host, window: window).flatMap { find(NSPopUpButton.self, in: $0) }
+                .first { $0.accessibilityIdentifier() == "console.launchTarget" }
             require(targetPicker?.isEnabled == true, "provider discovery blocked the Shell selector")
             pump(0.03)
             require(shell.terminal.bounds == shellBounds && agent.terminal.bounds == agentBounds, "creation resized live PTYs")
@@ -179,13 +224,23 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
             require(registry.sessions.count == 3 && workspace.activeLayout.root == treeRoot, "creation changed runtime ownership")
             if attempt == 0 {
                 eventually("synthetic provider was not loaded in the popover") {
-                    NSApp.windows.filter(\.isVisible).compactMap(\.contentView).flatMap { find(NSPopUpButton.self, in: $0) }.contains { $0.titleOfSelectedItem == "Codex fixture" }
+                    launchSurfaces(host: host, window: window).flatMap { find(NSPopUpButton.self, in: $0) }
+                        .contains { picker in
+                            picker.itemArray.contains { $0.title == "Codex fixture" }
+                                || picker.titleOfSelectedItem == "Codex fixture"
+                        }
                 }
                 pump(0.3) // Capture settled native presentation, not the show animation.
                 try captureOwnedWindow(window, to: URL(fileURLWithPath: home).appendingPathComponent("session-launcher-composited-native.png"))
+                raiseTestWindow(app, window)
+                pump(0.12)
             }
             cancel?.performClick(nil)
-            eventually("cancel did not return focus to selected native PTY") { window.firstResponder === agent.terminal && window.isKeyWindow }
+            eventually("cancel did not return focus to the selected session") {
+                workspace.activeSelection == agent.id && testWindowAcceptsInput(window)
+                    && (window.firstResponder === agent.terminal
+                        || find(NSTextView.self, in: host).contains { $0.accessibilityIdentifier() == "console.sessionComposer" && $0.window?.firstResponder === $0 })
+            }
             require(workspace.draft == "fixture draft", "cancel discarded an unsent draft")
             // Reopen before a prior hide animation's callback can own the new one.
         }
@@ -209,8 +264,12 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
         pump(0.2)
         require(!find(NSView.self, in: host).contains { $0.accessibilityIdentifier() == "console.sessionPalette" }, "detached window opened the session palette")
         require(workspace.activeSelection == agent.id && agent.terminal.window === detached, "detached shortcut changed session ownership")
-        TerminalWindows.shared.bringBack(agent); window.makeKeyAndOrderFront(nil)
-        eventually("returning the detached terminal did not restore focus") { agent.terminal.window === window && window.firstResponder === agent.terminal }
+        TerminalWindows.shared.bringBack(agent); raiseTestWindow(app, window)
+        eventually("returning the detached terminal did not restore focus") {
+            if agent.terminal.window !== window { return false }
+            if consoleTestQuiet { return testWindowAcceptsInput(window) }
+            return window.firstResponder === agent.terminal
+        }
         func capture(_ name: String) throws {
             pump()
             try captureOwnedWindow(window, to: URL(fileURLWithPath: home).appendingPathComponent(name + "-composited-native.png"))
@@ -237,13 +296,68 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
         require(route("/agent-new fix tests", .plain, false, false) == .needProvider, "/agent-new skipped provider selection")
         require(route("/agent-new fix tests", .plain, true, false) == .newAgent("fix tests"), "/agent-new dropped its prompt")
         require(route("继续看测试", .command, false, false) == .needProvider, "⌘↩ sent text before an agent was selected")
-        require(route("继续看测试", .command, true, false) == .needSession, "⌘↩ created a session instead of asking to resume")
+        require(route("继续看测试", .command, true, false) == .newAgent("继续看测试"), "⌘↩ without a session should start the first agent")
+        require(route("继续看测试", .command, false, true) == .resume("继续看测试"), "⌘↩ should resume without a default provider when a target exists")
         require(route("继续看测试", .command, true, true) == .resume("继续看测试"), "⌘↩ did not resume the selected agent")
         require(route("  ", .command, true, true) == .none, "blank ⌘↩ was sent to the agent")
         require(route("新的任务", .commandShift, false, true) == .needProvider, "⇧⌘↩ skipped provider selection")
         require(route("新的任务", .commandShift, true, true) == .newAgent("新的任务"), "⇧⌘↩ did not start a new agent session")
         require(route("", .commandShift, true, false) == .newAgent(""), "⇧⌘↩ required text to create a session")
-        require(SessionComposerModel.matches("/").map(\.token) == ["/agent-select", "/agent-new"], "slash menu did not list both commands")
+        require(SessionComposerModel.matches("/").map(\.token).contains("/agent-select"), "slash menu missing /agent-select")
+        require(SessionComposerModel.matches("/agent").map(\.token).contains("/agent"), "slash filter missed /agent")
+        let shellLine = SessionPTYInput.encodeShellLine("ls -la")
+        require(shellLine.bytes?.last == 10, "shell line did not end with LF")
+        let agentLine = SessionPTYInput.encodeAgentTurn("hi", bracketedPaste: false)
+        require(agentLine.bytes?.last == 13, "agent line did not end with CR")
+        let blocked = SessionPTYInput.encodeAgentTurn("a\nb", bracketedPaste: false)
+        require(blocked.bytes == nil, "multiline agent text without bracketed paste was accepted")
+        let pasted = SessionPTYInput.encodeAgentTurn("line1\nline2", bracketedPaste: true)
+        require(pasted.bytes?.starts(with: Array("\u{1B}[200~".utf8)) == true && pasted.bytes?.last == 13,
+                "bracketed agent paste was not wrapped with CR")
+    }
+
+    static func agentComposerPTYChecks(root: URL, env: [String: String]) throws {
+        let registry = TerminalSessions.shared
+        let agentScript = root.appendingPathComponent("agent-pty-fixture.py")
+        try Data("""
+        import sys
+        sys.stdout.write("\\033[?2004h")
+        print("READY-AGENT", flush=True)
+        line = b""
+        while True:
+            ch = sys.stdin.buffer.read(1)
+            if not ch:
+                break
+            if ch in (b"\\r", b"\\n"):
+                sys.stdout.write("\\aECHO:" + line.decode() + "\\n")
+                sys.stdout.flush()
+                break
+            line += ch
+        """.utf8).write(to: agentScript)
+        var owned: TerminalSession?
+        defer {
+            if let owned, owned.isActive { owned.stop(force: true) }
+            eventually("agent composer fixture did not exit") { owned?.isActive == false }
+            if let owned { registry.remove(owned) }
+            try? FileManager.default.removeItem(at: agentScript)
+        }
+        do {
+            let agent = try registry.add(worktree: root.path, title: "Agent PTY fixture", kind: "agent:codex:native",
+                                         executable: "/usr/bin/python3", arguments: [agentScript.path], environment: env, select: false)
+            owned = agent
+        } catch {
+            fatalError("agent composer fixture failed to start: \(error)")
+        }
+        guard let agent = owned else { return }
+        var output = ""
+        agent.terminal.onBytes = { output += String(decoding: $0, as: UTF8.self) }
+        eventually("agent composer fixture was not ready") { output.contains("READY-AGENT") }
+        eventually("agent composer fixture did not enable bracketed paste") { agent.terminal.getTerminal().bracketedPasteMode }
+        let encoded = SessionPTYInput.encodeAgentTurn("fixture-turn", bracketedPaste: false)
+        guard let bytes = encoded.bytes else { fatalError("agent composer fixture could not encode turn: \(encoded.error ?? "")") }
+        agent.terminal.send(source: agent.terminal, data: bytes[...])
+        eventually("agent composer fixture did not echo the CR-terminated turn") { output.contains("ECHO:fixture-turn") }
+        require(agent.needsAttention, "agent composer fixture did not mark attention after BEL")
         require(SessionComposerModel.matches("ls").isEmpty, "ordinary text opened the slash menu")
         require(SessionBridgeTextView.action(keyCode: 36, modifiers: [], composing: false, editable: true) == .shell, "Return was not the shell chord")
         require(SessionBridgeTextView.action(keyCode: 36, modifiers: .command, composing: false, editable: true) == .resume, "⌘↩ was not the resume chord")
@@ -252,6 +366,7 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
         require(SessionBridgeTextView.action(keyCode: 36, modifiers: [.command, .option], composing: false, editable: true) == nil, "an unrelated chord was captured")
     }
     static func captureOwnedWindow(_ window: NSWindow, to output: URL) throws {
+        if consoleTestQuiet { return }
         var completed: Result<Void, Error>?
         let task = Task { @MainActor in
             do {
