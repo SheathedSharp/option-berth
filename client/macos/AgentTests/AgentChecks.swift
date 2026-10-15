@@ -31,6 +31,15 @@ enum AgentChecks {
         var sessions: [TerminalSession] = []
         do {
             try composerChecks()
+            try sessionPTYInputChecks()
+            try slashParserChecks()
+            try composerRouterChecks()
+            try composerAttachmentChecks()
+            try consoleAgentAttentionChecks()
+            try agentStreamReducerChecks()
+            try agentRowProjectorChecks()
+            try agentSessionFileGuardChecks()
+            try AgentStreamProcessChecks.run()
             try fm.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
             defer { try? fm.removeItem(at: root) }
             let tools = root.appendingPathComponent("tools")
