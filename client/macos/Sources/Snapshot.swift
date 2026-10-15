@@ -100,9 +100,9 @@ enum Snapshot {
                               width: width, height: height)
         if agentCode != 0 { return agentCode }
 
-        let left = TerminalSession(worktree: "/workspace/demo", title: "Shell · feature/api")
-        let right = TerminalSession(worktree: "/workspace/demo", title: "Codex · feature/api", kind: "agent:codex:native")
-        let nested = TerminalSession(worktree: "/workspace/demo", title: "Shell · tests")
+        let left = TerminalSession(worktree: "/workspace/demo", title: "Shell 1")
+        let right = TerminalSession(worktree: "/workspace/demo", title: "Shell 2")
+        let nested = TerminalSession(worktree: "/workspace/demo", title: "Shell 3")
         let layout = ConsoleWorkspace()
         layout.single(left.id, agent: false)
         do {
@@ -114,6 +114,27 @@ enum Snapshot {
                               to: url.appendingPathComponent("11-console-split.png").path,
                               width: width, height: height)
         if splitCode != 0 { return splitCode }
+
+        let slashCode = write(WorkspaceConsole(root: "/workspace/demo", frozen: true, frozenScene: .slashMenu),
+                              to: url.appendingPathComponent("10-console-slash.png").path,
+                              width: width, height: height)
+        if slashCode != 0 { return slashCode }
+        let noProviderCode = write(WorkspaceConsole(root: "/workspace/demo", frozen: true, frozenScene: .noProvider),
+                                    to: url.appendingPathComponent("10-console-no-provider.png").path,
+                                    width: width, height: height)
+        if noProviderCode != 0 { return noProviderCode }
+        let nativeCode = write(WorkspaceConsole(root: "/workspace/demo", frozen: true, frozenScene: .nativeAgent),
+                               to: url.appendingPathComponent("10-console-native-agent.png").path,
+                               width: width, height: height)
+        if nativeCode != 0 { return nativeCode }
+        let streamCode = write(WorkspaceConsole(root: "/workspace/demo", frozen: true, frozenScene: .streamDetail),
+                               to: url.appendingPathComponent("10-console-stream-detail.png").path,
+                               width: width, height: height)
+        if streamCode != 0 { return streamCode }
+        let mixedCode = write(WorkspaceConsole(root: "/workspace/demo", frozen: true, frozenScene: .streamMixed),
+                              to: url.appendingPathComponent("10-console-stream-mixed.png").path,
+                              width: width, height: height)
+        if mixedCode != 0 { return mixedCode }
 
         let proposal = GroupInitResult(path: "/Users/you/code/new-worktree/oberth.yaml",
                                        yaml: "name: new-worktree\nservices: []\n",

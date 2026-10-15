@@ -17,8 +17,14 @@ enum ClientAlert {
 
     static func apply(to alert: NSAlert, settings: UISettings = .shared) {
         let window = alert.window
+        let canvas = settings.resolvedCanvasNSColor()
         window.isOpaque = true
-        window.backgroundColor = NSColor(settings.canvasColor)
+        window.backgroundColor = canvas
         window.appearance = NSAppearance(named: settings.colorScheme == .dark ? .darkAqua : .aqua)
+        if let content = window.contentView {
+            content.wantsLayer = true
+            content.layer?.backgroundColor = canvas.cgColor
+            content.layer?.isOpaque = true
+        }
     }
 }

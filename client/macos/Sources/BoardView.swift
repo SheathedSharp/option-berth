@@ -149,6 +149,16 @@ struct BoardView: View {
                 }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .berthOpenGitPath)) { notification in
+            guard scrolls, let request = notification.object as? BerthGitPathRequest else { return }
+            let target = URL(fileURLWithPath: request.worktree).standardizedFileURL.resolvingSymlinksInPath().path
+            guard let project = services.projects.first(where: {
+                guard let root = $0.rootDir else { return false }
+                return URL(fileURLWithPath: root).standardizedFileURL.resolvingSymlinksInPath().path == target
+            }) else { return }
+            views.scope = .code(project.name)
+            git.openPath(request.path, project: project)
+        }
         .sheet(isPresented: $views.showingUpdates) { ReleaseUpdateSheet().clientWindowChrome() }
         .sheet(isPresented: $views.showingRecovery) {
             WorkspaceRecoverySheet(recovery: .shared) { root in views.scope = .console(root) }

@@ -8,6 +8,10 @@ struct PaneWorkspaceView: View {
     @ObservedObject var workspace: ConsoleWorkspace
     let agent: Bool
     var focusIntent: TerminalFocusIntent?
+    var dimTerminalCaret = false
+    var bridgePromptKeys = false
+    var onPromptKey: ((NSEvent) -> Void)?
+    var onSendCommandToAgent: ((CommandBlock) -> Void)?
     var compactSinglePane = false
     var frozen = false
     var frozenSessions: [TerminalSession] = []
@@ -71,7 +75,11 @@ struct PaneWorkspaceView: View {
                     .background(layout.focused == sessionID ? Ink.accentSoft : Ink.surface).disabled(frozen)
                 Hairline()
                 }
-                TerminalPaneBody(session: session, frozen: frozen, focusIntent: focusIntent)
+                TerminalPaneBody(session: session, frozen: frozen, focusIntent: focusIntent,
+                                 dimTerminalCaret: dimTerminalCaret && session.kind == "terminal",
+                                 bridgePromptKeys: bridgePromptKeys && session.kind == "terminal",
+                                 onPromptKey: onPromptKey,
+                                 onSendCommandToAgent: onSendCommandToAgent)
             }.frame(minWidth: 140, minHeight: 100)
             if frozen { return AnyView(pane) }
             return AnyView(pane

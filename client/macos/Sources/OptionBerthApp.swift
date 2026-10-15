@@ -124,6 +124,7 @@ struct OptionBerthApp: App {
                     recovery.loadOnce()
                     store.start()
                     services.start()
+                    ConsoleAgentAlerts.shared.setEnabled(settings.consoleAgentNotifications)
                 }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in recovery.saveNow() }
                 .onDisappear {

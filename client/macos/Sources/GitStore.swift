@@ -32,6 +32,8 @@ final class GitStore: ObservableObject {
     private var lastOverviewAt = Date.distantPast
     private var lastTreeAt = Date.distantPast
     private var lastGraphAt = Date.distantPast
+    private var pendingSelectPath: String?
+    private var pendingSelectProject: BerthGroup?
     private let isFixture: Bool
 
     init() { isFixture = false }
@@ -90,6 +92,14 @@ final class GitStore: ObservableObject {
         }
     }
 
+    func openPath(_ path: String, project: BerthGroup?) {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        pendingSelectPath = trimmed
+        pendingSelectProject = project
+        loadTree(project: project, force: true)
+    }
+
     func loadTree(project: BerthGroup?, force: Bool = false) {
         guard !isFixture, let requestedRoot = prepare(project) else { return }
         guard !treeInFlight,
@@ -110,7 +120,17 @@ final class GitStore: ObservableObject {
                     self.overview = value.overview
                     self.problem = nil
                     self.lastOverviewAt = Date()
-                    if let path = self.selectedPath {
+                    if let pending = self.pendingSelectPath {
+                        self.pendingSelectPath = nil
+                        let project = self.pendingSelectProject
+                        self.pendingSelectProject = nil
+                        if let file = value.files.first(where: { $0.path == pending }) {
+                            self.select(file, project: project)
+                        } else {
+                            self.selectedPath = pending
+                            self.readPatch(pending, root: requestedRoot)
+                        }
+                    } else if let path = self.selectedPath {
                         if value.files.contains(where: { $0.path == path }) {
                             self.readPatch(path, root: requestedRoot)
                         } else {

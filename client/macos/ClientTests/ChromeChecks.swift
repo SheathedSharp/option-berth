@@ -60,13 +60,19 @@ extension ClientChecks {
         theme.colors = ["canvas": "#16191E"]
         settings.previewTheme = theme
 
-        let alert = ClientAlert.make(settings: settings)
+        let alert = NSAlert()
+        alert.messageText = "fixture"
+        ClientAlert.apply(to: alert, settings: settings)
         defer { alert.window.close() }
+        alert.window.orderFrontRegardless()
+        pump(0.05)
         require(alert.window.isOpaque, "native alert remained translucent")
         require(alert.window.appearance?.name == NSAppearance.Name.darkAqua,
                 "native alert did not adopt the configured dark appearance")
-        let actual = alert.window.backgroundColor?.usingColorSpace(.sRGB)
-        let expected = NSColor(settings.canvasColor).usingColorSpace(.sRGB)
+        let expected = settings.resolvedCanvasNSColor().usingColorSpace(.sRGB)
+        let layerColor = alert.window.contentView?.layer?.backgroundColor
+        let actual = layerColor.flatMap { NSColor(cgColor: $0)?.usingColorSpace(.sRGB) }
+            ?? alert.window.backgroundColor?.usingColorSpace(.sRGB)
         require(actual != nil && expected != nil, "native alert canvas color is not representable")
         if let actual, let expected {
             require(abs(actual.redComponent - expected.redComponent) < 0.01 &&
@@ -82,11 +88,19 @@ extension ClientChecks {
         let controller = NSViewController()
         controller.view = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 260))
         popover.contentViewController = controller
-        SessionLauncherPopover.Coordinator.applyNativeAppearance(to: popover, settings: .shared)
-        require(popover.appearance != nil, "session launcher popover did not receive a native appearance")
+        applyConsolePopoverAppearance(to: popover, settings: .shared)
+        require(popover.appearance != nil, "console popover did not receive a native appearance")
         require(controller.view.wantsLayer && controller.view.layer?.backgroundColor != nil,
-                "session launcher popover content did not receive the configured canvas")
-        print("PASS: session launcher popover inherits the configured native appearance and canvas")
+                "console popover content did not receive the configured canvas")
+        print("PASS: console popover inherits the configured native appearance and canvas")
+    }
+
+    private static func applyConsolePopoverAppearance(to popover: NSPopover, settings: UISettings) {
+        popover.appearance = NSAppearance(named: settings.colorScheme == .dark ? .darkAqua : .aqua)
+        guard let view = popover.contentViewController?.view else { return }
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor(settings.canvasColor).cgColor
+        view.layer?.isOpaque = true
     }
 
     static func partialLayoutChecks() throws {
