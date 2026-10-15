@@ -20,11 +20,16 @@
     },
     "shellIntegration": {
       "type": ["boolean", "null"],
-      "description": "Only new supported zsh sessions; never restarts running PTYs."
+      "description": "Only new supported zsh/bash/fish sessions; never restarts running PTYs."
     },
     "sidebarWidth": { "type": ["number", "null"], "minimum": 140, "maximum": 320 },
     "servicesDetailWidth": { "type": ["number", "null"], "minimum": 340, "maximum": 500 },
     "gitDetailWidth": { "type": ["number", "null"], "minimum": 340, "maximum": 500 },
+    "consoleAgentWidth": { "type": ["number", "null"], "minimum": 240, "maximum": 520 },
+    "consoleAgentNotifications": {
+      "type": ["boolean", "null"],
+      "description": "Structured Agent turn/request alerts and Dock badge when the app is in the background; default off."
+    },
     "defaultAgent": {
       "enum": ["codex", "claude", "opencode", "deepseek", "pi", null],
       "description": "Default for new worktree UI state; existing drafts and selections are unchanged."

@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "reduceMotion": true,
   "sidebarWidth": 220,
-  "shellIntegration": false,
+  "shellIntegration": true,
   "defaultAgent": "codex",
   "servicesDetailWidth": 420,
   "gitDetailWidth": 380

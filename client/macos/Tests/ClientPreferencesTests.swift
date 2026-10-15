@@ -21,12 +21,17 @@ import Foundation
             let value = try decode("{\"schemaVersion\":1,\"sidebarWidth\":\(width)}")
             expect(value.sidebarWidth == Double(width), "valid width rejected")
         }
+        for width in [240, 300, 520] {
+            let value = try decode("{\"schemaVersion\":1,\"consoleAgentWidth\":\(width)}")
+            expect(value.consoleAgentWidth == Double(width), "valid console agent width rejected")
+        }
         let optional = try decode(#"{"schemaVersion":1,"reduceMotion":null,"shellIntegration":false,"sidebarWidth":null,"defaultAgent":null}"#)
         expect(optional.reduceMotion == nil && optional.shellIntegration == false && optional.sidebarWidth == nil && optional.defaultAgent == nil, "null optional must mean unset")
         for text in [#"{}"#, #"{"schemaVersion":2}"#, #"{"schemaVersion":true}"#,
                      #"{"schemaVersion":1,"reduceMotion":1}"#, #"{"schemaVersion":1,"reduceMotion":"true"}"#,
                      #"{"schemaVersion":1,"shellIntegration":0}"#, #"{"schemaVersion":1,"shellIntegration":{}}"#,
                      #"{"schemaVersion":1,"sidebarWidth":139}"#, #"{"schemaVersion":1,"sidebarWidth":321}"#,
+                     #"{"schemaVersion":1,"consoleAgentWidth":239}"#, #"{"schemaVersion":1,"consoleAgentWidth":521}"#,
                      #"{"schemaVersion":1,"sidebarWidth":true}"#, #"{"schemaVersion":1,"sidebarWidth":"220"}"#,
                      #"{"schemaVersion":1,"defaultAgent":"custom-shell"}"#, #"{"schemaVersion":1,"defaultAgent":[]}"#,
                      #"{"schemaVersion":1,"reduceMotoin":true}"#] {

@@ -34,12 +34,17 @@ def main() -> None:
         for metadata, valid in [("file:///fixture/local.schema.json", True), ("https://invalid.example/not-fetched", True),
                                 (None, False), (7, False), ("", False), ("x\n", False)]:
             case(kind, {"schemaVersion": 1, "$schema": metadata}, valid, "inert metadata")
-    for key in ["sidebarWidth", "servicesDetailWidth", "gitDetailWidth"]:
-        low, high = (140, 320) if key == "sidebarWidth" else (340, 500)
+    for key in ["sidebarWidth", "servicesDetailWidth", "gitDetailWidth", "consoleAgentWidth"]:
+        if key == "sidebarWidth":
+            low, high = 140, 320
+        elif key == "consoleAgentWidth":
+            low, high = 240, 520
+        else:
+            low, high = 340, 500
         for value, valid in [(low, True), (high, True), (low + .5, True), (None, True),
                              (low - 1, False), (high + 1, False), (True, False), (str(low), False), ([], False)]:
             case("settings", {"schemaVersion": 1, key: value}, valid, key)
-    for key in ("reduceMotion", "shellIntegration"):
+    for key in ("reduceMotion", "shellIntegration", "consoleAgentNotifications"):
         for value in (None, True, False, 0, 1, "true"):
             case("settings", {"schemaVersion": 1, key: value}, value is None or type(value) is bool, key)
     for value in (None, "codex", "claude", "opencode", "deepseek", "pi", "unknown", []):

@@ -68,11 +68,16 @@ struct ClientPreferencesConfiguration: ClientConfigurationDocument {
     var sidebarWidth: Double?
     var servicesDetailWidth: Double?
     var gitDetailWidth: Double?
+    var consoleAgentWidth: Double?
+    var consoleAgentNotifications: Bool?
     var defaultAgent: String?
-    static let keys: Set<String> = ["schemaVersion", "reduceMotion", "shellIntegration", "sidebarWidth", "servicesDetailWidth", "gitDetailWidth", "defaultAgent"]
+    static let keys: Set<String> = ["schemaVersion", "reduceMotion", "shellIntegration", "sidebarWidth", "servicesDetailWidth", "gitDetailWidth", "consoleAgentWidth", "consoleAgentNotifications", "defaultAgent"]
     func validate() throws {
         guard schemaVersion == 1 else { throw ClientConfigurationError.invalid("settings.schemaVersion must be 1") }
         if let sidebarWidth, !sidebarWidth.isFinite || !(140...320).contains(sidebarWidth) { throw ClientConfigurationError.invalid("settings.sidebarWidth must be between 140 and 320") }
+        if let consoleAgentWidth, !consoleAgentWidth.isFinite || !(240...520).contains(consoleAgentWidth) {
+            throw ClientConfigurationError.invalid("settings.consoleAgentWidth must be between 240 and 520")
+        }
         for pane in ClientDetailPane.allCases {
             if let width = pane.configured(in: self), !width.isFinite || !ClientDetailPane.range.contains(width) {
                 throw ClientConfigurationError.invalid("settings.\(pane.rawValue)DetailWidth must be between 340 and 500")

@@ -37,8 +37,10 @@ enum ConfigurationDocument: String, CaseIterable, Identifiable {
           // "sidebarWidth": 220, // 140–320 点
           // "servicesDetailWidth": 380, // 340–500 点
           // "gitDetailWidth": 420, // 340–500 点
-          // "shellIntegration": true, // 仅影响新开的 zsh
+          // "consoleAgentWidth": 300, // 240–520 点（会话页 Agent 栏）
+          // "shellIntegration": true, // 仅影响新开的 zsh/bash/fish
           // "defaultAgent": "codex", // 也可 claude/opencode/deepseek/pi
+          // "consoleAgentNotifications": false, // 结构化 Agent 后台通知与 Dock 角标
         }
         """ + "\n"
         case .keybindings: return """

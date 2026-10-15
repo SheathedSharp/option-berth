@@ -1,4 +1,5 @@
 import AppKit
+import BerthTerminal
 import SwiftUI
 
 /// Paper defaults + explicit user files. Files take precedence and are never
@@ -29,10 +30,14 @@ final class UISettings: ObservableObject {
     @Published var previewTheme: ThemeConfiguration?
     @Published private var legacy = ThemeConfiguration()
     @Published private var sidebarOverride: Double?
+    @Published private var consoleAgentOverride: Double?
     @Published private var detailOverrides: [ClientDetailPane: Double] = [:]
     private var legacyDetails: [ClientDetailPane: Double] = [:]
     @Published private var legacyShellIntegration = false
+    @Published private var legacyAgentNotifications = false
     private var legacySidebarWidth: Double = 172
+    private var legacyConsoleAgentWidth: Double = 300
+    static let consoleAgentWidthRange: ClosedRange<Double> = 240...520
     private let defaults: UserDefaults
     private var monitor: ClientConfigurationMonitor?
     let configurationDirectory: URL?
@@ -55,6 +60,10 @@ final class UISettings: ObservableObject {
         if let width = defaults.object(forKey: "railWidth") as? Double, width.isFinite {
             legacySidebarWidth = min(max(width, 140), 320)
         }
+        if let width = defaults.object(forKey: "console.agentWidth.v1") as? Double, width.isFinite {
+            legacyConsoleAgentWidth = min(max(width, Self.consoleAgentWidthRange.lowerBound),
+                                          Self.consoleAgentWidthRange.upperBound)
+        }
         // Read the shared legacy width once for each module. Future drags write
         // separate keys; never rewrite the old shared value or the user file.
         for pane in ClientDetailPane.allCases {
@@ -64,7 +73,17 @@ final class UISettings: ObservableObject {
             legacyDetails[pane] = raw.map { $0.isFinite && $0 >= ClientDetailPane.range.lowerBound
                 ? min($0, ClientDetailPane.range.upperBound) : fallback } ?? fallback
         }
-        legacyShellIntegration = defaults.bool(forKey: "terminal.shellIntegration.v1")
+        if defaults.object(forKey: "console.agentNotifications.v1") != nil {
+            legacyAgentNotifications = defaults.bool(forKey: "console.agentNotifications.v1")
+        }
+        if defaults.object(forKey: "terminal.shellIntegration.v1") != nil {
+            legacyShellIntegration = defaults.bool(forKey: "terminal.shellIntegration.v1")
+        } else {
+            let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+            if ShellIntegrationLease.supports(executable: shell) {
+                legacyShellIntegration = true
+            }
+        }
         if let configurationDirectory {
             let observer = ClientConfigurationMonitor(directory: configurationDirectory) { [weak self] in self?.applyConfiguration($0) }
             configuration = observer.initial; monitor = observer
@@ -74,12 +93,15 @@ final class UISettings: ObservableObject {
         // A manual resize remains local until this field changes. Other config
         // edits cannot move a divider under the user's pointer.
         if next.preferences.sidebarWidth != configuration.preferences.sidebarWidth { sidebarOverride = nil }
+        if next.preferences.consoleAgentWidth != configuration.preferences.consoleAgentWidth { consoleAgentOverride = nil }
         for pane in ClientDetailPane.allCases {
             if pane.configured(in: next.preferences) != pane.configured(in: configuration.preferences) {
                 detailOverrides[pane] = nil
             }
         }
         configuration = next
+        let notify = consoleAgentNotifications
+        Task { @MainActor in ConsoleAgentAlerts.shared.setEnabled(notify) }
     }
     func reloadConfiguration() { monitor?.reload() }
     var sidebarWidth: Double {
@@ -91,6 +113,18 @@ final class UISettings: ObservableObject {
                 legacySidebarWidth = value; defaults.set(value, forKey: "railWidth")
             }
             sidebarOverride = value
+        }
+    }
+    var consoleAgentWidth: Double {
+        get { consoleAgentOverride ?? configuration.preferences.consoleAgentWidth ?? legacyConsoleAgentWidth }
+        set {
+            guard newValue.isFinite else { return }
+            let value = min(max(newValue, Self.consoleAgentWidthRange.lowerBound), Self.consoleAgentWidthRange.upperBound)
+            if configuration.preferences.consoleAgentWidth == nil {
+                legacyConsoleAgentWidth = value
+                defaults.set(value, forKey: "console.agentWidth.v1")
+            }
+            consoleAgentOverride = value
         }
     }
     func detailWidth(for pane: ClientDetailPane) -> Double {
@@ -113,7 +147,31 @@ final class UISettings: ObservableObject {
             legacyShellIntegration = newValue; defaults.set(newValue, forKey: "terminal.shellIntegration.v1")
         }
     }
+    var consoleAgentNotifications: Bool {
+        get { configuration.preferences.consoleAgentNotifications ?? legacyAgentNotifications }
+        set {
+            guard configuration.preferences.consoleAgentNotifications == nil else { return }
+            legacyAgentNotifications = newValue
+            defaults.set(newValue, forKey: "console.agentNotifications.v1")
+            Task { @MainActor in ConsoleAgentAlerts.shared.setEnabled(newValue) }
+        }
+    }
     private var theme: ThemeConfiguration { previewTheme ?? configuration.theme }
+    /// sRGB canvas for AppKit windows; matches `token("canvas")` without SwiftUI→NSColor drift.
+    func resolvedCanvasNSColor() -> NSColor {
+        nativeTokenNSColor("canvas")
+    }
+    private func nativeTokenNSColor(_ name: String) -> NSColor {
+        let hex: UInt32 = {
+            if let text = theme.colors?[name], let value = ThemeConfiguration.hex(text) { return value }
+            if name == "accent", let text = legacy.colors?[name], let value = ThemeConfiguration.hex(text) { return value }
+            return ThemeConfiguration.paper[name] ?? ThemeConfiguration.paper["ink"]!
+        }()
+        return NSColor(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
+                       green: CGFloat((hex >> 8) & 0xFF) / 255,
+                       blue: CGFloat(hex & 0xFF) / 255,
+                       alpha: 1)
+    }
     var themeFilePresent: Bool { configuration.themeFilePresent }
     var colorScheme: ColorScheme { theme.appearance == "dark" ? .dark : .light }
     var interfaceFontName: String {
