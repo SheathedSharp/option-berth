@@ -25,6 +25,11 @@ var sessionUUID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 var openCodeID = regexp.MustCompile(`^ses_[A-Za-z0-9]{8,128}$`)
 var cliVersion = regexp.MustCompile(`^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$`)
 
+// InspectResume reads only an explicitly selected regular file for stream resume.
+func InspectResume(provider, path, worktree string) (*ResumeReference, error) {
+	return inspectResume(provider, path, worktree)
+}
+
 // inspectResume reads only an explicitly selected regular file. It does not scan
 // another application's history, create a conversation, or guess the last ID.
 func inspectResume(provider, path, worktree string) (*ResumeReference, error) {

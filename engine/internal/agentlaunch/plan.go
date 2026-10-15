@@ -17,6 +17,7 @@ type Provider struct {
 	Command      string `json:"command"`
 	Installed    bool   `json:"installed"`
 	NativePrompt bool   `json:"native_prompt"`
+	Stream       bool   `json:"stream"`
 	Note         string `json:"note,omitempty"`
 	ResumeFile   bool   `json:"resume_file"`
 }
