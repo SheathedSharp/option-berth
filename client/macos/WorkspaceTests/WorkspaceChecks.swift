@@ -12,9 +12,12 @@ import BerthTerminal
     }
     @MainActor static func main() throws {
         parserChecks()
+        promptLineCaptureChecks()
         try layoutChecks()
         try archiveChecks()
         try shellChecks()
+        try bashShellChecks()
+        try fishShellChecks()
     }
     static func parserChecks() {
         let n = "nonce"
@@ -41,6 +44,12 @@ import BerthTerminal
         require(parser.revision == revision, "ordinary output republished command history")
         parser.clear(); require(parser.blocks.isEmpty, "clear failed")
         print("PASS: 32 chunk boundaries, OSC BEL/ST, foreign nonce, bounded history/frame, unknown exit")
+    }
+    static func promptLineCaptureChecks() {
+        require(ShellPromptLineCapture.extractCommand(from: "fixture> echo", seed: "ech") == "echo", "seed-aligned prompt tail")
+        require(ShellPromptLineCapture.extractCommand(from: "% git status", seed: "git") == "git status", "percent prompt")
+        require(ShellPromptLineCapture.extractCommand(from: "noise", seed: "git") == nil, "unrelated line without seed")
+        print("PASS: shell prompt line capture heuristics")
     }
     @MainActor static func shellChecks() throws {
         let fm = FileManager.default
@@ -82,5 +91,57 @@ import BerthTerminal
         let after = try String(contentsOf: profile, encoding: .utf8)
         require(after == original, "user profile modified")
         print("PASS: real isolated zsh PTY command/exit markers, existing prompt hooks after success/failure, original rc retained, native process exit")
+    }
+    @MainActor static func bashShellChecks() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("bash-shell-check-" + UUID().uuidString)
+        try fm.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? fm.removeItem(at: root) }
+        let profile = root.appendingPathComponent(".bashrc")
+        try "export OBERTH_BASH_FIXTURE=retained\nPS1='bash-fixture> '\n".write(to: profile, atomically: true, encoding: .utf8)
+        let env = ["HOME": root.path, "PATH": "/usr/bin:/bin", "SHELL": "/bin/bash", "TMOUT": "15"]
+        let session = TerminalSession(worktree: root.path)
+        try session.start(executable: "/bin/bash", arguments: ["-i"], environment: env, shellIntegration: true)
+        defer { if session.isActive { session.stop(force: true); eventually("bash fixture cleanup") { !session.isActive } } }
+        session.terminal.send(source: session.terminal, data: Array("false\r".utf8)[...])
+        eventually("bash command block never completed") { session.commandBlocks.last?.exitCode == 1 }
+        require(session.commandBlocks.last?.command == "false", "bash preexec text missing")
+        session.terminal.send(source: session.terminal, data: Array("[[ $OBERTH_BASH_FIXTURE == retained ]]\r".utf8)[...])
+        eventually("bash original profile not sourced") { session.commandBlocks.count >= 2 && session.commandBlocks.last?.exitCode == 0 }
+        session.terminal.send(source: session.terminal, data: Array("exit\r".utf8)[...])
+        eventually("integrated bash did not exit") { !session.isActive }
+        let after = try String(contentsOf: profile, encoding: .utf8)
+        require(after.contains("OBERTH_BASH_FIXTURE"), "user bash profile modified")
+        print("PASS: isolated bash PTY integration markers and profile retention")
+    }
+    @MainActor static func fishShellChecks() throws {
+        let candidates = ["/opt/homebrew/bin/fish", "/usr/local/bin/fish", "/usr/bin/fish"]
+        guard let fish = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+            print("SKIP: fish not installed for shell integration check")
+            return
+        }
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("fish-shell-check-" + UUID().uuidString)
+        try fm.createDirectory(at: root, withIntermediateDirectories: false)
+        let configRoot = root.appendingPathComponent(".config/fish", isDirectory: true)
+        try fm.createDirectory(at: configRoot, withIntermediateDirectories: true)
+        let userConfig = configRoot.appendingPathComponent("config.fish")
+        try "set -gx OBERTH_FISH_FIXTURE retained\n".write(to: userConfig, atomically: true, encoding: .utf8)
+        defer { try? fm.removeItem(at: root) }
+        let env = ["HOME": root.path, "XDG_CONFIG_HOME": root.appendingPathComponent(".config").path,
+                   "PATH": "/usr/bin:/bin", "SHELL": fish, "TMOUT": "15"]
+        let session = TerminalSession(worktree: root.path)
+        try session.start(executable: fish, arguments: ["-i"], environment: env, shellIntegration: true)
+        defer { if session.isActive { session.stop(force: true); eventually("fish fixture cleanup") { !session.isActive } } }
+        session.terminal.send(source: session.terminal, data: Array("false\r".utf8)[...])
+        eventually("fish command block never completed") { session.commandBlocks.last?.exitCode == 1 }
+        require(session.commandBlocks.last?.command == "false", "fish preexec text missing")
+        session.terminal.send(source: session.terminal, data: Array("test $OBERTH_FISH_FIXTURE = retained\r".utf8)[...])
+        eventually("fish user config not sourced") { session.commandBlocks.count >= 2 && session.commandBlocks.last?.exitCode == 0 }
+        session.terminal.send(source: session.terminal, data: Array("exit\r".utf8)[...])
+        eventually("integrated fish did not exit") { !session.isActive }
+        let after = try String(contentsOf: userConfig, encoding: .utf8)
+        require(after.contains("OBERTH_FISH_FIXTURE"), "user fish config modified")
+        print("PASS: isolated fish PTY integration markers and config retention")
     }
 }
