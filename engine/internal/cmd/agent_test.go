@@ -78,3 +78,32 @@ func TestAgentRunRejectsPlanFlagsBeforeReadingInput(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentStreamFakeEmitsSessionStarted(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("BERTH_AGENT_STREAM_FAKE", "codex")
+	command := newAgentCommand()
+	command.SetArgs([]string{"stream", "codex", "--worktree", root})
+	command.SetIn(strings.NewReader(`{"v":1,"type":"turn.start","id":"c1","text":"hello"}` + "\n"))
+	output := captureStdout(t, func() {
+		if err := command.Execute(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(output, `"type":"session.started"`) || !strings.Contains(output, `"type":"turn.completed"`) {
+		t.Fatalf("unexpected stream output: %s", output)
+	}
+}
+
+func TestAgentListJSONIncludesStreamFlag(t *testing.T) {
+	command := newAgentCommand()
+	command.SetArgs([]string{"list", "--json"})
+	output := captureStdout(t, func() {
+		if err := command.Execute(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(output, `"stream": true`) {
+		t.Fatalf("expected stream flag for codex/claude, got %s", output)
+	}
+}
