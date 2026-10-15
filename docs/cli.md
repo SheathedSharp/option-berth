@@ -299,6 +299,16 @@ Windows currently supports plan/list, not native process handoff. Merely finding
 or a particular installed version; a provider failure remains a provider failure, never a silent shell fallback.
 
 
+### oberth agent stream
+
+`oberth agent stream <provider> --worktree <path> [--resume-file <path>]` 启动结构化桥进程：
+stdin 每行一条命令、stdout 每行一个事件，均为带 `"v":1` 的 NDJSON；stderr 只写诊断。
+契约见 `engine/docs/schema/agent-stream.schema.json` 与 [console-plan.md](console-plan.md) 第 4.6 节。
+`agent list --json` 的 `"stream": true|false` 表示本构建是否包含该 provider 的流式适配器（Codex、Claude Code、OpenCode ACP、Pi RPC）。
+生产环境需已安装对应 CLI；自动化测试可设 `BERTH_AGENT_STREAM_FAKE=<provider>` 使用纯 NDJSON 假驱动，或对
+`go test` 注入 `LookPath` 指向 `engine/internal/agentstream/testdata/fake*` 替身。
+本构建含 Codex `app-server`、Claude `stream-json`、OpenCode `acp` 与 Pi `--mode rpc` live 桥；未安装 CLI 时首轮 `turn.start` 返回 `unsupported`。
+
 ### Explicit native continuation / 显式原生续接
 
 `oberth agent plan <provider> --worktree /workspace/project --resume-file /absolute/session-file --json`
