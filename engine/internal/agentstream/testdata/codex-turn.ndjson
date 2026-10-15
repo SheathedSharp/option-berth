@@ -1,0 +1,9 @@
+{"v":1,"type":"session.started","provider":"codex","protocol":"codex-app-server","worktree":"/workspace/demo","provider_session_id":"thr_123","session_file":"/tmp/session.jsonl","capabilities":["interrupt","approvals","turn_diff"]}
+{"v":1,"type":"turn.started","turn":"t1","input":"修复登录页的单元测试"}
+{"v":1,"type":"item.started","turn":"t1","item":{"id":"i1","kind":"command","command":"npm test","cwd":"/workspace/demo","status":"running"}}
+{"v":1,"type":"item.updated","turn":"t1","item":"i2","kind":"message","text_delta":"先运行测试确认失败原因。"}
+{"v":1,"type":"item.completed","turn":"t1","item":{"id":"i1","kind":"command","status":"failed","exit_code":1,"duration_ms":12034,"output_tail":"FAIL"}}
+{"v":1,"type":"request.opened","turn":"t1","request":{"id":"r7","kind":"command","command":"rm -rf .cache","cwd":"/workspace/demo","reason":"cleanup","decisions":["allow","allow_session","deny"]}}
+{"v":1,"type":"request.closed","request":"r7","decision":"allow","by":"client"}
+{"v":1,"type":"turn.diff","turn":"t1","files":[{"path":"src/login.ts","added":12,"removed":3}],"patch":"diff","truncated":false}
+{"v":1,"type":"turn.completed","turn":"t1","outcome":"completed"}
