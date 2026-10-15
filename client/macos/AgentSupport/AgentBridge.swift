@@ -9,15 +9,24 @@ public struct ExternalAgent: Decodable, Identifiable {
     public let nativePrompt: Bool
     public let note: String?
     public let resumeFile: Bool?
+    public let stream: Bool?
     public var supportsResume: Bool { resumeFile == true }
+    public var supportsStream: Bool { stream == true }
     enum CodingKeys: String, CodingKey {
-        case id, name, command, installed, note
+        case id, name, command, installed, note, stream
         case nativePrompt = "native_prompt"
         case resumeFile = "resume_file"
     }
-    public init(id: String, name: String, command: String, installed: Bool, nativePrompt: Bool, note: String? = nil, resumeFile: Bool = false) {
+    public init(id: String, name: String, command: String, installed: Bool, nativePrompt: Bool,
+                note: String? = nil, resumeFile: Bool = false, stream: Bool = false) {
         self.id = id; self.name = name; self.command = command; self.installed = installed
-        self.nativePrompt = nativePrompt; self.note = note; self.resumeFile = resumeFile
+        self.nativePrompt = nativePrompt; self.note = note; self.resumeFile = resumeFile; self.stream = stream
+    }
+
+    public static func streamArguments(provider: String, root: String, resumeFile: String? = nil) -> [String] {
+        var args = ["agent", "stream", provider, "--worktree", root]
+        if let resumeFile { args += ["--resume-file", resumeFile] }
+        return args
     }
 }
 
