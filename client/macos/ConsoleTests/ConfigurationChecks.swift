@@ -87,32 +87,12 @@ else:
         }
         func openShell() {
             dismissCreationPopoverIfPresent()
-            var picker: NSPopUpButton?
-            for attempt in 0..<4 {
-                press("console.newSession")
-                pump(attempt == 0 ? 0.25 : 0.15)
-                let end = Date().addingTimeInterval(5)
-                while picker == nil, Date() < end {
-                    pump(0.05)
-                    picker = launchSurfaces().flatMap { ConsoleChecks.find(NSPopUpButton.self, in: $0) }
-                        .first { $0.accessibilityIdentifier() == "console.launchTarget" }
-                }
-                if picker != nil { break }
-                dismissCreationPopoverIfPresent()
-            }
-            require(picker != nil, "unified target picker missing")
-            guard let picker, let item = picker.itemArray.first(where: { $0.representedObject as? String == "shell" }),
-                  let action = picker.action else { fatalError("Shell target unavailable") }
-            picker.select(item); NSApp.sendAction(action, to: picker.target, from: picker)
-            pump(0.12)
-            var launch: NSButton?
-            eventually("unified Shell launch action missing") {
-                launch = launchSurfaces().flatMap { ConsoleChecks.find(NSButton.self, in: $0) }
-                    .first { $0.accessibilityIdentifier() == "console.launch" && $0.title == "打开 Shell" }
-                return launch?.isEnabled == true
-            }
-            launch?.performClick(nil)
+            press("console.newShell")
             pump(0.2)
+        }
+        func backToShell() {
+            press("console.session." + shell.id.uuidString)
+            pump(0.15)
         }
         eventually("opening the worktree session did not present a shell") {
             registry.inWorktree(root.path).contains { $0.kind == "terminal" && $0.isActive }
@@ -122,27 +102,92 @@ else:
         let process = shell.terminal.process
         eventually("shell surface was not attached") { shell.terminal.window === window && shell.terminal.bounds.width > 40 }
         pump(0.2)
-        let shellBounds = shell.terminal.bounds
+        var shellBounds = shell.terminal.bounds
         press("console.focusComposer")
         var editor: NSTextView?
         eventually("shell did not focus the session composer") {
             editor = find(NSTextView.self, in: host).first { $0.accessibilityIdentifier() == "console.sessionComposer" }
             return editor != nil && window.firstResponder === editor
         }
-        eventually("configured provider was not the composer default") {
-            find(NSButton.self, in: host).contains { $0.accessibilityIdentifier() == "console.agentChip" && $0.title == "Claude fixture" }
-        }
-        require(shell.terminal.bounds == shellBounds, "session composer resized the live shell")
-        require(registry.inWorktree(root.path).filter { $0.kind.hasPrefix("agent:") }.isEmpty, "focusing the composer launched an agent")
-        guard let editor else { fatalError("session composer missing") }
-        editor.insertText("configured fixture prompt", replacementRange: NSRange(location: NSNotFound, length: 0))
-        eventually("native composer did not keep its draft") { state.draft == "configured fixture prompt" }
         func chord(_ flags: NSEvent.ModifierFlags) {
+            guard let composerEditor = editor else { fatalError("session composer missing") }
             let submit = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
                 characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)!
-            if !window.performKeyEquivalent(with: submit) { window.sendEvent(submit) }
+            if window.firstResponder === composerEditor {
+                if !composerEditor.performKeyEquivalent(with: submit) { composerEditor.keyDown(with: submit) }
+            } else if !window.performKeyEquivalent(with: submit) {
+                window.sendEvent(submit)
+            }
         }
+        require(shell.terminal.caretColor == .clear, "composer-focused shell should hide the terminal caret")
+        state.draft = ""
+        window.makeFirstResponder(shell.terminal)
+        pump(0.08)
+        let typed = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+            characters: "z", charactersIgnoringModifiers: "z", isARepeat: false, keyCode: 6)!
+        NSApp.sendEvent(typed)
+        eventually("typing in the shell surface did not bridge into the composer") { state.draft == "z" }
+        backToShell()
+        state.resumeAgentID = nil
+        press("console.focusComposer")
+        pump(0.1)
+        window.makeFirstResponder(editor)
+        state.draft = "/bin/sleep 60"
+        chord([])
+        pump(0.25)
+        eventually("composer Enter did not start a foreground shell command") { shell.shellForegroundBusy }
+        require(shell.terminal.caretColor != .clear, "foreground command should show the terminal caret")
+        shell.terminal.send(source: shell.terminal, data: [0x03][...])
+        eventually("shell interrupt did not end the foreground command") { !shell.shellForegroundBusy }
+        press("console.focusComposer")
+        pump(0.15)
+        eventually("shell prompt did not hide the terminal caret again") { shell.terminal.caretColor == .clear }
+        shellBounds = shell.terminal.bounds
+        var shellFF: [UInt8] = []
+        shell.terminal.onOutboundBytes = { shellFF.append(contentsOf: $0) }
+        defer { shell.terminal.onOutboundBytes = nil }
+        guard let composerField = editor else { fatalError("session composer missing for control-L test") }
+        window.makeFirstResponder(composerField)
+        state.draft = ""
+        pump(0.08)
+        let controlL = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .control,
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+            characters: "l", charactersIgnoringModifiers: "l", isARepeat: false, keyCode: 37)!
+        if !composerField.performKeyEquivalent(with: controlL) {
+            composerField.keyDown(with: controlL)
+        }
+        eventually("composer control-L did not forward FF to the shell PTY") { shellFF.contains(0x0c) }
+        shellFF.removeAll()
+        state.draft = "ech"
+        pump(0.05)
+        let tab = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+            characters: "\t", charactersIgnoringModifiers: "\t", isARepeat: false, keyCode: 48)!
+        if !composerField.performKeyEquivalent(with: tab) {
+            composerField.keyDown(with: tab)
+        }
+        eventually("composer Tab did not forward draft plus HT to the shell PTY") {
+            shellFF.suffix(4) == Array("ech\t".utf8)
+        }
+        eventually("shell tab completion did not read the prompt line back into the composer") {
+            state.draft.hasPrefix("ech") && state.draft.count >= 3
+        }
+        state.draft = ""
+        composerField.string = ""
+        pump(0.05)
+        eventually("configured provider was not the composer default") {
+            state.providerID == "claude" && state.providerChosen
+        }
+        require(shell.terminal.bounds == shellBounds, "session composer resized the live shell")
+        require(registry.inWorktree(root.path).filter { $0.kind.hasPrefix("agent:") }.isEmpty, "focusing the composer launched an agent")
+        guard let composerEditor = editor else { fatalError("session composer missing") }
+        composerEditor.insertText("configured fixture prompt", replacementRange: NSRange(location: NSNotFound, length: 0))
+        eventually("native composer did not keep its draft") { state.draft == "configured fixture prompt" }
+        pump(0.75)
+        press("console.focusComposer")
+        pump(0.08)
         chord(.command)
         eventually("⌘↩ did not launch the first configured Agent through its plan") {
             registry.inWorktree(root.path).contains { $0.kind == "agent:claude:native" && $0.isActive }
@@ -157,20 +202,25 @@ else:
                 "new agent was not listed in the status column")
         var agentOutput = ""
         agent.terminal.onBytes = { agentOutput += String(decoding: $0, as: UTF8.self) }
-        window.makeFirstResponder(editor)
-        editor.insertText("second-turn", replacementRange: NSRange(location: NSNotFound, length: 0))
+        window.makeFirstResponder(composerEditor)
+        composerEditor.insertText("second-turn", replacementRange: NSRange(location: NSNotFound, length: 0))
         eventually("resume draft was not kept") { state.draft == "second-turn" }
         chord(.command)
-        eventually("⌘↩ did not deliver a new turn to the selected agent stdin") { agentOutput.contains("AGENT:second-turn") }
+        eventually("⌘↩ did not paste into the terminal agent") {
+            state.activeSelection == agent.id && state.draft.isEmpty && state.resumeAgentID == agent.id
+        }
+        agent.terminal.send(source: agent.terminal, data: Array("\n".utf8)[...])
+        eventually("⌘↩ paste plus Enter did not reach the agent stdin") { agentOutput.contains("AGENT:second-turn") }
         require(registry.inWorktree(root.path).filter { $0.kind.hasPrefix("agent:") }.count == 1, "⌘↩ opened another agent instead of resuming")
         require(agent.terminal.process === agentProcess && shell.terminal.process === process, "resume replaced a PTY")
-        require(state.activeSelection == shell.id, "resume switched the canvas into the agent GUI")
+        backToShell()
+        press("console.focusComposer")
+        eventually("return to shell did not restore the shell canvas") { state.activeSelection == shell.id }
         press("console.agentStatus." + agent.id.uuidString)
-        require(state.resumeAgentID == agent.id && state.activeSelection == shell.id, "status preview did not set resume target while keeping the shell canvas")
-        press("console.agentEnter." + agent.id.uuidString)
         ConsoleChecks.raiseTestWindow(NSApplication.shared, window)
         pump(0.12)
-        eventually("status enter did not attach the same agent session") {
+        require(state.resumeAgentID == agent.id, "agent row did not set resume target")
+        eventually("agent row did not attach the same agent session") {
             state.activeSelection == agent.id && agent.terminal.process === agentProcess
                 && (window.firstResponder === agent.terminal || ConsoleChecks.consoleTestQuiet)
         }
@@ -178,11 +228,16 @@ else:
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
             characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
         NSApp.sendEvent(escape)
-        eventually("Escape did not return to the live shell") {
-            state.activeSelection == shell.id && window.firstResponder === editor
-                && agent.isActive && agent.terminal.process === agentProcess
+        pump(0.05)
+        require(state.activeSelection == agent.id && agent.isActive && agent.terminal.process === agentProcess,
+                "Escape must stay in the agent TUI for the provider to handle")
+        backToShell()
+        eventually("return to shell after agent view did not restore the shell canvas") {
+            state.activeSelection == shell.id
         }
-        press("console.reenter." + agent.id.uuidString)
+        press("console.focusComposer")
+        pump(0.15)
+        press("console.agentStatus." + agent.id.uuidString)
         ConsoleChecks.raiseTestWindow(NSApplication.shared, window)
         pump(0.12)
         eventually("re-enter did not attach the same agent session") {
@@ -193,11 +248,14 @@ else:
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
             characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
         NSApp.sendEvent(escapeAgain)
-        eventually("Escape after re-enter did not return to the live shell") {
-            state.activeSelection == shell.id && window.firstResponder === editor
-                && agent.isActive && agent.terminal.process === agentProcess
-        }
-        editor.insertText("another-agent", replacementRange: NSRange(location: NSNotFound, length: 0))
+        pump(0.05)
+        require(state.activeSelection == agent.id && agent.isActive && agent.terminal.process === agentProcess,
+                "Escape after re-enter must stay in the agent TUI")
+        backToShell()
+        eventually("second return to shell did not restore the shell canvas") { state.activeSelection == shell.id }
+        press("console.focusComposer")
+        pump(0.15)
+        composerEditor.insertText("another-agent", replacementRange: NSRange(location: NSNotFound, length: 0))
         chord([.command, .shift])
         eventually("⇧⌘↩ did not launch a second agent session") {
             registry.inWorktree(root.path).filter { $0.kind.hasPrefix("agent:") }.count == 2
@@ -205,6 +263,19 @@ else:
         pump(0.15)
         shell.terminal.send(source: shell.terminal, data: Array("printf 'CONFIGURED-SHELL\\n'\n".utf8)[...])
         eventually("file-enabled shell integration did not produce command metadata") { shell.commandBlocks.contains { $0.command?.contains("CONFIGURED-SHELL") == true && $0.endedAt != nil } }
+        eventually("finished shell command should offer send-to-agent") {
+            find(NSButton.self, in: host).contains { $0.accessibilityIdentifier() == "console.commandBlock.sendToAgent" }
+        }
+        guard let sendToAgent = find(NSButton.self, in: host).first(where: {
+            $0.accessibilityIdentifier() == "console.commandBlock.sendToAgent"
+        }) else { fatalError("command block missing send-to-agent control") }
+        sendToAgent.performClick(nil)
+        eventually("send-to-agent should attach shell output to the composer") {
+            find(NSView.self, in: host).contains {
+                $0.accessibilityIdentifier() == "console.composerAttachment"
+                    && ($0.accessibilityValue() as? String)?.contains("CONFIGURED-SHELL") == true
+            }
+        }
         let bytes = try Data(contentsOf: configuration)
         require(String(decoding: bytes, as: UTF8.self).contains("claude"), "console modified the user's configuration")
         try Data(#"{"schemaVersion":1,"defaultAgent":"pi","shellIntegration":false}"#.utf8).write(to: configuration, options: .atomic)
@@ -212,11 +283,8 @@ else:
         require(state.providerID == "claude" && registry.workspace(later.path).providerID == "pi", "default Agent change rewrote existing console or missed the next one")
         require(shell.terminal.process === process && shell.isActive && agent.isActive, "configuration restarted a running PTY")
         dismissCreationPopoverIfPresent()
-        eventually("provider catalogue was not ready for a second shell") {
-            find(NSButton.self, in: host).contains { $0.accessibilityIdentifier() == "console.agentChip" }
-        }
         ConsoleChecks.raiseTestWindow(NSApplication.shared, window)
-        pump(0.25)
+        pump(0.5)
         openShell()
         if registry.inWorktree(root.path).filter({ $0.kind == "terminal" }).count < 2 {
             press("console.newShell")

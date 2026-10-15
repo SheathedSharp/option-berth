@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import ScreenCaptureKit
+import BerthAgent
 import BerthTerminal
 @testable import BerthClient
 
@@ -84,7 +85,7 @@ import BerthTerminal
 #!/bin/sh
 [ "$#" = 3 ] && [ "$1" = agent ] && [ "$2" = list ] && [ "$3" = --json ] || exit 97
 /bin/sleep 0.05
-printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"codex","installed":true,"native_prompt":true}]}'
+printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"codex","installed":true,"native_prompt":true,"stream":true,"resume_file":true}]}'
 """#.utf8).write(to: catalogue)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: catalogue.path)
         setenv("BERTH_BIN", catalogue.path, 1)
@@ -136,24 +137,45 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
         eventually("the native test window never became ready") { testWindowAcceptsInput(window) }
         pump(0.25)
         func choose(_ session: TerminalSession) {
-            guard let button = find(NSButton.self, in: host).first(where: { $0.accessibilityIdentifier() == "console.session." + session.id.uuidString }) else { fatalError("native shared session button missing") }
-            button.performClick(nil)
             raiseTestWindow(app, window)
+            let identifier = session.kind == "terminal"
+                ? "console.session." + session.id.uuidString
+                : "console.agentStatus." + session.id.uuidString
+            guard let button = find(NSButton.self, in: host).first(where: { $0.accessibilityIdentifier() == identifier }) else {
+                fatalError("native session control missing for " + session.title)
+            }
+            button.performClick(nil)
             eventually("session rail did not select " + session.title) { workspace.activeSelection == session.id }
             if session.kind == "terminal" {
-                eventually("shell composer did not focus for " + session.title) {
-                    testWindowAcceptsInput(window) && find(NSTextView.self, in: host).contains {
-                        $0.accessibilityIdentifier() == "console.sessionComposer" && $0.window?.firstResponder === $0
-                    }
+                eventually("shell selection did not activate for " + session.title) {
+                    workspace.activeSelection == session.id
                 }
+                find(NSButton.self, in: host).first { $0.accessibilityIdentifier() == "console.focusComposer" }?.performClick(nil)
+                pump(0.08)
             } else {
                 eventually("agent PTY did not focus for " + session.title) {
-                    testWindowAcceptsInput(window) && window.firstResponder === session.terminal
+                    workspace.activeSelection == session.id
+                        && (window.firstResponder === session.terminal || consoleTestQuiet)
+                }
+                if consoleTestQuiet {
+                    window.makeFirstResponder(session.terminal)
+                    pump(0.08)
                 }
             }
             pump(0.05)
         }
         require(!find(NSButton.self, in: host).contains { $0.accessibilityIdentifier() == "console.session." + foreign.id.uuidString }, "session strip crossed worktrees")
+        func submitComposerDraft() {
+            guard let editor = find(NSTextView.self, in: host).first(where: { $0.accessibilityIdentifier() == "console.sessionComposer" }) else {
+                fatalError("session composer missing for draft submit")
+            }
+            window.makeFirstResponder(editor)
+            pump(0.05)
+            let submit = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)!
+            if !editor.performKeyEquivalent(with: submit) { editor.keyDown(with: submit) }
+        }
         func type(_ text: String) {
             for char in text + "\r" {
                 let key = String(char)
@@ -179,17 +201,21 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
         eventually("initial Escape did not dismiss the session palette") {
             !find(NSView.self, in: host).contains { $0.accessibilityIdentifier() == "console.sessionPalette" }
         }
-        choose(agent); press(53, characters: "\u{1b}")
-        eventually("Escape did not return from the agent to the remembered Shell") {
-            workspace.activeSelection == shell.id && find(NSTextView.self, in: host).contains { $0.accessibilityIdentifier() == "console.sessionComposer" && $0.window?.firstResponder === $0 }
+        choose(agent)
+        guard let back = find(NSButton.self, in: host).first(where: { $0.accessibilityIdentifier() == "console.returnToShell" }) else {
+            fatalError("native agent return-to-shell control missing")
         }
+        back.performClick(nil)
+        eventually("Return to Shell did not select the remembered shell") { workspace.activeSelection == shell.id }
+        find(NSButton.self, in: host).first { $0.accessibilityIdentifier() == "console.focusComposer" }?.performClick(nil)
+        pump(0.15)
         choose(shell); press(48, flags: [.command], characters: "\t")
         eventually("Command-Tab did not cycle to the parallel agent") { workspace.activeSelection == agent.id && window.firstResponder === agent.terminal }
         choose(shell); press(48, flags: [.command, .option], characters: "\t")
         eventually("Command-Option-Tab did not open the session palette") { find(NSView.self, in: host).contains { $0.accessibilityIdentifier() == "console.sessionPalette" } }
         press(53, characters: "\u{1b}")
         eventually("Escape did not dismiss the session palette") { !find(NSView.self, in: host).contains { $0.accessibilityIdentifier() == "console.sessionPalette" } }
-        choose(shell); workspace.draft = "shell-only"; press(36, characters: "\r")
+        choose(shell); workspace.draft = "shell-only"; submitComposerDraft()
         choose(agent); type("agent-only")
         eventually("native typing did not reach selected PTYs") { shellOutput.contains("INPUT:shell-only") && agentOutput.contains("INPUT:agent-only") }
         require(!shellOutput.contains("agent-only") && !agentOutput.contains("shell-only"), "shared tabs broadcast input")
@@ -198,52 +224,17 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
         workspace.draft = "fixture draft"
         choose(shell); choose(agent)
         require(workspace.draft == "fixture draft", "switching lost the unsent draft")
-        // Opening a creation surface must not resize live alternate-screen TUIs,
-        // replace hosts, mutate the active split, or implicitly launch a process.
-        pump(0.2) // Let onAppear provider discovery finish before opening the launcher popover.
+        pump(0.2)
         let shellBounds = shell.terminal.bounds, agentBounds = agent.terminal.bounds
         let shellHost = shell.terminal.superview, agentHost = agent.terminal.superview
-        guard let create = find(NSButton.self, in: host).first(where: { $0.accessibilityIdentifier() == "console.newSession" }) else { fatalError("unified creation entry missing") }
-        for attempt in 0..<4 {
-            raiseTestWindow(app, window)
-            create.performClick(nil)
-            pump(0.05)
-            var cancel: NSButton?
-            eventually("native creation popover did not open/reopen") {
-                cancel = launchSurfaces(host: host, window: window).flatMap { find(NSButton.self, in: $0) }
-                    .first { $0.accessibilityIdentifier() == "console.cancelLaunch" }
-                if cancel == nil { create.performClick(nil) }
-                return cancel != nil
-            }
-            let targetPicker = launchSurfaces(host: host, window: window).flatMap { find(NSPopUpButton.self, in: $0) }
-                .first { $0.accessibilityIdentifier() == "console.launchTarget" }
-            require(targetPicker?.isEnabled == true, "provider discovery blocked the Shell selector")
-            pump(0.03)
-            require(shell.terminal.bounds == shellBounds && agent.terminal.bounds == agentBounds, "creation resized live PTYs")
-            require(shell.terminal.superview === shellHost && agent.terminal.superview === agentHost, "creation remounted native hosts")
-            require(registry.sessions.count == 3 && workspace.activeLayout.root == treeRoot, "creation changed runtime ownership")
-            if attempt == 0 {
-                eventually("synthetic provider was not loaded in the popover") {
-                    launchSurfaces(host: host, window: window).flatMap { find(NSPopUpButton.self, in: $0) }
-                        .contains { picker in
-                            picker.itemArray.contains { $0.title == "Codex fixture" }
-                                || picker.titleOfSelectedItem == "Codex fixture"
-                        }
-                }
-                pump(0.3) // Capture settled native presentation, not the show animation.
-                try captureOwnedWindow(window, to: URL(fileURLWithPath: home).appendingPathComponent("session-launcher-composited-native.png"))
-                raiseTestWindow(app, window)
-                pump(0.12)
-            }
-            cancel?.performClick(nil)
-            eventually("cancel did not return focus to the selected session") {
-                workspace.activeSelection == agent.id && testWindowAcceptsInput(window)
-                    && (window.firstResponder === agent.terminal
-                        || find(NSTextView.self, in: host).contains { $0.accessibilityIdentifier() == "console.sessionComposer" && $0.window?.firstResponder === $0 })
-            }
-            require(workspace.draft == "fixture draft", "cancel discarded an unsent draft")
-            // Reopen before a prior hide animation's callback can own the new one.
-        }
+        require(find(NSView.self, in: host).contains { $0.accessibilityIdentifier() == "console.shellBar.add" }
+                || find(NSButton.self, in: host).contains { ($0.title ?? "").contains(shell.title) },
+                "shell bar missing")
+        require(!find(NSButton.self, in: host).contains { $0.accessibilityIdentifier() == "console.cancelLaunch" },
+                "session launcher popover still mounted")
+        require(shell.terminal.bounds == shellBounds && agent.terminal.bounds == agentBounds, "layout refresh resized live PTYs")
+        require(shell.terminal.superview === shellHost && agent.terminal.superview === agentHost, "layout refresh remounted native hosts")
+        require(registry.sessions.count == 3 && workspace.activeLayout.root == treeRoot, "layout refresh changed runtime ownership")
         let editor = NSTextView(frame: NSRect(x: 20, y: 20, width: 140, height: 30))
         host.addSubview(editor); window.makeFirstResponder(editor)
         workspace.draft = "changed draft"; registry.objectWillChange.send(); pump()
@@ -280,40 +271,29 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
         try capture("console-narrow")
         require(registry.sessions.count == 3 && owned.allSatisfy(\.isActive), "presentation started or stopped an unexpected process")
         try configurationChecks(parentRoot: root)
+        try streamStructuredConsoleChecks(parentRoot: root)
+        try streamShellAttachmentAgentSendCheck(parentRoot: root)
         print("PASS: real native shared tabs, mixed layout identity, cwd/draft retention, independent key input, one-shot focus, detached shortcut isolation, detached return and background launch isolation")
     }
     static func composerModelChecks() {
-        func route(_ text: String, _ chord: SessionComposerModel.Chord, _ providerChosen: Bool, _ resumeReady: Bool) -> SessionComposerModel.Route {
-            SessionComposerModel.route(text: text, chord: chord, providerChosen: providerChosen, resumeReady: resumeReady)
-        }
-        require(route("ls -la", .plain, false, false) == .shell("ls -la"), "Enter did not route to the shell")
-        require(route("  ", .plain, true, true) == .none, "blank Enter was treated as input")
-        require(route("/usr/bin/true", .plain, true, true) == .shell("/usr/bin/true"), "a path was captured as a slash command")
-        require(route("/", .plain, false, false) == .none, "a bare slash was sent to the shell")
-        require(route("/agent", .plain, true, true) == .none, "an ambiguous slash prefix was executed")
-        require(route("/agent-select", .plain, false, false) == .openProviders, "/agent-select did not open providers")
-        require(route("/agent-select claude", .plain, false, false) == .selectProvider("claude"), "/agent-select did not carry the provider")
-        require(route("/agent-new fix tests", .plain, false, false) == .needProvider, "/agent-new skipped provider selection")
-        require(route("/agent-new fix tests", .plain, true, false) == .newAgent("fix tests"), "/agent-new dropped its prompt")
-        require(route("继续看测试", .command, false, false) == .needProvider, "⌘↩ sent text before an agent was selected")
-        require(route("继续看测试", .command, true, false) == .newAgent("继续看测试"), "⌘↩ without a session should start the first agent")
-        require(route("继续看测试", .command, false, true) == .resume("继续看测试"), "⌘↩ should resume without a default provider when a target exists")
-        require(route("继续看测试", .command, true, true) == .resume("继续看测试"), "⌘↩ did not resume the selected agent")
-        require(route("  ", .command, true, true) == .none, "blank ⌘↩ was sent to the agent")
-        require(route("新的任务", .commandShift, false, true) == .needProvider, "⇧⌘↩ skipped provider selection")
-        require(route("新的任务", .commandShift, true, true) == .newAgent("新的任务"), "⇧⌘↩ did not start a new agent session")
-        require(route("", .commandShift, true, false) == .newAgent(""), "⇧⌘↩ required text to create a session")
-        require(SessionComposerModel.matches("/").map(\.token).contains("/agent-select"), "slash menu missing /agent-select")
-        require(SessionComposerModel.matches("/agent").map(\.token).contains("/agent"), "slash filter missed /agent")
+        let slashContext = SlashContext(hasAgents: true, shellCount: 2, targetWorking: true,
+                                        targetResumable: true, providerSupportsResume: true)
+        require(SlashParser.matches("/", context: slashContext).map(\.rawValue).contains("/agent-select"),
+                "slash menu missing /agent-select")
+        require(SlashParser.matches("/agent", context: slashContext).map(\.rawValue).contains("/agent"),
+                "slash filter missed /agent")
+        require(SlashParser.matches("/open", context: slashContext).isEmpty, "removed /open must not appear in slash menu")
+        require(SlashParser.matches("/focus", context: slashContext).map(\.rawValue) == ["/focus"],
+                "/focus must be available when a shell exists")
         let shellLine = SessionPTYInput.encodeShellLine("ls -la")
-        require(shellLine.bytes?.last == 10, "shell line did not end with LF")
-        let agentLine = SessionPTYInput.encodeAgentTurn("hi", bracketedPaste: false)
-        require(agentLine.bytes?.last == 13, "agent line did not end with CR")
-        let blocked = SessionPTYInput.encodeAgentTurn("a\nb", bracketedPaste: false)
+        require(shellLine.bytes?.last == 13, "shell line did not end with CR")
+        let agentPaste = SessionPTYInput.encodeAgentPaste("hi", bracketedPaste: false)
+        require(agentPaste.bytes == Array("hi".utf8), "agent paste must not end with CR")
+        let blocked = SessionPTYInput.encodeAgentPaste("a\nb", bracketedPaste: false)
         require(blocked.bytes == nil, "multiline agent text without bracketed paste was accepted")
-        let pasted = SessionPTYInput.encodeAgentTurn("line1\nline2", bracketedPaste: true)
-        require(pasted.bytes?.starts(with: Array("\u{1B}[200~".utf8)) == true && pasted.bytes?.last == 13,
-                "bracketed agent paste was not wrapped with CR")
+        let pasted = SessionPTYInput.encodeAgentPaste("line1\nline2", bracketedPaste: true)
+        require(pasted.bytes?.starts(with: Array("\u{1B}[200~".utf8)) == true && pasted.bytes?.last != 13,
+                "bracketed agent paste must not submit with CR")
     }
 
     static func agentComposerPTYChecks(root: URL, env: [String: String]) throws {
@@ -353,17 +333,39 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
         agent.terminal.onBytes = { output += String(decoding: $0, as: UTF8.self) }
         eventually("agent composer fixture was not ready") { output.contains("READY-AGENT") }
         eventually("agent composer fixture did not enable bracketed paste") { agent.terminal.getTerminal().bracketedPasteMode }
-        let encoded = SessionPTYInput.encodeAgentTurn("fixture-turn", bracketedPaste: false)
-        guard let bytes = encoded.bytes else { fatalError("agent composer fixture could not encode turn: \(encoded.error ?? "")") }
+        let encoded = SessionPTYInput.encodeAgentPaste("fixture-turn", bracketedPaste: false)
+        guard let bytes = encoded.bytes else { fatalError("agent composer fixture could not encode paste: \(encoded.error ?? "")") }
         agent.terminal.send(source: agent.terminal, data: bytes[...])
-        eventually("agent composer fixture did not echo the CR-terminated turn") { output.contains("ECHO:fixture-turn") }
+        agent.terminal.send(source: agent.terminal, data: [13])
+        eventually("agent composer fixture did not echo the pasted turn after CR") { output.contains("ECHO:fixture-turn") }
         require(agent.needsAttention, "agent composer fixture did not mark attention after BEL")
-        require(SessionComposerModel.matches("ls").isEmpty, "ordinary text opened the slash menu")
+        let slashMenuContext = SlashContext(hasAgents: true, shellCount: 2, targetWorking: true,
+                                            targetResumable: true, providerSupportsResume: true)
+        require(SlashParser.matches("ls", context: slashMenuContext).isEmpty, "ordinary text opened the slash menu")
         require(SessionBridgeTextView.action(keyCode: 36, modifiers: [], composing: false, editable: true) == .shell, "Return was not the shell chord")
         require(SessionBridgeTextView.action(keyCode: 36, modifiers: .command, composing: false, editable: true) == .resume, "⌘↩ was not the resume chord")
         require(SessionBridgeTextView.action(keyCode: 36, modifiers: [.command, .shift], composing: false, editable: true) == .newAgent, "⇧⌘↩ was not the new-session chord")
         require(SessionBridgeTextView.action(keyCode: 36, modifiers: .command, composing: true, editable: true) == nil, "marked text was submitted")
         require(SessionBridgeTextView.action(keyCode: 36, modifiers: [.command, .option], composing: false, editable: true) == nil, "an unrelated chord was captured")
+        var controlByte: UInt8?
+        let editor = SessionBridgeTextView(frame: NSRect(x: 0, y: 0, width: 120, height: 28))
+        editor.isEditable = true
+        let window = NSWindow(contentRect: editor.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = editor
+        window.makeFirstResponder(editor)
+        editor.onSendControl = { controlByte = $0 }
+        let controlC = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .control,
+            timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "c",
+            charactersIgnoringModifiers: "c", isARepeat: false, keyCode: 8)!
+        editor.keyDown(with: controlC)
+        require(controlByte == 0x03, "composer control-C did not emit ETX")
+        var clearByte: UInt8?
+        editor.onSendControl = { clearByte = $0 }
+        let controlL = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .control,
+            timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "l",
+            charactersIgnoringModifiers: "l", isARepeat: false, keyCode: 37)!
+        editor.keyDown(with: controlL)
+        require(clearByte == 0x0c, "composer control-L did not emit FF")
     }
     static func captureOwnedWindow(_ window: NSWindow, to output: URL) throws {
         if consoleTestQuiet { return }

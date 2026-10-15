@@ -132,12 +132,12 @@ enum TerminalChecks {
             } catch is TerminalFailure {}
             var snap = SessionActivitySnapshot()
             snap.alternateScreen = true
-            try check(AgentActivityInference.infer(isActive: true, isTaskMode: false, snapshot: snap) == .working,
-                      "alternate screen did not infer working")
+            try check(AgentActivityInference.infer(isActive: true, isTaskMode: false, snapshot: snap) == .unknown,
+                      "alternate screen must not infer working")
             snap.alternateScreen = false
             snap.lastBellAt = Date()
-            try check(AgentActivityInference.infer(isActive: true, isTaskMode: false, snapshot: snap) == .waitingInput,
-                      "recent bell did not infer waiting input")
+            try check(AgentActivityInference.infer(isActive: true, isTaskMode: false, snapshot: snap) == .unknown,
+                      "recent bell must not infer waiting input")
             print("PASS: real PTY, literal argv, cwd, exit code, independent stop, native window keyboard/text input, 1 MiB output, 24-cycle PTY reclamation, invalid input, OSC policy, agent activity inference, owned cleanup")
         } catch {
             fputs("terminal checks failed: \(error)\n", stderr)
