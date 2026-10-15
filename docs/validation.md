@@ -113,6 +113,23 @@ HOME="$isolation/home" CFFIXED_USER_HOME="$isolation/home" BERTH_HOME="$isolatio
 | 复杂提示符 | powerlevel10k / starship 下 Shell 集成默认开启后的表现 |
 | 系统通知 | 开启 `consoleAgentNotifications` 后，后台收到审批/完成通知（可选手测） |
 
+#### 建议步骤（真机 Codex / Claude Code 共用）
+
+在已登录 provider 的 worktree **会话**页：`settings.json` 设好 `defaultAgent`，Shell 集成默认开。每步失败即停，记入下表备注。
+
+1. 打开会话 → 确认仅**一条**底部输入条，Shell 在左、Agent 栏在右；未选 Agent 时 ⌘↩ 提示选择。
+2. **两轮** ⌘↩：第二轮应落在同一结构化会话（非新建），右栏见轮次与输出。
+3. 触发需审批的命令 → 在右栏 **允许** 一次；再触发 → **拒绝** 一次（输入条 ↩/⌘↩ 不得代替按钮）。
+4. 长轮次中 `/interrupt` 或详情「中断」→ provider 确认中断后状态恢复可发下一轮。
+5. 结束会话（详情「结束」或 `/close` 并确认）→ ⌘↩ **续接**（同会话文件）并再发一轮。
+6. 空闲或结束后 `/native` 或栏内「在原生终端中继续」→ 结构化桥关闭、主画布为原生 PTY；同文件勿与运行中结构化会话双开（应提示拒绝）。
+7. **IME**：组合输入过程中 ↩ 与 ⌘↩ 不提交；在 Shell **提示符**处开始的组合应进入输入条草稿。
+8. **复杂提示符**（p10k 或 starship）：前台命令时键盘在 PTY，结束后回到输入条；⌃C 可达 Shell。
+9. **通知（可选）**：`consoleAgentNotifications: true`，应用后台时审批/轮次完成有系统通知，回前台 Dock 角标清除。
+10. **`mage states` 目检**：逐张查看 `client/macos/.cache/states/` 下 `10-console-*`、`11-console-split`（可先 `mage states` 再目检）。
+
+记录表 **构建/commit** 建议填 `git rev-parse --short HEAD`（例如发版候选 `db57292` 一带）。
+
 #### 手测记录（执行后由人填写）
 
 完成任一项后，把本节标题里的 **未执行** 改为最近手测日期；未测行保持 **未执行**。失败项写清复现步骤，不要冒充通过。
