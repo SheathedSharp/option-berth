@@ -121,10 +121,10 @@ SwiftTerm 固定版本负责终端仿真与 PTY；构建需要 Swift 6+，首次
 
 ## Coding agent 会话 / Agent sessions
 
-在 **会话 / Sessions** 中，terminal 是主画布。每个 worktree 左侧的窄 vertical rail 按
-Shell → Agent 排列会话，用运行/休眠点标记状态；⌘⌥Tab 打开非模态、可搜索的 Shell/Agent
-切换器，结果显示 provider、状态和路径。切换不会挤压现有终端、重启 PTY 或广播输入；
-关闭切换器后草稿留在内存，焦点返回当前会话。Agent session 的审批仍归属它自己的 CLI。
+在 **会话 / Sessions** 中，Shell PTY 是主画布；顶部 **Shell 栏** 切换本 worktree 的 Shell，
+右侧 **Agent 栏** 列出终端 Agent 与结构化流（`oberth agent stream`）。⌘⌥Tab 打开可搜索的
+Shell/Agent 切换器。切换不重启 PTY、不广播输入；结构化流的审批在右栏由人决定，原生 TUI
+审批仍归属 provider CLI。契约见 [docs/console.md](../../docs/console.md)；实施计划与发版前缺口见 [docs/console-plan.md](../../docs/console-plan.md)。
 每个会话固定归属于创建时的 worktree。切换项目不迁移进程；布局和 provider 选择可经用户
 同意保存，重启后先确认恢复，不自动恢复进程。
 
@@ -133,8 +133,7 @@ Shell → Agent 排列会话，用运行/休眠点标记状态；⌘⌥Tab 打�
 旧引擎缺少这些命令时会报错，不会回退拼接 shell。需要与客户端匹配的 oberth 版本；
 安装/替换引擎仍由用户明确执行。
 
-工作台底部有一条会话输入。普通 **Enter** 把文字写入当前 Shell 的 PTY（Shell 前台有命令或全屏 TUI 时键盘直接交给 PTY）。**⌘Enter** 把同一段文字送入续接目标的 Agent stdin；尚无 Agent 但已选 provider 时会用这段文字新建首个会话；已有可续接会话时不必再选 provider。**⇧⌘Enter** 始终经 `oberth agent plan` 新建 Agent PTY。右侧状态列表可单击设为续接目标并预览输出尾部，「进入」才切主画布。未选 provider 时 ⌘Enter / ⇧⌘Enter 会先打开选择，选定后保留文字并继续原操作。输入 **`/`** 列出命令（含 `/agent-select`、`/agent`、`/agent-new`、`/open` 等），可用方向键与 Enter 选择。`settings.json` 的 `defaultAgent` 会让新建工作区带上 provider 选择。只有这条输入处理这些快捷键，中文输入法组合文字时不会误提交；焦点在原生终端时，输入和审批仍交给那个 PTY。
-这不是第二套聊天协议：⌘Enter 只是把用户写下的一行交给已经在跑的 Agent PTY，不猜测屏幕、不绕过审批、不按“最近一次对话”跨 worktree 恢复。「新会话」弹层仍可另开 Shell，或用它自己的消息框开始一次新的 Agent 启动。
+工作台底部**单输入条**（Shell 视图）：↩ 送 Shell；⌘↩ / ⇧⌘↩ 送 Agent（`stream: true` 时默认结构化桥，否则原生 PTY）。提示符下 zsh/bash/fish 集成开启时键盘在输入条；前台命令或备用屏时键盘在 PTY。行首 **`/`** 为斜杠菜单；`defaultAgent` 影响新工作区默认 provider。IME 组合中 ↩/⌘↩ 不提交（`ComposerChecks`）；真机输入法仍须手测。
 
 DeepSeek 的消息入口运行 `dsh --profile headless`；原生入口要求用户已有 `tui` profile。
 两者是不同模式，不承诺同一对话的 headless/TUI 无缝切换。客户端不创建 profile，
@@ -146,17 +145,7 @@ worktree 是启动归属，不是限制 agent 文件权限的操作系统沙箱�
 不是对忽略退出信号的故障程序承诺硬超时。agent 启动后的结束操作仍遵守上面的 PTY 规则。
 外部 agent 自身的日志、会话存储和文件改动遵循它自己的配置。
 
-**English.** The terminal is the primary canvas. A narrow per-worktree rail orders Shell sessions
-before Agent sessions and marks live/dormant state. Cmd+Option+Tab opens a non-modal searchable
-Shell/Agent switcher with provider, state, and path context. Switching does not resize running
-terminals, restart a PTY, or broadcast input; provider-native approvals stay with the agent CLI.
-The native New session popover selects a shell or provider without resizing running terminals. Each process keeps its initial worktree. Install/authenticate your coding agent yourself; Refresh only discovers executables.
-The session field under the terminal is the bridge. Return writes the line to the current shell PTY.
-Cmd+Return writes that line to the selected agent's stdin as a new turn; it does not start a process or type the provider command into the shell.
-Shift+Cmd+Return asks `oberth agent plan` for a new agent PTY, passes a nonempty task literally, and lists the session on the right. Click a row to view that terminal.
-Until a default agent is chosen, both agent chords ask for `/agent-select` and keep the draft. `/agent-new` matches Shift+Cmd+Return.
-A `defaultAgent` in `settings.json` selects the provider for new workspaces. Marked IME text is not submitted.
-These chords belong to the field; a focused native terminal keeps its own input and approvals. Drafts remain in memory only; layout and provider metadata can be saved with explicit consent and reviewed after restart, without automatically launching processes.
+**English.** The Shell PTY is the primary canvas; a **Shell bar** and right **Agent column** list terminal and structured (`oberth agent stream`) sessions per worktree. Cmd+Option+Tab opens a searchable switcher. Return sends the shell; Cmd+Return / Shift+Cmd+Return send the agent target (structured bridge when `stream: true`, otherwise a native PTY). At the shell prompt with integration enabled, the single composer owns the keyboard; foreground commands and the alternate screen keep the PTY. Structured approvals are answered in the detail column, not via composer keys. See [docs/console.md](../../docs/console.md). `defaultAgent` in `settings.json` seeds new workspaces. Marked IME text is not submitted (`ComposerChecks`); full IME still needs manual QA.
 DeepSeek uses headless for messages and requires an existing tui profile for native mode; switching
 between them does not resume the same conversation. No agent reasoning loop, credential store,
 automatic installation, approval bypass, shell prompt interpolation, or implicit cross-worktree resume is added.
@@ -178,7 +167,7 @@ AgentChecks 的默认路径使用合成 CLI 协议；显式二进制路径验证
 
 ## 会话工作区 / Session workspace
 
-日常切换使用 worktree 内的 vertical rail 或 ⌘⌥Tab palette；**⇧⌘O** 仍打开全局会话管理。
+日常切换使用 Shell 栏、Agent 栏或 ⌘⌥Tab palette；**⇧⌘O** 打开全局会话管理（含结构化流结束）。
 可以按名称、worktree、agent 类型搜索，重命名并打开、结束或关闭
 本应用拥有的会话。即使原项目清单被移除，活动 PTY 仍可从这里找到；未关联清单的会话页明确
 提示没有项目服务事实，不把会话存在冒充服务正常。移除项目会丢弃该项目的输入草稿与导航状态，

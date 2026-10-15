@@ -215,8 +215,17 @@ func Clean() error {
 // Snapshot renders current daemon state with an already-built client.
 func Snapshot() error { return Shot(nil) }
 
-// States renders frozen UI fixtures without building or installing anything.
-func States() error { return renderClient("--render-states", "states", "--size", "900x640") }
+// States renders frozen UI fixtures. Rebuilds the macOS client so snapshot code stays current.
+func States() error {
+	p, err := loadProject()
+	if err != nil {
+		return err
+	}
+	if err := buildClient(p); err != nil {
+		return err
+	}
+	return renderClient("--render-states", "states", "--size", "900x640")
+}
 
 // Window captures the current client window without an implicit build.
 func Window() error { return renderClient("--dump-window", "window.png") }

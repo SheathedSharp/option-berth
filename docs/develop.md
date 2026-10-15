@@ -50,16 +50,16 @@ go vet ./...
 go test -count=1 -timeout=8m ./...
 ```
 
+若 `proxy.golang.org` 拉模块超时，在同一 shell 前缀 `GOPROXY=https://goproxy.cn,direct`（或你环境可用的镜像）再执行上述命令；超时只表示网络，不代表代码不能编译。
+
 **macOS 客户端（在 `client/macos/` 下）：**
 
 ```sh
 swift build
 swift run TerminalChecks
-# 隔离 HOME / BERTH_HOME / BERTH_CONSOLE_TEST=1
-swift run ConsoleChecks
 ```
 
-Console 原生测试可用 `BERTH_CONSOLE_TEST_QUIET=1` 减少抢焦点与截屏（见 ConsoleChecks 源码注释）。
+完整控制台与 `ClientChecks` 隔离命令见 [validation.md](validation.md)「控制台原生回归」「客户端原生回归」；仓库根目录可一键跑 `bash scripts/run_console_validation.sh`（`QUIET=1` 少抢焦点，`--with-client` 含隔离 `ClientChecks`）。**不要**裸跑 `swift run ConsoleChecks` / `swift run ClientChecks`（须按文档设置 `HOME`、`BERTH_HOME` 等）。Console 也可单独加 `BERTH_CONSOLE_TEST_QUIET=1`（见 `console.yml` 与无 quiet 的 CI 路径互补）。
 
 **界面改动额外要求：**
 
@@ -83,6 +83,6 @@ Console 原生测试可用 `BERTH_CONSOLE_TEST_QUIET=1` 减少抢焦点与截屏
 
 ## 相关专题
 
-- 终端与会话 UX 契约：[console.md](console.md)
+- 终端与会话 UX 契约：[console.md](console.md)；实施计划与发版前缺口：[console-plan.md](console-plan.md)
 - macOS 使用与截图：[macos-guide.md](macos-guide.md)、[client/macos/README.md](../client/macos/README.md)
 - 用 oberth 操作当前 worktree：`.agents/skills/option-berth/SKILL.md`

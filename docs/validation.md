@@ -46,10 +46,85 @@ GUI全部交互、签名安装包和长期负载仍需独立验收；没有可�
 对照五个 provider 的 native/task 参数计划，再用临时 provider 替身验证原生 PTY 交接。
 这不是登录五个真实模型账号，也不等于验收所有 provider 版本。
 
+`go test ./internal/agentstream/...`（含 `-race`）与 `go test ./internal/cmd/ -run Agent` 校验桥 CLI 接线；模块拉取失败时可设 `GOPROXY=https://goproxy.cn,direct`。NDJSON 夹具符合 `engine/docs/schema/agent-stream.schema.json`；
+`BERTH_AGENT_STREAM_FAKE=<provider>` 覆盖纯 NDJSON 假驱动；`testdata/fakecodex` / `testdata/fakeclaude` / `testdata/fakeopencode` / `testdata/fakepi` 经
+`Options.LookPath` 覆盖 live 握手、两轮、busy、审批、未知请求 `notice`、关闭时中断与进程回收。
+`oberth agent stream` 的 CLI 接线由 `internal/cmd` 的 `Agent` 测试抽查。真机 Codex / Claude 手测、输出上限截断
+与完整项映射仍在 [console-plan.md](console-plan.md) 阶段 2 完成标准内；未安装 CLI 且未注入 lookPath 时首轮
+`turn.start` 返回 `unsupported` 事件。
+
 打开 worktree 会话时，目录存在且还没有 Shell，会启动一个交互式 Shell。从该 Shell 开始的外部 Agent 在返回 Shell 后仍是同一个 PTY，可以再次进入；`ConfigurationChecks` 覆盖这条路径。目录不存在时不创建进程。
+
+**控制台原生回归（建议发版前本机一轮）**：也可从仓库根目录执行 `bash scripts/run_console_validation.sh`（本地少抢焦点：`QUIET=1 bash scripts/run_console_validation.sh`；含隔离 `ClientChecks`：加 `--with-client`）。
+
+```sh
+cd client/macos
+swift run WorkspaceChecks
+swift run AgentChecks
+swift run TerminalChecks
+isolation=$(mktemp -d)
+mkdir -p "$isolation/home/.option-berth"
+trap 'rm -rf "$isolation"' EXIT
+HOME="$isolation/home" CFFIXED_USER_HOME="$isolation/home" BERTH_HOME="$isolation/home/.option-berth" \
+  SHELL=/bin/zsh ZDOTDIR="$isolation/home" BERTH_CONSOLE_TEST=1 swift run ConsoleChecks
+cd ../../engine && GOPROXY=https://goproxy.cn,direct go test ./internal/agentstream/... -race -count=1
+cd .. && python3 scripts/check_client_configuration.py
+```
+
+本地少抢焦点时可加 `BERTH_CONSOLE_TEST_QUIET=1`（与 GitHub `console.yml` 无 quiet 的 CI 路径互补）。
+
+**客户端原生回归（`ClientChecks`，与 `.github/workflows/client.yml` 一致）**：
+
+```sh
+binary_dir=$(swift build --package-path client/macos --show-bin-path)
+isolation=$(mktemp -d)
+mkdir -p "$isolation/home" "$isolation/berth"
+trap 'rm -rf "$isolation"' EXIT
+HOME="$isolation/home" CFFIXED_USER_HOME="$isolation/home" BERTH_HOME="$isolation/berth" \
+  "$binary_dir/ClientChecks"
+```
+
+未设置隔离 `BERTH_HOME` 时，`GettingStartedChecks` 等会主动失败；不要裸跑 `swift run ClientChecks` 当作发版证据。
+
+本机 **2026-10-15** 已跑通上文「控制台原生回归」命令块与隔离 `ClientChecks`（`WorkspaceChecks`、`TerminalChecks`、`AgentChecks`、`ConsoleChecks`、`go test ./internal/agentstream/... -race`、`check_client_configuration.py` 绿；`fish` 集成因未安装为 SKIP）。同日刷新 `mage states` PNG。**不包含**下方手测表与 PNG 人工目检。
+
+`AgentChecks` 含阶段 0 纯函数：`ComposerRouterChecks`、`SlashParserChecks`、`AgentStreamReducerChecks`、`AgentRowProjectorChecks`、`agentSessionFileGuardChecks` 等。
+
+`StreamConsoleChecks`（由 `ConsoleChecks` 调用）用合成 `oberth agent stream` 脚本与 `BERTH_STREAM_FIXTURE_LOG` 记录 stdin，
+覆盖同一桥两轮（桥 PID 跨轮存活）、`/interrupt`→`turn.interrupt`、审批期间入队与详情「撤回」、`request.respond` 字节、Esc 不回答、⇧⌘↩ 第二会话、`session.close` 结束、桥自然退出（`session.ended`）后 ⌘↩ 续接并拉起新桥、`/native` 经 `agent plan --resume-file` 开原生 PTY、运行中结构化会话占用同一会话文件时 `/resume`（`BERTH_TEST_RESUME_FILE`）拒绝且不拉起原生 PTY，与 `BERTH_STREAM_UNSUPPORTED` 提示；不是真机 Codex/Claude。`AgentSessionFileGuard` 路径归一与冲突判定由 `AgentChecks`/`agentSessionFileGuardChecks` 覆盖。Shell→Agent 附件与 `ComposerAttachmentFormat` 由 `AgentChecks`/`composerAttachmentChecks` 覆盖；结构化流后台通知事件解析由 `consoleAgentAttentionChecks` 覆盖；`StreamConsoleChecks` 含详情「放到输入条」与 `berthOpenGitPath`；`ConfigurationChecks` 含 zsh 命令块「发给 Agent」与 `console.composerAttachment`；`streamShellAttachmentAgentSendCheck` 验证附件并入结构化首轮 `turn.start`；系统通知投递无专用 ConsoleChecks。引擎 `go test ./internal/agentstream/... -race` 在模块可拉取时执行（网络受限时可设 `GOPROXY=https://goproxy.cn,direct` 等）。
+启用 Shell 集成且处于提示符时，`ConfigurationChecks` 还检查输入条聚焦时终端光标透明、在终端表面打字会桥接到输入条草稿（不含 ⌘/⌃ 修饰键）、↩ 启动前台命令后 `shellForegroundBusy` 与光标可见、向 PTY 发送 ETX 结束命令后回到提示符并恢复透明光标、**Tab** 将单行草稿与 HT 送入 Shell PTY 并从提示符行缓冲回读补全结果到草稿（`WorkspaceChecks` 覆盖 `ShellPromptLineCapture` 启发式与隔离 **bash** OSC 集成；**fish** 在 runner 装有可执行文件时执行，否则跳过）。
 `11-console-split` 冻结图表达当前递归窗格模型；原生分隔控件和终端内容由独立原生检查验证。
+
+**冻结呈现（`mage states`）**：2026-10-15 在本机多次执行 `mage states`（最近一次在会话文件冲突与 `/resume` 可见性修复之后），已写出 `client/macos/.cache/states/` 下含 `10-console-slash`、`10-console-no-provider`、`10-console-native-agent`、`10-console-stream-detail`、`10-console-stream-mixed`、`11-console-split` 等 PNG。自动化仅证明渲染管线成功；**全量逐张人工翻看**仍属发版前检查（手测表「`mage states` 全量目检」行），不能替代 `ConsoleChecks` 或真机手测。
+
+**主窗口几何（`mage window`）**：2026-10-15 已写出 `client/macos/.cache/window.png`（空 worktree 主界面 + 菜单栏快照）。不覆盖会话工作台内混合 PTY/结构化流交互；后者见 `ConsoleChecks` 与手测表。
 完整窗口的鼠标菜单、系统输入法、辅助功能及长时间负载仍需继续真实使用验收。
 不要将“页面切换保留内存状态”写成“应用重启恢复进程与会话”。
+
+### 控制台手测（截至 2026-10-15：**未执行**）
+
+以下项在 [console-plan.md](console-plan.md) 阶段 1–3 完成标准中要求，**尚无自动化替代**；发版前须在本机执行并记录结果，或继续保持「未执行」：
+
+| 项 | 说明 |
+|---|---|
+| 真机 Codex | 两轮对话、一次允许、一次拒绝、一次中断、结束后续接、`/native` |
+| 真机 Claude Code | 同上 |
+| 中文 IME | 组合中 ↩ / ⌘↩ 不提交；提示符处开始的组合转入输入条 |
+| 复杂提示符 | powerlevel10k / starship 下 Shell 集成默认开启后的表现 |
+| 系统通知 | 开启 `consoleAgentNotifications` 后，后台收到审批/完成通知（可选手测） |
+
+#### 手测记录（执行后由人填写）
+
+完成任一项后，把本节标题里的 **未执行** 改为最近手测日期；未测行保持 **未执行**。失败项写清复现步骤，不要冒充通过。
+
+| 项 | 日期 | 构建/commit | 结果 | 备注 |
+|---|---|---|---|---|
+| 真机 Codex | | | 未执行 | 两轮；允许+拒绝；中断；续接；`/native` |
+| 真机 Claude Code | | | 未执行 | 同上 |
+| 中文 IME | | | 未执行 | 组合中 ↩/⌘↩；提示符处组合进输入条 |
+| 复杂提示符 | | | 未执行 | p10k 或 starship；`shellIntegration` 默认开 |
+| 系统通知 | | | 未执行 | 可选 |
+| `mage states` 全量目检 | | | 未执行 | 路径：`client/macos/.cache/states/` |
 
 ## 有限 CLI 回收回归
 
