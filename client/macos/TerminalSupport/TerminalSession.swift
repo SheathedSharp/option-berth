@@ -20,6 +20,7 @@ public final class TerminalSession: ObservableObject, Identifiable {
     @Published public private(set) var needsAttention = false
     private var commandParser: CommandBlockParser?
     private var shellLease: ShellIntegrationLease?
+    private var commandOutputStartRows: [UUID: Int] = [:]
 
     public init(worktree: String, title: String = "Terminal", kind: String = "terminal") {
         self.worktree = worktree.hasPrefix("/") && !worktree.utf8.contains(0) ? URL(fileURLWithPath: worktree).standardizedFileURL.resolvingSymlinksInPath().path : ""
@@ -29,7 +30,7 @@ public final class TerminalSession: ObservableObject, Identifiable {
         terminal.onExit = { [weak self] status in
             guard let self else { return }
             commandParser?.interrupt()
-            commandBlocks = commandParser?.blocks ?? []
+            syncCommandBlocksFromParser()
             shellLease = nil
             isActive = false
             isStopping = false
@@ -46,7 +47,7 @@ public final class TerminalSession: ObservableObject, Identifiable {
             let revision = commandParser?.revision
             commandParser?.consume(bytes)
             if commandParser?.revision != revision {
-                commandBlocks = commandParser?.blocks ?? []; onChange?()
+                syncCommandBlocksFromParser()
             }
         }
         terminal.onBell = { [weak self] in
@@ -100,6 +101,8 @@ public final class TerminalSession: ObservableObject, Identifiable {
         AgentActivityInference.infer(isActive: isActive, isTaskMode: isTaskAgent, snapshot: activity)
     }
 
+    public var shellIntegrationEnabled: Bool { commandParser != nil }
+
     public var shellForegroundBusy: Bool {
         guard kind == "terminal", isActive else { return false }
         if activity.alternateScreen { return true }
@@ -107,7 +110,38 @@ public final class TerminalSession: ObservableObject, Identifiable {
     }
 
     public func clearCommandHistory() {
-        commandParser?.clear(); commandBlocks = []; onChange?()
+        commandParser?.clear()
+        commandOutputStartRows.removeAll()
+        commandBlocks = []
+        onChange?()
+    }
+
+    private func syncCommandBlocksFromParser() {
+        guard let parser = commandParser else {
+            commandBlocks = []
+            return
+        }
+        let prior = Dictionary(uniqueKeysWithValues: commandBlocks.map { ($0.id, $0.capturedOutput) })
+        var blocks = parser.blocks
+        let terminal = terminal.getTerminal()
+        for index in blocks.indices {
+            var block = blocks[index]
+            if let saved = prior[block.id], block.capturedOutput == nil {
+                block.capturedOutput = saved
+            }
+            if block.isRunning {
+                if commandOutputStartRows[block.id] == nil {
+                    commandOutputStartRows[block.id] = terminal.buffer.y
+                }
+            } else if block.capturedOutput == nil, let start = commandOutputStartRows.removeValue(forKey: block.id) {
+                block.capturedOutput = ShellCommandCapture.capture(terminal: terminal, startRow: start)
+            }
+            blocks[index] = block
+        }
+        let live = Set(blocks.map(\.id))
+        commandOutputStartRows = commandOutputStartRows.filter { live.contains($0.key) }
+        commandBlocks = blocks
+        onChange?()
     }
 
     public func start(executable: String, arguments: [String], environment: [String: String]? = nil, shellIntegration: Bool = false) throws {
@@ -124,22 +158,24 @@ public final class TerminalSession: ObservableObject, Identifiable {
         guard env.allSatisfy({ !$0.key.isEmpty && !$0.key.contains("=") && !$0.key.utf8.contains(0) && !$0.value.utf8.contains(0) }) else {
             throw TerminalFailure("终端环境变量无效 / Invalid terminal environment")
         }
+        var launchArguments = arguments
         if shellIntegration {
-            guard kind == "terminal", URL(fileURLWithPath: executable).lastPathComponent == "zsh", arguments == ["-i"] else {
-                throw TerminalFailure("命令块集成目前只支持显式启用的 zsh / Shell integration currently requires an opted-in interactive zsh")
+            guard kind == "terminal", ShellIntegrationLease.supports(executable: executable) else {
+                throw TerminalFailure("命令块集成仅支持交互式 zsh、bash 或 fish / Shell integration requires interactive zsh, bash, or fish")
             }
-            let lease = try ShellIntegrationLease(environment: env)
+            let lease = try ShellIntegrationLease(executable: executable, environment: env)
             shellLease = lease
             commandParser = CommandBlockParser(nonce: lease.nonce)
             terminal.getTerminal().registerOscHandler(code: 633) { _ in /* Host parser consumes command metadata. */ }
             env = lease.environment
+            launchArguments = lease.launchArguments
         }
         env["PWD"] = worktree
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
         isActive = true
         state = "运行中 / Running"
-        terminal.launch(executable: executable, arguments: arguments, environment: env, directory: worktree)
+        terminal.launch(executable: executable, arguments: launchArguments, environment: env, directory: worktree)
         if terminal.process?.shellPid == 0 {
             isActive = false
             shellLease = nil
@@ -203,9 +239,10 @@ public final class HostedTerminalView: TerminalView, TerminalViewDelegate, Local
     public private(set) var process: LocalProcess?
     public var onExit: ((Int32?) -> Void)?
     public var onBytes: ((ArraySlice<UInt8>) -> Void)?
+    /// Test hook: bytes written to the PTY (not echoed child output).
+    public var onOutboundBytes: ((ArraySlice<UInt8>) -> Void)?
     var onProtocolBytes: ((ArraySlice<UInt8>) -> Void)?
     var onBell: (() -> Void)?
-
     public override init(frame: CGRect) {
         super.init(frame: frame, font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
                    options: TerminalOptions(cols: 96, rows: 24, cursorStyle: .steadyBar,
@@ -237,7 +274,10 @@ public final class HostedTerminalView: TerminalView, TerminalViewDelegate, Local
         var size = getWindowSize()
         _ = PseudoTerminalHelpers.setWinSize(masterPtyDescriptor: process.childfd, windowSize: &size)
     }
-    public func send(source: TerminalView, data: ArraySlice<UInt8>) { process?.send(data: data) }
+    public func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        onOutboundBytes?(data)
+        process?.send(data: data)
+    }
     public func setTerminalTitle(source: TerminalView, title: String) { /* Untrusted OSC title is not identity. */ }
     public func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) { /* Never retarget. */ }
     public func scrolled(source: TerminalView, position: Double) {}

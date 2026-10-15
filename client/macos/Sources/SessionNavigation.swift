@@ -2,34 +2,46 @@ import AppKit
 import BerthTerminal
 import SwiftUI
 
-/// The compact session rail keeps the terminal as the primary surface while
-/// making every shell and external agent reachable without opening a sheet.
-struct SessionRailItem: View {
-    let session: TerminalSession
-    let selected: Bool
-    let activate: () -> Void
+struct ShellSessionBar: View {
+    let shells: [TerminalSession]
+    let selectedID: UUID?
+    let onSelect: (TerminalSession) -> Void
+    let onNewShell: () -> Void
+    let onNewAgent: () -> Void
+    let onOpenSwitcher: () -> Void
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            ConsoleSessionTab(session: session, selected: selected, compact: true, activate: activate)
-                .frame(width: 30, height: 28)
-                .background(selected ? Ink.accentSoft : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-            Circle()
-                .fill(session.isActive ? Ink.live : Ink.dormant)
-                .frame(width: 5, height: 5)
-                .offset(x: -4, y: -4)
+        HStack(spacing: Metrics.inline) {
+            ForEach(shells) { shell in
+                ConsoleSessionTab(session: shell, selected: shell.id == selectedID, compact: false,
+                                  activate: { onSelect(shell) })
+                    .fixedSize()
+            }
+            Menu {
+                Button("新建 Shell", action: onNewShell)
+                Button("新建 Agent 会话 ⇧⌘↩", action: onNewAgent)
+            } label: {
+                Text("＋").font(Face.sans(Metrics.chrome, .medium)).frame(width: 28, height: 24)
+            }
+            .menuStyle(.borderlessButton)
+            .accessibilityIdentifier("console.shellBar.add")
+            .accessibilityLabel("新建 Shell 或 Agent")
+            Spacer(minLength: 0)
+            Button(action: onOpenSwitcher) {
+                Image(systemName: "rectangle.on.rectangle")
+                    .foregroundStyle(Ink.inkMuted)
+            }
+            .buttonStyle(.plain)
+            .help("切换会话 · ⌃⌥Tab")
         }
-        .frame(width: 30, height: 28)
-        .help(session.title + " · " + session.state)
-        .accessibilityIdentifier("console.session." + session.id.uuidString)
-        .accessibilityLabel(session.title)
-        .accessibilityValue((selected ? "选中，" : "") + session.state)
+        .font(Face.mono(Metrics.meta))
+        .padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV)
+        .background(Ink.surface)
     }
 }
 
 /// A non-modal switcher for fast session navigation. It owns no PTY and only
-/// calls the same activation closure used by the rail and the command palette.
+/// calls the same activation closure used by the shell bar and the command palette.
 struct SessionSwitcherPalette: View {
     let root: String
     let sessions: [TerminalSession]
@@ -70,7 +82,7 @@ struct SessionSwitcherPalette: View {
                 TextField("搜索名称、agent、状态或路径", text: $query)
                     .textFieldStyle(.plain).font(Face.sans(Metrics.chrome)).focused($focused)
                     .accessibilityIdentifier("console.sessionSearch")
-                Text("⌘Tab").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
+                Text("⌃Tab").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
             }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.headerPad).background(Ink.sunken)
             Hairline()
             ScrollView {
@@ -87,7 +99,7 @@ struct SessionSwitcherPalette: View {
                 Text(root).font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
                     .lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 0)
-                Text("⌘⌥Tab 打开 · ⌘Tab 循环")
+                Text("⌃⌥Tab 打开 · ⌃Tab 循环")
                     .font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
             }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.headerPad)
             .background(Ink.surface)

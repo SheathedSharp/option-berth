@@ -1,4 +1,5 @@
 import Foundation
+import SwiftTerm
 
 /// Observable PTY facts for inferred agent UI. Not a second runtime ledger.
 public struct SessionActivitySnapshot: Equatable {
@@ -32,13 +33,21 @@ public enum AgentActivityInference {
 
     public static func infer(isActive: Bool, isTaskMode: Bool, snapshot: SessionActivitySnapshot, now: Date = Date()) -> AgentInferredState {
         guard isActive else { return .exited }
-        if isTaskMode { return .unknown }
-        if snapshot.alternateScreen { return .working }
-        if let notify = snapshot.lastNotifyAt, now.timeIntervalSince(notify) <= bellWindow { return .waitingInput }
-        if let bell = snapshot.lastBellAt, now.timeIntervalSince(bell) <= bellWindow { return .waitingInput }
-        if let output = snapshot.lastOutputAt, now.timeIntervalSince(output) <= recentOutput { return .working }
-        if snapshot.lastOutputAt != nil { return .waitingInput }
+        _ = snapshot
+        _ = now
+        _ = isTaskMode
         return .unknown
+    }
+
+    public static func screenPreviewLines(from terminal: Terminal, maxNonEmpty: Int = 8) -> [String] {
+        var collected: [String] = []
+        var row = terminal.buffer.y
+        while row >= 0, collected.count < maxNonEmpty {
+            let text = terminal.getLine(row: row)?.translateToString(trimRight: true) ?? ""
+            if !text.isEmpty { collected.append(text) }
+            row -= 1
+        }
+        return collected.reversed()
     }
 
     public static func appendTail(_ existing: String, bytes: ArraySlice<UInt8>, limit: Int = 2048) -> String {

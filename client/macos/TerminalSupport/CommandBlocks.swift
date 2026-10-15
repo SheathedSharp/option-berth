@@ -7,6 +7,7 @@ public struct CommandBlock: Identifiable, Equatable {
     public var endedAt: Date?
     public var exitCode: Int?
     public var interrupted: Bool
+    public var capturedOutput: String?
     public var isRunning: Bool { endedAt == nil }
 }
 

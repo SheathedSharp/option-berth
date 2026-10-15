@@ -6,13 +6,26 @@ struct TerminalSurface: NSViewRepresentable {
     let session: TerminalSession
     var detached = false
     var focusIntent: TerminalFocusIntent?
+    var dimTerminalCaret = false
+    var bridgePromptKeys = false
+    var onPromptKey: ((NSEvent) -> Void)?
     @ObservedObject private var settings = UISettings.shared
     @ObservedObject private var windows = TerminalWindows.shared
     func makeNSView(context: Context) -> TerminalHost {
-        let host = TerminalHost(); applyAppearance(session.terminal); host.present(session, detached: detached); host.focusIntent = resolvedFocusIntent(host: host); return host
+        let host = TerminalHost()
+        host.present(session, detached: detached)
+        applyAppearance(session.terminal)
+        host.bridgePromptKeys = bridgePromptKeys
+        host.onPromptKey = onPromptKey
+        host.focusIntent = resolvedFocusIntent(host: host)
+        return host
     }
     func updateNSView(_ host: TerminalHost, context: Context) {
-        host.present(session, detached: detached); applyAppearance(session.terminal); host.focusIntent = resolvedFocusIntent(host: host)
+        host.present(session, detached: detached)
+        applyAppearance(session.terminal)
+        host.bridgePromptKeys = bridgePromptKeys
+        host.onPromptKey = onPromptKey
+        host.focusIntent = resolvedFocusIntent(host: host)
     }
     private func resolvedFocusIntent(host: TerminalHost) -> TerminalFocusIntent? {
         if let window = host.window, let responder = window.firstResponder as? NSView,
@@ -29,6 +42,7 @@ struct TerminalSurface: NSViewRepresentable {
         if view.font.fontName != font.fontName || view.font.pointSize != font.pointSize { view.font = font }
         view.nativeBackgroundColor = NSColor(settings.terminalBackground)
         view.nativeForegroundColor = NSColor(settings.terminalForeground)
+        view.caretColor = dimTerminalCaret ? .clear : NSColor.selectedControlColor
     }
 }
 
@@ -36,11 +50,15 @@ struct TerminalPaneBody: View {
     @ObservedObject var session: TerminalSession
     var frozen: Bool
     var focusIntent: TerminalFocusIntent?
+    var dimTerminalCaret = false
+    var bridgePromptKeys = false
+    var onPromptKey: ((NSEvent) -> Void)?
+    var onSendCommandToAgent: ((CommandBlock) -> Void)?
     @ObservedObject private var windows = TerminalWindows.shared
     var body: some View {
         VStack(spacing: 0) {
             if !session.commandBlocks.isEmpty {
-                CommandBlockStrip(session: session)
+                CommandBlockStrip(session: session, onSendToAgent: onSendCommandToAgent)
                 Hairline()
             }
             if frozen {
@@ -54,7 +72,10 @@ struct TerminalPaneBody: View {
                     Button("显示窗口") { windows.detach(session) }
                     Button("返回工作区") { windows.bringBack(session) }
                 }.font(Face.sans(11)).frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else { TerminalSurface(session: session, focusIntent: focusIntent).id(session.id) }
+            } else {
+                TerminalSurface(session: session, focusIntent: focusIntent, dimTerminalCaret: dimTerminalCaret,
+                                bridgePromptKeys: bridgePromptKeys, onPromptKey: onPromptKey).id(session.id)
+            }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
@@ -68,12 +89,18 @@ func showTerminalFind(_ terminal: HostedTerminalView) {
 
 private struct CommandBlockStrip: View {
     @ObservedObject var session: TerminalSession
+    var onSendToAgent: ((CommandBlock) -> Void)?
     var body: some View {
         HStack(spacing: 8) {
             if let block = session.commandBlocks.last {
                 Image(systemName: block.isRunning ? "hourglass" : (block.exitCode == 0 ? "checkmark.circle" : "exclamationmark.circle"))
                 Text(block.command ?? "命令文本不可用").font(Face.mono(10)).lineLimit(1)
                 Spacer(minLength: 0)
+                if !block.isRunning, block.command != nil, let onSendToAgent {
+                    ConsoleToolbarAction(title: "发给 Agent", identifier: "console.commandBlock.sendToAgent",
+                                         perform: { onSendToAgent(block) })
+                        .font(Face.sans(10, .medium))
+                }
                 Text(block.isRunning ? "运行中" : (block.exitCode.map { "exit \($0)" } ?? "结果未知"))
                     .font(Face.mono(10)).foregroundStyle(Ink.inkMuted)
             }

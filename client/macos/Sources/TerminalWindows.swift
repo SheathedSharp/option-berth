@@ -87,6 +87,13 @@ final class TerminalHost: NSView {
     var detached = false
     var focusIntent: TerminalFocusIntent? { didSet { focusIntent?.fulfill(in: self) } }
     private var keyObserver: NSObjectProtocol?
+    private var promptKeyMonitor: Any?
+    var bridgePromptKeys = false {
+        didSet { updatePromptKeyMonitor() }
+    }
+    var onPromptKey: ((NSEvent) -> Void)? {
+        didSet { updatePromptKeyMonitor() }
+    }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if let keyObserver { NotificationCenter.default.removeObserver(keyObserver) }
@@ -99,7 +106,23 @@ final class TerminalHost: NSView {
         focusIntent?.fulfill(in: self)
     }
     override func layout() { super.layout(); focusIntent?.fulfill(in: self) }
-    deinit { if let keyObserver { NotificationCenter.default.removeObserver(keyObserver) } }
+    deinit {
+        if let keyObserver { NotificationCenter.default.removeObserver(keyObserver) }
+        if let promptKeyMonitor { NSEvent.removeMonitor(promptKeyMonitor) }
+    }
+
+    private func updatePromptKeyMonitor() {
+        if let promptKeyMonitor { NSEvent.removeMonitor(promptKeyMonitor); self.promptKeyMonitor = nil }
+        guard bridgePromptKeys, onPromptKey != nil else { return }
+        promptKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, let session = self.session, let window = self.window,
+                  window.firstResponder === session.terminal else { return event }
+            let keys = event.modifierFlags.intersection([.command, .control, .option])
+            guard keys.isEmpty else { return event }
+            self.onPromptKey?(event)
+            return nil
+        }
+    }
     func present(_ session: TerminalSession, detached: Bool) {
         self.session = session; self.detached = detached
         guard (TerminalWindows.shared.windows[session.id] != nil) == detached else {

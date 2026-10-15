@@ -11,6 +11,8 @@ public final class ConsoleWorkspace: ObservableObject {
     @Published public var providerChosen = false
     /// Agent PTY that ⌘↩ resumes. Not archived: process identity does not survive restart.
     @Published public var resumeAgentID: UUID?
+    /// Structured `oberth agent stream` session that ⌘↩ targets when set.
+    @Published public var resumeStreamID: UUID?
     @Published public var draft = ""
     @Published public var nativeExpanded = false
     @Published public var terminalSelection: UUID?
