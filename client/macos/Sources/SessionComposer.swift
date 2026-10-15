@@ -3,28 +3,8 @@ import BerthAgent
 import BerthTerminal
 import SwiftUI
 
-/// Routes the session bridge. Enter writes a line to the shell PTY. ⌘↩ writes a
-/// line to the selected agent PTY. ⇧⌘↩ asks the existing planner for a new PTY.
-/// Slash tokens are commands, not shell text and not an agent prompt.
+/// Composer key chords and provider display names. Routing lives in `ComposerRouter`; slash commands in `SlashParser`.
 enum SessionComposerModel {
-    struct Command: Equatable, Identifiable {
-        var id: String { token }
-        let token: String
-        let title: String
-        let detail: String
-        var slug: String { String(token.dropFirst()) }
-    }
-
-    static let commands: [Command] = [
-        Command(token: "/agent-select", title: "选择默认 Agent", detail: "Codex、Claude Code 等"),
-        Command(token: "/agent-new", title: "新建 Agent 会话", detail: "等同 ⇧⌘↩，可选跟一段初始任务"),
-        Command(token: "/agent", title: "选择续接目标", detail: "按标题或 provider 片段，如 /agent codex"),
-        Command(token: "/shell-new", title: "新建 Shell", detail: "在当前 worktree 再开一个 Shell"),
-        Command(token: "/open", title: "聚焦终端", detail: "把键盘交给当前主画布会话（TUI / vim）"),
-        Command(token: "/rename", title: "重命名会话", detail: "重命名当前主画布会话"),
-        Command(token: "/stop", title: "结束会话", detail: "结束当前主画布会话（需确认）"),
-    ]
-
     static let providers: [(id: String, name: String)] = [
         ("codex", "Codex"),
         ("claude", "Claude Code"),
@@ -40,94 +20,6 @@ enum SessionComposerModel {
     }
 
     enum Chord: Equatable { case plain, command, commandShift }
-
-    enum Route: Equatable {
-        case shell(String)
-        case resume(String)
-        case newAgent(String)
-        case openProviders
-        case selectProvider(String)
-        case needProvider
-        case pickResumeAgent(String)
-        case shellNew
-        case renameSession(String)
-        case stopSession
-        case focusTerminal
-        case none
-    }
-
-    static func matches(_ text: String) -> [Command] {
-        let parts = split(text)
-        guard parts.token.hasPrefix("/") else { return [] }
-        if parts.token == "/" { return commands }
-        let prefix = filteredCommands(for: parts.token)
-        guard parts.token.count > 1, !prefix.isEmpty else { return prefix }
-        let query = parts.token.dropFirst().lowercased()
-        return prefix.filter {
-            $0.token.dropFirst().lowercased().contains(query)
-                || $0.title.lowercased().contains(query)
-                || $0.detail.lowercased().contains(query)
-        }
-    }
-
-    private static func filteredCommands(for token: String) -> [Command] {
-        guard token != "/" else { return commands }
-        return commands.filter { $0.token.hasPrefix(token) }
-    }
-
-    static func route(text: String, chord: Chord, providerChosen: Bool, resumeReady: Bool) -> Route {
-        let parts = split(text)
-        if let command = commands.first(where: { $0.token == parts.token }) {
-            return commandRoute(command.token, argument: parts.argument, chord: chord, providerChosen: providerChosen)
-        }
-        if parts.token.hasPrefix("/"), chord == .plain, !matches(text).isEmpty || parts.token == "/" {
-            return .none
-        }
-        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        switch chord {
-        case .plain:
-            return body.isEmpty ? .none : .shell(body)
-        case .command:
-            if body.isEmpty { return .none }
-            if resumeReady { return .resume(body) }
-            guard providerChosen else { return .needProvider }
-            return .newAgent(body)
-        case .commandShift:
-            if !providerChosen { return .needProvider }
-            return .newAgent(body)
-        }
-    }
-
-    private static func commandRoute(_ token: String, argument: String, chord: Chord, providerChosen: Bool) -> Route {
-        switch token {
-        case "/agent-select":
-            if chord == .commandShift { return providerChosen ? .newAgent("") : .needProvider }
-            return argument.isEmpty ? .openProviders : .selectProvider(argument)
-        case "/agent-new":
-            guard providerChosen else { return .needProvider }
-            return .newAgent(argument)
-        case "/agent":
-            return argument.isEmpty ? .none : .pickResumeAgent(argument)
-        case "/shell-new":
-            return .shellNew
-        case "/open":
-            return .focusTerminal
-        case "/rename":
-            return argument.isEmpty ? .none : .renameSession(argument)
-        case "/stop":
-            return .stopSession
-        default:
-            return .none
-        }
-    }
-
-    private static func split(_ text: String) -> (token: String, argument: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let parts = trimmed.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
-        let token = parts.first.map(String.init) ?? ""
-        let argument = parts.count > 1 ? String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines) : ""
-        return (token, argument)
-    }
 }
 
 struct ProviderChoice: Identifiable, Equatable {
@@ -162,6 +54,9 @@ final class SessionBridgeTextView: NSTextView {
     var onMenuActivate: (() -> Void)?
     var onHistoryBack: (() -> Void)?
     var onCommandHeld: ((Bool) -> Void)?
+    var onSendControl: ((UInt8) -> Void)?
+    var onShellTab: (() -> Void)?
+    var shellTabEnabled = false
     var slashMenuOpen = false
 
     enum Action: Equatable { case shell, resume, newAgent, escape }
@@ -177,14 +72,38 @@ final class SessionBridgeTextView: NSTextView {
         return nil
     }
 
+    private func handleControl(_ event: NSEvent) -> Bool {
+        let keys = event.modifierFlags.intersection([.command, .shift, .control, .option])
+        guard keys == .control else { return false }
+        if event.keyCode == 8 {
+            if !string.isEmpty {
+                undoManager?.beginUndoGrouping()
+                string = ""
+                undoManager?.endUndoGrouping()
+                return true
+            }
+            onSendControl?(0x03)
+            return true
+        }
+        if event.keyCode == 37 {
+            onSendControl?(0x0c)
+            return true
+        }
+        return false
+    }
+
     private func handle(_ event: NSEvent) -> Bool {
         guard window?.firstResponder === self, isEditable else { return false }
+        if handleControl(event) { return true }
         let keys = event.modifierFlags.intersection([.command, .shift, .control, .option])
         if keys.isEmpty, !hasMarkedText() {
             if slashMenuOpen {
                 if event.keyCode == 126 { onMenuStep?(-1); return true }
                 if event.keyCode == 125 { onMenuStep?(1); return true }
-                if event.keyCode == 36 || event.keyCode == 76 { onMenuActivate?(); return true }
+                if event.keyCode == 48 || event.keyCode == 36 || event.keyCode == 76 { onMenuActivate?(); return true }
+            } else if event.keyCode == 48, shellTabEnabled {
+                onShellTab?()
+                return true
             } else if event.keyCode == 126 {
                 onHistoryBack?()
                 return true
@@ -230,6 +149,9 @@ struct SessionBridgeField: NSViewRepresentable {
     var onMenuActivate: () -> Void
     var onHistoryBack: () -> Void
     var onCommandHeld: (Bool) -> Void
+    var onSendControl: (UInt8) -> Void
+    var shellTabEnabled: Bool
+    var onShellTab: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
     func makeNSView(context: Context) -> NSScrollView {
@@ -278,6 +200,9 @@ struct SessionBridgeField: NSViewRepresentable {
         editor.onMenuActivate = onMenuActivate
         editor.onHistoryBack = onHistoryBack
         editor.onCommandHeld = onCommandHeld
+        editor.onSendControl = onSendControl
+        editor.shellTabEnabled = shellTabEnabled
+        editor.onShellTab = onShellTab
         // A recreated text view must not repeat an old focus request, or it
         // steals the terminal when the status column changes selection.
         if context.coordinator.appliedFocus != focusToken {
@@ -300,12 +225,14 @@ struct SessionBridgeField: NSViewRepresentable {
 struct SessionComposerBar: View {
     @Binding var draft: String
     var notice: String
-    var shellTarget: String
-    var agentTarget: String
-    var agentTargetEmphasis: Bool
+    var shellAttachment: ComposerShellAttachment?
+    var onClearAttachment: () -> Void
+    var caption: String
+    var routeHints: RouteHints
+    var routeEmphasis: ComposerChord?
     var providerLabel: String
     var providerChosen: Bool
-    var commands: [SessionComposerModel.Command]
+    var slashCommands: [SlashCommand]
     var slashHighlight: Int
     var providers: [ProviderChoice]
     var pickingProvider: Bool
@@ -319,65 +246,94 @@ struct SessionComposerBar: View {
     var onMenuActivate: () -> Void
     var onHistoryBack: () -> Void
     var onCommandHeld: (Bool) -> Void
-    var onCommand: (SessionComposerModel.Command) -> Void
+    var onSendControl: (UInt8) -> Void
+    var shellTabEnabled: Bool
+    var onShellTab: () -> Void
+    var onSlash: (SlashCommand) -> Void
     var onProvider: (String) -> Void
     var onPickProvider: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(caption).font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkMuted).lineLimit(1)
+                .padding(.horizontal, Metrics.gutter).padding(.top, 6)
+            if let shellAttachment {
+                HStack(spacing: 6) {
+                    Text("\(shellAttachment.shellTitle) · \(shellAttachment.command)")
+                        .font(Face.mono(Metrics.caption))
+                        .foregroundStyle(Ink.inkMuted)
+                        .lineLimit(1)
+                    if let code = shellAttachment.exitCode {
+                        Text("exit \(code)").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
+                    }
+                    Spacer(minLength: 0)
+                    Button(action: onClearAttachment) {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(Ink.inkFaint)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("移除 Shell 附件")
+                }
+                .padding(.horizontal, Metrics.gutter)
+                .background(ConsoleValueMarker(identifier: "console.composerAttachment",
+                                               value: shellAttachment.command))
+            }
             field
-            hint
+            routeRow
         }
         .background(Ink.surface)
-        .overlay(alignment: .bottomLeading) { menu }
     }
 
     private var field: some View {
         HStack(spacing: Metrics.inline) {
-            Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(Ink.inkFaint)
+            Text("❯").font(Face.mono(12, .medium)).foregroundStyle(Ink.inkFaint)
             ZStack(alignment: .leading) {
                 if draft.isEmpty {
-                    Text("Shell 命令 · / 快捷操作").font(Face.mono(12)).foregroundStyle(Ink.inkFaint)
-                        .padding(.leading, 6).allowsHitTesting(false)
+                    Text("↩ 交给 Shell，⌘↩ 交给 Agent，/ 查看命令")
+                        .font(Face.mono(12)).foregroundStyle(Ink.inkFaint)
+                        .padding(.leading, 4).allowsHitTesting(false)
                 }
                 SessionBridgeField(text: $draft, enabled: enabled, focusToken: focusToken,
-                                   slashMenuOpen: pickingProvider || !commands.isEmpty,
+                                   slashMenuOpen: pickingProvider || !slashCommands.isEmpty,
                                    onShell: onShell, onResume: onResume, onNew: onNew, onEscape: onEscape,
                                    onMenuStep: onMenuStep, onMenuActivate: onMenuActivate, onHistoryBack: onHistoryBack,
-                                   onCommandHeld: onCommandHeld)
+                                   onCommandHeld: onCommandHeld,
+                                   onSendControl: onSendControl, shellTabEnabled: shellTabEnabled, onShellTab: onShellTab)
             }
-            .frame(minHeight: 32, maxHeight: 72)
-            VStack(alignment: .trailing, spacing: 2) {
-                Text("→ \(shellTarget)").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkMuted).lineLimit(1)
-                Text(agentTarget).font(Face.mono(Metrics.caption, agentTargetEmphasis ? .semibold : .medium))
-                    .foregroundStyle(agentTargetEmphasis ? Ink.accent : (providerChosen ? Ink.inkMuted : Ink.inkFaint))
-                    .padding(.horizontal, agentTargetEmphasis ? 4 : 0)
-                    .background(agentTargetEmphasis ? Ink.accentSoft : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                    .lineLimit(1)
-            }
-            ConsoleToolbarAction(title: providerChosen ? providerLabel : "选择 Agent",
-                                 identifier: "console.agentChip", symbol: "sparkle", perform: onPickProvider)
-                .fixedSize().frame(height: 24)
-                .help(providerChosen ? "默认 Agent：\(providerLabel)。点此更换，或输入 /agent-select" : "还没有默认 Agent。点此选择，或输入 /agent-select")
+            .frame(minHeight: 28, maxHeight: 120)
         }
-        .padding(.horizontal, Metrics.gutter).padding(.top, 6)
+        .padding(.horizontal, Metrics.gutter)
+        .overlay(alignment: .bottomLeading) { menu }
     }
 
-    private var hint: some View {
+    private var routeRow: some View {
         HStack(spacing: Metrics.inline) {
-            Text(notice.isEmpty ? "Enter → Shell · ⌘↩ → Agent · ⇧⌘↩ 新建 · / 命令" : notice)
-                .font(Face.sans(Metrics.caption)).foregroundStyle(notice.isEmpty ? Ink.inkFaint : Ink.inkMuted)
-                .lineLimit(2)
+            routeSegment(routeHints.enter, chord: .enter)
+            routeSegment(routeHints.command, chord: .command)
+            routeSegment(routeHints.commandShift, chord: .commandShift)
             Spacer(minLength: 0)
+            Text("/ 命令").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
+            if !notice.isEmpty {
+                Text(notice).font(Face.sans(Metrics.caption)).foregroundStyle(Change.changed).lineLimit(1)
+            }
             ConsoleValueMarker(identifier: "console.composerHint", value: notice)
                 .frame(width: 1, height: 1)
         }
-        .padding(.horizontal, Metrics.gutter).padding(.vertical, 4)
+        .padding(.horizontal, Metrics.gutter).padding(.bottom, 6)
+    }
+
+    private func routeSegment(_ segment: RouteHintSegment, chord: ComposerChord) -> some View {
+        let active = routeEmphasis == chord
+        return Text(segment.label)
+            .font(Face.mono(Metrics.caption, active ? .semibold : .regular))
+            .foregroundStyle(segment.available ? (active ? Ink.accent : Ink.inkMuted) : Ink.inkFaint)
+            .padding(.horizontal, active ? 4 : 0)
+            .background(active ? Ink.accentSoft : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .lineLimit(1)
     }
 
     @ViewBuilder private var menu: some View {
-        if pickingProvider || !commands.isEmpty {
+        if pickingProvider || !slashCommands.isEmpty {
             VStack(alignment: .leading, spacing: 2) {
                 if pickingProvider {
                     Text("选择默认 Agent").font(Face.mono(Metrics.caption, .semibold)).foregroundStyle(Ink.inkFaint)
@@ -388,8 +344,9 @@ struct SessionComposerBar: View {
                 } else {
                     Text("命令").font(Face.mono(Metrics.caption, .semibold)).foregroundStyle(Ink.inkFaint)
                         .padding(.horizontal, 8).padding(.top, 6)
-                    ForEach(Array(commands.enumerated()), id: \.element.id) { index, command in
-                        ConsoleToolbarAction(title: command.token, identifier: "console.slash." + command.slug, perform: { onCommand(command) })
+                    ForEach(Array(slashCommands.enumerated()), id: \.element.rawValue) { index, command in
+                        ConsoleToolbarAction(title: command.rawValue, identifier: "console.slash." + command.rawValue.dropFirst(),
+                                             perform: { onSlash(command) })
                             .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
                             .background(index == slashHighlight ? Ink.accentSoft : Color.clear)
                             .clipShape(RoundedRectangle(cornerRadius: 4))
@@ -406,7 +363,7 @@ struct SessionComposerBar: View {
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Ink.lineStrong, lineWidth: 1))
             .shadow(color: .black.opacity(0.16), radius: 12, y: 4)
             .padding(.leading, Metrics.gutter)
-            .offset(y: -52)
+            .offset(y: -6)
             .background(ConsoleValueMarker(identifier: pickingProvider ? "console.providerMenu" : "console.slashMenu", value: ""))
         }
     }
@@ -425,28 +382,114 @@ struct SessionComposerBar: View {
 
 struct AgentStatusColumn: View {
     let sessions: [TerminalSession]
+    var streamRows: [AgentRow] = []
     let resumeID: UUID?
+    var streamResumeID: UUID?
     let previewID: UUID?
-    let onPreview: (TerminalSession) -> Void
-    let onEnter: (TerminalSession) -> Void
+    let providerLabel: String
+    let providerChosen: Bool
+    var providerChoices: [ProviderChoice] = []
+    var defaultProviderID: String = ""
+    var canOpenNativeTerminal: Bool = false
+    var canResumeFromFile: Bool = false
+    let onPickProvider: () -> Void
+    let onNewAgent: () -> Void
+    var onNewAgentProvider: (String) -> Void = { _ in }
+    var onOpenNativeTerminal: () -> Void = {}
+    var onResumeFromFile: () -> Void = {}
+    let onSelectTerminal: (TerminalSession) -> Void
+    var onStreamTarget: (UUID) -> Void = { _ in }
+    var streamInlineRequest: AgentRequest?
+    var onStreamRespond: (String, AgentDecision) -> Void = { _, _ in }
+
+    private var activityCounts: (needsYou: Int, working: Int) {
+        var counts = AgentRowProjector.aggregateCounts(streamRows)
+        for session in sessions where session.isTaskAgent && session.isActive {
+            if session.commandBlocks.last?.isRunning == true { counts.working += 1 }
+        }
+        return counts
+    }
+
+    private var otherAgentProviders: [ProviderChoice] {
+        providerChoices.filter { $0.id != defaultProviderID && $0.installed != false }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("AGENT").font(Face.mono(Metrics.caption, .semibold)).foregroundStyle(Ink.inkFaint)
+            HStack(spacing: Metrics.inline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Agent").font(Face.sans(Metrics.chrome, .semibold))
+                    if activityCounts.needsYou > 0 || activityCounts.working > 0 {
+                        HStack(spacing: 4) {
+                            if activityCounts.needsYou > 0 {
+                                Text("需要你 \(activityCounts.needsYou)")
+                                    .foregroundStyle(Change.changed)
+                            }
+                            if activityCounts.needsYou > 0 && activityCounts.working > 0 {
+                                Text("·").foregroundStyle(Ink.inkMuted)
+                            }
+                            if activityCounts.working > 0 {
+                                Text("工作中 \(activityCounts.working)").foregroundStyle(Ink.inkMuted)
+                            }
+                        }
+                        .font(Face.sans(Metrics.caption))
+                    }
+                }
                 Spacer(minLength: 0)
+                Menu {
+                    Button("新建默认 Agent 会话", action: onNewAgent)
+                    if !otherAgentProviders.isEmpty {
+                        Menu("新建其他 Agent 会话") {
+                            ForEach(otherAgentProviders) { choice in
+                                Button(choice.name) { onNewAgentProvider(choice.id) }
+                            }
+                        }
+                    }
+                    Button("在原生终端中打开…", action: onOpenNativeTerminal)
+                        .disabled(!canOpenNativeTerminal)
+                    Button("从会话文件续接…", action: onResumeFromFile)
+                        .disabled(!canResumeFromFile)
+                } label: {
+                    Text("＋").font(Face.sans(Metrics.chrome, .medium))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                Button(action: onPickProvider) {
+                    Text(providerChosen ? "默认 \(providerLabel) ▾" : "选择 Agent")
+                        .font(Face.sans(Metrics.caption))
+                        .foregroundStyle(providerChosen ? Ink.inkMuted : Change.changed)
+                }
+                .buttonStyle(.plain)
             }
             .padding(.horizontal, Metrics.gutter).padding(.vertical, 7)
             Hairline()
-            if sessions.isEmpty {
-                Text("还没有 Agent。\n⇧⌘↩ 在当前标签新建。")
-                    .font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkMuted)
-                    .padding(Metrics.gutter)
-                    .fixedSize(horizontal: false, vertical: true)
+            if sessions.isEmpty && streamRows.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("还没有 Agent 会话。")
+                        .font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkMuted)
+                    if providerChosen {
+                        Text("在下方写下任务，⌘↩ 交给 \(providerLabel)。")
+                            .font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkMuted)
+                    } else {
+                        HStack(spacing: 8) {
+                            Text("先选择默认 Agent")
+                                .font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkMuted)
+                            Button("选择", action: onPickProvider)
+                                .font(Face.sans(Metrics.caption, .medium))
+                                .buttonStyle(.plain)
+                                .foregroundStyle(Ink.accent)
+                        }
+                    }
+                }
+                .padding(Metrics.gutter)
+                .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 4) {
+                        ForEach(streamRows) { row in
+                            streamStatusRow(row)
+                        }
                         ForEach(sessions) { session in
                             statusRow(session)
                         }
@@ -461,11 +504,49 @@ struct AgentStatusColumn: View {
         .accessibilityLabel("Agent 状态")
     }
 
+    private func streamStatusRow(_ row: AgentRow) -> some View {
+        let selected = row.id == streamResumeID
+        let showInlineApproval = row.id == previewID && row.status == .needsYou
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                ConsoleToolbarAction(title: row.title, identifier: "console.streamStatus." + row.id.uuidString,
+                                     symbol: selected ? "largecircle.fill.circle" : "circle",
+                                     perform: { onStreamTarget(row.id) })
+                    .frame(maxWidth: .infinity, minHeight: Metrics.hit, alignment: .leading)
+                if selected {
+                    Text("⌘↩").font(Face.mono(9)).foregroundStyle(Ink.accent)
+                }
+            }
+            Text((row.activity ?? "")).font(Face.mono(Metrics.caption))
+                .foregroundStyle(row.status == .needsYou ? Change.changed : Ink.inkMuted).lineLimit(2)
+            if showInlineApproval, let request = streamInlineRequest {
+                HStack(spacing: 6) {
+                    if request.decisions.contains(.allow) {
+                        ConsoleToolbarAction(title: "允许",
+                                             identifier: "console.streamRowApprove.\(request.id).allow",
+                                             perform: { onStreamRespond(request.id, .allow) })
+                    }
+                    if request.decisions.contains(.deny) {
+                        ConsoleToolbarAction(title: "拒绝",
+                                             identifier: "console.streamRowApprove.\(request.id).deny",
+                                             perform: { onStreamRespond(request.id, .deny) })
+                    }
+                }
+            }
+        }
+        .padding(6)
+        .background(selected ? Ink.accentSoft : Color.clear)
+        .overlay(alignment: .leading) {
+            if selected {
+                RoundedRectangle(cornerRadius: 1.5).fill(Ink.accent).frame(width: 3)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+    }
+
     private func statusRow(_ session: TerminalSession) -> some View {
         let selected = session.id == resumeID
-        let expanded = session.id == previewID
-        let provider = session.kind.split(separator: ":").dropFirst().first.map(String.init) ?? ""
-        let inferred = session.inferredAgentState.label
+        let status = ComposerConsoleBridge.agentStatusLabel(session)
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 4) {
                 if session.needsAttention {
@@ -473,37 +554,32 @@ struct AgentStatusColumn: View {
                 }
                 ConsoleToolbarAction(title: session.title, identifier: "console.agentStatus." + session.id.uuidString,
                                      symbol: selected ? "largecircle.fill.circle" : (session.isActive ? "circle.fill" : "circle"),
-                                     perform: { onPreview(session) })
+                                     perform: { onSelectTerminal(session) })
                     .frame(maxWidth: .infinity, minHeight: Metrics.hit, alignment: .leading)
-                ConsoleToolbarAction(title: "进入", identifier: "console.agentEnter." + session.id.uuidString,
-                                     symbol: "arrow.up.right", perform: { onEnter(session) })
-                    .fixedSize().frame(height: Metrics.hit)
-            }
-            Text((provider.isEmpty ? "" : provider + " · ") + inferred + (selected ? " · 续接" : ""))
-                .font(Face.mono(Metrics.caption)).foregroundStyle(selected ? Ink.accent : Ink.inkMuted)
-                .lineLimit(1).padding(.leading, 4)
-            if expanded {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(AgentActivityInference.previewLines(session.activity.outputTail), id: \.self) { line in
-                        Text(line).font(Face.mono(9)).foregroundStyle(Ink.inkFaint).lineLimit(1)
-                    }
+                if selected {
+                    Text("⌘↩").font(Face.mono(9)).foregroundStyle(Ink.accent)
                 }
-                .padding(4)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Ink.canvas)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
             }
+            Text(status)
+                .font(Face.mono(Metrics.caption)).foregroundStyle(selected ? Ink.accent : Ink.inkMuted)
+                .lineLimit(2).padding(.leading, 4)
         }
-        .padding(4)
+        .padding(6)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(selected ? Ink.accentSoft : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .help("单击设为 ⌘↩ 目标并预览；「进入」切到终端")
+        .overlay(alignment: .leading) {
+            if selected {
+                RoundedRectangle(cornerRadius: 1.5).fill(Ink.accent).frame(width: 3)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+        .help("单击设为 ⌘↩ 目标并打开终端")
     }
 }
 
 struct SessionComposerFrozen: View {
     var slash: Bool
+    var noProvider = false
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if slash {
@@ -529,8 +605,13 @@ struct SessionComposerFrozen: View {
                     .background(Ink.canvas)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
             }
-            Text("Enter Shell · ⌘↩ 续接 Agent · ⇧⌘↩ 新建")
-                .font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkFaint)
+            HStack(spacing: 8) {
+                Text("↩ Shell 1").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkFaint)
+                Text(noProvider ? "⌘↩ 先选择 Agent" : "⌘↩ 续接 Codex")
+                    .font(Face.sans(Metrics.caption))
+                    .foregroundStyle(noProvider ? Change.changed : Ink.inkFaint)
+                Text("⇧⌘↩ 新建").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkFaint)
+            }
         }
         .padding(.horizontal, Metrics.gutter).padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -538,28 +619,102 @@ struct SessionComposerFrozen: View {
     }
 }
 
-struct SessionStatusFrozen: View {
-    var active: Bool
+struct AgentStreamMixedFrozen: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("AGENT").font(Face.mono(Metrics.caption, .semibold)).foregroundStyle(Ink.inkFaint)
+            HStack {
+                Text("Agent").font(Face.sans(Metrics.chrome, .semibold))
+                Spacer()
+                Text("需要你 1 · 工作中 1").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkMuted)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Codex · 修复登录测试").font(Face.sans(Metrics.chrome, .semibold))
+                Text("● 工作中 · 运行 npm test").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.live)
+            }
+            .padding(6).background(Ink.accentSoft).clipShape(RoundedRectangle(cornerRadius: 6))
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Claude 1").font(Face.sans(Metrics.chrome, .semibold))
+                Text("终端 · 12 秒前有输出").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkMuted)
+            }
+            .padding(6).background(Color.clear)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Codex · 补文档").font(Face.sans(Metrics.chrome))
+                Text("✓ 已完成 · 3 分钟前").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkMuted)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(Metrics.gutter)
+        .frame(width: 280, alignment: .topLeading)
+        .background(Ink.surface)
+    }
+}
+
+struct AgentStreamStatusFrozen: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Agent").font(Face.sans(Metrics.chrome, .semibold))
+                Spacer()
+                Text("需要你 1").font(Face.sans(Metrics.caption)).foregroundStyle(Change.changed)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Codex · 修复登录测试").font(Face.sans(Metrics.chrome, .semibold))
+                Text("等你确认 · rm -rf .cache").font(Face.mono(Metrics.caption)).foregroundStyle(Change.changed)
+                HStack(spacing: 6) {
+                    Text("允许").font(Face.sans(Metrics.caption)).padding(.horizontal, 8).padding(.vertical, 2)
+                        .background(Ink.accentSoft).clipShape(RoundedRectangle(cornerRadius: 4))
+                    Text("拒绝").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkMuted)
+                }
+            }
+            .padding(6).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Ink.accentSoft).clipShape(RoundedRectangle(cornerRadius: 6))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("‹ Agent    Codex · 修复登录测试").font(Face.sans(Metrics.caption, .semibold))
+                Text("● 工作中 · 运行 npm test · 0:42").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkMuted)
+                Text("你\n修复登录页的单元测试").font(Face.mono(9)).foregroundStyle(Ink.inkFaint)
+            }
+            .padding(6).background(Ink.canvas).clipShape(RoundedRectangle(cornerRadius: 4))
+            Spacer(minLength: 0)
+        }
+        .padding(Metrics.gutter)
+        .frame(width: 280, alignment: .topLeading)
+        .background(Ink.surface)
+    }
+}
+
+struct SessionStatusFrozen: View {
+    var active: Bool
+    var noProvider = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Agent").font(Face.sans(Metrics.chrome, .semibold))
             if active {
                 HStack(spacing: 6) {
                     Circle().fill(Ink.live).frame(width: 6, height: 6)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("Codex 1").font(Face.sans(Metrics.chrome, .semibold))
-                        Text("codex · 运行中").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkMuted)
+                        Text("Codex · 修复登录测试").font(Face.sans(Metrics.chrome, .semibold))
+                        Text("● 工作中 · 运行 npm test").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.live)
                     }
                 }
                 .padding(6).frame(maxWidth: .infinity, alignment: .leading)
                 .background(Ink.accentSoft).clipShape(RoundedRectangle(cornerRadius: 6))
             } else {
-                Text("还没有 Agent。").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkMuted)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("还没有 Agent 会话。")
+                        .font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkMuted)
+                    if noProvider {
+                        Text("先选择默认 Agent")
+                            .font(Face.sans(Metrics.caption)).foregroundStyle(Change.changed)
+                    } else {
+                        Text("在下方写下任务，⌘↩ 交给 Codex。")
+                            .font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkMuted)
+                    }
+                }
             }
             Spacer(minLength: 0)
         }
         .padding(Metrics.gutter)
-        .frame(width: 168, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Ink.surface)
     }
 }

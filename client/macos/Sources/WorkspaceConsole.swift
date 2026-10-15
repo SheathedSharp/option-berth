@@ -1,4 +1,5 @@
 import AppKit
+import BerthAgent
 import BerthTerminal
 import SwiftUI
 
@@ -6,15 +7,24 @@ import SwiftUI
 /// interactive shell. An external agent is another PTY started from the shell;
 /// leaving its view does not signal it. Creation stays a transient surface
 /// above the terminal, not a second page that resizes every running TUI.
+enum FrozenConsoleScene: Equatable {
+    case slashMenu
+    case noProvider
+    case nativeAgent
+    case streamDetail
+    case streamMixed
+}
+
 struct WorkspaceConsole: View {
     let root: String
     var frozen = false
+    var frozenScene: FrozenConsoleScene = .slashMenu
     @ObservedObject private var workspace: ConsoleWorkspace
     @ObservedObject private var sessions = TerminalSessions.shared
     @ObservedObject private var settings = UISettings.shared
     @StateObject private var launcher = AgentLaunchController()
+    @StateObject private var streamController = AgentStreamsController()
     @State private var creating = false
-    @State private var startingAgent = false
     @State private var history = false
     @State private var problem: String?
     @State private var focusIntent: TerminalFocusIntent?
@@ -24,17 +34,18 @@ struct WorkspaceConsole: View {
     @State private var pickingProvider = false
     @State private var composerNotice = ""
     @State private var composerFocus = 0
-    @State private var agentColumnWidth = 212.0
     @State private var slashHighlight = 0
     @State private var previewAgentID: UUID?
     @State private var historyCursor = 0
     @State private var commandHeld = false
     @State private var pendingChord: SessionComposerModel.Chord?
+    @State private var shellAttachment: ComposerShellAttachment?
+    @State private var shellTabReadGeneration: UInt = 0
     @Environment(\.clientReduceMotion) private var reduced
-    init(root: String, frozen: Bool = false, initialAgent: Bool = false) {
-        self.root = root; self.frozen = frozen
+    init(root: String, frozen: Bool = false, initialAgent: Bool = false, frozenScene: FrozenConsoleScene = .slashMenu) {
+        self.root = root; self.frozen = frozen; self.frozenScene = frozenScene
         _workspace = ObservedObject(wrappedValue: frozen ? ConsoleWorkspace() : TerminalSessions.shared.workspace(root))
-        _creating = State(initialValue: frozen && initialAgent)
+        _creating = State(initialValue: frozen && (initialAgent || frozenScene == .slashMenu))
     }
     private var scoped: [TerminalSession] { frozen ? [] : sessions.inWorktree(root) }
     private var selected: TerminalSession? { scoped.first { $0.id == workspace.activeSelection } ?? scoped.last }
@@ -44,59 +55,42 @@ struct WorkspaceConsole: View {
             Hairline()
             if frozen { frozenStrip }
             if let selected {
-                HStack(spacing: 0) {
-                    sessionRail
-                    Hairline(axis: .vertical)
-                    VStack(spacing: 0) {
-                        HStack(spacing: 0) {
-                            sessionCanvas(for: selected)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            SplitHandle(width: $agentColumnWidth, range: 168...280, controlsTrailingPane: true)
-                            AgentStatusColumn(sessions: agentSessions, resumeID: workspace.resumeAgentID,
-                                              previewID: previewAgentID, onPreview: previewAgent, onEnter: enterAgent)
-                                .frame(width: CGFloat(agentColumnWidth))
-                                .frame(maxHeight: .infinity)
-                        }
+                VStack(spacing: 0) {
+                    if !shellSessions.isEmpty {
+                        ShellSessionBar(shells: shellSessions, selectedID: shellTarget()?.id,
+                                        onSelect: { activate($0) }, onNewShell: { newShell() },
+                                        onNewAgent: { composerAct(.commandShift) }, onOpenSwitcher: openSwitcher)
                         Hairline()
+                    }
+                    HStack(spacing: 0) {
+                        sessionCanvas(for: selected)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        SplitHandle(width: $settings.consoleAgentWidth, range: UISettings.consoleAgentWidthRange,
+                                    controlsTrailingPane: true)
+                        agentColumn
+                            .frame(width: CGFloat(settings.consoleAgentWidth))
+                            .frame(maxHeight: .infinity)
+                    }
+                    Hairline()
+                    if selected.kind == "terminal" {
                         composerBar
+                    } else {
+                        nativeAgentInputStrip(for: selected)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay(alignment: .topLeading) {
-                    ZStack(alignment: .topLeading) {
-                        if switcherPresented {
-                            SessionSwitcherPalette(root: root, sessions: scoped, query: $switcherQuery,
-                                                   selected: selected, activate: activate,
-                                                   close: closeSwitcher)
-                                .frame(width: 430, height: 380)
-                                .padding(.leading, 44).padding(.top, 10)
-                                .transition(.opacity.combined(with: .move(edge: .top)))
-                        }
-                        if startingAgent {
-                            // Floats above the live shell. The shell's frame does not change,
-                            // and dismissing this does not signal either PTY.
-                            agentLaunchSurface
-                                .frame(width: 440, height: 300, alignment: .top)
-                                .background(Ink.canvas)
-                                .clipShape(RoundedRectangle(cornerRadius: 10))
-                                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Ink.lineStrong, lineWidth: 1))
-                                .padding(.leading, 52).padding(.top, 8)
-                        }
+                    if switcherPresented {
+                        SessionSwitcherPalette(root: root, sessions: scoped, query: $switcherQuery,
+                                               selected: selected, activate: activate,
+                                               close: closeSwitcher)
+                            .frame(width: 430, height: 380)
+                            .padding(.leading, Metrics.gutter).padding(.top, 48)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
                     }
                 }
             } else if frozen {
-                HStack(spacing: 0) {
-                    VStack(spacing: 0) {
-                        Text("$ git status --short\n M Sources/API.swift\n$ _")
-                            .font(Face.mono(Metrics.row)).foregroundStyle(Ink.ink).padding(Metrics.panelPad)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                        Hairline()
-                        SessionComposerFrozen(slash: creating)
-                    }
-                    Hairline(axis: .vertical)
-                    SessionStatusFrozen(active: creating)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                frozenFixture
             } else {
                 shellFirstEmpty
             }
@@ -112,52 +106,31 @@ struct WorkspaceConsole: View {
                 if launcher.providers.isEmpty { launcher.refresh(workspace) }
             }
             .onChange(of: creating) { _, value in
-                if !value, !startingAgent, let selected { focusSessionInput(selected) }
-            }
-            .onChange(of: startingAgent) { _, value in
-                // Launch focuses the new PTY itself. This only aborts a plan that
-                // was still in flight when the surface closed.
-                if !value, !creating { launcher.cancel() }
+                if !value, let selected { focusSessionInput(selected) }
             }
             .background(alignment: .topLeading) {
                 SessionShortcutDelivery(open: openSwitcher, cycle: cycleSession, escape: handleEscape,
                                         focusComposer: focusComposer, newAgent: { composerAct(.commandShift) },
                                         canCycle: { scoped.count > 1 },
-                                        canEscape: { switcherPresented || startingAgent || selected?.kind != "terminal" },
+                                        canEscape: { switcherPresented || selected?.kind != "terminal" },
                                         canFocusComposer: canUseComposerShortcut, canNewAgent: canUseComposerShortcut)
                     .frame(width: 1, height: 1)
                     .allowsHitTesting(false)
             }
             .onDisappear { launcher.cancel() }
-    }
-    private var launchSurface: SessionLaunchPanel { launchPanel(agentOnly: false) }
-    private var agentLaunchSurface: SessionLaunchPanel { launchPanel(agentOnly: true) }
-    private func launchPanel(agentOnly: Bool) -> SessionLaunchPanel {
-        SessionLaunchPanel(root: root, workspace: workspace, launcher: launcher, selected: selected,
-            newShell: { newShell() }, activate: activate,
-            close: (agentOnly || selected != nil) ? {
-                if agentOnly { startingAgent = false } else { creating = false }
-            } : nil, frozen: frozen, agentOnly: agentOnly)
+            .onReceive(NotificationCenter.default.publisher(for: .agentStreamEndedExternally)) { note in
+                guard let id = note.userInfo?["id"] as? UUID else { return }
+                streamController.dropSession(id)
+                if workspace.resumeStreamID == id { workspace.resumeStreamID = nil }
+                if previewAgentID == id { previewAgentID = nil }
+            }
     }
     private var toolbar: some View {
         HStack(spacing: Metrics.inline) {
             if frozen {
-                Text("＋ 新会话"); Text("输入 ⌘↩").foregroundStyle(Ink.inkMuted)
+                Text("Shell 栏"); Text("输入 ⌘↩").foregroundStyle(Ink.inkMuted)
                 Spacer(); Text("历史"); Image(systemName: "ellipsis")
             } else {
-                if !scoped.isEmpty {
-                    SessionLauncherPopover(isPresented: $creating, panel: launchSurface, reduced: reduced,
-                                           beforeOpen: beginSession, onPresented: {
-                                               if selected?.kind == "terminal" { focusComposer() }
-                                           }, onDismiss: {
-                                               guard let selected else { return }
-                                               focusIntent = nil
-                                               focusSessionInput(selected)
-                                           })
-                        .fixedSize(horizontal: true, vertical: false).frame(height: 24)
-                        .help("再开一个 Shell，或开始外部 Agent 会话")
-                } else { Text("新会话").font(Face.sans(Metrics.chrome, .medium)) }
-                sessionModeControl
                 Spacer(minLength: 0)
                 ConsoleToolbarAction(title: "历史", identifier: "terminal.history") { history = true }
                     .fixedSize(horizontal: true, vertical: false).frame(height: 24)
@@ -165,15 +138,18 @@ struct WorkspaceConsole: View {
                 if ProcessInfo.processInfo.environment["BERTH_CONSOLE_TEST"] == "1" {
                     ConsoleToolbarAction(title: "新建 Shell", identifier: "console.newShell", perform: { newShell() })
                         .frame(width: 1, height: 1).opacity(0.01)
+                    ConsoleToolbarAction(title: "聚焦输入", identifier: "console.focusComposer", perform: focusComposer)
+                        .frame(width: 1, height: 1).opacity(0.01)
                 }
                 Menu {
                     Button("新建 Shell") { newShell() }
                     Toggle("新 Shell 启用命令块", isOn: $settings.shellIntegration)
-                        .disabled(settings.configuration.preferences.shellIntegration != nil || URL(fileURLWithPath: TerminalSession.shell).lastPathComponent != "zsh")
+                        .disabled(settings.configuration.preferences.shellIntegration != nil || !ShellIntegrationLease.supports(executable: TerminalSession.shell))
+                    Toggle("Agent 后台通知与 Dock 角标", isOn: $settings.consoleAgentNotifications)
+                        .disabled(settings.configuration.preferences.consoleAgentNotifications != nil)
                     if let selected {
                         Divider()
-                        if selected.kind == "terminal" { Button("聚焦输入") { focusComposer() } }
-                        else { Button("返回 Shell") { returnToShell() } }
+                        if selected.kind != "terminal" { Button("返回 Shell") { returnToShell() } }
                         Button("聚焦当前会话") { activate(selected) }
                         Button("查找当前终端") { showTerminalFind(selected.terminal) }
                         Button("在独立窗口显示") { TerminalWindows.shared.detach(selected) }
@@ -189,37 +165,9 @@ struct WorkspaceConsole: View {
             }
         }.font(Face.sans(Metrics.chrome)).padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV).background(Ink.surface)
     }
-    private var sessionRail: some View {
-        VStack(spacing: 6) {
-            Button { openSwitcher() } label: {
-                Image(systemName: "rectangle.on.rectangle")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(switcherPresented ? Ink.accent : Ink.inkMuted)
-                    .frame(width: 30, height: 28)
-                    .background(switcherPresented ? Ink.accentSoft : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-            }.buttonStyle(.plain).help("切换会话 / Switch session · ⌘⌥Tab")
-
-            Hairline()
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 5) {
-                    ForEach(orderedSessions) { session in
-                        SessionRailItem(session: session, selected: selected?.id == session.id,
-                                        activate: { activate(session) })
-                    }
-                }.padding(.vertical, 2)
-            }
-            Spacer(minLength: 0)
-            Text("⌘⌥")
-                .font(Face.mono(8, .medium)).foregroundStyle(Ink.inkFaint)
-                .rotationEffect(.degrees(-90))
-                .frame(width: 30, height: 24)
-        }
-        .padding(.horizontal, 5).padding(.vertical, 7)
-        .frame(width: 42)
-        .background(Ink.surface)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("当前 worktree 会话")
+    private var shellSessions: [TerminalSession] {
+        scoped.filter { $0.kind == "terminal" }
+            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
     }
 
     private var orderedSessions: [TerminalSession] {
@@ -231,37 +179,34 @@ struct WorkspaceConsole: View {
     }
 
     private func openSwitcher() {
-        startingAgent = false
         switcherQuery = ""
         switcherPresented = true
     }
 
     private func handleEscape() {
-        if startingAgent {
-            startingAgent = false
-            if let selected, selected.kind == "terminal" { focusIntent = TerminalFocusIntent(selected.id) }
-            if switcherPresented { closeSwitcher() }
+        if switcherPresented {
+            closeSwitcher()
             return
         }
-        closeSwitcher()
+        composerEscape()
     }
 
     private func closeSwitcher() {
-        let leaveAgent = selected?.kind != "terminal"
         switcherPresented = false
         switcherQuery = ""
-        if leaveAgent { returnToShell() }
     }
 
     /// Show the shell again. The agent PTY stays in the registry, still running.
     private func returnToShell() {
         switcherPresented = false
         switcherQuery = ""
-        startingAgent = false
         let shell = terminalReturnID.flatMap { id in scoped.first { $0.id == id && $0.kind == "terminal" } }
             ?? scoped.first { $0.kind == "terminal" }
-        if let shell { activate(shell) }
-        else { newShell() }
+        if let shell {
+            activate(shell)
+            focusIntent = nil
+            DispatchQueue.main.async { focusComposer() }
+        } else { newShell() }
     }
 
     private func activate(_ session: TerminalSession) {
@@ -270,7 +215,7 @@ struct WorkspaceConsole: View {
             terminalReturnID = current.id
         }
         // Selection only. Stopping an agent is the explicit end-session action.
-        sessions.select(session); creating = false; startingAgent = false; switcherPresented = false
+        sessions.select(session); creating = false; switcherPresented = false
         focusSessionInput(session, agentIntent: session.kind != "terminal")
         if TerminalWindows.shared.windows[session.id] != nil { TerminalWindows.shared.detach(session) }
     }
@@ -301,9 +246,31 @@ struct WorkspaceConsole: View {
         }
     }
 
+    private func shellPromptComposerMode(_ session: TerminalSession) -> Bool {
+        session.kind == "terminal" && session.shellIntegrationEnabled && !session.shellForegroundBusy
+    }
+
+    private func routeTerminalPromptKey(_ event: NSEvent) {
+        focusComposer()
+        switch event.keyCode {
+        case 51:
+            if !workspace.draft.isEmpty { workspace.draft.removeLast() }
+        case 36, 76:
+            workspace.draft += "\n"
+        default:
+            if let chars = event.characters, !chars.isEmpty { workspace.draft += chars }
+        }
+    }
+
     @ViewBuilder private func sessionCanvas(for session: TerminalSession) -> some View {
+        let promptComposer = shellPromptComposerMode(session)
         PaneWorkspaceView(primary: session, workspace: workspace, agent: workspace.agentMode,
-                          focusIntent: focusIntent, compactSinglePane: true)
+                          focusIntent: focusIntent,
+                          dimTerminalCaret: promptComposer,
+                          bridgePromptKeys: promptComposer,
+                          onPromptKey: routeTerminalPromptKey,
+                          onSendCommandToAgent: attachShellCommandBlock,
+                          compactSinglePane: true)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .onChange(of: session.shellForegroundBusy) { _, busy in
                 guard selected?.id == session.id else { return }
@@ -342,51 +309,246 @@ struct WorkspaceConsole: View {
             Spacer()
         }.font(Face.mono(Metrics.meta)).padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV)
     }
-    private func beginSession() {
-        guard !frozen else { return }
-        startingAgent = false
-        creating = true
-        if launcher.providers.isEmpty { launcher.refresh(workspace) }
+
+    @ViewBuilder private var frozenFixture: some View {
+        switch frozenScene {
+        case .streamMixed:
+            HStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    Text("$ git status -s\n M src/login.ts\n$ _")
+                        .font(Face.mono(Metrics.row)).foregroundStyle(Ink.ink).padding(Metrics.panelPad)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    Hairline()
+                    SessionComposerFrozen(slash: false, noProvider: false)
+                }
+                Hairline(axis: .vertical)
+                AgentStreamMixedFrozen()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .streamDetail:
+            HStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    Text("$ npm test\nFAIL src/login.test.ts\n$ _")
+                        .font(Face.mono(Metrics.row)).foregroundStyle(Ink.ink).padding(Metrics.panelPad)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    Hairline()
+                    SessionComposerFrozen(slash: false, noProvider: false)
+                }
+                Hairline(axis: .vertical)
+                AgentStreamStatusFrozen()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .nativeAgent:
+            VStack(spacing: 0) {
+                Text("Claude Code · 修复登录测试\n╭──────────────────────────────╮\n│ Allow running npm test?        │\n│  [Allow]  [Deny]             │\n╰──────────────────────────────╯")
+                    .font(Face.mono(Metrics.row)).foregroundStyle(Ink.ink).padding(Metrics.panelPad)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                Hairline()
+                HStack {
+                    Text("键盘在 Claude 1 的终端里 · ⌘↩ 回到输入条")
+                        .font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkMuted)
+                    Spacer()
+                    Text("返回 Shell").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.accent)
+                }
+                .padding(.horizontal, Metrics.gutter).padding(.vertical, 8)
+                .background(Ink.surface)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        default:
+            HStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    Text("$ git status --short\n M Sources/API.swift\n$ _")
+                        .font(Face.mono(Metrics.row)).foregroundStyle(Ink.ink).padding(Metrics.panelPad)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    Hairline()
+                    SessionComposerFrozen(slash: frozenScene == .slashMenu && creating,
+                                          noProvider: frozenScene == .noProvider)
+                }
+                Hairline(axis: .vertical)
+                SessionStatusFrozen(active: frozenScene == .slashMenu && creating,
+                                    noProvider: frozenScene == .noProvider)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
     private var agentSessions: [TerminalSession] {
         scoped.filter { $0.kind.hasPrefix("agent:") }
             .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
     }
+    @ViewBuilder private var agentColumn: some View {
+        VStack(spacing: 0) {
+            AgentStatusColumn(sessions: agentSessions, streamRows: structuredAgentRows,
+                              resumeID: workspace.resumeAgentID, streamResumeID: workspace.resumeStreamID,
+                              previewID: previewAgentID, providerLabel: providerLabel,
+                              providerChosen: workspace.providerChosen,
+                              providerChoices: SessionProviderChoices.merge(launcher.providers),
+                              defaultProviderID: workspace.providerID,
+                              canOpenNativeTerminal: launcher.available(workspace),
+                              canResumeFromFile: launcher.provider(workspace)?.supportsResume == true,
+                              onPickProvider: {
+                                  pickingProvider = true
+                                  if launcher.providers.isEmpty { launcher.refresh(workspace) }
+                              },
+                              onNewAgent: { composerAct(.commandShift) },
+                              onNewAgentProvider: { beginNewAgent(providerID: $0) },
+                              onOpenNativeTerminal: { openNativeTerminalFresh() },
+                              onResumeFromFile: { pickResumeFileAndLaunch() },
+                              onSelectTerminal: enterAgent,
+                              onStreamTarget: { selectStreamTarget($0) },
+                              streamInlineRequest: streamInlineRequest,
+                              onStreamRespond: { requestID, decision in
+                                  if let id = previewAgentID { respondStream(id, requestID: requestID, decision: decision) }
+                              })
+            if let previewAgentID, let session = streamController.session(previewAgentID) {
+                Hairline()
+                AgentStreamDetail(session: session, queuedCount: streamController.queuedCount(for: session.id),
+                                  queuedPreview: streamController.queuedMessages(for: session.id).first,
+                                  onWithdrawQueued: {
+                                      if let text = streamController.withdrawQueued(id: session.id) {
+                                          workspace.draft = text
+                                          composerNotice = "已从排队撤回"
+                                      }
+                                  },
+                                  onInterrupt: { interruptStream(session.id) },
+                                  onClose: { confirmEndStream(session.id) },
+                                  onRespond: { requestID, decision in
+                                      respondStream(session.id, requestID: requestID, decision: decision)
+                                  },
+                                  onAdoptCommand: adoptAgentCommand,
+                                  onOpenGitPath: openGitPath,
+                                  onContinueInNative: openStreamInNativeTerminal)
+            }
+        }
+        .onChange(of: previewAgentID) { _, id in streamController.markDetailVisible(id) }
+        .onChange(of: streamController.unsupportedNotice?.sessionID) { _, _ in
+            guard let notice = streamController.unsupportedNotice else { return }
+            composerNotice = "\(notice.message) · 可用「/native」或重新 ⌘↩ 走原生终端"
+            workspace.resumeStreamID = notice.sessionID
+            previewAgentID = notice.sessionID
+        }
+    }
+
+    private var streamInlineRequest: AgentRequest? {
+        guard let previewAgentID, let session = streamController.session(previewAgentID) else { return nil }
+        return session.snapshot.requests.first
+    }
+
+    private var structuredAgentRows: [AgentRow] {
+        let now = Date()
+        return streamController.sessions.map { session in
+            AgentRowProjector.streamRow(id: session.id, provider: session.provider, title: session.title,
+                                        snapshot: session.snapshot, unread: streamController.isUnread(session.id),
+                                        isTarget: session.id == workspace.resumeStreamID,
+                                        queuedCount: streamController.queuedCount(for: session.id), now: now)
+        }
+    }
     private var providerLabel: String {
         launcher.providers.first { $0.id == workspace.providerID }?.name ?? SessionComposerModel.providerName(workspace.providerID)
     }
-    private var slashCommands: [SessionComposerModel.Command] {
-        pickingProvider ? [] : SessionComposerModel.matches(workspace.draft)
+    private var composerSlashContext: SlashContext {
+        ComposerConsoleBridge.slashContext(agentCount: agentSessions.count + streamController.sessions.count,
+                                           shellCount: shellSessions.count, target: resumeTarget(),
+                                           streamSessions: streamController.sessions,
+                                           streamResumeID: workspace.resumeStreamID,
+                                           provider: launcher.provider(workspace))
+    }
+
+    private var composerContext: ComposerContext {
+        ComposerConsoleBridge.context(draft: workspace.draft, shell: shellTarget(), target: resumeTarget(),
+                                      streamSessions: streamController.sessions,
+                                      streamResumeID: workspace.resumeStreamID,
+                                      providerChosen: workspace.providerChosen, providerID: workspace.providerID,
+                                      slashContext: composerSlashContext)
+    }
+
+    private var slashCommands: [SlashCommand] {
+        pickingProvider ? [] : SlashParser.matches(workspace.draft, context: composerSlashContext)
+    }
+
+    private var composerCaption: String {
+        if shellTarget()?.shellIntegrationEnabled == false, shellTarget() != nil {
+            return "未启用 Shell 集成 · 在菜单中开启"
+        }
+        return "\(URL(fileURLWithPath: root).lastPathComponent) · 会话"
     }
 
     private var composerBar: some View {
-        SessionComposerBar(draft: $workspace.draft, notice: composerNotice,
-                           shellTarget: shellTarget()?.title ?? "Shell",
-                           agentTarget: agentTargetLabel,
-                           agentTargetEmphasis: commandHeld,
+        let hints = ComposerRouter.hints(composerContext)
+        return SessionComposerBar(draft: $workspace.draft, notice: composerNotice,
+                           shellAttachment: shellAttachment,
+                           onClearAttachment: { shellAttachment = nil },
+                           caption: composerCaption,
+                           routeHints: hints,
+                           routeEmphasis: commandHeld ? .command : nil,
                            providerLabel: providerLabel,
                            providerChosen: workspace.providerChosen,
-                           commands: slashCommands,
+                           slashCommands: slashCommands,
                            slashHighlight: slashHighlight,
                            providers: SessionProviderChoices.merge(launcher.providers),
-                           pickingProvider: pickingProvider, enabled: !launcher.planning && !shellOwnsKeyboard(),
+                           pickingProvider: pickingProvider, enabled: !launcher.planning,
                            focusToken: composerFocus,
                            onShell: { composerAct(.plain) }, onResume: { composerAct(.command) },
                            onNew: { composerAct(.commandShift) }, onEscape: composerEscape,
                            onMenuStep: stepSlashMenu, onMenuActivate: activateSlashMenu,
                            onHistoryBack: recallHistory,
                            onCommandHeld: { commandHeld = $0 },
-                           onCommand: runSlash, onProvider: chooseProvider, onPickProvider: {
+                           onSendControl: forwardControlToShell,
+                           shellTabEnabled: shellTabCompletionEnabled,
+                           onShellTab: forwardTabToShell,
+                           onSlash: runSlash, onProvider: chooseProvider, onPickProvider: {
                                pickingProvider = true
                                if launcher.providers.isEmpty { launcher.refresh(workspace) }
                            })
             .onChange(of: workspace.draft) { _, _ in slashHighlight = 0; historyCursor = 0 }
     }
 
-    private var agentTargetLabel: String {
-        if let agent = resumeTarget() { return "⌘↩ → \(agent.title)" }
-        if workspace.providerChosen { return "⌘↩ → \(providerLabel)（尚无会话）" }
-        return "⌘↩ → 选择 Agent"
+    private func nativeAgentInputStrip(for session: TerminalSession) -> some View {
+        HStack {
+            Text("键盘在 \(session.title) 的终端里 · ⌘↩ 回到输入条")
+                .font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkMuted)
+            Spacer()
+            ConsoleToolbarAction(title: "返回 Shell", identifier: "console.returnToShell", perform: returnToShell)
+                .font(Face.sans(Metrics.caption))
+        }
+        .padding(.horizontal, Metrics.gutter).padding(.vertical, 8)
+        .background(Ink.surface)
+    }
+
+    private func forwardControlToShell(_ byte: UInt8) {
+        guard let shell = shellTarget(), shell.isActive else { return }
+        shell.terminal.send(source: shell.terminal, data: [byte][...])
+    }
+
+    private var shellTabCompletionEnabled: Bool {
+        guard selected?.kind == "terminal", !frozen else { return false }
+        guard let shell = shellTarget(), shell.isActive else { return false }
+        return shell.shellIntegrationEnabled && !shell.shellForegroundBusy
+    }
+
+    private func forwardTabToShell() {
+        guard shellTabCompletionEnabled, let shell = shellTarget() else { return }
+        let text = workspace.draft
+        guard deliverTabCompletion(text, to: shell) else { return }
+        composerNotice = ""
+        scheduleShellTabReadBack(seed: text, session: shell)
+    }
+
+    private func scheduleShellTabReadBack(seed: String, session: TerminalSession) {
+        shellTabReadGeneration += 1
+        let generation = shellTabReadGeneration
+        let delays: [TimeInterval] = [0.05, 0.12, 0.22]
+        for delay in delays {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard generation == shellTabReadGeneration else { return }
+                guard shellTabCompletionEnabled, shellTarget()?.id == session.id else { return }
+                let terminal = session.terminal.getTerminal()
+                guard workspace.draft == seed else { return }
+                guard let line = ShellPromptLineCapture.commandLine(atPrompt: terminal, seed: seed) else { return }
+                guard line != seed else { return }
+                workspace.draft = line
+                composerFocus += 1
+            }
+        }
     }
 
     private func shellOwnsKeyboard() -> Bool {
@@ -407,6 +569,11 @@ struct WorkspaceConsole: View {
             chooseProvider(rows[slashHighlight].id)
             return
         }
+        if case .command(let command, let argument) = SlashParser.parse(workspace.draft, context: composerSlashContext) {
+            runSlashCommand(command, argument: argument, chord: .plain)
+            if workspace.draft.hasPrefix("/") { workspace.draft = "" }
+            return
+        }
         let commands = slashCommands
         guard slashHighlight < commands.count else { return }
         runSlash(commands[slashHighlight])
@@ -421,34 +588,46 @@ struct WorkspaceConsole: View {
     }
     private func focusComposer() {
         guard !frozen, selected != nil else { return }
+        if selected?.kind != "terminal" {
+            returnToShell()
+        }
         creating = false
-        startingAgent = false
         switcherPresented = false
         switcherQuery = ""
         composerFocus += 1
         if launcher.providers.isEmpty { launcher.refresh(workspace) }
     }
     private func canUseComposerShortcut() -> Bool {
-        guard !frozen, !startingAgent, !switcherPresented, !creating, selected != nil, !shellOwnsKeyboard() else { return false }
+        guard !frozen, !switcherPresented, !creating, selected != nil else { return false }
+        if selected?.kind != "terminal" { return true }
+        if shellOwnsKeyboard() { return false }
         if selected?.terminal.window?.firstResponder is NSTextView { return false }
         return true
     }
     private func composerEscape() {
         if pickingProvider { pickingProvider = false; return }
         if workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("/"),
-           !SessionComposerModel.matches(workspace.draft).isEmpty {
+           !slashCommands.isEmpty {
             workspace.draft = ""
             return
         }
         if let shell = shellTarget() { focusIntent = TerminalFocusIntent(shell.id) }
     }
     private func composerAct(_ chord: SessionComposerModel.Chord) {
-        guard !frozen, !launcher.planning else { return }
-        let route = SessionComposerModel.route(text: workspace.draft, chord: chord,
-                                               providerChosen: workspace.providerChosen,
-                                               resumeReady: resumeTarget() != nil)
-        if case .needProvider = route { pendingChord = chord }
-        apply(route, chord: chord)
+        guard !frozen else { return }
+        if launcher.planning { return }
+        if launcher.loading {
+            launcher.whenReady(workspace) { composerAct(chord) }
+            return
+        }
+        if selected?.kind != "terminal" {
+            if chord == .command { returnToShell(); focusComposer() }
+            return
+        }
+        let mapped = ComposerConsoleBridge.chord(chord)
+        let action = ComposerRouter.route(mapped, composerContext)
+        if case .pickProvider = action { pendingChord = chord }
+        applyComposer(action, chord: chord)
     }
 
     private func continuePendingChord() {
@@ -456,75 +635,140 @@ struct WorkspaceConsole: View {
         pendingChord = nil
         composerAct(chord)
     }
-    private func apply(_ route: SessionComposerModel.Route, chord: SessionComposerModel.Chord = .plain) {
-        switch route {
+    private func attachShellCommandBlock(_ block: CommandBlock) {
+        guard let session = scoped.first(where: { $0.commandBlocks.contains { $0.id == block.id } }) ?? shellTarget() else { return }
+        guard let command = block.command else { return }
+        shellAttachment = ComposerShellAttachment(
+            shellTitle: session.title,
+            command: command,
+            exitCode: block.exitCode,
+            interrupted: block.interrupted,
+            output: block.capturedOutput ?? "")
+        composerNotice = "已附上 Shell 输出，⌘↩ 发给 Agent"
+        focusComposer()
+    }
+
+    private func adoptAgentCommand(_ command: String) {
+        workspace.draft = command
+        composerNotice = "已放进输入条"
+        focusComposer()
+    }
+
+    private func openGitPath(_ path: String) {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        NotificationCenter.default.post(name: .berthOpenGitPath,
+                                        object: BerthGitPathRequest(worktree: root, path: trimmed))
+        composerNotice = "正在 Git 中打开 \(trimmed)"
+    }
+
+    private func takeAgentTurnText() -> String {
+        let payload = ComposerAttachmentFormat.agentMessage(text: workspace.draft, attachment: shellAttachment)
+        workspace.draft = ""
+        shellAttachment = nil
+        return payload
+    }
+
+    private func applyComposer(_ action: ComposerAction, chord: SessionComposerModel.Chord = .plain) {
+        switch action {
         case .none:
             break
-        case .shell(let text):
-            guard let shell = shellTarget() else { composerNotice = "没有正在运行的 Shell"; return }
+        case .shell(let id, let text):
+            guard let shell = scoped.first(where: { $0.id == id }) else {
+                composerNotice = "没有正在运行的 Shell"
+                return
+            }
             guard deliver(text, to: shell) else { return }
             workspace.draft = ""
             pickingProvider = false
             composerNotice = ""
-        case .resume(let text):
-            guard let agent = resumeTarget() else {
-                beginNewAgent(prompt: text)
+        case .shellBusy(let reason):
+            composerNotice = reason
+        case .openShellThenSend(let text):
+            newShell()
+            if let shell = shellTarget() { deliver(text, to: shell) }
+            workspace.draft = ""
+        case .agentSend(let id, _):
+            let text = takeAgentTurnText()
+            if let session = streamController.session(id) {
+                do {
+                    try streamController.sendTurn(id: id, text: text)
+                    workspace.resumeStreamID = id
+                    pickingProvider = false
+                    composerNotice = "已发送到 \(session.title)"
+                } catch {
+                    composerNotice = error.localizedDescription
+                }
                 return
             }
+        case .agentResumeThenSend(let id, _):
+            let text = takeAgentTurnText()
+            if streamController.session(id) != nil {
+                resumeStreamSend(id: id, text: text)
+                return
+            }
+            guard let agent = scoped.first(where: { $0.id == id }) else { return }
             guard agent.acceptsComposerTurn else {
                 composerNotice = "此会话已结束或为一次性 task。⇧⌘↩ 新建，或从文件续接。"
                 return
             }
-            guard deliverAgent(text, to: agent) else { return }
             workspace.resumeAgentID = agent.id
+            activate(agent)
+            guard pasteAgent(text, to: agent) else { return }
             workspace.draft = ""
             pickingProvider = false
-            let busy = agent.inferredAgentState == .working
-            composerNotice = busy ? "已送入 \(agent.title)。由 Agent 自行排队" : "已送入 \(agent.title)"
-        case .newAgent(let prompt):
+            composerNotice = "已放进 \(agent.title) 的终端（未发送）"
+        case .agentQueue(let id, _):
+            let text = takeAgentTurnText()
+            if streamController.session(id) != nil {
+                streamController.queue(id: id, text: text)
+                workspace.resumeStreamID = id
+                composerNotice = "已记下，将在 \(streamController.session(id)?.title ?? "Agent") 当前轮结束后发送"
+                return
+            }
+            workspace.resumeAgentID = id
+            composerNotice = "已记下，将在 \(resumeTarget()?.title ?? "Agent") 当前轮结束后发送"
+            workspace.draft = text
+        case .agentPaste(let id, let text):
+            guard let agent = scoped.first(where: { $0.id == id }) else { return }
+            workspace.resumeAgentID = agent.id
+            activate(agent)
+            guard pasteAgent(text, to: agent) else { return }
+            workspace.draft = ""
+            composerNotice = "已放进 \(agent.title) 的终端（未发送）"
+        case .agentNew(_, let firstTurn):
             pickingProvider = false
-            beginNewAgent(prompt: prompt)
-        case .openProviders:
-            pickingProvider = true
-            composerNotice = "选择默认 Agent"
-            if workspace.draft.hasPrefix("/") { workspace.draft = "" }
-            if launcher.providers.isEmpty { launcher.refresh(workspace) }
-        case .selectProvider(let id):
-            chooseProvider(id)
-        case .needProvider:
+            beginNewAgent(prompt: firstTurn)
+        case .pickProvider:
             pickingProvider = true
             composerNotice = "还没有默认 Agent。先选择，这段文字会保留。"
             if launcher.providers.isEmpty { launcher.refresh(workspace) }
-        case .pickResumeAgent(let query):
-            pickResumeAgent(query)
-        case .shellNew:
-            workspace.draft = ""
-            newShell()
-        case .renameSession(let name):
-            guard let selected else { return }
-            do {
-                try selected.rename(name)
-                workspace.draft = ""
-                composerNotice = "已重命名为 \(selected.title)"
-            } catch {
-                composerNotice = error.localizedDescription
+        case .openTarget(let id):
+            if streamController.session(id) != nil {
+                selectStreamTarget(id)
+                return
             }
-        case .stopSession:
-            guard let selected else { return }
-            workspace.draft = ""
-            if selected.isActive { confirmSessionStop(selected) }
-            else { sessions.remove(selected) }
-        case .focusTerminal:
-            guard let selected else { return }
-            workspace.draft = ""
-            focusIntent = TerminalFocusIntent(selected.id)
-            composerNotice = "键盘已交给 \(selected.title)"
+            if let agent = scoped.first(where: { $0.id == id }) {
+                workspace.resumeAgentID = agent.id
+                previewAgentID = agent.id
+            }
+        case .refuse(let message):
+            composerNotice = message
+        case .runSlash(let command, let argument):
+            runSlashCommand(command, argument: argument, chord: chord)
         }
     }
 
     private func pickResumeAgent(_ query: String) {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !needle.isEmpty else { return }
+        if let stream = streamController.sessions.first(where: {
+            $0.title.localizedCaseInsensitiveContains(needle) || $0.provider.localizedCaseInsensitiveContains(needle)
+        }) {
+            selectStreamTarget(stream.id)
+            workspace.draft = ""
+            return
+        }
         let matches = agentSessions.filter {
             $0.title.localizedCaseInsensitiveContains(needle)
                 || ($0.kind.split(separator: ":").dropFirst().first.map(String.init) ?? "").localizedCaseInsensitiveContains(needle)
@@ -538,28 +782,81 @@ struct WorkspaceConsole: View {
         workspace.draft = ""
         composerNotice = "⌘↩ 将续接到 \(match.title)"
     }
-    private func runSlash(_ command: SessionComposerModel.Command) {
-        let argument = commandArgument(command.token)
-        switch command.token {
-        case "/agent-select":
-            apply(argument.isEmpty ? .openProviders : .selectProvider(argument))
-        case "/agent-new":
-            if workspace.providerChosen { apply(.newAgent(argument)) }
-            else { pendingChord = .commandShift; apply(.needProvider) }
-        case "/agent":
-            apply(argument.isEmpty ? .none : .pickResumeAgent(argument))
-        case "/shell-new":
-            apply(.shellNew)
-        case "/rename":
-            apply(argument.isEmpty ? .none : .renameSession(argument))
-        case "/stop":
-            apply(.stopSession)
-        case "/open":
-            apply(.focusTerminal)
-        default:
-            break
-        }
+    private func runSlash(_ command: SlashCommand) {
+        let argument = commandArgument(command.rawValue)
+        runSlashCommand(command, argument: argument, chord: .plain)
         if workspace.draft.hasPrefix("/") { workspace.draft = "" }
+    }
+
+    private func runSlashCommand(_ command: SlashCommand, argument: String, chord: SessionComposerModel.Chord) {
+        switch command {
+        case .agentSelect:
+            if argument.isEmpty {
+                pickingProvider = true
+                composerNotice = "选择默认 Agent"
+                if launcher.providers.isEmpty { launcher.refresh(workspace) }
+            } else {
+                chooseProvider(argument)
+            }
+        case .agentNew:
+            if workspace.providerChosen { beginNewAgent(prompt: argument.isEmpty ? nil : argument) }
+            else { pendingChord = .commandShift; pickingProvider = true }
+        case .agent:
+            if !argument.isEmpty { pickResumeAgent(argument) }
+        case .shellNew:
+            workspace.draft = ""
+            newShell()
+        case .rename:
+            guard !argument.isEmpty, let selected else { return }
+            do {
+                try selected.rename(argument)
+                workspace.draft = ""
+                composerNotice = "已重命名为 \(selected.title)"
+            } catch { composerNotice = error.localizedDescription }
+        case .close:
+            if let id = workspace.resumeStreamID ?? previewAgentID, streamController.session(id) != nil {
+                confirmEndStream(id)
+                return
+            }
+            guard let target = resumeTarget() ?? selected else { return }
+            workspace.draft = ""
+            if target.isActive { confirmSessionStop(target) }
+            else { sessions.remove(target) }
+        case .interrupt:
+            if let id = workspace.resumeStreamID ?? previewAgentID, streamController.session(id) != nil {
+                interruptStream(id)
+            } else if resumeTarget() != nil {
+                composerNotice = "终端 Agent 请在 TUI 内中断 / Interrupt in the terminal TUI"
+            } else {
+                composerNotice = "没有可中断的目标"
+            }
+        case .focus:
+            guard let shell = shellTarget() else { return }
+            workspace.draft = ""
+            focusIntent = TerminalFocusIntent(shell.id)
+            composerNotice = "键盘已交给 \(shell.title)"
+        case .native:
+            openStreamInNativeTerminal()
+        case .resume:
+            pickResumeFileAndLaunch()
+        case .shell:
+            guard !argument.isEmpty else {
+                composerNotice = "用法：/shell 名称"
+                return
+            }
+            if let match = shellSessions.first(where: {
+                $0.title.localizedCaseInsensitiveContains(argument)
+            }) {
+                activate(match)
+                workspace.draft = ""
+                composerNotice = "已切换到 \(match.title)"
+            } else {
+                composerNotice = "找不到 Shell：\(argument)"
+            }
+        case .history:
+            history = true
+            workspace.draft = ""
+        }
     }
     private func commandArgument(_ token: String) -> String {
         let trimmed = workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -584,19 +881,49 @@ struct WorkspaceConsole: View {
         composerNotice = "默认 Agent：" + (launcher.providers.first { $0.id == id }?.name ?? SessionComposerModel.providerName(id))
         continuePendingChord()
     }
-    private func beginNewAgent(prompt: String? = nil) {
-        guard workspace.providerChosen else {
-            apply(.needProvider)
-            return
+    private func beginNewAgent(prompt: String? = nil, providerID: String? = nil) {
+        let targetID = providerID ?? workspace.providerID
+        if providerID == nil {
+            guard workspace.providerChosen else {
+                pickingProvider = true
+                composerNotice = "还没有默认 Agent。先选择，这段文字会保留。"
+                if launcher.providers.isEmpty { launcher.refresh(workspace) }
+                return
+            }
         }
-        let prompt = prompt ?? workspace.draft
+        let body = prompt ?? workspace.draft
+        let payload = ComposerAttachmentFormat.agentMessage(text: body, attachment: shellAttachment)
+        workspace.draft = ""
+        shellAttachment = nil
         launcher.whenReady(workspace) {
-            guard launcher.available(workspace) else {
+            guard let provider = launcher.providers.first(where: { $0.id == targetID }),
+                  provider.installed == true else {
                 composerNotice = launcher.problem ?? "所选 Agent 未安装或还不能启动"
                 return
             }
-            let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-            workspace.draft = prompt
+            let trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let binary = DaemonLaunch.binaryPath() else { return }
+            if provider.supportsStream {
+                guard streamController.slotAvailable(agentPTYCount: agentSessions.count) else {
+                    composerNotice = "会话已达上限（\(AgentStreams.maxSessions)）"
+                    return
+                }
+                let title = "\(provider.name) \(streamController.sessions.count + 1) · 流"
+                do {
+                    let session = try streamController.launch(
+                        binary: binary, provider: provider, root: root, title: title,
+                        environment: TerminalSession.environment(),
+                        firstTurn: trimmed.isEmpty ? nil : payload)
+                    workspace.resumeStreamID = session.id
+                    previewAgentID = session.id
+                    if !trimmed.isEmpty { workspace.draft = "" }
+                    composerNotice = "已新建 \(session.title)。⌘↩ 续接这一结构化会话"
+                } catch {
+                    composerNotice = error.localizedDescription
+                }
+                return
+            }
+            if !trimmed.isEmpty { workspace.draft = payload }
             launcher.launch(root: root, workspace: workspace, prompt: !trimmed.isEmpty) { session in
                 workspace.resumeAgentID = session.id
                 previewAgentID = session.id
@@ -604,10 +931,167 @@ struct WorkspaceConsole: View {
             }
         }
     }
-    private func previewAgent(_ session: TerminalSession) {
-        workspace.resumeAgentID = session.id
-        previewAgentID = previewAgentID == session.id ? nil : session.id
-        session.clearAttention()
+    private func selectStreamTarget(_ id: UUID) {
+        workspace.resumeStreamID = id
+        previewAgentID = id
+        streamController.markDetailVisible(id)
+        composerNotice = "⌘↩ 将续接到 \(streamController.session(id)?.title ?? "Agent")"
+    }
+
+    private func interruptStream(_ id: UUID) {
+        do {
+            try streamController.interrupt(id: id)
+            composerNotice = "已请求中断当前轮次"
+        } catch {
+            composerNotice = error.localizedDescription
+        }
+    }
+
+    private func confirmEndStream(_ id: UUID) {
+        if ProcessInfo.processInfo.environment["BERTH_CONSOLE_TEST"] == "1" {
+            endStream(id)
+            return
+        }
+        let title = streamController.session(id)?.title ?? "Agent"
+        let alert = ClientAlert.make()
+        alert.messageText = "结束 \(title)？"
+        alert.informativeText = "结构化桥会请求关闭 provider 会话；排队中的文字会放回输入条。"
+        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: "结束")
+        if alert.runModal() == .alertSecondButtonReturn { endStream(id) }
+    }
+
+    private func endStream(_ id: UUID) {
+        let queued = streamController.drainQueuedText(id: id)
+        streamController.end(id)
+        if workspace.resumeStreamID == id { workspace.resumeStreamID = nil }
+        if previewAgentID == id { previewAgentID = nil }
+        if let queued, !queued.isEmpty {
+            workspace.draft = workspace.draft.isEmpty ? queued : workspace.draft + "\n\n" + queued
+            composerNotice = "结构化会话已结束，排队内容已放回输入条"
+        } else {
+            composerNotice = "结构化会话已结束"
+        }
+    }
+
+    private func respondStream(_ id: UUID, requestID: String, decision: AgentDecision) {
+        do {
+            try streamController.respond(id: id, requestID: requestID, decision: decision)
+        } catch {
+            composerNotice = error.localizedDescription
+        }
+    }
+
+    private func launchNativeAgent(prompt: String?, resumeFile: String?) {
+        if let resumeFile, let message = streamController.sessionFileConflictMessage(for: resumeFile) {
+            composerNotice = message
+            return
+        }
+        let trimmed = prompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmed.isEmpty { workspace.draft = trimmed }
+        launcher.launch(root: root, workspace: workspace, prompt: !trimmed.isEmpty, resumeFile: resumeFile) { session in
+            workspace.resumeAgentID = session.id
+            previewAgentID = session.id
+            workspace.resumeStreamID = nil
+            composerNotice = resumeFile == nil
+                ? "已在原生终端打开 \(session.title)"
+                : "已从会话文件在原生终端续接 \(session.title)"
+            activate(session)
+        }
+    }
+
+    private func openNativeTerminalFresh() {
+        guard workspace.providerChosen else {
+            pickingProvider = true
+            composerNotice = "先选择默认 Agent"
+            if launcher.providers.isEmpty { launcher.refresh(workspace) }
+            return
+        }
+        launcher.whenReady(workspace) {
+            guard launcher.available(workspace) else {
+                composerNotice = launcher.problem ?? "所选 Agent 未安装或还不能启动"
+                return
+            }
+            launchNativeAgent(prompt: nil, resumeFile: nil)
+        }
+    }
+
+    private func pickResumeFileAndLaunch() {
+        guard workspace.providerChosen else {
+            pickingProvider = true
+            composerNotice = "先选择默认 Agent"
+            return
+        }
+        guard launcher.provider(workspace)?.supportsResume == true else {
+            composerNotice = "当前默认 Agent 不支持从会话文件续接"
+            return
+        }
+        launcher.whenReady(workspace) {
+            guard launcher.available(workspace) else {
+                composerNotice = launcher.problem ?? "所选 Agent 未安装或还不能启动"
+                return
+            }
+            if ProcessInfo.processInfo.environment["BERTH_CONSOLE_TEST"] == "1",
+               let testPath = ProcessInfo.processInfo.environment["BERTH_TEST_RESUME_FILE"] {
+                launchNativeAgent(prompt: nil, resumeFile: testPath)
+                return
+            }
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = true
+            panel.canChooseDirectories = false
+            panel.allowsMultipleSelection = false
+            panel.prompt = "校验并续接"
+            panel.message = "只续接当前 worktree 的原始会话文件。"
+            guard panel.runModal() == .OK, let file = panel.url else { return }
+            launchNativeAgent(prompt: nil, resumeFile: file.path)
+        }
+    }
+
+    private func openStreamInNativeTerminal() {
+        guard let id = workspace.resumeStreamID ?? previewAgentID,
+              let session = streamController.session(id) else {
+            composerNotice = "先选择一个结构化 Agent 会话"
+            return
+        }
+        guard let resumeFile = session.snapshot.reference?.sessionFile else {
+            composerNotice = "此会话没有 provider 会话文件，无法原生续接"
+            return
+        }
+        if case .ready = session.snapshot.phase,
+           session.snapshot.turns.last?.outcome == .running {
+            composerNotice = "请先中断当前轮次，再在原生终端中继续"
+            return
+        }
+        endStream(id)
+        launchNativeAgent(prompt: nil, resumeFile: resumeFile)
+    }
+
+    private func resumeStreamSend(id: UUID, text: String) {
+        guard let provider = launcher.provider(workspace), let binary = DaemonLaunch.binaryPath() else { return }
+        let session = streamController.session(id)
+        if case .ended = session?.snapshot.phase {
+            do {
+                let reopened = try streamController.resumeEndedSession(
+                    binary: binary, provider: provider, root: root, id: id,
+                    environment: TerminalSession.environment(), firstTurn: text)
+                workspace.resumeStreamID = reopened.id
+                workspace.draft = ""
+                pickingProvider = false
+                composerNotice = "已续接并发送到 \(reopened.title)"
+            } catch {
+                composerNotice = error.localizedDescription
+            }
+            return
+        }
+        do {
+            try streamController.sendTurn(id: id, text: text)
+            workspace.resumeStreamID = id
+            workspace.draft = ""
+            pickingProvider = false
+            composerNotice = "已发送到 \(session?.title ?? "Agent")"
+        } catch {
+            composerNotice = error.localizedDescription
+        }
     }
 
     private func enterAgent(_ session: TerminalSession) {
@@ -629,8 +1113,23 @@ struct WorkspaceConsole: View {
         return nil
     }
     @discardableResult
+    private func deliverTabCompletion(_ text: String, to session: TerminalSession) -> Bool {
+        let encoded = SessionPTYInput.encodeShellTabCompletion(text)
+        guard let bytes = encoded.bytes else {
+            composerNotice = encoded.error ?? "这段文字不能送入会话"
+            return false
+        }
+        guard session.isActive else {
+            composerNotice = "会话未在运行"
+            return false
+        }
+        session.terminal.send(source: session.terminal, data: bytes[...])
+        return true
+    }
+
     private func deliver(_ text: String, to session: TerminalSession) -> Bool {
-        let encoded = SessionPTYInput.encodeShellLine(text)
+        let bracketed = session.terminal.getTerminal().bracketedPasteMode
+        let encoded = SessionPTYInput.encodeShellLine(text, bracketedPaste: bracketed)
         guard let bytes = encoded.bytes else {
             composerNotice = encoded.error ?? "这段文字不能送入会话"
             return false
@@ -644,9 +1143,9 @@ struct WorkspaceConsole: View {
     }
 
     @discardableResult
-    private func deliverAgent(_ text: String, to session: TerminalSession) -> Bool {
+    private func pasteAgent(_ text: String, to session: TerminalSession) -> Bool {
         let bracketed = session.terminal.getTerminal().bracketedPasteMode
-        let encoded = SessionPTYInput.encodeAgentTurn(text, bracketedPaste: bracketed)
+        let encoded = SessionPTYInput.encodeAgentPaste(text, bracketedPaste: bracketed)
         guard let bytes = encoded.bytes else {
             composerNotice = encoded.error ?? "这段文字不能送入会话"
             return false
@@ -658,31 +1157,7 @@ struct WorkspaceConsole: View {
         session.terminal.send(source: session.terminal, data: bytes[...])
         return true
     }
-    @ViewBuilder private var sessionModeControl: some View {
-        if let selected {
-            if selected.kind == "terminal" {
-                ConsoleToolbarAction(title: "输入", identifier: "console.focusComposer", symbol: "text.cursor", perform: focusComposer)
-                    .fixedSize().frame(height: 24)
-                    .help("聚焦会话输入。Enter 到 Shell，⌘↩ 续接 Agent，⇧⌘↩ 新建。")
-                Text("⌘↩").font(Face.mono(9)).foregroundStyle(Ink.inkFaint)
-                ForEach(backgroundAgents.prefix(2)) { agent in
-                    ConsoleToolbarAction(title: agent.title, identifier: "console.reenter." + agent.id.uuidString,
-                                         perform: { activate(agent) })
-                        .fixedSize().frame(height: 24)
-                        .help("重新进入此 Agent 会话。进程仍是离开前的那一个。")
-                }
-            } else {
-                ConsoleToolbarAction(title: "返回 Shell", identifier: "console.returnToShell", symbol: "terminal",
-                                     perform: returnToShell)
-                    .fixedSize().frame(height: 24)
-                    .help("回到 Shell。当前 Agent 继续在后台运行，可再次进入同一会话。")
-            }
-        }
-    }
-    private var backgroundAgents: [TerminalSession] {
-        scoped.filter { $0.kind.hasPrefix("agent:") }
-            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
-    }
+
     /// The live canvas when this worktree has no session yet. The primary action
     /// is a shell; agent launch stays on that shell after it exists.
     private var shellFirstEmpty: some View {
@@ -721,7 +1196,7 @@ struct WorkspaceConsole: View {
         do {
             let number = scoped.filter { $0.kind == "terminal" }.count + 1
             let session = try sessions.add(worktree: root, title: "Shell \(number)", executable: TerminalSession.shell,
-                arguments: ["-i"], shellIntegration: settings.shellIntegration && URL(fileURLWithPath: TerminalSession.shell).lastPathComponent == "zsh",
+                arguments: ["-i"], shellIntegration: settings.shellIntegration && ShellIntegrationLease.supports(executable: TerminalSession.shell),
                 select: select)
             problem = nil
             if select { activate(session) }
