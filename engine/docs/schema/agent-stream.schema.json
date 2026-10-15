@@ -1,0 +1,283 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/sheathedsharp/option-berth/docs/schema/agent-stream.schema.json",
+  "title": "oberth agent stream NDJSON",
+  "description": "Normalized stdin commands and stdout events for `oberth agent stream`. Version field v must be 1.",
+  "oneOf": [
+    { "$ref": "#/$defs/commandTurnStart" },
+    { "$ref": "#/$defs/commandTurnInterrupt" },
+    { "$ref": "#/$defs/commandRequestRespond" },
+    { "$ref": "#/$defs/commandSessionClose" },
+    { "$ref": "#/$defs/eventAck" },
+    { "$ref": "#/$defs/eventError" },
+    { "$ref": "#/$defs/eventSessionStarted" },
+    { "$ref": "#/$defs/eventTurnStarted" },
+    { "$ref": "#/$defs/eventItemStarted" },
+    { "$ref": "#/$defs/eventItemUpdated" },
+    { "$ref": "#/$defs/eventItemCompleted" },
+    { "$ref": "#/$defs/eventRequestOpened" },
+    { "$ref": "#/$defs/eventRequestClosed" },
+    { "$ref": "#/$defs/eventTurnDiff" },
+    { "$ref": "#/$defs/eventNotice" },
+    { "$ref": "#/$defs/eventTurnCompleted" },
+    { "$ref": "#/$defs/eventSessionEnded" }
+  ],
+  "$defs": {
+    "version": { "type": "integer", "const": 1 },
+    "commandTurnStart": {
+      "type": "object",
+      "required": ["v", "type", "id", "text"],
+      "properties": {
+        "v": { "$ref": "#/$defs/version" },
+        "type": { "const": "turn.start" },
+        "id": { "type": "string" },
+        "text": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "commandTurnInterrupt": {
+      "type": "object",
+      "required": ["v", "type", "id"],
+      "properties": {
+        "v": { "$ref": "#/$defs/version" },
+        "type": { "const": "turn.interrupt" },
+        "id": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "commandRequestRespond": {
+      "type": "object",
+      "required": ["v", "type", "id", "request", "decision"],
+      "properties": {
+        "v": { "$ref": "#/$defs/version" },
+        "type": { "const": "request.respond" },
+        "id": { "type": "string" },
+        "request": { "type": "string" },
+        "decision": { "enum": ["allow", "allow_session", "deny"] },
+        "message": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "commandSessionClose": {
+      "type": "object",
+      "required": ["v", "type", "id"],
+      "properties": {
+        "v": { "$ref": "#/$defs/version" },
+        "type": { "const": "session.close" },
+        "id": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "eventAck": {
+      "type": "object",
+      "required": ["v", "type", "id"],
+      "properties": {
+        "v": { "$ref": "#/$defs/version" },
+        "type": { "const": "ack" },
+        "id": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "eventError": {
+      "type": "object",
+      "required": ["v", "type", "id", "code", "message"],
+      "properties": {
+        "v": { "$ref": "#/$defs/version" },
+        "type": { "const": "error" },
+        "id": { "type": "string" },
+        "code": { "type": "string" },
+        "message": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "eventSessionStarted": {
+      "type": "object",
+      "required": ["v", "type", "provider", "protocol", "worktree"],
+      "properties": {
+        "v": { "$ref": "#/$defs/version" },
+        "type": { "const": "session.started" },
+        "provider": { "type": "string" },
+        "protocol": { "type": "string" },
+        "worktree": { "type": "string" },
+        "provider_session_id": { "type": "string" },
+        "session_file": { "type": "string" },
+        "capabilities": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "eventTurnStarted": {
+      "type": "object",
+      "required": ["v", "type", "turn"],
+      "properties": {
+        "v": { "$ref": "#/$defs/version" },
+        "type": { "const": "turn.started" },
+        "turn": { "type": "string" },
+        "command": { "type": "string" },
+        "input": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "eventItemStarted": {
+      "type": "object",
+      "required": ["v", "type", "turn", "item"],
+      "properties": {
+        "v": { "$ref": "#/$defs/version" },
+        "type": { "const": "item.started" },
+        "turn": { "type": "string" },
+        "item": { "$ref": "#/$defs/streamItem" }
+      },
+      "additionalProperties": false
+    },
+    "eventItemUpdated": {
+      "type": "object",
+      "required": ["v", "type", "turn", "item", "kind"],
+      "properties": {
+        "v": { "$ref": "#/$defs/version" },
+        "type": { "const": "item.updated" },
+        "turn": { "type": "string" },
+        "item": { "type": "string" },
+        "kind": { "type": "string" },
+        "text_delta": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "eventItemCompleted": {
+      "type": "object",
+      "required": ["v", "type", "turn", "item"],
+      "properties": {
+        "v": { "$ref": "#/$defs/version" },
+        "type": { "const": "item.completed" },
+        "turn": { "type": "string" },
+        "item": { "$ref": "#/$defs/streamItem" }
+      },
+      "additionalProperties": false
+    },
+    "eventRequestOpened": {
+      "type": "object",
+      "required": ["v", "type", "turn", "request"],
+      "properties": {
+        "v": { "$ref": "#/$defs/version" },
+        "type": { "const": "request.opened" },
+        "turn": { "type": "string" },
+        "request": { "$ref": "#/$defs/streamRequest" }
+      },
+      "additionalProperties": false
+    },
+    "eventRequestClosed": {
+      "type": "object",
+      "required": ["v", "type", "request"],
+      "properties": {
+        "v": { "$ref": "#/$defs/version" },
+        "type": { "const": "request.closed" },
+        "request": { "type": "string" },
+        "decision": { "type": "string" },
+        "by": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "eventTurnDiff": {
+      "type": "object",
+      "required": ["v", "type", "turn", "files", "patch", "truncated"],
+      "properties": {
+        "v": { "$ref": "#/$defs/version" },
+        "type": { "const": "turn.diff" },
+        "turn": { "type": "string" },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "added", "removed"],
+            "properties": {
+              "path": { "type": "string" },
+              "added": { "type": "integer" },
+              "removed": { "type": "integer" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "patch": { "type": "string" },
+        "truncated": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "eventNotice": {
+      "type": "object",
+      "required": ["v", "type", "turn", "level", "code", "message"],
+      "properties": {
+        "v": { "$ref": "#/$defs/version" },
+        "type": { "const": "notice" },
+        "turn": { "type": "string" },
+        "level": { "enum": ["info", "warn", "error"] },
+        "code": { "type": "string" },
+        "message": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "eventTurnCompleted": {
+      "type": "object",
+      "required": ["v", "type", "turn", "outcome"],
+      "properties": {
+        "v": { "$ref": "#/$defs/version" },
+        "type": { "const": "turn.completed" },
+        "turn": { "type": "string" },
+        "outcome": { "enum": ["completed", "failed", "interrupted"] },
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "usage": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "eventSessionEnded": {
+      "type": "object",
+      "required": ["v", "type", "reason"],
+      "properties": {
+        "v": { "$ref": "#/$defs/version" },
+        "type": { "const": "session.ended" },
+        "reason": { "type": "string" },
+        "exit_code": { "type": "integer" }
+      },
+      "additionalProperties": false
+    },
+    "streamItem": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": {
+          "enum": ["message", "reasoning", "command", "file_change", "tool", "plan"]
+        },
+        "text": { "type": "string" },
+        "summary": { "type": "string" },
+        "command": { "type": "string" },
+        "cwd": { "type": "string" },
+        "status": { "enum": ["running", "completed", "failed", "declined"] },
+        "exit_code": { "type": "integer" },
+        "duration_ms": { "type": "integer" },
+        "output_tail": { "type": "string" },
+        "files": { "type": "array" },
+        "name": { "type": "string" },
+        "input_preview": { "type": "string" },
+        "steps": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "streamRequest": {
+      "type": "object",
+      "required": ["id", "kind", "decisions"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "enum": ["command", "file_change", "permission", "tool"] },
+        "command": { "type": "string" },
+        "cwd": { "type": "string" },
+        "paths": { "type": "array", "items": { "type": "string" } },
+        "reason": { "type": "string" },
+        "preview": { "type": "string" },
+        "decisions": {
+          "type": "array",
+          "items": { "enum": ["allow", "allow_session", "deny"] }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
