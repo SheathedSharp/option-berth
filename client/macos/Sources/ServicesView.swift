@@ -181,7 +181,8 @@ struct ServicesView: View {
     }
 
     private var serviceList: some View {
-        // 高度按行数给，但不跟着无限长：日志才是这一页的正文。
+        // Height follows ServiceRow dual-line craft height — never Metrics.rowHeight alone
+        // (that clipped primary+fact into a z-fight in the Command column).
         let visible = min(group.services.count, Col.maxVisibleRows)
         return Group {
             if scrolls {
@@ -190,7 +191,11 @@ struct ServicesView: View {
                 serviceRows
             }
         }
-        .frame(height: CGFloat(max(visible, 1)) * Metrics.rowHeight, alignment: .top)
+        // Dual-line rows + Hairline between each + slack so ImageRenderer cannot compress cells.
+        .frame(height: CGFloat(max(visible, 1)) * ServiceRow.height
+                       + CGFloat(max(group.services.count, 1))
+                       + 4,
+               alignment: .top)
         .clipped()
     }
 
