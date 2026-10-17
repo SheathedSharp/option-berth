@@ -3,8 +3,8 @@
   "schemaVersion": 1,
   "appearance": "light",
   "colors": {
-    "accent": "#A35F42",
-    "accentSoft": "#F2DED3"
+    "accent": "#007AFF",
+    "accentSoft": "#D6E9FF"
   },
   "interfaceFont": "__system__",
   "dataFont": "Monaspace Neon",

@@ -248,10 +248,11 @@ struct BoardView: View {
     private var rail: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Image(systemName: "square.stack.3d.up").font(.system(size: 11, weight: .medium)).foregroundStyle(Ink.inkMuted)
                 Text("Worktrees")
-                    .font(Face.sans(Metrics.heading, .semibold))
-                    .foregroundStyle(Ink.ink)
+                    .font(Face.sans(Metrics.caption, .medium))
+                    .tracking(1.0)
+                    .textCase(.uppercase)
+                    .foregroundStyle(Ink.inkFaint)
                 Spacer()
                 Button("+") { views.requestConnection() }
                     .buttonStyle(.plain)
@@ -309,8 +310,10 @@ struct BoardView: View {
         .padding(.top, Metrics.trafficLightInset)
         .background {
             ZStack {
+                // Cool surface stand-in for ImageRenderer freezes (scrolls == false).
+                // Live windows still get Finder-style sidebar vibrancy on top.
                 Ink.surface
-                SidebarMaterial()
+                if scrolls { SidebarMaterial() }
             }
         }
     }
@@ -461,11 +464,11 @@ struct BoardView: View {
     }
 
     private func tabBar(_ project: BerthGroup) -> some View {
-        HStack(spacing: Metrics.unit) {
+        let changed = git.tree?.files.count ?? 0
+        return HStack(spacing: 2) {
             WorkspaceTab(title: "服务", symbol: "server.rack", selected: scope == .services(project.name)) {
                 views.scope = .services(project.name)
             }.help(shortcuts.shortcut(.services).label)
-            let changed = git.tree?.files.count ?? 0
             WorkspaceTab(title: "Git" + (changed > 0 ? " · \(changed)" : ""), symbol: "chevron.left.forwardslash.chevron.right", selected: scope == .code(project.name)) {
                 views.scope = .code(project.name)
             }.help(shortcuts.shortcut(.code).label)
@@ -474,11 +477,19 @@ struct BoardView: View {
             }.help(shortcuts.shortcut(.terminal).label)
             Spacer(minLength: 0)
         }
+        .padding(3)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Ink.sunken)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Ink.line, lineWidth: 1)
+        )
         .padding(.horizontal, Metrics.gutter)
         .padding(.vertical, Metrics.tabPadV)
         .frame(minHeight: Metrics.chromeHeight)
     }
-
     private func ports(for project: BerthGroup) -> [Port] {
         store.ports.filter { port in
             if port.group == project.name { return true }

@@ -30,14 +30,14 @@ struct ThemeConfiguration: ClientConfigurationDocument {
     var logScale: Double?
     static let keys: Set<String> = ["schemaVersion", "appearance", "colors", "interfaceFont", "dataFont", "interfaceScale", "dataScale", "logScale"]
     static let paper: [String: UInt32] = [
-        "canvas": 0xF8F4EE, "surface": 0xEFE7DC, "sunken": 0xE5DACD,
-        "ink": 0x292521, "inkMuted": 0x6B6259, "inkFaint": 0x968A7D,
-        "dormant": 0xC5B8A9, "line": 0xDED3C7, "lineStrong": 0xC9B9A8,
-        "accent": 0xC56A4A, "accentSoft": 0xF4DED3, "live": 0x5E7D68,
-        "diff.added": 0x1B7F4B, "diff.addedBackground": 0xE9F5ED,
-        "diff.removed": 0xB3261E, "diff.removedBackground": 0xFDECEA,
-        "diff.changed": 0x9A5B00, "diff.changedBackground": 0xFBF3E4,
-        "terminal.background": 0xF8F4EE, "terminal.foreground": 0x292521
+        "canvas": 0xF5F5F7, "surface": 0xEBEBF0, "sunken": 0xE5E5EA,
+        "ink": 0x1D1D1F, "inkMuted": 0x6E6E73, "inkFaint": 0x8E8E93,
+        "dormant": 0xC7C7CC, "line": 0xD1D1D6, "lineStrong": 0xAEAEB2,
+        "accent": 0x007AFF, "accentSoft": 0xD6E9FF, "live": 0x34C759,
+        "diff.added": 0x248A3D, "diff.addedBackground": 0xEAF8EE,
+        "diff.removed": 0xD70015, "diff.removedBackground": 0xFDEEEC,
+        "diff.changed": 0xC93400, "diff.changedBackground": 0xFFF4EC,
+        "terminal.background": 0xF5F5F7, "terminal.foreground": 0x1D1D1F
     ]
     static func hex(_ text: String) -> UInt32? {
         let bytes = Array(text.utf8)
