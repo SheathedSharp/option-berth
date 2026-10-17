@@ -16,10 +16,10 @@ enum ConfigurationDocument: String, CaseIterable, Identifiable {
           "schemaVersion": 1,
           "appearance": "light", // light 或 dark，影响原生控件。
           "colors": {
-            "canvas": "#F8F4EE", // 主背景
-            "surface": "#EFE7DC", // 卡片和工具栏
-            "ink": "#292521", // 正文
-            "accent": "#C56A4A", // 强调色
+            "canvas": "#F7F4EF", // 主纸面
+            "surface": "#EEEAE3", // 侧栏 / 铬条
+            "ink": "#1C1916", // 正文
+            "accent": "#A85A42", // 强调色
             // 可添加 terminal.background / terminal.foreground。
             // 差异令牌：diff.added / diff.removed / diff.changed。
           },

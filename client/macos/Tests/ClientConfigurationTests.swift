@@ -13,7 +13,7 @@ import Foundation
             do { _ = try theme(text); fatalError("accepted invalid theme") } catch { checks += 1 }
         }
         let defaults = try theme(#"{"schemaVersion":1}"#)
-        expect(defaults.color("canvas") == 0xF8F4EE, "paper default")
+        expect(defaults.color("canvas") == 0xF7F4EF, "paper default")
         let custom = try theme(##"{"schemaVersion":1,"colors":{"accent":"#aBcD12"},"dataScale":1.25}"##)
         expect(custom.color("accent") == 0xABCD12, "override")
         expect(custom.color("ink") == defaults.color("ink"), "partial override")

@@ -167,17 +167,17 @@ struct ServiceRow: View {
     private var rowWash: some View {
         ZStack(alignment: .leading) {
             if isFocused {
-                // Unmistakable selection wash without screaming.
-                Ink.accentSoft.opacity(0.92)
+                // v11: whisper blush wash + thin terracotta rail — never alarm flood.
+                Ink.accentSoft.opacity(0.78)
             } else if hovering {
-                Ink.sunken.opacity(0.85)
+                Ink.surface.opacity(0.85)
             } else {
                 Color.clear
             }
             if isFocused {
                 Rectangle()
                     .fill(Ink.accent)
-                    .frame(width: 1)
+                    .frame(width: 2)
             }
         }
     }

@@ -171,7 +171,8 @@ struct ServicesView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity,
                alignment: .topLeading)
-        .background(Ink.canvas)
+        // v11: cooler surface stage so the lifted card reads as premium paper.
+        .background(Ink.surface)
     }
 
     /// Bordered data surface for declared services (Console.app / Instruments density).
@@ -180,12 +181,14 @@ struct ServicesView: View {
             columnHeader
             serviceList
         }
-        .background(Ink.canvas)
+        // Lifted warm white card (#FFFCF8) on taupe stage — one hairline + one soft shadow.
+        .background(Color(hex: 0xFFFCF8))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(Ink.lineStrong, lineWidth: 1)
         )
+        .shadow(color: Ink.ink.opacity(0.045), radius: 8, x: 0, y: 2)
     }
 
     /// Inset grouped disclosure — quieter chrome than a second full table header.
@@ -445,8 +448,7 @@ struct ServicesView: View {
     // MARK: - 日志
 
     private func logPanel(_ hits: [Int]) -> some View {
-        // Stage craft v9: log inspector as first-class console — head on
-        // surface, body in a denser sunken well (Paper Ink.sunken).
+        // Stage craft v11: cool light sunken well (not muddy brown); head on surface chrome.
         VStack(spacing: 0) {
             logHead
             if store.logFindOpen {
@@ -455,10 +457,10 @@ struct ServicesView: View {
             }
             logBody(hits)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .background(Ink.sunken.opacity(0.55))
+                .background(Ink.sunken)
         }
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(Ink.canvas)
+        .background(Ink.surface)
         .overlay(alignment: .leading) {
             // Quiet split rule against the services card.
             Rectangle().fill(Ink.lineStrong).frame(width: 1)
@@ -797,7 +799,7 @@ struct ServicesView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Ink.canvas)
+        .background(Ink.sunken)
     }
 
     /// 离屏那条路要画哪一段：跟随模式下是尾巴；查找开着就画**当前命中那一屏** ——
@@ -963,9 +965,13 @@ struct ServicesView: View {
     /// 正文的深浅：出事的那一行用墨色，其余是次级灰，续行（堆栈）最浅 ——
     /// 层级靠深浅，不靠加粗。
     private func messageTone(_ record: LogRecord) -> Color {
-        // v9: denser log well needs stronger mono contrast — primary lines use ink.
+        // v11: cool light well — incidents + primary body in ink; INFO muted; continuations faint.
         if incidentTone(record) != nil { return Ink.ink }
-        return record.continuation ? Ink.inkFaint : Ink.ink
+        if record.continuation { return Ink.inkFaint }
+        switch record.level {
+        case .info, .debug: return Ink.inkMuted
+        default: return Ink.ink
+        }
     }
 
     private func shortPath(_ path: String) -> String {

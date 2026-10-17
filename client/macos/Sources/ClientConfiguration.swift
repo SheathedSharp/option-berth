@@ -30,14 +30,16 @@ struct ThemeConfiguration: ClientConfigurationDocument {
     var logScale: Double?
     static let keys: Set<String> = ["schemaVersion", "appearance", "colors", "interfaceFont", "dataFont", "interfaceScale", "dataScale", "logScale"]
     static let paper: [String: UInt32] = [
-        "canvas": 0xF8F4EE, "surface": 0xEFE7DC, "sunken": 0xE5DACD,
-        "ink": 0x292521, "inkMuted": 0x6B6259, "inkFaint": 0x968A7D,
-        "dormant": 0xC5B8A9, "line": 0xDED3C7, "lineStrong": 0xC9B9A8,
-        "accent": 0xC56A4A, "accentSoft": 0xF4DED3, "live": 0x5E7D68,
-        "diff.added": 0x1B7F4B, "diff.addedBackground": 0xE9F5ED,
-        "diff.removed": 0xB3261E, "diff.removedBackground": 0xFDECEA,
-        "diff.changed": 0x9A5B00, "diff.changedBackground": 0xFBF3E4,
-        "terminal.background": 0xF8F4EE, "terminal.foreground": 0x292521
+        // v11: premium coordinated Paper — ivory + cool taupe; no muddy brown wells.
+        // Planes: canvas (stage paper) / surface (chrome) / sunken (cool light log well).
+        "canvas": 0xF7F4EF, "surface": 0xEEEAE3, "sunken": 0xE8E4DC,
+        "ink": 0x1C1916, "inkMuted": 0x6B6560, "inkFaint": 0x9A938C,
+        "dormant": 0xB5AFA6, "line": 0xE0DBD3, "lineStrong": 0xC9C2B8,
+        "accent": 0xA85A42, "accentSoft": 0xF3E8E2, "live": 0x3F6B52,
+        "diff.added": 0x2F6B4A, "diff.addedBackground": 0xE6F0EA,
+        "diff.removed": 0xB54A3C, "diff.removedBackground": 0xF7E9E6,
+        "diff.changed": 0xB07A2E, "diff.changedBackground": 0xF6EFE3,
+        "terminal.background": 0xF7F4EF, "terminal.foreground": 0x1C1916
     ]
     static func hex(_ text: String) -> UInt32? {
         let bytes = Array(text.utf8)
