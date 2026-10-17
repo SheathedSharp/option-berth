@@ -442,13 +442,14 @@ struct Tag: View {
     var tone: Tone = .accent
 
     enum Tone {
-        case accent, quiet, warn
+        case accent, quiet, warn, live
 
         var fg: Color {
             switch self {
             case .accent: return Ink.accent
             case .quiet: return Ink.inkMuted
             case .warn: return Change.changed
+            case .live: return Ink.live
             }
         }
 
@@ -457,6 +458,7 @@ struct Tag: View {
             case .accent: return Ink.accentSoft
             case .quiet: return Ink.sunken
             case .warn: return Change.changedBand
+            case .live: return Change.addedBand
             }
         }
     }

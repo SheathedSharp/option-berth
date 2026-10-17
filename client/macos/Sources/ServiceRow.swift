@@ -2,14 +2,12 @@ import SwiftUI
 
 /// One declared service — hover/selection wash, progressive actions.
 ///
-/// Layout that cannot z-fight:
-/// - **Name column**: service name + at most one status fact (VStack, explicit line frames)
-/// - **Port column**: single mono line
-/// - **Command column**: single line only (notice replaces cmd when present — never
-///   stacks a second string on top of it)
-///
-/// Earlier dual-line Command cells still collided under ImageRenderer height
-/// compression; splitting meta onto the name column keeps both readable.
+/// Stage craft v9 layout (operator-console data surface):
+/// - **Name**: single primary line
+/// - **Status**: calm chip (live / warn / quiet) — own optical column
+/// - **Port**: tabular mono
+/// - **Command**: single line (notice replaces cmd when present)
+/// - **Actions**: progressive chips on hover/focus
 struct ServiceRow: View {
     let service: BerthService
     let isLive: Bool
@@ -23,26 +21,23 @@ struct ServiceRow: View {
 
     @State private var hovering = false
 
-    private enum Col {
+    enum Col {
         static var spacing: CGFloat { Metrics.columnGap }
         static let dot: CGFloat = 14
-        /// Slightly wider name column so status fact does not crowd the port.
-        static let name: CGFloat = 132
+        /// Name is primary only; status moved to its own column.
+        static let name: CGFloat = 108
+        /// Calm status chip column — lockstep with ServicesView.Col.status.
+        static let status: CGFloat = 84
         static var port: CGFloat { Metrics.portColumn }
-        /// Room for 重启+停止 pair at equal optical width.
         static let action: CGFloat = 112
-        /// Shared min width so 启动 / 停止 / 重启 align as a column of chips.
         static let actionChip: CGFloat = 40
 
-        static let primaryLine: CGFloat = 16
-        static let secondaryLine: CGFloat = 14
-        static let lineGap: CGFloat = 3
-        static let verticalPad: CGFloat = 9
+        static let primaryLine: CGFloat = 17
+        static let verticalPad: CGFloat = 10
     }
 
-    /// Name dual-line + padding. Fixed so the list can size without compressing cells.
     static var height: CGFloat {
-        Col.verticalPad + Col.primaryLine + Col.lineGap + Col.secondaryLine + Col.verticalPad
+        Col.verticalPad + Col.primaryLine + Col.verticalPad
     }
 
     private var showActions: Bool { hovering || isFocused }
@@ -54,43 +49,45 @@ struct ServiceRow: View {
 
     private var commandIsNotice: Bool { notice.map { !$0.isEmpty } ?? false }
 
-    /// One status fact for the name column — priority: mismatch → health fail → exit → ok → waiting.
-    private var statusFact: (text: String, tone: Color)? {
+    /// Status chip for the dedicated 状态 column.
+    private var statusChip: (text: String, tone: Tag.Tone)? {
         if service.manifestRuntimeMismatch {
-            return ("清单已改 · 需重启", Change.changed)
+            return ("需重启", .warn)
         }
         if let health = service.healthStatus {
             switch health.status {
             case "ok":
                 break
             case "fail":
-                let label = health.reason.isEmpty ? "健康失败" : "健康失败 · \(health.reason)"
-                return (label, Change.changed)
+                return ("健康失败", .warn)
             default:
-                return ("健康未知", Change.changed)
+                return ("健康未知", .warn)
             }
         }
         if let exit = service.lastExit {
             let label: String = {
                 switch exit.reason {
                 case "ready_timeout": return "就绪超时"
-                case "crashed": return "上次崩溃 · \(exit.code)"
-                case "start_failed": return "上次启动失败"
-                case "port_occupied": return "上次端口被占用"
-                case "dependency_timeout": return "依赖等待超时"
+                case "crashed": return "已崩溃"
+                case "start_failed": return "启动失败"
+                case "port_occupied": return "端口占用"
+                case "dependency_timeout": return "依赖超时"
                 case "dependency_not_ready": return "依赖未就绪"
-                default: return "上次退出"
+                default: return "已退出"
                 }
             }()
-            return (label, Change.changed)
+            return (label, .warn)
         }
         if let health = service.healthStatus, health.status == "ok" {
-            return ("就绪", Ink.live)
+            return ("就绪", .live)
         }
         if service.health != nil && service.running {
-            return ("等待健康检查", Ink.inkFaint)
+            return ("检查中", .quiet)
         }
-        return nil
+        if isLive {
+            return ("在跑", .live)
+        }
+        return ("未启动", .quiet)
     }
 
     var body: some View {
@@ -98,16 +95,31 @@ struct ServiceRow: View {
             StatusDot(tone: isLive ? Ink.live : Ink.dormant)
                 .frame(width: Col.dot, alignment: .leading)
 
-            nameCell
+            Text(service.name)
+                .font(Face.sans(Metrics.row, .semibold))
+                .foregroundStyle(isLive ? Ink.ink : Ink.inkMuted)
+                .lineLimit(1)
+                .truncationMode(.middle)
                 .frame(width: Col.name, alignment: .leading)
 
+            Group {
+                if let statusChip {
+                    Tag(text: statusChip.text, tone: statusChip.tone)
+                } else {
+                    Text("—")
+                        .font(Face.sans(Metrics.meta))
+                        .foregroundStyle(Ink.inkFaint)
+                }
+            }
+            .frame(width: Col.status, alignment: .leading)
+
             Text(verbatim: service.shownPort.map { "\($0)" } ?? "—")
-                .font(Face.mono(Metrics.chrome))
+                .font(Face.mono(Metrics.chrome, .medium))
+                .monospacedDigit()
                 .foregroundStyle(Ink.inkMuted)
                 .lineLimit(1)
-                .frame(width: Col.port, alignment: .leading)
+                .frame(width: Col.port, alignment: .trailing)
 
-            // Single line only — never a second Text in this column.
             Text(commandText)
                 .font(commandIsNotice ? Face.sans(Metrics.chrome) : Face.mono(Metrics.meta))
                 .foregroundStyle(commandIsNotice ? Ink.ink : Ink.inkFaint)
@@ -136,40 +148,6 @@ struct ServiceRow: View {
         .accessibilityAction(named: Text("选中服务"), onFocus)
     }
 
-    private var nameCell: some View {
-        VStack(alignment: .leading, spacing: Col.lineGap) {
-            Text(service.name)
-                .font(Face.sans(Metrics.row, .medium))
-                .foregroundStyle(isLive ? Ink.ink : Ink.inkMuted)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(height: Col.primaryLine, alignment: .center)
-                .clipped()
-
-            Group {
-                if let statusFact {
-                    Text(statusFact.text)
-                        .font(Face.sans(Metrics.caption, .medium))
-                        .foregroundStyle(statusFact.tone)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                } else {
-                    Text(" ")
-                        .font(Face.sans(Metrics.caption, .medium))
-                        .foregroundStyle(.clear)
-                        .accessibilityHidden(true)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: Col.secondaryLine, alignment: .center)
-            .clipped()
-        }
-        .frame(width: Col.name, height: Col.primaryLine + Col.lineGap + Col.secondaryLine,
-               alignment: .leading)
-        .clipped()
-    }
-
     @ViewBuilder private var actions: some View {
         if isWorking {
             Text("…")
@@ -189,13 +167,13 @@ struct ServiceRow: View {
     private var rowWash: some View {
         ZStack(alignment: .leading) {
             if isFocused {
-                Ink.accentSoft
+                // Unmistakable selection wash without screaming.
+                Ink.accentSoft.opacity(0.92)
             } else if hovering {
-                Ink.sunken
+                Ink.sunken.opacity(0.85)
             } else {
-                Ink.canvas
+                Color.clear
             }
-            // 1pt selection rail — craft-floor allows 1px; marks focused row without costume.
             if isFocused {
                 Rectangle()
                     .fill(Ink.accent)

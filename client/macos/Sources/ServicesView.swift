@@ -44,8 +44,9 @@ struct ServicesView: View {
     private enum Col {
         static var spacing: CGFloat { Metrics.columnGap }
         static let dot: CGFloat = 14
-        /// Keep in lockstep with ServiceRow.Col.name (stage craft v8).
-        static let name: CGFloat = 132
+        /// Lockstep with ServiceRow.Col (stage craft v9).
+        static let name: CGFloat = 108
+        static let status: CGFloat = 84
         static var port: CGFloat { Metrics.portColumn }
         // Keep the listener evidence compact so the wider detail pane still fits
         // beside the service list at the default window size.
@@ -133,8 +134,11 @@ struct ServicesView: View {
     /// reading surface on the right so opening it never squeezes the service rows.
     private var servicePanel: some View {
         VStack(spacing: 0) {
-            columnHeader
-            serviceList
+            // Stage craft v9: services as an instrument data card — sticky
+            // header + rows live inside one bordered well, not a flat admin list.
+            servicesInstrument
+                .padding(.horizontal, Metrics.gutter)
+                .padding(.top, Metrics.gutter)
             if !group.machine.isEmpty || !unclaimedPorts.isEmpty {
                 // Quieter secondary evidence — inset groups, not competing table headers.
                 VStack(spacing: Metrics.gutter) {
@@ -168,6 +172,20 @@ struct ServicesView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity,
                alignment: .topLeading)
         .background(Ink.canvas)
+    }
+
+    /// Bordered data surface for declared services (Console.app / Instruments density).
+    private var servicesInstrument: some View {
+        VStack(spacing: 0) {
+            columnHeader
+            serviceList
+        }
+        .background(Ink.canvas)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Ink.lineStrong, lineWidth: 1)
+        )
     }
 
     /// Inset grouped disclosure — quieter chrome than a second full table header.
@@ -251,25 +269,23 @@ struct ServicesView: View {
     // MARK: - 服务行
 
     private var columnHeader: some View {
-        // Sticky instrument bar — surface + strong rule; Chinese labels match
-        // the rest of the stage copy so the table reads as one product, not a
-        // bilingual paste-up.
+        // Sticky instrument bar — 服务 | 状态 | 端口 | 命令 | 操作
         HStack(spacing: Col.spacing) {
             Color.clear.frame(width: Col.dot, height: 1)
             ColumnHead("服务").frame(width: Col.name, alignment: .leading)
-            ColumnHead("端口").frame(width: Col.port, alignment: .leading)
+            ColumnHead("状态").frame(width: Col.status, alignment: .leading)
+            ColumnHead("端口").frame(width: Col.port, alignment: .trailing)
             ColumnHead("命令").frame(maxWidth: .infinity, alignment: .leading)
-            // Reserve action gutter so headers align with progressive chips.
             Text("操作")
                 .font(Face.sans(Metrics.meta, .semibold))
-                .foregroundStyle(Ink.inkFaint)
-                .tracking(0.2)
+                .foregroundStyle(Ink.inkMuted)
+                .tracking(0.3)
                 .frame(width: Col.action, alignment: .trailing)
-                .opacity(0.55)
+                .opacity(0.7)
         }
         .padding(.horizontal, Metrics.gutter)
-        .padding(.top, Metrics.controlPadV + 2)
-        .padding(.bottom, Metrics.controlPadV + 2)
+        .padding(.top, Metrics.controlPadV + 3)
+        .padding(.bottom, Metrics.controlPadV + 3)
         .background(Ink.surface)
         .overlay(alignment: .bottom) {
             Rectangle().fill(Ink.lineStrong).frame(height: 1)
@@ -429,16 +445,24 @@ struct ServicesView: View {
     // MARK: - 日志
 
     private func logPanel(_ hits: [Int]) -> some View {
+        // Stage craft v9: log inspector as first-class console — head on
+        // surface, body in a denser sunken well (Paper Ink.sunken).
         VStack(spacing: 0) {
             logHead
-            Hairline()
             if store.logFindOpen {
                 logFindBar(hits)
                 Hairline()
             }
             logBody(hits)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(Ink.sunken.opacity(0.55))
         }
         .frame(maxHeight: .infinity, alignment: .top)
+        .background(Ink.canvas)
+        .overlay(alignment: .leading) {
+            // Quiet split rule against the services card.
+            Rectangle().fill(Ink.lineStrong).frame(width: 1)
+        }
     }
 
     private var logHead: some View {
@@ -448,9 +472,9 @@ struct ServicesView: View {
         return VStack(alignment: .leading, spacing: Metrics.unit) {
             HStack(alignment: .center, spacing: Metrics.inline) {
                 StatusDot(tone: run != nil ? Ink.live : Ink.dormant)
-                // Service name is the dominant title; path stays faint below.
+                // Service name dominates; path whispers on the next line.
                 Text(ref?.service ?? "日志")
-                    .font(Face.sans(Metrics.heading, .semibold))
+                    .font(Face.sans(Metrics.display, .semibold))
                     .foregroundStyle(Ink.ink)
                     .lineLimit(1)
                 Spacer(minLength: Metrics.unit)
@@ -717,7 +741,7 @@ struct ServicesView: View {
         .padding(.horizontal, Metrics.panelPad)
         .padding(.top, Metrics.section + Metrics.unit)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Ink.canvas)
+        .background(Color.clear)
     }
 
     private func logRoll(_ hits: [Int]) -> some View {
@@ -852,7 +876,7 @@ struct ServicesView: View {
                          font: Face.log(10, .medium), width: LogCol.level, isCurrent: isCurrent)
             }
             fragment(record.message.isEmpty ? " " : record.message,
-                     tone: messageTone(record), font: Face.log(11.5),
+                     tone: messageTone(record), font: Face.log(12),
                      width: nil, isCurrent: isCurrent, selectable: true)
         }
         // 色条撑满**整条记录**（折行、堆栈那几行都算），于是一屏扫下来是一条竖线。
@@ -939,8 +963,9 @@ struct ServicesView: View {
     /// 正文的深浅：出事的那一行用墨色，其余是次级灰，续行（堆栈）最浅 ——
     /// 层级靠深浅，不靠加粗。
     private func messageTone(_ record: LogRecord) -> Color {
+        // v9: denser log well needs stronger mono contrast — primary lines use ink.
         if incidentTone(record) != nil { return Ink.ink }
-        return record.continuation ? Ink.inkFaint : Ink.inkMuted
+        return record.continuation ? Ink.inkFaint : Ink.ink
     }
 
     private func shortPath(_ path: String) -> String {

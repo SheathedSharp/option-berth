@@ -50,12 +50,13 @@ struct ProjectDocumentHeader<Trailing: View>: View {
     private var titleBlock: some View {
         HStack(alignment: .firstTextBaseline, spacing: Metrics.inline) {
             Text(displayName)
-                .font(Face.display(Metrics.display, .semibold))
+                .font(Face.display(15, .semibold))
                 .foregroundStyle(Ink.ink)
                 .lineLimit(1)
-            // Quiet live compound — not a badge pill (quieter / tells).
+            // Quiet live compound — tabular counts, not a badge pill.
             Text(verbatim: "\(liveCount) · \(serviceCount) 服务")
-                .font(Face.sans(Metrics.chrome))
+                .font(Face.mono(Metrics.chrome))
+                .monospacedDigit()
                 .foregroundStyle(Ink.inkMuted)
                 .lineLimit(1)
                 .layoutPriority(-1)

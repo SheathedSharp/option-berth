@@ -150,24 +150,28 @@ struct ProjectFacePicker: View {
     }
 
     private var freezeSegments: some View {
-        HStack(spacing: 0) {
+        // v9: recessed segmented well — selected segment lifts to canvas.
+        HStack(spacing: 1) {
             ForEach(ProjectFace.allCases) { face in
                 let selected = current == face
                 Text(label(for: face))
-                    .font(Face.sans(Metrics.chrome, selected ? .semibold : .regular))
+                    .font(Face.sans(Metrics.chrome, selected ? .semibold : .medium))
                     .foregroundStyle(selected ? Ink.ink : Ink.inkMuted)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, Metrics.controlPadV + 1)
-                    .background(selected ? Ink.canvas : Color.clear)
+                    .padding(.vertical, Metrics.controlPadV + 2)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(selected ? Ink.canvas : Color.clear)
+                    )
                     .contentShape(Rectangle())
             }
         }
-        .padding(2)
+        .padding(3)
         .background(Ink.sunken)
-        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .strokeBorder(Ink.line, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Ink.lineStrong, lineWidth: 1)
         )
     }
 
