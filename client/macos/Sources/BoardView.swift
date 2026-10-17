@@ -126,10 +126,11 @@ struct BoardView: View {
                                  openGuide: { views.showingGuide = true })
                 Hairline()
                 content
-            }.padding(.top, views.railVisible ? 0 : Metrics.trafficLightInset)
+            }
+            .padding(.top, views.railVisible ? 0 : Metrics.trafficLightInset)
+            .background(Ink.canvas)
         }
         .ignoresSafeArea(.container, edges: .top)
-        .background(Ink.canvas)
         .background {
             if scrolls {
                 WorkspaceCommandDeliveryAnchor(delivery: commandDelivery).frame(width: 0, height: 0)
@@ -138,7 +139,7 @@ struct BoardView: View {
             }
         }
         .preferredColorScheme(settings.colorScheme)
-        .clientWindowChrome()
+        .clientWindowChrome(vibrancyBehindWindow: true)
         .disabled(views.showingGuide)
         .accessibilityHidden(views.showingGuide)
         .overlayPreferenceValue(TourAnchors.self) { anchors in
@@ -302,8 +303,16 @@ struct BoardView: View {
         }
         // The title bar is transparent and the traffic lights sit over the left rail.
         // Keep the rail surface continuous, but move its first controls below them.
+        // Ink.surface under the material is the ImageRenderer / freeze stand-in:
+        // NSVisualEffectView cannot sample the desktop offscreen, so freezes would
+        // otherwise show through as clear. Live windows still blend behind the window.
         .padding(.top, Metrics.trafficLightInset)
-        .background(Ink.surface)
+        .background {
+            ZStack {
+                Ink.surface
+                SidebarMaterial()
+            }
+        }
     }
 
     private func projectRow(_ project: BerthGroup, ordinal: Int) -> some View {
@@ -337,8 +346,8 @@ struct BoardView: View {
             }
             .padding(.horizontal, Metrics.gutter)
             .frame(height: Metrics.sidebarRow)
-            .background(isSelected ? Ink.accentSoft : Ink.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .background(isSelected ? Ink.accentSoft : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -464,7 +473,10 @@ struct BoardView: View {
                 views.scope = .terminal(project.name)
             }.help(shortcuts.shortcut(.terminal).label)
             Spacer(minLength: 0)
-        }.padding(.horizontal, Metrics.gutter).padding(.bottom, Metrics.tabPadV)
+        }
+        .padding(.horizontal, Metrics.gutter)
+        .padding(.vertical, Metrics.tabPadV)
+        .frame(minHeight: Metrics.chromeHeight)
     }
 
     private func ports(for project: BerthGroup) -> [Port] {

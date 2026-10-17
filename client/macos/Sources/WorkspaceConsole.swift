@@ -1220,9 +1220,10 @@ struct ConsoleSessionTab: NSViewRepresentable {
         button.image = NSImage(systemSymbolName: session.kind == "terminal" ? "terminal" : "sparkle", accessibilityDescription: nil)
         button.imagePosition = .imageLeading
         button.contentTintColor = NSColor(selected ? Ink.accent : Ink.inkMuted)
-        // Selected tab reads stronger than neighbors without growing past Metrics.listRow.
+        // Selected tab reads stronger than neighbors; continuous corners match toolbar chips.
         button.wantsLayer = true
-        button.layer?.cornerRadius = 4
+        button.layer?.cornerRadius = 6
+        button.layer?.cornerCurve = .continuous
         button.layer?.backgroundColor = selected ? NSColor(Ink.accentSoft).cgColor : NSColor.clear.cgColor
         button.toolTip = session.title + " · " + session.state
         button.setAccessibilityIdentifier("console.session." + session.id.uuidString)

@@ -38,7 +38,7 @@ struct ShellSessionBar: View {
         .font(Face.mono(Metrics.meta))
         .padding(.horizontal, Metrics.gutter)
         .frame(height: Metrics.chromeHeight)
-        .background(Ink.surface)
+        .background(Ink.canvas)
     }
 }
 
@@ -139,7 +139,7 @@ struct SessionSwitcherPalette: View {
                             if session.id == selected.id { Image(systemName: "checkmark").foregroundStyle(Ink.accent) }
                         }.padding(.horizontal, Metrics.inline).padding(.vertical, Metrics.tabPadV)
                         .background(session.id == selected.id ? Ink.accentSoft : Color.clear)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                     }.buttonStyle(.plain)
                         .accessibilityIdentifier("console.session." + session.id.uuidString)
                 }
