@@ -170,9 +170,9 @@ struct ServicesView: View {
     private var columnHeader: some View {
         HStack(spacing: Col.spacing) {
             Color.clear.frame(width: Col.dot, height: 1)
-            ColumnHead("service").frame(width: Col.name, alignment: .leading)
-            ColumnHead("port").frame(width: Col.port, alignment: .leading)
-            ColumnHead("command").frame(maxWidth: .infinity, alignment: .leading)
+            ColumnHead("Service").frame(width: Col.name, alignment: .leading)
+            ColumnHead("Port").frame(width: Col.port, alignment: .leading)
+            ColumnHead("Command").frame(maxWidth: .infinity, alignment: .leading)
             Color.clear.frame(width: Col.action, height: 1)
         }
         .padding(.horizontal, Metrics.gutter)
@@ -206,120 +206,17 @@ struct ServicesView: View {
     private func serviceRow(_ service: BerthService) -> some View {
         let ref = ServiceRef(group: group.name, service: service.name)
         let run = store.live(service, in: group)
-        let isLive = run != nil
-        let isFocused = store.focused == ref
-
-        return Button {
-            store.focus(ref)
-        } label: {
-            HStack(spacing: Col.spacing) {
-                StatusDot(tone: isLive ? Ink.live : Ink.dormant)
-                    .frame(width: Col.dot, alignment: .leading)
-
-                Text(service.name)
-                    .font(Face.sans(Metrics.row, .medium))
-                    .foregroundStyle(isLive ? Ink.ink : Ink.inkMuted)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(width: Col.name, alignment: .leading)
-
-                // `verbatim` 是必需的：`Text("\(port)")` 会按本地化给整数加千位分隔符，
-                // 端口 18080 显示成「18,080」，而端口是标识符不是数量。
-                // 监听实况那一版早就栽过一次，这里是同一个坑的第二遍 —— 加进 `--render-states`
-                // 的第 07/08 屏就是为了让它再犯的时候立刻看得见。
-                Text(verbatim: service.shownPort.map { "\($0)" } ?? "—")
-                    .font(Face.mono(Metrics.chrome))
-                    .foregroundStyle(Ink.inkMuted)
-                    .frame(width: Col.port, alignment: .leading)
-
-                // 命令用等宽没错：它是一行要能照着念的东西。
-                // 行尾那条 notice（「pid 31131」「已经在跑了」）比命令更相关，
-                // 有的时候就顶上来 —— 它是刚发生的事，命令一直都在。
-                VStack(alignment: .leading, spacing: Metrics.stack) {
-                    if let note = store.notice[ref] {
-                        Text(note)
-                            .font(Face.sans(Metrics.chrome))
-                            .foregroundStyle(Ink.ink)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    } else {
-                        Text(service.cmd.isEmpty ? "—" : service.cmd)
-                            .font(Face.mono(Metrics.meta))
-                            .foregroundStyle(Ink.inkFaint)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                    serviceFact(service)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                Group {
-                    if store.isWorking(group) {
-                        Text("…").font(Face.sans(Metrics.chrome)).foregroundStyle(Ink.inkFaint)
-                    } else if isLive {
-                        HStack(spacing: Metrics.unit) {
-                            RowAction(title: "重启", tone: Ink.accent) {
-                                store.restart(group, only: [service.name])
-                            }
-                            RowAction(title: "停止") { store.stop(service, in: group) }
-                        }
-                    } else {
-                        RowAction(title: "启动", tone: Ink.accent) {
-                            store.start(group, only: [service.name])
-                        }
-                    }
-                }
-                .frame(width: Col.action, alignment: .trailing)
-            }
-            .padding(.horizontal, Metrics.gutter)
-            .frame(height: Metrics.rowHeight)
-            .background(isFocused ? Ink.accentSoft : Ink.canvas)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    @ViewBuilder
-    private func serviceFact(_ service: BerthService) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            if service.manifestRuntimeMismatch {
-                factText("运行实例来自旧清单 · 重启以应用新命令", tone: Change.changed)
-            }
-            if let health = service.healthStatus {
-                let label: String = {
-                    switch health.status {
-                    case "ok": return "就绪"
-                    case "fail": return health.reason.isEmpty ? "健康失败" : "健康失败 · \(health.reason)"
-                    default: return "健康未知"
-                    }
-                }()
-                factText(label, tone: health.status == "ok" ? Ink.live : Change.changed)
-            } else if service.health != nil && service.running {
-                factText("等待健康检查", tone: Ink.inkFaint)
-            }
-            if let exit = service.lastExit {
-                let label: String = {
-                    switch exit.reason {
-                    case "ready_timeout": return "就绪超时"
-                    case "crashed": return "上次崩溃 · 退出码 \(exit.code)"
-                    case "start_failed": return "上次启动失败"
-                    case "port_occupied": return "上次端口被占用"
-                    case "dependency_timeout": return "依赖等待超时"
-                    case "dependency_not_ready": return "依赖未就绪"
-                    default: return "上次退出"
-                    }
-                }()
-                factText(label, tone: Change.changed)
-            }
-        }
-    }
-
-    private func factText(_ label: String, tone: Color) -> some View {
-            Text(label)
-            .font(Face.sans(Metrics.caption, .medium))
-            .foregroundStyle(tone)
-            .lineLimit(1)
-            .truncationMode(.middle)
+        return ServiceRow(
+            service: service,
+            isLive: run != nil,
+            isFocused: store.focused == ref,
+            isWorking: store.isWorking(group),
+            notice: store.notice[ref],
+            onFocus: { store.focus(ref) },
+            onStart: { store.start(group, only: [service.name]) },
+            onStop: { store.stop(service, in: group) },
+            onRestart: { store.restart(group, only: [service.name]) }
+        )
     }
 
     // MARK: - 依赖（机器上的，不归这一页管）
@@ -332,8 +229,8 @@ struct ServicesView: View {
     private var machineHeader: some View {
         HStack(spacing: Col.spacing) {
             Color.clear.frame(width: Col.dot, height: 1)
-            ColumnHead("machine").frame(width: Col.name, alignment: .leading)
-            ColumnHead("port").frame(width: Col.port, alignment: .leading)
+            ColumnHead("Machine").frame(width: Col.name, alignment: .leading)
+            ColumnHead("Port").frame(width: Col.port, alignment: .leading)
             Text("清单里的引用 —— 起停都不归这个项目")
                 .font(Face.sans(Metrics.meta))
                 .foregroundStyle(Ink.inkFaint)
@@ -427,8 +324,8 @@ struct ServicesView: View {
     private var unclaimedHeader: some View {
         HStack(spacing: Col.spacing) {
             Color.clear.frame(width: Col.dot, height: 1)
-            ColumnHead("listener").frame(width: Col.port, alignment: .leading)
-            ColumnHead("process").frame(width: Col.process, alignment: .leading)
+            ColumnHead("Listener").frame(width: Col.port, alignment: .leading)
+            ColumnHead("Process").frame(width: Col.process, alignment: .leading)
             Text("未声明")
                 .font(Face.sans(Metrics.meta))
                 .foregroundStyle(Ink.inkFaint)
@@ -508,21 +405,30 @@ struct ServicesView: View {
         let ref = store.focused
         let service = group.services.first { $0.name == ref?.service }
         let run = service.flatMap { store.live($0, in: group) }
-        return VStack(alignment: .leading, spacing: Metrics.unit) {
+        return VStack(alignment: .leading, spacing: Metrics.stack) {
             HStack(spacing: Metrics.inline) {
                 StatusDot(tone: run != nil ? Ink.live : Ink.dormant)
                 Text(ref?.service ?? "日志")
-                    .font(Face.sans(Metrics.chrome, .medium))
+                    .font(Face.sans(Metrics.chrome, .semibold))
                     .foregroundStyle(Ink.ink)
                     .lineLimit(1)
-                Spacer(minLength: 4)
+                Spacer(minLength: Metrics.unit)
                 if store.logPath != nil {
-                    RowAction(title: "Finder") { revealLog() }
+                    ChromeIconButton(systemImage: "folder",
+                                     help: "在 Finder 中显示日志文件",
+                                     action: revealLog)
                 }
                 if ref != nil {
-                    RowAction(title: "查找") { store.beginLogFind() }
-                    RowAction(title: following ? "跟随中" : "已暂停",
-                              tone: following ? Ink.accent : Ink.inkMuted) {
+                    ChromeIconButton(systemImage: "magnifyingglass",
+                                     help: "在日志里查找（⌘F）") {
+                        store.beginLogFind()
+                    }
+                    ChromeIconButton(
+                        systemImage: following ? "arrow.down.to.line.compact" : "pause.circle",
+                        help: following ? "跟随最新输出（点击暂停）" : "已暂停跟随（点击恢复）",
+                        tone: following ? Ink.accent : Ink.inkMuted,
+                        emphasized: following
+                    ) {
                         following.toggle()
                     }
                 }
@@ -543,7 +449,7 @@ struct ServicesView: View {
             }
         }
         .padding(.horizontal, Metrics.gutter)
-        .padding(.vertical, Metrics.headerPad)
+        .padding(.vertical, Metrics.gutter)
         .background(Ink.surface)
     }
 
@@ -692,32 +598,47 @@ struct ServicesView: View {
 
     @ViewBuilder private func logBody(_ hits: [Int]) -> some View {
         if store.focused == nil {
-            logPlaceholder("点上面任意一个服务，它说过的话在这里")
+            logEmpty(
+                symbol: "text.alignleft",
+                title: "还没有选中服务",
+                detail: "点左侧表格里的任意一行。该服务本次运行说过的话会出现在这里；未选中时这里保持空白，避免误读别人的日志。"
+            )
         } else if store.logRecords.isEmpty {
-            logPlaceholder("还没有输出")
+            logEmpty(
+                symbol: "tray",
+                title: "还没有输出",
+                detail: "服务启动后，stdout / stderr 会按行落在这里。若进程已在跑却仍为空，检查清单里的日志路径，或点上方文件夹图标打开文件。"
+            )
         } else {
             logRoll(hits)
         }
     }
 
-    private func logPlaceholder(_ text: String) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: Metrics.unit) {
-                Text(text)
-                    .font(Face.sans(Metrics.chrome))
+    /// Empty that teaches the interface (operate.md) — Chinese copy + one SF Symbol, no emoji.
+    private func logEmpty(symbol: String, title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: Metrics.inline) {
+            Image(systemName: symbol)
+                .font(.system(size: 22, weight: .regular))
+                .foregroundStyle(Ink.inkFaint)
+                .accessibilityHidden(true)
+            Text(title)
+                .font(Face.sans(Metrics.chrome, .semibold))
+                .foregroundStyle(Ink.ink)
+            Text(detail)
+                .font(Face.sans(Metrics.meta))
+                .foregroundStyle(Ink.inkFaint)
+                .fixedSize(horizontal: false, vertical: true)
+            if let path = store.logPath {
+                Text(shortPath(path))
+                    .font(Face.mono(Metrics.caption))
                     .foregroundStyle(Ink.inkFaint)
-                if let path = store.logPath {
-                    Text(shortPath(path))
-                        .font(Face.mono(10))
-                        .foregroundStyle(Ink.inkFaint)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, Metrics.gutter)
-        .padding(.top, Metrics.headerPad + Metrics.unit)
+        .padding(.top, Metrics.section)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Ink.canvas)
     }

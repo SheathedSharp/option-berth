@@ -290,8 +290,8 @@ enum ClientMotionPolicy {
 /// 展开）才给标准档。这个应用里唯一跑个不停的动画是「daemon 正在启动」——
 /// 那是一个转瞬即逝的状态，不是常驻装饰。
 enum Motion {
-    /// 左栏选中指示器滑过去。
-    static let selection = Animation.spring(response: 0.30, dampingFraction: 0.80)
+    /// 选中态过渡。Operate：~180ms easeOut，只传达状态，不做编排入场。
+    static let selection = Animation.easeOut(duration: 0.18)
     /// 范围切换时内容区的交叉淡入。
     static let swap = Animation.spring(response: 0.34, dampingFraction: 0.88)
     /// 悬停与按下。一天几十次，只能「几乎察觉不到」。
@@ -302,7 +302,7 @@ enum Motion {
     // reduced motion 下换成更温和的变体，不是直接关掉 —— 淡入还在，
     // 位移和回弹去掉。动效里承载信息的那部分（东西出现了）要保住。
     static func selection(reduced: Bool) -> Animation {
-        reduced ? .easeOut(duration: 0.15) : selection
+        reduced ? .easeOut(duration: 0.12) : selection
     }
 
     static func swap(reduced: Bool) -> Animation {
