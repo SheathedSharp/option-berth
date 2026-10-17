@@ -2,7 +2,7 @@ import AppKit
 import BerthTerminal
 import SwiftUI
 
-/// Built-in paper-key defaults (cool system chrome) + explicit user files. Files take precedence and are never
+/// Paper defaults + explicit user files. Files take precedence and are never
 /// overwritten by GUI controls. Window navigation is not a second runtime model.
 final class UISettings: ObservableObject {
     static let shared: UISettings = {

@@ -10,10 +10,10 @@ enum BerthGeometry {
         case close
     }
 
-    static let ink: UInt32 = 0x1D1D1F
-    static let paper: UInt32 = 0xF5F5F7
-    static let accent: UInt32 = 0x007AFF
-    static let darkAccent: UInt32 = 0x0A84FF
+    static let ink: UInt32 = 0x23262B
+    static let paper: UInt32 = 0xFAF7F1
+    static let accent: UInt32 = 0xA8543E
+    static let darkAccent: UInt32 = 0xDB9378
 
     // 应用图标的归一化参数；SVG 预览与 AppIconView 使用相同的数值。
     static let iconInset: Double = 0.0625

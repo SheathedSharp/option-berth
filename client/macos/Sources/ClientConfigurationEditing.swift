@@ -12,14 +12,14 @@ enum ConfigurationDocument: String, CaseIterable, Identifiable {
         switch self {
         case .theme: return """
         {
-          // 未指定的颜色继承 paper 默认（冷灰系统色）；颜色格式为 #RRGGBB。
+          // 未指定的颜色继承 Paper；颜色格式为 #RRGGBB。
           "schemaVersion": 1,
           "appearance": "light", // light 或 dark，影响原生控件。
           "colors": {
-            "canvas": "#F5F5F7", // 主背景
-            "surface": "#EBEBF0", // 卡片和工具栏
-            "ink": "#1D1D1F", // 正文
-            "accent": "#007AFF", // 强调色（系统蓝）
+            "canvas": "#F8F4EE", // 主背景
+            "surface": "#EFE7DC", // 卡片和工具栏
+            "ink": "#292521", // 正文
+            "accent": "#C56A4A", // 强调色
             // 可添加 terminal.background / terminal.foreground。
             // 差异令牌：diff.added / diff.removed / diff.changed。
           },

@@ -17,8 +17,10 @@ struct WorkspaceToolbar: View {
         HStack(spacing: Metrics.unit) {
             Wordmark(size: Metrics.chrome)
             Spacer(minLength: Metrics.unit)
-            commandField
+            chromeChip(symbol: "magnifyingglass", title: "命令", shortcut: "⇧⌘P",
+                       id: "commands", action: openActions)
                 .tourAnchor(.commands)
+                .help("搜索工作区动作 / Command panel")
             chromeChip(symbol: "rectangle.on.rectangle",
                        title: "会话 \(sessionCount)", id: "sessions", action: openSessions)
                 .tourAnchor(.sessions)
@@ -57,38 +59,7 @@ struct WorkspaceToolbar: View {
         .background(Ink.canvas)
     }
 
-    /// Spotlight / Raycast-like command affordance: sunken pill with icon, label, shortcut.
-    private var commandField: some View {
-        Button(action: openActions) {
-            HStack(spacing: Metrics.tabPadV + 1) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Ink.inkFaint)
-                Text("命令")
-                    .font(Face.sans(Metrics.chrome))
-                    .foregroundStyle(Ink.inkMuted)
-                    .lineLimit(1)
-                Text("⇧⌘P")
-                    .font(Face.mono(Metrics.caption))
-                    .foregroundStyle(Ink.inkFaint)
-            }
-            .padding(.horizontal, Metrics.controlPadH + 2)
-            .padding(.vertical, Metrics.controlPadV)
-            .frame(minHeight: Metrics.hit)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(Ink.sunken)
-            )
-            .overlay(
-                Capsule(style: .continuous)
-                    .strokeBorder(Ink.line, lineWidth: 1)
-            )
-            .contentShape(Capsule(style: .continuous))
-        }
-        .help("搜索工作区动作 / Command panel")
-        .accessibilityIdentifier("workspace.toolbar.commands")
-    }
-
+    /// Plain Finder/Notes-style icon+label control — no sunken search capsule.
     private func chromeChip(symbol: String, title: String, shortcut: String? = nil,
                             id: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
@@ -113,27 +84,31 @@ struct WorkspaceToolbar: View {
     }
 }
 
-/// Project-scope segmented control: Services / Git / Sessions.
-/// Selected = filled system accent with light label; unselected = clear on the track.
+/// Project-scope tabs: soft accentSoft selection + Xcode-style underline hairline.
+/// Not a filled candy pill or capsule segment track.
 struct WorkspaceTab: View {
     let title: String
     let symbol: String
     let selected: Bool
     let action: () -> Void
 
-    private let radius: CGFloat = 8
-
     var body: some View {
         Button(action: action) {
-            Label(title, systemImage: symbol)
-                .font(Face.sans(Metrics.chrome, selected ? .semibold : .regular))
-                .foregroundStyle(selected ? Color.white : Ink.inkMuted)
-                .padding(.horizontal, Metrics.tabPadH)
-                .padding(.vertical, Metrics.tabPadV)
-                .frame(minHeight: Metrics.hit)
-                .background(selected ? Ink.accent : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-                .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+            VStack(spacing: 0) {
+                Label(title, systemImage: symbol)
+                    .font(Face.sans(Metrics.chrome, selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? Ink.accent : Ink.inkMuted)
+                    .padding(.horizontal, Metrics.tabPadH)
+                    .padding(.vertical, Metrics.tabPadV)
+                    .frame(minHeight: Metrics.hit)
+                    .background(selected ? Ink.accentSoft : Color.clear)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                Rectangle()
+                    .fill(selected ? Ink.accent : Color.clear)
+                    .frame(height: 2)
+                    .padding(.horizontal, Metrics.unit)
+            }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])

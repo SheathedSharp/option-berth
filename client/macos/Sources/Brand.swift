@@ -4,9 +4,10 @@ import SwiftUI
 
 // 这一层是品牌，不是样式表。它回答三个问题：用什么颜色、用什么字、什么时候动。
 //
-// 默认是冷灰系统 chrome（macOS / Linear 一脉）：中性画布、一个系统蓝强调色。
-// 强调色只回答「这里有东西活着 / 选中 / 主操作」。层级继续靠发丝线、字距和材质，
-// 颜色不参与分层 —— 所以整个界面里带颜色的地方仍然数得出来。
+// 和上一版的关系：上一版是「档案纸」—— 六个黑白灰、一个彩色都没有，状态只能靠
+// 粗细和边框表达。这一版回到暖纸底，多了**一个**低饱和陶土强调色。它只回答一个问题：
+// 「这里有东西活着」。剩下的层级仍然是发丝线和字距的活，颜色不参与分层 ——
+// 所以整个界面里带颜色的地方仍然数得出来。
 
 extension Color {
     init(hex: UInt32) {
@@ -20,11 +21,10 @@ extension Color {
     }
 }
 
-/// 当前主题的基础色板。`paper` 键名保留作 API 兼容；默认值是冷灰系统色。
-/// 用户通过语义令牌文件覆盖。
+/// 当前主题的基础色板。纸张是唯一内置默认，用户通过语义令牌文件覆盖。
 ///
-/// 灰阶是中性系统灰（canvas / surface / sunken），不是暖纸棕。
-/// 强调色只有一个（系统蓝），且只用在**状态**上（还活着 / 选中 / 主操作），
+/// 纸张灰阶全部带一点暖底 —— 纯灰放在纸上会显脏，轻微的棕灰更像真实的阅读材料。
+/// 强调色只有一个，且只用在**状态**上（还活着 / 选中 / 主操作），
 /// 不用于装饰。想再加一个颜色之前先问：这个信息能不能用粗细、边框、字距表达？多半能。
 enum Ink {
     static var canvas: Color { UISettings.shared.canvasColor }
@@ -242,8 +242,8 @@ enum Face {
     }
 
     /// Editorial display face for the few moments that orient a reader.
-    /// New York keeps a quiet serif voice while body copy stays in the
-    /// familiar system sans for fast scanning and Chinese fallback.
+    /// New York gives the paper theme a distinct voice while body copy stays
+    /// in the familiar system sans for fast scanning and Chinese fallback.
     static func display(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
         let scaled = size * UISettings.shared.interfaceScale
         if UISettings.shared.interfaceFontName == "__system__" {

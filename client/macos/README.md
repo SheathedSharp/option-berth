@@ -42,7 +42,7 @@ VERSION=0.1.0 ./build.sh
 - 服务对应的运行实况，以及清单未声明的监听；
 - 启动全部、停止全部、编辑清单和移除项目等动作。
 
-默认主题键名仍是 `paper`（API 兼容），色值改为冷灰系统 chrome。设置 → 外观通过内置原生编辑器打开 `theme.json`、`settings.json` 和 `keybindings.json`，
+Paper（纸张）是唯一内置默认。设置 → 外观通过内置原生编辑器打开 `theme.json`、`settings.json` 和 `keybindings.json`，
 覆盖语义颜色、已安装字体、模块字号、独立面板宽度和会话默认值；支持注释与尾逗号，有效编辑自动保存并热更新，坏编辑保留草稿与上次有效值。
 配置位于 `$BERTH_HOME/config/`（默认 `~/.option-berth/config/`），不读项目内同名文件，打开不改写文件；编辑遇到外部变化会暂停保存并提示冲突。
 完整字段、Schema 和迁移规则见 [个性化配置](../../docs/client-configuration.md)。工作区一栏仍只
