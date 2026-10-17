@@ -87,17 +87,13 @@ enum Lane {
 }
 
 enum Metrics {
-    // 红绿灯的让位条。窗口是 `.hiddenTitleBar`，标题栏透明、还在内容之上，
-    // 所以这一条**必须是左栏自己的上内边距**，不能横在左栏上面 ——
-    // 横在上面的话系统按标题栏高度（32pt）让一次、这一条再让一次，窗口顶上
-    // 会空出 68pt 的白带，而离屏渲染里只看得到 36pt（那条路没有窗口）。
-    //
-    // **只有左栏用这一条**：那三个点在 x 9..69，正好坐在左栏上；内容区从 x=161
-    // 才开始（railWidth 160），头顶是空的，给它让位就是在右上角白留一片。详见 BoardView.body。
-    // 这一条跟系统标题栏走，不随界面字号缩放。
+    // Legacy inset from the hidden-title-bar era. Shell rebuild v5 uses a
+    // standard titlebar + NavigationSplitView, so live windows no longer pad
+    // the sidebar for traffic lights. Kept for any residual layout math / dumps.
     static let trafficLightInset: CGFloat = 36
-    /// 冻结渲染没有用户偏好时的左栏宽度。拖动范围仍是 140...320。
-    static let railWidth: CGFloat = 160
+    /// Freeze-path sidebar width (NavigationSplitView ideal is settings-driven).
+    /// Glanceably wider than the old 160pt custom rail.
+    static let railWidth: CGFloat = 220
 
     /// 界面字号。间距和行高跟着它走，用户把字放大时行不会被裁切。
     private static var interface: CGFloat {
@@ -430,9 +426,9 @@ struct ColumnLabel: View {
     var size: CGFloat = Metrics.caption
 
     var body: some View {
-        Text(text.uppercased())
+        // Sentence case — avoid ALL-CAPS "AI template" eyebrows in chrome.
+        Text(text)
             .font(Face.sans(size, .medium))
-            .tracking(1.0)
             .foregroundStyle(tone)
             .lineLimit(1)
     }

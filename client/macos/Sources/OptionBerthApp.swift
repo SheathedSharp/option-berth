@@ -133,7 +133,9 @@ struct OptionBerthApp: App {
                     services.stop()
                 }
         }
-        .windowStyle(.hiddenTitleBar)
+        // Standard titlebar + unified toolbar (shell rebuild v5).
+        // Hidden title bar forced custom traffic-light insets and a fake chrome strip.
+        .windowToolbarStyle(.unified)
         .defaultSize(width: 1060, height: 720)
         // A singleton Window otherwise keeps ⌘N to bring itself forward, and that
         // scene shortcut wins over the connect command. The menu still draws ⌘N.

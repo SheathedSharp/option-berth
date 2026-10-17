@@ -108,29 +108,7 @@ struct BoardView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            if views.railVisible {
-                rail.tourAnchor(.worktrees)
-                    .frame(width: scrolls ? settings.sidebarWidth : Double(Metrics.railWidth), alignment: .leading)
-                    .clipped()
-                SplitHandle(width: railWidth, range: Self.railRange)
-            }
-            VStack(spacing: 0) {
-                WorkspaceToolbar(frozen: !scrolls, sessionCount: scrolls ? terminalSessions.sessions.count : 0,
-                                 recoveryPending: scrolls && recovery.reviewPending,
-                                 openActions: { views.showingActions = true },
-                                 openSessions: { views.showingSessions = true },
-                                 openRecovery: { views.showingRecovery = true },
-                                 openUpdates: { views.showingUpdates = true },
-                                 openSettings: { views.showingSettings = true },
-                                 openGuide: { views.showingGuide = true })
-                Hairline()
-                content
-            }
-            .padding(.top, views.railVisible ? 0 : Metrics.trafficLightInset)
-            .background(Ink.canvas)
-        }
-        .ignoresSafeArea(.container, edges: .top)
+        shell
         .background {
             if scrolls {
                 WorkspaceCommandDeliveryAnchor(delivery: commandDelivery).frame(width: 0, height: 0)
@@ -139,7 +117,7 @@ struct BoardView: View {
             }
         }
         .preferredColorScheme(settings.colorScheme)
-        .clientWindowChrome(vibrancyBehindWindow: true)
+        .clientWindowChrome(vibrancyBehindWindow: false)
         .disabled(views.showingGuide)
         .accessibilityHidden(views.showingGuide)
         .overlayPreferenceValue(TourAnchors.self) { anchors in
@@ -236,6 +214,83 @@ struct BoardView: View {
         }
     }
 
+    /// Split column shell: sidebar List + detail, system `.toolbar` on live
+    /// windows. ImageRenderer freezes mirror the same columns (no AppKit List /
+    /// segmented control — those paint blank offscreen).
+    /// `railVisible` shows/hides the sidebar column (⌘B).
+    @ViewBuilder private var shell: some View {
+        HStack(spacing: 0) {
+            if views.railVisible {
+                sidebar
+                    .frame(width: scrolls ? settings.sidebarWidth : Double(Metrics.railWidth),
+                           alignment: .leading)
+                    .clipped()
+                if scrolls {
+                    SplitHandle(width: railWidth, range: Self.railRange)
+                } else {
+                    Hairline(axis: .vertical)
+                }
+            }
+            detailStack
+        }
+        .background(Ink.canvas)
+        .toolbar { if scrolls { workspaceToolbarItems } }
+    }
+
+    private var projectSelection: Binding<String?> {
+        Binding(
+            get: { scope.projectName },
+            set: { name in
+                guard let name else { return }
+                withAnimation(Motion.selection(reduced: reduce)) { views.selectProject(name) }
+            }
+        )
+    }
+
+    private var detailStack: some View {
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(Ink.canvas)
+    }
+
+    @ToolbarContentBuilder private var workspaceToolbarItems: some ToolbarContent {
+        ToolbarItemGroup(placement: .primaryAction) {
+            Button { views.showingActions = true } label: {
+                Label("命令", systemImage: "magnifyingglass")
+            }
+            .help("搜索工作区动作 / Command panel")
+            .accessibilityIdentifier("workspace.toolbar.commands")
+            .tourAnchor(.commands)
+
+            Button { views.showingSessions = true } label: {
+                Label("会话 \(scrolls ? terminalSessions.sessions.count : 0)",
+                      systemImage: "rectangle.on.rectangle")
+            }
+            .help("会话管理 / Sessions")
+            .accessibilityIdentifier("workspace.toolbar.sessions")
+            .tourAnchor(.sessions)
+
+            Button { views.showingRecovery = true } label: {
+                Label(scrolls && recovery.reviewPending ? "恢复 · 待确认" : "恢复",
+                      systemImage: "clock.arrow.circlepath")
+            }
+            .help("恢复建议 / Recovery")
+            .accessibilityIdentifier("workspace.toolbar.recovery")
+            .tourAnchor(.recovery)
+
+            Menu {
+                Button("检查更新… / Check for updates…") { views.showingUpdates = true }
+                Button("设置… / Settings…") { views.showingSettings = true }
+                Button("使用指引… / Getting started…") { views.showingGuide = true }
+            } label: {
+                Label("更多", systemImage: "ellipsis.circle")
+            }
+            .accessibilityLabel("更多工作区操作")
+            .accessibilityIdentifier("workspace.toolbar.more")
+            .tourAnchor(.more)
+        }
+    }
+
     private func refreshGit(force: Bool = false) {
         guard scrolls else { return }
         if case .code = scope {
@@ -245,25 +300,15 @@ struct BoardView: View {
         }
     }
 
-    private var rail: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Image(systemName: "square.stack.3d.up").font(.system(size: 11, weight: .medium)).foregroundStyle(Ink.inkMuted)
-                Text("Worktrees")
-                    .font(Face.sans(Metrics.heading, .semibold))
-                    .foregroundStyle(Ink.ink)
-                Spacer()
-                Button("+") { views.requestConnection() }
-                    .buttonStyle(.plain)
-                    .font(Face.mono(Metrics.display, .medium))
-                    .frame(minWidth: Metrics.hit, minHeight: Metrics.hit)
-                    .foregroundStyle(Ink.accent)
-                    .help("接入一个 worktree").tourAnchor(.connect)
+    private var sidebar: some View {
+        VStack(spacing: 0) {
+            if scrolls {
+                TextField("筛选 worktree", text: $views.projectQuery)
+                    .textFieldStyle(.roundedBorder)
+                    .font(Face.sans(Metrics.chrome))
+                    .padding(.horizontal, Metrics.gutter)
+                    .padding(.vertical, Metrics.tabPadV)
             }
-            .padding(.horizontal, Metrics.gutter)
-            .padding(.top, Metrics.headerPad + Metrics.unit)
-            .padding(.bottom, Metrics.headerPad)
-            Hairline()
             if projects.isEmpty {
                 VStack(alignment: .leading, spacing: Metrics.inline) {
                     Text("还没有清单项目")
@@ -273,86 +318,112 @@ struct BoardView: View {
                         .font(Face.sans(Metrics.meta))
                         .foregroundStyle(Ink.inkFaint)
                         .fixedSize(horizontal: false, vertical: true)
+                    Button("接入…") { views.requestConnection() }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(Ink.accent)
+                        .help("接入一个 worktree")
+                        .tourAnchor(.connect)
                 }
                 .padding(Metrics.gutter)
-            } else {
-                if scrolls {
-                    TextField("筛选 worktree", text: $views.projectQuery).textFieldStyle(.roundedBorder)
-                        .font(Face.sans(Metrics.chrome))
-                        .padding(.horizontal, Metrics.gutter)
-                        .padding(.vertical, Metrics.tabPadV)
-                    ScrollView {
-                        LazyVStack(spacing: Metrics.rowGap) {
-                            ForEach(Array(visibleProjects.enumerated()), id: \.element.id) { index, project in
-                                projectRow(project, ordinal: index + 1)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else if scrolls {
+                List(selection: projectSelection) {
+                    Section {
+                        ForEach(Array(visibleProjects.enumerated()), id: \.element.id) { index, project in
+                            projectRow(project, ordinal: index + 1)
+                                .tag(project.name)
+                        }
+                    } header: {
+                        HStack {
+                            Text("Worktrees")
+                                .textCase(nil)
+                            Spacer(minLength: 0)
+                            Button {
+                                views.requestConnection()
+                            } label: {
+                                Image(systemName: "plus")
                             }
-                        }.padding(.horizontal, Metrics.unit)
+                            .buttonStyle(.borderless)
+                            .help("接入一个 worktree")
+                            .tourAnchor(.connect)
+                        }
+                        .textCase(nil)
                     }
-                } else {
-                    VStack(spacing: Metrics.rowGap) { ForEach(Array(visibleProjects.enumerated()), id: \.element.id) { index, project in projectRow(project, ordinal: index + 1) } }
-                        .padding(.horizontal, Metrics.unit).padding(.top, Metrics.headerPad)
                 }
+                .listStyle(.sidebar)
+            } else {
+                // ImageRenderer cannot paint List(.sidebar); mirror the density with plain rows.
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack {
+                        Text("Worktrees")
+                            .font(Face.sans(Metrics.meta, .semibold))
+                            .foregroundStyle(Ink.inkMuted)
+                        Spacer(minLength: 0)
+                        Text("+")
+                            .font(Face.sans(Metrics.chrome, .medium))
+                            .foregroundStyle(Ink.accent)
+                            .tourAnchor(.connect)
+                    }
+                    .padding(.horizontal, Metrics.gutter)
+                    .padding(.vertical, Metrics.tabPadV)
+                    ForEach(Array(visibleProjects.enumerated()), id: \.element.id) { index, project in
+                        let selected = scope.projectName == project.name
+                        projectRow(project, ordinal: index + 1)
+                            .padding(.horizontal, Metrics.gutter)
+                            .padding(.vertical, Metrics.unit)
+                            .background(selected ? Ink.accentSoft : Color.clear)
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            .padding(.horizontal, Metrics.unit)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-            Spacer(minLength: 0)
             if services.updatedAt != nil {
                 Text("已更新")
                     .font(Face.mono(Metrics.caption))
                     .foregroundStyle(Ink.inkFaint)
                     .padding(Metrics.gutter)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        // The title bar is transparent and the traffic lights sit over the left rail.
-        // Keep the rail surface continuous, but move its first controls below them.
-        // Ink.surface under the material is the ImageRenderer / freeze stand-in:
-        // NSVisualEffectView cannot sample the desktop offscreen, so freezes would
-        // otherwise show through as clear. Live windows still blend behind the window.
-        .padding(.top, Metrics.trafficLightInset)
-        .background {
-            ZStack {
-                // Ink.surface is the ImageRenderer / freeze stand-in: NSVisualEffectView
-                // cannot sample the desktop offscreen. Live windows still get sidebar vibrancy.
-                Ink.surface
-                if scrolls { SidebarMaterial() }
-            }
-        }
+        .tourAnchor(.worktrees)
+        // Live List(.sidebar) already carries system sidebar material.
+        // Freeze path needs an opaque Paper stand-in (no NSVisualEffectView).
+        .background(scrolls ? Color.clear : Ink.surface)
     }
 
+    @ViewBuilder
     private func projectRow(_ project: BerthGroup, ordinal: Int) -> some View {
-        let isSelected = scope.projectName == project.name
         let live = services.liveCount(in: project)
-        return Button {
-            withAnimation(Motion.selection(reduced: reduce)) { views.selectProject(project.name) }
-        } label: {
-            HStack(spacing: Metrics.inline) {
-                StatusDot(tone: live > 0 ? Ink.live : Ink.dormant)
-                VStack(alignment: .leading, spacing: Metrics.stack) {
-                    Text(project.displayName)
-                        .font(Face.sans(Metrics.row, isSelected ? .medium : .regular))
-                        .foregroundStyle(isSelected ? Ink.accent : Ink.ink)
-                        .lineLimit(1)
-                    Text(project.branch.isEmpty ? shortPath(project.rootDir ?? "") : project.branch)
-                        .font(Face.mono(Metrics.caption))
-                        .foregroundStyle(Ink.inkFaint)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                Spacer(minLength: Metrics.unit)
-                VStack(alignment: .trailing, spacing: Metrics.stack) {
-                    Text(verbatim: "\(live)/\(project.services.count)")
-                        .font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkMuted)
-                    if let action = WorkspaceAction(rawValue: "worktree.\(ordinal)") {
-                        Text(scrolls ? shortcuts.shortcut(action).label : action.defaultShortcut.label)
-                            .font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
-                    }
+        HStack(spacing: Metrics.inline) {
+            StatusDot(tone: live > 0 ? Ink.live : Ink.dormant)
+            VStack(alignment: .leading, spacing: Metrics.stack) {
+                Text(project.displayName)
+                    .font(Face.sans(Metrics.row, .medium))
+                    .foregroundStyle(Ink.ink)
+                    .lineLimit(1)
+                Text(project.branch.isEmpty ? shortPath(project.rootDir ?? "") : project.branch)
+                    .font(Face.mono(Metrics.caption))
+                    .foregroundStyle(Ink.inkFaint)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: Metrics.unit)
+            VStack(alignment: .trailing, spacing: Metrics.stack) {
+                Text(verbatim: "\(live)/\(project.services.count)")
+                    .font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkMuted)
+                if let action = WorkspaceAction(rawValue: "worktree.\(ordinal)") {
+                    Text(scrolls ? shortcuts.shortcut(action).label : action.defaultShortcut.label)
+                        .font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
                 }
             }
-            .padding(.horizontal, Metrics.gutter)
-            .frame(height: Metrics.sidebarRow)
-            .background(isSelected ? Ink.accentSoft : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(Motion.selection(reduced: reduce)) { views.selectProject(project.name) }
+        }
     }
 
     @ViewBuilder private var content: some View {
@@ -404,7 +475,20 @@ struct BoardView: View {
     private func projectContent(_ project: BerthGroup) -> some View {
         VStack(spacing: 0) {
             projectHeader(project)
-            tabBar(project).tourAnchor(.facts)
+            HStack {
+                ProjectFacePicker(
+                    projectName: project.name,
+                    scope: $views.scope,
+                    gitChanged: git.tree?.files.count ?? 0,
+                    frozen: !scrolls,
+                    servicesHelp: shortcuts.shortcut(.services).label,
+                    codeHelp: shortcuts.shortcut(.code).label,
+                    terminalHelp: shortcuts.shortcut(.terminal).label
+                )
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, Metrics.gutter)
+            .padding(.bottom, Metrics.tabPadV)
             Hairline()
             switch scope {
             case .services:
@@ -414,7 +498,6 @@ struct BoardView: View {
                 CodeView(git: git, project: project, scrolls: scrolls)
             case .terminal, .console:
                 WorkspaceConsole(root: project.rootDir ?? "", frozen: !scrolls, initialAgent: initialConsoleAgent).id(project.rootDir ?? project.name)
-
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -423,64 +506,61 @@ struct BoardView: View {
     private func projectHeader(_ project: BerthGroup) -> some View {
         HStack(alignment: .center, spacing: Metrics.inline) {
             VStack(alignment: .leading, spacing: Metrics.stack) {
+                Text(project.displayName)
+                    .font(Face.sans(Metrics.display, .semibold))
+                    .foregroundStyle(Ink.ink)
+                    .lineLimit(1)
                 HStack(spacing: Metrics.inline) {
-                    Text(project.displayName).font(Face.sans(Metrics.display, .semibold)).foregroundStyle(Ink.ink).lineLimit(1)
                     if !project.branch.isEmpty {
                         Label(project.branch, systemImage: "arrow.triangle.branch")
-                            .font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkMuted).lineLimit(1)
-                            .padding(.horizontal, Metrics.controlPadH).padding(.vertical, 2).background(Ink.surface)
-                            .clipShape(Capsule()).layoutPriority(-1)
+                            .font(Face.mono(Metrics.meta))
+                            .foregroundStyle(Ink.inkMuted)
+                            .lineLimit(1)
                     }
+                    Text(shortPath(project.rootDir ?? "目录不可用"))
+                        .font(Face.mono(Metrics.meta))
+                        .foregroundStyle(Ink.inkFaint)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
-                Text(shortPath(project.rootDir ?? "目录不可用"))
-                    .font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkFaint).lineLimit(1).truncationMode(.middle)
-            }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             HStack(spacing: Metrics.unit) {
                 StatusDot(tone: services.liveCount(in: project) > 0 ? Ink.live : Ink.dormant)
                 Text(verbatim: "\(services.liveCount(in: project))/\(project.services.count) 服务")
                     .font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkMuted)
-            }.fixedSize()
+            }
+            .fixedSize()
             if services.isWorking(project) {
                 ProgressView().controlSize(.small).help("正在处理项目服务")
+            } else if !scrolls {
+                Label("项目", systemImage: "slider.horizontal.3")
+                    .font(Face.sans(Metrics.chrome))
+                    .foregroundStyle(Ink.inkMuted)
             } else {
-                if !scrolls {
-                    Label("项目", systemImage: "slider.horizontal.3").font(Face.sans(Metrics.chrome)).foregroundStyle(Ink.inkMuted)
-                } else {
                 Menu {
                     Button("编辑清单…") { openConfig(project) }
                     if !project.services.isEmpty {
                         Divider()
                         Button("启动全部服务") { services.start(project) }
-                        Button("停止项目服务") { services.stop(project) }.disabled(services.stoppableCount(in: project) == 0)
+                        Button("停止项目服务") { services.stop(project) }
+                            .disabled(services.stoppableCount(in: project) == 0)
                     }
                     Divider()
                     Button("移除项目…", role: .destructive) { removing = project }
-                } label: { Label("项目", systemImage: "slider.horizontal.3").font(Face.sans(Metrics.chrome)) }
-                    .menuStyle(.borderlessButton).fixedSize()
+                } label: {
+                    Label("项目", systemImage: "slider.horizontal.3")
+                        .font(Face.sans(Metrics.chrome))
                 }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
             }
-        }.padding(.horizontal, Metrics.gutter + Metrics.unit).padding(.top, Metrics.headerPad + Metrics.unit).padding(.bottom, Metrics.headerPad)
-    }
-
-    private func tabBar(_ project: BerthGroup) -> some View {
-        HStack(spacing: Metrics.unit) {
-            WorkspaceTab(title: "服务", symbol: "server.rack", selected: scope == .services(project.name)) {
-                views.scope = .services(project.name)
-            }.help(shortcuts.shortcut(.services).label)
-            let changed = git.tree?.files.count ?? 0
-            WorkspaceTab(title: "Git" + (changed > 0 ? " · \(changed)" : ""), symbol: "chevron.left.forwardslash.chevron.right", selected: scope == .code(project.name)) {
-                views.scope = .code(project.name)
-            }.help(shortcuts.shortcut(.code).label)
-            WorkspaceTab(title: "会话", symbol: "terminal", selected: scope == .terminal(project.name)) {
-                views.scope = .terminal(project.name)
-            }.help(shortcuts.shortcut(.terminal).label)
-            Spacer(minLength: 0)
         }
         .padding(.horizontal, Metrics.gutter)
-        .padding(.vertical, Metrics.tabPadV)
-        .frame(minHeight: Metrics.chromeHeight)
-        .overlay(alignment: .bottom) { Hairline() }
+        .padding(.top, Metrics.headerPad + Metrics.unit)
+        .padding(.bottom, Metrics.headerPad)
     }
+
     private func ports(for project: BerthGroup) -> [Port] {
         store.ports.filter { port in
             if port.group == project.name { return true }
@@ -596,9 +676,8 @@ struct ColumnHead: View {
     let title: String
     init(_ title: String) { self.title = title }
     var body: some View {
-        Text(title.uppercased())
-            .font(Face.sans(9, .semibold))
-            .tracking(0.8)
+        Text(title)
+            .font(Face.sans(Metrics.meta, .medium))
             .foregroundStyle(Ink.inkFaint)
             .lineLimit(1)
     }
