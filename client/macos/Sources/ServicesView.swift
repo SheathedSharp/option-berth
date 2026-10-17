@@ -37,16 +37,20 @@ struct ServicesView: View {
     /// 查找会按停跟随，但「本来就没跟着」的人不该被我们按着跟上。
     @State private var followingBeforeFind = false
     @FocusState private var findFocused: Bool
+    /// Machine / unclaimed listener sections collapse into quiet inset groups.
+    @State private var machineExpanded = true
+    @State private var listenersExpanded = true
 
     private enum Col {
         static var spacing: CGFloat { Metrics.columnGap }
         static let dot: CGFloat = 14
-        static let name: CGFloat = 128
+        /// Keep in lockstep with ServiceRow.Col.name (stage craft v8).
+        static let name: CGFloat = 132
         static var port: CGFloat { Metrics.portColumn }
         // Keep the listener evidence compact so the wider detail pane still fits
         // beside the service list at the default window size.
         static let process: CGFloat = 60
-        static let action: CGFloat = 120
+        static let action: CGFloat = 112
         /// 服务行最多露几行。再多就把日志挤没了 —— 而日志是这一页的正文。
         static let maxVisibleRows = 5
         /// 日志一行的近似高度（11pt 等宽 + 上下各 0.5pt）。离屏那条路拿它
@@ -57,10 +61,10 @@ struct ServicesView: View {
     /// 日志那三列。**宽度是定值，不跟窗口走** —— 一列时间一列级别，扫的是一条竖线；
     /// 让它随窗口伸缩的话，同一条日志在不同窗口里断在不同的字上。
     private enum LogCol {
-        /// 色条那一格：2pt 的条 + 1pt 的让位。两条记录之间的色条连不连得上，
-        /// 决定「一屏扫下来是不是一条竖线」。
-        static let rail: CGFloat = 3
-        static let railWidth: CGFloat = 2
+        /// 色条那一格：3pt 的条 + 让位。两条记录之间的色条连不连得上，
+        /// 决定「一屏扫下来是不是一条竖线」。Stage craft v8: slightly stronger rail.
+        static let rail: CGFloat = 5
+        static let railWidth: CGFloat = 3
         /// `HH:MM:SS.mmm` = 12 个字符 × 10pt 等宽（约 6pt/字）+ 一格让位。
         /// 少给几个点的话，满毫秒那一种会和级别列**贴在一起**（实测过）。
         static let time: CGFloat = 82
@@ -130,26 +134,105 @@ struct ServicesView: View {
     private var servicePanel: some View {
         VStack(spacing: 0) {
             columnHeader
-            Hairline()
             serviceList
-            Hairline()
-            if !group.machine.isEmpty {
-                machineHeader
-                Hairline()
-                machineList
-                Hairline()
-            }
-            if !unclaimedPorts.isEmpty {
-                unclaimedHeader
-                Hairline()
-                unclaimedList
-                Hairline()
+            if !group.machine.isEmpty || !unclaimedPorts.isEmpty {
+                // Quieter secondary evidence — inset groups, not competing table headers.
+                VStack(spacing: Metrics.gutter) {
+                    if !group.machine.isEmpty {
+                        insetGroup(
+                            title: "机器依赖",
+                            detail: "清单引用 · 起停不归本项目",
+                            count: group.machine.count,
+                            expanded: $machineExpanded
+                        ) {
+                            cappedRows(count: group.machine.count) { machineRows }
+                        }
+                    }
+                    if !unclaimedPorts.isEmpty {
+                        insetGroup(
+                            title: "未声明监听",
+                            detail: "无法归到清单服务",
+                            count: unclaimedPorts.count,
+                            expanded: $listenersExpanded
+                        ) {
+                            cappedRows(count: unclaimedPorts.count) { unclaimedRows }
+                        }
+                    }
+                }
+                .padding(.horizontal, Metrics.gutter)
+                .padding(.top, Metrics.gutter)
+                .padding(.bottom, Metrics.unit)
             }
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity,
                alignment: .topLeading)
         .background(Ink.canvas)
+    }
+
+    /// Inset grouped disclosure — quieter chrome than a second full table header.
+    private func insetGroup<Content: View>(
+        title: String,
+        detail: String,
+        count: Int,
+        expanded: Binding<Bool>,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(Motion.selection) { expanded.wrappedValue.toggle() }
+            } label: {
+                HStack(spacing: Metrics.inline) {
+                    Image(systemName: expanded.wrappedValue ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Ink.inkFaint)
+                        .frame(width: 10, alignment: .center)
+                    Text(title)
+                        .font(Face.sans(Metrics.chrome, .semibold))
+                        .foregroundStyle(Ink.inkMuted)
+                    Text(verbatim: "\(count)")
+                        .font(Face.mono(Metrics.meta))
+                        .foregroundStyle(Ink.inkFaint)
+                    Text(detail)
+                        .font(Face.sans(Metrics.caption))
+                        .foregroundStyle(Ink.inkFaint)
+                        .lineLimit(1)
+                        .layoutPriority(-1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, Metrics.gutter)
+                .padding(.vertical, Metrics.controlPadV + 1)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if expanded.wrappedValue {
+                Hairline(tone: Ink.line)
+                content()
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Ink.sunken.opacity(0.55))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Ink.line, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    /// Keep secondary evidence from eating the log — same visible-row budget as before.
+    private func cappedRows<Content: View>(count: Int, @ViewBuilder content: () -> Content) -> some View {
+        let visible = min(count, Col.maxVisibleRows)
+        return Group {
+            if scrolls {
+                ScrollView { content() }
+            } else {
+                content()
+            }
+        }
+        .frame(height: CGFloat(max(visible, 1)) * Metrics.rowHeight, alignment: .top)
+        .clipped()
     }
 
     /// 进这一页的规矩：**不替用户选服务**。
@@ -168,16 +251,29 @@ struct ServicesView: View {
     // MARK: - 服务行
 
     private var columnHeader: some View {
+        // Sticky instrument bar — surface + strong rule; Chinese labels match
+        // the rest of the stage copy so the table reads as one product, not a
+        // bilingual paste-up.
         HStack(spacing: Col.spacing) {
             Color.clear.frame(width: Col.dot, height: 1)
-            ColumnHead("Service").frame(width: Col.name, alignment: .leading)
-            ColumnHead("Port").frame(width: Col.port, alignment: .leading)
-            ColumnHead("Command").frame(maxWidth: .infinity, alignment: .leading)
-            Color.clear.frame(width: Col.action, height: 1)
+            ColumnHead("服务").frame(width: Col.name, alignment: .leading)
+            ColumnHead("端口").frame(width: Col.port, alignment: .leading)
+            ColumnHead("命令").frame(maxWidth: .infinity, alignment: .leading)
+            // Reserve action gutter so headers align with progressive chips.
+            Text("操作")
+                .font(Face.sans(Metrics.meta, .semibold))
+                .foregroundStyle(Ink.inkFaint)
+                .tracking(0.2)
+                .frame(width: Col.action, alignment: .trailing)
+                .opacity(0.55)
         }
         .padding(.horizontal, Metrics.gutter)
-        .padding(.vertical, Metrics.tabPadV)
+        .padding(.top, Metrics.controlPadV + 2)
+        .padding(.bottom, Metrics.controlPadV + 2)
         .background(Ink.surface)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Ink.lineStrong).frame(height: 1)
+        }
     }
 
     private var serviceList: some View {
@@ -231,37 +327,6 @@ struct ServicesView: View {
     /// 它们不是这个项目的成员 —— `up` 不起、`down` 不停，所以这一节没有动作按钮，
     /// 也不进「启动全部 / 全部停止」的口径。它给的是实况那一半：那个端口上有没有人在听。
     /// 少了它，一份写着依赖的清单在界面上是看不出来的。
-    private var machineHeader: some View {
-        HStack(spacing: Col.spacing) {
-            Color.clear.frame(width: Col.dot, height: 1)
-            ColumnHead("Machine").frame(width: Col.name, alignment: .leading)
-            ColumnHead("Port").frame(width: Col.port, alignment: .leading)
-            Text("清单里的引用 —— 起停都不归这个项目")
-                .font(Face.sans(Metrics.meta))
-                .foregroundStyle(Ink.inkFaint)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Color.clear.frame(width: Col.action, height: 1)
-        }
-        .padding(.horizontal, Metrics.gutter)
-        .padding(.vertical, Metrics.tabPadV)
-        .background(Ink.surface)
-    }
-
-    private var machineList: some View {
-        // 同 serviceList：高度按行数给，但不跟着无限长 —— 日志才是这一页的正文。
-        let visible = min(group.machine.count, Col.maxVisibleRows)
-        return Group {
-            if scrolls {
-                ScrollView { machineRows }
-            } else {
-                machineRows
-            }
-        }
-        .frame(height: CGFloat(max(visible, 1)) * Metrics.rowHeight, alignment: .top)
-        .clipped()
-    }
-
     private var machineRows: some View {
         VStack(spacing: 0) {
             ForEach(group.machine) { ref in
@@ -326,36 +391,6 @@ struct ServicesView: View {
         }
     }
 
-    private var unclaimedHeader: some View {
-        HStack(spacing: Col.spacing) {
-            Color.clear.frame(width: Col.dot, height: 1)
-            ColumnHead("Listener").frame(width: Col.port, alignment: .leading)
-            ColumnHead("Process").frame(width: Col.process, alignment: .leading)
-            Text("未声明")
-                .font(Face.sans(Metrics.meta))
-                .foregroundStyle(Ink.inkFaint)
-                .lineLimit(1)
-                .frame(width: Col.port, alignment: .leading)
-            Color.clear.frame(width: Col.action, height: 1)
-        }
-        .padding(.horizontal, Metrics.gutter)
-        .padding(.vertical, Metrics.tabPadV)
-        .background(Ink.surface)
-    }
-
-    private var unclaimedList: some View {
-        let visible = min(unclaimedPorts.count, Col.maxVisibleRows)
-        return Group {
-            if scrolls {
-                ScrollView { unclaimedRows }
-            } else {
-                unclaimedRows
-            }
-        }
-        .frame(height: CGFloat(max(visible, 1)) * Metrics.rowHeight, alignment: .top)
-        .clipped()
-    }
-
     private var unclaimedRows: some View {
         VStack(spacing: 0) {
             ForEach(unclaimedPorts) { port in
@@ -410,38 +445,52 @@ struct ServicesView: View {
         let ref = store.focused
         let service = group.services.first { $0.name == ref?.service }
         let run = service.flatMap { store.live($0, in: group) }
-        return VStack(alignment: .leading, spacing: Metrics.stack) {
-            HStack(spacing: Metrics.inline) {
+        return VStack(alignment: .leading, spacing: Metrics.unit) {
+            HStack(alignment: .center, spacing: Metrics.inline) {
                 StatusDot(tone: run != nil ? Ink.live : Ink.dormant)
+                // Service name is the dominant title; path stays faint below.
                 Text(ref?.service ?? "日志")
-                    .font(Face.sans(Metrics.chrome, .semibold))
+                    .font(Face.sans(Metrics.heading, .semibold))
                     .foregroundStyle(Ink.ink)
                     .lineLimit(1)
                 Spacer(minLength: Metrics.unit)
-                if store.logPath != nil {
-                    ChromeIconButton(systemImage: "folder",
-                                     help: "在 Finder 中显示日志文件",
-                                     action: revealLog)
-                }
-                if ref != nil {
-                    ChromeIconButton(systemImage: "magnifyingglass",
-                                     help: "在日志里查找（⌘F）") {
-                        store.beginLogFind()
+                if ref != nil || store.logPath != nil {
+                    HStack(spacing: 2) {
+                        if store.logPath != nil {
+                            ChromeIconButton(systemImage: "folder",
+                                             help: "在 Finder 中显示日志文件",
+                                             action: revealLog)
+                        }
+                        if ref != nil {
+                            ChromeIconButton(systemImage: "magnifyingglass",
+                                             help: "在日志里查找（⌘F）") {
+                                store.beginLogFind()
+                            }
+                            ChromeIconButton(
+                                systemImage: following ? "arrow.down.to.line.compact" : "pause.circle",
+                                help: following ? "跟随最新输出（点击暂停）" : "已暂停跟随（点击恢复）",
+                                tone: following ? Ink.accent : Ink.inkMuted,
+                                emphasized: following
+                            ) {
+                                following.toggle()
+                            }
+                        }
                     }
-                    ChromeIconButton(
-                        systemImage: following ? "arrow.down.to.line.compact" : "pause.circle",
-                        help: following ? "跟随最新输出（点击暂停）" : "已暂停跟随（点击恢复）",
-                        tone: following ? Ink.accent : Ink.inkMuted,
-                        emphasized: following
-                    ) {
-                        following.toggle()
-                    }
+                    .padding(2)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Ink.sunken.opacity(0.7))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(Ink.line, lineWidth: 1)
+                    )
                 }
             }
             if let path = store.logPath {
                 HStack(spacing: Metrics.unit) {
                     Text(store.logIsFromRunStart ? "本次运行" : "最近")
-                        .font(Face.sans(Metrics.meta))
+                        .font(Face.sans(Metrics.caption, .medium))
                         .foregroundStyle(Ink.inkFaint)
                         .fixedSize()
                     Text(shortPath(path))
@@ -451,11 +500,20 @@ struct ServicesView: View {
                         .truncationMode(.middle)
                         .help(path)
                 }
+                .padding(.leading, Col.dot + Metrics.inline)
+            } else if ref == nil {
+                Text("选中左侧服务后，这里显示该服务的运行输出")
+                    .font(Face.sans(Metrics.caption))
+                    .foregroundStyle(Ink.inkFaint)
+                    .padding(.leading, Col.dot + Metrics.inline)
             }
         }
         .padding(.horizontal, Metrics.gutter)
         .padding(.vertical, Metrics.gutter)
         .background(Ink.surface)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Ink.lineStrong).frame(height: 1)
+        }
     }
 
     private func revealLog() {
@@ -621,29 +679,43 @@ struct ServicesView: View {
 
     /// Empty that teaches the interface (operate.md) — Chinese copy + one SF Symbol, no emoji.
     private func logEmpty(symbol: String, title: String, detail: String) -> some View {
-        VStack(alignment: .leading, spacing: Metrics.inline) {
-            Image(systemName: symbol)
-                .font(.system(size: 22, weight: .regular))
-                .foregroundStyle(Ink.inkFaint)
-                .accessibilityHidden(true)
-            Text(title)
-                .font(Face.sans(Metrics.chrome, .semibold))
-                .foregroundStyle(Ink.ink)
-            Text(detail)
-                .font(Face.sans(Metrics.meta))
-                .foregroundStyle(Ink.inkFaint)
-                .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: Metrics.gutter) {
+            HStack(spacing: Metrics.inline) {
+                Image(systemName: symbol)
+                    .font(.system(size: 18, weight: .regular))
+                    .foregroundStyle(Ink.inkFaint)
+                    .frame(width: 28, height: 28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Ink.sunken)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(Ink.line, lineWidth: 1)
+                    )
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: Metrics.unit) {
+                    Text(title)
+                        .font(Face.sans(Metrics.chrome, .semibold))
+                        .foregroundStyle(Ink.ink)
+                    Text(detail)
+                        .font(Face.sans(Metrics.meta))
+                        .foregroundStyle(Ink.inkFaint)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             if let path = store.logPath {
                 Text(shortPath(path))
                     .font(Face.mono(Metrics.caption))
                     .foregroundStyle(Ink.inkFaint)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .padding(.leading, 28 + Metrics.inline)
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, Metrics.gutter)
-        .padding(.top, Metrics.section)
+        .padding(.horizontal, Metrics.panelPad)
+        .padding(.top, Metrics.section + Metrics.unit)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Ink.canvas)
     }
@@ -780,7 +852,7 @@ struct ServicesView: View {
                          font: Face.log(10, .medium), width: LogCol.level, isCurrent: isCurrent)
             }
             fragment(record.message.isEmpty ? " " : record.message,
-                     tone: messageTone(record), font: Face.log(11),
+                     tone: messageTone(record), font: Face.log(11.5),
                      width: nil, isCurrent: isCurrent, selectable: true)
         }
         // 色条撑满**整条记录**（折行、堆栈那几行都算），于是一屏扫下来是一条竖线。
@@ -802,8 +874,8 @@ struct ServicesView: View {
         // 当前命中那一行整行给一层薄底：折行、带堆栈的记录里，光靠那几个字
         // 认不出「当前这一条」到哪儿为止。
         .background(isCurrent ? Ink.accentSoft : Color.clear)
-        .padding(.horizontal, Metrics.gutter + 2)
-        .padding(.vertical, 0.5)
+        .padding(.horizontal, Metrics.gutter + 4)
+        .padding(.vertical, 1)
     }
 
     /// 一格文本。命中就换成涂过高亮的 `AttributedString`，没命中就是纯 `Text`。
@@ -883,6 +955,8 @@ struct ServicesView: View {
 struct RowAction: View {
     let title: String
     var tone: Color = Ink.ink
+    /// Optical column for Start/Stop/Restart — same chip measure across rows.
+    var minWidth: CGFloat = 0
     let action: () -> Void
 
     @State private var hovering = false
@@ -893,9 +967,14 @@ struct RowAction: View {
                 .font(Face.sans(Metrics.meta, .medium))
                 .foregroundStyle(tone)
                 .lineLimit(1)
+                .frame(minWidth: minWidth > 0 ? minWidth : nil)
                 .padding(.horizontal, Metrics.controlPadH)
                 .padding(.vertical, 2)
                 .background(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(hovering ? tone.opacity(0.06) : Color.clear)
+                )
+                .overlay(
                     RoundedRectangle(cornerRadius: 4, style: .continuous)
                         .strokeBorder(hovering ? tone.opacity(0.45) : Ink.lineStrong, lineWidth: 1)
                 )

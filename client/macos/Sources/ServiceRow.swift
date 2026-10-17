@@ -26,14 +26,18 @@ struct ServiceRow: View {
     private enum Col {
         static var spacing: CGFloat { Metrics.columnGap }
         static let dot: CGFloat = 14
-        static let name: CGFloat = 128
+        /// Slightly wider name column so status fact does not crowd the port.
+        static let name: CGFloat = 132
         static var port: CGFloat { Metrics.portColumn }
-        static let action: CGFloat = 120
+        /// Room for 重启+停止 pair at equal optical width.
+        static let action: CGFloat = 112
+        /// Shared min width so 启动 / 停止 / 重启 align as a column of chips.
+        static let actionChip: CGFloat = 40
 
         static let primaryLine: CGFloat = 16
         static let secondaryLine: CGFloat = 14
         static let lineGap: CGFloat = 3
-        static let verticalPad: CGFloat = 8
+        static let verticalPad: CGFloat = 9
     }
 
     /// Name dual-line + padding. Fixed so the list can size without compressing cells.
@@ -171,19 +175,32 @@ struct ServiceRow: View {
             Text("…")
                 .font(Face.sans(Metrics.chrome))
                 .foregroundStyle(Ink.inkFaint)
+                .frame(minWidth: Col.actionChip, alignment: .trailing)
         } else if isLive {
             HStack(spacing: Metrics.unit) {
-                RowAction(title: "重启", tone: Ink.accent, action: onRestart)
-                RowAction(title: "停止", action: onStop)
+                RowAction(title: "重启", tone: Ink.accent, minWidth: Col.actionChip, action: onRestart)
+                RowAction(title: "停止", minWidth: Col.actionChip, action: onStop)
             }
         } else {
-            RowAction(title: "启动", tone: Ink.accent, action: onStart)
+            RowAction(title: "启动", tone: Ink.accent, minWidth: Col.actionChip, action: onStart)
         }
     }
 
-    private var rowWash: Color {
-        if isFocused { return Ink.accentSoft }
-        if hovering { return Ink.sunken }
-        return Ink.canvas
+    private var rowWash: some View {
+        ZStack(alignment: .leading) {
+            if isFocused {
+                Ink.accentSoft
+            } else if hovering {
+                Ink.sunken
+            } else {
+                Ink.canvas
+            }
+            // 1pt selection rail — craft-floor allows 1px; marks focused row without costume.
+            if isFocused {
+                Rectangle()
+                    .fill(Ink.accent)
+                    .frame(width: 1)
+            }
+        }
     }
 }

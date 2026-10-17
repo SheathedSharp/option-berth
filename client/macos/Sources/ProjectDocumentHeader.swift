@@ -31,8 +31,8 @@ struct ProjectDocumentHeader<Trailing: View>: View {
                 trailing()
             }
             .padding(.horizontal, Metrics.gutter)
-            .padding(.top, Metrics.section)
-            .padding(.bottom, Metrics.inline)
+            .padding(.top, Metrics.gutter + Metrics.unit)
+            .padding(.bottom, Metrics.unit)
 
             metaLine
                 .padding(.horizontal, Metrics.gutter)
@@ -50,7 +50,7 @@ struct ProjectDocumentHeader<Trailing: View>: View {
     private var titleBlock: some View {
         HStack(alignment: .firstTextBaseline, spacing: Metrics.inline) {
             Text(displayName)
-                .font(Face.sans(Metrics.display, .semibold))
+                .font(Face.display(Metrics.display, .semibold))
                 .foregroundStyle(Ink.ink)
                 .lineLimit(1)
             // Quiet live compound — not a badge pill (quieter / tells).

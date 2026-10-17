@@ -92,7 +92,7 @@ struct ClientPreferencesConfiguration: ClientConfigurationDocument {
 enum ClientDetailPane: String, CaseIterable {
     case services, git
     static let range: ClosedRange<Double> = 340...500
-    static let defaultWidth: Double = 380
+    static let defaultWidth: Double = 420
     var storageKey: String { "ui." + rawValue + "DetailWidth.v1" }
     func configured(in preferences: ClientPreferencesConfiguration) -> Double? {
         self == .services ? preferences.servicesDetailWidth : preferences.gitDetailWidth

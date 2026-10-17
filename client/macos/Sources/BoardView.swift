@@ -577,8 +577,10 @@ struct BoardView: View {
                 projectMenu(project)
             }
 
-            // Metrics.section air above face picker, Metrics.gutter below (brief).
-            HStack {
+            // Stage craft v8: face strip rides a quiet surface band under the
+            // document header — stage chrome, not sidebar. Hairline separates
+            // the picker from the operator surface below.
+            HStack(alignment: .center, spacing: Metrics.inline) {
                 ProjectFacePicker(
                     projectName: project.name,
                     scope: $views.scope,
@@ -591,8 +593,12 @@ struct BoardView: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, Metrics.gutter)
-            .padding(.top, Metrics.section)
-            .padding(.bottom, Metrics.gutter)
+            .padding(.vertical, Metrics.gutter)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Ink.surface)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(Ink.line).frame(height: 1)
+            }
 
             switch scope {
             case .services:
