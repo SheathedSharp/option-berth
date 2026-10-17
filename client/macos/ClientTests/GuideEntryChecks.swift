@@ -39,8 +39,8 @@ extension ClientChecks {
         if let guide {
             point = guide.convert(NSPoint(x: guide.bounds.midX, y: guide.bounds.midY), to: nil)
         } else {
-            // Compact empty stack: chrome ~30 + pad 16 + mark 22 + title/body ≈ mid-button ~150.
-            let yLocal: CGFloat = board.isFlipped ? 150 : board.bounds.height - 150
+            // Compact empty stack: chrome ~28 + pad ~14 + mark 22 + title/body ≈ mid-button ~145.
+            let yLocal: CGFloat = board.isFlipped ? 145 : board.bounds.height - 145
             point = board.convert(NSPoint(x: 280, y: yLocal), to: nil)
         }
         guideClick(window, x: point.x, y: point.y)

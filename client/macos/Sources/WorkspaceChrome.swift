@@ -15,8 +15,6 @@ struct WorkspaceToolbar: View {
     var body: some View {
         HStack(spacing: Metrics.inline) {
             Wordmark(size: Metrics.chrome)
-            Text("WORKSPACE").font(Face.mono(Metrics.caption)).tracking(1.1).foregroundStyle(Ink.inkFaint)
-                .lineLimit(1).layoutPriority(-1)
             Spacer(minLength: Metrics.unit)
             Button(action: openActions) {
                 HStack(spacing: Metrics.tabPadV + 1) {
@@ -46,7 +44,7 @@ struct WorkspaceToolbar: View {
     private func toolbarButton(_ title: String, symbol: String, id: String, action: @escaping () -> Void) -> some View {
         Button(action: action) { Label(title, systemImage: symbol).font(Face.sans(Metrics.chrome)).lineLimit(1) }
             .accessibilityIdentifier("workspace.toolbar." + id)
-            .padding(.horizontal, Metrics.tabPadV).padding(.vertical, 2)
+            .padding(.horizontal, Metrics.unit).padding(.vertical, 2)
             .frame(minHeight: Metrics.hit)
     }
 }

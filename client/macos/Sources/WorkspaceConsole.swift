@@ -1220,6 +1220,10 @@ struct ConsoleSessionTab: NSViewRepresentable {
         button.image = NSImage(systemSymbolName: session.kind == "terminal" ? "terminal" : "sparkle", accessibilityDescription: nil)
         button.imagePosition = .imageLeading
         button.contentTintColor = NSColor(selected ? Ink.accent : Ink.inkMuted)
+        // Selected tab reads stronger than neighbors without growing past Metrics.listRow.
+        button.wantsLayer = true
+        button.layer?.cornerRadius = 4
+        button.layer?.backgroundColor = selected ? NSColor(Ink.accentSoft).cgColor : NSColor.clear.cgColor
         button.toolTip = session.title + " · " + session.state
         button.setAccessibilityIdentifier("console.session." + session.id.uuidString)
         button.setAccessibilityValue(selected ? "选中" : "")

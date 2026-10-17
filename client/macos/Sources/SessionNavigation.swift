@@ -21,7 +21,7 @@ struct ShellSessionBar: View {
                 Button("新建 Shell", action: onNewShell)
                 Button("新建 Agent 会话 ⇧⌘↩", action: onNewAgent)
             } label: {
-                Text("＋").font(Face.sans(Metrics.chrome, .medium)).frame(width: 28, height: 24)
+                Text("＋").font(Face.sans(Metrics.chrome, .medium)).frame(width: 24, height: Metrics.hit)
             }
             .menuStyle(.borderlessButton)
             .accessibilityIdentifier("console.shellBar.add")
@@ -30,12 +30,14 @@ struct ShellSessionBar: View {
             Button(action: onOpenSwitcher) {
                 Image(systemName: "rectangle.on.rectangle")
                     .foregroundStyle(Ink.inkMuted)
+                    .frame(minWidth: Metrics.hit, minHeight: Metrics.hit)
             }
             .buttonStyle(.plain)
             .help("切换会话 · ⌃⌥Tab")
         }
         .font(Face.mono(Metrics.meta))
-        .padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV)
+        .padding(.horizontal, Metrics.gutter)
+        .frame(height: Metrics.chromeHeight)
         .background(Ink.surface)
     }
 }

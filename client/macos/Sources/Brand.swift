@@ -92,12 +92,12 @@ enum Metrics {
     // 横在上面的话系统按标题栏高度（32pt）让一次、这一条再让一次，窗口顶上
     // 会空出 68pt 的白带，而离屏渲染里只看得到 36pt（那条路没有窗口）。
     //
-    // **只有左栏用这一条**：那三个点在 x 9..69，正好坐在左栏上；内容区从 x=173
-    // 才开始，头顶是空的，给它让位就是在右上角白留一片。详见 BoardView.body。
+    // **只有左栏用这一条**：那三个点在 x 9..69，正好坐在左栏上；内容区从 x=161
+    // 才开始（railWidth 160），头顶是空的，给它让位就是在右上角白留一片。详见 BoardView.body。
     // 这一条跟系统标题栏走，不随界面字号缩放。
     static let trafficLightInset: CGFloat = 36
     /// 冻结渲染没有用户偏好时的左栏宽度。拖动范围仍是 140...320。
-    static let railWidth: CGFloat = 172
+    static let railWidth: CGFloat = 160
 
     /// 界面字号。间距和行高跟着它走，用户把字放大时行不会被裁切。
     private static var interface: CGFloat {
@@ -115,7 +115,7 @@ enum Metrics {
     /// 颜色不在这里；深浅主题继续走 Ink。
     static var unit: CGFloat { 4 * interface }
     /// 面板与列表的水平内边距。
-    static var gutter: CGFloat { 10 * interface }
+    static var gutter: CGFloat { 8 * interface }
     /// 同一行里相邻控件的间距。
     static var inline: CGFloat { 6 * interface }
     /// 表列间距。比 inline 略宽，避免端口和命令贴住。
@@ -125,25 +125,25 @@ enum Metrics {
     /// 列表行之间的缝。
     static var rowGap: CGFloat { 2 * interface }
     /// 分区之间的垂直间距。
-    static var section: CGFloat { 12 * interface }
+    static var section: CGFloat { 10 * interface }
     /// 面板与表单的外圈留白。
-    static var panelPad: CGFloat { 12 * interface }
+    static var panelPad: CGFloat { 10 * interface }
 
     /// 服务、依赖、未声明监听。默认档放得下「命令 + 一条事实」。
-    static var rowHeight: CGFloat { max(28, 32 * interface) }
+    static var rowHeight: CGFloat { max(26, 30 * interface) }
     /// 左栏项目行：名称一行、分支一行。
-    static var sidebarRow: CGFloat { max(30, 34 * interface) }
+    static var sidebarRow: CGFloat { max(28, 32 * interface) }
     /// 单行列表（变更文件、命令、会话切换）。整行可点，不低于命中下限。
-    static var listRow: CGFloat { max(22, 24 * interface) }
+    static var listRow: CGFloat { max(20, 22 * interface) }
     /// 工作区与会话工具栏。
-    static var chromeHeight: CGFloat { max(28, 30 * interface) }
+    static var chromeHeight: CGFloat { max(26, 28 * interface) }
     /// 行内按钮的最小命中高度。
     static var hit: CGFloat { max(22, 22 * interface) }
 
-    static var headerPad: CGFloat { 5 * interface }
-    static var controlPadH: CGFloat { 7 * interface }
+    static var headerPad: CGFloat { 4 * interface }
+    static var controlPadH: CGFloat { 6 * interface }
     static var controlPadV: CGFloat { 3 * interface }
-    static var tabPadH: CGFloat { 8 * interface }
+    static var tabPadH: CGFloat { 7 * interface }
     static var tabPadV: CGFloat { 3 * interface }
 
     /// 端口列。等宽之后这个宽度就是「6 位端口 + 一个字符的余量」。

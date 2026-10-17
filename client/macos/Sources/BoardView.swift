@@ -316,8 +316,8 @@ struct BoardView: View {
                 StatusDot(tone: live > 0 ? Ink.live : Ink.dormant)
                 VStack(alignment: .leading, spacing: Metrics.stack) {
                     Text(project.displayName)
-                        .font(Face.sans(Metrics.row, .medium))
-                        .foregroundStyle(Ink.ink)
+                        .font(Face.sans(Metrics.row, isSelected ? .semibold : .regular))
+                        .foregroundStyle(isSelected ? Ink.accent : Ink.ink)
                         .lineLimit(1)
                     Text(project.branch.isEmpty ? shortPath(project.rootDir ?? "") : project.branch)
                         .font(Face.mono(Metrics.caption))
