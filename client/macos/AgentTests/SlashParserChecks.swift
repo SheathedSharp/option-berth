@@ -35,6 +35,16 @@ extension AgentChecks {
         let noResume = SlashContext(hasAgents: true, shellCount: 1, targetWorking: false,
                                     targetResumable: false, providerSupportsResume: false)
         try check(SlashParser.parse("/resume", context: noResume) == .none, "/resume hidden without resume support")
+
+        try check(SlashParser.parse("/ob-server", context: base) == .command(.obServer, argument: ""),
+                  "/ob-server opens services panel")
+        try check(SlashParser.parse("/services", context: base) == .command(.obServer, argument: ""),
+                  "/services aliases /ob-server")
+        try check(SlashParser.parse("/git", context: base) == .command(.git, argument: ""),
+                  "/git opens git panel")
+        let serviceMatches = SlashParser.matches("/serv", context: base).map(\.rawValue)
+        try check(serviceMatches.contains("/ob-server"), "/serv matches services alias")
+
         try check(SlashParser.matches("ls", context: base).isEmpty, "ordinary text has no slash menu")
     }
 }

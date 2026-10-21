@@ -162,11 +162,15 @@ struct OptionBerthApp: App {
         case .sidebar: views.railVisible.toggle()
         case .refresh:
             store.refresh(); services.refresh()
-            if case .code = views.scope { git.loadTree(project: services.projects.first { $0.name == views.project }, force: true) }
+            if views.capabilityPanel == .git {
+                git.loadTree(project: services.projects.first { $0.name == views.project }, force: true)
+            }
         case .find:
             if let terminal = HostedTerminalView.containing(NSApp.keyWindow?.firstResponder) { showTerminalFind(terminal) }
-            else if case .services = views.scope { services.beginLogFind() }
-            else if case .code = views.scope {
+            else if views.capabilityPanel == .services {
+                services.beginLogFind()
+            }
+            else if views.capabilityPanel == .git {
                 NotificationCenter.default.post(name: .init("option-berth.git.find"), object: views.project)
             }
         default: break // Ordinal commands were handled above.

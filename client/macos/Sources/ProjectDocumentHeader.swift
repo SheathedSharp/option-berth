@@ -1,10 +1,11 @@
 import SwiftUI
 
-/// Project content document header — ops-workbench v12.
+/// Project content document header — session-primary v13.
 ///
 /// Squint leader for the detail column: display name carries weight; a live
-/// **facts strip** (ready / attention) sits on the title line — status facts,
-/// not a decorative badge. Branch + path form the second line.
+/// **facts strip** (ready / attention) sits on the title line. Clicking facts
+/// opens the services capability panel (`/ob-server`). Branch + path form the
+/// second line.
 struct ProjectDocumentHeader<Trailing: View>: View {
     let displayName: String
     let liveCount: Int
@@ -14,6 +15,7 @@ struct ProjectDocumentHeader<Trailing: View>: View {
     let branch: String
     let path: String
     var isWorking: Bool = false
+    var onFactsTap: (() -> Void)? = nil
     @ViewBuilder var trailing: () -> Trailing
 
     var body: some View {
@@ -56,9 +58,9 @@ struct ProjectDocumentHeader<Trailing: View>: View {
         }
     }
 
-    /// Live status compound — tied to status facts, not a title ornament.
+    /// Live status compound — opens `/ob-server` when tapped.
     private var factsStrip: some View {
-        HStack(spacing: Metrics.unit) {
+        let label = HStack(spacing: Metrics.unit) {
             if attentionCount > 0 {
                 Text(verbatim: "\(attentionCount) 需处理")
                     .font(Face.mono(Metrics.chrome, .medium))
@@ -74,6 +76,19 @@ struct ProjectDocumentHeader<Trailing: View>: View {
                 .monospacedDigit()
                 .foregroundStyle(Ink.inkMuted)
                 .lineLimit(1)
+        }
+        .contentShape(Rectangle())
+        .help("打开服务面板 · /ob-server")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityIdentifier("workspace.runtimeFacts")
+
+        return Group {
+            if let onFactsTap {
+                Button(action: onFactsTap) { label }
+                    .buttonStyle(.plain)
+            } else {
+                label
+            }
         }
     }
 
@@ -104,7 +119,8 @@ struct ProjectDocumentHeader<Trailing: View>: View {
 
 extension ProjectDocumentHeader where Trailing == EmptyView {
     init(displayName: String, liveCount: Int, serviceCount: Int,
-         attentionCount: Int = 0, branch: String, path: String, isWorking: Bool = false) {
+         attentionCount: Int = 0, branch: String, path: String, isWorking: Bool = false,
+         onFactsTap: (() -> Void)? = nil) {
         self.displayName = displayName
         self.liveCount = liveCount
         self.serviceCount = serviceCount
@@ -112,6 +128,7 @@ extension ProjectDocumentHeader where Trailing == EmptyView {
         self.branch = branch
         self.path = path
         self.isWorking = isWorking
+        self.onFactsTap = onFactsTap
         self.trailing = { EmptyView() }
     }
 }

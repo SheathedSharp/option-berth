@@ -30,16 +30,16 @@ struct ThemeConfiguration: ClientConfigurationDocument {
     var logScale: Double?
     static let keys: Set<String> = ["schemaVersion", "appearance", "colors", "interfaceFont", "dataFont", "interfaceScale", "dataScale", "logScale"]
     static let paper: [String: UInt32] = [
-        // v11: premium coordinated Paper — ivory + cool taupe; no muddy brown wells.
-        // Planes: canvas (stage paper) / surface (chrome) / sunken (cool light log well).
-        "canvas": 0xF7F4EF, "surface": 0xEEEAE3, "sunken": 0xE8E4DC,
-        "ink": 0x1C1916, "inkMuted": 0x6B6560, "inkFaint": 0x9A938C,
-        "dormant": 0xB5AFA6, "line": 0xE0DBD3, "lineStrong": 0xC9C2B8,
-        "accent": 0xA85A42, "accentSoft": 0xF3E8E2, "live": 0x3F6B52,
+        // v13 session-primary: quieter Paper — less beige mud, clearer ink contrast,
+        // restrained terracotta. Planes stay warm but cooler-neutral than v11/v12 wells.
+        "canvas": 0xF8F6F2, "surface": 0xF1EEE8, "sunken": 0xE9E6E0,
+        "ink": 0x161412, "inkMuted": 0x5C574F, "inkFaint": 0x8A847B,
+        "dormant": 0xA9A39A, "line": 0xDDD8D0, "lineStrong": 0xC2BBB1,
+        "accent": 0x9E4F3A, "accentSoft": 0xF1E6E0, "live": 0x3A6750,
         "diff.added": 0x2F6B4A, "diff.addedBackground": 0xE6F0EA,
         "diff.removed": 0xB54A3C, "diff.removedBackground": 0xF7E9E6,
         "diff.changed": 0xB07A2E, "diff.changedBackground": 0xF6EFE3,
-        "terminal.background": 0xF7F4EF, "terminal.foreground": 0x1C1916
+        "terminal.background": 0xF8F6F2, "terminal.foreground": 0x161412
     ]
     static func hex(_ text: String) -> UInt32? {
         let bytes = Array(text.utf8)

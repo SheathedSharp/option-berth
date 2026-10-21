@@ -13,6 +13,10 @@ public enum SlashCommand: String, CaseIterable, Equatable, Sendable {
     case focus = "/focus"
     case rename = "/rename"
     case history = "/history"
+    /// Services capability panel (session-primary v13). Alias token `/services` resolves here in SlashParser.
+    case obServer = "/ob-server"
+    /// Read-only Git review panel for this worktree.
+    case git = "/git"
 
     public var title: String {
         switch self {
@@ -28,6 +32,8 @@ public enum SlashCommand: String, CaseIterable, Equatable, Sendable {
         case .focus: return "把键盘交给终端"
         case .rename: return "重命名"
         case .history: return "搜索命令历史"
+        case .obServer: return "打开服务面板"
+        case .git: return "打开 Git 面板"
         }
     }
 
@@ -45,6 +51,8 @@ public enum SlashCommand: String, CaseIterable, Equatable, Sendable {
         case .focus: return "vim、交互程序"
         case .rename: return "Agent 详情或当前 Shell"
         case .history: return "跨会话搜索"
+        case .obServer: return "需处理 · 在跑 · 日志（/services）"
+        case .git: return "只读审查本 worktree"
         }
     }
 }
@@ -79,13 +87,18 @@ public enum SlashParse: Equatable, Sendable {
 public enum SlashCommandRegistry {
     public static let catalogue: [SlashCommand] = SlashCommand.allCases
 
+    /// Token aliases that are not distinct enum cases (documented for users).
+    public static let aliases: [String: SlashCommand] = [
+        "/services": .obServer
+    ]
+
     public static func available(in context: SlashContext) -> [SlashCommand] {
         catalogue.filter { isAvailable($0, context: context) }
     }
 
     public static func isAvailable(_ command: SlashCommand, context: SlashContext) -> Bool {
         switch command {
-        case .agentSelect, .agentNew, .shellNew, .rename, .history:
+        case .agentSelect, .agentNew, .shellNew, .rename, .history, .obServer, .git:
             return true
         case .agent:
             return context.hasAgents
@@ -103,6 +116,11 @@ public enum SlashCommandRegistry {
         case .focus:
             return context.shellCount > 0
         }
+    }
+
+    public static func resolveToken(_ token: String) -> SlashCommand? {
+        if let exact = SlashCommand.allCases.first(where: { $0.rawValue == token }) { return exact }
+        return aliases[token]
     }
 }
 
@@ -129,13 +147,16 @@ public enum SlashParser {
         if token == "/" {
             return .composing(filter: "")
         }
-        if let exact = SlashCommand.allCases.first(where: { $0.rawValue == token }) {
+        if let exact = SlashCommandRegistry.resolveToken(token) {
             guard SlashCommandRegistry.isAvailable(exact, context: context) else { return .none }
             return .command(exact, argument: argument)
         }
         let available = SlashCommandRegistry.available(in: context)
-        let matches = available.filter { $0.rawValue.hasPrefix(token) }
-        if matches.isEmpty { return .none }
+        var prefixHits = available.filter { $0.rawValue.hasPrefix(token) }
+        for (alias, command) in SlashCommandRegistry.aliases where alias.hasPrefix(token) {
+            if available.contains(command), !prefixHits.contains(command) { prefixHits.append(command) }
+        }
+        if prefixHits.isEmpty { return .none }
         if token.count == 1 { return .composing(filter: "") }
         return .composing(filter: String(token.dropFirst()))
     }
@@ -146,11 +167,18 @@ public enum SlashParser {
         let available = SlashCommandRegistry.available(in: context)
         if token == "/" { return available }
         let query = token.dropFirst().lowercased()
-        return available.filter {
+        var result = available.filter {
             let name = String($0.rawValue.dropFirst()).lowercased()
             return name.hasPrefix(query)
                 || $0.title.lowercased().contains(query)
                 || $0.detail.lowercased().contains(query)
         }
+        // Surface `/services` alias when the user types that prefix.
+        if "services".hasPrefix(query) || query.hasPrefix("serv"),
+           available.contains(.obServer),
+           !result.contains(.obServer) {
+            result.append(.obServer)
+        }
+        return result
     }
 }

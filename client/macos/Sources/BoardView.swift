@@ -30,7 +30,7 @@ enum Scope: Hashable {
     init(argument: String) {
         let parts = argument.split(separator: ":", maxSplits: 1).map(String.init)
         guard parts.count == 2 else {
-            self = .services("")
+            self = .terminal("")
             return
         }
         switch parts[0] {
@@ -38,7 +38,7 @@ enum Scope: Hashable {
         case "code", "git": self = .code(parts[1])
         case "ports", "project": self = .services(parts[1])
         case "services": self = .services(parts[1])
-        default: self = .services("")
+        default: self = .terminal("")
         }
     }
 }
@@ -65,7 +65,7 @@ struct BoardView: View {
         services: ServicesStore,
         git: GitStore? = nil,
         scrolls: Bool = true,
-        initialScope: Scope = .services(""),
+        initialScope: Scope = .terminal(""),
         initialConsoleAgent: Bool = false,
         automaticGuide: Bool = false,
         guideDefaults: UserDefaults = .standard,
@@ -153,9 +153,9 @@ struct BoardView: View {
                 guard let root = $0.rootDir else { return false }
                 return URL(fileURLWithPath: root).standardizedFileURL.resolvingSymlinksInPath().path == target
             }) else { return }
-            // Shared selection bus: remember path, then switch face.
-            views.rememberGitPath(request.path)
-            views.scope = .code(project.name)
+            // Session-primary: Git is a capability panel on the session stage.
+            views.scope = .terminal(project.name)
+            views.openGitPanel(path: request.path)
             git.openPath(request.path, project: project)
         }
         .sheet(isPresented: $views.showingUpdates) { ReleaseUpdateSheet().clientWindowChrome() }
@@ -231,6 +231,9 @@ struct BoardView: View {
         }
         .onChange(of: scope) { _, newScope in
             refreshGit(force: true)
+        }
+        .onChange(of: views.capabilityPanel) { _, panel in
+            if panel == .git { refreshGit(force: true) }
         }
     }
 
@@ -577,70 +580,115 @@ struct BoardView: View {
 
     private func projectContent(_ project: BerthGroup) -> some View {
         let attention = project.services.filter(\.needsAttention).count
-        return VStack(spacing: 0) {
-            ProjectDocumentHeader(
-                displayName: project.displayName,
-                liveCount: services.liveCount(in: project),
-                serviceCount: project.services.count,
-                attentionCount: attention,
-                branch: project.branch,
-                path: shortPath(project.rootDir ?? ""),
-                isWorking: services.isWorking(project)
-            ) {
-                projectMenu(project)
-            }
-
-            // Ops-workbench v12: face strip = modes of this berth (服务 default home).
-            HStack(alignment: .center, spacing: Metrics.inline) {
-                ProjectFacePicker(
-                    projectName: project.name,
-                    scope: $views.scope,
-                    gitChanged: git.tree?.files.count ?? 0,
-                    frozen: !scrolls,
-                    servicesHelp: shortcuts.shortcut(.services).label,
-                    codeHelp: shortcuts.shortcut(.code).label,
-                    terminalHelp: shortcuts.shortcut(.terminal).label
-                )
-                Spacer(minLength: 0)
-                if attention > 0, case .services = scope {
-                    Text("操作台 · 先处理需关注项")
-                        .font(Face.sans(Metrics.caption))
-                        .foregroundStyle(Change.changed)
-                        .lineLimit(1)
+        return ZStack(alignment: .topTrailing) {
+            VStack(spacing: 0) {
+                ProjectDocumentHeader(
+                    displayName: project.displayName,
+                    liveCount: services.liveCount(in: project),
+                    serviceCount: project.services.count,
+                    attentionCount: attention,
+                    branch: project.branch,
+                    path: shortPath(project.rootDir ?? ""),
+                    isWorking: services.isWorking(project),
+                    onFactsTap: { views.openServicesPanel() }
+                ) {
+                    projectMenu(project)
                 }
-            }
-            .padding(.horizontal, Metrics.gutter)
-            .padding(.vertical, Metrics.unit + 1)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Ink.surface)
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(Ink.lineStrong).frame(height: 1)
-            }
 
-            switch scope {
-            case .services:
-                ServicesView(
-                    store: services,
-                    group: project,
-                    ports: ports(for: project),
-                    scrolls: scrolls,
-                    views: views,
-                    onJumpToGit: { path in
-                        views.rememberGitPath(path)
-                        views.scope = .code(project.name)
-                        if let path, !path.isEmpty {
-                            git.openPath(path, project: project)
-                        }
-                    }
+                // Session stage is always home (v13). Services/Git are overlays.
+                WorkspaceConsole(
+                    root: project.rootDir ?? "",
+                    frozen: !scrolls,
+                    initialAgent: initialConsoleAgent,
+                    openServicesPanel: { views.openServicesPanel() },
+                    openGitPanel: { views.openGitPanel() }
                 )
-            case .code:
-                CodeView(git: git, project: project, scrolls: scrolls)
-            case .terminal, .console:
-                WorkspaceConsole(root: project.rootDir ?? "", frozen: !scrolls, initialAgent: initialConsoleAgent)
-                    .id(project.rootDir ?? project.name)
+                .id(project.rootDir ?? project.name)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            if let panel = views.capabilityPanel {
+                capabilityOverlay(panel, project: project, attention: attention)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .animation(Motion.selection(reduced: reduce), value: views.capabilityPanel)
+    }
+
+    @ViewBuilder
+    private func capabilityOverlay(_ panel: CapabilityPanel, project: BerthGroup, attention: Int) -> some View {
+        let title: String = {
+            switch panel {
+            case .services: return attention > 0 ? "服务 · \(attention) 需处理" : "服务"
+            case .git:
+                let n = git.tree?.files.count ?? 0
+                return n > 0 ? "Git · \(n)" : "Git"
+            }
+        }()
+        VStack(spacing: 0) {
+            HStack(spacing: Metrics.inline) {
+                Text(title)
+                    .font(Face.sans(Metrics.chrome, .semibold))
+                    .foregroundStyle(Ink.ink)
+                Spacer(minLength: 0)
+                Text("Esc 返回会话")
+                    .font(Face.mono(Metrics.caption))
+                    .foregroundStyle(Ink.inkFaint)
+                Button {
+                    views.dismissCapabilityPanel()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Ink.inkMuted)
+                        .frame(width: Metrics.hit, height: Metrics.hit)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("关闭面板 · Esc")
+                .accessibilityIdentifier("workspace.capabilityClose")
+            }
+            .padding(.horizontal, Metrics.gutter)
+            .padding(.vertical, Metrics.unit + 2)
+            .background(Ink.surface)
+            Hairline(tone: Ink.lineStrong)
+
+            Group {
+                switch panel {
+                case .services:
+                    ServicesView(
+                        store: services,
+                        group: project,
+                        ports: ports(for: project),
+                        scrolls: scrolls,
+                        views: views,
+                        onJumpToGit: { path in
+                            views.openGitPanel(path: path)
+                            if let path, !path.isEmpty {
+                                git.openPath(path, project: project)
+                            }
+                        }
+                    )
+                case .git:
+                    CodeView(git: git, project: project, scrolls: scrolls)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Ink.canvas)
+        .overlay(alignment: .leading) {
+            // Dim the session underneath on the left edge only as a soft separator.
+            Rectangle().fill(Ink.lineStrong).frame(width: 1)
+        }
+        .accessibilityIdentifier(panel == .services ? "workspace.panel.services" : "workspace.panel.git")
+        .background {
+            if scrolls {
+                CapabilityPanelKeyMonitor(onEscape: { views.dismissCapabilityPanel() })
+                    .frame(width: 1, height: 1)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
     @ViewBuilder
@@ -720,7 +768,7 @@ struct BoardView: View {
                     : read.config.name
                 let root = URL(fileURLWithPath: configPath).deletingLastPathComponent().path
                 ProjectRegistry.adopt(name: name, root: root, config: configPath)
-                views.scope = .services(name)
+                views.scope = .terminal(name)
             case .failure(let error): problem = error.localizedDescription
             }
         }
@@ -736,7 +784,7 @@ struct BoardView: View {
                 let name = written.proposal.name
                 if !name.isEmpty {
                     ProjectRegistry.adopt(name: name, root: root, config: written.path)
-                    views.scope = .services(name)
+                    views.scope = .terminal(name)
                 }
                 services.refresh()
             case .failure(let error): proposalProblem = error.localizedDescription
@@ -794,5 +842,32 @@ struct ColumnHead: View {
             .foregroundStyle(Ink.inkMuted)
             .tracking(0.3)
             .lineLimit(1)
+    }
+}
+
+
+/// Esc dismisses the services/Git capability overlay while it is open.
+struct CapabilityPanelKeyMonitor: NSViewRepresentable {
+    let onEscape: () -> Void
+    func makeNSView(context: Context) -> MonitorView { MonitorView() }
+    func updateNSView(_ view: MonitorView, context: Context) { view.onEscape = onEscape }
+    static func dismantleNSView(_ view: MonitorView, coordinator: ()) { view.removeMonitor() }
+    final class MonitorView: NSView {
+        var onEscape: (() -> Void)?
+        private var monitor: Any?
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            removeMonitor()
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self, event.keyCode == 53 else { return event }
+                self.onEscape?()
+                return nil
+            }
+        }
+        func removeMonitor() {
+            if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
+        }
+        deinit { removeMonitor() }
     }
 }

@@ -129,8 +129,8 @@ struct ProjectFacePicker: View {
     }
 
     var body: some View {
-        // Ops-workbench v12: quieter mode switcher — modes of this berth,
-        // not three peer home apps. Smaller control; 服务 remains default.
+        // Legacy face picker retained for any freeze host; session-primary v13
+        // no longer mounts this as home navigation (slash panels instead).
         HStack(spacing: Metrics.inline) {
             Text("工作面")
                 .font(Face.sans(Metrics.caption, .medium))

@@ -19,6 +19,9 @@ struct WorkspaceConsole: View {
     let root: String
     var frozen = false
     var frozenScene: FrozenConsoleScene = .slashMenu
+    /// Session-primary: open Services / Git capability panels hosted by BoardView.
+    var openServicesPanel: () -> Void = {}
+    var openGitPanel: () -> Void = {}
     @ObservedObject private var workspace: ConsoleWorkspace
     @ObservedObject private var sessions = TerminalSessions.shared
     @ObservedObject private var settings = UISettings.shared
@@ -36,14 +39,19 @@ struct WorkspaceConsole: View {
     @State private var composerFocus = 0
     @State private var slashHighlight = 0
     @State private var previewAgentID: UUID?
+    /// When true, the full-width canvas shows the structured Agent stream (not Shell).
+    @State private var focusStreamOnCanvas = false
     @State private var historyCursor = 0
     @State private var commandHeld = false
     @State private var pendingChord: SessionComposerModel.Chord?
     @State private var shellAttachment: ComposerShellAttachment?
     @State private var shellTabReadGeneration: UInt = 0
     @Environment(\.clientReduceMotion) private var reduced
-    init(root: String, frozen: Bool = false, initialAgent: Bool = false, frozenScene: FrozenConsoleScene = .slashMenu) {
+    init(root: String, frozen: Bool = false, initialAgent: Bool = false, frozenScene: FrozenConsoleScene = .slashMenu,
+         openServicesPanel: @escaping () -> Void = {}, openGitPanel: @escaping () -> Void = {}) {
         self.root = root; self.frozen = frozen; self.frozenScene = frozenScene
+        self.openServicesPanel = openServicesPanel
+        self.openGitPanel = openGitPanel
         _workspace = ObservedObject(wrappedValue: frozen ? ConsoleWorkspace() : TerminalSessions.shared.workspace(root))
         _creating = State(initialValue: frozen && (initialAgent || frozenScene == .slashMenu))
     }
@@ -56,23 +64,35 @@ struct WorkspaceConsole: View {
             if frozen { frozenStrip }
             if let selected {
                 VStack(spacing: 0) {
-                    if !shellSessions.isEmpty {
-                        ShellSessionBar(shells: shellSessions, selectedID: shellTarget()?.id,
-                                        onSelect: { activate($0) }, onNewShell: { newShell() },
-                                        onNewAgent: { composerAct(.commandShift) }, onOpenSwitcher: openSwitcher)
-                        Hairline()
-                    }
-                    HStack(spacing: 0) {
-                        sessionCanvas(for: selected)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        SplitHandle(width: $settings.consoleAgentWidth, range: UISettings.consoleAgentWidthRange,
-                                    controlsTrailingPane: true)
-                        agentColumn
-                            .frame(width: CGFloat(settings.consoleAgentWidth))
-                            .frame(maxHeight: .infinity)
-                    }
+                    ShellSessionBar(
+                        shells: shellSessions,
+                        agents: agentSessions,
+                        streamRows: structuredAgentRows,
+                        selectedID: selected.id,
+                        streamSelectedID: focusStreamOnCanvas ? (previewAgentID ?? workspace.resumeStreamID) : nil,
+                        providerChosen: workspace.providerChosen,
+                        onPickProvider: {
+                            pickingProvider = true
+                            if launcher.providers.isEmpty { launcher.refresh(workspace) }
+                        },
+                        onSelect: { session in
+                            focusStreamOnCanvas = false
+                            activate(session)
+                        },
+                        onSelectStream: { id in
+                            focusStreamOnCanvas = true
+                            selectStreamTarget(id)
+                        },
+                        onNewShell: { newShell() },
+                        onNewAgent: { composerAct(.commandShift) },
+                        onOpenSwitcher: openSwitcher
+                    )
                     Hairline()
-                    if selected.kind == "terminal" {
+                    // Single-canvas: Shell PTY or Agent detail — never a permanent third Agent column.
+                    singleCanvas(for: selected)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    Hairline()
+                    if focusStreamOnCanvas || selected.kind == "terminal" {
                         composerBar
                     } else {
                         nativeAgentInputStrip(for: selected)
@@ -82,7 +102,10 @@ struct WorkspaceConsole: View {
                 .overlay(alignment: .topLeading) {
                     if switcherPresented {
                         SessionSwitcherPalette(root: root, sessions: scoped, query: $switcherQuery,
-                                               selected: selected, activate: activate,
+                                               selected: selected, activate: { session in
+                                                   focusStreamOnCanvas = false
+                                                   activate(session)
+                                               },
                                                close: closeSwitcher)
                             .frame(width: 430, height: 380)
                             .padding(.leading, Metrics.gutter).padding(.top, 48)
@@ -90,6 +113,7 @@ struct WorkspaceConsole: View {
                     }
                 }
             } else if frozen {
+
                 frozenFixture
             } else {
                 shellFirstEmpty
@@ -200,6 +224,7 @@ struct WorkspaceConsole: View {
     private func returnToShell() {
         switcherPresented = false
         switcherQuery = ""
+        focusStreamOnCanvas = false
         let shell = terminalReturnID.flatMap { id in scoped.first { $0.id == id && $0.kind == "terminal" } }
             ?? scoped.first { $0.kind == "terminal" }
         if let shell {
@@ -262,6 +287,35 @@ struct WorkspaceConsole: View {
         }
     }
 
+    /// Full-width focus: structured stream detail, or the selected Shell / native Agent PTY.
+    @ViewBuilder private func singleCanvas(for session: TerminalSession) -> some View {
+        if focusStreamOnCanvas,
+           let id = previewAgentID ?? workspace.resumeStreamID,
+           let stream = streamController.session(id) {
+            AgentStreamDetail(session: stream, queuedCount: streamController.queuedCount(for: stream.id),
+                              queuedPreview: streamController.queuedMessages(for: stream.id).first,
+                              onWithdrawQueued: {
+                                  if let text = streamController.withdrawQueued(id: stream.id) {
+                                      workspace.draft = text
+                                      composerNotice = "已从排队撤回"
+                                  }
+                              },
+                              onInterrupt: { interruptStream(stream.id) },
+                              onClose: { confirmEndStream(stream.id) },
+                              onRespond: { requestID, decision in
+                                  respondStream(stream.id, requestID: requestID, decision: decision)
+                              },
+                              onAdoptCommand: adoptAgentCommand,
+                              onOpenGitPath: openGitPath,
+                              onContinueInNative: openStreamInNativeTerminal)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Ink.canvas)
+                .onAppear { streamController.markDetailVisible(id) }
+        } else {
+            sessionCanvas(for: session)
+        }
+    }
+
     @ViewBuilder private func sessionCanvas(for session: TerminalSession) -> some View {
         let promptComposer = shellPromptComposerMode(session)
         PaneWorkspaceView(primary: session, workspace: workspace, agent: workspace.agentMode,
@@ -313,33 +367,39 @@ struct WorkspaceConsole: View {
     @ViewBuilder private var frozenFixture: some View {
         switch frozenScene {
         case .streamMixed:
-            HStack(spacing: 0) {
-                VStack(spacing: 0) {
-                    Text("$ git status -s\n M src/login.ts\n$ _")
-                        .font(Face.mono(Metrics.row)).foregroundStyle(Ink.ink).padding(Metrics.panelPad)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    Hairline()
-                    SessionComposerFrozen(slash: false, noProvider: false)
-                }
-                Hairline(axis: .vertical)
+            VStack(spacing: 0) {
+                HStack(spacing: Metrics.inline) {
+                    Text("›_ Shell 1").font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkMuted)
+                    Text("Codex · 流").font(Face.mono(Metrics.meta)).padding(6).background(Ink.accentSoft)
+                    Spacer()
+                }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV)
+                Hairline()
                 AgentStreamMixedFrozen()
+                Hairline()
+                SessionComposerFrozen(slash: false, noProvider: false)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .streamDetail:
-            HStack(spacing: 0) {
-                VStack(spacing: 0) {
-                    Text("$ npm test\nFAIL src/login.test.ts\n$ _")
-                        .font(Face.mono(Metrics.row)).foregroundStyle(Ink.ink).padding(Metrics.panelPad)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    Hairline()
-                    SessionComposerFrozen(slash: false, noProvider: false)
-                }
-                Hairline(axis: .vertical)
+            VStack(spacing: 0) {
+                HStack(spacing: Metrics.inline) {
+                    Text("›_ Shell 1").font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkMuted)
+                    Text("Codex · 流").font(Face.mono(Metrics.meta)).padding(6).background(Ink.accentSoft)
+                    Spacer()
+                }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV)
+                Hairline()
                 AgentStreamStatusFrozen()
+                Hairline()
+                SessionComposerFrozen(slash: false, noProvider: false)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .nativeAgent:
             VStack(spacing: 0) {
+                HStack(spacing: Metrics.inline) {
+                    Text("›_ Shell 1").font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkMuted)
+                    Text("Claude Code · 1").font(Face.mono(Metrics.meta)).padding(6).background(Ink.accentSoft)
+                    Spacer()
+                }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV)
+                Hairline()
                 Text("Claude Code · 修复登录测试\n╭──────────────────────────────╮\n│ Allow running npm test?        │\n│  [Allow]  [Deny]             │\n╰──────────────────────────────╯")
                     .font(Face.mono(Metrics.row)).foregroundStyle(Ink.ink).padding(Metrics.panelPad)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -355,22 +415,26 @@ struct WorkspaceConsole: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         default:
-            HStack(spacing: 0) {
-                VStack(spacing: 0) {
-                    Text("$ git status --short\n M Sources/API.swift\n$ _")
-                        .font(Face.mono(Metrics.row)).foregroundStyle(Ink.ink).padding(Metrics.panelPad)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    Hairline()
-                    SessionComposerFrozen(slash: frozenScene == .slashMenu && creating,
-                                          noProvider: frozenScene == .noProvider)
-                }
-                Hairline(axis: .vertical)
-                SessionStatusFrozen(active: frozenScene == .slashMenu && creating,
-                                    noProvider: frozenScene == .noProvider)
+            VStack(spacing: 0) {
+                HStack(spacing: Metrics.inline) {
+                    Text("›_ Shell 1").font(Face.mono(Metrics.meta)).padding(6).background(Ink.accentSoft)
+                    Text(frozenScene == .noProvider ? "+ / 选择默认 Agent" : "+ Agent")
+                        .font(Face.sans(Metrics.caption))
+                        .foregroundStyle(frozenScene == .noProvider ? Change.changed : Ink.inkMuted)
+                    Spacer()
+                }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV)
+                Hairline()
+                Text("$ git status --short\n M Sources/API.swift\n$ _")
+                    .font(Face.mono(Metrics.row)).foregroundStyle(Ink.ink).padding(Metrics.panelPad)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                Hairline()
+                SessionComposerFrozen(slash: frozenScene == .slashMenu && creating,
+                                      noProvider: frozenScene == .noProvider)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
+
     private var agentSessions: [TerminalSession] {
         scoped.filter { $0.kind.hasPrefix("agent:") }
             .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
@@ -856,6 +920,14 @@ struct WorkspaceConsole: View {
         case .history:
             history = true
             workspace.draft = ""
+        case .obServer:
+            workspace.draft = ""
+            openServicesPanel()
+            composerNotice = "服务面板 · Esc 返回会话"
+        case .git:
+            workspace.draft = ""
+            openGitPanel()
+            composerNotice = "Git 面板 · Esc 返回会话"
         }
     }
     private func commandArgument(_ token: String) -> String {
@@ -934,6 +1006,7 @@ struct WorkspaceConsole: View {
     private func selectStreamTarget(_ id: UUID) {
         workspace.resumeStreamID = id
         previewAgentID = id
+        focusStreamOnCanvas = true
         streamController.markDetailVisible(id)
         composerNotice = "⌘↩ 将续接到 \(streamController.session(id)?.title ?? "Agent")"
     }
@@ -1097,6 +1170,7 @@ struct WorkspaceConsole: View {
     private func enterAgent(_ session: TerminalSession) {
         workspace.resumeAgentID = session.id
         previewAgentID = session.id
+        focusStreamOnCanvas = false
         session.clearAttention()
         activate(session)
     }

@@ -1,11 +1,20 @@
 import AppKit
+import BerthAgent
 import BerthTerminal
 import SwiftUI
 
+/// Compact session strip (v13 single-canvas): Shell + Agent tabs share one row.
+/// Selecting a tab switches the full-width canvas; there is no permanent Agent column.
 struct ShellSessionBar: View {
     let shells: [TerminalSession]
+    var agents: [TerminalSession] = []
+    var streamRows: [AgentRow] = []
     let selectedID: UUID?
+    var streamSelectedID: UUID? = nil
+    var providerChosen: Bool = false
+    var onPickProvider: () -> Void = {}
     let onSelect: (TerminalSession) -> Void
+    var onSelectStream: (UUID) -> Void = { _ in }
     let onNewShell: () -> Void
     let onNewAgent: () -> Void
     let onOpenSwitcher: () -> Void
@@ -13,19 +22,41 @@ struct ShellSessionBar: View {
     var body: some View {
         HStack(spacing: Metrics.inline) {
             ForEach(shells) { shell in
-                ConsoleSessionTab(session: shell, selected: shell.id == selectedID, compact: false,
+                ConsoleSessionTab(session: shell, selected: streamSelectedID == nil && shell.id == selectedID, compact: false,
                                   activate: { onSelect(shell) })
+                    .fixedSize()
+            }
+            ForEach(streamRows) { row in
+                streamChip(row)
+            }
+            ForEach(agents) { agent in
+                ConsoleSessionTab(session: agent, selected: streamSelectedID == nil && agent.id == selectedID, compact: false,
+                                  activate: { onSelect(agent) })
                     .fixedSize()
             }
             Menu {
                 Button("新建 Shell", action: onNewShell)
                 Button("新建 Agent 会话 ⇧⌘↩", action: onNewAgent)
+                if !providerChosen {
+                    Button("选择默认 Agent…", action: onPickProvider)
+                }
             } label: {
                 Text("＋").font(Face.sans(Metrics.chrome, .medium)).frame(width: 24, height: Metrics.hit)
             }
             .menuStyle(.borderlessButton)
             .accessibilityIdentifier("console.shellBar.add")
             .accessibilityLabel("新建 Shell 或 Agent")
+            if agents.isEmpty && streamRows.isEmpty {
+                Button(action: providerChosen ? onNewAgent : onPickProvider) {
+                    Text(providerChosen ? "+ Agent" : "+ / 选择默认 Agent")
+                        .font(Face.sans(Metrics.caption, .medium))
+                        .foregroundStyle(providerChosen ? Ink.inkMuted : Change.changed)
+                        .padding(.horizontal, 6)
+                        .frame(height: Metrics.hit)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("console.sessionStrip.agentEmpty")
+            }
             Spacer(minLength: 0)
             Button(action: onOpenSwitcher) {
                 Image(systemName: "rectangle.on.rectangle")
@@ -39,6 +70,29 @@ struct ShellSessionBar: View {
         .padding(.horizontal, Metrics.gutter)
         .frame(height: Metrics.chromeHeight)
         .background(Ink.canvas)
+        .accessibilityIdentifier("console.sessionStrip")
+    }
+
+    private func streamChip(_ row: AgentRow) -> some View {
+        let selected = streamSelectedID == row.id
+        return Button {
+            onSelectStream(row.id)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "sparkle")
+                Text(row.title)
+                    .lineLimit(1)
+            }
+            .font(Face.mono(Metrics.meta))
+            .foregroundStyle(selected ? Ink.accent : Ink.inkMuted)
+            .padding(.horizontal, 8)
+            .frame(height: Metrics.hit)
+            .background(selected ? Ink.accentSoft : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .accessibilityIdentifier("console.streamTab." + row.id.uuidString)
     }
 }
 

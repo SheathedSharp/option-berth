@@ -11,7 +11,7 @@ enum BerthGeometry {
     }
 
     static let ink: UInt32 = 0x23262B
-    static let paper: UInt32 = 0xFAF7F1
+    static let paper: UInt32 = 0xF8F6F2
     static let accent: UInt32 = 0xA8543E
     static let darkAccent: UInt32 = 0xDB9378
 
