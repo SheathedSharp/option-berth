@@ -153,6 +153,8 @@ struct BoardView: View {
                 guard let root = $0.rootDir else { return false }
                 return URL(fileURLWithPath: root).standardizedFileURL.resolvingSymlinksInPath().path == target
             }) else { return }
+            // Shared selection bus: remember path, then switch face.
+            views.rememberGitPath(request.path)
             views.scope = .code(project.name)
             git.openPath(request.path, project: project)
         }
@@ -483,13 +485,22 @@ struct BoardView: View {
     @ViewBuilder
     private func projectRow(_ project: BerthGroup, ordinal: Int) -> some View {
         let live = services.liveCount(in: project)
+        let attention = project.services.filter(\.needsAttention).count
         HStack(spacing: Metrics.inline) {
-            StatusDot(tone: live > 0 ? Ink.live : Ink.dormant)
+            StatusDot(tone: attention > 0 ? Change.changed : (live > 0 ? Ink.live : Ink.dormant))
             VStack(alignment: .leading, spacing: Metrics.stack) {
-                Text(project.displayName)
-                    .font(Face.sans(Metrics.row, .medium))
-                    .foregroundStyle(Ink.ink)
-                    .lineLimit(1)
+                HStack(spacing: Metrics.unit) {
+                    Text(project.displayName)
+                        .font(Face.sans(Metrics.row, .medium))
+                        .foregroundStyle(Ink.ink)
+                        .lineLimit(1)
+                    if attention > 0 {
+                        Text(verbatim: "\(attention)")
+                            .font(Face.mono(Metrics.caption, .medium))
+                            .foregroundStyle(Change.changed)
+                            .help("需处理的服务数")
+                    }
+                }
                 Text(project.branch.isEmpty ? shortPath(project.rootDir ?? "") : project.branch)
                     .font(Face.mono(Metrics.caption))
                     .foregroundStyle(Ink.inkFaint)
@@ -500,7 +511,7 @@ struct BoardView: View {
             VStack(alignment: .trailing, spacing: Metrics.stack) {
                 Text(verbatim: "\(live)/\(project.services.count)")
                     .font(Face.mono(Metrics.meta))
-                    .foregroundStyle(Ink.inkMuted)
+                    .foregroundStyle(attention > 0 ? Change.changed : Ink.inkMuted)
                 if let action = WorkspaceAction(rawValue: "worktree.\(ordinal)") {
                     Text(scrolls ? shortcuts.shortcut(action).label : action.defaultShortcut.label)
                         .font(Face.mono(Metrics.caption))
@@ -565,11 +576,13 @@ struct BoardView: View {
     }
 
     private func projectContent(_ project: BerthGroup) -> some View {
-        VStack(spacing: 0) {
+        let attention = project.services.filter(\.needsAttention).count
+        return VStack(spacing: 0) {
             ProjectDocumentHeader(
                 displayName: project.displayName,
                 liveCount: services.liveCount(in: project),
                 serviceCount: project.services.count,
+                attentionCount: attention,
                 branch: project.branch,
                 path: shortPath(project.rootDir ?? ""),
                 isWorking: services.isWorking(project)
@@ -577,8 +590,7 @@ struct BoardView: View {
                 projectMenu(project)
             }
 
-            // Stage craft v9: face strip as a calm tool band — recessed
-            // segmented control on surface, strong rule into the operate stage.
+            // Ops-workbench v12: face strip = modes of this berth (服务 default home).
             HStack(alignment: .center, spacing: Metrics.inline) {
                 ProjectFacePicker(
                     projectName: project.name,
@@ -590,9 +602,15 @@ struct BoardView: View {
                     terminalHelp: shortcuts.shortcut(.terminal).label
                 )
                 Spacer(minLength: 0)
+                if attention > 0, case .services = scope {
+                    Text("操作台 · 先处理需关注项")
+                        .font(Face.sans(Metrics.caption))
+                        .foregroundStyle(Change.changed)
+                        .lineLimit(1)
+                }
             }
             .padding(.horizontal, Metrics.gutter)
-            .padding(.vertical, Metrics.unit + 2)
+            .padding(.vertical, Metrics.unit + 1)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Ink.surface)
             .overlay(alignment: .bottom) {
@@ -601,8 +619,20 @@ struct BoardView: View {
 
             switch scope {
             case .services:
-                ServicesView(store: services, group: project,
-                             ports: ports(for: project), scrolls: scrolls)
+                ServicesView(
+                    store: services,
+                    group: project,
+                    ports: ports(for: project),
+                    scrolls: scrolls,
+                    views: views,
+                    onJumpToGit: { path in
+                        views.rememberGitPath(path)
+                        views.scope = .code(project.name)
+                        if let path, !path.isEmpty {
+                            git.openPath(path, project: project)
+                        }
+                    }
+                )
             case .code:
                 CodeView(git: git, project: project, scrolls: scrolls)
             case .terminal, .console:

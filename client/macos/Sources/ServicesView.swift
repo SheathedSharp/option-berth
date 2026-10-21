@@ -16,6 +16,11 @@ struct ServicesView: View {
     let ports: [Port]
     /// `ImageRenderer` 画不出 `ScrollView` 里的东西。
     var scrolls: Bool = true
+    /// Shared workbench focus bus (ops-workbench v12). Optional so freezes
+    /// that construct ServicesView alone still compile.
+    var views: ViewState? = nil
+    /// Jump to Git mode for this berth; path may be nil (face switch only).
+    var onJumpToGit: ((String?) -> Void)? = nil
 
     // Logs need enough room for the fixed time/level columns and a readable message.
     // Services and Git have independent file-backed widths and drag preferences.
@@ -134,44 +139,42 @@ struct ServicesView: View {
     /// reading surface on the right so opening it never squeezes the service rows.
     private var servicePanel: some View {
         VStack(spacing: 0) {
-            // Stage craft v9: services as an instrument data card — sticky
-            // header + rows live inside one bordered well, not a flat admin list.
+            // Ops-workbench v12: attention-first instrument — not declaration order.
             servicesInstrument
                 .padding(.horizontal, Metrics.gutter)
                 .padding(.top, Metrics.gutter)
-            if !group.machine.isEmpty || !unclaimedPorts.isEmpty {
-                // Quieter secondary evidence — inset groups, not competing table headers.
-                VStack(spacing: Metrics.gutter) {
-                    if !group.machine.isEmpty {
-                        insetGroup(
-                            title: "机器依赖",
-                            detail: "清单引用 · 起停不归本项目",
-                            count: group.machine.count,
-                            expanded: $machineExpanded
-                        ) {
-                            cappedRows(count: group.machine.count) { machineRows }
-                        }
-                    }
-                    if !unclaimedPorts.isEmpty {
-                        insetGroup(
-                            title: "未声明监听",
-                            detail: "无法归到清单服务",
-                            count: unclaimedPorts.count,
-                            expanded: $listenersExpanded
-                        ) {
-                            cappedRows(count: unclaimedPorts.count) { unclaimedRows }
-                        }
-                    }
+            // Undeclared listeners sit with Attention evidence (above calm machine deps).
+            if !unclaimedPorts.isEmpty {
+                insetGroup(
+                    title: "未声明监听",
+                    detail: "无法归到清单服务 · 需核对",
+                    count: unclaimedPorts.count,
+                    expanded: $listenersExpanded
+                ) {
+                    cappedRows(count: unclaimedPorts.count) { unclaimedRows }
+                }
+                .padding(.horizontal, Metrics.gutter)
+                .padding(.top, Metrics.gutter)
+            }
+            if !group.machine.isEmpty {
+                insetGroup(
+                    title: "机器依赖",
+                    detail: "清单引用 · 起停不归本项目",
+                    count: group.machine.count,
+                    expanded: $machineExpanded
+                ) {
+                    cappedRows(count: group.machine.count) { machineRows }
                 }
                 .padding(.horizontal, Metrics.gutter)
                 .padding(.top, Metrics.gutter)
                 .padding(.bottom, Metrics.unit)
+            } else if !unclaimedPorts.isEmpty {
+                Spacer().frame(height: Metrics.unit)
             }
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity,
                alignment: .topLeading)
-        // v11: cooler surface stage so the lifted card reads as premium paper.
         .background(Ink.surface)
     }
 
@@ -265,8 +268,16 @@ struct ServicesView: View {
     /// 跨项目要**清**焦点：`focused` 挂在 store 上（是全局的），不清的话切到 B 项目，
     /// 面板里还留着 A 的日志。
     private func syncFocusToProject() {
-        guard let ref = store.focused, ref.group != group.name else { return }
+        if let ref = store.focused, ref.group == group.name {
+            views?.rememberService(ref)
+            return
+        }
+        guard store.focused != nil else {
+            views?.rememberService(nil)
+            return
+        }
         store.focus(nil)
+        views?.rememberService(nil)
     }
 
     // MARK: - 服务行
@@ -295,10 +306,30 @@ struct ServicesView: View {
         }
     }
 
+    private var attentionServices: [BerthService] {
+        group.services.filter(\.needsAttention)
+            .sorted { a, b in
+                if a.attentionRank != b.attentionRank { return a.attentionRank < b.attentionRank }
+                return a.name < b.name
+            }
+    }
+
+    private var calmServices: [BerthService] {
+        group.services.filter { !$0.needsAttention }
+            .sorted { a, b in
+                let aLive = store.live(a, in: group) != nil
+                let bLive = store.live(b, in: group) != nil
+                if aLive != bLive { return aLive && !bLive }
+                return a.name < b.name
+            }
+    }
+
+    private var orderedServices: [BerthService] { attentionServices + calmServices }
+
     private var serviceList: some View {
-        // Height follows ServiceRow dual-line craft height — never Metrics.rowHeight alone
-        // (that clipped primary+fact into a z-fight in the Command column).
-        let visible = min(group.services.count, Col.maxVisibleRows)
+        let visible = min(orderedServices.count, Col.maxVisibleRows)
+        // Extra room for section labels when both Attention and Ready appear.
+        let sectionChrome: CGFloat = (attentionServices.isEmpty || calmServices.isEmpty) ? 0 : 28
         return Group {
             if scrolls {
                 ScrollView { serviceRows }
@@ -306,9 +337,9 @@ struct ServicesView: View {
                 serviceRows
             }
         }
-        // Dual-line rows + Hairline between each + slack so ImageRenderer cannot compress cells.
         .frame(height: CGFloat(max(visible, 1)) * ServiceRow.height
-                       + CGFloat(max(group.services.count, 1))
+                       + CGFloat(max(orderedServices.count, 1))
+                       + sectionChrome
                        + 4,
                alignment: .top)
         .clipped()
@@ -316,11 +347,49 @@ struct ServicesView: View {
 
     private var serviceRows: some View {
         VStack(spacing: 0) {
-            ForEach(group.services) { service in
-                serviceRow(service)
-                Hairline()
+            if !attentionServices.isEmpty {
+                sectionLabel("需处理", count: attentionServices.count, tone: Change.changed)
+                ForEach(attentionServices) { service in
+                    serviceRow(service)
+                    Hairline()
+                }
+            }
+            if !calmServices.isEmpty {
+                sectionLabel(
+                    attentionServices.isEmpty ? "服务" : "就绪 · 在跑",
+                    count: calmServices.count,
+                    tone: Ink.inkMuted
+                )
+                ForEach(calmServices) { service in
+                    serviceRow(service)
+                    Hairline()
+                }
+            }
+            if orderedServices.isEmpty {
+                Text("清单里还没有服务")
+                    .font(Face.sans(Metrics.meta))
+                    .foregroundStyle(Ink.inkFaint)
+                    .padding(.horizontal, Metrics.gutter)
+                    .padding(.vertical, Metrics.gutter)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+
+    private func sectionLabel(_ title: String, count: Int, tone: Color) -> some View {
+        HStack(spacing: Metrics.unit) {
+            Text(title)
+                .font(Face.sans(Metrics.caption, .semibold))
+                .foregroundStyle(tone)
+            Text(verbatim: "\(count)")
+                .font(Face.mono(Metrics.caption))
+                .foregroundStyle(Ink.inkFaint)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Metrics.gutter)
+        .padding(.top, Metrics.unit + 2)
+        .padding(.bottom, Metrics.unit)
+        .background(Ink.surface.opacity(0.65))
     }
 
     private func serviceRow(_ service: BerthService) -> some View {
@@ -332,7 +401,10 @@ struct ServicesView: View {
             isFocused: store.focused == ref,
             isWorking: store.isWorking(group),
             notice: store.notice[ref],
-            onFocus: { store.focus(ref) },
+            onFocus: {
+                store.focus(ref)
+                views?.rememberService(ref)
+            },
             onStart: { store.start(group, only: [service.name]) },
             onStop: { store.stop(service, in: group) },
             onRestart: { store.restart(group, only: [service.name]) }
@@ -471,17 +543,40 @@ struct ServicesView: View {
         let ref = store.focused
         let service = group.services.first { $0.name == ref?.service }
         let run = service.flatMap { store.live($0, in: group) }
+        let chip = service.map(logStatusChip(for:))
         return VStack(alignment: .leading, spacing: Metrics.unit) {
             HStack(alignment: .center, spacing: Metrics.inline) {
                 StatusDot(tone: run != nil ? Ink.live : Ink.dormant)
-                // Service name dominates; path whispers on the next line.
-                Text(ref?.service ?? "日志")
+                // Ops-workbench: header = selected service + status (binding obvious).
+                Text(ref?.service ?? "运行证据")
                     .font(Face.sans(Metrics.display, .semibold))
                     .foregroundStyle(Ink.ink)
                     .lineLimit(1)
+                if let chip {
+                    Tag(text: chip.text, tone: chip.tone)
+                }
+                if let exit = service?.lastExit, run == nil {
+                    Text(verbatim: "exit \(exit.code)")
+                        .font(Face.mono(Metrics.caption))
+                        .foregroundStyle(Ink.inkFaint)
+                        .monospacedDigit()
+                } else if let run {
+                    Text(verbatim: "pid \(run.pid)")
+                        .font(Face.mono(Metrics.caption))
+                        .foregroundStyle(Ink.inkFaint)
+                        .monospacedDigit()
+                }
                 Spacer(minLength: Metrics.unit)
                 if ref != nil || store.logPath != nil {
                     HStack(spacing: 2) {
+                        if onJumpToGit != nil, ref != nil {
+                            ChromeIconButton(systemImage: "arrow.triangle.branch",
+                                             help: "在 Git 中查看此泊位（共享选中）") {
+                                // Partial but real: switch face; path only when
+                                // a concrete relative path is already known on ViewState.
+                                onJumpToGit?(views?.selectedGitPath)
+                            }
+                        }
                         if store.logPath != nil {
                             ChromeIconButton(systemImage: "folder",
                                              help: "在 Finder 中显示日志文件",
@@ -528,10 +623,16 @@ struct ServicesView: View {
                 }
                 .padding(.leading, Col.dot + Metrics.inline)
             } else if ref == nil {
-                Text("选中左侧服务后，这里显示该服务的运行输出")
-                    .font(Face.sans(Metrics.caption))
-                    .foregroundStyle(Ink.inkFaint)
-                    .padding(.leading, Col.dot + Metrics.inline)
+                VStack(alignment: .leading, spacing: Metrics.stack) {
+                    Text("还没选服务")
+                        .font(Face.sans(Metrics.chrome, .medium))
+                        .foregroundStyle(Ink.inkMuted)
+                    Text("点左侧一行：这里绑定该次 Run 的日志、退出码和最后输出（和 oberth logs 同一份事实）。")
+                        .font(Face.sans(Metrics.caption))
+                        .foregroundStyle(Ink.inkFaint)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.leading, Col.dot + Metrics.inline)
             }
         }
         .padding(.horizontal, Metrics.gutter)
@@ -540,6 +641,35 @@ struct ServicesView: View {
         .overlay(alignment: .bottom) {
             Rectangle().fill(Ink.lineStrong).frame(height: 1)
         }
+    }
+
+    /// Mirror ServiceRow status chips so the log header names the same fact.
+    private func logStatusChip(for service: BerthService) -> (text: String, tone: Tag.Tone) {
+        if service.manifestRuntimeMismatch { return ("需重启", .warn) }
+        if let health = service.healthStatus {
+            switch health.status {
+            case "ok": break
+            case "fail": return ("健康失败", .warn)
+            default: return ("健康未知", .warn)
+            }
+        }
+        if let exit = service.lastExit {
+            let label: String = {
+                switch exit.reason {
+                case "ready_timeout": return "就绪超时"
+                case "crashed": return "已崩溃"
+                case "start_failed": return "启动失败"
+                case "port_occupied": return "端口占用"
+                case "dependency_timeout": return "依赖超时"
+                case "dependency_not_ready": return "依赖未就绪"
+                default: return "已退出"
+                }
+            }()
+            return (label, .warn)
+        }
+        if let health = service.healthStatus, health.status == "ok" { return ("就绪", .live) }
+        if store.live(service, in: group) != nil { return ("在跑", .live) }
+        return ("未启动", .quiet)
     }
 
     private func revealLog() {

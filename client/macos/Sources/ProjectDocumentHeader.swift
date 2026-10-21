@@ -1,18 +1,16 @@
 import SwiftUI
 
-/// Project content document header — Operate craft, not a flat HStack tweak.
+/// Project content document header — ops-workbench v12.
 ///
-/// Squint leader for the detail column (layout.md / operate.md): display name
-/// carries weight; live compound sits quiet on the same line; branch + path
-/// form the second line. Tone step (Ink.surface + lineStrong) separates header
-/// from the face picker / table — not hairline costume everywhere.
-///
-/// Skills: operate (hierarchy from weight/size/grey), quieter (compound not badge),
-/// craft-floor (no kicker, no pill), apple-macos-layout (familiar document chrome).
+/// Squint leader for the detail column: display name carries weight; a live
+/// **facts strip** (ready / attention) sits on the title line — status facts,
+/// not a decorative badge. Branch + path form the second line.
 struct ProjectDocumentHeader<Trailing: View>: View {
     let displayName: String
     let liveCount: Int
     let serviceCount: Int
+    /// Services that need operator attention (需重启 / 失败 / 超时…).
+    var attentionCount: Int = 0
     let branch: String
     let path: String
     var isWorking: Bool = false
@@ -53,13 +51,29 @@ struct ProjectDocumentHeader<Trailing: View>: View {
                 .font(Face.display(15, .semibold))
                 .foregroundStyle(Ink.ink)
                 .lineLimit(1)
-            // Quiet live compound — tabular counts, not a badge pill.
-            Text(verbatim: "\(liveCount) · \(serviceCount) 服务")
+            factsStrip
+                .layoutPriority(-1)
+        }
+    }
+
+    /// Live status compound — tied to status facts, not a title ornament.
+    private var factsStrip: some View {
+        HStack(spacing: Metrics.unit) {
+            if attentionCount > 0 {
+                Text(verbatim: "\(attentionCount) 需处理")
+                    .font(Face.mono(Metrics.chrome, .medium))
+                    .monospacedDigit()
+                    .foregroundStyle(Change.changed)
+                    .lineLimit(1)
+                Text("·")
+                    .font(Face.sans(Metrics.meta))
+                    .foregroundStyle(Ink.inkFaint)
+            }
+            Text(verbatim: "\(liveCount)/\(serviceCount) 在跑")
                 .font(Face.mono(Metrics.chrome))
                 .monospacedDigit()
                 .foregroundStyle(Ink.inkMuted)
                 .lineLimit(1)
-                .layoutPriority(-1)
         }
     }
 
@@ -90,10 +104,11 @@ struct ProjectDocumentHeader<Trailing: View>: View {
 
 extension ProjectDocumentHeader where Trailing == EmptyView {
     init(displayName: String, liveCount: Int, serviceCount: Int,
-         branch: String, path: String, isWorking: Bool = false) {
+         attentionCount: Int = 0, branch: String, path: String, isWorking: Bool = false) {
         self.displayName = displayName
         self.liveCount = liveCount
         self.serviceCount = serviceCount
+        self.attentionCount = attentionCount
         self.branch = branch
         self.path = path
         self.isWorking = isWorking

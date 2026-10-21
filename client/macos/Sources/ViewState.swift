@@ -17,7 +17,27 @@ final class ViewState: ObservableObject {
     @Published var projectOperationPending = false
     @Published var projectDialogPresented = false
 
+    /// Shared workbench focus (ops-workbench v12): service + optional Git path
+    /// for the current berth. ServicesStore.focused remains the log source of
+    /// truth; this mirrors it so Git / Sessions can read the same selection bus.
+    @Published var selectedServiceKey: String?
+    @Published var selectedGitPath: String?
+
     init(scope: Scope = .services("")) { self.scope = scope }
+
+    func rememberService(_ ref: ServiceRef?) {
+        selectedServiceKey = ref?.key
+    }
+
+    func rememberGitPath(_ path: String?) {
+        let trimmed = path?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        selectedGitPath = trimmed.isEmpty ? nil : trimmed
+    }
+
+    func showCode(project: String, path: String? = nil) {
+        rememberGitPath(path)
+        scope = .code(project)
+    }
 
     enum Face { case services, code, terminal }
     var project: String? { scope.projectName }

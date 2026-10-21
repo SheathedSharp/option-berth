@@ -40,7 +40,8 @@ struct ServiceRow: View {
         Col.verticalPad + Col.primaryLine + Col.verticalPad
     }
 
-    private var showActions: Bool { hovering || isFocused }
+    /// Ops-workbench: attention rows keep CLI verbs visible (start/restart/stop).
+    private var showActions: Bool { hovering || isFocused || service.needsAttention }
 
     private var commandText: String {
         if let notice, !notice.isEmpty { return notice }

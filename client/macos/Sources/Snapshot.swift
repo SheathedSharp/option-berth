@@ -58,14 +58,16 @@ enum Snapshot {
         let logs = frozenLog()
         let git = frozenGit()
         guard let demo = groups.first(where: { $0.name == "berth-demo" }) else { return 1 }
-        let focus = ServiceRef(group: demo.name, service: "api")
+        // Ops-workbench: focus an attention service so live freeze shows
+        // Attention section + log binding (需重启), not only calm ready.
+        let focus = ServiceRef(group: demo.name, service: "web")
 
         let states: [(String, BoardStore, ServicesStore, GitStore, Scope)] = [
             ("01-empty", BoardStore(fixture: []), ServicesStore(fixture: []), GitStore(), .services("")),
             ("02-services-live", BoardStore(fixture: ports),
              ServicesStore(fixture: groups, runs: runs, focused: focus, logs: logs,
-                           logPath: ServicesStore.expectedLogPath(group: demo.name, service: "api"),
-                           notice: [ServiceRef(group: demo.name, service: "web"): "pid 31162 · 端口 5173"]),
+                           logPath: ServicesStore.expectedLogPath(group: demo.name, service: "web"),
+                           notice: [ServiceRef(group: demo.name, service: "web"): "清单与运行中命令不一致"]),
              GitStore(),
              .services(demo.name)),
             ("03-services-idle", BoardStore(fixture: ports),

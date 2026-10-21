@@ -129,21 +129,29 @@ struct ProjectFacePicker: View {
     }
 
     var body: some View {
-        Group {
-            if frozen {
-                freezeSegments
-            } else {
-                Picker("项目面", selection: selection) {
-                    ForEach(ProjectFace.allCases) { face in
-                        Text(label(for: face)).tag(face)
+        // Ops-workbench v12: quieter mode switcher — modes of this berth,
+        // not three peer home apps. Smaller control; 服务 remains default.
+        HStack(spacing: Metrics.inline) {
+            Text("工作面")
+                .font(Face.sans(Metrics.caption, .medium))
+                .foregroundStyle(Ink.inkFaint)
+                .fixedSize()
+            Group {
+                if frozen {
+                    freezeSegments
+                } else {
+                    Picker("工作面", selection: selection) {
+                        ForEach(ProjectFace.allCases) { face in
+                            Text(label(for: face)).tag(face)
+                        }
                     }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .controlSize(.small)
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .controlSize(.regular)
             }
+            .frame(maxWidth: 240)
         }
-        .frame(maxWidth: 280)
         .help(helpText)
         .accessibilityIdentifier("workspace.projectFace")
         .tourAnchor(.facts)
