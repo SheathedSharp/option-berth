@@ -206,19 +206,25 @@ struct SessionBridgeField: NSViewRepresentable {
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             attributes: [.font: font]
         )
-        let line = max(CGFloat(font.ascender - font.descender + font.leading), font.pointSize + 2)
+        let line = lineBox
         let count = Int(ceil(bounds.height / line))
         return max(1, min(6, count))
     }
 
+    /// Idle line box for mono 12 — redesign target 16–17pt (not the old fat 18).
+    static var lineBox: CGFloat {
+        let font = Face.nativeMono(12)
+        let natural = CGFloat(font.ascender - font.descender + font.leading)
+        return max(natural, 16)
+    }
+
     static func height(for text: String, width: CGFloat) -> CGFloat {
-        let line: CGFloat = 18
-        return line * CGFloat(wrappedLineCount(text, width: width))
+        lineBox * CGFloat(wrappedLineCount(text, width: width))
     }
 
     func makeNSView(context: Context) -> SessionBridgeTextView {
         // No NSScrollView — it invents a tall intrinsic size and was the fat-card root cause.
-        let editor = SessionBridgeTextView(frame: NSRect(x: 0, y: 0, width: 100, height: 18))
+        let editor = SessionBridgeTextView(frame: NSRect(x: 0, y: 0, width: 100, height: 16))
         editor.isRichText = false
         editor.allowsUndo = true
         editor.isAutomaticQuoteSubstitutionEnabled = false
@@ -226,7 +232,7 @@ struct SessionBridgeField: NSViewRepresentable {
         editor.isAutomaticTextReplacementEnabled = false
         editor.drawsBackground = false
         editor.focusRingType = .none
-        editor.textContainerInset = NSSize(width: 0, height: 1)
+        editor.textContainerInset = NSSize(width: 0, height: 0)
         editor.isVerticallyResizable = true
         editor.isHorizontallyResizable = false
         editor.autoresizingMask = [.width, .height]
@@ -375,8 +381,9 @@ struct SessionComposerBar: View {
 
     private var inputSurface: some View {
         VStack(alignment: .leading, spacing: 2) {
-            // Compact single-row surface (grows only when draft wraps).
-            HStack(alignment: .center, spacing: 6) {
+            // One-line terminal editor: path · mode · field share firstTextBaseline.
+            // Surface pad 3+3 + lineBox 16–17 → idle ≈ 22–24pt (REDESIGN-composer-slash).
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 if !pathPrefix.isEmpty {
                     Text(pathPrefix)
                         .font(Face.mono(Metrics.caption, .semibold))
@@ -391,7 +398,6 @@ struct SessionComposerBar: View {
                     if draft.isEmpty {
                         Text(placeholder)
                             .font(Face.mono(12)).foregroundStyle(Ink.inkFaint)
-                            .padding(.top, 1)
                             .allowsHitTesting(false)
                     }
                     SessionBridgeField(text: $draft, enabled: enabled, focusToken: focusToken,
@@ -404,7 +410,7 @@ struct SessionComposerBar: View {
                                        onSendControl: onSendControl, shellTabEnabled: shellTabEnabled, onShellTab: onShellTab,
                                        onToggleMode: onToggleMode)
                 }
-                .frame(height: composerFieldHeight)
+                .frame(height: composerFieldHeight, alignment: .topLeading)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     GeometryReader { geo in
@@ -412,21 +418,24 @@ struct SessionComposerBar: View {
                     }
                 )
                 .layoutPriority(1)
+                // Slash/provider palette anchors to the *field* left edge, above the caret row.
+                .overlay(alignment: .topLeading) { menu }
                 if agentMode {
                     agentToolbelt
                 }
             }
             .padding(.horizontal, 8)
-            .padding(.vertical, 2)
+            .padding(.vertical, 3)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Ink.surface)
-            .overlay(
+            // Weak chrome: fill + hairline only — no clipShape so the menu can sit above.
+            .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(Ink.line, lineWidth: 1)
+                    .fill(Ink.surface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(Ink.line, lineWidth: 1)
+                    )
             )
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-            // Popover sits ABOVE this surface (alignmentGuide pins menu bottom to surface top).
-            .overlay(alignment: .topLeading) { menu }
 
             HStack(spacing: Metrics.inline) {
                 Text(compactHint)
@@ -450,23 +459,19 @@ struct SessionComposerBar: View {
         }
     }
 
+    private var slashMenuWidth: CGFloat {
+        min(CGFloat(360), max(fieldWidth, 200))
+    }
+
     @ViewBuilder private var menu: some View {
         if pickingProvider || !slashCommands.isEmpty {
             VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
-                    Text(pickingProvider ? "选择 Agent" : "命令")
-                        .font(Face.mono(Metrics.caption, .semibold))
-                        .foregroundStyle(Ink.inkFaint)
-                    if !pickingProvider {
-                        Text("继续输入以筛选")
-                            .font(Face.sans(Metrics.caption))
-                            .foregroundStyle(Ink.inkFaint.opacity(0.85))
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 10)
-                .padding(.top, 6)
-                .padding(.bottom, 2)
+                Text(pickingProvider ? "选择 Agent" : "过滤命令")
+                    .font(Face.mono(Metrics.caption))
+                    .foregroundStyle(Ink.inkFaint)
+                    .padding(.horizontal, 10)
+                    .padding(.top, 6)
+                    .padding(.bottom, 2)
                 if pickingProvider {
                     ForEach(providers) { provider in
                         providerRow(provider)
@@ -479,41 +484,40 @@ struct SessionComposerBar: View {
             }
             .padding(.horizontal, 4)
             .padding(.bottom, 4)
-            .frame(width: 300, alignment: .leading)
+            .frame(width: slashMenuWidth, alignment: .leading)
+            .frame(maxHeight: CGFloat(8 * 32), alignment: .top)
             .background(Ink.canvas)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Ink.lineStrong, lineWidth: 1))
-            .shadow(color: .black.opacity(0.14), radius: 10, y: 2)
-            // Bottom of menu sits just above the top of the input surface — never covers typing.
+            .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
+            // Menu bottom sits 6pt above the field top — never covers the caret row.
             .alignmentGuide(.top) { dim in dim[.bottom] + 6 }
-            .padding(.leading, 0)
             .background(ConsoleValueMarker(identifier: pickingProvider ? "console.providerMenu" : "console.slashMenu", value: ""))
         }
     }
 
     private func slashRow(_ command: SlashCommand, highlighted: Bool) -> some View {
         Button(action: { onSlash(command) }) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+            VStack(alignment: .leading, spacing: 1) {
                 Text(command.rawValue)
                     .font(Face.mono(Metrics.chrome, .medium))
                     .foregroundStyle(Ink.ink)
                     .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                Text(command.detail)
+                Text(command.title)
                     .font(Face.sans(Metrics.caption))
                     .foregroundStyle(Ink.inkFaint)
                     .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .padding(.vertical, 5)
             .background(highlighted ? Ink.accentSoft : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("console.slash." + command.rawValue.dropFirst())
-        .help(command.title + " · " + command.detail)
+        .help(command.detail)
     }
 
     private var modeMarker: some View {
@@ -526,7 +530,7 @@ struct SessionComposerBar: View {
             }
             .foregroundStyle(agentMode ? Ink.accent : Ink.inkMuted)
             .padding(.horizontal, 5)
-            .padding(.vertical, 1)
+            .padding(.vertical, 0)
             .background(agentMode ? Ink.accentSoft : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
         }

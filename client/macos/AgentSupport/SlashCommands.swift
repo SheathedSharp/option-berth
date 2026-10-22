@@ -95,10 +95,10 @@ public enum SlashParse: Equatable, Sendable {
 public enum SlashCommandRegistry {
     public static let catalogue: [SlashCommand] = SlashCommand.allCases
 
-    /// Shown when the user types bare `/` — Cursor/Warp-style short palette.
+    /// Shown when the user types bare `/` — Cursor/Warp-style short palette (5–6).
     /// Keep typing to filter the full catalogue.
     public static let pinned: [SlashCommand] = [
-        .modeShell, .modeAgent, .agentSelect, .agentNew, .obServer, .git, .history,
+        .modeShell, .modeAgent, .agentSelect, .obServer, .git, .history,
     ]
 
     /// Token aliases that are not distinct enum cases (documented for users).
