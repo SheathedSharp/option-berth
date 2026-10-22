@@ -104,3 +104,12 @@ Must-fix:
 3. ⌘I / ↩ / `/` / `/ob-server` / `/git` 仍正确
 4. Freezes 写入 `.tmp-ui-v15-warp-blocks/`
 5. Local commit only
+
+## Follow-up 2026-10-22 — composer height + block isolation
+
+Zay rejected build 365 @ `2f83ae8`:
+
+1. **Bottom composer too tall** — idle field was a tall empty slab; caret floated above path/mode. Fix: exact single-line field height (`composerFieldHeight` ≈ 18pt), auto-grows with newlines up to 5 lines; tighter surface padding; NSTextView inset tightened so caret shares the path/mode row.
+2. **Command-block output contamination** — `$ git --version` block showed prior `$ ls` listing. Root cause: capture used viewport-relative `buffer.y` + `getLine`, and idle PTY keepalive was **1×1**, so resize reflowed the buffer across commands. Fix: accumulate PTY bytes between OSC C→D (strip OSC); fallback capture uses scroll-invariant absolute rows; idle keepalive hosts a real 720×360 geometry (hidden) so cols/rows stay stable.
+
+Keep: idle no 「提示符」 card; completed blocks command+output only (no trailing PS1); single bottom composer; active PTY only while running/TUI.

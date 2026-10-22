@@ -21,6 +21,9 @@ public final class TerminalSession: ObservableObject, Identifiable {
     private var commandParser: CommandBlockParser?
     private var shellLease: ShellIntegrationLease?
     private var commandOutputStartRows: [UUID: Int] = [:]
+    /// Bytes received while a command block is running (OSC C→D). Preferred over
+    /// buffer-row capture, which breaks when the idle keepalive PTY resizes.
+    private var commandOutputAccumulators: [UUID: String] = [:]
 
     public init(worktree: String, title: String = "Terminal", kind: String = "terminal") {
         self.worktree = worktree.hasPrefix("/") && !worktree.utf8.contains(0) ? URL(fileURLWithPath: worktree).standardizedFileURL.resolvingSymlinksInPath().path : ""
@@ -44,6 +47,9 @@ public final class TerminalSession: ObservableObject, Identifiable {
         }
         terminal.onProtocolBytes = { [weak self] bytes in
             guard let self, commandParser != nil else { return }
+            // Accumulate before consume so the D-marker packet's trailing output
+            // is captured before the block flips to completed.
+            appendRunningCommandOutput(bytes)
             let revision = commandParser?.revision
             commandParser?.consume(bytes)
             if commandParser?.revision != revision {
@@ -112,6 +118,7 @@ public final class TerminalSession: ObservableObject, Identifiable {
     public func clearCommandHistory() {
         commandParser?.clear()
         commandOutputStartRows.removeAll()
+        commandOutputAccumulators.removeAll()
         commandBlocks = []
         onChange?()
     }
@@ -130,18 +137,42 @@ public final class TerminalSession: ObservableObject, Identifiable {
                 block.capturedOutput = saved
             }
             if block.isRunning {
-                if commandOutputStartRows[block.id] == nil {
-                    commandOutputStartRows[block.id] = terminal.buffer.y
+                if commandOutputAccumulators[block.id] == nil {
+                    commandOutputAccumulators[block.id] = ""
                 }
-            } else if block.capturedOutput == nil, let start = commandOutputStartRows.removeValue(forKey: block.id) {
-                block.capturedOutput = ShellCommandCapture.capture(terminal: terminal, startRow: start)
+                if commandOutputStartRows[block.id] == nil {
+                    commandOutputStartRows[block.id] = ShellCommandCapture.absoluteCursorRow(terminal: terminal)
+                }
+            } else if block.capturedOutput == nil {
+                if let acc = commandOutputAccumulators.removeValue(forKey: block.id) {
+                    let finalized = ShellCommandCapture.finalizeAccumulated(acc)
+                    if !finalized.isEmpty {
+                        block.capturedOutput = finalized
+                    }
+                }
+                if block.capturedOutput == nil,
+                   let start = commandOutputStartRows.removeValue(forKey: block.id) {
+                    block.capturedOutput = ShellCommandCapture.capture(terminal: terminal, startRow: start)
+                } else {
+                    _ = commandOutputStartRows.removeValue(forKey: block.id)
+                }
             }
             blocks[index] = block
         }
         let live = Set(blocks.map(\.id))
         commandOutputStartRows = commandOutputStartRows.filter { live.contains($0.key) }
+        commandOutputAccumulators = commandOutputAccumulators.filter { live.contains($0.key) }
         commandBlocks = blocks
         onChange?()
+    }
+
+    /// Append PTY payload to the running command's accumulator (OSC already stripped).
+    private func appendRunningCommandOutput(_ bytes: ArraySlice<UInt8>) {
+        guard let id = commandBlocks.last(where: { $0.isRunning })?.id,
+              commandOutputAccumulators[id] != nil else { return }
+        let chunk = ShellCommandCapture.stripOSC(String(decoding: bytes, as: UTF8.self))
+        guard !chunk.isEmpty else { return }
+        commandOutputAccumulators[id, default: ""] += chunk
     }
 
     public func start(executable: String, arguments: [String], environment: [String: String]? = nil, shellIntegration: Bool = false) throws {

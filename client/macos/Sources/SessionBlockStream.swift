@@ -69,16 +69,19 @@ struct SessionBlockStream: View {
                 .padding(.bottom, 10)
             }
             .background(alignment: .bottom) {
-                // Keep PTY hosted while idle so the process stays warm — zero-size, not a card.
+                // Keep PTY hosted while idle so the process stays warm — not a card.
+                // Use a real terminal geometry (not 1×1): shrinking to 1×1 reflows the
+                // buffer and was a root cause of command-block output contamination.
                 if !showsActiveCard {
                     TerminalSurface(session: session, focusIntent: nil,
                                     dimTerminalCaret: true,
                                     bridgePromptKeys: bridgePromptKeys,
                                     onPromptKey: onPromptKey)
-                        .frame(width: 1, height: 1)
+                        .frame(width: 720, height: 360)
                         .opacity(0.01)
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
+                        .fixedSize()
                 }
             }
             .onAppear { scrollToActive(proxy) }

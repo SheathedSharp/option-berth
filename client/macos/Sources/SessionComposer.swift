@@ -184,15 +184,20 @@ struct SessionBridgeField: NSViewRepresentable {
         editor.isAutomaticDashSubstitutionEnabled = false
         editor.isAutomaticTextReplacementEnabled = false
         editor.drawsBackground = false
-        editor.textContainerInset = NSSize(width: 2, height: 2)
+        // Tight inset so caret sits on the same baseline as path / mode chip.
+        editor.textContainerInset = NSSize(width: 2, height: 1)
         editor.isVerticallyResizable = true
         editor.isHorizontallyResizable = false
         editor.autoresizingMask = [.width]
         editor.textContainer?.widthTracksTextView = true
+        editor.textContainer?.lineFragmentPadding = 0
+        editor.minSize = NSSize(width: 0, height: 0)
+        editor.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         editor.delegate = context.coordinator
         editor.setAccessibilityIdentifier("console.sessionComposer")
         editor.setAccessibilityLabel("会话输入。⌘I 切换 Shell/Agent。Enter 按当前模式发送，⌘↩ 发给当前 Agent，⇧⌘↩ 新建 Agent")
         scroll.documentView = editor
+        scroll.hasHorizontalScroller = false
         update(editor, context: context)
         return scroll
     }
@@ -304,14 +309,27 @@ struct SessionComposerBar: View {
             inputSurface
         }
         .padding(.horizontal, Metrics.gutter)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
         .background(Ink.canvas)
         .accessibilityIdentifier("console.composerBar")
         .accessibilityValue(inputMode.rawValue)
     }
 
+    /// One text-line tall when idle; grows with wrapped / newline draft up to 5 lines.
+    private var composerFieldHeight: CGFloat {
+        let lineHeight: CGFloat = 18
+        let lineCount: Int
+        if draft.isEmpty {
+            lineCount = 1
+        } else {
+            lineCount = max(1, draft.components(separatedBy: "\n").count)
+        }
+        return min(lineHeight * 5, lineHeight * CGFloat(lineCount))
+    }
+
     private var inputSurface: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 3) {
+            // Path + mode chip + draft share one baseline row (not a tall empty slab).
             HStack(alignment: .center, spacing: Metrics.inline) {
                 if !pathPrefix.isEmpty {
                     Text(pathPrefix)
@@ -338,12 +356,14 @@ struct SessionComposerBar: View {
                                        onSendControl: onSendControl, shellTabEnabled: shellTabEnabled, onShellTab: onShellTab,
                                        onToggleMode: onToggleMode)
                 }
-                .frame(minHeight: 22, maxHeight: 96)
+                .frame(height: composerFieldHeight)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(1)
                 if agentMode {
                     agentToolbelt
                 }
             }
+            .frame(minHeight: composerFieldHeight)
             HStack(spacing: Metrics.inline) {
                 Text(compactHint)
                     .font(Face.mono(Metrics.caption))
@@ -361,7 +381,7 @@ struct SessionComposerBar: View {
             }
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.vertical, 5)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Ink.surface)
         .overlay(
@@ -732,13 +752,13 @@ struct SessionComposerFrozen: View {
                       : "↩ · ⌘I · /")
                     .font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
             }
-            .padding(.horizontal, 10).padding(.vertical, 8)
+            .padding(.horizontal, 10).padding(.vertical, 5)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Ink.surface)
             .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Ink.line, lineWidth: 1))
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
-        .padding(.horizontal, Metrics.gutter).padding(.vertical, 8)
+        .padding(.horizontal, Metrics.gutter).padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Ink.canvas)
     }
