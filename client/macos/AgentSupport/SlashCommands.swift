@@ -1,6 +1,10 @@
 import Foundation
 
 public enum SlashCommand: String, CaseIterable, Equatable, Sendable {
+    /// Switch composer input mode to Shell (draft kept).
+    case modeShell = "/mode-shell"
+    /// Switch composer input mode to Agent (draft kept).
+    case modeAgent = "/mode-agent"
     case agentSelect = "/agent-select"
     case agentNew = "/agent-new"
     case agent = "/agent"
@@ -20,6 +24,8 @@ public enum SlashCommand: String, CaseIterable, Equatable, Sendable {
 
     public var title: String {
         switch self {
+        case .modeShell: return "切换到 Shell 输入"
+        case .modeAgent: return "切换到 Agent 输入"
         case .agentSelect: return "选择默认 Agent"
         case .agentNew: return "新建 Agent 会话"
         case .agent: return "切换 ⌘↩ 目标"
@@ -39,6 +45,8 @@ public enum SlashCommand: String, CaseIterable, Equatable, Sendable {
 
     public var detail: String {
         switch self {
+        case .modeShell: return "等同 ⌘I → Shell，保留草稿"
+        case .modeAgent: return "等同 ⌘I → Agent，保留草稿"
         case .agentSelect: return "Codex、Claude Code 等"
         case .agentNew: return "等同 ⇧⌘↩"
         case .agent: return "本 worktree 的 Agent 会话"
@@ -89,7 +97,11 @@ public enum SlashCommandRegistry {
 
     /// Token aliases that are not distinct enum cases (documented for users).
     public static let aliases: [String: SlashCommand] = [
-        "/services": .obServer
+        "/services": .obServer,
+        "/shell-mode": .modeShell,
+        "/agent-mode": .modeAgent,
+        "/to-shell": .modeShell,
+        "/to-agent": .modeAgent,
     ]
 
     public static func available(in context: SlashContext) -> [SlashCommand] {
@@ -98,7 +110,7 @@ public enum SlashCommandRegistry {
 
     public static func isAvailable(_ command: SlashCommand, context: SlashContext) -> Bool {
         switch command {
-        case .agentSelect, .agentNew, .shellNew, .rename, .history, .obServer, .git:
+        case .modeShell, .modeAgent, .agentSelect, .agentNew, .shellNew, .rename, .history, .obServer, .git:
             return true
         case .agent:
             return context.hasAgents
@@ -178,6 +190,14 @@ public enum SlashParser {
            available.contains(.obServer),
            !result.contains(.obServer) {
             result.append(.obServer)
+        }
+        if "shell-mode".hasPrefix(query) || "to-shell".hasPrefix(query) || query == "mode",
+           available.contains(.modeShell), !result.contains(.modeShell) {
+            result.append(.modeShell)
+        }
+        if "agent-mode".hasPrefix(query) || "to-agent".hasPrefix(query),
+           available.contains(.modeAgent), !result.contains(.modeAgent) {
+            result.append(.modeAgent)
         }
         return result
     }

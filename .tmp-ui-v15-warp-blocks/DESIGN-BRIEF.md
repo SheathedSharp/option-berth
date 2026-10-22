@@ -54,6 +54,31 @@ v14 的失败是 **chrome 与块模型**，不是「Session primary」IA。
 - 完成块是文本快照，不是可回放的终端 buffer；PTY scrollback 里历史仍在，但 UI 以块卡为准
 - ScrollView 内嵌 NSView：滚动时可能有轻微重布局闪烁
 - Alternate-screen 依赖 `activity.alternateScreen`；未识别的全屏程序可能仍用紧凑 active 高度
+- Agent 流消息时间戳沿用 AgentStreamDetail；本契约强制的是 **Shell 块** 发送时间
+- 块选中 / 右键菜单抛光仍 out of scope
+
+
+## Locked UX contract (Zay 2026-10-22)
+
+### Single focused composer
+- Default keyboard focus stays on the **bottom input only** — do not steal into active-block PTY for normal typing.
+- Left of the input: **short path prefix** (worktree basename, e.g. `hotpulse`).
+- Every sent shell block shows **send timestamp** (Asia/Shanghai, `HH:mm`).
+- Focus may enter the active block **only** for fullscreen/alternate-screen TUI; on exit (alternateScreen → false) or Esc-dismiss path, return focus to bottom input immediately.
+
+### Send + mode
+| Key | Shell mode | Agent mode |
+|---|---|---|
+| Enter | send to Shell | send to current Agent (same session) |
+| ⌘Enter | send draft to Agent (same session) | same session again |
+| ⌘I | → Agent (draft kept) | → Shell (draft kept) |
+| / | slash palette: mode, provider, /ob-server, /git, … | same |
+
+- Mode chip shows who Enter will send to.
+- `/mode-shell` / `/mode-agent` switch input mode without clearing draft body (slash token itself is consumed).
+
+### Out of scope
+Block selection / context-menu polish.
 
 ## Anti-goals
 

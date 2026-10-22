@@ -142,6 +142,11 @@ struct SessionActiveBlockCard: View {
                 .foregroundStyle(Ink.ink)
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            if let running {
+                Text(SessionBlockTime.short(running.startedAt))
+                    .font(Face.mono(Metrics.caption))
+                    .foregroundStyle(Ink.inkFaint)
+            }
             Text(headerStatus)
                 .font(Face.mono(Metrics.caption))
                 .foregroundStyle(headerColor)
@@ -192,6 +197,10 @@ struct SessionCommandBlockCard: View {
                     .foregroundStyle(Ink.ink)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                Text(SessionBlockTime.short(block.startedAt))
+                    .font(Face.mono(Metrics.caption))
+                    .foregroundStyle(Ink.inkFaint)
+                    .accessibilityLabel("发送于 \(SessionBlockTime.short(block.startedAt))")
                 if let code = block.exitCode {
                     Text("exit \(code)")
                         .font(Face.mono(Metrics.caption))
@@ -253,5 +262,17 @@ struct SessionCommandBlockCard: View {
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
         if lines.count <= limit { return text }
         return lines.prefix(limit).joined(separator: "\n") + "\n…"
+    }
+}
+
+
+enum SessionBlockTime {
+    /// Short local clock for block headers (Asia/Shanghai / box zone).
+    static func short(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_GB")
+        formatter.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
     }
 }

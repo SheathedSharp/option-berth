@@ -269,13 +269,15 @@ struct WorkspaceConsole: View {
         if TerminalWindows.shared.windows[session.id] != nil { TerminalWindows.shared.detach(session) }
     }
 
-    /// Shell typing defaults to the composer unless a foreground command or alternate screen owns the PTY.
+    /// Shell typing defaults to the bottom composer. Only alternate-screen TUI may own the PTY.
     private func focusSessionInput(_ session: TerminalSession, agentIntent: Bool = false) {
-        if session.kind == "terminal", session.shellForegroundBusy {
-            focusIntent = TerminalFocusIntent(session.id)
-        } else if session.kind == "terminal" {
-            focusIntent = nil
-            focusComposer()
+        if session.kind == "terminal" {
+            if session.activity.alternateScreen {
+                focusIntent = TerminalFocusIntent(session.id)
+            } else {
+                focusIntent = nil
+                focusComposer()
+            }
         } else {
             focusIntent = agentIntent ? TerminalFocusIntent(session.id) : nil
             guard agentIntent else { return }
@@ -295,8 +297,9 @@ struct WorkspaceConsole: View {
         }
     }
 
+    /// Dim PTY caret + bridge typing into composer unless a TUI owns the keyboard.
     private func shellPromptComposerMode(_ session: TerminalSession) -> Bool {
-        session.kind == "terminal" && session.shellIntegrationEnabled && !session.shellForegroundBusy
+        session.kind == "terminal" && !session.activity.alternateScreen
     }
 
     private func routeTerminalPromptKey(_ event: NSEvent) {
@@ -353,10 +356,22 @@ struct WorkspaceConsole: View {
                           onSendCommandToAgent: attachShellCommandBlock,
                           compactSinglePane: true)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onChange(of: session.activity.alternateScreen) { _, alt in
+                guard selected?.id == session.id, session.kind == "terminal" else { return }
+                if alt {
+                    focusIntent = TerminalFocusIntent(session.id)
+                } else {
+                    focusIntent = nil
+                    focusComposer()
+                }
+            }
             .onChange(of: session.shellForegroundBusy) { _, busy in
-                guard selected?.id == session.id else { return }
-                if busy { focusIntent = TerminalFocusIntent(session.id) }
-                else { focusComposer() }
+                guard selected?.id == session.id, session.kind == "terminal" else { return }
+                // Non-TUI busy must not steal focus; returning to idle reasserts composer.
+                if !busy, !session.activity.alternateScreen {
+                    focusIntent = nil
+                    focusComposer()
+                }
             }
             .onChange(of: session.commandBlocks.count) { _, _ in
                 guard selected?.id == session.id, session.kind == "terminal" else { return }
@@ -451,6 +466,7 @@ struct WorkspaceConsole: View {
                     .foregroundStyle(Ink.inkFaint)
                 Text("$ \(command)").font(Face.mono(Metrics.meta)).foregroundStyle(Ink.ink)
                 Spacer(minLength: 0)
+                Text("11:42").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
                 Text("exit 0").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
             }
             Text(output).font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkMuted)
@@ -599,11 +615,17 @@ struct WorkspaceConsole: View {
         return Ink.canvas
     }
 
+    private var worktreeShortName: String {
+        let name = URL(fileURLWithPath: root).lastPathComponent
+        return name.isEmpty ? root : name
+    }
+
     private var composerBar: some View {
         return SessionComposerBar(draft: $workspace.draft, notice: composerNotice,
                            shellAttachment: shellAttachment,
                            onClearAttachment: { shellAttachment = nil },
                            statusHint: composerStatusHint,
+                           pathPrefix: worktreeShortName,
                            inputMode: composerInputMode,
                            providerLabel: providerLabel,
                            providerChosen: workspace.providerChosen,
@@ -698,7 +720,7 @@ struct WorkspaceConsole: View {
 
     private func shellOwnsKeyboard() -> Bool {
         guard let shell = selected, shell.kind == "terminal" else { return false }
-        return shell.shellForegroundBusy
+        return shell.activity.alternateScreen
     }
 
     private func stepSlashMenu(_ delta: Int) {
@@ -750,10 +772,11 @@ struct WorkspaceConsole: View {
         return true
     }
     private func composerEscape() {
-        if pickingProvider { pickingProvider = false; return }
+        if pickingProvider { pickingProvider = false; focusComposer(); return }
         if workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("/"),
            !slashCommands.isEmpty {
             workspace.draft = ""
+            focusComposer()
             return
         }
         if composerInputMode == .agent {
@@ -762,7 +785,8 @@ struct WorkspaceConsole: View {
             focusComposer()
             return
         }
-        if let shell = shellTarget() { focusIntent = TerminalFocusIntent(shell.id) }
+        // Stay on bottom input — Esc must not steal into the active-block PTY.
+        focusComposer()
     }
     private func composerAct(_ chord: SessionComposerModel.Chord) {
         guard !frozen else { return }
@@ -942,6 +966,20 @@ struct WorkspaceConsole: View {
 
     private func runSlashCommand(_ command: SlashCommand, argument: String, chord: SessionComposerModel.Chord) {
         switch command {
+        case .modeShell:
+            // Mode only — draft body is the slash token; clearing it is expected. Non-slash draft never reaches here.
+            composerInputMode = .shell
+            pickingProvider = false
+            composerNotice = ""
+            focusComposer()
+        case .modeAgent:
+            composerInputMode = .agent
+            composerNotice = ""
+            if !workspace.providerChosen {
+                pickingProvider = true
+                if launcher.providers.isEmpty { launcher.refresh(workspace) }
+            }
+            focusComposer()
         case .agentSelect:
             if argument.isEmpty {
                 pickingProvider = true
