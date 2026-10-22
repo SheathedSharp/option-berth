@@ -279,7 +279,7 @@ struct SessionComposerBar: View {
     private var agentMode: Bool { inputMode == .agent }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             if let shellAttachment {
                 HStack(spacing: 6) {
                     Text("\(shellAttachment.shellTitle) · \(shellAttachment.command)")
@@ -296,63 +296,79 @@ struct SessionComposerBar: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("移除 Shell 附件")
                 }
-                .padding(.horizontal, Metrics.gutter)
-                .padding(.top, 6)
+                .padding(.horizontal, 2)
                 .background(ConsoleValueMarker(identifier: "console.composerAttachment",
                                                value: shellAttachment.command))
             }
-            field
-            // Notices only — no multi-segment route hint spam (v15 A).
-            if !notice.isEmpty || !statusHint.isEmpty {
-                quietNoticeRow
-            }
+            // One designed input surface: path + chip + draft on one center line.
+            inputSurface
         }
-        // Same plane as the canvas — no surface well / second card.
+        .padding(.horizontal, Metrics.gutter)
+        .padding(.vertical, 8)
         .background(Ink.canvas)
         .accessibilityIdentifier("console.composerBar")
         .accessibilityValue(inputMode.rawValue)
     }
 
-    private var field: some View {
-        HStack(spacing: Metrics.inline) {
-            if !pathPrefix.isEmpty {
-                Text(pathPrefix)
-                    .font(Face.mono(Metrics.caption, .semibold))
-                    .foregroundStyle(Ink.inkMuted)
-                    .lineLimit(1)
-                    .layoutPriority(1)
-                    .accessibilityIdentifier("console.composerPath")
-                    .help("当前 worktree")
-            }
-            modeMarker
-            ZStack(alignment: .leading) {
-                if draft.isEmpty {
-                    Text(placeholder)
-                        .font(Face.mono(12)).foregroundStyle(Ink.inkFaint)
-                        .padding(.leading, 4).allowsHitTesting(false)
+    private var inputSurface: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .center, spacing: Metrics.inline) {
+                if !pathPrefix.isEmpty {
+                    Text(pathPrefix)
+                        .font(Face.mono(Metrics.caption, .semibold))
+                        .foregroundStyle(Ink.inkMuted)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .accessibilityIdentifier("console.composerPath")
+                        .help("当前 worktree")
                 }
-                SessionBridgeField(text: $draft, enabled: enabled, focusToken: focusToken,
-                                   slashMenuOpen: pickingProvider || !slashCommands.isEmpty,
-                                   preferAgentEnter: agentMode,
-                                   onShell: onShell, onResume: onResume, onNew: onNew, onEscape: onEscape,
-                                   onMenuStep: onMenuStep, onMenuActivate: onMenuActivate, onHistoryBack: onHistoryBack,
-                                   onCommandHeld: onCommandHeld,
-                                   onSendControl: onSendControl, shellTabEnabled: shellTabEnabled, onShellTab: onShellTab,
-                                   onToggleMode: onToggleMode)
+                modeMarker
+                ZStack(alignment: .leading) {
+                    if draft.isEmpty {
+                        Text(placeholder)
+                            .font(Face.mono(12)).foregroundStyle(Ink.inkFaint)
+                            .padding(.leading, 2).allowsHitTesting(false)
+                    }
+                    SessionBridgeField(text: $draft, enabled: enabled, focusToken: focusToken,
+                                       slashMenuOpen: pickingProvider || !slashCommands.isEmpty,
+                                       preferAgentEnter: agentMode,
+                                       onShell: onShell, onResume: onResume, onNew: onNew, onEscape: onEscape,
+                                       onMenuStep: onMenuStep, onMenuActivate: onMenuActivate, onHistoryBack: onHistoryBack,
+                                       onCommandHeld: onCommandHeld,
+                                       onSendControl: onSendControl, shellTabEnabled: shellTabEnabled, onShellTab: onShellTab,
+                                       onToggleMode: onToggleMode)
+                }
+                .frame(minHeight: 22, maxHeight: 96)
+                .layoutPriority(1)
+                if agentMode {
+                    agentToolbelt
+                }
             }
-            .frame(minHeight: 28, maxHeight: 120)
-            Text(compactHint)
-                .font(Face.mono(Metrics.caption))
-                .foregroundStyle(Ink.inkFaint)
-                .lineLimit(1)
-                .layoutPriority(-1)
-            if agentMode {
-                agentToolbelt
+            HStack(spacing: Metrics.inline) {
+                Text(compactHint)
+                    .font(Face.mono(Metrics.caption))
+                    .foregroundStyle(Ink.inkFaint)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if !statusHint.isEmpty {
+                    Text(statusHint).font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint).lineLimit(1)
+                }
+                if !notice.isEmpty {
+                    Text(notice).font(Face.sans(Metrics.caption)).foregroundStyle(Change.changed).lineLimit(1)
+                }
+                ConsoleValueMarker(identifier: "console.composerHint", value: notice)
+                    .frame(width: 1, height: 1)
             }
         }
-        .padding(.horizontal, Metrics.gutter)
-        .padding(.top, shellAttachment == nil ? 8 : 2)
-        .padding(.bottom, 8)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Ink.surface)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Ink.line, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(alignment: .bottomLeading) { menu }
     }
 
@@ -398,22 +414,6 @@ struct SessionComposerBar: View {
             return providerChosen ? "发给 \(providerLabel)…" : "先选择 Agent…"
         }
         return ""
-    }
-
-    private var quietNoticeRow: some View {
-        HStack(spacing: Metrics.inline) {
-            if !statusHint.isEmpty {
-                Text(statusHint).font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint).lineLimit(1)
-            }
-            if !notice.isEmpty {
-                Text(notice).font(Face.sans(Metrics.caption)).foregroundStyle(Change.changed).lineLimit(1)
-            }
-            Spacer(minLength: 0)
-            ConsoleValueMarker(identifier: "console.composerHint", value: notice)
-                .frame(width: 1, height: 1)
-        }
-        .padding(.horizontal, Metrics.gutter)
-        .padding(.bottom, 6)
     }
 
     @ViewBuilder private var agentToolbelt: some View {
@@ -700,37 +700,43 @@ struct SessionComposerFrozen: View {
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Ink.lineStrong, lineWidth: 1))
                 .padding(.leading, Metrics.gutter)
             }
-            // Single input row — path · mode · draft · hints.
-            HStack(spacing: 8) {
-                Text("hotpulse").font(Face.mono(Metrics.caption, .semibold)).foregroundStyle(Ink.inkMuted)
-                HStack(spacing: 4) {
-                    Image(systemName: inputMode == .agent ? "sparkle" : "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                    Text(inputMode == .agent
-                          ? (noProvider ? "Agent" : "Agent · Codex")
-                          : "Shell")
-                        .font(Face.mono(Metrics.caption, .semibold))
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .center, spacing: 8) {
+                    Text("berth-demo").font(Face.mono(Metrics.caption, .semibold)).foregroundStyle(Ink.inkMuted)
+                    HStack(spacing: 4) {
+                        Image(systemName: inputMode == .agent ? "sparkle" : "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text(inputMode == .agent
+                              ? (noProvider ? "Agent" : "Agent · Codex")
+                              : "Shell")
+                            .font(Face.mono(Metrics.caption, .semibold))
+                    }
+                    .foregroundStyle(inputMode == .agent ? Ink.accent : Ink.inkMuted)
+                    .padding(.horizontal, 6).padding(.vertical, 3)
+                    .background(inputMode == .agent ? Ink.accentSoft : Color.clear)
+                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                    Text(slash ? "/" : (inputMode == .agent ? "fix the flaky test…" : "git pull"))
+                        .font(Face.mono(12)).foregroundStyle(slash ? Ink.ink : Ink.inkFaint)
+                    Spacer(minLength: 0)
+                    if inputMode == .agent {
+                        Text(noProvider ? "选择 Agent" : "Codex")
+                            .font(Face.sans(Metrics.caption, .medium))
+                            .foregroundStyle(noProvider ? Change.changed : Ink.inkMuted)
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(Ink.sunken)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
                 }
-                .foregroundStyle(inputMode == .agent ? Ink.accent : Ink.inkMuted)
-                .padding(.horizontal, 6).padding(.vertical, 3)
-                .background(inputMode == .agent ? Ink.accentSoft : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                Text(slash ? "/" : (inputMode == .agent ? "fix the flaky test…" : "git pull"))
-                    .font(Face.mono(12)).foregroundStyle(slash ? Ink.ink : Ink.inkFaint)
-                Spacer(minLength: 0)
                 Text(inputMode == .agent
-                      ? (noProvider ? "↩ pick Agent · ⌘I Shell · /" : "↩ send · ⌘↩ again · ⌘I Shell · /")
-                      : "↩ run · ⌘↩ Agent · ⌘I · /")
+                      ? (noProvider ? "↩ · ⌘I · /" : "↩ · ⌘↩ · ⌘I · /")
+                      : "↩ · ⌘I · /")
                     .font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
-                if inputMode == .agent {
-                    Text(noProvider ? "选择 Agent" : "Codex")
-                        .font(Face.sans(Metrics.caption, .medium))
-                        .foregroundStyle(noProvider ? Change.changed : Ink.inkMuted)
-                        .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(Ink.sunken)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                }
             }
+            .padding(.horizontal, 10).padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Ink.surface)
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Ink.line, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .padding(.horizontal, Metrics.gutter).padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)

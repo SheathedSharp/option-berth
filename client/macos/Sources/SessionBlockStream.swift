@@ -1,10 +1,9 @@
 import SwiftUI
 import BerthTerminal
 
-/// Warp-style block stream: completed cards + one active card that hosts the PTY.
-/// There is no separate live-PTY viewport under the stream — interactive work
-/// (running commands, idle prompt, alternate-screen TUIs) lives inside the
-/// last/active block card.
+/// Warp-style block stream: completed cards, plus an active PTY card only while
+/// a command is running or an alternate-screen TUI is up. Idle = completed
+/// blocks (or empty) + bottom composer — no 「提示符」 live card.
 struct SessionBlockStream: View {
     @ObservedObject var session: TerminalSession
     var selectedID: UUID?
@@ -28,6 +27,14 @@ struct SessionBlockStream: View {
         session.activity.alternateScreen
     }
 
+    /// Visible active card only for running command or TUI.
+    /// Without shell integration we keep a visible PTY surface (no block markers).
+    private var showsActiveCard: Bool {
+        if alternateScreen { return true }
+        if runningBlock != nil { return true }
+        return !session.shellIntegrationEnabled
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -42,22 +49,37 @@ struct SessionBlockStream: View {
                         .id(block.id)
                     }
 
-                    SessionActiveBlockCard(
-                        running: runningBlock,
-                        alternateScreen: alternateScreen,
-                        shellIntegration: session.shellIntegrationEnabled,
-                        ptyHeight: activePtyHeight,
-                        focusIntent: focusIntent,
-                        dimTerminalCaret: dimTerminalCaret,
-                        bridgePromptKeys: bridgePromptKeys,
-                        onPromptKey: onPromptKey,
-                        session: session
-                    )
-                    .id("active-block")
+                    if showsActiveCard {
+                        SessionActiveBlockCard(
+                            running: runningBlock,
+                            alternateScreen: alternateScreen,
+                            shellIntegration: session.shellIntegrationEnabled,
+                            ptyHeight: activePtyHeight,
+                            focusIntent: focusIntent,
+                            dimTerminalCaret: dimTerminalCaret,
+                            bridgePromptKeys: bridgePromptKeys,
+                            onPromptKey: onPromptKey,
+                            session: session
+                        )
+                        .id("active-block")
+                    }
                 }
                 .padding(.horizontal, Metrics.gutter)
                 .padding(.top, 8)
                 .padding(.bottom, 10)
+            }
+            .background(alignment: .bottom) {
+                // Keep PTY hosted while idle so the process stays warm — zero-size, not a card.
+                if !showsActiveCard {
+                    TerminalSurface(session: session, focusIntent: nil,
+                                    dimTerminalCaret: true,
+                                    bridgePromptKeys: bridgePromptKeys,
+                                    onPromptKey: onPromptKey)
+                        .frame(width: 1, height: 1)
+                        .opacity(0.01)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
             }
             .onAppear { scrollToActive(proxy) }
             .onChange(of: session.commandBlocks.count) { _, _ in scrollToActive(proxy) }
@@ -71,21 +93,26 @@ struct SessionBlockStream: View {
     private var activePtyHeight: CGFloat {
         let floor = availableHeight > 1 ? availableHeight : 320
         if alternateScreen {
-            // TUI owns the viewport — still one card, but tall.
             return max(280, floor - 24)
         }
         if runningBlock != nil {
             return max(160, min(260, floor * 0.48))
         }
-        if completedBlocks.isEmpty {
-            // Sole active card (fresh shell / no integration yet).
-            return max(220, floor - 24)
-        }
-        // Idle prompt after completed blocks — compact live card.
-        return max(110, min(168, floor * 0.32))
+        // No shell integration fallback — sole visible PTY card.
+        return max(220, floor - 24)
     }
 
     private func scrollToActive(_ proxy: ScrollViewProxy) {
+        guard showsActiveCard else {
+            if let last = completedBlocks.last?.id {
+                DispatchQueue.main.async {
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        proxy.scrollTo(last, anchor: .bottom)
+                    }
+                }
+            }
+            return
+        }
         DispatchQueue.main.async {
             withAnimation(.easeOut(duration: 0.12)) {
                 proxy.scrollTo("active-block", anchor: .bottom)
@@ -94,8 +121,7 @@ struct SessionBlockStream: View {
     }
 }
 
-/// The stream's last card: hosts HostedTerminalView. Same chrome language as
-/// completed blocks so it never reads as a second pane.
+/// Active card — only mounted while running / TUI / no-integration fallback.
 struct SessionActiveBlockCard: View {
     var running: CommandBlock?
     var alternateScreen: Bool
@@ -125,18 +151,18 @@ struct SessionActiveBlockCard: View {
         .background(Ink.sunken.opacity(0.55))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(alternateScreen || running != nil ? Ink.accent.opacity(0.45) : Ink.line, lineWidth: 1)
+                .stroke(Ink.accent.opacity(0.45), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .accessibilityIdentifier("console.activeBlock")
-        .accessibilityValue(running?.command ?? (alternateScreen ? "tui" : "prompt"))
+        .accessibilityValue(running?.command ?? (alternateScreen ? "tui" : "shell"))
     }
 
     @ViewBuilder private var header: some View {
         HStack(spacing: 6) {
             Image(systemName: headerSymbol)
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(headerColor)
+                .foregroundStyle(Ink.live)
             Text(headerTitle)
                 .font(Face.mono(Metrics.meta))
                 .foregroundStyle(Ink.ink)
@@ -149,19 +175,14 @@ struct SessionActiveBlockCard: View {
             }
             Text(headerStatus)
                 .font(Face.mono(Metrics.caption))
-                .foregroundStyle(headerColor)
+                .foregroundStyle(Ink.live)
         }
     }
 
     private var headerSymbol: String {
         if alternateScreen { return "rectangle.bottomhalf.inset.filled" }
         if running != nil { return "hourglass" }
-        return "circle.fill"
-    }
-
-    private var headerColor: Color {
-        if alternateScreen || running != nil { return Ink.live }
-        return Ink.inkFaint
+        return "terminal"
     }
 
     private var headerTitle: String {
@@ -169,7 +190,6 @@ struct SessionActiveBlockCard: View {
             return "$ \(command)"
         }
         if alternateScreen { return "交互界面" }
-        if shellIntegration { return "提示符" }
         return "Shell"
     }
 
@@ -185,6 +205,13 @@ struct SessionCommandBlockCard: View {
     var selected: Bool
     var onSelect: () -> Void
     var onSendToAgent: (() -> Void)?
+
+    private var displayOutput: String? {
+        guard let raw = block.capturedOutput else { return nil }
+        let cleaned = ShellCommandCapture.stripTrailingPrompt(raw)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? nil : cleaned
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -220,8 +247,7 @@ struct SessionCommandBlockCard: View {
                     .accessibilityIdentifier("console.commandBlock.sendToAgent")
                 }
             }
-            if let output = block.capturedOutput?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !output.isEmpty {
+            if let output = displayOutput {
                 Text(truncate(output, limit: 12))
                     .font(Face.mono(Metrics.caption))
                     .foregroundStyle(Ink.inkMuted)
@@ -265,9 +291,7 @@ struct SessionCommandBlockCard: View {
     }
 }
 
-
 enum SessionBlockTime {
-    /// Short local clock for block headers (Asia/Shanghai / box zone).
     static func short(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_GB")

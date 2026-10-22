@@ -56,6 +56,8 @@ v14 的失败是 **chrome 与块模型**，不是「Session primary」IA。
 - Alternate-screen 依赖 `activity.alternateScreen`；未识别的全屏程序可能仍用紧凑 active 高度
 - Agent 流消息时间戳沿用 AgentStreamDetail；本契约强制的是 **Shell 块** 发送时间
 - 块选中 / 右键菜单抛光仍 out of scope
+- 无 Shell 集成时仍显示一张 Shell live 卡（无法做命令块）
+- 隐藏 PTY 宿主在 idle 时为 1×1；极端情况下 re-present 可能有一帧闪烁
 
 
 ## Locked UX contract (Zay 2026-10-22)
@@ -79,6 +81,14 @@ v14 的失败是 **chrome 与块模型**，不是「Session primary」IA。
 
 ### Out of scope
 Block selection / context-menu polish.
+
+
+## Visual rejection follow-up (Zay 图1/图2 @ 157ccb4)
+
+Must-fix:
+1. **No idle 「提示符」 live card** — Active HostedTerminalView card only while a command is running or alternate-screen TUI is active. Idle = completed blocks (or empty) + bottom composer. PTY stays hosted off-layout (1×1) so the process stays warm.
+2. **No PS1 under blocks** — `ShellCommandCapture.stripTrailingPrompt` removes trailing prompt lines from captured output; cards show command + output only.
+3. **Composer one designed row** — Short path + mode chip + draft on one vertical center line inside a rounded `Ink.surface` + hairline bar; hints quietly under the draft inside that bar.
 
 ## Anti-goals
 
