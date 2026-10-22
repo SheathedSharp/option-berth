@@ -22,6 +22,13 @@ enum SessionComposerModel {
     enum Chord: Equatable { case plain, command, commandShift }
 }
 
+/// Explicit input mode on the unified session surface (Warp-like).
+/// Layout stays one canvas + one input; mode only changes chrome and plain Enter routing.
+enum ComposerInputMode: String, Equatable {
+    case shell
+    case agent
+}
+
 struct ProviderChoice: Identifiable, Equatable {
     let id: String
     let name: String
@@ -56,19 +63,26 @@ final class SessionBridgeTextView: NSTextView {
     var onCommandHeld: ((Bool) -> Void)?
     var onSendControl: ((UInt8) -> Void)?
     var onShellTab: (() -> Void)?
+    var onToggleMode: (() -> Void)?
     var shellTabEnabled = false
     var slashMenuOpen = false
+    /// When true, plain Enter follows the Agent chord path (resume/send).
+    var preferAgentEnter = false
 
-    enum Action: Equatable { case shell, resume, newAgent, escape }
+    enum Action: Equatable { case shell, resume, newAgent, escape, toggleMode }
 
-    static func action(keyCode: UInt16, modifiers: NSEvent.ModifierFlags, composing: Bool, editable: Bool) -> Action? {
+    static func action(keyCode: UInt16, modifiers: NSEvent.ModifierFlags, composing: Bool, editable: Bool,
+                       preferAgentEnter: Bool = false) -> Action? {
         guard editable, !composing else { return nil }
         let keys = modifiers.intersection([.command, .shift, .control, .option])
         if keyCode == 53, keys.isEmpty { return .escape }
+        // ⌘I toggles Shell ↔ Agent input mode (Warp-like). Claim it here so
+        // AppKit does not treat Command-I as italics inside the text view.
+        if keyCode == 34, keys == .command { return .toggleMode }
         guard keyCode == 36 || keyCode == 76 else { return nil }
         if keys == [.command, .shift] { return .newAgent }
         if keys == .command { return .resume }
-        if keys.isEmpty { return .shell }
+        if keys.isEmpty { return preferAgentEnter ? .resume : .shell }
         return nil
     }
 
@@ -110,12 +124,14 @@ final class SessionBridgeTextView: NSTextView {
             }
         }
         guard let action = Self.action(keyCode: event.keyCode, modifiers: event.modifierFlags,
-                                       composing: hasMarkedText(), editable: isEditable) else { return false }
+                                       composing: hasMarkedText(), editable: isEditable,
+                                       preferAgentEnter: preferAgentEnter) else { return false }
         switch action {
         case .shell: onShell?()
         case .resume: onResume?()
         case .newAgent: onNew?()
         case .escape: onEscape?()
+        case .toggleMode: onToggleMode?()
         }
         return true
     }
@@ -141,6 +157,7 @@ struct SessionBridgeField: NSViewRepresentable {
     var enabled: Bool
     var focusToken: Int
     var slashMenuOpen: Bool
+    var preferAgentEnter: Bool = false
     var onShell: () -> Void
     var onResume: () -> Void
     var onNew: () -> Void
@@ -152,6 +169,7 @@ struct SessionBridgeField: NSViewRepresentable {
     var onSendControl: (UInt8) -> Void
     var shellTabEnabled: Bool
     var onShellTab: () -> Void
+    var onToggleMode: () -> Void = {}
 
     func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
     func makeNSView(context: Context) -> NSScrollView {
@@ -173,7 +191,7 @@ struct SessionBridgeField: NSViewRepresentable {
         editor.textContainer?.widthTracksTextView = true
         editor.delegate = context.coordinator
         editor.setAccessibilityIdentifier("console.sessionComposer")
-        editor.setAccessibilityLabel("会话输入。Enter 发送到 Shell，⌘↩ 续接选中的 Agent，⇧⌘↩ 新建 Agent")
+        editor.setAccessibilityLabel("会话输入。⌘I 切换 Shell/Agent。Enter 按当前模式发送，⌘↩ 交给 Agent，⇧⌘↩ 新建 Agent")
         scroll.documentView = editor
         update(editor, context: context)
         return scroll
@@ -203,6 +221,8 @@ struct SessionBridgeField: NSViewRepresentable {
         editor.onSendControl = onSendControl
         editor.shellTabEnabled = shellTabEnabled
         editor.onShellTab = onShellTab
+        editor.onToggleMode = onToggleMode
+        editor.preferAgentEnter = preferAgentEnter
         // A recreated text view must not repeat an old focus request, or it
         // steals the terminal when the status column changes selection.
         if context.coordinator.appliedFocus != focusToken {
@@ -227,7 +247,9 @@ struct SessionComposerBar: View {
     var notice: String
     var shellAttachment: ComposerShellAttachment?
     var onClearAttachment: () -> Void
-    var caption: String
+    /// Integration / status hint — shown quietly on the route row, never as a second title bar.
+    var statusHint: String = ""
+    var inputMode: ComposerInputMode = .shell
     var routeHints: RouteHints
     var routeEmphasis: ComposerChord?
     var providerLabel: String
@@ -242,6 +264,7 @@ struct SessionComposerBar: View {
     var onResume: () -> Void
     var onNew: () -> Void
     var onEscape: () -> Void
+    var onToggleMode: () -> Void = {}
     var onMenuStep: (Int) -> Void
     var onMenuActivate: () -> Void
     var onHistoryBack: () -> Void
@@ -253,10 +276,10 @@ struct SessionComposerBar: View {
     var onProvider: (String) -> Void
     var onPickProvider: () -> Void
 
+    private var agentMode: Bool { inputMode == .agent }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(caption).font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkMuted).lineLimit(1)
-                .padding(.horizontal, Metrics.gutter).padding(.top, 6)
             if let shellAttachment {
                 HStack(spacing: 6) {
                     Text("\(shellAttachment.shellTitle) · \(shellAttachment.command)")
@@ -274,51 +297,114 @@ struct SessionComposerBar: View {
                     .accessibilityLabel("移除 Shell 附件")
                 }
                 .padding(.horizontal, Metrics.gutter)
+                .padding(.top, 6)
                 .background(ConsoleValueMarker(identifier: "console.composerAttachment",
                                                value: shellAttachment.command))
             }
             field
             routeRow
         }
-        .background(Ink.surface)
+        // Same plane as the canvas — no surface well / second card.
+        .background(Ink.canvas)
+        .accessibilityIdentifier("console.composerBar")
+        .accessibilityValue(inputMode.rawValue)
     }
 
     private var field: some View {
         HStack(spacing: Metrics.inline) {
-            Text("❯").font(Face.mono(12, .medium)).foregroundStyle(Ink.inkFaint)
+            modeMarker
             ZStack(alignment: .leading) {
                 if draft.isEmpty {
-                    Text("↩ 交给 Shell，⌘↩ 交给 Agent，/ 查看命令")
+                    Text(placeholder)
                         .font(Face.mono(12)).foregroundStyle(Ink.inkFaint)
                         .padding(.leading, 4).allowsHitTesting(false)
                 }
                 SessionBridgeField(text: $draft, enabled: enabled, focusToken: focusToken,
                                    slashMenuOpen: pickingProvider || !slashCommands.isEmpty,
+                                   preferAgentEnter: agentMode,
                                    onShell: onShell, onResume: onResume, onNew: onNew, onEscape: onEscape,
                                    onMenuStep: onMenuStep, onMenuActivate: onMenuActivate, onHistoryBack: onHistoryBack,
                                    onCommandHeld: onCommandHeld,
-                                   onSendControl: onSendControl, shellTabEnabled: shellTabEnabled, onShellTab: onShellTab)
+                                   onSendControl: onSendControl, shellTabEnabled: shellTabEnabled, onShellTab: onShellTab,
+                                   onToggleMode: onToggleMode)
             }
             .frame(minHeight: 28, maxHeight: 120)
+            if agentMode {
+                agentToolbelt
+            }
         }
         .padding(.horizontal, Metrics.gutter)
+        .padding(.top, shellAttachment == nil ? 8 : 2)
         .overlay(alignment: .bottomLeading) { menu }
+    }
+
+    private var modeMarker: some View {
+        Button(action: onToggleMode) {
+            HStack(spacing: 4) {
+                Image(systemName: agentMode ? "sparkle" : "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                Text(agentMode ? "Agent" : "Shell")
+                    .font(Face.mono(Metrics.caption, .semibold))
+            }
+            .foregroundStyle(agentMode ? Ink.accent : Ink.inkMuted)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(agentMode ? Ink.accentSoft : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help(agentMode ? "当前 Agent 输入 · ⌘I 切回 Shell" : "当前 Shell 输入 · ⌘I 切到 Agent")
+        .accessibilityIdentifier("console.composerMode")
+        .accessibilityValue(inputMode.rawValue)
+    }
+
+    private var placeholder: String {
+        if agentMode {
+            return providerChosen
+                ? "↩ 发给 \(providerLabel)，⌘I 切回 Shell，/ 命令"
+                : "↩ 先选择 Agent，⌘I 切回 Shell，/ 命令"
+        }
+        return "↩ 运行，⌘I 切到 Agent，/ 命令"
+    }
+
+    @ViewBuilder private var agentToolbelt: some View {
+        Button(action: onPickProvider) {
+            Text(providerChosen ? providerLabel : "选择 Agent")
+                .font(Face.sans(Metrics.caption, .medium))
+                .foregroundStyle(providerChosen ? Ink.inkMuted : Change.changed)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(Ink.sunken)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help("选择默认 Agent")
+        .accessibilityIdentifier("console.composerProvider")
     }
 
     private var routeRow: some View {
         HStack(spacing: Metrics.inline) {
-            routeSegment(routeHints.enter, chord: .enter)
-            routeSegment(routeHints.command, chord: .command)
-            routeSegment(routeHints.commandShift, chord: .commandShift)
+            if agentMode {
+                // Enter maps to Agent send in this mode — emphasize the command chord hint.
+                routeSegment(routeHints.command, chord: .command)
+                routeSegment(routeHints.commandShift, chord: .commandShift)
+                Text("⌘I Shell").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
+            } else {
+                routeSegment(routeHints.enter, chord: .enter)
+                routeSegment(routeHints.command, chord: .command)
+                routeSegment(routeHints.commandShift, chord: .commandShift)
+                Text("⌘I Agent").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
+            }
             Spacer(minLength: 0)
-            Text("/ 命令").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
+            if !statusHint.isEmpty {
+                Text(statusHint).font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint).lineLimit(1)
+            }
             if !notice.isEmpty {
                 Text(notice).font(Face.sans(Metrics.caption)).foregroundStyle(Change.changed).lineLimit(1)
             }
             ConsoleValueMarker(identifier: "console.composerHint", value: notice)
                 .frame(width: 1, height: 1)
         }
-        .padding(.horizontal, Metrics.gutter).padding(.bottom, 6)
+        .padding(.horizontal, Metrics.gutter).padding(.bottom, 8)
     }
 
     private func routeSegment(_ segment: RouteHintSegment, chord: ComposerChord) -> some View {
@@ -580,6 +666,7 @@ struct AgentStatusColumn: View {
 struct SessionComposerFrozen: View {
     var slash: Bool
     var noProvider = false
+    var inputMode: ComposerInputMode = .shell
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if slash {
@@ -596,26 +683,48 @@ struct SessionComposerFrozen: View {
                 .padding(.leading, Metrics.gutter)
             }
             HStack(spacing: 8) {
-                Text(slash ? "/" : "输入命令，或 /").font(Face.mono(12)).foregroundStyle(slash ? Ink.ink : Ink.inkFaint)
+                HStack(spacing: 4) {
+                    Image(systemName: inputMode == .agent ? "sparkle" : "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text(inputMode == .agent ? "Agent" : "Shell")
+                        .font(Face.mono(Metrics.caption, .semibold))
+                }
+                .foregroundStyle(inputMode == .agent ? Ink.accent : Ink.inkMuted)
+                .padding(.horizontal, 6).padding(.vertical, 3)
+                .background(inputMode == .agent ? Ink.accentSoft : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                Text(slash ? "/" : (inputMode == .agent ? "↩ 发给 Agent，⌘I 切回 Shell" : "↩ 运行，⌘I 切到 Agent"))
+                    .font(Face.mono(12)).foregroundStyle(slash ? Ink.ink : Ink.inkFaint)
                 Spacer(minLength: 0)
-                Text(slash ? "选择 Agent" : "未选择")
-                    .font(Face.sans(Metrics.chrome, .medium))
-                    .foregroundStyle(Ink.inkMuted)
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(Ink.canvas)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                if inputMode == .agent {
+                    Text(noProvider ? "选择 Agent" : "Codex")
+                        .font(Face.sans(Metrics.caption, .medium))
+                        .foregroundStyle(noProvider ? Change.changed : Ink.inkMuted)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(Ink.sunken)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
             }
             HStack(spacing: 8) {
-                Text("↩ Shell 1").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkFaint)
-                Text(noProvider ? "⌘↩ 先选择 Agent" : "⌘↩ 续接 Codex")
-                    .font(Face.sans(Metrics.caption))
-                    .foregroundStyle(noProvider ? Change.changed : Ink.inkFaint)
-                Text("⇧⌘↩ 新建").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkFaint)
+                if inputMode == .agent {
+                    Text(noProvider ? "↩ 先选择 Agent" : "↩ 发给 Codex")
+                        .font(Face.sans(Metrics.caption))
+                        .foregroundStyle(noProvider ? Change.changed : Ink.inkFaint)
+                    Text("⇧⌘↩ 新建").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkFaint)
+                    Text("⌘I Shell").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkFaint)
+                } else {
+                    Text("↩ Shell").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkFaint)
+                    Text(noProvider ? "⌘↩ 先选择 Agent" : "⌘↩ 续接 Codex")
+                        .font(Face.sans(Metrics.caption))
+                        .foregroundStyle(noProvider ? Change.changed : Ink.inkFaint)
+                    Text("⇧⌘↩ 新建").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkFaint)
+                    Text("⌘I Agent").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkFaint)
+                }
             }
         }
-        .padding(.horizontal, Metrics.gutter).padding(.vertical, 6)
+        .padding(.horizontal, Metrics.gutter).padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Ink.surface)
+        .background(Ink.canvas)
     }
 }
 
@@ -644,8 +753,8 @@ struct AgentStreamMixedFrozen: View {
             Spacer(minLength: 0)
         }
         .padding(Metrics.gutter)
-        .frame(width: 280, alignment: .topLeading)
-        .background(Ink.surface)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Ink.canvas)
     }
 }
 
@@ -677,8 +786,8 @@ struct AgentStreamStatusFrozen: View {
             Spacer(minLength: 0)
         }
         .padding(Metrics.gutter)
-        .frame(width: 280, alignment: .topLeading)
-        .background(Ink.surface)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Ink.canvas)
     }
 }
 
@@ -715,7 +824,7 @@ struct SessionStatusFrozen: View {
         }
         .padding(Metrics.gutter)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Ink.surface)
+        .background(Ink.canvas)
     }
 }
 

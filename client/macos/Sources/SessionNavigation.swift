@@ -3,8 +3,8 @@ import BerthAgent
 import BerthTerminal
 import SwiftUI
 
-/// Compact session strip (v13 single-canvas): Shell + Agent tabs share one row.
-/// Selecting a tab switches the full-width canvas; there is no permanent Agent column.
+/// Compact session strip (v14 warp-session): Shell + Agent tabs share one row on the
+/// same canvas plane. Selecting a tab switches full-width focus; no permanent Agent column.
 struct ShellSessionBar: View {
     let shells: [TerminalSession]
     var agents: [TerminalSession] = []
@@ -230,16 +230,20 @@ struct SessionShortcutDelivery: NSViewRepresentable {
     let escape: () -> Void
     let focusComposer: () -> Void
     let newAgent: () -> Void
+    var toggleInputMode: () -> Void = {}
     let canCycle: () -> Bool
     let canEscape: () -> Bool
     let canFocusComposer: () -> Bool
     let canNewAgent: () -> Bool
+    var canToggleInputMode: () -> Bool = { true }
 
     func makeNSView(context: Context) -> DeliveryView { DeliveryView() }
 
     func updateNSView(_ view: DeliveryView, context: Context) {
         view.apply(open: open, cycle: cycle, escape: escape, focusComposer: focusComposer, newAgent: newAgent,
-                   canCycle: canCycle, canEscape: canEscape, canFocusComposer: canFocusComposer, canNewAgent: canNewAgent)
+                   toggleInputMode: toggleInputMode,
+                   canCycle: canCycle, canEscape: canEscape, canFocusComposer: canFocusComposer, canNewAgent: canNewAgent,
+                   canToggleInputMode: canToggleInputMode)
     }
 
     static func dismantleNSView(_ view: DeliveryView, coordinator: ()) { view.removeMonitor() }
@@ -252,10 +256,12 @@ struct SessionShortcutDelivery: NSViewRepresentable {
         private var escapeAction: (() -> Void)?
         private var focusComposerAction: (() -> Void)?
         private var newAgentAction: (() -> Void)?
+        private var toggleInputModeAction: (() -> Void)?
         private var canCycle: (() -> Bool)?
         private var canEscape: (() -> Bool)?
         private var canFocusComposer: (() -> Bool)?
         private var canNewAgent: (() -> Bool)?
+        private var canToggleInputMode: (() -> Bool)?
 
         override init(frame frameRect: NSRect) {
             super.init(frame: frameRect)
@@ -272,17 +278,21 @@ struct SessionShortcutDelivery: NSViewRepresentable {
 
         func apply(open: @escaping () -> Void, cycle: @escaping (Int) -> Void,
                    escape: @escaping () -> Void, focusComposer: @escaping () -> Void, newAgent: @escaping () -> Void,
+                   toggleInputMode: @escaping () -> Void,
                    canCycle: @escaping () -> Bool, canEscape: @escaping () -> Bool,
-                   canFocusComposer: @escaping () -> Bool, canNewAgent: @escaping () -> Bool) {
+                   canFocusComposer: @escaping () -> Bool, canNewAgent: @escaping () -> Bool,
+                   canToggleInputMode: @escaping () -> Bool) {
             openAction = open
             cycleAction = cycle
             escapeAction = escape
             focusComposerAction = focusComposer
             newAgentAction = newAgent
+            toggleInputModeAction = toggleInputMode
             self.canCycle = canCycle
             self.canEscape = canEscape
             self.canFocusComposer = canFocusComposer
             self.canNewAgent = canNewAgent
+            self.canToggleInputMode = canToggleInputMode
         }
 
         func removeMonitor() {
@@ -345,6 +355,10 @@ struct SessionShortcutDelivery: NSViewRepresentable {
                 if keys == [.command, .shift], canNewAgent?() == true { return .newAgent }
                 if keys == .command, canFocusComposer?() == true { return .focusComposer }
             }
+            // ⌘I — toggle Shell ↔ Agent input mode (Warp-like).
+            if event.keyCode == Self.iKey, keys == .command, canToggleInputMode?() == true {
+                return .toggleInputMode
+            }
             if event.keyCode == Self.escape, canEscape?() == true { return .escape }
             return nil
         }
@@ -356,6 +370,7 @@ struct SessionShortcutDelivery: NSViewRepresentable {
             case .escape: escapeAction?()
             case .focusComposer: focusComposerAction?()
             case .newAgent: newAgentAction?()
+            case .toggleInputMode: toggleInputModeAction?()
             }
         }
 
@@ -363,10 +378,11 @@ struct SessionShortcutDelivery: NSViewRepresentable {
         private static let escape: UInt16 = 53
         private static let returnKey: UInt16 = 36
         private static let keypadEnter: UInt16 = 76
+        private static let iKey: UInt16 = 34
     }
 }
 
-private enum SessionShortcut { case open, cycle(Int), escape, focusComposer, newAgent }
+private enum SessionShortcut { case open, cycle(Int), escape, focusComposer, newAgent, toggleInputMode }
 
 private struct SessionPaletteMarker: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {

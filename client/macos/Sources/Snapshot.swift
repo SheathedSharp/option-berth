@@ -101,7 +101,7 @@ enum Snapshot {
                              width: width, height: height)
             if code != 0 { return code }
         }
-        // v13: explicit session-primary freezes (shell home + capability panels).
+        // v14 warp-session: same session-primary freezes; composer is merged into one canvas plane.
         if let demoName = groups.first(where: { $0.name == "berth-demo" })?.name {
             let shellViews = ViewState(scope: .terminal(demoName))
             let shellCode = write(BoardView(store: BoardStore(fixture: ports),
