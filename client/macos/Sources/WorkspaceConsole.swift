@@ -61,9 +61,12 @@ struct WorkspaceConsole: View {
     private var selected: TerminalSession? { scoped.first { $0.id == workspace.activeSelection } ?? scoped.last }
     var body: some View {
         VStack(spacing: 0) {
-            toolbar
-            Hairline()
-            if frozen { frozenStrip }
+            // v15: no dedicated 「历史」 chrome row — history via /history or ⌘Y.
+            if frozen {
+                toolbar
+                Hairline()
+                frozenStrip
+            }
             if let selected {
                 VStack(spacing: 0) {
                     // v15 A: no permanent Shell-1 / "+ Agent" strip. Thin rail only when
@@ -147,6 +150,7 @@ struct WorkspaceConsole: View {
                 SessionShortcutDelivery(open: openSwitcher, cycle: cycleSession, escape: handleEscape,
                                         focusComposer: focusComposer, newAgent: { composerAct(.commandShift) },
                                         toggleInputMode: toggleComposerInputMode,
+                                        openHistory: { history = true },
                                         canCycle: { scoped.count > 1 },
                                         canEscape: {
                                             switcherPresented
@@ -155,9 +159,50 @@ struct WorkspaceConsole: View {
                                                 || selected?.kind != "terminal"
                                         },
                                         canFocusComposer: canUseComposerShortcut, canNewAgent: canUseComposerShortcut,
-                                        canToggleInputMode: canUseComposerShortcut)
+                                        canToggleInputMode: canUseComposerShortcut,
+                                        canOpenHistory: { !frozen })
                     .frame(width: 1, height: 1)
                     .allowsHitTesting(false)
+            }
+            .background(alignment: .topTrailing) {
+                // Hidden hooks: HistoryEntryChecks + BERTH_CONSOLE_TEST. Not chrome.
+                HStack(spacing: 0) {
+                    ConsoleToolbarAction(title: "历史", identifier: "terminal.history") { history = true }
+                        .frame(width: 1, height: 1).opacity(0.01)
+                    if ProcessInfo.processInfo.environment["BERTH_CONSOLE_TEST"] == "1" {
+                        ConsoleToolbarAction(title: "新建 Shell", identifier: "console.newShell", perform: { newShell() })
+                            .frame(width: 1, height: 1).opacity(0.01)
+                        ConsoleToolbarAction(title: "聚焦输入", identifier: "console.focusComposer", perform: focusComposer)
+                            .frame(width: 1, height: 1).opacity(0.01)
+                    }
+                    // Session overflow kept off the focus chrome; available when rail shows via ShellSessionBar.
+                    if !frozen {
+                        Menu {
+                            Button("新建 Shell") { newShell() }
+                            Toggle("新 Shell 启用命令块", isOn: $settings.shellIntegration)
+                                .disabled(settings.configuration.preferences.shellIntegration != nil || !ShellIntegrationLease.supports(executable: TerminalSession.shell))
+                            Toggle("Agent 后台通知与 Dock 角标", isOn: $settings.consoleAgentNotifications)
+                                .disabled(settings.configuration.preferences.consoleAgentNotifications != nil)
+                            if let selected {
+                                Divider()
+                                if selected.kind != "terminal" { Button("返回 Shell") { returnToShell() } }
+                                Button("聚焦当前会话") { activate(selected) }
+                                Button("查找当前终端") { showTerminalFind(selected.terminal) }
+                                Button("在独立窗口显示") { TerminalWindows.shared.detach(selected) }
+                                splitItems(selected)
+                                Divider()
+                                Button(selected.isActive ? "结束当前会话…" : "关闭当前会话") {
+                                    if selected.isActive { confirmSessionStop(selected) }
+                                    else { TerminalWindows.shared.bringBack(selected); sessions.remove(selected) }
+                                }
+                            }
+                        } label: { Image(systemName: "ellipsis") }
+                        .menuStyle(.borderlessButton)
+                        .frame(width: 1, height: 1).opacity(0.01)
+                        .accessibilityHidden(true)
+                    }
+                }
+                .allowsHitTesting(true)
             }
             .onDisappear { launcher.cancel() }
             .onReceive(NotificationCenter.default.publisher(for: .agentStreamEndedExternally)) { note in
@@ -167,45 +212,18 @@ struct WorkspaceConsole: View {
                 if previewAgentID == id { previewAgentID = nil }
             }
     }
+    /// Frozen snapshot chrome only — live console has no 「历史」 row.
     private var toolbar: some View {
         HStack(spacing: Metrics.inline) {
-            if frozen {
-                Text("会话").foregroundStyle(Ink.inkFaint)
-                Spacer(); Text("历史"); Image(systemName: "ellipsis")
-            } else {
-                Spacer(minLength: 0)
-                ConsoleToolbarAction(title: "历史", identifier: "terminal.history") { history = true }
-                    .fixedSize(horizontal: true, vertical: false).frame(height: 24)
-                    .help("搜索当前 worktree 的内存命令历史")
-                if ProcessInfo.processInfo.environment["BERTH_CONSOLE_TEST"] == "1" {
-                    ConsoleToolbarAction(title: "新建 Shell", identifier: "console.newShell", perform: { newShell() })
-                        .frame(width: 1, height: 1).opacity(0.01)
-                    ConsoleToolbarAction(title: "聚焦输入", identifier: "console.focusComposer", perform: focusComposer)
-                        .frame(width: 1, height: 1).opacity(0.01)
-                }
-                Menu {
-                    Button("新建 Shell") { newShell() }
-                    Toggle("新 Shell 启用命令块", isOn: $settings.shellIntegration)
-                        .disabled(settings.configuration.preferences.shellIntegration != nil || !ShellIntegrationLease.supports(executable: TerminalSession.shell))
-                    Toggle("Agent 后台通知与 Dock 角标", isOn: $settings.consoleAgentNotifications)
-                        .disabled(settings.configuration.preferences.consoleAgentNotifications != nil)
-                    if let selected {
-                        Divider()
-                        if selected.kind != "terminal" { Button("返回 Shell") { returnToShell() } }
-                        Button("聚焦当前会话") { activate(selected) }
-                        Button("查找当前终端") { showTerminalFind(selected.terminal) }
-                        Button("在独立窗口显示") { TerminalWindows.shared.detach(selected) }
-                        splitItems(selected)
-                        Divider()
-                        Button(selected.isActive ? "结束当前会话…" : "关闭当前会话") {
-                            if selected.isActive { confirmSessionStop(selected) }
-                            else { TerminalWindows.shared.bringBack(selected); sessions.remove(selected) }
-                        }
-                    }
-                } label: { Image(systemName: "ellipsis") }
-                    .menuStyle(.borderlessButton).fixedSize().help("会话操作")
-            }
-        }.font(Face.sans(Metrics.chrome)).padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV).background(Ink.canvas)
+            Text("会话").foregroundStyle(Ink.inkFaint)
+            Spacer()
+            Text("历史")
+            Image(systemName: "ellipsis")
+        }
+        .font(Face.sans(Metrics.chrome))
+        .padding(.horizontal, Metrics.gutter)
+        .padding(.vertical, Metrics.tabPadV)
+        .background(Ink.canvas)
     }
     /// Warp A: hide tab chrome for the common single-Shell case.
     private var showSessionRail: Bool {

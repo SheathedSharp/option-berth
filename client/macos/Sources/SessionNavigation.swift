@@ -221,19 +221,21 @@ struct SessionShortcutDelivery: NSViewRepresentable {
     let focusComposer: () -> Void
     let newAgent: () -> Void
     var toggleInputMode: () -> Void = {}
+    var openHistory: () -> Void = {}
     let canCycle: () -> Bool
     let canEscape: () -> Bool
     let canFocusComposer: () -> Bool
     let canNewAgent: () -> Bool
     var canToggleInputMode: () -> Bool = { true }
+    var canOpenHistory: () -> Bool = { true }
 
     func makeNSView(context: Context) -> DeliveryView { DeliveryView() }
 
     func updateNSView(_ view: DeliveryView, context: Context) {
         view.apply(open: open, cycle: cycle, escape: escape, focusComposer: focusComposer, newAgent: newAgent,
-                   toggleInputMode: toggleInputMode,
+                   toggleInputMode: toggleInputMode, openHistory: openHistory,
                    canCycle: canCycle, canEscape: canEscape, canFocusComposer: canFocusComposer, canNewAgent: canNewAgent,
-                   canToggleInputMode: canToggleInputMode)
+                   canToggleInputMode: canToggleInputMode, canOpenHistory: canOpenHistory)
     }
 
     static func dismantleNSView(_ view: DeliveryView, coordinator: ()) { view.removeMonitor() }
@@ -247,11 +249,13 @@ struct SessionShortcutDelivery: NSViewRepresentable {
         private var focusComposerAction: (() -> Void)?
         private var newAgentAction: (() -> Void)?
         private var toggleInputModeAction: (() -> Void)?
+        private var openHistoryAction: (() -> Void)?
         private var canCycle: (() -> Bool)?
         private var canEscape: (() -> Bool)?
         private var canFocusComposer: (() -> Bool)?
         private var canNewAgent: (() -> Bool)?
         private var canToggleInputMode: (() -> Bool)?
+        private var canOpenHistory: (() -> Bool)?
 
         override init(frame frameRect: NSRect) {
             super.init(frame: frameRect)
@@ -268,21 +272,23 @@ struct SessionShortcutDelivery: NSViewRepresentable {
 
         func apply(open: @escaping () -> Void, cycle: @escaping (Int) -> Void,
                    escape: @escaping () -> Void, focusComposer: @escaping () -> Void, newAgent: @escaping () -> Void,
-                   toggleInputMode: @escaping () -> Void,
+                   toggleInputMode: @escaping () -> Void, openHistory: @escaping () -> Void,
                    canCycle: @escaping () -> Bool, canEscape: @escaping () -> Bool,
                    canFocusComposer: @escaping () -> Bool, canNewAgent: @escaping () -> Bool,
-                   canToggleInputMode: @escaping () -> Bool) {
+                   canToggleInputMode: @escaping () -> Bool, canOpenHistory: @escaping () -> Bool) {
             openAction = open
             cycleAction = cycle
             escapeAction = escape
             focusComposerAction = focusComposer
             newAgentAction = newAgent
             toggleInputModeAction = toggleInputMode
+            openHistoryAction = openHistory
             self.canCycle = canCycle
             self.canEscape = canEscape
             self.canFocusComposer = canFocusComposer
             self.canNewAgent = canNewAgent
             self.canToggleInputMode = canToggleInputMode
+            self.canOpenHistory = canOpenHistory
         }
 
         func removeMonitor() {
@@ -349,6 +355,10 @@ struct SessionShortcutDelivery: NSViewRepresentable {
             if event.keyCode == Self.iKey, keys == .command, canToggleInputMode?() == true {
                 return .toggleInputMode
             }
+            // ⌘Y — command history sheet (replaces the old 「历史」 chrome row).
+            if event.keyCode == Self.yKey, keys == .command, canOpenHistory?() == true {
+                return .openHistory
+            }
             if event.keyCode == Self.escape, canEscape?() == true { return .escape }
             return nil
         }
@@ -361,6 +371,7 @@ struct SessionShortcutDelivery: NSViewRepresentable {
             case .focusComposer: focusComposerAction?()
             case .newAgent: newAgentAction?()
             case .toggleInputMode: toggleInputModeAction?()
+            case .openHistory: openHistoryAction?()
             }
         }
 
@@ -369,10 +380,11 @@ struct SessionShortcutDelivery: NSViewRepresentable {
         private static let returnKey: UInt16 = 36
         private static let keypadEnter: UInt16 = 76
         private static let iKey: UInt16 = 34
+        private static let yKey: UInt16 = 16
     }
 }
 
-private enum SessionShortcut { case open, cycle(Int), escape, focusComposer, newAgent, toggleInputMode }
+private enum SessionShortcut { case open, cycle(Int), escape, focusComposer, newAgent, toggleInputMode, openHistory }
 
 private struct SessionPaletteMarker: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {

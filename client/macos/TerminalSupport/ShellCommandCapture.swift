@@ -19,9 +19,12 @@ public enum ShellCommandCapture {
         if lo <= hi {
             for row in lo...hi {
                 let text = terminal.getScrollInvariantLine(row: row)?.translateToString(trimRight: true) ?? ""
-                if !text.isEmpty { lines.append(text) }
+                lines.append(text)
             }
         }
+        // Drop leading/trailing empties here; keep interior blanks for layout.
+        while lines.first?.isEmpty == true { lines.removeFirst() }
+        while lines.last?.isEmpty == true { lines.removeLast() }
         return finalizeAccumulated(lines.joined(separator: "\n"), maxLines: maxLines)
     }
 

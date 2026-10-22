@@ -21,8 +21,8 @@ public final class TerminalSession: ObservableObject, Identifiable {
     private var commandParser: CommandBlockParser?
     private var shellLease: ShellIntegrationLease?
     private var commandOutputStartRows: [UUID: Int] = [:]
-    /// Bytes received while a command block is running (OSC C→D). Preferred over
-    /// buffer-row capture, which breaks when the idle keepalive PTY resizes.
+    /// Bytes received while a command block is running (OSC C→D). Fallback when
+    /// scroll-invariant buffer capture is empty (start row scrolled away).
     private var commandOutputAccumulators: [UUID: String] = [:]
 
     public init(worktree: String, title: String = "Terminal", kind: String = "terminal") {
@@ -144,17 +144,21 @@ public final class TerminalSession: ObservableObject, Identifiable {
                     commandOutputStartRows[block.id] = ShellCommandCapture.absoluteCursorRow(terminal: terminal)
                 }
             } else if block.capturedOutput == nil {
-                if let acc = commandOutputAccumulators.removeValue(forKey: block.id) {
+                // Prefer scroll-invariant buffer rows: they keep column spacing and
+                // real newlines after the terminal lays out the stream. Raw-byte
+                // accumulators concatenate cursor-addressed glyphs once CSI is
+                // stripped (ls / help "crushed blob"). Accumulator is fallback
+                // when the start row scrolled out of scrollback.
+                let start = commandOutputStartRows.removeValue(forKey: block.id)
+                let acc = commandOutputAccumulators.removeValue(forKey: block.id)
+                let fromBuffer = start.map { ShellCommandCapture.capture(terminal: terminal, startRow: $0) } ?? ""
+                if !fromBuffer.isEmpty {
+                    block.capturedOutput = fromBuffer
+                } else if let acc {
                     let finalized = ShellCommandCapture.finalizeAccumulated(acc)
                     if !finalized.isEmpty {
                         block.capturedOutput = finalized
                     }
-                }
-                if block.capturedOutput == nil,
-                   let start = commandOutputStartRows.removeValue(forKey: block.id) {
-                    block.capturedOutput = ShellCommandCapture.capture(terminal: terminal, startRow: start)
-                } else {
-                    _ = commandOutputStartRows.removeValue(forKey: block.id)
                 }
             }
             blocks[index] = block

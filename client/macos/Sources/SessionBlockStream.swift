@@ -27,12 +27,18 @@ struct SessionBlockStream: View {
         session.activity.alternateScreen
     }
 
-    /// Visible active card only for running command or TUI.
-    /// Without shell integration we keep a visible PTY surface (no block markers).
+    /// Visible PTY card: TUI, or shells without integration (sole surface).
+    /// With integration, ordinary running commands must NOT mount the live PTY
+    /// card — that mount/unmount was the post-submit flash of 提示符/live.
     private var showsActiveCard: Bool {
         if alternateScreen { return true }
-        if runningBlock != nil { return true }
-        return !session.shellIntegrationEnabled
+        if !session.shellIntegrationEnabled { return true }
+        return false
+    }
+
+    /// Lightweight running chrome (no TerminalSurface) while a block is in flight.
+    private var showsPendingRunningCard: Bool {
+        session.shellIntegrationEnabled && runningBlock != nil && !alternateScreen
     }
 
     var body: some View {
@@ -47,6 +53,11 @@ struct SessionBlockStream: View {
                             onSendToAgent: onSendToAgent.map { handler in { handler(block) } }
                         )
                         .id(block.id)
+                    }
+
+                    if showsPendingRunningCard, let running = runningBlock {
+                        SessionPendingBlockCard(running: running)
+                            .id("pending-block")
                     }
 
                     if showsActiveCard {
@@ -106,21 +117,52 @@ struct SessionBlockStream: View {
     }
 
     private func scrollToActive(_ proxy: ScrollViewProxy) {
-        guard showsActiveCard else {
-            if let last = completedBlocks.last?.id {
-                DispatchQueue.main.async {
-                    withAnimation(.easeOut(duration: 0.12)) {
-                        proxy.scrollTo(last, anchor: .bottom)
-                    }
-                }
-            }
-            return
+        let target: AnyHashable?
+        if showsActiveCard {
+            target = "active-block"
+        } else if showsPendingRunningCard {
+            target = "pending-block"
+        } else {
+            target = completedBlocks.last?.id
         }
+        guard let target else { return }
         DispatchQueue.main.async {
             withAnimation(.easeOut(duration: 0.12)) {
-                proxy.scrollTo("active-block", anchor: .bottom)
+                proxy.scrollTo(target, anchor: .bottom)
             }
         }
+    }
+}
+
+
+/// Running command without mounting the live PTY (avoids post-submit flash).
+struct SessionPendingBlockCard: View {
+    let running: CommandBlock
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "hourglass")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Ink.live)
+            Text("$ \(running.command ?? "…")")
+                .font(Face.mono(Metrics.meta))
+                .foregroundStyle(Ink.ink)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(SessionBlockTime.short(running.startedAt))
+                .font(Face.mono(Metrics.caption))
+                .foregroundStyle(Ink.inkFaint)
+            Text("运行中")
+                .font(Face.mono(Metrics.caption))
+                .foregroundStyle(Ink.live)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Ink.sunken.opacity(0.45))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityIdentifier("console.pendingBlock")
+        .accessibilityValue(running.command ?? "")
     }
 }
 
@@ -250,11 +292,16 @@ struct SessionCommandBlockCard: View {
                 }
             }
             if let output = displayOutput {
-                Text(truncate(output, limit: 12))
-                    .font(Face.mono(Metrics.caption))
+                Text(truncate(output, limit: 48))
+                    .font(Face.mono(Metrics.meta))
                     .foregroundStyle(Ink.inkMuted)
+                    .lineSpacing(3)
+                    .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
+                    .padding(.top, 2)
+                    .accessibilityIdentifier("console.commandBlock.output")
             }
         }
         .padding(.horizontal, 10)

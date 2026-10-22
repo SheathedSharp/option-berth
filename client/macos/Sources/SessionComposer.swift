@@ -528,7 +528,7 @@ struct SessionComposerBar: View {
                 ? "↩ send · ⌘↩ again · ⌘I Shell · /"
                 : "↩ pick Agent · ⌘I Shell · /"
         }
-        return "↩ run · ⌘↩ Agent · ⌘I · /"
+        return "↩ run · ⌘↩ Agent · ⌘I · / · ⌘Y 历史"
     }
 
     private var placeholder: String {
