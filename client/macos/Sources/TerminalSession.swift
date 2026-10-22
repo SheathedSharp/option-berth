@@ -54,17 +54,12 @@ struct TerminalPaneBody: View {
     var bridgePromptKeys = false
     var onPromptKey: ((NSEvent) -> Void)?
     var onSendCommandToAgent: ((CommandBlock) -> Void)?
-    /// When true, prefer Warp block stream over the old thin CommandBlockStrip chrome.
+    /// Warp block stream: PTY is hosted inside the active block card, never a sibling pane.
     var warpBlocks = true
     @State private var selectedBlockID: UUID?
     @ObservedObject private var windows = TerminalWindows.shared
     var body: some View {
-        VStack(spacing: 0) {
-            if warpBlocks, session.kind == "terminal", !session.commandBlocks.isEmpty {
-                SessionBlockStream(session: session, selectedID: selectedBlockID,
-                                   onSelect: { block in selectedBlockID = block.id },
-                                   onSendToAgent: onSendCommandToAgent)
-            }
+        Group {
             if frozen {
                 Text("$ pwd\n\(session.worktree)\n$ echo 'native session'\nnative session")
                     .font(Face.mono(11)).padding(10)
@@ -76,12 +71,29 @@ struct TerminalPaneBody: View {
                     Button("显示窗口") { windows.detach(session) }
                     Button("返回工作区") { windows.bringBack(session) }
                 }.font(Face.sans(11)).frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if warpBlocks, session.kind == "terminal" {
+                // One scroll: completed cards + active card that hosts the single PTY.
+                GeometryReader { geo in
+                    SessionBlockStream(
+                        session: session,
+                        selectedID: selectedBlockID,
+                        onSelect: { block in selectedBlockID = block.id },
+                        onSendToAgent: onSendCommandToAgent,
+                        availableHeight: geo.size.height,
+                        focusIntent: focusIntent,
+                        dimTerminalCaret: dimTerminalCaret,
+                        bridgePromptKeys: bridgePromptKeys,
+                        onPromptKey: onPromptKey
+                    )
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                // Live PTY = active unfinished region at the bottom of the block stream.
+                // Native agent PTY (non-terminal kind): full canvas, not block-streamed.
                 TerminalSurface(session: session, focusIntent: focusIntent, dimTerminalCaret: dimTerminalCaret,
                                 bridgePromptKeys: bridgePromptKeys, onPromptKey: onPromptKey).id(session.id)
             }
-        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

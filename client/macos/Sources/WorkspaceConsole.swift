@@ -421,12 +421,13 @@ struct WorkspaceConsole: View {
             .background(Ink.canvas)
         default:
             VStack(spacing: 0) {
-                // Block-stream freeze (no ScrollView — ImageRenderer collapses it).
+                // Block-stream freeze: completed cards + active card (PTY lives inside).
                 VStack(alignment: .leading, spacing: 8) {
                     frozenBlock(command: "git status",
                                 output: "On branch reunify-core\nnothing to commit, working tree clean",
                                 selected: false)
                     frozenBlock(command: "ls", output: "README.md  src/", selected: false)
+                    frozenActiveBlock()
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, Metrics.gutter)
@@ -459,6 +460,32 @@ struct WorkspaceConsole: View {
         .background(selected ? Ink.accentSoft : Ink.sunken.opacity(0.55))
         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
             .stroke(selected ? Ink.accent.opacity(0.55) : Ink.line, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    /// Active block freeze — same card chrome; stands in for the hosted PTY.
+    private func frozenActiveBlock() -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "circle.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Ink.inkFaint)
+                Text("提示符").font(Face.mono(Metrics.meta)).foregroundStyle(Ink.ink)
+                Spacer(minLength: 0)
+                Text("live").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
+            }
+            Text("sheathedsharp@host reunify-core % _")
+                .font(Face.mono(Metrics.caption))
+                .foregroundStyle(Ink.inkMuted)
+                .frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading)
+                .padding(8)
+                .background(Ink.canvas)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Ink.sunken.opacity(0.55))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Ink.line, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 

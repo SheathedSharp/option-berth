@@ -3,7 +3,8 @@
 **Branch:** `ui/warp-blocks-v15`  
 **Base:** `ui/warp-session-v14` @ `e8ffc40`  
 **Date:** 2026-10-22 (Asia/Shanghai)  
-**Locked by Zay:** ASCII prototype **A · Warp 块流**
+**Locked by Zay:** ASCII prototype **A · Warp 块流**  
+**Follow-up:** Zay rejected “live PTY under blocks” leftover @ `3951662` — active/interactive must live in-stream.
 
 ## Diagnosis vs v14
 
@@ -21,7 +22,7 @@ v14 的失败是 **chrome 与块模型**，不是「Session primary」IA。
 **一块滚动块流 + 底下一行输入。**
 
 - 完成的 Shell 命令（及输出）与 Agent 轮次以 **可选中 block** 出现在同一滚动流里
-- Live PTY / 进行中的命令是流底的 **active unfinished region**，不是第二个标签页或第二栏
+- 进行中的命令 / 空闲提示符 / TUI 都在流末 **active block 卡**内嵌唯一 PTY，不是块流下方第二视口
 - 输入只在底栏；`[Shell]` / `[Agent · provider]` chip；**⌘I** 切换；↩ 按模式路由；`/` slash 保留
 - 无 Shell 标签大条、无永久「选择默认 Agent」chrome、无 hint 堆砌
 - Worktrees 侧栏 + Paper `Ink.*` 不变；`/ob-server` `/git` 仍为能力 overlay
@@ -31,20 +32,28 @@ v14 的失败是 **chrome 与块模型**，不是「Session primary」IA。
 | Surface | v14 | v15 (A) |
 |---|---|---|
 | Session strip | ShellSessionBar 常驻（Shell 1 + 大 +Agent） | **折叠**：单 Shell 无条；多会话极细轨或仅 switcher；去掉永久「选择默认 Agent」 |
-| Canvas | 全幅 PTY + 顶上 CommandBlockStrip | **块流**：完成块为卡片；live PTY 为流底 active 区 |
+| Canvas | 全幅 PTY + 顶上 CommandBlockStrip | **块流**：完成块为卡片；**唯一 PTY 嵌在流末 active 卡** |
 | Composer | 模式 chip + 多段 routeRow 噪声 | **一行输入**：chip + 字段 + 右侧轻提示（`↩ run · ⌘I Agent · /`） |
 | Provider pick | 条上永久按钮 + Agent toolbelt | **仅** Agent 模式 toolbelt / slash `/agent-select` |
 | Services / Git | overlay | 不变 |
 
-## Block model (least-wrong)
+## Block model (active-in-stream)
 
-复用现有 `CommandBlock` / shell integration / `capturedOutput`，不另造平行模型。
+复用现有 `CommandBlock` / shell integration / `capturedOutput`；**新代码**把唯一 `HostedTerminalView` 嵌进流末 **active block 卡**，不再在块流下方另开 live PTY 视口。
 
-- **完成块**：`$ command` + 截断输出；可选中 → 附给 Agent（已有 attach 路径）
-- **进行中 / TUI / 无集成**：仍走 live `HostedTerminalView` 作为流底 active region
-- **诚实遗留**：完整「交互 TUI 包进独立 block」不做伪实现；有 alternate-screen / busy 时焦点回 PTY
+- **完成块**：静态卡 — `$ command` + 截断 `capturedOutput`；可选中 → 附给 Agent
+- **Active block（流的最后一张卡，同款 chrome）**：宿主唯一 PTY
+  - 运行中命令：卡头显示 `$ cmd` +「运行中」，卡身嵌 PTY
+  - 空闲提示符：卡头「提示符 / live」，卡身嵌 PTY（composer 仍是底栏输入 chrome）
+  - Alternate-screen TUI（vim/less 等）：同一张 active 卡加高占满视口，仍是一块卡而非第二栏
+- **无 Shell 集成**：流里只有这一张 active 卡（全高），视觉仍是 block，不是裸 PTY 条
+- Agent 结构化流仍用 `AgentStreamDetail` 占满画布；原生 agent PTY（非 terminal kind）暂不走块流
 
-Agent 结构化流仍用现有 `AgentStreamDetail` 占满画布（⌘I / 选中 stream）；不与 Shell 块流并列成两栏。
+### Limits (honest)
+
+- 完成块是文本快照，不是可回放的终端 buffer；PTY scrollback 里历史仍在，但 UI 以块卡为准
+- ScrollView 内嵌 NSView：滚动时可能有轻微重布局闪烁
+- Alternate-screen 依赖 `activity.alternateScreen`；未识别的全屏程序可能仍用紧凑 active 高度
 
 ## Anti-goals
 
