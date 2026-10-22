@@ -137,6 +137,27 @@ final class SessionBridgeTextView: NSTextView {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let keys = event.modifierFlags.intersection([.command, .shift, .control, .option])
+        // Claim standard editing chords so the field behaves like Cursor/Warp chat input.
+        // ⌘I stays reserved for mode toggle via handle(_:).
+        if keys == .command || keys == [.command, .shift],
+           let ch = event.charactersIgnoringModifiers?.lowercased(), ch.count == 1 {
+            switch ch {
+            case "a" where keys == .command:
+                selectAll(nil); return true
+            case "c" where keys == .command:
+                copy(nil); return true
+            case "x" where keys == .command:
+                cut(nil); return true
+            case "v" where keys == .command:
+                paste(nil); return true
+            case "z" where keys == .command:
+                undoManager?.undo(); return true
+            case "z" where keys == [.command, .shift]:
+                undoManager?.redo(); return true
+            default: break
+            }
+        }
         if handle(event) { return true }
         return super.performKeyEquivalent(with: event)
     }
@@ -157,8 +178,8 @@ struct SessionBridgeField: NSViewRepresentable {
     var enabled: Bool
     var focusToken: Int
     var slashMenuOpen: Bool
-    /// Exact height SwiftUI must honor — NSScrollView otherwise invents a tall intrinsic size.
-    var idealHeight: CGFloat = 18
+    /// Height SwiftUI assigned after measuring wrapped draft lines.
+    var idealHeight: CGFloat = 20
     var preferAgentEnter: Bool = false
     var onShell: () -> Void
     var onResume: () -> Void
@@ -174,43 +195,62 @@ struct SessionBridgeField: NSViewRepresentable {
     var onToggleMode: () -> Void = {}
 
     func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
-    func makeNSView(context: Context) -> NSScrollView {
-        let scroll = NSScrollView()
-        scroll.drawsBackground = false
-        scroll.hasVerticalScroller = false
-        scroll.autohidesScrollers = true
-        let editor = SessionBridgeTextView(frame: scroll.bounds)
+
+    /// Soft-wrap line count for `text` at `width` (mono 12), clamped 1…6.
+    static func wrappedLineCount(_ text: String, width: CGFloat) -> Int {
+        let font = Face.nativeMono(12)
+        let probe = text.isEmpty ? " " : text
+        let usable = max(width - 4, 24)
+        let bounds = (probe as NSString).boundingRect(
+            with: NSSize(width: usable, height: 10_000),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font]
+        )
+        let line = max(CGFloat(font.ascender - font.descender + font.leading), font.pointSize + 2)
+        let count = Int(ceil(bounds.height / line))
+        return max(1, min(6, count))
+    }
+
+    static func height(for text: String, width: CGFloat) -> CGFloat {
+        let line: CGFloat = 18
+        return line * CGFloat(wrappedLineCount(text, width: width))
+    }
+
+    func makeNSView(context: Context) -> SessionBridgeTextView {
+        // No NSScrollView — it invents a tall intrinsic size and was the fat-card root cause.
+        let editor = SessionBridgeTextView(frame: NSRect(x: 0, y: 0, width: 100, height: 18))
         editor.isRichText = false
         editor.allowsUndo = true
         editor.isAutomaticQuoteSubstitutionEnabled = false
         editor.isAutomaticDashSubstitutionEnabled = false
         editor.isAutomaticTextReplacementEnabled = false
         editor.drawsBackground = false
-        // Tight inset so caret sits on the same baseline as path / mode chip.
-        editor.textContainerInset = NSSize(width: 2, height: 1)
+        editor.focusRingType = .none
+        editor.textContainerInset = NSSize(width: 0, height: 1)
         editor.isVerticallyResizable = true
         editor.isHorizontallyResizable = false
-        editor.autoresizingMask = [.width]
+        editor.autoresizingMask = [.width, .height]
         editor.textContainer?.widthTracksTextView = true
+        editor.textContainer?.heightTracksTextView = false
         editor.textContainer?.lineFragmentPadding = 0
+        editor.textContainer?.containerSize = NSSize(width: 100, height: CGFloat.greatestFiniteMagnitude)
         editor.minSize = NSSize(width: 0, height: 0)
         editor.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         editor.delegate = context.coordinator
         editor.setAccessibilityIdentifier("console.sessionComposer")
-        editor.setAccessibilityLabel("会话输入。⌘I 切换 Shell/Agent。Enter 按当前模式发送，⌘↩ 发给当前 Agent，⇧⌘↩ 新建 Agent")
-        scroll.documentView = editor
-        scroll.hasHorizontalScroller = false
+        editor.setAccessibilityLabel("会话输入。⌘I 切换 Shell/Agent。Enter 按当前模式发送，⌘↩ 发给当前 Agent，⇧⌘↩ 新建 Agent。⌘A 全选。")
         update(editor, context: context)
-        return scroll
+        return editor
     }
 
-    func updateNSView(_ scroll: NSScrollView, context: Context) {
-        guard let editor = scroll.documentView as? SessionBridgeTextView else { return }
+    func updateNSView(_ editor: SessionBridgeTextView, context: Context) {
         update(editor, context: context)
+        let width = max(editor.bounds.width, 40)
+        editor.textContainer?.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
     }
 
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
-        let width = proposal.width ?? nsView.bounds.width
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: SessionBridgeTextView, context: Context) -> CGSize? {
+        let width = proposal.width ?? max(nsView.bounds.width, 40)
         return CGSize(width: max(width, 40), height: idealHeight)
     }
 
@@ -235,8 +275,6 @@ struct SessionBridgeField: NSViewRepresentable {
         editor.onShellTab = onShellTab
         editor.onToggleMode = onToggleMode
         editor.preferAgentEnter = preferAgentEnter
-        // A recreated text view must not repeat an old focus request, or it
-        // steals the terminal when the status column changes selection.
         if context.coordinator.appliedFocus != focusToken {
             context.coordinator.appliedFocus = focusToken
             if focusToken > 0 { editor.window?.makeFirstResponder(editor) }
@@ -251,6 +289,13 @@ struct SessionBridgeField: NSViewRepresentable {
             guard let editor = notification.object as? NSTextView else { return }
             text.wrappedValue = editor.string
         }
+    }
+}
+
+private struct ComposerFieldWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 320
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
@@ -290,8 +335,11 @@ struct SessionComposerBar: View {
 
     private var agentMode: Bool { inputMode == .agent }
 
+    /// Measured field width for soft-wrap height (updated via background GeometryReader).
+    @State private var fieldWidth: CGFloat = 320
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 2) {
             if let shellAttachment {
                 HStack(spacing: 6) {
                     Text("\(shellAttachment.shellTitle) · \(shellAttachment.command)")
@@ -312,27 +360,23 @@ struct SessionComposerBar: View {
                 .background(ConsoleValueMarker(identifier: "console.composerAttachment",
                                                value: shellAttachment.command))
             }
-            // One designed input surface: path + chip + draft on one center line.
             inputSurface
         }
         .padding(.horizontal, Metrics.gutter)
-        .padding(.vertical, 4)
+        .padding(.vertical, 2)
         .background(Ink.canvas)
         .accessibilityIdentifier("console.composerBar")
         .accessibilityValue(inputMode.rawValue)
     }
 
-    /// One text-line tall when idle; grows only when the draft contains newlines (up to 5).
     private var composerFieldHeight: CGFloat {
-        let lineHeight: CGFloat = 17
-        let lines = draft.isEmpty ? 1 : max(1, draft.components(separatedBy: "\n").count)
-        return lineHeight * CGFloat(min(5, lines))
+        SessionBridgeField.height(for: draft, width: fieldWidth)
     }
 
     private var inputSurface: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            // Surface = path + chip + draft only. Hint sits outside so it cannot inflate idle height.
-            HStack(alignment: .center, spacing: Metrics.inline) {
+        VStack(alignment: .leading, spacing: 2) {
+            // Compact single-row surface (grows only when draft wraps).
+            HStack(alignment: .center, spacing: 6) {
                 if !pathPrefix.isEmpty {
                     Text(pathPrefix)
                         .font(Face.mono(Metrics.caption, .semibold))
@@ -343,11 +387,12 @@ struct SessionComposerBar: View {
                         .help("当前 worktree")
                 }
                 modeMarker
-                ZStack(alignment: .leading) {
+                ZStack(alignment: .topLeading) {
                     if draft.isEmpty {
                         Text(placeholder)
                             .font(Face.mono(12)).foregroundStyle(Ink.inkFaint)
-                            .padding(.leading, 2).allowsHitTesting(false)
+                            .padding(.top, 1)
+                            .allowsHitTesting(false)
                     }
                     SessionBridgeField(text: $draft, enabled: enabled, focusToken: focusToken,
                                        slashMenuOpen: pickingProvider || !slashCommands.isEmpty,
@@ -361,21 +406,27 @@ struct SessionComposerBar: View {
                 }
                 .frame(height: composerFieldHeight)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .clipped()
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(key: ComposerFieldWidthKey.self, value: geo.size.width)
+                    }
+                )
                 .layoutPriority(1)
                 if agentMode {
                     agentToolbelt
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Ink.surface)
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .stroke(Ink.line, lineWidth: 1)
             )
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            // Popover sits ABOVE this surface (alignmentGuide pins menu bottom to surface top).
+            .overlay(alignment: .topLeading) { menu }
 
             HStack(spacing: Metrics.inline) {
                 Text(compactHint)
@@ -392,55 +443,70 @@ struct SessionComposerBar: View {
                 ConsoleValueMarker(identifier: "console.composerHint", value: notice)
                     .frame(width: 1, height: 1)
             }
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 2)
         }
-        .overlay(alignment: .bottomLeading) { menu }
+        .onPreferenceChange(ComposerFieldWidthKey.self) { width in
+            if width > CGFloat(1), abs(width - fieldWidth) > CGFloat(0.5) { fieldWidth = width }
+        }
     }
 
     @ViewBuilder private var menu: some View {
         if pickingProvider || !slashCommands.isEmpty {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(pickingProvider ? "选择 Agent" : "命令")
+                        .font(Face.mono(Metrics.caption, .semibold))
+                        .foregroundStyle(Ink.inkFaint)
+                    if !pickingProvider {
+                        Text("继续输入以筛选")
+                            .font(Face.sans(Metrics.caption))
+                            .foregroundStyle(Ink.inkFaint.opacity(0.85))
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10)
+                .padding(.top, 6)
+                .padding(.bottom, 2)
                 if pickingProvider {
-                    Text("选择默认 Agent").font(Face.mono(Metrics.caption, .semibold)).foregroundStyle(Ink.inkFaint)
-                        .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 2)
                     ForEach(providers) { provider in
                         providerRow(provider)
                     }
                 } else {
-                    Text("命令").font(Face.mono(Metrics.caption, .semibold)).foregroundStyle(Ink.inkFaint)
-                        .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 2)
                     ForEach(Array(slashCommands.enumerated()), id: \.element.rawValue) { index, command in
                         slashRow(command, highlighted: index == slashHighlight)
                     }
                 }
             }
             .padding(.horizontal, 4)
-            .padding(.bottom, 6)
-            .frame(width: 320, alignment: .leading)
+            .padding(.bottom, 4)
+            .frame(width: 300, alignment: .leading)
             .background(Ink.canvas)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Ink.lineStrong, lineWidth: 1))
-            .shadow(color: .black.opacity(0.14), radius: 10, y: 3)
-            .padding(.leading, Metrics.gutter)
-            .offset(y: -4)
+            .shadow(color: .black.opacity(0.14), radius: 10, y: 2)
+            // Bottom of menu sits just above the top of the input surface — never covers typing.
+            .alignmentGuide(.top) { dim in dim[.bottom] + 6 }
+            .padding(.leading, 0)
             .background(ConsoleValueMarker(identifier: pickingProvider ? "console.providerMenu" : "console.slashMenu", value: ""))
         }
     }
 
     private func slashRow(_ command: SlashCommand, highlighted: Bool) -> some View {
         Button(action: { onSlash(command) }) {
-            VStack(alignment: .leading, spacing: 1) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(command.rawValue)
                     .font(Face.mono(Metrics.chrome, .medium))
                     .foregroundStyle(Ink.ink)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
                 Text(command.detail)
                     .font(Face.sans(Metrics.caption))
                     .foregroundStyle(Ink.inkFaint)
-                    .lineLimit(2)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
             .background(highlighted ? Ink.accentSoft : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
             .contentShape(Rectangle())
@@ -459,8 +525,8 @@ struct SessionComposerBar: View {
                     .font(Face.mono(Metrics.caption, .semibold))
             }
             .foregroundStyle(agentMode ? Ink.accent : Ink.inkMuted)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
             .background(agentMode ? Ink.accentSoft : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
         }

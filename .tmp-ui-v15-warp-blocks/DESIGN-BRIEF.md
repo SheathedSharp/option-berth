@@ -117,3 +117,7 @@ Keep: idle no 「提示符」 card; completed blocks command+output only (no tra
 ## Follow-up 2026-10-22 13:47 — height / slash / ANSI
 
 Rejected 366: composer still tall; slash menu two-column void; block tails `[1m[7m%…`. Fixed: hint outside surface + sizeThatFits; slash row = command+detail stack; strip CSI/OSC/orphan crumbs in finalize + display.
+
+## Follow-up 2026-10-22 13:59 — compact wrap + slash above
+
+Rejected 367 fat composer / covered slash. NSScrollView removed; soft-wrap height; ⌘A; pinned slash palette anchored above input.

@@ -95,6 +95,12 @@ public enum SlashParse: Equatable, Sendable {
 public enum SlashCommandRegistry {
     public static let catalogue: [SlashCommand] = SlashCommand.allCases
 
+    /// Shown when the user types bare `/` — Cursor/Warp-style short palette.
+    /// Keep typing to filter the full catalogue.
+    public static let pinned: [SlashCommand] = [
+        .modeShell, .modeAgent, .agentSelect, .agentNew, .obServer, .git, .history,
+    ]
+
     /// Token aliases that are not distinct enum cases (documented for users).
     public static let aliases: [String: SlashCommand] = [
         "/services": .obServer,
@@ -106,6 +112,10 @@ public enum SlashCommandRegistry {
 
     public static func available(in context: SlashContext) -> [SlashCommand] {
         catalogue.filter { isAvailable($0, context: context) }
+    }
+
+    public static func pinnedAvailable(in context: SlashContext) -> [SlashCommand] {
+        pinned.filter { isAvailable($0, context: context) }
     }
 
     public static func isAvailable(_ command: SlashCommand, context: SlashContext) -> Bool {
@@ -177,7 +187,10 @@ public enum SlashParser {
         let (token, _) = parts(text)
         guard token.hasPrefix("/"), !isPathToken(token) else { return [] }
         let available = SlashCommandRegistry.available(in: context)
-        if token == "/" { return available }
+        // Bare `/` → short pinned palette (not the full dump).
+        if token == "/" {
+            return SlashCommandRegistry.pinnedAvailable(in: context)
+        }
         let query = token.dropFirst().lowercased()
         var result = available.filter {
             let name = String($0.rawValue.dropFirst()).lowercased()
@@ -198,6 +211,10 @@ public enum SlashParser {
         if "agent-mode".hasPrefix(query) || "to-agent".hasPrefix(query),
            available.contains(.modeAgent), !result.contains(.modeAgent) {
             result.append(.modeAgent)
+        }
+        // Keep the open palette scannable.
+        if result.count > 8 {
+            result = Array(result.prefix(8))
         }
         return result
     }

@@ -27,3 +27,10 @@ Zay rejected build 366 @ `fcfb10e`. Three fixes:
 1. **Composer height for real** — hint row moved **outside** the Ink.surface; surface is path+chip+draft only (~17pt + 4+4 pad). `SessionBridgeField.sizeThatFits` forces exact height so NSScrollView cannot invent a tall intrinsic size. `.clipped()`.
 2. **Slash menu** — palette rows: `/command` on top, detail under, left-aligned, no ConsoleToolbarAction stretch. Width 320.
 3. **ANSI litter** — `stripTerminalControls` removes OSC + CSI + orphan `[1m…` crumbs; `isOrphanCSILitter` drops clear/percent lines; `finalizeAccumulated` used on display path too. `clear` → empty body (no junk card text).
+
+## Follow-up 2026-10-22 13:59 — compact wrap composer + slash above
+
+Rejected 367: surface still fat; no soft-wrap grow; no ⌘A; slash covers input + too many cmds.
+
+1. Dropped NSScrollView host — plain `SessionBridgeTextView` + `sizeThatFits`. Height from soft-wrap measure (`boundingRect`, 1…6 lines). Padding 2/8. ⌘A/C/X/V/Z claimed.
+2. Slash: `pinned` short list on bare `/`; filter expands. Menu `alignmentGuide` sits **above** surface (does not cover typing). Compact single-line rows.
