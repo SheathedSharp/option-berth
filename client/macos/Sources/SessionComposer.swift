@@ -68,9 +68,6 @@ final class SessionBridgeTextView: NSTextView {
     var slashMenuOpen = false
     /// When true, plain Enter follows the Agent chord path (resume/send).
     var preferAgentEnter = false
-    /// Warp left-notch: `path > ` drawn inside the editor (not a SwiftUI sibling).
-    /// `string` stays draft-only so ⌘A selects the draft, never the notch.
-    var leadingNotch: String = ""
 
     enum Action: Equatable { case shell, resume, newAgent, escape, toggleMode }
 
@@ -174,32 +171,6 @@ final class SessionBridgeTextView: NSTextView {
         onCommandHeld?(event.modifierFlags.contains(.command))
         super.flagsChanged(with: event)
     }
-
-    /// Keep the draft indented by the notch width on every wrapped line (Warp same-line prompt).
-    func applyNotchLayout() {
-        let width = SessionBridgeField.measureNotchWidth(leadingNotch)
-        textContainerInset = NSSize(width: width, height: 0)
-        needsDisplay = true
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        guard !leadingNotch.isEmpty else { return }
-        // drawsBackground is false, so draw the notch after the glyphs.
-        // usesLineFragmentOrigin matches the draft's first-line box (caret baseline).
-        let font = Face.nativeMono(12)
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: NSColor(Ink.inkMuted),
-        ]
-        let line = SessionBridgeField.lineBox
-        let rect = NSRect(x: 0, y: textContainerInset.height, width: 4000, height: line)
-        (leadingNotch as NSString).draw(
-            with: rect,
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            attributes: attrs
-        )
-    }
 }
 
 struct SessionBridgeField: NSViewRepresentable {
@@ -207,8 +178,6 @@ struct SessionBridgeField: NSViewRepresentable {
     var enabled: Bool
     var focusToken: Int
     var slashMenuOpen: Bool
-    /// Worktree short name drawn as a read-only left notch (`hotpulse > `).
-    var pathPrefix: String = ""
     /// Height SwiftUI assigned after measuring wrapped draft lines.
     var idealHeight: CGFloat = 20
     var preferAgentEnter: Bool = false
@@ -228,11 +197,10 @@ struct SessionBridgeField: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
 
     /// Soft-wrap line count for `text` at `width` (mono 12), clamped 1…6.
-    /// `notch` is reserved on the leading edge (left-notch path/`>`).
-    static func wrappedLineCount(_ text: String, width: CGFloat, notch: CGFloat = 0) -> Int {
+    static func wrappedLineCount(_ text: String, width: CGFloat) -> Int {
         let font = Face.nativeMono(12)
         let probe = text.isEmpty ? " " : text
-        let usable = max(width - notch - 4, 24)
+        let usable = max(width - 4, 24)
         let bounds = (probe as NSString).boundingRect(
             with: NSSize(width: usable, height: 10_000),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
@@ -250,23 +218,8 @@ struct SessionBridgeField: NSViewRepresentable {
         return max(natural, 16)
     }
 
-    static func notchString(pathPrefix: String) -> String {
-        pathPrefix.isEmpty ? "" : "\(pathPrefix) > "
-    }
-
-    static func measureNotchWidth(_ notch: String) -> CGFloat {
-        guard !notch.isEmpty else { return 0 }
-        let font = Face.nativeMono(12)
-        return ceil((notch as NSString).size(withAttributes: [.font: font]).width)
-    }
-
-    static func notchWidth(for pathPrefix: String) -> CGFloat {
-        measureNotchWidth(notchString(pathPrefix: pathPrefix))
-    }
-
-    static func height(for text: String, width: CGFloat, pathPrefix: String = "") -> CGFloat {
-        let notch = notchWidth(for: pathPrefix)
-        return lineBox * CGFloat(wrappedLineCount(text, width: width, notch: notch))
+    static func height(for text: String, width: CGFloat) -> CGFloat {
+        lineBox * CGFloat(wrappedLineCount(text, width: width))
     }
 
     func makeNSView(context: Context) -> SessionBridgeTextView {
@@ -291,7 +244,7 @@ struct SessionBridgeField: NSViewRepresentable {
         editor.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         editor.delegate = context.coordinator
         editor.setAccessibilityIdentifier("console.sessionComposer")
-        editor.setAccessibilityLabel("会话输入。左侧路径与 > 为只读前缀。⌘I 切换 Shell/Agent。Enter 按当前模式发送，⌘↩ 发给当前 Agent，⇧⌘↩ 新建 Agent。⌘A 全选草稿。")
+        editor.setAccessibilityLabel("会话输入。⌘I 切换 Shell/Agent。Enter 按当前模式发送，⌘↩ 发给当前 Agent，⇧⌘↩ 新建 Agent。⌘A 全选。")
         update(editor, context: context)
         return editor
     }
@@ -328,13 +281,6 @@ struct SessionBridgeField: NSViewRepresentable {
         editor.onShellTab = onShellTab
         editor.onToggleMode = onToggleMode
         editor.preferAgentEnter = preferAgentEnter
-        let notch = Self.notchString(pathPrefix: pathPrefix)
-        if editor.leadingNotch != notch {
-            editor.leadingNotch = notch
-            editor.applyNotchLayout()
-        } else {
-            editor.applyNotchLayout()
-        }
         if context.coordinator.appliedFocus != focusToken {
             context.coordinator.appliedFocus = focusToken
             if focusToken > 0 { editor.window?.makeFirstResponder(editor) }
@@ -430,28 +376,35 @@ struct SessionComposerBar: View {
     }
 
     private var composerFieldHeight: CGFloat {
-        SessionBridgeField.height(for: draft, width: fieldWidth, pathPrefix: pathPrefix)
-    }
-
-    private var leadingNotchWidth: CGFloat {
-        SessionBridgeField.notchWidth(for: pathPrefix)
+        SessionBridgeField.height(for: draft, width: fieldWidth)
     }
 
     private var inputSurface: some View {
         VStack(alignment: .leading, spacing: 2) {
-            // Left-notch: path/`>` live inside SessionBridgeField (NSTextView).
-            // No SwiftUI Text path + firstTextBaseline beside the representable.
+            // Option A (v2): center HStack — path + plain ">" + field on ONE line.
+            // Never firstTextBaseline with NSViewRepresentable; never Shell chip as ">".
             HStack(alignment: .center, spacing: 6) {
+                if !pathPrefix.isEmpty {
+                    Text(pathPrefix)
+                        .font(Face.mono(Metrics.caption, .semibold))
+                        .foregroundStyle(Ink.inkMuted)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .accessibilityIdentifier("console.composerPath")
+                        .help("当前 worktree")
+                }
+                Text(">")
+                    .font(Face.mono(12, .semibold))
+                    .foregroundStyle(Ink.inkMuted)
+                    .accessibilityHidden(true)
                 ZStack(alignment: .topLeading) {
                     if draft.isEmpty, !placeholder.isEmpty {
                         Text(placeholder)
                             .font(Face.mono(12)).foregroundStyle(Ink.inkFaint)
-                            .padding(.leading, leadingNotchWidth)
                             .allowsHitTesting(false)
                     }
                     SessionBridgeField(text: $draft, enabled: enabled, focusToken: focusToken,
                                        slashMenuOpen: pickingProvider || !slashCommands.isEmpty,
-                                       pathPrefix: pathPrefix,
                                        idealHeight: composerFieldHeight,
                                        preferAgentEnter: agentMode,
                                        onShell: onShell, onResume: onResume, onNew: onNew, onEscape: onEscape,
@@ -460,7 +413,8 @@ struct SessionComposerBar: View {
                                        onSendControl: onSendControl, shellTabEnabled: shellTabEnabled, onShellTab: onShellTab,
                                        onToggleMode: onToggleMode)
                 }
-                .frame(height: composerFieldHeight, alignment: .topLeading)
+                .frame(minHeight: SessionBridgeField.lineBox, idealHeight: composerFieldHeight,
+                       maxHeight: composerFieldHeight, alignment: .topLeading)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     GeometryReader { geo in
@@ -468,17 +422,15 @@ struct SessionComposerBar: View {
                     }
                 )
                 .layoutPriority(1)
-                // Slash/provider palette anchors to the field left edge, above the caret row.
                 .overlay(alignment: .topLeading) { menu }
-                .background(ConsoleValueMarker(identifier: "console.composerPath", value: pathPrefix))
                 if agentMode {
                     agentToolbelt
                 }
             }
+            .frame(minHeight: SessionBridgeField.lineBox, alignment: .center)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .frame(maxWidth: .infinity, alignment: .leading)
-            // Weak chrome: fill + hairline only — no clipShape so the menu can sit above.
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(Ink.surface)
@@ -846,10 +798,12 @@ struct SessionComposerFrozen: View {
                 .padding(.leading, Metrics.gutter)
             }
             VStack(alignment: .leading, spacing: 2) {
-                // Left-notch snapshot: path + `>` + draft on ONE line (matches live NSTextView notch).
-                HStack(alignment: .center, spacing: 0) {
-                    Text("berth-demo > ")
-                        .font(Face.mono(12)).foregroundStyle(Ink.inkMuted)
+                // Option A snapshot: path + plain ">" + draft on ONE center-aligned row.
+                HStack(alignment: .center, spacing: 6) {
+                    Text("berth-demo")
+                        .font(Face.mono(Metrics.caption, .semibold)).foregroundStyle(Ink.inkMuted)
+                    Text(">")
+                        .font(Face.mono(12, .semibold)).foregroundStyle(Ink.inkMuted)
                     Text(slash ? "/" : (inputMode == .agent ? "fix the flaky test…" : "git pull"))
                         .font(Face.mono(12)).foregroundStyle(slash ? Ink.ink : Ink.inkFaint)
                     Spacer(minLength: 0)
