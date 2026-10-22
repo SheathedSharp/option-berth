@@ -157,6 +157,8 @@ struct SessionBridgeField: NSViewRepresentable {
     var enabled: Bool
     var focusToken: Int
     var slashMenuOpen: Bool
+    /// Exact height SwiftUI must honor — NSScrollView otherwise invents a tall intrinsic size.
+    var idealHeight: CGFloat = 18
     var preferAgentEnter: Bool = false
     var onShell: () -> Void
     var onResume: () -> Void
@@ -205,6 +207,11 @@ struct SessionBridgeField: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let editor = scroll.documentView as? SessionBridgeTextView else { return }
         update(editor, context: context)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
+        let width = proposal.width ?? nsView.bounds.width
+        return CGSize(width: max(width, 40), height: idealHeight)
     }
 
     private func update(_ editor: SessionBridgeTextView, context: Context) {
@@ -309,27 +316,22 @@ struct SessionComposerBar: View {
             inputSurface
         }
         .padding(.horizontal, Metrics.gutter)
-        .padding(.vertical, 6)
+        .padding(.vertical, 4)
         .background(Ink.canvas)
         .accessibilityIdentifier("console.composerBar")
         .accessibilityValue(inputMode.rawValue)
     }
 
-    /// One text-line tall when idle; grows with wrapped / newline draft up to 5 lines.
+    /// One text-line tall when idle; grows only when the draft contains newlines (up to 5).
     private var composerFieldHeight: CGFloat {
-        let lineHeight: CGFloat = 18
-        let lineCount: Int
-        if draft.isEmpty {
-            lineCount = 1
-        } else {
-            lineCount = max(1, draft.components(separatedBy: "\n").count)
-        }
-        return min(lineHeight * 5, lineHeight * CGFloat(lineCount))
+        let lineHeight: CGFloat = 17
+        let lines = draft.isEmpty ? 1 : max(1, draft.components(separatedBy: "\n").count)
+        return lineHeight * CGFloat(min(5, lines))
     }
 
     private var inputSurface: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            // Path + mode chip + draft share one baseline row (not a tall empty slab).
+        VStack(alignment: .leading, spacing: 4) {
+            // Surface = path + chip + draft only. Hint sits outside so it cannot inflate idle height.
             HStack(alignment: .center, spacing: Metrics.inline) {
                 if !pathPrefix.isEmpty {
                     Text(pathPrefix)
@@ -349,6 +351,7 @@ struct SessionComposerBar: View {
                     }
                     SessionBridgeField(text: $draft, enabled: enabled, focusToken: focusToken,
                                        slashMenuOpen: pickingProvider || !slashCommands.isEmpty,
+                                       idealHeight: composerFieldHeight,
                                        preferAgentEnter: agentMode,
                                        onShell: onShell, onResume: onResume, onNew: onNew, onEscape: onEscape,
                                        onMenuStep: onMenuStep, onMenuActivate: onMenuActivate, onHistoryBack: onHistoryBack,
@@ -358,12 +361,22 @@ struct SessionComposerBar: View {
                 }
                 .frame(height: composerFieldHeight)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .clipped()
                 .layoutPriority(1)
                 if agentMode {
                     agentToolbelt
                 }
             }
-            .frame(minHeight: composerFieldHeight)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Ink.surface)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Ink.line, lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
             HStack(spacing: Metrics.inline) {
                 Text(compactHint)
                     .font(Face.mono(Metrics.caption))
@@ -379,17 +392,62 @@ struct SessionComposerBar: View {
                 ConsoleValueMarker(identifier: "console.composerHint", value: notice)
                     .frame(width: 1, height: 1)
             }
+            .padding(.horizontal, 4)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Ink.surface)
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Ink.line, lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(alignment: .bottomLeading) { menu }
+    }
+
+    @ViewBuilder private var menu: some View {
+        if pickingProvider || !slashCommands.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                if pickingProvider {
+                    Text("选择默认 Agent").font(Face.mono(Metrics.caption, .semibold)).foregroundStyle(Ink.inkFaint)
+                        .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 2)
+                    ForEach(providers) { provider in
+                        providerRow(provider)
+                    }
+                } else {
+                    Text("命令").font(Face.mono(Metrics.caption, .semibold)).foregroundStyle(Ink.inkFaint)
+                        .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 2)
+                    ForEach(Array(slashCommands.enumerated()), id: \.element.rawValue) { index, command in
+                        slashRow(command, highlighted: index == slashHighlight)
+                    }
+                }
+            }
+            .padding(.horizontal, 4)
+            .padding(.bottom, 6)
+            .frame(width: 320, alignment: .leading)
+            .background(Ink.canvas)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Ink.lineStrong, lineWidth: 1))
+            .shadow(color: .black.opacity(0.14), radius: 10, y: 3)
+            .padding(.leading, Metrics.gutter)
+            .offset(y: -4)
+            .background(ConsoleValueMarker(identifier: pickingProvider ? "console.providerMenu" : "console.slashMenu", value: ""))
+        }
+    }
+
+    private func slashRow(_ command: SlashCommand, highlighted: Bool) -> some View {
+        Button(action: { onSlash(command) }) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(command.rawValue)
+                    .font(Face.mono(Metrics.chrome, .medium))
+                    .foregroundStyle(Ink.ink)
+                Text(command.detail)
+                    .font(Face.sans(Metrics.caption))
+                    .foregroundStyle(Ink.inkFaint)
+                    .lineLimit(2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(highlighted ? Ink.accentSoft : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("console.slash." + command.rawValue.dropFirst())
+        .help(command.title + " · " + command.detail)
     }
 
     private var modeMarker: some View {
@@ -402,7 +460,7 @@ struct SessionComposerBar: View {
             }
             .foregroundStyle(agentMode ? Ink.accent : Ink.inkMuted)
             .padding(.horizontal, 6)
-            .padding(.vertical, 3)
+            .padding(.vertical, 2)
             .background(agentMode ? Ink.accentSoft : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
         }
@@ -450,51 +508,22 @@ struct SessionComposerBar: View {
         .accessibilityIdentifier("console.composerProvider")
     }
 
-    @ViewBuilder private var menu: some View {
-        if pickingProvider || !slashCommands.isEmpty {
-            VStack(alignment: .leading, spacing: 2) {
-                if pickingProvider {
-                    Text("选择默认 Agent").font(Face.mono(Metrics.caption, .semibold)).foregroundStyle(Ink.inkFaint)
-                        .padding(.horizontal, 8).padding(.top, 6)
-                    ForEach(providers) { provider in
-                        providerRow(provider)
-                    }
-                } else {
-                    Text("命令").font(Face.mono(Metrics.caption, .semibold)).foregroundStyle(Ink.inkFaint)
-                        .padding(.horizontal, 8).padding(.top, 6)
-                    ForEach(Array(slashCommands.enumerated()), id: \.element.rawValue) { index, command in
-                        ConsoleToolbarAction(title: command.rawValue, identifier: "console.slash." + command.rawValue.dropFirst(),
-                                             perform: { onSlash(command) })
-                            .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
-                            .background(index == slashHighlight ? Ink.accentSoft : Color.clear)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                            .help(command.title + " · " + command.detail)
-                        Text(command.detail).font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkFaint)
-                            .padding(.leading, 8).padding(.bottom, 2)
-                    }
-                }
-            }
-            .padding(6)
-            .frame(width: 280, alignment: .leading)
-            .background(Ink.canvas)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Ink.lineStrong, lineWidth: 1))
-            .shadow(color: .black.opacity(0.16), radius: 12, y: 4)
-            .padding(.leading, Metrics.gutter)
-            .offset(y: -6)
-            .background(ConsoleValueMarker(identifier: pickingProvider ? "console.providerMenu" : "console.slashMenu", value: ""))
-        }
-    }
-
     private func providerRow(_ provider: ProviderChoice) -> some View {
         let unavailable = provider.installed == false
-        let suffix = provider.installed == false ? " · 未安装" : (provider.installed == nil ? "" : "")
-        return ConsoleToolbarAction(title: provider.name + suffix,
-                                    identifier: "console.provider." + provider.id,
-                                    perform: { onProvider(provider.id) })
-            .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
-            .disabled(unavailable)
-            .help(unavailable ? "未安装，不会自动安装" : "设为默认 Agent")
+        let suffix = provider.installed == false ? " · 未安装" : ""
+        return Button(action: { onProvider(provider.id) }) {
+            Text(provider.name + suffix)
+                .font(Face.sans(Metrics.chrome, .medium))
+                .foregroundStyle(unavailable ? Ink.inkFaint : Ink.ink)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(unavailable)
+        .accessibilityIdentifier("console.provider." + provider.id)
+        .help(unavailable ? "未安装，不会自动安装" : "设为默认 Agent")
     }
 }
 
@@ -732,7 +761,7 @@ struct SessionComposerFrozen: View {
                             .font(Face.mono(Metrics.caption, .semibold))
                     }
                     .foregroundStyle(inputMode == .agent ? Ink.accent : Ink.inkMuted)
-                    .padding(.horizontal, 6).padding(.vertical, 3)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(inputMode == .agent ? Ink.accentSoft : Color.clear)
                     .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                     Text(slash ? "/" : (inputMode == .agent ? "fix the flaky test…" : "git pull"))
@@ -742,23 +771,24 @@ struct SessionComposerFrozen: View {
                         Text(noProvider ? "选择 Agent" : "Codex")
                             .font(Face.sans(Metrics.caption, .medium))
                             .foregroundStyle(noProvider ? Change.changed : Ink.inkMuted)
-                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .padding(.horizontal, 8).padding(.vertical, 2)
                             .background(Ink.sunken)
                             .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                 }
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Ink.surface)
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Ink.line, lineWidth: 1))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 Text(inputMode == .agent
                       ? (noProvider ? "↩ · ⌘I · /" : "↩ · ⌘↩ · ⌘I · /")
                       : "↩ · ⌘I · /")
                     .font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
+                    .padding(.horizontal, 4)
             }
-            .padding(.horizontal, 10).padding(.vertical, 5)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Ink.surface)
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Ink.line, lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
-        .padding(.horizontal, Metrics.gutter).padding(.vertical, 6)
+        .padding(.horizontal, Metrics.gutter).padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Ink.canvas)
     }

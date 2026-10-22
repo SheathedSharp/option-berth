@@ -113,3 +113,7 @@ Zay rejected build 365 @ `2f83ae8`:
 2. **Command-block output contamination** — `$ git --version` block showed prior `$ ls` listing. Root cause: capture used viewport-relative `buffer.y` + `getLine`, and idle PTY keepalive was **1×1**, so resize reflowed the buffer across commands. Fix: accumulate PTY bytes between OSC C→D (strip OSC); fallback capture uses scroll-invariant absolute rows; idle keepalive hosts a real 720×360 geometry (hidden) so cols/rows stay stable.
 
 Keep: idle no 「提示符」 card; completed blocks command+output only (no trailing PS1); single bottom composer; active PTY only while running/TUI.
+
+## Follow-up 2026-10-22 13:47 — height / slash / ANSI
+
+Rejected 366: composer still tall; slash menu two-column void; block tails `[1m[7m%…`. Fixed: hint outside surface + sizeThatFits; slash row = command+detail stack; strip CSI/OSC/orphan crumbs in finalize + display.

@@ -211,8 +211,7 @@ struct SessionCommandBlockCard: View {
 
     private var displayOutput: String? {
         guard let raw = block.capturedOutput else { return nil }
-        let cleaned = ShellCommandCapture.stripTrailingPrompt(raw)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleaned = ShellCommandCapture.finalizeAccumulated(raw)
         return cleaned.isEmpty ? nil : cleaned
     }
 
