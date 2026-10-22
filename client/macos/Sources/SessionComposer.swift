@@ -250,8 +250,6 @@ struct SessionComposerBar: View {
     /// Integration / status hint — shown quietly on the route row, never as a second title bar.
     var statusHint: String = ""
     var inputMode: ComposerInputMode = .shell
-    var routeHints: RouteHints
-    var routeEmphasis: ComposerChord?
     var providerLabel: String
     var providerChosen: Bool
     var slashCommands: [SlashCommand]
@@ -302,7 +300,10 @@ struct SessionComposerBar: View {
                                                value: shellAttachment.command))
             }
             field
-            routeRow
+            // Notices only — no multi-segment route hint spam (v15 A).
+            if !notice.isEmpty || !statusHint.isEmpty {
+                quietNoticeRow
+            }
         }
         // Same plane as the canvas — no surface well / second card.
         .background(Ink.canvas)
@@ -329,12 +330,18 @@ struct SessionComposerBar: View {
                                    onToggleMode: onToggleMode)
             }
             .frame(minHeight: 28, maxHeight: 120)
+            Text(compactHint)
+                .font(Face.mono(Metrics.caption))
+                .foregroundStyle(Ink.inkFaint)
+                .lineLimit(1)
+                .layoutPriority(-1)
             if agentMode {
                 agentToolbelt
             }
         }
         .padding(.horizontal, Metrics.gutter)
         .padding(.top, shellAttachment == nil ? 8 : 2)
+        .padding(.bottom, 8)
         .overlay(alignment: .bottomLeading) { menu }
     }
 
@@ -343,7 +350,7 @@ struct SessionComposerBar: View {
             HStack(spacing: 4) {
                 Image(systemName: agentMode ? "sparkle" : "chevron.right")
                     .font(.system(size: 10, weight: .semibold))
-                Text(agentMode ? "Agent" : "Shell")
+                Text(modeChipLabel)
                     .font(Face.mono(Metrics.caption, .semibold))
             }
             .foregroundStyle(agentMode ? Ink.accent : Ink.inkMuted)
@@ -358,13 +365,42 @@ struct SessionComposerBar: View {
         .accessibilityValue(inputMode.rawValue)
     }
 
+    private var modeChipLabel: String {
+        if agentMode {
+            return providerChosen ? "Agent · \(providerLabel)" : "Agent"
+        }
+        return "Shell"
+    }
+
+    /// One quiet inline hint — matches ASCII A (`↩ run · ⌘I Agent · /`).
+    private var compactHint: String {
+        if agentMode {
+            return providerChosen ? "↩ send · ⌘I Shell · /" : "↩ pick Agent · ⌘I Shell · /"
+        }
+        return "↩ run · ⌘I Agent · /"
+    }
+
     private var placeholder: String {
         if agentMode {
-            return providerChosen
-                ? "↩ 发给 \(providerLabel)，⌘I 切回 Shell，/ 命令"
-                : "↩ 先选择 Agent，⌘I 切回 Shell，/ 命令"
+            return providerChosen ? "发给 \(providerLabel)…" : "先选择 Agent…"
         }
-        return "↩ 运行，⌘I 切到 Agent，/ 命令"
+        return ""
+    }
+
+    private var quietNoticeRow: some View {
+        HStack(spacing: Metrics.inline) {
+            if !statusHint.isEmpty {
+                Text(statusHint).font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint).lineLimit(1)
+            }
+            if !notice.isEmpty {
+                Text(notice).font(Face.sans(Metrics.caption)).foregroundStyle(Change.changed).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            ConsoleValueMarker(identifier: "console.composerHint", value: notice)
+                .frame(width: 1, height: 1)
+        }
+        .padding(.horizontal, Metrics.gutter)
+        .padding(.bottom, 6)
     }
 
     @ViewBuilder private var agentToolbelt: some View {
@@ -379,43 +415,6 @@ struct SessionComposerBar: View {
         .buttonStyle(.plain)
         .help("选择默认 Agent")
         .accessibilityIdentifier("console.composerProvider")
-    }
-
-    private var routeRow: some View {
-        HStack(spacing: Metrics.inline) {
-            if agentMode {
-                // Enter maps to Agent send in this mode — emphasize the command chord hint.
-                routeSegment(routeHints.command, chord: .command)
-                routeSegment(routeHints.commandShift, chord: .commandShift)
-                Text("⌘I Shell").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
-            } else {
-                routeSegment(routeHints.enter, chord: .enter)
-                routeSegment(routeHints.command, chord: .command)
-                routeSegment(routeHints.commandShift, chord: .commandShift)
-                Text("⌘I Agent").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
-            }
-            Spacer(minLength: 0)
-            if !statusHint.isEmpty {
-                Text(statusHint).font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint).lineLimit(1)
-            }
-            if !notice.isEmpty {
-                Text(notice).font(Face.sans(Metrics.caption)).foregroundStyle(Change.changed).lineLimit(1)
-            }
-            ConsoleValueMarker(identifier: "console.composerHint", value: notice)
-                .frame(width: 1, height: 1)
-        }
-        .padding(.horizontal, Metrics.gutter).padding(.bottom, 8)
-    }
-
-    private func routeSegment(_ segment: RouteHintSegment, chord: ComposerChord) -> some View {
-        let active = routeEmphasis == chord
-        return Text(segment.label)
-            .font(Face.mono(Metrics.caption, active ? .semibold : .regular))
-            .foregroundStyle(segment.available ? (active ? Ink.accent : Ink.inkMuted) : Ink.inkFaint)
-            .padding(.horizontal, active ? 4 : 0)
-            .background(active ? Ink.accentSoft : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-            .lineLimit(1)
     }
 
     @ViewBuilder private var menu: some View {
@@ -675,6 +674,10 @@ struct SessionComposerFrozen: View {
                     Text("选择默认 Agent").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkFaint)
                     Text("/agent-new").font(Face.mono(Metrics.chrome))
                     Text("新建 Agent 会话").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkFaint)
+                    Text("/ob-server").font(Face.mono(Metrics.chrome))
+                    Text("服务面板").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkFaint)
+                    Text("/git").font(Face.mono(Metrics.chrome))
+                    Text("Git 面板").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkFaint)
                 }
                 .padding(8)
                 .frame(width: 220, alignment: .leading)
@@ -682,20 +685,27 @@ struct SessionComposerFrozen: View {
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Ink.lineStrong, lineWidth: 1))
                 .padding(.leading, Metrics.gutter)
             }
+            // Single input row — matches ASCII A (no second hint stack).
             HStack(spacing: 8) {
                 HStack(spacing: 4) {
                     Image(systemName: inputMode == .agent ? "sparkle" : "chevron.right")
                         .font(.system(size: 10, weight: .semibold))
-                    Text(inputMode == .agent ? "Agent" : "Shell")
+                    Text(inputMode == .agent
+                          ? (noProvider ? "Agent" : "Agent · Codex")
+                          : "Shell")
                         .font(Face.mono(Metrics.caption, .semibold))
                 }
                 .foregroundStyle(inputMode == .agent ? Ink.accent : Ink.inkMuted)
                 .padding(.horizontal, 6).padding(.vertical, 3)
                 .background(inputMode == .agent ? Ink.accentSoft : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                Text(slash ? "/" : (inputMode == .agent ? "↩ 发给 Agent，⌘I 切回 Shell" : "↩ 运行，⌘I 切到 Agent"))
+                Text(slash ? "/" : (inputMode == .agent ? "fix the flaky test…" : "git pull"))
                     .font(Face.mono(12)).foregroundStyle(slash ? Ink.ink : Ink.inkFaint)
                 Spacer(minLength: 0)
+                Text(inputMode == .agent
+                      ? (noProvider ? "↩ pick Agent · ⌘I Shell · /" : "↩ send · ⌘I Shell · /")
+                      : "↩ run · ⌘I Agent · /")
+                    .font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
                 if inputMode == .agent {
                     Text(noProvider ? "选择 Agent" : "Codex")
                         .font(Face.sans(Metrics.caption, .medium))
@@ -703,22 +713,6 @@ struct SessionComposerFrozen: View {
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .background(Ink.sunken)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
-                }
-            }
-            HStack(spacing: 8) {
-                if inputMode == .agent {
-                    Text(noProvider ? "↩ 先选择 Agent" : "↩ 发给 Codex")
-                        .font(Face.sans(Metrics.caption))
-                        .foregroundStyle(noProvider ? Change.changed : Ink.inkFaint)
-                    Text("⇧⌘↩ 新建").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkFaint)
-                    Text("⌘I Shell").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkFaint)
-                } else {
-                    Text("↩ Shell").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkFaint)
-                    Text(noProvider ? "⌘↩ 先选择 Agent" : "⌘↩ 续接 Codex")
-                        .font(Face.sans(Metrics.caption))
-                        .foregroundStyle(noProvider ? Change.changed : Ink.inkFaint)
-                    Text("⇧⌘↩ 新建").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkFaint)
-                    Text("⌘I Agent").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkFaint)
                 }
             }
         }

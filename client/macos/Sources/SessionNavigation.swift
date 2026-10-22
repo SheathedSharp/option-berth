@@ -3,8 +3,9 @@ import BerthAgent
 import BerthTerminal
 import SwiftUI
 
-/// Compact session strip (v14 warp-session): Shell + Agent tabs share one row on the
-/// same canvas plane. Selecting a tab switches full-width focus; no permanent Agent column.
+/// Collapsed multi-session rail (v15 warp-blocks). Hidden when there is only one
+/// Shell and no Agent tabs — Warp A has no permanent Shell-1 / "+ Agent" chrome.
+/// Provider pick lives on the Agent-mode composer toolbelt / slash, not here.
 struct ShellSessionBar: View {
     let shells: [TerminalSession]
     var agents: [TerminalSession] = []
@@ -46,17 +47,6 @@ struct ShellSessionBar: View {
             .menuStyle(.borderlessButton)
             .accessibilityIdentifier("console.shellBar.add")
             .accessibilityLabel("新建 Shell 或 Agent")
-            if agents.isEmpty && streamRows.isEmpty {
-                Button(action: providerChosen ? onNewAgent : onPickProvider) {
-                    Text(providerChosen ? "+ Agent" : "+ / 选择默认 Agent")
-                        .font(Face.sans(Metrics.caption, .medium))
-                        .foregroundStyle(providerChosen ? Ink.inkMuted : Change.changed)
-                        .padding(.horizontal, 6)
-                        .frame(height: Metrics.hit)
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("console.sessionStrip.agentEmpty")
-            }
             Spacer(minLength: 0)
             Button(action: onOpenSwitcher) {
                 Image(systemName: "rectangle.on.rectangle")

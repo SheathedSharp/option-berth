@@ -54,12 +54,16 @@ struct TerminalPaneBody: View {
     var bridgePromptKeys = false
     var onPromptKey: ((NSEvent) -> Void)?
     var onSendCommandToAgent: ((CommandBlock) -> Void)?
+    /// When true, prefer Warp block stream over the old thin CommandBlockStrip chrome.
+    var warpBlocks = true
+    @State private var selectedBlockID: UUID?
     @ObservedObject private var windows = TerminalWindows.shared
     var body: some View {
         VStack(spacing: 0) {
-            if !session.commandBlocks.isEmpty {
-                CommandBlockStrip(session: session, onSendToAgent: onSendCommandToAgent)
-                Hairline()
+            if warpBlocks, session.kind == "terminal", !session.commandBlocks.isEmpty {
+                SessionBlockStream(session: session, selectedID: selectedBlockID,
+                                   onSelect: { block in selectedBlockID = block.id },
+                                   onSendToAgent: onSendCommandToAgent)
             }
             if frozen {
                 Text("$ pwd\n\(session.worktree)\n$ echo 'native session'\nnative session")
@@ -73,6 +77,7 @@ struct TerminalPaneBody: View {
                     Button("返回工作区") { windows.bringBack(session) }
                 }.font(Face.sans(11)).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                // Live PTY = active unfinished region at the bottom of the block stream.
                 TerminalSurface(session: session, focusIntent: focusIntent, dimTerminalCaret: dimTerminalCaret,
                                 bridgePromptKeys: bridgePromptKeys, onPromptKey: onPromptKey).id(session.id)
             }
@@ -84,37 +89,4 @@ func showTerminalFind(_ terminal: HostedTerminalView) {
     let item = NSMenuItem()
     item.tag = NSTextFinder.Action.showFindInterface.rawValue
     terminal.performTextFinderAction(item)
-}
-
-
-private struct CommandBlockStrip: View {
-    @ObservedObject var session: TerminalSession
-    var onSendToAgent: ((CommandBlock) -> Void)?
-    var body: some View {
-        HStack(spacing: 8) {
-            if let block = session.commandBlocks.last {
-                Image(systemName: block.isRunning ? "hourglass" : (block.exitCode == 0 ? "checkmark.circle" : "exclamationmark.circle"))
-                Text(block.command ?? "命令文本不可用").font(Face.mono(10)).lineLimit(1)
-                Spacer(minLength: 0)
-                if !block.isRunning, block.command != nil, let onSendToAgent {
-                    ConsoleToolbarAction(title: "发给 Agent", identifier: "console.commandBlock.sendToAgent",
-                                         perform: { onSendToAgent(block) })
-                        .font(Face.sans(10, .medium))
-                }
-                Text(block.isRunning ? "运行中" : (block.exitCode.map { "exit \($0)" } ?? "结果未知"))
-                    .font(Face.mono(10)).foregroundStyle(Ink.inkMuted)
-            }
-            Menu("历史 \(session.commandBlocks.count)") {
-                ForEach(session.commandBlocks.reversed()) { block in
-                    Button((block.exitCode.map { "[\($0)] " } ?? "[?] ") + String((block.command ?? "未知命令").prefix(100))) {
-                        guard let command = block.command else { return }
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(command, forType: .string)
-                    }.disabled(block.command == nil)
-                }
-                Divider()
-                Button("清空内存历史") { session.clearCommandHistory() }
-            }.help("选择历史条目只复制命令，不自动执行")
-        }.padding(.horizontal, 8).padding(.vertical, 5).foregroundStyle(Ink.inkMuted)
-    }
 }

@@ -66,34 +66,37 @@ struct WorkspaceConsole: View {
             if frozen { frozenStrip }
             if let selected {
                 VStack(spacing: 0) {
-                    ShellSessionBar(
-                        shells: shellSessions,
-                        agents: agentSessions,
-                        streamRows: structuredAgentRows,
-                        selectedID: selected.id,
-                        streamSelectedID: focusStreamOnCanvas ? (previewAgentID ?? workspace.resumeStreamID) : nil,
-                        providerChosen: workspace.providerChosen,
-                        onPickProvider: {
-                            pickingProvider = true
-                            if launcher.providers.isEmpty { launcher.refresh(workspace) }
-                        },
-                        onSelect: { session in
-                            focusStreamOnCanvas = false
-                            composerInputMode = .shell
-                            activate(session)
-                        },
-                        onSelectStream: { id in
-                            focusStreamOnCanvas = true
-                            composerInputMode = .agent
-                            selectStreamTarget(id)
-                        },
-                        onNewShell: { newShell() },
-                        onNewAgent: { composerAct(.commandShift) },
-                        onOpenSwitcher: openSwitcher
-                    )
-                    Hairline()
-                    // One continuous session surface: canvas + input share Ink.canvas.
-                    // No mid hairline / second titled panel (v13 dual-card critique).
+                    // v15 A: no permanent Shell-1 / "+ Agent" strip. Thin rail only when
+                    // multiple shells or any agent/stream tabs exist; else pure canvas.
+                    if showSessionRail {
+                        ShellSessionBar(
+                            shells: shellSessions,
+                            agents: agentSessions,
+                            streamRows: structuredAgentRows,
+                            selectedID: selected.id,
+                            streamSelectedID: focusStreamOnCanvas ? (previewAgentID ?? workspace.resumeStreamID) : nil,
+                            providerChosen: workspace.providerChosen,
+                            onPickProvider: {
+                                pickingProvider = true
+                                if launcher.providers.isEmpty { launcher.refresh(workspace) }
+                            },
+                            onSelect: { session in
+                                focusStreamOnCanvas = false
+                                composerInputMode = .shell
+                                activate(session)
+                            },
+                            onSelectStream: { id in
+                                focusStreamOnCanvas = true
+                                composerInputMode = .agent
+                                selectStreamTarget(id)
+                            },
+                            onNewShell: { newShell() },
+                            onNewAgent: { composerAct(.commandShift) },
+                            onOpenSwitcher: openSwitcher
+                        )
+                        Hairline()
+                    }
+                    // One continuous session surface: block stream + live PTY + one input.
                     VStack(spacing: 0) {
                         singleCanvas(for: selected)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -204,6 +207,11 @@ struct WorkspaceConsole: View {
             }
         }.font(Face.sans(Metrics.chrome)).padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV).background(Ink.canvas)
     }
+    /// Warp A: hide tab chrome for the common single-Shell case.
+    private var showSessionRail: Bool {
+        shellSessions.count > 1 || !agentSessions.isEmpty || !structuredAgentRows.isEmpty
+    }
+
     private var shellSessions: [TerminalSession] {
         scoped.filter { $0.kind == "terminal" }
             .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
@@ -376,90 +384,82 @@ struct WorkspaceConsole: View {
             }
         }
     }
-    private var frozenStrip: some View {
-        HStack(spacing: Metrics.inline) {
-            Text("›_ Shell 1").padding(7).background(Ink.accentSoft)
-            Spacer()
-        }.font(Face.mono(Metrics.meta)).padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV)
-    }
+    /// v15: frozen scenes no longer paint a permanent Shell-1 tab strip.
+    private var frozenStrip: some View { EmptyView() }
 
     @ViewBuilder private var frozenFixture: some View {
         switch frozenScene {
         case .streamMixed:
             VStack(spacing: 0) {
-                HStack(spacing: Metrics.inline) {
-                    Text("›_ Shell 1").font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkMuted)
-                    Text("Codex · 流").font(Face.mono(Metrics.meta)).padding(6).background(Ink.accentSoft)
-                    Spacer()
-                }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV)
-                Hairline()
-                VStack(spacing: 0) {
-                    AgentStreamMixedFrozen()
-                    SessionComposerFrozen(slash: false, noProvider: false, inputMode: .agent)
-                }
-                .background(Ink.accentSoft.opacity(0.22))
+                AgentStreamMixedFrozen()
+                SessionComposerFrozen(slash: false, noProvider: false, inputMode: .agent)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Ink.accentSoft.opacity(0.22))
         case .streamDetail:
             VStack(spacing: 0) {
-                HStack(spacing: Metrics.inline) {
-                    Text("›_ Shell 1").font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkMuted)
-                    Text("Codex · 流").font(Face.mono(Metrics.meta)).padding(6).background(Ink.accentSoft)
-                    Spacer()
-                }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV)
-                Hairline()
-                VStack(spacing: 0) {
-                    AgentStreamStatusFrozen()
-                    SessionComposerFrozen(slash: false, noProvider: false, inputMode: .agent)
-                }
-                .background(Ink.accentSoft.opacity(0.22))
+                AgentStreamStatusFrozen()
+                SessionComposerFrozen(slash: false, noProvider: false, inputMode: .agent)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Ink.accentSoft.opacity(0.22))
         case .nativeAgent:
             VStack(spacing: 0) {
-                HStack(spacing: Metrics.inline) {
-                    Text("›_ Shell 1").font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkMuted)
-                    Text("Claude Code · 1").font(Face.mono(Metrics.meta)).padding(6).background(Ink.accentSoft)
+                Text("Claude Code · 修复登录测试\n╭──────────────────────────────╮\n│ Allow running npm test?        │\n│  [Allow]  [Deny]             │\n╰──────────────────────────────╯")
+                    .font(Face.mono(Metrics.row)).foregroundStyle(Ink.ink).padding(Metrics.panelPad)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                HStack {
+                    Text("键盘在 Claude 1 的终端里 · ⌘↩ 回到输入条")
+                        .font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkMuted)
                     Spacer()
-                }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV)
-                Hairline()
-                VStack(spacing: 0) {
-                    Text("Claude Code · 修复登录测试\n╭──────────────────────────────╮\n│ Allow running npm test?        │\n│  [Allow]  [Deny]             │\n╰──────────────────────────────╯")
-                        .font(Face.mono(Metrics.row)).foregroundStyle(Ink.ink).padding(Metrics.panelPad)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    HStack {
-                        Text("键盘在 Claude 1 的终端里 · ⌘↩ 回到输入条")
-                            .font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkMuted)
-                        Spacer()
-                        Text("返回 Shell").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.accent)
-                    }
-                    .padding(.horizontal, Metrics.gutter).padding(.vertical, 8)
+                    Text("返回 Shell").font(Face.sans(Metrics.caption)).foregroundStyle(Ink.accent)
                 }
+                .padding(.horizontal, Metrics.gutter).padding(.vertical, 8)
                 .background(Ink.canvas)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Ink.canvas)
         default:
             VStack(spacing: 0) {
-                HStack(spacing: Metrics.inline) {
-                    Text("›_ Shell 1").font(Face.mono(Metrics.meta)).padding(6).background(Ink.accentSoft)
-                    Text(frozenScene == .noProvider ? "+ / 选择默认 Agent" : "+ Agent")
-                        .font(Face.sans(Metrics.caption))
-                        .foregroundStyle(frozenScene == .noProvider ? Change.changed : Ink.inkMuted)
-                    Spacer()
-                }.padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV)
-                Hairline()
-                VStack(spacing: 0) {
-                    Text("$ git status --short\n M Sources/API.swift\n$ _")
-                        .font(Face.mono(Metrics.row)).foregroundStyle(Ink.ink).padding(Metrics.panelPad)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    SessionComposerFrozen(slash: frozenScene == .slashMenu && creating,
-                                          noProvider: frozenScene == .noProvider,
-                                          inputMode: .shell)
+                // Block-stream freeze (no ScrollView — ImageRenderer collapses it).
+                VStack(alignment: .leading, spacing: 8) {
+                    frozenBlock(command: "git status",
+                                output: "On branch reunify-core\nnothing to commit, working tree clean",
+                                selected: false)
+                    frozenBlock(command: "ls", output: "README.md  src/", selected: false)
+                    Spacer(minLength: 0)
                 }
-                .background(Ink.canvas)
+                .padding(.horizontal, Metrics.gutter)
+                .padding(.top, 10)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                SessionComposerFrozen(slash: frozenScene == .slashMenu && creating,
+                                      noProvider: frozenScene == .noProvider,
+                                      inputMode: .shell)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Ink.canvas)
         }
+    }
+
+
+    private func frozenBlock(command: String, output: String, selected: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark.circle")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Ink.inkFaint)
+                Text("$ \(command)").font(Face.mono(Metrics.meta)).foregroundStyle(Ink.ink)
+                Spacer(minLength: 0)
+                Text("exit 0").font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
+            }
+            Text(output).font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkMuted)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(selected ? Ink.accentSoft : Ink.sunken.opacity(0.55))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .stroke(selected ? Ink.accent.opacity(0.55) : Ink.line, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private var agentSessions: [TerminalSession] {
@@ -573,14 +573,11 @@ struct WorkspaceConsole: View {
     }
 
     private var composerBar: some View {
-        let hints = ComposerRouter.hints(composerContext)
         return SessionComposerBar(draft: $workspace.draft, notice: composerNotice,
                            shellAttachment: shellAttachment,
                            onClearAttachment: { shellAttachment = nil },
                            statusHint: composerStatusHint,
                            inputMode: composerInputMode,
-                           routeHints: hints,
-                           routeEmphasis: commandHeld ? .command : (composerInputMode == .agent ? .command : nil),
                            providerLabel: providerLabel,
                            providerChosen: workspace.providerChosen,
                            slashCommands: slashCommands,
@@ -613,12 +610,13 @@ struct WorkspaceConsole: View {
                 pickingProvider = true
                 if launcher.providers.isEmpty { launcher.refresh(workspace) }
             }
-            composerNotice = "Agent 输入 · ⌘I 切回 Shell"
+            // Mode chip is the signal — no notice spam.
+            composerNotice = ""
         } else {
             composerInputMode = .shell
             pickingProvider = false
             focusComposer()
-            composerNotice = "Shell 输入 · ⌘I 切到 Agent"
+            composerNotice = ""
         }
     }
 
