@@ -379,10 +379,17 @@ struct SessionComposerBar: View {
         SessionBridgeField.height(for: draft, width: fieldWidth)
     }
 
+    private var menuOpen: Bool { pickingProvider || !slashCommands.isEmpty }
+
     private var inputSurface: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            // Option A (v2): center HStack — path + plain ">" + field on ONE line.
-            // Never firstTextBaseline with NSViewRepresentable; never Shell chip as ">".
+        // Composer A: path + plain ">" + field same row.
+        // Slash is a *sibling above* the caret row (not a field overlay) so it
+        // never covers typing — Cursor/Warp palette placement.
+        VStack(alignment: .leading, spacing: 4) {
+            if menuOpen {
+                menu
+            }
+
             HStack(alignment: .center, spacing: 6) {
                 if !pathPrefix.isEmpty {
                     Text(pathPrefix)
@@ -404,7 +411,7 @@ struct SessionComposerBar: View {
                             .allowsHitTesting(false)
                     }
                     SessionBridgeField(text: $draft, enabled: enabled, focusToken: focusToken,
-                                       slashMenuOpen: pickingProvider || !slashCommands.isEmpty,
+                                       slashMenuOpen: menuOpen,
                                        idealHeight: composerFieldHeight,
                                        preferAgentEnter: agentMode,
                                        onShell: onShell, onResume: onResume, onNew: onNew, onEscape: onEscape,
@@ -422,7 +429,6 @@ struct SessionComposerBar: View {
                     }
                 )
                 .layoutPriority(1)
-                .overlay(alignment: .topLeading) { menu }
                 if agentMode {
                     agentToolbelt
                 }
@@ -431,13 +437,10 @@ struct SessionComposerBar: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .frame(maxWidth: .infinity, alignment: .leading)
+            // Tonal step only — no hairline stroke (Paper Ink raised surface on canvas).
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(Ink.surface)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(Ink.line, lineWidth: 1)
-                    )
             )
 
             HStack(spacing: Metrics.inline) {
@@ -463,41 +466,38 @@ struct SessionComposerBar: View {
     }
 
     private var slashMenuWidth: CGFloat {
-        min(CGFloat(320), max(fieldWidth, 200))
+        min(CGFloat(320), max(fieldWidth + 48, 220))
     }
 
     @ViewBuilder private var menu: some View {
-        if pickingProvider || !slashCommands.isEmpty {
-            VStack(alignment: .leading, spacing: 0) {
-                if pickingProvider {
-                    ForEach(providers) { provider in
-                        providerRow(provider)
-                    }
-                } else {
-                    ForEach(Array(slashCommands.enumerated()), id: \.element.rawValue) { index, command in
-                        slashRow(command, highlighted: index == slashHighlight)
-                    }
+        VStack(alignment: .leading, spacing: 0) {
+            if pickingProvider {
+                ForEach(providers) { provider in
+                    providerRow(provider)
+                }
+            } else {
+                ForEach(Array(slashCommands.enumerated()), id: \.element.rawValue) { index, command in
+                    slashRow(command, highlighted: index == slashHighlight)
                 }
             }
-            .padding(.vertical, 4)
-            .padding(.horizontal, 4)
-            .frame(width: slashMenuWidth, alignment: .leading)
-            .frame(maxHeight: CGFloat(6 * 24 + 8), alignment: .top)
-            .background(Ink.canvas)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Ink.lineStrong, lineWidth: 1))
-            .shadow(color: .black.opacity(0.10), radius: 6, y: 2)
-            // Menu bottom sits 6pt above the field top — never covers the caret row.
-            .alignmentGuide(.top) { dim in dim[.bottom] + 6 }
-            .background(ConsoleValueMarker(identifier: pickingProvider ? "console.providerMenu" : "console.slashMenu", value: ""))
         }
+        .padding(.vertical, 3)
+        .padding(.horizontal, 3)
+        .frame(width: slashMenuWidth, alignment: .leading)
+        .frame(maxHeight: CGFloat(6 * 22 + 6), alignment: .top)
+        // Raised tonal panel on canvas — no stroke, no drop shadow (anti AI-template).
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Ink.surface)
+        )
+        .background(ConsoleValueMarker(identifier: pickingProvider ? "console.providerMenu" : "console.slashMenu", value: ""))
     }
 
     private func slashRow(_ command: SlashCommand, highlighted: Bool) -> some View {
         Button(action: { onSlash(command) }) {
             HStack(spacing: 8) {
                 Text(command.rawValue)
-                    .font(Face.mono(12, .medium))
+                    .font(Face.mono(12, highlighted ? .semibold : .medium))
                     .foregroundStyle(Ink.ink)
                     .lineLimit(1)
                 Text(command.title)
@@ -507,20 +507,13 @@ struct SessionComposerBar: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
+            .padding(.vertical, 3)
+            .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
+            // Soft selection = sunken fill only (no accent candy bar / pink blob).
             .background(
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .fill(highlighted ? Ink.sunken : Color.clear)
             )
-            .overlay(alignment: .leading) {
-                if highlighted {
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(Ink.accent)
-                        .frame(width: 2, height: 14)
-                        .padding(.leading, 2)
-                }
-            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -790,11 +783,13 @@ struct SessionComposerFrozen: View {
                     frozenSlashRow("/git", "Git 面板")
                     frozenSlashRow("/history", "搜索命令历史")
                 }
-                .padding(.vertical, 4)
-                .padding(.horizontal, 4)
+                .padding(.vertical, 3)
+                .padding(.horizontal, 3)
                 .frame(width: 280, alignment: .leading)
-                .background(Ink.canvas)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Ink.lineStrong, lineWidth: 1))
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Ink.surface)
+                )
                 .padding(.leading, Metrics.gutter)
             }
             VStack(alignment: .leading, spacing: 2) {
@@ -818,9 +813,10 @@ struct SessionComposerFrozen: View {
                 }
                 .padding(.horizontal, 8).padding(.vertical, 3)
                 .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
-                .background(Ink.surface)
-                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Ink.line, lineWidth: 1))
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Ink.surface)
+                )
                 Text(inputMode == .agent
                       ? (noProvider ? "↩ · ⌘I · /" : "↩ · ⌘↩ · ⌘I · /")
                       : "↩ · ⌘I · /")
@@ -835,12 +831,12 @@ struct SessionComposerFrozen: View {
 
     private func frozenSlashRow(_ command: String, _ title: String, highlighted: Bool = false) -> some View {
         HStack(spacing: 8) {
-            Text(command).font(Face.mono(12, .medium)).foregroundStyle(Ink.ink).lineLimit(1)
+            Text(command).font(Face.mono(12, highlighted ? .semibold : .medium)).foregroundStyle(Ink.ink).lineLimit(1)
             Text(title).font(Face.sans(Metrics.caption)).foregroundStyle(Ink.inkFaint).lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 8).padding(.vertical, 4)
-        .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
+        .padding(.horizontal, 8).padding(.vertical, 3)
+        .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .fill(highlighted ? Ink.sunken : Color.clear)
