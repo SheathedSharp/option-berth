@@ -1,4 +1,5 @@
 import SwiftUI
+import BerthAgent
 import BerthTerminal
 
 /// Warp-style block stream: completed cards, plus an active PTY card only while
@@ -9,6 +10,9 @@ struct SessionBlockStream: View {
     var selectedID: UUID?
     var onSelect: (CommandBlock) -> Void
     var onSendToAgent: ((CommandBlock) -> Void)?
+    /// Structured Agent sessions shown as status blocks in the same stream (not top tabs).
+    var agentRows: [AgentRow] = []
+    var onEnterAgent: ((UUID) -> Void)?
     var availableHeight: CGFloat
     var focusIntent: TerminalFocusIntent?
     var dimTerminalCaret = false
@@ -55,6 +59,12 @@ struct SessionBlockStream: View {
                         .id(block.id)
                     }
 
+                    // Agent status blocks share the stream with Shell cards (product shape).
+                    ForEach(agentRows) { row in
+                        SessionAgentBlockCard(row: row, onEnter: onEnterAgent.map { handler in { handler(row.id) } })
+                            .id("agent-\(row.id.uuidString)")
+                    }
+
                     if showsPendingRunningCard, let running = runningBlock {
                         SessionPendingBlockCard(running: running)
                             .id("pending-block")
@@ -99,6 +109,7 @@ struct SessionBlockStream: View {
             .onChange(of: session.commandBlocks.count) { _, _ in scrollToActive(proxy) }
             .onChange(of: runningBlock?.id) { _, _ in scrollToActive(proxy) }
             .onChange(of: alternateScreen) { _, _ in scrollToActive(proxy) }
+            .onChange(of: agentRows.count) { _, _ in scrollToActive(proxy) }
             .accessibilityIdentifier("console.blockStream")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -122,6 +133,8 @@ struct SessionBlockStream: View {
             target = "active-block"
         } else if showsPendingRunningCard {
             target = "pending-block"
+        } else if let lastAgent = agentRows.last {
+            target = "agent-\(lastAgent.id.uuidString)"
         } else {
             target = completedBlocks.last?.id
         }
@@ -292,7 +305,8 @@ struct SessionCommandBlockCard: View {
                 }
             }
             if let output = displayOutput {
-                Text(truncate(output, limit: 48))
+                // verbatim: LocalizedStringKey collapses runs of spaces / tabs — breaks ls columns.
+                Text(verbatim: truncate(output, limit: 48))
                     .font(Face.mono(Metrics.meta))
                     .foregroundStyle(Ink.inkMuted)
                     .lineSpacing(3)
@@ -337,6 +351,101 @@ struct SessionCommandBlockCard: View {
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
         if lines.count <= limit { return text }
         return lines.prefix(limit).joined(separator: "\n") + "\n…"
+    }
+}
+
+
+/// Agent turn/session as a status block in the unified stream (运行中 / 完成 / 失败).
+struct SessionAgentBlockCard: View {
+    let row: AgentRow
+    var onEnter: (() -> Void)?
+
+    var body: some View {
+        Button(action: { onEnter?() }) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: statusSymbol)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(statusColor)
+                    Text(row.title)
+                        .font(Face.sans(Metrics.meta, .semibold))
+                        .foregroundStyle(Ink.ink)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if let since = row.since {
+                        Text(SessionBlockTime.short(since))
+                            .font(Face.mono(Metrics.caption))
+                            .foregroundStyle(Ink.inkFaint)
+                    }
+                    Text(statusLabel)
+                        .font(Face.mono(Metrics.caption))
+                        .foregroundStyle(statusColor)
+                    Text("进入")
+                        .font(Face.sans(Metrics.caption, .medium))
+                        .foregroundStyle(Ink.accent)
+                }
+                if let activity = row.activity, !activity.isEmpty {
+                    Text(activity)
+                        .font(Face.mono(Metrics.caption))
+                        .foregroundStyle(Ink.inkMuted)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if row.queuedCount > 0 {
+                    Text("排队 \(row.queuedCount)")
+                        .font(Face.mono(Metrics.caption))
+                        .foregroundStyle(Ink.inkFaint)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(row.isTarget ? Ink.accentSoft : Ink.sunken.opacity(0.55))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(row.isTarget ? Ink.accent.opacity(0.45) : Ink.line, lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("console.agentBlock." + row.id.uuidString)
+        .accessibilityValue(statusLabel)
+        .accessibilityHint("打开 Agent 会话")
+    }
+
+    private var statusLabel: String {
+        switch row.status {
+        case .starting: return "启动中"
+        case .idle: return "就绪"
+        case .needsYou: return "等你"
+        case .working: return "运行中"
+        case .completed: return "完成"
+        case .failed: return "失败"
+        case .interrupted: return "已中断"
+        case .lost: return "丢失"
+        case .ended(let resumable): return resumable ? "已结束·可续" : "已结束"
+        }
+    }
+
+    private var statusSymbol: String {
+        switch row.status {
+        case .starting, .working: return "hourglass"
+        case .needsYou: return "hand.raised"
+        case .completed, .idle: return "checkmark.circle"
+        case .failed, .lost: return "xmark.circle"
+        case .interrupted: return "exclamationmark.triangle"
+        case .ended: return "stop.circle"
+        }
+    }
+
+    private var statusColor: Color {
+        switch row.status {
+        case .starting, .working: return Ink.live
+        case .needsYou: return Change.changed
+        case .failed, .lost: return Change.removed
+        case .completed, .idle, .ended, .interrupted: return Ink.inkFaint
+        }
     }
 }
 

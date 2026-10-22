@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import BerthAgent
 import UniformTypeIdentifiers
 import BerthTerminal
 
@@ -12,6 +13,8 @@ struct PaneWorkspaceView: View {
     var bridgePromptKeys = false
     var onPromptKey: ((NSEvent) -> Void)?
     var onSendCommandToAgent: ((CommandBlock) -> Void)?
+    var agentRows: [AgentRow] = []
+    var onEnterAgent: ((UUID) -> Void)?
     var compactSinglePane = false
     var frozen = false
     var frozenSessions: [TerminalSession] = []
@@ -79,7 +82,9 @@ struct PaneWorkspaceView: View {
                                  dimTerminalCaret: dimTerminalCaret && session.kind == "terminal",
                                  bridgePromptKeys: bridgePromptKeys && session.kind == "terminal",
                                  onPromptKey: onPromptKey,
-                                 onSendCommandToAgent: onSendCommandToAgent)
+                                 onSendCommandToAgent: onSendCommandToAgent,
+                                 agentRows: agentRows,
+                                 onEnterAgent: onEnterAgent)
             }.frame(minWidth: 140, minHeight: 100)
             if frozen { return AnyView(pane) }
             return AnyView(pane

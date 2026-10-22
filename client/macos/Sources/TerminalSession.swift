@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import BerthAgent
 import BerthTerminal
 
 struct TerminalSurface: NSViewRepresentable {
@@ -54,6 +55,8 @@ struct TerminalPaneBody: View {
     var bridgePromptKeys = false
     var onPromptKey: ((NSEvent) -> Void)?
     var onSendCommandToAgent: ((CommandBlock) -> Void)?
+    var agentRows: [AgentRow] = []
+    var onEnterAgent: ((UUID) -> Void)?
     /// Warp block stream: PTY is hosted inside the active block card, never a sibling pane.
     var warpBlocks = true
     @State private var selectedBlockID: UUID?
@@ -79,6 +82,8 @@ struct TerminalPaneBody: View {
                         selectedID: selectedBlockID,
                         onSelect: { block in selectedBlockID = block.id },
                         onSendToAgent: onSendCommandToAgent,
+                        agentRows: agentRows,
+                        onEnterAgent: onEnterAgent,
                         availableHeight: geo.size.height,
                         focusIntent: focusIntent,
                         dimTerminalCaret: dimTerminalCaret,

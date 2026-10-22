@@ -305,6 +305,13 @@ private struct ComposerFieldWidthKey: PreferenceKey {
     }
 }
 
+private struct ComposerBarWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 480
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
 struct SessionComposerBar: View {
     @Binding var draft: String
     var notice: String
@@ -343,6 +350,8 @@ struct SessionComposerBar: View {
 
     /// Measured field width for soft-wrap height (updated via background GeometryReader).
     @State private var fieldWidth: CGFloat = 320
+    /// Full composer content width — slash menu spans this so labels are not clipped.
+    @State private var barWidth: CGFloat = 480
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -460,13 +469,22 @@ struct SessionComposerBar: View {
             }
             .padding(.horizontal, 2)
         }
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(key: ComposerBarWidthKey.self, value: geo.size.width)
+            }
+        )
         .onPreferenceChange(ComposerFieldWidthKey.self) { width in
             if width > CGFloat(1), abs(width - fieldWidth) > CGFloat(0.5) { fieldWidth = width }
         }
+        .onPreferenceChange(ComposerBarWidthKey.self) { width in
+            if width > CGFloat(1), abs(width - barWidth) > CGFloat(0.5) { barWidth = width }
+        }
     }
 
+    /// Match the input row — never cap at 320 (that left a blank canvas slab on the right).
     private var slashMenuWidth: CGFloat {
-        min(CGFloat(320), max(fieldWidth + 48, 220))
+        max(barWidth, max(fieldWidth + 96, 360))
     }
 
     @ViewBuilder private var menu: some View {
@@ -484,31 +502,40 @@ struct SessionComposerBar: View {
         .padding(.vertical, 3)
         .padding(.horizontal, 3)
         .frame(width: slashMenuWidth, alignment: .leading)
-        .frame(maxHeight: CGFloat(6 * 22 + 6), alignment: .top)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxHeight: CGFloat(6 * 28 + 8), alignment: .top)
         // Raised tonal panel on canvas — no stroke, no drop shadow (anti AI-template).
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(Ink.surface)
         )
+        .clipped()
+        .zIndex(2)
         .background(ConsoleValueMarker(identifier: pickingProvider ? "console.providerMenu" : "console.slashMenu", value: ""))
     }
 
     private func slashRow(_ command: SlashCommand, highlighted: Bool) -> some View {
         Button(action: { onSlash(command) }) {
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 Text(command.rawValue)
                     .font(Face.mono(12, highlighted ? .semibold : .medium))
                     .foregroundStyle(Ink.ink)
                     .lineLimit(1)
+                    .layoutPriority(1)
                 Text(command.title)
+                    .font(Face.sans(Metrics.caption))
+                    .foregroundStyle(Ink.inkMuted)
+                    .lineLimit(1)
+                    .layoutPriority(1)
+                Text(command.detail)
                     .font(Face.sans(Metrics.caption))
                     .foregroundStyle(Ink.inkFaint)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
             // Soft selection = sunken fill only (no accent candy bar / pink blob).
             .background(
                 RoundedRectangle(cornerRadius: 4, style: .continuous)

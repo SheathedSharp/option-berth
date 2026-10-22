@@ -75,7 +75,8 @@ struct WorkspaceConsole: View {
                         ShellSessionBar(
                             shells: shellSessions,
                             agents: agentSessions,
-                            streamRows: structuredAgentRows,
+                            // Structured streams are status blocks in the scroll, not peer tabs.
+                            streamRows: [],
                             selectedID: selected.id,
                             streamSelectedID: focusStreamOnCanvas ? (previewAgentID ?? workspace.resumeStreamID) : nil,
                             providerChosen: workspace.providerChosen,
@@ -225,9 +226,10 @@ struct WorkspaceConsole: View {
         .padding(.vertical, Metrics.tabPadV)
         .background(Ink.canvas)
     }
-    /// Warp A: hide tab chrome for the common single-Shell case.
+    /// Thin rail only for multiple Shells or native Agent PTYs.
+    /// Structured Agent streams appear as status blocks in the unified stream (not top tabs).
     private var showSessionRail: Bool {
-        shellSessions.count > 1 || !agentSessions.isEmpty || !structuredAgentRows.isEmpty
+        shellSessions.count > 1 || !agentSessions.isEmpty
     }
 
     private var shellSessions: [TerminalSession] {
@@ -372,6 +374,8 @@ struct WorkspaceConsole: View {
                           bridgePromptKeys: promptComposer,
                           onPromptKey: routeTerminalPromptKey,
                           onSendCommandToAgent: attachShellCommandBlock,
+                          agentRows: structuredAgentRows,
+                          onEnterAgent: { selectStreamTarget($0) },
                           compactSinglePane: true)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .onChange(of: session.activity.alternateScreen) { _, alt in
@@ -862,8 +866,11 @@ struct WorkspaceConsole: View {
                 do {
                     try streamController.sendTurn(id: id, text: text)
                     workspace.resumeStreamID = id
+                    previewAgentID = id
+                    // Stay on unified block stream — Agent card shows 运行中; tap 进入 for detail.
+                    focusStreamOnCanvas = false
                     pickingProvider = false
-                    composerNotice = "已发送到 \(session.title)"
+                    composerNotice = "已发送 · 流里可进入 \(session.title)"
                 } catch {
                     composerNotice = error.localizedDescription
                 }
@@ -1106,8 +1113,9 @@ struct WorkspaceConsole: View {
                         firstTurn: trimmed.isEmpty ? nil : payload)
                     workspace.resumeStreamID = session.id
                     previewAgentID = session.id
+                    focusStreamOnCanvas = false
                     if !trimmed.isEmpty { workspace.draft = "" }
-                    composerNotice = "已新建 \(session.title)。⌘↩ 续接这一结构化会话"
+                    composerNotice = "已新建 \(session.title) · 块流里可进入"
                 } catch {
                     composerNotice = error.localizedDescription
                 }
@@ -1277,9 +1285,11 @@ struct WorkspaceConsole: View {
         do {
             try streamController.sendTurn(id: id, text: text)
             workspace.resumeStreamID = id
+            previewAgentID = id
+            focusStreamOnCanvas = false
             workspace.draft = ""
             pickingProvider = false
-            composerNotice = "已发送到 \(session?.title ?? "Agent")"
+            composerNotice = "已发送 · 流里可进入 \(session?.title ?? "Agent")"
         } catch {
             composerNotice = error.localizedDescription
         }

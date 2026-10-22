@@ -15,6 +15,21 @@ enum TerminalChecks {
         while !condition(), Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
         return condition()
     }
+
+    static func shellCommandCaptureChecks() throws {
+        // Tabs expand to column stops (ls / columnar TTY output).
+        try check(ShellCommandCapture.expandTabs("a\tb") == "a       b", "tab expand width 8")
+        try check(ShellCommandCapture.expandTabs("1234567\tx") == "1234567 x", "tab near stop")
+        // NUL cells become spaces so columnar gaps survive strip.
+        let withNul = "AGENTS.md\u{0}\u{0}core"
+        let cleaned = ShellCommandCapture.finalizeAccumulated(withNul)
+        try check(cleaned.contains("AGENTS.md  core") || cleaned.contains("AGENTS.md core"),
+                  "NUL gap should become spaces, got: \(cleaned)")
+        // Multiple spaces must not be collapsed by finalize itself.
+        let spaced = ShellCommandCapture.finalizeAccumulated("AGENTS.md   core   frontend")
+        try check(spaced == "AGENTS.md   core   frontend", "preserve interior spaces: \(spaced)")
+        print("PASS: ShellCommandCapture tab/NUL/space layout")
+    }
     static func main() {
         _ = NSApplication.shared
         var owned: [TerminalSession] = []
@@ -26,6 +41,7 @@ enum TerminalChecks {
         }
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            try shellCommandCaptureChecks()
             try mixedPaneChecks(root: root)
             try workspaceChecks(root: root)
             try nativeConsoleChecks(root: root)

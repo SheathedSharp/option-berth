@@ -11,6 +11,8 @@ public enum ShellCommandCapture {
     }
 
     /// Reads terminal buffer rows from absolute `startRow` through the current cursor row.
+    /// Empty cells (code 0) become spaces so cursor-addressed columnar layouts (ls -C)
+    /// keep their column gaps after control stripping.
     public static func capture(terminal: Terminal, startRow: Int, maxLines: Int = maxLines) -> String {
         let endRow = absoluteCursorRow(terminal: terminal)
         let lo = min(startRow, endRow)
@@ -18,14 +20,48 @@ public enum ShellCommandCapture {
         var lines: [String] = []
         if lo <= hi {
             for row in lo...hi {
-                let text = terminal.getScrollInvariantLine(row: row)?.translateToString(trimRight: true) ?? ""
-                lines.append(text)
+                lines.append(lineText(terminal.getScrollInvariantLine(row: row)))
             }
         }
         // Drop leading/trailing empties here; keep interior blanks for layout.
         while lines.first?.isEmpty == true { lines.removeFirst() }
         while lines.last?.isEmpty == true { lines.removeLast() }
         return finalizeAccumulated(lines.joined(separator: "\n"), maxLines: maxLines)
+    }
+
+    /// Buffer line → plain string with NUL cells as spaces (preserves column gaps).
+    public static func lineText(_ line: BufferLine?) -> String {
+        guard let line else { return "" }
+        return line.translateToString(trimRight: true) { cell in
+            let ch = cell.getCharacter()
+            // Empty cells decode as NUL; keep a space so ls columns stay separated.
+            return ch == "\u{0}" ? " " : ch
+        }
+    }
+
+    /// Expand tabs to spaces at `tabWidth` stops so SwiftUI Text can show columnar layout.
+    public static func expandTabs(_ text: String, tabWidth: Int = 8) -> String {
+        guard tabWidth > 0, text.contains("\t") else { return text }
+        var out = String()
+        out.reserveCapacity(text.count + 8)
+        var column = 0
+        for ch in text {
+            if ch == "\n" {
+                out.append(ch)
+                column = 0
+                continue
+            }
+            if ch == "\t" {
+                let spaces = tabWidth - (column % tabWidth)
+                out.append(String(repeating: " ", count: spaces))
+                column += spaces
+                continue
+            }
+            out.append(ch)
+            // Treat non-ASCII as width 1 for block cards; good enough for ls paths.
+            column += 1
+        }
+        return out
     }
 
     /// Strip OSC (ESC ]), CSI (ESC [), and other ESC sequences so block text is plain.
@@ -100,9 +136,12 @@ public enum ShellCommandCapture {
                 }
             }
             // Drop other C0 controls except tab / newline / CR.
+            // NUL (empty buffer cell) → space so columnar gaps survive.
             if let ascii = ch.unicodeScalars.first?.value, ascii < 0x20 {
                 if ch == "\t" || ch == "\n" || ch == "\r" {
                     out.append(ch)
+                } else if ascii == 0 {
+                    out.append(" ")
                 }
                 i += 1
                 continue
@@ -186,10 +225,12 @@ public enum ShellCommandCapture {
 
     public static func finalizeAccumulated(_ raw: String, maxLines: Int = maxLines) -> String {
         var cleaned = stripTrailingPrompt(
-            stripTerminalControls(raw)
-                .replacingOccurrences(of: "\r\n", with: "\n")
-                .replacingOccurrences(of: "\r", with: "\n")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            expandTabs(
+                stripTerminalControls(raw)
+                    .replacingOccurrences(of: "\r\n", with: "\n")
+                    .replacingOccurrences(of: "\r", with: "\n")
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         )
         // Collapse runs of blank lines left by stripped clear/CSI.
         while cleaned.contains("\n\n\n") {
