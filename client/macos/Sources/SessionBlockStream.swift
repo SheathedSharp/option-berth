@@ -6,14 +6,14 @@ import BerthTerminal
 /// a command is running or an alternate-screen TUI is up. Idle = completed
 /// blocks (or empty) + bottom composer — no 「提示符」 live card.
 ///
-/// Shell command cards and Agent session cards share one chronological scroll
-/// with the same card chrome (header + body), distinguished only by tag.
+/// Shell command cards and Agent turn cards share one chronological scroll
+/// with the same card chrome: status icon · prompt · kind tag · time (± exit).
 struct SessionBlockStream: View {
     @ObservedObject var session: TerminalSession
     var selectedID: UUID?
     var onSelect: (CommandBlock) -> Void
     var onSendToAgent: ((CommandBlock) -> Void)?
-    /// Structured Agent sessions shown as peer blocks in the same stream (not top tabs).
+    /// Agent turn / queued cards shown as peers in the same stream (not top tabs).
     var agentRows: [AgentRow] = []
     var onEnterAgent: ((UUID) -> Void)?
     var availableHeight: CGFloat
@@ -34,7 +34,7 @@ struct SessionBlockStream: View {
         session.activity.alternateScreen
     }
 
-    /// Peer cards (completed shell + agent sessions) sorted by start time so they
+    /// Peer cards (completed shell + agent turns) sorted by start time so they
     /// interleave instead of dumping all agents under all shells.
     private var peerItems: [SessionStreamPeer] {
         let shells = completedBlocks.map { SessionStreamPeer.shell($0) }
@@ -69,14 +69,13 @@ struct SessionBlockStream: View {
                             SessionCommandBlockCard(
                                 block: block,
                                 selected: selectedID == block.id,
-                                onSelect: { onSelect(block) },
-                                onSendToAgent: onSendToAgent.map { handler in { handler(block) } }
+                                onSelect: { onSelect(block) }
                             )
                             .id(block.id)
                         case .agent(let row):
                             SessionAgentBlockCard(
                                 row: row,
-                                onEnter: onEnterAgent.map { handler in { handler(row.id) } }
+                                onEnter: onEnterAgent.map { handler in { handler(row.sessionID) } }
                             )
                             .id("agent-\(row.id.uuidString)")
                         }
@@ -195,15 +194,65 @@ private enum SessionStreamPeer: Identifiable {
 }
 
 
+/// Shared status icon language for Shell + Agent blocks:
+/// 运行中 / 排队中 / 已完成 / 有异常.
+enum SessionBlockStatusChrome {
+    enum Kind {
+        case running
+        case queued
+        case completed
+        case abnormal
+    }
+
+    static func kind(for block: CommandBlock) -> Kind {
+        if block.isRunning { return .running }
+        if block.interrupted { return .abnormal }
+        if let code = block.exitCode { return code == 0 ? .completed : .abnormal }
+        return .completed
+    }
+
+    static func kind(for status: AgentDisplayStatus) -> Kind {
+        switch status {
+        case .starting, .working: return .running
+        case .queued: return .queued
+        case .completed, .idle, .ended: return .completed
+        case .failed, .interrupted, .lost, .needsYou: return .abnormal
+        }
+    }
+
+    static func symbol(_ kind: Kind) -> String {
+        switch kind {
+        case .running: return "hourglass"
+        case .queued: return "clock"
+        case .completed: return "checkmark.circle"
+        case .abnormal: return "exclamationmark.triangle"
+        }
+    }
+
+    static func color(_ kind: Kind) -> Color {
+        switch kind {
+        case .running: return Ink.live
+        case .queued: return Ink.inkMuted
+        case .completed: return Ink.inkFaint
+        case .abnormal: return Change.changed
+        }
+    }
+
+    /// Agent prompt prefix — distinct from Shell `$`.
+    static let agentPromptPrefix = "›"
+}
+
 /// Running command without mounting the live PTY (avoids post-submit flash).
 struct SessionPendingBlockCard: View {
     let running: CommandBlock
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "hourglass")
+            let kind = SessionBlockStatusChrome.Kind.running
+            Image(systemName: SessionBlockStatusChrome.symbol(kind))
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Ink.live)
+                .foregroundStyle(SessionBlockStatusChrome.color(kind))
+                .accessibilityLabel("运行中")
             Text("$ \(running.command ?? "…")")
                 .font(Face.mono(Metrics.meta))
                 .foregroundStyle(Ink.ink)
@@ -213,9 +262,6 @@ struct SessionPendingBlockCard: View {
             Text(SessionBlockTime.short(running.startedAt))
                 .font(Face.mono(Metrics.caption))
                 .foregroundStyle(Ink.inkFaint)
-            Text("运行中")
-                .font(Face.mono(Metrics.caption))
-                .foregroundStyle(Ink.live)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -280,15 +326,12 @@ struct SessionActiveBlockCard: View {
                     .font(Face.mono(Metrics.caption))
                     .foregroundStyle(Ink.inkFaint)
             }
-            Text(headerStatus)
-                .font(Face.mono(Metrics.caption))
-                .foregroundStyle(Ink.live)
         }
     }
 
     private var headerSymbol: String {
         if alternateScreen { return "rectangle.bottomhalf.inset.filled" }
-        if running != nil { return "hourglass" }
+        if running != nil { return SessionBlockStatusChrome.symbol(.running) }
         return "terminal"
     }
 
@@ -299,19 +342,12 @@ struct SessionActiveBlockCard: View {
         if alternateScreen { return "交互界面" }
         return "Shell"
     }
-
-    private var headerStatus: String {
-        if alternateScreen { return "TUI" }
-        if running != nil { return "运行中" }
-        return "live"
-    }
 }
 
 struct SessionCommandBlockCard: View {
     let block: CommandBlock
     var selected: Bool
     var onSelect: () -> Void
-    var onSendToAgent: (() -> Void)?
 
     private var displayOutput: String? {
         guard let raw = block.capturedOutput else { return nil }
@@ -322,9 +358,11 @@ struct SessionCommandBlockCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Image(systemName: statusSymbol)
+                let kind = SessionBlockStatusChrome.kind(for: block)
+                Image(systemName: SessionBlockStatusChrome.symbol(kind))
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(statusColor)
+                    .foregroundStyle(SessionBlockStatusChrome.color(kind))
+                    .accessibilityLabel(statusAccessibilityLabel(kind))
                 Text("$ \(block.command ?? "命令文本不可用")")
                     .font(Face.mono(Metrics.meta))
                     .foregroundStyle(Ink.ink)
@@ -343,15 +381,6 @@ struct SessionCommandBlockCard: View {
                     Text("中断")
                         .font(Face.mono(Metrics.caption))
                         .foregroundStyle(Change.changed)
-                }
-                if let onSendToAgent, block.command != nil {
-                    Button(action: onSendToAgent) {
-                        Text("发给 Agent")
-                            .font(Face.sans(Metrics.caption, .medium))
-                            .foregroundStyle(Ink.accent)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("console.commandBlock.sendToAgent")
                 }
             }
             if let output = displayOutput {
@@ -383,18 +412,13 @@ struct SessionCommandBlockCard: View {
         .accessibilityAddTraits(.isButton)
     }
 
-    private var statusSymbol: String {
-        if block.interrupted { return "exclamationmark.triangle" }
-        if block.exitCode == 0 { return "checkmark.circle" }
-        if block.exitCode != nil { return "xmark.circle" }
-        return "circle"
-    }
-
-    private var statusColor: Color {
-        if block.interrupted { return Change.changed }
-        if block.exitCode == 0 { return Ink.inkFaint }
-        if block.exitCode != nil { return Change.changed }
-        return Ink.inkMuted
+    private func statusAccessibilityLabel(_ kind: SessionBlockStatusChrome.Kind) -> String {
+        switch kind {
+        case .running: return "运行中"
+        case .queued: return "排队中"
+        case .completed: return "已完成"
+        case .abnormal: return "有异常"
+        }
     }
 
     private func truncate(_ text: String, limit: Int) -> String {
@@ -405,7 +429,7 @@ struct SessionCommandBlockCard: View {
 }
 
 
-/// Agent session as a peer of the shell card: status + user prompt + tag + result body.
+/// Agent turn as a peer of the shell card: same chrome, `›` prompt prefix.
 struct SessionAgentBlockCard: View {
     let row: AgentRow
     var onEnter: (() -> Void)?
@@ -413,7 +437,11 @@ struct SessionAgentBlockCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Tag(text: statusLabel, tone: statusTone)
+                let kind = SessionBlockStatusChrome.kind(for: row.status)
+                Image(systemName: SessionBlockStatusChrome.symbol(kind))
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(SessionBlockStatusChrome.color(kind))
+                    .accessibilityLabel(statusAccessibilityLabel(kind))
                 Text(headerPrompt)
                     .font(Face.mono(Metrics.meta))
                     .foregroundStyle(Ink.ink)
@@ -426,19 +454,10 @@ struct SessionAgentBlockCard: View {
                         .foregroundStyle(Ink.inkFaint)
                         .accessibilityLabel("发送于 \(SessionBlockTime.short(since))")
                 }
-                if row.queuedCount > 0 {
-                    Text("排队 \(row.queuedCount)")
+                if let code = row.exitCode {
+                    Text("exit \(code)")
                         .font(Face.mono(Metrics.caption))
-                        .foregroundStyle(Ink.inkFaint)
-                }
-                if onEnter != nil {
-                    Button(action: { onEnter?() }) {
-                        Text("进入")
-                            .font(Face.sans(Metrics.caption, .medium))
-                            .foregroundStyle(Ink.accent)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("console.agentBlock.enter." + row.id.uuidString)
+                        .foregroundStyle(code == 0 ? Ink.inkFaint : Change.changed)
                 }
             }
             if let result = displayResult {
@@ -466,17 +485,18 @@ struct SessionAgentBlockCard: View {
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onTapGesture { onEnter?() }
         .accessibilityIdentifier("console.agentBlock." + row.id.uuidString)
-        .accessibilityValue(statusLabel)
+        .accessibilityValue(statusAccessibilityLabel(SessionBlockStatusChrome.kind(for: row.status)))
         .accessibilityHint("打开 Agent 会话")
         .accessibilityAddTraits(.isButton)
     }
 
     private var headerPrompt: String {
+        let prefix = SessionBlockStatusChrome.agentPromptPrefix
         if let prompt = row.userPrompt, !prompt.isEmpty {
-            return prompt
+            return "\(prefix) \(prompt)"
         }
         // No turn yet — fall back to session title so the card still reads as a peer.
-        return row.title
+        return "\(prefix) \(row.title)"
     }
 
     private var displayResult: String? {
@@ -489,26 +509,12 @@ struct SessionAgentBlockCard: View {
         return nil
     }
 
-    private var statusLabel: String {
-        switch row.status {
-        case .starting: return "启动中"
-        case .idle: return "就绪"
-        case .needsYou: return "等你"
-        case .working: return "运行中"
-        case .completed: return "完成"
-        case .failed: return "失败"
-        case .interrupted: return "已中断"
-        case .lost: return "丢失"
-        case .ended(let resumable): return resumable ? "已结束·可续" : "已结束"
-        }
-    }
-
-    private var statusTone: Tag.Tone {
-        switch row.status {
-        case .starting, .working: return .live
-        case .needsYou: return .warn
-        case .failed, .lost: return .warn
-        case .completed, .idle, .ended, .interrupted: return .quiet
+    private func statusAccessibilityLabel(_ kind: SessionBlockStatusChrome.Kind) -> String {
+        switch kind {
+        case .running: return "运行中"
+        case .queued: return "排队中"
+        case .completed: return "已完成"
+        case .abnormal: return "有异常"
         }
     }
 

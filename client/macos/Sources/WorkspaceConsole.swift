@@ -381,7 +381,7 @@ struct WorkspaceConsole: View {
                           bridgePromptKeys: promptComposer,
                           onPromptKey: routeTerminalPromptKey,
                           onSendCommandToAgent: attachShellCommandBlock,
-                          agentRows: structuredAgentRows,
+                          agentRows: agentStreamBlocks,
                           onEnterAgent: { id in enterAgentBlock(id) },
                           compactSinglePane: true)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -570,6 +570,7 @@ struct WorkspaceConsole: View {
         return session.snapshot.requests.first
     }
 
+    /// Session-level rows for Agent status column / chips (one per session).
     private var structuredAgentRows: [AgentRow] {
         let now = Date()
         let streamRows = streamController.sessions.map { session in
@@ -578,14 +579,30 @@ struct WorkspaceConsole: View {
                                         isTarget: session.id == workspace.resumeStreamID,
                                         queuedCount: streamController.queuedCount(for: session.id), now: now)
         }
-        // Native Agent PTYs (OpenCode/DeepSeek when stream unavailable) must still
-        // appear as peer agent-session cards — toast alone is not enough.
-        let streamIDs = Set(streamRows.map(\.id))
+        let streamIDs = Set(streamRows.map(\.sessionID))
         let nativeRows = agentSessions.compactMap { session -> AgentRow? in
             guard !streamIDs.contains(session.id) else { return nil }
             return nativeAgentBlockRow(session)
         }
         return streamRows + nativeRows
+    }
+
+    /// Block-stream peers: one card per Agent turn (and queued prompts), plus native peers.
+    private var agentStreamBlocks: [AgentRow] {
+        let now = Date()
+        let streamBlocks = streamController.sessions.flatMap { session in
+            AgentRowProjector.streamTurnBlocks(
+                id: session.id, provider: session.provider, title: session.title,
+                snapshot: session.snapshot, unread: streamController.isUnread(session.id),
+                isTarget: session.id == workspace.resumeStreamID,
+                queued: streamController.queuedMessages(for: session.id), now: now)
+        }
+        let streamIDs = Set(streamController.sessions.map(\.id))
+        let nativeRows = agentSessions.compactMap { session -> AgentRow? in
+            guard !streamIDs.contains(session.id) else { return nil }
+            return nativeAgentBlockRow(session)
+        }
+        return streamBlocks + nativeRows
     }
 
     private func nativeAgentBlockRow(_ session: TerminalSession) -> AgentRow {

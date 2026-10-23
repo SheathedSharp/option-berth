@@ -54,6 +54,8 @@ public enum AgentDisplayDeriver {
             return nil
         case .idle:
             return "等第一条消息"
+        case .queued:
+            return "排队中"
         case .needsYou:
             if let request = requests.first {
                 if let command = request.command { return requestSummary(command) }

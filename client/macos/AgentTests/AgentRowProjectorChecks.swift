@@ -20,6 +20,8 @@ extension AgentChecks {
                              outcome: .completed,
                              items: [.message(id: "m1", text: "hello from agent\nsecond line")],
                              endedAt: Date(timeIntervalSince1970: 1_700_000_030))
+        let turn2 = AgentTurn(id: "t2", input: "second", sentAt: Date(timeIntervalSince1970: 1_700_000_040),
+                              outcome: .running, items: [])
         let snapshot = AgentStreamSnapshot(phase: .ready, turns: [turn], requests: [])
         let row = AgentRowProjector.streamRow(id: id, provider: "pi", title: "Pi 1 · 流",
                                               snapshot: snapshot, unread: false, isTarget: true,
@@ -27,9 +29,21 @@ extension AgentChecks {
         try check(row.userPrompt == "hi", "stream row carries user prompt")
         try check(row.resultText?.contains("hello from agent") == true, "stream row carries result text")
         try check(row.status == .completed, "completed turn status")
+        try check(row.sessionID == id, "stream row sessionID matches session")
 
         let preview = AgentDisplayDeriver.resultPreview(turn: turn, activity: "ignored", requests: [])
         try check(preview?.hasPrefix("hello from agent") == true, "resultPreview prefers message body")
+
+        let multi = AgentStreamSnapshot(phase: .ready, turns: [turn, turn2], requests: [])
+        let blocks = AgentRowProjector.streamTurnBlocks(
+            id: id, provider: "pi", title: "Pi 1 · 流", snapshot: multi, unread: false, isTarget: true,
+            queued: ["queued hello"], now: Date(timeIntervalSince1970: 1_700_000_080))
+        try check(blocks.count == 3, "one card per turn + queued")
+        try check(blocks[0].userPrompt == "hi" && blocks[0].status == .completed, "first turn completed")
+        try check(blocks[1].userPrompt == "second" && blocks[1].status == .working, "second turn running")
+        try check(blocks[2].status == .queued && blocks[2].userPrompt == "queued hello", "queued card")
+        try check(Set(blocks.map(\.id)).count == 3, "turn cards have unique ids")
+        try check(blocks.allSatisfy { $0.sessionID == id }, "turn cards share sessionID")
 
         let terminal = AgentRowProjector.terminalRow(
             id: id, provider: "opencode", title: "OpenCode 3", status: .working,
@@ -47,4 +61,3 @@ extension AgentChecks {
                   "exited native status is ended")
     }
 }
-
