@@ -30,5 +30,21 @@ extension AgentChecks {
 
         let preview = AgentDisplayDeriver.resultPreview(turn: turn, activity: "ignored", requests: [])
         try check(preview?.hasPrefix("hello from agent") == true, "resultPreview prefers message body")
+
+        let terminal = AgentRowProjector.terminalRow(
+            id: id, provider: "opencode", title: "OpenCode 3", status: .working,
+            activity: "终端", unread: false, isTarget: true,
+            since: Date(timeIntervalSince1970: 1_700_000_100),
+            userPrompt: "hi", resultText: "thinking…")
+        try check(terminal.userPrompt == "hi", "terminal row carries user prompt")
+        try check(terminal.resultText == "thinking…", "terminal row carries result text")
+        try check(terminal.since != nil, "terminal row carries since")
+        try check(AgentRowProjector.terminalStatus(isActive: true, needsAttention: false,
+                                                   isTaskAgent: false, taskRunning: false) == .working,
+                  "native interactive status is working")
+        try check(AgentRowProjector.terminalStatus(isActive: false, needsAttention: false,
+                                                   isTaskAgent: false, taskRunning: false) == .ended(resumable: false),
+                  "exited native status is ended")
     }
 }
+

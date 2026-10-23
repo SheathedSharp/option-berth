@@ -15,6 +15,12 @@ enum FrozenConsoleScene: Equatable {
     case streamMixed
 }
 
+/// Metadata so a native Agent PTY can render as an isomorphic agent-session card.
+private struct NativeAgentCardMeta: Equatable {
+    var prompt: String
+    var since: Date
+}
+
 struct WorkspaceConsole: View {
     let root: String
     var frozen = false
@@ -48,6 +54,8 @@ struct WorkspaceConsole: View {
     @State private var pendingChord: SessionComposerModel.Chord?
     @State private var shellAttachment: ComposerShellAttachment?
     @State private var shellTabReadGeneration: UInt = 0
+    /// First-turn prompt + start time for native Agent PTY cards in the block stream.
+    @State private var nativeAgentCardMeta: [UUID: NativeAgentCardMeta] = [:]
     @Environment(\.clientReduceMotion) private var reduced
     init(root: String, frozen: Bool = false, initialAgent: Bool = false, frozenScene: FrozenConsoleScene = .slashMenu,
          openServicesPanel: @escaping () -> Void = {}, openGitPanel: @escaping () -> Void = {}) {
@@ -374,7 +382,7 @@ struct WorkspaceConsole: View {
                           onPromptKey: routeTerminalPromptKey,
                           onSendCommandToAgent: attachShellCommandBlock,
                           agentRows: structuredAgentRows,
-                          onEnterAgent: { selectStreamTarget($0) },
+                          onEnterAgent: { id in enterAgentBlock(id) },
                           compactSinglePane: true)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .onChange(of: session.activity.alternateScreen) { _, alt in
@@ -564,12 +572,45 @@ struct WorkspaceConsole: View {
 
     private var structuredAgentRows: [AgentRow] {
         let now = Date()
-        return streamController.sessions.map { session in
+        let streamRows = streamController.sessions.map { session in
             AgentRowProjector.streamRow(id: session.id, provider: session.provider, title: session.title,
                                         snapshot: session.snapshot, unread: streamController.isUnread(session.id),
                                         isTarget: session.id == workspace.resumeStreamID,
                                         queuedCount: streamController.queuedCount(for: session.id), now: now)
         }
+        // Native Agent PTYs (OpenCode/DeepSeek when stream unavailable) must still
+        // appear as peer agent-session cards — toast alone is not enough.
+        let streamIDs = Set(streamRows.map(\.id))
+        let nativeRows = agentSessions.compactMap { session -> AgentRow? in
+            guard !streamIDs.contains(session.id) else { return nil }
+            return nativeAgentBlockRow(session)
+        }
+        return streamRows + nativeRows
+    }
+
+    private func nativeAgentBlockRow(_ session: TerminalSession) -> AgentRow {
+        let meta = nativeAgentCardMeta[session.id]
+        let provider = session.kind.split(separator: ":").dropFirst().first.map(String.init) ?? "agent"
+        let taskRunning = session.isTaskAgent && session.commandBlocks.last?.isRunning == true
+        let status = AgentRowProjector.terminalStatus(
+            isActive: session.isActive, needsAttention: session.needsAttention,
+            isTaskAgent: session.isTaskAgent, taskRunning: taskRunning)
+        let activity = ComposerConsoleBridge.agentStatusLabel(session)
+        let resultText: String? = {
+            let tail = session.activity.outputTail.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !tail.isEmpty {
+                return AgentActivityInference.previewLines(tail, count: 16).joined(separator: "\n")
+            }
+            return activity
+        }()
+        let prompt = meta?.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        return AgentRowProjector.terminalRow(
+            id: session.id, provider: provider, title: session.title, status: status,
+            activity: activity, unread: session.needsAttention,
+            isTarget: session.id == workspace.resumeAgentID,
+            since: meta?.since ?? session.activity.lastOutputAt,
+            userPrompt: (prompt?.isEmpty == false) ? prompt : nil,
+            resultText: resultText)
     }
     private var providerLabel: String {
         launcher.providers.first { $0.id == workspace.providerID }?.name ?? SessionComposerModel.providerName(workspace.providerID)
@@ -1117,7 +1158,12 @@ struct WorkspaceConsole: View {
             launcher.launch(root: root, workspace: workspace, prompt: !trimmed.isEmpty) { session in
                 workspace.resumeAgentID = session.id
                 previewAgentID = session.id
-                composerNotice = "已新建 \(session.title)。⌘↩ 续接这一会话"
+                workspace.resumeStreamID = nil
+                focusStreamOnCanvas = false
+                // Stay on Shell canvas — project an agent-session card into the block stream.
+                nativeAgentCardMeta[session.id] = NativeAgentCardMeta(
+                    prompt: trimmed, since: Date())
+                composerNotice = "已新建 \(session.title) · 块流里可见"
             }
         }
     }
@@ -1285,6 +1331,16 @@ struct WorkspaceConsole: View {
             composerNotice = "已发送 · 块流里可见 \(session?.title ?? "Agent")"
         } catch {
             composerNotice = error.localizedDescription
+        }
+    }
+
+    private func enterAgentBlock(_ id: UUID) {
+        if streamController.session(id) != nil {
+            selectStreamTarget(id)
+            return
+        }
+        if let session = scoped.first(where: { $0.id == id && $0.kind.hasPrefix("agent:") }) {
+            enterAgent(session)
         }
     }
 

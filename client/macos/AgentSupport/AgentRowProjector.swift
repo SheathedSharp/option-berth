@@ -19,10 +19,22 @@ public enum AgentRowProjector {
     }
 
     public static func terminalRow(id: UUID, provider: String, title: String, status: AgentDisplayStatus,
-                                   activity: String?, unread: Bool, isTarget: Bool) -> AgentRow {
+                                   activity: String?, unread: Bool, isTarget: Bool,
+                                   since: Date? = nil, userPrompt: String? = nil,
+                                   resultText: String? = nil) -> AgentRow {
         AgentRow(id: id, provider: provider, transport: .terminal, title: title, status: status,
-                 activity: activity, since: nil, unread: unread, isTarget: isTarget, queuedCount: 0,
-                 userPrompt: nil, resultText: activity)
+                 activity: activity, since: since, unread: unread, isTarget: isTarget, queuedCount: 0,
+                 userPrompt: userPrompt,
+                 resultText: resultText ?? activity)
+    }
+
+    /// Status for a native Agent PTY peer card in the unified block stream.
+    public static func terminalStatus(isActive: Bool, needsAttention: Bool, isTaskAgent: Bool,
+                                      taskRunning: Bool) -> AgentDisplayStatus {
+        if !isActive { return .ended(resumable: false) }
+        if needsAttention { return .needsYou }
+        if isTaskAgent { return taskRunning ? .working : .idle }
+        return .working
     }
 
     public static func aggregateCounts(_ rows: [AgentRow]) -> (needsYou: Int, working: Int) {
