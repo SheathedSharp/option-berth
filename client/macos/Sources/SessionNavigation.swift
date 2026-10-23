@@ -3,9 +3,9 @@ import BerthAgent
 import BerthTerminal
 import SwiftUI
 
-/// Collapsed multi-session rail (v15 warp-blocks). Hidden when there is only one
-/// Shell and no Agent tabs — Warp A has no permanent Shell-1 / "+ Agent" chrome.
-/// Provider pick lives on the Agent-mode composer toolbelt / slash, not here.
+/// Collapsed multi-Shell rail (v15 warp-blocks). Shown only when there are 2+
+/// Shells. Agent/Pi never appear here as peer tabs — they are agent-session
+/// blocks in the scroll. Provider pick lives on composer / slash, not here.
 struct ShellSessionBar: View {
     let shells: [TerminalSession]
     var agents: [TerminalSession] = []

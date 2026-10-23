@@ -54,19 +54,26 @@ enum ComposerConsoleBridge {
             return .untracked(id: shell.id, title: shell.title)
         }()
         let provider: ProviderSelection = providerChosen ? .chosen(providerID) : .unset
+        // Native Agent PTY (`target`) is intentionally ignored — not a ⌘↩ destination.
+        _ = target
         let agentTarget: AgentTarget = {
-            if let streamResumeID,
-               let stream = streamSessions.first(where: { $0.id == streamResumeID }) {
+            // Unified block canvas: ⌘↩ only targets structured streams (agent-session cards).
+            // Native Agent PTYs are never composer paste/jump targets — that path showed
+            // 「已放进 Pi 的终端」and switched Shell|Pi tabs.
+            let stream: AgentStreamSession? = {
+                if let streamResumeID,
+                   let match = streamSessions.first(where: { $0.id == streamResumeID }) {
+                    return match
+                }
+                return streamSessions.last
+            }()
+            if let stream {
                 let state = AgentDisplayDeriver.targetState(phase: stream.snapshot.phase,
                                                             turns: stream.snapshot.turns,
                                                             requests: stream.snapshot.requests)
                 return .stream(id: stream.id, title: stream.title, state: state)
             }
-            guard let target, target.kind.hasPrefix("agent:") else { return .none }
-            if !target.isActive {
-                return .terminal(id: target.id, title: target.title, alive: false)
-            }
-            return .terminal(id: target.id, title: target.title, alive: true)
+            return .none
         }()
         return ComposerContext(text: draft, slash: slash, shell: shellTarget, provider: provider, target: agentTarget)
     }

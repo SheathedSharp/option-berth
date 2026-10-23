@@ -69,13 +69,12 @@ struct WorkspaceConsole: View {
             }
             if let selected {
                 VStack(spacing: 0) {
-                    // v15 A: no permanent Shell-1 / "+ Agent" strip. Thin rail only when
-                    // multiple shells or any agent/stream tabs exist; else pure canvas.
+                    // v15 A: no Shell|Pi peer tabs. Thin rail only for 2+ Shells.
                     if showSessionRail {
                         ShellSessionBar(
                             shells: shellSessions,
-                            agents: agentSessions,
-                            // Structured streams are status blocks in the scroll, not peer tabs.
+                            // Never peer-tab Agent/Pi next to Shell — blocks live in the scroll.
+                            agents: [],
                             streamRows: [],
                             selectedID: selected.id,
                             streamSelectedID: focusStreamOnCanvas ? (previewAgentID ?? workspace.resumeStreamID) : nil,
@@ -226,10 +225,10 @@ struct WorkspaceConsole: View {
         .padding(.vertical, Metrics.tabPadV)
         .background(Ink.canvas)
     }
-    /// Thin rail only for multiple Shells or native Agent PTYs.
-    /// Structured Agent streams appear as status blocks in the unified stream (not top tabs).
+    /// Thin rail only for multiple Shells. Never list Agent/Pi as peer tabs —
+    /// Agent sessions are peer blocks in the scroll (agent-session cards).
     private var showSessionRail: Bool {
-        shellSessions.count > 1 || !agentSessions.isEmpty
+        shellSessions.count > 1
     }
 
     private var shellSessions: [TerminalSession] {
@@ -867,6 +866,7 @@ struct WorkspaceConsole: View {
                     try streamController.sendTurn(id: id, text: text)
                     workspace.resumeStreamID = id
                     previewAgentID = id
+                    workspace.resumeAgentID = nil
                     // Stay on unified block stream — Agent peer card shows status + prompt + result; 进入 opens detail.
                     focusStreamOnCanvas = false
                     pickingProvider = false
@@ -882,17 +882,9 @@ struct WorkspaceConsole: View {
                 resumeStreamSend(id: id, text: text)
                 return
             }
-            guard let agent = scoped.first(where: { $0.id == id }) else { return }
-            guard agent.acceptsComposerTurn else {
-                composerNotice = "此会话已结束或为一次性 task。⇧⌘↩ 新建，或从文件续接。"
-                return
-            }
-            workspace.resumeAgentID = agent.id
-            activate(agent)
-            guard pasteAgent(text, to: agent) else { return }
-            workspace.draft = ""
-            pickingProvider = false
-            composerNotice = "已放进 \(agent.title) 的终端（未发送）"
+            // Native Agent PTY ids are not ⌘↩ targets — stay on Shell stream and open a structured session.
+            guard scoped.contains(where: { $0.id == id && $0.kind.hasPrefix("agent:") }) else { return }
+            beginNewAgent(prompt: text)
         case .agentQueue(let id, _):
             let text = takeAgentTurnText()
             if streamController.session(id) != nil {
@@ -904,13 +896,9 @@ struct WorkspaceConsole: View {
             workspace.resumeAgentID = id
             composerNotice = "已记下，将在 \(resumeTarget()?.title ?? "Agent") 当前轮结束后发送"
             workspace.draft = text
-        case .agentPaste(let id, let text):
-            guard let agent = scoped.first(where: { $0.id == id }) else { return }
-            workspace.resumeAgentID = agent.id
-            activate(agent)
-            guard pasteAgent(text, to: agent) else { return }
-            workspace.draft = ""
-            composerNotice = "已放进 \(agent.title) 的终端（未发送）"
+        case .agentPaste(_, let text):
+            // Never switch to Pi/Agent PTY or dump into its terminal. Structured block only.
+            beginNewAgent(prompt: text)
         case .agentNew(_, let firstTurn):
             pickingProvider = false
             beginNewAgent(prompt: firstTurn)
@@ -920,12 +908,15 @@ struct WorkspaceConsole: View {
             if launcher.providers.isEmpty { launcher.refresh(workspace) }
         case .openTarget(let id):
             if streamController.session(id) != nil {
+                // 「进入」 detail only — empty ⌘↩ must not leave the Shell block stream.
                 selectStreamTarget(id)
+                focusStreamOnCanvas = false
                 return
             }
-            if let agent = scoped.first(where: { $0.id == id }) {
-                workspace.resumeAgentID = agent.id
-                previewAgentID = agent.id
+            // Ignore native Agent PTY ids as canvas targets (no Shell|Pi jump).
+            if scoped.contains(where: { $0.id == id && $0.kind.hasPrefix("agent:") }) {
+                composerNotice = "Agent 在块流里 · 输入后 ⌘↩ 发送"
+                return
             }
         case .refuse(let message):
             composerNotice = message
@@ -1113,6 +1104,7 @@ struct WorkspaceConsole: View {
                         firstTurn: trimmed.isEmpty ? nil : payload)
                     workspace.resumeStreamID = session.id
                     previewAgentID = session.id
+                    workspace.resumeAgentID = nil
                     focusStreamOnCanvas = false
                     if !trimmed.isEmpty { workspace.draft = "" }
                     composerNotice = "已新建 \(session.title) · 块流里可见"
@@ -1286,6 +1278,7 @@ struct WorkspaceConsole: View {
             try streamController.sendTurn(id: id, text: text)
             workspace.resumeStreamID = id
             previewAgentID = id
+            workspace.resumeAgentID = nil
             focusStreamOnCanvas = false
             workspace.draft = ""
             pickingProvider = false
