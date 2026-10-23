@@ -56,7 +56,8 @@ struct TerminalPaneBody: View {
     var onPromptKey: ((NSEvent) -> Void)?
     var onSendCommandToAgent: ((CommandBlock) -> Void)?
     var agentRows: [AgentRow] = []
-    var onEnterAgent: ((UUID) -> Void)?
+    var onEnterAgent: ((AgentRow) -> Void)?
+    var focusedAgentCardID: UUID? = nil
     /// Warp block stream: PTY is hosted inside the active block card, never a sibling pane.
     var warpBlocks = true
     @State private var selectedBlockID: UUID?
@@ -84,6 +85,7 @@ struct TerminalPaneBody: View {
                         onSendToAgent: onSendCommandToAgent,
                         agentRows: agentRows,
                         onEnterAgent: onEnterAgent,
+                        focusedAgentCardID: focusedAgentCardID,
                         availableHeight: geo.size.height,
                         focusIntent: focusIntent,
                         dimTerminalCaret: dimTerminalCaret,

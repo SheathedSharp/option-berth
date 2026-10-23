@@ -3,9 +3,20 @@ import BerthTerminal
 import Foundation
 
 /// Starts and tracks `oberth agent stream` children for the console workbench.
+/// App-wide singleton so switching worktrees (WorkspaceConsole `.id(root)` remount)
+/// does not drop live structured sessions or their projected agent-session cards.
 @MainActor
 final class AgentStreamsController: ObservableObject {
+    static let shared = AgentStreamsController()
+
+    /// First-turn prompt for native Agent PTY cards (persists across worktree remount).
+    struct NativeCardMeta: Equatable {
+        var prompt: String
+        var since: Date
+    }
+
     @Published private(set) var sessions: [AgentStreamSession] = []
+    @Published private(set) var nativeCardMeta: [UUID: NativeCardMeta] = [:]
     private let registry = AgentStreams()
     private var lineHooks: [UUID: AgentStreamProcess] = [:]
     private var queuedText: [UUID: [String]] = [:]
@@ -15,6 +26,32 @@ final class AgentStreamsController: ObservableObject {
     private var launchResumeFileByID: [UUID: String] = [:]
     /// Last structured session that reported `unsupported`; cleared on next launch.
     @Published private(set) var unsupportedNotice: (sessionID: UUID, message: String)?
+
+    private init() {}
+
+    private func canonical(_ root: String) -> String {
+        guard root.hasPrefix("/"), !root.utf8.contains(0) else { return "" }
+        return URL(fileURLWithPath: root).standardizedFileURL.resolvingSymlinksInPath().path
+    }
+
+    /// Structured sessions belonging to this worktree (for block-stream projection).
+    func sessions(inWorktree root: String) -> [AgentStreamSession] {
+        let key = canonical(root)
+        guard !key.isEmpty else { return [] }
+        return sessions.filter { canonical($0.worktree) == key }
+    }
+
+    func setNativeCardMeta(id: UUID, prompt: String, since: Date = Date()) {
+        var next = nativeCardMeta
+        next[id] = NativeCardMeta(prompt: prompt, since: since)
+        nativeCardMeta = next
+    }
+
+    func clearNativeCardMeta(id: UUID) {
+        var next = nativeCardMeta
+        next.removeValue(forKey: id)
+        nativeCardMeta = next
+    }
 
     private func sessionFileBindings() -> [AgentSessionFileGuard.Binding] {
         registry.all.map { session in
@@ -97,7 +134,7 @@ final class AgentStreamsController: ObservableObject {
             var snapshot = AgentStreamSnapshot()
             snapshot.phase = .starting
             let session = AgentStreamSession(id: sessionID, provider: provider.id, title: title,
-                                             snapshot: snapshot, process: process)
+                                             worktree: canonical(root), snapshot: snapshot, process: process)
             _ = try registry.register(session)
         } else {
             registry.update(sessionID) { session in
@@ -159,6 +196,7 @@ final class AgentStreamsController: ObservableObject {
         launchResumeFileByID.removeValue(forKey: id)
         queuedText.removeValue(forKey: id)
         unreadIDs.remove(id)
+        clearNativeCardMeta(id: id)
         if let process = lineHooks[id] {
             try? process.closeSession()
             _ = process.waitUntilExit()
@@ -173,6 +211,7 @@ final class AgentStreamsController: ObservableObject {
         launchResumeFileByID.removeValue(forKey: id)
         queuedText.removeValue(forKey: id)
         unreadIDs.remove(id)
+        clearNativeCardMeta(id: id)
         lineHooks.removeValue(forKey: id)
         registry.drop(id)
         publish()

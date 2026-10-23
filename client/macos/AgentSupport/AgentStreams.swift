@@ -4,20 +4,24 @@ public struct AgentStreamSession: Identifiable, Equatable, Sendable {
     public let id: UUID
     public let provider: String
     public let title: String
+    /// Canonical worktree root this structured session belongs to (survives UI remount).
+    public let worktree: String
     public var snapshot: AgentStreamSnapshot
     public var process: AgentStreamProcess
 
-    public init(id: UUID = UUID(), provider: String, title: String,
+    public init(id: UUID = UUID(), provider: String, title: String, worktree: String = "",
                 snapshot: AgentStreamSnapshot = AgentStreamSnapshot(), process: AgentStreamProcess) {
         self.id = id
         self.provider = provider
         self.title = title
+        self.worktree = worktree
         self.snapshot = snapshot
         self.process = process
     }
 
     public static func == (lhs: AgentStreamSession, rhs: AgentStreamSession) -> Bool {
-        lhs.id == rhs.id && lhs.provider == rhs.provider && lhs.title == rhs.title && lhs.snapshot == rhs.snapshot
+        lhs.id == rhs.id && lhs.provider == rhs.provider && lhs.title == rhs.title
+            && lhs.worktree == rhs.worktree && lhs.snapshot == rhs.snapshot
     }
 }
 

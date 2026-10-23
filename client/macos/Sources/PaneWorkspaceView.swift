@@ -14,7 +14,8 @@ struct PaneWorkspaceView: View {
     var onPromptKey: ((NSEvent) -> Void)?
     var onSendCommandToAgent: ((CommandBlock) -> Void)?
     var agentRows: [AgentRow] = []
-    var onEnterAgent: ((UUID) -> Void)?
+    var onEnterAgent: ((AgentRow) -> Void)?
+    var focusedAgentCardID: UUID? = nil
     var compactSinglePane = false
     var frozen = false
     var frozenSessions: [TerminalSession] = []
@@ -84,7 +85,8 @@ struct PaneWorkspaceView: View {
                                  onPromptKey: onPromptKey,
                                  onSendCommandToAgent: onSendCommandToAgent,
                                  agentRows: agentRows,
-                                 onEnterAgent: onEnterAgent)
+                                 onEnterAgent: onEnterAgent,
+                                 focusedAgentCardID: focusedAgentCardID)
             }.frame(minWidth: 140, minHeight: 100)
             if frozen { return AnyView(pane) }
             return AnyView(pane

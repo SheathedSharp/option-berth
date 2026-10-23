@@ -15,12 +15,6 @@ enum FrozenConsoleScene: Equatable {
     case streamMixed
 }
 
-/// Metadata so a native Agent PTY can render as an isomorphic agent-session card.
-private struct NativeAgentCardMeta: Equatable {
-    var prompt: String
-    var since: Date
-}
-
 struct WorkspaceConsole: View {
     let root: String
     var frozen = false
@@ -32,7 +26,7 @@ struct WorkspaceConsole: View {
     @ObservedObject private var sessions = TerminalSessions.shared
     @ObservedObject private var settings = UISettings.shared
     @StateObject private var launcher = AgentLaunchController()
-    @StateObject private var streamController = AgentStreamsController()
+    @ObservedObject private var streamController = AgentStreamsController.shared
     @State private var creating = false
     @State private var history = false
     @State private var problem: String?
@@ -46,7 +40,10 @@ struct WorkspaceConsole: View {
     @State private var slashHighlight = 0
     @State private var previewAgentID: UUID?
     /// When true, the full-width canvas shows the structured Agent stream (not Shell).
+    /// v15: block tap must NOT set this — stay in the isomorphic block stream.
     @State private var focusStreamOnCanvas = false
+    /// Expanded / scrolled agent-session card in the unified stream.
+    @State private var focusedAgentCardID: UUID?
     /// Warp-like: Shell vs Agent is input mode on one surface, not a second pane.
     @State private var composerInputMode: ComposerInputMode = .shell
     @State private var historyCursor = 0
@@ -54,8 +51,6 @@ struct WorkspaceConsole: View {
     @State private var pendingChord: SessionComposerModel.Chord?
     @State private var shellAttachment: ComposerShellAttachment?
     @State private var shellTabReadGeneration: UInt = 0
-    /// First-turn prompt + start time for native Agent PTY cards in the block stream.
-    @State private var nativeAgentCardMeta: [UUID: NativeAgentCardMeta] = [:]
     @Environment(\.clientReduceMotion) private var reduced
     init(root: String, frozen: Bool = false, initialAgent: Bool = false, frozenScene: FrozenConsoleScene = .slashMenu,
          openServicesPanel: @escaping () -> Void = {}, openGitPanel: @escaping () -> Void = {}) {
@@ -97,7 +92,6 @@ struct WorkspaceConsole: View {
                                 activate(session)
                             },
                             onSelectStream: { id in
-                                focusStreamOnCanvas = true
                                 composerInputMode = .agent
                                 selectStreamTarget(id)
                             },
@@ -382,7 +376,8 @@ struct WorkspaceConsole: View {
                           onPromptKey: routeTerminalPromptKey,
                           onSendCommandToAgent: attachShellCommandBlock,
                           agentRows: agentStreamBlocks,
-                          onEnterAgent: { id in enterAgentBlock(id) },
+                          onEnterAgent: { row in enterAgentBlock(row) },
+                          focusedAgentCardID: focusedAgentCardID,
                           compactSinglePane: true)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .onChange(of: session.activity.alternateScreen) { _, alt in
@@ -512,6 +507,10 @@ struct WorkspaceConsole: View {
         scoped.filter { $0.kind.hasPrefix("agent:") }
             .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
     }
+    /// Structured streams for this worktree only (shared controller holds all roots).
+    private var worktreeStreamSessions: [AgentStreamSession] {
+        streamController.sessions(inWorktree: root)
+    }
     @ViewBuilder private var agentColumn: some View {
         VStack(spacing: 0) {
             AgentStatusColumn(sessions: agentSessions, streamRows: structuredAgentRows,
@@ -573,7 +572,7 @@ struct WorkspaceConsole: View {
     /// Session-level rows for Agent status column / chips (one per session).
     private var structuredAgentRows: [AgentRow] {
         let now = Date()
-        let streamRows = streamController.sessions.map { session in
+        let streamRows = worktreeStreamSessions.map { session in
             AgentRowProjector.streamRow(id: session.id, provider: session.provider, title: session.title,
                                         snapshot: session.snapshot, unread: streamController.isUnread(session.id),
                                         isTarget: session.id == workspace.resumeStreamID,
@@ -590,14 +589,14 @@ struct WorkspaceConsole: View {
     /// Block-stream peers: one card per Agent turn (and queued prompts), plus native peers.
     private var agentStreamBlocks: [AgentRow] {
         let now = Date()
-        let streamBlocks = streamController.sessions.flatMap { session in
+        let streamBlocks = worktreeStreamSessions.flatMap { session in
             AgentRowProjector.streamTurnBlocks(
                 id: session.id, provider: session.provider, title: session.title,
                 snapshot: session.snapshot, unread: streamController.isUnread(session.id),
                 isTarget: session.id == workspace.resumeStreamID,
                 queued: streamController.queuedMessages(for: session.id), now: now)
         }
-        let streamIDs = Set(streamController.sessions.map(\.id))
+        let streamIDs = Set(worktreeStreamSessions.map(\.id))
         let nativeRows = agentSessions.compactMap { session -> AgentRow? in
             guard !streamIDs.contains(session.id) else { return nil }
             return nativeAgentBlockRow(session)
@@ -606,7 +605,7 @@ struct WorkspaceConsole: View {
     }
 
     private func nativeAgentBlockRow(_ session: TerminalSession) -> AgentRow {
-        let meta = nativeAgentCardMeta[session.id]
+        let meta = streamController.nativeCardMeta[session.id]
         let provider = session.kind.split(separator: ":").dropFirst().first.map(String.init) ?? "agent"
         let taskRunning = session.isTaskAgent && session.commandBlocks.last?.isRunning == true
         let status = AgentRowProjector.terminalStatus(
@@ -633,16 +632,16 @@ struct WorkspaceConsole: View {
         launcher.providers.first { $0.id == workspace.providerID }?.name ?? SessionComposerModel.providerName(workspace.providerID)
     }
     private var composerSlashContext: SlashContext {
-        ComposerConsoleBridge.slashContext(agentCount: agentSessions.count + streamController.sessions.count,
+        ComposerConsoleBridge.slashContext(agentCount: agentSessions.count + worktreeStreamSessions.count,
                                            shellCount: shellSessions.count, target: resumeTarget(),
-                                           streamSessions: streamController.sessions,
+                                           streamSessions: worktreeStreamSessions,
                                            streamResumeID: workspace.resumeStreamID,
                                            provider: launcher.provider(workspace))
     }
 
     private var composerContext: ComposerContext {
         ComposerConsoleBridge.context(draft: workspace.draft, shell: shellTarget(), target: resumeTarget(),
-                                      streamSessions: streamController.sessions,
+                                      streamSessions: worktreeStreamSessions,
                                       streamResumeID: workspace.resumeStreamID,
                                       providerChosen: workspace.providerChosen, providerID: workspace.providerID,
                                       slashContext: composerSlashContext)
@@ -986,7 +985,7 @@ struct WorkspaceConsole: View {
     private func pickResumeAgent(_ query: String) {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !needle.isEmpty else { return }
-        if let stream = streamController.sessions.first(where: {
+        if let stream = worktreeStreamSessions.first(where: {
             $0.title.localizedCaseInsensitiveContains(needle) || $0.provider.localizedCaseInsensitiveContains(needle)
         }) {
             selectStreamTarget(stream.id)
@@ -1154,7 +1153,7 @@ struct WorkspaceConsole: View {
                     composerNotice = "会话已达上限（\(AgentStreams.maxSessions)）"
                     return
                 }
-                let title = "\(provider.name) \(streamController.sessions.count + 1) · 流"
+                let title = "\(provider.name) \(worktreeStreamSessions.count + 1) · 流"
                 do {
                     let session = try streamController.launch(
                         binary: binary, provider: provider, root: root, title: title,
@@ -1178,8 +1177,7 @@ struct WorkspaceConsole: View {
                 workspace.resumeStreamID = nil
                 focusStreamOnCanvas = false
                 // Stay on Shell canvas — project an agent-session card into the block stream.
-                nativeAgentCardMeta[session.id] = NativeAgentCardMeta(
-                    prompt: trimmed, since: Date())
+                streamController.setNativeCardMeta(id: session.id, prompt: trimmed, since: Date())
                 composerNotice = "已新建 \(session.title) · 块流里可见"
             }
         }
@@ -1187,9 +1185,11 @@ struct WorkspaceConsole: View {
     private func selectStreamTarget(_ id: UUID) {
         workspace.resumeStreamID = id
         previewAgentID = id
-        focusStreamOnCanvas = true
+        focusStreamOnCanvas = false
+        composerInputMode = .agent
+        // Clear unread without swapping to the old AgentStreamDetail page.
         streamController.markDetailVisible(id)
-        composerNotice = "⌘↩ 将续接到 \(streamController.session(id)?.title ?? "Agent")"
+        composerNotice = "已聚焦 · ⌘↩ 续接 \(streamController.session(id)?.title ?? "Agent")"
     }
 
     private func interruptStream(_ id: UUID) {
@@ -1351,13 +1351,21 @@ struct WorkspaceConsole: View {
         }
     }
 
-    private func enterAgentBlock(_ id: UUID) {
-        if streamController.session(id) != nil {
-            selectStreamTarget(id)
+    /// Tap an agent-session card: stay in the unified block stream (expand + scroll + resume target).
+    /// Never navigate to AgentStreamDetail / native Agent PTY canvas.
+    private func enterAgentBlock(_ row: AgentRow) {
+        focusedAgentCardID = row.id
+        if streamController.session(row.sessionID) != nil {
+            selectStreamTarget(row.sessionID)
             return
         }
-        if let session = scoped.first(where: { $0.id == id && $0.kind.hasPrefix("agent:") }) {
-            enterAgent(session)
+        if let session = scoped.first(where: { $0.id == row.sessionID && $0.kind.hasPrefix("agent:") }) {
+            workspace.resumeAgentID = session.id
+            previewAgentID = session.id
+            focusStreamOnCanvas = false
+            composerInputMode = .agent
+            session.clearAttention()
+            composerNotice = "已聚焦 · ⌘↩ 续接 \(session.title)"
         }
     }
 

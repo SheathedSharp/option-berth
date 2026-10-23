@@ -15,7 +15,10 @@ struct SessionBlockStream: View {
     var onSendToAgent: ((CommandBlock) -> Void)?
     /// Agent turn / queued cards shown as peers in the same stream (not top tabs).
     var agentRows: [AgentRow] = []
-    var onEnterAgent: ((UUID) -> Void)?
+    /// Focus / expand a turn in-stream (same chrome); do not navigate away.
+    var onEnterAgent: ((AgentRow) -> Void)?
+    /// Card id to expand + scroll to (tap selection in the unified stream).
+    var focusedAgentCardID: UUID? = nil
     var availableHeight: CGFloat
     var focusIntent: TerminalFocusIntent?
     var dimTerminalCaret = false
@@ -75,7 +78,8 @@ struct SessionBlockStream: View {
                         case .agent(let row):
                             SessionAgentBlockCard(
                                 row: row,
-                                onEnter: onEnterAgent.map { handler in { handler(row.sessionID) } }
+                                expanded: focusedAgentCardID == row.id || row.isTarget,
+                                onEnter: onEnterAgent.map { handler in { handler(row) } }
                             )
                             .id("agent-\(row.id.uuidString)")
                         }
@@ -126,6 +130,14 @@ struct SessionBlockStream: View {
             .onChange(of: runningBlock?.id) { _, _ in scrollToActive(proxy) }
             .onChange(of: alternateScreen) { _, _ in scrollToActive(proxy) }
             .onChange(of: agentRows.count) { _, _ in scrollToActive(proxy) }
+            .onChange(of: focusedAgentCardID) { _, id in
+                guard let id else { return }
+                DispatchQueue.main.async {
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        proxy.scrollTo("agent-\(id.uuidString)", anchor: .center)
+                    }
+                }
+            }
             .accessibilityIdentifier("console.blockStream")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -432,7 +444,11 @@ struct SessionCommandBlockCard: View {
 /// Agent turn as a peer of the shell card: same chrome, `›` prompt prefix.
 struct SessionAgentBlockCard: View {
     let row: AgentRow
+    /// Selected / tapped in the unified stream — expand result, keep isomorphic chrome.
+    var expanded: Bool = false
     var onEnter: (() -> Void)?
+
+    private var highlighted: Bool { expanded || row.isTarget }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -445,7 +461,7 @@ struct SessionAgentBlockCard: View {
                 Text(headerPrompt)
                     .font(Face.mono(Metrics.meta))
                     .foregroundStyle(Ink.ink)
-                    .lineLimit(2)
+                    .lineLimit(expanded ? 6 : 2)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Tag(text: "agent-session", tone: .quiet)
                 if let since = row.since {
@@ -461,7 +477,7 @@ struct SessionAgentBlockCard: View {
                 }
             }
             if let result = displayResult {
-                Text(verbatim: truncate(result, limit: 48))
+                Text(verbatim: truncate(result, limit: expanded ? 400 : 48))
                     .font(Face.mono(Metrics.meta))
                     .foregroundStyle(Ink.inkMuted)
                     .lineSpacing(3)
@@ -476,17 +492,17 @@ struct SessionAgentBlockCard: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(row.isTarget ? Ink.accentSoft : Ink.sunken.opacity(0.55))
+        .background(highlighted ? Ink.accentSoft : Ink.sunken.opacity(0.55))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(row.isTarget ? Ink.accent.opacity(0.45) : Ink.line, lineWidth: 1)
+                .stroke(highlighted ? Ink.accent.opacity(0.45) : Ink.line, lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onTapGesture { onEnter?() }
         .accessibilityIdentifier("console.agentBlock." + row.id.uuidString)
         .accessibilityValue(statusAccessibilityLabel(SessionBlockStatusChrome.kind(for: row.status)))
-        .accessibilityHint("打开 Agent 会话")
+        .accessibilityHint("在块流中聚焦此回合")
         .accessibilityAddTraits(.isButton)
     }
 
