@@ -45,6 +45,7 @@ enum ClientChecks {
 
         try historyChecks()
         try historyEntryChecks()
+        try workplaceChecks()
     }
     static func shortcutChecks() throws {
         let suite = "workspace-shortcut-test-" + UUID().uuidString

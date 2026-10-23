@@ -13,6 +13,8 @@ struct SessionBlockStream: View {
     var selectedID: UUID?
     var onSelect: (CommandBlock) -> Void
     var onSendToAgent: ((CommandBlock) -> Void)?
+    /// Persisted shell cards from the active workplace (not in the live PTY list).
+    var historicalShellBlocks: [CommandBlock] = []
     /// Agent turn / queued cards shown as peers in the same stream (not top tabs).
     var agentRows: [AgentRow] = []
     /// Focus / expand a turn in-stream (same chrome); do not navigate away.
@@ -26,7 +28,13 @@ struct SessionBlockStream: View {
     var onPromptKey: ((NSEvent) -> Void)?
 
     private var completedBlocks: [CommandBlock] {
-        session.commandBlocks.filter { !$0.isRunning }
+        let live = session.commandBlocks.filter { !$0.isRunning }
+        let liveIDs = Set(live.map(\.id))
+        let archived = historicalShellBlocks.filter { !$0.isRunning && !liveIDs.contains($0.id) }
+        return (archived + live).sorted { lhs, rhs in
+            if lhs.startedAt != rhs.startedAt { return lhs.startedAt < rhs.startedAt }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
     }
 
     private var runningBlock: CommandBlock? {
@@ -130,6 +138,7 @@ struct SessionBlockStream: View {
             .onChange(of: runningBlock?.id) { _, _ in scrollToActive(proxy) }
             .onChange(of: alternateScreen) { _, _ in scrollToActive(proxy) }
             .onChange(of: agentRows.count) { _, _ in scrollToActive(proxy) }
+            .onChange(of: historicalShellBlocks.count) { _, _ in scrollToActive(proxy) }
             .onChange(of: focusedAgentCardID) { _, id in
                 guard let id else { return }
                 DispatchQueue.main.async {

@@ -27,6 +27,7 @@ struct WorkspaceConsole: View {
     @ObservedObject private var settings = UISettings.shared
     @StateObject private var launcher = AgentLaunchController()
     @ObservedObject private var streamController = AgentStreamsController.shared
+    @ObservedObject private var workplaceStore = WorkplaceStore.shared
     @State private var creating = false
     @State private var history = false
     @State private var problem: String?
@@ -142,8 +143,13 @@ struct WorkspaceConsole: View {
                 guard !frozen else { return }
                 WorkspaceRecovery.shared.watch(workspace)
                 ensureShellFirst()
+                ensureWorkplace()
                 if let selected { focusSessionInput(selected) }
                 if launcher.providers.isEmpty { launcher.refresh(workspace) }
+            }
+            .onChange(of: root) { _, _ in
+                guard !frozen else { return }
+                ensureWorkplace()
             }
             .onChange(of: creating) { _, value in
                 if !value, let selected { focusSessionInput(selected) }
@@ -375,6 +381,7 @@ struct WorkspaceConsole: View {
                           bridgePromptKeys: promptComposer,
                           onPromptKey: routeTerminalPromptKey,
                           onSendCommandToAgent: attachShellCommandBlock,
+                          historicalShellBlocks: workplaceStore.historicalShellBlocks(excludingLive: session.commandBlocks),
                           agentRows: agentStreamBlocks,
                           onEnterAgent: { row in enterAgentBlock(row) },
                           focusedAgentCardID: focusedAgentCardID,
@@ -400,7 +407,15 @@ struct WorkspaceConsole: View {
             .onChange(of: session.commandBlocks.count) { _, _ in
                 guard selected?.id == session.id, session.kind == "terminal" else { return }
                 focusSessionInput(session)
+                syncWorkplaceBlocks(shellSession: session)
             }
+            .onChange(of: session.commandBlocks.last?.exitCode) { _, _ in
+                syncWorkplaceBlocks(shellSession: session)
+            }
+            .onChange(of: agentStreamBlocks.count) { _, _ in
+                syncWorkplaceBlocks(shellSession: session)
+            }
+
     }
 
     private func cycleSession(_ offset: Int) {
@@ -601,7 +616,10 @@ struct WorkspaceConsole: View {
             guard !streamIDs.contains(session.id) else { return nil }
             return nativeAgentBlockRow(session)
         }
-        return streamBlocks + nativeRows
+        let live = streamBlocks + nativeRows
+        let liveIDs = Set(live.map(\.id))
+        let archived = workplaceStore.historicalAgentRows(excludingLive: liveIDs)
+        return archived + live
     }
 
     private func nativeAgentBlockRow(_ session: TerminalSession) -> AgentRow {
@@ -1101,8 +1119,105 @@ struct WorkspaceConsole: View {
             workspace.draft = ""
             openGitPanel()
             composerNotice = "Git 面板 · Esc 返回会话"
+        case .workplaceNew:
+            runWorkplaceNew(argument: argument)
+        case .workplaceList:
+            runWorkplaceList()
+        case .workplace:
+            runWorkplaceSwitch(argument: argument)
+        case .workplaceDelete:
+            runWorkplaceDelete(argument: argument)
         }
     }
+    private func ensureWorkplace() {
+        do {
+            let meta = try workplaceStore.ensureActive(worktree: root)
+            syncWorkplaceBlocks(shellSession: selected)
+            if composerNotice.isEmpty {
+                composerNotice = "Workplace · \(meta.name)"
+            }
+        } catch {
+            composerNotice = error.localizedDescription
+        }
+    }
+
+    private func syncWorkplaceBlocks(shellSession: TerminalSession?) {
+        guard !frozen else { return }
+        let shell = shellSession?.commandBlocks ?? selected.map { $0.kind == "terminal" ? $0.commandBlocks : [] } ?? []
+        // Live-only rows for sync (exclude archived projections we just merged in).
+        let liveAgents = liveAgentStreamBlocksOnly()
+        workplaceStore.syncLive(shell: shell, agents: liveAgents)
+    }
+
+    /// Agent cards that come from live sessions (not workplace archive).
+    private func liveAgentStreamBlocksOnly() -> [AgentRow] {
+        let now = Date()
+        let streamBlocks = worktreeStreamSessions.flatMap { session in
+            AgentRowProjector.streamTurnBlocks(
+                id: session.id, provider: session.provider, title: session.title,
+                snapshot: session.snapshot, unread: streamController.isUnread(session.id),
+                isTarget: session.id == workspace.resumeStreamID,
+                queued: streamController.queuedMessages(for: session.id), now: now)
+        }
+        let streamIDs = Set(worktreeStreamSessions.map(\.id))
+        let nativeRows = agentSessions.compactMap { session -> AgentRow? in
+            guard !streamIDs.contains(session.id) else { return nil }
+            return nativeAgentBlockRow(session)
+        }
+        return streamBlocks + nativeRows
+    }
+
+    private func runWorkplaceNew(argument: String) {
+        do {
+            syncWorkplaceBlocks(shellSession: selected)
+            let meta = try workplaceStore.create(worktree: root, name: argument, makeActive: true)
+            workspace.draft = ""
+            composerNotice = "已新建 Workplace · \(meta.name)"
+        } catch {
+            composerNotice = error.localizedDescription
+        }
+    }
+
+    private func runWorkplaceList() {
+        let rows = workplaceStore.list(worktree: root)
+        workspace.draft = ""
+        if rows.isEmpty {
+            composerNotice = "此 worktree 还没有 Workplace"
+            return
+        }
+        let activeID = workplaceStore.active?.id
+        let lines = rows.map { meta in
+            let mark = meta.id == activeID ? "●" : "○"
+            let short = String(meta.id.uuidString.prefix(8))
+            return "\(mark) \(meta.name)  \(short)"
+        }
+        composerNotice = "Workplace（\(rows.count)）\n" + lines.joined(separator: " · ")
+    }
+
+    private func runWorkplaceSwitch(argument: String) {
+        do {
+            syncWorkplaceBlocks(shellSession: selected)
+            let meta = try workplaceStore.switchTo(worktree: root, query: argument)
+            workspace.draft = ""
+            let count = workplaceStore.blocks.count
+            composerNotice = "已切换到 Workplace · \(meta.name)（\(count) 块）"
+        } catch {
+            composerNotice = error.localizedDescription
+        }
+    }
+
+    private func runWorkplaceDelete(argument: String) {
+        do {
+            syncWorkplaceBlocks(shellSession: selected)
+            try workplaceStore.delete(worktree: root, query: argument)
+            workspace.draft = ""
+            let name = workplaceStore.active?.name ?? "?"
+            composerNotice = "已删除 · 当前 Workplace · \(name)"
+        } catch {
+            composerNotice = error.localizedDescription
+        }
+    }
+
     private func commandArgument(_ token: String) -> String {
         let trimmed = workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let parts = trimmed.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)

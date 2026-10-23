@@ -21,6 +21,14 @@ public enum SlashCommand: String, CaseIterable, Equatable, Sendable {
     case obServer = "/ob-server"
     /// Read-only Git review panel for this worktree.
     case git = "/git"
+    /// Create a durable workplace under the current worktree.
+    case workplaceNew = "/workplace-new"
+    /// List workplaces for the current worktree.
+    case workplaceList = "/workplace-list"
+    /// Switch / recall a workplace by name or id (restores block stream).
+    case workplace = "/workplace"
+    /// Delete a workplace by name or id.
+    case workplaceDelete = "/workplace-delete"
 
     public var title: String {
         switch self {
@@ -40,6 +48,10 @@ public enum SlashCommand: String, CaseIterable, Equatable, Sendable {
         case .history: return "搜索命令历史"
         case .obServer: return "打开服务面板"
         case .git: return "打开 Git 面板"
+        case .workplaceNew: return "新建 Workplace"
+        case .workplaceList: return "列出 Workplace"
+        case .workplace: return "切换 Workplace"
+        case .workplaceDelete: return "删除 Workplace"
         }
     }
 
@@ -61,6 +73,10 @@ public enum SlashCommand: String, CaseIterable, Equatable, Sendable {
         case .history: return "跨会话搜索"
         case .obServer: return "需处理 · 在跑 · 日志（/services）"
         case .git: return "只读审查本 worktree"
+        case .workplaceNew: return "持久化块流工作区（可选名称）"
+        case .workplaceList: return "当前 worktree 下的全部 Workplace"
+        case .workplace: return "按名称或 id 回溯块流"
+        case .workplaceDelete: return "删除指定 Workplace"
         }
     }
 }
@@ -108,6 +124,10 @@ public enum SlashCommandRegistry {
         "/agent-mode": .modeAgent,
         "/to-shell": .modeShell,
         "/to-agent": .modeAgent,
+        "/wp-new": .workplaceNew,
+        "/wp-list": .workplaceList,
+        "/wp": .workplace,
+        "/wp-delete": .workplaceDelete,
     ]
 
     public static func available(in context: SlashContext) -> [SlashCommand] {
@@ -120,7 +140,8 @@ public enum SlashCommandRegistry {
 
     public static func isAvailable(_ command: SlashCommand, context: SlashContext) -> Bool {
         switch command {
-        case .modeShell, .modeAgent, .agentSelect, .agentNew, .shellNew, .rename, .history, .obServer, .git:
+        case .modeShell, .modeAgent, .agentSelect, .agentNew, .shellNew, .rename, .history, .obServer, .git,
+             .workplaceNew, .workplaceList, .workplace, .workplaceDelete:
             return true
         case .agent:
             return context.hasAgents
@@ -211,6 +232,12 @@ public enum SlashParser {
         if "agent-mode".hasPrefix(query) || "to-agent".hasPrefix(query),
            available.contains(.modeAgent), !result.contains(.modeAgent) {
             result.append(.modeAgent)
+        }
+        if "wp".hasPrefix(query) || "workplace".hasPrefix(query) || query.hasPrefix("wp") || query.hasPrefix("work"),
+           available.contains(.workplaceList) {
+            for cmd in [SlashCommand.workplaceList, .workplaceNew, .workplace, .workplaceDelete] where !result.contains(cmd) {
+                result.append(cmd)
+            }
         }
         // Keep the open palette scannable.
         if result.count > 8 {

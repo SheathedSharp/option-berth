@@ -55,6 +55,7 @@ struct TerminalPaneBody: View {
     var bridgePromptKeys = false
     var onPromptKey: ((NSEvent) -> Void)?
     var onSendCommandToAgent: ((CommandBlock) -> Void)?
+    var historicalShellBlocks: [CommandBlock] = []
     var agentRows: [AgentRow] = []
     var onEnterAgent: ((AgentRow) -> Void)?
     var focusedAgentCardID: UUID? = nil
@@ -83,6 +84,7 @@ struct TerminalPaneBody: View {
                         selectedID: selectedBlockID,
                         onSelect: { block in selectedBlockID = block.id },
                         onSendToAgent: onSendCommandToAgent,
+                        historicalShellBlocks: historicalShellBlocks,
                         agentRows: agentRows,
                         onEnterAgent: onEnterAgent,
                         focusedAgentCardID: focusedAgentCardID,

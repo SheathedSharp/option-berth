@@ -13,6 +13,7 @@ struct PaneWorkspaceView: View {
     var bridgePromptKeys = false
     var onPromptKey: ((NSEvent) -> Void)?
     var onSendCommandToAgent: ((CommandBlock) -> Void)?
+    var historicalShellBlocks: [CommandBlock] = []
     var agentRows: [AgentRow] = []
     var onEnterAgent: ((AgentRow) -> Void)?
     var focusedAgentCardID: UUID? = nil
@@ -84,6 +85,7 @@ struct PaneWorkspaceView: View {
                                  bridgePromptKeys: bridgePromptKeys && session.kind == "terminal",
                                  onPromptKey: onPromptKey,
                                  onSendCommandToAgent: onSendCommandToAgent,
+                                 historicalShellBlocks: historicalShellBlocks,
                                  agentRows: agentRows,
                                  onEnterAgent: onEnterAgent,
                                  focusedAgentCardID: focusedAgentCardID)
