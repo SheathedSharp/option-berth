@@ -6,15 +6,23 @@ public enum AgentRowProjector {
         let status = AgentDisplayDeriver.status(phase: snapshot.phase, turns: snapshot.turns, requests: snapshot.requests)
         let activity = AgentDisplayDeriver.activity(phase: snapshot.phase, turns: snapshot.turns,
                                                     requests: snapshot.requests, now: now)
-        let since = snapshot.turns.last?.endedAt ?? snapshot.turns.last?.sentAt
+        let latest = snapshot.turns.last
+        let since = latest?.endedAt ?? latest?.sentAt
+        let userPrompt = latest.flatMap { prompt in
+            let trimmed = prompt.input.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        let resultText = AgentDisplayDeriver.resultPreview(turn: latest, activity: activity, requests: snapshot.requests)
         return AgentRow(id: id, provider: provider, transport: .stream, title: title, status: status,
-                        activity: activity, since: since, unread: unread, isTarget: isTarget, queuedCount: queuedCount)
+                        activity: activity, since: since, unread: unread, isTarget: isTarget, queuedCount: queuedCount,
+                        userPrompt: userPrompt, resultText: resultText)
     }
 
     public static func terminalRow(id: UUID, provider: String, title: String, status: AgentDisplayStatus,
                                    activity: String?, unread: Bool, isTarget: Bool) -> AgentRow {
         AgentRow(id: id, provider: provider, transport: .terminal, title: title, status: status,
-                 activity: activity, since: nil, unread: unread, isTarget: isTarget, queuedCount: 0)
+                 activity: activity, since: nil, unread: unread, isTarget: isTarget, queuedCount: 0,
+                 userPrompt: nil, resultText: activity)
     }
 
     public static func aggregateCounts(_ rows: [AgentRow]) -> (needsYou: Int, working: Int) {

@@ -5,12 +5,15 @@ import BerthTerminal
 /// Warp-style block stream: completed cards, plus an active PTY card only while
 /// a command is running or an alternate-screen TUI is up. Idle = completed
 /// blocks (or empty) + bottom composer — no 「提示符」 live card.
+///
+/// Shell command cards and Agent session cards share one chronological scroll
+/// with the same card chrome (header + body), distinguished only by tag.
 struct SessionBlockStream: View {
     @ObservedObject var session: TerminalSession
     var selectedID: UUID?
     var onSelect: (CommandBlock) -> Void
     var onSendToAgent: ((CommandBlock) -> Void)?
-    /// Structured Agent sessions shown as status blocks in the same stream (not top tabs).
+    /// Structured Agent sessions shown as peer blocks in the same stream (not top tabs).
     var agentRows: [AgentRow] = []
     var onEnterAgent: ((UUID) -> Void)?
     var availableHeight: CGFloat
@@ -31,6 +34,17 @@ struct SessionBlockStream: View {
         session.activity.alternateScreen
     }
 
+    /// Peer cards (completed shell + agent sessions) sorted by start time so they
+    /// interleave instead of dumping all agents under all shells.
+    private var peerItems: [SessionStreamPeer] {
+        let shells = completedBlocks.map { SessionStreamPeer.shell($0) }
+        let agents = agentRows.map { SessionStreamPeer.agent($0) }
+        return (shells + agents).sorted { lhs, rhs in
+            if lhs.sortDate != rhs.sortDate { return lhs.sortDate < rhs.sortDate }
+            return lhs.stableKey < rhs.stableKey
+        }
+    }
+
     /// Visible PTY card: TUI, or shells without integration (sole surface).
     /// With integration, ordinary running commands must NOT mount the live PTY
     /// card — that mount/unmount was the post-submit flash of 提示符/live.
@@ -49,20 +63,23 @@ struct SessionBlockStream: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(completedBlocks) { block in
-                        SessionCommandBlockCard(
-                            block: block,
-                            selected: selectedID == block.id,
-                            onSelect: { onSelect(block) },
-                            onSendToAgent: onSendToAgent.map { handler in { handler(block) } }
-                        )
-                        .id(block.id)
-                    }
-
-                    // Agent status blocks share the stream with Shell cards (product shape).
-                    ForEach(agentRows) { row in
-                        SessionAgentBlockCard(row: row, onEnter: onEnterAgent.map { handler in { handler(row.id) } })
+                    ForEach(peerItems) { peer in
+                        switch peer {
+                        case .shell(let block):
+                            SessionCommandBlockCard(
+                                block: block,
+                                selected: selectedID == block.id,
+                                onSelect: { onSelect(block) },
+                                onSendToAgent: onSendToAgent.map { handler in { handler(block) } }
+                            )
+                            .id(block.id)
+                        case .agent(let row):
+                            SessionAgentBlockCard(
+                                row: row,
+                                onEnter: onEnterAgent.map { handler in { handler(row.id) } }
+                            )
                             .id("agent-\(row.id.uuidString)")
+                        }
                     }
 
                     if showsPendingRunningCard, let running = runningBlock {
@@ -133,10 +150,10 @@ struct SessionBlockStream: View {
             target = "active-block"
         } else if showsPendingRunningCard {
             target = "pending-block"
-        } else if let lastAgent = agentRows.last {
-            target = "agent-\(lastAgent.id.uuidString)"
+        } else if let last = peerItems.last {
+            target = last.scrollID
         } else {
-            target = completedBlocks.last?.id
+            target = nil
         }
         guard let target else { return }
         DispatchQueue.main.async {
@@ -145,6 +162,36 @@ struct SessionBlockStream: View {
             }
         }
     }
+}
+
+/// Chronological peer in the unified block stream.
+private enum SessionStreamPeer: Identifiable {
+    case shell(CommandBlock)
+    case agent(AgentRow)
+
+    var id: String {
+        switch self {
+        case .shell(let block): return "shell-\(block.id.uuidString)"
+        case .agent(let row): return "agent-\(row.id.uuidString)"
+        }
+    }
+
+    var scrollID: AnyHashable {
+        switch self {
+        case .shell(let block): return block.id
+        case .agent(let row): return "agent-\(row.id.uuidString)"
+        }
+    }
+
+    var sortDate: Date {
+        switch self {
+        case .shell(let block): return block.startedAt
+        // No turn yet → pin to end of the peer list (just-created session).
+        case .agent(let row): return row.since ?? .distantFuture
+        }
+    }
+
+    var stableKey: String { id }
 }
 
 
@@ -162,6 +209,7 @@ struct SessionPendingBlockCard: View {
                 .foregroundStyle(Ink.ink)
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            Tag(text: "shell", tone: .quiet)
             Text(SessionBlockTime.short(running.startedAt))
                 .font(Face.mono(Metrics.caption))
                 .foregroundStyle(Ink.inkFaint)
@@ -226,6 +274,7 @@ struct SessionActiveBlockCard: View {
                 .foregroundStyle(Ink.ink)
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            Tag(text: "shell", tone: .quiet)
             if let running {
                 Text(SessionBlockTime.short(running.startedAt))
                     .font(Face.mono(Metrics.caption))
@@ -281,6 +330,7 @@ struct SessionCommandBlockCard: View {
                     .foregroundStyle(Ink.ink)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                Tag(text: "shell", tone: .quiet)
                 Text(SessionBlockTime.short(block.startedAt))
                     .font(Face.mono(Metrics.caption))
                     .foregroundStyle(Ink.inkFaint)
@@ -355,63 +405,88 @@ struct SessionCommandBlockCard: View {
 }
 
 
-/// Agent turn/session as a status block in the unified stream (运行中 / 完成 / 失败).
+/// Agent session as a peer of the shell card: status + user prompt + tag + result body.
 struct SessionAgentBlockCard: View {
     let row: AgentRow
     var onEnter: (() -> Void)?
 
     var body: some View {
-        Button(action: { onEnter?() }) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Image(systemName: statusSymbol)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(statusColor)
-                    Text(row.title)
-                        .font(Face.sans(Metrics.meta, .semibold))
-                        .foregroundStyle(Ink.ink)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    if let since = row.since {
-                        Text(SessionBlockTime.short(since))
-                            .font(Face.mono(Metrics.caption))
-                            .foregroundStyle(Ink.inkFaint)
-                    }
-                    Text(statusLabel)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Tag(text: statusLabel, tone: statusTone)
+                Text(headerPrompt)
+                    .font(Face.mono(Metrics.meta))
+                    .foregroundStyle(Ink.ink)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Tag(text: "agent-session", tone: .quiet)
+                if let since = row.since {
+                    Text(SessionBlockTime.short(since))
                         .font(Face.mono(Metrics.caption))
-                        .foregroundStyle(statusColor)
-                    Text("进入")
-                        .font(Face.sans(Metrics.caption, .medium))
-                        .foregroundStyle(Ink.accent)
-                }
-                if let activity = row.activity, !activity.isEmpty {
-                    Text(activity)
-                        .font(Face.mono(Metrics.caption))
-                        .foregroundStyle(Ink.inkMuted)
-                        .lineLimit(2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .foregroundStyle(Ink.inkFaint)
+                        .accessibilityLabel("发送于 \(SessionBlockTime.short(since))")
                 }
                 if row.queuedCount > 0 {
                     Text("排队 \(row.queuedCount)")
                         .font(Face.mono(Metrics.caption))
                         .foregroundStyle(Ink.inkFaint)
                 }
+                if onEnter != nil {
+                    Button(action: { onEnter?() }) {
+                        Text("进入")
+                            .font(Face.sans(Metrics.caption, .medium))
+                            .foregroundStyle(Ink.accent)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("console.agentBlock.enter." + row.id.uuidString)
+                }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(row.isTarget ? Ink.accentSoft : Ink.sunken.opacity(0.55))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(row.isTarget ? Ink.accent.opacity(0.45) : Ink.line, lineWidth: 1)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            if let result = displayResult {
+                Text(verbatim: truncate(result, limit: 48))
+                    .font(Face.mono(Metrics.meta))
+                    .foregroundStyle(Ink.inkMuted)
+                    .lineSpacing(3)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .padding(.top, 2)
+                    .accessibilityIdentifier("console.agentBlock.result")
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(row.isTarget ? Ink.accentSoft : Ink.sunken.opacity(0.55))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(row.isTarget ? Ink.accent.opacity(0.45) : Ink.line, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .onTapGesture { onEnter?() }
         .accessibilityIdentifier("console.agentBlock." + row.id.uuidString)
         .accessibilityValue(statusLabel)
         .accessibilityHint("打开 Agent 会话")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var headerPrompt: String {
+        if let prompt = row.userPrompt, !prompt.isEmpty {
+            return prompt
+        }
+        // No turn yet — fall back to session title so the card still reads as a peer.
+        return row.title
+    }
+
+    private var displayResult: String? {
+        if let text = row.resultText?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+            return row.resultText
+        }
+        if let activity = row.activity?.trimmingCharacters(in: .whitespacesAndNewlines), !activity.isEmpty {
+            return row.activity
+        }
+        return nil
     }
 
     private var statusLabel: String {
@@ -428,24 +503,19 @@ struct SessionAgentBlockCard: View {
         }
     }
 
-    private var statusSymbol: String {
+    private var statusTone: Tag.Tone {
         switch row.status {
-        case .starting, .working: return "hourglass"
-        case .needsYou: return "hand.raised"
-        case .completed, .idle: return "checkmark.circle"
-        case .failed, .lost: return "xmark.circle"
-        case .interrupted: return "exclamationmark.triangle"
-        case .ended: return "stop.circle"
+        case .starting, .working: return .live
+        case .needsYou: return .warn
+        case .failed, .lost: return .warn
+        case .completed, .idle, .ended, .interrupted: return .quiet
         }
     }
 
-    private var statusColor: Color {
-        switch row.status {
-        case .starting, .working: return Ink.live
-        case .needsYou: return Change.changed
-        case .failed, .lost: return Change.removed
-        case .completed, .idle, .ended, .interrupted: return Ink.inkFaint
-        }
+    private func truncate(_ text: String, limit: Int) -> String {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        if lines.count <= limit { return text }
+        return lines.prefix(limit).joined(separator: "\n") + "\n…"
     }
 }
 

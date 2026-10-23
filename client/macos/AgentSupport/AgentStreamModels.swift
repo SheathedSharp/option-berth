@@ -204,10 +204,14 @@ public struct AgentRow: Equatable, Sendable, Identifiable {
     public let unread: Bool
     public let isTarget: Bool
     public let queuedCount: Int
+    /// Latest user turn text shown in the stream card header (sibling of `$ cmd`).
+    public let userPrompt: String?
+    /// Inline result / activity body for the stream card (sibling of shell output).
+    public let resultText: String?
 
     public init(id: UUID, provider: String, transport: AgentTransport, title: String,
                 status: AgentDisplayStatus, activity: String?, since: Date?, unread: Bool,
-                isTarget: Bool, queuedCount: Int) {
+                isTarget: Bool, queuedCount: Int, userPrompt: String? = nil, resultText: String? = nil) {
         self.id = id
         self.provider = provider
         self.transport = transport
@@ -218,5 +222,7 @@ public struct AgentRow: Equatable, Sendable, Identifiable {
         self.unread = unread
         self.isTarget = isTarget
         self.queuedCount = queuedCount
+        self.userPrompt = userPrompt
+        self.resultText = resultText
     }
 }

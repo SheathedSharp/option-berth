@@ -867,10 +867,10 @@ struct WorkspaceConsole: View {
                     try streamController.sendTurn(id: id, text: text)
                     workspace.resumeStreamID = id
                     previewAgentID = id
-                    // Stay on unified block stream — Agent card shows 运行中; tap 进入 for detail.
+                    // Stay on unified block stream — Agent peer card shows status + prompt + result; 进入 opens detail.
                     focusStreamOnCanvas = false
                     pickingProvider = false
-                    composerNotice = "已发送 · 流里可进入 \(session.title)"
+                    composerNotice = "已发送 · 块流里可见 \(session.title)"
                 } catch {
                     composerNotice = error.localizedDescription
                 }
@@ -1115,7 +1115,7 @@ struct WorkspaceConsole: View {
                     previewAgentID = session.id
                     focusStreamOnCanvas = false
                     if !trimmed.isEmpty { workspace.draft = "" }
-                    composerNotice = "已新建 \(session.title) · 块流里可进入"
+                    composerNotice = "已新建 \(session.title) · 块流里可见"
                 } catch {
                     composerNotice = error.localizedDescription
                 }
@@ -1289,7 +1289,7 @@ struct WorkspaceConsole: View {
             focusStreamOnCanvas = false
             workspace.draft = ""
             pickingProvider = false
-            composerNotice = "已发送 · 流里可进入 \(session?.title ?? "Agent")"
+            composerNotice = "已发送 · 块流里可见 \(session?.title ?? "Agent")"
         } catch {
             composerNotice = error.localizedDescription
         }
