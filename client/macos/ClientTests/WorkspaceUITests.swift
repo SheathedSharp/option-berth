@@ -33,6 +33,7 @@ enum ClientChecks {
         }
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory); app.finishLaunching()
+        quitReadinessChecks()
         try shortcutChecks()
         try windowChecks()
         paletteChecks()
@@ -46,6 +47,7 @@ enum ClientChecks {
         try historyChecks()
         try historyEntryChecks()
         try workplaceChecks()
+        quitReadinessChecks()
     }
     static func shortcutChecks() throws {
         let suite = "workspace-shortcut-test-" + UUID().uuidString
