@@ -126,8 +126,14 @@ struct OptionBerthApp: App {
                     services.start()
                     ConsoleAgentAlerts.shared.setEnabled(settings.consoleAgentNotifications)
                 }
-                .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in recovery.saveNow() }
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+                    // Workplace block writes are debounced onto a background
+                    // queue; quitting must not drop the last cards of a session.
+                    WorkplaceStore.shared.flushPendingSave()
+                    recovery.saveNow()
+                }
                 .onDisappear {
+                    WorkplaceStore.shared.flushPendingSave()
                     recovery.saveNow()
                     store.stop()
                     services.stop()

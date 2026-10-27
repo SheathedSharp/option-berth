@@ -29,10 +29,19 @@ extension ClientChecks {
             since: Date(timeIntervalSince1970: 1_700_000_002), unread: false, isTarget: false,
             queuedCount: 0, userPrompt: "hi", resultText: "hello", exitCode: nil)
         store.syncLive(shell: [shell], agents: [agent])
+        // `flushPendingSave` must be synchronous: writes now run on a background
+        // queue, and quit/switch callers rely on the bytes being on disk by the
+        // time it returns. Read the file immediately, with no run-loop pumping
+        // in between — a debounced or fire-and-forget write fails this.
         store.flushPendingSave()
         require(store.blocks.count == 2, "synced two blocks")
         require(store.blocks.contains { $0.kind == .shell && $0.input == "ls" }, "shell persisted")
         require(store.blocks.contains { $0.kind == .agentSession && $0.input == "hi" }, "agent persisted")
+        let flushedDir = root.appendingPathComponent("workplaces").appendingPathComponent(first.id.uuidString)
+        let flushedBlocks = try? Data(contentsOf: flushedDir.appendingPathComponent("blocks.json"))
+        require(flushedBlocks != nil, "flushPendingSave returned before blocks.json reached disk")
+        require(flushedBlocks.map { String(decoding: $0, as: UTF8.self).contains("\"ls\"") } == true,
+                "blocks.json on disk did not contain the flushed block")
 
         let dir = root.appendingPathComponent("workplaces").appendingPathComponent(first.id.uuidString)
         require(fm.fileExists(atPath: dir.appendingPathComponent("meta.json").path), "meta.json on disk")

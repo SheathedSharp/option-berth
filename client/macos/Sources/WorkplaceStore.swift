@@ -439,10 +439,16 @@ public final class WorkplaceStore: ObservableObject {
         }
     }
 
+    /// Cancel the debounce and write now, **waiting** for the write to land.
+    ///
+    /// The blocking part is the contract: callers reach this when they are about
+    /// to change what `active` points at, or when the process is going away.
+    /// Returning before the bytes reach disk would silently drop the last block
+    /// of a session on quit.
     public func flushPendingSave() {
         saveTask?.cancel()
         saveTask = nil
-        persistActiveNow()
+        persistActiveNowBlocking()
     }
 
     /// Persist now and wait for the write to land.
