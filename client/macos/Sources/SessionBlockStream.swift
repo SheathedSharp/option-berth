@@ -371,9 +371,13 @@ struct SessionCommandBlockCard: View {
     var onSelect: () -> Void
 
     private var displayOutput: String? {
+        // `capturedOutput` is already finalized by `TerminalSession` when the
+        // block closes, and again on restore from the workplace archive. Running
+        // `finalizeAccumulated` here re-cleaned text that was clean and cost
+        // ~0.7 ms per card per body evaluation — with a few dozen cards that is
+        // hundreds of milliseconds a second on the main thread.
         guard let raw = block.capturedOutput else { return nil }
-        let cleaned = ShellCommandCapture.finalizeAccumulated(raw)
-        return cleaned.isEmpty ? nil : cleaned
+        return raw.isEmpty ? nil : raw
     }
 
     var body: some View {
@@ -551,11 +555,18 @@ struct SessionAgentBlockCard: View {
 }
 
 enum SessionBlockTime {
-    static func short(_ date: Date) -> String {
+    /// One formatter for the process. Building a `DateFormatter` per call cost
+    /// ~46 µs each, and the block stream asks for two stamps per card on every
+    /// body evaluation.
+    private static let formatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_GB")
         formatter.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
         formatter.dateFormat = "HH:mm"
-        return formatter.string(from: date)
+        return formatter
+    }()
+
+    static func short(_ date: Date) -> String {
+        formatter.string(from: date)
     }
 }
