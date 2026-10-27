@@ -4,7 +4,7 @@
 > 已确认的决定：Agent 默认走 provider 自己的结构化 stdio 协议，审批请求在会话页由人决定；
 > 支持的 Shell（zsh/bash/fish）上新会话默认开启集成（`settings.json` 可关）。
 > 每完成一个阶段，把对应内容并入 [console.md](console.md)、[cli.md](cli.md)、[product.md](product.md)，
-> 再从本文删去已落地部分。提交说明用产品语言，不写阶段编号（见 `.agents/skills/git-commit`）。
+> 再从本文删去已落地部分。提交说明用产品语言，不写阶段编号。
 
 ## 1. 目标体验
 
