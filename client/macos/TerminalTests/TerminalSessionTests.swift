@@ -43,6 +43,7 @@ enum TerminalChecks {
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             try shellCommandCaptureChecks()
+            try FrameCoalescerChecks.run()
             try mixedPaneChecks(root: root)
             try workspaceChecks(root: root)
             try nativeConsoleChecks(root: root)

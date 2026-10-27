@@ -27,6 +27,22 @@ final class AgentStreamsController: ObservableObject {
     /// Last structured session that reported `unsupported`; cleared on next launch.
     @Published private(set) var unsupportedNotice: (sessionID: UUID, message: String)?
 
+    /// Frame coalescing for the stream path.
+    ///
+    /// **Why not publish per line.** `item.updated` arrives per token delta, so
+    /// the bridge emits hundreds of lines a second while a model answers. Each
+    /// line used to run `publish()`, which re-sorts every session and sends
+    /// `objectWillChange` to the whole console — the console then re-projects
+    /// every card (`agentStreamBlocks`, `structuredAgentRows`) several times per
+    /// body. That is the same per-event amplification as the PTY byte path, and
+    /// it is why a long agent answer made the window unresponsive.
+    ///
+    /// Facts still land in the registry immediately; only the `@Published`
+    /// hand-off to SwiftUI waits for the tick.
+    private lazy var publishCoalescer = FrameCoalescer { [weak self] in
+        self?.publish()
+    }
+
     private init() {}
 
     private func canonical(_ root: String) -> String {
@@ -94,7 +110,7 @@ final class AgentStreamsController: ObservableObject {
         guard var queue = queuedText[id], !queue.isEmpty else { return nil }
         let text = queue.removeFirst()
         queuedText[id] = queue.isEmpty ? nil : queue
-        publish()
+        publishNow()
         return text
     }
 
@@ -102,7 +118,7 @@ final class AgentStreamsController: ObservableObject {
     func drainQueuedText(id: UUID) -> String? {
         guard let queue = queuedText[id], !queue.isEmpty else { return nil }
         queuedText.removeValue(forKey: id)
-        publish()
+        publishNow()
         return queue.joined(separator: "\n\n")
     }
 
@@ -148,7 +164,7 @@ final class AgentStreamsController: ObservableObject {
         try process.start(binary: binary, arguments: args, directory: root, environment: environment)
         lineHooks[sessionID] = process
         AgentStreamRegistry.track(id: sessionID, worktree: root, title: title, process: process)
-        publish()
+        publishNow()
         if let firstTurn, !firstTurn.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             try sendTurn(id: sessionID, text: firstTurn)
         }
@@ -169,7 +185,7 @@ final class AgentStreamsController: ObservableObject {
         var queue = queuedText[id] ?? []
         if queue.count < 8 { queue.append(text) }
         queuedText[id] = queue
-        publish()
+        publishNow()
     }
 
     func respond(id: UUID, requestID: String, decision: AgentDecision) throws {
@@ -182,7 +198,7 @@ final class AgentStreamsController: ObservableObject {
             }
         }
         try process.sendRequestRespond(requestID: requestID, decision: decision)
-        publish()
+        publishNow()
     }
 
     func interrupt(id: UUID) throws {
@@ -204,7 +220,7 @@ final class AgentStreamsController: ObservableObject {
         registry.remove(id)
         lineHooks.removeValue(forKey: id)
         AgentStreamRegistry.untrack(id: id)
-        publish()
+        publishNow()
     }
 
     func dropSession(_ id: UUID) {
@@ -214,7 +230,7 @@ final class AgentStreamsController: ObservableObject {
         clearNativeCardMeta(id: id)
         lineHooks.removeValue(forKey: id)
         registry.drop(id)
-        publish()
+        publishNow()
     }
 
     func resumeEndedSession(binary: String, provider: ExternalAgent, root: String, id: UUID,
@@ -237,17 +253,23 @@ final class AgentStreamsController: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.registry.applyLine(sessionID, line: line)
+                // Cheap pre-filter: only the two notification types are worth
+                // decoding a second time. Everything else already went through
+                // the reducer above, so re-parsing each token delta here was
+                // pure repeated work on the hot path.
+                if line.contains("\"turn.completed\"") || line.contains("\"request.opened\"") {
+                    self.noteUnreadIfNeeded(sessionID: sessionID, line: line)
+                }
                 self.noteUnsupportedIfNeeded(sessionID: sessionID)
-                self.noteUnreadIfNeeded(sessionID: sessionID, line: line)
                 self.drainQueueIfIdle(sessionID: sessionID)
-                self.publish()
+                self.publishCoalescer.signal()
             }
         }, onEnd: { [weak self] _ in
             Task { @MainActor in
                 self?.launchResumeFileByID.removeValue(forKey: sessionID)
                 self?.lineHooks.removeValue(forKey: sessionID)
                 AgentStreamRegistry.untrack(id: sessionID)
-                self?.publish()
+                self?.publishCoalescer.signal()
             }
         })
     }
@@ -292,5 +314,13 @@ final class AgentStreamsController: ObservableObject {
 
     private func publish() {
         sessions = registry.all.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+
+    /// Publish immediately, dropping any scheduled tick so the same facts are
+    /// not announced twice. Every non-hot path (launch, queue edits, end, drop,
+    /// respond) goes through here: those are user actions whose result the
+    /// person is waiting to see, and each is far too rare to need coalescing.
+    private func publishNow() {
+        publishCoalescer.flushNow()
     }
 }

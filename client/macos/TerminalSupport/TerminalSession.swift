@@ -44,7 +44,9 @@ public final class TerminalSession: ObservableObject, Identifiable {
     ///
     /// The rendered terminal is unaffected: `HostedTerminalView` feeds SwiftTerm
     /// synchronously in `dataReceived`, so what you see still updates per chunk.
-    private var pendingPublish: DispatchWorkItem?
+    private lazy var publishCoalescer = FrameCoalescer { [weak self] in
+        self?.flushPendingPublish()
+    }
     /// Latest bell / alternate-screen facts since the last publish.
     private var pendingBellAt: Date?
     private var pendingAttention = false
@@ -53,9 +55,6 @@ public final class TerminalSession: ObservableObject, Identifiable {
     /// OSC 777 / 9;4 markers was pure per-chunk cost on a hot path.
     private var pendingProtocolScan: [UInt8] = []
     private static let protocolScanLimit = 64 * 1024
-    /// Upper bound on publish latency. 16 ms stays inside one frame at 60 Hz, so
-    /// a burst still paints as one update per frame instead of one per chunk.
-    private static let publishInterval: TimeInterval = 0.016
 
     public init(worktree: String, title: String = "Terminal", kind: String = "terminal") {
         self.worktree = worktree.hasPrefix("/") && !worktree.utf8.contains(0) ? URL(fileURLWithPath: worktree).standardizedFileURL.resolvingSymlinksInPath().path : ""
@@ -110,7 +109,7 @@ public final class TerminalSession: ObservableObject, Identifiable {
             }
             activity.outputTail = AgentActivityInference.appendTail(activity.outputTail, bytes: bytes)
             pendingAlternateScreen = terminal.getTerminal().isCurrentBufferAlternate
-            schedulePublish()
+            publishCoalescer.signal()
         }
         let priorProtocol = terminal.onProtocolBytes
         terminal.onProtocolBytes = { [weak self] bytes in
@@ -121,25 +120,14 @@ public final class TerminalSession: ObservableObject, Identifiable {
             if pendingProtocolScan.count < Self.protocolScanLimit {
                 pendingProtocolScan.append(contentsOf: bytes)
             }
-            schedulePublish()
+            publishCoalescer.signal()
         }
-    }
-
-    /// One publish per frame at most, no matter how fast bytes arrive.
-    private func schedulePublish() {
-        guard pendingPublish == nil else { return }
-        let work = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated { self?.flushPendingPublish() }
-        }
-        pendingPublish = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.publishInterval, execute: work)
     }
 
     /// Drop a scheduled tick. Used when something publishes immediately, so the
     /// same facts are not announced twice.
     private func cancelPendingPublish() {
-        pendingPublish?.cancel()
-        pendingPublish = nil
+        publishCoalescer.cancelPending()
         pendingProtocolScan.removeAll(keepingCapacity: true)
         pendingBellAt = nil
         pendingAlternateScreen = nil
@@ -147,7 +135,6 @@ public final class TerminalSession: ObservableObject, Identifiable {
     }
 
     private func flushPendingPublish() {
-        pendingPublish = nil
         let scanned = pendingProtocolScan
         pendingProtocolScan.removeAll(keepingCapacity: true)
         if !scanned.isEmpty, Self.containsNotify(scanned[...]) {
