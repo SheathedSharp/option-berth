@@ -213,14 +213,14 @@ final class AgentStreamsController: ObservableObject {
         queuedText.removeValue(forKey: id)
         unreadIDs.remove(id)
         clearNativeCardMeta(id: id)
-        if let process = lineHooks[id] {
-            try? process.closeSession()
-            _ = process.waitUntilExit()
-        }
+        // Stop offering the session immediately, then reclaim the bridge off the
+        // main thread. Waiting for the provider to exit here blocked the window
+        // for as long as a mid-turn model took to notice `session.close`.
+        let process = lineHooks.removeValue(forKey: id)
         registry.remove(id)
-        lineHooks.removeValue(forKey: id)
         AgentStreamRegistry.untrack(id: id)
         publishNow()
+        process?.requestShutdown()
     }
 
     func dropSession(_ id: UUID) {
@@ -228,9 +228,10 @@ final class AgentStreamsController: ObservableObject {
         queuedText.removeValue(forKey: id)
         unreadIDs.remove(id)
         clearNativeCardMeta(id: id)
-        lineHooks.removeValue(forKey: id)
+        let process = lineHooks.removeValue(forKey: id)
         registry.drop(id)
         publishNow()
+        process?.requestShutdown()
     }
 
     func resumeEndedSession(binary: String, provider: ExternalAgent, root: String, id: UUID,
@@ -280,11 +281,9 @@ final class AgentStreamsController: ObservableObject {
         let message = snapshot.bridgeErrorMessage ?? "此版本不支持结构化协议"
         unsupportedNotice = (sessionID, message)
         queuedText.removeValue(forKey: sessionID)
-        if let process = lineHooks[sessionID] {
-            try? process.closeSession()
-            _ = process.waitUntilExit()
-        }
-        lineHooks.removeValue(forKey: sessionID)
+        // Same rule as `end`, and this runs on the stream-line path: blocking
+        // here would stall the window on a provider that is slow to exit.
+        lineHooks.removeValue(forKey: sessionID)?.requestShutdown()
     }
 
     private func noteUnreadIfNeeded(sessionID: UUID, line: String) {
