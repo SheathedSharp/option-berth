@@ -12,17 +12,26 @@ extension ClientChecks {
         let a = try project("alpha", "feature/first"), b = try project("beta", "fix/second")
         let projects = [b, a]
         let views = ViewState(scope: .code(a.name))
+        // Session-primary (docs/console.md「布局与导航」): a worktree ordinal
+        // always routes to that worktree's session stage. Git is a capability
+        // panel over that stage, not a module selection the route must restore.
         views.selectVisibleProject(at: 2, in: projects)
-        require(views.scope == .code(b.name), "ordinal route changed module or used incoming rather than visible order")
+        require(views.scope == .terminal(b.name), "ordinal route changed module or used incoming rather than visible order")
         views.projectQuery = "FIRST"
         views.selectVisibleProject(at: 1, in: projects)
-        require(views.scope == .code(a.name), "filtered worktree navigation differs from rail")
+        require(views.scope == .terminal(a.name), "filtered worktree navigation differs from rail")
         views.selectVisibleProject(at: 2, in: projects)
-        require(views.scope == .code(a.name), "out-of-range key changed selection")
+        require(views.scope == .terminal(a.name), "out-of-range key changed selection")
         views.projectQuery = "missing"
         views.selectVisibleProject(at: 1, in: projects)
-        require(views.scope == .code(a.name), "empty filter changed selection")
+        require(views.scope == .terminal(a.name), "empty filter changed selection")
+        // A capability panel open on the old worktree must not survive the switch.
         views.projectQuery = ""
+        views.openGitPanel(path: "Sources/App.swift")
+        views.selectVisibleProject(at: 2, in: projects)
+        require(views.capabilityPanel == nil && views.selectedGitPath == nil,
+                "worktree switch carried the previous worktree's Git panel state")
+        views.scope = .code(a.name)
         views.showingSettings = true
         views.selectVisibleProject(at: 2, in: projects)
         let before = views.connectionRequest
