@@ -131,6 +131,14 @@ public final class WorkplaceStore: ObservableObject {
     private var saveTask: Task<Void, Never>?
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    /// Serial queue that owns every disk write.
+    ///
+    /// `blocks.json` carries up to `maximumBlocks` cards with their full text,
+    /// so encoding it is a megabyte-scale job. Doing that on the main actor
+    /// stalled the window whenever a block finished; doing it here keeps the
+    /// writes ordered and off the UI thread. Encoding uses a snapshot taken on
+    /// the main actor, so nothing here reads mutable store state concurrently.
+    private let ioQueue = DispatchQueue(label: "option-berth.workplace.io", qos: .utility)
 
     public init(rootURL: URL? = nil) {
         let home = FileManager.default.homeDirectoryForCurrentUser
@@ -256,7 +264,7 @@ public final class WorkplaceStore: ObservableObject {
         entry.order.append(meta.id)
         if makeActive {
             if let previous = active, canonical(previous.worktree) == key {
-                try persistActiveNow()
+                persistActiveNowBlocking()
             }
             entry.activeID = meta.id
             active = meta
@@ -296,7 +304,7 @@ public final class WorkplaceStore: ObservableObject {
         }
         if active?.id == target.id { return target }
         flushPendingSave()
-        try persistActiveNow()
+        persistActiveNowBlocking()
         var entry = index.worktrees[key] ?? WorkplaceWorktreeEntry(activeID: nil, order: candidates.map(\.id))
         entry.activeID = target.id
         if !entry.order.contains(target.id) { entry.order.append(target.id) }
@@ -427,28 +435,70 @@ public final class WorkplaceStore: ObservableObject {
         saveTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 350_000_000)
             guard !Task.isCancelled else { return }
-            try? persistActiveNow()
+            persistActiveNow()
         }
     }
 
     public func flushPendingSave() {
         saveTask?.cancel()
         saveTask = nil
-        try? persistActiveNow()
+        persistActiveNow()
     }
 
-    private func persistActiveNow() throws {
+    /// Persist now and wait for the write to land.
+    ///
+    /// Only for switches away from the current workplace: `active` is about to
+    /// be replaced, so the old blocks must reach disk before the new ones start
+    /// being written. Everything else uses the async path.
+    private func persistActiveNowBlocking() {
+        persistActiveNow()
+        ioQueue.sync {}
+    }
+
+    /// Persist the active workplace.
+    ///
+    /// Encoding and writing happen on `ioQueue`; the caller never blocks. Order
+    /// is preserved because the queue is serial and each write carries the
+    /// snapshot taken at call time. Returns nothing: a failed write leaves the
+    /// in-memory state intact and the next save retries, which is the same
+    /// contract the throwing version had for its callers.
+    private func persistActiveNow() {
         guard var meta = active else { return }
         meta.updatedAt = Date()
         active = meta
-        try writeMeta(meta)
-        try writeBlocks(meta.id, blocks)
+        let blocksSnapshot = blocks
         let key = canonical(meta.worktree)
         var entry = index.worktrees[key] ?? WorkplaceWorktreeEntry(activeID: meta.id, order: [meta.id])
         entry.activeID = meta.id
         if !entry.order.contains(meta.id) { entry.order.append(meta.id) }
         index.worktrees[key] = entry
-        try writeIndex()
+        let indexPath = index
+        let encoder = self.encoder
+        ioQueue.async { [rootURL] in
+            let metaURL = rootURL
+                .appendingPathComponent(meta.id.uuidString, isDirectory: true)
+                .appendingPathComponent("meta.json")
+            let blocksURL = rootURL
+                .appendingPathComponent(meta.id.uuidString, isDirectory: true)
+                .appendingPathComponent("blocks.json")
+            let indexURL = rootURL.appendingPathComponent("index.json")
+            let directory = rootURL.appendingPathComponent(meta.id.uuidString, isDirectory: true)
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            if let data = try? encoder.encode(meta) {
+                try? data.write(to: metaURL, options: .atomic)
+            }
+            var trimmed = blocksSnapshot
+            if trimmed.count > WorkplaceStore.maximumBlocks {
+                trimmed = Array(trimmed.suffix(WorkplaceStore.maximumBlocks))
+            }
+            let file = WorkplaceBlocksFile(schemaVersion: WorkplaceStore.schemaVersion, blocks: trimmed)
+            if let data = try? encoder.encode(file) {
+                try? data.write(to: blocksURL, options: .atomic)
+            }
+            if let data = try? encoder.encode(indexPath) {
+                try? data.write(to: indexURL, options: .atomic)
+            }
+        }
     }
 
     private func defaultName(for worktree: String) -> String {
