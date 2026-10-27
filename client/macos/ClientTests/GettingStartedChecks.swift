@@ -23,10 +23,23 @@ extension ClientChecks {
         pump()
     }
     static func clickTour(_ id: String, in window: NSWindow) {
-        pump(0.25) // Wait for the target relocation animation before hit-testing.
-        guard let root = window.contentView, let button = find(NSButton.self, in: root).first(where: { $0.accessibilityIdentifier() == id }) else {
-            fatalError("Missing native tour button: " + id)
+        // Wait for the control to exist rather than for a fixed delay: the tour
+        // only mounts its native buttons once `overlayPreferenceValue` has
+        // measured the anchors, and that takes a variable number of layout
+        // passes after a re-host or a target change. A fixed `pump` raced it.
+        let deadline = Date().addingTimeInterval(4)
+        func button() -> NSButton? {
+            guard let root = window.contentView else { return nil }
+            return find(NSButton.self, in: root).first { $0.accessibilityIdentifier() == id }
         }
+        while button() == nil, Date() < deadline { pump(0.02) }
+        guard let button = button() else {
+            let present = find(NSView.self, in: window.contentView ?? NSView())
+                .compactMap { $0.accessibilityIdentifier() }.filter { !$0.isEmpty }.sorted()
+            fatalError("Missing native tour button: \(id). Present identifiers: \(present)")
+        }
+        // Let the relocation animation settle before hit-testing the point.
+        pump(0.25)
         let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
         guideClick(window, x: point.x, y: point.y)
     }
