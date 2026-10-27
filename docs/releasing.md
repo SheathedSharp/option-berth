@@ -48,11 +48,11 @@ Mage 提供 `releaseProtocol / releaseFeature / releaseFix`（本地提交和 ta
 验证失败不修改日常工作区，不创建标签。没有跳过测试或强制发布选项。
 
 验证通过后仍重新检查工作区、main 提交、origin/main 与标签，防止验证期间的并行工作被覆盖。
-只允许候选中的版本与协议文件发生预期变化；其他生成或修改必须先被审查。
-代码与环境中的真实错误不通过删断言、放宽超时或自动无限重试处理。
+只允许候选中的版本与协议文件发生预期变化；其他生成或修改必须先被审查，真实错误不通过删断言、
+放宽超时或自动无限重试处理。
 
-推送使用 `git push --atomic`，main 和标签一起成功或一起失败，不使用 force。
-远端需为本项目，发布者必须有正常写入权限；分支保护拒绝时停止，不更改保护规则或绕过审查。
+推送使用 `git push --atomic`，main 和标签一起成功或一起失败，不使用 force；远端须为本项目，
+分支保护拒绝时停止，不更改保护规则或绕过审查。
 要求版本变更也走 PR 的仓库，应先按保护规则完成版本 PR，再由有权限的维护者创建相应注释标签。
 
 ## GitHub Actions 发布链路
@@ -84,23 +84,6 @@ Windows arm64 与部分 CLI 包是交叉构建；有下载包不等于已经验�
 上传/校验失败：检查遗留 draft 和资产，不直接把失败的 draft 标为正式版。
 网络中断可能造成客户端无法确认最终状态，必须读取远端核实，不能只根据本地报错推断“完全没发生”。
 已经公开的版本不覆盖资产或移动标签；修复后按类别发布下一个版本。既有安装不会自动升级或停止用户服务。
-
-## English quick reference
-
-`VERSION` follows **protocol.feature.fix**. Higher-component increments reset lower components.
-Protocol releases also advance the independently versioned daemon protocol major and regenerate its existing schema.
-This does not make an incompatible consumer compatible: all implementation and compatibility checks must pass first.
-
-The shell scripts default to a read-only plan. `--execute` creates a verified local version commit and annotated tag;
-`--publish` also atomically pushes main and the tag. Run from clean, reviewed main matching the expected origin.
-There is no force-publish or skip-verification flag. Validation uses a disposable checkout and does not overwrite
-concurrent user changes. Existing tags are immutable.
-
-Tag CI verifies native platforms, packages six CLI targets plus the macOS ARM64 app, includes build identities and
-licenses, verifies SHA-256, and publishes a draft only after uploaded assets are downloaded and rechecked.
-The application embeds its matching engine. Current macOS artifacts are **ad-hoc signed, not notarized**;
-Developer ID distribution remains an explicitly separate credential-dependent step.
-
 
 ## 显式 Developer ID / Apple 公证
 
