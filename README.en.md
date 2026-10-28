@@ -106,6 +106,27 @@ oberth agent plan codex --worktree "$PWD" --json
 oberth agent run codex --worktree "$PWD"
 ```
 
+### Give your coding agent the skill
+
+A coding agent learns `oberth` through the skill that ships with the repository
+(`.agents/skills/option-berth/`). It is part of the product, not a summary of it.
+Install it as a **symlink** into the clone:
+
+```sh
+cd option-berth   # the clone's root
+mkdir -p ~/.claude/skills
+ln -sfn "$PWD/.agents/skills/option-berth" ~/.claude/skills/option-berth
+```
+
+Claude Code is the example; other agents use their own skills directory. A symlink
+follows the clone, so `git pull` is the update. A copy does not update itself: when
+a command or a `--json` shape changes it keeps the old contract, and the same machine
+ends up with two skills under one name with no way to tell which one an agent loaded.
+
+Installing the skill only teaches the agent to read the same facts. It installs no
+service and edits no other tool's configuration; starting and stopping stay with the
+agent through the CLI.
+
 **Cmd+N** connects a project. **Cmd+1…9** selects the currently visible sidebar worktree without resetting its module.
 **Option+Cmd+S/G/T** selects services, Git, or Console; **Cmd+B** toggles the sidebar, and **Shift+Cmd+P** opens the action palette.
 Same-worktree sessions support recursive panes and exclusive detached-window presentation. The toolbar
