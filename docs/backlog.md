@@ -31,9 +31,7 @@ Cmd+N 接入项目，Cmd+1…9 按可见 Worktrees 导航，模块采用 Option+
 
 | 优先级 | 能力 | 当前缺口与完成条件 |
 | --- | --- | --- |
-| 高 | agent 侧的能力面是否够用 | 主线是给 coding agent 的能力，所以「agent 拿到这份代码能不能自己跑起来、自己判断为什么没跑起来」优先于任何界面。**2026-10-28 已跑过一轮**：真实 Claude Code 在陌生 worktree 上只靠 CLI 与 skill 完成了「起服务、失败、看日志、修、再起」，核心闭环 6 步走通（输入与结果见 [validation.md](validation.md)「核心验收」）。卡点见下面四条。仍缺：Codex / OpenCode / Pi 与多 worktree 并发场景。 |
-| 高 | `up` 的失败提示对「启动前拒绝」是错的 | 拒绝类错误（worktree 在 `$HOME` 之外、cwd 不可用或缺失）发生在 spawn 之前，没有日志；但 `groupstart` 的失败分支丢弃 RPC 自带的 hint，无条件换成 `oberth logs <svc> --once`，`reason` 也落到 `start_failed`，读起来像「启动后失败」。完成条件：保留 RPC 的 hint，pre-spawn 拒绝不发日志提示并给对应的 reason。 |
-| 高 | 未监听的 `machine:` 依赖无条件升级成 attention 交接 | 只要声明的 machine 条目没在听就发 `machine_unavailable`，不看有没有服务依赖它；而 `up` / `down` 永不操作 machine 条目，于是交接给 agent 的是它无权也无从处理的事，两轮分别花了 8 步和 5 步以上。完成条件：没有 `depends_on` 指向它时不发布交接，或降级成 `status` 里的一行。 |
+| 高 | agent 侧的能力面是否够用 | 主线是给 coding agent 的能力，所以「agent 拿到这份代码能不能自己跑起来、自己判断为什么没跑起来」优先于任何界面。**2026-10-28 已跑过一轮**：真实 Claude Code 在陌生 worktree 上只靠 CLI 与 skill 完成了「起服务、失败、看日志、修、再起」，核心闭环 6 步走通（输入与结果见 [validation.md](validation.md)「核心验收」）。那一轮卡住的两处已修：失败提示不再指向不存在的日志，未监听的 `machine:` 依赖不再发布交接（契约见 [cli.md](cli.md)）。仍缺：Codex / OpenCode / Pi 与多 worktree 并发场景。 |
 | 高 | skill 的安装与更新没有路径 | 仓库里的 skill 是 v0.4.0（含 `workplace.md`），本机装的那份是 v0.3.1，缺整个 `workplace` 参考；两份同名，哪份生效不确定（两轮分别读到旧版和新版）。README 只说「不会自动安装 skill」，没有安装或更新说明。完成条件：给出安装与更新路径，或让已装的那份能看出自己落后于哪个版本。 |
 | 中 | attention 的 task context 没有出处 | skill 写死 `--task-context /tmp/oberth-task-context.json`，但没有任何东西创建它，agent 得自己猜内容和位置；Jev 配置也有 `$BERTH_HOME/jev.json` 与 `~/.option-berth/jev.json` 两处，agent 两边都找过。完成条件：说清这个文件由谁写、放哪，或让 runner 在没有它时给出可读的默认。 |
 | 高 | 客户端与引擎是否拆成两个产品 | 现在两者在 CI、release 脚本、品牌、文档与验证矩阵里绑在一起（17 个 workflow 里约一半是客户端/品牌/site）。未决定。做之前先出拆分清单与代价，别顺手拆。 |
