@@ -102,6 +102,24 @@ oberth agent plan codex --worktree "$PWD" --json
 oberth agent run codex --worktree "$PWD"
 ```
 
+### 给 coding agent 装上 skill
+
+`oberth` 的能力是通过随仓库分发的 skill（`.agents/skills/option-berth/`）交给 agent 的，
+它是产品面的一部分，不是一份摘要。装它用**软链**指向克隆下来的仓库：
+
+```sh
+cd option-berth   # 克隆下来的仓库根目录
+mkdir -p ~/.claude/skills
+ln -sfn "$PWD/.agents/skills/option-berth" ~/.claude/skills/option-berth
+```
+
+以 Claude Code 为例，其他 agent 用各自的技能目录。软链跟着仓库走，`git pull` 之后 agent
+看到的就是新版本；复制过去的那份不会自己更新，命令或 `--json` 形状变了它还停在旧契约上，
+于是同一台机器上会出现两份同名 skill，agent 用哪份不确定。
+
+装 skill 只是让 agent 学会读同一份事实：它不装服务、不改其他工具的配置，起停仍由 agent
+自己按 CLI 调用。
+
 **⌘N** 接入项目，**⌘1…9** 按侧栏当前可见顺序选择 worktree，保留正在查看的模块。
 **⌥⌘S/G/T** 分别切换服务、只读 Git 与工作台，**⌘B** 切换侧栏，**⇧⌘P** 打开命令面板。工作区支持同一 worktree 的
 递归分屏与独立终端窗口；顶部可访问会话、恢复和检查更新。Agent 的“续接…”要求选择原始会话
