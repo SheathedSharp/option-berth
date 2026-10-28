@@ -109,10 +109,16 @@ Jev 不在 daemon 或 `status` 的控制路径里。
 验证、Jev 评估和 HIL 输出：
 
 ~~~sh
-jev-attention --auto --project "$PWD" --task-context /tmp/oberth-task-context.json
+# 短任务直接给参数，不必落文件
+jev-attention --auto --project "$PWD" \
+  --task "keep the API healthy while the integration test runs" \
+  --authorize inspect_logs,inspect_port,restart_service,continue_without_action,ask_user_for_context
 ~~~
 
-上下文文件包含 `task` 和必填的 `authorized_options`；适配器只向选定的 Jev provider 发送脱敏的事实摘要，
+上下文文件包含 `task` 和必填的 `authorized_options`，**由 agent 自己写**：机器上没有任何东西
+替你生成它，路径也由 agent 选（并行的任务各用一个文件，不要共用一个 `/tmp` 路径）。
+`--task` 与 `--authorize` 覆盖文件里的同名字段；两者都没有时 runner 直接报错，不会替 agent
+猜一个授权集。适配器只向选定的 Jev provider 发送脱敏的事实摘要，
 不会读取日志或起停服务。runner 输出 `clear`、`continue`、`human_required`、`unavailable` 或
 `stale`；成功时把校验后的 `assessment` 原子写回同一文件，并在返回前复读状态。
 没有可用的环境变量或 GUI 本地 Jev 配置、网络失败、响应无效、文件过期或状态修订变化时，事实文件保持不变。
