@@ -3,11 +3,14 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/sheathedsharp/option-berth/internal/display"
 )
+
+var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 func TestVersionJSONCarriesBuildIdentity(t *testing.T) {
 	previous := versionJSONFlag
@@ -42,6 +45,101 @@ func TestRootShortVersionFlag(t *testing.T) {
 	got := strings.TrimSpace(out)
 	if got == "" || strings.Contains(got, "commit") || strings.Contains(got, "built") {
 		t.Fatalf("short version output = %q, want only the CLI version", got)
+	}
+}
+
+// The first screen is where the brand shows up, so the mark has to be the real
+// one. markRail and markToken are generated (mark_gen.go) from the client's
+// geometry, and a regeneration that came out empty or misshapen would otherwise
+// ship silently.
+func TestWelcomeShowsTheBrandMarkBesideTheWordmark(t *testing.T) {
+	restore := display.NoColor
+	display.NoColor = true
+	t.Cleanup(func() { display.NoColor = restore })
+
+	// paintMarkRow reads a cell's shape from the same column in both layers, so
+	// the generator has to keep them the same shape. If it ever stops, the
+	// colour would land on the wrong cells rather than fail loudly.
+	rail := strings.Split(strings.TrimSuffix(markRail, "\n"), "\n")
+	token := strings.Split(strings.TrimSuffix(markToken, "\n"), "\n")
+	if len(rail) != len(token) {
+		t.Fatalf("mark layers have %d and %d rows, want the same", len(rail), len(token))
+	}
+	mark := make([]string, len(rail))
+	for i := range rail {
+		if r, tk := []rune(rail[i]), []rune(token[i]); len(r) != len(tk) {
+			t.Fatalf("mark row %d is %d and %d cells wide, want the same", i, len(r), len(tk))
+		}
+		mark[i] = strings.TrimRight(paintMarkRow(rail[i], token[i]), " ")
+	}
+	if len(mark) < 2 || strings.TrimSpace(strings.Join(mark, "")) == "" {
+		t.Fatalf("mark = %q, want a multi-row mark", mark)
+	}
+
+	var buf bytes.Buffer
+	printWelcome(&buf)
+	lines := strings.Split(buf.String(), "\n")
+	if len(lines) < len(mark) {
+		t.Fatalf("welcome has %d rows, want at least the %d mark rows", len(lines), len(mark))
+	}
+	width := 0
+	for _, row := range mark {
+		if w := display.DisplayWidth(row); w > width {
+			width = w
+		}
+	}
+	for i, row := range mark {
+		if !strings.HasPrefix(lines[i], "  "+row) {
+			t.Errorf("welcome row %d = %q, want mark row %q on the two-space margin",
+				i, lines[i], row)
+		}
+	}
+	// The wordmark and the tagline sit beside the mark, not under it: they
+	// start in the column just past the mark's widest row.
+	for i, want := range append([]string{wordmark}, taglineLines...) {
+		prefix := "  " + display.PadDisplay(mark[i], width) + "   "
+		if !strings.HasPrefix(lines[i], prefix) || !strings.HasSuffix(lines[i], want) {
+			t.Errorf("welcome row %d = %q, want %q in the column after the mark",
+				i, lines[i], want)
+		}
+	}
+}
+
+// The mark is drawn in the brand's two colours — rails in ink/paper, capsule in
+// terracotta. Painting it in one colour is what made the capsule read as a
+// third blob beside the two rail caps, so which layer owns a cell is the point.
+// Whichever colours the terminal ends up with, the glyphs must not move.
+func TestMarkLayersPaintEveryCellExactlyOnce(t *testing.T) {
+	rail := strings.Split(strings.TrimSuffix(markRail, "\n"), "\n")
+	token := strings.Split(strings.TrimSuffix(markToken, "\n"), "\n")
+	if len(rail) != len(token) {
+		t.Fatalf("mark layers have %d and %d rows, want the same", len(rail), len(token))
+	}
+	var sawRail, sawToken bool
+	for i := range rail {
+		r, tk := []rune(rail[i]), []rune(token[i])
+		if len(r) != len(tk) {
+			t.Fatalf("mark row %d is %d and %d cells wide, want the same", i, len(r), len(tk))
+		}
+		merged := make([]rune, len(r))
+		for j := range r {
+			switch {
+			case r[j] != ' ' && tk[j] != ' ':
+				t.Fatalf("mark row %d cell %d is claimed by both layers", i, j)
+			case r[j] != ' ':
+				merged[j], sawRail = r[j], true
+			case tk[j] != ' ':
+				merged[j], sawToken = tk[j], true
+			default:
+				merged[j] = ' '
+			}
+		}
+		if got := ansiEscape.ReplaceAllString(paintMarkRow(rail[i], token[i]), ""); got != string(merged) {
+			t.Errorf("painted row %d = %q, want the mark %q", i, got, string(merged))
+		}
+	}
+	if !sawRail || !sawToken {
+		t.Fatalf("mark has rail=%v token=%v, want both shapes present", sawRail, sawToken)
 	}
 }
 
