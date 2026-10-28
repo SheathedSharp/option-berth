@@ -80,7 +80,8 @@ struct SessionBlockStream: View {
                             SessionCommandBlockCard(
                                 block: block,
                                 selected: selectedID == block.id,
-                                onSelect: { onSelect(block) }
+                                onSelect: { onSelect(block) },
+                                onSendToAgent: onSendToAgent.map { handler in { handler(block) } }
                             )
                             .id(block.id)
                         case .agent(let row):
@@ -121,9 +122,15 @@ struct SessionBlockStream: View {
                 // Keep PTY hosted while idle so the process stays warm — not a card.
                 // Use a real terminal geometry (not 1×1): shrinking to 1×1 reflows the
                 // buffer and was a root cause of command-block output contamination.
+                //
+                // The caret follows the same rule as the visible card: hidden only
+                // while the composer owns typing. A foreground command hands the
+                // keyboard to the PTY (docs/console.md「焦点与不变量」: 前台命令或备用屏时
+                // 键盘在 PTY), so hardcoding `true` here reported a dimmed caret in the
+                // one state where the terminal really owns input.
                 if !showsActiveCard {
                     TerminalSurface(session: session, focusIntent: nil,
-                                    dimTerminalCaret: true,
+                                    dimTerminalCaret: dimTerminalCaret,
                                     bridgePromptKeys: bridgePromptKeys,
                                     onPromptKey: onPromptKey)
                         .frame(width: 720, height: 360)
@@ -369,6 +376,8 @@ struct SessionCommandBlockCard: View {
     let block: CommandBlock
     var selected: Bool
     var onSelect: () -> Void
+    /// Hand this finished command (plus its output) to the Agent composer.
+    var onSendToAgent: (() -> Void)?
 
     private var displayOutput: String? {
         // `capturedOutput` is already finalized by `TerminalSession` when the
@@ -406,6 +415,17 @@ struct SessionCommandBlockCard: View {
                     Text("中断")
                         .font(Face.mono(Metrics.caption))
                         .foregroundStyle(Change.changed)
+                }
+                // docs/console.md「Shell → Agent」: 已完成命令块可点「发给 Agent」。
+                // v15 dropped the control while keeping the plumbing, so the
+                // documented hand-off had no way in. It is a native button so it
+                // keeps keyboard focus and hit testing inside AppKit, like the
+                // other console actions.
+                if let onSendToAgent, !block.isRunning, block.command != nil {
+                    ConsoleToolbarAction(title: "发给 Agent",
+                                         identifier: "console.commandBlock.sendToAgent",
+                                         perform: onSendToAgent)
+                        .fixedSize()
                 }
             }
             if let output = displayOutput {

@@ -54,20 +54,26 @@ enum ComposerConsoleBridge {
             return .untracked(id: shell.id, title: shell.title)
         }()
         let provider: ProviderSelection = providerChosen ? .chosen(providerID) : .unset
-        // Native Agent PTY (`target`) is intentionally ignored — not a ⌘↩ destination.
-        _ = target
         let agentTarget: AgentTarget = {
-            // Unified block canvas: ⌘↩ only targets structured streams (agent-session cards).
-            // Native Agent PTYs are never composer paste/jump targets — that path showed
-            // 「已放进 Pi 的终端」and switched Shell|Pi tabs.
-            let stream: AgentStreamSession? = {
-                if let streamResumeID,
-                   let match = streamSessions.first(where: { $0.id == streamResumeID }) {
-                    return match
-                }
-                return streamSessions.last
-            }()
-            if let stream {
+            // docs/console.md「输入条与路由」: ⌘↩ sends to the current **Agent
+            // target**, and for a terminal agent that means pasting into its
+            // TUI (no Enter). So an explicitly targeted structured stream wins
+            // first, then an explicitly selected native agent PTY, and only
+            // then does the block-stream default apply.
+            //
+            // v15 briefly dropped the native branch entirely, which made the
+            // documented ⌘↩-into-terminal-agent behaviour unreachable.
+            if let streamResumeID,
+               let match = streamSessions.first(where: { $0.id == streamResumeID }) {
+                let state = AgentDisplayDeriver.targetState(phase: match.snapshot.phase,
+                                                            turns: match.snapshot.turns,
+                                                            requests: match.snapshot.requests)
+                return .stream(id: match.id, title: match.title, state: state)
+            }
+            if let target, target.kind.hasPrefix("agent:") {
+                return .terminal(id: target.id, title: target.title, alive: target.isActive)
+            }
+            if let stream = streamSessions.last {
                 let state = AgentDisplayDeriver.targetState(phase: stream.snapshot.phase,
                                                             turns: stream.snapshot.turns,
                                                             requests: stream.snapshot.requests)
