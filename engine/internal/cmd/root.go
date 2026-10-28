@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/sheathedsharp/option-berth/internal/buildinfo"
 	"github.com/sheathedsharp/option-berth/internal/config"
@@ -19,16 +20,124 @@ var loadedConfig = &config.Config{}
 
 var versionFlag bool
 
-const banner = `
-  ██████   ███   ██████   ██   ██████
-  ██          ██     ██ ██  ██     ██
-  ██     ██   ██ ██  ██ ██  ██     ██
-      ██ ██   ██ ██  ██ ██  ██ ████
-      ██ ██      ██  ██ ██  ██ ██  ██
-  ██████   ███   ██  ██ ██  ██ ██  ██
-`
+// The first screen opens with the brand: the mark, then the wordmark beside it.
+// The mark is generated into mark_gen.go from the same 24x24 outline the client
+// draws and the brand SVGs export, so it cannot drift from the logo. The
+// wordmark is an outline font a terminal cannot reproduce, so it is set in the
+// terminal's own type instead of being redrawn in blocks.
+const wordmark = "option-berth"
 
-const rootTagline = "Read a worktree's manifest and runtime, then start or stop its services."
+// taglineLines is the one-line positioning statement, wrapped so it sits beside
+// the mark instead of running past it.
+var taglineLines = []string{
+	"Read a worktree's manifest and runtime,",
+	"then start or stop its services.",
+}
+
+// logoLines is the logo: the mark with the wordmark and tagline beside it. The
+// mark is taller than the text, so its last rows stand alone.
+func logoLines() []string {
+	rail := strings.Split(strings.TrimSuffix(markRail, "\n"), "\n")
+	token := strings.Split(strings.TrimSuffix(markToken, "\n"), "\n")
+	text := append([]string{display.Bold(wordmark)}, dimmed(taglineLines)...)
+	width := 0
+	for _, row := range rail {
+		if w := display.DisplayWidth(row); w > width {
+			width = w
+		}
+	}
+	lines := make([]string, len(rail))
+	for i, row := range rail {
+		// The two layers are padded to the same width so a cell's shape is
+		// read from the same column in both. Only the rows that carry text get
+		// padded on the screen — padding the rest would leave trailing spaces.
+		tokenRow := ""
+		if i < len(token) {
+			tokenRow = token[i]
+		}
+		if i < len(text) {
+			lines[i] = paintMarkRow(display.PadDisplay(row, width),
+				display.PadDisplay(tokenRow, width)) + "   " + text[i]
+			continue
+		}
+		lines[i] = strings.TrimRight(paintMarkRow(row, tokenRow), " ")
+	}
+	return lines
+}
+
+// markLayer says which of the mark's two shapes owns a cell. The generator
+// emits one layer per shape, each with a space wherever the other owns the
+// cell, so a cell never belongs to both.
+type markLayer int
+
+const (
+	layerNone markLayer = iota
+	layerRail
+	layerToken
+)
+
+func (l markLayer) paint(s string) string {
+	switch l {
+	case layerRail:
+		return display.Ink(s)
+	case layerToken:
+		return display.Accent(s)
+	default:
+		return s
+	}
+}
+
+func cellAt(rail, token []rune, i int) (rune, markLayer) {
+	if i < len(rail) && rail[i] != ' ' {
+		return rail[i], layerRail
+	}
+	if i < len(token) && token[i] != ' ' {
+		return token[i], layerToken
+	}
+	return ' ', layerNone
+}
+
+// paintMarkRow draws one row, grouping a run of cells that belong to the same
+// shape under a single colour sequence rather than one escape per cell.
+func paintMarkRow(rail, token string) string {
+	r, t := []rune(rail), []rune(token)
+	var out strings.Builder
+	for i := 0; i < len(r); {
+		_, layer := cellAt(r, t, i)
+		j := i + 1
+		for j < len(r) {
+			if _, next := cellAt(r, t, j); next != layer {
+				break
+			}
+			j++
+		}
+		source := r
+		if layer == layerToken {
+			source = t
+		}
+		out.WriteString(layer.paint(string(source[i:j])))
+		i = j
+	}
+	return out.String()
+}
+
+func dimmed(lines []string) []string {
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		out[i] = display.Dim(line)
+	}
+	return out
+}
+
+// logoBlock is the logo as one string, on the screen's two-space margin.
+// `oberth --help` opens with it too, so both screens start the same way.
+func logoBlock() string {
+	lines := logoLines()
+	for i := range lines {
+		lines[i] = "  " + lines[i]
+	}
+	return strings.Join(lines, "\n")
+}
 
 // quickStart is the first screen's whole point: the commands a work session
 // actually runs, so the screen answers "what do I type" before "what exists".
@@ -42,7 +151,7 @@ var quickStart = []struct{ cmd, what string }{
 var rootCmd = &cobra.Command{
 	Use:   "oberth",
 	Short: "Manage services for the current worktree",
-	Long:  display.Cyan(banner) + "\n  " + display.Dim(rootTagline),
+	Long:  logoBlock(),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if versionFlag {
 			// Keep the shell-facing version probe deliberately small. Detailed
@@ -55,13 +164,13 @@ var rootCmd = &cobra.Command{
 	},
 }
 
-// printWelcome renders the bare-`oberth` screen: the logo, one line of what
-// this is, the commands a session starts with, and the way out to everything
-// else. It is a signpost, not the manual — the grouped command list stays on
-// `oberth --help` (gh's split between first screen and help).
+// printWelcome renders the bare-`oberth` screen: the logo with its one line of
+// what this is, the commands a session starts with, and the way out to
+// everything else. It is a signpost, not the manual — the grouped command list
+// stays on `oberth --help` (gh's split between first screen and help).
 func printWelcome(w io.Writer) {
-	fmt.Fprintln(w, display.Cyan(banner))
-	fmt.Fprintf(w, "  %s\n\n", display.Dim(rootTagline))
+	fmt.Fprintln(w, logoBlock())
+	fmt.Fprintln(w)
 	fmt.Fprintln(w, "  Start here:")
 	width := 0
 	for _, q := range quickStart {
