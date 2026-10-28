@@ -46,7 +46,11 @@ func TestAttentionTriggerPrecisionMatrix(t *testing.T) {
 		{name: "undeclared_sibling_prefix_listener", facts: Facts{ObservedAt: now, WorktreeRoot: root, Listeners: []Listener{{Port: 19000, Cwd: root + "-other"}}}},
 		{name: "unattributed_listener", facts: Facts{ObservedAt: now, WorktreeRoot: root, Listeners: []Listener{{Port: 19000}}}},
 		{name: "machine_available", facts: Facts{ObservedAt: now, WorktreeRoot: root, Machine: []Machine{{Name: "db", Port: 5432, Listening: true}}}},
-		{name: "machine_unavailable", facts: Facts{ObservedAt: now, WorktreeRoot: root, Machine: []Machine{{Name: "db", Port: 5432}}}, want: []EventKind{EventMachineOffline}},
+		// A declared dependency that is down is a fact the person declared and
+		// `status` already shows; the project cannot start it, so it is not a
+		// handoff. Both runs of the core acceptance spent more steps on this
+		// event than on the task itself.
+		{name: "machine_unavailable_is_not_a_handoff", facts: Facts{ObservedAt: now, WorktreeRoot: root, Machine: []Machine{{Name: "db", Port: 5432}}}},
 	}
 	repeated := facts(Service{Name: "api", LastExit: failure})
 	repeated.History = []ExitHistory{

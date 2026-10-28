@@ -322,7 +322,7 @@ func TestPendingWaitsForNoPortDependencyRun(t *testing.T) {
 	}
 	reg.Unregister(123)
 	got := pending(rt, "demo", []groups.Service{dep}, want)
-	if len(got) != 1 || !strings.Contains(got[0], "worker") {
+	if len(got) != 1 || got[0].Name != "worker" || !strings.Contains(got[0].Display, "worker") {
 		t.Fatalf("pending without a live no-port run = %v, want worker", got)
 	}
 	stale := state.Snapshot{Groups: []state.Group{{
@@ -792,8 +792,10 @@ services:
 	if !strings.Contains(api.Error, "timed out") || !strings.Contains(api.Error, "ghost") {
 		t.Errorf("error = %q, want it to name the dependency", api.Error)
 	}
-	if api.State != "failed" || api.Reason != "dependency_timeout" || api.Hint != "oberth logs api --once" {
-		t.Errorf("api chunk = %+v, want structured timeout and log hint", api)
+	// The hint names the dependency: `api` never ran, so its own log does not
+	// exist and reading it would explain nothing.
+	if api.State != "failed" || api.Reason != "dependency_timeout" || api.Hint != "oberth logs ghost --once" {
+		t.Errorf("api chunk = %+v, want structured timeout and the dependency's log hint", api)
 	}
 	if len(end.Errors) != 2 || !containsString(end.Errors, "ghost") || !containsString(end.Errors, "api") {
 		t.Fatalf("end = %+v", end)
@@ -849,6 +851,12 @@ services:
 			api := chunks[len(chunks)-1]
 			if api.Service != "api" || api.PID != 0 || !strings.Contains(api.Error, "worker to be running (no port)") {
 				t.Fatalf("api = %+v, want a no-port dependency timeout before spawn", api)
+			}
+			// The hint names the dependency that never became ready. `api`
+			// itself never ran, so its own log does not exist — including in
+			// the `--only api` case, where the worker was never going to start.
+			if api.Hint != "oberth logs worker --once" {
+				t.Errorf("hint = %q, want the dependency's log", api.Hint)
 			}
 			if dialable(port) {
 				t.Fatal("api opened its port before the worker was ready")

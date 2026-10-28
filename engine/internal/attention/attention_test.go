@@ -177,20 +177,36 @@ func TestDeriveRetainsAllAnomaliesAndStableIdentity(t *testing.T) {
 		{Name: "api", LastExit: &Exit{Reason: "port_occupied", Code: 1, RunID: "a1", At: now}},
 	}, Machine: []Machine{{Name: "db", Port: 5432, Listening: false}}}
 	a, ok := Derive(f, now, time.Minute)
-	if !ok || len(a.Events) != 3 {
-		t.Fatalf("artifact = %+v, ok = %v; want three anomalies", a, ok)
+	if !ok || len(a.Events) != 2 {
+		t.Fatalf("artifact = %+v, ok = %v; want both anomalies", a, ok)
 	}
-	if a.Event.Service != "api" || a.Events[2].Machine != "db" {
+	if a.Event.Service != "api" || a.Events[1].Service != "worker" {
 		t.Fatalf("events = %+v, want stable name order", a.Events)
 	}
-	if len(a.Evidence) != 5 {
-		t.Fatalf("evidence = %+v, want evidence for all anomalies", a.Evidence)
+	if len(a.Evidence) != 4 {
+		t.Fatalf("evidence = %+v, want evidence for both anomalies", a.Evidence)
 	}
 	f.Services[0], f.Services[1] = f.Services[1], f.Services[0]
 	f.ObservedAt = now.Add(30 * time.Second)
 	b, ok := Derive(f, f.ObservedAt, time.Minute)
 	if !ok || a.EventID != b.EventID || a.StateRevision != b.StateRevision {
 		t.Fatalf("identity/revision changed across reorder or observation time: %q/%q, %q/%q", a.EventID, a.StateRevision, b.EventID, b.StateRevision)
+	}
+}
+
+// A declared dependency going down must not churn the revision of an artifact
+// whose content did not change. The revision fingerprints the facts that can
+// create an event, and machines no longer can: folding them in dropped the
+// adapter's cached assessment and forced a re-read of an unchanged handoff.
+func TestRevisionIgnoresMachineListening(t *testing.T) {
+	now := time.Date(2026, 9, 27, 1, 2, 3, 0, time.UTC)
+	base := Facts{WorktreeRoot: "/tmp/demo", Branch: "main", ObservedAt: now,
+		Services: []Service{{Name: "api", LastExit: &Exit{Reason: "crashed", Code: 1, RunID: "a1", At: now}}}}
+	listening, offline := base, base
+	listening.Machine = []Machine{{Name: "db", Port: 5432, Listening: true}}
+	offline.Machine = []Machine{{Name: "db", Port: 5432, Listening: false}}
+	if Revision(listening) != Revision(offline) {
+		t.Fatal("a dependency flapping changed the revision of an unrelated artifact")
 	}
 }
 

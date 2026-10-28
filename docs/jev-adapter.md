@@ -265,7 +265,10 @@ is included in the shared vocabulary for a manifest-related handoff but is not
 an automatic fallback: the adapter does not create, select, or write a draft.
 The current deterministic service-failure artifacts expose only options that
 match their facts; adding an option to `authorized_options` cannot make it
-appear.
+appear. `inspect_dependency` stays in the vocabulary for artifacts that already
+carry it, but no current event offers it: a declared `machine:` entry that is
+not listening is a fact the person declared and `status` already shows, not an
+anomaly to hand off.
 
 ## Isolated acceptance
 

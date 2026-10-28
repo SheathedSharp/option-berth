@@ -34,7 +34,6 @@ const (
 	EventPortOccupied     EventKind = "port_occupied"
 	EventReadyTimeout     EventKind = "ready_timeout"
 	EventHealthFailed     EventKind = "health_failed"
-	EventMachineOffline   EventKind = "machine_unavailable"
 	EventUndeclared       EventKind = "undeclared_listener"
 	EventManifestConflict EventKind = "manifest_runtime_conflict"
 )
@@ -131,16 +130,11 @@ func Revision(f Facts) string {
 			_, _ = fmt.Fprint(h, "\x00ready_timeout")
 		}
 	}
-	machines := append([]Machine(nil), f.Machine...)
-	sort.SliceStable(machines, func(i, j int) bool {
-		if machines[i].Name != machines[j].Name {
-			return machines[i].Name < machines[j].Name
-		}
-		return machines[i].Port < machines[j].Port
-	})
-	for _, machine := range machines {
-		_, _ = fmt.Fprintf(h, "\x00machine\x00%s\x00%d\x00%t", machine.Name, machine.Port, machine.Listening)
-	}
+	// Machine facts are deliberately absent. This revision fingerprints the
+	// facts that can create an event, and a declared dependency being down is
+	// not one of them — folding it in made a dependency flap churn the revision
+	// of an unrelated artifact, which drops the adapter's cached assessment and
+	// forces the agent to re-read a handoff whose content never changed.
 	listeners := append([]Listener(nil), f.Listeners...)
 	sort.SliceStable(listeners, func(i, j int) bool {
 		if listeners[i].Port != listeners[j].Port {
@@ -176,7 +170,6 @@ type Event struct {
 	Service      string    `json:"service,omitempty"`
 	RunID        string    `json:"run_id,omitempty"`
 	ExitCode     *int      `json:"exit_code,omitempty"`
-	Machine      string    `json:"machine,omitempty"`
 	Port         int       `json:"port,omitempty"`
 	DeclaredPort *int      `json:"declared_port,omitempty"`
 	ActualPort   *int      `json:"actual_port,omitempty"`
@@ -298,18 +291,11 @@ func ClassifyAll(f Facts) []Event {
 			events = append(events, Event{Kind: EventManifestConflict, Service: service.Name, RunID: service.RunID, DeclaredPort: &declared, ActualPort: &actual, Reason: "declared_port_mismatch", At: eventTime(f)})
 		}
 	}
-	machines := append([]Machine(nil), f.Machine...)
-	sort.SliceStable(machines, func(i, j int) bool {
-		if machines[i].Name != machines[j].Name {
-			return machines[i].Name < machines[j].Name
-		}
-		return machines[i].Port < machines[j].Port
-	})
-	for _, machine := range machines {
-		if !machine.Listening {
-			events = append(events, Event{Kind: EventMachineOffline, Machine: machine.Name, Port: machine.Port, Reason: "not_listening", At: eventTime(f)})
-		}
-	}
+	// A declared `machine:` entry that is not listening is not an anomaly. The
+	// person declared the dependency, `status` already shows it as
+	// `listening: false`, and `up`/`down` never touch it — so a handoff here
+	// asks an agent to act on something it has no authority over. It was the
+	// single most expensive detour in the core acceptance run.
 	listeners := append([]Listener(nil), f.Listeners...)
 	sort.SliceStable(listeners, func(i, j int) bool {
 		if listeners[i].Port != listeners[j].Port {
@@ -492,8 +478,6 @@ func Recover(previous Artifact, now time.Time, ttl time.Duration) Artifact {
 
 func optionsFor(kind EventKind) []Option {
 	switch kind {
-	case EventMachineOffline:
-		return []Option{{ID: "inspect_dependency"}, {ID: "continue_without_action"}, {ID: "ask_user_for_context"}}
 	case EventPortOccupied:
 		return []Option{{ID: "inspect_logs"}, {ID: "inspect_port"}, {ID: "ask_user_for_context"}}
 	case EventHealthFailed:
@@ -548,9 +532,6 @@ func evidenceForOne(f Facts, event Event) []Evidence {
 		}
 		return []Evidence{{Ref: "status.worktree.services[" + event.Service + "].last_exit"}, logEvidence(f, event.Service, event.RunID)}
 	}
-	if event.Machine != "" {
-		return []Evidence{{Ref: "status.worktree.machine[" + event.Machine + "]"}}
-	}
 	if event.Kind == EventUndeclared {
 		return []Evidence{{Ref: "status.ports[" + fmt.Sprint(event.Port) + "]"}}
 	}
@@ -595,7 +576,7 @@ func eventIDs(f Facts, events []Event) string {
 	for _, event := range events {
 		// At is evidence, not identity: dependency polls use a new observation
 		// timestamp each time and must not create a new request identity.
-		_, _ = fmt.Fprintf(h, "\x00%s\x00%s\x00%s\x00%s\x00%d\x00%s", event.Kind, event.Service, event.Machine, event.RunID, event.Port, event.Reason)
+		_, _ = fmt.Fprintf(h, "\x00%s\x00%s\x00%s\x00%d\x00%s", event.Kind, event.Service, event.RunID, event.Port, event.Reason)
 		if event.DeclaredPort != nil {
 			_, _ = fmt.Fprintf(h, "\x00declared\x00%d", *event.DeclaredPort)
 		}

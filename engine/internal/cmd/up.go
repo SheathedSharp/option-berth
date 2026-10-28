@@ -240,7 +240,13 @@ func valueOrEmpty(value *string) string {
 // structured outcome fields. The daemon remains the source of facts; this is
 // only a compatibility projection for the client-side JSON document.
 func normalizeStartChunk(c *rpc.GroupsStartChunk) {
-	if c.State == "" {
+	// A daemon that sends the structured outcome fields also decides its own
+	// next step: it knows whether a log exists, and it knows when a refusal
+	// carries its own way out. Only a daemon predating those fields needs the
+	// projection below — second-guessing the new one put a "read the logs" hint
+	// on services that never started.
+	structured := c.State != ""
+	if !structured {
 		switch {
 		case c.Error != "":
 			c.State = "failed"
@@ -251,7 +257,7 @@ func normalizeStartChunk(c *rpc.GroupsStartChunk) {
 			c.State = "started"
 		}
 	}
-	if c.Error != "" && c.Hint == "" {
+	if c.Error != "" && c.Hint == "" && !structured {
 		c.Hint = logsHint(c.Service)
 	}
 }

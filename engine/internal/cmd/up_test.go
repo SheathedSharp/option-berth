@@ -34,6 +34,30 @@ func TestNormalizeStartChunkAddsStructuredFailure(t *testing.T) {
 	}
 }
 
+// A daemon that sends the structured outcome fields also decides its own next
+// step, so the compatibility projection must not put a log hint back on a
+// service that never started.
+func TestNormalizeStartChunkLeavesAStructuredChunkAlone(t *testing.T) {
+	const refusal = "pass allow_outside_home: true to start commands outside your home directory"
+	refused := rpc.GroupsStartChunk{
+		Service: "api", State: "failed", Reason: "start_failed",
+		Error: "/tmp/project is outside /Users/someone", Hint: refusal,
+	}
+	normalizeStartChunk(&refused)
+	if refused.Hint != refusal {
+		t.Fatalf("hint = %q, want the refusal's own hint", refused.Hint)
+	}
+
+	noHint := rpc.GroupsStartChunk{
+		Service: "api", State: "failed", Reason: "start_failed",
+		Error: "service api has no cmd to run",
+	}
+	normalizeStartChunk(&noHint)
+	if noHint.Hint != "" {
+		t.Fatalf("hint = %q, want no hint for a service that never started", noHint.Hint)
+	}
+}
+
 func TestPrintStartChunkShowsFailureHint(t *testing.T) {
 	out := captureStdout(t, func() {
 		printStartChunk(rpc.GroupsStartChunk{
