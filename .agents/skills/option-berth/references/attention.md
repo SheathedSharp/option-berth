@@ -27,18 +27,23 @@ or context-only handoff goes back to the person.
 
 When a task keeps services running or coordinates concurrent worktrees, the
 agent should arm one task-scoped session immediately after the initial status
-read. The session owns its poller and is stopped when the task ends:
+read. The session owns its poller and is stopped when the task ends.
+
+**Nothing on the machine creates the task context — you do.** It is your own
+statement of what this task is and which of the fixed options it may present.
+For a short task, pass it inline:
 
 ```sh
 jev-attention --session --project "$PWD" \
-  --task-context /tmp/oberth-task-context.json
+  --task "keep the API healthy while the integration test runs" \
+  --authorize inspect_logs,inspect_port,restart_service,continue_without_action,ask_user_for_context
 ```
 
-The task context should normally include the complete fixed vocabulary so the
-runner can present the event's bounded candidates without making a second
-authorization decision:
+For the complete fixed vocabulary, write a file and pass it. Choose a path
+unique to this task; two parallel agents sharing one path overwrite each other.
 
-```json
+```sh
+cat > "${TMPDIR:-/tmp}/oberth-task-$$.json" <<'JSON'
 {
   "task": "keep the API and worker healthy while running the integration test",
   "authorized_options": [
@@ -47,19 +52,28 @@ authorization decision:
     "continue_without_action", "ask_user_for_context"
   ]
 }
+JSON
+jev-attention --session --project "$PWD" --task-context "${TMPDIR:-/tmp}/oberth-task-$$.json"
 ```
+
+`--task` and `--authorize` override the same fields from the file. With neither
+a task nor an allow-list, the runner stops with `task context requires
+--task-context or --task` or `task context requires authorized_options or
+--authorize` — it will not guess an allow-list for you.
 
 `authorized_options` is an allow-list for the current task, not user approval;
 side effects still require an explicit user choice. `--session` is an alias for
-the long-lived `--subscribe` mode. A local `jev.json` with `enabled: false`
-keeps the session fact-only and prevents a remote call.
+the long-lived `--subscribe` mode. The runner reads `$BERTH_HOME/jev.json`
+(default `~/.option-berth/jev.json`); a copy there with `enabled: false` keeps
+the session fact-only and prevents a remote call. Under an isolated `BERTH_HOME`
+the client's `~/.option-berth/jev.json` is not the file being read.
 
 For a task that remains active while services run, use the agent-side
 subscription instead of rebuilding the request repeatedly:
 
 ```sh
 jev-attention --subscribe --project "$PWD" --interval 2s \
-  --task-context /tmp/oberth-task-context.json
+  --task-context "${TMPDIR:-/tmp}/oberth-task-$$.json"
 ```
 
 The runner polls the existing CLI contract. It does not add a daemon watcher,

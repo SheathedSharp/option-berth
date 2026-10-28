@@ -33,7 +33,6 @@ Cmd+N 接入项目，Cmd+1…9 按可见 Worktrees 导航，模块采用 Option+
 | --- | --- | --- |
 | 高 | agent 侧的能力面是否够用 | 主线是给 coding agent 的能力，所以「agent 拿到这份代码能不能自己跑起来、自己判断为什么没跑起来」优先于任何界面。**2026-10-28 已跑过一轮**：真实 Claude Code 在陌生 worktree 上只靠 CLI 与 skill 完成了「起服务、失败、看日志、修、再起」，核心闭环 6 步走通（输入与结果见 [validation.md](validation.md)「核心验收」）。那一轮卡住的两处已修：失败提示不再指向不存在的日志，未监听的 `machine:` 依赖不再发布交接（契约见 [cli.md](cli.md)）。仍缺：Codex / OpenCode / Pi 与多 worktree 并发场景。 |
 | 高 | skill 不在发布包内 | 安装与更新路径已写进 README：软链指向克隆下来的仓库，`git pull` 就是更新，复制的那份会停在原地。但发布压缩包与 `.app` 只带 `oberth` 二进制、许可与构建清单，只装发布包的用户拿不到 skill；[releasing.md](releasing.md) 里那份包内容清单是既定契约，把 `.agents/skills/option-berth/` 带进包需要决定。 |
-| 中 | attention 的 task context 没有出处 | skill 写死 `--task-context /tmp/oberth-task-context.json`，但没有任何东西创建它，agent 得自己猜内容和位置；Jev 配置也有 `$BERTH_HOME/jev.json` 与 `~/.option-berth/jev.json` 两处，agent 两边都找过。完成条件：说清这个文件由谁写、放哪，或让 runner 在没有它时给出可读的默认。 |
 | 高 | 客户端与引擎是否拆成两个产品 | 现在两者在 CI、release 脚本、品牌、文档与验证矩阵里绑在一起（17 个 workflow 里约一半是客户端/品牌/site）。未决定。做之前先出拆分清单与代价，别顺手拆。 |
 
 ### 呈现层（macOS 工作区）

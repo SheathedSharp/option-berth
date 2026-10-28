@@ -22,8 +22,12 @@ wire contract.
 For a task that keeps services running, prefer the task-scoped session form:
 
 ```sh
-jev-attention --session --project "$PWD" --task-context /tmp/oberth-task-context.json
+jev-attention --session --project "$PWD" --task-context "${TMPDIR:-/tmp}/oberth-task-$$.json"
 ```
+
+The path is the agent's to choose: nothing on the machine creates this file, so
+give each task its own — a fixed `/tmp` name lets two parallel agents overwrite
+each other's allow-list.
 
 `--session` is the lifecycle name for the long-lived `--subscribe` mode. The
 agent starts it after the initial status read and stops it with the task. It
@@ -34,11 +38,14 @@ The agent-side runner performs the status read and exact artifact lookup in one
 operation. Do not scan the `BERTH_HOME/attention` directory:
 
 ```sh
-jev-attention --auto --project "$PWD" --task-context /tmp/oberth-task-context.json
+jev-attention --auto --project "$PWD" --task-context "${TMPDIR:-/tmp}/oberth-task-$$.json"
 ```
 
 Create a short task context outside the repository. The option list is an
-explicit allow-list supplied by the development agent, not a model decision:
+explicit allow-list supplied by the development agent, not a model decision.
+A short task can skip the file entirely with `--task "<summary>"` and
+`--authorize <comma-separated ids>`; those override the same fields when both
+forms are given, and the runner refuses to guess when neither is present:
 
 ```json
 {
@@ -59,7 +66,7 @@ For a task that remains active while services run, use the subscription mode:
 
 ```sh
 jev-attention --subscribe --project "$PWD" --interval 2s \
-  --task-context /tmp/oberth-task-context.json
+  --task-context "${TMPDIR:-/tmp}/oberth-task-$$.json"
 ```
 
 It emits NDJSON: one `subscribed` record, then only changed event/revision/
