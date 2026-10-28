@@ -107,6 +107,36 @@ struct BerthService: Decodable, Identifiable, Sendable {
     /// 列表里展示的端口：跑起来了就用真实端口，没跑就用声明的。
     var shownPort: Int? { portActual ?? port }
 
+    /// Ops-workbench: rows that need an operator before calm ready rows.
+    /// Matches the status chips ServiceRow already surfaces (需重启 / 失败 /
+    /// 就绪超时 / 健康失败…), not a new product fact.
+    var needsAttention: Bool {
+        if manifestRuntimeMismatch { return true }
+        if let health = healthStatus {
+            switch health.status {
+            case "ok": break
+            default: return true
+            }
+        }
+        if lastExit != nil { return true }
+        return false
+    }
+
+    /// Lower = more urgent when sorting Attention above Ready.
+    var attentionRank: Int {
+        if manifestRuntimeMismatch { return 0 }
+        if let health = healthStatus, health.status == "fail" { return 1 }
+        if let exit = lastExit {
+            switch exit.reason {
+            case "ready_timeout", "port_occupied", "start_failed": return 2
+            case "crashed", "dependency_timeout", "dependency_not_ready": return 3
+            default: return 4
+            }
+        }
+        if let health = healthStatus, health.status != "ok" { return 5 }
+        return 9
+    }
+
     private enum CodingKeys: String, CodingKey {
         case name, prepare, cmd, cwd, port, description, running, health
         case portAuto = "port_auto"

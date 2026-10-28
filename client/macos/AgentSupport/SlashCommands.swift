@@ -1,6 +1,10 @@
 import Foundation
 
 public enum SlashCommand: String, CaseIterable, Equatable, Sendable {
+    /// Switch composer input mode to Shell (draft kept).
+    case modeShell = "/mode-shell"
+    /// Switch composer input mode to Agent (draft kept).
+    case modeAgent = "/mode-agent"
     case agentSelect = "/agent-select"
     case agentNew = "/agent-new"
     case agent = "/agent"
@@ -13,9 +17,23 @@ public enum SlashCommand: String, CaseIterable, Equatable, Sendable {
     case focus = "/focus"
     case rename = "/rename"
     case history = "/history"
+    /// Services capability panel (session-primary v13). Alias token `/services` resolves here in SlashParser.
+    case obServer = "/ob-server"
+    /// Read-only Git review panel for this worktree.
+    case git = "/git"
+    /// Create a durable workplace under the current worktree.
+    case workplaceNew = "/workplace-new"
+    /// List workplaces for the current worktree.
+    case workplaceList = "/workplace-list"
+    /// Switch / recall a workplace by name or id (restores block stream).
+    case workplace = "/workplace"
+    /// Delete a workplace by name or id.
+    case workplaceDelete = "/workplace-delete"
 
     public var title: String {
         switch self {
+        case .modeShell: return "切换到 Shell 输入"
+        case .modeAgent: return "切换到 Agent 输入"
         case .agentSelect: return "选择默认 Agent"
         case .agentNew: return "新建 Agent 会话"
         case .agent: return "切换 ⌘↩ 目标"
@@ -28,11 +46,19 @@ public enum SlashCommand: String, CaseIterable, Equatable, Sendable {
         case .focus: return "把键盘交给终端"
         case .rename: return "重命名"
         case .history: return "搜索命令历史"
+        case .obServer: return "打开服务面板"
+        case .git: return "打开 Git 面板"
+        case .workplaceNew: return "新建 Workplace"
+        case .workplaceList: return "列出 Workplace"
+        case .workplace: return "切换 Workplace"
+        case .workplaceDelete: return "删除 Workplace"
         }
     }
 
     public var detail: String {
         switch self {
+        case .modeShell: return "等同 ⌘I → Shell，保留草稿"
+        case .modeAgent: return "等同 ⌘I → Agent，保留草稿"
         case .agentSelect: return "Codex、Claude Code 等"
         case .agentNew: return "等同 ⇧⌘↩"
         case .agent: return "本 worktree 的 Agent 会话"
@@ -45,6 +71,12 @@ public enum SlashCommand: String, CaseIterable, Equatable, Sendable {
         case .focus: return "vim、交互程序"
         case .rename: return "Agent 详情或当前 Shell"
         case .history: return "跨会话搜索"
+        case .obServer: return "需处理 · 在跑 · 日志（/services）"
+        case .git: return "只读审查本 worktree"
+        case .workplaceNew: return "持久化块流工作区（可选名称）"
+        case .workplaceList: return "当前 worktree 下的全部 Workplace"
+        case .workplace: return "按名称或 id 回溯块流"
+        case .workplaceDelete: return "删除指定 Workplace"
         }
     }
 }
@@ -79,13 +111,37 @@ public enum SlashParse: Equatable, Sendable {
 public enum SlashCommandRegistry {
     public static let catalogue: [SlashCommand] = SlashCommand.allCases
 
+    /// Shown when the user types bare `/` — Cursor/Warp-style short palette (5–6).
+    /// Keep typing to filter the full catalogue.
+    public static let pinned: [SlashCommand] = [
+        .modeShell, .modeAgent, .agentSelect, .obServer, .git, .history,
+    ]
+
+    /// Token aliases that are not distinct enum cases (documented for users).
+    public static let aliases: [String: SlashCommand] = [
+        "/services": .obServer,
+        "/shell-mode": .modeShell,
+        "/agent-mode": .modeAgent,
+        "/to-shell": .modeShell,
+        "/to-agent": .modeAgent,
+        "/wp-new": .workplaceNew,
+        "/wp-list": .workplaceList,
+        "/wp": .workplace,
+        "/wp-delete": .workplaceDelete,
+    ]
+
     public static func available(in context: SlashContext) -> [SlashCommand] {
         catalogue.filter { isAvailable($0, context: context) }
     }
 
+    public static func pinnedAvailable(in context: SlashContext) -> [SlashCommand] {
+        pinned.filter { isAvailable($0, context: context) }
+    }
+
     public static func isAvailable(_ command: SlashCommand, context: SlashContext) -> Bool {
         switch command {
-        case .agentSelect, .agentNew, .shellNew, .rename, .history:
+        case .modeShell, .modeAgent, .agentSelect, .agentNew, .shellNew, .rename, .history, .obServer, .git,
+             .workplaceNew, .workplaceList, .workplace, .workplaceDelete:
             return true
         case .agent:
             return context.hasAgents
@@ -103,6 +159,11 @@ public enum SlashCommandRegistry {
         case .focus:
             return context.shellCount > 0
         }
+    }
+
+    public static func resolveToken(_ token: String) -> SlashCommand? {
+        if let exact = SlashCommand.allCases.first(where: { $0.rawValue == token }) { return exact }
+        return aliases[token]
     }
 }
 
@@ -129,13 +190,16 @@ public enum SlashParser {
         if token == "/" {
             return .composing(filter: "")
         }
-        if let exact = SlashCommand.allCases.first(where: { $0.rawValue == token }) {
+        if let exact = SlashCommandRegistry.resolveToken(token) {
             guard SlashCommandRegistry.isAvailable(exact, context: context) else { return .none }
             return .command(exact, argument: argument)
         }
         let available = SlashCommandRegistry.available(in: context)
-        let matches = available.filter { $0.rawValue.hasPrefix(token) }
-        if matches.isEmpty { return .none }
+        var prefixHits = available.filter { $0.rawValue.hasPrefix(token) }
+        for (alias, command) in SlashCommandRegistry.aliases where alias.hasPrefix(token) {
+            if available.contains(command), !prefixHits.contains(command) { prefixHits.append(command) }
+        }
+        if prefixHits.isEmpty { return .none }
         if token.count == 1 { return .composing(filter: "") }
         return .composing(filter: String(token.dropFirst()))
     }
@@ -144,13 +208,41 @@ public enum SlashParser {
         let (token, _) = parts(text)
         guard token.hasPrefix("/"), !isPathToken(token) else { return [] }
         let available = SlashCommandRegistry.available(in: context)
-        if token == "/" { return available }
+        // Bare `/` → short pinned palette (not the full dump).
+        if token == "/" {
+            return SlashCommandRegistry.pinnedAvailable(in: context)
+        }
         let query = token.dropFirst().lowercased()
-        return available.filter {
+        var result = available.filter {
             let name = String($0.rawValue.dropFirst()).lowercased()
             return name.hasPrefix(query)
                 || $0.title.lowercased().contains(query)
                 || $0.detail.lowercased().contains(query)
         }
+        // Surface `/services` alias when the user types that prefix.
+        if "services".hasPrefix(query) || query.hasPrefix("serv"),
+           available.contains(.obServer),
+           !result.contains(.obServer) {
+            result.append(.obServer)
+        }
+        if "shell-mode".hasPrefix(query) || "to-shell".hasPrefix(query) || query == "mode",
+           available.contains(.modeShell), !result.contains(.modeShell) {
+            result.append(.modeShell)
+        }
+        if "agent-mode".hasPrefix(query) || "to-agent".hasPrefix(query),
+           available.contains(.modeAgent), !result.contains(.modeAgent) {
+            result.append(.modeAgent)
+        }
+        if "wp".hasPrefix(query) || "workplace".hasPrefix(query) || query.hasPrefix("wp") || query.hasPrefix("work"),
+           available.contains(.workplaceList) {
+            for cmd in [SlashCommand.workplaceList, .workplaceNew, .workplace, .workplaceDelete] where !result.contains(cmd) {
+                result.append(cmd)
+            }
+        }
+        // Keep the open palette scannable.
+        if result.count > 8 {
+            result = Array(result.prefix(8))
+        }
+        return result
     }
 }

@@ -35,7 +35,7 @@ final class UISettings: ObservableObject {
     private var legacyDetails: [ClientDetailPane: Double] = [:]
     @Published private var legacyShellIntegration = false
     @Published private var legacyAgentNotifications = false
-    private var legacySidebarWidth: Double = 172
+    private var legacySidebarWidth: Double = 160
     private var legacyConsoleAgentWidth: Double = 300
     static let consoleAgentWidthRange: ClosedRange<Double> = 240...520
     private let defaults: UserDefaults

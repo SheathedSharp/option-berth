@@ -107,6 +107,45 @@ public final class AgentStreamProcess: @unchecked Sendable {
         try stdinHandle?.close()
     }
 
+    /// Ask the bridge to shut down without blocking the caller.
+    ///
+    /// `closeSession()` only sends the request and closes stdin — the provider
+    /// decides when it actually exits, and it may be mid-turn. Waiting on that
+    /// from the main actor is what froze the window when a person ended a
+    /// session (`AgentStreamsController.end`, `noteUnsupportedIfNeeded`,
+    /// `AgentStreamRegistry.end`), because `waitUntilExit()` there blocks for as
+    /// long as the provider takes.
+    ///
+    /// Reclamation is still **observed, not assumed**: the child is waited on by
+    /// its own handle (never by the `state` flag, which `cancel()` clears
+    /// eagerly), and a bridge that ignores `session.close` and SIGTERM is
+    /// escalated to SIGKILL once `graceSeconds` runs out — the same ladder the
+    /// engine uses for service teardown.
+    ///
+    /// - Parameter completion: runs on the main queue once the child is gone.
+    public func requestShutdown(graceSeconds: TimeInterval = 3,
+                                completion: (@Sendable () -> Void)? = nil) {
+        try? closeSession()
+        lock.lock()
+        let child = process
+        lock.unlock()
+        guard let child else {
+            if let completion { DispatchQueue.main.async(execute: completion) }
+            return
+        }
+        DispatchQueue.global(qos: .utility).async {
+            let deadline = Date().addingTimeInterval(graceSeconds)
+            while child.isRunning, Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.02)
+            }
+            if child.isRunning { kill(child.processIdentifier, SIGKILL) }
+            // Blocks this background queue only, until the child is reaped.
+            child.waitUntilExit()
+            self.finish(code: Int(child.terminationStatus))
+            if let completion { DispatchQueue.main.async(execute: completion) }
+        }
+    }
+
     public func cancel() {
         lock.lock()
         let child = process

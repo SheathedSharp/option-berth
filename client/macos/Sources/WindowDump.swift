@@ -7,10 +7,9 @@ import SwiftUI
 /// `ImageRenderer` 里没有窗口，也就没有标题栏、没有安全区、没有红绿灯。有一类错
 /// 它们**结构性地看不见**：布局里依赖窗口的那一部分。
 ///
-/// 真踩到的：窗口是 `.hiddenTitleBar`（标题栏透明、内容铺满整窗），SwiftUI 会按
-/// 标题栏高度（这台机器上 32pt）把内容让开一次，而代码里又横了一条 36pt 的让位条，
-/// 于是窗口顶上空出 68pt 的白带子 —— 左栏像被削掉了头。离屏那三张图里只看得到
-/// 36pt，怎么画都「对」。这就是「图和窗口对不上」这一类错，得换个工具才看得见。
+/// 真踩到的：历史上窗口用过 `.hiddenTitleBar`，自定义让位条和系统标题栏高度叠在一起会空出
+/// 一条白带。shell rebuild v5 改回标准标题栏 + toolbar；这条工具仍然用来量
+/// 真窗口几何，因为离屏 `ImageRenderer` 仍然没有标题栏。
 ///
 /// 它做四件事：
 /// 1. 打 `NSWindow` 的真实几何（frame / styleMask / contentLayoutRect / safeAreaInsets）

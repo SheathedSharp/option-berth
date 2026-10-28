@@ -1,5 +1,6 @@
 import AppKit
 import BerthTerminal
+import Combine
 import Foundation
 
 struct CheckFailure: Error { let reason: String }
@@ -15,6 +16,21 @@ enum TerminalChecks {
         while !condition(), Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
         return condition()
     }
+
+    static func shellCommandCaptureChecks() throws {
+        // Tabs expand to column stops (ls / columnar TTY output).
+        try check(ShellCommandCapture.expandTabs("a\tb") == "a       b", "tab expand width 8")
+        try check(ShellCommandCapture.expandTabs("1234567\tx") == "1234567 x", "tab near stop")
+        // NUL cells become spaces so columnar gaps survive strip.
+        let withNul = "AGENTS.md\u{0}\u{0}core"
+        let cleaned = ShellCommandCapture.finalizeAccumulated(withNul)
+        try check(cleaned.contains("AGENTS.md  core") || cleaned.contains("AGENTS.md core"),
+                  "NUL gap should become spaces, got: \(cleaned)")
+        // Multiple spaces must not be collapsed by finalize itself.
+        let spaced = ShellCommandCapture.finalizeAccumulated("AGENTS.md   core   frontend")
+        try check(spaced == "AGENTS.md   core   frontend", "preserve interior spaces: \(spaced)")
+        print("PASS: ShellCommandCapture tab/NUL/space layout")
+    }
     static func main() {
         _ = NSApplication.shared
         var owned: [TerminalSession] = []
@@ -26,6 +42,8 @@ enum TerminalChecks {
         }
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            try shellCommandCaptureChecks()
+            try FrameCoalescerChecks.run()
             try mixedPaneChecks(root: root)
             try workspaceChecks(root: root)
             try nativeConsoleChecks(root: root)
@@ -92,13 +110,36 @@ enum TerminalChecks {
             owned.append(flood)
             var floodBytes = 0
             var floodTail = ""
+            // Chain instead of replace: the session's own byte handler is what
+            // records activity, and the assertions below check it still runs.
+            let floodSessionHandler = flood.terminal.onBytes
             flood.terminal.onBytes = {
+                floodSessionHandler?($0)
                 floodBytes += $0.count
                 floodTail = String((floodTail + String(decoding: $0, as: UTF8.self)).suffix(128))
             }
+            // Publishing regression: byte facts are coalesced to a frame tick, so
+            // a 1 MiB flood must produce far fewer notifications than SwiftTerm
+            // chunks. Counting the whole registry (not just the session) is the
+            // point — that is what used to re-evaluate the window per chunk.
+            var floodPublishes = 0
+            let floodCancellable = flood.objectWillChange.sink { _ in floodPublishes += 1 }
+            defer { floodCancellable.cancel() }
             try flood.start(executable: "/bin/sh", arguments: ["-c", "/usr/bin/yes terminal-row | /usr/bin/head -c 1048576; printf '\\nPTY-FLOOD-END\\n'"], environment: ["PATH": "/usr/bin:/bin"])
             try check(until { !flood.isActive && floodBytes >= 1_048_576 && floodTail.contains("PTY-FLOOD-END") },
                       "bounded large-output stream lost its final bytes or exit")
+            // Let the last scheduled frame tick land before reading the count.
+            _ = until({ floodPublishes > 0 }, timeout: 1)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            try check(floodPublishes > 0, "coalescing starved the UI of output updates entirely")
+            try check(floodPublishes < 400,
+                      "output publishing was not coalesced: \(floodPublishes) notifications for 1 MiB")
+            // Coalescing must not swallow the facts: the tail still has to carry
+            // the final line. The PTY translates \n to \r\n, so match without
+            // assuming the marker is the very last byte.
+            try check(flood.activity.outputTail.contains("PTY-FLOOD-END"),
+                      "coalesced tail lost the final line: \(flood.activity.outputTail.suffix(40))")
+            print("PUBLISH CHECK 1 MiB flood -> \(floodPublishes) notifications")
             // Closing sessions must release their PTYs, not accumulate file descriptors.
             let baselineFDs = try FileManager.default.contentsOfDirectory(atPath: "/dev/fd").count
             for _ in 0..<24 {

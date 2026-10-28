@@ -1,5 +1,11 @@
 import SwiftUI
 
+/// Session-primary capability panels (v13). Not peer faces — overlays on the session stage.
+enum CapabilityPanel: String, Equatable {
+    case services
+    case git
+}
+
 /// Shared navigation state for the project window, sidebar and command menu.
 @MainActor
 final class ViewState: ObservableObject {
@@ -17,7 +23,42 @@ final class ViewState: ObservableObject {
     @Published var projectOperationPending = false
     @Published var projectDialogPresented = false
 
-    init(scope: Scope = .services("")) { self.scope = scope }
+    /// Shared workbench focus: service + optional Git path for the current berth.
+    @Published var selectedServiceKey: String?
+    @Published var selectedGitPath: String?
+
+    /// Services / Git as session capabilities (overlay). Nil = session canvas only.
+    @Published var capabilityPanel: CapabilityPanel?
+
+    init(scope: Scope = .terminal("")) { self.scope = scope }
+
+    func rememberService(_ ref: ServiceRef?) {
+        selectedServiceKey = ref?.key
+    }
+
+    func rememberGitPath(_ path: String?) {
+        let trimmed = path?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        selectedGitPath = trimmed.isEmpty ? nil : trimmed
+    }
+
+    func openServicesPanel() {
+        capabilityPanel = .services
+    }
+
+    func openGitPanel(path: String? = nil) {
+        if let path { rememberGitPath(path) }
+        capabilityPanel = .git
+    }
+
+    func dismissCapabilityPanel() {
+        capabilityPanel = nil
+    }
+
+    /// Legacy helper — session-primary maps Git to a capability panel, not a peer face.
+    func showCode(project: String, path: String? = nil) {
+        scope = .terminal(project)
+        openGitPanel(path: path)
+    }
 
     enum Face { case services, code, terminal }
     var project: String? { scope.projectName }
@@ -38,19 +79,21 @@ final class ViewState: ObservableObject {
               let name = WorkspaceProjectNavigation.project(at: ordinal, in: orderedProjects(projects).map(\.name)) else { return }
         selectProject(name)
     }
+    /// Selecting a worktree always lands on the session stage (v13).
     func selectProject(_ name: String) {
-        switch scope {
-        case .code: scope = .code(name)
-        case .terminal, .console: scope = .terminal(name)
-        case .services: scope = .services(name)
-        }
+        scope = .terminal(name)
+        capabilityPanel = nil
+        selectedServiceKey = nil
+        selectedGitPath = nil
     }
+    /// Module shortcuts open capability panels (or dismiss to session), never peer homes.
     func show(_ face: Face, projects: [String]) {
         guard let name = project.flatMap({ projects.contains($0) ? $0 : nil }) ?? projects.first else { return }
+        scope = .terminal(name)
         switch face {
-        case .services: scope = .services(name)
-        case .code: scope = .code(name)
-        case .terminal: scope = .terminal(name)
+        case .services: capabilityPanel = .services
+        case .code: capabilityPanel = .git
+        case .terminal: capabilityPanel = nil
         }
     }
 }

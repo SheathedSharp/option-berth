@@ -55,18 +55,31 @@ enum ComposerConsoleBridge {
         }()
         let provider: ProviderSelection = providerChosen ? .chosen(providerID) : .unset
         let agentTarget: AgentTarget = {
+            // docs/console.md「输入条与路由」: ⌘↩ sends to the current **Agent
+            // target**, and for a terminal agent that means pasting into its
+            // TUI (no Enter). So an explicitly targeted structured stream wins
+            // first, then an explicitly selected native agent PTY, and only
+            // then does the block-stream default apply.
+            //
+            // v15 briefly dropped the native branch entirely, which made the
+            // documented ⌘↩-into-terminal-agent behaviour unreachable.
             if let streamResumeID,
-               let stream = streamSessions.first(where: { $0.id == streamResumeID }) {
+               let match = streamSessions.first(where: { $0.id == streamResumeID }) {
+                let state = AgentDisplayDeriver.targetState(phase: match.snapshot.phase,
+                                                            turns: match.snapshot.turns,
+                                                            requests: match.snapshot.requests)
+                return .stream(id: match.id, title: match.title, state: state)
+            }
+            if let target, target.kind.hasPrefix("agent:") {
+                return .terminal(id: target.id, title: target.title, alive: target.isActive)
+            }
+            if let stream = streamSessions.last {
                 let state = AgentDisplayDeriver.targetState(phase: stream.snapshot.phase,
                                                             turns: stream.snapshot.turns,
                                                             requests: stream.snapshot.requests)
                 return .stream(id: stream.id, title: stream.title, state: state)
             }
-            guard let target, target.kind.hasPrefix("agent:") else { return .none }
-            if !target.isActive {
-                return .terminal(id: target.id, title: target.title, alive: false)
-            }
-            return .terminal(id: target.id, title: target.title, alive: true)
+            return .none
         }()
         return ComposerContext(text: draft, slash: slash, shell: shellTarget, provider: provider, target: agentTarget)
     }

@@ -54,6 +54,8 @@ public enum AgentDisplayDeriver {
             return nil
         case .idle:
             return "等第一条消息"
+        case .queued:
+            return "排队中"
         case .needsYou:
             if let request = requests.first {
                 if let command = request.command { return requestSummary(command) }
@@ -67,6 +69,51 @@ public enum AgentDisplayDeriver {
         case .ended(let resumable):
             return resumable ? "可续接" : "不可续接"
         }
+    }
+
+    /// Inline body for the unified stream card — prefer message text, else live activity / request.
+    public static func resultPreview(turn: AgentTurn?, activity: String?, requests: [AgentRequest]) -> String? {
+        if let turn {
+            let messages = turn.items.compactMap { item -> String? in
+                if case .message(_, let text) = item {
+                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return trimmed.isEmpty ? nil : text
+                }
+                return nil
+            }
+            if let last = messages.last { return last }
+
+            // While running with no message yet, surface the active tool/command line.
+            if turn.outcome == .running, let item = turn.items.last(where: { runningItem($0) }) {
+                switch item {
+                case .command(_, let command, _, _, _, _, _):
+                    return "$ \(command)"
+                case .fileChange(_, let files, _):
+                    let names = files.prefix(3).map(\.path).joined(separator: ", ")
+                    let more = files.count > 3 ? " …" : ""
+                    return names.isEmpty ? "修改文件" : "修改 \(names)\(more)"
+                case .tool(_, let name, let preview, _):
+                    let trimmed = preview.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return trimmed.isEmpty ? "调用 \(name)" : "\(name): \(trimmed)"
+                case .reasoning(_, let summary):
+                    let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return trimmed.isEmpty ? "思考中" : "思考：\(trimmed)"
+                default:
+                    break
+                }
+            }
+
+            // Failed / interrupted with no message — keep a short failure line.
+            if case .failed(_, let message) = turn.outcome, !message.isEmpty {
+                return message
+            }
+        }
+        if let request = requests.first {
+            if let command = request.command { return "等你确认 · \(command)" }
+            if let path = request.paths.first { return "等你确认 · \(path)" }
+            return "等你确认"
+        }
+        return activity
     }
 
     private static func requestSummary(_ text: String) -> String {

@@ -30,7 +30,7 @@ enum Scope: Hashable {
     init(argument: String) {
         let parts = argument.split(separator: ":", maxSplits: 1).map(String.init)
         guard parts.count == 2 else {
-            self = .services("")
+            self = .terminal("")
             return
         }
         switch parts[0] {
@@ -38,7 +38,7 @@ enum Scope: Hashable {
         case "code", "git": self = .code(parts[1])
         case "ports", "project": self = .services(parts[1])
         case "services": self = .services(parts[1])
-        default: self = .services("")
+        default: self = .terminal("")
         }
     }
 }
@@ -65,7 +65,7 @@ struct BoardView: View {
         services: ServicesStore,
         git: GitStore? = nil,
         scrolls: Bool = true,
-        initialScope: Scope = .services(""),
+        initialScope: Scope = .terminal(""),
         initialConsoleAgent: Bool = false,
         automaticGuide: Bool = false,
         guideDefaults: UserDefaults = .standard,
@@ -107,29 +107,19 @@ struct BoardView: View {
         return projects.first { $0.name == name }
     }
 
-    var body: some View {
-        HStack(spacing: 0) {
-            if views.railVisible {
-                rail.tourAnchor(.worktrees)
-                    .frame(width: scrolls ? settings.sidebarWidth : Double(Metrics.railWidth), alignment: .leading)
-                    .clipped()
-                SplitHandle(width: railWidth, range: Self.railRange)
-            }
-            VStack(spacing: 0) {
-                WorkspaceToolbar(frozen: !scrolls, sessionCount: scrolls ? terminalSessions.sessions.count : 0,
-                                 recoveryPending: scrolls && recovery.reviewPending,
-                                 openActions: { views.showingActions = true },
-                                 openSessions: { views.showingSessions = true },
-                                 openRecovery: { views.showingRecovery = true },
-                                 openUpdates: { views.showingUpdates = true },
-                                 openSettings: { views.showingSettings = true },
-                                 openGuide: { views.showingGuide = true })
-                Hairline()
-                content
-            }.padding(.top, views.railVisible ? 0 : Metrics.trafficLightInset)
+    /// HIG toolbars: window title is the current document / project, never the app name.
+    private var windowTitle: String {
+        if let selected { return selected.displayName }
+        if case .console(let root) = scope {
+            let short = root.replacingOccurrences(
+                of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")
+            return short.isEmpty ? "独立会话" : short
         }
-        .ignoresSafeArea(.container, edges: .top)
-        .background(Ink.canvas)
+        return "option-berth"
+    }
+
+    var body: some View {
+        shell
         .background {
             if scrolls {
                 WorkspaceCommandDeliveryAnchor(delivery: commandDelivery).frame(width: 0, height: 0)
@@ -138,7 +128,14 @@ struct BoardView: View {
             }
         }
         .preferredColorScheme(settings.colorScheme)
-        .clientWindowChrome()
+        .clientWindowChrome(vibrancyBehindWindow: scrolls)
+        .background {
+            if scrolls {
+                WindowTitleBinder(title: windowTitle)
+                    .frame(width: 0, height: 0)
+                    .allowsHitTesting(false)
+            }
+        }
         .disabled(views.showingGuide)
         .accessibilityHidden(views.showingGuide)
         .overlayPreferenceValue(TourAnchors.self) { anchors in
@@ -156,7 +153,9 @@ struct BoardView: View {
                 guard let root = $0.rootDir else { return false }
                 return URL(fileURLWithPath: root).standardizedFileURL.resolvingSymlinksInPath().path == target
             }) else { return }
-            views.scope = .code(project.name)
+            // Session-primary: Git is a capability panel on the session stage.
+            views.scope = .terminal(project.name)
+            views.openGitPanel(path: request.path)
             git.openPath(request.path, project: project)
         }
         .sheet(isPresented: $views.showingUpdates) { ReleaseUpdateSheet().clientWindowChrome() }
@@ -233,6 +232,101 @@ struct BoardView: View {
         .onChange(of: scope) { _, newScope in
             refreshGit(force: true)
         }
+        .onChange(of: views.capabilityPanel) { _, panel in
+            if panel == .git { refreshGit(force: true) }
+        }
+    }
+
+    /// Split column shell: sidebar List + detail, system `.toolbar` on live
+    /// windows. ImageRenderer freezes mirror the same columns (no AppKit List /
+    /// segmented control — those paint blank offscreen).
+    /// `railVisible` shows/hides the sidebar column (⌘B).
+    @ViewBuilder private var shell: some View {
+        HStack(spacing: 0) {
+            if views.railVisible {
+                sidebar
+                    .frame(width: scrolls ? settings.sidebarWidth : Double(Metrics.railWidth),
+                           alignment: .leading)
+                    .clipped()
+                if scrolls {
+                    SplitHandle(width: railWidth, range: Self.railRange)
+                } else {
+                    Hairline(axis: .vertical)
+                }
+            }
+            detailStack
+        }
+        .background(Ink.canvas)
+        .toolbar { if scrolls { workspaceToolbarItems } }
+    }
+
+    private var projectSelection: Binding<String?> {
+        Binding(
+            get: { scope.projectName },
+            set: { name in
+                guard let name else { return }
+                withAnimation(Motion.selection(reduced: reduce)) { views.selectProject(name) }
+            }
+        )
+    }
+
+    private var detailStack: some View {
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(Ink.canvas)
+    }
+
+    @ToolbarContentBuilder private var workspaceToolbarItems: some ToolbarContent {
+        // HIG: leading edge — show/hide sidebar (familiar, always available).
+        ToolbarItem(placement: .navigation) {
+            Button {
+                withAnimation(Motion.selection(reduced: reduce)) {
+                    views.railVisible.toggle()
+                }
+            } label: {
+                Label(views.railVisible ? "隐藏侧栏" : "显示侧栏",
+                      systemImage: "sidebar.leading")
+            }
+            .help("显示或隐藏侧栏 / Toggle sidebar")
+            .accessibilityIdentifier("workspace.toolbar.sidebar")
+        }
+
+        // HIG: trailing — commands / sessions / recovery / more, icons + Label a11y.
+        ToolbarItemGroup(placement: .primaryAction) {
+            Button { views.showingActions = true } label: {
+                Label("命令", systemImage: "magnifyingglass")
+            }
+            .help("搜索工作区动作 / Command panel")
+            .accessibilityIdentifier("workspace.toolbar.commands")
+            .tourAnchor(.commands)
+
+            Button { views.showingSessions = true } label: {
+                Label("会话 \(scrolls ? terminalSessions.sessions.count : 0)",
+                      systemImage: "rectangle.on.rectangle")
+            }
+            .help("会话管理 / Sessions")
+            .accessibilityIdentifier("workspace.toolbar.sessions")
+            .tourAnchor(.sessions)
+
+            Button { views.showingRecovery = true } label: {
+                Label(scrolls && recovery.reviewPending ? "恢复 · 待确认" : "恢复",
+                      systemImage: "clock.arrow.circlepath")
+            }
+            .help("恢复建议 / Recovery")
+            .accessibilityIdentifier("workspace.toolbar.recovery")
+            .tourAnchor(.recovery)
+
+            Menu {
+                Button("检查更新… / Check for updates…") { views.showingUpdates = true }
+                Button("设置… / Settings…") { views.showingSettings = true }
+                Button("使用指引… / Getting started…") { views.showingGuide = true }
+            } label: {
+                Label("更多", systemImage: "ellipsis.circle")
+            }
+            .accessibilityLabel("更多工作区操作")
+            .accessibilityIdentifier("workspace.toolbar.more")
+            .tourAnchor(.more)
+        }
     }
 
     private func refreshGit(force: Bool = false) {
@@ -244,104 +338,195 @@ struct BoardView: View {
         }
     }
 
-    private var rail: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Image(systemName: "square.stack.3d.up").font(.system(size: 11, weight: .medium)).foregroundStyle(Ink.inkMuted)
-                Text("Worktrees")
-                    .font(Face.sans(Metrics.heading, .semibold))
-                    .foregroundStyle(Ink.ink)
-                Spacer()
-                Button("+") { views.requestConnection() }
-                    .buttonStyle(.plain)
-                    .font(Face.mono(Metrics.display, .medium))
-                    .frame(minWidth: Metrics.hit, minHeight: Metrics.hit)
-                    .foregroundStyle(Ink.accent)
-                    .help("接入一个 worktree").tourAnchor(.connect)
+    private var sidebar: some View {
+        VStack(spacing: 0) {
+            if scrolls {
+                sidebarFilter
             }
-            .padding(.horizontal, Metrics.gutter)
-            .padding(.top, Metrics.headerPad + Metrics.unit)
-            .padding(.bottom, Metrics.headerPad)
-            Hairline()
             if projects.isEmpty {
-                VStack(alignment: .leading, spacing: Metrics.inline) {
-                    Text("还没有清单项目")
-                        .font(Face.sans(Metrics.chrome, .medium))
-                        .foregroundStyle(Ink.ink)
-                    Text("接入一个目录，或者先运行 oberth init。")
-                        .font(Face.sans(Metrics.meta))
-                        .foregroundStyle(Ink.inkFaint)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(Metrics.gutter)
-            } else {
-                if scrolls {
-                    TextField("筛选 worktree", text: $views.projectQuery).textFieldStyle(.roundedBorder)
-                        .font(Face.sans(Metrics.chrome))
-                        .padding(.horizontal, Metrics.gutter)
-                        .padding(.vertical, Metrics.tabPadV)
-                    ScrollView {
-                        LazyVStack(spacing: Metrics.rowGap) {
-                            ForEach(Array(visibleProjects.enumerated()), id: \.element.id) { index, project in
-                                projectRow(project, ordinal: index + 1)
+                sidebarEmpty
+            } else if scrolls {
+                List(selection: projectSelection) {
+                    Section {
+                        ForEach(Array(visibleProjects.enumerated()), id: \.element.id) { index, project in
+                            projectRow(project, ordinal: index + 1)
+                                .tag(project.name)
+                                .listRowInsets(EdgeInsets(
+                                    top: Metrics.unit,
+                                    leading: Metrics.gutter,
+                                    bottom: Metrics.unit,
+                                    trailing: Metrics.gutter
+                                ))
+                        }
+                    } header: {
+                        HStack(spacing: Metrics.inline) {
+                            Text("Worktrees")
+                                .font(Face.sans(Metrics.meta, .semibold))
+                                .foregroundStyle(Ink.inkMuted)
+                                .textCase(nil)
+                            Spacer(minLength: 0)
+                            Button {
+                                views.requestConnection()
+                            } label: {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 11, weight: .semibold))
                             }
-                        }.padding(.horizontal, Metrics.unit)
+                            .buttonStyle(.borderless)
+                            .help("接入一个 worktree")
+                            .tourAnchor(.connect)
+                        }
+                        .textCase(nil)
                     }
-                } else {
-                    VStack(spacing: Metrics.rowGap) { ForEach(Array(visibleProjects.enumerated()), id: \.element.id) { index, project in projectRow(project, ordinal: index + 1) } }
-                        .padding(.horizontal, Metrics.unit).padding(.top, Metrics.headerPad)
                 }
+                .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
+            } else {
+                // ImageRenderer cannot paint List(.sidebar); mirror density with plain rows.
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack {
+                        Text("Worktrees")
+                            .font(Face.sans(Metrics.meta, .semibold))
+                            .foregroundStyle(Ink.inkMuted)
+                        Spacer(minLength: 0)
+                        Image(systemName: "plus")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Ink.accent)
+                            .tourAnchor(.connect)
+                    }
+                    .padding(.horizontal, Metrics.gutter)
+                    .padding(.vertical, Metrics.tabPadV)
+                    ForEach(Array(visibleProjects.enumerated()), id: \.element.id) { index, project in
+                        let selected = scope.projectName == project.name
+                        projectRow(project, ordinal: index + 1)
+                            .padding(.horizontal, Metrics.gutter)
+                            .padding(.vertical, Metrics.unit)
+                            .background(selected ? Ink.accentSoft : Color.clear)
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            .padding(.horizontal, Metrics.unit)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-            Spacer(minLength: 0)
-            if services.updatedAt != nil {
-                Text("已更新")
-                    .font(Face.mono(Metrics.caption))
-                    .foregroundStyle(Ink.inkFaint)
-                    .padding(Metrics.gutter)
+            sidebarFooter
+        }
+        .tourAnchor(.worktrees)
+        // Live: system sidebar material + ~8% Paper canvas wash so Paper world survives
+        // (HIG materials: glass on chrome only; content stays opaque).
+        .background {
+            if scrolls {
+                ZStack {
+                    SidebarMaterial()
+                    Ink.canvas.opacity(0.08)
+                }
+            } else {
+                Ink.surface
             }
         }
-        // The title bar is transparent and the traffic lights sit over the left rail.
-        // Keep the rail surface continuous, but move its first controls below them.
-        .padding(.top, Metrics.trafficLightInset)
-        .background(Ink.surface)
     }
 
+    /// Leading magnifyingglass field — not a decorative Spotlight capsule (tells / quieter).
+    private var sidebarFilter: some View {
+        HStack(spacing: Metrics.inline) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Ink.inkFaint)
+                .accessibilityHidden(true)
+            TextField("筛选 worktree", text: $views.projectQuery)
+                .textFieldStyle(.plain)
+                .font(Face.sans(Metrics.chrome))
+                .foregroundStyle(Ink.ink)
+        }
+        .padding(.horizontal, Metrics.gutter)
+        .padding(.vertical, Metrics.controlPadV + 1)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Ink.sunken.opacity(0.55))
+        )
+        .padding(.horizontal, Metrics.gutter)
+        .padding(.top, Metrics.gutter)
+        .padding(.bottom, Metrics.unit)
+    }
+
+    private var sidebarEmpty: some View {
+        VStack(alignment: .leading, spacing: Metrics.inline) {
+            Image(systemName: "shippingbox")
+                .font(.system(size: 22, weight: .regular))
+                .foregroundStyle(Ink.inkFaint)
+                .accessibilityHidden(true)
+            Text("还没有清单项目")
+                .font(Face.sans(Metrics.chrome, .medium))
+                .foregroundStyle(Ink.ink)
+            Text("接入一个目录，或者先运行 oberth init。侧栏只列有 oberth.yaml 的 worktree。")
+                .font(Face.sans(Metrics.meta))
+                .foregroundStyle(Ink.inkFaint)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("接入…") { views.requestConnection() }
+                .buttonStyle(.borderless)
+                .foregroundStyle(Ink.accent)
+                .help("接入一个 worktree")
+                .tourAnchor(.connect)
+        }
+        .padding(Metrics.gutter)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// Useful relative time when the store has refreshed — not a decorative stamp.
+    private var sidebarFooter: some View {
+        Group {
+            if let updated = services.updatedAt {
+                Text("已更新 · \(TimeText.relative(updated))")
+                    .font(Face.sans(Metrics.caption))
+                    .foregroundStyle(Ink.inkFaint)
+                    .padding(.horizontal, Metrics.gutter)
+                    .padding(.vertical, Metrics.gutter)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    @ViewBuilder
     private func projectRow(_ project: BerthGroup, ordinal: Int) -> some View {
-        let isSelected = scope.projectName == project.name
         let live = services.liveCount(in: project)
-        return Button {
-            withAnimation(Motion.selection(reduced: reduce)) { views.selectProject(project.name) }
-        } label: {
-            HStack(spacing: Metrics.inline) {
-                StatusDot(tone: live > 0 ? Ink.live : Ink.dormant)
-                VStack(alignment: .leading, spacing: Metrics.stack) {
+        let attention = project.services.filter(\.needsAttention).count
+        HStack(spacing: Metrics.inline) {
+            StatusDot(tone: attention > 0 ? Change.changed : (live > 0 ? Ink.live : Ink.dormant))
+            VStack(alignment: .leading, spacing: Metrics.stack) {
+                HStack(spacing: Metrics.unit) {
                     Text(project.displayName)
                         .font(Face.sans(Metrics.row, .medium))
                         .foregroundStyle(Ink.ink)
                         .lineLimit(1)
-                    Text(project.branch.isEmpty ? shortPath(project.rootDir ?? "") : project.branch)
-                        .font(Face.mono(Metrics.caption))
-                        .foregroundStyle(Ink.inkFaint)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                Spacer(minLength: Metrics.unit)
-                VStack(alignment: .trailing, spacing: Metrics.stack) {
-                    Text(verbatim: "\(live)/\(project.services.count)")
-                        .font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkMuted)
-                    if let action = WorkspaceAction(rawValue: "worktree.\(ordinal)") {
-                        Text(scrolls ? shortcuts.shortcut(action).label : action.defaultShortcut.label)
-                            .font(Face.mono(Metrics.caption)).foregroundStyle(Ink.inkFaint)
+                    if attention > 0 {
+                        Text(verbatim: "\(attention)")
+                            .font(Face.mono(Metrics.caption, .medium))
+                            .foregroundStyle(Change.changed)
+                            .help("需处理的服务数")
                     }
                 }
+                Text(project.branch.isEmpty ? shortPath(project.rootDir ?? "") : project.branch)
+                    .font(Face.mono(Metrics.caption))
+                    .foregroundStyle(Ink.inkFaint)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
-            .padding(.horizontal, Metrics.gutter)
-            .frame(height: Metrics.sidebarRow)
-            .background(isSelected ? Ink.accentSoft : Ink.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .contentShape(Rectangle())
+            Spacer(minLength: Metrics.unit)
+            VStack(alignment: .trailing, spacing: Metrics.stack) {
+                Text(verbatim: "\(live)/\(project.services.count)")
+                    .font(Face.mono(Metrics.meta))
+                    .foregroundStyle(attention > 0 ? Change.changed : Ink.inkMuted)
+                if let action = WorkspaceAction(rawValue: "worktree.\(ordinal)") {
+                    Text(scrolls ? shortcuts.shortcut(action).label : action.defaultShortcut.label)
+                        .font(Face.mono(Metrics.caption))
+                        .foregroundStyle(Ink.inkFaint)
+                }
+            }
         }
-        .buttonStyle(.plain)
+        .frame(minHeight: Metrics.sidebarRow - Metrics.unit)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(Motion.selection(reduced: reduce)) { views.selectProject(project.name) }
+        }
     }
 
     @ViewBuilder private var content: some View {
@@ -364,11 +549,14 @@ struct BoardView: View {
 
     private var emptyContent: some View {
         VStack(alignment: .leading, spacing: Metrics.section) {
-            BerthMark(size: 22, occupied: false)
+            Image(systemName: "rectangle.split.2x1")
+                .font(.system(size: 28, weight: .regular))
+                .foregroundStyle(Ink.inkFaint)
+                .accessibilityHidden(true)
             Text("选择一个 worktree")
-                .font(Face.sans(16, .semibold))
+                .font(Face.sans(Metrics.display + 2, .semibold))
                 .foregroundStyle(Ink.ink)
-            Text("状态只从清单、运行记录和运行实况组成。左栏只列有 oberth.yaml 的项目。")
+            Text("从左栏点一个项目开始。状态只从清单、运行记录和运行实况组成；没有 oberth.yaml 的目录不会出现在这里。")
                 .font(Face.sans(Metrics.chrome))
                 .foregroundStyle(Ink.inkFaint)
                 .fixedSize(horizontal: false, vertical: true)
@@ -391,80 +579,147 @@ struct BoardView: View {
     }
 
     private func projectContent(_ project: BerthGroup) -> some View {
-        VStack(spacing: 0) {
-            projectHeader(project)
-            tabBar(project).tourAnchor(.facts)
-            Hairline()
-            switch scope {
-            case .services:
-                ServicesView(store: services, group: project,
-                             ports: ports(for: project), scrolls: scrolls)
-            case .code:
-                CodeView(git: git, project: project, scrolls: scrolls)
-            case .terminal, .console:
-                WorkspaceConsole(root: project.rootDir ?? "", frozen: !scrolls, initialAgent: initialConsoleAgent).id(project.rootDir ?? project.name)
+        let attention = project.services.filter(\.needsAttention).count
+        return ZStack(alignment: .topTrailing) {
+            VStack(spacing: 0) {
+                ProjectDocumentHeader(
+                    displayName: project.displayName,
+                    liveCount: services.liveCount(in: project),
+                    serviceCount: project.services.count,
+                    attentionCount: attention,
+                    branch: project.branch,
+                    path: shortPath(project.rootDir ?? ""),
+                    isWorking: services.isWorking(project),
+                    onFactsTap: { views.openServicesPanel() }
+                ) {
+                    projectMenu(project)
+                }
 
+                // Session stage is always home (v13). Services/Git are overlays.
+                WorkspaceConsole(
+                    root: project.rootDir ?? "",
+                    frozen: !scrolls,
+                    initialAgent: initialConsoleAgent,
+                    openServicesPanel: { views.openServicesPanel() },
+                    openGitPanel: { views.openGitPanel() }
+                )
+                .id(project.rootDir ?? project.name)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            if let panel = views.capabilityPanel {
+                capabilityOverlay(panel, project: project, attention: attention)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .animation(Motion.selection(reduced: reduce), value: views.capabilityPanel)
     }
 
-    private func projectHeader(_ project: BerthGroup) -> some View {
-        HStack(alignment: .center, spacing: Metrics.inline) {
-            VStack(alignment: .leading, spacing: Metrics.stack) {
-                HStack(spacing: Metrics.inline) {
-                    Text(project.displayName).font(Face.sans(Metrics.display, .semibold)).foregroundStyle(Ink.ink).lineLimit(1)
-                    if !project.branch.isEmpty {
-                        Label(project.branch, systemImage: "arrow.triangle.branch")
-                            .font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkMuted).lineLimit(1)
-                            .padding(.horizontal, Metrics.controlPadH).padding(.vertical, 2).background(Ink.surface)
-                            .clipShape(Capsule()).layoutPriority(-1)
-                    }
+    @ViewBuilder
+    private func capabilityOverlay(_ panel: CapabilityPanel, project: BerthGroup, attention: Int) -> some View {
+        let title: String = {
+            switch panel {
+            case .services: return attention > 0 ? "服务 · \(attention) 需处理" : "服务"
+            case .git:
+                let n = git.tree?.files.count ?? 0
+                return n > 0 ? "Git · \(n)" : "Git"
+            }
+        }()
+        VStack(spacing: 0) {
+            HStack(spacing: Metrics.inline) {
+                Text(title)
+                    .font(Face.sans(Metrics.chrome, .semibold))
+                    .foregroundStyle(Ink.ink)
+                Spacer(minLength: 0)
+                Text("Esc 返回会话")
+                    .font(Face.mono(Metrics.caption))
+                    .foregroundStyle(Ink.inkFaint)
+                Button {
+                    views.dismissCapabilityPanel()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Ink.inkMuted)
+                        .frame(width: Metrics.hit, height: Metrics.hit)
+                        .contentShape(Rectangle())
                 }
-                Text(shortPath(project.rootDir ?? "目录不可用"))
-                    .font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkFaint).lineLimit(1).truncationMode(.middle)
-            }.frame(maxWidth: .infinity, alignment: .leading)
-            HStack(spacing: Metrics.unit) {
-                StatusDot(tone: services.liveCount(in: project) > 0 ? Ink.live : Ink.dormant)
-                Text(verbatim: "\(services.liveCount(in: project))/\(project.services.count) 服务")
-                    .font(Face.mono(Metrics.meta)).foregroundStyle(Ink.inkMuted)
-            }.fixedSize()
-            if services.isWorking(project) {
-                ProgressView().controlSize(.small).help("正在处理项目服务")
-            } else {
-                if !scrolls {
-                    Label("项目", systemImage: "slider.horizontal.3").font(Face.sans(Metrics.chrome)).foregroundStyle(Ink.inkMuted)
-                } else {
-                Menu {
-                    Button("编辑清单…") { openConfig(project) }
-                    if !project.services.isEmpty {
-                        Divider()
-                        Button("启动全部服务") { services.start(project) }
-                        Button("停止项目服务") { services.stop(project) }.disabled(services.stoppableCount(in: project) == 0)
-                    }
-                    Divider()
-                    Button("移除项目…", role: .destructive) { removing = project }
-                } label: { Label("项目", systemImage: "slider.horizontal.3").font(Face.sans(Metrics.chrome)) }
-                    .menuStyle(.borderlessButton).fixedSize()
+                .buttonStyle(.plain)
+                .help("关闭面板 · Esc")
+                .accessibilityIdentifier("workspace.capabilityClose")
+            }
+            .padding(.horizontal, Metrics.gutter)
+            .padding(.vertical, Metrics.unit + 2)
+            .background(Ink.surface)
+            Hairline(tone: Ink.lineStrong)
+
+            Group {
+                switch panel {
+                case .services:
+                    ServicesView(
+                        store: services,
+                        group: project,
+                        ports: ports(for: project),
+                        scrolls: scrolls,
+                        views: views,
+                        onJumpToGit: { path in
+                            views.openGitPanel(path: path)
+                            if let path, !path.isEmpty {
+                                git.openPath(path, project: project)
+                            }
+                        }
+                    )
+                case .git:
+                    CodeView(git: git, project: project, scrolls: scrolls)
                 }
             }
-        }.padding(.horizontal, Metrics.gutter + Metrics.unit).padding(.top, Metrics.headerPad + Metrics.unit).padding(.bottom, Metrics.headerPad)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Ink.canvas)
+        .overlay(alignment: .leading) {
+            // Dim the session underneath on the left edge only as a soft separator.
+            Rectangle().fill(Ink.lineStrong).frame(width: 1)
+        }
+        .accessibilityIdentifier(panel == .services ? "workspace.panel.services" : "workspace.panel.git")
+        .background {
+            if scrolls {
+                CapabilityPanelKeyMonitor(onEscape: { views.dismissCapabilityPanel() })
+                    .frame(width: 1, height: 1)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
-    private func tabBar(_ project: BerthGroup) -> some View {
-        HStack(spacing: Metrics.unit) {
-            WorkspaceTab(title: "服务", symbol: "server.rack", selected: scope == .services(project.name)) {
-                views.scope = .services(project.name)
-            }.help(shortcuts.shortcut(.services).label)
-            let changed = git.tree?.files.count ?? 0
-            WorkspaceTab(title: "Git" + (changed > 0 ? " · \(changed)" : ""), symbol: "chevron.left.forwardslash.chevron.right", selected: scope == .code(project.name)) {
-                views.scope = .code(project.name)
-            }.help(shortcuts.shortcut(.code).label)
-            WorkspaceTab(title: "会话", symbol: "terminal", selected: scope == .terminal(project.name)) {
-                views.scope = .terminal(project.name)
-            }.help(shortcuts.shortcut(.terminal).label)
-            Spacer(minLength: 0)
-        }.padding(.horizontal, Metrics.gutter).padding(.bottom, Metrics.tabPadV)
+    @ViewBuilder
+    private func projectMenu(_ project: BerthGroup) -> some View {
+        if !scrolls {
+            Label("项目", systemImage: "slider.horizontal.3")
+                .font(Face.sans(Metrics.chrome))
+                .foregroundStyle(Ink.inkMuted)
+                .labelStyle(.iconOnly)
+        } else {
+            Menu {
+                Button("编辑清单…") { openConfig(project) }
+                if !project.services.isEmpty {
+                    Divider()
+                    Button("启动全部服务") { services.start(project) }
+                    Button("停止项目服务") { services.stop(project) }
+                        .disabled(services.stoppableCount(in: project) == 0)
+                }
+                Divider()
+                Button("移除项目…", role: .destructive) { removing = project }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(Ink.inkMuted)
+                    .frame(width: Metrics.hit, height: Metrics.hit)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .help("项目操作")
+            .fixedSize()
+        }
     }
 
     private func ports(for project: BerthGroup) -> [Port] {
@@ -513,7 +768,7 @@ struct BoardView: View {
                     : read.config.name
                 let root = URL(fileURLWithPath: configPath).deletingLastPathComponent().path
                 ProjectRegistry.adopt(name: name, root: root, config: configPath)
-                views.scope = .services(name)
+                views.scope = .terminal(name)
             case .failure(let error): problem = error.localizedDescription
             }
         }
@@ -529,7 +784,7 @@ struct BoardView: View {
                 let name = written.proposal.name
                 if !name.isEmpty {
                     ProjectRegistry.adopt(name: name, root: root, config: written.path)
-                    views.scope = .services(name)
+                    views.scope = .terminal(name)
                 }
                 services.refresh()
             case .failure(let error): proposalProblem = error.localizedDescription
@@ -582,10 +837,37 @@ struct ColumnHead: View {
     let title: String
     init(_ title: String) { self.title = title }
     var body: some View {
-        Text(title.uppercased())
-            .font(Face.sans(9, .semibold))
-            .tracking(0.8)
-            .foregroundStyle(Ink.inkFaint)
+        Text(title)
+            .font(Face.sans(Metrics.meta, .semibold))
+            .foregroundStyle(Ink.inkMuted)
+            .tracking(0.3)
             .lineLimit(1)
+    }
+}
+
+
+/// Esc dismisses the services/Git capability overlay while it is open.
+struct CapabilityPanelKeyMonitor: NSViewRepresentable {
+    let onEscape: () -> Void
+    func makeNSView(context: Context) -> MonitorView { MonitorView() }
+    func updateNSView(_ view: MonitorView, context: Context) { view.onEscape = onEscape }
+    static func dismantleNSView(_ view: MonitorView, coordinator: ()) { view.removeMonitor() }
+    final class MonitorView: NSView {
+        var onEscape: (() -> Void)?
+        private var monitor: Any?
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            removeMonitor()
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self, event.keyCode == 53 else { return event }
+                self.onEscape?()
+                return nil
+            }
+        }
+        func removeMonitor() {
+            if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
+        }
+        deinit { removeMonitor() }
     }
 }

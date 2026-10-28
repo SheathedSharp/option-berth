@@ -2,6 +2,22 @@ import Foundation
 
 /// 时间戳说成人话。提交时间和「上次看是什么时候」都在这儿，两处说法保持一致。
 enum TimeText {
+    /// 「刚刚 / 12 分钟前 …」—— 侧栏页脚「上次刷新」用 Date，不走 RFC3339。
+    static func relative(_ date: Date) -> String {
+        let seconds = Date().timeIntervalSince(date)
+        switch seconds {
+        case ..<60: return "刚刚"
+        case ..<3600: return "\(Int(seconds / 60)) 分钟前"
+        case ..<86400: return "\(Int(seconds / 3600)) 小时前"
+        case ..<2592000: return "\(Int(seconds / 86400)) 天前"
+        default:
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "zh_CN")
+            formatter.dateFormat = "M月d日"
+            return formatter.string(from: date)
+        }
+    }
+
     /// 「刚刚 / 12 分钟前 / 3 小时前 / 2 天前 / 2026-09-01」—— 人对一个提交问的是
     /// 「这是刚提交的还是上周的」，不是「第几秒」。
     static func relative(_ rfc3339: String?) -> String? {

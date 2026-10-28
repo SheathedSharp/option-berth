@@ -58,14 +58,16 @@ enum Snapshot {
         let logs = frozenLog()
         let git = frozenGit()
         guard let demo = groups.first(where: { $0.name == "berth-demo" }) else { return 1 }
-        let focus = ServiceRef(group: demo.name, service: "api")
+        // Ops-workbench: focus an attention service so live freeze shows
+        // Attention section + log binding (需重启), not only calm ready.
+        let focus = ServiceRef(group: demo.name, service: "web")
 
         let states: [(String, BoardStore, ServicesStore, GitStore, Scope)] = [
             ("01-empty", BoardStore(fixture: []), ServicesStore(fixture: []), GitStore(), .services("")),
             ("02-services-live", BoardStore(fixture: ports),
              ServicesStore(fixture: groups, runs: runs, focused: focus, logs: logs,
-                           logPath: ServicesStore.expectedLogPath(group: demo.name, service: "api"),
-                           notice: [ServiceRef(group: demo.name, service: "web"): "pid 31162 · 端口 5173"]),
+                           logPath: ServicesStore.expectedLogPath(group: demo.name, service: "web"),
+                           notice: [ServiceRef(group: demo.name, service: "web"): "清单与运行中命令不一致"]),
              GitStore(),
              .services(demo.name)),
             ("03-services-idle", BoardStore(fixture: ports),
@@ -81,12 +83,59 @@ enum Snapshot {
         ]
 
         for (name, store, services, git, scope) in states {
+            let views = ViewState(scope: {
+                switch scope {
+                case .services(let n): return .terminal(n)
+                case .code(let n): return .terminal(n)
+                default: return scope
+                }
+            }())
+            switch scope {
+            case .services: views.capabilityPanel = .services
+            case .code: views.capabilityPanel = .git
+            default: break
+            }
             let code = write(BoardView(store: store, services: services, git: git, scrolls: false,
-                                       initialScope: scope),
+                                       initialScope: views.scope, views: views),
                              to: url.appendingPathComponent("\(name).png").path,
                              width: width, height: height)
             if code != 0 { return code }
         }
+        // v15 warp-blocks: session-primary freezes; block stream + quiet single input (ASCII A).
+        if let demoName = groups.first(where: { $0.name == "berth-demo" })?.name {
+            let shellViews = ViewState(scope: .terminal(demoName))
+            let shellCode = write(BoardView(store: BoardStore(fixture: ports),
+                                            services: ServicesStore(fixture: groups, runs: runs),
+                                            git: git, scrolls: false, initialScope: .terminal(demoName),
+                                            views: shellViews),
+                                  to: url.appendingPathComponent("09-session-shell.png").path,
+                                  width: width, height: height)
+            if shellCode != 0 { return shellCode }
+
+            let svcViews = ViewState(scope: .terminal(demoName))
+            svcViews.capabilityPanel = .services
+            let focus = ServiceRef(group: demoName, service: "web")
+            let obCode = write(BoardView(store: BoardStore(fixture: ports),
+                                         services: ServicesStore(fixture: groups, runs: runs, focused: focus,
+                                                                 logs: logs,
+                                                                 logPath: ServicesStore.expectedLogPath(group: demoName, service: "web")),
+                                         git: git, scrolls: false, initialScope: .terminal(demoName),
+                                         views: svcViews),
+                               to: url.appendingPathComponent("14-ob-server.png").path,
+                               width: width, height: height)
+            if obCode != 0 { return obCode }
+
+            let gitViews = ViewState(scope: .terminal(demoName))
+            gitViews.capabilityPanel = .git
+            let gitPanelCode = write(BoardView(store: BoardStore(fixture: ports),
+                                               services: ServicesStore(fixture: groups, runs: runs),
+                                               git: git, scrolls: false, initialScope: .terminal(demoName),
+                                               views: gitViews),
+                                     to: url.appendingPathComponent("15-git-panel.png").path,
+                                     width: width, height: height)
+            if gitPanelCode != 0 { return gitPanelCode }
+        }
+
         let historyCodeView = write(CodeView(git: frozenHistory(), project: demo, scrolls: false, initialMode: .history),
                                     to: url.appendingPathComponent("08-code-history.png").path,
                                     width: width, height: height)

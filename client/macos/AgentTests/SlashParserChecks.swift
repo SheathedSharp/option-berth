@@ -35,6 +35,30 @@ extension AgentChecks {
         let noResume = SlashContext(hasAgents: true, shellCount: 1, targetWorking: false,
                                     targetResumable: false, providerSupportsResume: false)
         try check(SlashParser.parse("/resume", context: noResume) == .none, "/resume hidden without resume support")
+
+        try check(SlashParser.parse("/ob-server", context: base) == .command(.obServer, argument: ""),
+                  "/ob-server opens services panel")
+        try check(SlashParser.parse("/services", context: base) == .command(.obServer, argument: ""),
+                  "/services aliases /ob-server")
+        try check(SlashParser.parse("/git", context: base) == .command(.git, argument: ""),
+                  "/git opens git panel")
+        let serviceMatches = SlashParser.matches("/serv", context: base).map(\.rawValue)
+        try check(serviceMatches.contains("/ob-server"), "/serv matches services alias")
+
         try check(SlashParser.matches("ls", context: base).isEmpty, "ordinary text has no slash menu")
+
+        try check(SlashParser.parse("/workplace-new", context: base) == .command(.workplaceNew, argument: ""),
+                  "/workplace-new")
+        try check(SlashParser.parse("/workplace-list", context: base) == .command(.workplaceList, argument: ""),
+                  "/workplace-list")
+        try check(SlashParser.parse("/workplace 探索", context: base) == .command(.workplace, argument: "探索"),
+                  "/workplace argument")
+        try check(SlashParser.parse("/workplace-delete 默认", context: base) == .command(.workplaceDelete, argument: "默认"),
+                  "/workplace-delete")
+        try check(SlashParser.parse("/wp-list", context: base) == .command(.workplaceList, argument: ""),
+                  "/wp-list alias")
+        let wpMatches = SlashParser.matches("/wp", context: base).map(\.rawValue)
+        try check(wpMatches.contains("/workplace-list") && wpMatches.contains("/workplace-new"),
+                  "/wp surfaces workplace commands")
     }
 }

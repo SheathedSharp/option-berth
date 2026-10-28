@@ -36,9 +36,12 @@ enum AgentStreamRegistry {
 
     static func end(_ id: UUID) {
         guard let entry = entries[id] else { return }
-        try? entry.process.closeSession()
-        _ = entry.process.waitUntilExit()
+        // Untrack and announce first, then reclaim off the main thread. This is
+        // reached from the quit prompt and the session manager, both on the main
+        // actor while a person waits for the window to respond; blocking on a
+        // provider's exit here was a freeze.
         untrack(id: id)
         NotificationCenter.default.post(name: .agentStreamEndedExternally, object: nil, userInfo: ["id": id])
+        entry.process.requestShutdown()
     }
 }

@@ -9,6 +9,17 @@ public struct CommandBlock: Identifiable, Equatable {
     public var interrupted: Bool
     public var capturedOutput: String?
     public var isRunning: Bool { endedAt == nil }
+
+    public init(id: UUID = UUID(), command: String?, startedAt: Date, endedAt: Date? = nil,
+                exitCode: Int? = nil, interrupted: Bool = false, capturedOutput: String? = nil) {
+        self.id = id
+        self.command = command
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.exitCode = exitCode
+        self.interrupted = interrupted
+        self.capturedOutput = capturedOutput
+    }
 }
 
 /// Incremental, bounded OSC parser for the opt-in local shell hooks. The nonce

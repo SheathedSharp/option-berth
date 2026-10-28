@@ -9,7 +9,13 @@ extension ClientChecks {
             require(Scope(argument: legacy) == .services("demo"), "legacy CLI scope stopped resolving to services")
         }
         let state = ViewState(scope: .code("first"))
-        state.selectProject("second"); require(state.scope == .code("second"), "worktree switch reset the selected Git tab")
+        // Session-primary navigation (docs/console.md「布局与导航」): picking a
+        // worktree always lands on the session stage and drops any capability
+        // panel. The legacy `.code` start state is only an entry point, not a
+        // destination that selection has to preserve.
+        state.selectProject("second")
+        require(state.scope == .terminal("second"), "worktree switch did not land on the session stage")
+        require(state.capabilityPanel == nil, "worktree switch left a capability panel open")
         state.scope = .terminal("first"); state.selectProject("second")
         require(state.scope == .terminal("second"), "worktree switch reset the selected terminal tab")
         state.scope = .console("/fixture"); state.selectProject("second")

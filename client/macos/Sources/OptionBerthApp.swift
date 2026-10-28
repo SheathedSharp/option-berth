@@ -126,14 +126,22 @@ struct OptionBerthApp: App {
                     services.start()
                     ConsoleAgentAlerts.shared.setEnabled(settings.consoleAgentNotifications)
                 }
-                .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in recovery.saveNow() }
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+                    // Workplace block writes are debounced onto a background
+                    // queue; quitting must not drop the last cards of a session.
+                    WorkplaceStore.shared.flushPendingSave()
+                    recovery.saveNow()
+                }
                 .onDisappear {
+                    WorkplaceStore.shared.flushPendingSave()
                     recovery.saveNow()
                     store.stop()
                     services.stop()
                 }
         }
-        .windowStyle(.hiddenTitleBar)
+        // Standard titlebar + unified toolbar (shell rebuild v5).
+        // Hidden title bar forced custom traffic-light insets and a fake chrome strip.
+        .windowToolbarStyle(.unified)
         .defaultSize(width: 1060, height: 720)
         // A singleton Window otherwise keeps ⌘N to bring itself forward, and that
         // scene shortcut wins over the connect command. The menu still draws ⌘N.
@@ -160,11 +168,15 @@ struct OptionBerthApp: App {
         case .sidebar: views.railVisible.toggle()
         case .refresh:
             store.refresh(); services.refresh()
-            if case .code = views.scope { git.loadTree(project: services.projects.first { $0.name == views.project }, force: true) }
+            if views.capabilityPanel == .git {
+                git.loadTree(project: services.projects.first { $0.name == views.project }, force: true)
+            }
         case .find:
             if let terminal = HostedTerminalView.containing(NSApp.keyWindow?.firstResponder) { showTerminalFind(terminal) }
-            else if case .services = views.scope { services.beginLogFind() }
-            else if case .code = views.scope {
+            else if views.capabilityPanel == .services {
+                services.beginLogFind()
+            }
+            else if views.capabilityPanel == .git {
                 NotificationCenter.default.post(name: .init("option-berth.git.find"), object: views.project)
             }
         default: break // Ordinal commands were handled above.

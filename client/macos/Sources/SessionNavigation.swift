@@ -1,11 +1,21 @@
 import AppKit
+import BerthAgent
 import BerthTerminal
 import SwiftUI
 
+/// Collapsed multi-Shell rail (v15 warp-blocks). Shown only when there are 2+
+/// Shells. Agent/Pi never appear here as peer tabs — they are agent-session
+/// blocks in the scroll. Provider pick lives on composer / slash, not here.
 struct ShellSessionBar: View {
     let shells: [TerminalSession]
+    var agents: [TerminalSession] = []
+    var streamRows: [AgentRow] = []
     let selectedID: UUID?
+    var streamSelectedID: UUID? = nil
+    var providerChosen: Bool = false
+    var onPickProvider: () -> Void = {}
     let onSelect: (TerminalSession) -> Void
+    var onSelectStream: (UUID) -> Void = { _ in }
     let onNewShell: () -> Void
     let onNewAgent: () -> Void
     let onOpenSwitcher: () -> Void
@@ -13,15 +23,26 @@ struct ShellSessionBar: View {
     var body: some View {
         HStack(spacing: Metrics.inline) {
             ForEach(shells) { shell in
-                ConsoleSessionTab(session: shell, selected: shell.id == selectedID, compact: false,
+                ConsoleSessionTab(session: shell, selected: streamSelectedID == nil && shell.id == selectedID, compact: false,
                                   activate: { onSelect(shell) })
+                    .fixedSize()
+            }
+            ForEach(streamRows) { row in
+                streamChip(row)
+            }
+            ForEach(agents) { agent in
+                ConsoleSessionTab(session: agent, selected: streamSelectedID == nil && agent.id == selectedID, compact: false,
+                                  activate: { onSelect(agent) })
                     .fixedSize()
             }
             Menu {
                 Button("新建 Shell", action: onNewShell)
                 Button("新建 Agent 会话 ⇧⌘↩", action: onNewAgent)
+                if !providerChosen {
+                    Button("选择默认 Agent…", action: onPickProvider)
+                }
             } label: {
-                Text("＋").font(Face.sans(Metrics.chrome, .medium)).frame(width: 28, height: 24)
+                Text("＋").font(Face.sans(Metrics.chrome, .medium)).frame(width: 24, height: Metrics.hit)
             }
             .menuStyle(.borderlessButton)
             .accessibilityIdentifier("console.shellBar.add")
@@ -30,13 +51,38 @@ struct ShellSessionBar: View {
             Button(action: onOpenSwitcher) {
                 Image(systemName: "rectangle.on.rectangle")
                     .foregroundStyle(Ink.inkMuted)
+                    .frame(minWidth: Metrics.hit, minHeight: Metrics.hit)
             }
             .buttonStyle(.plain)
             .help("切换会话 · ⌃⌥Tab")
         }
         .font(Face.mono(Metrics.meta))
-        .padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.tabPadV)
-        .background(Ink.surface)
+        .padding(.horizontal, Metrics.gutter)
+        .frame(height: Metrics.chromeHeight)
+        .background(Ink.canvas)
+        .accessibilityIdentifier("console.sessionStrip")
+    }
+
+    private func streamChip(_ row: AgentRow) -> some View {
+        let selected = streamSelectedID == row.id
+        return Button {
+            onSelectStream(row.id)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "sparkle")
+                Text(row.title)
+                    .lineLimit(1)
+            }
+            .font(Face.mono(Metrics.meta))
+            .foregroundStyle(selected ? Ink.accent : Ink.inkMuted)
+            .padding(.horizontal, 8)
+            .frame(height: Metrics.hit)
+            .background(selected ? Ink.accentSoft : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .accessibilityIdentifier("console.streamTab." + row.id.uuidString)
     }
 }
 
@@ -137,7 +183,7 @@ struct SessionSwitcherPalette: View {
                             if session.id == selected.id { Image(systemName: "checkmark").foregroundStyle(Ink.accent) }
                         }.padding(.horizontal, Metrics.inline).padding(.vertical, Metrics.tabPadV)
                         .background(session.id == selected.id ? Ink.accentSoft : Color.clear)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                     }.buttonStyle(.plain)
                         .accessibilityIdentifier("console.session." + session.id.uuidString)
                 }
@@ -174,16 +220,22 @@ struct SessionShortcutDelivery: NSViewRepresentable {
     let escape: () -> Void
     let focusComposer: () -> Void
     let newAgent: () -> Void
+    var toggleInputMode: () -> Void = {}
+    var openHistory: () -> Void = {}
     let canCycle: () -> Bool
     let canEscape: () -> Bool
     let canFocusComposer: () -> Bool
     let canNewAgent: () -> Bool
+    var canToggleInputMode: () -> Bool = { true }
+    var canOpenHistory: () -> Bool = { true }
 
     func makeNSView(context: Context) -> DeliveryView { DeliveryView() }
 
     func updateNSView(_ view: DeliveryView, context: Context) {
         view.apply(open: open, cycle: cycle, escape: escape, focusComposer: focusComposer, newAgent: newAgent,
-                   canCycle: canCycle, canEscape: canEscape, canFocusComposer: canFocusComposer, canNewAgent: canNewAgent)
+                   toggleInputMode: toggleInputMode, openHistory: openHistory,
+                   canCycle: canCycle, canEscape: canEscape, canFocusComposer: canFocusComposer, canNewAgent: canNewAgent,
+                   canToggleInputMode: canToggleInputMode, canOpenHistory: canOpenHistory)
     }
 
     static func dismantleNSView(_ view: DeliveryView, coordinator: ()) { view.removeMonitor() }
@@ -196,10 +248,14 @@ struct SessionShortcutDelivery: NSViewRepresentable {
         private var escapeAction: (() -> Void)?
         private var focusComposerAction: (() -> Void)?
         private var newAgentAction: (() -> Void)?
+        private var toggleInputModeAction: (() -> Void)?
+        private var openHistoryAction: (() -> Void)?
         private var canCycle: (() -> Bool)?
         private var canEscape: (() -> Bool)?
         private var canFocusComposer: (() -> Bool)?
         private var canNewAgent: (() -> Bool)?
+        private var canToggleInputMode: (() -> Bool)?
+        private var canOpenHistory: (() -> Bool)?
 
         override init(frame frameRect: NSRect) {
             super.init(frame: frameRect)
@@ -216,17 +272,23 @@ struct SessionShortcutDelivery: NSViewRepresentable {
 
         func apply(open: @escaping () -> Void, cycle: @escaping (Int) -> Void,
                    escape: @escaping () -> Void, focusComposer: @escaping () -> Void, newAgent: @escaping () -> Void,
+                   toggleInputMode: @escaping () -> Void, openHistory: @escaping () -> Void,
                    canCycle: @escaping () -> Bool, canEscape: @escaping () -> Bool,
-                   canFocusComposer: @escaping () -> Bool, canNewAgent: @escaping () -> Bool) {
+                   canFocusComposer: @escaping () -> Bool, canNewAgent: @escaping () -> Bool,
+                   canToggleInputMode: @escaping () -> Bool, canOpenHistory: @escaping () -> Bool) {
             openAction = open
             cycleAction = cycle
             escapeAction = escape
             focusComposerAction = focusComposer
             newAgentAction = newAgent
+            toggleInputModeAction = toggleInputMode
+            openHistoryAction = openHistory
             self.canCycle = canCycle
             self.canEscape = canEscape
             self.canFocusComposer = canFocusComposer
             self.canNewAgent = canNewAgent
+            self.canToggleInputMode = canToggleInputMode
+            self.canOpenHistory = canOpenHistory
         }
 
         func removeMonitor() {
@@ -289,6 +351,14 @@ struct SessionShortcutDelivery: NSViewRepresentable {
                 if keys == [.command, .shift], canNewAgent?() == true { return .newAgent }
                 if keys == .command, canFocusComposer?() == true { return .focusComposer }
             }
+            // ⌘I — toggle Shell ↔ Agent input mode (Warp-like).
+            if event.keyCode == Self.iKey, keys == .command, canToggleInputMode?() == true {
+                return .toggleInputMode
+            }
+            // ⌘Y — command history sheet (replaces the old 「历史」 chrome row).
+            if event.keyCode == Self.yKey, keys == .command, canOpenHistory?() == true {
+                return .openHistory
+            }
             if event.keyCode == Self.escape, canEscape?() == true { return .escape }
             return nil
         }
@@ -300,6 +370,8 @@ struct SessionShortcutDelivery: NSViewRepresentable {
             case .escape: escapeAction?()
             case .focusComposer: focusComposerAction?()
             case .newAgent: newAgentAction?()
+            case .toggleInputMode: toggleInputModeAction?()
+            case .openHistory: openHistoryAction?()
             }
         }
 
@@ -307,10 +379,12 @@ struct SessionShortcutDelivery: NSViewRepresentable {
         private static let escape: UInt16 = 53
         private static let returnKey: UInt16 = 36
         private static let keypadEnter: UInt16 = 76
+        private static let iKey: UInt16 = 34
+        private static let yKey: UInt16 = 16
     }
 }
 
-private enum SessionShortcut { case open, cycle(Int), escape, focusComposer, newAgent }
+private enum SessionShortcut { case open, cycle(Int), escape, focusComposer, newAgent, toggleInputMode, openHistory }
 
 private struct SessionPaletteMarker: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {

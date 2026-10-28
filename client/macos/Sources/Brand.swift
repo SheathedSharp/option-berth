@@ -87,17 +87,13 @@ enum Lane {
 }
 
 enum Metrics {
-    // 红绿灯的让位条。窗口是 `.hiddenTitleBar`，标题栏透明、还在内容之上，
-    // 所以这一条**必须是左栏自己的上内边距**，不能横在左栏上面 ——
-    // 横在上面的话系统按标题栏高度（32pt）让一次、这一条再让一次，窗口顶上
-    // 会空出 68pt 的白带，而离屏渲染里只看得到 36pt（那条路没有窗口）。
-    //
-    // **只有左栏用这一条**：那三个点在 x 9..69，正好坐在左栏上；内容区从 x=173
-    // 才开始，头顶是空的，给它让位就是在右上角白留一片。详见 BoardView.body。
-    // 这一条跟系统标题栏走，不随界面字号缩放。
+    // Legacy inset from the hidden-title-bar era. Shell rebuild v5 uses a
+    // standard titlebar + NavigationSplitView, so live windows no longer pad
+    // the sidebar for traffic lights. Kept for any residual layout math / dumps.
     static let trafficLightInset: CGFloat = 36
-    /// 冻结渲染没有用户偏好时的左栏宽度。拖动范围仍是 140...320。
-    static let railWidth: CGFloat = 172
+    /// Freeze-path sidebar width (NavigationSplitView ideal is settings-driven).
+    /// Glanceably wider than the old 160pt custom rail.
+    static let railWidth: CGFloat = 220
 
     /// 界面字号。间距和行高跟着它走，用户把字放大时行不会被裁切。
     private static var interface: CGFloat {
@@ -115,7 +111,7 @@ enum Metrics {
     /// 颜色不在这里；深浅主题继续走 Ink。
     static var unit: CGFloat { 4 * interface }
     /// 面板与列表的水平内边距。
-    static var gutter: CGFloat { 10 * interface }
+    static var gutter: CGFloat { 8 * interface }
     /// 同一行里相邻控件的间距。
     static var inline: CGFloat { 6 * interface }
     /// 表列间距。比 inline 略宽，避免端口和命令贴住。
@@ -125,25 +121,25 @@ enum Metrics {
     /// 列表行之间的缝。
     static var rowGap: CGFloat { 2 * interface }
     /// 分区之间的垂直间距。
-    static var section: CGFloat { 12 * interface }
+    static var section: CGFloat { 10 * interface }
     /// 面板与表单的外圈留白。
-    static var panelPad: CGFloat { 12 * interface }
+    static var panelPad: CGFloat { 10 * interface }
 
     /// 服务、依赖、未声明监听。默认档放得下「命令 + 一条事实」。
-    static var rowHeight: CGFloat { max(28, 32 * interface) }
+    static var rowHeight: CGFloat { max(26, 30 * interface) }
     /// 左栏项目行：名称一行、分支一行。
-    static var sidebarRow: CGFloat { max(30, 34 * interface) }
+    static var sidebarRow: CGFloat { max(28, 32 * interface) }
     /// 单行列表（变更文件、命令、会话切换）。整行可点，不低于命中下限。
-    static var listRow: CGFloat { max(22, 24 * interface) }
+    static var listRow: CGFloat { max(20, 22 * interface) }
     /// 工作区与会话工具栏。
-    static var chromeHeight: CGFloat { max(28, 30 * interface) }
+    static var chromeHeight: CGFloat { max(26, 28 * interface) }
     /// 行内按钮的最小命中高度。
     static var hit: CGFloat { max(22, 22 * interface) }
 
-    static var headerPad: CGFloat { 5 * interface }
-    static var controlPadH: CGFloat { 7 * interface }
+    static var headerPad: CGFloat { 4 * interface }
+    static var controlPadH: CGFloat { 6 * interface }
     static var controlPadV: CGFloat { 3 * interface }
-    static var tabPadH: CGFloat { 8 * interface }
+    static var tabPadH: CGFloat { 7 * interface }
     static var tabPadV: CGFloat { 3 * interface }
 
     /// 端口列。等宽之后这个宽度就是「6 位端口 + 一个字符的余量」。
@@ -294,8 +290,8 @@ enum ClientMotionPolicy {
 /// 展开）才给标准档。这个应用里唯一跑个不停的动画是「daemon 正在启动」——
 /// 那是一个转瞬即逝的状态，不是常驻装饰。
 enum Motion {
-    /// 左栏选中指示器滑过去。
-    static let selection = Animation.spring(response: 0.30, dampingFraction: 0.80)
+    /// 选中态过渡。Operate：~180ms easeOut，只传达状态，不做编排入场。
+    static let selection = Animation.easeOut(duration: 0.18)
     /// 范围切换时内容区的交叉淡入。
     static let swap = Animation.spring(response: 0.34, dampingFraction: 0.88)
     /// 悬停与按下。一天几十次，只能「几乎察觉不到」。
@@ -306,7 +302,7 @@ enum Motion {
     // reduced motion 下换成更温和的变体，不是直接关掉 —— 淡入还在，
     // 位移和回弹去掉。动效里承载信息的那部分（东西出现了）要保住。
     static func selection(reduced: Bool) -> Animation {
-        reduced ? .easeOut(duration: 0.15) : selection
+        reduced ? .easeOut(duration: 0.12) : selection
     }
 
     static func swap(reduced: Bool) -> Animation {
@@ -430,9 +426,9 @@ struct ColumnLabel: View {
     var size: CGFloat = Metrics.caption
 
     var body: some View {
-        Text(text.uppercased())
+        // Sentence case — avoid ALL-CAPS "AI template" eyebrows in chrome.
+        Text(text)
             .font(Face.sans(size, .medium))
-            .tracking(1.0)
             .foregroundStyle(tone)
             .lineLimit(1)
     }
@@ -446,13 +442,14 @@ struct Tag: View {
     var tone: Tone = .accent
 
     enum Tone {
-        case accent, quiet, warn
+        case accent, quiet, warn, live
 
         var fg: Color {
             switch self {
             case .accent: return Ink.accent
             case .quiet: return Ink.inkMuted
             case .warn: return Change.changed
+            case .live: return Ink.live
             }
         }
 
@@ -461,6 +458,7 @@ struct Tag: View {
             case .accent: return Ink.accentSoft
             case .quiet: return Ink.sunken
             case .warn: return Change.changedBand
+            case .live: return Change.addedBand
             }
         }
     }

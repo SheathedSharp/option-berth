@@ -30,14 +30,16 @@ struct ThemeConfiguration: ClientConfigurationDocument {
     var logScale: Double?
     static let keys: Set<String> = ["schemaVersion", "appearance", "colors", "interfaceFont", "dataFont", "interfaceScale", "dataScale", "logScale"]
     static let paper: [String: UInt32] = [
-        "canvas": 0xF8F4EE, "surface": 0xEFE7DC, "sunken": 0xE5DACD,
-        "ink": 0x292521, "inkMuted": 0x6B6259, "inkFaint": 0x968A7D,
-        "dormant": 0xC5B8A9, "line": 0xDED3C7, "lineStrong": 0xC9B9A8,
-        "accent": 0xC56A4A, "accentSoft": 0xF4DED3, "live": 0x5E7D68,
-        "diff.added": 0x1B7F4B, "diff.addedBackground": 0xE9F5ED,
-        "diff.removed": 0xB3261E, "diff.removedBackground": 0xFDECEA,
-        "diff.changed": 0x9A5B00, "diff.changedBackground": 0xFBF3E4,
-        "terminal.background": 0xF8F4EE, "terminal.foreground": 0x292521
+        // v13 session-primary: quieter Paper — less beige mud, clearer ink contrast,
+        // restrained terracotta. Planes stay warm but cooler-neutral than v11/v12 wells.
+        "canvas": 0xF8F6F2, "surface": 0xF1EEE8, "sunken": 0xE9E6E0,
+        "ink": 0x161412, "inkMuted": 0x5C574F, "inkFaint": 0x8A847B,
+        "dormant": 0xA9A39A, "line": 0xDDD8D0, "lineStrong": 0xC2BBB1,
+        "accent": 0x9E4F3A, "accentSoft": 0xF1E6E0, "live": 0x3A6750,
+        "diff.added": 0x2F6B4A, "diff.addedBackground": 0xE6F0EA,
+        "diff.removed": 0xB54A3C, "diff.removedBackground": 0xF7E9E6,
+        "diff.changed": 0xB07A2E, "diff.changedBackground": 0xF6EFE3,
+        "terminal.background": 0xF8F6F2, "terminal.foreground": 0x161412
     ]
     static func hex(_ text: String) -> UInt32? {
         let bytes = Array(text.utf8)
@@ -92,7 +94,7 @@ struct ClientPreferencesConfiguration: ClientConfigurationDocument {
 enum ClientDetailPane: String, CaseIterable {
     case services, git
     static let range: ClosedRange<Double> = 340...500
-    static let defaultWidth: Double = 380
+    static let defaultWidth: Double = 420
     var storageKey: String { "ui." + rawValue + "DetailWidth.v1" }
     func configured(in preferences: ClientPreferencesConfiguration) -> Double? {
         self == .services ? preferences.servicesDetailWidth : preferences.gitDetailWidth

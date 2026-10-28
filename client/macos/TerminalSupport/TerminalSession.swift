@@ -16,11 +16,45 @@ public final class TerminalSession: ObservableObject, Identifiable {
     @Published public private(set) var isStopping = false
     public var onChange: (() -> Void)?
     @Published public private(set) var commandBlocks: [CommandBlock] = []
-    @Published public private(set) var activity = SessionActivitySnapshot()
+    /// Deliberately **not** `@Published`: the byte path mutates it per chunk
+    /// (`lastOutputAt`, `outputTail`), and a `@Published` field sends
+    /// `objectWillChange` on every one of those writes. Measured: a 1 MiB
+    /// stream produced ~82k notifications, which is the amplification that
+    /// froze the window. Readers still see fresh values because the coalesced
+    /// publish tick sends `objectWillChange` once per frame.
+    public private(set) var activity = SessionActivitySnapshot()
     @Published public private(set) var needsAttention = false
     private var commandParser: CommandBlockParser?
     private var shellLease: ShellIntegrationLease?
     private var commandOutputStartRows: [UUID: Int] = [:]
+    /// Bytes received while a command block is running (OSC C→D). Fallback when
+    /// scroll-invariant buffer capture is empty (start row scrolled away).
+    private var commandOutputAccumulators: [UUID: String] = [:]
+
+    /// Byte-path facts wait here until the next publish tick.
+    ///
+    /// **Why not publish per chunk.** SwiftTerm hands over up to 128 KiB per
+    /// read and flushes roughly every 32 chunks / 4 ms, so a chatty command
+    /// delivers bytes at hundreds of hertz. Every chunk used to send
+    /// `objectWillChange` for this session *and* for the whole
+    /// `TerminalSessions` registry that `BoardView` observes — so one `yes` or
+    /// one build log re-evaluated the sidebar, the service list and the entire
+    /// console tree per chunk. SwiftUI cannot keep up and the main queue backs
+    /// up: that is the freeze this coalescing removes.
+    ///
+    /// The rendered terminal is unaffected: `HostedTerminalView` feeds SwiftTerm
+    /// synchronously in `dataReceived`, so what you see still updates per chunk.
+    private lazy var publishCoalescer = FrameCoalescer { [weak self] in
+        self?.flushPendingPublish()
+    }
+    /// Latest bell / alternate-screen facts since the last publish.
+    private var pendingBellAt: Date?
+    private var pendingAttention = false
+    private var pendingAlternateScreen: Bool?
+    /// Notification coalescing rides on the same queue: scanning every chunk for
+    /// OSC 777 / 9;4 markers was pure per-chunk cost on a hot path.
+    private var pendingProtocolScan: [UInt8] = []
+    private static let protocolScanLimit = 64 * 1024
 
     public init(worktree: String, title: String = "Terminal", kind: String = "terminal") {
         self.worktree = worktree.hasPrefix("/") && !worktree.utf8.contains(0) ? URL(fileURLWithPath: worktree).standardizedFileURL.resolvingSymlinksInPath().path : ""
@@ -29,6 +63,9 @@ public final class TerminalSession: ObservableObject, Identifiable {
         terminal = HostedTerminalView(frame: NSRect(x: 0, y: 0, width: 760, height: 340))
         terminal.onExit = { [weak self] status in
             guard let self else { return }
+            // Facts that were still waiting for the next tick belong to an exit
+            // that supersedes them; drop them so they cannot republish after it.
+            cancelPendingPublish()
             commandParser?.interrupt()
             syncCommandBlocksFromParser()
             shellLease = nil
@@ -44,6 +81,9 @@ public final class TerminalSession: ObservableObject, Identifiable {
         }
         terminal.onProtocolBytes = { [weak self] bytes in
             guard let self, commandParser != nil else { return }
+            // Accumulate before consume so the D-marker packet's trailing output
+            // is captured before the block flips to completed.
+            appendRunningCommandOutput(bytes)
             let revision = commandParser?.revision
             commandParser?.consume(bytes)
             if commandParser?.revision != revision {
@@ -52,6 +92,9 @@ public final class TerminalSession: ObservableObject, Identifiable {
         }
         terminal.onBell = { [weak self] in
             guard let self else { return }
+            // Bells are rare and already a coalesced signal from SwiftTerm:
+            // publish immediately so attention never waits for the frame tick.
+            cancelPendingPublish()
             activity.lastBellAt = Date()
             needsAttention = true
             onChange?()
@@ -61,36 +104,87 @@ public final class TerminalSession: ObservableObject, Identifiable {
             guard let self else { return }
             activity.lastOutputAt = Date()
             if bytes.contains(7) {
-                activity.lastBellAt = Date()
-                needsAttention = true
+                pendingBellAt = Date()
+                pendingAttention = true
             }
             activity.outputTail = AgentActivityInference.appendTail(activity.outputTail, bytes: bytes)
-            activity.alternateScreen = terminal.getTerminal().isCurrentBufferAlternate
-            onChange?()
-            objectWillChange.send()
+            pendingAlternateScreen = terminal.getTerminal().isCurrentBufferAlternate
+            publishCoalescer.signal()
         }
         let priorProtocol = terminal.onProtocolBytes
         terminal.onProtocolBytes = { [weak self] bytes in
             priorProtocol?(bytes)
             guard let self else { return }
-            if Self.containsNotify(bytes) {
-                activity.lastNotifyAt = Date()
-                needsAttention = true
-                objectWillChange.send()
+            // Defer both the scan and the mutation to the publish tick: this
+            // closure runs per chunk on the byte path.
+            if pendingProtocolScan.count < Self.protocolScanLimit {
+                pendingProtocolScan.append(contentsOf: bytes)
             }
+            publishCoalescer.signal()
         }
     }
 
+    /// Drop a scheduled tick. Used when something publishes immediately, so the
+    /// same facts are not announced twice.
+    private func cancelPendingPublish() {
+        publishCoalescer.cancelPending()
+        pendingProtocolScan.removeAll(keepingCapacity: true)
+        pendingBellAt = nil
+        pendingAlternateScreen = nil
+        pendingAttention = false
+    }
+
+    private func flushPendingPublish() {
+        let scanned = pendingProtocolScan
+        pendingProtocolScan.removeAll(keepingCapacity: true)
+        if !scanned.isEmpty, Self.containsNotify(scanned[...]) {
+            activity.lastNotifyAt = Date()
+            pendingAttention = true
+        }
+        if let at = pendingBellAt {
+            activity.lastBellAt = at
+            pendingBellAt = nil
+        }
+        if pendingAttention {
+            needsAttention = true
+            pendingAttention = false
+        }
+        if let alternate = pendingAlternateScreen {
+            activity.alternateScreen = alternate
+            pendingAlternateScreen = nil
+        }
+        onChange?()
+        objectWillChange.send()
+    }
+
     public func clearAttention() {
+        cancelPendingPublish()
         needsAttention = false
         objectWillChange.send()
     }
 
     private static func containsNotify(_ bytes: ArraySlice<UInt8>) -> Bool {
         // Warp/iTerm-style OSC 777 notify and ConEmu-style OSC 9;4 progress hooks.
-        let markers = ["777;notify", "9;4;"]
-        let text = String(decoding: bytes, as: UTF8.self)
-        return markers.contains { text.contains($0) }
+        //
+        // Matched at the byte level: both markers are ASCII, and decoding a
+        // 64 KiB coalesced window to `String` once per frame was the expensive
+        // half of this check. Continuation bytes of real UTF-8 are all ≥ 0x80,
+        // so no multi-byte character can forge an ASCII marker.
+        let markers: [[UInt8]] = [Array("777;notify".utf8), Array("9;4;".utf8)]
+        let haystack = Array(bytes)
+        for marker in markers {
+            guard marker.count <= haystack.count else { continue }
+            var index = 0
+            let last = haystack.count - marker.count
+            while index <= last {
+                if haystack[index] == marker[0],
+                   haystack[index..<(index + marker.count)].elementsEqual(marker) {
+                    return true
+                }
+                index += 1
+            }
+        }
+        return false
     }
 
     public var isTaskAgent: Bool { kind.hasSuffix(":task") }
@@ -112,6 +206,7 @@ public final class TerminalSession: ObservableObject, Identifiable {
     public func clearCommandHistory() {
         commandParser?.clear()
         commandOutputStartRows.removeAll()
+        commandOutputAccumulators.removeAll()
         commandBlocks = []
         onChange?()
     }
@@ -130,18 +225,46 @@ public final class TerminalSession: ObservableObject, Identifiable {
                 block.capturedOutput = saved
             }
             if block.isRunning {
-                if commandOutputStartRows[block.id] == nil {
-                    commandOutputStartRows[block.id] = terminal.buffer.y
+                if commandOutputAccumulators[block.id] == nil {
+                    commandOutputAccumulators[block.id] = ""
                 }
-            } else if block.capturedOutput == nil, let start = commandOutputStartRows.removeValue(forKey: block.id) {
-                block.capturedOutput = ShellCommandCapture.capture(terminal: terminal, startRow: start)
+                if commandOutputStartRows[block.id] == nil {
+                    commandOutputStartRows[block.id] = ShellCommandCapture.absoluteCursorRow(terminal: terminal)
+                }
+            } else if block.capturedOutput == nil {
+                // Prefer scroll-invariant buffer rows: they keep column spacing and
+                // real newlines after the terminal lays out the stream. Raw-byte
+                // accumulators concatenate cursor-addressed glyphs once CSI is
+                // stripped (ls / help "crushed blob"). Accumulator is fallback
+                // when the start row scrolled out of scrollback.
+                let start = commandOutputStartRows.removeValue(forKey: block.id)
+                let acc = commandOutputAccumulators.removeValue(forKey: block.id)
+                let fromBuffer = start.map { ShellCommandCapture.capture(terminal: terminal, startRow: $0) } ?? ""
+                if !fromBuffer.isEmpty {
+                    block.capturedOutput = fromBuffer
+                } else if let acc {
+                    let finalized = ShellCommandCapture.finalizeAccumulated(acc)
+                    if !finalized.isEmpty {
+                        block.capturedOutput = finalized
+                    }
+                }
             }
             blocks[index] = block
         }
         let live = Set(blocks.map(\.id))
         commandOutputStartRows = commandOutputStartRows.filter { live.contains($0.key) }
+        commandOutputAccumulators = commandOutputAccumulators.filter { live.contains($0.key) }
         commandBlocks = blocks
         onChange?()
+    }
+
+    /// Append PTY payload to the running command's accumulator (OSC already stripped).
+    private func appendRunningCommandOutput(_ bytes: ArraySlice<UInt8>) {
+        guard let id = commandBlocks.last(where: { $0.isRunning })?.id,
+              commandOutputAccumulators[id] != nil else { return }
+        let chunk = ShellCommandCapture.stripOSC(String(decoding: bytes, as: UTF8.self))
+        guard !chunk.isEmpty else { return }
+        commandOutputAccumulators[id, default: ""] += chunk
     }
 
     public func start(executable: String, arguments: [String], environment: [String: String]? = nil, shellIntegration: Bool = false) throws {

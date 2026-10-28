@@ -186,6 +186,7 @@ public enum AgentDisplayStatus: Equatable, Sendable {
     case idle
     case needsYou
     case working
+    case queued
     case completed
     case failed
     case interrupted
@@ -194,7 +195,10 @@ public enum AgentDisplayStatus: Equatable, Sendable {
 }
 
 public struct AgentRow: Equatable, Sendable, Identifiable {
+    /// Unique card identity (per turn / queued item in the block stream).
     public let id: UUID
+    /// Session to open on enter / target for ⌘↩ (may differ from `id` when one session has many turns).
+    public let sessionID: UUID
     public let provider: String
     public let transport: AgentTransport
     public let title: String
@@ -204,11 +208,19 @@ public struct AgentRow: Equatable, Sendable, Identifiable {
     public let unread: Bool
     public let isTarget: Bool
     public let queuedCount: Int
+    /// User turn text shown in the stream card header (sibling of `$ cmd`).
+    public let userPrompt: String?
+    /// Inline result / activity body for the stream card (sibling of shell output).
+    public let resultText: String?
+    /// Analogous exit code when the turn/provider exposes one; otherwise nil (shell specialty).
+    public let exitCode: Int?
 
-    public init(id: UUID, provider: String, transport: AgentTransport, title: String,
+    public init(id: UUID, sessionID: UUID? = nil, provider: String, transport: AgentTransport, title: String,
                 status: AgentDisplayStatus, activity: String?, since: Date?, unread: Bool,
-                isTarget: Bool, queuedCount: Int) {
+                isTarget: Bool, queuedCount: Int, userPrompt: String? = nil, resultText: String? = nil,
+                exitCode: Int? = nil) {
         self.id = id
+        self.sessionID = sessionID ?? id
         self.provider = provider
         self.transport = transport
         self.title = title
@@ -218,5 +230,8 @@ public struct AgentRow: Equatable, Sendable, Identifiable {
         self.unread = unread
         self.isTarget = isTarget
         self.queuedCount = queuedCount
+        self.userPrompt = userPrompt
+        self.resultText = resultText
+        self.exitCode = exitCode
     }
 }

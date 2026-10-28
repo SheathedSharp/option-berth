@@ -16,6 +16,10 @@ client/macos/.cache/
 .cache/
 .workbuddy/preview/
 
+# ---- 本地界面迭代的离屏截图与设计笔记 ----
+# 只在改动的那一轮看，属 AGENTS.md 里不入库的截图与缓存。
+.tmp-ui-*/
+
 # ---- 编辑器与系统 ----
 .DS_Store
 *.swp
