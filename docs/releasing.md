@@ -20,7 +20,7 @@ RPC 自身有历史上独立的计数：`engine/internal/daemon/rpc/types.go` �
 ## 先预览，再执行
 
 从干净且与远端一致的已审阅 `main` 发起。需要 Git、Python 3.11+、Go，以及本地验证所需工具。
-macOS 客户端构建还需要对应 Swift 工具链，详见 [客户端说明](../client/macos/README.md)。
+macOS 客户端构建还需要对应 Swift 工具链，详见 [客户端说明](https://github.com/SheathedSharp/option-berth-macos)。
 
 ```sh
 # 默认只读预览：不构建、不联网、不写版本或 Git 引用
@@ -124,7 +124,7 @@ Windows workflow 在构建 CLI 后运行 `verify_service_lifecycle.py`，使用�
 
 ## macOS 安装容器
 
-新客户端使用 DMG（[安装与替换](../client/macos/docs/macos-install.md)）。打包器验证只读挂载、Applications 拖放入口、复制后的签名、内置引擎身份和许可。完成全部关卡及自有挂载清理后才暴露最终资产。CLI 压缩包不变，旧 Release 的 ZIP 不覆盖。日常 PR 不再自动跑 macOS 原生 CI；发版前应在本机或 disposable checkout 完成 `scripts/release-*.sh` 验证。
+新客户端使用 DMG（[安装与替换](https://github.com/SheathedSharp/option-berth-macos/blob/main/docs/macos-install.md)）。打包器验证只读挂载、Applications 拖放入口、复制后的签名、内置引擎身份和许可。完成全部关卡及自有挂载清理后才暴露最终资产。CLI 压缩包不变，旧 Release 的 ZIP 不覆盖。日常 PR 不再自动跑 macOS 原生 CI；发版前应在本机或 disposable checkout 完成 `scripts/release-*.sh` 验证。
 
 
 ## 无可用前台 Mac 时的完整 CI 预检

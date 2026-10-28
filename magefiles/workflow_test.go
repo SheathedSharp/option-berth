@@ -27,19 +27,16 @@ func mageFixture(t *testing.T) string {
 	return root
 }
 
-func TestRenderingNeverBuildsMissingClient(t *testing.T) {
+func TestClientTargetsNameTheSeparateProduct(t *testing.T) {
 	root := mageFixture(t)
 	scope := "services:demo"
 	for _, call := range []func() error{Snapshot, States, Window, func() error { return Shot(&scope) }, func() error { return Service("demo") }} {
-		if err := call(); err == nil || !strings.Contains(err.Error(), "client is not built") {
-			t.Fatalf("expected explicit build instruction, got %v", err)
+		if err := call(); err == nil || !strings.Contains(err.Error(), "separate product") {
+			t.Fatalf("expected a pointer to the client repository, got %v", err)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(root, "bin")); !os.IsNotExist(err) {
 		t.Fatal("render implicitly built binaries")
-	}
-	if _, err := os.Stat(filepath.Join(root, "client")); !os.IsNotExist(err) {
-		t.Fatal("render created client output without a binary")
 	}
 }
 

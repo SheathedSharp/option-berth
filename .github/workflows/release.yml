@@ -79,9 +79,6 @@ jobs:
         with:
           go-version-file: engine/go.mod
           cache-dependency-path: engine/go.sum
-      - name: Build macOS application carrier
-        if: matrix.os == 'darwin' && matrix.arch == 'arm64'
-        run: bash client/macos/build.sh
       - name: Build archives with per-target notices
         env:
           TARGET_OS: ${{ matrix.os }}
@@ -89,10 +86,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # System Bash 3.2 treats an empty array as unset with nounset.
-          # Keep a nonempty positional argv; only the arm64 Mac target adds App.
           set -- --os "$TARGET_OS" --arch "$TARGET_ARCH" --output dist
-          if [[ "$TARGET_OS/$TARGET_ARCH" == darwin/arm64 ]]; then set -- "$@" --include-app; fi
           python3 scripts/package_release.py "$@"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

@@ -8,7 +8,7 @@ CI 通过也不等于所有日常交互已验收。
 ## 呈现层：macOS 工作区
 
 服务声明、观察、归属、生命周期和持久化共用引擎事实链。macOS 工作区在同一 worktree 下
-提供服务、只读 Git 和统一工作台。打开 worktree 会话默认进入该目录的交互式 Shell。底部**单输入条**：↩ 送 Shell；⌘↩ / ⇧⌘↩ 送 Agent（`stream: true` 的 provider 默认 `oberth agent stream` 结构化桥，否则原生 PTY）。右侧 Agent 栏展示结构化轮次/审批或终端会话事实。详见 [console.md](../client/macos/docs/console.md)。DeepSeek 无结构化桥，仍走原生/TUI 入口。
+提供服务、只读 Git 和统一工作台。打开 worktree 会话默认进入该目录的交互式 Shell。底部**单输入条**：↩ 送 Shell；⌘↩ / ⇧⌘↩ 送 Agent（`stream: true` 的 provider 默认 `oberth agent stream` 结构化桥，否则原生 PTY）。右侧 Agent 栏展示结构化轮次/审批或终端会话事实。详见 [console.md](https://github.com/SheathedSharp/option-berth-macos/blob/main/docs/console.md)。DeepSeek 无结构化桥，仍走原生/TUI 入口。
 
 会话管理可搜索、重命名、打开和结束本应用拥有的会话，项目清单被移除也不丢失入口。
 草稿按 worktree 在内存中保留；布局/provider 元数据可经用户同意保存并在重启后确认恢复。
@@ -19,7 +19,7 @@ CI 通过也不等于所有日常交互已验收。
 
 有限 CLI 读取已有独立进程组、取消时限、双流结束和真实回收验证。切换 worktree/文件会
 取消失效请求；草稿候选只有在命令成功退出后才回填，关闭窗口后不接收旧结果。完整边界见
-[客户端说明](../client/macos/README.md#有限-cli-读取的取消边界)，回归入口见 [验证范围](validation.md)。
+[客户端说明](https://github.com/SheathedSharp/option-berth-macos#有限-cli-读取的取消边界)，回归入口见 [验证范围](validation.md)。
 
 Paper 是唯一内置默认；主题、快捷键、新会话默认值与各模块宽度已文件化，错误编辑保留有效值。
 Cmd+N 接入项目，Cmd+1…9 按可见 Worktrees 导航，模块采用 Option+Cmd+S/G/T。Git 提供冲突/暂存/工作区/
@@ -58,4 +58,4 @@ Cmd+N 接入项目，Cmd+1…9 按可见 Worktrees 导航，模块采用 Option+
 列为“为了追平参考项目必须补齐”的任务。它们不属于当前产品边界。
 
 支持范围内若复现误停、归属错误或账本损坏，必须修复，不能以“后续迭代”掩盖。
-验证命令与实际覆盖见 [validation.md](validation.md)，用户操作见 [客户端说明](../client/macos/README.md)。
+验证命令与实际覆盖见 [validation.md](validation.md)，用户操作见 [客户端说明](https://github.com/SheathedSharp/option-berth-macos)。

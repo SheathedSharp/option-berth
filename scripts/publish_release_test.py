@@ -25,53 +25,38 @@ class PublishAssetsTests(unittest.TestCase):
                 (self.root / (name + ".sha256")).write_text(digest + "  " + name + "\n")
 
     def test_complete_assets_verify_without_network(self):
-        self.assertEqual(len(release.verify_assets(self.root, self.tag)), 14)
+        self.assertEqual(len(release.verify_assets(self.root, self.tag)), 12)
         text = "".join(path.read_text() for path in sorted(self.root.glob("*.sha256")))
         (self.root / "SHA256SUMS").write_text(text)
-        self.assertEqual(len(release.verify_assets(self.root, self.tag, True)), 15)
+        self.assertEqual(len(release.verify_assets(self.root, self.tag, True)), 13)
 
-    def test_new_releases_require_dmg_but_keep_windows_zip(self):
+    def test_assets_are_the_cli_archives_only(self):
         expected = release.expected_assets(self.tag)
-        self.assertIn("OptionBerth-v1.2.3-macos-arm64-adhoc.dmg", expected)
         self.assertIn("option-berth-v1.2.3-windows-amd64.zip", expected)
-        for path in list(self.root.iterdir()):
-            if path.name.startswith("OptionBerth-"):
-                path.rename(path.with_name(path.name.replace(".dmg", ".zip")))
+        self.assertIn("option-berth-v1.2.3-darwin-arm64.tar.gz", expected)
+        self.assertFalse(any(name.startswith("OptionBerth-") for name in expected),
+                         "the macOS application is a separate product and must not ride in this release")
+        extra = self.root / "OptionBerth-v1.2.3-macos-arm64-adhoc.dmg"
+        extra.write_bytes(b"not part of this release")
         with patch.object(release, "gh") as gh, patch.object(release.subprocess, "run") as run:
             with self.assertRaisesRegex(ValueError, "incomplete or unexpected"):
                 release.publish(self.root, self.tag)
             gh.assert_not_called()
             run.assert_not_called()
 
-    def test_notarized_asset_mode_never_silently_accepts_adhoc(self):
-        with self.assertRaisesRegex(ValueError, "incomplete"):
-            release.verify_assets(self.root, self.tag, macos_trust="notarized")
-        for path in list(self.root.iterdir()):
-            if "-adhoc.dmg" in path.name:
-                name = path.name.replace("-adhoc.dmg", "-notarized.dmg")
-                if path.name.endswith(".sha256"):
-                    path.write_text(path.read_text().replace("-adhoc.dmg", "-notarized.dmg"))
-                path.rename(self.root / name)
-        self.assertEqual(len(release.verify_assets(self.root, self.tag, macos_trust="notarized")), 14)
-        with self.assertRaises(ValueError):
-            release.verify_assets(self.root, self.tag)
-        with self.assertRaises(ValueError):
-            release.expected_assets(self.tag, "unknown")
-
-    def test_mixed_trust_assets_fail_before_network_or_release_writes(self):
-        # A matching checksum does not make a second, differently-labelled app
-        # part of the selected release contract. Never upload an ambiguous set.
-        name = f"OptionBerth-{self.tag}-macos-arm64-notarized.dmg"
-        data = b"synthetic second app"
+    def test_unexpected_asset_fails_before_network_or_release_writes(self):
+        # A matching checksum does not make an unrelated file part of the
+        # selected release contract. Never upload an ambiguous set.
+        name = "OptionBerth-v1.2.3-macos-arm64-adhoc.dmg"
+        data = b"synthetic extra asset"
         (self.root / name).write_bytes(data)
         (self.root / (name + ".sha256")).write_text(hashlib.sha256(data).hexdigest() + "  " + name + "\n")
-        for trust in ("adhoc", "notarized"):
-            with self.subTest(trust=trust), patch.object(release, "gh") as gh, patch.object(release.subprocess, "run") as run:
-                with self.assertRaisesRegex(ValueError, "incomplete or unexpected"):
-                    release.publish(self.root, self.tag, macos_trust=trust)
-                gh.assert_not_called()
-                run.assert_not_called()
-                self.assertFalse((self.root / "SHA256SUMS").exists())
+        with patch.object(release, "gh") as gh, patch.object(release.subprocess, "run") as run:
+            with self.assertRaisesRegex(ValueError, "incomplete or unexpected"):
+                release.publish(self.root, self.tag)
+            gh.assert_not_called()
+            run.assert_not_called()
+            self.assertFalse((self.root / "SHA256SUMS").exists())
 
     def test_missing_extra_corrupt_and_path_injection_are_rejected(self):
         archive = next(path for path in self.root.iterdir() if path.name.endswith(".zip"))

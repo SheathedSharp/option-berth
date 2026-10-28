@@ -11,13 +11,18 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 from pathlib import Path
 import re
 import sys
 import xml.etree.ElementTree as ET
 
 HERE = Path(__file__).resolve().parent
-SOURCE = HERE.parent / "client/macos/Sources/BerthGeometry.swift"
+# The 24x24 geometry lives with the macOS client, which is a separate product.
+# Point BERTH_GEOMETRY at that file, or keep the two clones side by side.
+SOURCE = Path(os.environ.get(
+    "BERTH_GEOMETRY",
+    HERE.parent.parent / "option-berth-macos" / "Sources" / "BerthGeometry.swift"))
 TERMINAL_GO = HERE.parent / "engine/internal/cmd/mark_gen.go"
 NAMES = ("standardRail", "standardToken", "compactRail", "compactToken")
 ARITY = {"move": 2, "line": 2, "curve": 6, "close": 0}
@@ -285,6 +290,11 @@ def main() -> int:
     parser.add_argument("--go-output", type=Path, default=TERMINAL_GO,
                         help="CLI 首屏标记的 Go 常量输出路径")
     args = parser.parse_args()
+    if not SOURCE.is_file():
+        print(f"跳过：几何源在 macOS 客户端仓库里（{SOURCE}）。\n"
+              "把两个仓库放在同级目录，或用 BERTH_GEOMETRY 指向 BerthGeometry.swift。",
+              file=sys.stderr)
+        return 2
     try:
         paths, _ = read_geometry()
         targets = {args.output / name: text for name, text in build_assets().items()}

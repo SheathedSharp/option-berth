@@ -14,7 +14,7 @@ MIT 而重新许可。源码与发布包均保留适用声明；发布包还附�
 
 `client/macos/Fonts/MonaspaceNeon-*.otf` 保持未修改的字体文件，适用 SIL Open Font
 License 1.1。原版权、保留字体名和许可全文见
-[LICENSE-Monaspace.txt](client/macos/Fonts/LICENSE-Monaspace.txt)。
+[LICENSE-Monaspace.txt](https://github.com/SheathedSharp/option-berth-macos/blob/main/Fonts/LICENSE-Monaspace.txt)。
 分发时必须附带原版权和 OFL，不将字体改标 MIT，不单独销售字体，不擅用保留名命名修改版。
 
 ## Go 依赖
