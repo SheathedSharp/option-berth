@@ -45,5 +45,49 @@ enum AgentStreamProcessChecks {
             throw FailedCheck(detail: "reducer did not reach ready")
         }
         print("PASS: AgentStreamProcess framing and AgentStreams registry")
+        try shutdownChecks(root: root)
+    }
+
+    /// `requestShutdown` exists so ending a session cannot freeze the window.
+    /// Two things must hold: the call returns immediately, and the bridge is
+    /// still reclaimed. The fixture ignores `session.close` on purpose, so the
+    /// only way out is the bounded SIGKILL escalation.
+    private static func shutdownChecks(root: URL) throws {
+        let stubborn = root.appendingPathComponent("stubborn-bridge")
+        let script = """
+        #!/bin/sh
+        # Never answers session.close; sits in a read loop until killed.
+        while IFS= read -r line; do :; done
+        """
+        try script.write(to: stubborn, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stubborn.path)
+
+        let process = AgentStreamProcess()
+        var ended = false
+        process.setHandlers(onLine: { _ in }, onEnd: { _ in ended = true })
+        try process.start(binary: stubborn.path, arguments: ["agent", "stream", "codex"],
+                          directory: root.path, environment: ProcessInfo.processInfo.environment)
+        guard process.isRunning else { throw FailedCheck(detail: "stubborn bridge did not start") }
+
+        var completed = false
+        let began = Date()
+        process.requestShutdown(graceSeconds: 0.3) { completed = true }
+        let callDuration = Date().timeIntervalSince(began)
+        guard callDuration < 0.1 else {
+            throw FailedCheck(detail: "requestShutdown blocked its caller for \(callDuration)s")
+        }
+
+        // Reclamation is observed: the completion only fires after the child is
+        // reaped. Give the grace window plus slack, but bound it.
+        let deadline = Date().addingTimeInterval(6)
+        while !completed, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        }
+        guard completed else {
+            throw FailedCheck(detail: "stubborn bridge was never reclaimed (call took \(callDuration)s)")
+        }
+        guard !process.isRunning else { throw FailedCheck(detail: "process still reports running after reclaim") }
+        guard ended else { throw FailedCheck(detail: "onEnd never fired for the reclaimed bridge") }
+        print("PASS: requestShutdown returns immediately and still reclaims a non-cooperative bridge")
     }
 }

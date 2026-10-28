@@ -69,6 +69,8 @@ fix(engine): commit diff 超过 48 个文件时截断并返回元数据
 2. `git log -5 --oneline`—match existing style.
 3. Draft subject; read it aloud as if posting to the team—if it needs “M2 是什么？”, rewrite.
 4. Only commit when the user asked; never rewrite `git config` or force-push `main` without explicit request.
+5. Branch first: `<type>/<scope>-<主题>`, using the `type` below. The rule and examples live in the
+   [develop skill](../develop/SKILL.md) 「交付」—keep it in one place and don't restate it here.
 
 ## This repo’s types
 
@@ -76,6 +78,8 @@ fix(engine): commit diff 超过 48 个文件时截断并返回元数据
 |------|---------|
 | feat | User-visible behavior or new capability |
 | fix | Bug or incorrect behavior |
+| perf | Faster or lighter without changing behavior |
+| refactor | Same behavior, restructured |
 | docs | Documentation only |
 | test | Tests only, no product behavior change |
 | chore | Tooling, deps, non-user-facing maintenance |

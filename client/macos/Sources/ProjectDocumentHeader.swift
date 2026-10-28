@@ -81,6 +81,12 @@ struct ProjectDocumentHeader<Trailing: View>: View {
         .help("打开服务面板 · /ob-server")
         .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("workspace.runtimeFacts")
+        // v13 turned Services/Git into capability panels over the session stage
+        // and the old face picker stopped mounting, which silently orphaned the
+        // tour's `.facts` step: the guide ran out of targets after two stops.
+        // This button is the live entry to that panel now, so it carries the
+        // anchor the guide looks for (docs/console.md「布局与导航」).
+        .tourAnchor(.facts)
 
         return Group {
             if let onFactsTap {

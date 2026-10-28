@@ -16,7 +16,13 @@ public final class TerminalSession: ObservableObject, Identifiable {
     @Published public private(set) var isStopping = false
     public var onChange: (() -> Void)?
     @Published public private(set) var commandBlocks: [CommandBlock] = []
-    @Published public private(set) var activity = SessionActivitySnapshot()
+    /// Deliberately **not** `@Published`: the byte path mutates it per chunk
+    /// (`lastOutputAt`, `outputTail`), and a `@Published` field sends
+    /// `objectWillChange` on every one of those writes. Measured: a 1 MiB
+    /// stream produced ~82k notifications, which is the amplification that
+    /// froze the window. Readers still see fresh values because the coalesced
+    /// publish tick sends `objectWillChange` once per frame.
+    public private(set) var activity = SessionActivitySnapshot()
     @Published public private(set) var needsAttention = false
     private var commandParser: CommandBlockParser?
     private var shellLease: ShellIntegrationLease?
@@ -25,6 +31,31 @@ public final class TerminalSession: ObservableObject, Identifiable {
     /// scroll-invariant buffer capture is empty (start row scrolled away).
     private var commandOutputAccumulators: [UUID: String] = [:]
 
+    /// Byte-path facts wait here until the next publish tick.
+    ///
+    /// **Why not publish per chunk.** SwiftTerm hands over up to 128 KiB per
+    /// read and flushes roughly every 32 chunks / 4 ms, so a chatty command
+    /// delivers bytes at hundreds of hertz. Every chunk used to send
+    /// `objectWillChange` for this session *and* for the whole
+    /// `TerminalSessions` registry that `BoardView` observes — so one `yes` or
+    /// one build log re-evaluated the sidebar, the service list and the entire
+    /// console tree per chunk. SwiftUI cannot keep up and the main queue backs
+    /// up: that is the freeze this coalescing removes.
+    ///
+    /// The rendered terminal is unaffected: `HostedTerminalView` feeds SwiftTerm
+    /// synchronously in `dataReceived`, so what you see still updates per chunk.
+    private lazy var publishCoalescer = FrameCoalescer { [weak self] in
+        self?.flushPendingPublish()
+    }
+    /// Latest bell / alternate-screen facts since the last publish.
+    private var pendingBellAt: Date?
+    private var pendingAttention = false
+    private var pendingAlternateScreen: Bool?
+    /// Notification coalescing rides on the same queue: scanning every chunk for
+    /// OSC 777 / 9;4 markers was pure per-chunk cost on a hot path.
+    private var pendingProtocolScan: [UInt8] = []
+    private static let protocolScanLimit = 64 * 1024
+
     public init(worktree: String, title: String = "Terminal", kind: String = "terminal") {
         self.worktree = worktree.hasPrefix("/") && !worktree.utf8.contains(0) ? URL(fileURLWithPath: worktree).standardizedFileURL.resolvingSymlinksInPath().path : ""
         self.title = title
@@ -32,6 +63,9 @@ public final class TerminalSession: ObservableObject, Identifiable {
         terminal = HostedTerminalView(frame: NSRect(x: 0, y: 0, width: 760, height: 340))
         terminal.onExit = { [weak self] status in
             guard let self else { return }
+            // Facts that were still waiting for the next tick belong to an exit
+            // that supersedes them; drop them so they cannot republish after it.
+            cancelPendingPublish()
             commandParser?.interrupt()
             syncCommandBlocksFromParser()
             shellLease = nil
@@ -58,6 +92,9 @@ public final class TerminalSession: ObservableObject, Identifiable {
         }
         terminal.onBell = { [weak self] in
             guard let self else { return }
+            // Bells are rare and already a coalesced signal from SwiftTerm:
+            // publish immediately so attention never waits for the frame tick.
+            cancelPendingPublish()
             activity.lastBellAt = Date()
             needsAttention = true
             onChange?()
@@ -67,36 +104,87 @@ public final class TerminalSession: ObservableObject, Identifiable {
             guard let self else { return }
             activity.lastOutputAt = Date()
             if bytes.contains(7) {
-                activity.lastBellAt = Date()
-                needsAttention = true
+                pendingBellAt = Date()
+                pendingAttention = true
             }
             activity.outputTail = AgentActivityInference.appendTail(activity.outputTail, bytes: bytes)
-            activity.alternateScreen = terminal.getTerminal().isCurrentBufferAlternate
-            onChange?()
-            objectWillChange.send()
+            pendingAlternateScreen = terminal.getTerminal().isCurrentBufferAlternate
+            publishCoalescer.signal()
         }
         let priorProtocol = terminal.onProtocolBytes
         terminal.onProtocolBytes = { [weak self] bytes in
             priorProtocol?(bytes)
             guard let self else { return }
-            if Self.containsNotify(bytes) {
-                activity.lastNotifyAt = Date()
-                needsAttention = true
-                objectWillChange.send()
+            // Defer both the scan and the mutation to the publish tick: this
+            // closure runs per chunk on the byte path.
+            if pendingProtocolScan.count < Self.protocolScanLimit {
+                pendingProtocolScan.append(contentsOf: bytes)
             }
+            publishCoalescer.signal()
         }
     }
 
+    /// Drop a scheduled tick. Used when something publishes immediately, so the
+    /// same facts are not announced twice.
+    private func cancelPendingPublish() {
+        publishCoalescer.cancelPending()
+        pendingProtocolScan.removeAll(keepingCapacity: true)
+        pendingBellAt = nil
+        pendingAlternateScreen = nil
+        pendingAttention = false
+    }
+
+    private func flushPendingPublish() {
+        let scanned = pendingProtocolScan
+        pendingProtocolScan.removeAll(keepingCapacity: true)
+        if !scanned.isEmpty, Self.containsNotify(scanned[...]) {
+            activity.lastNotifyAt = Date()
+            pendingAttention = true
+        }
+        if let at = pendingBellAt {
+            activity.lastBellAt = at
+            pendingBellAt = nil
+        }
+        if pendingAttention {
+            needsAttention = true
+            pendingAttention = false
+        }
+        if let alternate = pendingAlternateScreen {
+            activity.alternateScreen = alternate
+            pendingAlternateScreen = nil
+        }
+        onChange?()
+        objectWillChange.send()
+    }
+
     public func clearAttention() {
+        cancelPendingPublish()
         needsAttention = false
         objectWillChange.send()
     }
 
     private static func containsNotify(_ bytes: ArraySlice<UInt8>) -> Bool {
         // Warp/iTerm-style OSC 777 notify and ConEmu-style OSC 9;4 progress hooks.
-        let markers = ["777;notify", "9;4;"]
-        let text = String(decoding: bytes, as: UTF8.self)
-        return markers.contains { text.contains($0) }
+        //
+        // Matched at the byte level: both markers are ASCII, and decoding a
+        // 64 KiB coalesced window to `String` once per frame was the expensive
+        // half of this check. Continuation bytes of real UTF-8 are all ≥ 0x80,
+        // so no multi-byte character can forge an ASCII marker.
+        let markers: [[UInt8]] = [Array("777;notify".utf8), Array("9;4;".utf8)]
+        let haystack = Array(bytes)
+        for marker in markers {
+            guard marker.count <= haystack.count else { continue }
+            var index = 0
+            let last = haystack.count - marker.count
+            while index <= last {
+                if haystack[index] == marker[0],
+                   haystack[index..<(index + marker.count)].elementsEqual(marker) {
+                    return true
+                }
+                index += 1
+            }
+        }
+        return false
     }
 
     public var isTaskAgent: Bool { kind.hasSuffix(":task") }

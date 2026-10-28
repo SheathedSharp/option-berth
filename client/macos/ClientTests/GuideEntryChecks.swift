@@ -12,6 +12,10 @@ extension ClientChecks {
         let before = TerminalSessions.shared.sessions.count
         let navigation = ViewState()
         let board = NSHostingView(rootView: BoardView(store: BoardStore(fixture: []), services: ServicesStore(fixture: []), views: navigation))
+        // The test window owns geometry. Without this the hosting view adopts
+        // the content's intrinsic height (~902pt here), so coordinates computed
+        // from the window fell outside the visible area and the click missed.
+        board.sizingOptions = []
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1060, height: 720), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = board; window.makeKeyAndOrderFront(nil); pump(0.35)
@@ -39,8 +43,13 @@ extension ClientChecks {
         if let guide {
             point = guide.convert(NSPoint(x: guide.bounds.midX, y: guide.bounds.midY), to: nil)
         } else {
-            // Compact empty stack: chrome ~28 + pad ~14 + mark 22 + title/body ≈ mid-button ~145.
-            let yLocal: CGFloat = board.isFlipped ? 145 : board.bounds.height - 145
+            // The empty-state CTA is a plain SwiftUI Button, which is not an
+            // NSView and has no accessibility element in a headless process, so
+            // it has to be hit by coordinate. Measured against the current empty
+            // layout: with the hosting view at 1060x752 (flipped), the guide row
+            // centres at yTop=126 and the 「接入项目」 button sits below it. If
+            // the empty state is re-laid-out, re-measure rather than guess.
+            let yLocal: CGFloat = board.isFlipped ? 126 : board.bounds.height - 126
             point = board.convert(NSPoint(x: 280, y: yLocal), to: nil)
         }
         guideClick(window, x: point.x, y: point.y)

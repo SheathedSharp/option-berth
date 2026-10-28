@@ -107,11 +107,10 @@ public enum ComposerRouter {
                 if resumable { return .agentResumeThenSend(id, body) }
                 return .refuse("会话已结束，请用 ⇧⌘↩ 新建")
             }
-        case .terminal:
-            // Native Agent PTYs are not ⌘↩ paste targets (rejects Shell|Pi jump /
-            // 「放进终端」). Open a structured stream session instead.
-            guard providerChosen(context) else { return .pickProvider(then: .command) }
-            return .agentNew(defaultProviderID(context), firstTurn: body)
+        case .terminal(let id, _, let alive):
+            // docs/console.md「输入条与路由」: 终端 Agent 为粘贴进 TUI、不回车.
+            if alive { return .agentPaste(id, body) }
+            return .refuse("终端会话已退出，请用 ⇧⌘↩ 新建")
         }
     }
 
@@ -172,8 +171,8 @@ public enum ComposerRouter {
             case .ended:
                 return RouteHintSegment(label: "\(prefix) 续接 \(title)", available: true)
             }
-        case .terminal:
-            return RouteHintSegment(label: "\(prefix) 新建 \(providerLabel(context)) 会话", available: providerChosen(context))
+        case .terminal(_, let title, _):
+            return RouteHintSegment(label: "\(prefix) 放进 \(title) 的终端（不回车）", available: true)
         }
     }
 

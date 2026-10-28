@@ -103,17 +103,29 @@ struct WorkspaceConsole: View {
                         Hairline()
                     }
                     // One continuous session surface: block stream + live PTY + one input.
-                    VStack(spacing: 0) {
-                        singleCanvas(for: selected)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        if focusStreamOnCanvas || selected.kind == "terminal" {
-                            composerBar
-                        } else {
-                            nativeAgentInputStrip(for: selected)
+                    // The Agent column sits beside it (docs/console.md「布局与导航」:
+                    // 右侧 Agent 栏，宽度 consoleAgentWidth). v13 unwired it and
+                    // left `agentColumn` dead, so ⌘↩ had no target to show and
+                    // the documented width setting did nothing.
+                    HStack(spacing: 0) {
+                        VStack(spacing: 0) {
+                            singleCanvas(for: selected)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            if focusStreamOnCanvas || selected.kind == "terminal" {
+                                composerBar
+                            } else {
+                                nativeAgentInputStrip(for: selected)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(sessionSurfaceBackground)
+                        if !frozen {
+                            agentColumn
+                                .frame(width: CGFloat(settings.consoleAgentWidth))
+                                .frame(maxHeight: .infinity)
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(sessionSurfaceBackground)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay(alignment: .topLeading) {
@@ -161,10 +173,15 @@ struct WorkspaceConsole: View {
                                         openHistory: { history = true },
                                         canCycle: { scoped.count > 1 },
                                         canEscape: {
+                                            // Escape belongs to the native Agent TUI while it
+                                            // owns the keyboard: a provider reads Esc itself (back
+                                            // out of a mode, cancel a completion). Leaving the
+                                            // agent view is ⌘↩'s job (docs/console.md: 原生 Agent
+                                            // 全屏 TUI 时 ⌘↩ 返回 Shell 视图), so swallowing Esc
+                                            // here would steal a key the terminal needs.
                                             switcherPresented
                                                 || pickingProvider
-                                                || composerInputMode == .agent
-                                                || selected?.kind != "terminal"
+                                                || (composerInputMode == .agent && selected?.kind == "terminal")
                                         },
                                         canFocusComposer: canUseComposerShortcut, canNewAgent: canUseComposerShortcut,
                                         canToggleInputMode: canUseComposerShortcut,
@@ -233,10 +250,15 @@ struct WorkspaceConsole: View {
         .padding(.vertical, Metrics.tabPadV)
         .background(Ink.canvas)
     }
-    /// Thin rail only for multiple Shells. Never list Agent/Pi as peer tabs —
-    /// Agent sessions are peer blocks in the scroll (agent-session cards).
+    /// The Shell rail is present whenever this worktree has a Shell.
+    ///
+    /// docs/console.md「布局与导航」describes it as the bar that switches this
+    /// worktree's Shell and carries **＋** for a new Shell or Agent. v15 narrowed
+    /// it to two-plus Shells, which left a single-Shell workspace with no rail
+    /// and no ＋ next to the session. Agents are still never listed as peer
+    /// tabs — they live in the scroll as agent-session cards.
     private var showSessionRail: Bool {
-        shellSessions.count > 1
+        !shellSessions.isEmpty
     }
 
     private var shellSessions: [TerminalSession] {
@@ -324,9 +346,17 @@ struct WorkspaceConsole: View {
         }
     }
 
-    /// Dim PTY caret + bridge typing into composer unless a TUI owns the keyboard.
+    /// Dim PTY caret + bridge typing into composer only while the shell sits at
+    /// its prompt.
+    ///
+    /// The caret has to agree with who owns the keyboard, not merely with the
+    /// screen buffer: `shellOwnsKeyboard`/`shellForegroundBusy` hand the keyboard
+    /// to the PTY for a foreground command as well as for an alternate-screen TUI
+    /// (docs/console.md「焦点与不变量」: 前台命令或备用屏时键盘在 PTY). Gating on the
+    /// alternate-screen flag alone left the caret hidden during a foreground
+    /// command — the one state where the PTY really does own typing.
     private func shellPromptComposerMode(_ session: TerminalSession) -> Bool {
-        session.kind == "terminal" && !session.activity.alternateScreen
+        session.kind == "terminal" && !session.shellForegroundBusy
     }
 
     private func routeTerminalPromptKey(_ event: NSEvent) {
@@ -545,30 +575,17 @@ struct WorkspaceConsole: View {
                               onOpenNativeTerminal: { openNativeTerminalFresh() },
                               onResumeFromFile: { pickResumeFileAndLaunch() },
                               onSelectTerminal: enterAgent,
-                              onStreamTarget: { selectStreamTarget($0) },
+                              onStreamTarget: { id in
+                                  selectStreamTarget(id)
+                                  // The Agent column lists sessions; its detail lives on the
+                                  // canvas (v15 keeps the inline copy out of the column: two
+                                  // unbounded ScrollViews in one 300pt axis looped the layout).
+                                  focusStreamOnCanvas = true
+                              },
                               streamInlineRequest: streamInlineRequest,
                               onStreamRespond: { requestID, decision in
                                   if let id = previewAgentID { respondStream(id, requestID: requestID, decision: decision) }
                               })
-            if let previewAgentID, let session = streamController.session(previewAgentID) {
-                Hairline()
-                AgentStreamDetail(session: session, queuedCount: streamController.queuedCount(for: session.id),
-                                  queuedPreview: streamController.queuedMessages(for: session.id).first,
-                                  onWithdrawQueued: {
-                                      if let text = streamController.withdrawQueued(id: session.id) {
-                                          workspace.draft = text
-                                          composerNotice = "已从排队撤回"
-                                      }
-                                  },
-                                  onInterrupt: { interruptStream(session.id) },
-                                  onClose: { confirmEndStream(session.id) },
-                                  onRespond: { requestID, decision in
-                                      respondStream(session.id, requestID: requestID, decision: decision)
-                                  },
-                                  onAdoptCommand: adoptAgentCommand,
-                                  onOpenGitPath: openGitPath,
-                                  onContinueInNative: openStreamInNativeTerminal)
-            }
         }
         .onChange(of: previewAgentID) { _, id in streamController.markDetailVisible(id) }
         .onChange(of: streamController.unsupportedNotice?.sessionID) { _, _ in
@@ -971,9 +988,16 @@ struct WorkspaceConsole: View {
             workspace.resumeAgentID = id
             composerNotice = "已记下，将在 \(resumeTarget()?.title ?? "Agent") 当前轮结束后发送"
             workspace.draft = text
-        case .agentPaste(_, let text):
-            // Never switch to Pi/Agent PTY or dump into its terminal. Structured block only.
-            beginNewAgent(prompt: text)
+        case .agentPaste(let id, let text):
+            // docs/console.md「输入条与路由」: ⌘↩ 送当前 Agent 目标，终端 Agent 为
+            // 粘贴进 TUI、不回车。v15 briefly rerouted this to a brand-new
+            // structured session, which left the documented paste path dead.
+            guard let agent = scoped.first(where: { $0.id == id }) else { return }
+            workspace.resumeAgentID = agent.id
+            activate(agent)
+            guard pasteAgent(text, to: agent) else { return }
+            workspace.draft = ""
+            composerNotice = "已放进 \(agent.title) 的终端（未发送）"
         case .agentNew(_, let firstTurn):
             pickingProvider = false
             beginNewAgent(prompt: firstTurn)

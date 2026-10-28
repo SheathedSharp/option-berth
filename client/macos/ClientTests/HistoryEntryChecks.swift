@@ -34,12 +34,18 @@ extension ClientChecks {
         require(shells.count == 1 && !TerminalSessions.shared.inWorktree(root.path).contains { $0.kind.hasPrefix("agent:") },
                 "shell-first open created an agent or a second shell")
         require(window.attachedSheet == nil, "terminal opened history without request")
-        guard let button = find(NSButton.self, in: host).first(where: { $0.accessibilityIdentifier() == "terminal.history" }) else {
-            fatalError("native console history control is missing")
-        }
-        let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
-        historyClick(window, x: point.x, y: point.y)
-        eventually("terminal history button did not open its actual sheet") { window.attachedSheet != nil }
+        // ⌘Y is the documented way in (docs/console.md: 「⌘Y」 opens the command
+        // history; v15 removed the old 「历史」 chrome row). Drive the shortcut
+        // rather than clicking the invisible `terminal.history` test hook: the
+        // hook sits in the view's background, and v15's block stream now covers
+        // it, so a click there never reaches it.
+        let historyKey = NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: .command,
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+            context: nil, characters: "y", charactersIgnoringModifiers: "y",
+            isARepeat: false, keyCode: 16)!
+        NSApp.sendEvent(historyKey)
+        eventually("terminal history shortcut did not open its actual sheet") { window.attachedSheet != nil }
         require(TerminalSessions.shared.inWorktree(root.path).filter { $0.kind == "terminal" }.count == 1,
                 "opening history created another terminal process")
         print("PASS: worktree session opens one shell; history sheet does not create another process")

@@ -40,8 +40,15 @@ metadata:
 
 ## 交付
 
+- **分支：动手改代码前先建分支，不要直接在 `main` 或别人的迭代分支上写。**
+  名字用 `<type>/<scope>-<主题>`：`type` 取 git-commit skill 那张表（`feat` / `fix` /
+  `perf` / `refactor` / `test` / `docs` / `chore`），`scope` 与 subject 的 scope 一致，
+  主题用短横线连接的英文小写。例：`perf/client-publish-coalesce`、
+  `fix/client-console-status-control`。一条主题一条分支；同一主题的多条 commit 留在同一分支上。
+  已经身处一条迭代分支时（如 `ui/*`），先确认这条分支是否就是要交付的那条 —— 是就别套娃再开，
+  不是就从它切出上述命名的分支，并把已有改动一起带过去。
 - 提交：中文 `type(scope): 主题`，一主题一 commit；subject 用**产品语言**，不用 M0/M1 等内部代号（见 git-commit skill）。
-- 仅用户明确要求时 `git commit` / `git push` / 安装 / 发版。
+- 仅用户明确要求时 `git commit` / `git push` / 安装 / 发版。**建分支不算提交**，可以在动手时先建。
 - 发版见 [docs/releasing.md](../../../docs/releasing.md)。
 
 ## 专题文档（按需）
