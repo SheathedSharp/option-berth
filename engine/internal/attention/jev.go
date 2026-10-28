@@ -153,7 +153,6 @@ type jevState struct {
 type jevEvent struct {
 	Kind         string `json:"kind"`
 	Service      string `json:"service,omitempty"`
-	Machine      string `json:"machine,omitempty"`
 	Reason       string `json:"reason,omitempty"`
 	Port         int    `json:"port,omitempty"`
 	DeclaredPort *int   `json:"declared_port,omitempty"`
@@ -346,7 +345,6 @@ func safeEvent(event Event) jevEvent {
 	return jevEvent{
 		Kind:         redactText(redactIdentifier(string(event.Kind), maxReasonBytes), maxReasonBytes),
 		Service:      redactText(redactIdentifier(event.Service, maxServiceBytes), maxServiceBytes),
-		Machine:      redactText(redactIdentifier(event.Machine, maxServiceBytes), maxServiceBytes),
 		Reason:       redactText(redactIdentifier(event.Reason, maxReasonBytes), maxReasonBytes),
 		Port:         event.Port,
 		DeclaredPort: event.DeclaredPort,
