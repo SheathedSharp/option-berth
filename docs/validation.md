@@ -58,6 +58,35 @@ GUI全部交互、签名安装包和长期负载仍需独立验收；没有可�
 macOS 客户端经 `workplace record` 上报自己 PTY 条目的路径 —— 客户端仍用本机
 `~/.option-berth/workplaces/` JSON，尚未接入引擎记录（见 [backlog.md](backlog.md)）。
 
+## 核心验收：真实 coding agent 在一个陌生 worktree 上
+
+对应 [backlog.md](backlog.md)「agent 侧的能力面是否够用」的完成条件。**2026-10-28** 在本机跑了
+两轮，输入如下：
+
+| 输入 | 值 |
+|---|---|
+| 引擎 | 本机构建 `v0.8.2`（commit `125108e`） |
+| agent | Claude Code CLI（`claude -p`，本机默认模型 `deepseek-v4.1-flash-1017`） |
+| skill | 随仓库分发的 `.agents/skills/option-berth/`，装进被测项目的 `.claude/skills/` |
+| 环境 | 独立 `BERTH_HOME`；可丢弃项目 `ledger-api`（git 仓库 + linked worktree `feature/rate-limits`） |
+| 任务 | 「服务没在跑，跑起来并确认它真的在运行；起不来就查清原因解决」——不提任何 oberth 命令 |
+| 场景 | 清单已声明 `api`（`port: 8137`、`health: /health`）与只读 `machine:` 依赖 `ledger-db`（55432）；服务因生成物 `config/endpoints.json` 缺失（已 gitignore）退出 1 |
+
+两轮都**完成**了任务：服务起在 `127.0.0.1:8137`，四个路由实测 200 / 200 / 200 / 404，`status`
+报 `running` 且健康 `ok 200`，被跟踪文件零改动。第二轮的核心闭环只有 6 步：
+`status` → `up`（失败）→ `logs`（给出确切原因）→ 重建生成物 → `up` → 实测确认。
+`oberth.yaml` 两轮都没被改：agent 提出加 `prepare:` 的建议，把采纳留给用户。
+
+卡在两处，两轮都出现，缺陷记录在 [backlog.md](backlog.md)：
+
+1. 第一次 `status` 就发布 `attention_path`（`machine_unavailable`，指向 `ledger-db`）。skill 要求
+   先处理这个交接，agent 为此花 8 步做 artifact 校验、找 `jev.json`、写 task context、arm 会话——
+   比核心闭环本身还多。该依赖没有任何服务 `depends_on` 它，`up` / `down` 也不操作 `machine:` 条目。
+2. 第一轮项目在 `$HOME` 之外，`up` 直接拒绝：错误只说「在 home 之外」，hint 指向一个**不存在**的
+   日志；agent 靠 `oberth up --help` 才找到 `--allow-outside-home`。
+
+**未执行**：Codex / OpenCode / Pi 的同场景验收；Windows / Linux 上的对应验收；多 worktree 并发。
+
 ## 终端工作区的分层验证
 
 `TerminalChecks` 使用独立目录和自有子进程检查 cwd/PWD、退出回执、1 MiB 输出、24 次会话
