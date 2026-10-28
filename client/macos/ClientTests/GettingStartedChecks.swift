@@ -22,16 +22,46 @@ extension ClientChecks {
         }
         pump()
     }
+    /// Press Next until the tour closes, or `limit` clicks have happened.
+    ///
+    /// The number of steps depends on which targets are on screen, so a fixed
+    /// click count either stops short (fails the "Done closed it" assertion) or
+    /// overshoots and asks for a button that no longer exists. This expresses
+    /// the actual intent: walk to the end.
+    @discardableResult
+    static func advanceTourToEnd(_ limit: Int, in window: NSWindow, isShowing: () -> Bool) -> Bool {
+        for _ in 0..<limit {
+            guard isShowing() else { return true }
+            let next = find(NSButton.self, in: window.contentView ?? NSView())
+                .first { $0.accessibilityIdentifier() == "guide.next" }
+            guard let next else { return true }
+            let point = next.convert(NSPoint(x: next.bounds.midX, y: next.bounds.midY), to: nil)
+            pump(0.25)
+            guideClick(window, x: point.x, y: point.y)
+        }
+        return !isShowing()
+    }
     static func clickTour(_ id: String, in window: NSWindow) {
-        pump(0.25) // Wait for the target relocation animation before hit-testing.
-        guard let root = window.contentView, let button = find(NSButton.self, in: root).first(where: { $0.accessibilityIdentifier() == id }) else {
-            // Name what is actually on screen: "missing" alone cannot tell a
-            // rebuilt-away control from a renamed identifier, and an empty list
-            // means the whole tour layer unmounted.
+        // The tour layer only mounts its native buttons after
+        // `overlayPreferenceValue` has measured the anchors, and it re-mounts
+        // after a re-host (`window.contentView = loadedHost`) or a target
+        // change. Waiting a fixed delay raced those mounts; wait for the control
+        // itself and fail with what is actually on screen.
+        var button: NSButton?
+        let deadline = Date().addingTimeInterval(4)
+        while Date() < deadline {
+            button = find(NSButton.self, in: window.contentView ?? NSView())
+                .first { $0.accessibilityIdentifier() == id }
+            if button != nil { break }
+            pump(0.03)
+        }
+        guard let button else {
             let present = find(NSView.self, in: window.contentView ?? NSView())
                 .compactMap { $0.accessibilityIdentifier() }.filter { !$0.isEmpty }.sorted()
             fatalError("Missing native tour button: \(id). Present identifiers: \(present)")
         }
+        // Let the relocation animation settle before hit-testing the point.
+        pump(0.25)
         let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
         guideClick(window, x: point.x, y: point.y)
     }
@@ -144,7 +174,7 @@ extension ClientChecks {
         require(!second.showingGuide, "second presentation ignored durable skip")
         second.showingGuide = true; pump(0.2)
         require(find(TourControlsView.self, in: window.contentView!).count == 1, "manual replay unavailable")
-        for _ in 0..<6 { clickTour("guide.next", in: window) }
+        advanceTourToEnd(10, in: window, isShowing: { second.showingGuide })
         require(!second.showingGuide, "Done did not close tour or missing targets were not skipped")
         second.showingGuide = true; pump(0.2)
         clickTour("guide.skip", in: window)
@@ -164,8 +194,11 @@ extension ClientChecks {
         loadedHost.sizingOptions = []
         window.contentView = loadedHost; window.setContentSize(NSSize(width: 900, height: 640)); pump(0.2)
         loaded.showingGuide = true; pump(0.2)
+        FileHandle.standardError.write(Data("L0 target=\(String(describing: loadedMeasurement?.target))\n".utf8))
         clickTour("guide.next", in: window)
+        FileHandle.standardError.write(Data("L1 target=\(String(describing: loadedMeasurement?.target))\n".utf8))
         clickTour("guide.next", in: window)
+        FileHandle.standardError.write(Data("L2 target=\(String(describing: loadedMeasurement?.target))\n".utf8))
         eventually("existing-project tabs did not receive a real anchor") { loadedMeasurement?.target == .facts }
         require(window.attachedSheet == nil, "project guidance unexpectedly uses a sheet")
         require(CGRect(origin: .zero, size: loadedMeasurement!.viewport).contains(loadedMeasurement!.card), "dark guide card escaped viewport")

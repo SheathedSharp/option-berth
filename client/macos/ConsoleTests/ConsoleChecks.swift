@@ -141,10 +141,17 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
             let identifier = session.kind == "terminal"
                 ? "console.session." + session.id.uuidString
                 : "console.agentStatus." + session.id.uuidString
-            guard let button = find(NSButton.self, in: host).first(where: { $0.accessibilityIdentifier() == identifier }) else {
+            if let button = find(NSButton.self, in: host).first(where: { $0.accessibilityIdentifier() == identifier }) {
+                button.performClick(nil)
+            } else if session.kind == "terminal" {
+                // The Shell rail only exists for two or more Shells; a lone
+                // Shell is selected through the shared path (palette, ⌘⇥ and
+                // the card taps all end up here). Agents always have their
+                // column control, so a missing one still fails below.
+                TerminalSessions.shared.select(session)
+            } else {
                 fatalError("native session control missing for " + session.title)
             }
-            button.performClick(nil)
             eventually("session rail did not select " + session.title) { workspace.activeSelection == session.id }
             if session.kind == "terminal" {
                 eventually("shell selection did not activate for " + session.title) {
@@ -217,7 +224,10 @@ printf '%s\n' '{"providers":[{"id":"codex","name":"Codex fixture","command":"cod
         eventually("Escape did not dismiss the session palette") { !find(NSView.self, in: host).contains { $0.accessibilityIdentifier() == "console.sessionPalette" } }
         choose(shell); workspace.draft = "shell-only"; submitComposerDraft()
         choose(agent); type("agent-only")
-        eventually("native typing did not reach selected PTYs") { shellOutput.contains("INPUT:shell-only") && agentOutput.contains("INPUT:agent-only") }
+        let shellGot = shellOutput.contains("INPUT:shell-only")
+        let agentGot = agentOutput.contains("INPUT:agent-only")
+        let responderName = window.firstResponder.map { String(describing: Swift.type(of: $0)) } ?? "nil"
+        eventually("native typing did not reach selected PTYs [shell=\(shellGot) agent=\(agentGot) responder=\(responderName)]") { shellOutput.contains("INPUT:shell-only") && agentOutput.contains("INPUT:agent-only") }
         require(!shellOutput.contains("agent-only") && !agentOutput.contains("shell-only"), "shared tabs broadcast input")
         require(workspace.activeLayout.root == treeRoot && Set(workspace.activeLayout.sessions) == Set([shell.id, agent.id]), "cross-kind switching discarded the mixed split")
         require(shell.terminal.process === shellProcess && agent.terminal.process === agentProcess, "switching recreated a PTY")

@@ -91,7 +91,10 @@ extension ClientChecks {
             try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: berth).appendingPathComponent("history-native.png"))
         }
         FileHandle.standardError.write(Data("CHECK: history rendered; exercising filtered copy and native confirmation\n".utf8))
-        historyClick(window, x: 595, y: 304)
+        // Copy sits at the trailing edge of the first row. The row band moved up
+        // when the sheet was re-laid-out (Metrics), so this y is measured, not
+        // derived: 276 in a 480pt sheet. Re-measure if the sheet layout changes.
+        historyClick(window, x: 595, y: 276)
         require(board.string(forType: .string) == "echo '历史 safe'", "native filtered Copy failed or copied an unfiltered command")
         pump(0.1)
         require(registry.commandHistory(in: first.path).map(\.id) == before, "search/copy executed a command or changed source history")
