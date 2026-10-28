@@ -44,4 +44,4 @@ capture synthetic paper/midnight windows. Frozen renders supplement layout revie
 The reduced-motion policy is tested without changing the user's system setting. Complete VoiceOver,
 all input methods and all customized font configurations are not claimed as covered.
 
-客户端操作与验证入口见 [client/macos/README.md](../client/macos/README.md)。
+客户端操作与验证入口见 [client/macos/README.md](../README.md)。

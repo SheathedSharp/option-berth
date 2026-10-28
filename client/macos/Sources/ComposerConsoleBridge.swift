@@ -55,7 +55,7 @@ enum ComposerConsoleBridge {
         }()
         let provider: ProviderSelection = providerChosen ? .chosen(providerID) : .unset
         let agentTarget: AgentTarget = {
-            // docs/console.md「输入条与路由」: ⌘↩ sends to the current **Agent
+            // client/macos/docs/console.md「输入条与路由」: ⌘↩ sends to the current **Agent
             // target**, and for a terminal agent that means pasting into its
             // TUI (no Enter). So an explicitly targeted structured stream wins
             // first, then an explicitly selected native agent PTY, and only

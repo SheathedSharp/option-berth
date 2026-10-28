@@ -8,7 +8,7 @@ CI 通过也不等于所有日常交互已验收。
 ## 呈现层：macOS 工作区
 
 服务声明、观察、归属、生命周期和持久化共用引擎事实链。macOS 工作区在同一 worktree 下
-提供服务、只读 Git 和统一工作台。打开 worktree 会话默认进入该目录的交互式 Shell。底部**单输入条**：↩ 送 Shell；⌘↩ / ⇧⌘↩ 送 Agent（`stream: true` 的 provider 默认 `oberth agent stream` 结构化桥，否则原生 PTY）。右侧 Agent 栏展示结构化轮次/审批或终端会话事实。详见 [console.md](console.md)。DeepSeek 无结构化桥，仍走原生/TUI 入口。
+提供服务、只读 Git 和统一工作台。打开 worktree 会话默认进入该目录的交互式 Shell。底部**单输入条**：↩ 送 Shell；⌘↩ / ⇧⌘↩ 送 Agent（`stream: true` 的 provider 默认 `oberth agent stream` 结构化桥，否则原生 PTY）。右侧 Agent 栏展示结构化轮次/审批或终端会话事实。详见 [console.md](../client/macos/docs/console.md)。DeepSeek 无结构化桥，仍走原生/TUI 入口。
 
 会话管理可搜索、重命名、打开和结束本应用拥有的会话，项目清单被移除也不丢失入口。
 草稿按 worktree 在内存中保留；布局/provider 元数据可经用户同意保存并在重启后确认恢复。

@@ -11,7 +11,8 @@
 | 引擎与 CLI | `engine/` | `oberth` 产品接口；Go 版本见 `engine/go.mod` |
 | macOS 客户端 | `client/macos/` | Swift 包；改 UI 前读 [client/macos/AGENTS.md](../client/macos/AGENTS.md) |
 | 开发自动化 | 仓库根 `mage` 目标 | 构建与验证入口；**不要**把 Mage 当成产品 CLI |
-| 文档 | `docs/` | 契约、验证范围、发版见 [validation.md](validation.md)、[releasing.md](releasing.md) |
+| 文档 | `docs/` | 引擎与产品契约、验证范围、发版见 [validation.md](validation.md)、[releasing.md](releasing.md) |
+| 客户端文档 | `client/macos/docs/` | 工作台契约与计划、安装与首次使用、个性化配置、Git 审查 |
 
 实现边界与不可违反的约束见根目录 [AGENTS.md](../AGENTS.md)，本文只讲怎么动这些代码。
 
@@ -80,6 +81,6 @@ swift run TerminalChecks
 
 ## 相关专题
 
-- 终端与会话 UX 契约：[console.md](console.md)；实施计划与发版前缺口：[console-plan.md](console-plan.md)
-- macOS 使用与截图：[macos-guide.md](macos-guide.md)、[client/macos/README.md](../client/macos/README.md)
+- 终端与会话 UX 契约：[console.md](../client/macos/docs/console.md)；实施计划与发版前缺口：[console-plan.md](../client/macos/docs/console-plan.md)
+- macOS 使用与截图：[macos-guide.md](../client/macos/docs/macos-guide.md)、[client/macos/README.md](../client/macos/README.md)
 - 用 oberth 操作当前 worktree：`.agents/skills/option-berth/SKILL.md`

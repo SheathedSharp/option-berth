@@ -34,7 +34,7 @@ extension ClientChecks {
         require(shells.count == 1 && !TerminalSessions.shared.inWorktree(root.path).contains { $0.kind.hasPrefix("agent:") },
                 "shell-first open created an agent or a second shell")
         require(window.attachedSheet == nil, "terminal opened history without request")
-        // ⌘Y is the documented way in (docs/console.md: 「⌘Y」 opens the command
+        // ⌘Y is the documented way in (client/macos/docs/console.md: 「⌘Y」 opens the command
         // history; v15 removed the old 「历史」 chrome row). Drive the shortcut
         // rather than clicking the invisible `terminal.history` test hook: the
         // hook sits in the view's background, and v15's block stream now covers

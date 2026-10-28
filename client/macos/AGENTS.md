@@ -1,6 +1,7 @@
 # macOS 客户端开发约定
 
-产品边界见 [产品定义](../../docs/product.md)，构建和验证入口见 [README](README.md)。
+产品边界见 [产品定义](../../docs/product.md)，构建和验证入口见 [README](README.md)，
+客户端自己的契约文档在 [docs/](docs/)。
 
 - 客户端呈现 CLI/daemon 的事实，不新增独立运行模型；Jev 只属于可选外部 adapter。
 - 界面修改后运行冻结状态渲染并查看图片。菜单、确认框、悬停和窗口交互另做原生检查，

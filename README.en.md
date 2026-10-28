@@ -121,7 +121,7 @@ approval bypass, or sandbox bypass is introduced.
 Paper is the only built-in default theme. Edit `~/.option-berth/config/theme.json`, `settings.json`, and
 `keybindings.json` for semantic colors, fonts, scales, independent panel widths, new-session defaults, and commands.
 Valid edits reload live; invalid edits retain the last valid values. Files follow `BERTH_HOME` and are never
-overwritten by the client. This does not install or execute plugins. See [personalization](docs/client-configuration.md)
+overwritten by the client. This does not install or execute plugins. See [personalization](client/macos/docs/client-configuration.md)
 and the [client guide](client/macos/README.md).
 
 The macOS release app embeds its matching engine, but is currently **ad-hoc signed, not Developer ID signed

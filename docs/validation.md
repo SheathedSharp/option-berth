@@ -73,7 +73,7 @@ macOS 客户端经 `workplace record` 上报自己 PTY 条目的路径 —— �
 `BERTH_AGENT_STREAM_FAKE=<provider>` 覆盖纯 NDJSON 假驱动；`testdata/fakecodex` / `testdata/fakeclaude` / `testdata/fakeopencode` / `testdata/fakepi` 经
 `Options.LookPath` 覆盖 live 握手、两轮、busy、审批、未知请求 `notice`、关闭时中断与进程回收。
 `oberth agent stream` 的 CLI 接线由 `internal/cmd` 的 `Agent` 测试抽查。真机 Codex / Claude 手测、输出上限截断
-与完整项映射仍在 [console-plan.md](console-plan.md) 阶段 2 完成标准内；未安装 CLI 且未注入 lookPath 时首轮
+与完整项映射仍在 [console-plan.md](../client/macos/docs/console-plan.md) 阶段 2 完成标准内；未安装 CLI 且未注入 lookPath 时首轮
 `turn.start` 返回 `unsupported` 事件。
 
 打开 worktree 会话时，目录存在且还没有 Shell，会启动一个交互式 Shell。从该 Shell 开始的外部 Agent 在返回 Shell 后仍是同一个 PTY，可以再次进入；`ConfigurationChecks` 覆盖这条路径。目录不存在时不创建进程。
@@ -126,7 +126,7 @@ HOME="$isolation/home" CFFIXED_USER_HOME="$isolation/home" BERTH_HOME="$isolatio
 
 ### 控制台手测（截至 2026-10-15：**未执行**）
 
-以下项在 [console-plan.md](console-plan.md) 阶段 1–3 完成标准中要求，**尚无自动化替代**；发版前须在本机执行并记录结果，或继续保持「未执行」：
+以下项在 [console-plan.md](../client/macos/docs/console-plan.md) 阶段 1–3 完成标准中要求，**尚无自动化替代**；发版前须在本机执行并记录结果，或继续保持「未执行」：
 
 | 项 | 说明 |
 |---|---|
