@@ -103,7 +103,7 @@ struct WorkspaceConsole: View {
                         Hairline()
                     }
                     // One continuous session surface: block stream + live PTY + one input.
-                    // The Agent column sits beside it (docs/console.md「布局与导航」:
+                    // The Agent column sits beside it (client/macos/docs/console.md「布局与导航」:
                     // 右侧 Agent 栏，宽度 consoleAgentWidth). v13 unwired it and
                     // left `agentColumn` dead, so ⌘↩ had no target to show and
                     // the documented width setting did nothing.
@@ -176,7 +176,7 @@ struct WorkspaceConsole: View {
                                             // Escape belongs to the native Agent TUI while it
                                             // owns the keyboard: a provider reads Esc itself (back
                                             // out of a mode, cancel a completion). Leaving the
-                                            // agent view is ⌘↩'s job (docs/console.md: 原生 Agent
+                                            // agent view is ⌘↩'s job (client/macos/docs/console.md: 原生 Agent
                                             // 全屏 TUI 时 ⌘↩ 返回 Shell 视图), so swallowing Esc
                                             // here would steal a key the terminal needs.
                                             switcherPresented
@@ -252,7 +252,7 @@ struct WorkspaceConsole: View {
     }
     /// The Shell rail is present whenever this worktree has a Shell.
     ///
-    /// docs/console.md「布局与导航」describes it as the bar that switches this
+    /// client/macos/docs/console.md「布局与导航」describes it as the bar that switches this
     /// worktree's Shell and carries **＋** for a new Shell or Agent. v15 narrowed
     /// it to two-plus Shells, which left a single-Shell workspace with no rail
     /// and no ＋ next to the session. Agents are still never listed as peer
@@ -352,7 +352,7 @@ struct WorkspaceConsole: View {
     /// The caret has to agree with who owns the keyboard, not merely with the
     /// screen buffer: `shellOwnsKeyboard`/`shellForegroundBusy` hand the keyboard
     /// to the PTY for a foreground command as well as for an alternate-screen TUI
-    /// (docs/console.md「焦点与不变量」: 前台命令或备用屏时键盘在 PTY). Gating on the
+    /// (client/macos/docs/console.md「焦点与不变量」: 前台命令或备用屏时键盘在 PTY). Gating on the
     /// alternate-screen flag alone left the caret hidden during a foreground
     /// command — the one state where the PTY really does own typing.
     private func shellPromptComposerMode(_ session: TerminalSession) -> Bool {
@@ -989,7 +989,7 @@ struct WorkspaceConsole: View {
             composerNotice = "已记下，将在 \(resumeTarget()?.title ?? "Agent") 当前轮结束后发送"
             workspace.draft = text
         case .agentPaste(let id, let text):
-            // docs/console.md「输入条与路由」: ⌘↩ 送当前 Agent 目标，终端 Agent 为
+            // client/macos/docs/console.md「输入条与路由」: ⌘↩ 送当前 Agent 目标，终端 Agent 为
             // 粘贴进 TUI、不回车。v15 briefly rerouted this to a brand-new
             // structured session, which left the documented paste path dead.
             guard let agent = scoped.first(where: { $0.id == id }) else { return }

@@ -112,7 +112,7 @@ DeepSeek 的消息入口使用 headless，原生入口要求已有 tui profile�
 option-berth 不实现另一套 agent 推理系统、不保存模型凭证、不自动安装插件，也不添加绕过审批或沙箱的参数。
 Paper 是唯一内置默认主题；编辑 `~/.option-berth/config/theme.json`、`settings.json` 与 `keybindings.json`
 可调整语义颜色、字体、模块字号、独立面板宽度、会话默认值和快捷键；保存即热更新，错误编辑保留上次有效值。
-配置遵循 `BERTH_HOME`，不覆盖用户文件、不加载插件代码。见 [个性化配置](docs/client-configuration.md)
+配置遵循 `BERTH_HOME`，不覆盖用户文件、不加载插件代码。见 [个性化配置](client/macos/docs/client-configuration.md)
 及 [客户端说明](client/macos/README.md)。
 
 发布包内的 macOS App 带有匹配版本的引擎，但目前只有 **ad-hoc 签名，没有 Developer ID 或 Apple 公证**。

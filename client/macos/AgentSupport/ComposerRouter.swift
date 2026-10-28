@@ -108,7 +108,7 @@ public enum ComposerRouter {
                 return .refuse("会话已结束，请用 ⇧⌘↩ 新建")
             }
         case .terminal(let id, _, let alive):
-            // docs/console.md「输入条与路由」: 终端 Agent 为粘贴进 TUI、不回车.
+            // client/macos/docs/console.md「输入条与路由」: 终端 Agent 为粘贴进 TUI、不回车.
             if alive { return .agentPaste(id, body) }
             return .refuse("终端会话已退出，请用 ⇧⌘↩ 新建")
         }

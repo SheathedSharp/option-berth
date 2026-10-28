@@ -45,7 +45,7 @@ VERSION=0.1.0 ./build.sh
 Paper（纸张）是唯一内置默认。设置 → 外观通过内置原生编辑器打开 `theme.json`、`settings.json` 和 `keybindings.json`，
 覆盖语义颜色、已安装字体、模块字号、独立面板宽度和会话默认值；支持注释与尾逗号，有效编辑自动保存并热更新，坏编辑保留草稿与上次有效值。
 配置位于 `$BERTH_HOME/config/`（默认 `~/.option-berth/config/`），不读项目内同名文件，打开不改写文件；编辑遇到外部变化会暂停保存并提示冲突。
-完整字段、Schema 和迁移规则见 [个性化配置](../../docs/client-configuration.md)。工作区一栏仍只
+完整字段、Schema 和迁移规则见 [个性化配置](docs/client-configuration.md)。工作区一栏仍只
 显示产品路径和连接信息。Jev 增强一栏可以启用 agent-side Jev、保存或清除 OpenRouter key，
 配置写入 `~/.option-berth/jev.json`，供任务级 `jev-attention --session` 读取。客户端不维护模型目录、daemon
 判断结果或另一套事实模型。新建项目的清单审阅框可以调用本机 agent 起草，并显示它正在检查的
@@ -124,7 +124,7 @@ SwiftTerm 固定版本负责终端仿真与 PTY；构建需要 Swift 6+，首次
 在 **会话 / Sessions** 中，Shell PTY 是主画布；顶部 **Shell 栏** 切换本 worktree 的 Shell，
 右侧 **Agent 栏** 列出终端 Agent 与结构化流（`oberth agent stream`）。⌘⌥Tab 打开可搜索的
 Shell/Agent 切换器。切换不重启 PTY、不广播输入；结构化流的审批在右栏由人决定，原生 TUI
-审批仍归属 provider CLI。契约见 [docs/console.md](../../docs/console.md)；实施计划与发版前缺口见 [docs/console-plan.md](../../docs/console-plan.md)。
+审批仍归属 provider CLI。契约见 [docs/console.md](docs/console.md)；实施计划与发版前缺口见 [docs/console-plan.md](docs/console-plan.md)。
 每个会话固定归属于创建时的 worktree。切换项目不迁移进程；布局和 provider 选择可经用户
 同意保存，重启后先确认恢复，不自动恢复进程。
 
@@ -145,7 +145,7 @@ worktree 是启动归属，不是限制 agent 文件权限的操作系统沙箱�
 不是对忽略退出信号的故障程序承诺硬超时。agent 启动后的结束操作仍遵守上面的 PTY 规则。
 外部 agent 自身的日志、会话存储和文件改动遵循它自己的配置。
 
-**English.** The Shell PTY is the primary canvas; a **Shell bar** and right **Agent column** list terminal and structured (`oberth agent stream`) sessions per worktree. Cmd+Option+Tab opens a searchable switcher. Return sends the shell; Cmd+Return / Shift+Cmd+Return send the agent target (structured bridge when `stream: true`, otherwise a native PTY). At the shell prompt with integration enabled, the single composer owns the keyboard; foreground commands and the alternate screen keep the PTY. Structured approvals are answered in the detail column, not via composer keys. See [docs/console.md](../../docs/console.md). `defaultAgent` in `settings.json` seeds new workspaces. Marked IME text is not submitted (`ComposerChecks`); full IME still needs manual QA.
+**English.** The Shell PTY is the primary canvas; a **Shell bar** and right **Agent column** list terminal and structured (`oberth agent stream`) sessions per worktree. Cmd+Option+Tab opens a searchable switcher. Return sends the shell; Cmd+Return / Shift+Cmd+Return send the agent target (structured bridge when `stream: true`, otherwise a native PTY). At the shell prompt with integration enabled, the single composer owns the keyboard; foreground commands and the alternate screen keep the PTY. Structured approvals are answered in the detail column, not via composer keys. See [docs/console.md](docs/console.md). `defaultAgent` in `settings.json` seeds new workspaces. Marked IME text is not submitted (`ComposerChecks`); full IME still needs manual QA.
 DeepSeek uses headless for messages and requires an existing tui profile for native mode; switching
 between them does not resume the same conversation. No agent reasoning loop, credential store,
 automatic installation, approval bypass, shell prompt interpolation, or implicit cross-worktree resume is added.
@@ -330,7 +330,7 @@ client/macos/build/OptionBerth.app/Contents/MacOS/OptionBerth \
 原生按钮支持继续、返回、跳过、完成，Return/Escape 和左右方向键；Tab 焦点留在导览内，
 关闭后只恢复同一窗口仍存活的编辑控件。底层工作区禁用，遮罩挖空也不会让点击穿透。
 大号界面字体只滚动说明区，操作按钮保持可见。Reduce Motion 禁用定位动画。导览不会启动 shell/Agent、写清单或打开项目选择器；
-看完后再通过真实入口操作，仍须逐项确认。详见 [首次使用](../../docs/macos-guide.md)。
+看完后再通过真实入口操作，仍须逐项确认。详见 [首次使用](docs/macos-guide.md)。
 
 `ClientChecks` 使用独立 HOME/BERTH_HOME，验证跨真实进程的首次资格持久化、旧用户迁移、
 原生鼠标/键盘/跳过/重看、焦点归属、760×520 缩放与已接入项目锚点，保存 paper/midnight

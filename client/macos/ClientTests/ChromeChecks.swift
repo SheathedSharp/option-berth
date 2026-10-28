@@ -9,7 +9,7 @@ extension ClientChecks {
             require(Scope(argument: legacy) == .services("demo"), "legacy CLI scope stopped resolving to services")
         }
         let state = ViewState(scope: .code("first"))
-        // Session-primary navigation (docs/console.md「布局与导航」): picking a
+        // Session-primary navigation (client/macos/docs/console.md「布局与导航」): picking a
         // worktree always lands on the session stage and drops any capability
         // panel. The legacy `.code` start state is only an entry point, not a
         // destination that selection has to preserve.

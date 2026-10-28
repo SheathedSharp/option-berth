@@ -43,7 +43,7 @@ Warp 的「单输入、Shell 常显、Agent 在侧栏」是交互参照，不接
 
 ## 发版前仍须手测
 
-自动化与合成替身不能代替真实 provider 与输入法。见 [validation.md](validation.md) **控制台手测**表：**真机 Codex/Claude**（两轮、审批、中断、续接、`/native`）、**中文 IME**、powerlevel10k/starship 下 Shell 集成；可选 `consoleAgentNotifications`。实施历史与风险见 [console-plan.md](console-plan.md) §8–9。
+自动化与合成替身不能代替真实 provider 与输入法。见 [validation.md](../../../docs/validation.md) **控制台手测**表：**真机 Codex/Claude**（两轮、审批、中断、续接、`/native`）、**中文 IME**、powerlevel10k/starship 下 Shell 集成；可选 `consoleAgentNotifications`。实施历史与风险见 [console-plan.md](console-plan.md) §8–9。
 
 ## 验收
 

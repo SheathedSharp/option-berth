@@ -85,7 +85,7 @@ struct ProjectDocumentHeader<Trailing: View>: View {
         // and the old face picker stopped mounting, which silently orphaned the
         // tour's `.facts` step: the guide ran out of targets after two stops.
         // This button is the live entry to that panel now, so it carries the
-        // anchor the guide looks for (docs/console.md「布局与导航」).
+        // anchor the guide looks for (client/macos/docs/console.md「布局与导航」).
         .tourAnchor(.facts)
 
         return Group {

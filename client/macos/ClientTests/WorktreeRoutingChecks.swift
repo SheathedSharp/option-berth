@@ -12,7 +12,7 @@ extension ClientChecks {
         let a = try project("alpha", "feature/first"), b = try project("beta", "fix/second")
         let projects = [b, a]
         let views = ViewState(scope: .code(a.name))
-        // Session-primary (docs/console.md「布局与导航」): a worktree ordinal
+        // Session-primary (client/macos/docs/console.md「布局与导航」): a worktree ordinal
         // always routes to that worktree's session stage. Git is a capability
         // panel over that stage, not a module selection the route must restore.
         views.selectVisibleProject(at: 2, in: projects)
