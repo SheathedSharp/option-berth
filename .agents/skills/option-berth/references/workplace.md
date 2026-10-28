@@ -1,7 +1,8 @@
 # Workplace record
 
-Use this guide when the task is about what work has been done in a worktree,
-or about which record new work belongs to.
+Use this guide when the task is about what work has been done in a worktree, or
+about which record new work belongs to. Reading it back is how you pick up work
+someone else — or an earlier turn of your own — left behind.
 
 A workplace is a named scope under one worktree. Its blocks are the work items:
 the shell commands this engine ran and the agent turns it bridged. The record
@@ -39,16 +40,20 @@ Work this engine starts is recorded without being asked:
 - `oberth agent stream <provider>` records one block per turn: the prompt when
   the turn starts, the provider's outcome when it ends.
 
-Report work the engine cannot see — an interactive shell or a native agent in
-your own terminal — with:
+Write down what the engine cannot see — an interactive shell in someone's
+terminal, a native agent, or an attempt of your own worth remembering ("I
+changed the retry, the tests still fail") — with:
 
 ```sh
 oberth workplace record --kind shell --id <id> --input 'npm test' --status running --json
 oberth workplace record --kind shell --id <id> --status completed --exit-code 0 --json
+oberth workplace record --kind agent --id <id> --input 'raised the pool size' \
+  --status failed --output "$(tail -20 build.log)" --json
 ```
 
-Reuse the same `--id` to report the same work again: it updates one block
-rather than adding a second, so the start and the end can arrive in either
+What you write is marked `source: reported`: your account, not the engine's
+evidence. Reuse the same `--id` to report the same work again — it updates one
+block rather than adding a second, so the start and the end can arrive in either
 order, and a late `running` never overwrites an outcome already recorded. Keep
 output text to the tail you want kept; the record refuses more than 64 KiB.
 

@@ -12,6 +12,11 @@ metadata:
 from the worktree that the task concerns. Use `--json` for a single document or
 NDJSON for a stream; errors belong on stderr.
 
+This skill ships with the repository and is part of the product, not a summary
+of it: it is how a coding agent is meant to learn `oberth`. Commands are grouped
+by what you are trying to do — facts, operations, code and declaration, handoff,
+runtime — and `oberth --help` shows the same grouping.
+
 ## Always start here
 
 Read the current worktree before reasoning about services:

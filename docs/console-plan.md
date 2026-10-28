@@ -211,7 +211,7 @@ enum ComposerRouter {
 oberth agent stream <provider> --worktree <path> [--resume-file <path>]
 ```
 
-- 属于支撑层 `agent`，不经 daemon，不登记服务事实。调用方拥有这个进程。
+- 属于交接层 `agent`，不经 daemon，不登记服务事实。调用方拥有这个进程。
 - stdin 每行一条命令，stdout 每行一个事件，均带 `"v":1`。stderr 只写诊断，不含输入或输出原文。
 - 启动阶段失败时，stderr 输出标准 JSON 错误：参数错误或未安装退出 2，provider 启动失败退出 1。
   新增稳定错误码 `unsupported`，表示已安装的 provider 版本没有可用的机器协议，客户端据此提供「用原生终端打开」。
