@@ -19,6 +19,24 @@
 核心由本项目需求驱动；数据库、系统调用和平台适配可以保留成熟实现，不为“自研比例”重写。
 来源与版权独立保留在 [engine/UPSTREAM.md](../engine/UPSTREAM.md) 和许可证中。
 
+## 工作记录
+
+`workplace` 挂在 worktree 上，不在服务链上：它是「在这个 worktree 上做过什么」的记录，
+不参与服务事实的归约，也不被 `status` 当成运行真相。实现在 `internal/workplace`（规则、
+选择器与 RPC）、`internal/store/workplaces.go`（行与迁移 009）和 `cmd/workplace*`（CLI 与记录接线）。
+
+- **写入只有一个所有者。** daemon 是账本的唯一写者；CLI 的读路径在 daemon 不在时只读打开同一份
+  数据库，写命令走 RPC。工作记录不为自己去启动 daemon。
+- **block 只在引擎确实观察到结束时收尾。** 附加的 `oberth start` 由等待它的进程收尾；非附加运行
+  由 daemon 在记录该 Run 的退出时收尾（`daemon.OnRunExit`，在注册表锁之外通知）；`agent stream`
+  按桥收到的 `turn.completed` outcome 收尾。没有结束证据的条目保持 `running`，不冒充成功。
+- **同一个 id 的第二次观察是更新，不是第二条。** 已记下的结果不会被后来的 `running` 覆盖，空字段
+  不清空已写的内容，所以一次工作的开始与结束可以任意顺序到达；`seq` 由第一次观察决定。
+- **不复制日志。** 引擎记录的 block 只有 `run_id` 与 `log_path`；只有前端上报（`source: reported`）
+  的 block 带文本输出，并且明确标成上报方的话，不是引擎的证据。
+- **记录失败是诊断，不是命令失败。** 记录在 `start` 与 `agent stream` 之外异步落地，失败在 stderr
+  说明一次；队列满时丢弃并说明，因为悄悄漏记的记录读起来和完整的一样。
+
 ## 起停与端口预留
 
 启动只接受当前服务的就绪证据。无端口运行的 ID/PID/StartedAt 和停止回执在首次信号
