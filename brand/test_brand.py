@@ -80,10 +80,44 @@ class BrandTests(unittest.TestCase):
         self.assertEqual(outlines("small-light"), outlines("small-dark"))
         self.assertNotEqual(outlines("small-light"), standard)
 
+    def test_terminal_mark_layers_stay_aligned(self):
+        paths, _ = BUILD.read_geometry()
+        rail, token = BUILD.terminal_mark(paths)
+        for art in (rail, token):
+            self.assertTrue(art.endswith("\n"))
+        rows, token_rows = rail.splitlines(), token.splitlines()
+        self.assertGreaterEqual(len(rows), 2)
+        # 每格一个字符，两层必须逐格对齐：谁短一格，调用方就会把颜色涂到错的格子上。
+        self.assertEqual(len(rows), len(token_rows))
+        for line in rows + token_rows:
+            self.assertTrue(set(line) <= set("█▀▄ "), line)
+            self.assertEqual(len(line), len(rows[0]), line)
+        for row, token_row in zip(rows, token_rows):
+            self.assertFalse(any(a != " " and b != " " for a, b in zip(row, token_row)),
+                             (row, token_row))
+        # 两个形体都在，而且胶囊只占上半部分。
+        self.assertTrue(any(c != " " for c in rail))
+        self.assertTrue(any(c != " " for c in token))
+
+    def test_terminal_mark_follows_the_geometry(self):
+        paths, _ = BUILD.read_geometry()
+        before = BUILD.terminal_mark(paths)
+        # The mark is the two closed shapes, so moving one of them has to show.
+        moved = dict(paths)
+        moved["standardToken"] = [(op, tuple(v + 4 if i % 2 == 0 else v
+                                             for i, v in enumerate(values)))
+                                  for op, values in paths["standardToken"]]
+        self.assertNotEqual(before, BUILD.terminal_mark(moved))
+
+    def test_terminal_go_export_is_current(self):
+        self.assertEqual(BUILD.TERMINAL_GO.read_text(encoding="utf-8"), BUILD.build_terminal_go())
+        self.assertIn("package cmd", BUILD.build_terminal_go())
+
     def test_check_is_read_only_and_detects_drift(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            command = [sys.executable, str(HERE / "build-option-berth.py"), "--output", directory]
+            command = [sys.executable, str(HERE / "build-option-berth.py"),
+                       "--output", directory, "--go-output", str(root / "mark_gen.go")]
             subprocess.run(command, check=True, capture_output=True)
             before = {path.name: path.read_bytes() for path in root.iterdir()}
             result = subprocess.run(command + ["--check"], capture_output=True)

@@ -18,6 +18,7 @@ import xml.etree.ElementTree as ET
 
 HERE = Path(__file__).resolve().parent
 SOURCE = HERE.parent / "client/macos/Sources/BerthGeometry.swift"
+TERMINAL_GO = HERE.parent / "engine/internal/cmd/mark_gen.go"
 NAMES = ("standardRail", "standardToken", "compactRail", "compactToken")
 ARITY = {"move": 2, "line": 2, "curve": 6, "close": 0}
 SVG_COMMAND = {"move": "M", "line": "L", "curve": "C", "close": "Z"}
@@ -120,6 +121,139 @@ def wordmark(rail: str, token: str) -> str:
     return "".join(result)
 
 
+# 终端首屏的标记：和 SVG 共用同一份轮廓，不另画一份。每格 4×4 采样后按覆盖率
+# 取实心，上下两个半格合成一个字符行，字符格的宽高比因此和 24×24 网格一致。
+TERMINAL_COLUMNS = 14
+TERMINAL_SAMPLES = 4
+TERMINAL_COVERAGE = 0.5
+CURVE_STEPS = 24
+TERMINAL_BLOCKS = {(True, True): "█", (True, False): "▀", (False, True): "▄", (False, False): " "}
+RAIL, TOKEN = 1, 2
+
+
+def outline(commands: list) -> list[tuple[float, float]]:
+    """把一条封闭轮廓展平成折线，供栅格采样使用。"""
+    points: list[tuple[float, float]] = []
+    current = start = (0.0, 0.0)
+    for op, values in commands:
+        if op == "move":
+            current = start = (values[0], values[1])
+            points.append(current)
+        elif op == "line":
+            current = (values[0], values[1])
+            points.append(current)
+        elif op == "curve":
+            x1, y1, x2, y2, x3, y3 = values
+            x0, y0 = current
+            for step in range(1, CURVE_STEPS + 1):
+                t = step / CURVE_STEPS
+                u = 1 - t
+                points.append((u**3 * x0 + 3 * u * u * t * x1 + 3 * u * t * t * x2 + t**3 * x3,
+                               u**3 * y0 + 3 * u * u * t * y1 + 3 * u * t * t * y2 + t**3 * y3))
+            current = (x3, y3)
+    points.append(start)
+    return points
+
+
+def covered(shapes: list, x: float, y: float) -> bool:
+    """偶奇规则：点是否落在标记的任一封闭体内。"""
+    inside = False
+    for points in shapes:
+        for (ax, ay), (bx, by) in zip(points, points[1:]):
+            if (ay > y) != (by > y) and ax + (y - ay) * (bx - ax) / (by - ay) > x:
+                inside = not inside
+    return inside
+
+
+def coverage(shape: list, left: float, top: float, width: float, height: float) -> float:
+    hits = 0
+    for row in range(TERMINAL_SAMPLES):
+        for column in range(TERMINAL_SAMPLES):
+            if covered([shape], left + (column + 0.5) * width / TERMINAL_SAMPLES,
+                       top + (row + 0.5) * height / TERMINAL_SAMPLES):
+                hits += 1
+    return hits / TERMINAL_SAMPLES**2
+
+
+def terminal_mark(paths: dict, columns: int = TERMINAL_COLUMNS) -> tuple[str, str]:
+    """把标准标记栅格成终端方块字符，返回 (轨, 胶囊) 两层。
+
+    两层形状相同——每格一个字符，另一层在该格留空格——调用方据此给两个形体上不同
+    颜色。品牌本来就是这个分工：轨是墨色/纸色，胶囊是陶土色；涂成一色时胶囊会和
+    两个轨帽并成"三个一样的块"，看起来像一张脸。
+
+    栅格贴合标记自身的外接矩形，并让行高除得尽，使顶边和底边正好落在字符格边界上；
+    否则圆角底边会被切成一条悬空的半高横条，像影子一样挂在本体下面。
+    """
+    if columns % 2:
+        raise ValueError("终端标记的列数必须是偶数")
+    rail, token = outline(paths["standardRail"]), outline(paths["standardToken"])
+    xs = [x for shape in (rail, token) for x, _ in shape]
+    ys = [y for shape in (rail, token) for _, y in shape]
+    left, top = min(xs), min(ys)
+    width, height = max(xs) - left, max(ys) - top
+    cell = width / columns
+    rows = math.ceil(height / cell)
+    if rows % 2:
+        rows += 1
+    step = height / rows  # 行高单独取，行数取偶数才能让上下边界对齐
+    owner = []
+    for row in range(rows):
+        line = []
+        for column in range(columns):
+            x0, y0 = left + column * cell, top + row * step
+            rail_cov = coverage(rail, x0, y0, cell, step)
+            token_cov = coverage(token, x0, y0, cell, step)
+            if max(rail_cov, token_cov) < TERMINAL_COVERAGE:
+                line.append(0)
+            else:
+                line.append(TOKEN if token_cov >= rail_cov else RAIL)
+        owner.append(line)
+    layers = {RAIL: [], TOKEN: []}
+    for row in range(0, rows, 2):
+        for layer in (RAIL, TOKEN):
+            chars = []
+            for column in range(columns):
+                pair = (owner[row][column], owner[row + 1][column])
+                filled = pair[0] != 0 or pair[1] != 0
+                mine = layer in pair
+                chars.append(TERMINAL_BLOCKS[(pair[0] != 0, pair[1] != 0)] if filled and mine else " ")
+            layers[layer].append("".join(chars))
+    # 两层一起裁掉上下空行和公共缩进。这里不能对单层做 rstrip：两层必须逐格对齐，
+    # 谁短一格都会让调用方把颜色涂到错的格子上。
+    blank = [not (layers[RAIL][i].strip() or layers[TOKEN][i].strip())
+             for i in range(len(layers[RAIL]))]
+    first = next((i for i, empty in enumerate(blank) if not empty), None)
+    if first is None:
+        raise ValueError("终端标记为空")
+    last = max(i for i, empty in enumerate(blank) if not empty)
+    indent = min(len(layers[layer][i]) - len(layers[layer][i].lstrip())
+                 for layer in (RAIL, TOKEN) for i in range(first, last + 1)
+                 if layers[layer][i].strip())
+    return tuple("\n".join(line[indent:] for line in layers[layer][first:last + 1]) + "\n"
+                 for layer in (RAIL, TOKEN))
+
+
+def build_terminal_go(paths: dict | None = None) -> str:
+    """生成 CLI 首屏用的 Go 常量；由同一份几何源派生。"""
+    if paths is None:
+        paths, _ = read_geometry()
+    rail, token = terminal_mark(paths)
+    return ("// Code generated by brand/build-option-berth.py from\n"
+            "// client/macos/Sources/BerthGeometry.swift; DO NOT EDIT.\n"
+            "\n"
+            "package cmd\n"
+            "\n"
+            "// The brand mark on the bare-`oberth` screen: the 24x24 outline the client's\n"
+            "// BerthMark and the brand SVGs share, rasterised into blocks. The two shapes\n"
+            "// are separate layers with the same shape — one rune per cell, spaces where\n"
+            "// the other shape owns the cell — so each can be drawn in its own colour.\n"
+            "const (\n"
+            "	markRail = `" + rail + "`\n"
+            "	markToken = `" + token + "`\n"
+            ")\n")
+
+
 def build_assets() -> dict[str, str]:
     paths, palette = read_geometry()
     ink, paper, accent, dark_accent = (palette[k] for k in ("ink", "paper", "accent", "darkAccent"))
@@ -148,22 +282,27 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="检查导出与代码一致，不写文件")
     parser.add_argument("--output", type=Path, default=HERE, help="SVG 输出目录")
+    parser.add_argument("--go-output", type=Path, default=TERMINAL_GO,
+                        help="CLI 首屏标记的 Go 常量输出路径")
     args = parser.parse_args()
     try:
-        assets = build_assets()
+        paths, _ = read_geometry()
+        targets = {args.output / name: text for name, text in build_assets().items()}
+        targets[args.go_output] = build_terminal_go(paths)
         if args.check:
-            stale = [name for name, text in assets.items()
-                     if not (args.output / name).is_file()
-                     or (args.output / name).read_text(encoding="utf-8") != text]
+            stale = [str(path) for path, text in targets.items()
+                     if not path.is_file()
+                     or path.read_text(encoding="utf-8") != text]
             if stale:
                 print("导出缺失或过期：" + ", ".join(stale), file=sys.stderr)
                 return 1
-            print(f"OK: {len(assets)} 个 SVG 与客户端几何源一致")
+            print(f"OK: {len(targets)} 个导出与客户端几何源一致")
         else:
             args.output.mkdir(parents=True, exist_ok=True)
-            for name, text in assets.items():
-                (args.output / name).write_text(text, encoding="utf-8")
-            print(f"已写出 {len(assets)} 个 SVG 到 {args.output}")
+            for path, text in targets.items():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+            print(f"已写出 {len(targets)} 个导出")
         return 0
     except (OSError, ValueError, ET.ParseError) as error:
         print(f"品牌导出失败：{error}", file=sys.stderr)
