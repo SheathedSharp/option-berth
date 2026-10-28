@@ -19,6 +19,11 @@ type Options struct {
 	ResumeFile string
 	// LookPath resolves provider executables; nil uses exec.LookPath.
 	LookPath func(string) (string, error)
+	// Observer, when set, receives each protocol event after it has been
+	// written to out. It is for local bookkeeping beside the bridge — the
+	// workplace record is what uses it — and must neither block nor write to
+	// out: the protocol belongs to the caller, and this is a side channel.
+	Observer func(event map[string]any)
 }
 
 // Supported reports whether this build includes a stream adapter for the provider.
@@ -51,7 +56,7 @@ func Run(opts Options, in io.Reader, out io.Writer, errOut io.Writer) error {
 	if err != nil {
 		return err
 	}
-	bridge := &bridge{driver: driver, out: &lineWriter{w: out}}
+	bridge := &bridge{driver: driver, out: &lineWriter{w: out}, observer: opts.Observer}
 	commands := bufio.NewReader(in)
 	for {
 		cmd, err := readCommand(commands)
@@ -106,10 +111,11 @@ func resolveWorktree(path string) (string, error) {
 }
 
 type bridge struct {
-	driver driver
-	out    *lineWriter
-	closed bool
-	emitMu sync.Mutex
+	driver   driver
+	out      *lineWriter
+	observer func(event map[string]any)
+	closed   bool
+	emitMu   sync.Mutex
 }
 
 func (b *bridge) handle(cmd map[string]any) error {
@@ -159,10 +165,21 @@ func (b *bridge) closeSession() error {
 	return err
 }
 
+// emit writes one event and hands it to the observer.
+//
+// The observer runs outside the emit lock and after the write: an observer
+// that is slow delays its own bookkeeping, never the protocol line the caller
+// is waiting for, and never another emitter's line.
 func (b *bridge) emit(v any) {
 	b.emitMu.Lock()
-	defer b.emitMu.Unlock()
 	b.out.emit(v)
+	b.emitMu.Unlock()
+	if b.observer == nil {
+		return
+	}
+	if event, ok := v.(map[string]any); ok {
+		b.observer(event)
+	}
 }
 
 func (b *bridge) emitAck(id string) {

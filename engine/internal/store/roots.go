@@ -52,6 +52,12 @@ func (s *Store) RemoveRoot(path string) error {
 	return s.exec(`DELETE FROM known_roots WHERE path = ?`, clean)
 }
 
+// CleanRoot is cleanRoot for callers outside this package that key their own
+// rows by worktree path. There is one spelling of a root, and the workplace
+// tables need the same one the roots table uses: two spellings of one checkout
+// would be two sets of workplaces.
+func CleanRoot(path string) (string, error) { return cleanRoot(path) }
+
 // cleanRoot is the one spelling of a root path. Every write and every delete
 // goes through it, so the same directory cannot sit in the table twice.
 //

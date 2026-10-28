@@ -29,6 +29,8 @@ var contractMethods = []string{
 	"groups.config.get", "groups.config.set",
 	"runs.register", "runs.unregister", "runs.list", "runs.spawn",
 	"sessions.kill",
+	"workplace.list", "workplace.new", "workplace.use",
+	"workplace.show", "workplace.delete", "workplace.record",
 	"config.get", "config.set", "config.path",
 }
 

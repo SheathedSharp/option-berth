@@ -2705,6 +2705,346 @@
         "ports",
         "machine"
       ]
+    },
+    "Workplace": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "worktree": {
+          "type": "string"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "blocks": {
+          "type": "integer"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "worktree",
+        "active",
+        "blocks",
+        "created_at",
+        "updated_at"
+      ]
+    },
+    "WorkplaceBlock": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "workplace": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "input": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "log_path": {
+          "type": "string"
+        },
+        "output": {
+          "type": "string"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "ended_at": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "workplace",
+        "seq",
+        "kind",
+        "source",
+        "status",
+        "started_at"
+      ]
+    },
+    "WorkplaceBlockInput": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "input": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "log_path": {
+          "type": "string"
+        },
+        "output": {
+          "type": "string"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "ended_at": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "kind"
+      ]
+    },
+    "WorkplaceDeleteParams": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "worktree": {
+          "type": "string"
+        },
+        "selector": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "worktree",
+        "selector"
+      ]
+    },
+    "WorkplaceDeleteResult": {
+      "properties": {
+        "deleted": {
+          "type": "string"
+        },
+        "active": {
+          "$ref": "#/definitions/Workplace"
+        }
+      },
+      "type": "object",
+      "required": [
+        "deleted"
+      ]
+    },
+    "WorkplaceListResult": {
+      "properties": {
+        "worktree": {
+          "type": "string"
+        },
+        "active": {
+          "type": "string"
+        },
+        "workplaces": {
+          "items": {
+            "$ref": "#/definitions/Workplace"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "worktree",
+        "workplaces"
+      ]
+    },
+    "WorkplaceNewParams": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "worktree": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "worktree"
+      ]
+    },
+    "WorkplaceNewResult": {
+      "properties": {
+        "workplace": {
+          "$ref": "#/definitions/Workplace"
+        }
+      },
+      "type": "object",
+      "required": [
+        "workplace"
+      ]
+    },
+    "WorkplaceParams": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "worktree": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "worktree"
+      ]
+    },
+    "WorkplaceRecordParams": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "worktree": {
+          "type": "string"
+        },
+        "block": {
+          "$ref": "#/definitions/WorkplaceBlockInput"
+        }
+      },
+      "type": "object",
+      "required": [
+        "worktree",
+        "block"
+      ]
+    },
+    "WorkplaceRecordResult": {
+      "properties": {
+        "workplace": {
+          "$ref": "#/definitions/Workplace"
+        },
+        "block": {
+          "$ref": "#/definitions/WorkplaceBlock"
+        }
+      },
+      "type": "object",
+      "required": [
+        "workplace",
+        "block"
+      ]
+    },
+    "WorkplaceShowParams": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "worktree": {
+          "type": "string"
+        },
+        "selector": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "required": [
+        "worktree"
+      ]
+    },
+    "WorkplaceShowResult": {
+      "properties": {
+        "workplace": {
+          "$ref": "#/definitions/Workplace"
+        },
+        "blocks": {
+          "items": {
+            "$ref": "#/definitions/WorkplaceBlock"
+          },
+          "type": "array"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "required": [
+        "workplace",
+        "blocks",
+        "truncated"
+      ]
+    },
+    "WorkplaceUseParams": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "worktree": {
+          "type": "string"
+        },
+        "selector": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "worktree",
+        "selector"
+      ]
+    },
+    "WorkplaceUseResult": {
+      "properties": {
+        "workplace": {
+          "$ref": "#/definitions/Workplace"
+        }
+      },
+      "type": "object",
+      "required": [
+        "workplace"
+      ]
     }
   },
   "methods": {
@@ -2934,6 +3274,54 @@
       },
       "result": {
         "$ref": "#/definitions/OKResult"
+      }
+    },
+    "workplace.delete": {
+      "params": {
+        "$ref": "#/definitions/WorkplaceDeleteParams"
+      },
+      "result": {
+        "$ref": "#/definitions/WorkplaceDeleteResult"
+      }
+    },
+    "workplace.list": {
+      "params": {
+        "$ref": "#/definitions/WorkplaceParams"
+      },
+      "result": {
+        "$ref": "#/definitions/WorkplaceListResult"
+      }
+    },
+    "workplace.new": {
+      "params": {
+        "$ref": "#/definitions/WorkplaceNewParams"
+      },
+      "result": {
+        "$ref": "#/definitions/WorkplaceNewResult"
+      }
+    },
+    "workplace.record": {
+      "params": {
+        "$ref": "#/definitions/WorkplaceRecordParams"
+      },
+      "result": {
+        "$ref": "#/definitions/WorkplaceRecordResult"
+      }
+    },
+    "workplace.show": {
+      "params": {
+        "$ref": "#/definitions/WorkplaceShowParams"
+      },
+      "result": {
+        "$ref": "#/definitions/WorkplaceShowResult"
+      }
+    },
+    "workplace.use": {
+      "params": {
+        "$ref": "#/definitions/WorkplaceUseParams"
+      },
+      "result": {
+        "$ref": "#/definitions/WorkplaceUseResult"
       }
     }
   },

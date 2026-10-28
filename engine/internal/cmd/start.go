@@ -123,6 +123,11 @@ func startAttached(cmd *cobra.Command, argv []string, cwd string, res spawn.Reso
 	daemonKnows := registerRun(h)
 	defer unregisterRun(h.PID, daemonKnows)
 
+	// The run is recorded in the worktree's active workplace as it happens,
+	// with the run identity and log path that make the block checkable later.
+	recorder := startRecording(cwd)
+	defer recorder.Close()
+	blockID := recorder.startShell(argv, h.ID, h.PID, h.LogPath, h.StartedAt)
 	code, err := h.Wait()
 	if err != nil {
 		return fmt.Errorf("running %q: %w", argv[0], err)
@@ -130,6 +135,9 @@ func startAttached(cmd *cobra.Command, argv []string, cwd string, res spawn.Reso
 	// The daemon keeps how it ended, and knows a Ctrl+C we forwarded is not a
 	// crash however the child chose to exit.
 	finishRun(h.PID, daemonKnows, code, fwd.Interrupted())
+	recorder.endShell(blockID, code, fwd.Interrupted())
+	// The record is flushed before the exit below, which skips deferred work.
+	recorder.Close()
 	if code != 0 {
 		// Mirror the child's exit code without cobra printing usage over it.
 		cmd.SilenceUsage, cmd.SilenceErrors = true, true
@@ -141,6 +149,11 @@ func startAttached(cmd *cobra.Command, argv []string, cwd string, res spawn.Reso
 
 // startDetached hands the run to the daemon so it is parented by something that
 // outlives this shell, falling back to spawning it here when there is no daemon.
+//
+// The run is recorded in the worktree's workplace, and the record is flushed
+// before this returns: this command exits immediately afterwards, so a record
+// still in a queue would go with it. The block is left open — the run is still
+// going — and the daemon closes it when it records how the run ended.
 func startDetached(cmd *cobra.Command, argv []string, cwd string, res spawn.Resolution) error {
 	ctx, cancel := context.WithTimeout(cmd.Context(), registerTimeout)
 	defer cancel()
@@ -167,6 +180,7 @@ func startDetached(cmd *cobra.Command, argv []string, cwd string, res spawn.Reso
 		var out rpc.RunsSpawnResult
 		if err := c.Call(ctx, "runs.spawn", params, &out); err == nil {
 			printStarted(res, out.PID, out.LogPath)
+			recordDetachedRun(cwd, argv, out.RunID, out.PID, out.LogPath, time.Now().UTC())
 			return nil
 		} else if !errors.Is(err, client.ErrNotRunning) {
 			return err
@@ -189,7 +203,20 @@ func startDetached(cmd *cobra.Command, argv []string, cwd string, res spawn.Reso
 	}
 	registerRun(h)
 	printStarted(res, h.PID, h.LogPath)
+	recordDetachedRun(cwd, argv, h.ID, h.PID, h.LogPath, h.StartedAt)
 	return nil
+}
+
+// recordDetachedRun records one detached run and waits for the record to land.
+//
+// The recorder is created here rather than at the top of startDetached because
+// the daemon this command reaches may have been started by the line above it:
+// a recorder that dialled before that would find nothing listening, give up,
+// and drop the very record it exists for.
+func recordDetachedRun(cwd string, argv []string, runID string, pid int, logPath string, started time.Time) {
+	recorder := startRecording(cwd)
+	defer recorder.Close()
+	recorder.startShell(argv, runID, pid, logPath, started)
 }
 
 // callerEnv is this process's environment as the map runs.spawn and
