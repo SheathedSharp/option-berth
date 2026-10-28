@@ -46,7 +46,16 @@ enum ClientChecks {
 
         try historyChecks()
         try historyEntryChecks()
-        try workplaceChecks()
+        // The engine-backed workplace path awaits child processes, so it runs
+        // on the main actor while this loop keeps the queue serviced.
+        var workplaceFinished = false
+        var workplaceError: Error?
+        Task { @MainActor in
+            do { try await workplaceChecks() } catch { workplaceError = error }
+            workplaceFinished = true
+        }
+        eventually("workplace checks did not finish") { workplaceFinished }
+        if let workplaceError { throw workplaceError }
         quitReadinessChecks()
     }
     static func shortcutChecks() throws {

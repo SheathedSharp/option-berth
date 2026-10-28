@@ -54,9 +54,13 @@ GUI全部交互、签名安装包和长期负载仍需独立验收；没有可�
   用真实二进制与真实 daemon 跑 `oberth start -d`，核对记录先出现且是 running、随后由 daemon
   收成 completed（并核对退出码、结束时间与它指向的日志确实存在）。
 
+客户端不再保留第二份记录：`ClientChecks` 的 workplace 检查用合成 `oberth` 走完整条路径 ——
+`oberth workplace list/show` 读回、`workplace record` 上报自己交互式 PTY 与原生 agent 的条目、
+同一个 id 再报是更新、状态映射，以及输出经 `--output-file` 而不是 argv（2026-10-28）。
+它不启动 daemon，因此不等于真实 daemon 下的上报验收。
+
 **未执行**：真实 Codex / Claude 账号下的一轮任务在 workplace 里的端到端确认（合成驱动不算）；
-macOS 客户端经 `workplace record` 上报自己 PTY 条目的路径 —— 客户端仍用本机
-`~/.option-berth/workplaces/` JSON，尚未接入引擎记录（见 [backlog.md](backlog.md)）。
+macOS 客户端对**真实 daemon** 的上报路径（上面的检查用合成 CLI）。
 
 ## 核心验收：真实 coding agent 在一个陌生 worktree 上
 

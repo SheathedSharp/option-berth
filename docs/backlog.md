@@ -41,7 +41,6 @@ Cmd+N 接入项目，Cmd+1…9 按可见 Worktrees 导航，模块采用 Option+
 
 | 优先级 | 能力 | 当前缺口与完成条件 |
 | --- | --- | --- |
-| 高 | 客户端接入引擎的工作记录 | 引擎已有 `workplace`：worktree 下的工作记录，`oberth start` 与 `oberth agent stream` 自动写入，agent 或前端可经 `oberth workplace record` 写入（契约见 [cli.md](cli.md)）。客户端仍把块流存在本机 `~/.option-berth/workplaces/` JSON，是引擎之外的第二份状态。完成条件：客户端改为读引擎记录、把自己交互式 PTY 与原生 agent 的条目经 `workplace record` 上报，并删除本地 JSON 存储及其迁移路径。 |
 | 高 | 外部 agent 的显式续接和结构化会话协议 | 已落地：`oberth agent stream` live 桥（Codex、Claude、OpenCode、Pi）、macOS 结构化 UI、合成/单元回归（见 [validation.md](validation.md)）。仍缺：**真机** Codex/Claude 等验收、DeepSeek 结构化桥与明确续接、安装版本能力探测的完整产品化。审批在会话页由人决定，桥不加放宽参数；原生 TUI 审批不被输入条接管。 |
 | 高 | 应用重启后的恢复 | 已实现用户同意后的私有布局快照、历史入口、失效/未知文件拒绝与显式新建Shell映射；不保存消息/输出/PID，不自动复活进程。仍缺旧PTY接管、输出历史恢复、精确分隔尺寸与agent对话恢复入口的完整联动。 |
 | 中 | 命令块与 shell 集成 | 已落地临时 **zsh/bash/fish** 集成（OSC `133`/`633`）、命令块条、Shell→Agent 附件与 Tab 补全回读；复杂提示符（powerlevel10k/starship）与 IME 须手测（[validation.md](validation.md)）。 |
