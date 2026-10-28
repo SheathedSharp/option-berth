@@ -3,12 +3,7 @@
 package main
 
 import (
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
-	"time"
 )
 
 // Engine builds only the CLI/daemon; the canonical BuildEngine name remains.
@@ -64,40 +59,8 @@ func snapshotFile(scope string) string {
 	return "scope-" + name + ".png"
 }
 
-func renderClient(flag, filename string, args ...string) error {
-	p, err := loadProject()
-	if err != nil {
-		return err
-	}
-	binary := clientBinary(p)
-	if !fileExists(binary) {
-		return fmt.Errorf("client is not built; run mage client or mage buildClient first")
-	}
-	out := filepath.Join(p.root, "client", "macos", ".cache", filename)
-	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
-		return err
-	}
-	return command(p.root, binary, append([]string{flag, out}, args...)...)
-}
+func renderClient(flag, filename string, args ...string) error { return clientMoved() }
 
 func openInstalledClient(root string) error {
-	// `open` otherwise reuses an older running binary with the same bundle ID.
-	// Request a normal quit, never kill arbitrary processes matching a name.
-	script := `with timeout of 5 seconds
-if application id "dev.option-berth.app" is running then tell application id "dev.option-berth.app" to quit
-end timeout`
-	if err := command(root, "osascript", "-e", script); err != nil {
-		return err
-	}
-	for i := 0; i < 20; i++ {
-		output, err := exec.Command("osascript", "-e", `application id "dev.option-berth.app" is running`).Output()
-		if err != nil {
-			return err
-		}
-		if strings.TrimSpace(string(output)) == "false" {
-			return command(root, "open", "/Applications/OptionBerth.app")
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	return fmt.Errorf("installed client did not quit; close it before running the new build")
+	return clientMoved()
 }

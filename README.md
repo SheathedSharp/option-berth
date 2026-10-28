@@ -4,10 +4,23 @@
     <img src="brand/option-berth-lockup-light.svg" alt="option-berth — 各自成泊" width="420">
   </picture>
 </p>
-<p align="center"><strong>每份代码，各自成泊。</strong><br>面向 Git worktree 的本地开发运行工作台。</p>
+<p align="center"><strong>每份代码，各自成泊。</strong><br>面向 Git worktree 的本地服务运行事实与生命周期引擎。</p>
 <p align="center">简体中文 · <a href="README.en.md">English</a></p>
 
 <p align="center"><a href="https://sheathedsharp.github.io/option-berth/">产品官网与真实截图</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">下载最新版本</a></p>
+
+## 三个产品
+
+option-berth 拆成三个独立产品，各自有仓库、版本与发布节奏：
+
+| 产品 | 仓库 | 它做什么 |
+| --- | --- | --- |
+| **引擎**（本仓库） | [SheathedSharp/option-berth](https://github.com/SheathedSharp/option-berth) | `oberth`：声明、观察、起停一个 worktree 的服务，输出人和 agent 都能读的事实 |
+| **客户端** | [SheathedSharp/option-berth-macos](https://github.com/SheathedSharp/option-berth-macos) | macOS 原生界面：服务、只读 Git 与终端/agent 会话，呈现同一份事实 |
+| **给 coding agent 的指引** | [SheathedSharp/option-berth-skill](https://github.com/SheathedSharp/option-berth-skill) | 教会 agent 读同一份事实、把服务跑起来、留下并取回工作记录 |
+
+三者只通过 CLI 与 `--json` 契约相连：客户端和 skill 都不自带第二份运行状态。
+开发和依赖安装时，把三个仓库放在同一个目录下即可（见下面「一起用」）。
 
 ## 为什么需要 option-berth
 
@@ -15,7 +28,7 @@
 哪个服务属于哪份 checkout？它真的健康了吗？一个 worker 没有监听端口，是否还在运行？
 停止当前项目，会不会影响另一个分支？
 
-option-berth 把**服务声明、实际运行、日志、Git 上下文与终端会话**放到同一条工作流中。
+option-berth 把**服务声明、实际运行、日志、Git 上下文与工作记录**放到同一条工作流中。
 你确认项目应该运行什么；`oberth` 负责启动、观察和有边界地停止。
 人和外部 coding agent 读取相同的事实，不需要各自猜测系统状态。
 
@@ -28,15 +41,16 @@ option-berth 把**服务声明、实际运行、日志、Git 上下文与终端�
 | 排查失败 | 从服务进入日志、退出结果与诊断，而不是重新拼接系统命令 |
 | 使用无端口 worker | 通过运行记录观察，不把“没有端口”当成“没有运行” |
 | 与 coding agent 协作 | 相同 CLI 提供结构化 JSON；不内置另一套模型或 agent 推理系统 |
-| 使用原生桌面界面 | macOS 客户端呈现同一份服务事实与只读 Git 信息 |
+| 接手别人（或上一轮）的工作 | `oberth workplace` 记录做过的命令与任务，结果如何都留在 worktree 上 |
 
 **不是全机端口雷达，也不是另一个 AI IDE。** `machine:` 依赖只读；项目起停不会接管它们。
 worktree 隔离指运行归属和生命周期边界，不是操作系统安全沙箱。
+界面不在这个仓库：它是独立的 [macOS 客户端](https://github.com/SheathedSharp/option-berth-macos)。
 
 ## 安装与构建
 
-版本发布包见 [GitHub Releases](https://github.com/SheathedSharp/option-berth/releases)；也可以从源码构建。引擎使用 [Go 1.25 或后续兼容版本](engine/go.mod) 和 Mage；
-macOS 客户端需要系统开发工具。正式发布说明见 [发布流程](docs/releasing.md)。
+版本发布包见 [GitHub Releases](https://github.com/SheathedSharp/option-berth/releases)；也可以从源码构建。
+引擎使用 [Go 1.25 或后续兼容版本](engine/go.mod) 和 Mage。正式发布说明见 [发布流程](docs/releasing.md)。
 
 ```sh
 git clone https://github.com/SheathedSharp/option-berth.git
@@ -47,11 +61,11 @@ mage buildEngine
 ./bin/oberth version --json
 ```
 
-构建不会安装软件或启动日常服务。确认需要安装后执行 `mage install`；它会写入安装目录、
-配置 PATH，并在 macOS 安装桌面客户端。用 `NO_MODIFY_PATH=1 mage install` 可跳过 PATH 修改。
+构建不会安装软件或启动日常服务。确认需要安装后执行 `mage install`；它会写入安装目录并配置 PATH。
+用 `NO_MODIFY_PATH=1 mage install` 可跳过 PATH 修改。
 
-引擎的完整服务场景面向 **macOS / Linux**。Windows 已有原生构建、冒烟及部分事实与持久化测试，
-不能视为完整生命周期支持。桌面客户端目前是 **macOS 14+ / Apple Silicon**。
+完整服务场景面向 **macOS / Linux**。Windows 已有原生构建、冒烟及部分事实与持久化测试，
+不能视为完整生命周期支持。
 
 ## 第一次跑通
 
@@ -83,18 +97,11 @@ oberth down                    # 停止当前项目并安全处理端口预留
 ```
 
 `oberth git` 提供只读 Git 上下文；需要跨项目观察时，使用带明确 worktree 筛选的 `oberth events`。
-命令不会自动安装其他工具的 hooks、skills 或 MCP 配置。可选 [Jev adapter](docs/jev-adapter.md)
-不进入引擎的运行事实与控制链路，缺少模型配置也能使用核心功能。
+可选 [Jev adapter](docs/jev-adapter.md) 不进入引擎的运行事实与控制链路，缺少模型配置也能使用核心功能。
 
-## 终端与 coding agent
+## 与 coding agent 协作
 
-macOS **会话 / Sessions** 将 Shell 与外部 agent 放在同一会话栏和原生显示区，
-共用当前 worktree 的服务事实和只读 Git 上下文；新 Agent 消息是就地展开的入口，不是另一层页面。会话固定归属于创建时的 worktree，
-切换项目不会把原会话迁移到另一份代码中。
-
-自行安装并登录 **OpenCode、Codex、Claude Code、DeepSeek Harness 或 Pi** 后，
-在 agent 消息框按 **⌘Enter** 发送首条消息并创建新会话；**⇧⌘Enter** 进入当前活动会话的原生界面。
-普通 Enter 换行，后续对话和权限确认交给 agent 自己。再次发送会建立新会话，不自动跨 worktree 恢复历史对话。
+引擎提供显式的启动适配，不实现模型、工具循环或会话推理：
 
 ```sh
 oberth agent list --json
@@ -102,39 +109,21 @@ oberth agent plan codex --worktree "$PWD" --json
 oberth agent run codex --worktree "$PWD"
 ```
 
-### 给 coding agent 装上 skill
+agent 怎么学会用这些命令，写在独立的
+[option-berth-skill](https://github.com/SheathedSharp/option-berth-skill) 仓库里。
+装它是 agent 自己的事：本仓库的命令不会自动安装 hooks、skills 或 MCP 配置。
 
-`oberth` 的能力是通过随仓库分发的 skill（`.agents/skills/option-berth/`）交给 agent 的，
-它是产品面的一部分，不是一份摘要。装它用**软链**指向克隆下来的仓库：
+## 一起用
+
+三个仓库互不复制代码，按同一份 CLI 契约协作。开发或试用时放在同级目录：
 
 ```sh
-cd option-berth   # 克隆下来的仓库根目录
-mkdir -p ~/.claude/skills
-ln -sfn "$PWD/.agents/skills/option-berth" ~/.claude/skills/option-berth
+git clone https://github.com/SheathedSharp/option-berth.git
+git clone https://github.com/SheathedSharp/option-berth-macos.git
+git clone https://github.com/SheathedSharp/option-berth-skill.git
 ```
 
-以 Claude Code 为例，其他 agent 用各自的技能目录。软链跟着仓库走，`git pull` 之后 agent
-看到的就是新版本；复制过去的那份不会自己更新，命令或 `--json` 形状变了它还停在旧契约上，
-于是同一台机器上会出现两份同名 skill，agent 用哪份不确定。
-
-装 skill 只是让 agent 学会读同一份事实：它不装服务、不改其他工具的配置，起停仍由 agent
-自己按 CLI 调用。
-
-**⌘N** 接入项目，**⌘1…9** 按侧栏当前可见顺序选择 worktree，保留正在查看的模块。
-**⌥⌘S/G/T** 分别切换服务、只读 Git 与工作台，**⌘B** 切换侧栏，**⇧⌘P** 打开命令面板。工作区支持同一 worktree 的
-递归分屏与独立终端窗口；顶部可访问会话、恢复和检查更新。Agent 的“续接…”要求选择原始会话
-文件并核对 worktree，不使用最近对话。可明确允许保存布局元数据，但草稿、终端输出和旧进程
-不会自动恢复。命令块集成对新建 zsh 显式启用，不修改用户 shell 配置。
-
-DeepSeek 的消息入口使用 headless，原生入口要求已有 tui profile；两种模式不是同一对话的无缝切换。
-option-berth 不实现另一套 agent 推理系统、不保存模型凭证、不自动安装插件，也不添加绕过审批或沙箱的参数。
-Paper 是唯一内置默认主题；编辑 `~/.option-berth/config/theme.json`、`settings.json` 与 `keybindings.json`
-可调整语义颜色、字体、模块字号、独立面板宽度、会话默认值和快捷键；保存即热更新，错误编辑保留上次有效值。
-配置遵循 `BERTH_HOME`，不覆盖用户文件、不加载插件代码。见 [个性化配置](client/macos/docs/client-configuration.md)
-及 [客户端说明](client/macos/README.md)。
-
-发布包内的 macOS App 带有匹配版本的引擎，但目前只有 **ad-hoc 签名，没有 Developer ID 或 Apple 公证**。
-下载后核对 SHA256SUMS；不要把它当成已公证安装包。使用终端不替代 `oberth down`，关闭会话不会自动停止项目服务。
+客户端用 `BERTH_BIN` 指向任意一份 `oberth`；skill 用软链装进你所用 agent 的技能目录。
 
 ## 版本与贡献
 
@@ -157,5 +146,5 @@ python3 -m unittest discover -s scripts -p '*_test.py'
 ## 许可证
 
 由 **SheathedSharp** 与项目贡献者维护。项目代码适用 [MIT License](LICENSE)；
-第三方代码、字体及素材保留各自许可和版权，见 [第三方声明](THIRD_PARTY_NOTICES.md)。
+第三方代码及素材保留各自许可和版权，见 [第三方声明](THIRD_PARTY_NOTICES.md)。
 外部 coding agent 的名称仅说明兼容性，不表示其开发者为本项目背书。

@@ -13,8 +13,8 @@
 | 构建、运行、改哪跑什么 | [docs/develop.md](docs/develop.md) |
 | 验证项的含义与平台范围 | [docs/validation.md](docs/validation.md) |
 | 版本、标签、发版前置 | [docs/releasing.md](docs/releasing.md) |
-| 改 macOS 客户端 | [client/macos/AGENTS.md](client/macos/AGENTS.md) |
-| 客户端工作台契约、安装、配置 | [client/macos/docs/](client/macos/docs/) |
+| 改 macOS 客户端 | [option-berth-macos](https://github.com/SheathedSharp/option-berth-macos)（独立产品） |
+| 改 coding agent 的 skill | [option-berth-skill](https://github.com/SheathedSharp/option-berth-skill)（独立产品） |
 
 历史方案、临时排障和旧迭代的要求不是当前契约，不按它们补实现。
 

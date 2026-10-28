@@ -12,8 +12,3 @@ class LicenseTests(unittest.TestCase):
             self.assertIn("Copyright (c) 2026 RasKrebs", text)
             self.assertIn("The above copyright notice and this permission notice", text)
             self.assertIn('THE SOFTWARE IS PROVIDED "AS IS"', text)
-
-    def test_fonts_keep_their_own_license(self):
-        text = (ROOT / "client/macos/Fonts/LICENSE-Monaspace.txt").read_text()
-        self.assertIn("SIL OPEN FONT LICENSE", text.upper())
-        self.assertNotIn("Copyright (c) 2026 SheathedSharp", text)

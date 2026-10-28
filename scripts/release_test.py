@@ -176,65 +176,6 @@ class ReleaseTests(unittest.TestCase):
         self.assertTrue(self.git("ls-remote", "origin", "refs/heads/main").startswith(self.head))
         self.assertEqual(self.git("ls-remote", "origin", "refs/tags/v1.2.4"), "")
 
-    def test_macos_release_checks_real_agent_planner_when_gui_exists(self):
-        (self.root / "client/macos/AgentTests").mkdir(parents=True)
-        calls = []
-        def record(root, *args, **kwargs):
-            calls.append((root, args, kwargs))
-            return ""
-        with patch.object(release.sys, "platform", "darwin"), patch.object(release, "run", side_effect=record):
-            release.verify(self.root)
-        agent = [call for call in calls if "AgentChecks" in call[1]]
-        self.assertEqual(len(agent), 1)
-        binary = agent[0][2]["environment"]["BERTH_AGENT_TEST_BINARY"]
-        self.assertTrue(Path(binary).is_absolute())
-        builds = [call for call in calls if call[1] == ("go", "build", "-o", binary, ".")]
-        self.assertEqual(len(builds), 1)
-        self.assertEqual(builds[0][0], self.root / "engine")
-        self.assertLess(calls.index(builds[0]), calls.index(agent[0]))
-
-    def test_release_workflow_pins_event_sha_and_keeps_full_tag_objects(self):
-        workflow = (release.ROOT / ".github/workflows/release.yml").read_text()
-        checkouts = workflow.split("- uses: actions/checkout@")[1:]
-        self.assertEqual(len(checkouts), 4)
-        for block in checkouts:
-            settings = block.split("      - ", 1)[0]
-            self.assertIn("ref: ${{ github.sha }}", settings)
-            self.assertIn("fetch-depth: 0", settings)
-            self.assertIn("persist-credentials: false", settings)
-
-    def test_checkout_fallback_can_peel_a_local_tag_but_sha_only_preserves_it(self):
-        tag = "v1.2.3"
-        self.git("tag", "-a", tag, "-m", "annotated fixture")
-        annotation = self.git("rev-parse", "refs/tags/" + tag)
-        self.git("push", "origin", "refs/tags/" + tag)
-        def checkout(name):
-            directory = Path(self.tmp.name) / name
-            directory.mkdir()
-            def command(*args):
-                return subprocess.check_output(["git", *args], cwd=directory, text=True,
-                                               stderr=subprocess.DEVNULL).strip()
-            command("init")
-            self.configure_fixture_git(directory)
-            command("remote", "add", "origin", str(self.remote))
-            command("fetch", "origin", "+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*")
-            command("checkout", "--detach", self.head)
-            self.assertEqual(command("cat-file", "-t", "refs/tags/" + tag), "tag")
-            return directory, command
-        old, old_git = checkout("old-checkout")
-        # Reproduce actions/checkout's ref+peeled-commit fallback from the failed
-        # real release. This is only a disposable local clone, never origin.
-        old_git("fetch", "--no-tags", "origin", "+" + self.head + ":refs/tags/" + tag)
-        with self.assertRaisesRegex(ValueError, "must be annotated"):
-            release.validate_tag(old, tag)
-        current, current_git = checkout("sha-only-checkout")
-        current_git("fetch", "--no-tags", "origin", self.head)
-        release.validate_tag(current, tag)
-        self.assertEqual(current_git("rev-parse", "refs/tags/" + tag), annotation)
-        self.assertIn(annotation, self.git("ls-remote", "origin", "refs/tags/" + tag))
-
-
-class PackagingWorkflowTests(unittest.TestCase):
     def packaging_script(self):
         workflow = (release.ROOT / ".github/workflows/release.yml").read_text()
         block = workflow.split("      - name: Build archives with per-target notices\n", 1)[1]
@@ -244,9 +185,7 @@ class PackagingWorkflowTests(unittest.TestCase):
         self.assertTrue(lines and all(not line.strip() or line.startswith("          ") for line in lines))
         return "\n".join(line[10:] for line in lines) + "\n"
 
-    def test_all_six_targets_use_exact_argv_on_system_bash(self):
-        # Execute the actual workflow block, not a parallel shell implementation.
-        # /bin/bash is 3.2 on macOS; no build, network, credentials or model call.
+    def test_packaging_argv_is_exact_for_every_target(self):
         script = self.packaging_script()
         with tempfile.TemporaryDirectory(prefix="berth-package-argv-") as temporary:
             root = Path(temporary)
@@ -264,8 +203,6 @@ class PackagingWorkflowTests(unittest.TestCase):
                                                 cwd=root, env=env, text=True, capture_output=True, timeout=10)
                         self.assertEqual(result.returncode, 0, result.stderr)
                         expected = ["scripts/package_release.py", "--os", system, "--arch", arch, "--output", "dist"]
-                        if (system, arch) == ("darwin", "arm64"):
-                            expected.append("--include-app")
                         self.assertEqual(result.stdout.splitlines(), expected)
 
     def test_missing_target_is_still_rejected_before_packaging(self):

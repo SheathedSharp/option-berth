@@ -14,8 +14,6 @@ import subprocess
 import tarfile
 import tempfile
 import zipfile
-from macos_release_signing import SigningConfiguration, sign_application
-from macos_release_dmg import create_disk_image
 
 ROOT = Path(__file__).resolve().parent.parent
 TARGETS = {(system, arch) for system in ("darwin", "linux", "windows") for arch in ("amd64", "arm64")}
@@ -68,15 +66,9 @@ def checksum_sidecar(path: Path) -> None:
     path.with_name(path.name + ".sha256").write_text(checksum(path) + "  " + path.name + "\n")
 
 
-def package(root: Path, system: str, arch: str, output: Path, include_app: bool = False, signing: SigningConfiguration | None = None) -> list[Path]:
-    signing = signing or SigningConfiguration()
-    signing.validate()
-    if signing.mode != "adhoc" and not include_app:
-        raise ValueError("Developer ID options require --include-app")
+def package(root: Path, system: str, arch: str, output: Path) -> list[Path]:
     if (system, arch) not in TARGETS:
         raise ValueError("unsupported release target")
-    if include_app and (system, arch) != ("darwin", "arm64"):
-        raise ValueError("the current native app target is darwin/arm64")
     env = dict(os.environ, GOOS=system, GOARCH=arch, CGO_ENABLED="0", GOMAXPROCS="4")
     version = (root / "VERSION").read_text().strip()
     # Share validation with the release entry point without executing a release.
@@ -126,31 +118,6 @@ def package(root: Path, system: str, arch: str, output: Path, include_app: bool 
                 target.add(stage, arcname=stem, filter=normalize)
         checksum_sidecar(archive)
         created.append(archive)
-        if include_app:
-            source = root / "client/macos/build/OptionBerth.app"
-            if not source.is_dir():
-                raise RuntimeError("build the native app explicitly before packaging it")
-            with (source / "Contents/Info.plist").open("rb") as stream:
-                metadata = plistlib.load(stream)
-                if metadata["CFBundleShortVersionString"] != version or metadata.get("BerthBuildCommit") != commit:
-                    raise RuntimeError("application version does not match VERSION")
-            app = Path(tmp) / "OptionBerth.app"
-            shutil.copytree(source, app, symlinks=True)
-            shutil.copy2(stage / "oberth", app / "Contents/MacOS/oberth")
-            app_notices = app / "Contents/Resources/Licenses"
-            shutil.copytree(notices, app_notices, dirs_exist_ok=True)
-            shutil.copyfile(root / "LICENSE", app_notices / "option-berth-LICENSE.txt")
-            # The trust suffix is returned only after signing and (when
-            # explicitly selected) acceptance, stapling and Gatekeeper checks.
-            trust = sign_application(app, signing)
-            app_archive = output / f"OptionBerth-v{version}-macos-arm64-{trust}.dmg"
-            if app_archive.exists():
-                raise FileExistsError("refusing to overwrite an application archive")
-            # The image itself must pass its signing/notary gates, read-only
-            # mount, private installation copy and bundled-engine identity check.
-            create_disk_image(app, app_archive, signing)
-            checksum_sidecar(app_archive)
-            created.append(app_archive)
     return created
 
 
@@ -159,15 +126,9 @@ if __name__ == "__main__":
     parser.add_argument("--os", choices=("darwin", "linux", "windows"), required=True)
     parser.add_argument("--arch", choices=("amd64", "arm64"), required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--include-app", action="store_true")
-    parser.add_argument("--macos-signing", choices=("adhoc", "developer-id"), default="adhoc")
-    parser.add_argument("--signing-identity", help="Existing certificate identity or SHA1; never imported")
-    parser.add_argument("--team-id", help="Expected Developer ID Team Identifier")
-    parser.add_argument("--notary-profile", help="Existing notarytool Keychain profile; no credentials on argv")
     args = parser.parse_args()
     try:
-        for artifact in package(ROOT, args.os, args.arch, args.output.resolve(), args.include_app,
-                                SigningConfiguration(args.macos_signing, args.signing_identity, args.team_id, args.notary_profile)):
+        for artifact in package(ROOT, args.os, args.arch, args.output.resolve()):
             print(artifact.name)
     except (OSError, ValueError, RuntimeError) as error:
         parser.exit(1, f"packaging refused: {error}\n")

@@ -1,68 +1,83 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="brand/option-berth-lockup-dark.svg">
-    <img src="brand/option-berth-lockup-light.svg" alt="option-berth — a berth for every worktree" width="420">
+    <img src="brand/option-berth-lockup-light.svg" alt="option-berth" width="420">
   </picture>
 </p>
-<p align="center"><strong>A berth for every worktree.</strong><br>A local development and runtime workspace for Git worktrees.</p>
+<p align="center"><strong>Every checkout, its own berth.</strong><br>Service facts and lifecycle for local Git worktrees.</p>
 <p align="center"><a href="README.md">简体中文</a> · English</p>
 
-<p align="center"><a href="https://sheathedsharp.github.io/option-berth/en/">Product website and native screenshots</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">Latest release</a></p>
+<p align="center"><a href="https://sheathedsharp.github.io/option-berth/">Website and real screenshots</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">Download the latest release</a></p>
+
+## Three products
+
+option-berth is three independent products, each with its own repository, version and release cadence:
+
+| Product | Repository | What it does |
+| --- | --- | --- |
+| **Engine** (this repository) | [SheathedSharp/option-berth](https://github.com/SheathedSharp/option-berth) | `oberth`: declare, observe, start and stop one worktree's services, and answer with facts a person and an agent both read |
+| **Client** | [SheathedSharp/option-berth-macos](https://github.com/SheathedSharp/option-berth-macos) | A native macOS surface for services, read-only Git and terminal/agent sessions over the same facts |
+| **Coding-agent skill** | [SheathedSharp/option-berth-skill](https://github.com/SheathedSharp/option-berth-skill) | Teaches an agent to read the same facts, run the services, and leave work behind for the next session |
+
+They meet only at the CLI and its `--json` contract: neither the client nor the skill keeps a second
+copy of the runtime state. Put the three clones side by side when you develop or try them together
+(see "Using the three together" below).
 
 ## Why option-berth
 
-Working on several branches—or running coding agents in parallel worktrees—creates questions that Git alone
-cannot answer. Which checkout owns this service? Is it actually healthy? Is a worker without a listening port
-still running? Can you stop this project without disrupting another branch?
+Working on several branches, or letting coding agents work across several worktrees, is not only a
+code problem: which service belongs to which checkout? Is it actually healthy? Is a worker without a
+port still running? Will stopping this project disturb another branch?
 
-option-berth brings **service declarations, observed runs, logs, Git context, and terminal sessions** into one workflow.
-You approve what a project should run. `oberth` starts it, observes it, and stops it within explicit ownership
-boundaries. People and external coding agents use the same facts rather than guessing separately.
+option-berth puts **declared services, what is actually running, logs, Git context and the work
+record** on one path. You decide what a project should run; `oberth` starts, observes and stops it
+within bounds. People and external coding agents read the same facts instead of guessing system state.
 
-## What it helps you do
+## What it changes
 
-| Your task | What option-berth provides |
+| You want to | option-berth gives you |
 | --- | --- |
-| Run multiple worktrees | Automatic ports and separate run ownership |
-| Confirm readiness | Process, listener, and health distinctions; `up --wait` waits for readiness |
-| Investigate failures | Service logs, exit results, and focused diagnostics |
-| Manage portless workers | Run records instead of treating “no port” as “not running” |
-| Work with coding agents | The same CLI with structured JSON; no built-in model or agent reasoning system |
-| Use a native desktop interface | A macOS view of the same service facts and read-only Git context |
+| Run several worktrees at once | Automatic ports and per-run ownership, so branches do not collide |
+| Know a service is usable | Process, listener and health kept apart; `up --wait` waits for real readiness |
+| Diagnose a failure | Logs, exit result and diagnosis from the service, not a reassembled shell one-liner |
+| Observe a portless worker | A run record instead of treating "no port" as "not running" |
+| Work with a coding agent | The same CLI as structured JSON; no second model or agent-reasoning system inside |
+| Take over someone else's work | `oberth workplace` keeps the commands and tasks run here, and how they ended |
 
-**Not a machine-wide port radar or another AI IDE.** `machine:` dependencies are read-only and are not taken
-over by project lifecycle commands. Worktree isolation means ownership and lifecycle separation, not an
-operating-system security sandbox.
+**Not a whole-machine port radar, and not another AI IDE.** `machine:` dependencies are read-only and
+project start/stop never takes them over. Worktree isolation is about run ownership and lifecycle
+boundaries, not an operating-system sandbox. The interface is not in this repository: it is the
+separate [macOS client](https://github.com/SheathedSharp/option-berth-macos).
 
 ## Build and install
 
-Release archives are listed in [GitHub Releases](https://github.com/SheathedSharp/option-berth/releases); source builds remain available. The engine requires [Go 1.25 or a compatible later version](engine/go.mod)
-and Mage; the macOS client also needs system development tools. See the [release process](docs/releasing.md).
+Release archives are on [GitHub Releases](https://github.com/SheathedSharp/option-berth/releases); you
+can also build from source. The engine needs [Go 1.25 or a later compatible version](engine/go.mod) and
+Mage. The formal release rules live in [the release guide](docs/releasing.md).
 
 ```sh
 git clone https://github.com/SheathedSharp/option-berth.git
 cd option-berth
-# macOS build tools; use the appropriate Go / Mage installation on other systems
+# macOS tooling; use the equivalent Go / Mage install elsewhere
 brew install go mage
 mage buildEngine
 ./bin/oberth version --json
 ```
 
-Building does not install software or start your everyday services. To install explicitly, run `mage install`.
-It writes installation directories, configures PATH, and installs the desktop application on macOS.
-Use `NO_MODIFY_PATH=1 mage install` to leave shell PATH configuration unchanged.
+Building installs nothing and starts no daily service. Once you mean to install, run `mage install`:
+it writes the install directory and configures PATH. `NO_MODIFY_PATH=1 mage install` skips the PATH edit.
 
-Complete service scenarios target **macOS and Linux**. Windows has native builds, smoke tests, and selected
-fact/persistence tests—not complete lifecycle coverage. The desktop client currently targets
-**macOS 14+ on Apple Silicon**.
+The complete service scenario targets **macOS / Linux**. Windows has a native build, smoke checks and
+some fact/persistence tests; that is not full lifecycle support.
 
 ## Try it first
 
-[Hello Worktree](examples/hello-worktree/README.md) contains a loopback-only API and a portless worker.
-It uses the Python 3 standard library: no model account, container, or pip dependencies are required.
+The repository ships [Hello Worktree](examples/hello-worktree/README.md): one API that only listens on
+localhost and one portless worker. Python 3 standard library only — no model account, container or pip
+dependency.
 
 ```sh
-# After installing oberth, start at the repository root
+# With oberth installed, from the repository root
 cd examples/hello-worktree
 oberth up --wait --json
 oberth status --json
@@ -70,35 +85,28 @@ oberth logs worker --once
 oberth down --json
 ```
 
-For your own project, run `oberth init`, then review and edit `oberth.yaml`. An existing coding agent may
-help draft it, but **a draft is not authorization**: only an explicit, reviewed `init adopt` writes it to the
-project. See the [CLI reference](docs/cli.md) for ports, dependencies, health checks, and the manifest format.
+For your own project, run `oberth init`, then review and edit the generated `oberth.yaml`. An agent can
+draft one, but **a draft is not authorization**: nothing is written until you run `init adopt`.
+Fields, automatic ports, dependencies and health checks are in [the CLI guide](docs/cli.md).
 
 ## Everyday commands
 
 ```sh
-oberth status --json            # Declarations and observed runtime for this worktree
-oberth doctor                  # Installation, manifest, and daemon diagnostics
-oberth up --wait                # Start and wait for readiness
-oberth restart --only api       # Restart only the named service
-oberth logs api --once          # Read service logs
-oberth down                    # Stop this project and safely handle port reservations
+oberth status --json            # this worktree's declaration and runtime facts
+oberth doctor                  # install, manifest and background-service diagnosis
+oberth up --wait                # start and wait for readiness
+oberth restart --only api       # restart only the named service
+oberth logs api --once          # read a service's log
+oberth down                    # stop the project and release port claims safely
 ```
 
-`oberth git` exposes read-only Git context. For cross-project observation, use `oberth events` with explicit
-worktree filters. The product does not automatically install other tools' hooks, skills, or MCP configuration.
-The optional [Jev adapter](docs/jev-adapter.md) stays outside the engine's runtime facts and control path;
-core functionality does not require model configuration.
+`oberth git` gives read-only Git context; for cross-project observation use `oberth events` with an
+explicit worktree filter. The optional [Jev adapter](docs/jev-adapter.md) stays outside the engine's
+runtime facts and control path, so core features work without any model configuration.
 
-## Terminal and coding agents
+## Working with coding agents
 
-The macOS **Console** unifies Shell and external agent sessions in one session strip and native display,
-alongside the selected worktree's service facts and read-only Git context. The new-agent composer opens in place. Every session keeps its initial worktree when you switch projects.
-
-Install and authenticate **OpenCode, Codex, Claude Code, DeepSeek Harness, or Pi** yourself.
-In the agent composer, **Cmd+Enter** starts a new session with your initial message; **Shift+Cmd+Enter** focuses
-the selected live native session. Return inserts a newline. Continue subsequent turns and permissions in the
-agent's own interface. Sending another composer message creates another session, not an implicit resume.
+The engine exposes an explicit launch adapter; it implements no model, tool loop or session reasoning:
 
 ```sh
 oberth agent list --json
@@ -106,57 +114,32 @@ oberth agent plan codex --worktree "$PWD" --json
 oberth agent run codex --worktree "$PWD"
 ```
 
-### Give your coding agent the skill
+How an agent learns to use these commands lives in the separate
+[option-berth-skill](https://github.com/SheathedSharp/option-berth-skill) repository. Installing it is
+the agent's own choice: nothing in this repository installs hooks, skills or MCP configuration for you.
 
-A coding agent learns `oberth` through the skill that ships with the repository
-(`.agents/skills/option-berth/`). It is part of the product, not a summary of it.
-Install it as a **symlink** into the clone:
+## Using the three together
+
+The three repositories share no code; they meet at the CLI contract. Put them side by side:
 
 ```sh
-cd option-berth   # the clone's root
-mkdir -p ~/.claude/skills
-ln -sfn "$PWD/.agents/skills/option-berth" ~/.claude/skills/option-berth
+git clone https://github.com/SheathedSharp/option-berth.git
+git clone https://github.com/SheathedSharp/option-berth-macos.git
+git clone https://github.com/SheathedSharp/option-berth-skill.git
 ```
 
-Claude Code is the example; other agents use their own skills directory. A symlink
-follows the clone, so `git pull` is the update. A copy does not update itself: when
-a command or a `--json` shape changes it keeps the old contract, and the same machine
-ends up with two skills under one name with no way to tell which one an agent loaded.
-
-Installing the skill only teaches the agent to read the same facts. It installs no
-service and edits no other tool's configuration; starting and stopping stay with the
-agent through the CLI.
-
-**Cmd+N** connects a project. **Cmd+1…9** selects the currently visible sidebar worktree without resetting its module.
-**Option+Cmd+S/G/T** selects services, Git, or Console; **Cmd+B** toggles the sidebar, and **Shift+Cmd+P** opens the action palette.
-Same-worktree sessions support recursive panes and exclusive detached-window presentation. The toolbar
-exposes session management, layout recovery and an explicit release check. Resume requires a selected
-original session file and matching worktree metadata, never the latest conversation. Layout metadata is
-opt-in; drafts, terminal output and old processes are not automatically restored. Command blocks are an
-explicit per-shell zsh integration and do not modify the user's shell profiles.
-
-DeepSeek messages use headless; native mode requires an existing tui profile. These are not seamless modes
-of the same conversation. No new reasoning loop, model credential store, automatic plugin installation,
-approval bypass, or sandbox bypass is introduced.
-
-Paper is the only built-in default theme. Edit `~/.option-berth/config/theme.json`, `settings.json`, and
-`keybindings.json` for semantic colors, fonts, scales, independent panel widths, new-session defaults, and commands.
-Valid edits reload live; invalid edits retain the last valid values. Files follow `BERTH_HOME` and are never
-overwritten by the client. This does not install or execute plugins. See [personalization](client/macos/docs/client-configuration.md)
-and the [client guide](client/macos/README.md).
-
-The macOS release app embeds its matching engine, but is currently **ad-hoc signed, not Developer ID signed
-or notarized by Apple**. Verify SHA256SUMS; do not treat it as a notarized installer. Closing a terminal session
-does not stop project services and does not replace `oberth down`.
+The client points at any `oberth` through `BERTH_BIN`; the skill is installed by symlinking it into
+whichever agent's skills directory you use.
 
 ## Versioning and contributing
 
-Versions use **X1.X2.X3**: protocol changes, features, and bug fixes respectively. Incrementing a higher
-component resets the lower components. The [release process](docs/releasing.md) defines scripts and gates.
+Versions are **X1.X2.X3**: X1 for a protocol change, X2 for a feature, X3 for a fix; raising a higher
+digit clears the lower ones. Release scripts and validation rules are in
+[the release guide](docs/releasing.md).
 
-Submit focused PRs with the problem, implementation, TODOs, tests, compatibility, and rollback boundaries.
-Do not commit private configuration, credentials, runtime logs, or real project screenshots.
-See [AGENTS.md](AGENTS.md) for development conventions.
+Contribute one focused PR per theme, describing the problem, the implementation, TODOs, tests and
+compatibility. Do not commit private configuration, credentials, run logs or screenshots of real
+projects. Development rules are in [AGENTS.md](AGENTS.md).
 
 ```sh
 mage test
@@ -164,12 +147,13 @@ mage vet
 python3 -m unittest discover -s scripts -p '*_test.py'
 ```
 
-The core is designed around this project's worktree, manifest, service, run, and runtime-fact model.
-[Product boundaries](docs/product.md) and [architecture](docs/architecture.md) describe the current contract.
-Historical code provenance remains documented in [UPSTREAM](engine/UPSTREAM.md).
+The core is designed from this product's own needs around worktree, manifest, service, run and runtime
+facts. [Product boundaries](docs/product.md) and [architecture](docs/architecture.md) hold the current
+contract; the historical origin is recorded in [UPSTREAM](engine/UPSTREAM.md).
 
 ## License
 
-Maintained by **SheathedSharp** and project contributors. Project code is available under the
-[MIT License](LICENSE). Third-party code, fonts, and assets retain their own terms and copyright notices;
-see [third-party notices](THIRD_PARTY_NOTICES.md). External agent names describe compatibility, not endorsement.
+Maintained by **SheathedSharp** and contributors. Project code is under the [MIT License](LICENSE);
+third-party code and assets keep their own licenses and copyright, see
+[third-party notices](THIRD_PARTY_NOTICES.md). Coding-agent names describe compatibility only and do not
+imply endorsement by their developers.

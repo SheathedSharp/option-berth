@@ -32,7 +32,7 @@ type project struct {
 	date    string
 }
 
-// Build compiles the engine, optional Jev adapter, and macOS client.
+// Build compiles the engine and the optional Jev adapter.
 func Build() error {
 	p, err := loadProject()
 	if err != nil {
@@ -44,7 +44,7 @@ func Build() error {
 	if err := buildJev(p); err != nil {
 		return err
 	}
-	return buildClient(p)
+	return nil
 }
 
 // BuildEngine compiles the Go CLI and daemon.
@@ -144,16 +144,13 @@ func Version() error {
 	return nil
 }
 
-// Install builds and installs the CLI, adapter, and macOS application.
+// Install builds and installs the CLI and adapter.
 func Install() error {
 	p, err := loadProject()
 	if err != nil {
 		return err
 	}
-	if err := installCLI(p); err != nil {
-		return err
-	}
-	return installApp(p)
+	return installCLI(p)
 }
 
 // InstallCLI builds the CLI and adapter, then configures ~/.local/bin on PATH.
@@ -202,8 +199,6 @@ func Clean() error {
 	}
 	for _, path := range []string{
 		filepath.Join(p.root, "bin"),
-		filepath.Join(p.root, "client", "macos", "build"),
-		filepath.Join(p.root, "client", "macos", ".cache"),
 	} {
 		if err := os.RemoveAll(path); err != nil {
 			return err
@@ -315,12 +310,13 @@ func buildJev(p project) error {
 	return nil
 }
 
-func buildClient(p project) error {
-	cmd := exec.Command(filepath.Join(p.root, "client", "macos", "build.sh"))
-	cmd.Dir = p.root
-	cmd.Env = append(os.Environ(), "VERSION="+p.version, "BUILD_NUMBER="+buildNumber(p.root))
-	return runCommand(cmd)
+// clientMoved names the product that now owns the macOS interface. Mage stays a
+// single product's build tool rather than pretending to build a sibling repo.
+func clientMoved() error {
+	return fmt.Errorf("the macOS client is a separate product: https://github.com/SheathedSharp/option-berth-macos")
 }
+
+func buildClient(p project) error { return clientMoved() }
 
 func installCLI(p project) error {
 	if err := buildEngine(p); err != nil {
