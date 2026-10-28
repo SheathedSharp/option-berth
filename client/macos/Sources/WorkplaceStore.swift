@@ -2,19 +2,14 @@ import BerthAgent
 import BerthTerminal
 import Foundation
 
-/// Durable work surface under a worktree. On disk:
+/// The work recorded under a worktree, read back from the engine.
 ///
-/// ```
-/// ~/.option-berth/workplaces/
-///   index.json                 # worktree → activeID + ordered ids
-///   <workplace-id>/
-///     meta.json                # id, name, worktree, timestamps
-///     blocks.json              # unified shell + agent-session stream
-/// ```
-///
-/// Live PTY / agent processes are not owned here — only the isomorphic block
-/// cards (input, output, status, time, kind) so a workplace can be recalled.
-
+/// The engine owns this record: `oberth start` and `oberth agent stream` write
+/// it, and a front end that owns its own terminal reports the work it can see
+/// through `oberth workplace record`. Nothing here is stored a second time —
+/// `blocks` is a projection of `oberth workplace show --json`, refreshed after
+/// each mutation. Live PTY / agent processes are still owned by the console;
+/// only their reported cards live in the engine.
 public enum WorkplaceBlockKind: String, Codable, Sendable, Equatable {
     case shell
     case agentSession = "agent-session"
@@ -78,81 +73,113 @@ public struct WorkplaceBlock: Codable, Equatable, Identifiable, Sendable {
             exitCode: exitCode, interrupted: interrupted || status == .abnormal && exitCode == nil,
             capturedOutput: output)
     }
+
+    /// The engine's block, projected onto the console's card model.
+    init(engine block: EngineBlock) {
+        let status: WorkplaceBlockStatus
+        switch block.status {
+        case "running": status = .running
+        case "completed": status = .completed
+        default: status = .abnormal
+        }
+        self.init(
+            id: WorkplaceIdentity.uuid(for: block.id),
+            kind: block.kind == "agent" ? .agentSession : .shell,
+            input: block.input,
+            // Only a reported block carries text; an engine block points at its
+            // log, and the log stays the one copy of that output.
+            output: block.output,
+            status: status,
+            startedAt: WorkplaceTime.date(block.startedAt) ?? Date(timeIntervalSince1970: 0),
+            endedAt: WorkplaceTime.date(block.endedAt),
+            exitCode: block.exitCode,
+            interrupted: block.status == "interrupted",
+            provider: block.provider)
+    }
+
+    /// What the engine accepts for this block when the console reports it.
+    /// `queued` has no engine equivalent; a queued card is work that has not
+    /// started, which the engine records as still running.
+    var report: WorkplaceReport {
+        let engineStatus: String
+        switch status {
+        case .running, .queued: engineStatus = "running"
+        case .completed: engineStatus = "completed"
+        case .abnormal: engineStatus = interrupted ? "interrupted" : "failed"
+        }
+        return WorkplaceReport(
+            id: id,
+            kind: kind == .agentSession ? "agent" : "shell",
+            input: input,
+            output: output,
+            status: engineStatus,
+            startedAt: startedAt,
+            endedAt: endedAt,
+            exitCode: exitCode,
+            provider: provider)
+    }
 }
 
 public struct WorkplaceMeta: Codable, Equatable, Identifiable, Sendable {
+    /// The engine's identifier for this workplace. Empty only for the
+    /// placeholder the console shows before the first engine read returns.
+    public var engineID: String
     public var id: UUID
     public var name: String
     public var worktree: String
     public var createdAt: Date
     public var updatedAt: Date
 
-    public init(id: UUID = UUID(), name: String, worktree: String, createdAt: Date = Date(), updatedAt: Date = Date()) {
+    public init(engineID: String = "", id: UUID = UUID(), name: String, worktree: String,
+                createdAt: Date = Date(), updatedAt: Date = Date()) {
+        self.engineID = engineID
         self.id = id
         self.name = name
         self.worktree = worktree
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
+
+    init(engine workplace: EngineWorkplace) {
+        self.init(
+            engineID: workplace.id,
+            id: WorkplaceIdentity.uuid(for: workplace.id),
+            name: workplace.name,
+            worktree: workplace.worktree,
+            createdAt: WorkplaceTime.date(workplace.createdAt) ?? Date(timeIntervalSince1970: 0),
+            updatedAt: WorkplaceTime.date(workplace.updatedAt) ?? Date(timeIntervalSince1970: 0))
+    }
 }
 
-struct WorkplaceIndex: Codable, Equatable {
-    var schemaVersion: Int = 1
-    /// Canonical worktree path → ordering + active workplace.
-    var worktrees: [String: WorkplaceWorktreeEntry] = [:]
-}
-
-struct WorkplaceWorktreeEntry: Codable, Equatable {
-    var activeID: UUID?
-    var order: [UUID]
-}
-
-struct WorkplaceBlocksFile: Codable, Equatable {
-    var schemaVersion: Int = 1
-    var blocks: [WorkplaceBlock]
-}
-
+/// Reads and reports through the engine, and publishes the projection.
+///
+/// Every engine call blocks on a child process, so they run off the main actor;
+/// the published properties are only ever written on the main actor.
 @MainActor
 public final class WorkplaceStore: ObservableObject {
     public static let shared = WorkplaceStore()
 
-    public static let schemaVersion = 1
     public static let maximumBlocks = 500
 
     @Published public private(set) var active: WorkplaceMeta?
-    /// Blocks belonging to the active workplace (disk + live upserts).
+    /// Blocks belonging to the active workplace, as the engine last reported them.
     @Published public private(set) var blocks: [WorkplaceBlock] = []
     /// Wall clock when the active workplace was opened; live PTY/agent cards from
     /// before this moment stay foreign until the user creates them anew here.
     public private(set) var activeOpenedAt: Date = .distantPast
 
-    private let rootURL: URL
-    private var index: WorkplaceIndex
-    private var saveTask: Task<Void, Never>?
-    private let encoder: JSONEncoder
-    private let decoder: JSONDecoder
-    /// Serial queue that owns every disk write.
-    ///
-    /// `blocks.json` carries up to `maximumBlocks` cards with their full text,
-    /// so encoding it is a megabyte-scale job. Doing that on the main actor
-    /// stalled the window whenever a block finished; doing it here keeps the
-    /// writes ordered and off the UI thread. Encoding uses a snapshot taken on
-    /// the main actor, so nothing here reads mutable store state concurrently.
-    private let ioQueue = DispatchQueue(label: "option-berth.workplace.io", qos: .utility)
+    private let binary: String?
+    /// Last state handed to the engine for each block, so a refresh that changes
+    /// nothing does not spawn a process.
+    private var reported: [UUID: WorkplaceReport] = [:]
+    private var pending: [UUID: WorkplaceReport] = [:]
+    private var drainTask: Task<Void, Never>?
+    private var cachedList: [String: [WorkplaceMeta]] = [:]
 
-    public init(rootURL: URL? = nil) {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        self.rootURL = rootURL ?? home.appendingPathComponent(".option-berth/workplaces", isDirectory: true)
-        let enc = JSONEncoder()
-        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        enc.dateEncodingStrategy = .iso8601
-        self.encoder = enc
-        let dec = JSONDecoder()
-        dec.dateDecodingStrategy = .iso8601
-        self.decoder = dec
-        self.index = WorkplaceIndex()
-        try? FileManager.default.createDirectory(at: self.rootURL, withIntermediateDirectories: true)
-        self.index = loadIndex()
+    /// `binary` and the initial listing are injectable so checks can run against
+    /// a synthetic CLI with no daemon.
+    public init(binary: String? = nil) {
+        self.binary = binary
     }
 
     private func canonical(_ root: String) -> String {
@@ -160,248 +187,240 @@ public final class WorkplaceStore: ObservableObject {
         return URL(fileURLWithPath: root).standardizedFileURL.resolvingSymlinksInPath().path
     }
 
-    private func indexURL() -> URL { rootURL.appendingPathComponent("index.json") }
-    private func dirURL(_ id: UUID) -> URL { rootURL.appendingPathComponent(id.uuidString, isDirectory: true) }
-    private func metaURL(_ id: UUID) -> URL { dirURL(id).appendingPathComponent("meta.json") }
-    private func blocksURL(_ id: UUID) -> URL { dirURL(id).appendingPathComponent("blocks.json") }
-
-    private func loadIndex() -> WorkplaceIndex {
-        let url = indexURL()
-        guard let data = try? Data(contentsOf: url),
-              let value = try? decoder.decode(WorkplaceIndex.self, from: data) else {
-            return WorkplaceIndex()
+    private func offMain<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do { continuation.resume(returning: try work()) }
+                catch { continuation.resume(throwing: error) }
+            }
         }
-        return value
     }
 
-    private func writeIndex() throws {
-        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
-        let data = try encoder.encode(index)
-        try data.write(to: indexURL(), options: .atomic)
-    }
+    // MARK: Reading
 
-    private func readMeta(_ id: UUID) -> WorkplaceMeta? {
-        guard let data = try? Data(contentsOf: metaURL(id)),
-              let meta = try? decoder.decode(WorkplaceMeta.self, from: data) else { return nil }
-        return meta
-    }
-
-    private func writeMeta(_ meta: WorkplaceMeta) throws {
-        try FileManager.default.createDirectory(at: dirURL(meta.id), withIntermediateDirectories: true)
-        let data = try encoder.encode(meta)
-        try data.write(to: metaURL(meta.id), options: .atomic)
-    }
-
-    private func readBlocks(_ id: UUID) -> [WorkplaceBlock] {
-        guard let data = try? Data(contentsOf: blocksURL(id)),
-              let file = try? decoder.decode(WorkplaceBlocksFile.self, from: data) else { return [] }
-        return file.blocks
-    }
-
-    private func writeBlocks(_ id: UUID, _ blocks: [WorkplaceBlock]) throws {
-        try FileManager.default.createDirectory(at: dirURL(id), withIntermediateDirectories: true)
-        var trimmed = blocks
-        if trimmed.count > Self.maximumBlocks {
-            trimmed = Array(trimmed.suffix(Self.maximumBlocks))
-        }
-        let file = WorkplaceBlocksFile(schemaVersion: Self.schemaVersion, blocks: trimmed)
-        let data = try encoder.encode(file)
-        try data.write(to: blocksURL(id), options: .atomic)
-    }
-
-    /// Open last workplace for this worktree, or create a default one.
+    /// Open the last workplace for this worktree, or create a default one.
+    ///
+    /// The engine's `list` already says which workplace is current, so this is
+    /// one read plus, when there is nothing yet, one create.
     @discardableResult
-    public func ensureActive(worktree: String) throws -> WorkplaceMeta {
+    public func ensureActive(worktree: String) async throws -> WorkplaceMeta {
         let key = canonical(worktree)
         guard !key.isEmpty else { throw TerminalFailure("工作目录无效 / Invalid worktree") }
         if let active, canonical(active.worktree) == key {
             return active
         }
-        flushPendingSave()
-        var entry = index.worktrees[key] ?? WorkplaceWorktreeEntry(activeID: nil, order: [])
-        if let id = entry.activeID, let meta = readMeta(id), canonical(meta.worktree) == key {
-            active = meta
-            blocks = readBlocks(id)
-            // Empty archive claims current live PTY history; non-empty stays isolated.
-            activeOpenedAt = blocks.isEmpty ? .distantPast : Date()
+        let workplaces = try await offMain { [binary] in
+            try WorkplaceAPI.list(worktree: key, binary: binary)
+        }
+        cachedList[key] = workplaces.map(WorkplaceMeta.init(engine:))
+        if let current = workplaces.first(where: { $0.active }) {
+            let meta = WorkplaceMeta(engine: current)
+            await adopt(meta, worktree: key)
             return meta
         }
-        for id in entry.order.reversed() {
-            if let meta = readMeta(id), canonical(meta.worktree) == key {
-                entry.activeID = id
-                index.worktrees[key] = entry
-                try writeIndex()
-                active = meta
-                blocks = readBlocks(id)
-                activeOpenedAt = blocks.isEmpty ? .distantPast : Date()
-                return meta
+        if let last = workplaces.last {
+            let used = try await offMain { [binary] in
+                try WorkplaceAPI.use(worktree: key, query: last.id, binary: binary)
             }
+            let meta = WorkplaceMeta(engine: used)
+            await adopt(meta, worktree: key)
+            return meta
         }
-        return try create(worktree: key, name: "默认", makeActive: true)
+        return try await create(worktree: key, name: "默认", makeActive: true)
     }
 
     public func list(worktree: String) -> [WorkplaceMeta] {
         let key = canonical(worktree)
-        guard !key.isEmpty else { return [] }
-        let order = index.worktrees[key]?.order ?? []
-        return order.compactMap { id -> WorkplaceMeta? in
-            guard let meta = readMeta(id), canonical(meta.worktree) == key else { return nil }
-            return meta
-        }
+        if let cached = cachedList[key] { return cached }
+        if let active, canonical(active.worktree) == key { return [active] }
+        return []
     }
 
-    @discardableResult
-    public func create(worktree: String, name: String, makeActive: Bool = true) throws -> WorkplaceMeta {
+    public func refreshList(worktree: String) async throws {
         let key = canonical(worktree)
         guard !key.isEmpty else { throw TerminalFailure("工作目录无效 / Invalid worktree") }
-        flushPendingSave()
+        let workplaces = try await offMain { [binary] in
+            try WorkplaceAPI.list(worktree: key, binary: binary)
+        }
+        cachedList[key] = workplaces.map(WorkplaceMeta.init(engine:))
+    }
+
+    private func adopt(_ meta: WorkplaceMeta, worktree: String) async {
+        active = meta
+        let shown = try? await offMain { [binary] in
+            try WorkplaceAPI.show(worktree: worktree, binary: binary)
+        }
+        blocks = shown?.blocks.map(WorkplaceBlock.init(engine:)) ?? []
+        activeOpenedAt = blocks.isEmpty ? .distantPast : Date()
+    }
+
+    // MARK: Writing
+
+    @discardableResult
+    public func create(worktree: String, name: String, makeActive: Bool = true) async throws -> WorkplaceMeta {
+        let key = canonical(worktree)
+        guard !key.isEmpty else { throw TerminalFailure("工作目录无效 / Invalid worktree") }
+        flushPendingReports(waiting: true)
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let label = trimmed.isEmpty ? defaultName(for: key) : trimmed
-        let meta = WorkplaceMeta(name: label, worktree: key)
-        try writeMeta(meta)
-        try writeBlocks(meta.id, [])
-        var entry = index.worktrees[key] ?? WorkplaceWorktreeEntry(activeID: nil, order: [])
-        entry.order.append(meta.id)
+        let created = try await offMain { [binary] in
+            try WorkplaceAPI.create(worktree: key, name: label, binary: binary)
+        }
+        let meta = WorkplaceMeta(engine: created)
+        cachedList[key, default: []].append(meta)
         if makeActive {
-            if let previous = active, canonical(previous.worktree) == key {
-                persistActiveNowBlocking()
-            }
-            entry.activeID = meta.id
-            active = meta
-            blocks = []
+            reported.removeAll()
+            await adopt(meta, worktree: key)
             activeOpenedAt = .distantPast
         }
-        index.worktrees[key] = entry
-        try writeIndex()
         return meta
     }
 
     /// Switch to an existing workplace under this worktree (by id, name, or prefix).
     @discardableResult
-    public func switchTo(worktree: String, query: String) throws -> WorkplaceMeta {
+    public func switchTo(worktree: String, query: String) async throws -> WorkplaceMeta {
         let key = canonical(worktree)
         guard !key.isEmpty else { throw TerminalFailure("工作目录无效 / Invalid worktree") }
-        let candidates = list(worktree: key)
-        guard !candidates.isEmpty else { throw TerminalFailure("此 worktree 还没有 Workplace / No workplaces yet") }
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { throw TerminalFailure("用法：/workplace 名称或 id / Usage: /workplace name-or-id") }
-        let match: WorkplaceMeta?
-        if let exact = candidates.first(where: { $0.name.caseInsensitiveCompare(q) == .orderedSame }) {
-            match = exact
-        } else if let byID = candidates.first(where: { $0.id.uuidString.lowercased() == q.lowercased() }) {
-            match = byID
-        } else if let prefix = candidates.first(where: {
-            $0.id.uuidString.lowercased().hasPrefix(q.lowercased()) || $0.name.lowercased().hasPrefix(q.lowercased())
-        }) {
-            match = prefix
-        } else if let contains = candidates.first(where: { $0.name.lowercased().contains(q.lowercased()) }) {
-            match = contains
-        } else {
-            match = nil
+        if cachedList[key] == nil { try await refreshList(worktree: key) }
+        let candidates = list(worktree: key)
+        guard !candidates.isEmpty else { throw TerminalFailure("此 worktree 还没有 Workplace / No workplaces yet") }
+        flushPendingReports(waiting: true)
+        // The engine owns name/id/prefix matching and its ambiguity rules; the
+        // client passes the user's query through instead of re-implementing them.
+        let switched = try await offMain { [binary] in
+            try WorkplaceAPI.use(worktree: key, query: q, binary: binary)
         }
-        guard let target = match else {
-            throw TerminalFailure("找不到 Workplace：\(q)")
-        }
-        if active?.id == target.id { return target }
-        flushPendingSave()
-        persistActiveNowBlocking()
-        var entry = index.worktrees[key] ?? WorkplaceWorktreeEntry(activeID: nil, order: candidates.map(\.id))
-        entry.activeID = target.id
-        if !entry.order.contains(target.id) { entry.order.append(target.id) }
-        index.worktrees[key] = entry
-        try writeIndex()
-        active = target
-        blocks = readBlocks(target.id)
-        activeOpenedAt = blocks.isEmpty ? .distantPast : Date()
-        return target
+        let meta = WorkplaceMeta(engine: switched)
+        reported.removeAll()
+        await adopt(meta, worktree: key)
+        return meta
     }
 
-    public func delete(worktree: String, query: String) throws {
+    public func delete(worktree: String, query: String) async throws {
         let key = canonical(worktree)
         guard !key.isEmpty else { throw TerminalFailure("工作目录无效 / Invalid worktree") }
-        let candidates = list(worktree: key)
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { throw TerminalFailure("用法：/workplace-delete 名称或 id") }
-        guard let target = candidates.first(where: {
-            $0.name.caseInsensitiveCompare(q) == .orderedSame
-                || $0.id.uuidString.lowercased() == q.lowercased()
-                || $0.id.uuidString.lowercased().hasPrefix(q.lowercased())
-                || $0.name.lowercased().contains(q.lowercased())
-        }) else {
-            throw TerminalFailure("找不到 Workplace：\(q)")
+        flushPendingReports(waiting: true)
+        let removing = active?.engineID
+        try await offMain { [binary] in
+            try WorkplaceAPI.delete(worktree: key, query: q, binary: binary)
         }
-        flushPendingSave()
-        let wasActive = active?.id == target.id
-        try? FileManager.default.removeItem(at: dirURL(target.id))
-        var entry = index.worktrees[key] ?? WorkplaceWorktreeEntry(activeID: nil, order: [])
-        entry.order.removeAll { $0 == target.id }
-        if entry.activeID == target.id { entry.activeID = entry.order.last }
-        index.worktrees[key] = entry
-        try writeIndex()
-        if wasActive {
-            if let nextID = entry.activeID, let meta = readMeta(nextID) {
-                active = meta
-                blocks = readBlocks(nextID)
-                activeOpenedAt = blocks.isEmpty ? .distantPast : Date()
-            } else if entry.order.isEmpty {
-                _ = try create(worktree: key, name: "默认", makeActive: true)
+        try await refreshList(worktree: key)
+        if let removing, active?.engineID == removing {
+            reported.removeAll()
+            if let next = cachedList[key]?.last {
+                let used = try await offMain { [binary] in
+                    try WorkplaceAPI.use(worktree: key, query: next.engineID, binary: binary)
+                }
+                await adopt(WorkplaceMeta(engine: used), worktree: key)
             } else {
                 active = nil
                 blocks = []
                 activeOpenedAt = .distantPast
+                _ = try await create(worktree: key, name: "默认", makeActive: true)
             }
         }
     }
 
-    /// Upsert live shell + agent cards into the active workplace and schedule a disk write.
+    // MARK: Reporting the console's own work
+
+    /// Upsert live shell + agent cards into the active workplace.
+    ///
+    /// Only the cards this console owns are reported: the engine already records
+    /// what it started. Reports are coalesced per block and sent off the main
+    /// actor, so a fast-finishing command costs one report, not two.
     public func syncLive(shell: [CommandBlock], agents: [AgentRow]) {
         guard active != nil else { return }
-        var map = Dictionary(uniqueKeysWithValues: blocks.map { ($0.id, $0) })
-        let known = Set(map.keys)
         let opened = activeOpenedAt.addingTimeInterval(-1)
+        var latest: [UUID: WorkplaceBlock] = [:]
         for block in shell {
-            // Skip live PTY history that predates this workplace open, unless already archived.
-            if !known.contains(block.id), block.startedAt < opened { continue }
-            let next = WorkplaceBlock.fromShell(block)
-            map[next.id] = next
+            if block.startedAt < opened, reported[block.id] == nil { continue }
+            latest[block.id] = WorkplaceBlock.fromShell(block)
         }
         for row in agents {
             let since = row.since ?? Date()
-            if !known.contains(row.id), since < opened { continue }
-            let status: WorkplaceBlockStatus
-            switch row.status {
-            case .starting, .working: status = .running
-            case .queued: status = .queued
-            case .completed, .idle, .ended: status = .completed
-            case .failed, .interrupted, .lost, .needsYou: status = .abnormal
+            if since < opened, reported[row.id] == nil { continue }
+            latest[row.id] = Self.block(fromAgentRow: row)
+        }
+        var changed = false
+        for (id, block) in latest {
+            let report = block.report
+            if reported[id] == report { continue }
+            pending[id] = report
+            reported[id] = report
+            changed = true
+        }
+        if changed { drainReports() }
+    }
+
+    private static func block(fromAgentRow row: AgentRow) -> WorkplaceBlock {
+        let status: WorkplaceBlockStatus
+        switch row.status {
+        case .starting, .working: status = .running
+        case .queued: status = .queued
+        case .completed, .idle, .ended: status = .completed
+        case .failed, .interrupted, .lost, .needsYou: status = .abnormal
+        }
+        let ended: Date? = (status == .running || status == .queued) ? nil : (row.since ?? Date())
+        return WorkplaceBlock(
+            id: row.id, kind: .agentSession, input: row.userPrompt ?? row.title,
+            output: row.resultText ?? row.activity, status: status,
+            startedAt: row.since ?? Date(), endedAt: ended, exitCode: row.exitCode,
+            interrupted: status == .abnormal && row.exitCode == nil,
+            provider: row.provider, sessionTitle: row.title, agentSessionID: row.sessionID)
+    }
+
+    private func drainReports() {
+        guard drainTask == nil else { return }
+        drainTask = Task { @MainActor in
+            defer { drainTask = nil }
+            while let (id, report) = pending.first {
+                pending.removeValue(forKey: id)
+                guard let worktree = active?.worktree else { continue }
+                // A failed report is a diagnostic, not a command failure: the
+                // engine keeps the block as it last heard it, and the card stays
+                // visible in the console either way.
+                _ = try? await offMain { [binary] in
+                    try WorkplaceAPI.record(report, worktree: worktree, binary: binary)
+                }
             }
-            let input = row.userPrompt ?? row.title
-            let output = row.resultText ?? row.activity
-            let ended: Date? = (status == .running || status == .queued) ? nil : (row.since ?? Date())
-            let next = WorkplaceBlock(
-                id: row.id, kind: .agentSession, input: input, output: output, status: status,
-                startedAt: row.since ?? Date(), endedAt: ended, exitCode: row.exitCode,
-                interrupted: status == .abnormal && row.exitCode == nil,
-                provider: row.provider, sessionTitle: row.title, agentSessionID: row.sessionID)
-            map[next.id] = next
-        }
-        let merged = map.values.sorted { lhs, rhs in
-            if lhs.startedAt != rhs.startedAt { return lhs.startedAt < rhs.startedAt }
-            return lhs.id.uuidString < rhs.id.uuidString
-        }
-        if merged != blocks {
-            blocks = merged
-            scheduleSave()
         }
     }
 
-    /// Shell cards restored from disk that are not already in the live PTY list.
+    /// Send whatever is still queued before the process goes away, then stop.
+    ///
+    /// Reports after this are dropped rather than silently deferred: the engine
+    /// keeps the last state it heard, and an unobserved end stays `running`
+    /// instead of being claimed as finished.
+    public func flushPendingSave() {
+        flushPendingReports(waiting: true)
+    }
+
+    private func flushPendingReports(waiting: Bool) {
+        drainTask?.cancel()
+        drainTask = nil
+        guard waiting, let worktree = active?.worktree else { return }
+        let binary = self.binary
+        while let (id, report) = pending.first {
+            pending.removeValue(forKey: id)
+            // Go through the same call the async drain uses: it is the one that
+            // writes output to a file instead of putting it on argv.
+            _ = try? WorkplaceAPI.record(report, worktree: worktree, binary: binary)
+        }
+    }
+
+    // MARK: Projections for the console
+
+    /// Shell cards restored from the engine that are not already in the live PTY list.
     public func historicalShellBlocks(excludingLive live: [CommandBlock]) -> [CommandBlock] {
         let liveIDs = Set(live.map(\.id))
         return blocks.filter { $0.kind == .shell && !liveIDs.contains($0.id) }.map { $0.asCommandBlock() }
     }
 
-    /// Agent cards restored from disk that are not already projected live.
+    /// Agent cards restored from the engine that are not already projected live.
     public func historicalAgentRows(excludingLive liveIDs: Set<UUID>) -> [AgentRow] {
         blocks.compactMap { block -> AgentRow? in
             guard block.kind == .agentSession, !liveIDs.contains(block.id) else { return nil }
@@ -427,83 +446,6 @@ public final class WorkplaceStore: ObservableObject {
                 userPrompt: block.input,
                 resultText: block.output,
                 exitCode: block.exitCode)
-        }
-    }
-
-    public func scheduleSave() {
-        saveTask?.cancel()
-        saveTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 350_000_000)
-            guard !Task.isCancelled else { return }
-            persistActiveNow()
-        }
-    }
-
-    /// Cancel the debounce and write now, **waiting** for the write to land.
-    ///
-    /// The blocking part is the contract: callers reach this when they are about
-    /// to change what `active` points at, or when the process is going away.
-    /// Returning before the bytes reach disk would silently drop the last block
-    /// of a session on quit.
-    public func flushPendingSave() {
-        saveTask?.cancel()
-        saveTask = nil
-        persistActiveNowBlocking()
-    }
-
-    /// Persist now and wait for the write to land.
-    ///
-    /// Only for switches away from the current workplace: `active` is about to
-    /// be replaced, so the old blocks must reach disk before the new ones start
-    /// being written. Everything else uses the async path.
-    private func persistActiveNowBlocking() {
-        persistActiveNow()
-        ioQueue.sync {}
-    }
-
-    /// Persist the active workplace.
-    ///
-    /// Encoding and writing happen on `ioQueue`; the caller never blocks. Order
-    /// is preserved because the queue is serial and each write carries the
-    /// snapshot taken at call time. Returns nothing: a failed write leaves the
-    /// in-memory state intact and the next save retries, which is the same
-    /// contract the throwing version had for its callers.
-    private func persistActiveNow() {
-        guard var meta = active else { return }
-        meta.updatedAt = Date()
-        active = meta
-        let blocksSnapshot = blocks
-        let key = canonical(meta.worktree)
-        var entry = index.worktrees[key] ?? WorkplaceWorktreeEntry(activeID: meta.id, order: [meta.id])
-        entry.activeID = meta.id
-        if !entry.order.contains(meta.id) { entry.order.append(meta.id) }
-        index.worktrees[key] = entry
-        let indexPath = index
-        let encoder = self.encoder
-        ioQueue.async { [rootURL] in
-            let metaURL = rootURL
-                .appendingPathComponent(meta.id.uuidString, isDirectory: true)
-                .appendingPathComponent("meta.json")
-            let blocksURL = rootURL
-                .appendingPathComponent(meta.id.uuidString, isDirectory: true)
-                .appendingPathComponent("blocks.json")
-            let indexURL = rootURL.appendingPathComponent("index.json")
-            let directory = rootURL.appendingPathComponent(meta.id.uuidString, isDirectory: true)
-            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            if let data = try? encoder.encode(meta) {
-                try? data.write(to: metaURL, options: .atomic)
-            }
-            var trimmed = blocksSnapshot
-            if trimmed.count > WorkplaceStore.maximumBlocks {
-                trimmed = Array(trimmed.suffix(WorkplaceStore.maximumBlocks))
-            }
-            let file = WorkplaceBlocksFile(schemaVersion: WorkplaceStore.schemaVersion, blocks: trimmed)
-            if let data = try? encoder.encode(file) {
-                try? data.write(to: blocksURL, options: .atomic)
-            }
-            if let data = try? encoder.encode(indexPath) {
-                try? data.write(to: indexURL, options: .atomic)
-            }
         }
     }
 

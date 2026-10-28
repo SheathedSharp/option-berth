@@ -1154,14 +1154,17 @@ struct WorkspaceConsole: View {
         }
     }
     private func ensureWorkplace() {
-        do {
-            let meta = try workplaceStore.ensureActive(worktree: root)
-            syncWorkplaceBlocks(shellSession: selected)
-            if composerNotice.isEmpty {
-                composerNotice = "Workplace · \(meta.name)"
+        let worktree = root
+        Task { @MainActor in
+            do {
+                let meta = try await workplaceStore.ensureActive(worktree: worktree)
+                syncWorkplaceBlocks(shellSession: selected)
+                if composerNotice.isEmpty {
+                    composerNotice = "Workplace · \(meta.name)"
+                }
+            } catch {
+                composerNotice = error.localizedDescription
             }
-        } catch {
-            composerNotice = error.localizedDescription
         }
     }
 
@@ -1192,53 +1195,71 @@ struct WorkspaceConsole: View {
     }
 
     private func runWorkplaceNew(argument: String) {
-        do {
-            syncWorkplaceBlocks(shellSession: selected)
-            let meta = try workplaceStore.create(worktree: root, name: argument, makeActive: true)
-            workspace.draft = ""
-            composerNotice = "已新建 Workplace · \(meta.name)"
-        } catch {
-            composerNotice = error.localizedDescription
+        let worktree = root
+        Task { @MainActor in
+            do {
+                syncWorkplaceBlocks(shellSession: selected)
+                let meta = try await workplaceStore.create(worktree: worktree, name: argument, makeActive: true)
+                workspace.draft = ""
+                composerNotice = "已新建 Workplace · \(meta.name)"
+            } catch {
+                composerNotice = error.localizedDescription
+            }
         }
     }
 
     private func runWorkplaceList() {
-        let rows = workplaceStore.list(worktree: root)
-        workspace.draft = ""
-        if rows.isEmpty {
-            composerNotice = "此 worktree 还没有 Workplace"
-            return
+        let worktree = root
+        Task { @MainActor in
+            do {
+                try await workplaceStore.refreshList(worktree: worktree)
+            } catch {
+                composerNotice = error.localizedDescription
+                return
+            }
+            let rows = workplaceStore.list(worktree: worktree)
+            workspace.draft = ""
+            if rows.isEmpty {
+                composerNotice = "此 worktree 还没有 Workplace"
+                return
+            }
+            let activeID = workplaceStore.active?.engineID
+            let lines = rows.map { meta in
+                let mark = meta.engineID == activeID ? "●" : "○"
+                let short = String(meta.engineID.prefix(8))
+                return "\(mark) \(meta.name)  \(short)"
+            }
+            composerNotice = "Workplace（\(rows.count)）\n" + lines.joined(separator: " · ")
         }
-        let activeID = workplaceStore.active?.id
-        let lines = rows.map { meta in
-            let mark = meta.id == activeID ? "●" : "○"
-            let short = String(meta.id.uuidString.prefix(8))
-            return "\(mark) \(meta.name)  \(short)"
-        }
-        composerNotice = "Workplace（\(rows.count)）\n" + lines.joined(separator: " · ")
     }
 
     private func runWorkplaceSwitch(argument: String) {
-        do {
-            syncWorkplaceBlocks(shellSession: selected)
-            let meta = try workplaceStore.switchTo(worktree: root, query: argument)
-            workspace.draft = ""
-            let count = workplaceStore.blocks.count
-            composerNotice = "已切换到 Workplace · \(meta.name)（\(count) 块）"
-        } catch {
-            composerNotice = error.localizedDescription
+        let worktree = root
+        Task { @MainActor in
+            do {
+                syncWorkplaceBlocks(shellSession: selected)
+                let meta = try await workplaceStore.switchTo(worktree: worktree, query: argument)
+                workspace.draft = ""
+                let count = workplaceStore.blocks.count
+                composerNotice = "已切换到 Workplace · \(meta.name)（\(count) 块）"
+            } catch {
+                composerNotice = error.localizedDescription
+            }
         }
     }
 
     private func runWorkplaceDelete(argument: String) {
-        do {
-            syncWorkplaceBlocks(shellSession: selected)
-            try workplaceStore.delete(worktree: root, query: argument)
-            workspace.draft = ""
-            let name = workplaceStore.active?.name ?? "?"
-            composerNotice = "已删除 · 当前 Workplace · \(name)"
-        } catch {
-            composerNotice = error.localizedDescription
+        let worktree = root
+        Task { @MainActor in
+            do {
+                syncWorkplaceBlocks(shellSession: selected)
+                try await workplaceStore.delete(worktree: worktree, query: argument)
+                workspace.draft = ""
+                let name = workplaceStore.active?.name ?? "?"
+                composerNotice = "已删除 · 当前 Workplace · \(name)"
+            } catch {
+                composerNotice = error.localizedDescription
+            }
         }
     }
 
