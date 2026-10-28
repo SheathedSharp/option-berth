@@ -1,6 +1,11 @@
 name: Product website
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['site/**', '.github/workflows/site.yml']
+  pull_request:
+    paths: ['site/**', '.github/workflows/site.yml']
 permissions:
   contents: read
 concurrency:
