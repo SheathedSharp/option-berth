@@ -82,20 +82,30 @@ func printWelcome(w io.Writer) {
 	}
 }
 
+// The help is grouped by what the reader is trying to do, not by which part of
+// the engine does it: an agent looking at `oberth --help` is asking "what is it
+// doing", "make it run", "what does the code say", "hand work over or take it
+// back", or "fix the installation" — never "which module is this". The layers
+// are the ones docs/product.md and docs/cli.md name, and the contract test pins
+// every command to one of them.
 const (
-	commandGroupCore    = "core"
-	commandGroupSupport = "support"
-	commandGroupInfra   = "infra"
+	commandGroupFacts      = "facts"
+	commandGroupOperations = "operations"
+	commandGroupCode       = "code"
+	commandGroupHandoff    = "handoff"
+	commandGroupInfra      = "infra"
 )
 
 func init() {
 	rootCmd.AddGroup(
-		&cobra.Group{ID: commandGroupCore, Title: "Worktree lifecycle:"},
-		&cobra.Group{ID: commandGroupSupport, Title: "Inspection and explicit controls:"},
+		&cobra.Group{ID: commandGroupFacts, Title: "Facts:"},
+		&cobra.Group{ID: commandGroupOperations, Title: "Operations:"},
+		&cobra.Group{ID: commandGroupCode, Title: "Code and declaration:"},
+		&cobra.Group{ID: commandGroupHandoff, Title: "Handoff:"},
 		&cobra.Group{ID: commandGroupInfra, Title: "Runtime and setup:"},
 	)
 	// cobra's built-in help command would otherwise land in a lone
-	// "Additional Commands" section, which breaks the three-ring grouping the
+	// "Additional Commands" section, which breaks the layer grouping the
 	// contract test pins. It is setup tooling, so it belongs with the rest of
 	// Runtime and setup.
 	rootCmd.SetHelpCommandGroupID(commandGroupInfra)

@@ -21,7 +21,7 @@ var (
 var downCmd = &cobra.Command{
 	Use:     "down [project]",
 	Short:   "Stop a project's services and release its claimed ports",
-	GroupID: commandGroupCore,
+	GroupID: commandGroupOperations,
 	Long: "Stop every service of the project in the nearest oberth.yaml, or of the\n" +
 		"named project: every port it listens on, and every service option-berth started\n" +
 		"for it that holds no port. The ports option-berth claimed for its `port: auto`\n" +

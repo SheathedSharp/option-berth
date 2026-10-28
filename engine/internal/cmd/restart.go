@@ -21,7 +21,7 @@ var (
 var restartCmd = &cobra.Command{
 	Use:     "restart [project]",
 	Short:   "Restart a project's services",
-	GroupID: commandGroupCore,
+	GroupID: commandGroupOperations,
 	Long: "Stop and start the project's services again. With --only, only the named\n" +
 		"services are restarted; their port: auto claims stay attached to the\n" +
 		"worktree so the service can reclaim the same addresses.",

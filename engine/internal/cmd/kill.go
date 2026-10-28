@@ -36,7 +36,7 @@ var (
 var killCmd = &cobra.Command{
 	Use:     "kill [port|pid ...]",
 	Short:   "Stop a named listener or process",
-	GroupID: commandGroupSupport,
+	GroupID: commandGroupOperations,
 	Long: `Stop a named listener. Docker-published ports are stopped with docker stop; a
 listener option-berth started is stopped together with its whole process tree.
 

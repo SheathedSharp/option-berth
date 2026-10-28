@@ -35,7 +35,7 @@ type eventsChangedRecord struct{ state.StateChanged }
 var eventsCmd = &cobra.Command{
 	Use:     "events",
 	Short:   "Subscribe to selected worktree state changes",
-	GroupID: commandGroupSupport,
+	GroupID: commandGroupFacts,
 	Long: "Read a filtered machine-local state stream. The first NDJSON record is a snapshot; later records are state.changed summaries.\n\n" +
 		"Selectors are additive. `--worktree` takes a checkout root or worktree ID, `--repository` takes a repository ID, and `--workspace` joins an explicit ephemeral integration relation.\n" +
 		"A workspace is registered by a subscription that also supplies a worktree or repository; later subscribers may use that workspace name alone.\n" +

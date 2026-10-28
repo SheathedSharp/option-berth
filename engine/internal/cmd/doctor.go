@@ -34,7 +34,7 @@ var (
 var doctorCmd = &cobra.Command{
 	Use:     "doctor",
 	Short:   "Check that this option-berth installation is healthy",
-	GroupID: commandGroupSupport,
+	GroupID: commandGroupInfra,
 	Long: "Run every self-check option-berth has: the binary on PATH, the config file, the\n" +
 		"daemon and its socket, the database, this project's\n" +
 		"oberth.yaml and docker.\n\n" +

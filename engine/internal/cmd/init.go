@@ -45,7 +45,7 @@ const initNote = `
 var initCmd = &cobra.Command{
 	Use:     "init",
 	Short:   "Create the starter oberth.yaml",
-	GroupID: commandGroupCore,
+	GroupID: commandGroupCode,
 	Long: "Create a starter oberth.yaml for the current worktree. It records the\n" +
 		"project identity and leaves the service list for a person to review.\n\n" +
 		"Use `oberth init draft` when a local agent should prepare a draft, and\n" +

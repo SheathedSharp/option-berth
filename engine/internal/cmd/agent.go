@@ -10,7 +10,7 @@ import (
 )
 
 func newAgentCommand() *cobra.Command {
-	command := &cobra.Command{Use: "agent", Short: "Open an existing coding agent in an explicitly selected worktree", GroupID: commandGroupSupport}
+	command := &cobra.Command{Use: "agent", Short: "Open an existing coding agent in an explicitly selected worktree", GroupID: commandGroupHandoff}
 	var listJSON bool
 	list := &cobra.Command{Use: "list", Args: cobra.NoArgs, Short: "List supported agents without running them", RunE: func(cmd *cobra.Command, _ []string) error {
 		providers := agentlaunch.Providers(nil)

@@ -27,7 +27,7 @@ var (
 var gitCmd = &cobra.Command{
 	Use:     "git [path]",
 	Short:   "Show a repository's current state (read-only)",
-	GroupID: commandGroupSupport,
+	GroupID: commandGroupCode,
 	Long: "Show the branch, the worktrees, what has changed and where the checkout\n" +
 		"stands against its upstream. With no argument it reads the repository the\n" +
 		"working directory is in.\n\n" +
