@@ -26,10 +26,11 @@ Sonar 等参考项目提供思路和工程经验，不决定本项目的架构�
 
 ```text
 Worktree      路径 + git 身份（仓库、分支、脏文件数）          代码采
- └─ Manifest  oberth.yaml                                      人写（agent 可起草，人采纳）
-     └─ Service   一条服务：prepare / cmd / port / depends_on    人写
-         └─ Run       一次运行：pid、起止时间、退出码、日志路径    后台进程记
-             └─ Runtime facts 进程是否活着、监听端口、退出原因     代码采
+ ├─ Manifest  oberth.yaml                                      人写（agent 可起草，人采纳）
+ │   └─ Service   一条服务：prepare / cmd / port / depends_on    人写
+ │       └─ Run       一次运行：pid、起止时间、退出码、日志路径    后台进程记
+ │           └─ Runtime facts 进程是否活着、监听端口、退出原因     代码采
+ ├─ Workplace   这个 worktree 上的工作记录：workplace 与其中的 block  引擎记（前端可上报）
 + Undeclared  cwd 落在这个 worktree 里、清单却没写的监听          代码采
 ```
 
@@ -39,6 +40,10 @@ Worktree      路径 + git 身份（仓库、分支、脏文件数）          �
 - 服务可以带 `prepare:` 前置命令。`up` 和 `restart` 会在启动长驻 `cmd:` 前完成它，适合
   Java jar、生成代码或其他必须从当前 checkout 重新产出的制品；前置命令失败时不会启动服务。
 - 两个 worktree 同时跑同一个仓库时，每个 Run 归属于起它的那个 worktree，不互相归错。
+- **工作记录挂在 worktree 上，不在服务链上。** 一个 worktree 可以有多个 workplace，每个按
+  顺序保存其中的工作条目：引擎跑过的命令、交给 agent 的每一轮任务。它是「做过什么」的记录，
+  不是新的运行真相——引擎记录的条目指向对应的 Run 和日志，没有观察到结束的条目保持 running，
+  不冒充成功。产品不靠它判断服务状态，也不把它当成会话恢复。
 
 ## 核心闭环
 
@@ -54,11 +59,15 @@ oberth down      停掉这个项目的全部服务
 没有清单时，`oberth init` 写一份 starter。需要 agent 帮忙时用
 `oberth init draft`，由人用 `oberth init adopt` 采纳落盘。
 
+服务之外，`oberth workplace` 是同一个 worktree 上的**工作记录**：做过哪些命令和哪些 agent
+任务，记录在哪一条 Run 和哪一份日志上，以及新工作记到哪个 workplace。它只读回做过什么，
+不起停也不恢复。
+
 ## 命令分环
 
 | 环 | 命令 | 要求 |
 |---|---|---|
-| 核心 | `status` · `up` · `restart` · `down` · `logs` · `init` | 形状写进 [`cli.md`](cli.md)，场景测试守门 |
+| 核心 | `status` · `up` · `restart` · `down` · `logs` · `init` · `workplace` | 形状写进 [`cli.md`](cli.md)，场景测试守门 |
 | 支撑 | `events` · `start` · `kill` · `git`（只读摘要与 diff）· `doctor` | `events` 只读订阅明确关系的状态变化；`start` 只跑单个命令，`kill` 只处理明确点名的进程 |
 | 基础设施 | `daemon` · `config` · `serve` · `version` · `completion` | 只管理后台采集器、配置与运行环境 |
 
@@ -88,6 +97,7 @@ macOS 客户端可以为这个可选 adapter 保存本地 Jev 配置；配置只
 | 代码 / git | 只读：不提交、不暂存、不切分支 |
 | `oberth.yaml` | 读、校验、起草；落盘只随人的采纳 |
 | 项目服务 | 按清单起停、读日志 |
+| 工作记录 | 记引擎自己启动的工作，以及前端上报的条目；增删 workplace 和其中的 block。不启动、不恢复、不替前端观察它自己的终端 |
 | 机器级服务 | 只看在不在听；`up` / `down` 不动它们，点名 `kill` 是唯一例外 |
 | 别人的配置 | 不写：不装 hooks、不注册 MCP、不改 agent 的配置 |
 

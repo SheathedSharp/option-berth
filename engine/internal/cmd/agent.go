@@ -42,8 +42,14 @@ func newAgentCommand() *cobra.Command {
 			if !agentstream.Supported(args[0]) {
 				return usageError{fmt.Errorf("agent stream is not available for provider %q", args[0])}
 			}
+			// Each turn is recorded into this worktree's active workplace. It
+			// is a side channel: a record that cannot be written never
+			// interrupts the session the client is running.
+			recorder := startRecording(streamWorktree)
+			defer recorder.Close()
 			return agentstream.Run(agentstream.Options{
 				Provider: args[0], Worktree: streamWorktree, ResumeFile: streamResume,
+				Observer: recorder.bridgeEvents(args[0]),
 			}, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}

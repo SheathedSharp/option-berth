@@ -304,6 +304,16 @@ func init() {
 
 	Describe("sessions.kill", SessionsKillParams{}, KillEnvelope{}, nil, nil)
 
+	// Workplaces: the worktree's recorded shell and agent work. The package
+	// that serves them is internal/workplace, which registers the handlers
+	// from its own init().
+	Describe("workplace.list", WorkplaceParams{}, WorkplaceListResult{}, nil, nil)
+	Describe("workplace.new", WorkplaceNewParams{}, WorkplaceNewResult{}, nil, nil)
+	Describe("workplace.use", WorkplaceUseParams{}, WorkplaceUseResult{}, nil, nil)
+	Describe("workplace.show", WorkplaceShowParams{}, WorkplaceShowResult{}, nil, nil)
+	Describe("workplace.delete", WorkplaceDeleteParams{}, WorkplaceDeleteResult{}, nil, nil)
+	Describe("workplace.record", WorkplaceRecordParams{}, WorkplaceRecordResult{}, nil, nil)
+
 	// Config.
 	Describe("config.get", HostParams{}, ConfigGetResult{}, nil, nil)
 	Describe("config.set", ConfigSetParams{}, ConfigSetResult{}, nil, nil)

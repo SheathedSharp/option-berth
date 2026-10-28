@@ -2,7 +2,7 @@
 name: option-berth
 description: Use oberth to inspect and operate services for the current worktree, observe explicitly related local worktrees during parallel development, and arm task-scoped attention for long-running service work.
 metadata:
-  version: "0.3.1"
+  version: "0.4.0"
   source: "github.com/SheathedSharp/option-berth"
 ---
 
@@ -46,6 +46,8 @@ Read the detailed guide only for the mode the task needs:
 
 - Service start, stop, restart, logs, or status reporting: read
   [references/operations.md](references/operations.md).
+- What work has been done in this worktree, or which workplace new work belongs
+  to: read [references/workplace.md](references/workplace.md).
 - Explicitly related worktrees or repositories: read
   [references/cross-worktree.md](references/cross-worktree.md).
 - Manifest drafting or adoption: read

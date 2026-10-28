@@ -35,6 +35,29 @@ Mage 与品牌检查分别位于各自PR及CI。冻结呈现与真实Dock、菜�
 GUI全部交互、签名安装包和长期负载仍需独立验收；没有可靠对照不宣传整体加速或长期无泄漏。
 自动密钥扫描、许可证输入保留和CI成功各自有边界，不能替代安全审查或完整分发审核。
 
+## 工作记录
+
+`go test ./internal/workplace/ ./internal/store/ ./internal/daemon/runsreg/ ./internal/cmd/`
+（`-race` 同上）覆盖：
+
+- workplace 的建、列、切换、删除与选择器：同名冲突、`ambiguous` 不替调用者挑一个、删掉当前那个
+  之后由剩余里最新的接任、删空之后不再有当前 workplace。
+- block 的写入规则：每个 workplace 内 `seq` 递增并有上限，超出丢最旧的；同一个 id 的第二次观察
+  是更新；已经记下的结果不被迟到的 `running` 覆盖，空字段不清空已写内容。
+- Run 退出收尾 block：`runsreg` 在记录退出与启动失败时都会通知（在注册表锁之外），
+  `internal/workplace` 用 run_id 收尾对应 block，且只收尾仍是 running 的那些。
+- CLI 端到端：真实 daemon socket 与自建 git worktree 下跑 `list` / `new` / `use` / `show` /
+  `delete` / `record`，核对 JSON 文档；`oberth start -- /bin/echo hello` 核对写入的 run_id、pid、
+  退出码；`BERTH_AGENT_STREAM_FAKE=codex` 下 `oberth agent stream` 核对一轮 turn 的 prompt 与
+  outcome；daemon 不可达时读命令仍从同一份数据库读，写命令被拒绝。
+- 非附加运行的两端：`go test -tags integration -run TestDetachedRunIsRecorded ./internal/daemon/`
+  用真实二进制与真实 daemon 跑 `oberth start -d`，核对记录先出现且是 running、随后由 daemon
+  收成 completed（并核对退出码、结束时间与它指向的日志确实存在）。
+
+**未执行**：真实 Codex / Claude 账号下的一轮任务在 workplace 里的端到端确认（合成驱动不算）；
+macOS 客户端经 `workplace record` 上报自己 PTY 条目的路径 —— 客户端仍用本机
+`~/.option-berth/workplaces/` JSON，尚未接入引擎记录（见 [backlog.md](backlog.md)）。
+
 ## 终端工作区的分层验证
 
 `TerminalChecks` 使用独立目录和自有子进程检查 cwd/PWD、退出回执、1 MiB 输出、24 次会话

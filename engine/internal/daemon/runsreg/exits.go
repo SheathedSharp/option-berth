@@ -120,7 +120,20 @@ func (r *Registry) StartFailed(rec Record, message string) Exit {
 // StartFailedWithReason records a failed attempt with the lifecycle reason
 // that caused it. Dependency failures are distinct from a command that could
 // not be spawned, so status, attention and event consumers see the same fact.
+//
+// A run that never started has ended too, so this announces it the same way a
+// process exit does — after the mirror lock is released, never under it: a
+// listener is other people's code, and holding this registry's lock across it
+// would put their work on this registry's critical path.
 func (r *Registry) StartFailedWithReason(rec Record, reason, message string) Exit {
+	e := r.startFailed(rec, reason, message)
+	daemon.NotifyRunExit(daemon.RunExit{
+		RunID: e.ID, PID: e.PID, Code: e.Code, Reason: e.Reason, ExitedAt: e.ExitedAt,
+	})
+	return e
+}
+
+func (r *Registry) startFailed(rec Record, reason, message string) Exit {
 	// Order the in-memory event and its durable projection with reap/rename.
 	r.mirrorMu.Lock()
 	defer r.mirrorMu.Unlock()

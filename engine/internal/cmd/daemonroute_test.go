@@ -85,17 +85,30 @@ func startTestDaemon(t *testing.T, rows []ports.ListeningPort) {
 		return client.Dial(ctx, client.ClientInfo{Name: "cli", Version: "test", Socket: socket})
 	}
 	t.Cleanup(func() { dialDaemon = prev })
+
+	// The same daemon is where this CLI writes. A command that autostarts would
+	// otherwise start a second daemon of its own instead of reaching this one —
+	// which is what the harness is here to prevent.
+	prevWrite := connectForWrite
+	connectForWrite = func(ctx context.Context) (*client.Client, error) {
+		return client.Dial(ctx, client.ClientInfo{Name: "cli", Version: "test", Socket: socket})
+	}
+	t.Cleanup(func() { connectForWrite = prevWrite })
 }
 
 // noDaemonReachable makes every connection attempt fail, the way an empty
-// socket path does.
+// socket path does — including the ones a write command makes, which otherwise
+// would autostart a daemon of their own.
 func noDaemonReachable(t *testing.T) {
 	t.Helper()
-	prev := dialDaemon
-	dialDaemon = func(context.Context) (*client.Client, error) {
+	unreachable := func(context.Context) (*client.Client, error) {
 		return nil, errors.New("oberth daemon is not running")
 	}
-	t.Cleanup(func() { dialDaemon = prev })
+	prev, prevWrite := dialDaemon, connectForWrite
+	dialDaemon, connectForWrite = unreachable, unreachable
+	t.Cleanup(func() {
+		dialDaemon, connectForWrite = prev, prevWrite
+	})
 }
 
 // resetRouting clears the per-invocation state the flags and the once-only note

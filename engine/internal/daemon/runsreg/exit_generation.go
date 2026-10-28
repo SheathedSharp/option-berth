@@ -1,5 +1,7 @@
 package runsreg
 
+import "github.com/sheathedsharp/option-berth/internal/daemon"
+
 // Exited snapshots the generation currently registered for a legacy PID-only
 // notification. A caller that already knows the run (such as the child reaper)
 // must use ExitedRun instead, so a late callback cannot pick a replacement.
@@ -13,8 +15,19 @@ func (r *Registry) Exited(pid, code int, stopped bool) (Exit, bool) {
 
 // ExitedRun records an exit only for the supplied generation. Log I/O happens
 // outside both locks; identity is rechecked before any memory/disk mutation.
+//
+// A recorded exit is announced once the registry has let go of the run: this
+// is the moment a run's end becomes a fact, and the one place a package that
+// recorded the run can learn about it. Announcing it here rather than inside
+// exitedRun keeps the notification off the mirror lock.
 func (r *Registry) ExitedRun(expected Record, code int, stopped bool) (Exit, bool) {
-	return r.exitedRun(expected, code, stopped, tailLines)
+	e, ok := r.exitedRun(expected, code, stopped, tailLines)
+	if ok {
+		daemon.NotifyRunExit(daemon.RunExit{
+			RunID: e.ID, PID: e.PID, Code: e.Code, Reason: e.Reason, ExitedAt: e.ExitedAt,
+		})
+	}
+	return e, ok
 }
 
 // The per-call reader makes the I/O boundary testable without a mutable global
