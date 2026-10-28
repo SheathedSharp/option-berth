@@ -31,7 +31,7 @@ var (
 var logsCmd = &cobra.Command{
 	Use:               "logs <service|port>",
 	Short:             "Attach to a process and view its log output",
-	GroupID:           commandGroupCore,
+	GroupID:           commandGroupFacts,
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeLogTarget,
 	RunE: func(cmd *cobra.Command, args []string) error {

@@ -88,8 +88,10 @@ func TestPrintWelcomeShowsQuickStartNotTheManual(t *testing.T) {
 			t.Fatalf("description column drifted between rows:\n%s", out)
 		}
 	}
-	// The manual is elsewhere: no grouped headers, no full flag block.
-	for _, gone := range []string{"Worktree lifecycle:", "Inspection and explicit controls:", "Usage:", "Flags:"} {
+	// The manual is elsewhere: no grouped headers, no full flag block. The
+	// headers named here are the layers docs/cli.md documents, so this test
+	// fails if the welcome screen starts carrying the manual's grouping.
+	for _, gone := range []string{"Facts:", "Operations:", "Code and declaration:", "Handoff:", "Usage:", "Flags:"} {
 		if strings.Contains(out, gone) {
 			t.Errorf("welcome should not carry the manual's %q:\n%s", gone, out)
 		}

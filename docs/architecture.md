@@ -21,9 +21,10 @@
 
 ## 工作记录
 
-`workplace` 挂在 worktree 上，不在服务链上：它是「在这个 worktree 上做过什么」的记录，
-不参与服务事实的归约，也不被 `status` 当成运行真相。实现在 `internal/workplace`（规则、
-选择器与 RPC）、`internal/store/workplaces.go`（行与迁移 009）和 `cmd/workplace*`（CLI 与记录接线）。
+`workplace` 是交接层的能力：agent 可以读回「在这个 worktree 上做过什么、结果如何」来接手，
+也可以把引擎看不见的尝试自己写进去。它挂在 worktree 上，不在服务链上，不参与服务事实的归约，
+也不被 `status` 当成运行真相。实现在 `internal/workplace`（规则、选择器与 RPC）、
+`internal/store/workplaces.go`（行与迁移 009）和 `cmd/workplace*`（CLI 与记录接线）。
 
 - **写入只有一个所有者。** daemon 是账本的唯一写者；CLI 的读路径在 daemon 不在时只读打开同一份
   数据库，写命令走 RPC。工作记录不为自己去启动 daemon。

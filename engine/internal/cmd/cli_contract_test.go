@@ -37,17 +37,25 @@ func TestExitCodesMatchTheContract(t *testing.T) {
 	}
 }
 
-func TestPublicCommandSurfaceHasOneProductRing(t *testing.T) {
+// TestPublicCommandSurfaceLandsInTheDocumentedLayers pins the whole public
+// surface: every command, and the layer of docs/cli.md it belongs to. A command
+// that lands in no layer, or in the wrong one, is a reader being sent to the
+// wrong place — and the layering is the contract, not the help text's taste.
+func TestPublicCommandSurfaceLandsInTheDocumentedLayers(t *testing.T) {
 	want := map[string]string{
-		"status": commandGroupCore, "init": commandGroupCore, "up": commandGroupCore,
-		"down": commandGroupCore, "restart": commandGroupCore, "logs": commandGroupCore,
-		"workplace": commandGroupCore,
-		"events":    commandGroupSupport, "git": commandGroupSupport, "agent": commandGroupSupport,
-		"doctor": commandGroupSupport,
-		"start":  commandGroupSupport, "kill": commandGroupSupport,
+		// 事实
+		"status": commandGroupFacts, "logs": commandGroupFacts, "events": commandGroupFacts,
+		// 操作
+		"up": commandGroupOperations, "restart": commandGroupOperations,
+		"down": commandGroupOperations, "start": commandGroupOperations, "kill": commandGroupOperations,
+		// 代码与声明
+		"git": commandGroupCode, "init": commandGroupCode,
+		// 交接
+		"workplace": commandGroupHandoff, "agent": commandGroupHandoff,
+		// 基础设施
 		"daemon": commandGroupInfra, "serve": commandGroupInfra,
 		"config": commandGroupInfra, "version": commandGroupInfra,
-		"completion": commandGroupInfra,
+		"completion": commandGroupInfra, "doctor": commandGroupInfra,
 	}
 	public := 0
 	for _, command := range rootCmd.Commands() {

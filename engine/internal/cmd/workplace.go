@@ -47,7 +47,7 @@ func newWorkplaceCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:     "workplace",
 		Short:   "The record of work done in this worktree",
-		GroupID: commandGroupCore,
+		GroupID: commandGroupHandoff,
 		Long: "A workplace is a named scope under one worktree that holds the work done in it: the\n" +
 			"shell commands the engine ran and the agent tasks it bridged. Work is recorded as\n" +
 			"it happens — `oberth start` and `oberth agent stream` both write into the worktree's\n" +

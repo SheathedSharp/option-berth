@@ -31,7 +31,7 @@ var (
 var upCmd = &cobra.Command{
 	Use:     "up [project]",
 	Short:   "Start a project's services from its oberth.yaml",
-	GroupID: commandGroupCore,
+	GroupID: commandGroupOperations,
 	Long: "Start every service the project's oberth.yaml declares, in depends_on\n" +
 		"order: a service waits for the ports its dependencies declare before it\n" +
 		"is started, and services that are already running are skipped.\n\n" +

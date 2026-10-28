@@ -37,7 +37,7 @@ var (
 var statusCmd = &cobra.Command{
 	Use:     "status [path]",
 	Short:   "This project right now, and what changed since you last looked",
-	GroupID: commandGroupCore,
+	GroupID: commandGroupFacts,
 	Long: "One read for the start of a work session: what the manifest declares, what is\n" +
 		"actually running, which listeners belong to it, what the repository looks\n" +
 		"like, whether a drafted manifest is waiting to be adopted — and, from the second\n" +

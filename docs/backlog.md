@@ -1,9 +1,11 @@
 # 当前能力与待办
 
-以 [产品定义](product.md) 和 [支持边界](architecture.md) 为准。终端能启动外部 agent，
-不等于已经具备完整终端工作台或全部 provider 会话协议；CI 通过也不等于所有日常交互已验收。
+以 [产品定义](product.md) 和 [支持边界](architecture.md) 为准。主线是给 coding agent 的能力；
+下面客户端那一节记的是**呈现层**的进度，它不定义产品，也不该反过来决定引擎做什么。
+终端能启动外部 agent，不等于已经具备完整终端工作台或全部 provider 会话协议；
+CI 通过也不等于所有日常交互已验收。
 
-## 已有的工作链路
+## 呈现层：macOS 工作区
 
 服务声明、观察、归属、生命周期和持久化共用引擎事实链。macOS 工作区在同一 worktree 下
 提供服务、只读 Git 和统一工作台。打开 worktree 会话默认进入该目录的交互式 Shell。底部**单输入条**：↩ 送 Shell；⌘↩ / ⇧⌘↩ 送 Agent（`stream: true` 的 provider 默认 `oberth agent stream` 结构化桥，否则原生 PTY）。右侧 Agent 栏展示结构化轮次/审批或终端会话事实。详见 [console.md](console.md)。DeepSeek 无结构化桥，仍走原生/TUI 入口。
@@ -23,11 +25,22 @@ Paper 是唯一内置默认；主题、快捷键、新会话默认值与各模�
 Cmd+N 接入项目，Cmd+1…9 按可见 Worktrees 导航，模块采用 Option+Cmd+S/G/T。Git 提供冲突/暂存/工作区/
 未跟踪筛选、重命名路径检索、上游和同仓库上下文；没有 CLI 事实支撑的历史 DAG 不画占位图。
 
-## 后续能力（不属于本轮工作台、命令与文件配置改造的交付范围）
+## 后续能力
+
+引擎侧与呈现层分开记：前者是产品主线，后者是它的呈现。
 
 | 优先级 | 能力 | 当前缺口与完成条件 |
 | --- | --- | --- |
-| 高 | 客户端接入引擎的工作记录 | 引擎已有 `workplace`：worktree 下的工作记录，`oberth start` 与 `oberth agent stream` 自动写入，前端可经 `oberth workplace record` 上报（契约见 [cli.md](cli.md)）。客户端仍把块流存在本机 `~/.option-berth/workplaces/` JSON，是引擎之外的第二份状态。完成条件：客户端改为读引擎记录、把自己交互式 PTY 与原生 agent 的条目经 `workplace record` 上报，并删除本地 JSON 存储及其迁移路径。 |
+| 高 | agent 侧的能力面是否够用 | 主线是给 coding agent 的能力，所以「agent 拿到这份代码能不能自己跑起来、自己判断为什么没跑起来」优先于任何界面。缺的验收：用真实 coding agent 在一个陌生 worktree 上只靠 CLI 与 skill 完成「起服务、失败、看日志、修、再起」，记录它卡在哪一步。 |
+| 高 | 客户端与引擎是否拆成两个产品 | 现在两者在 CI、release 脚本、品牌、文档与验证矩阵里绑在一起（17 个 workflow 里约一半是客户端/品牌/site）。未决定。做之前先出拆分清单与代价，别顺手拆。 |
+
+### 呈现层（macOS 工作区）
+
+这些是客户端进度，不定义产品，也不该反过来决定引擎做什么。
+
+| 优先级 | 能力 | 当前缺口与完成条件 |
+| --- | --- | --- |
+| 高 | 客户端接入引擎的工作记录 | 引擎已有 `workplace`：worktree 下的工作记录，`oberth start` 与 `oberth agent stream` 自动写入，agent 或前端可经 `oberth workplace record` 写入（契约见 [cli.md](cli.md)）。客户端仍把块流存在本机 `~/.option-berth/workplaces/` JSON，是引擎之外的第二份状态。完成条件：客户端改为读引擎记录、把自己交互式 PTY 与原生 agent 的条目经 `workplace record` 上报，并删除本地 JSON 存储及其迁移路径。 |
 | 高 | 外部 agent 的显式续接和结构化会话协议 | 已落地：`oberth agent stream` live 桥（Codex、Claude、OpenCode、Pi）、macOS 结构化 UI、合成/单元回归（见 [validation.md](validation.md)）。仍缺：**真机** Codex/Claude 等验收、DeepSeek 结构化桥与明确续接、安装版本能力探测的完整产品化。审批在会话页由人决定，桥不加放宽参数；原生 TUI 审批不被输入条接管。 |
 | 高 | 应用重启后的恢复 | 已实现用户同意后的私有布局快照、历史入口、失效/未知文件拒绝与显式新建Shell映射；不保存消息/输出/PID，不自动复活进程。仍缺旧PTY接管、输出历史恢复、精确分隔尺寸与agent对话恢复入口的完整联动。 |
 | 中 | 命令块与 shell 集成 | 已落地临时 **zsh/bash/fish** 集成（OSC `133`/`633`）、命令块条、Shell→Agent 附件与 Tab 补全回读；复杂提示符（powerlevel10k/starship）与 IME 须手测（[validation.md](validation.md)）。 |

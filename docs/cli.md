@@ -1,7 +1,8 @@
 # oberth CLI 契约
 
-这份文档描述产品主线：一个 worktree 的清单、运行记录和运行实况、起停和日志，以及并行开发
-所需的只读事件流。其余命令以 oberth <command> --help 为准，不在这里另建一套契约。
+这份文档描述产品主线：一个 worktree 的清单、运行记录和运行实况、起停和日志，并行开发所需的
+只读事件流，以及留给下一个接手的人或 agent 的工作记录。其余命令以 oberth <command> --help
+为准，不在这里另建一套契约。
 
 无参数运行 `oberth` 显示首屏：logo、一句定位、三条最常用命令（status / up / down）
 和到完整帮助的指引；它是指路牌不是手册，分组命令清单只在 `oberth --help`。
@@ -20,17 +21,20 @@
 
 ## 命令面
 
-CLI 只有三层。核心层围绕当前 worktree 的清单和运行闭环；支撑层只提供只读代码上下文
-和明确点名的进程控制；基础设施层负责 daemon、配置、自检和 shell 接入。根帮助按这三层
-分组，新的产品能力只能落在已有层里，不能再把一个动作塞进另一个命令的选项中。
+CLI 按 **agent 想做的事**分层，不按内部模块分：事实是「现在是什么状态」，操作是「让它跑起来或
+停下来」，代码与声明是「读代码和清单」，交接是「留下或取回工作、把会话交给外部 agent」，
+基础设施是运行环境本身。根帮助按这五层分组，新的产品能力只能落在已有层里，不能再把一个动作
+塞进另一个命令的选项中。
 
 | 层 | 公开命令 | 边界 |
 |---|---|---|
-| Worktree lifecycle | `status` · `init` · `up` · `restart` · `down` · `logs` · `workplace` | 当前项目的声明、实况、服务起停，以及这个 worktree 上的工作记录 |
-| Inspection and explicit controls | `events` · `git` · `doctor` · `start` · `kill` | 订阅明确关系的状态变化、只读代码、自检，或明确点名一个低级进程入口 |
-| Runtime and setup | `daemon` · `serve` · `config` · `version` · `completion` | 后台采集器、安装配置和基础设施 |
+| 事实 | `status` · `logs` · `events` | 当前项目的声明、实况与变化 |
+| 操作 | `up` · `restart` · `down` · `start` · `kill` | 按清单起停，或明确点名一个低级进程入口 |
+| 代码与声明 | `git` · `init` | 只读代码上下文，以及这份 worktree 的清单 |
+| 交接 | `workplace` · `agent` | 工作记录，以及把会话交给外部 coding agent |
+| 基础设施 | `daemon` · `serve` · `config` · `version` · `completion` · `doctor` | 后台采集器、安装配置与自检 |
 
-## 核心五条
+## 核心闭环
 
 ### oberth status [path] [--json] [--no-mark]
 
@@ -196,9 +200,10 @@ ambiguous。
 
 ### oberth workplace
 
-一个 worktree 的**工作记录**。一个 worktree 下可以有多个 workplace，每个按时间顺序保存其中的
-工作条目（block）：引擎跑过的命令，和交给 agent 的每一轮任务。命令只读写这份记录，不判断、
-不启动、不恢复。
+交接层里的一份**工作记录**。一个 worktree 下可以有多个 workplace，每个按时间顺序保存其中的
+工作条目（block）：引擎跑过的命令，和交给 agent 的每一轮任务。它回答的是「在这里做过什么、
+结果如何」——agent 可以读回来接手别人（或自己上一轮）的工作，也可以把引擎看不见的尝试自己
+写进去。命令只读写这份记录，不判断、不启动、不恢复。
 
 ~~~text
 oberth workplace list [--worktree PATH] [--json]
@@ -231,20 +236,20 @@ block 的 `--json` 字段：
 
 - `kind`：`shell`（引擎跑的命令）或 `agent`（交给 agent 的一轮任务）。
 - `source`：`engine`（引擎自己观察到的运行，run_id / pid / log_path / 退出码都是它采的）或
-  `reported`（引擎没启动、由前端上报的条目）。只有 `reported` 的 block 带 `output` 文本；
+  `reported`（引擎没启动、由上报方写进来的条目）。只有 `reported` 的 block 带 `output` 文本；
   引擎的 block 指向 `log_path`，日志仍是输出的唯一一份。
 - `status`：`running` · `completed` · `failed` · `interrupted`。没有观察到结束的条目保持
   running，不会被当成成功；被 `oberth` 或用户停下的运行是 interrupted，不看它留下的信号退出码。
-- `seq` 在所属 workplace 内递增，每个 workplace 最多保留 500 条，超出时丢弃最旧的。
+- `seq` 是条目在所属 workplace 里的顺序，每个 workplace 最多保留 500 条，超出时丢弃最旧的。
 
 记录不需要手动操作：
 
 - `oberth start` 把这次运行写进当前 workplace；非附加（`-d`）的运行由 daemon 在记录它的退出时收尾。
 - `oberth agent stream` 每一轮写一条：`turn.started` 开，`turn.completed` 按 provider 给的
   outcome 收尾（completed / interrupted / failed）。
-- 引擎看不见的工作（前端自己的交互式 Shell、原生 agent）用 `oberth workplace record` 上报。
-  同一个 `--id` 再报一次是更新同一条而不是新增，所以一次工作的开始与结束可以任意顺序到达；
-  重复的 `running` 不会覆盖已经记下的结果。
+- 引擎看不见的工作用 `oberth workplace record` 写进来：agent 自己的尝试（「我改了 X，测试仍然
+  失败」）、前端自己的交互式 Shell、原生 agent。同一个 `--id` 再报一次是更新同一条而不是新增，
+  所以一次工作的开始与结束可以任意顺序到达；重复的 `running` 不会覆盖已经记下的结果。
 
 边界：`show` 读回的是做过什么，不是把当时的进程叫回来。daemon 不在时读命令仍从数据库直接读；
 `new` / `use` / `delete` / `record` 需要一个 daemon（按既有规则自启动），而 `oberth start` 与
@@ -277,9 +282,9 @@ oberth init [--dry-run] [--json]
 完整清单；再加 `--diff` 时，输出当前清单与采纳结果的只读 unified diff（JSON 输出放在
 `diff` 字段），不写清单也不移动草稿。
 
-## 支撑命令
+## 各层其余命令
 
-这些命令服务于核心闭环，保持可用但不再扩展产品模型：
+核心闭环之外的命令按层列在这里，契约同样是这份文档：
 
 - oberth doctor：检查清单、daemon、CLI 路径和日志目录，给出可操作的修复提示。
   `--only daemon_build_matches` 对比 CLI 与 daemon 的构建提交；同版本号不代表同构建。
@@ -312,8 +317,7 @@ group/session 选择器只为迁移保留，不出现在公开帮助中。
 
 ## 基础设施命令
 
-- oberth daemon status|path|stop|restart|log|schema：管理或查看后台采集器。
-- `oberth -v` / `oberth --version`：简洁地打印当前 CLI 版本；`oberth config init|path|edit`、`oberth serve`、`oberth version`、`oberth completion`：配置与运行环境入口。
+- oberth daemon status|path|stop|restart|log|schema：管理或查看后台采集器。- `oberth -v` / `oberth --version`：简洁地打印当前 CLI 版本；`oberth config init|path|edit`、`oberth serve`、`oberth version`、`oberth completion`：配置与运行环境入口。
 - `oberth version --json` 输出当前构建的 `version`、`commit`、`built` 和 `platform`，供安装检查脚本确认实际运行的构建。
 
 `oberth version --json` 的 stdout 是一个 JSON 值：

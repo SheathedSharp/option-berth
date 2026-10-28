@@ -41,7 +41,7 @@ const registerTimeout = 5 * time.Second
 var startCmd = &cobra.Command{
 	Use:     "start [-d] [flags] -- <command> [args...]",
 	Short:   "Run one command and record it as a service",
-	GroupID: commandGroupSupport,
+	GroupID: commandGroupOperations,
 	Long: "Run one command after -- and record it so option-berth can attribute every\n" +
 		"port it (or anything it spawns) opens to a group and a service name.\n\n" +
 		"Project services belong to `oberth up`; this is the low-level escape hatch\n" +
