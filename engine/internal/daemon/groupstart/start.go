@@ -148,7 +148,7 @@ func run(ctx context.Context, rt *daemon.Runtime, s *daemon.Stream,
 			rt.Scanner.Wake()
 			if err := s.Send(rpc.GroupsStartChunk{
 				Service: svc.Name, State: "failed", Reason: startFailureReason(message),
-				Error: message, Hint: logsHint(svc.Name),
+				Error: message, Hint: dependencyHint(err),
 			}); err != nil {
 				return end, err
 			}
@@ -163,13 +163,16 @@ func run(ctx context.Context, rt *daemon.Runtime, s *daemon.Stream,
 					return end, err
 				}
 				rt.Logger.Warn("preparing a service", "group", group, "service", svc.Name, "error", err)
-				message := detail(err)
+				// Same rule as the cmd path: the error's own hint, or none. A
+				// prepare step that failed before its log file was even created
+				// has no log to point at.
+				message, hint := detailAndHint(err)
 				recordStartFailure(cfg, group, svc, meta, "prepare: "+message)
 				end.Errors = append(end.Errors, svc.Name)
 				rt.Scanner.Wake()
 				if err := s.Send(rpc.GroupsStartChunk{
 					Service: svc.Name, State: "failed", Reason: "start_failed",
-					Error: "prepare failed: " + message, Hint: logsHint(svc.Name),
+					Error: "prepare failed: " + message, Hint: hint,
 				}); err != nil {
 					return end, err
 				}
@@ -185,13 +188,17 @@ func run(ctx context.Context, rt *daemon.Runtime, s *daemon.Stream,
 				return end, err
 			}
 			rt.Logger.Warn("starting a service", "group", group, "service", svc.Name, "error", err)
-			message := detail(err)
+			// The hint is the error's own, never a guess. Every failure on this
+			// path happened before a process existed, so a "read the logs" hint
+			// would name a file that was never written; the refusals that do
+			// have a next step carry it themselves.
+			message, hint := detailAndHint(err)
 			recordStartFailureReason(cfg, group, svc, meta, startFailureReason(message), message)
 			end.Errors = append(end.Errors, svc.Name)
 			rt.Scanner.Wake()
 			if err := s.Send(rpc.GroupsStartChunk{
 				Service: svc.Name, State: "failed", Reason: startFailureReason(message),
-				Error: message, Hint: logsHint(svc.Name),
+				Error: message, Hint: hint,
 			}); err != nil {
 				return end, err
 			}
@@ -601,9 +608,9 @@ func waitFor(ctx context.Context, rt *daemon.Runtime, group string, deps []group
 	budget := dependencyTimeout
 	waitCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
-	missing := make([]string, len(deps))
+	missing := make([]pendingDependency, len(deps))
 	for i, dep := range deps {
-		missing[i] = dep.Name
+		missing[i] = pendingDependency{Name: dep.Name, Display: dep.Name}
 	}
 	expired := func() error {
 		// Preserve parent cancellation/deadline instead of recording it as a
@@ -612,7 +619,20 @@ func waitFor(ctx context.Context, rt *daemon.Runtime, group string, deps []group
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		return fmt.Errorf("timed out after %s waiting for %s", budget, strings.Join(missing, ", "))
+		displays := make([]string, 0, len(missing))
+		names := make([]string, 0, len(missing))
+		for _, pending := range missing {
+			displays = append(displays, pending.Display)
+			// A wait can be blocked by something that is not a service (an
+			// unreadable snapshot); there is no log to name for that.
+			if pending.Name != "" {
+				names = append(names, pending.Name)
+			}
+		}
+		return dependencyFailure{
+			message: fmt.Sprintf("timed out after %s waiting for %s", budget, strings.Join(displays, ", ")),
+			names:   names,
+		}
 	}
 	want := make(map[string]int, len(deps))
 	for _, dep := range deps {
@@ -630,7 +650,10 @@ func waitFor(ctx context.Context, rt *daemon.Runtime, group string, deps []group
 			return expired()
 		}
 		if err != nil {
-			return fmt.Errorf("no port for dependency %s: %s", dep.Name, detail(err))
+			return dependencyFailure{
+				message: fmt.Sprintf("no port for dependency %s: %s", dep.Name, detail(err)),
+				names:   []string{dep.Name},
+			}
 		}
 		want[dep.Name] = port
 	}
@@ -668,27 +691,35 @@ func waitFor(ctx context.Context, rt *daemon.Runtime, group string, deps []group
 }
 
 // pending lists the dependencies that are not ready yet.
-func pending(rt *daemon.Runtime, group string, deps []groups.Service, want map[string]int) []string {
+func pending(rt *daemon.Runtime, group string, deps []groups.Service, want map[string]int) []pendingDependency {
 	return pendingContext(context.Background(), rt, group, deps, want)
 }
 
-func pendingContext(ctx context.Context, rt *daemon.Runtime, group string, deps []groups.Service, want map[string]int) []string {
+// pendingDependency is one dependency that has not become ready. Display is what
+// a reader sees in the timeout message; Name is the service whose log explains
+// it, empty when the wait is blocked by something that is not a service.
+type pendingDependency struct {
+	Name    string
+	Display string
+}
+
+func pendingContext(ctx context.Context, rt *daemon.Runtime, group string, deps []groups.Service, want map[string]int) []pendingDependency {
 	snap, err := rt.Scanner.SnapshotForReadinessContext(ctx)
 	if err != nil {
-		return []string{"fresh dependency state: " + err.Error()}
+		return []pendingDependency{{Display: "fresh dependency state: " + err.Error()}}
 	}
-	var missing []string
+	var missing []pendingDependency
 	for _, dep := range deps {
 		if dep.HasPort() {
 			if !listening(snap, group, dep, want[dep.Name]) {
-				missing = append(missing, fmt.Sprintf("%s on port %d", dep.Name, want[dep.Name]))
+				missing = append(missing, pendingDependency{Name: dep.Name, Display: fmt.Sprintf("%s on port %d", dep.Name, want[dep.Name])})
 			} else if dep.Health != "" && !healthy(snap, group, dep.Name) {
-				missing = append(missing, fmt.Sprintf("%s health check", dep.Name))
+				missing = append(missing, pendingDependency{Name: dep.Name, Display: fmt.Sprintf("%s health check", dep.Name)})
 			}
 			continue
 		}
 		if !liveService(rt, snap, group, dep.Name) {
-			missing = append(missing, fmt.Sprintf("%s to be running (no port)", dep.Name))
+			missing = append(missing, pendingDependency{Name: dep.Name, Display: fmt.Sprintf("%s to be running (no port)", dep.Name)})
 		}
 	}
 	return missing
@@ -813,9 +844,38 @@ func resolveConfig(rt *daemon.Runtime, p rpc.GroupsStartParams) (*groups.Config,
 // detail unwraps an rpc error so a chunk carries the message a user reads
 // rather than the JSON-RPC envelope's wrapper.
 func detail(err error) string {
+	message, _ := detailAndHint(err)
+	return message
+}
+
+// detailAndHint is detail plus the error's own next step. An error that already
+// carries the way out keeps it: replacing that hint with a guess is how a
+// refusal to start sent an agent to a log file that was never written.
+func detailAndHint(err error) (message, hint string) {
 	var re *rpc.Error
 	if errors.As(err, &re) {
-		return re.Data.Detail
+		return re.Data.Detail, re.Data.Hint
 	}
-	return err.Error()
+	return err.Error(), ""
+}
+
+// dependencyFailure names the dependencies that kept a service from starting.
+// waitFor knows which ones never became ready; the caller must point at one of
+// those rather than at the first dependency the manifest happens to list, which
+// may be perfectly healthy.
+type dependencyFailure struct {
+	message string
+	names   []string
+}
+
+func (e dependencyFailure) Error() string { return e.message }
+
+// dependencyHint names the dependency whose log explains the failure. The
+// service that was waiting has not run yet, so its own log does not exist.
+func dependencyHint(err error) string {
+	var failure dependencyFailure
+	if errors.As(err, &failure) && len(failure.names) > 0 {
+		return logsHint(failure.names[0])
+	}
+	return ""
 }

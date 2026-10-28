@@ -147,7 +147,9 @@ Jev 调用、缓存命中和无事件轮询数量；没有真实反馈时指标�
 成功时人读输出逐服务报告并给出汇总；`--wait` 等待期间先输出一行 dim 提示再逐行出结果。
 --json 输出一个包含 services 和汇总字段的值。每个
 `services[]` 都有结构化的 `state`：`started`、`skipped` 或 `failed`，失败时还给出机器可分支的
-`reason` 和可直接执行的 `hint`（通常是 `oberth logs <service> --once`），原有 `error` 保留给人读。
+`reason` 和可直接执行的 `hint`，原有 `error` 保留给人读。`hint` 只指向真实存在的证据：进程起来过
+才给 `oberth logs <service> --once`，依赖没就绪时给**依赖**的日志，还没起进程就被拒绝（例如 worktree
+在 home 之外）时给拒绝本身带的做法，没有可执行的下一步时不给。
 等待判定只认**等待开始之后**记录的退出：`down` 留下的旧退出记录不会被 `up --wait` 读成本轮启动失败。
 `--wait`（`--ready` 的别名）会在返回前等待本次选择的服务（包括已经在运行、未重新启动的服务）真正监听；声明了 `health:` 的服务还必须
 通过健康检查。无端口 worker 以运行记录活跃作为 ready。默认不等待，`--wait-timeout` 默认 30s；显式指定时必须为正值且同时启用 `--wait` 或 `--ready`，否则退出 2，不执行启动；
@@ -168,7 +170,8 @@ Jev 调用、缓存命中和无事件轮询数量；没有真实反馈时指标�
 {"services":[
   {"service":"api","state":"started","pid":1234,"port":3000},
   {"service":"worker","state":"failed","reason":"start_failed",
-   "error":"command not found","hint":"oberth logs worker --once"}
+   "error":"exec: \"nosuchcmd\": executable file not found in $PATH",
+   "hint":"check the command and its working directory"}
 ],"started":["api"],"skipped":[],"errors":["worker"]}
 ~~~
 
