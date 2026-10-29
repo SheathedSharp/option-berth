@@ -34,6 +34,11 @@ curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/ins
 不需要管理员权限。安装目标来自已发布标签，不是 `main` 上的未发布代码；旧包没有
 `install-path.sh` 时，从同一标签的 `scripts/install-path.sh` 取用。
 
+官方 GitHub 主机不可达或过慢时，安装器按固定顺序回退到 GitHub 代理（默认
+`https://ghfast.top`、`https://gh-proxy.com`，可用 `BERTH_INSTALL_MIRRORS` 覆盖或清空）。
+校验和优先取官方；来自镜像时要求第二个源报告相同摘要，校验不通过不落盘。镜像只改变传输
+路径，不改变发布资产的定义。
+
 卸载器先尝试 `oberth daemon stop`，再删除二进制、许可与安装器写入的 PATH 行；默认保留
 `~/.option-berth` 运行状态，只有 `--purge-state` / `-PurgeState` 才删除。完整说明见
 [install.md](install.md)。

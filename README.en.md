@@ -75,6 +75,10 @@ download and verify release archives: they start no service and write no Git dat
 [install.sh](install.sh) / [install.ps1](install.ps1) first if you prefer, or download the
 [Releases](https://github.com/SheathedSharp/option-berth/releases) archives directly.
 
+When GitHub is slow or blocked, prefix `go install` with `GOPROXY=https://goproxy.cn`; the installers
+fall back to mirrors automatically, and the script is also served through jsDelivr. See
+[Install and uninstall](docs/install.md) for the exact recipes.
+
 ### With go install (Go 1.25+)
 
 ```sh
