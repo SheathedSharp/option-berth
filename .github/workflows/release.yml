@@ -50,7 +50,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y rpm msitools
-          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Native release gates
         env:
@@ -102,7 +102,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.0
           export PATH="$(go env GOPATH)/bin:$PATH"
           python3 scripts/package_linux.py --arch "$TARGET_ARCH" --dist dist
       - name: Build Windows MSI
