@@ -8,7 +8,7 @@ import shutil
 
 ROOT = Path(__file__).resolve().parent
 SITE = "https://sheathedsharp.github.io/option-berth/"
-ASSETS = ("icon.svg", "mark.svg", "site.css", "site.js")
+ASSETS = ("icon.svg", "mark.svg", "mark-dark.svg", "boot.js", "site.css", "site.js")
 
 
 def build() -> Path:

@@ -4,13 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="$description">
-  <meta name="theme-color" content="#f8f5ef">
+  <meta name="theme-color" content="#1b1e22">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>$page_title</title>
   <link rel="canonical" href="$canonical">
   <link rel="alternate" hreflang="zh-CN" href="$site_url">
   <link rel="alternate" hreflang="en" href="${site_url}en/">
   <link rel="icon" type="image/svg+xml" href="${asset_path}icon.svg">
+  <script src="${asset_path}boot.js"></script>
   <link rel="stylesheet" href="${asset_path}site.css">
   <meta property="og:type" content="website">
   <meta property="og:title" content="$page_title">
@@ -23,68 +24,73 @@
   <a class="skip-link" href="#main">$skip</a>
   <header class="site-head">
     <nav class="wrap head-row" aria-label="$navigation">
-      <a class="wordmark" href="$home_path" aria-label="option-berth"><img src="${asset_path}mark.svg" width="28" height="28" alt=""><span>option<span class="hyphen">-</span>berth</span></a>
-      <div class="head-links"><a href="#commands">$nav_commands</a><a href="#chain">$nav_chain</a><a href="#products">$nav_products</a><a href="#install">$nav_install</a></div>
-      <div class="head-end"><a class="language" href="$language_path" lang="$other_lang" hreflang="$other_lang">$language_label</a><a class="head-action" href="#install">$install_short</a></div>
+      <a class="wordmark" href="$home_path" aria-label="option-berth"><img src="${asset_path}mark-dark.svg" width="24" height="24" alt=""><span>option<span class="hyphen">-</span>berth</span></a>
+      <div class="head-end"><a href="https://github.com/SheathedSharp/option-berth">$nav_github <span aria-hidden="true">↗</span></a><a class="language" href="$language_path" lang="$other_lang" hreflang="$other_lang">$language_label</a></div>
     </nav>
   </header>
   <main id="main">
-    <section class="hero" aria-labelledby="hero-title">
-      <div class="hero-bottom" aria-hidden="true"></div>
-      <div class="wrap hero-inner">
-        <div class="hero-top">
-          <h1 id="hero-title" class="hero-line"><span class="mask"><span class="line">$hero_title_1</span></span><span class="mask"><span class="line line-two">$hero_title_2</span></span></h1>
-        </div>
-        <div class="hero-foot">
-          <div class="hero-foot-copy">
-            <p class="hero-lede">$hero_lede</p>
-            <div class="hero-actions"><a class="button button-solid" href="#install">$install_action <span aria-hidden="true">↗</span></a><a class="text-link" href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md">$read_contract <span aria-hidden="true">↗</span></a></div>
-          </div>
-          <div class="hero-fact" data-ui>
-            <p class="hero-fact-label">$hero_fact_label</p>
-            <pre><code>oberth status --json
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <h1 id="hero-title" class="hero-line"><span class="mask"><span class="line">$hero_title_1</span></span><span class="mask"><span class="line line-two">$hero_title_2</span></span></h1>
+        <p class="hero-lede">$hero_lede</p>
+        <div class="hero-actions"><a class="button button-solid" href="#install">$install_action</a><a class="text-link" href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md">$read_contract <span aria-hidden="true">↗</span></a></div>
+      </div>
+      <div class="hero-panel" data-ui>
+        <div class="hero-views">
+          <div class="hero-view is-active">
+            <p class="panel-label">oberth status · $example_label</p>
+<pre><code>hello-worktree · main
 
-api      running  :21730   health 200
-worker   running  no port</code></pre>
+api      <span class="ok">running</span>   :21730   health 200
+worker   <span class="ok">running</span>   no port
+
+2 services · manifest oberth.yaml</code></pre>
+          </div>
+          <div class="hero-view" aria-hidden="true">
+            <p class="panel-label">oberth logs worker --once · $example_label</p>
+<pre><code>worker: API health=200
+worker: API health=200
+worker: API health=200</code></pre>
           </div>
         </div>
       </div>
     </section>
 
-    <section class="commands wrap" id="commands" aria-labelledby="commands-title">
-      <div class="section-head reveal">
-        <h2 id="commands-title">$commands_title</h2>
-        <p>$commands_intro</p>
-      </div>
-      <div class="command-box reveal" data-ui>
-        <div class="command-search">
-          <label for="command-filter">$command_search_label</label>
-          <input id="command-filter" type="search" placeholder="$command_search_placeholder" autocomplete="off" spellcheck="false" aria-controls="command-list" data-count-filtered="$command_count_filtered" data-count-all="$command_count_all">
-          <p class="command-status" id="command-status" role="status" aria-live="polite"></p>
-        </div>
-        <ul class="command-list" id="command-list">
-          <li><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-status-path---json---no-mark"><span class="command-name">oberth status --json</span><span class="command-tag">$cmd_status_tag</span><span class="command-desc">$cmd_status_desc</span></a></li>
-          <li><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-up-project---only-name---waitready---wait-timeout-duration"><span class="command-name">oberth up --wait</span><span class="command-tag">$cmd_up_tag</span><span class="command-desc">$cmd_up_desc</span></a></li>
-          <li><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-logs-serviceport---once---lines-n---follow---ip-address---json"><span class="command-name">oberth logs</span><span class="command-tag">$cmd_logs_tag</span><span class="command-desc">$cmd_logs_desc</span></a></li>
-          <li><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-down-project---force---json"><span class="command-name">oberth down</span><span class="command-tag">$cmd_down_tag</span><span class="command-desc">$cmd_down_desc</span></a></li>
-          <li><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-workplace"><span class="command-name">oberth workplace</span><span class="command-tag">$cmd_workplace_tag</span><span class="command-desc">$cmd_workplace_desc</span></a></li>
-          <li><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#%E5%90%84%E5%B1%82%E5%85%B6%E4%BD%99%E5%91%BD%E4%BB%A4"><span class="command-name">oberth doctor</span><span class="command-tag">$cmd_doctor_tag</span><span class="command-desc">$cmd_doctor_desc</span></a></li>
-        </ul>
-        <p class="command-empty" id="command-empty" hidden>$command_empty</p>
+    <section class="pain" aria-labelledby="pain-title">
+      <div class="wrap pain-inner">
+        <h2 id="pain-title" class="reveal">$pain_title</h2>
+        <p class="pain-statement reveal">$pain_a <span class="chip" data-ui><code>3000 in use</code></span>$pain_b <span class="chip" data-ui><code>exit 1</code></span>$pain_c <span class="chip" data-ui><code>worker · no port</code></span>$pain_d</p>
       </div>
     </section>
 
-    <section class="chain" id="chain" aria-labelledby="chain-title">
-      <div class="wrap section-head reveal">
-        <h2 id="chain-title">$chain_title</h2>
-        <p>$chain_intro</p>
+    <section class="how" id="how" aria-labelledby="how-title" data-stage="0">
+      <div class="wrap how-head section-head">
+        <h2 id="how-title" class="reveal">$how_title</h2>
+        <p class="reveal">$how_intro</p>
       </div>
-      <div class="chain-split">
-        <div class="chain-side chain-input reveal" data-ui>
-          <h3>$chain_input_label</h3>
-          <p class="chain-note">$chain_input_note</p>
-<pre><code><span class="code-comment">$chain_code_comment</span>
-name: hello-worktree
+      <div class="how-split">
+        <div class="how-copy">
+          <div class="stage-copy is-active" data-stage="0">
+            <p class="stage-clause">$stage_1_clause</p>
+            <p class="stage-body">$stage_1_body</p>
+          </div>
+          <div class="stage-copy" data-stage="1">
+            <p class="stage-clause">$stage_2_clause</p>
+            <p class="stage-body">$stage_2_body</p>
+          </div>
+          <div class="stage-copy" data-stage="2">
+            <p class="stage-clause">$stage_3_clause</p>
+            <p class="stage-body">$stage_3_body</p>
+          </div>
+          <div class="stage-copy" data-stage="3">
+            <p class="stage-clause">$stage_4_clause</p>
+            <p class="stage-body">$stage_4_body</p>
+          </div>
+        </div>
+        <div class="how-fragment">
+          <div class="stage-view is-active" data-stage="0" data-ui>
+            <p class="fragment-label">oberth.yaml · $example_label</p>
+<pre><code>name: hello-worktree
 services:
   - name: api
     cmd: python3 -u api.py
@@ -95,76 +101,114 @@ services:
     depends_on: [api]
     env:
       API_URL: $${api.url}</code></pre>
+          </div>
+          <div class="stage-view" data-stage="1" data-ui>
+            <p class="fragment-label">oberth up --wait · $example_label</p>
+<pre><code>api      started   :21730   ready
+worker   started   no port</code></pre>
+          </div>
+          <div class="stage-view" data-stage="2" data-ui>
+            <p class="fragment-label">oberth status · $example_label</p>
+<pre><code>api      <span class="ok">running</span>   :21730   health 200
+worker   <span class="ok">running</span>   no port</code></pre>
+          </div>
+          <div class="stage-view" data-stage="3" data-ui>
+            <p class="fragment-label">oberth logs worker --once · $example_label</p>
+<pre><code>worker: API health=200
+worker: API health=200
+worker: API health=200</code></pre>
+          </div>
         </div>
-        <div class="chain-side chain-output reveal" data-ui>
-          <h3>$chain_output_label</h3>
-          <p class="chain-note">$chain_output_note</p>
-<pre><code>{
-  "worktree": {
-    "name": "hello-worktree",
-    "branch": "main",
-    "status": "running",
-    "services": [
-      {
-        "name": "api",
-        "running": true,
-        "port_actual": 21730,
-        "health_status": { "status": "ok", "code": 200 }
-      },
-      {
-        "name": "worker",
-        "running": true,
-        "port_actual": null
-      }
-    ]
-  }
-}</code></pre>
+      </div>
+      <div class="wrap how-controls">
+        <input class="stage-range" type="range" min="0" max="3" step="1" value="0" aria-label="$stage_slider_label">
+        <div class="stage-names">
+          <button type="button" data-stage="0" class="is-active" aria-current="true">$stage_1_name</button>
+          <button type="button" data-stage="1">$stage_2_name</button>
+          <button type="button" data-stage="2">$stage_3_name</button>
+          <button type="button" data-stage="3">$stage_4_name</button>
         </div>
       </div>
     </section>
 
-    <section class="steps wrap" aria-labelledby="steps-title">
-      <div class="section-head reveal">
-        <h2 id="steps-title">$steps_title</h2>
-        <p>$steps_intro</p>
+    <section class="commands wrap" id="commands" aria-labelledby="commands-title">
+      <div class="section-head">
+        <h2 id="commands-title" class="reveal">$commands_title</h2>
+        <p class="reveal">$commands_intro</p>
       </div>
-      <ol class="step-lines">
-        <li class="reveal"><span>$step_1</span></li>
-        <li class="reveal"><span>$step_2</span></li>
-        <li class="reveal"><span>$step_3</span></li>
-        <li class="reveal"><span>$step_4</span></li>
-      </ol>
+      <div class="command-box reveal" data-ui>
+        <div class="command-search">
+          <label for="command-filter">$command_search_label</label>
+          <input id="command-filter" type="search" placeholder="$command_search_placeholder" autocomplete="off" spellcheck="false" aria-controls="command-list" data-count-filtered="$command_count_filtered" data-count-all="$command_count_all">
+          <p class="command-status" id="command-status" role="status" aria-live="polite"></p>
+        </div>
+        <ul class="command-list" id="command-list">
+          <li><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-status-path---json---no-mark"><code class="command-name">oberth status --json</code><span class="command-tag">$cmd_status_tag</span><span class="command-desc">$cmd_status_desc</span></a></li>
+          <li><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-up-project---only-name---waitready---wait-timeout-duration"><code class="command-name">oberth up --wait</code><span class="command-tag">$cmd_up_tag</span><span class="command-desc">$cmd_up_desc</span></a></li>
+          <li><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-logs-serviceport---once---lines-n---follow---ip-address---json"><code class="command-name">oberth logs</code><span class="command-tag">$cmd_logs_tag</span><span class="command-desc">$cmd_logs_desc</span></a></li>
+          <li><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-down-project---force---json"><code class="command-name">oberth down</code><span class="command-tag">$cmd_down_tag</span><span class="command-desc">$cmd_down_desc</span></a></li>
+          <li><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-workplace"><code class="command-name">oberth workplace</code><span class="command-tag">$cmd_workplace_tag</span><span class="command-desc">$cmd_workplace_desc</span></a></li>
+          <li><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#%E5%90%84%E5%B1%82%E5%85%B6%E4%BD%99%E5%91%BD%E4%BB%A4"><code class="command-name">oberth doctor</code><span class="command-tag">$cmd_doctor_tag</span><span class="command-desc">$cmd_doctor_desc</span></a></li>
+        </ul>
+        <p class="command-empty" id="command-empty" hidden>$command_empty</p>
+      </div>
     </section>
 
-    <section class="products wrap" id="products" aria-labelledby="products-title">
-      <div class="section-head reveal">
-        <h2 id="products-title">$products_title</h2>
-        <p>$products_intro</p>
+    <section class="facts wrap" aria-labelledby="facts-title">
+      <div class="facts-board">
+        <div class="fact fact-lead reveal">
+          <h2 id="facts-title">$facts_title</h2>
+          <p class="fact-lead-note">$facts_lead_note</p>
+        </div>
+        <div class="fact reveal">
+          <p class="fact-label">$fact_process_label</p>
+          <p class="fact-value"><span class="ok">running</span></p>
+          <p class="fact-note">$fact_process_note</p>
+        </div>
+        <div class="fact reveal">
+          <p class="fact-label">$fact_port_label</p>
+          <p class="fact-value">21730 <span class="fact-unit">auto</span></p>
+          <p class="fact-note">$fact_port_note</p>
+        </div>
+        <div class="fact reveal">
+          <p class="fact-label">$fact_health_label</p>
+          <p class="fact-value">200 <span class="fact-unit">/health</span></p>
+          <p class="fact-note">$fact_health_note</p>
+        </div>
+        <div class="fact reveal">
+          <p class="fact-label">$fact_exit_label</p>
+          <p class="fact-value">none</p>
+          <p class="fact-note">$fact_exit_note</p>
+        </div>
+        <div class="fact fact-wide reveal">
+          <p class="fact-label">$fact_worker_label</p>
+          <p class="fact-value">worker · <span class="ok">running</span></p>
+          <p class="fact-note">$fact_worker_note</p>
+        </div>
       </div>
-      <ul class="product-list">
-        <li class="reveal"><a href="https://github.com/SheathedSharp/option-berth"><span class="product-name">$product_engine_name</span><span class="product-meta">$product_engine_meta</span><span class="product-desc">$product_engine_desc</span><span class="product-open">$product_link <span aria-hidden="true">↗</span></span></a></li>
-        <li class="reveal"><a href="https://github.com/SheathedSharp/option-berth-macos"><span class="product-name">$product_client_name</span><span class="product-meta">$product_client_meta</span><span class="product-desc">$product_client_desc</span><span class="product-open">$product_link <span aria-hidden="true">↗</span></span></a></li>
-        <li class="reveal"><a href="https://github.com/SheathedSharp/option-berth-skill"><span class="product-name">$product_skill_name</span><span class="product-meta">$product_skill_meta</span><span class="product-desc">$product_skill_desc</span><span class="product-open">$product_link <span aria-hidden="true">↗</span></span></a></li>
-      </ul>
     </section>
 
     <section class="install" id="install" aria-labelledby="install-title">
       <div class="wrap install-grid">
-        <div class="install-copy reveal">
+        <div class="install-copy">
           <h2 id="install-title">$install_title</h2>
           <p>$install_intro</p>
           <p class="install-note">$install_note</p>
         </div>
         <div class="install-panels">
           <div class="install-panel reveal" data-ui>
-            <h3>$install_source_title</h3>
-<pre><code>git clone https://github.com/SheathedSharp/option-berth.git
+            <div class="panel-head">
+              <h3>$install_source_title</h3>
+              <button class="copy" type="button" data-copy="install-source-code" data-copied="$copy_done" data-select="$copy_select" aria-label="$copy_label $install_source_title">$copy_label</button>
+              <span class="copy-status" role="status"></span>
+            </div>
+<pre><code id="install-source-code">git clone https://github.com/SheathedSharp/option-berth.git
 cd option-berth
 brew install go mage
 mage buildEngine
 ./bin/oberth version --json</code></pre>
           </div>
-          <div class="install-panel install-panel-release reveal">
+          <div class="install-panel install-panel-release reveal" data-ui>
             <h3>$install_release_title</h3>
             <p>$install_release_body</p>
             <a class="text-link" href="https://github.com/SheathedSharp/option-berth/releases/latest">$install_release_link <span aria-hidden="true">↗</span></a>
@@ -174,29 +218,38 @@ mage buildEngine
     </section>
 
     <section class="faq wrap" aria-labelledby="faq-title">
-      <h2 id="faq-title" class="reveal">$faq_title</h2>
-      <div class="faq-text reveal">
-        <p><strong>$faq_q1</strong> $faq_a1</p>
-        <p><strong>$faq_q2</strong> $faq_a2</p>
-        <p><strong>$faq_q3</strong> $faq_a3</p>
-        <p><strong>$faq_q4</strong> $faq_a4</p>
-        <p><strong>$faq_q5</strong> $faq_a5</p>
-        <p><strong>$faq_q6</strong> $faq_a6</p>
+      <div class="faq-grid">
+        <h2 id="faq-title">$faq_title</h2>
+        <div class="faq-list">
+          <details name="faq"><summary>$faq_q1<span class="faq-icon" aria-hidden="true"></span></summary><p>$faq_a1</p></details>
+          <details name="faq"><summary>$faq_q2<span class="faq-icon" aria-hidden="true"></span></summary><p>$faq_a2</p></details>
+          <details name="faq"><summary>$faq_q3<span class="faq-icon" aria-hidden="true"></span></summary><p>$faq_a3</p></details>
+          <details name="faq" open><summary>$faq_q4<span class="faq-icon" aria-hidden="true"></span></summary><p>$faq_a4</p></details>
+          <details name="faq"><summary>$faq_q5<span class="faq-icon" aria-hidden="true"></span></summary><p>$faq_a5</p></details>
+          <details name="faq"><summary>$faq_q6<span class="faq-icon" aria-hidden="true"></span></summary><p>$faq_a6</p></details>
+        </div>
       </div>
     </section>
 
     <section class="close" aria-labelledby="close-title">
-      <div class="wrap reveal">
-        <h2 id="close-title">$cta_title</h2>
-        <p class="close-body">$cta_body</p>
-        <div class="close-actions"><a class="button button-paper" href="https://github.com/SheathedSharp/option-berth/releases/latest">$cta_download <span aria-hidden="true">↗</span></a><a class="close-link" href="https://github.com/SheathedSharp/option-berth-macos">$cta_client <span aria-hidden="true">↗</span></a><a class="close-link" href="https://github.com/SheathedSharp/option-berth-skill">$cta_skill <span aria-hidden="true">↗</span></a></div>
+      <div class="wrap close-inner">
+        <div class="close-copy">
+          <h2 id="close-title" class="reveal">$cta_title</h2>
+          <p class="close-body reveal">$cta_body</p>
+          <div class="close-actions reveal"><a class="button button-solid" href="#install">$install_action</a></div>
+        </div>
+        <div class="close-products reveal">
+          <a href="https://github.com/SheathedSharp/option-berth">$cta_engine <span aria-hidden="true">↗</span></a>
+          <a href="https://github.com/SheathedSharp/option-berth-macos">$cta_client <span aria-hidden="true">↗</span></a>
+          <a href="https://github.com/SheathedSharp/option-berth-skill">$cta_skill <span aria-hidden="true">↗</span></a>
+        </div>
       </div>
     </section>
   </main>
   <footer class="site-foot wrap">
-    <a class="wordmark" href="$home_path"><img src="${asset_path}mark.svg" width="24" height="24" alt=""><span>option-berth</span></a>
-    <p>$footer_line</p>
-    <div><a href="https://github.com/SheathedSharp/option-berth/blob/main/LICENSE">$license</a><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md">$docs</a><a href="https://github.com/SheathedSharp/option-berth/releases">$releases</a><a href="https://github.com/SheathedSharp/option-berth/issues">$feedback</a></div>
+    <p>oberth · $footer_line</p>
+    <nav aria-label="$footer_navigation"><a href="https://github.com/SheathedSharp/option-berth/blob/main/LICENSE">$license</a><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md">$docs</a><a href="https://github.com/SheathedSharp/option-berth/releases">$releases</a><a href="https://github.com/SheathedSharp/option-berth/issues">$feedback</a></nav>
+    <p>$footer_note</p>
   </footer>
 </body>
 </html>
