@@ -120,8 +120,16 @@ oberth agent run codex --worktree "$PWD"
 ```
 
 How an agent learns to use these commands lives in the separate
-[option-berth-skill](https://github.com/SheathedSharp/option-berth-skill) repository. Installing it is
-the agent's own choice: nothing in this repository installs hooks, skills or MCP configuration for you.
+[option-berth-skill](https://github.com/SheathedSharp/option-berth-skill) repository. Install it for
+the agents already on your machine with the Skills CLI:
+
+```sh
+npx skills add SheathedSharp/option-berth-skill -g
+```
+
+Claude Code can also install it from the plugin marketplace:
+`/plugin install option-berth --marketplace SheathedSharp/option-berth-skill`. Installing it is the
+agent's own choice: nothing in this repository installs hooks, skills or MCP configuration for you.
 
 ## Using the three together
 
@@ -133,8 +141,8 @@ git clone https://github.com/SheathedSharp/option-berth-macos.git
 git clone https://github.com/SheathedSharp/option-berth-skill.git
 ```
 
-The client points at any `oberth` through `BERTH_BIN`; the skill is installed by symlinking it into
-whichever agent's skills directory you use.
+The client points at any `oberth` through `BERTH_BIN`; develop the skill by symlinking the sibling
+clone, and install the published one with `npx skills add`.
 
 ## Versioning and contributing
 

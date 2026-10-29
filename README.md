@@ -115,6 +115,14 @@ oberth agent run codex --worktree "$PWD"
 
 agent 怎么学会用这些命令，写在独立的
 [option-berth-skill](https://github.com/SheathedSharp/option-berth-skill) 仓库里。
+用 Skills CLI 安装到本机已安装的 agent：
+
+```sh
+npx skills add SheathedSharp/option-berth-skill -g
+```
+
+Claude Code 也可以走插件市场：
+`/plugin install option-berth --marketplace SheathedSharp/option-berth-skill`。
 装它是 agent 自己的事：本仓库的命令不会自动安装 hooks、skills 或 MCP 配置。
 
 ## 一起用
@@ -127,7 +135,8 @@ git clone https://github.com/SheathedSharp/option-berth-macos.git
 git clone https://github.com/SheathedSharp/option-berth-skill.git
 ```
 
-客户端用 `BERTH_BIN` 指向任意一份 `oberth`；skill 用软链装进你所用 agent 的技能目录。
+客户端用 `BERTH_BIN` 指向任意一份 `oberth`；开发中的 skill 用软链指向同级 clone，
+正式安装用 `npx skills add`。
 
 ## 版本与贡献
 
