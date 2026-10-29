@@ -74,6 +74,9 @@ GitHub 访问慢或被限制时：`go install` 加 `GOPROXY=https://goproxy.cn`�
 镜像，脚本入口也可以从 jsDelivr 获取。具体做法见
 [安装与卸载](docs/install.md#下载慢或被网络限制)。
 
+直接运行 `oberth` 会显示本机版本；有更新时首屏底部给出升级命令。也可以随时运行
+`oberth version --check` 主动检查，它只读发布信息，不下载、不安装。
+
 ### 用 go install（Go 1.25+）
 
 ```sh

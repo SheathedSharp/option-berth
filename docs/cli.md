@@ -4,8 +4,10 @@
 只读事件流，以及留给下一个接手的人或 agent 的工作记录。其余命令以 oberth <command> --help
 为准，不在这里另建一套契约。
 
-无参数运行 `oberth` 显示首屏：品牌标记与字标、一句定位、三条最常用命令（status / up / down）
-和到完整帮助的指引；它是指路牌不是手册，分组命令清单只在 `oberth --help`。标记由
+无参数运行 `oberth` 显示首屏：品牌标记与字标、一句定位、本机版本、三条最常用命令（status / up / down）
+和到完整帮助的指引；它是指路牌不是手册，分组命令清单只在 `oberth --help`。版本行在发布版本检查
+成功时带 `(latest)` 或 `(latest version vX.Y.Z)`；检查未知时只打印本机版本，不把“没查到”写成
+“最新”。发现更新时，首屏底部给出对应平台的安装命令和 `oberth daemon stop`。标记由
 `brand/build-option-berth.py` 从客户端几何源生成到 `engine/internal/cmd/mark_gen.go`，
 不手写；字标是轮廓字，终端里用粗体文字表示。
 
@@ -336,12 +338,28 @@ group/session 选择器只为迁移保留，不出现在公开帮助中。
 
 - oberth daemon status|path|stop|restart|log|schema：管理或查看后台采集器。- `oberth -v` / `oberth --version`：简洁地打印当前 CLI 版本；`oberth config init|path|edit`、`oberth serve`、`oberth version`、`oberth completion`：配置与运行环境入口。
 - `oberth version --json` 输出当前构建的 `version`、`commit`、`built` 和 `platform`，供安装检查脚本确认实际运行的构建。
+- `oberth version --check` 读取最新发布标签，报告本机是否落后；`--check --json` 在原来的字段上增加
+  `latest`。它只读发布信息，不下载、不安装，也不替换正在运行的二进制。首屏的版本状态复用同一份
+  检查结果，最多缓存 24 小时；只有终端会话会自动检查，单次最多等待 1 秒，
+  `BERTH_NO_UPDATE_CHECK=1` 可关闭。GitHub 不可达时 `--check` 以非零退出并说明原因，
+  首屏只显示本机版本。检查结果缓存在 `BERTH_HOME/update-check.json`
+  （默认 `~/.option-berth/update-check.json`），只为首屏复用，不是运行事实。
 
 `oberth version --json` 的 stdout 是一个 JSON 值：
 
 ~~~json
 {"version":"v0.1.0","commit":"<git-sha>","built":"<UTC timestamp>","platform":"darwin/arm64"}
 ~~~
+
+`--check --json` 在这个对象上增加 `latest`：
+
+~~~json
+{"version":"v0.1.0","commit":"<git-sha>","built":"<UTC timestamp>","platform":"darwin/arm64",
+ "latest":{"version":"v0.1.1","checked_at":"<UTC timestamp>","update_available":true}}
+~~~
+
+`latest.version` 是发布源报告的最新标签；只有本机版本严格更旧时 `update_available` 才为 `true`，
+本机版本更新（例如从 `main` 构建）或无法比较（例如 `dev`）都为 `false`。
 
 ## 清单和状态的边界
 

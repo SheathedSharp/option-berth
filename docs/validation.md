@@ -38,6 +38,9 @@ PATH 配置、旧包缺少 `install-path.sh` 时的标签回退、未知参数�
 测试不访问真实 GitHub，也不写用户目录。Windows 脚本在 Windows CI 做语法解析，其安装、卸载与
 PATH 行为需要独立的 Windows 原生验证；本机测试不能代替它。
 
+`versioncheck` 的单元测试用本地 HTTP 服务模拟发布页重定向与 releases API，不访问真实 GitHub；
+缓存读写使用临时目录。首屏的自动检查只在终端会话启用，测试进程的 stdout 不是终端时不触发。
+
 `scripts/go_install_test.py` 用本地 file module proxy 走真实 `go install`，安装
 `engine/cmd/oberth` 与 `engine/cmd/jev-attention`，并核对 `version --json` 使用模块版本。
 这验证了模块路径、`cmd/oberth` 的二进制名，以及 `go install` 不经过 `-ldflags` 时的版本回退。
