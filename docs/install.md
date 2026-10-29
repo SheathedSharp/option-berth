@@ -54,7 +54,7 @@ Windows 安装器在替换文件前会检查 `oberth` / `jev-attention` 是否�
 
 ### Windows MSI（amd64）
 
-从 v1.0.1 起，Release 还会提供 `option-berth-X.Y.Z-windows-amd64.msi`。双击安装，或：
+从 v1.1.0 起，Release 还会提供 `option-berth-X.Y.Z-windows-amd64.msi`。双击安装，或：
 
 ```powershell
 msiexec /i .\option-berth-1.0.0-windows-amd64.msi
@@ -75,7 +75,7 @@ go install github.com/sheathedsharp/option-berth/engine/cmd/oberth@latest
 go install github.com/sheathedsharp/option-berth/engine/cmd/jev-attention@latest
 ```
 
-需要 v1.0.1 或更新版本。固定版本用 `@v1.0.1`。二进制进 `$(go env GOPATH)/bin`（或 `GOBIN`），
+需要 v1.1.0 或更新版本。固定版本用 `@v1.1.0`。二进制进 `$(go env GOPATH)/bin`（或 `GOBIN`），
 该目录需要在 PATH 中。
 
 ## 手动下载发布包
@@ -98,7 +98,7 @@ install -m 0755 option-berth-v1.0.0-darwin-arm64/jev-attention ~/.local/bin/jev-
 ## Linux 安装包（.deb / .rpm）
 
 发布流程会为 amd64/arm64 生成 `.deb` 与 `.rpm`，和压缩包放在同一个 Release。`v1.0.0` 还没有
-这些资产，从 v1.0.1 开始提供：
+这些资产，从 v1.1.0 开始提供：
 
 ```sh
 # Debian / Ubuntu
