@@ -162,7 +162,7 @@ function Install-Oberth {
                 if ($base -eq $baseUrl) { break }
             }
             elseif ($digest -ne $expected) {
-                throw "checksum sources disagree for $archive: $base reports $digest"
+                throw "checksum sources disagree for ${archive}: $base reports $digest"
             }
             else {
                 break
