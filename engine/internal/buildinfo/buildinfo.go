@@ -1,10 +1,10 @@
 // Package buildinfo carries what this build knows about itself: the version
 // stamped in at link time and the platform it was built for.
 //
-// It is deliberately separate from any update mechanism. option-berth is built
-// from source, and nothing in this tree may replace the running executable with
-// a binary downloaded from somewhere else — see UPSTREAM.md for why the fork
-// removed that machinery instead of repointing it.
+// It is deliberately separate from the update check. `oberth version --check`
+// only reads the latest published tag; nothing in this tree downloads a binary
+// or replaces the running executable — see UPSTREAM.md for why the fork removed
+// that machinery instead of repointing it.
 package buildinfo
 
 import (
