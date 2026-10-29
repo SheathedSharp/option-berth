@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
 // fakeRows is the snapshot every read handler is exercised against: a user

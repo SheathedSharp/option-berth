@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/workplace"
+	"github.com/sheathedsharp/option-berth/engine/internal/workplace"
 )
 
 // A recorder with no worker behind it: the queue is the whole observable

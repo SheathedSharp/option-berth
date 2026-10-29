@@ -28,5 +28,5 @@ jobs:
           set -euo pipefail
           output=$(mktemp -d)
           trap 'rm -rf "$output"' EXIT
-          (cd engine && go build -o "$output/oberth" .)
+          (cd engine && go build -o "$output/oberth" ./cmd/oberth)
           python3 scripts/verify-reused-readiness.py --binary "$output/oberth"

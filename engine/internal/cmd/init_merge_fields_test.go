@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"github.com/sheathedsharp/option-berth/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"os"
 	"path/filepath"
 	"testing"

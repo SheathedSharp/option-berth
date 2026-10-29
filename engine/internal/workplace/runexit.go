@@ -3,8 +3,8 @@ package workplace
 import (
 	"sync/atomic"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon"
-	"github.com/sheathedsharp/option-berth/internal/daemon/runsreg"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/runsreg"
 )
 
 // Closing the block of a run the daemon outlived.

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/display"
-	"github.com/sheathedsharp/option-berth/internal/git"
+	"github.com/sheathedsharp/option-berth/engine/internal/display"
+	"github.com/sheathedsharp/option-berth/engine/internal/git"
 	"github.com/spf13/cobra"
 )
 

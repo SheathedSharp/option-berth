@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/claims"
-	"github.com/sheathedsharp/option-berth/internal/store"
+	"github.com/sheathedsharp/option-berth/engine/internal/claims"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 // newManager builds a manager over a real temp database, so the SQL that

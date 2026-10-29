@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/paths"
+	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 )
 
 // Re-enter TestMain with a caller's overrides, rather than setting them after

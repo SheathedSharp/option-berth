@@ -3,7 +3,7 @@ package workplace
 import (
 	"errors"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 )
 
 // How a failure out of this package is reported.

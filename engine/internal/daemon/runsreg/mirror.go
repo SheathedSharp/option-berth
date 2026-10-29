@@ -3,7 +3,7 @@ package runsreg
 import (
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/runs"
+	"github.com/sheathedsharp/option-berth/engine/internal/runs"
 )
 
 // sameRun compares generation identity, never mutable labels or stop state.

@@ -1,6 +1,6 @@
 package runsreg
 
-import "github.com/sheathedsharp/option-berth/internal/state"
+import "github.com/sheathedsharp/option-berth/engine/internal/state"
 
 // StopSignalObserver captures exact generations before control starts, but
 // changes no facts until an OS adapter confirms an accepted signal. The maps

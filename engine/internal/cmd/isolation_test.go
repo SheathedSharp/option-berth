@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/config"
-	"github.com/sheathedsharp/option-berth/internal/daemon"
-	"github.com/sheathedsharp/option-berth/internal/daemon/client"
-	"github.com/sheathedsharp/option-berth/internal/store"
-	"github.com/sheathedsharp/option-berth/internal/testenv"
+	"github.com/sheathedsharp/option-berth/engine/internal/config"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
+	"github.com/sheathedsharp/option-berth/engine/internal/testenv"
 	"github.com/spf13/cobra"
 )
 

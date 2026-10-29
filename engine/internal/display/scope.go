@@ -1,6 +1,6 @@
 package display
 
-import "github.com/sheathedsharp/option-berth/internal/ports"
+import "github.com/sheathedsharp/option-berth/engine/internal/ports"
 
 // Scope is what a `--json` document is about — the first thing a caller has to
 // know, because the same rows mean something different for one project than

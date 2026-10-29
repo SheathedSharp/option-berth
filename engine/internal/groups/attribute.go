@@ -3,8 +3,8 @@ package groups
 import (
 	"os"
 
-	"github.com/sheathedsharp/option-berth/internal/ports"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // Attribute runs the resolver over a direct scan. It builds an index from what

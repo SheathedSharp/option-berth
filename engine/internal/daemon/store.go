@@ -3,8 +3,8 @@ package daemon
 import (
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/state"
-	"github.com/sheathedsharp/option-berth/internal/store"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 // openStore opens the daemon's SQLite database and hands it to the runtime and

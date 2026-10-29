@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
-	"github.com/sheathedsharp/option-berth/internal/daemon/runsreg"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/runsreg"
 )
 
 // TestPrepareCancellationKillsThePrepareProcess: a `prepare` that hangs must

@@ -4,9 +4,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/sheathedsharp/option-berth/internal/paths"
-	"github.com/sheathedsharp/option-berth/internal/servicefacts"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/paths"
+	"github.com/sheathedsharp/option-berth/engine/internal/servicefacts"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // serviceRowsWithFacts is the contract adapter. Attribution and lifecycle

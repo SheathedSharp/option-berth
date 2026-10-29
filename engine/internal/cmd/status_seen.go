@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/git"
-	"github.com/sheathedsharp/option-berth/internal/paths"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/git"
+	"github.com/sheathedsharp/option-berth/engine/internal/paths"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // This file is what makes the second `oberth status` different from the

@@ -1,6 +1,6 @@
 package docker
 
-import "github.com/sheathedsharp/option-berth/internal/ports"
+import "github.com/sheathedsharp/option-berth/engine/internal/ports"
 
 // EnrichFromPS stamps pp from `docker ps --format psFormat` output, as a scan
 // does from the watcher's cached list. It lets the external test package drive

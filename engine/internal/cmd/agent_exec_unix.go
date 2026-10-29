@@ -3,7 +3,7 @@
 package cmd
 
 import (
-	"github.com/sheathedsharp/option-berth/internal/agentlaunch"
+	"github.com/sheathedsharp/option-berth/engine/internal/agentlaunch"
 	"os"
 	"syscall"
 )

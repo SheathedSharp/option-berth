@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/sheathedsharp/option-berth/internal/buildinfo"
-	"github.com/sheathedsharp/option-berth/internal/display"
+	"github.com/sheathedsharp/option-berth/engine/internal/buildinfo"
+	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/spf13/cobra"
 )
 
@@ -37,7 +37,7 @@ func init() {
 func versionRun(cmd *cobra.Command, args []string) error {
 	if versionJSONFlag {
 		return printJSON(versionDocument{
-			Version:  buildinfo.Version,
+			Version:  buildinfo.VersionValue(),
 			Commit:   buildinfo.Commit,
 			Built:    buildinfo.Date,
 			Platform: runtime.GOOS + "/" + runtime.GOARCH,

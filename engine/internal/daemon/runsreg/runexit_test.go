@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
 )
 
 // A recorded exit is announced once. The workplace record is what listens: it

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/agentlaunch"
+	"github.com/sheathedsharp/option-berth/engine/internal/agentlaunch"
 )
 
 type claudeLive struct {

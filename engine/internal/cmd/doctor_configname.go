@@ -3,8 +3,8 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"github.com/sheathedsharp/option-berth/internal/doctor"
-	"github.com/sheathedsharp/option-berth/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/doctor"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/spf13/cobra"
 	"os"
 	"path/filepath"

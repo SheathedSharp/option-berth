@@ -5,8 +5,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // TestDeliverRacesClose pins the fix for the panic PR #68 hit in CI: the read

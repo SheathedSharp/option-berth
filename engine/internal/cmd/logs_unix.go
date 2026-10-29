@@ -9,8 +9,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/sheathedsharp/option-berth/internal/display"
-	"github.com/sheathedsharp/option-berth/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/display"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
 // execDockerLogs execs into docker logs for a container.

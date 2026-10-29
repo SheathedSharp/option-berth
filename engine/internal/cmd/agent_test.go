@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/agentlaunch"
+	"github.com/sheathedsharp/option-berth/engine/internal/agentlaunch"
 )
 
 func TestAgentPlanReadsPromptWithoutExecutingProvider(t *testing.T) {

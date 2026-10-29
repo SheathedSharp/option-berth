@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/sheathedsharp/option-berth/internal/spawn"
+	"github.com/sheathedsharp/option-berth/engine/internal/spawn"
 )
 
 // The ways resolving an agent CLI fails, so a caller can map the failure onto

@@ -3,7 +3,7 @@ package sessions
 import (
 	_ "embed"
 
-	"github.com/sheathedsharp/option-berth/internal/store"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 // Migration 005 is the version contract §8 reserves for sessions. It is

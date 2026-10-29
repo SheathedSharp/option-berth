@@ -10,14 +10,14 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/sheathedsharp/option-berth/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
 // header is written above a generated config so the next reader knows where it
 // came from and that it is meant to be edited and committed.
 const header = `# ` + ConfigName + ` — option-berth worktree service configuration, written by ` + "`oberth init`" + `.
 # Edit and commit it: option-berth uses it to name this worktree and to know
-# which services belong to it. https://github.com/sheathedsharp/option-berth
+# which services belong to it. https://github.com/sheathedsharp/option-berth/engine
 #
 # The services list below is yours to write. option-berth starts and stops exactly
 # what it declares, and it does not infer a service from a running process: a

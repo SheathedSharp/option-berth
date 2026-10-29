@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/attention"
 )
 
 // The runner lives in the optional agent-side command. Only the documented

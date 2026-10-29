@@ -1,8 +1,8 @@
 package scanner
 
 import (
-	"github.com/sheathedsharp/option-berth/internal/groups"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // The daemon's `oberth.yaml` index lives here, on the scan loop, because the

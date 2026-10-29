@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/ports"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // maxHealthProbes bounds how many configured health checks run at once, the

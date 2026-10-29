@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/git"
+	"github.com/sheathedsharp/option-berth/engine/internal/git"
 	"github.com/spf13/cobra"
 )
 

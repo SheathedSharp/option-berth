@@ -3,7 +3,7 @@ package daemon
 import (
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 func TestReplayFromReturnsContiguousTransitions(t *testing.T) {

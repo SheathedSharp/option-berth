@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/sheathedsharp/option-berth/docs/schema/agent-stream.schema.json",
+  "$id": "https://github.com/sheathedsharp/option-berth/engine/docs/schema/agent-stream.schema.json",
   "title": "oberth agent stream NDJSON",
   "description": "Normalized stdin commands and stdout events for `oberth agent stream`. Version field v must be 1.",
   "oneOf": [

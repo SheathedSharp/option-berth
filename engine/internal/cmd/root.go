@@ -7,10 +7,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/sheathedsharp/option-berth/internal/buildinfo"
-	"github.com/sheathedsharp/option-berth/internal/config"
-	"github.com/sheathedsharp/option-berth/internal/display"
-	"github.com/sheathedsharp/option-berth/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/buildinfo"
+	"github.com/sheathedsharp/option-berth/engine/internal/config"
+	"github.com/sheathedsharp/option-berth/engine/internal/display"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/spf13/cobra"
 )
 

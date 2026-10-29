@@ -65,12 +65,24 @@ Windows（PowerShell）：
 irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps1 | iex
 ```
 
-Windows amd64 从下一个版本起还提供未签名 MSI；arm64 继续使用 zip 与 `install.ps1`。
+Windows amd64 从 v1.0.1 起还提供未签名 MSI；arm64 继续使用 zip 与 `install.ps1`。
 
 固定版本用 `--version v1.0.0`（Windows 为 `-Version v1.0.0`），换安装目录用 `--dir` / `-Dir`，
 不想修改 PATH 用 `--no-modify-path` / `-NoModifyPath`。脚本只下载并校验 Release 压缩包，
 不启动服务、不写 Git；也可以先审阅 [install.sh](install.sh) / [install.ps1](install.ps1)，
 或直接下载 [Releases](https://github.com/SheathedSharp/option-berth/releases) 压缩包。
+
+### 用 go install（Go 1.25+）
+
+```sh
+go install github.com/sheathedsharp/option-berth/engine/cmd/oberth@latest
+
+# 可选的 Jev adapter
+go install github.com/sheathedsharp/option-berth/engine/cmd/jev-attention@latest
+```
+
+需要 v1.0.1 或更新版本。二进制进 `$(go env GOPATH)/bin` 或 `GOBIN`，该目录需要在 PATH 中。
+卸载时删除 `$(go env GOPATH)/bin/oberth` 与 `jev-attention`。
 
 卸载：
 
@@ -79,7 +91,7 @@ curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uni
 ```
 
 默认保留 `~/.option-berth` 运行状态，加 `--purge-state` 才会删除。Linux 还提供 `.deb` / `.rpm`
-（从下一个版本起随 Release 发布）。完整安装、升级、卸载与各渠道说明见 [安装与卸载](docs/install.md)。
+（v1.0.1 起随 Release 发布）。完整安装、升级、卸载与各渠道说明见 [安装与卸载](docs/install.md)。
 
 完整服务场景面向 **macOS / Linux**。Windows 已有原生构建、冒烟及部分事实与持久化测试，
 不能视为完整生命周期支持。

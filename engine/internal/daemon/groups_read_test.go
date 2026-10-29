@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // TestGroupsListServesTheSnapshotsGroups: `groups.list` is the groups the scan

@@ -25,7 +25,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // Environment variables every child gets, so a tool that wants to know which

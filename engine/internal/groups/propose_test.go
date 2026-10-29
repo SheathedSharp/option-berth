@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
 // TestProposeReportsWhatIsListening: a proposal declares no services at all. It

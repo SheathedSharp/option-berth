@@ -7,7 +7,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/sheathedsharp/option-berth/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
 // execDockerLogs runs docker logs for a container.

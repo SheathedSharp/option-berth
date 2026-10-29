@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 )
 
 // The sample below is copied from a real `git status --porcelain=v2 --branch -z`

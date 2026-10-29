@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/runs"
-	"github.com/sheathedsharp/option-berth/internal/store"
+	"github.com/sheathedsharp/option-berth/engine/internal/runs"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 func TestMirrorFailuresAreReportedWithoutErasingRuntimeFacts(t *testing.T) {

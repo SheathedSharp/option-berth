@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"runtime"
 
-	"github.com/sheathedsharp/option-berth/internal/config"
+	"github.com/sheathedsharp/option-berth/engine/internal/config"
 	"github.com/spf13/cobra"
 )
 

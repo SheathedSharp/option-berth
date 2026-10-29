@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
 )
 
 var pruning struct {

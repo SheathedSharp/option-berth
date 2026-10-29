@@ -3,7 +3,7 @@ package killer
 import (
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
 func (u *unit) addClaim(pid int, at time.Time) {

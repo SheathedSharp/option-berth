@@ -3,8 +3,8 @@ package groupstart
 import (
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/groups"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 func TestPortDependencyRequiresObservedListenerNotJustRun(t *testing.T) {

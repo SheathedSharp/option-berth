@@ -1,8 +1,8 @@
 package daemon
 
 import (
-	"github.com/sheathedsharp/option-berth/internal/claims"
-	"github.com/sheathedsharp/option-berth/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/claims"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 )
 
 // AcquireServicePort claims the port a `port: auto` service runs on, for the

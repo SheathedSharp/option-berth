@@ -7,7 +7,7 @@ package daemon
 import (
 	"net"
 
-	"github.com/sheathedsharp/option-berth/internal/paths"
+	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 )
 
 // WindowsPipe is the named pipe the daemon listens on under Windows

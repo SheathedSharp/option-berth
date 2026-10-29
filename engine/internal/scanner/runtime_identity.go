@@ -1,6 +1,6 @@
 package scanner
 
-import "github.com/sheathedsharp/option-berth/internal/state"
+import "github.com/sheathedsharp/option-berth/engine/internal/state"
 
 // Optional observations belong to a runtime, not just a socket address. A
 // port reused after restart must not inherit the previous run's health/stats.

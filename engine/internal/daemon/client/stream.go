@@ -6,7 +6,7 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 )
 
 // StreamBuffer is how many chunks a stream holds before the reader has to catch

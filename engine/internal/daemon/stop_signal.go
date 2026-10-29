@@ -1,8 +1,8 @@
 package daemon
 
 import (
-	"github.com/sheathedsharp/option-berth/internal/killer"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/killer"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 type stopSignalRegistry interface {

@@ -17,6 +17,10 @@ option-berth 拆成三个独立产品：本仓库发布 `oberth` 引擎与 CLI�
 
 不发布 macOS 应用、DMG、公证包、客户端截图或 skill 安装包。
 
+引擎模块路径是 `github.com/sheathedsharp/option-berth/engine`；
+`go install github.com/sheathedsharp/option-berth/engine/cmd/oberth@vX.Y.Z` 直接从 Git 标签
+构建，不经过 Release 资产，也不需要额外的模块仓库。
+
 安装入口是仓库根目录的 `install.sh`（macOS/Linux）、`install.ps1`（Windows），以及对应的
 `uninstall.sh` / `uninstall.ps1`；它们不占 Release 资产，从 `main` 提供：
 

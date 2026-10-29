@@ -33,7 +33,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go vet ./...
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go build -o ../bin/oberth.exe .
+          go build -o ../bin/oberth.exe ./cmd/oberth
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go build -o ../bin/jev-attention.exe ./cmd/jev-attention
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

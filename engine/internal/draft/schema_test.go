@@ -3,7 +3,7 @@ package draft
 import (
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 )
 
 // ptr builds the nullable fields the schema requires every answer to carry.

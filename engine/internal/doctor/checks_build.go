@@ -3,7 +3,7 @@ package doctor
 import (
 	"context"
 	"fmt"
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"strings"
 )
 

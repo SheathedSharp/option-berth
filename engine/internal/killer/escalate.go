@@ -3,7 +3,7 @@ package killer
 import (
 	"context"
 
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // escalate implements the daemon spec's "SIGTERM, wait up to --grace (default

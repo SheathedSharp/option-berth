@@ -3,7 +3,7 @@ package daemon
 import (
 	"bufio"
 	"encoding/json"
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"net"
 	"testing"
 )

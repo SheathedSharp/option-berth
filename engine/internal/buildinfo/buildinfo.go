@@ -10,6 +10,7 @@ package buildinfo
 import (
 	"fmt"
 	"runtime"
+	"runtime/debug"
 	"strings"
 )
 
@@ -28,9 +29,22 @@ func VersionString() string {
 }
 
 // VersionValue returns the normalized SemVer value stamped into this build.
+//
+// `go install module@version` does not apply this package's link flags, so the
+// stamped value stays "dev". In that case the module version is still available
+// through the build info and is what a user expects `oberth version` to show.
 // Development builds keep their explicit `dev` marker.
 func VersionValue() string {
-	version := Version
+	return versionValue(Version, debug.ReadBuildInfo)
+}
+
+func versionValue(stamped string, readBuildInfo func() (*debug.BuildInfo, bool)) string {
+	version := stamped
+	if version == "dev" || version == "unknown" {
+		if info, ok := readBuildInfo(); ok && info != nil && info.Main.Version != "" && info.Main.Version != "(devel)" {
+			version = info.Main.Version
+		}
+	}
 	if version != "dev" && version != "unknown" && !strings.HasPrefix(version, "v") {
 		version = "v" + version
 	}

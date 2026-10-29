@@ -1,6 +1,6 @@
 package cmd
 
-import "github.com/sheathedsharp/option-berth/internal/state"
+import "github.com/sheathedsharp/option-berth/engine/internal/state"
 
 // A declared path alone is not proof that an observed listener writes there.
 // RunID binds a listening service to a managed run; absent that evidence, the

@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/runs"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/runs"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 func testDirectRuns(parents map[int]int, entries ...runs.Entry) *DirectRuns {

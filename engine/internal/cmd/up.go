@@ -9,15 +9,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/client"
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
-	"github.com/sheathedsharp/option-berth/internal/display"
-	"github.com/sheathedsharp/option-berth/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/display"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/spf13/cobra"
 
 	// The daemon serves groups.start from this package's init(); `oberth serve`
 	// runs in this binary, so it has to be linked in.
-	_ "github.com/sheathedsharp/option-berth/internal/daemon/groupstart"
+	_ "github.com/sheathedsharp/option-berth/engine/internal/daemon/groupstart"
 )
 
 var (
