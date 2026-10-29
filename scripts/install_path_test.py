@@ -80,6 +80,22 @@ class InstallPathTests(unittest.TestCase):
             self.assertIn('export PATH="$HOME/.local/bin:$PATH"', text)
             self.assertIn('export PATH="$HOME/tools/bin:$PATH"', text)
 
+    def test_comment_mention_is_not_a_path_edit(self):
+        # The old code-berth installer left a comment naming the directory.
+        # Seeing that comment must not suppress the real export line.
+        for comment in (
+            "# code-berth — the CLI `make install` puts in $HOME/.local/bin\n",
+            "  # old installer marker: $HOME/.local/bin\n",
+        ):
+            with self.subTest(comment=comment), tempfile.TemporaryDirectory() as tmp:
+                home = Path(tmp)
+                rc = home / ".zshrc"
+                rc.write_text(comment)
+                result = self.run_installer(home)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('export PATH="$HOME/.local/bin:$PATH"', rc.read_text())
+                self.assertNotIn("already configured", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

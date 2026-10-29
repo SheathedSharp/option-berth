@@ -27,11 +27,17 @@ case "$dir" in
 esac
 line="export PATH=\"$expr:\$PATH\""
 
-# 看一个文件里有没有提过这个目录。用 read 扫而不是 grep：这一条要在任何环境里都算数，
-# 而 grep 在某些沙箱里会静默漏匹配 —— 漏了就会重复写。
+# 看一个文件里有没有真的把目录写进 PATH。注释里提到目录不算：旧安装器留下的
+# 注释（# code-berth ... $HOME/.local/bin）曾让这里误判为已配置，结果只写了注释、
+# 没有写 export。用 read 扫而不是 grep：这一条要在任何环境里都算数，而 grep 在某些
+# 沙箱里会静默漏匹配 —— 漏了就会重复写。
 mentions() {
 	while IFS= read -r l || [ -n "$l" ]; do
-		case "$l" in
+		active=${l#"${l%%[![:space:]]*}"}
+		case "$active" in
+		'' | \#*) continue ;;
+		esac
+		case "$active" in
 		*"$expr"*) return 0 ;;
 		esac
 	done <"$1"
