@@ -1,16 +1,19 @@
 # 验证范围
 
 当前工作流均记录实际源码身份；检查结论只对应运行中的 commit，不沿用旧库或本机的历史结果。
-GitHub Actions 的自动验证仅在推送 `v*` 注释标签时由 `Verified release` 触发；日常 PR 与 `main` 推送不再启动 CI。需要分项检查时可在 Actions 里手动 `workflow_dispatch` 对应工作流，发版前仍应跑本地 `scripts/release-*.sh` 预览与 `--execute` 验证。
+GitHub Actions 的自动验证仅在推送 `v*` 注释标签时由 `Verified release` 触发；日常 PR 与 `main`
+推送不跑引擎 CI（站点改动例外，见 `.github/workflows/site.yml`）。需要分项检查时可在 Actions 里
+手动 `workflow_dispatch` 对应工作流，发版前仍应跑本地 `scripts/release-*.sh` 预览与 `--execute` 验证。
 
 | 工作流 | 平台与内容 |
 |---|---|
 | Engine verification | macOS / Ubuntu：原生构建、vet、全引擎单元、核心 race、真实服务场景、Mage 工作流回归、Python 辅助测试。 |
 | Git read verification | macOS / Ubuntu：Git、worktree、归因与观察的重复测试和 race。 |
 | Windows build verification | Windows x64：原生构建、vet、CLI/Jev 构建、version JSON/帮助页、事实/持久化，以及隔离 API/无端口 worker 的启动、重复启动、采集器恢复和限定停止；Ubuntu：Windows arm64 交叉构建。 |
-| Client and brand verification | macOS：共享几何源与13个SVG一致性、8项生成器测试、原生客户端/ICNS构建、PTY/输入框/会话导航回归及随包OFL检查。 |
 
 CLI、Mage 与品牌迁移分别审查、验证、合并，没有引入旧私人 Git 祖先。
+品牌检查比较本仓库导出的 SVG 与同级 `option-berth-macos` 里的 `BerthGeometry.swift`；
+没有同级检出时明确跳过，不伪装成已比对。
 Windows 的基础服务场景与所选原生测试，不等于全部服务树、Windows GUI 或 arm64 原生执行验收。
 
 ## 本机复现
@@ -27,12 +30,12 @@ go test -race -count=1 -timeout=10m ./internal/claims ./internal/runs ./internal
 go test -tags integration -count=1 -timeout=8m ./internal/scenario/...
 ```
 
-Mage 与品牌检查分别位于各自PR及CI。冻结呈现与真实Dock、菜单或交互验收分开。
-构建、截图、安装和服务起停是不同副作用，普通检查不操作日常用户服务。
+Mage 与品牌检查分别位于各自 PR 及 CI。构建、安装和服务起停是不同副作用，普通检查不操作日常用户服务。
 
 ## 不作出的保证
 
-GUI全部交互、签名安装包和长期负载仍需独立验收；没有可靠对照不宣传整体加速或长期无泄漏。
+长期负载仍需独立验收；没有可靠对照不宣传整体加速或长期无泄漏。
+客户端交互与签名安装包属于客户端仓库的验证范围。
 自动密钥扫描、许可证输入保留和CI成功各自有边界，不能替代安全审查或完整分发审核。
 
 ## 工作记录
@@ -54,13 +57,10 @@ GUI全部交互、签名安装包和长期负载仍需独立验收；没有可�
   用真实二进制与真实 daemon 跑 `oberth start -d`，核对记录先出现且是 running、随后由 daemon
   收成 completed（并核对退出码、结束时间与它指向的日志确实存在）。
 
-客户端不再保留第二份记录：`ClientChecks` 的 workplace 检查用合成 `oberth` 走完整条路径 ——
-`oberth workplace list/show` 读回、`workplace record` 上报自己交互式 PTY 与原生 agent 的条目、
-同一个 id 再报是更新、状态映射，以及输出经 `--output-file` 而不是 argv（2026-10-28）。
-它不启动 daemon，因此不等于真实 daemon 下的上报验收。
+客户端的 workplace 上报检查不在本仓库：它和客户端代码一起在
+[option-berth-macos](https://github.com/SheathedSharp/option-berth-macos)。
 
-**未执行**：真实 Codex / Claude 账号下的一轮任务在 workplace 里的端到端确认（合成驱动不算）；
-macOS 客户端对**真实 daemon** 的上报路径（上面的检查用合成 CLI）。
+**未执行**：真实 Codex / Claude 账号下的一轮任务在 workplace 里的端到端确认（合成驱动不算）。
 
 ## 核心验收：真实 coding agent 在一个陌生 worktree 上
 
@@ -69,9 +69,9 @@ macOS 客户端对**真实 daemon** 的上报路径（上面的检查用合成 C
 
 | 输入 | 值 |
 |---|---|
-| 引擎 | 本机构建 `v0.8.2`（commit `125108e`） |
+| 引擎 | 拆分前本机构建 `v0.8.2`（commit `125108e`） |
 | agent | Claude Code CLI（`claude -p`，本机默认模型 `deepseek-v4.1-flash-1017`） |
-| skill | 随仓库分发的 `.agents/skills/option-berth/`，装进被测项目的 `.claude/skills/` |
+| skill | 当时随本仓库分发的 `.agents/skills/option-berth/`；拆分后在 [option-berth-skill](https://github.com/SheathedSharp/option-berth-skill) |
 | 环境 | 独立 `BERTH_HOME`；可丢弃项目 `ledger-api`（git 仓库 + linked worktree `feature/rate-limits`） |
 | 任务 | 「服务没在跑，跑起来并确认它真的在运行；起不来就查清原因解决」——不提任何 oberth 命令 |
 | 场景 | 清单已声明 `api`（`port: 8137`、`health: /health`）与只读 `machine:` 依赖 `ledger-db`（55432）；服务因生成物 `config/endpoints.json` 缺失（已 gitignore）退出 1 |

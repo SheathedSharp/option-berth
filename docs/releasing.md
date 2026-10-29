@@ -1,8 +1,30 @@
 # 发布流程 / Release process
 
+## 本仓库只发布引擎
+
+option-berth 拆成三个独立产品：本仓库发布 `oberth` 引擎与 CLI；macOS 客户端与给 coding agent
+的 skill 各自在自己的仓库发版。三者只通过 CLI 与 `--json` 契约相连，版本与发布节奏互不绑定。
+
+本仓库的 Release 资产只有引擎：
+
+- macOS、Linux、Windows 的 amd64 与 arm64 压缩包（`option-berth-vX.Y.Z-<os>-<arch>.tar.gz|zip`）；
+- 每个压缩包的 `.sha256`；
+- 汇总的 `SHA256SUMS`。
+
+不发布 macOS 应用、DMG、公证包、客户端截图或 skill 安装包。
+
+### 拆分后的版本线
+
+引擎版本从 **1.0.0** 开始重新起算。这一次不是协议升级：`VERSION` 重定基线不改变
+`ProtocolVersion`，也不重新生成协议 schema。之后的版本仍按下面的步进表推进。
+
+拆分前 `v0.2.0` 至 `v0.8.2` 的标签和 Release 属于合并产品，包含 macOS 应用
+资产。**2026-10-29 起它们已从本仓库远端移除**；对应提交仍在 Git 历史中，最后一个
+拆分前提交是 `74a51d1`。客户端与 skill 的版本只在各自仓库维护。
+
 ## 版本含义
 
-产品版本为 **X1.X2.X3**，根目录 `VERSION` 是产品版本的唯一来源，不加 `v`。
+产品版本为 **X1.X2.X3**，根目录 `VERSION` 是引擎版本的唯一来源，不加 `v`。
 Git 标签使用 `vX1.X2.X3`，必须为注释标签，指向已经验证且属于 `main` 历史的提交。
 
 | 变化 | 步进 | 示例 |
@@ -20,7 +42,7 @@ RPC 自身有历史上独立的计数：`engine/internal/daemon/rpc/types.go` �
 ## 先预览，再执行
 
 从干净且与远端一致的已审阅 `main` 发起。需要 Git、Python 3.11+、Go，以及本地验证所需工具。
-macOS 客户端构建还需要对应 Swift 工具链，详见 [客户端说明](https://github.com/SheathedSharp/option-berth-macos)。
+客户端与 skill 不参与本仓库的发布验证。
 
 ```sh
 # 默认只读预览：不构建、不联网、不写版本或 Git 引用
@@ -44,7 +66,7 @@ Mage 提供 `releaseProtocol / releaseFeature / releaseFix`（本地提交和 ta
 ## 发布前的强制验证
 
 脚本锁定本次本地操作，在仓库外创建可丢弃 checkout，生成候选版本后执行构建、vet、完整单元测试、
-核心竞态测试、真实服务场景、Mage/Python 辅助测试、品牌一致性，以及 macOS 上的客户端构建、原生 PTY 和实际 CLI→agent 界面交接回归（外部 provider 使用临时替身，不调用模型）。
+核心竞态测试、真实服务场景、Mage/Python 辅助测试与品牌一致性检查。
 验证失败不修改日常工作区，不创建标签。没有跳过测试或强制发布选项。
 
 验证通过后仍重新检查工作区、main 提交、origin/main 与标签，防止验证期间的并行工作被覆盖。
@@ -61,18 +83,11 @@ Mage 提供 `releaseProtocol / releaseFeature / releaseFix`（本地提交和 ta
 
 1. 校验版本、协议 schema、注释标签及 main 归属，并运行发布策略测试。
 2. 在 macOS/Linux 运行原生发布验证，复用 Windows 原生构建与事实/持久化检查。
-3. 构建 Darwin/Linux/Windows 的 amd64 与 arm64 CLI 压缩包；macOS arm64 额外生成应用包。
+3. 构建 Darwin/Linux/Windows 的 amd64 与 arm64 六个 CLI 压缩包。
 4. 每个 CLI 包包含 `oberth`、可选 `jev-attention`、构建清单、目标实际运行依赖的许可原文和 SHA256SUMS。
 5. 验证全部目标齐全及散列后创建 GitHub draft release，上传，再下载校验并逐项比对上传前的本地散列；最后才转为正式 release。
 
-Mac 应用包携带同一提交构建的 `oberth`，优先使用随包引擎；显式 `BERTH_BIN` 仍可覆盖。
-应用和引擎的版本/提交身份必须一致，避免只升级界面而悄悄调用另一份旧引擎。
 Windows arm64 与部分 CLI 包是交叉构建；有下载包不等于已经验证所有平台生命周期。
-
-**当前 macOS 包只有 ad-hoc 签名，没有 Developer ID 签名或公证。** 文件名与发布说明明确标记 `adhoc`。
-它不等于受 Apple 信任的安装包；不提供关闭 Gatekeeper 的安装建议。Developer ID/公证需要维护者另行
-配置证书主体与凭证并完成验收，本流程不会创建证书、上传个人密钥或伪称已经完成这一步。
-
 标签工作流显式按触发提交 SHA checkout，并获取完整历史与标签对象，避免 ref + 已剥离提交的
 回退 fetch 将 runner 本地的注释标签改成轻量引用。注释标签、版本一致性与 main 归属检查不放宽；
 校验或发布失败后不移动远端标签，修复按下一版本交付。
@@ -85,31 +100,6 @@ Windows arm64 与部分 CLI 包是交叉构建；有下载包不等于已经验�
 网络中断可能造成客户端无法确认最终状态，必须读取远端核实，不能只根据本地报错推断“完全没发生”。
 已经公开的版本不覆盖资产或移动标签；修复后按类别发布下一个版本。既有安装不会自动升级或停止用户服务。
 
-## 显式 Developer ID / Apple 公证
-
-默认发布仍使用 `adhoc`，不会读取、导入或创建开发者凭证。具备已有 Developer ID 证书和
-notarytool Keychain profile 的授权 macOS runner，可在明确选定的打包操作中使用：
-
-```sh
-python3 scripts/package_release.py --os darwin --arch arm64 --include-app --output dist \
-  --macos-signing developer-id --signing-identity '<certificate SHA1>' \
-  --team-id '<10-character Team ID>' --notary-profile '<existing profile>'
-```
-
-代码先校验参数，逐个签署嵌套 Mach-O 和应用包并启用 hardened runtime、timestamp，再核对
-TeamIdentifier。只有 notarytool 返回 `Accepted`、staple/validate、严格签名验证和 Gatekeeper
-检查全部成功后，再生成外层 DMG 并对镜像执行签名、公证、staple/validate 和 Gatekeeper open 检查；全部通过才生成 `-notarized.dmg`；任何失败都不降级伪装成已公证。原始构建应用不会被
-修改，签名发生在暂存副本。`--deep` 仅用于验证，不作为隐式递归签名策略。
-
-发布资产校验默认只接受 ad-hoc 资产集合。发布经过上述完整流程产生的公证包时，须显式使用
-`publish_release.py --macos-trust notarized`。这项参数只选定预期资产名称集合，不独立证明
-签名、公证或下载完整性；原有下载回验与 SHA256 对照仍执行。CI 默认不自动使用开发者账号，
-证书/公证环境尚未配置或实机验收时，不能把准备好的脚本写成已完成真实公证。
-
-依据：[Apple 自定义公证工作流](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow)。
-`macos_release_signing_test.py` 通过注入命令响应验证拒绝、正确顺序、Team ID 不符和各关卡失败；
-隔离临时 Mach-O 的真实 ad-hoc 签名另行验证。模拟 Accepted 结果不等于向 Apple 实际提交。
-
 ## 原生 Windows 服务回归
 
 Windows workflow 在构建 CLI 后运行 `verify_service_lifecycle.py`，使用临时 HOME/BERTH_HOME、
@@ -119,13 +109,7 @@ Windows workflow 在构建 CLI 后运行 `verify_service_lifecycle.py`，使用�
 失败时只清理自己的临时夹具和显式启动的 daemon，所有夹具另有有限自退出期限。
 
 这项检查不涵盖 Windows/Linux 桌面端、所有终端/权限/服务树场景，也不代表 Windows arm64
-已经原生执行。客户端升级入口只检查公开发布信息，自动替换安装与状态迁移仍须单独验收。
-
-
-## macOS 安装容器
-
-新客户端使用 DMG（[安装与替换](https://github.com/SheathedSharp/option-berth-macos/blob/main/docs/macos-install.md)）。打包器验证只读挂载、Applications 拖放入口、复制后的签名、内置引擎身份和许可。完成全部关卡及自有挂载清理后才暴露最终资产。CLI 压缩包不变，旧 Release 的 ZIP 不覆盖。日常 PR 不再自动跑 macOS 原生 CI；发版前应在本机或 disposable checkout 完成 `scripts/release-*.sh` 验证。
-
+已经原生执行。
 
 ## 无可用前台 Mac 时的完整 CI 预检
 

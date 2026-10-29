@@ -96,8 +96,9 @@ oberth down      停掉这个项目的全部服务
 **接口只有 CLI。** agent 读 `--json`，人读同一条命令的表格；`status --json` 的顶层对象是
 `worktree`。客户端是同一份状态的呈现，不长 CLI 没有的能力。
 
-仓库里那份 skill（`.agents/skills/option-berth/`）是**产品面的一部分**：它是 agent 学会用这套
-能力的入口，随仓库分发，装不装由用户决定。命令、`--json` 形状或错误码变了，它跟着变。
+给 agent 的 skill 是独立产品：[option-berth-skill](https://github.com/SheathedSharp/option-berth-skill)。
+它教 agent 用同一套 CLI 与 `--json`，但不在这个仓库分发；命令、`--json` 形状或错误码变了，
+需要同步检查它的契约。装不装由用户决定。
 
 `oberth events` 是面向并行开发 agent 的只读 NDJSON 订阅入口。它支持按 worktree 根路径或 ID（沿已有
 Repo 关系包含同仓库 worktree）、repository ID 和显式 workspace 关系过滤，首条记录是摘要快照，后续是 `state.changed` 摘要；
@@ -106,8 +107,7 @@ Repo 关系包含同仓库 worktree）、repository ID 和显式 workspace 关�
 当代码采到确定异常时，`status --json` 可以同时发布一个位于 `BERTH_HOME` 的派生 attention 文件，
 供使用 oberth 的开发 agent 判断是否需要把选择交还给用户。它只引用状态和日志证据，不改变事实，
 不执行动作；Jev 若被外部 adapter 使用，也只补充升级建议，不进入引擎控制路径。
-macOS 客户端可以为这个可选 adapter 保存本地 Jev 配置；配置只写入用户自己的
-`~/.option-berth/jev.json`（隔离运行遵循 `BERTH_HOME`），不改变运行事实、清单或 daemon 接口。
+客户端如何保存这个可选 adapter 的本地配置，属于客户端仓库的契约。
 
 ## 写的边界
 

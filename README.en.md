@@ -7,7 +7,7 @@
 <p align="center"><strong>Every checkout, its own berth.</strong><br>Service facts and lifecycle for local Git worktrees.</p>
 <p align="center"><a href="README.md">简体中文</a> · English</p>
 
-<p align="center"><a href="https://sheathedsharp.github.io/option-berth/">Website and real screenshots</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">Download the latest release</a></p>
+<p align="center"><a href="https://sheathedsharp.github.io/option-berth/">Website</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">Download the latest engine</a></p>
 
 ## Three products
 
@@ -22,6 +22,11 @@ option-berth is three independent products, each with its own repository, versio
 They meet only at the CLI and its `--json` contract: neither the client nor the skill keeps a second
 copy of the runtime state. Put the three clones side by side when you develop or try them together
 (see "Using the three together" below).
+
+This repository's releases contain only the engine CLI (amd64 and arm64 archives for macOS, Linux and
+Windows, plus `SHA256SUMS`). The engine version line starts at `1.0.0`; the pre-split
+`v0.2.0`–`v0.8.2` releases belonged to the combined product and are no longer published here. The
+client and skill release from their own repositories.
 
 ## Why option-berth
 

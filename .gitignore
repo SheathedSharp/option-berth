@@ -5,12 +5,6 @@ engine/oberth
 engine/*.test
 engine/*.out
 
-# ---- 原生客户端（client/macos）----
-# .app 和离屏渲染出来的图都是现做现看，不进 git。
-# 注意 Fonts/ 里的 .otf **要提交** —— 那是构建输入，不是产物。
-client/macos/build/
-client/macos/.cache/
-
 # ---- 验证台的产物 ----
 # 每次跑都会重新生成；冻结数据写在代码里（Snapshot.frozenPorts），不在这里。
 .cache/
@@ -19,6 +13,7 @@ client/macos/.cache/
 # ---- 本地界面迭代的离屏截图与设计笔记 ----
 # 只在改动的那一轮看，属 AGENTS.md 里不入库的截图与缓存。
 .tmp-ui-*/
+.taste-skill/
 
 # ---- 编辑器与系统 ----
 .DS_Store
