@@ -47,7 +47,11 @@ jobs:
           cache-dependency-path: engine/go.sum
       - name: Install package tools for tests
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y rpm msitools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm msitools
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Native release gates
         env:
           GOTOOLCHAIN: local
@@ -98,8 +102,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y rpm
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+          export PATH="$(go env GOPATH)/bin:$PATH"
           python3 scripts/package_linux.py --arch "$TARGET_ARCH" --dist dist
       - name: Build Windows MSI
         if: matrix.os == 'windows' && matrix.arch == 'amd64'

@@ -14,6 +14,7 @@ SPEC = importlib.util.spec_from_file_location("package_linux", SCRIPT)
 linux = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(linux)
 VERSION = (Path(__file__).resolve().parent.parent / "VERSION").read_text().strip()
+HAS_NFPM = shutil.which("nfpm")
 
 
 def make_archive(directory: Path) -> Path:
@@ -59,6 +60,7 @@ def tar_members(data: bytes) -> dict[str, bytes]:
         return {member.name: tar.extractfile(member).read() for member in tar if member.isfile()}
 
 
+@unittest.skipUnless(HAS_NFPM, "nfpm is not installed")
 class LinuxPackageTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="berth-linux-package-test-")
@@ -70,7 +72,7 @@ class LinuxPackageTests(unittest.TestCase):
         self.archive = make_archive(self.dist)
 
     def test_deb_contains_binaries_notices_and_control_metadata(self):
-        packages = linux.package(self.dist, "amd64", self.output, deb_only=True)
+        packages = linux.package(self.dist, "amd64", self.output, packagers=("deb",))
         self.assertEqual([path.name for path in packages], [f"option-berth_{VERSION}_amd64.deb"])
         package = packages[0]
         self.assertTrue(package.with_name(package.name + ".sha256").is_file())
@@ -91,49 +93,35 @@ class LinuxPackageTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("dpkg-deb"), "dpkg-deb is not installed")
     def test_dpkg_reads_the_package(self):
-        package = linux.package(self.dist, "amd64", self.output, deb_only=True)[0]
+        package = linux.package(self.dist, "amd64", self.output, packagers=("deb",))[0]
         result = subprocess.run(["dpkg-deb", "--info", str(package)], capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Package: option-berth", result.stdout)
         fields = subprocess.run(["dpkg-deb", "--field", str(package), "Version"], capture_output=True, text=True, timeout=20)
         self.assertEqual(fields.stdout.strip(), VERSION)
 
+    def test_rpm_contains_the_same_files(self):
+        package = linux.package(self.dist, "amd64", self.output, packagers=("rpm",))[0]
+        self.assertEqual(package.name, f"option-berth-{VERSION}-1.x86_64.rpm")
+        self.assertTrue(package.with_name(package.name + ".sha256").is_file())
+        if shutil.which("rpm"):
+            listing = subprocess.run(["rpm", "-qpl", str(package)], capture_output=True, text=True, timeout=20)
+            self.assertEqual(listing.returncode, 0, listing.stderr)
+            self.assertIn("/usr/bin/oberth", listing.stdout)
+            self.assertIn("/usr/share/doc/option-berth/licenses/engine-LICENSE", listing.stdout)
+
     def test_checksum_mismatch_refuses_before_packaging(self):
         self.archive.with_name(self.archive.name + ".sha256").write_text(
             "0" * 64 + "  " + self.archive.name + "\n"
         )
         with self.assertRaisesRegex(ValueError, "SHA256 mismatch"):
-            linux.package(self.dist, "amd64", self.output, deb_only=True)
+            linux.package(self.dist, "amd64", self.output, packagers=("deb",))
         self.assertFalse(self.output.exists())
 
     def test_missing_archive_is_rejected(self):
         self.archive.unlink()
         with self.assertRaisesRegex(ValueError, "missing release archive"):
-            linux.package(self.dist, "amd64", self.output, deb_only=True)
-
-    def test_rpm_spec_uses_the_release_files(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            for name in ("oberth", "jev-attention", "LICENSE", "build-manifest.json"):
-                (root / name).write_text("x")
-            (root / "licenses").mkdir()
-            (root / "licenses" / "engine-LICENSE").write_text("x")
-            spec = linux.spec_text(VERSION, "x86_64", root)
-        self.assertIn(f"Version: {VERSION}", spec)
-        self.assertIn("BuildArch: x86_64", spec)
-        self.assertIn("/usr/bin/oberth", spec)
-        self.assertIn("/usr/share/doc/option-berth/licenses/*", spec)
-        self.assertIn("Requires: ca-certificates", spec)
-
-    @unittest.skipUnless(shutil.which("rpmbuild") and shutil.which("rpm"), "rpmbuild/rpm are not installed")
-    def test_rpm_builds_and_lists_the_same_files(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = linux.extract(self.archive, Path(temporary))
-            package = linux.build_rpm(root, VERSION, "amd64", self.output)
-        listing = subprocess.run(["rpm", "-qpl", str(package)], capture_output=True, text=True, timeout=20)
-        self.assertEqual(listing.returncode, 0, listing.stderr)
-        self.assertIn("/usr/bin/oberth", listing.stdout)
-        self.assertIn("/usr/share/doc/option-berth/licenses/engine-LICENSE", listing.stdout)
+            linux.package(self.dist, "amd64", self.output, packagers=("deb",))
 
 
 if __name__ == "__main__":

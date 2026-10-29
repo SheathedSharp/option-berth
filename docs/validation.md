@@ -42,11 +42,12 @@ PATH 行为需要独立的 Windows 原生验证；本机测试不能代替它。
 `engine/cmd/oberth` 与 `engine/cmd/jev-attention`，并核对 `version --json` 使用模块版本。
 这验证了模块路径、`cmd/oberth` 的二进制名，以及 `go install` 不经过 `-ldflags` 时的版本回退。
 
-Linux 安装包测试从夹具压缩包生成 `.deb`/`.rpm`，检查 control 字段、安装路径、许可与 md5sums；
-有 `dpkg-deb` 时用 dpkg 读包，有 `rpmbuild`/`rpm` 时实际构建并列出包内容。MSI 测试用 `wixl`
-生成安装包并检查 File 表与 PATH 的 `=-PATH` 语义（安装时追加、卸载时只移除追加段）。macOS 本机
-没有这些工具时对应检查明确跳过，不能把跳过当作通过。发布 workflow 在 Linux 目标上安装 `rpm`
-与 `msitools` 后构建安装包，再由发布脚本按完整资产集校验。发布 workflow 另有 `msi-smoke`：
+Linux 安装包测试从夹具压缩包用 `nfpm` 生成 `.deb`/`.rpm`，检查 control 字段、安装路径、许可与
+md5sums；有 `dpkg-deb` 时用 dpkg 读包，有 `rpm` 时列出包内容。`nfpm` 不依赖 rpmbuild，因此
+amd64/arm64 都能在同一个 x86 runner 上生成。MSI 测试用 `wixl` 生成安装包并检查 File 表与 PATH
+的 `=-PATH` 语义（安装时追加、卸载时只移除追加段）。macOS 本机没有这些工具时对应检查明确跳过，
+不能把跳过当作通过。发布 workflow 在 Linux 目标上安装 `nfpm`，在 Windows 目标上安装 `msitools`
+后构建安装包，再由发布脚本按完整资产集校验。发布 workflow 另有 `msi-smoke`：
 在 windows-2025 上静默安装 MSI、运行 `oberth version`、检查用户 PATH，再卸载并确认二进制与
 PATH 条目都被移除。这项检查尚未在本机执行，只有 CI 实际跑过才算通过；它也不覆盖签名和
 SmartScreen 行为。
