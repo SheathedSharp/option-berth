@@ -35,6 +35,41 @@ curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/ins
 安装器不启动服务、不写 Git、不需要管理员权限。安装后可以运行 `oberth version` 与
 `oberth doctor` 确认。
 
+### 下载慢或被网络限制
+
+`github.com`、`raw.githubusercontent.com` 与 `api.github.com` 按域名分别可达，常见表现是
+连接超时，而不是明确的报错。安装器不会在官方地址上死等：
+
+- 先用约 5 秒探测官方主机，不可达时直接改用镜像列表；
+- 官方主机可用但传输持续低于 200KB/s 达 15 秒（镜像是 50KB/s、20 秒），放弃该源换下一个；
+- 校验和先于压缩包下载；使用镜像时要求第二个源报告相同的 SHA256 才继续；
+- 默认镜像是 `https://ghfast.top` 与 `https://gh-proxy.com`。用自己的代理：
+  `BERTH_INSTALL_MIRRORS='https://your-proxy'`；设成空串则只用官方地址。
+
+脚本本身取不到时，可以从 jsDelivr 取同一份文件（内容来自本仓库 `main`）：
+
+```sh
+curl -fsSL https://cdn.jsdelivr.net/gh/SheathedSharp/option-berth@main/install.sh | sh
+```
+
+Windows 安装器同样支持镜像回退，也可以用代理入口启动：
+
+```powershell
+irm https://ghfast.top/https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps1 | iex
+```
+
+`go install` 不经过 Release 资产，改用 Go 模块代理即可，校验和仍会核对：
+
+```sh
+GOPROXY=https://goproxy.cn go install github.com/sheathedsharp/option-berth/engine/cmd/oberth@latest
+```
+
+只设 `GOPROXY` 就够了：Go 会通过代理的 `/sumdb/` 端点校验模块。不要追加 `,direct`，
+代理未命中时会回落到直连 GitHub，也就是超时的那条路径；也不需要 `GOSUMDB=off`。
+
+第三方代理能看到下载流量，也可能被替换。需要严格来源时用 `--version` 固定版本，并对照
+Releases 里的 `SHA256SUMS`；发布包签名校验尚未提供。
+
 ## 一行脚本（Windows）
 
 ```powershell

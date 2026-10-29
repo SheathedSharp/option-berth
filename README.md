@@ -70,6 +70,10 @@ irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps
 不启动服务、不写 Git；也可以先审阅 [install.sh](install.sh) / [install.ps1](install.ps1)，
 或直接下载 [Releases](https://github.com/SheathedSharp/option-berth/releases) 压缩包。
 
+GitHub 访问慢或被限制时：`go install` 加 `GOPROXY=https://goproxy.cn`，安装脚本会自动回退到
+镜像，脚本入口也可以从 jsDelivr 获取。具体做法见
+[安装与卸载](docs/install.md#下载慢或被网络限制)。
+
 ### 用 go install（Go 1.25+）
 
 ```sh
