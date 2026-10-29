@@ -14,6 +14,12 @@ SPEC.loader.exec_module(BUILD)
 
 
 class BrandTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if not BUILD.SOURCE.is_file():
+            raise unittest.SkipTest(
+                f"geometry source lives in option-berth-macos: {BUILD.SOURCE}")
+
     def test_closed_bounded_geometry(self):
         paths, _ = BUILD.read_geometry()
         self.assertEqual(set(paths), set(BUILD.NAMES))

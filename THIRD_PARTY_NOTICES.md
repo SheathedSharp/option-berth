@@ -10,12 +10,12 @@ MIT 而重新许可。源码与发布包均保留适用声明；发布包还附�
 根许可证保留该版权；设计与来源边界见 [engine/UPSTREAM.md](engine/UPSTREAM.md)。
 保留来源不表示后续架构基于该项目，也不将其已有作品宣称为本项目原创。
 
-## Monaspace 字体
+## 客户端资产
 
-`client/macos/Fonts/MonaspaceNeon-*.otf` 保持未修改的字体文件，适用 SIL Open Font
-License 1.1。原版权、保留字体名和许可全文见
-[LICENSE-Monaspace.txt](https://github.com/SheathedSharp/option-berth-macos/blob/main/Fonts/LICENSE-Monaspace.txt)。
-分发时必须附带原版权和 OFL，不将字体改标 MIT，不单独销售字体，不擅用保留名命名修改版。
+macOS 客户端及其字体（Monaspace，SIL Open Font License 1.1）与终端依赖（SwiftTerm，MIT）
+随独立仓库 [option-berth-macos](https://github.com/SheathedSharp/option-berth-macos) 分发；
+相应的原版权与许可原文由该仓库保留。本仓库的源码与发布包不包含这些资产，也不把它们
+重新许可为 MIT。
 
 ## Go 依赖
 
@@ -32,9 +32,3 @@ License 1.1。原版权、保留字体名和许可全文见
 
 第三方名称仅用于说明兼容、依赖和来源，不表示认可或背书。代码许可证不授予第三方
 商标权。新增素材必须记录来源及分发许可；项目图形资产与字体的许可分别处理。
-
-## SwiftTerm
-
-macOS 终端使用 SwiftTerm v1.20.0（提交 `5d14406844143538cd8f8851d2d8a67c1fe443e5`），
-适用其 MIT 许可证；源码由 Swift Package Manager 获取，版本由 Package.resolved 固定。
-客户端构建将上游 LICENSE 原文附入应用 Resources/Licenses，不将上游终端实现宣称为本项目原创。

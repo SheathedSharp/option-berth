@@ -3,7 +3,9 @@
 **Option：保留选择。Berth：运行有归属。** 对称双轨围出泊位，独立胶囊表示有明确归属的运行。
 品牌图形不是进程拓扑；陶土色不是服务健康状态。深浅色和单色版本保持同一语义。
 
-唯一几何源是 `client/macos/Sources/BerthGeometry.swift`，包含标准与小尺寸轮廓、色板和图标布局。
+唯一几何源在独立的 [option-berth-macos](https://github.com/SheathedSharp/option-berth-macos)
+仓库的 `Sources/BerthGeometry.swift`，包含标准与小尺寸轮廓、色板和图标布局。本仓库只保留导出结果；
+没有同级检出时品牌检查明确跳过。
 `BerthMark`、原生图标和13个SVG导出共用它；固定轮廓字标在 `wordmark.svg`。
 `oberth` 首屏的方块标记是同一份轮廓的终端栅格，生成到 `engine/internal/cmd/mark_gen.go`，
 同样不手写；列数由导出脚本的 `TERMINAL_COLUMNS` 决定。导出分轨与胶囊两层，两层形状相同、
@@ -13,8 +15,6 @@
 ```sh
 python3 brand/build-option-berth.py --check
 python3 -m unittest discover -s brand -p 'test_*.py'
-mage client
-mage states
 ```
 
 修改几何后运行导出脚本并提交SVG与 `mark_gen.go`。PNG/ICNS由原生 `--write-icon` 与 `iconutil` 生成到构建目录，
