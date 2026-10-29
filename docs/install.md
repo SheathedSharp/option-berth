@@ -52,20 +52,6 @@ irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps
 Windows 安装器在替换文件前会检查 `oberth` / `jev-attention` 是否正在运行；
 正在运行就先执行 `oberth daemon stop`，再重新安装。
 
-### Windows MSI（amd64）
-
-从 v1.1.1 起，Release 还会提供 `option-berth-X.Y.Z-windows-amd64.msi`。双击安装，或：
-
-```powershell
-msiexec /i .\option-berth-1.0.0-windows-amd64.msi
-msiexec /x .\option-berth-1.0.0-windows-amd64.msi
-```
-
-MSI 是 per-user 安装：写入 `%LOCALAPPDATA%\option-berth`，把 `bin` 追加到当前用户 PATH，
-卸载时只移除自己追加的那一段。它不会删除 `%USERPROFILE%\.option-berth` 运行状态。MSI 没有代码
-签名，Windows SmartScreen 会提示“未知发布者”；需要校验时先核对同名 `.sha256`。Windows arm64
-没有 MSI，使用 zip 与 `install.ps1`。
-
 ## go install（Go 1.25+）
 
 ```sh
@@ -75,7 +61,7 @@ go install github.com/sheathedsharp/option-berth/engine/cmd/oberth@latest
 go install github.com/sheathedsharp/option-berth/engine/cmd/jev-attention@latest
 ```
 
-需要 v1.1.1 或更新版本。固定版本用 `@v1.1.1`。二进制进 `$(go env GOPATH)/bin`（或 `GOBIN`），
+需要 v1.1.2 或更新版本。固定版本用 `@v1.1.2`。二进制进 `$(go env GOPATH)/bin`（或 `GOBIN`），
 该目录需要在 PATH 中。
 
 ## 手动下载发布包
@@ -98,7 +84,7 @@ install -m 0755 option-berth-v1.0.0-darwin-arm64/jev-attention ~/.local/bin/jev-
 ## Linux 安装包（.deb / .rpm）
 
 发布流程会为 amd64/arm64 生成 `.deb` 与 `.rpm`，和压缩包放在同一个 Release。`v1.0.0` 还没有
-这些资产，从 v1.1.1 开始提供：
+这些资产，从 v1.1.2 开始提供：
 
 ```sh
 # Debian / Ubuntu
@@ -180,7 +166,7 @@ CLI 调用会启动新版本。Windows 先停止正在运行的 `oberth`，再�
 - **winget**：需要向 microsoft/winget-pkgs 提交并过审，每个版本更新。
 - **Chocolatey**：需要社区包仓库与审核，和 winget 类似。
 
-当前可用方式见上面的脚本、手动发布包、Linux `.deb`/`.rpm` 与 Windows amd64 MSI。
+当前可用方式见上面的脚本、手动发布包与 Linux `.deb`/`.rpm`。Windows MSI 暂未提供。
 
 ## 平台边界
 

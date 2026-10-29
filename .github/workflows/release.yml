@@ -49,7 +49,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y rpm msitools
+          sudo apt-get install -y rpm
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Native release gates
@@ -105,62 +105,15 @@ jobs:
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.0
           export PATH="$(go env GOPATH)/bin:$PATH"
           python3 scripts/package_linux.py --arch "$TARGET_ARCH" --dist dist
-      - name: Build Windows MSI
-        if: matrix.os == 'windows' && matrix.arch == 'amd64'
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y msitools
-          python3 scripts/package_windows_msi.py --dist dist
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: release-${{ matrix.os }}-${{ matrix.arch }}
           path: dist/*
           if-no-files-found: error
           retention-days: 7
-  msi-smoke:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: package
-    runs-on: windows-2025
-    timeout-minutes: 10
-    steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: release-windows-amd64
-          path: dist
-      - name: Install, run and uninstall the MSI
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $version = $env:GITHUB_REF_NAME.TrimStart('v')
-          $msi = Join-Path $PWD "dist\option-berth-$version-windows-amd64.msi"
-          if (-not (Test-Path -LiteralPath $msi -PathType Leaf)) { throw "missing MSI: $msi" }
-          $install = Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart', '/l*v', 'msi-install.log') -Wait -PassThru
-          if ($install.ExitCode -notin 0, 3010) { Get-Content msi-install.log -Tail 80; throw "install failed: $($install.ExitCode)" }
-          $bin = Join-Path $env:LOCALAPPDATA 'option-berth\bin'
-          $exe = Join-Path $bin 'oberth.exe'
-          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'oberth.exe was not installed' }
-          & $exe version
-          if ($LASTEXITCODE -ne 0) { throw 'installed oberth did not run' }
-          $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-          if (($userPath -split ';') -notcontains $bin) { throw 'MSI did not add bin to the user PATH' }
-          $uninstall = Start-Process msiexec.exe -ArgumentList @('/x', "`"$msi`"", '/qn', '/norestart', '/l*v', 'msi-uninstall.log') -Wait -PassThru
-          if ($uninstall.ExitCode -notin 0, 3010) { Get-Content msi-uninstall.log -Tail 80; throw "uninstall failed: $($uninstall.ExitCode)" }
-          if (Test-Path -LiteralPath $exe) { throw 'oberth.exe remains after uninstall' }
-          $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-          if (($userPath -split ';') -contains $bin) { throw 'MSI left bin on the user PATH' }
-      - name: Keep MSI logs
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: msi-smoke-${{ github.run_id }}
-          path: msi-*.log
-          retention-days: 7
-          if-no-files-found: ignore
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [package, msi-smoke]
+    needs: package
     runs-on: ubuntu-24.04
     permissions:
       contents: write

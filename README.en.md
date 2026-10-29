@@ -69,9 +69,6 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps1 | iex
 ```
 
-Windows amd64 also has an unsigned MSI from v1.1.1 onwards; arm64 keeps the zip and
-`install.ps1` path.
-
 Pin a version with `--version v1.0.0` (`-Version v1.0.0` on Windows), change the directory with
 `--dir` / `-Dir`, and skip the PATH edit with `--no-modify-path` / `-NoModifyPath`. The scripts only
 download and verify release archives: they start no service and write no Git data. Read
@@ -87,7 +84,7 @@ go install github.com/sheathedsharp/option-berth/engine/cmd/oberth@latest
 go install github.com/sheathedsharp/option-berth/engine/cmd/jev-attention@latest
 ```
 
-This requires v1.1.1 or newer. The binaries land in `$(go env GOPATH)/bin` or `GOBIN`, which must be on
+This requires v1.1.2 or newer. The binaries land in `$(go env GOPATH)/bin` or `GOBIN`, which must be on
 PATH. Uninstall by deleting `oberth` and `jev-attention` from that directory.
 
 Uninstall:
@@ -97,7 +94,7 @@ curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uni
 ```
 
 The uninstaller keeps `~/.option-berth` runtime state unless you pass `--purge-state`. Linux also
-ships `.deb` / `.rpm` packages from v1.1.1 onwards. See
+ships `.deb` / `.rpm` packages from v1.1.2 onwards. See
 [Install and uninstall](docs/install.md) for the full matrix, upgrades and manual archives.
 
 The complete service scenario targets **macOS / Linux**. Windows has a native build, smoke checks and

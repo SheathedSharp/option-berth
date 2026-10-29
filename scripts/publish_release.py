@@ -21,8 +21,7 @@ def expected_assets(tag: str) -> set[str]:
     for arch, rpm_arch in (("amd64", "x86_64"), ("arm64", "aarch64")):
         linux_packages.add(f"option-berth_{version}_{arch}.deb")
         linux_packages.add(f"option-berth-{version}-1.{rpm_arch}.rpm")
-    windows_msi = {f"option-berth-{version}-windows-amd64.msi"}
-    assets = archives | linux_packages | windows_msi
+    assets = archives | linux_packages
     return assets | {name + ".sha256" for name in assets}
 
 
