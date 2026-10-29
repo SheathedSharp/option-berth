@@ -51,6 +51,8 @@ curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/ins
 
 产品版本为 **X1.X2.X3**，根目录 `VERSION` 是引擎版本的唯一来源，不加 `v`。
 Git 标签使用 `vX1.X2.X3`，必须为注释标签，指向已经验证且属于 `main` 历史的提交。
+每次发布同时创建 `engine/vX1.X2.X3` 注释标签，指向同一提交；它是 `engine/` 子模块的 Go 版本标签，
+`go install .../engine/cmd/oberth@vX1.X2.X3` 依赖它。
 
 | 变化 | 步进 | 示例 |
 | --- | --- | --- |

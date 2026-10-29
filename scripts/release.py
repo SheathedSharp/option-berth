@@ -61,7 +61,9 @@ def plan(root: Path, kind: str) -> dict[str, str]:
     current = (root / "VERSION").read_text().strip()
     current_protocol = protocol(root)
     next_version = bump(current, kind)
-    return {"kind": kind, "from": current, "version": next_version, "tag": "v" + next_version,
+    tag = "v" + next_version
+    return {"kind": kind, "from": current, "version": next_version, "tag": tag,
+            "module_tag": "engine/" + tag,
             "protocol_from": current_protocol,
             "protocol": bump(current_protocol, "protocol") if kind == "protocol" else current_protocol}
 
@@ -97,15 +99,17 @@ def clean(root: Path) -> None:
         raise RuntimeError("release requires a clean worktree, including untracked files")
 
 
-def remote_preflight(root: Path, head: str, tag: str) -> None:
+def remote_preflight(root: Path, head: str, tag: str, module_tag: str) -> None:
     if run(root, "git", "remote", "get-url", "origin") not in ACCEPTED_REMOTES:
         raise RuntimeError("origin is not the expected release repository")
-    remote = run(root, "git", "ls-remote", "--refs", "origin", "refs/heads/main", "refs/tags/" + tag)
+    remote = run(root, "git", "ls-remote", "--refs", "origin", "refs/heads/main",
+                 "refs/tags/" + tag, "refs/tags/" + module_tag)
     refs = dict(line.split("\t")[::-1] for line in remote.splitlines() if line)
     if refs.get("refs/heads/main") != head:
         raise RuntimeError("local main must exactly match origin/main before release")
-    if "refs/tags/" + tag in refs or run(root, "git", "tag", "--list", tag):
-        raise RuntimeError("release tag already exists; tags are never overwritten")
+    for name in (tag, module_tag):
+        if "refs/tags/" + name in refs or run(root, "git", "tag", "--list", name):
+            raise RuntimeError("release tag already exists; tags are never overwritten")
 
 
 def update_candidate(root: Path, spec: dict[str, str]) -> None:
@@ -123,7 +127,7 @@ def release(root: Path, kind: str, publish: bool, verifier: Callable[[Path], Non
     if run(root, "git", "branch", "--show-current") != "main":
         raise RuntimeError("execute releases from reviewed main, not a topic branch")
     head = run(root, "git", "rev-parse", "HEAD")
-    remote_preflight(root, head, spec["tag"])
+    remote_preflight(root, head, spec["tag"], spec["module_tag"])
     common = Path(run(root, "git", "rev-parse", "--git-common-dir"))
     if not common.is_absolute():
         common = root / common
@@ -151,16 +155,19 @@ def release(root: Path, kind: str, publish: bool, verifier: Callable[[Path], Non
                 clean(root)
                 if run(root, "git", "rev-parse", "HEAD") != head:
                     raise RuntimeError("main moved during verification; no tag or push performed")
-                remote_preflight(root, head, spec["tag"])
+                remote_preflight(root, head, spec["tag"], spec["module_tag"])
                 run(root, "git", "merge", "--ff-only", commit)
                 clean(root)
                 run(root, "git", "-c", "user.name=SheathedSharp", "-c", "user.email=116537753+SheathedSharp@users.noreply.github.com",
                     "tag", "-a", spec["tag"], commit, "-m", "Release " + spec["tag"])
+                run(root, "git", "-c", "user.name=SheathedSharp", "-c", "user.email=116537753+SheathedSharp@users.noreply.github.com",
+                    "tag", "-a", spec["module_tag"], commit, "-m", "Release " + spec["tag"] + " (engine module)")
                 spec["commit"] = commit
                 spec["state"] = "tagged-locally"
                 if publish:
                     try:
-                        run(root, "git", "push", "--atomic", "origin", commit + ":refs/heads/main", "refs/tags/" + spec["tag"], capture=False)
+                        run(root, "git", "push", "--atomic", "origin", commit + ":refs/heads/main",
+                            "refs/tags/" + spec["tag"], "refs/tags/" + spec["module_tag"], capture=False)
                     except RuntimeError as error:
                         raise RuntimeError(f"local commit and {spec['tag']} retained; atomic push failed. Verify remote refs before retrying; never force or recreate the tag") from error
                     spec["state"] = "pushed-awaiting-release-workflow"
@@ -181,6 +188,11 @@ def validate_tag(root: Path, tag: str) -> None:
         raise ValueError("release tag must be annotated")
     if run(root, "git", "rev-parse", "refs/tags/" + tag + "^{commit}") != run(root, "git", "rev-parse", "HEAD"):
         raise ValueError("checkout is not the tagged commit")
+    module_tag = "engine/" + tag
+    if run(root, "git", "cat-file", "-t", "refs/tags/" + module_tag) != "tag":
+        raise ValueError("engine module tag must be annotated")
+    if run(root, "git", "rev-parse", "refs/tags/" + module_tag + "^{commit}") != run(root, "git", "rev-parse", "HEAD"):
+        raise ValueError("engine module tag does not point at the tagged commit")
     run(root, "git", "merge-base", "--is-ancestor", "HEAD", "origin/main")
 
 

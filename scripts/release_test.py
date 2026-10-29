@@ -72,6 +72,7 @@ class ReleaseTests(unittest.TestCase):
         for kind, version, protocol in (("protocol", "2.0.0", "3.0.0"), ("feature", "1.3.0", "2.1.0"), ("fix", "1.2.4", "2.1.0")):
             result = release.plan(self.root, kind)
             self.assertEqual(result["version"], version)
+            self.assertEqual(result["module_tag"], "engine/v" + version)
             self.assertEqual(result["protocol"], protocol)
         self.assertEqual(self.git("status", "--porcelain"), "")
         self.assertEqual(self.git("tag", "--list"), "")
@@ -88,7 +89,9 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(observed, ["1.2.4\n"])
         self.assertEqual(result["state"], "tagged-locally")
         self.assertEqual(self.git("cat-file", "-t", "v1.2.4"), "tag")
+        self.assertEqual(self.git("cat-file", "-t", "engine/v1.2.4"), "tag")
         self.assertEqual(self.git("rev-parse", "v1.2.4^{}"), self.git("rev-parse", "HEAD"))
+        self.assertEqual(self.git("rev-parse", "engine/v1.2.4^{}"), self.git("rev-parse", "HEAD"))
         remote = self.git("ls-remote", "origin", "refs/heads/main")
         self.assertTrue(remote.startswith(self.head))
         self.assertEqual(self.git("diff", "--name-only", self.head, "HEAD"), "VERSION")
@@ -98,6 +101,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(result["state"], "pushed-awaiting-release-workflow")
         self.assertIn(result["commit"], self.git("ls-remote", "origin", "refs/heads/main"))
         self.assertIn("refs/tags/v1.3.0", self.git("ls-remote", "origin", "refs/tags/v1.3.0"))
+        self.assertIn("refs/tags/engine/v1.3.0", self.git("ls-remote", "origin", "refs/tags/engine/v1.3.0"))
 
     def test_publication_and_fetch_do_not_spawn_automatic_maintenance(self):
         # Trace the real Git commands, not a mocked subprocess. A tiny temporary
@@ -115,6 +119,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(automatic, [], "fixture spawned unowned automatic Git maintenance")
         self.assertIn(result["commit"], self.git("ls-remote", "origin", "refs/heads/main"))
         self.assertIn("refs/tags/v1.3.0", self.git("ls-remote", "origin", "refs/tags/v1.3.0"))
+        self.assertIn("refs/tags/engine/v1.3.0", self.git("ls-remote", "origin", "refs/tags/engine/v1.3.0"))
 
     def test_failed_verification_leaves_main_and_tags_untouched(self):
         def fail(_):
@@ -173,8 +178,10 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "retained; atomic push failed"):
             release.release(self.root, "fix", True, release.check_versions)
         self.assertEqual(self.git("cat-file", "-t", "v1.2.4"), "tag")
+        self.assertEqual(self.git("cat-file", "-t", "engine/v1.2.4"), "tag")
         self.assertTrue(self.git("ls-remote", "origin", "refs/heads/main").startswith(self.head))
         self.assertEqual(self.git("ls-remote", "origin", "refs/tags/v1.2.4"), "")
+        self.assertEqual(self.git("ls-remote", "origin", "refs/tags/engine/v1.2.4"), "")
 
     def packaging_script(self):
         workflow = (release.ROOT / ".github/workflows/release.yml").read_text()
