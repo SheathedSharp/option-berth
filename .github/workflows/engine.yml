@@ -71,9 +71,9 @@ jobs:
       - name: Mage workflow regression tests
         shell: bash
         run: go test -race -count=1 magefiles/build.go magefiles/workflow.go magefiles/workflow_test.go
-      - name: Install rpm for Linux package tests
+      - name: Install package tools for tests
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y rpm
+        run: sudo apt-get update && sudo apt-get install -y rpm msitools
       - name: Measurement helper tests
         shell: bash
         run: python3 -m unittest discover -s scripts -p '*_test.py'

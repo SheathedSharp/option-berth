@@ -25,12 +25,12 @@ class PublishAssetsTests(unittest.TestCase):
                 (self.root / (name + ".sha256")).write_text(digest + "  " + name + "\n")
 
     def test_complete_assets_verify_without_network(self):
-        self.assertEqual(len(release.verify_assets(self.root, self.tag)), 20)
+        self.assertEqual(len(release.verify_assets(self.root, self.tag)), 22)
         text = "".join(path.read_text() for path in sorted(self.root.glob("*.sha256")))
         (self.root / "SHA256SUMS").write_text(text)
-        self.assertEqual(len(release.verify_assets(self.root, self.tag, True)), 21)
+        self.assertEqual(len(release.verify_assets(self.root, self.tag, True)), 23)
 
-    def test_assets_are_the_cli_archives_and_linux_packages(self):
+    def test_assets_are_the_cli_archives_linux_packages_and_msi(self):
         expected = release.expected_assets(self.tag)
         self.assertIn("option-berth-v1.2.3-windows-amd64.zip", expected)
         self.assertIn("option-berth-v1.2.3-darwin-arm64.tar.gz", expected)
@@ -38,6 +38,7 @@ class PublishAssetsTests(unittest.TestCase):
         self.assertIn("option-berth_1.2.3_arm64.deb", expected)
         self.assertIn("option-berth-1.2.3-1.x86_64.rpm", expected)
         self.assertIn("option-berth-1.2.3-1.aarch64.rpm", expected)
+        self.assertIn("option-berth-1.2.3-windows-amd64.msi", expected)
         self.assertFalse(any(name.startswith("OptionBerth-") for name in expected),
                          "the macOS application is a separate product and must not ride in this release")
         extra = self.root / "OptionBerth-v1.2.3-macos-arm64-adhoc.dmg"

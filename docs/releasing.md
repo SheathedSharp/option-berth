@@ -10,6 +10,8 @@ option-berth 拆成三个独立产品：本仓库发布 `oberth` 引擎与 CLI�
 - macOS、Linux、Windows 的 amd64 与 arm64 压缩包（`option-berth-vX.Y.Z-<os>-<arch>.tar.gz|zip`）；
 - Linux 的 `.deb` 与 `.rpm`（`option-berth_X.Y.Z_<deb-arch>.deb`、
   `option-berth-X.Y.Z-1.<rpm-arch>.rpm`）；
+- Windows amd64 的未签名 MSI（`option-berth-X.Y.Z-windows-amd64.msi`）；arm64 仍用 zip 与
+  `install.ps1`，不生成跨架构 MSI；
 - 每个资产的 `.sha256`；
 - 汇总的 `SHA256SUMS`。
 
@@ -33,6 +35,11 @@ curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/ins
 卸载器先尝试 `oberth daemon stop`，再删除二进制、许可与安装器写入的 PATH 行；默认保留
 `~/.option-berth` 运行状态，只有 `--purge-state` / `-PurgeState` 才删除。完整说明见
 [install.md](install.md)。
+
+Homebrew 公式在独立的 [SheathedSharp/homebrew-tap](https://github.com/SheathedSharp/homebrew-tap)
+仓库维护。那个仓库的每日 workflow 读取本仓库最新 Release 的 `SHA256SUMS`，用
+`scripts/render_homebrew_formula.py` 重新生成公式；发布新版本后如果不想等定时任务，手动运行
+`Update option-berth formula` 即可。公式内容来自已发布资产，不在本仓库的 Release 里重复上传。
 
 ### 拆分后的版本线
 
@@ -104,10 +111,11 @@ Mage 提供 `releaseProtocol / releaseFeature / releaseFix`（本地提交和 ta
 
 1. 校验版本、协议 schema、注释标签及 main 归属，并运行发布策略测试。
 2. 在 macOS/Linux 运行原生发布验证，复用 Windows 原生构建与事实/持久化检查。
-3. 构建 Darwin/Linux/Windows 的 amd64 与 arm64 六个 CLI 压缩包，并在 Linux 目标上生成
-   amd64/arm64 的 `.deb` 与 `.rpm`。
-4. 每个 CLI 包包含 `oberth`、可选 `jev-attention`、`install-path.sh`、构建清单、目标实际运行依赖的许可原文和 SHA256SUMS；Linux 安装包从同一个压缩包解出二进制与许可，不另建内容。
-5. 验证全部目标齐全及散列后创建 GitHub draft release，上传，再下载校验并逐项比对上传前的本地散列；最后才转为正式 release。
+3. 构建 Darwin/Linux/Windows 的 amd64 与 arm64 六个 CLI 压缩包，在 Linux 目标上生成
+   amd64/arm64 的 `.deb` 与 `.rpm`，并在 Windows amd64 目标上生成 MSI。
+4. 每个 CLI 包包含 `oberth`、可选 `jev-attention`、`install-path.sh`、构建清单、目标实际运行依赖的许可原文和 SHA256SUMS；Linux 安装包与 MSI 从同一个压缩包解出二进制与许可，不另建内容。
+5. MSI 是 per-user 安装，写入 `%LOCALAPPDATA%\option-berth` 并把 `bin` 追加到用户 PATH；卸载时只移除自己追加的那一段。它没有代码签名，Windows SmartScreen 会提示未知发布者；arm64 不提供 MSI。
+6. 验证全部目标齐全及散列后创建 GitHub draft release，上传，再下载校验并逐项比对上传前的本地散列；最后才转为正式 release。
 
 Windows arm64 与部分 CLI 包是交叉构建；有下载包不等于已经验证所有平台生命周期。
 标签工作流显式按触发提交 SHA checkout，并获取完整历史与标签对象，避免 ref + 已剥离提交的

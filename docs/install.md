@@ -52,6 +52,20 @@ irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps
 Windows 安装器在替换文件前会检查 `oberth` / `jev-attention` 是否正在运行；
 正在运行就先执行 `oberth daemon stop`，再重新安装。
 
+### Windows MSI（amd64）
+
+从下一个版本起，Release 还会提供 `option-berth-X.Y.Z-windows-amd64.msi`。双击安装，或：
+
+```powershell
+msiexec /i .\option-berth-1.0.0-windows-amd64.msi
+msiexec /x .\option-berth-1.0.0-windows-amd64.msi
+```
+
+MSI 是 per-user 安装：写入 `%LOCALAPPDATA%\option-berth`，把 `bin` 追加到当前用户 PATH，
+卸载时只移除自己追加的那一段。它不会删除 `%USERPROFILE%\.option-berth` 运行状态。MSI 没有代码
+签名，Windows SmartScreen 会提示“未知发布者”；需要校验时先核对同名 `.sha256`。Windows arm64
+没有 MSI，使用 zip 与 `install.ps1`。
+
 ## 手动下载发布包
 
 不想执行脚本时，从 [Releases](https://github.com/SheathedSharp/option-berth/releases)
@@ -149,10 +163,9 @@ rm -rf ~/.option-berth
 安装器只读取已发布标签，不会跟踪 `main` 上的未发布代码；需要固定版本时使用 `--version` /
 `-Version`。
 
-## Homebrew
+## Homebrew（macOS / Linux）
 
-formula 与自动更新 workflow 已准备在 [packaging/homebrew/tap](../packaging/homebrew/tap)，
-但公开仓库 `SheathedSharp/homebrew-tap` 尚未创建。**在 tap 仓库发布前，下面的命令不可用**：
+formula 发布在 [SheathedSharp/homebrew-tap](https://github.com/SheathedSharp/homebrew-tap)：
 
 ```sh
 brew install SheathedSharp/tap/option-berth
@@ -160,7 +173,8 @@ brew upgrade option-berth
 brew uninstall option-berth
 ```
 
-tap 建立后，每日 workflow 会按最新 Release 重新生成 formula；也可以手动运行
+formula 支持 macOS 与 Linux 的 amd64/arm64；安装 `oberth`、`jev-attention`，并把许可与构建清单
+放进 Homebrew prefix。tap 中的每日 workflow 会按最新 Release 重新生成 formula；也可以手动运行
 `Update option-berth formula` workflow 立即更新。`brew uninstall` 不删除 `~/.option-berth`
 运行状态。
 
@@ -172,7 +186,7 @@ tap 建立后，每日 workflow 会按最新 Release 重新生成 formula；也�
 - **Chocolatey**：需要社区包仓库与审核，和 winget 类似。
 
 这些渠道在真正发布前不写进 README 的安装命令，也不用脚本冒充。当前可用方式是上面的一行脚本、
-手动发布包、Linux `.deb`/`.rpm`，以及 tap 发布后的 Homebrew。
+手动发布包、Linux `.deb`/`.rpm`、Windows amd64 MSI（下一版本起），以及 Homebrew。
 
 ## 平台边界
 

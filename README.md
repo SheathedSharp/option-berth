@@ -59,11 +59,19 @@ macOS / Linux：一条命令解析最新发布、按平台下载、核对 SHA256
 curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh
 ```
 
+macOS / Linux 也可以用 Homebrew：
+
+```sh
+brew install SheathedSharp/tap/option-berth
+```
+
 Windows（PowerShell）：
 
 ```powershell
 irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps1 | iex
 ```
+
+Windows amd64 从下一个版本起还提供未签名 MSI；arm64 继续使用 zip 与 `install.ps1`。
 
 固定版本用 `--version v1.0.0`（Windows 为 `-Version v1.0.0`），换安装目录用 `--dir` / `-Dir`，
 不想修改 PATH 用 `--no-modify-path` / `-NoModifyPath`。脚本只下载并校验 Release 压缩包，

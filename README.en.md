@@ -63,11 +63,20 @@ verifies SHA256, and installs into `~/.local/bin`.
 curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh
 ```
 
+macOS / Linux also has a Homebrew formula:
+
+```sh
+brew install SheathedSharp/tap/option-berth
+```
+
 Windows (PowerShell):
 
 ```powershell
 irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps1 | iex
 ```
+
+Windows amd64 also has an unsigned MSI from the next release onwards; arm64 keeps the zip and
+`install.ps1` path.
 
 Pin a version with `--version v1.0.0` (`-Version v1.0.0` on Windows), change the directory with
 `--dir` / `-Dir`, and skip the PATH edit with `--no-modify-path` / `-NoModifyPath`. The scripts only

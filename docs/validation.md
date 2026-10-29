@@ -39,9 +39,13 @@ PATH 配置、旧包缺少 `install-path.sh` 时的标签回退、未知参数�
 PATH 行为需要独立的 Windows 原生验证；本机测试不能代替它。
 
 Linux 安装包测试从夹具压缩包生成 `.deb`/`.rpm`，检查 control 字段、安装路径、许可与 md5sums；
-有 `dpkg-deb` 时用 dpkg 读包，有 `rpmbuild`/`rpm` 时实际构建并列出包内容。macOS 本机没有这两个
-工具时对应检查明确跳过，不能把跳过当作通过。发布 workflow 在 Linux 目标上安装 `rpm` 后构建
-两种包，再由发布脚本按完整资产集校验。
+有 `dpkg-deb` 时用 dpkg 读包，有 `rpmbuild`/`rpm` 时实际构建并列出包内容。MSI 测试用 `wixl`
+生成安装包并检查 File 表与 PATH 的 `=-PATH` 语义（安装时追加、卸载时只移除追加段）。macOS 本机
+没有这些工具时对应检查明确跳过，不能把跳过当作通过。发布 workflow 在 Linux 目标上安装 `rpm`
+与 `msitools` 后构建安装包，再由发布脚本按完整资产集校验。发布 workflow 另有 `msi-smoke`：
+在 windows-2025 上静默安装 MSI、运行 `oberth version`、检查用户 PATH，再卸载并确认二进制与
+PATH 条目都被移除。这项检查尚未在本机执行，只有 CI 实际跑过才算通过；它也不覆盖签名和
+SmartScreen 行为。
 
 ## 不作出的保证
 
