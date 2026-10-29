@@ -146,5 +146,7 @@ macOS 客户端可以为这个可选 adapter 保存本地 Jev 配置；配置只
 原生终端只承载用户选择的 shell 或已有 coding agent。消息作为精确参数或原生终端输入传递，
 不拼成隐藏 shell 命令；登录、模型、审批、工具调用和对话恢复由外部 agent 自己负责。
 不自动安装 agent、修改其配置、关闭沙箱或从其他 worktree 恢复最近会话。
-支持结构化协议的 provider（`oberth agent stream`：当前构建含 Codex、Claude Code、OpenCode、Pi，见 [console.md](https://github.com/SheathedSharp/option-berth-macos/blob/main/docs/console.md) 与 `agent list --json` 的 `stream` 字段）在会话页呈现审批请求，由人决定允许或拒绝，
-执行仍由 provider 负责；桥不传放宽权限的参数，也不自动批准。Shell 集成（zsh/bash/fish，可关）在提示符状态把键盘交给输入条。
+支持结构化协议的 provider（`oberth agent stream`：当前构建含 Codex、Claude Code、OpenCode、Pi，
+见 `agent list --json` 的 `stream` 字段）由桥转发审批请求，由人决定允许或拒绝 —— 呈现在
+[macOS 客户端](https://github.com/SheathedSharp/option-berth-macos)里，执行仍由 provider 负责；
+桥不传放宽权限的参数，也不自动批准。Shell 集成（zsh/bash/fish，可关）同样由客户端实现。
