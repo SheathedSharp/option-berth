@@ -169,33 +169,20 @@ rm -rf ~/.option-berth
 
 ## 升级
 
-重新执行对应平台的安装命令即可替换二进制：
-
-- macOS / Linux 用临时文件加 `mv` 原子替换；正在运行的 daemon 会继续用旧二进制，直到重启。
-  升级后执行一次 `oberth daemon stop`，下一次 CLI 调用会启动新版本。
-- Windows 会先检查进程并拒绝在运行中替换；先 `oberth daemon stop`，再重新安装。
-
-安装器只读取已发布标签，不会跟踪 `main` 上的未发布代码；需要固定版本时使用 `--version` /
-`-Version`。
-
-## Homebrew（尚未提供）
-
-`brew install option-berth` 这种短命令只对 homebrew-core 里的公式成立。提交 homebrew-core
-需要满足知名度与公式规范并通过官方审核；本仓库目前没有提交，也不维护独立 tap。因此当前不提供
-Homebrew 安装。等 homebrew-core 接受后，命令才会是 `brew install option-berth`。
+重新执行对应平台的安装命令即可替换二进制；升级后执行一次 `oberth daemon stop`，下一次
+CLI 调用会启动新版本。Windows 先停止正在运行的 `oberth`，再重新安装。需要固定版本时使用
+`--version` / `-Version`。
 
 ## 尚未提供的渠道
 
+- **Homebrew**：短命令 `brew install option-berth` 需要 homebrew-core 收录，暂未提供。
 - **Scoop**：需要单独的 bucket 仓库，本仓库不维护。
-- **winget**：`winget install` 要求向 microsoft/winget-pkgs 提交清单并经过审核，每个版本都需要
-  更新清单；审核周期不由我们控制，因此暂不承诺。
+- **winget**：需要向 microsoft/winget-pkgs 提交并过审，每个版本更新。
 - **Chocolatey**：需要社区包仓库与审核，和 winget 类似。
 
-这些渠道在真正发布前不写进 README 的安装命令，也不用脚本冒充。当前可用方式是上面的一行脚本、
-手动发布包、Linux `.deb`/`.rpm`，以及 Windows amd64 MSI（v1.0.1 起）。
+当前可用方式见上面的脚本、手动发布包、Linux `.deb`/`.rpm` 与 Windows amd64 MSI。
 
 ## 平台边界
 
 完整服务场景在 **macOS / Linux** 验证。Windows 有独立原生构建、冒烟和部分事实/持久化测试，
-但 Windows 安装器与卸载器的实际 PATH 行为仍需 Windows 原生验证；仓库 CI 目前只检查 PowerShell
-脚本能解析。各平台都不提供自动升级守护进程或后台更新器。
+但不是完整生命周期支持。各平台都不提供自动升级守护进程或后台更新器。
