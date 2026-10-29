@@ -4,8 +4,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // CaptureGroupStop copies raw identity once. Re-reading RunStart after the port

@@ -4,8 +4,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/killer"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/killer"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // GroupStopRun is an internal control identity, not an RPC/schema extension.

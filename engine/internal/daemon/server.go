@@ -13,9 +13,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
-	"github.com/sheathedsharp/option-berth/internal/scanner"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // DefaultIdleTimeout is the config default for daemon.idle_timeout. Zero means

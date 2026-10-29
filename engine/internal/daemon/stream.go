@@ -8,7 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 )
 
 // streamSeq numbers subscriptions for the life of the process. Ids are unique

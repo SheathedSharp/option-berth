@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/runs"
+	"github.com/sheathedsharp/option-berth/engine/internal/runs"
 )
 
 // Uses the public call as a statement so the exact behavioral regression also

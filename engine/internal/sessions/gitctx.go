@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/sheathedsharp/option-berth/internal/groups"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // GitContext is the checkout a command is started in: the worktree name and

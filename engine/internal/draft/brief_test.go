@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 )
 
 func TestBriefCarriesTheFacts(t *testing.T) {

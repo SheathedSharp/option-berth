@@ -5,8 +5,8 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/client"
-	"github.com/sheathedsharp/option-berth/internal/sessions"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/sessions"
 )
 
 // sessionsDaemon connects without autostarting. Session membership lives in

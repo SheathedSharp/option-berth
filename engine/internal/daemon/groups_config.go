@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
-	"github.com/sheathedsharp/option-berth/internal/groups"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // The `oberth.yaml` read/write namespace (contract §13.2) plus the reload that

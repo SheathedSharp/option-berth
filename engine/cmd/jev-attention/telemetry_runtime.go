@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/attention"
-	"github.com/sheathedsharp/option-berth/internal/paths"
+	"github.com/sheathedsharp/option-berth/engine/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 )
 
 // telemetryHome follows the same BERTH_HOME resolution as the engine. The

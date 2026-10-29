@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon"
-	"github.com/sheathedsharp/option-berth/internal/daemon/runsreg"
-	"github.com/sheathedsharp/option-berth/internal/store"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/runsreg"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 // A run the CLI did not wait for — `oberth start -d` — is closed by the daemon

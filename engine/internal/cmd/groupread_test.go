@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/runsreg"
-	"github.com/sheathedsharp/option-berth/internal/groups"
-	"github.com/sheathedsharp/option-berth/internal/runs"
-	"github.com/sheathedsharp/option-berth/internal/servicefacts"
-	"github.com/sheathedsharp/option-berth/internal/state"
-	"github.com/sheathedsharp/option-berth/internal/store"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/runsreg"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/runs"
+	"github.com/sheathedsharp/option-berth/engine/internal/servicefacts"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 func TestDirectRunRegistryReportsNoPortWorker(t *testing.T) {

@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
-	"github.com/sheathedsharp/option-berth/internal/store"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 func checkDaemonReachable(ctx context.Context, env *Env) rpc.DoctorCheck {

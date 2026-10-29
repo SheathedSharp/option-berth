@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/store"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 func TestReservedMigrationFromAnotherPackage(t *testing.T) {

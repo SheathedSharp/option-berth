@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/store"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 // These tests exercise startup failure ordering only. They do not replace

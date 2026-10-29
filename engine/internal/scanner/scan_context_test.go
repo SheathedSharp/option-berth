@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
 func TestContextReadCancellationNeverUsesLastGood(t *testing.T) {

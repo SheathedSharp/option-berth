@@ -1,6 +1,6 @@
 package groups
 
-import "github.com/sheathedsharp/option-berth/internal/state"
+import "github.com/sheathedsharp/option-berth/engine/internal/state"
 
 // Registry attributes a port to a process option-berth started. It answers with the
 // whole run, not just its group, because `run`, `display_name` and

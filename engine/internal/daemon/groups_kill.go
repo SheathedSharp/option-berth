@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
-	"github.com/sheathedsharp/option-berth/internal/groups"
-	"github.com/sheathedsharp/option-berth/internal/killer"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/killer"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // handleGroupsKill stops a group's listening ports. With release it is

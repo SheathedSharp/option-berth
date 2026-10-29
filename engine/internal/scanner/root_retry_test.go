@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/ports"
-	"github.com/sheathedsharp/option-berth/internal/store"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 // Exercise the scanner/store boundary with a real isolated SQLite store. The

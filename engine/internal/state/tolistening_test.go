@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
 // fullRow is a scan row with every field the wire shape carries set, so the

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/ports"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // Step 1A.19. Everything here is about what a handler pays for, not about what

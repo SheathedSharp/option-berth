@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 )
 
 // treeTimeout bounds a tree read, which costs more than a status: the line

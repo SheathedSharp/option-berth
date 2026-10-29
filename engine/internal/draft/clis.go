@@ -18,7 +18,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/sheathedsharp/option-berth/internal/spawn"
+	"github.com/sheathedsharp/option-berth/engine/internal/spawn"
 )
 
 // CLI is one supported local agent: the program to find, and the arguments

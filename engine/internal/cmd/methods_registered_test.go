@@ -3,8 +3,8 @@ package cmd
 import (
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon"
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 )
 
 // The protocol schema and the dispatcher have to name the same methods. This

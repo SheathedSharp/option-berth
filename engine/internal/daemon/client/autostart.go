@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
 )
 
 // pollInterval is how often Autostart retries the dial while waiting.

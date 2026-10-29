@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/groups"
-	"github.com/sheathedsharp/option-berth/internal/scanner"
-	"github.com/sheathedsharp/option-berth/internal/state"
-	"github.com/sheathedsharp/option-berth/internal/store"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 // Runtime is what the daemon hands to extension packages (contract §8). Step

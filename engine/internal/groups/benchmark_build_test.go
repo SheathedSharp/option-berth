@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // BenchmarkGroupsWith measures the manifest-to-runtime join independently of

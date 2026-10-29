@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/sheathedsharp/option-berth/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
 // Text helpers for the human renderings: widths that ignore colour codes, and

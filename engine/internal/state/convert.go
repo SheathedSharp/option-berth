@@ -1,6 +1,6 @@
 package state
 
-import "github.com/sheathedsharp/option-berth/internal/ports"
+import "github.com/sheathedsharp/option-berth/engine/internal/ports"
 
 // FromListening adapts the scanner model to the published contract model. It is
 // the only place that translation happens: `oberth list --json` uses it today

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/servicefacts"
+	"github.com/sheathedsharp/option-berth/engine/internal/servicefacts"
 )
 
 func TestServiceFactsRemainDetachedAcrossExitAndRestart(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 )
 
 // diffTimeout bounds one diff. A patch is bigger than a status and is read one

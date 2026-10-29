@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 )
 
 // fakeEnv is an Env whose every seam answers without touching the machine: no

@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/sheathedsharp/option-berth/internal/ports"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // RenderGroups writes the `oberth groups` table: NAME SOURCE ROOT PORTS STATUS.

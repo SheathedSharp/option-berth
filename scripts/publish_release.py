@@ -16,7 +16,14 @@ def expected_assets(tag: str) -> set[str]:
         raise ValueError("invalid version tag")
     archives = {f"option-berth-{tag}-{system}-{arch}." + ("zip" if system == "windows" else "tar.gz")
                 for system in ("darwin", "linux", "windows") for arch in ("amd64", "arm64")}
-    return archives | {name + ".sha256" for name in archives}
+    version = tag[1:]
+    linux_packages = set()
+    for arch, rpm_arch in (("amd64", "x86_64"), ("arm64", "aarch64")):
+        linux_packages.add(f"option-berth_{version}_{arch}.deb")
+        linux_packages.add(f"option-berth-{version}-1.{rpm_arch}.rpm")
+    windows_msi = {f"option-berth-{version}-windows-amd64.msi"}
+    assets = archives | linux_packages | windows_msi
+    return assets | {name + ".sha256" for name in assets}
 
 
 def verify_assets(directory: Path, tag: str, aggregate: bool = False) -> list[Path]:
@@ -62,9 +69,11 @@ def publish(directory: Path, tag: str) -> None:
     notes = ("## 使用前 / Before use\n\n"
              "版本按协议 / 功能 / 修复步进。终端与外部 coding agent 使用同一份 worktree 上下文；"
              "agent 需自行安装登录，后续对话与审批留在其原生界面。\n\n"
-             "Windows 构建包不等于完整生命周期支持。请先核对 SHA256SUMS，许可随包附带。\n\n"
+             "Windows 构建包不等于完整生命周期支持。Linux 同时提供 .deb 与 .rpm，"
+             "Windows amd64 提供未签名的 MSI。请先核对 SHA256SUMS，许可随包附带。\n\n"
              "macOS 客户端与 coding agent 的 skill 是独立产品，见 README 里的链接。\n\n"
              "Protocol / feature / fix versioning. See the repository release guide.\n\n"
+             "Linux .deb/.rpm packages and an unsigned Windows amd64 MSI are published beside the CLI archives. "
              "Windows ARM64 and some CLI archives are cross-built; build availability is not a claim "
              "of full native lifecycle coverage. Verify SHA256SUMS before use. Third-party notices are "
              "included in every archive. The macOS client and the coding-agent skill are separate "

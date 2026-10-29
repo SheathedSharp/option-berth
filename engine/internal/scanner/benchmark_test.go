@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
 // BenchmarkSnapshot measures the scanner's attribution and publication path

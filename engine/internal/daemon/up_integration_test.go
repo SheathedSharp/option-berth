@@ -18,10 +18,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/client"
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
-	"github.com/sheathedsharp/option-berth/internal/groups"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // TestUpStartsAGroupInOrderAndDownStopsIt is the step's acceptance path end to

@@ -3,8 +3,8 @@ package rpc
 import (
 	"encoding/json"
 
-	"github.com/sheathedsharp/option-berth/internal/groups"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // This file declares the params and results of every daemon method named in

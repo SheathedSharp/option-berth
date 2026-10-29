@@ -3,7 +3,7 @@ package claims
 import (
 	_ "embed"
 
-	"github.com/sheathedsharp/option-berth/internal/store"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 // Migration 006 is the version the cross-spec contract (§8) reserves for

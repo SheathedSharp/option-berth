@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon"
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
-	"github.com/sheathedsharp/option-berth/internal/spawn"
-	"github.com/sheathedsharp/option-berth/internal/state"
-	"github.com/sheathedsharp/option-berth/internal/store"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/spawn"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 // How a run ended. A run option-berth or the user asked to stop is stopped whatever

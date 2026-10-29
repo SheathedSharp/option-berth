@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/sheathedsharp/option-berth/internal/claims"
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
-	"github.com/sheathedsharp/option-berth/internal/groups"
-	"github.com/sheathedsharp/option-berth/internal/state"
-	"github.com/sheathedsharp/option-berth/internal/store"
+	"github.com/sheathedsharp/option-berth/engine/internal/claims"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 type groupRunReleaseGuard interface {

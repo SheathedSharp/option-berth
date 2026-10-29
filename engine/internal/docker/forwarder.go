@@ -3,7 +3,7 @@ package docker
 import (
 	"strings"
 
-	"github.com/sheathedsharp/option-berth/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
 // Docker does not hand a host port to the container: a helper process on the

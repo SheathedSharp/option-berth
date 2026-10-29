@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/store"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 func observedClaim(port int, key string) store.ClaimRow {

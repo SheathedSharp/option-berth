@@ -4,7 +4,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/sheathedsharp/option-berth/internal/paths"
+	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 )
 
 // Pending is a draft sitting on disk that nobody has adopted: what

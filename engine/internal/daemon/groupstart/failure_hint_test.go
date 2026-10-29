@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 )
 
 // A refusal already carries the way out. Replacing that with a "read the logs"

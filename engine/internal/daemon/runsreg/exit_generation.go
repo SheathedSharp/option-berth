@@ -1,6 +1,6 @@
 package runsreg
 
-import "github.com/sheathedsharp/option-berth/internal/daemon"
+import "github.com/sheathedsharp/option-berth/engine/internal/daemon"
 
 // Exited snapshots the generation currently registered for a legacy PID-only
 // notification. A caller that already knows the run (such as the child reaper)

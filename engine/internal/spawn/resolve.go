@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/sheathedsharp/option-berth/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 )
 
 // Resolution is the group and name a run is registered under, plus the

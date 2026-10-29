@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/servicefacts"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/servicefacts"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 type snapshotRegistry struct {

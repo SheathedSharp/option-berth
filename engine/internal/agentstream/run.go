@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/sheathedsharp/option-berth/internal/agentlaunch"
+	"github.com/sheathedsharp/option-berth/engine/internal/agentlaunch"
 )
 
 // Options configures a structured agent bridge process.

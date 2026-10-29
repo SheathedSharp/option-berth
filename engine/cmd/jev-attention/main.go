@@ -21,7 +21,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/attention"
 )
 
 type output struct {

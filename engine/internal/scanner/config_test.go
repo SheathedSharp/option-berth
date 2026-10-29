@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
 // TestScanPicksUpAnEditedConfig: the daemon's index is long-lived, so a file

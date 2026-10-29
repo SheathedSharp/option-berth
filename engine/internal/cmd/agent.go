@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/sheathedsharp/option-berth/internal/agentlaunch"
-	"github.com/sheathedsharp/option-berth/internal/agentstream"
+	"github.com/sheathedsharp/option-berth/engine/internal/agentlaunch"
+	"github.com/sheathedsharp/option-berth/engine/internal/agentstream"
 	"github.com/spf13/cobra"
 )
 

@@ -8,7 +8,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 )
 
 // Request is what a Handler receives: the decoded call plus the connection it

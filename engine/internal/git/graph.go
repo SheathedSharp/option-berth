@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 )
 
 // graphTimeout bounds a history read. A graph is deliberately a separate read

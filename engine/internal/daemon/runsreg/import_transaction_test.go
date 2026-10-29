@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/runs"
+	"github.com/sheathedsharp/option-berth/engine/internal/runs"
 )
 
 func importFixture(t *testing.T) (*Registry, runs.Entry, []byte) {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/sheathedsharp/option-berth/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
 // EnrichPortsContext retains optional Docker enrichment on ordinary failure,

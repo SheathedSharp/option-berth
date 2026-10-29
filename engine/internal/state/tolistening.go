@@ -3,7 +3,7 @@ package state
 import (
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
 // ToListening is the inverse of FromListening: it turns a published row back

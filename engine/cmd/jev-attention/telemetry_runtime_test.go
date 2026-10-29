@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/attention"
 )
 
 func TestBindFeedbackIdentityUsesCanonicalProject(t *testing.T) {

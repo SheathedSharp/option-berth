@@ -9,11 +9,11 @@ import (
 	"os"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/buildinfo"
-	"github.com/sheathedsharp/option-berth/internal/daemon"
-	"github.com/sheathedsharp/option-berth/internal/daemon/client"
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
-	"github.com/sheathedsharp/option-berth/internal/display"
+	"github.com/sheathedsharp/option-berth/engine/internal/buildinfo"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/spf13/cobra"
 )
 

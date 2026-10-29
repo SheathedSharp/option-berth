@@ -6,15 +6,15 @@ import (
 	"os"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
-	"github.com/sheathedsharp/option-berth/internal/docker"
-	"github.com/sheathedsharp/option-berth/internal/groups"
-	"github.com/sheathedsharp/option-berth/internal/ports"
-	"github.com/sheathedsharp/option-berth/internal/runs"
-	"github.com/sheathedsharp/option-berth/internal/scanner"
-	"github.com/sheathedsharp/option-berth/internal/servicefacts"
-	"github.com/sheathedsharp/option-berth/internal/state"
-	"github.com/sheathedsharp/option-berth/internal/store"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/docker"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/runs"
+	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
+	"github.com/sheathedsharp/option-berth/engine/internal/servicefacts"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 // groupRows joins the worktree's live port evidence with its manifest index.

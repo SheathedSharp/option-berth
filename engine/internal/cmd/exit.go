@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
-	"github.com/sheathedsharp/option-berth/internal/display"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/display"
 )
 
 // Exit codes — the table in docs/cli.md. A caller branches on the status

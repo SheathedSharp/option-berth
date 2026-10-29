@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const modulePath = "github.com/sheathedsharp/option-berth"
+const modulePath = "github.com/sheathedsharp/option-berth/engine"
 
 var semverPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 
@@ -291,7 +291,7 @@ func buildEngine(p project) error {
 		"-X", modulePath + "/internal/buildinfo.Commit=" + p.commit,
 		"-X", modulePath + "/internal/buildinfo.Date=" + p.date,
 	}, " ")
-	if err := command(p.engine, "go", "build", "-trimpath", "-ldflags", ldflags, "-o", bin, "."); err != nil {
+	if err := command(p.engine, "go", "build", "-trimpath", "-ldflags", ldflags, "-o", bin, "./cmd/oberth"); err != nil {
 		return err
 	}
 	fmt.Printf("built %s (v%s, %s)\n", bin, p.version, p.commit)

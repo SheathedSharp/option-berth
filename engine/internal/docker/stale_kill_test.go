@@ -5,10 +5,10 @@ import (
 	"os"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/docker"
-	"github.com/sheathedsharp/option-berth/internal/killer"
-	"github.com/sheathedsharp/option-berth/internal/ports"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/docker"
+	"github.com/sheathedsharp/option-berth/engine/internal/killer"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // cachedPS is a container list the watcher could still be serving after

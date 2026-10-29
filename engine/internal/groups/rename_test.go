@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // renameWorld is a project with a main checkout and a worktree, both running,

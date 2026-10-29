@@ -6,7 +6,7 @@ package servicefacts
 import (
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // Key scopes a service name to its resolved worktree group.

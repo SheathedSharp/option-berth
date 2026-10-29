@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 )
 
 // TestCheckProtocol pins contract §7's versioning rule: only the major has to

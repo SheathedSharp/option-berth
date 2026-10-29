@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/client"
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
-	"github.com/sheathedsharp/option-berth/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/spf13/cobra"
 )
 

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/display"
+	"github.com/sheathedsharp/option-berth/engine/internal/display"
 )
 
 var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*m`)

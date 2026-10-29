@@ -23,7 +23,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/sheathedsharp/option-berth/internal/store"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 // Kind is what a block records.

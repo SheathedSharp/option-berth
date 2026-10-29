@@ -32,6 +32,25 @@ go test -tags integration -count=1 -timeout=8m ./internal/scenario/...
 
 Mage 与品牌检查分别位于各自 PR 及 CI。构建、安装和服务起停是不同副作用，普通检查不操作日常用户服务。
 
+发布安装与卸载脚本用本地夹具跑通：平台映射、latest 重定向、固定版本、SHA256 不匹配不落盘、
+PATH 配置、旧包缺少 `install-path.sh` 时的标签回退、未知参数在下载前失败，以及卸载只删
+安装器写入的精确 PATH 行、默认保留 `~/.option-berth`、`--purge-state` 才删除状态目录。
+测试不访问真实 GitHub，也不写用户目录。Windows 脚本在 Windows CI 做语法解析，其安装、卸载与
+PATH 行为需要独立的 Windows 原生验证；本机测试不能代替它。
+
+`scripts/go_install_test.py` 用本地 file module proxy 走真实 `go install`，安装
+`engine/cmd/oberth` 与 `engine/cmd/jev-attention`，并核对 `version --json` 使用模块版本。
+这验证了模块路径、`cmd/oberth` 的二进制名，以及 `go install` 不经过 `-ldflags` 时的版本回退。
+
+Linux 安装包测试从夹具压缩包生成 `.deb`/`.rpm`，检查 control 字段、安装路径、许可与 md5sums；
+有 `dpkg-deb` 时用 dpkg 读包，有 `rpmbuild`/`rpm` 时实际构建并列出包内容。MSI 测试用 `wixl`
+生成安装包并检查 File 表与 PATH 的 `=-PATH` 语义（安装时追加、卸载时只移除追加段）。macOS 本机
+没有这些工具时对应检查明确跳过，不能把跳过当作通过。发布 workflow 在 Linux 目标上安装 `rpm`
+与 `msitools` 后构建安装包，再由发布脚本按完整资产集校验。发布 workflow 另有 `msi-smoke`：
+在 windows-2025 上静默安装 MSI、运行 `oberth version`、检查用户 PATH，再卸载并确认二进制与
+PATH 条目都被移除。这项检查尚未在本机执行，只有 CI 实际跑过才算通过；它也不覆盖签名和
+SmartScreen 行为。
+
 ## 不作出的保证
 
 长期负载仍需独立验收；没有可靠对照不宣传整体加速或长期无泄漏。

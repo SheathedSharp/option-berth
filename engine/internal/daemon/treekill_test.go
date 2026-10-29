@@ -5,7 +5,7 @@ package daemon_test
 import (
 	"os/exec"
 
-	"github.com/sheathedsharp/option-berth/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
 // stopCommand takes a `option-berth` invocation down for good and reaps it.

@@ -54,11 +54,59 @@ project start/stop never takes them over. Worktree isolation is about run owners
 boundaries, not an operating-system sandbox. The interface is not in this repository: it is the
 separate [macOS client](https://github.com/SheathedSharp/option-berth-macos).
 
-## Build and install
+## Install
 
-Release archives are on [GitHub Releases](https://github.com/SheathedSharp/option-berth/releases); you
-can also build from source. The engine needs [Go 1.25 or a later compatible version](engine/go.mod) and
-Mage. The formal release rules live in [the release guide](docs/releasing.md).
+macOS / Linux: one command resolves the latest release, downloads the archive for this machine,
+verifies SHA256, and installs into `~/.local/bin`.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps1 | iex
+```
+
+Windows amd64 also has an unsigned MSI from v1.0.1 onwards; arm64 keeps the zip and
+`install.ps1` path.
+
+Pin a version with `--version v1.0.0` (`-Version v1.0.0` on Windows), change the directory with
+`--dir` / `-Dir`, and skip the PATH edit with `--no-modify-path` / `-NoModifyPath`. The scripts only
+download and verify release archives: they start no service and write no Git data. Read
+[install.sh](install.sh) / [install.ps1](install.ps1) first if you prefer, or download the
+[Releases](https://github.com/SheathedSharp/option-berth/releases) archives directly.
+
+### With go install (Go 1.25+)
+
+```sh
+go install github.com/sheathedsharp/option-berth/engine/cmd/oberth@latest
+
+# optional Jev adapter
+go install github.com/sheathedsharp/option-berth/engine/cmd/jev-attention@latest
+```
+
+This requires v1.0.1 or newer. The binaries land in `$(go env GOPATH)/bin` or `GOBIN`, which must be on
+PATH. Uninstall by deleting `oberth` and `jev-attention` from that directory.
+
+Uninstall:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uninstall.sh | sh
+```
+
+The uninstaller keeps `~/.option-berth` runtime state unless you pass `--purge-state`. Linux also
+ships `.deb` / `.rpm` packages from v1.0.1 onwards. See
+[Install and uninstall](docs/install.md) for the full matrix, upgrades and manual archives.
+
+The complete service scenario targets **macOS / Linux**. Windows has a native build, smoke checks and
+some fact/persistence tests; that is not full lifecycle support.
+
+### Build from source
+
+The engine needs [Go 1.25 or a later compatible version](engine/go.mod) and Mage. The formal release
+rules live in [the release guide](docs/releasing.md).
 
 ```sh
 git clone https://github.com/SheathedSharp/option-berth.git
@@ -71,9 +119,6 @@ mage buildEngine
 
 Building installs nothing and starts no daily service. Once you mean to install, run `mage install`:
 it writes the install directory and configures PATH. `NO_MODIFY_PATH=1 mage install` skips the PATH edit.
-
-The complete service scenario targets **macOS / Linux**. Windows has a native build, smoke checks and
-some fact/persistence tests; that is not full lifecycle support.
 
 ## Try it first
 

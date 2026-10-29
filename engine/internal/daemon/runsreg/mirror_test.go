@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/groups"
-	"github.com/sheathedsharp/option-berth/internal/runs"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/runs"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 func mirroredRegistry(t *testing.T) (*Registry, Record) {

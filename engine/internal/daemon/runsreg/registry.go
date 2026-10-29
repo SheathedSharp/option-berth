@@ -17,11 +17,11 @@ import (
 
 	"golang.org/x/sync/semaphore"
 
-	"github.com/sheathedsharp/option-berth/internal/ports"
-	"github.com/sheathedsharp/option-berth/internal/runs"
-	"github.com/sheathedsharp/option-berth/internal/sessions"
-	"github.com/sheathedsharp/option-berth/internal/state"
-	"github.com/sheathedsharp/option-berth/internal/store"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/runs"
+	"github.com/sheathedsharp/option-berth/engine/internal/sessions"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 // parentsTTL bounds how long one process table is reused while attributing a

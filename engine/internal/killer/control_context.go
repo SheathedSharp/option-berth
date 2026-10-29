@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
 func controlCommand(ctx context.Context, name string, args ...string) (*exec.Cmd, context.CancelFunc) {

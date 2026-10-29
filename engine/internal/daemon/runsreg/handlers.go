@@ -8,13 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon"
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
-	"github.com/sheathedsharp/option-berth/internal/scanner"
-	"github.com/sheathedsharp/option-berth/internal/sessions"
-	"github.com/sheathedsharp/option-berth/internal/spawn"
-	"github.com/sheathedsharp/option-berth/internal/state"
-	"github.com/sheathedsharp/option-berth/internal/store"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
+	"github.com/sheathedsharp/option-berth/engine/internal/sessions"
+	"github.com/sheathedsharp/option-berth/engine/internal/spawn"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 // Default is the registry this daemon serves. One daemon, one registry: the

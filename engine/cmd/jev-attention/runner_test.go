@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/attention"
 )
 
 func probability(v float64) *float64 { return &v }

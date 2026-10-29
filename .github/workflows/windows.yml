@@ -33,7 +33,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go vet ./...
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go build -o ../bin/oberth.exe .
+          go build -o ../bin/oberth.exe ./cmd/oberth
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go build -o ../bin/jev-attention.exe ./cmd/jev-attention
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -45,6 +45,13 @@ jobs:
           if (-not $version.version) { throw 'version JSON has no version' }
           & ../bin/oberth.exe --help
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install and uninstall scripts parse under Windows PowerShell
+        run: |
+          foreach ($script in '../install.ps1', '../uninstall.ps1') {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script), [ref]$null, [ref]$errors) | Out-Null
+            if ($errors.Count) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
+          }
       - name: Native service lifecycle and collector recovery
         run: |
           python ../scripts/verify_service_lifecycle.py --binary ../bin/oberth.exe

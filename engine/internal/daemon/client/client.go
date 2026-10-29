@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon"
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 )
 
 // AutostartTimeout is how long a client waits for a daemon it spawned to start

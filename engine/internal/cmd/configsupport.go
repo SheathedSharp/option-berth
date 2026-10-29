@@ -3,9 +3,9 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/client"
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
-	"github.com/sheathedsharp/option-berth/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 )
 
 // requireConfigSupport refuses to hand a file to a daemon older than the

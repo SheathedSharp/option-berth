@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // TestIndexReprobesADirectoryAfterManifestAppears pins the invalidation rule

@@ -3,8 +3,8 @@ package daemon
 import (
 	"context"
 	"errors"
-	"github.com/sheathedsharp/option-berth/internal/scanner"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 	"time"
 )
 

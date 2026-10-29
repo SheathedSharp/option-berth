@@ -1,4 +1,4 @@
-module github.com/sheathedsharp/option-berth
+module github.com/sheathedsharp/option-berth/engine
 
 go 1.25.0
 

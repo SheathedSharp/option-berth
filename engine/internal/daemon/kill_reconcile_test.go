@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/ports"
-	"github.com/sheathedsharp/option-berth/internal/scanner"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
 )
 
 type postStopRegistry struct {

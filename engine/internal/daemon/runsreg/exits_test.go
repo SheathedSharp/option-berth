@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/store"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 // TestExitedRecordsHowARunEnded: code 0 exited, anything else crashed, and a

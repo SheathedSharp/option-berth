@@ -3,7 +3,7 @@ package cmd
 import (
 	"os"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/spf13/cobra"
 )
 

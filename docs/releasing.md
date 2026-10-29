@@ -8,10 +8,37 @@ option-berth 拆成三个独立产品：本仓库发布 `oberth` 引擎与 CLI�
 本仓库的 Release 资产只有引擎：
 
 - macOS、Linux、Windows 的 amd64 与 arm64 压缩包（`option-berth-vX.Y.Z-<os>-<arch>.tar.gz|zip`）；
-- 每个压缩包的 `.sha256`；
+- Linux 的 `.deb` 与 `.rpm`（`option-berth_X.Y.Z_<deb-arch>.deb`、
+  `option-berth-X.Y.Z-1.<rpm-arch>.rpm`）；
+- Windows amd64 的未签名 MSI（`option-berth-X.Y.Z-windows-amd64.msi`）；arm64 仍用 zip 与
+  `install.ps1`，不生成跨架构 MSI；
+- 每个资产的 `.sha256`；
 - 汇总的 `SHA256SUMS`。
 
 不发布 macOS 应用、DMG、公证包、客户端截图或 skill 安装包。
+
+引擎模块路径是 `github.com/sheathedsharp/option-berth/engine`；
+`go install github.com/sheathedsharp/option-berth/engine/cmd/oberth@vX.Y.Z` 直接从 Git 标签
+构建，不经过 Release 资产，也不需要额外的模块仓库。
+
+安装入口是仓库根目录的 `install.sh`（macOS/Linux）、`install.ps1`（Windows），以及对应的
+`uninstall.sh` / `uninstall.ps1`；它们不占 Release 资产，从 `main` 提供：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh
+```
+
+脚本解析 `releases/latest`（或用 `--version` 固定标签），按平台下载压缩包与同名 `.sha256`，
+校验通过才解压，把 `oberth` 与 `jev-attention` 装到 `~/.local/bin`（Windows 为
+`%LOCALAPPDATA%\option-berth\bin`），把 `LICENSE`、`licenses/` 与构建清单留在
+`~/.local/share/option-berth`（Windows 为 `%LOCALAPPDATA%\option-berth`），通过包内
+`install-path.sh` 配置 PATH，最后运行 `oberth version` 自检。它不启动服务、不写 Git、
+不需要管理员权限。安装目标来自已发布标签，不是 `main` 上的未发布代码；旧包没有
+`install-path.sh` 时，从同一标签的 `scripts/install-path.sh` 取用。
+
+卸载器先尝试 `oberth daemon stop`，再删除二进制、许可与安装器写入的 PATH 行；默认保留
+`~/.option-berth` 运行状态，只有 `--purge-state` / `-PurgeState` 才删除。完整说明见
+[install.md](install.md)。
 
 ### 拆分后的版本线
 
@@ -83,9 +110,11 @@ Mage 提供 `releaseProtocol / releaseFeature / releaseFix`（本地提交和 ta
 
 1. 校验版本、协议 schema、注释标签及 main 归属，并运行发布策略测试。
 2. 在 macOS/Linux 运行原生发布验证，复用 Windows 原生构建与事实/持久化检查。
-3. 构建 Darwin/Linux/Windows 的 amd64 与 arm64 六个 CLI 压缩包。
-4. 每个 CLI 包包含 `oberth`、可选 `jev-attention`、构建清单、目标实际运行依赖的许可原文和 SHA256SUMS。
-5. 验证全部目标齐全及散列后创建 GitHub draft release，上传，再下载校验并逐项比对上传前的本地散列；最后才转为正式 release。
+3. 构建 Darwin/Linux/Windows 的 amd64 与 arm64 六个 CLI 压缩包，在 Linux 目标上生成
+   amd64/arm64 的 `.deb` 与 `.rpm`，并在 Windows amd64 目标上生成 MSI。
+4. 每个 CLI 包包含 `oberth`、可选 `jev-attention`、`install-path.sh`、构建清单、目标实际运行依赖的许可原文和 SHA256SUMS；Linux 安装包与 MSI 从同一个压缩包解出二进制与许可，不另建内容。
+5. MSI 是 per-user 安装，写入 `%LOCALAPPDATA%\option-berth` 并把 `bin` 追加到用户 PATH；卸载时只移除自己追加的那一段。它没有代码签名，Windows SmartScreen 会提示未知发布者；arm64 不提供 MSI。
+6. 验证全部目标齐全及散列后创建 GitHub draft release，上传，再下载校验并逐项比对上传前的本地散列；最后才转为正式 release。
 
 Windows arm64 与部分 CLI 包是交叉构建；有下载包不等于已经验证所有平台生命周期。
 标签工作流显式按触发提交 SHA checkout，并获取完整历史与标签对象，避免 ref + 已剥离提交的

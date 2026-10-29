@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/paths"
+	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 )
 
 // Entry is a single tagged run, keyed in the registry by its PID.

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/sheathedsharp/option-berth/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 )
 
 // rules is the drafting brief that goes in front of every run. It is embedded

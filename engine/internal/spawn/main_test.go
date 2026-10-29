@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/testenv"
+	"github.com/sheathedsharp/option-berth/engine/internal/testenv"
 )
 
 // Every path option-berth resolves from the environment points at a private temp

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/sessions"
-	"github.com/sheathedsharp/option-berth/internal/store"
+	"github.com/sheathedsharp/option-berth/engine/internal/sessions"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 
 	_ "modernc.org/sqlite"
 )

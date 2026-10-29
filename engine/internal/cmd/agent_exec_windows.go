@@ -4,7 +4,7 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/sheathedsharp/option-berth/internal/agentlaunch"
+	"github.com/sheathedsharp/option-berth/engine/internal/agentlaunch"
 )
 
 func executeAgent(agentlaunch.Plan) error {

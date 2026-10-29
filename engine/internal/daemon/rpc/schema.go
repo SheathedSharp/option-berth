@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/invopop/jsonschema"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 //go:generate go run ../../../cmd/gen-schema -o ../../../docs/schema/protocol.schema.json
@@ -169,7 +169,7 @@ func BuildSchema() *Document {
 
 	return &Document{
 		Schema:          "https://json-schema.org/draft/2020-12/schema",
-		ID:              "https://github.com/sheathedsharp/option-berth/docs/schema/protocol.schema.json",
+		ID:              "https://github.com/sheathedsharp/option-berth/engine/docs/schema/protocol.schema.json",
 		Title:           "option-berth daemon protocol",
 		Description:     "Generated from the Go types in internal/state and internal/daemon/rpc. Do not edit by hand; run `go generate ./...`.",
 		ProtocolVersion: ProtocolVersion,
@@ -248,7 +248,7 @@ var refPattern = regexp.MustCompile(`"#/definitions/([^"]+)"`)
 
 // sanitizeDefName turns Go's generic instantiation names into plain identifiers
 // a TypeScript or Rust generator can use:
-// "Change[github.com/sheathedsharp/option-berth/internal/state.Port]" becomes "ChangePort".
+// "Change[github.com/sheathedsharp/option-berth/engine/internal/state.Port]" becomes "ChangePort".
 func sanitizeDefName(name string) string {
 	open := strings.IndexByte(name, '[')
 	if open < 0 {

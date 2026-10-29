@@ -3,10 +3,10 @@ package scanner
 import (
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/groups"
-	"github.com/sheathedsharp/option-berth/internal/ports"
-	"github.com/sheathedsharp/option-berth/internal/sessions"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/sessions"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // sessionRegistry is a run registry that also knows the agent session, the

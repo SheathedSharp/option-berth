@@ -8,19 +8,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/buildinfo"
-	"github.com/sheathedsharp/option-berth/internal/daemon/client"
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
-	"github.com/sheathedsharp/option-berth/internal/display"
-	"github.com/sheathedsharp/option-berth/internal/runs"
-	"github.com/sheathedsharp/option-berth/internal/sessions"
-	"github.com/sheathedsharp/option-berth/internal/spawn"
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/buildinfo"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/display"
+	"github.com/sheathedsharp/option-berth/engine/internal/runs"
+	"github.com/sheathedsharp/option-berth/engine/internal/sessions"
+	"github.com/sheathedsharp/option-berth/engine/internal/spawn"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 	"github.com/spf13/cobra"
 
 	// The daemon serves runs.register/unregister/list/spawn from this package's
 	// init(); `oberth serve` runs in this binary, so it has to be linked in.
-	_ "github.com/sheathedsharp/option-berth/internal/daemon/runsreg"
+	_ "github.com/sheathedsharp/option-berth/engine/internal/daemon/runsreg"
 )
 
 var (

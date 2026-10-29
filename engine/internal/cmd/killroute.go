@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/client"
-	"github.com/sheathedsharp/option-berth/internal/daemon/rpc"
-	"github.com/sheathedsharp/option-berth/internal/killer"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/killer"
 )
 
 // killThroughDaemon runs `oberth kill` as `ports.kill` / `groups.kill`.

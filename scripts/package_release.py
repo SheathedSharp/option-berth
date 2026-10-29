@@ -36,7 +36,7 @@ def json_stream(text: str):
 
 
 def runtime_notices(root: Path, env: dict[str, str]) -> tuple[str, list[dict[str, str]]]:
-    packages = json_stream(command(root / "engine", env, "go", "list", "-deps", "-json", ".", "./cmd/jev-attention"))
+    packages = json_stream(command(root / "engine", env, "go", "list", "-deps", "-json", "./cmd/oberth", "./cmd/jev-attention"))
     modules = {}
     for package in packages:
         module = package.get("Module")
@@ -77,7 +77,7 @@ def package(root: Path, system: str, arch: str, output: Path) -> list[Path]:
     commit = command(root, env, "git", "rev-parse", "HEAD")
     stamp = int(command(root, env, "git", "show", "-s", "--format=%ct", "HEAD"))
     built = datetime.datetime.fromtimestamp(stamp, datetime.timezone.utc).isoformat().replace("+00:00", "Z")
-    flags = "-s -w " + " ".join("-X github.com/sheathedsharp/option-berth/internal/buildinfo." + key + "=" + value
+    flags = "-s -w " + " ".join("-X github.com/sheathedsharp/option-berth/engine/internal/buildinfo." + key + "=" + value
                                   for key, value in (("Version", "v" + version), ("Commit", commit[:7]), ("Date", built)))
     output.mkdir(parents=True, exist_ok=True)
     stem = f"option-berth-v{version}-{system}-{arch}"
@@ -86,9 +86,10 @@ def package(root: Path, system: str, arch: str, output: Path) -> list[Path]:
         stage = Path(tmp) / stem
         stage.mkdir()
         suffix = ".exe" if system == "windows" else ""
-        for name, source in (("oberth", "."), ("jev-attention", "./cmd/jev-attention")):
+        for name, source in (("oberth", "./cmd/oberth"), ("jev-attention", "./cmd/jev-attention")):
             command(root / "engine", env, "go", "build", "-trimpath", "-ldflags", flags, "-o", str(stage / (name + suffix)), source)
         shutil.copyfile(root / "LICENSE", stage / "LICENSE")
+        shutil.copyfile(root / "scripts" / "install-path.sh", stage / "install-path.sh")
         notices = stage / "licenses"
         notices.mkdir()
         shutil.copyfile(root / "engine/LICENSE", notices / "engine-LICENSE")

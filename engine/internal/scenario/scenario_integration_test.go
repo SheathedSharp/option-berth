@@ -20,8 +20,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/client"
-	"github.com/sheathedsharp/option-berth/internal/testenv"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/testenv"
 )
 
 func TestMain(m *testing.M) { os.Exit(testenv.Run(m)) }
@@ -37,7 +37,7 @@ var buildBinary = sync.OnceValues(func() (string, error) {
 	if runtime.GOOS == "windows" {
 		bin += ".exe"
 	}
-	cmd := exec.Command("go", "build", "-o", bin, ".")
+	cmd := exec.Command("go", "build", "-o", bin, "./cmd/oberth")
 	cmd.Dir = repoRoot()
 	if _, err := cmd.CombinedOutput(); err != nil {
 		return "", err

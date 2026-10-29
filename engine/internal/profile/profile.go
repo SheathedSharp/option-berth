@@ -8,7 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/sheathedsharp/option-berth/internal/paths"
+	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 )
 
 // validateName rejects profile names that contain path separators or traversal components.

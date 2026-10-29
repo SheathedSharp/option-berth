@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/claims"
+	"github.com/sheathedsharp/option-berth/engine/internal/claims"
 )
 
 // TestIdentityFromACheckout covers the three shapes a working directory can

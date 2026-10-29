@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/internal/daemon/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
 )
 
 // TestDaemonStopRestartKeepsServiceEvidence proves that stopping the

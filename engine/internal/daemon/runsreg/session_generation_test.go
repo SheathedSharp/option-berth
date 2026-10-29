@@ -3,7 +3,7 @@ package runsreg
 import (
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 func TestSessionDoesNotAttachReplacementToCapturedRun(t *testing.T) {

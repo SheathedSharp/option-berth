@@ -5,7 +5,7 @@ package groups
 import (
 	"path/filepath"
 
-	"github.com/sheathedsharp/option-berth/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 func referenceResolveOne(p *state.Port, runs Registry, index *Index) {

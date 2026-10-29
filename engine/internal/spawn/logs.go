@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/sheathedsharp/option-berth/internal/paths"
+	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 )
 
 // Log rotation policy for detached runs: 10 MiB per file, three generations
