@@ -7,7 +7,7 @@
 <p align="center"><strong>每份代码，各自成泊。</strong><br>面向 Git worktree 的本地服务运行事实与生命周期引擎。</p>
 <p align="center">简体中文 · <a href="README.en.md">English</a></p>
 
-<p align="center"><a href="https://sheathedsharp.github.io/option-berth/">产品官网与真实截图</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">下载最新版本</a></p>
+<p align="center"><a href="https://sheathedsharp.github.io/option-berth/">产品官网</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">下载最新引擎</a></p>
 
 ## 三个产品
 
@@ -21,6 +21,10 @@ option-berth 拆成三个独立产品，各自有仓库、版本与发布节奏�
 
 三者只通过 CLI 与 `--json` 契约相连：客户端和 skill 都不自带第二份运行状态。
 开发和依赖安装时，把三个仓库放在同一个目录下即可（见下面「一起用」）。
+
+本仓库的 Release 只包含引擎 CLI（macOS/Linux/Windows 的 amd64 与 arm64 压缩包及
+`SHA256SUMS`）。引擎版本从 `1.0.0` 起；拆分前的 `v0.2.0`–`v0.8.2` 属于合并产品，
+已不在本仓库发布。客户端与 skill 各自在自己的仓库发版。
 
 ## 为什么需要 option-berth
 
