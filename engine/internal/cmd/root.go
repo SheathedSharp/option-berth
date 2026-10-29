@@ -1,16 +1,19 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/buildinfo"
 	"github.com/sheathedsharp/option-berth/engine/internal/config"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/versioncheck"
 	"github.com/spf13/cobra"
 )
 
@@ -34,12 +37,16 @@ var taglineLines = []string{
 	"then start or stop its services.",
 }
 
-// logoLines is the logo: the mark with the wordmark and tagline beside it. The
-// mark is taller than the text, so its last rows stand alone.
-func logoLines() []string {
+// logoLines is the logo: the mark with the wordmark, tagline and any extra
+// identity lines beside it. The mark is taller than the text, so its last rows
+// stand alone.
+func logoLines(extra ...string) []string {
 	rail := strings.Split(strings.TrimSuffix(markRail, "\n"), "\n")
 	token := strings.Split(strings.TrimSuffix(markToken, "\n"), "\n")
-	text := append([]string{display.Bold(wordmark)}, dimmed(taglineLines)...)
+	text := make([]string, 0, 1+len(taglineLines)+len(extra))
+	text = append(text, display.Bold(wordmark))
+	text = append(text, dimmed(taglineLines)...)
+	text = append(text, extra...)
 	width := 0
 	for _, row := range rail {
 		if w := display.DisplayWidth(row); w > width {
@@ -131,8 +138,8 @@ func dimmed(lines []string) []string {
 
 // logoBlock is the logo as one string, on the screen's two-space margin.
 // `oberth --help` opens with it too, so both screens start the same way.
-func logoBlock() string {
-	lines := logoLines()
+func logoBlock(extra ...string) string {
+	lines := logoLines(extra...)
 	for i := range lines {
 		lines[i] = "  " + lines[i]
 	}
@@ -159,17 +166,30 @@ var rootCmd = &cobra.Command{
 			fmt.Printf("option-berth %s\n", buildinfo.VersionValue())
 			return nil
 		}
-		printWelcome(cmd.OutOrStdout())
+		printWelcome(cmd.OutOrStdout(), welcomeVersion())
 		return nil
 	},
+}
+
+// welcomeVersion is the version line the signpost can show. It only reaches the
+// release feed when a terminal is attached, the user has not opted out, and
+// this build is a release; an unknown answer stays unknown.
+func welcomeVersion() versioncheck.State {
+	current := buildinfo.VersionValue()
+	state := versioncheck.State{Current: current}
+	if !versioncheck.IsRelease(current) || !versioncheck.Enabled() {
+		return state
+	}
+	checked, _ := versioncheck.Lookup(context.Background(), current, false, versioncheck.WelcomeTimeout)
+	return checked
 }
 
 // printWelcome renders the bare-`oberth` screen: the logo with its one line of
 // what this is, the commands a session starts with, and the way out to
 // everything else. It is a signpost, not the manual — the grouped command list
 // stays on `oberth --help` (gh's split between first screen and help).
-func printWelcome(w io.Writer) {
-	fmt.Fprintln(w, logoBlock())
+func printWelcome(w io.Writer, version versioncheck.State) {
+	fmt.Fprintln(w, logoBlock(versionLine(version)))
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "  Start here:")
 	width := 0
@@ -189,6 +209,46 @@ func printWelcome(w io.Writer) {
 	} {
 		fmt.Fprintf(w, "    %s  %s\n", display.Bold(display.PadDisplay(q.cmd, width)), display.Dim(q.what))
 	}
+	if version.UpdateAvailable() {
+		printUpgrade(w, version.Latest)
+	}
+}
+
+// versionLine is the build identity under the tagline: what this binary is,
+// and — when a check has run — whether it is the latest release. An unknown
+// answer prints only the version; "not checked" never reads as "latest".
+func versionLine(state versioncheck.State) string {
+	current := state.Current
+	if current == "" {
+		current = buildinfo.VersionValue()
+	}
+	line := display.Bold(current)
+	switch state.Relation() {
+	case versioncheck.Same:
+		line += " " + display.Green("(latest)")
+	case versioncheck.Behind:
+		line += " " + display.Yellow("(latest version "+state.Latest+")")
+	}
+	return line
+}
+
+// printUpgrade is the one action the signpost offers when this build is behind:
+// the install command for this platform, and the daemon restart that makes the
+// new binary the one that runs next.
+func printUpgrade(w io.Writer, latest string) {
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "  "+display.Yellow("Upgrade to "+latest+":"))
+	fmt.Fprintf(w, "    %s\n", display.Bold(upgradeCommand(runtime.GOOS)))
+	fmt.Fprintf(w, "    %s  %s\n", display.Bold("oberth daemon stop"), display.Dim("# pick up the new build"))
+}
+
+// upgradeCommand is the published install entry point for goos. It is the same
+// command docs/install.md gives, so a reader can compare the two.
+func upgradeCommand(goos string) string {
+	if goos == "windows" {
+		return "irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps1 | iex"
+	}
+	return "curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh"
 }
 
 // The help is grouped by what the reader is trying to do, not by which part of

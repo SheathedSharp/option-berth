@@ -67,6 +67,10 @@ const (
 	// anchor its "和上次比" is measured from. The app keeps one of its own
 	// (seen.json, written by the Swift client) — two readers, two anchors.
 	SeenCLIFile = "seen-cli.json"
+	// UpdateCheckFile is the cached answer to "what is the latest release?".
+	// It is advisory, not a second source of runtime truth: a failed or stale
+	// check is rendered as unknown, never as "current".
+	UpdateCheckFile = "update-check.json"
 )
 
 // Environment variables that override what this package resolves. All three are
