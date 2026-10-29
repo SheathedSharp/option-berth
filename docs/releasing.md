@@ -36,11 +36,6 @@ curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/ins
 `~/.option-berth` 运行状态，只有 `--purge-state` / `-PurgeState` 才删除。完整说明见
 [install.md](install.md)。
 
-Homebrew 公式在独立的 [SheathedSharp/homebrew-tap](https://github.com/SheathedSharp/homebrew-tap)
-仓库维护。那个仓库的每日 workflow 读取本仓库最新 Release 的 `SHA256SUMS`，用
-`scripts/render_homebrew_formula.py` 重新生成公式；发布新版本后如果不想等定时任务，手动运行
-`Update option-berth formula` 即可。公式内容来自已发布资产，不在本仓库的 Release 里重复上传。
-
 ### 拆分后的版本线
 
 引擎版本从 **1.0.0** 开始重新起算。这一次不是协议升级：`VERSION` 重定基线不改变

@@ -59,12 +59,6 @@ macOS / Linux：一条命令解析最新发布、按平台下载、核对 SHA256
 curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh
 ```
 
-macOS / Linux 也可以用 Homebrew：
-
-```sh
-brew install SheathedSharp/tap/option-berth
-```
-
 Windows（PowerShell）：
 
 ```powershell

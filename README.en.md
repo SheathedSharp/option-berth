@@ -63,12 +63,6 @@ verifies SHA256, and installs into `~/.local/bin`.
 curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh
 ```
 
-macOS / Linux also has a Homebrew formula:
-
-```sh
-brew install SheathedSharp/tap/option-berth
-```
-
 Windows (PowerShell):
 
 ```powershell

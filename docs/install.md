@@ -163,20 +163,11 @@ rm -rf ~/.option-berth
 安装器只读取已发布标签，不会跟踪 `main` 上的未发布代码；需要固定版本时使用 `--version` /
 `-Version`。
 
-## Homebrew（macOS / Linux）
+## Homebrew（尚未提供）
 
-formula 发布在 [SheathedSharp/homebrew-tap](https://github.com/SheathedSharp/homebrew-tap)：
-
-```sh
-brew install SheathedSharp/tap/option-berth
-brew upgrade option-berth
-brew uninstall option-berth
-```
-
-formula 支持 macOS 与 Linux 的 amd64/arm64；安装 `oberth`、`jev-attention`，并把许可与构建清单
-放进 Homebrew prefix。tap 中的每日 workflow 会按最新 Release 重新生成 formula；也可以手动运行
-`Update option-berth formula` workflow 立即更新。`brew uninstall` 不删除 `~/.option-berth`
-运行状态。
+`brew install option-berth` 这种短命令只对 homebrew-core 里的公式成立。提交 homebrew-core
+需要满足知名度与公式规范并通过官方审核；本仓库目前没有提交，也不维护独立 tap。因此当前不提供
+Homebrew 安装。等 homebrew-core 接受后，命令才会是 `brew install option-berth`。
 
 ## 尚未提供的渠道
 
@@ -186,7 +177,7 @@ formula 支持 macOS 与 Linux 的 amd64/arm64；安装 `oberth`、`jev-attentio
 - **Chocolatey**：需要社区包仓库与审核，和 winget 类似。
 
 这些渠道在真正发布前不写进 README 的安装命令，也不用脚本冒充。当前可用方式是上面的一行脚本、
-手动发布包、Linux `.deb`/`.rpm`、Windows amd64 MSI（下一版本起），以及 Homebrew。
+手动发布包、Linux `.deb`/`.rpm`，以及 Windows amd64 MSI（下一版本起）。
 
 ## 平台边界
 
