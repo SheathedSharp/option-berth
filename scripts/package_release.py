@@ -89,6 +89,7 @@ def package(root: Path, system: str, arch: str, output: Path) -> list[Path]:
         for name, source in (("oberth", "."), ("jev-attention", "./cmd/jev-attention")):
             command(root / "engine", env, "go", "build", "-trimpath", "-ldflags", flags, "-o", str(stage / (name + suffix)), source)
         shutil.copyfile(root / "LICENSE", stage / "LICENSE")
+        shutil.copyfile(root / "scripts" / "install-path.sh", stage / "install-path.sh")
         notices = stage / "licenses"
         notices.mkdir()
         shutil.copyfile(root / "engine/LICENSE", notices / "engine-LICENSE")

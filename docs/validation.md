@@ -32,6 +32,11 @@ go test -tags integration -count=1 -timeout=8m ./internal/scenario/...
 
 Mage 与品牌检查分别位于各自 PR 及 CI。构建、安装和服务起停是不同副作用，普通检查不操作日常用户服务。
 
+发布安装脚本用本地夹具 release 跑通：平台映射、latest 重定向、固定版本、SHA256 不匹配不落盘、
+PATH 配置、旧包缺少 `install-path.sh` 时的标签回退，以及未知参数在下载前失败。测试不访问真实
+GitHub，也不写用户目录。Windows 脚本在 Windows CI 做语法解析，其安装与 PATH 行为需要独立的
+Windows 原生验证；本机测试不能代替它。
+
 ## 不作出的保证
 
 长期负载仍需独立验收；没有可靠对照不宣传整体加速或长期无泄漏。

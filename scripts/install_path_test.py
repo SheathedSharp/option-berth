@@ -46,9 +46,9 @@ class InstallPathTests(unittest.TestCase):
             home = Path(tmp)
             result = self.run_installer(home)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("没有找到", result.stdout)
+            self.assertIn("no existing shell startup file found", result.stdout)
             self.assertIn('export PATH="$HOME/.local/bin:$PATH"', result.stdout)
-            self.assertNotIn("已经在", result.stdout)
+            self.assertNotIn("already configured", result.stdout)
             self.assertEqual(list(home.iterdir()), [])
 
     def test_install_is_idempotent(self):
@@ -63,6 +63,22 @@ class InstallPathTests(unittest.TestCase):
             self.assertEqual(second.returncode, 0, second.stderr)
             self.assertEqual(rc.read_bytes(), installed)
             self.assertEqual(installed.count(b"export PATH="), 1)
+
+    def test_custom_directory_is_used_for_detection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            rc = home / ".zshrc"
+            rc.write_text('export PATH="$HOME/.local/bin:$PATH"\n')
+            custom = home / "tools" / "bin"
+            env = dict(os.environ, HOME=str(home))
+            result = subprocess.run(
+                ["sh", str(SCRIPT), str(custom)],
+                env=env, capture_output=True, text=True, errors="replace", timeout=10,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            text = rc.read_text()
+            self.assertIn('export PATH="$HOME/.local/bin:$PATH"', text)
+            self.assertIn('export PATH="$HOME/tools/bin:$PATH"', text)
 
 
 if __name__ == "__main__":

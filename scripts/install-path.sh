@@ -1,20 +1,20 @@
 #!/bin/sh
 #
-# 把 option-berth 装到的那个目录放进 PATH —— `mage install` 的最后一步。
+# 把 option-berth 装到的那个目录放进 PATH —— `mage install` 与发布安装脚本共用的最后一步。
 #
-# 为什么要有这一步：`mage install` 把二进制放在 ~/.local/bin，而 macOS 上这个目录
-# 默认不在 PATH 里（zsh 不读 ~/.profile，只有 bash 那条路读）。于是 `option-berth` 在
-# 终端里敲不到，按 skill 敲它的 agent 也敲不到 —— 而这一步失败是静默的：二进制装是
-# 装上了，doctor 里那条 cli_on_path 才是唯一会说的。
+# 为什么要有这一步：安装把二进制放在 ~/.local/bin，而 macOS 上这个目录默认不在 PATH 里
+# （zsh 不读 ~/.profile，只有 bash 那条路读）。于是 `option-berth` 在终端里敲不到，按
+# skill 敲它的 agent 也敲不到 —— 而这一步失败是静默的：二进制装是装上了，doctor 里那条
+# cli_on_path 才是唯一会说的。
 #
 # 做法照 uv / rustup 的安装脚本（装到用户目录，再往 shell 的启动文件里加一行）：
 #
 #   - 只改**已经存在**的启动文件 —— 不替人建 .zshrc，也不碰 fish 那种另一套语法
-#   - 每个文件各判各的：里面已经提过 .local/bin 就跳过，所以能反复跑
+#   - 每个文件各判各的：里面已经提过这个安装目录就跳过，所以能反复跑
 #   - 改了什么就打印什么，一行都没写时不假装做了事
 #   - NO_MODIFY_PATH=1 → 一个文件都不动，只把那行打出来（CI 和洁癖用同一条路）
 #
-# 撤销：删掉启动文件里带 .local/bin 的那一行 —— 打印出来的文件名就是去哪儿删。
+# 撤销：删掉启动文件里带这个安装目录的那一行 —— 打印出来的文件名就是去哪儿删。
 set -eu
 
 dir="${1:-$HOME/.local/bin}"
@@ -32,7 +32,7 @@ line="export PATH=\"$expr:\$PATH\""
 mentions() {
 	while IFS= read -r l || [ -n "$l" ]; do
 		case "$l" in
-		*".local/bin"*) return 0 ;;
+		*"$expr"*) return 0 ;;
 		esac
 	done <"$1"
 	return 1
@@ -43,7 +43,7 @@ mentions() {
 candidates=".zshrc .zshenv .bashrc .bash_profile .bash_login .profile"
 
 if [ "${NO_MODIFY_PATH:-0}" != "0" ]; then
-	echo "PATH       没动你的启动文件（NO_MODIFY_PATH=${NO_MODIFY_PATH}）。要让 option-berth 在终端里能用，把这一行加到你的启动文件："
+	echo "PATH       left your shell startup files alone (NO_MODIFY_PATH=${NO_MODIFY_PATH}). To use option-berth in a terminal, add this line:"
 	echo
 	echo "    $line"
 	exit 0
@@ -58,16 +58,16 @@ for f in $candidates; do
 		continue
 	fi
 	{
-		printf '\n# option-berth — the CLI `mage install` puts in %s\n' "$expr"
+		printf '\n# option-berth CLI (installed in %s)\n' "$expr"
 		printf '%s\n' "$line"
 	} >>"$HOME/$f"
 	wrote="$wrote $f"
 done
 
 if [ -n "$wrote" ]; then
-	echo "PATH       往 ${wrote# } 各加了一行 —— 新开的终端里生效（当前这个 shell 要先 . ~/.zshrc）"
+	echo "PATH       added to ${wrote# } — open a new terminal to use it (or source the file)"
 elif [ -n "$kept" ]; then
-	echo "PATH       ~/.local/bin 已经在 ${kept# } 里了 —— 没动"
+	echo "PATH       $expr is already configured in ${kept# } — nothing changed"
 else
-	printf '%s\n\n    %s\n' "PATH       没有找到已有的 shell 启动文件；未修改 PATH。请手动添加：" "$line"
+	printf '%s\n\n    %s\n' "PATH       no existing shell startup file found; PATH unchanged. Add this line manually:" "$line"
 fi
