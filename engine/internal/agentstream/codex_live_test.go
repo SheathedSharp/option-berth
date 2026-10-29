@@ -8,9 +8,27 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+// completionSignal records output and closes done when the first turn
+// completes. Waiting for the real completion avoids a load-dependent sleep:
+// a fixed sleep lets the second turn arrive while the first is still busy.
+type completionSignal struct {
+	bytes.Buffer
+	done chan struct{}
+	once sync.Once
+}
+
+func (w *completionSignal) Write(p []byte) (int, error) {
+	n, err := w.Buffer.Write(p)
+	if bytes.Contains(p, []byte(`"type":"turn.completed"`)) {
+		w.once.Do(func() { close(w.done) })
+	}
+	return n, err
+}
 
 func buildFakeProvider(t *testing.T, name string) string {
 	t.Helper()
@@ -32,11 +50,14 @@ func TestCodexLiveFakeBinaryTwoTurns(t *testing.T) {
 	root := t.TempDir()
 	os.Unsetenv("BERTH_AGENT_STREAM_FAKE")
 	bin := buildFakeProvider(t, "codex")
-	var out bytes.Buffer
+	out := &completionSignal{done: make(chan struct{})}
 	inR, inW := io.Pipe()
 	go func() {
 		_, _ = io.WriteString(inW, `{"v":1,"type":"turn.start","id":"c1","text":"first"}`+"\n")
-		time.Sleep(1 * time.Second)
+		select {
+		case <-out.done:
+		case <-time.After(15 * time.Second):
+		}
 		_, _ = io.WriteString(inW, `{"v":1,"type":"turn.start","id":"c2","text":"second"}`+"\n")
 		time.Sleep(800 * time.Millisecond)
 		_ = inW.Close()
@@ -49,7 +70,7 @@ func TestCodexLiveFakeBinaryTwoTurns(t *testing.T) {
 			}
 			return "", exec.ErrNotFound
 		},
-	}, inR, &out, io.Discard); err != nil {
+	}, inR, out, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	body := out.String()
