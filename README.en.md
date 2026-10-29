@@ -75,6 +75,15 @@ download and verify release archives: they start no service and write no Git dat
 [install.sh](install.sh) / [install.ps1](install.ps1) first if you prefer, or download the
 [Releases](https://github.com/SheathedSharp/option-berth/releases) archives directly.
 
+Uninstall:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uninstall.sh | sh
+```
+
+The uninstaller keeps `~/.option-berth` runtime state unless you pass `--purge-state`. See
+[Install and uninstall](docs/install.md) for the full matrix, upgrades and manual archives.
+
 The complete service scenario targets **macOS / Linux**. Windows has a native build, smoke checks and
 some fact/persistence tests; that is not full lifecycle support.
 

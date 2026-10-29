@@ -13,8 +13,8 @@ option-berth 拆成三个独立产品：本仓库发布 `oberth` 引擎与 CLI�
 
 不发布 macOS 应用、DMG、公证包、客户端截图或 skill 安装包。
 
-安装入口是仓库根目录的 `install.sh`（macOS/Linux）与 `install.ps1`（Windows），不占 Release 资产，
-从 `main` 提供：
+安装入口是仓库根目录的 `install.sh`（macOS/Linux）、`install.ps1`（Windows），以及对应的
+`uninstall.sh` / `uninstall.ps1`；它们不占 Release 资产，从 `main` 提供：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh
@@ -27,6 +27,10 @@ curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/ins
 `install-path.sh` 配置 PATH，最后运行 `oberth version` 自检。它不启动服务、不写 Git、
 不需要管理员权限。安装目标来自已发布标签，不是 `main` 上的未发布代码；旧包没有
 `install-path.sh` 时，从同一标签的 `scripts/install-path.sh` 取用。
+
+卸载器先尝试 `oberth daemon stop`，再删除二进制、许可与安装器写入的 PATH 行；默认保留
+`~/.option-berth` 运行状态，只有 `--purge-state` / `-PurgeState` 才删除。完整说明见
+[install.md](install.md)。
 
 ### 拆分后的版本线
 

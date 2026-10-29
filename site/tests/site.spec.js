@@ -14,6 +14,7 @@ for (const locale of ['', 'en/']) for (const width of [360, 390, 768, 1440]) {
     await page.locator('#install').scrollIntoViewIfNeeded();
     await expect(page.locator('#install h2')).toBeVisible();
     await expect(page.locator('#install a[href$="releases/latest"]')).toBeVisible();
+    await expect(page.locator('#install a[href$="docs/install.md"]')).toBeVisible();
     await expect(page.locator('.install-panel-release pre code')).toContainText('install.sh');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
     for (const image of await page.locator('img:visible').all()) {
@@ -104,6 +105,7 @@ test('no-JavaScript page keeps copy, language, commands and release link', async
   await expect(page.locator('#command-empty')).toBeHidden();
   await page.locator('#install').scrollIntoViewIfNeeded();
   await expect(page.locator('#install a[href$="releases/latest"]')).toBeVisible();
+  await expect(page.locator('#install a[href$="docs/install.md"]')).toBeVisible();
   await expect(page.locator('.install-panel-release pre code')).toContainText('install.sh');
   await page.locator('.language').click();
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
