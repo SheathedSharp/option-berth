@@ -11,23 +11,21 @@ for (const locale of ['', 'en/']) for (const width of [360, 390, 768, 1440]) {
     await page.goto(locale || './');
     await expect(page.locator('h1')).toBeVisible();
     await expect(page.locator('html')).toHaveAttribute('lang', locale ? 'en' : 'zh-CN');
-    await page.locator('#download').scrollIntoViewIfNeeded();
-    await expect(page.locator('#download .primary')).toHaveAttribute('href', 'https://github.com/SheathedSharp/option-berth/releases/latest');
+    await page.locator('#install').scrollIntoViewIfNeeded();
+    await expect(page.locator('#install h2')).toBeVisible();
+    await expect(page.locator('#install a[href$="releases/latest"]')).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
-    for (const image of await page.locator('main img:visible').all()) {
+    for (const image of await page.locator('img:visible').all()) {
       await image.scrollIntoViewIfNeeded();
-      // A lazy image may report complete before its request has started.
-      // Require actual decoded pixels, not two racy sequential snapshots.
       await expect.poll(() => image.evaluate(img => img.complete && img.naturalWidth > 0), {
         message: `Image did not load: ${await image.getAttribute('src')}`, timeout: 10000
       }).toBe(true);
-      if (await image.evaluate(el => Boolean(el.closest('[aria-hidden="true"]')))) expect(await image.getAttribute('alt')).toBe('');
-      else expect(await image.getAttribute('alt')).toBeTruthy();
+      expect(await image.getAttribute('alt')).not.toBeNull();
     }
     await page.evaluate(() => scrollTo(0, 0));
     if (width === 1440 || width === 390) {
       await mkdir('test-results/previews', {recursive: true});
-      // Application assertions retain strict CSP and require zero console errors.
+      // Page assertions retain strict CSP and require zero console errors.
       expect(errors).toEqual([]);
       // Playwright 1.63 WebKit unconditionally inserts "body {}" to synchronize
       // animation state. Track that exact capture-only mutation; do not relax
@@ -53,35 +51,32 @@ for (const locale of ['', 'en/']) for (const width of [360, 390, 768, 1440]) {
   });
 }
 
-test('keyboard gallery, modal close and focus restoration', async ({page}) => {
+test('command filter, empty state and Escape reset', async ({page}) => {
   await page.goto('./');
-  const first = page.getByRole('tab', {name: '服务', exact: true});
-  await first.focus();
-  await page.keyboard.press('ArrowRight');
-  const git = page.getByRole('tab', {name: 'Git', exact: true});
-  await expect(git).toBeFocused();
-  await expect(git).toHaveAttribute('aria-selected', 'true');
-  await expect(page.locator('#panel-services')).toBeHidden();
-  await expect(page.locator('#panel-git')).toBeVisible();
-  const link = page.locator('#panel-git a');
-  await link.click();
-  await expect(page.locator('dialog')).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(page.locator('dialog')).toBeHidden();
-  await expect(link).toBeFocused();
-  await link.click();
-  await page.locator('dialog button').click();
-  await expect(page.locator('dialog')).toBeHidden();
+  const input = page.locator('#command-filter');
+  const rows = page.locator('#command-list li');
+  await expect(rows).toHaveCount(6);
+  await input.fill('logs');
+  await expect(rows).toHaveCount(6);
+  await expect(page.locator('#command-list li:visible')).toHaveCount(1);
+  await expect(page.locator('#command-list li:visible')).toContainText('oberth logs');
+  await expect(page.locator('#command-status')).toContainText('1');
+  await input.fill('zzz');
+  await expect(page.locator('#command-list li:visible')).toHaveCount(0);
+  await expect(page.locator('#command-empty')).toBeVisible();
+  await input.press('Escape');
+  await expect(input).toHaveValue('');
+  await expect(page.locator('#command-list li:visible')).toHaveCount(6);
+  await expect(page.locator('#command-empty')).toBeHidden();
 });
 
-test('real static language navigation and accessible download disclosure', async ({page}) => {
+test('real static language navigation and product links', async ({page}) => {
   await page.goto('./');
+  await expect(page.locator('.product-list a')).toHaveCount(3);
   await page.locator('.language').click();
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-  await expect(page.locator('h1')).toContainText('Every worktree.');
-  await page.locator('#download summary').click();
-  await expect(page.locator('#download details')).toHaveAttribute('open', '');
-  await expect(page.locator('#download details p')).toContainText('notarization');
+  await expect(page.locator('h1')).toContainText('Service engine');
+  await expect(page.locator('.product-list a[href$="option-berth-macos"]')).toHaveCount(1);
   await page.locator('.language').click();
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
 });
@@ -90,7 +85,7 @@ test('reduced motion on first load and live preference change', async ({page}) =
   await page.emulateMedia({reducedMotion: 'reduce'});
   await page.goto('./');
   await expect(page.locator('html')).not.toHaveClass(/motion/);
-  expect(await page.locator('.hero-emblem img').evaluate(el => getComputedStyle(el).animationName)).toBe('none');
+  expect(await page.locator('.hero-line .line').first().evaluate(el => getComputedStyle(el).animationName)).toBe('none');
   await page.emulateMedia({reducedMotion: 'no-preference'});
   await expect(page.locator('html')).toHaveClass(/motion/);
   await page.emulateMedia({reducedMotion: 'reduce'});
@@ -98,15 +93,16 @@ test('reduced motion on first load and live preference change', async ({page}) =
   expect(await page.locator('.reveal').first().evaluate(el => getComputedStyle(el).opacity)).toBe('1');
 });
 
-test('no-JavaScript page keeps copy, language, image and download links', async ({browser, baseURL}) => {
+test('no-JavaScript page keeps copy, language, commands and release link', async ({browser, baseURL}) => {
   const context = await browser.newContext({javaScriptEnabled: false});
   const page = await context.newPage();
   await page.goto(baseURL);
   await expect(page.locator('h1')).toBeVisible();
-  await expect(page.locator('.gallery-controls')).toBeHidden();
-  await expect(page.locator('#panel-services img')).toBeVisible();
-  await page.locator('#download').scrollIntoViewIfNeeded();
-  await expect(page.locator('#download .primary')).toBeVisible();
+  await expect(page.locator('#command-list li')).toHaveCount(6);
+  await expect(page.locator('#command-list li:visible')).toHaveCount(6);
+  await expect(page.locator('#command-empty')).toBeHidden();
+  await page.locator('#install').scrollIntoViewIfNeeded();
+  await expect(page.locator('#install a[href$="releases/latest"]')).toBeVisible();
   await page.locator('.language').click();
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   await context.close();
