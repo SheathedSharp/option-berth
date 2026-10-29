@@ -8,7 +8,9 @@ option-berth 拆成三个独立产品：本仓库发布 `oberth` 引擎与 CLI�
 本仓库的 Release 资产只有引擎：
 
 - macOS、Linux、Windows 的 amd64 与 arm64 压缩包（`option-berth-vX.Y.Z-<os>-<arch>.tar.gz|zip`）；
-- 每个压缩包的 `.sha256`；
+- Linux 的 `.deb` 与 `.rpm`（`option-berth_X.Y.Z_<deb-arch>.deb`、
+  `option-berth-X.Y.Z-1.<rpm-arch>.rpm`）；
+- 每个资产的 `.sha256`；
 - 汇总的 `SHA256SUMS`。
 
 不发布 macOS 应用、DMG、公证包、客户端截图或 skill 安装包。
@@ -102,8 +104,9 @@ Mage 提供 `releaseProtocol / releaseFeature / releaseFix`（本地提交和 ta
 
 1. 校验版本、协议 schema、注释标签及 main 归属，并运行发布策略测试。
 2. 在 macOS/Linux 运行原生发布验证，复用 Windows 原生构建与事实/持久化检查。
-3. 构建 Darwin/Linux/Windows 的 amd64 与 arm64 六个 CLI 压缩包。
-4. 每个 CLI 包包含 `oberth`、可选 `jev-attention`、`install-path.sh`、构建清单、目标实际运行依赖的许可原文和 SHA256SUMS。
+3. 构建 Darwin/Linux/Windows 的 amd64 与 arm64 六个 CLI 压缩包，并在 Linux 目标上生成
+   amd64/arm64 的 `.deb` 与 `.rpm`。
+4. 每个 CLI 包包含 `oberth`、可选 `jev-attention`、`install-path.sh`、构建清单、目标实际运行依赖的许可原文和 SHA256SUMS；Linux 安装包从同一个压缩包解出二进制与许可，不另建内容。
 5. 验证全部目标齐全及散列后创建 GitHub draft release，上传，再下载校验并逐项比对上传前的本地散列；最后才转为正式 release。
 
 Windows arm64 与部分 CLI 包是交叉构建；有下载包不等于已经验证所有平台生命周期。

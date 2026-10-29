@@ -69,6 +69,26 @@ install -m 0755 option-berth-v1.0.0-darwin-arm64/jev-attention ~/.local/bin/jev-
 
 压缩包内的 `LICENSE`、`licenses/` 与 `build-manifest.json` 建议保留；手动安装时它们不会自动复制。
 
+## Linux 安装包（.deb / .rpm）
+
+发布流程会为 amd64/arm64 生成 `.deb` 与 `.rpm`，和压缩包放在同一个 Release。`v1.0.0` 还没有
+这些资产，从下一个版本开始提供：
+
+```sh
+# Debian / Ubuntu
+sudo apt install ./option-berth_1.0.0_amd64.deb
+sudo apt remove option-berth
+
+# Fedora / RHEL
+sudo dnf install ./option-berth-1.0.0-1.x86_64.rpm
+sudo dnf remove option-berth
+```
+
+安装包把 `oberth`、`jev-attention` 放到 `/usr/bin`，许可与构建清单放到
+`/usr/share/doc/option-berth`。`apt remove` / `dnf remove` 不删除 `~/.option-berth` 运行状态；
+确认不再需要后再执行 `oberth daemon stop` 并删除该目录。arm64 使用 `_arm64.deb` 与
+`.aarch64.rpm` 文件名。
+
 ## 卸载
 
 macOS / Linux：
@@ -129,12 +149,30 @@ rm -rf ~/.option-berth
 安装器只读取已发布标签，不会跟踪 `main` 上的未发布代码；需要固定版本时使用 `--version` /
 `-Version`。
 
-## 包管理器渠道
+## Homebrew
 
-Homebrew、Scoop、winget 都是主流包管理器，但它们分别要求先发布 Homebrew formula（tap 仓库）、
-Scoop manifest（bucket 仓库）或通过 microsoft/winget-pkgs 审核。**本仓库目前没有发布这些渠道**，
-因此现在不提供 `brew install`、`scoop install` 或 `winget install` 命令；在这些外部仓库建立前，
-请使用上面的一行脚本或手动下载发布包。这是当前真实缺口，不用脚本冒充包管理器安装。
+formula 与自动更新 workflow 已准备在 [packaging/homebrew/tap](../packaging/homebrew/tap)，
+但公开仓库 `SheathedSharp/homebrew-tap` 尚未创建。**在 tap 仓库发布前，下面的命令不可用**：
+
+```sh
+brew install SheathedSharp/tap/option-berth
+brew upgrade option-berth
+brew uninstall option-berth
+```
+
+tap 建立后，每日 workflow 会按最新 Release 重新生成 formula；也可以手动运行
+`Update option-berth formula` workflow 立即更新。`brew uninstall` 不删除 `~/.option-berth`
+运行状态。
+
+## 尚未提供的渠道
+
+- **Scoop**：需要单独的 bucket 仓库，本仓库不维护。
+- **winget**：`winget install` 要求向 microsoft/winget-pkgs 提交清单并经过审核，每个版本都需要
+  更新清单；审核周期不由我们控制，因此暂不承诺。
+- **Chocolatey**：需要社区包仓库与审核，和 winget 类似。
+
+这些渠道在真正发布前不写进 README 的安装命令，也不用脚本冒充。当前可用方式是上面的一行脚本、
+手动发布包、Linux `.deb`/`.rpm`，以及 tap 发布后的 Homebrew。
 
 ## 平台边界
 

@@ -1,0 +1,48 @@
+name: Update option-berth formula
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: update-option-berth-formula
+  cancel-in-progress: false
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          path: tap
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: SheathedSharp/option-berth
+          path: source
+          persist-credentials: false
+      - name: Render the formula for the latest release
+        working-directory: tap
+        run: |
+          set -euo pipefail
+          latest=$(curl -fsSL --max-redirs 5 -o /dev/null -w '%{url_effective}' https://github.com/SheathedSharp/option-berth/releases/latest)
+          tag=${latest##*/}
+          case "$tag" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "unexpected release tag: $tag" >&2; exit 1 ;;
+          esac
+          python3 ../source/scripts/render_homebrew_formula.py --tag "$tag" --output Formula/option-berth.rb
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+      - name: Commit only when the release changed
+        working-directory: tap
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- Formula/option-berth.rb; then
+            echo "formula already current for $TAG"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/option-berth.rb
+          git commit -m "option-berth $TAG"
+          git push

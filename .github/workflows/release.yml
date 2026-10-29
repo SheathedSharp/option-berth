@@ -45,6 +45,9 @@ jobs:
         with:
           go-version-file: engine/go.mod
           cache-dependency-path: engine/go.sum
+      - name: Install rpm for Linux package tests
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm
       - name: Native release gates
         env:
           GOTOOLCHAIN: local
@@ -88,6 +91,16 @@ jobs:
           set -euo pipefail
           set -- --os "$TARGET_OS" --arch "$TARGET_ARCH" --output dist
           python3 scripts/package_release.py "$@"
+      - name: Build Linux packages
+        if: matrix.os == 'linux'
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y rpm
+          python3 scripts/package_linux.py --arch "$TARGET_ARCH" --dist dist
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: release-${{ matrix.os }}-${{ matrix.arch }}

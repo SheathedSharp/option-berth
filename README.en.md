@@ -81,7 +81,8 @@ Uninstall:
 curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uninstall.sh | sh
 ```
 
-The uninstaller keeps `~/.option-berth` runtime state unless you pass `--purge-state`. See
+The uninstaller keeps `~/.option-berth` runtime state unless you pass `--purge-state`. Linux also
+ships `.deb` / `.rpm` packages from the next release onwards. See
 [Install and uninstall](docs/install.md) for the full matrix, upgrades and manual archives.
 
 The complete service scenario targets **macOS / Linux**. Windows has a native build, smoke checks and

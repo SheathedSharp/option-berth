@@ -76,8 +76,8 @@ irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps
 curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uninstall.sh | sh
 ```
 
-默认保留 `~/.option-berth` 运行状态，加 `--purge-state` 才会删除。完整安装、升级、卸载与
-手动包说明见 [安装与卸载](docs/install.md)。
+默认保留 `~/.option-berth` 运行状态，加 `--purge-state` 才会删除。Linux 还提供 `.deb` / `.rpm`
+（从下一个版本起随 Release 发布）。完整安装、升级、卸载与各渠道说明见 [安装与卸载](docs/install.md)。
 
 完整服务场景面向 **macOS / Linux**。Windows 已有原生构建、冒烟及部分事实与持久化测试，
 不能视为完整生命周期支持。

@@ -38,6 +38,11 @@ PATH 配置、旧包缺少 `install-path.sh` 时的标签回退、未知参数�
 测试不访问真实 GitHub，也不写用户目录。Windows 脚本在 Windows CI 做语法解析，其安装、卸载与
 PATH 行为需要独立的 Windows 原生验证；本机测试不能代替它。
 
+Linux 安装包测试从夹具压缩包生成 `.deb`/`.rpm`，检查 control 字段、安装路径、许可与 md5sums；
+有 `dpkg-deb` 时用 dpkg 读包，有 `rpmbuild`/`rpm` 时实际构建并列出包内容。macOS 本机没有这两个
+工具时对应检查明确跳过，不能把跳过当作通过。发布 workflow 在 Linux 目标上安装 `rpm` 后构建
+两种包，再由发布脚本按完整资产集校验。
+
 ## 不作出的保证
 
 长期负载仍需独立验收；没有可靠对照不宣传整体加速或长期无泄漏。
