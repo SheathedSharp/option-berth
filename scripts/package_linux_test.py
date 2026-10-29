@@ -80,7 +80,7 @@ class LinuxPackageTests(unittest.TestCase):
         self.assertEqual(entries["debian-binary"], b"2.0\n")
         control = tar_members(entries["control.tar.gz"])
         self.assertIn(b"Package: option-berth", control["./control"])
-        self.assertIn(f"Version: {VERSION}".encode(), control["./control"])
+        self.assertIn(f"Version: {VERSION}-1".encode(), control["./control"])
         self.assertIn(b"Architecture: amd64", control["./control"])
         self.assertIn(b"Depends: ca-certificates", control["./control"])
         self.assertIn(b"usr/bin/oberth", control["./md5sums"])
@@ -98,7 +98,7 @@ class LinuxPackageTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Package: option-berth", result.stdout)
         fields = subprocess.run(["dpkg-deb", "--field", str(package), "Version"], capture_output=True, text=True, timeout=20)
-        self.assertEqual(fields.stdout.strip(), VERSION)
+        self.assertEqual(fields.stdout.strip(), f"{VERSION}-1")
 
     def test_rpm_contains_the_same_files(self):
         package = linux.package(self.dist, "amd64", self.output, packagers=("rpm",))[0]
