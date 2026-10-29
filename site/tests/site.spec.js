@@ -72,11 +72,11 @@ test('command filter, empty state and Escape reset', async ({page}) => {
 
 test('real static language navigation and product links', async ({page}) => {
   await page.goto('./');
-  await expect(page.locator('.product-list a')).toHaveCount(3);
+  await expect(page.locator('.close-products a')).toHaveCount(3);
   await page.locator('.language').click();
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-  await expect(page.locator('h1')).toContainText('Service engine');
-  await expect(page.locator('.product-list a[href$="option-berth-macos"]')).toHaveCount(1);
+  await expect(page.locator('h1')).toContainText('Stop guessing');
+  await expect(page.locator('.close-products a[href$="option-berth-macos"]')).toHaveCount(1);
   await page.locator('.language').click();
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
 });
