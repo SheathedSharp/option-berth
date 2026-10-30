@@ -345,6 +345,12 @@ func (l *Loop) osScanContext(ctx context.Context, include Include) ([]ports.List
 	if err != nil {
 		return nil, err
 	}
+	// The daemon's own self-probe binds a short-lived loopback socket. A
+	// regular scan that overlaps it would otherwise publish that socket as an
+	// undeclared listener of the checkout the daemon was started in. The probe
+	// keeps using the raw collector, because seeing this process's own
+	// listener is exactly what it tests.
+	pp = withoutOwnListeners(pp)
 	l.docker.Enrich(pp)
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -362,10 +368,11 @@ func (l *Loop) osScanContext(ctx context.Context, include Include) ([]ports.List
 	return pp, ctx.Err()
 }
 
-// withoutOwnListeners drops rows owned by this process. option-berth itself
-// does not listen on TCP; a row with this PID is a transient probe socket, and
-// publishing it would make the probe look like a service the user never
-// declared.
+// withoutOwnListeners drops rows owned by the daemon process. In production
+// option-berth has no TCP listener of its own, so a row with this PID is the
+// self-probe's transient socket; publishing it would make the probe look like a
+// service the user never declared. Test-injected scans do not pass through
+// this, so a test can still model a listener owned by the same process.
 func withoutOwnListeners(pp []ports.ListeningPort) []ports.ListeningPort {
 	pid := os.Getpid()
 	out := pp[:0]
@@ -646,14 +653,6 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 		}
 		return state.Snapshot{}, prev, false, err
 	}
-
-	// The daemon's own self-probe binds a short-lived loopback socket. A
-	// regular scan that overlaps it would otherwise publish that socket as an
-	// undeclared listener of the checkout the daemon was started in. This is
-	// applied after the seam so test scans and the production collector share
-	// one rule; the probe keeps using the raw collector, because seeing this
-	// process's own listener is exactly what it tests.
-	pp = withoutOwnListeners(pp)
 
 	if wantHealth {
 		ports.EnrichHealthContext(ctx, pp, HealthTimeout, HealthBudget)
