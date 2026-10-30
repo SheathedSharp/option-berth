@@ -193,6 +193,45 @@ services:
 	return b, nil
 }
 
+// dualStackServerPy binds the IPv6 wildcard with V6ONLY off: the same OS-level
+// socket Go's net.Listen("tcp", ":port"), Node's listen(port) and Java's
+// default bind hold. On macOS netstat prints it as tcp46.
+const dualStackServerPy = `import socket, time
+ln = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+ln.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+ln.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+ln.bind(("::", __PORT__))
+ln.listen(5)
+print("dual-stack api listening on __PORT__", flush=True)
+while True:
+    time.sleep(3600)
+`
+
+// DualStackAPIServer provisions a project whose only service binds the
+// dual-stack wildcard. It is the fixture for the tcp46 blind spot: before the
+// decoder accepted tcp46, status, `up --wait` and dependency waits could not
+// see this listener at all.
+func DualStackAPIServer(dir string) (Built, error) {
+	port := freePort()
+	files := map[string]string{
+		ConfigName: fmt.Sprintf(`name: dual-stack
+services:
+  - name: api
+    cmd: python3 api.py
+    port: %d
+`, port),
+		"api.py": py(dualStackServerPy, port),
+	}
+	b, err := project("dual-stack", port, dir, files)
+	if err != nil {
+		return Built{}, err
+	}
+	if err := writeNote(dir, "# dual-stack\n\ndeclares `api` on "+strconv.Itoa(port)+" bound as a dual-stack wildcard;\nits socket is the one macOS netstat prints as tcp46.\n"); err != nil {
+		return Built{}, err
+	}
+	return b, nil
+}
+
 // crashPy tries to bind a port the scenario already holds, and dies with the
 // OS's "address already in use".
 const crashPy = `import socket, sys

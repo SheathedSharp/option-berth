@@ -82,6 +82,33 @@ func TestAPIServerAndWorker(t *testing.T) {
 	}
 }
 
+func TestDualStackAPIServer(t *testing.T) {
+	b, err := DualStackAPIServer(t.TempDir())
+	if err != nil {
+		t.Fatalf("DualStackAPIServer: %v", err)
+	}
+	t.Cleanup(func() { release(t, b) })
+
+	if !isGit(b.Root) {
+		t.Errorf("project root %s is not a git checkout", b.Root)
+	}
+	cfg := loadManifest(t, b.Manifest)
+	if cfg.Name != "dual-stack" {
+		t.Errorf("name = %q, want dual-stack", cfg.Name)
+	}
+	api := service(cfg, "api")
+	if api == nil || !api.HasPort() || api.Port != b.Port {
+		t.Fatalf("api = %+v, want port %d", api, b.Port)
+	}
+	body, err := os.ReadFile(filepath.Join(b.Root, "api.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "IPV6_V6ONLY, 0") || !strings.Contains(string(body), `("::"`) {
+		t.Fatalf("api.py is not the dual-stack fixture:\n%s", body)
+	}
+}
+
 func TestStartupFailure(t *testing.T) {
 	b, err := StartupFailure(t.TempDir())
 	if err != nil {
