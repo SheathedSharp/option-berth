@@ -92,6 +92,16 @@ amd64/arm64 都能在同一个 x86 runner 上生成。macOS 本机没有这些�
 跳过当作通过。发布 workflow 在 Linux 目标上安装 `nfpm` 后构建两种包，再由发布脚本按完整资产集
 校验。Windows MSI 生成代码未接入发布，也不在当前验证范围；Windows 只提供 zip 与 `install.ps1`。
 
+### worktree 身份与结束端
+
+`go test ./internal/store ./internal/scanner ./internal/groups ./internal/daemon ./internal/cmd`
+覆盖：身份账本的写入、重开与只读读取；扫描到清单时把 `${worktree}` 与根路径、组名、清单路径
+一起记录；目录消失后的身份行仍保留；`status` 发布的 `worktree.identity`；`oberth worktrees`
+的 present/gone 判定、`--gone` 过滤和不建库；`down --worktree/--identity` 对存在与已消失
+checkout 的解析、未知身份返回 not_found、按记录 claim key 交还预留，以及两个 checkout 共用
+组名时返回 ambiguous 而不是同时停止。真实进程的删除后停止仍需在能正常观察监听的
+macOS/Linux 上跑，沙箱里的 `observation_*` 结果不能代替它。
+
 ## 不作出的保证
 
 长期负载仍需独立验收；没有可靠对照不宣传整体加速或长期无泄漏。
