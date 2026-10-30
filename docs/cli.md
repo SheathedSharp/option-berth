@@ -396,9 +396,21 @@ group/session 选择器只为迁移保留，不出现在公开帮助中。
 
 `oberth.yaml` 只接受一个 YAML 文档；第二个文档（包括空文档）会报错，而不是被忽略。
 同一服务不能重复声明 `port`，包括 `auto` 与数字混写；错误带 YAML 行号。
-单文档、注释、正常数字端口和 `port: auto` 保持兼容。此规则不是完整的未知字段严格校验。
+单文档、注释、正常数字端口和 `port: auto` 保持兼容。
 
-`doctor --only project_config` 可额外报告被忽略的清单键及行列位置（warn），不回显字段值；
+### 清单 schema 与未知字段严格模式
+
+清单的 JSON Schema 发布在 `engine/docs/schema/manifest.schema.json`，由 `internal/groups` 的声明
+类型生成；`go generate ./...` 同时更新它与协议 schema。schema 拒绝未知键（顶层 `x-` 扩展与
+`$schema` 键除外），端口只接受 1–65535 或 `auto`。`oberth init` 与 `oberth init draft` 写出的文件
+首行带 `# yaml-language-server: $schema=...` modeline，编辑器据此在起草和采纳之前标出拼错的键；
+手写清单可以自行加同一行。
+
+默认解析仍忽略未知键以保持兼容。设 `BERTH_STRICT_MANIFEST=1`（也接受 `true`、`yes`、`on`）后，
+未知键变成带行列位置的加载错误，覆盖 CLI、daemon 和 `oberth init adopt` 的所有清单读取路径；
+顶层 `x-` 与 `$schema` 仍然是合法元数据。
+
+`doctor --only project_config` 在默认模式下以 warn 报告被忽略的清单键及行列位置，不回显字段值；
 `env` 自定义键与顶层 `x-` 扩展不被误报。不改写清单、不执行命令，也不为补充报告元数据连接 daemon。
 
 ### oberth agent: external coding-agent handoff

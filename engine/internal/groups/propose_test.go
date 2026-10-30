@@ -70,7 +70,10 @@ func TestProposeReportsWhatIsListening(t *testing.T) {
 	if loaded.Name != cfg.Name || len(loaded.Services) != 0 {
 		t.Errorf("round trip = %+v, want the name and no services", loaded)
 	}
-	if !strings.HasPrefix(string(data), "# "+ConfigName) {
+	if !strings.HasPrefix(string(data), "# yaml-language-server: $schema=") {
+		t.Errorf("generated file does not start with the editor schema modeline:\n%s", data)
+	}
+	if !strings.Contains(string(data), "# "+ConfigName) {
 		t.Errorf("generated file has no header:\n%s", data)
 	}
 	for _, want := range []string{"services: []", "5432", "db", "8124", "backend"} {
