@@ -125,15 +125,23 @@ amd64/arm64 都能在同一个 x86 runner 上生成。macOS 本机没有这些�
 
 **2026-10-30 实际执行**：
 
-- `python3 -m unittest scripts/agent_eval_test.py`：29 项通过，覆盖夹具、判定、越界识别、
+- `python3 -m unittest scripts/agent_eval_test.py`：30 项通过，覆盖夹具、判定、越界识别、
   agent 参数、provider 事件解析、报告聚合，以及用脚本化二进制跑完整 runner（重复两轮可比）。
 - `python3 scripts/agent_eval.py --dry-run --scenarios missing-artifact`：preflight 启动
   平凡服务时，当前 Claude Code 进程上下文里的 `netstat` 返回空表，引擎报
   `netstat: no recognized TCP table header`。harness 按设计退出 2，拒绝把环境问题写成
   agent 失败。
-- **未执行**：真实 Claude Code / Codex / OpenCode / Pi 的矩阵。需要在普通终端（不在 coding
-  agent 沙箱内）或具备凭据的 CI 上运行；Codex 本机也未登录。没有用参考脚本或 fake engine
-  的行冒充真实 agent 结论。
+- **reference 冒烟**：为绕开上述本机 `netstat` 限制，用一份只在本机测量用的 lsof 回退构建
+  （未进入仓库，也不是发布构建）跑
+  `--execute --agents reference --scenarios all --repeat 2`。五个场景全部完成，步数分别为
+  missing-artifact 6、port-occupied 5、dependency-not-ready 6、manifest-process-mismatch 7、
+  dual-worktree 6，越界 0，所有行可比。它证明夹具、引擎事实、判定和报告链路可用；
+  reference 执行固定动作，不依赖 skill，因此不能用它证明 agent 因 skill 改动而减少步数。
+- **未执行**：真实 Claude Code 的 skill 前后对比。隔离 `HOME` 下 Claude 报
+  `Not logged in`；没有转发凭证。因此「步数下降、且不再为无人依赖的 machine: 条目交接」
+  仍只有静态契约与 reference 冒烟证据，没有模型行为测量。
+- **未执行**：Codex / OpenCode / Pi 的矩阵。需要在普通终端或具备凭据的 CI 上运行；
+  Codex 本机也未登录。没有用参考脚本或 fake engine 的行冒充真实 agent 结论。
 
 ## 客户端验证
 
