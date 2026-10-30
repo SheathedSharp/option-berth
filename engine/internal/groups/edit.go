@@ -37,47 +37,50 @@ func ClearInt() IntChange { return IntChange{Set: true} }
 // "absent" and "null" mean the same thing and the zero value of every field is
 // simply left out of the file.
 type ServiceAdd struct {
-	Name        string   `json:"name"`
-	Prepare     string   `json:"prepare,omitempty"`
-	Port        int      `json:"port,omitempty"`
-	Cmd         string   `json:"cmd,omitempty"`
-	Cwd         string   `json:"cwd,omitempty"`
-	Health      string   `json:"health,omitempty"`
-	Description string   `json:"description,omitempty"`
-	Icon        string   `json:"icon,omitempty"`
-	Color       string   `json:"color,omitempty"`
-	DependsOn   []string `json:"depends_on,omitempty"`
+	Name          string   `json:"name"`
+	Prepare       string   `json:"prepare,omitempty"`
+	PrepareInputs []string `json:"prepare_inputs,omitempty"`
+	Port          int      `json:"port,omitempty"`
+	Cmd           string   `json:"cmd,omitempty"`
+	Cwd           string   `json:"cwd,omitempty"`
+	Health        string   `json:"health,omitempty"`
+	Description   string   `json:"description,omitempty"`
+	Icon          string   `json:"icon,omitempty"`
+	Color         string   `json:"color,omitempty"`
+	DependsOn     []string `json:"depends_on,omitempty"`
 }
 
 // Service is the config entry the add describes.
 func (a ServiceAdd) Service() Service {
 	return Service{
-		Name:        a.Name,
-		Prepare:     a.Prepare,
-		Cmd:         a.Cmd,
-		Cwd:         a.Cwd,
-		Port:        a.Port,
-		Health:      a.Health,
-		Description: a.Description,
-		Icon:        a.Icon,
-		Color:       a.Color,
-		DependsOn:   append([]string{}, a.DependsOn...),
+		Name:          a.Name,
+		Prepare:       a.Prepare,
+		PrepareInputs: append([]string{}, a.PrepareInputs...),
+		Cmd:           a.Cmd,
+		Cwd:           a.Cwd,
+		Port:          a.Port,
+		Health:        a.Health,
+		Description:   a.Description,
+		Icon:          a.Icon,
+		Color:         a.Color,
+		DependsOn:     append([]string{}, a.DependsOn...),
 	}
 }
 
 // AddFrom is the add entry that would recreate a service.
 func AddFrom(s Service) ServiceAdd {
 	return ServiceAdd{
-		Name:        s.Name,
-		Prepare:     s.Prepare,
-		Port:        s.Port,
-		Cmd:         s.Cmd,
-		Cwd:         s.Cwd,
-		Health:      s.Health,
-		Description: s.Description,
-		Icon:        s.Icon,
-		Color:       s.Color,
-		DependsOn:   append([]string{}, s.DependsOn...),
+		Name:          s.Name,
+		Prepare:       s.Prepare,
+		PrepareInputs: append([]string{}, s.PrepareInputs...),
+		Port:          s.Port,
+		Cmd:           s.Cmd,
+		Cwd:           s.Cwd,
+		Health:        s.Health,
+		Description:   s.Description,
+		Icon:          s.Icon,
+		Color:         s.Color,
+		DependsOn:     append([]string{}, s.DependsOn...),
 	}
 }
 
@@ -376,6 +379,13 @@ func serviceNode(add ServiceAdd) *yaml.Node {
 	if add.Prepare != "" {
 		setKey(m, "prepare", strNode(add.Prepare))
 	}
+	if len(add.PrepareInputs) > 0 {
+		seq := &yaml.Node{Kind: yaml.SequenceNode, Style: yaml.FlowStyle}
+		for _, input := range add.PrepareInputs {
+			seq.Content = append(seq.Content, strNode(input))
+		}
+		setKey(m, "prepare_inputs", seq)
+	}
 	if add.Cmd != "" {
 		setKey(m, "cmd", strNode(add.Cmd))
 	}
@@ -386,7 +396,7 @@ func serviceNode(add ServiceAdd) *yaml.Node {
 		setKey(m, FieldPort, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.Itoa(add.Port)})
 	}
 	if add.Health != "" {
-		setKey(m, FieldHealth, strNode(add.Health))
+		setKey(m, FieldHealth, healthNode(ParseHealth(add.Health)))
 	}
 	if add.Description != "" {
 		setKey(m, FieldDescription, strNode(add.Description))

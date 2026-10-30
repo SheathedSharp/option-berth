@@ -32,6 +32,13 @@
           "type": "string",
           "description": "Optional foreground command run immediately before cmd."
         },
+        "prepare_inputs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Files the prepare command reads, relative to cwd. When their contents are unchanged, up skips prepare."
+        },
         "cmd": {
           "type": "string",
           "description": "The command that brings the service back up, run from cwd."
@@ -55,8 +62,38 @@
           "description": "The port the service binds (1-65535), or auto to let option-berth pick one."
         },
         "health": {
-          "type": "string",
-          "description": "HTTP path that answers when the service is up."
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^/"
+            },
+            {
+              "properties": {
+                "http": {
+                  "type": "string",
+                  "pattern": "^/",
+                  "description": "HTTP path, for example /healthz."
+                },
+                "tcp": {
+                  "type": "integer",
+                  "maximum": 65535,
+                  "minimum": 1,
+                  "description": "Port to connect to. It must match the service's declared port."
+                },
+                "command": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Command to run in the service's cwd; exit 0 is healthy."
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "maxProperties": 1,
+              "minProperties": 1,
+              "description": "A TCP or command check. Use exactly one key."
+            }
+          ],
+          "description": "Health check: an HTTP path, {tcp: port}, or {command: command line}."
         },
         "description": {
           "type": "string",

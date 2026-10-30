@@ -35,6 +35,7 @@ name: demo
 services:
   - name: api
     prepare: make build
+    prepare_inputs: [package.json, package-lock.json]
     cmd: ./bin/api
     cwd: backend
     port: auto
@@ -48,6 +49,13 @@ services:
   - name: db
     cmd: docker compose up db
     port: 5432
+    health:
+      tcp: 5432
+  - name: cache
+    cmd: redis-server
+    port: 6379
+    health:
+      command: redis-cli -p ${port} ping
 machine:
   - name: mysql
     port: 3306
@@ -69,6 +77,9 @@ func TestWrittenManifestValidates(t *testing.T) {
 		Name: "demo",
 		Services: []Service{
 			{Name: "api", Cmd: "echo api", PortAuto: true, Env: map[string]string{"API_URL": "http://127.0.0.1:${port}"}},
+			{Name: "web", Prepare: "npm ci", PrepareInputs: []string{"package.json"}, Cmd: "npm start"},
+			{Name: "db", Cmd: "postgres", Port: 5432, Health: "tcp:5432"},
+			{Name: "cache", Cmd: "redis-server", Port: 6379, Health: "command:redis-cli -p ${port} ping"},
 		},
 		Machine: []MachineRef{{Name: "mysql", Port: 3306}},
 	}
@@ -95,6 +106,13 @@ func TestManifestSchemaRejectsMisspellingsAndBadValues(t *testing.T) {
 		{"machine typo", "machine:\n  - name: db\n    port: 5432\n    prott: 5433\n"},
 		{"port is not a string", "services:\n  - name: api\n    port: \"8000\"\n"},
 		{"port out of range", "services:\n  - name: api\n    port: 70000\n"},
+		{"health path has no slash", "services:\n  - name: api\n    health: healthz\n"},
+		{"health has two forms", "services:\n  - name: db\n    port: 5432\n    health:\n      tcp: 5432\n      command: true\n"},
+		{"health tcp is not a number", "services:\n  - name: db\n    port: 5432\n    health:\n      tcp: \"5432\"\n"},
+		{"health tcp out of range", "services:\n  - name: db\n    port: 5432\n    health:\n      tcp: 70000\n"},
+		{"health command is empty", "services:\n  - name: api\n    health:\n      command: \"\"\n"},
+		{"health has an unknown form", "services:\n  - name: api\n    health:\n      httpz: /health\n"},
+		{"prepare_inputs is a string", "services:\n  - name: api\n    prepare: make build\n    prepare_inputs: package.json\n"},
 		{"machine port required", "machine:\n  - name: db\n"},
 		{"service name required", "services:\n  - cmd: echo api\n"},
 		{"top-level extension is not a service", "name: demo\nservices: {name: api}\n"},
@@ -150,6 +168,34 @@ services:
 	}
 	if _, err := Load(path); err != nil {
 		t.Fatalf("strict mode refused metadata: %v", err)
+	}
+}
+
+// Strict mode must accept the new key shapes: prepare_inputs is a known key,
+// and the keys inside a health mapping belong to the health union, not to the
+// service.
+func TestStrictManifestAcceptsHealthAndPrepareInputs(t *testing.T) {
+	t.Setenv(StrictEnv, "1")
+	path := filepath.Join(t.TempDir(), ConfigName)
+	body := `name: demo
+services:
+  - name: db
+    prepare: npm ci
+    prepare_inputs: [package.json]
+    cmd: postgres
+    port: 5432
+    health:
+      tcp: 5432
+  - name: api
+    cmd: api
+    health:
+      command: pg_isready -p 5432
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatalf("strict mode refused a health mapping or prepare_inputs: %v", err)
 	}
 }
 

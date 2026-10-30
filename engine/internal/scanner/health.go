@@ -2,10 +2,16 @@ package scanner
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/spawn"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
@@ -30,13 +36,15 @@ func ProbeConfigured(rows []state.Port, gg []state.Group, probe Probe, budget ti
 }
 
 // probeConfigured fills Port.health for every `oberth.yaml` service that
-// declares a `health:` path and whose port is listening.
+// declares a `health:` check and whose port is listening, and
+// Service.health_status for every command check.
 //
 // Unlike the opt-in `include: ["health"]` probe, this one runs on every tick
-// and for every subscriber: a health path in a config is a statement about what
-// the service *is*, not a statistic a client may or may not want, so the
-// daemon polls it as part of state (step 1A.7). Everything else about it is the
-// same probe — one HTTP GET, HealthTimeout, ten in flight.
+// and for every subscriber: a health check in a config is a statement about
+// what the service *is*, not a statistic a client may or may not want, so the
+// daemon polls it as part of state (step 1A.7). HTTP and TCP share the port
+// probe; a command check runs in the service's cwd. All kinds use
+// HealthTimeout, ten in flight, and one round budget.
 func probeConfigured(rows []state.Port, gg []state.Group, probe Probe, budget time.Duration) {
 	var contextual ProbeContext
 	if probe != nil {
@@ -69,7 +77,7 @@ func ProbeConfiguredContext(ctx context.Context, rows []state.Port, gg []state.G
 
 	// The whole round is bounded, not just one probe. This runs inside the
 	// scan, which every write handler's republish and every kill's rescan is
-	// queued behind (contract §38), so a project that declares health paths on
+	// queued behind (contract §38), so a project that declares health checks on
 	// a dozen services — half of them accepting and never answering — must not
 	// be able to add waves of HealthTimeout to somebody's "Save" button.
 	var deadline time.Time
@@ -107,7 +115,15 @@ admit:
 			if ctx.Err() != nil {
 				return
 			}
-			r := probe(ctx, t.host, t.port, t.path, timeout)
+			var r ports.HealthResult
+			switch t.kind {
+			case groups.HealthTCP:
+				r = ports.ProbeTCPContext(ctx, t.host, t.port, timeout)
+			case groups.HealthCommand:
+				r = ports.ProbeCommandContext(ctx, t.argv, t.dir, t.env, timeout)
+			default:
+				r = probe(ctx, t.host, t.port, t.path, timeout)
+			}
 			if ctx.Err() != nil {
 				return
 			}
@@ -132,10 +148,10 @@ admit:
 		return err
 	}
 
+	// Port-backed results go onto the rows first; the join below copies them
+	// onto the service rows that own those listeners.
 	for i, t := range targets {
-		if !probed[i] {
-			// Left for carryHealth: the previous tick's verdict beats a
-			// flicker to "unknown" for a probe that never ran.
+		if !probed[i] || t.kind == groups.HealthCommand {
 			continue
 		}
 		h := results[i]
@@ -145,6 +161,18 @@ admit:
 		}
 	}
 	syncConfiguredHealth(rows, gg)
+	// Command checks have no listener to join through: write their verdict
+	// straight onto the service row that declared them.
+	for i, t := range targets {
+		if !probed[i] || t.kind != groups.HealthCommand {
+			continue
+		}
+		if t.group < 0 || t.service < 0 || t.group >= len(gg) || t.service >= len(gg[t.group].Services) {
+			continue
+		}
+		h := results[i]
+		gg[t.group].Services[t.service].HealthStatus = &h
+	}
 	return nil
 }
 
@@ -154,6 +182,10 @@ admit:
 // would always publish the previous (usually nil) verdict. Keeping the join
 // at commit time also covers a carried result when the health budget skips a
 // round.
+//
+// A command check has no port join: its verdict is set directly by
+// ProbeConfiguredContext. A stopped command-checked service keeps no verdict,
+// because running the command would describe the machine, not the service.
 func syncConfiguredHealth(rows []state.Port, gg []state.Group) {
 	byPort := make(map[int]*state.Health)
 	for i := range rows {
@@ -167,6 +199,12 @@ func syncConfiguredHealth(rows []state.Port, gg []state.Group) {
 	for gi := range gg {
 		for si := range gg[gi].Services {
 			svc := &gg[gi].Services[si]
+			if svc.Health != nil && groups.ParseHealth(*svc.Health).Kind == groups.HealthCommand {
+				if !svc.Running {
+					svc.HealthStatus = nil
+				}
+				continue
+			}
 			svc.HealthStatus = nil
 			if svc.PortActual == nil {
 				continue
@@ -179,45 +217,92 @@ func syncConfiguredHealth(rows []state.Port, gg []state.Group) {
 	}
 }
 
-// healthTarget is one configured probe: the port, the path from the config and
-// the rows the result is written back to.
+// healthTarget is one configured probe: what to run, and where its result goes.
+// Port-backed checks (HTTP, TCP) write to the port rows they joined; a command
+// check writes to one service row.
 type healthTarget struct {
-	port int
-	host string
-	path string
-	rows []int
+	kind    groups.HealthKind
+	port    int
+	host    string
+	path    string
+	argv    []string
+	dir     string
+	env     []string
+	rows    []int
+	group   int
+	service int
 }
 
-// healthTargets joins the configured health paths against the ports actually
-// listening. A service whose port is down has no row to carry a result, so it
-// simply is not probed; the group already reports it as not running.
+// healthTargets joins the configured health declarations against what is
+// actually running. A port-backed check whose port is down has no row to carry
+// a result, so it is not probed; the group already reports the service as not
+// running. Command checks are built for running services, in the service's cwd,
+// with ${port}/${<service>.port} expanded the same way cmd and prepare are.
 func healthTargets(rows []state.Port, gg []state.Group) []healthTarget {
-	paths := map[int]string{}
-	for _, g := range gg {
-		for _, svc := range g.Services {
-			if svc.Health == nil || *svc.Health == "" || svc.PortActual == nil {
+	type portCheck struct {
+		kind groups.HealthKind
+		path string
+	}
+	checks := map[int]portCheck{}
+	var out []healthTarget
+
+	for gi := range gg {
+		portMap := groupPortMap(gg[gi])
+		for si := range gg[gi].Services {
+			svc := &gg[gi].Services[si]
+			if svc.Health == nil || *svc.Health == "" {
 				continue
 			}
-			if _, taken := paths[*svc.PortActual]; !taken {
-				paths[*svc.PortActual] = *svc.Health
+			h := groups.ParseHealth(*svc.Health)
+			if h.Kind == groups.HealthCommand {
+				// A command check runs in the service's cwd. Without the
+				// project root there is no cwd to run it in, and the daemon's
+				// own directory is not the service's: report no verdict rather
+				// than a wrong one.
+				if !svc.Running || gg[gi].RootDir == nil {
+					continue
+				}
+				// Resolving the token shells out to git; only a check that
+				// names ${worktree} pays for it.
+				worktree := ""
+				if strings.Contains(h.Command, "${worktree}") {
+					worktree = groups.WorktreeTokenFor(*gg[gi].RootDir)
+				}
+				expanded := groups.Expand(h.Command, groups.Values{
+					Self: svc.Name, Worktree: worktree, Ports: portMap,
+				})
+				out = append(out, healthTarget{
+					kind: groups.HealthCommand, argv: spawn.SplitCmd(expanded),
+					dir: filepath.Join(*gg[gi].RootDir, filepath.FromSlash(svc.Cwd)),
+					env: commandEnv(svc.PortActual), group: gi, service: si,
+				})
+				continue
+			}
+			if svc.PortActual == nil {
+				continue
+			}
+			if h.Kind == groups.HealthTCP {
+				if _, taken := checks[h.Port]; !taken {
+					checks[h.Port] = portCheck{kind: groups.HealthTCP}
+				}
+				continue
+			}
+			if _, taken := checks[*svc.PortActual]; !taken {
+				checks[*svc.PortActual] = portCheck{kind: groups.HealthHTTP, path: h.Path}
 			}
 		}
 	}
-	if len(paths) == 0 {
-		return nil
-	}
 
 	byPort := map[int]*healthTarget{}
-	out := []healthTarget{}
-	order := []int{}
+	var order []int
 	for i := range rows {
-		path, want := paths[rows[i].Port]
+		check, want := checks[rows[i].Port]
 		if !want {
 			continue
 		}
 		t, seen := byPort[rows[i].Port]
 		if !seen {
-			t = &healthTarget{port: rows[i].Port, path: path}
+			t = &healthTarget{kind: check.kind, port: rows[i].Port, path: check.path, group: -1, service: -1}
 			byPort[rows[i].Port] = t
 			order = append(order, rows[i].Port)
 		}
@@ -228,6 +313,34 @@ func healthTargets(rows []state.Port, gg []state.Group) []healthTarget {
 		out = append(out, *byPort[port])
 	}
 	return out
+}
+
+// groupPortMap is the service-name-to-port map ${port} and ${<service>.port}
+// expand against. A service that is not running contributes its declared port;
+// a port: auto service contributes the port it actually got.
+func groupPortMap(g state.Group) map[string]int {
+	ports := make(map[string]int, len(g.Services))
+	for _, svc := range g.Services {
+		switch {
+		case svc.PortActual != nil:
+			ports[svc.Name] = *svc.PortActual
+		case svc.Port != nil:
+			ports[svc.Name] = *svc.Port
+		}
+	}
+	return ports
+}
+
+// commandEnv is the minimal environment a health command gets: the daemon's
+// own plus the service's port, so a command may read either PORT or use the
+// ${port} reference expanded into its arguments.
+func commandEnv(port *int) []string {
+	env := os.Environ()
+	if port == nil {
+		return env
+	}
+	v := strconv.Itoa(*port)
+	return append(env, "PORT="+v, "BERTH_PORT="+v)
 }
 
 // preferHost picks the loopback address to probe. A service bound on IPv4 (or

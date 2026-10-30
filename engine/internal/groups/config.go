@@ -89,8 +89,12 @@ type Service struct {
 	// It is useful for services whose runnable artifact (a jar, generated
 	// binary, or bundle) must be rebuilt from the current checkout first.
 	Prepare string `yaml:"prepare,omitempty" jsonschema_description:"Optional foreground command run immediately before cmd."`
-	Cmd     string `yaml:"cmd,omitempty" jsonschema_description:"The command that brings the service back up, run from cwd."`
-	Cwd     string `yaml:"cwd,omitempty" jsonschema_description:"Working directory, relative to the directory holding oberth.yaml."`
+	// PrepareInputs are the files Prepare reads, relative to the service's
+	// cwd. When every one has the same contents as the last successful
+	// Prepare, `up` skips the command. An empty list means "always run".
+	PrepareInputs []string `yaml:"prepare_inputs,omitempty" jsonschema_description:"Files the prepare command reads, relative to cwd. When their contents are unchanged, up skips prepare."`
+	Cmd           string   `yaml:"cmd,omitempty" jsonschema_description:"The command that brings the service back up, run from cwd."`
+	Cwd           string   `yaml:"cwd,omitempty" jsonschema_description:"Working directory, relative to the directory holding oberth.yaml."`
 	// Port is the port the service binds, or 0 when it declares none or when
 	// PortAuto is set.
 	Port int `yaml:"port,omitempty" jsonschema_description:"The port the service binds, or auto to let option-berth pick one."`
@@ -99,7 +103,7 @@ type Service struct {
 	// different one in every other checkout — and hands it over as PORT,
 	// BERTH_PORT and ${port}.
 	PortAuto    bool     `yaml:"-"`
-	Health      string   `yaml:"health,omitempty" jsonschema_description:"HTTP path that answers when the service is up."`
+	Health      string   `yaml:"health,omitempty" jsonschema_description:"Health check: an HTTP path, {tcp: port}, or {command: command line}."`
 	Description string   `yaml:"description,omitempty" jsonschema_description:"User-authored metadata shown by clients."`
 	Icon        string   `yaml:"icon,omitempty" jsonschema_description:"User-authored metadata shown by clients."`
 	Color       string   `yaml:"color,omitempty" jsonschema_description:"User-authored metadata shown by clients."`
@@ -130,7 +134,8 @@ func (s *Service) UnmarshalYAML(n *yaml.Node) error {
 		return nil
 	}
 	auto := false
-	portLine := 0
+	portLine, healthLine := 0, 0
+	var health HealthCheck
 	stripped := *n
 	stripped.Content = make([]*yaml.Node, 0, len(n.Content))
 	for i := 0; i+1 < len(n.Content); i += 2 {
@@ -141,6 +146,18 @@ func (s *Service) UnmarshalYAML(n *yaml.Node) error {
 				return fmt.Errorf(`line %d: mapping key "port" already defined at line %d`, k.Line, portLine)
 			}
 			portLine = k.Line
+		}
+		if k.Value == "health" {
+			if healthLine != 0 {
+				return fmt.Errorf(`line %d: mapping key "health" already defined at line %d`, k.Line, healthLine)
+			}
+			healthLine = k.Line
+			h, err := decodeHealthNode(v)
+			if err != nil {
+				return err
+			}
+			health = h
+			continue
 		}
 		if k.Value == "port" && v.Kind == yaml.ScalarNode {
 			switch tag := v.ShortTag(); {
@@ -160,31 +177,41 @@ func (s *Service) UnmarshalYAML(n *yaml.Node) error {
 	}
 	*s = Service(p)
 	s.PortAuto = auto
+	s.Health = health.Canonical()
 	return nil
 }
 
-// MarshalYAML writes PortAuto back as `port: auto`, where a number would be.
+// MarshalYAML writes PortAuto back as `port: auto`, where a number would be,
+// and the TCP/command health forms back as mappings rather than their
+// canonical wire strings.
 func (s Service) MarshalYAML() (any, error) {
 	type plain Service
-	if !s.PortAuto {
-		return plain(s), nil
-	}
 	var n yaml.Node
 	if err := n.Encode(plain(s)); err != nil {
 		return nil, err
 	}
-	at := 0
-	for i := 0; i+1 < len(n.Content); i += 2 {
-		switch n.Content[i].Value {
-		case "name", "cmd", "cwd":
-			at = i + 2
+	if s.PortAuto {
+		at := 0
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			switch n.Content[i].Value {
+			case "name", "cmd", "cwd":
+				at = i + 2
+			}
+		}
+		pair := []*yaml.Node{
+			{Kind: yaml.ScalarNode, Tag: "!!str", Value: "port"},
+			{Kind: yaml.ScalarNode, Tag: "!!str", Value: PortAutoValue},
+		}
+		n.Content = append(n.Content[:at], append(pair, n.Content[at:]...)...)
+	}
+	if h := ParseHealth(s.Health); h.Kind == HealthTCP || h.Kind == HealthCommand {
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if n.Content[i].Value == "health" {
+				n.Content[i+1] = healthNode(h)
+				break
+			}
 		}
 	}
-	pair := []*yaml.Node{
-		{Kind: yaml.ScalarNode, Tag: "!!str", Value: "port"},
-		{Kind: yaml.ScalarNode, Tag: "!!str", Value: PortAutoValue},
-	}
-	n.Content = append(n.Content[:at], append(pair, n.Content[at:]...)...)
 	return &n, nil
 }
 
@@ -274,15 +301,15 @@ type Candidate struct {
 }
 
 // UsesAssignedPorts reports whether this file needs a daemon that knows the
-// format v0.8.0 introduced: a `port: auto` service, or an `env:`, `prepare:`
-// or `cmd:` value carrying a ${...} reference (a port or the worktree
-// identity).
+// format v0.8.0 introduced: a `port: auto` service, or an `env:`, `prepare:`,
+// `cmd:` or `health:` value carrying a ${...} reference (a port or the
+// worktree identity).
 func (c *Config) UsesAssignedPorts() bool {
 	for _, s := range c.Services {
 		if s.PortAuto || len(s.Env) > 0 {
 			return true
 		}
-		if refPattern.MatchString(s.Prepare) || refPattern.MatchString(s.Cmd) {
+		if refPattern.MatchString(s.Prepare) || refPattern.MatchString(s.Cmd) || refPattern.MatchString(s.Health) {
 			return true
 		}
 	}
@@ -420,6 +447,8 @@ func (c *Config) validate() []string {
 				problems = append(problems, fmt.Sprintf("%s: env %q is not a variable name", where, key))
 			}
 		}
+		problems = append(problems, c.prepareInputProblems(s, where)...)
+		problems = append(problems, c.healthProblems(s, where)...)
 		problems = append(problems, c.refProblems(s, where)...)
 	}
 
@@ -476,6 +505,68 @@ func (c *Config) cwdInside(cwd string) bool {
 		return false
 	}
 	return true
+}
+
+// prepareInputProblems checks the files a prepare step declares. They are read
+// relative to the service's cwd, and they must stay inside the directory that
+// holds the manifest: a manifest may not hash files anywhere on the machine.
+// Declaring inputs without a command is a contradiction, not a harmless no-op.
+func (c *Config) prepareInputProblems(s Service, where string) []string {
+	if len(s.PrepareInputs) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(s.Prepare) == "" {
+		return []string{where + ": prepare_inputs needs a prepare command"}
+	}
+	var problems []string
+	for _, input := range s.PrepareInputs {
+		switch {
+		case strings.TrimSpace(input) == "":
+			problems = append(problems, where+": prepare_inputs has an empty path")
+		case filepath.IsAbs(input) || strings.HasPrefix(input, "/") || strings.HasPrefix(input, `\`):
+			problems = append(problems, fmt.Sprintf("%s: prepare_inputs path %q must be relative to cwd", where, input))
+		case !c.cwdInside(filepath.Join(s.Cwd, input)):
+			problems = append(problems, fmt.Sprintf("%s: prepare_inputs path %q escapes the directory holding %s", where, input, ConfigName))
+		}
+	}
+	return problems
+}
+
+// healthProblems checks the parsed declaration against the service it belongs
+// to. A scalar that reads like the canonical tcp/command form is refused:
+// scalars are HTTP paths, so accepting it here would write a value that parses
+// back differently.
+func (c *Config) healthProblems(s Service, where string) []string {
+	if s.Health == "" {
+		return nil
+	}
+	h := ParseHealth(s.Health)
+	if h.Kind == HealthHTTP && healthIsReserved(s.Health) {
+		return []string{fmt.Sprintf("%s: health %q starts with a reserved prefix; write it as a mapping", where, s.Health)}
+	}
+	switch h.Kind {
+	case HealthHTTP:
+		if !strings.HasPrefix(h.Path, "/") {
+			return []string{fmt.Sprintf("%s: health path %q must start with /", where, h.Path)}
+		}
+	case HealthTCP:
+		if h.Port < 1 || h.Port > 65535 {
+			return []string{fmt.Sprintf("%s: health tcp port %d is out of range 1-65535", where, h.Port)}
+		}
+		switch {
+		case s.PortAuto:
+			return []string{fmt.Sprintf("%s: health tcp needs a fixed port; a port: auto service should use a command check", where)}
+		case s.Port == 0:
+			return []string{fmt.Sprintf("%s: health tcp needs the service to declare a port", where)}
+		case s.Port != h.Port:
+			return []string{fmt.Sprintf("%s: health tcp port %d does not match the service's port %d", where, h.Port, s.Port)}
+		}
+	case HealthCommand:
+		if strings.TrimSpace(h.Command) == "" {
+			return []string{where + ": health command is empty"}
+		}
+	}
+	return nil
 }
 
 // ServiceDir returns the absolute working directory for a service.

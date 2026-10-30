@@ -155,28 +155,43 @@ func serviceReady(group state.Group, rows []state.Port, name string) (bool, stri
 		}
 		return true, ""
 	}
+	check := groups.ParseHealth(*svc.Health)
+	// A command check answers for itself: it needs no listener of its own, and
+	// its verdict is written straight onto the service row.
+	if check.Kind == groups.HealthCommand {
+		return healthVerdict(svc, nil)
+	}
 	if svc.PortActual == nil {
 		return false, "waiting_for_listener"
 	}
+	return healthVerdict(svc, rows)
+}
+
+// healthVerdict reads the service's configured verdict, falling back to the
+// port row's when the service row has not been joined yet. rows is nil for a
+// command check, whose result has no port row.
+func healthVerdict(svc *state.Service, rows []state.Port) (bool, string) {
 	if svc.HealthStatus != nil {
 		if svc.HealthStatus.Status == state.HealthOK {
 			return true, ""
 		}
 		return false, "health_" + svc.HealthStatus.Reason
 	}
-	for _, row := range rows {
-		if row.Port != *svc.PortActual {
-			continue
+	if rows != nil && svc.PortActual != nil {
+		for _, row := range rows {
+			if row.Port != *svc.PortActual {
+				continue
+			}
+			if row.Health == nil {
+				break
+			}
+			if row.Health.Status == state.HealthOK {
+				return true, ""
+			}
+			return false, "health_" + row.Health.Reason
 		}
-		if row.Health == nil {
-			return false, "waiting_for_health"
-		}
-		if row.Health.Status == state.HealthOK {
-			return true, ""
-		}
-		return false, "health_" + row.Health.Reason
 	}
-	return false, "waiting_for_listener"
+	return false, "waiting_for_health"
 }
 
 func markStartChunkFailed(chunks []rpc.GroupsStartChunk, summary *rpc.GroupsStartEnd,

@@ -102,6 +102,22 @@ func TestServiceReadyTreatsPortlessRunAsReady(t *testing.T) {
 	}
 }
 
+func TestServiceReadyWaitsForCommandHealthWithoutPort(t *testing.T) {
+	health := "command:pg_isready -p 5432"
+	group := state.Group{Services: []state.Service{{Name: "db", Running: true, Health: &health}}}
+	if ready, reason := serviceReady(group, nil, "db"); ready || reason != "waiting_for_health" {
+		t.Fatalf("serviceReady before a verdict = %v, %q, want a health wait", ready, reason)
+	}
+	group.Services[0].HealthStatus = &state.Health{Status: state.HealthOK}
+	if ready, reason := serviceReady(group, nil, "db"); !ready || reason != "" {
+		t.Fatalf("serviceReady healthy = %v, %q, want ready", ready, reason)
+	}
+	group.Services[0].HealthStatus = &state.Health{Status: state.HealthFail, Reason: "command-failed"}
+	if ready, reason := serviceReady(group, nil, "db"); ready || reason != "health_command-failed" {
+		t.Fatalf("serviceReady failed = %v, %q, want the command verdict", ready, reason)
+	}
+}
+
 func TestServiceReadyWaitsForListenerWithoutHealth(t *testing.T) {
 	port := 18080
 	group := state.Group{Services: []state.Service{{Name: "api", Running: true, Port: &port}}}

@@ -53,6 +53,7 @@ func ManifestSchema() *jsonschema.Schema {
 
 	if svc := s.Definitions["Service"]; svc != nil && svc.Properties != nil {
 		svc.Properties.Set("port", servicePortSchema())
+		svc.Properties.Set("health", serviceHealthSchema())
 	}
 	if ref := s.Definitions["MachineRef"]; ref != nil && ref.Properties != nil {
 		if port, ok := ref.Properties.Get("port"); ok {
@@ -96,6 +97,38 @@ func servicePortSchema() *jsonschema.Schema {
 		},
 	}
 }
+
+// serviceHealthSchema states the `health:` union. The Go field is a string
+// because that is the canonical published form, but the YAML file also accepts
+// a one-key mapping, so reflect alone would reject every tcp and command
+// check in an editor.
+func serviceHealthSchema() *jsonschema.Schema {
+	mapping := &jsonschema.Schema{
+		Type:                 "object",
+		Description:          "A TCP or command check. Use exactly one key.",
+		AdditionalProperties: jsonschema.FalseSchema,
+		MinProperties:        count(1),
+		MaxProperties:        count(1),
+		Properties:           jsonschema.NewProperties(),
+	}
+	mapping.Properties.Set("http", &jsonschema.Schema{
+		Type: "string", Pattern: "^/", Description: "HTTP path, for example /healthz.",
+	})
+	mapping.Properties.Set("tcp", &jsonschema.Schema{
+		Type: "integer", Minimum: json.Number("1"), Maximum: json.Number("65535"),
+		Description: "Port to connect to. It must match the service's declared port.",
+	})
+	mapping.Properties.Set("command", &jsonschema.Schema{
+		Type: "string", MinLength: count(1),
+		Description: "Command to run in the service's cwd; exit 0 is healthy.",
+	})
+	return &jsonschema.Schema{
+		Description: "Health check: an HTTP path, {tcp: port}, or {command: command line}.",
+		AnyOf:       []*jsonschema.Schema{{Type: "string", Pattern: "^/"}, mapping},
+	}
+}
+
+func count(n uint64) *uint64 { return &n }
 
 func setPortRange(s *jsonschema.Schema) {
 	s.Minimum = json.Number("1")

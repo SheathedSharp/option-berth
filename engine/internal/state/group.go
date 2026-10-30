@@ -6,15 +6,20 @@ package state
 type Service struct {
 	Name    string `json:"name"`
 	Prepare string `json:"prepare"`
-	Cmd     string `json:"cmd"`
-	Cwd     string `json:"cwd"`
-	Port    *int   `json:"port" jsonschema:"nullable"`
+	// PrepareInputs are the files the prepare step reads, relative to Cwd. When
+	// their contents are unchanged, `up` skips the step. Always an array.
+	PrepareInputs []string `json:"prepare_inputs"`
+	Cmd           string   `json:"cmd"`
+	Cwd           string   `json:"cwd"`
+	Port          *int     `json:"port" jsonschema:"nullable"`
 	// PortAuto is `port: auto`: the daemon assigns the port when it starts the
 	// service, so Port is null and PortActual says where it is running.
-	PortAuto bool    `json:"port_auto"`
-	Health   *string `json:"health" jsonschema:"nullable"`
-	// HealthStatus is the latest result for the declared HTTP health path.
-	// Health remains the manifest path; this field is the runtime verdict so a
+	PortAuto bool `json:"port_auto"`
+	// Health is the declared check in its published form: an HTTP path
+	// (/healthz), or tcp:<port>, or command:<command line>.
+	Health *string `json:"health" jsonschema:"nullable"`
+	// HealthStatus is the latest result for the declared health check.
+	// Health remains the manifest value; this field is the runtime verdict so a
 	// reader never has to join a service back to a listener to answer whether it
 	// is ready.
 	HealthStatus *Health `json:"health_status" jsonschema:"nullable"`

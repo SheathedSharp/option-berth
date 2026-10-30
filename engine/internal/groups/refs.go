@@ -195,8 +195,9 @@ func (c *Config) ServiceNamed(name string) (Service, bool) {
 	return Service{}, false
 }
 
-// refProblems checks every reference in a service's prepare, cmd and env: each
-// has to name a service in this file, and that service has to have a port.
+// refProblems checks every reference in a service's prepare, cmd, health and
+// env: each has to name a service in this file, and that service has to have a
+// port.
 func (c *Config) refProblems(s Service, where string) []string {
 	var out []string
 	check := func(field, text string) {
@@ -219,6 +220,7 @@ func (c *Config) refProblems(s Service, where string) []string {
 	}
 	check("prepare", s.Prepare)
 	check("cmd", s.Cmd)
+	check("health", s.Health)
 	keys := make([]string, 0, len(s.Env))
 	for k := range s.Env {
 		keys = append(keys, k)
