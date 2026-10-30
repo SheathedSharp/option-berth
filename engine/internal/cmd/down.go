@@ -62,7 +62,7 @@ func downRun(cmd *cobra.Command, args []string) error {
 	}
 	defer c.Close()
 
-	if err := requireConfigSupport(c, local); err != nil {
+	if err := requireStopConfigSupport(c, local); err != nil {
 		return err
 	}
 

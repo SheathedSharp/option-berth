@@ -13,6 +13,7 @@ A person reviews this draft before it becomes their file.
         prepare: <a build or generation command, only when the artifact must be refreshed first>
         cmd: <the command that brings it up>
         cwd: .                # relative to this file; omit for the root
+        env_file: ../shared/dev.env  # optional, read-only; for config kept outside the checkout
         port: 8000            # omit when it binds no port
         health: /healthz      # only when a real HTTP health path exists
         env:
@@ -22,6 +23,10 @@ A person reviews this draft before it becomes their file.
     machine:                  # services this machine runs and the project needs
       - name: mysql
         port: 3306
+    workspace:                # read-only addresses in other checkouts; omit unless stated
+      - name: backend
+        worktree: ../backend  # the other checkout, relative to this file
+        service: api
 
 Those are the fields of the answer document; the manifest above is what
 option-berth renders from it (`why` and `verified` become comments above the
@@ -40,7 +45,13 @@ write will be read out of prose.
 - `port` is the port the process actually binds, not a port only written down
   somewhere.
 - `cmd`, `env` values and `health` may refer to ports as `${port}`, `${url}`,
-  `${<service>.port}` and `${<service>.url}`.
+  `${<service>.port}` and `${<service>.url}`. `${<name>...}` may also name a
+  `machine` entry, or a `workspace` entry (except in `health`).
+- Use `env_file:` only when the project already keeps a shared dotenv file
+  outside the checkout; it is read at start and never written.
+- Add a `workspace` entry only when the project's files or the user explicitly
+  state the other checkout and service. It is a read-only address, not a
+  dependency: never use it to start or stop the other side.
 - Do not invent health paths. No HTTP endpoint, no `health` key.
 
 ## How to find out how services start

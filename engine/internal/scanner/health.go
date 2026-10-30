@@ -315,17 +315,25 @@ func healthTargets(rows []state.Port, gg []state.Group) []healthTarget {
 	return out
 }
 
-// groupPortMap is the service-name-to-port map ${port} and ${<service>.port}
-// expand against. A service that is not running contributes its declared port;
-// a port: auto service contributes the port it actually got.
+// groupPortMap is the name-to-port map ${port} and ${<name>.port} expand
+// against. A service that is not running contributes its declared port; a
+// port: auto service contributes the port it actually got. `machine:`
+// references contribute their fixed port, so a command check can name the
+// database it is waiting for. Workspace references are not included: their
+// address lives in another checkout and is resolved only when a service starts.
 func groupPortMap(g state.Group) map[string]int {
-	ports := make(map[string]int, len(g.Services))
+	ports := make(map[string]int, len(g.Services)+len(g.Machine))
 	for _, svc := range g.Services {
 		switch {
 		case svc.PortActual != nil:
 			ports[svc.Name] = *svc.PortActual
 		case svc.Port != nil:
 			ports[svc.Name] = *svc.Port
+		}
+	}
+	for _, m := range g.Machine {
+		if _, exists := ports[m.Name]; !exists {
+			ports[m.Name] = m.Port
 		}
 	}
 	return ports

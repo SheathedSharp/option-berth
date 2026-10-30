@@ -79,6 +79,12 @@ type OKResult struct {
 // for the daemon's age.
 const CapabilityAutoPorts = "groups.autoports"
 
+// CapabilityManifestExtras is announced by daemons that understand the
+// manifest's `env_file:` and `workspace:` references. An older daemon ignores
+// both: it would start a service without the env file's values and leave a
+// workspace address unexpanded, so the CLI refuses to hand it such a file.
+const CapabilityManifestExtras = "groups.manifest.extras"
+
 // CapabilityStateScope is announced by daemons that understand scoped state
 // snapshots and the redacted state.changed notification.
 const CapabilityStateScope = "state.scope"

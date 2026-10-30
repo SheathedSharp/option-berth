@@ -39,7 +39,7 @@ import (
 const DraftSchema = `{
   "type": "object",
   "additionalProperties": false,
-  "required": ["name", "services", "machine", "notes"],
+  "required": ["name", "services", "machine", "workspace", "notes"],
   "properties": {
     "name": {
       "type": "string",
@@ -51,12 +51,13 @@ const DraftSchema = `{
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "prepare", "cmd", "cwd", "port", "port_auto", "env", "depends_on", "health", "why", "verified"],
+        "required": ["name", "prepare", "cmd", "cwd", "env_file", "port", "port_auto", "env", "depends_on", "health", "why", "verified"],
         "properties": {
           "name": {"type": "string", "description": "Short name, unique in this file."},
           "prepare": {"type": ["string", "null"], "description": "A foreground build or code-generation command to run before cmd, when the runnable artifact must be rebuilt."},
           "cmd": {"type": "string", "description": "The command that brings the service back up, run from cwd. A foreground command: no nohup, no &."},
           "cwd": {"type": ["string", "null"], "description": "Directory to run in, relative to the project root. Null for the root."},
+          "env_file": {"type": ["string", "null"], "description": "A dotenv-style file read when the service starts, relative to the manifest or absolute. Use it for shared configuration or secrets kept outside the checkout. Null when there is none."},
           "port": {"type": ["integer", "null"], "description": "The port it binds. Null when it binds none."},
           "port_auto": {"type": ["boolean", "null"], "description": "True to let option-berth pick the port (port: auto). Null otherwise."},
           "env": {
@@ -92,6 +93,20 @@ const DraftSchema = `{
         }
       }
     },
+    "workspace": {
+      "type": ["array", "null"],
+      "description": "Services in other checkouts this worktree may address as ${name.port} or ${name.url}. Read-only references: option-berth never starts or stops the other worktree. Only include one when the project's own files or the user state that relationship.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "worktree", "service"],
+        "properties": {
+          "name": {"type": "string", "description": "The name this file uses in ${name.port} and ${name.url}."},
+          "worktree": {"type": "string", "description": "The other checkout's root directory, relative to this manifest or absolute."},
+          "service": {"type": "string", "description": "The service name in that checkout's manifest."}
+        }
+      }
+    },
     "notes": {
       "type": ["array", "null"],
       "items": {"type": "string"},
@@ -103,10 +118,11 @@ const DraftSchema = `{
 // Draft is one drafting run's answer, decoded from the reply the CLI was asked
 // to produce in DraftSchema.
 type Draft struct {
-	Name     string         `json:"name"`
-	Services []DraftService `json:"services"`
-	Machine  []DraftMachine `json:"machine"`
-	Notes    []string       `json:"notes"`
+	Name      string           `json:"name"`
+	Services  []DraftService   `json:"services"`
+	Machine   []DraftMachine   `json:"machine"`
+	Workspace []DraftWorkspace `json:"workspace"`
+	Notes     []string         `json:"notes"`
 }
 
 // DraftMachine is one reference to a service the machine runs: the project
@@ -114,6 +130,14 @@ type Draft struct {
 type DraftMachine struct {
 	Name string `json:"name"`
 	Port int    `json:"port"`
+}
+
+// DraftWorkspace is one read-only address in another checkout: the project's
+// commands may point at it, but option-berth never starts or stops it.
+type DraftWorkspace struct {
+	Name     string `json:"name"`
+	Worktree string `json:"worktree"`
+	Service  string `json:"service"`
 }
 
 // DraftService is one proposed service plus the provenance that decides whether
@@ -125,6 +149,7 @@ type DraftService struct {
 	Prepare   *string    `json:"prepare"`
 	Cmd       string     `json:"cmd"`
 	Cwd       *string    `json:"cwd"`
+	EnvFile   *string    `json:"env_file"`
 	Port      *int       `json:"port"`
 	PortAuto  *bool      `json:"port_auto"`
 	Env       []DraftEnv `json:"env"`
@@ -159,6 +184,11 @@ func ParseDraft(answer []byte) (*Draft, error) {
 			return nil, fmt.Errorf("%w: service %d has no name or no cmd", ErrNoDraft, i+1)
 		}
 	}
+	for i, w := range d.Workspace {
+		if strings.TrimSpace(w.Name) == "" || strings.TrimSpace(w.Worktree) == "" || strings.TrimSpace(w.Service) == "" {
+			return nil, fmt.Errorf("%w: workspace reference %d needs a name, worktree and service", ErrNoDraft, i+1)
+		}
+	}
 	return &d, nil
 }
 
@@ -188,6 +218,20 @@ func (d *Draft) YAML() ([]byte, error) {
 			refs.Content = append(refs.Content, n)
 		}
 		root.Content = append(root.Content, key("machine"), refs)
+	}
+
+	if len(d.Workspace) > 0 {
+		refs := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+		refs.HeadComment = "Services in other checkouts — addressed read-only, never started or stopped from here"
+		for _, w := range d.Workspace {
+			n := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			n.Content = append(n.Content,
+				key("name"), scalar(w.Name),
+				key("worktree"), scalar(w.Worktree),
+				key("service"), scalar(w.Service))
+			refs.Content = append(refs.Content, n)
+		}
+		root.Content = append(root.Content, key("workspace"), refs)
 	}
 
 	var buf bytes.Buffer
@@ -224,6 +268,9 @@ func (s DraftService) node() *yaml.Node {
 	add("cmd", s.Cmd)
 	if s.Cwd != nil && *s.Cwd != "" {
 		add("cwd", *s.Cwd)
+	}
+	if s.EnvFile != nil && strings.TrimSpace(*s.EnvFile) != "" {
+		add("env_file", *s.EnvFile)
 	}
 	switch {
 	case s.PortAuto != nil && *s.PortAuto:

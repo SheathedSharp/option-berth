@@ -38,6 +38,7 @@ services:
     prepare_inputs: [package.json, package-lock.json]
     cmd: ./bin/api
     cwd: backend
+    env_file: ../shared/dev.env
     port: auto
     health: /healthz
     description: HTTP API
@@ -59,6 +60,10 @@ services:
 machine:
   - name: mysql
     port: 3306
+workspace:
+  - name: backend
+    worktree: ../backend
+    service: api
 ports: [9229]
 worktree_ports: 4
 x-template: &defaults
@@ -76,12 +81,13 @@ func TestWrittenManifestValidates(t *testing.T) {
 	cfg := &Config{
 		Name: "demo",
 		Services: []Service{
-			{Name: "api", Cmd: "echo api", PortAuto: true, Env: map[string]string{"API_URL": "http://127.0.0.1:${port}"}},
+			{Name: "api", Cmd: "echo api", PortAuto: true, EnvFile: "../shared/dev.env", Env: map[string]string{"API_URL": "http://127.0.0.1:${port}"}},
 			{Name: "web", Prepare: "npm ci", PrepareInputs: []string{"package.json"}, Cmd: "npm start"},
 			{Name: "db", Cmd: "postgres", Port: 5432, Health: "tcp:5432"},
 			{Name: "cache", Cmd: "redis-server", Port: 6379, Health: "command:redis-cli -p ${port} ping"},
 		},
-		Machine: []MachineRef{{Name: "mysql", Port: 3306}},
+		Machine:   []MachineRef{{Name: "mysql", Port: 3306}},
+		Workspace: []WorkspaceRef{{Name: "backend", Worktree: "../backend", Service: "api"}},
 	}
 	data, err := Marshal(cfg)
 	if err != nil {
@@ -114,6 +120,9 @@ func TestManifestSchemaRejectsMisspellingsAndBadValues(t *testing.T) {
 		{"health has an unknown form", "services:\n  - name: api\n    health:\n      httpz: /health\n"},
 		{"prepare_inputs is a string", "services:\n  - name: api\n    prepare: make build\n    prepare_inputs: package.json\n"},
 		{"machine port required", "machine:\n  - name: db\n"},
+		{"workspace service required", "workspace:\n  - name: backend\n    worktree: ../backend\n"},
+		{"workspace typo", "workspace:\n  - name: backend\n    worktree: ../backend\n    service: api\n    servcie: api\n"},
+		{"env_file is not a string", "services:\n  - name: api\n    env_file: [a, b]\n"},
 		{"service name required", "services:\n  - cmd: echo api\n"},
 		{"top-level extension is not a service", "name: demo\nservices: {name: api}\n"},
 	} {
