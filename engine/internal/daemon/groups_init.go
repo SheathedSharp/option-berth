@@ -243,8 +243,7 @@ func initSnapshot(rt *Runtime) (state.Snapshot, error) {
 	}
 	snap, err := rt.Scanner.Snapshot(scanner.Include{})
 	if err != nil {
-		return state.Snapshot{}, rpc.NewError(rpc.CodeInternal, "scan failed: "+err.Error(),
-			"check `oberth daemon log` for the scanner error")
+		return state.Snapshot{}, scanFailure(err)
 	}
 	return snap, nil
 }

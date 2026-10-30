@@ -41,6 +41,12 @@ const (
 	// error registry; the core command set does not currently emit it.
 	CodeNotConfigured = 1012
 
+	// Observation failures are the collector's own codes, not engine bugs. A
+	// sandboxed agent reads the code to know whether it may retry elsewhere or
+	// must trust an "absent listener" answer (it must not).
+	CodeObservationEmpty      = 1013
+	CodeObservationIncomplete = 1014
+
 	// 1100-1199 are owned by spec 3 (shares and proxies). 1101-1106 and 1109
 	// belonged to the provider design (ngrok, cloudflared) and were deleted
 	// before anything returned them; they stay unused rather than reassigned.
@@ -73,6 +79,9 @@ var codeNames = map[int]string{
 	CodeOutsideHome:     "outside_home",
 	CodeConflict:        "conflict",
 	CodeNotConfigured:   "not_configured",
+
+	CodeObservationEmpty:      "observation_empty",
+	CodeObservationIncomplete: "observation_incomplete",
 
 	CodeTargetNotListening: "target_not_listening",
 	CodeShareLimitReached:  "share_limit_reached",

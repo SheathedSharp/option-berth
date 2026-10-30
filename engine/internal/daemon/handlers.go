@@ -118,8 +118,7 @@ func handleSnapshot(_ context.Context, req *Request) (any, error) {
 	}
 	snap, err := req.Runtime.Scanner.SnapshotAll(include)
 	if err != nil {
-		return nil, rpc.NewError(rpc.CodeInternal, "scan failed: "+err.Error(),
-			"check `oberth daemon log` for the scanner error")
+		return nil, scanFailure(err)
 	}
 	scope := scopeOf(p.Scope)
 	if !scope.Empty() {
