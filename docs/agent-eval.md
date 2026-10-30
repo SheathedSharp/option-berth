@@ -130,26 +130,32 @@ environment 里放两个 secret，不放到仓库级：
 | agent | 协议 | 默认模型 |
 |---|---|---|
 | Claude Code | Anthropic Messages | `cline-pass/deepseek-v4.1-flash-1017` |
-| Codex | Responses（经本地 bridge） | `gpt-6-luna` |
+| Codex | Responses SSE（直连） | `gpt-6-luna` |
 | OpenCode | OpenAI Chat Completions | `step-5-preview` |
 | Pi | OpenAI Chat Completions | `space-bunny` |
 
-Codex 0.166 只发 Responses 请求，并要求 SSE 以 `response.completed` 结束；当前 gateway
-只提供非流式 Responses 和流式 chat completions。因此 workflow 在 loopback 上启动
-[`scripts/codex_responses_bridge.py`](../scripts/codex_responses_bridge.py)，把 Codex 的
-Responses 请求翻译成 chat completions，再把结果翻译回 Codex 需要的 Responses 事件。
-bridge 是验收夹具，不是被测产品：它只转发 function / custom 工具，丢掉 hosted 工具；
-gateway key 只存在于 bridge 进程自己的环境里，不进入 Codex 的 argv 或运行环境。
-报告里的 Codex 行仍然是真实 Codex CLI 与真实模型的结果，bridge 只改变传输协议。
+Codex 0.166 只发 Responses 请求，并要求 `POST /v1/responses` 在 `stream: true` 时返回
+`text/event-stream`，最后以 `response.completed` 结束。只返回单体 JSON 的实现不能驱动
+Codex：它会把响应当成断掉的流。workflow 不翻译协议；它先运行
+[`scripts/check_agent_gateway.py`](../scripts/check_agent_gateway.py)，同时检查
+Anthropic Messages、OpenAI chat SSE、Responses SSE 和 Responses function call 四个契约。
+任何一项不满足时，该 step 在安装 agent、消耗模型额度之前退出 2，并打印实际拿到的
+content-type。
+
+Codex 的 `gpt-6-luna` 内置元数据默认 `tool_mode=code_mode_only` 且
+`use_responses_lite=true`，会把工具放进 `additional_tools` 输入项，而不是标准 Responses
+`tools`。workflow 在安装 Codex 后读取本机 catalog，只把当前 Codex 模型改成
+`tool_mode=direct`、`use_responses_lite=false`，让 Codex 与其他 agent 一样发标准
+function tools；这不是协议翻译，也不要求 gateway 识别 Codex 私有输入项。
 
 workflow 显式传入自主执行参数：Claude `--permission-mode=bypassPermissions`、Codex
 `--sandbox danger-full-access`、OpenCode `--auto`、Pi `--approve`。harness 自己仍然不加
 这些参数；是否允许由 workflow 的操作者决定。
 
-workflow 的顺序是：构建带发布身份的 `oberth`、安装四个 agent、写 provider 配置、
-启动 bridge、先跑 preflight（观察不到监听就退出 2，不消耗模型额度），再跑
-`--execute --repeat 2 --require-comparable`。报告、bridge 日志、构建身份和 agent 版本
-作为 artifact 保留 30 天，`report.md` 同时写入 job summary。
+workflow 的顺序是：检查 gateway 协议、构建带发布身份的 `oberth`、安装四个 agent、
+写 provider 配置、跑 preflight（观察不到监听就退出 2），再跑
+`--execute --repeat 2 --require-comparable`。报告、gateway 检查日志、构建身份和 agent
+版本作为 artifact 保留 30 天，`report.md` 同时写入 job summary。
 
 运行方式：Actions → **Agent eval / real agent matrix** → Run workflow → 选择分支
 （environment 只允许 `main`）→ 在 environment 审批提示中批准。没有批准的运行不会
