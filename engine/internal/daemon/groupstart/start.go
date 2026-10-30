@@ -156,27 +156,46 @@ func run(ctx context.Context, rt *daemon.Runtime, s *daemon.Stream,
 		}
 
 		if strings.TrimSpace(svc.Prepare) != "" {
-			if err := prepare(ctx, cfg, group, svc, book, p); err != nil {
-				// Losing the request is not evidence that the service failed.
-				// prepare has already killed and reaped its attached child.
-				if err := ctx.Err(); err != nil {
-					return end, err
+			// The skip is an optimization, never a substitute for running the
+			// step when the evidence is incomplete. CheckCwd failing here means
+			// prepare() below will report the refusal with its own hint.
+			skipped := false
+			if cwd, err := runsreg.CheckCwd(cfg.ServiceDir(svc), p.AllowOutsideHome); err == nil &&
+				prepareUnchanged(cfg.Path, svc, cwd) {
+				rt.Logger.Info("prepare inputs unchanged; skipping", "group", group, "service", svc.Name)
+				skipped = true
+			}
+			if !skipped {
+				if err := prepare(ctx, cfg, group, svc, book, p); err != nil {
+					// Losing the request is not evidence that the service failed.
+					// prepare has already killed and reaped its attached child.
+					if err := ctx.Err(); err != nil {
+						return end, err
+					}
+					rt.Logger.Warn("preparing a service", "group", group, "service", svc.Name, "error", err)
+					// Same rule as the cmd path: the error's own hint, or none. A
+					// prepare step that failed before its log file was even created
+					// has no log to point at.
+					message, hint := detailAndHint(err)
+					recordStartFailure(cfg, group, svc, meta, "prepare: "+message)
+					end.Errors = append(end.Errors, svc.Name)
+					rt.Scanner.Wake()
+					if err := s.Send(rpc.GroupsStartChunk{
+						Service: svc.Name, State: "failed", Reason: "start_failed",
+						Error: "prepare failed: " + message, Hint: hint,
+					}); err != nil {
+						return end, err
+					}
+					continue
 				}
-				rt.Logger.Warn("preparing a service", "group", group, "service", svc.Name, "error", err)
-				// Same rule as the cmd path: the error's own hint, or none. A
-				// prepare step that failed before its log file was even created
-				// has no log to point at.
-				message, hint := detailAndHint(err)
-				recordStartFailure(cfg, group, svc, meta, "prepare: "+message)
-				end.Errors = append(end.Errors, svc.Name)
-				rt.Scanner.Wake()
-				if err := s.Send(rpc.GroupsStartChunk{
-					Service: svc.Name, State: "failed", Reason: "start_failed",
-					Error: "prepare failed: " + message, Hint: hint,
-				}); err != nil {
-					return end, err
+				// The step succeeded: remember exactly what it saw. A stamp
+				// write failure is not a start failure — the service can still
+				// run and the next start simply repeats prepare.
+				if cwd, err := runsreg.CheckCwd(cfg.ServiceDir(svc), p.AllowOutsideHome); err == nil {
+					if err := recordPrepareStamp(cfg.Path, svc, cwd); err != nil {
+						rt.Logger.Warn("recording prepare inputs", "group", group, "service", svc.Name, "error", err)
+					}
 				}
-				continue
 			}
 		}
 		if err := ctx.Err(); err != nil {
@@ -720,6 +739,13 @@ func pendingContext(ctx context.Context, rt *daemon.Runtime, group string, deps 
 		}
 		if !liveService(rt, snap, group, dep.Name) {
 			missing = append(missing, pendingDependency{Name: dep.Name, Display: fmt.Sprintf("%s to be running (no port)", dep.Name)})
+			continue
+		}
+		// A portless worker can still declare a command check (for example a
+		// queue consumer that reports readiness only once it has connected).
+		// Dependents wait for that verdict too.
+		if dep.Health != "" && !healthy(snap, group, dep.Name) {
+			missing = append(missing, pendingDependency{Name: dep.Name, Display: fmt.Sprintf("%s health check", dep.Name)})
 		}
 	}
 	return missing

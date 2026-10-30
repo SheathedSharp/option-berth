@@ -63,6 +63,10 @@ const (
 	LogsDir     = "logs"
 	DraftsDir   = "drafts"
 	ProfilesDir = "profiles"
+	// PrepareDir holds the content fingerprints that let `up` skip a prepare
+	// step whose declared inputs have not changed. It is a cache, not a
+	// declaration: deleting it only makes the next start slower.
+	PrepareDir = "prepare"
 	// SeenCLIFile is the `status` command's ledger of what it last showed: the
 	// anchor its "和上次比" is measured from. The app keeps one of its own
 	// (seen.json, written by the Swift client) — two readers, two anchors.
@@ -213,6 +217,9 @@ func Logs() string {
 	}
 	return filepath.Join(Dir(), LogsDir)
 }
+
+// Prepare is the directory of prepare input fingerprints.
+func Prepare() string { return filepath.Join(Dir(), PrepareDir) }
 
 // Drafts is the directory holding the drafts of a project's oberth.yaml
 // that a local agent wrote (init draft). Nothing reads it on its own: a

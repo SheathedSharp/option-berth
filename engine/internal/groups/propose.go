@@ -228,11 +228,12 @@ func serviceNotes(cfg *Config) string {
 	b.WriteString("#\n")
 	for _, line := range []string{
 		`  - name: api`,
-		`    prepare: mvn -DskipTests package  # optional: rebuild an artifact first`,
+		`    prepare: pnpm install          # optional: rebuild an artifact first`,
+		`    prepare_inputs: [package.json, pnpm-lock.yaml]  # skip prepare while these are unchanged`,
 		`    cmd: pnpm run dev              # what brings it back up`,
 		`    port: 8000                     # optional: the port it binds`,
 		`    cwd: .                         # optional: where to run it, relative to this file`,
-		`    health: /healthz               # optional: an HTTP path that says it is up`,
+		`    health: /healthz               # optional: HTTP path; or {tcp: 5432} / {command: pg_isready}`,
 		`    env:                           # optional, added to its environment`,
 		`      NODE_ENV: development`,
 		``,

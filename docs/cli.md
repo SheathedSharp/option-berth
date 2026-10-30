@@ -76,6 +76,8 @@ depends on · listeners · code · failed · next · drafts · last look），�
 即使强制停止留下了非零信号退出码也一样。
 
 `worktree.services[]` 还带有 `health_status`（`status`、`code`、`reason`、`observed_at`）。
+`health` 是声明的规范形式：HTTP 路径，或 `tcp:<port>`，或 `command:<命令行>`；`prepare_inputs` 是
+prepare 读取的文件列表，没有声明时为空数组。
 运行中的服务同时带 `manifest_hash` 与 `runtime_spec_hash`；两者不一致时
 `manifest_runtime_mismatch` 为 `true`，表示当前进程来自旧清单，应该用
 `oberth restart --only <service>` 重新应用。hash 只覆盖命令、cwd、端口、health 和依赖等可执行声明，
@@ -166,9 +168,19 @@ Jev 调用、缓存命中和无事件轮询数量；没有真实反馈时指标�
 [--allow-outside-home] [--json]
 
 按 oberth.yaml 的 depends_on 顺序启动服务。服务有 `prepare:` 时，先在同一 cwd 直接执行这个前置命令，
-成功后才启动长驻的 `cmd:`；前置命令的输出写入该服务日志，失败时服务不会启动。带端口的依赖等待监听，无端口的 worker 等待其运行记录变为活跃；
+成功后才启动长驻的 `cmd:`；前置命令的输出写入该服务日志，失败时服务不会启动。
+`prepare_inputs:` 声明该命令读取的输入文件（相对服务 cwd，例如 `[package.json, package-lock.json]`）；
+上次 prepare 成功且这些文件内容未变时，本次 `up` 直接跳过 prepare，不再重复安装依赖。指纹只在上次
+成功之后记录，输入缺失或读不到时一律重跑；缓存位于 `$BERTH_HOME/prepare`，删除它只会让下次启动更慢。
+带端口的依赖等待监听，无端口的 worker 等待其运行记录变为活跃；
 已经在运行的服务跳过；每个服务有自己的
 日志文件和运行记录。无参数时使用当前目录最近的清单，也可以显式给项目名。
+
+`health:` 有三种写法：HTTP 路径（`/healthz`，缺省形式）、TCP 连接（`health: {tcp: 5432}`，端口必须与
+服务声明的端口一致）和命令（`health: {command: pg_isready -h 127.0.0.1 -p ${port}}`）。命令在服务
+cwd 中执行，按 `cmd:` 的规则拆成 argv（不经过 shell），支持 `${port}`、`${url}` 和
+`${<service>.port}` 引用，退出码 0 视为健康。HTTP 和 TCP 只说明端口可访问；数据库这类端口先开、
+协议后就绪的服务用命令式检查。健康结果与依赖等待使用的是同一个事实。
 
 成功时人读输出逐服务报告并给出汇总；`--wait` 等待期间先输出一行 dim 提示再逐行出结果。
 --json 输出一个包含 services 和汇总字段的值。每个
@@ -178,7 +190,7 @@ Jev 调用、缓存命中和无事件轮询数量；没有真实反馈时指标�
 在 home 之外）时给拒绝本身带的做法，没有可执行的下一步时不给。
 等待判定只认**等待开始之后**记录的退出：`down` 留下的旧退出记录不会被 `up --wait` 读成本轮启动失败。
 `--wait`（`--ready` 的别名）会在返回前等待本次选择的服务（包括已经在运行、未重新启动的服务）真正监听；声明了 `health:` 的服务还必须
-通过健康检查。无端口 worker 以运行记录活跃作为 ready。默认不等待，`--wait-timeout` 默认 30s；显式指定时必须为正值且同时启用 `--wait` 或 `--ready`，否则退出 2，不执行启动；
+通过对应的健康检查（命令式检查不要求服务自己监听）。无端口 worker 以运行记录活跃作为 ready。默认不等待，`--wait-timeout` 默认 30s；显式指定时必须为正值且同时启用 `--wait` 或 `--ready`，否则退出 2，不执行启动；
 超时的服务状态为 `failed`、原因是 `ready_timeout`，命令退出码为 1。只有本次新启动的超时运行才进入停止清理；
 已经存在的运行不会因这次等待失败而被停止或重启。`started` / `skipped` 汇总描述启动动作，
 就绪判定失败另外出现在 `errors` 与逐服务 `state` 中。对本次新启动且被清理的运行，

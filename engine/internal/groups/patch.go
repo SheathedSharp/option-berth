@@ -25,7 +25,7 @@ const (
 // is inserted at this position relative to the keys already there, so an
 // edited file still reads the way a hand-written one does. Keys nobody here
 // knows about sort last and are never moved.
-var keyOrder = []string{"name", "prepare", "cmd", "cwd", "port", "health", "description", "icon", "color", "depends_on"}
+var keyOrder = []string{"name", "prepare", "prepare_inputs", "cmd", "cwd", "port", "health", "description", "icon", "color", "depends_on"}
 
 // ServicePatch is the editable subset of one `oberth.yaml` service
 // (contract §13.2). Three states matter: a field the caller did not mention is
@@ -131,7 +131,12 @@ func (p ServicePatch) value(field string) (node *yaml.Node, clear bool) {
 	case FieldColor:
 		return strScalar(p.Color), p.Color == nil
 	case FieldHealth:
-		return strScalar(p.Health), p.Health == nil
+		if p.Health == nil {
+			return nil, true
+		}
+		// Accept the published canonical form, so a client that reads
+		// tcp:5432 or command:pg_isready can write it back unchanged.
+		return healthNode(ParseHealth(*p.Health)), false
 	case FieldPort:
 		if p.Port == nil {
 			return nil, true

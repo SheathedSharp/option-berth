@@ -151,6 +151,7 @@ func (c *Config) refProblems(s Service, where string) []string {
 	}
 	check("prepare", s.Prepare)
 	check("cmd", s.Cmd)
+	check("health", s.Health)
 	keys := make([]string, 0, len(s.Env))
 	for k := range s.Env {
 		keys = append(keys, k)

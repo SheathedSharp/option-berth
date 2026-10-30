@@ -133,14 +133,18 @@ func (r *resolutionPass) describeCheckout(g *state.Group) {
 // publishes.
 func ServiceRow(s Service) state.Service {
 	svc := state.Service{
-		Name:      s.Name,
-		Prepare:   s.Prepare,
-		Cmd:       s.Cmd,
-		Cwd:       s.Cwd,
-		DependsOn: append([]string{}, s.DependsOn...),
+		Name:          s.Name,
+		Prepare:       s.Prepare,
+		PrepareInputs: append([]string{}, s.PrepareInputs...),
+		Cmd:           s.Cmd,
+		Cwd:           s.Cwd,
+		DependsOn:     append([]string{}, s.DependsOn...),
 	}
 	if svc.DependsOn == nil {
 		svc.DependsOn = []string{}
+	}
+	if svc.PrepareInputs == nil {
+		svc.PrepareInputs = []string{}
 	}
 	if s.Port != 0 {
 		port := s.Port

@@ -43,7 +43,8 @@ func servicesEqual(a, b []Service) bool {
 }
 
 func serviceEqual(a, b *Service) bool {
-	return a.Name == b.Name && a.Prepare == b.Prepare && a.Cmd == b.Cmd && a.Cwd == b.Cwd &&
+	return a.Name == b.Name && a.Prepare == b.Prepare && sliceEqual(a.PrepareInputs, b.PrepareInputs) &&
+		a.Cmd == b.Cmd && a.Cwd == b.Cwd &&
 		pointerEqual(a.Port, b.Port) && a.PortAuto == b.PortAuto && pointerEqual(a.Health, b.Health) &&
 		healthEqual(a.HealthStatus, b.HealthStatus) &&
 		pointerEqual(a.RuntimeCmd, b.RuntimeCmd) && pointerEqual(a.RuntimeCwd, b.RuntimeCwd) &&

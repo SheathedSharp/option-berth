@@ -1849,6 +1849,12 @@
         "prepare": {
           "type": "string"
         },
+        "prepare_inputs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "cmd": {
           "type": "string"
         },
@@ -2035,6 +2041,7 @@
       "required": [
         "name",
         "prepare",
+        "prepare_inputs",
         "cmd",
         "cwd",
         "port",
@@ -2066,6 +2073,12 @@
         },
         "prepare": {
           "type": "string"
+        },
+        "prepare_inputs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "port": {
           "type": "integer"
