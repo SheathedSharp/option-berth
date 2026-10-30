@@ -138,9 +138,9 @@ Codex 0.166 只发 Responses 请求，并要求 SSE 以 `response.completed` 结
 只提供非流式 Responses 和流式 chat completions。因此 workflow 在 loopback 上启动
 [`scripts/codex_responses_bridge.py`](../scripts/codex_responses_bridge.py)，把 Codex 的
 Responses 请求翻译成 chat completions，再把结果翻译回 Codex 需要的 Responses 事件。
-bridge 是验收夹具，不是被测产品：它只转发 function / custom 工具，丢掉 hosted 工具，
-并且持有 gateway key 的进程不会把 key 交给 agent。报告里的 Codex 行仍然是真实 Codex
-CLI 与真实模型的结果，bridge 只改变传输协议。
+bridge 是验收夹具，不是被测产品：它只转发 function / custom 工具，丢掉 hosted 工具；
+gateway key 只存在于 bridge 进程自己的环境里，不进入 Codex 的 argv 或运行环境。
+报告里的 Codex 行仍然是真实 Codex CLI 与真实模型的结果，bridge 只改变传输协议。
 
 workflow 显式传入自主执行参数：Claude `--permission-mode=bypassPermissions`、Codex
 `--sandbox danger-full-access`、OpenCode `--auto`、Pi `--approve`。harness 自己仍然不加
