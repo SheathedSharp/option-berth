@@ -1,0 +1,8 @@
+# The quality gate's configuration and mechanics need the maintainer's review.
+/.github/workflows/ @SheathedSharp
+/.github/CODEOWNERS @SheathedSharp
+/.github/quality-gate-checks.json @SheathedSharp
+/scripts/release.py @SheathedSharp
+/scripts/race-packages.txt @SheathedSharp
+/scripts/check_ci_gate.py @SheathedSharp
+/scripts/check_ci_gate_test.py @SheathedSharp

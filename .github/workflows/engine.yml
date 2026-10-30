@@ -51,7 +51,7 @@ jobs:
           # BERTH_HOME across packages or the unit/race/scenario steps.
           mkdir -p verification
           git rev-parse HEAD > verification/commit.txt
-          git rev-parse HEAD^{tree} > verification/tree.txt
+          git rev-parse 'HEAD^{tree}' > verification/tree.txt
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: engine/go.mod
@@ -59,6 +59,17 @@ jobs:
       - name: Native build
         working-directory: engine
         run: go build ./...
+      - name: Cross-build release targets
+        if: runner.os == 'Linux'
+        working-directory: engine
+        shell: bash
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            GOOS=${target%/*} GOARCH=${target#*/} go build ./...
+          done
       - name: Vet
         working-directory: engine
         shell: bash
@@ -79,7 +90,12 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          go test -race -count=1 -timeout=10m ./internal/claims ./internal/runs ./internal/spawn ./internal/daemon/... ./internal/git ./internal/groups ./internal/ports ./internal/scanner ./internal/servicefacts ./internal/state ./internal/store ./internal/killer 2>&1 | tee ../verification/race.log
+          # macOS ships bash 3.2, which has no mapfile.
+          race_packages=()
+          while IFS= read -r package; do
+            race_packages+=("$package")
+          done < <(grep -vE '^[[:space:]]*(#|$)' ../scripts/race-packages.txt)
+          go test -race -count=1 -timeout=10m "${race_packages[@]}" 2>&1 | tee ../verification/race.log
       - name: Real service scenarios
         if: github.event_name == 'workflow_dispatch' && (success() || failure())
         working-directory: engine

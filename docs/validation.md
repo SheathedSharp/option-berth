@@ -3,16 +3,27 @@
 当前工作流均记录实际源码身份；检查结论只对应运行中的 commit，不沿用旧库或本机的历史结果。
 自动门槛分两层：`Engine verification` 在 PR 与 `main` 推送时于 macOS / Ubuntu 运行原生构建、vet、
 全引擎单元测试、Mage 工作流回归与 Python 辅助测试，并在 Windows 上用 Windows PowerShell 5.1
-解析 `install.ps1` / `uninstall.ps1`；核心 race 与真实服务场景只在手动 `workflow_dispatch` 和推送
-`v*` 注释标签时的 `Verified release` 中运行。站点改动由
+解析 `install.ps1` / `uninstall.ps1`；`Windows build verification` 在 PR 与引擎相关 `main` 推送时
+运行 Windows x64 原生构建、CLI 冒烟、脚本解析、服务生命周期与事实/持久化检查，并在 Ubuntu 上
+交叉构建 Windows arm64。核心 race 与真实服务场景只在手动 `workflow_dispatch`、
+每日 `Nightly full verification` 和推送 `v*` 注释标签时的 `Verified release` 中运行。站点改动由
 `.github/workflows/site.yml` 在 PR 与 `main` 推送时验证。需要分项检查时可在 Actions 里手动
 `workflow_dispatch` 对应工作流，发版前仍应跑本地 `scripts/release-*.sh` 预览与 `--execute` 验证。
 
 | 工作流 | 触发 | 平台与内容 |
 |---|---|---|
-| Engine verification | PR、引擎相关 `main` 推送、手动 | 自动：macOS / Ubuntu 原生构建、vet、全引擎单元测试、Mage 工作流回归、Python 辅助测试，以及 Windows PowerShell 5.1 解析安装/卸载脚本；手动另跑核心 race 与真实服务场景。 |
-| Git read verification | 手动 | macOS / Ubuntu：Git、worktree、归因与观察的重复测试和 race。 |
-| Windows build verification | 发布标签（`Verified release` 调用） | Windows x64：原生构建、vet、CLI/Jev 构建、version JSON/帮助页、事实/持久化，以及隔离 API/无端口 worker 的启动、重复启动、采集器恢复和限定停止；Ubuntu：Windows arm64 交叉构建。 |
+| Engine verification | PR、引擎相关 `main` 推送、手动 | 自动：macOS / Ubuntu 原生构建、vet、全引擎单元测试、Mage 工作流回归、Python 辅助测试，Ubuntu 上六个发布目标的交叉构建，以及 Windows PowerShell 5.1 解析安装/卸载脚本；手动另跑核心 race 与真实服务场景。 |
+| Nightly full verification | 每日 18:23 UTC、手动 | macOS / Ubuntu：与 `scripts/release.py --verify-only` 相同的完整门槛，含核心 race 与真实服务场景。 |
+| Git read verification | PR、相关 `main` 推送、手动 | macOS / Ubuntu：Git、worktree、归因与观察的重复测试和 race。 |
+| Hello worktree example | PR、引擎相关 `main` 推送、手动 | macOS / Ubuntu：在两个 worktree 中验证仓库内示例。 |
+| Reused service readiness | PR、引擎相关 `main` 推送、手动 | macOS / Ubuntu：真实健康与不健康服务的复用检查。 |
+| Windows build verification | PR、引擎相关 `main` 推送、发布标签、手动 | Windows x64：原生构建、vet、CLI/Jev 构建、version JSON/帮助页、事实/持久化，以及隔离 API/无端口 worker 的启动、重复启动、采集器恢复和限定停止；Ubuntu：Windows arm64 交叉构建。 |
+| Gate integrity | PR（`pull_request_target`） | 修改 `.github/workflows/`、CODEOWNERS、race 清单、发布脚本或质量门检查脚本时，要求 PR 作者是仓库维护者。 |
+| CI configuration | PR、CI 相关 `main` 推送、手动 | Ubuntu：actionlint 检查全部 workflow，并校验 required checks 与 workflow job 名一致。 |
+| Bounded ancestry comparison | 手动（证据） | Ubuntu：在同一 runner 上对比分支与指定基线的有界基准；不作为合并门槛。 |
+
+必需检查的唯一清单是 `.github/quality-gate-checks.json`；workflow job 名由 PR 上的 `CI configuration`
+校验，线上 ruleset 另由每日 `Nightly full verification` 校验。
 
 CLI、Mage 与品牌迁移分别审查、验证、合并，没有引入旧私人 Git 祖先。
 品牌检查比较本仓库导出的 SVG 与同级 `option-berth-macos` 里的 `BerthGeometry.swift`；
@@ -29,7 +40,7 @@ cd engine
 go build ./...
 go vet ./...
 go test -count=1 -timeout=8m ./...
-go test -race -count=1 -timeout=10m ./internal/claims ./internal/runs ./internal/spawn ./internal/daemon/... ./internal/git ./internal/groups ./internal/ports ./internal/scanner ./internal/servicefacts ./internal/state ./internal/store ./internal/killer
+go test -race -count=1 -timeout=10m $(grep -vE '^[[:space:]]*(#|$)' ../scripts/race-packages.txt)
 go test -tags integration -count=1 -timeout=8m ./internal/scenario/...
 ```
 

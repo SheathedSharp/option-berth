@@ -296,7 +296,12 @@ func TestStatsTickIsSerializedWithScans(t *testing.T) {
 			}
 		}()
 	}
-	waitFor(t, "a few stats samples under load", func() bool { return r.samples.Load() >= 5 })
+	// Samples alone do not prove a publish: a scan can supersede a stats tick
+	// before it commits. Wait for both so the test actually exercises an
+	// interleaving instead of stopping on the first sample.
+	waitFor(t, "five stats samples and two publishes under load", func() bool {
+		return r.samples.Load() >= 5 && len(r.published()) >= 2
+	})
 	close(stop)
 	wg.Wait()
 

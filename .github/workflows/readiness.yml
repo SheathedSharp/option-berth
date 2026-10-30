@@ -1,5 +1,14 @@
 name: Reused service readiness
 on:
+  # No path filter on pull_request: a skipped required workflow leaves its
+  # check pending and blocks the PR.
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - 'engine/**'
+      - 'scripts/verify-reused-readiness.py'
+      - '.github/workflows/readiness.yml'
   workflow_dispatch:
 permissions:
   contents: read
@@ -8,6 +17,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   native:
+    name: Reused readiness / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:

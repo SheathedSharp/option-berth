@@ -1,6 +1,12 @@
 name: Bounded ancestry comparison
 on:
+  # Evidence for a specific comparison, not a required merge gate.
   workflow_dispatch:
+    inputs:
+      base:
+        description: Base ref to compare against
+        required: false
+        default: main
 permissions:
   contents: read
 concurrency:
@@ -20,7 +26,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ inputs.base }}
           path: before
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
