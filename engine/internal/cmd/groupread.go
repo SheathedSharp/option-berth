@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -17,29 +18,119 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
+// scanPorts and scanProbe are the observation seams. Production uses the real
+// collector; tests that exercise a later stage replace them so they do not
+// depend on the host's ability to read its own listener table.
+var (
+	scanPorts = ports.Scan
+	scanProbe = ports.ProbeListenerObservation
+)
+
 // groupRows joins the worktree's live port evidence with its manifest index.
 // Status uses the same source whether the daemon is warm or the caller asks
 // for a direct scan.
 func groupRows(ctx context.Context) ([]ports.ListeningPort, []state.Group, error) {
+	got, groups, _, err := groupRowsObserved(ctx)
+	return got, groups, err
+}
+
+// groupRowsObserved is groupRows plus the self-probe verdict. A blind
+// observation still yields the manifest and run view, with no ports; callers
+// that cannot degrade use groupRows and get the same rows, while status can
+// say why the port list is unknown.
+func groupRowsObserved(ctx context.Context) ([]ports.ListeningPort, []state.Group, *rpc.ObservationStatus, error) {
+	var daemonErr error
 	if !noDaemonFlag {
 		if c, err := dialDaemon(ctx); err == nil {
 			defer c.Close()
 			var snap state.Snapshot
 			if err := c.Call(ctx, "state.snapshot", rpc.StateSnapshotParams{}, &snap); err == nil {
-				return state.ToListeningAll(snap.Ports), snap.Groups, nil
+				probe := c.Hello().Observation
+				if probe == nil || probe.State == string(ports.ObservationObservable) {
+					// The snapshot may still be partial: the daemon's collector
+					// could read some rows and not others. Carry that verdict,
+					// falling back to the probe's healthy one.
+					obs := snap.Observation
+					if obs == nil {
+						obs = probe
+					}
+					return state.ToListeningAll(snap.Ports), snap.Groups, obs, nil
+				}
+				// A blind daemon can still serve its last-good snapshot. Treat
+				// those ports as unknown, not as current facts; try this process
+				// and keep the daemon's reason for the fallback note.
+				daemonErr = &cliErr{Code: probe.Code, Msg: "daemon cannot see listeners: " + probe.Detail, Hint: probe.Hint}
+			} else {
+				daemonErr = cliError(err)
 			}
 		}
 	}
-	return scanGroups()
+	got, groups, obs, err := scanGroupsObserved(ctx)
+	if err != nil {
+		if daemonErr == nil {
+			return nil, nil, obs, err
+		}
+		// Both paths failed: keep the local code and hint, but do not lose the
+		// daemon's reason. "Daemon is blind" and "this CLI is blind" are two
+		// facts a reader needs to choose the next step.
+		dcode, dmsg, _ := describe(daemonErr)
+		lcode, lmsg, lhint := describe(err)
+		return nil, nil, obs, failHint(lcode,
+			fmt.Sprintf("%s; daemon also failed: %s: %s", lmsg, dcode, dmsg), lhint)
+	}
+	if daemonErr != nil {
+		noteFallbackBecause(daemonErr)
+	}
+	return got, groups, obs, nil
 }
 
 // scanGroups runs a direct scan, resolves every port's manifest attribution,
 // and builds the group collection. Invalid manifests are reported and skipped
 // so a broken sibling file does not block status for the current worktree.
 func scanGroups() ([]ports.ListeningPort, []state.Group, error) {
-	results, err := ports.Scan()
-	if err != nil {
-		return nil, nil, err
+	got, groups, _, err := scanGroupsObserved(context.Background())
+	return got, groups, err
+}
+
+// scanGroupsObserved is the direct path with an observation verdict. When the
+// collector cannot produce a trustworthy table, the manifest and run registry
+// still describe what is declared and what was started; the ports are unknown.
+func scanGroupsObserved(ctx context.Context) ([]ports.ListeningPort, []state.Group, *rpc.ObservationStatus, error) {
+	results, scanErr := scanPorts()
+	var obs *rpc.ObservationStatus
+	if scanErr != nil {
+		if partial, ok := ports.PartialRows(scanErr); ok {
+			// The collector read a table; some rows were unreadable. Publish
+			// the readable ones, but say the rest are unknown.
+			results = partial
+			hint := ""
+			var oe *ports.ObservationError
+			if errors.As(scanErr, &oe) {
+				hint = oe.Hint
+			}
+			obs = &rpc.ObservationStatus{
+				State:     state.ObservationPartial,
+				Code:      ports.CodeObservationIncomplete,
+				Detail:    scanErr.Error(),
+				Hint:      hint,
+				CheckedAt: time.Now().UTC().Format(time.RFC3339),
+			}
+		} else {
+			var oe *ports.ObservationError
+			if !errors.As(scanErr, &oe) {
+				return nil, nil, nil, scanErr
+			}
+			probe := scanProbe(ctx)
+			obs = observationFromProbe(probe, oe)
+			// The probe saw its own listener, so the collector works; an empty
+			// first pass may have been transient. One retry settles it without
+			// publishing the probe's own socket.
+			if oe.Code == ports.CodeObservationEmpty && probe.State == ports.ObservationObservable {
+				if retry, err := scanPorts(); err == nil {
+					results = retry
+				}
+			}
+		}
 	}
 	docker.EnrichPorts(results)
 	ports.Enrich(results)
@@ -65,7 +156,42 @@ func scanGroups() ([]ports.ListeningPort, []state.Group, error) {
 		results[i].HealthLatency = time.Duration(h.LatencyMs) * time.Millisecond
 		results[i].HealthObservedAt = h.ObservedAt
 	}
-	return results, groupRows, nil
+	return results, groupRows, obs, nil
+}
+
+// observationFromProbe turns a failed scan plus the probe verdict into the fact
+// a status reader needs. Empty output takes the probe's reason; a format or row
+// problem keeps its own code but is still reported as blind to a trustworthy
+// table.
+func observationFromProbe(probe ports.ProbeResult, scanErr *ports.ObservationError) *rpc.ObservationStatus {
+	state, code := probe.State, scanErr.Code
+	detail, hint := scanErr.Error(), scanErr.Hint
+	switch {
+	case scanErr.Code == ports.CodeObservationEmpty:
+		code = probe.Code
+		// probe.Detail already carries the collector failure; appending it
+		// again reads like two separate problems.
+		detail = probe.Detail
+		if detail == "" {
+			detail = scanErr.Error()
+		}
+		hint = probe.Hint
+	case probe.State == ports.ObservationBindDenied:
+		state = ports.ObservationBindDenied
+		code = probe.Code
+		detail = fmt.Sprintf("%s (%s)", probe.Detail, scanErr.Error())
+		hint = probe.Hint
+	default:
+		state = ports.ObservationBlind
+		detail = fmt.Sprintf("%s (probe: %s)", scanErr.Error(), probe.Detail)
+	}
+	return &rpc.ObservationStatus{
+		State:     string(state),
+		Code:      code,
+		Detail:    detail,
+		Hint:      hint,
+		CheckedAt: time.Now().UTC().Format(time.RFC3339),
+	}
 }
 
 // directRunRegistry is the no-daemon view of option-berth's own live runs.

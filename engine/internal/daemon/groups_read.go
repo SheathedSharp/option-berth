@@ -34,8 +34,7 @@ func readGroups(rt *Runtime) ([]state.Group, error) {
 	}
 	snap, err := rt.Scanner.Snapshot(scanner.Include{})
 	if err != nil {
-		return nil, rpc.NewError(rpc.CodeInternal, "scan failed: "+err.Error(),
-			"check `oberth daemon log` for the scanner error")
+		return nil, scanFailure(err)
 	}
 	return orEmptyGroups(snap.Groups), nil
 }

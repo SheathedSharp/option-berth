@@ -12,6 +12,7 @@ import (
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
 // The exit codes docs/cli.md documents, and the classification behind them.
@@ -102,6 +103,20 @@ func TestDaemonErrorKeepsItsCode(t *testing.T) {
 	}
 	if ce.Code != "not_found" || ce.Msg != detail || ce.Hint != "check the port" {
 		t.Fatalf("cliErr = %+v", ce)
+	}
+}
+
+// The no-daemon direct scan returns a collector error, not an rpc.Error. A
+// sandboxed agent must read observation_empty rather than "internal".
+func TestObservationErrorKeepsItsCode(t *testing.T) {
+	err := &ports.ObservationError{
+		Code:   ports.CodeObservationEmpty,
+		Detail: "netstat: exited 0 but printed no listening table",
+		Hint:   "retry outside the sandbox",
+	}
+	code, msg, hint := describe(err)
+	if code != ports.CodeObservationEmpty || msg != err.Detail || hint != err.Hint {
+		t.Fatalf("describe = %q, %q, %q", code, msg, hint)
 	}
 }
 

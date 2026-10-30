@@ -84,6 +84,10 @@ type statusDocument struct {
 	// which is not the same as nothing having changed (`empty` inside says
 	// that).
 	Changed *statusChange `json:"changed,omitempty"`
+	// Observation is present when the listener table could not be trusted.
+	// Ports and port_actual are then unknown, not empty; the manifest and run
+	// records still describe what was declared and started.
+	Observation *rpc.ObservationStatus `json:"observation,omitempty"`
 }
 
 func statusRun(cmd *cobra.Command, args []string) error {
@@ -179,7 +183,7 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool) (statusDocu
 	// One snapshot for everything the daemon knows: the group row already
 	// carries the join between the manifest and reality (running, port_actual,
 	// last_exit), and its ports are the "actually listening" half.
-	pp, gg, err := groupRows(ctx)
+	pp, gg, obs, err := groupRowsObserved(ctx)
 	if err != nil {
 		return statusDocument{}, err
 	}
@@ -196,7 +200,7 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool) (statusDocu
 		// manifest here while the daemon's index still points at the gone path.
 		// Reading the manifest once brings it into the index; then re-read.
 		if refreshConfigIndex(ctx, root) {
-			pp, gg, err = groupRows(ctx)
+			pp, gg, obs, err = groupRowsObserved(ctx)
 			if err != nil {
 				return statusDocument{}, err
 			}
@@ -241,12 +245,13 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool) (statusDocu
 	}
 
 	doc := statusDocument{
-		Scope:    display.Scope{Kind: "worktree", Name: name, Root: root},
-		Worktree: *group,
-		Ports:    ports,
-		Git:      tree,
-		Drafts:   []draft.Pending{},
-		Exits:    statusExits(ctx, name),
+		Scope:       display.Scope{Kind: "worktree", Name: name, Root: root},
+		Worktree:    *group,
+		Ports:       ports,
+		Git:         tree,
+		Drafts:      []draft.Pending{},
+		Exits:       statusExits(ctx, name),
+		Observation: publicObservation(obs),
 	}
 	if pending, ok := draft.PendingFor(name); ok {
 		doc.Drafts = append(doc.Drafts, pending)
@@ -374,13 +379,25 @@ func localStatusGroup(root, name string, pp []ports.ListeningPort) (*state.Group
 	for _, p := range pp {
 		rows = append(rows, state.FromListening(p))
 	}
-	for _, candidate := range groups.Groups(rows, index) {
+	// Include local run history: when the listener table is unavailable this
+	// is the only evidence that a declared service was started and is alive.
+	for _, candidate := range groups.GroupsWith(rows, index, directRunHistory()) {
 		if candidate.Name == name {
 			copy := candidate
 			return &copy, true
 		}
 	}
 	return nil, false
+}
+
+// publicObservation keeps the healthy wire shape unchanged: an observable
+// process has no observation object. Any other verdict is a fact the reader
+// needs before treating an empty port list as idle.
+func publicObservation(obs *rpc.ObservationStatus) *rpc.ObservationStatus {
+	if obs == nil || obs.State == string(ports.ObservationObservable) {
+		return nil
+	}
+	return obs
 }
 
 // statusExits is the finished runs of one group, newest first. A registry that
@@ -482,6 +499,12 @@ func printStatus(doc statusDocument) {
 	}
 	fmt.Println(head)
 
+	if doc.Observation != nil {
+		statusLine("listeners", display.Yellow("unknown")+" · "+doc.Observation.Detail)
+		if doc.Observation.Hint != "" {
+			statusLine("next", doc.Observation.Hint)
+		}
+	}
 	printStatusServices(doc)
 	printStatusMachine(doc)
 	printStatusUnclaimedPorts(doc)

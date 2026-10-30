@@ -336,7 +336,7 @@ func fallbackEntry(h *spawn.Handle) runs.Entry {
 // connectDaemon dials the daemon, starting one if needed: a run has to be
 // registered somewhere that outlives the command.
 func connectDaemon(ctx context.Context) (*client.Client, error) {
-	return client.Connect(ctx, client.ClientInfo{Name: "cli", Version: buildinfo.Version})
+	return connectForWrite(ctx)
 }
 
 // connectRunningDaemon dials without autostarting: cleaning up a run is no

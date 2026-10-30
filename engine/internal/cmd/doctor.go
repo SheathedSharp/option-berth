@@ -158,8 +158,18 @@ func doctorDaemonProbe(ctx context.Context) doctor.DaemonInfo {
 		Socket:          hello.Socket,
 		PID:             hello.PID,
 		DBPath:          status.DBPath,
+		Observation:     greatestObservation(status.Observation, hello.Observation),
 	}
 	return info
+}
+
+// greatestObservation prefers the status probe (current) over the hello cache
+// (up to observationTTL old), and a reported verdict over an absent one.
+func greatestObservation(current, cached *rpc.ObservationStatus) *rpc.ObservationStatus {
+	if current != nil {
+		return current
+	}
+	return cached
 }
 
 // ---------------------------------------------------------------- render ---

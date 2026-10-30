@@ -224,7 +224,9 @@ type statusDoc struct {
 	// Ports are the listeners attributed to this project. A port here that no
 	// declared service claims is "running but undeclared".
 	Ports []struct {
-		Port int `json:"port"`
+		Port          int      `json:"port"`
+		BindAddress   string   `json:"bind_address"`
+		BindAddresses []string `json:"bind_addresses"`
 	} `json:"ports"`
 	// Exits are the finished runs' failure evidence: the thing that answers
 	// "declared but not running — why" (exit code + last lines).
@@ -399,6 +401,81 @@ func TestAPIServerAndWorkerEndToEnd(t *testing.T) {
 	}
 	if !down.OK {
 		t.Error("down reported ok=false")
+	}
+}
+
+// A service that binds the dual-stack wildcard is printed by macOS netstat as
+// tcp46. Before the decoder accepted that row, `up --wait` never saw the
+// listener, timed out after the full readiness budget, and then stopped the run
+// it had just started. This is the default bind of Go, Node and Java.
+func TestDualStackServiceBecomesReadyEndToEnd(t *testing.T) {
+	e := newEnv(t)
+	e.serve()
+
+	b, err := DualStackAPIServer(filepath.Join(e.home, "dual-stack"))
+	if err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+	t.Cleanup(func() {
+		e.cleanupBuilt(b)
+		_, _ = e.run("", "daemon", "stop", "--json")
+	})
+
+	var up struct {
+		Services []struct {
+			Service string `json:"service"`
+			State   string `json:"state"`
+			Error   string `json:"error"`
+		} `json:"services"`
+		Errors []string `json:"errors"`
+	}
+	stdout, stderr, err := e.runCapture(b.Root, "up", "--wait", "--wait-timeout", "20s", "--json")
+	if err != nil {
+		t.Fatalf("up --wait: %v\nstdout=%s\nstderr=%s", err, stdout, stderr)
+	}
+	if err := json.Unmarshal(stdout, &up); err != nil {
+		t.Fatalf("decode up: %v\n%s", err, stdout)
+	}
+	if len(up.Errors) != 0 {
+		t.Fatalf("up reported errors: %v", up.Errors)
+	}
+	ready := false
+	for _, svc := range up.Services {
+		if svc.Service != "api" {
+			continue
+		}
+		if svc.Error != "" {
+			t.Fatalf("api did not become ready: %+v", svc)
+		}
+		if svc.State == "ready_timeout" || svc.State == "failed" {
+			t.Fatalf("api state = %q: %+v", svc.State, svc)
+		}
+		ready = true
+	}
+	if !ready {
+		t.Fatalf("up did not account for api: %+v", up)
+	}
+
+	st := e.waitStatus(b.Root, func(d statusDoc) bool {
+		return d.serviceRunning("api", b.Port, true)
+	})
+	found := false
+	for _, p := range st.Ports {
+		if p.Port != b.Port {
+			continue
+		}
+		found = true
+		// macOS is the platform where one dual-stack socket is printed as
+		// tcp46 and must become both wildcard addresses. Linux/Windows show
+		// their native shape; the port being attributable is the shared claim.
+		if runtime.GOOS == "darwin" {
+			if p.BindAddress != "0.0.0.0" || len(p.BindAddresses) != 1 || p.BindAddresses[0] != "::" {
+				t.Errorf("dual-stack row = bind %q extra %v, want 0.0.0.0 + [::]", p.BindAddress, p.BindAddresses)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("status did not carry port %d: %+v", b.Port, st.Ports)
 	}
 }
 

@@ -244,6 +244,9 @@
         },
         "keepalive": {
           "type": "boolean"
+        },
+        "observation": {
+          "$ref": "#/definitions/Observation"
         }
       },
       "type": "object",
@@ -301,6 +304,9 @@
         },
         "db_path": {
           "type": "string"
+        },
+        "observation": {
+          "$ref": "#/definitions/Observation"
         }
       },
       "type": "object",
@@ -1194,6 +1200,29 @@
       "type": "object",
       "required": [
         "ok"
+      ]
+    },
+    "Observation": {
+      "properties": {
+        "state": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "hint": {
+          "type": "string"
+        },
+        "checked_at": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "state"
       ]
     },
     "Port": {
@@ -2330,6 +2359,9 @@
             "$ref": "#/definitions/SessionRecord"
           },
           "type": "array"
+        },
+        "observation": {
+          "$ref": "#/definitions/Observation"
         }
       },
       "type": "object",

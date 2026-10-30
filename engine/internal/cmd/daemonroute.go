@@ -29,6 +29,18 @@ func noteFallback() {
 	})
 }
 
+// fallbackCauseOnce is noteFallback for a daemon that answered with an error.
+// The cause is printed, not swallowed: "the daemon could not scan" and "there
+// is no daemon" are different facts.
+var fallbackCauseOnce sync.Once
+
+func noteFallbackBecause(err error) {
+	fallbackCauseOnce.Do(func() {
+		_, msg, _ := describe(err)
+		fmt.Fprintf(os.Stderr, "%s\n", display.Dim("note: daemon failed ("+msg+"), using direct scan"))
+	})
+}
+
 // dialDaemon is the seam the CLI tests replace. It connects to a daemon that is
 // already listening and never starts one: every command routed through here
 // works without a daemon (spec, "CLI surface": `list`, `info`, `next`, `wait`,

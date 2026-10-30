@@ -95,8 +95,7 @@ func killSnapshot(ctx context.Context, req *Request) (state.Snapshot, error) {
 		return state.Snapshot{}, err
 	}
 	if err != nil {
-		return state.Snapshot{}, rpc.NewError(rpc.CodeInternal, "scan failed: "+err.Error(),
-			"check `oberth daemon log` for the scanner error")
+		return state.Snapshot{}, scanFailure(err)
 	}
 	return snap, nil
 }

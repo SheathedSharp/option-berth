@@ -3,6 +3,8 @@ package killer
 import (
 	"errors"
 	"fmt"
+
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
 // Error codes from the cross-spec contract's error model (§2). The killer only
@@ -53,6 +55,12 @@ func Code(err error) string {
 	if errors.As(err, &c) {
 		return c.Code
 	}
+	// A collection failure before any target was resolved carries the
+	// collector's own code, so the CLI does not report a sandbox as an engine bug.
+	var oe *ports.ObservationError
+	if errors.As(err, &oe) {
+		return oe.Code
+	}
 	return CodeInternal
 }
 
@@ -61,6 +69,10 @@ func Hint(err error) string {
 	var c *CodedError
 	if errors.As(err, &c) {
 		return c.Hint
+	}
+	var oe *ports.ObservationError
+	if errors.As(err, &oe) {
+		return oe.Hint
 	}
 	return ""
 }

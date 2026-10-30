@@ -35,6 +35,33 @@ go test -tags integration -count=1 -timeout=8m ./internal/scenario/...
 
 Mage 与品牌检查分别位于各自 PR 及 CI。构建、安装和服务起停是不同副作用，普通检查不操作日常用户服务。
 
+### 监听观察：双栈、探针与沙箱
+
+macOS 把 Go `net.Listen("tcp", ":p")`、Node `listen(p)` 和 Java 默认绑定打印成 `tcp46`。
+2026-10-30 从本机 shell 抓取真实表：65 个 LISTEN 行里 12 个是 `tcp46`；修复前的解码器
+一个都看不到。修复后同一份真实表解码出全部 12 个端口（53 行合并结果）；
+`internal/ports/testdata/darwin_netstat_tcp46.txt` 保留同列布局的合成夹具。
+`TestDualStackServiceBecomesReadyEndToEnd` 用双栈服务跑真实 `up --wait`，但在本机无法执行：
+Go 进程读取 `sysctl net.inet.tcp.pcblist_n` 只得到截断结果，daemon 看不到任何监听；
+这条集成测试须在能读取完整监听表的 macOS/Linux 构建环境通过。
+
+沙箱里 `netstat` 可能以 0 退出给出空表（Codex 的 read-only seatbelt 下还会在 stderr 报
+`Operation not permitted`）。现在采集器返回 `observation_empty` / `observation_unrecognized` /
+`observation_incomplete`，CLI 再用自证探针给出 `observable` / `blind` / `bind_denied`。
+实测三家：Codex（`codex sandbox` 的同一 seatbelt 策略；agent 会话因 401 无法调用模型）、
+Claude Code（`sandbox.enabled` 的非交互会话）、Cursor（`--sandbox enabled` 的非交互会话）
+都返回 `observation_bind_denied`；`status --json` 仍以 0 退出并返回清单、服务、日志路径和
+`observation`，`ports` 为空、`port_actual` 为 null。`up --wait` 在自启前被守门拒绝并提示到
+普通终端运行 `oberth serve --detach`；`doctor --only listener_observation` 报告同一结论。
+Claude 会话的 agent 据此说明“知道项目声明了什么、无法确认监听”，没有重试或转述 internal。
+
+好行夹坏行的夹具（`TestCollectListenersKeepsReadableRowsWhenOneRowFails`）和 scanner 的
+partial 测试确认：可读行照常发布，坏行对应的端口不在结果里，快照带
+`observation.state=partial`。
+
+本机普通 shell 启动的 Go 进程同样拿不到完整监听表，所以 `TestScanFindsIsolatedListener`
+在这台机器上失败；这是环境限制，不是本次改动的回归。
+
 发布安装与卸载脚本用本地夹具跑通：平台映射、latest 重定向、固定版本、SHA256 不匹配不落盘、
 PATH 配置、旧包缺少 `install-path.sh` 时的标签回退、未知参数在下载前失败，以及卸载只删
 安装器写入的精确 PATH 行、默认保留 `~/.option-berth`、`--purge-state` 才删除状态目录。

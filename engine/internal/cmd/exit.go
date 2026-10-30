@@ -8,6 +8,7 @@ import (
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
 // Exit codes — the table in docs/cli.md. A caller branches on the status
@@ -76,6 +77,12 @@ func describe(err error) (code, msg, hint string) {
 	var re *rpc.Error
 	if errors.As(err, &re) {
 		return re.Data.Code, re.Data.Detail, re.Data.Hint
+	}
+	// The direct-scan path (no daemon) returns the collector's own error. Keep
+	// its code and hint instead of letting describe flatten it into "internal".
+	var oe *ports.ObservationError
+	if errors.As(err, &oe) {
+		return oe.Code, oe.Error(), oe.Hint
 	}
 	var ue usageError
 	if errors.As(err, &ue) {
