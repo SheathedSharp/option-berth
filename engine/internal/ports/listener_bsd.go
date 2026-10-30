@@ -32,7 +32,11 @@ func decodeDarwinNetstat(text string) ([]ListeningPort, error) {
 			continue
 		}
 		fields := strings.Fields(line)
-		if len(fields) == 0 || (fields[0] != "tcp4" && fields[0] != "tcp6") {
+		if len(fields) == 0 {
+			continue
+		}
+		proto := fields[0]
+		if proto != "tcp4" && proto != "tcp6" && proto != "tcp46" {
 			continue
 		}
 		if len(fields) < 6 {
@@ -82,21 +86,50 @@ func decodeDarwinNetstat(text string) ([]ListeningPort, error) {
 			return nil, observationf(CodeObservationIncomplete, observationIncompleteHint,
 				"netstat: invalid listening port at line %d", row+1)
 		}
-		bind, family := normalizeBind(endpoint[:dot], fields[0] == "tcp6")
-		if _, err := netip.ParseAddr(bind); err != nil {
-			return nil, observationf(CodeObservationIncomplete, observationIncompleteHint,
-				"netstat: invalid listening address at line %d", row+1)
+		for _, bind := range darwinBinds(proto, endpoint[:dot]) {
+			if _, err := netip.ParseAddr(bind.address); err != nil {
+				return nil, observationf(CodeObservationIncomplete, observationIncompleteHint,
+					"netstat: invalid listening address at line %d", row+1)
+			}
+			key := listenerKey{int(port), bind.address}
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, ListeningPort{
+				Port: int(port), PID: int(pid), Process: process,
+				BindAddress: strings.Clone(bind.address), IPVersion: bind.family,
+			})
 		}
-		key := listenerKey{int(port), bind}
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		out = append(out, ListeningPort{Port: int(port), PID: int(pid), Process: process, BindAddress: strings.Clone(bind), IPVersion: family})
 	}
 	if pidColumn < 0 {
 		return nil, observationf(CodeObservationEmpty, observationEmptyHint,
 			"netstat: response has no recognized TCP table header")
 	}
 	return out, nil
+}
+
+type darwinBind struct {
+	address string
+	family  string
+}
+
+// darwinBinds maps the protocol label netstat prints to the addresses the
+// socket holds. tcp46 is a dual-stack socket: macOS shows one row, but the
+// same socket answers on both families. Emitting both wildcard addresses lets
+// mergeAddresses fold them into one row with the second in BindAddresses;
+// treating tcp46 as uninteresting made every Go/Node/Java default bind vanish
+// from status, readiness and dependency waits.
+func darwinBinds(proto, raw string) []darwinBind {
+	if proto != "tcp46" {
+		bind, family := normalizeBind(raw, proto == "tcp6")
+		return []darwinBind{{address: bind, family: family}}
+	}
+	v4, family4 := normalizeBind(raw, false)
+	v6, family6 := normalizeBind(raw, true)
+	binds := []darwinBind{{address: v4, family: family4}}
+	if v6 != v4 {
+		binds = append(binds, darwinBind{address: v6, family: family6})
+	}
+	return binds
 }
