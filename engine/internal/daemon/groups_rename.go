@@ -71,8 +71,7 @@ func handleGroupsRename(_ context.Context, req *Request) (any, error) {
 	rt := req.Runtime
 	snap, err := rt.Scanner.Snapshot(scanner.Include{})
 	if err != nil {
-		return nil, rpc.NewError(rpc.CodeInternal, "scan failed: "+err.Error(),
-			"check `oberth daemon log` for the scanner error")
+		return nil, scanFailure(err)
 	}
 	local := make([]state.Group, 0, len(snap.Groups))
 	for _, g := range snap.Groups {

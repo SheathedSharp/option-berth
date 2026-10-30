@@ -15,6 +15,8 @@ func TestEveryRegistryCodeHasAName(t *testing.T) {
 		CodeTimeout, CodeInvalidSelector, CodeOutsideHome, CodeTargetNotListening,
 		CodeShareLimitReached, CodeListenPortInUse, CodeNotSignedIn, CodeShareExpired,
 		CodeRelayUnreachable, CodeShareBlocked,
+		CodeObservationEmpty, CodeObservationUnrecognized, CodeObservationIncomplete,
+		CodeObservationBlind, CodeObservationBindDenied,
 		CodeSessionNotFound, CodeClaimConflict} {
 		if CodeName(c) == "" {
 			t.Fatalf("code %d has no data.code name", c)
@@ -46,6 +48,23 @@ func TestShareErrorCodes(t *testing.T) {
 	for _, code := range []int{1101, 1102, 1103, 1104, 1105, 1106, 1109} {
 		if got, ok := codeNames[code]; ok {
 			t.Errorf("code %d is still registered as %q; the provider codes were deleted", code, got)
+		}
+	}
+}
+
+// Observation codes are part of the wire contract: an agent branches on
+// data.code, so the numeric values and names are pinned like the share block.
+func TestObservationErrorCodes(t *testing.T) {
+	want := map[int]string{
+		CodeObservationEmpty:        "observation_empty",
+		CodeObservationIncomplete:   "observation_incomplete",
+		CodeObservationUnrecognized: "observation_unrecognized",
+		CodeObservationBlind:        "observation_blind",
+		CodeObservationBindDenied:   "observation_bind_denied",
+	}
+	for code, name := range want {
+		if got := CodeName(code); got != name {
+			t.Errorf("CodeName(%d) = %q, want %q", code, got, name)
 		}
 	}
 }

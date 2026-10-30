@@ -33,8 +33,7 @@ func readPorts(rt *Runtime, include scanner.Include) ([]state.Port, error) {
 	}
 	snap, err := rt.Scanner.Snapshot(include)
 	if err != nil {
-		return nil, rpc.NewError(rpc.CodeInternal, "scan failed: "+err.Error(),
-			"check `oberth daemon log` for the scanner error")
+		return nil, scanFailure(err)
 	}
 	return snap.Ports, nil
 }

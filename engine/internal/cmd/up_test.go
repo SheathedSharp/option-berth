@@ -10,8 +10,20 @@ import (
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
+
+// observableProbe keeps readiness tests focused on their own timing rules; the
+// real probe depends on the host being able to read its listener table.
+func observableProbe(t *testing.T) {
+	t.Helper()
+	prev := scanProbe
+	scanProbe = func(context.Context) ports.ProbeResult {
+		return ports.ProbeResult{State: ports.ObservationObservable}
+	}
+	t.Cleanup(func() { scanProbe = prev })
+}
 
 // chdir moves into dir for the duration of a test.
 func chdir(t *testing.T, dir string) {
@@ -103,6 +115,7 @@ func TestServiceReadyWaitsForListenerWithoutHealth(t *testing.T) {
 }
 
 func TestWaitForStartReadyUsesTimeoutAsStructuredFailure(t *testing.T) {
+	observableProbe(t)
 	t.Setenv("BERTH_HOME", t.TempDir())
 	old := noDaemonFlag
 	noDaemonFlag = true
@@ -250,6 +263,7 @@ func TestUpParamsReportsABrokenConfig(t *testing.T) {
 // Readiness is a desired-state check, not just a receipt for newly spawned runs.
 // A pre-existing service that is not ready must fail without becoming our cleanup target.
 func TestWaitForStartReadyChecksSkippedWithoutAuthorizingCleanup(t *testing.T) {
+	observableProbe(t)
 	t.Setenv("BERTH_HOME", t.TempDir())
 	old := noDaemonFlag
 	noDaemonFlag = true
@@ -278,6 +292,7 @@ func TestWaitForStartReadyChecksSkippedWithoutAuthorizingCleanup(t *testing.T) {
 }
 
 func TestWaitForStartReadyMixedTimeoutCleansOnlyNewStarts(t *testing.T) {
+	observableProbe(t)
 	t.Setenv("BERTH_HOME", t.TempDir())
 	old := noDaemonFlag
 	noDaemonFlag = true

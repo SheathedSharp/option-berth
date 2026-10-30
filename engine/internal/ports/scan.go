@@ -17,6 +17,13 @@ func Scan() ([]ListeningPort, error) {
 // ScanContext retains Scan's command ceiling and decoding rules. Cancelled
 // command output cannot become a healthy (possibly partial) observation.
 func ScanContext(ctx context.Context) ([]ListeningPort, error) {
+	return scanContext(ctx)
+}
+
+// scanContext is the one collection path. The self-probe uses it so it tests
+// exactly what a real read does; it must not call the probe itself, or a blind
+// process would recurse instead of reporting the blind spot.
+func scanContext(ctx context.Context) ([]ListeningPort, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -27,6 +34,9 @@ func ScanContext(ctx context.Context) ([]ListeningPort, error) {
 		return nil, err
 	}
 	if err != nil {
+		if partial, ok := PartialRows(err); ok {
+			return mergeAddresses(partial), err
+		}
 		return nil, err
 	}
 	return mergeAddresses(rows), nil
@@ -75,26 +85,50 @@ func collectListeners(platform string, run listenerCommand) ([]ListeningPort, er
 		return nil, fmt.Errorf("unsupported platform: %s", platform)
 	}
 	stdout, stderr, err := run(name, args...)
-	rows := decodeListeners(string(stdout), format)
-	if detail := strings.TrimSpace(string(stderr)); detail != "" {
-		if err != nil {
-			return nil, fmt.Errorf("%s: incomplete listener observation: %w\n%s", name, err, detail)
-		}
-		return nil, fmt.Errorf("%s: incomplete listener observation: %s", name, detail)
-	}
+	detail := strings.TrimSpace(string(stderr))
+
 	if err == nil {
+		// Every collector here prints at least a header, even when nothing is
+		// listening. A sandbox can let the command exit 0 while denying the
+		// syscall behind the table, which leaves stdout empty — that is an
+		// observation that never happened, not an empty machine.
+		if len(bytes.TrimSpace(stdout)) == 0 {
+			return nil, observationf(CodeObservationEmpty, observationEmptyHint,
+				"%s: exited 0 but printed no listening table%s", name, observationDetailSuffix(detail))
+		}
+		if detail != "" {
+			return nil, observationf(CodeObservationIncomplete, observationIncompleteHint,
+				"%s: incomplete listener observation: %s", name, firstObservationLine(detail))
+		}
 		if format == darwinNetstatListeners {
 			return decodeDarwinNetstat(string(stdout))
 		}
-		return rows, nil
+		return decodeListeners(string(stdout), format), nil
 	}
 
-	detail := strings.TrimSpace(string(stderr))
+	// A non-zero exit is a failed command. With diagnostics it is an
+	// observation the caller can classify; with no output at all there is
+	// nothing to explain and it stays an ordinary error.
 	if detail == "" {
 		detail = strings.TrimSpace(string(stdout))
 	}
 	if detail == "" {
 		return nil, fmt.Errorf("%s: %w", name, err)
 	}
-	return nil, fmt.Errorf("%s: %w\n%s", name, err, detail)
+	return nil, observationErr(err, CodeObservationIncomplete, observationIncompleteHint,
+		"%s: incomplete listener observation: %v\n%s", name, err, firstObservationLine(detail))
+}
+
+// observationDetailSuffix folds a command's own diagnostic into a one-line
+// observation error without letting a multi-line banner hide the code.
+func observationDetailSuffix(detail string) string {
+	if detail == "" {
+		return ""
+	}
+	return ": " + firstObservationLine(detail)
+}
+
+func firstObservationLine(detail string) string {
+	line, _, _ := strings.Cut(detail, "\n")
+	return line
 }

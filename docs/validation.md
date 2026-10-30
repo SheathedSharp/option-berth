@@ -46,6 +46,33 @@ go test -tags integration -count=1 -timeout=8m ./internal/scenario/...
 
 Mage 与品牌检查分别位于各自 PR 及 CI。构建、安装和服务起停是不同副作用，普通检查不操作日常用户服务。
 
+### 监听观察：双栈、探针与沙箱
+
+macOS 把 Go `net.Listen("tcp", ":p")`、Node `listen(p)` 和 Java 默认绑定打印成 `tcp46`。
+2026-10-30 从本机 shell 抓取真实表：65 个 LISTEN 行里 12 个是 `tcp46`；修复前的解码器
+一个都看不到。修复后同一份真实表解码出全部 12 个端口（53 行合并结果）；
+`internal/ports/testdata/darwin_netstat_tcp46.txt` 保留同列布局的合成夹具。
+`TestDualStackServiceBecomesReadyEndToEnd` 用双栈服务跑真实 `up --wait`，但在本机无法执行：
+Go 进程读取 `sysctl net.inet.tcp.pcblist_n` 只得到截断结果，daemon 看不到任何监听；
+这条集成测试须在能读取完整监听表的 macOS/Linux 构建环境通过。
+
+沙箱里 `netstat` 可能以 0 退出给出空表（Codex 的 read-only seatbelt 下还会在 stderr 报
+`Operation not permitted`）。现在采集器返回 `observation_empty` / `observation_unrecognized` /
+`observation_incomplete`，CLI 再用自证探针给出 `observable` / `blind` / `bind_denied`。
+实测三家：Codex（`codex sandbox` 的同一 seatbelt 策略；agent 会话因 401 无法调用模型）、
+Claude Code（`sandbox.enabled` 的非交互会话）、Cursor（`--sandbox enabled` 的非交互会话）
+都返回 `observation_bind_denied`；`status --json` 仍以 0 退出并返回清单、服务、日志路径和
+`observation`，`ports` 为空、`port_actual` 为 null。`up --wait` 在自启前被守门拒绝并提示到
+普通终端运行 `oberth serve --detach`；`doctor --only listener_observation` 报告同一结论。
+Claude 会话的 agent 据此说明“知道项目声明了什么、无法确认监听”，没有重试或转述 internal。
+
+好行夹坏行的夹具（`TestCollectListenersKeepsReadableRowsWhenOneRowFails`）和 scanner 的
+partial 测试确认：可读行照常发布，坏行对应的端口不在结果里，快照带
+`observation.state=partial`。
+
+本机普通 shell 启动的 Go 进程同样拿不到完整监听表，所以 `TestScanFindsIsolatedListener`
+在这台机器上失败；这是环境限制，不是本次改动的回归。
+
 发布安装与卸载脚本用本地夹具跑通：平台映射、latest 重定向、固定版本、SHA256 不匹配不落盘、
 PATH 配置、旧包缺少 `install-path.sh` 时的标签回退、未知参数在下载前失败，以及卸载只删
 安装器写入的精确 PATH 行、默认保留 `~/.option-berth`、`--purge-state` 才删除状态目录。
@@ -122,7 +149,40 @@ amd64/arm64 都能在同一个 x86 runner 上生成。macOS 本机没有这些�
 2. 第一轮项目在 `$HOME` 之外，`up` 直接拒绝：错误只说「在 home 之外」，hint 指向一个**不存在**的
    日志；agent 靠 `oberth up --help` 才找到 `--allow-outside-home`。
 
-**未执行**：Codex / OpenCode / Pi 的同场景验收；Windows / Linux 上的对应验收；多 worktree 并发。
+**未执行**（当时）：Codex / OpenCode / Pi 的同场景验收；Windows / Linux 上的对应验收；多 worktree 并发。
+这些已进入下面的固定场景库；真实 agent 矩阵仍未执行。
+
+## 固定场景库（agent 矩阵）
+
+2026-10-28 的手工验收已沉淀成固定场景库，入口 `scripts/agent_eval.py`，契约与指标见
+[agent-eval.md](agent-eval.md)。至少覆盖五个场景：生成物缺失、端口被占、依赖未就绪、
+清单与进程不一致、同仓库双 worktree。每次运行使用隔离 `HOME` / `BERTH_HOME` / 可丢弃项目，
+只按点名的 `--pass-env` 和 `--agent-arg` 传入凭证与 provider 参数；harness 自己不添加
+审批绕过或沙箱禁用参数。
+
+报告按「场景 × agent」给出完成率、步数、`oberth` 调用次数和越界次数；`comparable` 只在
+同一二进制、`--repeat >= 2` 且没有 error 时为真。`--require-complete` / `--require-comparable`
+可用作发布门禁，但真实 agent 依赖外部 CLI、登录与网络，不放进 `scripts/release.py`。
+
+**2026-10-30 实际执行**：
+
+- `python3 -m unittest scripts/agent_eval_test.py`：30 项通过，覆盖夹具、判定、越界识别、
+  agent 参数、provider 事件解析、报告聚合，以及用脚本化二进制跑完整 runner（重复两轮可比）。
+- `python3 scripts/agent_eval.py --dry-run --scenarios missing-artifact`：preflight 启动
+  平凡服务时，当前 Claude Code 进程上下文里的 `netstat` 返回空表，引擎报
+  `netstat: no recognized TCP table header`。harness 按设计退出 2，拒绝把环境问题写成
+  agent 失败。
+- **reference 冒烟**：为绕开上述本机 `netstat` 限制，用一份只在本机测量用的 lsof 回退构建
+  （未进入仓库，也不是发布构建）跑
+  `--execute --agents reference --scenarios all --repeat 2`。五个场景全部完成，步数分别为
+  missing-artifact 6、port-occupied 5、dependency-not-ready 6、manifest-process-mismatch 7、
+  dual-worktree 6，越界 0，所有行可比。它证明夹具、引擎事实、判定和报告链路可用；
+  reference 执行固定动作，不依赖 skill，因此不能用它证明 agent 因 skill 改动而减少步数。
+- **未执行**：真实 Claude Code 的 skill 前后对比。隔离 `HOME` 下 Claude 报
+  `Not logged in`；没有转发凭证。因此「步数下降、且不再为无人依赖的 machine: 条目交接」
+  仍只有静态契约与 reference 冒烟证据，没有模型行为测量。
+- **未执行**：Codex / OpenCode / Pi 的矩阵。需要在普通终端或具备凭据的 CI 上运行；
+  Codex 本机也未登录。没有用参考脚本或 fake engine 的行冒充真实 agent 结论。
 
 ## 客户端验证
 

@@ -47,7 +47,7 @@ func parseInclude(in rpc.Include) (scanner.Include, error) {
 	return out, nil
 }
 
-func handleHello(_ context.Context, req *Request) (any, error) {
+func handleHello(ctx context.Context, req *Request) (any, error) {
 	var p rpc.DaemonHelloParams
 	if err := req.Bind(&p); err != nil {
 		return nil, err
@@ -70,10 +70,11 @@ func handleHello(_ context.Context, req *Request) (any, error) {
 		Socket:          rt.Socket,
 		BinaryPath:      rt.BinaryPath,
 		Keepalive:       p.Keepalive,
+		Observation:     rt.RefreshObservation(ctx),
 	}, nil
 }
 
-func handleStatus(_ context.Context, req *Request) (any, error) {
+func handleStatus(ctx context.Context, req *Request) (any, error) {
 	rt := req.Runtime
 	st := rt.Scanner.Status()
 	lastScan := ""
@@ -92,6 +93,7 @@ func handleStatus(_ context.Context, req *Request) (any, error) {
 		StatsIntervalMs:    st.StatsIntervalMs,
 		Scans:              st.Scans,
 		DBPath:             rt.DBPath(),
+		Observation:        rt.RefreshObservation(ctx),
 	}, nil
 }
 
@@ -118,8 +120,7 @@ func handleSnapshot(_ context.Context, req *Request) (any, error) {
 	}
 	snap, err := req.Runtime.Scanner.SnapshotAll(include)
 	if err != nil {
-		return nil, rpc.NewError(rpc.CodeInternal, "scan failed: "+err.Error(),
-			"check `oberth daemon log` for the scanner error")
+		return nil, scanFailure(err)
 	}
 	scope := scopeOf(p.Scope)
 	if !scope.Empty() {

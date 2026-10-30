@@ -1,17 +1,31 @@
 package daemon
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
+
+// observationTTL bounds how often a daemon re-runs the self-probe. The answer
+// changes only when the process's sandbox does, so a short cache is enough; a
+// status read refreshes it, a hello reuses it.
+const observationTTL = 30 * time.Second
+
+// observationProbeTimeout keeps daemon.hello from waiting out a wedged
+// collector. A probe that cannot answer in this budget is reported as blind,
+// which is the safe direction: an unknown table must not look healthy.
+const observationProbeTimeout = 2 * time.Second
 
 // Runtime is what the daemon hands to extension packages (contract §8). Step
 // 1A.1 exposed the scanner, the logger and the process identity and 1A.4 the
@@ -41,6 +55,46 @@ type Runtime struct {
 	// Active lifecycle holders and waiters only; idle entries are reclaimed.
 	groupLocksMu sync.Mutex
 	groupLocks   map[string]*groupLock
+
+	// The self-probe verdict, cached so daemon.hello does not scan on every
+	// connection. A blind daemon must say so before a client trusts an empty
+	// port list.
+	observationMu sync.Mutex
+	observation   *rpc.ObservationStatus
+	observedAt    time.Time
+}
+
+// RefreshObservation returns the daemon's self-probe verdict, running the probe
+// when the cached answer is stale. It is a fact: it binds a real socket and
+// looks for it with the same collector the scanner uses.
+func (r *Runtime) RefreshObservation(ctx context.Context) *rpc.ObservationStatus {
+	r.observationMu.Lock()
+	defer r.observationMu.Unlock()
+	if r.observation != nil && time.Since(r.observedAt) < observationTTL {
+		return r.observation
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, observationProbeTimeout)
+	defer cancel()
+	result := ports.ProbeListenerObservation(probeCtx)
+	status := &rpc.ObservationStatus{
+		State:     string(result.State),
+		Code:      result.Code,
+		Detail:    result.Detail,
+		Hint:      result.Hint,
+		CheckedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	// A cancelled or timed-out probe is not a verdict about this host, so it
+	// must not be cached as one. Report the conservative result, but let the
+	// next caller ask again.
+	if errors.Is(result.Err, context.Canceled) || errors.Is(result.Err, context.DeadlineExceeded) {
+		if r.observation != nil && errors.Is(result.Err, context.Canceled) {
+			return r.observation
+		}
+		return status
+	}
+	r.observation = status
+	r.observedAt = time.Now()
+	return status
 }
 
 // RunRegistry is the set of processes `oberth start` spawned. The daemon carries

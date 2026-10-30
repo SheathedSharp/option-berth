@@ -25,7 +25,17 @@
 - 退出码：0 成功，1 运行失败，2 参数或选项错误，130 被 Ctrl-C 中断。
 - JSON 错误形状为 {"error":{"code":"...","message":"...","hint":"..."}}。
   稳定的 code 包括 invalid_params、not_found、invalid_config、ambiguous、
-  permission_denied、timeout、daemon_busy 和 internal。
+  permission_denied、timeout、daemon_busy、observation_empty、
+  observation_unrecognized、observation_incomplete、observation_blind、
+  observation_bind_denied 和 internal。观察类 code 都不是“没有监听”：
+  - observation_empty：采集命令以 0 退出但没有任何输出；由自证探针判定是真空表还是失明。
+  - observation_unrecognized：有输出但没有可识别的表头，属于格式问题。
+  - observation_incomplete：部分输出行无法解码。可读行照常发布，坏行对应的端口保持未知，
+    `observation.state` 为 partial；命令整体失败时仍按失败处理。
+  - observation_blind：探针能绑定本地端口，但同一采集器看不到自己的监听。
+  - observation_bind_denied：探针连本地端口都不能绑定，从这里启动的服务也无法监听。
+  hint 指向离开沙箱重试、升级 option-berth 或运行
+  `oberth doctor --only listener_observation` 检查当前进程。
 - --no-daemon 让读命令在本地直接采集；需要记录运行和起停的命令仍需要 daemon。
   daemon 不可用时，`status` 仍从本地只读历史显示最近的退出原因。
 
@@ -70,6 +80,14 @@ depends on · listeners · code · failed · next · drafts · last look），�
 `manifest_runtime_mismatch` 为 `true`，表示当前进程来自旧清单，应该用
 `oberth restart --only <service>` 重新应用。hash 只覆盖命令、cwd、端口、health 和依赖等可执行声明，
 不包含环境变量内容。
+
+监听表不可信时（例如 agent 沙箱拒绝系统内省），`status` 仍然返回清单、服务、运行记录、
+日志路径和最近退出；顶层带 `observation`（`state`、`code`、`detail`、`hint`、`checked_at`）。
+完全失明时 `ports` 为空、`port_actual` 为 null；部分行不可读时 `ports` 只含可读行，
+未读到的端口不在其中，`observation.state` 为 partial。`up --wait` 在观察不是 observable 时
+立即返回观察类错误并保留刚启动的运行，不会等满超时再把它停掉；`logs <service>` 对托管服务
+仍使用运行登记的日志路径，不依赖监听表。需要自启 daemon 的写命令会先跑自证探针，失明时
+拒绝从当前进程创建 daemon，提示在普通终端运行 `oberth serve --detach`。
 
 JSON 顶层固定包含：
 
@@ -305,7 +323,9 @@ oberth init [--dry-run] [--json]
 
 核心闭环之外的命令按层列在这里，契约同样是这份文档：
 
-- oberth doctor：检查清单、daemon、CLI 路径和日志目录，给出可操作的修复提示。
+- oberth doctor：检查清单、daemon、CLI 路径、日志目录和当前进程能否看见监听，给出可操作的修复提示。
+  `--only listener_observation` 绑定一个真实本地端口，再用与 `status` 相同的采集器确认能否看到它：
+  报告 observable / blind / bind_denied；CLI 模式下同时附带 daemon 的自证结果，daemon 失明也会失败。
   `--only daemon_build_matches` 对比 CLI 与 daemon 的构建提交；同版本号不代表同构建。
   缺少提交身份或状态 RPC 失败会报告 warn，不会标记匹配，也不会自动重启 daemon。
 - oberth events：供 agent 订阅本机 daemon 的状态变化。并行联调时 agent 应根据任务中明确给出的
@@ -336,7 +356,10 @@ group/session 选择器只为迁移保留，不出现在公开帮助中。
 
 ## 基础设施命令
 
-- oberth daemon status|path|stop|restart|log|schema：管理或查看后台采集器。- `oberth -v` / `oberth --version`：简洁地打印当前 CLI 版本；`oberth config init|path|edit`、`oberth serve`、`oberth version`、`oberth completion`：配置与运行环境入口。
+- oberth daemon status|path|stop|restart|log|schema：管理或查看后台采集器。`daemon status --json`
+  带 `observation`（`state`、`code`、`detail`、`hint`、`checked_at`），表示 daemon 自己能否看见监听；
+  `daemon.hello` 也带同一份结果，客户端不能把失明 daemon 的空端口表当成事实。
+- `oberth -v` / `oberth --version`：简洁地打印当前 CLI 版本；`oberth config init|path|edit`、`oberth serve`、`oberth version`、`oberth completion`：配置与运行环境入口。
 - `oberth version --json` 输出当前构建的 `version`、`commit`、`built` 和 `platform`，供安装检查脚本确认实际运行的构建。
 - `oberth version --check` 读取最新发布标签，报告本机是否落后；`--check --json` 在原来的字段上增加
   `latest`。它只读发布信息，不下载、不安装，也不替换正在运行的二进制。首屏的版本状态复用同一份

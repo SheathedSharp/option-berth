@@ -71,10 +71,14 @@ func TestListenerCommandUsesOnlyFixedPlatformArguments(t *testing.T) {
 			if tool != tt.tool || !reflect.DeepEqual(args, tt.args) {
 				t.Fatalf("command = %s %v", tool, args)
 			}
-			if tt.platform == "darwin" {
+			switch tt.platform {
+			case "darwin":
 				return []byte(darwinTCPHeader), nil, nil
+			case "linux":
+				return []byte("State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n"), nil, nil
+			default:
+				return []byte("  Proto  Local Address          Foreign Address        State           PID\n"), nil, nil
 			}
-			return nil, nil, nil
 		})
 		if err != nil || calls != 1 {
 			t.Fatalf("calls=%d error=%v", calls, err)
