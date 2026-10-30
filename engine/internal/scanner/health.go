@@ -254,16 +254,17 @@ func healthTargets(rows []state.Port, gg []state.Group) []healthTarget {
 			}
 			h := groups.ParseHealth(*svc.Health)
 			if h.Kind == groups.HealthCommand {
-				if !svc.Running {
+				// A command check runs in the service's cwd. Without the
+				// project root there is no cwd to run it in, and the daemon's
+				// own directory is not the service's: report no verdict rather
+				// than a wrong one.
+				if !svc.Running || gg[gi].RootDir == nil {
 					continue
 				}
 				expanded := groups.Expand(h.Command, svc.Name, portMap)
-				dir := ""
-				if gg[gi].RootDir != nil {
-					dir = filepath.Join(*gg[gi].RootDir, filepath.FromSlash(svc.Cwd))
-				}
 				out = append(out, healthTarget{
-					kind: groups.HealthCommand, argv: spawn.SplitCmd(expanded), dir: dir,
+					kind: groups.HealthCommand, argv: spawn.SplitCmd(expanded),
+					dir: filepath.Join(*gg[gi].RootDir, filepath.FromSlash(svc.Cwd)),
 					env: commandEnv(svc.PortActual), group: gi, service: si,
 				})
 				continue
