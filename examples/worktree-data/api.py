@@ -2,12 +2,21 @@
 """Serve a health fact read from this worktree's own SQLite database."""
 import json
 import os
+import socketserver
 import sqlite3
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 DB_PATH = Path(os.environ["DB_PATH"]).resolve()
 PORT = int(os.environ["PORT"])
+
+
+class Server(ThreadingHTTPServer):
+    def server_bind(self):
+        # Avoid HTTPServer's reverse DNS lookup; the address is explicitly local.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = "localhost"
+        self.server_port = self.server_address[1]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -32,4 +41,4 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+    Server(("127.0.0.1", PORT), Handler).serve_forever()
