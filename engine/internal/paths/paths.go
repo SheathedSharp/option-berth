@@ -1,9 +1,9 @@
 // Package paths is the one place that knows where option-berth keeps its files.
 //
 // Before this package existed the layout was spelled out eight times — config,
-// db, logs, profiles, runs, credentials, the share install id and the daemon's
-// socket each built `~/.option-berth/...` for themselves, with comments
-// explaining that they mirrored internal/config "to avoid an import cycle".
+// db, logs, profiles, runs and the daemon's socket each built
+// `~/.option-berth/...` for themselves, with comments explaining that they
+// mirrored internal/config "to avoid an import cycle".
 // Copying a path eight times is how a codebase ends up with a state directory
 // that is named one thing in the docs and another on disk.
 //
@@ -12,7 +12,7 @@
 // # One directory, and why not ~/.config
 //
 // Everything lives in ~/.option-berth: config.yaml, the database, the socket, the
-// lock, logs, profiles, the runs registry and credentials.
+// lock, logs, profiles and the runs registry.
 //
 // The obvious alternative is `~/.config`, which is where the upstream project
 // put it. It is the wrong shape for this: **a SQLite database, a unix
@@ -42,15 +42,13 @@ import (
 // File names inside Dir. Each is exported as a constant so a caller that needs
 // to recognise a file (doctor, the corruption path) does not retype the string.
 const (
-	DirName       = ".option-berth"
-	ConfigFile    = "config.yaml"
-	DBFile        = "option-berth.db"
-	SocketFile    = "daemon.sock"
-	LockFile      = "daemon.lock"
-	LogFile       = "daemon.log"
-	RunsFile      = "runs.json"
-	Credentials   = "credentials.json"
-	InstallIDFile = "install_id"
+	DirName    = ".option-berth"
+	ConfigFile = "config.yaml"
+	DBFile     = "option-berth.db"
+	SocketFile = "daemon.sock"
+	LockFile   = "daemon.lock"
+	LogFile    = "daemon.log"
+	RunsFile   = "runs.json"
 	// JevConfigFile is the owner-only local configuration written by the
 	// macOS settings page. It is deliberately separate from config.yaml:
 	// that file is a general, human-readable settings map and must never
@@ -250,13 +248,6 @@ func SeenCLI() string { return filepath.Join(Dir(), SeenCLIFile) }
 // Runs is the run registry that lets a restarted CLI find what a previous run
 // started.
 func Runs() string { return filepath.Join(Dir(), RunsFile) }
-
-// CredentialsPath is the fallback credential store, used on machines with no OS
-// keychain.
-func CredentialsPath() string { return filepath.Join(Dir(), Credentials) }
-
-// InstallIDPath is the file holding the anonymous install id.
-func InstallIDPath() string { return filepath.Join(Dir(), InstallIDFile) }
 
 // without returns getenv with one key hidden, so a default can be resolved even
 // when the caller overrode it.
