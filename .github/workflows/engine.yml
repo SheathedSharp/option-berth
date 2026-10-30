@@ -1,6 +1,25 @@
 name: Engine verification
 
 on:
+  # Move the release gate in front of the merge: every PR runs the native
+  # build, vet, unit tests and the fast helper suites on both supported engine
+  # platforms. Core race tests and real service scenarios stay on manual
+  # dispatch and on the tag-driven release workflow.
+  # No path filter here: a skipped path-filtered workflow leaves a required
+  # check pending and blocks the PR.
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - 'engine/**'
+      - 'magefiles/**'
+      - 'scripts/**'
+      - 'install.sh'
+      - 'install.ps1'
+      - 'uninstall.sh'
+      - 'uninstall.ps1'
+      - '.github/workflows/engine.yml'
+      - '.github/workflows/release.yml'
   workflow_dispatch:
 
 permissions:
@@ -55,14 +74,14 @@ jobs:
           set -o pipefail
           go test -count=1 -timeout=8m ./... 2>&1 | tee ../verification/unit.log
       - name: Core concurrency tests
-        if: success() || failure()
+        if: github.event_name == 'workflow_dispatch' && (success() || failure())
         working-directory: engine
         shell: bash
         run: |
           set -o pipefail
           go test -race -count=1 -timeout=10m ./internal/claims ./internal/runs ./internal/spawn ./internal/daemon/... ./internal/git ./internal/groups ./internal/ports ./internal/scanner ./internal/servicefacts ./internal/state ./internal/store ./internal/killer 2>&1 | tee ../verification/race.log
       - name: Real service scenarios
-        if: success() || failure()
+        if: github.event_name == 'workflow_dispatch' && (success() || failure())
         working-directory: engine
         shell: bash
         run: |

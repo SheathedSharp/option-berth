@@ -1,15 +1,17 @@
 # 验证范围
 
 当前工作流均记录实际源码身份；检查结论只对应运行中的 commit，不沿用旧库或本机的历史结果。
-GitHub Actions 的自动验证仅在推送 `v*` 注释标签时由 `Verified release` 触发；日常 PR 与 `main`
-推送不跑引擎 CI（站点改动例外，见 `.github/workflows/site.yml`）。需要分项检查时可在 Actions 里
-手动 `workflow_dispatch` 对应工作流，发版前仍应跑本地 `scripts/release-*.sh` 预览与 `--execute` 验证。
+自动门槛分两层：`Engine verification` 在 PR 与 `main` 推送时于 macOS / Ubuntu 运行原生构建、vet、
+全引擎单元测试、Mage 工作流回归与 Python 辅助测试；核心 race 与真实服务场景只在手动
+`workflow_dispatch` 和推送 `v*` 注释标签时的 `Verified release` 中运行。站点改动由
+`.github/workflows/site.yml` 在 PR 与 `main` 推送时验证。需要分项检查时可在 Actions 里手动
+`workflow_dispatch` 对应工作流，发版前仍应跑本地 `scripts/release-*.sh` 预览与 `--execute` 验证。
 
-| 工作流 | 平台与内容 |
-|---|---|
-| Engine verification | macOS / Ubuntu：原生构建、vet、全引擎单元、核心 race、真实服务场景、Mage 工作流回归、Python 辅助测试。 |
-| Git read verification | macOS / Ubuntu：Git、worktree、归因与观察的重复测试和 race。 |
-| Windows build verification | Windows x64：原生构建、vet、CLI/Jev 构建、version JSON/帮助页、事实/持久化，以及隔离 API/无端口 worker 的启动、重复启动、采集器恢复和限定停止；Ubuntu：Windows arm64 交叉构建。 |
+| 工作流 | 触发 | 平台与内容 |
+|---|---|---|
+| Engine verification | PR、引擎相关 `main` 推送、手动 | 自动：macOS / Ubuntu 原生构建、vet、全引擎单元测试、Mage 工作流回归、Python 辅助测试；手动另跑核心 race 与真实服务场景。 |
+| Git read verification | 手动 | macOS / Ubuntu：Git、worktree、归因与观察的重复测试和 race。 |
+| Windows build verification | 发布标签（`Verified release` 调用） | Windows x64：原生构建、vet、CLI/Jev 构建、version JSON/帮助页、事实/持久化，以及隔离 API/无端口 worker 的启动、重复启动、采集器恢复和限定停止；Ubuntu：Windows arm64 交叉构建。 |
 
 CLI、Mage 与品牌迁移分别审查、验证、合并，没有引入旧私人 Git 祖先。
 品牌检查比较本仓库导出的 SVG 与同级 `option-berth-macos` 里的 `BerthGeometry.swift`；
