@@ -48,7 +48,7 @@ CLI 按 **agent 想做的事**分层，不按内部模块分：事实是「现�
 
 | 层 | 公开命令 | 边界 |
 |---|---|---|
-| 事实 | `status` · `logs` · `events` | 当前项目的声明、实况与变化 |
+| 事实 | `status` · `logs` · `events` · `worktrees` | 当前项目的声明、实况与变化；本机见过的 checkout 身份 |
 | 操作 | `up` · `restart` · `down` · `start` · `kill` | 按清单起停，或明确点名一个低级进程入口 |
 | 代码与声明 | `git` · `init` | 只读代码上下文，以及这份 worktree 的清单 |
 | 交接 | `workplace` · `agent` | 工作记录，以及把会话交给外部 coding agent |
@@ -96,7 +96,7 @@ JSON 顶层固定包含：
 ~~~json
 {
   "scope": {"kind": "worktree", "name": "demo", "root": "/work/demo"},
-  "worktree": {"name": "demo", "services": []},
+  "worktree": {"name": "demo", "identity": "wt_0123456789ab", "services": []},
   "ports": [],
   "git": {"snapshot": {}},
   "drafts": [],
@@ -104,6 +104,10 @@ JSON 顶层固定包含：
   "changed": {"at": "..."}
 }
 ~~~
+
+`worktree.identity` 就是清单里 `${worktree}` 展开成的值。它由 checkout 的规范化根路径
+派生，所以同一个 checkout 每次读取都相同；人或 agent 要用 `psql` 连这个 worktree 的库时，
+直接读这个字段拼库名，不必自己算哈希。
 
 changed 是第一次运行时缺省的可选字段。ports 仍是给脚本核对用的原始监听事实，不是
 独立的产品对象，也不是整台机器的端口清单；exits 只保留最近的退出记录，详细输出用 logs。
@@ -221,18 +225,53 @@ cwd 中执行，按 `cmd:` 的规则拆成 argv（不经过 shell），支持 `$
 这类重启保留 `port: auto` 的 worktree 占用，让服务重新拿回原地址。`--force` 跳过优雅停止。
 --json 返回一个值，其中 `stopped` 是停止结果，`services` 和汇总字段是重新启动结果。
 
-### oberth down [project] [--force] [--json]
+### oberth down [project] [--worktree path | --identity wt_…] [--force] [--json]
 
 停止该项目清单里的全部服务，动作后确认可释放时交还 `port: auto` 的预留。
 无参数时使用当前目录的清单。`--force` 直接使用强制信号，不跳过运行身份或预留释放门禁。
 成功时 `--json` 返回停止结果和实际释放数量。项目清单中声明的 `machine:` 依赖只读其
 监听状态，`down` 不会停止它们。
 
+`--worktree PATH` 按 checkout 根路径、`--identity wt_…` 按 `${worktree}` 身份停止。
+两者都不能和项目名或清单路径同时使用。它们是 worktree 被删除或移动后的明确入口：
+目录还在时 daemon 重新读取该清单；目录已不在时按身份账本里记录的组名停止仍属于它的
+监听与运行，并交还该 worktree 记录的 `port: auto` 预留。找不到身份返回 not_found，
+不会猜一个组。目标已经没有任何运行或预留时，显式身份仍然是一次成功的空停止。
+`--identity` 的值来自 `status --json` 的 `worktree.identity` 或 `oberth worktrees`。
+
+按项目名停止是组名作用域：同一仓库的不同 worktree 发布为 `<project>` 与
+`<project>@<worktree>`，名字不同时互不影响。两个 checkout 真把同一组名占了（例如不同
+仓库目录同名，或两个不同父目录下同名的 linked worktree）时，daemon 的组已经合并，
+任何组作用域的停止都会同时打到两者；此时 `down <project>` 和显式身份都返回 ambiguous，
+提示改用 `kill` 按端口或 pid 点名，而不是替调用者挑一个。
+
 取消、停止不完整、动作后观察失败、仍有登记运行/监听或预留已被刷新时，不交还未经确认
 的预留，返回现有 RPC 错误并提示检查 `status` 和日志后重试。已发送的信号不因这个错误
 撤销；`not_found` 不单独证明端口已可释放。无端口运行的真实停止需要准确的出生身份。
 底层 dry-run 和 scoped 停止不释放预留；`restart --only` 因此保留原分配。
 这不承诺 OS 观察与账本写入原子，也不承诺任意旧版本同时写入同一账本。
+
+### oberth worktrees [--gone] [--json]
+
+只读列出本机 daemon 见过的 `${worktree}` 身份、派生它的 checkout 根路径、最近一次发布的
+组名和该路径现在是否还存在。它是身份账本，不是运行事实：行在 checkout 删除或移动后保留，
+`exists` 在每次读取时按文件系统重新判断，所以同一路径重新出现时身份也重新存在；
+`last_seen` 只是最近一次写入账本（daemon 启动或组名变化）的时间，不是每次扫描的心跳。
+
+`--gone` 只保留 checkout 已不存在的身份，供人或 agent 找到按旧身份留下的数据库和数据目录
+（`app_${worktree}`、`.data/${worktree}`）。删除动作仍由人执行：命令不删除账本行、数据库、
+数据目录或正在运行的进程；要停止仍在跑的服务用 `oberth down --identity <wt_…>`。
+
+~~~json
+{"worktrees":[
+  {"identity":"wt_0123456789ab","root":"/work/demo","group":"demo","exists":true,"last_seen":"2026-10-30T09:00:00Z"},
+  {"identity":"wt_abcdef012345","root":"/work/old","group":"demo@old","exists":false,"last_seen":"2026-10-28T18:00:00Z"}
+]}
+~~~
+
+没有 daemon 或还没有账本时返回空列表，不会为了读这份事实启动 daemon 或新建数据库。
+daemon 是账本的唯一写者：它在扫描到清单时记录身份，重启后按已记录的根路径补齐；
+`status` 等读命令和 `down` 都不写账本。
 
 ### oberth logs <service|port> [--once] [--lines N] [--follow] [--ip address] [--json]
 
@@ -409,6 +448,8 @@ oberth init [--dry-run] [--json]
 - machine: 是项目依赖的只读引用；up / down 不会替它起停。
 - workspace: 是另一个 checkout 的服务地址引用；up / down / restart 不会替对方起停，也不建立
   depends_on 关系。
+- `worktrees` 的账本只记「身份曾在哪个路径被看到」和最近一次组名；不记服务是否运行，
+  也不自动删除 checkout 消失后的数据。
 - 监听端口、pid、退出码和日志是 Run 的运行实况。产品不提供整机端口雷达、机器服务注册表、模型
   判断、MCP 服务或自动安装 skill。
 
@@ -431,8 +472,9 @@ oberth init [--dry-run] [--json]
 `${worktree}` 由清单所在 checkout 的规范化根路径派生：同一个 worktree 每次启动都相同，
 主 checkout 和每个 linked worktree 各不相同。它是标识符而不是路径，适合拼进数据库名
 （`app_${worktree}`）或相对数据目录（`.data/${worktree}`）。移动 checkout 目录会得到新的
-身份，旧数据不会被搬走；它也不改变 `down` 的行为——`down` 只停本 worktree 的服务，
-不删除数据。
+身份，旧数据不会被搬走。当前 checkout 的值直接读 `oberth status --json` 的
+`worktree.identity`；本机见过哪些身份、哪些 checkout 已经不在了，用 `oberth worktrees`。
+删除数据仍然由人完成，引擎只报告身份与路径的对应关系。
 
 只有上表五种形状是引用；其他 `${...}`（例如 `${HOME}`、`${FOO:-x}`）原样保留。
 `${worktree}` 不指向服务，不需要也不产生 `depends_on`；未声明的服务、没有端口的端口引用

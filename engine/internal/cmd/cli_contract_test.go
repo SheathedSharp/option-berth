@@ -46,6 +46,7 @@ func TestPublicCommandSurfaceLandsInTheDocumentedLayers(t *testing.T) {
 	want := map[string]string{
 		// 事实
 		"status": commandGroupFacts, "logs": commandGroupFacts, "events": commandGroupFacts,
+		"worktrees": commandGroupFacts,
 		// 操作
 		"up": commandGroupOperations, "restart": commandGroupOperations,
 		"down": commandGroupOperations, "start": commandGroupOperations, "kill": commandGroupOperations,

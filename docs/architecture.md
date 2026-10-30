@@ -19,6 +19,12 @@
 核心由本项目需求驱动；数据库、系统调用和平台适配可以保留成熟实现，不为“自研比例”重写。
 来源与版权独立保留在 [engine/UPSTREAM.md](../engine/UPSTREAM.md) 和许可证中。
 
+worktree 的结束端也挂在这条链上：`${worktree}` 来自 checkout 根路径，daemon 把
+`身份 → 根路径 → 最近组名/claim key` 记进 `worktree_identities`（迁移 010）。它是身份账本，
+不是第二份运行事实：行在目录消失后保留，`exists` 由读取方按文件系统判断；`status` 只发布
+当前身份，`worktrees` 只读枚举，`down --worktree/--identity` 才使用账本里的组名停止和交还
+预留。删除数据仍由人完成。
+
 ## 只读地址与共享环境
 
 `workspace:` 引用和 `machine:` 一样不产生新的运行事实：地址只从对方清单的声明和 daemon 已发布的

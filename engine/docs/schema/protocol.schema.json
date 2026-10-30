@@ -3,7 +3,7 @@
   "$id": "https://github.com/sheathedsharp/option-berth/engine/docs/schema/protocol.schema.json",
   "title": "option-berth daemon protocol",
   "description": "Generated from the Go types in internal/state and internal/daemon/rpc. Do not edit by hand; run `go generate ./...`.",
-  "protocol_version": "1.1.0",
+  "protocol_version": "1.2.0",
   "definitions": {
     "ChangeGroup": {
       "properties": {
@@ -510,6 +510,9 @@
         "worktree": {
           "type": "string"
         },
+        "identity": {
+          "type": "string"
+        },
         "branch": {
           "type": "string"
         },
@@ -569,6 +572,7 @@
         "name",
         "repo",
         "worktree",
+        "identity",
         "branch",
         "source",
         "root_dir",
@@ -789,6 +793,12 @@
           "type": "string"
         },
         "config_path": {
+          "type": "string"
+        },
+        "worktree_path": {
+          "type": "string"
+        },
+        "identity": {
           "type": "string"
         },
         "force": {
