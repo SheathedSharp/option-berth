@@ -111,6 +111,52 @@ agent 能力结论，不能与真实 agent 混在同一张能力表里。
 输出目录包含 `report.json`、`report.md` 和每次运行的 agent 事件、动作日志与场景证据。
 `.agent-eval/` 已加入 `.gitignore`。
 
+## CI 手动验收
+
+真实 agent 矩阵的固定入口是 [`.github/workflows/agent-eval.yml`](../.github/workflows/agent-eval.yml)。
+它只接受 `workflow_dispatch`，并挂在 `agent-eval` environment 上：environment 配置了
+必需 reviewer，开始任何一步之前都必须由维护者在 Actions 页面批准。不要给它加
+`pull_request`、`push` 或 `schedule` 触发；一次运行会消耗真实模型额度。
+
+environment 里放两个 secret，不放到仓库级：
+
+| secret | 用途 |
+|---|---|
+| `LLM_GATEWAY_BASE_URL` | gateway 根地址，例如 `https://gateway.example`；workflow 自己补 `/v1` |
+| `LLM_GATEWAY_API_KEY` | 该 gateway 的 key |
+
+模型由 workflow 输入决定，默认值针对当前 gateway 的 key 白名单选择：
+
+| agent | 协议 | 默认模型 |
+|---|---|---|
+| Claude Code | Anthropic Messages | `cline-pass/deepseek-v4.1-flash-1017` |
+| Codex | Responses（经本地 bridge） | `gpt-6-luna` |
+| OpenCode | OpenAI Chat Completions | `step-5-preview` |
+| Pi | OpenAI Chat Completions | `space-bunny` |
+
+Codex 0.166 只发 Responses 请求，并要求 SSE 以 `response.completed` 结束；当前 gateway
+只提供非流式 Responses 和流式 chat completions。因此 workflow 在 loopback 上启动
+[`scripts/codex_responses_bridge.py`](../scripts/codex_responses_bridge.py)，把 Codex 的
+Responses 请求翻译成 chat completions，再把结果翻译回 Codex 需要的 Responses 事件。
+bridge 是验收夹具，不是被测产品：它只转发 function / custom 工具，丢掉 hosted 工具，
+并且持有 gateway key 的进程不会把 key 交给 agent。报告里的 Codex 行仍然是真实 Codex
+CLI 与真实模型的结果，bridge 只改变传输协议。
+
+workflow 显式传入自主执行参数：Claude `--permission-mode=bypassPermissions`、Codex
+`--sandbox danger-full-access`、OpenCode `--auto`、Pi `--approve`。harness 自己仍然不加
+这些参数；是否允许由 workflow 的操作者决定。
+
+workflow 的顺序是：构建带发布身份的 `oberth`、安装四个 agent、写 provider 配置、
+启动 bridge、先跑 preflight（观察不到监听就退出 2，不消耗模型额度），再跑
+`--execute --repeat 2 --require-comparable`。报告、bridge 日志、构建身份和 agent 版本
+作为 artifact 保留 30 天，`report.md` 同时写入 job summary。
+
+运行方式：Actions → **Agent eval / real agent matrix** → Run workflow → 选择分支
+（environment 只允许 `main`）→ 在 environment 审批提示中批准。没有批准的运行不会
+拿到 secret，也不会调用模型。
+
+它不是 required check，也不进入 `scripts/release.py`；发布证据仍然由人决定是否采纳。
+
 ## 发布前
 
 按 [releasing.md](releasing.md) 的流程，发布候选构建在普通终端（或具备凭据的 CI）上跑
