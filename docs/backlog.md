@@ -9,7 +9,7 @@
 
 | 优先级 | 能力 | 当前缺口与完成条件 |
 | --- | --- | --- |
-| 高 | agent 侧的能力面是否够用 | 主线是给 coding agent 的能力，所以「agent 拿到这份代码能不能自己跑起来、自己判断为什么没跑起来」优先于任何界面。**2026-10-28 已跑过一轮**：真实 Claude Code 在陌生 worktree 上只靠 CLI 与 skill 完成了「起服务、失败、看日志、修、再起」，核心闭环 6 步走通（输入与结果见 [validation.md](validation.md)「核心验收」）。那一轮卡住的两处已修：失败提示不再指向不存在的日志，未监听的 `machine:` 依赖不再发布交接（契约见 [cli.md](cli.md)）。仍缺：Codex / OpenCode / Pi 与多 worktree 并发场景。 |
+| 高 | agent 侧的能力面是否够用 | 主线是给 coding agent 的能力，所以「agent 拿到这份代码能不能自己跑起来、自己判断为什么没跑起来」优先于任何界面。**2026-10-28 已跑过一轮**：真实 Claude Code 在陌生 worktree 上只靠 CLI 与 skill 完成了「起服务、失败、看日志、修、再起」，核心闭环 6 步走通（输入与结果见 [validation.md](validation.md)「核心验收」）。那一轮卡住的两处已修：失败提示不再指向不存在的日志，未监听的 `machine:` 依赖不再发布交接（契约见 [cli.md](cli.md)）。**2026-10-30 起**这轮验收沉淀为固定场景库（生成物缺失、端口被占、依赖未就绪、清单与进程不一致、同仓库双 worktree），见 [agent-eval.md](agent-eval.md)。仍缺：在一台能正常观察监听的普通终端或 CI 上，用真实 Codex / OpenCode / Pi 跑出可比的发布矩阵；本机 agent 沙箱内 preflight 会拒绝出表。 |
 | 中 | 引擎契约变更同步到 skill | skill 现在独立发版；本仓库的 CLI、`--json` 形状、错误码或 schema 变化没有自动检查 skill 里的引用。发布前需人工核对 skill 的命令与字段，或补一条跨仓库契约检查。 |
 
 ## 支持范围内的修复

@@ -108,7 +108,32 @@ amd64/arm64 都能在同一个 x86 runner 上生成。macOS 本机没有这些�
 2. 第一轮项目在 `$HOME` 之外，`up` 直接拒绝：错误只说「在 home 之外」，hint 指向一个**不存在**的
    日志；agent 靠 `oberth up --help` 才找到 `--allow-outside-home`。
 
-**未执行**：Codex / OpenCode / Pi 的同场景验收；Windows / Linux 上的对应验收；多 worktree 并发。
+**未执行**（当时）：Codex / OpenCode / Pi 的同场景验收；Windows / Linux 上的对应验收；多 worktree 并发。
+这些已进入下面的固定场景库；真实 agent 矩阵仍未执行。
+
+## 固定场景库（agent 矩阵）
+
+2026-10-28 的手工验收已沉淀成固定场景库，入口 `scripts/agent_eval.py`，契约与指标见
+[agent-eval.md](agent-eval.md)。至少覆盖五个场景：生成物缺失、端口被占、依赖未就绪、
+清单与进程不一致、同仓库双 worktree。每次运行使用隔离 `HOME` / `BERTH_HOME` / 可丢弃项目，
+只按点名的 `--pass-env` 和 `--agent-arg` 传入凭证与 provider 参数；harness 自己不添加
+审批绕过或沙箱禁用参数。
+
+报告按「场景 × agent」给出完成率、步数、`oberth` 调用次数和越界次数；`comparable` 只在
+同一二进制、`--repeat >= 2` 且没有 error 时为真。`--require-complete` / `--require-comparable`
+可用作发布门禁，但真实 agent 依赖外部 CLI、登录与网络，不放进 `scripts/release.py`。
+
+**2026-10-30 实际执行**：
+
+- `python3 -m unittest scripts/agent_eval_test.py`：29 项通过，覆盖夹具、判定、越界识别、
+  agent 参数、provider 事件解析、报告聚合，以及用脚本化二进制跑完整 runner（重复两轮可比）。
+- `python3 scripts/agent_eval.py --dry-run --scenarios missing-artifact`：preflight 启动
+  平凡服务时，当前 Claude Code 进程上下文里的 `netstat` 返回空表，引擎报
+  `netstat: no recognized TCP table header`。harness 按设计退出 2，拒绝把环境问题写成
+  agent 失败。
+- **未执行**：真实 Claude Code / Codex / OpenCode / Pi 的矩阵。需要在普通终端（不在 coding
+  agent 沙箱内）或具备凭据的 CI 上运行；Codex 本机也未登录。没有用参考脚本或 fake engine
+  的行冒充真实 agent 结论。
 
 ## 客户端验证
 

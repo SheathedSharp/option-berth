@@ -101,6 +101,17 @@ Mage 提供 `releaseProtocol / releaseFeature / releaseFix`（本地提交和 ta
 核心竞态测试、真实服务场景、Mage/Python 辅助测试与品牌一致性检查。
 验证失败不修改日常工作区，不创建标签。没有跳过测试或强制发布选项。
 
+### 发布前的 agent 场景矩阵
+
+固定场景库的入口是 `scripts/agent_eval.py`，契约为 [agent-eval.md](agent-eval.md)。
+发布候选构建应在一台能正常观察监听的普通终端（或具备凭据的 CI）上跑
+`--execute --repeat 2`，把 `report.md` 作为发布证据附上；`--require-comparable`
+用于确认同一场景确实重复跑过且来自同一构建。
+
+真实 agent 依赖外部 CLI、登录状态和网络，这一步**不放进** `scripts/release.py` 的强制
+验证，也不因为它失败而阻止引擎发布。没有执行的 agent 行必须在证据里写「未执行」；
+参考脚本和 fake engine 的结果不能替代真实 agent。
+
 验证通过后仍重新检查工作区、main 提交、origin/main 与标签，防止验证期间的并行工作被覆盖。
 只允许候选中的版本与协议文件发生预期变化；其他生成或修改必须先被审查，真实错误不通过删断言、
 放宽超时或自动无限重试处理。
