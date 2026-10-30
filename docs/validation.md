@@ -52,6 +52,10 @@ Claude Code（`sandbox.enabled` 的非交互会话）、Cursor（`--sandbox enab
 普通终端运行 `oberth serve --detach`；`doctor --only listener_observation` 报告同一结论。
 Claude 会话的 agent 据此说明“知道项目声明了什么、无法确认监听”，没有重试或转述 internal。
 
+好行夹坏行的夹具（`TestCollectListenersKeepsReadableRowsWhenOneRowFails`）和 scanner 的
+partial 测试确认：可读行照常发布，坏行对应的端口不在结果里，快照带
+`observation.state=partial`。
+
 本机普通 shell 启动的 Go 进程同样拿不到完整监听表，所以 `TestScanFindsIsolatedListener`
 在这台机器上失败；这是环境限制，不是本次改动的回归。
 

@@ -30,7 +30,8 @@
   observation_bind_denied 和 internal。观察类 code 都不是“没有监听”：
   - observation_empty：采集命令以 0 退出但没有任何输出；由自证探针判定是真空表还是失明。
   - observation_unrecognized：有输出但没有可识别的表头，属于格式问题。
-  - observation_incomplete：输出行无法完整解码或命令带诊断失败，整轮扫描被丢弃。
+  - observation_incomplete：部分输出行无法解码。可读行照常发布，坏行对应的端口保持未知，
+    `observation.state` 为 partial；命令整体失败时仍按失败处理。
   - observation_blind：探针能绑定本地端口，但同一采集器看不到自己的监听。
   - observation_bind_denied：探针连本地端口都不能绑定，从这里启动的服务也无法监听。
   hint 指向离开沙箱重试、升级 option-berth 或运行
@@ -81,11 +82,12 @@ depends on · listeners · code · failed · next · drafts · last look），�
 不包含环境变量内容。
 
 监听表不可信时（例如 agent 沙箱拒绝系统内省），`status` 仍然返回清单、服务、运行记录、
-日志路径和最近退出；端口相关字段保持未知而不是空事实：`ports` 为空、`port_actual` 为 null，
-顶层带 `observation`（`state`、`code`、`detail`、`hint`、`checked_at`）。`up --wait` 在这种
-情况下立即返回观察类错误并保留刚启动的运行，不会等满超时再把它停掉；`logs <service>` 对
-托管服务仍使用运行登记的日志路径，不依赖监听表。需要自启 daemon 的写命令会先跑自证探针，
-失明时拒绝从当前进程创建 daemon，提示在普通终端运行 `oberth serve --detach`。
+日志路径和最近退出；顶层带 `observation`（`state`、`code`、`detail`、`hint`、`checked_at`）。
+完全失明时 `ports` 为空、`port_actual` 为 null；部分行不可读时 `ports` 只含可读行，
+未读到的端口不在其中，`observation.state` 为 partial。`up --wait` 在观察不是 observable 时
+立即返回观察类错误并保留刚启动的运行，不会等满超时再把它停掉；`logs <service>` 对托管服务
+仍使用运行登记的日志路径，不依赖监听表。需要自启 daemon 的写命令会先跑自证探针，失明时
+拒绝从当前进程创建 daemon，提示在普通终端运行 `oberth serve --detach`。
 
 JSON 顶层固定包含：
 
