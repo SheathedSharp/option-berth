@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -261,10 +262,14 @@ func healthTargets(rows []state.Port, gg []state.Group) []healthTarget {
 				if !svc.Running || gg[gi].RootDir == nil {
 					continue
 				}
+				// Resolving the token shells out to git; only a check that
+				// names ${worktree} pays for it.
+				worktree := ""
+				if strings.Contains(h.Command, "${worktree}") {
+					worktree = groups.WorktreeTokenFor(*gg[gi].RootDir)
+				}
 				expanded := groups.Expand(h.Command, groups.Values{
-					Self:     svc.Name,
-					Worktree: groups.WorktreeTokenFor(*gg[gi].RootDir),
-					Ports:    portMap,
+					Self: svc.Name, Worktree: worktree, Ports: portMap,
 				})
 				out = append(out, healthTarget{
 					kind: groups.HealthCommand, argv: spawn.SplitCmd(expanded),
