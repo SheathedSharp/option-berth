@@ -19,7 +19,11 @@
 | Reused service readiness | PR、引擎相关 `main` 推送、手动 | macOS / Ubuntu：真实健康与不健康服务的复用检查。 |
 | Windows build verification | PR、引擎相关 `main` 推送、发布标签、手动 | Windows x64：原生构建、vet、CLI/Jev 构建、version JSON/帮助页、事实/持久化，以及隔离 API/无端口 worker 的启动、重复启动、采集器恢复和限定停止；Ubuntu：Windows arm64 交叉构建。 |
 | Gate integrity | PR（`pull_request_target`） | 修改 `.github/workflows/`、CODEOWNERS、race 清单、发布脚本或质量门检查脚本时，要求 PR 作者是仓库维护者。 |
+| CI configuration | PR、CI 相关 `main` 推送、手动 | Ubuntu：actionlint 检查全部 workflow，并校验 required checks 与 workflow job 名一致。 |
 | Bounded ancestry comparison | 手动（证据） | Ubuntu：在同一 runner 上对比分支与指定基线的有界基准；不作为合并门槛。 |
+
+必需检查的唯一清单是 `.github/quality-gate-checks.json`；workflow job 名由 PR 上的 `CI configuration`
+校验，线上 ruleset 另由每日 `Nightly full verification` 校验。
 
 CLI、Mage 与品牌迁移分别审查、验证、合并，没有引入旧私人 Git 祖先。
 品牌检查比较本仓库导出的 SVG 与同级 `option-berth-macos` 里的 `BerthGeometry.swift`；

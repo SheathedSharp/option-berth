@@ -1,9 +1,9 @@
 ---
 name: option-berth-delivery
 description: >-
-  本仓库的交付流程：主题分支推送到 origin，开远端 PR，等 Engine verification 的
-  macOS 与 Linux 检查通过并经用户确认后，用 merge commit 合并。用于开始交付、合并改动、
-  或考虑是否直接操作 main 时。发布提交与标签不走这条流程。
+  本仓库的交付流程：主题分支推送到 origin，开远端 PR，等本 PR 的 required checks
+  通过并经用户确认后，用 merge commit 合并。用于开始交付、合并改动、或考虑是否直接
+  操作 main 时。发布提交与标签不走这条流程。
 ---
 
 # option-berth 远端 PR 交付
@@ -35,16 +35,18 @@ worktree、提交信息与用户确认的规则不变。
      --title "<subject>" --body "<验证输入与结果；未跑项>"
    ```
 
-5. 等检查。必须看到 `Engine / ubuntu-24.04`、`Engine / macos-15` 与
-   `Engine / windows-install-scripts` 都通过：
+5. 等检查。本 PR 的所有 required checks 都必须通过；清单以 `main` 的 ruleset 为准，
+   仓库内的唯一清单是 `.github/quality-gate-checks.json`：
 
    ```sh
    gh pr checks <branch> --watch
    ```
 
    失败时按实际日志修复并重新推送；不绕过检查、不关闭 workflow、不放宽超时、
-   不把旧提交的绿灯当成本次结果。`Engine verification` 还会跑 Mage 与 Python 辅助
-   测试；核心 race 与真实服务场景仍只在手动或发版流程中执行，PR 通过不等于这两项已跑。
+   不把旧提交的绿灯当成本次结果。核心 race 与真实服务场景由每日
+   `Nightly full verification` 与发版流程覆盖，PR 通过不等于这两项已跑。修改
+   workflow、CODEOWNERS、race 清单或发布/检查脚本时，`Gate integrity` 要求 PR 作者
+   是仓库维护者（`OWNER` / `MEMBER` / `COLLABORATOR`），不要尝试绕过。
 6. 得到用户明确确认后才合并：
 
    ```sh

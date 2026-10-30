@@ -5,11 +5,12 @@
 
 ## 交付
 
-合并前移到远端 PR：主题分支推送到 `origin`，等 `Engine verification` 的
-`Engine / ubuntu-24.04`、`Engine / macos-15` 与 `Engine / windows-install-scripts` 通过，
-经用户确认后用 merge commit 合并；
-不在本地把主题分支合入 `main` 后直接推送。发布脚本的原子推送是例外。命令、失败处理与
-清理见项目 skill [`option-berth-delivery`](.agents/skills/option-berth-delivery/SKILL.md)。
+合并前移到远端 PR：主题分支推送到 `origin`，等本 PR 的所有 required checks 通过（清单见
+[`.github/quality-gate-checks.json`](.github/quality-gate-checks.json)，以 `main` 的 ruleset 为准），
+经用户确认后用 merge commit 合并；不在本地把主题分支合入 `main` 后直接推送。发布脚本的原子
+推送是例外。修改 workflow、CODEOWNERS、race 清单或发布/检查脚本时，`Gate integrity` 要求
+PR 作者是仓库维护者，不要绕过。命令、失败处理与清理见项目 skill
+[`option-berth-delivery`](.agents/skills/option-berth-delivery/SKILL.md)。
 
 契约与做法各有去处，冲突时以契约为准：
 

@@ -56,6 +56,11 @@ jobs:
           set -o pipefail
           go version | tee verification/go-version.txt
           python3 scripts/release.py --verify-only 2>&1 | tee verification/full.log
+      - name: Check required checks against the ruleset
+        if: runner.os == 'Linux' && (success() || failure())
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/check_ci_gate.py --check-ruleset
       - name: Retain verification logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

@@ -1,0 +1,48 @@
+name: CI configuration
+
+on:
+  # No path filter on pull_request: a skipped required workflow leaves its
+  # check pending and blocks the PR.
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - '.github/CODEOWNERS'
+      - '.github/quality-gate-checks.json'
+      - 'scripts/check_ci_gate.py'
+      - 'scripts/check_ci_gate_test.py'
+      - 'scripts/race-packages.txt'
+      - 'scripts/release.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-config-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: CI config / lint and gate consistency
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: engine/go.mod
+          cache-dependency-path: engine/go.sum
+      - name: Install actionlint
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Lint every workflow
+        run: actionlint .github/workflows/*.yml
+      - name: Check required checks against workflow jobs
+        run: python3 scripts/check_ci_gate.py
+      - name: Run gate checker tests
+        run: python3 -m unittest discover -s scripts -p 'check_ci_gate_test.py'

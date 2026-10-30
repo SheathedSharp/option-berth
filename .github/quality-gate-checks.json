@@ -1,0 +1,17 @@
+{
+  "required_checks": [
+    "Engine / ubuntu-24.04",
+    "Engine / macos-15",
+    "Engine / windows-install-scripts",
+    "Windows x64 native build and smoke",
+    "Windows arm64 cross-build",
+    "Git read / ubuntu-24.04",
+    "Git read / macos-15",
+    "Examples / ubuntu-24.04",
+    "Examples / macos-15",
+    "Reused readiness / ubuntu-24.04",
+    "Reused readiness / macos-15",
+    "CI config / lint and gate consistency",
+    "Gate integrity / maintainer-owned CI changes"
+  ]
+}
