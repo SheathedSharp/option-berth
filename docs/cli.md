@@ -392,6 +392,26 @@ group/session 选择器只为迁移保留，不出现在公开帮助中。
 - 监听端口、pid、退出码和日志是 Run 的运行实况。产品不提供整机端口雷达、机器服务注册表、模型
   判断、MCP 服务或自动安装 skill。
 
+### 清单中的引用
+
+`prepare:`、`cmd:` 和 `env:` 的值可以引用端口和 checkout 身份，daemon 在启动服务前展开：
+
+| 引用 | 展开为 |
+|---|---|
+| `${port}` / `${url}` | 本服务自己的端口 / `http://localhost:<port>` |
+| `${<service>.port}` / `${<service>.url}` | 同一清单里另一个服务的端口 / URL |
+| `${worktree}` | 当前 checkout 的稳定身份，形如 `wt_0123456789ab` |
+
+`${worktree}` 由清单所在 checkout 的规范化根路径派生：同一个 worktree 每次启动都相同，
+主 checkout 和每个 linked worktree 各不相同。它是标识符而不是路径，适合拼进数据库名
+（`app_${worktree}`）或相对数据目录（`.data/${worktree}`）。移动 checkout 目录会得到新的
+身份，旧数据不会被搬走；它也不改变 `down` 的行为——`down` 只停本 worktree 的服务，
+不删除数据。
+
+只有上表五种形状是引用；其他 `${...}`（例如 `${HOME}`、`${FOO:-x}`）原样保留。
+`${worktree}` 不指向服务，不需要也不产生 `depends_on`；未声明的服务、没有端口的端口引用
+仍按清单校验拒绝。可运行示例见 [`examples/worktree-data`](../examples/worktree-data/README.md)。
+
 ### 清单解析的歧义拒绝
 
 `oberth.yaml` 只接受一个 YAML 文档；第二个文档（包括空文档）会报错，而不是被忽略。

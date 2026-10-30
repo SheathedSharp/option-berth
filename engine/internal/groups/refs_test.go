@@ -1,17 +1,25 @@
 package groups
 
 import (
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
 
 func TestExpand(t *testing.T) {
-	ports := map[string]int{"api": 21408, "db": 21407}
+	values := Values{
+		Self:     "api",
+		Worktree: "wt_0123456789ab",
+		Ports:    map[string]int{"api": 21408, "db": 21407},
+	}
 	for _, tt := range []struct{ in, want string }{
 		{"--port ${port}", "--port 21408"},
 		{"${url}/healthz", "http://localhost:21408/healthz"},
 		{"postgres://localhost:${db.port}/app", "postgres://localhost:21407/app"},
 		{"${db.url}", "http://localhost:21407"},
+		{"app_${worktree}", "app_wt_0123456789ab"},
+		{".data/${worktree}/app.db", ".data/wt_0123456789ab/app.db"},
 		// Not references: left exactly as written.
 		{"${HOME}/bin", "${HOME}/bin"},
 		{"${FOO:-x}", "${FOO:-x}"},
@@ -19,14 +27,66 @@ func TestExpand(t *testing.T) {
 		// A reference to a service with no port in the map stays put.
 		{"${cache.port}", "${cache.port}"},
 	} {
-		if got := Expand(tt.in, "api", ports); got != tt.want {
+		if got := Expand(tt.in, values); got != tt.want {
 			t.Errorf("Expand(%q) = %q, want %q", tt.in, got, tt.want)
 		}
+	}
+	// Without an identity the reference is left as written, like an unresolved
+	// port reference: a daemon that does not know the checkout must not guess.
+	unknown := Values{Self: "api", Ports: values.Ports}
+	if got := Expand("app_${worktree}", unknown); got != "app_${worktree}" {
+		t.Errorf("Expand with no identity = %q, want the reference unchanged", got)
+	}
+}
+
+func TestWorktreeToken(t *testing.T) {
+	dir := t.TempDir()
+	token := WorktreeToken(dir)
+	if token != WorktreeToken(dir) {
+		t.Fatalf("WorktreeToken(%q) is not stable across calls", dir)
+	}
+	if !regexp.MustCompile(`^wt_[0-9a-f]{12}$`).MatchString(token) {
+		t.Errorf("token = %q, want wt_ followed by 12 hex digits", token)
+	}
+	// The same directory reached through `..` names the same checkout.
+	spelled := dir + string(filepath.Separator) + ".." + string(filepath.Separator) + filepath.Base(dir)
+	if got := WorktreeToken(spelled); got != token {
+		t.Errorf("token through %q = %q, want %q", spelled, got, token)
+	}
+	if other := WorktreeToken(t.TempDir()); other == token {
+		t.Errorf("two directories share the token %q", token)
+	}
+	if got := WorktreeToken(""); got != "" {
+		t.Errorf("WorktreeToken(\"\") = %q, want empty", got)
+	}
+	if got := WorktreeTokenFor(dir); got != token {
+		t.Errorf("WorktreeTokenFor(%q) = %q, want %q", dir, got, token)
+	}
+}
+
+// TestWorktreeTokenPerCheckout: a nested manifest, the main checkout and a
+// linked worktree each resolve to their own checkout's token. Two worktrees of
+// one repository therefore never share a database name or data directory.
+func TestWorktreeTokenPerCheckout(t *testing.T) {
+	c := newCheckouts(t, "shop", "feat")
+	nestedMain := mkdir(t, c.main, "api")
+	nestedWorktree := mkdir(t, c.wt, "web")
+
+	main := WorktreeTokenFor(nestedMain)
+	worktree := WorktreeTokenFor(nestedWorktree)
+	if main == worktree {
+		t.Fatalf("main and linked worktree share the token %q", main)
+	}
+	if main != WorktreeTokenFor(c.main) {
+		t.Errorf("a nested manifest has a different token than its main checkout")
+	}
+	if worktree != WorktreeTokenFor(c.wt) {
+		t.Errorf("a nested manifest has a different token than its worktree")
 	}
 }
 
 func TestRefs(t *testing.T) {
-	got := Refs("x ${port} ${db.port} ${HOME} ${db.url} ${url}", "api")
+	got := Refs("x ${port} ${db.port} ${HOME} ${db.url} ${url} ${worktree}", "api")
 	if strings.Join(got, ",") != "api,db" {
 		t.Errorf("Refs = %v, want [api db]", got)
 	}
@@ -40,6 +100,8 @@ func TestMatchesExpanded(t *testing.T) {
 		{"--port=${port}", "--port=8123", true},
 		{"--port=${port}", "--port=", false},
 		{"${port}", "8123", true},
+		{"--db=${worktree}", "--db=wt_0123456789ab", true},
+		{"--db=${worktree}", "--db=", false},
 		{"${HOME}", "${HOME}", true},
 		{"${HOME}", "/Users/me", false},
 		{"dev", "dev", true},
@@ -96,6 +158,32 @@ services:
 	}
 	if db, _ := back.ServiceNamed("db"); !db.PortAuto {
 		t.Errorf("round trip lost port: auto: %+v", db)
+	}
+}
+
+// TestLoadAcceptsWorktreeReference: ${worktree} is a reference the daemon
+// resolves from the checkout, not a service name, so a manifest may use it in
+// cmd, prepare and env without declaring a service called "worktree".
+func TestLoadAcceptsWorktreeReference(t *testing.T) {
+	cfg, err := loadString(t, "demo", `
+name: demo
+services:
+  - name: api
+    prepare: build --data ${worktree}
+    cmd: run --data ${worktree}
+    port: auto
+    env:
+      DATA_DIR: .data/${worktree}
+`)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	api, _ := cfg.ServiceNamed("api")
+	if api.Env["DATA_DIR"] != ".data/${worktree}" {
+		t.Errorf("env = %v, want the reference preserved for the daemon", api.Env)
+	}
+	if !cfg.UsesAssignedPorts() {
+		t.Error("UsesAssignedPorts = false, want a file the assigned-port daemon must handle")
 	}
 }
 
