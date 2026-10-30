@@ -293,10 +293,14 @@ func prepare(ctx context.Context, cfg *groups.Config, group string,
 		return fmt.Errorf("opening %s: %w", logPath, err)
 	}
 	defer log.Close()
+	env, err := serviceEnv(p.Env, cfg, svc, ports[svc.Name], ports, values)
+	if err != nil {
+		return err
+	}
 	h, err := spawn.Spawn(ctx, spawn.Request{
 		Argv:   argv,
 		Cwd:    cwd,
-		Env:    serviceEnv(p.Env, svc, ports[svc.Name], ports, values),
+		Env:    env,
 		Group:  group,
 		Name:   svc.Name,
 		Stdout: log,
@@ -399,10 +403,14 @@ func start(ctx context.Context, rt *daemon.Runtime, cfg *groups.Config, group st
 	port := ports[svc.Name]
 	runMeta := meta
 	runMeta.SpecHash = groups.ServiceSpecHash(svc)
+	env, err := serviceEnv(p.Env, cfg, svc, port, ports, values)
+	if err != nil {
+		return nil, err
+	}
 	return runsreg.Spawn(ctx, rt, spawn.Request{
 		Argv:     argv,
 		Cwd:      cwd,
-		Env:      serviceEnv(p.Env, svc, port, ports, values),
+		Env:      env,
 		Group:    group,
 		Name:     svc.Name,
 		PortHint: port,
@@ -412,13 +420,26 @@ func start(ctx context.Context, rt *daemon.Runtime, cfg *groups.Config, group st
 
 // serviceEnv is the environment a service starts in, each layer winning over
 // the one before: the daemon's own, the caller's (the CLI sends its shell's),
-// PORT for a service with a port, and the service's own `env:` with its
-// references expanded. BERTH_PORT and the other run variables are added by
-// spawn on top of all of it.
-func serviceEnv(caller map[string]string, svc groups.Service, port int, ports map[string]int, values groups.Values) []string {
+// the service's `env_file`, PORT for a service with a port, and the service's
+// own `env:` with its references expanded. BERTH_PORT and the other run
+// variables are added by spawn on top of all of it.
+//
+// The env file is read at start time, so the same committed manifest can point
+// every worktree at one file outside their checkouts. Its values are data: they
+// are not reference-expanded and never appear in status or logs.
+func serviceEnv(caller map[string]string, cfg *groups.Config, svc groups.Service, port int, ports map[string]int, values groups.Values) ([]string, error) {
 	over := make(map[string]string, len(caller)+len(svc.Env)+1)
 	for k, v := range caller {
 		over[k] = v
+	}
+	if path := cfg.EnvFilePath(svc); path != "" {
+		fromFile, err := groups.EnvFileValues(path)
+		if err != nil {
+			return nil, fmt.Errorf("service %s: %w", svc.Name, err)
+		}
+		for k, v := range fromFile {
+			over[k] = v
+		}
 	}
 	if port > 0 {
 		over["PORT"] = strconv.Itoa(port)
@@ -426,7 +447,7 @@ func serviceEnv(caller map[string]string, svc groups.Service, port int, ports ma
 	for k, v := range svc.Env {
 		over[k] = groups.Expand(v, values)
 	}
-	return layer(os.Environ(), over)
+	return layer(os.Environ(), over), nil
 }
 
 // layer returns base with every key in over replaced or added.
@@ -466,6 +487,10 @@ type addressBook struct {
 	live     map[string]int
 	ports    map[string]int
 	errs     map[string]error
+	// groups is the one runtime snapshot this start resolves workspace
+	// references against. It is read-only: a reference never allocates a port
+	// or starts the other checkout's service.
+	groups []state.Group
 }
 
 func newAddressBook(ctx context.Context, rt *daemon.Runtime, cfg *groups.Config, group string) (*addressBook, error) {
@@ -480,6 +505,7 @@ func newAddressBook(ctx context.Context, rt *daemon.Runtime, cfg *groups.Config,
 		ctx: ctx, rt: rt, cfg: cfg, group: group,
 		worktree: groups.WorktreeTokenFor(cfg.Dir),
 		live:     map[string]int{}, ports: map[string]int{}, errs: map[string]error{},
+		groups: snap.Groups,
 	}
 	// A service that is already up keeps the port it is on: the run registry
 	// knows the port option-berth started it on, and the group row knows where
@@ -521,13 +547,24 @@ func (b *addressBook) port(name string) (int, error) {
 		err  error
 	)
 	switch {
-	case !ok || !svc.HasPort():
-	case svc.Port != 0:
-		port = svc.Port
-	case b.live[name] != 0:
-		port = b.live[name]
-	default:
-		port, err = daemon.AcquireServicePort(b.rt, b.cfg.Dir, name)
+	case ok && svc.HasPort():
+		switch {
+		case svc.Port != 0:
+			port = svc.Port
+		case b.live[name] != 0:
+			port = b.live[name]
+		default:
+			port, err = daemon.AcquireServicePort(b.rt, b.cfg.Dir, name)
+		}
+	case !ok:
+		// Not one of this file's services: a machine reference is a fixed
+		// port, and a workspace reference reads the other checkout's address.
+		// Neither is allocated or started here.
+		if machine, found := b.cfg.MachineNamed(name); found {
+			port = machine.Port
+		} else if _, found := b.cfg.WorkspaceNamed(name); found {
+			port, err = b.cfg.WorkspaceServiceAddress(name, b.groups)
+		}
 	}
 	if err != nil {
 		b.errs[name] = err

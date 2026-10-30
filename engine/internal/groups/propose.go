@@ -169,6 +169,13 @@ func Marshal(cfg *Config) ([]byte, error) {
 		}
 		b.Write(body)
 	}
+	if len(cfg.Workspace) > 0 {
+		body, err := marshalWorkspace(cfg.Workspace)
+		if err != nil {
+			return nil, err
+		}
+		b.Write(body)
+	}
 	b.WriteString(serviceNotes(cfg))
 	return []byte(b.String()), nil
 }
@@ -208,6 +215,23 @@ func marshalMachine(refs []MachineRef) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// marshalWorkspace renders the `workspace:` list — read-only addresses in
+// other checkouts — after the machine references it reads like.
+func marshalWorkspace(refs []WorkspaceRef) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(struct {
+		Workspace []WorkspaceRef `yaml:"workspace"`
+	}{refs}); err != nil {
+		return nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
 // yamlScalar renders one string as the value side of a key, quoted when YAML
 // would otherwise read it as something else. A project directory can be called
 // anything, including `yes` or `a: b`.
@@ -237,6 +261,7 @@ func serviceNotes(cfg *Config) string {
 		`    cmd: pnpm run dev              # what brings it back up`,
 		`    port: 8000                     # optional: the port it binds`,
 		`    cwd: .                         # optional: where to run it, relative to this file`,
+		`    env_file: ../shared/dev.env    # optional: dotenv file read at start, never written`,
 		`    health: /healthz               # optional: HTTP path; or {tcp: 5432} / {command: pg_isready}`,
 		`    env:                           # optional, added to its environment`,
 		`      NODE_ENV: development`,
@@ -248,6 +273,14 @@ func serviceNotes(cfg *Config) string {
 		`  machine:`,
 		`    - name: mysql`,
 		`      port: 3306`,
+		``,
+		`A service in another checkout is addressed the same way, read-only, through`,
+		`workspace: — ${backend.url} then follows that checkout's own port, including`,
+		`an assigned one, and nothing here starts or stops it:`,
+		`  workspace:`,
+		`    - name: backend`,
+		`      worktree: ../backend`,
+		`      service: api`,
 	} {
 		// Trailing spaces are trimmed: an empty line in the list above is a
 		// paragraph break in the comment, not "# " with nothing after it.

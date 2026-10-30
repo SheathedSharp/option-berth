@@ -95,6 +95,11 @@ type Service struct {
 	PrepareInputs []string `yaml:"prepare_inputs,omitempty" jsonschema_description:"Files the prepare command reads, relative to cwd. When their contents are unchanged, up skips prepare."`
 	Cmd           string   `yaml:"cmd,omitempty" jsonschema_description:"The command that brings the service back up, run from cwd."`
 	Cwd           string   `yaml:"cwd,omitempty" jsonschema_description:"Working directory, relative to the directory holding oberth.yaml."`
+	// EnvFile is a dotenv-style file read when the service starts. A relative
+	// path is resolved against the directory holding the manifest, so
+	// `../shared/dev.env` can point outside this checkout; an absolute path is
+	// used as written. It is read-only: option-berth never creates or edits it.
+	EnvFile string `yaml:"env_file,omitempty" jsonschema_description:"Dotenv-style file read when the service starts. Relative paths are resolved against the manifest's directory; the file is never written."`
 	// Port is the port the service binds, or 0 when it declares none or when
 	// PortAuto is set.
 	Port int `yaml:"port,omitempty" jsonschema_description:"The port the service binds, or auto to let option-berth pick one."`
@@ -242,13 +247,38 @@ type MachineRef struct {
 	Port int `yaml:"port" jsonschema_description:"The port the dependency listens on. Required: it is what the reference is matched by."`
 }
 
+// WorkspaceRef is one entry of the file's top-level `workspace:` list: a
+// service in another checkout, which this worktree's commands and environment
+// may address but does not own.
+//
+// It is a reference, not a member: like `machine:`, `up` and `down` never
+// touch it, and it carries no cmd. Unlike `machine:` the address is not fixed —
+// the referenced checkout's own manifest decides the port, including
+// `port: auto`. Resolution reads the other checkout's manifest and the daemon's
+// runtime facts; it never starts or stops that service.
+type WorkspaceRef struct {
+	// Name is what this file calls the reference: `${backend.port}`,
+	// `${backend.url}`. It must not collide with a service or machine name.
+	Name string `yaml:"name" jsonschema_description:"Name this file uses for the reference, as in ${backend.port} or ${backend.url}."`
+	// Worktree is the other checkout's root directory, relative to the
+	// directory holding this manifest or absolute. A path to that checkout's
+	// manifest is accepted too.
+	Worktree string `yaml:"worktree" jsonschema_description:"The other checkout's root directory (or its manifest path), relative to this manifest's directory or absolute."`
+	// Service names the service in the other checkout's manifest.
+	Service string `yaml:"service" jsonschema_description:"The service name in the other checkout's manifest."`
+}
+
 // Config is a parsed `.oberth.yaml`. Path and Dir are filled by Load and are
 // not part of the file format.
 type Config struct {
 	Name     string       `yaml:"name" jsonschema_description:"The group this project is known by. Defaults to the directory name when absent."`
 	Services []Service    `yaml:"services,omitempty" jsonschema_description:"Services option-berth starts and stops for this project."`
 	Machine  []MachineRef `yaml:"machine,omitempty" jsonschema_description:"Services the machine already runs that the project depends on. References only: option-berth never starts or stops them."`
-	Ports    []int        `yaml:"ports,omitempty" jsonschema_description:"Extra ports the project claims beyond its services."`
+	// Workspace are services in other checkouts this worktree may address by
+	// ${<name>.port} and ${<name>.url}. They are read-only references: nothing
+	// here starts or stops the other worktree.
+	Workspace []WorkspaceRef `yaml:"workspace,omitempty" jsonschema_description:"Services in other checkouts, addressable by ${name.port} and ${name.url}. Read-only references: option-berth never starts or stops them."`
+	Ports     []int          `yaml:"ports,omitempty" jsonschema_description:"Extra ports the project claims beyond its services."`
 	// WorktreePorts is how many ports a claim for this project takes when the
 	// caller does not name a count (step 5A.7). Nil means the key is absent
 	// and the claims default applies.
@@ -314,6 +344,56 @@ func (c *Config) UsesAssignedPorts() bool {
 		}
 	}
 	return false
+}
+
+// UsesManifestExtras reports whether the file uses a field an older daemon
+// would silently ignore: `env_file` (the service would start without it) or
+// `workspace` references (their addresses would stay unexpanded). The CLI
+// checks the running daemon's capability before handing it such a file.
+func (c *Config) UsesManifestExtras() bool {
+	if len(c.Workspace) > 0 {
+		return true
+	}
+	for _, s := range c.Services {
+		if strings.TrimSpace(s.EnvFile) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// EnvFilePath is the absolute file a service's `env_file:` names. A relative
+// path is resolved against the directory holding the manifest, which is what
+// lets a worktree reference a shared file outside its own checkout.
+func (c *Config) EnvFilePath(s Service) string {
+	path := strings.TrimSpace(s.EnvFile)
+	if path == "" {
+		return ""
+	}
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path)
+	}
+	return filepath.Join(c.Dir, filepath.FromSlash(path))
+}
+
+// MachineNamed returns the machine reference with this name.
+func (c *Config) MachineNamed(name string) (MachineRef, bool) {
+	for _, m := range c.Machine {
+		if m.Name == name {
+			return m, true
+		}
+	}
+	return MachineRef{}, false
+}
+
+// WorkspaceNamed returns the workspace reference with this name.
+func (c *Config) WorkspaceNamed(name string) (WorkspaceRef, bool) {
+	for _, w := range c.Workspace {
+		if w.Name == name {
+			return w, true
+		}
+	}
+	return WorkspaceRef{}, false
 }
 
 // ConfigError reports every problem found in one file at once, so a user fixing
@@ -447,6 +527,9 @@ func (c *Config) validate() []string {
 				problems = append(problems, fmt.Sprintf("%s: env %q is not a variable name", where, key))
 			}
 		}
+		if strings.ContainsRune(s.EnvFile, 0) {
+			problems = append(problems, where+": env_file contains a NUL byte")
+		}
 		problems = append(problems, c.prepareInputProblems(s, where)...)
 		problems = append(problems, c.healthProblems(s, where)...)
 		problems = append(problems, c.refProblems(s, where)...)
@@ -475,6 +558,35 @@ func (c *Config) validate() []string {
 			problems = append(problems, where+": port is required — it is what the reference is matched by")
 		case m.Port < 1 || m.Port > 65535:
 			problems = append(problems, fmt.Sprintf("%s: port %d is out of range 1-65535", where, m.Port))
+		}
+	}
+
+	// `workspace:` holds read-only references to services in other checkouts.
+	// Their names live in the same `${<name>.port}` namespace as this file's
+	// services and machine references, so the three may not collide.
+	workspaces := map[string]bool{}
+	for i, w := range c.Workspace {
+		where := fmt.Sprintf("workspace[%d]", i)
+		if w.Name == "" {
+			problems = append(problems, where+": name is empty")
+		} else {
+			where = "workspace " + w.Name
+			if seen[w.Name] {
+				problems = append(problems, fmt.Sprintf("%s: %s is already a service in this file", where, w.Name))
+			}
+			if machines[w.Name] {
+				problems = append(problems, fmt.Sprintf("%s: %s is already a machine reference in this file", where, w.Name))
+			}
+			if workspaces[w.Name] {
+				problems = append(problems, where+": duplicate name")
+			}
+			workspaces[w.Name] = true
+		}
+		if strings.TrimSpace(w.Worktree) == "" {
+			problems = append(problems, where+": worktree is required")
+		}
+		if strings.TrimSpace(w.Service) == "" {
+			problems = append(problems, where+": service is required")
 		}
 	}
 

@@ -23,6 +23,7 @@ func init() {
 	RegisterHandler("groups.reload", handleGroupsReload)
 	RegisterCapability("groups")
 	RegisterCapability(rpc.CapabilityAutoPorts)
+	RegisterCapability(rpc.CapabilityManifestExtras)
 }
 
 func handleGroupsConfigGet(_ context.Context, req *Request) (any, error) {

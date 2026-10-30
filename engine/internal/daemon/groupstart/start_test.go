@@ -1049,3 +1049,130 @@ func killPIDs(chunks []rpc.GroupsStartChunk) {
 		}
 	}
 }
+
+// TestEnvFileSuppliesEnvironmentBelowTheManifest: a shared file outside the
+// checkout fills the service's environment, its values are not reference
+// expanded, and PORT plus the service's own `env:` still win.
+func TestEnvFileSuppliesEnvironmentBelowTheManifest(t *testing.T) {
+	skipOnWindows(t)
+	dir := isolate(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	envPath := filepath.Join(filepath.Dir(dir), "shared.env")
+	if err := os.WriteFile(envPath, []byte("FROM_FILE=file-value\nCALLER_LOSES=file-value\nOVERRIDDEN=file-value\nPORT=9999\nLITERAL=${not-expanded}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	port := freePort(t)
+	cmd := serviceCmd(t)
+	path := writeConfig(t, dir, fmt.Sprintf(`name: envtest
+services:
+  - name: api
+    cmd: %s
+    port: %d
+    env_file: ../shared.env
+    env:
+      BERTH_TEST_ECHO: FROM_FILE,CALLER_LOSES,OVERRIDDEN,PORT,LITERAL
+      OVERRIDDEN: from-manifest
+`, cmd, port))
+
+	c := startDaemon(t, ctx, dir, []int{port})
+	var start rpc.GroupsStartResult
+	s, err := c.Stream(ctx, "groups.start", rpc.GroupsStartParams{
+		ConfigPath: &path,
+		Env:        map[string]string{"CALLER_LOSES": "caller-value"},
+	}, &start)
+	if err != nil {
+		t.Fatalf("groups.start: %v", err)
+	}
+	defer s.Close()
+
+	chunks, end := collect(t, s)
+	t.Cleanup(func() { killPIDs(chunks) })
+	if len(end.Started) != 1 || len(end.Errors) != 0 {
+		dumpLogs(t, chunks)
+		t.Fatalf("end = %+v, chunks = %+v", end, chunks)
+	}
+
+	want := []string{
+		"FROM_FILE=file-value",
+		"CALLER_LOSES=file-value",
+		"OVERRIDDEN=from-manifest",
+		fmt.Sprintf("PORT=%d", port),
+		"LITERAL=${not-expanded}",
+	}
+	// The child prints its environment just before it listens; give the log a
+	// moment to arrive instead of racing the write.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		raw, _ := os.ReadFile(chunks[0].LogPath)
+		missing := ""
+		for _, w := range want {
+			if !strings.Contains(string(raw), w) {
+				missing = w
+				break
+			}
+		}
+		if missing == "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("service log is missing %q:\n%s", missing, raw)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// TestAddressBookReadsMachineAndWorkspaceReferences: neither is allocated or
+// started; a machine reference is its fixed port and a workspace reference is
+// the other checkout's declared or observed address.
+func TestAddressBookReadsMachineAndWorkspaceReferences(t *testing.T) {
+	root := t.TempDir()
+	backendDir := filepath.Join(root, "backend")
+	if err := os.MkdirAll(backendDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(backendDir, groups.ConfigName),
+		[]byte("name: backend\nservices:\n  - name: api\n    cmd: run-api\n    port: 8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	frontDir := filepath.Join(root, "frontend")
+	if err := os.MkdirAll(frontDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	frontPath := filepath.Join(frontDir, groups.ConfigName)
+	if err := os.WriteFile(frontPath, []byte(`name: frontend
+machine:
+  - name: mysql
+    port: 3306
+workspace:
+  - name: backend
+    worktree: ../backend
+    service: api
+services:
+  - name: web
+    cmd: run-web --db ${mysql.port} --api ${backend.url}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := groups.Load(frontPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	b := &addressBook{cfg: cfg, live: map[string]int{}, ports: map[string]int{}, errs: map[string]error{}}
+
+	if port, err := b.port("mysql"); err != nil || port != 3306 {
+		t.Fatalf("machine port = (%d, %v), want (3306, nil)", port, err)
+	}
+	if port, err := b.port("backend"); err != nil || port != 8080 {
+		t.Fatalf("workspace port = (%d, %v), want (8080, nil)", port, err)
+	}
+	ports, err := b.forService(cfg.Services[0])
+	if err != nil {
+		t.Fatalf("forService: %v", err)
+	}
+	if ports["mysql"] != 3306 || ports["backend"] != 8080 {
+		t.Fatalf("forService ports = %v, want mysql and backend", ports)
+	}
+}

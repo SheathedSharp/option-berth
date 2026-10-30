@@ -46,6 +46,16 @@ go test -tags integration -count=1 -timeout=8m ./internal/scenario/...
 
 Mage 与品牌检查分别位于各自 PR 及 CI。构建、安装和服务起停是不同副作用，普通检查不操作日常用户服务。
 
+### 清单地址、共享环境与 start 展开
+
+`internal/groups` 的单元测试覆盖 `env_file` 的行格式、引号与转义、错误不回显值，以及 `workspace:`
+地址解析（对方固定端口、对方运行实况、`port: auto` 未运行时拒绝）、名称冲突和引用校验。
+`internal/daemon/groupstart` 用真实 daemon 和子进程核对 `env_file` 的优先级（调用者 < `env_file`
+< `PORT` < 服务 `env:`）以及 `machine:` / `workspace:` 地址；`internal/cmd` 的
+`TestExpandStart*` / `TestOverlayRunAddresses*` 覆盖 `oberth start` 的地址展开、未知引用拒绝，以及
+`up` 刚返回、扫描尚未发布监听时用 run 的已分配端口补齐。上述包的 `go test -race` 已通过；完整的
+`go test ./...` 在本机沙箱仍受下面的监听表限制。
+
 ### 监听观察：双栈、探针与沙箱
 
 macOS 把 Go `net.Listen("tcp", ":p")`、Node `listen(p)` 和 Java 默认绑定打印成 `tcp46`。
