@@ -33,7 +33,24 @@ QUALITATIVE_ANCHORS = (
     ("oberth serve --detach", "starting a daemon outside an agent sandbox"),
     ("--only listener_observation", "the doctor self-probe"),
     ("BERTH_STRICT_MANIFEST", "strict unknown-key parsing"),
+    ("worktree.identity", "the stable identity published by status"),
+    ("oberth worktrees", "the read-only identity ledger"),
+    ("--identity", "stopping a checkout that no longer exists"),
+    ("oberth start", "the low-level entry that expands addresses"),
 )
+
+
+def manifest_key_pattern(key: str) -> re.Pattern[str]:
+    """Match a manifest field where it is used as a field, not as a word.
+
+    Bare substring matching let a `workspace:` field count as covered by the
+    unrelated `--workspace` subscription flag. Require a field name, a YAML
+    `key:`, or a quoted key.
+    """
+    return re.compile(
+        rf"(?:`{re.escape(key)}`|(?<![\w-]){re.escape(key)}\s*:|\"{re.escape(key)}\")"
+    )
+
 
 def stable_error_codes(cli_text: str) -> list[str]:
     """Read the stable data.code strings from the CLI contract sentence."""
@@ -113,8 +130,18 @@ def read_skill(skill_dir: Path) -> tuple[str, list[Path]]:
     return "\n".join(path.read_text(encoding="utf-8") for path in files), files
 
 
+def anchor_present(kind: str, anchor: str, skill_text: str) -> bool:
+    if kind == "manifest key":
+        return manifest_key_pattern(anchor).search(skill_text) is not None
+    return anchor in skill_text
+
+
 def missing_anchors(anchors: list[tuple[str, str]], skill_text: str) -> list[tuple[str, str]]:
-    return [(kind, anchor) for kind, anchor in anchors if anchor not in skill_text]
+    return [
+        (kind, anchor)
+        for kind, anchor in anchors
+        if not anchor_present(kind, anchor, skill_text)
+    ]
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -34,7 +34,7 @@ class ExtractionTests(unittest.TestCase):
     def test_reference_tokens_match_the_contract_table(self):
         self.assertEqual(
             set(contract.reference_tokens(CLI)),
-            {"${port}", "${url}", "${<service>.port}", "${<service>.url}", "${worktree}"},
+            {"${port}", "${url}", "${<name>.port}", "${<name>.url}", "${worktree}"},
         )
 
     def test_manifest_anchors_include_the_agent_facing_fields(self):
@@ -48,6 +48,8 @@ class ExtractionTests(unittest.TestCase):
             "machine",
             "services",
             "worktree_ports",
+            "workspace",
+            "env_file",
         ):
             self.assertIn(key, keys)
 
@@ -70,6 +72,15 @@ class CoverageTests(unittest.TestCase):
         anchors = [("error code", "observation_blind"), ("reference", "${worktree}")]
         text = "observation_blind and ${worktree}"
         self.assertEqual(contract.missing_anchors(anchors, text), [])
+
+    def test_manifest_key_needs_field_context(self):
+        anchors = [("manifest key", "workspace")]
+        self.assertEqual(
+            contract.missing_anchors(anchors, "subscribe with --workspace NAME"),
+            anchors,
+        )
+        self.assertEqual(contract.missing_anchors(anchors, "workspace: []"), [])
+        self.assertEqual(contract.missing_anchors(anchors, "`workspace`"), [])
 
     def test_read_skill_requires_skill_and_references(self):
         with tempfile.TemporaryDirectory(prefix="berth-skill-") as temporary:
