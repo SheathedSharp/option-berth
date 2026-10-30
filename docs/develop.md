@@ -56,7 +56,12 @@ PR 与 `main` 推送会自动在 macOS/Linux 上跑这三项，以及 Mage 与 P
 ```sh
 python3 -m unittest discover -s scripts -p '*_test.py'
 python3 brand/build-option-berth.py --check
+python3 scripts/agent_eval.py --list       # 固定 agent 场景库
+python3 scripts/agent_eval.py --dry-run    # 只做 preflight 与夹具，不启动 agent
 ```
+
+真实 agent 矩阵需要在普通终端（不在 coding agent 沙箱内）或具备凭据的 CI 上跑，
+指标与边界见 [agent-eval.md](agent-eval.md)。
 
 隔离环境与授权边界见 [AGENTS.md](../AGENTS.md)「验证」；接口兼容和
 「取消/未知不算成功」这类实现约束见 [AGENTS.md](../AGENTS.md)「接口」「一条事实链」。
