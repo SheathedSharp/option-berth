@@ -45,6 +45,10 @@ go vet ./...
 go test -count=1 -timeout=8m ./...
 ```
 
+PR 与 `main` 推送会自动在 macOS/Linux 上跑这三项，以及 Mage 与 Python 辅助测试，并在 Windows
+上解析 `install.ps1` / `uninstall.ps1`；核心 race、真实服务场景等完整门槛仍按
+[validation.md](validation.md) 在手动或发版流程中执行。
+
 若 `proxy.golang.org` 拉模块超时，在同一 shell 前缀 `GOPROXY=https://goproxy.cn`（或你环境可用的镜像）再执行上述命令。只设 `GOPROXY` 即可，Go 会通过代理的 `/sumdb/` 端点核对校验和，不需要 `GOSUMDB=off`；也不要追加 `,direct`，代理未命中时会回落到直连 GitHub 并长时间卡住。超时只表示网络，不代表代码不能编译。
 
 脚本、发布与品牌生成：
@@ -68,6 +72,9 @@ python3 scripts/agent_eval.py --dry-run    # 只做 preflight 与夹具，不启
 也不用「闭环」「补齐」这类指向不明的词。`scope` 与改动的树一致（`engine`、`docs`、`ci`、`brand`…）。
 
 - 推送前 `git log` / `git status`，重读目标 HEAD，注意与他人并行提交。
+- 合并走远端 PR：分支推到 `origin` 后开 PR，等 `Engine verification` 通过并经用户确认后
+  用 merge commit 合并；不在本地直接合入 `main`。发布由 `scripts/release-*.sh` 原子推送，
+  见 [releasing.md](releasing.md)。
 - 发版与标签流程见 [releasing.md](releasing.md)，版本与标签的约定只在那里维护。
 
 ## 相关专题

@@ -157,7 +157,9 @@ Windows workflow 在构建 CLI 后运行 `verify_service_lifecycle.py`，使用�
 
 ## 无可用前台 Mac 时的完整 CI 预检
 
-自动 CI 仅在推送与 `VERSION` 一致的 **`v*` 注释 tag** 时运行 `Verified release`（验证、打包、发布）。
+完整的自动发布 CI 仅在推送与 `VERSION` 一致的 **`v*` 注释 tag** 时运行 `Verified release`
+（验证、打包、发布）；PR 与 `main` 推送的自动门槛覆盖构建、vet、单元测试与辅助脚本测试，见
+[validation.md](validation.md)。
 发版前应在本机执行 `scripts/release-feature.sh` / `scripts/release-fix.sh` 等预览与 `--execute` 验证；
 无前台 Mac 时，可先合入 VERSION PR，再对目标提交打 tag，由 tag 工作流在 runner 上执行与
 `scripts/release.py --verify-only` 等价的完整门槛。失败时不移动或覆盖 tag，修复按下一版本交付。

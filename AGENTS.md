@@ -3,6 +3,14 @@
 本文件只放这个仓库特有的、动手前必须知道的边界。通用的交付规则（中文 `type(scope): 主题`、
 一主题一提交、分支与合并、不擅自改检查门槛）来自本机全局规则，不在这里复述。
 
+## 交付
+
+合并前移到远端 PR：主题分支推送到 `origin`，等 `Engine verification` 的
+`Engine / ubuntu-24.04`、`Engine / macos-15` 与 `Engine / windows-install-scripts` 通过，
+经用户确认后用 merge commit 合并；
+不在本地把主题分支合入 `main` 后直接推送。发布脚本的原子推送是例外。命令、失败处理与
+清理见项目 skill [`option-berth-delivery`](.agents/skills/option-berth-delivery/SKILL.md)。
+
 契约与做法各有去处，冲突时以契约为准：
 
 | 要查的东西 | 去哪里 |
