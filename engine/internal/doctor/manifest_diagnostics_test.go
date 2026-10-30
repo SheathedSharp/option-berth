@@ -34,6 +34,20 @@ func TestDoctorReportsIgnoredManifestFieldsWithoutValues(t *testing.T) {
 	}
 }
 
+// The optional strict mode makes the same finding the warn above reports into
+// a load failure, which is what a CI or pre-adoption check needs.
+func TestDoctorFailsUnknownManifestFieldsInStrictMode(t *testing.T) {
+	t.Setenv(groups.StrictEnv, "1")
+	env := fakeEnv(t)
+	write(t, filepath.Join(env.Project, groups.ConfigName),
+		"name: demo\nservices:\n  - name: api\n    cmd: echo api\n    heath: /healthz\n")
+	got := run(t, env, checkProjectConfig)
+	wantStatus(t, got, StatusFail)
+	if !strings.Contains(got.Detail, "services[0].heath") || !strings.Contains(got.Detail, "line 5") {
+		t.Fatalf("strict failure does not locate the key: %+v", got)
+	}
+}
+
 func TestProjectOnlyDoctorDoesNotProbeDaemon(t *testing.T) {
 	env := fakeEnv(t)
 	write(t, filepath.Join(env.Project, groups.ConfigName), "name: demo\n")

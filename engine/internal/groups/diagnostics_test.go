@@ -15,6 +15,7 @@ func TestManifestFieldWarnings(t *testing.T) {
 		{"machine typo", "name: demo\nmachine:\n  - name: db\n    port: 5432\n    prott: 5433\n", []string{"machine[0].prott"}},
 		{"merged service anchor", "name: demo\nx-template: &defaults\n  cmd: echo api\n  heath: secret\nservices:\n  - <<: *defaults\n    name: api\n", []string{"services[0].heath"}},
 		{"top-level typo", "name: demo\nservcies: []\n", []string{"servcies"}},
+		{"schema metadata", "name: demo\n$schema: https://example.invalid/manifest.schema.json\n", nil},
 		{"comment only", "# intentionally empty\n", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

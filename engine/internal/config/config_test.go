@@ -152,7 +152,7 @@ func TestTemplateDocumentsTheDaemonAndItsEnvironment(t *testing.T) {
 	for _, want := range []string{
 		"# daemon:", "idle_timeout: 30m", "log_level: info", "stats_interval: 1s",
 		"scan_interval: 2s",
-		"BERTH_DB", "BERTH_SOCKET",
+		"BERTH_DB", "BERTH_SOCKET", "BERTH_STRICT_MANIFEST",
 	} {
 		if !strings.Contains(template, want) {
 			t.Errorf("config template does not mention %q", want)

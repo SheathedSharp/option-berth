@@ -36,7 +36,7 @@ func Fmt() error {
 	return command(p.engine, "gofmt", "-w", ".")
 }
 
-// Schema regenerates the existing protocol schema.
+// Schema regenerates the checked-in protocol and manifest JSON Schemas.
 func Schema() error {
 	p, err := loadProject()
 	if err != nil {

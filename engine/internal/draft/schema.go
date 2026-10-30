@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"gopkg.in/yaml.v3"
 )
 
@@ -198,7 +199,9 @@ func (d *Draft) YAML() ([]byte, error) {
 	if err := enc.Close(); err != nil {
 		return nil, err
 	}
-	out := buf.String()
+	// The modeline gives an editor the manifest's JSON Schema while the draft
+	// is still a draft, before anyone adopts it.
+	out := "# yaml-language-server: $schema=" + groups.ManifestSchemaURL + "\n" + buf.String()
 	for _, note := range d.Notes {
 		out += "# note: " + strings.ReplaceAll(strings.TrimSpace(note), "\n", "\n# ") + "\n"
 	}

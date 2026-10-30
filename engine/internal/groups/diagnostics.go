@@ -2,11 +2,27 @@ package groups
 
 import (
 	"fmt"
-	"gopkg.in/yaml.v3"
 	"os"
 	"reflect"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
+
+// StrictEnv is the optional switch that turns ignored manifest fields into
+// load errors. It is off unless the value is one of the accepted true
+// spellings; without it a manifest keeps the historical behaviour of ignoring
+// keys this version does not know.
+const StrictEnv = "BERTH_STRICT_MANIFEST"
+
+// StrictManifest reports whether manifest parsing rejects unknown fields.
+func StrictManifest() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(StrictEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
 
 // FieldWarning locates ignored declaration keys without exposing their values.
 // It is advisory; it does not change runtime parsing or execution semantics.
@@ -17,6 +33,12 @@ type FieldWarning struct {
 
 func (w FieldWarning) String() string {
 	return fmt.Sprintf("line %d:%d: unknown field %s (ignored)", w.Line, w.Column, w.Field)
+}
+
+// problem is the strict-mode form of a warning: the same location, without
+// claiming the field was ignored, because in strict mode it was not.
+func (w FieldWarning) problem() string {
+	return fmt.Sprintf("line %d:%d: unknown field %s", w.Line, w.Column, w.Field)
 }
 
 // LoadWithWarnings validates and inspects the same bytes. Keys come from the
@@ -35,9 +57,17 @@ func LoadWithWarnings(path string) (*Config, []FieldWarning, error) {
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, nil, err
 	}
-	root := documentRoot(&doc)
+	return cfg, fieldWarnings(&doc), nil
+}
+
+// fieldWarnings walks a parsed YAML document against Config's Go type and
+// returns every key that type does not declare. Top-level extension keys are
+// metadata: `x-` carries reusable anchors and `$schema` names this file's JSON
+// Schema, so neither is a misspelling.
+func fieldWarnings(doc *yaml.Node) []FieldWarning {
+	root := documentRoot(doc)
 	if root == nil {
-		return cfg, nil, nil
+		return nil
 	}
 	var warnings []FieldWarning
 	type visit struct {
@@ -109,12 +139,21 @@ func LoadWithWarnings(path string) (*Config, []FieldWarning, error) {
 				continue
 			}
 			// Top-level extension maps may hold reusable YAML anchors. They never run.
-			if path == "" && strings.HasPrefix(k.Value, "x-") {
+			if path == "" && (strings.HasPrefix(k.Value, "x-") || k.Value == "$schema") {
 				continue
 			}
 			warnings = append(warnings, FieldWarning{Line: k.Line, Column: k.Column, Field: field})
 		}
 	}
 	walk(root, reflect.TypeOf(Config{}), "")
-	return cfg, warnings, nil
+	return warnings
+}
+
+// strictProblems renders warnings as the load errors strict mode reports.
+func strictProblems(warnings []FieldWarning) []string {
+	problems := make([]string, len(warnings))
+	for i, warning := range warnings {
+		problems[i] = warning.problem()
+	}
+	return problems
 }
