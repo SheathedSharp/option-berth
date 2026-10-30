@@ -94,15 +94,28 @@ type DaemonHelloParams struct {
 	Keepalive     bool   `json:"keepalive,omitempty"`
 }
 
+// ObservationStatus is the process's self-probe verdict. State is observable,
+// blind or bind_denied; Code is the stable observation code when the listener
+// table cannot be trusted. It is a fact produced by binding a real socket and
+// looking for it with the same collector a status read uses.
+type ObservationStatus struct {
+	State     string `json:"state"`
+	Code      string `json:"code,omitempty"`
+	Detail    string `json:"detail,omitempty"`
+	Hint      string `json:"hint,omitempty"`
+	CheckedAt string `json:"checked_at,omitempty"`
+}
+
 type DaemonHelloResult struct {
-	ProtocolVersion string   `json:"protocol_version"`
-	DaemonVersion   string   `json:"daemon_version"`
-	PID             int      `json:"pid"`
-	StartedAt       string   `json:"started_at"`
-	Capabilities    []string `json:"capabilities"`
-	Socket          string   `json:"socket"`
-	BinaryPath      string   `json:"binary_path"`
-	Keepalive       bool     `json:"keepalive"`
+	ProtocolVersion string             `json:"protocol_version"`
+	DaemonVersion   string             `json:"daemon_version"`
+	PID             int                `json:"pid"`
+	StartedAt       string             `json:"started_at"`
+	Capabilities    []string           `json:"capabilities"`
+	Socket          string             `json:"socket"`
+	BinaryPath      string             `json:"binary_path"`
+	Keepalive       bool               `json:"keepalive"`
+	Observation     *ObservationStatus `json:"observation,omitempty"`
 }
 
 type DaemonStatusResult struct {
@@ -129,6 +142,10 @@ type DaemonStatusResult struct {
 	// through the daemon must not make it grow faster than one does.
 	Scans  int64  `json:"scans"`
 	DBPath string `json:"db_path"`
+	// Observation says whether this daemon can see its own listeners. A daemon
+	// started inside a sandbox can run while blind; the CLI and the desktop app
+	// need to see that before trusting an empty port list.
+	Observation *ObservationStatus `json:"observation,omitempty"`
 }
 
 // DaemonSchemaResult is the JSON Schema bundle this package generates.

@@ -2,58 +2,83 @@ package doctor
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
-// checkListenerObservation answers "can this process read the listening
-// table?". It is the one check whose failure can make every other reading
-// misleading: a sandboxed process that is allowed to run option-berth but not
-// to inspect sockets would otherwise report an empty machine as healthy.
-//
-// It intentionally uses the same collector as `status` rather than a cheaper
-// probe, so the check proves exactly the path that failed.
+// checkListenerObservation answers "can this process see its own listeners?".
+// It binds a real local port and asks the same collector a status read uses
+// whether that listener is visible as this process. In CLI mode it also reports
+// the daemon's own probe: a healthy CLI cannot make a blind daemon's empty port
+// list trustworthy.
 func checkListenerObservation(ctx context.Context, env *Env) rpc.DoctorCheck {
 	ctx, cancel := context.WithTimeout(ctx, NetworkBudget)
 	defer cancel()
 
-	rows, err := env.ObserveListeners(ctx)
-	if err == nil {
-		return rpc.DoctorCheck{
-			Status:  StatusOK,
-			Summary: "this process can read the TCP listening table",
-			Detail:  fmt.Sprintf("%d listener row(s) observed by the %s process", len(rows), env.Mode),
+	cli := env.ProbeObservation(ctx)
+	parts := []string{observationPart("cli", cli.State, cli.Detail)}
+	fix := cli.Hint
+
+	var daemon *rpc.ObservationStatus
+	if env.Mode == ModeCLI {
+		if info := env.Daemon(ctx); info.Reachable {
+			daemon = info.Observation
+			if daemon == nil {
+				parts = append(parts, "daemon: observation not reported")
+			} else {
+				parts = append(parts, observationPart("daemon", observationState(daemon.State), daemon.Detail))
+			}
 		}
 	}
 
-	var oe *ports.ObservationError
-	if errors.As(err, &oe) {
+	detail := strings.Join(parts, "; ")
+	if cli.State == ports.ObservationBindDenied {
 		return rpc.DoctorCheck{
 			Status:  StatusFail,
-			Summary: observationSummary(oe.Code),
-			Detail:  fmt.Sprintf("%s: %s", oe.Code, oe.Error()),
-			Fix:     oe.Hint,
+			Summary: "this process cannot bind a local port",
+			Detail:  detail,
+			Fix:     fix,
+		}
+	}
+	if cli.State != ports.ObservationObservable {
+		return rpc.DoctorCheck{
+			Status:  StatusFail,
+			Summary: "this process cannot see its own listener",
+			Detail:  detail,
+			Fix:     fix,
+		}
+	}
+	if daemon != nil && daemon.State != string(ports.ObservationObservable) {
+		if daemon.Hint != "" {
+			fix = daemon.Hint
+		}
+		return rpc.DoctorCheck{
+			Status:  StatusFail,
+			Summary: "the daemon cannot see its own listeners",
+			Detail:  detail,
+			Fix:     fix,
 		}
 	}
 	return rpc.DoctorCheck{
-		Status:  StatusFail,
-		Summary: "this process cannot read the TCP listening table",
-		Detail:  err.Error(),
-		Fix: "retry in a normal terminal outside any agent sandbox; " +
-			"if it still fails, check that the host's netstat/ss command runs",
+		Status:  StatusOK,
+		Summary: "this process can see its own listener",
+		Detail:  detail,
 	}
 }
 
-func observationSummary(code string) string {
-	switch code {
-	case ports.CodeObservationEmpty:
-		return "the collector returned no listening table"
-	case ports.CodeObservationIncomplete:
-		return "the collector's output could not be trusted"
-	default:
-		return "listening observation failed"
+func observationState(state string) ports.ObservationState {
+	if state == "" {
+		return "unknown"
 	}
+	return ports.ObservationState(state)
+}
+
+func observationPart(label string, state ports.ObservationState, detail string) string {
+	if detail == "" {
+		return fmt.Sprintf("%s: %s", label, state)
+	}
+	return fmt.Sprintf("%s: %s (%s)", label, state, detail)
 }

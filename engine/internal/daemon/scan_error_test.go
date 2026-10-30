@@ -16,7 +16,10 @@ func TestScanFailureKeepsObservationCodes(t *testing.T) {
 		rpcCode   int
 	}{
 		{ports.CodeObservationEmpty, rpc.CodeObservationEmpty},
+		{ports.CodeObservationUnrecognized, rpc.CodeObservationUnrecognized},
 		{ports.CodeObservationIncomplete, rpc.CodeObservationIncomplete},
+		{ports.CodeObservationBlind, rpc.CodeObservationBlind},
+		{ports.CodeObservationBindDenied, rpc.CodeObservationBindDenied},
 	} {
 		err := &ports.ObservationError{
 			Code:   tt.collector,

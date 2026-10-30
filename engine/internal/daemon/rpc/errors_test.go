@@ -15,7 +15,8 @@ func TestEveryRegistryCodeHasAName(t *testing.T) {
 		CodeTimeout, CodeInvalidSelector, CodeOutsideHome, CodeTargetNotListening,
 		CodeShareLimitReached, CodeListenPortInUse, CodeNotSignedIn, CodeShareExpired,
 		CodeRelayUnreachable, CodeShareBlocked,
-		CodeObservationEmpty, CodeObservationIncomplete,
+		CodeObservationEmpty, CodeObservationUnrecognized, CodeObservationIncomplete,
+		CodeObservationBlind, CodeObservationBindDenied,
 		CodeSessionNotFound, CodeClaimConflict} {
 		if CodeName(c) == "" {
 			t.Fatalf("code %d has no data.code name", c)
@@ -55,8 +56,11 @@ func TestShareErrorCodes(t *testing.T) {
 // data.code, so the numeric values and names are pinned like the share block.
 func TestObservationErrorCodes(t *testing.T) {
 	want := map[int]string{
-		CodeObservationEmpty:      "observation_empty",
-		CodeObservationIncomplete: "observation_incomplete",
+		CodeObservationEmpty:        "observation_empty",
+		CodeObservationIncomplete:   "observation_incomplete",
+		CodeObservationUnrecognized: "observation_unrecognized",
+		CodeObservationBlind:        "observation_blind",
+		CodeObservationBindDenied:   "observation_bind_denied",
 	}
 	for code, name := range want {
 		if got := CodeName(code); got != name {

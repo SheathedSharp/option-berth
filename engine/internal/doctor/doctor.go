@@ -71,6 +71,8 @@ type DaemonInfo struct {
 	Socket          string
 	PID             int
 	DBPath          string
+	// Observation is the daemon's own self-probe verdict, when it reports one.
+	Observation *rpc.ObservationStatus
 }
 
 // Env is the slice of the world the checks read. Everything that a test would
@@ -114,10 +116,11 @@ type Env struct {
 	// Docker reports the docker daemon's server version, or an error when the
 	// CLI is there but the daemon is not answering.
 	Docker func(context.Context) (string, error)
-	// ObserveListeners reads this process's TCP listening table the same way a
-	// status read does. A sandbox that lets the binary run but denies system
-	// introspection fails here; that failure is what the check exists to show.
-	ObserveListeners func(context.Context) ([]ports.ListeningPort, error)
+	// ProbeObservation binds a real local port and asks the collector whether
+	// it can see it as this process. A sandbox that lets the binary run but
+	// denies system introspection fails here; that failure is what the check
+	// exists to show.
+	ProbeObservation func(context.Context) ports.ProbeResult
 }
 
 // check is one diagnostic: its id, whether only the CLI can answer it, and the
@@ -325,8 +328,8 @@ func (e *Env) fill() {
 	if e.Docker == nil {
 		e.Docker = func(context.Context) (string, error) { return "", errNoProbe }
 	}
-	if e.ObserveListeners == nil {
-		e.ObserveListeners = ports.ScanContext
+	if e.ProbeObservation == nil {
+		e.ProbeObservation = ports.ProbeListenerObservation
 	}
 }
 

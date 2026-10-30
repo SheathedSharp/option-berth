@@ -244,6 +244,9 @@
         },
         "keepalive": {
           "type": "boolean"
+        },
+        "observation": {
+          "$ref": "#/definitions/ObservationStatus"
         }
       },
       "type": "object",
@@ -301,6 +304,9 @@
         },
         "db_path": {
           "type": "string"
+        },
+        "observation": {
+          "$ref": "#/definitions/ObservationStatus"
         }
       },
       "type": "object",
@@ -1194,6 +1200,29 @@
       "type": "object",
       "required": [
         "ok"
+      ]
+    },
+    "ObservationStatus": {
+      "properties": {
+        "state": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "hint": {
+          "type": "string"
+        },
+        "checked_at": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "state"
       ]
     },
     "Port": {

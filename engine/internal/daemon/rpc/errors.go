@@ -44,8 +44,11 @@ const (
 	// Observation failures are the collector's own codes, not engine bugs. A
 	// sandboxed agent reads the code to know whether it may retry elsewhere or
 	// must trust an "absent listener" answer (it must not).
-	CodeObservationEmpty      = 1013
-	CodeObservationIncomplete = 1014
+	CodeObservationEmpty        = 1013
+	CodeObservationIncomplete   = 1014
+	CodeObservationUnrecognized = 1015
+	CodeObservationBlind        = 1016
+	CodeObservationBindDenied   = 1017
 
 	// 1100-1199 are owned by spec 3 (shares and proxies). 1101-1106 and 1109
 	// belonged to the provider design (ngrok, cloudflared) and were deleted
@@ -80,8 +83,11 @@ var codeNames = map[int]string{
 	CodeConflict:        "conflict",
 	CodeNotConfigured:   "not_configured",
 
-	CodeObservationEmpty:      "observation_empty",
-	CodeObservationIncomplete: "observation_incomplete",
+	CodeObservationEmpty:        "observation_empty",
+	CodeObservationIncomplete:   "observation_incomplete",
+	CodeObservationUnrecognized: "observation_unrecognized",
+	CodeObservationBlind:        "observation_blind",
+	CodeObservationBindDenied:   "observation_bind_denied",
 
 	CodeTargetNotListening: "target_not_listening",
 	CodeShareLimitReached:  "share_limit_reached",

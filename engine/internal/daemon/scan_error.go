@@ -7,6 +7,16 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
+// observationRPCCodes keeps the collector's reason string and the wire number
+// in one place. A new reason must be added here or it degrades to internal.
+var observationRPCCodes = map[string]int{
+	ports.CodeObservationEmpty:        rpc.CodeObservationEmpty,
+	ports.CodeObservationUnrecognized: rpc.CodeObservationUnrecognized,
+	ports.CodeObservationIncomplete:   rpc.CodeObservationIncomplete,
+	ports.CodeObservationBlind:        rpc.CodeObservationBlind,
+	ports.CodeObservationBindDenied:   rpc.CodeObservationBindDenied,
+}
+
 // scanFailure renders a failed observation without flattening it into
 // "internal". The collector already decided whether it saw nothing
 // (observation_empty), saw a table it cannot trust (observation_incomplete),
@@ -15,11 +25,8 @@ import (
 func scanFailure(err error) *rpc.Error {
 	var oe *ports.ObservationError
 	if errors.As(err, &oe) {
-		switch oe.Code {
-		case ports.CodeObservationEmpty:
-			return rpc.NewError(rpc.CodeObservationEmpty, oe.Error(), oe.Hint)
-		case ports.CodeObservationIncomplete:
-			return rpc.NewError(rpc.CodeObservationIncomplete, oe.Error(), oe.Hint)
+		if code, ok := observationRPCCodes[oe.Code]; ok {
+			return rpc.NewError(code, oe.Error(), oe.Hint)
 		}
 	}
 	return rpc.NewError(rpc.CodeInternal, "scan failed: "+err.Error(),

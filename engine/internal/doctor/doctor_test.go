@@ -36,8 +36,8 @@ func fakeEnv(t *testing.T) *Env {
 		LookPath:   func(string) (string, error) { return "", exec.ErrNotFound },
 		Daemon:     func(context.Context) DaemonInfo { return DaemonInfo{Err: errors.New("no daemon")} },
 		Docker:     func(context.Context) (string, error) { return "", errors.New("no docker in tests") },
-		ObserveListeners: func(context.Context) ([]ports.ListeningPort, error) {
-			return nil, nil
+		ProbeObservation: func(context.Context) ports.ProbeResult {
+			return ports.ProbeResult{State: ports.ObservationObservable}
 		},
 	}
 }
