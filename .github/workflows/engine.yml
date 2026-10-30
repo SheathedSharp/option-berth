@@ -59,6 +59,17 @@ jobs:
       - name: Native build
         working-directory: engine
         run: go build ./...
+      - name: Cross-build release targets
+        if: runner.os == 'Linux'
+        working-directory: engine
+        shell: bash
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            GOOS=${target%/*} GOARCH=${target#*/} go build ./...
+          done
       - name: Vet
         working-directory: engine
         shell: bash

@@ -12,7 +12,7 @@
 
 | 工作流 | 触发 | 平台与内容 |
 |---|---|---|
-| Engine verification | PR、引擎相关 `main` 推送、手动 | 自动：macOS / Ubuntu 原生构建、vet、全引擎单元测试、Mage 工作流回归、Python 辅助测试，以及 Windows PowerShell 5.1 解析安装/卸载脚本；手动另跑核心 race 与真实服务场景。 |
+| Engine verification | PR、引擎相关 `main` 推送、手动 | 自动：macOS / Ubuntu 原生构建、vet、全引擎单元测试、Mage 工作流回归、Python 辅助测试，Ubuntu 上六个发布目标的交叉构建，以及 Windows PowerShell 5.1 解析安装/卸载脚本；手动另跑核心 race 与真实服务场景。 |
 | Nightly full verification | 每日 18:23 UTC、手动 | macOS / Ubuntu：与 `scripts/release.py --verify-only` 相同的完整门槛，含核心 race 与真实服务场景。 |
 | Git read verification | 手动 | macOS / Ubuntu：Git、worktree、归因与观察的重复测试和 race。 |
 | Windows build verification | PR、引擎相关 `main` 推送、发布标签、手动 | Windows x64：原生构建、vet、CLI/Jev 构建、version JSON/帮助页、事实/持久化，以及隔离 API/无端口 worker 的启动、重复启动、采集器恢复和限定停止；Ubuntu：Windows arm64 交叉构建。 |
