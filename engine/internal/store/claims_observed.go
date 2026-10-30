@@ -60,6 +60,52 @@ func (c Claims) ObserveContext(ctx context.Context, keys ...string) (ClaimObserv
 	return observation, nil
 }
 
+// ObserveWorktreeContext captures every reservation belonging to one
+// project/worktree pair, including services the caller cannot name because the
+// checkout's manifest is gone. It is otherwise the same operation-owned value
+// snapshot as ObserveContext: the returned rows are compared again on delete,
+// so a concurrent refresh keeps the whole set.
+func (c Claims) ObserveWorktreeContext(ctx context.Context, project, worktree string) (ClaimObservation, error) {
+	if err := ctx.Err(); err != nil {
+		return ClaimObservation{}, err
+	}
+	if !c.s.wmu.TryLock() {
+		return ClaimObservation{}, errors.New("store: claims writer is busy; retry observation")
+	}
+	defer c.s.wmu.Unlock()
+	tx, err := c.s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ClaimObservation{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.QueryContext(ctx,
+		`SELECT `+claimColumns+` FROM claims WHERE project = ? AND worktree = ? ORDER BY key, port`,
+		project, worktree)
+	if err != nil {
+		return ClaimObservation{}, fmt.Errorf("reading worktree reservations: %w", err)
+	}
+	observation := ClaimObservation{owner: c.s, revision: c.s.claimsRevision}
+	for rows.Next() {
+		row, err := decodeClaim(rows.Scan)
+		if err != nil {
+			_ = rows.Close()
+			return ClaimObservation{}, err
+		}
+		observation.Rows = append(observation.Rows, row)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return ClaimObservation{}, err
+	}
+	if err := rows.Close(); err != nil {
+		return ClaimObservation{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ClaimObservation{}, err
+	}
+	return observation, nil
+}
+
 func readObservedClaims(ctx context.Context, tx *sql.Tx, key string) ([]ClaimRow, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT `+claimColumns+` FROM claims WHERE key = ? ORDER BY port`, key)
 	if err != nil {

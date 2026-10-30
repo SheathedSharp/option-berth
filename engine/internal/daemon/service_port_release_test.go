@@ -64,6 +64,53 @@ func releaseFixture(t *testing.T) (*Runtime, *servicePortRelease, *releaseGuardF
 	return rt, plan, guard
 }
 
+// A manifest-less checkout loses the service list its release used to be built
+// from, but the claim key recorded with the identity still names every
+// reservation. Only that key is released.
+func TestWorktreePortReleaseUsesTheRecordedClaimKey(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "fixture.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	dir := t.TempDir()
+	project, worktree := claims.Identity(dir, "", "")
+	otherProject, otherWorktree := claims.Identity(t.TempDir(), "", "")
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, row := range []store.ClaimRow{
+		{Port: 12501, Key: claims.ServiceKey(project, worktree, "web"), Project: project, Worktree: worktree, CreatedAt: at, ExpiresAt: at.Add(time.Hour)},
+		{Port: 12502, Key: claims.ServiceKey(project, worktree, "worker"), Project: project, Worktree: worktree, CreatedAt: at, ExpiresAt: at.Add(time.Hour)},
+		{Port: 12601, Key: claims.ServiceKey(otherProject, otherWorktree, "web"), Project: otherProject, Worktree: otherWorktree, CreatedAt: at, ExpiresAt: at.Add(time.Hour)},
+	} {
+		if err := st.Claims().Put(row); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rt := &Runtime{Store: st}
+	guard := &releaseGuardFixture{}
+	rt.SetRuns(guard)
+	plan, err := captureWorktreePortRelease(context.Background(), rt, project, worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan == nil || len(plan.observed.Rows) != 2 {
+		t.Fatalf("plan = %+v, want the two reservations of one worktree", plan)
+	}
+	result, err := finishGroupStop(context.Background(), &Request{Runtime: rt}, "demo@feat", plan, state.Snapshot{}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := result.(rpc.KillEnvelope)
+	if env.Released != 2 || guard.calls != 1 {
+		t.Fatalf("result = %+v, guard=%d", env, guard.calls)
+	}
+	held, err := st.Claims().List()
+	if err != nil || len(held) != 1 || held[0].Project != otherProject {
+		t.Fatalf("remaining reservations = %+v, %v", held, err)
+	}
+}
+
 func TestServicePortReleaseRequiresPostStopEvidence(t *testing.T) {
 	for _, kind := range []string{"scan failure", "cancel", "permission", "not found", "partial tree", "unknown owner", "foreign owner", "remaining group"} {
 		t.Run(kind, func(t *testing.T) {

@@ -795,6 +795,12 @@
         "config_path": {
           "type": "string"
         },
+        "worktree_path": {
+          "type": "string"
+        },
+        "identity": {
+          "type": "string"
+        },
         "force": {
           "type": "boolean"
         },
