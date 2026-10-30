@@ -111,6 +111,11 @@ type Group struct {
 	// `<repo>@<worktree>` group. It is empty for a main checkout and for a
 	// group that is not a checkout.
 	Worktree string `json:"worktree"`
+	// Identity is the stable `${worktree}` token of the checkout this group
+	// lives in (`wt_` plus twelve hex digits). It is the value a manifest can
+	// embed in a database name or data directory, published here so a reader
+	// never has to re-derive it from the root path.
+	Identity string `json:"identity"`
 	// Branch is the branch checked out in the group's checkout, read from its
 	// HEAD. It is empty when HEAD is detached or cannot be read.
 	Branch     string      `json:"branch"`

@@ -49,6 +49,10 @@ Worktree      路径 + git 身份（仓库、分支、脏文件数）          �
   的服务用命令式检查，依赖和 `up --wait` 等到它真正可连接才继续。
 - 两个 worktree 同时跑同一个仓库时，每个 Run 归属于起它的那个 worktree，不互相归错。
   数据目录或库名可以用清单里的 `${worktree}` 稳定身份分开，两个 worktree 不必共享一份数据。
+- **worktree 的结束端也是事实链的一部分。** 当前身份随 `status --json` 发布；`worktrees` 列出
+  引擎见过的身份和已不存在的 checkout，供人清理旧数据库和数据目录；`down --worktree/--identity`
+  是 worktree 目录被删除后仍能停止并交还预留的明确入口。引擎只报告和停止，不替人删除数据；
+  两个 checkout 共用同一组名时拒绝按组停止，而不是扩大目标。
 - **工作记录挂在 worktree 上，不在服务链上。** 一个 worktree 可以有多个 workplace，每个按顺序
   保存其中的工作条目：引擎跑过的命令、交给 agent 的每一轮任务。它是「在这里做过什么、结果如何」
   的记录——agent 可以自己往里追加，也可以读回来接手别人（或自己上一轮）的工作。它不是新的运行
@@ -86,7 +90,7 @@ oberth down      停掉这个项目的全部服务
 
 | 层 | 命令 | 这一层回答什么 |
 |---|---|---|
-| 事实 | `status` · `logs` · `events` | 现在是什么状态、在变什么 |
+| 事实 | `status` · `logs` · `events` · `worktrees` | 现在是什么状态、在变什么；本机见过哪些 checkout 身份 |
 | 操作 | `up` · `restart` · `down` · `start` · `kill` | 让它跑起来、停下来 |
 | 代码与声明 | `git` · `init` | 代码上下文，以及这份 worktree 的清单 |
 | 交接 | `workplace` · `agent` | 留下和取回工作记录，把会话交给外部 agent |

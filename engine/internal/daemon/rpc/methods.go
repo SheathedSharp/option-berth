@@ -285,9 +285,19 @@ type GroupsKillParams struct {
 	// caller that knows the file but not the name the daemon publishes its
 	// group under (`<project>@<worktree>` in a linked worktree, an alias).
 	ConfigPath *string `json:"config_path,omitempty"`
-	Force      bool    `json:"force,omitempty"`
-	GraceMs    int     `json:"grace_ms,omitempty"`
-	DryRun     bool    `json:"dry_run,omitempty"`
+	// Worktree names the checkout by its root path. It is the explicit stop
+	// entry for an orchestrator after the directory was deleted or moved: the
+	// daemon resolves the recorded group from the identity ledger instead of
+	// reading a manifest that may no longer exist. Mutually exclusive with
+	// Name, ConfigPath and Identity.
+	WorktreePath *string `json:"worktree_path,omitempty"`
+	// Identity names the checkout by its `${worktree}` token (`wt_...`).
+	// Like Worktree, it reaches services whose directory is gone and releases
+	// the reservations recorded for that checkout.
+	Identity *string `json:"identity,omitempty"`
+	Force    bool    `json:"force,omitempty"`
+	GraceMs  int     `json:"grace_ms,omitempty"`
+	DryRun   bool    `json:"dry_run,omitempty"`
 	// Only narrows a project stop to these declared services. It is used by
 	// `oberth restart --only`; scoped stops keep auto-port claims.
 	Only []string `json:"only,omitempty"`

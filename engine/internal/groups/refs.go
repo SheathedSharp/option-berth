@@ -89,10 +89,21 @@ func WorktreeToken(root string) string {
 // worktree's root when dir is inside one — and for dir itself when it is not
 // inside a checkout.
 func WorktreeTokenFor(dir string) string {
+	identity, _ := WorktreeIdentityFor(dir)
+	return identity
+}
+
+// WorktreeIdentityFor is WorktreeTokenFor with the canonical root the token was
+// derived from. That root — the checkout's root, or dir itself outside a
+// checkout — is the path whose existence decides whether the identity still
+// has a checkout.
+func WorktreeIdentityFor(dir string) (identity, root string) {
 	if co, ok := Locate(dir); ok {
-		return WorktreeToken(co.Root)
+		root = co.Root
+	} else {
+		root = Canonical(dir)
 	}
-	return WorktreeToken(dir)
+	return WorktreeToken(root), root
 }
 
 // isReference reports whether the inside of ${...} is one of the shapes the

@@ -48,6 +48,7 @@ within bounds. People and external coding agents read the same facts instead of 
 | Observe a portless worker | A run record instead of treating "no port" as "not running" |
 | Work with a coding agent | The same CLI as structured JSON; no second model or agent-reasoning system inside |
 | Take over someone else's work | `oberth workplace` keeps the commands and tasks run here, and how they ended |
+| End or clean up a worktree | The `${worktree}` identity is in `status --json`; `worktrees --gone` lists identities whose checkout is gone; `down --worktree/--identity` still stops it and releases its reservations, while deleting data stays a person's call |
 
 **Not a whole-machine port radar, and not another AI IDE.** `machine:` dependencies are read-only and
 project start/stop never takes them over. Worktree isolation is about run ownership and lifecycle

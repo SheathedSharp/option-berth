@@ -110,11 +110,16 @@ func GroupsWith(pp []state.Port, index *Index, reg Registry) []state.Group {
 // `<repo>@<worktree>` for the linked worktree it lives in is that worktree of
 // repo; every other group is its own project.
 func (r *resolutionPass) describeCheckout(g *state.Group) {
-	g.Repo, g.Worktree, g.Branch = g.Name, "", ""
+	g.Repo, g.Worktree, g.Branch, g.Identity = g.Name, "", "", ""
 	if g.RootDir == nil {
 		return
 	}
 	co, ok := r.locate(*g.RootDir)
+	if ok {
+		g.Identity = WorktreeToken(co.Root)
+	} else {
+		g.Identity = WorktreeToken(*g.RootDir)
+	}
 	if !ok {
 		return
 	}
