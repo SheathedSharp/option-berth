@@ -47,6 +47,10 @@
           "type": "string",
           "description": "Working directory, relative to the directory holding oberth.yaml."
         },
+        "env_file": {
+          "type": "string",
+          "description": "Dotenv-style file read when the service starts. Relative paths are resolved against the manifest's directory; the file is never written."
+        },
         "port": {
           "anyOf": [
             {
@@ -127,6 +131,29 @@
       "required": [
         "name"
       ]
+    },
+    "WorkspaceRef": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name this file uses for the reference, as in ${backend.port} or ${backend.url}."
+        },
+        "worktree": {
+          "type": "string",
+          "description": "The other checkout's root directory (or its manifest path), relative to this manifest's directory or absolute."
+        },
+        "service": {
+          "type": "string",
+          "description": "The service name in the other checkout's manifest."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "worktree",
+        "service"
+      ]
     }
   },
   "properties": {
@@ -147,6 +174,13 @@
       },
       "type": "array",
       "description": "Services the machine already runs that the project depends on. References only: option-berth never starts or stops them."
+    },
+    "workspace": {
+      "items": {
+        "$ref": "#/$defs/WorkspaceRef"
+      },
+      "type": "array",
+      "description": "Services in other checkouts, addressable by ${name.port} and ${name.url}. Read-only references: option-berth never starts or stops them."
     },
     "ports": {
       "items": {

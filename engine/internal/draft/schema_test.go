@@ -20,14 +20,16 @@ func TestDraftRendersAManifest(t *testing.T) {
 			Prepare:  ptr("mvn -DskipTests package"),
 			Cmd:      "pnpm run dev",
 			Cwd:      ptr("backend"),
+			EnvFile:  ptr("../shared/dev.env"),
 			Port:     ptr(8000),
 			Health:   ptr("/healthz"),
 			Env:      []DraftEnv{{Name: "NODE_ENV", Value: "development"}, {Name: "API_URL", Value: "http://127.0.0.1:${port}"}},
 			Why:      "package.json scripts.dev",
 			Verified: ptr("already listening on 8000 when inspected"),
 		}},
-		Machine: []DraftMachine{{Name: "mysql", Port: 3306}},
-		Notes:   []string{"the worker has no port"},
+		Machine:   []DraftMachine{{Name: "mysql", Port: 3306}},
+		Workspace: []DraftWorkspace{{Name: "backend", Worktree: "../backend", Service: "api"}},
+		Notes:     []string{"the worker has no port"},
 	}
 
 	out, err := d.YAML()
@@ -49,8 +51,14 @@ func TestDraftRendersAManifest(t *testing.T) {
 	if cfg.Services[0].Prepare != "mvn -DskipTests package" {
 		t.Errorf("prepare did not survive the round trip: %q", cfg.Services[0].Prepare)
 	}
+	if cfg.Services[0].EnvFile != "../shared/dev.env" {
+		t.Errorf("env_file did not survive the round trip: %q", cfg.Services[0].EnvFile)
+	}
 	if len(cfg.Machine) != 1 || cfg.Machine[0].Name != "mysql" || cfg.Machine[0].Port != 3306 {
 		t.Errorf("the machine list did not survive the round trip: %+v\n%s", cfg.Machine, out)
+	}
+	if len(cfg.Workspace) != 1 || cfg.Workspace[0].Name != "backend" || cfg.Workspace[0].Worktree != "../backend" {
+		t.Errorf("the workspace list did not survive the round trip: %+v\n%s", cfg.Workspace, out)
 	}
 }
 

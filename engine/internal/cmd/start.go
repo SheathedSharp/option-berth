@@ -55,7 +55,12 @@ var startCmd = &cobra.Command{
 		"The child runs in its own process group with BERTH_GROUP, BERTH_NAME\n" +
 		"and BERTH_RUN_ID in its environment. Ctrl+C goes to the whole tree and\n" +
 		"option-berth exits with the command's own exit code.\n\n" +
-		"Everything after -- is the command, passed through verbatim.",
+		"Service and workspace references in the command — ${api.url},\n" +
+		"${api.port}, ${machine.port}, ${backend.url} and ${worktree} — are expanded\n" +
+		"to this worktree's addresses before it runs, including port: auto. A\n" +
+		"reference with no address fails instead of running as a literal. Bare\n" +
+		"${port} and ${url} expand when --port supplies their value. Everything\n" +
+		"else after -- is passed through verbatim.",
 	Args:                  cobra.ArbitraryArgs,
 	DisableFlagsInUseLine: true,
 	RunE:                  startRun,
@@ -84,6 +89,13 @@ func startRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--port %d is not a port number", startPort)
 	}
 	res := spawn.Resolve(cwd, args, startGroup, startName)
+	// The manifest is resolved by the same pass that named the group and run.
+	// The address book is expanded into the command, not into the child's
+	// environment: a one-off command keeps the environment the caller gave it.
+	argv, err := expandStartAddresses(cmd.Context(), startConfig(res.ConfigPath), args, startPort)
+	if err != nil {
+		return err
+	}
 	// The agent session is detected here, in the process the agent actually
 	// spawned: the daemon's own environment is a service manager's, not an
 	// agent's, so it could never detect this (spec 2 §3).
@@ -92,9 +104,9 @@ func startRun(cmd *cobra.Command, args []string) error {
 	startSession = session
 
 	if startDetach {
-		return startDetached(cmd, args, cwd, res)
+		return startDetached(cmd, argv, cwd, res)
 	}
-	return startAttached(cmd, args, cwd, res)
+	return startAttached(cmd, argv, cwd, res)
 }
 
 // startAttached runs the command in the foreground: stdio passes through, the

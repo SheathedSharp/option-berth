@@ -312,6 +312,10 @@ func TestGroupsPublishEachCheckoutOnce(t *testing.T) {
 		if wt.ConfigPath == nil || *wt.ConfigPath != filepath.Join(c.wt, ConfigName) {
 			t.Errorf("worktree config_path = %v, want its own copy", wt.ConfigPath)
 		}
+		if main.Identity != WorktreeTokenFor(c.main) || wt.Identity != WorktreeTokenFor(c.wt) {
+			t.Errorf("identity = %q / %q, want %q / %q",
+				main.Identity, wt.Identity, WorktreeTokenFor(c.main), WorktreeTokenFor(c.wt))
+		}
 		if running && (len(wt.Services) != 1 || !wt.Services[0].Running || len(main.Members) != 0) {
 			t.Errorf("the worktree's api is the worktree's: main %+v, worktree %+v", main, wt)
 		}

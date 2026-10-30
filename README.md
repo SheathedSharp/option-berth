@@ -46,6 +46,7 @@ option-berth 把**服务声明、实际运行、日志、Git 上下文与工作�
 | 使用无端口 worker | 通过运行记录观察，不把“没有端口”当成“没有运行” |
 | 与 coding agent 协作 | 相同 CLI 提供结构化 JSON；不内置另一套模型或 agent 推理系统 |
 | 接手别人（或上一轮）的工作 | `oberth workplace` 记录做过的命令与任务，结果如何都留在 worktree 上 |
+| 结束或清理一个 worktree | `${worktree}` 身份随 `status --json` 发布；`worktrees --gone` 列出 checkout 已消失的身份；`down --worktree/--identity` 仍能停止并交还预留，数据删除留给人 |
 
 **不是全机端口雷达，也不是另一个 AI IDE。** `machine:` 依赖只读；项目起停不会接管它们。
 worktree 隔离指运行归属和生命周期边界，不是操作系统安全沙箱。

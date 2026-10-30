@@ -276,3 +276,22 @@ func TestPreferHostPicksIPv6OnlyWhenItHasTo(t *testing.T) {
 		t.Errorf("IPv4 should win regardless of row order, got %q", got)
 	}
 }
+
+// groupPortMap feeds ${name.port} in a command health check. A machine
+// reference is a fixed port and is expanded there too; workspace references
+// are deliberately absent because their address lives in another checkout.
+func TestGroupPortMapIncludesMachineRefs(t *testing.T) {
+	actual, declared := 4100, 8080
+	ports := groupPortMap(state.Group{
+		Services: []state.Service{
+			{Name: "api", Running: true, PortActual: &actual},
+			{Name: "web", Port: &declared},
+		},
+		Machine: []state.MachineRef{{Name: "mysql", Port: 3306}},
+	})
+	for name, want := range map[string]int{"api": 4100, "web": 8080, "mysql": 3306} {
+		if got := ports[name]; got != want {
+			t.Errorf("groupPortMap[%s] = %d, want %d", name, got, want)
+		}
+	}
+}

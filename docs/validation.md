@@ -61,6 +61,16 @@ Mage 与品牌检查分别位于各自 PR 及 CI。构建、安装和服务起�
 python3 scripts/check_skill_contract.py --skill-dir ../option-berth-skill
 ```
 
+### 清单地址、共享环境与 start 展开
+
+`internal/groups` 的单元测试覆盖 `env_file` 的行格式、引号与转义、错误不回显值，以及 `workspace:`
+地址解析（对方固定端口、对方运行实况、`port: auto` 未运行时拒绝）、名称冲突和引用校验。
+`internal/daemon/groupstart` 用真实 daemon 和子进程核对 `env_file` 的优先级（调用者 < `env_file`
+< `PORT` < 服务 `env:`）以及 `machine:` / `workspace:` 地址；`internal/cmd` 的
+`TestExpandStart*` / `TestOverlayRunAddresses*` 覆盖 `oberth start` 的地址展开、未知引用拒绝，以及
+`up` 刚返回、扫描尚未发布监听时用 run 的已分配端口补齐。上述包的 `go test -race` 已通过；完整的
+`go test ./...` 在本机沙箱仍受下面的监听表限制。
+
 ### 监听观察：双栈、探针与沙箱
 
 macOS 把 Go `net.Listen("tcp", ":p")`、Node `listen(p)` 和 Java 默认绑定打印成 `tcp46`。
@@ -106,6 +116,16 @@ md5sums；有 `dpkg-deb` 时用 dpkg 读包，有 `rpm` 时列出包内容。`nf
 amd64/arm64 都能在同一个 x86 runner 上生成。macOS 本机没有这些工具时对应检查明确跳过，不能把
 跳过当作通过。发布 workflow 在 Linux 目标上安装 `nfpm` 后构建两种包，再由发布脚本按完整资产集
 校验。Windows MSI 生成代码未接入发布，也不在当前验证范围；Windows 只提供 zip 与 `install.ps1`。
+
+### worktree 身份与结束端
+
+`go test ./internal/store ./internal/scanner ./internal/groups ./internal/daemon ./internal/cmd`
+覆盖：身份账本的写入、重开与只读读取；扫描到清单时把 `${worktree}` 与根路径、组名、清单路径
+一起记录；目录消失后的身份行仍保留；`status` 发布的 `worktree.identity`；`oberth worktrees`
+的 present/gone 判定、`--gone` 过滤和不建库；`down --worktree/--identity` 对存在与已消失
+checkout 的解析、未知身份返回 not_found、按记录 claim key 交还预留，以及两个 checkout 共用
+组名时返回 ambiguous 而不是同时停止。真实进程的删除后停止仍需在能正常观察监听的
+macOS/Linux 上跑，沙箱里的 `observation_*` 结果不能代替它。
 
 ## 不作出的保证
 

@@ -13,6 +13,8 @@ func TestManifestFieldWarnings(t *testing.T) {
 	}{
 		{"known fields", "name: demo\nservices:\n  - name: api\n    cmd: echo api\n    port: auto\n    env: {CUSTOM: secret}\n", nil},
 		{"machine typo", "name: demo\nmachine:\n  - name: db\n    port: 5432\n    prott: 5433\n", []string{"machine[0].prott"}},
+		{"workspace typo", "name: demo\nworkspace:\n  - name: backend\n    worktree: ../backend\n    service: api\n    servcie: api\n", []string{"workspace[0].servcie"}},
+		{"env_file typo", "name: demo\nservices:\n  - name: api\n    cmd: echo api\n    env_fil: ../shared/dev.env\n", []string{"services[0].env_fil"}},
 		{"merged service anchor", "name: demo\nx-template: &defaults\n  cmd: echo api\n  heath: secret\nservices:\n  - <<: *defaults\n    name: api\n", []string{"services[0].heath"}},
 		{"top-level typo", "name: demo\nservcies: []\n", []string{"servcies"}},
 		{"schema metadata", "name: demo\n$schema: https://example.invalid/manifest.schema.json\n", nil},

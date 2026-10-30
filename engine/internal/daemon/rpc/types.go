@@ -11,7 +11,7 @@ const Version = "2.0"
 
 // ProtocolVersion is the daemon protocol version (contract §7). Additive
 // changes bump the minor; the clients in this plan all target major 1.
-const ProtocolVersion = "1.1.0"
+const ProtocolVersion = "1.2.0"
 
 // Request is a client call. ID is raw so a client can use numbers or strings.
 type Request struct {

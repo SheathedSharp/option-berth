@@ -228,6 +228,11 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool) (statusDocu
 	if group.RootDir != nil && *group.RootDir != "" {
 		root = *group.RootDir
 	}
+	// An older daemon does not publish the checkout identity yet; the value is
+	// a pure function of the root, so status can still answer where to read it.
+	if group.Identity == "" {
+		group.Identity = groups.WorktreeTokenFor(root)
+	}
 
 	ports := make([]state.Port, 0, len(pp))
 	for _, p := range pp {

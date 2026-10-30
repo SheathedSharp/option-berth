@@ -201,6 +201,72 @@ func TestLoadReferenceProblems(t *testing.T) {
 			"needs a port, and api declares none"},
 		{"a bad variable name", "services:\n  - name: api\n    env:\n      BAD-KEY: x\n",
 			`env "BAD-KEY" is not a variable name`},
+		{"a workspace reference in health is refused", "workspace:\n  - name: backend\n    worktree: ../backend\n    service: api\nservices:\n  - name: api\n    health:\n      command: curl -f ${backend.url}/health\n",
+			"workspace addresses are expanded in prepare, cmd and env only"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := loadString(t, "demo", "name: demo\n"+tt.body)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Load error = %v, want it to contain %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadAcceptsMachineAndWorkspaceReferences(t *testing.T) {
+	cfg, err := loadString(t, "demo", `name: demo
+machine:
+  - name: mysql
+    port: 3306
+workspace:
+  - name: backend
+    worktree: ../backend
+    service: api
+services:
+  - name: api
+    cmd: run --db ${mysql.port} --backend ${backend.url}
+    prepare: build --api ${backend.url}
+    health:
+      command: mysqladmin -h 127.0.0.1 -P ${mysql.port} ping
+    env:
+      API_URL: ${backend.url}
+`)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Workspace) != 1 || cfg.Workspace[0].Name != "backend" {
+		t.Fatalf("workspace = %+v", cfg.Workspace)
+	}
+	if !cfg.UsesManifestExtras() {
+		t.Error("UsesManifestExtras = false, want true for a file with workspace references")
+	}
+	out, err := Marshal(cfg)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	back, err := Parse(cfg.Path, out)
+	if err != nil {
+		t.Fatalf("the marshalled file does not load: %v\n%s", err, out)
+	}
+	if len(back.Workspace) != 1 || back.Workspace[0].Worktree != "../backend" {
+		t.Errorf("round trip lost the workspace reference:\n%s", out)
+	}
+}
+
+func TestWorkspaceValidationProblems(t *testing.T) {
+	for _, tt := range []struct{ name, body, want string }{
+		{"no name", "workspace:\n  - worktree: ../backend\n    service: api\n",
+			"workspace[0]: name is empty"},
+		{"no worktree", "workspace:\n  - name: backend\n    service: api\n",
+			"workspace backend: worktree is required"},
+		{"no service", "workspace:\n  - name: backend\n    worktree: ../backend\n",
+			"workspace backend: service is required"},
+		{"named after a service", "services:\n  - name: backend\nworkspace:\n  - name: backend\n    worktree: ../backend\n    service: api\n",
+			"workspace backend: backend is already a service in this file"},
+		{"named after a machine reference", "machine:\n  - name: backend\n    port: 3306\nworkspace:\n  - name: backend\n    worktree: ../backend\n    service: api\n",
+			"workspace backend: backend is already a machine reference in this file"},
+		{"duplicate names", "workspace:\n  - name: backend\n    worktree: ../a\n    service: api\n  - name: backend\n    worktree: ../b\n    service: api\n",
+			"workspace backend: duplicate name"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := loadString(t, "demo", "name: demo\n"+tt.body)

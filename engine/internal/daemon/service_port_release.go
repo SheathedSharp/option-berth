@@ -68,6 +68,34 @@ func captureServicePortRelease(ctx context.Context, rt *Runtime, cfg *groups.Con
 	return plan, nil
 }
 
+// captureWorktreePortRelease is the same capture for a checkout whose manifest
+// is gone. It selects every reservation recorded for the identity's claim key,
+// not just the services a manifest would name, because there is no manifest
+// left to enumerate.
+func captureWorktreePortRelease(ctx context.Context, rt *Runtime, project, worktree string) (*servicePortRelease, error) {
+	if project == "" {
+		return nil, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if rt.Store == nil {
+		return nil, errNoStore()
+	}
+	if !claimsMu.TryLock() {
+		return nil, errors.New("claims are changing; retry down")
+	}
+	defer claimsMu.Unlock()
+	observed, err := rt.Store.Claims().ObserveWorktreeContext(ctx, project, worktree)
+	if err != nil {
+		return nil, err
+	}
+	if len(observed.Rows) == 0 {
+		return nil, nil
+	}
+	return &servicePortRelease{store: rt.Store, configPath: "", observed: observed}, nil
+}
+
 func (p *servicePortRelease) release(ctx context.Context, rt *Runtime, group string, after state.Snapshot, scanErr error, results []state.KillResult) (int, error) {
 	return p.releaseWithWait(ctx, rt, group, after, scanErr, results, false)
 }

@@ -19,6 +19,23 @@
 核心由本项目需求驱动；数据库、系统调用和平台适配可以保留成熟实现，不为“自研比例”重写。
 来源与版权独立保留在 [engine/UPSTREAM.md](../engine/UPSTREAM.md) 和许可证中。
 
+worktree 的结束端也挂在这条链上：`${worktree}` 来自 checkout 根路径，daemon 把
+`身份 → 根路径 → 最近组名/claim key` 记进 `worktree_identities`（迁移 010）。它是身份账本，
+不是第二份运行事实：行在目录消失后保留，`exists` 由读取方按文件系统判断；`status` 只发布
+当前身份，`worktrees` 只读枚举，`down --worktree/--identity` 才使用账本里的组名停止和交还
+预留。删除数据仍由人完成。
+
+## 只读地址与共享环境
+
+`workspace:` 引用和 `machine:` 一样不产生新的运行事实：地址只从对方清单的声明和 daemon 已发布的
+运行事实（`state.snapshot` 与 run 登记）解析，解析失败就让使用它的服务启动失败，不回退到字面量或
+另一份缓存。`up` / `down` / `restart` 的目标集合仍只来自本清单的 `services:`，引用不扩大它。
+
+`oberth start` 的地址展开复用同一份清单与同一份运行快照；它只改写命令参数，不替命令注入环境，
+也不写入新的状态。`env_file:` 在每次启动（含 `prepare:`）前读取，内容不进入状态、日志或
+`spec_hash`，读取失败阻止该服务启动。两者都遵守「一条事实链」：不另立状态源，也不缓存第二份
+运行结果来绕过失败路径。
+
 ## 工作记录
 
 `workplace` 是交接层的能力：agent 可以读回「在这个 worktree 上做过什么、结果如何」来接手，

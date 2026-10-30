@@ -89,10 +89,26 @@ func WorktreeToken(root string) string {
 // worktree's root when dir is inside one — and for dir itself when it is not
 // inside a checkout.
 func WorktreeTokenFor(dir string) string {
+	identity, _ := WorktreeIdentityFor(dir)
+	return identity
+}
+
+// WorktreeIdentityFor is WorktreeTokenFor with the canonical root the token was
+// derived from. That root — the checkout's root, or dir itself outside a
+// checkout — is the path whose existence decides whether the identity still
+// has a checkout.
+func WorktreeIdentityFor(dir string) (identity, root string) {
 	if co, ok := Locate(dir); ok {
-		return WorktreeToken(co.Root)
+		root = co.Root
+	} else {
+		root = Canonical(dir)
 	}
-	return WorktreeToken(dir)
+	return WorktreeToken(root), root
+}
+
+// HasWorktreeRef reports whether text carries the ${worktree} reference.
+func HasWorktreeRef(text string) bool {
+	return strings.Contains(text, "${"+refWorktree+"}")
 }
 
 // isReference reports whether the inside of ${...} is one of the shapes the
@@ -196,8 +212,12 @@ func (c *Config) ServiceNamed(name string) (Service, bool) {
 }
 
 // refProblems checks every reference in a service's prepare, cmd, health and
-// env: each has to name a service in this file, and that service has to have a
-// port.
+// env: each has to name a service in this file, a `machine:` reference, or a
+// `workspace:` reference, and a service named directly has to have a port.
+//
+// Workspace references are read-only addresses resolved when a service starts,
+// so a health command — which is re-expanded by the scanner without that
+// resolution — may not name one.
 func (c *Config) refProblems(s Service, where string) []string {
 	var out []string
 	check := func(field, text string) {
@@ -210,12 +230,25 @@ func (c *Config) refProblems(s Service, where string) []string {
 			if svc != "" {
 				target, found = c.ServiceNamed(svc)
 			}
-			switch {
-			case !found:
-				out = append(out, fmt.Sprintf("%s: %s %s names no service %q", where, field, m[0], svc))
-			case !target.HasPort():
-				out = append(out, fmt.Sprintf("%s: %s %s needs a port, and %s declares none", where, field, m[0], target.Name))
+			if found {
+				if !target.HasPort() {
+					out = append(out, fmt.Sprintf("%s: %s %s needs a port, and %s declares none", where, field, m[0], target.Name))
+				}
+				continue
 			}
+			if svc == "" {
+				continue
+			}
+			if _, ok := c.MachineNamed(svc); ok {
+				continue
+			}
+			if _, ok := c.WorkspaceNamed(svc); ok {
+				if field == "health" {
+					out = append(out, fmt.Sprintf("%s: health %s names a workspace reference; workspace addresses are expanded in prepare, cmd and env only", where, m[0]))
+				}
+				continue
+			}
+			out = append(out, fmt.Sprintf("%s: %s %s names no service %q", where, field, m[0], svc))
 		}
 	}
 	check("prepare", s.Prepare)

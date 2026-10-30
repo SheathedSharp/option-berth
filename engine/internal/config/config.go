@@ -16,9 +16,6 @@ type Config struct {
 	Daemon   DaemonConfig   `yaml:"daemon"`
 	Color    *bool          `yaml:"color"`    // pointer: nil = unset, distinguishes from explicit false
 	Services map[int]string `yaml:"services"` // port -> label, merged over built-in table
-	// Share holds the sharing settings; today that is the relay this machine
-	// signs in to (see share.go).
-	Share ShareConfig `yaml:"share"`
 	// Agent holds the drafting agent's settings (see agent.go): which local
 	// CLI `oberth init draft` runs, and how long it gets.
 	Agent AgentConfig `yaml:"agent"`
@@ -172,12 +169,6 @@ const template = `# option-berth configuration
 #   9000: php-fpm
 #   5050: my-dashboard
 
-# share:            # sharing a local port through the relay
-#   # The relay option-berth signs in to and shares through. There is no
-#   # default: unset means no relay at all; BERTH_RELAY overrides it for one
-#   # process.
-#   relay: https://relay.example
-
 # agent:            # drafting a oberth.yaml with your own local agent
 #                   # ('oberth init draft'). option-berth runs a CLI you
 #                   # already have; it never talks to a model itself, and a
@@ -208,11 +199,6 @@ const template = `# option-berth configuration
 #   BERTH_STRICT_MANIFEST
 #                  set to 1 to make an unknown key in oberth.yaml a load error
 #                  with its line and column instead of a warning
-#   BERTH_RELAY    the relay to sign in to and share through, overriding
-#                  share.relay
-#   BERTH_CREDENTIALS_STORE
-#                  set to 'file' to keep the relay session in
-#                  ~/.option-berth/credentials.json instead of the OS keychain
 `
 
 // WriteTemplate writes a commented starter config to Path(), creating the
@@ -240,14 +226,6 @@ var validLogLevels = map[string]bool{"debug": true, "info": true, "warn": true, 
 // and returning a warning for each. Valid neighboring settings are preserved.
 func validate(cfg *Config) []string {
 	var warnings []string
-
-	// The relay is validated here rather than in Relay() so that
-	// `oberth config set share.relay …` refuses a bad value at the moment it
-	// is written, instead of accepting it and ignoring it on every load.
-	if _, w := ResolveRelay("", cfg.Share.Relay); w != "" {
-		warnings = append(warnings, w)
-		cfg.Share.Relay = ""
-	}
 
 	if v := strings.TrimSpace(cfg.Daemon.IdleTimeout); v != "" {
 		if d, err := time.ParseDuration(v); err != nil || d < 0 {
