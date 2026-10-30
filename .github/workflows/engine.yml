@@ -51,7 +51,7 @@ jobs:
           # BERTH_HOME across packages or the unit/race/scenario steps.
           mkdir -p verification
           git rev-parse HEAD > verification/commit.txt
-          git rev-parse HEAD^{tree} > verification/tree.txt
+          git rev-parse 'HEAD^{tree}' > verification/tree.txt
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: engine/go.mod

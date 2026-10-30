@@ -103,7 +103,8 @@ jobs:
         run: |
           set -euo pipefail
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.0
-          export PATH="$(go env GOPATH)/bin:$PATH"
+          gopath=$(go env GOPATH)
+          export PATH="$gopath/bin:$PATH"
           python3 scripts/package_linux.py --arch "$TARGET_ARCH" --dist dist
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
