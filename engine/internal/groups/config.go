@@ -301,9 +301,9 @@ type Candidate struct {
 }
 
 // UsesAssignedPorts reports whether this file needs a daemon that knows the
-// format v0.8.0 introduced: a `port: auto` service, or an `env:`, `prepare:`
-// or `cmd:` value carrying a ${...} reference (a port or the worktree
-// identity).
+// format v0.8.0 introduced: a `port: auto` service, or an `env:`, `prepare:`,
+// `cmd:` or `health:` value carrying a ${...} reference (a port or the
+// worktree identity).
 func (c *Config) UsesAssignedPorts() bool {
 	for _, s := range c.Services {
 		if s.PortAuto || len(s.Env) > 0 {

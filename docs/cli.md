@@ -178,8 +178,8 @@ Jev 调用、缓存命中和无事件轮询数量；没有真实反馈时指标�
 
 `health:` 有三种写法：HTTP 路径（`/healthz`，缺省形式）、TCP 连接（`health: {tcp: 5432}`，端口必须与
 服务声明的端口一致）和命令（`health: {command: pg_isready -h 127.0.0.1 -p ${port}}`）。命令在服务
-cwd 中执行，按 `cmd:` 的规则拆成 argv（不经过 shell），支持 `${port}`、`${url}` 和
-`${<service>.port}` 引用，退出码 0 视为健康。HTTP 和 TCP 只说明端口可访问；数据库这类端口先开、
+cwd 中执行，按 `cmd:` 的规则拆成 argv（不经过 shell），支持 `${port}`、`${url}`、
+`${<service>.port}` 和 `${worktree}` 引用，退出码 0 视为健康。HTTP 和 TCP 只说明端口可访问；数据库这类端口先开、
 协议后就绪的服务用命令式检查。健康结果与依赖等待使用的是同一个事实。
 
 成功时人读输出逐服务报告并给出汇总；`--wait` 等待期间先输出一行 dim 提示再逐行出结果。
