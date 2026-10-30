@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -361,6 +362,22 @@ func (l *Loop) osScanContext(ctx context.Context, include Include) ([]ports.List
 	return pp, ctx.Err()
 }
 
+// withoutOwnListeners drops rows owned by this process. option-berth itself
+// does not listen on TCP; a row with this PID is a transient probe socket, and
+// publishing it would make the probe look like a service the user never
+// declared.
+func withoutOwnListeners(pp []ports.ListeningPort) []ports.ListeningPort {
+	pid := os.Getpid()
+	out := pp[:0]
+	for _, row := range pp {
+		if row.PID == pid {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
 // Probe runs one health probe through the loop's seam.
 func (l *Loop) Probe(host string, port int, path string, timeout time.Duration) ports.HealthResult {
 	return l.ProbeContext(context.Background(), host, port, path, timeout)
@@ -629,6 +646,14 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 		}
 		return state.Snapshot{}, prev, false, err
 	}
+
+	// The daemon's own self-probe binds a short-lived loopback socket. A
+	// regular scan that overlaps it would otherwise publish that socket as an
+	// undeclared listener of the checkout the daemon was started in. This is
+	// applied after the seam so test scans and the production collector share
+	// one rule; the probe keeps using the raw collector, because seeing this
+	// process's own listener is exactly what it tests.
+	pp = withoutOwnListeners(pp)
 
 	if wantHealth {
 		ports.EnrichHealthContext(ctx, pp, HealthTimeout, HealthBudget)
