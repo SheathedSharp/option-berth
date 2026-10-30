@@ -12,7 +12,7 @@
 
 | 工作流 | 触发 | 平台与内容 |
 |---|---|---|
-| Engine verification | PR、引擎相关 `main` 推送、手动 | 自动：macOS / Ubuntu 原生构建、vet、全引擎单元测试、Mage 工作流回归、Python 辅助测试，Ubuntu 上六个发布目标的交叉构建，以及 Windows PowerShell 5.1 解析安装/卸载脚本；手动另跑核心 race 与真实服务场景。 |
+| Engine verification | PR、引擎相关 `main` 推送、手动 | 自动：macOS / Ubuntu 原生构建、vet、全引擎单元测试、Mage 工作流回归、Python 辅助测试，Ubuntu 上六个发布目标的交叉构建，Linux 上检出 `option-berth-skill` 核对 agent 契约覆盖，以及 Windows PowerShell 5.1 解析安装/卸载脚本；手动另跑核心 race 与真实服务场景。 |
 | Nightly full verification | 每日 18:23 UTC、手动 | macOS / Ubuntu：与 `scripts/release.py --verify-only` 相同的完整门槛，含核心 race 与真实服务场景。 |
 | Git read verification | PR、相关 `main` 推送、手动 | macOS / Ubuntu：Git、worktree、归因与观察的重复测试和 race。 |
 | Checked-in examples | PR、引擎相关 `main` 推送、手动 | macOS / Ubuntu：在两个 worktree 中验证仓库内示例，包括独立数据库、幂等迁移与单边停止。 |
@@ -45,6 +45,21 @@ go test -tags integration -count=1 -timeout=8m ./internal/scenario/...
 ```
 
 Mage 与品牌检查分别位于各自 PR 及 CI。构建、安装和服务起停是不同副作用，普通检查不操作日常用户服务。
+
+### agent 契约与 skill 覆盖
+
+`scripts/check_skill_contract.py` 从 `docs/cli.md`（稳定错误码与清单引用表）、
+`engine/docs/schema/manifest.schema.json`（清单字段与三种 `health` 写法）和
+`engine/internal/state/observation.go`（`observation.state`）提取锚点，要求 skill 的
+`SKILL.md` 与 `references/*.md` 都提到。`Engine verification` 的 Linux job 检出
+`option-berth-skill` 的 `main` 后运行它；skill 更新需要先合并，引擎的契约改动才能通过。
+
+这条检查只证明字段、错误码和引用被 skill 提到，不证明解释正确，也不证明真实 agent 会照着做。
+行为验收仍以 [agent-eval.md](agent-eval.md) 的场景库为准。本地运行需要同级的 skill 检出：
+
+```sh
+python3 scripts/check_skill_contract.py --skill-dir ../option-berth-skill
+```
 
 ### 监听观察：双栈、探针与沙箱
 
