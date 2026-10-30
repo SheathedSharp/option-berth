@@ -701,6 +701,29 @@ def _terminate_owned(pids: set[int], root: Path) -> None:
 # Status helpers used by scenario judges
 
 
+def up_service(doc: dict[str, Any] | None, name: str) -> dict[str, Any] | None:
+    """The `up --json` entry for a service (separate shape from status)."""
+    if not isinstance(doc, dict):
+        return None
+    for item in doc.get("services") or []:
+        if item.get("service") == name:
+            return item
+    return None
+
+
+def up_started(doc: dict[str, Any] | None, name: str) -> bool:
+    item = up_service(doc, name)
+    if item is not None:
+        return item.get("state") == "started" or item.get("running") is True
+    return running(doc, name)
+
+
+def up_pid(doc: dict[str, Any] | None, name: str) -> int | None:
+    item = up_service(doc, name)
+    value = item.get("pid") if item is not None else (service(doc, name) or {}).get("pid")
+    return value if isinstance(value, int) else None
+
+
 def service(doc: dict[str, Any] | None, name: str) -> dict[str, Any] | None:
     if not isinstance(doc, dict):
         return None

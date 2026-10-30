@@ -25,6 +25,8 @@ from agent_eval_lib import (
     port_actual,
     running,
     service,
+    up_pid,
+    up_started,
 )
 
 
@@ -364,7 +366,7 @@ def _setup_manifest_mismatch(env: ScenarioEnv) -> ScenarioState:
         "README.md": "# billing-api\n\nThe running mode comes from the manifest command.\n",
     })
     proc, doc = env.up(project)
-    if proc.returncode != 0 or not running(doc, "api"):
+    if proc.returncode != 0 or not up_started(doc, "api"):
         detail = (proc.stderr or proc.stdout or "").strip()
         raise RuntimeError(f"could not pre-start the mismatch fixture: {detail}")
     # The person edits the manifest after the process started. The worktree is
@@ -426,10 +428,10 @@ def _setup_dual_worktree(env: ScenarioEnv) -> ScenarioState:
     )
     env.projects.append(linked)
     proc, doc = env.up(main)
-    if proc.returncode != 0 or not running(doc, "api"):
+    if proc.returncode != 0 or not up_started(doc, "api"):
         detail = (proc.stderr or proc.stdout or "").strip()
         raise RuntimeError(f"could not pre-start the main worktree: {detail}")
-    main_pid = (service(doc, "api") or {}).get("pid")
+    main_pid = up_pid(doc, "api")
     preserve_pids = {("main", "api"): main_pid} if isinstance(main_pid, int) else {}
     return ScenarioState(
         worktrees={"main": main, "wt": linked},
