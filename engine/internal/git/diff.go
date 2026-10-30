@@ -50,12 +50,12 @@ type FileDiff struct {
 
 // Patch is the answer to "what changed, line by line".
 type Patch struct {
-	Root   string     `json:"root"`
-	Commit string     `json:"commit,omitempty"`
-	Base   string     `json:"base,omitempty"`
+	Root   string `json:"root"`
+	Commit string `json:"commit,omitempty"`
+	Base   string `json:"base,omitempty"`
 	// Truncated is set when a commit diff stopped after maxCommitDiffFiles.
-	Truncated  bool `json:"truncated,omitempty"`
-	TotalFiles int  `json:"total_files,omitempty"`
+	Truncated  bool       `json:"truncated,omitempty"`
+	TotalFiles int        `json:"total_files,omitempty"`
 	Files      []FileDiff `json:"files"`
 }
 
