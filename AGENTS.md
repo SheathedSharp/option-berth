@@ -6,7 +6,8 @@
 ## 交付
 
 合并前移到远端 PR：主题分支推送到 `origin`，等 `Engine verification` 的
-`Engine / ubuntu-24.04` 与 `Engine / macos-15` 通过，经用户确认后用 merge commit 合并；
+`Engine / ubuntu-24.04`、`Engine / macos-15` 与 `Engine / windows-install-scripts` 通过，
+经用户确认后用 merge commit 合并；
 不在本地把主题分支合入 `main` 后直接推送。发布脚本的原子推送是例外。命令、失败处理与
 清理见项目 skill [`option-berth-delivery`](.agents/skills/option-berth-delivery/SKILL.md)。
 

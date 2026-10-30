@@ -107,3 +107,26 @@ jobs:
           name: engine-verification-${{ matrix.os }}-${{ github.run_id }}
           path: verification/
           retention-days: 7
+
+  windows-install-scripts:
+    name: Engine / windows-install-scripts
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Parse install and uninstall scripts with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          # Both scripts declare #Requires -Version 5.1. Parsing them with
+          # Windows PowerShell rejects syntax that would break the documented
+          # minimum; pwsh 7 alone would accept PS7-only syntax.
+          foreach ($script in 'install.ps1', 'uninstall.ps1') {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script), [ref]$null, [ref]$errors) | Out-Null
+            if ($errors.Count) {
+              $errors | ForEach-Object { Write-Error $_ }
+              exit 1
+            }
+          }
