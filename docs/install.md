@@ -196,7 +196,8 @@ CLI 调用会启动新版本。Windows 先停止正在运行的 `oberth`，再�
 
 `oberth` 首屏会显示本机版本；有更新时底部直接给出本平台的安装命令和 `oberth daemon stop`。
 也可以随时运行 `oberth version --check` 主动检查。自动检查只读 GitHub 的发布标签，
-最多缓存 24 小时，不下载、不安装任何东西；`BERTH_NO_UPDATE_CHECK=1` 可关闭首屏的自动检查。
+成功结果缓存 5 分钟、失败结果缓存 30 分钟，不下载、不安装任何东西；
+`BERTH_NO_UPDATE_CHECK=1` 可关闭首屏的自动检查。
 网络不可达时首屏只显示本机版本，不把它当作最新版。
 
 ## 尚未提供的渠道

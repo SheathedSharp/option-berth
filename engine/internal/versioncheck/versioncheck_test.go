@@ -174,12 +174,43 @@ func TestLookupExpiresCache(t *testing.T) {
 	if _, err := checker.lookup(context.Background(), "v1.1.2", false, time.Second); err != nil {
 		t.Fatal(err)
 	}
-	now = now.Add(CacheTTL + time.Second)
+	now = now.Add(SuccessTTL + time.Second)
 	if _, err := checker.lookup(context.Background(), "v1.1.2", false, time.Second); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 2 {
 		t.Fatalf("fetches = %d, want the expired cache to be rechecked", calls)
+	}
+}
+
+func TestLookupRemembersAFailureLongerThanASuccess(t *testing.T) {
+	now := time.Date(2026, 10, 29, 8, 0, 0, 0, time.UTC)
+	checker := newTestChecker(t, "http://127.0.0.1:1")
+	checker.now = func() time.Time { return now }
+	calls := 0
+	checker.fetch = func(context.Context) (string, error) {
+		calls++
+		return "", errors.New("network down")
+	}
+
+	if _, err := checker.lookup(context.Background(), "v1.1.2", false, time.Second); err == nil {
+		t.Fatal("lookup returned nil error for a failed check")
+	}
+	// A successful answer would be stale by now; the failure is not.
+	now = now.Add(SuccessTTL + time.Second)
+	if _, err := checker.lookup(context.Background(), "v1.1.2", false, time.Second); err != nil {
+		t.Fatalf("cached failure: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("fetches = %d, want the failure to be reused", calls)
+	}
+	// Past the failure TTL the feed is tried again.
+	now = now.Add(FailureTTL)
+	if _, err := checker.lookup(context.Background(), "v1.1.2", false, time.Second); err == nil {
+		t.Fatal("lookup did not retry after the failure TTL")
+	}
+	if calls != 2 {
+		t.Fatalf("fetches = %d, want a retry after the failure TTL", calls)
 	}
 }
 
@@ -330,6 +361,7 @@ func newTestChecker(t *testing.T, baseURL string) *checker {
 		apiURL:     baseURL + "/api/releases/latest",
 		statePath:  filepath.Join(t.TempDir(), "update-check.json"),
 		now:        time.Now,
-		ttl:        CacheTTL,
+		successTTL: SuccessTTL,
+		failureTTL: FailureTTL,
 	}
 }

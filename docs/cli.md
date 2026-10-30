@@ -340,7 +340,7 @@ group/session 选择器只为迁移保留，不出现在公开帮助中。
 - `oberth version --json` 输出当前构建的 `version`、`commit`、`built` 和 `platform`，供安装检查脚本确认实际运行的构建。
 - `oberth version --check` 读取最新发布标签，报告本机是否落后；`--check --json` 在原来的字段上增加
   `latest`。它只读发布信息，不下载、不安装，也不替换正在运行的二进制。首屏的版本状态复用同一份
-  检查结果，最多缓存 24 小时；只有终端会话会自动检查，单次最多等待 1 秒，
+  检查结果，成功时缓存 5 分钟、失败时缓存 30 分钟；只有终端会话会自动检查，单次最多等待 1 秒，
   `BERTH_NO_UPDATE_CHECK=1` 可关闭。GitHub 不可达时 `--check` 以非零退出并说明原因，
   首屏只显示本机版本。检查结果缓存在 `BERTH_HOME/update-check.json`
   （默认 `~/.option-berth/update-check.json`），只为首屏复用，不是运行事实。
