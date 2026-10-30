@@ -1,6 +1,18 @@
 name: Git read verification
 
 on:
+  # No path filter on pull_request: a skipped required workflow leaves its
+  # check pending and blocks the PR.
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - 'engine/internal/git/**'
+      - 'engine/internal/groups/**'
+      - 'engine/internal/scanner/**'
+      - 'engine/go.mod'
+      - 'engine/go.sum'
+      - '.github/workflows/git-read.yml'
   workflow_dispatch:
 
 permissions:
