@@ -1,0 +1,11 @@
+# One SQLite database per worktree: ${worktree} is a stable identity for the
+# checkout holding this manifest, so two worktrees never share a data file.
+name: worktree-data
+services:
+  - name: api
+    prepare: python3 migrate.py
+    cmd: python3 -u api.py
+    port: auto
+    health: /health
+    env:
+      DB_PATH: .berth/${worktree}/app.db

@@ -106,7 +106,7 @@ type Service struct {
 	DependsOn   []string `yaml:"depends_on,omitempty"`
 	// Env is added to the service's environment when option-berth starts it. Values
 	// may refer to ports with ${port}, ${url}, ${<service>.port} and
-	// ${<service>.url}.
+	// ${<service>.url}, and to this checkout's stable identity with ${worktree}.
 	Env map[string]string `yaml:"env,omitempty"`
 }
 
@@ -275,7 +275,8 @@ type Candidate struct {
 
 // UsesAssignedPorts reports whether this file needs a daemon that knows the
 // format v0.8.0 introduced: a `port: auto` service, or an `env:`, `prepare:`
-// or `cmd:` value whose references name another service's port.
+// or `cmd:` value carrying a ${...} reference (a port or the worktree
+// identity).
 func (c *Config) UsesAssignedPorts() bool {
 	for _, s := range c.Services {
 		if s.PortAuto || len(s.Env) > 0 {
