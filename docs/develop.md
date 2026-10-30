@@ -58,9 +58,14 @@ CI 配置改动还会跑 actionlint 与必需检查一致性检查，清单在 `
 ```sh
 python3 -m unittest discover -s scripts -p '*_test.py'
 python3 brand/build-option-berth.py --check
+python3 scripts/check_skill_contract.py --skill-dir ../option-berth-skill
 python3 scripts/agent_eval.py --list       # 固定 agent 场景库
 python3 scripts/agent_eval.py --dry-run    # 只做 preflight 与夹具，不启动 agent
 ```
+
+`check_skill_contract.py` 需要同级的 skill 检出；CI 在 Linux job 里检出
+`option-berth-skill` 后运行。锚点来自本仓库的 CLI 契约、清单 schema 与 observation 常量，
+不要在引擎仓库里改 skill 内容。
 
 真实 agent 矩阵需要在普通终端（不在 coding agent 沙箱内）或具备凭据的 CI 上跑。
 本仓的手动 CI 入口是 `.github/workflows/agent-eval.yml`，它挂在需要 reviewer 批准的

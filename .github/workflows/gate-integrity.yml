@@ -31,7 +31,7 @@ jobs:
           set -euo pipefail
           changed=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" \
             --jq '.[] | .filename, (.previous_filename // empty)')
-          if ! printf '%s\n' "$changed" | grep -Eq '^(\.github/workflows/|\.github/CODEOWNERS$|\.github/quality-gate-checks\.json$|scripts/(release\.py|race-packages\.txt|check_ci_gate\.py|check_ci_gate_test\.py)$)'; then
+          if ! printf '%s\n' "$changed" | grep -Eq '^(\.github/workflows/|\.github/CODEOWNERS$|\.github/quality-gate-checks\.json$|scripts/(release\.py|race-packages\.txt|check_ci_gate\.py|check_ci_gate_test\.py|check_skill_contract\.py|check_skill_contract_test\.py)$)'; then
             echo "No quality gate configuration changed."
             exit 0
           fi

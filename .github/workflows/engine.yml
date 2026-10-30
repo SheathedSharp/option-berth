@@ -12,6 +12,7 @@ on:
     branches: [main]
     paths:
       - 'engine/**'
+      - 'docs/cli.md'
       - 'magefiles/**'
       - 'scripts/**'
       - 'install.sh'
@@ -52,6 +53,21 @@ jobs:
           mkdir -p verification
           git rev-parse HEAD > verification/commit.txt
           git rev-parse 'HEAD^{tree}' > verification/tree.txt
+      # The skill is a separate repository, but it teaches this contract. Merge
+      # the skill update first; this check fails until its main covers every
+      # stable error code, manifest field, reference, and observation state.
+      - name: Check out the agent skill
+        if: runner.os == 'Linux'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: SheathedSharp/option-berth-skill
+          ref: main
+          path: option-berth-skill
+          persist-credentials: false
+      - name: Skill covers the agent contract
+        if: runner.os == 'Linux'
+        shell: bash
+        run: python3 scripts/check_skill_contract.py --skill-dir option-berth-skill
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: engine/go.mod
