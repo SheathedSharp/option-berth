@@ -13,6 +13,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/buildinfo"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 	"github.com/sheathedsharp/option-berth/engine/internal/userenv"
 	"github.com/spf13/cobra"
 )
@@ -53,6 +54,19 @@ func serveRun(cmd *cobra.Command, _ []string) error {
 		// The parent only forks; the process that becomes the daemon is the
 		// child, and it is the one that asks for the PATH below.
 		return detachDaemon(cmd.Context(), socket)
+	}
+
+	// The daemon holds a working directory, not a project: it watches every
+	// checkout on the machine, and every service it starts gets an explicit
+	// cwd from its manifest. Inheriting the caller's directory made the
+	// daemon's own cwd part of port attribution and left it pointing at a
+	// deleted worktree once that checkout went away.
+	workDir, err := daemonWorkDir()
+	if err != nil {
+		return err
+	}
+	if err := os.Chdir(workDir); err != nil {
+		return fmt.Errorf("moving the daemon to %s: %w", workDir, err)
 	}
 
 	// A service's environment is this process's, so this is the one place the
@@ -152,6 +166,13 @@ func detachDaemon(ctx context.Context, socket string) error {
 	child.Stdin = nil
 	child.Stdout = logFile
 	child.Stderr = logFile
+	// The child re-checks this, but setting it here means the daemon never
+	// starts out inside the checkout that happened to autostart it.
+	workDir, err := daemonWorkDir()
+	if err != nil {
+		return err
+	}
+	child.Dir = workDir
 	detachProcess(child)
 
 	if err := child.Start(); err != nil {
@@ -165,6 +186,17 @@ func detachDaemon(ctx context.Context, socket string) error {
 	}
 	fmt.Printf("oberth daemon started (pid %d), listening on %s\n", child.Process.Pid, socket)
 	return nil
+}
+
+// daemonWorkDir is where a daemon process runs: option-berth's own state
+// directory, never the checkout that happened to start it. The directory is
+// created owner-only, the same mode the rest of the state directory uses.
+func daemonWorkDir() (string, error) {
+	dir, err := paths.EnsureDir()
+	if err != nil {
+		return "", fmt.Errorf("preparing the daemon working directory: %w", err)
+	}
+	return dir, nil
 }
 
 // stopTimeout bounds how long `daemon stop` and `daemon restart` wait for the

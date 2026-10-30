@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -344,6 +345,12 @@ func (l *Loop) osScanContext(ctx context.Context, include Include) ([]ports.List
 	if err != nil {
 		return nil, err
 	}
+	// The daemon's own self-probe binds a short-lived loopback socket. A
+	// regular scan that overlaps it would otherwise publish that socket as an
+	// undeclared listener of the checkout the daemon was started in. The probe
+	// keeps using the raw collector, because seeing this process's own
+	// listener is exactly what it tests.
+	pp = withoutOwnListeners(pp)
 	l.docker.Enrich(pp)
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -359,6 +366,23 @@ func (l *Loop) osScanContext(ctx context.Context, include Include) ([]ports.List
 		}
 	}
 	return pp, ctx.Err()
+}
+
+// withoutOwnListeners drops rows owned by the daemon process. In production
+// option-berth has no TCP listener of its own, so a row with this PID is the
+// self-probe's transient socket; publishing it would make the probe look like a
+// service the user never declared. Test-injected scans do not pass through
+// this, so a test can still model a listener owned by the same process.
+func withoutOwnListeners(pp []ports.ListeningPort) []ports.ListeningPort {
+	pid := os.Getpid()
+	out := pp[:0]
+	for _, row := range pp {
+		if row.PID == pid {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
 }
 
 // Probe runs one health probe through the loop's seam.
