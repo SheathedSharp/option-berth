@@ -129,6 +129,20 @@ def check_chat(base: str, key: str, model: str, *, post: Post = post_json,
     return f"chat completions SSE: ok (model={model})"
 
 
+def _responses_events(status: int, content_type: str, body: bytes) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for line in _sse_lines(status, content_type, body):
+        if line == "[DONE]":
+            continue
+        try:
+            document = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(document, dict):
+            events.append(document)
+    return events
+
+
 def check_responses(base: str, key: str, model: str, *, post: Post = post_json,
                     timeout: float = TIMEOUT) -> str:
     status, content_type, body = post(
@@ -137,19 +151,8 @@ def check_responses(base: str, key: str, model: str, *, post: Post = post_json,
         {"model": model, "input": "Reply with ok", "stream": True},
         timeout,
     )
-    events = _sse_lines(status, content_type, body)
-    completed = False
-    for event in events:
-        if event == "[DONE]":
-            continue
-        try:
-            document = json.loads(event)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(document, dict) and document.get("type") == "response.completed":
-            completed = True
-            break
-    if not completed:
+    if not any(event.get("type") == "response.completed"
+               for event in _responses_events(status, content_type, body)):
         raise CheckError(
             "Responses stream did not contain response.completed; "
             "Codex 0.166 requires Responses SSE, not a single JSON object"
@@ -157,10 +160,49 @@ def check_responses(base: str, key: str, model: str, *, post: Post = post_json,
     return f"responses SSE: ok (model={model})"
 
 
+def check_responses_tools(base: str, key: str, model: str, *, post: Post = post_json,
+                          timeout: float = TIMEOUT) -> str:
+    status, content_type, body = post(
+        normalize_base(base) + "/responses",
+        {"Authorization": "Bearer " + key, "Accept": "text/event-stream"},
+        {
+            "model": model,
+            "input": "Call exec_command with cmd 'true'. Do not answer in text.",
+            "stream": True,
+            "tools": [{
+                "type": "function",
+                "name": "exec_command",
+                "description": "Run a shell command.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"cmd": {"type": "string"}},
+                    "required": ["cmd"],
+                },
+            }],
+            "tool_choice": {"type": "function", "name": "exec_command"},
+        },
+        timeout,
+    )
+    for event in _responses_events(status, content_type, body):
+        kind = event.get("type")
+        item = event.get("item") if isinstance(event.get("item"), dict) else {}
+        if kind in ("response.function_call_arguments.delta",
+                    "response.function_call_arguments.done"):
+            return f"responses tool call: ok (model={model})"
+        if kind in ("response.output_item.added", "response.output_item.done") \
+                and item.get("type") == "function_call":
+            return f"responses tool call: ok (model={model})"
+    raise CheckError(
+        "Responses stream did not contain a function_call; "
+        "the gateway must translate standard Responses tools for Codex"
+    )
+
+
 CHECKS = {
     "anthropic": check_anthropic,
     "chat": check_chat,
     "responses": check_responses,
+    "responses_tools": check_responses_tools,
 }
 
 
@@ -169,7 +211,7 @@ def endpoints_for_agents(agents: list[str]) -> list[str]:
     if "claude" in agents:
         needed.append("anthropic")
     if "codex" in agents:
-        needed.append("responses")
+        needed.extend(["responses", "responses_tools"])
     if "opencode" in agents or "pi" in agents:
         needed.append("chat")
     return needed
@@ -217,7 +259,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{args.key_env} is required", file=sys.stderr)
         return 2
     agents = [item.strip() for item in args.agents.split(",") if item.strip()]
-    models = {"anthropic": args.claude_model, "chat": args.chat_model, "responses": args.codex_model}
+    models = {
+        "anthropic": args.claude_model,
+        "chat": args.chat_model,
+        "responses": args.codex_model,
+        "responses_tools": args.codex_model,
+    }
     try:
         base = normalize_base(args.base)
     except CheckError as exc:

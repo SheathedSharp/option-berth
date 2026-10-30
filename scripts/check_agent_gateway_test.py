@@ -27,10 +27,10 @@ class BaseTests(unittest.TestCase):
 
     def test_endpoints_follow_selected_agents(self):
         self.assertEqual(gateway.endpoints_for_agents(["claude"]), ["anthropic"])
-        self.assertEqual(gateway.endpoints_for_agents(["codex"]), ["responses"])
+        self.assertEqual(gateway.endpoints_for_agents(["codex"]), ["responses", "responses_tools"])
         self.assertEqual(gateway.endpoints_for_agents(["opencode", "pi"]), ["chat"])
         self.assertEqual(gateway.endpoints_for_agents(["claude", "codex", "opencode", "pi"]),
-                         ["anthropic", "responses", "chat"])
+                         ["anthropic", "responses", "responses_tools", "chat"])
 
 
 class RunChecksTests(unittest.TestCase):
@@ -44,11 +44,12 @@ class RunChecksTests(unittest.TestCase):
 
         passed, failed = gateway.run_checks(
             "https://example.test/v1", "k", ["claude", "codex", "opencode"],
-            {"anthropic": "a", "chat": "c", "responses": "r"}, post=post,
+            {"anthropic": "a", "chat": "c", "responses": "r", "responses_tools": "r"}, post=post,
         )
         self.assertEqual(len(passed), 2)
-        self.assertEqual(len(failed), 1)
-        self.assertIn("responses", failed[0])
+        self.assertEqual(len(failed), 2)
+        self.assertTrue(any("responses:" in line for line in failed))
+        self.assertTrue(any("responses_tools:" in line for line in failed))
         self.assertIn("text/event-stream", failed[0])
 
 
@@ -105,6 +106,26 @@ class ResponsesTests(unittest.TestCase):
         with self.assertRaises(gateway.CheckError) as caught:
             gateway.check_responses("https://example.test", "k", "m", post=post)
         self.assertIn("response.completed", str(caught.exception))
+
+
+class ResponsesToolTests(unittest.TestCase):
+    def test_function_call_event_passes(self):
+        body = (b'data: {"type":"response.output_item.added","item":{"type":"function_call",'
+                b'"name":"exec_command"}}\n\n'
+                b'data: {"type":"response.completed","response":{"id":"resp_1"}}\n\n')
+        post = fake_post(200, "text/event-stream", body)
+        result = gateway.check_responses_tools("https://example.test", "k", "m", post=post)
+        self.assertIn("responses tool call: ok", result)
+        self.assertEqual(post.seen[2]["tool_choice"],
+                         {"type": "function", "name": "exec_command"})
+
+    def test_text_only_stream_fails(self):
+        body = (b'data: {"type":"response.output_text.delta","delta":"ok"}\n\n'
+                b'data: {"type":"response.completed","response":{"id":"resp_1"}}\n\n')
+        post = fake_post(200, "text/event-stream", body)
+        with self.assertRaises(gateway.CheckError) as caught:
+            gateway.check_responses_tools("https://example.test", "k", "m", post=post)
+        self.assertIn("function_call", str(caught.exception))
 
 
 if __name__ == "__main__":

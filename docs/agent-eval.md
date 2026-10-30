@@ -138,8 +138,15 @@ Codex 0.166 只发 Responses 请求，并要求 `POST /v1/responses` 在 `stream
 `text/event-stream`，最后以 `response.completed` 结束。只返回单体 JSON 的实现不能驱动
 Codex：它会把响应当成断掉的流。workflow 不翻译协议；它先运行
 [`scripts/check_agent_gateway.py`](../scripts/check_agent_gateway.py)，同时检查
-Anthropic Messages、OpenAI chat SSE 和 Responses SSE 三个契约。任何一项不满足时，
-该 step 在安装 agent、消耗模型额度之前退出 2，并打印实际拿到的 content-type。
+Anthropic Messages、OpenAI chat SSE、Responses SSE 和 Responses function call 四个契约。
+任何一项不满足时，该 step 在安装 agent、消耗模型额度之前退出 2，并打印实际拿到的
+content-type。
+
+Codex 的 `gpt-6-luna` 内置元数据默认 `tool_mode=code_mode_only` 且
+`use_responses_lite=true`，会把工具放进 `additional_tools` 输入项，而不是标准 Responses
+`tools`。workflow 在安装 Codex 后读取本机 catalog，只把当前 Codex 模型改成
+`tool_mode=direct`、`use_responses_lite=false`，让 Codex 与其他 agent 一样发标准
+function tools；这不是协议翻译，也不要求 gateway 识别 Codex 私有输入项。
 
 workflow 显式传入自主执行参数：Claude `--permission-mode=bypassPermissions`、Codex
 `--sandbox danger-full-access`、OpenCode `--auto`、Pi `--approve`。harness 自己仍然不加

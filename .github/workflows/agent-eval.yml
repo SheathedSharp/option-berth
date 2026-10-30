@@ -128,6 +128,38 @@ jobs:
           done | tee "$RUNNER_TEMP/agent-eval/agent-versions.txt"
           node --version | tee -a "$RUNNER_TEMP/agent-eval/agent-versions.txt"
 
+      - name: Align Codex tool exposure with the gateway contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          config_dir="$RUNNER_TEMP/agent-eval"
+          catalog="$config_dir/codex-models.json"
+          mkdir -p "$config_dir/codex-home"
+          # Codex's built-in metadata for GPT-6 models selects code-mode-only
+          # and Responses Lite, which sends tools as additional_tools input
+          # items instead of standard Responses function tools. Patch the
+          # catalog for this run so Codex uses the same direct function tools
+          # as the other agents; the gateway needs no Codex-specific branch.
+          CODEX_HOME="$config_dir/codex-home" codex debug models > "$catalog"
+          python3 - "$catalog" "$CODEX_MODEL" <<'PY'
+          import json
+          import sys
+
+          path, model = sys.argv[1], sys.argv[2]
+          with open(path, encoding="utf-8") as handle:
+              catalog = json.load(handle)
+          for entry in catalog.get("models", []):
+              if entry.get("slug") == model:
+                  entry["tool_mode"] = "direct"
+                  entry["use_responses_lite"] = False
+                  break
+          else:
+              raise SystemExit(f"model {model!r} is not in the Codex model catalog")
+          with open(path, "w", encoding="utf-8") as handle:
+              json.dump(catalog, handle)
+          print(f"prepared {path} with direct tools for {model}")
+          PY
+
       - name: Write provider configuration
         shell: bash
         env:
@@ -205,11 +237,9 @@ jobs:
           ANTHROPIC_MODEL: ${{ inputs.claude_model }}
           ANTHROPIC_SMALL_FAST_MODEL: ${{ inputs.claude_model }}
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
-          # Codex calls the gateway's Responses endpoint directly, so it gets
-          # the real key through its provider's env_key.
-          OPENAI_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
           GATEWAY_BASE_URL: ${{ secrets.LLM_GATEWAY_BASE_URL }}
-          # OpenCode and Pi interpolate this at request time.
+          # One key name for every agent that speaks an OpenAI protocol;
+          # Claude uses ANTHROPIC_AUTH_TOKEN above.
           GATEWAY_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
           OPENCODE_CONFIG: ${{ runner.temp }}/agent-eval/opencode.json
           PI_CODING_AGENT_DIR: ${{ runner.temp }}/agent-eval/pi
@@ -234,7 +264,6 @@ jobs:
             --pass-env ANTHROPIC_MODEL
             --pass-env ANTHROPIC_SMALL_FAST_MODEL
             --pass-env CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
-            --pass-env OPENAI_API_KEY
             --pass-env GATEWAY_API_KEY
             --pass-env OPENCODE_CONFIG
             --pass-env PI_CODING_AGENT_DIR
@@ -249,13 +278,15 @@ jobs:
             --agent-arg codex=-c
             --agent-arg "codex=model_providers.gateway.base_url=\"$codex_base\""
             --agent-arg codex=-c
-            --agent-arg 'codex=model_providers.gateway.env_key="OPENAI_API_KEY"'
+            --agent-arg 'codex=model_providers.gateway.env_key="GATEWAY_API_KEY"'
             --agent-arg codex=-c
             --agent-arg 'codex=model_providers.gateway.wire_api="responses"'
             --agent-arg codex=-c
             --agent-arg 'codex=model_providers.gateway.supports_websockets=false'
             --agent-arg codex=-c
             --agent-arg "codex=model=\"$CODEX_MODEL\""
+            --agent-arg codex=-c
+            --agent-arg "codex=model_catalog_json=\"$RUNNER_TEMP/agent-eval/codex-models.json\""
             --agent-arg codex=-c
             --agent-arg 'codex=approval_policy="never"'
             --agent-arg opencode=--auto
@@ -287,6 +318,7 @@ jobs:
           path: |
             agent-eval-report/
             ${{ runner.temp }}/agent-eval/gateway-check.log
+            ${{ runner.temp }}/agent-eval/codex-models.json
             ${{ runner.temp }}/agent-eval/build.json
             ${{ runner.temp }}/agent-eval/agent-versions.txt
           if-no-files-found: warn
