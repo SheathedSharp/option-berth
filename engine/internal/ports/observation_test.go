@@ -77,11 +77,17 @@ func TestCollectListenersKeepsAValidTable(t *testing.T) {
 	}
 }
 
-func TestDecodeDarwinEmptyTableNamesTheObservationCode(t *testing.T) {
-	for _, text := range []string{"", "permission denied\n"} {
+func TestDecodeDarwinHeaderlessOutputNamesTheReason(t *testing.T) {
+	for _, tt := range []struct {
+		text string
+		code string
+	}{
+		{"", CodeObservationEmpty},
+		{"permission denied\n", CodeObservationUnrecognized},
+	} {
 		var oe *ObservationError
-		if !errors.As(mustDecodeDarwin(t, text), &oe) || oe.Code != CodeObservationEmpty {
-			t.Fatalf("input %q did not classify as %q: %v", text, CodeObservationEmpty, mustDecodeDarwin(t, text))
+		if !errors.As(mustDecodeDarwin(t, tt.text), &oe) || oe.Code != tt.code {
+			t.Fatalf("input %q did not classify as %q: %v", tt.text, tt.code, mustDecodeDarwin(t, tt.text))
 		}
 	}
 }

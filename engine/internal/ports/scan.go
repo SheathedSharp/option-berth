@@ -17,6 +17,13 @@ func Scan() ([]ListeningPort, error) {
 // ScanContext retains Scan's command ceiling and decoding rules. Cancelled
 // command output cannot become a healthy (possibly partial) observation.
 func ScanContext(ctx context.Context) ([]ListeningPort, error) {
+	return scanContext(ctx)
+}
+
+// scanContext is the one collection path. The self-probe uses it so it tests
+// exactly what a real read does; it must not call the probe itself, or a blind
+// process would recurse instead of reporting the blind spot.
+func scanContext(ctx context.Context) ([]ListeningPort, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

@@ -11,22 +11,38 @@ import "fmt"
 // allowed to look". These codes are part of the CLI/RPC contract (docs/cli.md).
 const (
 	// CodeObservationEmpty means the collector exited successfully but printed
-	// no listening table. A successful exit is not evidence that nothing listens.
+	// no listening table at all. This is suspicious, not proof of an idle
+	// machine: the self-probe decides whether the process is blind.
 	CodeObservationEmpty = "observation_empty"
+	// CodeObservationUnrecognized means the collector printed something, but
+	// no table header the decoder knows. That is a format problem, not an
+	// empty machine; the hint asks for the header rather than a sandbox change.
+	CodeObservationUnrecognized = "observation_unrecognized"
 	// CodeObservationIncomplete means the pass could not be trusted: a row was
 	// malformed, or the collector put diagnostics on stderr. The pass is
 	// discarded rather than published as a possibly-partial table.
 	CodeObservationIncomplete = "observation_incomplete"
+	// CodeObservationBlind is the self-probe's verdict when this process can
+	// bind a port but cannot see its own listener in the table.
+	CodeObservationBlind = "observation_blind"
+	// CodeObservationBindDenied is the self-probe's verdict when this process
+	// cannot bind a local port at all.
+	CodeObservationBindDenied = "observation_bind_denied"
 )
 
 // Observation hints name the next step, not just the symptom. They are shown
 // verbatim by the CLI, the daemon and `oberth doctor`.
 const (
 	observationEmptyHint = "the collector exited successfully but returned no listening table; " +
-		"an agent sandbox may be blocking system introspection — retry outside the sandbox, " +
-		"or run `oberth doctor --only listener_observation` to check this process"
+		"run `oberth doctor --only listener_observation` to determine whether this process can see its own listener"
+	observationUnrecognizedHint = "the collector printed no table header option-berth recognizes; " +
+		"upgrade option-berth if the table changed, or report the header line"
 	observationIncompleteHint = "the collector's output could not be trusted, so no listener is reported absent; " +
 		"run `oberth doctor --only listener_observation`, then retry outside an agent sandbox if it also fails"
+	observationBlindHint = "this process cannot see its own listener, so an empty listener list is not evidence that nothing runs; " +
+		"retry outside the sandbox or run `oberth doctor --only listener_observation`"
+	observationBindDeniedHint = "this process cannot bind a local port, so services started from here cannot listen either; " +
+		"retry outside the sandbox or allow option-berth's network access"
 )
 
 // ObservationError is a listener observation that failed for a reason the

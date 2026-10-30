@@ -103,7 +103,11 @@ func decodeDarwinNetstat(text string) ([]ListeningPort, error) {
 		}
 	}
 	if pidColumn < 0 {
-		return nil, observationf(CodeObservationEmpty, observationEmptyHint,
+		if strings.TrimSpace(text) == "" {
+			return nil, observationf(CodeObservationEmpty, observationEmptyHint,
+				"netstat: response was empty")
+		}
+		return nil, observationf(CodeObservationUnrecognized, observationUnrecognizedHint,
 			"netstat: response has no recognized TCP table header")
 	}
 	return out, nil
