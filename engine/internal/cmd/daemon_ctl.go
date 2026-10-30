@@ -14,6 +14,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/spf13/cobra"
 )
 
@@ -113,7 +114,7 @@ func daemonStatusRun(cmd *cobra.Command, _ []string) error {
 	hello := c.Hello()
 
 	if daemonJSONFlag {
-		return printJSON(map[string]any{
+		body := map[string]any{
 			"running":               true,
 			"pid":                   status.PID,
 			"uptime":                status.Uptime,
@@ -131,7 +132,11 @@ func daemonStatusRun(cmd *cobra.Command, _ []string) error {
 			"build_commit":          status.Commit,
 			"build_date":            status.Built,
 			"build_matches":         status.Commit == "" || status.Commit == buildinfo.Commit,
-		})
+		}
+		if status.Observation != nil {
+			body["observation"] = status.Observation
+		}
+		return printJSON(body)
 	}
 
 	fmt.Printf("running       yes\n")
@@ -148,6 +153,12 @@ func daemonStatusRun(cmd *cobra.Command, _ []string) error {
 		fmt.Printf("last scan     %s\n", status.LastScanAt)
 	}
 	fmt.Printf("socket        %s\n", hello.Socket)
+	if status.Observation != nil && status.Observation.State != string(ports.ObservationObservable) {
+		fmt.Printf("observation   %s (%s)\n", status.Observation.State, orUnknown(status.Observation.Code))
+		if status.Observation.Hint != "" {
+			fmt.Printf("hint          %s\n", status.Observation.Hint)
+		}
+	}
 	if status.DBPath != "" {
 		fmt.Printf("database      %s\n", status.DBPath)
 	}
