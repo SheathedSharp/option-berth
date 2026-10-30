@@ -1,0 +1,304 @@
+name: Agent eval / real agent matrix
+
+# This workflow spends real model tokens. It is manual-only and runs behind the
+# `agent-eval` environment, which requires an explicit reviewer approval before
+# any step starts. Do not add pull_request, push or schedule triggers.
+on:
+  workflow_dispatch:
+    inputs:
+      agents:
+        description: Comma list of agents (claude,codex,opencode,pi)
+        required: true
+        default: claude,codex,opencode,pi
+        type: string
+      scenarios:
+        description: Comma list of scenario ids, or all
+        required: true
+        default: all
+        type: string
+      repeat:
+        description: Runs per scenario/agent (2 or more makes rows comparable)
+        required: true
+        default: '2'
+        type: string
+      claude_model:
+        description: Model for Claude Code through the Anthropic protocol
+        required: true
+        default: cline-pass/deepseek-v4.1-flash-1017
+        type: string
+      codex_model:
+        description: Model for Codex through the Responses bridge
+        required: true
+        default: gpt-6-luna
+        type: string
+      opencode_model:
+        description: Model for OpenCode through the OpenAI chat protocol
+        required: true
+        default: step-5-preview
+        type: string
+      pi_model:
+        description: Model for Pi through the OpenAI chat protocol
+        required: true
+        default: space-bunny
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-eval
+  cancel-in-progress: false
+
+jobs:
+  matrix:
+    name: Agent eval / real agents
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    environment: agent-eval
+    env:
+      AGENTS: ${{ inputs.agents }}
+      SCENARIOS: ${{ inputs.scenarios }}
+      REPEAT: ${{ inputs.repeat }}
+      CODEX_MODEL: ${{ inputs.codex_model }}
+      OPENCODE_MODEL: ${{ inputs.opencode_model }}
+      PI_MODEL: ${{ inputs.pi_model }}
+    steps:
+      - name: Check out the engine and the pinned skill
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          path: source
+      - name: Check out option-berth-skill
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: SheathedSharp/option-berth-skill
+          ref: main
+          path: option-berth-skill
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: source/engine/go.mod
+          cache-dependency-path: source/engine/go.sum
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v4
+        with:
+          node-version: '22.20.0'
+
+      - name: Build the engine under test
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install github.com/magefile/mage@v1.17.2
+          "$(go env GOPATH)/bin/mage" buildEngine
+          mkdir -p "$RUNNER_TEMP/agent-eval"
+          bin/oberth version --json | tee "$RUNNER_TEMP/agent-eval/build.json"
+
+      - name: Install coding agents
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install -g --no-audit --no-fund \
+            @anthropic-ai/claude-code@2.1.314 \
+            @openai/codex@0.166.0 \
+            opencode-ai@1.19.5 \
+            @earendil-works/pi-coding-agent@1.4.0
+          for command in claude codex opencode pi; do
+            printf '%s: ' "$command"
+            command -v "$command"
+            "$command" --version 2>&1 | sed -n '1p'
+          done | tee "$RUNNER_TEMP/agent-eval/agent-versions.txt"
+          node --version | tee -a "$RUNNER_TEMP/agent-eval/agent-versions.txt"
+
+      - name: Write provider configuration
+        shell: bash
+        env:
+          GATEWAY_BASE_URL: ${{ secrets.LLM_GATEWAY_BASE_URL }}
+          OPENCODE_MODEL_SELECTED: ${{ inputs.opencode_model }}
+          PI_MODEL_SELECTED: ${{ inputs.pi_model }}
+        run: |
+          set -euo pipefail
+          config_dir="$RUNNER_TEMP/agent-eval"
+          mkdir -p "$config_dir/pi"
+          python3 - "$config_dir" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          base = os.environ["GATEWAY_BASE_URL"].rstrip("/")
+          if not base.endswith("/v1"):
+              base += "/v1"
+          opencode_model = os.environ["OPENCODE_MODEL_SELECTED"]
+          pi_model = os.environ["PI_MODEL_SELECTED"]
+
+          # The gateway key is interpolated by each agent at request time; the
+          # key itself never appears in these files.
+          opencode = {
+              "$schema": "https://opencode.ai/config.json",
+              "autoupdate": False,
+              "snapshot": False,
+              "model": f"gateway/{opencode_model}",
+              "provider": {
+                  "gateway": {
+                      "npm": "@ai-sdk/openai-compatible",
+                      "name": "LLM gateway",
+                      "options": {
+                          "baseURL": base,
+                          "apiKey": "{env:GATEWAY_API_KEY}",
+                      },
+                      "models": {opencode_model: {"name": opencode_model}},
+                  }
+              },
+          }
+          pi = {
+              "$schema": "https://pi.dev/schemas/models.schema.json",
+              "providers": {
+                  "gateway": {
+                      "baseUrl": base,
+                      "api": "openai-completions",
+                      "apiKey": "$GATEWAY_API_KEY",
+                      "models": [{"id": pi_model, "name": pi_model}],
+                  }
+              },
+          }
+          (root / "opencode.json").write_text(json.dumps(opencode, indent=2) + "\n")
+          (root / "pi" / "models.json").write_text(json.dumps(pi, indent=2) + "\n")
+          PY
+          echo "wrote $config_dir/opencode.json and $config_dir/pi/models.json"
+
+      - name: Start the Responses bridge for Codex
+        shell: bash
+        env:
+          CODE_BRIDGE_GATEWAY_BASE: ${{ secrets.LLM_GATEWAY_BASE_URL }}
+          CODE_BRIDGE_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
+        run: |
+          set -euo pipefail
+          config_dir="$RUNNER_TEMP/agent-eval"
+          nohup python3 source/scripts/codex_responses_bridge.py \
+            --port 18080 --log "$config_dir/bridge.log" \
+            >"$config_dir/bridge.stderr.log" 2>&1 &
+          echo $! > "$config_dir/bridge.pid"
+          for _ in $(seq 1 50); do
+            if curl -fsS http://127.0.0.1:18080/healthz >/dev/null; then
+              echo "bridge is healthy"
+              exit 0
+            fi
+            sleep 0.2
+          done
+          echo "bridge did not become healthy" >&2
+          cat "$config_dir/bridge.stderr.log" >&2 || true
+          exit 1
+
+      - name: Preflight listener observation
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/agent_eval.py --dry-run --scenarios missing-artifact \
+            --binary bin/oberth --out "$RUNNER_TEMP/agent-eval/preflight"
+
+      - name: Run the scenario matrix
+        working-directory: source
+        shell: bash
+        env:
+          # Claude Code uses the Anthropic protocol. The fast model is pinned to
+          # the same model so background calls never reach a different model.
+          ANTHROPIC_BASE_URL: ${{ secrets.LLM_GATEWAY_BASE_URL }}
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.LLM_GATEWAY_API_KEY }}
+          ANTHROPIC_MODEL: ${{ inputs.claude_model }}
+          ANTHROPIC_SMALL_FAST_MODEL: ${{ inputs.claude_model }}
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
+          # Codex only needs a non-empty value here; the loopback bridge owns
+          # the real gateway credential and ignores the agent's Authorization.
+          OPENAI_API_KEY: bridge-local
+          # OpenCode and Pi interpolate this at request time.
+          GATEWAY_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
+          OPENCODE_CONFIG: ${{ runner.temp }}/agent-eval/opencode.json
+          PI_CODING_AGENT_DIR: ${{ runner.temp }}/agent-eval/pi
+          PI_OFFLINE: '1'
+        run: |
+          set -euo pipefail
+          args=(
+            --execute
+            --agents "$AGENTS"
+            --scenarios "$SCENARIOS"
+            --repeat "$REPEAT"
+            --binary bin/oberth
+            --skill-dir "$GITHUB_WORKSPACE/option-berth-skill"
+            --out "$GITHUB_WORKSPACE/agent-eval-report"
+            --timeout 600
+            --pass-env ANTHROPIC_BASE_URL
+            --pass-env ANTHROPIC_AUTH_TOKEN
+            --pass-env ANTHROPIC_MODEL
+            --pass-env ANTHROPIC_SMALL_FAST_MODEL
+            --pass-env CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+            --pass-env OPENAI_API_KEY
+            --pass-env GATEWAY_API_KEY
+            --pass-env OPENCODE_CONFIG
+            --pass-env PI_CODING_AGENT_DIR
+            --pass-env PI_OFFLINE
+            --agent-arg claude=--permission-mode=bypassPermissions
+            --agent-arg codex=--sandbox
+            --agent-arg codex=danger-full-access
+            --agent-arg codex=-c
+            --agent-arg 'codex=model_provider="bridge"'
+            --agent-arg codex=-c
+            --agent-arg 'codex=model_providers.bridge.name="bridge"'
+            --agent-arg codex=-c
+            --agent-arg 'codex=model_providers.bridge.base_url="http://127.0.0.1:18080/v1"'
+            --agent-arg codex=-c
+            --agent-arg 'codex=model_providers.bridge.env_key="OPENAI_API_KEY"'
+            --agent-arg codex=-c
+            --agent-arg 'codex=model_providers.bridge.wire_api="responses"'
+            --agent-arg codex=-c
+            --agent-arg 'codex=model_providers.bridge.supports_websockets=false'
+            --agent-arg codex=-c
+            --agent-arg "codex=model=\"$CODEX_MODEL\""
+            --agent-arg codex=-c
+            --agent-arg 'codex=approval_policy="never"'
+            --agent-arg opencode=--auto
+            --agent-arg opencode=--model
+            --agent-arg "opencode=gateway/$OPENCODE_MODEL"
+            --agent-arg pi=--approve
+            --agent-arg pi=--model
+            --agent-arg "pi=gateway/$PI_MODEL"
+            --require-comparable
+          )
+          python3 scripts/agent_eval.py "${args[@]}"
+
+      - name: Publish the matrix to the job summary
+        if: always()
+        shell: bash
+        run: |
+          report="$GITHUB_WORKSPACE/agent-eval-report/report.md"
+          if [ -f "$report" ]; then
+            cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No report.md was written." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Keep the report and bridge evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: agent-eval-${{ github.run_id }}
+          path: |
+            agent-eval-report/
+            ${{ runner.temp }}/agent-eval/bridge.log
+            ${{ runner.temp }}/agent-eval/bridge.stderr.log
+            ${{ runner.temp }}/agent-eval/build.json
+            ${{ runner.temp }}/agent-eval/agent-versions.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Stop the Responses bridge
+        if: always()
+        shell: bash
+        run: |
+          pid_file="$RUNNER_TEMP/agent-eval/bridge.pid"
+          if [ -f "$pid_file" ]; then
+            kill "$(cat "$pid_file")" 2>/dev/null || true
+          fi

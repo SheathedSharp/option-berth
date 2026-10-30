@@ -67,8 +67,10 @@ python3 scripts/agent_eval.py --dry-run    # 只做 preflight 与夹具，不启
 `option-berth-skill` 后运行。锚点来自本仓库的 CLI 契约、清单 schema 与 observation 常量，
 不要在引擎仓库里改 skill 内容。
 
-真实 agent 矩阵需要在普通终端（不在 coding agent 沙箱内）或具备凭据的 CI 上跑，
-指标与边界见 [agent-eval.md](agent-eval.md)。
+真实 agent 矩阵需要在普通终端（不在 coding agent 沙箱内）或具备凭据的 CI 上跑。
+本仓的手动 CI 入口是 `.github/workflows/agent-eval.yml`，它挂在需要 reviewer 批准的
+`agent-eval` environment 上；指标、模型与 Codex bridge 的边界见
+[agent-eval.md](agent-eval.md)。
 
 隔离环境与授权边界见 [AGENTS.md](../AGENTS.md)「验证」；接口兼容和
 「取消/未知不算成功」这类实现约束见 [AGENTS.md](../AGENTS.md)「接口」「一条事实链」。
