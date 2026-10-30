@@ -90,7 +90,11 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          mapfile -t race_packages < <(grep -vE '^[[:space:]]*(#|$)' ../scripts/race-packages.txt)
+          # macOS ships bash 3.2, which has no mapfile.
+          race_packages=()
+          while IFS= read -r package; do
+            race_packages+=("$package")
+          done < <(grep -vE '^[[:space:]]*(#|$)' ../scripts/race-packages.txt)
           go test -race -count=1 -timeout=10m "${race_packages[@]}" 2>&1 | tee ../verification/race.log
       - name: Real service scenarios
         if: github.event_name == 'workflow_dispatch' && (success() || failure())
