@@ -1,6 +1,8 @@
 package groups
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"sort"
@@ -13,7 +15,11 @@ import (
 // ${<service>.url}. The daemon expands them when it starts the service, after
 // the port of every service they name is known.
 //
-// Only those four shapes are references. Anything else between ${ and } —
+// ${worktree} is the fifth shape: a stable token for the checkout holding the
+// manifest, so two worktrees of one repository can keep separate data (a
+// database name, a data directory) without sharing anything.
+//
+// Only those five shapes are references. Anything else between ${ and } —
 // ${HOME}, ${FOO:-x} — is left exactly as written, because a `cmd` has never
 // been expanded before and one that hands such a string to `sh -c` must keep
 // working.
@@ -23,12 +29,19 @@ var refPattern = regexp.MustCompile(`\$\{([^{}$]*)\}`)
 var envKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 const (
-	refPort = "port"
-	refURL  = "url"
+	refPort     = "port"
+	refURL      = "url"
+	refWorktree = "worktree"
+
+	// worktreeTokenPrefix keeps the token usable as an unquoted SQL identifier,
+	// a filesystem path element and an environment value: a letter first, then
+	// lowercase hex.
+	worktreeTokenPrefix = "wt_"
 )
 
-// parseRef reads the inside of ${...}. service is "" for the service's own
-// port; ok is false for anything that is not a reference.
+// parseRef reads the inside of ${...} as a service port reference. service is
+// "" for the service's own port; ok is false for anything that is not one —
+// including ${worktree}, which names no service.
 func parseRef(inner string) (service, field string, ok bool) {
 	switch inner {
 	case refPort, refURL:
@@ -45,20 +58,74 @@ func parseRef(inner string) (service, field string, ok bool) {
 // URL is what ${url} expands to for a port.
 func URL(port int) string { return "http://localhost:" + strconv.Itoa(port) }
 
-// Expand replaces the references in text with the ports in ports, keyed by
-// service name; self is the service text belongs to. A reference to a service
-// ports has no entry for is left as written, and so is anything that is not a
-// reference.
-func Expand(text, self string, ports map[string]int) string {
+// Values are what the references in one service's text expand to.
+type Values struct {
+	// Self is the service the text belongs to: a bare ${port} and ${url} mean it.
+	Self string
+	// Worktree is the token ${worktree} expands to. Empty leaves the reference
+	// as written, like a port reference naming a service with no known port.
+	Worktree string
+	// Ports are the ports of the services the text names.
+	Ports map[string]int
+}
+
+// WorktreeToken is the stable identity ${worktree} expands to for the checkout
+// rooted at root: "wt_" followed by twelve hex digits of a hash of the canonical
+// path. The same checkout keeps the token across restarts; a main checkout and
+// each linked worktree get different tokens, because their roots differ.
+//
+// The token is an identifier, not a path: embed it in one (`.data/${worktree}`)
+// rather than expecting a directory. An empty root has no token.
+func WorktreeToken(root string) string {
+	root = Canonical(root)
+	if root == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(root))
+	return worktreeTokenPrefix + hex.EncodeToString(sum[:])[:12]
+}
+
+// WorktreeTokenFor is WorktreeToken for the checkout holding dir — the
+// worktree's root when dir is inside one — and for dir itself when it is not
+// inside a checkout.
+func WorktreeTokenFor(dir string) string {
+	if co, ok := Locate(dir); ok {
+		return WorktreeToken(co.Root)
+	}
+	return WorktreeToken(dir)
+}
+
+// isReference reports whether the inside of ${...} is one of the shapes the
+// daemon expands. ${worktree} is not a service, so callers that resolve service
+// names must use parseRef instead.
+func isReference(inner string) bool {
+	if inner == refWorktree {
+		return true
+	}
+	_, _, ok := parseRef(inner)
+	return ok
+}
+
+// Expand replaces the references in text with the values they name. A
+// reference whose value is not known is left as written, and so is anything
+// that is not a reference.
+func Expand(text string, v Values) string {
 	return refPattern.ReplaceAllStringFunc(text, func(m string) string {
-		svc, field, ok := parseRef(m[2 : len(m)-1])
+		inner := m[2 : len(m)-1]
+		if inner == refWorktree {
+			if v.Worktree == "" {
+				return m
+			}
+			return v.Worktree
+		}
+		svc, field, ok := parseRef(inner)
 		if !ok {
 			return m
 		}
 		if svc == "" {
-			svc = self
+			svc = v.Self
 		}
-		port, ok := ports[svc]
+		port, ok := v.Ports[svc]
 		if !ok || port == 0 {
 			return m
 		}
@@ -70,7 +137,8 @@ func Expand(text, self string, ports map[string]int) string {
 }
 
 // Refs lists the services the references in text name, in order and without
-// repeats; a bare ${port} or ${url} names self.
+// repeats; a bare ${port} or ${url} names self. ${worktree} names no service
+// and is never listed.
 func Refs(text, self string) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -104,7 +172,7 @@ func MatchesExpanded(pattern, actual string) bool {
 	last := 0
 	for _, loc := range locs {
 		b.WriteString(regexp.QuoteMeta(pattern[last:loc[0]]))
-		if _, _, ok := parseRef(pattern[loc[2]:loc[3]]); ok {
+		if isReference(pattern[loc[2]:loc[3]]) {
 			b.WriteString(".+")
 		} else {
 			b.WriteString(regexp.QuoteMeta(pattern[loc[0]:loc[1]]))

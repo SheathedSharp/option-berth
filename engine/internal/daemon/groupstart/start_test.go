@@ -601,6 +601,70 @@ services:
 	}
 }
 
+// TestWorktreeIdentityExpandsInPrepareAndEnv: ${worktree} is the stable token
+// of the checkout holding the manifest, expanded before a service's prepare
+// and env run. It names no service, so it adds no dependency. The cmd half is
+// the same Expand call and is covered by the groups tests.
+func TestWorktreeIdentityExpandsInPrepareAndEnv(t *testing.T) {
+	skipOnWindows(t)
+	dir := isolate(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	token := groups.WorktreeTokenFor(dir)
+	marker := filepath.Join(dir, "prepared.txt")
+	cmd := serviceCmd(t)
+	path := writeConfig(t, dir, fmt.Sprintf(`name: worktree-ref
+services:
+  - name: api
+    prepare: /bin/sh -c 'printf %%s ${worktree} > "%s"'
+    cmd: %s
+    port: auto
+    env:
+      BERTH_TEST_ECHO: WORKTREE
+      WORKTREE: ${worktree}
+`, marker, cmd))
+
+	watch := &watchList{}
+	c := startDaemonWith(t, ctx, watchScan(dir, watch))
+
+	var start rpc.GroupsStartResult
+	s, err := c.Stream(ctx, "groups.start", rpc.GroupsStartParams{ConfigPath: &path}, &start)
+	if err != nil {
+		t.Fatalf("groups.start: %v", err)
+	}
+	defer s.Close()
+
+	chunks, end := collectWatching(t, s, watch)
+	t.Cleanup(func() { killPIDs(chunks) })
+	if len(end.Started) != 1 || len(end.Errors) != 0 {
+		dumpLogs(t, chunks)
+		t.Fatalf("end = %+v, chunks = %+v", end, chunks)
+	}
+
+	prepared, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("reading the prepare marker: %v", err)
+	}
+	if got := strings.TrimSpace(string(prepared)); got != token {
+		t.Fatalf("prepare saw ${worktree} = %q, want %q", got, token)
+	}
+
+	want := "WORKTREE=" + token
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		raw, _ := os.ReadFile(chunks[0].LogPath)
+		if strings.Contains(string(raw), want) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("api log is missing %q:\n%s", want, raw)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 // collectWatching is collect for a scan whose watch list grows: every service
 // reported started is added to it, so the next scan sees its port.
 func collectWatching(t *testing.T, s *client.Stream, w *watchList) ([]rpc.GroupsStartChunk, rpc.GroupsStartEnd) {

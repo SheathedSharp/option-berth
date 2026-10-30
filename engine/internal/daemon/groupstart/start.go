@@ -276,8 +276,9 @@ func prepare(ctx context.Context, cfg *groups.Config, group string,
 	if err != nil {
 		return err
 	}
+	values := groups.Values{Self: svc.Name, Worktree: book.worktree, Ports: ports}
 	for i := range argv {
-		argv[i] = groups.Expand(argv[i], svc.Name, ports)
+		argv[i] = groups.Expand(argv[i], values)
 	}
 	cwd, err := runsreg.CheckCwd(cfg.ServiceDir(svc), p.AllowOutsideHome)
 	if err != nil {
@@ -295,7 +296,7 @@ func prepare(ctx context.Context, cfg *groups.Config, group string,
 	h, err := spawn.Spawn(ctx, spawn.Request{
 		Argv:   argv,
 		Cwd:    cwd,
-		Env:    serviceEnv(p.Env, svc, ports[svc.Name], ports),
+		Env:    serviceEnv(p.Env, svc, ports[svc.Name], ports, values),
 		Group:  group,
 		Name:   svc.Name,
 		Stdout: log,
@@ -387,8 +388,9 @@ func start(ctx context.Context, rt *daemon.Runtime, cfg *groups.Config, group st
 	}
 	// Expanded after splitting, so a value can never change how the command
 	// splits into arguments.
+	values := groups.Values{Self: svc.Name, Worktree: book.worktree, Ports: ports}
 	for i := range argv {
-		argv[i] = groups.Expand(argv[i], svc.Name, ports)
+		argv[i] = groups.Expand(argv[i], values)
 	}
 	cwd, err := runsreg.CheckCwd(cfg.ServiceDir(svc), p.AllowOutsideHome)
 	if err != nil {
@@ -400,7 +402,7 @@ func start(ctx context.Context, rt *daemon.Runtime, cfg *groups.Config, group st
 	return runsreg.Spawn(ctx, rt, spawn.Request{
 		Argv:     argv,
 		Cwd:      cwd,
-		Env:      serviceEnv(p.Env, svc, port, ports),
+		Env:      serviceEnv(p.Env, svc, port, ports, values),
 		Group:    group,
 		Name:     svc.Name,
 		PortHint: port,
@@ -413,7 +415,7 @@ func start(ctx context.Context, rt *daemon.Runtime, cfg *groups.Config, group st
 // PORT for a service with a port, and the service's own `env:` with its
 // references expanded. BERTH_PORT and the other run variables are added by
 // spawn on top of all of it.
-func serviceEnv(caller map[string]string, svc groups.Service, port int, ports map[string]int) []string {
+func serviceEnv(caller map[string]string, svc groups.Service, port int, ports map[string]int, values groups.Values) []string {
 	over := make(map[string]string, len(caller)+len(svc.Env)+1)
 	for k, v := range caller {
 		over[k] = v
@@ -422,7 +424,7 @@ func serviceEnv(caller map[string]string, svc groups.Service, port int, ports ma
 		over["PORT"] = strconv.Itoa(port)
 	}
 	for k, v := range svc.Env {
-		over[k] = groups.Expand(v, svc.Name, ports)
+		over[k] = groups.Expand(v, values)
 	}
 	return layer(os.Environ(), over)
 }
@@ -453,15 +455,17 @@ func layer(base []string, over map[string]string) []string {
 // per groups.start and only for the services this start needs: the ones it
 // spawns and the ones their prepare, cmd and env refer to. It is what ${port} and
 // ${<service>.port} expand to, what PORT is set to, and what a dependent waits
-// for.
+// for. worktree is the stable identity ${worktree} expands to for the checkout
+// holding the manifest.
 type addressBook struct {
-	ctx   context.Context
-	rt    *daemon.Runtime
-	cfg   *groups.Config
-	group string
-	live  map[string]int
-	ports map[string]int
-	errs  map[string]error
+	ctx      context.Context
+	rt       *daemon.Runtime
+	cfg      *groups.Config
+	group    string
+	worktree string
+	live     map[string]int
+	ports    map[string]int
+	errs     map[string]error
 }
 
 func newAddressBook(ctx context.Context, rt *daemon.Runtime, cfg *groups.Config, group string) (*addressBook, error) {
@@ -474,7 +478,8 @@ func newAddressBook(ctx context.Context, rt *daemon.Runtime, cfg *groups.Config,
 	}
 	b := &addressBook{
 		ctx: ctx, rt: rt, cfg: cfg, group: group,
-		live: map[string]int{}, ports: map[string]int{}, errs: map[string]error{},
+		worktree: groups.WorktreeTokenFor(cfg.Dir),
+		live:     map[string]int{}, ports: map[string]int{}, errs: map[string]error{},
 	}
 	// A service that is already up keeps the port it is on: the run registry
 	// knows the port option-berth started it on, and the group row knows where

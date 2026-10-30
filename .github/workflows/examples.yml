@@ -1,4 +1,4 @@
-name: Hello worktree example
+name: Checked-in examples
 on:
   # No path filter on pull_request: a skipped required workflow leaves its
   # check pending and blocks the PR.
@@ -33,7 +33,7 @@ jobs:
         with:
           go-version-file: engine/go.mod
           cache-dependency-path: engine/go.sum
-      - name: Verify the checked-in example in two worktrees
+      - name: Verify the checked-in examples in two worktrees
         shell: bash
         run: |
           set -euo pipefail

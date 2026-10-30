@@ -261,7 +261,11 @@ func healthTargets(rows []state.Port, gg []state.Group) []healthTarget {
 				if !svc.Running || gg[gi].RootDir == nil {
 					continue
 				}
-				expanded := groups.Expand(h.Command, svc.Name, portMap)
+				expanded := groups.Expand(h.Command, groups.Values{
+					Self:     svc.Name,
+					Worktree: groups.WorktreeTokenFor(*gg[gi].RootDir),
+					Ports:    portMap,
+				})
 				out = append(out, healthTarget{
 					kind: groups.HealthCommand, argv: spawn.SplitCmd(expanded),
 					dir: filepath.Join(*gg[gi].RootDir, filepath.FromSlash(svc.Cwd)),
