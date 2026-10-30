@@ -94,17 +94,10 @@ type DaemonHelloParams struct {
 	Keepalive     bool   `json:"keepalive,omitempty"`
 }
 
-// ObservationStatus is the process's self-probe verdict. State is observable,
-// blind or bind_denied; Code is the stable observation code when the listener
-// table cannot be trusted. It is a fact produced by binding a real socket and
-// looking for it with the same collector a status read uses.
-type ObservationStatus struct {
-	State     string `json:"state"`
-	Code      string `json:"code,omitempty"`
-	Detail    string `json:"detail,omitempty"`
-	Hint      string `json:"hint,omitempty"`
-	CheckedAt string `json:"checked_at,omitempty"`
-}
+// ObservationStatus is the process's self-probe verdict or the collector's
+// partial-scan status. It lives in state so a published snapshot can carry it;
+// the alias keeps existing callers on the same wire shape.
+type ObservationStatus = state.Observation
 
 type DaemonHelloResult struct {
 	ProtocolVersion string             `json:"protocol_version"`

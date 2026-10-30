@@ -71,6 +71,34 @@ func TestScanGroupsObservedKeepsManifestWhenBlind(t *testing.T) {
 	}
 }
 
+// A partial table keeps its readable rows; the observation says the rest is
+// unknown rather than empty.
+func TestScanGroupsObservedKeepsReadableRowsWhenPartial(t *testing.T) {
+	dir := demoManifest(t)
+	readable := ports.ListeningPort{
+		Port: 18123, PID: os.Getpid(), BindAddress: "0.0.0.0", IPVersion: "IPv4", Cwd: dir,
+	}
+	prevPorts := scanPorts
+	scanPorts = func() ([]ports.ListeningPort, error) {
+		return []ports.ListeningPort{readable}, &ports.ObservationError{
+			Code: ports.CodeObservationIncomplete, Detail: "netstat: unreadable TCP rows: line 3",
+			Hint: "run doctor", Partial: true, Rows: []ports.ListeningPort{readable},
+		}
+	}
+	t.Cleanup(func() { scanPorts = prevPorts })
+
+	got, _, obs, err := scanGroupsObserved(context.Background())
+	if err != nil {
+		t.Fatalf("partial scan returned an error: %v", err)
+	}
+	if len(got) != 1 || got[0].Port != 18123 {
+		t.Fatalf("rows = %+v, want the readable row", got)
+	}
+	if obs == nil || obs.State != "partial" || obs.Code != ports.CodeObservationIncomplete {
+		t.Fatalf("observation = %+v", obs)
+	}
+}
+
 func TestStatusDocumentKeepsManifestWhenBlind(t *testing.T) {
 	dir := demoManifest(t)
 	prev := noDaemonFlag

@@ -6,6 +6,7 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -572,6 +573,26 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 		// and freshness, and leave pending invalidation for a later observer.
 		return state.Snapshot{}, l.Cached(), false, err
 	}
+	var observation *state.Observation
+	if err != nil {
+		if partial, ok := ports.PartialRows(err); ok {
+			// The readable rows are facts; the unreadable ones are not. Publish
+			// the rows together with the verdict so no port looks absent.
+			pp = partial
+			var oe *ports.ObservationError
+			if errors.As(err, &oe) {
+				observation = &state.Observation{
+					State: state.ObservationPartial, Code: oe.Code,
+					Detail: oe.Error(), Hint: oe.Hint,
+					CheckedAt: l.nowRFC3339(),
+				}
+			}
+			if reportFailure {
+				l.opts.Logger.Warn("scan partial, publishing readable rows", "error", err)
+			}
+			err = nil
+		}
+	}
 	if err != nil {
 		if reportFailure {
 			l.opts.Logger.Warn("scan failed, keeping last good state", "error", err)
@@ -653,16 +674,17 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 	}
 
 	next, prev, changed = l.commitScan(commit{
-		subs:     subs,
-		collect:  collect,
-		carry:    carry,
-		health:   wantHealth,
-		seq:      gen,
-		refresh:  refresh,
-		pp:       pp,
-		rows:     rows,
-		groups:   groupRows,
-		sessions: sessionRows,
+		subs:        subs,
+		collect:     collect,
+		carry:       carry,
+		health:      wantHealth,
+		seq:         gen,
+		refresh:     refresh,
+		pp:          pp,
+		rows:        rows,
+		groups:      groupRows,
+		sessions:    sessionRows,
+		observation: observation,
 	})
 	if changed {
 		l.publish(prev, next, deriveEvents(prev, next, l.nowRFC3339()))
@@ -683,6 +705,9 @@ type commit struct {
 	rows     []state.Port
 	groups   []state.Group
 	sessions []state.SessionRecord
+	// observation is non-nil only when this scan could not read the whole
+	// table; the readable rows are still facts.
+	observation *state.Observation
 }
 
 // commitScan swaps a finished scan into the cache and adapts the interval.
@@ -754,6 +779,7 @@ func (l *Loop) commitScan(c commit) (next, prev state.Snapshot, changed bool) {
 	next = local.Into(state.Snapshot{
 		At:            l.lastScanAt.Format(time.RFC3339),
 		DaemonVersion: l.opts.DaemonVersion,
+		Observation:   c.observation,
 	})
 
 	if l.haveSnap && !snapshotChanged(prev, next, withStats) {
@@ -1168,6 +1194,9 @@ func (l *Loop) commitRepublish(
 	next = local.Into(state.Snapshot{
 		At:            l.now().Format(time.RFC3339),
 		DaemonVersion: l.opts.DaemonVersion,
+		// Republishing re-attributes the last scan; it does not re-read the
+		// table, so the partial/healthy verdict stays whatever that scan said.
+		Observation: prev.Observation,
 	})
 	if !snapshotChanged(prev, next, true) {
 		// A write that changed nothing a client can see publishes nothing and

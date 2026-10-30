@@ -45,14 +45,21 @@ func groupRowsObserved(ctx context.Context) ([]ports.ListeningPort, []state.Grou
 			defer c.Close()
 			var snap state.Snapshot
 			if err := c.Call(ctx, "state.snapshot", rpc.StateSnapshotParams{}, &snap); err == nil {
-				obs := c.Hello().Observation
-				if obs == nil || obs.State == string(ports.ObservationObservable) {
+				probe := c.Hello().Observation
+				if probe == nil || probe.State == string(ports.ObservationObservable) {
+					// The snapshot may still be partial: the daemon's collector
+					// could read some rows and not others. Carry that verdict,
+					// falling back to the probe's healthy one.
+					obs := snap.Observation
+					if obs == nil {
+						obs = probe
+					}
 					return state.ToListeningAll(snap.Ports), snap.Groups, obs, nil
 				}
 				// A blind daemon can still serve its last-good snapshot. Treat
 				// those ports as unknown, not as current facts; try this process
 				// and keep the daemon's reason for the fallback note.
-				daemonErr = &cliErr{Code: obs.Code, Msg: "daemon cannot see listeners: " + obs.Detail, Hint: obs.Hint}
+				daemonErr = &cliErr{Code: probe.Code, Msg: "daemon cannot see listeners: " + probe.Detail, Hint: probe.Hint}
 			} else {
 				daemonErr = cliError(err)
 			}
@@ -92,18 +99,36 @@ func scanGroupsObserved(ctx context.Context) ([]ports.ListeningPort, []state.Gro
 	results, scanErr := scanPorts()
 	var obs *rpc.ObservationStatus
 	if scanErr != nil {
-		var oe *ports.ObservationError
-		if !errors.As(scanErr, &oe) {
-			return nil, nil, nil, scanErr
-		}
-		probe := scanProbe(ctx)
-		obs = observationFromProbe(probe, oe)
-		// The probe saw its own listener, so the collector works; an empty
-		// first pass may have been transient. One retry settles it without
-		// publishing the probe's own socket.
-		if oe.Code == ports.CodeObservationEmpty && probe.State == ports.ObservationObservable {
-			if retry, err := scanPorts(); err == nil {
-				results = retry
+		if partial, ok := ports.PartialRows(scanErr); ok {
+			// The collector read a table; some rows were unreadable. Publish
+			// the readable ones, but say the rest are unknown.
+			results = partial
+			hint := ""
+			var oe *ports.ObservationError
+			if errors.As(scanErr, &oe) {
+				hint = oe.Hint
+			}
+			obs = &rpc.ObservationStatus{
+				State:     state.ObservationPartial,
+				Code:      ports.CodeObservationIncomplete,
+				Detail:    scanErr.Error(),
+				Hint:      hint,
+				CheckedAt: time.Now().UTC().Format(time.RFC3339),
+			}
+		} else {
+			var oe *ports.ObservationError
+			if !errors.As(scanErr, &oe) {
+				return nil, nil, nil, scanErr
+			}
+			probe := scanProbe(ctx)
+			obs = observationFromProbe(probe, oe)
+			// The probe saw its own listener, so the collector works; an empty
+			// first pass may have been transient. One retry settles it without
+			// publishing the probe's own socket.
+			if oe.Code == ports.CodeObservationEmpty && probe.State == ports.ObservationObservable {
+				if retry, err := scanPorts(); err == nil {
+					results = retry
+				}
 			}
 		}
 	}

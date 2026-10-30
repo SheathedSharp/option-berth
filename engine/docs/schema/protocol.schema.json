@@ -246,7 +246,7 @@
           "type": "boolean"
         },
         "observation": {
-          "$ref": "#/definitions/ObservationStatus"
+          "$ref": "#/definitions/Observation"
         }
       },
       "type": "object",
@@ -306,7 +306,7 @@
           "type": "string"
         },
         "observation": {
-          "$ref": "#/definitions/ObservationStatus"
+          "$ref": "#/definitions/Observation"
         }
       },
       "type": "object",
@@ -1202,7 +1202,7 @@
         "ok"
       ]
     },
-    "ObservationStatus": {
+    "Observation": {
       "properties": {
         "state": {
           "type": "string"
@@ -2359,6 +2359,9 @@
             "$ref": "#/definitions/SessionRecord"
           },
           "type": "array"
+        },
+        "observation": {
+          "$ref": "#/definitions/Observation"
         }
       },
       "type": "object",
