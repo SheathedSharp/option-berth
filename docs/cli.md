@@ -25,7 +25,12 @@
 - 退出码：0 成功，1 运行失败，2 参数或选项错误，130 被 Ctrl-C 中断。
 - JSON 错误形状为 {"error":{"code":"...","message":"...","hint":"..."}}。
   稳定的 code 包括 invalid_params、not_found、invalid_config、ambiguous、
-  permission_denied、timeout、daemon_busy 和 internal。
+  permission_denied、timeout、daemon_busy、observation_empty、
+  observation_incomplete 和 internal。
+  observation_empty 表示采集命令成功退出但没有任何监听表（常见于 agent 沙箱拒绝系统内省），
+  observation_incomplete 表示输出行无法完整解码或命令带诊断失败，因此整轮扫描被丢弃；
+  两者都不是“没有监听”，hint 指向离开沙箱重试或运行
+  `oberth doctor --only listener_observation` 检查当前进程。
 - --no-daemon 让读命令在本地直接采集；需要记录运行和起停的命令仍需要 daemon。
   daemon 不可用时，`status` 仍从本地只读历史显示最近的退出原因。
 
@@ -305,8 +310,10 @@ oberth init [--dry-run] [--json]
 
 核心闭环之外的命令按层列在这里，契约同样是这份文档：
 
-- oberth doctor：检查清单、daemon、CLI 路径和日志目录，给出可操作的修复提示。
-  `--only daemon_build_matches` 对比 CLI 与 daemon 的构建提交；同版本号不代表同构建。
+- oberth doctor：检查清单、daemon、CLI 路径、日志目录和当前进程能否读取监听表，给出可操作的修复提示。
+  `--only listener_observation` 用与 `status` 相同的采集路径验证当前进程；在 agent 沙箱里它报告
+  observation_empty / observation_incomplete，而不是把空表当成健康。`--only daemon_build_matches`
+  对比 CLI 与 daemon 的构建提交；同版本号不代表同构建。
   缺少提交身份或状态 RPC 失败会报告 warn，不会标记匹配，也不会自动重启 daemon。
 - oberth events：供 agent 订阅本机 daemon 的状态变化。并行联调时 agent 应根据任务中明确给出的
   关系主动建立并消费订阅；人手执行此命令主要用于排障。`--worktree PATH_OR_ID` 会沿已有 Repo 关系包含同仓库

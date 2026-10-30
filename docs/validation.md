@@ -32,6 +32,18 @@ go test -tags integration -count=1 -timeout=8m ./internal/scenario/...
 
 Mage 与品牌检查分别位于各自 PR 及 CI。构建、安装和服务起停是不同副作用，普通检查不操作日常用户服务。
 
+### 沙箱下的监听观察
+
+macOS 的 agent 沙箱会让 `netstat` 启动但拒绝 `net.inet.tcp.pcblist_n`；命令仍以 0 退出并给出空表。
+因此 `status --json` 在 Codex、Claude Code、Cursor 的沙箱里返回 `observation_empty`，message 保留
+底层 sysctl 诊断，hint 指向离开沙箱重试或 `oberth doctor --only listener_observation`。
+
+2026-10-30 在本机实测：Claude Code 与 Cursor 用各自非交互会话的默认沙箱跑 `status --json`；
+Codex 会话因 401 无法调用模型，用 `codex sandbox` 的同一 seatbelt 策略执行命令。三家都返回该 code。
+本机普通 shell 启动的 Go 进程同样拿不到完整监听表（`sysctl net.inet.tcp.pcblist_n`
+只返回截断结果），所以 `TestScanFindsIsolatedListener` 在这台机器上以 `observation_empty`
+失败；这是环境限制，在允许读取主机监听表的构建环境里仍须通过。
+
 发布安装与卸载脚本用本地夹具跑通：平台映射、latest 重定向、固定版本、SHA256 不匹配不落盘、
 PATH 配置、旧包缺少 `install-path.sh` 时的标签回退、未知参数在下载前失败，以及卸载只删
 安装器写入的精确 PATH 行、默认保留 `~/.option-berth`、`--purge-state` 才删除状态目录。
