@@ -10,6 +10,7 @@ import (
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
@@ -42,7 +43,17 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 	// exit recorded after the wait began counts as this run's death.
 	waitStarted := time.Now().UTC()
 	for {
-		pp, gg, err := groupRows(ctx)
+		pp, gg, obs, err := groupRowsObserved(ctx)
+		if obs != nil && obs.State != string(ports.ObservationObservable) {
+			// Waiting the full timeout would end by stopping the run it just
+			// started. "Cannot see" is a different outcome from "not ready".
+			code := obs.Code
+			if code == "" {
+				code = ports.CodeObservationBlind
+			}
+			return nil, failHint(code,
+				fmt.Sprintf("cannot confirm readiness: %s", obs.Detail), obs.Hint)
+		}
 		if err == nil {
 			portsNow := make([]state.Port, 0, len(pp))
 			for _, row := range pp {

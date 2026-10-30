@@ -146,7 +146,7 @@ func resolveLogTarget(ctx context.Context, c *client.Client, target, bindIP stri
 		return nil, "", failHint("not_found", fmt.Sprintf("no project contains service %q", target),
 			"run this command inside a worktree with an oberth.yaml")
 	}
-	_, groups, err := groupRows(ctx)
+	_, groups, obs, err := groupRowsObserved(ctx)
 	if err != nil {
 		return nil, "", cliError(err)
 	}
@@ -174,6 +174,14 @@ func resolveLogTarget(ctx context.Context, c *client.Client, target, bindIP stri
 					return nil, "", err
 				}
 				return row, "", nil
+			}
+			if obs != nil && obs.State != string(ports.ObservationObservable) {
+				code := obs.Code
+				if code == "" {
+					code = ports.CodeObservationBlind
+				}
+				return nil, "", failHint(code,
+					fmt.Sprintf("cannot resolve a listener for %q: %s", target, obs.Detail), obs.Hint)
 			}
 			return nil, "", failHint("not_found", fmt.Sprintf("service %q is not running", target),
 				"run `oberth up`, or use `oberth status` to inspect its last exit")
