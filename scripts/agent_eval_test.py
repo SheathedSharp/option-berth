@@ -413,6 +413,18 @@ class JudgeTests(unittest.TestCase):
         self.assertFalse(scenario.judge(probe({"main": main, "wt": crossed}, http), state()).completed)
 
 
+class UpShapeTests(unittest.TestCase):
+    def test_up_and_status_service_shapes(self) -> None:
+        up = {"services": [{"service": "api", "state": "started", "pid": 7}]}
+        self.assertTrue(lib.up_started(up, "api"))
+        self.assertEqual(lib.up_pid(up, "api"), 7)
+        status = {"worktree": {"services": [{"name": "api", "running": True, "pid": 8}]}}
+        self.assertTrue(lib.up_started(status, "api"))
+        self.assertEqual(lib.up_pid(status, "api"), 8)
+        self.assertFalse(lib.up_started({"services": [{"service": "api", "state": "failed"}]}, "api"))
+        self.assertIsNone(lib.up_pid({"services": [{"service": "api", "state": "failed"}]}, "api"))
+
+
 class ReportTests(unittest.TestCase):
     def row(self, scenario: str, agent: str, *, repeat: int, completed: bool,
             steps: int = 5, oob: int = 0, status: str = "ok", sha: str = "abc") -> dict:
