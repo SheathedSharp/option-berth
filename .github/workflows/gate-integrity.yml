@@ -1,0 +1,41 @@
+name: Gate integrity
+
+on:
+  # Run from the base branch, never from the pull request head. This job only
+  # reads the PR file list through the API; it must not checkout or execute
+  # pull request code.
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: gate-integrity-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  protect:
+    name: Gate integrity / maintainer-owned CI changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require a maintainer for quality gate changes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          ASSOCIATION: ${{ github.event.pull_request.author_association }}
+        run: |
+          set -euo pipefail
+          changed=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)')
+          if ! printf '%s\n' "$changed" | grep -Eq '^(\.github/workflows/|\.github/CODEOWNERS$|\.github/quality-gate-checks\.json$|scripts/(release\.py|race-packages\.txt|check_ci_gate\.py|check_ci_gate_test\.py)$)'; then
+            echo "No quality gate configuration changed."
+            exit 0
+          fi
+          case "$ASSOCIATION" in
+            OWNER|MEMBER|COLLABORATOR) echo "Quality gate change by $ASSOCIATION." ;;
+            *) echo "Quality gate changes require a maintainer." >&2; exit 1 ;;
+          esac
