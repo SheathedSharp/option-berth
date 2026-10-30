@@ -23,7 +23,7 @@ func groupsEqual(a, b Group) bool {
 	// Host/Name define Key, not the old group's payload comparison. In
 	// particular an empty host and localhost share the same public group key.
 	return a.Status == b.Status && a.Repo == b.Repo && a.Worktree == b.Worktree &&
-		a.Branch == b.Branch && a.Source == b.Source &&
+		a.Identity == b.Identity && a.Branch == b.Branch && a.Source == b.Source &&
 		pointerEqual(a.RootDir, b.RootDir) && pointerEqual(a.ConfigPath, b.ConfigPath) &&
 		sliceEqual(a.Members, b.Members) && servicesEqual(a.Services, b.Services) &&
 		machineEqual(a.Machine, b.Machine)
