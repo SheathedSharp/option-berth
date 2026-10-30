@@ -171,6 +171,34 @@ services:
 	}
 }
 
+// Strict mode must accept the new key shapes: prepare_inputs is a known key,
+// and the keys inside a health mapping belong to the health union, not to the
+// service.
+func TestStrictManifestAcceptsHealthAndPrepareInputs(t *testing.T) {
+	t.Setenv(StrictEnv, "1")
+	path := filepath.Join(t.TempDir(), ConfigName)
+	body := `name: demo
+services:
+  - name: db
+    prepare: npm ci
+    prepare_inputs: [package.json]
+    cmd: postgres
+    port: 5432
+    health:
+      tcp: 5432
+  - name: api
+    cmd: api
+    health:
+      command: pg_isready -p 5432
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatalf("strict mode refused a health mapping or prepare_inputs: %v", err)
+	}
+}
+
 func TestUnknownFieldsStayWarningsByDefault(t *testing.T) {
 	t.Setenv(StrictEnv, "")
 	path := filepath.Join(t.TempDir(), ConfigName)
