@@ -29,9 +29,14 @@ const (
 	// Repository is the public project the release tags belong to.
 	Repository = "SheathedSharp/option-berth"
 
-	// CacheTTL is how long a checked answer is reused. One day keeps the
-	// welcome screen cheap while still surfacing a release the next day.
-	CacheTTL = 24 * time.Hour
+	// SuccessTTL is how long a successful answer is reused. Five minutes keeps
+	// the welcome screen cheap without hiding a fresh release for a day: a
+	// check made just before a release must not claim "latest" hours later.
+	SuccessTTL = 5 * time.Minute
+
+	// FailureTTL is how long a failed check is remembered. It is longer than a
+	// success so an unreachable feed does not add a timeout to every run.
+	FailureTTL = 30 * time.Minute
 
 	// WelcomeTimeout bounds the check the welcome screen may run. It is short
 	// because the screen is a signpost: an unreachable network must not make
@@ -166,7 +171,8 @@ func (s State) fresh(now time.Time, ttl time.Duration) bool {
 // Lookup returns what is known about the latest release for current.
 //
 // Unless force is set, a cached answer for the same build is reused while it is
-// younger than CacheTTL. A check records its result — including a failure — so
+// younger than SuccessTTL (FailureTTL when the last check failed). A check
+// records its result — including a failure — so
 // the welcome screen can show an honest "unknown" instead of retrying on every
 // invocation. A check failure is returned to the caller; the returned State is
 // still written to the cache.
@@ -206,7 +212,8 @@ func defaultChecker() *checker {
 		apiURL:     "https://api.github.com/repos/" + Repository + "/releases/latest",
 		statePath:  filepath.Join(paths.Dir(), paths.UpdateCheckFile),
 		now:        time.Now,
-		ttl:        CacheTTL,
+		successTTL: SuccessTTL,
+		failureTTL: FailureTTL,
 	}
 }
 
@@ -216,17 +223,29 @@ type checker struct {
 	apiURL     string
 	statePath  string
 	now        func() time.Time
-	ttl        time.Duration
+	successTTL time.Duration
+	failureTTL time.Duration
 
 	// fetch replaces the network sources in tests. Production leaves it nil.
 	fetch func(context.Context) (string, error)
+}
+
+// fresh reports whether a cached state may be reused. A failure is remembered
+// longer than a success: retrying an unreachable feed every few minutes would
+// add its timeout to most runs.
+func (c *checker) fresh(state State, now time.Time) bool {
+	ttl := c.successTTL
+	if state.Error != "" {
+		ttl = c.failureTTL
+	}
+	return state.fresh(now, ttl)
 }
 
 func (c *checker) lookup(ctx context.Context, current string, force bool, timeout time.Duration) (State, error) {
 	current = strings.TrimSpace(current)
 	now := c.now()
 	if !force {
-		if cached, ok := c.read(); ok && cached.Current == current && cached.fresh(now, c.ttl) {
+		if cached, ok := c.read(); ok && cached.Current == current && c.fresh(cached, now) {
 			return cached, nil
 		}
 	}
