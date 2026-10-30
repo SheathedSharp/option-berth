@@ -39,6 +39,8 @@ func prepareDigest(svc groups.Service, cwd string) (string, error) {
 	inputs := append([]string{}, svc.PrepareInputs...)
 	sort.Strings(inputs)
 	h := sha256.New()
+	writeField(h, "cwd")
+	writeField(h, filepath.Clean(cwd))
 	writeField(h, "command")
 	writeField(h, svc.Prepare)
 	seen := map[string]bool{}

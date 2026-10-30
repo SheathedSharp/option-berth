@@ -79,6 +79,21 @@ func TestPrepareStampIsPerManifestAndService(t *testing.T) {
 	}
 }
 
+func TestPrepareStampIncludesTheWorkingDirectory(t *testing.T) {
+	t.Setenv("BERTH_HOME", t.TempDir())
+	a, b := t.TempDir(), t.TempDir()
+	writePrepareFile(t, a, "package.json", `{"name":"web"}`)
+	writePrepareFile(t, b, "package.json", `{"name":"web"}`)
+	svc := groups.Service{Name: "web", Prepare: "npm ci", PrepareInputs: []string{"package.json"}}
+
+	if err := recordPrepareStamp("cfg", svc, a); err != nil {
+		t.Fatal(err)
+	}
+	if prepareUnchanged("cfg", svc, b) {
+		t.Fatal("a stamp recorded in one cwd matched an identical input in another")
+	}
+}
+
 func TestPrepareMissingInputNeverSkipsOrStamps(t *testing.T) {
 	t.Setenv("BERTH_HOME", t.TempDir())
 	dir := t.TempDir()
