@@ -179,9 +179,13 @@ def preflight(binary: Path, out_root: Path, pass_env: list[str]) -> None:
                 "  Run this harness from a normal terminal outside a coding-agent sandbox, "
                 "or fix the listener observation path first."
             )
-        services = (doc.get("worktree") or {}).get("services") or []
+        _, status_doc = env.status(project)
+        services = (status_doc.get("worktree") or {}).get("services") if isinstance(status_doc, dict) else []
         if not services or not services[0].get("running"):
-            raise PreflightError(f"preflight service did not run: {json.dumps(doc)[:2000]}")
+            raise PreflightError(
+                f"preflight service did not appear in status: up={json.dumps(doc)[:1200]} "
+                f"status={json.dumps(status_doc)[:1200]}"
+            )
     finally:
         env.cleanup({"main": project} if "project" in locals() else {})
 
