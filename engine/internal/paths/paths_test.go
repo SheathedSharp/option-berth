@@ -31,8 +31,8 @@ func TestEverythingIsInTheOneDirectory(t *testing.T) {
 		t.Setenv(key, "")
 	}
 
-	// 一个目录装全部：配置、数据库、socket、锁、日志、profile、凭据、安装号。
-	// 这正是这个包存在的理由 —— 它们以前被八个地方各拼一遍。
+	// 一个目录装全部：配置、数据库、socket、锁、日志、profile 和运行登记。
+	// 这正是这个包存在的理由 —— 它们以前被多个地方各拼一遍。
 	for _, tc := range []struct {
 		name string
 		got  string
@@ -46,8 +46,6 @@ func TestEverythingIsInTheOneDirectory(t *testing.T) {
 		{"logs", Logs()},
 		{"profiles", Profiles()},
 		{"runs", Runs()},
-		{"credentials", CredentialsPath()},
-		{"install id", InstallIDPath()},
 	} {
 		if tc.name == "socket" && runtime.GOOS == "windows" {
 			if tc.got != WindowsPipe {
