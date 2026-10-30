@@ -90,7 +90,8 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          go test -race -count=1 -timeout=10m ./internal/claims ./internal/runs ./internal/spawn ./internal/daemon/... ./internal/git ./internal/groups ./internal/ports ./internal/scanner ./internal/servicefacts ./internal/state ./internal/store ./internal/killer 2>&1 | tee ../verification/race.log
+          mapfile -t race_packages < <(grep -vE '^[[:space:]]*(#|$)' ../scripts/race-packages.txt)
+          go test -race -count=1 -timeout=10m "${race_packages[@]}" 2>&1 | tee ../verification/race.log
       - name: Real service scenarios
         if: github.event_name == 'workflow_dispatch' && (success() || failure())
         working-directory: engine

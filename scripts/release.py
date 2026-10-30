@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 VERSION_RE = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z")
 PROTOCOL_FILE = Path("engine/internal/daemon/rpc/types.go")
 SCHEMA_FILE = Path("engine/docs/schema/protocol.schema.json")
+RACE_PACKAGES_FILE = Path("scripts/race-packages.txt")
 PROTOCOL_RE = re.compile(r'(?m)^const ProtocolVersion = "([0-9]+\.[0-9]+\.[0-9]+)"$')
 ACCEPTED_REMOTES = {
     "https://github.com/SheathedSharp/option-berth.git",
@@ -75,13 +76,28 @@ def check_versions(root: Path) -> None:
         raise ValueError("generated schema does not match daemon protocol version")
 
 
+def race_packages(root: Path) -> tuple[str, ...]:
+    """Read the race package list shared with the CI workflow."""
+    lines = (root / RACE_PACKAGES_FILE).read_text().splitlines()
+    packages = tuple(line.strip() for line in lines
+                     if line.strip() and not line.lstrip().startswith("#"))
+    if not packages:
+        raise ValueError(f"{RACE_PACKAGES_FILE} has no packages")
+    for package in packages:
+        if not package.startswith("./") or any(char.isspace() for char in package):
+            raise ValueError(f"race package entries must be single ./ paths: {package}")
+    if len(packages) != len(set(packages)):
+        raise ValueError(f"{RACE_PACKAGES_FILE} has duplicate entries")
+    return packages
+
+
 def verify(root: Path) -> None:
     """No skip-checks mode is exposed by the release command."""
     check_versions(root)
     engine = root / "engine"
     for args in [("go", "build", "./..."), ("go", "vet", "./..."),
                  ("go", "test", "-count=1", "-timeout=8m", "./..."),
-                 ("go", "test", "-race", "-count=1", "-timeout=10m", "./internal/claims", "./internal/runs", "./internal/spawn", "./internal/daemon/...", "./internal/cmd", "./internal/doctor", "./internal/groups", "./internal/store"),
+                 ("go", "test", "-race", "-count=1", "-timeout=10m", *race_packages(root)),
                  ("go", "test", "-tags", "integration", "-count=1", "-timeout=8m", "./internal/scenario/...")]:
         run(engine, *args, capture=False)
     run(root, "go", "test", "-count=1", "magefiles/build.go", "magefiles/workflow.go", "magefiles/workflow_test.go", capture=False)
