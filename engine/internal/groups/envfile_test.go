@@ -22,13 +22,13 @@ WITH_EQUALS=a=b=c
 		t.Fatalf("EnvFileValues: %v", err)
 	}
 	want := map[string]string{
-		"API_TOKEN":      "abc123",
-		"DATABASE_URL":   "postgres://localhost:5432/app",
-		"EMPTY":          "",
-		"QUOTED":         "line one\nline two",
-		"SINGLE":         "literal ${not-expanded}",
-		"WITH_EQUALS":    "a=b=c",
-		"PADDED":         "value with spaces",
+		"API_TOKEN":    "abc123",
+		"DATABASE_URL": "postgres://localhost:5432/app",
+		"EMPTY":        "",
+		"QUOTED":       "line one\nline two",
+		"SINGLE":       "literal ${not-expanded}",
+		"WITH_EQUALS":  "a=b=c",
+		"PADDED":       "value with spaces",
 	}
 	for key, value := range want {
 		if got[key] != value {
