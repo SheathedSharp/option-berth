@@ -21,16 +21,35 @@ import (
 // Status uses the same source whether the daemon is warm or the caller asks
 // for a direct scan.
 func groupRows(ctx context.Context) ([]ports.ListeningPort, []state.Group, error) {
+	var daemonErr error
 	if !noDaemonFlag {
 		if c, err := dialDaemon(ctx); err == nil {
 			defer c.Close()
 			var snap state.Snapshot
 			if err := c.Call(ctx, "state.snapshot", rpc.StateSnapshotParams{}, &snap); err == nil {
 				return state.ToListeningAll(snap.Ports), snap.Groups, nil
+			} else {
+				daemonErr = cliError(err)
 			}
 		}
 	}
-	return scanGroups()
+	got, groups, err := scanGroups()
+	if err != nil {
+		if daemonErr == nil {
+			return nil, nil, err
+		}
+		// Both paths failed: keep the local code and hint, but do not lose the
+		// daemon's reason. "Daemon is blind" and "this CLI is blind" are two
+		// facts a reader needs to choose the next step.
+		dcode, dmsg, _ := describe(daemonErr)
+		lcode, lmsg, lhint := describe(err)
+		return nil, nil, failHint(lcode,
+			fmt.Sprintf("%s; daemon also failed: %s: %s", lmsg, dcode, dmsg), lhint)
+	}
+	if daemonErr != nil {
+		noteFallbackBecause(daemonErr)
+	}
+	return got, groups, nil
 }
 
 // scanGroups runs a direct scan, resolves every port's manifest attribution,
