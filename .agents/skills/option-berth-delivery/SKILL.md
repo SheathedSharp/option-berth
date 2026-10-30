@@ -35,7 +35,8 @@ worktree、提交信息与用户确认的规则不变。
      --title "<subject>" --body "<验证输入与结果；未跑项>"
    ```
 
-5. 等检查。必须看到 `Engine / ubuntu-24.04` 与 `Engine / macos-15` 都通过：
+5. 等检查。必须看到 `Engine / ubuntu-24.04`、`Engine / macos-15` 与
+   `Engine / windows-install-scripts` 都通过：
 
    ```sh
    gh pr checks <branch> --watch
