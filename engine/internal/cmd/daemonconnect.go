@@ -52,9 +52,17 @@ var connectForWrite = func(ctx context.Context) (*client.Client, error) {
 			if code == "" {
 				code = string(probe.State)
 			}
-			hint := probe.Hint
-			if hint == "" {
-				hint = "run `oberth serve --detach` from a normal terminal, or allow option-berth in the sandbox"
+			// The probe names its own next step (leave the sandbox, or run
+			// doctor), but the contract for a refused autostart is specific:
+			// the daemon has to be started from a terminal that can observe
+			// listeners. Lead with that command instead of leaving it to the
+			// empty-probe fallback, which never applied because the probe
+			// always carries a hint.
+			hint := "run `oberth serve --detach` from a normal terminal"
+			if probe.Hint != "" {
+				hint += "; " + probe.Hint
+			} else {
+				hint += ", or allow option-berth in the sandbox"
 			}
 			return nil, failHint(code,
 				"refusing to autostart a daemon that cannot see listeners: "+probe.Detail, hint)
