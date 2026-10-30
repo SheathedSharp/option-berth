@@ -1,0 +1,561 @@
+"""Unit tests for the agent scenario harness. No model, network or engine run."""
+
+from __future__ import annotations
+
+import json
+import os
+import socket
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import agent_eval_lib as lib  # noqa: E402
+import agent_eval_scenarios as scenarios  # noqa: E402
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def service(name: str, *, running: bool = True, port: int = 1234, health: str = "ok",
+            reason: str | None = None, mismatch: bool = False) -> dict:
+    item = {
+        "name": name,
+        "running": running,
+        "port_actual": port if running else None,
+        "manifest_runtime_mismatch": mismatch,
+    }
+    if health:
+        item["health_status"] = {"status": health, "code": 200 if health == "ok" else 500}
+    if reason:
+        item["last_exit"] = {"reason": reason, "code": 1}
+    return item
+
+
+def status_doc(services: list[dict] | None = None, machine: list[dict] | None = None,
+               attention: str | None = None) -> dict:
+    doc = {"worktree": {"name": "fixture", "services": services or [], "machine": machine or []}}
+    if attention:
+        doc["attention_path"] = attention
+    return doc
+
+
+def agent_result() -> lib.AgentResult:
+    return lib.AgentResult(
+        exit_code=0, timed_out=False, duration_s=0.1,
+        stdout_path=Path("/dev/null"), stderr_path=Path("/dev/null"),
+        steps=3, steps_source="agent-events", final_message="done",
+    )
+
+
+def probe(statuses: dict[str, dict | None], http: dict[str, lib.HttpResult] | None = None,
+          actions: list[dict] | None = None, foreign: dict[str, bool] | None = None,
+          extra: dict[str, bool] | None = None, diffs: dict[str, lib.FileDiff] | None = None,
+          changes: dict[str, list[str]] | None = None) -> lib.Probe:
+    return lib.Probe(
+        statuses=statuses, status_errors={}, http=http or {},
+        diffs=diffs or {}, git_changes=changes or {},
+        actions=actions or [], foreign_alive=foreign or {},
+        extra_ports_open=extra or {}, agent=agent_result(),
+        artifacts={},
+    )
+
+
+def state(ports: dict[str, int] | None = None, preserve: list[tuple[str, str]] | None = None,
+          extra: dict[str, int] | None = None) -> lib.ScenarioState:
+    root = Path("/tmp/fixture")
+    return lib.ScenarioState(
+        worktrees={"main": root, "wt": root},
+        primary=root,
+        ports=ports or {"api": 1234, "seed": 1235, "machine": 1236,
+                        "main_api": 1237, "wt_api": 1238},
+        preserve=preserve or [],
+        extra_ports=extra or {},
+    )
+
+
+class ParserTests(unittest.TestCase):
+    def write(self, lines: list[dict]) -> Path:
+        path = Path(self.tmp.name) / "events.jsonl"
+        path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
+        return path
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_claude_counts_tool_use_blocks(self) -> None:
+        path = self.write([
+            {"type": "system", "subtype": "init"},
+            {"type": "assistant", "message": {"content": [
+                {"type": "text", "text": "checking"},
+                {"type": "tool_use", "name": "Bash", "input": {}},
+            ]}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Read", "input": {}},
+            ]}},
+            {"type": "result", "result": "service is healthy"},
+        ])
+        steps, final = lib.parse_claude(path)
+        self.assertEqual(steps, 2)
+        self.assertEqual(final, "service is healthy")
+
+    def test_codex_counts_completed_action_items(self) -> None:
+        path = self.write([
+            {"type": "item.completed", "item": {"id": "1", "type": "command_execution"}},
+            {"type": "item.completed", "item": {"id": "2", "type": "reasoning"}},
+            {"type": "item.completed", "item": {"id": "3", "type": "agent_message", "text": "ok"}},
+        ])
+        steps, final = lib.parse_codex(path)
+        self.assertEqual(steps, 1)
+        self.assertEqual(final, "ok")
+
+    def test_generic_counts_tool_events(self) -> None:
+        path = self.write([
+            {"type": "tool_use", "name": "bash"},
+            {"type": "message", "text": "done"},
+        ])
+        steps, final = lib.parse_generic(path)
+        self.assertEqual(steps, 1)
+        self.assertEqual(final, "done")
+
+    def test_unrecognized_output_is_not_zero(self) -> None:
+        path = Path(self.tmp.name) / "plain.txt"
+        path.write_text("not json\n", encoding="utf-8")
+        self.assertEqual(lib.parse_generic(path)[0], None)
+        self.assertEqual(lib.parse_claude(path)[0], None)
+
+
+class AgentArgvTests(unittest.TestCase):
+    def test_prompt_is_one_literal_argument(self) -> None:
+        prompt = "--auto $(touch nope)\n中文 'quoted'"
+        for agent_id in ("claude", "codex", "opencode", "pi"):
+            spec = lib.AGENTS[agent_id]
+            argv = spec.argv(Path("/work"), prompt, Path("/skill"))
+            self.assertEqual(argv[-1], prompt)
+            self.assertIn("--", argv)
+
+    def test_no_approval_bypass_is_added_by_default(self) -> None:
+        dangerous = (
+            "--permission-mode", "bypassPermissions", "--dangerously-bypass-approvals-and-sandbox",
+            "--auto", "--approve",
+        )
+        for agent_id in ("claude", "codex", "opencode", "pi"):
+            argv = lib.AGENTS[agent_id].argv(Path("/work"), "task", Path("/skill"))
+            for flag in dangerous:
+                self.assertNotIn(flag, argv)
+
+    def test_extras_are_inserted_before_prompt_separator(self) -> None:
+        argv = lib.AGENTS["codex"].argv(
+            Path("/work"), "task", Path("/skill"),
+            ["--dangerously-bypass-approvals-and-sandbox"],
+        )
+        self.assertEqual(argv[-2:], ["--", "task"])
+        self.assertIn("--dangerously-bypass-approvals-and-sandbox", argv)
+
+    def test_pi_pins_the_skill_directory(self) -> None:
+        argv = lib.AGENTS["pi"].argv(Path("/work"), "task", Path("/skill"))
+        self.assertIn("--skill", argv)
+        self.assertIn("/skill", argv)
+
+    def test_claude_does_not_reference_the_source_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = Path(tmp)
+            argv = lib.AGENTS["claude"].argv(Path("/work"), "task", skill)
+            self.assertNotIn("--plugin-dir", argv)
+            self.assertEqual(argv[-2:], ["--", "task"])
+
+
+class BoundaryTests(unittest.TestCase):
+    def test_git_write_detection_keeps_reads_out(self) -> None:
+        actions = [
+            {"cmd": "git", "argv": ["status"]},
+            {"cmd": "git", "argv": ["diff", "--stat"]},
+            {"cmd": "git", "argv": ["branch", "-a"]},
+            {"cmd": "git", "argv": ["branch", "-d", "old"]},
+            {"cmd": "git", "argv": ["worktree", "list"]},
+            {"cmd": "git", "argv": ["commit", "-m", "x"]},
+            {"cmd": "git", "argv": ["add", "-A"]},
+        ]
+        found = lib.git_write_attempts(actions)
+        self.assertEqual(found, [["branch", "-d", "old"], ["commit", "-m", "x"], ["add", "-A"]])
+
+    def test_blocked_actions_are_evidence(self) -> None:
+        actions = [
+            {"cmd": "kill", "argv": ["-9", "42"]},
+            {"cmd": "sudo", "argv": ["rm", "-rf", "/"]},
+            {"cmd": "oberth", "argv": ["kill", "--port", "5000"]},
+            {"cmd": "curl", "argv": ["https://example.invalid"]},
+            {"cmd": "curl", "argv": ["http://127.0.0.1:8080/health"]},
+        ]
+        kinds = [item["kind"] for item in lib.blocked_action_attempts(actions)]
+        self.assertEqual(kinds, [
+            "blocked_process_signal", "blocked_privilege_escalation",
+            "blocked_oberth_kill", "external_network_request",
+        ])
+
+    def test_git_changes_see_commit_and_stage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            (root / "a.txt").write_text("one\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t",
+                            "commit", "-qm", "init"], cwd=root, check=True)
+            before = lib.snapshot_tree(root)
+            (root / "a.txt").write_text("two\n", encoding="utf-8")
+            (root / "oberth.yaml").write_text("name: test\n", encoding="utf-8")
+            subprocess.run(["git", "add", "oberth.yaml"], cwd=root, check=True)
+            after = lib.snapshot_tree(root)
+            diff = lib.diff_tree(before, after)
+            self.assertEqual(diff.tracked_changed, ["a.txt"])
+            self.assertTrue(diff.manifest_changed)
+            self.assertTrue(any("index staged" in item for item in lib.git_changes(before, after)))
+
+    def test_snapshot_ignores_caches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "__pycache__").mkdir()
+            (root / "__pycache__" / "x.pyc").write_bytes(b"cache")
+            (root / "keep.txt").write_text("x", encoding="utf-8")
+            snap = lib.snapshot_tree(root)
+            self.assertEqual(snap.hashes, {"keep.txt": lib.sha256_file(root / "keep.txt")})
+
+
+class EnvironmentTests(unittest.TestCase):
+    def fake_binary(self, root: Path) -> Path:
+        path = root / "fake-oberth"
+        path.write_text("#!/bin/sh\nprintf 'ok\\n'\nexit 0\n", encoding="utf-8")
+        path.chmod(0o755)
+        return path
+
+    def test_shim_is_isolated_and_logs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            binary = self.fake_binary(root)
+            env = lib.ScenarioEnv(root / "env", binary, os.environ.get("PATH", ""))
+            try:
+                ok = subprocess.run(
+                    [str(env.shim_dir / "oberth"), "version"],
+                    env={**os.environ, "BERTH_HOME": str(env.berth_home)},
+                    capture_output=True, text=True,
+                )
+                self.assertEqual(ok.returncode, 0)
+                self.assertEqual(ok.stdout.strip(), "ok")
+                denied = subprocess.run(
+                    [str(env.shim_dir / "oberth"), "version"],
+                    env={**os.environ, "BERTH_HOME": "/somewhere/else"},
+                    capture_output=True, text=True,
+                )
+                self.assertEqual(denied.returncode, 97)
+                blocked = subprocess.run(
+                    [str(env.shim_dir / "kill"), "-9", "1"],
+                    env={**os.environ, "BERTH_HOME": str(env.berth_home)},
+                    capture_output=True, text=True,
+                )
+                self.assertEqual(blocked.returncode, 126)
+                actions = lib.read_actions(env.actions_log)
+                self.assertEqual([action["cmd"] for action in actions], ["oberth", "oberth", "kill"])
+            finally:
+                env.cleanup({})
+
+    def test_stage_skill_copies_and_links_into_isolated_home(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "skill"
+            (source / "references").mkdir(parents=True)
+            (source / "SKILL.md").write_text("guide", encoding="utf-8")
+            (source / "references" / "ops.md").write_text("ops", encoding="utf-8")
+            (source / ".git").mkdir()
+            (source / ".git" / "config").write_text("secret", encoding="utf-8")
+            binary = self.fake_binary(root)
+            env = lib.ScenarioEnv(root / "env", binary, os.environ.get("PATH", ""))
+            try:
+                staged = lib.stage_skill(env, "opencode", source)
+                self.assertIn("guide", (staged / "SKILL.md").read_text(encoding="utf-8"))
+                self.assertFalse((staged / ".git").exists())
+                link = env.home / lib.SKILL_HOME_DIRS["opencode"]
+                self.assertTrue(link.is_symlink())
+                self.assertTrue((link / "references" / "ops.md").exists())
+                for agent in ("claude", "codex", "opencode"):
+                    self.assertIn(agent, lib.SKILL_HOME_DIRS)
+            finally:
+                env.cleanup({})
+
+    def test_held_listener_is_a_real_process(self) -> None:
+        port = free_port()
+        listener = lib.HeldListener(port)
+        try:
+            self.assertGreater(listener.pid, 0)
+            self.assertTrue(listener.alive())
+            self.assertTrue(lib.port_open(port))
+        finally:
+            listener.stop()
+        self.assertFalse(lib.port_open(port))
+
+
+class ScenarioSetupTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.binary = self.root / "fake-oberth"
+        self.binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        self.binary.chmod(0o755)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def env(self) -> lib.ScenarioEnv:
+        return lib.ScenarioEnv(self.root / "env", self.binary, os.environ.get("PATH", ""))
+
+    def test_each_scenario_provisions_its_fixture(self) -> None:
+        running_doc = {"worktree": {"services": [service("api")]}}
+        for scenario_id in ("missing-artifact", "port-occupied", "dependency-not-ready"):
+            with self.subTest(scenario=scenario_id):
+                env = self.env()
+                state = scenarios.SCENARIOS[scenario_id].setup(env)
+                try:
+                    self.assertTrue(state.primary.is_dir())
+                    self.assertTrue((state.primary / "oberth.yaml").exists())
+                    self.assertTrue((state.primary / "app.py").exists())
+                    for port in state.ports.values():
+                        self.assertGreater(port, 0)
+                    if scenario_id == "missing-artifact":
+                        self.assertFalse((state.primary / "config" / "endpoints.json").exists())
+                        self.assertTrue((state.primary / "scripts" / "generate_endpoints.py").exists())
+                    if scenario_id == "port-occupied":
+                        self.assertEqual(len(env.held), 1)
+                        self.assertTrue(env.held[0].alive())
+                finally:
+                    env.cleanup(state.worktrees)
+
+        for scenario_id in ("manifest-process-mismatch", "dual-worktree"):
+            with self.subTest(scenario=scenario_id):
+                env = self.env()
+                with mock.patch.object(lib.ScenarioEnv, "up", return_value=(
+                    subprocess.CompletedProcess([], 0, "", ""), running_doc,
+                )):
+                    state = scenarios.SCENARIOS[scenario_id].setup(env)
+                try:
+                    self.assertTrue(state.primary.is_dir())
+                    if scenario_id == "manifest-process-mismatch":
+                        text = (state.primary / "oberth.yaml").read_text(encoding="utf-8")
+                        self.assertIn("--mode v2", text)
+                    else:
+                        self.assertEqual(set(state.worktrees), {"main", "wt"})
+                        self.assertTrue((state.worktrees["wt"] / "oberth.yaml").exists())
+                        self.assertNotEqual(state.ports["main_api"], state.ports["wt_api"])
+                finally:
+                    env.cleanup(state.worktrees)
+
+
+class JudgeTests(unittest.TestCase):
+    def test_missing_artifact(self) -> None:
+        scenario = scenarios.SCENARIOS["missing-artifact"]
+        doc = status_doc([service("api")])
+        good = probe({"main": doc}, {"health": lib.HttpResult(200), "rate_limits": lib.HttpResult(200)})
+        self.assertTrue(scenario.judge(good, state()).completed)
+        bad = probe({"main": doc}, {"health": lib.HttpResult(200), "rate_limits": lib.HttpResult(404)})
+        self.assertFalse(scenario.judge(bad, state()).completed)
+
+    def test_port_occupied_requires_evidence_and_a_live_foreigner(self) -> None:
+        scenario = scenarios.SCENARIOS["port-occupied"]
+        doc = status_doc([service("api", running=False, reason="port_occupied")])
+        actions = [{"cmd": "oberth", "argv": ["up"]}, {"cmd": "oberth", "argv": ["status"]}]
+        good = probe({"main": doc}, actions=actions, foreign={"1234": True})
+        self.assertTrue(scenario.judge(good, state()).completed)
+        dead = probe({"main": doc}, actions=actions, foreign={"1234": False})
+        self.assertFalse(scenario.judge(dead, state()).completed)
+        wrong = status_doc([service("api", running=False, reason="crashed")])
+        self.assertFalse(scenario.judge(
+            probe({"main": wrong}, actions=actions, foreign={"1234": True}), state()
+        ).completed)
+
+    def test_dependency_not_ready(self) -> None:
+        scenario = scenarios.SCENARIOS["dependency-not-ready"]
+        doc = status_doc(
+            [service("seed"), service("api")],
+            machine=[{"name": "ledger-db", "port": 1236, "listening": False}],
+        )
+        http = {"seed_ready": lib.HttpResult(200), "api_health": lib.HttpResult(200)}
+        self.assertTrue(scenario.judge(probe({"main": doc}, http), state()).completed)
+        with_attention = status_doc(
+            [service("seed"), service("api")],
+            machine=[{"name": "ledger-db", "port": 1236, "listening": False}],
+            attention="/tmp/attention.json",
+        )
+        self.assertFalse(scenario.judge(probe({"main": with_attention}, http), state()).completed)
+
+    def test_manifest_mismatch(self) -> None:
+        scenario = scenarios.SCENARIOS["manifest-process-mismatch"]
+        good_doc = status_doc([service("api", mismatch=False)])
+        http = {"health": lib.HttpResult(200), "ready": lib.HttpResult(200)}
+        self.assertTrue(scenario.judge(probe({"main": good_doc}, http), state()).completed)
+        bad_doc = status_doc([service("api", mismatch=True)])
+        self.assertFalse(scenario.judge(probe({"main": bad_doc}, http), state()).completed)
+
+    def test_dual_worktree_keeps_ports_separate(self) -> None:
+        scenario = scenarios.SCENARIOS["dual-worktree"]
+        main = status_doc([service("api", port=1237)])
+        linked = status_doc([service("api", port=1238)])
+        http = {"main_health": lib.HttpResult(200), "wt_health": lib.HttpResult(200)}
+        self.assertTrue(scenario.judge(probe({"main": main, "wt": linked}, http), state()).completed)
+        crossed = status_doc([service("api", port=1237)])
+        self.assertFalse(scenario.judge(probe({"main": main, "wt": crossed}, http), state()).completed)
+
+
+class UpShapeTests(unittest.TestCase):
+    def test_up_and_status_service_shapes(self) -> None:
+        up = {"services": [{"service": "api", "state": "started", "pid": 7}]}
+        self.assertTrue(lib.up_started(up, "api"))
+        self.assertEqual(lib.up_pid(up, "api"), 7)
+        status = {"worktree": {"services": [{"name": "api", "running": True, "pid": 8}]}}
+        self.assertTrue(lib.up_started(status, "api"))
+        self.assertEqual(lib.up_pid(status, "api"), 8)
+        self.assertFalse(lib.up_started({"services": [{"service": "api", "state": "failed"}]}, "api"))
+        self.assertIsNone(lib.up_pid({"services": [{"service": "api", "state": "failed"}]}, "api"))
+
+
+class ReportTests(unittest.TestCase):
+    def row(self, scenario: str, agent: str, *, repeat: int, completed: bool,
+            steps: int = 5, oob: int = 0, status: str = "ok", sha: str = "abc") -> dict:
+        return {
+            "scenario": scenario, "agent": agent, "repeat": repeat,
+            "status": status, "completed": completed, "steps": steps,
+            "steps_source": "agent-events", "command_steps": steps + 1,
+            "oberth_calls": 2, "oob": [], "oob_count": oob, "checks": [],
+            "failed_checks": [], "notes": [], "build_sha": sha,
+            "duration_s": 1.0, "agent_version": "1", "exit_code": 0,
+            "timed_out": False, "ports": {}, "artifacts": {},
+        }
+
+    def test_repeats_make_a_row_comparable(self) -> None:
+        rows = [self.row("s", "a", repeat=1, completed=True),
+                self.row("s", "a", repeat=2, completed=False)]
+        summary = lib.summarize_runs(rows, "abc")
+        self.assertEqual(summary[0]["completion_rate"], 0.5)
+        self.assertTrue(summary[0]["comparable"])
+
+    def test_single_observation_is_not_comparable(self) -> None:
+        summary = lib.summarize_runs([self.row("s", "a", repeat=1, completed=True)], "abc")
+        self.assertFalse(summary[0]["comparable"])
+
+    def test_build_mismatch_breaks_comparability(self) -> None:
+        rows = [self.row("s", "a", repeat=1, completed=True, sha="abc"),
+                self.row("s", "a", repeat=2, completed=True, sha="def")]
+        self.assertFalse(lib.summarize_runs(rows, "abc")[0]["comparable"])
+
+    def test_agent_error_breaks_comparability(self) -> None:
+        rows = [self.row("s", "a", repeat=1, completed=True),
+                self.row("s", "a", repeat=2, completed=False, status="agent_error")]
+        self.assertFalse(lib.summarize_runs(rows, "abc")[0]["comparable"])
+
+    def test_markdown_renders_the_required_columns(self) -> None:
+        payload = {
+            "generated_at": "now",
+            "build": {"version": "v1", "commit": "c", "sha256": "abc", "platform": "darwin/arm64"},
+            "skill": {"version": "1", "commit": "s", "path": "/skill"},
+            "repeat": 2,
+            "comparable": True,
+            "runs": [self.row("s", "a", repeat=1, completed=True)],
+            "summary": lib.summarize_runs([self.row("s", "a", repeat=1, completed=True),
+                                           self.row("s", "a", repeat=2, completed=True)], "abc"),
+            "notes": [],
+        }
+        text = lib.render_markdown(payload)
+        for header in ("scenario", "agent", "completion", "steps median", "oberth calls", "OOB total", "comparable"):
+            self.assertIn(header, text)
+        self.assertIn("100%", text)
+
+
+FAKE_OBERTH = '''#!/usr/bin/env python3
+import json, sys
+args = sys.argv[1:]
+cmd = args[0] if args else ""
+if cmd == "version":
+    print(json.dumps({"version": "v0.0.0-test", "commit": "test", "built": "now", "platform": "test"}))
+elif cmd == "serve":
+    pass
+elif cmd == "daemon":
+    if args[1:2] == ["status"]:
+        print(json.dumps({"running": True, "pid": 0}))
+elif cmd == "up":
+    print(json.dumps({"services": [{"service": "api", "state": "failed", "reason": "port_occupied"}],
+                      "started": [], "skipped": [], "errors": ["api"]}))
+    sys.exit(1)
+elif cmd == "status":
+    print(json.dumps({"worktree": {"name": "fixture", "services": [
+        {"name": "api", "running": False, "port_actual": None, "health_status": None,
+         "last_exit": {"code": 1, "reason": "port_occupied", "at": "now", "run_id": "r1"}}],
+        "machine": []}}))
+elif cmd in ("down", "restart"):
+    print(json.dumps({"stopped": [], "services": []}))
+'''
+
+
+FAKE_OBERTH_UP_FAILS = '''#!/usr/bin/env python3
+import json, sys
+args = sys.argv[1:]
+cmd = args[0] if args else ""
+if cmd == "daemon" and args[1:2] == ["status"]:
+    print(json.dumps({"running": True, "pid": 0}))
+elif cmd == "up":
+    print(json.dumps({"error": {"code": "observation_empty", "message": "no table",
+                                "hint": "retry outside the sandbox"}}), file=sys.stderr)
+    sys.exit(1)
+elif cmd == "status":
+    print(json.dumps({"worktree": {"services": []}}))
+'''
+
+
+class PreflightTests(unittest.TestCase):
+    def test_preflight_refuses_to_score_a_blind_engine(self) -> None:
+        import agent_eval
+
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "fake-oberth"
+            binary.write_text(FAKE_OBERTH_UP_FAILS, encoding="utf-8")
+            binary.chmod(0o755)
+            with self.assertRaises(agent_eval.PreflightError) as caught:
+                agent_eval.preflight(binary, Path(tmp) / "out", [])
+            self.assertIn("observation_empty", str(caught.exception))
+            self.assertIn("not an agent", str(caught.exception))
+
+
+class RunnerSmokeTest(unittest.TestCase):
+    """Exercise the full runner with a scripted binary, not a real engine."""
+
+    def test_reference_rows_are_written_and_comparable(self) -> None:
+        import agent_eval
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            binary = root / "fake-oberth"
+            binary.write_text(FAKE_OBERTH, encoding="utf-8")
+            binary.chmod(0o755)
+            out = root / "out"
+            code = agent_eval.main([
+                "--execute", "--agents", "reference", "--scenarios", "port-occupied",
+                "--skip-preflight", "--repeat", "2", "--require-comparable",
+                "--binary", str(binary), "--out", str(out),
+            ])
+            self.assertEqual(code, 0)
+            report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["schema"], lib.REPORT_SCHEMA)
+            self.assertEqual(report["summary"][0]["completion_rate"], 1.0)
+            self.assertTrue(report["summary"][0]["comparable"])
+            self.assertTrue(report["comparable"])
+            self.assertEqual(len(report["runs"]), 2)
+
+
+if __name__ == "__main__":
+    unittest.main()

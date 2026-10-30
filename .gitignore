@@ -43,3 +43,6 @@ scripts/render-check/
 # Local Python verification output
 __pycache__/
 *.py[cod]
+
+# Agent scenario matrices (local evidence, never product assets)
+.agent-eval/
