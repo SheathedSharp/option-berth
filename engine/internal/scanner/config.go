@@ -19,6 +19,9 @@ func (l *Loop) index() *groups.Index {
 		if l.attr.roots == nil {
 			l.attr.roots = map[string]bool{}
 		}
+		if l.attr.identities == nil {
+			l.attr.identities = map[string]string{}
+		}
 	}
 	return l.attr.index
 }

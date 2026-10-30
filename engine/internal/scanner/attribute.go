@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/claims"
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
@@ -21,6 +22,11 @@ type Store interface {
 	// RemoveRoot is the other half of AddRoot: the seed step drops the roots
 	// whose directory is no longer there (see seedRoots).
 	RemoveRoot(path string) error
+	// RecordWorktreeIdentity keeps the `${worktree}` token and the root it was
+	// derived from, so the checkout's data can still be found after the
+	// directory is deleted or moved. It is an identity ledger, not runtime
+	// truth, and it survives RemoveRoot on purpose.
+	RecordWorktreeIdentity(rec store.WorktreeIdentity) error
 	AppendBatch(events []store.HistoryEvent) error
 	GroupAliases() (map[string]string, error)
 }
@@ -33,6 +39,10 @@ type attribution struct {
 	index  *groups.Index
 	seeded bool
 	roots  map[string]bool
+	// identities caches the group name last written for each `${worktree}`
+	// token, so a tick only writes the ledger when the checkout is new or its
+	// group was renamed.
+	identities map[string]string
 }
 
 // SetStore installs the store after construction. The daemon does it from
@@ -45,7 +55,8 @@ func (l *Loop) SetStore(s Store) {
 	defer l.attr.mu.Unlock()
 	l.opts.Store = s
 	l.attr.seeded = false
-	l.attr.roots = map[string]bool{} // acknowledgements belong to this store
+	l.attr.roots = map[string]bool{}        // acknowledgements belong to this store
+	l.attr.identities = map[string]string{} // and so do the identity rows
 }
 
 // SetRuns installs the run-registry accessor. It is a function because
@@ -191,6 +202,12 @@ func (l *Loop) seedRoots(st Store) {
 	for _, root := range roots {
 		info, err := os.Stat(root)
 		if os.IsNotExist(err) || (err == nil && !info.IsDir()) {
+			// The root is gone, but its `${worktree}` identity is not: a
+			// database or data directory built from that token may still be on
+			// disk. Record the pair without a group name — the manifest that
+			// would name the group is gone too — and keep the row after the
+			// root is forgotten.
+			l.recordIdentityRoot(st, root)
 			if err := st.RemoveRoot(root); err != nil {
 				complete = false
 				l.opts.Logger.Warn("forgetting a vanished oberth.yaml root", "dir", root, "error", err)
@@ -215,6 +232,17 @@ func (l *Loop) seedRoots(st Store) {
 		// Retain explicit roots even before they have a manifest; a silent
 		// project must become visible when its first declaration is created.
 		l.attr.index.Reload(discovered)
+		watched := make(map[string]bool, len(discovered))
+		for _, dir := range discovered {
+			watched[dir] = true
+		}
+		var seeded []*groups.Config
+		for _, cfg := range l.attr.index.Configs() {
+			if cfg != nil && watched[cfg.Dir] {
+				seeded = append(seeded, cfg)
+			}
+		}
+		l.recordIdentities(st, seeded)
 	}
 	// Retry failures on the existing scan cadence, never in a busy loop or
 	// a new worker. Successful roots are not re-observed during that retry.
@@ -253,11 +281,16 @@ func (l *Loop) registry() groups.Registry {
 
 // rememberRoots persists a `oberth.yaml` directory the first time it is seen,
 // so the next daemon start knows about the project without walking the disk.
+// It also keeps each checkout's `${worktree}` identity current: the ledger
+// survives the directory, and a group rename updates the name a later
+// `down --identity` resolves.
 func (l *Loop) rememberRoots(st Store, index *groups.Index) {
 	if st == nil {
 		return
 	}
-	for _, cfg := range index.Configs() {
+	configs := index.Configs()
+	l.recordIdentities(st, configs)
+	for _, cfg := range configs {
 		if cfg == nil || cfg.Dir == "" || l.attr.roots[cfg.Dir] {
 			continue
 		}
@@ -267,6 +300,83 @@ func (l *Loop) rememberRoots(st Store, index *groups.Index) {
 		}
 		l.attr.roots[cfg.Dir] = true
 	}
+}
+
+// recordIdentities writes one ledger row per checkout. Several manifests can
+// share an identity — a nested project in a worktree uses the same
+// `${worktree}` token as the checkout's own file — so the shallowest one wins:
+// Configs is deepest first, and the checkout's own group is the one an explicit
+// `down --identity` can address without guessing. A checkout with no root
+// manifest keeps its only (nested) group.
+func (l *Loop) recordIdentities(st Store, configs []*groups.Config) {
+	if st == nil {
+		return
+	}
+	best := make(map[string]*groups.Config, len(configs))
+	for _, cfg := range configs {
+		if cfg == nil || cfg.Dir == "" {
+			continue
+		}
+		identity, _ := groups.WorktreeIdentityFor(cfg.Dir)
+		if identity == "" {
+			continue
+		}
+		best[identity] = cfg
+	}
+	for identity, cfg := range best {
+		l.recordIdentity(st, identity, cfg)
+	}
+}
+
+// recordIdentity writes one checkout identity when it is new or its group name
+// changed.
+func (l *Loop) recordIdentity(st Store, identity string, cfg *groups.Config) bool {
+	if st == nil || cfg == nil || cfg.Dir == "" || identity == "" {
+		return false
+	}
+	group := l.attr.index.GroupOf(cfg)
+	_, root := groups.WorktreeIdentityFor(cfg.Dir)
+	if l.attr.identities == nil {
+		l.attr.identities = map[string]string{}
+	}
+	if known, ok := l.attr.identities[identity]; ok && known == group {
+		return true
+	}
+	project, worktree := claims.Identity(cfg.Dir, "", "")
+	rec := store.WorktreeIdentity{
+		Identity: identity, Root: root, Group: group, ConfigPath: cfg.Path,
+		Project: project, Worktree: worktree,
+	}
+	if err := st.RecordWorktreeIdentity(rec); err != nil {
+		l.opts.Logger.Warn("recording a worktree identity", "dir", cfg.Dir, "error", err)
+		return false
+	}
+	l.attr.identities[identity] = group
+	return true
+}
+
+// recordIdentityRoot records an identity whose checkout has vanished. There is
+// no manifest left to name its group, so only the token/root pair is kept; the
+// ledger still answers which path the token belonged to.
+func (l *Loop) recordIdentityRoot(st Store, root string) {
+	if st == nil || root == "" {
+		return
+	}
+	identity, canonical := groups.WorktreeIdentityFor(root)
+	if identity == "" {
+		return
+	}
+	if l.attr.identities == nil {
+		l.attr.identities = map[string]string{}
+	}
+	if _, ok := l.attr.identities[identity]; ok {
+		return
+	}
+	if err := st.RecordWorktreeIdentity(store.WorktreeIdentity{Identity: identity, Root: canonical}); err != nil {
+		l.opts.Logger.Warn("recording a vanished worktree identity", "dir", root, "error", err)
+		return
+	}
+	l.attr.identities[identity] = ""
 }
 
 // record writes the port transitions of one published delta to the history
