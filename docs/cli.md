@@ -80,6 +80,13 @@ depends on · listeners · code · failed · next · drafts · last look），�
 `oberth restart --only <service>` 重新应用。hash 只覆盖命令、cwd、端口、health 和依赖等可执行声明，
 不包含环境变量内容。
 
+监听表不可信时（例如 agent 沙箱拒绝系统内省），`status` 仍然返回清单、服务、运行记录、
+日志路径和最近退出；端口相关字段保持未知而不是空事实：`ports` 为空、`port_actual` 为 null，
+顶层带 `observation`（`state`、`code`、`detail`、`hint`、`checked_at`）。`up --wait` 在这种
+情况下立即返回观察类错误并保留刚启动的运行，不会等满超时再把它停掉；`logs <service>` 对
+托管服务仍使用运行登记的日志路径，不依赖监听表。需要自启 daemon 的写命令会先跑自证探针，
+失明时拒绝从当前进程创建 daemon，提示在普通终端运行 `oberth serve --detach`。
+
 JSON 顶层固定包含：
 
 ~~~json
