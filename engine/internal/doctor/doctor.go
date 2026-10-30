@@ -24,6 +24,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
@@ -113,6 +114,10 @@ type Env struct {
 	// Docker reports the docker daemon's server version, or an error when the
 	// CLI is there but the daemon is not answering.
 	Docker func(context.Context) (string, error)
+	// ObserveListeners reads this process's TCP listening table the same way a
+	// status read does. A sandbox that lets the binary run but denies system
+	// introspection fails here; that failure is what the check exists to show.
+	ObserveListeners func(context.Context) ([]ports.ListeningPort, error)
 }
 
 // check is one diagnostic: its id, whether only the CLI can answer it, and the
@@ -124,8 +129,8 @@ type check struct {
 }
 
 // checks is the whole list, in the order the table prints them: the binary,
-// then the daemon, then its storage, then the integrations, then the project,
-// then the optional extras.
+// then the daemon, then its storage and this process's listener observation,
+// then the integrations, then the project, then the optional extras.
 func checks() []check {
 	list := []check{
 		{id: "cli_on_path", cliOnly: true, run: checkCLIOnPath},
@@ -137,6 +142,7 @@ func checks() []check {
 		{id: "daemon_protocol", run: checkDaemonProtocol},
 		{id: "socket_permissions", run: checkSocketPermissions},
 		{id: "db_ok", run: checkDBOK},
+		{id: "listener_observation", run: checkListenerObservation},
 	}
 	// No rows about agent integration (MCP registration, hooks, skill copies):
 	// option-berth does not wire itself into other tools' configuration.
@@ -318,6 +324,9 @@ func (e *Env) fill() {
 	}
 	if e.Docker == nil {
 		e.Docker = func(context.Context) (string, error) { return "", errNoProbe }
+	}
+	if e.ObserveListeners == nil {
+		e.ObserveListeners = ports.ScanContext
 	}
 }
 

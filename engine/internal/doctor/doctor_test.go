@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
 // fakeEnv is an Env whose every seam answers without touching the machine: no
@@ -35,6 +36,9 @@ func fakeEnv(t *testing.T) *Env {
 		LookPath:   func(string) (string, error) { return "", exec.ErrNotFound },
 		Daemon:     func(context.Context) DaemonInfo { return DaemonInfo{Err: errors.New("no daemon")} },
 		Docker:     func(context.Context) (string, error) { return "", errors.New("no docker in tests") },
+		ObserveListeners: func(context.Context) ([]ports.ListeningPort, error) {
+			return nil, nil
+		},
 	}
 }
 
