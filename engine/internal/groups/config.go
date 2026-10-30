@@ -84,34 +84,34 @@ func TargetIn(dir string) string {
 // interprets: it carries them onto state.Service so a client can render them
 // (contract §13.1).
 type Service struct {
-	Name string `yaml:"name"`
+	Name string `yaml:"name" jsonschema_description:"Short name, unique in this file."`
 	// Prepare is an optional foreground command run immediately before Cmd.
 	// It is useful for services whose runnable artifact (a jar, generated
 	// binary, or bundle) must be rebuilt from the current checkout first.
-	Prepare string `yaml:"prepare,omitempty"`
+	Prepare string `yaml:"prepare,omitempty" jsonschema_description:"Optional foreground command run immediately before cmd."`
 	// PrepareInputs are the files Prepare reads, relative to the service's
 	// cwd. When every one has the same contents as the last successful
 	// Prepare, `up` skips the command. An empty list means "always run".
-	PrepareInputs []string `yaml:"prepare_inputs,omitempty"`
-	Cmd           string   `yaml:"cmd,omitempty"`
-	Cwd           string   `yaml:"cwd,omitempty"`
+	PrepareInputs []string `yaml:"prepare_inputs,omitempty" jsonschema_description:"Files the prepare command reads, relative to cwd. When their contents are unchanged, up skips prepare."`
+	Cmd           string   `yaml:"cmd,omitempty" jsonschema_description:"The command that brings the service back up, run from cwd."`
+	Cwd           string   `yaml:"cwd,omitempty" jsonschema_description:"Working directory, relative to the directory holding oberth.yaml."`
 	// Port is the port the service binds, or 0 when it declares none or when
 	// PortAuto is set.
-	Port int `yaml:"port,omitempty"`
+	Port int `yaml:"port,omitempty" jsonschema_description:"The port the service binds, or auto to let option-berth pick one."`
 	// PortAuto is `port: auto`: the daemon picks the port when it starts the
 	// service — the same one every time for the same checkout, and a
 	// different one in every other checkout — and hands it over as PORT,
 	// BERTH_PORT and ${port}.
 	PortAuto    bool     `yaml:"-"`
-	Health      string   `yaml:"health,omitempty"`
-	Description string   `yaml:"description,omitempty"`
-	Icon        string   `yaml:"icon,omitempty"`
-	Color       string   `yaml:"color,omitempty"`
-	DependsOn   []string `yaml:"depends_on,omitempty"`
+	Health      string   `yaml:"health,omitempty" jsonschema_description:"Health check: an HTTP path, {tcp: port}, or {command: command line}."`
+	Description string   `yaml:"description,omitempty" jsonschema_description:"User-authored metadata shown by clients."`
+	Icon        string   `yaml:"icon,omitempty" jsonschema_description:"User-authored metadata shown by clients."`
+	Color       string   `yaml:"color,omitempty" jsonschema_description:"User-authored metadata shown by clients."`
+	DependsOn   []string `yaml:"depends_on,omitempty" jsonschema_description:"Names of services that must be started first."`
 	// Env is added to the service's environment when option-berth starts it. Values
 	// may refer to ports with ${port}, ${url}, ${<service>.port} and
 	// ${<service>.url}, and to this checkout's stable identity with ${worktree}.
-	Env map[string]string `yaml:"env,omitempty"`
+	Env map[string]string `yaml:"env,omitempty" jsonschema_description:"Environment added when option-berth starts the service. Values may use ${port}, ${url}, ${worktree}, and another service's port or url as ${name.port} or ${name.url}."`
 }
 
 // PortAutoValue is the `port:` value that asks the daemon to pick the port.
@@ -234,25 +234,25 @@ const FieldWorktreePorts = "worktree_ports"
 // that need them.
 type MachineRef struct {
 	// Name is what a reader calls the service ("mysql").
-	Name string `yaml:"name"`
+	Name string `yaml:"name" jsonschema_description:"How a reader calls the service, for example mysql."`
 	// Port anchors the reference: it is what the dependency is aligned
 	// against, and the row whose service-manager unit carries the rest of that
 	// service's ports — mysql's 3306 and 33060 are one service, and one
 	// declaration covers both.
-	Port int `yaml:"port"`
+	Port int `yaml:"port" jsonschema_description:"The port the dependency listens on. Required: it is what the reference is matched by."`
 }
 
 // Config is a parsed `.oberth.yaml`. Path and Dir are filled by Load and are
 // not part of the file format.
 type Config struct {
-	Name     string       `yaml:"name"`
-	Services []Service    `yaml:"services,omitempty"`
-	Machine  []MachineRef `yaml:"machine,omitempty"`
-	Ports    []int        `yaml:"ports,omitempty"`
+	Name     string       `yaml:"name" jsonschema_description:"The group this project is known by. Defaults to the directory name when absent."`
+	Services []Service    `yaml:"services,omitempty" jsonschema_description:"Services option-berth starts and stops for this project."`
+	Machine  []MachineRef `yaml:"machine,omitempty" jsonschema_description:"Services the machine already runs that the project depends on. References only: option-berth never starts or stops them."`
+	Ports    []int        `yaml:"ports,omitempty" jsonschema_description:"Extra ports the project claims beyond its services."`
 	// WorktreePorts is how many ports a claim for this project takes when the
 	// caller does not name a count (step 5A.7). Nil means the key is absent
 	// and the claims default applies.
-	WorktreePorts *int `yaml:"worktree_ports,omitempty"`
+	WorktreePorts *int `yaml:"worktree_ports,omitempty" jsonschema_description:"How many ports a linked-worktree claim takes by default."`
 
 	Path string `yaml:"-"` // absolute path of the file it was read from
 	Dir  string `yaml:"-"` // directory containing the file
@@ -378,6 +378,14 @@ func parse(abs string, data []byte) (*Config, error) {
 	}
 	if err := rejectStopKey(&doc); err != nil {
 		return nil, &ConfigError{Path: abs, Problems: []string{err.Error()}}
+	}
+	// Optional strict mode: a key this version does not know is an error
+	// instead of something to ignore. Off by default so an older installed
+	// CLI cannot silently refuse a manifest that only gained fields.
+	if StrictManifest() {
+		if problems := strictProblems(fieldWarnings(&doc)); len(problems) > 0 {
+			return nil, &ConfigError{Path: abs, Problems: problems}
+		}
 	}
 
 	cfg := &Config{Path: abs, Dir: dir}

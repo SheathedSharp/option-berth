@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/sheathedsharp/option-berth/engine/docs/schema/manifest.schema.json",
+  "$defs": {
+    "MachineRef": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "How a reader calls the service, for example mysql."
+        },
+        "port": {
+          "type": "integer",
+          "maximum": 65535,
+          "minimum": 1,
+          "description": "The port the dependency listens on. Required: it is what the reference is matched by."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "port"
+      ]
+    },
+    "Service": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Short name, unique in this file."
+        },
+        "prepare": {
+          "type": "string",
+          "description": "Optional foreground command run immediately before cmd."
+        },
+        "prepare_inputs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Files the prepare command reads, relative to cwd. When their contents are unchanged, up skips prepare."
+        },
+        "cmd": {
+          "type": "string",
+          "description": "The command that brings the service back up, run from cwd."
+        },
+        "cwd": {
+          "type": "string",
+          "description": "Working directory, relative to the directory holding oberth.yaml."
+        },
+        "port": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "maximum": 65535,
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "const": "auto"
+            }
+          ],
+          "description": "The port the service binds (1-65535), or auto to let option-berth pick one."
+        },
+        "health": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^/"
+            },
+            {
+              "properties": {
+                "http": {
+                  "type": "string",
+                  "pattern": "^/",
+                  "description": "HTTP path, for example /healthz."
+                },
+                "tcp": {
+                  "type": "integer",
+                  "maximum": 65535,
+                  "minimum": 1,
+                  "description": "Port to connect to. It must match the service's declared port."
+                },
+                "command": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Command to run in the service's cwd; exit 0 is healthy."
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "maxProperties": 1,
+              "minProperties": 1,
+              "description": "A TCP or command check. Use exactly one key."
+            }
+          ],
+          "description": "Health check: an HTTP path, {tcp: port}, or {command: command line}."
+        },
+        "description": {
+          "type": "string",
+          "description": "User-authored metadata shown by clients."
+        },
+        "icon": {
+          "type": "string",
+          "description": "User-authored metadata shown by clients."
+        },
+        "color": {
+          "type": "string",
+          "description": "User-authored metadata shown by clients."
+        },
+        "depends_on": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Names of services that must be started first."
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Environment added when option-berth starts the service. Values may use ${port}, ${url}, ${worktree}, and another service's port or url as ${name.port} or ${name.url}."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ]
+    }
+  },
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "The group this project is known by. Defaults to the directory name when absent."
+    },
+    "services": {
+      "items": {
+        "$ref": "#/$defs/Service"
+      },
+      "type": "array",
+      "description": "Services option-berth starts and stops for this project."
+    },
+    "machine": {
+      "items": {
+        "$ref": "#/$defs/MachineRef"
+      },
+      "type": "array",
+      "description": "Services the machine already runs that the project depends on. References only: option-berth never starts or stops them."
+    },
+    "ports": {
+      "items": {
+        "type": "integer",
+        "maximum": 65535,
+        "minimum": 1
+      },
+      "type": "array",
+      "description": "Extra ports the project claims beyond its services."
+    },
+    "worktree_ports": {
+      "type": "integer",
+      "maximum": 100,
+      "minimum": 1,
+      "description": "How many ports a linked-worktree claim takes by default."
+    },
+    "$schema": {
+      "type": "string",
+      "description": "Optional JSON Schema URL for editor completion and validation."
+    }
+  },
+  "patternProperties": {
+    "^x-": true
+  },
+  "additionalProperties": false,
+  "type": "object",
+  "title": "option-berth manifest",
+  "description": "An oberth.yaml manifest: the services one worktree declares. Generated from the Go types in internal/groups; do not edit by hand. Run `go generate ./...`."
+}

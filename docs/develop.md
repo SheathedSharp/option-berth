@@ -29,6 +29,7 @@ mage buildEngine    # 仅引擎 → ./bin/oberth
 mage runCLI "status --json"
 mage runDaemon      # 用刚构建的 CLI 起 daemon（隔离用途）
 mage stop
+mage schema         # 重新生成 protocol 与 manifest JSON Schema
 ```
 
 `mage install` 会写入安装目录并改 PATH（可用 `NO_MODIFY_PATH=1` 跳过）；**未经明确授权不要**对用户日常环境执行安装或发布。

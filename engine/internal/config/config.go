@@ -205,6 +205,9 @@ const template = `# option-berth configuration
 #   BERTH_NO_AUTOSTART
 #                  set to 1 to stop clients starting a daemon that is not
 #                  already running; they report it as unavailable instead
+#   BERTH_STRICT_MANIFEST
+#                  set to 1 to make an unknown key in oberth.yaml a load error
+#                  with its line and column instead of a warning
 #   BERTH_RELAY    the relay to sign in to and share through, overriding
 #                  share.relay
 #   BERTH_CREDENTIALS_STORE

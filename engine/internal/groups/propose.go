@@ -14,8 +14,12 @@ import (
 )
 
 // header is written above a generated config so the next reader knows where it
-// came from and that it is meant to be edited and committed.
-const header = `# ` + ConfigName + ` — option-berth worktree service configuration, written by ` + "`oberth init`" + `.
+// came from and that it is meant to be edited and committed. The first line is
+// the YAML language server's modeline: an editor validates and completes the
+// file against the published schema, so a misspelled key is marked before the
+// file is ever used.
+const header = `# yaml-language-server: $schema=` + ManifestSchemaURL + "\n" +
+	`# ` + ConfigName + ` — option-berth worktree service configuration, written by ` + "`oberth init`" + `.
 # Edit and commit it: option-berth uses it to name this worktree and to know
 # which services belong to it. https://github.com/sheathedsharp/option-berth/engine
 #
