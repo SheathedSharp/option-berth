@@ -82,7 +82,7 @@
             "type": "string"
           },
           "type": "object",
-          "description": "Environment added when option-berth starts the service. Values may use ${port}, ${url}, and another service's port or url as ${name.port} or ${name.url}."
+          "description": "Environment added when option-berth starts the service. Values may use ${port}, ${url}, ${worktree}, and another service's port or url as ${name.port} or ${name.url}."
         }
       },
       "additionalProperties": false,
