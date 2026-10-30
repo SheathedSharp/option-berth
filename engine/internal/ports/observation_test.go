@@ -66,6 +66,33 @@ func TestCollectListenersClassifiesMalformedRow(t *testing.T) {
 	}
 }
 
+// One unreadable row must not erase the rows that were read. The result is
+// marked partial so the caller can publish the good ports and the unknown one
+// together, never the good ports alone.
+func TestCollectListenersKeepsReadableRowsWhenOneRowFails(t *testing.T) {
+	run := func(string, ...string) ([]byte, []byte, error) {
+		out := darwinTCPHeader +
+			"tcp4 0 0 127.0.0.1.8123 *.* LISTEN 0 0 131072 131072 node:42 0 0\n" +
+			"tcp4 0 0 127.0.0.1.8124 *.* LISTEN\n"
+		return []byte(out), nil, nil
+	}
+	rows, err := collectListeners("darwin", run)
+	if len(rows) != 1 || rows[0].Port != 8123 {
+		t.Fatalf("rows = %+v, want the readable row", rows)
+	}
+	partial, ok := PartialRows(err)
+	if !ok || len(partial) != 1 || partial[0].Port != 8123 {
+		t.Fatalf("PartialRows = %+v, %v", partial, ok)
+	}
+	var oe *ObservationError
+	if !errors.As(err, &oe) || oe.Code != CodeObservationIncomplete || !oe.Partial {
+		t.Fatalf("error = %+v, want a partial observation_incomplete", err)
+	}
+	if !strings.Contains(oe.Error(), "line 3") {
+		t.Fatalf("detail = %q, want the unreadable line number", oe.Error())
+	}
+}
+
 func TestCollectListenersKeepsAValidTable(t *testing.T) {
 	run := func(string, ...string) ([]byte, []byte, error) {
 		out := darwinTCPHeader + "tcp4 0 0 127.0.0.1.8123 *.* LISTEN 0 0 131072 131072 node:42 0 0\n"

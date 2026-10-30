@@ -34,6 +34,9 @@ func scanContext(ctx context.Context) ([]ListeningPort, error) {
 		return nil, err
 	}
 	if err != nil {
+		if partial, ok := PartialRows(err); ok {
+			return mergeAddresses(partial), err
+		}
 		return nil, err
 	}
 	return mergeAddresses(rows), nil

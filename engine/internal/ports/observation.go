@@ -1,6 +1,9 @@
 package ports
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // A sandboxed collector does not fail like a missing executable. macOS
 // seatbelt lets `netstat` run, denies the sysctl behind the TCP table, and
@@ -53,6 +56,11 @@ type ObservationError struct {
 	Detail string
 	Hint   string
 	Err    error
+	// Partial means Rows holds the rows that were readable. The caller may
+	// publish them only together with the observation status; a partial table
+	// must never be presented as a complete one.
+	Partial bool
+	Rows    []ListeningPort
 }
 
 func (e *ObservationError) Error() string { return e.Detail }
@@ -71,4 +79,15 @@ func observationErr(err error, code, hint, format string, args ...any) *Observat
 	return &ObservationError{
 		Code: code, Detail: fmt.Sprintf(format, args...), Hint: hint, Err: err,
 	}
+}
+
+// PartialRows returns the readable rows when err describes a partial
+// observation rather than a failed one. A caller that publishes them must also
+// publish the observation status, or an unreadable port becomes an absent one.
+func PartialRows(err error) ([]ListeningPort, bool) {
+	var oe *ObservationError
+	if errors.As(err, &oe) && oe.Partial && len(oe.Rows) > 0 {
+		return oe.Rows, true
+	}
+	return nil, false
 }

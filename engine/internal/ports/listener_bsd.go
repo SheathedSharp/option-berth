@@ -1,6 +1,7 @@
 package ports
 
 import (
+	"fmt"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -11,14 +12,16 @@ import (
 // Resolve PID columns from the header: macOS versions use either pid or
 // process:pid, and may add traffic columns before it. No fixed PID offset.
 //
-// A malformed row invalidates the whole table instead of shrinking it: a
-// caller that believes a port is free must not have been shown a prefix. Both
-// that case and a headerless (usually sandbox-blocked) response are
-// ObservationError values so the CLI can report a code and a next step.
+// An unreadable row is kept out of the result, but it does not erase the rows
+// that were readable: the error is marked Partial and carries them. A caller
+// that publishes those rows must also publish the observation status, or an
+// unreadable port would look absent. A headerless (usually sandbox-blocked)
+// response is still a whole-observation failure.
 func decodeDarwinNetstat(text string) ([]ListeningPort, error) {
 	pidColumn, namedPID := -1, false
 	seen := make(map[listenerKey]bool)
 	var out []ListeningPort
+	var problems []string
 	for row, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "Proto ") {
@@ -40,15 +43,15 @@ func decodeDarwinNetstat(text string) ([]ListeningPort, error) {
 			continue
 		}
 		if len(fields) < 6 {
-			return nil, observationf(CodeObservationIncomplete, observationIncompleteHint,
-				"netstat: truncated TCP row at line %d", row+1)
+			problems = append(problems, fmt.Sprintf("line %d: truncated TCP row", row+1))
+			continue
 		}
 		if fields[5] != "LISTEN" {
 			continue
 		}
 		if pidColumn < 0 || pidColumn >= len(fields) {
-			return nil, observationf(CodeObservationIncomplete, observationIncompleteHint,
-				"netstat: missing TCP process identity column at line %d", row+1)
+			problems = append(problems, fmt.Sprintf("line %d: missing TCP process identity column", row+1))
+			continue
 		}
 		pidText, process := fields[pidColumn], ""
 		if namedPID {
@@ -66,30 +69,32 @@ func decodeDarwinNetstat(text string) ([]ListeningPort, error) {
 				break
 			}
 			if !found {
-				return nil, observationf(CodeObservationIncomplete, observationIncompleteHint,
-					"netstat: unreadable TCP process identity at line %d", row+1)
+				problems = append(problems, fmt.Sprintf("line %d: unreadable TCP process identity", row+1))
+				continue
 			}
 		}
 		pid, err := strconv.ParseUint(pidText, 10, 31)
 		if err != nil {
-			return nil, observationf(CodeObservationIncomplete, observationIncompleteHint,
-				"netstat: invalid TCP process identity at line %d", row+1)
+			problems = append(problems, fmt.Sprintf("line %d: invalid TCP process identity", row+1))
+			continue
 		}
 		endpoint := fields[3]
 		dot := strings.LastIndexByte(endpoint, '.')
 		if dot <= 0 {
-			return nil, observationf(CodeObservationIncomplete, observationIncompleteHint,
-				"netstat: invalid TCP endpoint at line %d", row+1)
+			problems = append(problems, fmt.Sprintf("line %d: invalid TCP endpoint %q", row+1, endpoint))
+			continue
 		}
 		port, err := strconv.ParseUint(endpoint[dot+1:], 10, 16)
 		if err != nil || port == 0 {
-			return nil, observationf(CodeObservationIncomplete, observationIncompleteHint,
-				"netstat: invalid listening port at line %d", row+1)
+			problems = append(problems, fmt.Sprintf("line %d: invalid listening port in %q", row+1, endpoint))
+			continue
 		}
+		badAddress := false
 		for _, bind := range darwinBinds(proto, endpoint[:dot]) {
 			if _, err := netip.ParseAddr(bind.address); err != nil {
-				return nil, observationf(CodeObservationIncomplete, observationIncompleteHint,
-					"netstat: invalid listening address at line %d", row+1)
+				problems = append(problems, fmt.Sprintf("line %d: invalid listening address %q", row+1, endpoint))
+				badAddress = true
+				break
 			}
 			key := listenerKey{int(port), bind.address}
 			if seen[key] {
@@ -101,6 +106,9 @@ func decodeDarwinNetstat(text string) ([]ListeningPort, error) {
 				BindAddress: strings.Clone(bind.address), IPVersion: bind.family,
 			})
 		}
+		if badAddress {
+			continue
+		}
 	}
 	if pidColumn < 0 {
 		if strings.TrimSpace(text) == "" {
@@ -109,6 +117,15 @@ func decodeDarwinNetstat(text string) ([]ListeningPort, error) {
 		}
 		return nil, observationf(CodeObservationUnrecognized, observationUnrecognizedHint,
 			"netstat: response has no recognized TCP table header")
+	}
+	if len(problems) > 0 {
+		return out, &ObservationError{
+			Code:    CodeObservationIncomplete,
+			Detail:  "netstat: unreadable TCP rows: " + strings.Join(problems, "; "),
+			Hint:    observationIncompleteHint,
+			Partial: true,
+			Rows:    out,
+		}
 	}
 	return out, nil
 }
