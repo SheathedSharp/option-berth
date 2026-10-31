@@ -20,7 +20,7 @@ const statusCodeTimeout = 10 * time.Second
 // this work: it runs every few seconds and must not re-read source trees. A
 // missing snapshot, an unreadable source, or a run from before this feature
 // leaves the fields null (unknown), never false.
-func annotateCodeFacts(ctx context.Context, group *state.Group) {
+func annotateCodeFacts(ctx context.Context, group *state.Group, selected map[string]bool) {
 	if group == nil {
 		return
 	}
@@ -35,6 +35,9 @@ func annotateCodeFacts(ctx context.Context, group *state.Group) {
 	currentByTree := map[string]currentResult{}
 	for i := range group.Services {
 		svc := &group.Services[i]
+		if selected != nil && !selected[svc.Name] {
+			continue
+		}
 		if !svc.Running || svc.RunID == nil || *svc.RunID == "" {
 			continue
 		}

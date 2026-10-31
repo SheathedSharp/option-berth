@@ -79,7 +79,8 @@ checkout 子目录且 `sources` 指向同级目录；非 Git 回退跳过 `node_
 以及拒绝读取另一个 run 的快照。`internal/groups` 覆盖 `sources` 的解析、越界校验、`sources: []`
 与省略的区别、编辑输出；`internal/state` 的字段覆盖测试保证新字段进入相等比较。
 `internal/daemon/groupstart` 用真实 daemon 核对启动时确实写入快照，以及 `sources: []` 不写；
-`internal/cmd` 的 `TestAnnotateCodeFacts*` 覆盖“已改 / 未改 / 未知”三态。2026-10-31 本机执行：
+`internal/cmd` 的 `TestAnnotateCodeFacts*` 覆盖“已改 / 未改 / 未知”三态，`TestStatusOnly*`
+确认代码比较跟随 `--only` 选择，`TestBriefStatus*` 确认 `--brief` 保留代码字段。2026-10-31 本机执行：
 
 ```sh
 cd engine

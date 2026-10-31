@@ -46,6 +46,12 @@ type briefService struct {
 	// ManifestRuntimeMismatch is kept because it is the one cheap signal that
 	// the process is running an older manifest; it is omitted when false.
 	ManifestRuntimeMismatch bool `json:"manifest_runtime_mismatch,omitempty"`
+	// CodeChangedSinceStart is the same fact the full document publishes:
+	// true/false when checked, absent when unknown. CodeChangedFiles and
+	// CodeHint accompany it only when the source changed.
+	CodeChangedSinceStart *bool  `json:"code_changed_since_start,omitempty"`
+	CodeChangedFiles      *int   `json:"code_changed_files,omitempty"`
+	CodeHint              string `json:"code_hint,omitempty"`
 }
 
 type briefHealth struct {
@@ -104,6 +110,11 @@ func briefStatusFrom(doc statusDocument) briefStatusDocument {
 			Name: svc.Name, Running: svc.Running,
 			Port: svc.Port, PortActual: svc.PortActual, PortAuto: svc.PortAuto,
 			ManifestRuntimeMismatch: svc.ManifestRuntimeMismatch,
+			CodeChangedSinceStart:   svc.CodeChangedSinceStart,
+			CodeChangedFiles:        svc.CodeChangedFiles,
+		}
+		if svc.CodeHint != nil {
+			item.CodeHint = *svc.CodeHint
 		}
 		if svc.HealthStatus != nil {
 			item.Health = &briefHealth{
