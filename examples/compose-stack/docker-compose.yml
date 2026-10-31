@@ -17,3 +17,7 @@ services:
       interval: 1s
       timeout: 2s
       retries: 30
+    # oberth down gives the process group 5s after SIGTERM before escalating.
+    # Compose's own default stop grace is 10s, which would outlast that window;
+    # keep the container's stop inside it so a normal down can finish the job.
+    stop_grace_period: 2s

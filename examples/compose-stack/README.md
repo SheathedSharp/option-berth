@@ -23,6 +23,12 @@ The manifest uses four facts that matter together:
 `oberth down --force` sends SIGKILL. Compose never gets to stop the containers,
 so they can survive the run. Use the normal `oberth down` for this stack.
 
+A normal `down` waits 5 seconds after SIGTERM before escalating. Compose's own
+default stop grace is 10 seconds, so a stack that needs longer than 5 seconds to
+stop would be killed mid-shutdown and leave its port held. The example sets
+`stop_grace_period: 2s`; a heavier stack should keep its stop time inside
+oberth's window, or be stopped with `docker compose down` before `oberth down`.
+
 ## One shared stack instead
 
 A single Compose project shared by every worktree is not a managed service in
