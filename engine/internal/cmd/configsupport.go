@@ -50,10 +50,11 @@ func requireNamedProjectSupport(ctx context.Context, c *client.Client, p rpc.Gro
 	return configSupportProblem(cfg, c.Hello(), true)
 }
 
-// configPathForProject picks the manifest a named project resolves to. A group
-// matches by its own name or by the repository it belongs to, and a main
-// checkout wins over a linked worktree: `oberth up <project>` names the
-// project, and its main checkout's manifest is the one that speaks for it.
+// configPathForProject picks the manifest a named project resolves to. It
+// matches the group name exactly, the same rule the daemon's own `ConfigNamed`
+// uses: a linked worktree's group is `<repo>@<worktree>`, so `up <repo>` does
+// not silently select one of its worktrees. A main checkout wins if two groups
+// ever carry the same name.
 func configPathForProject(gg []state.Group, name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -61,7 +62,7 @@ func configPathForProject(gg []state.Group, name string) string {
 	}
 	first := ""
 	for _, g := range gg {
-		if g.Name != name && g.Repo != name {
+		if g.Name != name {
 			continue
 		}
 		if g.ConfigPath == nil || *g.ConfigPath == "" {

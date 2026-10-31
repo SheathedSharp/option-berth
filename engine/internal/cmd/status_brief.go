@@ -64,12 +64,16 @@ type briefService struct {
 // copies rather than aliases: the brief document is encoded after the snapshot
 // is released, and it must never share a mutable slice with the full one.
 type briefStarting struct {
-	Phase         string   `json:"phase"`
-	StartedAt     string   `json:"started_at"`
-	ElapsedMS     int64    `json:"elapsed_ms"`
-	ReadyTimeout  string   `json:"ready_timeout"`
-	WaitingOn     []string `json:"waiting_on,omitempty"`
-	LastPrepareMS *int64   `json:"last_prepare_ms,omitempty"`
+	Phase        string `json:"phase"`
+	StartedAt    string `json:"started_at"`
+	ElapsedMS    int64  `json:"elapsed_ms"`
+	ReadyTimeout string `json:"ready_timeout"`
+	// WaitingOn is always an array and LastPrepareMS is null when unknown: the
+	// same wire shape state.ServiceStarting publishes. A brief reader must not
+	// have to distinguish "absent" from "empty" on a field the full document
+	// always carries.
+	WaitingOn     []string `json:"waiting_on"`
+	LastPrepareMS *int64   `json:"last_prepare_ms"`
 }
 
 type briefHealth struct {
@@ -104,9 +108,9 @@ func briefStartingFrom(in *state.ServiceStarting) *briefStarting {
 		StartedAt:    in.StartedAt,
 		ElapsedMS:    in.ElapsedMS,
 		ReadyTimeout: in.ReadyTimeout,
-	}
-	if len(in.WaitingOn) > 0 {
-		out.WaitingOn = append([]string{}, in.WaitingOn...)
+		// Always a fresh non-nil slice, so an empty set encodes as [] exactly as
+		// the full document does and never aliases the snapshot's slice.
+		WaitingOn: append([]string{}, in.WaitingOn...),
 	}
 	if in.LastPrepareMS != nil {
 		ms := *in.LastPrepareMS

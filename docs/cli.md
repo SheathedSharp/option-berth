@@ -108,7 +108,8 @@ prepare 读取的文件列表，没有声明时为空数组。
 run 注册后消失。`--brief --json` 也带同一个 `starting`（字段相同，读取时复制，不与完整文档
 共享可变数据），所以精简读者同样能分辨“正在启动”和“从未启动”。人读输出把该服务显示为
 `starting · <phase> · for <已启动时长> · budget <ready_timeout> · waiting on <依赖…>`：
-时长由 `elapsed_ms` 四舍五入到秒，`budget` 直接用发布值，只有 `waiting_on` 非空时才追加最后一段。
+时长由 `elapsed_ms` 四舍五入到秒（不足 1 秒显示 `for <1s`，不会显示 `for 0s`），`budget` 直接用
+发布值，只有 `waiting_on` 非空时才追加最后一段。
 运行中的服务同时带 `manifest_hash` 与 `runtime_spec_hash`；两者不一致时
 `manifest_runtime_mismatch` 为 `true`，表示当前进程来自旧清单，应该用
 `oberth restart --only <service>` 重新应用。hash 只覆盖命令、cwd、端口、health 和依赖等可执行声明，
@@ -162,7 +163,7 @@ JSON 顶层固定包含：
       {"name": "cache", "running": false,
        "starting": {"phase": "waiting_dependency", "started_at": "2026-10-31T10:00:00Z",
                     "elapsed_ms": 130000, "ready_timeout": "3m0s",
-                    "waiting_on": ["db"]}}
+                    "waiting_on": ["db"], "last_prepare_ms": null}}
     ]},
   "ports": [3000, 3001],
   "machine": [{"name": "redis", "port": 6379, "listening": true}],

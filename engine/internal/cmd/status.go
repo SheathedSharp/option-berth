@@ -766,8 +766,13 @@ func startingStateText(starting state.ServiceStarting) string {
 		parts = append(parts, starting.Phase)
 	}
 	if starting.ElapsedMS > 0 {
-		elapsed := time.Duration(starting.ElapsedMS) * time.Millisecond
-		parts = append(parts, "for "+elapsed.Round(time.Second).String())
+		elapsed := (time.Duration(starting.ElapsedMS) * time.Millisecond).Round(time.Second)
+		if elapsed < time.Second {
+			// Rounding must not turn a fresh attempt into "for 0s".
+			parts = append(parts, "for <1s")
+		} else {
+			parts = append(parts, "for "+elapsed.String())
+		}
 	}
 	if starting.ReadyTimeout != "" {
 		parts = append(parts, "budget "+starting.ReadyTimeout)

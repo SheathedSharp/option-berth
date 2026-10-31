@@ -212,7 +212,10 @@ func TestBriefStatusCarriesStarting(t *testing.T) {
 	for _, present := range []string{
 		`"starting":{"phase":"waiting_dependency","started_at":"2026-10-31T10:00:00Z",` +
 			`"elapsed_ms":130000,"ready_timeout":"3m0s","waiting_on":["db","cache"],"last_prepare_ms":800}`,
-		`"phase":"prepare"`,
+		// A service with nothing outstanding still publishes an empty array and
+		// a null duration, the same shape the full document uses.
+		`"starting":{"phase":"prepare","started_at":"2026-10-31T10:00:00Z",` +
+			`"elapsed_ms":10,"ready_timeout":"30s","waiting_on":[],"last_prepare_ms":null}`,
 	} {
 		if !strings.Contains(text, present) {
 			t.Errorf("brief document is missing %s: %s", present, text)
@@ -261,6 +264,11 @@ func TestServiceStateTextStartingLine(t *testing.T) {
 			name:     "no waiting_on",
 			starting: state.ServiceStarting{Phase: "spawning", ElapsedMS: 600, ReadyTimeout: "30s"},
 			want:     "starting · spawning · for 1s · budget 30s",
+		},
+		{
+			name:     "sub-second attempt does not read as zero",
+			starting: state.ServiceStarting{Phase: "spawning", ElapsedMS: 200, ReadyTimeout: "30s"},
+			want:     "starting · spawning · for <1s · budget 30s",
 		},
 		{
 			name:     "no elapsed",

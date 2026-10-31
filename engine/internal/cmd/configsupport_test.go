@@ -87,13 +87,13 @@ func TestConfigPathForProject(t *testing.T) {
 			want:    "/work/shop-feature/oberth.yaml",
 		},
 		{
-			name: "matched by repo when the group is named per worktree",
+			name: "repo name with only linked worktrees does not pick one",
 			groups: []state.Group{
 				{Name: "shop@a", Repo: "shop", Worktree: "a", ConfigPath: path("/work/a/oberth.yaml")},
 				{Name: "shop@b", Repo: "shop", Worktree: "b", ConfigPath: path("/work/b/oberth.yaml")},
 			},
 			project: "shop",
-			want:    "/work/a/oberth.yaml",
+			want:    "",
 		},
 		{
 			name: "no manifest path",
