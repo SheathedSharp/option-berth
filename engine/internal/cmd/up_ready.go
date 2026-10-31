@@ -20,25 +20,38 @@ import (
 // This keeps `up --wait` useful to both humans and agents without adding a
 // second readiness protocol to the daemon.
 func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *groups.Config,
-	chunks []rpc.GroupsStartChunk, summary *rpc.GroupsStartEnd, timeout time.Duration) ([]string, error) {
-	if timeout <= 0 {
-		timeout = 30 * time.Second
+	chunks []rpc.GroupsStartChunk, summary *rpc.GroupsStartEnd, timeout time.Duration,
+	timeoutSet bool) ([]string, error) {
+	waitStart := time.Now()
+	// An explicit --wait-timeout is the ceiling for the whole invocation. It
+	// does not replace each service's own readiness budget; it only caps the
+	// deadline that budget would otherwise give it.
+	var hardDeadline time.Time
+	if timeoutSet {
+		if timeout <= 0 {
+			timeout = groups.DefaultReadyTimeout
+		}
+		hardDeadline = waitStart.Add(timeout)
 	}
 	selected := make(map[string]startSelection)
 	for _, chunk := range chunks {
 		if chunk.Error == "" {
-			selected[chunk.Service] = startSelection{runID: chunk.RunID, owned: !chunk.Skipped}
+			selected[chunk.Service] = startSelection{
+				runID:  chunk.RunID,
+				owned:  !chunk.Skipped,
+				budget: startChunkReadyTimeout(chunk),
+			}
 		}
 	}
 	if len(selected) == 0 {
 		return nil, nil
 	}
 
-	deadline := time.Now().Add(timeout)
 	// ServiceExit.At is second-precision. Comparing it with a nanosecond wait
 	// start would read an exit from this same second as older than the wait.
 	// Align the timestamp fallback to the second; the run id stays primary.
-	fallbackSince := time.Now().UTC().Truncate(time.Second)
+	fallbackSince := waitStart.UTC().Truncate(time.Second)
+	var timedOut []string
 	for {
 		pp, gg, obs, err := groupRowsObserved(ctx)
 		if obs != nil && obs.State != string(ports.ObservationObservable) {
@@ -56,46 +69,72 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 			for _, row := range pp {
 				portsNow = append(portsNow, state.FromListening(row))
 			}
-			if group := startTargetGroup(params, cfg, gg); group != nil {
-				for name, selection := range selected {
-					if ready, _ := serviceReady(*group, portsNow, name); ready {
-						markStartChunkReady(chunks, name)
-						delete(selected, name)
-						continue
-					}
-					svc := serviceIn(*group, name)
-					if svc == nil {
-						continue
-					}
-					// An older daemon may omit run_id on a skipped chunk. Once
-					// the service is live, the group row names its run, and
-					// that run is what this wait is about.
-					if selection.runID == "" && svc.Running && svc.RunID != nil {
-						selection.runID = *svc.RunID
-						selected[name] = selection
-					}
-					if selectedExit(svc.LastExit, selection.runID, fallbackSince) {
-						markStartChunkFailed(chunks, summary, name, svc.LastExit.Reason,
-							fmt.Sprintf("service exited with code %d (%s)", svc.LastExit.Code, svc.LastExit.Reason),
-							svc.LastExit.PortHolder)
-						delete(selected, name)
-					}
+			group := startTargetGroup(params, cfg, gg)
+			for name, selection := range selected {
+				var svc *state.Service
+				if group != nil {
+					svc = serviceIn(*group, name)
+				}
+				// Anchor each deadline once. A run this invocation started is
+				// measured from its own StartedAt, so time already spent
+				// starting it counts against its budget. A skipped service,
+				// or one whose row has no usable StartedAt, is measured from
+				// the moment the wait began.
+				if selection.deadline.IsZero() {
+					selection.deadline = startDeadline(selection, svc, waitStart, hardDeadline)
+					selected[name] = selection
+				}
+				if group == nil || svc == nil {
+					continue
+				}
+				if ready, _ := serviceReady(*group, portsNow, name); ready {
+					markStartChunkReady(chunks, name)
+					delete(selected, name)
+					continue
+				}
+				// An older daemon may omit run_id on a skipped chunk. Once
+				// the service is live, the group row names its run, and
+				// that run is what this wait is about.
+				if selection.runID == "" && svc.Running && svc.RunID != nil {
+					selection.runID = *svc.RunID
+					selected[name] = selection
+				}
+				if selectedExit(svc.LastExit, selection.runID, fallbackSince) {
+					markStartChunkFailed(chunks, summary, name, svc.LastExit.Reason,
+						fmt.Sprintf("service exited with code %d (%s)", svc.LastExit.Code, svc.LastExit.Reason),
+						svc.LastExit.PortHolder)
+					delete(selected, name)
+				}
+			}
+		}
+		if err != nil {
+			// An unreadable snapshot still has to let a service's own budget
+			// expire; otherwise a persistent read failure would wait forever.
+			for name, selection := range selected {
+				if selection.deadline.IsZero() {
+					selection.deadline = startDeadline(selection, nil, waitStart, hardDeadline)
+					selected[name] = selection
 				}
 			}
 		}
 		if len(selected) == 0 {
-			return nil, nil
+			sort.Strings(timedOut)
+			return timedOut, nil
 		}
-		if time.Now().After(deadline) {
-			timedOut := make([]string, 0, len(selected))
-			for name, selection := range selected {
-				markStartChunkFailed(chunks, summary, name, "ready_timeout",
-					fmt.Sprintf("timed out after %s waiting for %s to be ready", timeout, name), nil)
-				// Waiting on an existing run does not authorize stopping it.
-				if selection.owned {
-					timedOut = append(timedOut, name)
-				}
+		now := time.Now()
+		for name, selection := range selected {
+			if selection.deadline.IsZero() || now.Before(selection.deadline) {
+				continue
 			}
+			markStartChunkFailed(chunks, summary, name, "ready_timeout",
+				fmt.Sprintf("timed out after %s waiting for %s to be ready", selection.budget, name), nil)
+			// Waiting on an existing run does not authorize stopping it.
+			if selection.owned {
+				timedOut = append(timedOut, name)
+			}
+			delete(selected, name)
+		}
+		if len(selected) == 0 {
 			sort.Strings(timedOut)
 			return timedOut, nil
 		}
@@ -107,12 +146,43 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 	}
 }
 
+// startDeadline is when this invocation gives up on one service. A run it
+// started is measured from that run's own StartedAt; a skipped service, or one
+// whose row carries no usable StartedAt, from the moment the wait began. An
+// explicit --wait-timeout caps every deadline at the invocation's ceiling.
+func startDeadline(selection startSelection, svc *state.Service, waitStart, hardDeadline time.Time) time.Time {
+	since := waitStart
+	if selection.owned && svc != nil && svc.StartedAt != nil {
+		if at, err := time.Parse(time.RFC3339Nano, *svc.StartedAt); err == nil {
+			since = at
+		}
+	}
+	deadline := since.Add(selection.budget)
+	if !hardDeadline.IsZero() && deadline.After(hardDeadline) {
+		deadline = hardDeadline
+	}
+	return deadline
+}
+
+// startChunkReadyTimeout is the readiness budget the daemon published for one
+// service. A daemon predating ready_timeout omits it; the client then falls
+// back to the same default the manifest uses.
+func startChunkReadyTimeout(c rpc.GroupsStartChunk) time.Duration {
+	if d, err := time.ParseDuration(strings.TrimSpace(c.ReadyTimeout)); err == nil && d > 0 {
+		return d
+	}
+	return groups.DefaultReadyTimeout
+}
+
 // startSelection is what this invocation selected for one service: the run it
-// is about, and whether this invocation started that run (and may therefore
-// stop it on timeout).
+// is about, whether this invocation started that run (and may therefore stop
+// it on timeout), the readiness budget its manifest gives it, and the deadline
+// computed from both that budget and where it is measured from.
 type startSelection struct {
-	runID string
-	owned bool
+	runID    string
+	owned    bool
+	budget   time.Duration
+	deadline time.Time
 }
 
 // selectedExit reports whether exit is the death of the run this start

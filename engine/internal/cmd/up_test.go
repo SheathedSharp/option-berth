@@ -146,7 +146,7 @@ func TestWaitForStartReadyUsesTimeoutAsStructuredFailure(t *testing.T) {
 	params := rpc.GroupsStartParams{ConfigPath: &path}
 	chunks := []rpc.GroupsStartChunk{{Service: "api", State: "started"}}
 	summary := rpc.GroupsStartEnd{Started: []string{"api"}, Errors: []string{}}
-	if timedOut, err := waitForStartReady(context.Background(), params, nil, chunks, &summary, time.Millisecond); err != nil {
+	if timedOut, err := waitForStartReady(context.Background(), params, nil, chunks, &summary, time.Millisecond, true); err != nil {
 		t.Fatal(err)
 	} else if len(timedOut) != 1 || timedOut[0] != "api" {
 		t.Fatalf("timed out = %v, want api", timedOut)
@@ -369,7 +369,7 @@ func TestWaitForStartReadyChecksSkippedWithoutAuthorizingCleanup(t *testing.T) {
 	chdir(t, dir)
 	chunks := []rpc.GroupsStartChunk{{Service: "api", State: "skipped", Skipped: true}}
 	summary := rpc.GroupsStartEnd{Skipped: []string{"api"}}
-	cleanup, err := waitForStartReady(context.Background(), rpc.GroupsStartParams{ConfigPath: &path}, nil, chunks, &summary, time.Millisecond)
+	cleanup, err := waitForStartReady(context.Background(), rpc.GroupsStartParams{ConfigPath: &path}, nil, chunks, &summary, time.Millisecond, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +399,7 @@ func TestWaitForStartReadyMixedTimeoutCleansOnlyNewStarts(t *testing.T) {
 	chdir(t, dir)
 	chunks := []rpc.GroupsStartChunk{{Service: "old", State: "skipped", Skipped: true}, {Service: "new", State: "started"}}
 	summary := rpc.GroupsStartEnd{Skipped: []string{"old"}, Started: []string{"new"}}
-	cleanup, err := waitForStartReady(context.Background(), rpc.GroupsStartParams{ConfigPath: &path}, nil, chunks, &summary, time.Millisecond)
+	cleanup, err := waitForStartReady(context.Background(), rpc.GroupsStartParams{ConfigPath: &path}, nil, chunks, &summary, time.Millisecond, true)
 	if err != nil {
 		t.Fatal(err)
 	}
