@@ -138,7 +138,7 @@ func TestWaitForStartReadyFailsFastWhenBlind(t *testing.T) {
 	summary := rpc.GroupsStartEnd{Started: []string{"api"}}
 	started := time.Now()
 	cleanup, err := waitForStartReady(context.Background(),
-		rpc.GroupsStartParams{ConfigPath: &path}, nil, chunks, &summary, 5*time.Second)
+		rpc.GroupsStartParams{ConfigPath: &path}, nil, chunks, &summary, 5*time.Second, true)
 	if err == nil {
 		t.Fatal("a blind process must not claim readiness")
 	}

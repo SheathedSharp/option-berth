@@ -32,12 +32,22 @@ func requireConfigSupportFor(c *client.Client, cfg *groups.Config, starting bool
 	if cfg == nil {
 		return nil
 	}
-	hello := c.Hello()
+	return configSupportProblem(cfg, c.Hello(), starting)
+}
+
+// configSupportProblem is the capability check without a live client, so the
+// decisions are testable without a daemon. `ready_timeout:` is checked only
+// for commands that start services: stopping what is already running does not
+// need the daemon to honour a readiness budget.
+func configSupportProblem(cfg *groups.Config, hello rpc.DaemonHelloResult, starting bool) error {
 	if cfg.UsesAssignedPorts() && !hasCapability(hello, rpc.CapabilityAutoPorts) {
 		return unsupportedConfig(cfg, hello, "`port: auto`")
 	}
 	if starting && cfg.UsesManifestExtras() && !hasCapability(hello, rpc.CapabilityManifestExtras) {
 		return unsupportedConfig(cfg, hello, "`env_file:` or `workspace:`")
+	}
+	if starting && cfg.UsesReadyTimeout() && !hasCapability(hello, rpc.CapabilityReadyTimeout) {
+		return unsupportedConfig(cfg, hello, "`ready_timeout:`")
 	}
 	return nil
 }

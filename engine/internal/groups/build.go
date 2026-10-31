@@ -144,6 +144,7 @@ func ServiceRow(s Service) state.Service {
 		Cmd:           s.Cmd,
 		Cwd:           s.Cwd,
 		Sources:       cloneStrings(s.Sources),
+		ReadyTimeout:  s.EffectiveReadyTimeout().String(),
 		DependsOn:     append([]string{}, s.DependsOn...),
 	}
 	if svc.DependsOn == nil {

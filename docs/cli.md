@@ -247,6 +247,10 @@ Git 检出中只纳入已跟踪文件和未被 ignore 的未跟踪文件，`node
 带端口的依赖等待监听，无端口的 worker 等待其运行记录变为活跃；
 已经在运行的服务跳过；每个服务有自己的
 日志文件和运行记录。无参数时使用当前目录最近的清单，也可以显式给项目名。
+`ready_timeout:` 声明一个服务的就绪预算（Go duration 字符串，例如 `90s`，缺省 30s，必须为正）：
+`depends_on` 的后继服务等待该服务时使用它，`up --wait` 也使用它。`prepare:` 不计入这个预算。
+清单声明了 `ready_timeout:` 时，CLI 要求 daemon 宣告 `groups.start.ready_timeout` 能力；旧 daemon
+会提示 `oberth daemon restart`，而不是静默按 30s 等待。
 
 `health:` 有三种写法：HTTP 路径（`/healthz`，缺省形式）、TCP 连接（`health: {tcp: 5432}`，端口必须与
 服务声明的端口一致）和命令（`health: {command: pg_isready -h 127.0.0.1 -p ${port}}`）。命令在服务
@@ -269,13 +273,19 @@ cwd 中执行，按 `cmd:` 的规则拆成 argv（不经过 shell），支持 `$
 只有完全没有 run_id 的旧记录才退回退出时间，并把等待开始对齐到秒，因此同一秒内记录的退出也算本轮。
 其他 run 的旧退出记录不会被 `up --wait` 读成本轮启动失败。
 `--wait`（`--ready` 的别名）会在返回前等待本次选择的服务（包括已经在运行、未重新启动的服务）真正监听；声明了 `health:` 的服务还必须
-通过对应的健康检查（命令式检查不要求服务自己监听）。无端口 worker 以运行记录活跃作为 ready。默认不等待，`--wait-timeout` 默认 30s；显式指定时必须为正值且同时启用 `--wait` 或 `--ready`，否则退出 2，不执行启动；
-超时的服务状态为 `failed`、原因是 `ready_timeout`，命令退出码为 1。只有本次新启动的超时运行才进入停止清理；
+通过对应的健康检查（命令式检查不要求服务自己监听）。无端口 worker 以运行记录活跃作为 ready。默认不等待；
+不指定 `--wait-timeout` 时按每个服务自己的 `ready_timeout:` 等待（缺省 30s）：本次新启动的服务从状态行里该运行的
+开始时间起算，已运行的 skipped 服务或取不到开始时间时从等待开始起算。显式指定 `--wait-timeout` 时它是整次等待的
+总上限，只会收紧、不会放宽每个服务的 `ready_timeout:`：每个服务的 deadline 取两者中更早的一个；必须为正值且同时
+启用 `--wait` 或 `--ready`，否则退出 2，不执行启动；
+超时的服务状态为 `failed`、原因是 `ready_timeout`，消息说明超时来自该服务的就绪预算，还是调用方给的
+`--wait-timeout` 上限，命令退出码为 1。只有本次新启动的超时运行才进入停止清理；
 已经存在的运行不会因这次等待失败而被停止或重启。`started` / `skipped` 汇总描述启动动作，
 就绪判定失败另外出现在 `errors` 与逐服务 `state` 中。对本次新启动且被清理的运行，
 引擎把同一个 `ready_timeout` 写入服务的最后退出事实，因此 `status`、桌面服务行、attention 和事件流
 不会把它显示成普通的手动停止。健康事实带有 `status`、`code`、`reason` 与 `observed_at`，
 依赖声明了 `health:` 时，后继服务会等待该依赖的健康状态为 `ok`。
+依赖等待的预算取 `depends_on` 中被依赖方各自 `ready_timeout:` 的最大值（未声明的依赖按 30s），不是等待方自己的；
 依赖等待本身失败时，服务最后退出原因分别是 `dependency_timeout` 或 `dependency_not_ready`，
 与启动失败一样会保留在状态、attention 和状态变更中。若依赖是本次 `groups.start` 已经尝试、
 并且在等待期间已经退出，后继服务不再等满预算：它立即以 `dependency_not_ready` 失败，
