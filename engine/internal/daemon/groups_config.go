@@ -24,6 +24,7 @@ func init() {
 	RegisterCapability("groups")
 	RegisterCapability(rpc.CapabilityAutoPorts)
 	RegisterCapability(rpc.CapabilityManifestExtras)
+	RegisterCapability(rpc.CapabilityReadyTimeout)
 }
 
 func handleGroupsConfigGet(_ context.Context, req *Request) (any, error) {

@@ -118,6 +118,10 @@
           "type": "string",
           "description": "User-authored metadata shown by clients."
         },
+        "ready_timeout": {
+          "type": "string",
+          "description": "How long this service may take to become ready: dependency waits and up --wait use it. A Go duration such as 90s; defaults to 30s."
+        },
         "depends_on": {
           "items": {
             "type": "string"

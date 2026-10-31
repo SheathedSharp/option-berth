@@ -24,9 +24,14 @@ oberth up --wait
 ```
 
 - `--wait` 等到本次选择的服务真正监听；声明了 `health:` 的服务还要通过健康检查；无端口 worker
-  以运行记录活跃为准。默认等待 30s，慢的就绪过程用 `--wait-timeout` 放宽。
-- `--wait-timeout` 只约束**启动之后**的监听与健康等待，不约束 `prepare:`。依赖安装慢要靠
-  `prepare_inputs:` 缓存（内容未变时跳过），或调大编排工具自己的脚本超时。
+  以运行记录活跃为准。每个服务用 `ready_timeout:`（Go duration，缺省 30s，必须为正）声明自己的
+  就绪预算；`up --wait` 默认按它等待，`depends_on` 的后继服务也按被依赖方自己的预算等待。
+  `--wait-timeout` 只是整次 `up --wait` 的总上限，只会收紧、不会放宽每个服务的
+  `ready_timeout:`；慢服务应把预算写进清单，而不是只调大这个开关。
+- `ready_timeout:` 约束**启动之后**的监听与健康等待，包括依赖等待和 `up --wait`；
+  `--wait-timeout` 只约束 `up --wait` 自己的等待（它在 `groups.start` 流结束后才开始计时，
+  不影响 daemon 的依赖等待）。两者都不约束 `prepare:`。依赖安装慢要靠 `prepare_inputs:`
+  缓存（内容未变时跳过），或调大编排工具自己的脚本超时。
 - 失败时退出码为 1，逐服务给出 `state`、`reason` 和 `hint`；只有进程真的起过，`hint` 才指向
   `oberth logs <service> --once`。
 - 观察失明时 `up --wait` 会立即返回 `observation_*` 错误并保留刚启动的运行。这不是“没起来”。
@@ -182,12 +187,13 @@ shift
 export PATH="$HOME/.local/bin:$PATH"
 trap 'oberth down --worktree "$worktree"' EXIT
 cd "$worktree"
-oberth up --wait --wait-timeout 120s
+oberth up --wait
 claude "$@"
 ```
 
 `trap` 保证 `claude` 失败或被中断时也会清理；`oberth` 起的服务是 daemon 持有的，不会随
-脚本退出自动消失。
+脚本退出自动消失。慢服务（例如首次编译的 Next.js）在清单里用 `ready_timeout:` 声明预算；
+`--wait-timeout` 只能收紧它，不能代替它。
 
 **B. 让 Claude Code 的 WorktreeCreate 接管创建**。只有当你确实需要自动创建并启动时才用。
 配置 `WorktreeCreate` 会**取代** Claude Code 默认的 `git worktree` 创建：`.worktreeinclude`、
@@ -241,7 +247,7 @@ cleanup() {
 }
 trap cleanup EXIT
 cd "$dir"
-oberth up --wait --wait-timeout 120s >&2
+oberth up --wait >&2
 trap - EXIT
 echo "$dir"
 ```
@@ -288,7 +294,7 @@ shift
 export PATH="$HOME/.local/bin:$PATH"
 trap 'oberth down --worktree "$worktree"' EXIT
 cd "$worktree"
-oberth up --wait --wait-timeout 180s
+oberth up --wait
 codex "$@"
 ```
 

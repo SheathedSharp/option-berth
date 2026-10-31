@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -111,12 +112,16 @@ type Service struct {
 	// service — the same one every time for the same checkout, and a
 	// different one in every other checkout — and hands it over as PORT,
 	// BERTH_PORT and ${port}.
-	PortAuto    bool     `yaml:"-"`
-	Health      string   `yaml:"health,omitempty" jsonschema_description:"Health check: an HTTP path, {tcp: port}, or {command: command line}."`
-	Description string   `yaml:"description,omitempty" jsonschema_description:"User-authored metadata shown by clients."`
-	Icon        string   `yaml:"icon,omitempty" jsonschema_description:"User-authored metadata shown by clients."`
-	Color       string   `yaml:"color,omitempty" jsonschema_description:"User-authored metadata shown by clients."`
-	DependsOn   []string `yaml:"depends_on,omitempty" jsonschema_description:"Names of services that must be started first."`
+	PortAuto    bool   `yaml:"-"`
+	Health      string `yaml:"health,omitempty" jsonschema_description:"Health check: an HTTP path, {tcp: port}, or {command: command line}."`
+	Description string `yaml:"description,omitempty" jsonschema_description:"User-authored metadata shown by clients."`
+	Icon        string `yaml:"icon,omitempty" jsonschema_description:"User-authored metadata shown by clients."`
+	Color       string `yaml:"color,omitempty" jsonschema_description:"User-authored metadata shown by clients."`
+	// ReadyTimeout is how long a dependent may wait for this service to become
+	// ready, and how long `up --wait` gives it after it starts. It is a Go
+	// duration string; omitted means DefaultReadyTimeout.
+	ReadyTimeout string   `yaml:"ready_timeout,omitempty" jsonschema_description:"How long this service may take to become ready: dependency waits and up --wait use it. A Go duration such as 90s; defaults to 30s."`
+	DependsOn    []string `yaml:"depends_on,omitempty" jsonschema_description:"Names of services that must be started first."`
 	// Env is added to the service's environment when option-berth starts it. Values
 	// may refer to ports with ${port}, ${url}, ${<service>.port} and
 	// ${<service>.url}, and to this checkout's stable identity with ${worktree}.
@@ -136,6 +141,25 @@ func cloneStrings(in []string) []string {
 
 // PortAutoValue is the `port:` value that asks the daemon to pick the port.
 const PortAutoValue = "auto"
+
+// DefaultReadyTimeout is how long a service gets to become ready when its
+// manifest does not declare ready_timeout.
+const DefaultReadyTimeout = 30 * time.Second
+
+// EffectiveReadyTimeout is the readiness budget this service's declaration
+// asks for: ready_timeout when present, DefaultReadyTimeout otherwise. Load
+// has already rejected non-positive and unparseable values; this fallback
+// keeps a hand-built Service harmless.
+func (s Service) EffectiveReadyTimeout() time.Duration {
+	if strings.TrimSpace(s.ReadyTimeout) == "" {
+		return DefaultReadyTimeout
+	}
+	d, err := time.ParseDuration(s.ReadyTimeout)
+	if err != nil || d <= 0 {
+		return DefaultReadyTimeout
+	}
+	return d
+}
 
 // HasPort reports whether the service declares a port, fixed or auto.
 func (s Service) HasPort() bool { return s.Port != 0 || s.PortAuto }
@@ -377,6 +401,19 @@ func (c *Config) UsesManifestExtras() bool {
 	return false
 }
 
+// UsesReadyTimeout reports whether any service declares `ready_timeout:`. An
+// older daemon ignores the field and keeps its fixed 30s dependency wait, so
+// the CLI checks its capability before handing it such a file instead of
+// letting the declared budget silently not apply.
+func (c *Config) UsesReadyTimeout() bool {
+	for _, s := range c.Services {
+		if strings.TrimSpace(s.ReadyTimeout) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // EnvFilePath is the absolute file a service's `env_file:` names. A relative
 // path is resolved against the directory holding the manifest, which is what
 // lets a worktree reference a shared file outside its own checkout.
@@ -548,6 +585,7 @@ func (c *Config) validate() []string {
 		problems = append(problems, c.prepareInputProblems(s, where)...)
 		problems = append(problems, c.sourceProblems(s, where)...)
 		problems = append(problems, c.healthProblems(s, where)...)
+		problems = append(problems, c.readyTimeoutProblems(s, where)...)
 		problems = append(problems, c.refProblems(s, where)...)
 	}
 
@@ -680,6 +718,23 @@ func (c *Config) sourceProblems(s Service, where string) []string {
 		}
 	}
 	return problems
+}
+
+// readyTimeoutProblems checks the declaration as written. An absent value
+// means DefaultReadyTimeout; anything present must parse as a Go duration and
+// be positive, or a wait could expire before it began.
+func (c *Config) readyTimeoutProblems(s Service, where string) []string {
+	if strings.TrimSpace(s.ReadyTimeout) == "" {
+		return nil
+	}
+	d, err := time.ParseDuration(s.ReadyTimeout)
+	if err != nil {
+		return []string{fmt.Sprintf("%s: ready_timeout %q is not a duration (for example 30s, 2m)", where, s.ReadyTimeout)}
+	}
+	if d <= 0 {
+		return []string{fmt.Sprintf("%s: ready_timeout %q must be positive", where, s.ReadyTimeout)}
+	}
+	return nil
 }
 
 // healthProblems checks the parsed declaration against the service it belongs

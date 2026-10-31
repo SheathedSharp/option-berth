@@ -25,7 +25,9 @@ var (
 	upJSON             bool
 	upAllowOutsideHome bool
 	upWait             bool
-	upWaitTimeout      = 30 * time.Second
+	// upWaitTimeout stays zero unless the caller sets --wait-timeout. Without
+	// that flag each service is judged against its own ready_timeout.
+	upWaitTimeout time.Duration
 )
 
 var upCmd = &cobra.Command{
@@ -57,13 +59,15 @@ func init() {
 	upCmd.Flags().BoolVar(&upWait, "ready", false,
 		"Alias for --wait")
 	upCmd.Flags().DurationVar(&upWaitTimeout, "wait-timeout", upWaitTimeout,
-		"Maximum time to wait for services to become ready (e.g. 30s)")
+		"Maximum total time to wait for services to become ready; shortens but never extends each service's ready_timeout")
 	rootCmd.AddCommand(upCmd)
 }
 
 func upRun(cmd *cobra.Command, args []string) error {
 	// Validate before resolving a project or issuing any mutating RPC.
-	if (upWait || cmd.Flags().Changed("wait-timeout")) && upWaitTimeout <= 0 {
+	// An explicit --wait-timeout is a total ceiling and must be usable; when
+	// it is absent each service's own ready_timeout decides.
+	if cmd.Flags().Changed("wait-timeout") && upWaitTimeout <= 0 {
 		return usageError{fmt.Errorf("--wait-timeout must be positive")}
 	}
 	if cmd.Flags().Changed("wait-timeout") && !upWait {
@@ -91,7 +95,8 @@ func upRun(cmd *cobra.Command, args []string) error {
 	}
 	defer stream.Close()
 
-	return consumeStartWithWait(cmd.Context(), c, stream, upJSON, upWait, upWaitTimeout, params, cfg)
+	return consumeStartWithWait(cmd.Context(), c, stream, upJSON, upWait, upWaitTimeout,
+		cmd.Flags().Changed("wait-timeout"), params, cfg)
 }
 
 // upParams turns the command line into groups.start params: a name when one was
@@ -141,11 +146,11 @@ func projectStartParams(args []string, only []string, allowOutsideHome bool) (rp
 // summary. It exits non-zero when any service failed to start (spec, "Error
 // handling": a partial failure is still a failure).
 func consumeStart(stream *client.Stream, asJSON bool) error {
-	return consumeStartWithWait(context.Background(), nil, stream, asJSON, false, 0, rpc.GroupsStartParams{}, nil)
+	return consumeStartWithWait(context.Background(), nil, stream, asJSON, false, 0, false, rpc.GroupsStartParams{}, nil)
 }
 
 func consumeStartWithWait(ctx context.Context, c *client.Client, stream *client.Stream, asJSON, wait bool,
-	waitTimeout time.Duration, params rpc.GroupsStartParams, cfg *groups.Config) error {
+	waitTimeout time.Duration, waitTimeoutSet bool, params rpc.GroupsStartParams, cfg *groups.Config) error {
 	var chunks []rpc.GroupsStartChunk
 
 	for chunk := range stream.Chunks() {
@@ -178,7 +183,7 @@ func consumeStartWithWait(ctx context.Context, c *client.Client, stream *client.
 		if !asJSON {
 			fmt.Println(display.Dim("waiting for services to be ready…"))
 		}
-		timedOut, err := waitForStartReady(ctx, params, cfg, chunks, &summary, waitTimeout)
+		timedOut, err := waitForStartReady(ctx, params, cfg, chunks, &summary, waitTimeout, waitTimeoutSet)
 		if err != nil {
 			return err
 		}

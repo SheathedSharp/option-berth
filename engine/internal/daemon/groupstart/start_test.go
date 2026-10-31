@@ -381,6 +381,7 @@ services:
   - name: db
     cmd: %s
     port: %d
+    ready_timeout: 45s
 `, cmd, apiPort, cmd, dbPort))
 
 	c := startDaemon(t, ctx, dir, []int{dbPort, apiPort})
@@ -402,6 +403,7 @@ services:
 	if chunks[0].Service != "db" || chunks[1].Service != "api" {
 		t.Fatalf("order = %s, %s; want db then api", chunks[0].Service, chunks[1].Service)
 	}
+	wantReadyTimeout := map[string]string{"db": "45s", "api": "30s"}
 	for _, ch := range chunks {
 		if ch.Error != "" || ch.PID == 0 || ch.LogPath == "" {
 			dumpLogs(t, chunks)
@@ -409,6 +411,9 @@ services:
 		}
 		if !strings.Contains(ch.LogPath, filepath.Join("itest", ch.Service+".log")) {
 			t.Errorf("log path %q is not under the group directory", ch.LogPath)
+		}
+		if ch.ReadyTimeout != wantReadyTimeout[ch.Service] {
+			t.Errorf("%s ready_timeout = %q, want %q", ch.Service, ch.ReadyTimeout, wantReadyTimeout[ch.Service])
 		}
 	}
 	if len(end.Started) != 2 || len(end.Errors) != 0 {
@@ -855,6 +860,9 @@ services:
 	}
 	if chunks[0].State != "skipped" {
 		t.Errorf("state = %q, want skipped", chunks[0].State)
+	}
+	if chunks[0].ReadyTimeout != "30s" {
+		t.Errorf("ready_timeout = %q, want the 30s default on a skipped chunk", chunks[0].ReadyTimeout)
 	}
 	if !strings.Contains(chunks[0].Reason, "already running") {
 		t.Errorf("reason = %q", chunks[0].Reason)
