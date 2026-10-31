@@ -99,6 +99,17 @@ go install github.com/sheathedsharp/option-berth/engine/cmd/jev-attention@latest
 需要 v1.1.2 或更新版本。固定版本用 `@v1.1.2`。二进制进 `$(go env GOPATH)/bin`（或 `GOBIN`），
 该目录需要在 PATH 中。
 
+## Homebrew
+
+自建 tap，不需要等 homebrew-core 收录。它安装引擎 CLI（`oberth` 和 `jev-attention`），
+不是 macOS 客户端。formula 指向已发布的压缩包，校验和写在 tap 里。
+
+```sh
+brew install sheathedsharp/tap/oberth
+```
+
+升级用 `brew upgrade oberth`。`brew install option-berth` 仍然要等 homebrew-core 收录，现在没有。
+
 ## 手动下载发布包
 
 不想执行脚本时，从 [Releases](https://github.com/SheathedSharp/option-berth/releases)
@@ -202,12 +213,12 @@ CLI 调用会启动新版本。Windows 先停止正在运行的 `oberth`，再�
 
 ## 尚未提供的渠道
 
-- **Homebrew**：短命令 `brew install option-berth` 需要 homebrew-core 收录，暂未提供。
+- **Homebrew core**：`brew install option-berth` 需要 homebrew-core 收录，暂未提供。自建 tap 见上面的 Homebrew 一节。
 - **Scoop**：需要单独的 bucket 仓库，本仓库不维护。
 - **winget**：需要向 microsoft/winget-pkgs 提交并过审，每个版本更新。
 - **Chocolatey**：需要社区包仓库与审核，和 winget 类似。
 
-当前可用方式见上面的脚本、手动发布包与 Linux `.deb`/`.rpm`。Windows MSI 暂未提供。
+当前可用方式见上面的脚本、Homebrew tap、手动发布包与 Linux `.deb`/`.rpm`。Windows MSI 暂未提供。
 
 ## 平台边界
 
