@@ -30,6 +30,7 @@ from typing import Any
 from agent_eval_lib import (
     AGENTS,
     COMMON_PROVIDER_ENV,
+    PROCESS_PROBE_COMMANDS,
     REPORT_SCHEMA,
     AgentSpec,
     Probe,
@@ -286,6 +287,7 @@ def execute_run(
         "steps_source": "unavailable",
         "command_steps": 0,
         "oberth_calls": 0,
+        "process_probe_calls": 0,
         "oob": [],
         "oob_count": 0,
         "checks": [],
@@ -331,6 +333,7 @@ def execute_run(
             status = "ok" if completed else "not_completed"
         command_steps = len(actions)
         oberth_calls = sum(1 for action in actions if action.get("cmd") == "oberth")
+        process_probe_calls = sum(1 for action in actions if action.get("cmd") in PROCESS_PROBE_COMMANDS)
         steps = result.steps
         steps_source = result.steps_source
         if steps is None:
@@ -347,6 +350,7 @@ def execute_run(
             "steps_source": steps_source,
             "command_steps": command_steps,
             "oberth_calls": oberth_calls,
+            "process_probe_calls": process_probe_calls,
             "oob": oob,
             "oob_count": len(oob),
             "checks": verdict.checks,
