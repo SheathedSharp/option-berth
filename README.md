@@ -134,6 +134,9 @@ mage buildEngine
 无端口 worker。只需 Python 3 标准库，不需要模型账号、容器或 pip 依赖。
 需要按 worktree 隔离数据时，[Worktree Data](examples/worktree-data/README.md) 演示用
 `${worktree}` 让两个 worktree 各自迁移、各自读写自己的数据库。
+想看它在复杂项目里的样子时，[Stack Workshop](examples/stack-workshop/README.md) 是一份
+十服务整栈：慢启动的 auth、要构建的前端、要迁移的数据库、两个无端口 worker，以及只读的
+`machine:` 依赖；同样只用 Python 3 标准库。
 
 ```sh
 # 已安装 oberth 后，从仓库根目录开始

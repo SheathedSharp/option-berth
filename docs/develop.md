@@ -59,8 +59,8 @@ CI 配置改动还会跑 actionlint 与必需检查一致性检查，清单在 `
 python3 -m unittest discover -s scripts -p '*_test.py'
 python3 brand/build-option-berth.py --check
 python3 scripts/check_skill_contract.py --skill-dir ../option-berth-skill
-python3 scripts/agent_eval.py --list       # 固定 agent 场景库
-python3 scripts/agent_eval.py --dry-run    # 只做 preflight 与夹具，不启动 agent
+python3 scripts/agent_eval.py --list          # core/large 场景与 oberth/native 对照臂
+python3 scripts/agent_eval.py --dry-run --suite large  # 建大项目夹具，不启动 agent
 ```
 
 `check_skill_contract.py` 需要同级的 skill 检出；CI 在 Linux job 里检出

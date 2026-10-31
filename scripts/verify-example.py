@@ -129,11 +129,101 @@ def verify_worktree_data(module, binary: Path, example: Path) -> dict:
             trial.close()
 
 
+def verify_stack(module, binary: Path, example: Path) -> dict:
+    """One full ten-service stack: ordered dependencies, a slow auth, a prepared
+    frontend, a migration and two portless workers. Runs in one disposable
+    worktree so the required Examples job stays bounded."""
+    http = build_opener(ProxyHandler({}))
+
+    def get_json(port: int, path: str, timeout: float = 20) -> dict:
+        deadline = time.monotonic() + timeout
+        last = None
+        while time.monotonic() < deadline:
+            try:
+                with http.open(f"http://127.0.0.1:{port}{path}", timeout=3) as response:
+                    return json.load(response)
+            except OSError as error:
+                last = error
+                time.sleep(.15)
+        raise RuntimeError(f"{path} on {port} did not answer: {last}")
+
+    with tempfile.TemporaryDirectory(prefix="bstack-", dir="/tmp") as tmp:
+        trial = module.Trial(binary, Path(tmp).resolve())
+        try:
+            trial.provision()
+            root = trial.roots[0]
+            for source in example.rglob("*"):
+                if not source.is_file() or source.name == "README.md":
+                    continue
+                target = root / source.relative_to(example)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source, target)
+            manifest = root / "oberth.yaml"
+            data = manifest.read_text()
+            py = sys.executable
+            replacements = {
+                "cmd: python3 -u service.py": "cmd: " + json.dumps(f"{py} -u service.py"),
+                "cmd: python3 -u worker.py": "cmd: " + json.dumps(f"{py} -u worker.py"),
+                "prepare: python3 migrate.py": "prepare: " + json.dumps(f"{py} migrate.py"),
+                "prepare: python3 build.py": "prepare: " + json.dumps(f"{py} build.py"),
+            }
+            for old, new in replacements.items():
+                data = data.replace(old, new)
+            manifest.write_text(data)
+            trial.command(root, "up", "--wait", "--wait-timeout", "25s", "--json")
+
+            state = trial.status(root)
+            services = {item["name"]: item for item in state["worktree"]["services"]}
+            expected = {
+                "auth", "catalog", "api", "gateway", "web", "search", "billing",
+                "ingest", "worker", "notifier",
+            }
+            assert set(services) == expected, sorted(services)
+            assert all(item.get("running") for item in services.values()), services
+            assert all(item.get("health_status", {}).get("status") == "ok"
+                       for name, item in services.items()
+                       if name not in {"worker", "notifier"}), services
+
+            gateway = services["gateway"]["port_actual"]
+            api = services["api"]["port_actual"]
+            web = services["web"]["port_actual"]
+            assert get_json(gateway, "/health")["ok"] is True
+            assert get_json(api, "/version")["version"] == "v1"
+            assert get_json(web, "/version")["version"].startswith("v1-")
+
+            effects = {
+                "worker": root / ".berth" / state["worktree"]["identity"] / "worker.heartbeat",
+                "notifier": root / ".berth" / state["worktree"]["identity"] / "notifier.heartbeat",
+            }
+            for name, path in effects.items():
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline:
+                    if path.exists() and path.read_text().strip():
+                        last = json.loads([line for line in path.read_text().splitlines() if line.strip()][-1])
+                        if last.get("ok"):
+                            break
+                    time.sleep(.2)
+                else:
+                    raise RuntimeError(f"{name} never wrote an ok heartbeat at {path}")
+                assert last["service"] == name, (last, name)
+
+            trial.command(root, "down", "--force", "--json")
+            stopped = trial.status(root)
+            assert not any(item["running"] for item in stopped["worktree"]["services"]), stopped
+            return {"example": "stack-workshop", "services": len(services),
+                    "ordered_dependencies": True, "slow_dependency": True,
+                    "prepared_frontend": True, "migration": True,
+                    "portless_workers": 2, "down_stops_all": "passed"}
+        finally:
+            trial.close()
+
+
 def verify(binary: Path) -> None:
     module = trial_module()
     examples = Path(__file__).resolve().parent.parent / "examples"
     checked = [verify_hello(module, binary.resolve(strict=True), examples / "hello-worktree"),
-               verify_worktree_data(module, binary, examples / "worktree-data")]
+               verify_worktree_data(module, binary, examples / "worktree-data"),
+               verify_stack(module, binary, examples / "stack-workshop")]
     for result in checked:
         print(json.dumps(result))
     print("isolated example processes and temporary files cleaned up")

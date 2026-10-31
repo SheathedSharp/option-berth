@@ -56,11 +56,20 @@ CLI 按 **agent 想做的事**分层，不按内部模块分：事实是「现�
 
 ## 核心闭环
 
-### oberth status [path] [--json] [--no-mark]
+### oberth status [path] [--json] [--no-mark] [--only services] [--brief]
 
 读取一个 worktree 的完整现状：清单声明的服务、运行记录、监听实况、最近退出原因和 git
 摘要。path 省略时使用当前目录。命令只在自己的状态文件里留下「上次看」标记，
 第二次运行会在 changed 中列出事实变化；--no-mark 只读不移动标记。
+
+`--only api,worker` 只保留这些服务及其 `depends_on` 的传递闭包；`ports[]`、`exits[]` 和
+`changed` 里的服务/端口变化一起收窄，`machine:` 与 git 摘要保持不变。名称必须已经声明：
+未知名称返回 `not_found` 并列出可选服务，空名称按参数错误处理。过滤发生在完整快照和
+「上次看」标记写入之后，因此不会把部分状态写成下一次比较的基线。
+
+`--brief` 只保留运行时事实：服务与依赖的状态、声明/实际端口、健康结果、当前退出原因和
+下一步，以及监听端口与 `observation`。它不输出 `git`、`drafts`、`changed`、attention 交接
+或每个服务一份的清单字段；需要这些时用完整 `status`。
 
 服务的 `last_exit.reason` 会区分普通崩溃（`crashed`）和固定端口被其他进程占用
 （`port_occupied`），也会标出命令尚未启动就失败的服务（`start_failed`），因此“启动后退出”、
@@ -120,6 +129,28 @@ JSON 顶层固定包含：
   "drafts": [],
   "exits": [],
   "changed": {"at": "..."}
+}
+~~~
+
+完整文档的 `git.files` 最多 100 条；`files_total` 是截断前的总数，`files_truncated` 为 true
+时表示列表只是一个前缀。完整文件列表用 `oberth git files --json`，它不截断。
+
+`--brief --json` 是独立的精简文档：
+
+~~~json
+{
+  "scope": {"kind": "worktree", "name": "demo", "root": "/work/demo"},
+  "worktree": {"name": "demo", "identity": "wt_0123456789ab", "branch": "main",
+    "services": [
+      {"name": "api", "running": true, "port": 3000, "port_actual": 3001,
+       "health": {"status": "ok", "code": 200}},
+      {"name": "worker", "running": false, "exit_reason": "crashed", "exit_code": 1,
+       "hint": "oberth logs worker --once"}
+    ]},
+  "ports": [3000, 3001],
+  "machine": [{"name": "redis", "port": 6379, "listening": true}],
+  "exits": [{"run_id": "...", "name": "worker", "reason": "crashed", "code": 1,
+             "exited_at": "2026-10-31T09:00:00Z", "hint": "oberth logs worker --once"}]
 }
 ~~~
 
@@ -437,7 +468,7 @@ oberth init [--dry-run] [--json]
   不直接打印信号名；`down` 停无端口 run 时显示服务名（清单里的名字），不是进程表里的解释器名。
   被释放的地址行写作 `released <url>`。`--json` 的 `method` 字段仍是 wire 枚举
   （sigterm/sigkill/docker_stop/none），人读与机器读各用各的词汇表。
-- oberth git [path]：在 status 之外按需读取代码摘要、文件列表或 diff；`oberth git graph [path] --json` 返回完整提交拓扑、parent IDs、refs 与 worktree。`--limit N`（N > 0）仍可截断，并在 JSON 里把 `truncated` 标为 true、`limit` 标为 N；`--limit 0` 与省略该参数一样表示完整历史，此时 `limit` 为 0、`truncated` 为 false。Graph 明确标出 `observed_head`，仍保持只读，不 fetch、不刷新 index。`oberth git diff [path] --commit <hex> [--file <repo-relative-path>] --json` 审查指定 commit 相对第一个 parent 的 patch；root commit 相对空树，merge 不使用 combined diff。commit 只接受 7–64 位十六进制 object ID，响应带 `commit` 与 `base` 字段。
+- oberth git [path]：在 status 之外按需读取代码摘要、文件列表或 diff；`oberth git files --json` 不截断，`files_total` 是完整数量。`oberth git graph [path] --json` 返回完整提交拓扑、parent IDs、refs 与 worktree。`--limit N`（N > 0）仍可截断，并在 JSON 里把 `truncated` 标为 true、`limit` 标为 N；`--limit 0` 与省略该参数一样表示完整历史，此时 `limit` 为 0、`truncated` 为 false。Graph 明确标出 `observed_head`，仍保持只读，不 fetch、不刷新 index。`oberth git diff [path] --commit <hex> [--file <repo-relative-path>] --json` 审查指定 commit 相对第一个 parent 的 patch；root commit 相对空树，merge 不使用 combined diff。commit 只接受 7–64 位十六进制 object ID，响应带 `commit` 与 `base` 字段。
 
 `start` 只运行 `oberth start [flags] -- <command> [args...]` 这一种低级入口；日常项目服务
 使用 `up` / `down`。命令参数里的 `${<name>.port}`、`${<name>.url}` 和 `${worktree}` 会在执行前
