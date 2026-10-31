@@ -1,0 +1,106 @@
+# A ten-service stack with a slow dependency, a prepared frontend, a migrated
+# database, a portless worker and read-only machine dependencies. Every command
+# is explicit: nothing here is inferred from a running process.
+name: stack-workshop
+services:
+  - name: auth
+    cmd: python3 -u service.py
+    port: auto
+    health: /health
+    env:
+      SERVICE_NAME: auth
+      READY_DELAY: "4"
+      VERSION_FILE: variant.txt
+
+  - name: catalog
+    cmd: python3 -u service.py
+    port: auto
+    health: /health
+    env:
+      SERVICE_NAME: catalog
+      VERSION_FILE: variant.txt
+
+  - name: api
+    prepare: python3 migrate.py
+    prepare_inputs: [schema.sql]
+    cmd: python3 -u service.py
+    port: auto
+    health: /health
+    depends_on: [auth, catalog]
+    env:
+      SERVICE_NAME: api
+      DB_PATH: .berth/${worktree}/app.db
+      VERSION_FILE: variant.txt
+      REQUIRE: ${auth.url}/health,${catalog.url}/health
+
+  - name: gateway
+    cmd: python3 -u service.py
+    port: auto
+    health: /health
+    depends_on: [api]
+    env:
+      SERVICE_NAME: gateway
+      VERSION_FILE: variant.txt
+      REQUIRE: ${api.url}/health
+
+  - name: web
+    prepare: python3 build.py
+    prepare_inputs: [src/app.html, variant.txt]
+    cmd: python3 -u service.py
+    port: auto
+    health: /health
+    env:
+      SERVICE_NAME: web
+      DIST: dist
+      VERSION_FILE: dist/version.txt
+
+  - name: search
+    cmd: python3 -u service.py
+    port: auto
+    health: /health
+    depends_on: [catalog]
+    env:
+      SERVICE_NAME: search
+      VERSION_FILE: variant.txt
+      REQUIRE: ${catalog.url}/health
+
+  - name: billing
+    cmd: python3 -u service.py
+    port: auto
+    health: /health
+    env:
+      SERVICE_NAME: billing
+      VERSION_FILE: variant.txt
+
+  - name: ingest
+    cmd: python3 -u service.py
+    port: auto
+    health: /health
+    depends_on: [catalog]
+    env:
+      SERVICE_NAME: ingest
+      VERSION_FILE: variant.txt
+
+  - name: worker
+    cmd: python3 -u worker.py
+    depends_on: [api]
+    env:
+      SERVICE_NAME: worker
+      API_URL: ${api.url}
+      HEARTBEAT: .berth/${worktree}/worker.heartbeat
+
+  - name: notifier
+    cmd: python3 -u worker.py
+    depends_on: [api]
+    env:
+      SERVICE_NAME: notifier
+      API_URL: ${api.url}
+      HEARTBEAT: .berth/${worktree}/notifier.heartbeat
+
+# Read-only references. The stack reads them if they exist; `up` and `down`
+# never start or stop them.
+machine:
+  - name: postgres
+    port: 5432
+  - name: redis
+    port: 6379

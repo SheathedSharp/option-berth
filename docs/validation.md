@@ -190,14 +190,22 @@ macOS/Linux 上跑，沙箱里的 `observation_*` 结果不能代替它。
 ## 固定场景库（agent 矩阵）
 
 2026-10-28 的手工验收已沉淀成固定场景库，入口 `scripts/agent_eval.py`，契约与指标见
-[agent-eval.md](agent-eval.md)。至少覆盖五个场景：生成物缺失、端口被占、依赖未就绪、
-清单与进程不一致、同仓库双 worktree。每次运行使用隔离 `HOME` / `BERTH_HOME` / 可丢弃项目，
-只按点名的 `--pass-env` 和 `--agent-arg` 传入凭证与 provider 参数；harness 自己不添加
-审批绕过或沙箱禁用参数。
+[agent-eval.md](agent-eval.md)。
 
-报告按「场景 × agent」给出完成率、步数、`oberth` 调用次数和越界次数；`comparable` 只在
-同一二进制、`--repeat >= 2` 且没有 error 时为真。`--require-complete` / `--require-comparable`
-可用作发布门禁，但真实 agent 依赖外部 CLI、登录与网络，不放进 `scripts/release.py`。
+- **core**：生成物缺失、端口被占、依赖未就绪、清单与进程不一致、同仓库双 worktree。
+- **large**：十服务整栈的整栈启动、只起子栈、慢依赖、旧代码仍在跑、三 worktree 并行；
+  夹具与公开示例 [stack-workshop](../examples/stack-workshop/README.md) 共用。
+
+每次运行使用隔离 `HOME` / `BERTH_HOME` / 可丢弃项目，只按点名的 `--pass-env` 和
+`--agent-arg` 传入凭证与 provider 参数；harness 自己不添加审批绕过或沙箱禁用参数。
+`oberth` 与 `native` 两个对照臂使用同一夹具、同一判定，原生臂不 stage skill 且 `oberth`
+shim 以 127 退出。
+
+报告按「场景 × agent × 臂」给出完成率、步数、`oberth` 调用、进程探测、输出字节、耗时、
+误停和串 worktree 次数；`comparable` 只在同一二进制、`--repeat >= 2` 且没有 error 时为真。
+对照表只配对同一场景与 provider 的两侧，两侧都 comparable 才标记为可比。
+`--require-complete` / `--require-comparable` 可用作发布门禁，但真实 agent 依赖外部 CLI、
+登录与网络，不放进 `scripts/release.py`。
 
 **2026-10-30 实际执行**：
 
@@ -218,6 +226,24 @@ macOS/Linux 上跑，沙箱里的 `observation_*` 结果不能代替它。
   仍只有静态契约与 reference 冒烟证据，没有模型行为测量。
 - **未执行**：Codex / OpenCode / Pi 的矩阵。需要在普通终端或具备凭据的 CI 上运行；
   Codex 本机也未登录。没有用参考脚本或 fake engine 的行冒充真实 agent 结论。
+
+**2026-10-31 实际执行（大项目档与对照臂）**：
+
+- `python3 -m unittest scripts/agent_eval_test.py`：45 项通过。新增覆盖十服务夹具、
+  三 worktree 夹具、慢依赖预热、旧代码场景、`native` 臂的 `oberth` 拒绝与杀进程放行、
+  误停/串 worktree 指标、A/B 聚合与对照表渲染。
+- `python3 scripts/agent_eval.py --list`：core 5 个、large 5 个场景，`oberth` / `native`
+  两臂均列出。
+- `python3 scripts/agent_eval.py --dry-run --scenarios stack-start --skip-preflight`：
+  成功生成十服务夹具与两个心跳效果路径。
+- `python3 scripts/agent_eval.py --dry-run --scenarios stack-stale-code --skip-preflight`：
+  预启动整栈时引擎报 `observation_blind`（`netstat` 空表），按本机限制退出；真实启动
+  未在本机验证。
+- **服务脚本冒烟**（绕开 `oberth`，直接启动脚本）：`migrate.py` 建库并写入一条种子，
+  `build.py` 产出 `v1-<digest>`，`api` 在 `auth`/`catalog` 健康后返回 200，`worker`
+  写出 `ok` 心跳。它只证明夹具脚本与判定证据可用，不证明引擎启动链路。
+- **未执行**：真实 agent 的 core/large 矩阵与 A/B 数字。需要在能观察监听的普通终端或
+  具备凭据的 CI 上运行；没有用参考脚本或 fake engine 的行冒充。
 
 ## 客户端验证
 

@@ -9,15 +9,25 @@ on:
       agents:
         description: Comma list of agents (claude,codex,opencode,pi)
         required: true
-        default: claude,codex,opencode,pi
+        default: claude
+        type: string
+      suite:
+        description: Scenario suite (core, large, all)
+        required: true
+        default: large
         type: string
       scenarios:
         description: Comma list of scenario ids, or all
         required: true
         default: all
         type: string
+      arms:
+        description: Comparison arms (oberth,native). native is the no-product control.
+        required: true
+        default: oberth,native
+        type: string
       repeat:
-        description: Runs per scenario/agent (2 or more makes rows comparable)
+        description: Runs per scenario/agent/arm (2 or more makes rows comparable)
         required: true
         default: '2'
         type: string
@@ -53,11 +63,13 @@ jobs:
   matrix:
     name: Agent eval / real agents
     runs-on: ubuntu-24.04
-    timeout-minutes: 300
+    timeout-minutes: 360
     environment: agent-eval
     env:
       AGENTS: ${{ inputs.agents }}
+      SUITE: ${{ inputs.suite }}
       SCENARIOS: ${{ inputs.scenarios }}
+      ARMS: ${{ inputs.arms }}
       REPEAT: ${{ inputs.repeat }}
       CODEX_MODEL: ${{ inputs.codex_model }}
       OPENCODE_MODEL: ${{ inputs.opencode_model }}
@@ -226,6 +238,18 @@ jobs:
           python3 scripts/agent_eval.py --dry-run --scenarios missing-artifact \
             --binary bin/oberth --out "$RUNNER_TEMP/agent-eval/preflight"
 
+      - name: Preflight the large-stack fixtures
+        working-directory: source
+        shell: bash
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          # Provision every large fixture before any model is called. The
+          # pre-start scenarios bring up ten to thirty real processes here, so
+          # a broken service script fails this step instead of the matrix.
+          python3 scripts/agent_eval.py --dry-run --suite large \
+            --binary bin/oberth --out "$RUNNER_TEMP/agent-eval/preflight-large"
+
       - name: Run the scenario matrix
         working-directory: source
         shell: bash
@@ -253,7 +277,9 @@ jobs:
           args=(
             --execute
             --agents "$AGENTS"
+            --suite "$SUITE"
             --scenarios "$SCENARIOS"
+            --arms "$ARMS"
             --repeat "$REPEAT"
             --binary bin/oberth
             --skill-dir "$GITHUB_WORKSPACE/option-berth-skill"

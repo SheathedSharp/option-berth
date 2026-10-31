@@ -141,7 +141,10 @@ it writes the install directory and configures PATH. `NO_MODIFY_PATH=1 mage inst
 The repository ships [Hello Worktree](examples/hello-worktree/README.md): one API that only listens on
 localhost and one portless worker. Python 3 standard library only — no model account, container or pip
 dependency. For data that must stay separate per worktree, [Worktree Data](examples/worktree-data/README.md)
-shows `${worktree}` giving each worktree its own migration and database.
+shows `${worktree}` giving each worktree its own migration and database. To see the shape of a
+larger project, [Stack Workshop](examples/stack-workshop/README.md) is a ten-service stack: a
+slow-starting auth, a built frontend, a migrated database, two portless workers and read-only
+`machine:` dependencies — still Python 3 standard library only.
 
 ```sh
 # With oberth installed, from the repository root

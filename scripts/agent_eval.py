@@ -2,9 +2,9 @@
 """Run the fixed agent scenario library and write a comparable matrix.
 
     python3 scripts/agent_eval.py --list
-    python3 scripts/agent_eval.py --dry-run
+    python3 scripts/agent_eval.py --dry-run --suite large
     python3 scripts/agent_eval.py --execute --agents claude,codex,opencode,pi \\
-        --scenarios all --repeat 2
+        --suite all --arms oberth,native --scenarios all --repeat 2
 
 The harness never adds provider approval/sandbox flags and never forwards a
 credential unless its variable name is passed explicitly with --pass-env.
@@ -29,6 +29,9 @@ from typing import Any
 
 from agent_eval_lib import (
     AGENTS,
+    ARM_NATIVE,
+    ARM_OBERTH,
+    ARMS,
     COMMON_PROVIDER_ENV,
     PROCESS_PROBE_COMMANDS,
     REPORT_SCHEMA,
@@ -36,11 +39,14 @@ from agent_eval_lib import (
     Probe,
     ScenarioEnv,
     ScenarioState,
+    compare_arms,
+    cross_worktree_count,
     detect_oob,
     diff_tree,
     free_port,
     git_changes,
     http_get_stable,
+    mis_stop_count,
     port_open,
     read_actions,
     run_agent,
@@ -52,7 +58,14 @@ from agent_eval_lib import (
     utc_stamp,
     write_report,
 )
-from agent_eval_scenarios import SCENARIOS, Scenario
+from agent_eval_scenarios import SCENARIOS as CORE_SCENARIOS, Scenario
+from agent_eval_stacks import LARGE_SCENARIOS
+
+# The core library proves the failure paths on small fixtures. The large library
+# keeps the same shape but puts the task inside a ten-service stack with slow
+# dependencies, a prepared frontend, a migrated database, portless workers and
+# parallel worktrees. They share one harness and one judge vocabulary.
+SCENARIOS: dict[str, Scenario] = {**CORE_SCENARIOS, **LARGE_SCENARIOS}
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -261,6 +274,7 @@ def execute_run(
     spec: AgentSpec,
     repeat: int,
     *,
+    arm: str,
     out_root: Path,
     binary: Path,
     skill: Path | None,
@@ -268,18 +282,19 @@ def execute_run(
     build: dict[str, Any],
     extras: list[str],
 ) -> dict[str, Any]:
-    run_dir = out_root / "artifacts" / f"{scenario.id}__{agent_id}__r{repeat}"
+    run_dir = out_root / "artifacts" / f"{scenario.id}__{agent_id}__{arm}__r{repeat}"
     run_dir.mkdir(parents=True, exist_ok=True)
     env_root = Path(tempfile.mkdtemp(prefix="oberth-eval-", dir=tempfile.gettempdir()))
     env = ScenarioEnv(
         env_root, binary, os.environ.get("PATH", ""),
-        pass_env=args.pass_env, keep=args.keep,
+        pass_env=args.pass_env, keep=args.keep, arm=arm,
     )
     state: ScenarioState | None = None
     started = time.monotonic()
     record: dict[str, Any] = {
         "scenario": scenario.id,
         "agent": agent_id,
+        "arm": arm,
         "repeat": repeat,
         "status": "harness_error",
         "completed": False,
@@ -289,6 +304,9 @@ def execute_run(
         "oberth_calls": 0,
         "oberth_output_bytes": 0,
         "process_probe_calls": 0,
+        "agent_output_bytes": 0,
+        "mis_stops": 0,
+        "cross_worktree_incidents": 0,
         "oob": [],
         "oob_count": 0,
         "checks": [],
@@ -308,11 +326,15 @@ def execute_run(
         record["ports"] = state.ports
         before = {label: snapshot_tree(root) for label, root in state.worktrees.items()}
         if agent_id == "reference":
+            if arm != ARM_OBERTH:
+                raise RuntimeError("the reference script is an oberth-arm self-check")
             result = run_reference(scenario, state, env=env, out_dir=run_dir, timeout=args.timeout)
         else:
-            if skill is None:
-                raise RuntimeError("a skill checkout is required for a real agent; pass --skill-dir")
-            staged_skill = stage_skill(env, agent_id, skill)
+            staged_skill = None
+            if arm == ARM_OBERTH:
+                if skill is None:
+                    raise RuntimeError("a skill checkout is required for a real oberth-arm agent; pass --skill-dir")
+                staged_skill = stage_skill(env, agent_id, skill)
             result = run_agent(
                 spec, cwd=state.primary, prompt=scenario.prompt, skill=staged_skill,
                 env=env, out_dir=run_dir, timeout=args.timeout, extras=extras,
@@ -327,6 +349,7 @@ def execute_run(
         oob = detect_oob(
             diffs=probe.diffs, git_changes=probe.git_changes,
             statuses=probe.statuses, state=state, actions=call_actions, held=env.held,
+            arm=arm,
         )
         completed = verdict.completed and not oob
         if result.timed_out:
@@ -351,6 +374,10 @@ def execute_run(
             else:
                 steps_source = "command-shim (fallback)"
                 record["notes"].append("provider event shape not recognized; steps count external commands")
+        agent_output_bytes = sum(
+            path.stat().st_size for path in (result.stdout_path, result.stderr_path)
+            if path.exists()
+        )
         record.update({
             "status": status,
             "completed": completed,
@@ -360,6 +387,9 @@ def execute_run(
             "oberth_calls": oberth_calls,
             "oberth_output_bytes": oberth_output_bytes,
             "process_probe_calls": process_probe_calls,
+            "agent_output_bytes": agent_output_bytes,
+            "mis_stops": mis_stop_count(oob),
+            "cross_worktree_incidents": cross_worktree_count(oob, state),
             "oob": oob,
             "oob_count": len(oob),
             "checks": verdict.checks,
@@ -430,6 +460,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--execute", action="store_true", help="run agents and write the matrix")
     parser.add_argument("--agents", default="", help="comma list of agents, or all (claude,codex,opencode,pi)")
     parser.add_argument("--scenarios", default="all", help="comma list of scenario ids, or all")
+    parser.add_argument("--suite", default="all", choices=["all", "core", "large"],
+                        help="scenario suite: core failure paths, large ten-service stacks, or all")
+    parser.add_argument("--arms", default=ARM_OBERTH,
+                        help="comma list of comparison arms: oberth,native (default: oberth)")
     parser.add_argument("--repeat", type=int, default=1, help="runs per scenario/agent (>=2 makes a row comparable)")
     parser.add_argument("--binary", default=str(ROOT / "bin" / "oberth"), help="oberth binary under test")
     parser.add_argument("--skill-dir", default=None, help="option-berth-skill checkout")
@@ -444,9 +478,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.list:
-        print("scenarios:")
-        for scenario in SCENARIOS.values():
-            print(f"  {scenario.id:28} {scenario.title}: {scenario.description}")
+        for suite in ("core", "large"):
+            print(f"{suite} scenarios:")
+            for scenario in SCENARIOS.values():
+                if scenario.suite == suite:
+                    print(f"  {scenario.id:28} {scenario.title}: {scenario.description}")
+        print("arms:")
+        for arm in ARMS:
+            print(f"  {arm:28} {'oberth CLI and the pinned skill' if arm == ARM_OBERTH else 'native tools only (control)'}")
         print("agents:")
         for agent_id, spec in AGENTS.items():
             available = "installed" if (not spec.command or shutil.which(spec.command)) else "not found"
@@ -461,7 +500,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.require_comparable and args.repeat < 2:
         parser.error("--require-comparable needs --repeat 2 or more")
 
-    scenario_ids = parse_list(args.scenarios, list(SCENARIOS), "scenario")
+    if args.scenarios.strip() == "all":
+        scenario_ids = [
+            scenario_id for scenario_id, scenario in SCENARIOS.items()
+            if args.suite in ("all", scenario.suite)
+        ]
+    else:
+        scenario_ids = parse_list(args.scenarios, list(SCENARIOS), "scenario")
+        if args.suite != "all":
+            scenario_ids = [sid for sid in scenario_ids if SCENARIOS[sid].suite == args.suite]
+            if not scenario_ids:
+                parser.error(f"no scenario in suite {args.suite!r} among the selected ids")
+    if not scenario_ids:
+        parser.error(f"no scenarios in suite {args.suite!r}")
+
+    arm_ids = parse_list(args.arms, list(ARMS), "arm")
     all_agents = [name for name in AGENTS if name != "reference"]
     if args.agents.strip() == "all":
         agent_ids = all_agents
@@ -471,6 +524,17 @@ def main(argv: list[str] | None = None) -> int:
         agent_ids = []
     if args.execute and not agent_ids:
         parser.error("--execute needs --agents")
+    # The reference script drives oberth itself, so it is an oberth-arm
+    # self-check only; pairing it with the native control would measure the
+    # harness, not a model.
+    agent_arm_pairs = [
+        (agent_id, arm)
+        for agent_id in agent_ids
+        for arm in arm_ids
+        if not (agent_id == "reference" and arm != ARM_OBERTH)
+    ]
+    if args.execute and not agent_arm_pairs:
+        parser.error("the selected agents and arms produce no runs; the reference script is oberth-arm only")
 
     extras: dict[str, list[str]] = {}
     for item in args.agent_arg:
@@ -513,36 +577,40 @@ def main(argv: list[str] | None = None) -> int:
     runs: list[dict[str, Any]] = []
     for scenario_id in scenario_ids:
         scenario = SCENARIOS[scenario_id]
-        for agent_id in agent_ids:
+        for agent_id, arm in agent_arm_pairs:
             spec = AGENTS[agent_id]
             if agent_id != "reference" and not shutil.which(spec.command):
                 for repeat in range(1, args.repeat + 1):
                     runs.append({
-                        "scenario": scenario_id, "agent": agent_id, "repeat": repeat,
+                        "scenario": scenario_id, "agent": agent_id, "arm": arm, "repeat": repeat,
                         "status": "harness_error", "completed": False, "steps": None,
                         "steps_source": "unavailable", "command_steps": 0, "oberth_calls": 0,
-                        "oberth_output_bytes": 0,
-                        "oob": [], "oob_count": 0, "checks": [], "failed_checks": [],
+                        "oberth_output_bytes": 0, "process_probe_calls": 0,
+                        "agent_output_bytes": 0, "mis_stops": 0,
+                        "cross_worktree_incidents": 0, "oob": [], "oob_count": 0,
+                        "checks": [], "failed_checks": [],
                         "notes": [f"{spec.command} not found"], "duration_s": 0.0,
                         "build_sha": build["sha256"], "agent_version": None,
                         "exit_code": None, "timed_out": False, "ports": {}, "artifacts": {},
                     })
                 continue
             for repeat in range(1, args.repeat + 1):
-                print(f"run {scenario_id} / {agent_id} / {repeat}...", file=sys.stderr)
+                print(f"run {scenario_id} / {agent_id} / {arm} / {repeat}...", file=sys.stderr)
                 record = execute_run(
-                    scenario, agent_id, spec, repeat,
+                    scenario, agent_id, spec, repeat, arm=arm,
                     out_root=out_root, binary=binary, skill=skill, args=args,
                     build=build, extras=extras.get(agent_id, []),
                 )
                 runs.append(record)
                 print(
                     f"  {record['status']}: completed={record['completed']} "
-                    f"steps={record['steps']} oob={record['oob_count']}",
+                    f"steps={record['steps']} probes={record['process_probe_calls']} "
+                    f"oob={record['oob_count']}",
                     file=sys.stderr,
                 )
 
     summary = summarize_runs(runs, build["sha256"])
+    comparison = compare_arms(summary)
     comparable = bool(summary) and all(row["comparable"] for row in summary)
     notes: list[str] = []
     if args.repeat < 2:
@@ -551,14 +619,22 @@ def main(argv: list[str] | None = None) -> int:
         notes.append("not every row is comparable; check harness/agent errors and the build sha")
     if any(row["step_source"] and "fallback" in " ".join(row["step_source"]) for row in summary):
         notes.append("at least one row fell back to shim command counts because provider events were not recognized")
-    if skill is None:
-        notes.append("no skill checkout found; real agent rows would not be comparable to a pinned skill")
+    if skill is None and any(arm == ARM_OBERTH for _, arm in agent_arm_pairs):
+        notes.append("no skill checkout found; oberth-arm rows would not be comparable to a pinned skill")
+    if ARM_NATIVE in arm_ids:
+        notes.append(
+            "native rows are the control: no skill and an oberth shim that exits 127; "
+            "compare_arms only pairs rows with the same scenario, provider and binary"
+        )
+    if args.require_complete and ARM_NATIVE in arm_ids:
+        notes.append("require-complete scores the control too; run it with --arms oberth when asserting product completion")
     payload = {
         "schema": REPORT_SCHEMA,
         "generated_at": utc_stamp(),
         "build": build,
         "skill": skill_info,
         "agents": {agent_id: AGENTS[agent_id].version() for agent_id in agent_ids},
+        "arms": arm_ids,
         "passed_env": sorted(args.pass_env),
         "agent_args": extras,
         "repeat": args.repeat,
@@ -567,6 +643,7 @@ def main(argv: list[str] | None = None) -> int:
         "comparable": comparable,
         "runs": runs,
         "summary": summary,
+        "comparison": comparison,
         "notes": notes,
     }
     json_path, md_path = write_report(out_root, payload)
