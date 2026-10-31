@@ -98,6 +98,12 @@ depends on · listeners · code · failed · next · drafts · last look），�
 `worktree.services[]` 还带有 `health_status`（`status`、`code`、`reason`、`observed_at`）。
 `health` 是声明的规范形式：HTTP 路径，或 `tcp:<port>`，或 `command:<命令行>`；`prepare_inputs` 是
 prepare 读取的文件列表，没有声明时为空数组。
+启动进行中时，`worktree.services[].starting` 给出这一次启动尝试的瞬时事实：`phase`
+（`waiting_dependency`、`prepare` 或 `spawning`）、`started_at`、有效的 `ready_timeout`、
+读取时计算的 `elapsed_ms`、本次等待声明的 `waiting_on`，以及上一次 prepare 耗时的
+`last_prepare_ms`（未知时为 null）。它不是一个 run：不进入运行记录、不落盘、不算
+`running`、不影响 `worktree.status`，daemon 重启即消失；依赖等待、prepare 与 spawn 期间可读，
+run 注册后消失。人读输出把该服务显示为 `starting · <phase>`。
 运行中的服务同时带 `manifest_hash` 与 `runtime_spec_hash`；两者不一致时
 `manifest_runtime_mismatch` 为 `true`，表示当前进程来自旧清单，应该用
 `oberth restart --only <service>` 重新应用。hash 只覆盖命令、cwd、端口、health 和依赖等可执行声明，
@@ -292,6 +298,13 @@ cwd 中执行，按 `cmd:` 的规则拆成 argv（不经过 shell），支持 `$
 消息带上依赖的退出码与原因，`hint` 指向依赖日志。依赖仍活着但尚未监听时仍按 `dependency_timeout` 等满预算。
 任何服务启动失败都会以退出码 1 返回，失败服务仍保留其退出原因供 status 查看。
 默认只允许在用户 home 目录内启动服务；明确使用 `--allow-outside-home` 才会放开这个限制。
+
+daemon 宣告 `groups.start.phases` 能力时，`up` 会在请求里带上 `progress: true`，并在服务进入
+`waiting_dependency`、`prepare`、`spawning` 阶段时收到 `state: "starting"` 的进度 chunk：
+`phase`、`started_at`、`ready_timeout`、`elapsed_ms`、`waiting_on`、`last_prepare_ms`。
+这些 chunk 是诊断，不是结果：它们不计入 `services[]`、不参与就绪等待，也不影响汇总。
+人读模式把它们打印成 dim 进度行；`--json` 时进度行只写 stderr，stdout 仍然只有一个最终
+JSON 值，不混入诊断。旧 daemon 不认识 `progress`，旧 CLI 也不会发送，行为与之前一致。
 
 例如一次部分成功的结果仍是一个 JSON 值：
 

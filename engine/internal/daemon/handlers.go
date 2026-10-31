@@ -122,6 +122,10 @@ func handleSnapshot(_ context.Context, req *Request) (any, error) {
 	if err != nil {
 		return nil, scanFailure(err)
 	}
+	// Attach in-flight start attempts on a copy. The cached snapshot stays
+	// attempt-free, so a delta never carries one and a later scan cannot
+	// mistake the attempt for a run.
+	snap.Groups = joinStartAttempts(req.Runtime, snap.Groups)
 	scope := scopeOf(p.Scope)
 	if !scope.Empty() {
 		if scope.Workspace != "" && !scope.HasSelectors() && !req.Runtime.Server().workspaceAvailable(scope.Workspace) {

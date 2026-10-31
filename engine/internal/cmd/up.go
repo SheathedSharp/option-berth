@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,6 +96,10 @@ func upRun(cmd *cobra.Command, args []string) error {
 	if err := requireStartDependencySupport(c, params.IncludeDependencies); err != nil {
 		return err
 	}
+	// Progress is an enhancement: ask for in-flight chunks only from a daemon
+	// that advertises them. An older daemon ignores the field entirely; a CLI
+	// that cannot see the capability simply keeps the old stream.
+	params.Progress = hasCapability(c.Hello(), rpc.CapabilityStartPhases)
 
 	var start rpc.GroupsStartResult
 	stream, err := c.Stream(cmd.Context(), "groups.start", params, &start)
@@ -179,31 +184,8 @@ func consumeStart(stream *client.Stream, asJSON bool) error {
 
 func consumeStartWithWait(ctx context.Context, c *client.Client, stream *client.Stream, asJSON, wait bool,
 	waitTimeout time.Duration, waitTimeoutSet bool, params rpc.GroupsStartParams, cfg *groups.Config) error {
-	var chunks []rpc.GroupsStartChunk
-
-	for chunk := range stream.Chunks() {
-		var c rpc.GroupsStartChunk
-		if err := json.Unmarshal(chunk, &c); err != nil {
-			continue
-		}
-		normalizeStartChunk(&c)
-		if !wait {
-			// This invocation did not wait, so it cannot claim readiness.
-			// Say only what it knows: the daemon reported a started process.
-			markStartChunkUnconfirmed(&c)
-		}
-		chunks = append(chunks, c)
-		if !asJSON && !wait {
-			printStartChunk(c)
-		}
-	}
-
-	end := <-stream.End()
-	if end.Err != nil {
-		return cliError(end.Err)
-	}
-	var summary rpc.GroupsStartEnd
-	if err := end.Decode(&summary); err != nil {
+	chunks, summary, err := collectStartChunks(stream, os.Stderr, wait, asJSON)
+	if err != nil {
 		return err
 	}
 	var cleanupErr error
@@ -271,6 +253,80 @@ func valueOrEmpty(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+// startChunkStream is the bit of client.Stream this command reads. It lets the
+// chunk handling be tested without a live daemon.
+type startChunkStream interface {
+	Chunks() <-chan json.RawMessage
+	End() <-chan client.End
+}
+
+// collectStartChunks drains a groups.start stream into the per-service
+// outcomes and the summary. In-flight `starting` chunks are diagnostic: they
+// go to progress (stderr in production) and are dropped here, so services[],
+// the readiness wait and the summary never treat them as services.
+func collectStartChunks(stream startChunkStream, progress io.Writer, wait, asJSON bool) ([]rpc.GroupsStartChunk, rpc.GroupsStartEnd, error) {
+	var chunks []rpc.GroupsStartChunk
+	for chunk := range stream.Chunks() {
+		var c rpc.GroupsStartChunk
+		if err := json.Unmarshal(chunk, &c); err != nil {
+			continue
+		}
+		if isStartProgressChunk(c) {
+			printStartProgress(progress, c)
+			continue
+		}
+		normalizeStartChunk(&c)
+		if !wait {
+			// This invocation did not wait, so it cannot claim readiness.
+			// Say only what it knows: the daemon reported a started process.
+			markStartChunkUnconfirmed(&c)
+		}
+		chunks = append(chunks, c)
+		if !asJSON && !wait {
+			printStartChunk(c)
+		}
+	}
+	end := <-stream.End()
+	var summary rpc.GroupsStartEnd
+	if end.Err != nil {
+		return chunks, summary, cliError(end.Err)
+	}
+	if err := end.Decode(&summary); err != nil {
+		return chunks, summary, err
+	}
+	return chunks, summary, nil
+}
+
+// isStartProgressChunk reports whether a chunk is an in-flight observation
+// requested with progress, not a service outcome. Such chunks are filtered
+// before readiness waiting, JSON assembly and the summary.
+func isStartProgressChunk(c rpc.GroupsStartChunk) bool {
+	return c.State == "starting"
+}
+
+// printStartProgress writes one dim progress line. It goes to stderr so a
+// `--json` invocation still emits exactly one JSON value on stdout.
+func printStartProgress(w io.Writer, c rpc.GroupsStartChunk) {
+	parts := make([]string, 0, 3)
+	if c.Phase != "" {
+		parts = append(parts, c.Phase)
+	}
+	if len(c.WaitingOn) > 0 {
+		parts = append(parts, "waiting on "+strings.Join(c.WaitingOn, ", "))
+	}
+	if c.ElapsedMS > 0 {
+		parts = append(parts, fmt.Sprintf("%dms", c.ElapsedMS))
+	}
+	if c.LastPrepareMS != nil {
+		parts = append(parts, fmt.Sprintf("last prepare %dms", *c.LastPrepareMS))
+	}
+	line := strings.Join(parts, " · ")
+	if c.ReadyTimeout != "" {
+		line += " (ready_timeout " + c.ReadyTimeout + ")"
+	}
+	fmt.Fprintf(w, "  %s %s  %s\n", display.Dim("…"), display.Bold(c.Service), display.Dim(line))
 }
 
 // normalizeStartChunk keeps a new CLI useful with a daemon that predates the
