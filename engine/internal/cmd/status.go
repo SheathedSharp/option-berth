@@ -19,6 +19,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/servicefacts"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 	"github.com/spf13/cobra"
@@ -258,6 +259,11 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool) (statusDocu
 		Exits:       statusExits(ctx, name),
 		Observation: publicObservation(obs),
 	}
+	// The direct read (no daemon) has no snapshot of its own, and the daemon's
+	// runs.list may be older than the service row. Fill only what is still
+	// missing, from the full scan rather than doc.Ports: the occupier may
+	// belong to another worktree.
+	applyExitPortHolders(doc.Exits, pp)
 	if pending, ok := draft.PendingFor(name); ok {
 		doc.Drafts = append(doc.Drafts, pending)
 	}
@@ -501,6 +507,65 @@ func applyExitHints(records []rpc.RunRecord) {
 	}
 }
 
+// applyExitPortHolders fills port_holder evidence that the read path could not
+// attach. records is modified in place; a holder a daemon already joined from
+// its own snapshot is never overwritten. listening is the full scan, not the
+// worktree's own ports: the occupier may belong to another worktree.
+func applyExitPortHolders(records []rpc.RunRecord, listening []ports.ListeningPort) {
+	var rows []state.Port
+	for _, p := range listening {
+		rows = append(rows, state.FromListening(p))
+	}
+	for i := range records {
+		run := &records[i]
+		if run.PortHolder != nil || run.Reason != "port_occupied" || run.PortHint == nil {
+			continue
+		}
+		run.PortHolder = servicefacts.FindPortHolder(rows, servicefacts.PortHolderQuery{
+			Port: *run.PortHint, Group: run.Group, Service: run.Name, RunID: run.ID,
+		})
+	}
+}
+
+// portHolderNote renders who holds the failed port in the fewest words that
+// still answer "may I stop it?".
+func portHolderNote(holder *state.PortHolder, group string) string {
+	if holder == nil {
+		return ""
+	}
+	who := holder.Command
+	if who == "" {
+		who = "a process"
+	}
+	if holder.PID > 0 {
+		who += fmt.Sprintf(" (pid %d)", holder.PID)
+	}
+	switch holder.Kind {
+	case state.PortHolderRun:
+		where := "another worktree's option-berth service"
+		if holder.Group == group {
+			where = "this worktree's option-berth service"
+		}
+		who += " · " + where
+		if holder.Name != "" {
+			who += " " + holder.Name
+		}
+	case state.PortHolderPrevious:
+		who += " · previous run of this service"
+	case state.PortHolderListener:
+		where := "a listener attributed to another worktree"
+		if holder.Group == group {
+			where = "a listener in this worktree"
+		}
+		who += " · " + where
+		if holder.Group != "" {
+			who += " (" + holder.Group + ")"
+		}
+	default:
+		who += " · ownership unknown"
+	}
+	return who
+}
 func exitTime(run rpc.RunRecord) time.Time {
 	if at, err := time.Parse(time.RFC3339, run.ExitedAt); err == nil {
 		return at
@@ -586,6 +651,9 @@ func printStatusServices(doc statusDocument) {
 		}
 		if s.PID != nil {
 			parts = append(parts, "pid "+fmt.Sprint(*s.PID))
+		}
+		if s.LastExit != nil && s.LastExit.PortHolder != nil && s.LastExit.PortHolder.PID > 0 {
+			parts = append(parts, "port held by pid "+fmt.Sprint(s.LastExit.PortHolder.PID))
 		}
 		statusLine("services", strings.Join(parts, " · "))
 	}
@@ -715,6 +783,11 @@ func printStatusFailure(doc statusDocument) {
 			code = fmt.Sprint(*run.ExitCode)
 		}
 		line := lastNonEmpty(run.LastLines)
+		if run.Reason == "port_occupied" && run.PortHolder != nil {
+			// The holder answers the question the last log line only raises.
+			line = fmt.Sprintf("port %d held by %s", run.PortHolder.Port,
+				portHolderNote(run.PortHolder, doc.Worktree.Name))
+		}
 		if line == "" {
 			statusLine("failed", fmt.Sprintf("%s exit %s · no log lines kept", run.Name, code))
 		} else {

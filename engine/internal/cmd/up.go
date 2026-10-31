@@ -36,7 +36,8 @@ var upCmd = &cobra.Command{
 		"order: a service waits for the ports its dependencies declare before it\n" +
 		"is started, and services that are already running are skipped.\n\n" +
 		"Use --wait (or --ready) when the caller needs listeners and configured\n" +
-		"health checks to be ready before the command returns.\n\n" +
+		"health checks to be ready before the command returns. Without it a\n" +
+		"started service is reported as started, not as ready.\n\n" +
 		"Each service runs detached in its own process group, with stdout and\n" +
 		"stderr in ~/.option-berth/logs/<project>/<service>.log. Stop them all\n" +
 		"again with `oberth down`.\n\n" +
@@ -152,6 +153,12 @@ func consumeStartWithWait(ctx context.Context, c *client.Client, stream *client.
 		if err := json.Unmarshal(chunk, &c); err != nil {
 			continue
 		}
+		normalizeStartChunk(&c)
+		if !wait {
+			// This invocation did not wait, so it cannot claim readiness.
+			// Say only what it knows: the daemon reported a started process.
+			markStartChunkUnconfirmed(&c)
+		}
 		chunks = append(chunks, c)
 		if !asJSON && !wait {
 			printStartChunk(c)
@@ -165,9 +172,6 @@ func consumeStartWithWait(ctx context.Context, c *client.Client, stream *client.
 	var summary rpc.GroupsStartEnd
 	if err := end.Decode(&summary); err != nil {
 		return err
-	}
-	for i := range chunks {
-		normalizeStartChunk(&chunks[i])
 	}
 	var cleanupErr error
 	if wait {
@@ -262,6 +266,17 @@ func normalizeStartChunk(c *rpc.GroupsStartChunk) {
 	}
 }
 
+// markStartChunkUnconfirmed states what this invocation knows: the daemon
+// reported the process started, but this command did not wait for readiness.
+// It is an annotation on the CLI's own output, not a daemon fact.
+func markStartChunkUnconfirmed(c *rpc.GroupsStartChunk) {
+	if c.State != "started" {
+		return
+	}
+	ready := false
+	c.Ready = &ready
+}
+
 func classifyStartFailure(message string) string {
 	lower := strings.ToLower(message)
 	switch {
@@ -298,7 +313,13 @@ func printStartChunk(c rpc.GroupsStartChunk) {
 		if c.Port > 0 {
 			where = display.Underline(groups.URL(c.Port)) + "  " + where
 		}
-		fmt.Printf("  %s %s  %s\n", display.Green("✓"), display.Bold(c.Service), where)
+		marker, suffix := display.Green("✓"), ""
+		if c.Ready == nil || !*c.Ready {
+			// A check mark would claim the process is ready; this invocation
+			// only saw it start.
+			marker, suffix = display.Yellow("~"), "  "+display.Dim("started, readiness not confirmed")
+		}
+		fmt.Printf("  %s %s  %s%s\n", marker, display.Bold(c.Service), where, suffix)
 	}
 }
 

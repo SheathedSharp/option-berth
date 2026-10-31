@@ -446,7 +446,11 @@ func sameExit(a, b *ServiceExit) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	return *a == *b
+	// Compare by value: a fresh PortHolder pointer is allocated on every
+	// publication, and pointer identity would report a change every scan.
+	return a.Code == b.Code && a.Reason == b.Reason && a.At == b.At &&
+		a.RunID == b.RunID && a.PortHint == b.PortHint &&
+		samePortHolder(a.PortHolder, b.PortHolder)
 }
 
 func portByKey(ports []Port, key string) (Port, bool) {
