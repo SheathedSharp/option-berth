@@ -97,6 +97,11 @@ go generate ./...
 `netstat` 返回空表，daemon 拒绝自启），未执行；新增的 `stale-code` 场景同样需要可观察监听的
 普通终端或 CI。
 
+start attempt 的定向测试在 `internal/daemon/groupstart`：成功、prepare 失败、依赖失败、spawn
+失败、取消后的清理，`starting` 快照与 scope 过滤，以及 `progress` 门控；`internal/cmd` 覆盖
+starting chunk 被排除在 `services[]`/汇总之外且进度只写 stderr。它们用真实 daemon 和隔离的
+HOME/`BERTH_HOME`，未在本机跑 race。
+
 ### 监听观察：双栈、探针与沙箱
 
 macOS 把 Go `net.Listen("tcp", ":p")`、Node `listen(p)` 和 Java 默认绑定打印成 `tcp46`。
