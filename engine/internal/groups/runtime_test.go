@@ -83,6 +83,27 @@ func TestServiceRowsCopyHealthAndReuseManifestFingerprint(t *testing.T) {
 	}
 }
 
+// TestExpandedRuntimeCommandIsNotDrift: the daemon expands ${worktree} and
+// ${port} before spawning, so the recorded command legitimately differs from
+// the manifest spelling. A matching spec hash is the verdict; comparing the
+// two strings would call every correctly started Compose service stale.
+func TestExpandedRuntimeCommandIsNotDrift(t *testing.T) {
+	cfg := &Config{Name: "shop", Dir: "/nonexistent/shop",
+		Services: []Service{{Name: "db", Cmd: "docker compose -p app_${worktree} up"}}}
+	hash := ServiceSpecHash(cfg.Services[0])
+	facts := servicefacts.Capture([]servicefacts.RunRecord{{
+		Key: servicefacts.Key{Group: "shop", Service: "db"},
+		Run: state.ServiceRun{
+			ID: "run", PID: 9, SpecHash: hash, Cwd: cfg.Dir,
+			Cmd: "docker compose -p app_wt_0123456789ab up",
+		},
+	}}, nil)
+	row := serviceRowsWithFacts(cfg, "shop", servicefacts.NewResolver(facts, nil))[0]
+	if row.ManifestRuntimeMismatch {
+		t.Fatalf("expanded command reported as drift: %+v", row)
+	}
+}
+
 // TestPreUpgradeSpecHashIsNotDrift pins the upgrade window: a run registered
 // before the hash encoding changed carries the old format, which differs from
 // the current manifest hash by construction. That is not manifest drift — the

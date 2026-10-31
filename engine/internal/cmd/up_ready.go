@@ -285,8 +285,14 @@ func serviceReady(group state.Group, rows []state.Port, name string) (bool, stri
 	}
 	check := groups.ParseHealth(*svc.Health)
 	// A command check answers for itself: it needs no listener of its own, and
-	// its verdict is written straight onto the service row.
+	// its verdict is written straight onto the service row. A service that also
+	// declares a port is not ready until that port exists: Compose publishes
+	// the host port after the container starts, and a caller reading
+	// port_actual right after the wait must not get nil.
 	if check.Kind == groups.HealthCommand {
+		if (svc.Port != nil || svc.PortAuto) && svc.PortActual == nil {
+			return false, "waiting_for_listener"
+		}
 		return healthVerdict(svc, nil)
 	}
 	if svc.PortActual == nil {

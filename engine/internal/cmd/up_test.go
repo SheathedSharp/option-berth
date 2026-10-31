@@ -119,6 +119,22 @@ func TestServiceReadyWaitsForCommandHealthWithoutPort(t *testing.T) {
 	}
 }
 
+func TestServiceReadyWaitsForDeclaredPortAfterCommandHealth(t *testing.T) {
+	health := "command:docker compose exec -T db pg_isready"
+	port := 15432
+	group := state.Group{Services: []state.Service{{
+		Name: "db", Running: true, PortAuto: true, Health: &health,
+		HealthStatus: &state.Health{Status: state.HealthOK},
+	}}}
+	if ready, reason := serviceReady(group, nil, "db"); ready || reason != "waiting_for_listener" {
+		t.Fatalf("serviceReady before the host port = %v, %q, want listener wait", ready, reason)
+	}
+	group.Services[0].PortActual = &port
+	if ready, reason := serviceReady(group, nil, "db"); !ready || reason != "" {
+		t.Fatalf("serviceReady after the host port = %v, %q, want ready", ready, reason)
+	}
+}
+
 func TestServiceReadyWaitsForListenerWithoutHealth(t *testing.T) {
 	port := 18080
 	group := state.Group{Services: []state.Service{{Name: "api", Running: true, Port: &port}}}
