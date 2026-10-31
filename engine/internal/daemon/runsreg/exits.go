@@ -370,6 +370,7 @@ func exitRow(e Exit, ports []state.Port) rpc.RunRecord {
 		Origin:     e.Origin,
 		SpecHash:   e.SpecHash,
 		LogPath:    e.LogPath,
+		LogOffset:  &e.LogOffset,
 		ExitCode:   &code,
 		Reason:     e.Reason,
 		ExitedAt:   e.ExitedAt.UTC().Format(time.RFC3339),

@@ -351,7 +351,7 @@ cwd 中执行，按 `cmd:` 的规则拆成 argv（不经过 shell），支持 `$
 daemon 是账本的唯一写者：它在扫描到清单时记录身份，重启后按已记录的根路径补齐；
 `status` 等读命令和 `down` 都不写账本。
 
-### oberth logs <service|port> [--once] [--lines N] [--follow] [--ip address] [--json]
+### oberth logs <service|port> [--once] [--lines N] [--follow] [--ip address] [--json] [--run current|<id>] [--first-error]
 
 按清单里的服务名查看日志；端口形式继续可用。服务有监听端口时，命令读取该进程的日志；
 没有端口的 worker 读取该次运行的服务日志文件。默认先输出最近几行并持续跟随；--once 只读
@@ -360,6 +360,29 @@ daemon 是账本的唯一写者：它在扫描到清单时记录身份，重启�
 ~~~json
 {"source":"/path/to/service.log","lines":["..."],"truncated":false,"service":"api","run_id":"...","pid":1234,"status":"running"}
 ~~~
+
+`--run current --first-error` 的文档：
+
+~~~json
+{"source":"/path/to/service.log","lines":[],"truncated":false,"service":"api",
+ "run_id":"...","log_offset":1234,"first_error":{"line":42,"text":"ERROR could not connect"}}
+~~~
+
+服务日志文件跨多次运行追加。`--run current` 只读该服务当前这次运行从 `log_offset` 开始的
+部分；也可以给 `status --json` 里的 `run_id` 精确选择一次历史运行。`current` 优先选仍在运行
+的进程，没有时才选最近结束的一次。`--run` 只接受服务名，
+不能和 `--ip` 同时使用；它需要 daemon，daemon 不可用时返回 `daemon_unavailable`。旧运行记录
+没有 offset 时返回 not_found 并提示重启一次服务。文件被轮转、记录的
+offset 已越过文件末尾时，读取回退到文件开头，并在 JSON 里用 `run_start_unknown: true` 说明
+这次的行可能混入更早的运行。
+
+`--first-error` 与 `--run` 一起使用：按固定词表（不区分大小写的 error、exception、fatal、
+panic、traceback）定位该次运行的第一条匹配行，返回行号和原文。它是位置，不是根因判断；
+没有匹配时 JSON 带 `no_first_error: true`。`--first-error` 隐含 `--once`。
+
+`--run` 的 JSON 文档在原有字段上增加 `log_offset`、可选的 `run_start_unknown`，以及
+`first_error`（`line`、`text`）或 `no_first_error`。行号从该次运行的起点算起；回退到文件
+开头时，行号也按回退后的内容算，`run_start_unknown` 是读这份行号的前提。
 
 跟随模式使用 NDJSON，每行带有 `source`、`line` 以及可用的服务和运行元数据；一次性读取还会在
 服务已退出时给出 `exit_code` 和 `reason`。找不到端口返回 not_found；多个绑定未指定 --ip 返回

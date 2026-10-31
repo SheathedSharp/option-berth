@@ -495,7 +495,8 @@ func statusExitsDirect(group string) []rpc.RunRecord {
 			Cmd: row.Cmd, Cwd: row.Cwd, StartedAt: row.StartedAt.UTC().Format(time.RFC3339),
 			Ports: []int{}, Status: "exited", ConfigPath: row.ConfigPath,
 			StartID: row.StartID, Origin: row.Origin, LogPath: row.LogPath,
-			ExitCode: &code, Reason: row.Reason,
+			LogOffset: &row.LogOffset,
+			ExitCode:  &code, Reason: row.Reason,
 			ExitedAt:  row.ExitedAt.UTC().Format(time.RFC3339),
 			LastLines: append([]string{}, row.LastLines...),
 		}

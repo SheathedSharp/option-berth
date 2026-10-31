@@ -635,6 +635,12 @@ type RunRecord struct {
 	SpecHash string `json:"spec_hash,omitempty"`
 	// LogPath is the file a detached run's output goes to.
 	LogPath string `json:"log_path,omitempty"`
+	// LogOffset is where this run's part of LogPath begins. The file is
+	// appended to across runs, so a reader starts here to show one run and not
+	// the generations before it. It is null when an older daemon did not record
+	// the offset: zero is a real value (the file was empty at start), so the
+	// two must not share a spelling.
+	LogOffset *int64 `json:"log_offset,omitempty"`
 	// ExitCode, Reason, ExitedAt and LastLines are filled in for a run that
 	// has ended. Reason is exited (code 0), crashed (any other code),
 	// port_occupied (a declared port was already held), stopped

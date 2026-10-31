@@ -158,14 +158,19 @@ func handleUnregister(ctx context.Context, req *daemon.Request) (any, error) {
 }
 
 func handleList(ctx context.Context, req *daemon.Request) (any, error) {
+	// A run's identity and log path do not come from the listener table. When
+	// observation is blind, the ports are unknown — not the runs — so list what
+	// the registry knows and leave the per-run port list empty. Failing here
+	// used to make `logs --run` depend on a collector it never reads.
 	snap, err := req.Runtime.Scanner.SnapshotAllContext(ctx, scanner.Include{})
+	portsKnown := err == nil
 	if err != nil {
-		return nil, err
+		snap = state.Snapshot{}
 	}
 	records := Default.List()
 	rows := make([]rpc.RunRecord, 0, len(records))
 	for _, rec := range records {
-		rows = append(rows, row(rec, snap))
+		rows = append(rows, row(rec, snap, portsKnown))
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -322,7 +327,11 @@ func CheckCwd(cwd string, allowOutsideHome bool) (string, error) {
 
 // row renders one run for `runs.list`, including the ports it currently holds
 // and whether it is still coming up.
-func row(rec Record, snap state.Snapshot) rpc.RunRecord {
+//
+// portsKnown separates "the run has no port" from "the listener table could not
+// be read". Without it, a blind collector would make every port-hinted run look
+// like it was still starting.
+func row(rec Record, snap state.Snapshot, portsKnown bool) rpc.RunRecord {
 	out := rpc.RunRecord{
 		ID:         rec.ID,
 		PID:        rec.PID,
@@ -338,12 +347,13 @@ func row(rec Record, snap state.Snapshot) rpc.RunRecord {
 		Origin:     rec.Origin,
 		SpecHash:   rec.SpecHash,
 		LogPath:    rec.LogPath,
+		LogOffset:  &rec.LogOffset,
 	}
 	if rec.PortHint > 0 {
 		hint := rec.PortHint
 		out.PortHint = &hint
 		out.URL = serviceURL(hint)
-		if !contains(out.Ports, hint) {
+		if portsKnown && !contains(out.Ports, hint) {
 			// The expected port is not listening yet: the desktop and
 			// `daemon.status` show the run as coming up rather than missing.
 			out.Status = "starting"
