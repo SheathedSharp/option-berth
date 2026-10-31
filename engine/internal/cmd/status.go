@@ -506,7 +506,8 @@ func statusExitsDirect(group string) []rpc.RunRecord {
 			Cmd: row.Cmd, Cwd: row.Cwd, StartedAt: row.StartedAt.UTC().Format(time.RFC3339),
 			Ports: []int{}, Status: "exited", ConfigPath: row.ConfigPath,
 			StartID: row.StartID, Origin: row.Origin, LogPath: row.LogPath,
-			ExitCode: &code, Reason: row.Reason,
+			LogOffset: &row.LogOffset,
+			ExitCode:  &code, Reason: row.Reason,
 			ExitedAt:  row.ExitedAt.UTC().Format(time.RFC3339),
 			LastLines: append([]string{}, row.LastLines...),
 		}
@@ -625,6 +626,7 @@ func printStatus(doc statusDocument) {
 	printStatusHead(doc)
 	printStatusServices(doc)
 	printStatusMachine(doc)
+	printStatusResources(doc)
 	printStatusUnclaimedPorts(doc)
 	printStatusCode(doc)
 	printStatusFailure(doc)
@@ -639,6 +641,7 @@ func printStatusBrief(doc statusDocument) {
 	printStatusHead(doc)
 	printStatusServices(doc)
 	printStatusMachine(doc)
+	printStatusResources(doc)
 	printStatusUnclaimedPorts(doc)
 	printStatusFailure(doc)
 }
@@ -665,7 +668,7 @@ func printStatusHead(doc statusDocument) {
 // is measured once from the widest, in terminal cells rather than runes, so
 // every row's value starts at the same cell.
 var statusLabels = []string{
-	"services", "depends on", "listeners", "code", "failed", "next", "drafts", "last look",
+	"services", "depends on", "listeners", "resources", "code", "failed", "next", "drafts", "last look",
 }
 
 func statusLabelWidth() int {
@@ -701,6 +704,11 @@ func printStatusServices(doc statusDocument) {
 		}
 		if s.PID != nil {
 			parts = append(parts, "pid "+fmt.Sprint(*s.PID))
+		}
+		if s.Stats != nil {
+			parts = append(parts,
+				fmt.Sprintf("cpu %.1f%%", s.Stats.CPUPercent),
+				"mem "+ports.FormatBytes(s.Stats.MemoryRSS))
 		}
 		if s.LastExit != nil && s.LastExit.PortHolder != nil && s.LastExit.PortHolder.PID > 0 {
 			parts = append(parts, "port held by pid "+fmt.Sprint(s.LastExit.PortHolder.PID))
@@ -769,6 +777,26 @@ func printStatusMachine(doc statusDocument) {
 		}
 	}
 	statusLine("depends on", strings.Join(parts, " · "))
+}
+
+// printStatusResources is the worktree-level sum. "Not measured" stays a
+// different word from a measured zero: a running service with no sample is
+// counted, but it is not silently added as 0%.
+func printStatusResources(doc statusDocument) {
+	running := doc.Worktree.RunningServices
+	if running == 0 && doc.Worktree.Resources == nil {
+		return
+	}
+	parts := []string{fmt.Sprintf("%d running", running)}
+	if res := doc.Worktree.Resources; res != nil {
+		parts = append(parts,
+			fmt.Sprintf("cpu %.1f%%", res.CPUPercent),
+			"mem "+ports.FormatBytes(res.MemoryRSS))
+		if res.Services != running {
+			parts = append(parts, fmt.Sprintf("%d sampled", res.Services))
+		}
+	}
+	statusLine("resources", strings.Join(parts, " · "))
 }
 
 // printStatusUnclaimedPorts keeps the normal status path service-centered. A

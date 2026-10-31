@@ -42,6 +42,12 @@ func serviceRowsWithFacts(cfg *Config, group string, resolver servicefacts.Resol
 				health := *listener.Health
 				row.HealthStatus = &health
 			}
+			// A listener's stats describe its process. A portless worker has
+			// no listener; the run row below carries its stats instead.
+			if listener.Stats != nil {
+				stats := *listener.Stats
+				row.Stats = &stats
+			}
 		}
 		if run := result.Run; run != nil {
 			row.RunID = optional(run.ID)
@@ -57,12 +63,20 @@ func serviceRowsWithFacts(cfg *Config, group string, resolver servicefacts.Resol
 			// written by this encoding: a run registered before an upgrade
 			// carries the previous format, which differs by construction and
 			// would flag every surviving service as stale. Length is the
-			// discriminator; cmd and cwd still decide those cases.
+			// discriminator.
+			//
+			// A comparable hash is the whole verdict. Text comparison is the
+			// fallback for records that predate it, not an extra check: the
+			// runtime command is expanded (`${worktree}`, `${port}`), so it
+			// legitimately differs from the manifest's spelling and comparing
+			// the two would call every correctly started Compose service stale.
 			hashComparable := len(run.SpecHash) == SpecHashLen
-			row.ManifestRuntimeMismatch =
-				(hashComparable && run.SpecHash != *row.ManifestHash) ||
-					(run.Cmd != "" && strings.TrimSpace(run.Cmd) != strings.TrimSpace(svc.Cmd)) ||
+			drift := hashComparable && run.SpecHash != *row.ManifestHash
+			if !hashComparable {
+				drift = (run.Cmd != "" && strings.TrimSpace(run.Cmd) != strings.TrimSpace(svc.Cmd)) ||
 					(run.Cwd != "" && filepath.Clean(run.Cwd) != filepath.Clean(cfg.ServiceDir(svc)))
+			}
+			row.ManifestRuntimeMismatch = drift
 		}
 		out[i] = row
 	}

@@ -176,6 +176,15 @@ func (l *Loop) attributeContext(ctx context.Context, pp []ports.ListeningPort) (
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
+	// A portless worker has no listener row to be measured with. Give it the
+	// same sample a listener gets, so service and worktree resource facts do
+	// not silently omit it.
+	FillServiceStatsContext(ctx, groupRows, l.opts.SampleStats)
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	groups.StampServicePortRuns(resolved, groupRows)
+	groups.FinalizeResources(groupRows)
 	return resolved, groupRows, nil
 }
 

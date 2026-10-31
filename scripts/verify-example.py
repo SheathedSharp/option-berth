@@ -7,6 +7,7 @@ import importlib.util
 import json
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -218,12 +219,160 @@ def verify_stack(module, binary: Path, example: Path) -> dict:
             trial.close()
 
 
+def compose_available() -> bool:
+    try:
+        done = subprocess.run(
+            ["docker", "compose", "version"],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return done.returncode == 0
+
+
+def compose(root: Path, project: str, *args: str, timeout: float = 120) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["docker", "compose", "-f", str(root / "docker-compose.yml"), "-p", project, *args],
+        cwd=root, capture_output=True, text=True, timeout=timeout,
+    )
+
+
+def compose_containers(project: str) -> list[str]:
+    # Running only. `down` stops the containers; it does not remove them, so
+    # `docker ps -a` would still list stopped ones and read as "left running".
+    done = subprocess.run(
+        ["docker", "ps", "-q", "--filter", f"label=com.docker.compose.project={project}"],
+        capture_output=True, text=True, timeout=30,
+    )
+    if done.returncode:
+        # An unavailable daemon must not read as "no containers": that would
+        # make the after-down assertion pass without observing anything.
+        raise RuntimeError(f"docker ps for {project}: {done.stderr.strip()}")
+    return [line for line in done.stdout.splitlines() if line.strip()]
+
+
+def run_oberth_json(trial, root: Path, *args: str, timeout: float = 120) -> dict:
+    done = subprocess.run(
+        [str(trial.binary), *args], cwd=root, env=trial.env,
+        capture_output=True, text=True, timeout=timeout,
+    )
+    if done.returncode:
+        raise RuntimeError(
+            f"{args}: exit={done.returncode}\n{done.stderr}\n{done.stdout}"
+        )
+    return json.loads(done.stdout)
+
+
+def verify_compose(module, binary: Path, example: Path) -> dict:
+    """One Compose project per worktree, verified where Docker exists.
+
+    macOS runners have no Docker daemon, so this branch reports a skip instead
+    of pretending the stack ran. The required Examples check still runs both
+    operating systems; the Compose evidence is the Linux row.
+    """
+    if not sys.platform.startswith("linux"):
+        return {"example": "compose-stack", "skipped": "Docker Compose is verified on Linux CI"}
+    if not compose_available():
+        # On the Linux row this is a missing prerequisite, not a platform
+        # difference: fail so the required check cannot pass without evidence.
+        raise RuntimeError("docker compose is not available on the Linux examples runner")
+
+    # Pull first: `up --wait` must not spend its budget on an image download.
+    pulled = subprocess.run(
+        ["docker", "pull", "postgres:16-alpine"],
+        capture_output=True, text=True, timeout=300,
+    )
+    if pulled.returncode:
+        raise RuntimeError("postgres:16-alpine could not be pulled: " + pulled.stderr.strip())
+
+    with tempfile.TemporaryDirectory(prefix="bcompose-", dir="/tmp") as tmp:
+        trial = module.Trial(binary, Path(tmp).resolve())
+        projects: list[str] = []
+        try:
+            trial.provision()
+            for root in trial.roots:
+                for name in ("docker-compose.yml", "oberth.yaml"):
+                    shutil.copyfile(example / name, root / name)
+
+            identities = [trial.status(root)["worktree"]["identity"] for root in trial.roots]
+            projects = ["app_" + identity for identity in identities]
+            for root, project in zip(trial.roots, projects):
+                run_oberth_json(trial, root, "up", "--wait", "--json")
+
+            ports = []
+            for root, project, identity in zip(trial.roots, projects, identities):
+                state = trial.status(root)
+                db = next(item for item in state["worktree"]["services"] if item["name"] == "db")
+                assert db["running"], db
+                deadline = time.monotonic() + 60
+                while time.monotonic() < deadline:
+                    health = db.get("health_status") or {}
+                    if health.get("status") == "ok":
+                        break
+                    time.sleep(.2)
+                    state = trial.status(root)
+                    db = next(item for item in state["worktree"]["services"] if item["name"] == "db")
+                assert (db.get("health_status") or {}).get("status") == "ok", db
+                assert db.get("port_actual"), db
+                ports.append(db["port_actual"])
+
+                mapped = compose(root, project, "port", "db", "5432")
+                if mapped.returncode:
+                    raise RuntimeError(f"compose port: {mapped.stderr}")
+                host_port = int(mapped.stdout.strip().rsplit(":", 1)[1])
+                assert host_port == db["port_actual"], (host_port, db["port_actual"])
+
+                database = f"app_{identity}"
+                query = compose(
+                    root, project, "exec", "-T", "db", "psql", "-U", "app",
+                    "-d", database, "-tAc", "select current_database()",
+                )
+                if query.returncode:
+                    raise RuntimeError(f"psql in {project}: {query.stderr}")
+                assert query.stdout.strip() == database, (query.stdout, database)
+                assert compose_containers(project), f"no containers for {project}"
+
+            assert ports[0] != ports[1], f"worktrees share a Compose host port: {ports}"
+
+            # A normal down is SIGTERM: Compose must stop its own containers and
+            # leave the other worktree's project alone.
+            run_oberth_json(trial, trial.roots[0], "down", "--json")
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline and compose_containers(projects[0]):
+                time.sleep(.2)
+            assert not compose_containers(projects[0]), f"down left {projects[0]} running"
+            assert compose_containers(projects[1]), "down stopped the other worktree's containers"
+            other = trial.status(trial.roots[1])
+            other_db = next(item for item in other["worktree"]["services"] if item["name"] == "db")
+            assert other_db["running"], other_db
+            assert (other_db.get("health_status") or {}).get("status") == "ok", other_db
+
+            run_oberth_json(trial, trial.roots[1], "down", "--json")
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline and compose_containers(projects[1]):
+                time.sleep(.2)
+            assert not compose_containers(projects[1]), f"down left {projects[1]} running"
+
+            return {"example": "compose-stack", "worktrees": 2,
+                    "distinct_ports": True, "distinct_databases": True,
+                    "port_auto_into_compose": True, "pg_isready_health": True,
+                    "single_side_stop": "passed", "down_stops_containers": True}
+        finally:
+            for root, project in zip(trial.roots, projects):
+                try:
+                    compose(root, project, "down", "--volumes", "--remove-orphans")
+                except (OSError, subprocess.SubprocessError):
+                    pass
+            trial.close()
+
+
 def verify(binary: Path) -> None:
     module = trial_module()
     examples = Path(__file__).resolve().parent.parent / "examples"
     checked = [verify_hello(module, binary.resolve(strict=True), examples / "hello-worktree"),
                verify_worktree_data(module, binary, examples / "worktree-data"),
-               verify_stack(module, binary, examples / "stack-workshop")]
+               verify_stack(module, binary, examples / "stack-workshop"),
+               verify_compose(module, binary, examples / "compose-stack")]
     for result in checked:
         print(json.dumps(result))
     print("isolated example processes and temporary files cleaned up")

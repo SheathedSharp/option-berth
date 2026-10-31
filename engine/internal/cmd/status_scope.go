@@ -33,6 +33,10 @@ func scopeStatusDocument(doc *statusDocument, names []string) error {
 		}
 	}
 	doc.Worktree.Services = services
+	// Resources belong to the selected set, not to the whole worktree. Keeping
+	// the pre-filter totals would make `--only api` report a worker it excluded.
+	doc.Worktree.RunningServices = doc.Worktree.RunningServiceCount()
+	doc.Worktree.Resources = doc.Worktree.ResourceTotals()
 
 	ports := make(map[int]bool, len(services)*2)
 	for _, svc := range services {
