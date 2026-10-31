@@ -102,10 +102,13 @@ depends on · listeners · code · failed · next · drafts · last look），�
 prepare 读取的文件列表，没有声明时为空数组。
 启动进行中时，`worktree.services[].starting` 给出这一次启动尝试的瞬时事实：`phase`
 （`waiting_dependency`、`prepare` 或 `spawning`）、`started_at`、有效的 `ready_timeout`、
-读取时计算的 `elapsed_ms`、本次等待声明的 `waiting_on`，以及上一次 prepare 耗时的
+读取时计算的 `elapsed_ms`、本次等待的 `waiting_on`，以及上一次 prepare 耗时的
 `last_prepare_ms`（未知时为 null）。它不是一个 run：不进入运行记录、不落盘、不算
 `running`、不影响 `worktree.status`，daemon 重启即消失；依赖等待、prepare 与 spawn 期间可读，
-run 注册后消失。人读输出把该服务显示为 `starting · <phase>`。
+run 注册后消失。`--brief --json` 也带同一个 `starting`（字段相同，读取时复制，不与完整文档
+共享可变数据），所以精简读者同样能分辨“正在启动”和“从未启动”。人读输出把该服务显示为
+`starting · <phase> · for <已启动时长> · budget <ready_timeout> · waiting on <依赖…>`：
+时长由 `elapsed_ms` 四舍五入到秒，`budget` 直接用发布值，只有 `waiting_on` 非空时才追加最后一段。
 运行中的服务同时带 `manifest_hash` 与 `runtime_spec_hash`；两者不一致时
 `manifest_runtime_mismatch` 为 `true`，表示当前进程来自旧清单，应该用
 `oberth restart --only <service>` 重新应用。hash 只覆盖命令、cwd、端口、health 和依赖等可执行声明，
@@ -155,7 +158,11 @@ JSON 顶层固定包含：
        "code_changed_since_start": true, "code_changed_files": 2,
        "code_hint": "oberth restart --only api"},
       {"name": "worker", "running": false, "exit_reason": "crashed", "exit_code": 1,
-       "hint": "oberth logs worker --once"}
+       "hint": "oberth logs worker --once"},
+      {"name": "cache", "running": false,
+       "starting": {"phase": "waiting_dependency", "started_at": "2026-10-31T10:00:00Z",
+                    "elapsed_ms": 130000, "ready_timeout": "3m0s",
+                    "waiting_on": ["db"]}}
     ]},
   "ports": [3000, 3001],
   "machine": [{"name": "redis", "port": 6379, "listening": true}],
@@ -260,7 +267,10 @@ Git 检出中只纳入已跟踪文件和未被 ignore 的未跟踪文件，`node
 `ready_timeout:` 声明一个服务的就绪预算（Go duration 字符串，例如 `90s`，缺省 30s，必须为正）：
 `depends_on` 的后继服务等待该服务时使用它，`up --wait` 也使用它。`prepare:` 不计入这个预算。
 清单声明了 `ready_timeout:` 时，CLI 要求 daemon 宣告 `groups.start.ready_timeout` 能力；旧 daemon
-会提示 `oberth daemon restart`，而不是静默按 30s 等待。
+会提示 `oberth daemon restart`，而不是静默按 30s 等待。按项目名启动（`oberth up <project>`、
+`oberth restart <project>`）时 CLI 手上没有清单，这项检查改为向 daemon 的 `state.snapshot`
+找到该项目的清单路径后本地解析，再套同一套能力规则；清单找不到或读不出来时不阻断启动，
+由 daemon 报它自己的错误。
 
 `health:` 有三种写法：HTTP 路径（`/healthz`，缺省形式）、TCP 连接（`health: {tcp: 5432}`，端口必须与
 服务声明的端口一致）和命令（`health: {command: pg_isready -h 127.0.0.1 -p ${port}}`）。命令在服务
@@ -306,6 +316,8 @@ cwd 中执行，按 `cmd:` 的规则拆成 argv（不经过 shell），支持 `$
 daemon 宣告 `groups.start.phases` 能力时，`up` 会在请求里带上 `progress: true`，并在服务进入
 `waiting_dependency`、`prepare`、`spawning` 阶段时收到 `state: "starting"` 的进度 chunk：
 `phase`、`started_at`、`ready_timeout`、`elapsed_ms`、`waiting_on`、`last_prepare_ms`。
+`waiting_on` 随依赖轮询收缩：每次观察到某个声明的依赖已经就绪，它就从集合里消失，
+全部就绪时为空；观察本身失败时保留上一次已知集合，不会把“读不到”显示成“没有在等”。
 这些 chunk 是诊断，不是结果：它们不计入 `services[]`、不参与就绪等待，也不影响汇总。
 人读模式把它们打印成 dim 进度行；`--json` 时进度行只写 stderr，stdout 仍然只有一个最终
 JSON 值，不混入诊断。旧 daemon 不认识 `progress`，旧 CLI 也不会发送，行为与之前一致。
