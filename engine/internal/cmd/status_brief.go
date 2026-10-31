@@ -3,6 +3,7 @@ package cmd
 import (
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // briefStatusDocument is the `status --json --brief` shape. It is a separate
@@ -52,6 +53,23 @@ type briefService struct {
 	CodeChangedSinceStart *bool  `json:"code_changed_since_start,omitempty"`
 	CodeChangedFiles      *int   `json:"code_changed_files,omitempty"`
 	CodeHint              string `json:"code_hint,omitempty"`
+	// Starting is the in-flight start attempt, the same transient fact the
+	// full document carries. A brief reader often reads exactly while services
+	// are coming up, and "not running" alone cannot say whether that is a wait
+	// in progress or a service that never started.
+	Starting *briefStarting `json:"starting,omitempty"`
+}
+
+// briefStarting mirrors state.ServiceStarting field for field. The projection
+// copies rather than aliases: the brief document is encoded after the snapshot
+// is released, and it must never share a mutable slice with the full one.
+type briefStarting struct {
+	Phase         string   `json:"phase"`
+	StartedAt     string   `json:"started_at"`
+	ElapsedMS     int64    `json:"elapsed_ms"`
+	ReadyTimeout  string   `json:"ready_timeout"`
+	WaitingOn     []string `json:"waiting_on,omitempty"`
+	LastPrepareMS *int64   `json:"last_prepare_ms,omitempty"`
 }
 
 type briefHealth struct {
@@ -73,6 +91,28 @@ type briefExit struct {
 	Code     *int   `json:"code,omitempty"`
 	ExitedAt string `json:"exited_at,omitempty"`
 	Hint     string `json:"hint,omitempty"`
+}
+
+// briefStartingFrom copies one attempt. WaitingOn and LastPrepareMS are new
+// values, never aliases of the snapshot the attempt came from.
+func briefStartingFrom(in *state.ServiceStarting) *briefStarting {
+	if in == nil {
+		return nil
+	}
+	out := &briefStarting{
+		Phase:        in.Phase,
+		StartedAt:    in.StartedAt,
+		ElapsedMS:    in.ElapsedMS,
+		ReadyTimeout: in.ReadyTimeout,
+	}
+	if len(in.WaitingOn) > 0 {
+		out.WaitingOn = append([]string{}, in.WaitingOn...)
+	}
+	if in.LastPrepareMS != nil {
+		ms := *in.LastPrepareMS
+		out.LastPrepareMS = &ms
+	}
+	return out
 }
 
 func briefStatusFrom(doc statusDocument) briefStatusDocument {
@@ -122,6 +162,9 @@ func briefStatusFrom(doc statusDocument) briefStatusDocument {
 				Code:   svc.HealthStatus.Code,
 				Reason: svc.HealthStatus.Reason,
 			}
+		}
+		if svc.Starting != nil {
+			item.Starting = briefStartingFrom(svc.Starting)
 		}
 		if svc.LastExit != nil {
 			item.ExitReason = svc.LastExit.Reason
