@@ -30,9 +30,17 @@ import (
 // or two — the whole registry is a different command's business.
 const statusExitsShown = 5
 
+// statusFilesShown caps the changed-file rows a full status carries. The list
+// is unbounded in git, and a dirty monorepo can make one status read larger
+// than the rest of the document combined. `oberth git files` still returns all
+// of them, and the document says how many were left out.
+const statusFilesShown = 100
+
 var (
 	statusJSONFlag   bool
 	statusNoMarkFlag bool
+	statusBriefFlag  bool
+	statusOnlyFlag   []string
 )
 
 var statusCmd = &cobra.Command{
@@ -63,6 +71,10 @@ func init() {
 	statusCmd.Flags().BoolVar(&statusJSONFlag, "json", false, "Output as JSON")
 	statusCmd.Flags().BoolVar(&statusNoMarkFlag, "no-mark", false,
 		"Show the change without moving the mark this command compares against")
+	statusCmd.Flags().StringSliceVar(&statusOnlyFlag, "only", nil,
+		"Only these services and their dependencies (comma separated)")
+	statusCmd.Flags().BoolVar(&statusBriefFlag, "brief", false,
+		"Keep only runtime facts: status, ports, health, exit reason and next step")
 	rootCmd.AddCommand(statusCmd)
 }
 
@@ -99,6 +111,16 @@ func statusRun(cmd *cobra.Command, args []string) error {
 	doc, err := buildStatusDocument(cmd.Context(), dir, !statusNoMarkFlag)
 	if err != nil {
 		return err
+	}
+	if err := scopeStatusDocument(&doc, statusOnlyFlag); err != nil {
+		return err
+	}
+	if statusBriefFlag {
+		if statusJSONFlag {
+			return printJSON(briefStatusFrom(doc))
+		}
+		printStatusBrief(doc)
+		return nil
 	}
 	if statusJSONFlag {
 		return printJSON(doc)
@@ -244,10 +266,16 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool) (statusDocu
 	sort.Slice(ports, func(i, j int) bool { return ports[i].Port < ports[j].Port })
 
 	// Git shells out and is the only part that can be slow; a project outside a
-	// repository simply has none of it.
+	// repository simply has none of it. The mark keeps the full file list, while
+	// the printed document gets a bounded prefix: truncating before the ledger
+	// would turn later files into "gone" on the next comparison.
 	var tree *git.Tree
+	var fullTree git.Tree
 	if t, err := git.ReadTree(ctx, root); err == nil {
-		tree = &t
+		fullTree = t
+		capped := t
+		capped.CapFiles(statusFilesShown)
+		tree = &capped
 	}
 
 	doc := statusDocument{
@@ -273,7 +301,7 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool) (statusDocu
 	// just does not move the anchor, which is what an agent wants when it is
 	// looking at the shape rather than at the project.
 	seen := loadStatusSeen()
-	entry := statusSeenFrom(root, *group, ports, gitOrEmpty(tree), time.Now())
+	entry := statusSeenFrom(root, *group, ports, fullTree, time.Now())
 	if mark {
 		before, had := seen.mark(root, entry)
 		if had {
@@ -573,13 +601,6 @@ func exitTime(run rpc.RunRecord) time.Time {
 	return time.Time{}
 }
 
-func gitOrEmpty(tree *git.Tree) git.Tree {
-	if tree == nil {
-		return git.Tree{}
-	}
-	return *tree
-}
-
 // printStatus renders the aggregate for a person.
 //
 // The labels are a fixed-width column, one line each — the same reading posture
@@ -587,6 +608,28 @@ func gitOrEmpty(tree *git.Tree) git.Tree {
 // things are in here" before any of it is read. Nothing is phrased as a
 // verdict: the change line lists what moved, not whether it should have.
 func printStatus(doc statusDocument) {
+	printStatusHead(doc)
+	printStatusServices(doc)
+	printStatusMachine(doc)
+	printStatusUnclaimedPorts(doc)
+	printStatusCode(doc)
+	printStatusFailure(doc)
+	printStatusDraft(doc)
+	printStatusChange(doc)
+}
+
+// printStatusBrief is the human half of --brief: the same service, dependency
+// and failure rows, without the repository summary, drafts or change line. It
+// excludes no fact that explains whether a service is running.
+func printStatusBrief(doc statusDocument) {
+	printStatusHead(doc)
+	printStatusServices(doc)
+	printStatusMachine(doc)
+	printStatusUnclaimedPorts(doc)
+	printStatusFailure(doc)
+}
+
+func printStatusHead(doc statusDocument) {
 	head := display.Bold(doc.Worktree.Name)
 	if doc.Scope.Root != "" {
 		head += "  " + display.Dim(shortPath(doc.Scope.Root))
@@ -602,13 +645,6 @@ func printStatus(doc statusDocument) {
 			statusLine("next", doc.Observation.Hint)
 		}
 	}
-	printStatusServices(doc)
-	printStatusMachine(doc)
-	printStatusUnclaimedPorts(doc)
-	printStatusCode(doc)
-	printStatusFailure(doc)
-	printStatusDraft(doc)
-	printStatusChange(doc)
 }
 
 // statusLabels are every label the reading table can carry. The column width

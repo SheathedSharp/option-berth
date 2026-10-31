@@ -229,7 +229,7 @@ shim 以 127 退出。
 
 **2026-10-31 实际执行（大项目档与对照臂）**：
 
-- `python3 -m unittest scripts/agent_eval_test.py`：44 项通过。新增覆盖十服务夹具、
+- `python3 -m unittest scripts/agent_eval_test.py`：45 项通过。新增覆盖十服务夹具、
   三 worktree 夹具、慢依赖预热、旧代码场景、`native` 臂的 `oberth` 拒绝与杀进程放行、
   误停/串 worktree 指标、A/B 聚合与对照表渲染。
 - `python3 scripts/agent_eval.py --list`：core 5 个、large 5 个场景，`oberth` / `native`

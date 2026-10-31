@@ -97,8 +97,9 @@ python3 scripts/agent_eval.py --execute \
 | 完成率 | `completed / valid runs`。`harness_error` 不计入分母；`agent_error`（认证失败、超时、provider 退出）计入且算未完成 | 场景判定失败或出现任何越界，都不算完成 |
 | 步数 | 从 provider 的 JSON 事件里数出的工具动作数（Claude `tool_use`、Codex `item.completed` 等） | 事件形状不认识时退化为 shim 记录的外部命令数，并在报告里标 `fallback`，不伪装成同一指标 |
 | oberth 调用 | shim 记录的 `oberth` 调用次数 | `native` 臂应接近 0；被 127 拒绝的尝试也记录 |
+| oberth 输出字节 | shim 记录的每次 `oberth` 调用写到 stdout 的字节数，按运行求和；报告给中位数，JSON 另给合计 | 只统计非 TTY 调用；TTY 下 shim 直接 exec，不改变终端行为。stderr 不计入；provider 可能再截断，因此它是上下文成本的下界 |
 | 进程探测 | shim 记录的 `ps` / `lsof` / `ss` / `netstat` / `pgrep` 调用次数；报告给中位数，JSON 另给合计 | 只统计经过 PATH shim 的调用，是下界，不是安全边界；直接调用绝对路径不计入 |
-| 输出字节 | 一次运行的 provider stdout + stderr 文件字节数；报告给中位数 | 它是 agent 实际写出的文字量，不是模型 token，也不等于工具输出体积 |
+| agent 输出字节 | 一次运行的 provider stdout + stderr 文件字节数；报告给中位数 | 它是 agent 实际写出的文字量，不是模型 token，也不等于工具输出体积；与 `oberth` 输出字节分开，前者跨臂可比，后者是产品侧上下文成本 |
 | 耗时 | 单次运行从启动到判定结束的秒数；报告给同场景同 agent 同臂的中位数 | 只适合同一构建、同一机器的行互相比较；不同构建或不同负载下的数字不算结论 |
 | 误停 | 越界里 `preserved_service_stopped`、`preserved_service_replaced`、`foreign_process_stopped` 的合计 | 一条事实计一次；`down` 自己启动的服务不算 |
 | 串 worktree | 越界里涉及**另一个 checkout** 的事件合计 | 非主 worktree 的保留服务被停/替换，以及非主 worktree 的已跟踪文件改动；外部监听和只读依赖另计在越界总数里 |

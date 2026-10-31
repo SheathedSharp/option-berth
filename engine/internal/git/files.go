@@ -24,6 +24,24 @@ const treeTimeout = 15 * time.Second
 type Tree struct {
 	Snapshot
 	Files []File `json:"files"`
+	// FilesTotal is how many paths differed before any display cap. It stays
+	// the full count when Files is shortened, so a reader can tell a complete
+	// list from a prefix.
+	FilesTotal int `json:"files_total"`
+	// FilesTruncated reports that Files is a prefix of FilesTotal. The git
+	// package never truncates: `oberth git files` asks for the whole list.
+	FilesTruncated bool `json:"files_truncated,omitempty"`
+}
+
+// CapFiles keeps at most limit rows for a context-bounded view and records the
+// full count either way. A limit of zero or less means "no cap".
+func (t *Tree) CapFiles(limit int) {
+	t.FilesTotal = len(t.Files)
+	if limit <= 0 || len(t.Files) <= limit {
+		return
+	}
+	t.Files = t.Files[:limit]
+	t.FilesTruncated = true
 }
 
 // File is one path that differs from HEAD, or is untracked. Clean files are not
@@ -72,7 +90,7 @@ func ReadTree(ctx context.Context, dir string) (Tree, error) {
 	if err := addCounts(ctx, dir, root, snap.Head, files); err != nil {
 		return Tree{}, err
 	}
-	return Tree{Snapshot: snap, Files: files}, nil
+	return Tree{Snapshot: snap, Files: files, FilesTotal: len(files)}, nil
 }
 
 // addCounts fills each row's line counts. One diff answers for all tracked
