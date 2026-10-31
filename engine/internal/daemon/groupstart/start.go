@@ -53,6 +53,7 @@ const startupCheckWindow = 100 * time.Millisecond
 func init() {
 	daemon.RegisterHandler("groups.start", handleGroupsStart)
 	daemon.RegisterCapability("groups")
+	daemon.RegisterCapability(rpc.CapabilityStartDependencies)
 	daemon.RegisterCapability(rpc.CapabilityStartPhases)
 }
 
@@ -69,7 +70,10 @@ func handleGroupsStart(ctx context.Context, req *daemon.Request) (any, error) {
 	// published in: `<project>@<worktree>` for a worktree's copy of a
 	// committed file, never the `name:` the copy carries (step 5A.6).
 	group := req.Runtime.Scanner.GroupOf(cfg)
-	plan, err := groups.Plan(cfg, p.Only)
+	plan, err := groups.PlanWith(cfg, groups.PlanOptions{
+		Only:                p.Only,
+		IncludeDependencies: p.IncludeDependencies,
+	})
 	if err != nil {
 		var unknown *groups.UnknownServiceError
 		if errors.As(err, &unknown) {
@@ -129,6 +133,12 @@ func run(ctx context.Context, rt *daemon.Runtime, s *daemon.Stream,
 		if err := ctx.Err(); err != nil {
 			return end, err
 		}
+		if len(step.IncludedBy) > 0 {
+			// The summary describes the plan, not the outcome: a dependency
+			// that fails still came in through a named root.
+			end.Included = append(end.Included, step.Service.Name)
+			sort.Strings(end.Included)
+		}
 		started, err := startOneService(ctx, rt, s, cfg, group, step, book, p, meta, &end)
 		// A run registered here is real even when the call then failed
 		// (cancellation or a failed stream send), so the scan cache still has
@@ -165,7 +175,7 @@ func startOneService(ctx context.Context, rt *daemon.Runtime, s *daemon.Stream,
 	if up {
 		if err := s.Send(rpc.GroupsStartChunk{
 			Service: svc.Name, State: "skipped", Skipped: true, Reason: reason, RunID: runID,
-			ReadyTimeout: svc.EffectiveReadyTimeout().String(),
+			IncludedBy: step.IncludedBy, ReadyTimeout: svc.EffectiveReadyTimeout().String(),
 		}); err != nil {
 			return false, err
 		}
@@ -189,7 +199,7 @@ func startOneService(ctx context.Context, rt *daemon.Runtime, s *daemon.Stream,
 		rt.Scanner.Wake()
 		if err := s.Send(rpc.GroupsStartChunk{
 			Service: svc.Name, State: "failed", Reason: startFailureReason(message),
-			Error: message, Hint: dependencyHint(err),
+			Error: message, Hint: dependencyHint(err), IncludedBy: step.IncludedBy,
 		}); err != nil {
 			return false, err
 		}
@@ -228,7 +238,7 @@ func startOneService(ctx context.Context, rt *daemon.Runtime, s *daemon.Stream,
 				rt.Scanner.Wake()
 				if err := s.Send(rpc.GroupsStartChunk{
 					Service: svc.Name, State: "failed", Reason: "start_failed",
-					Error: "prepare failed: " + message, Hint: hint,
+					Error: "prepare failed: " + message, Hint: hint, IncludedBy: step.IncludedBy,
 				}); err != nil {
 					return false, err
 				}
@@ -277,7 +287,7 @@ func startOneService(ctx context.Context, rt *daemon.Runtime, s *daemon.Stream,
 		rt.Scanner.Wake()
 		if err := s.Send(rpc.GroupsStartChunk{
 			Service: svc.Name, State: "failed", Reason: startFailureReason(message),
-			Error: message, Hint: hint,
+			Error: message, Hint: hint, IncludedBy: step.IncludedBy,
 		}); err != nil {
 			return false, err
 		}
@@ -313,7 +323,7 @@ func startOneService(ctx context.Context, rt *daemon.Runtime, s *daemon.Stream,
 			Service: svc.Name, State: "failed", Reason: exit.Reason,
 			Error: fmt.Sprintf("service exited with code %d (%s)", exit.Code, exit.Reason),
 			Hint:  logsHint(svc.Name), PID: h.PID, RunID: h.ID, LogPath: h.LogPath,
-			PortHolder: holder,
+			PortHolder: holder, IncludedBy: step.IncludedBy,
 		}); err != nil {
 			return true, err
 		}
@@ -322,7 +332,7 @@ func startOneService(ctx context.Context, rt *daemon.Runtime, s *daemon.Stream,
 	end.Started = append(end.Started, svc.Name)
 	if err := s.Send(rpc.GroupsStartChunk{
 		Service: svc.Name, State: "started", PID: h.PID, Port: h.PortHint, RunID: h.ID,
-		LogPath: h.LogPath, LogOffset: h.LogOffset,
+		LogPath: h.LogPath, LogOffset: h.LogOffset, IncludedBy: step.IncludedBy,
 		ReadyTimeout: svc.EffectiveReadyTimeout().String(),
 	}); err != nil {
 		return true, err

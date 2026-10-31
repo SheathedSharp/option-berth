@@ -9,9 +9,27 @@ import (
 // Step is one service in a start plan, with the dependencies `groups.start`
 // has to see ready before it spawns this one. A ported dependency is ready when
 // its listener is present; a no-port dependency is ready when its run is live.
+//
+// IncludedBy names the explicitly selected services whose depends_on closure
+// brought this service into the plan, sorted. It is empty for a service the
+// caller named (or for a plan that names nothing and therefore selects every
+// service), so a non-empty IncludedBy is exactly "this one is here because
+// something you named requires it".
 type Step struct {
-	Service Service
-	Waits   []Service
+	Service    Service
+	Waits      []Service
+	IncludedBy []string
+}
+
+// PlanOptions narrows a start plan. The zero value keeps Plan's original
+// meaning: no filter, so every service is explicit.
+type PlanOptions struct {
+	// Only names the services the caller asked for. Empty means every service.
+	Only []string
+	// IncludeDependencies adds the transitive depends_on closure of Only to the
+	// plan. With it false the named services are kept as named — an older
+	// daemon's behaviour, which `oberth restart --only` still relies on.
+	IncludeDependencies bool
 }
 
 // UnknownServiceError names an `only` entry that is not in the file. It maps
@@ -40,10 +58,21 @@ func (e *UnknownServiceError) Error() string {
 // may already be running, which is the common case, and `groups.start` skips
 // what is up.
 //
+// Plan keeps the original meaning of `only`: it does not pull dependencies in.
+// Use PlanWith to include them.
+//
 // Load has already rejected cycles and unknown depends_on, so the sort here
 // cannot loop; a config built by hand that still contains one degrades to file
 // order rather than dropping services.
 func Plan(cfg *Config, only []string) ([]Step, error) {
+	return PlanWith(cfg, PlanOptions{Only: only})
+}
+
+// PlanWith is Plan with dependency closure. When IncludeDependencies is set,
+// every service reachable through depends_on from an explicitly named service
+// joins the plan; a service both named and reached is still explicit and
+// carries no IncludedBy. Unknown names in Only remain an error.
+func PlanWith(cfg *Config, opts PlanOptions) ([]Step, error) {
 	if cfg == nil {
 		return nil, nil
 	}
@@ -54,9 +83,16 @@ func Plan(cfg *Config, only []string) ([]Step, error) {
 		order[s.Name] = i
 	}
 
-	keep, err := selection(cfg, byName, only)
+	keep, err := selection(cfg, byName, opts.Only)
 	if err != nil {
 		return nil, err
+	}
+	includedBy := map[string]map[string]bool{}
+	if opts.IncludeDependencies {
+		// The names the caller gave are the roots; snapshot them before the
+		// closure adds services to keep, so a reached service never becomes a
+		// root of its own.
+		closure(sortedKeys(keep), byName, keep, includedBy)
 	}
 
 	sorted := topoSort(cfg, order)
@@ -66,7 +102,7 @@ func Plan(cfg *Config, only []string) ([]Step, error) {
 		if !keep[s.Name] {
 			continue
 		}
-		step := Step{Service: s}
+		step := Step{Service: s, IncludedBy: sortedKeys(includedBy[s.Name])}
 		for _, dep := range s.DependsOn {
 			d, ok := byName[dep]
 			if !ok {
@@ -77,6 +113,58 @@ func Plan(cfg *Config, only []string) ([]Step, error) {
 		steps = append(steps, step)
 	}
 	return steps, nil
+}
+
+// closure adds every depends_on descendant of a root to keep and records which
+// explicit roots reached it. A visited set per root makes a hand-built config
+// with a cycle terminate; Load rejects those configs long before this runs.
+func closure(roots []string, byName map[string]Service, keep map[string]bool,
+	includedBy map[string]map[string]bool) {
+	explicit := make(map[string]bool, len(roots))
+	for _, root := range roots {
+		explicit[root] = true
+	}
+	for _, root := range roots {
+		visited := map[string]bool{}
+		var visit func(name string)
+		visit = func(name string) {
+			if visited[name] {
+				return
+			}
+			visited[name] = true
+			svc, ok := byName[name]
+			if !ok {
+				return
+			}
+			for _, dep := range svc.DependsOn {
+				dep = strings.TrimSpace(dep)
+				if _, ok := byName[dep]; !ok {
+					continue
+				}
+				if !explicit[dep] {
+					keep[dep] = true
+					if includedBy[dep] == nil {
+						includedBy[dep] = map[string]bool{}
+					}
+					includedBy[dep][root] = true
+				}
+				visit(dep)
+			}
+		}
+		visit(root)
+	}
+}
+
+func sortedKeys(set map[string]bool) []string {
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(set))
+	for name := range set {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // selection is the set of services the plan keeps.
