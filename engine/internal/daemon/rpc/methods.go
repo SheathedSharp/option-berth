@@ -623,6 +623,12 @@ type RunRecord struct {
 	Reason    string   `json:"reason,omitempty"`
 	ExitedAt  string   `json:"exited_at,omitempty"`
 	LastLines []string `json:"last_lines,omitempty"`
+	// Hint is a deterministic next command for a failed run, pointing at
+	// evidence the run actually left (its log file). Same field name and
+	// meaning as GroupsStartChunk.Hint; empty for routine exits and for
+	// failures that never created a log. Status fills it while rendering
+	// exits; a runs.list that does not compute one leaves it empty.
+	Hint string `json:"hint,omitempty"`
 }
 
 type RunsSpawnParams struct {

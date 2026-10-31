@@ -1619,6 +1619,9 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "hint": {
+          "type": "string"
         }
       },
       "type": "object",
