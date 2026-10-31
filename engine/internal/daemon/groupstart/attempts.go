@@ -88,6 +88,23 @@ func (a *startAttempt) setPhase(phase string, waitingOn []string) {
 	a.waitingOn = append([]string{}, waitingOn...)
 }
 
+// setWaitingOn replaces what the attempt is waiting on without touching its
+// phase. The dependency poll calls it so a reader watching a start sees the set
+// shrink as dependencies come up, instead of the declaration it began with.
+//
+// It only assigns under the lock; the observation that produced the names is
+// the caller's, and no pendingContext read happens with this lock held. An
+// attempt already finished or replaced by a newer one is left alone, so a poll
+// that lands after the attempt ended cannot resurrect stale waiting facts.
+func (a *startAttempt) setWaitingOn(names []string) {
+	startAttempts.Lock()
+	defer startAttempts.Unlock()
+	if startAttempts.byKey[a.key()] != a {
+		return
+	}
+	a.waitingOn = append([]string{}, names...)
+}
+
 // setLastPrepare records the duration of the prepare step that just ran. It is
 // advisory: a reader may show it, but no start decision reads it.
 func (a *startAttempt) setLastPrepare(ms int64) {

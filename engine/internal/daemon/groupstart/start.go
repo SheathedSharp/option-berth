@@ -189,7 +189,7 @@ func startOneService(ctx context.Context, rt *daemon.Runtime, s *daemon.Stream,
 		return false, err
 	}
 
-	if err := waitFor(ctx, rt, group, step.Waits, book, meta.StartID); err != nil {
+	if err := waitForProgress(ctx, rt, group, step.Waits, book, meta.StartID, attempt.setWaitingOn); err != nil {
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
@@ -786,7 +786,24 @@ func alreadyRunning(ctx context.Context, rt *daemon.Runtime, group string, svc g
 // dial is deliberate: the thing that decides a service is up has to be the
 // thing every client reads. A no-port dependency uses the run registry's live
 // record because it has no listener to wait for.
+//
+// It is waitForProgress without a progress callback, kept so existing callers
+// and tests read the same as before.
 func waitFor(ctx context.Context, rt *daemon.Runtime, group string, deps []groups.Service, book *addressBook, startID string) error {
+	return waitForProgress(ctx, rt, group, deps, book, startID, nil)
+}
+
+// waitForProgress is waitFor with an observer: every completed dependency poll
+// reports the dependencies still outstanding, so a start attempt can publish a
+// waiting set that shrinks as things come up instead of the declaration it
+// began with.
+//
+// onPending receives the still-waiting names in declaration order, an empty
+// set once everything is ready, and nothing at all when the observation itself
+// failed. The last case matters: "the fresh dependency state could not be
+// read" is not evidence that nothing is being waited on, and rendering that
+// unknown as an empty set would claim the opposite of what happened.
+func waitForProgress(ctx context.Context, rt *daemon.Runtime, group string, deps []groups.Service, book *addressBook, startID string, onPending func([]string)) error {
 	if len(deps) == 0 {
 		return nil
 	}
@@ -867,6 +884,9 @@ func waitFor(ctx context.Context, rt *daemon.Runtime, group string, deps []group
 		observed := pendingContext(waitCtx, rt, group, deps, want)
 		if waitCtx.Err() != nil {
 			return expired()
+		}
+		if onPending != nil {
+			reportPending(observed, onPending)
 		}
 		if len(observed) == 0 {
 			return nil
@@ -955,6 +975,31 @@ func pending(rt *daemon.Runtime, group string, deps []groups.Service, want map[s
 type pendingDependency struct {
 	Name    string
 	Display string
+}
+
+// reportPending turns one observation into the set a reader should see: the
+// still-waiting dependency names in declaration order, nil when everything is
+// ready, and no call at all when the observation failed.
+//
+// An observation that failed is reported as exactly one entry with no name
+// (there is no service whose log explains an unreadable snapshot). The caller's
+// last known set stays published: "unknown" must not be rendered as "waiting
+// for nothing", which is what an empty set says.
+func reportPending(observed []pendingDependency, onPending func([]string)) {
+	if len(observed) == 0 {
+		onPending(nil)
+		return
+	}
+	names := make([]string, 0, len(observed))
+	for _, pending := range observed {
+		if pending.Name != "" {
+			names = append(names, pending.Name)
+		}
+	}
+	if len(names) == 0 {
+		return
+	}
+	onPending(names)
 }
 
 func pendingContext(ctx context.Context, rt *daemon.Runtime, group string, deps []groups.Service, want map[string]int) []pendingDependency {

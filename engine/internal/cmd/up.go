@@ -93,6 +93,11 @@ func upRun(cmd *cobra.Command, args []string) error {
 	if err := requireConfigSupport(c, cfg); err != nil {
 		return err
 	}
+	// A named project carries no manifest here, so the same capability rules
+	// run against the file the daemon will actually read.
+	if err := requireNamedProjectSupport(cmd.Context(), c, params); err != nil {
+		return err
+	}
 	if err := requireStartDependencySupport(c, params.IncludeDependencies); err != nil {
 		return err
 	}

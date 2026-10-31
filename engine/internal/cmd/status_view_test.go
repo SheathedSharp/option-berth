@@ -195,6 +195,132 @@ func TestBriefStatusKeepsOnlyRuntimeFacts(t *testing.T) {
 	}
 }
 
+// TestBriefStatusCarriesStarting: `--brief --json` is a reader's document for a
+// project that may be mid-start, so the in-flight attempt must be there with
+// the same facts the full document publishes.
+func TestBriefStatusCarriesStarting(t *testing.T) {
+	lastPrepare := int64(800)
+	doc := statusScopeFixture()
+	doc.Worktree.Services[1].Starting = &state.ServiceStarting{
+		Phase:         "waiting_dependency",
+		StartedAt:     "2026-10-31T10:00:00Z",
+		ElapsedMS:     130000,
+		ReadyTimeout:  "3m0s",
+		WaitingOn:     []string{"db", "cache"},
+		LastPrepareMS: &lastPrepare,
+	}
+	doc.Worktree.Services[2].Starting = &state.ServiceStarting{
+		Phase: "prepare", StartedAt: "2026-10-31T10:00:00Z", ElapsedMS: 10, ReadyTimeout: "30s",
+	}
+
+	brief := briefStatusFrom(doc)
+	raw, err := json.Marshal(brief)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, present := range []string{
+		`"starting":{"phase":"waiting_dependency","started_at":"2026-10-31T10:00:00Z",` +
+			`"elapsed_ms":130000,"ready_timeout":"3m0s","waiting_on":["db","cache"],"last_prepare_ms":800}`,
+		// A service with nothing outstanding still publishes an empty array and
+		// a null duration, the same shape the full document uses.
+		`"starting":{"phase":"prepare","started_at":"2026-10-31T10:00:00Z",` +
+			`"elapsed_ms":10,"ready_timeout":"30s","waiting_on":[],"last_prepare_ms":null}`,
+	} {
+		if !strings.Contains(text, present) {
+			t.Errorf("brief document is missing %s: %s", present, text)
+		}
+	}
+	// Only the services actually starting carry the field.
+	if got := strings.Count(text, `"starting":`); got != 2 {
+		t.Fatalf("starting appears %d times, want only the two in-flight services: %s", got, text)
+	}
+
+	// The projection copies: mutating the snapshot must not change the brief.
+	doc.Worktree.Services[1].Starting.WaitingOn[0] = "mutated"
+	if got := brief.Worktree.Services[1].Starting.WaitingOn[0]; got != "db" {
+		t.Fatalf("waiting_on aliased the snapshot slice: %q", got)
+	}
+	*doc.Worktree.Services[1].Starting.LastPrepareMS = 1
+	if got := *brief.Worktree.Services[1].Starting.LastPrepareMS; got != 800 {
+		t.Fatalf("last_prepare_ms aliased the snapshot pointer: %d", got)
+	}
+	// And the other way: the brief's own slice is not the snapshot's.
+	brief.Worktree.Services[1].Starting.WaitingOn[1] = "changed"
+	if got := doc.Worktree.Services[1].Starting.WaitingOn[1]; got != "cache" {
+		t.Fatalf("the brief slice aliased the snapshot: %q", got)
+	}
+}
+
+// TestServiceStateTextStartingLine: the human row says how long the attempt has
+// been going and what budget it is measured against, and names the waiting
+// dependencies only when there are some.
+func TestServiceStateTextStartingLine(t *testing.T) {
+	noColor(t)
+	for _, tc := range []struct {
+		name     string
+		starting state.ServiceStarting
+		want     string
+	}{
+		{
+			name: "prepare with elapsed and waiting",
+			starting: state.ServiceStarting{
+				Phase: "prepare", ElapsedMS: 130000, ReadyTimeout: "3m0s",
+				WaitingOn: []string{"db", "cache"},
+			},
+			want: "starting · prepare · for 2m10s · budget 3m0s · waiting on db, cache",
+		},
+		{
+			name:     "no waiting_on",
+			starting: state.ServiceStarting{Phase: "spawning", ElapsedMS: 600, ReadyTimeout: "30s"},
+			want:     "starting · spawning · for 1s · budget 30s",
+		},
+		{
+			name:     "sub-second attempt does not read as zero",
+			starting: state.ServiceStarting{Phase: "spawning", ElapsedMS: 200, ReadyTimeout: "30s"},
+			want:     "starting · spawning · for <1s · budget 30s",
+		},
+		{
+			name:     "no elapsed",
+			starting: state.ServiceStarting{Phase: "waiting_dependency", ReadyTimeout: "30s", WaitingOn: []string{"db"}},
+			want:     "starting · waiting_dependency · budget 30s · waiting on db",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := state.Service{Name: "api", Starting: &tc.starting}
+			if got := serviceStateText(svc); got != tc.want {
+				t.Fatalf("state text = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// A service that is not starting keeps the old word: the extra parts are the
+// attempt's, not the column's.
+func TestServiceStateTextUnchangedWithoutStarting(t *testing.T) {
+	noColor(t)
+	if got := serviceStateText(state.Service{Name: "api"}); got != "not running" {
+		t.Fatalf("idle text = %q, want not running", got)
+	}
+	if got := serviceStateText(state.Service{Name: "api", Running: true}); got != "running" {
+		t.Fatalf("running text = %q, want running", got)
+	}
+}
+
+func TestBriefStatusHumanShowsStartingLine(t *testing.T) {
+	noColor(t)
+	doc := statusScopeFixture()
+	doc.Worktree.Services[1].Starting = &state.ServiceStarting{
+		Phase: "waiting_dependency", ElapsedMS: 130000, ReadyTimeout: "3m0s",
+		WaitingOn: []string{"db", "cache"},
+	}
+	out := captureStdout(t, func() { printStatusBrief(doc) })
+	want := "starting · waiting_dependency · for 2m10s · budget 3m0s · waiting on db, cache"
+	if !strings.Contains(out, want) {
+		t.Fatalf("brief output is missing %q:\n%s", want, out)
+	}
+}
+
 func TestStatusShowsServiceAndWorktreeResources(t *testing.T) {
 	doc := statusScopeFixture()
 	doc.Worktree.Services[0].Stats = &state.Stats{CPUPercent: 12.5, MemoryRSS: 2 << 20}
@@ -246,6 +372,14 @@ func TestBriefStatusHumanSkipsRepositoryAndChange(t *testing.T) {
 			t.Errorf("brief output is missing %q:\n%s", present, out)
 		}
 	}
+}
+
+// noColor pins plain text so a state word can be compared exactly.
+func noColor(t *testing.T) {
+	t.Helper()
+	restore := display.NoColor
+	display.NoColor = true
+	t.Cleanup(func() { display.NoColor = restore })
 }
 
 func intsText(values []int) string {

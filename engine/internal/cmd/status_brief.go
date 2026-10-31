@@ -47,9 +47,6 @@ type briefService struct {
 	ExitCode   *int        `json:"exit_code,omitempty"`
 	Hint       string      `json:"hint,omitempty"`
 	Stats      *briefStats `json:"stats,omitempty"`
-	// Starting is the transient start attempt. It is a fact about why a
-	// service is not ready yet, so the brief view must not hide it.
-	Starting *state.ServiceStarting `json:"starting,omitempty"`
 	// ManifestRuntimeMismatch is kept because it is the one cheap signal that
 	// the process is running an older manifest; it is omitted when false.
 	ManifestRuntimeMismatch bool `json:"manifest_runtime_mismatch,omitempty"`
@@ -59,6 +56,28 @@ type briefService struct {
 	CodeChangedSinceStart *bool  `json:"code_changed_since_start,omitempty"`
 	CodeChangedFiles      *int   `json:"code_changed_files,omitempty"`
 	CodeHint              string `json:"code_hint,omitempty"`
+	// Starting is the in-flight start attempt, the same transient fact the
+	// full document carries. A brief reader often reads exactly while services
+	// are coming up, and "not running" alone cannot say whether that is a wait
+	// in progress or a service that never started. Its own copy, so the brief
+	// document never aliases the snapshot's slice.
+	Starting *briefStarting `json:"starting,omitempty"`
+}
+
+// briefStarting mirrors state.ServiceStarting field for field. The projection
+// copies rather than aliases: the brief document is encoded after the snapshot
+// is released, and it must never share a mutable slice with the full one.
+type briefStarting struct {
+	Phase        string `json:"phase"`
+	StartedAt    string `json:"started_at"`
+	ElapsedMS    int64  `json:"elapsed_ms"`
+	ReadyTimeout string `json:"ready_timeout"`
+	// WaitingOn is always an array and LastPrepareMS is null when unknown: the
+	// same wire shape state.ServiceStarting publishes. A brief reader must not
+	// have to distinguish "absent" from "empty" on a field the full document
+	// always carries.
+	WaitingOn     []string `json:"waiting_on"`
+	LastPrepareMS *int64   `json:"last_prepare_ms"`
 }
 
 type briefHealth struct {
@@ -87,6 +106,28 @@ type briefExit struct {
 	Code     *int   `json:"code,omitempty"`
 	ExitedAt string `json:"exited_at,omitempty"`
 	Hint     string `json:"hint,omitempty"`
+}
+
+// briefStartingFrom copies one attempt. WaitingOn and LastPrepareMS are new
+// values, never aliases of the snapshot the attempt came from.
+func briefStartingFrom(in *state.ServiceStarting) *briefStarting {
+	if in == nil {
+		return nil
+	}
+	out := &briefStarting{
+		Phase:        in.Phase,
+		StartedAt:    in.StartedAt,
+		ElapsedMS:    in.ElapsedMS,
+		ReadyTimeout: in.ReadyTimeout,
+		// Always a fresh non-nil slice, so an empty set encodes as [] exactly as
+		// the full document does and never aliases the snapshot's slice.
+		WaitingOn: append([]string{}, in.WaitingOn...),
+	}
+	if in.LastPrepareMS != nil {
+		ms := *in.LastPrepareMS
+		out.LastPrepareMS = &ms
+	}
+	return out
 }
 
 func briefStatusFrom(doc statusDocument) briefStatusDocument {
@@ -128,7 +169,6 @@ func briefStatusFrom(doc statusDocument) briefStatusDocument {
 			ManifestRuntimeMismatch: svc.ManifestRuntimeMismatch,
 			CodeChangedSinceStart:   svc.CodeChangedSinceStart,
 			CodeChangedFiles:        svc.CodeChangedFiles,
-			Starting:                svc.Starting,
 		}
 		if svc.CodeHint != nil {
 			item.CodeHint = *svc.CodeHint
@@ -145,6 +185,9 @@ func briefStatusFrom(doc statusDocument) briefStatusDocument {
 				CPUPercent: svc.Stats.CPUPercent,
 				MemoryRSS:  svc.Stats.MemoryRSS,
 			}
+		}
+		if svc.Starting != nil {
+			item.Starting = briefStartingFrom(svc.Starting)
 		}
 		if svc.LastExit != nil {
 			item.ExitReason = svc.LastExit.Reason

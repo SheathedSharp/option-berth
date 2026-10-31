@@ -59,6 +59,11 @@ func restartRun(cmd *cobra.Command, args []string) error {
 	if err := requireConfigSupport(c, cfg); err != nil {
 		return err
 	}
+	// Restarting triggers the same dependency waits a named start does, so a
+	// named project gets the same manifest capability check.
+	if err := requireNamedProjectSupport(cmd.Context(), c, startParams); err != nil {
+		return err
+	}
 
 	var snapshot []ports.ListeningPort
 	if !restartJSON {

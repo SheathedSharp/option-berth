@@ -739,7 +739,7 @@ func serviceStateText(s state.Service) string {
 	if s.Starting != nil {
 		// A start is in flight. This is a transient fact from the start call,
 		// not a run: name the phase instead of claiming the service is idle.
-		return display.Dim("starting · " + s.Starting.Phase)
+		return display.Dim(startingStateText(*s.Starting))
 	}
 	if s.LastExit == nil {
 		return display.Dim("not running")
@@ -758,6 +758,37 @@ func serviceStateText(s state.Service) string {
 	default:
 		return display.Red(fmt.Sprintf("failed · %s · exit %d", s.LastExit.Reason, s.LastExit.Code))
 	}
+}
+
+// startingStateText is the words for an in-flight start attempt:
+// `starting · prepare · for 2m10s · budget 3m0s · waiting on db, cache`.
+//
+// The extra parts answer the question a reader actually has — "is this stuck?"
+// — which needs how long the attempt has been going and the budget it is being
+// measured against. elapsed_ms is read-time arithmetic, so it is rounded to
+// whole seconds here rather than printed to the millisecond; ready_timeout is
+// the daemon's published value and is not reformatted.
+func startingStateText(starting state.ServiceStarting) string {
+	parts := []string{"starting"}
+	if starting.Phase != "" {
+		parts = append(parts, starting.Phase)
+	}
+	if starting.ElapsedMS > 0 {
+		elapsed := (time.Duration(starting.ElapsedMS) * time.Millisecond).Round(time.Second)
+		if elapsed < time.Second {
+			// Rounding must not turn a fresh attempt into "for 0s".
+			parts = append(parts, "for <1s")
+		} else {
+			parts = append(parts, "for "+elapsed.String())
+		}
+	}
+	if starting.ReadyTimeout != "" {
+		parts = append(parts, "budget "+starting.ReadyTimeout)
+	}
+	if len(starting.WaitingOn) > 0 {
+		parts = append(parts, "waiting on "+strings.Join(starting.WaitingOn, ", "))
+	}
+	return strings.Join(parts, " · ")
 }
 
 // printStatusMachine is the same declaration-versus-reality pair as the ports

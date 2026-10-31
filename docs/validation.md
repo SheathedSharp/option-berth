@@ -113,9 +113,17 @@ restart 都是生产代码。同一隔离 `HOME`/`BERTH_HOME`/git 项目下实�
 普通终端或 CI。新增的 `stale-code` 场景同样尚未用真实 agent 执行。
 
 start attempt 的定向测试在 `internal/daemon/groupstart`：成功、prepare 失败、依赖失败、spawn
-失败、取消后的清理，`starting` 快照与 scope 过滤，以及 `progress` 门控；`internal/cmd` 覆盖
-starting chunk 被排除在 `services[]`/汇总之外且进度只写 stderr。它们用真实 daemon 和隔离的
-HOME/`BERTH_HOME`，未在本机跑 race。
+失败、取消后的清理，`starting` 快照与 scope 过滤，以及 `progress` 门控；
+`TestWaitingOnShrinksAsDependenciesBecomeReady` 用 fake scanner 让两个依赖先后就绪，断言
+attempt 的 `waitingOn` 从 `[db, cache]` 收缩到 `[cache]` 再到空，`TestWaitingOnKeepsLastSetWhenObservationIsUnknown`
+断言观察读不到时保留上一次集合；`TestSetWaitingOnDoesNotTouchPhaseOrOutliveTheAttempt` 断言它
+不改 phase、也不复活已结束的 attempt。`internal/cmd` 覆盖 starting chunk 被排除在
+`services[]`/汇总之外且进度只写 stderr，`TestBriefStatusCarriesStarting` 覆盖
+`status --json --brief` 的 `starting` 投影与切片/指针复制语义，`TestServiceStateTextStartingLine`
+覆盖人读 starting 行在有/无 `waiting_on`、有/无 `elapsed` 三种形态下的文本，
+`TestConfigPathForProject` 覆盖按项目名启动时清单路径的匹配规则（主 checkout 优先、
+linked worktree、Repo 匹配、无 ConfigPath），能力规则本身仍由 `TestConfigSupport...` 覆盖。
+用真实 daemon 的用例都跑在隔离的 HOME/`BERTH_HOME` 下，未在本机跑 race。
 
 ### 监听观察：双栈、探针与沙箱
 

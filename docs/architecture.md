@@ -24,10 +24,11 @@
 group + service 为键在内存中记录 `start_id`、phase、`started_at`、有效 `ready_timeout`、
 `waiting_on` 与上一次 `last_prepare_ms`；`state.snapshot` / `groups.list` 只在返回副本上把它
 join 成服务行的 `starting`，缓存快照保持无 attempt，因此 delta 不会发布它，后面的读取也不会把
-它误认成运行。所有权和清理都在 start 调用内：already-running 不创建 attempt；依赖失败、
-prepare 失败、spawn 失败、取消和成功（run 注册后）都会删除它。它不进入运行登记表、不落盘、
-不算 running、不影响 group status，daemon 重启即消失。prepare 耗时 sidecar 只服务诊断读取，
-永远不决定是否运行或跳过。
+它误认成运行。`waiting_on` 由依赖轮询更新：每次观察后写回仍未就绪的依赖名，观察失败时保持
+上一次的集合，因此它始终是瞬时诊断事实而不是 run，也不是任何决策的输入。所有权和清理都在
+start 调用内：already-running 不创建 attempt；依赖失败、prepare 失败、spawn 失败、取消和
+成功（run 注册后）都会删除它。它不进入运行登记表、不落盘、不算 running、不影响 group status，
+daemon 重启即消失。prepare 耗时 sidecar 只服务诊断读取，永远不决定是否运行或跳过。
 
 核心由本项目需求驱动；数据库、系统调用和平台适配可以保留成熟实现，不为“自研比例”重写。
 来源与版权独立保留在 [engine/UPSTREAM.md](../engine/UPSTREAM.md) 和许可证中。
