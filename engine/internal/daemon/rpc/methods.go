@@ -347,13 +347,19 @@ type GroupsStartChunk struct {
 	// State is the machine-readable outcome for this service: started,
 	// skipped, failed, or ready_timeout (when the CLI was asked to wait).
 	State string `json:"state,omitempty" jsonschema:"enum=started,enum=skipped,enum=failed,enum=ready_timeout"`
-	PID   int    `json:"pid,omitempty"`
+	// Ready is the CLI's readiness annotation, not a daemon fact: true only
+	// when this invocation waited and confirmed the service. false on a
+	// started service means "started, readiness not confirmed". Absent for
+	// skipped and failed services.
+	Ready *bool `json:"ready,omitempty"`
+	PID   int   `json:"pid,omitempty"`
 	// Port is the port a started service was told to bind: its fixed port,
 	// or the one assigned for `port: auto`. Zero for a service with none.
 	Port    int    `json:"port,omitempty"`
 	LogPath string `json:"log_path,omitempty"`
-	// RunID is the run a started service became: the id `runs.list` reports
-	// it under and `ports.kill {run_id}` stops it by.
+	// RunID is the run this chunk is about: the run a started service became,
+	// or the live run a skipped chunk matched. It is empty when the daemon
+	// cannot name one (an unmanaged listener, or an older daemon).
 	RunID string `json:"run_id,omitempty"`
 	// LogOffset is how long log_path already was before this start. The file
 	// is appended to across runs, so a client following it starts here to

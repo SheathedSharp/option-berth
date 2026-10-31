@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -174,6 +175,82 @@ func TestExitAfterTreatsAPreWaitExitAsStale(t *testing.T) {
 	}
 	if !exitAfter(&state.ServiceExit{Reason: "crashed"}, waitStarted) {
 		t.Fatal("an unparseable timestamp is treated as fresh, not as stale")
+	}
+}
+
+// TestSelectedExitMatchesTheRunNotTheClock: the run id is the evidence. An
+// exit recorded before the RPC returned still belongs to this start when it
+// names the selected run; an exit from another run is stale even inside the
+// same second.
+func TestSelectedExitMatchesTheRunNotTheClock(t *testing.T) {
+	since := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	before := &state.ServiceExit{Code: 1, Reason: "crashed", RunID: "run-1",
+		At: since.Add(-time.Hour).Format(time.RFC3339)}
+	if !selectedExit(before, "run-1", since) {
+		t.Fatal("an exit of the selected run must count even if it predates the wait")
+	}
+	other := &state.ServiceExit{Code: 1, Reason: "crashed", RunID: "run-0",
+		At: since.Add(time.Second).Format(time.RFC3339)}
+	if selectedExit(other, "run-1", since) {
+		t.Fatal("an exit from another run must not be read as this run's death")
+	}
+	legacy := &state.ServiceExit{Code: 1, Reason: "crashed", At: since.Format(time.RFC3339)}
+	if !selectedExit(legacy, "run-1", since) {
+		t.Fatal("a record without a run id must fall back to the timestamp")
+	}
+	if !selectedExit(legacy, "", since) {
+		t.Fatal("an exit in the wait-start second must count")
+	}
+	if selectedExit(nil, "run-1", since) {
+		t.Fatal("a nil exit is no evidence")
+	}
+}
+
+func TestStartChunkReadinessAnnotation(t *testing.T) {
+	chunks := []rpc.GroupsStartChunk{{Service: "api", State: "started"}}
+	markStartChunkUnconfirmed(&chunks[0])
+	if chunks[0].Ready == nil || *chunks[0].Ready {
+		t.Fatalf("ready = %v, want an explicit false", chunks[0].Ready)
+	}
+	data, err := json.Marshal(chunks[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"ready":false`) {
+		t.Fatalf("json = %s, want ready:false", data)
+	}
+
+	markStartChunkReady(chunks, "api")
+	if chunks[0].Ready == nil || !*chunks[0].Ready {
+		t.Fatalf("ready = %v, want true after a confirmed wait", chunks[0].Ready)
+	}
+
+	summary := rpc.GroupsStartEnd{}
+	markStartChunkFailed(chunks, &summary, "api", "crashed", "boom")
+	if chunks[0].Ready != nil {
+		t.Fatalf("ready = %v, want none on a failed chunk", chunks[0].Ready)
+	}
+}
+
+func TestPrintStartChunkShowsUnconfirmedReadiness(t *testing.T) {
+	unconfirmed := false
+	out := captureStdout(t, func() {
+		printStartChunk(rpc.GroupsStartChunk{
+			Service: "api", State: "started", Ready: &unconfirmed, PID: 1, LogPath: "/tmp/api.log",
+		})
+	})
+	if !strings.Contains(out, "readiness not confirmed") || strings.Contains(out, "✓") {
+		t.Fatalf("unconfirmed output = %q, want a distinct marker and wording", out)
+	}
+
+	confirmed := true
+	out = captureStdout(t, func() {
+		printStartChunk(rpc.GroupsStartChunk{
+			Service: "api", State: "started", Ready: &confirmed, PID: 1, LogPath: "/tmp/api.log",
+		})
+	})
+	if !strings.Contains(out, "✓") || strings.Contains(out, "readiness not confirmed") {
+		t.Fatalf("confirmed output = %q, want the ready check", out)
 	}
 }
 

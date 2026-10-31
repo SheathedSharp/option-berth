@@ -3,7 +3,7 @@
   "$id": "https://github.com/sheathedsharp/option-berth/engine/docs/schema/protocol.schema.json",
   "title": "option-berth daemon protocol",
   "description": "Generated from the Go types in internal/state and internal/daemon/rpc. Do not edit by hand; run `go generate ./...`.",
-  "protocol_version": "1.2.0",
+  "protocol_version": "1.3.0",
   "definitions": {
     "ChangeGroup": {
       "properties": {
@@ -917,6 +917,9 @@
             "failed",
             "ready_timeout"
           ]
+        },
+        "ready": {
+          "type": "boolean"
         },
         "pid": {
           "type": "integer"

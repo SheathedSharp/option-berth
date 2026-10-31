@@ -24,24 +24,21 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	pending := make(map[string]bool)
-	owned := make(map[string]bool)
+	selected := make(map[string]startSelection)
 	for _, chunk := range chunks {
 		if chunk.Error == "" {
-			pending[chunk.Service] = true
-			owned[chunk.Service] = !chunk.Skipped
+			selected[chunk.Service] = startSelection{runID: chunk.RunID, owned: !chunk.Skipped}
 		}
 	}
-	if len(pending) == 0 {
+	if len(selected) == 0 {
 		return nil, nil
 	}
 
 	deadline := time.Now().Add(timeout)
-	// A retained last_exit can predate this start: the run `down` stopped a
-	// minute ago still says "stopped, exit 143", and reading it as a fresh
-	// failure would flunk every `up --wait` that follows a `down`. Only an
-	// exit recorded after the wait began counts as this run's death.
-	waitStarted := time.Now().UTC()
+	// ServiceExit.At is second-precision. Comparing it with a nanosecond wait
+	// start would read an exit from this same second as older than the wait.
+	// Align the timestamp fallback to the second; the run id stays primary.
+	fallbackSince := time.Now().UTC().Truncate(time.Second)
 	for {
 		pp, gg, obs, err := groupRowsObserved(ctx)
 		if obs != nil && obs.State != string(ports.ObservationObservable) {
@@ -60,28 +57,41 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 				portsNow = append(portsNow, state.FromListening(row))
 			}
 			if group := startTargetGroup(params, cfg, gg); group != nil {
-				for name := range pending {
+				for name, selection := range selected {
 					if ready, _ := serviceReady(*group, portsNow, name); ready {
-						delete(pending, name)
-					} else if svc := serviceIn(*group, name); svc != nil &&
-						exitAfter(svc.LastExit, waitStarted) {
+						markStartChunkReady(chunks, name)
+						delete(selected, name)
+						continue
+					}
+					svc := serviceIn(*group, name)
+					if svc == nil {
+						continue
+					}
+					// An older daemon may omit run_id on a skipped chunk. Once
+					// the service is live, the group row names its run, and
+					// that run is what this wait is about.
+					if selection.runID == "" && svc.Running && svc.RunID != nil {
+						selection.runID = *svc.RunID
+						selected[name] = selection
+					}
+					if selectedExit(svc.LastExit, selection.runID, fallbackSince) {
 						markStartChunkFailed(chunks, summary, name, svc.LastExit.Reason,
 							fmt.Sprintf("service exited with code %d (%s)", svc.LastExit.Code, svc.LastExit.Reason))
-						delete(pending, name)
+						delete(selected, name)
 					}
 				}
 			}
 		}
-		if len(pending) == 0 {
+		if len(selected) == 0 {
 			return nil, nil
 		}
 		if time.Now().After(deadline) {
-			timedOut := make([]string, 0, len(pending))
-			for name := range pending {
+			timedOut := make([]string, 0, len(selected))
+			for name, selection := range selected {
 				markStartChunkFailed(chunks, summary, name, "ready_timeout",
 					fmt.Sprintf("timed out after %s waiting for %s to be ready", timeout, name))
 				// Waiting on an existing run does not authorize stopping it.
-				if owned[name] {
+				if selection.owned {
 					timedOut = append(timedOut, name)
 				}
 			}
@@ -96,11 +106,34 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 	}
 }
 
-// exitAfter reports whether an exit record belongs to a run that died after
-// the moment a readiness wait began. A nil exit is no evidence either way;
-// an unparseable timestamp is treated as fresh, because a malformed record
-// the daemon did produce is more likely this run's than a stale one's.
-func exitAfter(exit *state.ServiceExit, waitStarted time.Time) bool {
+// startSelection is what this invocation selected for one service: the run it
+// is about, and whether this invocation started that run (and may therefore
+// stop it on timeout).
+type startSelection struct {
+	runID string
+	owned bool
+}
+
+// selectedExit reports whether exit is the death of the run this start
+// selected. A run id is authoritative: an exit from another run is stale even
+// if its timestamp falls inside this wait. Only when no run id is available
+// does the timestamp decide, and then the wait-start second is included.
+func selectedExit(exit *state.ServiceExit, runID string, since time.Time) bool {
+	if exit == nil {
+		return false
+	}
+	if runID != "" && exit.RunID != "" {
+		return exit.RunID == runID
+	}
+	return exitAfter(exit, since)
+}
+
+// exitAfter is the fallback for a legacy record that names no run. It reports
+// whether the exit was recorded at or after the wait began. A nil exit is no
+// evidence either way; an unparseable timestamp is treated as fresh, because a
+// malformed record the daemon did produce is more likely this run's than a
+// stale one's. since must be truncated to the timestamp's own precision.
+func exitAfter(exit *state.ServiceExit, since time.Time) bool {
 	if exit == nil {
 		return false
 	}
@@ -108,7 +141,7 @@ func exitAfter(exit *state.ServiceExit, waitStarted time.Time) bool {
 	if err != nil {
 		return true
 	}
-	return !at.Before(waitStarted)
+	return !at.Before(since)
 }
 
 func startTargetGroup(params rpc.GroupsStartParams, cfg *groups.Config, all []state.Group) *state.Group {
@@ -194,6 +227,19 @@ func healthVerdict(svc *state.Service, rows []state.Port) (bool, string) {
 	return false, "waiting_for_health"
 }
 
+// markStartChunkReady records that this invocation waited and confirmed the
+// service. A skipped service keeps its state; only readiness is annotated.
+func markStartChunkReady(chunks []rpc.GroupsStartChunk, name string) {
+	for i := range chunks {
+		if chunks[i].Service != name || chunks[i].Error != "" {
+			continue
+		}
+		ready := true
+		chunks[i].Ready = &ready
+		return
+	}
+}
+
 func markStartChunkFailed(chunks []rpc.GroupsStartChunk, summary *rpc.GroupsStartEnd,
 	name, reason, message string) {
 	for i := range chunks {
@@ -204,6 +250,7 @@ func markStartChunkFailed(chunks []rpc.GroupsStartChunk, summary *rpc.GroupsStar
 		chunks[i].Reason = reason
 		chunks[i].Error = message
 		chunks[i].Hint = logsHint(name)
+		chunks[i].Ready = nil
 		if !containsString(summary.Errors, name) {
 			summary.Errors = append(summary.Errors, name)
 		}

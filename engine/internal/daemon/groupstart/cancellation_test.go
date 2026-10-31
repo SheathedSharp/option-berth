@@ -23,7 +23,7 @@ func TestDependencyWaitCancellationReachesScanner(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- waitFor(ctx, &daemon.Runtime{Scanner: l}, "test", []groups.Service{{Name: "api", Port: 18000}}, &addressBook{ports: map[string]int{"api": 18000}})
+		done <- waitFor(ctx, &daemon.Runtime{Scanner: l}, "test", []groups.Service{{Name: "api", Port: 18000}}, &addressBook{ports: map[string]int{"api": 18000}}, "")
 	}()
 	select {
 	case <-entered:
@@ -51,7 +51,7 @@ func TestDependencyWaitPreCancelledSkipsCollector(t *testing.T) {
 	}})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := waitFor(ctx, &daemon.Runtime{Scanner: l}, "test", []groups.Service{{Name: "api", Port: 18000}}, &addressBook{ports: map[string]int{"api": 18000}})
+	err := waitFor(ctx, &daemon.Runtime{Scanner: l}, "test", []groups.Service{{Name: "api", Port: 18000}}, &addressBook{ports: map[string]int{"api": 18000}}, "")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("wait result=%v", err)
 	}
@@ -66,7 +66,7 @@ func TestDependencyWaitCancelledLegacyReadCannotReportReady(t *testing.T) {
 		cancel()
 		return []ports.ListeningPort{{Port: 18000, PID: 123}}, nil
 	}})
-	err := waitFor(ctx, &daemon.Runtime{Scanner: l}, "test", []groups.Service{{Name: "api", Port: 18000}}, &addressBook{ports: map[string]int{"api": 18000}})
+	err := waitFor(ctx, &daemon.Runtime{Scanner: l}, "test", []groups.Service{{Name: "api", Port: 18000}}, &addressBook{ports: map[string]int{"api": 18000}}, "")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled dependency reported ready: %v", err)
 	}

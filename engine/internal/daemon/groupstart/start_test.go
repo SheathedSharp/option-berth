@@ -314,7 +314,7 @@ func TestPendingWaitsForNoPortDependencyRun(t *testing.T) {
 	dep := groups.Service{Name: "worker", Cmd: "worker"}
 	want := map[string]int{"worker": 0}
 
-	if err := waitFor(context.Background(), rt, "demo", []groups.Service{dep}, &addressBook{}); err != nil {
+	if err := waitFor(context.Background(), rt, "demo", []groups.Service{dep}, &addressBook{}, ""); err != nil {
 		t.Fatalf("waitFor with a live no-port run = %v, want nil", err)
 	}
 	if got := pending(rt, "demo", []groups.Service{dep}, want); len(got) != 0 {
@@ -811,9 +811,10 @@ services:
 	}
 }
 
-// TestReportsADependencyTimeout: a dependency that never comes up is reported
-// against the service that waited, and everything independent still starts.
-func TestReportsADependencyTimeout(t *testing.T) {
+// TestReportsADependencyThatExits: a dependency this same start attempted and
+// that has already exited can never become ready, so its dependent fails at
+// once with the dependency's exit as evidence instead of waiting out the budget.
+func TestReportsADependencyThatExits(t *testing.T) {
 	skipOnWindows(t)
 	dir := isolate(t)
 
@@ -828,7 +829,7 @@ func TestReportsADependencyTimeout(t *testing.T) {
 	path := writeConfig(t, dir, fmt.Sprintf(`name: itest
 services:
   - name: ghost
-    cmd: %s --never-listens
+    cmd: %s
     port: %d
   - name: api
     cmd: %s
@@ -851,18 +852,72 @@ services:
 	}
 	api := chunks[1]
 	if api.Service != "api" || api.Error == "" {
-		t.Fatalf("api chunk = %+v, want a timeout error", api)
+		t.Fatalf("api chunk = %+v, want a dependency failure", api)
 	}
-	if !strings.Contains(api.Error, "timed out") || !strings.Contains(api.Error, "ghost") {
-		t.Errorf("error = %q, want it to name the dependency", api.Error)
+	if !strings.Contains(api.Error, "dependency ghost exited with code") {
+		t.Errorf("error = %q, want the dependency's exit", api.Error)
 	}
 	// The hint names the dependency: `api` never ran, so its own log does not
 	// exist and reading it would explain nothing.
-	if api.State != "failed" || api.Reason != "dependency_timeout" || api.Hint != "oberth logs ghost --once" {
-		t.Errorf("api chunk = %+v, want structured timeout and the dependency's log hint", api)
+	if api.State != "failed" || api.Reason != "dependency_not_ready" || api.Hint != "oberth logs ghost --once" {
+		t.Errorf("api chunk = %+v, want dependency_not_ready and the dependency's log hint", api)
 	}
 	if len(end.Errors) != 2 || !containsString(end.Errors, "ghost") || !containsString(end.Errors, "api") {
 		t.Fatalf("end = %+v", end)
+	}
+}
+
+// TestReportsATrueDependencyTimeout: a dependency that stays alive but never
+// listens still gets the full budget, and the dependent reports a timeout.
+func TestReportsATrueDependencyTimeout(t *testing.T) {
+	skipOnWindows(t)
+	dir := isolate(t)
+
+	old := dependencyTimeout
+	dependencyTimeout = 600 * time.Millisecond
+	t.Cleanup(func() { dependencyTimeout = old })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	deadPort, livePort := freePort(t), freePort(t)
+	path := writeConfig(t, dir, fmt.Sprintf(`name: itest
+services:
+  - name: ghost
+    cmd: sleep 30
+    port: %d
+  - name: api
+    cmd: %s
+    port: %d
+    depends_on: [ghost]
+`, deadPort, serviceCmd(t), livePort))
+
+	c := startDaemon(t, ctx, dir, []int{deadPort, livePort})
+
+	var start rpc.GroupsStartResult
+	s, err := c.Stream(ctx, "groups.start", rpc.GroupsStartParams{ConfigPath: &path}, &start)
+	if err != nil {
+		t.Fatalf("groups.start: %v", err)
+	}
+	defer s.Close()
+
+	chunks, end := collect(t, s)
+	t.Cleanup(func() { killPIDs(chunks) })
+	if len(chunks) != 2 {
+		t.Fatalf("chunks = %+v", chunks)
+	}
+	api := chunks[1]
+	if !strings.Contains(api.Error, "timed out") || !strings.Contains(api.Error, "ghost") {
+		t.Errorf("error = %q, want it to name the dependency", api.Error)
+	}
+	if api.State != "failed" || api.Reason != "dependency_timeout" || api.Hint != "oberth logs ghost --once" {
+		t.Errorf("api chunk = %+v, want structured timeout and the dependency's log hint", api)
+	}
+	if !containsString(end.Started, "ghost") || containsString(end.Errors, "ghost") {
+		t.Fatalf("end = %+v, want the live dependency started, not failed", end)
+	}
+	if len(end.Errors) != 1 || !containsString(end.Errors, "api") {
+		t.Fatalf("end = %+v, want only the dependent reported failed", end)
 	}
 }
 
@@ -913,8 +968,23 @@ services:
 				t.Fatalf("end = %+v, want the failed worker reported too", end)
 			}
 			api := chunks[len(chunks)-1]
-			if api.Service != "api" || api.PID != 0 || !strings.Contains(api.Error, "worker to be running (no port)") {
-				t.Fatalf("api = %+v, want a no-port dependency timeout before spawn", api)
+			if api.Service != "api" || api.PID != 0 {
+				t.Fatalf("api = %+v, want no process spawned", api)
+			}
+			if len(tc.only) == 0 {
+				// The worker was attempted in this start and exited, so the
+				// wait fails on its exit instead of the budget.
+				if api.Reason != "dependency_not_ready" ||
+					!strings.Contains(api.Error, "dependency worker exited with code") {
+					t.Fatalf("api = %+v, want the worker's exit as the dependency failure", api)
+				}
+			} else {
+				// The worker was never attempted, so there is no exit to
+				// explain; the wait runs out as before.
+				if api.Reason != "dependency_timeout" ||
+					!strings.Contains(api.Error, "worker to be running (no port)") {
+					t.Fatalf("api = %+v, want a no-port dependency timeout before spawn", api)
+				}
 			}
 			// The hint names the dependency that never became ready. `api`
 			// itself never ran, so its own log does not exist — including in
