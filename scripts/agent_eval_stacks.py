@@ -396,7 +396,9 @@ def _judge_subset(probe: Probe, state: ScenarioState) -> Verdict:
         port = state.ports_by_label["main"][name]
         checks.append(check(f"main {name} stayed stopped", not port_open(port), f"port={port} is listening"))
     for name in WORKER_SERVICES:
-        path = state.effects[f"main_{name}"]
+        # Single-worktree effects are keyed by the service name; the prefixed
+        # form belongs to the multi-worktree fixtures.
+        path = state.effects[name]
         checks.append(check(f"main {name} stayed stopped", not path.exists(), f"{path.name} exists"))
     return Verdict(
         completed=all(item["ok"] for item in checks),
