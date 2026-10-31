@@ -48,6 +48,7 @@ func init() {
 			rt.Logger.Info("imported runs.json into the run registry", "runs", n)
 		}
 		rt.SetRuns(Default)
+		Default.PruneCodeSnapshots()
 		startPruning(rt)
 		return nil
 	})

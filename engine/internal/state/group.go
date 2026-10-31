@@ -11,7 +11,11 @@ type Service struct {
 	PrepareInputs []string `json:"prepare_inputs"`
 	Cmd           string   `json:"cmd"`
 	Cwd           string   `json:"cwd"`
-	Port          *int     `json:"port" jsonschema:"nullable"`
+	// Sources is the manifest's `sources:` list, relative to Cwd. Null means
+	// the service directory (the default); an empty array means the code check
+	// is explicitly disabled.
+	Sources []string `json:"sources" jsonschema:"nullable"`
+	Port    *int     `json:"port" jsonschema:"nullable"`
 	// PortAuto is `port: auto`: the daemon assigns the port when it starts the
 	// service, so Port is null and PortActual says where it is running.
 	PortAuto bool `json:"port_auto"`
@@ -31,6 +35,19 @@ type Service struct {
 	ManifestHash            *string `json:"manifest_hash" jsonschema:"nullable"`
 	RuntimeSpecHash         *string `json:"runtime_spec_hash" jsonschema:"nullable"`
 	ManifestRuntimeMismatch bool    `json:"manifest_runtime_mismatch"`
+	// CodeHead is the commit checked out when this run started, when the
+	// checkout had one. It is start-time evidence, not the current HEAD.
+	CodeHead *string `json:"code_head" jsonschema:"nullable"`
+	// CodeChangedSinceStart is filled by `status` for a running service whose
+	// start snapshot is available. Null means unknown: the run predates code
+	// tracking, the snapshot is gone, or the sources could not be read. Null is
+	// never "unchanged".
+	CodeChangedSinceStart *bool `json:"code_changed_since_start" jsonschema:"nullable"`
+	// CodeChangedFiles is the exact number of files that differ from the start
+	// snapshot, when both snapshots kept per-file evidence. Null means unknown,
+	// including when a very large source set was fingerprinted by digest only.
+	CodeChangedFiles *int    `json:"code_changed_files" jsonschema:"nullable"`
+	CodeHint         *string `json:"code_hint" jsonschema:"nullable"`
 	// Description, Icon and Color are user-authored metadata from
 	// `oberth.yaml` (contract §13.1). The daemon stores and serves them; what
 	// an icon or a colour means is the client's business.

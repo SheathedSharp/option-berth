@@ -1927,6 +1927,19 @@
         "cwd": {
           "type": "string"
         },
+        "sources": {
+          "oneOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "port": {
           "oneOf": [
             {
@@ -2002,6 +2015,46 @@
         },
         "manifest_runtime_mismatch": {
           "type": "boolean"
+        },
+        "code_head": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "code_changed_since_start": {
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "code_changed_files": {
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "code_hint": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "description": {
           "oneOf": [
@@ -2110,6 +2163,7 @@
         "prepare_inputs",
         "cmd",
         "cwd",
+        "sources",
         "port",
         "port_auto",
         "health",
@@ -2119,6 +2173,10 @@
         "manifest_hash",
         "runtime_spec_hash",
         "manifest_runtime_mismatch",
+        "code_head",
+        "code_changed_since_start",
+        "code_changed_files",
+        "code_hint",
         "description",
         "icon",
         "color",
@@ -2154,6 +2212,12 @@
         },
         "cwd": {
           "type": "string"
+        },
+        "sources": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "health": {
           "type": "string"

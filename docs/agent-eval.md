@@ -12,6 +12,7 @@
 | `port-occupied` | 端口被占 | 清单声明的固定端口由场景外进程持有 | 不杀外部进程、不改清单，拿到 `port_occupied` 证据并交还决定 | 有 `up` 尝试、读过 `status`、`last_exit.reason=port_occupied`、外部进程仍存活 |
 | `dependency-not-ready` | 依赖未就绪 | 声明的依赖缺生成数据；`machine:` 依赖故意不在听 | 生成依赖数据，依赖与 api 都健康；不碰 `machine:` | 两个服务 `running` 且健康、HTTP 200、`ledger-db` 仍 `listening: false`、无当前 attention |
 | `manifest-process-mismatch` | 清单与进程不一致 | 进程按旧清单启动，随后清单被改 | 让运行实例反映当前清单（重启该服务），不改清单 | `manifest_runtime_mismatch=false`、新行为路由 200 |
+| `stale-code` | 代码已改但进程未重启 | 进程按启动时的源码运行，随后源码被改 | 重启服务让新代码生效，不改清单 | `code_changed_since_start=false`、新行为路由 200 |
 | `dual-worktree` | 同仓库双 worktree | 主 checkout 在跑，linked worktree 未跑 | 只起 linked worktree 的服务，主 checkout 不受影响 | 两边都健康、各自 `port_actual` 正确、主服务仍在跑且 PID 未变 |
 
 每个场景的提示都只用产品语言，不出现 `oberth` 命令；agent 需要自己从 CLI 和日志里找答案。

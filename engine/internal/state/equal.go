@@ -44,12 +44,15 @@ func servicesEqual(a, b []Service) bool {
 
 func serviceEqual(a, b *Service) bool {
 	return a.Name == b.Name && a.Prepare == b.Prepare && sliceEqual(a.PrepareInputs, b.PrepareInputs) &&
-		a.Cmd == b.Cmd && a.Cwd == b.Cwd &&
+		a.Cmd == b.Cmd && a.Cwd == b.Cwd && sliceEqual(a.Sources, b.Sources) &&
 		pointerEqual(a.Port, b.Port) && a.PortAuto == b.PortAuto && pointerEqual(a.Health, b.Health) &&
 		healthEqual(a.HealthStatus, b.HealthStatus) &&
 		pointerEqual(a.RuntimeCmd, b.RuntimeCmd) && pointerEqual(a.RuntimeCwd, b.RuntimeCwd) &&
 		pointerEqual(a.ManifestHash, b.ManifestHash) && pointerEqual(a.RuntimeSpecHash, b.RuntimeSpecHash) &&
-		a.ManifestRuntimeMismatch == b.ManifestRuntimeMismatch && pointerEqual(a.Description, b.Description) &&
+		a.ManifestRuntimeMismatch == b.ManifestRuntimeMismatch &&
+		pointerEqual(a.CodeHead, b.CodeHead) && pointerEqual(a.CodeChangedSinceStart, b.CodeChangedSinceStart) &&
+		pointerEqual(a.CodeChangedFiles, b.CodeChangedFiles) && pointerEqual(a.CodeHint, b.CodeHint) &&
+		pointerEqual(a.Description, b.Description) &&
 		pointerEqual(a.Icon, b.Icon) && pointerEqual(a.Color, b.Color) && sliceEqual(a.DependsOn, b.DependsOn) &&
 		a.Running == b.Running && pointerEqual(a.PortActual, b.PortActual) && pointerEqual(a.PID, b.PID) &&
 		pointerEqual(a.RunID, b.RunID) && pointerEqual(a.StartedAt, b.StartedAt) &&
