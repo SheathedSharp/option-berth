@@ -436,6 +436,7 @@ func statusExits(ctx context.Context, group string) []rpc.RunRecord {
 	if len(records) > statusExitsShown {
 		records = records[:statusExitsShown]
 	}
+	applyExitHints(records)
 	return records
 }
 
@@ -477,7 +478,33 @@ func statusExitsDirect(group string) []rpc.RunRecord {
 	if len(records) > statusExitsShown {
 		records = records[:statusExitsShown]
 	}
+	applyExitHints(records)
 	return records
+}
+
+// exitHint is the next command for one finished run, or empty when the run
+// left no log to read. It is a file-existence check, not a claim that the
+// process ever started: a spawn failure after the log was opened has a file,
+// and a deleted or rotated-away log has none.
+func exitHint(run rpc.RunRecord) string {
+	if run.Name == "" || !isFailureReason(run.Reason) || run.LogPath == "" {
+		return ""
+	}
+	info, err := os.Stat(run.LogPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return ""
+	}
+	return logsHint(run.Name)
+}
+
+// applyExitHints fills a next step the daemon did not supply. Only empty fields
+// are written, so a newer daemon's richer hint wins.
+func applyExitHints(records []rpc.RunRecord) {
+	for i := range records {
+		if records[i].Hint == "" {
+			records[i].Hint = exitHint(records[i])
+		}
+	}
 }
 
 // applyExitPortHolders fills port_holder evidence that the read path could not
@@ -539,7 +566,6 @@ func portHolderNote(holder *state.PortHolder, group string) string {
 	}
 	return who
 }
-
 func exitTime(run rpc.RunRecord) time.Time {
 	if at, err := time.Parse(time.RFC3339, run.ExitedAt); err == nil {
 		return at
@@ -746,15 +772,12 @@ func printStatusCode(doc statusDocument) {
 	statusLine("code", strings.Join(parts, " · "))
 }
 
-// printStatusFailure is C3's "上次为何失败": the daemon kept the exit code and
-// the last lines of each run that died, and this is the one place they are
-// shown together. Keep every retained failure visible; status is often the
-// first command after a partial startup and one line would hide the others.
+// printStatusFailure is C3's "上次为何失败". It shows one row per service: the
+// newest exit, and only while that exit is still the service's published
+// last_exit. A service that is running again, or whose newest exit is a
+// routine stop, is not currently failed; its retained history stays in exits[].
 func printStatusFailure(doc statusDocument) {
-	for _, run := range doc.Exits {
-		if !isFailureReason(run.Reason) {
-			continue
-		}
+	for _, run := range currentFailures(doc) {
 		code := "—"
 		if run.ExitCode != nil {
 			code = fmt.Sprint(*run.ExitCode)
@@ -770,10 +793,45 @@ func printStatusFailure(doc statusDocument) {
 		} else {
 			statusLine("failed", fmt.Sprintf("%s exit %s · %s", run.Name, code, display.Dim(line)))
 		}
-		if run.Name != "" {
-			statusLine("next", display.Dim("oberth logs "+run.Name+" --once"))
+		if run.Hint != "" {
+			statusLine("next", display.Dim(run.Hint))
 		}
 	}
+}
+
+// currentFailures is the failed section's set: the newest exit of each
+// service, kept only while that exit is still the service's published
+// last_exit. Deduplicating before the failure test also drops a service whose
+// newest exit is a routine stop, even if an older crash is still retained.
+// A service the manifest does not declare has no last_exit to compare; its
+// newest retained exit is the best fact available.
+func currentFailures(doc statusDocument) []rpc.RunRecord {
+	services := make(map[string]*state.Service, len(doc.Worktree.Services))
+	for i := range doc.Worktree.Services {
+		services[doc.Worktree.Services[i].Name] = &doc.Worktree.Services[i]
+	}
+	exits := append([]rpc.RunRecord(nil), doc.Exits...)
+	sort.SliceStable(exits, func(i, j int) bool {
+		return exitTime(exits[i]).After(exitTime(exits[j]))
+	})
+	seen := make(map[string]bool, len(exits))
+	out := make([]rpc.RunRecord, 0, len(exits))
+	for _, run := range exits {
+		if seen[run.Name] {
+			continue
+		}
+		seen[run.Name] = true
+		if !isFailureReason(run.Reason) {
+			continue
+		}
+		if svc, declared := services[run.Name]; declared {
+			if svc.LastExit == nil || svc.LastExit.RunID != run.ID {
+				continue
+			}
+		}
+		out = append(out, run)
+	}
+	return out
 }
 
 // isFailureReason keeps routine exits out of the failure section. A stopped

@@ -47,9 +47,15 @@ IGNORED_SUFFIXES = (".pyc", ".pyo")
 # execs the real interpreter, so it cannot recurse through its own shebang.
 SHIM_COMMANDS = (
     "oberth", "git", "curl", "wget", "make", "python3", "python", "node",
-    "npm", "npx", "go", "docker", "lsof", "ps", "kill", "pkill", "killall",
-    "sudo",
+    "npm", "npx", "go", "docker", "lsof", "ps", "ss", "netstat", "pgrep",
+    "kill", "pkill", "killall", "sudo",
 )
+
+# Commands that inspect processes or sockets directly instead of asking the
+# engine. Counting them measures whether the published failure evidence is
+# enough on its own. The shim only sees calls that went through PATH, so the
+# count is a lower bound, not a sandbox boundary.
+PROCESS_PROBE_COMMANDS = frozenset({"ps", "lsof", "ss", "netstat", "pgrep"})
 
 SHIM_TEMPLATE = Template(
     """#!$python
@@ -1162,6 +1168,8 @@ def summarize_runs(runs: list[dict[str, Any]], build_sha: str) -> list[dict[str,
         steps = [row["steps"] for row in valid if isinstance(row.get("steps"), int)]
         commands = [row["command_steps"] for row in valid if isinstance(row.get("command_steps"), int)]
         oberth_calls = [row["oberth_calls"] for row in valid if isinstance(row.get("oberth_calls"), int)]
+        process_probes = [row["process_probe_calls"] for row in valid if isinstance(row.get("process_probe_calls"), int)]
+        durations = [row["duration_s"] for row in valid if isinstance(row.get("duration_s"), (int, float))]
         oob = [row["oob_count"] for row in valid]
         builds = {row["build_sha"] for row in valid}
         comparable = len(valid) >= 2 and len(builds) == 1 and not any(row["status"] == "agent_error" for row in valid)
@@ -1177,6 +1185,9 @@ def summarize_runs(runs: list[dict[str, Any]], build_sha: str) -> list[dict[str,
             "steps_max": max(steps) if steps else None,
             "command_steps_median": _median(commands),
             "oberth_calls_median": _median(oberth_calls),
+            "process_probe_calls_median": _median(process_probes),
+            "process_probe_calls_total": sum(process_probes),
+            "duration_median_s": _median(durations),
             "oob_total": sum(oob),
             "oob_median": _median(oob),
             "harness_errors": sum(1 for row in rows if row["status"] == "harness_error"),
@@ -1204,8 +1215,8 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- repeats: {payload['repeat']}",
         f"- comparable: {'yes' if payload.get('comparable') else 'no'}",
         "",
-        "| scenario | agent | valid runs | completion | steps median [range] | oberth calls | OOB total | comparable | notes |",
-        "|---|---|---:|---:|---|---:|---:|---|---|",
+        "| scenario | agent | valid runs | completion | steps median [range] | oberth calls | process probes | duration median | OOB total | comparable | notes |",
+        "|---|---|---:|---:|---|---:|---:|---:|---:|---|---|",
     ]
     for row in payload["summary"]:
         rate = "n/a" if row["completion_rate"] is None else f"{row['completion_rate'] * 100:.0f}%"
@@ -1215,6 +1226,8 @@ def render_markdown(payload: dict[str, Any]) -> str:
         if row["steps_median"] is None and row["command_steps_median"] is not None:
             steps = f"cmd {row['command_steps_median']:g}"
         calls = "n/a" if row["oberth_calls_median"] is None else f"{row['oberth_calls_median']:g}"
+        probes = "n/a" if row["process_probe_calls_median"] is None else f"{row['process_probe_calls_median']:g}"
+        duration = "n/a" if row["duration_median_s"] is None else f"{row['duration_median_s']:g}s"
         notes = "; ".join(row["notes"]) if row["notes"] else ""
         if row["harness_errors"]:
             notes = (notes + "; " if notes else "") + f"{row['harness_errors']} harness error(s)"
@@ -1222,7 +1235,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
             notes = (notes + "; " if notes else "") + f"{row['agent_errors']} agent error(s)"
         lines.append(
             f"| {row['scenario']} | {row['agent']} | {row['valid_runs']} | {rate} | {steps} | "
-            f"{calls} | {row['oob_total']} | {'yes' if row['comparable'] else 'no'} | {notes} |"
+            f"{calls} | {probes} | {duration} | {row['oob_total']} | {'yes' if row['comparable'] else 'no'} | {notes} |"
         )
     failed = [run for run in payload["runs"] if not run["completed"] or run["oob_count"]]
     if failed:

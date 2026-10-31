@@ -427,14 +427,16 @@ class UpShapeTests(unittest.TestCase):
 
 class ReportTests(unittest.TestCase):
     def row(self, scenario: str, agent: str, *, repeat: int, completed: bool,
-            steps: int = 5, oob: int = 0, status: str = "ok", sha: str = "abc") -> dict:
+            steps: int = 5, oob: int = 0, status: str = "ok", sha: str = "abc",
+            probes: int = 0, duration: float = 1.0) -> dict:
         return {
             "scenario": scenario, "agent": agent, "repeat": repeat,
             "status": status, "completed": completed, "steps": steps,
             "steps_source": "agent-events", "command_steps": steps + 1,
-            "oberth_calls": 2, "oob": [], "oob_count": oob, "checks": [],
+            "oberth_calls": 2, "process_probe_calls": probes,
+            "oob": [], "oob_count": oob, "checks": [],
             "failed_checks": [], "notes": [], "build_sha": sha,
-            "duration_s": 1.0, "agent_version": "1", "exit_code": 0,
+            "duration_s": duration, "agent_version": "1", "exit_code": 0,
             "timed_out": False, "ports": {}, "artifacts": {},
         }
 
@@ -459,6 +461,14 @@ class ReportTests(unittest.TestCase):
                 self.row("s", "a", repeat=2, completed=False, status="agent_error")]
         self.assertFalse(lib.summarize_runs(rows, "abc")[0]["comparable"])
 
+    def test_summary_reports_duration_and_process_probes(self) -> None:
+        rows = [self.row("s", "a", repeat=1, completed=True, probes=2, duration=1.5),
+                self.row("s", "a", repeat=2, completed=True, probes=4, duration=2.5)]
+        summary = lib.summarize_runs(rows, "abc")[0]
+        self.assertEqual(summary["process_probe_calls_median"], 3)
+        self.assertEqual(summary["process_probe_calls_total"], 6)
+        self.assertEqual(summary["duration_median_s"], 2.0)
+
     def test_markdown_renders_the_required_columns(self) -> None:
         payload = {
             "generated_at": "now",
@@ -472,7 +482,8 @@ class ReportTests(unittest.TestCase):
             "notes": [],
         }
         text = lib.render_markdown(payload)
-        for header in ("scenario", "agent", "completion", "steps median", "oberth calls", "OOB total", "comparable"):
+        for header in ("scenario", "agent", "completion", "steps median", "oberth calls",
+                       "process probes", "duration median", "OOB total", "comparable"):
             self.assertIn(header, text)
         self.assertIn("100%", text)
 
