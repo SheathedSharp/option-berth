@@ -212,6 +212,9 @@ class Scenario:
     reference: Callable[[ScenarioState], list[list[str]]]
     description: str = ""
     suite: str = "core"
+    # Commands beyond this budget lose cost points, never correctness. None
+    # means the scenario does not declare a budget yet.
+    budget: int | None = None
 
 
 # --------------------------------------------------------------------------- #
