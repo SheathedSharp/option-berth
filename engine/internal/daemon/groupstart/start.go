@@ -130,11 +130,14 @@ func run(ctx context.Context, rt *daemon.Runtime, s *daemon.Stream,
 			return end, err
 		}
 		started, err := startOneService(ctx, rt, s, cfg, group, step, book, p, meta, &end)
-		if err != nil {
-			return end, err
-		}
+		// A run registered here is real even when the call then failed
+		// (cancellation or a failed stream send), so the scan cache still has
+		// to be invalidated before returning.
 		if started {
 			changed = true
+		}
+		if err != nil {
+			return end, err
 		}
 	}
 	return end, nil
