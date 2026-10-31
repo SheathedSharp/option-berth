@@ -1670,6 +1670,9 @@
           },
           "type": "array"
         },
+        "hint": {
+          "type": "string"
+        },
         "port_holder": {
           "$ref": "#/definitions/PortHolder"
         }

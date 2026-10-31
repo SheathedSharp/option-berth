@@ -79,10 +79,12 @@ depends on · listeners · code · failed · next · drafts · last look），�
 每个服务单独一行，同时给出声明端口与当前运行实况；服务状态词带颜色（running 绿、
 失败红、常规停止 dim），在 NO_COLOR 下退化为纯文字。无端口 worker 会明确标为 no port，
 `port: auto` 尚未分配时会显示 auto port unassigned。
-只有清单没有声明的监听才单独列出。多个服务同时失败时，失败证据按退出记录逐条显示，并给出
-对应的 `oberth logs <service> --once` 下一步。端口冲突的失败行直接写出占用者
-（端口、pid、命令和归属种类），不需要再跑 `lsof`/`ps`。正常退出和被 `down` 停止的服务不进入失败区，
-即使强制停止留下了非零信号退出码也一样。
+只有清单没有声明的监听才单独列出。失败区每个服务只显示最新一条退出记录，并且只在该记录仍是
+服务的当前 `last_exit` 时显示：服务已经重新运行、或最新一条是正常退出/被 `down` 停止时，该服务
+从失败区消失，旧记录仍留在 `exits[]` 历史里。不同服务各显示一条。端口冲突的失败行直接写出占用者
+（端口、pid、命令和归属种类），不需要再跑 `lsof`/`ps`。只有失败记录确实留下了日志文件
+才给出 `oberth logs <service> --once` 下一步；该步骤也以 `hint` 出现在 JSON 的 `exits[]` 中，
+人读和 agent 读到同一个指引。即使强制停止留下了非零信号退出码，正常退出和被停止的服务也不进入失败区。
 
 `worktree.services[]` 还带有 `health_status`（`status`、`code`、`reason`、`observed_at`）。
 `health` 是声明的规范形式：HTTP 路径，或 `tcp:<port>`，或 `command:<命令行>`；`prepare_inputs` 是
@@ -122,7 +124,8 @@ changed 是第一次运行时缺省的可选字段。ports 仍是给脚本核对
 独立的产品对象，也不是整台机器的端口清单。exits 是最近 5 次结束运行的新到旧历史，
 不是当前失败集合；当前事实以 `worktree.services[].last_exit` 为准。`exits[].ports`
 描述退出运行仍持有的端口，所以已退出的运行保持空数组；失败端口在 `port_hint`，
-占用者在 `port_holder`。详细输出用 logs。
+占用者在 `port_holder`。每条失败记录可带 `hint`（与 `groups.start` 的 per-service hint 同义），
+这是 CLI 按日志文件是否存在填出的确定性下一步。详细输出用 logs。
 `worktree.services[]` 的 `pid`、`run_id` 和 `started_at` 在服务由 option-berth 正在运行时提供，
 无端口 worker 也能靠这些字段核对实际运行记录；`log_path` 始终由引擎给出。
 

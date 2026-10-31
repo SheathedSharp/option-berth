@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -133,22 +135,57 @@ func TestPublishAttentionClearsAfterRecovery(t *testing.T) {
 	}
 }
 
-func TestPrintStatusFailureShowsEveryRetainedRun(t *testing.T) {
+func TestPrintStatusFailureShowsTheNewestExitPerService(t *testing.T) {
 	code1, code2 := 127, 7
 	out := captureStdout(t, func() {
 		printStatusFailure(statusDocument{Exits: []rpc.RunRecord{
-			{Name: "missing", Reason: "start_failed", ExitCode: &code1, LastLines: []string{"exec: command not found"}},
-			{Name: "crashed", Reason: "crashed", ExitCode: &code2, LastLines: []string{"worker exited"}},
+			{Name: "missing", Reason: "start_failed", ExitCode: &code1,
+				LastLines: []string{"exec: command not found"}, Hint: "oberth logs missing --once",
+				ExitedAt: "2026-10-30T12:02:00Z"},
+			{Name: "crashed", Reason: "crashed", ExitCode: &code2,
+				LastLines: []string{"worker exited"}, Hint: "oberth logs crashed --once",
+				ExitedAt: "2026-10-30T12:01:00Z"},
+			// An older generation of the same service must not add a second row.
+			{Name: "crashed", Reason: "crashed", ExitCode: &code2,
+				LastLines: []string{"worker exited earlier"}, ExitedAt: "2026-10-30T11:00:00Z"},
 		}})
 	})
 	if !strings.Contains(out, "missing") || !strings.Contains(out, "crashed") {
 		t.Fatalf("failure output = %q, want both service failures", out)
 	}
 	if strings.Count(out, "failed") != 2 {
-		t.Fatalf("failure output = %q, want two failure rows", out)
+		t.Fatalf("failure output = %q, want one failure row per service", out)
 	}
 	if strings.Count(out, "next") != 2 || !strings.Contains(out, "oberth logs missing --once") {
 		t.Fatalf("failure output = %q, want one actionable next step per failure", out)
+	}
+}
+
+func TestCurrentFailuresSkipsRunningAndSuperseded(t *testing.T) {
+	doc := statusDocument{
+		Worktree: state.Group{Services: []state.Service{
+			{Name: "api", Running: true},
+			{Name: "worker", LastExit: &state.ServiceExit{Reason: "crashed", Code: 1, RunID: "worker-2"}},
+		}},
+		Exits: []rpc.RunRecord{
+			{ID: "api-run", Name: "api", Reason: "crashed", ExitedAt: "2026-10-30T12:03:00Z"},
+			{ID: "worker-2", Name: "worker", Reason: "crashed", ExitedAt: "2026-10-30T12:02:00Z"},
+			{ID: "worker-1", Name: "worker", Reason: "crashed", ExitedAt: "2026-10-30T12:01:00Z"},
+		},
+	}
+	got := currentFailures(doc)
+	if len(got) != 1 || got[0].ID != "worker-2" {
+		t.Fatalf("current failures = %+v, want only the current worker exit", got)
+	}
+
+	// A newer routine stop is the service's current last_exit; the older crash
+	// stays history and is not shown as a current failure.
+	doc.Worktree.Services[1].LastExit = &state.ServiceExit{Reason: "stopped", RunID: "worker-3"}
+	doc.Exits = append([]rpc.RunRecord{
+		{ID: "worker-3", Name: "worker", Reason: "stopped", ExitedAt: "2026-10-30T12:04:00Z"},
+	}, doc.Exits...)
+	if got := currentFailures(doc); len(got) != 0 {
+		t.Fatalf("current failures = %+v, want none after a routine stop", got)
 	}
 }
 
@@ -190,12 +227,57 @@ func TestPrintStatusFailureStillSuggestsLogsWithoutTail(t *testing.T) {
 	code := 1
 	out := captureStdout(t, func() {
 		printStatusFailure(statusDocument{Exits: []rpc.RunRecord{
-			{Name: "silent", Reason: "start_failed", ExitCode: &code},
+			{Name: "silent", Reason: "start_failed", ExitCode: &code, Hint: "oberth logs silent --once"},
+			{Name: "nolog", Reason: "start_failed", ExitCode: &code},
 		}})
 	})
 	if !strings.Contains(out, "silent") || !strings.Contains(out, "no log lines kept") ||
 		!strings.Contains(out, "oberth logs silent --once") {
 		t.Fatalf("failure output = %q, want evidence placeholder and next step", out)
+	}
+	if strings.Contains(out, "oberth logs nolog --once") {
+		t.Fatalf("failure output = %q, want no next step without a real log", out)
+	}
+}
+
+func TestExitHintOnlyForARealLog(t *testing.T) {
+	dir := t.TempDir()
+	log := filepath.Join(dir, "api.log")
+	if err := os.WriteFile(log, []byte("boom\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := exitHint(rpc.RunRecord{Name: "api", Reason: "crashed", LogPath: log}); got != "oberth logs api --once" {
+		t.Fatalf("hint = %q, want the log command", got)
+	}
+	for name, run := range map[string]rpc.RunRecord{
+		"routine stop": {Name: "api", Reason: "stopped", LogPath: log},
+		"no name":      {Reason: "crashed", LogPath: log},
+		"missing file": {Name: "api", Reason: "crashed", LogPath: filepath.Join(dir, "gone.log")},
+		"directory":    {Name: "api", Reason: "crashed", LogPath: dir},
+		"no log path":  {Name: "api", Reason: "crashed"},
+	} {
+		if got := exitHint(run); got != "" {
+			t.Fatalf("%s: hint = %q, want none", name, got)
+		}
+	}
+}
+
+func TestApplyExitHintsKeepsDaemonHintAndFillsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	log := filepath.Join(dir, "api.log")
+	if err := os.WriteFile(log, []byte("boom\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	records := []rpc.RunRecord{
+		{Name: "api", Reason: "crashed", LogPath: log},
+		{Name: "other", Reason: "crashed", LogPath: log, Hint: "a richer daemon hint"},
+	}
+	applyExitHints(records)
+	if records[0].Hint != "oberth logs api --once" {
+		t.Fatalf("filled hint = %q", records[0].Hint)
+	}
+	if records[1].Hint != "a richer daemon hint" {
+		t.Fatalf("daemon hint overwritten: %q", records[1].Hint)
 	}
 }
 
