@@ -78,6 +78,15 @@ GitHub 访问慢或被限制时：`go install` 加 `GOPROXY=https://goproxy.cn`�
 直接运行 `oberth` 会显示本机版本；有更新时首屏底部给出升级命令。也可以随时运行
 `oberth version --check` 主动检查，它只读发布信息，不下载、不安装。
 
+### Homebrew
+
+```sh
+brew install sheathedsharp/tap/oberth
+```
+
+这安装引擎 CLI，不是 macOS 客户端。`brew install option-berth` 仍要等 homebrew-core，现在没有。
+说明见 [安装与卸载](docs/install.md#homebrew)。
+
 ### 用 go install（Go 1.25+）
 
 ```sh

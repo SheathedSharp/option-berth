@@ -84,6 +84,15 @@ Running `oberth` shows the installed version, and the first screen prints the up
 newer release exists. Ask on demand with `oberth version --check`; it only reads release metadata and
 never downloads or installs anything.
 
+### Homebrew
+
+```sh
+brew install sheathedsharp/tap/oberth
+```
+
+This installs the engine CLI, not the macOS app. `brew install option-berth` still needs a
+homebrew-core formula, which does not exist yet. See [Install and uninstall](docs/install.md#homebrew).
+
 ### With go install (Go 1.25+)
 
 ```sh
