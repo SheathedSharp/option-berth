@@ -49,6 +49,32 @@ func TestStartDeadlineAnchorsOwnedRunsAtStartedAt(t *testing.T) {
 	if got := startDeadline(owned, svc, waitStart, hard); !got.Equal(hard) {
 		t.Fatalf("explicit cap deadline = %s, want %s", got, hard)
 	}
+	// A longer --wait-timeout is a ceiling, not a new budget: it must not
+	// silently extend a service past its declared ready_timeout.
+	longer := waitStart.Add(120 * time.Second)
+	if got, want := startDeadline(owned, svc, waitStart, longer), waitStart.Add(20*time.Second); !got.Equal(want) {
+		t.Fatalf("a longer --wait-timeout extended the budget: got %s, want %s", got, want)
+	}
+}
+
+// The failure message must name what actually expired. A short explicit
+// --wait-timeout is not the service's 30s ready budget, and printing it as one
+// sends whoever reads the failure after the wrong number.
+func TestStartTimeoutMessageDistinguishesCeilingFromBudget(t *testing.T) {
+	waitStart := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+	owned := startSelection{owned: true, budget: 30 * time.Second}
+
+	budgetExpired := anchorStart(owned, nil, waitStart, waitStart.Add(120*time.Second))
+	if got := startTimeoutMessage(budgetExpired, "api", 120*time.Second); !strings.Contains(got, "after 30s") ||
+		!strings.Contains(got, "ready_timeout") || strings.Contains(got, "--wait-timeout") {
+		t.Fatalf("budget message = %q, want the 30s ready budget", got)
+	}
+
+	capped := anchorStart(owned, nil, waitStart, waitStart.Add(5*time.Second))
+	got := startTimeoutMessage(capped, "api", 5*time.Second)
+	if !strings.Contains(got, "5s") || !strings.Contains(got, "--wait-timeout") || !strings.Contains(got, "30s") {
+		t.Fatalf("ceiling message = %q, want the 5s ceiling and the 30s budget", got)
+	}
 }
 
 // Without --wait-timeout each service gets its own budget, and the timeout

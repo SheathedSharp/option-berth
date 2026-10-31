@@ -85,6 +85,13 @@ const CapabilityAutoPorts = "groups.autoports"
 // workspace address unexpanded, so the CLI refuses to hand it such a file.
 const CapabilityManifestExtras = "groups.manifest.extras"
 
+// CapabilityReadyTimeout is announced by daemons that honour the manifest's
+// per-service `ready_timeout:` — both dependency waits and the budget they
+// publish on a start chunk. An older daemon ignores the field and keeps its
+// fixed 30s wait; the CLI refuses to hand it such a file rather than let a
+// slow dependency be failed at the wrong deadline.
+const CapabilityReadyTimeout = "groups.start.ready_timeout"
+
 // CapabilityStateScope is announced by daemons that understand scoped state
 // snapshots and the redacted state.changed notification.
 const CapabilityStateScope = "state.scope"

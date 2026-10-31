@@ -240,6 +240,8 @@ Git 检出中只纳入已跟踪文件和未被 ignore 的未跟踪文件，`node
 日志文件和运行记录。无参数时使用当前目录最近的清单，也可以显式给项目名。
 `ready_timeout:` 声明一个服务的就绪预算（Go duration 字符串，例如 `90s`，缺省 30s，必须为正）：
 `depends_on` 的后继服务等待该服务时使用它，`up --wait` 也使用它。`prepare:` 不计入这个预算。
+清单声明了 `ready_timeout:` 时，CLI 要求 daemon 宣告 `groups.start.ready_timeout` 能力；旧 daemon
+会提示 `oberth daemon restart`，而不是静默按 30s 等待。
 
 `health:` 有三种写法：HTTP 路径（`/healthz`，缺省形式）、TCP 连接（`health: {tcp: 5432}`，端口必须与
 服务声明的端口一致）和命令（`health: {command: pg_isready -h 127.0.0.1 -p ${port}}`）。命令在服务
@@ -265,8 +267,10 @@ cwd 中执行，按 `cmd:` 的规则拆成 argv（不经过 shell），支持 `$
 通过对应的健康检查（命令式检查不要求服务自己监听）。无端口 worker 以运行记录活跃作为 ready。默认不等待；
 不指定 `--wait-timeout` 时按每个服务自己的 `ready_timeout:` 等待（缺省 30s）：本次新启动的服务从状态行里该运行的
 开始时间起算，已运行的 skipped 服务或取不到开始时间时从等待开始起算。显式指定 `--wait-timeout` 时它是整次等待的
-总上限，并把每个服务的 deadline 限制在等待开始 + 该值；必须为正值且同时启用 `--wait` 或 `--ready`，否则退出 2，不执行启动；
-超时的服务状态为 `failed`、原因是 `ready_timeout`，消息带该服务的就绪预算，命令退出码为 1。只有本次新启动的超时运行才进入停止清理；
+总上限，只会收紧、不会放宽每个服务的 `ready_timeout:`：每个服务的 deadline 取两者中更早的一个；必须为正值且同时
+启用 `--wait` 或 `--ready`，否则退出 2，不执行启动；
+超时的服务状态为 `failed`、原因是 `ready_timeout`，消息说明超时来自该服务的就绪预算，还是调用方给的
+`--wait-timeout` 上限，命令退出码为 1。只有本次新启动的超时运行才进入停止清理；
 已经存在的运行不会因这次等待失败而被停止或重启。`started` / `skipped` 汇总描述启动动作，
 就绪判定失败另外出现在 `errors` 与逐服务 `state` 中。对本次新启动且被清理的运行，
 引擎把同一个 `ready_timeout` 写入服务的最后退出事实，因此 `status`、桌面服务行、attention 和事件流

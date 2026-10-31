@@ -59,7 +59,7 @@ func init() {
 	upCmd.Flags().BoolVar(&upWait, "ready", false,
 		"Alias for --wait")
 	upCmd.Flags().DurationVar(&upWaitTimeout, "wait-timeout", upWaitTimeout,
-		"Maximum total time to wait for services to become ready (default: each service's ready_timeout)")
+		"Maximum total time to wait for services to become ready; shortens but never extends each service's ready_timeout")
 	rootCmd.AddCommand(upCmd)
 }
 

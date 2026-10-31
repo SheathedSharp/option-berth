@@ -81,7 +81,7 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 				// or one whose row has no usable StartedAt, is measured from
 				// the moment the wait began.
 				if selection.deadline.IsZero() {
-					selection.deadline = startDeadline(selection, svc, waitStart, hardDeadline)
+					selection = anchorStart(selection, svc, waitStart, hardDeadline)
 					selected[name] = selection
 				}
 				if group == nil || svc == nil {
@@ -112,8 +112,7 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 			// expire; otherwise a persistent read failure would wait forever.
 			for name, selection := range selected {
 				if selection.deadline.IsZero() {
-					selection.deadline = startDeadline(selection, nil, waitStart, hardDeadline)
-					selected[name] = selection
+					selected[name] = anchorStart(selection, nil, waitStart, hardDeadline)
 				}
 			}
 		}
@@ -127,7 +126,7 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 				continue
 			}
 			markStartChunkFailed(chunks, summary, name, "ready_timeout",
-				fmt.Sprintf("timed out after %s waiting for %s to be ready", selection.budget, name), nil)
+				startTimeoutMessage(selection, name, timeout), nil)
 			// Waiting on an existing run does not authorize stopping it.
 			if selection.owned {
 				timedOut = append(timedOut, name)
@@ -151,17 +150,39 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 // whose row carries no usable StartedAt, from the moment the wait began. An
 // explicit --wait-timeout caps every deadline at the invocation's ceiling.
 func startDeadline(selection startSelection, svc *state.Service, waitStart, hardDeadline time.Time) time.Time {
+	return anchorStart(selection, svc, waitStart, hardDeadline).deadline
+}
+
+// anchorStart fixes the point a service's budget is measured from and turns
+// that budget into a deadline. It records which side set the deadline: an
+// explicit --wait-timeout that cut the budget short is reported as such, not
+// as a budget that ran out.
+func anchorStart(selection startSelection, svc *state.Service, waitStart, hardDeadline time.Time) startSelection {
 	since := waitStart
 	if selection.owned && svc != nil && svc.StartedAt != nil {
 		if at, err := time.Parse(time.RFC3339Nano, *svc.StartedAt); err == nil {
 			since = at
 		}
 	}
-	deadline := since.Add(selection.budget)
-	if !hardDeadline.IsZero() && deadline.After(hardDeadline) {
-		deadline = hardDeadline
+	selection.deadline = since.Add(selection.budget)
+	selection.capped = false
+	if !hardDeadline.IsZero() && selection.deadline.After(hardDeadline) {
+		selection.deadline = hardDeadline
+		selection.capped = true
 	}
-	return deadline
+	return selection
+}
+
+// startTimeoutMessage names what actually expired. A ceiling the caller chose
+// is not a readiness budget the manifest declared, and printing one as the
+// other sends whoever reads the failure after the wrong number.
+func startTimeoutMessage(selection startSelection, name string, timeout time.Duration) string {
+	if selection.capped && timeout > 0 {
+		return fmt.Sprintf("exceeded the %s --wait-timeout waiting for %s to be ready (ready budget %s)",
+			timeout, name, selection.budget)
+	}
+	return fmt.Sprintf("timed out after %s waiting for %s to be ready (ready_timeout)",
+		selection.budget, name)
 }
 
 // startChunkReadyTimeout is the readiness budget the daemon published for one
@@ -183,6 +204,9 @@ type startSelection struct {
 	owned    bool
 	budget   time.Duration
 	deadline time.Time
+	// capped says the --wait-timeout ceiling, not the service's budget, set
+	// the deadline. The failure message must not call the ceiling a budget.
+	capped bool
 }
 
 // selectedExit reports whether exit is the death of the run this start

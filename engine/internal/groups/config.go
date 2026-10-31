@@ -401,6 +401,19 @@ func (c *Config) UsesManifestExtras() bool {
 	return false
 }
 
+// UsesReadyTimeout reports whether any service declares `ready_timeout:`. An
+// older daemon ignores the field and keeps its fixed 30s dependency wait, so
+// the CLI checks its capability before handing it such a file instead of
+// letting the declared budget silently not apply.
+func (c *Config) UsesReadyTimeout() bool {
+	for _, s := range c.Services {
+		if strings.TrimSpace(s.ReadyTimeout) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // EnvFilePath is the absolute file a service's `env_file:` names. A relative
 // path is resolved against the directory holding the manifest, which is what
 // lets a worktree reference a shared file outside its own checkout.

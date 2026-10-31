@@ -38,6 +38,37 @@ services:
 	}
 }
 
+// UsesReadyTimeout is what lets the CLI refuse an old daemon: that daemon
+// would ignore the declared budget and keep its fixed dependency wait. A file
+// that only relies on the default must stay usable with it.
+func TestUsesReadyTimeoutOnlyWhenDeclared(t *testing.T) {
+	declared, err := loadString(t, "shop", `
+name: shop
+services:
+  - name: api
+    cmd: run api
+    ready_timeout: 90s
+`)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !declared.UsesReadyTimeout() {
+		t.Error("UsesReadyTimeout = false, want true for a declared budget")
+	}
+	plain, err := loadString(t, "plain", `
+name: plain
+services:
+  - name: api
+    cmd: run api
+`)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if plain.UsesReadyTimeout() {
+		t.Error("UsesReadyTimeout = true, want false when only the default applies")
+	}
+}
+
 // A value that is unparseable or asks for no time at all must fail at Load:
 // otherwise a wait could expire before it started, or silently fall back while
 // the file claims something else.
