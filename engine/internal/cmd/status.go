@@ -19,6 +19,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/servicefacts"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 	"github.com/spf13/cobra"
@@ -258,6 +259,11 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool) (statusDocu
 		Exits:       statusExits(ctx, name),
 		Observation: publicObservation(obs),
 	}
+	// The direct read (no daemon) has no snapshot of its own, and the daemon's
+	// runs.list may be older than the service row. Fill only what is still
+	// missing, from the full scan rather than doc.Ports: the occupier may
+	// belong to another worktree.
+	applyExitPortHolders(doc.Exits, pp)
 	if pending, ok := draft.PendingFor(name); ok {
 		doc.Drafts = append(doc.Drafts, pending)
 	}
@@ -430,6 +436,7 @@ func statusExits(ctx context.Context, group string) []rpc.RunRecord {
 	if len(records) > statusExitsShown {
 		records = records[:statusExitsShown]
 	}
+	applyExitHints(records)
 	return records
 }
 
@@ -471,9 +478,94 @@ func statusExitsDirect(group string) []rpc.RunRecord {
 	if len(records) > statusExitsShown {
 		records = records[:statusExitsShown]
 	}
+	applyExitHints(records)
 	return records
 }
 
+// exitHint is the next command for one finished run, or empty when the run
+// left no log to read. It is a file-existence check, not a claim that the
+// process ever started: a spawn failure after the log was opened has a file,
+// and a deleted or rotated-away log has none.
+func exitHint(run rpc.RunRecord) string {
+	if run.Name == "" || !isFailureReason(run.Reason) || run.LogPath == "" {
+		return ""
+	}
+	info, err := os.Stat(run.LogPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return ""
+	}
+	return logsHint(run.Name)
+}
+
+// applyExitHints fills a next step the daemon did not supply. Only empty fields
+// are written, so a newer daemon's richer hint wins.
+func applyExitHints(records []rpc.RunRecord) {
+	for i := range records {
+		if records[i].Hint == "" {
+			records[i].Hint = exitHint(records[i])
+		}
+	}
+}
+
+// applyExitPortHolders fills port_holder evidence that the read path could not
+// attach. records is modified in place; a holder a daemon already joined from
+// its own snapshot is never overwritten. listening is the full scan, not the
+// worktree's own ports: the occupier may belong to another worktree.
+func applyExitPortHolders(records []rpc.RunRecord, listening []ports.ListeningPort) {
+	var rows []state.Port
+	for _, p := range listening {
+		rows = append(rows, state.FromListening(p))
+	}
+	for i := range records {
+		run := &records[i]
+		if run.PortHolder != nil || run.Reason != "port_occupied" || run.PortHint == nil {
+			continue
+		}
+		run.PortHolder = servicefacts.FindPortHolder(rows, servicefacts.PortHolderQuery{
+			Port: *run.PortHint, Group: run.Group, Service: run.Name, RunID: run.ID,
+		})
+	}
+}
+
+// portHolderNote renders who holds the failed port in the fewest words that
+// still answer "may I stop it?".
+func portHolderNote(holder *state.PortHolder, group string) string {
+	if holder == nil {
+		return ""
+	}
+	who := holder.Command
+	if who == "" {
+		who = "a process"
+	}
+	if holder.PID > 0 {
+		who += fmt.Sprintf(" (pid %d)", holder.PID)
+	}
+	switch holder.Kind {
+	case state.PortHolderRun:
+		where := "another worktree's option-berth service"
+		if holder.Group == group {
+			where = "this worktree's option-berth service"
+		}
+		who += " · " + where
+		if holder.Name != "" {
+			who += " " + holder.Name
+		}
+	case state.PortHolderPrevious:
+		who += " · previous run of this service"
+	case state.PortHolderListener:
+		where := "a listener attributed to another worktree"
+		if holder.Group == group {
+			where = "a listener in this worktree"
+		}
+		who += " · " + where
+		if holder.Group != "" {
+			who += " (" + holder.Group + ")"
+		}
+	default:
+		who += " · ownership unknown"
+	}
+	return who
+}
 func exitTime(run rpc.RunRecord) time.Time {
 	if at, err := time.Parse(time.RFC3339, run.ExitedAt); err == nil {
 		return at
@@ -559,6 +651,9 @@ func printStatusServices(doc statusDocument) {
 		}
 		if s.PID != nil {
 			parts = append(parts, "pid "+fmt.Sprint(*s.PID))
+		}
+		if s.LastExit != nil && s.LastExit.PortHolder != nil && s.LastExit.PortHolder.PID > 0 {
+			parts = append(parts, "port held by pid "+fmt.Sprint(s.LastExit.PortHolder.PID))
 		}
 		statusLine("services", strings.Join(parts, " · "))
 	}
@@ -677,29 +772,66 @@ func printStatusCode(doc statusDocument) {
 	statusLine("code", strings.Join(parts, " · "))
 }
 
-// printStatusFailure is C3's "上次为何失败": the daemon kept the exit code and
-// the last lines of each run that died, and this is the one place they are
-// shown together. Keep every retained failure visible; status is often the
-// first command after a partial startup and one line would hide the others.
+// printStatusFailure is C3's "上次为何失败". It shows one row per service: the
+// newest exit, and only while that exit is still the service's published
+// last_exit. A service that is running again, or whose newest exit is a
+// routine stop, is not currently failed; its retained history stays in exits[].
 func printStatusFailure(doc statusDocument) {
-	for _, run := range doc.Exits {
-		if !isFailureReason(run.Reason) {
-			continue
-		}
+	for _, run := range currentFailures(doc) {
 		code := "—"
 		if run.ExitCode != nil {
 			code = fmt.Sprint(*run.ExitCode)
 		}
 		line := lastNonEmpty(run.LastLines)
+		if run.Reason == "port_occupied" && run.PortHolder != nil {
+			// The holder answers the question the last log line only raises.
+			line = fmt.Sprintf("port %d held by %s", run.PortHolder.Port,
+				portHolderNote(run.PortHolder, doc.Worktree.Name))
+		}
 		if line == "" {
 			statusLine("failed", fmt.Sprintf("%s exit %s · no log lines kept", run.Name, code))
 		} else {
 			statusLine("failed", fmt.Sprintf("%s exit %s · %s", run.Name, code, display.Dim(line)))
 		}
-		if run.Name != "" {
-			statusLine("next", display.Dim("oberth logs "+run.Name+" --once"))
+		if run.Hint != "" {
+			statusLine("next", display.Dim(run.Hint))
 		}
 	}
+}
+
+// currentFailures is the failed section's set: the newest exit of each
+// service, kept only while that exit is still the service's published
+// last_exit. Deduplicating before the failure test also drops a service whose
+// newest exit is a routine stop, even if an older crash is still retained.
+// A service the manifest does not declare has no last_exit to compare; its
+// newest retained exit is the best fact available.
+func currentFailures(doc statusDocument) []rpc.RunRecord {
+	services := make(map[string]*state.Service, len(doc.Worktree.Services))
+	for i := range doc.Worktree.Services {
+		services[doc.Worktree.Services[i].Name] = &doc.Worktree.Services[i]
+	}
+	exits := append([]rpc.RunRecord(nil), doc.Exits...)
+	sort.SliceStable(exits, func(i, j int) bool {
+		return exitTime(exits[i]).After(exitTime(exits[j]))
+	})
+	seen := make(map[string]bool, len(exits))
+	out := make([]rpc.RunRecord, 0, len(exits))
+	for _, run := range exits {
+		if seen[run.Name] {
+			continue
+		}
+		seen[run.Name] = true
+		if !isFailureReason(run.Reason) {
+			continue
+		}
+		if svc, declared := services[run.Name]; declared {
+			if svc.LastExit == nil || svc.LastExit.RunID != run.ID {
+				continue
+			}
+		}
+		out = append(out, run)
+	}
+	return out
 }
 
 // isFailureReason keeps routine exits out of the failure section. A stopped

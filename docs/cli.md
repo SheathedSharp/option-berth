@@ -66,14 +66,25 @@ CLI 按 **agent 想做的事**分层，不按内部模块分：事实是「现�
 （`port_occupied`），也会标出命令尚未启动就失败的服务（`start_failed`），因此“启动后退出”、
 “端口冲突”和“启动前失败”不会混成同一种状态。
 
+`port_occupied` 时，`last_exit.port_hint` 是这次运行被告知要绑定的端口，
+`last_exit.port_holder` 描述读取时仍占着该端口的进程：`port`、`pid`、`command`、`kind`，
+托管运行时另有 `group`、`name`、`run_id`，可读时另有 `cwd` 和 `bind_address`。
+`kind` 取 `oberth_run`（option-berth 启动的运行，可能是另一个 worktree）、
+`previous_run`（同一服务更早的一代）、`worktree_listener`（归属于某个 worktree、但没有托管运行）
+或 `unknown`（没有 worktree 归属）。它只查失败服务自己的那个端口，不是整机端口表；
+占用者已经释放或当前观察不到时字段缺省，缺省表示“读取时没看到”，不是“端口空闲”。
+
 人读输出按项目、服务、依赖、代码和失败原因排列，标签是英文的固定宽度列（services ·
 depends on · listeners · code · failed · next · drafts · last look），按终端显示宽度对齐。
 每个服务单独一行，同时给出声明端口与当前运行实况；服务状态词带颜色（running 绿、
 失败红、常规停止 dim），在 NO_COLOR 下退化为纯文字。无端口 worker 会明确标为 no port，
 `port: auto` 尚未分配时会显示 auto port unassigned。
-只有清单没有声明的监听才单独列出。多个服务同时失败时，失败证据按退出记录逐条显示，并给出
-对应的 `oberth logs <service> --once` 下一步。正常退出和被 `down` 停止的服务不进入失败区，
-即使强制停止留下了非零信号退出码也一样。
+只有清单没有声明的监听才单独列出。失败区每个服务只显示最新一条退出记录，并且只在该记录仍是
+服务的当前 `last_exit` 时显示：服务已经重新运行、或最新一条是正常退出/被 `down` 停止时，该服务
+从失败区消失，旧记录仍留在 `exits[]` 历史里。不同服务各显示一条。端口冲突的失败行直接写出占用者
+（端口、pid、命令和归属种类），不需要再跑 `lsof`/`ps`。只有失败记录确实留下了日志文件
+才给出 `oberth logs <service> --once` 下一步；该步骤也以 `hint` 出现在 JSON 的 `exits[]` 中，
+人读和 agent 读到同一个指引。即使强制停止留下了非零信号退出码，正常退出和被停止的服务也不进入失败区。
 
 `worktree.services[]` 还带有 `health_status`（`status`、`code`、`reason`、`observed_at`）。
 `health` 是声明的规范形式：HTTP 路径，或 `tcp:<port>`，或 `command:<命令行>`；`prepare_inputs` 是
@@ -110,7 +121,11 @@ JSON 顶层固定包含：
 直接读这个字段拼库名，不必自己算哈希。
 
 changed 是第一次运行时缺省的可选字段。ports 仍是给脚本核对用的原始监听事实，不是
-独立的产品对象，也不是整台机器的端口清单；exits 只保留最近的退出记录，详细输出用 logs。
+独立的产品对象，也不是整台机器的端口清单。exits 是最近 5 次结束运行的新到旧历史，
+不是当前失败集合；当前事实以 `worktree.services[].last_exit` 为准。`exits[].ports`
+描述退出运行仍持有的端口，所以已退出的运行保持空数组；失败端口在 `port_hint`，
+占用者在 `port_holder`。每条失败记录可带 `hint`（与 `groups.start` 的 per-service hint 同义），
+这是 CLI 按日志文件是否存在填出的确定性下一步。详细输出用 logs。
 `worktree.services[]` 的 `pid`、`run_id` 和 `started_at` 在服务由 option-berth 正在运行时提供，
 无端口 worker 也能靠这些字段核对实际运行记录；`log_path` 始终由引擎给出。
 
@@ -192,8 +207,15 @@ cwd 中执行，按 `cmd:` 的规则拆成 argv（不经过 shell），支持 `$
 `services[]` 都有结构化的 `state`：`started`、`skipped` 或 `failed`，失败时还给出机器可分支的
 `reason` 和可直接执行的 `hint`，原有 `error` 保留给人读。`hint` 只指向真实存在的证据：进程起来过
 才给 `oberth logs <service> --once`，依赖没就绪时给**依赖**的日志，还没起进程就被拒绝（例如 worktree
-在 home 之外）时给拒绝本身带的做法，没有可执行的下一步时不给。
-等待判定只认**等待开始之后**记录的退出：`down` 留下的旧退出记录不会被 `up --wait` 读成本轮启动失败。
+在 home 之外）时给拒绝本身带的做法，没有可执行的下一步时不给。失败原因为 `port_occupied` 时，
+`services[]` 还带与 status 相同形状的 `port_holder`（`port`、`pid`、`command`、`kind`，
+托管时另有 `group`/`name`/`run_id`），不需要再自己查进程表。
+`services[]` 的 `ready` 是 CLI 的注释，不是 daemon 事实：`--wait` 确认就绪后为 `true`；
+默认不等待时 `started` 服务带 `false`，人读显示 `~` 和 `started, readiness not confirmed`；
+`skipped`/`failed` 不带该字段。`false` 不是失败，`state` 仍表示启动动作的结果。
+等待判定先按运行身份：本次启动 chunk 的 `run_id`、跳过 chunk 指向的正在运行 run，或第一次观察到的同一 run。
+只有完全没有 run_id 的旧记录才退回退出时间，并把等待开始对齐到秒，因此同一秒内记录的退出也算本轮。
+其他 run 的旧退出记录不会被 `up --wait` 读成本轮启动失败。
 `--wait`（`--ready` 的别名）会在返回前等待本次选择的服务（包括已经在运行、未重新启动的服务）真正监听；声明了 `health:` 的服务还必须
 通过对应的健康检查（命令式检查不要求服务自己监听）。无端口 worker 以运行记录活跃作为 ready。默认不等待，`--wait-timeout` 默认 30s；显式指定时必须为正值且同时启用 `--wait` 或 `--ready`，否则退出 2，不执行启动；
 超时的服务状态为 `failed`、原因是 `ready_timeout`，命令退出码为 1。只有本次新启动的超时运行才进入停止清理；
@@ -203,7 +225,9 @@ cwd 中执行，按 `cmd:` 的规则拆成 argv（不经过 shell），支持 `$
 不会把它显示成普通的手动停止。健康事实带有 `status`、`code`、`reason` 与 `observed_at`，
 依赖声明了 `health:` 时，后继服务会等待该依赖的健康状态为 `ok`。
 依赖等待本身失败时，服务最后退出原因分别是 `dependency_timeout` 或 `dependency_not_ready`，
-与启动失败一样会保留在状态、attention 和状态变更中。
+与启动失败一样会保留在状态、attention 和状态变更中。若依赖是本次 `groups.start` 已经尝试、
+并且在等待期间已经退出，后继服务不再等满预算：它立即以 `dependency_not_ready` 失败，
+消息带上依赖的退出码与原因，`hint` 指向依赖日志。依赖仍活着但尚未监听时仍按 `dependency_timeout` 等满预算。
 任何服务启动失败都会以退出码 1 返回，失败服务仍保留其退出原因供 status 查看。
 默认只允许在用户 home 目录内启动服务；明确使用 `--allow-outside-home` 才会放开这个限制。
 
@@ -211,7 +235,7 @@ cwd 中执行，按 `cmd:` 的规则拆成 argv（不经过 shell），支持 `$
 
 ~~~json
 {"services":[
-  {"service":"api","state":"started","pid":1234,"port":3000},
+  {"service":"api","state":"started","ready":false,"pid":1234,"port":3000},
   {"service":"worker","state":"failed","reason":"start_failed",
    "error":"exec: \"nosuchcmd\": executable file not found in $PATH",
    "hint":"check the command and its working directory"}
@@ -224,6 +248,7 @@ cwd 中执行，按 `cmd:` 的规则拆成 argv（不经过 shell），支持 `$
 `--only` 只重启点名的服务，依赖和其他服务保持运行；
 这类重启保留 `port: auto` 的 worktree 占用，让服务重新拿回原地址。`--force` 跳过优雅停止。
 --json 返回一个值，其中 `stopped` 是停止结果，`services` 和汇总字段是重新启动结果。
+`restart` 不等待就绪，因此 `started` 服务带 `ready:false`，人读同样标注未确认就绪。
 
 ### oberth down [project] [--worktree path | --identity wt_…] [--force] [--json]
 

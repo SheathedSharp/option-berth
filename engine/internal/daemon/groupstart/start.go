@@ -23,6 +23,8 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/runsreg"
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
+	"github.com/sheathedsharp/option-berth/engine/internal/servicefacts"
 	"github.com/sheathedsharp/option-berth/engine/internal/spawn"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
@@ -126,19 +128,21 @@ func run(ctx context.Context, rt *daemon.Runtime, s *daemon.Stream,
 			return end, err
 		}
 		svc := step.Service
-		reason, up, err := alreadyRunning(ctx, rt, group, svc)
+		reason, runID, up, err := alreadyRunning(ctx, rt, group, svc)
 		if err != nil {
 			return end, err
 		}
 		if up {
-			if err := s.Send(rpc.GroupsStartChunk{Service: svc.Name, State: "skipped", Skipped: true, Reason: reason}); err != nil {
+			if err := s.Send(rpc.GroupsStartChunk{
+				Service: svc.Name, State: "skipped", Skipped: true, Reason: reason, RunID: runID,
+			}); err != nil {
 				return end, err
 			}
 			end.Skipped = append(end.Skipped, svc.Name)
 			continue
 		}
 
-		if err := waitFor(ctx, rt, group, step.Waits, book); err != nil {
+		if err := waitFor(ctx, rt, group, step.Waits, book, meta.StartID); err != nil {
 			if err := ctx.Err(); err != nil {
 				return end, err
 			}
@@ -238,10 +242,24 @@ func run(ctx context.Context, rt *daemon.Runtime, s *daemon.Stream,
 		}
 		if exit, ok := runsreg.Default.ExitForRun(h.ID, h.PID, h.StartedAt); ok {
 			end.Errors = append(end.Errors, svc.Name)
+			// A bind failure is explained by whoever still holds the port.
+			// This is the first read, so the caller gets the evidence without
+			// a second command. A scanner that is absent or cannot observe
+			// leaves the holder empty; it must never turn this failure into an
+			// internal error.
+			var holder *state.PortHolder
+			if exit.Reason == runsreg.ReasonPortOccupied && rt.Scanner != nil {
+				if snap, err := rt.Scanner.SnapshotAllContext(ctx, scanner.Include{}); err == nil {
+					holder = servicefacts.FindPortHolder(snap.Ports, servicefacts.PortHolderQuery{
+						Port: exit.PortHint, Group: group, Service: svc.Name, RunID: h.ID,
+					})
+				}
+			}
 			if err := s.Send(rpc.GroupsStartChunk{
 				Service: svc.Name, State: "failed", Reason: exit.Reason,
 				Error: fmt.Sprintf("service exited with code %d (%s)", exit.Code, exit.Reason),
 				Hint:  logsHint(svc.Name), PID: h.PID, RunID: h.ID, LogPath: h.LogPath,
+				PortHolder: holder,
 			}); err != nil {
 				return end, err
 			}
@@ -621,18 +639,25 @@ func (b *addressBook) forService(svc groups.Service) (map[string]int, error) {
 // The group's resolved state answers for everything option-berth did not start — it
 // already joins declared ports, run names and display names against what is
 // listening.
-func alreadyRunning(ctx context.Context, rt *daemon.Runtime, group string, svc groups.Service) (string, bool, error) {
+func alreadyRunning(ctx context.Context, rt *daemon.Runtime, group string, svc groups.Service) (reason, runID string, up bool, err error) {
 	if err := ctx.Err(); err != nil {
-		return "", false, err
+		return "", "", false, err
 	}
-	for _, rec := range runsreg.Default.List() {
-		if rec.Group == group && rec.Name == svc.Name {
-			return fmt.Sprintf("already started by option-berth (pid %d)", rec.PID), true, ctx.Err()
+	// List is oldest first; the newest matching run is the one the CLI will
+	// later read, so name that one rather than the first.
+	var newest *runsreg.Record
+	list := runsreg.Default.List()
+	for i := range list {
+		if list[i].Group == group && list[i].Name == svc.Name {
+			newest = &list[i]
 		}
+	}
+	if newest != nil {
+		return fmt.Sprintf("already started by option-berth (pid %d)", newest.PID), newest.ID, true, ctx.Err()
 	}
 	snap, err := snapshotContext(ctx, rt)
 	if err != nil {
-		return "", false, err
+		return "", "", false, err
 	}
 	for _, g := range snap.Groups {
 		if g.Name != group {
@@ -642,13 +667,16 @@ func alreadyRunning(ctx context.Context, rt *daemon.Runtime, group string, svc g
 			if row.Name != svc.Name || !row.Running {
 				continue
 			}
-			if row.PortActual != nil {
-				return fmt.Sprintf("already running on port %d", *row.PortActual), true, nil
+			if row.RunID != nil {
+				runID = *row.RunID
 			}
-			return "already running", true, nil
+			if row.PortActual != nil {
+				return fmt.Sprintf("already running on port %d", *row.PortActual), runID, true, nil
+			}
+			return "already running", runID, true, nil
 		}
 	}
-	return "", false, nil
+	return "", "", false, nil
 }
 
 // waitFor blocks until every dependency is ready, or gives up after
@@ -656,7 +684,7 @@ func alreadyRunning(ctx context.Context, rt *daemon.Runtime, group string, svc g
 // dial is deliberate: the thing that decides a service is up has to be the
 // thing every client reads. A no-port dependency uses the run registry's live
 // record because it has no listener to wait for.
-func waitFor(ctx context.Context, rt *daemon.Runtime, group string, deps []groups.Service, book *addressBook) error {
+func waitFor(ctx context.Context, rt *daemon.Runtime, group string, deps []groups.Service, book *addressBook, startID string) error {
 	if len(deps) == 0 {
 		return nil
 	}
@@ -737,6 +765,21 @@ func waitFor(ctx context.Context, rt *daemon.Runtime, group string, deps []group
 		if len(observed) == 0 {
 			return nil
 		}
+		// A dependency this same groups.start already attempted and that has
+		// since exited cannot become ready; waiting out the budget would only
+		// turn a known failure into dependency_timeout.
+		for _, dep := range observed {
+			if dep.Name == "" {
+				continue
+			}
+			if exit, ok := dependencyExited(rt, group, dep.Name, startID); ok {
+				return dependencyFailure{
+					message: fmt.Sprintf("dependency %s exited with code %d (%s)",
+						dep.Name, exit.Code, exit.Reason),
+					names: []string{dep.Name},
+				}
+			}
+		}
 		missing = observed
 		if poll == nil {
 			poll = time.NewTimer(dependencyPoll)
@@ -749,6 +792,33 @@ func waitFor(ctx context.Context, rt *daemon.Runtime, group string, deps []group
 		case <-poll.C:
 		}
 	}
+}
+
+// dependencyExitRegistry is the part of the run registry the dependency wait
+// needs. daemon.RunRegistry stays small; a runtime whose registry cannot answer
+// both questions keeps the original timeout behavior.
+type dependencyExitRegistry interface {
+	LatestExit(group, service string) (runsreg.Exit, bool)
+	Live(group, service string) bool
+}
+
+// dependencyExited reports an exit that proves this wait cannot succeed: the
+// dependency was attempted by this same groups.start (its exit carries this
+// call's StartID) and no run of it is live now. An older exit, or a live run
+// that has not begun listening yet, is not evidence of failure.
+func dependencyExited(rt *daemon.Runtime, group, service, startID string) (state.ServiceExit, bool) {
+	if rt == nil || startID == "" {
+		return state.ServiceExit{}, false
+	}
+	reg, ok := rt.Runs().(dependencyExitRegistry)
+	if !ok || reg.Live(group, service) {
+		return state.ServiceExit{}, false
+	}
+	exit, ok := reg.LatestExit(group, service)
+	if !ok || exit.StartID != startID {
+		return state.ServiceExit{}, false
+	}
+	return exit.ServiceExit(), true
 }
 
 // pending lists the dependencies that are not ready yet.

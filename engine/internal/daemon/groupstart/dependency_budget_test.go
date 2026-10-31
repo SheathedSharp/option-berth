@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/runsreg"
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
@@ -26,7 +27,7 @@ func setDependencyBudget(t *testing.T, budget time.Duration) {
 func budgetWait(ctx context.Context, l *scanner.Loop) error {
 	return waitFor(ctx, &daemon.Runtime{Scanner: l}, "test",
 		[]groups.Service{{Name: "api", Port: 18000}},
-		&addressBook{ports: map[string]int{"api": 18000}})
+		&addressBook{ports: map[string]int{"api": 18000}}, "")
 }
 
 func requireDependencyTimeout(t *testing.T, err error) {
@@ -144,7 +145,7 @@ func TestDependencyBudgetDoesNotPoisonNextWait(t *testing.T) {
 
 func TestDependencyBudgetEmptyDependenciesRemainImmediate(t *testing.T) {
 	setDependencyBudget(t, 0)
-	if err := waitFor(context.Background(), nil, "test", nil, nil); err != nil {
+	if err := waitFor(context.Background(), nil, "test", nil, nil, ""); err != nil {
 		t.Fatalf("empty wait used runtime or budget: %v", err)
 	}
 }
@@ -238,5 +239,48 @@ func TestDependencyBudgetDeadlineIsNotRenewedBetweenPolls(t *testing.T) {
 	parentDeadline, _ := parent.Deadline()
 	if !deadlines[0].Before(parentDeadline) || !errors.Is(child.Err(), context.Canceled) || parent.Err() != nil {
 		t.Fatalf("wrong budget lifetime: deadlines=%v child=%v parent=%v", deadlines, child.Err(), parent.Err())
+	}
+}
+
+// TestDependencyExitFailsFastOnlyForThisStart: an exit carrying this start's
+// StartID proves the dependency can never become ready; an exit from an earlier
+// start is not this wait's evidence and must keep the budget.
+func TestDependencyExitFailsFastOnlyForThisStart(t *testing.T) {
+	setDependencyBudget(t, 50*time.Millisecond)
+	l := scanner.New(scanner.Options{Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
+		return nil, nil
+	}})
+	reg := runsreg.New()
+	reg.Mirror = false
+	reg.Alive = func(int) bool { return false }
+	reg.StartFailedWithReason(runsreg.Record{Group: "demo", Name: "seed", StartID: "start-1"},
+		runsreg.ReasonStartFailed, "boom")
+	rt := &daemon.Runtime{Scanner: l}
+	rt.SetRuns(reg)
+	deps := []groups.Service{{Name: "seed"}}
+
+	err := waitFor(context.Background(), rt, "demo", deps, &addressBook{}, "start-1")
+	var failure dependencyFailure
+	if !errors.As(err, &failure) || len(failure.names) == 0 || failure.names[0] != "seed" {
+		t.Fatalf("wait = %v, want a failure naming seed", err)
+	}
+	if !strings.Contains(err.Error(), "dependency seed exited with code") {
+		t.Fatalf("wait = %v, want the dependency's exit", err)
+	}
+	if startFailureReason(err.Error()) != "dependency_not_ready" {
+		t.Fatalf("reason = %q, want dependency_not_ready", startFailureReason(err.Error()))
+	}
+	if dependencyHint(err) != "oberth logs seed --once" {
+		t.Fatalf("hint = %q, want the dependency's log", dependencyHint(err))
+	}
+
+	// The same dependency exit from a different groups.start is not evidence
+	// for this one, so the wait still runs out.
+	err = waitFor(context.Background(), rt, "demo", deps, &addressBook{}, "start-2")
+	if err == nil || !strings.Contains(err.Error(), "timed out after") || !strings.Contains(err.Error(), "seed") {
+		t.Fatalf("wait = %v, want the original dependency timeout", err)
+	}
+	if startFailureReason(err.Error()) != "dependency_timeout" {
+		t.Fatalf("reason = %q, want dependency_timeout", startFailureReason(err.Error()))
 	}
 }

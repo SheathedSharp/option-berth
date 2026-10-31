@@ -34,7 +34,7 @@ func TestLifecycleObservationPropagatesOwnerCancellation(t *testing.T) {
 			}
 		} else {
 			var up bool
-			_, up, err = alreadyRunning(ctx, rt, "example", groups.Service{Name: "worker"})
+			_, _, up, err = alreadyRunning(ctx, rt, "example", groups.Service{Name: "worker"})
 			if up {
 				t.Fatal("cancelled observation declared readiness")
 			}

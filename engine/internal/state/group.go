@@ -63,12 +63,19 @@ type Service struct {
 // process owns the declared port), start_failed (the command could not be
 // started), stopped (option-berth or the user asked it to stop), ready_timeout
 // (a readiness wait expired), dependency_timeout (a dependency readiness wait
-// expired), or dependency_not_ready (a dependency could not be resolved).
+// expired), or dependency_not_ready (a dependency could not be resolved or
+// exited before becoming ready).
 type ServiceExit struct {
 	Code   int    `json:"code"`
 	Reason string `json:"reason" jsonschema:"enum=exited,enum=crashed,enum=port_occupied,enum=start_failed,enum=stopped,enum=ready_timeout,enum=dependency_timeout,enum=dependency_not_ready"`
 	At     string `json:"at"`
 	RunID  string `json:"run_id"`
+	// PortHint is the port this run was told to bind. It survives a later
+	// manifest edit and is how port_occupied evidence is found again.
+	PortHint int `json:"port_hint,omitempty"`
+	// PortHolder is present only for port_occupied, when the declared port was
+	// observed held at read time.
+	PortHolder *PortHolder `json:"port_holder,omitempty" jsonschema:"nullable"`
 }
 
 // ServiceRun identifies a live option-berth-owned service. It intentionally
