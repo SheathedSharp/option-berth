@@ -2,11 +2,11 @@
 """Check that the agent skill covers the engine's agent-facing contract.
 
 The skill is an independent product, but it teaches the same CLI, error codes,
-manifest fields, and references. This check extracts those anchors from the
-contract's canonical sources — docs/cli.md, the generated manifest schema, and
-the observation state constants — and requires each one to appear in the skill
-checkout. It does not judge prose; it catches a contract change that never
-reached the skill.
+manifest fields, references, and agent-facing JSON fields. This check extracts
+those anchors from the contract's canonical sources — docs/cli.md, the generated
+manifest schema, and the observation state constants — and requires each one to
+appear in the skill checkout. It does not judge prose; it catches a contract
+change that never reached the skill.
 """
 from __future__ import annotations
 
@@ -84,6 +84,22 @@ def reference_tokens(cli_text: str) -> list[str]:
     return tokens
 
 
+def json_field_anchors(cli_text: str) -> list[str]:
+    """Read the agent-facing JSON field table, not fields named in prose."""
+    fields: list[str] = []
+    for line in _section(cli_text, "### agent 读取的 JSON 字段").splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        match = re.fullmatch(r"`([^`]+)`", cells[0]) if cells else None
+        if match is not None:
+            fields.append(match.group(1))
+    fields = list(dict.fromkeys(fields))
+    if not fields:
+        raise ValueError("docs/cli.md: the agent JSON field table names no fields")
+    return fields
+
+
 def manifest_anchors(schema: dict) -> list[str]:
     """Keys an agent must know to draft or diagnose a manifest."""
     keys = set(schema.get("properties", {}))
@@ -107,8 +123,9 @@ def build_anchors(cli_text: str, schema: dict, observation_go: str) -> list[tupl
     anchors.extend(("manifest key", key) for key in manifest_anchors(schema))
     anchors.extend(("reference", token) for token in reference_tokens(cli_text))
     anchors.extend(("observation state", state) for state in observation_states(observation_go))
+    anchors.extend(("json field", field) for field in json_field_anchors(cli_text))
     anchors.extend(("qualitative anchor", anchor) for anchor, _ in QUALITATIVE_ANCHORS)
-    return anchors
+    return list(dict.fromkeys(anchors))
 
 
 def validate_qualitative_sources(cli_text: str) -> None:
