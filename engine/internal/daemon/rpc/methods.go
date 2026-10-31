@@ -361,6 +361,10 @@ type GroupsStartChunk struct {
 	// or the live run a skipped chunk matched. It is empty when the daemon
 	// cannot name one (an unmanaged listener, or an older daemon).
 	RunID string `json:"run_id,omitempty"`
+	// ReadyTimeout is this service's effective readiness budget, a normalized
+	// Go duration ("30s"). A daemon that predates the field omits it, and a
+	// client falls back to 30s.
+	ReadyTimeout string `json:"ready_timeout,omitempty"`
 	// LogOffset is how long log_path already was before this start. The file
 	// is appended to across runs, so a client following it starts here to
 	// show this run and not the ones before.

@@ -136,6 +136,7 @@ func run(ctx context.Context, rt *daemon.Runtime, s *daemon.Stream,
 		if up {
 			if err := s.Send(rpc.GroupsStartChunk{
 				Service: svc.Name, State: "skipped", Skipped: true, Reason: reason, RunID: runID,
+				ReadyTimeout: svc.EffectiveReadyTimeout().String(),
 			}); err != nil {
 				return end, err
 			}
@@ -270,6 +271,7 @@ func run(ctx context.Context, rt *daemon.Runtime, s *daemon.Stream,
 		if err := s.Send(rpc.GroupsStartChunk{
 			Service: svc.Name, State: "started", PID: h.PID, Port: h.PortHint, RunID: h.ID,
 			LogPath: h.LogPath, LogOffset: h.LogOffset,
+			ReadyTimeout: svc.EffectiveReadyTimeout().String(),
 		}); err != nil {
 			return end, err
 		}
@@ -722,9 +724,13 @@ func waitFor(ctx context.Context, rt *daemon.Runtime, group string, deps []group
 		return err
 	}
 	// One budget belongs to the whole wait, including observation and queueing,
-	// not just the gap between polls. A dependency timeout must not cancel the
-	// parent plan: independent services still get their own chance to start.
-	budget := dependencyTimeout
+	// not just the gap between polls. It is the largest effective readiness
+	// budget among the dependencies, so a dependent waits as long as the
+	// slowest thing it declared lets it. A dependency with no ready_timeout
+	// keeps dependencyTimeout, the package's test seam. A dependency timeout
+	// must not cancel the parent plan: independent services still get their
+	// own chance to start.
+	budget := dependencyBudget(deps)
 	waitCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	missing := make([]pendingDependency, len(deps))
@@ -822,6 +828,23 @@ func waitFor(ctx context.Context, rt *daemon.Runtime, group string, deps []group
 		case <-poll.C:
 		}
 	}
+}
+
+// dependencyBudget is the longest readiness budget among deps. A dependency
+// that declares ready_timeout is waited for on its own budget; one that does
+// not keeps dependencyTimeout so the existing test seam still governs it.
+func dependencyBudget(deps []groups.Service) time.Duration {
+	budget := time.Duration(0)
+	for _, dep := range deps {
+		d := dependencyTimeout
+		if strings.TrimSpace(dep.ReadyTimeout) != "" {
+			d = dep.EffectiveReadyTimeout()
+		}
+		if d > budget {
+			budget = d
+		}
+	}
+	return budget
 }
 
 // dependencyExitRegistry is the part of the run registry the dependency wait

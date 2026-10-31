@@ -933,6 +933,9 @@
         "run_id": {
           "type": "string"
         },
+        "ready_timeout": {
+          "type": "string"
+        },
         "log_offset": {
           "type": "integer"
         },
@@ -1940,6 +1943,9 @@
             }
           ]
         },
+        "ready_timeout": {
+          "type": "string"
+        },
         "port": {
           "oneOf": [
             {
@@ -2164,6 +2170,7 @@
         "cmd",
         "cwd",
         "sources",
+        "ready_timeout",
         "port",
         "port_auto",
         "health",

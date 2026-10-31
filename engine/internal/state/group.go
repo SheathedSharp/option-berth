@@ -15,7 +15,11 @@ type Service struct {
 	// the service directory (the default); an empty array means the code check
 	// is explicitly disabled.
 	Sources []string `json:"sources" jsonschema:"nullable"`
-	Port    *int     `json:"port" jsonschema:"nullable"`
+	// ReadyTimeout is the effective readiness budget for this service: the
+	// manifest's ready_timeout, or the 30s default when it is absent. It is
+	// normalized as a Go duration string ("30s").
+	ReadyTimeout string `json:"ready_timeout"`
+	Port         *int   `json:"port" jsonschema:"nullable"`
 	// PortAuto is `port: auto`: the daemon assigns the port when it starts the
 	// service, so Port is null and PortActual says where it is running.
 	PortAuto bool `json:"port_auto"`
