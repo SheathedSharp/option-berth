@@ -75,9 +75,10 @@ python3 scripts/check_skill_contract.py --skill-dir ../option-berth-skill
 
 `internal/codeid` 的单元测试覆盖：Git 检出只纳入已跟踪与未 ignore 的未跟踪文件；服务 cwd 位于
 checkout 子目录且 `sources` 指向同级目录；非 Git 回退跳过 `node_modules` / `build`，但显式声明的
-目录不被跳过；新增、修改、删除分别计数；缺失的 source 视为空而不是错误；快照写读、按 run 清理，
-以及拒绝读取另一个 run 的快照。`internal/groups` 覆盖 `sources` 的解析、越界校验、`sources: []`
-与省略的区别、编辑输出；`internal/state` 的字段覆盖测试保证新字段进入相等比较。
+目录不被跳过；新增、修改、删除分别计数；缺失的 source 视为空而不是错误；经过符号链接的 source
+被拒绝而不是给出假阴性；快照写读、按 run 清理，以及拒绝读取另一个 run 的快照。`internal/groups`
+覆盖 `sources` 的解析、越界校验、`sources: []` 与省略的区别，以及 YAML 往返不丢失 `sources: []`；
+`internal/state` 的字段覆盖测试保证新字段进入相等比较。
 `internal/daemon/groupstart` 用真实 daemon 核对启动时确实写入快照，以及 `sources: []` 不写；
 `internal/cmd` 的 `TestAnnotateCodeFacts*` 覆盖“已改 / 未改 / 未知”三态，`TestStatusOnly*`
 确认代码比较跟随 `--only` 选择，`TestBriefStatus*` 确认 `--brief` 保留代码字段。2026-10-31 本机执行：

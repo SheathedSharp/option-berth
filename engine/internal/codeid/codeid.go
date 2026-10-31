@@ -98,6 +98,15 @@ func Take(ctx context.Context, root string, sources []string) (Snapshot, error) 
 		return Snapshot{}, err
 	}
 	root = filepath.Clean(root)
+	// Resolve the root once so a source check compares against a canonical
+	// path. `groups.start` already passes a resolved cwd; a direct caller (or
+	// a test) may not.
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
+	if err := checkSourceLinks(root, sources); err != nil {
+		return Snapshot{}, err
+	}
 	snap := Snapshot{
 		Version: SnapshotVersion,
 		Root:    root,
@@ -238,6 +247,32 @@ func PruneExcept(keep map[string]bool) error {
 		var snap Snapshot
 		if json.Unmarshal(data, &snap) != nil || snap.RunID == "" || !keep[snap.RunID] {
 			_ = os.Remove(path)
+		}
+	}
+	return nil
+}
+
+// checkSourceLinks refuses a declared source that resolves through a symlink.
+// Hashing the link string would report "unchanged" while the target's contents
+// change, which is exactly the false answer this package exists to prevent.
+// A missing source is not an error: deleting it is a change.
+func checkSourceLinks(root string, sources []string) error {
+	for _, source := range sources {
+		abs := filepath.Join(root, filepath.FromSlash(source))
+		// A broken link resolves to ErrNotExist, so check the entry itself
+		// first: it is still a link, not a missing file.
+		if info, lerr := os.Lstat(abs); lerr == nil && info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("source %q is a symlink; declare its target path", source)
+		}
+		resolved, err := filepath.EvalSymlinks(abs)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("source %q: %w", source, err)
+		}
+		if filepath.Clean(resolved) != filepath.Clean(abs) {
+			return fmt.Errorf("source %q is reached through a symlink; declare its target path", source)
 		}
 	}
 	return nil

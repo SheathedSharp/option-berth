@@ -115,6 +115,43 @@ func TestServiceNodeWritesSourcesIncludingTheEmptyOptOut(t *testing.T) {
 	}
 }
 
+// A rename or draft merge re-encodes the service. `sources: []` must survive
+// that round-trip; dropping it would silently re-enable a check the author
+// opted out of.
+func TestMarshalYAMLKeepsSourcesDefaultAndOptOut(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		sources []string
+		want    string
+		absent  bool
+	}{
+		{"omitted", nil, "", true},
+		{"list", []string{"src", "go.mod"}, "sources: [src, go.mod]\n", false},
+		{"disabled", []string{}, "sources: []\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := yaml.Marshal(Service{Name: "web", Cmd: "serve", Sources: tc.sources})
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := string(out)
+			if tc.absent && strings.Contains(text, "sources:") {
+				t.Fatalf("omitted sources were written:\n%s", text)
+			}
+			if !tc.absent && !strings.Contains(text, tc.want) {
+				t.Fatalf("output does not contain %q:\n%s", tc.want, text)
+			}
+			var back Service
+			if err := yaml.Unmarshal(out, &back); err != nil {
+				t.Fatal(err)
+			}
+			if (back.Sources == nil) != (tc.sources == nil) || len(back.Sources) != len(tc.sources) {
+				t.Fatalf("round-trip sources = %#v, want %#v", back.Sources, tc.sources)
+			}
+		})
+	}
+}
+
 // Where to look for code is not part of the executable process spec: changing
 // `sources:` must not make a running service look like it was started from an
 // old manifest and demand a restart.
