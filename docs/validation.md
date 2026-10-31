@@ -241,6 +241,7 @@ macOS/Linux 上跑，沙箱里的 `observation_*` 结果不能代替它。
 - **core**：生成物缺失、端口被占、依赖未就绪、清单与进程不一致、代码已改但进程未重启、
   同仓库双 worktree。
 - **large**：十服务整栈的整栈启动、只起子栈、慢依赖、旧代码仍在跑、三 worktree 并行；
+  以及三个准确率诱导场景（端口属于外部进程、同名服务在另一个 checkout、只改前端）。
   夹具与公开示例 [stack-workshop](../examples/stack-workshop/README.md) 共用。
 
 每次运行使用隔离 `HOME` / `BERTH_HOME` / 可丢弃项目，只按点名的 `--pass-env` 和
@@ -276,10 +277,10 @@ shim 以 127 退出。
 
 **2026-10-31 实际执行（大项目档与对照臂）**：
 
-- `python3 -m unittest scripts/agent_eval_test.py`：45 项通过。新增覆盖十服务夹具、
-  三 worktree 夹具、慢依赖预热、旧代码场景、`native` 臂的 `oberth` 拒绝与杀进程放行、
-  误停/串 worktree 指标、A/B 聚合与对照表渲染。
-- `python3 scripts/agent_eval.py --list`：core 5 个、large 5 个场景，`oberth` / `native`
+- `python3 -m unittest scripts/agent_eval_test.py`：49 项通过。新增覆盖十服务夹具、
+  三 worktree 夹具、慢依赖预热、旧代码场景、三个准确率诱导场景的失败路径、`native` 臂的
+  `oberth` 拒绝与杀进程放行、误停/串 worktree 指标、A/B 聚合与对照表渲染。
+- `python3 scripts/agent_eval.py --list`：core 6 个、large 8 个场景，`oberth` / `native`
   两臂均列出。
 - `python3 scripts/agent_eval.py --dry-run --scenarios stack-start --skip-preflight`：
   成功生成十服务夹具与两个心跳效果路径。
@@ -288,9 +289,13 @@ shim 以 127 退出。
   未在本机验证。
 - **服务脚本冒烟**（绕开 `oberth`，直接启动脚本）：`migrate.py` 建库并写入一条种子，
   `build.py` 产出 `v1-<digest>`，`api` 在 `auth`/`catalog` 健康后返回 200，`worker`
-  写出 `ok` 心跳。它只证明夹具脚本与判定证据可用，不证明引擎启动链路。
-- **未执行**：真实 agent 的 core/large 矩阵与 A/B 数字。需要在能观察监听的普通终端或
-  具备凭据的 CI 上运行；没有用参考脚本或 fake engine 的行冒充。
+  写出 `ok` 心跳；`REQUIRED_FILE` 缺失时服务以 1 退出、补齐后健康。它只证明夹具脚本与
+  判定证据可用，不证明引擎启动链路。
+- **准确率诱导场景**：2026-10-31 新增 `stack-port-owner`、`stack-same-name-other-worktree`、
+  `stack-overbuild`，判定分别检查外部进程存活、另一个 checkout 的 PID 未变、只重启 web 时
+  其余 PID 未变；单元测试覆盖了它们的失败路径。
+- **未执行**：这三个新场景的真实 agent A/B 数字。需要在能观察监听的普通终端或具备凭据的
+  CI 上运行；没有用参考脚本或 fake engine 的行冒充。
 
 ## 客户端验证
 

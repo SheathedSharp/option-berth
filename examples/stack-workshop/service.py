@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import ProxyHandler, build_opener
@@ -19,6 +20,7 @@ NAME = os.environ.get("SERVICE_NAME", "service")
 PORT = int(os.environ["PORT"])
 READY_DELAY = float(os.environ.get("READY_DELAY", "0"))
 VERSION_FILE = os.environ.get("VERSION_FILE", "variant.txt")
+REQUIRED_FILE = os.environ.get("REQUIRED_FILE", "")
 REQUIRE = [item.strip() for item in os.environ.get("REQUIRE", "").split(",") if item.strip()]
 OPENER = build_opener(ProxyHandler({}))
 
@@ -71,6 +73,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    if REQUIRED_FILE and not os.path.exists(REQUIRED_FILE):
+        print(f"{NAME}: missing {REQUIRED_FILE}; run the documented setup step", file=sys.stderr, flush=True)
+        sys.exit(1)
     if READY_DELAY > 0:
         print(f"{NAME}: warming up for {READY_DELAY:g}s", flush=True)
         time.sleep(READY_DELAY)
