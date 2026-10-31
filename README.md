@@ -4,7 +4,7 @@
     <img src="brand/option-berth-lockup-light.svg" alt="option-berth — 各自成泊" width="420">
   </picture>
 </p>
-<p align="center"><strong>每份代码，各自成泊。</strong><br>面向 Git worktree 的本地服务运行事实与生命周期引擎。</p>
+<p align="center"><strong>每份代码，各自成泊。</strong><br>Git worktree 的运行事实层：服务起没起来，为什么没起来。</p>
 <p align="center">简体中文 · <a href="README.en.md">English</a></p>
 
 <p align="center"><a href="https://sheathedsharp.github.io/option-berth/">产品官网</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">下载最新引擎</a></p>
@@ -45,6 +45,7 @@ option-berth 把**服务声明、实际运行、日志、Git 上下文与工作�
 | 排查失败 | 从服务进入日志、退出结果与诊断，而不是重新拼接系统命令 |
 | 使用无端口 worker | 通过运行记录观察，不把“没有端口”当成“没有运行” |
 | 与 coding agent 协作 | 相同 CLI 提供结构化 JSON；不内置另一套模型或 agent 推理系统 |
+| 接入现有编排工具 | 在工具自己的 setup / cleanup 脚本里调用 `up --wait`、`down --worktree`；不改它的配置 |
 | 接手别人（或上一轮）的工作 | `oberth workplace` 记录做过的命令与任务，结果如何都留在 worktree 上 |
 | 结束或清理一个 worktree | `${worktree}` 身份随 `status --json` 发布；`worktrees --gone` 列出 checkout 已消失的身份；`down --worktree/--identity` 仍能停止并交还预留，数据删除留给人 |
 
@@ -182,6 +183,21 @@ npx skills add SheathedSharp/option-berth-skill -g
 Claude Code 也可以走插件市场：
 `/plugin install option-berth --marketplace SheathedSharp/option-berth-skill`。
 装它是 agent 自己的事：本仓库的命令不会自动安装 hooks、skills 或 MCP 配置。
+
+## 接入编排工具
+
+option-berth 是 worktree 的运行事实层。Conductor、Cursor、Claude Code、Codex 等工具负责创建工作区；
+在它们自己的 setup / run / cleanup 脚本或外层 wrapper 里调用 `oberth` 即可：
+
+```sh
+oberth up --wait                           # 新工作区的 setup
+oberth status --json                       # 脚本或 agent 读取运行事实
+oberth down --worktree /path/to/worktree   # 清理；checkout 已删除也能按身份停止
+```
+
+产品不安装 hooks、不注册 MCP、不改这些工具的配置。各工具的具体写法、版本前提、常见框架的
+端口参数（例如 Vite 要写 `--port ${port} --strictPort`），以及一段可以粘进 `AGENTS.md` 的说明，
+见 [接入编排工具与开发服务器](docs/integrations.md)。
 
 ## 一起用
 

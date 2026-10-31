@@ -19,6 +19,7 @@ PR 作者是仓库维护者，不要绕过。命令、失败处理与清理见�
 | 产品定义、该不该做 | [docs/product.md](docs/product.md) |
 | CLI / RPC / JSON / 清单字段 | [docs/cli.md](docs/cli.md) |
 | 生产实现边界、事实链 | [docs/architecture.md](docs/architecture.md) |
+| 接入编排工具、写 AGENTS.md 配方 | [docs/integrations.md](docs/integrations.md) |
 | 构建、运行、改哪跑什么 | [docs/develop.md](docs/develop.md) |
 | 验证项的含义与平台范围 | [docs/validation.md](docs/validation.md) |
 | 版本、标签、发版前置 | [docs/releasing.md](docs/releasing.md) |
