@@ -57,7 +57,21 @@ func serviceEqual(a, b *Service) bool {
 		pointerEqual(a.Icon, b.Icon) && pointerEqual(a.Color, b.Color) && sliceEqual(a.DependsOn, b.DependsOn) &&
 		a.Running == b.Running && pointerEqual(a.PortActual, b.PortActual) && pointerEqual(a.PID, b.PID) &&
 		pointerEqual(a.RunID, b.RunID) && pointerEqual(a.StartedAt, b.StartedAt) &&
-		pointerEqual(a.LogPath, b.LogPath) && sameExit(a.LastExit, b.LastExit)
+		pointerEqual(a.LogPath, b.LogPath) && sameExit(a.LastExit, b.LastExit) &&
+		sameStarting(a.Starting, b.Starting)
+}
+
+// sameStarting compares the transient start attempt. It is part of the wire
+// row's equality so a snapshot carrying it is never mistaken for one without
+// it; the scanner's cached snapshot has no attempts, so this only matters to a
+// reader that joined one.
+func sameStarting(a, b *ServiceStarting) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Phase == b.Phase && a.StartedAt == b.StartedAt &&
+		a.ReadyTimeout == b.ReadyTimeout && a.ElapsedMS == b.ElapsedMS &&
+		sliceEqual(a.WaitingOn, b.WaitingOn) && pointerEqual(a.LastPrepareMS, b.LastPrepareMS)
 }
 
 func machineEqual(a, b []MachineRef) bool {

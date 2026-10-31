@@ -96,6 +96,14 @@ const CapabilityReadyTimeout = "groups.start.ready_timeout"
 // snapshots and the redacted state.changed notification.
 const CapabilityStateScope = "state.scope"
 
+// CapabilityStartPhases is announced by daemons that publish a service's
+// in-flight start attempt: progress chunks on `groups.start` when the caller
+// asks for them, and a `starting` object on the service row. It is a diagnostic
+// enhancement, never a prerequisite: an old client that does not set progress
+// keeps the old stream, and a new client talking to an old daemon simply gets
+// no progress.
+const CapabilityStartPhases = "groups.start.phases"
+
 // Include lists the optional per-subscriber enrichments ("stats", "health").
 type Include []string
 
@@ -336,6 +344,12 @@ type GroupsStartParams struct {
 	// toolchain and virtualenv it was started from rather than the daemon's.
 	// Omitted, the services get the daemon's environment.
 	Env map[string]string `json:"env,omitempty"`
+	// Progress asks the daemon to push in-flight `starting` chunks while a
+	// service waits for a dependency, runs prepare, or is being spawned. They
+	// are diagnostic, not outcomes: the per-service outcome chunks and
+	// GroupsStartEnd are unchanged. Omitted (the historical shape) means no
+	// progress chunks at all.
+	Progress bool `json:"progress,omitempty"`
 }
 
 type GroupsStartResult struct {
@@ -348,12 +362,15 @@ type GroupsStartResult struct {
 
 // GroupsStartChunk is one service's outcome, pushed as it happens: it was
 // started (pid and log_path), it was skipped (with the reason), or it could not
-// be started (error).
+// be started (error). When the caller set progress, it can also be an in-flight
+// `starting` observation with a phase and timings; those are not outcomes.
 type GroupsStartChunk struct {
 	Service string `json:"service"`
 	// State is the machine-readable outcome for this service: started,
 	// skipped, failed, or ready_timeout (when the CLI was asked to wait).
-	State string `json:"state,omitempty" jsonschema:"enum=started,enum=skipped,enum=failed,enum=ready_timeout"`
+	// `starting` is an in-flight progress observation requested with
+	// GroupsStartParams.Progress; it never appears in the final summary.
+	State string `json:"state,omitempty" jsonschema:"enum=started,enum=skipped,enum=failed,enum=ready_timeout,enum=starting"`
 	// Ready is the CLI's readiness annotation, not a daemon fact: true only
 	// when this invocation waited and confirmed the service. false on a
 	// started service means "started, readiness not confirmed". Absent for
@@ -372,6 +389,19 @@ type GroupsStartChunk struct {
 	// Go duration ("30s"). A daemon that predates the field omits it, and a
 	// client falls back to 30s.
 	ReadyTimeout string `json:"ready_timeout,omitempty"`
+	// The remaining fields are present only on a `starting` progress chunk.
+	// They describe the in-flight start attempt, never a committed outcome.
+	// Phase is waiting_dependency while depends_on is waited for, prepare while
+	// the prepare command runs, and spawning from prepare success until the run
+	// is registered. StartedAt is when the attempt began (RFC3339Nano);
+	// ElapsedMS is computed at send time; WaitingOn names the dependencies
+	// still being waited for; LastPrepareMS is the previous prepare duration
+	// when one is known.
+	Phase         string   `json:"phase,omitempty" jsonschema:"enum=waiting_dependency,enum=prepare,enum=spawning"`
+	StartedAt     string   `json:"started_at,omitempty"`
+	ElapsedMS     int64    `json:"elapsed_ms,omitempty"`
+	WaitingOn     []string `json:"waiting_on,omitempty"`
+	LastPrepareMS *int64   `json:"last_prepare_ms,omitempty" jsonschema:"nullable"`
 	// LogOffset is how long log_path already was before this start. The file
 	// is appended to across runs, so a client following it starts here to
 	// show this run and not the ones before.

@@ -915,7 +915,8 @@
             "started",
             "skipped",
             "failed",
-            "ready_timeout"
+            "ready_timeout",
+            "starting"
           ]
         },
         "ready": {
@@ -935,6 +936,36 @@
         },
         "ready_timeout": {
           "type": "string"
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "waiting_dependency",
+            "prepare",
+            "spawning"
+          ]
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "elapsed_ms": {
+          "type": "integer"
+        },
+        "waiting_on": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "last_prepare_ms": {
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "log_offset": {
           "type": "integer"
@@ -1013,6 +1044,9 @@
             "type": "string"
           },
           "type": "object"
+        },
+        "progress": {
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -2160,6 +2194,16 @@
               "type": "null"
             }
           ]
+        },
+        "starting": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/ServiceStarting"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "type": "object",
@@ -2194,7 +2238,8 @@
         "run_id",
         "started_at",
         "log_path",
-        "last_exit"
+        "last_exit",
+        "starting"
       ]
     },
     "ServiceAdd": {
@@ -2379,6 +2424,52 @@
       "required": [
         "from",
         "to"
+      ]
+    },
+    "ServiceStarting": {
+      "properties": {
+        "phase": {
+          "type": "string",
+          "enum": [
+            "waiting_dependency",
+            "prepare",
+            "spawning"
+          ]
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "ready_timeout": {
+          "type": "string"
+        },
+        "elapsed_ms": {
+          "type": "integer"
+        },
+        "waiting_on": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "last_prepare_ms": {
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object",
+      "required": [
+        "phase",
+        "started_at",
+        "ready_timeout",
+        "elapsed_ms",
+        "waiting_on",
+        "last_prepare_ms"
       ]
     },
     "Session": {
@@ -2815,6 +2906,9 @@
         },
         "manifest_runtime_mismatch": {
           "type": "boolean"
+        },
+        "starting": {
+          "$ref": "#/definitions/ServiceStarting"
         }
       },
       "type": "object",
