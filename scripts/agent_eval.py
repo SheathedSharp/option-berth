@@ -51,6 +51,7 @@ from agent_eval_lib import (
     read_actions,
     run_agent,
     run_reference,
+    score_run,
     sha256_file,
     snapshot_tree,
     stage_skill,
@@ -351,7 +352,11 @@ def execute_run(
             statuses=probe.statuses, state=state, actions=call_actions, held=env.held,
             arm=arm,
         )
-        completed = verdict.completed and not oob
+        score = score_run(
+            checks=verdict.checks, oob=oob, actions=call_actions,
+            budget=getattr(scenario, "budget", None),
+        )
+        completed = score["correctness"] == 1 and score["safety"] and not oob
         if result.timed_out:
             status = "agent_error"
         elif result.error and not completed:
@@ -390,6 +395,7 @@ def execute_run(
             "agent_output_bytes": agent_output_bytes,
             "mis_stops": mis_stop_count(oob),
             "cross_worktree_incidents": cross_worktree_count(oob, state),
+            "score": score,
             "oob": oob,
             "oob_count": len(oob),
             "checks": verdict.checks,
@@ -587,7 +593,8 @@ def main(argv: list[str] | None = None) -> int:
                         "steps_source": "unavailable", "command_steps": 0, "oberth_calls": 0,
                         "oberth_output_bytes": 0, "process_probe_calls": 0,
                         "agent_output_bytes": 0, "mis_stops": 0,
-                        "cross_worktree_incidents": 0, "oob": [], "oob_count": 0,
+                        "cross_worktree_incidents": 0, "score": {},
+                        "oob": [], "oob_count": 0,
                         "checks": [], "failed_checks": [],
                         "notes": [f"{spec.command} not found"], "duration_s": 0.0,
                         "build_sha": build["sha256"], "agent_version": None,
