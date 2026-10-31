@@ -238,8 +238,10 @@ def compose(root: Path, project: str, *args: str, timeout: float = 120) -> subpr
 
 
 def compose_containers(project: str) -> list[str]:
+    # Running only. `down` stops the containers; it does not remove them, so
+    # `docker ps -a` would still list stopped ones and read as "left running".
     done = subprocess.run(
-        ["docker", "ps", "-aq", "--filter", f"label=com.docker.compose.project={project}"],
+        ["docker", "ps", "-q", "--filter", f"label=com.docker.compose.project={project}"],
         capture_output=True, text=True, timeout=30,
     )
     if done.returncode:
