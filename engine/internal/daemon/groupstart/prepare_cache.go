@@ -107,6 +107,37 @@ func prepareUnchanged(configPath string, svc groups.Service, cwd string) bool {
 // recordPrepareStamp writes the fingerprint of the step that just succeeded.
 // It does nothing when no inputs are declared, or when a declared input is
 // missing now; the next start then reruns rather than trusting a partial key.
+func recordPrepareStamp(configPath string, svc groups.Service, cwd string) error {
+	digest, err := prepareDigest(svc, cwd)
+	if err != nil {
+		if errors.Is(err, errNoPrepareInputs) {
+			return nil
+		}
+		return err
+	}
+	dir := paths.Prepare()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".prepare-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	if _, err := io.WriteString(tmp, digest+"\n"); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(name, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(name, prepareStampPath(configPath, svc.Name))
+}
+
 // prepareDurationPath is the advisory sidecar for one service's last prepare
 // duration. It is keyed independently of the input fingerprint: a duration is
 // evidence for a reader, never a reason to run or skip a step, so it must not
@@ -156,35 +187,4 @@ func lastPrepareDuration(configPath, service string) *int64 {
 		return nil
 	}
 	return &ms
-}
-
-func recordPrepareStamp(configPath string, svc groups.Service, cwd string) error {
-	digest, err := prepareDigest(svc, cwd)
-	if err != nil {
-		if errors.Is(err, errNoPrepareInputs) {
-			return nil
-		}
-		return err
-	}
-	dir := paths.Prepare()
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".prepare-*")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	defer os.Remove(name)
-	if _, err := io.WriteString(tmp, digest+"\n"); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(name, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(name, prepareStampPath(configPath, svc.Name))
 }

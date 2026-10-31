@@ -110,7 +110,7 @@ func (a *startAttempt) finish() {
 }
 
 // progressChunk renders the attempt as a `starting` chunk. elapsed_ms is
-// computed now, so a reader sees how long this phase has been in flight.
+// computed now, so a reader sees how long this attempt has been in flight.
 func (a *startAttempt) progressChunk() rpc.GroupsStartChunk {
 	startAttempts.Lock()
 	defer startAttempts.Unlock()

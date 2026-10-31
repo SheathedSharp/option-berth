@@ -80,7 +80,7 @@ func joinStartAttempts(rt *Runtime, groups []state.Group) []state.Group {
 }
 
 // startingFromAttempt projects an attempt at read time. elapsed_ms is computed
-// here rather than stored, so a progress read shows how long the phase has
+// here rather than stored, so a progress read shows how long the attempt has
 // actually been in flight.
 func startingFromAttempt(a StartAttempt) *state.ServiceStarting {
 	elapsed := time.Since(a.StartedAt).Milliseconds()
