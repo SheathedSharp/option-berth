@@ -23,6 +23,8 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/runsreg"
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
+	"github.com/sheathedsharp/option-berth/engine/internal/servicefacts"
 	"github.com/sheathedsharp/option-berth/engine/internal/spawn"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
@@ -240,10 +242,24 @@ func run(ctx context.Context, rt *daemon.Runtime, s *daemon.Stream,
 		}
 		if exit, ok := runsreg.Default.ExitForRun(h.ID, h.PID, h.StartedAt); ok {
 			end.Errors = append(end.Errors, svc.Name)
+			// A bind failure is explained by whoever still holds the port.
+			// This is the first read, so the caller gets the evidence without
+			// a second command. A scanner that is absent or cannot observe
+			// leaves the holder empty; it must never turn this failure into an
+			// internal error.
+			var holder *state.PortHolder
+			if exit.Reason == runsreg.ReasonPortOccupied && rt.Scanner != nil {
+				if snap, err := rt.Scanner.SnapshotAllContext(ctx, scanner.Include{}); err == nil {
+					holder = servicefacts.FindPortHolder(snap.Ports, servicefacts.PortHolderQuery{
+						Port: exit.PortHint, Group: group, Service: svc.Name, RunID: h.ID,
+					})
+				}
+			}
 			if err := s.Send(rpc.GroupsStartChunk{
 				Service: svc.Name, State: "failed", Reason: exit.Reason,
 				Error: fmt.Sprintf("service exited with code %d (%s)", exit.Code, exit.Reason),
 				Hint:  logsHint(svc.Name), PID: h.PID, RunID: h.ID, LogPath: h.LogPath,
+				PortHolder: holder,
 			}); err != nil {
 				return end, err
 			}

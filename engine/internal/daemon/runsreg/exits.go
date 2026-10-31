@@ -10,6 +10,7 @@ import (
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/servicefacts"
 	"github.com/sheathedsharp/option-berth/engine/internal/spawn"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
@@ -71,10 +72,11 @@ type Exit struct {
 // ServiceExit is the exit as a service row carries it.
 func (e Exit) ServiceExit() state.ServiceExit {
 	return state.ServiceExit{
-		Code:   e.Code,
-		Reason: e.Reason,
-		At:     e.ExitedAt.UTC().Format(time.RFC3339),
-		RunID:  e.ID,
+		Code:     e.Code,
+		Reason:   e.Reason,
+		At:       e.ExitedAt.UTC().Format(time.RFC3339),
+		RunID:    e.ID,
+		PortHint: e.PortHint,
 	}
 }
 
@@ -347,8 +349,11 @@ func tailLines(path string, offset int64, n int) []string {
 // serviceURL is the address a run's port hint stands for.
 func serviceURL(port int) string { return "http://localhost:" + strconv.Itoa(port) }
 
-// exitRow renders one exit for `runs.list`.
-func exitRow(e Exit) rpc.RunRecord {
+// exitRow renders one exit for `runs.list`. ports supplies the one read-time
+// fact the durable exit row cannot carry: who is on the declared port now. A
+// bind failure is explained by a listener that is still there; if it has since
+// released the port, there is no holder to name.
+func exitRow(e Exit, ports []state.Port) rpc.RunRecord {
 	code := e.Code
 	out := rpc.RunRecord{
 		ID:         e.ID,
@@ -374,6 +379,11 @@ func exitRow(e Exit) rpc.RunRecord {
 		hint := e.PortHint
 		out.PortHint = &hint
 		out.URL = serviceURL(hint)
+		if e.Reason == ReasonPortOccupied {
+			out.PortHolder = servicefacts.FindPortHolder(ports, servicefacts.PortHolderQuery{
+				Port: hint, Group: e.Group, Service: e.Name, RunID: e.ID,
+			})
+		}
 	}
 	return out
 }

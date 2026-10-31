@@ -226,7 +226,7 @@ func TestStartChunkReadinessAnnotation(t *testing.T) {
 	}
 
 	summary := rpc.GroupsStartEnd{}
-	markStartChunkFailed(chunks, &summary, "api", "crashed", "boom")
+	markStartChunkFailed(chunks, &summary, "api", "crashed", "boom", nil)
 	if chunks[0].Ready != nil {
 		t.Fatalf("ready = %v, want none on a failed chunk", chunks[0].Ready)
 	}

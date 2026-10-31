@@ -76,7 +76,8 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 					}
 					if selectedExit(svc.LastExit, selection.runID, fallbackSince) {
 						markStartChunkFailed(chunks, summary, name, svc.LastExit.Reason,
-							fmt.Sprintf("service exited with code %d (%s)", svc.LastExit.Code, svc.LastExit.Reason))
+							fmt.Sprintf("service exited with code %d (%s)", svc.LastExit.Code, svc.LastExit.Reason),
+							svc.LastExit.PortHolder)
 						delete(selected, name)
 					}
 				}
@@ -89,7 +90,7 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 			timedOut := make([]string, 0, len(selected))
 			for name, selection := range selected {
 				markStartChunkFailed(chunks, summary, name, "ready_timeout",
-					fmt.Sprintf("timed out after %s waiting for %s to be ready", timeout, name))
+					fmt.Sprintf("timed out after %s waiting for %s to be ready", timeout, name), nil)
 				// Waiting on an existing run does not authorize stopping it.
 				if selection.owned {
 					timedOut = append(timedOut, name)
@@ -241,7 +242,7 @@ func markStartChunkReady(chunks []rpc.GroupsStartChunk, name string) {
 }
 
 func markStartChunkFailed(chunks []rpc.GroupsStartChunk, summary *rpc.GroupsStartEnd,
-	name, reason, message string) {
+	name, reason, message string, holder *state.PortHolder) {
 	for i := range chunks {
 		if chunks[i].Service != name || chunks[i].Error != "" {
 			continue
@@ -250,6 +251,7 @@ func markStartChunkFailed(chunks []rpc.GroupsStartChunk, summary *rpc.GroupsStar
 		chunks[i].Reason = reason
 		chunks[i].Error = message
 		chunks[i].Hint = logsHint(name)
+		chunks[i].PortHolder = holder
 		chunks[i].Ready = nil
 		if !containsString(summary.Errors, name) {
 			summary.Errors = append(summary.Errors, name)

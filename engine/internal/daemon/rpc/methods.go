@@ -372,6 +372,9 @@ type GroupsStartChunk struct {
 	// no model judgement; it points at the run evidence option-berth already
 	// collected.
 	Hint string `json:"hint,omitempty"`
+	// PortHolder names the process observed on the declared port when this
+	// service failed with port_occupied. Absent for every other outcome.
+	PortHolder *state.PortHolder `json:"port_holder,omitempty"`
 }
 
 type GroupsStartEnd struct {
@@ -629,6 +632,9 @@ type RunRecord struct {
 	Reason    string   `json:"reason,omitempty"`
 	ExitedAt  string   `json:"exited_at,omitempty"`
 	LastLines []string `json:"last_lines,omitempty"`
+	// PortHolder is the process observed on the declared port when a run
+	// ended with port_occupied. Absent for every other outcome.
+	PortHolder *state.PortHolder `json:"port_holder,omitempty"`
 }
 
 type RunsSpawnParams struct {

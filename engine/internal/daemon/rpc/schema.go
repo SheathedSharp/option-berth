@@ -134,6 +134,8 @@ func namedTypes() []any {
 		state.Snapshot{}, state.Delta{}, state.Event{}, state.StateChanged{}, state.StreamSnapshot{},
 		state.StreamWorktree{}, state.StreamService{}, state.StreamPort{}, state.EventSource{}, state.Service{},
 		state.Stats{}, state.Health{}, state.Docker{}, state.Run{},
+		state.PortHolder{},
+
 		StateSnapshotResult{},
 		state.KillResult{},
 		Error{}, MutationResult{}, KillEnvelope{}, DoctorCheck{},

@@ -172,7 +172,7 @@ func handleList(ctx context.Context, req *daemon.Request) (any, error) {
 	exits := Default.Exits()
 	exited := make([]rpc.RunRecord, 0, len(exits))
 	for _, e := range exits {
-		exited = append(exited, exitRow(e))
+		exited = append(exited, exitRow(e, snap.Ports))
 	}
 	return rpc.RunsListResult{Runs: rows, Exited: exited}, nil
 }

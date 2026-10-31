@@ -25,6 +25,7 @@ func fullRow() ports.ListeningPort {
 		Type:        ports.PortTypeUser,
 		Tag:         "web",
 		RunID:       "run-1",
+		RunGroup:    "shop",
 		RunRootPID:  40,
 		Name:        "api",
 		ProjectRoot: "/home/dev/api",

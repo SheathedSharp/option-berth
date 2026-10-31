@@ -152,6 +152,27 @@ func TestPrintStatusFailureShowsEveryRetainedRun(t *testing.T) {
 	}
 }
 
+func TestPrintStatusFailureNamesThePortHolder(t *testing.T) {
+	code := 1
+	out := captureStdout(t, func() {
+		printStatusFailure(statusDocument{
+			Worktree: state.Group{Name: "shop"},
+			Exits: []rpc.RunRecord{{
+				Name: "api", Reason: "port_occupied", ExitCode: &code,
+				PortHolder: &state.PortHolder{
+					Port: 3000, PID: 4242, Command: "node server.js",
+					Kind: state.PortHolderRun, Group: "shop@other", Name: "api",
+				},
+			}},
+		})
+	})
+	for _, want := range []string{"port 3000", "4242", "node server.js", "another worktree"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("failure output = %q, want %q", out, want)
+		}
+	}
+}
+
 func TestPrintStatusFailureSkipsRoutineStops(t *testing.T) {
 	code := 137
 	out := captureStdout(t, func() {
