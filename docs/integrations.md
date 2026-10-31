@@ -46,7 +46,8 @@ oberth logs <service> --once --json
 `status --json` 里与编排最相关的是：
 
 - `worktree.services[]`：`pid`、`run_id`、`port_actual`、`running`、`health_status`、
-  `last_exit.reason`。逐服务的下一步提示来自 `up --json` 的 `services[].hint`，不是 `status`。
+  `last_exit.reason`。`exits[].hint` 与 `up --json` 的 `services[].hint` 同义，是引擎按日志
+  文件是否存在的确定性下一步；`worktree.services[]` 本身没有 `hint`。
 - `worktree.identity`（`wt_…`）和 `scope.root`：停止与核对 checkout 根路径用。
 - 顶层 `observation`：监听表不可信时出现，带 `state`、`code`、`detail`、`hint`。
   `observation_*` 都不是“没有监听”，更不是“没在运行”。
@@ -337,7 +338,8 @@ Codex 自己管理的 worktree（`codex --worktree`、`/worktree`）会按保留
   （`state`、`code`、`hint`）。
 - 启动用 `oberth up --wait --json`。`--wait` 等到服务真正监听并通过声明的健康检查；无端口
   worker 以运行记录活跃为准。
-- `oberth up --json` 的 `services[].hint` 是逐服务的下一步；`status --json` 没有这个字段。
+- `oberth up --json` 的 `services[].hint` 和 `status --json` 的 `exits[].hint` 是同一类确定性
+  下一步；`worktree.services[]` 本身没有 `hint`。
 - 失败时用 `oberth logs <service> --once --json` 读服务自己的输出，不要用等待超时或端口扫描
   代替原因。
 - `observation.state` 不是 `observable` 时，明确说“看不见监听”，按 `observation.hint` 处理；
