@@ -65,11 +65,13 @@ CLI 按 **agent 想做的事**分层，不按内部模块分：事实是「现�
 `--only api,worker` 只保留这些服务及其 `depends_on` 的传递闭包；`ports[]`、`exits[]` 和
 `changed` 里的服务/端口变化一起收窄，`machine:` 与 git 摘要保持不变。名称必须已经声明：
 未知名称返回 `not_found` 并列出可选服务，空名称按参数错误处理。过滤发生在完整快照和
-「上次看」标记写入之后，因此不会把部分状态写成下一次比较的基线。
+「上次看」标记写入之后，因此不会把部分状态写成下一次比较的基线。代码比较也只对选中的
+服务做，不会为范围外的服务重读源码。
 
 `--brief` 只保留运行时事实：服务与依赖的状态、声明/实际端口、健康结果、当前退出原因和
-下一步，以及监听端口与 `observation`。它不输出 `git`、`drafts`、`changed`、attention 交接
-或每个服务一份的清单字段；需要这些时用完整 `status`。
+下一步、代码变更（`code_changed_since_start`、`code_changed_files`、`code_hint`），以及
+监听端口与 `observation`。它不输出 `git`、`drafts`、`changed`、attention 交接或每个服务
+一份的清单字段；需要这些时用完整 `status`。
 
 服务的 `last_exit.reason` 会区分普通崩溃（`crashed`）和固定端口被其他进程占用
 （`port_occupied`），也会标出命令尚未启动就失败的服务（`start_failed`），因此“启动后退出”、
@@ -98,6 +100,12 @@ depends on · listeners · code · failed · next · drafts · last look），�
 `worktree.services[]` 还带有 `health_status`（`status`、`code`、`reason`、`observed_at`）。
 `health` 是声明的规范形式：HTTP 路径，或 `tcp:<port>`，或 `command:<命令行>`；`prepare_inputs` 是
 prepare 读取的文件列表，没有声明时为空数组。
+启动进行中时，`worktree.services[].starting` 给出这一次启动尝试的瞬时事实：`phase`
+（`waiting_dependency`、`prepare` 或 `spawning`）、`started_at`、有效的 `ready_timeout`、
+读取时计算的 `elapsed_ms`、本次等待声明的 `waiting_on`，以及上一次 prepare 耗时的
+`last_prepare_ms`（未知时为 null）。它不是一个 run：不进入运行记录、不落盘、不算
+`running`、不影响 `worktree.status`，daemon 重启即消失；依赖等待、prepare 与 spawn 期间可读，
+run 注册后消失。人读输出把该服务显示为 `starting · <phase>`。
 
 运行中的服务带 `stats`（`cpu_percent`、`memory_rss_bytes`、`thread_count`、`uptime`、`state`、
 `connections`）。有监听的服务取监听行的样本；无端口的 worker 取它运行根进程的样本，所以
@@ -154,6 +162,8 @@ JSON 顶层固定包含：
     "services": [
       {"name": "api", "running": true, "port": 3000, "port_actual": 3001,
        "health": {"status": "ok", "code": 200},
+       "code_changed_since_start": true, "code_changed_files": 2,
+       "code_hint": "oberth restart --only api",
        "stats": {"cpu_percent": 1.2, "memory_rss_bytes": 104857600}},
       {"name": "worker", "running": false, "exit_reason": "crashed", "exit_code": 1,
        "hint": "oberth logs worker --once"}
@@ -232,10 +242,19 @@ macOS 设置页写入的 `~/.option-berth/jev.json`（隔离运行时为 `$BERTH
 质量记录不属于 `status` 事实，也不改变任何执行权限；报告的 `sessions` 对象会说明会话、轮询、事件、
 Jev 调用、缓存命中和无事件轮询数量；没有真实反馈时指标保持 `null`。
 
-### oberth up [project] [--only name,...] [--wait|--ready] [--wait-timeout duration]
+### oberth up [project] [--only name,...] [--no-deps] [--wait|--ready] [--wait-timeout duration]
 [--allow-outside-home] [--json]
 
-按 oberth.yaml 的 depends_on 顺序启动服务。服务有 `prepare:` 时，先在同一 cwd 直接执行这个前置命令，
+按 oberth.yaml 的 depends_on 顺序启动服务。`--only` 点名服务时，默认连同它们传递的
+`depends_on` 闭包一起启动（例如 `--only web`、`web → api → db` 会依次启动 db、api、web）；
+显式点名的服务保持点名身份，被依赖带上的服务会在输出中标出由哪个点名服务带上。
+`--no-deps` 只启动点名的服务本身，不展开依赖闭包；没有 `--only` 时它不改变行为（本来就启动全部）。
+人类可读输出中被带上的行附加 dim 说明（如 `started (dependency of web)`、`skipped · required by web`），
+汇总在非空时另起一行 `included dependencies: api, db`。`--json` 中它们仍是普通 `services[]` 条目，
+带 `included_by`（排序后的点名根服务）；汇总带 `included`（排序）。能力协商：旧 daemon 不认识
+`include_dependencies`，新 CLI 只在 `--only` 点名了至少一个服务时才发送它，此时遇到旧 daemon
+会直接报错并提示重启 daemon 或传 `--no-deps`；没有 `--only`（或 `--no-deps`）时不发送，普通 `up` 不受影响。
+服务有 `prepare:` 时，先在同一 cwd 直接执行这个前置命令，
 成功后才启动长驻的 `cmd:`；前置命令的输出写入该服务日志，失败时服务不会启动。
 服务有 `env_file:` 时，prepare 与长驻命令都会先读到文件里的变量（见「共享环境文件」）。
 `prepare_inputs:` 声明该命令读取的输入文件（相对服务 cwd，例如 `[package.json, package-lock.json]`）；
@@ -245,7 +264,9 @@ Jev 调用、缓存命中和无事件轮询数量；没有真实反馈时指标�
 启动时记录这些路径的内容指纹和当时的 HEAD，`status` 重算后发布 `code_changed_since_start`。
 Git 检出中只纳入已跟踪文件和未被 ignore 的未跟踪文件，`node_modules`、`target`、`dist` 等不会进入
 指纹——即使它们被显式写进 `sources:`，因为它们通常是源码产出的制品；非 Git 目录只应用固定忽略
-列表。显式写 `sources: []` 关闭这项检查，适用于自己热重载代码的服务。
+列表。`sources:` 的路径本身不能经过符号链接（要声明链接目标）；目录内更深层的链接按链接本身记录，
+不跟随到目标。缺省源树相同的多个服务（例如都缺省到同一个仓库根）会一起报告变化；要区分它们，
+显式写上各自真正读取的 `sources:`。显式写 `sources: []` 关闭这项检查，适用于自己热重载代码的服务。
 带端口的依赖等待监听，无端口的 worker 等待其运行记录变为活跃；
 已经在运行的服务跳过；每个服务有自己的
 日志文件和运行记录。无参数时使用当前目录最近的清单，也可以显式给项目名。
@@ -294,6 +315,13 @@ cwd 中执行，按 `cmd:` 的规则拆成 argv（不经过 shell），支持 `$
 消息带上依赖的退出码与原因，`hint` 指向依赖日志。依赖仍活着但尚未监听时仍按 `dependency_timeout` 等满预算。
 任何服务启动失败都会以退出码 1 返回，失败服务仍保留其退出原因供 status 查看。
 默认只允许在用户 home 目录内启动服务；明确使用 `--allow-outside-home` 才会放开这个限制。
+
+daemon 宣告 `groups.start.phases` 能力时，`up` 会在请求里带上 `progress: true`，并在服务进入
+`waiting_dependency`、`prepare`、`spawning` 阶段时收到 `state: "starting"` 的进度 chunk：
+`phase`、`started_at`、`ready_timeout`、`elapsed_ms`、`waiting_on`、`last_prepare_ms`。
+这些 chunk 是诊断，不是结果：它们不计入 `services[]`、不参与就绪等待，也不影响汇总。
+人读模式把它们打印成 dim 进度行；`--json` 时进度行只写 stderr，stdout 仍然只有一个最终
+JSON 值，不混入诊断。旧 daemon 不认识 `progress`，旧 CLI 也不会发送，行为与之前一致。
 
 例如一次部分成功的结果仍是一个 JSON 值：
 

@@ -47,9 +47,18 @@ type briefService struct {
 	ExitCode   *int        `json:"exit_code,omitempty"`
 	Hint       string      `json:"hint,omitempty"`
 	Stats      *briefStats `json:"stats,omitempty"`
+	// Starting is the transient start attempt. It is a fact about why a
+	// service is not ready yet, so the brief view must not hide it.
+	Starting *state.ServiceStarting `json:"starting,omitempty"`
 	// ManifestRuntimeMismatch is kept because it is the one cheap signal that
 	// the process is running an older manifest; it is omitted when false.
 	ManifestRuntimeMismatch bool `json:"manifest_runtime_mismatch,omitempty"`
+	// CodeChangedSinceStart is the same fact the full document publishes:
+	// true/false when checked, absent when unknown. CodeChangedFiles and
+	// CodeHint accompany it only when the source changed.
+	CodeChangedSinceStart *bool  `json:"code_changed_since_start,omitempty"`
+	CodeChangedFiles      *int   `json:"code_changed_files,omitempty"`
+	CodeHint              string `json:"code_hint,omitempty"`
 }
 
 type briefHealth struct {
@@ -117,6 +126,12 @@ func briefStatusFrom(doc statusDocument) briefStatusDocument {
 			Name: svc.Name, Running: svc.Running,
 			Port: svc.Port, PortActual: svc.PortActual, PortAuto: svc.PortAuto,
 			ManifestRuntimeMismatch: svc.ManifestRuntimeMismatch,
+			CodeChangedSinceStart:   svc.CodeChangedSinceStart,
+			CodeChangedFiles:        svc.CodeChangedFiles,
+			Starting:                svc.Starting,
+		}
+		if svc.CodeHint != nil {
+			item.CodeHint = *svc.CodeHint
 		}
 		if svc.HealthStatus != nil {
 			item.Health = &briefHealth{

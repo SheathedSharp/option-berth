@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1120,6 +1121,133 @@ services:
 	if !asRPCError(err, &re) || re.Data.Code != "not_found" {
 		t.Fatalf("error = %v, want not_found", err)
 	}
+}
+
+// TestDaemonAnnouncesStartDependencyCapability: the CLI feature-detects the
+// closure field on this capability, so a daemon serving groups.start must
+// announce it.
+func TestDaemonAnnouncesStartDependencyCapability(t *testing.T) {
+	skipOnWindows(t)
+	dir := isolate(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	c := startDaemon(t, ctx, dir, nil)
+	if !slices.Contains(c.Hello().Capabilities, rpc.CapabilityStartDependencies) {
+		t.Fatalf("capabilities = %v, want %s",
+			c.Hello().Capabilities, rpc.CapabilityStartDependencies)
+	}
+}
+
+// TestStartIncludesDependencyClosure: include_dependencies grows only's plan
+// with its transitive depends_on closure, and both the chunks and the summary
+// say which named service brought each one in.
+func TestStartIncludesDependencyClosure(t *testing.T) {
+	skipOnWindows(t)
+	dir := isolate(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	dbPort, apiPort, webPort := freePort(t), freePort(t), freePort(t)
+	cmd := serviceCmd(t)
+	path := writeConfig(t, dir, fmt.Sprintf(`name: itest
+services:
+  - name: web
+    cmd: %s
+    port: %d
+    depends_on: [api]
+  - name: api
+    cmd: %s
+    port: %d
+    depends_on: [db]
+  - name: db
+    cmd: %s
+    port: %d
+`, cmd, webPort, cmd, apiPort, cmd, dbPort))
+
+	c := startDaemon(t, ctx, dir, []int{dbPort, apiPort, webPort})
+
+	var start rpc.GroupsStartResult
+	s, err := c.Stream(ctx, "groups.start", rpc.GroupsStartParams{
+		ConfigPath: &path, Only: []string{"web"}, IncludeDependencies: true,
+	}, &start)
+	if err != nil {
+		t.Fatalf("groups.start: %v", err)
+	}
+	defer s.Close()
+
+	chunks, end := collect(t, s)
+	if len(chunks) != 3 {
+		t.Fatalf("chunks = %+v, want db, api and web", chunks)
+	}
+	wantOrder := []string{"db", "api", "web"}
+	for i, want := range wantOrder {
+		if chunks[i].Service != want {
+			t.Fatalf("order = %+v, want %v", chunks, wantOrder)
+		}
+	}
+	for _, ch := range chunks[:2] {
+		if !slices.Equal(ch.IncludedBy, []string{"web"}) {
+			t.Errorf("%s IncludedBy = %v, want [web]", ch.Service, ch.IncludedBy)
+		}
+	}
+	if chunks[2].IncludedBy != nil {
+		t.Errorf("web IncludedBy = %v, want nil for the named service", chunks[2].IncludedBy)
+	}
+	if !slices.Equal(end.Included, []string{"api", "db"}) {
+		t.Errorf("end.Included = %v, want [api db]", end.Included)
+	}
+	if len(end.Started) != 3 || len(end.Errors) != 0 {
+		t.Fatalf("end = %+v", end)
+	}
+	t.Cleanup(func() { killPIDs(chunks) })
+}
+
+// TestStartWithoutClosureKeepsTheNamedOnly is the restart path: a call that
+// does not set include_dependencies still starts exactly what it named.
+func TestStartWithoutClosureKeepsTheNamedOnly(t *testing.T) {
+	skipOnWindows(t)
+	dir := isolate(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	one, two := freePort(t), freePort(t)
+	cmd := serviceCmd(t)
+	path := writeConfig(t, dir, fmt.Sprintf(`name: itest
+services:
+  - name: one
+    cmd: %s
+    port: %d
+  - name: two
+    cmd: %s
+    port: %d
+`, cmd, one, cmd, two))
+
+	c := startDaemon(t, ctx, dir, []int{one, two})
+
+	var start rpc.GroupsStartResult
+	s, err := c.Stream(ctx, "groups.start", rpc.GroupsStartParams{
+		ConfigPath: &path, Only: []string{"two"},
+	}, &start)
+	if err != nil {
+		t.Fatalf("groups.start: %v", err)
+	}
+	defer s.Close()
+
+	chunks, end := collect(t, s)
+	if len(chunks) != 1 || chunks[0].Service != "two" {
+		t.Fatalf("chunks = %+v, want only two", chunks)
+	}
+	if chunks[0].IncludedBy != nil {
+		t.Errorf("IncludedBy = %v, want none without closure", chunks[0].IncludedBy)
+	}
+	if len(end.Included) != 0 {
+		t.Errorf("end.Included = %v, want none", end.Included)
+	}
+	t.Cleanup(func() { killPIDs(chunks) })
 }
 
 // TestStartNeedsAName rejects a call that names neither a group nor a file.

@@ -82,6 +82,27 @@ type Service struct {
 	// LastExit is how this service's last run ended, for a service option-berth
 	// started that is not running now: "api crashed with exit code 1".
 	LastExit *ServiceExit `json:"last_exit" jsonschema:"nullable"`
+	// Starting is the in-flight start attempt, present only while a
+	// `groups.start` is waiting, preparing or spawning this service. It is a
+	// transient diagnostic fact owned by the start call: it is never persisted,
+	// never a run, and absent before the attempt and after it ends. elapsed_ms
+	// is computed when this snapshot is read, not when the attempt changed.
+	Starting *ServiceStarting `json:"starting" jsonschema:"nullable"`
+}
+
+// ServiceStarting is one in-flight start attempt as a reader sees it. The
+// phase is waiting_dependency, prepare, or spawning; started_at is when the
+// attempt began, elapsed_ms how long ago that was at read time, ready_timeout
+// the effective budget this start uses, waiting_on the dependencies this start
+// declared to wait for, and last_prepare_ms the previous prepare duration when
+// one is known (advisory evidence, never a decision).
+type ServiceStarting struct {
+	Phase         string   `json:"phase" jsonschema:"enum=waiting_dependency,enum=prepare,enum=spawning"`
+	StartedAt     string   `json:"started_at"`
+	ReadyTimeout  string   `json:"ready_timeout"`
+	ElapsedMS     int64    `json:"elapsed_ms"`
+	WaitingOn     []string `json:"waiting_on"`
+	LastPrepareMS *int64   `json:"last_prepare_ms" jsonschema:"nullable"`
 }
 
 // ServiceExit is how a run of a service ended. Reason is exited (code 0),

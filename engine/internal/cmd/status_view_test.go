@@ -140,6 +140,10 @@ func TestBriefStatusKeepsOnlyRuntimeFacts(t *testing.T) {
 	doc := statusScopeFixture()
 	doc.Worktree.Services[0].HealthStatus = &state.Health{Status: "ok", Code: 200}
 	doc.Worktree.Services[0].ManifestRuntimeMismatch = true
+	codeChanged, codeFiles, codeHint := true, 2, "oberth restart --only api"
+	doc.Worktree.Services[0].CodeChangedSinceStart = &codeChanged
+	doc.Worktree.Services[0].CodeChangedFiles = &codeFiles
+	doc.Worktree.Services[0].CodeHint = &codeHint
 	doc.Worktree.Services[1].LastExit = &state.ServiceExit{Reason: "crashed", Code: 2, RunID: "worker-run"}
 	doc.Exits = append([]rpc.RunRecord{{
 		ID: "worker-run", Name: "worker", Reason: "crashed", ExitCode: intPtr(2),
@@ -171,6 +175,8 @@ func TestBriefStatusKeepsOnlyRuntimeFacts(t *testing.T) {
 	for _, present := range []string{
 		`"name":"api"`, `"running":true`, `"port":3000`, `"port_actual":3001`,
 		`"health":{"status":"ok","code":200}`, `"manifest_runtime_mismatch":true`,
+		`"code_changed_since_start":true`, `"code_changed_files":2`,
+		`"code_hint":"oberth restart --only api"`,
 		`"exit_reason":"crashed"`, `"exit_code":2`, `"hint":"oberth logs worker --once"`,
 		`"machine":[{"name":"redis","port":6379,"listening":false}]`,
 		`"identity":"wt_0123456789ab"`,
@@ -181,6 +187,11 @@ func TestBriefStatusKeepsOnlyRuntimeFacts(t *testing.T) {
 	}
 	if brief.Ports == nil || brief.Exits == nil || brief.Worktree.Services == nil {
 		t.Fatalf("brief arrays must not be null: %+v", brief)
+	}
+	// Unknown is absent, not false: only the one checked service carries the
+	// field.
+	if got := strings.Count(text, `"code_changed_since_start"`); got != 1 {
+		t.Fatalf("code_changed_since_start appears %d times, want only the checked service: %s", got, text)
 	}
 }
 

@@ -9,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
@@ -134,4 +136,55 @@ func recordPrepareStamp(configPath string, svc groups.Service, cwd string) error
 		return err
 	}
 	return os.Rename(name, prepareStampPath(configPath, svc.Name))
+}
+
+// prepareDurationPath is the advisory sidecar for one service's last prepare
+// duration. It is keyed independently of the input fingerprint: a duration is
+// evidence for a reader, never a reason to run or skip a step, so it must not
+// share the stamp's key or its digest semantics.
+func prepareDurationPath(configPath, service string) string {
+	sum := sha256.Sum256([]byte("prepare_duration\x00" + configPath + "\x00" + service))
+	return filepath.Join(paths.Prepare(), hex.EncodeToString(sum[:])+".prepare_ms")
+}
+
+// recordPrepareDuration stores how long the prepare step that just succeeded
+// took. It is best-effort: callers log a failure and continue, because the
+// service still ran and the next start simply has no previous duration to show.
+func recordPrepareDuration(configPath, service string, elapsed time.Duration) error {
+	dir := paths.Prepare()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".prepare-ms-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	if _, err := io.WriteString(tmp, strconv.FormatInt(elapsed.Milliseconds(), 10)+"\n"); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(name, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(name, prepareDurationPath(configPath, service))
+}
+
+// lastPrepareDuration returns the previous prepare duration in milliseconds, or
+// nil when there is no readable record. A malformed or unreadable sidecar is
+// just "unknown": it never blocks a start.
+func lastPrepareDuration(configPath, service string) *int64 {
+	raw, err := os.ReadFile(prepareDurationPath(configPath, service))
+	if err != nil {
+		return nil
+	}
+	ms, err := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
+	if err != nil || ms < 0 {
+		return nil
+	}
+	return &ms
 }
