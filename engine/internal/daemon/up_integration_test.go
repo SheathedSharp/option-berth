@@ -7,11 +7,13 @@
 package daemon_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -77,11 +79,11 @@ services:
 	// the cwd's oberth.yaml.
 	up := e.command("up", "--json")
 	up.Dir = project
-	upOut, err := up.CombinedOutput()
+	upOut, upErr, err := runSplit(up)
 	if err != nil {
-		t.Fatalf("oberth up: %v\n%s", err, upOut)
+		t.Fatalf("oberth up: %v\nstdout:\n%s\nstderr:\n%s", err, upOut, upErr)
 	}
-	t.Logf("oberth up --json:\n%s", upOut)
+	t.Logf("oberth up --json:\n%s\nstderr:\n%s", upOut, upErr)
 
 	var summary struct {
 		Services []rpc.GroupsStartChunk `json:"services"`
@@ -129,9 +131,9 @@ services:
 	// Running `up` again is a no-op: everything is already running.
 	again := e.command("up", "--json")
 	again.Dir = project
-	againOut, err := again.CombinedOutput()
+	againOut, againErr, err := runSplit(again)
 	if err != nil {
-		t.Fatalf("second oberth up: %v\n%s", err, againOut)
+		t.Fatalf("second oberth up: %v\nstdout:\n%s\nstderr:\n%s", err, againOut, againErr)
 	}
 	var second struct {
 		Skipped []string `json:"skipped"`
@@ -148,11 +150,11 @@ services:
 	// `oberth down` stops all three services declared by this worktree.
 	down := e.command("down", "--json")
 	down.Dir = project
-	downOut, err := down.CombinedOutput()
+	downOut, downErr, err := runSplit(down)
 	if err != nil {
-		t.Fatalf("oberth down: %v\n%s", err, downOut)
+		t.Fatalf("oberth down: %v\nstdout:\n%s\nstderr:\n%s", err, downOut, downErr)
 	}
-	t.Logf("oberth down --json:\n%s", downOut)
+	t.Logf("oberth down --json:\n%s\nstderr:\n%s", downOut, downErr)
 
 	for _, port := range []int{dbPort, apiPort, webPort} {
 		if portOpen(port) {
@@ -196,6 +198,16 @@ func keys(m map[int]bool) []int {
 		out = append(out, k)
 	}
 	return out
+}
+
+// runSplit runs cmd with stdout and stderr captured separately. `up --json`
+// writes in-flight progress to stderr, so only stdout is a JSON document;
+// merging the streams would corrupt it.
+func runSplit(cmd *exec.Cmd) (stdout, stderr []byte, err error) {
+	var out, errOut bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errOut
+	err = cmd.Run()
+	return out.Bytes(), errOut.Bytes(), err
 }
 
 func waitForPorts(t *testing.T, ctx context.Context, c *client.Client, want []int, timeout time.Duration) {
