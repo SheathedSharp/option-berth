@@ -45,6 +45,10 @@ type StreamService struct {
 	ManifestHash            *string      `json:"manifest_hash,omitempty"`
 	RuntimeSpecHash         *string      `json:"runtime_spec_hash,omitempty"`
 	ManifestRuntimeMismatch bool         `json:"manifest_runtime_mismatch"`
+	// Starting is the in-flight start attempt, when a scoped read happens to
+	// catch one. It carries no command, cwd or environment, so it is safe for
+	// the redacted projection.
+	Starting *ServiceStarting `json:"starting,omitempty"`
 }
 
 // StreamPort contains the runtime identity and health of a listener without
@@ -166,6 +170,7 @@ func streamServices(in []Service) []StreamService {
 			ManifestHash:            service.ManifestHash,
 			RuntimeSpecHash:         service.RuntimeSpecHash,
 			ManifestRuntimeMismatch: service.ManifestRuntimeMismatch,
+			Starting:                service.Starting,
 		})
 	}
 	if out == nil {

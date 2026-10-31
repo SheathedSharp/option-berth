@@ -29,14 +29,14 @@ func handleGroupsList(_ context.Context, req *Request) (any, error) {
 func readGroups(rt *Runtime) ([]state.Group, error) {
 	if rt.Subscribers() > 0 {
 		if snap := rt.Scanner.Cached(); snap.Seq > 0 {
-			return orEmptyGroups(snap.Groups), nil
+			return orEmptyGroups(joinStartAttempts(rt, snap.Groups)), nil
 		}
 	}
 	snap, err := rt.Scanner.Snapshot(scanner.Include{})
 	if err != nil {
 		return nil, scanFailure(err)
 	}
-	return orEmptyGroups(snap.Groups), nil
+	return orEmptyGroups(joinStartAttempts(rt, snap.Groups)), nil
 }
 
 // orEmptyGroups keeps the collection an array on the wire, never null

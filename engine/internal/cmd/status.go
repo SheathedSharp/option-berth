@@ -728,6 +728,11 @@ func serviceStateText(s state.Service) string {
 	if s.Running {
 		return display.Green("running")
 	}
+	if s.Starting != nil {
+		// A start is in flight. This is a transient fact from the start call,
+		// not a run: name the phase instead of claiming the service is idle.
+		return display.Dim("starting · " + s.Starting.Phase)
+	}
 	if s.LastExit == nil {
 		return display.Dim("not running")
 	}

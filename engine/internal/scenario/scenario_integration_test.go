@@ -10,6 +10,7 @@ package scenario
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -189,14 +190,19 @@ func (e *env) run(dir string, args ...string) ([]byte, error) {
 	return e.command(dir, args...).CombinedOutput()
 }
 
-// runJSON runs a command and decodes its stdout as one JSON value.
+// runJSON runs a command and decodes its stdout as one JSON value. stdout and
+// stderr stay separate: `up --json` writes in-flight progress to stderr, so a
+// merged buffer is not a JSON document.
 func (e *env) runJSON(dir string, out any, args ...string) error {
 	e.t.Helper()
-	data, err := e.run(dir, args...)
+	stdout, stderr, err := e.runCapture(dir, args...)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w (stderr: %s)", err, strings.TrimSpace(string(stderr)))
 	}
-	return json.Unmarshal(data, out)
+	if err := json.Unmarshal(stdout, out); err != nil {
+		return fmt.Errorf("decoding stdout: %w (stderr: %s)", err, strings.TrimSpace(string(stderr)))
+	}
+	return nil
 }
 
 // statusDoc is the slice of the status document the smoke asserts on.

@@ -20,6 +20,15 @@
 指纹与 HEAD，按 run id 写到 `$BERTH_HOME/code`，run 结束或启动清理时删除；`status` 只对运行中的
 服务重算并比较。快照是这次运行的输入证据，不是第二份运行事实；缺失表示未知，不表示“没变”。
 
+`groups.start` 的 start attempt 是这条链上的瞬时诊断事实，不是 run。`groupstart` 以
+group + service 为键在内存中记录 `start_id`、phase、`started_at`、有效 `ready_timeout`、
+`waiting_on` 与上一次 `last_prepare_ms`；`state.snapshot` / `groups.list` 只在返回副本上把它
+join 成服务行的 `starting`，缓存快照保持无 attempt，因此 delta 不会发布它，后面的读取也不会把
+它误认成运行。所有权和清理都在 start 调用内：already-running 不创建 attempt；依赖失败、
+prepare 失败、spawn 失败、取消和成功（run 注册后）都会删除它。它不进入运行登记表、不落盘、
+不算 running、不影响 group status，daemon 重启即消失。prepare 耗时 sidecar 只服务诊断读取，
+永远不决定是否运行或跳过。
+
 核心由本项目需求驱动；数据库、系统调用和平台适配可以保留成熟实现，不为“自研比例”重写。
 来源与版权独立保留在 [engine/UPSTREAM.md](../engine/UPSTREAM.md) 和许可证中。
 
