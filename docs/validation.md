@@ -95,9 +95,22 @@ go generate ./...
 ```
 
 以上通过。`go test ./...` 未作为本机结论：`internal/cmd` 的 init/kill 用例仍受本机监听表限制。
-真实 CLI 的“起服务 → 改代码 → status → restart”冒烟也在本机被 `observation_blind` 拒绝（沙箱
-`netstat` 返回空表，daemon 拒绝自启），未执行；新增的 `stale-code` 场景同样需要可观察监听的
-普通终端或 CI。
+
+**真实 CLI 冒烟（2026-10-31）**：本机 `netstat` 在普通 shell 里能打印表，但 Go 进程通过管道读到的
+stdout 是空的，daemon 因此报告 `observation_blind`。为了不让“监听观察”挡住与它无关的代码身份链，
+用一个**仅把监听扫描替换为空表**的临时 daemon 驱动真实 CLI；spawn、run registry、快照、status、
+restart 都是生产代码。同一隔离 `HOME`/`BERTH_HOME`/git 项目下实际观测到：
+
+1. `up` 后 `status --no-mark --json`：`code_head=<commit>`，`code_changed_since_start=false`。
+2. 改 `worker.py` 后：`code_changed_since_start=true`、`code_changed_files=1`、
+   `code_hint=oberth restart --only worker`。
+3. `restart --only worker` 后：回到 `false`，文件数/hint 缺省。
+4. `status --json --brief` 同样带上述字段；`--only worker` 只返回 worker，不再读取同栈的 other。
+5. 人读 `--brief` 输出 `worker · running · no port · code changed since start (1 file)` 和
+   `next  oberth restart --only worker`。
+
+这次冒烟没有验证监听观察本身，也没有证明 `up --wait` 的就绪判断；这两项仍需要能读取完整监听表的
+普通终端或 CI。新增的 `stale-code` 场景同样尚未用真实 agent 执行。
 
 start attempt 的定向测试在 `internal/daemon/groupstart`：成功、prepare 失败、依赖失败、spawn
 失败、取消后的清理，`starting` 快照与 scope 过滤，以及 `progress` 门控；`internal/cmd` 覆盖
