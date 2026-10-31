@@ -1,12 +1,81 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"strings"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
+
+// requireNamedProjectSupport runs the same manifest capability check when the
+// project was named rather than resolved from the working directory.
+//
+// `oberth up <project>` and `oberth restart <project>` send a name, so the CLI
+// has no manifest to inspect and the check in requireConfigSupport has nothing
+// to read (cfg is nil). The daemon still finds the file itself. Without this,
+// a named start against a daemon that does not honour `ready_timeout:` would
+// silently wait its old fixed 30s while the file promises something else.
+//
+// It only works when the daemon does not already announce the capability; a
+// daemon that does has nothing to be warned about, and paying for a snapshot
+// read on every start would be wrong. A manifest the CLI cannot find or parse
+// is not its to judge: the daemon owns the file and reports its own error, so
+// this returns nil and lets that error happen.
+func requireNamedProjectSupport(ctx context.Context, c *client.Client, p rpc.GroupsStartParams) error {
+	if c == nil || p.Name == nil {
+		return nil
+	}
+	name := strings.TrimSpace(*p.Name)
+	if name == "" || hasCapability(c.Hello(), rpc.CapabilityReadyTimeout) {
+		return nil
+	}
+	var snap state.Snapshot
+	if err := c.Call(ctx, "state.snapshot", rpc.StateSnapshotParams{}, &snap); err != nil {
+		// The snapshot is how this check finds the file, not what it is for.
+		// A read that fails here leaves the start to the daemon's own answer.
+		return nil
+	}
+	path := configPathForProject(snap.Groups, name)
+	if path == "" {
+		return nil
+	}
+	cfg, err := groups.Load(path)
+	if err != nil {
+		return nil
+	}
+	return configSupportProblem(cfg, c.Hello(), true)
+}
+
+// configPathForProject picks the manifest a named project resolves to. A group
+// matches by its own name or by the repository it belongs to, and a main
+// checkout wins over a linked worktree: `oberth up <project>` names the
+// project, and its main checkout's manifest is the one that speaks for it.
+func configPathForProject(gg []state.Group, name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	first := ""
+	for _, g := range gg {
+		if g.Name != name && g.Repo != name {
+			continue
+		}
+		if g.ConfigPath == nil || *g.ConfigPath == "" {
+			continue
+		}
+		if g.Worktree == "" {
+			return *g.ConfigPath
+		}
+		if first == "" {
+			first = *g.ConfigPath
+		}
+	}
+	return first
+}
 
 // requireConfigSupport refuses to hand a file to a daemon older than the
 // format it uses.
