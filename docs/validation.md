@@ -48,7 +48,8 @@ Mage 与品牌检查分别位于各自 PR 及 CI。构建、安装和服务起�
 
 ### agent 契约与 skill 覆盖
 
-`scripts/check_skill_contract.py` 从 `docs/cli.md`（稳定错误码与清单引用表）、
+`scripts/check_skill_contract.py` 从 `docs/cli.md`（稳定错误码、清单引用表与 agent 读取的
+JSON 字段表）、
 `engine/docs/schema/manifest.schema.json`（清单字段与三种 `health` 写法）和
 `engine/internal/state/observation.go`（`observation.state`）提取锚点，要求 skill 的
 `SKILL.md` 与 `references/*.md` 都提到。`Engine verification` 的 Linux job 检出

@@ -64,8 +64,8 @@ python3 scripts/agent_eval.py --dry-run --suite large  # 建大项目夹具，�
 ```
 
 `check_skill_contract.py` 需要同级的 skill 检出；CI 在 Linux job 里检出
-`option-berth-skill` 后运行。锚点来自本仓库的 CLI 契约、清单 schema 与 observation 常量，
-不要在引擎仓库里改 skill 内容。
+`option-berth-skill` 后运行。锚点来自本仓库的 CLI 契约（错误码、引用表与 agent 读取的
+JSON 字段表）、清单 schema 与 observation 常量，不要在引擎仓库里改 skill 内容。
 
 真实 agent 矩阵需要在普通终端（不在 coding agent 沙箱内）或具备凭据的 CI 上跑。
 本仓的手动 CI 入口是 `.github/workflows/agent-eval.yml`，它挂在需要 reviewer 批准的
