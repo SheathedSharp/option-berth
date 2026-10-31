@@ -441,6 +441,27 @@ func TestUpParamsSendsDependencyClosureByDefault(t *testing.T) {
 	if params.IncludeDependencies {
 		t.Fatal("include_dependencies = true, want --no-deps to turn it off")
 	}
+
+	// Without --only the field cannot change the plan, and asking for it would
+	// break a plain `up` against a daemon that predates the closure.
+	upNoDeps = false
+	upOnly = nil
+	params, _, err = upParams(nil)
+	if err != nil {
+		t.Fatalf("upParams without --only: %v", err)
+	}
+	if params.IncludeDependencies {
+		t.Fatal("include_dependencies = true without --only, want the field left off")
+	}
+
+	upOnly = []string{" ", ""}
+	params, _, err = upParams(nil)
+	if err != nil {
+		t.Fatalf("upParams with a blank --only: %v", err)
+	}
+	if params.IncludeDependencies {
+		t.Fatal("include_dependencies = true for blank --only names, want the field left off")
+	}
 }
 
 // TestStartDependencyCapabilityGate refuses a daemon that would ignore the

@@ -231,7 +231,8 @@ Jev 调用、缓存命中和无事件轮询数量；没有真实反馈时指标�
 人类可读输出中被带上的行附加 dim 说明（如 `started (dependency of web)`、`skipped · required by web`），
 汇总在非空时另起一行 `included dependencies: api, db`。`--json` 中它们仍是普通 `services[]` 条目，
 带 `included_by`（排序后的点名根服务）；汇总带 `included`（排序）。能力协商：旧 daemon 不认识
-`include_dependencies`，新 CLI 需要发送它时会直接报错并提示重启 daemon 或传 `--no-deps`。
+`include_dependencies`，新 CLI 只在 `--only` 点名了至少一个服务时才发送它，此时遇到旧 daemon
+会直接报错并提示重启 daemon 或传 `--no-deps`；没有 `--only`（或 `--no-deps`）时不发送，普通 `up` 不受影响。
 服务有 `prepare:` 时，先在同一 cwd 直接执行这个前置命令，
 成功后才启动长驻的 `cmd:`；前置命令的输出写入该服务日志，失败时服务不会启动。
 服务有 `env_file:` 时，prepare 与长驻命令都会先读到文件里的变量（见「共享环境文件」）。

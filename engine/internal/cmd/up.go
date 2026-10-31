@@ -110,10 +110,22 @@ func upParams(args []string) (rpc.GroupsStartParams, *groups.Config, error) {
 		return params, cfg, err
 	}
 	// `up` brings a named service's dependencies with it unless asked not to.
-	// --no-deps without --only changes nothing: with no filter everything is
-	// started anyway, and the field is then a no-op the daemon can ignore.
-	params.IncludeDependencies = !upNoDeps
+	// Without --only the field cannot change the plan (everything is started
+	// anyway), so it is not sent: that keeps a plain `up` working against a
+	// daemon that predates the closure and does not announce the capability.
+	params.IncludeDependencies = !upNoDeps && namesServices(upOnly)
 	return params, cfg, nil
+}
+
+// namesServices reports whether --only named at least one non-blank service.
+// A blank list is the same as no filter: there is nothing to expand.
+func namesServices(only []string) bool {
+	for _, name := range only {
+		if strings.TrimSpace(name) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func projectStartParams(args []string, only []string, allowOutsideHome bool) (rpc.GroupsStartParams, *groups.Config, error) {
