@@ -42,6 +42,28 @@ func requireConfigSupportFor(c *client.Client, cfg *groups.Config, starting bool
 	return nil
 }
 
+// requireStartDependencySupport refuses to send include_dependencies to a
+// daemon that predates it. The old daemon ignores the field and starts only the
+// named services, so the caller would get a partial group after the usual
+// timeout for the services that never came up — an error about the services
+// for a problem with the daemon. Restarting it, or asking for exactly what was
+// named, are both real fixes.
+func requireStartDependencySupport(c *client.Client, include bool) error {
+	return requireStartDependencySupportFor(c.Hello(), include)
+}
+
+func requireStartDependencySupportFor(hello rpc.DaemonHelloResult, include bool) error {
+	if !include || hasCapability(hello, rpc.CapabilityStartDependencies) {
+		return nil
+	}
+	version := hello.DaemonVersion
+	if version == "" {
+		version = "an older version"
+	}
+	return fmt.Errorf("the running daemon (%s) cannot start a service's depends_on closure\nhint: restart it with `oberth daemon restart`, or pass `--no-deps`",
+		version)
+}
+
 func hasCapability(hello rpc.DaemonHelloResult, want string) bool {
 	for _, capability := range hello.Capabilities {
 		if capability == want {

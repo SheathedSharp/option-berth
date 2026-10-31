@@ -410,3 +410,129 @@ func TestWaitForStartReadyMixedTimeoutCleansOnlyNewStarts(t *testing.T) {
 		t.Fatalf("both services must fail readiness: %+v", summary)
 	}
 }
+
+// TestUpParamsSendsDependencyClosureByDefault: `up` asks for the closure;
+// --no-deps turns it off for a daemon that cannot do it, or for a caller that
+// wants exactly what it named.
+func TestUpParamsSendsDependencyClosureByDefault(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, groups.ConfigName),
+		[]byte("name: demo\nservices:\n  - name: api\n    cmd: echo api\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dir)
+	upOnly = []string{"api"}
+	upNoDeps = false
+	t.Cleanup(func() { upOnly = nil; upNoDeps = false })
+
+	params, _, err := upParams(nil)
+	if err != nil {
+		t.Fatalf("upParams: %v", err)
+	}
+	if !params.IncludeDependencies {
+		t.Fatal("include_dependencies = false, want the closure by default")
+	}
+
+	upNoDeps = true
+	params, _, err = upParams(nil)
+	if err != nil {
+		t.Fatalf("upParams --no-deps: %v", err)
+	}
+	if params.IncludeDependencies {
+		t.Fatal("include_dependencies = true, want --no-deps to turn it off")
+	}
+}
+
+// TestStartDependencyCapabilityGate refuses a daemon that would ignore the
+// field, instead of letting the missing services fail after the dependency
+// timeout. A request that does not need the field is unaffected.
+func TestStartDependencyCapabilityGate(t *testing.T) {
+	old := rpc.DaemonHelloResult{DaemonVersion: "v0.9.0", Capabilities: []string{"groups"}}
+	if err := requireStartDependencySupportFor(old, false); err != nil {
+		t.Fatalf("a request without include_dependencies must pass: %v", err)
+	}
+	err := requireStartDependencySupportFor(old, true)
+	if err == nil {
+		t.Fatal("expected an error from a daemon without the capability")
+	}
+	for _, want := range []string{"depends_on closure", "oberth daemon restart", "--no-deps", "v0.9.0"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %v, want it to mention %q", err, want)
+		}
+	}
+
+	newer := rpc.DaemonHelloResult{
+		DaemonVersion: "v0.10.0",
+		Capabilities:  []string{"groups", rpc.CapabilityStartDependencies},
+	}
+	if err := requireStartDependencySupportFor(newer, true); err != nil {
+		t.Fatalf("a daemon announcing the capability must pass: %v", err)
+	}
+}
+
+// TestPrintStartChunkMarksIncludedDependencies: a service brought in by a named
+// root says so, and a named service's row stays as it was.
+func TestPrintStartChunkMarksIncludedDependencies(t *testing.T) {
+	started := true
+	out := captureStdout(t, func() {
+		printStartChunk(rpc.GroupsStartChunk{
+			Service: "api", State: "started", Ready: &started, PID: 1,
+			LogPath: "/tmp/api.log", IncludedBy: []string{"web"},
+		})
+	})
+	if !strings.Contains(out, "(dependency of web)") {
+		t.Fatalf("started dependency output = %q, want the included note", out)
+	}
+
+	out = captureStdout(t, func() {
+		printStartChunk(rpc.GroupsStartChunk{
+			Service: "db", State: "skipped", Skipped: true, Reason: "already running",
+			IncludedBy: []string{"web"},
+		})
+	})
+	if !strings.Contains(out, "required by web") || !strings.Contains(out, "already running") {
+		t.Fatalf("skipped dependency output = %q, want reason and included note", out)
+	}
+
+	out = captureStdout(t, func() {
+		printStartChunk(rpc.GroupsStartChunk{
+			Service: "web", State: "started", Ready: &started, PID: 1, LogPath: "/tmp/web.log",
+		})
+	})
+	if strings.Contains(out, "dependency of") {
+		t.Fatalf("named service output = %q, want no included note", out)
+	}
+}
+
+// TestPrintStartSummaryListsIncludedDependencies prints the closure only when
+// there is one.
+func TestPrintStartSummaryListsIncludedDependencies(t *testing.T) {
+	out := captureStdout(t, func() {
+		printStartSummary(rpc.GroupsStartEnd{
+			Started:  []string{"api", "db", "web"},
+			Included: []string{"api", "db"},
+		})
+	})
+	if !strings.Contains(out, "included dependencies: api, db") {
+		t.Fatalf("summary = %q, want the included line", out)
+	}
+
+	out = captureStdout(t, func() {
+		printStartSummary(rpc.GroupsStartEnd{Started: []string{"api"}})
+	})
+	if strings.Contains(out, "included dependencies") {
+		t.Fatalf("summary = %q, want no included line when nothing was included", out)
+	}
+}
+
+// TestRestartParamsDontIncludeDependencies: restart keeps its old meaning of
+// exactly the named services.
+func TestRestartParamsDontIncludeDependencies(t *testing.T) {
+	params, _, err := projectStartParams([]string{"demo"}, []string{"api"}, false)
+	if err != nil {
+		t.Fatalf("projectStartParams: %v", err)
+	}
+	if params.IncludeDependencies {
+		t.Fatal("restart params must not ask for the closure")
+	}
+}

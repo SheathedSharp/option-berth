@@ -950,6 +950,12 @@
         },
         "port_holder": {
           "$ref": "#/definitions/PortHolder"
+        },
+        "included_by": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "type": "object",
@@ -972,6 +978,12 @@
           "type": "array"
         },
         "errors": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "included": {
           "items": {
             "type": "string"
           },
@@ -1003,6 +1015,9 @@
           "type": "array"
         },
         "allow_outside_home": {
+          "type": "boolean"
+        },
+        "include_dependencies": {
           "type": "boolean"
         },
         "env": {
