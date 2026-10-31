@@ -106,7 +106,7 @@ func TestStatusDocumentKeepsManifestWhenBlind(t *testing.T) {
 	t.Cleanup(func() { noDaemonFlag = prev })
 	blindObservation(t)
 
-	doc, err := buildStatusDocument(context.Background(), dir, false)
+	doc, err := buildStatusDocument(context.Background(), dir, false, nil)
 	if err != nil {
 		t.Fatalf("status failed instead of degrading: %v", err)
 	}

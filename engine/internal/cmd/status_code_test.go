@@ -31,7 +31,7 @@ func TestAnnotateCodeFactsReportsChangedCode(t *testing.T) {
 		Name: "api", Running: true, RunID: stringPtr("run-1"),
 	}}}
 
-	annotateCodeFacts(context.Background(), group)
+	annotateCodeFacts(context.Background(), group, nil)
 	svc := group.Services[0]
 	if svc.CodeChangedSinceStart == nil || *svc.CodeChangedSinceStart {
 		t.Fatalf("unchanged code = %+v, want an explicit false", svc)
@@ -43,7 +43,7 @@ func TestAnnotateCodeFactsReportsChangedCode(t *testing.T) {
 	if err := os.WriteFile(app, []byte("print('v2')\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	annotateCodeFacts(context.Background(), group)
+	annotateCodeFacts(context.Background(), group, nil)
 	svc = group.Services[0]
 	if svc.CodeChangedSinceStart == nil || !*svc.CodeChangedSinceStart {
 		t.Fatalf("edited code = %+v, want changed", svc)
@@ -72,6 +72,35 @@ func TestPrintStatusServicesShowsChangedCodeAndNextStep(t *testing.T) {
 	}
 }
 
+func TestAnnotateCodeFactsHonoursTheSelection(t *testing.T) {
+	t.Setenv("BERTH_HOME", t.TempDir())
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "app.py"), []byte("print('v1')\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := codeid.Take(context.Background(), root, []string{"."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, runID := range []string{"run-api", "run-worker"} {
+		if err := codeid.Save(runID, snap); err != nil {
+			t.Fatal(err)
+		}
+	}
+	apiRun, workerRun := "run-api", "run-worker"
+	group := &state.Group{Services: []state.Service{
+		{Name: "api", Running: true, RunID: &apiRun},
+		{Name: "worker", Running: true, RunID: &workerRun},
+	}}
+	annotateCodeFacts(context.Background(), group, map[string]bool{"api": true})
+	if group.Services[0].CodeChangedSinceStart == nil {
+		t.Fatal("selected service was not checked")
+	}
+	if group.Services[1].CodeChangedSinceStart != nil {
+		t.Fatal("unselected service was hashed")
+	}
+}
+
 func TestAnnotateCodeFactsLeavesUnknownCodeUnknown(t *testing.T) {
 	t.Setenv("BERTH_HOME", t.TempDir())
 	root := t.TempDir()
@@ -83,7 +112,7 @@ func TestAnnotateCodeFactsLeavesUnknownCodeUnknown(t *testing.T) {
 	stopped := &state.Group{Services: []state.Service{{
 		Name: "api", RunID: stringPtr("run-1"),
 	}}}
-	annotateCodeFacts(context.Background(), stopped)
+	annotateCodeFacts(context.Background(), stopped, nil)
 	if stopped.Services[0].CodeChangedSinceStart != nil {
 		t.Fatal("a stopped service got a code verdict")
 	}
@@ -93,7 +122,7 @@ func TestAnnotateCodeFactsLeavesUnknownCodeUnknown(t *testing.T) {
 	missing := &state.Group{Services: []state.Service{{
 		Name: "api", Running: true, RunID: stringPtr("run-2"),
 	}}}
-	annotateCodeFacts(context.Background(), missing)
+	annotateCodeFacts(context.Background(), missing, nil)
 	if missing.Services[0].CodeChangedSinceStart != nil {
 		t.Fatal("a missing snapshot was reported as unchanged")
 	}
@@ -112,7 +141,7 @@ func TestAnnotateCodeFactsLeavesUnknownCodeUnknown(t *testing.T) {
 	redefined := &state.Group{Services: []state.Service{{
 		Name: "api", Running: true, RunID: &runID, Sources: []string{"src"},
 	}}}
-	annotateCodeFacts(context.Background(), redefined)
+	annotateCodeFacts(context.Background(), redefined, nil)
 	if redefined.Services[0].CodeChangedSinceStart != nil {
 		t.Fatal("a changed source declaration was compared against the old baseline")
 	}

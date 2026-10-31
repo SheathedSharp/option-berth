@@ -65,11 +65,13 @@ CLI 按 **agent 想做的事**分层，不按内部模块分：事实是「现�
 `--only api,worker` 只保留这些服务及其 `depends_on` 的传递闭包；`ports[]`、`exits[]` 和
 `changed` 里的服务/端口变化一起收窄，`machine:` 与 git 摘要保持不变。名称必须已经声明：
 未知名称返回 `not_found` 并列出可选服务，空名称按参数错误处理。过滤发生在完整快照和
-「上次看」标记写入之后，因此不会把部分状态写成下一次比较的基线。
+「上次看」标记写入之后，因此不会把部分状态写成下一次比较的基线。代码比较也只对选中的
+服务做，不会为范围外的服务重读源码。
 
 `--brief` 只保留运行时事实：服务与依赖的状态、声明/实际端口、健康结果、当前退出原因和
-下一步，以及监听端口与 `observation`。它不输出 `git`、`drafts`、`changed`、attention 交接
-或每个服务一份的清单字段；需要这些时用完整 `status`。
+下一步、代码变更（`code_changed_since_start`、`code_changed_files`、`code_hint`），以及
+监听端口与 `observation`。它不输出 `git`、`drafts`、`changed`、attention 交接或每个服务
+一份的清单字段；需要这些时用完整 `status`。
 
 服务的 `last_exit.reason` 会区分普通崩溃（`crashed`）和固定端口被其他进程占用
 （`port_occupied`），也会标出命令尚未启动就失败的服务（`start_failed`），因此“启动后退出”、
@@ -143,7 +145,9 @@ JSON 顶层固定包含：
   "worktree": {"name": "demo", "identity": "wt_0123456789ab", "branch": "main",
     "services": [
       {"name": "api", "running": true, "port": 3000, "port_actual": 3001,
-       "health": {"status": "ok", "code": 200}},
+       "health": {"status": "ok", "code": 200},
+       "code_changed_since_start": true, "code_changed_files": 2,
+       "code_hint": "oberth restart --only api"},
       {"name": "worker", "running": false, "exit_reason": "crashed", "exit_code": 1,
        "hint": "oberth logs worker --once"}
     ]},

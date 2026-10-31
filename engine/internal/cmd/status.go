@@ -108,7 +108,7 @@ func statusRun(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	doc, err := buildStatusDocument(cmd.Context(), dir, !statusNoMarkFlag)
+	doc, err := buildStatusDocument(cmd.Context(), dir, !statusNoMarkFlag, statusOnlyFlag)
 	if err != nil {
 		return err
 	}
@@ -197,7 +197,7 @@ func manifestAt(dir string) string {
 //
 // mark is what `--no-mark` turns off: looking at the change without moving the
 // anchor the next run compares against.
-func buildStatusDocument(ctx context.Context, dir string, mark bool) (statusDocument, error) {
+func buildStatusDocument(ctx context.Context, dir string, mark bool, only []string) (statusDocument, error) {
 	name, root, err := statusProject(dir)
 	if err != nil {
 		return statusDocument{}, err
@@ -257,8 +257,19 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool) (statusDocu
 		group.Identity = groups.WorktreeTokenFor(root)
 	}
 	// This is the one expensive read status performs, and it is bounded and
-	// limited to running services. The daemon's scan path never does it.
-	annotateCodeFacts(ctx, group)
+	// limited to running services. The daemon's scan path never does it. A
+	// scoped read resolves its selection first so services outside `--only`
+	// are never hashed.
+	var codeSelection map[string]bool
+	if len(only) > 0 {
+		// An invalid selection is reported later, after the mark, exactly as
+		// `--only` did before code facts existed. Here it only means there is
+		// no selection to narrow the expensive read.
+		if selected, selErr := statusOnlySelection(group.Services, only); selErr == nil {
+			codeSelection = selected
+		}
+	}
+	annotateCodeFacts(ctx, group, codeSelection)
 
 	ports := make([]state.Port, 0, len(pp))
 	for _, p := range pp {
