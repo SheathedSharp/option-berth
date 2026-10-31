@@ -102,10 +102,22 @@ depends on · listeners · code · failed · next · drafts · last look），�
 prepare 读取的文件列表，没有声明时为空数组。
 启动进行中时，`worktree.services[].starting` 给出这一次启动尝试的瞬时事实：`phase`
 （`waiting_dependency`、`prepare` 或 `spawning`）、`started_at`、有效的 `ready_timeout`、
-读取时计算的 `elapsed_ms`、本次等待声明的 `waiting_on`，以及上一次 prepare 耗时的
+读取时计算的 `elapsed_ms`、本次等待的 `waiting_on`，以及上一次 prepare 耗时的
 `last_prepare_ms`（未知时为 null）。它不是一个 run：不进入运行记录、不落盘、不算
 `running`、不影响 `worktree.status`，daemon 重启即消失；依赖等待、prepare 与 spawn 期间可读，
-run 注册后消失。人读输出把该服务显示为 `starting · <phase>`。
+run 注册后消失。`--brief --json` 也带同一个 `starting`（字段相同，读取时复制，不与完整文档
+共享可变数据），所以精简读者同样能分辨“正在启动”和“从未启动”。人读输出把该服务显示为
+`starting · <phase> · for <已启动时长> · budget <ready_timeout> · waiting on <依赖…>`：
+时长由 `elapsed_ms` 四舍五入到秒（不足 1 秒显示 `for <1s`，不会显示 `for 0s`），`budget` 直接用
+发布值，只有 `waiting_on` 非空时才追加最后一段。
+
+运行中的服务带 `stats`（`cpu_percent`、`memory_rss_bytes`、`thread_count`、`uptime`、`state`、
+`connections`）。有监听的服务取监听行的样本；无端口的 worker 取它运行根进程的样本，所以
+worker 不再因为不占端口而看不到资源。没有样本时字段缺省，表示**未知**，不是 0。
+`worktree.running_services` 是正在运行的声明服务数；`worktree.resources` 是这些服务样本的
+worktree 汇总（`cpu_percent`、`memory_rss_bytes`、`services` 为贡献样本的服务数）。汇总只
+在至少一个服务有样本时出现，并明确 `services` 与 `running_services` 的差异；没有样本时缺省，
+不会用 0 冒充测量结果。
 运行中的服务同时带 `manifest_hash` 与 `runtime_spec_hash`；两者不一致时
 `manifest_runtime_mismatch` 为 `true`，表示当前进程来自旧清单，应该用
 `oberth restart --only <service>` 重新应用。hash 只覆盖命令、cwd、端口、health 和依赖等可执行声明，
@@ -149,13 +161,20 @@ JSON 顶层固定包含：
 {
   "scope": {"kind": "worktree", "name": "demo", "root": "/work/demo"},
   "worktree": {"name": "demo", "identity": "wt_0123456789ab", "branch": "main",
+    "running_services": 1,
+    "resources": {"cpu_percent": 1.2, "memory_rss_bytes": 104857600, "services": 1},
     "services": [
       {"name": "api", "running": true, "port": 3000, "port_actual": 3001,
        "health": {"status": "ok", "code": 200},
        "code_changed_since_start": true, "code_changed_files": 2,
-       "code_hint": "oberth restart --only api"},
+       "code_hint": "oberth restart --only api",
+       "stats": {"cpu_percent": 1.2, "memory_rss_bytes": 104857600}},
       {"name": "worker", "running": false, "exit_reason": "crashed", "exit_code": 1,
-       "hint": "oberth logs worker --once"}
+       "hint": "oberth logs worker --once"},
+      {"name": "cache", "running": false,
+       "starting": {"phase": "waiting_dependency", "started_at": "2026-10-31T10:00:00Z",
+                    "elapsed_ms": 130000, "ready_timeout": "3m0s",
+                    "waiting_on": ["db"], "last_prepare_ms": null}}
     ]},
   "ports": [3000, 3001],
   "machine": [{"name": "redis", "port": 6379, "listening": true}],
@@ -231,6 +250,26 @@ macOS 设置页写入的 `~/.option-berth/jev.json`（隔离运行时为 `$BERTH
 质量记录不属于 `status` 事实，也不改变任何执行权限；报告的 `sessions` 对象会说明会话、轮询、事件、
 Jev 调用、缓存命中和无事件轮询数量；没有真实反馈时指标保持 `null`。
 
+### agent 读取的 JSON 字段
+
+下面这些字段是 agent 在 `status`、`up`、`restart` 的 `--json` 输出里做判断所需的最小集合。
+字段的完整含义见各自命令的说明；本表同时是 `scripts/check_skill_contract.py` 的锚点来源，
+新增或改名时同步更新 skill。
+
+| 字段 | 命令 | 用途 |
+|---|---|---|
+| `last_exit.reason` | `status` | 当前失败原因；按它分支到日志、依赖或端口占用。 |
+| `last_exit.port_hint` | `status` | 本次启动被告知要绑定的端口。 |
+| `last_exit.port_holder` | `status` | 读取时仍占着失败端口的进程；缺省表示没观察到，不是端口空闲。 |
+| `exits[].hint` | `status` | 历史退出记录里由日志文件是否存在决定的下一步。 |
+| `services[].ready` | `up` / `restart` | CLI 的就绪注释；`false` 表示未确认，不是失败。 |
+| `services[].port_holder` | `up` | 端口冲突时与 `status` 同形状的占用者证据。 |
+| `health_status` | `status` | 声明健康检查的结果与原因。 |
+| `manifest_runtime_mismatch` | `status` | 运行实例是否来自旧清单。 |
+| `worktree.identity` | `status` | `${worktree}` 的展开值，用于命名 per-worktree 数据。 |
+| `observation.state` | `status` | 监听表是否可信；先读它再读 `ports`。 |
+| `attention_path` | `status` | 当前异常的派生交接文件；没有异常时缺省。 |
+
 ### oberth up [project] [--only name,...] [--no-deps] [--wait|--ready] [--wait-timeout duration]
 [--allow-outside-home] [--json]
 
@@ -262,7 +301,10 @@ Git 检出中只纳入已跟踪文件和未被 ignore 的未跟踪文件，`node
 `ready_timeout:` 声明一个服务的就绪预算（Go duration 字符串，例如 `90s`，缺省 30s，必须为正）：
 `depends_on` 的后继服务等待该服务时使用它，`up --wait` 也使用它。`prepare:` 不计入这个预算。
 清单声明了 `ready_timeout:` 时，CLI 要求 daemon 宣告 `groups.start.ready_timeout` 能力；旧 daemon
-会提示 `oberth daemon restart`，而不是静默按 30s 等待。
+会提示 `oberth daemon restart`，而不是静默按 30s 等待。按项目名启动（`oberth up <project>`、
+`oberth restart <project>`）时 CLI 手上没有清单，这项检查改为向 daemon 的 `state.snapshot`
+找到该项目的清单路径后本地解析，再套同一套能力规则；清单找不到或读不出来时不阻断启动，
+由 daemon 报它自己的错误。
 
 `health:` 有三种写法：HTTP 路径（`/healthz`，缺省形式）、TCP 连接（`health: {tcp: 5432}`，端口必须与
 服务声明的端口一致）和命令（`health: {command: pg_isready -h 127.0.0.1 -p ${port}}`）。命令在服务
@@ -308,6 +350,8 @@ cwd 中执行，按 `cmd:` 的规则拆成 argv（不经过 shell），支持 `$
 daemon 宣告 `groups.start.phases` 能力时，`up` 会在请求里带上 `progress: true`，并在服务进入
 `waiting_dependency`、`prepare`、`spawning` 阶段时收到 `state: "starting"` 的进度 chunk：
 `phase`、`started_at`、`ready_timeout`、`elapsed_ms`、`waiting_on`、`last_prepare_ms`。
+`waiting_on` 随依赖轮询收缩：每次观察到某个声明的依赖已经就绪，它就从集合里消失，
+全部就绪时为空；观察本身失败时保留上一次已知集合，不会把“读不到”显示成“没有在等”。
 这些 chunk 是诊断，不是结果：它们不计入 `services[]`、不参与就绪等待，也不影响汇总。
 人读模式把它们打印成 dim 进度行；`--json` 时进度行只写 stderr，stdout 仍然只有一个最终
 JSON 值，不混入诊断。旧 daemon 不认识 `progress`，旧 CLI 也不会发送，行为与之前一致。
@@ -368,9 +412,13 @@ JSON 值，不混入诊断。旧 daemon 不认识 `progress`，旧 CLI 也不会
 （`app_${worktree}`、`.data/${worktree}`）。删除动作仍由人执行：命令不删除账本行、数据库、
 数据目录或正在运行的进程；要停止仍在跑的服务用 `oberth down --identity <wt_…>`。
 
+有 daemon 应答时，每行还带 `running_services`：该身份下正在运行的声明服务数。它是读取时
+对组事实的一次连接，不写回账本。没有 daemon 时字段缺省——账本不存运行状态，缺省表示
+**未观察**，不是 0。
+
 ~~~json
 {"worktrees":[
-  {"identity":"wt_0123456789ab","root":"/work/demo","group":"demo","exists":true,"last_seen":"2026-10-30T09:00:00Z"},
+  {"identity":"wt_0123456789ab","root":"/work/demo","group":"demo","exists":true,"last_seen":"2026-10-30T09:00:00Z","running_services":2},
   {"identity":"wt_abcdef012345","root":"/work/old","group":"demo@old","exists":false,"last_seen":"2026-10-28T18:00:00Z"}
 ]}
 ~~~
@@ -379,7 +427,7 @@ JSON 值，不混入诊断。旧 daemon 不认识 `progress`，旧 CLI 也不会
 daemon 是账本的唯一写者：它在扫描到清单时记录身份，重启后按已记录的根路径补齐；
 `status` 等读命令和 `down` 都不写账本。
 
-### oberth logs <service|port> [--once] [--lines N] [--follow] [--ip address] [--json]
+### oberth logs <service|port> [--once] [--lines N] [--follow] [--ip address] [--json] [--run current|<id>] [--first-error]
 
 按清单里的服务名查看日志；端口形式继续可用。服务有监听端口时，命令读取该进程的日志；
 没有端口的 worker 读取该次运行的服务日志文件。默认先输出最近几行并持续跟随；--once 只读
@@ -388,6 +436,29 @@ daemon 是账本的唯一写者：它在扫描到清单时记录身份，重启�
 ~~~json
 {"source":"/path/to/service.log","lines":["..."],"truncated":false,"service":"api","run_id":"...","pid":1234,"status":"running"}
 ~~~
+
+`--run current --first-error` 的文档：
+
+~~~json
+{"source":"/path/to/service.log","lines":[],"truncated":false,"service":"api",
+ "run_id":"...","log_offset":1234,"first_error":{"line":42,"text":"ERROR could not connect"}}
+~~~
+
+服务日志文件跨多次运行追加。`--run current` 只读该服务当前这次运行从 `log_offset` 开始的
+部分；也可以给 `status --json` 里的 `run_id` 精确选择一次历史运行。`current` 优先选仍在运行
+的进程，没有时才选最近结束的一次。`--run` 只接受服务名，
+不能和 `--ip` 同时使用；它需要 daemon，daemon 不可用时返回 `daemon_unavailable`。旧运行记录
+没有 offset 时返回 not_found 并提示重启一次服务。文件被轮转、记录的
+offset 已越过文件末尾时，读取回退到文件开头，并在 JSON 里用 `run_start_unknown: true` 说明
+这次的行可能混入更早的运行。
+
+`--first-error` 与 `--run` 一起使用：按固定词表（不区分大小写的 error、exception、fatal、
+panic、traceback）定位该次运行的第一条匹配行，返回行号和原文。它是位置，不是根因判断；
+没有匹配时 JSON 带 `no_first_error: true`。`--first-error` 隐含 `--once`。
+
+`--run` 的 JSON 文档在原有字段上增加 `log_offset`、可选的 `run_start_unknown`，以及
+`first_error`（`line`、`text`）或 `no_first_error`。行号从该次运行的起点算起；回退到文件
+开头时，行号也按回退后的内容算，`run_start_unknown` 是读这份行号的前提。
 
 跟随模式使用 NDJSON，每行带有 `source`、`line` 以及可用的服务和运行元数据；一次性读取还会在
 服务已退出时给出 `exit_code` 和 `reason`。找不到端口返回 not_found；多个绑定未指定 --ip 返回
@@ -584,7 +655,9 @@ oberth init [--dry-run] [--json]
 
 只有上表五种形状是引用；其他 `${...}`（例如 `${HOME}`、`${FOO:-x}`）原样保留。
 `${worktree}` 不指向服务，不需要也不产生 `depends_on`；未声明的服务、没有端口的端口引用
-仍按清单校验拒绝。可运行示例见 [`examples/worktree-data`](../examples/worktree-data/README.md)。
+仍按清单校验拒绝。可运行示例见 [`examples/worktree-data`](../examples/worktree-data/README.md)；
+Docker Compose 的每 worktree 一套写法见 [`examples/compose-stack`](../examples/compose-stack/README.md)，
+它在 Linux CI 上验证 `port: auto`、`pg_isready` 健康检查和 `down` 真正停止容器。
 
 ### 共享环境文件
 

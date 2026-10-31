@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: macOS 客户端问题
+    url: https://github.com/SheathedSharp/option-berth-macos/issues
+    about: 客户端界面、渲染和原生交互的问题在独立仓库处理。
+  - name: coding agent skill 问题
+    url: https://github.com/SheathedSharp/option-berth-skill/issues
+    about: skill 的指引、安装和 agent 行为问题在独立仓库处理。
+  - name: 产品边界与设计说明
+    url: https://github.com/SheathedSharp/option-berth/blob/main/docs/product.md
+    about: 提交建议前先确认这个仓库负责什么。

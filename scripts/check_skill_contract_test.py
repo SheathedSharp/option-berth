@@ -37,6 +37,24 @@ class ExtractionTests(unittest.TestCase):
             {"${port}", "${url}", "${<name>.port}", "${<name>.url}", "${worktree}"},
         )
 
+    def test_json_field_anchors_match_the_agent_field_table(self):
+        self.assertEqual(
+            set(contract.json_field_anchors(CLI)),
+            {
+                "last_exit.reason",
+                "last_exit.port_hint",
+                "last_exit.port_holder",
+                "exits[].hint",
+                "services[].ready",
+                "services[].port_holder",
+                "health_status",
+                "manifest_runtime_mismatch",
+                "worktree.identity",
+                "observation.state",
+                "attention_path",
+            },
+        )
+
     def test_manifest_anchors_include_the_agent_facing_fields(self):
         keys = set(contract.manifest_anchors(SCHEMA))
         for key in (
@@ -82,6 +100,17 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(contract.missing_anchors(anchors, "workspace: []"), [])
         self.assertEqual(contract.missing_anchors(anchors, "`workspace`"), [])
 
+    def test_json_field_needs_the_exact_path(self):
+        anchors = [("json field", "last_exit.port_holder")]
+        self.assertEqual(
+            contract.missing_anchors(anchors, "read `port_holder` instead"),
+            anchors,
+        )
+        self.assertEqual(
+            contract.missing_anchors(anchors, "read `last_exit.port_holder`"),
+            [],
+        )
+
     def test_read_skill_requires_skill_and_references(self):
         with tempfile.TemporaryDirectory(prefix="berth-skill-") as temporary:
             root = Path(temporary)
@@ -104,6 +133,7 @@ class CurrentContractTests(unittest.TestCase):
         self.assertIn(("reference", "${worktree}"), anchors)
         self.assertIn(("error code", "observation_bind_denied"), anchors)
         self.assertIn(("manifest key", "prepare_inputs"), anchors)
+        self.assertIn(("json field", "last_exit.port_holder"), anchors)
 
 
 if __name__ == "__main__":

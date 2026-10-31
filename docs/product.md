@@ -133,8 +133,8 @@ oberth down      停掉这个项目的全部服务
 
 给 agent 的 skill 是独立产品：[option-berth-skill](https://github.com/SheathedSharp/option-berth-skill)。
 它教 agent 用同一套 CLI 与 `--json`，但不在这个仓库分发；命令、`--json` 形状、错误码、
-清单字段或引用变了，`scripts/check_skill_contract.py` 会对照 `docs/cli.md`、清单 schema 与
-observation 常量检查 skill 是否覆盖。装不装由用户决定。
+清单字段、引用或 agent 读取的 `--json` 字段变了，`scripts/check_skill_contract.py` 会对照
+`docs/cli.md`、清单 schema 与 observation 常量检查 skill 是否覆盖。装不装由用户决定。
 
 `oberth events` 是面向并行开发 agent 的只读 NDJSON 订阅入口。它支持按 worktree 根路径或 ID（沿已有
 Repo 关系包含同仓库 worktree）、repository ID 和显式 workspace 关系过滤，首条记录是摘要快照，后续是 `state.changed` 摘要；

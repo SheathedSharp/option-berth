@@ -101,8 +101,63 @@ func GroupsWith(pp []state.Port, index *Index, reg Registry) []state.Group {
 		pass.describeCheckout(g)
 		out = append(out, *g)
 	}
+	// Count and sum here so every caller of the shared join gets them. A
+	// caller that fills a portless worker's sample afterwards runs it again;
+	// the function is idempotent.
+	FinalizeResources(out)
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// StampServicePortRuns joins a Docker-published port to the managed run whose
+// service row already claims it as PortActual. The listener belongs to
+// docker-proxy, not to the run's process tree, so ancestry cannot attribute it;
+// the service row can, because it was resolved from the run's port hint.
+//
+// The stamp matters beyond presentation: a group stop builds its targets from
+// the snapshot, and without it the Compose CLI and the container are both
+// targeted. Stopping the container makes the CLI exit before its own signal, so
+// the stop reports an unconfirmed target and retains port reservations.
+func StampServicePortRuns(pp []state.Port, groups []state.Group) {
+	if len(pp) == 0 || len(groups) == 0 {
+		return
+	}
+	type key struct {
+		group string
+		port  int
+	}
+	owners := make(map[key]state.Service, len(pp))
+	for _, g := range groups {
+		for _, svc := range g.Services {
+			if svc.PortActual == nil || svc.RunID == nil || *svc.RunID == "" || svc.PID == nil {
+				continue
+			}
+			owners[key{group: g.Name, port: *svc.PortActual}] = svc
+		}
+	}
+	for i := range pp {
+		if pp[i].Run != nil || pp[i].Type != state.TypeDocker || pp[i].Group == nil {
+			continue
+		}
+		svc, ok := owners[key{group: *pp[i].Group, port: pp[i].Port}]
+		if !ok {
+			continue
+		}
+		pp[i].Run = &state.Run{
+			ID: *svc.RunID, Group: *pp[i].Group, Name: svc.Name, RootPID: *svc.PID,
+		}
+	}
+}
+
+// FinalizeResources computes the worktree-level counts and sums from the
+// service rows. It is separate from GroupsWith because a portless worker's
+// sample is filled after the pure join; the caller runs this again once every
+// service sample is in place. It is idempotent.
+func FinalizeResources(groups []state.Group) {
+	for i := range groups {
+		groups[i].RunningServices = groups[i].RunningServiceCount()
+		groups[i].Resources = groups[i].ResourceTotals()
+	}
 }
 
 // describeCheckout fills in which project a group is a checkout of, which
