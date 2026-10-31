@@ -47,6 +47,13 @@
           "type": "string",
           "description": "Working directory, relative to the directory holding oberth.yaml."
         },
+        "sources": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Files or directories whose contents identify the running code, relative to cwd. Omit to use cwd; set to [] to disable the check."
+        },
         "env_file": {
           "type": "string",
           "description": "Dotenv-style file read when the service starts. Relative paths are resolved against the manifest's directory; the file is never written."

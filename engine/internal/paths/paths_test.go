@@ -46,6 +46,7 @@ func TestEverythingIsInTheOneDirectory(t *testing.T) {
 		{"logs", Logs()},
 		{"profiles", Profiles()},
 		{"runs", Runs()},
+		{"code", Code()},
 	} {
 		if tc.name == "socket" && runtime.GOOS == "windows" {
 			if tc.got != WindowsPipe {

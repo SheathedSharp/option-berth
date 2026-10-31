@@ -143,6 +143,7 @@ func ServiceRow(s Service) state.Service {
 		PrepareInputs: append([]string{}, s.PrepareInputs...),
 		Cmd:           s.Cmd,
 		Cwd:           s.Cwd,
+		Sources:       cloneStrings(s.Sources),
 		DependsOn:     append([]string{}, s.DependsOn...),
 	}
 	if svc.DependsOn == nil {

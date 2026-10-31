@@ -25,7 +25,7 @@ const (
 // is inserted at this position relative to the keys already there, so an
 // edited file still reads the way a hand-written one does. Keys nobody here
 // knows about sort last and are never moved.
-var keyOrder = []string{"name", "prepare", "prepare_inputs", "cmd", "cwd", "port", "health", "description", "icon", "color", "depends_on"}
+var keyOrder = []string{"name", "prepare", "prepare_inputs", "cmd", "cwd", "sources", "port", "health", "description", "icon", "color", "depends_on"}
 
 // ServicePatch is the editable subset of one `oberth.yaml` service
 // (contract §13.2). Three states matter: a field the caller did not mention is

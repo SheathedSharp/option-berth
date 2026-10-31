@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/codeid"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
@@ -413,6 +414,21 @@ services:
 	if len(end.Started) != 2 || len(end.Errors) != 0 {
 		t.Fatalf("end = %+v", end)
 	}
+	// Each run carries the code identity it started with, and the per-run
+	// snapshot it is compared against later lives on disk under that run id.
+	for _, ch := range chunks {
+		rec, ok := runsreg.Default.Lookup(ch.PID)
+		if !ok {
+			t.Fatalf("run %s was not registered", ch.Service)
+		}
+		snap, err := codeid.Load(rec.ID)
+		if err != nil {
+			t.Fatalf("loading %s's code snapshot: %v", ch.Service, err)
+		}
+		if snap.Digest == "" || snap.Root == "" || len(snap.Sources) == 0 {
+			t.Fatalf("%s code snapshot = %+v", ch.Service, snap)
+		}
+	}
 
 	// api was only spawned once db was actually listening, which is the whole
 	// point of depends_on.
@@ -421,6 +437,43 @@ services:
 	}
 
 	t.Cleanup(func() { killPIDs(chunks) })
+}
+
+// sources: [] is the explicit opt-out for a service that reloads its own code;
+// it must leave the run without a source snapshot, not pretend the code is
+// unchanged.
+func TestSourcesEmptyDisablesCodeIdentity(t *testing.T) {
+	skipOnWindows(t)
+	dir := isolate(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	port := freePort(t)
+	path := writeConfig(t, dir, fmt.Sprintf(`name: reload
+services:
+  - name: api
+    cmd: %s
+    port: %d
+    sources: []
+`, serviceCmd(t), port))
+	c := startDaemon(t, ctx, dir, []int{port})
+	var start rpc.GroupsStartResult
+	s, err := c.Stream(ctx, "groups.start", rpc.GroupsStartParams{ConfigPath: &path}, &start)
+	if err != nil {
+		t.Fatalf("groups.start: %v", err)
+	}
+	defer s.Close()
+	chunks, _ := collect(t, s)
+	if len(chunks) != 1 {
+		t.Fatalf("chunks = %+v", chunks)
+	}
+	t.Cleanup(func() { killPIDs(chunks) })
+	rec, ok := runsreg.Default.Lookup(chunks[0].PID)
+	if !ok {
+		t.Fatal("run was not registered")
+	}
+	if _, err := codeid.Load(rec.ID); err == nil {
+		t.Fatal("sources: [] wrote a source snapshot")
+	}
 }
 
 // A prepare command is completed before the service process is spawned. This

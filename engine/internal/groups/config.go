@@ -95,6 +95,10 @@ type Service struct {
 	PrepareInputs []string `yaml:"prepare_inputs,omitempty" jsonschema_description:"Files the prepare command reads, relative to cwd. When their contents are unchanged, up skips prepare."`
 	Cmd           string   `yaml:"cmd,omitempty" jsonschema_description:"The command that brings the service back up, run from cwd."`
 	Cwd           string   `yaml:"cwd,omitempty" jsonschema_description:"Working directory, relative to the directory holding oberth.yaml."`
+	// Sources are the paths whose contents identify the code this service runs,
+	// relative to its cwd. A missing key means cwd; an explicit empty list
+	// disables the check for a service that reloads its own code.
+	Sources []string `yaml:"sources,omitempty" jsonschema_description:"Files or directories whose contents identify the running code, relative to cwd. Omit to use cwd; set to [] to disable the check."`
 	// EnvFile is a dotenv-style file read when the service starts. A relative
 	// path is resolved against the directory holding the manifest, so
 	// `../shared/dev.env` can point outside this checkout; an absolute path is
@@ -117,6 +121,17 @@ type Service struct {
 	// may refer to ports with ${port}, ${url}, ${<service>.port} and
 	// ${<service>.url}, and to this checkout's stable identity with ${worktree}.
 	Env map[string]string `yaml:"env,omitempty" jsonschema_description:"Environment added when option-berth starts the service. Values may use ${port}, ${url}, ${worktree}, and another service's port or url as ${name.port} or ${name.url}."`
+}
+
+// cloneStrings keeps nil and an explicit empty slice distinct: for `sources`
+// nil means "the service directory" and [] means "do not check".
+func cloneStrings(in []string) []string {
+	if in == nil {
+		return nil
+	}
+	out := make([]string, len(in))
+	copy(out, in)
+	return out
 }
 
 // PortAutoValue is the `port:` value that asks the daemon to pick the port.
@@ -531,6 +546,7 @@ func (c *Config) validate() []string {
 			problems = append(problems, where+": env_file contains a NUL byte")
 		}
 		problems = append(problems, c.prepareInputProblems(s, where)...)
+		problems = append(problems, c.sourceProblems(s, where)...)
 		problems = append(problems, c.healthProblems(s, where)...)
 		problems = append(problems, c.refProblems(s, where)...)
 	}
@@ -639,6 +655,28 @@ func (c *Config) prepareInputProblems(s Service, where string) []string {
 			problems = append(problems, fmt.Sprintf("%s: prepare_inputs path %q must be relative to cwd", where, input))
 		case !c.cwdInside(filepath.Join(s.Cwd, input)):
 			problems = append(problems, fmt.Sprintf("%s: prepare_inputs path %q escapes the directory holding %s", where, input, ConfigName))
+		}
+	}
+	return problems
+}
+
+// sourceProblems checks the paths whose contents identify the running code.
+// They are read relative to the service's cwd, and like prepare_inputs they
+// may not reach anywhere on the machine. An explicit empty list is valid: it
+// opts a hot-reloading service out of the check.
+func (c *Config) sourceProblems(s Service, where string) []string {
+	if s.Sources == nil {
+		return nil
+	}
+	var problems []string
+	for _, source := range s.Sources {
+		switch {
+		case strings.TrimSpace(source) == "":
+			problems = append(problems, where+": sources has an empty path")
+		case filepath.IsAbs(source) || strings.HasPrefix(source, "/") || strings.HasPrefix(source, `\`):
+			problems = append(problems, fmt.Sprintf("%s: sources path %q must be relative to cwd", where, source))
+		case !c.cwdInside(filepath.Join(s.Cwd, source)):
+			problems = append(problems, fmt.Sprintf("%s: sources path %q escapes the directory holding %s", where, source, ConfigName))
 		}
 	}
 	return problems

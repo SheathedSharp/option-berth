@@ -43,6 +43,7 @@ type ServiceAdd struct {
 	Port          int      `json:"port,omitempty"`
 	Cmd           string   `json:"cmd,omitempty"`
 	Cwd           string   `json:"cwd,omitempty"`
+	Sources       []string `json:"sources,omitempty"`
 	Health        string   `json:"health,omitempty"`
 	Description   string   `json:"description,omitempty"`
 	Icon          string   `json:"icon,omitempty"`
@@ -58,6 +59,7 @@ func (a ServiceAdd) Service() Service {
 		PrepareInputs: append([]string{}, a.PrepareInputs...),
 		Cmd:           a.Cmd,
 		Cwd:           a.Cwd,
+		Sources:       cloneStrings(a.Sources),
 		Port:          a.Port,
 		Health:        a.Health,
 		Description:   a.Description,
@@ -76,6 +78,7 @@ func AddFrom(s Service) ServiceAdd {
 		Port:          s.Port,
 		Cmd:           s.Cmd,
 		Cwd:           s.Cwd,
+		Sources:       cloneStrings(s.Sources),
 		Health:        s.Health,
 		Description:   s.Description,
 		Icon:          s.Icon,
@@ -391,6 +394,13 @@ func serviceNode(add ServiceAdd) *yaml.Node {
 	}
 	if add.Cwd != "" {
 		setKey(m, "cwd", strNode(add.Cwd))
+	}
+	if add.Sources != nil {
+		seq := &yaml.Node{Kind: yaml.SequenceNode, Style: yaml.FlowStyle}
+		for _, source := range add.Sources {
+			seq.Content = append(seq.Content, strNode(source))
+		}
+		setKey(m, "sources", seq)
 	}
 	if add.Port != 0 {
 		setKey(m, FieldPort, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.Itoa(add.Port)})

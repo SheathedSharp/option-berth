@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/codeid"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/runsreg"
@@ -425,7 +426,23 @@ func start(ctx context.Context, rt *daemon.Runtime, cfg *groups.Config, group st
 	if err != nil {
 		return nil, err
 	}
-	return runsreg.Spawn(ctx, rt, spawn.Request{
+	// The run id is chosen before the spawn so the source snapshot can be
+	// written first: an immediately exiting process then deletes a file that
+	// already exists, never one written after its run is gone.
+	runID := spawn.NewID()
+	sources, trackCode := codeid.ResolveSources(svc.Sources)
+	if trackCode {
+		snap, snapErr := codeid.Take(ctx, cwd, sources)
+		if snapErr != nil {
+			// Code identity is a check, not a startup dependency. Unknown is
+			// reported by status; it is never rendered as "unchanged".
+			logCodeIdentity(rt, svc.Name, "reading sources", snapErr)
+		} else if saveErr := codeid.Save(runID, snap); saveErr != nil {
+			logCodeIdentity(rt, svc.Name, "storing source snapshot", saveErr)
+		}
+	}
+	h, err := runsreg.Spawn(ctx, rt, spawn.Request{
+		ID:       runID,
 		Argv:     argv,
 		Cwd:      cwd,
 		Env:      env,
@@ -434,6 +451,19 @@ func start(ctx context.Context, rt *daemon.Runtime, cfg *groups.Config, group st
 		PortHint: port,
 		LogPath:  spawn.LogPath(group, svc.Name),
 	}, runMeta)
+	if err != nil {
+		_ = codeid.Remove(runID)
+		return nil, err
+	}
+	return h, nil
+}
+
+// logCodeIdentity keeps a failed code check visible without making it a
+// service-start failure.
+func logCodeIdentity(rt *daemon.Runtime, service, what string, err error) {
+	if rt != nil && rt.Logger != nil {
+		rt.Logger.Warn("code identity unavailable", "service", service, "step", what, "error", err)
+	}
 }
 
 // serviceEnv is the environment a service starts in, each layer winning over

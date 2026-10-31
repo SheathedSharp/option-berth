@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/sync/semaphore"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/codeid"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/sheathedsharp/option-berth/engine/internal/runs"
 	"github.com/sheathedsharp/option-berth/engine/internal/sessions"
@@ -181,8 +182,27 @@ func (r *Registry) Unregister(pid int) bool {
 	r.mu.Unlock()
 	if ok {
 		r.mirrorRemoveLocked(rec)
+		_ = codeid.Remove(rec.ID)
 	}
 	return ok
+}
+
+// PruneCodeSnapshots removes source snapshots whose run is no longer live.
+// A daemon crash can leave a snapshot behind; startup is when the live set is
+// known and no new run has been started yet.
+func (r *Registry) PruneCodeSnapshots() {
+	r.mu.Lock()
+	keep := make(map[string]bool, len(r.runs))
+	for _, rec := range r.runs {
+		if rec.ID != "" {
+			keep[rec.ID] = true
+		}
+	}
+	logger := r.logger
+	r.mu.Unlock()
+	if err := codeid.PruneExcept(keep); err != nil && logger != nil {
+		logger.Warn("pruning code snapshots", "error", err)
+	}
 }
 
 // RenameGroups moves every run recorded under an old group name to its new one
