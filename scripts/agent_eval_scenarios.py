@@ -211,6 +211,7 @@ class Scenario:
     urls: Callable[[ScenarioState], dict[str, str]]
     reference: Callable[[ScenarioState], list[list[str]]]
     description: str = ""
+    suite: str = "core"
 
 
 # --------------------------------------------------------------------------- #

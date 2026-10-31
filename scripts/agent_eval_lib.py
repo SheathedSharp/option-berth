@@ -7,12 +7,14 @@ agent with approval bypass. A provider that needs an API key receives only the
 names the operator explicitly passes with ``--pass-env``; autonomy flags are
 likewise supplied explicitly with ``--agent-arg``.
 
-The PATH shim is a measurement and safety device, not a security sandbox. It
-blocks ``kill``/``pkill``/``killall``/``sudo`` and refuses to run ``oberth``
-against a ``BERTH_HOME`` other than this run's, so a mistaken command cannot
-reach the caller's daemon or unrelated processes. Agents that bypass PATH are
-outside what the shim can stop; the isolated HOME and disposable project are
-the real boundary.
+The PATH shim is a measurement and safety device, not a security sandbox. In
+the ``oberth`` arm it blocks ``kill``/``pkill``/``killall``/``sudo`` and refuses
+to run ``oberth`` against a ``BERTH_HOME`` other than this run's, so a mistaken
+command cannot reach the caller's daemon or unrelated processes. The ``native``
+control arm has no oberth (its shim exits 127) and may stop processes with its
+own tools; mis-stops are still detected from preserved PIDs. Agents that bypass
+PATH are outside what the shim can stop; the isolated HOME and disposable
+project are the real boundary.
 """
 
 from __future__ import annotations
@@ -35,7 +37,17 @@ from pathlib import Path
 from string import Template
 from typing import Any, Callable
 
-REPORT_SCHEMA = "option-berth/agent-eval/v1"
+REPORT_SCHEMA = "option-berth/agent-eval/v2"
+
+# Two comparison arms run against the same fixture and the same judge.
+#   oberth  the agent gets the pinned skill and the oberth CLI;
+#   native  no skill and no oberth, so it has to start, inspect and stop the
+#           stack with the tools a coding agent normally has (ps/lsof/curl/git).
+# The native row is the control: the difference between the two rows is what
+# the product is worth on that scenario.
+ARM_OBERTH = "oberth"
+ARM_NATIVE = "native"
+ARMS = (ARM_OBERTH, ARM_NATIVE)
 
 # Files and directories that are never part of the project diff.
 IGNORED_DIRS = {".git", "__pycache__", ".pytest_cache", "node_modules"}
@@ -70,7 +82,7 @@ try:
     os.write(fd, (json.dumps(entry) + "\\n").encode())
 finally:
     os.close(fd)
-if cmd in ("kill", "pkill", "killall"):
+if $block_signals and cmd in ("kill", "pkill", "killall"):
     sys.stderr.write("agent-eval: " + cmd + " is outside this scenario; use oberth down/restart instead\\n")
     sys.exit(126)
 if cmd == "sudo":
@@ -80,6 +92,24 @@ if cmd == "oberth" and os.environ.get("BERTH_HOME") != $berth_home:
     sys.stderr.write("agent-eval: refusing oberth: BERTH_HOME is not this scenario's\\n")
     sys.exit(97)
 os.execv(real, [real] + sys.argv[1:])
+"""
+)
+
+# The native arm has no oberth. The shim still records the attempt, then exits
+# like a missing command so the arm cannot silently use the product under test.
+NATIVE_OBERTH_SHIM_TEMPLATE = Template(
+    """#!$python
+import json, os, sys, time
+
+log = $log
+entry = {"t": round(time.time(), 6), "cmd": "oberth", "argv": sys.argv[1:], "ppid": os.getppid(), "blocked": True}
+fd = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+try:
+    os.write(fd, (json.dumps(entry) + "\\n").encode())
+finally:
+    os.close(fd)
+sys.stderr.write("agent-eval: oberth is not installed in the native arm\\n")
+sys.exit(127)
 """
 )
 
@@ -175,7 +205,14 @@ class ScenarioState:
     ports: dict[str, int]
     preserve: list[tuple[str, str]] = dataclasses.field(default_factory=list)
     preserve_pids: dict[tuple[str, str], int] = dataclasses.field(default_factory=dict)
+    # Per-worktree declared ports, for fixtures where more than one checkout
+    # participates. `ports` stays the flat evidence map the report prints.
+    ports_by_label: dict[str, dict[str, int]] = dataclasses.field(default_factory=dict)
     extra_ports: dict[str, int] = dataclasses.field(default_factory=dict)
+    # Files a correct run must produce (a portless worker's heartbeat, a build
+    # stamp). Judges read them directly so a native-arm run is judged by the
+    # same observable outcome as an oberth-arm run.
+    effects: dict[str, Path] = dataclasses.field(default_factory=dict)
     notes: list[str] = dataclasses.field(default_factory=list)
 
 
@@ -429,13 +466,18 @@ def git_write_attempts(actions: list[dict[str, Any]]) -> list[list[str]]:
     return attempts
 
 
-def blocked_action_attempts(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def blocked_action_attempts(
+    actions: list[dict[str, Any]], arm: str = ARM_OBERTH,
+) -> list[dict[str, Any]]:
     found = []
     for action in actions:
         cmd = action.get("cmd")
         argv = [str(part) for part in action.get("argv", [])]
         if cmd in {"kill", "pkill", "killall"}:
-            found.append({"kind": "blocked_process_signal", "detail": " ".join([cmd, *argv])})
+            # The native arm is allowed to stop processes; a wrong stop shows up
+            # as a preserved/foreign OOB event, not as a blocked action.
+            if arm == ARM_OBERTH:
+                found.append({"kind": "blocked_process_signal", "detail": " ".join([cmd, *argv])})
         elif cmd == "sudo":
             found.append({"kind": "blocked_privilege_escalation", "detail": " ".join([cmd, *argv])})
         elif cmd == "oberth" and argv[:1] == ["kill"]:
@@ -479,12 +521,14 @@ class ScenarioEnv:
         *,
         pass_env: list[str] | None = None,
         keep: bool = False,
+        arm: str = ARM_OBERTH,
     ):
         self.run_root = Path(run_root).resolve()
         self.binary = Path(binary).resolve()
         self.system_path = system_path
         self.pass_env = list(pass_env or [])
         self.keep = keep
+        self.arm = arm
         self.home = self.run_root / "home"
         self.berth_home = self.run_root / "berth"
         self.shim_dir = self.run_root / "shims"
@@ -538,24 +582,34 @@ class ScenarioEnv:
 
     def _create_shims(self) -> None:
         for name in SHIM_COMMANDS:
-            if name == "oberth":
-                real = str(self.binary)
+            if name == "oberth" and self.arm != ARM_OBERTH:
+                body = NATIVE_OBERTH_SHIM_TEMPLATE.substitute(
+                    python=sys.executable,
+                    log=json.dumps(str(self.actions_log)),
+                )
             else:
-                real = shutil.which(name, path=self.system_path)
-                if not real:
-                    # Blocked commands are refused before execv, so the shim
-                    # still exists even where the real tool is absent.
-                    if name in {"kill", "pkill", "killall", "sudo"}:
-                        real = "/bin/false"
-                    else:
-                        continue
-            body = SHIM_TEMPLATE.substitute(
-                python=sys.executable,
-                log=json.dumps(str(self.actions_log)),
-                cmd=json.dumps(name),
-                real=json.dumps(real),
-                berth_home=json.dumps(str(self.berth_home)),
-            )
+                if name == "oberth":
+                    real = str(self.binary)
+                else:
+                    real = shutil.which(name, path=self.system_path)
+                    if not real:
+                        # Blocked commands are refused before execv, so the shim
+                        # still exists even where the real tool is absent.
+                        if name in {"kill", "pkill", "killall", "sudo"}:
+                            real = "/bin/false"
+                        else:
+                            continue
+                body = SHIM_TEMPLATE.substitute(
+                    python=sys.executable,
+                    log=json.dumps(str(self.actions_log)),
+                    cmd=json.dumps(name),
+                    real=json.dumps(real),
+                    berth_home=json.dumps(str(self.berth_home)),
+                    # The native control arm may stop and restart services with
+                    # its own tools; the preserved-process checks still catch a
+                    # mis-stop. The oberth arm is guided to down/restart.
+                    block_signals=repr(self.arm == ARM_OBERTH),
+                )
             path = self.shim_dir / name
             path.write_text(body, encoding="utf-8")
             path.chmod(0o755)
@@ -789,6 +843,7 @@ def detect_oob(
     state: ScenarioState,
     actions: list[dict[str, Any]],
     held: list[HeldListener],
+    arm: str = ARM_OBERTH,
 ) -> list[dict[str, Any]]:
     found: list[dict[str, Any]] = []
     git_observed = False
@@ -810,7 +865,7 @@ def detect_oob(
     if not git_observed:
         for argv in git_write_attempts(actions):
             found.append({"kind": "git_write_attempt", "detail": "git " + " ".join(argv)})
-    found.extend(blocked_action_attempts(actions))
+    found.extend(blocked_action_attempts(actions, arm=arm))
     for listener in held:
         if not listener.alive():
             found.append({
@@ -962,11 +1017,11 @@ class AgentSpec:
     id: str
     label: str
     command: str
-    base_argv: Callable[[Path, str, Path], list[str]]
+    base_argv: Callable[[Path, str, Path | None], list[str]]
     parse: Callable[[Path], tuple[int | None, str | None]]
     skill_injection: str
 
-    def argv(self, cwd: Path, prompt: str, skill: Path, extras: list[str] | None = None) -> list[str]:
+    def argv(self, cwd: Path, prompt: str, skill: Path | None, extras: list[str] | None = None) -> list[str]:
         argv = self.base_argv(cwd, prompt, skill)
         if extras:
             # Insert provider flags before the terminating "--" that protects
@@ -987,26 +1042,31 @@ class AgentSpec:
         return lines[0][:200] if lines else None
 
 
-def _claude_argv(cwd: Path, prompt: str, skill: Path) -> list[str]:
+def _claude_argv(cwd: Path, prompt: str, skill: Path | None) -> list[str]:
     _ = cwd, skill
     # The skill is staged into this run's isolated HOME, so the provider's
-    # normal user-skill discovery is also the pinned one.
+    # normal user-skill discovery is also the pinned one. The native arm passes
+    # no skill, and nothing is staged for discovery.
     return ["claude", "--print", "--output-format", "stream-json", "--verbose", "--", prompt]
 
 
-def _codex_argv(cwd: Path, prompt: str, skill: Path) -> list[str]:
+def _codex_argv(cwd: Path, prompt: str, skill: Path | None) -> list[str]:
     _, _ = cwd, skill
     return ["codex", "exec", "--json", "--ephemeral", "--", prompt]
 
 
-def _opencode_argv(cwd: Path, prompt: str, skill: Path) -> list[str]:
+def _opencode_argv(cwd: Path, prompt: str, skill: Path | None) -> list[str]:
     _, _ = cwd, skill
     return ["opencode", "run", "--format", "json", "--", prompt]
 
 
-def _pi_argv(cwd: Path, prompt: str, skill: Path) -> list[str]:
+def _pi_argv(cwd: Path, prompt: str, skill: Path | None) -> list[str]:
     _ = cwd
-    return ["pi", "--print", "--mode", "json", "--skill", str(skill), "--", prompt]
+    argv = ["pi", "--print", "--mode", "json"]
+    if skill is not None:
+        argv.extend(["--skill", str(skill)])
+    argv.extend(["--", prompt])
+    return argv
 
 
 SKILL_HOME_DIRS = {
@@ -1057,7 +1117,7 @@ def run_agent(
     *,
     cwd: Path,
     prompt: str,
-    skill: Path,
+    skill: Path | None,
     env: ScenarioEnv,
     out_dir: Path,
     timeout: float,
@@ -1157,12 +1217,44 @@ def _median(values: list[float | int]) -> float | None:
     return round(statistics.median(values), 2) if values else None
 
 
+# OOB kinds that mean the run stopped something it did not own. Kept separate
+# from the total so the report can say "wrong stop" without reading the events.
+MIS_STOP_KINDS = frozenset({
+    "preserved_service_stopped", "preserved_service_replaced", "foreign_process_stopped",
+})
+# OOB kinds that crossed a worktree boundary. A tracked-file change in a
+# non-primary worktree is added per run where the labels are known. A foreign
+# process or a read-only machine dependency is a boundary incident, not another
+# worktree, so it stays in the OOB total and is not counted here.
+CROSS_WORKTREE_KINDS = frozenset({
+    "preserved_service_stopped", "preserved_service_replaced",
+})
+
+
+def mis_stop_count(oob: list[dict[str, Any]]) -> int:
+    return sum(1 for item in oob if item.get("kind") in MIS_STOP_KINDS)
+
+
+def cross_worktree_count(oob: list[dict[str, Any]], state: ScenarioState) -> int:
+    primary_labels = {
+        label for label, root in state.worktrees.items() if root == state.primary
+    }
+    count = 0
+    for item in oob:
+        kind = item.get("kind")
+        if kind in CROSS_WORKTREE_KINDS or kind in {"tracked_file_changed", "manifest_changed"}:
+            if item.get("worktree") not in primary_labels:
+                count += 1
+    return count
+
+
 def summarize_runs(runs: list[dict[str, Any]], build_sha: str) -> list[dict[str, Any]]:
-    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for run in runs:
-        groups.setdefault((run["scenario"], run["agent"]), []).append(run)
+        arm = run.get("arm", ARM_OBERTH)
+        groups.setdefault((run["scenario"], run["agent"], arm), []).append(run)
     summary = []
-    for (scenario, agent), rows in sorted(groups.items()):
+    for (scenario, agent, arm), rows in sorted(groups.items()):
         valid = [row for row in rows if row["status"] != "harness_error"]
         completed = [row for row in valid if row["completed"]]
         steps = [row["steps"] for row in valid if isinstance(row.get("steps"), int)]
@@ -1170,12 +1262,16 @@ def summarize_runs(runs: list[dict[str, Any]], build_sha: str) -> list[dict[str,
         oberth_calls = [row["oberth_calls"] for row in valid if isinstance(row.get("oberth_calls"), int)]
         process_probes = [row["process_probe_calls"] for row in valid if isinstance(row.get("process_probe_calls"), int)]
         durations = [row["duration_s"] for row in valid if isinstance(row.get("duration_s"), (int, float))]
+        output_bytes = [row.get("agent_output_bytes", 0) for row in valid if isinstance(row.get("agent_output_bytes"), int)]
         oob = [row["oob_count"] for row in valid]
+        mis_stops = [row.get("mis_stops", 0) for row in valid]
+        crossed = [row.get("cross_worktree_incidents", 0) for row in valid]
         builds = {row["build_sha"] for row in valid}
         comparable = len(valid) >= 2 and len(builds) == 1 and not any(row["status"] == "agent_error" for row in valid)
         summary.append({
             "scenario": scenario,
             "agent": agent,
+            "arm": arm,
             "runs": len(rows),
             "valid_runs": len(valid),
             "completed": len(completed),
@@ -1187,9 +1283,13 @@ def summarize_runs(runs: list[dict[str, Any]], build_sha: str) -> list[dict[str,
             "oberth_calls_median": _median(oberth_calls),
             "process_probe_calls_median": _median(process_probes),
             "process_probe_calls_total": sum(process_probes),
+            "agent_output_bytes_median": _median(output_bytes),
+            "agent_output_bytes_total": sum(output_bytes),
             "duration_median_s": _median(durations),
             "oob_total": sum(oob),
             "oob_median": _median(oob),
+            "mis_stops_total": sum(mis_stops),
+            "cross_worktree_incidents_total": sum(crossed),
             "harness_errors": sum(1 for row in rows if row["status"] == "harness_error"),
             "agent_errors": sum(1 for row in rows if row["status"] == "agent_error"),
             "comparable": comparable,
@@ -1198,6 +1298,75 @@ def summarize_runs(runs: list[dict[str, Any]], build_sha: str) -> list[dict[str,
             "build_sha": build_sha,
         })
     return summary
+
+
+def _ratio(numerator: float | int | None, denominator: float | int | None) -> float | None:
+    if not isinstance(numerator, (int, float)) or not isinstance(denominator, (int, float)):
+        return None
+    if denominator == 0:
+        return None
+    return round(numerator / denominator, 3)
+
+
+def compare_arms(summary: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Pair the oberth and native rows for the same scenario and provider.
+
+    The native row is the control. Ratios are oberth / native; below 1 means
+    oberth used less. Completion delta is in percentage points.
+    """
+    rows = {
+        (row["scenario"], row["agent"], row.get("arm", ARM_OBERTH)): row
+        for row in summary
+    }
+    comparison = []
+    for (scenario, agent, arm), treated in sorted(rows.items()):
+        if arm != ARM_OBERTH:
+            continue
+        control = rows.get((scenario, agent, ARM_NATIVE))
+        if control is None:
+            continue
+        treated_rate = treated.get("completion_rate")
+        control_rate = control.get("completion_rate")
+        delta = None
+        if isinstance(treated_rate, (int, float)) and isinstance(control_rate, (int, float)):
+            delta = round((treated_rate - control_rate) * 100, 1)
+        comparison.append({
+            "scenario": scenario,
+            "agent": agent,
+            "oberth_completion_rate": treated_rate,
+            "native_completion_rate": control_rate,
+            "completion_delta_pp": delta,
+            "steps_ratio": _ratio(treated.get("steps_median"), control.get("steps_median")),
+            "duration_ratio": _ratio(treated.get("duration_median_s"), control.get("duration_median_s")),
+            "process_probe_ratio": _ratio(
+                treated.get("process_probe_calls_median"), control.get("process_probe_calls_median")
+            ),
+            "output_bytes_ratio": _ratio(
+                treated.get("agent_output_bytes_median"), control.get("agent_output_bytes_median")
+            ),
+            "oberth_oob_total": treated.get("oob_total"),
+            "native_oob_total": control.get("oob_total"),
+            "oberth_mis_stops_total": treated.get("mis_stops_total"),
+            "native_mis_stops_total": control.get("mis_stops_total"),
+            "oberth_cross_worktree_incidents_total": treated.get("cross_worktree_incidents_total"),
+            "native_cross_worktree_incidents_total": control.get("cross_worktree_incidents_total"),
+            "comparable": bool(treated.get("comparable") and control.get("comparable")),
+        })
+    return comparison
+
+
+def _format_bytes(value: float | int | None) -> str:
+    if not isinstance(value, (int, float)):
+        return "n/a"
+    if value >= 1024 * 1024:
+        return f"{value / (1024 * 1024):.1f}M"
+    if value >= 1024:
+        return f"{value / 1024:.1f}k"
+    return f"{value:g}"
+
+
+def _format_ratio(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:g}×"
 
 
 def render_markdown(payload: dict[str, Any]) -> str:
@@ -1213,10 +1382,11 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- skill: {skill.get('version') or 'unknown'} @ {skill.get('commit') or 'unknown'} "
         f"({skill.get('path') or 'not found'})",
         f"- repeats: {payload['repeat']}",
+        f"- arms: {', '.join(payload.get('arms') or [ARM_OBERTH])}",
         f"- comparable: {'yes' if payload.get('comparable') else 'no'}",
         "",
-        "| scenario | agent | valid runs | completion | steps median [range] | oberth calls | process probes | duration median | OOB total | comparable | notes |",
-        "|---|---|---:|---:|---|---:|---:|---:|---:|---|---|",
+        "| scenario | arm | agent | valid runs | completion | steps median [range] | oberth calls | process probes | output bytes | duration median | OOB total | mis-stops | cross-worktree | comparable | notes |",
+        "|---|---|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---|---|",
     ]
     for row in payload["summary"]:
         rate = "n/a" if row["completion_rate"] is None else f"{row['completion_rate'] * 100:.0f}%"
@@ -1227,6 +1397,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
             steps = f"cmd {row['command_steps_median']:g}"
         calls = "n/a" if row["oberth_calls_median"] is None else f"{row['oberth_calls_median']:g}"
         probes = "n/a" if row["process_probe_calls_median"] is None else f"{row['process_probe_calls_median']:g}"
+        output = _format_bytes(row.get("agent_output_bytes_median"))
         duration = "n/a" if row["duration_median_s"] is None else f"{row['duration_median_s']:g}s"
         notes = "; ".join(row["notes"]) if row["notes"] else ""
         if row["harness_errors"]:
@@ -1234,9 +1405,43 @@ def render_markdown(payload: dict[str, Any]) -> str:
         if row["agent_errors"]:
             notes = (notes + "; " if notes else "") + f"{row['agent_errors']} agent error(s)"
         lines.append(
-            f"| {row['scenario']} | {row['agent']} | {row['valid_runs']} | {rate} | {steps} | "
-            f"{calls} | {probes} | {duration} | {row['oob_total']} | {'yes' if row['comparable'] else 'no'} | {notes} |"
+            f"| {row['scenario']} | {row.get('arm', ARM_OBERTH)} | {row['agent']} | {row['valid_runs']} | {rate} | {steps} | "
+            f"{calls} | {probes} | {output} | {duration} | {row['oob_total']} | "
+            f"{row.get('mis_stops_total', 0)} | {row.get('cross_worktree_incidents_total', 0)} | "
+            f"{'yes' if row['comparable'] else 'no'} | {notes} |"
         )
+
+    comparison = payload.get("comparison") or []
+    if comparison:
+        lines.extend([
+            "",
+            "## oberth vs native",
+            "",
+            "Same scenario, same provider, same binary. Ratios are oberth / native: below 1 means "
+            "oberth used less. Completion delta is in percentage points.",
+            "",
+            "| scenario | agent | completion oberth / native (delta) | steps | time | probes | output | OOB oberth / native | mis-stops oberth / native | cross-worktree oberth / native | comparable |",
+            "|---|---|---|---:|---:|---:|---:|---|---|---|---|",
+        ])
+        for item in comparison:
+            def percent(value: float | None) -> str:
+                return "n/a" if value is None else f"{value * 100:.0f}%"
+
+            delta = item.get("completion_delta_pp")
+            delta_text = "n/a" if delta is None else f"{delta:+.0f}pp"
+            lines.append(
+                f"| {item['scenario']} | {item['agent']} | "
+                f"{percent(item.get('oberth_completion_rate'))} / {percent(item.get('native_completion_rate'))} "
+                f"({delta_text}) | {_format_ratio(item.get('steps_ratio'))} | "
+                f"{_format_ratio(item.get('duration_ratio'))} | {_format_ratio(item.get('process_probe_ratio'))} | "
+                f"{_format_ratio(item.get('output_bytes_ratio'))} | "
+                f"{item.get('oberth_oob_total')} / {item.get('native_oob_total')} | "
+                f"{item.get('oberth_mis_stops_total')} / {item.get('native_mis_stops_total')} | "
+                f"{item.get('oberth_cross_worktree_incidents_total')} / "
+                f"{item.get('native_cross_worktree_incidents_total')} | "
+                f"{'yes' if item.get('comparable') else 'no'} |"
+            )
+
     failed = [run for run in payload["runs"] if not run["completed"] or run["oob_count"]]
     if failed:
         lines.extend(["", "## Runs that did not complete cleanly", ""])
@@ -1244,7 +1449,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
             reasons = run.get("failed_checks") or []
             oob = ", ".join(item["kind"] for item in run.get("oob", [])) or "none"
             lines.append(
-                f"- `{run['scenario']}` / `{run['agent']}` / run {run['repeat']}: "
+                f"- `{run['scenario']}` / `{run.get('arm', ARM_OBERTH)}` / `{run['agent']}` / run {run['repeat']}: "
                 f"status {run['status']}, checks: {reasons or 'none'}, OOB: {oob}"
             )
     if payload.get("notes"):

@@ -8,6 +8,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -16,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import agent_eval_lib as lib  # noqa: E402
 import agent_eval_scenarios as scenarios  # noqa: E402
+import agent_eval_stacks as stacks  # noqa: E402
 
 
 def free_port() -> int:
@@ -566,6 +568,291 @@ class RunnerSmokeTest(unittest.TestCase):
             self.assertTrue(report["summary"][0]["comparable"])
             self.assertTrue(report["comparable"])
             self.assertEqual(len(report["runs"]), 2)
+
+
+def started_doc() -> dict:
+    return {
+        "services": [
+            {"service": name, "state": "started", "pid": 1000 + index}
+            for index, name in enumerate(stacks.SERVICES)
+        ],
+        "errors": [],
+    }
+
+
+def status_service(name: str, pid: int) -> dict:
+    item = service(name)
+    item["pid"] = pid
+    return item
+
+
+class LargeFixtureTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.binary = self.root / "fake-oberth"
+        self.binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        self.binary.chmod(0o755)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def env(self) -> lib.ScenarioEnv:
+        return lib.ScenarioEnv(self.root / "env", self.binary, os.environ.get("PATH", ""))
+
+    def test_single_stack_writes_ten_services_and_effects(self) -> None:
+        env = self.env()
+        state = stacks.LARGE_SCENARIOS["stack-start"].setup(env)
+        try:
+            manifest = (state.primary / "oberth.yaml").read_text(encoding="utf-8")
+            for name in stacks.SERVICES:
+                self.assertIn(f"- name: {name}", manifest)
+            self.assertEqual(set(state.ports_by_label["main"]), set(stacks.PORT_SERVICES))
+            self.assertEqual(set(state.effects), {"worker", "notifier"})
+            for name in ("service.py", "worker.py", "build.py", "migrate.py", "schema.sql"):
+                self.assertTrue((state.primary / name).exists(), name)
+            self.assertIn("prepare_inputs: [schema.sql]", manifest)
+            self.assertIn("prepare_inputs: [src/app.html, variant.txt]", manifest)
+            self.assertIn("machine:", manifest)
+        finally:
+            env.cleanup(state.worktrees)
+
+    def test_slow_dependency_sets_the_warmup(self) -> None:
+        env = self.env()
+        state = stacks.LARGE_SCENARIOS["stack-slow-dependency"].setup(env)
+        try:
+            manifest = (state.primary / "oberth.yaml").read_text(encoding="utf-8")
+            self.assertIn('READY_DELAY: "8"', manifest)
+        finally:
+            env.cleanup(state.worktrees)
+
+    def test_stale_fixture_keeps_unaffected_pids(self) -> None:
+        env = self.env()
+        with mock.patch.object(stacks, "_up", return_value=(subprocess.CompletedProcess([], 0, "", ""), started_doc())):
+            state = stacks.LARGE_SCENARIOS["stack-stale-code"].setup(env)
+        try:
+            self.assertEqual(
+                (state.primary / "variant.txt").read_text(encoding="utf-8"), "v2\n",
+            )
+            self.assertNotIn(("main", "api"), [key for key in state.preserve_pids])
+            self.assertNotIn(("main", "web"), [key for key in state.preserve_pids])
+            self.assertIn(("main", "gateway"), state.preserve_pids)
+            self.assertIn(("main", "worker"), state.preserve_pids)
+            self.assertEqual(state.preserve_pids[("main", "gateway")], 1003)
+        finally:
+            env.cleanup(state.worktrees)
+
+    def test_parallel_fixture_creates_three_worktrees(self) -> None:
+        env = self.env()
+        with mock.patch.object(stacks, "_up", return_value=(subprocess.CompletedProcess([], 0, "", ""), started_doc())):
+            state = stacks.LARGE_SCENARIOS["stack-parallel-three"].setup(env)
+        try:
+            self.assertEqual(set(state.worktrees), {"main", "wt1", "wt2"})
+            self.assertEqual(set(state.ports_by_label), {"main", "wt1", "wt2"})
+            for name in stacks.PORT_SERVICES:
+                ports = {state.ports_by_label[label][name] for label in state.ports_by_label}
+                self.assertEqual(len(ports), 3, name)
+            self.assertEqual(len(state.preserve), 2 * len(stacks.SERVICES))
+            self.assertEqual(len(state.preserve_pids), 2 * len(stacks.SERVICES))
+            self.assertIn("wt2_worker", state.effects)
+        finally:
+            env.cleanup(state.worktrees)
+
+
+class LargeJudgeTests(unittest.TestCase):
+    def write_heartbeats(self, state: lib.ScenarioState, prefix: str = "") -> None:
+        for name in stacks.WORKER_SERVICES:
+            path = state.effects[f"{prefix}{name}"]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps({"t": time.time(), "service": name, "ok": True}) + "\n",
+                encoding="utf-8",
+            )
+
+    def health(self, prefix: str = "", version: str = "v2") -> dict[str, lib.HttpResult]:
+        result = {
+            f"{prefix}{name}_health": lib.HttpResult(200, body=json.dumps({"ok": True}))
+            for name in stacks.PORT_SERVICES
+        }
+        result[f"{prefix}api_version"] = lib.HttpResult(200, body=json.dumps({"version": version}))
+        result[f"{prefix}web_version"] = lib.HttpResult(200, body=json.dumps({"version": f"{version}-abc"}))
+        return result
+
+    def test_stack_start_requires_every_service_and_live_heartbeats(self) -> None:
+        env = lib.ScenarioEnv.__new__(lib.ScenarioEnv)  # judge only needs paths
+        _ = env
+        root = Path(tempfile.mkdtemp())
+        ports = {name: 20000 + index for index, name in enumerate(stacks.PORT_SERVICES)}
+        state = stacks._state({"main": root}, root, {"main": ports}, stacks._effects("main", root, multi=False))
+        self.write_heartbeats(state)
+        scenario = stacks.LARGE_SCENARIOS["stack-start"]
+        http = self.health(version="v1")
+        with mock.patch.object(stacks, "port_open", return_value=True):
+            good = scenario.judge(probe({"main": status_doc()}, http), state)
+            self.assertTrue(good.completed, [item for item in good.checks if not item["ok"]])
+            state.effects["worker"].unlink()
+            bad = scenario.judge(probe({"main": status_doc()}, http), state)
+            self.assertFalse(bad.completed)
+
+    def test_stack_stale_requires_new_versions_and_untouched_pids(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        ports = {name: 21000 + index for index, name in enumerate(stacks.PORT_SERVICES)}
+        pids = {("main", name): 3000 + index for index, name in enumerate(stacks.SERVICES) if name not in {"api", "web"}}
+        state = stacks._state(
+            {"main": root}, root, {"main": ports}, stacks._effects("main", root, multi=False),
+            preserve=[("main", name) for name in stacks.SERVICES if name not in {"api", "web"}],
+            preserve_pids=pids,
+        )
+        self.write_heartbeats(state)
+        doc = status_doc([
+            status_service(name, pids.get(("main", name), 4000 + index))
+            for index, name in enumerate(stacks.SERVICES)
+        ])
+        scenario = stacks.LARGE_SCENARIOS["stack-stale-code"]
+        with mock.patch.object(stacks, "port_open", return_value=True):
+            good = scenario.judge(probe({"main": doc}, self.health()), state)
+            self.assertTrue(good.completed, [item for item in good.checks if not item["ok"]])
+            stale = self.health()
+            stale["api_version"] = lib.HttpResult(200, body=json.dumps({"version": "v1"}))
+            bad = scenario.judge(probe({"main": doc}, stale), state)
+            self.assertFalse(bad.completed)
+
+    def test_stack_parallel_rejects_crossed_ports(self) -> None:
+        roots = {label: Path(tempfile.mkdtemp()) for label in ("main", "wt1", "wt2")}
+        ports = {
+            label: {name: 22000 + index for index, name in enumerate(stacks.PORT_SERVICES)}
+            for label in roots
+        }
+        ports["wt2"]["api"] = ports["main"]["api"]
+        state = stacks._state(
+            roots, roots["wt2"], ports,
+            {
+                **stacks._effects("main", roots["main"], multi=True),
+                **stacks._effects("wt1", roots["wt1"], multi=True),
+                **stacks._effects("wt2", roots["wt2"], multi=True),
+            },
+            preserve=[(label, name) for label in ("main", "wt1") for name in stacks.SERVICES],
+            preserve_pids={(label, name): 5000 + index
+                           for index, (label, name) in enumerate(
+                               (label, name) for label in ("main", "wt1") for name in stacks.SERVICES)},
+        )
+        self.write_heartbeats(state, prefix="wt2_")
+        http = self.health(prefix="wt2_")
+        statuses = {
+            "main": status_doc([status_service(name, 5000 + index) for index, name in enumerate(stacks.SERVICES)]),
+            "wt1": status_doc([status_service(name, 5010 + index) for index, name in enumerate(stacks.SERVICES)]),
+            "wt2": status_doc(),
+        }
+        scenario = stacks.LARGE_SCENARIOS["stack-parallel-three"]
+        with mock.patch.object(stacks, "port_open", return_value=True):
+            bad = scenario.judge(probe(statuses, http), state)
+            self.assertFalse(bad.completed)
+            self.assertFalse(next(item for item in bad.checks if "api has a distinct port" in item["name"])["ok"])
+
+
+class ArmTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.binary = self.root / "fake-oberth"
+        self.binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        self.binary.chmod(0o755)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_native_arm_refuses_oberth_and_logs_the_attempt(self) -> None:
+        env = lib.ScenarioEnv(self.root / "env", self.binary, os.environ.get("PATH", ""), arm=lib.ARM_NATIVE)
+        proc = subprocess.run(
+            [str(env.shim_dir / "oberth"), "status"],
+            env=env.base_env(shimmed=True), capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(proc.returncode, 127)
+        actions = lib.read_actions(env.actions_log)
+        self.assertEqual(actions[-1]["cmd"], "oberth")
+        self.assertTrue(actions[-1].get("blocked"))
+
+    def test_native_arm_may_stop_processes_but_oberth_arm_may_not(self) -> None:
+        actions = [{"cmd": "kill", "argv": ["-9", "42"]}]
+        self.assertEqual(lib.blocked_action_attempts(actions), [
+            {"kind": "blocked_process_signal", "detail": "kill -9 42"},
+        ])
+        self.assertEqual(lib.blocked_action_attempts(actions, arm=lib.ARM_NATIVE), [])
+
+    def test_pi_without_a_skill_omits_the_flag(self) -> None:
+        argv = lib.AGENTS["pi"].argv(Path("/work"), "task", None)
+        self.assertNotIn("--skill", argv)
+        self.assertEqual(argv[-2:], ["--", "task"])
+
+
+class ComparisonTests(unittest.TestCase):
+    def row(self, arm: str, *, completed: bool, steps: int, duration: float,
+            probes: int = 1, output: int = 100, oob: int = 0,
+            mis_stops: int = 0, crossed: int = 0) -> dict:
+        return {
+            "scenario": "s", "agent": "a", "arm": arm, "repeat": 1,
+            "status": "ok", "completed": completed, "steps": steps,
+            "steps_source": "agent-events", "command_steps": steps,
+            "oberth_calls": 1 if arm == lib.ARM_OBERTH else 0,
+            "process_probe_calls": probes, "agent_output_bytes": output,
+            "mis_stops": mis_stops, "cross_worktree_incidents": crossed,
+            "oob": [], "oob_count": oob, "checks": [], "failed_checks": [],
+            "notes": [], "build_sha": "abc", "duration_s": duration,
+            "agent_version": "1", "exit_code": 0, "timed_out": False,
+            "ports": {}, "artifacts": {},
+        }
+
+    def test_arms_are_summarized_separately_and_compared(self) -> None:
+        rows = [
+            self.row(lib.ARM_OBERTH, completed=True, steps=4, duration=10, probes=0, output=500),
+            self.row(lib.ARM_OBERTH, completed=True, steps=6, duration=14, probes=0, output=700),
+            self.row(lib.ARM_NATIVE, completed=False, steps=20, duration=60, probes=6, output=9000, oob=1),
+            self.row(lib.ARM_NATIVE, completed=True, steps=24, duration=70, probes=8, output=11000, oob=1),
+        ]
+        summary = lib.summarize_runs(rows, "abc")
+        self.assertEqual({row["arm"] for row in summary}, {lib.ARM_OBERTH, lib.ARM_NATIVE})
+        comparison = lib.compare_arms(summary)[0]
+        self.assertEqual(comparison["completion_delta_pp"], 50.0)  # 100% vs 50%
+        self.assertEqual(comparison["steps_ratio"], 0.227)
+        self.assertEqual(comparison["process_probe_ratio"], 0.0)
+        self.assertEqual(comparison["oberth_mis_stops_total"], 0)
+        self.assertEqual(comparison["native_oob_total"], 2)
+
+    def test_cross_worktree_counts_only_other_checkouts(self) -> None:
+        roots = {"main": Path("/a"), "wt": Path("/b")}
+        state = lib.ScenarioState(worktrees=roots, primary=roots["wt"], ports={})
+        oob = [
+            {"kind": "preserved_service_stopped", "worktree": "main"},
+            {"kind": "preserved_service_stopped", "worktree": "wt"},
+            {"kind": "foreign_process_stopped"},
+            {"kind": "read_only_dependency_touched"},
+            {"kind": "tracked_file_changed", "worktree": "main"},
+        ]
+        self.assertEqual(lib.cross_worktree_count(oob, state), 2)
+        self.assertEqual(lib.mis_stop_count(oob), 3)
+
+    def test_markdown_renders_the_comparison_section(self) -> None:
+        rows = [
+            self.row(lib.ARM_OBERTH, completed=True, steps=4, duration=10),
+            self.row(lib.ARM_NATIVE, completed=False, steps=12, duration=40),
+        ]
+        summary = lib.summarize_runs(rows, "abc")
+        payload = {
+            "generated_at": "now",
+            "build": {"version": "v1", "commit": "c", "sha256": "abc", "platform": "test"},
+            "skill": {"version": "1", "commit": "s", "path": "/skill"},
+            "repeat": 1,
+            "arms": [lib.ARM_OBERTH, lib.ARM_NATIVE],
+            "comparable": False,
+            "runs": rows,
+            "summary": summary,
+            "comparison": lib.compare_arms(summary),
+            "notes": [],
+        }
+        text = lib.render_markdown(payload)
+        self.assertIn("oberth vs native", text)
+        self.assertIn("| arm |", text)
+        self.assertIn("steps", text)
 
 
 if __name__ == "__main__":
