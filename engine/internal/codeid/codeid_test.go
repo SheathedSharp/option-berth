@@ -194,6 +194,36 @@ func TestTakeWalkFallbackSkipsBuildTreesButHonoursAnExplicitSource(t *testing.T)
 	}
 }
 
+func TestTakeRefusesASymlinkedSource(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real-src")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, real, "app.py", "print('app')\n")
+	link := filepath.Join(root, "linked-src")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks are unavailable: %v", err)
+	}
+	if _, err := Take(context.Background(), root, []string{"linked-src"}); err == nil {
+		t.Fatal("a symlinked source was accepted; changes behind it would report unchanged")
+	}
+	// The target itself is a valid declaration.
+	if _, err := Take(context.Background(), root, []string{"real-src"}); err != nil {
+		t.Fatalf("real source: %v", err)
+	}
+
+	// A broken link is still a link: it must be refused, not treated as a
+	// missing (empty) source.
+	broken := filepath.Join(root, "broken-src")
+	if err := os.Symlink(filepath.Join(root, "gone"), broken); err != nil {
+		t.Skipf("symlinks are unavailable: %v", err)
+	}
+	if _, err := Take(context.Background(), root, []string{"broken-src"}); err == nil {
+		t.Fatal("a broken symlinked source was treated as an empty source")
+	}
+}
+
 func TestTakeMissingSourceIsEmptyRatherThanAnError(t *testing.T) {
 	root := t.TempDir()
 	snap, err := Take(context.Background(), root, []string{"gone"})

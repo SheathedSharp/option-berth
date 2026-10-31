@@ -74,6 +74,11 @@ type Service struct {
 	// composes the path itself: the client used to keep a copy of the layout,
 	// and two copies of a convention drift.
 	LogPath *string `json:"log_path" jsonschema:"nullable"`
+	// Stats is the running service's CPU and memory: from its listener row
+	// when it has one, or from its run's root process when it is a worker with
+	// no port. Null until a sample exists, and never kept for a stopped
+	// service.
+	Stats *Stats `json:"stats" jsonschema:"nullable"`
 	// LastExit is how this service's last run ended, for a service option-berth
 	// started that is not running now: "api crashed with exit code 1".
 	LastExit *ServiceExit `json:"last_exit" jsonschema:"nullable"`
@@ -177,6 +182,52 @@ type Group struct {
 	// Machine is what the manifest declares as depending on services of this
 	// machine, joined against what is listening. Always an array.
 	Machine []MachineRef `json:"machine"`
+	// RunningServices is how many declared services are running now. It is a
+	// count, present even when no resource sample exists.
+	RunningServices int `json:"running_services"`
+	// Resources is the sum across this worktree's sampled running services.
+	// Null when no service has a sample.
+	Resources *Resources `json:"resources" jsonschema:"nullable"`
+}
+
+// Resources is a worktree-level sum. Service-level samples stay in
+// Service.Stats; uptime, state and connections do not add up across services,
+// so they are not repeated here.
+type Resources struct {
+	CPUPercent float64 `json:"cpu_percent"`
+	MemoryRSS  int64   `json:"memory_rss_bytes"`
+	// Services is how many running services contributed a sample.
+	Services int `json:"services"`
+}
+
+// RunningServiceCount counts declared services that are running now.
+func (g Group) RunningServiceCount() int {
+	count := 0
+	for _, svc := range g.Services {
+		if svc.Running {
+			count++
+		}
+	}
+	return count
+}
+
+// ResourceTotals sums the samples of this worktree's running services. It
+// returns nil when nothing was sampled, so "no measurement" does not read as a
+// measured zero.
+func (g Group) ResourceTotals() *Resources {
+	var total Resources
+	for _, svc := range g.Services {
+		if !svc.Running || svc.Stats == nil {
+			continue
+		}
+		total.CPUPercent += svc.Stats.CPUPercent
+		total.MemoryRSS += svc.Stats.MemoryRSS
+		total.Services++
+	}
+	if total.Services == 0 {
+		return nil
+	}
+	return &total
 }
 
 // Key is the stable delta identity for the group.

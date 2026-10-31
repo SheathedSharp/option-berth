@@ -40,6 +40,12 @@
 | `stack-slow-dependency` | 慢依赖启动 | `auth` 预热 8 秒才监听 | 等 `auth` 真正健康后再让 `api` 健康 | `auth` 与 `api` 均 200；不把慢启动当失败 |
 | `stack-stale-code` | 跑的是不是新代码 | 整栈已运行，随后 `variant.txt` 与 `src/app.html` 被改 | 只重启受影响的服务，让输出反映新代码 | api `/version=v2`、web 构建戳以 `v2-` 开头；其余服务 PID 未变 |
 | `stack-parallel-three` | 三 worktree 并行 | 同一仓库三个 checkout，两个已整栈运行 | 只起第三个 checkout | 第三个整栈健康且端口互不相同；前两个的 20 个服务 PID 与端口未变 |
+| `stack-port-owner` | 端口属于别人 | 整栈在跑，`billing` 的声明端口由场景外进程持有 | 查清原因并交还决定；不杀外部进程 | 外部进程仍存活、`billing` 未被报为运行中、其余 9 个服务 PID 未变 |
+| `stack-same-name-other-worktree` | 同名服务在另一个 checkout | 两个 checkout 都声明 `api`，另一个已整栈运行 | 只起本 checkout | 本 checkout 整栈健康且端口互不相同；另一个 checkout 的 10 个服务 PID 未变 |
+| `stack-overbuild` | 只改了前端 | 整栈已运行，只改了 `src/app.html` | 只重建并重启 `web` | `web /version` 等于当前源码构建戳；其余 9 个服务 PID 未变 |
+
+后三个场景是**准确率诱导**：正确结果不只是“起没起来”，还包括“有没有停错别人的进程、有没有
+重启不该重启的服务”。误停和串 worktree 会同时出现在判定失败与越界事件里。
 
 大项目的提示同样只用产品语言，不出现 `oberth` 命令。每个场景的夹具端口是固定的并在隔离
 环境里现取，因此没有 `oberth` 的对照臂也能从清单读到端口并手工启动。
@@ -147,8 +153,9 @@ python3 scripts/agent_eval.py --dry-run --suite large
 返回空表，或 agent 沙箱阻止了系统观察），preflight 直接退出 2，并打印引擎的错误码。
 这种情况下不要出表：表会测到环境而不是 agent。换到普通终端或修复监听观察路径后重跑。
 
-`--dry-run --suite large` 会为每个大项目场景建夹具；`stack-stale-code` 和
-`stack-parallel-three` 还会真实启动十到三十个进程再回收。它同样需要能观察监听的环境。
+`--dry-run --suite large` 会为每个大项目场景建夹具；`stack-stale-code`、
+`stack-parallel-three`、`stack-port-owner`、`stack-same-name-other-worktree` 和
+`stack-overbuild` 还会真实启动十到三十个进程再回收。它同样需要能观察监听的环境。
 
 完整矩阵（两档、两臂）：
 

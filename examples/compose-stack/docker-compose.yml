@@ -1,0 +1,23 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      # Every worktree gets its own database name. The manifest passes this in
+      # as DB_NAME, already expanded from ${worktree}.
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      # option-berth assigns the port for `port: auto` and passes it as PORT.
+      # Compose interpolates it here, so two worktrees never collide.
+      - "${PORT}:5432"
+    healthcheck:
+      # $$ escapes Compose interpolation; the container's shell expands it.
+      test: ["CMD-SHELL", "pg_isready -U app -d $$POSTGRES_DB"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+    # oberth down gives the process group 5s after SIGTERM before escalating.
+    # Compose's own default stop grace is 10s, which would outlast that window;
+    # keep the container's stop inside it so a normal down can finish the job.
+    stop_grace_period: 2s

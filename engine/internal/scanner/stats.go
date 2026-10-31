@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
@@ -102,7 +103,7 @@ func (l *Loop) sampleStatsContext(ctx context.Context, include Include) {
 	if !have || ctx.Err() != nil {
 		return
 	}
-	pids := statsPIDs(basis.Ports)
+	pids := mergePIDs(statsPIDs(basis.Ports), serviceStatsPIDs(basis.Groups))
 	var samples map[int]ports.ProcSample
 	if l.opts.SampleStats != nil {
 		samples = l.opts.SampleStats(pids)
@@ -135,11 +136,14 @@ func (l *Loop) sampleStatsContext(ctx context.Context, include Include) {
 	if rebase {
 		// A rename, run replacement or bare rescan can progress while sampling.
 		// Patch CURRENT rows only, and only the runtimes the sample observed.
+		// The groups belong to that newer scan and already carry its samples;
+		// patching them from this older basis would cross generations.
 		next.Ports = refreshStatsFrom(prev.Ports, samples, basis.Ports, true)
 	} else {
 		next.Ports = refreshStats(prev.Ports, samples)
+		next.Groups = refreshGroupStats(prev.Groups, next.Ports, samples)
 	}
-	if !statsChanged(prev.Ports, next.Ports) {
+	if !statsChanged(prev, next) {
 		return
 	}
 
@@ -153,24 +157,145 @@ func (l *Loop) sampleStatsContext(ctx context.Context, include Include) {
 	l.opts.Publish(prev, next, nil)
 }
 
-// statsChanged reports whether any row's stats object moved. The two slices
-// are index-aligned — next is prev with stats replaced — so this compares
-// position by position rather than going through a keyed diff.
-func statsChanged(prev, next []state.Port) bool {
-	if len(prev) != len(next) {
+// statsChanged reports whether any row's or service's stats object moved. The
+// slices are index-aligned — next is prev with stats replaced — so this
+// compares position by position rather than going through a keyed diff.
+func statsChanged(prev, next state.Snapshot) bool {
+	if len(prev.Ports) != len(next.Ports) || len(prev.Groups) != len(next.Groups) {
 		return true
 	}
-	for i := range next {
-		a, b := prev[i].Stats, next[i].Stats
-		switch {
-		case a == nil && b == nil:
-		case a == nil || b == nil:
-			return true
-		case *a != *b:
+	for i := range next.Ports {
+		if !sameStats(prev.Ports[i].Stats, next.Ports[i].Stats) {
 			return true
 		}
 	}
+	for i := range next.Groups {
+		if !sameResources(prev.Groups[i].Resources, next.Groups[i].Resources) {
+			return true
+		}
+		if len(prev.Groups[i].Services) != len(next.Groups[i].Services) {
+			return true
+		}
+		for j := range next.Groups[i].Services {
+			if !sameStats(prev.Groups[i].Services[j].Stats, next.Groups[i].Services[j].Stats) {
+				return true
+			}
+		}
+	}
 	return false
+}
+
+func sameStats(a, b *state.Stats) bool {
+	switch {
+	case a == nil && b == nil:
+		return true
+	case a == nil || b == nil:
+		return false
+	default:
+		return *a == *b
+	}
+}
+
+func sameResources(a, b *state.Resources) bool {
+	switch {
+	case a == nil && b == nil:
+		return true
+	case a == nil || b == nil:
+		return false
+	default:
+		return *a == *b
+	}
+}
+
+// mergePIDs unions two lists with no duplicates. The stats tick samples one
+// process once even when a listener row and a service row name the same pid.
+func mergePIDs(lists ...[]int) []int {
+	seen := map[int]bool{}
+	out := make([]int, 0)
+	for _, pids := range lists {
+		for _, pid := range pids {
+			if pid <= 0 || seen[pid] {
+				continue
+			}
+			seen[pid] = true
+			out = append(out, pid)
+		}
+	}
+	return out
+}
+
+// serviceStatsPIDs are the run root processes of running services that have no
+// listener. A listener's process is already in statsPIDs; sampling it twice
+// would only cost a duplicate entry in one ps call.
+func serviceStatsPIDs(groups []state.Group) []int {
+	pids := make([]int, 0, len(groups))
+	for i := range groups {
+		for j := range groups[i].Services {
+			svc := &groups[i].Services[j]
+			if !svc.Running || svc.PortActual != nil || svc.PID == nil || *svc.PID <= 0 {
+				continue
+			}
+			pids = append(pids, *svc.PID)
+		}
+	}
+	return pids
+}
+
+// refreshGroupStats writes the sampled stats back onto each service. A service
+// with a listener takes the sample from its listener row, so the port row and
+// the service row cannot disagree; a portless worker takes its own pid's
+// sample. Group totals are recomputed after the service rows are in place.
+func refreshGroupStats(rows []state.Group, ports []state.Port, samples map[int]ports.ProcSample) []state.Group {
+	if len(rows) == 0 || len(samples) == 0 {
+		return rows
+	}
+	byPort := make(map[int]*state.Stats, len(ports))
+	for i := range ports {
+		if ports[i].Stats != nil {
+			byPort[ports[i].Port] = ports[i].Stats
+		}
+	}
+
+	out := rows
+	copied := false
+	for i := range rows {
+		changed := false
+		for j := range rows[i].Services {
+			svc := &rows[i].Services[j]
+			if !svc.Running {
+				continue
+			}
+			var next *state.Stats
+			if svc.PortActual != nil {
+				next = byPort[*svc.PortActual]
+			} else if svc.PID != nil {
+				if s, ok := samples[*svc.PID]; ok {
+					stats := state.Stats{
+						CPUPercent: s.CPUPercent, MemoryRSS: s.MemoryRSS,
+						ThreadCount: s.ThreadCount, Uptime: s.Uptime, State: s.State,
+					}
+					next = &stats
+				}
+			}
+			if next == nil || (svc.Stats != nil && *svc.Stats == *next) {
+				continue
+			}
+			if !copied {
+				out = append([]state.Group(nil), rows...)
+				copied = true
+			}
+			if !changed {
+				out[i].Services = append([]state.Service(nil), rows[i].Services...)
+				changed = true
+			}
+			stats := *next
+			out[i].Services[j].Stats = &stats
+		}
+	}
+	if copied {
+		groups.FinalizeResources(out)
+	}
+	return out
 }
 
 // statsPIDs are the processes a stats tick samples, minus containers whose

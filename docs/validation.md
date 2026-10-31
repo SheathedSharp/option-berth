@@ -15,7 +15,7 @@
 | Engine verification | PR、引擎相关 `main` 推送、手动 | 自动：macOS / Ubuntu 原生构建、vet、全引擎单元测试、Mage 工作流回归、Python 辅助测试，Ubuntu 上六个发布目标的交叉构建，Linux 上检出 `option-berth-skill` 核对 agent 契约覆盖，以及 Windows PowerShell 5.1 解析安装/卸载脚本；手动另跑核心 race 与真实服务场景。 |
 | Nightly full verification | 每日 18:23 UTC、手动 | macOS / Ubuntu：与 `scripts/release.py --verify-only` 相同的完整门槛，含核心 race 与真实服务场景。 |
 | Git read verification | PR、相关 `main` 推送、手动 | macOS / Ubuntu：Git、worktree、归因与观察的重复测试和 race。 |
-| Checked-in examples | PR、引擎相关 `main` 推送、手动 | macOS / Ubuntu：在两个 worktree 中验证仓库内示例，包括独立数据库、幂等迁移与单边停止。 |
+| Checked-in examples | PR、引擎相关 `main` 推送、手动 | macOS / Ubuntu：在两个 worktree 中验证仓库内示例，包括独立数据库、幂等迁移与单边停止。Compose 示例只在有 Docker 的 Linux 行验证（两个 worktree 各自的 project、`port: auto` 映射、`pg_isready`、单边 `down` 停容器）；macOS runner 无 Docker，报告跳过而不算平台证据。 |
 | Reused service readiness | PR、引擎相关 `main` 推送、手动 | macOS / Ubuntu：真实健康与不健康服务的复用检查。 |
 | Windows build verification | PR、引擎相关 `main` 推送、发布标签、手动 | Windows x64：原生构建、vet、CLI/Jev 构建、version JSON/帮助页、事实/持久化，以及隔离 API/无端口 worker 的启动、重复启动、采集器恢复和限定停止；Ubuntu：Windows arm64 交叉构建。 |
 | Gate integrity | PR（`pull_request_target`） | 修改 `.github/workflows/`、CODEOWNERS、race 清单、发布脚本或质量门检查脚本时，要求 PR 作者是仓库维护者。 |
@@ -75,9 +75,10 @@ python3 scripts/check_skill_contract.py --skill-dir ../option-berth-skill
 
 `internal/codeid` 的单元测试覆盖：Git 检出只纳入已跟踪与未 ignore 的未跟踪文件；服务 cwd 位于
 checkout 子目录且 `sources` 指向同级目录；非 Git 回退跳过 `node_modules` / `build`，但显式声明的
-目录不被跳过；新增、修改、删除分别计数；缺失的 source 视为空而不是错误；快照写读、按 run 清理，
-以及拒绝读取另一个 run 的快照。`internal/groups` 覆盖 `sources` 的解析、越界校验、`sources: []`
-与省略的区别、编辑输出；`internal/state` 的字段覆盖测试保证新字段进入相等比较。
+目录不被跳过；新增、修改、删除分别计数；缺失的 source 视为空而不是错误；经过符号链接的 source
+被拒绝而不是给出假阴性；快照写读、按 run 清理，以及拒绝读取另一个 run 的快照。`internal/groups`
+覆盖 `sources` 的解析、越界校验、`sources: []` 与省略的区别，以及 YAML 往返不丢失 `sources: []`；
+`internal/state` 的字段覆盖测试保证新字段进入相等比较。
 `internal/daemon/groupstart` 用真实 daemon 核对启动时确实写入快照，以及 `sources: []` 不写；
 `internal/cmd` 的 `TestAnnotateCodeFacts*` 覆盖“已改 / 未改 / 未知”三态，`TestStatusOnly*`
 确认代码比较跟随 `--only` 选择，`TestBriefStatus*` 确认 `--brief` 保留代码字段。2026-10-31 本机执行：
@@ -94,9 +95,22 @@ go generate ./...
 ```
 
 以上通过。`go test ./...` 未作为本机结论：`internal/cmd` 的 init/kill 用例仍受本机监听表限制。
-真实 CLI 的“起服务 → 改代码 → status → restart”冒烟也在本机被 `observation_blind` 拒绝（沙箱
-`netstat` 返回空表，daemon 拒绝自启），未执行；新增的 `stale-code` 场景同样需要可观察监听的
-普通终端或 CI。
+
+**真实 CLI 冒烟（2026-10-31）**：本机 `netstat` 在普通 shell 里能打印表，但 Go 进程通过管道读到的
+stdout 是空的，daemon 因此报告 `observation_blind`。为了不让“监听观察”挡住与它无关的代码身份链，
+用一个**仅把监听扫描替换为空表**的临时 daemon 驱动真实 CLI；spawn、run registry、快照、status、
+restart 都是生产代码。同一隔离 `HOME`/`BERTH_HOME`/git 项目下实际观测到：
+
+1. `up` 后 `status --no-mark --json`：`code_head=<commit>`，`code_changed_since_start=false`。
+2. 改 `worker.py` 后：`code_changed_since_start=true`、`code_changed_files=1`、
+   `code_hint=oberth restart --only worker`。
+3. `restart --only worker` 后：回到 `false`，文件数/hint 缺省。
+4. `status --json --brief` 同样带上述字段；`--only worker` 只返回 worker，不再读取同栈的 other。
+5. 人读 `--brief` 输出 `worker · running · no port · code changed since start (1 file)` 和
+   `next  oberth restart --only worker`。
+
+这次冒烟没有验证监听观察本身，也没有证明 `up --wait` 的就绪判断；这两项仍需要能读取完整监听表的
+普通终端或 CI。新增的 `stale-code` 场景同样尚未用真实 agent 执行。
 
 start attempt 的定向测试在 `internal/daemon/groupstart`：成功、prepare 失败、依赖失败、spawn
 失败、取消后的清理，`starting` 快照与 scope 过滤，以及 `progress` 门控；
@@ -235,6 +249,7 @@ macOS/Linux 上跑，沙箱里的 `observation_*` 结果不能代替它。
 - **core**：生成物缺失、端口被占、依赖未就绪、清单与进程不一致、代码已改但进程未重启、
   同仓库双 worktree。
 - **large**：十服务整栈的整栈启动、只起子栈、慢依赖、旧代码仍在跑、三 worktree 并行；
+  以及三个准确率诱导场景（端口属于外部进程、同名服务在另一个 checkout、只改前端）。
   夹具与公开示例 [stack-workshop](../examples/stack-workshop/README.md) 共用。
 
 每次运行使用隔离 `HOME` / `BERTH_HOME` / 可丢弃项目，只按点名的 `--pass-env` 和
@@ -270,10 +285,10 @@ shim 以 127 退出。
 
 **2026-10-31 实际执行（大项目档与对照臂）**：
 
-- `python3 -m unittest scripts/agent_eval_test.py`：45 项通过。新增覆盖十服务夹具、
-  三 worktree 夹具、慢依赖预热、旧代码场景、`native` 臂的 `oberth` 拒绝与杀进程放行、
-  误停/串 worktree 指标、A/B 聚合与对照表渲染。
-- `python3 scripts/agent_eval.py --list`：core 5 个、large 5 个场景，`oberth` / `native`
+- `python3 -m unittest scripts/agent_eval_test.py`：49 项通过。新增覆盖十服务夹具、
+  三 worktree 夹具、慢依赖预热、旧代码场景、三个准确率诱导场景的失败路径、`native` 臂的
+  `oberth` 拒绝与杀进程放行、误停/串 worktree 指标、A/B 聚合与对照表渲染。
+- `python3 scripts/agent_eval.py --list`：core 6 个、large 8 个场景，`oberth` / `native`
   两臂均列出。
 - `python3 scripts/agent_eval.py --dry-run --scenarios stack-start --skip-preflight`：
   成功生成十服务夹具与两个心跳效果路径。
@@ -282,9 +297,13 @@ shim 以 127 退出。
   未在本机验证。
 - **服务脚本冒烟**（绕开 `oberth`，直接启动脚本）：`migrate.py` 建库并写入一条种子，
   `build.py` 产出 `v1-<digest>`，`api` 在 `auth`/`catalog` 健康后返回 200，`worker`
-  写出 `ok` 心跳。它只证明夹具脚本与判定证据可用，不证明引擎启动链路。
-- **未执行**：真实 agent 的 core/large 矩阵与 A/B 数字。需要在能观察监听的普通终端或
-  具备凭据的 CI 上运行；没有用参考脚本或 fake engine 的行冒充。
+  写出 `ok` 心跳；`REQUIRED_FILE` 缺失时服务以 1 退出、补齐后健康。它只证明夹具脚本与
+  判定证据可用，不证明引擎启动链路。
+- **准确率诱导场景**：2026-10-31 新增 `stack-port-owner`、`stack-same-name-other-worktree`、
+  `stack-overbuild`，判定分别检查外部进程存活、另一个 checkout 的 PID 未变、只重启 web 时
+  其余 PID 未变；单元测试覆盖了它们的失败路径。
+- **未执行**：这三个新场景的真实 agent A/B 数字。需要在能观察监听的普通终端或具备凭据的
+  CI 上运行；没有用参考脚本或 fake engine 的行冒充。
 
 ## 客户端验证
 

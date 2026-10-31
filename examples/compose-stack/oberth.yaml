@@ -1,0 +1,17 @@
+# One Compose project per worktree. `-p app_${worktree}` keeps the containers,
+# network and volumes separate; `port: auto` is handed to Compose as PORT, and
+# DB_NAME becomes this worktree's database.
+#
+# `docker compose up` stays in the foreground on purpose: a normal `oberth down`
+# sends SIGTERM to the process group, which lets Compose stop the containers.
+# `oberth down --force` sends SIGKILL and does not give Compose that chance; use
+# it only after stopping the Compose project yourself.
+name: compose-stack
+services:
+  - name: db
+    cmd: docker compose -f docker-compose.yml -p app_${worktree} up
+    port: auto
+    health:
+      command: docker compose -f docker-compose.yml -p app_${worktree} exec -T db pg_isready -U app -d app_${worktree}
+    env:
+      DB_NAME: app_${worktree}

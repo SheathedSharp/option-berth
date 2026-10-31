@@ -26,6 +26,8 @@ var (
 	logsLinesFlag int
 	logsJSONFlag  bool
 	logsOnceFlag  bool
+	logsRunFlag   string
+	logsFirstErr  bool
 )
 
 var logsCmd = &cobra.Command{
@@ -38,6 +40,24 @@ var logsCmd = &cobra.Command{
 		bindIP, _ := cmd.Flags().GetString("ip")
 		if logsOnceFlag {
 			logsFollow = false
+		}
+		if logsFirstErr {
+			if logsRunFlag == "" {
+				return usageError{fmt.Errorf("--first-error needs --run current; without a run the file mixes earlier runs")}
+			}
+			logsFollow = false
+		}
+		if logsRunFlag != "" {
+			if bindIP != "" {
+				return usageError{fmt.Errorf("--ip selects a listener; --run selects a service run, so the two cannot be combined")}
+			}
+			c := daemonClient(cmd.Context())
+			if c == nil {
+				return failHint("daemon_unavailable", "logs --run needs the daemon",
+					"start one with `oberth serve --detach`")
+			}
+			defer c.Close()
+			return logsFromRun(cmd.Context(), c, args[0], logsRunFlag)
 		}
 
 		c := daemonClient(cmd.Context())
@@ -236,6 +256,13 @@ func readFileLogs(path string, lines int) (logsDocument, error) {
 }
 
 func streamFileLogs(ctx context.Context, path string, asJSON bool, lines int, meta logMetadata) error {
+	return streamFileLogsFrom(ctx, path, -1, asJSON, lines, meta)
+}
+
+// streamFileLogsFrom is streamFileLogs for one run: a non-negative offset is
+// where that run began, so the backlog and the follow both start there instead
+// of at the end of a file shared with earlier generations.
+func streamFileLogsFrom(ctx context.Context, path string, offset int64, asJSON bool, lines int, meta logMetadata) error {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return failHint("not_found", "log file does not exist: "+path,
 			"start the service with `oberth up`")
@@ -243,7 +270,15 @@ func streamFileLogs(ctx context.Context, path string, asJSON bool, lines int, me
 	if lines <= 0 {
 		lines = 10
 	}
-	cmd := exec.CommandContext(ctx, "tail", "-n", strconv.Itoa(lines), "-f", path)
+	args := []string{"-n", strconv.Itoa(lines)}
+	if offset >= 0 {
+		start, err := runTailStart(path, offset, lines)
+		if err != nil {
+			return err
+		}
+		args = []string{"-c", "+" + strconv.FormatInt(start+1, 10)}
+	}
+	cmd := exec.CommandContext(ctx, "tail", append(args, "-f", path)...)
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -381,15 +416,35 @@ type logsDocument struct {
 	Status    string   `json:"status,omitempty"`
 	ExitCode  *int     `json:"exit_code,omitempty"`
 	Reason    string   `json:"reason,omitempty"`
+	// LogOffset is where this document's run began in the file, when the read
+	// was scoped to one run. It is a pointer so zero (the file was empty when
+	// the run started) is not confused with "not a run-scoped read".
+	LogOffset *int64 `json:"log_offset,omitempty"`
+	// RunStartUnknown says the recorded offset was older than the file (a
+	// rotation); the lines may include generations before this run.
+	RunStartUnknown bool `json:"run_start_unknown,omitempty"`
+	// FirstError is present only when --first-error found a match.
+	FirstError *logMatch `json:"first_error,omitempty"`
+	// NoFirstError says --first-error searched the run and found none.
+	NoFirstError bool `json:"no_first_error,omitempty"`
+}
+
+// logMatch is the first line in a run that matched the fixed error vocabulary.
+// It is a location, not a diagnosis.
+type logMatch struct {
+	Line int    `json:"line"`
+	Text string `json:"text"`
 }
 
 type logMetadata struct {
-	Service  string
-	RunID    string
-	PID      int
-	Status   string
-	ExitCode *int
-	Reason   string
+	Service         string
+	RunID           string
+	PID             int
+	Status          string
+	ExitCode        *int
+	Reason          string
+	LogOffset       *int64
+	RunStartUnknown bool
 }
 
 func applyLogMetadata(doc *logsDocument, meta logMetadata) {
@@ -399,6 +454,8 @@ func applyLogMetadata(doc *logsDocument, meta logMetadata) {
 	doc.Status = meta.Status
 	doc.ExitCode = meta.ExitCode
 	doc.Reason = meta.Reason
+	doc.LogOffset = meta.LogOffset
+	doc.RunStartUnknown = meta.RunStartUnknown
 }
 
 func logLineJSON(source, line string, meta logMetadata) map[string]any {
@@ -566,6 +623,10 @@ func init() {
 	logsCmd.Flags().BoolVar(&logsJSONFlag, "json", false,
 		"Output as JSON: one document when reading once, one object per line while following")
 	logsCmd.Flags().String("ip", "", "Specify bind address when a port is bound to multiple IPs")
+	logsCmd.Flags().StringVar(&logsRunFlag, "run", "",
+		"Read one run's output instead of the whole log file: `current` or a run ID")
+	logsCmd.Flags().BoolVar(&logsFirstErr, "first-error", false,
+		"Print the first line matching error, exception, fatal, panic or traceback (needs --run)")
 	rootCmd.AddCommand(logsCmd)
 }
 

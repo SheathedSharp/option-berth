@@ -24,10 +24,12 @@ type briefStatusDocument struct {
 }
 
 type briefWorktree struct {
-	Name     string         `json:"name"`
-	Identity string         `json:"identity"`
-	Branch   string         `json:"branch,omitempty"`
-	Services []briefService `json:"services"`
+	Name            string           `json:"name"`
+	Identity        string           `json:"identity"`
+	Branch          string           `json:"branch,omitempty"`
+	Services        []briefService   `json:"services"`
+	RunningServices int              `json:"running_services"`
+	Resources       *state.Resources `json:"resources,omitempty"`
 }
 
 type briefService struct {
@@ -41,9 +43,10 @@ type briefService struct {
 	Health     *briefHealth `json:"health,omitempty"`
 	// ExitReason and ExitCode are the service's current last_exit. Hint is the
 	// deterministic next command, when that exit left a log to read.
-	ExitReason string `json:"exit_reason,omitempty"`
-	ExitCode   *int   `json:"exit_code,omitempty"`
-	Hint       string `json:"hint,omitempty"`
+	ExitReason string      `json:"exit_reason,omitempty"`
+	ExitCode   *int        `json:"exit_code,omitempty"`
+	Hint       string      `json:"hint,omitempty"`
+	Stats      *briefStats `json:"stats,omitempty"`
 	// ManifestRuntimeMismatch is kept because it is the one cheap signal that
 	// the process is running an older manifest; it is omitted when false.
 	ManifestRuntimeMismatch bool `json:"manifest_runtime_mismatch,omitempty"`
@@ -56,7 +59,8 @@ type briefService struct {
 	// Starting is the in-flight start attempt, the same transient fact the
 	// full document carries. A brief reader often reads exactly while services
 	// are coming up, and "not running" alone cannot say whether that is a wait
-	// in progress or a service that never started.
+	// in progress or a service that never started. Its own copy, so the brief
+	// document never aliases the snapshot's slice.
 	Starting *briefStarting `json:"starting,omitempty"`
 }
 
@@ -80,6 +84,13 @@ type briefHealth struct {
 	Status string `json:"status"`
 	Code   int    `json:"code,omitempty"`
 	Reason string `json:"reason,omitempty"`
+}
+
+// briefStats is the resource half worth carrying per service. Uptime, state and
+// connection counts stay in the full document.
+type briefStats struct {
+	CPUPercent float64 `json:"cpu_percent"`
+	MemoryRSS  int64   `json:"memory_rss_bytes"`
 }
 
 type briefMachine struct {
@@ -123,10 +134,12 @@ func briefStatusFrom(doc statusDocument) briefStatusDocument {
 	out := briefStatusDocument{
 		Scope: doc.Scope,
 		Worktree: briefWorktree{
-			Name:     doc.Worktree.Name,
-			Identity: doc.Worktree.Identity,
-			Branch:   doc.Worktree.Branch,
-			Services: make([]briefService, 0, len(doc.Worktree.Services)),
+			Name:            doc.Worktree.Name,
+			Identity:        doc.Worktree.Identity,
+			Branch:          doc.Worktree.Branch,
+			Services:        make([]briefService, 0, len(doc.Worktree.Services)),
+			RunningServices: doc.Worktree.RunningServices,
+			Resources:       doc.Worktree.Resources,
 		},
 		Ports:       make([]int, 0, len(doc.Ports)),
 		Exits:       make([]briefExit, 0, len(doc.Exits)),
@@ -165,6 +178,12 @@ func briefStatusFrom(doc statusDocument) briefStatusDocument {
 				Status: svc.HealthStatus.Status,
 				Code:   svc.HealthStatus.Code,
 				Reason: svc.HealthStatus.Reason,
+			}
+		}
+		if svc.Stats != nil {
+			item.Stats = &briefStats{
+				CPUPercent: svc.Stats.CPUPercent,
+				MemoryRSS:  svc.Stats.MemoryRSS,
 			}
 		}
 		if svc.Starting != nil {

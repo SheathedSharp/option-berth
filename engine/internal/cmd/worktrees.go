@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 	"github.com/spf13/cobra"
@@ -53,6 +55,11 @@ type worktreeIdentityRow struct {
 	Group    string `json:"group,omitempty"`
 	Exists   bool   `json:"exists"`
 	LastSeen string `json:"last_seen,omitempty"`
+	// RunningServices is how many declared services are running for this
+	// identity now. It is absent when no daemon answered: the ledger does not
+	// store runtime facts, and zero would claim a measurement the command did
+	// not make.
+	RunningServices *int `json:"running_services,omitempty"`
 }
 
 type worktreesDocument struct {
@@ -64,6 +71,7 @@ func worktreesRun(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	running := runningServicesByIdentity(cmd.Context())
 	rows := make([]worktreeIdentityRow, 0, len(identities))
 	for _, identity := range identities {
 		exists := checkoutExists(identity.Root)
@@ -75,6 +83,9 @@ func worktreesRun(cmd *cobra.Command, _ []string) error {
 			Root:     identity.Root,
 			Group:    identity.Group,
 			Exists:   exists,
+		}
+		if count, ok := running[identity.Identity]; ok {
+			row.RunningServices = &count
 		}
 		if !identity.LastSeen.IsZero() {
 			row.LastSeen = identity.LastSeen.UTC().Format(time.RFC3339)
@@ -93,6 +104,33 @@ func worktreesRun(cmd *cobra.Command, _ []string) error {
 	}
 	printWorktrees(rows)
 	return nil
+}
+
+// runningServicesByIdentity asks the daemon for the running count per
+// `${worktree}` identity. The ledger is the authority on identity; this is a
+// read-time join against group facts. No daemon means no entry, which the JSON
+// omits, rather than a zero the command did not observe.
+func runningServicesByIdentity(ctx context.Context) map[string]int {
+	if noDaemonFlag {
+		return nil
+	}
+	c, err := dialDaemon(ctx)
+	if err != nil {
+		return nil
+	}
+	defer c.Close()
+	var listed rpc.GroupsListResult
+	if err := c.Call(ctx, "groups.list", rpc.HostParams{Host: hostParams().Host}, &listed); err != nil {
+		return nil
+	}
+	out := make(map[string]int, len(listed.Groups))
+	for _, group := range listed.Groups {
+		if group.Identity == "" {
+			continue
+		}
+		out[group.Identity] += group.RunningServices
+	}
+	return out
 }
 
 // knownWorktreeIdentities reads the ledger without starting or asking the
@@ -143,6 +181,10 @@ func printWorktrees(rows []worktreeIdentityRow) {
 		if !row.Exists {
 			state = display.Yellow("checkout gone")
 		}
-		fmt.Printf("  %s  %s  %s  %s\n", row.Identity, group, row.Root, state)
+		running := ""
+		if row.RunningServices != nil {
+			running = fmt.Sprintf("  %d running", *row.RunningServices)
+		}
+		fmt.Printf("  %s  %s  %s  %s%s\n", row.Identity, group, row.Root, state, running)
 	}
 }

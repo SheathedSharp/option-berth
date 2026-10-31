@@ -26,7 +26,8 @@ func groupsEqual(a, b Group) bool {
 		a.Identity == b.Identity && a.Branch == b.Branch && a.Source == b.Source &&
 		pointerEqual(a.RootDir, b.RootDir) && pointerEqual(a.ConfigPath, b.ConfigPath) &&
 		sliceEqual(a.Members, b.Members) && servicesEqual(a.Services, b.Services) &&
-		machineEqual(a.Machine, b.Machine)
+		machineEqual(a.Machine, b.Machine) &&
+		a.RunningServices == b.RunningServices && pointerEqual(a.Resources, b.Resources)
 }
 
 func servicesEqual(a, b []Service) bool {
@@ -57,8 +58,8 @@ func serviceEqual(a, b *Service) bool {
 		pointerEqual(a.Icon, b.Icon) && pointerEqual(a.Color, b.Color) && sliceEqual(a.DependsOn, b.DependsOn) &&
 		a.Running == b.Running && pointerEqual(a.PortActual, b.PortActual) && pointerEqual(a.PID, b.PID) &&
 		pointerEqual(a.RunID, b.RunID) && pointerEqual(a.StartedAt, b.StartedAt) &&
-		pointerEqual(a.LogPath, b.LogPath) && sameExit(a.LastExit, b.LastExit) &&
-		sameStarting(a.Starting, b.Starting)
+		pointerEqual(a.LogPath, b.LogPath) && pointerEqual(a.Stats, b.Stats) &&
+		sameExit(a.LastExit, b.LastExit) && sameStarting(a.Starting, b.Starting)
 }
 
 // sameStarting compares the transient start attempt. It is part of the wire

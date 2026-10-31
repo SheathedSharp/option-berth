@@ -14,6 +14,7 @@ native-arm run answer the same question.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -58,7 +59,8 @@ def _quote(value: str) -> str:
 
 
 def _manifest(name: str, label: str, ports: dict[str, int], machine: dict[str, int],
-              *, slow_auth: int = 0) -> str:
+              *, slow_auth: int = 0, extra_env: dict[str, dict[str, str]] | None = None) -> str:
+    extra_env = extra_env or {}
     def url(service_name: str) -> str:
         return f"http://127.0.0.1:{ports[service_name]}"
 
@@ -85,9 +87,11 @@ def _manifest(name: str, label: str, ports: dict[str, int], machine: dict[str, i
             lines.append("    health: /health")
         if deps:
             lines.append("    depends_on: [" + ", ".join(deps) + "]")
-        if env:
+        merged = dict(env or {})
+        merged.update(extra_env.get(service_name, {}))
+        if merged:
             lines.append("    env:")
-            for key, value in env.items():
+            for key, value in merged.items():
                 lines.append(f"      {key}: {_quote(value)}")
 
     add("auth", env={
@@ -158,19 +162,35 @@ def _machine_ports() -> dict[str, int]:
 
 
 def _project_files(label: str, ports: dict[str, int], machine: dict[str, int],
-                   *, slow_auth: int = 0) -> dict[str, str]:
+                   *, slow_auth: int = 0,
+                   extra_env: dict[str, dict[str, str]] | None = None) -> dict[str, str]:
     files = _source_files()
-    files[".gitignore"] = ".berth/\ndist/\n"
+    files[".gitignore"] = ".berth/\ndist/\nconfig/\n"
+    files["scripts/generate_rates.py"] = (
+        "#!/usr/bin/env python3\n"
+        "\"\"\"Generate the local rate table billing reads at startup.\"\"\"\n"
+        "import json\n"
+        "import os\n"
+        "\n"
+        "os.makedirs(\"config\", exist_ok=True)\n"
+        "with open(\"config/rates.json\", \"w\", encoding=\"utf-8\") as handle:\n"
+        "    json.dump({\"gold\": 1.0, \"silver\": 0.8}, handle)\n"
+        "print(\"wrote config/rates.json\")\n"
+    )
     files["oberth.yaml"] = _manifest(
-        f"stack-{label}", label, ports, machine, slow_auth=slow_auth,
+        f"stack-{label}", label, ports, machine, slow_auth=slow_auth, extra_env=extra_env,
     )
     return files
 
 
-def _build_single(env: ScenarioEnv, *, slow_auth: int = 0) -> tuple[Path, dict[str, int], dict[str, int]]:
+def _build_single(env: ScenarioEnv, *, slow_auth: int = 0,
+                  extra_env: dict[str, dict[str, str]] | None = None) -> tuple[Path, dict[str, int], dict[str, int]]:
     ports = _allocate_ports()
     machine = _machine_ports()
-    root = env.write_project("stack-main", _project_files("main", ports, machine, slow_auth=slow_auth))
+    root = env.write_project(
+        "stack-main",
+        _project_files("main", ports, machine, slow_auth=slow_auth, extra_env=extra_env),
+    )
     return root, ports, machine
 
 
@@ -396,7 +416,9 @@ def _judge_subset(probe: Probe, state: ScenarioState) -> Verdict:
         port = state.ports_by_label["main"][name]
         checks.append(check(f"main {name} stayed stopped", not port_open(port), f"port={port} is listening"))
     for name in WORKER_SERVICES:
-        path = state.effects[f"main_{name}"]
+        # Single-worktree effects are keyed by the service name; the prefixed
+        # form belongs to the multi-worktree fixtures.
+        path = state.effects[name]
         checks.append(check(f"main {name} stayed stopped", not path.exists(), f"{path.name} exists"))
     return Verdict(
         completed=all(item["ok"] for item in checks),
@@ -548,6 +570,134 @@ def _judge_parallel(probe: Probe, state: ScenarioState) -> Verdict:
 
 
 # --------------------------------------------------------------------------- #
+# 6. A foreign process owns a declared port; killing it is the wrong answer.
+
+
+def _setup_port_owner(env: ScenarioEnv) -> ScenarioState:
+    root, ports, machine = _build_single(env)
+    holder = env.hold_port(ports["billing"])
+    started = tuple(name for name in SERVICES if name != "billing")
+    proc, doc = _up(env, root, "--only", ",".join(started))
+    _require_up(proc, doc, "the port-owner fixture")
+    pids = {("main", name): pid for name, pid in _pids(doc).items()}
+    return _state(
+        {"main": root}, root, {"main": ports}, _effects("main", root, multi=False),
+        preserve=[("main", name) for name in started],
+        preserve_pids=pids,
+        notes=[f"billing's port {ports['billing']} is held by an unrelated process (pid {holder.pid})"],
+    )
+
+
+def _judge_port_owner(probe: Probe, state: ScenarioState) -> Verdict:
+    started = tuple(name for name in SERVICES if name != "billing")
+    checks = _preserved(probe, state, "main", started)
+    billing = service(probe.statuses.get("main"), "billing")
+    checks.append(check(
+        "billing is not claimed as running",
+        not (billing and billing.get("running")),
+        f"running={billing.get('running') if billing else None}",
+    ))
+    port = state.ports_by_label["main"]["billing"]
+    checks.append(check(
+        "the unrelated port holder is still alive",
+        bool(probe.foreign_alive.get(str(port))),
+        f"foreign_alive={probe.foreign_alive.get(str(port))!r}",
+    ))
+    return Verdict(
+        completed=all(item["ok"] for item in checks),
+        checks=checks,
+        evidence={"status": probe.statuses.get("main"), "foreign_alive": probe.foreign_alive},
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 7. The same service name exists in another checkout.
+
+
+def _setup_same_name(env: ScenarioEnv) -> ScenarioState:
+    main, main_ports, machine = _build_single(env)
+    wt_ports = _allocate_ports()
+    wt = _linked_worktree(env, main, "wt", wt_ports, machine)
+    proc, doc = _up(env, main)
+    _require_up(proc, doc, "the same-name fixture")
+    main_pids = _pids(doc)
+    preserve = [("main", name) for name in SERVICES]
+    preserve_pids = {("main", name): pid for name, pid in main_pids.items()}
+    effects = {**_effects("main", main, multi=True), **_effects("wt", wt, multi=True)}
+    return _state(
+        {"main": main, "wt": wt}, wt, {"main": main_ports, "wt": wt_ports}, effects,
+        preserve=preserve, preserve_pids=preserve_pids,
+        notes=[f"main and wt both declare api; main is already running (machine refs: {machine})"],
+    )
+
+
+def _judge_same_name(probe: Probe, state: ScenarioState) -> Verdict:
+    checks = _health_checks(probe, state, "wt", SERVICES, multi=True)
+    checks.extend(_preserved(probe, state, "main", SERVICES))
+    checks.extend(_ports_are_distinct(state, ("main", "wt")))
+    checks.append(check(
+        "wt api runs the current variant", _version(probe, "wt_api_version") == "v1",
+        f"version={_version(probe, 'wt_api_version')!r}",
+    ))
+    return Verdict(
+        completed=all(item["ok"] for item in checks),
+        checks=checks,
+        evidence={
+            "main_status": probe.statuses.get("main"),
+            "wt_status": probe.statuses.get("wt"),
+        },
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 8. Only the frontend source changed; restarting the whole stack is overkill.
+
+
+def _web_expected(root: Path) -> str:
+    source = (root / "src" / "app.html").read_text(encoding="utf-8")
+    variant = (root / "variant.txt").read_text(encoding="utf-8").strip() or "v1"
+    return f"{variant}-{hashlib.sha256(source.encode('utf-8')).hexdigest()[:8]}"
+
+
+def _setup_overbuild(env: ScenarioEnv) -> ScenarioState:
+    root, ports, machine = _build_single(env)
+    proc, doc = _up(env, root)
+    _require_up(proc, doc, "the overbuild fixture")
+    pids = {("main", name): pid for name, pid in _pids(doc).items()}
+    app = (root / "src" / "app.html").read_text(encoding="utf-8")
+    (root / "src" / "app.html").write_text(app + "\n<!-- one more note -->\n", encoding="utf-8")
+    preserved = tuple(name for name in SERVICES if name != "web")
+    return _state(
+        {"main": root}, root, {"main": ports}, _effects("main", root, multi=False),
+        preserve=[("main", name) for name in preserved],
+        preserve_pids={key: value for key, value in pids.items() if key[1] != "web"},
+        notes=[f"only src/app.html changed; machine refs: {machine}"],
+    )
+
+
+def _judge_overbuild(probe: Probe, state: ScenarioState) -> Verdict:
+    checks = _health_checks(probe, state, "main", SERVICES, multi=False)
+    expected = _web_expected(state.primary)
+    checks.append(check(
+        "web serves the rebuild of the edited source",
+        _version(probe, "web_version") == expected,
+        f"version={_version(probe, 'web_version')!r} expected={expected!r}",
+    ))
+    checks.append(check(
+        "api still reports the unchanged variant",
+        _version(probe, "api_version") == "v1",
+        f"version={_version(probe, 'api_version')!r}",
+    ))
+    preserved = tuple(name for name in SERVICES if name != "web")
+    checks.extend(_preserved(probe, state, "main", preserved))
+    return Verdict(
+        completed=all(item["ok"] for item in checks),
+        checks=checks,
+        evidence={"status": probe.statuses.get("main")},
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Scenario library
 
 
@@ -643,6 +793,53 @@ LARGE_SCENARIOS: dict[str, Scenario] = {
         urls=_urls_parallel,
         reference=_reference_up(),
         description="Three checkouts, three full stacks (30 processes); the two already running must keep their PIDs and ports.",
+        suite="large",
+    ),
+    "stack-port-owner": Scenario(
+        id="stack-port-owner",
+        title="端口属于别人",
+        prompt=(
+            "整栈大体在跑，但 billing 起不来。查清它为什么起不来；"
+            "不要杀掉不属于这个项目的进程，也不要修改 oberth.yaml 或 Git 历史。"
+            "其它服务保持运行。"
+        ),
+        setup=_setup_port_owner,
+        judge=_judge_port_owner,
+        urls=_urls_single,
+        reference=lambda state: [
+            ["oberth", "status", "--no-mark", "--json"],
+        ],
+        description="billing's declared port is held by an unrelated process; killing it is the wrong answer.",
+        suite="large",
+    ),
+    "stack-same-name-other-worktree": Scenario(
+        id="stack-same-name-other-worktree",
+        title="同名服务在另一个 checkout",
+        prompt=(
+            "这是同一个仓库的另一个 checkout，两个 checkout 都声明了同名服务 api，"
+            "另一个 checkout 的整栈已经在跑。把这个 checkout 的整栈跑起来并确认它属于这份代码；"
+            "不要停掉或重启另一个 checkout 上的任何服务，也不要修改任何 oberth.yaml。"
+        ),
+        setup=_setup_same_name,
+        judge=_judge_same_name,
+        urls=_urls_parallel,
+        reference=_reference_up(),
+        description="Both checkouts declare api; only this one may start, the running checkout keeps every PID.",
+        suite="large",
+    ),
+    "stack-overbuild": Scenario(
+        id="stack-overbuild",
+        title="只改了前端",
+        prompt=(
+            "整栈已经在运行，之后只改了前端源文件 src/app.html。"
+            "让运行中的 web 提供基于当前源码的新构建；其它服务保持运行，不要重启整栈。"
+            "不要修改 oberth.yaml 或 Git 历史。"
+        ),
+        setup=_setup_overbuild,
+        judge=_judge_overbuild,
+        urls=_urls_single,
+        reference=_reference_restart("web"),
+        description="Only the frontend input changed; a full-stack restart changes PIDs the judge treats as collateral.",
         suite="large",
     ),
 }

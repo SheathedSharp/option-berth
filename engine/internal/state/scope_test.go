@@ -205,7 +205,10 @@ func TestStreamSnapshotRedactsCommandsAndPaths(t *testing.T) {
 		Groups: []Group{{
 			Name: "example-worker", Repo: "example-worker", Branch: "feature", RootDir: &root, Status: "running",
 			Services: []Service{{Name: "web", Cmd: cmd, Prepare: "npm build", Cwd: cwd, Running: true,
-				ManifestHash: &manifestHash, RuntimeSpecHash: &runtimeHash, ManifestRuntimeMismatch: true}},
+				ManifestHash: &manifestHash, RuntimeSpecHash: &runtimeHash, ManifestRuntimeMismatch: true,
+				Stats: &Stats{CPUPercent: 1.5, MemoryRSS: 1048576}}},
+			RunningServices: 1,
+			Resources:       &Resources{CPUPercent: 1.5, MemoryRSS: 1048576, Services: 1},
 		}},
 		Ports: []Port{{Port: 18090, BindAddress: "127.0.0.1", ProjectRoot: &root, Command: cmd, Cwd: cwd, Process: "node"}},
 	}
@@ -225,6 +228,11 @@ func TestStreamSnapshotRedactsCommandsAndPaths(t *testing.T) {
 	if !strings.Contains(text, manifestHash) || !strings.Contains(text, runtimeHash) ||
 		!strings.Contains(text, "manifest_runtime_mismatch") {
 		t.Fatalf("scoped snapshot lost safe drift evidence: %s", text)
+	}
+	for _, safe := range []string{"cpu_percent", "memory_rss_bytes", "running_services", "resources"} {
+		if !strings.Contains(text, safe) {
+			t.Fatalf("scoped snapshot lost safe resource evidence %q: %s", safe, text)
+		}
 	}
 }
 

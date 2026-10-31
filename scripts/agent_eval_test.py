@@ -707,6 +707,27 @@ class LargeJudgeTests(unittest.TestCase):
             bad = scenario.judge(probe({"main": status_doc()}, http), state)
             self.assertFalse(bad.completed)
 
+    def test_stack_subset_uses_single_worktree_effect_keys(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        ports = {name: 20500 + index for index, name in enumerate(stacks.PORT_SERVICES)}
+        state = stacks._state(
+            {"main": root}, root, {"main": ports}, stacks._effects("main", root, multi=False),
+        )
+        scenario = stacks.LARGE_SCENARIOS["stack-subset"]
+        http = self.health(version="v1")
+        with mock.patch.object(stacks, "port_open", return_value=False):
+            good = scenario.judge(probe({"main": status_doc()}, http), state)
+            self.assertTrue(good.completed, [item for item in good.checks if not item["ok"]])
+            self.assertTrue(any("worker stayed stopped" in item["name"] for item in good.checks))
+            # A heartbeat means the worker was started despite the subset task.
+            state.effects["worker"].parent.mkdir(parents=True, exist_ok=True)
+            state.effects["worker"].write_text(
+                json.dumps({"t": time.time(), "service": "worker", "ok": True}) + "\n",
+                encoding="utf-8",
+            )
+            bad = scenario.judge(probe({"main": status_doc()}, http), state)
+            self.assertFalse(bad.completed)
+
     def test_stack_stale_requires_new_versions_and_untouched_pids(self) -> None:
         root = Path(tempfile.mkdtemp())
         ports = {name: 21000 + index for index, name in enumerate(stacks.PORT_SERVICES)}
@@ -761,6 +782,75 @@ class LargeJudgeTests(unittest.TestCase):
             bad = scenario.judge(probe(statuses, http), state)
             self.assertFalse(bad.completed)
             self.assertFalse(next(item for item in bad.checks if "api has a distinct port" in item["name"])["ok"])
+
+    def test_port_owner_fails_when_the_foreign_process_is_killed(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        ports = {name: 23000 + index for index, name in enumerate(stacks.PORT_SERVICES)}
+        started = tuple(name for name in stacks.SERVICES if name != "billing")
+        state = stacks._state(
+            {"main": root}, root, {"main": ports}, stacks._effects("main", root, multi=False),
+        )
+        doc = status_doc([status_service(name, 3000 + index) for index, name in enumerate(started)])
+        scenario = stacks.LARGE_SCENARIOS["stack-port-owner"]
+        alive = {str(ports["billing"]): True}
+        with mock.patch.object(stacks, "port_open", return_value=True):
+            good = scenario.judge(probe({"main": doc}, foreign=alive), state)
+            self.assertTrue(good.completed, [item for item in good.checks if not item["ok"]])
+            killed = scenario.judge(probe({"main": doc}, foreign={str(ports["billing"]): False}), state)
+            self.assertFalse(killed.completed)
+            billing_down = status_doc(
+                [status_service(name, 3000 + index) for index, name in enumerate(started)]
+                + [service("billing", running=False)]
+            )
+            self.assertTrue(scenario.judge(probe({"main": billing_down}, foreign=alive), state).completed)
+
+    def test_same_name_keeps_the_other_checkout_pids(self) -> None:
+        roots = {"main": Path(tempfile.mkdtemp()), "wt": Path(tempfile.mkdtemp())}
+        ports = {
+            "main": {name: 24000 + index for index, name in enumerate(stacks.PORT_SERVICES)},
+            "wt": {name: 24100 + index for index, name in enumerate(stacks.PORT_SERVICES)},
+        }
+        state = stacks._state(
+            roots, roots["wt"], ports,
+            {**stacks._effects("main", roots["main"], multi=True), **stacks._effects("wt", roots["wt"], multi=True)},
+            preserve=[("main", name) for name in stacks.SERVICES],
+            preserve_pids={("main", name): 4000 + index for index, name in enumerate(stacks.SERVICES)},
+        )
+        self.write_heartbeats(state, prefix="wt_")
+        http = self.health(prefix="wt_", version="v1")
+        main_doc = status_doc([status_service(name, 4000 + index) for index, name in enumerate(stacks.SERVICES)])
+        wt_doc = status_doc()
+        scenario = stacks.LARGE_SCENARIOS["stack-same-name-other-worktree"]
+        with mock.patch.object(stacks, "port_open", return_value=True):
+            good = scenario.judge(probe({"main": main_doc, "wt": wt_doc}, http), state)
+            self.assertTrue(good.completed, [item for item in good.checks if not item["ok"]])
+            crossed = status_doc([status_service(name, 9000 + index) for index, name in enumerate(stacks.SERVICES)])
+            self.assertFalse(scenario.judge(probe({"main": crossed, "wt": wt_doc}, http), state).completed)
+
+    def test_overbuild_rejects_a_full_stack_restart(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        (root / "src").mkdir()
+        (root / "src" / "app.html").write_text("<html>new</html>\n", encoding="utf-8")
+        (root / "variant.txt").write_text("v1\n", encoding="utf-8")
+        ports = {name: 25000 + index for index, name in enumerate(stacks.PORT_SERVICES)}
+        preserved = tuple(name for name in stacks.SERVICES if name != "web")
+        state = stacks._state(
+            {"main": root}, root, {"main": ports}, stacks._effects("main", root, multi=False),
+            preserve=[("main", name) for name in preserved],
+            preserve_pids={("main", name): 5000 + index for index, name in enumerate(preserved)},
+        )
+        self.write_heartbeats(state)
+        expected = stacks._web_expected(root)
+        http = self.health(version="v1")
+        http["web_version"] = lib.HttpResult(200, body=json.dumps({"version": expected}))
+        doc = status_doc([status_service(name, 5000 + index) for index, name in enumerate(preserved)]
+                         + [status_service("web", 7000)])
+        scenario = stacks.LARGE_SCENARIOS["stack-overbuild"]
+        with mock.patch.object(stacks, "port_open", return_value=True):
+            good = scenario.judge(probe({"main": doc}, http), state)
+            self.assertTrue(good.completed, [item for item in good.checks if not item["ok"]])
+            restarted = status_doc([status_service(name, 8000 + index) for index, name in enumerate(stacks.SERVICES)])
+            self.assertFalse(scenario.judge(probe({"main": restarted}, http), state).completed)
 
 
 class ArmTests(unittest.TestCase):
