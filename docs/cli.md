@@ -100,7 +100,7 @@ depends on · listeners · code · failed · next · drafts · last look），�
 prepare 读取的文件列表，没有声明时为空数组。
 启动进行中时，`worktree.services[].starting` 给出这一次启动尝试的瞬时事实：`phase`
 （`waiting_dependency`、`prepare` 或 `spawning`）、`started_at`、有效的 `ready_timeout`、
-读取时计算的 `elapsed_ms`、仍在等待的 `waiting_on`，以及上一次 prepare 耗时的
+读取时计算的 `elapsed_ms`、本次等待声明的 `waiting_on`，以及上一次 prepare 耗时的
 `last_prepare_ms`（未知时为 null）。它不是一个 run：不进入运行记录、不落盘、不算
 `running`、不影响 `worktree.status`，daemon 重启即消失；依赖等待、prepare 与 spawn 期间可读，
 run 注册后消失。人读输出把该服务显示为 `starting · <phase>`。

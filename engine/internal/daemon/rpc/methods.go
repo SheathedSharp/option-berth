@@ -394,9 +394,9 @@ type GroupsStartChunk struct {
 	// Phase is waiting_dependency while depends_on is waited for, prepare while
 	// the prepare command runs, and spawning from prepare success until the run
 	// is registered. StartedAt is when the attempt began (RFC3339Nano);
-	// ElapsedMS is computed at send time; WaitingOn names the dependencies
-	// still being waited for; LastPrepareMS is the previous prepare duration
-	// when one is known.
+	// ElapsedMS is computed at send time; WaitingOn names the declared
+	// dependencies this start waits for; LastPrepareMS is the previous prepare
+	// duration when one is known.
 	Phase         string   `json:"phase,omitempty" jsonschema:"enum=waiting_dependency,enum=prepare,enum=spawning"`
 	StartedAt     string   `json:"started_at,omitempty"`
 	ElapsedMS     int64    `json:"elapsed_ms,omitempty"`

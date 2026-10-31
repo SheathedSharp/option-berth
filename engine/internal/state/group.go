@@ -88,9 +88,9 @@ type Service struct {
 // ServiceStarting is one in-flight start attempt as a reader sees it. The
 // phase is waiting_dependency, prepare, or spawning; started_at is when the
 // attempt began, elapsed_ms how long ago that was at read time, ready_timeout
-// the effective budget this start uses, waiting_on the dependencies still
-// outstanding, and last_prepare_ms the previous prepare duration when one is
-// known (advisory evidence, never a decision).
+// the effective budget this start uses, waiting_on the dependencies this start
+// declared to wait for, and last_prepare_ms the previous prepare duration when
+// one is known (advisory evidence, never a decision).
 type ServiceStarting struct {
 	Phase         string   `json:"phase" jsonschema:"enum=waiting_dependency,enum=prepare,enum=spawning"`
 	StartedAt     string   `json:"started_at"`
