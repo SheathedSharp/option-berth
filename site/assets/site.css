@@ -671,7 +671,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
   font-size: var(--step-small);
 }
 .site-foot > p { color: var(--muted); }
-.site-foot nav { display: flex; gap: 22px; }
+.site-foot nav { display: flex; flex-wrap: wrap; gap: 22px; }
 .site-foot nav a { color: var(--ink); }
 .site-foot nav a:hover { text-decoration: underline; text-underline-offset: 4px; }
 .site-foot > p:last-child { text-align: right; }
@@ -772,6 +772,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
   .faq summary { min-height: 60px; padding: 16px 18px; gap: 16px; }
   .faq details p { padding: 0 18px 18px; }
   .site-foot { grid-template-columns: 1fr; gap: 10px; padding-block: 40px; }
+  .site-foot nav { gap: 12px 18px; }
   .site-foot > p:last-child { text-align: left; }
 }
 
