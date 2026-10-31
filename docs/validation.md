@@ -15,7 +15,7 @@
 | Engine verification | PR、引擎相关 `main` 推送、手动 | 自动：macOS / Ubuntu 原生构建、vet、全引擎单元测试、Mage 工作流回归、Python 辅助测试，Ubuntu 上六个发布目标的交叉构建，Linux 上检出 `option-berth-skill` 核对 agent 契约覆盖，以及 Windows PowerShell 5.1 解析安装/卸载脚本；手动另跑核心 race 与真实服务场景。 |
 | Nightly full verification | 每日 18:23 UTC、手动 | macOS / Ubuntu：与 `scripts/release.py --verify-only` 相同的完整门槛，含核心 race 与真实服务场景。 |
 | Git read verification | PR、相关 `main` 推送、手动 | macOS / Ubuntu：Git、worktree、归因与观察的重复测试和 race。 |
-| Checked-in examples | PR、引擎相关 `main` 推送、手动 | macOS / Ubuntu：在两个 worktree 中验证仓库内示例，包括独立数据库、幂等迁移与单边停止。 |
+| Checked-in examples | PR、引擎相关 `main` 推送、手动 | macOS / Ubuntu：在两个 worktree 中验证仓库内示例，包括独立数据库、幂等迁移与单边停止。Compose 示例只在有 Docker 的 Linux 行验证（两个 worktree 各自的 project、`port: auto` 映射、`pg_isready`、单边 `down` 停容器）；macOS runner 无 Docker，报告跳过而不算平台证据。 |
 | Reused service readiness | PR、引擎相关 `main` 推送、手动 | macOS / Ubuntu：真实健康与不健康服务的复用检查。 |
 | Windows build verification | PR、引擎相关 `main` 推送、发布标签、手动 | Windows x64：原生构建、vet、CLI/Jev 构建、version JSON/帮助页、事实/持久化，以及隔离 API/无端口 worker 的启动、重复启动、采集器恢复和限定停止；Ubuntu：Windows arm64 交叉构建。 |
 | Gate integrity | PR（`pull_request_target`） | 修改 `.github/workflows/`、CODEOWNERS、race 清单、发布脚本或质量门检查脚本时，要求 PR 作者是仓库维护者。 |
