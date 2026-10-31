@@ -142,6 +142,8 @@ func collectStart(stream *client.Stream) ([]rpc.GroupsStartChunk, rpc.GroupsStar
 			continue
 		}
 		normalizeStartChunk(&item)
+		// restart never waits, so a started service is never confirmed ready.
+		markStartChunkUnconfirmed(&item)
 		chunks = append(chunks, item)
 	}
 	end := <-stream.End()
