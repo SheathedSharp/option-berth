@@ -228,10 +228,27 @@ func (s *Service) UnmarshalYAML(n *yaml.Node) error {
 // MarshalYAML writes PortAuto back as `port: auto`, where a number would be,
 // and the TCP/command health forms back as mappings rather than their
 // canonical wire strings.
+//
+// `sources: []` is an explicit opt-out, but `omitempty` would drop it as an
+// empty slice. The key is written back by hand when the list is non-nil so a
+// round-trip cannot silently re-enable the check.
 func (s Service) MarshalYAML() (any, error) {
 	type plain Service
 	var n yaml.Node
-	if err := n.Encode(plain(s)); err != nil {
+	if s.Sources != nil {
+		// Encode through a copy without the slice so omitempty stays quiet,
+		// then insert the sequence explicitly below.
+		copy := s
+		copy.Sources = nil
+		if err := n.Encode(plain(copy)); err != nil {
+			return nil, err
+		}
+		seq := &yaml.Node{Kind: yaml.SequenceNode, Style: yaml.FlowStyle}
+		for _, source := range s.Sources {
+			seq.Content = append(seq.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: source})
+		}
+		setKeyIn(&n, "sources", seq, keyOrder)
+	} else if err := n.Encode(plain(s)); err != nil {
 		return nil, err
 	}
 	if s.PortAuto {
