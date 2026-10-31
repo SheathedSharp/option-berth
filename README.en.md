@@ -4,7 +4,7 @@
     <img src="brand/option-berth-lockup-light.svg" alt="option-berth" width="420">
   </picture>
 </p>
-<p align="center"><strong>Every checkout, its own berth.</strong><br>Service facts and lifecycle for local Git worktrees.</p>
+<p align="center"><strong>Every checkout, its own berth.</strong><br>The runtime facts layer for Git worktrees: whether your services are up, and why not.</p>
 <p align="center"><a href="README.md">简体中文</a> · English</p>
 
 <p align="center"><a href="https://sheathedsharp.github.io/option-berth/">Website</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">Download the latest engine</a></p>
@@ -47,6 +47,7 @@ within bounds. People and external coding agents read the same facts instead of 
 | Diagnose a failure | Logs, exit result and diagnosis from the service, not a reassembled shell one-liner |
 | Observe a portless worker | A run record instead of treating "no port" as "not running" |
 | Work with a coding agent | The same CLI as structured JSON; no second model or agent-reasoning system inside |
+| Bring in an existing orchestrator | Call `up --wait` and `down --worktree` from the tool's own setup/cleanup scripts; its configuration is untouched |
 | Take over someone else's work | `oberth workplace` keeps the commands and tasks run here, and how they ended |
 | End or clean up a worktree | The `${worktree}` identity is in `status --json`; `worktrees --gone` lists identities whose checkout is gone; `down --worktree/--identity` still stops it and releases its reservations, while deleting data stays a person's call |
 
@@ -191,6 +192,23 @@ npx skills add SheathedSharp/option-berth-skill -g
 Claude Code can also install it from the plugin marketplace:
 `/plugin install option-berth --marketplace SheathedSharp/option-berth-skill`. Installing it is the
 agent's own choice: nothing in this repository installs hooks, skills or MCP configuration for you.
+
+## Working with orchestrators
+
+option-berth is the runtime facts layer for worktrees. Conductor, Cursor, Claude Code, Codex and
+similar tools create the workspace; call `oberth` from their own setup / run / cleanup scripts or an
+outer wrapper:
+
+```sh
+oberth up --wait                           # setup for a new workspace
+oberth status --json                       # scripts or agents read the runtime facts
+oberth down --worktree /path/to/worktree   # cleanup; still works after the checkout is gone
+```
+
+The product installs no hooks, registers no MCP server and edits none of those tools'
+configuration. Per-tool wiring, version requirements, the port flags for common frameworks (Vite
+needs `--port ${port} --strictPort`), and a snippet to paste into `AGENTS.md` are in the
+[integration recipes](docs/integrations.md).
 
 ## Using the three together
 

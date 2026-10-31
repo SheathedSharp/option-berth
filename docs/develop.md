@@ -90,5 +90,6 @@ python3 scripts/agent_eval.py --dry-run    # 只做 preflight 与夹具，不启
 
 - CLI 与 RPC 契约：[cli.md](cli.md)；产品边界：[product.md](product.md)；实现与事实链：[architecture.md](architecture.md)
 - 可选 attention adapter：[jev-adapter.md](jev-adapter.md)
+- 接入编排工具与开发服务器：[integrations.md](integrations.md)
 - 客户端：[option-berth-macos](https://github.com/SheathedSharp/option-berth-macos)
 - coding agent 的 skill：[option-berth-skill](https://github.com/SheathedSharp/option-berth-skill)
