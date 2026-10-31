@@ -564,6 +564,19 @@
             "$ref": "#/definitions/MachineRef"
           },
           "type": "array"
+        },
+        "running_services": {
+          "type": "integer"
+        },
+        "resources": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Resources"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "type": "object",
@@ -580,7 +593,9 @@
         "status",
         "members",
         "services",
-        "machine"
+        "machine",
+        "running_services",
+        "resources"
       ]
     },
     "GroupConfig": {
@@ -1582,6 +1597,25 @@
         "truncated"
       ]
     },
+    "Resources": {
+      "properties": {
+        "cpu_percent": {
+          "type": "number"
+        },
+        "memory_rss_bytes": {
+          "type": "integer"
+        },
+        "services": {
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "required": [
+        "cpu_percent",
+        "memory_rss_bytes",
+        "services"
+      ]
+    },
     "Run": {
       "properties": {
         "id": {
@@ -2154,6 +2188,16 @@
             }
           ]
         },
+        "stats": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Stats"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "last_exit": {
           "oneOf": [
             {
@@ -2197,6 +2241,7 @@
         "run_id",
         "started_at",
         "log_path",
+        "stats",
         "last_exit"
       ]
     },

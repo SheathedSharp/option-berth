@@ -101,8 +101,23 @@ func GroupsWith(pp []state.Port, index *Index, reg Registry) []state.Group {
 		pass.describeCheckout(g)
 		out = append(out, *g)
 	}
+	// Count and sum here so every caller of the shared join gets them. A
+	// caller that fills a portless worker's sample afterwards runs it again;
+	// the function is idempotent.
+	FinalizeResources(out)
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// FinalizeResources computes the worktree-level counts and sums from the
+// service rows. It is separate from GroupsWith because a portless worker's
+// sample is filled after the pure join; the caller runs this again once every
+// service sample is in place. It is idempotent.
+func FinalizeResources(groups []state.Group) {
+	for i := range groups {
+		groups[i].RunningServices = groups[i].RunningServiceCount()
+		groups[i].Resources = groups[i].ResourceTotals()
+	}
 }
 
 // describeCheckout fills in which project a group is a checkout of, which

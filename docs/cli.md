@@ -98,6 +98,14 @@ depends on · listeners · code · failed · next · drafts · last look），�
 `worktree.services[]` 还带有 `health_status`（`status`、`code`、`reason`、`observed_at`）。
 `health` 是声明的规范形式：HTTP 路径，或 `tcp:<port>`，或 `command:<命令行>`；`prepare_inputs` 是
 prepare 读取的文件列表，没有声明时为空数组。
+
+运行中的服务带 `stats`（`cpu_percent`、`memory_rss_bytes`、`thread_count`、`uptime`、`state`、
+`connections`）。有监听的服务取监听行的样本；无端口的 worker 取它运行根进程的样本，所以
+worker 不再因为不占端口而看不到资源。没有样本时字段缺省，表示**未知**，不是 0。
+`worktree.running_services` 是正在运行的声明服务数；`worktree.resources` 是这些服务样本的
+worktree 汇总（`cpu_percent`、`memory_rss_bytes`、`services` 为贡献样本的服务数）。汇总只
+在至少一个服务有样本时出现，并明确 `services` 与 `running_services` 的差异；没有样本时缺省，
+不会用 0 冒充测量结果。
 运行中的服务同时带 `manifest_hash` 与 `runtime_spec_hash`；两者不一致时
 `manifest_runtime_mismatch` 为 `true`，表示当前进程来自旧清单，应该用
 `oberth restart --only <service>` 重新应用。hash 只覆盖命令、cwd、端口、health 和依赖等可执行声明，
@@ -141,9 +149,12 @@ JSON 顶层固定包含：
 {
   "scope": {"kind": "worktree", "name": "demo", "root": "/work/demo"},
   "worktree": {"name": "demo", "identity": "wt_0123456789ab", "branch": "main",
+    "running_services": 1,
+    "resources": {"cpu_percent": 1.2, "memory_rss_bytes": 104857600, "services": 1},
     "services": [
       {"name": "api", "running": true, "port": 3000, "port_actual": 3001,
-       "health": {"status": "ok", "code": 200}},
+       "health": {"status": "ok", "code": 200},
+       "stats": {"cpu_percent": 1.2, "memory_rss_bytes": 104857600}},
       {"name": "worker", "running": false, "exit_reason": "crashed", "exit_code": 1,
        "hint": "oberth logs worker --once"}
     ]},
@@ -340,9 +351,13 @@ cwd 中执行，按 `cmd:` 的规则拆成 argv（不经过 shell），支持 `$
 （`app_${worktree}`、`.data/${worktree}`）。删除动作仍由人执行：命令不删除账本行、数据库、
 数据目录或正在运行的进程；要停止仍在跑的服务用 `oberth down --identity <wt_…>`。
 
+有 daemon 应答时，每行还带 `running_services`：该身份下正在运行的声明服务数。它是读取时
+对组事实的一次连接，不写回账本。没有 daemon 时字段缺省——账本不存运行状态，缺省表示
+**未观察**，不是 0。
+
 ~~~json
 {"worktrees":[
-  {"identity":"wt_0123456789ab","root":"/work/demo","group":"demo","exists":true,"last_seen":"2026-10-30T09:00:00Z"},
+  {"identity":"wt_0123456789ab","root":"/work/demo","group":"demo","exists":true,"last_seen":"2026-10-30T09:00:00Z","running_services":2},
   {"identity":"wt_abcdef012345","root":"/work/old","group":"demo@old","exists":false,"last_seen":"2026-10-28T18:00:00Z"}
 ]}
 ~~~
@@ -579,7 +594,9 @@ oberth init [--dry-run] [--json]
 
 只有上表五种形状是引用；其他 `${...}`（例如 `${HOME}`、`${FOO:-x}`）原样保留。
 `${worktree}` 不指向服务，不需要也不产生 `depends_on`；未声明的服务、没有端口的端口引用
-仍按清单校验拒绝。可运行示例见 [`examples/worktree-data`](../examples/worktree-data/README.md)。
+仍按清单校验拒绝。可运行示例见 [`examples/worktree-data`](../examples/worktree-data/README.md)；
+Docker Compose 的每 worktree 一套写法见 [`examples/compose-stack`](../examples/compose-stack/README.md)，
+它在 Linux CI 上验证 `port: auto`、`pg_isready` 健康检查和 `down` 真正停止容器。
 
 ### 共享环境文件
 

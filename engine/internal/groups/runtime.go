@@ -42,6 +42,12 @@ func serviceRowsWithFacts(cfg *Config, group string, resolver servicefacts.Resol
 				health := *listener.Health
 				row.HealthStatus = &health
 			}
+			// A listener's stats describe its process. A portless worker has
+			// no listener; the run row below carries its stats instead.
+			if listener.Stats != nil {
+				stats := *listener.Stats
+				row.Stats = &stats
+			}
 		}
 		if run := result.Run; run != nil {
 			row.RunID = optional(run.ID)

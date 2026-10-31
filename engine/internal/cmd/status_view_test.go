@@ -22,10 +22,12 @@ func statusScopeFixture() statusDocument {
 		Worktree: state.Group{
 			Name: "shop", Identity: "wt_0123456789ab", Branch: "main",
 			Services: []state.Service{
-				{Name: "api", Port: &apiPort, PortActual: &apiActual, Running: true, DependsOn: []string{"worker"}},
+				{Name: "api", Port: &apiPort, PortActual: &apiActual, Running: true, DependsOn: []string{"worker"},
+					Stats: &state.Stats{CPUPercent: 2, MemoryRSS: 20}},
 				{Name: "worker", DependsOn: []string{"db"}},
 				{Name: "db", Port: &dbPort, LastExit: &state.ServiceExit{Reason: "crashed", Code: crashed, RunID: "db-run"}},
-				{Name: "web", Port: &webPort, Running: true},
+				{Name: "web", Port: &webPort, Running: true,
+					Stats: &state.Stats{CPUPercent: 5, MemoryRSS: 50}},
 			},
 			Machine: []state.MachineRef{{Name: "redis", Port: 6379}},
 		},
@@ -93,6 +95,14 @@ func TestStatusOnlyKeepsServicesAndDependencyClosure(t *testing.T) {
 	}
 	if change.Empty {
 		t.Fatal("a scoped change with selected facts reports itself empty")
+	}
+
+	if doc.Worktree.RunningServices != 1 {
+		t.Fatalf("running_services = %d, want only the selected api", doc.Worktree.RunningServices)
+	}
+	res := doc.Worktree.Resources
+	if res == nil || res.Services != 1 || res.CPUPercent != 2 || res.MemoryRSS != 20 {
+		t.Fatalf("resources = %+v, want only api's sample", res)
 	}
 }
 
@@ -171,6 +181,41 @@ func TestBriefStatusKeepsOnlyRuntimeFacts(t *testing.T) {
 	}
 	if brief.Ports == nil || brief.Exits == nil || brief.Worktree.Services == nil {
 		t.Fatalf("brief arrays must not be null: %+v", brief)
+	}
+}
+
+func TestStatusShowsServiceAndWorktreeResources(t *testing.T) {
+	doc := statusScopeFixture()
+	doc.Worktree.Services[0].Stats = &state.Stats{CPUPercent: 12.5, MemoryRSS: 2 << 20}
+	doc.Worktree.Services[1].Stats = &state.Stats{CPUPercent: 7, MemoryRSS: 3 << 20}
+	doc.Worktree.RunningServices = 2
+	doc.Worktree.Resources = &state.Resources{CPUPercent: 19.5, MemoryRSS: 5 << 20, Services: 2}
+
+	out := captureStdout(t, func() { printStatusBrief(doc) })
+	for _, want := range []string{"cpu 12.5%", "mem 2.0M", "2 running", "cpu 19.5%", "mem 5.0M"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("resource output is missing %q:\n%s", want, out)
+		}
+	}
+
+	brief := briefStatusFrom(doc)
+	if brief.Worktree.RunningServices != 2 || brief.Worktree.Resources == nil ||
+		brief.Worktree.Services[0].Stats == nil || brief.Worktree.Services[0].Stats.MemoryRSS != 2<<20 {
+		t.Fatalf("brief resources = %+v", brief.Worktree)
+	}
+}
+
+func TestStatusResourcesKeepUnmeasuredApartFromZero(t *testing.T) {
+	doc := statusScopeFixture()
+	doc.Worktree.RunningServices = 1
+	doc.Worktree.Resources = nil
+
+	out := captureStdout(t, func() { printStatusBrief(doc) })
+	if !strings.Contains(out, "1 running") {
+		t.Fatalf("output = %q, want the running count", out)
+	}
+	if strings.Contains(out, "cpu 0.0%") || strings.Contains(out, "mem 0B") {
+		t.Fatalf("output = %q, want no measured zero for an unsampled service", out)
 	}
 }
 
