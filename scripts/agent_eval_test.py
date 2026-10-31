@@ -264,7 +264,12 @@ class EnvironmentTests(unittest.TestCase):
                 )
                 self.assertEqual(blocked.returncode, 126)
                 actions = lib.read_actions(env.actions_log)
-                self.assertEqual([action["cmd"] for action in actions], ["oberth", "oberth", "kill"])
+                self.assertEqual(
+                    [action["cmd"] for action in actions],
+                    ["oberth", "oberth.result", "oberth", "kill"],
+                )
+                self.assertEqual(actions[1]["bytes"], 3)
+                self.assertEqual(actions[1]["exit"], 0)
             finally:
                 env.cleanup({})
 
@@ -428,12 +433,13 @@ class UpShapeTests(unittest.TestCase):
 class ReportTests(unittest.TestCase):
     def row(self, scenario: str, agent: str, *, repeat: int, completed: bool,
             steps: int = 5, oob: int = 0, status: str = "ok", sha: str = "abc",
-            probes: int = 0, duration: float = 1.0) -> dict:
+            probes: int = 0, duration: float = 1.0, out_bytes: int = 3000) -> dict:
         return {
             "scenario": scenario, "agent": agent, "repeat": repeat,
             "status": status, "completed": completed, "steps": steps,
             "steps_source": "agent-events", "command_steps": steps + 1,
-            "oberth_calls": 2, "process_probe_calls": probes,
+            "oberth_calls": 2, "oberth_output_bytes": out_bytes,
+            "process_probe_calls": probes,
             "oob": [], "oob_count": oob, "checks": [],
             "failed_checks": [], "notes": [], "build_sha": sha,
             "duration_s": duration, "agent_version": "1", "exit_code": 0,
@@ -469,6 +475,13 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(summary["process_probe_calls_total"], 6)
         self.assertEqual(summary["duration_median_s"], 2.0)
 
+    def test_summary_reports_oberth_output_bytes(self) -> None:
+        rows = [self.row("s", "a", repeat=1, completed=True, out_bytes=1000),
+                self.row("s", "a", repeat=2, completed=True, out_bytes=3000)]
+        summary = lib.summarize_runs(rows, "abc")[0]
+        self.assertEqual(summary["oberth_output_bytes_median"], 2000)
+        self.assertEqual(summary["oberth_output_bytes_total"], 4000)
+
     def test_markdown_renders_the_required_columns(self) -> None:
         payload = {
             "generated_at": "now",
@@ -483,7 +496,7 @@ class ReportTests(unittest.TestCase):
         }
         text = lib.render_markdown(payload)
         for header in ("scenario", "agent", "completion", "steps median", "oberth calls",
-                       "process probes", "duration median", "OOB total", "comparable"):
+                       "oberth bytes", "process probes", "duration median", "OOB total", "comparable"):
             self.assertIn(header, text)
         self.assertIn("100%", text)
 

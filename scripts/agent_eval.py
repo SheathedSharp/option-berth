@@ -287,6 +287,7 @@ def execute_run(
         "steps_source": "unavailable",
         "command_steps": 0,
         "oberth_calls": 0,
+        "oberth_output_bytes": 0,
         "process_probe_calls": 0,
         "oob": [],
         "oob_count": 0,
@@ -318,11 +319,14 @@ def execute_run(
             )
         time.sleep(0.4)
         actions = read_actions(env.actions_log)
+        # A completed oberth call records a second result row with its stdout
+        # size. It is measurement, not another command.
+        call_actions = [action for action in actions if action.get("cmd") != "oberth.result"]
         probe = collect_probe(scenario, state, env, result, before, actions, run_dir)
         verdict = scenario.judge(probe, state)
         oob = detect_oob(
             diffs=probe.diffs, git_changes=probe.git_changes,
-            statuses=probe.statuses, state=state, actions=actions, held=env.held,
+            statuses=probe.statuses, state=state, actions=call_actions, held=env.held,
         )
         completed = verdict.completed and not oob
         if result.timed_out:
@@ -331,9 +335,13 @@ def execute_run(
             status = "agent_error"
         else:
             status = "ok" if completed else "not_completed"
-        command_steps = len(actions)
-        oberth_calls = sum(1 for action in actions if action.get("cmd") == "oberth")
-        process_probe_calls = sum(1 for action in actions if action.get("cmd") in PROCESS_PROBE_COMMANDS)
+        command_steps = len(call_actions)
+        oberth_calls = sum(1 for action in call_actions if action.get("cmd") == "oberth")
+        oberth_output_bytes = sum(
+            int(action.get("bytes") or 0)
+            for action in actions if action.get("cmd") == "oberth.result"
+        )
+        process_probe_calls = sum(1 for action in call_actions if action.get("cmd") in PROCESS_PROBE_COMMANDS)
         steps = result.steps
         steps_source = result.steps_source
         if steps is None:
@@ -350,6 +358,7 @@ def execute_run(
             "steps_source": steps_source,
             "command_steps": command_steps,
             "oberth_calls": oberth_calls,
+            "oberth_output_bytes": oberth_output_bytes,
             "process_probe_calls": process_probe_calls,
             "oob": oob,
             "oob_count": len(oob),
@@ -512,6 +521,7 @@ def main(argv: list[str] | None = None) -> int:
                         "scenario": scenario_id, "agent": agent_id, "repeat": repeat,
                         "status": "harness_error", "completed": False, "steps": None,
                         "steps_source": "unavailable", "command_steps": 0, "oberth_calls": 0,
+                        "oberth_output_bytes": 0,
                         "oob": [], "oob_count": 0, "checks": [], "failed_checks": [],
                         "notes": [f"{spec.command} not found"], "duration_s": 0.0,
                         "build_sha": build["sha256"], "agent_version": None,

@@ -50,6 +50,7 @@ python3 scripts/agent_eval.py --execute \
 | 完成率 | `completed / valid runs`。`harness_error` 不计入分母；`agent_error`（认证失败、超时、provider 退出）计入且算未完成 | 场景判定失败或出现任何越界，都不算完成 |
 | 步数 | 从 provider 的 JSON 事件里数出的工具动作数（Claude `tool_use`、Codex `item.completed` 等） | 事件形状不认识时退化为 shim 记录的外部命令数，并在报告里标 `fallback`，不伪装成同一指标 |
 | oberth 调用 | shim 记录的 `oberth` 调用次数 | 与步数分开，便于看核心闭环是否被无关动作淹没 |
+| oberth 输出字节 | shim 记录的每次 `oberth` 调用写到 stdout 的字节数，按运行求和；报告给中位数，JSON 另给合计 | 只统计非 TTY 调用；TTY 下 shim 直接 exec，不改变终端行为。stderr 不计入；provider 可能再截断，因此它是上下文成本的下界 |
 | 进程探测 | shim 记录的 `ps` / `lsof` / `ss` / `netstat` / `pgrep` 调用次数；报告给中位数，JSON 另给合计 | 只统计经过 PATH shim 的调用，是下界，不是安全边界；直接调用绝对路径不计入 |
 | 耗时 | 单次运行从启动到判定结束的秒数；报告给同场景同 agent 的中位数 | 只适合同一构建、同一机器的行互相比较；不同构建或不同负载下的数字不算结论 |
 | 越界次数 | 见下 | 每个事件一条，按种类去重到「一次事实」 |

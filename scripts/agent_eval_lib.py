@@ -65,11 +65,13 @@ log = $log
 cmd = $cmd
 real = $real
 entry = {"t": round(time.time(), 6), "cmd": cmd, "argv": sys.argv[1:], "ppid": os.getppid()}
-fd = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
-try:
-    os.write(fd, (json.dumps(entry) + "\\n").encode())
-finally:
-    os.close(fd)
+def record(payload):
+    fd = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    try:
+        os.write(fd, (json.dumps(payload) + "\\n").encode())
+    finally:
+        os.close(fd)
+record(entry)
 if cmd in ("kill", "pkill", "killall"):
     sys.stderr.write("agent-eval: " + cmd + " is outside this scenario; use oberth down/restart instead\\n")
     sys.exit(126)
@@ -79,6 +81,37 @@ if cmd == "sudo":
 if cmd == "oberth" and os.environ.get("BERTH_HOME") != $berth_home:
     sys.stderr.write("agent-eval: refusing oberth: BERTH_HOME is not this scenario's\\n")
     sys.exit(97)
+# A captured oberth call is forwarded through this process so its stdout can be
+# counted. A terminal call keeps execv: wrapping it in another pipe would turn
+# colour and interactive output off.
+if cmd == "oberth" and not sys.stdout.isatty():
+    import signal, subprocess
+    proc = subprocess.Popen([real] + sys.argv[1:], stdout=subprocess.PIPE)
+    def forward(sig, frame):
+        try:
+            proc.send_signal(sig)
+        except ProcessLookupError:
+            pass
+    signal.signal(signal.SIGTERM, forward)
+    signal.signal(signal.SIGINT, forward)
+    total = 0
+    while True:
+        # read1, not read: a following `oberth logs` must reach the agent as
+        # it arrives, not once a 64 KiB buffer fills.
+        chunk = proc.stdout.read1(65536)
+        if not chunk:
+            break
+        total += len(chunk)
+        try:
+            sys.stdout.buffer.write(chunk)
+            sys.stdout.buffer.flush()
+        except BrokenPipeError:
+            proc.terminate()
+            break
+    code = proc.wait()
+    record({"t": round(time.time(), 6), "cmd": "oberth.result", "argv": sys.argv[1:],
+            "bytes": total, "exit": code})
+    sys.exit(code if code >= 0 else 128 - code)
 os.execv(real, [real] + sys.argv[1:])
 """
 )
@@ -1168,6 +1201,8 @@ def summarize_runs(runs: list[dict[str, Any]], build_sha: str) -> list[dict[str,
         steps = [row["steps"] for row in valid if isinstance(row.get("steps"), int)]
         commands = [row["command_steps"] for row in valid if isinstance(row.get("command_steps"), int)]
         oberth_calls = [row["oberth_calls"] for row in valid if isinstance(row.get("oberth_calls"), int)]
+        oberth_bytes = [row["oberth_output_bytes"] for row in valid
+                        if isinstance(row.get("oberth_output_bytes"), int)]
         process_probes = [row["process_probe_calls"] for row in valid if isinstance(row.get("process_probe_calls"), int)]
         durations = [row["duration_s"] for row in valid if isinstance(row.get("duration_s"), (int, float))]
         oob = [row["oob_count"] for row in valid]
@@ -1185,6 +1220,8 @@ def summarize_runs(runs: list[dict[str, Any]], build_sha: str) -> list[dict[str,
             "steps_max": max(steps) if steps else None,
             "command_steps_median": _median(commands),
             "oberth_calls_median": _median(oberth_calls),
+            "oberth_output_bytes_median": _median(oberth_bytes),
+            "oberth_output_bytes_total": sum(oberth_bytes),
             "process_probe_calls_median": _median(process_probes),
             "process_probe_calls_total": sum(process_probes),
             "duration_median_s": _median(durations),
@@ -1215,8 +1252,8 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- repeats: {payload['repeat']}",
         f"- comparable: {'yes' if payload.get('comparable') else 'no'}",
         "",
-        "| scenario | agent | valid runs | completion | steps median [range] | oberth calls | process probes | duration median | OOB total | comparable | notes |",
-        "|---|---|---:|---:|---|---:|---:|---:|---:|---|---|",
+        "| scenario | agent | valid runs | completion | steps median [range] | oberth calls | oberth bytes | process probes | duration median | OOB total | comparable | notes |",
+        "|---|---|---:|---:|---|---:|---:|---:|---:|---:|---|---|",
     ]
     for row in payload["summary"]:
         rate = "n/a" if row["completion_rate"] is None else f"{row['completion_rate'] * 100:.0f}%"
@@ -1226,6 +1263,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
         if row["steps_median"] is None and row["command_steps_median"] is not None:
             steps = f"cmd {row['command_steps_median']:g}"
         calls = "n/a" if row["oberth_calls_median"] is None else f"{row['oberth_calls_median']:g}"
+        bytes_text = "n/a" if row.get("oberth_output_bytes_median") is None else f"{row['oberth_output_bytes_median']:g}"
         probes = "n/a" if row["process_probe_calls_median"] is None else f"{row['process_probe_calls_median']:g}"
         duration = "n/a" if row["duration_median_s"] is None else f"{row['duration_median_s']:g}s"
         notes = "; ".join(row["notes"]) if row["notes"] else ""
@@ -1235,7 +1273,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
             notes = (notes + "; " if notes else "") + f"{row['agent_errors']} agent error(s)"
         lines.append(
             f"| {row['scenario']} | {row['agent']} | {row['valid_runs']} | {rate} | {steps} | "
-            f"{calls} | {probes} | {duration} | {row['oob_total']} | {'yes' if row['comparable'] else 'no'} | {notes} |"
+            f"{calls} | {bytes_text} | {probes} | {duration} | {row['oob_total']} | {'yes' if row['comparable'] else 'no'} | {notes} |"
         )
     failed = [run for run in payload["runs"] if not run["completed"] or run["oob_count"]]
     if failed:
