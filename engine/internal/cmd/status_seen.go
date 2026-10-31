@@ -86,6 +86,16 @@ type statusFileChange struct {
 	Gone     []string `json:"gone,omitempty"`
 }
 
+// isEmpty is the one definition of "nothing moved". A filtered view recomputes
+// it after dropping facts outside its scope, so an empty change cannot mean
+// "everything was filtered out".
+func (c statusChange) isEmpty() bool {
+	return len(c.ServicesStarted) == 0 && len(c.ServicesStopped) == 0 &&
+		len(c.PortsOpened) == 0 && len(c.PortsClosed) == 0 &&
+		len(c.Files.Appeared) == 0 && len(c.Files.Touched) == 0 &&
+		len(c.Files.Gone) == 0 && c.HeadFrom == ""
+}
+
 // statusSeenFrom is the entry a run records: the facts the comparison above
 // needs, and nothing else. It is deliberately not "everything the command
 // printed" — a ledger that grows with the output would make the file a second
@@ -203,10 +213,7 @@ func compareStatusSeen(before, now statusSeenEntry) statusChange {
 		change.HeadFrom, change.HeadTo = shortHash(before.Head), shortHash(now.Head)
 	}
 
-	change.Empty = len(change.ServicesStarted) == 0 && len(change.ServicesStopped) == 0 &&
-		len(change.PortsOpened) == 0 && len(change.PortsClosed) == 0 &&
-		len(change.Files.Appeared) == 0 && len(change.Files.Touched) == 0 &&
-		len(change.Files.Gone) == 0 && change.HeadFrom == ""
+	change.Empty = change.isEmpty()
 	return change
 }
 
