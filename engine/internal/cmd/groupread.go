@@ -138,6 +138,7 @@ func scanGroupsObserved(ctx context.Context) ([]ports.ListeningPort, []state.Gro
 	resolved, index := groups.Attribute(results)
 	reportInvalidConfigs(index)
 	groupRows := groups.GroupsWith(resolved, index, directRunHistory())
+	groups.StampServicePortRuns(resolved, groupRows)
 	scanner.FillServiceStatsContext(ctx, groupRows, nil)
 	groups.FinalizeResources(groupRows)
 	scanner.ProbeConfigured(resolved, groupRows, ports.ProbeHealth, scanner.ConfiguredHealthBudget)

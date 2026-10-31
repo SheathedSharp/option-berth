@@ -128,3 +128,26 @@ func TestPreUpgradeSpecHashIsNotDrift(t *testing.T) {
 		t.Fatalf("pre-upgrade hash reported as drift: %+v", svc)
 	}
 }
+
+func TestStampServicePortRunsJoinsADockerPortToItsService(t *testing.T) {
+	group, port, runID, pid := "shop", 15432, "run-1", 42
+	rows := []state.Port{
+		{Group: &group, Port: port, Type: state.TypeDocker, PID: 900},
+		{Group: &group, Port: 15433, Type: state.TypeDocker, PID: 901},
+	}
+	services := []state.Group{{
+		Name: group,
+		Services: []state.Service{{
+			Name: "db", Running: true, PortActual: &port, RunID: &runID, PID: &pid,
+		}},
+	}}
+
+	StampServicePortRuns(rows, services)
+
+	if rows[0].Run == nil || rows[0].Run.ID != runID || rows[0].Run.Name != "db" || rows[0].Run.RootPID != pid {
+		t.Fatalf("docker row run = %+v, want the service's run", rows[0].Run)
+	}
+	if rows[1].Run != nil {
+		t.Fatalf("an unclaimed docker row was stamped: %+v", rows[1].Run)
+	}
+}

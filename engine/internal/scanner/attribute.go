@@ -183,6 +183,7 @@ func (l *Loop) attributeContext(ctx context.Context, pp []ports.ListeningPort) (
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
+	groups.StampServicePortRuns(resolved, groupRows)
 	groups.FinalizeResources(groupRows)
 	return resolved, groupRows, nil
 }
