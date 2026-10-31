@@ -373,3 +373,31 @@ func sortedKeys(m map[string]string) []string {
 	}
 	return keys
 }
+
+// CapFiles keeps a bounded prefix but never hides that it did: the full count
+// and the truncation marker are what let a reader ask for the rest.
+func TestCapFilesRecordsTotalAndPrefix(t *testing.T) {
+	files := []File{{Path: "a"}, {Path: "b"}, {Path: "c"}}
+
+	truncated := Tree{Files: files}
+	truncated.CapFiles(2)
+	if truncated.FilesTotal != 3 || !truncated.FilesTruncated {
+		t.Fatalf("truncated tree total=%d marker=%v, want 3/true",
+			truncated.FilesTotal, truncated.FilesTruncated)
+	}
+	if len(truncated.Files) != 2 || truncated.Files[1].Path != "b" {
+		t.Fatalf("files = %+v, want the first two rows", truncated.Files)
+	}
+
+	complete := Tree{Files: files}
+	complete.CapFiles(3)
+	if complete.FilesTotal != 3 || complete.FilesTruncated || len(complete.Files) != 3 {
+		t.Fatalf("complete tree = %+v, want all three rows and no marker", complete)
+	}
+
+	uncapped := Tree{Files: files}
+	uncapped.CapFiles(0)
+	if uncapped.FilesTotal != 3 || uncapped.FilesTruncated || len(uncapped.Files) != 3 {
+		t.Fatalf("uncapped tree = %+v, want all three rows and no marker", uncapped)
+	}
+}
