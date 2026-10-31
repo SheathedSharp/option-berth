@@ -2972,6 +2972,9 @@
         },
         "starting": {
           "$ref": "#/definitions/ServiceStarting"
+        },
+        "stats": {
+          "$ref": "#/definitions/Stats"
         }
       },
       "type": "object",
@@ -3047,6 +3050,12 @@
             "$ref": "#/definitions/MachineRef"
           },
           "type": "array"
+        },
+        "running_services": {
+          "type": "integer"
+        },
+        "resources": {
+          "$ref": "#/definitions/Resources"
         }
       },
       "type": "object",
@@ -3055,7 +3064,8 @@
         "status",
         "services",
         "ports",
-        "machine"
+        "machine",
+        "running_services"
       ]
     },
     "Workplace": {

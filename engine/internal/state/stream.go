@@ -21,11 +21,13 @@ type StreamSnapshot struct {
 
 // StreamWorktree is the safe runtime projection for one selected checkout.
 type StreamWorktree struct {
-	Source   EventSource     `json:"source"`
-	Status   string          `json:"status"`
-	Services []StreamService `json:"services"`
-	Ports    []StreamPort    `json:"ports"`
-	Machine  []MachineRef    `json:"machine"`
+	Source          EventSource     `json:"source"`
+	Status          string          `json:"status"`
+	Services        []StreamService `json:"services"`
+	Ports           []StreamPort    `json:"ports"`
+	Machine         []MachineRef    `json:"machine"`
+	RunningServices int             `json:"running_services"`
+	Resources       *Resources      `json:"resources,omitempty"`
 }
 
 // StreamService contains only service runtime facts. Manifest commands and
@@ -49,6 +51,9 @@ type StreamService struct {
 	// catch one. It carries no command, cwd or environment, so it is safe for
 	// the redacted projection.
 	Starting *ServiceStarting `json:"starting,omitempty"`
+	// Stats is CPU and memory for the service's process. It is runtime only:
+	// no command, path or environment rides along.
+	Stats *Stats `json:"stats,omitempty"`
 }
 
 // StreamPort contains the runtime identity and health of a listener without
@@ -103,11 +108,13 @@ func StreamSnapshotFor(snap Snapshot, scope Scope) StreamSnapshot {
 	for _, g := range snap.Groups {
 		source := EventSourceForGroup(g)
 		row := StreamWorktree{
-			Source:   *source,
-			Status:   g.Status,
-			Services: streamServices(g.Services),
-			Ports:    []StreamPort{},
-			Machine:  append([]MachineRef(nil), g.Machine...),
+			Source:          *source,
+			Status:          g.Status,
+			Services:        streamServices(g.Services),
+			Ports:           []StreamPort{},
+			Machine:         append([]MachineRef(nil), g.Machine...),
+			RunningServices: g.RunningServices,
+			Resources:       g.Resources,
 		}
 		if row.Machine == nil {
 			row.Machine = []MachineRef{}
@@ -171,6 +178,7 @@ func streamServices(in []Service) []StreamService {
 			RuntimeSpecHash:         service.RuntimeSpecHash,
 			ManifestRuntimeMismatch: service.ManifestRuntimeMismatch,
 			Starting:                service.Starting,
+			Stats:                   service.Stats,
 		})
 	}
 	if out == nil {
