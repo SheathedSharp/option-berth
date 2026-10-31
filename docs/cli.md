@@ -183,6 +183,26 @@ macOS 设置页写入的 `~/.option-berth/jev.json`（隔离运行时为 `$BERTH
 质量记录不属于 `status` 事实，也不改变任何执行权限；报告的 `sessions` 对象会说明会话、轮询、事件、
 Jev 调用、缓存命中和无事件轮询数量；没有真实反馈时指标保持 `null`。
 
+### agent 读取的 JSON 字段
+
+下面这些字段是 agent 在 `status`、`up`、`restart` 的 `--json` 输出里做判断所需的最小集合。
+字段的完整含义见各自命令的说明；本表同时是 `scripts/check_skill_contract.py` 的锚点来源，
+新增或改名时同步更新 skill。
+
+| 字段 | 命令 | 用途 |
+|---|---|---|
+| `last_exit.reason` | `status` | 当前失败原因；按它分支到日志、依赖或端口占用。 |
+| `last_exit.port_hint` | `status` | 本次启动被告知要绑定的端口。 |
+| `last_exit.port_holder` | `status` | 读取时仍占着失败端口的进程；缺省表示没观察到，不是端口空闲。 |
+| `exits[].hint` | `status` | 历史退出记录里由日志文件是否存在决定的下一步。 |
+| `services[].ready` | `up` / `restart` | CLI 的就绪注释；`false` 表示未确认，不是失败。 |
+| `services[].port_holder` | `up` | 端口冲突时与 `status` 同形状的占用者证据。 |
+| `health_status` | `status` | 声明健康检查的结果与原因。 |
+| `manifest_runtime_mismatch` | `status` | 运行实例是否来自旧清单。 |
+| `worktree.identity` | `status` | `${worktree}` 的展开值，用于命名 per-worktree 数据。 |
+| `observation.state` | `status` | 监听表是否可信；先读它再读 `ports`。 |
+| `attention_path` | `status` | 当前异常的派生交接文件；没有异常时缺省。 |
+
 ### oberth up [project] [--only name,...] [--wait|--ready] [--wait-timeout duration]
 [--allow-outside-home] [--json]
 
