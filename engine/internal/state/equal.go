@@ -53,7 +53,7 @@ func serviceEqual(a, b *Service) bool {
 		pointerEqual(a.Icon, b.Icon) && pointerEqual(a.Color, b.Color) && sliceEqual(a.DependsOn, b.DependsOn) &&
 		a.Running == b.Running && pointerEqual(a.PortActual, b.PortActual) && pointerEqual(a.PID, b.PID) &&
 		pointerEqual(a.RunID, b.RunID) && pointerEqual(a.StartedAt, b.StartedAt) &&
-		pointerEqual(a.LogPath, b.LogPath) && pointerEqual(a.LastExit, b.LastExit)
+		pointerEqual(a.LogPath, b.LogPath) && sameExit(a.LastExit, b.LastExit)
 }
 
 func machineEqual(a, b []MachineRef) bool {

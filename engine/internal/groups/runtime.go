@@ -28,6 +28,7 @@ func serviceRowsWithFacts(cfg *Config, group string, resolver servicefacts.Resol
 		row.LogPath = &path
 		if result.LastExit != nil {
 			exit := *result.LastExit
+			exit.PortHolder = result.PortHolder
 			row.LastExit = &exit
 		}
 		if listener := result.Listener; listener != nil {
