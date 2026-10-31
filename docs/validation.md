@@ -71,6 +71,32 @@ python3 scripts/check_skill_contract.py --skill-dir ../option-berth-skill
 `up` 刚返回、扫描尚未发布监听时用 run 的已分配端口补齐。上述包的 `go test -race` 已通过；完整的
 `go test ./...` 在本机沙箱仍受下面的监听表限制。
 
+### 代码身份（sources）
+
+`internal/codeid` 的单元测试覆盖：Git 检出只纳入已跟踪与未 ignore 的未跟踪文件；服务 cwd 位于
+checkout 子目录且 `sources` 指向同级目录；非 Git 回退跳过 `node_modules` / `build`，但显式声明的
+目录不被跳过；新增、修改、删除分别计数；缺失的 source 视为空而不是错误；快照写读、按 run 清理，
+以及拒绝读取另一个 run 的快照。`internal/groups` 覆盖 `sources` 的解析、越界校验、`sources: []`
+与省略的区别、编辑输出；`internal/state` 的字段覆盖测试保证新字段进入相等比较。
+`internal/daemon/groupstart` 用真实 daemon 核对启动时确实写入快照，以及 `sources: []` 不写；
+`internal/cmd` 的 `TestAnnotateCodeFacts*` 覆盖“已改 / 未改 / 未知”三态。2026-10-31 本机执行：
+
+```sh
+cd engine
+go vet ./internal/codeid ./internal/groups ./internal/state ./internal/cmd \
+  ./internal/daemon/runsreg ./internal/daemon/groupstart ./internal/runs
+go test ./internal/codeid ./internal/groups ./internal/state ./internal/servicefacts \
+  ./internal/paths ./internal/daemon/runsreg -count=1
+go test ./internal/daemon/groupstart -count=1
+go test ./internal/cmd -run 'TestAnnotateCodeFacts|TestStatus' -count=1
+go generate ./...
+```
+
+以上通过。`go test ./...` 未作为本机结论：`internal/cmd` 的 init/kill 用例仍受本机监听表限制。
+真实 CLI 的“起服务 → 改代码 → status → restart”冒烟也在本机被 `observation_blind` 拒绝（沙箱
+`netstat` 返回空表，daemon 拒绝自启），未执行；新增的 `stale-code` 场景同样需要可观察监听的
+普通终端或 CI。
+
 ### 监听观察：双栈、探针与沙箱
 
 macOS 把 Go `net.Listen("tcp", ":p")`、Node `listen(p)` 和 Java 默认绑定打印成 `tcp46`。
@@ -190,8 +216,8 @@ macOS/Linux 上跑，沙箱里的 `observation_*` 结果不能代替它。
 ## 固定场景库（agent 矩阵）
 
 2026-10-28 的手工验收已沉淀成固定场景库，入口 `scripts/agent_eval.py`，契约与指标见
-[agent-eval.md](agent-eval.md)。至少覆盖五个场景：生成物缺失、端口被占、依赖未就绪、
-清单与进程不一致、同仓库双 worktree。每次运行使用隔离 `HOME` / `BERTH_HOME` / 可丢弃项目，
+[agent-eval.md](agent-eval.md)。至少覆盖六个场景：生成物缺失、端口被占、依赖未就绪、
+清单与进程不一致、代码已改但进程未重启、同仓库双 worktree。每次运行使用隔离 `HOME` / `BERTH_HOME` / 可丢弃项目，
 只按点名的 `--pass-env` 和 `--agent-arg` 传入凭证与 provider 参数；harness 自己不添加
 审批绕过或沙箱禁用参数。
 

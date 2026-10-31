@@ -234,6 +234,9 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool) (statusDocu
 	if group.Identity == "" {
 		group.Identity = groups.WorktreeTokenFor(root)
 	}
+	// This is the one expensive read status performs, and it is bounded and
+	// limited to running services. The daemon's scan path never does it.
+	annotateCodeFacts(ctx, group)
 
 	ports := make([]state.Port, 0, len(pp))
 	for _, p := range pp {
@@ -655,7 +658,18 @@ func printStatusServices(doc statusDocument) {
 		if s.LastExit != nil && s.LastExit.PortHolder != nil && s.LastExit.PortHolder.PID > 0 {
 			parts = append(parts, "port held by pid "+fmt.Sprint(s.LastExit.PortHolder.PID))
 		}
+		codeChanged := s.CodeChangedSinceStart != nil && *s.CodeChangedSinceStart
+		if codeChanged {
+			detail := "code changed since start"
+			if s.CodeChangedFiles != nil {
+				detail += fmt.Sprintf(" (%d %s)", *s.CodeChangedFiles, pluralWord(*s.CodeChangedFiles, "file"))
+			}
+			parts = append(parts, display.Yellow(detail))
+		}
 		statusLine("services", strings.Join(parts, " · "))
+		if codeChanged && s.CodeHint != nil {
+			statusLine("next", display.Dim(*s.CodeHint))
+		}
 	}
 }
 

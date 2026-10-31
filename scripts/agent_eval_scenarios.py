@@ -399,7 +399,52 @@ def _judge_manifest_mismatch(probe: Probe, state: ScenarioState) -> Verdict:
 
 
 # --------------------------------------------------------------------------- #
-# 5. Two worktrees of one repository run at the same time.
+# 5. The file changed after the process started; the running code is stale.
+
+
+def _setup_stale_code(env: ScenarioEnv) -> ScenarioState:
+    port = env_free_port()
+    project = env.write_project("stale-code-api", {
+        "oberth.yaml": manifest("stale-code-api", [
+            {"name": "api", "cmd": "python3 app.py", "port": port, "health": "/health"},
+        ]),
+        "app.py": http_server(port, {"/health": 200}, "api v1 listening on %d" % port),
+        "README.md": "# stale-code-api\n\nThe running process reads app.py at startup.\n",
+    })
+    proc, doc = env.up(project)
+    if proc.returncode != 0 or not up_started(doc, "api"):
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise RuntimeError(f"could not pre-start the stale-code fixture: {detail}")
+    # Someone edits the source after the process started. The running process
+    # still serves v1; only evidence-based restart makes it v2. The worktree is
+    # intentionally dirty against HEAD, and the baseline is taken from here.
+    (project / "app.py").write_text(
+        http_server(port, {"/health": 200, "/ready": 200}, "api v2 listening on %d" % port),
+        encoding="utf-8",
+    )
+    return ScenarioState(worktrees={"main": project}, primary=project, ports={"api": port})
+
+
+def _judge_stale_code(probe: Probe, state: ScenarioState) -> Verdict:
+    doc = probe.statuses.get("main")
+    item = service(doc, "api") or {}
+    checks = [
+        check("api is running", running(doc, "api"), _status_detail(doc, "api")),
+        check("status says the running code is current",
+              bool(item) and item.get("code_changed_since_start") is False,
+              f"code_changed_since_start={item.get('code_changed_since_start')!r}"),
+        check("GET /health returns 200", probe.http["health"].status == 200, _http_detail(probe.http["health"])),
+        check("GET /ready returns 200 (the edited code)", probe.http["ready"].status == 200, _http_detail(probe.http["ready"])),
+    ]
+    return Verdict(
+        completed=all(item["ok"] for item in checks),
+        checks=checks,
+        evidence={"status": doc, "http": _http_evidence(probe.http)},
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 6. Two worktrees of one repository run at the same time.
 
 
 def _setup_dual_worktree(env: ScenarioEnv) -> ScenarioState:
@@ -516,6 +561,14 @@ def _urls_dual(state: ScenarioState) -> dict[str, str]:
     }
 
 
+def _urls_stale(state: ScenarioState) -> dict[str, str]:
+    port = state.ports["api"]
+    return {
+        "health": f"http://127.0.0.1:{port}/health",
+        "ready": f"http://127.0.0.1:{port}/ready",
+    }
+
+
 def _urls_empty(state: ScenarioState) -> dict[str, str]:
     _ = state
     return {}
@@ -596,6 +649,23 @@ SCENARIOS: dict[str, Scenario] = {
             ["oberth", "status", "--no-mark", "--json"],
         ],
         description="A running process predates a manifest edit; it must be reconciled without editing the manifest.",
+    ),
+    "stale-code": Scenario(
+        id="stale-code",
+        title="代码已改但进程未重启",
+        prompt=(
+            "这个项目的服务正在运行，但刚刚改过它的代码，运行中的进程可能还是旧版本。"
+            "让实际运行反映当前代码；不要修改 oberth.yaml，也不要手动杀进程。"
+            "做完后用一句话说明你确认到的代码与运行事实。"
+        ),
+        setup=_setup_stale_code,
+        judge=_judge_stale_code,
+        urls=_urls_stale,
+        reference=lambda state: [
+            ["oberth", "restart", "--only", "api", "--json"],
+            ["oberth", "status", "--no-mark", "--json"],
+        ],
+        description="The source changed after the process started; only a restart makes the new behavior live.",
     ),
     "dual-worktree": Scenario(
         id="dual-worktree",

@@ -92,7 +92,14 @@ prepare 读取的文件列表，没有声明时为空数组。
 运行中的服务同时带 `manifest_hash` 与 `runtime_spec_hash`；两者不一致时
 `manifest_runtime_mismatch` 为 `true`，表示当前进程来自旧清单，应该用
 `oberth restart --only <service>` 重新应用。hash 只覆盖命令、cwd、端口、health 和依赖等可执行声明，
-不包含环境变量内容。
+不包含环境变量内容，也不包含 `sources:`——改变检查范围本身不需要重启进程。
+
+运行中的服务若在启动时采集了代码身份，`status` 会按 `sources:` 声明的路径重算内容指纹并发布
+`code_changed_since_start`：`false` 表示已核对未变；`true` 时能精确比较文件时给出
+`code_changed_files`，并给出可直接执行的 `code_hint`（`oberth restart --only <service>`）。
+`code_head` 是启动时 checkout 的 commit，没有提交或不在 Git 检出中时缺省。这些字段缺省表示**未知**
+——旧版本启动的运行、快照已删除、或源码当前读不到——不是“没变”。逐文件快照超过保存上限时，
+仍能回答是否变化，但文件数缺省。
 
 监听表不可信时（例如 agent 沙箱拒绝系统内省），`status` 仍然返回清单、服务、运行记录、
 日志路径和最近退出；顶层带 `observation`（`state`、`code`、`detail`、`hint`、`checked_at`）。
@@ -192,6 +199,11 @@ Jev 调用、缓存命中和无事件轮询数量；没有真实反馈时指标�
 `prepare_inputs:` 声明该命令读取的输入文件（相对服务 cwd，例如 `[package.json, package-lock.json]`）；
 上次 prepare 成功且这些文件内容未变时，本次 `up` 直接跳过 prepare，不再重复安装依赖。指纹只在上次
 成功之后记录，输入缺失或读不到时一律重跑；缓存位于 `$BERTH_HOME/prepare`，删除它只会让下次启动更慢。
+`sources:` 声明用于判断“进程是否在跑当前代码”的文件或目录（相对服务 cwd，缺省为该目录）；
+启动时记录这些路径的内容指纹和当时的 HEAD，`status` 重算后发布 `code_changed_since_start`。
+Git 检出中只纳入已跟踪文件和未被 ignore 的未跟踪文件，`node_modules`、`target`、`dist` 等不会进入
+指纹——即使它们被显式写进 `sources:`，因为它们通常是源码产出的制品；非 Git 目录只应用固定忽略
+列表。显式写 `sources: []` 关闭这项检查，适用于自己热重载代码的服务。
 带端口的依赖等待监听，无端口的 worker 等待其运行记录变为活跃；
 已经在运行的服务跳过；每个服务有自己的
 日志文件和运行记录。无参数时使用当前目录最近的清单，也可以显式给项目名。

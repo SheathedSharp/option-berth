@@ -1,6 +1,9 @@
 package runsreg
 
-import "github.com/sheathedsharp/option-berth/engine/internal/daemon"
+import (
+	"github.com/sheathedsharp/option-berth/engine/internal/codeid"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
+)
 
 // Exited snapshots the generation currently registered for a legacy PID-only
 // notification. A caller that already knows the run (such as the child reaper)
@@ -62,6 +65,9 @@ func (r *Registry) exitedRun(expected Record, code int, stopped bool, read func(
 	history := r.history
 	r.mu.Unlock()
 	r.mirrorRemoveLocked(rec)
+	// The snapshot belongs to this run; a finished run has no code identity to
+	// compare. Failure to remove is diagnostic only, not a lifecycle failure.
+	_ = codeid.Remove(rec.ID)
 	if history != nil {
 		r.persistenceResult("exit.append", history.AppendRunExit(storeRow(e)))
 	}

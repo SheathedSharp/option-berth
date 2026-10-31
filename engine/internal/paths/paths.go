@@ -65,6 +65,10 @@ const (
 	// step whose declared inputs have not changed. It is a cache, not a
 	// declaration: deleting it only makes the next start slower.
 	PrepareDir = "prepare"
+	// CodeDir holds one source snapshot per live run. It is input evidence for
+	// that run, removed with it; deleting it only turns the next status read's
+	// code comparison into "unknown".
+	CodeDir = "code"
 	// SeenCLIFile is the `status` command's ledger of what it last showed: the
 	// anchor its "和上次比" is measured from. The app keeps one of its own
 	// (seen.json, written by the Swift client) — two readers, two anchors.
@@ -218,6 +222,9 @@ func Logs() string {
 
 // Prepare is the directory of prepare input fingerprints.
 func Prepare() string { return filepath.Join(Dir(), PrepareDir) }
+
+// Code is the directory of per-run source snapshots.
+func Code() string { return filepath.Join(Dir(), CodeDir) }
 
 // Drafts is the directory holding the drafts of a project's oberth.yaml
 // that a local agent wrote (init draft). Nothing reads it on its own: a
