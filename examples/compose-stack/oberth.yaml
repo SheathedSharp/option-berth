@@ -11,6 +11,7 @@ services:
   - name: db
     cmd: docker compose -f docker-compose.yml -p app_${worktree} up
     port: auto
-    health: command:docker compose -f docker-compose.yml -p app_${worktree} exec -T db pg_isready -U app -d app_${worktree}
+    health:
+      command: docker compose -f docker-compose.yml -p app_${worktree} exec -T db pg_isready -U app -d app_${worktree}
     env:
       DB_NAME: app_${worktree}
