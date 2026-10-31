@@ -707,6 +707,27 @@ class LargeJudgeTests(unittest.TestCase):
             bad = scenario.judge(probe({"main": status_doc()}, http), state)
             self.assertFalse(bad.completed)
 
+    def test_stack_subset_uses_single_worktree_effect_keys(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        ports = {name: 20500 + index for index, name in enumerate(stacks.PORT_SERVICES)}
+        state = stacks._state(
+            {"main": root}, root, {"main": ports}, stacks._effects("main", root, multi=False),
+        )
+        scenario = stacks.LARGE_SCENARIOS["stack-subset"]
+        http = self.health(version="v1")
+        with mock.patch.object(stacks, "port_open", return_value=False):
+            good = scenario.judge(probe({"main": status_doc()}, http), state)
+            self.assertTrue(good.completed, [item for item in good.checks if not item["ok"]])
+            self.assertTrue(any("worker stayed stopped" in item["name"] for item in good.checks))
+            # A heartbeat means the worker was started despite the subset task.
+            state.effects["worker"].parent.mkdir(parents=True, exist_ok=True)
+            state.effects["worker"].write_text(
+                json.dumps({"t": time.time(), "service": "worker", "ok": True}) + "\n",
+                encoding="utf-8",
+            )
+            bad = scenario.judge(probe({"main": status_doc()}, http), state)
+            self.assertFalse(bad.completed)
+
     def test_stack_stale_requires_new_versions_and_untouched_pids(self) -> None:
         root = Path(tempfile.mkdtemp())
         ports = {name: 21000 + index for index, name in enumerate(stacks.PORT_SERVICES)}
