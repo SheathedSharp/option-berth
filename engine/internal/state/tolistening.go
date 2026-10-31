@@ -42,7 +42,7 @@ func ToListening(p Port) ports.ListeningPort {
 		lp.GroupSource = string(*p.GroupSource)
 	}
 	if p.Run != nil {
-		lp.RunID, lp.Tag, lp.RunRootPID = p.Run.ID, p.Run.Name, p.Run.RootPID
+		lp.RunID, lp.Tag, lp.RunRootPID, lp.RunGroup = p.Run.ID, p.Run.Name, p.Run.RootPID, p.Run.Group
 	}
 	if p.Stats != nil {
 		lp.CPUPercent = p.Stats.CPUPercent

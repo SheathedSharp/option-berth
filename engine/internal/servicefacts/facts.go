@@ -146,6 +146,11 @@ type Result struct {
 	Run      *state.ServiceRun
 	Listener *state.Port
 	LastExit *state.ServiceExit
+	// PortHolder is the process observed on the service's own declared port
+	// when its last run ended with port_occupied. It is separate from LastExit
+	// so the captured registry fact stays untouched; the reduction adds this
+	// read-time observation on top.
+	PortHolder *state.PortHolder
 }
 
 type portKey struct {
@@ -244,7 +249,116 @@ func (r Resolver) Resolve(declaration Declaration) Result {
 	if best <= len(r.listeners) {
 		out.Listener, out.Running, out.LastExit = &r.listeners[best-1], true, nil
 	}
+	// A bind failure names the one port the service tried to hold. Publish the
+	// process observed there as evidence, but never guess beyond that port.
+	// The exit's own port hint survives a later manifest edit; the declaration
+	// is only the fallback for a record that predates it.
+	if !out.Running && out.LastExit != nil && out.LastExit.Reason == "port_occupied" {
+		port := out.LastExit.PortHint
+		if port == 0 {
+			port = declaration.Port
+		}
+		if port == 0 && declaration.PortAuto {
+			port = evidence.PortHint
+		}
+		out.PortHolder = FindPortHolder(r.listeners, PortHolderQuery{
+			Port:    port,
+			Group:   declaration.Key.Group,
+			Service: declaration.Key.Service,
+			RunID:   out.LastExit.RunID,
+		})
+	}
 	return out
+}
+
+// PortHolderQuery scopes a holder lookup to one failed service and the port its
+// run was told to bind. RunID identifies the failed run so a surviving child of
+// the same run is not mistaken for a separate generation.
+type PortHolderQuery struct {
+	Port    int
+	Group   string
+	Service string
+	RunID   string
+}
+
+// FindPortHolder finds the local listener holding the failed service's port and
+// classifies it by the ownership facts already on the row. It looks at one port
+// only; this is not a machine-wide scan. Same-worktree listeners win over other
+// worktrees, and input order breaks a remaining tie.
+//
+// A nil result means no holder was observed at read time, never that the port
+// is free. The three provenance kinds are about what option-berth knows, not
+// about which manifest declares the listener: a run it started (oberth_run), a
+// previous generation of the same service (previous_run), a listener attributed
+// to a worktree without a managed run (worktree_listener), or neither (unknown).
+func FindPortHolder(ports []state.Port, q PortHolderQuery) *state.PortHolder {
+	if q.Port <= 0 {
+		return nil
+	}
+	var fallback *state.Port
+	for i := range ports {
+		p := &ports[i]
+		if p.Port != q.Port || !state.IsLocalhost(p.Host) {
+			continue
+		}
+		if listenerGroup(p) == q.Group {
+			return buildPortHolder(p, q)
+		}
+		if fallback == nil {
+			fallback = p
+		}
+	}
+	if fallback != nil {
+		return buildPortHolder(fallback, q)
+	}
+	return nil
+}
+
+func buildPortHolder(p *state.Port, q PortHolderQuery) *state.PortHolder {
+	holder := &state.PortHolder{
+		Port:        p.Port,
+		BindAddress: p.BindAddress,
+		PID:         p.PID,
+		Command:     p.Command,
+		Cwd:         p.Cwd,
+	}
+	if holder.Command == "" {
+		holder.Command = p.DisplayName
+	}
+	group := listenerGroup(p)
+	switch {
+	case p.Run != nil:
+		holder.Group, holder.Name, holder.RunID = p.Run.Group, p.Run.Name, p.Run.ID
+		if holder.Group == "" {
+			holder.Group = group
+		}
+		if holder.Group == q.Group && holder.Name == q.Service {
+			// The same service's earlier generation, or a surviving child of
+			// the failed run itself; RunID says which.
+			holder.Kind = state.PortHolderPrevious
+		} else {
+			holder.Kind = state.PortHolderRun
+		}
+	case group != "":
+		holder.Kind = state.PortHolderListener
+		holder.Group = group
+	default:
+		holder.Kind = state.PortHolderUnknown
+	}
+	return holder
+}
+
+// listenerGroup is the worktree a listener is attributed to. A managed run's
+// own group wins; the listener's inferred group is the legacy fallback for
+// `oberth run --tag`.
+func listenerGroup(p *state.Port) string {
+	if p.Run != nil && p.Run.Group != "" {
+		return p.Run.Group
+	}
+	if p.Group != nil {
+		return *p.Group
+	}
+	return ""
 }
 
 func eligible(key Key, evidence Evidence, listener *state.Port) bool {

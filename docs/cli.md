@@ -66,13 +66,22 @@ CLI 按 **agent 想做的事**分层，不按内部模块分：事实是「现�
 （`port_occupied`），也会标出命令尚未启动就失败的服务（`start_failed`），因此“启动后退出”、
 “端口冲突”和“启动前失败”不会混成同一种状态。
 
+`port_occupied` 时，`last_exit.port_hint` 是这次运行被告知要绑定的端口，
+`last_exit.port_holder` 描述读取时仍占着该端口的进程：`port`、`pid`、`command`、`kind`，
+托管运行时另有 `group`、`name`、`run_id`，可读时另有 `cwd` 和 `bind_address`。
+`kind` 取 `oberth_run`（option-berth 启动的运行，可能是另一个 worktree）、
+`previous_run`（同一服务更早的一代）、`worktree_listener`（归属于某个 worktree、但没有托管运行）
+或 `unknown`（没有 worktree 归属）。它只查失败服务自己的那个端口，不是整机端口表；
+占用者已经释放或当前观察不到时字段缺省，缺省表示“读取时没看到”，不是“端口空闲”。
+
 人读输出按项目、服务、依赖、代码和失败原因排列，标签是英文的固定宽度列（services ·
 depends on · listeners · code · failed · next · drafts · last look），按终端显示宽度对齐。
 每个服务单独一行，同时给出声明端口与当前运行实况；服务状态词带颜色（running 绿、
 失败红、常规停止 dim），在 NO_COLOR 下退化为纯文字。无端口 worker 会明确标为 no port，
 `port: auto` 尚未分配时会显示 auto port unassigned。
 只有清单没有声明的监听才单独列出。多个服务同时失败时，失败证据按退出记录逐条显示，并给出
-对应的 `oberth logs <service> --once` 下一步。正常退出和被 `down` 停止的服务不进入失败区，
+对应的 `oberth logs <service> --once` 下一步。端口冲突的失败行直接写出占用者
+（端口、pid、命令和归属种类），不需要再跑 `lsof`/`ps`。正常退出和被 `down` 停止的服务不进入失败区，
 即使强制停止留下了非零信号退出码也一样。
 
 `worktree.services[]` 还带有 `health_status`（`status`、`code`、`reason`、`observed_at`）。
@@ -110,7 +119,10 @@ JSON 顶层固定包含：
 直接读这个字段拼库名，不必自己算哈希。
 
 changed 是第一次运行时缺省的可选字段。ports 仍是给脚本核对用的原始监听事实，不是
-独立的产品对象，也不是整台机器的端口清单；exits 只保留最近的退出记录，详细输出用 logs。
+独立的产品对象，也不是整台机器的端口清单。exits 是最近 5 次结束运行的新到旧历史，
+不是当前失败集合；当前事实以 `worktree.services[].last_exit` 为准。`exits[].ports`
+描述退出运行仍持有的端口，所以已退出的运行保持空数组；失败端口在 `port_hint`，
+占用者在 `port_holder`。详细输出用 logs。
 `worktree.services[]` 的 `pid`、`run_id` 和 `started_at` 在服务由 option-berth 正在运行时提供，
 无端口 worker 也能靠这些字段核对实际运行记录；`log_path` 始终由引擎给出。
 
@@ -192,7 +204,9 @@ cwd 中执行，按 `cmd:` 的规则拆成 argv（不经过 shell），支持 `$
 `services[]` 都有结构化的 `state`：`started`、`skipped` 或 `failed`，失败时还给出机器可分支的
 `reason` 和可直接执行的 `hint`，原有 `error` 保留给人读。`hint` 只指向真实存在的证据：进程起来过
 才给 `oberth logs <service> --once`，依赖没就绪时给**依赖**的日志，还没起进程就被拒绝（例如 worktree
-在 home 之外）时给拒绝本身带的做法，没有可执行的下一步时不给。
+在 home 之外）时给拒绝本身带的做法，没有可执行的下一步时不给。失败原因为 `port_occupied` 时，
+`services[]` 还带与 status 相同形状的 `port_holder`（`port`、`pid`、`command`、`kind`，
+托管时另有 `group`/`name`/`run_id`），不需要再自己查进程表。
 等待判定只认**等待开始之后**记录的退出：`down` 留下的旧退出记录不会被 `up --wait` 读成本轮启动失败。
 `--wait`（`--ready` 的别名）会在返回前等待本次选择的服务（包括已经在运行、未重新启动的服务）真正监听；声明了 `health:` 的服务还必须
 通过对应的健康检查（命令式检查不要求服务自己监听）。无端口 worker 以运行记录活跃作为 ready。默认不等待，`--wait-timeout` 默认 30s；显式指定时必须为正值且同时启用 `--wait` 或 `--ready`，否则退出 2，不执行启动；

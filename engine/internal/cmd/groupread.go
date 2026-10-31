@@ -235,6 +235,7 @@ func (r directRunRegistry) ServiceFacts() servicefacts.Snapshot {
 			Exit: state.ServiceExit{
 				Code: exit.Code, Reason: exit.Reason,
 				At: exit.ExitedAt.UTC().Format(time.RFC3339), RunID: exit.ID,
+				PortHint: exit.PortHint,
 			},
 		})
 	}
