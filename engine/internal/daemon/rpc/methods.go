@@ -85,6 +85,13 @@ const CapabilityAutoPorts = "groups.autoports"
 // workspace address unexpanded, so the CLI refuses to hand it such a file.
 const CapabilityManifestExtras = "groups.manifest.extras"
 
+// CapabilityStartDependencies is announced by daemons whose groups.start
+// understands `include_dependencies: true`: growing the named services' plan
+// with their transitive depends_on closure. An older daemon ignores the field
+// and starts only the named services, so the CLI checks for this before
+// sending it.
+const CapabilityStartDependencies = "groups.start.dependencies"
+
 // CapabilityReadyTimeout is announced by daemons that honour the manifest's
 // per-service `ready_timeout:` — both dependency waits and the budget they
 // publish on a start chunk. An older daemon ignores the field and keeps its
@@ -331,6 +338,11 @@ type GroupsStartParams struct {
 	ConfigPath       *string  `json:"config_path,omitempty"`
 	Only             []string `json:"only,omitempty"`
 	AllowOutsideHome bool     `json:"allow_outside_home,omitempty"`
+	// IncludeDependencies asks for the transitive depends_on closure of Only,
+	// not only the named services. `oberth up` sets it; `oberth restart` leaves
+	// it false and keeps restarting exactly what it names. Unknown names in
+	// Only are still not_found with or without it.
+	IncludeDependencies bool `json:"include_dependencies,omitempty"`
 	// Env is the environment the services start in, layered over the
 	// daemon's own. The CLI sends its shell's, so a service sees the PATH,
 	// toolchain and virtualenv it was started from rather than the daemon's.
@@ -386,12 +398,20 @@ type GroupsStartChunk struct {
 	// PortHolder names the process observed on the declared port when this
 	// service failed with port_occupied. Absent for every other outcome.
 	PortHolder *state.PortHolder `json:"port_holder,omitempty"`
+	// IncludedBy lists the explicitly named services whose depends_on closure
+	// brought this service into the plan, sorted. Empty means the service was
+	// named (or every service was planned), so nothing included it implicitly.
+	IncludedBy []string `json:"included_by,omitempty"`
 }
 
 type GroupsStartEnd struct {
 	Started []string `json:"started"`
 	Skipped []string `json:"skipped"`
 	Errors  []string `json:"errors"`
+	// Included lists, sorted, the services in the plan only because a named
+	// service depends on them. It is a plan fact, independent of whether each
+	// one started or was already running; empty when nothing was included.
+	Included []string `json:"included,omitempty"`
 }
 
 // GroupsRenameParams renames a project (step 5A.6). Name is the project's name
