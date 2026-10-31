@@ -102,7 +102,7 @@ oberth workplace show    之前在这里做过什么、结果如何
 ```text
 cd <worktree>
 oberth status    声明了什么、实际在跑什么、上次为什么失败、代码是哪份
-oberth up        按清单起服务（depends_on 顺序，已在跑的跳过）
+oberth up        按清单起服务（depends_on 顺序，已在跑的跳过；--only 默认带依赖闭包）
 oberth restart   重启项目全部服务，或用 --only 重启点名的服务
 oberth logs      从服务直接到日志、退出码和最后输出
 oberth down      停掉这个项目的全部服务

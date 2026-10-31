@@ -25,6 +25,7 @@ var (
 	upJSON             bool
 	upAllowOutsideHome bool
 	upWait             bool
+	upNoDeps           bool
 	// upWaitTimeout stays zero unless the caller sets --wait-timeout. Without
 	// that flag each service is judged against its own ready_timeout.
 	upWaitTimeout time.Duration
@@ -37,6 +38,9 @@ var upCmd = &cobra.Command{
 	Long: "Start every service the project's oberth.yaml declares, in depends_on\n" +
 		"order: a service waits for the ports its dependencies declare before it\n" +
 		"is started, and services that are already running are skipped.\n\n" +
+		"With --only, the named services' transitive depends_on closure is started\n" +
+		"too, so the things they need come up with them. Pass --no-deps to start\n" +
+		"only the named services themselves.\n\n" +
 		"Use --wait (or --ready) when the caller needs listeners and configured\n" +
 		"health checks to be ready before the command returns. Without it a\n" +
 		"started service is reported as started, not as ready.\n\n" +
@@ -50,7 +54,8 @@ var upCmd = &cobra.Command{
 }
 
 func init() {
-	upCmd.Flags().StringSliceVar(&upOnly, "only", nil, "Start only these services (comma separated)")
+	upCmd.Flags().StringSliceVar(&upOnly, "only", nil, "Start these services and their depends_on closure (comma separated)")
+	upCmd.Flags().BoolVar(&upNoDeps, "no-deps", false, "Start only the named services, without their depends_on closure")
 	upCmd.Flags().BoolVar(&upJSON, "json", false, "Output as JSON")
 	upCmd.Flags().BoolVar(&upAllowOutsideHome, "allow-outside-home", false,
 		"Allow services whose worktree is outside the user's home directory")
@@ -87,6 +92,9 @@ func upRun(cmd *cobra.Command, args []string) error {
 	if err := requireConfigSupport(c, cfg); err != nil {
 		return err
 	}
+	if err := requireStartDependencySupport(c, params.IncludeDependencies); err != nil {
+		return err
+	}
 
 	var start rpc.GroupsStartResult
 	stream, err := c.Stream(cmd.Context(), "groups.start", params, &start)
@@ -102,7 +110,27 @@ func upRun(cmd *cobra.Command, args []string) error {
 // upParams turns the command line into groups.start params: a name when one was
 // given, the config at or above the working directory otherwise.
 func upParams(args []string) (rpc.GroupsStartParams, *groups.Config, error) {
-	return projectStartParams(args, upOnly, upAllowOutsideHome)
+	params, cfg, err := projectStartParams(args, upOnly, upAllowOutsideHome)
+	if err != nil {
+		return params, cfg, err
+	}
+	// `up` brings a named service's dependencies with it unless asked not to.
+	// Without --only the field cannot change the plan (everything is started
+	// anyway), so it is not sent: that keeps a plain `up` working against a
+	// daemon that predates the closure and does not announce the capability.
+	params.IncludeDependencies = !upNoDeps && namesServices(upOnly)
+	return params, cfg, nil
+}
+
+// namesServices reports whether --only named at least one non-blank service.
+// A blank list is the same as no filter: there is nothing to expand.
+func namesServices(only []string) bool {
+	for _, name := range only {
+		if strings.TrimSpace(name) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func projectStartParams(args []string, only []string, allowOutsideHome bool) (rpc.GroupsStartParams, *groups.Config, error) {
@@ -301,7 +329,11 @@ func logsHint(service string) string { return "oberth logs " + service + " --onc
 func printStartChunk(c rpc.GroupsStartChunk) {
 	switch {
 	case c.Error != "":
-		fmt.Printf("  %s %s  %s\n", display.Red("x"), display.Bold(c.Service), display.Dim(c.Error))
+		note := ""
+		if len(c.IncludedBy) > 0 {
+			note = "  " + display.Dim("(dependency of "+strings.Join(c.IncludedBy, ", ")+")")
+		}
+		fmt.Printf("  %s %s  %s%s\n", display.Red("x"), display.Bold(c.Service), display.Dim(c.Error), note)
 		if c.Hint != "" {
 			fmt.Printf("    %s\n", display.Dim("next: "+c.Hint))
 		}
@@ -310,7 +342,11 @@ func printStartChunk(c rpc.GroupsStartChunk) {
 		if reason == "" {
 			reason = "already running"
 		}
-		fmt.Printf("  %s %s  %s\n", display.Dim("-"), display.Bold(c.Service), display.Dim(reason))
+		note := ""
+		if len(c.IncludedBy) > 0 {
+			note = "  " + display.Dim("· required by "+strings.Join(c.IncludedBy, ", "))
+		}
+		fmt.Printf("  %s %s  %s%s\n", display.Dim("-"), display.Bold(c.Service), display.Dim(reason), note)
 	default:
 		// The address, not the port number: a terminal makes a URL clickable,
 		// and opening the thing you just started is the next thing you do.
@@ -323,6 +359,9 @@ func printStartChunk(c rpc.GroupsStartChunk) {
 			// A check mark would claim the process is ready; this invocation
 			// only saw it start.
 			marker, suffix = display.Yellow("~"), "  "+display.Dim("started, readiness not confirmed")
+		}
+		if len(c.IncludedBy) > 0 {
+			suffix += "  " + display.Dim("(dependency of "+strings.Join(c.IncludedBy, ", ")+")")
 		}
 		fmt.Printf("  %s %s  %s%s\n", marker, display.Bold(c.Service), where, suffix)
 	}
@@ -337,6 +376,9 @@ func printStartSummary(end rpc.GroupsStartEnd) {
 		parts = append(parts, display.Red(fmt.Sprintf("%d failed", len(end.Errors))))
 	}
 	fmt.Printf("\n%s\n", display.Dim(strings.Join(parts, ", ")))
+	if len(end.Included) > 0 {
+		fmt.Printf("%s\n", display.Dim("included dependencies: "+strings.Join(end.Included, ", ")))
+	}
 }
 
 // shortPath renders a path under the home directory as ~/….
