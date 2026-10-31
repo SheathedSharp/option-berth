@@ -1,0 +1,49 @@
+name: 功能建议
+description: 提出新的产品能力或对现有行为的调整
+title: "[feature] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        先读 [docs/product.md](https://github.com/SheathedSharp/option-berth/blob/main/docs/product.md)
+        的产品边界。这个仓库只做引擎与 CLI；macOS 客户端和 coding agent 的 skill 在各自仓库维护。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题
+      description: 现在是什么场景、卡在哪里；不要只描述想要的实现。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 你希望的行为
+      description: 从人和 agent 两个读者出发，说明命令、输出或清单应该怎样变化。
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 涉及范围
+      options:
+        - CLI / `--json` 契约
+        - 清单字段 / 引用
+        - 运行生命周期 / 就绪判定
+        - 监听观察 / 端口归属
+        - attention / 并行 worktree
+        - 安装 / 发布
+        - 不确定
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 已考虑过的替代方案
+      description: 现有命令能否组合出这个结果；为什么不够。
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索现有 issue 和文档，没有重复建议。
+          required: true
