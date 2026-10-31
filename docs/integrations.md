@@ -24,9 +24,11 @@ oberth up --wait
 ```
 
 - `--wait` 等到本次选择的服务真正监听；声明了 `health:` 的服务还要通过健康检查；无端口 worker
-  以运行记录活跃为准。默认等待 30s，慢的就绪过程用 `--wait-timeout` 放宽。
-- `--wait-timeout` 只约束**启动之后**的监听与健康等待，不约束 `prepare:`。依赖安装慢要靠
-  `prepare_inputs:` 缓存（内容未变时跳过），或调大编排工具自己的脚本超时。
+  以运行记录活跃为准。每个服务用 `ready_timeout:`（Go duration，缺省 30s，必须为正）声明自己的
+  就绪预算；`up --wait` 默认按它等待，`depends_on` 的后继服务也按被依赖方自己的预算等待。
+  `--wait-timeout` 仍可给整次等待设一个总上限，慢的就绪过程优先调大对应服务的 `ready_timeout:`。
+- `--wait-timeout` 和 `ready_timeout:` 都只约束**启动之后**的监听与健康等待（含依赖等待），不约束
+  `prepare:`。依赖安装慢要靠 `prepare_inputs:` 缓存（内容未变时跳过），或调大编排工具自己的脚本超时。
 - 失败时退出码为 1，逐服务给出 `state`、`reason` 和 `hint`；只有进程真的起过，`hint` 才指向
   `oberth logs <service> --once`。
 - 观察失明时 `up --wait` 会立即返回 `observation_*` 错误并保留刚启动的运行。这不是“没起来”。
