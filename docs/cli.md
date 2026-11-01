@@ -71,6 +71,12 @@ command's options.
 | Handoff | `workplace` · `agent` | Work records, and handing the session to an external coding agent |
 | Infrastructure | `daemon` · `serve` · `config` · `version` · `completion` · `doctor` | Background collector, install configuration and self-check |
 
+`oberth --help` ends with a **For agents** section that gives a reading pattern, not commands: the
+three reads a session opens with (`status --json --brief`, `up --wait --json`,
+`logs <service> --once --json --run current --first-error`). It adds no command and does not change
+the layer table above; the `--help` of `status`, `up` and `logs` carries the reasoning behind the
+same reads.
+
 ## Core loop
 
 ### oberth status [path] [--json] [--no-mark] [--only services] [--brief]
@@ -610,6 +616,12 @@ human to decide. `--dry-run` only previews, `--json` is for machine reading.
 ~~~text
 oberth init [--dry-run] [--json]
 ~~~
+
+A failed listener scan does not abort `init`: the project's own declarations and the shape of an entry
+to copy are still there. Only one conclusion may not be written — "nothing was listening". The comment
+says **listening unknown** instead, with the observation code and the next step, and stderr says so
+once. This is the same rule `status` follows: cannot-look is not nothing-is-listening. A partially
+readable scan still lists the ports it read and says the table is incomplete.
 
 #### oberth init draft [agent] [--dry-run] [--json] [--progress]
 

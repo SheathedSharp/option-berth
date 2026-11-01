@@ -201,3 +201,61 @@ func TestProposeUsesProjectRootWhenTheComposeDirIsGone(t *testing.T) {
 		t.Errorf("candidate = %+v, want db on 5432 at the repo root", got)
 	}
 }
+
+// An unknown observation must never render as an idle machine. This is the
+// comment a person writes the service list from; "nothing was listening" when
+// the scan never read the table is a fact the file does not have.
+func TestProposeSaysListeningIsUnknownWhenTheScanFailed(t *testing.T) {
+	f := newFixture(t)
+	cfg := Propose(f.repo, nil, nil)
+	cfg.Observation = &ListenerObservation{
+		State:  "blind",
+		Code:   "observation_blind",
+		Detail: "bound 127.0.0.1:51234 but the listener table did not show it\ntrailing line",
+		Hint:   "retry outside the sandbox\nor run `oberth doctor`",
+	}
+	data, err := Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if strings.Contains(text, "Nothing was listening") {
+		t.Fatalf("a failed scan was rendered as an idle machine:\n%s", text)
+	}
+	for _, want := range []string{
+		"Listening inside this project is unknown",
+		"observation_blind: bound 127.0.0.1:51234 but the listener table did not show it",
+		"next: retry outside the sandbox",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the starter does not mention %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "trailing line") {
+		t.Errorf("a multi-line collector diagnostic broke the comment:\n%s", text)
+	}
+	// The comment is the only change: the file still loads.
+	path := filepath.Join(f.repo, ConfigName)
+	writeFile(t, path, text)
+	if _, err := Load(path); err != nil {
+		t.Fatalf("the degraded starter does not validate: %v", err)
+	}
+}
+
+// A partial pass read some rows, so its candidates are facts and the file says
+// "nothing was listening" only when there is genuinely nothing to report.
+func TestProposePartialObservationKeepsTheIdleSentence(t *testing.T) {
+	f := newFixture(t)
+	cfg := Propose(f.repo, nil, nil)
+	cfg.Observation = &ListenerObservation{State: ObservationPartial, Code: "observation_incomplete"}
+	if cfg.Observation.Unknown() {
+		t.Fatal("a partial observation still read the table; it is not unknown")
+	}
+	data, err := Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "Nothing was listening inside this project") {
+		t.Fatalf("a partial pass with no rows in this project should say so:\n%s", data)
+	}
+}

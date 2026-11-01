@@ -11,6 +11,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/config"
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
 // clearInitFlags zeroes action flags and returns the restore, so each test gets a clean slate.
@@ -439,4 +440,62 @@ func TestResolveAgent(t *testing.T) {
 			t.Fatalf("error = %v, want not_found", err)
 		}
 	})
+}
+
+// A blind collector must not make `init` claim the machine was idle. The
+// starter is the one file a person writes services from, so "the scan failed"
+// has to reach both the comment in the file and the terminal.
+func TestInitSaysListeningIsUnknownWhenTheScanFails(t *testing.T) {
+	t.Cleanup(clearInitFlags())
+	proj := projectDir(t)
+	chdir(t, proj)
+	blindObservation(t)
+
+	var err error
+	stderr := captureStderr(t, func() { err = initRun(initCmd, nil) })
+	if err != nil {
+		t.Fatalf("init failed instead of degrading: %v", err)
+	}
+	data, readErr := os.ReadFile(filepath.Join(proj, groups.ConfigName))
+	if readErr != nil {
+		t.Fatalf("no manifest written: %v", readErr)
+	}
+	text := string(data)
+	if strings.Contains(text, "Nothing was listening") {
+		t.Fatalf("a failed scan was written as an idle machine:\n%s", text)
+	}
+	for _, want := range []string{
+		"Listening inside this project is unknown",
+		ports.CodeObservationBlind,
+		"bound 127.0.0.1:1 but the table did not show it",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("the starter does not mention %q:\n%s", want, text)
+		}
+	}
+	if !strings.Contains(stderr, "listening is unknown, not empty") {
+		t.Fatalf("stderr = %q, want the one-line note", stderr)
+	}
+	// The file still has to load: the comment is the only thing that changed.
+	if _, parseErr := groups.Parse(filepath.Join(proj, groups.ConfigName), data); parseErr != nil {
+		t.Fatalf("the degraded starter does not parse: %v", parseErr)
+	}
+}
+
+// `init draft` reads the same proposal, so a blind scan must not fail it
+// either: the drafting agent gets the project's declarations as it would on a
+// quiet machine, and the brief is told the listener list is unknown.
+func TestInitDraftRunsWhenTheScanIsBlind(t *testing.T) {
+	t.Cleanup(clearInitFlags())
+	proj := projectDir(t)
+	chdir(t, proj)
+	fakeAgentCLI(t, draftStub)
+	blindObservation(t)
+
+	if err := initDraftRun(initDraftCmd, []string{"claude"}); err != nil {
+		t.Fatalf("init draft failed on a blind scan: %v", err)
+	}
+	if _, err := os.Stat(paths.Draft(filepath.Base(proj))); err != nil {
+		t.Fatalf("no draft archived: %v", err)
+	}
 }

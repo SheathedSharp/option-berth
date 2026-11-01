@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -155,6 +156,74 @@ var quickStart = []struct{ cmd, what string }{
 	{"oberth down", "Stop them and give the ports back"},
 }
 
+// agentReads is the reading pattern `oberth --help` hands a coding agent, and
+// the reason it is on the help screen at all: an agent pays for every byte it
+// reads, so the cheapest shape of each answer is part of the interface, not a
+// tip. These are the three reads a session starts with — the runtime facts, the
+// operation that waits for real readiness, and the one line that explains a
+// failure. The last row has no description: it is already as long as the
+// column allows, and its flags say what it does.
+var agentReads = []struct{ cmd, what string }{
+	{"oberth status --json --brief", "runtime facts only; narrow with --only <service>"},
+	{"oberth up --wait --json", "start and wait until really ready"},
+	{"oberth logs <service> --once --json --run current --first-error", ""},
+}
+
+// agentHelp is the block `oberth --help` ends with. The width is the widest
+// command that carries a description, so the descriptions line up and the long
+// row stands alone without trailing spaces.
+func agentHelp() string {
+	width := 0
+	for _, r := range agentReads {
+		if r.what != "" && len(r.cmd) > width {
+			width = len(r.cmd)
+		}
+	}
+	var b strings.Builder
+	b.WriteString("For agents:\n")
+	for _, r := range agentReads {
+		if r.what == "" {
+			b.WriteString("  " + r.cmd + "\n")
+			continue
+		}
+		b.WriteString("  " + display.PadDisplay(r.cmd, width) + "  " + r.what + "\n")
+	}
+	return b.String()
+}
+
+// installAgentHelp appends the agent reading block to the root help screen and
+// leaves every other command's help exactly as cobra renders it. The block is a
+// reading pattern, not a second command list: the grouped layers above it stay
+// the only place commands are enumerated, and a subcommand's own --help is
+// still the manual for that command.
+func installAgentHelp() {
+	base := rootCmd.HelpFunc()
+	rootCmd.SetHelpFunc(func(c *cobra.Command, args []string) {
+		if c != rootCmd {
+			base(c, args)
+			return
+		}
+		out := c.OutOrStdout()
+		var rendered bytes.Buffer
+		c.SetOut(&rendered)
+		base(c, args)
+		c.SetOut(out)
+		fmt.Fprint(out, withAgentHelp(rendered.String()))
+	})
+}
+
+// withAgentHelp splices the block in above cobra's trailing pointer to
+// `[command] --help`, so the screen still ends by sending the reader to the
+// manual. The trailing line is located rather than recomposed: the rest of the
+// screen is cobra's, and only that one line must stay last.
+func withAgentHelp(text string) string {
+	const pointer = "\nUse \""
+	if i := strings.LastIndex(text, pointer); i >= 0 {
+		return text[:i] + "\n" + agentHelp() + text[i:]
+	}
+	return text + "\n" + agentHelp()
+}
+
 var rootCmd = &cobra.Command{
 	Use:   "oberth",
 	Short: "Manage services for the current worktree",
@@ -279,6 +348,7 @@ func init() {
 	// Runtime and setup.
 	rootCmd.SetHelpCommandGroupID(commandGroupInfra)
 	rootCmd.SetCompletionCommandGroupID(commandGroupInfra)
+	installAgentHelp()
 	rootCmd.PersistentFlags().Bool("no-color", false, "Disable colored output")
 	rootCmd.Flags().BoolVarP(&versionFlag, "version", "v", false,
 		"Print the version and exit")

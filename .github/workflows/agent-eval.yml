@@ -26,12 +26,19 @@ on:
         default: all
         type: string
       arms:
-        description: Comparison arms (oberth,native). native is the no-product control.
+        description: Arms to run (oberth,oberth-noskill,native). native is the no-product control.
+        required: true
+        default: oberth,native
+        type: string
+      compare:
+        description: >-
+          Arm pair for the comparison table (TREATED,CONTROL). oberth,native is
+          product vs control; oberth,oberth-noskill isolates the skill.
         required: true
         default: oberth,native
         type: string
       repeat:
-        description: Runs per scenario/agent/arm (2 or more makes rows comparable)
+        description: Runs per scenario/agent/arm (>=2 makes rows comparable, >=5 adds intervals)
         required: true
         default: '2'
         type: string
@@ -68,6 +75,7 @@ env:
   SUITE: ${{ inputs.suite }}
   SCENARIOS: ${{ inputs.scenarios }}
   ARMS: ${{ inputs.arms }}
+  COMPARE: ${{ inputs.compare }}
   REPEAT: ${{ inputs.repeat }}
   CLAUDE_MODEL: ${{ inputs.claude_model }}
   CODEX_MODEL: ${{ inputs.codex_model }}
@@ -342,6 +350,7 @@ jobs:
             --suite "$SUITE"
             --scenarios "$SCENARIOS"
             --arms "$ARMS"
+            --compare "$COMPARE"
             --repeat "$REPEAT"
             --binary bin/oberth
             --skill-dir "$GITHUB_WORKSPACE/option-berth-skill"
@@ -460,7 +469,7 @@ jobs:
           for report in "${reports[@]}"; do
             args+=("$report")
           done
-          args+=(--out "$GITHUB_WORKSPACE/agent-eval-merged" --require-comparable)
+          args+=(--out "$GITHUB_WORKSPACE/agent-eval-merged" --require-comparable --compare "$COMPARE")
           python3 scripts/agent_eval.py "${args[@]}"
       - name: Publish the merged matrix to the job summary
         if: always()

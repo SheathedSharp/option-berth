@@ -26,6 +26,8 @@ A contract lives in exactly one place. Everything else links to it.
 | Implementation boundaries and the chain of facts | `docs/agent/architecture.md` | `docs/product.md` |
 | Build commands and what to run after a change | `docs/agent/develop.md` | `README.md` |
 | What each check proves and its platform scope | `docs/agent/validation.md` | `docs/agent/develop.md` |
+| Scenario library, arms, metrics and the comparison report | `docs/agent/agent-eval.md` | `docs/cli.md` |
+| What agents still ask the shell, and why | `docs/agent/trace-analysis.md` | `docs/agent/agent-eval.md` |
 | Version, tag and release rules | `docs/agent/releasing.md` | `AGENTS.md` |
 | Standing orders an agent needs in every session | root `AGENTS.md` | any document below it |
 
