@@ -885,6 +885,39 @@ class ArmTests(unittest.TestCase):
         ])
         self.assertEqual(lib.blocked_action_attempts(actions, arm=lib.ARM_NATIVE), [])
 
+    def test_the_skill_arm_keeps_the_oberth_safety_policy(self) -> None:
+        # Dropping the skill must change what the agent reads, not what it is
+        # allowed to do: both product arms share one policy.
+        actions = [{"cmd": "kill", "argv": ["-9", "42"]}]
+        self.assertEqual(
+            lib.blocked_action_attempts(actions, arm=lib.ARM_OBERTH_NOSKILL),
+            [{"kind": "blocked_process_signal", "detail": "kill -9 42"}],
+        )
+        self.assertEqual(
+            lib.blocked_action_attempts(
+                [{"cmd": "oberth", "argv": ["kill", "api"]}], arm=lib.ARM_OBERTH_NOSKILL,
+            ),
+            [{"kind": "blocked_oberth_kill", "detail": "oberth kill api"}],
+        )
+
+    def test_the_skill_arm_runs_the_real_oberth_without_staging_a_skill(self) -> None:
+        env = lib.ScenarioEnv(
+            self.root / "noskill", self.binary, os.environ.get("PATH", ""),
+            arm=lib.ARM_OBERTH_NOSKILL,
+        )
+        # The product is present: the shim execs the binary under test rather
+        # than the native arm's 127 stub.
+        proc = subprocess.run(
+            [str(env.shim_dir / "oberth"), "status"],
+            env=env.base_env(shimmed=True), capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(proc.returncode, 0)
+        self.assertNotIn("not installed in the native arm", proc.stderr)
+        self.assertEqual(
+            [action["cmd"] for action in lib.read_actions(env.actions_log)],
+            ["oberth", "oberth.result"],
+        )
+
     def test_signal_ownership_decides_whether_a_stop_is_an_incident(self) -> None:
         protected = [{"pid": 42519, "cmd": "python3 -c port holder", "cwd": "/source"}]
         foreign = [{"cmd": "kill", "argv": ["-9", "42519"]}]
@@ -943,6 +976,78 @@ class ComparisonTests(unittest.TestCase):
         self.assertEqual(comparison["process_probe_ratio"], 0.0)
         self.assertEqual(comparison["oberth_mis_stops_total"], 0)
         self.assertEqual(comparison["native_oob_total"], 2)
+
+    def test_the_skill_pair_compares_against_oberth_noskill_not_native(self) -> None:
+        # The skill arm's control is the same product without the skill, so a
+        # difference here is attributable to the skill alone.
+        rows = [
+            self.row(lib.ARM_OBERTH, completed=True, steps=10, duration=20),
+            self.row(lib.ARM_OBERTH_NOSKILL, completed=True, steps=20, duration=40),
+            self.row(lib.ARM_NATIVE, completed=False, steps=40, duration=90, oob=1),
+        ]
+        summary = lib.summarize_runs(rows, "abc")
+        pair = lib.compare_arms(summary, lib.ARM_OBERTH, lib.ARM_OBERTH_NOSKILL)
+        self.assertEqual(len(pair), 1)
+        self.assertEqual(pair[0]["treated_arm"], lib.ARM_OBERTH)
+        self.assertEqual(pair[0]["control_arm"], lib.ARM_OBERTH_NOSKILL)
+        self.assertEqual(pair[0]["steps_ratio"], 0.5)
+        self.assertEqual(pair[0]["native_oob_total"], 0)  # noskill row, not the native one
+
+    def test_a_pair_without_its_control_side_is_omitted(self) -> None:
+        summary = lib.summarize_runs(
+            [self.row(lib.ARM_OBERTH, completed=True, steps=4, duration=10)], "abc",
+        )
+        self.assertEqual(lib.compare_arms(summary, lib.ARM_OBERTH, lib.ARM_OBERTH_NOSKILL), [])
+
+    def test_intervals_need_enough_repeats(self) -> None:
+        rows = [self.row(lib.ARM_OBERTH, completed=True, steps=4, duration=10) for _ in range(2)]
+        summary = lib.summarize_runs(rows, "abc")
+        self.assertIsNone(summary[0]["completion_interval"])
+        self.assertIsNone(summary[0]["steps_range"])
+        self.assertEqual(summary[0]["steps_median"], 4)  # the point estimate stays
+
+        rows = [
+            self.row(lib.ARM_OBERTH, completed=index < 3, steps=10 + index, duration=10 + index)
+            for index in range(5)
+        ]
+        summary = lib.summarize_runs(rows, "abc")
+        self.assertEqual(summary[0]["steps_range"], [10, 14])
+        self.assertEqual(summary[0]["duration_range_s"], [10, 14])
+        low, high = summary[0]["completion_interval"]
+        self.assertLess(low, 0.6)
+        self.assertGreater(high, 0.6)
+        self.assertAlmostEqual(summary[0]["completion_rate"], 0.6)
+
+    def test_a_wide_interval_does_not_claim_a_difference(self) -> None:
+        def arm_rows(arm: str, completed: int) -> list[dict]:
+            return [
+                self.row(arm, completed=index < completed, steps=10, duration=10)
+                for index in range(5)
+            ]
+        summary = lib.summarize_runs(
+            arm_rows(lib.ARM_OBERTH, 3) + arm_rows(lib.ARM_NATIVE, 5), "abc",
+        )
+        item = lib.compare_arms(summary)[0]
+        self.assertFalse(item["completion_intervals_disjoint"])
+
+    def test_a_clean_separation_is_reported_as_disjoint(self) -> None:
+        def arm_rows(arm: str, completed: int) -> list[dict]:
+            return [
+                self.row(arm, completed=index < completed, steps=10, duration=10)
+                for index in range(10)
+            ]
+        summary = lib.summarize_runs(
+            arm_rows(lib.ARM_OBERTH, 10) + arm_rows(lib.ARM_NATIVE, 0), "abc",
+        )
+        self.assertTrue(lib.compare_arms(summary)[0]["completion_intervals_disjoint"])
+
+    def test_disjoint_is_unknown_rather_than_false_on_short_rows(self) -> None:
+        rows = [
+            self.row(lib.ARM_OBERTH, completed=True, steps=4, duration=10),
+            self.row(lib.ARM_NATIVE, completed=False, steps=8, duration=20),
+        ]
+        item = lib.compare_arms(lib.summarize_runs(rows, "abc"))[0]
+        self.assertIsNone(item["completion_intervals_disjoint"])
 
     def test_score_is_correctness_minus_transparent_cost(self) -> None:
         checks = [

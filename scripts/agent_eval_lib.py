@@ -39,15 +39,34 @@ from typing import Any, Callable
 
 REPORT_SCHEMA = "option-berth/agent-eval/v2"
 
-# Two comparison arms run against the same fixture and the same judge.
-#   oberth  the agent gets the pinned skill and the oberth CLI;
-#   native  no skill and no oberth, so it has to start, inspect and stop the
-#           stack with the tools a coding agent normally has (ps/lsof/curl/git).
+# Three arms run against the same fixture and the same judge.
+#   oberth          the agent gets the pinned skill and the oberth CLI;
+#   oberth-noskill  the agent gets the oberth CLI but no skill, so the
+#                   difference against `oberth` is what the skill adds on top
+#                   of the same product and the same tools;
+#   native          no skill and no oberth, so it has to start, inspect and
+#                   stop the stack with the tools a coding agent normally has
+#                   (ps/lsof/curl/git).
 # The native row is the control: the difference between the two rows is what
 # the product is worth on that scenario.
 ARM_OBERTH = "oberth"
+ARM_OBERTH_NOSKILL = "oberth-noskill"
 ARM_NATIVE = "native"
-ARMS = (ARM_OBERTH, ARM_NATIVE)
+ARMS = (ARM_OBERTH, ARM_OBERTH_NOSKILL, ARM_NATIVE)
+
+
+def arm_has_oberth(arm: str) -> bool:
+    """Whether this arm is given the product under test.
+
+    The oberth family shares one rule set -- blocked signals, the BERTH_HOME
+    guard, `oberth kill` refusal -- so a comparison inside that family changes
+    only the skill, never the safety policy.
+    """
+    return arm in (ARM_OBERTH, ARM_OBERTH_NOSKILL)
+
+
+def arm_uses_skill(arm: str) -> bool:
+    return arm == ARM_OBERTH
 
 # Files and directories that are never part of the project diff.
 IGNORED_DIRS = {".git", "__pycache__", ".pytest_cache", "node_modules"}
@@ -545,7 +564,7 @@ def process_signal_attempts(
         if cmd not in {"kill", "pkill", "killall"}:
             continue
         argv = [str(part) for part in action.get("argv", [])]
-        if arm != ARM_OBERTH:
+        if not arm_has_oberth(arm):
             continue  # the native arm may stop processes; wrong stops show up as OOB
         record = {"detail": " ".join([cmd, *argv])}
         if signal_targets_protected(cmd, argv, protected):
@@ -669,7 +688,7 @@ class ScenarioEnv:
 
     def _create_shims(self) -> None:
         for name in SHIM_COMMANDS:
-            if name == "oberth" and self.arm != ARM_OBERTH:
+            if name == "oberth" and not arm_has_oberth(self.arm):
                 body = NATIVE_OBERTH_SHIM_TEMPLATE.substitute(
                     python=sys.executable,
                     log=json.dumps(str(self.actions_log)),
@@ -694,8 +713,8 @@ class ScenarioEnv:
                     berth_home=json.dumps(str(self.berth_home)),
                     # The native control arm may stop and restart services with
                     # its own tools; the preserved-process checks still catch a
-                    # mis-stop. The oberth arm is guided to down/restart.
-                    block_signals=repr(self.arm == ARM_OBERTH),
+                    # mis-stop. The oberth arms are guided to down/restart.
+                    block_signals=repr(arm_has_oberth(self.arm)),
                 )
             path = self.shim_dir / name
             path.write_text(body, encoding="utf-8")
@@ -1335,6 +1354,32 @@ def _median(values: list[float | int]) -> float | None:
     return round(statistics.median(values), 2) if values else None
 
 
+# Below this many valid runs a min/max range is just the two observations
+# again, and a completion interval is too wide to say anything. Rows keep
+# their point estimates; the interval columns render as n/a.
+MIN_INTERVAL_RUNS = 5
+
+
+def _range(values: list[float | int]) -> tuple[float | int | None, float | int | None]:
+    return (min(values), max(values)) if values else (None, None)
+
+
+def wilson_interval(successes: int, total: int, z: float = 1.96) -> tuple[float, float] | None:
+    """Wilson score interval for a completion rate.
+
+    Chosen over the normal approximation because these rows have small n and
+    are often at 0% or 100%, where the normal interval collapses to a point
+    and overstates certainty.
+    """
+    if total <= 0:
+        return None
+    p = successes / total
+    denominator = 1 + z * z / total
+    centre = (p + z * z / (2 * total)) / denominator
+    spread = z * ((p * (1 - p) / total + z * z / (4 * total * total)) ** 0.5) / denominator
+    return (round(max(0.0, centre - spread), 3), round(min(1.0, centre + spread), 3))
+
+
 # OOB kinds that mean the run stopped something it did not own. Kept separate
 # from the total so the report can say "wrong stop" without reading the events.
 MIS_STOP_KINDS = frozenset({
@@ -1460,6 +1505,12 @@ def summarize_runs(runs: list[dict[str, Any]], build_sha: str) -> list[dict[str,
         # observations on one build; the agent_error count stays in the row so
         # a reader can see the run failed for an environmental reason.
         comparable = len(valid) >= 2 and len(builds) == 1
+        # Intervals are reported only once the row has enough repeats to be
+        # more than its own min and max; the point estimates never change.
+        enough = len(valid) >= MIN_INTERVAL_RUNS
+        steps_low, steps_high = _range(steps) if enough else (None, None)
+        duration_low, duration_high = _range(durations) if enough else (None, None)
+        score_low, score_high = _range(scores) if enough else (None, None)
         summary.append({
             "scenario": scenario,
             "agent": agent,
@@ -1468,6 +1519,13 @@ def summarize_runs(runs: list[dict[str, Any]], build_sha: str) -> list[dict[str,
             "valid_runs": len(valid),
             "completed": len(completed),
             "completion_rate": round(len(completed) / len(valid), 3) if valid else None,
+            # Interval columns are additive to the schema: a row that is not
+            # long enough leaves them null instead of pretending n=2 has a
+            # usable spread.
+            "completion_interval": wilson_interval(len(completed), len(valid)) if enough else None,
+            "steps_range": [steps_low, steps_high] if enough and steps else None,
+            "duration_range_s": [duration_low, duration_high] if enough and durations else None,
+            "score_range": [score_low, score_high] if enough and scores else None,
             "steps_median": _median(steps),
             "steps_min": min(steps) if steps else None,
             "steps_max": max(steps) if steps else None,
@@ -1507,11 +1565,18 @@ def _ratio(numerator: float | int | None, denominator: float | int | None) -> fl
     return round(numerator / denominator, 3)
 
 
-def compare_arms(summary: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Pair the oberth and native rows for the same scenario and provider.
+def compare_arms(
+    summary: list[dict[str, Any]],
+    treated_arm: str = ARM_OBERTH,
+    control_arm: str = ARM_NATIVE,
+) -> list[dict[str, Any]]:
+    """Pair two arms of the same scenario and provider.
 
-    The native row is the control. Ratios are oberth / native; below 1 means
-    oberth used less. Completion delta is in percentage points.
+    Defaults keep the historical product comparison: oberth against the native
+    control. Passing (ARM_OBERTH, ARM_OBERTH_NOSKILL) instead isolates what the
+    pinned skill adds on top of the same binary and the same tools. Ratios are
+    treated / control; below 1 means the treated arm used less. Completion
+    delta is in percentage points.
     """
     rows = {
         (row["scenario"], row["agent"], row.get("arm", ARM_OBERTH)): row
@@ -1519,9 +1584,9 @@ def compare_arms(summary: list[dict[str, Any]]) -> list[dict[str, Any]]:
     }
     comparison = []
     for (scenario, agent, arm), treated in sorted(rows.items()):
-        if arm != ARM_OBERTH:
+        if arm != treated_arm:
             continue
-        control = rows.get((scenario, agent, ARM_NATIVE))
+        control = rows.get((scenario, agent, control_arm))
         if control is None:
             continue
         treated_rate = treated.get("completion_rate")
@@ -1529,12 +1594,32 @@ def compare_arms(summary: list[dict[str, Any]]) -> list[dict[str, Any]]:
         delta = None
         if isinstance(treated_rate, (int, float)) and isinstance(control_rate, (int, float)):
             delta = round((treated_rate - control_rate) * 100, 1)
+        treated_interval = treated.get("completion_interval")
+        control_interval = control.get("completion_interval")
+        # The historical key names stay as they are: a reader diffing an old
+        # report against a new one should not have to relearn the columns. The
+        # arm pair is named explicitly next to them so an oberth-vs-noskill
+        # comparison cannot be mistaken for oberth-vs-native.
+        separated = None
+        if treated_interval and control_interval:
+            separated = (
+                treated_interval[0] > control_interval[1]
+                or control_interval[0] > treated_interval[1]
+            )
         comparison.append({
             "scenario": scenario,
             "agent": agent,
+            "treated_arm": treated_arm,
+            "control_arm": control_arm,
             "oberth_completion_rate": treated_rate,
             "native_completion_rate": control_rate,
             "completion_delta_pp": delta,
+            "oberth_completion_interval": treated_interval,
+            "native_completion_interval": control_interval,
+            # True only when both rows are long enough to have an interval and
+            # those intervals do not overlap. Null means "not enough repeats to
+            # say", never "no difference".
+            "completion_intervals_disjoint": separated,
             "oberth_score_median": treated.get("score_median"),
             "native_score_median": control.get("score_median"),
             "score_delta": (
@@ -1584,6 +1669,22 @@ def _format_ratio(value: float | None) -> str:
     return "n/a" if value is None else f"{value:g}×"
 
 
+def _group_comparisons(
+    comparison: list[dict[str, Any]],
+) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    """Group comparison rows by arm pair, keeping one table per pair.
+
+    A report can carry both oberth-vs-native and oberth-vs-oberth-noskill rows.
+    Printing them in one table would put two different meanings under the same
+    column headers, so the markdown writer renders a section per pair.
+    """
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for item in comparison:
+        pair = (item.get("treated_arm", ARM_OBERTH), item.get("control_arm", ARM_NATIVE))
+        groups.setdefault(pair, []).append(item)
+    return groups
+
+
 def render_markdown(payload: dict[str, Any]) -> str:
     build = payload["build"]
     skill = payload["skill"]
@@ -1631,31 +1732,47 @@ def render_markdown(payload: dict[str, Any]) -> str:
         )
 
     comparison = payload.get("comparison") or []
-    if comparison:
+    for pair, items in _group_comparisons(comparison).items():
+        treated_arm, control_arm = pair
         lines.extend([
             "",
-            "## oberth vs native",
+            f"## {treated_arm} vs {control_arm}",
             "",
-            "Same scenario, same provider, same binary. Ratios are oberth / native: below 1 means "
-            "oberth used less. Completion delta is in percentage points.",
+            f"Same scenario, same provider, same binary. Ratios are {treated_arm} / {control_arm}: below 1 "
+            f"means {treated_arm} used less. Completion delta is in percentage points. A completion "
+            f"interval is shown once a row has at least {MIN_INTERVAL_RUNS} valid runs; "
+            f"`disjoint` is `n/a` when either side is too short to say.",
             "",
-            "| scenario | agent | score oberth / native (delta) | safety fail oberth / native | completion oberth / native (delta) | steps | time | probes | agent output | oberth bytes | OOB oberth / native | mis-stops oberth / native | cross-worktree oberth / native | comparable |",
-            "|---|---|---|---|---|---:|---:|---:|---:|---:|---|---|---|---|",
+            f"| scenario | agent | score {treated_arm} / {control_arm} (delta) | safety fail "
+            f"{treated_arm} / {control_arm} | completion {treated_arm} / {control_arm} (delta) | "
+            f"completion interval {treated_arm} / {control_arm} | disjoint | steps | time | probes | "
+            f"agent output | oberth bytes | OOB {treated_arm} / {control_arm} | mis-stops "
+            f"{treated_arm} / {control_arm} | cross-worktree {treated_arm} / {control_arm} | comparable |",
+            "|---|---|---|---|---|---|:---:|---:|---:|---:|---:|---:|---|---|---|---|",
         ])
-        for item in comparison:
+        for item in items:
             def percent(value: float | None) -> str:
                 return "n/a" if value is None else f"{value * 100:.0f}%"
+
+            def interval(value: list[float] | None) -> str:
+                if not value:
+                    return "n/a"
+                return f"{percent(value[0])}–{percent(value[1])}"
 
             delta = item.get("completion_delta_pp")
             delta_text = "n/a" if delta is None else f"{delta:+.0f}pp"
             score_delta = item.get("score_delta")
             score_delta_text = "n/a" if score_delta is None else f"{score_delta:+.1f}"
+            disjoint = item.get("completion_intervals_disjoint")
+            disjoint_text = "n/a" if disjoint is None else ("yes" if disjoint else "no")
             lines.append(
                 f"| {item['scenario']} | {item['agent']} | "
                 f"{item.get('oberth_score_median')} / {item.get('native_score_median')} ({score_delta_text}) | "
                 f"{item.get('oberth_safety_failures')} / {item.get('native_safety_failures')} | "
                 f"{percent(item.get('oberth_completion_rate'))} / {percent(item.get('native_completion_rate'))} "
-                f"({delta_text}) | {_format_ratio(item.get('steps_ratio'))} | "
+                f"({delta_text}) | {interval(item.get('oberth_completion_interval'))} / "
+                f"{interval(item.get('native_completion_interval'))} | {disjoint_text} | "
+                f"{_format_ratio(item.get('steps_ratio'))} | "
                 f"{_format_ratio(item.get('duration_ratio'))} | {_format_ratio(item.get('process_probe_ratio'))} | "
                 f"{_format_ratio(item.get('agent_output_bytes_ratio'))} | "
                 f"{_format_ratio(item.get('oberth_output_bytes_ratio'))} | "

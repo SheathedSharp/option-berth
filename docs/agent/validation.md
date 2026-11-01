@@ -523,6 +523,79 @@ external CLIs, logins, and the network, so they are not put into `scripts/releas
   after the fix. The fix has not been re-run yet; the next CI matrix is what gives the corrected
   scores.
 
+## Skill arm and intervals (2026-11-01)
+
+The harness gained a third arm, `oberth-noskill`, and interval columns. This section records what
+was actually run on this machine; the CI matrix below the change is not implied.
+
+- `python3 -m unittest scripts.agent_eval_test`: 67 items passed. New coverage: the skill arm keeps
+  the whole `oberth` safety policy (`kill`, `oberth kill`), the skill arm execs the real binary
+  instead of the native arm's 127 stub, `compare_arms(treated, control)` pairs
+  `oberth` against `oberth-noskill` rather than against `native`, a pair missing its control side
+  produces no row, intervals stay `null` below 5 valid runs while the point estimates stay, a wide
+  interval reports `completion_intervals_disjoint: false`, a clean separation reports `true`, and a
+  short row reports `null` instead of `false`.
+- `python3 -m unittest discover -s scripts -p '*_test.py'`: 164 items passed, 1 skipped (the brand
+  check skips without a sibling `option-berth-macos` checkout).
+- `python3 scripts/agent_eval.py --list`: lists `oberth`, `oberth-noskill`, `native` with the new
+  description line.
+- `python3 scripts/agent_eval.py --dry-run --suite core` (isolated `HOME` / `BERTH_HOME` under
+  `/tmp`): preflight ok through the lsof fallback, all 6 core fixtures provisioned.
+- `python3 scripts/agent_eval.py --execute --agents reference --suite core --arms oberth --repeat 2`:
+  12 runs, all completed, zero boundary violations, all rows comparable; the report carries
+  `compare_arms: ["oberth", "native"]` and the note that `--repeat 2` is below the interval
+  threshold.
+- `python3 scripts/agent_eval.py --dry-run --suite large`: preflight ok, all 8 large fixtures
+  provisioned, up to 24 ports and 42 files across three worktrees.
+- `python3 scripts/check_docs.py` and `python3 scripts/check_ci_gate.py`: clean.
+- **Not run**: a real agent on the `oberth-noskill` arm. Its correctness depends on the agent not
+  discovering the skill another way, which the staging code prevents but only a real run can show.
+  The baseline rerun that would produce that comparison was triggered on `main` but had not been
+  approved when this was written.
+
+## Manual tier: real JVM / Node / Compose (2026-11-01)
+
+The large-stack fixtures use only the Python standard library on purpose. These three runs check
+that the engine also drives real toolchains; they are manual, not part of the standing matrix.
+
+Environment: macOS 27.2 / 26B123, arm64; OpenJDK 21.0.12; Maven 3.9; Node 26.9.0; Docker 29.8.2
+through colima, Compose 5.5.1. Every run used a throwaway `HOME` / `BERTH_HOME` under `/tmp` and a
+disposable git repository, and every daemon and container was removed at the end.
+
+- **Maven / JVM**: `pom.xml` with `maven-jar-plugin` and a `Main-Class`; the service is a
+  `com.sun.net.httpserver.HttpServer` answering `/health`. Manifest:
+  `prepare: mvn -q package -DskipTests`, `cmd: java -jar target/demo-1.0.0.jar`, `port: auto`,
+  `health: /health`. `oberth up --wait --wait-timeout 180s` reported
+  `prepare 2417ms`, `spawning 2418ms`, then `✓ api http://localhost:10870`; `status` showed
+  `running · listening on 10870`, `curl /health` returned `{"status":"ok"}`, and `down` stopped it
+  and released the claim. A first attempt failed with `no main manifest attribute`: the fixture was
+  wrong, not the engine.
+- **Node**: `npm run build` writes `dist/index.html` from `src/app.html`, `node server.js` serves it
+  with `/health`; `dist/` is gitignored. `up --wait` reported `prepare 440ms`, `spawning 443ms`,
+  `✓ web http://localhost:19670`. After editing `src/app.html`, `status` reported
+  `code changed since start (1 file)`; `down` + `up --wait` rebuilt and served the new content.
+- **Compose**: the checked-in [compose-stack](../../examples/compose-stack/README.md) example
+  (`postgres:16-alpine`, `port: auto`, `pg_isready` health command). Two environment preconditions
+  had to be met before it could run, and both are properties of this machine rather than of the
+  example: the isolated `HOME` hid `~/.docker/cli-plugins`, so `docker compose` degraded to
+  `docker` + an unknown subcommand (exit 125); and the colima context needs
+  `DOCKER_HOST=unix://$HOME/.colima/default/docker.sock`, without which the container client cannot
+  reach the API. With both handled, the container started and `compose exec -T db pg_isready`
+  answered `accepting connections`, but `oberth up --wait` still reported
+  `timed out after 30s waiting for db to be ready` while `status` showed `auto port unassigned`
+  and the container was healthy. **This one is an open gap**: the compose example does not reach
+  ready on this machine, and the cause has not been isolated (the health command and the container
+  both work when driven by hand). It is recorded as a failure, not as a pass.
+- **Not run**: the `native` arm on any of these three, and any real coding agent on them. They prove
+  the engine drives real toolchains; they say nothing about agent behaviour.
+
+## Client verification
+
+The macOS client's verification scope is not here: it lives with the client code in
+[option-berth-macos](https://github.com/SheathedSharp/option-berth-macos).
+This document describes only the engine's verification scope and platform boundaries; the two sides
+share one fact chain, but each side's checks prove only its own thing.
+
 ## Client verification
 
 The macOS client's verification scope is not here: it lives with the client code in
