@@ -352,17 +352,6 @@ def execute_run(
             statuses=probe.statuses, state=state, actions=call_actions, held=env.held,
             arm=arm,
         )
-        score = score_run(
-            checks=verdict.checks, oob=oob, actions=call_actions,
-            budget=getattr(scenario, "budget", None),
-        )
-        completed = score["correctness"] == 1 and score["safety"] and not oob
-        if result.timed_out:
-            status = "agent_error"
-        elif result.error and not completed:
-            status = "agent_error"
-        else:
-            status = "ok" if completed else "not_completed"
         command_steps = len(call_actions)
         oberth_calls = sum(1 for action in call_actions if action.get("cmd") == "oberth")
         oberth_output_bytes = sum(
@@ -379,6 +368,23 @@ def execute_run(
             else:
                 steps_source = "command-shim (fallback)"
                 record["notes"].append("provider event shape not recognized; steps count external commands")
+        score = score_run(
+            checks=verdict.checks, oob=oob, actions=call_actions,
+            budget=getattr(scenario, "budget", None),
+            steps=result.steps,
+        )
+        completed = (
+            score["correctness"] == 1
+            and score["safety"]
+            and not oob
+            and not result.timed_out
+        )
+        if result.timed_out:
+            status = "agent_error"
+        elif result.error and not completed:
+            status = "agent_error"
+        else:
+            status = "ok" if completed else "not_completed"
         agent_output_bytes = sum(
             path.stat().st_size for path in (result.stdout_path, result.stderr_path)
             if path.exists()

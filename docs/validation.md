@@ -286,7 +286,7 @@ shim 以 127 退出。
 
 **2026-10-31 实际执行（大项目档与对照臂）**：
 
-- `python3 -m unittest scripts/agent_eval_test.py`：53 项通过。新增覆盖十服务夹具、
+- `python3 -m unittest scripts/agent_eval_test.py`：55 项通过。新增覆盖十服务夹具、
   三 worktree 夹具、慢依赖预热、旧代码场景、三个准确率诱导场景的失败路径、`native` 臂的
   `oberth` 拒绝与杀进程放行、误停/串 worktree 指标、A/B 聚合与对照表渲染。
 - `python3 scripts/agent_eval.py --list`：core 6 个、large 8 个场景，`oberth` / `native`
@@ -304,8 +304,11 @@ shim 以 127 退出。
   `stack-overbuild`，判定分别检查外部进程存活、另一个 checkout 的 PID 未变、只重启 web 时
   其余 PID 未变；单元测试覆盖了它们的失败路径。
 - **评分模型**：同轮加入 `correctness / safety / cost` 三轴与透明总分；safety 一票否决，
-  超出场景预算按 1.5 分/命令扣，不改变 correctness。单测覆盖满分、安全归零、仅越界归零、
-  部分完成和超预算五种情况。
+  超出场景预算按 1.5 分/动作扣，不改变 correctness。计分单位是 provider 动作数，不是
+  shim 命令数；后者只作诊断。单测覆盖满分、安全归零、仅越界归零、部分完成、超预算，
+  以及“provider 动作计分”和“事件形状不认识时回退并标注”两种情况。
+- **可比性修正**：一次超时不再让整张表作废。`agent_error` 只计入它自己那一行；行的
+  `comparable` 只看重复次数与同一构建。超时的运行也不再被算作完成。
 - **未执行**：这三个新场景的真实 agent A/B 数字。需要在能观察监听的普通终端或具备凭据的
   CI 上运行；没有用参考脚本或 fake engine 的行冒充。
 

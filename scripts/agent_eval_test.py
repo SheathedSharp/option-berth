@@ -464,10 +464,13 @@ class ReportTests(unittest.TestCase):
                 self.row("s", "a", repeat=2, completed=True, sha="def")]
         self.assertFalse(lib.summarize_runs(rows, "abc")[0]["comparable"])
 
-    def test_agent_error_breaks_comparability(self) -> None:
+    def test_agent_error_does_not_void_its_row(self) -> None:
         rows = [self.row("s", "a", repeat=1, completed=True),
                 self.row("s", "a", repeat=2, completed=False, status="agent_error")]
-        self.assertFalse(lib.summarize_runs(rows, "abc")[0]["comparable"])
+        summary = lib.summarize_runs(rows, "abc")[0]
+        self.assertTrue(summary["comparable"])
+        self.assertEqual(summary["agent_errors"], 1)
+        self.assertEqual(summary["valid_runs"], 2)
 
     def test_summary_reports_duration_and_process_probes(self) -> None:
         rows = [self.row("s", "a", repeat=1, completed=True, probes=2, duration=1.5),
@@ -934,6 +937,25 @@ class ComparisonTests(unittest.TestCase):
         self.assertEqual(score["over_budget"], 10)
         self.assertEqual(score["cost_penalty"], 15.0)
         self.assertEqual(score["score"], 85.0)
+
+    def test_budget_counts_provider_actions_not_shim_commands(self) -> None:
+        checks = [lib.check("outcome", True)]
+        actions = [{"cmd": "curl", "argv": ["http://127.0.0.1/"]}] * 50
+        score = lib.score_run(checks=checks, oob=[], actions=actions, budget=20, steps=12)
+        self.assertEqual(score["scored_actions"], 12)
+        self.assertEqual(score["command_steps"], 50)
+        self.assertEqual(score["actions_source"], "provider-events")
+        self.assertEqual(score["over_budget"], 0)
+        self.assertEqual(score["score"], 100.0)
+
+    def test_missing_provider_events_fall_back_to_commands_and_say_so(self) -> None:
+        checks = [lib.check("outcome", True)]
+        actions = [{"cmd": "curl", "argv": ["http://127.0.0.1/"]}] * 50
+        score = lib.score_run(checks=checks, oob=[], actions=actions, budget=20, steps=None)
+        self.assertEqual(score["scored_actions"], 50)
+        self.assertEqual(score["actions_source"], "command-shim (fallback)")
+        self.assertEqual(score["cost_penalty"], 30.0)
+        self.assertEqual(score["score"], 70.0)
 
     def test_safety_failure_zeroes_the_score(self) -> None:
         checks = [
