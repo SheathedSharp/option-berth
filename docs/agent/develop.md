@@ -68,8 +68,9 @@ Scripts, release and brand generation:
 python3 -m unittest discover -s scripts -p '*_test.py'
 python3 brand/build-option-berth.py --check
 python3 scripts/check_skill_contract.py --skill-dir ../option-berth-skill
-python3 scripts/agent_eval.py --list          # core/large scenarios and the oberth/native arms
+python3 scripts/agent_eval.py --list          # core/large/cold scenarios and the comparison arms
 python3 scripts/agent_eval.py --dry-run --suite large  # build the large fixture, launch no agent
+python3 scripts/agent_eval.py --dry-run --suite cold   # cold-start fixtures: no manifest, no agent
 ```
 
 `check_skill_contract.py` needs a sibling skill checkout; CI checks out `option-berth-skill` in the
