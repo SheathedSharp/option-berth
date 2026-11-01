@@ -53,7 +53,7 @@ func TestPublicCommandSurfaceLandsInTheDocumentedLayers(t *testing.T) {
 		// 代码与声明
 		"git": commandGroupCode, "init": commandGroupCode,
 		// 交接
-		"workplace": commandGroupHandoff, "agent": commandGroupHandoff,
+		"workplace": commandGroupHandoff, "agent": commandGroupHandoff, "jev": commandGroupHandoff,
 		// 基础设施
 		"daemon": commandGroupInfra, "serve": commandGroupInfra,
 		"config": commandGroupInfra, "version": commandGroupInfra,

@@ -86,9 +86,9 @@ func ReasonFor(err error) string {
 func ReasonHint(code string) string {
 	switch code {
 	case ReasonNoKey:
-		return "run `oberth jev enable` to store a key, or set OPENROUTER_API_KEY / TYPESAFE_API_KEY for this shell"
+		return "run `oberth jev enable` to store a key and turn the assessment on"
 	case ReasonDisabled:
-		return "Jev is off; run `oberth jev enable` (or set BERTH_JEV=1) to allow it for this task"
+		return "Jev is off; run `oberth jev enable`, or set BERTH_JEV=1 to allow it for this one process"
 	case ReasonInvalidConfig:
 		return "jev.json is not usable; run `oberth jev status` and then `oberth jev enable` to rewrite it"
 	case ReasonUnauthorized:

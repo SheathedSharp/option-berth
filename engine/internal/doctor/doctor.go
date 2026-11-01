@@ -24,6 +24,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
@@ -81,6 +82,10 @@ type DaemonInfo struct {
 // because every test binary already runs with an isolated HOME (internal/testenv)
 // and reading a real temp file is more honest than faking os.ReadFile.
 type Env struct {
+	// SettingsPath is the owner-only jev.json for this installation. It is a
+	// field rather than a global lookup so a check describes this home, not
+	// the process's own.
+	SettingsPath string
 	// Mode is who is running the checks.
 	Mode Mode
 	// GOOS overrides runtime.GOOS, so the Windows skips can be exercised on
@@ -155,6 +160,9 @@ func checks() []check {
 		check{id: "project_config", run: checkProjectConfig},
 		check{id: "docker", run: checkDocker},
 		check{id: "agent_skill", run: checkSkillVersion},
+		// The optional assessment goes last: it is enrichment, and its row
+		// must never push a fact or a control check off the table.
+		check{id: "jev", run: checkJev},
 	)
 }
 
@@ -322,6 +330,9 @@ func (e *Env) fill() {
 	}
 	if e.DBPath == "" {
 		e.DBPath = store.Path()
+	}
+	if e.SettingsPath == "" {
+		e.SettingsPath = paths.JevConfigPath()
 	}
 	if e.Daemon == nil {
 		e.Daemon = func(context.Context) DaemonInfo {

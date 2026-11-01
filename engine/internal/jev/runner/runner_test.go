@@ -1,4 +1,4 @@
-package main
+package runner
 
 import (
 	"bytes"
@@ -70,13 +70,13 @@ func TestHILPolicyBoundaries(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			a := base()
 			tc.mutate(a)
-			got := decideHIL(a)
+			got := DecideHIL(a)
 			if got.NeedsHuman != tc.human || got.Reason != tc.reason {
 				t.Fatalf("decision = %+v", got)
 			}
 		})
 	}
-	if !decideHIL(nil).NeedsHuman {
+	if !DecideHIL(nil).NeedsHuman {
 		t.Fatal("no assessment must ask")
 	}
 	// Regression metrics for every policy branch. These labels describe the
@@ -86,7 +86,7 @@ func TestHILPolicyBoundaries(t *testing.T) {
 	for _, tc := range cases {
 		a := base()
 		tc.mutate(a)
-		got := decideHIL(a).NeedsHuman
+		got := DecideHIL(a).NeedsHuman
 		switch {
 		case got && tc.human:
 			tp++
@@ -107,7 +107,7 @@ func TestHILPolicyBoundaries(t *testing.T) {
 	}
 }
 
-func runnerFixture(t *testing.T) (runnerStatus, attention.Artifact) {
+func runnerFixture(t *testing.T) (Status, attention.Artifact) {
 	t.Helper()
 	root := t.TempDir()
 	now := time.Now().UTC()
@@ -122,7 +122,7 @@ func runnerFixture(t *testing.T) (runnerStatus, attention.Artifact) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := runnerStatus{AttentionPath: path, AttentionRevision: a.StateRevision}
+	s := Status{AttentionPath: path, AttentionRevision: a.StateRevision}
 	s.Scope.Root = root
 	return s, a
 }
@@ -139,8 +139,8 @@ func TestAutoNormalDoesNotCallModel(t *testing.T) {
 	calls := 0
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))
 	defer srv.Close()
-	out, err := runAuto(context.Background(), "unused", ".", jev.Client{Endpoint: srv.URL, APIKey: "test", HTTPClient: srv.Client()}, jev.TaskContext{Task: "edit docs"},
-		func(context.Context, string, string) (runnerStatus, error) { return runnerStatus{}, nil })
+	out, err := Auto(context.Background(), "unused", ".", jev.Client{Endpoint: srv.URL, APIKey: "test", HTTPClient: srv.Client()}, jev.TaskContext{Task: "edit docs"},
+		func(context.Context, string, string) (Status, error) { return Status{}, nil })
 	if err != nil || out.Status != "clear" || calls != 0 {
 		t.Fatalf("out=%+v err=%v calls=%d", out, err, calls)
 	}
@@ -176,9 +176,9 @@ func TestAutoAssessesRefreshesCachesAndBindsTask(t *testing.T) {
 	}))
 	defer srv.Close()
 	client := jev.Client{Endpoint: srv.URL, APIKey: "test", HTTPClient: srv.Client()}
-	read := func(context.Context, string, string) (runnerStatus, error) { reads++; return s, nil }
+	read := func(context.Context, string, string) (Status, error) { reads++; return s, nil }
 	task := jev.TaskContext{Task: "fix api", AuthorizedOptions: authorizedFor(a)}
-	out, err := runAuto(context.Background(), "unused", ".", client, task, read)
+	out, err := Auto(context.Background(), "unused", ".", client, task, read)
 	if err != nil || out.Status != "continue" || out.Cached || !out.JevCalled || calls != 1 || reads != 2 {
 		t.Fatalf("out=%+v err=%v calls=%d reads=%d", out, err, calls, reads)
 	}
@@ -194,12 +194,12 @@ func TestAutoAssessesRefreshesCachesAndBindsTask(t *testing.T) {
 			t.Fatal("restart lost permission boundary")
 		}
 	}
-	out, err = runAuto(context.Background(), "unused", ".", client, task, read)
+	out, err = Auto(context.Background(), "unused", ".", client, task, read)
 	if err != nil || !out.Cached || calls != 1 {
 		t.Fatalf("cache out=%+v err=%v calls=%d", out, err, calls)
 	}
 	task.Task = "run integration tests"
-	out, err = runAuto(context.Background(), "unused", ".", client, task, read)
+	out, err = Auto(context.Background(), "unused", ".", client, task, read)
 	if err != nil || out.Cached || calls != 2 {
 		t.Fatalf("task cache out=%+v err=%v calls=%d", out, err, calls)
 	}
@@ -225,7 +225,7 @@ func TestAutoUnavailableKeepsFactsAndRequestsHuman(t *testing.T) {
 			if mode == "no_key" {
 				client.APIKey = ""
 			}
-			out, err := runAuto(context.Background(), "unused", ".", client, jev.TaskContext{Task: "fix api", AuthorizedOptions: authorizedFor(artifact)}, func(context.Context, string, string) (runnerStatus, error) { return s, nil })
+			out, err := Auto(context.Background(), "unused", ".", client, jev.TaskContext{Task: "fix api", AuthorizedOptions: authorizedFor(artifact)}, func(context.Context, string, string) (Status, error) { return s, nil })
 			after, _ := os.ReadFile(s.AttentionPath)
 			if err != nil || out.Status != "unavailable" || out.JevCalled != (mode != "no_key") || !out.Decision.NeedsHuman || out.Assessment != nil || out.Request == nil || string(before) != string(after) {
 				t.Fatalf("out=%+v err=%v changed=%t", out, err, string(before) != string(after))
@@ -250,7 +250,7 @@ func TestAutoRefusesStaleAndCrossWorktreeRequests(t *testing.T) {
 				data, _ := json.Marshal(a)
 				_ = os.WriteFile(s.AttentionPath, data, 0600)
 			}
-			out, err := runAuto(context.Background(), "unused", ".", jev.Client{}, jev.TaskContext{Task: "fix", AuthorizedOptions: authorizedFor(a)}, func(context.Context, string, string) (runnerStatus, error) {
+			out, err := Auto(context.Background(), "unused", ".", jev.Client{}, jev.TaskContext{Task: "fix", AuthorizedOptions: authorizedFor(a)}, func(context.Context, string, string) (Status, error) {
 				reads++
 				copy := s
 				if reads == 2 && mode == "changed_during_call" {
@@ -283,15 +283,15 @@ func TestSubscribeDeduplicatesSameRevisionAndStops(t *testing.T) {
 	defer cancel()
 	var output bytes.Buffer
 	reads := 0
-	err := runSubscribe(ctx, "unused", ".", time.Millisecond, jev.Client{}, jev.TaskContext{
+	err := Subscribe(ctx, "unused", ".", time.Millisecond, jev.Client{}, jev.TaskContext{
 		Task: "fix api", AuthorizedOptions: authorizedFor(artifact),
-	}, func(context.Context, string, string) (runnerStatus, error) {
+	}, func(context.Context, string, string) (Status, error) {
 		reads++
 		if reads >= 4 {
 			cancel()
 		}
 		return s, nil
-	}, func(value any) error { return writeJSON(&output, value) })
+	}, func(value any) error { return json.NewEncoder(&output).Encode(value) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,18 +318,18 @@ func TestSubscribeDiscoversAnomalyAfterClear(t *testing.T) {
 	defer cancel()
 	var output bytes.Buffer
 	reads := 0
-	err := runSubscribe(ctx, "unused", ".", time.Millisecond, jev.Client{}, jev.TaskContext{
+	err := Subscribe(ctx, "unused", ".", time.Millisecond, jev.Client{}, jev.TaskContext{
 		Task: "fix api", AuthorizedOptions: authorizedFor(artifact),
-	}, func(context.Context, string, string) (runnerStatus, error) {
+	}, func(context.Context, string, string) (Status, error) {
 		reads++
 		if reads == 1 {
-			return runnerStatus{}, nil
+			return Status{}, nil
 		}
 		if reads >= 4 {
 			cancel()
 		}
 		return s, nil
-	}, func(value any) error { return writeJSON(&output, value) })
+	}, func(value any) error { return json.NewEncoder(&output).Encode(value) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,12 +352,12 @@ func TestSubscribeStatsExplainQuietAndUnavailablePolls(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	reads := 0
-	stats, err := runSubscribeWithStats(ctx, "unused", ".", time.Millisecond, jev.Client{}, jev.TaskContext{
+	stats, err := SubscribeWithStats(ctx, "unused", ".", time.Millisecond, jev.Client{}, jev.TaskContext{
 		Task: "fix api", AuthorizedOptions: authorizedFor(artifact),
-	}, func(context.Context, string, string) (runnerStatus, error) {
+	}, func(context.Context, string, string) (Status, error) {
 		reads++
 		if reads == 1 {
-			return runnerStatus{}, nil
+			return Status{}, nil
 		}
 		if reads >= 3 {
 			cancel()
@@ -374,7 +374,7 @@ func TestSubscribeStatsExplainQuietAndUnavailablePolls(t *testing.T) {
 
 func TestAutoRequiresExplicitAuthorizedOptions(t *testing.T) {
 	s, _ := runnerFixture(t)
-	_, err := runAuto(context.Background(), "unused", ".", jev.Client{}, jev.TaskContext{Task: "fix api"}, func(context.Context, string, string) (runnerStatus, error) { return s, nil })
+	_, err := Auto(context.Background(), "unused", ".", jev.Client{}, jev.TaskContext{Task: "fix api"}, func(context.Context, string, string) (Status, error) { return s, nil })
 	if err == nil || !strings.Contains(err.Error(), "explicit authorized_options") {
 		t.Fatalf("err = %v, want explicit authorization error", err)
 	}
@@ -397,9 +397,9 @@ func TestAutoSendsOnlyExplicitAuthorizedCandidates(t *testing.T) {
 		_, _ = w.Write([]byte(`{"model":"jev-test","answers":{"task_relevant":{"type":"noul","noul":0.4},"needs_human":{"type":"noul","noul":0.2}}}`))
 	}))
 	defer srv.Close()
-	out, err := runAuto(context.Background(), "unused", ".", jev.Client{Endpoint: srv.URL, APIKey: "test", HTTPClient: srv.Client()}, jev.TaskContext{
+	out, err := Auto(context.Background(), "unused", ".", jev.Client{Endpoint: srv.URL, APIKey: "test", HTTPClient: srv.Client()}, jev.TaskContext{
 		Task: "inspect api", AuthorizedOptions: []string{"inspect_logs"},
-	}, func(context.Context, string, string) (runnerStatus, error) { return s, nil })
+	}, func(context.Context, string, string) (Status, error) { return s, nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,9 +449,9 @@ func TestAutoIntersectsBroadKnownAuthorizationWithEventCandidates(t *testing.T) 
 		_, _ = w.Write([]byte(`{"model":"jev-test","answers":{"task_relevant":{"type":"noul","noul":0.4},"needs_human":{"type":"noul","noul":0.2}}}`))
 	}))
 	defer srv.Close()
-	out, err := runAuto(context.Background(), "unused", ".", jev.Client{Endpoint: srv.URL, APIKey: "test", HTTPClient: srv.Client()}, jev.TaskContext{
+	out, err := Auto(context.Background(), "unused", ".", jev.Client{Endpoint: srv.URL, APIKey: "test", HTTPClient: srv.Client()}, jev.TaskContext{
 		Task: "inspect api", AuthorizedOptions: []string{absent, wanted},
-	}, func(context.Context, string, string) (runnerStatus, error) { return s, nil })
+	}, func(context.Context, string, string) (Status, error) { return s, nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -474,7 +474,7 @@ func TestRunnerExecutesOnlyStatusAndRejectsExtraJSON(t *testing.T) {
 		if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
 			t.Fatal(err)
 		}
-		_, err := readRunnerStatus(context.Background(), binary, dir)
+		_, err := ReadStatus(context.Background(), binary, dir)
 		if strings.HasSuffix(body, " {}") && err == nil {
 			t.Fatal("extra JSON accepted")
 		}

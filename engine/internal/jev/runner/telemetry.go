@@ -1,4 +1,4 @@
-package main
+package runner
 
 import (
 	"errors"
@@ -13,15 +13,15 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 )
 
-// telemetryHome follows the same BERTH_HOME resolution as the engine. The
+// TelemetryHome follows the same BERTH_HOME resolution as the engine. The
 // quality ledger is local and opt-out by isolation (BERTH_HOME), never by a
 // provider or network setting.
-func telemetryHome() string { return paths.Dir() }
+func TelemetryHome() string { return paths.Dir() }
 
-// appendRunnerTelemetry is best effort by design. A diagnostics failure must
+// AppendRunnerTelemetry is best effort by design. A diagnostics failure must
 // never turn a safe HIL result into a runtime failure or execute an action.
-func appendRunnerTelemetry(home, project string, task jev.TaskContext, result runnerOutput, runErr error, source string, latency time.Duration) string {
-	root := result.worktreeRoot
+func AppendRunnerTelemetry(home, project string, task jev.TaskContext, result Output, runErr error, source string, latency time.Duration) string {
+	root := result.WorktreeRoot
 	if strings.TrimSpace(root) == "" {
 		root, _ = filepath.Abs(project)
 	}
@@ -41,7 +41,7 @@ func appendRunnerTelemetry(home, project string, task jev.TaskContext, result ru
 	}
 	if runErr != nil {
 		record.Status = "error"
-		record.Reason = telemetryErrorReason(runErr)
+		record.Reason = TelemetryErrorReason(runErr)
 	}
 	if result.Decision != nil {
 		record.Decision = &jev.TelemetryDecision{
@@ -57,7 +57,7 @@ func appendRunnerTelemetry(home, project string, task jev.TaskContext, result ru
 		record.EventKind = string(result.Request.Event.Kind)
 		record.Service = result.Request.Event.Service
 		record.FirstSeen = result.Request.FirstSeen
-		record.FreshUntil = firstNonEmptyTelemetry(result.FreshUntil, result.Request.FreshUntil)
+		record.FreshUntil = FirstNonEmpty(result.FreshUntil, result.Request.FreshUntil)
 		record.CandidateOptions = make([]string, 0, len(result.Request.Options))
 		for _, option := range result.Request.Options {
 			record.CandidateOptions = append(record.CandidateOptions, option.ID)
@@ -75,7 +75,7 @@ func appendRunnerTelemetry(home, project string, task jev.TaskContext, result ru
 	return path
 }
 
-func appendLifecycleTelemetry(home, project, status, sessionID string, stats *subscriptionStats) {
+func AppendLifecycleTelemetry(home, project, status, sessionID string, stats *SubscriptionStats) {
 	root, _ := filepath.Abs(project)
 	record := jev.TelemetryRecord{
 		Kind: "lifecycle", Source: "subscription", Project: jev.ProjectLabel(root),
@@ -92,7 +92,7 @@ func appendLifecycleTelemetry(home, project, status, sessionID string, stats *su
 	_, _ = jev.AppendTelemetry(home, record)
 }
 
-func recordManualAssessment(home, artifactPath string, artifact attention.Artifact, task jev.TaskContext, result *jev.Result, callErr error, source string) string {
+func RecordManualAssessment(home, artifactPath string, artifact attention.Artifact, task jev.TaskContext, result *jev.Result, callErr error, source string) string {
 	record := jev.TelemetryRecord{
 		Kind: "assessment", Source: source, Project: jev.ProjectLabel(artifact.WorktreeRoot),
 		WorktreeID: jev.WorktreeID(artifact.WorktreeRoot), EventID: artifact.EventID,
@@ -107,12 +107,12 @@ func recordManualAssessment(home, artifactPath string, artifact attention.Artifa
 		assessment := result.Assessment
 		record.Assessment = &assessment
 		record.ContextID = assessment.ContextID
-		decision := decideHIL(&assessment)
+		decision := DecideHIL(&assessment)
 		record.Decision = &jev.TelemetryDecision{NeedsHuman: decision.NeedsHuman, Reason: decision.Reason, Policy: decision.Policy}
 		record.Status = "assessed"
 	} else {
 		record.Status = "unavailable"
-		record.Reason = telemetryErrorReason(callErr)
+		record.Reason = TelemetryErrorReason(callErr)
 	}
 	if _, err := jev.AppendTelemetry(home, record); err != nil {
 		fmt.Fprintf(os.Stderr, "jev-attention: quality telemetry unavailable: %v\n", err)
@@ -120,7 +120,7 @@ func recordManualAssessment(home, artifactPath string, artifact attention.Artifa
 	return jev.TelemetryPath(home)
 }
 
-func recordPreflightAssessment(home string, request jev.Preflight, task jev.TaskContext, result *jev.Result, callErr error) string {
+func RecordPreflightAssessment(home string, request jev.Preflight, task jev.TaskContext, result *jev.Result, callErr error) string {
 	record := jev.TelemetryRecord{
 		Kind: "assessment", Source: "preflight", Project: jev.ProjectLabel(request.WorktreeRoot),
 		WorktreeID: jev.WorktreeID(request.WorktreeRoot), EventID: request.RequestID,
@@ -135,12 +135,12 @@ func recordPreflightAssessment(home string, request jev.Preflight, task jev.Task
 		assessment := result.Assessment
 		record.Assessment = &assessment
 		record.ContextID = assessment.ContextID
-		decision := decideHIL(&assessment)
+		decision := DecideHIL(&assessment)
 		record.Decision = &jev.TelemetryDecision{NeedsHuman: decision.NeedsHuman, Reason: decision.Reason, Policy: decision.Policy}
 		record.Status = "assessed"
 	} else {
 		record.Status = "unavailable"
-		record.Reason = telemetryErrorReason(callErr)
+		record.Reason = TelemetryErrorReason(callErr)
 	}
 	if _, err := jev.AppendTelemetry(home, record); err != nil {
 		fmt.Fprintf(os.Stderr, "jev-attention: quality telemetry unavailable: %v\n", err)
@@ -148,7 +148,7 @@ func recordPreflightAssessment(home string, request jev.Preflight, task jev.Task
 	return jev.TelemetryPath(home)
 }
 
-func telemetryErrorReason(err error) string {
+func TelemetryErrorReason(err error) string {
 	if err == nil {
 		return ""
 	}
@@ -169,53 +169,13 @@ func telemetryErrorReason(err error) string {
 	}
 }
 
-func firstNonEmptyTelemetry(values ...string) string {
+func FirstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
 			return value
 		}
 	}
 	return ""
-}
-
-func runFeedback(feedbackPath, artifactPath, project string) error {
-	var input jev.FeedbackInput
-	if err := jev.ReadJSONValueStrict(feedbackPath, &input); err != nil {
-		return fmt.Errorf("read feedback: %w", err)
-	}
-	if strings.TrimSpace(artifactPath) != "" {
-		artifact, err := attention.Read(artifactPath)
-		if err != nil {
-			return fmt.Errorf("read attention artifact: %w", err)
-		}
-		if artifact.EventID != strings.TrimSpace(input.EventID) || artifact.StateRevision != strings.TrimSpace(input.StateRevision) {
-			return errors.New("feedback does not match the supplied attention artifact")
-		}
-		if input.ContextID != "" && artifact.Assessment != nil && input.ContextID != artifact.Assessment.ContextID {
-			return errors.New("feedback context does not match the supplied attention artifact")
-		}
-		if err := bindFeedbackIdentity(&input, artifact.WorktreeRoot); err != nil {
-			return err
-		}
-	} else if strings.TrimSpace(project) != "" {
-		root, err := filepath.Abs(project)
-		if err != nil {
-			return fmt.Errorf("resolve feedback project: %w", err)
-		}
-		if err := bindFeedbackIdentity(&input, root); err != nil {
-			return err
-		}
-	}
-	record, err := jev.NewFeedbackRecord(input, time.Now().UTC())
-	if err != nil {
-		return err
-	}
-	path, err := jev.AppendTelemetry(telemetryHome(), record)
-	if err != nil {
-		return err
-	}
-	printJSON(output{Status: "feedback_recorded", TelemetryPath: path, RequestID: record.RecordID})
-	return nil
 }
 
 // bindFeedbackIdentity makes the command-line project/artifact authoritative.
@@ -239,11 +199,55 @@ func bindFeedbackIdentity(input *jev.FeedbackInput, root string) error {
 	return nil
 }
 
-func runQualityReport(lookback time.Duration, projectFilter string) error {
-	home := telemetryHome()
+// Feedback records one agent quality-feedback document and returns where it
+// landed. Printing belongs to the command; the identity binding and the ledger
+// write belong here, so both `jev-attention --feedback` and `oberth jev
+// feedback` call exactly one implementation.
+func Feedback(feedbackPath, artifactPath, project string) (jev.FeedbackRecordResult, error) {
+	var input jev.FeedbackInput
+	if err := jev.ReadJSONValueStrict(feedbackPath, &input); err != nil {
+		return jev.FeedbackRecordResult{}, fmt.Errorf("read feedback: %w", err)
+	}
+	if strings.TrimSpace(artifactPath) != "" {
+		artifact, err := attention.Read(artifactPath)
+		if err != nil {
+			return jev.FeedbackRecordResult{}, fmt.Errorf("read attention artifact: %w", err)
+		}
+		if artifact.EventID != strings.TrimSpace(input.EventID) || artifact.StateRevision != strings.TrimSpace(input.StateRevision) {
+			return jev.FeedbackRecordResult{}, errors.New("feedback does not match the supplied attention artifact")
+		}
+		if input.ContextID != "" && artifact.Assessment != nil && input.ContextID != artifact.Assessment.ContextID {
+			return jev.FeedbackRecordResult{}, errors.New("feedback context does not match the supplied attention artifact")
+		}
+		if err := bindFeedbackIdentity(&input, artifact.WorktreeRoot); err != nil {
+			return jev.FeedbackRecordResult{}, err
+		}
+	} else if strings.TrimSpace(project) != "" {
+		root, err := filepath.Abs(project)
+		if err != nil {
+			return jev.FeedbackRecordResult{}, fmt.Errorf("resolve feedback project: %w", err)
+		}
+		if err := bindFeedbackIdentity(&input, root); err != nil {
+			return jev.FeedbackRecordResult{}, err
+		}
+	}
+	record, err := jev.NewFeedbackRecord(input, time.Now().UTC())
+	if err != nil {
+		return jev.FeedbackRecordResult{}, err
+	}
+	path, err := jev.AppendTelemetry(TelemetryHome(), record)
+	if err != nil {
+		return jev.FeedbackRecordResult{}, err
+	}
+	return jev.FeedbackRecordResult{Path: path, RecordID: record.RecordID}, nil
+}
+
+// QualityReport summarizes the local ledger over a lookback window.
+func QualityReport(lookback time.Duration, projectFilter string) (jev.QualityReport, error) {
+	home := TelemetryHome()
 	records, err := jev.ReadTelemetry(home)
 	if err != nil {
-		return fmt.Errorf("read quality telemetry: %w", err)
+		return jev.QualityReport{}, fmt.Errorf("read quality telemetry: %w", err)
 	}
 	var since time.Time
 	if lookback > 0 {
@@ -251,18 +255,11 @@ func runQualityReport(lookback time.Duration, projectFilter string) error {
 	}
 	filter := strings.TrimSpace(projectFilter)
 	if filepath.IsAbs(filter) || strings.ContainsRune(filter, filepath.Separator) {
-		root, absErr := filepath.Abs(filter)
-		if absErr == nil {
-			// Accept either the safe project label or its stable worktree hash.
-			if filter == "" {
-				filter = ""
-			} else {
-				filter = jev.ProjectLabel(root)
-			}
+		if root, absErr := filepath.Abs(filter); absErr == nil && filter != "" {
+			filter = jev.ProjectLabel(root)
 		}
 	}
 	report := jev.BuildQualityReport(records, since, filter, time.Now().UTC())
 	report.Source = jev.TelemetryPath(home)
-	printJSON(report)
-	return nil
+	return report, nil
 }
