@@ -151,6 +151,12 @@ oberth down --json
 也可以让已有 agent 起草，但 **draft 不等于授权**：只有你确认并执行 `init adopt` 后才落盘。
 完整字段、自动端口、依赖和健康检查见 [CLI 使用说明](docs/cli.md)。
 
+> **macOS 27 上的已知限制（v1.4.0 及更早）**：由 Go 等非 Apple 签名父进程启动时，`netstat`
+> 会以 0 退出却拿不到 TCP 表，因此 `up --wait`、`status` 与 `init` 可能报告
+> `observation_blind`——它表示「看不见」，不表示「没有服务在听」。出现时请到普通终端运行
+> `oberth doctor --only listener_observation` 确认。已在 `main` 修复（回退到 `lsof` 采集），
+> 该修复随下一个补丁版本发布，发布后本条移除。
+
 ## 每天使用的几条命令
 
 ```sh

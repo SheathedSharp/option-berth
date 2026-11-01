@@ -64,6 +64,11 @@ CLI 按 **agent 想做的事**分层，不按内部模块分：事实是「现�
 | 交接 | `workplace` · `agent` | 工作记录，以及把会话交给外部 coding agent |
 | 基础设施 | `daemon` · `serve` · `config` · `version` · `completion` · `doctor` | 后台采集器、安装配置与自检 |
 
+`oberth --help` 末尾另有一节 **For agents**，给的是读法而不是命令：一次会话开头的三条读
+（`status --json --brief`、`up --wait --json`、`logs <service> --once --json --run current
+--first-error`）。它不新增命令，也不改变上面这张层表；`status`、`up`、`logs` 自己的
+`--help` 里写着同一套读法的理由。
+
 ## 核心闭环
 
 ### oberth status [path] [--json] [--no-mark] [--only services] [--brief]
@@ -509,6 +514,11 @@ ambiguous。
 oberth init [--dry-run] [--json]
 ~~~
 
+监听扫描失败不中止 `init`：项目自身的声明、可复制的条目形状都还在。只有一句结论不能写，
+就是「当时没有服务在监听」。因此文件里的注释改成「监听未知」并带上观察错误码与下一步，
+stderr 也说明一次。这与 `status` 的规则一致：看不见不是没在听。部分可读的扫描照常列出
+读到的端口，注释说明这张表不完整。
+
 #### oberth init draft [agent] [--dry-run] [--json] [--progress]
 
 让配置中的本机 agent 起草一份清单。option-berth 不判断、不联网，也不直接改
@@ -534,6 +544,10 @@ oberth init [--dry-run] [--json]
   报告 observable / blind / bind_denied；CLI 模式下同时附带 daemon 的自证结果，daemon 失明也会失败。
   `--only daemon_build_matches` 对比 CLI 与 daemon 的构建提交；同版本号不代表同构建。
   缺少提交身份或状态 RPC 失败会报告 warn，不会标记匹配，也不会自动重启 daemon。
+  `--only agent_skill` 只读 `HOME` 下已安装的 skill（`~/.claude`、`~/.codex`、`~/.config/opencode`
+  的技能目录），比较各份 `SKILL.md` 的 `metadata.version`：没装是 `skip`，只有一份永远 `ok`，
+  多份版本不一致或软链指向已不存在的 checkout 才 `warn`。它不联网，不知道哪个版本是最新的，
+  因此不会把单独一份说成「落后」，也不安装、不更新、不修复 skill。
 - oberth events：供 agent 订阅本机 daemon 的状态变化。并行联调时 agent 应根据任务中明确给出的
   关系主动建立并消费订阅；人手执行此命令主要用于排障。`--worktree PATH_OR_ID` 会沿已有 Repo 关系包含同仓库
   的其他 worktree；`--repository REPO_ID` 是可重复的加法过滤器，`--workspace NAME` 加入显式的临时联调关系；

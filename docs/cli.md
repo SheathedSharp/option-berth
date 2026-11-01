@@ -71,6 +71,12 @@ command's options.
 | Handoff | `workplace` · `agent` | Work records, and handing the session to an external coding agent |
 | Infrastructure | `daemon` · `serve` · `config` · `version` · `completion` · `doctor` | Background collector, install configuration and self-check |
 
+`oberth --help` ends with a **For agents** section that gives a reading pattern, not commands: the
+three reads a session opens with (`status --json --brief`, `up --wait --json`,
+`logs <service> --once --json --run current --first-error`). It adds no command and does not change
+the layer table above; the `--help` of `status`, `up` and `logs` carries the reasoning behind the
+same reads.
+
 ## Core loop
 
 ### oberth status [path] [--json] [--no-mark] [--only services] [--brief]
@@ -616,6 +622,12 @@ human to decide. `--dry-run` only previews, `--json` is for machine reading.
 oberth init [--dry-run] [--json]
 ~~~
 
+A failed listener scan does not abort `init`: the project's own declarations and the shape of an entry
+to copy are still there. Only one conclusion may not be written — "nothing was listening". The comment
+says **listening unknown** instead, with the observation code and the next step, and stderr says so
+once. This is the same rule `status` follows: cannot-look is not nothing-is-listening. A partially
+readable scan still lists the ports it read and says the table is incomplete.
+
 #### oberth init draft [agent] [--dry-run] [--json] [--progress]
 
 Has the local agent from the configuration draft a manifest. option-berth does not judge, does not go
@@ -643,6 +655,7 @@ Commands outside the core loop are listed here by layer, and this document is th
   it reports observable / blind / bind_denied; in CLI mode it also carries the daemon's self-proof result, and a blind daemon also fails.
   `--only daemon_build_matches` compares the CLI's and the daemon's build commits; the same version number does not mean the same build.
   A missing commit identity or a failed status RPC reports warn, does not mark a match, and does not restart the daemon automatically.
+  `--only agent_skill` reads the skill already installed under `HOME` (`~/.claude`, `~/.codex`, and `~/.config/opencode` skill directories) and compares each copy's `SKILL.md` `metadata.version`: nothing installed is `skip`, a single copy is always `ok`, and only disagreeing versions or a symlink pointing at a checkout that no longer exists report `warn`. It does not go online, so it does not know which version is current and never calls one copy outdated; it does not install, update, or repair the skill.
 - oberth events: for agents to subscribe to this machine's daemon state changes. During parallel integration work an agent should actively establish and consume subscriptions according to the relationships explicitly given in the task; a human running this command is mainly troubleshooting. `--worktree PATH_OR_ID` includes the same repository's
   other worktrees along existing Repo relationships; `--repository REPO_ID` is a repeatable additive filter, and `--workspace NAME` joins an explicit temporary integration relationship;
   the first NDJSON line is directly `{"type":"state.snapshot",...}` and each following line is directly `{"type":"state.changed",...}`.
