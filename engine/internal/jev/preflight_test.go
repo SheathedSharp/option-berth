@@ -1,4 +1,4 @@
-package attention
+package jev
 
 import (
 	"encoding/json"
@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/sheathedsharp/option-berth/engine/internal/attention"
 )
 
 func writeStatusFixture(t *testing.T, home, root string, drafts []SnapshotDraft) string {
@@ -53,7 +55,7 @@ func TestPreflightBindsActionToFreshStatusAndFixedTarget(t *testing.T) {
 		t.Fatalf("identity/options missing: %+v", request)
 	}
 	for _, option := range request.Options {
-		if !KnownOptionID(option.ID) {
+		if !attention.KnownOptionID(option.ID) {
 			t.Fatalf("unknown option in preflight: %q", option.ID)
 		}
 	}
@@ -102,8 +104,8 @@ func TestPreflightAdoptRequiresCurrentDraftUnderBerthHome(t *testing.T) {
 	if err := os.WriteFile(draftPath, []byte("name: changed\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidatePreflight(request, snapshot, home, time.Now().UTC()); !errors.Is(err, ErrStale) {
-		t.Fatalf("changed draft err = %v, want ErrStale", err)
+	if err := ValidatePreflight(request, snapshot, home, time.Now().UTC()); !errors.Is(err, attention.ErrStale) {
+		t.Fatalf("changed draft err = %v, want attention.ErrStale", err)
 	}
 }
 
@@ -137,13 +139,13 @@ func TestPreflightAssessmentUsesFixedOptions(t *testing.T) {
 		t.Fatal(err)
 	}
 	needs := 0.95
-	if err := request.AttachAssessment(Assessment{NeedsHuman: &needs, NextOption: "start_service", Probabilities: map[string]float64{"start_service": 0.8, "inspect_manifest": 0.1, "continue_without_action": 0.1}}); err != nil {
+	if err := request.AttachAssessment(attention.Assessment{NeedsHuman: &needs, NextOption: "start_service", Probabilities: map[string]float64{"start_service": 0.8, "inspect_manifest": 0.1, "continue_without_action": 0.1}}); err != nil {
 		t.Fatal(err)
 	}
 	if request.Assessment == nil || request.Assessment.NextOption != "start_service" {
 		t.Fatalf("assessment = %+v", request.Assessment)
 	}
-	if err := request.AttachAssessment(Assessment{NextOption: "run_arbitrary_shell"}); err == nil {
+	if err := request.AttachAssessment(attention.Assessment{NextOption: "run_arbitrary_shell"}); err == nil {
 		t.Fatal("arbitrary preflight option was accepted")
 	}
 }

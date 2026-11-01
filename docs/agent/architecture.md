@@ -48,6 +48,23 @@ publishes only the current identity, `worktrees` only reads and enumerates, and 
 `down --worktree/--identity` uses the ledger's group name to stop services and hand reservations back.
 Deleting data remains a person's job.
 
+## Optional enrichment stays off the control path
+
+`internal/attention` holds only the deterministic part: fact input, event classification, derivation,
+atomic publication, expiry and reads. It does not open a network connection, read a key or call a model.
+`internal/jev` holds the optional enrichment: the Jev client, local settings, telemetry, preflight and
+the runner.
+
+`internal/cmd/attention_boundary_test.go` checks that boundary instead of leaving it as a comment:
+
+- `go list -deps` asserts that the dependency closure of `daemon`, `scanner`, `groups`, `ports` and
+  `servicefacts` contains no `internal/jev`;
+- `go/parser` asserts that the imports of `status`, `up`, `down`, `restart`, `logs` and `start`
+  contain none either.
+
+So with no key, no `jev.json` and an unreachable provider, the control path still works: `status`
+publishes the artifact derived from facts, and only an external process can attach an `assessment`.
+
 ## Read-only addresses and shared environment
 
 `workspace:` references create no new runtime facts, exactly like `machine:`. Addresses resolve only

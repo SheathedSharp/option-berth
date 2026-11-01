@@ -1,4 +1,4 @@
-package attention
+package jev
 
 // This file contains the optional, local quality ledger for the agent-side
 // attention adapter.  It is deliberately separate from runtime facts: records
@@ -19,6 +19,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/sheathedsharp/option-berth/engine/internal/attention"
 )
 
 const (
@@ -35,36 +37,36 @@ const (
 // no task text, log contents, API keys, shell commands, or absolute paths.
 // Project and worktree identifiers are either a short label or a one-way hash.
 type TelemetryRecord struct {
-	Schema            string             `json:"schema"`
-	RecordID          string             `json:"record_id"`
-	RecordedAt        string             `json:"recorded_at"`
-	Kind              string             `json:"kind"`   // assessment, feedback, lifecycle
-	Source            string             `json:"source"` // runner, agent, adapter
-	Project           string             `json:"project,omitempty"`
-	WorktreeID        string             `json:"worktree_id,omitempty"`
-	EventID           string             `json:"event_id,omitempty"`
-	StateRevision     string             `json:"state_revision,omitempty"`
-	ContextID         string             `json:"context_id,omitempty"`
-	SessionID         string             `json:"session_id,omitempty"`
-	EventKind         string             `json:"event_kind,omitempty"`
-	Service           string             `json:"service,omitempty"`
-	Status            string             `json:"status,omitempty"`
-	Reason            string             `json:"reason,omitempty"`
-	FirstSeen         string             `json:"first_seen,omitempty"`
-	FreshUntil        string             `json:"fresh_until,omitempty"`
-	LatencyMS         int64              `json:"latency_ms,omitempty"`
-	Cached            bool               `json:"cached,omitempty"`
-	Assessment        *Assessment        `json:"assessment,omitempty"`
-	Decision          *TelemetryDecision `json:"decision,omitempty"`
-	CandidateOptions  []string           `json:"candidate_options,omitempty"`
-	AuthorizedOptions []string           `json:"authorized_options,omitempty"`
-	Polls             int                `json:"polls,omitempty"`
-	EventsSeen        int                `json:"events_seen,omitempty"`
-	JevCalls          int                `json:"jev_calls,omitempty"`
-	CacheHits         int                `json:"cache_hits,omitempty"`
-	NoEventPolls      int                `json:"no_event_polls,omitempty"`
-	Unavailable       int                `json:"unavailable,omitempty"`
-	Feedback          *TelemetryFeedback `json:"feedback,omitempty"`
+	Schema            string                `json:"schema"`
+	RecordID          string                `json:"record_id"`
+	RecordedAt        string                `json:"recorded_at"`
+	Kind              string                `json:"kind"`   // assessment, feedback, lifecycle
+	Source            string                `json:"source"` // runner, agent, adapter
+	Project           string                `json:"project,omitempty"`
+	WorktreeID        string                `json:"worktree_id,omitempty"`
+	EventID           string                `json:"event_id,omitempty"`
+	StateRevision     string                `json:"state_revision,omitempty"`
+	ContextID         string                `json:"context_id,omitempty"`
+	SessionID         string                `json:"session_id,omitempty"`
+	EventKind         string                `json:"event_kind,omitempty"`
+	Service           string                `json:"service,omitempty"`
+	Status            string                `json:"status,omitempty"`
+	Reason            string                `json:"reason,omitempty"`
+	FirstSeen         string                `json:"first_seen,omitempty"`
+	FreshUntil        string                `json:"fresh_until,omitempty"`
+	LatencyMS         int64                 `json:"latency_ms,omitempty"`
+	Cached            bool                  `json:"cached,omitempty"`
+	Assessment        *attention.Assessment `json:"assessment,omitempty"`
+	Decision          *TelemetryDecision    `json:"decision,omitempty"`
+	CandidateOptions  []string              `json:"candidate_options,omitempty"`
+	AuthorizedOptions []string              `json:"authorized_options,omitempty"`
+	Polls             int                   `json:"polls,omitempty"`
+	EventsSeen        int                   `json:"events_seen,omitempty"`
+	JevCalls          int                   `json:"jev_calls,omitempty"`
+	CacheHits         int                   `json:"cache_hits,omitempty"`
+	NoEventPolls      int                   `json:"no_event_polls,omitempty"`
+	Unavailable       int                   `json:"unavailable,omitempty"`
+	Feedback          *TelemetryFeedback    `json:"feedback,omitempty"`
 }
 
 // TelemetryDecision is the adapter's actual conservative routing decision,
@@ -263,7 +265,7 @@ func NewFeedbackRecord(input FeedbackInput, now time.Time) (TelemetryRecord, err
 	if !validUserDecision(feedback.UserDecision) {
 		return TelemetryRecord{}, fmt.Errorf("attention: unsupported user_decision %q", feedback.UserDecision)
 	}
-	if feedback.ChosenOption != "" && !KnownOptionID(feedback.ChosenOption) {
+	if feedback.ChosenOption != "" && !attention.KnownOptionID(feedback.ChosenOption) {
 		return TelemetryRecord{}, fmt.Errorf("attention: unsupported chosen_option %q", feedback.ChosenOption)
 	}
 	if !validActionStatus(feedback.ActionStatus) {
@@ -326,7 +328,7 @@ func AppendTelemetry(home string, record TelemetryRecord) (string, error) {
 	if len(line)+1 > TelemetryMaxLineBytes {
 		return "", errors.New("attention: telemetry record is too large")
 	}
-	err = withArtifactLock(home, func() error {
+	err = attention.WithLock(home, func() error {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			return err
 		}
@@ -470,7 +472,7 @@ func normalizeTelemetry(record TelemetryRecord, now time.Time) (TelemetryRecord,
 		if !validUserDecision(record.Feedback.UserDecision) || !validActionStatus(record.Feedback.ActionStatus) {
 			return TelemetryRecord{}, errors.New("attention: invalid telemetry feedback value")
 		}
-		if record.Feedback.ChosenOption != "" && !KnownOptionID(record.Feedback.ChosenOption) {
+		if record.Feedback.ChosenOption != "" && !attention.KnownOptionID(record.Feedback.ChosenOption) {
 			return TelemetryRecord{}, fmt.Errorf("attention: unsupported chosen option %q", record.Feedback.ChosenOption)
 		}
 	}
@@ -480,8 +482,8 @@ func normalizeTelemetry(record TelemetryRecord, now time.Time) (TelemetryRecord,
 	return record, nil
 }
 
-func validateTelemetryAssessment(assessment Assessment) error {
-	if assessment.NextOption != "" && !KnownOptionID(assessment.NextOption) {
+func validateTelemetryAssessment(assessment attention.Assessment) error {
+	if assessment.NextOption != "" && !attention.KnownOptionID(assessment.NextOption) {
 		return fmt.Errorf("attention: unsupported telemetry next option %q", assessment.NextOption)
 	}
 	for name, value := range map[string]string{
@@ -498,7 +500,7 @@ func validateTelemetryAssessment(assessment Assessment) error {
 		}
 	}
 	for option, probability := range assessment.Probabilities {
-		if !KnownOptionID(option) || !finite(probability) {
+		if !attention.KnownOptionID(option) || !finite(probability) {
 			return fmt.Errorf("attention: invalid telemetry probability for %s", option)
 		}
 	}
@@ -519,7 +521,7 @@ func cleanOptionIDs(values []string) []string {
 	result := make([]string, 0, len(values))
 	for _, value := range values {
 		value = strings.TrimSpace(value)
-		if value != "" && KnownOptionID(value) && !seen[value] {
+		if value != "" && attention.KnownOptionID(value) && !seen[value] {
 			seen[value] = true
 			result = append(result, value)
 		}

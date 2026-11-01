@@ -1,4 +1,4 @@
-package attention
+package jev
 
 // Local Jev configuration is intentionally owned by the optional adapter and
 // the desktop settings page. Keeping it outside config.yaml means generic
