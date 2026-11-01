@@ -81,6 +81,40 @@ those defaults. `TYPESAFE_API_KEY`, `TYPESAFE_ENDPOINT`, and `TYPESAFE_MODEL`
 remain available for the native TypeSafe endpoint. Never put either provider's
 key in a repository file or a task-context JSON file.
 
+### An environment key is a secret, not consent
+
+A key in a shell profile does not mean the person asked for their runtime events
+to be sent to a provider. Only two things turn Jev on:
+
+| Declaration | Scope |
+|---|---|
+| `"enabled": true` in the owner-only `jev.json` | every process that shares this `BERTH_HOME` |
+| `BERTH_JEV=1` (`true`, `yes` or `on`) | this process only, for CI and one-off runs |
+
+Everything else only supplies settings: `OPENROUTER_API_KEY` / `TYPESAFE_API_KEY`
+and their endpoint/model variables pick the provider and the secret, and a
+pre-settings `decide.key` is a secret too — it can never switch Jev on. A
+`jev.json` that says `"enabled": false` is a decision the person already made, so
+an environment key does not override it. One resolution function decides all of
+this, and `--endpoint`, `--model`, `--timeout` and `--api-key` override the field
+they name without granting consent.
+
+This is a breaking change for a user who relied on the old implicit enable. Such
+a user gets one stderr line per process telling them to run `oberth jev enable`
+once (or set `BERTH_JEV=1` for the task); stdout stays a single JSON value.
+
+### Fixed reasons instead of provider text
+
+Every "Jev was not used" answer carries one of these codes, in the JSON output,
+the quality ledger and `oberth jev test`:
+
+`no_key`, `disabled`, `invalid_config`, `unauthorized`, `rate_limited`,
+`timeout`, `network`, `provider_error`, `bad_response`, `stale`.
+
+The code is what a caller branches on, so a person gets a next step written for
+that code rather than a provider's error body. A failure this client does not
+recognise is `provider_error`; it is never left blank.
+
 The macOS client's **Settings → Jev enhancement** page is the persistent setup path. It
 writes an owner-only file at `~/.option-berth/jev.json` (or
 `$BERTH_HOME/jev.json` in an isolated run):
@@ -98,13 +132,14 @@ writes an owner-only file at `~/.option-berth/jev.json` (or
 ```
 
 The adapter reads this file automatically, so an agent does not need to
-re-export a shell variable for every task. An explicit `OPENROUTER_API_KEY` or
-`TYPESAFE_API_KEY` still wins for CI and one-off isolation; `enabled: false`
-suppresses the local key. A pre-settings `~/.option-berth/decide.key` is read
-only when `jev.json` does not exist. The settings page may show that legacy key
-as a masked migration candidate; the adapter itself never copies it. The GUI
-masks the key and the adapter never puts it in attention artifacts, quality
-telemetry, or daemon output.
+re-export a shell variable for every task. This file is the only persistent
+consent: an explicit `OPENROUTER_API_KEY` or `TYPESAFE_API_KEY` supplies the key
+and selects the provider but does not enable Jev, and `enabled: false` keeps it
+off even when a key is present in the environment. A pre-settings
+`~/.option-berth/decide.key` is a secret only. The settings page may show that
+legacy key as a masked migration candidate; the adapter itself never copies it.
+The GUI masks the key and the adapter never puts it in attention artifacts,
+quality telemetry, or daemon output.
 
 For one-off use, `--task` and `--authorize inspect_logs,restart_service` can
 replace `--task-context`. `--authorize` (or `authorized_options` in the JSON)
@@ -115,7 +150,8 @@ intersection with the current event's candidates. An empty intersection is an
 error. `--endpoint`, `--model`, and `--timeout` override
 the selected provider's endpoint/model and the ten-second default timeout.
 For persistent local use, prefer the settings file; `--api-key` is provided
-for test harnesses and can expose a secret in process listings.
+for test harnesses and can expose a secret in process listings. None of these
+flags is consent: they change a resolved field, they do not enable Jev.
 
 ## Failure and privacy behavior
 
