@@ -553,6 +553,49 @@ was actually run on this machine; the CI matrix below the change is not implied.
   The baseline rerun that would produce that comparison was triggered on `main` but had not been
   approved when this was written.
 
+## Manual tier: real JVM / Node / Compose (2026-11-01)
+
+The large-stack fixtures use only the Python standard library on purpose. These three runs check
+that the engine also drives real toolchains; they are manual, not part of the standing matrix.
+
+Environment: macOS 27.2 / 26B123, arm64; OpenJDK 21.0.12; Maven 3.9; Node 26.9.0; Docker 29.8.2
+through colima, Compose 5.5.1. Every run used a throwaway `HOME` / `BERTH_HOME` under `/tmp` and a
+disposable git repository, and every daemon and container was removed at the end.
+
+- **Maven / JVM**: `pom.xml` with `maven-jar-plugin` and a `Main-Class`; the service is a
+  `com.sun.net.httpserver.HttpServer` answering `/health`. Manifest:
+  `prepare: mvn -q package -DskipTests`, `cmd: java -jar target/demo-1.0.0.jar`, `port: auto`,
+  `health: /health`. `oberth up --wait --wait-timeout 180s` reported
+  `prepare 2417ms`, `spawning 2418ms`, then `✓ api http://localhost:10870`; `status` showed
+  `running · listening on 10870`, `curl /health` returned `{"status":"ok"}`, and `down` stopped it
+  and released the claim. A first attempt failed with `no main manifest attribute`: the fixture was
+  wrong, not the engine.
+- **Node**: `npm run build` writes `dist/index.html` from `src/app.html`, `node server.js` serves it
+  with `/health`; `dist/` is gitignored. `up --wait` reported `prepare 440ms`, `spawning 443ms`,
+  `✓ web http://localhost:19670`. After editing `src/app.html`, `status` reported
+  `code changed since start (1 file)`; `down` + `up --wait` rebuilt and served the new content.
+- **Compose**: the checked-in [compose-stack](../../examples/compose-stack/README.md) example
+  (`postgres:16-alpine`, `port: auto`, `pg_isready` health command). Two environment preconditions
+  had to be met before it could run, and both are properties of this machine rather than of the
+  example: the isolated `HOME` hid `~/.docker/cli-plugins`, so `docker compose` degraded to
+  `docker` + an unknown subcommand (exit 125); and the colima context needs
+  `DOCKER_HOST=unix://$HOME/.colima/default/docker.sock`, without which the container client cannot
+  reach the API. With both handled, the container started and `compose exec -T db pg_isready`
+  answered `accepting connections`, but `oberth up --wait` still reported
+  `timed out after 30s waiting for db to be ready` while `status` showed `auto port unassigned`
+  and the container was healthy. **This one is an open gap**: the compose example does not reach
+  ready on this machine, and the cause has not been isolated (the health command and the container
+  both work when driven by hand). It is recorded as a failure, not as a pass.
+- **Not run**: the `native` arm on any of these three, and any real coding agent on them. They prove
+  the engine drives real toolchains; they say nothing about agent behaviour.
+
+## Client verification
+
+The macOS client's verification scope is not here: it lives with the client code in
+[option-berth-macos](https://github.com/SheathedSharp/option-berth-macos).
+This document describes only the engine's verification scope and platform boundaries; the two sides
+share one fact chain, but each side's checks prove only its own thing.
+
 ## Client verification
 
 The macOS client's verification scope is not here: it lives with the client code in
