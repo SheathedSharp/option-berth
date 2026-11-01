@@ -16,7 +16,7 @@ on:
         default: claude,codex,opencode,pi
         type: string
       suite:
-        description: Scenario suite (core, large, all)
+        description: Scenario suite (core, large, cold, all)
         required: true
         default: large
         type: string
@@ -151,6 +151,16 @@ jobs:
           # a broken service script fails this step instead of the matrix.
           python3 scripts/agent_eval.py --dry-run --suite large \
             --binary bin/oberth --out "$RUNNER_TEMP/agent-eval/preflight-large"
+      - name: Provision the cold-start fixtures
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A cold-start fixture builds a git repository and nothing else, so
+          # provisioning it is cheap; doing it here means a broken fixture fails
+          # before any drafting run spends model quota.
+          python3 scripts/agent_eval.py --dry-run --suite cold \
+            --binary bin/oberth --out "$RUNNER_TEMP/agent-eval/preflight-cold"
       - name: Publish the agent matrix
         id: matrix
         shell: bash

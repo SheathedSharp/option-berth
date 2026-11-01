@@ -589,6 +589,42 @@ disposable git repository, and every daemon and container was removed at the end
 - **Not run**: the `native` arm on any of these three, and any real coding agent on them. They prove
   the engine drives real toolchains; they say nothing about agent behaviour.
 
+## Cold start: no manifest (2026-11-02)
+
+The cold-start suite is the first one whose fixture has no `oberth.yaml`. This section records what
+was actually run on this machine (macOS 27, arm64, Go `1.27.1`); the CI matrix is not implied.
+
+- `python3 -m unittest scripts.agent_eval_cold_test`: 42 items passed. Coverage: registration and
+  suite selection, the three fixtures provision with no manifest and committed executable scripts, the
+  services read `PORT` rather than a baked-in number, the shipped tools really run (compose `setup`
+  renders the env file and `up` refuses before it exists, the node install step writes the member
+  marker, `run-npm` resolves a workspace script, `mvnw` refuses an unknown module and `-am` builds
+  both libraries), adoption is gated by `init adopt --dry-run` and never writes a rejected draft, and
+  the judge fails on a missing or empty manifest, an undeclared service, a port mismatch, a 503 health
+  answer, an edited tracked file and rewritten Git history while tolerating a manifest write.
+- `python3 -m unittest scripts.agent_eval_test`: 67 items passed — the existing suites are unchanged
+  by the new tier and by the `--suite` choice list.
+- `python3 scripts/agent_eval.py --list`: the three cold scenarios are listed under their own tier
+  alongside the 6 core and 8 large ones.
+- `python3 scripts/agent_eval.py --dry-run --suite cold --skip-preflight` (isolated `HOME` /
+  `BERTH_HOME` under `/tmp`): all three fixtures provisioned — compose 8 files, node 11, maven 12.
+- **Reference flow** against a `go build` of this worktree (`dev/unknown`, sha256 `6e157e0c…`):
+  `--execute --agents reference --suite cold --repeat 2 --require-comparable` produced 6 runs, all
+  `completed=True`, zero boundary violations, all rows comparable. Step counts 9 / 15 / 13 for
+  compose / node / maven, median duration 4.7s / 5.0s / 3.5s. The report carried the `cold_start`
+  block with 3 scenarios × 2 observations × 2 drafting runs = 12 agent calls.
+- The reference arm adopts a manifest it did not draft, so `adopted_by_harness` is 0 in that run and
+  the rows say nothing about draft quality. The harness-adoption path is covered by unit tests with a
+  scripted binary, not by a real drafting agent.
+- **Not run**: a real coding agent on any cold-start scenario, so there is no baseline success rate
+  yet and no threshold is set. The `native` control arm on cold start is also not run; whether an
+  agent without `oberth` can reach a healthy stack by reading these READMEs is untested. Both need the
+  `agent-eval` environment a human approves.
+- **Not run**: the CI path. The workflow gained a cold-fixture provisioning step and the `cold` value
+  for `suite`; neither has executed on a runner.
+- The `--binary` was a plain `go build`, which reports `version: dev`: the rows are self-consistent
+  but not comparable to a released build.
+
 ## Client verification
 
 The macOS client's verification scope is not here: it lives with the client code in

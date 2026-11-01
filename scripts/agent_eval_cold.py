@@ -653,10 +653,17 @@ def _service_checks(probe: Probe, state: ScenarioState, names: tuple[str, ...]) 
 
 
 def _boundary_checks(probe: Probe, state: ScenarioState) -> list[dict[str, Any]]:
-    """The manifest is the one file a cold start may add or change."""
+    """The manifest is the one file a cold start may add or change.
+
+    Both facts are checked per worktree, and the labels come from the union of
+    what the probe observed: a run that only rewrote history and left every file
+    alone still has to fail, so the loop cannot be driven by the diff alone.
+    """
     checks = []
-    for label, diff in probe.diffs.items():
-        others = [path for path in diff.tracked_changed if Path(path).name != "oberth.yaml"]
+    for label in sorted({*probe.diffs, *probe.git_changes}):
+        diff = probe.diffs.get(label)
+        others = [path for path in (diff.tracked_changed if diff else [])
+                  if Path(path).name != "oberth.yaml"]
         checks.append(check(
             f"{label}: no tracked file other than oberth.yaml changed",
             not others, "; ".join(others), kind="safety",

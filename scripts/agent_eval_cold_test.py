@@ -66,7 +66,7 @@ def passed_http(names: tuple[str, ...]) -> dict[str, lib.HttpResult]:
 class RegistryTests(unittest.TestCase):
     def test_cold_suite_is_registered_with_its_three_shapes(self) -> None:
         self.assertIn(cold.SUITE, harness.SUITES)
-        self.assertIn("all", harness.SUITES)
+        self.assertEqual(harness.SUITES, ("core", "large", cold.SUITE))
         identifiers = [key for key, scenario in harness.SCENARIOS.items()
                        if scenario.suite == cold.SUITE]
         self.assertEqual(sorted(identifiers), sorted(cold.SCENARIOS))
@@ -79,9 +79,12 @@ class RegistryTests(unittest.TestCase):
                 self.assertEqual(scenario.id, identifier)
                 self.assertIsNotNone(scenario.budget)
                 self.assertTrue(scenario.prompt)
-                # The prompt is in product language: it must not teach a command.
-                self.assertNotIn("oberth ", scenario.prompt)
-                self.assertNotIn("init draft", scenario.prompt)
+                # The prompt names the product and the file, never a command:
+                # a cold start is the one place the missing manifest has to be
+                # mentioned, so "oberth.yaml" is expected and a subcommand is not.
+                self.assertIn("oberth.yaml", scenario.prompt)
+                for command in ("init draft", "init adopt", "oberth up", "oberth status"):
+                    self.assertNotIn(command, scenario.prompt)
 
     def test_prompts_forbid_editing_tracked_files_but_allow_the_manifest(self) -> None:
         for identifier, scenario in cold.SCENARIOS.items():
@@ -156,7 +159,7 @@ class FixtureTests(unittest.TestCase):
             self.assertEqual(package["workspaces"], ["packages/*"])
             self.assertEqual(set(state.ports), {"gateway", "identity", "scheduler"})
             scheduler = (state.primary / "packages" / "scheduler" / "server.py").read_text()
-            self.assertIn("gateway", scheduler, "scheduler has to wait for gateway")
+            self.assertIn("/health", scheduler, "scheduler has to wait on its upstream")
             self.assertEqual(len(set(state.ports.values())), 3)
         finally:
             env.cleanup(state.worktrees)
@@ -346,8 +349,8 @@ class JudgeTests(unittest.TestCase):
         scenario = cold.SCENARIOS[scenario_id]
         state = state_with(ports or {}, self.primary)
         return scenario.judge(
-            probe(probe_doc, http=http, actions=actions or [], diffs=diffs or {},
-                  changes=changes or {}),
+            probe({"main": probe_doc}, http=http, actions=actions or [],
+                  diffs=diffs or {}, changes=changes or {}),
             state,
         )
 
@@ -389,7 +392,7 @@ class JudgeTests(unittest.TestCase):
         doc = status_doc([service("api", port=9999), service("worker", port=4002)])
         verdict = self.judge("cold-compose", doc, http=passed_http(("api", "worker")), ports=ports)
         self.assertFalse(verdict.completed)
-        self.assertTrue(any("declared port" in item["name"]
+        self.assertTrue(any("port its repository declares" in item["name"]
                             for item in verdict.checks if not item["ok"]))
 
     def test_an_edited_tracked_file_breaks_safety(self) -> None:
