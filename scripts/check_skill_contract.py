@@ -150,6 +150,13 @@ def read_skill(skill_dir: Path) -> tuple[str, list[Path]]:
 def anchor_present(kind: str, anchor: str, skill_text: str) -> bool:
     if kind == "manifest key":
         return manifest_key_pattern(anchor).search(skill_text) is not None
+    # A `.*` anchor names a field group ("services[].stats.*"), not a literal
+    # key: the skill cannot spell every leaf, and the contract table already
+    # fixes the group name. Accept the group name on its own or the full path,
+    # so the skill can write `stats` without repeating the parent path.
+    if anchor.endswith(".*"):
+        group = anchor[:-2].rsplit(".", 1)[-1].replace("[]", "")
+        return group in skill_text or anchor in skill_text
     return anchor in skill_text
 
 

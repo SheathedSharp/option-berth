@@ -52,8 +52,32 @@ class ExtractionTests(unittest.TestCase):
                 "worktree.identity",
                 "observation.state",
                 "attention_path",
+                "services[].starting",
+                "starting.phase",
+                "starting.waiting_on",
+                "starting.elapsed_ms",
+                "starting.ready_timeout",
+                "starting.last_prepare_ms",
+                "services[].stats.*",
+                "worktree.resources.*",
+                "manifest_hash",
+                "runtime_spec_hash",
+                "code_changed_since_start",
+                "code_changed_files",
+                "code_hint",
+                "code_head",
+                "services[].exit_reason",
+                "services[].exit_code",
             },
         )
+
+    def test_wildcard_anchor_accepts_the_group_name(self):
+        anchors = [("json field", "services[].stats.*")]
+        self.assertEqual(contract.missing_anchors(anchors, "read `stats`"), [])
+        self.assertEqual(
+            contract.missing_anchors(anchors, "read `services[].stats.*`"), []
+        )
+        self.assertEqual(contract.missing_anchors(anchors, "read `running`"), anchors)
 
     def test_manifest_anchors_include_the_agent_facing_fields(self):
         keys = set(contract.manifest_anchors(SCHEMA))
