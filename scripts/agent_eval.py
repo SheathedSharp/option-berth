@@ -62,14 +62,27 @@ from agent_eval_lib import (
     utc_stamp,
     write_report,
 )
+from agent_eval_cold import (
+    SCENARIOS as COLD_SCENARIOS,
+    SUITE as COLD_SUITE,
+    adopt_draft,
+    budget_note,
+    reference_draft,
+    write_reference_draft,
+)
 from agent_eval_scenarios import SCENARIOS as CORE_SCENARIOS, Scenario
 from agent_eval_stacks import LARGE_SCENARIOS
 
 # The core library proves the failure paths on small fixtures. The large library
 # keeps the same shape but puts the task inside a ten-service stack with slow
 # dependencies, a prepared frontend, a migrated database, portless workers and
-# parallel worktrees. They share one harness and one judge vocabulary.
-SCENARIOS: dict[str, Scenario] = {**CORE_SCENARIOS, **LARGE_SCENARIOS}
+# parallel worktrees. The cold library removes the manifest entirely, so the run
+# has to draft and adopt one first. They share one harness and one judge
+# vocabulary.
+SUITES = ("core", "large", COLD_SUITE)
+SCENARIOS: dict[str, Scenario] = {
+    **CORE_SCENARIOS, **LARGE_SCENARIOS, **COLD_SCENARIOS,
+}
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -329,9 +342,21 @@ def execute_run(
         state = scenario.setup(env)
         record["ports"] = state.ports
         before = {label: snapshot_tree(root) for label, root in state.worktrees.items()}
+        if scenario.suite == COLD_SUITE:
+            # A cold start has to draft, and the drafting run reads the agent
+            # settings from this run's own BERTH_HOME. The reference flow names
+            # the agent explicitly; a real provider is named the same way, from
+            # what the operator passed on the command line.
+            env.write_agent_config(agent_id, extras)
         if agent_id == "reference":
             if arm != ARM_OBERTH:
                 raise RuntimeError("the reference script is an oberth-arm self-check")
+            if scenario.suite == COLD_SUITE:
+                # The reference arm runs no model, so it cannot draft. It writes
+                # the manifest a person who knew this repository would write and
+                # lets the ordinary `init adopt` path take it from there; the
+                # drafting step stays uncovered by this arm, and the docs say so.
+                write_reference_draft(env, state, reference_draft(scenario.id))
             result = run_reference(scenario, state, env=env, out_dir=run_dir, timeout=args.timeout)
         else:
             staged_skill = None
@@ -343,6 +368,15 @@ def execute_run(
                 spec, cwd=state.primary, prompt=scenario.prompt, skill=staged_skill,
                 env=env, out_dir=run_dir, timeout=args.timeout, extras=extras,
             )
+        if scenario.suite == COLD_SUITE:
+            # The person who would adopt is the harness here, under one fixed
+            # rule: only a draft that already passes `init adopt --dry-run` is
+            # written, and the record says the harness did it.
+            adoption = adopt_draft(env, state)
+            record["drafted"] = adoption["drafted"]
+            record["adopted_by"] = adoption["adopted_by"]
+            if adoption.get("note"):
+                record["notes"].append(adoption["note"])
         time.sleep(0.4)
         actions = read_actions(env.actions_log)
         # A completed oberth call records a second result row with its stdout
@@ -354,6 +388,9 @@ def execute_run(
             diffs=probe.diffs, git_changes=probe.git_changes,
             statuses=probe.statuses, state=state, actions=call_actions, held=env.held,
             arm=arm,
+            # A cold start begins with no manifest; writing one is the task, so
+            # it is not the "the manifest was edited" violation it is elsewhere.
+            allow_manifest_write=scenario.suite == COLD_SUITE,
         )
         command_steps = len(call_actions)
         oberth_calls = sum(1 for action in call_actions if action.get("cmd") == "oberth")
@@ -465,6 +502,41 @@ def dry_run(scenario_ids: list[str], *, out_root: Path, binary: Path, args: argp
     return 1 if failures else 0
 
 
+def _cold_start_budget(runs: list[dict[str, Any]], scenario_ids: list[str]) -> dict[str, Any]:
+    """State what a cold-start observation actually costs, per scenario.
+
+    `init draft` runs a second agent process inside the run, so a cold-start row
+    is two provider calls, not one. The block is absent when the matrix has no
+    cold-start scenario, so a core or large report does not grow a field that
+    would always read zero.
+    """
+    cold = [run for run in runs if run.get("scenario") in COLD_SCENARIOS]
+    if not cold:
+        return {}
+    per_scenario = []
+    for scenario_id in [sid for sid in scenario_ids if sid in COLD_SCENARIOS]:
+        rows = [run for run in cold if run["scenario"] == scenario_id]
+        valid = [run for run in rows if run.get("status") != "harness_error"]
+        drafting = sum(1 for run in rows if run.get("drafted"))
+        per_scenario.append({
+            "scenario": scenario_id,
+            "observations": len(valid),
+            "drafting_runs": drafting,
+            "agent_calls": len(valid) + drafting,
+            "adopted_by_harness": sum(1 for run in rows if run.get("adopted_by") == "harness"),
+            "adopted_by_agent": sum(1 for run in rows if run.get("adopted_by") == "agent"),
+            "not_adopted": sum(1 for run in valid if not run.get("adopted_by")),
+        })
+    return {
+        **budget_note(),
+        "per_scenario": per_scenario,
+        "observations": sum(item["observations"] for item in per_scenario),
+        "drafting_runs": sum(item["drafting_runs"] for item in per_scenario),
+        "agent_calls": sum(item["agent_calls"] for item in per_scenario),
+        "adopted_by_harness": sum(item["adopted_by_harness"] for item in per_scenario),
+    }
+
+
 def merge_reports(paths: list[str], out_root: Path, *, require_comparable: bool) -> int:
     """Combine shard reports into one matrix.
 
@@ -529,6 +601,7 @@ def merge_reports(paths: list[str], out_root: Path, *, require_comparable: bool)
         "summary": summary,
         "comparison": compare_arms(summary),
         "notes": [f"merged from {len(shards)} shard report(s)"],
+        "cold_start": _cold_start_budget(runs, base.get("scenarios") or []),
     }
     json_path, md_path = write_report(out_root, payload)
     print(f"wrote {json_path}\nwrote {md_path}", file=sys.stderr)
@@ -559,8 +632,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="merge shard report.json files into one matrix (repeatable)")
     parser.add_argument("--agents", default="", help="comma list of agents, or all (claude,codex,opencode,pi)")
     parser.add_argument("--scenarios", default="all", help="comma list of scenario ids, or all")
-    parser.add_argument("--suite", default="all", choices=["all", "core", "large"],
-                        help="scenario suite: core failure paths, large ten-service stacks, or all")
+    parser.add_argument("--suite", default="all", choices=["all", *SUITES],
+                        help="scenario suite: core failure paths, large ten-service stacks, "
+                             "cold no-manifest starts, or all")
     parser.add_argument("--arms", default=ARM_OBERTH,
                         help="comma list of comparison arms: oberth,native (default: oberth)")
     parser.add_argument("--repeat", type=int, default=1, help="runs per scenario/agent (>=2 makes a row comparable)")
@@ -582,7 +656,7 @@ def main(argv: list[str] | None = None) -> int:
         return merge_reports(args.merge, out_root, require_comparable=args.require_comparable)
 
     if args.list:
-        for suite in ("core", "large"):
+        for suite in SUITES:
             print(f"{suite} scenarios:")
             for scenario in SCENARIOS.values():
                 if scenario.suite == suite:
@@ -750,6 +824,7 @@ def main(argv: list[str] | None = None) -> int:
         "summary": summary,
         "comparison": comparison,
         "notes": notes,
+        "cold_start": _cold_start_budget(runs, scenario_ids),
     }
     json_path, md_path = write_report(out_root, payload)
     print(f"wrote {json_path}\nwrote {md_path}", file=sys.stderr)
