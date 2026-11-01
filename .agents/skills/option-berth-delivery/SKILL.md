@@ -15,12 +15,12 @@ worktree、提交信息与用户确认的规则不变。
 ## 适用范围
 
 任何要进入 `main` 的改动：feat、fix、docs、ci、chore。发布提交、标签与发布脚本的原子
-推送是例外，见 [docs/releasing.md](../../../docs/releasing.md)。
+推送是例外，见 [docs/releasing.md](../../../docs/agent/releasing.md)。
 
 ## 流程
 
 1. 在独立 worktree 的主题分支上完成改动（全局 `git-workflow`）。本地验证按
-   [docs/develop.md](../../../docs/develop.md) 执行，输入与结果如实记录；没跑的检查写清楚。
+   [docs/develop.md](../../../docs/agent/develop.md) 执行，输入与结果如实记录；没跑的检查写清楚。
 2. 一个主题一个提交，提交信息按全局 `git-commit`（中文 `type(scope): 主题`）。
 3. 推送分支：
 
@@ -70,8 +70,8 @@ worktree、提交信息与用户确认的规则不变。
 - 不在本地合并后直接推送 `main`；这会绕过 PR 上的自动门槛。
 - 不 force push、不删除 `main`、不修改 required status checks 或分支保护。
 - 不把多个主题塞进一个 PR；不替用户决定合并时机。
-- 不把 PR 绿灯当成完整验收：发版前仍按 [docs/validation.md](../../../docs/validation.md)
-  与 [docs/releasing.md](../../../docs/releasing.md) 执行完整门槛。
+- 不把 PR 绿灯当成完整验收：发版前仍按 [docs/validation.md](../../../docs/agent/validation.md)
+  与 [docs/releasing.md](../../../docs/agent/releasing.md) 执行完整门槛。
 
 ## 发布
 
