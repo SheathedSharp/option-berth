@@ -147,11 +147,14 @@ func checks() []check {
 		{id: "db_ok", run: checkDBOK},
 		{id: "listener_observation", run: checkListenerObservation},
 	}
-	// No rows about agent integration (MCP registration, hooks, skill copies):
-	// option-berth does not wire itself into other tools' configuration.
+	// No rows about agent integration in the sense of wiring: option-berth does
+	// not register MCP servers, install hooks or write another tool's config.
+	// The skill row below reads only what a user already installed, and it says
+	// nothing about a single copy being current — see checkSkillVersion.
 	return append(list,
 		check{id: "project_config", run: checkProjectConfig},
 		check{id: "docker", run: checkDocker},
+		check{id: "agent_skill", run: checkSkillVersion},
 	)
 }
 
