@@ -56,3 +56,31 @@ func TestBriefCapsTheCandidateList(t *testing.T) {
 		t.Errorf("the brief should name what it left out:\n%s", b)
 	}
 }
+
+// A brief built from a failed scan must not tell the agent the project is idle.
+// The agent drafts against this text, and "nothing is listening" would make it
+// invent services to explain an absence that was never observed.
+func TestBriefSaysTheListenerTableIsUnknown(t *testing.T) {
+	b := Brief(Facts{
+		Root: "/x", Group: "x", CLI: "claude",
+		Observation: &groups.ListenerObservation{
+			State:  "blind",
+			Code:   "observation_blind",
+			Detail: "bound 127.0.0.1:51234 but\nthe table did not show it",
+		},
+	})
+	if strings.Contains(b, "Nothing is listening") {
+		t.Fatalf("a failed scan was told to the agent as an idle machine:\n%s", b)
+	}
+	for _, want := range []string{
+		"unknown, not idle",
+		"observation_blind",
+		// The detail is folded onto one line: it arrives from a collector's
+		// stderr and a newline would break the sentence it sits in.
+		"bound 127.0.0.1:51234 but the table did not show it",
+	} {
+		if !strings.Contains(b, want) {
+			t.Errorf("the brief does not mention %q:\n%s", want, b)
+		}
+	}
+}

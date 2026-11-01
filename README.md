@@ -159,6 +159,13 @@ For your own project, run `oberth init`, then review and edit the generated `obe
 draft one, but **a draft is not authorization**: nothing is written until you run `init adopt`.
 Fields, automatic ports, dependencies and health checks are in [the CLI guide](docs/cli.md).
 
+> **Known limitation on macOS 27 (v1.4.0 and earlier)**: when started from a parent process Apple
+> has not signed — Go, for instance — `netstat` exits 0 without printing the TCP table, so
+> `up --wait`, `status` and `init` can report `observation_blind`. That means "cannot look", not
+> "nothing is listening". Run `oberth doctor --only listener_observation` in a plain terminal to
+> confirm. Fixed on `main` (the collector falls back to `lsof`); the fix ships in the next patch
+> release, after which this note is removed.
+
 ## Everyday commands
 
 ```sh

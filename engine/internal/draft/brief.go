@@ -33,6 +33,12 @@ type Facts struct {
 	CLI string
 	// Candidates are the listeners a scan found inside the project.
 	Candidates []groups.Candidate
+	// Observation is the listener scan's verdict when it could not be trusted
+	// (nil when the scan read the table). With no candidates it is the
+	// difference between "nothing runs" and "this process cannot look", and a
+	// brief that states the first when the second is true sends the agent
+	// hunting for services that were never absent.
+	Observation *groups.ListenerObservation
 	// Existing is the current oberth.yaml, when there is one.
 	Existing string
 }
@@ -55,6 +61,16 @@ func Brief(f Facts) string {
 	}
 
 	if len(f.Candidates) == 0 {
+		if f.Observation.Unknown() {
+			// The engine could not read this machine's table. Saying "nothing is
+			// listening" would be a fact the engine does not have, and the agent
+			// would draft against a machine that was never observed.
+			fmt.Fprintf(&b, "\nThe listener scan could not read this machine's table (%s: %s),\n",
+				f.Observation.Code, strings.Join(strings.Fields(f.Observation.Detail), " "))
+			b.WriteString("so an empty listener list here means unknown, not idle. Find the\n" +
+				"services in the project's own files; do not conclude a service is down.\n")
+			return b.String()
+		}
 		b.WriteString("\nNothing is listening inside the project right now, so there is no scan\n" +
 			"evidence to start from. Find the services in the project's own files.\n")
 		return b.String()

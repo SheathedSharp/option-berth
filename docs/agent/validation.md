@@ -149,6 +149,47 @@ row"; when the probe can see its own listener it still reports observable, and t
   services run as the same user and are unaffected; when judging whether a foreign port is taken, read
   this difference as `docs/cli.md` describes.
 
+**`init` degrades when it cannot look (2026-11-02)**: a failed scan no longer aborts `init`. The
+starter's comment says listening is unknown, with the observation code and the next step, instead of
+"Nothing was listening". Run on this machine, macOS 27.2 / 26B123, in an isolated `HOME`/`BERTH_HOME`
+with a throwaway git project that runs no services:
+
+- With both collectors made blind — an `exit 0` `netstat` and an `exit 1` `lsof` on `PATH` —
+  `doctor --only listener_observation` reports
+  `blind (… netstat: exited 0 but printed no listening table; fallback: lsof: printed no listening
+  table (exit exit status 1))`. In the same process `init` exits 0 and writes `oberth.yaml` with the
+  comment `Listening inside this project is unknown` plus `observation_blind` and the hint, one
+  stderr note, and `init --dry-run --json` still parses.
+- With the shims removed (this machine then takes A1's netstat→lsof fallback) the comment returns to
+  `Nothing was listening inside this project` and stderr says `0 listening ports`.
+- `go test ./internal/cmd ./internal/groups ./internal/draft ./internal/daemon/...` passes. New
+  cases: `TestInitSaysListeningIsUnknownWhenTheScanFails`, `TestInitDraftRunsWhenTheScanIsBlind`,
+  `TestProposeSaysListeningIsUnknownWhenTheScanFailed`,
+  `TestProposePartialObservationKeepsTheIdleSentence`, `TestBriefSaysTheListenerTableIsUnknown`.
+
+**The whole chain on macOS 27 (2026-11-02)**: same machine, a fresh isolated `HOME`/`BERTH_HOME` (the
+example project lives inside `HOME`, because the engine refuses to start commands outside it), using
+the `oberth` built from this branch:
+
+- `doctor --only listener_observation` → `ok  this process can see its own listener`.
+- `serve --detach`, then `daemon status --json`'s `observation` →
+  `{"state":"observable","detail":"saw this process's listener on 127.0.0.1:60344 (pid 32739) via lsof"}`.
+  The `via lsof` in the detail is A1's collector source; no extra JSON field was added.
+- `examples/hello-worktree`: `up --wait --json` brings both services up as `started`/`ready` (api on
+  the assigned port 28031, the worker portless); `status --json` lists that port and reports
+  `observation: null` for a complete table; `down --json` stops both by pid/sigterm and reports
+  `released: 1`. A first attempt with the example outside `HOME` was refused with
+  `start_failed … is outside …/home` — the engine's existing safety boundary, not an observation
+  problem — and passed once moved inside. An earlier attempt that shared one `BERTH_HOME` with that
+  failed run made `down` report `ambiguous: group hello-worktree is shared by wt_…, wt_…`; a fresh
+  `BERTH_HOME` cleared it, so it was leftover registration of the same directory, not this change.
+- `go test -tags integration ./internal/scenario/... -count=1` → passes (63.6s).
+- `daemon stop` afterwards; temporary directories collected; no daemon left running.
+
+Not covered here: the daemon's `groups.init` is unchanged. Its scan failure already returns an
+`observation_*` RPC error rather than an empty table, so it has no "empty table read as idle" path,
+and the CLI's `oberth init` does not go through the daemon.
+
 **Real CLI smoke (2026-10-31)**: on this machine, `netstat` prints a table in an ordinary shell, but
 the stdout a Go process reads through a pipe is empty, so the daemon reports `observation_blind`. So
 that listener observation would not block the code identity chain, which is unrelated to it, a

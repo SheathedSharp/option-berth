@@ -505,6 +505,11 @@ ambiguous。
 oberth init [--dry-run] [--json]
 ~~~
 
+监听扫描失败不中止 `init`：项目自身的声明、可复制的条目形状都还在。只有一句结论不能写，
+就是「当时没有服务在监听」。因此文件里的注释改成「监听未知」并带上观察错误码与下一步，
+stderr 也说明一次。这与 `status` 的规则一致：看不见不是没在听。部分可读的扫描照常列出
+读到的端口，注释说明这张表不完整。
+
 #### oberth init draft [agent] [--dry-run] [--json] [--progress]
 
 让配置中的本机 agent 起草一份清单。option-berth 不判断、不联网，也不直接改
