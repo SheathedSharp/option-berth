@@ -3,13 +3,17 @@ name: Agent eval / real agent matrix
 # This workflow spends real model tokens. It is manual-only and runs behind the
 # `agent-eval` environment, which requires an explicit reviewer approval before
 # any step starts. Do not add pull_request, push or schedule triggers.
+#
+# The matrix is sharded by agent: `plan` validates the gateway and fixtures and
+# emits the agent list, each `matrix` job runs one agent, and `merge` joins the
+# shards into one report. Wall-clock is roughly one agent's run, not four.
 on:
   workflow_dispatch:
     inputs:
       agents:
         description: Comma list of agents (claude,codex,opencode,pi)
         required: true
-        default: claude
+        default: claude,codex,opencode,pi
         type: string
       suite:
         description: Scenario suite (core, large, all)
@@ -34,7 +38,7 @@ on:
       claude_model:
         description: Model for Claude Code through the Anthropic protocol
         required: true
-        default: cline-pass/deepseek-v4.1-flash-1017
+        default: deepseek-v4.1-flash
         type: string
       codex_model:
         description: Model for Codex through the Responses API
@@ -59,21 +63,25 @@ concurrency:
   group: agent-eval
   cancel-in-progress: false
 
+env:
+  AGENTS: ${{ inputs.agents }}
+  SUITE: ${{ inputs.suite }}
+  SCENARIOS: ${{ inputs.scenarios }}
+  ARMS: ${{ inputs.arms }}
+  REPEAT: ${{ inputs.repeat }}
+  CLAUDE_MODEL: ${{ inputs.claude_model }}
+  CODEX_MODEL: ${{ inputs.codex_model }}
+  OPENCODE_MODEL: ${{ inputs.opencode_model }}
+  PI_MODEL: ${{ inputs.pi_model }}
+
 jobs:
-  matrix:
-    name: Agent eval / real agents
+  plan:
+    name: Agent eval / plan
     runs-on: ubuntu-24.04
-    timeout-minutes: 360
+    timeout-minutes: 30
     environment: agent-eval
-    env:
-      AGENTS: ${{ inputs.agents }}
-      SUITE: ${{ inputs.suite }}
-      SCENARIOS: ${{ inputs.scenarios }}
-      ARMS: ${{ inputs.arms }}
-      REPEAT: ${{ inputs.repeat }}
-      CODEX_MODEL: ${{ inputs.codex_model }}
-      OPENCODE_MODEL: ${{ inputs.opencode_model }}
-      PI_MODEL: ${{ inputs.pi_model }}
+    outputs:
+      agents: ${{ steps.matrix.outputs.agents }}
     steps:
       - name: Check out the engine and the pinned skill
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -93,7 +101,6 @@ jobs:
         env:
           AGENT_GATEWAY_BASE_URL: ${{ secrets.LLM_GATEWAY_BASE_URL }}
           AGENT_GATEWAY_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
-          CLAUDE_MODEL: ${{ inputs.claude_model }}
           CODEX_MODEL: ${{ inputs.codex_model }}
           CHAT_MODEL: ${{ inputs.opencode_model }}
         run: |
@@ -109,11 +116,6 @@ jobs:
         with:
           go-version-file: source/engine/go.mod
           cache-dependency-path: source/engine/go.sum
-      - name: Set up Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v4
-        with:
-          node-version: '22.20.0'
-
       - name: Build the engine under test
         working-directory: source
         shell: bash
@@ -123,7 +125,78 @@ jobs:
           "$(go env GOPATH)/bin/mage" buildEngine
           mkdir -p "$RUNNER_TEMP/agent-eval"
           bin/oberth version --json | tee "$RUNNER_TEMP/agent-eval/build.json"
+      - name: Preflight listener observation
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/agent_eval.py --dry-run --scenarios missing-artifact \
+            --binary bin/oberth --out "$RUNNER_TEMP/agent-eval/preflight"
+      - name: Preflight the large-stack fixtures
+        working-directory: source
+        shell: bash
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          # Provision every large fixture before any model is called. The
+          # pre-start scenarios bring up ten to thirty real processes here, so
+          # a broken service script fails this step instead of the matrix.
+          python3 scripts/agent_eval.py --dry-run --suite large \
+            --binary bin/oberth --out "$RUNNER_TEMP/agent-eval/preflight-large"
+      - name: Publish the agent matrix
+        id: matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
 
+          agents = [part.strip() for part in os.environ["AGENTS"].split(",") if part.strip()]
+          print("agents=" + json.dumps(agents))
+          PY
+      - name: Share the built binary with the shards
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: agent-eval-binary
+          path: source/bin/oberth
+          retention-days: 1
+          if-no-files-found: error
+
+  matrix:
+    name: Agent eval / ${{ matrix.agent }}
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    environment: agent-eval
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: ${{ fromJSON(needs.plan.outputs.agents) }}
+    env:
+      AGENT: ${{ matrix.agent }}
+    steps:
+      - name: Check out the engine and the pinned skill
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          path: source
+      - name: Check out option-berth-skill
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: SheathedSharp/option-berth-skill
+          ref: main
+          path: option-berth-skill
+          persist-credentials: false
+      - name: Download the engine under test
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agent-eval-binary
+          path: source/bin
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v4
+        with:
+          node-version: '22.20.0'
       - name: Install coding agents
         shell: bash
         run: |
@@ -139,8 +212,8 @@ jobs:
             "$command" --version 2>&1 | sed -n '1p'
           done | tee "$RUNNER_TEMP/agent-eval/agent-versions.txt"
           node --version | tee -a "$RUNNER_TEMP/agent-eval/agent-versions.txt"
-
       - name: Align Codex tool exposure with the gateway contract
+        if: matrix.agent == 'codex'
         shell: bash
         run: |
           set -euo pipefail
@@ -171,7 +244,6 @@ jobs:
               json.dump(catalog, handle)
           print(f"prepared {path} with direct tools for {model}")
           PY
-
       - name: Write provider configuration
         shell: bash
         env:
@@ -229,28 +301,7 @@ jobs:
           (root / "pi" / "models.json").write_text(json.dumps(pi, indent=2) + "\n")
           PY
           echo "wrote $config_dir/opencode.json and $config_dir/pi/models.json"
-
-      - name: Preflight listener observation
-        working-directory: source
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 scripts/agent_eval.py --dry-run --scenarios missing-artifact \
-            --binary bin/oberth --out "$RUNNER_TEMP/agent-eval/preflight"
-
-      - name: Preflight the large-stack fixtures
-        working-directory: source
-        shell: bash
-        timeout-minutes: 20
-        run: |
-          set -euo pipefail
-          # Provision every large fixture before any model is called. The
-          # pre-start scenarios bring up ten to thirty real processes here, so
-          # a broken service script fails this step instead of the matrix.
-          python3 scripts/agent_eval.py --dry-run --suite large \
-            --binary bin/oberth --out "$RUNNER_TEMP/agent-eval/preflight-large"
-
-      - name: Run the scenario matrix
+      - name: Run this agent's scenario matrix
         working-directory: source
         shell: bash
         env:
@@ -276,7 +327,7 @@ jobs:
           fi
           args=(
             --execute
-            --agents "$AGENTS"
+            --agents "$AGENT"
             --suite "$SUITE"
             --scenarios "$SCENARIOS"
             --arms "$ARMS"
@@ -324,28 +375,69 @@ jobs:
             --require-comparable
           )
           python3 scripts/agent_eval.py "${args[@]}"
-
-      - name: Publish the matrix to the job summary
-        if: always()
-        shell: bash
-        run: |
-          report="$GITHUB_WORKSPACE/agent-eval-report/report.md"
-          if [ -f "$report" ]; then
-            cat "$report" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "No report.md was written." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Keep the report and gateway evidence
+      - name: Keep this shard
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: agent-eval-${{ github.run_id }}
+          name: agent-eval-shard-${{ matrix.agent }}
           path: |
             agent-eval-report/
             ${{ runner.temp }}/agent-eval/gateway-check.log
             ${{ runner.temp }}/agent-eval/codex-models.json
             ${{ runner.temp }}/agent-eval/build.json
             ${{ runner.temp }}/agent-eval/agent-versions.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+  merge:
+    name: Agent eval / merge
+    needs: matrix
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out the engine
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          path: source
+      - name: Download every shard
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: agent-eval-shard-*
+          path: shards
+          merge-multiple: false
+      - name: Merge the shards into one matrix
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t reports < <(find "$GITHUB_WORKSPACE/shards" -name report.json -print | sort)
+          if [ "${#reports[@]}" -eq 0 ]; then
+            echo "No shard report.json was produced." >&2
+            exit 1
+          fi
+          args=(--merge)
+          for report in "${reports[@]}"; do
+            args+=("$report")
+          done
+          args+=(--out "$GITHUB_WORKSPACE/agent-eval-merged" --require-comparable)
+          python3 scripts/agent_eval.py "${args[@]}"
+      - name: Publish the merged matrix to the job summary
+        if: always()
+        shell: bash
+        run: |
+          report="$GITHUB_WORKSPACE/agent-eval-merged/report.md"
+          if [ -f "$report" ]; then
+            cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No merged report.md was written." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Keep the merged report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: agent-eval-merged-${{ github.run_id }}
+          path: agent-eval-merged/
           if-no-files-found: warn
           retention-days: 30

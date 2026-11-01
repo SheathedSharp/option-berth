@@ -241,7 +241,7 @@ environment 里放两个 secret，不放到仓库级：
 
 | agent | 协议 | 默认模型 |
 |---|---|---|
-| Claude Code | Anthropic Messages | `cline-pass/deepseek-v4.1-flash-1017` |
+| Claude Code | Anthropic Messages | `deepseek-v4.1-flash` |
 | Codex | Responses SSE（直连） | `gpt-6-luna` |
 | OpenCode | OpenAI Chat Completions | `step-5-preview` |
 | Pi | OpenAI Chat Completions | `space-bunny` |
@@ -268,18 +268,24 @@ workflow 的输入：
 
 | 输入 | 默认 | 说明 |
 |---|---|---|
-| `agents` | `claude` | 跑哪些 provider；`all` 为四个 |
+| `agents` | `claude,codex,opencode,pi` | 跑哪些 provider |
 | `suite` | `large` | `core` / `large` / `all` |
 | `arms` | `oberth,native` | 产品臂 + 对照臂 |
 | `scenarios` | `all` | 也可点名具体 id |
 | `repeat` | `2` | 少于 2 不可比 |
 
-workflow 的顺序是：检查 gateway 协议、构建带发布身份的 `oberth`、安装 agent、
-写 provider 配置、跑核心 preflight（观察不到监听就退出 2）、跑大项目夹具 preflight
-（真实启动整栈，失败在消耗模型额度之前暴露），再跑
-`--execute --suite … --arms … --repeat 2 --require-comparable`。报告、gateway 检查日志、
-构建身份和 agent 版本作为 artifact 保留 30 天，`report.md` 同时写入 job summary；
-其中包含「oberth vs native」对照表。
+workflow 分三个 job：
+
+1. **`plan`**：检查 gateway 协议、构建 `oberth`、跑核心与大项目夹具 preflight
+   （观察不到监听就退出 2），并把 `agents` 输入转成矩阵；
+2. **`matrix`**：**每个 agent 一个 runner 并行**，只跑自己的场景，上传
+   `agent-eval-shard-<agent>`；一个 agent 失败不影响其他 agent；
+3. **`merge`**：下载所有 shard，用 `--merge` 合成一张表；它要求所有 shard 的构建、
+   skill、场景和 repeat 完全一致，否则拒绝合并。
+
+并发后墙钟时间约等于**一个 agent 的耗时**，而不是四个相加。`report.md`（含
+「oberth vs native」对照表）写入 job summary，合并报告与各 shard 作为 artifact
+保留 30 天。
 
 运行方式：Actions → **Agent eval / real agent matrix** → Run workflow → 选择分支
 （environment 只允许 `main`）→ 在 environment 审批提示中批准。没有批准的运行不会
