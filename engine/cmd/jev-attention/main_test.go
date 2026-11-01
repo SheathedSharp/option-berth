@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/jev"
 )
 
 func TestLoadContextRequiresExplicitTaskAndAuthorization(t *testing.T) {
@@ -46,7 +47,7 @@ func TestLoadContextFileAndFlagOverrides(t *testing.T) {
 }
 
 func TestSafeReasonDoesNotExposeProviderDetails(t *testing.T) {
-	if got := safeReason(attention.ErrUnavailable); got != "Jev unavailable" {
+	if got := safeReason(jev.ErrUnavailable); got != "Jev unavailable" {
 		t.Fatalf("reason = %q", got)
 	}
 }
@@ -58,10 +59,10 @@ func TestOpenRouterEnvironmentSelectsJevDefaults(t *testing.T) {
 	t.Setenv("TYPESAFE_API_KEY", "typesafe-test-key")
 	t.Setenv("TYPESAFE_ENDPOINT", "https://typesafe.example/systemone")
 	t.Setenv("TYPESAFE_MODEL", "jev-test")
-	if got := defaultEndpoint(); got != attention.DefaultOpenRouterEndpoint {
+	if got := defaultEndpoint(); got != jev.DefaultOpenRouterEndpoint {
 		t.Fatalf("endpoint = %q, want OpenRouter decisions endpoint", got)
 	}
-	if got := defaultModel(); got != attention.DefaultOpenRouterModel {
+	if got := defaultModel(); got != jev.DefaultOpenRouterModel {
 		t.Fatalf("model = %q, want pinned OpenRouter Jev model", got)
 	}
 	if got := defaultAPIKey(); got != "openrouter-test-key" {
@@ -146,7 +147,7 @@ func TestLegacyJevKeyRemainsAvailableWithoutNewSettings(t *testing.T) {
 	if got := defaultAPIKey(); got != "legacy-key" {
 		t.Fatalf("legacy api key = %q", got)
 	}
-	if got := defaultEndpoint(); got != attention.DefaultOpenRouterEndpoint {
+	if got := defaultEndpoint(); got != jev.DefaultOpenRouterEndpoint {
 		t.Fatalf("legacy endpoint = %q", got)
 	}
 }
@@ -190,14 +191,14 @@ func TestRunPreflightWritesFactRequestWhenJevUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("BERTH_HOME", home)
-	if err := runPreflight(statusPath, "", "restart_service", "api", "", "ask before restart", false, attention.DefaultJevEndpoint, attention.DefaultJevModel, "", time.Second, attention.TaskContext{}); err != nil {
+	if err := runPreflight(statusPath, "", "restart_service", "api", "", "ask before restart", false, jev.DefaultJevEndpoint, jev.DefaultJevModel, "", time.Second, jev.TaskContext{}); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := filepath.Glob(filepath.Join(home, "attention", "preflight", "*.json"))
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("preflight entries = %v, err=%v", entries, err)
 	}
-	request, err := attention.ReadPreflight(entries[0])
+	request, err := jev.ReadPreflight(entries[0])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,11 +208,11 @@ func TestRunPreflightWritesFactRequestWhenJevUnavailable(t *testing.T) {
 }
 
 func TestPreflightContextOffersOnlyFixedRequestOptions(t *testing.T) {
-	request := attention.Preflight{
-		Intent:  attention.Intent{Action: "restart_service"},
+	request := jev.Preflight{
+		Intent:  jev.Intent{Action: "restart_service"},
 		Options: []attention.Option{{ID: "restart_service"}, {ID: "inspect_manifest"}, {ID: "continue_without_action"}},
 	}
-	ctx := preflightTaskContext(request, attention.TaskContext{Task: "prepare the integration test"})
+	ctx := preflightTaskContext(request, jev.TaskContext{Task: "prepare the integration test"})
 	if ctx.Task == "" || len(ctx.AuthorizedOptions) != len(request.Options) {
 		t.Fatalf("preflight context = %+v", ctx)
 	}
@@ -229,11 +230,11 @@ func TestPreflightContextOffersOnlyFixedRequestOptions(t *testing.T) {
 }
 
 func TestPreflightTaskContextIncludesIntentWithoutExceedingBound(t *testing.T) {
-	request := attention.Preflight{
-		Intent: attention.Intent{Action: "restart_service", UserPermission: "ask first"},
-		Target: attention.PreflightTarget{Project: "demo", Service: "api"},
+	request := jev.Preflight{
+		Intent: jev.Intent{Action: "restart_service", UserPermission: "ask first"},
+		Target: jev.PreflightTarget{Project: "demo", Service: "api"},
 	}
-	got := preflightTaskContext(request, attention.TaskContext{Task: string(make([]byte, 4000))})
+	got := preflightTaskContext(request, jev.TaskContext{Task: string(make([]byte, 4000))})
 	if len([]byte(got.Task)) > 2000 || got.AuthorizedOptions[0] != "restart_service" {
 		t.Fatalf("task context = %+v", got)
 	}

@@ -6,19 +6,19 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/jev"
 )
 
 func TestBindFeedbackIdentityUsesCanonicalProject(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "example-worker")
-	input := attention.FeedbackInput{Project: "example-worker", WorktreeID: attention.WorktreeID(root)}
+	input := jev.FeedbackInput{Project: "example-worker", WorktreeID: jev.WorktreeID(root)}
 	if err := bindFeedbackIdentity(&input, root); err != nil {
 		t.Fatal(err)
 	}
-	if input.Project != "example-worker" || input.WorktreeID != attention.WorktreeID(root) {
+	if input.Project != "example-worker" || input.WorktreeID != jev.WorktreeID(root) {
 		t.Fatalf("identity = %+v", input)
 	}
-	input.WorktreeID = attention.WorktreeID(filepath.Join(t.TempDir(), "other"))
+	input.WorktreeID = jev.WorktreeID(filepath.Join(t.TempDir(), "other"))
 	if err := bindFeedbackIdentity(&input, root); err == nil {
 		t.Fatal("mismatched worktree was accepted")
 	}
@@ -32,8 +32,8 @@ func TestRunFeedbackBindsProjectAndRejectsMismatch(t *testing.T) {
 	}
 	t.Setenv("BERTH_HOME", home)
 	feedbackPath := filepath.Join(t.TempDir(), "feedback.json")
-	data, err := json.Marshal(attention.FeedbackInput{
-		Schema:  attention.FeedbackSchema,
+	data, err := json.Marshal(jev.FeedbackInput{
+		Schema:  jev.FeedbackSchema,
 		EventID: "event-1", StateRevision: "revision-1", HumanNeeded: boolPtr(true),
 	})
 	if err != nil {
@@ -45,14 +45,14 @@ func TestRunFeedbackBindsProjectAndRejectsMismatch(t *testing.T) {
 	if err := runFeedback(feedbackPath, "", root); err != nil {
 		t.Fatal(err)
 	}
-	records, err := attention.ReadTelemetry(home)
+	records, err := jev.ReadTelemetry(home)
 	if err != nil || len(records) != 1 {
 		t.Fatalf("records = %+v, err=%v", records, err)
 	}
-	if records[0].Project != "example-worker" || records[0].WorktreeID != attention.WorktreeID(root) {
+	if records[0].Project != "example-worker" || records[0].WorktreeID != jev.WorktreeID(root) {
 		t.Fatalf("record identity = %+v", records[0])
 	}
-	bad := attention.FeedbackInput{Schema: attention.FeedbackSchema, EventID: "event-2", StateRevision: "revision-2", WorktreeID: attention.WorktreeID(filepath.Join(t.TempDir(), "other")), HumanNeeded: boolPtr(true)}
+	bad := jev.FeedbackInput{Schema: jev.FeedbackSchema, EventID: "event-2", StateRevision: "revision-2", WorktreeID: jev.WorktreeID(filepath.Join(t.TempDir(), "other")), HumanNeeded: boolPtr(true)}
 	badData, _ := json.Marshal(bad)
 	if err := os.WriteFile(feedbackPath, badData, 0o600); err != nil {
 		t.Fatal(err)

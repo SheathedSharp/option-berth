@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/jev"
 )
 
 type output struct {
@@ -115,7 +116,7 @@ func main() {
 		home := telemetryHome()
 		sessionID := newSessionID(*project)
 		appendLifecycleTelemetry(home, *project, "subscribed", sessionID, nil)
-		stats, err := runSubscribeWithStats(subscriptionContext, *oberth, *project, *interval, attention.Client{
+		stats, err := runSubscribeWithStats(subscriptionContext, *oberth, *project, *interval, jev.Client{
 			Endpoint: *endpoint, Model: *model, APIKey: *apiKey, Timeout: *timeout,
 		}, ctx, readRunnerStatus, sessionID, func(result runnerOutput, latency time.Duration) {
 			appendRunnerTelemetry(home, *project, ctx, result, nil, "subscription", latency)
@@ -135,7 +136,7 @@ func main() {
 			fail(contextErr.Error())
 		}
 		started := time.Now()
-		result, err := runAuto(context.Background(), *oberth, *project, attention.Client{
+		result, err := runAuto(context.Background(), *oberth, *project, jev.Client{
 			Endpoint: *endpoint, Model: *model, APIKey: *apiKey, Timeout: *timeout,
 		}, ctx, readRunnerStatus)
 		telemetryPath := appendRunnerTelemetry(telemetryHome(), *project, ctx, result, err, "runner", time.Since(started))
@@ -167,22 +168,22 @@ func main() {
 	if err != nil {
 		fail(err.Error())
 	}
-	result, err := (attention.Client{
+	result, err := (jev.Client{
 		Endpoint: *endpoint,
 		APIKey:   *apiKey,
 		Model:    *model,
 		Timeout:  *timeout,
 	}).Evaluate(context.Background(), artifact, ctx)
 	if err != nil {
-		if errors.Is(err, attention.ErrUnavailable) || errors.Is(err, attention.ErrStale) {
+		if errors.Is(err, jev.ErrUnavailable) || errors.Is(err, jev.ErrStale) {
 			telemetryPath := recordManualAssessment(telemetryHome(), *attentionPath, artifact, ctx, nil, err, "manual")
 			printJSON(output{Status: "unavailable", AttentionPath: *attentionPath, TelemetryPath: telemetryPath, Reason: safeReason(err)})
 			return
 		}
 		fail(err.Error())
 	}
-	if err := attention.Persist(*attentionPath, artifact, result); err != nil {
-		if errors.Is(err, attention.ErrStale) {
+	if err := jev.Persist(*attentionPath, artifact, result); err != nil {
+		if errors.Is(err, jev.ErrStale) {
 			printJSON(output{Status: "unavailable", AttentionPath: *attentionPath, Reason: "artifact became stale"})
 			return
 		}
@@ -199,27 +200,27 @@ func newSessionID(project string) string {
 	return hex.EncodeToString(sum[:])[:20]
 }
 
-func runPreflight(statusPath, preflightPath, action, service, draftGroup, permission string, userApproved bool, endpoint, model, apiKey string, timeout time.Duration, task attention.TaskContext) error {
+func runPreflight(statusPath, preflightPath, action, service, draftGroup, permission string, userApproved bool, endpoint, model, apiKey string, timeout time.Duration, task jev.TaskContext) error {
 	home := strings.TrimSpace(os.Getenv("BERTH_HOME"))
 	if home == "" {
 		return errors.New("preflight requires BERTH_HOME so its derived request has an owned destination")
 	}
-	var request attention.Preflight
+	var request jev.Preflight
 	var err error
 	if strings.TrimSpace(preflightPath) != "" {
-		request, err = attention.ReadPreflight(preflightPath)
+		request, err = jev.ReadPreflight(preflightPath)
 		if err != nil {
 			return err
 		}
-		if filepath.Clean(preflightPath) != filepath.Clean(attention.PreflightPath(home, request)) {
+		if filepath.Clean(preflightPath) != filepath.Clean(jev.PreflightPath(home, request)) {
 			return errors.New("preflight path is not the current BERTH_HOME derived request")
 		}
 		if strings.TrimSpace(statusPath) != "" {
-			snapshot, readErr := attention.ReadStatusSnapshot(statusPath, time.Time{})
+			snapshot, readErr := jev.ReadStatusSnapshot(statusPath, time.Time{})
 			if readErr != nil {
 				return readErr
 			}
-			if err := attention.ValidatePreflight(request, snapshot, home, time.Time{}); err != nil {
+			if err := jev.ValidatePreflight(request, snapshot, home, time.Time{}); err != nil {
 				return err
 			}
 		}
@@ -227,11 +228,11 @@ func runPreflight(statusPath, preflightPath, action, service, draftGroup, permis
 		if strings.TrimSpace(action) == "" {
 			return errors.New("--action is required with --status")
 		}
-		snapshot, readErr := attention.ReadStatusSnapshot(statusPath, time.Time{})
+		snapshot, readErr := jev.ReadStatusSnapshot(statusPath, time.Time{})
 		if readErr != nil {
 			return readErr
 		}
-		request, err = attention.DerivePreflight(snapshot, attention.Intent{
+		request, err = jev.DerivePreflight(snapshot, jev.Intent{
 			Action: action, Service: service, DraftGroup: draftGroup,
 			UserPermission: permission, UserApproved: userApproved,
 		}, home, time.Time{})
@@ -239,7 +240,7 @@ func runPreflight(statusPath, preflightPath, action, service, draftGroup, permis
 			return err
 		}
 	}
-	path, err := attention.WritePreflight(home, request)
+	path, err := jev.WritePreflight(home, request)
 	if err != nil {
 		return err
 	}
@@ -252,9 +253,9 @@ func runPreflight(statusPath, preflightPath, action, service, draftGroup, permis
 		task.Task = "Evaluate whether this proposed worktree action needs the user's choice"
 	}
 	task = preflightTaskContext(request, task)
-	result, callErr := (attention.Client{Endpoint: endpoint, APIKey: apiKey, Model: model, Timeout: timeout}).Evaluate(context.Background(), artifact, task)
+	result, callErr := (jev.Client{Endpoint: endpoint, APIKey: apiKey, Model: model, Timeout: timeout}).Evaluate(context.Background(), artifact, task)
 	if callErr != nil {
-		if errors.Is(callErr, attention.ErrUnavailable) || errors.Is(callErr, attention.ErrStale) {
+		if errors.Is(callErr, jev.ErrUnavailable) || errors.Is(callErr, jev.ErrStale) {
 			telemetryPath := recordPreflightAssessment(home, request, task, nil, callErr)
 			printJSON(output{Status: "unavailable", PreflightPath: path, TelemetryPath: telemetryPath, RequestID: request.RequestID, Reason: safeReason(callErr)})
 			return nil
@@ -264,7 +265,7 @@ func runPreflight(statusPath, preflightPath, action, service, draftGroup, permis
 	if err := request.AttachAssessment(result.Assessment); err != nil {
 		return err
 	}
-	if _, err := attention.WritePreflight(home, request); err != nil {
+	if _, err := jev.WritePreflight(home, request); err != nil {
 		return err
 	}
 	telemetryPath := recordPreflightAssessment(home, request, task, &result, nil)
@@ -272,7 +273,7 @@ func runPreflight(statusPath, preflightPath, action, service, draftGroup, permis
 	return nil
 }
 
-func preflightTaskContext(request attention.Preflight, task attention.TaskContext) attention.TaskContext {
+func preflightTaskContext(request jev.Preflight, task jev.TaskContext) jev.TaskContext {
 	base := strings.TrimSpace(task.Task)
 	target := request.Target.Service
 	if target == "" {
@@ -303,13 +304,13 @@ func preflightTaskContext(request attention.Preflight, task attention.TaskContex
 	return task
 }
 
-func loadContext(path, task, authorized string) (attention.TaskContext, error) {
-	var result attention.TaskContext
+func loadContext(path, task, authorized string) (jev.TaskContext, error) {
+	var result jev.TaskContext
 	var err error
 	if strings.TrimSpace(path) != "" {
-		result, err = attention.ReadTaskContext(path)
+		result, err = jev.ReadTaskContext(path)
 		if err != nil {
-			return attention.TaskContext{}, err
+			return jev.TaskContext{}, err
 		}
 	}
 	if strings.TrimSpace(task) != "" {
@@ -341,46 +342,46 @@ func envOr(name, fallback string) string {
 
 func defaultEndpoint() string {
 	if strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")) != "" {
-		return envOr("OPENROUTER_ENDPOINT", attention.DefaultOpenRouterEndpoint)
+		return envOr("OPENROUTER_ENDPOINT", jev.DefaultOpenRouterEndpoint)
 	}
 	if strings.TrimSpace(os.Getenv("TYPESAFE_API_KEY")) != "" {
-		return envOr("TYPESAFE_ENDPOINT", attention.DefaultJevEndpoint)
+		return envOr("TYPESAFE_ENDPOINT", jev.DefaultJevEndpoint)
 	}
 	if cfg, present, valid := localJevConfig(); present {
 		if !valid || !cfg.Enabled {
-			return envOr("TYPESAFE_ENDPOINT", attention.DefaultJevEndpoint)
+			return envOr("TYPESAFE_ENDPOINT", jev.DefaultJevEndpoint)
 		}
 		if cfg.Provider == "openrouter" {
-			return envOr("OPENROUTER_ENDPOINT", firstNonEmpty(cfg.Endpoint, attention.DefaultOpenRouterEndpoint))
+			return envOr("OPENROUTER_ENDPOINT", firstNonEmpty(cfg.Endpoint, jev.DefaultOpenRouterEndpoint))
 		}
-		return envOr("TYPESAFE_ENDPOINT", firstNonEmpty(cfg.Endpoint, attention.DefaultJevEndpoint))
+		return envOr("TYPESAFE_ENDPOINT", firstNonEmpty(cfg.Endpoint, jev.DefaultJevEndpoint))
 	}
-	if key, err := attention.ReadLegacyJevKey(); err == nil && key != "" {
-		return attention.DefaultOpenRouterEndpoint
+	if key, err := jev.ReadLegacyJevKey(); err == nil && key != "" {
+		return jev.DefaultOpenRouterEndpoint
 	}
-	return envOr("TYPESAFE_ENDPOINT", attention.DefaultJevEndpoint)
+	return envOr("TYPESAFE_ENDPOINT", jev.DefaultJevEndpoint)
 }
 
 func defaultModel() string {
 	if strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")) != "" {
-		return envOr("OPENROUTER_MODEL", attention.DefaultOpenRouterModel)
+		return envOr("OPENROUTER_MODEL", jev.DefaultOpenRouterModel)
 	}
 	if strings.TrimSpace(os.Getenv("TYPESAFE_API_KEY")) != "" {
-		return envOr("TYPESAFE_MODEL", attention.DefaultJevModel)
+		return envOr("TYPESAFE_MODEL", jev.DefaultJevModel)
 	}
 	if cfg, present, valid := localJevConfig(); present {
 		if !valid || !cfg.Enabled {
-			return envOr("TYPESAFE_MODEL", attention.DefaultJevModel)
+			return envOr("TYPESAFE_MODEL", jev.DefaultJevModel)
 		}
 		if cfg.Provider == "openrouter" {
-			return envOr("OPENROUTER_MODEL", firstNonEmpty(cfg.Model, attention.DefaultOpenRouterModel))
+			return envOr("OPENROUTER_MODEL", firstNonEmpty(cfg.Model, jev.DefaultOpenRouterModel))
 		}
-		return envOr("TYPESAFE_MODEL", firstNonEmpty(cfg.Model, attention.DefaultJevModel))
+		return envOr("TYPESAFE_MODEL", firstNonEmpty(cfg.Model, jev.DefaultJevModel))
 	}
-	if key, err := attention.ReadLegacyJevKey(); err == nil && key != "" {
-		return attention.DefaultOpenRouterModel
+	if key, err := jev.ReadLegacyJevKey(); err == nil && key != "" {
+		return jev.DefaultOpenRouterModel
 	}
-	return envOr("TYPESAFE_MODEL", attention.DefaultJevModel)
+	return envOr("TYPESAFE_MODEL", jev.DefaultJevModel)
 }
 
 // effectiveAPIKey resolves the key after flag parsing. An explicit --api-key
@@ -407,7 +408,7 @@ func defaultAPIKey() string {
 		}
 		return cfg.APIKey
 	}
-	key, err := attention.ReadLegacyJevKey()
+	key, err := jev.ReadLegacyJevKey()
 	if err != nil {
 		return ""
 	}
@@ -418,14 +419,14 @@ func defaultTimeout() time.Duration {
 	if cfg, present, valid := localJevConfig(); present && valid && cfg.Enabled {
 		return cfg.Timeout()
 	}
-	return attention.DefaultJevTimeout
+	return jev.DefaultJevTimeout
 }
 
 // localJevConfig reports a malformed file as present but invalid. This keeps a
 // bad or explicitly disabled local setting from falling through to the legacy
 // key, while still allowing explicit environment variables to win above it.
-func localJevConfig() (attention.LocalJevConfig, bool, bool) {
-	cfg, present, err := attention.LoadLocalJevConfig()
+func localJevConfig() (jev.LocalJevConfig, bool, bool) {
+	cfg, present, err := jev.LoadLocalJevConfig()
 	return cfg, present, err == nil
 }
 
@@ -439,10 +440,10 @@ func firstNonEmpty(values ...string) string {
 }
 
 func safeReason(err error) string {
-	if errors.Is(err, attention.ErrStale) {
+	if errors.Is(err, jev.ErrStale) {
 		return "artifact became stale"
 	}
-	if errors.Is(err, attention.ErrUnavailable) {
+	if errors.Is(err, jev.ErrUnavailable) {
 		return "Jev unavailable"
 	}
 	return "assessment unavailable"
