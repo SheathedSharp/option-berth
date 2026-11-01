@@ -530,6 +530,10 @@ oberth init [--dry-run] [--json]
   报告 observable / blind / bind_denied；CLI 模式下同时附带 daemon 的自证结果，daemon 失明也会失败。
   `--only daemon_build_matches` 对比 CLI 与 daemon 的构建提交；同版本号不代表同构建。
   缺少提交身份或状态 RPC 失败会报告 warn，不会标记匹配，也不会自动重启 daemon。
+  `--only agent_skill` 只读 `HOME` 下已安装的 skill（`~/.claude`、`~/.codex`、`~/.config/opencode`
+  的技能目录），比较各份 `SKILL.md` 的 `metadata.version`：没装是 `skip`，只有一份永远 `ok`，
+  多份版本不一致或软链指向已不存在的 checkout 才 `warn`。它不联网，不知道哪个版本是最新的，
+  因此不会把单独一份说成「落后」，也不安装、不更新、不修复 skill。
 - oberth events：供 agent 订阅本机 daemon 的状态变化。并行联调时 agent 应根据任务中明确给出的
   关系主动建立并消费订阅；人手执行此命令主要用于排障。`--worktree PATH_OR_ID` 会沿已有 Repo 关系包含同仓库
   的其他 worktree；`--repository REPO_ID` 是可重复的加法过滤器，`--workspace NAME` 加入显式的临时联调关系；

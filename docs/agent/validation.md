@@ -265,6 +265,45 @@ ambiguous instead of stopping both when two checkouts share a group name. Stoppi
 with real processes still has to run on macOS/Linux where listeners can be observed normally;
 `observation_*` results from a sandbox cannot replace it.
 
+### The doctor's agent-skill row
+
+`internal/doctor`'s `checkSkillVersion` only reads the `SKILL.md` of the skill already installed in
+three places under `HOME`; it does not go online, dial the daemon, or install and change anything.
+Unit tests (`checks_skill_test.go`) cover: a nested `metadata.version` is not confused with a
+top-level `version:`; missing frontmatter, unclosed frontmatter, a missing version field and an empty
+value each report an error instead of guessing a version; nothing installed is `skip`; a single copy
+is always `ok` and carries no `fix`; two copies at the same version are `ok`; two copies at different
+versions `warn` and name both versions in `fix`; a copy whose frontmatter cannot be read is not a
+version conflict and is only marked `unreadable` in the detail; a symlink into a live checkout is
+called a `link`; a dangling symlink `warn`s and prints the original target; `--only agent_skill` runs
+just this row; and the check never dials the daemon.
+
+Executed on this machine (macOS 27.2 / 26B123) on 2026-11-01:
+
+```sh
+cd engine
+go build ./... && go vet ./internal/doctor/
+go test ./internal/doctor/ -count=1
+```
+
+All of the above passed. The real CLI was also run with an isolated `HOME`/`BERTH_HOME` (a locally
+built binary, deleted afterwards):
+
+| Input | `doctor --only agent_skill` |
+|---|---|
+| nothing installed | `skip`, "the agent skill is not installed here" |
+| `~/.claude/.../SKILL.md` declaring 0.7.1 | `ok`, "the installed skill copies agree" |
+| plus `~/.codex/.../SKILL.md` declaring 0.6.0 | `warn`, "2 installed copies of the skill disagree on its version", with 0.7.1 vs 0.6.0 in the fix |
+| `~/.codex/...` replaced by a link to a directory that does not exist | `warn`, "a skill link points at a checkout that is gone", with the original target in the fix |
+
+Under `--json` the row is still `id`/`status`/`summary`/`detail`/`fixable`; no field was added.
+
+**Not executed**: a copy installed through the plugin marketplace is not verified. The plugin install
+path is managed by the client (Claude Code's `.claude-plugin`) and is not one of those three user
+skill directories; this row reports `skip` for it, which must not be read as "the skill is not
+installed". Nothing here compares against an "official latest version" either: with no network the
+engine cannot prove which copy is current, which is why a single copy is never called outdated.
+
 ## What is not guaranteed
 
 Long-running load still needs separate acceptance; without a reliable control we do not advertise an
