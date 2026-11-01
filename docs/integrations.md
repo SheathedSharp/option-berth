@@ -1,127 +1,152 @@
-# 接入编排工具与开发服务器
+# Integrating orchestration tools and dev servers
 
-option-berth 是 **worktree 的运行事实层**。编排工具负责创建工作区、调度会话，也常常分配自己的
-端口；`oberth` 负责回答这份代码上的服务现在是什么状态、失败为什么失败，并在结束时停止它留下的
-服务。
+English | [中文](integrations.zh.md)
 
-接入方式是**用户在自己的脚本里调用 CLI**：工具提供 setup / run / cleanup 槽位的，把 `oberth`
-命令粘进去；没有槽位的，用外层 wrapper 或 `AGENTS.md` 说明。这些脚本和配置都由用户自己创建；
-option-berth 不安装 hooks、不注册 MCP、不修改任何工具的配置，也不分发集成代码；接口仍然只有
-CLI 与 `--json`。
+option-berth is the **runtime fact layer for worktrees**. Orchestration tools create workspaces,
+schedule sessions, and often allocate their own ports; `oberth` answers what state the services on
+this code are in right now, why a failure failed, and stops the services it left behind when things
+end.
 
-## 版本前提
+Integration works by **the user calling the CLI in their own scripts**: where a tool offers setup /
+run / cleanup slots, paste the `oberth` commands into them; where it has no slots, use an outer
+wrapper or a note in `AGENTS.md`. The user creates these scripts and configuration themselves;
+option-berth does not install hooks, does not register an MCP, does not modify any tool's
+configuration, and does not distribute integration code; the interface is still only the CLI and
+`--json`.
 
-本页的清理步骤用到 `down --worktree`、`down --identity` 和 `worktrees`，从 v1.3.0 起提供。
-更早的版本在删除 checkout 目录**之前**进入该目录执行 `oberth down`。
+## Version prerequisite
 
-## 三条命令
+The cleanup steps on this page use `down --worktree`, `down --identity`, and `worktrees`, available
+from v1.3.0. Earlier versions enter the checkout directory and run `oberth down` **before** deleting
+it.
 
-### 创建后：启动并等待就绪
+## The three commands
+
+### After creation: start and wait for readiness
 
 ```sh
 cd /path/to/checkout
 oberth up --wait
 ```
 
-- `--wait` 等到本次选择的服务真正监听；声明了 `health:` 的服务还要通过健康检查；无端口 worker
-  以运行记录活跃为准。每个服务用 `ready_timeout:`（Go duration，缺省 30s，必须为正）声明自己的
-  就绪预算；`up --wait` 默认按它等待，`depends_on` 的后继服务也按被依赖方自己的预算等待。
-  `--wait-timeout` 只是整次 `up --wait` 的总上限，只会收紧、不会放宽每个服务的
-  `ready_timeout:`；慢服务应把预算写进清单，而不是只调大这个开关。
-- `ready_timeout:` 约束**启动之后**的监听与健康等待，包括依赖等待和 `up --wait`；
-  `--wait-timeout` 只约束 `up --wait` 自己的等待（它在 `groups.start` 流结束后才开始计时，
-  不影响 daemon 的依赖等待）。两者都不约束 `prepare:`。依赖安装慢要靠 `prepare_inputs:`
-  缓存（内容未变时跳过），或调大编排工具自己的脚本超时。
-- 失败时退出码为 1，逐服务给出 `state`、`reason` 和 `hint`；只有进程真的起过，`hint` 才指向
-  `oberth logs <service> --once`。
-- 观察失明时 `up --wait` 会立即返回 `observation_*` 错误并保留刚启动的运行。这不是“没起来”。
-  按 `hint` 在普通终端运行 `oberth serve --detach` 后再试；不要在沙箱里反复重试。
-- `up` 默认拒绝服务工作目录在 `$HOME` 之外。编排工具把 workspace 放在 home 外时，确认后加
-  `--allow-outside-home`；`down` 没有这个开关。
-- 清单要由人确认：`oberth init`，或 `oberth init draft` 起草、人 `oberth init adopt` 采纳。
-  agent 的草稿不等于授权。
+- `--wait` waits until the services selected for this run are actually listening; services that
+  declare `health:` must also pass their health check; a portless worker counts as ready based on the
+  run record being active. Each service declares its own readiness budget with `ready_timeout:` (Go
+  duration, default 30s, must be positive); `up --wait` waits by it by default, and `depends_on`
+  successors also wait by the depended-on service's own budget. `--wait-timeout` is only the overall
+  cap for the whole `up --wait` run; it only tightens, never loosens, each service's
+  `ready_timeout:`; slow services should write their budget into the manifest rather than just
+  raising this flag.
+- `ready_timeout:` constrains the listen and health waits **after startup**, including dependency
+  waits and `up --wait`; `--wait-timeout` only constrains `up --wait`'s own wait (it starts counting
+  after the `groups.start` stream ends, and does not affect the daemon's dependency waits). Neither
+  constrains `prepare:`. Slow dependency installation needs the `prepare_inputs:` cache (skipped when
+  the content is unchanged), or a larger script timeout on the orchestration tool's own side.
+- On failure the exit code is 1, with `state`, `reason`, and `hint` given per service; `hint` points
+  at `oberth logs <service> --once` only if the process really did start.
+- When observation is blind, `up --wait` returns an `observation_*` error immediately and keeps the
+  run it just started. This is not "it didn't start". Follow the `hint`, run `oberth serve --detach`
+  in a normal terminal, then retry; do not retry repeatedly inside a sandbox.
+- `up` by default refuses service working directories outside `$HOME`. When an orchestration tool
+  puts the workspace outside home, confirm and add `--allow-outside-home`; `down` has no such flag.
+- The manifest must be confirmed by a human: `oberth init`, or `oberth init draft` to draft and a
+  human `oberth init adopt` to adopt. An agent's draft is not authorization.
 
-### 运行中：读事实
+### While running: read the facts
 
 ```sh
 oberth status --json
 oberth logs <service> --once --json
 ```
 
-`status --json` 里与编排最相关的是：
+The parts of `status --json` most relevant to orchestration are:
 
-- `worktree.services[]`：`pid`、`run_id`、`port_actual`、`running`、`health_status`、
-  `last_exit.reason`。`exits[].hint` 与 `up --json` 的 `services[].hint` 同义，是引擎按日志
-  文件是否存在的确定性下一步；`worktree.services[]` 本身没有 `hint`。
-- `worktree.identity`（`wt_…`）和 `scope.root`：停止与核对 checkout 根路径用。
-- 顶层 `observation`：监听表不可信时出现，带 `state`、`code`、`detail`、`hint`。
-  `observation_*` 都不是“没有监听”，更不是“没在运行”。
+- `worktree.services[]`: `pid`, `run_id`, `port_actual`, `running`, `health_status`,
+  `last_exit.reason`. `exits[].hint` is synonymous with `services[].hint` in `up --json`: the
+  engine's deterministic next step based on whether the log file exists; `worktree.services[]` itself
+  has no `hint`.
+- `worktree.identity` (`wt_…`) and `scope.root`: for stopping and for checking the checkout root
+  path.
+- Top-level `observation`: appears when the listener table is untrustworthy, carrying `state`,
+  `code`, `detail`, `hint`. None of the `observation_*` codes mean "nothing is listening", and still
+  less "not running".
 
-不要用 `ss` / `lsof` / `/proc` 的即时输出替代这些字段；它们没有运行归属，也无法区分
-“看不见”和“没在跑”。
+Do not substitute the instantaneous output of `ss` / `lsof` / `/proc` for these fields; they have no
+run ownership and cannot tell "cannot see it" apart from "not running".
 
-### 结束：按 worktree 停
+### Ending: stop by worktree
 
 ```sh
-oberth down                                         # 目录还在，使用最近清单
-oberth down --worktree /absolute/path/to/checkout   # 按 checkout 根路径
-oberth down --identity wt_...                       # 按身份，目录已删除时
+oberth down                                         # directory still exists, use the most recent manifest
+oberth down --worktree /absolute/path/to/checkout   # by checkout root path
+oberth down --identity wt_...                       # by identity, when the directory is already deleted
 ```
 
-- `--worktree` 要的是 **checkout 根路径**，不是子目录；从 `status --json` 的 `scope.root`
-  或 `git rev-parse --show-toplevel` 取。
-- 目录已经删除时，daemon 仍能按身份账本停止它留下的运行与监听，并交还 `port: auto` 预留；
-  前提是 daemon 之前见过这个 checkout。
-- `down` 只有在确认停止后才交还预留。取消、停止不完整、动作后观察失败、仍有登记运行/监听或
-  预留已被刷新时，它会保留预留并报错；不要把错误当成已经释放。
-- 目标已经没有任何运行或预留时，显式身份仍是一次成功的空停止。
-- `oberth worktrees --gone` 只列出 daemon 记过的身份，不是孤儿进程的全量清单。账本里没有清单
-  的行没有可停的服务组，`down --identity` 会返回 `not_found`。
-- 两个 checkout 占用同一组名时，组作用域的停止返回 `ambiguous`；此时按端口或 pid 点名
-  `kill`，不要替调用者猜一个。
+- `--worktree` wants the **checkout root path**, not a subdirectory; take it from `scope.root` in
+  `status --json`, or from `git rev-parse --show-toplevel`.
+- When the directory is already deleted, the daemon can still stop the runs and listeners it left
+  behind by identity ledger and hand back the `port: auto` reservation; the precondition is that the
+  daemon has seen this checkout before.
+- `down` hands back the reservation only after it has confirmed the stop. On cancellation, an
+  incomplete stop, an observation failure after the action, runs/listeners still registered, or a
+  reservation that has already been refreshed, it keeps the reservation and errors; do not take the
+  error as a release.
+- When the target no longer has any runs or reservations, an explicit identity is still a successful
+  empty stop.
+- `oberth worktrees --gone` lists only the identities the daemon has recorded; it is not a complete
+  inventory of orphan processes. A ledger row with no manifest has no service group to stop, and
+  `down --identity` returns `not_found`.
+- When two checkouts occupy the same group name, a group-scoped stop returns `ambiguous`; in that
+  case name the target by port or pid for `kill`; do not guess one on the caller's behalf.
 
-## 通用接法
+## General integration
 
-| 工具的槽位 | 放什么 |
+| Tool slot | What to put there |
 |---|---|
-| 创建 / setup | `oberth up --wait`（需要机器读输出时加 `--json`） |
-| 运行 / run | 不要再启动同一批服务。`oberth` 起的服务归 daemon，工具停止 run 脚本不会停它们 |
-| 归档 / 删除 / cleanup | `oberth down --worktree <checkout 根>`；没有该能力时在删除前进入目录 `oberth down` |
-| 只有单一 run 槽位 | 把启动放 setup；不要用 run 槽位伪装 setup，否则工具会按住或杀掉它 |
+| Create / setup | `oberth up --wait` (add `--json` when a machine needs to read the output) |
+| Run / run | Do not start the same set of services again. Services started by `oberth` belong to the daemon; the tool stopping the run script will not stop them |
+| Archive / delete / cleanup | `oberth down --worktree <checkout root>`; where that is not available, enter the directory and run `oberth down` before deleting |
+| Only a single run slot | Put the start into setup; do not disguise setup as the run slot, or the tool will hold onto it or kill it |
 
-几个容易踩的点：
+A few easy pitfalls:
 
-- **PATH**：setup / hook 往往不加载你的 shell rc。用 `oberth` 的绝对路径，或在脚本里显式设置
-  `PATH`；本页示例按 README 的默认安装位置补 `~/.local/bin`，装在别处就换成实际路径。同一个
-  环境会传给服务的 `cmd:`；只让 `oberth` 可执行还不够，`node`、`npm`、`python3` 也必须在
-  PATH 上。启动后用 `oberth logs <service> --once` 复核。
-- **工作区根不等于 Git checkout 根**：`up` 从 cwd 找最近的 `oberth.yaml`。工具的工作区目录
-  如果包含多层目录，先 `cd "$(git rev-parse --show-toplevel)"`，并把同一个根传给
-  `down --worktree`。
-- **不要写死 `PORT`**：`port: auto` 的服务由引擎分配端口并通过环境注入 `PORT`。服务自己的
-  `env:` 优先级高于注入的 `PORT`，所以 `env: PORT: 3000` 会覆盖分配值，导致 `up --wait`
-  等错端口。用 `${port}` 引用，或 `env: { PORT: "${port}" }`。
-- **严格端口**：框架如果会在端口被占时悄悄换一个，`up --wait` 等的是清单里的端口，最终会以
-  `ready_timeout` 失败（并且只清理本次新启动的运行）。优先使用框架的严格端口选项，让冲突
-  直接变成一条可读的失败事实。
+- **PATH**: setup / hooks often do not load your shell rc. Use the absolute path to `oberth`, or set
+  `PATH` explicitly in the script; the examples on this page append `~/.local/bin` per the default
+  install location in the README — if you installed elsewhere, substitute the real path. The same
+  environment is passed to the services' `cmd:`; making only `oberth` executable is not enough —
+  `node`, `npm`, and `python3` must be on PATH too. After starting, check again with
+  `oberth logs <service> --once`.
+- **The workspace root is not the Git checkout root**: `up` finds the nearest `oberth.yaml` from the
+  cwd. If the tool's workspace directory contains several levels of directories, first
+  `cd "$(git rev-parse --show-toplevel)"`, and pass the same root to `down --worktree`.
+- **Do not hardcode `PORT`**: for a `port: auto` service the engine allocates the port and injects it
+  through the environment as `PORT`. A service's own `env:` takes precedence over the injected
+  `PORT`, so `env: PORT: 3000` overrides the allocated value and makes `up --wait` wait on the wrong
+  port. Reference `${port}`, or use `env: { PORT: "${port}" }`.
+- **Strict port**: if the framework quietly switches to another port when the port is taken,
+  `up --wait` waits for the port in the manifest and eventually fails with `ready_timeout` (and
+  cleans up only the runs started by this invocation). Prefer the framework's strict-port option, so
+  the conflict becomes a readable failure fact directly.
 
-## 工具配方
+## Tool recipes
 
-以下配置都由用户自己创建；项目级配置（`.conductor/settings.toml`、`.cursor/worktrees.json`、
-项目 `.claude/settings.json`、`.codex/`）可以随仓库提交，用户级配置（如 `~/.codex/hooks.json`、
-用户级 Claude Code settings）留在本机。option-berth 不会写入这些文件。
+All the configuration below is created by the user; project-level configuration
+(`.conductor/settings.toml`, `.cursor/worktrees.json`, a project's `.claude/settings.json`,
+`.codex/`) can be committed with the repo, while user-level configuration (such as
+`~/.codex/hooks.json`, user-level Claude Code settings) stays on the local machine. option-berth does
+not write these files.
 
-这些脚本只在已经有人确认过 `oberth.yaml` 的仓库里启用；没有清单时 `up` 会失败，先运行
-`oberth init` 并确认启动命令和端口。
+These scripts are only enabled in a repo where a human has already confirmed `oberth.yaml`; without a
+manifest `up` fails, so run `oberth init` first and confirm the start command and port.
 
 ### Conductor
 
-Conductor 在仓库里的 `.conductor/settings.toml` 配置 `[scripts]`；个人覆盖放在
-`.conductor/settings.local.toml`，用户级默认在 `~/.conductor/settings.toml`。setup 在工作区
-创建、Git 检出之后运行，archive 在工作区归档前运行。
+Conductor configures `[scripts]` in `.conductor/settings.toml` in the repo; personal overrides go in
+`.conductor/settings.local.toml`, and user-level defaults in `~/.conductor/settings.toml`. setup runs
+after the workspace is created and Git is checked out; archive runs before the workspace is archived.
 
 ```toml
-# <repo>/.conductor/settings.toml（用户自己写，随仓库提交）
+# <repo>/.conductor/settings.toml (written by the user, committed with the repo)
 "$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
 
 [scripts]
@@ -129,22 +154,28 @@ setup = 'PATH="$HOME/.local/bin:$PATH" oberth up --wait'
 archive = 'PATH="$HOME/.local/bin:$PATH" oberth down --worktree "$CONDUCTOR_WORKSPACE_PATH"'
 ```
 
-- 不要把 `oberth up --wait` 放进 `scripts.run.<id>`。那是 Run 按钮的 action，Conductor 在
-  Stop 时向它的进程组发 SIGTERM；而 oberth 起的服务属于 daemon，不由这个 action 持有。
-- setup / archive 从工作区目录执行；Conductor 为工作区创建 Git worktree，
-  `CONDUCTOR_WORKSPACE_PATH` 通常就是这个 checkout 根。先确认它与 `oberth status --json` 的
-  `scope.root` 一致，再把同一个值传给 `down --worktree`；不一致时用 `scope.root`。
-- `CONDUCTOR_PORT` 是 Conductor 自己分配的一段 10 个端口。不要让同一个服务同时由两套机制
-  分配端口：oberth 管理的服务用 `port: auto`；如果 Conductor 的预览要求绑定
-  `CONDUCTOR_PORT`，把这个服务留在 oberth 清单之外，或只作为 `machine:` 只读引用。
-- archive 是文档里唯一的清理入口，没有单独的删除 hook。Conductor 归档会打断正在运行的
-  setup；归档 hook 是否总能在打断后执行，官方文档没有说明，重要工作区请自行复核。
-- setup 失败是否阻止工作区创建、脚本超时是多少，官方文档没有说明。
+- Do not put `oberth up --wait` into `scripts.run.<id>`. That is the action behind the Run button,
+  and Conductor sends SIGTERM to its process group on Stop; services started by oberth belong to the
+  daemon and are not held by this action.
+- setup / archive run from the workspace directory; Conductor creates a Git worktree for the
+  workspace, and `CONDUCTOR_WORKSPACE_PATH` is usually that checkout root. First confirm it matches
+  `scope.root` from `oberth status --json`, then pass the same value to `down --worktree`; if they do
+  not match, use `scope.root`.
+- `CONDUCTOR_PORT` is a block of 10 ports that Conductor allocates itself. Do not let the same
+  service get its port allocated by two mechanisms at once: services managed by oberth use
+  `port: auto`; if Conductor's preview requires binding `CONDUCTOR_PORT`, leave that service outside
+  the oberth manifest, or reference it only read-only as `machine:`.
+- archive is the only cleanup entry point in the docs; there is no separate delete hook. Archiving in
+  Conductor interrupts a setup that is running; the official docs do not say whether the archive hook
+  always runs after that interruption, so check important workspaces yourself.
+- Whether a failed setup prevents workspace creation, and how long the script timeout is, the
+  official docs do not say.
 
 ### Cursor
 
-Cursor 读取仓库里的 `.cursor/worktrees.json`，在它创建工作区时执行 setup 命令。命令既可以是
-数组，也可以是指向 `.cursor/` 下脚本的相对路径；脚本形式更好控制引号和 PATH。
+Cursor reads `.cursor/worktrees.json` in the repo and runs the setup command when it creates a
+workspace. The command can be an array, or a relative path to a script under `.cursor/`; the script
+form gives better control over quoting and PATH.
 
 ```json
 {
@@ -152,8 +183,9 @@ Cursor 读取仓库里的 `.cursor/worktrees.json`，在它创建工作区时执
 }
 ```
 
-Windows 的完整服务场景不在本仓验证范围，见 [验证说明](validation.md)；本页不提供 Windows
-版本的 setup 脚本。
+Full service scenarios on Windows are outside this repo's validation scope, see the
+[validation notes](agent/validation.md); this page does not provide a Windows version of the setup
+script.
 
 ```sh
 #!/bin/sh
@@ -163,21 +195,24 @@ cd "$(git rev-parse --show-toplevel)"
 exec /absolute/path/to/oberth up --wait
 ```
 
-- Cursor 文档说命令在 worktree 中依次执行，但没有说明用哪个 shell、如何继承 PATH；脚本里
-  用绝对路径，并显式 `cd` 到 Git 根。
-- **没有 teardown hook。** Cursor 的自动清理会删除 worktree 目录；文档没有说明删除时会运行
-  用户命令。删除前先执行 `oberth down --worktree <checkout 根>`；忘记时，删除后用
-  `oberth worktrees --gone` 找身份，再 `oberth down --identity wt_…`（有上一节的版本前提）。
-- setup 失败是否阻止 agent、是否重跑，官方文档没有说明；`oberth up --wait` 可安全重复执行。
-- 调试时看 Output 面板的 `Worktrees Setup` 通道。
+- Cursor's docs say the commands run in sequence in the worktree, but do not say which shell is used
+  or how PATH is inherited; use absolute paths in the script, and `cd` to the Git root explicitly.
+- **There is no teardown hook.** Cursor's automatic cleanup deletes the worktree directory; the docs
+  do not say that user commands are run on deletion. Run `oberth down --worktree <checkout root>`
+  before deleting; if you forget, after deletion use `oberth worktrees --gone` to find the identity,
+  then `oberth down --identity wt_…` (subject to the version prerequisite in the previous section).
+- Whether a failed setup prevents the agent from running, and whether it is re-run, the official docs
+  do not say; `oberth up --wait` is safe to run repeatedly.
+- When debugging, watch the `Worktrees Setup` channel in the Output panel.
 
 ### Claude Code
 
-Claude Code 有两条路，先选清楚：
+Claude Code has two paths; decide which one first:
 
-**A. 不接管 worktree 创建（推荐）**。保留 Claude 自己的 `git worktree` 行为，把本页末尾的
-`AGENTS.md` / `CLAUDE.md` 段落放进仓库，让 agent 在需要时先读 `oberth status --json`、
-再用 `oberth up --wait`。如果你在外层脚本里创建 worktree，在脚本里启动和清理：
+**A. Do not take over worktree creation (recommended)**. Keep Claude's own `git worktree` behavior,
+and put the `AGENTS.md` / `CLAUDE.md` section at the end of this page into the repo, so that the agent
+reads `oberth status --json` first when needed and then uses `oberth up --wait`. If you create the
+worktree in an outer script, start and clean up in that script:
 
 ```sh
 #!/bin/sh
@@ -191,16 +226,20 @@ oberth up --wait
 claude "$@"
 ```
 
-`trap` 保证 `claude` 失败或被中断时也会清理；`oberth` 起的服务是 daemon 持有的，不会随
-脚本退出自动消失。慢服务（例如首次编译的 Next.js）在清单里用 `ready_timeout:` 声明预算；
-`--wait-timeout` 只能收紧它，不能代替它。
+`trap` guarantees cleanup even when `claude` fails or is interrupted; services started by `oberth` are
+held by the daemon and do not disappear automatically when the script exits. For slow services (for
+example a Next.js first compile), declare the budget with `ready_timeout:` in the manifest;
+`--wait-timeout` can only tighten it, not replace it.
 
-**B. 让 Claude Code 的 WorktreeCreate 接管创建**。只有当你确实需要自动创建并启动时才用。
-配置 `WorktreeCreate` 会**取代** Claude Code 默认的 `git worktree` 创建：`.worktreeinclude`、
-基线与分支选择都不再自动处理，hook 必须自己创建目录，并把目录路径作为 stdout 的最后一个
-非空行输出，其他输出走 stderr。非零退出会让创建工作区失败。
+**B. Let Claude Code's WorktreeCreate take over creation**. Use this only when you really need
+automatic creation plus startup. Configuring `WorktreeCreate` **replaces** Claude Code's default
+`git worktree` creation: `.worktreeinclude`, base and branch selection are no longer handled
+automatically, the hook must create the directory itself, and it must print the directory path as the
+last non-empty line of stdout, with all other output going to stderr. A non-zero exit makes workspace
+creation fail.
 
-把下面的 hooks 写进项目级 `.claude/settings.json`（可提交）或用户级 settings；示例是项目级：
+Put the following hooks into the project-level `.claude/settings.json` (committable) or user-level
+settings; the example is project-level:
 
 ```json
 {
@@ -229,7 +268,7 @@ claude "$@"
 
 ```sh
 #!/bin/sh
-# worktree-create.sh；stdin 是 hook JSON，stdout 最后一行必须是 worktree 路径
+# worktree-create.sh; stdin is the hook JSON, the last line of stdout must be the worktree path
 set -eu
 export PATH="$HOME/.local/bin:$PATH"
 payload=$(cat)
@@ -272,19 +311,25 @@ if [ -n "$branch" ] && [ "$branch" != "HEAD" ] && [ -n "$common" ]; then
 fi
 ```
 
-- 脚本放在 `.claude/hooks/` 并随项目提交；`${CLAUDE_PROJECT_DIR}` 指向会话开始的项目根。
-- 这两个事件没有 matcher；即使写了也会被忽略。示例中的 `jq` 需要自行安装。
-- `WorktreeRemove` 只对 `WorktreeCreate` 创建的 worktree 触发，而且 subagent / workflow agent
-  结束时不会触发；用默认 `git worktree` 创建的 worktree 没有文档化的离开事件。
-- hooks 以用户的完整权限运行，不在沙箱里；提交到仓库的 `.claude/settings.json` 会变成在用户
-  机器上执行命令。交互会话有 workspace trust 确认；`-p` / SDK 会话没有这个确认。
-- 不要用 `SessionEnd` 做清理：默认预算 1.5s，最多 60s，而且 `/clear`、`/resume` 也会触发。
-- `WorktreeCreate` 只覆盖 Claude Code 自己创建的 worktree；其他编排工具创建的 checkout 不会
-  触发它，那里要用工具自己的 setup / cleanup。
+- Put the scripts in `.claude/hooks/` and commit them with the project; `${CLAUDE_PROJECT_DIR}` points
+  at the project root from when the session started.
+- These two events have no matcher; even if you write one it is ignored. The `jq` in the examples
+  needs to be installed separately.
+- `WorktreeRemove` only fires for worktrees created by `WorktreeCreate`, and does not fire when a
+  subagent / workflow agent ends; worktrees created with the default `git worktree` have no
+  documented leaving event.
+- hooks run with the user's full privileges, not inside a sandbox; a `.claude/settings.json` committed
+  to the repo becomes commands that execute on users' machines. Interactive sessions have a workspace
+  trust confirmation; `-p` / SDK sessions do not have this confirmation.
+- Do not use `SessionEnd` for cleanup: the default budget is 1.5s, at most 60s, and `/clear` and
+  `/resume` also trigger it.
+- `WorktreeCreate` only covers worktrees created by Claude Code itself; checkouts created by other
+  orchestration tools do not trigger it, and there you need the tool's own setup / cleanup.
 
 ### Codex
 
-Codex **没有** worktree-created / worktree-removed hook。最可靠的做法是外层 wrapper：
+Codex has **no** worktree-created / worktree-removed hook. The most reliable approach is an outer
+wrapper:
 
 ```sh
 #!/bin/sh
@@ -298,90 +343,104 @@ oberth up --wait
 codex "$@"
 ```
 
-`trap` 同样保证 Codex 失败时清理。不要让 `oberth up` 和 `codex` 都去启动同一批服务；启动只做
-一次，Codex 通过 `oberth status --json` 读事实。
+`trap` likewise guarantees cleanup when Codex fails. Do not let both `oberth up` and `codex` start the
+same set of services; start once, and have Codex read the facts through `oberth status --json`.
 
-Codex 的 `SessionStart` / `SessionEnd` hook 是最近似的生命周期入口，但它们不是 worktree 事件，
-而且以下行为在官方文档里没有说明，不能当作保证：
+Codex's `SessionStart` / `SessionEnd` hooks are the closest lifecycle entry points, but they are not
+worktree events, and the following behaviors are not stated in the official docs, so they cannot be
+treated as guarantees:
 
-- `codex exec` / `codex exec --worktree` 是否运行这些 hook；
-- hook 命令是否受 Codex 沙箱限制（如果受限，`oberth up` 可能写不了状态或绑不了本地端口）；
-- hook 是否继承 `PATH`、`HOME`、`BERTH_HOME` 等环境；
-- `SessionEnd` 的默认 1s / 最大 3s 是否够 `oberth down` 完成。
+- whether `codex exec` / `codex exec --worktree` runs these hooks;
+- whether hook commands are restricted by the Codex sandbox (if they are, `oberth up` may not be able
+  to write state or bind local ports);
+- whether hooks inherit the environment, including `PATH`, `HOME`, `BERTH_HOME`;
+- whether `SessionEnd`'s default 1s / maximum 3s is enough for `oberth down` to finish.
 
-如果你接受这些未知，可以在用户级 `~/.codex/hooks.json` 里用 `SessionStart`（matcher
-`startup|fork`）启动、用 `SessionEnd` 尽力清理；脚本里用 `oberth` 的绝对路径，并且不要把
-`SessionEnd` 当成唯一的清理路径。项目级 `.codex/` 只在项目被信任时加载，`--worktree` 新建的
-路径可能不在信任范围内，所以优先用户级。
+If you accept these unknowns, you can start with `SessionStart` (matcher `startup|fork`) and do
+best-effort cleanup with `SessionEnd` in the user-level `~/.codex/hooks.json`; use the absolute path
+to `oberth` in the scripts, and do not treat `SessionEnd` as the only cleanup path. Project-level
+`.codex/` is only loaded when the project is trusted, and a path newly created by `--worktree` may be
+outside the trusted scope, so prefer user level.
 
-ChatGPT 桌面版的 Codex 另有 Local environments 的 setup script（仅桌面应用，配置在项目的
-`.codex/` 下）：它在新建 worktree 时自动运行，可以放 `oberth up --wait`；它没有对应的删除
-hook，清理仍要在删除前执行 `oberth down`。
+The Codex in the ChatGPT desktop app has a separate Local environments setup script (desktop app
+only, configured under the project's `.codex/`): it runs automatically when a new worktree is created
+and can hold `oberth up --wait`; it has no corresponding delete hook, so cleanup still has to run
+`oberth down` before deletion.
 
-Codex 自己管理的 worktree（`codex --worktree`、`/worktree`）会按保留策略删除目录；官方文档
-没有说明删除时运行用户命令。删除前执行 `oberth down --worktree <checkout 根>`，或用
-`worktrees --gone` / `down --identity` 补停。
+Worktrees managed by Codex itself (`codex --worktree`, `/worktree`) are deleted according to a
+retention policy; the official docs do not say that user commands are run on deletion. Run
+`oberth down --worktree <checkout root>` before deletion, or use `worktrees --gone` /
+`down --identity` to stop them afterwards.
 
-### 其他工具
+### Other tools
 
-只要工具有 setup / run / cleanup 槽位，就按「通用接法」粘三条命令。没有 cleanup 槽位时，
-把清理放到外层脚本或删除前的最后一步；不要依赖删除目录本身来停止服务。
+As long as a tool has setup / run / cleanup slots, paste the three commands per "General
+integration". Where there is no cleanup slot, put cleanup in an outer script or as the last step
+before deletion; do not rely on deleting the directory itself to stop the services.
 
-## 贴进 AGENTS.md / CLAUDE.md 的一段
+## The section to paste into AGENTS.md / CLAUDE.md
 
-把下面这段放进仓库根目录的 `AGENTS.md`（Claude Code 也读 `CLAUDE.md`，可按工具追加）。
-它解决的是最常见的问题：agent 在端口被占时先跑 `ss`、直接执行 `python3 app.py`、翻 `/proc`，
-很久之后才想到 `oberth`。
+Put the following section into `AGENTS.md` at the repo root (Claude Code also reads `CLAUDE.md`, and
+you can append it per tool). It solves the most common problem: when a port is taken, the agent first
+runs `ss`, directly executes `python3 app.py`, digs through `/proc`, and only much later thinks of
+`oberth`.
 
 ````md
-## 本地服务
+## Local services
 
-这个 worktree 的服务由 option-berth（`oberth`）管理。启动或排查前先用它读事实，不要先猜端口、
-翻 `ps` / `lsof` / `/proc`，也不要直接运行 `npm run dev`、`python3 app.py` 一类命令。
+The services in this worktree are managed by option-berth (`oberth`). Before starting or
+troubleshooting, read the facts with it first: do not guess ports first, dig through `ps` / `lsof` /
+`/proc`, or directly run commands like `npm run dev` or `python3 app.py`.
 
-- 先运行 `oberth status --json`。服务状态在 `worktree.services[]`：`last_exit.reason` 是最近
-  失败原因，`health_status.reason` 是健康检查原因；监听不可信时读顶层 `observation`
-  （`state`、`code`、`hint`）。
-- 启动用 `oberth up --wait --json`。`--wait` 等到服务真正监听并通过声明的健康检查；无端口
-  worker 以运行记录活跃为准。
-- `oberth up --json` 的 `services[].hint` 和 `status --json` 的 `exits[].hint` 是同一类确定性
-  下一步；`worktree.services[]` 本身没有 `hint`。
-- 失败时用 `oberth logs <service> --once --json` 读服务自己的输出，不要用等待超时或端口扫描
-  代替原因。
-- `observation.state` 不是 `observable` 时，明确说“看不见监听”，按 `observation.hint` 处理；
-  不要把它当成“没在跑”，也不要声称服务健康。
-- 停止当前 worktree 用 `oberth down`，或 `oberth down --worktree "$(git rev-parse --show-toplevel)"`。
-  目录已删除时用 `oberth worktrees --gone` 找到 `wt_…`，再 `oberth down --identity wt_…`
-  （账本行没有清单时就没有可停的服务组）。除非用户明确点名端口或 pid，不要按端口或全局
-  进程名杀服务。
-- 没有 `oberth.yaml` 时运行 `oberth init`，把需要人确认的字段留给用户；可以用
-  `oberth init draft` 起草，但只有人确认后才运行 `oberth init adopt`。
-- 不要启动或停止 `machine:` / `workspace:` 引用的服务；它们只读，也不属于这个 worktree
-  的生命周期。
+- Run `oberth status --json` first. Service state is in `worktree.services[]`: `last_exit.reason` is
+  the most recent failure reason and `health_status.reason` is the health-check reason; when the
+  listener data is untrustworthy, read the top-level `observation` (`state`, `code`, `hint`).
+- Start with `oberth up --wait --json`. `--wait` waits until the services are actually listening and
+  pass their declared health checks; a portless worker counts as ready based on the run record being
+  active.
+- `services[].hint` in `oberth up --json` and `exits[].hint` in `status --json` are the same kind of
+  deterministic next step; `worktree.services[]` itself has no `hint`.
+- On failure, read the service's own output with `oberth logs <service> --once --json`; do not
+  substitute a wait timeout or a port scan for the reason.
+- When `observation.state` is not `observable`, say explicitly that you "cannot see the listener",
+  and follow `observation.hint`; do not treat it as "not running", and do not claim the service is
+  healthy.
+- Stop the current worktree with `oberth down`, or
+  `oberth down --worktree "$(git rev-parse --show-toplevel)"`. If the directory is already deleted,
+  use `oberth worktrees --gone` to find the `wt_…`, then `oberth down --identity wt_…` (a ledger row
+  with no manifest has no service group to stop). Unless the user explicitly names a port or pid, do
+  not kill services by port or by global process name.
+- When there is no `oberth.yaml`, run `oberth init` and leave the fields that need human confirmation
+  to the user; you can draft with `oberth init draft`, but only run `oberth init adopt` after a human
+  confirms.
+- Do not start or stop services referenced by `machine:` / `workspace:`; they are read-only and are
+  not part of this worktree's lifecycle.
 
-如果本机 `oberth down --help` 没有 `--worktree`，在删除 worktree 目录之前用 `oberth down`。
+If `oberth down --help` on this machine has no `--worktree`, use `oberth down` before deleting the
+worktree directory.
 ````
 
-## 框架配方
+## Framework recipes
 
-`port: auto` 是大多数本地开发服务的正确选择：引擎为每个 worktree 预留不同端口，并把端口注入
-`PORT`；`cmd:` 里的 `${port}` 在启动前按当前服务展开。`cmd:` 按 shell 风格拆成 argv，但不经过
-shell，所以不要把整条命令包进 `sh -c`，除非你确实需要 shell 语义。
+`port: auto` is the right choice for most local dev services: the engine reserves a different port for
+each worktree and injects the port into `PORT`; `${port}` in `cmd:` is expanded per service before
+startup. `cmd:` is split into argv shell-style but does not go through a shell, so do not wrap the
+whole command in `sh -c` unless you really need shell semantics.
 
-| 框架 | `cmd:` | 端口行为 |
+| Framework | `cmd:` | Port behavior |
 |---|---|---|
-| Vite | `npm run dev -- --port ${port} --strictPort` | 不读 `PORT`；没有 `--strictPort` 时会悄悄换端口。`--` 用于把参数转给 dev 脚本 |
-| SvelteKit | `npm run dev -- --port ${port} --strictPort` | 开发服务器是 Vite，行为同上；要求生成项目的 dev 脚本是 `vite dev` |
-| Next.js | `npx next dev -p ${port}` | 显式 `-p` 让端口占用直接失败；没有 `--strictPort`。只有端口来自默认值 3000 时才会自动换端口 |
-| Nuxt | `npx nuxt dev --port ${port} --strictPort` | `--strictPort` 在端口不可用时退出，不换端口 |
-| Astro | `npx astro dev --port ${port}` | 文档没有严格端口选项；端口占用时会尝试下一个端口，`up --wait` 会按清单端口超时 |
-| Django | `python manage.py runserver 127.0.0.1:${port}` | 端口是位置参数；占用时直接报错退出，没有自动换端口 |
-| Flask | `flask run --port ${port}` | 占用时直接报错；读 `FLASK_RUN_PORT`，不是 `PORT` |
-| Rails | `bin/rails server -p ${port}` | 占用时直接报错；没有 `-p` 时读 `PORT` |
-| Go | 应用自己的 flag / 环境变量 | `net/http` 没有标准端口参数；`go run . --port ${port}` 只在应用自己解析 `--port` 时成立 |
-| Node / Express | `node server.js` | 应用自己读 `process.env.PORT` 时可直接用；否则把 `${port}` 传给应用自己的参数 |
+| Vite | `npm run dev -- --port ${port} --strictPort` | Does not read `PORT`; without `--strictPort` it quietly switches ports. `--` passes the arguments through to the dev script |
+| SvelteKit | `npm run dev -- --port ${port} --strictPort` | The dev server is Vite, behavior as above; requires the generated project's dev script to be `vite dev` |
+| Next.js | `npx next dev -p ${port}` | The explicit `-p` makes a taken port fail outright; there is no `--strictPort`. It only switches ports automatically when the port comes from the default value 3000 |
+| Nuxt | `npx nuxt dev --port ${port} --strictPort` | `--strictPort` exits when the port is unavailable instead of switching ports |
+| Astro | `npx astro dev --port ${port}` | The docs have no strict-port option; when the port is taken it tries the next port, and `up --wait` times out on the manifest port |
+| Django | `python manage.py runserver 127.0.0.1:${port}` | The port is a positional argument; when taken it errors out immediately, with no automatic port switching |
+| Flask | `flask run --port ${port}` | Errors out immediately when taken; reads `FLASK_RUN_PORT`, not `PORT` |
+| Rails | `bin/rails server -p ${port}` | Errors out immediately when taken; without `-p` it reads `PORT` |
+| Go | The app's own flag / environment variable | `net/http` has no standard port argument; `go run . --port ${port}` only holds when the app parses `--port` itself |
+| Node / Express | `node server.js` | Works directly when the app reads `process.env.PORT` itself; otherwise pass `${port}` to the app's own argument |
 
-一个完整的最小清单：
+A complete minimal manifest:
 
 ```yaml
 name: web
@@ -392,8 +451,9 @@ services:
     health: /
 ```
 
-`health: /` 适合根路径返回 2xx/3xx 的开发服务器；没有可用的健康路径时删掉这一行，就绪判定会
-退化为端口监听。无端口 worker 不写 `port:`，用运行记录判断活跃：
+`health: /` suits a dev server that returns 2xx/3xx on the root path; when there is no usable health
+path, delete that line and the readiness decision falls back to port listening. A portless worker
+omits `port:` and its activity is judged by the run record:
 
 ```yaml
 services:
@@ -403,21 +463,23 @@ services:
       API_URL: ${api.url}
 ```
 
-## 排障
+## Troubleshooting
 
-| 现象 | 先看什么 |
+| Symptom | What to check first |
 |---|---|
-| `up --wait` 报 `observation_*` | 当前进程看不见监听表，不是服务没起来。按 `hint` 在普通终端运行 `oberth serve --detach`，或运行 `oberth doctor --only listener_observation` |
-| `up --wait` 超时 `ready_timeout` | 服务没有监听清单端口，或健康检查未通过。看 `oberth logs <service> --once`；框架悄悄换端口时改用严格端口选项 |
-| 失败原因是 `port_occupied` | 固定端口被别的进程占用。停掉占用者或换端口；不要用 `pkill` 扩大目标 |
-| `down --worktree` 返回 `not_found` | 传入的不是记录的 checkout 根，或账本行没有清单可停。用 `status --json` 的 `scope.root`；删除前优先 `oberth down` |
-| `down` 返回 `ambiguous` | 两个 checkout 共用了同一组名。按端口或 pid 点名 `kill`，不要替调用者挑一个 |
-| setup 里找不到 `oberth` 或 `node` / `npm` | 脚本没有加载 shell rc。用绝对路径或在脚本里设置 `PATH`；服务 `cmd:` 继承同一环境 |
-| 服务在 home 外启动失败 | `up` 的默认限制针对服务工作目录。确认后加 `--allow-outside-home`；`down` 没有这个开关 |
+| `up --wait` reports `observation_*` | The current process cannot see the listener table; it is not that the service failed to start. Following the `hint`, run `oberth serve --detach` in a normal terminal, or run `oberth doctor --only listener_observation` |
+| `up --wait` times out on `ready_timeout` | The service is not listening on the manifest port, or the health check did not pass. Check `oberth logs <service> --once`; when the framework quietly switches ports, switch to a strict-port option |
+| The failure reason is `port_occupied` | A fixed port is taken by another process. Stop the occupant or change the port; do not widen the target with `pkill` |
+| `down --worktree` returns `not_found` | What you passed is not the recorded checkout root, or the ledger row has no manifest to stop. Use `scope.root` from `status --json`; prefer `oberth down` before deletion |
+| `down` returns `ambiguous` | Two checkouts share the same group name. Name the target by port or pid for `kill`; do not pick one on the caller's behalf |
+| `oberth` or `node` / `npm` not found in setup | The script did not load your shell rc. Use absolute paths or set `PATH` in the script; a service's `cmd:` inherits the same environment |
+| A service fails to start outside home | `up`'s default restriction applies to the service working directory. After confirming, add `--allow-outside-home`; `down` has no such flag |
 
-## 验证边界
+## Validation boundaries
 
-本页的 `oberth` 命令、字段和错误语义按本仓 [CLI 契约](cli.md)；第三方配置来自各工具在
-2026-10-31 的官方文档。**没有**在 Conductor、Cursor、Claude Code、Codex 的每一种组合里实际
-跑通这些脚本；工具升级后以官方文档为准。沙箱里的 agent 会话可能看不到监听表，这不是服务
-失败，见 [验证说明](validation.md) 的观察边界。
+The `oberth` commands, fields, and error semantics on this page follow this repo's
+[CLI contract](cli.md); third-party configuration comes from each tool's official docs as of
+2026-10-31. These scripts have **not** actually been run end to end in every combination of
+Conductor, Cursor, Claude Code, and Codex; after tools upgrade, the official docs take precedence.
+Agent sessions inside a sandbox may not see the listener table; that is not a service failure, see the
+observation boundaries in the [validation notes](agent/validation.md).

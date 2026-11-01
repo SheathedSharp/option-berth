@@ -117,8 +117,37 @@ go test ./internal/cmd -run 'TestAnnotateCodeFacts|TestStatus' -count=1
 go generate ./...
 ```
 
-All of the above passed. `go test ./...` is not claimed as a local conclusion: the init/kill cases in
-`internal/cmd` are still limited by this machine's listener table.
+All of the above passed. At the time, `go test ./...` could not be claimed as a local conclusion:
+the init/kill cases in `internal/cmd` were limited by this machine's listener table. After the
+2026-11-01 lsof fallback the whole package set passes locally; the record is later in this section.
+
+**The macOS 27 netstat fallback (2026-11-01)**: on this machine, macOS 27.2 / 26B123, a
+`netstat -anvl -p tcp` fork/exec'd from a Go process exits 0 with 0 bytes on stdout, and
+`sysctl net.inet.tcp.pcblist_n` is likewise empty. Running it directly in the same shell yields about
+74KB, and netstat started through `sh -c exec`, Apple `/usr/bin/python3`, `perl`, `ruby` and `env`
+works normally; only `bash -c` is reliably empty. The daemon and CLI on this machine therefore always
+report `observation_blind`. The collector now falls back to `lsof`
+(`-a -n -P -w +c 0 -iTCP -sTCP:LISTEN -Fpcltn`) when "netstat ran successfully but printed not one
+row"; when the probe can see its own listener it still reports observable, and the detail and
+`daemon status` state that this round was observed through lsof. Actual inputs and results:
+
+- `go test ./internal/ports -run TestScanFindsIsolatedListener`: failed before the fallback
+  (`netstat: exited 0 but printed no listening table`), passes after it.
+- `go test -count=1 -timeout=12m ./...`: the whole package set passes on this machine for the first
+  time (the init/kill cases in `internal/cmd` previously failed under the same limitation).
+- `go test -tags integration ./internal/scenario -count=1`: every real scenario passes, including
+  `TestDualStackServiceBecomesReadyEndToEnd`; that integration test could not run on this machine
+  before.
+- The dual-stack address shape changed: lsof reports Go's `net.Listen("tcp", ":p")` as a single
+  `tIPv6 n*:p` with no V6ONLY fact, so the real scenarios now declare only `::` instead of adding
+  0.0.0.0 the way netstat's tcp46 does. The integration assertion now requires only a wildcard
+  address; netstat's tcp46 shape is still covered by the decode fixture
+  `internal/ports/testdata/darwin_netstat_tcp46.txt` (pure decoding, no readable real table needed).
+- The fallback is narrower: a non-root `lsof` cannot see other users' sockets. On this machine
+  `netstat` has 54 listening ports and `lsof` only 49; the 5 missing ones are all held by root
+  processes (launchd's 445/88/8021, QQPCMgrDaemon's 58827, verge-mihomo's 7897). option-berth's own
+  services run as the same user and are unaffected; when judging whether a foreign port is taken, read
+  this difference as `docs/cli.md` describes.
 
 **Real CLI smoke (2026-10-31)**: on this machine, `netstat` prints a table in an ordinary shell, but
 the stdout a Go process reads through a pipe is empty, so the daemon reports `observation_blind`. So
@@ -189,9 +218,10 @@ The fixture with good rows around a bad one (`TestCollectListenersKeepsReadableR
 and the scanner's partial test confirm that readable rows are published as usual, the port of the
 bad row is not in the result, and the snapshot carries `observation.state=partial`.
 
-A Go process started from this machine's ordinary shell likewise cannot get the full listener table,
-so `TestScanFindsIsolatedListener` fails on this machine; this is an environment limitation, not a
-regression from this change.
+A Go process started from this machine's ordinary shell likewise cannot get `netstat`'s table, which
+is why `TestScanFindsIsolatedListener` once failed on this machine. After the 2026-11-01 lsof fallback
+(see "The macOS 27 netstat fallback" in this section) the case passes locally; where the fallback is
+narrower is recorded in that section too.
 
 The release install and uninstall scripts are exercised with local fixtures: platform mapping, the
 latest redirect, pinned versions, a SHA256 mismatch not writing to disk, PATH configuration, the tag
@@ -349,9 +379,10 @@ external CLIs, logins, and the network, so they are not put into `scripts/releas
   trivial service, `netstat` in the current Claude Code process context returns an empty table and
   the engine reports `netstat: no recognized TCP table header`. The harness exits 2 by design,
   refusing to write an environment problem down as an agent failure.
-- **reference smoke**: to work around the local `netstat` limitation above, a build with an lsof
-  fallback used only for local measurement (not committed to the repository, and not a release
-  build) ran `--execute --agents reference --scenarios all --repeat 2`. All five scenarios
+- **reference smoke**: to work around the local `netstat` limitation above at the time, a build with an
+  lsof fallback used only for local measurement (not committed to the repository, and not a release
+  build) ran `--execute --agents reference --scenarios all --repeat 2`. That kind of fallback has now
+  entered the engine (see "The macOS 27 netstat fallback"), so a local build is no longer needed. All five scenarios
   completed, with step counts missing-artifact 6, port-occupied 5, dependency-not-ready 6,
   manifest-process-mismatch 7, dual-worktree 6, zero out-of-bounds, and all rows comparable. It
   proves that the fixtures, engine facts, verdicts, and report pipeline work; reference executes

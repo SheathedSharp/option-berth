@@ -1,19 +1,23 @@
-# 当前能力与待办
+# Current capability and open work
 
-以 [产品定义](product.md) 和 [支持边界](architecture.md) 为准。主线是给 coding agent 的能力。
-呈现层与 skill 的进度不在这个仓库：macOS 客户端在
-[option-berth-macos](https://github.com/SheathedSharp/option-berth-macos)，给 agent 的 skill 在
-[option-berth-skill](https://github.com/SheathedSharp/option-berth-skill)。
+English | [中文](backlog.zh.md)
 
-## 后续能力
+The [product definition](product.md) and [support boundaries](agent/architecture.md) are authoritative.
+The through-line is what a coding agent can do. Presentation-layer and skill progress are not in this
+repository: the macOS client is
+[option-berth-macos](https://github.com/SheathedSharp/option-berth-macos) and the agent skill is
+[option-berth-skill](https://github.com/SheathedSharp/option-berth-skill).
 
-| 优先级 | 能力 | 当前缺口与完成条件 |
+## Upcoming capability
+
+| Priority | Capability | Current gap and completion condition |
 | --- | --- | --- |
-| 高 | agent 侧的能力面是否够用 | 主线是给 coding agent 的能力，所以「agent 拿到这份代码能不能自己跑起来、自己判断为什么没跑起来」优先于任何界面。**2026-10-28 已跑过一轮**：真实 Claude Code 在陌生 worktree 上只靠 CLI 与 skill 完成了「起服务、失败、看日志、修、再起」，核心闭环 6 步走通（输入与结果见 [validation.md](validation.md)「核心验收」）。那一轮卡住的两处已修：失败提示不再指向不存在的日志，未监听的 `machine:` 依赖不再发布交接（契约见 [cli.md](cli.md)）。**2026-10-30 起**这轮验收沉淀为固定场景库（生成物缺失、端口被占、依赖未就绪、清单与进程不一致、同仓库双 worktree），见 [agent-eval.md](agent-eval.md)。**2026-10-31 起**增加 ten-service 大项目档（慢依赖、生成物、迁移、无端口 worker、三 worktree）与 `oberth` / `native` 对照臂，报告输出完成率、步数、耗时、输出字节、进程探测、误停和串 worktree 的差值；夹具与公开示例 [stack-workshop](../examples/stack-workshop/README.md) 共用。仍缺：在一台能正常观察监听的普通终端或 CI 上，用真实 Codex / OpenCode / Pi 跑出可比的发布矩阵，并补一档真实 JVM / Node 构建 / compose Postgres+Redis 的手动夹具；本机 agent 沙箱内 preflight 会拒绝出表。 |
-| 中 | 编排工具配方的端到端验证 | [integrations.md](integrations.md) 的 Conductor / Cursor / Claude Code / Codex 配置来自各工具官方文档，尚未在真实工具里跑通创建、启动和归档/清理。完成条件：在隔离 `HOME` 与可丢弃仓库中各跑一次 setup、`status --json` 和 cleanup（含 checkout 已删除的路径），记录实际输入与结果。 |
+| High | Whether the agent-facing capability surface is sufficient | The through-line is what a coding agent can do, so "can an agent take this code, run it itself, and judge for itself why it did not run" outranks any interface. **One round ran on 2026-10-28**: real Claude Code, on an unfamiliar worktree, using only the CLI and the skill, completed "start the service, fail, read the log, fix, start again" — the core loop in 6 steps (inputs and results in [validation.md](agent/validation.md) "Core acceptance"). The two places that round got stuck are fixed: a failure hint no longer points at a log that does not exist, and an unlistened `machine:` dependency no longer publishes a handoff (contract in [cli.md](cli.md)). **From 2026-10-30** that acceptance round was distilled into a fixed scenario library (missing artifact, port occupied, dependency not ready, manifest/process mismatch, same-repository dual worktree), see [agent-eval.md](agent/agent-eval.md). **From 2026-10-31** a ten-service large-project tier was added (slow dependency, generated artifact, migration, portless worker, three worktrees) plus `oberth` / `native` comparison arms, with the report outputting completion rate, steps, elapsed time, output bytes, process probing, wrong stops and cross-worktree differences; the fixture shares the public example [stack-workshop](../examples/stack-workshop/README.md). Still missing: a comparable release matrix from real Codex / OpenCode / Pi on an ordinary terminal that can observe listeners or in CI, plus one manual fixture tier with a real JVM / Node build / compose Postgres+Redis; preflight inside this machine's agent sandbox refuses to produce a table. |
+| Medium | End-to-end verification of orchestrator recipes | The Conductor / Cursor / Claude Code / Codex configurations in [integrations.md](integrations.md) come from each tool's official documentation and have not been run end to end in the real tools for creation, start and archive/cleanup. Completion condition: run setup, `status --json` and cleanup once each in an isolated `HOME` and a throwaway repository (including the path where the checkout was already deleted), recording the actual inputs and results. |
 
-## 支持范围内的修复
+## Fixes within the supported scope
 
-支持范围内若复现误停、归属错误或账本损坏，必须修复，不能以「后续迭代」掩盖。
-验证命令与实际覆盖见 [validation.md](validation.md)；客户端的行为见
-[option-berth-macos](https://github.com/SheathedSharp/option-berth-macos)。
+Within the supported scope, a reproducible wrong stop, attribution error or ledger corruption must be
+fixed and cannot be papered over as "a later iteration". Verification commands and actual coverage are
+in [validation.md](agent/validation.md); client behavior is in
+[option-berth-macos](https://github.com/SheathedSharp/option-berth-macos).

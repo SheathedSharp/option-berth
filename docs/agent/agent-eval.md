@@ -205,11 +205,13 @@ python3 scripts/agent_eval.py --dry-run --suite large
 ```
 
 `--dry-run` runs a **preflight**: it starts a trivial service with the binary under test and reads its
-status. If the engine cannot see listeners in the current process context (for example Darwin's
-`netstat` returns an empty table when it is not run from a shell-responsible process, or the agent
+status. If the engine cannot see listeners in the current process context (for example the agent
 sandbox blocks system observation), preflight exits 2 immediately and prints the engine's error code.
-In that case do not produce a table: the table would measure the environment, not the agent. Move to a
-normal terminal or fix the listener observation path and rerun.
+In that case do not produce a table: the table would measure the environment, not the agent. On
+macOS 27, when `netstat` cannot get a table the collector falls back to `lsof` (see
+[validation.md](validation.md)), so preflight can now run in an ordinary local terminal; the harness
+still decides only by the observation conclusion the engine publishes, and never writes an environment
+problem down as an agent failure.
 
 `--dry-run --suite large` creates fixtures for each large-project scenario; `stack-stale-code`,
 `stack-parallel-three`, `stack-port-owner`, `stack-same-name-other-worktree` and `stack-overbuild`

@@ -1,122 +1,134 @@
-# 安装与卸载
+# Install and uninstall
 
-本页只讲引擎 CLI 的安装、升级与卸载。macOS 客户端与 coding agent skill 是独立产品，
-各自在自己的仓库分发。
+English | [中文](install.zh.md)
 
-## 一行脚本（macOS / Linux）
+This page covers installing, upgrading and uninstalling the engine CLI only. The macOS client and the
+coding-agent skill are independent products distributed from their own repositories.
+
+## One-line script (macOS / Linux)
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh
 ```
 
-脚本解析最新 Release，按 `uname` 选择 darwin/linux 与 amd64/arm64，下载
-`option-berth-vX.Y.Z-<os>-<arch>.tar.gz`，核对同名 `.sha256` 后安装：
+The script resolves the latest release, picks darwin/linux and amd64/arm64 from `uname`, downloads
+`option-berth-vX.Y.Z-<os>-<arch>.tar.gz`, verifies the same-named `.sha256`, then installs:
 
-| 内容 | 位置 |
+| Content | Location |
 |---|---|
-| 二进制 | `~/.local/bin/oberth`、`~/.local/bin/jev-attention` |
-| 许可与构建清单 | `~/.local/share/option-berth` |
-| PATH | 已有的 shell 启动文件里加一行（不新建启动文件） |
-| 运行状态 | `~/.option-berth`（安装器不创建、不改动） |
+| Binaries | `~/.local/bin/oberth`, `~/.local/bin/jev-attention` |
+| Licenses and build manifest | `~/.local/share/option-berth` |
+| PATH | One line added to an existing shell startup file (never a new one) |
+| Runtime state | `~/.option-berth` (the installer neither creates nor modifies it) |
 
-固定版本、换目录或不动 PATH：
+Pin a version, change the directory, or leave PATH alone:
 
 ```sh
-# 固定版本
+# Pin a version
 curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh -s -- --version v1.0.0
 
-# 换安装目录
+# Change the install directory
 curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh -s -- --dir "$HOME/tools/bin"
 
-# 只下载安装，不改 shell 启动文件
+# Install only; do not modify shell startup files
 curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh -s -- --no-modify-path
 ```
 
-安装器不启动服务、不写 Git、不需要管理员权限。安装后可以运行 `oberth version` 与
-`oberth doctor` 确认。
+The installer starts no service, writes no Git state and needs no administrator rights. After
+installing, run `oberth version` and `oberth doctor` to confirm.
 
-### 下载慢或被网络限制
+### Slow downloads or network restrictions
 
-`github.com`、`raw.githubusercontent.com` 与 `api.github.com` 按域名分别可达，常见表现是
-连接超时，而不是明确的报错。安装器不会在官方地址上死等：
+`github.com`, `raw.githubusercontent.com` and `api.github.com` are reachable per domain, and the common
+symptom is a connection timeout rather than an explicit error. The installer does not sit waiting on the
+official host:
 
-- 先用约 5 秒探测官方主机，不可达时直接改用镜像列表；
-- 官方主机可用但传输持续低于 200KB/s 达 15 秒（镜像是 50KB/s、20 秒），放弃该源换下一个；
-- 校验和先于压缩包下载；使用镜像时要求第二个源报告相同的 SHA256 才继续；
-- 默认镜像是 `https://ghfast.top` 与 `https://gh-proxy.com`。用自己的代理：
-  `BERTH_INSTALL_MIRRORS='https://your-proxy'`；设成空串则只用官方地址。
+- It probes the official host for about 5 seconds and switches to the mirror list when unreachable;
+- When the official host is reachable but transfer stays under 200KB/s for 15 seconds (mirrors: 50KB/s,
+  20 seconds), it abandons that source for the next one;
+- Checksums download before the archive; with a mirror, a second source must report the same SHA256
+  before it continues;
+- The default mirrors are `https://ghfast.top` and `https://gh-proxy.com`. Use your own with
+  `BERTH_INSTALL_MIRRORS='https://your-proxy'`; set it to an empty string to use only the official host.
 
-脚本本身取不到时，可以从 jsDelivr 取同一份文件（内容来自本仓库 `main`）：
+When the script itself cannot be fetched, jsDelivr serves the same file (content from this repository's
+`main`):
 
 ```sh
 curl -fsSL https://cdn.jsdelivr.net/gh/SheathedSharp/option-berth@main/install.sh | sh
 ```
 
-Windows 安装器同样支持镜像回退，也可以用代理入口启动：
+The Windows installer supports the same mirror fallback, and can also be launched through a proxy entry:
 
 ```powershell
 irm https://ghfast.top/https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps1 | iex
 ```
 
-`go install` 不经过 Release 资产，改用 Go 模块代理即可，校验和仍会核对：
+`go install` does not go through release assets, so a Go module proxy suffices and checksums are still
+verified:
 
 ```sh
 GOPROXY=https://goproxy.cn go install github.com/sheathedsharp/option-berth/engine/cmd/oberth@latest
 ```
 
-只设 `GOPROXY` 就够了：Go 会通过代理的 `/sumdb/` 端点校验模块。不要追加 `,direct`，
-代理未命中时会回落到直连 GitHub，也就是超时的那条路径；也不需要 `GOSUMDB=off`。
+Setting only `GOPROXY` is enough: Go verifies the module through the proxy's `/sumdb/` endpoint. Do not
+append `,direct` — when the proxy misses, Go falls back to a direct GitHub connection, which is the path
+that times out; `GOSUMDB=off` is unnecessary too.
 
-第三方代理能看到下载流量，也可能被替换。需要严格来源时用 `--version` 固定版本，并对照
-Releases 里的 `SHA256SUMS`；发布包签名校验尚未提供。
+A third-party proxy can see download traffic and can be replaced. When you need a strict origin, pin the
+version with `--version` and compare against the `SHA256SUMS` in Releases; release-archive signature
+verification is not available yet.
 
-## 一行脚本（Windows）
+## One-line script (Windows)
 
 ```powershell
 irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps1 | iex
 ```
 
-| 内容 | 位置 |
+| Content | Location |
 |---|---|
-| 二进制 | `%LOCALAPPDATA%\option-berth\bin\oberth.exe`、`jev-attention.exe` |
-| 许可与构建清单 | `%LOCALAPPDATA%\option-berth` |
-| PATH | 当前用户的 PATH（不改系统 PATH） |
-| 运行状态 | `%USERPROFILE%\.option-berth` |
+| Binaries | `%LOCALAPPDATA%\option-berth\bin\oberth.exe`, `jev-attention.exe` |
+| Licenses and build manifest | `%LOCALAPPDATA%\option-berth` |
+| PATH | The current user's PATH (the system PATH is never modified) |
+| Runtime state | `%USERPROFILE%\.option-berth` |
 
-固定版本或不改 PATH：`.\install.ps1 -Version v1.0.0 -NoModifyPath`。
-Windows 安装器在替换文件前会检查 `oberth` / `jev-attention` 是否正在运行；
-正在运行就先执行 `oberth daemon stop`，再重新安装。
+Pin a version or leave PATH alone: `.\install.ps1 -Version v1.0.0 -NoModifyPath`.
+Before replacing files, the Windows installer checks whether `oberth` / `jev-attention` are running; if
+they are, it runs `oberth daemon stop` first and then reinstalls.
 
-## go install（Go 1.25+）
+## go install (Go 1.25+)
 
 ```sh
 go install github.com/sheathedsharp/option-berth/engine/cmd/oberth@latest
 
-# 可选的 Jev adapter
+# Optional Jev adapter
 go install github.com/sheathedsharp/option-berth/engine/cmd/jev-attention@latest
 ```
 
-需要 v1.1.2 或更新版本。固定版本用 `@v1.1.2`。二进制进 `$(go env GOPATH)/bin`（或 `GOBIN`），
-该目录需要在 PATH 中。
+This needs v1.1.2 or later. Pin a version with `@v1.1.2`. The binaries land in `$(go env GOPATH)/bin`
+(or `GOBIN`), which must be on PATH.
 
 ## Homebrew
 
-自建 tap，不需要等 homebrew-core 收录。它安装引擎 CLI（`oberth` 和 `jev-attention`），
-不是 macOS 客户端。formula 指向已发布的压缩包，校验和写在 tap 里。
+A self-hosted tap, so there is no need to wait for homebrew-core inclusion. It installs the engine CLI
+(`oberth` and `jev-attention`), not the macOS client. The formula points at published archives, with
+checksums recorded in the tap.
 
 ```sh
 brew install sheathedsharp/tap/oberth
 ```
 
-升级用 `brew upgrade oberth`。`brew install option-berth` 仍然要等 homebrew-core 收录，现在没有。
+Upgrade with `brew upgrade oberth`. `brew install option-berth` still waits on homebrew-core inclusion,
+which does not exist yet.
 
-## 手动下载发布包
+## Download a release manually
 
-不想执行脚本时，从 [Releases](https://github.com/SheathedSharp/option-berth/releases)
-下载对应平台的压缩包，先核对 `SHA256SUMS`，再把 `oberth` 与 `jev-attention` 放到 PATH 中的目录：
+When you would rather not run a script, download the archive for your platform from
+[Releases](https://github.com/SheathedSharp/option-berth/releases), verify `SHA256SUMS` first, then put
+`oberth` and `jev-attention` in a directory on PATH:
 
 ```sh
-# 以 darwin-arm64、v1.0.0 为例
+# darwin-arm64 and v1.0.0 as an example
 curl -fLO https://github.com/SheathedSharp/option-berth/releases/download/v1.0.0/option-berth-v1.0.0-darwin-arm64.tar.gz
 curl -fLO https://github.com/SheathedSharp/option-berth/releases/download/v1.0.0/option-berth-v1.0.0-darwin-arm64.tar.gz.sha256
 shasum -a 256 -c option-berth-v1.0.0-darwin-arm64.tar.gz.sha256
@@ -125,12 +137,13 @@ install -m 0755 option-berth-v1.0.0-darwin-arm64/oberth ~/.local/bin/oberth
 install -m 0755 option-berth-v1.0.0-darwin-arm64/jev-attention ~/.local/bin/jev-attention
 ```
 
-压缩包内的 `LICENSE`、`licenses/` 与 `build-manifest.json` 建议保留；手动安装时它们不会自动复制。
+Keeping the archive's `LICENSE`, `licenses/` and `build-manifest.json` is recommended; a manual install
+does not copy them for you.
 
-## Linux 安装包（.deb / .rpm）
+## Linux packages (.deb / .rpm)
 
-发布流程会为 amd64/arm64 生成 `.deb` 与 `.rpm`，和压缩包放在同一个 Release。`v1.0.0` 还没有
-这些资产，从 v1.1.2 开始提供：
+The release process produces `.deb` and `.rpm` for amd64/arm64 in the same release as the archives.
+`v1.0.0` does not have these assets yet; they are available from v1.1.2:
 
 ```sh
 # Debian / Ubuntu
@@ -142,39 +155,41 @@ sudo dnf install ./option-berth-1.0.0-1.x86_64.rpm
 sudo dnf remove option-berth
 ```
 
-安装包把 `oberth`、`jev-attention` 放到 `/usr/bin`，许可与构建清单放到
-`/usr/share/doc/option-berth`。`apt remove` / `dnf remove` 不删除 `~/.option-berth` 运行状态；
-确认不再需要后再执行 `oberth daemon stop` 并删除该目录。arm64 使用 `_arm64.deb` 与
-`.aarch64.rpm` 文件名。
+The packages put `oberth` and `jev-attention` in `/usr/bin` and the licenses and build manifest in
+`/usr/share/doc/option-berth`. `apt remove` / `dnf remove` do not delete `~/.option-berth` runtime
+state; once you are sure it is no longer needed, run `oberth daemon stop` and delete that directory.
+arm64 uses the `_arm64.deb` and `.aarch64.rpm` file names.
 
-## 卸载
+## Uninstall
 
-macOS / Linux：
+macOS / Linux:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uninstall.sh | sh
 ```
 
-Windows：
+Windows:
 
 ```powershell
 irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uninstall.ps1 | iex
 ```
 
-卸载器会：
+The uninstaller:
 
-- 尽量先执行 `oberth daemon stop`，避免留下正在运行的旧进程；
-- 删除 `oberth` 与 `jev-attention`；
-- 删除安装器放在 `~/.local/share/option-berth` 的许可与构建清单；
-- 删除安装器写进 shell 启动文件的那一行（只删自己写的精确行，不动其他 PATH 配置）。
+- Tries `oberth daemon stop` first, so no old process keeps running;
+- Removes `oberth` and `jev-attention`;
+- Removes the licenses and build manifest the installer placed in `~/.local/share/option-berth`;
+- Removes the exact line the installer wrote into a shell startup file (only that line; other PATH
+  configuration is untouched).
 
-`go install` 安装的二进制不由这些卸载器管理：直接删除 `$(go env GOPATH)/bin/oberth` 与
-`jev-attention`；运行状态的处理与下面相同。
+Binaries installed by `go install` are not managed by these uninstallers: delete
+`$(go env GOPATH)/bin/oberth` and `jev-attention` directly; runtime state is handled as below.
 
-默认**保留** `~/.option-berth` 运行状态（数据库、日志、runs、配置）。确认不再需要时：
+By default it **keeps** `~/.option-berth` runtime state (database, logs, runs, configuration). When you
+are sure it is no longer needed:
 
 ```sh
-# macOS / Linux：连同运行状态一起删除
+# macOS / Linux: remove runtime state along with the install
 curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uninstall.sh | sh -s -- --purge-state
 ```
 
@@ -183,44 +198,49 @@ curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uni
 .\uninstall.ps1 -PurgeState
 ```
 
-`--purge-state` / `-PurgeState` 不可恢复；使用 `BERTH_HOME` 的项目请确认它指向的就是要删除的目录。
-只想保留 PATH 配置时用 `--keep-path` / `-KeepPath`；自定义目录用 `--dir` / `-Dir` 与
-`--data-dir` / `-DataDir`。
+`--purge-state` / `-PurgeState` is irreversible; projects using `BERTH_HOME` should confirm that it
+points at the directory being deleted. To keep only the PATH configuration, use
+`--keep-path` / `-KeepPath`; for custom directories use `--dir` / `-Dir` and
+`--data-dir` / `-DataDir`.
 
-手动卸载等价于：
+A manual uninstall is equivalent to:
 
 ```sh
 oberth daemon stop
 rm -f ~/.local/bin/oberth ~/.local/bin/jev-attention
 rm -rf ~/.local/share/option-berth
-# 需要时再删除运行状态
+# Remove runtime state only when needed
 rm -rf ~/.option-berth
 ```
 
-然后从 shell 启动文件里删掉安装器加的那一行 PATH。
+Then delete the PATH line the installer added from your shell startup file.
 
-## 升级
+## Upgrade
 
-重新执行对应平台的安装命令即可替换二进制；升级后执行一次 `oberth daemon stop`，下一次
-CLI 调用会启动新版本。Windows 先停止正在运行的 `oberth`，再重新安装。需要固定版本时使用
-`--version` / `-Version`。
+Rerun the install command for your platform to replace the binaries; after upgrading, run
+`oberth daemon stop` once, and the next CLI call starts the new version. On Windows, stop the running
+`oberth` first, then reinstall. Pin a version with `--version` / `-Version`.
 
-`oberth` 首屏会显示本机版本；有更新时底部直接给出本平台的安装命令和 `oberth daemon stop`。
-也可以随时运行 `oberth version --check` 主动检查。自动检查只读 GitHub 的发布标签，
-成功结果缓存 5 分钟、失败结果缓存 30 分钟，不下载、不安装任何东西；
-`BERTH_NO_UPDATE_CHECK=1` 可关闭首屏的自动检查。
-网络不可达时首屏只显示本机版本，不把它当作最新版。
+`oberth`'s first screen shows the local version; when an update exists, its footer gives the install
+command for this platform and `oberth daemon stop`. You can also run `oberth version --check` at any
+time. The automatic check reads GitHub release tags only, caches success for 5 minutes and failure for
+30 minutes, and downloads or installs nothing; `BERTH_NO_UPDATE_CHECK=1` disables the automatic check
+on the first screen. When the network is unreachable, the first screen shows only the local version and
+never presents it as the latest.
 
-## 尚未提供的渠道
+## Channels not yet available
 
-- **Homebrew core**：`brew install option-berth` 需要 homebrew-core 收录，暂未提供。自建 tap 见上面的 Homebrew 一节。
-- **Scoop**：需要单独的 bucket 仓库，本仓库不维护。
-- **winget**：需要向 microsoft/winget-pkgs 提交并过审，每个版本更新。
-- **Chocolatey**：需要社区包仓库与审核，和 winget 类似。
+- **Homebrew core**: `brew install option-berth` needs homebrew-core inclusion, which is not available
+  yet. The self-hosted tap is described in the Homebrew section above.
+- **Scoop**: needs a separate bucket repository, which this repository does not maintain.
+- **winget**: needs a submission to microsoft/winget-pkgs and review for every version update.
+- **Chocolatey**: needs a community package repository and review, similar to winget.
 
-当前可用方式见上面的脚本、Homebrew tap、手动发布包与 Linux `.deb`/`.rpm`。Windows MSI 暂未提供。
+The currently available paths are the scripts above, the Homebrew tap, manual release downloads and the
+Linux `.deb`/`.rpm`. A Windows MSI is not available yet.
 
-## 平台边界
+## Platform boundaries
 
-完整服务场景在 **macOS / Linux** 验证。Windows 有独立原生构建、冒烟和部分事实/持久化测试，
-但不是完整生命周期支持。各平台都不提供自动升级守护进程或后台更新器。
+Full service scenarios are verified on **macOS / Linux**. Windows has an independent native build, smoke
+tests and some fact/persistence tests, but is not full lifecycle support. No platform provides an
+auto-upgrade daemon or a background updater.

@@ -31,6 +31,15 @@ class ExtractionTests(unittest.TestCase):
         self.assertIn("invalid_params", codes)
         self.assertIn("internal", codes)
 
+    def test_stable_error_codes_exclude_the_english_conjunction(self):
+        # The English contract separates the last two codes with `and`; a naive
+        # word scan would publish `and` as a code the skill must cover.
+        codes = contract.stable_error_codes(CLI)
+        self.assertNotIn("and", codes)
+        self.assertEqual(len(codes), len(set(codes)))
+        for code in codes:
+            self.assertEqual(code, code.strip())
+
     def test_reference_tokens_match_the_contract_table(self):
         self.assertEqual(
             set(contract.reference_tokens(CLI)),

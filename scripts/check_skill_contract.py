@@ -3,8 +3,9 @@
 
 The skill is an independent product, but it teaches the same CLI, error codes,
 manifest fields, references, and agent-facing JSON fields. This check extracts
-those anchors from the contract's canonical sources — docs/cli.md, the generated
-manifest schema, and the observation state constants — and requires each one to
+those anchors from the contract's canonical sources — docs/cli.md (the English
+authoritative side of the pair), the generated manifest schema, and the
+observation state constants — and requires each one to
 appear in the skill checkout. It does not judge prose; it catches a contract
 change that never reached the skill.
 """
@@ -54,10 +55,17 @@ def manifest_key_pattern(key: str) -> re.Pattern[str]:
 
 def stable_error_codes(cli_text: str) -> list[str]:
     """Read the stable data.code strings from the CLI contract sentence."""
-    match = re.search(r"稳定的 code 包括(.+?)。", cli_text, re.S)
+    match = re.search(r"The stable codes are (.+?)\.(?:\s|$)", cli_text, re.S)
     if match is None:
         raise ValueError("docs/cli.md: no sentence listing the stable error codes")
-    codes = re.findall(r"[a-z][a-z0-9_]+", match.group(1))
+    # The list is comma-separated with an English `and` before the last item.
+    # Splitting on both keeps `and` out of the codes themselves; the Chinese
+    # side separates with `、` and needs no such cut.
+    codes = [
+        token.strip()
+        for token in re.split(r",|\band\b", match.group(1))
+        if re.fullmatch(r"[a-z][a-z0-9_]+", token.strip())
+    ]
     if not codes:
         raise ValueError("docs/cli.md: the stable error-code sentence names no codes")
     return codes
@@ -75,7 +83,7 @@ def _section(text: str, heading: str) -> str:
 def reference_tokens(cli_text: str) -> list[str]:
     """Read the manifest reference table, not examples in surrounding prose."""
     tokens: list[str] = []
-    for line in _section(cli_text, "### 清单中的引用").splitlines():
+    for line in _section(cli_text, "### Manifest references").splitlines():
         if not line.startswith("|") or "${" not in line:
             continue
         tokens.extend(re.findall(r"`(\$\{[^`]+\})`", line))
@@ -87,7 +95,7 @@ def reference_tokens(cli_text: str) -> list[str]:
 def json_field_anchors(cli_text: str) -> list[str]:
     """Read the agent-facing JSON field table, not fields named in prose."""
     fields: list[str] = []
-    for line in _section(cli_text, "### agent 读取的 JSON 字段").splitlines():
+    for line in _section(cli_text, "### Agent-facing JSON fields").splitlines():
         if not line.startswith("|"):
             continue
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
