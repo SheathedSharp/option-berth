@@ -269,6 +269,22 @@ Jev 调用、缓存命中和无事件轮询数量；没有真实反馈时指标�
 | `worktree.identity` | `status` | `${worktree}` 的展开值，用于命名 per-worktree 数据。 |
 | `observation.state` | `status` | 监听表是否可信；先读它再读 `ports`。 |
 | `attention_path` | `status` | 当前异常的派生交接文件；没有异常时缺省。 |
+| `services[].starting` | `status` | 正在启动的瞬时事实；不是 run，也不等于 `running`。 |
+| `starting.phase` | `status` | `waiting_dependency`、`prepare` 或 `spawning`。 |
+| `starting.waiting_on` | `status` | 仍在等的依赖；观察失败时保留上次已知集合。 |
+| `starting.elapsed_ms` | `status` | 本次启动已经过的毫秒数，读取时计算。 |
+| `starting.ready_timeout` | `status` | 这次生效的就绪等待预算。 |
+| `starting.last_prepare_ms` | `status` | 上一次 prepare 耗时；未知时为 null。 |
+| `services[].stats.*` | `status` | 服务资源样本；字段缺省表示未知，不是 0。 |
+| `worktree.resources.*` | `status` | 已有样本的 worktree 汇总；没有样本时缺省。 |
+| `manifest_hash` | `status` | 进程启动时的清单指纹。 |
+| `runtime_spec_hash` | `status` | 当前运行参数的指纹；与 `manifest_hash` 不一致即来自旧清单。 |
+| `code_changed_since_start` | `status` | 服务是否在跑当前源码；缺省表示未知。 |
+| `code_changed_files` | `status` | 发生变化且能精确比较的文件数。 |
+| `code_hint` | `status` | 代码已变化时的确定性下一步。 |
+| `code_head` | `status` | 启动时的 commit；不是 Git 检出或无提交时缺省。 |
+| `services[].exit_reason` | `status --brief` | 精简视图里的失败原因。 |
+| `services[].exit_code` | `status --brief` | 精简视图里的退出码。 |
 
 ### oberth up [project] [--only name,...] [--no-deps] [--wait|--ready] [--wait-timeout duration]
 [--allow-outside-home] [--json]
