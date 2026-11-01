@@ -1,7 +1,9 @@
-package main
+package runner
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,7 +18,7 @@ import (
 
 // The runner lives in the optional agent-side command. Only the documented
 // status read is executed here; all action choices remain with the agent/user.
-type runnerStatus struct {
+type Status struct {
 	Scope struct {
 		Root string `json:"root"`
 	} `json:"scope"`
@@ -24,30 +26,30 @@ type runnerStatus struct {
 	AttentionRevision string `json:"attention_revision"`
 }
 
-type hilDecision struct {
+type HILDecision struct {
 	NeedsHuman bool   `json:"needs_human"`
 	Reason     string `json:"reason"`
 	NextOption string `json:"next_option,omitempty"`
 	Policy     string `json:"policy"`
 }
 
-type runnerOption struct {
+type OptionView struct {
 	ID                     string `json:"id"`
 	ReadOnly               bool   `json:"read_only"`
 	RequiresExplicitChoice bool   `json:"requires_explicit_choice"`
 }
 
-type hilRequest struct {
+type HILRequest struct {
 	Event      attention.Event      `json:"event"`
 	Events     []attention.Event    `json:"events,omitempty"`
 	Evidence   []attention.Evidence `json:"evidence"`
-	Options    []runnerOption       `json:"options"`
+	Options    []OptionView         `json:"options"`
 	FirstSeen  string               `json:"first_seen,omitempty"`
 	LastSeen   string               `json:"last_seen,omitempty"`
 	FreshUntil string               `json:"fresh_until,omitempty"`
 }
 
-type runnerOutput struct {
+type Output struct {
 	Status            string                `json:"status"`
 	Reason            string                `json:"reason,omitempty"`
 	AttentionPath     string                `json:"attention_path,omitempty"`
@@ -61,17 +63,19 @@ type runnerOutput struct {
 	Assessment        *attention.Assessment `json:"assessment,omitempty"`
 	JevCalled         bool                  `json:"jev_called,omitempty"`
 	Cached            bool                  `json:"cached,omitempty"`
-	Decision          *hilDecision          `json:"decision,omitempty"`
-	Request           *hilRequest           `json:"request,omitempty"`
-	// worktreeRoot is used only for the local quality ledger and is deliberately
-	// excluded from the agent-facing JSON output.
-	worktreeRoot string
+	Decision          *HILDecision          `json:"decision,omitempty"`
+	Request           *HILRequest           `json:"request,omitempty"`
+	// WorktreeRoot is used only for the local quality ledger and is deliberately
+	// excluded from the agent-facing JSON output: an absolute path is not a
+	// fact the agent needs, and leaking one would break the redaction the
+	// adapter promises.
+	WorktreeRoot string `json:"-"`
 }
 
-// subscriptionStats are emitted once when a session stops. Keeping counters
+// SubscriptionStats are emitted once when a session stops. Keeping counters
 // in the session summary makes a quiet ledger explainable without appending a
 // record for every polling tick.
-type subscriptionStats struct {
+type SubscriptionStats struct {
 	Polls        int
 	EventsSeen   int
 	JevCalls     int
@@ -84,8 +88,8 @@ type subscriptionStats struct {
 // Conservative routing thresholds, not claims of calibrated probabilities.
 // Even a confident model cannot authorize a side effect. A close Choice
 // distribution also needs the user's context.
-func decideHIL(a *attention.Assessment) hilDecision {
-	d := hilDecision{NeedsHuman: true, Reason: "assessment_unavailable", Policy: "oberth.hil/v1"}
+func DecideHIL(a *attention.Assessment) HILDecision {
+	d := HILDecision{NeedsHuman: true, Reason: "assessment_unavailable", Policy: "oberth.hil/v1"}
 	if a == nil {
 		return d
 	}
@@ -133,16 +137,16 @@ func decideHIL(a *attention.Assessment) hilDecision {
 	return d
 }
 
-func readRunnerStatus(ctx context.Context, binary, project string) (runnerStatus, error) {
+func ReadStatus(ctx context.Context, binary, project string) (Status, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, "status", "--json", "--no-mark")
 	cmd.Dir = project
 	data, err := cmd.Output()
 	if err != nil {
-		return runnerStatus{}, errors.New("runner: oberth status failed; read oberth status directly for details")
+		return Status{}, errors.New("runner: oberth status failed; read oberth status directly for details")
 	}
-	var status runnerStatus
+	var status Status
 	// Unmarshal rejects trailing JSON and non-JSON stdout.
 	if err := json.Unmarshal(data, &status); err != nil {
 		return status, errors.New("runner: invalid oberth status JSON")
@@ -153,7 +157,7 @@ func readRunnerStatus(ctx context.Context, binary, project string) (runnerStatus
 	return status, nil
 }
 
-func runnerArtifact(s runnerStatus) (attention.Artifact, error) {
+func ArtifactFor(s Status) (attention.Artifact, error) {
 	a, err := attention.ReadFresh(s.AttentionPath, time.Time{})
 	if err != nil {
 		return a, jev.ErrStale
@@ -166,30 +170,30 @@ func runnerArtifact(s runnerStatus) (attention.Artifact, error) {
 	return a, nil
 }
 
-func runAuto(ctx context.Context, binary, project string, client jev.Client, task jev.TaskContext,
-	readStatus func(context.Context, string, string) (runnerStatus, error)) (runnerOutput, error) {
+func Auto(ctx context.Context, binary, project string, client jev.Client, task jev.TaskContext,
+	readStatus func(context.Context, string, string) (Status, error)) (Output, error) {
 	s, err := readStatus(ctx, binary, project)
 	if err != nil {
-		return runnerOutput{}, err
+		return Output{}, err
 	}
 	if s.AttentionPath == "" {
-		return runnerOutput{Status: "clear", WorktreeID: jev.WorktreeID(s.Scope.Root), worktreeRoot: s.Scope.Root}, nil
+		return Output{Status: "clear", WorktreeID: jev.WorktreeID(s.Scope.Root), WorktreeRoot: s.Scope.Root}, nil
 	}
-	a, err := runnerArtifact(s)
+	a, err := ArtifactFor(s)
 	if err != nil {
-		return staleRunnerOutput(s), nil
+		return StaleOutput(s), nil
 	}
 	// Candidate options published by the fact layer are not permission. The
 	// agent must supply an explicit allow-list for this task.
 	if len(task.AuthorizedOptions) == 0 {
-		return runnerOutput{}, errors.New("runner: explicit authorized_options are required")
+		return Output{}, errors.New("runner: explicit authorized_options are required")
 	}
 	// Long-running agents can declare a broad fixed allow-list. Only its
 	// intersection with this event's deterministic candidates reaches Jev or
 	// the HIL request; candidate publication itself never grants permission.
 	authorized, err := jev.FilterAuthorizedOptions(a.Options, task.AuthorizedOptions)
 	if err != nil {
-		return runnerOutput{}, fmt.Errorf("runner: %w", err)
+		return Output{}, fmt.Errorf("runner: %w", err)
 	}
 	task.AuthorizedOptions = authorized
 	result, cached := jev.CachedResult(a, task)
@@ -200,48 +204,49 @@ func runAuto(ctx context.Context, binary, project string, client jev.Client, tas
 		result, callErr = client.Evaluate(ctx, a, task)
 	}
 	if callErr != nil && !errors.Is(callErr, jev.ErrUnavailable) && !errors.Is(callErr, jev.ErrStale) {
-		return runnerOutput{}, callErr
+		return Output{}, callErr
 	}
 	// A remote call can take seconds. Refresh facts before publishing the HIL
 	// output, even on fallback or cache reuse; do not present an old request.
 	fresh, err := readStatus(ctx, binary, project)
 	if err != nil {
-		return runnerOutput{}, err
+		return Output{}, err
 	}
 	if fresh.AttentionPath == "" {
-		return runnerOutput{Status: "clear", WorktreeID: jev.WorktreeID(fresh.Scope.Root), worktreeRoot: fresh.Scope.Root}, nil
+		return Output{Status: "clear", WorktreeID: jev.WorktreeID(fresh.Scope.Root), WorktreeRoot: fresh.Scope.Root}, nil
 	}
-	latest, err := runnerArtifact(fresh)
+	latest, err := ArtifactFor(fresh)
 	if err != nil || fresh.AttentionPath != s.AttentionPath || latest.EventID != a.EventID || latest.StateRevision != a.StateRevision {
-		return staleRunnerOutput(fresh), nil
+		return StaleOutput(fresh), nil
 	}
 	if errors.Is(callErr, jev.ErrStale) {
-		return staleRunnerOutput(fresh), nil
+		return StaleOutput(fresh), nil
 	}
 	if callErr == nil && !cached {
 		if err := jev.Persist(s.AttentionPath, a, result); err != nil {
 			if errors.Is(err, jev.ErrStale) {
-				return staleRunnerOutput(fresh), nil
+				return StaleOutput(fresh), nil
 			}
-			return runnerOutput{}, err
+			return Output{}, err
 		}
 	}
-	out := runnerOutput{AttentionPath: s.AttentionPath, AttentionRevision: a.StateRevision, EventID: a.EventID, FreshUntil: latest.FreshUntil, Cached: cached, WorktreeID: jev.WorktreeID(fresh.Scope.Root), worktreeRoot: fresh.Scope.Root}
+	out := Output{AttentionPath: s.AttentionPath, AttentionRevision: a.StateRevision, EventID: a.EventID, FreshUntil: latest.FreshUntil, Cached: cached, WorktreeID: jev.WorktreeID(fresh.Scope.Root), WorktreeRoot: fresh.Scope.Root}
 	out.JevCalled = jevCalled
 	if callErr == nil {
 		out.Assessment = &result.Assessment
 		out.ContextID = result.Assessment.ContextID
 	}
-	d := decideHIL(out.Assessment)
+	d := DecideHIL(out.Assessment)
 	out.Decision = &d
 	if callErr != nil {
 		out.Status = "unavailable"
+		out.Reason = jev.ReasonFor(callErr)
 	} else if d.NeedsHuman {
 		out.Status = "human_required"
 	} else {
 		out.Status = "continue"
 	}
-	request := &hilRequest{
+	request := &HILRequest{
 		Event: a.Event, Events: a.Events, Evidence: a.Evidence,
 		FirstSeen: a.FirstSeen, LastSeen: a.LastSeen, FreshUntil: a.FreshUntil,
 	}
@@ -252,44 +257,44 @@ func runAuto(ctx context.Context, binary, project string, client jev.Client, tas
 			}
 			policy, ok := attention.OptionPolicyFor(option.ID)
 			if !ok {
-				return runnerOutput{}, errors.New("runner: unknown fixed option")
+				return Output{}, errors.New("runner: unknown fixed option")
 			}
-			request.Options = append(request.Options, runnerOption{ID: option.ID, ReadOnly: policy.ReadOnly, RequiresExplicitChoice: policy.RequiresExplicitChoice})
+			request.Options = append(request.Options, OptionView{ID: option.ID, ReadOnly: policy.ReadOnly, RequiresExplicitChoice: policy.RequiresExplicitChoice})
 		}
 	}
 	out.Request = request
 	return out, nil
 }
 
-func staleRunnerOutput(status runnerStatus) runnerOutput {
-	d := hilDecision{NeedsHuman: true, Reason: "state_changed_refresh_required", Policy: "oberth.hil/v1"}
-	return runnerOutput{Status: "stale", WorktreeID: jev.WorktreeID(status.Scope.Root), Decision: &d, worktreeRoot: status.Scope.Root}
+func StaleOutput(status Status) Output {
+	d := HILDecision{NeedsHuman: true, Reason: "state_changed_refresh_required", Policy: "oberth.hil/v1"}
+	return Output{Status: "stale", WorktreeID: jev.WorktreeID(status.Scope.Root), Decision: &d, WorktreeRoot: status.Scope.Root}
 }
 
-// runSubscribe keeps the optional adapter outside the daemon while giving an
+// Subscribe keeps the optional adapter outside the daemon while giving an
 // agent a durable event stream for the lifetime of its current task. It emits
 // only when the status/event/assessment state changes; repeated polls of the
 // same revision are deliberately silent.
-func runSubscribe(ctx context.Context, binary, project string, interval time.Duration, client jev.Client,
-	task jev.TaskContext, readStatus func(context.Context, string, string) (runnerStatus, error),
+func Subscribe(ctx context.Context, binary, project string, interval time.Duration, client jev.Client,
+	task jev.TaskContext, readStatus func(context.Context, string, string) (Status, error),
 	emit func(any) error) error {
-	return runSubscribeWithObserver(ctx, binary, project, interval, client, task, readStatus, "", nil, emit)
+	return SubscribeWithObserver(ctx, binary, project, interval, client, task, readStatus, "", nil, emit)
 }
 
-// runSubscribeWithObserver keeps the same protocol while allowing the command
+// SubscribeWithObserver keeps the same protocol while allowing the command
 // entrypoint to append local quality observations. The observer cannot modify
 // the result or execute an option.
-func runSubscribeWithObserver(ctx context.Context, binary, project string, interval time.Duration, client jev.Client,
-	task jev.TaskContext, readStatus func(context.Context, string, string) (runnerStatus, error),
-	sessionID string, observe func(runnerOutput, time.Duration), emit func(any) error) error {
-	_, err := runSubscribeWithStats(ctx, binary, project, interval, client, task, readStatus, sessionID, observe, emit)
+func SubscribeWithObserver(ctx context.Context, binary, project string, interval time.Duration, client jev.Client,
+	task jev.TaskContext, readStatus func(context.Context, string, string) (Status, error),
+	sessionID string, observe func(Output, time.Duration), emit func(any) error) error {
+	_, err := SubscribeWithStats(ctx, binary, project, interval, client, task, readStatus, sessionID, observe, emit)
 	return err
 }
 
-func runSubscribeWithStats(ctx context.Context, binary, project string, interval time.Duration, client jev.Client,
-	task jev.TaskContext, readStatus func(context.Context, string, string) (runnerStatus, error),
-	sessionID string, observe func(runnerOutput, time.Duration), emit func(any) error) (subscriptionStats, error) {
-	stats := subscriptionStats{seen: make(map[string]bool)}
+func SubscribeWithStats(ctx context.Context, binary, project string, interval time.Duration, client jev.Client,
+	task jev.TaskContext, readStatus func(context.Context, string, string) (Status, error),
+	sessionID string, observe func(Output, time.Duration), emit func(any) error) (SubscriptionStats, error) {
+	stats := SubscriptionStats{seen: make(map[string]bool)}
 	if interval <= 0 {
 		return stats, errors.New("runner: subscription interval must be positive")
 	}
@@ -303,15 +308,15 @@ func runSubscribeWithStats(ctx context.Context, binary, project string, interval
 	lastKey := ""
 	for {
 		if err := ctx.Err(); err != nil {
-			_ = emit(subscriptionStopped(sessionID))
+			_ = emit(SubscriptionStopped(sessionID))
 			return stats, nil
 		}
 		stats.Polls++
 		started := time.Now()
-		result, err := runAuto(ctx, binary, project, client, task, readStatus)
+		result, err := Auto(ctx, binary, project, client, task, readStatus)
 		latency := time.Since(started)
 		if err != nil {
-			result = runnerOutput{Status: "error", Reason: subscriptionReason(err)}
+			result = Output{Status: "error", Reason: SubscriptionReason(err)}
 		}
 		result.SessionID = sessionID
 		if result.Status == "clear" && result.EventID == "" {
@@ -333,7 +338,7 @@ func runSubscribeWithStats(ctx context.Context, binary, project string, interval
 		if result.Status == "unavailable" {
 			stats.Unavailable++
 		}
-		key := subscriptionKey(result)
+		key := SubscriptionKey(result)
 		if key != lastKey {
 			if observe != nil {
 				observe(result, latency)
@@ -349,14 +354,14 @@ func runSubscribeWithStats(ctx context.Context, binary, project string, interval
 			if !timer.Stop() {
 				<-timer.C
 			}
-			_ = emit(subscriptionStopped(sessionID))
+			_ = emit(SubscriptionStopped(sessionID))
 			return stats, nil
 		case <-timer.C:
 		}
 	}
 }
 
-func subscriptionStopped(sessionID string) map[string]string {
+func SubscriptionStopped(sessionID string) map[string]string {
 	result := map[string]string{"status": "stopped", "reason": "subscription_cancelled"}
 	if sessionID != "" {
 		result["session_id"] = sessionID
@@ -364,20 +369,20 @@ func subscriptionStopped(sessionID string) map[string]string {
 	return result
 }
 
-func subscriptionKey(result runnerOutput) string {
+func SubscriptionKey(result Output) string {
 	assessment, _ := json.Marshal(result.Assessment)
 	return fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s", result.Status, result.EventID,
 		result.AttentionRevision, result.DecisionReason(), string(assessment))
 }
 
-func (result runnerOutput) DecisionReason() string {
+func (result Output) DecisionReason() string {
 	if result.Decision == nil {
 		return result.Reason
 	}
 	return result.Decision.Reason
 }
 
-func subscriptionReason(err error) string {
+func SubscriptionReason(err error) string {
 	if errors.Is(err, jev.ErrStale) {
 		return "state_changed_refresh_required"
 	}
@@ -385,4 +390,14 @@ func subscriptionReason(err error) string {
 		return "jev_unavailable"
 	}
 	return "runner_cycle_failed"
+}
+
+// NewSessionID names one subscription for the local ledger. It is derived from
+// the project root and the start time so two parallel sessions in the same
+// worktree stay distinguishable after the fact.
+func NewSessionID(project string) string {
+	root, _ := filepath.Abs(project)
+	seed := fmt.Sprintf("%s\x00%d", filepath.Clean(root), time.Now().UnixNano())
+	sum := sha256.Sum256([]byte(seed))
+	return hex.EncodeToString(sum[:])[:20]
 }

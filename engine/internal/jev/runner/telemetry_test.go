@@ -1,4 +1,4 @@
-package main
+package runner
 
 import (
 	"encoding/json"
@@ -24,7 +24,7 @@ func TestBindFeedbackIdentityUsesCanonicalProject(t *testing.T) {
 	}
 }
 
-func TestRunFeedbackBindsProjectAndRejectsMismatch(t *testing.T) {
+func TestFeedbackBindsProjectAndRejectsMismatch(t *testing.T) {
 	home := t.TempDir()
 	root := filepath.Join(t.TempDir(), "example-worker")
 	if err := os.MkdirAll(root, 0o700); err != nil {
@@ -42,7 +42,7 @@ func TestRunFeedbackBindsProjectAndRejectsMismatch(t *testing.T) {
 	if err := os.WriteFile(feedbackPath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := runFeedback(feedbackPath, "", root); err != nil {
+	if _, err := Feedback(feedbackPath, "", root); err != nil {
 		t.Fatal(err)
 	}
 	records, err := jev.ReadTelemetry(home)
@@ -57,7 +57,7 @@ func TestRunFeedbackBindsProjectAndRejectsMismatch(t *testing.T) {
 	if err := os.WriteFile(feedbackPath, badData, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := runFeedback(feedbackPath, "", root); err == nil {
+	if _, err := Feedback(feedbackPath, "", root); err == nil {
 		t.Fatal("mismatched feedback was accepted")
 	}
 }

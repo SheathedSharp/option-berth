@@ -1,12 +1,24 @@
 # Jev attention adapter
 
-`engine/cmd/jev-attention` is an optional, read-only adapter for the agent
-attention handoff. Its `--auto` runner reads `oberth status --json --no-mark`,
-validates the exact published artifact, asks TypeSafe Jev whether the event
-affects the current development task and needs the user's choice, then stores
-only the validated typed assessment in the same artifact. Its manual mode can
-still assess an explicitly supplied artifact. It never reads service logs,
+`oberth jev` is an optional, read-only assessment of the agent attention handoff.
+Its `assess` runner reads `oberth status --json --no-mark`, validates the exact
+published artifact, asks the selected Jev provider whether the event affects the
+current development task and needs the user's choice, then stores only the
+validated typed assessment in the same artifact. It never reads service logs,
 starts or stops a process, edits a manifest, or invents a command.
+
+The verbs map one-to-one onto the standalone binary's flags, and the JSON is the
+same object the agent already parsed:
+
+| `oberth jev` | standalone shell |
+|---|---|
+| `assess` | `jev-attention --auto` |
+| `session` | `jev-attention --session` / `--subscribe` |
+| `feedback --file` | `jev-attention --feedback` |
+| `report` | `jev-attention --quality-report` |
+
+`engine/cmd/jev-attention` remains as a thin shell over the same runner package
+(`internal/jev/runner`) while existing scripts and the installed skill catch up.
 
 The adapter supports TypeSafe's endpoint and OpenRouter's Jev Decisions API.
 For OpenRouter, use `POST https://openrouter.ai/api/alpha/decisions` with the
@@ -22,14 +34,14 @@ wire contract.
 For a task that keeps services running, prefer the task-scoped session form:
 
 ```sh
-jev-attention --session --project "$PWD" --task-context "${TMPDIR:-/tmp}/oberth-task-$$.json"
+oberth jev session --project "$PWD" --task-context "${TMPDIR:-/tmp}/oberth-task-$$.json"
 ```
 
 The path is the agent's to choose: nothing on the machine creates this file, so
 give each task its own — a fixed `/tmp` name lets two parallel agents overwrite
 each other's allow-list.
 
-`--session` is the lifecycle name for the long-lived `--subscribe` mode. The
+`session` is the long-lived form (`--subscribe` in the standalone shell). The
 agent starts it after the initial status read and stops it with the task. It
 polls facts continuously but calls Jev only for a new event/revision or an
 uncached assessment.
@@ -38,7 +50,7 @@ The agent-side runner performs the status read and exact artifact lookup in one
 operation. Do not scan the `BERTH_HOME/attention` directory:
 
 ```sh
-jev-attention --auto --project "$PWD" --task-context "${TMPDIR:-/tmp}/oberth-task-$$.json"
+oberth jev assess --project "$PWD" --task-context "${TMPDIR:-/tmp}/oberth-task-$$.json"
 ```
 
 Create a short task context outside the repository. The option list is an
@@ -65,7 +77,7 @@ The runner never executes the selected option.
 For a task that remains active while services run, use the subscription mode:
 
 ```sh
-jev-attention --subscribe --project "$PWD" --interval 2s \
+oberth jev session --project "$PWD" --interval 2s \
   --task-context "${TMPDIR:-/tmp}/oberth-task-$$.json"
 ```
 
@@ -211,7 +223,7 @@ logs into it:
 Append it with:
 
 ```sh
-jev-attention --feedback /tmp/oberth-attention-feedback.json --project "$PWD"
+oberth jev feedback --file /tmp/oberth-attention-feedback.json --project "$PWD"
 ```
 
 `human_needed` is the ground-truth label for the event: set it to `false` when
@@ -227,9 +239,9 @@ permission.
 Inspect the accumulated evidence with:
 
 ```sh
-jev-attention --quality-report
-jev-attention --quality-report --since 168h --quality-project example-worker
-jev-attention --quality-report --since 168h --quality-project example-api
+oberth jev report
+oberth jev report --since 168h --quality-project example-worker
+oberth jev report --since 168h --quality-project example-api
 ```
 
 The report includes session lifecycle and polling counts, observation/status counts, labelled/unlabelled-case
@@ -243,11 +255,13 @@ Ledger write failures are diagnostic only and do not change the runner result.
 
 ## Action preflight
 
-When an agent is preparing a side effect that is not itself a runtime fact,
-the same binary can create a separate preflight request from a freshly saved
-`oberth status --json` response. This is an external adapter artifact under
-`BERTH_HOME/attention/preflight/`; it never enters the daemon or replaces the
-runtime attention artifact:
+When an agent is preparing a side effect that is not itself a runtime fact, a
+preflight request can be derived from a freshly saved `oberth status --json`
+response. In this release it is still reached through the standalone shell:
+`oberth jev` carries the runner verbs above, not the preflight flags, so the
+command below is `jev-attention`, not `oberth jev`. The request is an external
+adapter artifact under `BERTH_HOME/attention/preflight/`; it never enters the
+daemon or replaces the runtime attention artifact:
 
 ```sh
 oberth status --json > /tmp/oberth-status.json

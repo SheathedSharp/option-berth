@@ -122,7 +122,7 @@ oberth down      stop every service in this project
 | 事实 | `status` · `logs` · `events` · `worktrees` | 现在是什么状态、在变什么；本机见过哪些 checkout 身份 |
 | 操作 | `up` · `restart` · `down` · `start` · `kill` | 让它跑起来、停下来 |
 | 代码与声明 | `git` · `init` | 代码上下文，以及这份 worktree 的清单 |
-| 交接 | `workplace` · `agent` | 留下和取回工作记录，把会话交给外部 agent |
+| 交接 | `workplace` · `agent` · `jev` | 留下和取回工作记录，把会话交给外部 agent；可选的模型评估，默认关闭 |
 | 基础设施 | `daemon` · `serve` · `config` · `version` · `completion` · `doctor` | 运行环境、配置与自检 |
 
 `events` 只读订阅明确关系的状态变化；`start` 只跑单个命令，`kill` 只处理明确点名的进程。
@@ -144,8 +144,11 @@ Repo 关系包含同仓库 worktree）、repository ID 和显式 workspace 关�
 
 当代码采到确定异常时，`status --json` 可以同时发布一个位于 `BERTH_HOME` 的派生 attention 文件，
 供使用 oberth 的开发 agent 判断是否需要把选择交还给用户。它只引用状态和日志证据，不改变事实，
-不执行动作；Jev 若被外部 adapter 使用，也只补充升级建议，不进入引擎控制路径。
-客户端如何保存这个可选 adapter 的本地配置，属于客户端仓库的契约。
+不执行动作。
+
+可选的模型评估是交接层的 `oberth jev`，默认关闭：只有人在 owner-only 设置文件里写
+`enabled: true`，或为单个进程设 `BERTH_JEV=1`，才会联网。环境变量里的密钥只是密钥，不是同意。
+启用后它也只补充升级建议，不进入引擎控制路径。客户端如何保存这份设置，属于客户端仓库的契约。
 
 ## 写的边界
 

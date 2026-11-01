@@ -152,7 +152,7 @@ may only land in an existing layer:
 | Facts | `status` · `logs` · `events` · `worktrees` | What the state is and what is changing; which checkout identities this machine has seen |
 | Operations | `up` · `restart` · `down` · `start` · `kill` | Make it run, make it stop |
 | Code and declaration | `git` · `init` | Code context, and this worktree's manifest |
-| Handoff | `workplace` · `agent` | Leave and retrieve work records; hand a session to an external agent |
+| Handoff | `workplace` · `agent` · `jev` | Leave and retrieve work records; hand a session to an external agent; the optional model assessment, off by default |
 | Infrastructure | `daemon` · `serve` · `config` · `version` · `completion` · `doctor` | The runtime environment, configuration and self-checks |
 
 `events` only subscribes read-only to state changes of explicitly related worktrees; `start` runs a
@@ -181,10 +181,13 @@ broadcasting logs, commands, working directories or environment variables, and i
 
 When the code observes a definite anomaly, `status --json` may also publish a derived attention file
 under `BERTH_HOME` so that a development agent using oberth can decide whether to hand the choice back
-to the user. It only cites state and log evidence; it changes no fact and performs no action. If Jev is
-used through an external adapter it only adds an escalation suggestion and never enters the engine's
-control path. How the client stores that optional adapter's local configuration is the client
-repository's contract.
+to the user. It only cites state and log evidence; it changes no fact and performs no action.
+
+The optional model assessment is `oberth jev`, in the Handoff layer, and it is off unless the person
+enabled it: `enabled: true` in the owner-only settings file, or `BERTH_JEV=1` for one process. A key in
+the environment supplies a secret and is not consent. When it runs, it only adds an escalation
+suggestion and never enters the engine's control path. How the client stores that setting is the
+client repository's contract.
 
 ## Write boundaries
 

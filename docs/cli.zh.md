@@ -61,7 +61,7 @@ CLI 按 **agent 想做的事**分层，不按内部模块分：事实是「现�
 | 事实 | `status` · `logs` · `events` · `worktrees` | 当前项目的声明、实况与变化；本机见过的 checkout 身份 |
 | 操作 | `up` · `restart` · `down` · `start` · `kill` | 按清单起停，或明确点名一个低级进程入口 |
 | 代码与声明 | `git` · `init` | 只读代码上下文，以及这份 worktree 的清单 |
-| 交接 | `workplace` · `agent` | 工作记录，以及把会话交给外部 coding agent |
+| 交接 | `workplace` · `agent` · `jev` | 工作记录，把会话交给外部 coding agent；可选的模型评估（默认关闭） |
 | 基础设施 | `daemon` · `serve` · `config` · `version` · `completion` · `doctor` | 后台采集器、安装配置与自检 |
 
 `oberth --help` 末尾另有一节 **For agents**，给的是读法而不是命令：一次会话开头的三条读
@@ -227,17 +227,20 @@ changed 是第一次运行时缺省的可选字段。ports 仍是给脚本核对
 Jev 不在 daemon 或 `status` 的控制路径里：确定性部分在 `internal/attention`，Jev 客户端在
 `internal/jev`，这条依赖边界由 `internal/cmd/attention_boundary_test.go` 检查。
 
-可选的 `jev-attention` 适配器不属于 `oberth` 子命令。构建后可以用
-`bin/jev-attention`（`mage buildJev`），或在仓库根目录通过
-`(cd engine && go run ./cmd/jev-attention)` 调用。agent 应使用一次调用完成状态读取、异常
-验证、Jev 评估和 HIL 输出：
+可选的模型评估是交接层的 `oberth jev`。agent 应使用一次调用完成状态读取、异常验证、评估
+和 HIL 输出：
 
 ~~~sh
 # for short tasks pass arguments directly, no need to write a file
-jev-attention --auto --project "$PWD" \
+oberth jev assess --project "$PWD" \
   --task "keep the API healthy while the integration test runs" \
   --authorize inspect_logs,inspect_port,restart_service,continue_without_action,ask_user_for_context
 ~~~
+
+`oberth jev assess` 即原来的 `jev-attention --auto`，`oberth jev session` 即
+`--session`/`--subscribe`，`oberth jev feedback` / `oberth jev report` 即 `--feedback` 与
+`--quality-report`。独立二进制 `jev-attention` 在迁移期是同一 runner 的薄壳，
+`scripts/verify-attention-handoff.py` 和 skill 因此不用改；它不会长期分发。
 
 上下文文件包含 `task` 和必填的 `authorized_options`，**由 agent 自己写**：机器上没有任何东西
 替你生成它，路径也由 agent 选（并行的任务各用一个文件，不要共用一个 `/tmp` 路径）。
@@ -247,23 +250,23 @@ jev-attention --auto --project "$PWD" \
 `stale`；成功时把校验后的 `assessment` 原子写回同一文件，并在返回前复读状态。
 没有可用的环境变量或 GUI 本地 Jev 配置、网络失败、响应无效、文件过期或状态修订变化时，事实文件保持不变。
 macOS 设置页写入的 `~/.option-berth/jev.json`（隔离运行时为 `$BERTH_HOME/jev.json`）由
-`jev-attention` 自动读取，并且是唯一的持久同意：`enabled: true` 开启，`enabled: false` 即使环境
+`oberth jev` 自动读取，并且是唯一的持久同意：`enabled: true` 开启，`enabled: false` 即使环境
 里有密钥也保持关闭。显式 `OPENROUTER_API_KEY` / `TYPESAFE_API_KEY` 只提供密钥并选定 provider，不
 开启 Jev；`BERTH_JEV=1` 只为当前进程开启。每次不可用都带固定原因码（`no_key`、`disabled`、
 `invalid_config`、`unauthorized`、`rate_limited`、`timeout`、`network`、`provider_error`、
 `bad_response`、`stale`），而不是 provider 的错误原文。
 `--auto`、`--session` 和 `--subscribe` 必须显式提供 `authorized_options`；artifact 的 `options` 只是候选集，
 不会自动变成 agent 的授权。
-需要在任务生命周期内持续发现异常时，agent 应使用 `jev-attention --session --interval 2s`（底层别名仍为
+需要在任务生命周期内持续发现异常时，agent 应使用 `oberth jev session --interval 2s`（底层别名仍为
 `--subscribe`），
 它以 NDJSON 只输出新的 event/revision/assessment 变化，并在取消时结束。
 完整参数和隐私边界见
 [`jev-adapter.md`](agent/jev-adapter.md)。
 
-`jev-attention --auto` / `--subscribe` 会在 `$BERTH_HOME/quality/events.ndjson`
+`oberth jev assess` / `oberth jev session` 会在 `$BERTH_HOME/quality/events.ndjson`
 留下脱敏的本地质量观测。开发 agent 在真实交互后可用
-`jev-attention --feedback <json>` 回写人工标签和动作结果，再用
-`jev-attention --quality-report [--since 168h]` 查看标注覆盖率、assessment
+`oberth jev feedback --file <json>` 回写人工标签和动作结果，再用
+`oberth jev report [--since 168h]` 查看标注覆盖率、assessment
 可用率、路由原因与模型/选项分布、人工升级 precision/recall/F1、Jev 的
 `needs_human` / `task_relevant` 概率误差、推荐命中率、动作成功率、解决率和发现延迟。
 质量记录不属于 `status` 事实，也不改变任何执行权限；报告的 `sessions` 对象会说明会话、轮询、事件、

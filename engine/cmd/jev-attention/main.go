@@ -7,8 +7,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -23,6 +21,7 @@ import (
 
 	"github.com/sheathedsharp/option-berth/engine/internal/attention"
 	"github.com/sheathedsharp/option-berth/engine/internal/jev"
+	"github.com/sheathedsharp/option-berth/engine/internal/jev/runner"
 )
 
 type output struct {
@@ -93,18 +92,14 @@ func main() {
 		if *qualitySince < 0 {
 			fail("--since must not be negative")
 		}
-		if err := runQualityReport(*qualitySince, *qualityProject); err != nil {
-			fail(err.Error())
-		}
+		printQualityReport(*qualitySince, *qualityProject)
 		return
 	}
 	if strings.TrimSpace(*feedbackPath) != "" {
 		if *auto || *subscribe || *watch || *statusPath != "" || *preflightPath != "" || *action != "" {
 			fail("--feedback cannot be combined with runner or preflight flags")
 		}
-		if err := runFeedback(*feedbackPath, *attentionPath, *project); err != nil {
-			fail(err.Error())
-		}
+		printFeedback(*feedbackPath, *attentionPath, *project)
 		return
 	}
 	ctx, contextErr := loadContext(*contextPath, *task, *authorized)
@@ -120,19 +115,19 @@ func main() {
 		}
 		subscriptionContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		home := telemetryHome()
-		sessionID := newSessionID(*project)
-		appendLifecycleTelemetry(home, *project, "subscribed", sessionID, nil)
-		stats, err := runSubscribeWithStats(subscriptionContext, *oberth, *project, *interval, jev.Client{
+		home := runner.TelemetryHome()
+		sessionID := runner.NewSessionID(*project)
+		runner.AppendLifecycleTelemetry(home, *project, "subscribed", sessionID, nil)
+		stats, err := runner.SubscribeWithStats(subscriptionContext, *oberth, *project, *interval, jev.Client{
 			Endpoint: consent.Endpoint, Model: consent.Model, APIKey: consent.Key, Timeout: consent.Timeout,
-		}, ctx, readRunnerStatus, sessionID, func(result runnerOutput, latency time.Duration) {
-			appendRunnerTelemetry(home, *project, ctx, result, nil, "subscription", latency)
+		}, ctx, runner.ReadStatus, sessionID, func(result runner.Output, latency time.Duration) {
+			runner.AppendRunnerTelemetry(home, *project, ctx, result, nil, "subscription", latency)
 		}, func(value any) error { return writeJSON(os.Stdout, value) })
 		if err != nil {
-			appendLifecycleTelemetry(home, *project, "error", sessionID, &stats)
+			runner.AppendLifecycleTelemetry(home, *project, "error", sessionID, &stats)
 			fail(err.Error())
 		}
-		appendLifecycleTelemetry(home, *project, "stopped", sessionID, &stats)
+		runner.AppendLifecycleTelemetry(home, *project, "stopped", sessionID, &stats)
 		return
 	}
 	if *auto {
@@ -143,10 +138,10 @@ func main() {
 			fail(contextErr.Error())
 		}
 		started := time.Now()
-		result, err := runAuto(context.Background(), *oberth, *project, jev.Client{
+		result, err := runner.Auto(context.Background(), *oberth, *project, jev.Client{
 			Endpoint: consent.Endpoint, Model: consent.Model, APIKey: consent.Key, Timeout: consent.Timeout,
-		}, ctx, readRunnerStatus)
-		telemetryPath := appendRunnerTelemetry(telemetryHome(), *project, ctx, result, err, "runner", time.Since(started))
+		}, ctx, runner.ReadStatus)
+		telemetryPath := runner.AppendRunnerTelemetry(runner.TelemetryHome(), *project, ctx, result, err, "runner", time.Since(started))
 		if err != nil {
 			fail(err.Error())
 		}
@@ -177,14 +172,14 @@ func main() {
 	}
 	client, clientErr := consent.Client()
 	if clientErr != nil {
-		telemetryPath := recordManualAssessment(telemetryHome(), *attentionPath, artifact, ctx, nil, clientErr, "manual")
+		telemetryPath := runner.RecordManualAssessment(runner.TelemetryHome(), *attentionPath, artifact, ctx, nil, clientErr, "manual")
 		printJSON(output{Status: "unavailable", AttentionPath: *attentionPath, TelemetryPath: telemetryPath, Reason: consent.ReasonOr(clientErr)})
 		return
 	}
 	result, err := client.Evaluate(context.Background(), artifact, ctx)
 	if err != nil {
 		if errors.Is(err, jev.ErrUnavailable) || errors.Is(err, jev.ErrStale) {
-			telemetryPath := recordManualAssessment(telemetryHome(), *attentionPath, artifact, ctx, nil, err, "manual")
+			telemetryPath := runner.RecordManualAssessment(runner.TelemetryHome(), *attentionPath, artifact, ctx, nil, err, "manual")
 			printJSON(output{Status: "unavailable", AttentionPath: *attentionPath, TelemetryPath: telemetryPath, Reason: jev.ReasonFor(err)})
 			return
 		}
@@ -197,15 +192,8 @@ func main() {
 		}
 		fail(err.Error())
 	}
-	telemetryPath := recordManualAssessment(telemetryHome(), *attentionPath, artifact, ctx, &result, nil, "manual")
+	telemetryPath := runner.RecordManualAssessment(runner.TelemetryHome(), *attentionPath, artifact, ctx, &result, nil, "manual")
 	printJSON(output{Status: "assessed", AttentionPath: *attentionPath, TelemetryPath: telemetryPath, Assessment: &result.Assessment, TaskRelevant: &result.TaskRelevant, Model: result.Model})
-}
-
-func newSessionID(project string) string {
-	root, _ := filepath.Abs(project)
-	seed := fmt.Sprintf("%s\x00%d", filepath.Clean(root), time.Now().UnixNano())
-	sum := sha256.Sum256([]byte(seed))
-	return hex.EncodeToString(sum[:])[:20]
 }
 
 func runPreflight(statusPath, preflightPath, action, service, draftGroup, permission string, userApproved bool, consent jev.Resolved, task jev.TaskContext) error {
@@ -256,7 +244,7 @@ func runPreflight(statusPath, preflightPath, action, service, draftGroup, permis
 	// still gets the bounded preflight document to present directly.
 	client, clientErr := consent.Client()
 	if clientErr != nil {
-		telemetryPath := recordPreflightAssessment(home, request, task, nil, clientErr)
+		telemetryPath := runner.RecordPreflightAssessment(home, request, task, nil, clientErr)
 		printJSON(output{Status: "unavailable", PreflightPath: path, TelemetryPath: telemetryPath, RequestID: request.RequestID, Reason: consent.ReasonOr(clientErr)})
 		return nil
 	}
@@ -272,7 +260,7 @@ func runPreflight(statusPath, preflightPath, action, service, draftGroup, permis
 	result, callErr := client.Evaluate(context.Background(), artifact, task)
 	if callErr != nil {
 		if errors.Is(callErr, jev.ErrUnavailable) || errors.Is(callErr, jev.ErrStale) {
-			telemetryPath := recordPreflightAssessment(home, request, task, nil, callErr)
+			telemetryPath := runner.RecordPreflightAssessment(home, request, task, nil, callErr)
 			printJSON(output{Status: "unavailable", PreflightPath: path, TelemetryPath: telemetryPath, RequestID: request.RequestID, Reason: jev.ReasonFor(callErr)})
 			return nil
 		}
@@ -284,7 +272,7 @@ func runPreflight(statusPath, preflightPath, action, service, draftGroup, permis
 	if _, err := jev.WritePreflight(home, request); err != nil {
 		return err
 	}
-	telemetryPath := recordPreflightAssessment(home, request, task, &result, nil)
+	telemetryPath := runner.RecordPreflightAssessment(home, request, task, &result, nil)
 	printJSON(output{Status: "assessed", PreflightPath: path, TelemetryPath: telemetryPath, RequestID: request.RequestID, Assessment: &result.Assessment, TaskRelevant: &result.TaskRelevant, Model: result.Model})
 	return nil
 }
@@ -361,4 +349,23 @@ func printJSON(value any) {
 func fail(message string) {
 	fmt.Fprintln(os.Stderr, message)
 	os.Exit(1)
+}
+
+func printFeedback(feedbackPath, artifactPath, project string) {
+	result, err := runner.Feedback(feedbackPath, artifactPath, project)
+	if err != nil {
+		fail(err.Error())
+	}
+	printJSON(output{Status: "feedback_recorded", TelemetryPath: result.Path, RequestID: result.RecordID})
+}
+
+func printQualityReport(lookback time.Duration, projectFilter string) {
+	if lookback < 0 {
+		fail("--since must not be negative")
+	}
+	report, err := runner.QualityReport(lookback, projectFilter)
+	if err != nil {
+		fail(err.Error())
+	}
+	printJSON(report)
 }
