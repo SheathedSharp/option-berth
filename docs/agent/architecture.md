@@ -62,8 +62,15 @@ the runner.
 - `go/parser` asserts that the imports of `status`, `up`, `down`, `restart`, `logs` and `start`
   contain none either.
 
-So with no key, no `jev.json` and an unreachable provider, the control path still works: `status`
-publishes the artifact derived from facts, and only an external process can attach an `assessment`.
+So with no key, no `jev.json` and an unreachable provider, the control path still works: nothing
+leaves the machine, and no service start, stop or readiness decision depends on the enrichment.
+
+The artifact itself is gated on consent. `status` publishes it only once the person has enabled Jev,
+which makes `attention_path` a signal an agent can act on directly: present means the enhancement is
+on; absent means either nothing needs assessing or the user never opted in, and the agent no longer
+has to tell those apart by reading the settings file. An install that turns the enhancement off also
+clears what was published before, so a stale artifact cannot keep inviting an assessment the person
+declined.
 
 ## Read-only addresses and shared environment
 

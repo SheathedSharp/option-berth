@@ -352,12 +352,25 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool, only []stri
 // publishAttention makes the deterministic anomaly visible to an optional
 // agent adapter without putting a model or network call in status' read path.
 // Failure to publish the optional artifact never makes the facts unavailable.
+//
+// The artifact only exists once the person has enabled the enhancement. An
+// `attention_path` is therefore an unambiguous signal: an agent that sees one
+// knows Jev is on and may run `oberth jev assess`, and an agent that sees none
+// does not have to guess whether that is because nothing failed or because the
+// user never opted in. Publishing it unconditionally meant every reader had to
+// reconstruct that answer from the settings file.
 func publishAttention(doc *statusDocument) string {
 	if doc == nil {
 		return ""
 	}
 	doc.AttentionPath = ""
 	doc.AttentionRevision = ""
+	if !jevEnabled() {
+		// Clear a leftover artifact from before the enhancement was switched
+		// off: leaving it on disk would keep telling agents to assess.
+		_ = attention.Clear(paths.Dir(), doc.Scope.Root)
+		return ""
+	}
 	facts := attention.Facts{
 		WorktreeRoot: doc.Scope.Root,
 		Branch:       doc.Worktree.Branch,

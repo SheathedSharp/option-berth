@@ -249,11 +249,17 @@ file exists. Use logs for detailed output. `worktree.services[]`'s `pid`, `run_i
 are provided while the service is being run by option-berth, so even a portless worker can be
 verified against the actual run record through these fields; `log_path` is always given by the engine.
 
-When a definite abnormal event appears in the state, the JSON also carries `attention_path`. It points
-at a recomputable, expirable agent handoff file under `BERTH_HOME/attention/`; with no current
-abnormality the field is absent. When there is an abnormality, `attention_revision` is provided as
-well and must equal the file's `state_revision`, so the agent can check inside the same `status`
-response whether the file still corresponds to current facts. The core file is
+Once the optional Jev enhancement is enabled, a definite abnormal event in the state also puts
+`attention_path` in the JSON. It points at a recomputable, expirable agent handoff file under
+`BERTH_HOME/attention/`; with no current abnormality the field is absent. **Its presence is the
+signal that the person enabled the enhancement** — an agent that sees one may run `oberth jev
+assess`, and an agent that sees none does not have to guess whether that is because nothing is wrong
+or because Jev was never turned on. Without consent `status` publishes nothing and clears an artifact
+left over from before the enhancement was switched off. When there is an abnormality,
+`attention_revision` is provided as well and must equal the file's `state_revision`, so the agent can
+check inside the same `status` response whether the file still corresponds to current facts. An
+undeclared listener is not an abnormality: `status` already lists the port with its owner, and a
+process the agent did not start is not one it should stop. The core file is
 `oberth.attention/v1`, containing `event_id`, `state_revision`, `worktree_root`, optional `branch`,
 `generated_at`, `fresh_until`, `first_seen`, `last_seen`, optional `recovered_at`, `event`, an
 optional full `events` array, `evidence` and fixed `options`, and containing no shell commands or

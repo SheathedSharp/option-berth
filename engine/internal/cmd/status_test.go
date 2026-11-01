@@ -9,12 +9,29 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/attention"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
+	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
+
+// enableJev writes the settings file that grants consent. Publishing the
+// attention artifact is gated on it, so every case that expects a path has to
+// state the person enabled the enhancement first.
+func enableJev(t *testing.T) {
+	t.Helper()
+	path := paths.JevConfigPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"schema":"oberth.jev-config/v1","enabled":true,"provider":"typesafe","api_key":"k"}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestPublishAttentionWritesFactArtifact(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("BERTH_HOME", home)
+	enableJev(t)
 	code := 1
 	root := t.TempDir()
 	doc := statusDocument{
@@ -48,6 +65,7 @@ func TestPublishAttentionWritesFactArtifact(t *testing.T) {
 func TestPublishAttentionPreservesAssessmentOnStableRefresh(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("BERTH_HOME", home)
+	enableJev(t)
 	root := t.TempDir()
 	doc := statusDocument{
 		Scope: display.Scope{Root: root},
@@ -78,6 +96,7 @@ func TestPublishAttentionPreservesAssessmentOnStableRefresh(t *testing.T) {
 func TestPublishAttentionCarriesScopedPortsAndHistory(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("BERTH_HOME", home)
+	enableJev(t)
 	root := t.TempDir()
 	declared, actual := 3000, 3001
 	projectRoot := root
@@ -100,17 +119,17 @@ func TestPublishAttentionCarriesScopedPortsAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(artifact.Events) != 2 {
-		t.Fatalf("events = %+v, want conflict and scoped undeclared listener", artifact.Events)
-	}
-	if artifact.Events[0].Kind != attention.EventManifestConflict || artifact.Events[1].Kind != attention.EventUndeclared {
-		t.Fatalf("events = %+v", artifact.Events)
+	// One event, not two: the scoped listener is a fact `status` shows, and an
+	// undeclared listener is no longer an anomaly worth a handoff.
+	if len(artifact.Events) != 1 || artifact.Events[0].Kind != attention.EventManifestConflict {
+		t.Fatalf("events = %+v, want the manifest conflict only", artifact.Events)
 	}
 }
 
 func TestPublishAttentionClearsAfterRecovery(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("BERTH_HOME", home)
+	enableJev(t)
 	root := t.TempDir()
 	failed := statusDocument{
 		Scope: display.Scope{Root: root},
@@ -313,5 +332,61 @@ func TestPrintStatusServicesUsesOneRowPerService(t *testing.T) {
 	}
 	if strings.Contains(out, "stopped · stopped · exit") {
 		t.Errorf("service output = %q, stopped rows should not surface a signal code", out)
+	}
+}
+
+// An `attention_path` is a signal in itself: its presence means the person
+// enabled the enhancement. Without the gate every agent had to reconstruct
+// that from the settings file before it could decide whether to run `oberth jev
+// assess`, and a disabled install still left an artifact telling it to.
+func TestPublishAttentionIsSilentUntilEnabled(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("BERTH_HOME", home)
+	root := t.TempDir()
+	doc := statusDocument{
+		Scope: display.Scope{Root: root},
+		Worktree: state.Group{Services: []state.Service{{
+			Name: "api", LastExit: &state.ServiceExit{Code: 1, Reason: "start_failed"},
+		}}},
+	}
+	if path := publishAttention(&doc); path != "" {
+		t.Fatalf("published %q while Jev is disabled", path)
+	}
+	if doc.AttentionPath != "" || doc.AttentionRevision != "" {
+		t.Fatalf("doc carries an artifact: %q / %q", doc.AttentionPath, doc.AttentionRevision)
+	}
+
+	// Enabling it makes the same facts publish; the gate is the only difference.
+	enableJev(t)
+	if path := publishAttention(&doc); path == "" {
+		t.Fatal("enabled Jev published no artifact")
+	}
+}
+
+// Turning the enhancement off must also clear what is already on disk, or a
+// stale artifact keeps telling agents to assess after the person said no.
+func TestPublishAttentionClearsWhenDisabled(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("BERTH_HOME", home)
+	root := t.TempDir()
+	doc := statusDocument{
+		Scope: display.Scope{Root: root},
+		Worktree: state.Group{Services: []state.Service{{
+			Name: "api", LastExit: &state.ServiceExit{Code: 1, Reason: "start_failed"},
+		}}},
+	}
+	enableJev(t)
+	path := publishAttention(&doc)
+	if path == "" {
+		t.Fatal("enabled Jev published no artifact")
+	}
+	if err := os.Remove(paths.JevConfigPath()); err != nil {
+		t.Fatal(err)
+	}
+	if got := publishAttention(&doc); got != "" {
+		t.Fatalf("still published %q after the settings file was removed", got)
+	}
+	if _, err := attention.Read(path); err == nil {
+		t.Fatal("the artifact outlived the consent it was published under")
 	}
 }
