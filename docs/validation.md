@@ -8,7 +8,7 @@
 交叉构建 Windows arm64。核心 race 与真实服务场景只在手动 `workflow_dispatch`、
 每日 `Nightly full verification` 和推送 `v*` 注释标签时的 `Verified release` 中运行。站点改动由
 `.github/workflows/site.yml` 在 PR 与 `main` 推送时验证。需要分项检查时可在 Actions 里手动
-`workflow_dispatch` 对应工作流，发版前仍应跑本地 `scripts/release-*.sh` 预览与 `--execute` 验证。
+`workflow_dispatch` 对应工作流，发版前需要在本机复跑时用 `python3 scripts/release.py --verify-only`。
 
 | 工作流 | 触发 | 平台与内容 |
 |---|---|---|

@@ -82,8 +82,8 @@ JSON 字段表）、清单 schema 与 observation 常量，不要在引擎仓库
 
 - 推送前 `git log` / `git status`，重读目标 HEAD，注意与他人并行提交。
 - 合并走远端 PR：分支推到 `origin` 后开 PR，等 `Engine verification` 通过并经用户确认后
-  用 merge commit 合并；不在本地直接合入 `main`。发布由 `scripts/release-*.sh` 原子推送，
-  见 [releasing.md](releasing.md)。
+  用 merge commit 合并；不在本地直接合入 `main`。发布同样走版本 PR 加注释标签，由
+  `Verified release` 验证后发布，见 [releasing.md](releasing.md)。
 - 发版与标签流程见 [releasing.md](releasing.md)，版本与标签的约定只在那里维护。
 
 ## 相关专题

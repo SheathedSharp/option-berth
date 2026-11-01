@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -228,21 +227,6 @@ func Window() error { return renderClient("--dump-window", "window.png") }
 // Service is the compatible spelling of `mage shot -scope=services:NAME`.
 func Service(name string) error { scope := "services:" + name; return Shot(&scope) }
 
-// ReleasePatch increments PATCH, commits VERSION, and creates an annotated tag.
-func ReleasePatch(dryRun *bool) error {
-	return release("patch", dryRun != nil && *dryRun)
-}
-
-// ReleaseMinor increments MINOR, commits VERSION, and creates an annotated tag.
-func ReleaseMinor(dryRun *bool) error {
-	return release("minor", dryRun != nil && *dryRun)
-}
-
-// ReleaseMajor increments MAJOR, commits VERSION, and creates an annotated tag.
-func ReleaseMajor(dryRun *bool) error {
-	return release("major", dryRun != nil && *dryRun)
-}
-
 func loadProject() (project, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -360,85 +344,6 @@ func installApp(p project) error {
 
 func clientBinary(p project) string {
 	return filepath.Join(p.root, "client", "macos", "build", "OptionBerth.app", "Contents", "MacOS", "OptionBerth")
-}
-
-func release(level string, dryRun bool) error {
-	kinds := map[string]string{"major": "protocol", "minor": "feature", "patch": "fix"}
-	kind, ok := kinds[level]
-	if !ok {
-		return fmt.Errorf("unknown release level %q", level)
-	}
-	return releaseScript(kind, dryRun, false)
-}
-
-func releaseScript(kind string, dryRun, publish bool) error {
-	p, err := loadProject()
-	if err != nil {
-		return err
-	}
-	action := "--execute"
-	if publish {
-		action = "--publish"
-	}
-	if dryRun {
-		action = "--dry-run"
-	}
-	return command(p.root, "python3", filepath.Join(p.root, "scripts", "release.py"), "--kind", kind, action)
-}
-
-// ReleaseProtocol increments X1 and the independently versioned daemon protocol.
-func ReleaseProtocol(dryRun *bool) error {
-	return releaseScript("protocol", dryRun != nil && *dryRun, false)
-}
-
-// ReleaseFeature increments X2, resetting X3.
-func ReleaseFeature(dryRun *bool) error {
-	return releaseScript("feature", dryRun != nil && *dryRun, false)
-}
-
-// ReleaseFix increments X3.
-func ReleaseFix(dryRun *bool) error { return releaseScript("fix", dryRun != nil && *dryRun, false) }
-
-// PublishProtocol verifies, tags and atomically pushes a protocol release.
-func PublishProtocol(dryRun *bool) error {
-	return releaseScript("protocol", dryRun != nil && *dryRun, true)
-}
-
-// PublishFeature verifies, tags and atomically pushes a feature release.
-func PublishFeature(dryRun *bool) error {
-	return releaseScript("feature", dryRun != nil && *dryRun, true)
-}
-
-// PublishFix verifies, tags and atomically pushes a bug-fix release.
-func PublishFix(dryRun *bool) error { return releaseScript("fix", dryRun != nil && *dryRun, true) }
-
-func bumpVersion(version, level string) (string, error) {
-	parts := strings.Split(version, ".")
-	if len(parts) != 3 || !semverPattern.MatchString(version) {
-		return "", fmt.Errorf("invalid version %q", version)
-	}
-	values := make([]int, 3)
-	for i := range parts {
-		value, err := strconv.Atoi(parts[i])
-		if err != nil {
-			return "", err
-		}
-		values[i] = value
-	}
-	switch level {
-	case "major":
-		values[0]++
-		values[1] = 0
-		values[2] = 0
-	case "minor":
-		values[1]++
-		values[2] = 0
-	case "patch":
-		values[2]++
-	default:
-		return "", fmt.Errorf("unknown release level %q", level)
-	}
-	return fmt.Sprintf("%d.%d.%d", values[0], values[1], values[2]), nil
 }
 
 func requireCleanTree(root string) error {

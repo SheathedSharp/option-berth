@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Plan or explicitly publish a protocol.feature.fix release from reviewed main."""
+"""Release gates and tag validation shared by CI and packaging.
+
+Version bumps and tags are made through a reviewed PR followed by annotated
+tags; the local commit/publish modes that used to live here are gone.
+"""
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
-import tempfile
-from typing import Callable
 
 ROOT = Path(__file__).resolve().parent.parent
 VERSION_RE = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z")
@@ -19,11 +20,6 @@ PROTOCOL_FILE = Path("engine/internal/daemon/rpc/types.go")
 SCHEMA_FILE = Path("engine/docs/schema/protocol.schema.json")
 RACE_PACKAGES_FILE = Path("scripts/race-packages.txt")
 PROTOCOL_RE = re.compile(r'(?m)^const ProtocolVersion = "([0-9]+\.[0-9]+\.[0-9]+)"$')
-ACCEPTED_REMOTES = {
-    "https://github.com/SheathedSharp/option-berth.git",
-    "https://github.com/SheathedSharp/option-berth",
-    "git@github.com:SheathedSharp/option-berth.git",
-}
 
 
 def run(root: Path, *args: str, capture: bool = True, environment: dict[str, str] | None = None) -> str:
@@ -39,34 +35,11 @@ def run(root: Path, *args: str, capture: bool = True, environment: dict[str, str
     return (result.stdout or "").strip()
 
 
-def bump(version: str, kind: str) -> str:
-    if not VERSION_RE.fullmatch(version):
-        raise ValueError("version must be three nonnegative integers without leading zeros")
-    index = {"protocol": 0, "feature": 1, "fix": 2}.get(kind)
-    if index is None:
-        raise ValueError("release kind must be protocol, feature or fix")
-    values = list(map(int, version.split(".")))
-    values[index] += 1
-    values[index + 1:] = [0] * (2 - index)
-    return ".".join(map(str, values))
-
-
 def protocol(root: Path) -> str:
     matches = PROTOCOL_RE.findall((root / PROTOCOL_FILE).read_text())
     if len(matches) != 1:
         raise ValueError("expected one daemon protocol version declaration")
     return matches[0]
-
-
-def plan(root: Path, kind: str) -> dict[str, str]:
-    current = (root / "VERSION").read_text().strip()
-    current_protocol = protocol(root)
-    next_version = bump(current, kind)
-    tag = "v" + next_version
-    return {"kind": kind, "from": current, "version": next_version, "tag": tag,
-            "module_tag": "engine/" + tag,
-            "protocol_from": current_protocol,
-            "protocol": bump(current_protocol, "protocol") if kind == "protocol" else current_protocol}
 
 
 def check_versions(root: Path) -> None:
@@ -92,7 +65,7 @@ def race_packages(root: Path) -> tuple[str, ...]:
 
 
 def verify(root: Path) -> None:
-    """No skip-checks mode is exposed by the release command."""
+    """No skip-checks mode is exposed by the release gates."""
     check_versions(root)
     engine = root / "engine"
     for args in [("go", "build", "./..."), ("go", "vet", "./..."),
@@ -108,92 +81,6 @@ def verify(root: Path) -> None:
         # The 24x24 geometry is the macOS client's. Without a sibling checkout
         # there is nothing to compare against; say so instead of passing quietly.
         print("brand: skipped the terminal-mark drift check; BerthGeometry.swift lives in option-berth-macos")
-
-
-def clean(root: Path) -> None:
-    if run(root, "git", "status", "--porcelain", "--untracked-files=all"):
-        raise RuntimeError("release requires a clean worktree, including untracked files")
-
-
-def remote_preflight(root: Path, head: str, tag: str, module_tag: str) -> None:
-    if run(root, "git", "remote", "get-url", "origin") not in ACCEPTED_REMOTES:
-        raise RuntimeError("origin is not the expected release repository")
-    remote = run(root, "git", "ls-remote", "--refs", "origin", "refs/heads/main",
-                 "refs/tags/" + tag, "refs/tags/" + module_tag)
-    refs = dict(line.split("\t")[::-1] for line in remote.splitlines() if line)
-    if refs.get("refs/heads/main") != head:
-        raise RuntimeError("local main must exactly match origin/main before release")
-    for name in (tag, module_tag):
-        if "refs/tags/" + name in refs or run(root, "git", "tag", "--list", name):
-            raise RuntimeError("release tag already exists; tags are never overwritten")
-
-
-def update_candidate(root: Path, spec: dict[str, str]) -> None:
-    (root / "VERSION").write_text(spec["version"] + "\n")
-    if spec["kind"] == "protocol":
-        path = root / PROTOCOL_FILE
-        path.write_text(PROTOCOL_RE.sub('const ProtocolVersion = "' + spec["protocol"] + '"', path.read_text()))
-        run(root / "engine", "go", "generate", "./internal/daemon/rpc", capture=False)
-    check_versions(root)
-
-
-def release(root: Path, kind: str, publish: bool, verifier: Callable[[Path], None] = verify) -> dict[str, str]:
-    spec = plan(root, kind)
-    clean(root)
-    if run(root, "git", "branch", "--show-current") != "main":
-        raise RuntimeError("execute releases from reviewed main, not a topic branch")
-    head = run(root, "git", "rev-parse", "HEAD")
-    remote_preflight(root, head, spec["tag"], spec["module_tag"])
-    common = Path(run(root, "git", "rev-parse", "--git-common-dir"))
-    if not common.is_absolute():
-        common = root / common
-    lock = common / "oberth-release.lock"
-    fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    os.close(fd)
-    try:
-        with tempfile.TemporaryDirectory(prefix="oberth-release-") as tmp:
-            candidate = Path(tmp) / "candidate"
-            run(root, "git", "worktree", "add", "--detach", str(candidate), head)
-            try:
-                update_candidate(candidate, spec)
-                verifier(candidate)
-                allowed = {"VERSION"}
-                if kind == "protocol":
-                    allowed |= {str(PROTOCOL_FILE), str(SCHEMA_FILE)}
-                changed = set(run(candidate, "git", "diff", "--name-only", "HEAD").splitlines())
-                if not changed.issubset(allowed) or run(candidate, "git", "ls-files", "--others", "--exclude-standard"):
-                    raise RuntimeError("verification changed unexpected tracked or untracked inputs")
-                run(candidate, "git", "diff", "--check")
-                run(candidate, "git", "add", "--", *sorted(allowed))
-                run(candidate, "git", "-c", "user.name=SheathedSharp", "-c", "user.email=116537753+SheathedSharp@users.noreply.github.com",
-                    "commit", "-m", "chore(release): " + spec["tag"])
-                commit = run(candidate, "git", "rev-parse", "HEAD")
-                clean(root)
-                if run(root, "git", "rev-parse", "HEAD") != head:
-                    raise RuntimeError("main moved during verification; no tag or push performed")
-                remote_preflight(root, head, spec["tag"], spec["module_tag"])
-                run(root, "git", "merge", "--ff-only", commit)
-                clean(root)
-                run(root, "git", "-c", "user.name=SheathedSharp", "-c", "user.email=116537753+SheathedSharp@users.noreply.github.com",
-                    "tag", "-a", spec["tag"], commit, "-m", "Release " + spec["tag"])
-                run(root, "git", "-c", "user.name=SheathedSharp", "-c", "user.email=116537753+SheathedSharp@users.noreply.github.com",
-                    "tag", "-a", spec["module_tag"], commit, "-m", "Release " + spec["tag"] + " (engine module)")
-                spec["commit"] = commit
-                spec["state"] = "tagged-locally"
-                if publish:
-                    try:
-                        run(root, "git", "push", "--atomic", "origin", commit + ":refs/heads/main",
-                            "refs/tags/" + spec["tag"], "refs/tags/" + spec["module_tag"], capture=False)
-                    except RuntimeError as error:
-                        raise RuntimeError(f"local commit and {spec['tag']} retained; atomic push failed. Verify remote refs before retrying; never force or recreate the tag") from error
-                    spec["state"] = "pushed-awaiting-release-workflow"
-                return spec
-            finally:
-                # Only this invocation's disposable candidate is removed.
-                run(root, "git", "worktree", "remove", "--force", str(candidate))
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            lock.unlink()
 
 
 def validate_tag(root: Path, tag: str) -> None:
@@ -213,14 +100,9 @@ def validate_tag(root: Path, tag: str) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--validate-tag", help="validate an existing annotated release tag without publishing")
-    parser.add_argument("--kind", choices=("protocol", "feature", "fix"))
-    modes = parser.add_mutually_exclusive_group()
-    modes.add_argument("--dry-run", action="store_true", help="plan only (the default); no writes, builds, tags or network")
-    modes.add_argument("--execute", action="store_true", help="verify, create version commit and annotated local tag")
-    modes.add_argument("--publish", action="store_true", help="execute and atomically push main plus tag; CI publishes artifacts")
-    modes.add_argument("--verify-only", action="store_true", help="run release gates without changing version or refs")
+    parser = argparse.ArgumentParser(description="Release gates and tag validation for CI.")
+    parser.add_argument("--validate-tag", help="validate an existing annotated release tag")
+    parser.add_argument("--verify-only", action="store_true", help="run release gates without changing refs")
     args = parser.parse_args()
     try:
         if args.validate_tag:
@@ -229,14 +111,11 @@ def main() -> int:
         if args.verify_only:
             verify(ROOT)
             return 0
-        if args.kind is None:
-            parser.error("--kind is required")
-        result = release(ROOT, args.kind, args.publish) if args.execute or args.publish else plan(ROOT, args.kind)
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-        return 0
+        parser.error("choose --verify-only or --validate-tag; local release/publish modes were removed")
     except (OSError, RuntimeError, ValueError) as error:
         print(f"release refused: {error}", file=sys.stderr)
         return 1
+    return 0
 
 
 if __name__ == "__main__":
