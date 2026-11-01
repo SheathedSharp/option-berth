@@ -1,83 +1,89 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="brand/option-berth-lockup-dark.svg">
-    <img src="brand/option-berth-lockup-light.svg" alt="option-berth — 各自成泊" width="420">
+    <img src="brand/option-berth-lockup-light.svg" alt="option-berth" width="420">
   </picture>
 </p>
-<p align="center"><strong>每份代码，各自成泊。</strong><br>Git worktree 的运行事实层：服务起没起来，为什么没起来。</p>
-<p align="center">简体中文 · <a href="README.en.md">English</a></p>
+<p align="center"><strong>Every checkout, its own berth.</strong><br>The runtime facts layer for Git worktrees: whether your services are up, and why not.</p>
+<p align="center">English · <a href="README.zh.md">简体中文</a></p>
 
-<p align="center"><a href="https://sheathedsharp.github.io/option-berth/">产品官网</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">下载最新引擎</a></p>
+<p align="center"><a href="https://sheathedsharp.github.io/option-berth/">Website</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">Download the latest engine</a></p>
 
-## 三个产品
+## Three products
 
-option-berth 拆成三个独立产品，各自有仓库、版本与发布节奏：
+option-berth is three independent products, each with its own repository, version and release cadence:
 
-| 产品 | 仓库 | 它做什么 |
+| Product | Repository | What it does |
 | --- | --- | --- |
-| **引擎**（本仓库） | [SheathedSharp/option-berth](https://github.com/SheathedSharp/option-berth) | `oberth`：声明、观察、起停一个 worktree 的服务，输出人和 agent 都能读的事实 |
-| **客户端** | [SheathedSharp/option-berth-macos](https://github.com/SheathedSharp/option-berth-macos) | macOS 原生界面：服务、只读 Git 与终端/agent 会话，呈现同一份事实 |
-| **给 coding agent 的指引** | [SheathedSharp/option-berth-skill](https://github.com/SheathedSharp/option-berth-skill) | 教会 agent 读同一份事实、把服务跑起来、留下并取回工作记录 |
+| **Engine** (this repository) | [SheathedSharp/option-berth](https://github.com/SheathedSharp/option-berth) | `oberth`: declare, observe, start and stop one worktree's services, and answer with facts a person and an agent both read |
+| **Client** | [SheathedSharp/option-berth-macos](https://github.com/SheathedSharp/option-berth-macos) | A native macOS surface for services, read-only Git and terminal/agent sessions over the same facts |
+| **Coding-agent skill** | [SheathedSharp/option-berth-skill](https://github.com/SheathedSharp/option-berth-skill) | Teaches an agent to read the same facts, run the services, and leave work behind for the next session |
 
-三者只通过 CLI 与 `--json` 契约相连：客户端和 skill 都不自带第二份运行状态。
-开发和依赖安装时，把三个仓库放在同一个目录下即可（见下面「一起用」）。
+They meet only at the CLI and its `--json` contract: neither the client nor the skill keeps a second
+copy of the runtime state. Put the three clones side by side when you develop or try them together
+(see "Using the three together" below).
 
-本仓库的 Release 只包含引擎 CLI（macOS/Linux/Windows 的 amd64 与 arm64 压缩包及
-`SHA256SUMS`）。引擎版本从 `1.0.0` 起；拆分前的 `v0.2.0`–`v0.8.2` 属于合并产品，
-已不在本仓库发布。客户端与 skill 各自在自己的仓库发版。
+This repository's releases contain only the engine CLI (amd64 and arm64 archives for macOS, Linux and
+Windows, plus `SHA256SUMS`). The engine version line starts at `1.0.0`; the pre-split
+`v0.2.0`–`v0.8.2` releases belonged to the combined product and are no longer published here. The
+client and skill release from their own repositories.
 
-## 为什么需要 option-berth
+## Why option-berth
 
-同时开发几个分支，或让 coding agent 在多个 worktree 中工作时，难点不止是代码：
-哪个服务属于哪份 checkout？它真的健康了吗？一个 worker 没有监听端口，是否还在运行？
-停止当前项目，会不会影响另一个分支？
+Working on several branches, or letting coding agents work across several worktrees, is not only a
+code problem: which service belongs to which checkout? Is it actually healthy? Is a worker without a
+port still running? Will stopping this project disturb another branch?
 
-option-berth 把**服务声明、实际运行、日志、Git 上下文与工作记录**放到同一条工作流中。
-你确认项目应该运行什么；`oberth` 负责启动、观察和有边界地停止。
-人和外部 coding agent 读取相同的事实，不需要各自猜测系统状态。
+option-berth puts **declared services, what is actually running, logs, Git context and the work
+record** on one path. You decide what a project should run; `oberth` starts, observes and stops it
+within bounds. People and external coding agents read the same facts instead of guessing system state.
 
-## 它带来的改变
+## What it changes
 
-| 你要做的事 | option-berth 如何帮助 |
+| You want to | option-berth gives you |
 | --- | --- |
-| 同时运行多个 worktree | 自动端口与独立运行归属，减少分支之间的干扰 |
-| 确认服务可用 | 区分进程、监听和健康；`up --wait` 等待实际就绪 |
-| 排查失败 | 从服务进入日志、退出结果与诊断，而不是重新拼接系统命令 |
-| 使用无端口 worker | 通过运行记录观察，不把“没有端口”当成“没有运行” |
-| 与 coding agent 协作 | 相同 CLI 提供结构化 JSON；不内置另一套模型或 agent 推理系统 |
-| 接入现有编排工具 | 在工具自己的 setup / cleanup 脚本里调用 `up --wait`、`down --worktree`；不改它的配置 |
-| 接手别人（或上一轮）的工作 | `oberth workplace` 记录做过的命令与任务，结果如何都留在 worktree 上 |
-| 结束或清理一个 worktree | `${worktree}` 身份随 `status --json` 发布；`worktrees --gone` 列出 checkout 已消失的身份；`down --worktree/--identity` 仍能停止并交还预留，数据删除留给人 |
+| Run several worktrees at once | Automatic ports and per-run ownership, so branches do not collide |
+| Know a service is usable | Process, listener and health kept apart; `up --wait` waits for real readiness |
+| Diagnose a failure | Logs, exit result and diagnosis from the service, not a reassembled shell one-liner |
+| Observe a portless worker | A run record instead of treating "no port" as "not running" |
+| Work with a coding agent | The same CLI as structured JSON; no second model or agent-reasoning system inside |
+| Bring in an existing orchestrator | Call `up --wait` and `down --worktree` from the tool's own setup/cleanup scripts; its configuration is untouched |
+| Take over someone else's work | `oberth workplace` keeps the commands and tasks run here, and how they ended |
+| End or clean up a worktree | The `${worktree}` identity is in `status --json`; `worktrees --gone` lists identities whose checkout is gone; `down --worktree/--identity` still stops it and releases its reservations, while deleting data stays a person's call |
 
-**不是全机端口雷达，也不是另一个 AI IDE。** `machine:` 依赖只读；项目起停不会接管它们。
-worktree 隔离指运行归属和生命周期边界，不是操作系统安全沙箱。
-界面不在这个仓库：它是独立的 [macOS 客户端](https://github.com/SheathedSharp/option-berth-macos)。
+**Not a whole-machine port radar, and not another AI IDE.** `machine:` dependencies are read-only and
+project start/stop never takes them over. Worktree isolation is about run ownership and lifecycle
+boundaries, not an operating-system sandbox. The interface is not in this repository: it is the
+separate [macOS client](https://github.com/SheathedSharp/option-berth-macos).
 
-## 安装
+## Install
 
-macOS / Linux：一条命令解析最新发布、按平台下载、核对 SHA256，并装到 `~/.local/bin`。
+macOS / Linux: one command resolves the latest release, downloads the archive for this machine,
+verifies SHA256, and installs into `~/.local/bin`.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh
 ```
 
-Windows（PowerShell）：
+Windows (PowerShell):
 
 ```powershell
 irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps1 | iex
 ```
 
-固定版本用 `--version v1.0.0`（Windows 为 `-Version v1.0.0`），换安装目录用 `--dir` / `-Dir`，
-不想修改 PATH 用 `--no-modify-path` / `-NoModifyPath`。脚本只下载并校验 Release 压缩包，
-不启动服务、不写 Git；也可以先审阅 [install.sh](install.sh) / [install.ps1](install.ps1)，
-或直接下载 [Releases](https://github.com/SheathedSharp/option-berth/releases) 压缩包。
+Pin a version with `--version v1.0.0` (`-Version v1.0.0` on Windows), change the directory with
+`--dir` / `-Dir`, and skip the PATH edit with `--no-modify-path` / `-NoModifyPath`. The scripts only
+download and verify release archives: they start no service and write no Git data. Read
+[install.sh](install.sh) / [install.ps1](install.ps1) first if you prefer, or download the
+[Releases](https://github.com/SheathedSharp/option-berth/releases) archives directly.
 
-GitHub 访问慢或被限制时：`go install` 加 `GOPROXY=https://goproxy.cn`，安装脚本会自动回退到
-镜像，脚本入口也可以从 jsDelivr 获取。具体做法见
-[安装与卸载](docs/install.md#下载慢或被网络限制)。
+When GitHub is slow or blocked, prefix `go install` with `GOPROXY=https://goproxy.cn`; the installers
+fall back to mirrors automatically, and the script is also served through jsDelivr. See
+[Install and uninstall](docs/install.md) for the exact recipes.
 
-直接运行 `oberth` 会显示本机版本；有更新时首屏底部给出升级命令。也可以随时运行
-`oberth version --check` 主动检查，它只读发布信息，不下载、不安装。
+Running `oberth` shows the installed version, and the first screen prints the upgrade command when a
+newer release exists. Ask on demand with `oberth version --check`; it only reads release metadata and
+never downloads or installs anything.
 
 ### Homebrew
 
@@ -85,61 +91,63 @@ GitHub 访问慢或被限制时：`go install` 加 `GOPROXY=https://goproxy.cn`�
 brew install sheathedsharp/tap/oberth
 ```
 
-这安装引擎 CLI，不是 macOS 客户端。`brew install option-berth` 仍要等 homebrew-core，现在没有。
-说明见 [安装与卸载](docs/install.md#homebrew)。
+This installs the engine CLI, not the macOS app. `brew install option-berth` still needs a
+homebrew-core formula, which does not exist yet. See [Install and uninstall](docs/install.md#homebrew).
 
-### 用 go install（Go 1.25+）
+### With go install (Go 1.25+)
 
 ```sh
 go install github.com/sheathedsharp/option-berth/engine/cmd/oberth@latest
 
-# 可选的 Jev adapter
+# optional Jev adapter
 go install github.com/sheathedsharp/option-berth/engine/cmd/jev-attention@latest
 ```
 
-需要 v1.1.2 或更新版本。二进制进 `$(go env GOPATH)/bin` 或 `GOBIN`，该目录需要在 PATH 中。
-卸载时删除 `$(go env GOPATH)/bin/oberth` 与 `jev-attention`。
+This requires v1.1.2 or newer. The binaries land in `$(go env GOPATH)/bin` or `GOBIN`, which must be on
+PATH. Uninstall by deleting `oberth` and `jev-attention` from that directory.
 
-卸载：
+Uninstall:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uninstall.sh | sh
 ```
 
-默认保留 `~/.option-berth` 运行状态，加 `--purge-state` 才会删除。Linux 还提供 `.deb` / `.rpm`
-（v1.1.2 起随 Release 发布）。完整安装、升级、卸载与各渠道说明见 [安装与卸载](docs/install.md)。
+The uninstaller keeps `~/.option-berth` runtime state unless you pass `--purge-state`. Linux also
+ships `.deb` / `.rpm` packages from v1.1.2 onwards. See
+[Install and uninstall](docs/install.md) for the full matrix, upgrades and manual archives.
 
-完整服务场景面向 **macOS / Linux**。Windows 已有原生构建、冒烟及部分事实与持久化测试，
-不能视为完整生命周期支持。
+The complete service scenario targets **macOS / Linux**. Windows has a native build, smoke checks and
+some fact/persistence tests; that is not full lifecycle support.
 
-### 从源码构建
+### Build from source
 
-引擎使用 [Go 1.25 或后续兼容版本](engine/go.mod) 和 Mage。正式发布说明见 [发布流程](docs/releasing.md)。
+The engine needs [Go 1.25 or a later compatible version](engine/go.mod) and Mage. The formal release
+rules live in [the release guide](docs/agent/releasing.md).
 
 ```sh
 git clone https://github.com/SheathedSharp/option-berth.git
 cd option-berth
-# macOS 的构建工具；其他系统使用对应的 Go / Mage 安装方式
+# macOS tooling; use the equivalent Go / Mage install elsewhere
 brew install go mage
 mage buildEngine
 ./bin/oberth version --json
 ```
 
-构建不会安装软件或启动日常服务。确认需要安装后执行 `mage install`；它会写入安装目录并配置 PATH。
-用 `NO_MODIFY_PATH=1 mage install` 可跳过 PATH 修改。
+Building installs nothing and starts no daily service. Once you mean to install, run `mage install`:
+it writes the install directory and configures PATH. `NO_MODIFY_PATH=1 mage install` skips the PATH edit.
 
-## 第一次跑通
+## Try it first
 
-仓库自带 [Hello Worktree](examples/hello-worktree/README.md)：一个只监听本机的 API 和一个
-无端口 worker。只需 Python 3 标准库，不需要模型账号、容器或 pip 依赖。
-需要按 worktree 隔离数据时，[Worktree Data](examples/worktree-data/README.md) 演示用
-`${worktree}` 让两个 worktree 各自迁移、各自读写自己的数据库。
-想看它在复杂项目里的样子时，[Stack Workshop](examples/stack-workshop/README.md) 是一份
-十服务整栈：慢启动的 auth、要构建的前端、要迁移的数据库、两个无端口 worker，以及只读的
-`machine:` 依赖；同样只用 Python 3 标准库。
+The repository ships [Hello Worktree](examples/hello-worktree/README.md): one API that only listens on
+localhost and one portless worker. Python 3 standard library only — no model account, container or pip
+dependency. For data that must stay separate per worktree, [Worktree Data](examples/worktree-data/README.md)
+shows `${worktree}` giving each worktree its own migration and database. To see the shape of a
+larger project, [Stack Workshop](examples/stack-workshop/README.md) is a ten-service stack: a
+slow-starting auth, a built frontend, a migrated database, two portless workers and read-only
+`machine:` dependencies — still Python 3 standard library only.
 
 ```sh
-# 已安装 oberth 后，从仓库根目录开始
+# With oberth installed, from the repository root
 cd examples/hello-worktree
 oberth up --wait --json
 oberth status --json
@@ -147,27 +155,28 @@ oberth logs worker --once
 oberth down --json
 ```
 
-接入自己的项目时，先运行 `oberth init`，再审阅并编辑生成的 `oberth.yaml`。
-也可以让已有 agent 起草，但 **draft 不等于授权**：只有你确认并执行 `init adopt` 后才落盘。
-完整字段、自动端口、依赖和健康检查见 [CLI 使用说明](docs/cli.md)。
+For your own project, run `oberth init`, then review and edit the generated `oberth.yaml`. An agent can
+draft one, but **a draft is not authorization**: nothing is written until you run `init adopt`.
+Fields, automatic ports, dependencies and health checks are in [the CLI guide](docs/cli.md).
 
-## 每天使用的几条命令
+## Everyday commands
 
 ```sh
-oberth status --json            # 当前 worktree 的声明与运行事实
-oberth doctor                  # 安装、清单与后台服务诊断
-oberth up --wait                # 启动并等待就绪
-oberth restart --only api       # 只重启点名服务
-oberth logs api --once          # 读取服务日志
-oberth down                    # 停止当前项目并安全处理端口预留
+oberth status --json            # this worktree's declaration and runtime facts
+oberth doctor                  # install, manifest and background-service diagnosis
+oberth up --wait                # start and wait for readiness
+oberth restart --only api       # restart only the named service
+oberth logs api --once          # read a service's log
+oberth down                    # stop the project and release port claims safely
 ```
 
-`oberth git` 提供只读 Git 上下文；需要跨项目观察时，使用带明确 worktree 筛选的 `oberth events`。
-可选 [Jev adapter](docs/jev-adapter.md) 不进入引擎的运行事实与控制链路，缺少模型配置也能使用核心功能。
+`oberth git` gives read-only Git context; for cross-project observation use `oberth events` with an
+explicit worktree filter. The optional [Jev adapter](docs/agent/jev-adapter.md) stays outside the engine's
+runtime facts and control path, so core features work without any model configuration.
 
-## 与 coding agent 协作
+## Working with coding agents
 
-引擎提供显式的启动适配，不实现模型、工具循环或会话推理：
+The engine exposes an explicit launch adapter; it implements no model, tool loop or session reasoning:
 
 ```sh
 oberth agent list --json
@@ -175,36 +184,38 @@ oberth agent plan codex --worktree "$PWD" --json
 oberth agent run codex --worktree "$PWD"
 ```
 
-agent 怎么学会用这些命令，写在独立的
-[option-berth-skill](https://github.com/SheathedSharp/option-berth-skill) 仓库里。
-用 Skills CLI 安装到本机已安装的 agent：
+How an agent learns to use these commands lives in the separate
+[option-berth-skill](https://github.com/SheathedSharp/option-berth-skill) repository. Install it for
+the agents already on your machine with the Skills CLI:
 
 ```sh
 npx skills add SheathedSharp/option-berth-skill -g
 ```
 
-Claude Code 也可以走插件市场：
-`/plugin install option-berth --marketplace SheathedSharp/option-berth-skill`。
-装它是 agent 自己的事：本仓库的命令不会自动安装 hooks、skills 或 MCP 配置。
+Claude Code can also install it from the plugin marketplace:
+`/plugin install option-berth --marketplace SheathedSharp/option-berth-skill`. Installing it is the
+agent's own choice: nothing in this repository installs hooks, skills or MCP configuration for you.
 
-## 接入编排工具
+## Working with orchestrators
 
-option-berth 是 worktree 的运行事实层。Conductor、Cursor、Claude Code、Codex 等工具负责创建工作区；
-在它们自己的 setup / run / cleanup 脚本或外层 wrapper 里调用 `oberth` 即可：
+option-berth is the runtime facts layer for worktrees. Conductor, Cursor, Claude Code, Codex and
+similar tools create the workspace; call `oberth` from their own setup / run / cleanup scripts or an
+outer wrapper:
 
 ```sh
-oberth up --wait                           # 新工作区的 setup
-oberth status --json                       # 脚本或 agent 读取运行事实
-oberth down --worktree /path/to/worktree   # 清理；checkout 已删除也能按身份停止
+oberth up --wait                           # setup for a new workspace
+oberth status --json                       # scripts or agents read the runtime facts
+oberth down --worktree /path/to/worktree   # cleanup; still works after the checkout is gone
 ```
 
-产品不安装 hooks、不注册 MCP、不改这些工具的配置。各工具的具体写法、版本前提、常见框架的
-端口参数（例如 Vite 要写 `--port ${port} --strictPort`），以及一段可以粘进 `AGENTS.md` 的说明，
-见 [接入编排工具与开发服务器](docs/integrations.md)。
+The product installs no hooks, registers no MCP server and edits none of those tools'
+configuration. Per-tool wiring, version requirements, the port flags for common frameworks (Vite
+needs `--port ${port} --strictPort`), and a snippet to paste into `AGENTS.md` are in the
+[integration recipes](docs/integrations.md).
 
-## 一起用
+## Using the three together
 
-三个仓库互不复制代码，按同一份 CLI 契约协作。开发或试用时放在同级目录：
+The three repositories share no code; they meet at the CLI contract. Put them side by side:
 
 ```sh
 git clone https://github.com/SheathedSharp/option-berth.git
@@ -212,16 +223,18 @@ git clone https://github.com/SheathedSharp/option-berth-macos.git
 git clone https://github.com/SheathedSharp/option-berth-skill.git
 ```
 
-客户端用 `BERTH_BIN` 指向任意一份 `oberth`；开发中的 skill 用软链指向同级 clone，
-正式安装用 `npx skills add`。
+The client points at any `oberth` through `BERTH_BIN`; develop the skill by symlinking the sibling
+clone, and install the published one with `npx skills add`.
 
-## 版本与贡献
+## Versioning and contributing
 
-版本为 **X1.X2.X3**：X1 表示协议更新，X2 表示功能更新，X3 表示缺陷修复；
-增加较高位时清零较低位。发布脚本与验证规则以 [发布流程](docs/releasing.md) 为准。
+Versions are **X1.X2.X3**: X1 for a protocol change, X2 for a feature, X3 for a fix; raising a higher
+digit clears the lower ones. Release scripts and validation rules are in
+[the release guide](docs/agent/releasing.md).
 
-贡献请提交一个主题明确的 PR，说明问题、实现、TODO、测试及兼容性；
-不要提交私人配置、凭证、运行日志或真实项目截图。开发约定见 [AGENTS.md](AGENTS.md)。
+Contribute one focused PR per theme, describing the problem, the implementation, TODOs, tests and
+compatibility. Do not commit private configuration, credentials, run logs or screenshots of real
+projects. Development rules are in [AGENTS.md](AGENTS.md).
 
 ```sh
 mage test
@@ -229,12 +242,13 @@ mage vet
 python3 -m unittest discover -s scripts -p '*_test.py'
 ```
 
-项目核心围绕 worktree、manifest、service、run 和运行事实自主设计。
-[产品边界](docs/product.md) 与 [架构说明](docs/architecture.md) 记录当前契约，
-历史来源在 [UPSTREAM](engine/UPSTREAM.md) 中如实保留。
+The core is designed from this product's own needs around worktree, manifest, service, run and runtime
+facts. [Product boundaries](docs/product.md) and [architecture](docs/agent/architecture.md) hold the current
+contract; the historical origin is recorded in [UPSTREAM](engine/UPSTREAM.md).
 
-## 许可证
+## License
 
-由 **SheathedSharp** 与项目贡献者维护。项目代码适用 [MIT License](LICENSE)；
-第三方代码及素材保留各自许可和版权，见 [第三方声明](THIRD_PARTY_NOTICES.md)。
-外部 coding agent 的名称仅说明兼容性，不表示其开发者为本项目背书。
+Maintained by **SheathedSharp** and contributors. Project code is under the [MIT License](LICENSE);
+third-party code and assets keep their own licenses and copyright, see
+[third-party notices](THIRD_PARTY_NOTICES.md). Coding-agent names describe compatibility only and do not
+imply endorsement by their developers.

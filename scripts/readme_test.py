@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 class ReadmeTests(unittest.TestCase):
     def test_bilingual_entry_pages_share_logo_and_current_links(self):
-        for name, other in (("README.md", "README.en.md"), ("README.en.md", "README.md")):
+        for name, other in (("README.md", "README.zh.md"), ("README.zh.md", "README.md")):
             text = (ROOT / name).read_text()
             self.assertIn(other, text)
             self.assertIn("option-berth-lockup-dark.svg", text)

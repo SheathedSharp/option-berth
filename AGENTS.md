@@ -1,68 +1,102 @@
-# 开发约定
+# Engineering rules
 
-本文件只放这个仓库特有的、动手前必须知道的边界。通用的交付规则（中文 `type(scope): 主题`、
-一主题一提交、分支与合并、不擅自改检查门槛）来自本机全局规则，不在这里复述。
+This file holds only the boundaries specific to this repository that you must know before touching it.
+The general delivery rules (Chinese `type(scope): subject` commit messages, one topic per commit,
+branching and merging, never changing a check threshold on your own) come from this machine's global
+rules and are not repeated here.
 
-## 交付
+## Delivery
 
-合并前移到远端 PR：主题分支推送到 `origin`，等本 PR 的所有 required checks 通过（清单见
-[`.github/quality-gate-checks.json`](.github/quality-gate-checks.json)，以 `main` 的 ruleset 为准），
-经用户确认后用 merge commit 合并；不在本地把主题分支合入 `main` 后直接推送。发布脚本的原子
-推送是例外。修改 workflow、CODEOWNERS、race 清单或发布/检查脚本时，`Gate integrity` 要求
-PR 作者是仓库维护者，不要绕过。命令、失败处理与清理见项目 skill
-[`option-berth-delivery`](.agents/skills/option-berth-delivery/SKILL.md)。
+Merging happens through a remote PR: push the topic branch to `origin`, wait for every required check
+on that PR (the list is [`.github/quality-gate-checks.json`](.github/quality-gate-checks.json), with
+`main`'s ruleset as the authority), and merge with a merge commit once the user confirms. Never merge a
+topic branch into `main` locally and push it. The release script's atomic push is the exception.
+When a change touches a workflow, CODEOWNERS, the race list or a release/check script, `Gate integrity`
+requires the PR author to be a repository maintainer; do not work around it. Commands, failure handling
+and cleanup are in the project skill
+[`option-berth-delivery`](.agents/skills/option-berth-delivery/SKILL.md).
 
-契约与做法各有去处，冲突时以契约为准：
+Contracts and practices each have a home; when they conflict, the contract wins:
 
-| 要查的东西 | 去哪里 |
+| What you need | Where to go |
 |---|---|
-| 产品定义、该不该做 | [docs/product.md](docs/product.md) |
-| CLI / RPC / JSON / 清单字段 | [docs/cli.md](docs/cli.md) |
-| 生产实现边界、事实链 | [docs/architecture.md](docs/architecture.md) |
-| 接入编排工具、写 AGENTS.md 配方 | [docs/integrations.md](docs/integrations.md) |
-| 构建、运行、改哪跑什么 | [docs/develop.md](docs/develop.md) |
-| 验证项的含义与平台范围 | [docs/validation.md](docs/validation.md) |
-| 版本、标签、发版前置 | [docs/releasing.md](docs/releasing.md) |
-| 改 macOS 客户端 | [option-berth-macos](https://github.com/SheathedSharp/option-berth-macos)（独立产品） |
-| 改 coding agent 的 skill | [option-berth-skill](https://github.com/SheathedSharp/option-berth-skill)（独立产品） |
+| Product definition, whether to build something at all | [docs/product.md](docs/product.md) |
+| CLI / RPC / JSON / manifest fields | [docs/cli.md](docs/cli.md) |
+| Work records and handoff | [docs/workplace.md](docs/workplace.md) |
+| Production implementation boundaries, the chain of facts | [docs/agent/architecture.md](docs/agent/architecture.md) |
+| Integrating orchestrators, writing an AGENTS.md recipe | [docs/integrations.md](docs/integrations.md) |
+| Build, run, and what to run after which change | [docs/agent/develop.md](docs/agent/develop.md) |
+| What each check proves and its platform scope | [docs/agent/validation.md](docs/agent/validation.md) |
+| Versions, tags, pre-release gates | [docs/agent/releasing.md](docs/agent/releasing.md) |
+| Agent scenario library and release matrix | [docs/agent/agent-eval.md](docs/agent/agent-eval.md) |
+| Optional attention adapter | [docs/agent/jev-adapter.md](docs/agent/jev-adapter.md) |
+| Changing the macOS client | [option-berth-macos](https://github.com/SheathedSharp/option-berth-macos) (separate product) |
+| Changing the coding-agent skill | [option-berth-skill](https://github.com/SheathedSharp/option-berth-skill) (separate product) |
 
-历史方案、临时排障和旧迭代的要求不是当前契约，不按它们补实现。
+Past designs, temporary debugging and requirements from older iterations are not the current contract;
+do not build implementations to match them.
 
-## 一条事实链
+## One chain of facts
 
-`worktree → manifest → service → run → runtime facts` 是唯一的运行真相。
-新增能力挂到这条链上，不另立状态源、不缓存第二份运行结果来绕过失败路径。
+`worktree → manifest → service → run → runtime facts` is the only source of runtime truth.
+Attach new capabilities to this chain; never stand up a second source of state, and never cache a second
+copy of runtime results to route around a failure path.
 
-- 清单由人确认，模型只起草；`machine:` 依赖只读；产品 CLI 的 Git 操作只读。
-- 取消、未知和观察失败不是成功，信号回执不等于进程已退出；跨代际的结果不能覆盖新快照。
-- 锁、缓存、队列要明确所有权与释放边界，不用游离任务伪造硬超时。
+- A person confirms the manifest; a model only drafts it. `machine:` dependencies are read-only, and the
+  product CLI's Git operations are read-only.
+- Cancellation, unknown and observation failure are not success; a signal receipt does not mean the
+  process exited; results from an older generation cannot overwrite a newer snapshot.
+- Locks, caches and queues must state their ownership and release boundaries; do not fake a hard timeout
+  with a detached task.
 
-细节见 [docs/architecture.md](docs/architecture.md)。
+Details in [docs/agent/architecture.md](docs/agent/architecture.md).
 
-## 接口
+## Interface
 
-`oberth` 的 CLI、RPC、JSON 和清单是本项目的对外接口，变更要同步 schema、文档与回归。
-JSON stdout 不混入诊断。Mage 只是开发工具，它的目标和日志不属于产品语义。
+The `oberth` CLI, RPC, JSON and manifest are this project's external interface: a change must update the
+schema, the documentation and the regression together. JSON stdout never mixes in diagnostics. Mage is
+only a development tool; its targets and logs are not part of product semantics.
 
-## 验证
+## Validation
 
-改什么跑什么，入口见 [docs/develop.md](docs/develop.md)，各项检查证明什么见
-[docs/validation.md](docs/validation.md)。
+Run what you changed; entry points are in [docs/agent/develop.md](docs/agent/develop.md), and what each
+check proves is in [docs/agent/validation.md](docs/agent/validation.md).
 
-- 完整服务场景只在 macOS/Linux 上验证；Windows 的证据是独立原生构建/冒烟与 arm64 交叉构建。
-- GUI 改动要区分冻结渲染与真实交互：离屏图不能证明鼠标、输入法和长时负载正常。
-- 性能结论需要可比测量，不同基线上的数字不算结论。
-- 测试、真实服务和截图使用独立 `HOME`/`BERTH_HOME` 与可丢弃项目，结束后回收自己起的进程。
-  不动用户日常 daemon、账本或真实仓库写入；安装、发布、Git 写入和仓库可见性变更需明确授权。
+- Full service scenarios are verified only on macOS/Linux; Windows evidence is a separate native
+  build/smoke plus an arm64 cross-build.
+- GUI changes must distinguish frozen rendering from real interaction: an offscreen image does not prove
+  the mouse, input methods or long-running load work.
+- Performance conclusions need comparable measurements; numbers from different baselines are not
+  conclusions.
+- Tests, real services and screenshots use an isolated `HOME`/`BERTH_HOME` and throwaway projects, and
+  you reclaim the processes you started afterwards. Never touch the user's everyday daemon, ledger or
+  real repository writes; installing, releasing, Git writes and repository-visibility changes require
+  explicit authorization.
 
-只报告实际执行的输入和结果。格式检查、回归定义和旧提交绿灯都不能代替测试；
-没跑的验证写清楚没跑。
+Report only inputs and results you actually executed. Formatting checks, regression definitions and a
+green light on an older commit do not substitute for a test; state plainly any validation you did not
+run.
 
-## 资产
+## Assets
 
-示例、夹具和截图使用合成身份与路径。不提交凭证、私人日志、真实用户截图、缓存、原始扫描
-报告或历史备份。保留根 MIT、上游版权与随附字体的 OFL：不修改系统字体，不把字体重新许可为 MIT。
+Examples, fixtures and screenshots use synthetic identities and paths. Never commit credentials, private
+logs, real-user screenshots, caches, raw scan reports or historical backups. Keep the root MIT license,
+the upstream copyright and the bundled fonts' OFL: do not modify system fonts and do not relicense the
+fonts as MIT.
 
-## 文档
+## Documentation
 
-只保留当前有用的契约、依据和真实缺口；已落地的计划并进契约文档后从计划里删掉。
+Keep only the contracts, evidence and real gaps that are useful now; once a landed plan is merged into
+the contract documents, delete it from the plan.
+
+Human-facing documents under `docs/` are bilingual pairs: `foo.md` (English, authoritative) and
+`foo.zh.md`. Both sides carry equal authority and must say the same thing; a change to one updates the
+other in the same PR. `scripts/check_docs.py` enforces pair completeness, matching heading structure,
+byte-identical code blocks and the language switcher.
+
+Documents under `docs/agent/` are read by coding agents and are English only. They are process and
+engineering material, not the contract. A fact that belongs to the CLI, RPC, JSON or manifest contract
+has exactly one home in `docs/`; never copy it into `docs/agent/`.
+
+The documentation standard — where a fact belongs, what each tier must not contain — is
+[docs/AGENTS.md](docs/AGENTS.md).
