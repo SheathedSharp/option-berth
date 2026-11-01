@@ -193,6 +193,14 @@ jobs:
         with:
           name: agent-eval-binary
           path: source/bin
+      - name: Restore the binary's execute bit
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Artifacts do not preserve file modes; the harness invokes the
+          # binary by path.
+          chmod +x source/bin/oberth
+          source/bin/oberth version --json
       - name: Set up Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v4
         with:
@@ -201,6 +209,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Each matrix job is a fresh runner: the plan job's temp directory
+          # does not exist here, and the version log is written below.
+          mkdir -p "$RUNNER_TEMP/agent-eval"
           npm install -g --no-audit --no-fund \
             @anthropic-ai/claude-code@2.1.314 \
             @openai/codex@0.166.0 \
@@ -402,16 +413,44 @@ jobs:
           persist-credentials: false
           path: source
       - name: Download every shard
+        # A failed agent produces no shard; the merge step reports which ones
+        # are missing instead of failing before it can say anything.
+        continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: agent-eval-shard-*
           path: shards
           merge-multiple: false
+      - name: Check every requested agent produced a shard
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$GITHUB_WORKSPACE/shards" "$AGENTS" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          root, wanted = Path(sys.argv[1]), [a.strip() for a in sys.argv[2].split(",") if a.strip()]
+          present = set()
+          for path in root.rglob("report.json"):
+              try:
+                  report = json.loads(path.read_text(encoding="utf-8"))
+              except (OSError, json.JSONDecodeError):
+                  continue
+              present.update(report.get("agents") or {})
+          missing = [agent for agent in wanted if agent not in present]
+          if missing:
+              print(f"missing shard(s) for: {', '.join(missing)}", file=sys.stderr)
+              sys.exit(1)
+          print(f"shards present for: {', '.join(sorted(present))}")
+          PY
       - name: Merge the shards into one matrix
         working-directory: source
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/shards"
           mapfile -t reports < <(find "$GITHUB_WORKSPACE/shards" -name report.json -print | sort)
           if [ "${#reports[@]}" -eq 0 ]; then
             echo "No shard report.json was produced." >&2
