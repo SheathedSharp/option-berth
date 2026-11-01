@@ -49,10 +49,13 @@ func TestStartingChunksAreNotOutcomes(t *testing.T) {
 	}, client.End{Data: endData})
 
 	var progress bytes.Buffer
-	chunks, summary, err := collectStartChunks(stream, &progress, false, true)
+	chunks, summary, err := collectStartChunks(stream, &progress, false, false)
 	if err != nil {
 		t.Fatalf("collectStartChunks: %v", err)
 	}
+	// Human mode prints progress; a --json invocation must stay quiet (see
+	// TestJSONStartProgressStaysQuiet). Everything downstream — the readiness
+	// wait, services[] and the summary — sees only the two outcomes in both.
 	// Everything downstream — the readiness wait, services[] in JSON and the
 	// summary — sees only the two outcomes.
 	if len(chunks) != 2 {
@@ -74,6 +77,29 @@ func TestStartingChunksAreNotOutcomes(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("progress = %q, missing %q", got, want)
 		}
+	}
+}
+
+func TestJSONStartProgressStaysQuiet(t *testing.T) {
+	endData, err := json.Marshal(rpc.GroupsStartEnd{Started: []string{"api"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream := newFakeStartStream([]rpc.GroupsStartChunk{
+		{Service: "api", State: "starting", Phase: "waiting_dependency", WaitingOn: []string{"db"}, ReadyTimeout: "30s", ElapsedMS: 15},
+		{Service: "api", State: "started", PID: 100, Port: 5000, ReadyTimeout: "30s"},
+	}, client.End{Data: endData})
+
+	var progress bytes.Buffer
+	chunks, _, err := collectStartChunks(stream, &progress, true, true)
+	if err != nil {
+		t.Fatalf("collectStartChunks: %v", err)
+	}
+	if progress.Len() != 0 {
+		t.Fatalf("--json wrote progress diagnostics: %q", progress.String())
+	}
+	if len(chunks) != 1 || chunks[0].State != "started" {
+		t.Fatalf("chunks = %+v, want only the started outcome", chunks)
 	}
 }
 

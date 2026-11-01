@@ -103,8 +103,11 @@ func upRun(cmd *cobra.Command, args []string) error {
 	}
 	// Progress is an enhancement: ask for in-flight chunks only from a daemon
 	// that advertises them. An older daemon ignores the field entirely; a CLI
-	// that cannot see the capability simply keeps the old stream.
-	params.Progress = hasCapability(c.Hello(), rpc.CapabilityStartPhases)
+	// that cannot see the capability simply keeps the old stream. A --json
+	// invocation never asks: its one JSON value is the whole answer, and a
+	// diagnostic line on stderr would break the contract for callers that
+	// treat a failed command's stderr as the error shape.
+	params.Progress = !upJSON && hasCapability(c.Hello(), rpc.CapabilityStartPhases)
 
 	var start rpc.GroupsStartResult
 	stream, err := c.Stream(cmd.Context(), "groups.start", params, &start)
@@ -279,7 +282,11 @@ func collectStartChunks(stream startChunkStream, progress io.Writer, wait, asJSO
 			continue
 		}
 		if isStartProgressChunk(c) {
-			printStartProgress(progress, c)
+			// A daemon may still send progress when a peer asked for it;
+			// this invocation's own contract decides whether it is shown.
+			if !asJSON {
+				printStartProgress(progress, c)
+			}
 			continue
 		}
 		normalizeStartChunk(&c)
