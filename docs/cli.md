@@ -277,6 +277,17 @@ oberth jev assess --project "$PWD" \
   --authorize inspect_logs,inspect_port,restart_service,continue_without_action,ask_user_for_context
 ~~~
 
+`oberth jev enable` is the one step that turns the assessment on: it reads a key
+(`--key-stdin`, `--key-env NAME`, or hidden terminal input), sends one synthetic
+redacted probe, and only writes `jev.json` when the probe succeeds — a failed
+probe leaves the existing configuration untouched. `oberth jev status` reports
+the resolved state without a network call, `oberth jev test` probes once,
+`oberth jev preview` prints the exact redacted body for the current event without
+sending it, and `oberth jev disable [--forget]` turns it off while keeping the
+key unless `--forget` is given. `oberth doctor` gains one offline row for the same
+state, and a human `status` read mentions the feature once every two weeks when
+it is off and an anomaly is present; `BERTH_NO_TIPS=1` silences that hint.
+
 `oberth jev assess` is the former `jev-attention --auto`, `oberth jev session` is the former
 `--session`/`--subscribe`, and `oberth jev feedback` / `oberth jev report` are the former
 `--feedback` and `--quality-report`. The standalone `jev-attention` binary stays as a thin shell over

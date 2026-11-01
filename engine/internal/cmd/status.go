@@ -130,7 +130,22 @@ func statusRun(cmd *cobra.Command, args []string) error {
 		return printJSON(doc)
 	}
 	printStatus(doc)
+	maybePrintJevTip(&doc)
 	return nil
+}
+
+// maybePrintJevTip is the one-line, rate-limited offer of the optional
+// assessment. It runs only in the human view, after the facts, and only when
+// Jev is off and there is an anomaly it could assess — status_tip.go has the
+// rest of the rules.
+func maybePrintJevTip(doc *statusDocument) {
+	now := time.Now().UTC()
+	if jevEnabled() || !jevTipWanted(doc, now) {
+		return
+	}
+	fmt.Fprintln(os.Stdout)
+	fmt.Fprintln(os.Stdout, jevTipLine())
+	recordJevTip(paths.JevTipPath(), now)
 }
 
 // statusDir is the directory a status read is about: the argument, or the

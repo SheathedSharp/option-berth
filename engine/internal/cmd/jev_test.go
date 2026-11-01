@@ -29,8 +29,13 @@ func TestJevIsInTheHandoffLayer(t *testing.T) {
 	}
 }
 
-func TestJevSurfaceIsTheFourRunnerVerbs(t *testing.T) {
-	want := map[string]bool{"assess": false, "session": false, "feedback": false, "report": false}
+func TestJevSurfaceIsTheRunnerAndSetupVerbs(t *testing.T) {
+	want := map[string]bool{
+		// the runner: what an agent calls while working
+		"assess": false, "session": false, "feedback": false, "report": false,
+		// setup and explanation: what a person calls once
+		"status": false, "enable": false, "test": false, "disable": false, "preview": false,
+	}
 	for _, sub := range jevCmd.Commands() {
 		if _, ok := want[sub.Name()]; !ok {
 			t.Errorf("unexpected jev subcommand %q", sub.Name())

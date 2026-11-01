@@ -237,6 +237,13 @@ oberth jev assess --project "$PWD" \
   --authorize inspect_logs,inspect_port,restart_service,continue_without_action,ask_user_for_context
 ~~~
 
+`oberth jev enable` 是一步开启：读密钥（`--key-stdin`、`--key-env NAME` 或终端隐藏
+输入），发一次合成的脱敏探测，**只有探测成功才写** `jev.json`；探测失败时已有配置保持不动。
+`oberth jev status` 不联网报告解析结果，`oberth jev test` 联网探测一次，`oberth jev preview`
+打印当前事件将要发送的脱敏请求体但不发送，`oberth jev disable [--forget]` 关闭（默认保留密钥，
+`--forget` 才会删除）。`oberth doctor` 增加一行离线状态；人读 `status` 在未启用且当前有异常时，
+每两周提示一次，`BERTH_NO_TIPS=1` 可关闭。
+
 `oberth jev assess` 即原来的 `jev-attention --auto`，`oberth jev session` 即
 `--session`/`--subscribe`，`oberth jev feedback` / `oberth jev report` 即 `--feedback` 与
 `--quality-report`。独立二进制 `jev-attention` 在迁移期是同一 runner 的薄壳，

@@ -57,6 +57,10 @@ const (
 	// LegacyJevKeyFile is read-only compatibility for the pre-settings adapter.
 	// A new settings file takes precedence and can explicitly disable Jev.
 	LegacyJevKeyFile = "decide.key"
+	// JevTipFile records when `status` last showed the one-line optional-Jev
+	// hint. It is advisory: deleting it only makes the hint eligible again, so
+	// it is never read as a fact about the user's configuration.
+	JevTipFile = "jev-tip.json"
 
 	LogsDir     = "logs"
 	DraftsDir   = "drafts"
@@ -203,6 +207,10 @@ func ConfigPath() string { return filepath.Join(Dir(), ConfigFile) }
 // JevConfigPath is the local Jev settings file. The file is owned by the
 // optional agent-side adapter and the macOS settings page, not by the daemon.
 func JevConfigPath() string { return filepath.Join(Dir(), JevConfigFile) }
+
+// JevTipPath is where `status` remembers when it last mentioned the optional
+// assessment, so a tip shown in one session does not repeat every read.
+func JevTipPath() string { return filepath.Join(Dir(), JevTipFile) }
 
 // LegacyJevKeyPath is retained so an existing adapter installation keeps
 // working until the user saves the new settings page once.

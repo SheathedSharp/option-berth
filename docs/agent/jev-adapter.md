@@ -29,6 +29,46 @@ question for the authorized fixed options. See the [OpenRouter Jev guide](https:
 and [TypeSafe API reference](https://docs.typesafe.ai/api/) for the upstream
 wire contract.
 
+## Turning it on
+
+`oberth jev enable` is the one step, in this order: choose a provider, read the
+key, prove the key answers, then write the owner-only file.
+
+```sh
+# a script or CI job: the key never appears in an argument list
+printf '%s' "$KEY" | oberth jev enable --provider openrouter --key-stdin
+
+# read it from an existing variable
+oberth jev enable --provider typesafe --key-env TYPESAFE_API_KEY
+
+# a person at a terminal: hidden input
+oberth jev enable --provider openrouter
+```
+
+The proof is one synthetic, redacted assessment — the same request shape a real
+event uses, carrying no worktree facts. **If the probe fails, nothing is
+written**, so a typo cannot replace a working configuration with one that breaks
+every later task. On success the command prints what it stored and what will and
+will not be sent.
+
+| Command | What it does | Network |
+|---|---|---|
+| `oberth jev status` | resolved state: on or off, provider, key source, fingerprint, reason | no |
+| `oberth jev enable` | store a key, probe once, then write the settings | once |
+| `oberth jev test` | one synthetic probe against the current settings | once |
+| `oberth jev preview` | the exact redacted body for this worktree's current event | no |
+| `oberth jev disable` | turn it off, keeping the key; `--forget` removes it | no |
+
+`status` never prints a key, only a short fingerprint so a person can tell two
+keys apart. `preview` is the honesty check to run before enabling: if the body it
+shows is not acceptable, do not enable.
+
+Hidden terminal input uses the platform's own termios through `golang.org/x/sys`,
+which the engine already depends on; `golang.org/x/term` is deliberately not
+added for eight lines of the same work. On Windows interactive entry is refused
+with a pointer to `--key-stdin` / `--key-env`, because the engine's Windows
+surface is a native build and a smoke test, not full acceptance.
+
 ## Run it
 
 For a task that keeps services running, prefer the task-scoped session form:
