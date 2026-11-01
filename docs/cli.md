@@ -611,6 +611,12 @@ human to decide. `--dry-run` only previews, `--json` is for machine reading.
 oberth init [--dry-run] [--json]
 ~~~
 
+A failed listener scan does not abort `init`: the project's own declarations and the shape of an entry
+to copy are still there. Only one conclusion may not be written — "nothing was listening". The comment
+says **listening unknown** instead, with the observation code and the next step, and stderr says so
+once. This is the same rule `status` follows: cannot-look is not nothing-is-listening. A partially
+readable scan still lists the ports it read and says the table is incomplete.
+
 #### oberth init draft [agent] [--dry-run] [--json] [--progress]
 
 Has the local agent from the configuration draft a manifest. option-berth does not judge, does not go

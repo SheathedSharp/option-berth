@@ -311,6 +311,20 @@ func serviceNotes(cfg *Config) string {
 
 	if len(cfg.Candidates) == 0 {
 		b.WriteString("#\n")
+		if cfg.Observation.Unknown() {
+			// The scan failed, so an empty list says nothing about what runs.
+			// Writing "nothing was listening" here would turn a sandbox denial
+			// into a fact about the machine, and the reader of this file — the
+			// person who has to write the services — is the one who cannot
+			// check it themselves later.
+			b.WriteString("# Listening inside this project is unknown: the scan could not read\n")
+			b.WriteString("# this machine's listener table when this file was written.\n")
+			fmt.Fprintf(&b, "#   %s: %s\n", cfg.Observation.Code, firstLine(cfg.Observation.Detail))
+			if hint := strings.TrimSpace(cfg.Observation.Hint); hint != "" {
+				fmt.Fprintf(&b, "#   next: %s\n", firstLine(hint))
+			}
+			return b.String()
+		}
 		b.WriteString("# Nothing was listening inside this project when this file was written.\n")
 		return b.String()
 	}
@@ -346,6 +360,16 @@ func serviceNotes(cfg *Config) string {
 		}
 	}
 	return b.String()
+}
+
+// firstLine keeps a detail or hint to the one line a comment can hold: both
+// arrive from a collector's stderr, which can be a multi-line banner.
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if line, _, ok := strings.Cut(s, "\n"); ok {
+		return line
+	}
+	return s
 }
 
 // commandWidth keeps a command line to one readable line, and commandTail says

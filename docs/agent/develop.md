@@ -86,6 +86,28 @@ Isolation and authorization boundaries are in [AGENTS.md](../../AGENTS.md) "Vali
 compatibility and implementation constraints such as "cancellation and unknown are not success" are in
 the same file's "Interface" and "One chain of facts" sections.
 
+### Listener observation on macOS 27 has to be re-verified locally
+
+GitHub-hosted runners top out at macOS 26 (`macos-26` / `macos-latest` is macOS 26 arm64) and this
+repository's workflows still pin `macos-15`. The macOS 27 behavior — a `netstat` started by a parent
+Apple has not signed gets no TCP table — therefore has **no CI coverage** and can only be re-verified
+on a local macOS 27 machine. Do not present a local record as CI evidence. Steps (isolated
+`HOME`/`BERTH_HOME`, a throwaway project, cleaned up afterwards):
+
+```sh
+export HOME=$(mktemp -d) BERTH_HOME=$(mktemp -d)
+cd engine && go build -o /tmp/oberth-mac27 ./cmd/oberth
+/tmp/oberth-mac27 doctor --only listener_observation     # expect observable, detail naming lsof
+/tmp/oberth-mac27 serve --detach && /tmp/oberth-mac27 daemon status
+cd ../examples/hello-worktree
+/tmp/oberth-mac27 up --wait --json && /tmp/oberth-mac27 status --json && /tmp/oberth-mac27 down --json
+cd ../../engine && go test -tags integration ./internal/scenario/... -count=1
+/tmp/oberth-mac27 daemon stop    # do not leave a daemon behind
+```
+
+Record the result in [validation.md](validation.md) "Listener observation", with the commit, the
+inputs and the actual output. Add a CI job once GitHub offers a macOS 27 image.
+
 ## Commits and collaboration
 
 Additional requirements for this repository: subjects use product language, never this repository's

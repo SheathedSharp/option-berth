@@ -365,6 +365,41 @@ type Config struct {
 	// its dependencies, and it arrived looking finished. Nothing becomes a
 	// service but a line a person wrote here.
 	Declared []Declared `yaml:"-"`
+
+	// Observation is the listener scan's own verdict, set only when that scan
+	// could not be trusted. Nil means the scan read the table it reports.
+	//
+	// Without it a failed scan and an idle machine render the same comment —
+	// "nothing was listening" — and a starter written in a sandbox would state
+	// a fact the process never established. Marshal says "unknown" instead.
+	Observation *ListenerObservation `yaml:"-"`
+}
+
+// ObservationPartial is the state of a scan that read some rows and could not
+// read others. The readable rows are facts; the rest of the table is unknown.
+// It matches state.ObservationPartial, the value `oberth status` publishes.
+const ObservationPartial = "partial"
+
+// ListenerObservation is what a proposal's scan could establish about this
+// machine. State and Code carry the collector's own vocabulary (the values
+// `oberth status` publishes), so the comment and the status read agree.
+type ListenerObservation struct {
+	// State is ObservationPartial when some rows were readable, or the probe's
+	// verdict ("blind", "bind_denied") when no row could be trusted.
+	State string
+	// Code is the observation error code, e.g. observation_blind.
+	Code string
+	// Detail is what the collector or the probe reported, in one line.
+	Detail string
+	// Hint is the next step from the same source.
+	Hint string
+}
+
+// Unknown reports whether the scan established nothing about which services
+// are up — the case where an empty candidate list is ignorance, not an idle
+// machine.
+func (o *ListenerObservation) Unknown() bool {
+	return o != nil && o.State != ObservationPartial
 }
 
 // Candidate is one listener found inside a project's directory. Process is a

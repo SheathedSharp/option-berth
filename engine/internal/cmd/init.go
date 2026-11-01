@@ -207,15 +207,34 @@ func initRun(cmd *cobra.Command, args []string) error {
 	fmt.Printf("wrote %s: worktree %s with %d %s\n",
 		target, cfg.Name, len(cfg.Services), pluralWord(len(cfg.Services), "service"))
 	if len(cfg.Services) == 0 {
-		context := fmt.Sprintf("%d listening %s", len(cfg.Candidates), pluralWord(len(cfg.Candidates), "port"))
-		if n := len(cfg.Declared); n > 0 {
-			context += fmt.Sprintf(" and %d declared %s", n, pluralWord(n, "service"))
-		}
-		fmt.Fprintf(os.Stderr,
-			"note: the list is yours to write — %s %s in the comments as context\n",
-			context, wasWere(len(cfg.Candidates)+len(cfg.Declared)))
+		noteStarterContext(cfg)
 	}
 	return nil
+}
+
+// noteStarterContext says once, on stderr, what the comments above are made of.
+// A blind scan is not counted as "0 listening ports": the count would be a fact
+// about a table this process never read, and it is the number a reader would
+// take as evidence the machine was quiet.
+func noteStarterContext(cfg *groups.Config) {
+	if cfg.Observation.Unknown() {
+		fmt.Fprintf(os.Stderr,
+			"note: could not read this machine's listener table (%s), so the comments say listening is unknown, not empty: %s\n",
+			cfg.Observation.Code, oneLine(cfg.Observation.Detail))
+		if n := len(cfg.Declared); n > 0 {
+			fmt.Fprintf(os.Stderr,
+				"note: the list is yours to write — %d declared %s %s in the comments as context\n",
+				n, pluralWord(n, "service"), wasWere(n))
+		}
+		return
+	}
+	context := fmt.Sprintf("%d listening %s", len(cfg.Candidates), pluralWord(len(cfg.Candidates), "port"))
+	if n := len(cfg.Declared); n > 0 {
+		context += fmt.Sprintf(" and %d declared %s", n, pluralWord(n, "service"))
+	}
+	fmt.Fprintf(os.Stderr,
+		"note: the list is yours to write — %s %s in the comments as context\n",
+		context, wasWere(len(cfg.Candidates)+len(cfg.Declared)))
 }
 
 // wasWere keeps that note readable whether one thing was listening or several.
@@ -288,7 +307,10 @@ func initAgentRun(cmd *cobra.Command, root string, cfg *groups.Config, agent str
 	if progress != nil {
 		progress.emit("running", fmt.Sprintf("%s started, inspecting project files", cli.Name))
 	}
-	facts := draft.Facts{Root: root, Group: cfg.Name, CLI: cli.Name, Candidates: cfg.Candidates}
+	facts := draft.Facts{
+		Root: root, Group: cfg.Name, CLI: cli.Name,
+		Candidates: cfg.Candidates, Observation: cfg.Observation,
+	}
 	if data, err := os.ReadFile(groups.TargetIn(root)); err == nil {
 		facts.Existing = string(data)
 	}
@@ -579,8 +601,15 @@ func initAdoptDraft(root, source string, replace, merge, dryRun, diff, jsonOutpu
 // the listeners does not have to scan the machine a second time — two scans
 // milliseconds apart can disagree, and a file annotated from one while written
 // from another would quietly describe a machine that never existed.
+//
+// A scan that fails does not fail the run. The starter's job is to hand a person
+// the project facts they will write the services from, and those facts — the
+// project's own declarations, the shape of an entry — survive a collector that
+// cannot read this machine's table. What does not survive is the claim that
+// nothing is listening, so the config carries the observation and Marshal says
+// "unknown" (see groups.ListenerObservation).
 func proposeConfig(root string) ([]ports.ListeningPort, *groups.Config, error) {
-	results, err := ports.Scan()
+	results, obs, err := scanForProposal()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -595,7 +624,54 @@ func proposeConfig(root string) ([]ports.ListeningPort, *groups.Config, error) {
 	// `init` used to fold them in, and the argument for it ("those files state
 	// a command outright") is exactly what `init draft` exists to weigh now.
 	cfg.Declared = groups.Detect(root)
+	cfg.Observation = obs
 	return results, cfg, nil
+}
+
+// scanForProposal reads this machine's listener table for a starter file. An
+// observation failure is returned as the verdict carried on the config, twice
+// over: once for the rows that were readable (a partial pass still has real
+// facts), and once for the code a person needs to know why the list is short.
+//
+// Only a scan that could not be classified at all is an error here — the
+// collector produced no table and no reason, which is not something a starter
+// can render as either fact or unknown.
+func scanForProposal() ([]ports.ListeningPort, *groups.ListenerObservation, error) {
+	// The package-level seam, not ports.Scan: this path is exercised in tests
+	// whose host cannot read its own listener table, and a starter is exactly
+	// the file those tests need to see degrade.
+	results, err := scanPorts()
+	if err == nil {
+		return results, nil, nil
+	}
+	var oe *ports.ObservationError
+	if !errors.As(err, &oe) {
+		return nil, nil, err
+	}
+	obs := &groups.ListenerObservation{Code: oe.Code, Detail: err.Error(), Hint: oe.Hint}
+	if partial, ok := ports.PartialRows(err); ok {
+		// Readable rows are facts; the rest of the table is unknown. The
+		// candidates below therefore list what was seen, and the comment says
+		// the list is short rather than complete.
+		obs.State = groups.ObservationPartial
+		return partial, obs, nil
+	}
+	// The collector's own code ("observation_empty") is what it said; the probe
+	// is what settles whether this process can look at all. The probe's verdict
+	// is the one a reader can act on, so it supplies the code as well — and a
+	// probe that never ran keeps the collector's.
+	probe := scanProbe(context.Background())
+	obs.State, obs.Detail, obs.Hint = string(probe.State), probe.Detail, probe.Hint
+	if probe.Code != "" {
+		obs.Code = probe.Code
+	}
+	if obs.Detail == "" {
+		obs.Detail = err.Error()
+	}
+	if obs.Hint == "" {
+		obs.Hint = oe.Hint
+	}
+	return nil, obs, nil
 }
 
 // initResult is what `oberth init --json` reports on every path it can take:
