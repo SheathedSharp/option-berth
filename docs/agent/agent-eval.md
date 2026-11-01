@@ -5,7 +5,7 @@ fixed scenario library, reruns it on the **same build** every time, and outputs 
 count, duration, output bytes, process probes, wrongful stops and boundary-violation counts for
 "scenario × agent × control arm".
 
-Scenarios come in two tiers:
+Scenarios come in three tiers:
 
 - **core** (`scripts/agent_eval_scenarios.py`): single-file small services, each proving one failure
   path.
@@ -13,6 +13,9 @@ Scenarios come in two tiers:
   artifacts, database migration, a worker without a port, and three worktrees in parallel. The service
   scripts are shared with the public example
   [`examples/stack-workshop`](../../examples/stack-workshop/README.md); no second copy is maintained.
+- **cold** (`scripts/agent_eval_cold.py`): a repository with **no** `oberth.yaml`, so the run has to
+  draft, adopt and then start the project. The other two tiers begin from a manifest a person already
+  wrote; this one measures the step a new user actually takes.
 
 Judgement uses facts published by the engine, loopback HTTP, ports, effect files and the PIDs of
 preserved processes. Judgement for large-project scenarios does not require the agent to produce a
@@ -56,6 +59,46 @@ stops and worktree cross-talk appear both in failed judgement and in boundary-vi
 The large-project prompts likewise use only product language and contain no `oberth` command. Each
 scenario's fixture ports are fixed and taken fresh in the isolated environment, so the control arm
 without `oberth` can also read the ports from the manifest and start services by hand.
+
+### Cold-start scenarios
+
+The fixture is a plausible repository and nothing else: no manifest, no pending draft. How the project
+starts is stated by the repository's own files — a `Makefile` with the project's targets, an npm
+`workspaces` list and the members' `scripts`, a multi-module `pom.xml` plus the `README` naming the build
+goal. The processes go through tools the fixture ships (a package-manager front end, a Maven wrapper, a
+compose project's bootstrap script), so a control arm with no `oberth` can start the same project by
+reading the same README.
+
+| id | shape | what makes it non-trivial |
+|---|---|---|
+| `cold-compose` | compose project, two services | `config/app.env` is generated from a checked-in example, so a prepare step or a first failed start must lead to `scripts/dev.py setup` before anything listens; a `platform-db` machine reference must stay unstarted |
+| `cold-node-monorepo` | three npm workspaces | an install step creates the marker each member checks; `gateway` needs `identity` and `scheduler` needs `gateway`, so declaration order and `depends_on` both matter |
+| `cold-maven-modules` | three-module Maven reactor | `catalog` and `billing` must be built before `api` runs; `./mvnw -pl api -am install` is `prepare:`, and `api` answers 503 until both libraries answer |
+
+Every service binds `PORT`. That is the engine's own contract — the address book hands each declared
+service its port through `PORT`/`BERTH_PORT` — and the README documents exporting it, which is what makes
+the same command work in an arm with no `oberth`.
+
+Judgement is the same for all three shapes: a manifest exists and declares services, every expected service
+is declared, running and healthy, each runs on the port its repository declares, each answers `/health`
+with 200, no tracked file other than `oberth.yaml` changed, and Git history is intact. The judge never asks
+who wrote the manifest.
+
+**The harness adopts, not a person.** No person is in the loop once a run starts, so the run's own harness
+adopts — under one fixed rule: only a draft that already passes `init adopt --dry-run` is written, and the
+run record says `adopted_by: "harness"`. A draft the preview rejects is not forced in. A run that wrote its
+own manifest is recorded as `adopted_by: "agent"`.
+
+**One observation costs two model calls.** `init draft` runs the configured agent once *inside* the run.
+The report carries this as `cold_start` (per scenario: observations, drafting runs, agent calls, who
+adopted), and `report.md` renders it under "Cold-start cost". A budget that assumes one call per run is
+wrong for this suite. The drafting agent is named in the run's own `BERTH_HOME/config.yaml` from what the
+operator passed with `--agent-arg`; the harness adds no autonomy flag of its own.
+
+**The reference arm does not draft.** It runs no model, so it writes the manifest a person who knew the
+repository would write and then goes through the ordinary `init adopt` → `up --wait` → `status` path. It
+proves the fixture, the judge and the report chain; it does not prove the drafting step, and a `reference`
+row must never be read as evidence about draft quality.
 
 ## Isolation and authorization
 
@@ -235,6 +278,7 @@ debugging):
 mage buildEngine
 python3 scripts/agent_eval.py --list
 python3 scripts/agent_eval.py --dry-run --suite large
+python3 scripts/agent_eval.py --dry-run --suite cold
 ```
 
 `--dry-run` runs a **preflight**: it starts a trivial service with the binary under test and reads its
@@ -347,7 +391,7 @@ Workflow inputs:
 | input | default | description |
 |---|---|---|
 | `agents` | `claude,codex,opencode,pi` | which providers to run |
-| `suite` | `large` | `core` / `large` / `all` |
+| `suite` | `large` | `core` / `large` / `cold` / `all` |
 | `arms` | `oberth,native` | up to three: `oberth` / `oberth-noskill` / `native` |
 | `compare` | `oberth,native` | which pair the comparison table is built from |
 | `scenarios` | `all` | specific ids may also be named |
@@ -355,8 +399,9 @@ Workflow inputs:
 
 The workflow has three jobs:
 
-1. **`plan`**: check the gateway protocol, build `oberth`, run preflight on the core and large-project
-   fixtures (exit 2 if listeners cannot be observed), and turn the `agents` input into a matrix;
+1. **`plan`**: check the gateway protocol, build `oberth`, run preflight on the core, large-project and
+   cold-start fixtures (exit 2 if listeners cannot be observed), and turn the `agents` input into a
+   matrix;
 2. **`matrix`**: **one runner per agent, in parallel**, each running only its own scenarios and uploading
    `agent-eval-shard-<agent>`; one agent failing does not affect the others;
 3. **`merge`**: download all shards and combine them into one table with `--merge`; it requires all shards
