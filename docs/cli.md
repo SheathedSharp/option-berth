@@ -71,6 +71,12 @@ command's options.
 | Handoff | `workplace` · `agent` | Work records, and handing the session to an external coding agent |
 | Infrastructure | `daemon` · `serve` · `config` · `version` · `completion` · `doctor` | Background collector, install configuration and self-check |
 
+`oberth --help` ends with a **For agents** section that gives a reading pattern, not commands: the
+three reads a session opens with (`status --json --brief`, `up --wait --json`,
+`logs <service> --once --json --run current --first-error`). It adds no command and does not change
+the layer table above; the `--help` of `status`, `up` and `logs` carries the reasoning behind the
+same reads.
+
 ## Core loop
 
 ### oberth status [path] [--json] [--no-mark] [--only services] [--brief]

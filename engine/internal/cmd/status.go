@@ -62,7 +62,11 @@ var statusCmd = &cobra.Command{
 		"own, because a window that re-reads every few seconds must not move an anchor an\n" +
 		"agent set before starting work. When a deterministic service or dependency anomaly exists, status\n" +
 		"also publishes a derived agent attention artifact under BERTH_HOME; it never calls a model\n" +
-		"or executes an action for that artifact.",
+		"or executes an action for that artifact.\n\n" +
+		"With --json --brief the answer is the runtime facts only — services, ports, health,\n" +
+		"the current exit reason and the next step — without the manifest copies, drafts,\n" +
+		"git summary or change ledger. It is the cheapest read for an agent that already\n" +
+		"knows which service it is working on: narrow it further with --only <service>.",
 	Args: cobra.MaximumNArgs(1),
 	RunE: statusRun,
 }
