@@ -465,6 +465,79 @@ def dry_run(scenario_ids: list[str], *, out_root: Path, binary: Path, args: argp
     return 1 if failures else 0
 
 
+def merge_reports(paths: list[str], out_root: Path, *, require_comparable: bool) -> int:
+    """Combine shard reports into one matrix.
+
+    Sharding runs each agent on its own runner so the wall-clock equals one
+    agent's run. Merging is only sound when every shard used the same binary,
+    skill, scenarios and repeat count; a mismatch is reported instead of
+    silently averaged.
+    """
+    shards = []
+    for raw in paths:
+        path = Path(raw).expanduser().resolve()
+        try:
+            shards.append((path, json.loads(path.read_text(encoding="utf-8"))))
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"cannot read shard {path}: {exc}", file=sys.stderr)
+            return 1
+    if not shards:
+        print("merge: no shard reports given", file=sys.stderr)
+        return 1
+
+    base = shards[0][1]
+    for path, doc in shards[1:]:
+        for key in ("build", "skill", "repeat", "scenarios", "arms"):
+            if doc.get(key) != base.get(key):
+                print(
+                    f"merge: shard {path} differs on {key}; refusing to combine incomparable rows",
+                    file=sys.stderr,
+                )
+                return 1
+
+    runs: list[dict[str, Any]] = []
+    seen: dict[tuple[str, str, str, int], int] = {}
+    for _, doc in shards:
+        for run in doc.get("runs", []):
+            key = (run["scenario"], run["agent"], run.get("arm", ARM_OBERTH), run["repeat"])
+            if key in seen:
+                # A shard that hit a harness error may coexist with a good run
+                # of the same key; keep the observation that produced facts.
+                if run.get("status") != "harness_error":
+                    runs[seen[key]] = run
+                continue
+            seen[key] = len(runs)
+            runs.append(run)
+
+    build = base["build"]
+    summary = summarize_runs(runs, build["sha256"])
+    comparable = bool(summary) and all(row["comparable"] for row in summary)
+    payload = {
+        "schema": REPORT_SCHEMA,
+        "generated_at": utc_stamp(),
+        "build": build,
+        "skill": base.get("skill") or {},
+        "agents": base.get("agents") or {},
+        "arms": base.get("arms") or [ARM_OBERTH],
+        "passed_env": base.get("passed_env") or [],
+        "agent_args": base.get("agent_args") or {},
+        "repeat": base.get("repeat"),
+        "scenarios": base.get("scenarios") or [],
+        "scenario_prompts": base.get("scenario_prompts") or {},
+        "comparable": comparable,
+        "runs": runs,
+        "summary": summary,
+        "comparison": compare_arms(summary),
+        "notes": [f"merged from {len(shards)} shard report(s)"],
+    }
+    json_path, md_path = write_report(out_root, payload)
+    print(f"wrote {json_path}\nwrote {md_path}", file=sys.stderr)
+    if require_comparable and not comparable:
+        print("require-comparable: the merged matrix is not comparable", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Fixed agent scenario matrix for option-berth.",
@@ -482,6 +555,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--list", action="store_true", help="list scenarios and agents")
     parser.add_argument("--dry-run", action="store_true", help="provision every scenario and stop before any agent")
     parser.add_argument("--execute", action="store_true", help="run agents and write the matrix")
+    parser.add_argument("--merge", action="append", default=[], metavar="REPORT_JSON",
+                        help="merge shard report.json files into one matrix (repeatable)")
     parser.add_argument("--agents", default="", help="comma list of agents, or all (claude,codex,opencode,pi)")
     parser.add_argument("--scenarios", default="all", help="comma list of scenario ids, or all")
     parser.add_argument("--suite", default="all", choices=["all", "core", "large"],
@@ -500,6 +575,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--require-complete", action="store_true", help="exit 1 unless every valid run completed with no OOB")
     parser.add_argument("--require-comparable", action="store_true", help="exit 1 unless every row has repeat>=2 on one build")
     args = parser.parse_args(argv)
+
+    if args.merge:
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        out_root = Path(args.out).expanduser().resolve() if args.out else ROOT / ".agent-eval" / stamp
+        return merge_reports(args.merge, out_root, require_comparable=args.require_comparable)
 
     if args.list:
         for suite in ("core", "large"):

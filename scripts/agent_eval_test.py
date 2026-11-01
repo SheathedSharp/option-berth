@@ -1038,5 +1038,61 @@ class ComparisonTests(unittest.TestCase):
         self.assertIn("steps", text)
 
 
+class MergeTests(unittest.TestCase):
+    def shard(self, agent: str, *, sha: str = "abc", repeat: int = 2) -> dict:
+        rows = []
+        for arm in (lib.ARM_OBERTH, lib.ARM_NATIVE):
+            for index in (1, repeat):
+                rows.append({
+                    "scenario": "stack-start", "agent": agent, "arm": arm, "repeat": index,
+                    "status": "ok", "completed": True, "steps": 10, "steps_source": "agent-events",
+                    "command_steps": 10, "oberth_calls": 1, "oberth_output_bytes": 0,
+                    "process_probe_calls": 1, "agent_output_bytes": 100, "mis_stops": 0,
+                    "cross_worktree_incidents": 0, "oob": [], "oob_count": 0, "checks": [],
+                    "failed_checks": [], "notes": [], "build_sha": sha, "duration_s": 1.0,
+                    "agent_version": "1", "exit_code": 0, "timed_out": False,
+                    "ports": {}, "artifacts": {}, "score": lib.score_run(
+                        checks=[lib.check("outcome", True)], oob=[], actions=[], budget=20, steps=10,
+                    ),
+                })
+        return {
+            "schema": lib.REPORT_SCHEMA, "build": {"sha256": sha}, "skill": {"version": "1"},
+            "agents": {agent: "1"}, "arms": [lib.ARM_OBERTH, lib.ARM_NATIVE], "repeat": repeat,
+            "scenarios": ["stack-start"], "runs": rows,
+        }
+
+    def write(self, payload: dict, name: str) -> Path:
+        path = Path(self.tmp.name) / name
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_shards_merge_into_one_comparable_matrix(self) -> None:
+        import agent_eval
+
+        a = self.write(self.shard("claude"), "claude.json")
+        b = self.write(self.shard("codex"), "codex.json")
+        out = Path(self.tmp.name) / "merged"
+        code = agent_eval.merge_reports([str(a), str(b)], out, require_comparable=True)
+        self.assertEqual(code, 0)
+        report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+        self.assertEqual({row["agent"] for row in report["summary"]}, {"claude", "codex"})
+        self.assertTrue(all(row["comparable"] for row in report["summary"]))
+        self.assertEqual(report["comparison"][0]["steps_ratio"], 1.0)
+
+    def test_shards_with_different_builds_are_refused(self) -> None:
+        import agent_eval
+
+        a = self.write(self.shard("claude", sha="abc"), "claude.json")
+        b = self.write(self.shard("codex", sha="def"), "codex.json")
+        code = agent_eval.merge_reports([str(a), str(b)], Path(self.tmp.name) / "merged", require_comparable=True)
+        self.assertEqual(code, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
