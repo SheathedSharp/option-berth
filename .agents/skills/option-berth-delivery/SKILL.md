@@ -73,8 +73,10 @@ worktree、提交信息与用户确认的规则不变。
 - 不把 PR 绿灯当成完整验收：发版前仍按 [docs/validation.md](../../../docs/validation.md)
   与 [docs/releasing.md](../../../docs/releasing.md) 执行完整门槛。
 
-## 发布例外
+## 发布
 
-`scripts/release-*.sh` / `scripts/release.py --publish` 要求本地 `main` 与 `origin/main`
-完全一致，并用 `git push --atomic` 同时推送版本提交与标签，不经过 PR。完成 PR 合并后
-先按第 7 步同步 `main`，再按发版流程执行；发布仍需单独授权。
+发布和普通改动走同一条 PR 路径：版本 PR 只改 `VERSION`（协议版本发布同时改
+`ProtocolVersion` 与生成的 schema），合并后在合并提交上创建注释标签 `vX.Y.Z` 与
+`engine/vX.Y.Z` 并推送。`Verified release` 在 runner 上跑完整门槛，通过后才构建和发布资产。
+本机不再有创建版本提交、打标签或推送的快捷入口；`scripts/release.py` 只保留
+`--verify-only` 与 `--validate-tag`。打标签仍是发布动作，需要单独授权。

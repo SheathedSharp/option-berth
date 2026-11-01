@@ -77,35 +77,37 @@ RPC 自身有历史上独立的计数：`engine/internal/daemon/rpc/types.go` �
 支持范围内的误停、归属错误、账本损坏，以及服务已在监听却被当成未就绪，按修复版本（X3）单独发布，不等周窗口。
 不兼容的 daemon 协议变更才升 X1。
 
-## 先预览，再执行
+## 发布路径
 
 从干净且与远端一致的已审阅 `main` 发起。需要 Git、Python 3.11+、Go，以及本地验证所需工具。
 客户端与 skill 不参与本仓库的发布验证。
 
+发布只有一条路径：**版本 PR → 合并 → 推注释标签 → `Verified release` 在 runner 上验证并发布**。
+本机不再有创建版本提交、打标签或推送的快捷入口；`scripts/release.py` 只保留 CI 用的
+`--verify-only` 和 `--validate-tag`。
+
+1. 从 `main` 开分支，只改 `VERSION`（协议版本发布同时改 `ProtocolVersion` 并重新生成 schema），
+   提交 `chore(release): vX.Y.Z`，开 PR。
+2. PR 的 required checks 通过并经确认后，用 merge commit 合并。
+3. 在合并提交上创建注释标签 `vX.Y.Z` 和 `engine/vX.Y.Z`，推送标签。
+4. `Verified release` 按标签执行 `policy` / `verify` / `windows` / `package` / `publish`，
+   在 runner 上跑与 `scripts/release.py --verify-only` 相同的门槛，通过后才构建资产并把
+   draft 转正。
+
+本地只读检查：
+
 ```sh
-# 默认只读预览：不构建、不联网、不写版本或 Git 引用
-scripts/release-protocol.sh
-scripts/release-feature.sh
-scripts/release-fix.sh
-
-# 完成验证，创建本地版本提交和注释标签；暂不推送
-scripts/release-feature.sh --execute
-
-# 一次调用：验证 → 版本提交 → tag → 原子推送 → 托管构建与发布
-scripts/release-feature.sh --publish
+python3 scripts/release.py --verify-only          # 与 runner 相同的完整门槛
+python3 scripts/release.py --validate-tag vX.Y.Z  # 核对已存在的标签
 ```
 
-每次选择一种类型，不要连续执行三条发布命令。Python 等价入口是
-`python3 scripts/release.py --kind feature --publish`。
-Mage 提供 `releaseProtocol / releaseFeature / releaseFix`（本地提交和 tag）与
-`publishProtocol / publishFeature / publishFix`（包括推送）；均接受 `-dry-run`。
-旧的 `releaseMajor / releaseMinor / releasePatch` 保留为协议/功能/修复的本地发布别名。
+这两条不写版本、不建标签、不推送。标签一旦推送就不再移动；失败时修复后按下一个版本交付。
 
 ## 发布前的强制验证
 
-脚本锁定本次本地操作，在仓库外创建可丢弃 checkout，生成候选版本后执行构建、vet、完整单元测试、
-核心竞态测试、真实服务场景、Mage/Python 辅助测试与品牌一致性检查。
-验证失败不修改日常工作区，不创建标签。没有跳过测试或强制发布选项。
+`Verified release` 在标签提交上执行构建、vet、完整单元测试、核心竞态测试、真实服务场景、
+Mage/Python 辅助测试与品牌一致性检查；任一项失败都不会构建或发布资产。
+没有跳过测试或强制发布的选项。
 
 ### 发布前的 agent 场景矩阵
 
@@ -118,13 +120,8 @@ Mage 提供 `releaseProtocol / releaseFeature / releaseFix`（本地提交和 ta
 验证，也不因为它失败而阻止引擎发布。没有执行的 agent 行必须在证据里写「未执行」；
 参考脚本和 fake engine 的结果不能替代真实 agent。
 
-验证通过后仍重新检查工作区、main 提交、origin/main 与标签，防止验证期间的并行工作被覆盖。
-只允许候选中的版本与协议文件发生预期变化；其他生成或修改必须先被审查，真实错误不通过删断言、
+工作流校验版本、协议 schema、注释标签与 main 归属后才继续。真实错误不通过删断言、
 放宽超时或自动无限重试处理。
-
-推送使用 `git push --atomic`，main 和标签一起成功或一起失败，不使用 force；远端须为本项目，
-分支保护拒绝时停止，不更改保护规则或绕过审查。
-要求版本变更也走 PR 的仓库，应先按保护规则完成版本 PR，再由有权限的维护者创建相应注释标签。
 
 ## GitHub Actions 发布链路
 
@@ -161,12 +158,11 @@ Windows workflow 在构建 CLI 后运行 `verify_service_lifecycle.py`，使用�
 这项检查不涵盖 Windows/Linux 桌面端、所有终端/权限/服务树场景，也不代表 Windows arm64
 已经原生执行。
 
-## 无可用前台 Mac 时的完整 CI 预检
+## 打标签前的预检
 
 完整的自动发布 CI 仅在推送与 `VERSION` 一致的 **`v*` 注释 tag** 时运行 `Verified release`
 （验证、打包、发布）；PR 与 `main` 推送的自动门槛覆盖构建、vet、单元测试与辅助脚本测试，见
 [validation.md](validation.md)。每日 `Nightly full verification` 在默认分支上运行与发版等价的
 完整门槛；打标签前应先确认它通过，避免把只在该门槛暴露的问题留到发版后。
-发版前应在本机执行 `scripts/release-feature.sh` / `scripts/release-fix.sh` 等预览与 `--execute` 验证；
-无前台 Mac 时，可先合入 VERSION PR，再对目标提交打 tag，由 tag 工作流在 runner 上执行与
-`scripts/release.py --verify-only` 等价的完整门槛。失败时不移动或覆盖 tag，修复按下一版本交付。
+需要在本机复跑时用 `python3 scripts/release.py --verify-only`；它只读当前检出的提交。
+失败时不移动或覆盖 tag，修复按下一版本交付。
