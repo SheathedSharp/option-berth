@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,27 +47,129 @@ func TestLoadContextFileAndFlagOverrides(t *testing.T) {
 	}
 }
 
-func TestSafeReasonDoesNotExposeProviderDetails(t *testing.T) {
-	if got := safeReason(jev.ErrUnavailable); got != "Jev unavailable" {
-		t.Fatalf("reason = %q", got)
+// Consent is the one behavior change in this package: a key is a secret, not
+// permission. These tables pin the rule the old default* helpers encoded by
+// accident — environment keys used to switch Jev on by their mere presence.
+func TestConsentComesOnlyFromAnExplicitEnable(t *testing.T) {
+	enabled := jev.LocalJevConfig{Schema: jev.LocalJevConfigSchema, Enabled: true, Provider: "openrouter", APIKey: "settings-key"}
+	disabled := jev.LocalJevConfig{Schema: jev.LocalJevConfigSchema, Enabled: false, Provider: "openrouter", APIKey: "settings-key"}
+	cases := []struct {
+		name        string
+		input       jev.ResolveInput
+		wantEnabled bool
+		wantReason  string
+		wantKey     string
+		wantMigrate bool
+	}{
+		{
+			name:        "environment key alone is not consent",
+			input:       jev.ResolveInput{OpenRouterKey: "env-key"},
+			wantEnabled: false,
+			wantReason:  jev.ReasonDisabled,
+			wantMigrate: true,
+		},
+		{
+			name:        "legacy decide.key alone is not consent",
+			input:       jev.ResolveInput{LegacyKey: "legacy-key", LegacyFound: true},
+			wantEnabled: false,
+			wantReason:  jev.ReasonDisabled,
+			wantMigrate: true,
+		},
+		{
+			name:        "settings enabled is consent and supplies its own key",
+			input:       jev.ResolveInput{Settings: enabled, SettingsPresent: true},
+			wantEnabled: true,
+			wantKey:     "settings-key",
+		},
+		{
+			name:        "settings enabled falls back to the environment key",
+			input:       jev.ResolveInput{Settings: enabled, SettingsPresent: true, OpenRouterKey: "env-key"},
+			wantEnabled: true,
+			wantKey:     "env-key",
+		},
+		{
+			name:        "explicitly disabled settings are not overridden by a key",
+			input:       jev.ResolveInput{Settings: disabled, SettingsPresent: true, OpenRouterKey: "env-key"},
+			wantEnabled: false,
+			wantReason:  jev.ReasonDisabled,
+		},
+		{
+			name:        "one-shot BERTH_JEV is consent without a settings file",
+			input:       jev.ResolveInput{OneShot: "1", TypeSafeKey: "env-key"},
+			wantEnabled: true,
+			wantKey:     "env-key",
+		},
+		{
+			name:        "BERTH_JEV=0 is not consent",
+			input:       jev.ResolveInput{OneShot: "0", TypeSafeKey: "env-key"},
+			wantEnabled: false,
+			wantReason:  jev.ReasonDisabled,
+			wantMigrate: true,
+		},
+		{
+			name:        "enabled settings with no key anywhere reports no_key",
+			input:       jev.ResolveInput{Settings: jev.LocalJevConfig{Schema: jev.LocalJevConfigSchema, Enabled: true, Provider: "typesafe"}, SettingsPresent: true},
+			wantEnabled: true,
+			wantReason:  jev.ReasonNoKey,
+		},
+		{
+			name:        "a malformed settings file is a closed door, not a fallthrough",
+			input:       jev.ResolveInput{SettingsPresent: true, SettingsErr: errors.New("bad json"), OpenRouterKey: "env-key"},
+			wantEnabled: false,
+			wantReason:  jev.ReasonInvalidConfig,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := jev.Resolve(tc.input)
+			if got.Enabled != tc.wantEnabled {
+				t.Fatalf("enabled = %v, want %v (%+v)", got.Enabled, tc.wantEnabled, got)
+			}
+			if got.Reason != tc.wantReason {
+				t.Fatalf("reason = %q, want %q", got.Reason, tc.wantReason)
+			}
+			if tc.wantKey != "" && got.Key != tc.wantKey {
+				t.Fatalf("key = %q, want %q", got.Key, tc.wantKey)
+			}
+			if got.MigrationHint != tc.wantMigrate {
+				t.Fatalf("migration hint = %v, want %v", got.MigrationHint, tc.wantMigrate)
+			}
+			if !got.Enabled && got.Key != "" {
+				t.Fatalf("a disabled configuration still resolved a key: %q", got.Key)
+			}
+		})
 	}
 }
 
-func TestOpenRouterEnvironmentSelectsJevDefaults(t *testing.T) {
-	t.Setenv("OPENROUTER_API_KEY", "openrouter-test-key")
-	t.Setenv("OPENROUTER_ENDPOINT", "")
-	t.Setenv("OPENROUTER_MODEL", "")
-	t.Setenv("TYPESAFE_API_KEY", "typesafe-test-key")
-	t.Setenv("TYPESAFE_ENDPOINT", "https://typesafe.example/systemone")
-	t.Setenv("TYPESAFE_MODEL", "jev-test")
-	if got := defaultEndpoint(); got != jev.DefaultOpenRouterEndpoint {
-		t.Fatalf("endpoint = %q, want OpenRouter decisions endpoint", got)
+func TestResolvedClientRefusesWithoutConsent(t *testing.T) {
+	withoutConsent := jev.Resolved{Key: "k", Endpoint: jev.DefaultJevEndpoint, Reason: jev.ReasonDisabled}
+	if _, err := withoutConsent.Client(); err == nil {
+		t.Fatal("a disabled configuration produced a client")
 	}
-	if got := defaultModel(); got != jev.DefaultOpenRouterModel {
-		t.Fatalf("model = %q, want pinned OpenRouter Jev model", got)
+	enabled := jev.Resolved{Enabled: true, Key: "k", Endpoint: jev.DefaultJevEndpoint, Model: jev.DefaultJevModel, Timeout: time.Second}
+	client, err := enabled.Client()
+	if err != nil {
+		t.Fatalf("enabled configuration: %v", err)
 	}
-	if got := defaultAPIKey(); got != "openrouter-test-key" {
-		t.Fatalf("api key = %q, want OpenRouter key", got)
+	if client.APIKey != "k" || client.Endpoint != jev.DefaultJevEndpoint {
+		t.Fatalf("client = %+v", client)
+	}
+}
+
+func TestRedactedStateNeverCarriesTheKey(t *testing.T) {
+	resolved := jev.Resolve(jev.ResolveInput{Settings: jev.LocalJevConfig{
+		Schema: jev.LocalJevConfigSchema, Enabled: true, Provider: "openrouter", APIKey: "secret-key",
+	}, SettingsPresent: true})
+	state := resolved.RedactedState()
+	encoded, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "secret-key") {
+		t.Fatalf("redacted state leaks the key: %s", encoded)
+	}
+	if state["key_source"] != string(jev.SourceSettings) {
+		t.Fatalf("key_source = %v", state["key_source"])
 	}
 }
 
@@ -86,73 +189,38 @@ func TestLocalJevSettingsSelectOpenRouterDefaults(t *testing.T) {
     }`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := defaultEndpoint(); got != "https://local.example/decisions" {
-		t.Fatalf("endpoint = %q", got)
+	got := resolveConsent("", false)
+	if !got.Enabled || got.Endpoint != "https://local.example/decisions" || got.Model != "local/jev" {
+		t.Fatalf("resolved = %+v", got)
 	}
-	if got := defaultModel(); got != "local/jev" {
-		t.Fatalf("model = %q", got)
+	if got.Key != "local-key" || got.Timeout != 5*time.Second {
+		t.Fatalf("key/timeout = %q/%s", got.Key, got.Timeout)
 	}
-	if got := defaultAPIKey(); got != "local-key" {
-		t.Fatalf("api key = %q", got)
-	}
-	if got := defaultTimeout(); got != 5*time.Second {
-		t.Fatalf("timeout = %s", got)
+	if got.KeySource != jev.SourceSettings {
+		t.Fatalf("key source = %q", got.KeySource)
 	}
 }
 
-func TestEnvironmentKeyOverridesLocalJevSettings(t *testing.T) {
+func TestEnvironmentKeySelectsTheProviderButNotConsent(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("BERTH_HOME", home)
-	if err := os.WriteFile(filepath.Join(home, "jev.json"), []byte(`{"schema":"oberth.jev-config/v1","enabled":true,"provider":"openrouter","api_key":"local-key"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	t.Setenv("OPENROUTER_API_KEY", "environment-key")
 	t.Setenv("OPENROUTER_ENDPOINT", "https://env.example/decisions")
 	t.Setenv("OPENROUTER_MODEL", "env/jev")
-	if got := defaultAPIKey(); got != "environment-key" {
-		t.Fatalf("api key = %q", got)
-	}
-	if got := defaultEndpoint(); got != "https://env.example/decisions" {
-		t.Fatalf("endpoint = %q", got)
-	}
-	if got := defaultModel(); got != "env/jev" {
-		t.Fatalf("model = %q", got)
-	}
-}
-
-func TestDisabledLocalJevSettingsDoNotFallThroughToLegacyKey(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("BERTH_HOME", home)
-	t.Setenv("OPENROUTER_API_KEY", "")
 	t.Setenv("TYPESAFE_API_KEY", "")
-	if err := os.WriteFile(filepath.Join(home, "jev.json"), []byte(`{"schema":"oberth.jev-config/v1","enabled":false,"api_key":"local-key"}`), 0o600); err != nil {
-		t.Fatal(err)
+	got := resolveConsent("", false)
+	if got.Enabled {
+		t.Fatalf("an environment key enabled Jev: %+v", got)
 	}
-	if err := os.WriteFile(filepath.Join(home, "decide.key"), []byte("legacy-key"), 0o600); err != nil {
-		t.Fatal(err)
+	if !got.MigrationHint {
+		t.Fatal("an environment-only user did not get the migration hint")
 	}
-	if got := defaultAPIKey(); got != "" {
-		t.Fatalf("disabled config returned key %q", got)
-	}
-}
-
-func TestLegacyJevKeyRemainsAvailableWithoutNewSettings(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("BERTH_HOME", home)
-	t.Setenv("OPENROUTER_API_KEY", "")
-	t.Setenv("TYPESAFE_API_KEY", "")
-	if err := os.WriteFile(filepath.Join(home, "decide.key"), []byte("legacy-key\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got := defaultAPIKey(); got != "legacy-key" {
-		t.Fatalf("legacy api key = %q", got)
-	}
-	if got := defaultEndpoint(); got != jev.DefaultOpenRouterEndpoint {
-		t.Fatalf("legacy endpoint = %q", got)
+	if got.Provider != jev.ProviderOpenRouter || got.Endpoint != "https://env.example/decisions" || got.Model != "env/jev" {
+		t.Fatalf("provider selection = %+v", got)
 	}
 }
 
-func TestEffectiveAPIKeyPrefersExplicitFlagOverConfiguredKey(t *testing.T) {
+func TestExplicitAPIKeyFlagWinsAndCanDisable(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("BERTH_HOME", home)
 	t.Setenv("OPENROUTER_API_KEY", "")
@@ -160,14 +228,14 @@ func TestEffectiveAPIKeyPrefersExplicitFlagOverConfiguredKey(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, "jev.json"), []byte(`{"schema":"oberth.jev-config/v1","enabled":true,"provider":"openrouter","api_key":"local-key"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := effectiveAPIKey("", false); got != "local-key" {
-		t.Fatalf("unset flag = %q, want the configured key", got)
+	if got := resolveConsent("", false); got.Key != "local-key" {
+		t.Fatalf("unset flag = %q, want the configured key", got.Key)
 	}
-	if got := effectiveAPIKey("flag-key", true); got != "flag-key" {
-		t.Fatalf("explicit value = %q, want it verbatim", got)
+	if got := resolveConsent("flag-key", true); got.Key != "flag-key" || got.KeySource != jev.SourceFlag {
+		t.Fatalf("explicit value = %+v, want it verbatim", got)
 	}
-	if got := effectiveAPIKey("", true); got != "" {
-		t.Fatalf("explicit empty value = %q, want the key disabled", got)
+	if got := resolveConsent("", true); got.Key != "" {
+		t.Fatalf("explicit empty value = %q, want the key disabled", got.Key)
 	}
 }
 
@@ -191,7 +259,9 @@ func TestRunPreflightWritesFactRequestWhenJevUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("BERTH_HOME", home)
-	if err := runPreflight(statusPath, "", "restart_service", "api", "", "ask before restart", false, jev.DefaultJevEndpoint, jev.DefaultJevModel, "", time.Second, jev.TaskContext{}); err != nil {
+	// No consent: the request must still be written, and no provider contacted.
+	disabled := jev.Resolved{Endpoint: jev.DefaultJevEndpoint, Model: jev.DefaultJevModel, Timeout: time.Second, Reason: jev.ReasonDisabled}
+	if err := runPreflight(statusPath, "", "restart_service", "api", "", "ask before restart", false, disabled, jev.TaskContext{}); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := filepath.Glob(filepath.Join(home, "attention", "preflight", "*.json"))

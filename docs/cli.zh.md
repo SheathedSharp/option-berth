@@ -242,8 +242,11 @@ jev-attention --auto --project "$PWD" \
 `stale`；成功时把校验后的 `assessment` 原子写回同一文件，并在返回前复读状态。
 没有可用的环境变量或 GUI 本地 Jev 配置、网络失败、响应无效、文件过期或状态修订变化时，事实文件保持不变。
 macOS 设置页写入的 `~/.option-berth/jev.json`（隔离运行时为 `$BERTH_HOME/jev.json`）由
-`jev-attention` 自动读取；显式 `OPENROUTER_API_KEY` / `TYPESAFE_API_KEY` 优先，`enabled: false`
-会关闭本地配置。
+`jev-attention` 自动读取，并且是唯一的持久同意：`enabled: true` 开启，`enabled: false` 即使环境
+里有密钥也保持关闭。显式 `OPENROUTER_API_KEY` / `TYPESAFE_API_KEY` 只提供密钥并选定 provider，不
+开启 Jev；`BERTH_JEV=1` 只为当前进程开启。每次不可用都带固定原因码（`no_key`、`disabled`、
+`invalid_config`、`unauthorized`、`rate_limited`、`timeout`、`network`、`provider_error`、
+`bad_response`、`stale`），而不是 provider 的错误原文。
 `--auto`、`--session` 和 `--subscribe` 必须显式提供 `authorized_options`；artifact 的 `options` 只是候选集，
 不会自动变成 agent 的授权。
 需要在任务生命周期内持续发现异常时，agent 应使用 `jev-attention --session --interval 2s`（底层别名仍为

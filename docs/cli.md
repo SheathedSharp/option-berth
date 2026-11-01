@@ -284,8 +284,12 @@ writes the validated `assessment` back to the same file and re-reads the state b
 there is no usable environment variable or GUI-local Jev configuration, or on network failure,
 invalid response, expired file or changed state revision, the fact file is left unchanged. The
 `~/.option-berth/jev.json` written by the macOS settings page (`$BERTH_HOME/jev.json` for isolated
-runs) is read automatically by `jev-attention`; an explicit `OPENROUTER_API_KEY` / `TYPESAFE_API_KEY`
-takes precedence, and `enabled: false` turns the local configuration off. `--auto`, `--session` and
+runs) is read automatically by `jev-attention` and is the only persistent consent: `enabled: true`
+turns Jev on, `enabled: false` keeps it off even when a key is present. An explicit
+`OPENROUTER_API_KEY` / `TYPESAFE_API_KEY` supplies the key and selects the provider but does not
+enable Jev; `BERTH_JEV=1` enables it for one process. Each unavailable answer carries one fixed
+reason (`no_key`, `disabled`, `invalid_config`, `unauthorized`, `rate_limited`, `timeout`, `network`,
+`provider_error`, `bad_response`, `stale`) rather than a provider's error text. `--auto`, `--session` and
 `--subscribe` must be given `authorized_options` explicitly; the artifact's `options` is only a
 candidate set and does not automatically become the agent's authorization. To keep discovering
 abnormalities over a task's lifetime, the agent should use

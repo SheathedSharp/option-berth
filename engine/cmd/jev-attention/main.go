@@ -63,25 +63,32 @@ func main() {
 		draftGroup     = flag.String("draft-group", "", "pending draft group for adopt_manifest")
 		permission     = flag.String("permission", "", "explicit user permission context for action preflight")
 		userApproved   = flag.Bool("user-approved", false, "record that the user approved the proposed action (does not execute it)")
-		endpoint       = flag.String("endpoint", defaultEndpoint(), "Jev endpoint (environment or ~/.option-berth/jev.json)")
-		model          = flag.String("model", defaultModel(), "Jev model")
-		apiKey         = flag.String("api-key", "", "API key (defaults to the environment or ~/.option-berth/jev.json; pass an empty value to disable)")
-		timeout        = flag.Duration("timeout", defaultTimeout(), "remote request timeout")
+		_              = flag.String("endpoint", "", "Jev endpoint (defaults to the resolved provider)")
+		_              = flag.String("model", "", "Jev model (defaults to the resolved provider)")
+		apiKey         = flag.String("api-key", "", "API key (defaults to jev.json, then the provider's environment variable; pass an empty value to disable)")
+		_              = flag.Duration("timeout", 0, "remote request timeout (defaults to jev.json or 10s)")
 	)
 	flag.Parse()
 	if *session {
 		*subscribe = true
 	}
 	// The configured key must never be a flag default, or `--help` would echo a
-	// secret. An explicit --api-key wins verbatim, including an empty value,
-	// which disables the key for harnesses.
+	// secret. Resolution happens once, here: an explicit --api-key wins verbatim
+	// (including an empty value, which disables the key for harnesses), and
+	// everything else comes from jev.Resolve so consent has exactly one rule.
 	apiKeyProvided := false
 	flag.Visit(func(f *flag.Flag) {
 		if f.Name == "api-key" {
 			apiKeyProvided = true
 		}
 	})
-	*apiKey = effectiveAPIKey(*apiKey, apiKeyProvided)
+	consent := resolveConsent(*apiKey, apiKeyProvided)
+	// A user who configured a key and nothing else was relying on the old
+	// implicit enable. Say it once per process on stderr instead of failing
+	// quietly; the JSON output stays a single value on stdout.
+	if consent.MigrationHint {
+		fmt.Fprintln(os.Stderr, "jev-attention: Jev now needs explicit consent; environment keys only supply the key. Run `oberth jev enable` once, or set BERTH_JEV=1 for this process.")
+	}
 	if *qualityReport {
 		if *qualitySince < 0 {
 			fail("--since must not be negative")
@@ -117,7 +124,7 @@ func main() {
 		sessionID := newSessionID(*project)
 		appendLifecycleTelemetry(home, *project, "subscribed", sessionID, nil)
 		stats, err := runSubscribeWithStats(subscriptionContext, *oberth, *project, *interval, jev.Client{
-			Endpoint: *endpoint, Model: *model, APIKey: *apiKey, Timeout: *timeout,
+			Endpoint: consent.Endpoint, Model: consent.Model, APIKey: consent.Key, Timeout: consent.Timeout,
 		}, ctx, readRunnerStatus, sessionID, func(result runnerOutput, latency time.Duration) {
 			appendRunnerTelemetry(home, *project, ctx, result, nil, "subscription", latency)
 		}, func(value any) error { return writeJSON(os.Stdout, value) })
@@ -137,7 +144,7 @@ func main() {
 		}
 		started := time.Now()
 		result, err := runAuto(context.Background(), *oberth, *project, jev.Client{
-			Endpoint: *endpoint, Model: *model, APIKey: *apiKey, Timeout: *timeout,
+			Endpoint: consent.Endpoint, Model: consent.Model, APIKey: consent.Key, Timeout: consent.Timeout,
 		}, ctx, readRunnerStatus)
 		telemetryPath := appendRunnerTelemetry(telemetryHome(), *project, ctx, result, err, "runner", time.Since(started))
 		if err != nil {
@@ -153,7 +160,7 @@ func main() {
 		if contextErr != nil && strings.TrimSpace(*contextPath) != "" {
 			fail(contextErr.Error())
 		}
-		if err := runPreflight(*statusPath, *preflightPath, *action, *service, *draftGroup, *permission, *userApproved, *endpoint, *model, *apiKey, *timeout, ctx); err != nil {
+		if err := runPreflight(*statusPath, *preflightPath, *action, *service, *draftGroup, *permission, *userApproved, consent, ctx); err != nil {
 			fail(err.Error())
 		}
 		return
@@ -168,16 +175,17 @@ func main() {
 	if err != nil {
 		fail(err.Error())
 	}
-	result, err := (jev.Client{
-		Endpoint: *endpoint,
-		APIKey:   *apiKey,
-		Model:    *model,
-		Timeout:  *timeout,
-	}).Evaluate(context.Background(), artifact, ctx)
+	client, clientErr := consent.Client()
+	if clientErr != nil {
+		telemetryPath := recordManualAssessment(telemetryHome(), *attentionPath, artifact, ctx, nil, clientErr, "manual")
+		printJSON(output{Status: "unavailable", AttentionPath: *attentionPath, TelemetryPath: telemetryPath, Reason: consent.ReasonOr(clientErr)})
+		return
+	}
+	result, err := client.Evaluate(context.Background(), artifact, ctx)
 	if err != nil {
 		if errors.Is(err, jev.ErrUnavailable) || errors.Is(err, jev.ErrStale) {
 			telemetryPath := recordManualAssessment(telemetryHome(), *attentionPath, artifact, ctx, nil, err, "manual")
-			printJSON(output{Status: "unavailable", AttentionPath: *attentionPath, TelemetryPath: telemetryPath, Reason: safeReason(err)})
+			printJSON(output{Status: "unavailable", AttentionPath: *attentionPath, TelemetryPath: telemetryPath, Reason: jev.ReasonFor(err)})
 			return
 		}
 		fail(err.Error())
@@ -200,7 +208,7 @@ func newSessionID(project string) string {
 	return hex.EncodeToString(sum[:])[:20]
 }
 
-func runPreflight(statusPath, preflightPath, action, service, draftGroup, permission string, userApproved bool, endpoint, model, apiKey string, timeout time.Duration, task jev.TaskContext) error {
+func runPreflight(statusPath, preflightPath, action, service, draftGroup, permission string, userApproved bool, consent jev.Resolved, task jev.TaskContext) error {
 	home := strings.TrimSpace(os.Getenv("BERTH_HOME"))
 	if home == "" {
 		return errors.New("preflight requires BERTH_HOME so its derived request has an owned destination")
@@ -244,6 +252,14 @@ func runPreflight(statusPath, preflightPath, action, service, draftGroup, permis
 	if err != nil {
 		return err
 	}
+	// Writing the request is not consent to send it: without consent the agent
+	// still gets the bounded preflight document to present directly.
+	client, clientErr := consent.Client()
+	if clientErr != nil {
+		telemetryPath := recordPreflightAssessment(home, request, task, nil, clientErr)
+		printJSON(output{Status: "unavailable", PreflightPath: path, TelemetryPath: telemetryPath, RequestID: request.RequestID, Reason: consent.ReasonOr(clientErr)})
+		return nil
+	}
 	artifact := request.AssessmentArtifactForAdapter()
 	if strings.TrimSpace(task.Task) == "" {
 		// Preflight's action intent is the minimum task context when the caller
@@ -253,11 +269,11 @@ func runPreflight(statusPath, preflightPath, action, service, draftGroup, permis
 		task.Task = "Evaluate whether this proposed worktree action needs the user's choice"
 	}
 	task = preflightTaskContext(request, task)
-	result, callErr := (jev.Client{Endpoint: endpoint, APIKey: apiKey, Model: model, Timeout: timeout}).Evaluate(context.Background(), artifact, task)
+	result, callErr := client.Evaluate(context.Background(), artifact, task)
 	if callErr != nil {
 		if errors.Is(callErr, jev.ErrUnavailable) || errors.Is(callErr, jev.ErrStale) {
 			telemetryPath := recordPreflightAssessment(home, request, task, nil, callErr)
-			printJSON(output{Status: "unavailable", PreflightPath: path, TelemetryPath: telemetryPath, RequestID: request.RequestID, Reason: safeReason(callErr)})
+			printJSON(output{Status: "unavailable", PreflightPath: path, TelemetryPath: telemetryPath, RequestID: request.RequestID, Reason: jev.ReasonFor(callErr)})
 			return nil
 		}
 		return callErr
@@ -331,122 +347,6 @@ func loadContext(path, task, authorized string) (jev.TaskContext, error) {
 		return result, errMissingOptions
 	}
 	return result, nil
-}
-
-func envOr(name, fallback string) string {
-	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
-		return value
-	}
-	return fallback
-}
-
-func defaultEndpoint() string {
-	if strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")) != "" {
-		return envOr("OPENROUTER_ENDPOINT", jev.DefaultOpenRouterEndpoint)
-	}
-	if strings.TrimSpace(os.Getenv("TYPESAFE_API_KEY")) != "" {
-		return envOr("TYPESAFE_ENDPOINT", jev.DefaultJevEndpoint)
-	}
-	if cfg, present, valid := localJevConfig(); present {
-		if !valid || !cfg.Enabled {
-			return envOr("TYPESAFE_ENDPOINT", jev.DefaultJevEndpoint)
-		}
-		if cfg.Provider == "openrouter" {
-			return envOr("OPENROUTER_ENDPOINT", firstNonEmpty(cfg.Endpoint, jev.DefaultOpenRouterEndpoint))
-		}
-		return envOr("TYPESAFE_ENDPOINT", firstNonEmpty(cfg.Endpoint, jev.DefaultJevEndpoint))
-	}
-	if key, err := jev.ReadLegacyJevKey(); err == nil && key != "" {
-		return jev.DefaultOpenRouterEndpoint
-	}
-	return envOr("TYPESAFE_ENDPOINT", jev.DefaultJevEndpoint)
-}
-
-func defaultModel() string {
-	if strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")) != "" {
-		return envOr("OPENROUTER_MODEL", jev.DefaultOpenRouterModel)
-	}
-	if strings.TrimSpace(os.Getenv("TYPESAFE_API_KEY")) != "" {
-		return envOr("TYPESAFE_MODEL", jev.DefaultJevModel)
-	}
-	if cfg, present, valid := localJevConfig(); present {
-		if !valid || !cfg.Enabled {
-			return envOr("TYPESAFE_MODEL", jev.DefaultJevModel)
-		}
-		if cfg.Provider == "openrouter" {
-			return envOr("OPENROUTER_MODEL", firstNonEmpty(cfg.Model, jev.DefaultOpenRouterModel))
-		}
-		return envOr("TYPESAFE_MODEL", firstNonEmpty(cfg.Model, jev.DefaultJevModel))
-	}
-	if key, err := jev.ReadLegacyJevKey(); err == nil && key != "" {
-		return jev.DefaultOpenRouterModel
-	}
-	return envOr("TYPESAFE_MODEL", jev.DefaultJevModel)
-}
-
-// effectiveAPIKey resolves the key after flag parsing. An explicit --api-key
-// wins verbatim, including an empty value, which disables the key for
-// harnesses; an unset flag falls back to the environment or the local
-// jev.json / decide.key.
-func effectiveAPIKey(flagValue string, provided bool) string {
-	if provided {
-		return flagValue
-	}
-	return defaultAPIKey()
-}
-
-func defaultAPIKey() string {
-	if value := strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")); value != "" {
-		return value
-	}
-	if value := strings.TrimSpace(os.Getenv("TYPESAFE_API_KEY")); value != "" {
-		return value
-	}
-	if cfg, present, valid := localJevConfig(); present {
-		if !valid || !cfg.Enabled {
-			return ""
-		}
-		return cfg.APIKey
-	}
-	key, err := jev.ReadLegacyJevKey()
-	if err != nil {
-		return ""
-	}
-	return key
-}
-
-func defaultTimeout() time.Duration {
-	if cfg, present, valid := localJevConfig(); present && valid && cfg.Enabled {
-		return cfg.Timeout()
-	}
-	return jev.DefaultJevTimeout
-}
-
-// localJevConfig reports a malformed file as present but invalid. This keeps a
-// bad or explicitly disabled local setting from falling through to the legacy
-// key, while still allowing explicit environment variables to win above it.
-func localJevConfig() (jev.LocalJevConfig, bool, bool) {
-	cfg, present, err := jev.LoadLocalJevConfig()
-	return cfg, present, err == nil
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value = strings.TrimSpace(value); value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func safeReason(err error) string {
-	if errors.Is(err, jev.ErrStale) {
-		return "artifact became stale"
-	}
-	if errors.Is(err, jev.ErrUnavailable) {
-		return "Jev unavailable"
-	}
-	return "assessment unavailable"
 }
 
 func writeJSON(writer io.Writer, value any) error {

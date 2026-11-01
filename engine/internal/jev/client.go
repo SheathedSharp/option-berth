@@ -111,7 +111,7 @@ type Client struct {
 func (c Client) normalized() (Client, error) {
 	c.APIKey = strings.TrimSpace(c.APIKey)
 	if c.APIKey == "" {
-		return Client{}, ErrUnavailable
+		return Client{}, WithReason(ReasonNoKey, ErrUnavailable)
 	}
 	if strings.TrimSpace(c.Endpoint) == "" {
 		c.Endpoint = DefaultJevEndpoint
@@ -262,21 +262,23 @@ func (c Client) Evaluate(ctx context.Context, artifact attention.Artifact, task 
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.HTTPClient.Do(req)
 	if err != nil {
-		return Result{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
+		// A timeout, an unreachable host and a cancelled context are three
+		// different next steps for the person, so classify before wrapping.
+		return Result{}, WithReason(reasonFromTransport(ctx, err), fmt.Errorf("%w: %v", ErrUnavailable, err))
 	}
 	defer resp.Body.Close()
 	responseBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if readErr != nil {
-		return Result{}, fmt.Errorf("%w: read response: %v", ErrUnavailable, readErr)
+		return Result{}, WithReason(reasonFromTransport(ctx, readErr), fmt.Errorf("%w: read response: %v", ErrUnavailable, readErr))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// Do not return the response body: providers may echo state or account
 		// details and errors should never become agent-visible evidence.
-		return Result{}, fmt.Errorf("%w: Jev HTTP status %d", ErrUnavailable, resp.StatusCode)
+		return Result{}, WithReason(reasonFromStatus(resp.StatusCode), fmt.Errorf("%w: Jev HTTP status %d", ErrUnavailable, resp.StatusCode))
 	}
 	var decoded jevResponse
 	if err := json.Unmarshal(responseBody, &decoded); err != nil {
-		return Result{}, fmt.Errorf("%w: invalid Jev response", ErrUnavailable)
+		return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: invalid Jev response", ErrUnavailable))
 	}
 	result, err := validateResponse(decoded, options, client.Model)
 	if err != nil {
@@ -381,7 +383,7 @@ func optionDescription(id string) string {
 
 func validateResponse(response jevResponse, options []string, configuredModel string) (Result, error) {
 	if response.Answers == nil {
-		return Result{}, fmt.Errorf("%w: Jev response has no answers", ErrUnavailable)
+		return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: Jev response has no answers", ErrUnavailable))
 	}
 	required := []string{"task_relevant", "needs_human"}
 	if len(options) > 1 {
@@ -389,7 +391,7 @@ func validateResponse(response jevResponse, options []string, configuredModel st
 	}
 	for _, key := range required {
 		if _, ok := response.Answers[key]; !ok {
-			return Result{}, fmt.Errorf("%w: Jev response omitted %s", ErrUnavailable, key)
+			return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: Jev response omitted %s", ErrUnavailable, key))
 		}
 	}
 	relevant, err := validateNoul(response.Answers["task_relevant"], "task_relevant")
@@ -407,10 +409,10 @@ func validateResponse(response jevResponse, options []string, configuredModel st
 	} else {
 		choice := response.Answers["next_option"]
 		if choice.Type != "choice" || !finiteProbability(choice.Confidence) || choice.Confidence == nil {
-			return Result{}, fmt.Errorf("%w: invalid next_option confidence", ErrUnavailable)
+			return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: invalid next_option confidence", ErrUnavailable))
 		}
 		if !contains(options, choice.Choice) {
-			return Result{}, fmt.Errorf("%w: Jev selected unauthorized option %q", ErrUnavailable, choice.Choice)
+			return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: Jev selected unauthorized option %q", ErrUnavailable, choice.Choice))
 		}
 		probabilities, err := validateChoiceProbabilities(choice.Probabilities, options)
 		if err != nil {
@@ -429,25 +431,25 @@ func validateResponse(response jevResponse, options []string, configuredModel st
 
 func validateNoul(answer jevAnswer, key string) (float64, error) {
 	if answer.Type != "noul" || answer.Noul == nil || !finite(*answer.Noul) {
-		return 0, fmt.Errorf("%w: invalid %s answer", ErrUnavailable, key)
+		return 0, WithReason(ReasonBadResponse, fmt.Errorf("%w: invalid %s answer", ErrUnavailable, key))
 	}
 	return *answer.Noul, nil
 }
 
 func validateChoiceProbabilities(values map[string]float64, options []string) (map[string]float64, error) {
 	if len(values) != len(options) {
-		return nil, fmt.Errorf("%w: choice probabilities do not cover authorized options", ErrUnavailable)
+		return nil, WithReason(ReasonBadResponse, fmt.Errorf("%w: choice probabilities do not cover authorized options", ErrUnavailable))
 	}
 	total := 0.0
 	for _, option := range options {
 		value, ok := values[option]
 		if !ok || !finite(value) {
-			return nil, fmt.Errorf("%w: invalid probability for %s", ErrUnavailable, option)
+			return nil, WithReason(ReasonBadResponse, fmt.Errorf("%w: invalid probability for %s", ErrUnavailable, option))
 		}
 		total += value
 	}
 	if math.Abs(total-1) > 0.01 {
-		return nil, fmt.Errorf("%w: choice probabilities sum to %.4f", ErrUnavailable, total)
+		return nil, WithReason(ReasonBadResponse, fmt.Errorf("%w: choice probabilities sum to %.4f", ErrUnavailable, total))
 	}
 	result := make(map[string]float64, len(options))
 	for _, option := range options {
