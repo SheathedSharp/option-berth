@@ -25,6 +25,12 @@ const (
 	DefaultTTL   = 10 * time.Minute
 )
 
+// ErrStale means that the artifact changed or expired under the caller. The
+// artifact writer returns it from a compare-and-swap that lost the race and the
+// adapter returns it when its in-flight response no longer matches the event.
+// It is one sentinel so a caller can test either failure with errors.Is.
+var ErrStale = errors.New("attention: artifact became stale")
+
 type EventKind string
 
 const (

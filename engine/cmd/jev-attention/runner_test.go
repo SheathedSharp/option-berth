@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/jev"
 )
 
 func probability(v float64) *float64 { return &v }
@@ -138,7 +139,7 @@ func TestAutoNormalDoesNotCallModel(t *testing.T) {
 	calls := 0
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))
 	defer srv.Close()
-	out, err := runAuto(context.Background(), "unused", ".", attention.Client{Endpoint: srv.URL, APIKey: "test", HTTPClient: srv.Client()}, attention.TaskContext{Task: "edit docs"},
+	out, err := runAuto(context.Background(), "unused", ".", jev.Client{Endpoint: srv.URL, APIKey: "test", HTTPClient: srv.Client()}, jev.TaskContext{Task: "edit docs"},
 		func(context.Context, string, string) (runnerStatus, error) { return runnerStatus{}, nil })
 	if err != nil || out.Status != "clear" || calls != 0 {
 		t.Fatalf("out=%+v err=%v calls=%d", out, err, calls)
@@ -174,9 +175,9 @@ func TestAutoAssessesRefreshesCachesAndBindsTask(t *testing.T) {
 		}})
 	}))
 	defer srv.Close()
-	client := attention.Client{Endpoint: srv.URL, APIKey: "test", HTTPClient: srv.Client()}
+	client := jev.Client{Endpoint: srv.URL, APIKey: "test", HTTPClient: srv.Client()}
 	read := func(context.Context, string, string) (runnerStatus, error) { reads++; return s, nil }
-	task := attention.TaskContext{Task: "fix api", AuthorizedOptions: authorizedFor(a)}
+	task := jev.TaskContext{Task: "fix api", AuthorizedOptions: authorizedFor(a)}
 	out, err := runAuto(context.Background(), "unused", ".", client, task, read)
 	if err != nil || out.Status != "continue" || out.Cached || !out.JevCalled || calls != 1 || reads != 2 {
 		t.Fatalf("out=%+v err=%v calls=%d reads=%d", out, err, calls, reads)
@@ -220,11 +221,11 @@ func TestAutoUnavailableKeepsFactsAndRequestsHuman(t *testing.T) {
 				}
 			}))
 			defer srv.Close()
-			client := attention.Client{Endpoint: srv.URL, APIKey: "test", HTTPClient: srv.Client()}
+			client := jev.Client{Endpoint: srv.URL, APIKey: "test", HTTPClient: srv.Client()}
 			if mode == "no_key" {
 				client.APIKey = ""
 			}
-			out, err := runAuto(context.Background(), "unused", ".", client, attention.TaskContext{Task: "fix api", AuthorizedOptions: authorizedFor(artifact)}, func(context.Context, string, string) (runnerStatus, error) { return s, nil })
+			out, err := runAuto(context.Background(), "unused", ".", client, jev.TaskContext{Task: "fix api", AuthorizedOptions: authorizedFor(artifact)}, func(context.Context, string, string) (runnerStatus, error) { return s, nil })
 			after, _ := os.ReadFile(s.AttentionPath)
 			if err != nil || out.Status != "unavailable" || out.JevCalled != (mode != "no_key") || !out.Decision.NeedsHuman || out.Assessment != nil || out.Request == nil || string(before) != string(after) {
 				t.Fatalf("out=%+v err=%v changed=%t", out, err, string(before) != string(after))
@@ -249,7 +250,7 @@ func TestAutoRefusesStaleAndCrossWorktreeRequests(t *testing.T) {
 				data, _ := json.Marshal(a)
 				_ = os.WriteFile(s.AttentionPath, data, 0600)
 			}
-			out, err := runAuto(context.Background(), "unused", ".", attention.Client{}, attention.TaskContext{Task: "fix", AuthorizedOptions: authorizedFor(a)}, func(context.Context, string, string) (runnerStatus, error) {
+			out, err := runAuto(context.Background(), "unused", ".", jev.Client{}, jev.TaskContext{Task: "fix", AuthorizedOptions: authorizedFor(a)}, func(context.Context, string, string) (runnerStatus, error) {
 				reads++
 				copy := s
 				if reads == 2 && mode == "changed_during_call" {
@@ -282,7 +283,7 @@ func TestSubscribeDeduplicatesSameRevisionAndStops(t *testing.T) {
 	defer cancel()
 	var output bytes.Buffer
 	reads := 0
-	err := runSubscribe(ctx, "unused", ".", time.Millisecond, attention.Client{}, attention.TaskContext{
+	err := runSubscribe(ctx, "unused", ".", time.Millisecond, jev.Client{}, jev.TaskContext{
 		Task: "fix api", AuthorizedOptions: authorizedFor(artifact),
 	}, func(context.Context, string, string) (runnerStatus, error) {
 		reads++
@@ -317,7 +318,7 @@ func TestSubscribeDiscoversAnomalyAfterClear(t *testing.T) {
 	defer cancel()
 	var output bytes.Buffer
 	reads := 0
-	err := runSubscribe(ctx, "unused", ".", time.Millisecond, attention.Client{}, attention.TaskContext{
+	err := runSubscribe(ctx, "unused", ".", time.Millisecond, jev.Client{}, jev.TaskContext{
 		Task: "fix api", AuthorizedOptions: authorizedFor(artifact),
 	}, func(context.Context, string, string) (runnerStatus, error) {
 		reads++
@@ -351,7 +352,7 @@ func TestSubscribeStatsExplainQuietAndUnavailablePolls(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	reads := 0
-	stats, err := runSubscribeWithStats(ctx, "unused", ".", time.Millisecond, attention.Client{}, attention.TaskContext{
+	stats, err := runSubscribeWithStats(ctx, "unused", ".", time.Millisecond, jev.Client{}, jev.TaskContext{
 		Task: "fix api", AuthorizedOptions: authorizedFor(artifact),
 	}, func(context.Context, string, string) (runnerStatus, error) {
 		reads++
@@ -373,7 +374,7 @@ func TestSubscribeStatsExplainQuietAndUnavailablePolls(t *testing.T) {
 
 func TestAutoRequiresExplicitAuthorizedOptions(t *testing.T) {
 	s, _ := runnerFixture(t)
-	_, err := runAuto(context.Background(), "unused", ".", attention.Client{}, attention.TaskContext{Task: "fix api"}, func(context.Context, string, string) (runnerStatus, error) { return s, nil })
+	_, err := runAuto(context.Background(), "unused", ".", jev.Client{}, jev.TaskContext{Task: "fix api"}, func(context.Context, string, string) (runnerStatus, error) { return s, nil })
 	if err == nil || !strings.Contains(err.Error(), "explicit authorized_options") {
 		t.Fatalf("err = %v, want explicit authorization error", err)
 	}
@@ -396,7 +397,7 @@ func TestAutoSendsOnlyExplicitAuthorizedCandidates(t *testing.T) {
 		_, _ = w.Write([]byte(`{"model":"jev-test","answers":{"task_relevant":{"type":"noul","noul":0.4},"needs_human":{"type":"noul","noul":0.2}}}`))
 	}))
 	defer srv.Close()
-	out, err := runAuto(context.Background(), "unused", ".", attention.Client{Endpoint: srv.URL, APIKey: "test", HTTPClient: srv.Client()}, attention.TaskContext{
+	out, err := runAuto(context.Background(), "unused", ".", jev.Client{Endpoint: srv.URL, APIKey: "test", HTTPClient: srv.Client()}, jev.TaskContext{
 		Task: "inspect api", AuthorizedOptions: []string{"inspect_logs"},
 	}, func(context.Context, string, string) (runnerStatus, error) { return s, nil })
 	if err != nil {
@@ -448,7 +449,7 @@ func TestAutoIntersectsBroadKnownAuthorizationWithEventCandidates(t *testing.T) 
 		_, _ = w.Write([]byte(`{"model":"jev-test","answers":{"task_relevant":{"type":"noul","noul":0.4},"needs_human":{"type":"noul","noul":0.2}}}`))
 	}))
 	defer srv.Close()
-	out, err := runAuto(context.Background(), "unused", ".", attention.Client{Endpoint: srv.URL, APIKey: "test", HTTPClient: srv.Client()}, attention.TaskContext{
+	out, err := runAuto(context.Background(), "unused", ".", jev.Client{Endpoint: srv.URL, APIKey: "test", HTTPClient: srv.Client()}, jev.TaskContext{
 		Task: "inspect api", AuthorizedOptions: []string{absent, wanted},
 	}, func(context.Context, string, string) (runnerStatus, error) { return s, nil })
 	if err != nil {

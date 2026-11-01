@@ -224,7 +224,8 @@ changed 是第一次运行时缺省的可选字段。ports 仍是给脚本核对
 `assessment.context_id`（若存在）只是 adapter 对当前任务和授权选项 allow-list 的哈希缓存键，
 不属于运行事实，也不授予执行权限。
 这个文件是派生通知，不是新的运行事实来源；
-Jev 不在 daemon 或 `status` 的控制路径里。
+Jev 不在 daemon 或 `status` 的控制路径里：确定性部分在 `internal/attention`，Jev 客户端在
+`internal/jev`，这条依赖边界由 `internal/cmd/attention_boundary_test.go` 检查。
 
 可选的 `jev-attention` 适配器不属于 `oberth` 子命令。构建后可以用
 `bin/jev-attention`（`mage buildJev`），或在仓库根目录通过
