@@ -95,7 +95,8 @@ go test ./internal/cmd -run 'TestAnnotateCodeFacts|TestStatus' -count=1
 go generate ./...
 ```
 
-以上通过。`go test ./...` 未作为本机结论：`internal/cmd` 的 init/kill 用例仍受本机监听表限制。
+以上通过。当时 `go test ./...` 不能作为本机结论：`internal/cmd` 的 init/kill 用例受本机监听表
+限制。2026-11-01 的 lsof 回退之后整包在本机通过，见本节后面的记录。
 
 **真实 CLI 冒烟（2026-10-31）**：本机 `netstat` 在普通 shell 里能打印表，但 Go 进程通过管道读到的
 stdout 是空的，daemon 因此报告 `observation_blind`。为了不让“监听观察”挡住与它无关的代码身份链，
@@ -132,9 +133,29 @@ macOS 把 Go `net.Listen("tcp", ":p")`、Node `listen(p)` 和 Java 默认绑定�
 2026-10-30 从本机 shell 抓取真实表：65 个 LISTEN 行里 12 个是 `tcp46`；修复前的解码器
 一个都看不到。修复后同一份真实表解码出全部 12 个端口（53 行合并结果）；
 `internal/ports/testdata/darwin_netstat_tcp46.txt` 保留同列布局的合成夹具。
-`TestDualStackServiceBecomesReadyEndToEnd` 用双栈服务跑真实 `up --wait`，但在本机无法执行：
-Go 进程读取 `sysctl net.inet.tcp.pcblist_n` 只得到截断结果，daemon 看不到任何监听；
-这条集成测试须在能读取完整监听表的 macOS/Linux 构建环境通过。
+
+**macOS 27 的 netstat 回退（2026-11-01）**：本机 macOS 27.2 / 26B123 上，Go 进程 fork/exec
+出来的 `netstat -anvl -p tcp` 以 0 退出、stdout 为 0 字节，`sysctl net.inet.tcp.pcblist_n` 同样
+为空；同一 shell 直接跑得到约 74KB，经 `sh -c exec`、Apple `/usr/bin/python3`、`perl`、`ruby`、
+`env` 启动的 netstat 也正常，只有 `bash -c` 稳定为 0。因此 daemon 与 CLI 在这台机器上必然
+`observation_blind`。采集器现在在「netstat 跑成功但一行都没有」时改用 `lsof`
+（`-a -n -P -w +c 0 -iTCP -sTCP:LISTEN -Fpcltn`），探针能看到自己的监听时照常报 observable，
+detail 与 `daemon status` 写明经 lsof 观察。实测输入与结果：
+
+- `go test ./internal/ports -run TestScanFindsIsolatedListener`：回退前失败（`netstat: exited 0 but
+  printed no listening table`），回退后通过。
+- `go test -count=1 -timeout=12m ./...`：本机首次整包通过（此前 `internal/cmd` 的 init/kill
+  用例受同一限制失败）。
+- `go test -tags integration ./internal/scenario -count=1`：全部真实场景通过，含
+  `TestDualStackServiceBecomesReadyEndToEnd`；这条集成测试此前在本机无法执行。
+- 双栈地址形状变了：lsof 把 Go 的 `net.Listen("tcp", ":p")` 只报成一条 `tIPv6 n*:p`，没有
+  V6ONLY 事实，所以真实场景里只声明 `::`，不再像 netstat 的 tcp46 那样补出 0.0.0.0。集成断言
+  改成只要求通配地址；netstat 的 tcp46 形状仍由
+  `internal/ports/testdata/darwin_netstat_tcp46.txt` 解码夹具覆盖（纯解码，不需要可读的真表）。
+- 回退更窄：非 root 的 `lsof` 看不到其他用户的 socket。同机 `netstat` 有 54 个监听端口，
+  `lsof` 只有 49 个，差的 5 个都由 root 进程持有（launchd 的 445/88/8021、QQPCMgrDaemon 的
+  58827、verge-mihomo 的 7897）。option-berth 自己的服务同用户，不受影响；判断外来端口是否被占
+  时必须按 `docs/cli.md` 的说明读这个差别。
 
 沙箱里 `netstat` 可能以 0 退出给出空表（Codex 的 read-only seatbelt 下还会在 stderr 报
 `Operation not permitted`）。现在采集器返回 `observation_empty` / `observation_unrecognized` /
@@ -150,8 +171,9 @@ Claude 会话的 agent 据此说明“知道项目声明了什么、无法确认
 partial 测试确认：可读行照常发布，坏行对应的端口不在结果里，快照带
 `observation.state=partial`。
 
-本机普通 shell 启动的 Go 进程同样拿不到完整监听表，所以 `TestScanFindsIsolatedListener`
-在这台机器上失败；这是环境限制，不是本次改动的回归。
+本机普通 shell 启动的 Go 进程同样拿不到 `netstat` 的表，`TestScanFindsIsolatedListener` 曾因此在
+这台机器上失败。2026-11-01 的 lsof 回退（见本节「macOS 27 的 netstat 回退」）之后这条用例在本机
+通过；回退窄在哪里也在那一节写明。
 
 发布安装与卸载脚本用本地夹具跑通：平台映射、latest 重定向、固定版本、SHA256 不匹配不落盘、
 PATH 配置、旧包缺少 `install-path.sh` 时的标签回退、未知参数在下载前失败，以及卸载只删
@@ -272,9 +294,10 @@ shim 以 127 退出。
   平凡服务时，当前 Claude Code 进程上下文里的 `netstat` 返回空表，引擎报
   `netstat: no recognized TCP table header`。harness 按设计退出 2，拒绝把环境问题写成
   agent 失败。
-- **reference 冒烟**：为绕开上述本机 `netstat` 限制，用一份只在本机测量用的 lsof 回退构建
+- **reference 冒烟**：当时为绕开上述本机 `netstat` 限制，用一份只在本机测量用的 lsof 回退构建
   （未进入仓库，也不是发布构建）跑
-  `--execute --agents reference --scenarios all --repeat 2`。五个场景全部完成，步数分别为
+  `--execute --agents reference --scenarios all --repeat 2`。这类回退现已进入引擎
+  （见「macOS 27 的 netstat 回退」），不需要本机构建。五个场景全部完成，步数分别为
   missing-artifact 6、port-occupied 5、dependency-not-ready 6、manifest-process-mismatch 7、
   dual-worktree 6，越界 0，所有行可比。它证明夹具、引擎事实、判定和报告链路可用；
   reference 执行固定动作，不依赖 skill，因此不能用它证明 agent 因 skill 改动而减少步数。

@@ -471,12 +471,23 @@ func TestDualStackServiceBecomesReadyEndToEnd(t *testing.T) {
 			continue
 		}
 		found = true
-		// macOS is the platform where one dual-stack socket is printed as
-		// tcp46 and must become both wildcard addresses. Linux/Windows show
-		// their native shape; the port being attributable is the shared claim.
-		if runtime.GOOS == "darwin" {
-			if p.BindAddress != "0.0.0.0" || len(p.BindAddresses) != 1 || p.BindAddresses[0] != "::" {
-				t.Errorf("dual-stack row = bind %q extra %v, want 0.0.0.0 + [::]", p.BindAddress, p.BindAddresses)
+		// Attributing the port to the service through this collector is the
+		// shared claim on every platform; the exact address shape is not.
+		// netstat prints this socket as tcp46 and it becomes both wildcard
+		// addresses, while the lsof fallback macOS 27 needs (issue #156)
+		// prints the single AF_INET6 socket with no V6ONLY fact, so only `::`
+		// can be claimed. A row that does carry two addresses must still be
+		// the wildcard pair. netstat's tcp46 shape stays covered by the
+		// listener_bsd_test.go fixtures, which are decoder tests and need no
+		// readable host table.
+		switch p.BindAddress {
+		case "0.0.0.0", "::":
+		default:
+			t.Errorf("dual-stack row = bind %q, want a wildcard address", p.BindAddress)
+		}
+		for _, extra := range p.BindAddresses {
+			if extra != "0.0.0.0" && extra != "::" {
+				t.Errorf("dual-stack row = extra %q, want only the other wildcard", extra)
 			}
 		}
 	}

@@ -32,6 +32,9 @@ type ProbeResult struct {
 	Detail string
 	Hint   string
 	Err    error
+	// Source names the collector that answered when it was not the platform's
+	// primary one ("lsof" on Darwin). Empty means the primary collector.
+	Source string
 }
 
 // ProbeListenerObservation binds 127.0.0.1:0 and asks the same collector a
@@ -39,15 +42,28 @@ type ProbeResult struct {
 // only reliable way to tell "nothing is listening" from "this process is not
 // allowed to look": sandboxes deny the syscall without denying exec, so the
 // command exits 0 with a valid-looking empty table.
+//
+// Source is set when a Darwin fallback collector answered (listenerSourceLsofName):
+// the process can see its own listeners, but the table it read is narrower than
+// the primary one, and a reader deciding that a *foreign* port is absent needs
+// to know that. It never changes the verdict — the probe only ever asks about a
+// socket this process owns.
 func ProbeListenerObservation(ctx context.Context) ProbeResult {
-	return probeListenerObservation(ctx, func(ctx context.Context, _, _ int) ([]ListeningPort, error) {
-		return scanContext(ctx)
+	return probeListenerObservationSource(ctx, func(ctx context.Context, _, _ int) ([]ListeningPort, string, error) {
+		return scanContextSource(ctx)
 	})
 }
 
-// probeListenerObservation takes the scan as a seam so the three verdicts can
-// be tested without depending on the host's ability to read its own table.
+// probeListenerObservation keeps the verdict seam for the tests that inject a
+// scan which cannot see or cannot own the socket.
 func probeListenerObservation(ctx context.Context, scan func(context.Context, int, int) ([]ListeningPort, error)) ProbeResult {
+	return probeListenerObservationSource(ctx, func(ctx context.Context, port, pid int) ([]ListeningPort, string, error) {
+		rows, err := scan(ctx, port, pid)
+		return rows, "", err
+	})
+}
+
+func probeListenerObservationSource(ctx context.Context, scan func(context.Context, int, int) ([]ListeningPort, string, error)) ProbeResult {
 	if err := ctx.Err(); err != nil {
 		return ProbeResult{State: ObservationBlind, Code: CodeObservationBlind, Detail: "probe cancelled", Hint: observationBlindHint, Err: err}
 	}
@@ -63,7 +79,7 @@ func probeListenerObservation(ctx context.Context, scan func(context.Context, in
 
 	port := ln.Addr().(*net.TCPAddr).Port
 	pid := os.Getpid()
-	rows, err := scan(ctx, port, pid)
+	rows, source, err := scan(ctx, port, pid)
 	if err != nil {
 		return ProbeResult{
 			State: ObservationBlind, Code: CodeObservationBlind,
@@ -76,10 +92,11 @@ func probeListenerObservation(ctx context.Context, scan func(context.Context, in
 			continue
 		}
 		if row.PID == pid {
-			return ProbeResult{
-				State:  ObservationObservable,
-				Detail: fmt.Sprintf("saw this process's listener on 127.0.0.1:%d (pid %d)", port, pid),
+			detail := fmt.Sprintf("saw this process's listener on 127.0.0.1:%d (pid %d)", port, pid)
+			if source != "" {
+				detail += " via " + source
 			}
+			return ProbeResult{State: ObservationObservable, Detail: detail, Source: source}
 		}
 		return ProbeResult{
 			State: ObservationBlind, Code: CodeObservationBlind,
