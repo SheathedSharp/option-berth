@@ -31,8 +31,16 @@ var (
 )
 
 var logsCmd = &cobra.Command{
-	Use:               "logs <service|port>",
-	Short:             "Attach to a process and view its log output",
+	Use:   "logs <service|port>",
+	Short: "Attach to a process and view its log output",
+	Long: "Read a service's output: the recent lines, and then follow them.\n\n" +
+		"Following is the default, which is what a person at a terminal wants. A\n" +
+		"caller that only needs the failure should not pay for the whole file:\n" +
+		"--run current starts at the run happening now instead of the generations\n" +
+		"before it, --first-error returns the first line matching the fixed error\n" +
+		"vocabulary with its line number, and --once --json returns one document\n" +
+		"and exits. Together they are the shortest path from a failed service to\n" +
+		"the line that explains it.",
 	GroupID:           commandGroupFacts,
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeLogTarget,

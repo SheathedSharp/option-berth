@@ -44,7 +44,10 @@ var upCmd = &cobra.Command{
 		"only the named services themselves.\n\n" +
 		"Use --wait (or --ready) when the caller needs listeners and configured\n" +
 		"health checks to be ready before the command returns. Without it a\n" +
-		"started service is reported as started, not as ready.\n\n" +
+		"started service is reported as started, not as ready. That difference is\n" +
+		"the reason to pass --wait: `up --wait --json` is the one call that answers\n" +
+		"whether a service is really up, and a started service with\n" +
+		"services[].ready false is unconfirmed, not failed.\n\n" +
 		"Each service runs detached in its own process group, with stdout and\n" +
 		"stderr in ~/.option-berth/logs/<project>/<service>.log. Stop them all\n" +
 		"again with `oberth down`.\n\n" +

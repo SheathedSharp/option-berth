@@ -64,6 +64,11 @@ CLI 按 **agent 想做的事**分层，不按内部模块分：事实是「现�
 | 交接 | `workplace` · `agent` | 工作记录，以及把会话交给外部 coding agent |
 | 基础设施 | `daemon` · `serve` · `config` · `version` · `completion` · `doctor` | 后台采集器、安装配置与自检 |
 
+`oberth --help` 末尾另有一节 **For agents**，给的是读法而不是命令：一次会话开头的三条读
+（`status --json --brief`、`up --wait --json`、`logs <service> --once --json --run current
+--first-error`）。它不新增命令，也不改变上面这张层表；`status`、`up`、`logs` 自己的
+`--help` 里写着同一套读法的理由。
+
 ## 核心闭环
 
 ### oberth status [path] [--json] [--no-mark] [--only services] [--brief]
