@@ -31,8 +31,10 @@ from agent_eval_lib import (
     AGENTS,
     ARM_NATIVE,
     ARM_OBERTH,
+    ARM_OBERTH_NOSKILL,
     ARMS,
     COMMON_PROVIDER_ENV,
+    MIN_INTERVAL_RUNS,
     PROCESS_PROBE_COMMANDS,
     REPORT_SCHEMA,
     AgentSpec,
@@ -44,6 +46,7 @@ from agent_eval_lib import (
     cross_worktree_count,
     detect_oob,
     diff_tree,
+    arm_uses_skill,
     protected_processes,
     wasted_process_attempts,
     free_port,
@@ -70,6 +73,13 @@ from agent_eval_stacks import LARGE_SCENARIOS
 # dependencies, a prepared frontend, a migrated database, portless workers and
 # parallel worktrees. They share one harness and one judge vocabulary.
 SCENARIOS: dict[str, Scenario] = {**CORE_SCENARIOS, **LARGE_SCENARIOS}
+
+# One line per arm, in ARMS order, for --list.
+ARM_DESCRIPTIONS = (
+    "oberth CLI and the pinned skill",
+    "oberth CLI without the skill (isolates what the skill adds)",
+    "native tools only (control)",
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -330,14 +340,14 @@ def execute_run(
         record["ports"] = state.ports
         before = {label: snapshot_tree(root) for label, root in state.worktrees.items()}
         if agent_id == "reference":
-            if arm != ARM_OBERTH:
-                raise RuntimeError("the reference script is an oberth-arm self-check")
+            if not arm_uses_skill(arm):
+                raise RuntimeError("the reference script is a skill-arm self-check")
             result = run_reference(scenario, state, env=env, out_dir=run_dir, timeout=args.timeout)
         else:
             staged_skill = None
-            if arm == ARM_OBERTH:
+            if arm_uses_skill(arm):
                 if skill is None:
-                    raise RuntimeError("a skill checkout is required for a real oberth-arm agent; pass --skill-dir")
+                    raise RuntimeError("a skill checkout is required for the skill arm; pass --skill-dir")
                 staged_skill = stage_skill(env, agent_id, skill)
             result = run_agent(
                 spec, cwd=state.primary, prompt=scenario.prompt, skill=staged_skill,
@@ -465,7 +475,24 @@ def dry_run(scenario_ids: list[str], *, out_root: Path, binary: Path, args: argp
     return 1 if failures else 0
 
 
-def merge_reports(paths: list[str], out_root: Path, *, require_comparable: bool) -> int:
+def parse_compare(value: str) -> tuple[str, str]:
+    """Read the `TREATED,CONTROL` arm pair used for the comparison table."""
+    parts = [part.strip() for part in value.split(",") if part.strip()]
+    if len(parts) != 2:
+        raise SystemExit(f"--compare expects TREATED,CONTROL, got {value!r}")
+    treated, control = parts
+    for arm in (treated, control):
+        if arm not in ARMS:
+            raise SystemExit(f"unknown arm in --compare: {arm} (choose from {', '.join(ARMS)})")
+    if treated == control:
+        raise SystemExit("--compare needs two different arms")
+    return treated, control
+
+
+def merge_reports(
+    paths: list[str], out_root: Path, *, require_comparable: bool,
+    compare: tuple[str, str] = (ARM_OBERTH, ARM_NATIVE),
+) -> int:
     """Combine shard reports into one matrix.
 
     Sharding runs each agent on its own runner so the wall-clock equals one
@@ -527,7 +554,8 @@ def merge_reports(paths: list[str], out_root: Path, *, require_comparable: bool)
         "comparable": comparable,
         "runs": runs,
         "summary": summary,
-        "comparison": compare_arms(summary),
+        "compare_arms": list(compare),
+        "comparison": compare_arms(summary, *compare),
         "notes": [f"merged from {len(shards)} shard report(s)"],
     }
     json_path, md_path = write_report(out_root, payload)
@@ -562,7 +590,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--suite", default="all", choices=["all", "core", "large"],
                         help="scenario suite: core failure paths, large ten-service stacks, or all")
     parser.add_argument("--arms", default=ARM_OBERTH,
-                        help="comma list of comparison arms: oberth,native (default: oberth)")
+                        help="comma list of comparison arms: oberth,oberth-noskill,native (default: oberth)")
+    parser.add_argument("--compare", default=f"{ARM_OBERTH},{ARM_NATIVE}", metavar="TREATED,CONTROL",
+                        help="arm pair for the comparison table (default: oberth,native); "
+                             f"use oberth,{ARM_OBERTH_NOSKILL} to isolate the skill")
     parser.add_argument("--repeat", type=int, default=1, help="runs per scenario/agent (>=2 makes a row comparable)")
     parser.add_argument("--binary", default=str(ROOT / "bin" / "oberth"), help="oberth binary under test")
     parser.add_argument("--skill-dir", default=None, help="option-berth-skill checkout")
@@ -576,10 +607,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--require-comparable", action="store_true", help="exit 1 unless every row has repeat>=2 on one build")
     args = parser.parse_args(argv)
 
+    compare_pair = parse_compare(args.compare)
+
     if args.merge:
         stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
         out_root = Path(args.out).expanduser().resolve() if args.out else ROOT / ".agent-eval" / stamp
-        return merge_reports(args.merge, out_root, require_comparable=args.require_comparable)
+        return merge_reports(
+            args.merge, out_root,
+            require_comparable=args.require_comparable, compare=compare_pair,
+        )
 
     if args.list:
         for suite in ("core", "large"):
@@ -588,8 +624,8 @@ def main(argv: list[str] | None = None) -> int:
                 if scenario.suite == suite:
                     print(f"  {scenario.id:28} {scenario.title}: {scenario.description}")
         print("arms:")
-        for arm in ARMS:
-            print(f"  {arm:28} {'oberth CLI and the pinned skill' if arm == ARM_OBERTH else 'native tools only (control)'}")
+        for arm, description in zip(ARMS, ARM_DESCRIPTIONS):
+            print(f"  {arm:28} {description}")
         print("agents:")
         for agent_id, spec in AGENTS.items():
             available = "installed" if (not spec.command or shutil.which(spec.command)) else "not found"
@@ -628,8 +664,8 @@ def main(argv: list[str] | None = None) -> int:
         agent_ids = []
     if args.execute and not agent_ids:
         parser.error("--execute needs --agents")
-    # The reference script drives oberth itself, so it is an oberth-arm
-    # self-check only; pairing it with the native control would measure the
+    # The reference script drives oberth itself with the skill staged, so it is
+    # the `oberth` arm's self-check only; its other pairings would measure the
     # harness, not a model.
     agent_arm_pairs = [
         (agent_id, arm)
@@ -715,21 +751,31 @@ def main(argv: list[str] | None = None) -> int:
                 )
 
     summary = summarize_runs(runs, build["sha256"])
-    comparison = compare_arms(summary)
+    comparison = compare_arms(summary, *compare_pair)
     comparable = bool(summary) and all(row["comparable"] for row in summary)
     notes: list[str] = []
     if args.repeat < 2:
         notes.append("repeat=1: rows are single observations, not a comparable repeat series")
+    if args.repeat < MIN_INTERVAL_RUNS:
+        notes.append(
+            f"repeat={args.repeat}: below {MIN_INTERVAL_RUNS} the report gives point estimates only; "
+            "completion intervals and min/max ranges stay empty"
+        )
     if not comparable and args.repeat >= 2:
         notes.append("not every row is comparable; check harness/agent errors and the build sha")
     if any(row["step_source"] and "fallback" in " ".join(row["step_source"]) for row in summary):
         notes.append("at least one row fell back to shim command counts because provider events were not recognized")
-    if skill is None and any(arm == ARM_OBERTH for _, arm in agent_arm_pairs):
-        notes.append("no skill checkout found; oberth-arm rows would not be comparable to a pinned skill")
+    if skill is None and any(arm_uses_skill(arm) for _, arm in agent_arm_pairs):
+        notes.append("no skill checkout found; skill-arm rows would not be comparable to a pinned skill")
     if ARM_NATIVE in arm_ids:
         notes.append(
             "native rows are the control: no skill and an oberth shim that exits 127; "
             "compare_arms only pairs rows with the same scenario, provider and binary"
+        )
+    if ARM_OBERTH_NOSKILL in arm_ids:
+        notes.append(
+            f"{ARM_OBERTH_NOSKILL} rows keep the product and the safety policy but drop the skill; "
+            f"pass --compare {ARM_OBERTH},{ARM_OBERTH_NOSKILL} to read the skill's contribution"
         )
     if args.require_complete and ARM_NATIVE in arm_ids:
         notes.append("require-complete scores the control too; run it with --arms oberth when asserting product completion")
@@ -748,6 +794,7 @@ def main(argv: list[str] | None = None) -> int:
         "comparable": comparable,
         "runs": runs,
         "summary": summary,
+        "compare_arms": list(compare_pair),
         "comparison": comparison,
         "notes": notes,
     }

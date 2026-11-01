@@ -73,11 +73,12 @@ and the throwaway project.
 
 ## Control arms
 
-Same scenario, same provider, same binary, two arms:
+Same scenario, same provider, same binary, up to three arms:
 
 | arm | what the agent gets | purpose |
 |---|---|---|
 | `oberth` | the `oberth` binary under test + the pinned skill | product capability |
+| `oberth-noskill` | the same `oberth` binary, no skill staged | isolates what the skill adds |
 | `native` | only native tools (shell, `ps`/`lsof`, `curl`, `git`); no skill is staged, the `oberth` shim records the invocation and then exits 127 | control |
 
 `native` is the control group: it can use its own tools to stop and restart processes, otherwise it
@@ -86,9 +87,21 @@ preserved process PIDs and boundary-violation events. Both arms use the same jud
 differences in completion rate, step count, duration, process probes and output bytes are the
 measurable product gain on that scenario, not a difference between two fixtures.
 
-A report produces a comparison row only when both arms exist for the same `(scenario, agent)`; if
-either side is missing, it does not guess. The report schema is `option-berth/agent-eval/v2`: `runs[]`
-and `summary[]` gain `arm`, and the top level gains `arms[]` and `comparison[]`.
+`oberth-noskill` is a second control: it keeps the product, the shim guards and the safety policy and
+drops only the skill. The difference between `oberth` and it is therefore attributable to the skill
+alone, instead of mixing "has oberth" with "has the skill". The shim's interception rules, the
+`BERTH_HOME` check and the `oberth kill` refusal are one policy for the whole `oberth` family; they do
+not loosen because the skill is absent.
+
+A report renders exactly one comparison table, chosen by `--compare TREATED,CONTROL`; the default is
+still `oberth,native`. To read the skill's contribution, use `--compare oberth,oberth-noskill`. A
+comparison row appears only when both sides exist for the same `(scenario, agent)`; if either side is
+missing, it does not guess.
+
+The report schema is `option-berth/agent-eval/v2`: `runs[]` and `summary[]` carry `arm`, and the top
+level carries `arms[]`, `compare_arms()` (the pair actually used) and `comparison[]`. Every comparison
+row also names `treated_arm` / `control_arm`, so a row cannot be read against the wrong pair. These
+fields are additive; the old key names stay.
 
 **Neither credentials nor permissions are inherited implicitly.** Only environment variables named by
 `--pass-env NAME` enter the run environment; only provider arguments given explicitly with
@@ -170,6 +183,24 @@ Boundary-violation events:
   wrongful stops are judged by preserved PIDs);
 - the port of a read-only `machine:` dependency was bound.
 
+### Intervals
+
+Point estimates (medians, completion rate) are readable at `--repeat 2`, but they are only two or
+three observations. Conclusions like "oberth is faster than the control" need an interval:
+
+- `summary[].completion_interval`: the Wilson interval of the completion rate. Wilson rather than the
+  normal approximation because these rows have small n and are often at 0% or 100%, where the normal
+  interval collapses to a point and overstates certainty;
+- `summary[].steps_range`, `duration_range_s`, `score_range`: the row's minimum and maximum;
+- `comparison[].completion_intervals_disjoint`: whether the two completion intervals do not overlap at
+  all. `true` means separated, `false` means overlapping, `null` means "not enough repeats to say" — it
+  never writes "cannot tell" as `false`.
+
+Intervals appear only at `valid_runs >= 5`; when `--repeat` is below 5 those fields are `null` and the
+report says so in its notes. This is a **reporting threshold, not a merge gate**: a `--repeat 2` matrix
+still passes `--require-comparable`, it just cannot give an interval. Below `--repeat 2` even
+comparability does not hold.
+
 ## Comparability
 
 A row (`scenario × agent × arm`) is marked `comparable` only when all of the following hold:
@@ -191,7 +222,9 @@ different agent arguments cannot be compared with each other; the `native` arm d
 `--require-comparable` exits 1 when the matrix is not comparable; `--require-complete` exits 1 when any
 row's completion rate is not 100% or a boundary violation occurred. Both only read the report and do not
 change any threshold. `--require-complete` also counts the `native` control, so asserting product
-completion rate should be paired with `--arms oberth`.
+completion rate should be paired with `--arms oberth`. It is therefore incompatible with a matrix that
+carries a control arm: the `native` rows are expected to miss some scenarios. Use it only for an
+`--arms oberth` self-check.
 
 ## Running
 
@@ -234,6 +267,19 @@ Large-project comparison only (the recommended minimal proof):
 python3 scripts/agent_eval.py --execute \
   --agents claude --suite large --arms oberth,native --repeat 2
 ```
+
+To isolate the skill's contribution, run three arms and name the pair:
+
+```sh
+python3 scripts/agent_eval.py --execute \
+  --agents claude --suite large \
+  --arms oberth,oberth-noskill,native --repeat 5 \
+  --compare oberth,oberth-noskill
+```
+
+`--compare` only chooses which comparison table is rendered; all three arms run. `--repeat 5` is what
+produces intervals (see "Intervals"). A three-arm large matrix at `--repeat 5` costs about 3.75× the
+two-arm `--repeat 2` run, so budget the scenario subset accordingly.
 
 Harness self-check only (does not call a model):
 
@@ -302,9 +348,10 @@ Workflow inputs:
 |---|---|---|
 | `agents` | `claude,codex,opencode,pi` | which providers to run |
 | `suite` | `large` | `core` / `large` / `all` |
-| `arms` | `oberth,native` | product arm + control arm |
+| `arms` | `oberth,native` | up to three: `oberth` / `oberth-noskill` / `native` |
+| `compare` | `oberth,native` | which pair the comparison table is built from |
 | `scenarios` | `all` | specific ids may also be named |
-| `repeat` | `2` | fewer than 2 is not comparable |
+| `repeat` | `2` | fewer than 2 is not comparable; fewer than 5 gives no intervals |
 
 The workflow has three jobs:
 
@@ -316,8 +363,9 @@ The workflow has three jobs:
    to agree exactly on build, skill, scenarios and repeat, and otherwise refuses to merge.
 
 With concurrency, wall-clock time is roughly **the duration of one agent**, not the sum of four.
-`report.md` (including the "oberth vs native" comparison table) is written to the job summary, and the
-merged report and the individual shards are kept as artifacts for 30 days.
+`report.md` (including the comparison table chosen by the `compare` input, "oberth vs native" by
+default) is written to the job summary, and the merged report and the individual shards are kept as
+artifacts for 30 days.
 
 How to run: Actions → **Agent eval / real agent matrix** → Run workflow → choose a branch (the
 environment allows only `main`) → approve in the environment approval prompt. A run without approval

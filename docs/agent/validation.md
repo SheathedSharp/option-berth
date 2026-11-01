@@ -523,6 +523,36 @@ external CLIs, logins, and the network, so they are not put into `scripts/releas
   after the fix. The fix has not been re-run yet; the next CI matrix is what gives the corrected
   scores.
 
+## Skill arm and intervals (2026-11-01)
+
+The harness gained a third arm, `oberth-noskill`, and interval columns. This section records what
+was actually run on this machine; the CI matrix below the change is not implied.
+
+- `python3 -m unittest scripts.agent_eval_test`: 67 items passed. New coverage: the skill arm keeps
+  the whole `oberth` safety policy (`kill`, `oberth kill`), the skill arm execs the real binary
+  instead of the native arm's 127 stub, `compare_arms(treated, control)` pairs
+  `oberth` against `oberth-noskill` rather than against `native`, a pair missing its control side
+  produces no row, intervals stay `null` below 5 valid runs while the point estimates stay, a wide
+  interval reports `completion_intervals_disjoint: false`, a clean separation reports `true`, and a
+  short row reports `null` instead of `false`.
+- `python3 -m unittest discover -s scripts -p '*_test.py'`: 164 items passed, 1 skipped (the brand
+  check skips without a sibling `option-berth-macos` checkout).
+- `python3 scripts/agent_eval.py --list`: lists `oberth`, `oberth-noskill`, `native` with the new
+  description line.
+- `python3 scripts/agent_eval.py --dry-run --suite core` (isolated `HOME` / `BERTH_HOME` under
+  `/tmp`): preflight ok through the lsof fallback, all 6 core fixtures provisioned.
+- `python3 scripts/agent_eval.py --execute --agents reference --suite core --arms oberth --repeat 2`:
+  12 runs, all completed, zero boundary violations, all rows comparable; the report carries
+  `compare_arms: ["oberth", "native"]` and the note that `--repeat 2` is below the interval
+  threshold.
+- `python3 scripts/agent_eval.py --dry-run --suite large`: preflight ok, all 8 large fixtures
+  provisioned, up to 24 ports and 42 files across three worktrees.
+- `python3 scripts/check_docs.py` and `python3 scripts/check_ci_gate.py`: clean.
+- **Not run**: a real agent on the `oberth-noskill` arm. Its correctness depends on the agent not
+  discovering the skill another way, which the staging code prevents but only a real run can show.
+  The baseline rerun that would produce that comparison was triggered on `main` but had not been
+  approved when this was written.
+
 ## Client verification
 
 The macOS client's verification scope is not here: it lives with the client code in
