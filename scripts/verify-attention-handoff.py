@@ -195,6 +195,15 @@ services:
   - name: worker
     cmd: \"sh -c 'if test -e .once; then exec sleep 60; else touch .once; exit 1; fi'\"\n"""
         )
+        # `status` only publishes the handoff once the person has enabled the
+        # optional enhancement; its presence is what tells an agent Jev is on.
+        # Enable it the way a user would, in this throwaway home.
+        settings = home / "jev.json"
+        settings.write_text(
+            '{"schema":"oberth.jev-config/v1","enabled":true,'
+            '"provider":"typesafe","api_key":"verification-only"}\n'
+        )
+        settings.chmod(0o600)
 
         first = run(binary, project, home, "up", "--json", check=False)
         if first.returncode == 0:

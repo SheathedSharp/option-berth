@@ -40,7 +40,6 @@ const (
 	EventPortOccupied     EventKind = "port_occupied"
 	EventReadyTimeout     EventKind = "ready_timeout"
 	EventHealthFailed     EventKind = "health_failed"
-	EventUndeclared       EventKind = "undeclared_listener"
 	EventManifestConflict EventKind = "manifest_runtime_conflict"
 )
 
@@ -302,63 +301,12 @@ func ClassifyAll(f Facts) []Event {
 	// `listening: false`, and `up`/`down` never touch it — so a handoff here
 	// asks an agent to act on something it has no authority over. It was the
 	// single most expensive detour in the core acceptance run.
-	listeners := append([]Listener(nil), f.Listeners...)
-	sort.SliceStable(listeners, func(i, j int) bool {
-		if listeners[i].Port != listeners[j].Port {
-			return listeners[i].Port < listeners[j].Port
-		}
-		return listeners[i].ProjectRoot < listeners[j].ProjectRoot
-	})
-	declared := make(map[int]bool)
-	for _, service := range services {
-		if service.DeclaredPort != nil {
-			declared[*service.DeclaredPort] = true
-		}
-		if service.ActualPort != nil {
-			declared[*service.ActualPort] = true
-		}
-	}
-	seenPorts := make(map[int]bool)
-	for _, listener := range listeners {
-		if listener.Port <= 0 || declared[listener.Port] || seenPorts[listener.Port] || !listenerInRoot(listener, f.WorktreeRoot) {
-			continue
-		}
-		seenPorts[listener.Port] = true
-		port := listener.Port
-		events = append(events, Event{Kind: EventUndeclared, Port: port, Reason: "no_service_declares_port", At: eventTime(f)})
-	}
+	//
+	// An undeclared listener is not one either, for the same reason. `status`
+	// already lists the port with its owner, and a dev server nobody wrote down
+	// is not a fault: the agent did not start it and must not stop it. A
+	// handoff here spent steps on a process that was never wrong.
 	return events
-}
-
-func listenerInRoot(listener Listener, root string) bool {
-	if strings.TrimSpace(root) == "" {
-		return false
-	}
-	path := strings.TrimSpace(listener.Cwd)
-	if path == "" {
-		path = strings.TrimSpace(listener.ProjectRoot)
-	}
-	if path == "" {
-		// A host snapshot must include one of the paths above before it can
-		// claim a listener. Do not turn an incomplete row into a machine-wide
-		// port alert when the worktree root is known.
-		return false
-	}
-	rootAbs, errRoot := filepath.Abs(root)
-	pathAbs, errPath := filepath.Abs(path)
-	if errRoot != nil || errPath != nil {
-		return false
-	}
-	// macOS commonly publishes /private/var/... for a path the caller knew
-	// as /var/.... Resolve existing paths before the containment check.
-	if resolved, err := filepath.EvalSymlinks(rootAbs); err == nil {
-		rootAbs = resolved
-	}
-	if resolved, err := filepath.EvalSymlinks(pathAbs); err == nil {
-		pathAbs = resolved
-	}
-	rel, err := filepath.Rel(filepath.Clean(rootAbs), filepath.Clean(pathAbs))
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func crashThreshold(f Facts) int {
@@ -488,8 +436,6 @@ func optionsFor(kind EventKind) []Option {
 		return []Option{{ID: "inspect_logs"}, {ID: "inspect_port"}, {ID: "ask_user_for_context"}}
 	case EventHealthFailed:
 		return []Option{{ID: "inspect_logs"}, {ID: "restart_service"}, {ID: "ask_user_for_context"}}
-	case EventUndeclared:
-		return []Option{{ID: "inspect_port"}, {ID: "inspect_manifest"}, {ID: "ask_user_for_context"}}
 	case EventManifestConflict:
 		return []Option{{ID: "inspect_manifest"}, {ID: "inspect_logs"}, {ID: "ask_user_for_context"}}
 	case EventRepeatedCrash:
@@ -537,9 +483,6 @@ func evidenceForOne(f Facts, event Event) []Evidence {
 			return []Evidence{{Ref: "status.worktree.services[" + event.Service + "].port"}, {Ref: "status.worktree.services[" + event.Service + "].port_actual"}}
 		}
 		return []Evidence{{Ref: "status.worktree.services[" + event.Service + "].last_exit"}, logEvidence(f, event.Service, event.RunID)}
-	}
-	if event.Kind == EventUndeclared {
-		return []Evidence{{Ref: "status.ports[" + fmt.Sprint(event.Port) + "]"}}
 	}
 	return nil
 }

@@ -211,10 +211,13 @@ changed 是第一次运行时缺省的可选字段。ports 仍是给脚本核对
 `worktree.services[]` 的 `pid`、`run_id` 和 `started_at` 在服务由 option-berth 正在运行时提供，
 无端口 worker 也能靠这些字段核对实际运行记录；`log_path` 始终由引擎给出。
 
-当状态里出现确定的异常事件时，JSON 还会带 `attention_path`。它指向
+在用户启用可选的 Jev 增强之后，状态里出现确定的异常事件才会带 `attention_path`。它指向
 `BERTH_HOME/attention/` 下的一个可重算、可过期的 agent 交接文件；没有当前异常时该字段缺省。
-有异常时同时提供 `attention_revision`，它必须与文件中的 `state_revision` 相等，供 agent
-在同一份 `status` 响应中核对文件是否仍对应当前事实。
+**这个字段出现本身就是「用户已启用增强」的信号**：看到它的 agent 可以运行 `oberth jev assess`，
+看不到的 agent 也不必再猜是「没有异常」还是「从没开过 Jev」。未启用时 `status` 不发布，并清掉
+关闭之前留下的文件。有异常时同时提供 `attention_revision`，它必须与文件中的 `state_revision`
+相等，供 agent 在同一份 `status` 响应中核对文件是否仍对应当前事实。
+未声明的监听不是异常：`status` 已经列出该端口及其属主，agent 没有启动它，也不该去停它。
 核心文件是 `oberth.attention/v1`，包含 `event_id`、`state_revision`、`worktree_root`、
 可选的 `branch`、`generated_at`、`fresh_until`、`first_seen`、`last_seen`、可选的 `recovered_at`、`event`、
 可选的完整 `events` 数组、`evidence` 和固定 `options`，不包含 shell 命令或模型调用结果；

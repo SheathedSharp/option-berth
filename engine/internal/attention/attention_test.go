@@ -83,19 +83,16 @@ func TestClassifyPortsAndManifestConflicts(t *testing.T) {
 		},
 	}
 	events := ClassifyAll(f)
-	if len(events) != 2 {
-		t.Fatalf("events = %+v, want manifest conflict and one local undeclared listener", events)
+	if len(events) != 1 {
+		t.Fatalf("events = %+v, want the manifest conflict only: an undeclared listener is not an anomaly", events)
 	}
 	if events[0].Kind != EventManifestConflict || events[0].Reason != "declared_port_mismatch" ||
 		events[0].DeclaredPort == nil || *events[0].DeclaredPort != declared ||
 		events[0].ActualPort == nil || *events[0].ActualPort != actual {
 		t.Fatalf("manifest event = %+v", events[0])
 	}
-	if events[1].Kind != EventUndeclared || events[1].Port != 9000 {
-		t.Fatalf("undeclared event = %+v", events[1])
-	}
 	artifact, ok := Derive(f, now, time.Minute)
-	if !ok || len(artifact.Options) != 4 || artifact.Options[0].ID != "inspect_manifest" {
+	if !ok || len(artifact.Options) != 3 || artifact.Options[0].ID != "inspect_manifest" {
 		t.Fatalf("artifact options = %+v, ok=%v", artifact.Options, ok)
 	}
 	starting := Facts{ObservedAt: now, WorktreeRoot: root, Services: []Service{{Name: "api", Running: true, StartedAt: now.Format(time.RFC3339), DeclaredPort: &declared}}}
@@ -119,15 +116,17 @@ func TestFailureEventCarriesRunEvidence(t *testing.T) {
 	}
 }
 
-func TestUndeclaredListenerNeedsScopedPath(t *testing.T) {
-	f := Facts{WorktreeRoot: "/tmp/worktree", Listeners: []Listener{{Port: 9000}}}
-	if events := ClassifyAll(f); len(events) != 0 {
-		t.Fatalf("pathless listener = %+v, want no machine-wide inference", events)
-	}
-	f.Listeners[0].Cwd = "/tmp/worktree/subdir"
-	events := ClassifyAll(f)
-	if len(events) != 1 || events[0].Kind != EventUndeclared {
-		t.Fatalf("scoped listener = %+v, want undeclared event", events)
+// An undeclared listener is a fact `status` already shows, not a fault. The
+// agent did not start that process and must not stop it, so a handoff here
+// spent steps on something that was never wrong.
+func TestUndeclaredListenerIsNotAnAnomaly(t *testing.T) {
+	for _, f := range []Facts{
+		{WorktreeRoot: "/tmp/worktree", Listeners: []Listener{{Port: 9000}}},
+		{WorktreeRoot: "/tmp/worktree", Listeners: []Listener{{Port: 9000, Cwd: "/tmp/worktree/subdir"}}},
+	} {
+		if events := ClassifyAll(f); len(events) != 0 {
+			t.Fatalf("listeners %+v produced %+v, want no event", f.Listeners, events)
+		}
 	}
 }
 

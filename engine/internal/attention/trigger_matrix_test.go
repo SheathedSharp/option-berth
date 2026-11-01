@@ -41,7 +41,9 @@ func TestAttentionTriggerPrecisionMatrix(t *testing.T) {
 		{name: "manifest_runtime_port_mismatch", facts: facts(Service{Name: "api", Running: true, DeclaredPort: &declared, ActualPort: &actual}), want: []EventKind{EventManifestConflict}},
 		{name: "manifest_runtime_missing_listener", facts: facts(Service{Name: "api", Running: true, DeclaredPort: &declared}), want: []EventKind{EventManifestConflict}},
 		{name: "declared_listener", facts: Facts{ObservedAt: now, WorktreeRoot: root, Services: []Service{running}, Listeners: []Listener{{Port: declared, Cwd: root}}}},
-		{name: "undeclared_worktree_listener", facts: Facts{ObservedAt: now, WorktreeRoot: root, Listeners: []Listener{{Port: 19000, Cwd: root + "/server"}}}, want: []EventKind{EventUndeclared}},
+		// An undeclared listener is a fact `status` already shows, not a fault:
+		// the agent did not start that process and must not stop it.
+		{name: "undeclared_worktree_listener", facts: Facts{ObservedAt: now, WorktreeRoot: root, Listeners: []Listener{{Port: 19000, Cwd: root + "/server"}}}},
 		{name: "undeclared_foreign_worktree_listener", facts: Facts{ObservedAt: now, WorktreeRoot: root, Listeners: []Listener{{Port: 19000, ProjectRoot: "/tmp/attention-matrix/linked"}}}},
 		{name: "undeclared_sibling_prefix_listener", facts: Facts{ObservedAt: now, WorktreeRoot: root, Listeners: []Listener{{Port: 19000, Cwd: root + "-other"}}}},
 		{name: "unattributed_listener", facts: Facts{ObservedAt: now, WorktreeRoot: root, Listeners: []Listener{{Port: 19000}}}},
