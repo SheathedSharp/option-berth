@@ -184,9 +184,10 @@ python3 scripts/agent_eval.py --dry-run --suite large
 ```
 
 `--dry-run` 会跑一次 **preflight**：用待测二进制启动一个平凡服务并读取状态。
-如果引擎在当前进程上下文里看不到监听（例如 Darwin 的 `netstat` 在非 shell 责任进程下
-返回空表，或 agent 沙箱阻止了系统观察），preflight 直接退出 2，并打印引擎的错误码。
-这种情况下不要出表：表会测到环境而不是 agent。换到普通终端或修复监听观察路径后重跑。
+如果引擎在当前进程上下文里看不到监听（例如 agent 沙箱阻止了系统观察），preflight 直接退出 2，
+并打印引擎的错误码。这种情况下不要出表：表会测到环境而不是 agent。macOS 27 上 netstat 拿不到
+表时采集会改用 lsof（见 [validation.md](validation.md)），本机普通终端因此能跑 preflight；
+harness 仍只按引擎给出的观察结论判定，不把环境问题写成 agent 失败。
 
 `--dry-run --suite large` 会为每个大项目场景建夹具；`stack-stale-code`、
 `stack-parallel-three`、`stack-port-owner`、`stack-same-name-other-worktree` 和

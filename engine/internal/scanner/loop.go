@@ -872,8 +872,28 @@ func backoff(d, base, max time.Duration) time.Duration {
 	return next
 }
 
+// observationEqual compares two verdicts without treating a re-checked healthy
+// process as changed: CheckedAt is the moment of the probe, not a fact about
+// the table, so a process that keeps seeing itself publishes nothing new.
+func observationEqual(a, b *state.Observation) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.State == b.State && a.Code == b.Code && a.Detail == b.Detail && a.Hint == b.Hint
+}
+
 // snapshotChanged reports whether the diff between two snapshots is non-empty.
+//
+// The observation verdict is part of that diff even though no row changed: a
+// scan can resolve from "some rows unreadable" to "whole table read" with the
+// same ports in it, and holding the stale verdict back would keep publishing a
+// partial table as if it were complete — the exact rule PartialRows exists to
+// keep. Publishing nothing leaves the old verdict in place, which is what a
+// deduplicated tick must not do when the verdict itself moved.
 func snapshotChanged(prev, next state.Snapshot, withStats bool) bool {
+	if !observationEqual(prev.Observation, next.Observation) {
+		return true
+	}
 	var d state.Delta
 	if withStats {
 		d = state.DiffWithStats(prev, next)

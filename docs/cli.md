@@ -36,6 +36,14 @@
   - observation_bind_denied：探针连本地端口都不能绑定，从这里启动的服务也无法监听。
   hint 指向离开沙箱重试、升级 option-berth 或运行
   `oberth doctor --only listener_observation` 检查当前进程。
+- macOS 27 起，由非 Apple 签名父进程（Go、Homebrew Python 等）启动的子进程执行 `netstat`
+  会以 0 退出却拿不到 TCP 表。这种「一条行都没有」仍按 observation_empty 处理，由自证探针判定；
+  探针能看到自己的监听时，本轮改用 `lsof` 采集并照常报 observable。`doctor` 的 detail 与
+  `daemon status` 的 `observation` 会写明这轮经 lsof 观察。
+- 这条回退比 `netstat` 窄，读取时要知道两件事：非 root 的 `lsof` 看不到其他用户的 socket，
+  root 进程持有的端口可能不在表里；同一个 `lsof` 也只把双栈通配 socket 报成 `::`，不补另一个
+  地址族。因此「端口不在结果中」在两种采集器下不是同一个结论，判断外来端口是否被占时不能用它
+  当空闲证据。
 - --no-daemon 让读命令在本地直接采集；需要记录运行和起停的命令仍需要 daemon。
   daemon 不可用时，`status` 仍从本地只读历史显示最近的退出原因。
 
