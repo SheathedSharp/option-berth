@@ -81,7 +81,7 @@ those defaults. `TYPESAFE_API_KEY`, `TYPESAFE_ENDPOINT`, and `TYPESAFE_MODEL`
 remain available for the native TypeSafe endpoint. Never put either provider's
 key in a repository file or a task-context JSON file.
 
-The macOS client's **设置 → Jev 增强** page is the persistent setup path. It
+The macOS client's **Settings → Jev enhancement** page is the persistent setup path. It
 writes an owner-only file at `~/.option-berth/jev.json` (or
 `$BERTH_HOME/jev.json` in an isolated run):
 

@@ -9,7 +9,7 @@
 The harness never adds provider approval/sandbox flags and never forwards a
 credential unless its variable name is passed explicitly with --pass-env.
 Each run gets its own HOME, XDG directories, BERTH_HOME, temp directory and
-disposable project. See docs/agent-eval.md for the contract and metrics.
+disposable project. See docs/agent/agent-eval.md for the contract and metrics.
 """
 
 from __future__ import annotations

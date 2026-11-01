@@ -45,8 +45,8 @@ CI=1 npm test                  # CI 两种浏览器引擎
 自动端口、无端口 worker，结束后由 `down` 回收。截图与日志中的临时路径已替换为演示值；
 端口 `21730`、健康 `200` 与无端口 worker 是这份演示的输出。四事实卡片把同一次运行里的
 进程、端口、健康、退出拆开讲，并用无端口 worker 说明“没有监听不等于没在运行”。清单、命令与平台边界以
-[docs/cli.md](../docs/cli.md)、[docs/architecture.md](../docs/architecture.md) 和
-[docs/validation.md](../docs/validation.md) 为准。
+[docs/cli.md](../docs/cli.md)、[docs/architecture.md](../docs/agent/architecture.md) 和
+[docs/validation.md](../docs/agent/validation.md) 为准。
 
 ## Deploy
 
