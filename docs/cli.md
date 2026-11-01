@@ -263,8 +263,9 @@ several are abnormal at once `events` is authoritative; an optional attention ad
 worktree, `attention_revision` against `state_revision`, and `fresh_until`, before offering the user a
 choice. `assessment.context_id` (if present) is only the adapter's hash cache key over the current task
 and the authorized-option allow-list; it is not a runtime fact and grants no execution permission.
-This file is a derived notification, not a new source of runtime truth; Jev is not on the daemon's or
-`status`'s control path.
+This file is a derived notification, not a new source of runtime truth. Jev is not on the daemon's or
+`status`'s control path: the deterministic part lives in `internal/attention`, the Jev client in
+`internal/jev`, and `internal/cmd/attention_boundary_test.go` checks that dependency boundary.
 
 The optional `jev-attention` adapter is not an `oberth` subcommand. Once built it can be invoked as
 `bin/jev-attention` (`mage buildJev`), or from the repository root via

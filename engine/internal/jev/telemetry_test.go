@@ -1,4 +1,4 @@
-package attention
+package jev
 
 import (
 	"bytes"
@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sheathedsharp/option-berth/engine/internal/attention"
 )
 
 func TestTelemetryAppendIsPrivateAndPathFree(t *testing.T) {
@@ -16,8 +18,8 @@ func TestTelemetryAppendIsPrivateAndPathFree(t *testing.T) {
 	record := TelemetryRecord{
 		Kind: "assessment", Source: "runner", Project: ProjectLabel("/Users/alice/private/example-worker"),
 		WorktreeID: WorktreeID("/Users/alice/private/example-worker"), EventID: "event-1", StateRevision: "rev-1",
-		EventKind: string(EventServiceFailed), Status: "human_required", Reason: "explicit_choice_required",
-		Assessment: &Assessment{NeedsHuman: &needsHuman, NextOption: "restart_service", Probabilities: map[string]float64{"restart_service": 1}},
+		EventKind: string(attention.EventServiceFailed), Status: "human_required", Reason: "explicit_choice_required",
+		Assessment: &attention.Assessment{NeedsHuman: &needsHuman, NextOption: "restart_service", Probabilities: map[string]float64{"restart_service": 1}},
 	}
 	path, err := AppendTelemetry(home, record)
 	if err != nil {
@@ -55,7 +57,7 @@ func TestTelemetryAppendIsPrivateAndPathFree(t *testing.T) {
 
 func TestTelemetryRejectsFreeFormAssessmentFields(t *testing.T) {
 	value := .5
-	for _, assessment := range []*Assessment{
+	for _, assessment := range []*attention.Assessment{
 		{NextOption: "run_shell"},
 		{Model: "/Users/alice/private/model", NeedsHuman: &value},
 	} {
@@ -93,9 +95,9 @@ func TestBuildQualityReportSeparatesLabelsFromUnlabelledObservations(t *testing.
 		return TelemetryRecord{
 			Schema: TelemetrySchema, RecordID: event + "-assessment", RecordedAt: base.Add(time.Duration(offset) * time.Minute).Format(time.RFC3339Nano),
 			Kind: "assessment", Source: "runner", Project: "example-worker", WorktreeID: "worktree-1", EventID: event,
-			StateRevision: "rev-" + event, ContextID: "ctx-" + event, EventKind: string(EventServiceFailed), Status: status,
+			StateRevision: "rev-" + event, ContextID: "ctx-" + event, EventKind: string(attention.EventServiceFailed), Status: status,
 			FirstSeen: base.Format(time.RFC3339Nano), Decision: &TelemetryDecision{NeedsHuman: needs, Reason: "test"},
-			Assessment: &Assessment{NextOption: option, Probabilities: map[string]float64{option: 1}},
+			Assessment: &attention.Assessment{NextOption: option, Probabilities: map[string]float64{option: 1}},
 		}
 	}
 	feedback := func(event string, human *bool, chosen, action string, offset int) TelemetryRecord {
@@ -199,7 +201,7 @@ func TestBuildQualityReportCalibratesTypedProbabilities(t *testing.T) {
 			Schema: TelemetrySchema, RecordID: "assessment", RecordedAt: now.Format(time.RFC3339Nano),
 			Kind: "assessment", Source: "runner", Project: "example-worker", WorktreeID: "w", EventID: "e", StateRevision: "r", ContextID: "c",
 			Status: "continue", Decision: &TelemetryDecision{NeedsHuman: false},
-			Assessment: &Assessment{NeedsHuman: &needs, TaskRelevant: &relevant, NextOption: "inspect_logs", Probabilities: map[string]float64{"inspect_logs": 1}},
+			Assessment: &attention.Assessment{NeedsHuman: &needs, TaskRelevant: &relevant, NextOption: "inspect_logs", Probabilities: map[string]float64{"inspect_logs": 1}},
 		},
 		{
 			Schema: TelemetrySchema, RecordID: "feedback", RecordedAt: now.Add(time.Second).Format(time.RFC3339Nano),
@@ -232,7 +234,7 @@ func TestBuildQualityReportJoinsFeedbackIndependentOfLedgerOrder(t *testing.T) {
 			Schema: TelemetrySchema, RecordID: "assessment", RecordedAt: now.Format(time.RFC3339Nano),
 			Kind: "assessment", Source: "runner", Project: "example-worker", WorktreeID: "w", EventID: "e", StateRevision: "r", ContextID: "ctx",
 			Status: "human_required", Decision: &TelemetryDecision{NeedsHuman: true},
-			Assessment: &Assessment{NextOption: "restart_service", Probabilities: map[string]float64{"restart_service": 1}},
+			Assessment: &attention.Assessment{NextOption: "restart_service", Probabilities: map[string]float64{"restart_service": 1}},
 		},
 	}
 	report := BuildQualityReport(records, time.Time{}, "example-worker", now.Add(2*time.Minute))
@@ -249,7 +251,7 @@ func TestBuildQualityReportTracksResolutionLabels(t *testing.T) {
 			Schema: TelemetrySchema, RecordID: event + "-assessment", RecordedAt: now.Add(offset).Format(time.RFC3339Nano),
 			Kind: "assessment", Source: "runner", Project: "example-worker", WorktreeID: "w", EventID: event, StateRevision: event,
 			Status: "human_required", Decision: &TelemetryDecision{NeedsHuman: true},
-			Assessment: &Assessment{NextOption: "restart_service", Probabilities: map[string]float64{"restart_service": 1}},
+			Assessment: &attention.Assessment{NextOption: "restart_service", Probabilities: map[string]float64{"restart_service": 1}},
 		}
 	}
 	records := []TelemetryRecord{

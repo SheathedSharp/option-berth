@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/jev"
 )
 
 // The runner lives in the optional agent-side command. Only the documented
@@ -155,24 +156,24 @@ func readRunnerStatus(ctx context.Context, binary, project string) (runnerStatus
 func runnerArtifact(s runnerStatus) (attention.Artifact, error) {
 	a, err := attention.ReadFresh(s.AttentionPath, time.Time{})
 	if err != nil {
-		return a, attention.ErrStale
+		return a, jev.ErrStale
 	}
 	if s.AttentionRevision == "" || a.StateRevision != s.AttentionRevision ||
 		filepath.Clean(a.WorktreeRoot) != filepath.Clean(s.Scope.Root) ||
 		a.EventID == "" || a.RecoveredAt != "" {
-		return a, attention.ErrStale
+		return a, jev.ErrStale
 	}
 	return a, nil
 }
 
-func runAuto(ctx context.Context, binary, project string, client attention.Client, task attention.TaskContext,
+func runAuto(ctx context.Context, binary, project string, client jev.Client, task jev.TaskContext,
 	readStatus func(context.Context, string, string) (runnerStatus, error)) (runnerOutput, error) {
 	s, err := readStatus(ctx, binary, project)
 	if err != nil {
 		return runnerOutput{}, err
 	}
 	if s.AttentionPath == "" {
-		return runnerOutput{Status: "clear", WorktreeID: attention.WorktreeID(s.Scope.Root), worktreeRoot: s.Scope.Root}, nil
+		return runnerOutput{Status: "clear", WorktreeID: jev.WorktreeID(s.Scope.Root), worktreeRoot: s.Scope.Root}, nil
 	}
 	a, err := runnerArtifact(s)
 	if err != nil {
@@ -186,19 +187,19 @@ func runAuto(ctx context.Context, binary, project string, client attention.Clien
 	// Long-running agents can declare a broad fixed allow-list. Only its
 	// intersection with this event's deterministic candidates reaches Jev or
 	// the HIL request; candidate publication itself never grants permission.
-	authorized, err := attention.FilterAuthorizedOptions(a.Options, task.AuthorizedOptions)
+	authorized, err := jev.FilterAuthorizedOptions(a.Options, task.AuthorizedOptions)
 	if err != nil {
 		return runnerOutput{}, fmt.Errorf("runner: %w", err)
 	}
 	task.AuthorizedOptions = authorized
-	result, cached := attention.CachedResult(a, task)
+	result, cached := jev.CachedResult(a, task)
 	var callErr error
 	jevCalled := false
 	if !cached {
 		jevCalled = strings.TrimSpace(client.APIKey) != ""
 		result, callErr = client.Evaluate(ctx, a, task)
 	}
-	if callErr != nil && !errors.Is(callErr, attention.ErrUnavailable) && !errors.Is(callErr, attention.ErrStale) {
+	if callErr != nil && !errors.Is(callErr, jev.ErrUnavailable) && !errors.Is(callErr, jev.ErrStale) {
 		return runnerOutput{}, callErr
 	}
 	// A remote call can take seconds. Refresh facts before publishing the HIL
@@ -208,24 +209,24 @@ func runAuto(ctx context.Context, binary, project string, client attention.Clien
 		return runnerOutput{}, err
 	}
 	if fresh.AttentionPath == "" {
-		return runnerOutput{Status: "clear", WorktreeID: attention.WorktreeID(fresh.Scope.Root), worktreeRoot: fresh.Scope.Root}, nil
+		return runnerOutput{Status: "clear", WorktreeID: jev.WorktreeID(fresh.Scope.Root), worktreeRoot: fresh.Scope.Root}, nil
 	}
 	latest, err := runnerArtifact(fresh)
 	if err != nil || fresh.AttentionPath != s.AttentionPath || latest.EventID != a.EventID || latest.StateRevision != a.StateRevision {
 		return staleRunnerOutput(fresh), nil
 	}
-	if errors.Is(callErr, attention.ErrStale) {
+	if errors.Is(callErr, jev.ErrStale) {
 		return staleRunnerOutput(fresh), nil
 	}
 	if callErr == nil && !cached {
-		if err := attention.Persist(s.AttentionPath, a, result); err != nil {
-			if errors.Is(err, attention.ErrStale) {
+		if err := jev.Persist(s.AttentionPath, a, result); err != nil {
+			if errors.Is(err, jev.ErrStale) {
 				return staleRunnerOutput(fresh), nil
 			}
 			return runnerOutput{}, err
 		}
 	}
-	out := runnerOutput{AttentionPath: s.AttentionPath, AttentionRevision: a.StateRevision, EventID: a.EventID, FreshUntil: latest.FreshUntil, Cached: cached, WorktreeID: attention.WorktreeID(fresh.Scope.Root), worktreeRoot: fresh.Scope.Root}
+	out := runnerOutput{AttentionPath: s.AttentionPath, AttentionRevision: a.StateRevision, EventID: a.EventID, FreshUntil: latest.FreshUntil, Cached: cached, WorktreeID: jev.WorktreeID(fresh.Scope.Root), worktreeRoot: fresh.Scope.Root}
 	out.JevCalled = jevCalled
 	if callErr == nil {
 		out.Assessment = &result.Assessment
@@ -262,15 +263,15 @@ func runAuto(ctx context.Context, binary, project string, client attention.Clien
 
 func staleRunnerOutput(status runnerStatus) runnerOutput {
 	d := hilDecision{NeedsHuman: true, Reason: "state_changed_refresh_required", Policy: "oberth.hil/v1"}
-	return runnerOutput{Status: "stale", WorktreeID: attention.WorktreeID(status.Scope.Root), Decision: &d, worktreeRoot: status.Scope.Root}
+	return runnerOutput{Status: "stale", WorktreeID: jev.WorktreeID(status.Scope.Root), Decision: &d, worktreeRoot: status.Scope.Root}
 }
 
 // runSubscribe keeps the optional adapter outside the daemon while giving an
 // agent a durable event stream for the lifetime of its current task. It emits
 // only when the status/event/assessment state changes; repeated polls of the
 // same revision are deliberately silent.
-func runSubscribe(ctx context.Context, binary, project string, interval time.Duration, client attention.Client,
-	task attention.TaskContext, readStatus func(context.Context, string, string) (runnerStatus, error),
+func runSubscribe(ctx context.Context, binary, project string, interval time.Duration, client jev.Client,
+	task jev.TaskContext, readStatus func(context.Context, string, string) (runnerStatus, error),
 	emit func(any) error) error {
 	return runSubscribeWithObserver(ctx, binary, project, interval, client, task, readStatus, "", nil, emit)
 }
@@ -278,15 +279,15 @@ func runSubscribe(ctx context.Context, binary, project string, interval time.Dur
 // runSubscribeWithObserver keeps the same protocol while allowing the command
 // entrypoint to append local quality observations. The observer cannot modify
 // the result or execute an option.
-func runSubscribeWithObserver(ctx context.Context, binary, project string, interval time.Duration, client attention.Client,
-	task attention.TaskContext, readStatus func(context.Context, string, string) (runnerStatus, error),
+func runSubscribeWithObserver(ctx context.Context, binary, project string, interval time.Duration, client jev.Client,
+	task jev.TaskContext, readStatus func(context.Context, string, string) (runnerStatus, error),
 	sessionID string, observe func(runnerOutput, time.Duration), emit func(any) error) error {
 	_, err := runSubscribeWithStats(ctx, binary, project, interval, client, task, readStatus, sessionID, observe, emit)
 	return err
 }
 
-func runSubscribeWithStats(ctx context.Context, binary, project string, interval time.Duration, client attention.Client,
-	task attention.TaskContext, readStatus func(context.Context, string, string) (runnerStatus, error),
+func runSubscribeWithStats(ctx context.Context, binary, project string, interval time.Duration, client jev.Client,
+	task jev.TaskContext, readStatus func(context.Context, string, string) (runnerStatus, error),
 	sessionID string, observe func(runnerOutput, time.Duration), emit func(any) error) (subscriptionStats, error) {
 	stats := subscriptionStats{seen: make(map[string]bool)}
 	if interval <= 0 {
@@ -377,10 +378,10 @@ func (result runnerOutput) DecisionReason() string {
 }
 
 func subscriptionReason(err error) string {
-	if errors.Is(err, attention.ErrStale) {
+	if errors.Is(err, jev.ErrStale) {
 		return "state_changed_refresh_required"
 	}
-	if errors.Is(err, attention.ErrUnavailable) {
+	if errors.Is(err, jev.ErrUnavailable) {
 		return "jev_unavailable"
 	}
 	return "runner_cycle_failed"
