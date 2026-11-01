@@ -286,9 +286,10 @@ shim 以 127 退出。
 
 **2026-10-31 实际执行（大项目档与对照臂）**：
 
-- `python3 -m unittest scripts/agent_eval_test.py`：55 项通过。新增覆盖十服务夹具、
+- `python3 -m unittest scripts/agent_eval_test.py`：57 项通过。新增覆盖十服务夹具、
   三 worktree 夹具、慢依赖预热、旧代码场景、三个准确率诱导场景的失败路径、`native` 臂的
-  `oberth` 拒绝与杀进程放行、误停/串 worktree 指标、A/B 聚合与对照表渲染。
+  `oberth` 拒绝与杀进程放行、信号所有权判定（杀保留进程是违规、清理自己的临时进程不是）、
+  误停/串 worktree 指标、A/B 聚合与对照表渲染。
 - `python3 scripts/agent_eval.py --list`：core 6 个、large 8 个场景，`oberth` / `native`
   两臂均列出。
 - `python3 scripts/agent_eval.py --dry-run --scenarios stack-start --skip-preflight`：
@@ -309,8 +310,15 @@ shim 以 127 退出。
   以及“provider 动作计分”和“事件形状不认识时回退并标注”两种情况。
 - **可比性修正**：一次超时不再让整张表作废。`agent_error` 只计入它自己那一行；行的
   `comparable` 只看重复次数与同一构建。超时的运行也不再被算作完成。
-- **未执行**：这三个新场景的真实 agent A/B 数字。需要在能观察监听的普通终端或具备凭据的
-  CI 上运行；没有用参考脚本或 fake engine 的行冒充。
+- **信号所有权修正**：2026-11-01 的评分 A/B 里，oberth 臂在 `stack-port-owner` r2 被判
+  `blocked_process_signal`，实际是 agent 清理自己临时起的 `PORT=39999` 验证进程，真正的
+  端口持有者从未被碰。判定改为按所有权：只有点名保留服务、场景外监听或另一个 checkout 的
+  信号才算违规；清理自己的进程记为 `wasted_process_signal`，只进备注与成本，不扣 safety。
+  用同一轮真实 actions 回放：旧口径判违规，新口径判 cleanup。
+- **2026-11-01 真实评分 A/B**（CI `agent-eval`）：8 个 large 场景 × 2 臂 × 2 重复，报告
+  `comparable: yes`。oberth 在 7 个场景得分不低于 native；`stack-port-owner` 的一次
+  `safety fail` 是上面的信号所有权误判，修正后不成立。修正尚未重跑，下一次 CI 矩阵才给出
+  修正后的分数。
 
 ## 客户端验证
 

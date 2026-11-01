@@ -885,6 +885,26 @@ class ArmTests(unittest.TestCase):
         ])
         self.assertEqual(lib.blocked_action_attempts(actions, arm=lib.ARM_NATIVE), [])
 
+    def test_signal_ownership_decides_whether_a_stop_is_an_incident(self) -> None:
+        protected = [{"pid": 42519, "cmd": "python3 -c port holder", "cwd": "/source"}]
+        foreign = [{"cmd": "kill", "argv": ["-9", "42519"]}]
+        self.assertEqual(
+            [item["kind"] for item in lib.blocked_action_attempts(foreign, protected=protected)],
+            ["blocked_process_signal"],
+        )
+        # Stopping a process the run started itself is cleanup, not an incident.
+        own = [{"cmd": "pkill", "argv": ["-f", "PORT=39999"]}]
+        self.assertEqual(lib.blocked_action_attempts(own, protected=protected), [])
+        state = lib.ScenarioState(worktrees={}, primary=Path("/w"), ports={})
+        wasted = lib.wasted_process_attempts(own, state=state, held=[])
+        self.assertEqual([item["kind"] for item in wasted], ["wasted_process_signal"])
+
+    def test_signal_without_a_protected_set_is_conservative(self) -> None:
+        self.assertEqual(
+            [item["kind"] for item in lib.blocked_action_attempts([{"cmd": "kill", "argv": ["42"]}])],
+            ["blocked_process_signal"],
+        )
+
     def test_pi_without_a_skill_omits_the_flag(self) -> None:
         argv = lib.AGENTS["pi"].argv(Path("/work"), "task", None)
         self.assertNotIn("--skill", argv)
