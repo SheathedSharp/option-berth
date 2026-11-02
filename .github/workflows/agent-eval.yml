@@ -45,7 +45,7 @@ on:
       claude_model:
         description: Model for Claude Code through the Anthropic protocol
         required: true
-        default: deepseek-v4.1-flash
+        default: reflection/beam:free
         type: string
       codex_model:
         description: Model for Codex through the Responses API

@@ -361,7 +361,7 @@ allowlist:
 
 | agent | protocol | default model |
 |---|---|---|
-| Claude Code | Anthropic Messages | `deepseek-v4.1-flash` |
+| Claude Code | Anthropic Messages | `reflection/beam:free` |
 | Codex | Responses SSE (direct) | `gpt-6-luna` |
 | OpenCode | OpenAI Chat Completions | `step-5-preview` |
 | Pi | OpenAI Chat Completions | `space-bunny` |
