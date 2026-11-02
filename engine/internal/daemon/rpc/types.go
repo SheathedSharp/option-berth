@@ -10,8 +10,10 @@ import "encoding/json"
 const Version = "2.0"
 
 // ProtocolVersion is the daemon protocol version (contract §7). Additive
-// changes bump the minor; the clients in this plan all target major 1.
-const ProtocolVersion = "1.3.0"
+// changes bump the minor; a field a client can no longer send or read bumps
+// the major. 2.0.0 withdrew Selector.Key and the host envelope, neither of
+// which any handler read.
+const ProtocolVersion = "2.0.0"
 
 // Request is a client call. ID is raw so a client can use numbers or strings.
 type Request struct {
