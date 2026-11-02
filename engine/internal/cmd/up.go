@@ -151,7 +151,6 @@ func namesServices(only []string) bool {
 
 func projectStartParams(args []string, only []string, allowOutsideHome bool) (rpc.GroupsStartParams, *groups.Config, error) {
 	params := rpc.GroupsStartParams{
-		HostParams:       hostParams(),
 		Only:             only,
 		AllowOutsideHome: allowOutsideHome,
 	}
@@ -246,7 +245,6 @@ func consumeStartWithWait(ctx context.Context, c *client.Client, stream *client.
 func stopTimedOutServices(ctx context.Context, c *client.Client, params rpc.GroupsStartParams, services []string) error {
 	var env rpc.KillEnvelope
 	err := c.Call(ctx, "groups.kill", rpc.GroupsKillParams{
-		HostParams: params.HostParams,
 		Name:       valueOrEmpty(params.Name),
 		ConfigPath: params.ConfigPath,
 		Only:       services,

@@ -92,6 +92,13 @@ func daemonUp(ctx context.Context) bool {
 // daemonList reads the worktree-scoped live snapshot through the daemon and
 // converts its evidence rows back to the scanner shape used by kill and logs.
 // The old whole-machine ports.list endpoint is intentionally gone.
+//
+// Every command that reads it acts on one machine: this one. `--host` and the
+// registered-remote-host machinery it used to reach are gone
+// (docs/history/scope.md, 2026-09-22). The product starts the projects on the
+// machine it runs on. The wire carries no host field either: a field every
+// handler ignored was indistinguishable from one that worked, so it was
+// withdrawn rather than kept and filled with "local".
 func daemonList(ctx context.Context, c *client.Client) ([]ports.ListeningPort, error) {
 	var snap state.Snapshot
 	if err := c.Call(ctx, "state.snapshot", rpc.StateSnapshotParams{}, &snap); err != nil {

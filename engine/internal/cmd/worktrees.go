@@ -120,7 +120,7 @@ func runningServicesByIdentity(ctx context.Context) map[string]int {
 	}
 	defer c.Close()
 	var listed rpc.GroupsListResult
-	if err := c.Call(ctx, "groups.list", rpc.HostParams{Host: hostParams().Host}, &listed); err != nil {
+	if err := c.Call(ctx, "groups.list", rpc.Empty{}, &listed); err != nil {
 		return nil
 	}
 	out := make(map[string]int, len(listed.Groups))

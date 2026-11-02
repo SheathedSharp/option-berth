@@ -351,7 +351,6 @@ func logsThroughDaemon(ctx context.Context, c *client.Client, port int, bindIP s
 
 	params := rpc.PortsLogsParams{
 		Selector: rpc.Selector{
-			HostParams:  hostParams(),
 			Port:        &row.Port,
 			BindAddress: strPtrOrNil(row.BindAddress),
 		},
@@ -391,7 +390,6 @@ func logsThroughDaemon(ctx context.Context, c *client.Client, port int, bindIP s
 func readLogsOnce(ctx context.Context, c *client.Client, row ports.ListeningPort, lines int, meta logMetadata) (logsDocument, error) {
 	params := rpc.PortsLogsParams{
 		Selector: rpc.Selector{
-			HostParams:  hostParams(),
 			Port:        &row.Port,
 			BindAddress: strPtrOrNil(row.BindAddress),
 		},
@@ -517,7 +515,7 @@ func logMetadataForTarget(ctx context.Context, c *client.Client, target string, 
 	}
 	if c != nil {
 		var listed rpc.RunsListResult
-		if err := c.Call(ctx, "runs.list", rpc.HostParams{Host: hostParams().Host}, &listed); err == nil {
+		if err := c.Call(ctx, "runs.list", rpc.Empty{}, &listed); err == nil {
 			for _, rec := range listed.Runs {
 				if rec.Name == target && (group == "" || rec.Group == group) {
 					return logMetadataFromRun(rec)
@@ -593,7 +591,7 @@ func printLogHeader(source string) {
 // daemonFindPort resolves one port through state.snapshot, so the header a command
 // prints names the same process the daemon is about to act on.
 func daemonFindPort(ctx context.Context, c *client.Client, port int, bindIP string) (*ports.ListeningPort, error) {
-	rows, err := hostSnapshot(ctx, c)
+	rows, err := daemonList(ctx, c)
 	if err != nil {
 		return nil, cliError(err)
 	}

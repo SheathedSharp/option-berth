@@ -109,6 +109,11 @@ type Server struct {
 	done     chan struct{}
 	graceful atomic.Bool
 	wg       sync.WaitGroup
+	// producers counts stream goroutines across every connection. They run
+	// after their handler returns and outlive the connection entry, which
+	// removeConn deletes, so they are counted on the server rather than the
+	// Conn: shutdown must wait for them before it closes the store.
+	producers sync.WaitGroup
 }
 
 type stateReplay struct {
@@ -255,11 +260,20 @@ func (s *Server) Serve(ctx context.Context) error {
 	cancel()
 	s.closeAllConns("daemon stopping")
 	s.wg.Wait()
+	// A stream producer outlives the handler that started it and writes run and
+	// exit facts. closeAllConns only asks it to stop; it has to be waited for
+	// before the store closes underneath it.
+	s.waitProducers()
 	runShutdownHooks(s.graceful.Load())
 	_ = removeStaleSocket(s.socket)
 	s.logger.Info("daemon stopped", "graceful", s.graceful.Load())
 	return acceptErr
 }
+
+// waitProducers blocks until every stream producer the server has started has
+// returned. Connections are already closed by the time this runs, so no new
+// producer can start.
+func (s *Server) waitProducers() { s.producers.Wait() }
 
 // accept is the accept loop. A failure after Shutdown has been requested is
 // the listener closing under us, not an error.
