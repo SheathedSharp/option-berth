@@ -14,13 +14,19 @@ func TestOpenCodeLiveFakeBinaryTwoTurns(t *testing.T) {
 	root := t.TempDir()
 	os.Unsetenv("BERTH_AGENT_STREAM_FAKE")
 	bin := buildFakeProvider(t, "opencode")
-	var out bytes.Buffer
+	out := newCompletionSignal()
 	inR, inW := io.Pipe()
 	go func() {
 		_, _ = io.WriteString(inW, `{"v":1,"type":"turn.start","id":"c1","text":"first"}`+"\n")
-		time.Sleep(1 * time.Second)
+		select {
+		case <-out.first:
+		case <-time.After(15 * time.Second):
+		}
 		_, _ = io.WriteString(inW, `{"v":1,"type":"turn.start","id":"c2","text":"second"}`+"\n")
-		time.Sleep(800 * time.Millisecond)
+		select {
+		case <-out.second:
+		case <-time.After(15 * time.Second):
+		}
 		_ = inW.Close()
 	}()
 	if err := Run(Options{
@@ -31,7 +37,7 @@ func TestOpenCodeLiveFakeBinaryTwoTurns(t *testing.T) {
 			}
 			return "", exec.ErrNotFound
 		},
-	}, inR, &out, io.Discard); err != nil {
+	}, inR, out, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	body := out.String()
