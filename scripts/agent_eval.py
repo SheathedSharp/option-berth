@@ -87,6 +87,12 @@ SCENARIOS: dict[str, Scenario] = {
     **CORE_SCENARIOS, **LARGE_SCENARIOS, **COLD_SCENARIOS,
 }
 
+# The cheapest scenario that still forces the agent to act. `--smoke` uses it to
+# put each requested agent through a real tool round trip before a matrix spends
+# hours: reading the project and missing an artifact takes one or two actions,
+# which is enough to prove the loop closes and cheap enough to run per provider.
+SMOKE_SCENARIO = "missing-artifact"
+
 # One line per arm, in ARMS order, for --list.
 ARM_DESCRIPTIONS = (
     "oberth CLI and the pinned skill",
@@ -512,6 +518,83 @@ def dry_run(scenario_ids: list[str], *, out_root: Path, binary: Path, args: argp
     return 1 if failures else 0
 
 
+def smoke(
+    agent_ids: list[str],
+    *,
+    out_root: Path,
+    binary: Path,
+    skill: Path | None,
+    extras: dict[str, list[str]],
+    args: argparse.Namespace,
+) -> int:
+    """Prove each agent can close one real turn loop before a matrix spends hours.
+
+    The gateway check answers a different question from the one that matters.
+    "Does this endpoint accept this model name" is a single request with no
+    history; "will the agent work" is a multi-turn loop where the model asks for
+    a tool, reads the result, and sends the conversation back. On 2026-11-02 the
+    single-request check passed and all 80 matrix rows died on turn two, because
+    the provider required `reasoning_content` on every earlier assistant message
+    and the client never sends it. Nothing that inspects one request can see a
+    second-request requirement, and nothing that reimplements the client can see
+    a client-side refusal.
+
+    So this is not the same check at higher fidelity — it is the real path,
+    minimized. It drives the cheapest real scenario through the same runner,
+    fixtures and isolation the matrix uses, and asks the two things a preflight
+    can honestly answer: did the agent report an error, and did it take at least
+    one action? An action proves the loop closed once, which is exactly the part
+    a single-turn check cannot reach.
+    """
+    scenario = SCENARIOS[SMOKE_SCENARIO]
+    failures = 0
+    for agent_id in agent_ids:
+        spec = AGENTS[agent_id]
+        if agent_id != "reference" and not shutil.which(spec.command):
+            print(f"smoke {agent_id}: {spec.command} is not installed", file=sys.stderr)
+            failures += 1
+            continue
+        run_dir = out_root / "smoke" / agent_id
+        env_root = Path(tempfile.mkdtemp(prefix="oberth-smoke-", dir=tempfile.gettempdir()))
+        env = ScenarioEnv(env_root, binary, os.environ.get("PATH", ""), pass_env=args.pass_env)
+        state = None
+        started = time.monotonic()
+        try:
+            env.start_daemon()
+            state = scenario.setup(env)
+            staged_skill = stage_skill(env, agent_id, skill) if skill is not None else None
+            result = run_agent(
+                spec, cwd=state.primary, prompt=scenario.prompt, skill=staged_skill,
+                env=env, out_dir=run_dir, timeout=args.timeout, extras=extras.get(agent_id),
+            )
+            elapsed = time.monotonic() - started
+            problem = None
+            if result.error:
+                # The agent's own words, not a summary: the operator has to be
+                # able to act on it without opening the artifact.
+                problem = result.error
+            elif not result.steps:
+                problem = (
+                    "the agent finished without taking a single action; a run that never "
+                    "touches the project cannot tell a broken loop from a quiet one"
+                )
+            if problem:
+                failures += 1
+                print(f"smoke {agent_id}: FAILED after {elapsed:.0f}s\n  {problem}", file=sys.stderr)
+            else:
+                print(
+                    f"smoke {agent_id}: ok ({result.steps} actions, {elapsed:.0f}s)"
+                    " — the model completed a full tool round trip",
+                    file=sys.stderr,
+                )
+        except Exception as exc:  # noqa: BLE001
+            failures += 1
+            print(f"smoke {agent_id}: {type(exc).__name__}: {exc}", file=sys.stderr)
+        finally:
+            env.cleanup(state.worktrees if state else None)
+    return 1 if failures else 0
+
+
 def _cold_start_budget(runs: list[dict[str, Any]], scenario_ids: list[str]) -> dict[str, Any]:
     """State what a cold-start observation actually costs, per scenario.
 
@@ -655,6 +738,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--list", action="store_true", help="list scenarios and agents")
     parser.add_argument("--dry-run", action="store_true", help="provision every scenario and stop before any agent")
+    parser.add_argument(
+        "--smoke", action="store_true",
+        help="run each named agent on one cheap scenario to prove its loop works (real path, minimal cost)",
+    )
     parser.add_argument("--execute", action="store_true", help="run agents and write the matrix")
     parser.add_argument("--merge", action="append", default=[], metavar="REPORT_JSON",
                         help="merge shard report.json files into one matrix (repeatable)")
@@ -706,8 +793,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {agent_id:28} {spec.label} ({available}, skill={spec.skill_injection})")
         return 0
 
-    if bool(args.dry_run) == bool(args.execute):
-        parser.error("choose exactly one of --dry-run or --execute (or use --list)")
+    modes = sum(bool(value) for value in (args.dry_run, args.execute, args.smoke))
+    if modes != 1:
+        parser.error("choose exactly one of --dry-run, --smoke or --execute (or use --list)")
+    if args.smoke and not args.agents.strip():
+        parser.error("--smoke needs --agents: the point is to prove the agents you are about to run")
 
     if args.repeat < 1:
         parser.error("--repeat must be at least 1")
@@ -787,6 +877,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.dry_run:
         return dry_run(scenario_ids, out_root=out_root, binary=binary, args=args)
+
+    if args.smoke:
+        return smoke(
+            agent_ids, out_root=out_root, binary=binary, skill=skill, extras=extras, args=args,
+        )
 
     runs: list[dict[str, Any]] = []
     for scenario_id in scenario_ids:

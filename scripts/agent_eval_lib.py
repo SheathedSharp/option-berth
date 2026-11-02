@@ -1097,9 +1097,42 @@ def _json_lines(path: Path) -> list[Any]:
     return doc if isinstance(doc, list) else [doc]
 
 
-def parse_claude(path: Path) -> tuple[int | None, str | None]:
+@dataclasses.dataclass(frozen=True)
+class AgentTrace:
+    """What an agent's own event stream says about its run.
+
+    ``error`` is the agent's verdict that the run failed, read from the stream
+    rather than inferred from the exit code. It lives in the same value as
+    ``steps`` and ``final`` so a caller cannot take the scored fields and
+    silently drop the diagnosis: an agent that reports "API Error:
+    400 ..." after eight tool calls did fail, and a harness that counts only
+    exit codes records it as a clean run that happened to finish early.
+
+    ``steps is None`` means the stream was unreadable — a different fact from
+    "the agent took no action", which is ``steps == 0``.
+    """
+
+    steps: int | None
+    final: str | None
+    error: str | None = None
+
+
+def _error_text(value: Any) -> str | None:
+    """Render whatever shape a provider uses for an error as one line."""
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, dict):
+        for key in ("message", "error", "detail"):
+            text = _error_text(value.get(key))
+            if text:
+                return text
+    return None
+
+
+def parse_claude(path: Path) -> AgentTrace:
     steps = 0
     final = None
+    error = None
     parsed = False
     for obj in _json_lines(path):
         if not isinstance(obj, dict):
@@ -1110,14 +1143,21 @@ def parse_claude(path: Path) -> tuple[int | None, str | None]:
             for block in message.get("content") or []:
                 if isinstance(block, dict) and block.get("type") == "tool_use":
                     steps += 1
-        elif obj.get("type") == "result" and isinstance(obj.get("result"), str):
-            final = obj["result"]
-    return (steps if parsed else None), final
+        elif obj.get("type") == "result":
+            if isinstance(obj.get("result"), str):
+                final = obj["result"]
+            # The result event carries the agent's own pass/fail verdict. An
+            # agent that hit an upstream 400 still prints a `result` line, so
+            # reading only its text turns the error message into the answer.
+            if obj.get("is_error"):
+                error = _error_text(obj.get("error")) or _error_text(obj.get("result")) or "agent reported an error"
+    return AgentTrace(steps if parsed else None, final, error)
 
 
-def parse_codex(path: Path) -> tuple[int | None, str | None]:
+def parse_codex(path: Path) -> AgentTrace:
     steps = 0
     final = None
+    error = None
     parsed = False
     seen: set[str] = set()
     objects = _json_lines(path)
@@ -1147,7 +1187,11 @@ def parse_codex(path: Path) -> tuple[int | None, str | None]:
             steps += 1
         elif obj.get("type") == "turn.completed" and isinstance(obj.get("message"), str):
             final = obj["message"]
-    return (steps if parsed else None), final
+        elif obj.get("type") in ("turn.failed", "error", "stream_error"):
+            # Codex reports a failed turn as its own event rather than a
+            # non-zero exit with no steps, so the failure has to be read here.
+            error = _error_text(obj) or _error_text(item) or "agent reported a failed turn"
+    return AgentTrace(steps if parsed else None, final, error)
 
 
 GENERIC_ACTION_TYPES = {
@@ -1156,9 +1200,10 @@ GENERIC_ACTION_TYPES = {
 }
 
 
-def parse_generic(path: Path, text_keys: tuple[str, ...] = ("text", "content", "message", "result")) -> tuple[int | None, str | None]:
+def parse_generic(path: Path, text_keys: tuple[str, ...] = ("text", "content", "message", "result")) -> AgentTrace:
     steps = 0
     final = None
+    error = None
     parsed = False
     for obj in _json_lines(path):
         if not isinstance(obj, dict):
@@ -1178,7 +1223,11 @@ def parse_generic(path: Path, text_keys: tuple[str, ...] = ("text", "content", "
                 steps += 1
             if isinstance(part.get("text"), str):
                 final = part["text"]
-    return (steps if parsed else None), final
+        # Both protocols in this family can say "this turn failed" without a
+        # non-zero exit, so the stream is the only place the verdict exists.
+        if obj.get("is_error") or kind == "error" or (isinstance(part, dict) and part.get("type") == "error"):
+            error = _error_text(obj) or _error_text(part) or "agent reported an error"
+    return AgentTrace(steps if parsed else None, final, error)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1187,7 +1236,7 @@ class AgentSpec:
     label: str
     command: str
     base_argv: Callable[[Path, str, Path | None], list[str]]
-    parse: Callable[[Path], tuple[int | None, str | None]]
+    parse: Callable[[Path], AgentTrace]
     skill_injection: str
 
     def argv(self, cwd: Path, prompt: str, skill: Path | None, extras: list[str] | None = None) -> list[str]:
@@ -1277,7 +1326,7 @@ AGENTS: dict[str, AgentSpec] = {
     "codex": AgentSpec("codex", "Codex", "codex", _codex_argv, parse_codex, "home-skill-dir"),
     "opencode": AgentSpec("opencode", "OpenCode", "opencode", _opencode_argv, parse_generic, "home-skill-dir"),
     "pi": AgentSpec("pi", "Pi", "pi", _pi_argv, parse_generic, "skill-flag"),
-    "reference": AgentSpec("reference", "reference script (harness self-check)", "", lambda c, p, s: [], lambda p: (None, None), "none"),
+    "reference": AgentSpec("reference", "reference script (harness self-check)", "", lambda c, p, s: [], lambda p: AgentTrace(None, None), "none"),
 }
 
 
@@ -1321,11 +1370,19 @@ def run_agent(
                     pass
                 proc.wait(timeout=10)
     duration = time.monotonic() - started
-    steps, final = spec.parse(stdout_path)
+    trace = spec.parse(stdout_path)
+    # The agent's own verdict outranks anything the harness can infer. An agent
+    # that reports "API Error: 400 ..." after taking action has failed; the old
+    # rule ("non-zero exit *and* no steps") recorded that as a clean run,
+    # because the steps it took before dying suppressed the only error signal
+    # the harness looked at. A table built from those rows says the product
+    # scored zero when in fact the agent never got to act.
     error = None
     if timed_out:
         error = f"agent timed out after {timeout:.0f}s"
-    elif proc.returncode != 0 and not steps:
+    elif trace.error:
+        error = trace.error
+    elif proc.returncode != 0 and not trace.steps:
         error = f"agent exited {proc.returncode}; see {stderr_path.name}"
     return AgentResult(
         exit_code=proc.returncode,
@@ -1333,9 +1390,9 @@ def run_agent(
         duration_s=round(duration, 3),
         stdout_path=stdout_path,
         stderr_path=stderr_path,
-        steps=steps,
-        steps_source="agent-events" if steps is not None else "unavailable",
-        final_message=final,
+        steps=trace.steps,
+        steps_source="agent-events" if trace.steps is not None else "unavailable",
+        final_message=trace.final,
         error=error,
     )
 
