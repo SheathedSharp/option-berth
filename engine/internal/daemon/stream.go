@@ -106,7 +106,17 @@ func StartStream(ctx context.Context, req *Request, initial any, produce StreamF
 	req.Conn.RegisterStream(id, cancel)
 	req.Conn.replyResult(req.ID, result)
 
+	// A producer outlives the handler that started it and the connection entry,
+	// which removeConn deletes, so it is counted on the server: it writes run
+	// and exit facts, and the store closes as soon as that wait returns.
+	srv := req.Conn.srv
+	if srv != nil {
+		srv.producers.Add(1)
+	}
 	go func() {
+		if srv != nil {
+			defer srv.producers.Done()
+		}
 		defer cancel()
 		end, perr := produce(sctx, s)
 		s.finish(end, perr)
