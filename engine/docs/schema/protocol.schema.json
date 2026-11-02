@@ -128,9 +128,6 @@
     },
     "ConfigSetParams": {
       "properties": {
-        "host": {
-          "type": "string"
-        },
         "patch": {
           "type": "object"
         }
@@ -157,9 +154,6 @@
     },
     "DaemonDoctorParams": {
       "properties": {
-        "host": {
-          "type": "string"
-        },
         "only": {
           "items": {
             "type": "string"
@@ -636,9 +630,6 @@
     },
     "GroupsConfigGetParams": {
       "properties": {
-        "host": {
-          "type": "string"
-        },
         "name": {
           "type": "string"
         },
@@ -665,9 +656,6 @@
     },
     "GroupsConfigSetParams": {
       "properties": {
-        "host": {
-          "type": "string"
-        },
         "path": {
           "type": "string"
         },
@@ -739,9 +727,6 @@
     },
     "GroupsInitParams": {
       "properties": {
-        "host": {
-          "type": "string"
-        },
         "root_dir": {
           "type": "string"
         },
@@ -801,9 +786,6 @@
     },
     "GroupsKillParams": {
       "properties": {
-        "host": {
-          "type": "string"
-        },
         "name": {
           "type": "string"
         },
@@ -881,9 +863,6 @@
     },
     "GroupsRenameParams": {
       "properties": {
-        "host": {
-          "type": "string"
-        },
         "name": {
           "type": "string"
         },
@@ -1048,9 +1027,6 @@
     },
     "GroupsStartParams": {
       "properties": {
-        "host": {
-          "type": "string"
-        },
         "name": {
           "type": "string"
         },
@@ -1136,14 +1112,6 @@
         "latency_ms",
         "observed_at"
       ]
-    },
-    "HostParams": {
-      "properties": {
-        "host": {
-          "type": "string"
-        }
-      },
-      "type": "object"
     },
     "Include": {
       "items": {
@@ -1547,9 +1515,6 @@
     },
     "PortsKillParams": {
       "properties": {
-        "host": {
-          "type": "string"
-        },
         "targets": {
           "items": {
             "$ref": "#/definitions/Selector"
@@ -1594,9 +1559,6 @@
     },
     "PortsLogsParams": {
       "properties": {
-        "host": {
-          "type": "string"
-        },
         "port": {
           "type": "integer"
         },
@@ -1607,9 +1569,6 @@
           "type": "string"
         },
         "run_id": {
-          "type": "string"
-        },
-        "key": {
           "type": "string"
         },
         "lines": {
@@ -1802,9 +1761,6 @@
     },
     "RunsRegisterParams": {
       "properties": {
-        "host": {
-          "type": "string"
-        },
         "pid": {
           "type": "integer"
         },
@@ -1863,9 +1819,6 @@
     },
     "RunsSpawnParams": {
       "properties": {
-        "host": {
-          "type": "string"
-        },
         "argv": {
           "items": {
             "type": "string"
@@ -1935,9 +1888,6 @@
     },
     "RunsUnregisterParams": {
       "properties": {
-        "host": {
-          "type": "string"
-        },
         "pid": {
           "type": "integer"
         },
@@ -1975,9 +1925,6 @@
     },
     "Selector": {
       "properties": {
-        "host": {
-          "type": "string"
-        },
         "port": {
           "type": "integer"
         },
@@ -1988,9 +1935,6 @@
           "type": "string"
         },
         "run_id": {
-          "type": "string"
-        },
-        "key": {
           "type": "string"
         }
       },
@@ -2627,9 +2571,6 @@
     },
     "SessionsKillParams": {
       "properties": {
-        "host": {
-          "type": "string"
-        },
         "id": {
           "type": "string"
         },
@@ -3211,9 +3152,6 @@
     },
     "WorkplaceDeleteParams": {
       "properties": {
-        "host": {
-          "type": "string"
-        },
         "worktree": {
           "type": "string"
         },
@@ -3264,9 +3202,6 @@
     },
     "WorkplaceNewParams": {
       "properties": {
-        "host": {
-          "type": "string"
-        },
         "worktree": {
           "type": "string"
         },
@@ -3292,9 +3227,6 @@
     },
     "WorkplaceParams": {
       "properties": {
-        "host": {
-          "type": "string"
-        },
         "worktree": {
           "type": "string"
         }
@@ -3306,9 +3238,6 @@
     },
     "WorkplaceRecordParams": {
       "properties": {
-        "host": {
-          "type": "string"
-        },
         "worktree": {
           "type": "string"
         },
@@ -3339,9 +3268,6 @@
     },
     "WorkplaceShowParams": {
       "properties": {
-        "host": {
-          "type": "string"
-        },
         "worktree": {
           "type": "string"
         },
@@ -3381,9 +3307,6 @@
     },
     "WorkplaceUseParams": {
       "properties": {
-        "host": {
-          "type": "string"
-        },
         "worktree": {
           "type": "string"
         },
@@ -3412,7 +3335,7 @@
   "methods": {
     "config.get": {
       "params": {
-        "$ref": "#/definitions/HostParams"
+        "$ref": "#/definitions/Empty"
       },
       "result": {
         "$ref": "#/definitions/ConfigGetResult"
@@ -3420,7 +3343,7 @@
     },
     "config.path": {
       "params": {
-        "$ref": "#/definitions/HostParams"
+        "$ref": "#/definitions/Empty"
       },
       "result": {
         "$ref": "#/definitions/ConfigPathResult"
@@ -3468,7 +3391,7 @@
     },
     "daemon.status": {
       "params": {
-        "$ref": "#/definitions/HostParams"
+        "$ref": "#/definitions/Empty"
       },
       "result": {
         "$ref": "#/definitions/DaemonStatusResult"
@@ -3508,7 +3431,7 @@
     },
     "groups.list": {
       "params": {
-        "$ref": "#/definitions/HostParams"
+        "$ref": "#/definitions/Empty"
       },
       "result": {
         "$ref": "#/definitions/GroupsListResult"
@@ -3516,7 +3439,7 @@
     },
     "groups.reload": {
       "params": {
-        "$ref": "#/definitions/HostParams"
+        "$ref": "#/definitions/Empty"
       },
       "result": {
         "$ref": "#/definitions/GroupsReloadResult"
@@ -3568,7 +3491,7 @@
     },
     "runs.list": {
       "params": {
-        "$ref": "#/definitions/HostParams"
+        "$ref": "#/definitions/Empty"
       },
       "result": {
         "$ref": "#/definitions/RunsListResult"

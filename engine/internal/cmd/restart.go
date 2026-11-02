@@ -67,17 +67,16 @@ func restartRun(cmd *cobra.Command, args []string) error {
 
 	var snapshot []ports.ListeningPort
 	if !restartJSON {
-		snapshot, err = hostSnapshot(cmd.Context(), c)
+		snapshot, err = daemonList(cmd.Context(), c)
 		if err != nil {
 			return cliError(err)
 		}
 	}
 
 	stop := rpc.GroupsKillParams{
-		HostParams: hostParams(),
-		Force:      restartForce,
-		Release:    true,
-		Only:       restartOnly,
+		Force:   restartForce,
+		Release: true,
+		Only:    restartOnly,
 	}
 	if startParams.Name != nil {
 		stop.Name = *startParams.Name

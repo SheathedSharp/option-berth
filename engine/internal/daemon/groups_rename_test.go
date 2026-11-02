@@ -143,7 +143,7 @@ func TestGroupsRenameStoresAnAliasForAProjectWithoutAFile(t *testing.T) {
 
 	// Named by a checkout, routed through an explicit localhost.
 	res, delta := c.renameGroupCollectingDelta(t, rpc.GroupsRenameParams{
-		HostParams: rpc.HostParams{Host: "localhost"}, Name: "shop@feat", To: "market",
+		Name: "shop@feat", To: "market",
 	})
 	if !res.OK || res.Name != "market" || strings.Join(res.Affected, ",") != "market,market@feat" {
 		t.Fatalf("result = %+v", res)
