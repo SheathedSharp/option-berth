@@ -83,7 +83,7 @@ func resolveRunForLogs(ctx context.Context, c *client.Client, target, selector s
 	}
 
 	var listed rpc.RunsListResult
-	if err := c.Call(ctx, "runs.list", rpc.HostParams{Host: hostParams().Host}, &listed); err != nil {
+	if err := c.Call(ctx, "runs.list", rpc.Empty{}, &listed); err != nil {
 		return rpc.RunRecord{}, cliError(err)
 	}
 

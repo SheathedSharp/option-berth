@@ -16,33 +16,18 @@ import (
 
 // ---------------------------------------------------------------- shared ---
 
-// HostParams is retained as the local-only selector envelope used by the
-// existing method shapes. Its zero value addresses this daemon.
+// Selector addresses one port (contract §3). Exactly one of Port, PID and
+// RunID is set; BindAddress only disambiguates Port.
 //
-// The daemon accepts it on every method it serves except `state.*`, `stream.*`,
-// `daemon.hello` and `daemon.shutdown`. It is embedded in the params types
-// below where the wire shape already carries it.
-type HostParams struct {
-	// Host names a registered remote host. Empty or "localhost" is this
-	// machine.
-	Host string `json:"host,omitempty"`
-}
-
-// Selector addresses one port (contract §3). Exactly one of Port, PID, RunID
-// and Key is set; BindAddress only disambiguates Port.
+// A client that holds a port key from the stream sets Port and BindAddress
+// rather than sending the joined form back: the daemon reads the three fields
+// it acts on, so a fourth spelling that has to be expanded first would be one
+// more shape with no reader behind it.
 type Selector struct {
-	HostParams
 	Port        *int    `json:"port,omitempty"`
 	PID         *int    `json:"pid,omitempty"`
 	BindAddress *string `json:"bind_address,omitempty"`
 	RunID       *string `json:"run_id,omitempty"`
-	// Key is a delta key handed straight back as a selector: `"<port>"`,
-	// `"<port>:<bind_address>"`, or either of those behind a `"<host>/"`
-	// prefix naming a registered host. A client that holds the key the stream
-	// gave it does not have to take it apart to act on the row. The daemon
-	// expands it into Host, Port and BindAddress before any handler sees it,
-	// so it never combines with them.
-	Key string `json:"key,omitempty"`
 }
 
 // MutationResult is the minimum every mutating method returns (contract §3).
@@ -195,7 +180,6 @@ type DoctorCheck struct {
 }
 
 type DaemonDoctorParams struct {
-	HostParams
 	// Only keeps just these checks. An entry matches a check id exactly, or
 	// every check under it when the id is dotted (`mcp_registered`).
 	Only []string `json:"only,omitempty"`
@@ -271,7 +255,6 @@ type StateSubscribeParams struct {
 // ----------------------------------------------------------------- ports ---
 
 type PortsKillParams struct {
-	HostParams
 	Targets  []Selector `json:"targets"`
 	Tree     bool       `json:"tree,omitempty"`
 	Force    bool       `json:"force,omitempty"`
@@ -307,7 +290,6 @@ type GroupsListResult struct {
 }
 
 type GroupsKillParams struct {
-	HostParams
 	Name string `json:"name"`
 	// ConfigPath names the group by its oberth.yaml instead of by name, for a
 	// caller that knows the file but not the name the daemon publishes its
@@ -341,7 +323,6 @@ type GroupsKillParams struct {
 }
 
 type GroupsStartParams struct {
-	HostParams
 	Name             *string  `json:"name,omitempty"`
 	ConfigPath       *string  `json:"config_path,omitempty"`
 	Only             []string `json:"only,omitempty"`
@@ -458,7 +439,6 @@ type GroupsStartEnd struct {
 // name the rename would give; invalid_config when the edited file would no
 // longer validate.
 type GroupsRenameParams struct {
-	HostParams
 	Name string `json:"name"`
 	To   string `json:"to"`
 }
@@ -485,7 +465,6 @@ type GroupConfig struct {
 }
 
 type GroupsConfigGetParams struct {
-	HostParams
 	Name *string `json:"name,omitempty"`
 	Path *string `json:"path,omitempty"`
 }
@@ -502,7 +481,6 @@ type GroupsConfigGetResult struct {
 // Nothing is written unless the whole edit succeeds and the result still
 // validates, so a call that fails leaves the file byte-identical.
 type GroupsConfigSetParams struct {
-	HostParams
 	Path string `json:"path"`
 	// Services patches the metadata of services that already exist.
 	Services []groups.ServiceEdit `json:"services,omitempty"`
@@ -584,7 +562,6 @@ type ConfigProblem struct {
 // into one instead (contract §4, §16, step 5A.4). Force and Merge are mutually
 // exclusive.
 type GroupsInitParams struct {
-	HostParams
 	RootDir string `json:"root_dir"`
 	Write   bool   `json:"write,omitempty"`
 	Force   bool   `json:"force,omitempty"`
@@ -614,7 +591,6 @@ type GroupsInitResult struct {
 // ------------------------------------------------------------------ runs ---
 
 type RunsRegisterParams struct {
-	HostParams
 	PID       int     `json:"pid"`
 	PPID      int     `json:"ppid"`
 	Group     string  `json:"group"`
@@ -639,7 +615,6 @@ type RunsRegisterResult struct {
 }
 
 type RunsUnregisterParams struct {
-	HostParams
 	PID int `json:"pid"`
 	// ExitCode is how the run ended, for a caller that waited on it —
 	// `oberth start` without --detach. Absent simply forgets the run.
@@ -711,7 +686,6 @@ type RunRecord struct {
 }
 
 type RunsSpawnParams struct {
-	HostParams
 	Argv             []string          `json:"argv"`
 	Cwd              string            `json:"cwd"`
 	Env              map[string]string `json:"env,omitempty"`
@@ -730,7 +704,6 @@ type RunsSpawnResult struct {
 }
 
 type SessionsKillParams struct {
-	HostParams
 	ID     string `json:"id"`
 	Tree   bool   `json:"tree,omitempty"`
 	Force  bool   `json:"force,omitempty"`
@@ -744,7 +717,6 @@ type ConfigGetResult struct {
 }
 
 type ConfigSetParams struct {
-	HostParams
 	Patch map[string]any `json:"patch"`
 }
 

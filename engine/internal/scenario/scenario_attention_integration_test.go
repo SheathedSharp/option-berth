@@ -64,6 +64,28 @@ func readAttentionDoc(t *testing.T, status statusDoc) attentionDoc {
 	return artifact
 }
 
+// enableJevIn is the person's consent, written where the daemon's child
+// processes read it. `status` publishes `attention_path` only once the
+// enhancement is enabled, so every test here that expects an artifact has to
+// state that the person turned it on — the same precondition a real install
+// has after `oberth jev enable`. Without it these tests would assert against a
+// feature that is deliberately off, not against the handoff they describe.
+//
+// The key is a placeholder: this file never calls a provider (an injectable
+// HTTP server covers Jev itself), and the artifact is derived from runtime
+// facts before any network step.
+func enableJevIn(t *testing.T, e *env) {
+	t.Helper()
+	dir := filepath.Join(e.home, ".option-berth")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("creating the Jev settings directory: %v", err)
+	}
+	body := `{"schema":"oberth.jev-config/v1","enabled":true,"provider":"typesafe","api_key":"integration-placeholder"}`
+	if err := os.WriteFile(filepath.Join(dir, "jev.json"), []byte(body), 0o600); err != nil {
+		t.Fatalf("writing the Jev settings file: %v", err)
+	}
+}
+
 func attentionServices(a attentionDoc) map[string]string {
 	got := make(map[string]string, len(a.Events))
 	for _, event := range a.Events {
@@ -81,6 +103,7 @@ func attentionServices(a attentionDoc) map[string]string {
 func TestAttentionFailureMatrix(t *testing.T) {
 	e := newEnv(t)
 	e.serve()
+	enableJevIn(t, e)
 	b, err := FailureMatrix(filepath.Join(e.home, "attention-failures"))
 	if err != nil {
 		t.Fatalf("provision: %v", err)
@@ -169,12 +192,15 @@ func TestAttentionFailureMatrix(t *testing.T) {
 }
 
 // TestAttentionNormalAndUndeclaredBoundaries records both sides of the
-// boundary: ordinary runtime activity does not interrupt, while a listener
-// inside this worktree with no manifest declaration is a deterministic anomaly
-// that does create an attention request. A normal down then clears it.
+// boundary: ordinary runtime activity does not interrupt, and a listener inside
+// this worktree that no service declares is a fact `status` already reports —
+// port and owner — not an abnormality worth a handoff. The agent did not start
+// it and must not stop it, so turning it into an event only recreates the most
+// expensive detour in the core loop. A normal down then leaves nothing behind.
 func TestAttentionNormalAndUndeclaredBoundaries(t *testing.T) {
 	e := newEnv(t)
 	e.serve()
+	enableJevIn(t, e)
 	b, err := APIServerAndWorker(filepath.Join(e.home, "attention-normal"))
 	if err != nil {
 		t.Fatalf("provision: %v", err)
@@ -205,19 +231,15 @@ func TestAttentionNormalAndUndeclaredBoundaries(t *testing.T) {
 
 	extraPort := freePort()
 	undeclaredProcess := startUndeclaredListener(t, e, b.Root, extraPort)
+	// The port must become visible as a fact while no artifact appears. The
+	// wait is on the fact, not the artifact: a passing run is one where this
+	// predicate is satisfiable at all.
 	undeclared := e.waitStatus(b.Root, func(status statusDoc) bool {
-		return portsContain(status, extraPort) && status.AttentionPath != ""
+		return portsContain(status, extraPort)
 	})
-	artifact := readAttentionDoc(t, undeclared)
-	foundUndeclared := false
-	for _, event := range artifact.Events {
-		if event.Kind == "undeclared_listener" && event.Port == extraPort {
-			foundUndeclared = true
-			break
-		}
-	}
-	if !foundUndeclared {
-		t.Fatalf("attention did not identify undeclared listener %d: %+v", extraPort, artifact.Events)
+	if undeclared.AttentionPath != "" {
+		artifact := readAttentionDoc(t, undeclared)
+		t.Fatalf("an undeclared listener created a handoff: %+v", artifact.Events)
 	}
 	if err := undeclaredProcess.Process.Kill(); err != nil {
 		t.Fatalf("stop undeclared listener: %v", err)
@@ -249,6 +271,7 @@ func TestAttentionNormalAndUndeclaredBoundaries(t *testing.T) {
 func TestAttentionManifestConflictIsNotActionable(t *testing.T) {
 	e := newEnv(t)
 	e.serve()
+	enableJevIn(t, e)
 	b, err := APIServerAndWorker(filepath.Join(e.home, "attention-conflict"))
 	if err != nil {
 		t.Fatalf("provision: %v", err)

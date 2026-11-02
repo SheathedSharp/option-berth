@@ -274,7 +274,7 @@ func init() {
 	// Daemon lifecycle.
 	Describe("daemon.hello", DaemonHelloParams{}, DaemonHelloResult{}, nil, nil)
 	Describe("daemon.shutdown", Empty{}, OKResult{}, nil, nil)
-	Describe("daemon.status", HostParams{}, DaemonStatusResult{}, nil, nil)
+	Describe("daemon.status", Empty{}, DaemonStatusResult{}, nil, nil)
 	Describe("daemon.schema", Empty{}, DaemonSchemaResult{}, nil, nil)
 	Describe("daemon.doctor", DaemonDoctorParams{}, DaemonDoctorResult{}, nil, nil)
 
@@ -289,11 +289,11 @@ func init() {
 	Describe("ports.logs", PortsLogsParams{}, PortsLogsResult{}, PortsLogsChunk{}, StreamEnd{})
 
 	// Groups.
-	Describe("groups.list", HostParams{}, GroupsListResult{}, nil, nil)
+	Describe("groups.list", Empty{}, GroupsListResult{}, nil, nil)
 	Describe("groups.kill", GroupsKillParams{}, KillEnvelope{}, nil, nil)
 	Describe("groups.start", GroupsStartParams{}, GroupsStartResult{}, GroupsStartChunk{}, GroupsStartEnd{})
 	Describe("groups.rename", GroupsRenameParams{}, GroupsRenameResult{}, nil, nil)
-	Describe("groups.reload", HostParams{}, GroupsReloadResult{}, nil, nil)
+	Describe("groups.reload", Empty{}, GroupsReloadResult{}, nil, nil)
 	Describe("groups.config.get", GroupsConfigGetParams{}, GroupsConfigGetResult{}, nil, nil)
 	Describe("groups.config.set", GroupsConfigSetParams{}, GroupsConfigSetResult{}, nil, nil)
 	Describe("groups.init", GroupsInitParams{}, GroupsInitResult{}, nil, nil)
@@ -301,7 +301,7 @@ func init() {
 	// Runs.
 	Describe("runs.register", RunsRegisterParams{}, RunsRegisterResult{}, nil, nil)
 	Describe("runs.unregister", RunsUnregisterParams{}, OKResult{}, nil, nil)
-	Describe("runs.list", HostParams{}, RunsListResult{}, nil, nil)
+	Describe("runs.list", Empty{}, RunsListResult{}, nil, nil)
 	Describe("runs.spawn", RunsSpawnParams{}, RunsSpawnResult{}, nil, nil)
 
 	Describe("sessions.kill", SessionsKillParams{}, KillEnvelope{}, nil, nil)
@@ -317,9 +317,9 @@ func init() {
 	Describe("workplace.record", WorkplaceRecordParams{}, WorkplaceRecordResult{}, nil, nil)
 
 	// Config.
-	Describe("config.get", HostParams{}, ConfigGetResult{}, nil, nil)
+	Describe("config.get", Empty{}, ConfigGetResult{}, nil, nil)
 	Describe("config.set", ConfigSetParams{}, ConfigSetResult{}, nil, nil)
-	Describe("config.path", HostParams{}, ConfigPathResult{}, nil, nil)
+	Describe("config.path", Empty{}, ConfigPathResult{}, nil, nil)
 
 	// Notifications the daemon pushes (contract §1). state.subscribe keeps its
 	// own broadcast names; every streaming method shares stream.chunk and
