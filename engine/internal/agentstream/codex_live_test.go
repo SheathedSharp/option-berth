@@ -13,19 +13,41 @@ import (
 	"time"
 )
 
-// completionSignal records output and closes done when the first turn
-// completes. Waiting for the real completion avoids a load-dependent sleep:
-// a fixed sleep lets the second turn arrive while the first is still busy.
+// completionSignal records output and signals each turn completion, so a test
+// can wait for the work it depends on instead of sleeping for a fixed time.
+// A fixed sleep is load-dependent: under contention the next turn arrives
+// while the first is still busy, and the harness correctly rejects it, which
+// turns a scheduling delay into a false failure.
 type completionSignal struct {
 	bytes.Buffer
-	done chan struct{}
-	once sync.Once
+	mu     sync.Mutex
+	count  int
+	first  chan struct{}
+	second chan struct{}
+}
+
+func newCompletionSignal() *completionSignal {
+	return &completionSignal{first: make(chan struct{}), second: make(chan struct{})}
 }
 
 func (w *completionSignal) Write(p []byte) (int, error) {
 	n, err := w.Buffer.Write(p)
-	if bytes.Contains(p, []byte(`"type":"turn.completed"`)) {
-		w.once.Do(func() { close(w.done) })
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.count += bytes.Count(p, []byte(`"type":"turn.completed"`))
+	if w.count >= 1 {
+		select {
+		case <-w.first:
+		default:
+			close(w.first)
+		}
+	}
+	if w.count >= 2 {
+		select {
+		case <-w.second:
+		default:
+			close(w.second)
+		}
 	}
 	return n, err
 }
@@ -50,16 +72,19 @@ func TestCodexLiveFakeBinaryTwoTurns(t *testing.T) {
 	root := t.TempDir()
 	os.Unsetenv("BERTH_AGENT_STREAM_FAKE")
 	bin := buildFakeProvider(t, "codex")
-	out := &completionSignal{done: make(chan struct{})}
+	out := newCompletionSignal()
 	inR, inW := io.Pipe()
 	go func() {
 		_, _ = io.WriteString(inW, `{"v":1,"type":"turn.start","id":"c1","text":"first"}`+"\n")
 		select {
-		case <-out.done:
+		case <-out.first:
 		case <-time.After(15 * time.Second):
 		}
 		_, _ = io.WriteString(inW, `{"v":1,"type":"turn.start","id":"c2","text":"second"}`+"\n")
-		time.Sleep(800 * time.Millisecond)
+		select {
+		case <-out.second:
+		case <-time.After(15 * time.Second):
+		}
 		_ = inW.Close()
 	}()
 	if err := Run(Options{
