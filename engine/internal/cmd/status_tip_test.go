@@ -6,6 +6,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/display"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
 // The optional-Jev hint is a courtesy, so every rule around it is about not
@@ -73,7 +77,10 @@ func TestRecordJevTipIsOwnerOnly(t *testing.T) {
 func TestTipIsSuppressed(t *testing.T) {
 	t.Cleanup(func() { t.Setenv(noTipsEnv, "") })
 	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
-	withAnomaly := &statusDocument{AttentionPath: "/tmp/attention/abc.json"}
+	// The anomaly is the classifier's verdict. It is deliberately not paired
+	// with an AttentionPath: that field only exists once the person opted in,
+	// which is the state the tip is not shown in.
+	withAnomaly := &statusDocument{attentionEvent: true}
 
 	t.Run("no anomaly", func(t *testing.T) {
 		t.Setenv(noTipsEnv, "")
@@ -100,6 +107,51 @@ func TestTipIsSuppressed(t *testing.T) {
 			t.Fatal("the tip appeared on a non-terminal stdout")
 		}
 	})
+}
+
+// The tip must be reachable in the state it exists for. Requiring a published
+// artifact made it dead code: consent gates the artifact, so with Jev off there
+// is never a path to read, and the offer was silent in precisely the case it
+// describes. The terminal is passed in so a passing pipe cannot stand in for a
+// working decision.
+func TestTipFiresWithJevOffAndAnAnomaly(t *testing.T) {
+	t.Setenv(noTipsEnv, "")
+	t.Setenv("BERTH_HOME", t.TempDir())
+	if jevEnabled() {
+		t.Fatal("this case needs Jev to be off")
+	}
+	doc := &statusDocument{attentionEvent: true}
+	if !jevTipEligible(doc, time.Now().UTC(), true) {
+		t.Fatal("a Jev-off read with a derived anomaly withheld the tip")
+	}
+}
+
+// The published artifact gates on consent, so a read that derives an anomaly
+// while Jev is off must hold the verdict and publish nothing. This is the pair
+// the tip reads: verdict present, path absent.
+func TestAnomalyVerdictSurvivesTheConsentGate(t *testing.T) {
+	t.Setenv("BERTH_HOME", t.TempDir())
+	if jevEnabled() {
+		t.Fatal("this case needs Jev to be off")
+	}
+	exited := time.Now().UTC()
+	doc := &statusDocument{Scope: display.Scope{Root: t.TempDir()}}
+	doc.Worktree.Services = []state.Service{{
+		Name:     "api",
+		Running:  false,
+		LastExit: &state.ServiceExit{Code: 1, Reason: "crashed", RunID: "r1", At: exited.Format(time.RFC3339Nano)},
+	}}
+	doc.Exits = []rpc.RunRecord{{
+		Name: "api", Reason: "crashed", ID: "r1",
+		ExitedAt: exited.Format(time.RFC3339Nano),
+	}}
+	publishAttention(doc)
+	if doc.AttentionPath != "" {
+		t.Fatalf("published %q without consent", doc.AttentionPath)
+	}
+	if !doc.attentionEvent {
+		t.Fatal("the derived anomaly was discarded with the publication")
+	}
 }
 
 // The hint is one dim line: it must name the feature, say it is optional, and
