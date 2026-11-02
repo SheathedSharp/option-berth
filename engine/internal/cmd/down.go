@@ -59,7 +59,7 @@ func downRun(cmd *cobra.Command, args []string) error {
 		return usageError{fmt.Errorf("a project argument cannot be combined with --worktree or --identity")}
 	}
 
-	params := rpc.GroupsKillParams{HostParams: hostParams(), Force: downForceFlag, Release: true}
+	params := rpc.GroupsKillParams{Force: downForceFlag, Release: true}
 	var local *groups.Config
 	switch {
 	case worktree != "":
@@ -98,7 +98,7 @@ func downRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	snapshot, err := hostSnapshot(cmd.Context(), c)
+	snapshot, err := daemonList(cmd.Context(), c)
 	if err != nil {
 		return cliError(err)
 	}

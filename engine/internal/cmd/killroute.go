@@ -19,7 +19,7 @@ import (
 // signalling moves: the daemon kills, then rescans and records the port going
 // down, which is what the CLI's own killer could never do (contract §22).
 func killThroughDaemon(ctx context.Context, c *client.Client, args []string, bindIP string) error {
-	snapshot, err := hostSnapshot(ctx, c)
+	snapshot, err := daemonList(ctx, c)
 	if err != nil {
 		return cliError(err)
 	}
@@ -67,11 +67,10 @@ func killCallFor(targets []killer.Target, opts killer.Options) killCall {
 		return func(ctx context.Context, c *client.Client, dryRun bool) ([]killer.Result, error) {
 			var env rpc.KillEnvelope
 			err := c.Call(ctx, "groups.kill", rpc.GroupsKillParams{
-				HostParams: hostParams(),
-				Name:       name,
-				Force:      opts.Force,
-				GraceMs:    graceMs(opts),
-				DryRun:     dryRun,
+				Name:    name,
+				Force:   opts.Force,
+				GraceMs: graceMs(opts),
+				DryRun:  dryRun,
 			}, &env)
 			return env.Results, err
 		}
@@ -81,13 +80,12 @@ func killCallFor(targets []killer.Target, opts killer.Options) killCall {
 	return func(ctx context.Context, c *client.Client, dryRun bool) ([]killer.Result, error) {
 		var env rpc.KillEnvelope
 		err := c.Call(ctx, "ports.kill", rpc.PortsKillParams{
-			HostParams: hostParams(),
-			Targets:    selectors,
-			Tree:       opts.Tree,
-			Force:      opts.Force,
-			GraceMs:    graceMs(opts),
-			Escalate:   opts.Escalate,
-			DryRun:     dryRun,
+			Targets:  selectors,
+			Tree:     opts.Tree,
+			Force:    opts.Force,
+			GraceMs:  graceMs(opts),
+			Escalate: opts.Escalate,
+			DryRun:   dryRun,
 		}, &env)
 		return env.Results, err
 	}

@@ -67,7 +67,6 @@ type WorkplaceBlockInput struct {
 // WorkplaceParams is the common half of every workplace method: which worktree
 // the call is about.
 type WorkplaceParams struct {
-	HostParams
 	Worktree string `json:"worktree"`
 }
 
@@ -80,7 +79,6 @@ type WorkplaceListResult struct {
 }
 
 type WorkplaceNewParams struct {
-	HostParams
 	Worktree string `json:"worktree"`
 	// Name is what to call it. Empty takes the default name.
 	Name string `json:"name,omitempty"`
@@ -91,7 +89,6 @@ type WorkplaceNewResult struct {
 }
 
 type WorkplaceUseParams struct {
-	HostParams
 	Worktree string `json:"worktree"`
 	Selector string `json:"selector"`
 }
@@ -101,7 +98,6 @@ type WorkplaceUseResult struct {
 }
 
 type WorkplaceShowParams struct {
-	HostParams
 	Worktree string `json:"worktree"`
 	// Selector names the workplace; empty means the active one.
 	Selector string `json:"selector,omitempty"`
@@ -120,7 +116,6 @@ type WorkplaceShowResult struct {
 }
 
 type WorkplaceDeleteParams struct {
-	HostParams
 	Worktree string `json:"worktree"`
 	Selector string `json:"selector"`
 }
@@ -134,7 +129,6 @@ type WorkplaceDeleteResult struct {
 }
 
 type WorkplaceRecordParams struct {
-	HostParams
 	Worktree string              `json:"worktree"`
 	Block    WorkplaceBlockInput `json:"block"`
 }
