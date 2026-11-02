@@ -190,6 +190,33 @@ Not covered here: the daemon's `groups.init` is unchanged. Its scan failure alre
 `observation_*` RPC error rather than an empty table, so it has no "empty table read as idle" path,
 and the CLI's `oberth init` does not go through the daemon.
 
+**The attention scenario tests after the consent gate (2026-11-02)**: gating the artifact on consent
+left two integration tests asserting a contract that no longer exists, and `main`'s nightly went red
+on both platforms (run `41355765757`, headSha `79b5c33`). Both failures are the tests' fault, not the
+gate's:
+
+- `TestAttentionFailureMatrix` and `TestAttentionManifestConflictIsNotActionable` never wrote
+  `jev.json`, so `status` correctly published no `attention_path` and the tests waited out their
+  budget for one that now only exists after `oberth jev enable`. Both now call a helper that writes
+  the owner-only settings file into the run's isolated `HOME` before the fixture starts. The key is a
+  placeholder: these tests derive the artifact from runtime facts and never call a provider
+  (an injectable HTTP server covers Jev itself).
+- `TestAttentionNormalAndUndeclaredBoundaries` still expected an `undeclared_listener` event. That
+  kind was removed on purpose — an undeclared listener is a fact `status` already reports with its
+  port and owner, so the test now asserts the port appears while no artifact is created.
+
+Verified on this machine (macOS 27.2 / 26B123), all three re-run against this branch:
+
+- `go test -tags integration -count=1 -run 'TestAttention' ./internal/scenario/` → passes.
+- The same command with the settings-file helper removed from the failure matrix → fails in 17s, so
+  the helper is what the passing case depends on, not a coincidental green.
+- `go test -tags integration -count=1 ./internal/scenario/` → passes (48.4s), the whole real-service
+  suite rather than the three attention cases alone.
+- `go test ./internal/ports/... ./internal/daemon/... ./internal/cmd -count=1` → passes.
+- `scripts/verify-attention-handoff.py --choice continue_without_action` → `status: passed`.
+
+Not run: the nightly workflow itself, and `-race` on the scenario package.
+
 **The optional-Jev hint was unreachable (2026-11-02)**: `status` never showed the one-line offer of
 the enhancement. The hint required "Jev off **and** an `attention_path`", but the consent gate makes
 the artifact exist only when Jev is on, so the two halves could not hold at once. The contract text
@@ -208,7 +235,7 @@ throwaway git project whose only service exits 1):
 - `status --json` → `attention_path: null`, `last_exit.reason: crashed`, `exits: ["crashed"]`. This is
   the state that used to be unreachable: a derived anomaly with nothing published.
 - `status` under a real PTY (`pty.fork`) → the table, then
-  `Jev: an optional model can assess this anomaly; `oberth jev enable` turns it on`.
+  "Jev: an optional model can assess this anomaly; `oberth jev enable` turns it on".
 - `status --json` and `status --brief` under the same PTY → tip absent.
 - `BERTH_NO_TIPS=1 status` under the same PTY → tip absent.
 - After writing `jev.json` with `enabled: true`, `status` under the PTY → tip absent and
