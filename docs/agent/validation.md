@@ -217,6 +217,37 @@ Verified on this machine (macOS 27.2 / 26B123), all three re-run against this br
 
 Not run: the nightly workflow itself, and `-race` on the scenario package.
 
+**The optional-Jev hint was unreachable (2026-11-02)**: `status` never showed the one-line offer of
+the enhancement. The hint required "Jev off **and** an `attention_path`", but the consent gate makes
+the artifact exist only when Jev is on, so the two halves could not hold at once. The contract text
+in [cli.md](../cli.md) "Listener observation and the optional Jev enhancement" described the hint as
+working; the code silently did not.
+
+Deriving and publishing are now two decisions. `publishAttention` always runs the deterministic
+classification and records the verdict in an unexported field, then publishes only if the person
+consented. The hint reads that verdict, so it fires exactly when there is something to assess and the
+enhancement is off — and still not on `--json`, `--brief`, a non-TTY, `BERTH_NO_TIPS=1`, or within
+the interval.
+
+Actual inputs and results on this machine (macOS 27.2 / 26B123, isolated `HOME`/`BERTH_HOME`,
+throwaway git project whose only service exits 1):
+
+- `status --json` → `attention_path: null`, `last_exit.reason: crashed`, `exits: ["crashed"]`. This is
+  the state that used to be unreachable: a derived anomaly with nothing published.
+- `status` under a real PTY (`pty.fork`) → the table, then
+  "Jev: an optional model can assess this anomaly; `oberth jev enable` turns it on".
+- `status --json` and `status --brief` under the same PTY → tip absent.
+- `BERTH_NO_TIPS=1 status` under the same PTY → tip absent.
+- After writing `jev.json` with `enabled: true`, `status` under the PTY → tip absent and
+  `attention_path` published, which is the intended "already opted in, nothing to offer" case.
+- `go test ./...` → clean. New cases: `TestTipFiresWithJevOffAndAnAnomaly`,
+  `TestAnomalyVerdictSurvivesTheConsentGate`. Deleting the `doc.attentionEvent = true` assignment
+  makes the second fail, so the assertion is load-bearing rather than incidental.
+- `go vet ./...` → clean (with `GOPROXY=https://goproxy.cn,direct`; the default proxy timed out on a
+  test-only dependency).
+
+Not run: `-race` on `internal/cmd`.
+
 **Real CLI smoke (2026-10-31)**: on this machine, `netstat` prints a table in an ordinary shell, but
 the stdout a Go process reads through a pipe is empty, so the daemon reports `observation_blind`. So
 that listener observation would not block the code identity chain, which is unrelated to it, a
