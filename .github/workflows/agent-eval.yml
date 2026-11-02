@@ -103,22 +103,6 @@ jobs:
           ref: main
           path: option-berth-skill
           persist-credentials: false
-      - name: Check the gateway protocol contract
-        working-directory: source
-        shell: bash
-        env:
-          AGENT_GATEWAY_BASE_URL: ${{ secrets.LLM_GATEWAY_BASE_URL }}
-          AGENT_GATEWAY_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
-          CODEX_MODEL: ${{ inputs.codex_model }}
-          CHAT_MODEL: ${{ inputs.opencode_model }}
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/agent-eval"
-          python3 scripts/check_agent_gateway.py --agents "$AGENTS" \
-            --claude-model "$CLAUDE_MODEL" \
-            --codex-model "$CODEX_MODEL" \
-            --chat-model "$CHAT_MODEL" \
-            2>&1 | tee "$RUNNER_TEMP/agent-eval/gateway-check.log"
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
@@ -354,17 +338,14 @@ jobs:
           if [[ "$codex_base" != */v1 ]]; then
             codex_base="$codex_base/v1"
           fi
-          args=(
-            --execute
+          # The agent's real configuration, assembled once. The smoke run and
+          # the matrix share this array on purpose: a preflight that built its
+          # own flags would test a different setup from the one that runs, and
+          # a gate that tests a different setup is how a broken matrix passes.
+          common=(
             --agents "$AGENT"
-            --suite "$SUITE"
-            --scenarios "$SCENARIOS"
-            --arms "$ARMS"
-            --compare "$COMPARE"
-            --repeat "$REPEAT"
             --binary bin/oberth
             --skill-dir "$GITHUB_WORKSPACE/option-berth-skill"
-            --out "$GITHUB_WORKSPACE/agent-eval-report"
             --timeout 600
             --pass-env ANTHROPIC_BASE_URL
             --pass-env ANTHROPIC_AUTH_TOKEN
@@ -402,9 +383,27 @@ jobs:
             --agent-arg pi=--approve
             --agent-arg pi=--model
             --agent-arg "pi=gateway/$PI_MODEL"
-            --require-comparable
           )
-          python3 scripts/agent_eval.py "${args[@]}"
+          # The gate that decides whether this shard may spend hours. It runs
+          # the agent through one cheap real scenario instead of asking the
+          # gateway whether it accepts a model name. On 2026-11-02 the
+          # single-request check passed and all 80 rows then died on the second
+          # turn, because the provider wanted reasoning_content on every earlier
+          # assistant message and no one-request probe can observe a
+          # second-request requirement. The only honest preflight for "can this
+          # agent run" is to run it, configured exactly as the matrix is.
+          python3 scripts/agent_eval.py --smoke "${common[@]}" \
+            --out "$RUNNER_TEMP/agent-eval/smoke"
+
+          python3 scripts/agent_eval.py "${common[@]}" \
+            --execute \
+            --suite "$SUITE" \
+            --scenarios "$SCENARIOS" \
+            --arms "$ARMS" \
+            --compare "$COMPARE" \
+            --repeat "$REPEAT" \
+            --out "$GITHUB_WORKSPACE/agent-eval-report" \
+            --require-comparable
       - name: Keep this shard
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -412,7 +411,7 @@ jobs:
           name: agent-eval-shard-${{ matrix.agent }}
           path: |
             agent-eval-report/
-            ${{ runner.temp }}/agent-eval/gateway-check.log
+            ${{ runner.temp }}/agent-eval/smoke/
             ${{ runner.temp }}/agent-eval/codex-models.json
             ${{ runner.temp }}/agent-eval/build.json
             ${{ runner.temp }}/agent-eval/agent-versions.txt

@@ -38,8 +38,21 @@ type tipRecord struct {
 }
 
 // jevTipWanted reports whether this status read should end with the hint.
+//
+// The evidence is the classifier's verdict, not the published artifact. Since
+// the artifact only exists after the person opted in, requiring one here asked
+// the offer to depend on its own acceptance and silenced it in exactly the case
+// it exists for: Jev off and something worth assessing.
 func jevTipWanted(doc *statusDocument, now time.Time) bool {
-	if doc == nil || strings.TrimSpace(doc.AttentionPath) == "" {
+	return jevTipEligible(doc, now, isTerminalStdout())
+}
+
+// jevTipEligible is the same decision with the terminal test lifted out, so the
+// states that hide the tip can be asserted separately. `go test` writes to a
+// pipe, which means the terminal gate alone would make every case indistinguishable
+// from a working one and hide a tip that can never fire.
+func jevTipEligible(doc *statusDocument, now time.Time, terminal bool) bool {
+	if doc == nil || !doc.attentionEvent {
 		// No anomaly means nothing for the assessment to look at; a tip here
 		// would describe a feature with nothing to do.
 		return false
@@ -47,7 +60,7 @@ func jevTipWanted(doc *statusDocument, now time.Time) bool {
 	if strings.TrimSpace(os.Getenv(noTipsEnv)) == "1" {
 		return false
 	}
-	if !isTerminalStdout() {
+	if !terminal {
 		return false
 	}
 	return tipDue(paths.JevTipPath(), now)

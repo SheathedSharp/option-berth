@@ -190,6 +190,64 @@ Not covered here: the daemon's `groups.init` is unchanged. Its scan failure alre
 `observation_*` RPC error rather than an empty table, so it has no "empty table read as idle" path,
 and the CLI's `oberth init` does not go through the daemon.
 
+**The attention scenario tests after the consent gate (2026-11-02)**: gating the artifact on consent
+left two integration tests asserting a contract that no longer exists, and `main`'s nightly went red
+on both platforms (run `41355765757`, headSha `79b5c33`). Both failures are the tests' fault, not the
+gate's:
+
+- `TestAttentionFailureMatrix` and `TestAttentionManifestConflictIsNotActionable` never wrote
+  `jev.json`, so `status` correctly published no `attention_path` and the tests waited out their
+  budget for one that now only exists after `oberth jev enable`. Both now call a helper that writes
+  the owner-only settings file into the run's isolated `HOME` before the fixture starts. The key is a
+  placeholder: these tests derive the artifact from runtime facts and never call a provider
+  (an injectable HTTP server covers Jev itself).
+- `TestAttentionNormalAndUndeclaredBoundaries` still expected an `undeclared_listener` event. That
+  kind was removed on purpose — an undeclared listener is a fact `status` already reports with its
+  port and owner, so the test now asserts the port appears while no artifact is created.
+
+Verified on this machine (macOS 27.2 / 26B123), all three re-run against this branch:
+
+- `go test -tags integration -count=1 -run 'TestAttention' ./internal/scenario/` → passes.
+- The same command with the settings-file helper removed from the failure matrix → fails in 17s, so
+  the helper is what the passing case depends on, not a coincidental green.
+- `go test -tags integration -count=1 ./internal/scenario/` → passes (48.4s), the whole real-service
+  suite rather than the three attention cases alone.
+- `go test ./internal/ports/... ./internal/daemon/... ./internal/cmd -count=1` → passes.
+- `scripts/verify-attention-handoff.py --choice continue_without_action` → `status: passed`.
+
+Not run: the nightly workflow itself, and `-race` on the scenario package.
+
+**The optional-Jev hint was unreachable (2026-11-02)**: `status` never showed the one-line offer of
+the enhancement. The hint required "Jev off **and** an `attention_path`", but the consent gate makes
+the artifact exist only when Jev is on, so the two halves could not hold at once. The contract text
+in [cli.md](../cli.md) "Listener observation and the optional Jev enhancement" described the hint as
+working; the code silently did not.
+
+Deriving and publishing are now two decisions. `publishAttention` always runs the deterministic
+classification and records the verdict in an unexported field, then publishes only if the person
+consented. The hint reads that verdict, so it fires exactly when there is something to assess and the
+enhancement is off — and still not on `--json`, `--brief`, a non-TTY, `BERTH_NO_TIPS=1`, or within
+the interval.
+
+Actual inputs and results on this machine (macOS 27.2 / 26B123, isolated `HOME`/`BERTH_HOME`,
+throwaway git project whose only service exits 1):
+
+- `status --json` → `attention_path: null`, `last_exit.reason: crashed`, `exits: ["crashed"]`. This is
+  the state that used to be unreachable: a derived anomaly with nothing published.
+- `status` under a real PTY (`pty.fork`) → the table, then
+  "Jev: an optional model can assess this anomaly; `oberth jev enable` turns it on".
+- `status --json` and `status --brief` under the same PTY → tip absent.
+- `BERTH_NO_TIPS=1 status` under the same PTY → tip absent.
+- After writing `jev.json` with `enabled: true`, `status` under the PTY → tip absent and
+  `attention_path` published, which is the intended "already opted in, nothing to offer" case.
+- `go test ./...` → clean. New cases: `TestTipFiresWithJevOffAndAnAnomaly`,
+  `TestAnomalyVerdictSurvivesTheConsentGate`. Deleting the `doc.attentionEvent = true` assignment
+  makes the second fail, so the assertion is load-bearing rather than incidental.
+- `go vet ./...` → clean (with `GOPROXY=https://goproxy.cn,direct`; the default proxy timed out on a
+  test-only dependency).
+
+Not run: `-race` on `internal/cmd`.
+
 **Real CLI smoke (2026-10-31)**: on this machine, `netstat` prints a table in an ordinary shell, but
 the stdout a Go process reads through a pipe is empty, so the daemon reports `observation_blind`. So
 that listener observation would not block the code identity chain, which is unrelated to it, a
@@ -588,6 +646,74 @@ disposable git repository, and every daemon and container was removed at the end
   both work when driven by hand). It is recorded as a failure, not as a pass.
 - **Not run**: the `native` arm on any of these three, and any real coding agent on them. They prove
   the engine drives real toolchains; they say nothing about agent behaviour.
+
+## A matrix that measured nothing (2026-11-02)
+
+The 8 `large` scenarios × 2 arms × 5 repeats matrix was dispatched on `main` (`691f619`) and
+completed in 32 minutes. Every number in it is void, and the reason is worth keeping because it was
+recorded as a clean run.
+
+Actual inputs and results:
+
+- `gh workflow run agent-eval.yml -f agents=claude -f suite=large -f repeat=5` → run
+  [41411562913](https://github.com/SheathedSharp/option-berth/actions/runs/41411562913), `plan` 1 min,
+  `claude` 32 min, `merge` 1 min; `comparable: true`, 80 runs, 5 repeats each, all
+  scenario/agent/arm triples present.
+- Of those 80 runs, **70 were `not_completed` and 10 were `ok`**, and the 10 were all
+  `stack-port-owner` — the one scenario whose correct answer is "do nothing, hand the decision
+  back". Every run recorded `agent_error: None`.
+- The completion rate was **0% for both arms in 7 of 8 scenarios**, and the comparison table
+  therefore reported `completion_delta_pp: 0.0` everywhere with no disjoint intervals — a table that
+  reads as "the product does not help" when in fact no agent ran.
+- The agent artifact says why: `agent.stdout.jsonl` ends with
+  `{"type":"result","is_error":true,"result":"API Error: 400 upstream 400: Missing required parameter:
+  'messages[2].reasoning_content'. This model needs the reasoning of every earlier assistant
+  message..."}`. Turn one succeeded, the tool result went back, and the provider rejected turn two.
+  Median run duration was 21 s and `git_changes` was empty in every row.
+
+Two independent defects let that through, and both are the same mistake in different places — the
+harness preferred its own inference over the agent's own report:
+
+- `parse_claude` read the `result` event's text and dropped its `is_error` flag, so a hard provider
+  failure was stored as the agent's final answer.
+- `run_agent` only raised an error when `returncode != 0 and not steps`, so a run that died *after*
+  acting recorded no error at all. The 8 tool calls it made before dying suppressed the only signal
+  the harness looked at.
+- Separately, the gate that was supposed to prevent this — `check_agent_gateway.py` — sends **one**
+  request with no history. It passed, correctly: the endpoint accepts the model name. It cannot
+  observe a requirement that only appears on the second request, and it reimplements the client
+  instead of running it.
+
+What changed (code, not procedure):
+
+- `AgentTrace` replaces the `(steps, final)` tuple every parser returned. The agent's own error
+  verdict travels in the same value as the fields a caller scores, so a reader cannot take the
+  numbers and silently drop the diagnosis. `parse_claude` / `parse_codex` / `parse_generic` each read
+  their own dialect's error event; `run_agent` prefers `trace.error` over any exit-code inference.
+- `agent_eval.py --smoke` runs one requested agent on `missing-artifact` through the ordinary
+  runner, and fails when the agent reports an error **or takes no action at all**. Taking an action
+  is what proves the model closed a tool round trip — the part a single request cannot reach.
+- The workflow gate is that smoke, and it runs inside each `matrix` shard using **the same `common`
+  argument array the matrix itself uses**. A preflight assembled from its own flags tests a
+  different configuration from the one that runs, which is how a broken matrix passes its gate. The
+  gateway script stays as a manual diagnostic and is no longer the gate.
+
+Verified on this machine:
+
+- `python3 -m unittest scripts.agent_eval_test` → 74 items pass (was 67). New:
+  `test_claude_error_result_is_a_failure_not_an_answer`, `test_codex_failed_turn_is_a_failure`,
+  `test_generic_error_event_is_a_failure`, `test_a_clean_result_reports_no_error`, and three
+  `SmokeModeTests` that drive `main(["--smoke", ...])` with a scripted agent.
+- Negative control: deleting the `is_error` branch from `parse_claude` fails
+  `test_claude_error_result_is_a_failure_not_an_answer` and one smoke case, so the assertions are
+  load-bearing rather than incidental.
+- `python3 -m unittest discover -s scripts -p '*_test.py'` → 231 pass, 1 skipped (the brand check
+  needs the client checkout).
+- `python3 scripts/check_docs.py` → 6 pairs consistent.
+
+**Not run**: the corrected matrix. The workflow change needs this PR to merge before a dispatch uses
+it, and a real `--smoke` costs one model turn per agent. Whether `reflection/beam:free` now completes
+a multi-turn loop *in CI* is exactly what that smoke will answer first.
 
 ## Cold start: no manifest (2026-11-02)
 

@@ -97,6 +97,12 @@ type statusDocument struct {
 	// AttentionRevision lets an agent compare an artifact it read with the
 	// exact deterministic facts represented by this status response.
 	AttentionRevision string `json:"attention_revision,omitempty"`
+	// attentionEvent is whether the deterministic classifier derived a definite
+	// anomaly, independent of whether it was published. It never reaches the
+	// wire: consent decides the artifact, this decides the one-line offer of the
+	// enhancement, and reading consent off the artifact would make that offer
+	// unreachable precisely when it is due.
+	attentionEvent bool
 	// Changed is absent on the first run: there is nothing to compare against,
 	// which is not the same as nothing having changed (`empty` inside says
 	// that).
@@ -359,18 +365,20 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool, only []stri
 // does not have to guess whether that is because nothing failed or because the
 // user never opted in. Publishing it unconditionally meant every reader had to
 // reconstruct that answer from the settings file.
+//
+// Deriving and publishing are two decisions, not one. The derivation is pure
+// fact work and always runs, so `status` knows whether there is an anomaly even
+// when it publishes nothing; only publication depends on consent. Collapsing
+// them would leave the offer of the enhancement ("there is something to assess
+// here") with no evidence to fire on, because the artifact it used to read is
+// exactly what consent removes.
 func publishAttention(doc *statusDocument) string {
 	if doc == nil {
 		return ""
 	}
 	doc.AttentionPath = ""
 	doc.AttentionRevision = ""
-	if !jevEnabled() {
-		// Clear a leftover artifact from before the enhancement was switched
-		// off: leaving it on disk would keep telling agents to assess.
-		_ = attention.Clear(paths.Dir(), doc.Scope.Root)
-		return ""
-	}
+	doc.attentionEvent = false
 	facts := attention.Facts{
 		WorktreeRoot: doc.Scope.Root,
 		Branch:       doc.Worktree.Branch,
@@ -441,6 +449,15 @@ func publishAttention(doc *statusDocument) string {
 	facts.ObservedAt = time.Now().UTC()
 	artifact, ok := attention.Derive(facts, facts.ObservedAt, attention.DefaultTTL)
 	if !ok {
+		// No anomaly: there is nothing to offer and nothing to publish.
+		_ = attention.Clear(paths.Dir(), doc.Scope.Root)
+		return ""
+	}
+	doc.attentionEvent = true
+	if !jevEnabled() {
+		// The person has not opted in, so nothing is published. Clear a
+		// leftover artifact from before the enhancement was switched off:
+		// leaving it on disk would keep telling agents to assess.
 		_ = attention.Clear(paths.Dir(), doc.Scope.Root)
 		return ""
 	}

@@ -369,11 +369,21 @@ allowlist:
 Codex 0.166 sends only Responses requests and requires `POST /v1/responses` to return
 `text/event-stream` when `stream: true`, ending with `response.completed`. An implementation that
 returns only a monolithic JSON body cannot drive Codex: it treats the response as a broken stream. The
-workflow does not translate protocols; it first runs
-[`scripts/check_agent_gateway.py`](../../scripts/check_agent_gateway.py), checking four contracts at
-once: Anthropic Messages, OpenAI chat SSE, Responses SSE and Responses function call. If any one is
-unmet, that step exits 2 before installing agents and consuming model quota, and prints the
-content-type it actually received.
+workflow does not translate protocols. `scripts/check_agent_gateway.py` can check the four wire
+contracts directly (Anthropic Messages, OpenAI chat SSE, Responses SSE and Responses function call),
+but it is a **manual diagnostic, not the gate**: a single request with no history cannot prove an
+agent will work. On 2026-11-02 that check passed and all 80 matrix rows then died on their second
+turn, because the provider required `reasoning_content` on every earlier assistant message and the
+client never sends it. A one-request probe cannot observe a second-request requirement, and a probe
+that reimplements the client cannot observe a client-side refusal.
+
+The gate is therefore the real runner, minimized: each `matrix` job runs
+`agent_eval.py --smoke` for its own agent before the scenario loop, using the **same** `common`
+argument array the matrix itself uses, so the preflight cannot test a different configuration from
+the one that runs. The smoke drives one cheap scenario (`missing-artifact`) through the ordinary
+runner and fails the shard when the agent reports an error or never takes a single action. Taking an
+action is what proves the model completed a full tool round trip — model asks, tool answers,
+conversation goes back — which is exactly the part one request cannot reach.
 
 Codex's `gpt-6-luna` built-in metadata defaults to `tool_mode=code_mode_only` and
 `use_responses_lite=true`, which puts tools into an `additional_tools` input item instead of the
@@ -399,11 +409,11 @@ Workflow inputs:
 
 The workflow has three jobs:
 
-1. **`plan`**: check the gateway protocol, build `oberth`, run preflight on the core, large-project and
-   cold-start fixtures (exit 2 if listeners cannot be observed), and turn the `agents` input into a
-   matrix;
-2. **`matrix`**: **one runner per agent, in parallel**, each running only its own scenarios and uploading
-   `agent-eval-shard-<agent>`; one agent failing does not affect the others;
+1. **`plan`**: build `oberth`, run preflight on the core, large-project and cold-start fixtures
+   (exit 2 if listeners cannot be observed), and turn the `agents` input into a matrix;
+2. **`matrix`**: **one runner per agent, in parallel**; each proves its own agent with `--smoke`, then
+   runs only its own scenarios and uploads `agent-eval-shard-<agent>`; one agent failing does not
+   affect the others;
 3. **`merge`**: download all shards and combine them into one table with `--merge`; it requires all shards
    to agree exactly on build, skill, scenarios and repeat, and otherwise refuses to merge.
 

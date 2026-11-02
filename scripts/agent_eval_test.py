@@ -107,7 +107,8 @@ class ParserTests(unittest.TestCase):
             ]}},
             {"type": "result", "result": "service is healthy"},
         ])
-        steps, final = lib.parse_claude(path)
+        trace = lib.parse_claude(path)
+        steps, final = trace.steps, trace.final
         self.assertEqual(steps, 2)
         self.assertEqual(final, "service is healthy")
 
@@ -117,7 +118,8 @@ class ParserTests(unittest.TestCase):
             {"type": "item.completed", "item": {"id": "2", "type": "reasoning"}},
             {"type": "item.completed", "item": {"id": "3", "type": "agent_message", "text": "ok"}},
         ])
-        steps, final = lib.parse_codex(path)
+        trace = lib.parse_codex(path)
+        steps, final = trace.steps, trace.final
         self.assertEqual(steps, 1)
         self.assertEqual(final, "ok")
 
@@ -126,15 +128,65 @@ class ParserTests(unittest.TestCase):
             {"type": "tool_use", "name": "bash"},
             {"type": "message", "text": "done"},
         ])
-        steps, final = lib.parse_generic(path)
+        trace = lib.parse_generic(path)
+        steps, final = trace.steps, trace.final
         self.assertEqual(steps, 1)
         self.assertEqual(final, "done")
 
     def test_unrecognized_output_is_not_zero(self) -> None:
         path = Path(self.tmp.name) / "plain.txt"
         path.write_text("not json\n", encoding="utf-8")
-        self.assertEqual(lib.parse_generic(path)[0], None)
-        self.assertEqual(lib.parse_claude(path)[0], None)
+        self.assertEqual(lib.parse_generic(path).steps, None)
+        self.assertEqual(lib.parse_claude(path).steps, None)
+
+    def test_claude_error_result_is_a_failure_not_an_answer(self) -> None:
+        # The 2026-11-02 matrix produced 80 rows like this: the agent took real
+        # action, then the provider answered 400 and Claude Code printed the
+        # error as its `result`. Reading only the text made a dead run look
+        # like a completed one whose answer happened to mention an API error.
+        path = self.write([
+            {"type": "system", "subtype": "init"},
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Bash", "input": {}},
+            ]}},
+            {"type": "result", "is_error": True,
+             "result": "API Error: 400 upstream 400: Missing required parameter"},
+        ])
+        trace = lib.parse_claude(path)
+        self.assertEqual(trace.steps, 1)
+        self.assertTrue(trace.error, "the agent's own error verdict was dropped")
+        self.assertIn("400", trace.error)
+
+    def test_codex_failed_turn_is_a_failure(self) -> None:
+        path = self.write([
+            {"type": "item.completed", "item": {"id": "1", "type": "command_execution"}},
+            {"type": "turn.failed", "error": {"message": "upstream 500"}},
+        ])
+        trace = lib.parse_codex(path)
+        self.assertEqual(trace.steps, 1)
+        self.assertIn("upstream 500", trace.error or "")
+
+    def test_generic_error_event_is_a_failure(self) -> None:
+        path = self.write([
+            {"type": "tool_call", "name": "bash"},
+            {"type": "error", "message": "quota exhausted"},
+        ])
+        trace = lib.parse_generic(path)
+        self.assertEqual(trace.steps, 1)
+        self.assertIn("quota exhausted", trace.error or "")
+
+    def test_a_clean_result_reports_no_error(self) -> None:
+        # The guard must not turn every run into a failure: a result without
+        # is_error is a pass, and its text stays the final answer.
+        path = self.write([
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Bash", "input": {}},
+            ]}},
+            {"type": "result", "result": "service is healthy"},
+        ])
+        trace = lib.parse_claude(path)
+        self.assertIsNone(trace.error)
+        self.assertEqual(trace.final, "service is healthy")
 
 
 class AgentArgvTests(unittest.TestCase):
@@ -558,6 +610,87 @@ class PreflightTests(unittest.TestCase):
                 agent_eval.preflight(binary, Path(tmp) / "out", [])
             self.assertIn("observation_empty", str(caught.exception))
             self.assertIn("not an agent", str(caught.exception))
+
+
+class SmokeModeTests(unittest.TestCase):
+    """`--smoke` must exercise the real agent path, so its own test does too.
+
+    These drive the actual `smoke()` entry with a scripted agent and a scripted
+    engine. The point is not to simulate an agent faithfully — it is to prove
+    the preflight reads the agent's own verdict and refuses to pass a run that
+    never acted, which are the two things the single-request gateway check could
+    not do.
+    """
+
+    def _fake_agent(self, tmp: Path, stream: str) -> Path:
+        script = tmp / "fake-claude"
+        script.write_text(
+            "#!/usr/bin/env python3\nimport sys\nsys.stdout.write(" + repr(stream) + ")\n",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+        return script
+
+    def _run(self, stream: str) -> tuple[int, str]:
+        import contextlib
+        import dataclasses
+        import io
+
+        import agent_eval
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            binary = root / "fake-oberth"
+            binary.write_text(FAKE_OBERTH, encoding="utf-8")
+            binary.chmod(0o755)
+            script = self._fake_agent(root, stream)
+            original = lib.AGENTS["claude"]
+            lib.AGENTS["claude"] = dataclasses.replace(
+                original, command=str(script),
+                base_argv=lambda cwd, prompt, skill: [str(script)],
+            )
+            try:
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr):
+                    code = agent_eval.main([
+                        "--smoke", "--agents", "claude", "--skip-preflight",
+                        "--binary", str(binary), "--out", str(root / "out"),
+                    ])
+                return code, stderr.getvalue()
+            finally:
+                lib.AGENTS["claude"] = original
+
+    def test_a_real_round_trip_passes(self) -> None:
+        stream = "\n".join([
+            json.dumps({"type": "system", "subtype": "init"}),
+            json.dumps({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Bash", "input": {}},
+            ]}}),
+            json.dumps({"type": "result", "result": "generated and started"}),
+        ]) + "\n"
+        code, err = self._run(stream)
+        self.assertEqual(code, 0, err)
+        self.assertIn("full tool round trip", err)
+
+    def test_an_agent_reported_error_fails_the_smoke(self) -> None:
+        stream = "\n".join([
+            json.dumps({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Bash", "input": {}},
+            ]}}),
+            json.dumps({"type": "result", "is_error": True,
+                        "result": "API Error: 400 upstream 400"}),
+        ]) + "\n"
+        code, err = self._run(stream)
+        self.assertEqual(code, 1, err)
+        self.assertIn("400", err)
+
+    def test_a_run_that_never_acted_fails_the_smoke(self) -> None:
+        # No tool call at all: the agent answered without touching the project,
+        # which is what a broken multi-turn loop looks like from the outside.
+        stream = json.dumps({"type": "result", "result": "all good"}) + "\n"
+        code, err = self._run(stream)
+        self.assertEqual(code, 1, err)
+        self.assertIn("without taking a single action", err)
 
 
 class RunnerSmokeTest(unittest.TestCase):
