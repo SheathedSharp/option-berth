@@ -32,6 +32,21 @@ func claimsManager(rt *Runtime) (*claims.Manager, error) {
 	}), nil
 }
 
+// claimsManagerWithListening is claimsManager for a caller that has already
+// observed the listener table. The probe is a full scan, so a caller holding
+// claimsMu must hand the observation in rather than let the manager run it
+// under the lock: no lock on this path may span IO.
+func claimsManagerWithListening(rt *Runtime, listening map[int]bool) (*claims.Manager, error) {
+	st := rt.Store
+	if st == nil {
+		return nil, errNoStore()
+	}
+	return claims.New(st.Claims(), claims.Options{
+		Listening:    func() (map[int]bool, error) { return listening, nil },
+		DefaultCount: func(project string) int { return worktreePorts(rt, project) },
+	}), nil
+}
+
 // worktreePorts answers claims.Options.DefaultCount: the worktree_ports of the
 // `oberth.yaml` belonging to a claim's project, or zero when no config says
 // (step 5A.7).

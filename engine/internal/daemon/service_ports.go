@@ -15,9 +15,22 @@ import (
 // cannot reach the claims book itself.
 func AcquireServicePort(rt *Runtime, dir, service string) (int, error) {
 	project, worktree := claims.Identity(dir, "", "")
+
+	// Observe first, then lock. The listener probe is a full scan (lsof, ps and
+	// docker stats) and the slowest thing on this path; holding the daemon-wide
+	// claims lock across it would make a concurrent `down` fail its TryLock
+	// capture with "claims are changing". The snapshot is one generation old by
+	// the time the table is read, which is the same race every observation on
+	// this chain accepts: a port that starts listening in between is caught by
+	// the listen-time bind failure, never by a longer-held lock.
+	listening, err := listeningPorts(rt)
+	if err != nil {
+		return 0, scanFailure(err)
+	}
+
 	claimsMu.Lock()
 	defer claimsMu.Unlock()
-	m, err := claimsManager(rt)
+	m, err := claimsManagerWithListening(rt, listening)
 	if err != nil {
 		return 0, err
 	}
