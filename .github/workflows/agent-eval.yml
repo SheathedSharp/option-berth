@@ -45,7 +45,7 @@ on:
       claude_model:
         description: Model for Claude Code through the Anthropic protocol
         required: true
-        default: reflection/beam:free
+        default: qwen-3.8-flash
         type: string
       codex_model:
         description: Model for Codex through the Responses API
