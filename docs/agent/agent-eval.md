@@ -325,6 +325,39 @@ python3 scripts/agent_eval.py --execute \
 produces intervals (see "Intervals"). A three-arm large matrix at `--repeat 5` costs about 3.75× the
 two-arm `--repeat 2` run, so budget the scenario subset accordingly.
 
+### Budget a shard by wall clock, not by scenario count
+
+`repeat 5` is not a free upgrade on the CI budget. On 2026-11-02 a `claude` shard of 8 large scenarios
+× 2 arms × 5 repeats ran one scenario every 3–8 minutes (median 208 s per run) and was killed by the
+job's 180-minute `timeout-minutes` at 181 minutes with 29 of 40 runs finished — the `merge` job then
+failed on the missing shard. The model was healthy; the shard was simply too large. Nothing in the
+report says "budget exceeded", so the only visible symptom is a cancelled `matrix` job and a `merge`
+that reports a missing shard.
+
+Estimate before dispatching: `scenarios × arms × repeat × per-run seconds`. At the observed ~200 s per
+run, one shard of 40 runs costs about 2.5–3 hours including fixture setup, so `repeat 5` over the full
+large suite fits only if the job timeout is raised well above 180 minutes.
+
+When the estimate exceeds the timeout, **split by scenario** instead of lowering `repeat`: dispatch
+two runs over disjoint `--scenarios` subsets, let each upload its own shard, and combine with
+`--merge`. Every shard stays inside the budget and the `repeat 5` intervals survive. For example:
+
+```sh
+# shard A
+python3 scripts/agent_eval.py --execute --agents claude --suite large \
+  --scenarios stack-start,stack-subset,stack-slow-dependency,stack-stale-code \
+  --arms oberth,native --repeat 5 --out report-a
+# shard B
+python3 scripts/agent_eval.py --execute --agents claude --suite large \
+  --scenarios stack-parallel-three,stack-port-owner,stack-same-name-other-worktree,stack-overbuild \
+  --arms oberth,native --repeat 5 --out report-b
+# combine: refuses unless build, skill, scenarios and repeat agree
+python3 scripts/agent_eval.py --merge report-a/report.json --merge report-b/report.json
+```
+
+A cancelled shard is not reusable evidence: the upload contains raw run artifacts but no
+`report.json`, so it cannot be merged or scored.
+
 Harness self-check only (does not call a model):
 
 ```sh
@@ -361,7 +394,7 @@ allowlist:
 
 | agent | protocol | default model |
 |---|---|---|
-| Claude Code | Anthropic Messages | `reflection/beam:free` |
+| Claude Code | Anthropic Messages | `qwen-3.8-flash` |
 | Codex | Responses SSE (direct) | `gpt-6-luna` |
 | OpenCode | OpenAI Chat Completions | `step-5-preview` |
 | Pi | OpenAI Chat Completions | `space-bunny` |
