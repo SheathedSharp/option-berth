@@ -1332,5 +1332,211 @@ class MergeTests(unittest.TestCase):
         self.assertEqual(code, 1)
 
 
+class ShardPlanTests(unittest.TestCase):
+    def test_each_scenario_is_covered_once_per_agent(self) -> None:
+        import agent_eval
+
+        pairs = [
+            ("claude", lib.ARM_OBERTH), ("claude", lib.ARM_NATIVE),
+            ("codex", lib.ARM_OBERTH), ("codex", lib.ARM_NATIVE),
+        ]
+        plan = agent_eval.plan_experiment(
+            scenario_ids=["s1", "s2", "s3"], agent_arm_pairs=pairs, repeat=5,
+            shard_minutes=30, per_run_seconds=100, max_parallel=2,
+        )
+        self.assertEqual(plan["total_runs"], 3 * 2 * 2 * 5)
+        for agent in ("claude", "codex"):
+            seen = [
+                scenario
+                for shard in plan["shards"] if shard["agent"] == agent
+                for scenario in shard["scenarios"].split(",")
+            ]
+            self.assertEqual(sorted(seen), ["s1", "s2", "s3"])
+        # One smoke per agent, not one per shard.
+        self.assertEqual(sum(1 for shard in plan["shards"] if shard["smoke"]), 2)
+
+    def test_wall_clock_is_runner_minutes_divided_by_parallelism(self) -> None:
+        import agent_eval
+
+        plan = agent_eval.plan_experiment(
+            scenario_ids=["s1", "s2"], agent_arm_pairs=[("claude", lib.ARM_OBERTH)],
+            repeat=2, shard_minutes=60, per_run_seconds=100, max_parallel=4,
+        )
+        self.assertEqual(plan["max_parallel"], 4)
+        self.assertEqual(plan["estimated_minutes"], round(plan["total_run_minutes"] / 4, 1))
+
+    def test_plan_command_refuses_an_over_budget_experiment(self) -> None:
+        import contextlib
+        import io
+
+        import agent_eval
+
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            code = agent_eval.main([
+                "--plan", "--agents", "claude", "--suite", "core", "--repeat", "5",
+                "--per-run-seconds", "300", "--budget-minutes", "1",
+            ])
+        self.assertEqual(code, 1)
+
+    def test_plan_command_prints_the_matrix(self) -> None:
+        import contextlib
+        import io
+
+        import agent_eval
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = agent_eval.main([
+                "--plan", "--agents", "claude", "--suite", "core", "--repeat", "2",
+                "--budget-minutes", "0",
+            ])
+        self.assertEqual(code, 0)
+        plan = json.loads(out.getvalue())
+        self.assertEqual(plan["total_runs"], 6 * 1 * 2)
+        self.assertTrue(plan["shards"])
+
+
+class JournalTests(unittest.TestCase):
+    def meta(self) -> dict:
+        return {
+            "build": {"sha256": "abc", "version": "test", "commit": "deadbeef"},
+            "skill": {}, "agents": {"claude": "1"},
+            "arms": [lib.ARM_OBERTH], "passed_env": [], "agent_args": {},
+            "repeat": 2, "scenarios": ["stack-start"],
+            "scenario_prompts": {"stack-start": "do it"},
+            "compare_arms": [lib.ARM_OBERTH, lib.ARM_NATIVE],
+            "require_complete": False, "skill_present": False, "extra_notes": [],
+        }
+
+    def run_record(self) -> dict:
+        return {
+            "scenario": "stack-start", "agent": "claude", "arm": lib.ARM_OBERTH, "repeat": 1,
+            "status": "ok", "completed": True, "steps": 7, "steps_source": "agent-events",
+            "command_steps": 7, "oberth_calls": 1, "oberth_output_bytes": 0,
+            "process_probe_calls": 1, "agent_output_bytes": 100, "mis_stops": 0,
+            "cross_worktree_incidents": 0, "oob": [], "oob_count": 0, "checks": [],
+            "failed_checks": [], "notes": [], "build_sha": "abc", "duration_s": 1.0,
+            "agent_version": "1", "exit_code": 0, "timed_out": False, "ports": {}, "artifacts": {},
+            "score": lib.score_run(checks=[lib.check("outcome", True)], oob=[], actions=[], budget=20, steps=7),
+        }
+
+    def test_report_only_rebuilds_from_the_journal(self) -> None:
+        import agent_eval
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "shard"
+            agent_eval.write_journal(out, self.meta(), [self.run_record()])
+            meta, runs = agent_eval.read_journal(out / "journal.json")
+            self.assertEqual(meta["build"]["sha256"], "abc")
+            self.assertEqual(len(runs), 1)
+            code = agent_eval.main(["--report-only", str(out)])
+            self.assertEqual(code, 0)
+            report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(report["runs"]), 1)
+            self.assertTrue(report["summary"])
+
+
+class MergeUnionTests(unittest.TestCase):
+    def shard(self, agent: str, scenario_ids: list[str], *, version: str = "1") -> dict:
+        rows = []
+        for scenario in scenario_ids:
+            for arm in (lib.ARM_OBERTH, lib.ARM_NATIVE):
+                for repeat in (1, 2):
+                    rows.append({
+                        "scenario": scenario, "agent": agent, "arm": arm, "repeat": repeat,
+                        "status": "ok", "completed": True, "steps": 8, "steps_source": "agent-events",
+                        "command_steps": 8, "oberth_calls": 1, "oberth_output_bytes": 0,
+                        "process_probe_calls": 1, "agent_output_bytes": 100, "mis_stops": 0,
+                        "cross_worktree_incidents": 0, "oob": [], "oob_count": 0, "checks": [],
+                        "failed_checks": [], "notes": [], "build_sha": "abc", "duration_s": 1.0,
+                        "agent_version": version, "exit_code": 0, "timed_out": False,
+                        "ports": {}, "artifacts": {},
+                        "score": lib.score_run(checks=[lib.check("outcome", True)], oob=[], actions=[], budget=20, steps=8),
+                    })
+        return {
+            "schema": lib.REPORT_SCHEMA, "build": {"sha256": "abc"}, "skill": {"version": "1"},
+            "agents": {agent: version}, "arms": [lib.ARM_OBERTH, lib.ARM_NATIVE], "repeat": 2,
+            "scenarios": scenario_ids,
+            "scenario_prompts": {sid: f"prompt {sid}" for sid in scenario_ids},
+            "passed_env": [], "agent_args": {}, "runs": rows,
+        }
+
+    def write(self, payload: dict, name: str, root: Path) -> Path:
+        path = root / name
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def test_disjoint_scenario_shards_merge_into_one_experiment(self) -> None:
+        import agent_eval
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            a = self.write(self.shard("claude", ["stack-start"]), "a.json", root)
+            b = self.write(self.shard("claude", ["stack-subset"]), "b.json", root)
+            out = root / "merged"
+            code = agent_eval.merge_reports([str(a), str(b)], out, require_comparable=True)
+            self.assertEqual(code, 0)
+            report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["scenarios"], ["stack-start", "stack-subset"])
+            self.assertEqual({row["scenario"] for row in report["summary"]}, {"stack-start", "stack-subset"})
+
+    def test_coverage_gate_names_the_missing_scenario(self) -> None:
+        import agent_eval
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            a = self.write(self.shard("claude", ["stack-start"]), "a.json", root)
+            out = root / "merged"
+            code = agent_eval.merge_reports(
+                [str(a)], out, require_comparable=False,
+                expect_scenarios=["stack-start", "stack-subset"], require_coverage=True,
+            )
+            self.assertEqual(code, 1)
+            report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+            self.assertTrue(any("missing scenarios" in note for note in report["notes"]))
+
+    def test_two_cli_versions_for_one_agent_are_refused(self) -> None:
+        import agent_eval
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            a = self.write(self.shard("claude", ["stack-start"], version="1"), "a.json", root)
+            b = self.write(self.shard("claude", ["stack-subset"], version="2"), "b.json", root)
+            code = agent_eval.merge_reports(
+                [str(a), str(b)], root / "merged", require_comparable=False,
+            )
+            self.assertEqual(code, 1)
+
+
+class TurnPercentileTests(unittest.TestCase):
+    def rows(self, count: int) -> list[dict]:
+        return [
+            {
+                "scenario": "stack-start", "agent": "claude", "arm": lib.ARM_OBERTH,
+                "repeat": index + 1, "status": "ok", "completed": True, "steps": 5 + index,
+                "steps_source": "agent-events", "command_steps": 5 + index,
+                "oberth_calls": 1, "oberth_output_bytes": 0, "process_probe_calls": 0,
+                "agent_output_bytes": 0, "mis_stops": 0, "cross_worktree_incidents": 0,
+                "oob": [], "oob_count": 0, "checks": [], "failed_checks": [], "notes": [],
+                "build_sha": "abc", "duration_s": 1.0, "agent_version": "1", "exit_code": 0,
+                "timed_out": False, "ports": {}, "artifacts": {},
+                "score": lib.score_run(checks=[lib.check("outcome", True)], oob=[], actions=[], budget=50, steps=5),
+            }
+            for index in range(count)
+        ]
+
+    def test_percentile_is_nearest_rank(self) -> None:
+        self.assertEqual(lib._percentile([1, 2, 3, 4, 5], 95), 5)
+        self.assertEqual(lib._percentile([1, 2, 3, 4, 5], 50), 3)
+        self.assertIsNone(lib._percentile([], 95))
+
+    def test_p95_is_flagged_unreliable_below_twenty_runs(self) -> None:
+        five = lib.summarize_runs(self.rows(5), "abc")[0]
+        self.assertEqual(five["steps_p95"], 9)
+        self.assertFalse(five["steps_p95_reliable"])
+        twenty = lib.summarize_runs(self.rows(20), "abc")[0]
+        self.assertTrue(twenty["steps_p95_reliable"])
+
+
 if __name__ == "__main__":
     unittest.main()

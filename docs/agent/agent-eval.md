@@ -325,38 +325,51 @@ python3 scripts/agent_eval.py --execute \
 produces intervals (see "Intervals"). A three-arm large matrix at `--repeat 5` costs about 3.75× the
 two-arm `--repeat 2` run, so budget the scenario subset accordingly.
 
-### Budget a shard by wall clock, not by scenario count
+### Shards are sized by wall clock, and a cancelled shard still produces evidence
 
-`repeat 5` is not a free upgrade on the CI budget. On 2026-11-02 a `claude` shard of 8 large scenarios
+`repeat 5` is not a free upgrade on the CI budget. On 2026-11-02 a `claude` job of 8 large scenarios
 × 2 arms × 5 repeats ran one scenario every 3–8 minutes (median 208 s per run) and was killed by the
-job's 180-minute `timeout-minutes` at 181 minutes with 29 of 40 runs finished — the `merge` job then
-failed on the missing shard. The model was healthy; the shard was simply too large. Nothing in the
-report says "budget exceeded", so the only visible symptom is a cancelled `matrix` job and a `merge`
-that reports a missing shard.
+job's 180-minute `timeout-minutes` at 181 minutes with 29 of 40 runs finished. The model was healthy;
+the job was simply too large. The report is written at the end, so the 29 finished runs could not be
+scored, merged or resumed, and the merge job only said `missing shard(s)`.
 
-Estimate before dispatching: `scenarios × arms × repeat × per-run seconds`. At the observed ~200 s per
-run, one shard of 40 runs costs about 2.5–3 hours including fixture setup, so `repeat 5` over the full
-large suite fits only if the job timeout is raised well above 180 minutes.
+The workflow now makes the cost explicit instead of discovering it at the timeout:
 
-When the estimate exceeds the timeout, **split by scenario** instead of lowering `repeat`: dispatch
-two runs over disjoint `--scenarios` subsets, let each upload its own shard, and combine with
-`--merge`. Every shard stays inside the budget and the `repeat 5` intervals survive. For example:
+- **`plan` computes the shard matrix.** `scripts/agent_eval.py --plan` divides each provider's
+  scenarios into groups that fit `shard_minutes` at `per_run_seconds` per run, then multiplies by
+  `max_parallel` to estimate wall clock. `budget_minutes` is a gate: an experiment over budget fails
+  in `plan`, before any model call. The estimate, the shard table and the pinned skill commit are in
+  the job summary, so the approval prompt describes what is about to be spent.
+- **Every shard writes a journal after every run.** `<out>/journal.json` is rewritten atomically and
+  `if: always()` rebuilds `report.json` from it (`--report-only`). A cancelled or timed-out shard
+  uploads a partial report and the journal; it is not lost evidence.
+- **`--resume <journal.json>` skips completed keys.** Dispatch with `options.resume_run` set to a
+  previous run id and each shard downloads its matching artifact, then repeats only what is missing.
+  A harness error is retried; a real agent error is a result and is kept.
+- **`--max-consecutive-failures` is a circuit breaker.** After that many consecutive agent/harness
+  failures the shard stops and records why, instead of paying for the rest of the matrix.
+- **`--merge` unions disjoint shards.** What must match is the binary, the skill, the arm set, the
+  repeat count and the provider arguments; different scenarios and different agents are the point of
+  sharding. `--expect-scenarios` + `--require-coverage` report exactly which requested scenarios are
+  missing, and the merged report is written before the coverage gate exits non-zero.
+
+Local use is the same code path:
 
 ```sh
-# shard A
-python3 scripts/agent_eval.py --execute --agents claude --suite large \
-  --scenarios stack-start,stack-subset,stack-slow-dependency,stack-stale-code \
-  --arms oberth,native --repeat 5 --out report-a
-# shard B
-python3 scripts/agent_eval.py --execute --agents claude --suite large \
-  --scenarios stack-parallel-three,stack-port-owner,stack-same-name-other-worktree,stack-overbuild \
-  --arms oberth,native --repeat 5 --out report-b
-# combine: refuses unless build, skill, scenarios and repeat agree
-python3 scripts/agent_eval.py --merge report-a/report.json --merge report-b/report.json
+python3 scripts/agent_eval.py --plan --agents claude --suite large --arms oberth,native \
+  --repeat 5 --shard-minutes 60 --per-run-seconds 240 --max-parallel 4
+python3 scripts/agent_eval.py --execute --agents claude --suite large --repeat 5 \
+  --scenarios stack-start,stack-subset --out shard-a
+python3 scripts/agent_eval.py --report-only shard-a        # after a cancel
+python3 scripts/agent_eval.py --resume shard-a/journal.json --execute ... # continue
+python3 scripts/agent_eval.py --merge shard-a/report.json shard-b/report.json \
+  --expect-scenarios stack-start,stack-subset,stack-slow-dependency
 ```
 
-A cancelled shard is not reusable evidence: the upload contains raw run artifacts but no
-`report.json`, so it cannot be merged or scored.
+`steps_p95` is emitted as a real observation but carries `steps_p95_reliable: false` below
+`P95_MIN_RUNS` (20) valid runs. At `--repeat 5` it is the maximum wearing a percentile's name; the
+markdown shows it only when the flag is true, so a reader is not invited to treat n=5 as a tail
+estimate.
 
 Harness self-check only (does not call a model):
 
@@ -410,13 +423,15 @@ turn, because the provider required `reasoning_content` on every earlier assista
 client never sends it. A one-request probe cannot observe a second-request requirement, and a probe
 that reimplements the client cannot observe a client-side refusal.
 
-The gate is therefore the real runner, minimized: each `matrix` job runs
-`agent_eval.py --smoke` for its own agent before the scenario loop, using the **same** `common`
-argument array the matrix itself uses, so the preflight cannot test a different configuration from
-the one that runs. The smoke drives one cheap scenario (`missing-artifact`) through the ordinary
-runner and fails the shard when the agent reports an error or never takes a single action. Taking an
-action is what proves the model completed a full tool round trip — model asks, tool answers,
-conversation goes back — which is exactly the part one request cannot reach.
+The gate is therefore the real runner, minimized: **every shard job** runs `agent_eval.py --smoke`
+for its own provider before the scenario loop, using the **same** `common` argument array the matrix
+itself uses, so the preflight cannot test a different configuration from the one that runs. A shard
+is a fresh runner with a fresh agent install, so the smoke is repeated per shard on purpose: a
+provider that rejects turn two fails in a minute instead of after the shard's runs. The smoke drives
+one cheap scenario (`missing-artifact`) through the ordinary runner and fails the shard when the
+agent reports an error or never takes a single action. Taking an action is what proves the model
+completed a full tool round trip — model asks, tool answers, conversation goes back — which is
+exactly the part one request cannot reach.
 
 Codex's `gpt-6-luna` built-in metadata defaults to `tool_mode=code_mode_only` and
 `use_responses_lite=true`, which puts tools into an `additional_tools` input item instead of the
@@ -429,35 +444,53 @@ The workflow passes autonomous-execution arguments explicitly: Claude `--permiss
 Codex `--sandbox danger-full-access`, OpenCode `--auto`, Pi `--approve`. The harness itself still does
 not add these arguments; whether to allow them is the workflow operator's decision.
 
-Workflow inputs:
+Workflow inputs (`workflow_dispatch` allows ten; the tuning knobs share one JSON object):
 
 | input | default | description |
 |---|---|---|
 | `agents` | `claude,codex,opencode,pi` | which providers to run |
 | `suite` | `large` | `core` / `large` / `cold` / `all` |
 | `arms` | `oberth,native` | up to three: `oberth` / `oberth-noskill` / `native` |
-| `compare` | `oberth,native` | which pair the comparison table is built from |
 | `scenarios` | `all` | specific ids may also be named |
-| `repeat` | `2` | fewer than 2 is not comparable; fewer than 5 gives no intervals |
+| `repeat` | `2` | fewer than 2 is not comparable; fewer than 5 gives no intervals; p95 needs 20 |
+| `claude_model` … `pi_model` | model table above | one provider each |
+| `options` | `{}` | JSON tuning object, unknown keys rejected |
+
+`options` accepts:
+
+| key | default | meaning |
+|---|---|---|
+| `compare` | `oberth,native` | pair rendered in the comparison table (`TREATED,CONTROL`) |
+| `shard_minutes` | `60` | target wall-clock minutes per shard |
+| `per_run_seconds` | `240` | measured seconds per run, including setup |
+| `budget_minutes` | `240` | whole-experiment wall-clock gate; `0` disables |
+| `max_parallel` | `4` | shards at once; also used by the plan's estimate |
+| `shard_timeout_minutes` | `120` | hard timeout for one shard job |
+| `run_timeout` | `300` | hard timeout for one agent run, in seconds |
+| `max_consecutive_failures` | `3` | circuit breaker per shard; `0` disables |
+| `resume_run` | `""` | previous run id whose matching shards are resumed |
 
 The workflow has three jobs:
 
-1. **`plan`**: build `oberth`, run preflight on the core, large-project and cold-start fixtures
-   (exit 2 if listeners cannot be observed), and turn the `agents` input into a matrix;
-2. **`matrix`**: **one runner per agent, in parallel**; each proves its own agent with `--smoke`, then
-   runs only its own scenarios and uploads `agent-eval-shard-<agent>`; one agent failing does not
-   affect the others;
-3. **`merge`**: download all shards and combine them into one table with `--merge`; it requires all shards
-   to agree exactly on build, skill, scenarios and repeat, and otherwise refuses to merge.
+1. **`plan`** (ungated — it calls no model): validate `options`, build `oberth`, preflight the
+   fixtures, resolve the skill commit, and run `--plan` to produce the shard matrix and the budget
+   check. The estimate and shard table are on the run page **before** any approval, so the reviewer
+   sees what the run will cost;
+2. **`matrix`** (behind the `agent-eval` environment): one runner per shard (not per agent), at most
+   `max_parallel` at once. Each installs only its own provider, runs `--smoke`, then `--execute` on
+   its scenario subset; a cancelled or failed shard rebuilds a partial report from its journal and
+   uploads `agent-eval-shard-<shard>`;
+3. **`merge`**: unions the shards (`--merge`), reports coverage against the plan's scenarios, and
+   writes the merged report before a missing scenario can fail the gate.
 
-With concurrency, wall-clock time is roughly **the duration of one agent**, not the sum of four.
-`report.md` (including the comparison table chosen by the `compare` input, "oberth vs native" by
-default) is written to the job summary, and the merged report and the individual shards are kept as
-artifacts for 30 days.
+Wall clock is the plan's estimate: total run minutes divided by `max_parallel`, not the sum of one
+job per provider. `report.md` (including the comparison table chosen by `options.compare`) is in the
+job summary, and the merged report and individual shards are kept as artifacts for 30 days.
 
 How to run: Actions → **Agent eval / real agent matrix** → Run workflow → choose a branch (the
-environment allows only `main`) → approve in the environment approval prompt. A run without approval
-does not get the secrets and does not call a model.
+environment allows only `main`). The ungated `plan` job runs first and writes the shard table and
+wall-clock estimate to the run summary; review it, then approve the `matrix` deployment. A run
+without that approval does not get the secrets and does not call a model.
 
 It is not a required check and does not enter `scripts/release.py`; whether to adopt it as release
 evidence is still a human decision.

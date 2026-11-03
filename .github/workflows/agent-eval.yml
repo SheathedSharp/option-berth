@@ -1,12 +1,15 @@
 name: Agent eval / real agent matrix
 
-# This workflow spends real model tokens. It is manual-only and runs behind the
-# `agent-eval` environment, which requires an explicit reviewer approval before
-# any step starts. Do not add pull_request, push or schedule triggers.
+# This workflow spends real model tokens. It is manual-only. `plan` is cheap and
+# ungated so the cost estimate is on the run page before anyone approves; the
+# `matrix` job is behind the `agent-eval` environment and cannot call a model
+# until a reviewer approves it. Do not add pull_request, push or schedule
+# triggers.
 #
-# The matrix is sharded by agent: `plan` validates the gateway and fixtures and
-# emits the agent list, each `matrix` job runs one agent, and `merge` joins the
-# shards into one report. Wall-clock is roughly one agent's run, not four.
+# The matrix is sharded by the cost unit, not by agent: `plan` divides each
+# provider's scenarios into groups sized to a wall-clock target, and `merge`
+# unions the shards. A shard that is cancelled still uploads its journal and a
+# partial report; the next dispatch can resume it instead of paying twice.
 on:
   workflow_dispatch:
     inputs:
@@ -30,17 +33,19 @@ on:
         required: true
         default: oberth,native
         type: string
-      compare:
-        description: >-
-          Arm pair for the comparison table (TREATED,CONTROL). oberth,native is
-          product vs control; oberth,oberth-noskill isolates the skill.
-        required: true
-        default: oberth,native
-        type: string
       repeat:
-        description: Runs per scenario/agent/arm (>=2 makes rows comparable, >=5 adds intervals)
+        description: Runs per scenario/agent/arm (>=2 makes rows comparable, >=5 adds intervals; p95 needs >=20)
         required: true
         default: '2'
+        type: string
+      options:
+        description: >-
+          JSON tuning object; unknown keys are rejected. Keys and defaults:
+          compare (oberth,native), shard_minutes (60), per_run_seconds (240),
+          budget_minutes (240), max_parallel (4), shard_timeout_minutes (120),
+          run_timeout (300), max_consecutive_failures (3), resume_run ("").
+        required: false
+        default: '{}'
         type: string
       claude_model:
         description: Model for Claude Code through the Anthropic protocol
@@ -65,18 +70,22 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
+  # A new dispatch supersedes a stale experiment instead of queueing behind it.
+  # A cancelled matrix job still runs its `if: always()` steps, so the journal
+  # and partial report survive the cancellation.
   group: agent-eval
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   AGENTS: ${{ inputs.agents }}
   SUITE: ${{ inputs.suite }}
   SCENARIOS: ${{ inputs.scenarios }}
   ARMS: ${{ inputs.arms }}
-  COMPARE: ${{ inputs.compare }}
   REPEAT: ${{ inputs.repeat }}
+  OPTIONS: ${{ inputs.options }}
   CLAUDE_MODEL: ${{ inputs.claude_model }}
   CODEX_MODEL: ${{ inputs.codex_model }}
   OPENCODE_MODEL: ${{ inputs.opencode_model }}
@@ -87,10 +96,71 @@ jobs:
     name: Agent eval / plan
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    environment: agent-eval
+    # Deliberately not behind the environment: this job builds and preflights
+    # but never calls a model, so it can run before the approval and publish the
+    # cost estimate the approver needs. Only `matrix` is gated.
     outputs:
+      options: ${{ steps.options.outputs.options }}
+      shards: ${{ steps.matrix.outputs.shards }}
       agents: ${{ steps.matrix.outputs.agents }}
+      expected_scenarios: ${{ steps.matrix.outputs.expected_scenarios }}
+      total_runs: ${{ steps.matrix.outputs.total_runs }}
+      estimated_minutes: ${{ steps.matrix.outputs.estimated_minutes }}
+      skill_sha: ${{ steps.matrix.outputs.skill_sha }}
     steps:
+      - name: Validate the tuning options
+        id: options
+        shell: bash
+        run: |
+          set -euo pipefail
+          # One JSON object instead of eight more dispatch inputs (GitHub caps
+          # workflow_dispatch at ten). Unknown keys are rejected so a typo does
+          # not silently run with a default the operator did not intend.
+          python3 - "$OPTIONS" "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import sys
+
+          defaults = {
+              "compare": "oberth,native",
+              "shard_minutes": 60,
+              "per_run_seconds": 240,
+              "budget_minutes": 240,
+              "max_parallel": 4,
+              "shard_timeout_minutes": 120,
+              "run_timeout": 300,
+              "max_consecutive_failures": 3,
+              "resume_run": "",
+          }
+          raw = (sys.argv[1] or "").strip() or "{}"
+          try:
+              given = json.loads(raw)
+          except json.JSONDecodeError as exc:
+              raise SystemExit(f"options is not valid JSON: {exc}")
+          if not isinstance(given, dict):
+              raise SystemExit("options must be a JSON object")
+          unknown = sorted(set(given) - set(defaults))
+          if unknown:
+              raise SystemExit("unknown option(s): " + ", ".join(unknown))
+          merged = {**defaults, **given}
+          for key in ("shard_minutes", "per_run_seconds", "run_timeout"):
+              if not isinstance(merged[key], (int, float)) or merged[key] <= 0:
+                  raise SystemExit(f"options.{key} must be a positive number")
+          if not isinstance(merged["budget_minutes"], (int, float)) or merged["budget_minutes"] < 0:
+              raise SystemExit("options.budget_minutes must be zero or a positive number")
+          for key in ("shard_timeout_minutes", "max_parallel", "max_consecutive_failures"):
+              if not isinstance(merged[key], int) or merged[key] < 0:
+                  raise SystemExit(f"options.{key} must be a non-negative integer")
+          if merged["max_parallel"] < 1:
+              raise SystemExit("options.max_parallel must be at least 1")
+          if merged["shard_timeout_minutes"] < 1:
+              raise SystemExit("options.shard_timeout_minutes must be at least 1")
+          if "," not in str(merged["compare"]):
+              raise SystemExit("options.compare must be TREATED,CONTROL")
+          with open(sys.argv[2], "a", encoding="utf-8") as handle:
+              print("options=" + json.dumps(merged), file=handle)
+              for key, value in merged.items():
+                  print(f"{key}={value}", file=handle)
+          PY
       - name: Check out the engine and the pinned skill
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -145,17 +215,74 @@ jobs:
           # before any drafting run spends model quota.
           python3 scripts/agent_eval.py --dry-run --suite cold \
             --binary bin/oberth --out "$RUNNER_TEMP/agent-eval/preflight-cold"
-      - name: Publish the agent matrix
+      - name: Plan the shards and estimate the cost
         id: matrix
+        working-directory: source
         shell: bash
+        env:
+          SHARD_MINUTES: ${{ steps.options.outputs.shard_minutes }}
+          PER_RUN_SECONDS: ${{ steps.options.outputs.per_run_seconds }}
+          MAX_PARALLEL: ${{ steps.options.outputs.max_parallel }}
+          BUDGET_MINUTES: ${{ steps.options.outputs.budget_minutes }}
         run: |
           set -euo pipefail
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          # The plan is the budget gate: it refuses an experiment whose wall
+          # clock exceeds the dispatch's budget before any model is called.
+          python3 scripts/agent_eval.py --plan \
+            --agents "$AGENTS" --suite "$SUITE" --scenarios "$SCENARIOS" \
+            --arms "$ARMS" --repeat "$REPEAT" \
+            --shard-minutes "$SHARD_MINUTES" --per-run-seconds "$PER_RUN_SECONDS" \
+            --max-parallel "$MAX_PARALLEL" --budget-minutes "$BUDGET_MINUTES" \
+            > "$RUNNER_TEMP/agent-eval/plan.json"
+          python3 - "$RUNNER_TEMP/agent-eval/plan.json" "$GITHUB_OUTPUT" "$GITHUB_STEP_SUMMARY" \
+            "$GITHUB_WORKSPACE/option-berth-skill" <<'PY'
           import json
-          import os
+          import subprocess
+          import sys
+          from pathlib import Path
 
-          agents = [part.strip() for part in os.environ["AGENTS"].split(",") if part.strip()]
-          print("agents=" + json.dumps(agents))
+          plan = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          output, summary = Path(sys.argv[2]), Path(sys.argv[3])
+          skill_dir = sys.argv[4]
+          shards = plan["shards"]
+          agents = sorted({shard["agent"] for shard in shards})
+          scenarios = sorted({
+              scenario
+              for shard in shards
+              for scenario in shard["scenarios"].split(",")
+          })
+          skill_sha = subprocess.check_output(
+              ["git", "-C", skill_dir, "rev-parse", "HEAD"], text=True
+          ).strip()
+          with output.open("a", encoding="utf-8") as handle:
+              print("shards=" + json.dumps(shards), file=handle)
+              print("agents=" + json.dumps(agents), file=handle)
+              print("expected_scenarios=" + ",".join(scenarios), file=handle)
+              print(f"total_runs={plan['total_runs']}", file=handle)
+              print(f"estimated_minutes={plan['estimated_minutes']}", file=handle)
+              print(f"skill_sha={skill_sha}", file=handle)
+          lines = [
+              "## Agent eval plan",
+              "",
+              f"- agents: {', '.join(agents)}",
+              f"- scenarios: {len(scenarios)}",
+              f"- requested runs: **{plan['total_runs']}**",
+              f"- wall clock: **~{plan['estimated_minutes']} min** "
+              f"({plan['total_run_minutes']} runner-min at {plan['max_parallel']} parallel shard(s))",
+              f"- shard target: {plan['per_run_seconds']:g} s per run, "
+              f"{len(shards)} shard(s)",
+              f"- pinned skill: `{skill_sha[:12]}`",
+              "",
+              "| shard | agent | scenarios | runs | ~min |",
+              "|---|---|---|---:|---:|",
+          ]
+          for shard in shards:
+              lines.append(
+                  f"| {shard['name']} | {shard['agent']} | {shard['scenarios']} "
+                  f"| {shard['runs']} | {shard['estimated_minutes']} |"
+              )
+          with summary.open("a", encoding="utf-8") as handle:
+              handle.write("\n".join(lines) + "\n")
           PY
       - name: Share the built binary with the shards
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -166,17 +293,24 @@ jobs:
           if-no-files-found: error
 
   matrix:
-    name: Agent eval / ${{ matrix.agent }}
+    name: Agent eval / ${{ matrix.name }}
     needs: plan
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: ${{ fromJSON(needs.plan.outputs.options).shard_timeout_minutes }}
     environment: agent-eval
     strategy:
       fail-fast: false
+      max-parallel: ${{ fromJSON(needs.plan.outputs.options).max_parallel }}
       matrix:
-        agent: ${{ fromJSON(needs.plan.outputs.agents) }}
+        include: ${{ fromJSON(needs.plan.outputs.shards) }}
     env:
       AGENT: ${{ matrix.agent }}
+      SHARD_NAME: ${{ matrix.name }}
+      SHARD_SCENARIOS: ${{ matrix.scenarios }}
+      COMPARE: ${{ fromJSON(needs.plan.outputs.options).compare }}
+      RUN_TIMEOUT: ${{ fromJSON(needs.plan.outputs.options).run_timeout }}
+      MAX_CONSECUTIVE_FAILURES: ${{ fromJSON(needs.plan.outputs.options).max_consecutive_failures }}
+      RESUME_RUN: ${{ fromJSON(needs.plan.outputs.options).resume_run }}
     steps:
       - name: Check out the engine and the pinned skill
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -187,7 +321,7 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: SheathedSharp/option-berth-skill
-          ref: main
+          ref: ${{ needs.plan.outputs.skill_sha }}
           path: option-berth-skill
           persist-credentials: false
       - name: Download the engine under test
@@ -207,24 +341,27 @@ jobs:
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v4
         with:
           node-version: '22.20.0'
-      - name: Install coding agents
+      - name: Install this shard's agent
         shell: bash
         run: |
           set -euo pipefail
-          # Each matrix job is a fresh runner: the plan job's temp directory
-          # does not exist here, and the version log is written below.
+          # A fresh runner per shard: install only the provider this shard
+          # exercises, not all four.
           mkdir -p "$RUNNER_TEMP/agent-eval"
-          npm install -g --no-audit --no-fund \
-            @anthropic-ai/claude-code@2.1.314 \
-            @openai/codex@0.166.0 \
-            opencode-ai@1.19.5 \
-            @earendil-works/pi-coding-agent@1.4.0
-          for command in claude codex opencode pi; do
-            printf '%s: ' "$command"
-            command -v "$command"
-            "$command" --version 2>&1 | sed -n '1p'
-          done | tee "$RUNNER_TEMP/agent-eval/agent-versions.txt"
-          node --version | tee -a "$RUNNER_TEMP/agent-eval/agent-versions.txt"
+          case "$AGENT" in
+            claude)   package='@anthropic-ai/claude-code@2.1.314' ;;
+            codex)    package='@openai/codex@0.166.0' ;;
+            opencode) package='opencode-ai@1.19.5' ;;
+            pi)       package='@earendil-works/pi-coding-agent@1.4.0' ;;
+            *) echo "unknown agent: $AGENT" >&2; exit 1 ;;
+          esac
+          npm install -g --no-audit --no-fund "$package"
+          printf '%s: ' "$AGENT"
+          command -v "$AGENT"
+          "$AGENT" --version 2>&1 | sed -n '1p'
+          node --version
+          { printf '%s: ' "$AGENT"; command -v "$AGENT"; "$AGENT" --version 2>&1 | sed -n '1p'; node --version; } \
+            > "$RUNNER_TEMP/agent-eval/agent-versions.txt"
       - name: Align Codex tool exposure with the gateway contract
         if: matrix.agent == 'codex'
         shell: bash
@@ -314,7 +451,7 @@ jobs:
           (root / "pi" / "models.json").write_text(json.dumps(pi, indent=2) + "\n")
           PY
           echo "wrote $config_dir/opencode.json and $config_dir/pi/models.json"
-      - name: Run this agent's scenario matrix
+      - name: Run this agent's scenario shard
         working-directory: source
         shell: bash
         env:
@@ -332,6 +469,7 @@ jobs:
           OPENCODE_CONFIG: ${{ runner.temp }}/agent-eval/opencode.json
           PI_CODING_AGENT_DIR: ${{ runner.temp }}/agent-eval/pi
           PI_OFFLINE: '1'
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           codex_base="${GATEWAY_BASE_URL%/}"
@@ -340,13 +478,13 @@ jobs:
           fi
           # The agent's real configuration, assembled once. The smoke run and
           # the matrix share this array on purpose: a preflight that built its
-          # own flags would test a different setup from the one that runs, and
-          # a gate that tests a different setup is how a broken matrix passes.
+          # own flags would test a different setup from the one that runs.
           common=(
             --agents "$AGENT"
             --binary bin/oberth
             --skill-dir "$GITHUB_WORKSPACE/option-berth-skill"
-            --timeout 600
+            --timeout "$RUN_TIMEOUT"
+            --max-consecutive-failures "$MAX_CONSECUTIVE_FAILURES"
             --pass-env ANTHROPIC_BASE_URL
             --pass-env ANTHROPIC_AUTH_TOKEN
             --pass-env ANTHROPIC_MODEL
@@ -384,31 +522,80 @@ jobs:
             --agent-arg pi=--model
             --agent-arg "pi=gateway/$PI_MODEL"
           )
-          # The gate that decides whether this shard may spend hours. It runs
-          # the agent through one cheap real scenario instead of asking the
-          # gateway whether it accepts a model name. On 2026-11-02 the
-          # single-request check passed and all 80 rows then died on the second
-          # turn, because the provider wanted reasoning_content on every earlier
-          # assistant message and no one-request probe can observe a
-          # second-request requirement. The only honest preflight for "can this
-          # agent run" is to run it, configured exactly as the matrix is.
+          # A smoke is one cheap real scenario through this exact configuration.
+          # Every shard runs it: a shard is a fresh runner, and a provider that
+          # rejects turn two must fail in a minute, not after the shard's runs.
           python3 scripts/agent_eval.py --smoke "${common[@]}" \
             --out "$RUNNER_TEMP/agent-eval/smoke"
+
+          resume=()
+          if [[ -n "$RESUME_RUN" ]]; then
+            mkdir -p "$RUNNER_TEMP/resume"
+            if gh run download "$RESUME_RUN" -n "agent-eval-shard-$SHARD_NAME" \
+                -D "$RUNNER_TEMP/resume"; then
+              journal=$(find "$RUNNER_TEMP/resume" -name journal.json -print -quit)
+              if [[ -n "$journal" ]]; then
+                resume=(--resume "$journal")
+                echo "resuming from $journal" >&2
+              fi
+            else
+              echo "no resumable artifact agent-eval-shard-$SHARD_NAME in run $RESUME_RUN" >&2
+            fi
+          fi
 
           python3 scripts/agent_eval.py "${common[@]}" \
             --execute \
             --suite "$SUITE" \
-            --scenarios "$SCENARIOS" \
+            --scenarios "$SHARD_SCENARIOS" \
             --arms "$ARMS" \
             --compare "$COMPARE" \
             --repeat "$REPEAT" \
             --out "$GITHUB_WORKSPACE/agent-eval-report" \
-            --require-comparable
+            --require-comparable \
+            "${resume[@]}"
+      - name: Rebuild a partial report and summarize this shard
+        if: always()
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$GITHUB_WORKSPACE/agent-eval-report"
+          if [[ ! -f "$out/report.json" && -f "$out/journal.json" ]]; then
+            python3 scripts/agent_eval.py --report-only "$out" || true
+          fi
+          python3 - "$out" "$SHARD_NAME" "$AGENT" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          out, shard, agent = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+          report_path = out / "report.json"
+          if not report_path.is_file():
+              print(f"## {shard}\n\nNo report.json and no journal: the shard never reached a run.\n")
+              raise SystemExit(0)
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+          runs = report.get("runs") or []
+          ok = sum(1 for run in runs if run.get("status") == "ok")
+          failed = sum(1 for run in runs if run.get("status") == "agent_error")
+          harness = sum(1 for run in runs if run.get("status") == "harness_error")
+          note = "" if not any("aborted" in note for note in report.get("notes") or []) else " (partial: circuit breaker fired)"
+          print(f"## {shard}\n")
+          print(f"- agent: `{agent}`")
+          print(f"- runs recorded: **{len(runs)}**{note}")
+          print(f"- ok: {ok}, not completed: {len(runs) - ok - failed - harness}, agent errors: {failed}, harness errors: {harness}")
+          for row in report.get("summary") or []:
+              print(
+                  f"- {row['scenario']} / {row['arm']}: "
+                  f"completion {row['completion_rate']}, steps median {row['steps_median']}, "
+                  f"p95 {row['steps_p95']}"
+                  + ("" if row.get("steps_p95_reliable") else " (p95 unreliable at this n)")
+              )
+          PY
       - name: Keep this shard
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: agent-eval-shard-${{ matrix.agent }}
+          name: agent-eval-shard-${{ matrix.name }}
           path: |
             agent-eval-report/
             ${{ runner.temp }}/agent-eval/smoke/
@@ -420,10 +607,14 @@ jobs:
 
   merge:
     name: Agent eval / merge
-    needs: matrix
+    needs: [plan, matrix]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      # `plan` can fail before it emits options; the merge still runs so a
+      # partial experiment is visible, and the comparison needs a fallback.
+      COMPARE: ${{ needs.plan.outputs.options && fromJSON(needs.plan.outputs.options).compare || 'oberth,native' }}
     steps:
       - name: Check out the engine
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -431,54 +622,35 @@ jobs:
           persist-credentials: false
           path: source
       - name: Download every shard
-        # A failed agent produces no shard; the merge step reports which ones
-        # are missing instead of failing before it can say anything.
+        # A missing shard is a coverage fact the merge reports; it must not stop
+        # the merge from publishing the shards that did finish.
         continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: agent-eval-shard-*
           path: shards
           merge-multiple: false
-      - name: Check every requested agent produced a shard
-        working-directory: source
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - "$GITHUB_WORKSPACE/shards" "$AGENTS" <<'PY'
-          import json
-          import sys
-          from pathlib import Path
-
-          root, wanted = Path(sys.argv[1]), [a.strip() for a in sys.argv[2].split(",") if a.strip()]
-          present = set()
-          for path in root.rglob("report.json"):
-              try:
-                  report = json.loads(path.read_text(encoding="utf-8"))
-              except (OSError, json.JSONDecodeError):
-                  continue
-              present.update(report.get("agents") or {})
-          missing = [agent for agent in wanted if agent not in present]
-          if missing:
-              print(f"missing shard(s) for: {', '.join(missing)}", file=sys.stderr)
-              sys.exit(1)
-          print(f"shards present for: {', '.join(sorted(present))}")
-          PY
       - name: Merge the shards into one matrix
         working-directory: source
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$GITHUB_WORKSPACE/shards"
           mapfile -t reports < <(find "$GITHUB_WORKSPACE/shards" -name report.json -print | sort)
           if [ "${#reports[@]}" -eq 0 ]; then
-            echo "No shard report.json was produced." >&2
+            echo "No shard produced report.json." >&2
             exit 1
           fi
           args=(--merge)
           for report in "${reports[@]}"; do
             args+=("$report")
           done
-          args+=(--out "$GITHUB_WORKSPACE/agent-eval-merged" --require-comparable --compare "$COMPARE")
+          args+=(
+            --out "$GITHUB_WORKSPACE/agent-eval-merged"
+            --expect-scenarios "${{ needs.plan.outputs.expected_scenarios }}"
+            --require-coverage
+            --require-comparable
+            --compare "$COMPARE"
+          )
           python3 scripts/agent_eval.py "${args[@]}"
       - name: Publish the merged matrix to the job summary
         if: always()
