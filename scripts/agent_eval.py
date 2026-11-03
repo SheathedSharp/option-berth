@@ -35,6 +35,7 @@ from agent_eval_lib import (
     ARMS,
     COMMON_PROVIDER_ENV,
     MIN_INTERVAL_RUNS,
+    P95_MIN_RUNS,
     PROCESS_PROBE_COMMANDS,
     REPORT_SCHEMA,
     AgentSpec,
@@ -647,13 +648,17 @@ def parse_compare(value: str) -> tuple[str, str]:
 def merge_reports(
     paths: list[str], out_root: Path, *, require_comparable: bool,
     compare: tuple[str, str] = (ARM_OBERTH, ARM_NATIVE),
+    expect_scenarios: list[str] | None = None,
+    require_coverage: bool = False,
 ) -> int:
     """Combine shard reports into one matrix.
 
-    Sharding runs each agent on its own runner so the wall-clock equals one
-    agent's run. Merging is only sound when every shard used the same binary,
-    skill, scenarios and repeat count; a mismatch is reported instead of
-    silently averaged.
+    Shards of one experiment may cover different scenarios and different
+    agents — that is the point of splitting by the cost unit. What must match
+    is everything that would make two rows incomparable: the binary, the skill,
+    the arm set, the repeat count and the provider arguments. A scenario or
+    agent union is the merged experiment; an equality check here would reject
+    exactly the split the workflow is designed to produce.
     """
     shards = []
     for raw in paths:
@@ -669,13 +674,47 @@ def merge_reports(
 
     base = shards[0][1]
     for path, doc in shards[1:]:
-        for key in ("build", "skill", "repeat", "scenarios", "arms"):
+        for key in ("build", "skill", "repeat", "arms", "passed_env", "agent_args"):
             if doc.get(key) != base.get(key):
                 print(
                     f"merge: shard {path} differs on {key}; refusing to combine incomparable rows",
                     file=sys.stderr,
                 )
                 return 1
+
+    # A scenario id measured with a different prompt in another shard is a
+    # different task even though the id matches.
+    scenario_prompts: dict[str, str] = {}
+    for path, doc in shards:
+        for scenario_id, prompt in (doc.get("scenario_prompts") or {}).items():
+            if scenario_id in scenario_prompts and scenario_prompts[scenario_id] != prompt:
+                print(
+                    f"merge: shard {path} disagrees about the prompt for scenario {scenario_id!r}",
+                    file=sys.stderr,
+                )
+                return 1
+            scenario_prompts[scenario_id] = prompt
+    scenarios = sorted(
+        {scenario_id for _, doc in shards for scenario_id in (doc.get("scenarios") or [])}
+        | set(scenario_prompts)
+    )
+    if not scenarios:
+        print("merge: no shard names a scenario", file=sys.stderr)
+        return 1
+
+    # Two shards may both run claude; they must agree on the CLI version, or
+    # their rows were produced by different clients.
+    agents: dict[str, str] = {}
+    for path, doc in shards:
+        for agent_id, version in (doc.get("agents") or {}).items():
+            if agent_id in agents and agents[agent_id] != version:
+                print(
+                    f"merge: shard {path} reports {agent_id} {version!r}, "
+                    f"another shard reports {agents[agent_id]!r}",
+                    file=sys.stderr,
+                )
+                return 1
+            agents[agent_id] = version
 
     runs: list[dict[str, Any]] = []
     seen: dict[tuple[str, str, str, int], int] = {}
@@ -691,6 +730,17 @@ def merge_reports(
             seen[key] = len(runs)
             runs.append(run)
 
+    expected = list(expect_scenarios or [])
+    missing = [scenario_id for scenario_id in expected if scenario_id not in scenarios]
+    notes = [f"merged from {len(shards)} shard report(s)"]
+    if expected:
+        present = len(expected) - len(missing)
+        notes.append(f"coverage: {present}/{len(expected)} requested scenarios present")
+        if missing:
+            notes.append("missing scenarios: " + ", ".join(missing))
+    if len(agents) > 1:
+        notes.append(f"agents in this merge: {', '.join(sorted(agents))}")
+
     build = base["build"]
     summary = summarize_runs(runs, build["sha256"])
     comparable = bool(summary) and all(row["comparable"] for row in summary)
@@ -699,27 +749,196 @@ def merge_reports(
         "generated_at": utc_stamp(),
         "build": build,
         "skill": base.get("skill") or {},
-        "agents": base.get("agents") or {},
+        "agents": agents,
         "arms": base.get("arms") or [ARM_OBERTH],
         "passed_env": base.get("passed_env") or [],
         "agent_args": base.get("agent_args") or {},
         "repeat": base.get("repeat"),
-        "scenarios": base.get("scenarios") or [],
-        "scenario_prompts": base.get("scenario_prompts") or {},
+        "scenarios": scenarios,
+        "scenario_prompts": scenario_prompts,
         "comparable": comparable,
         "runs": runs,
         "summary": summary,
         "compare_arms": list(compare),
         "comparison": compare_arms(summary, *compare),
-        "notes": [f"merged from {len(shards)} shard report(s)"],
-        "cold_start": _cold_start_budget(runs, base.get("scenarios") or []),
+        "notes": notes,
+        "cold_start": _cold_start_budget(runs, scenarios),
     }
     json_path, md_path = write_report(out_root, payload)
     print(f"wrote {json_path}\nwrote {md_path}", file=sys.stderr)
+    if require_coverage and missing:
+        print(
+            f"require-coverage: missing {len(missing)} requested scenario(s): {', '.join(missing)}",
+            file=sys.stderr,
+        )
+        return 1
     if require_comparable and not comparable:
         print("require-comparable: the merged matrix is not comparable", file=sys.stderr)
         return 1
     return 0
+
+
+JOURNAL_SCHEMA = "oberth.agent-eval.journal/v1"
+
+
+def journal_path(out_root: Path) -> Path:
+    return out_root / "journal.json"
+
+
+def write_journal(out_root: Path, meta: dict[str, Any], runs: list[dict[str, Any]]) -> None:
+    """Persist every completed run immediately.
+
+    A cancelled job keeps whatever this file holds; the report is a view over
+    it, not the only copy. Rewriting the whole file is deliberate: a partial
+    line from a killed process must not turn the journal into an unreadable
+    one. The file is small (one record per run) and the rename is atomic.
+    """
+    out_root.mkdir(parents=True, exist_ok=True)
+    tmp = out_root / "journal.json.tmp"
+    doc = {"schema": JOURNAL_SCHEMA, "meta": meta, "runs": runs}
+    tmp.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    tmp.replace(journal_path(out_root))
+
+
+def read_journal(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    if doc.get("schema") != JOURNAL_SCHEMA:
+        raise ValueError(f"{path} is not an agent-eval journal")
+    return dict(doc.get("meta") or {}), list(doc.get("runs") or [])
+
+
+def assemble_payload(meta: dict[str, Any], runs: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build the report from the journal's meta and runs.
+
+    The same function serves a completed matrix and a report rebuilt after a
+    cancellation, so a partial report is not a second, weaker format.
+    """
+    build = meta["build"]
+    repeat = int(meta.get("repeat") or 1)
+    arms = list(meta.get("arms") or [ARM_OBERTH])
+    compare_pair = tuple(meta.get("compare_arms") or (ARM_OBERTH, ARM_NATIVE))
+    summary = summarize_runs(runs, build["sha256"])
+    comparison = compare_arms(summary, *compare_pair)
+    comparable = bool(summary) and all(row["comparable"] for row in summary)
+
+    notes: list[str] = list(meta.get("extra_notes") or [])
+    if repeat < 2:
+        notes.append("repeat=1: rows are single observations, not a comparable repeat series")
+    if repeat < MIN_INTERVAL_RUNS:
+        notes.append(
+            f"repeat={repeat}: below {MIN_INTERVAL_RUNS} the report gives point estimates only; "
+            "completion intervals and min/max ranges stay empty"
+        )
+    if repeat < P95_MIN_RUNS:
+        notes.append(
+            f"repeat={repeat}: steps_p95 is emitted as a real observation but flagged unreliable; "
+            f"a tail estimate needs {P95_MIN_RUNS}+ valid runs (at n={repeat} it equals the maximum)"
+        )
+    if not comparable and repeat >= 2:
+        notes.append("not every row is comparable; check harness/agent errors and the build sha")
+    if any(row["step_source"] and "fallback" in " ".join(row["step_source"]) for row in summary):
+        notes.append("at least one row fell back to shim command counts because provider events were not recognized")
+    if not meta.get("skill_present") and any(arm_uses_skill(arm) for arm in arms):
+        notes.append("no skill checkout found; skill-arm rows would not be comparable to a pinned skill")
+    if ARM_NATIVE in arms:
+        notes.append(
+            "native rows are the control: no skill and an oberth shim that exits 127; "
+            "compare_arms only pairs rows with the same scenario, provider and binary"
+        )
+    if ARM_OBERTH_NOSKILL in arms:
+        notes.append(
+            f"{ARM_OBERTH_NOSKILL} rows keep the product and the safety policy but drop the skill; "
+            f"pass --compare {ARM_OBERTH},{ARM_OBERTH_NOSKILL} to read the skill's contribution"
+        )
+    if meta.get("require_complete") and ARM_NATIVE in arms:
+        notes.append("require-complete scores the control too; run it with --arms oberth when asserting product completion")
+
+    return {
+        "schema": REPORT_SCHEMA,
+        "generated_at": utc_stamp(),
+        "build": build,
+        "skill": meta.get("skill") or {},
+        "agents": meta.get("agents") or {},
+        "arms": arms,
+        "passed_env": meta.get("passed_env") or [],
+        "agent_args": meta.get("agent_args") or {},
+        "repeat": repeat,
+        "scenarios": meta.get("scenarios") or [],
+        "scenario_prompts": meta.get("scenario_prompts") or {},
+        "comparable": comparable,
+        "runs": runs,
+        "summary": summary,
+        "compare_arms": list(compare_pair),
+        "comparison": comparison,
+        "notes": notes,
+        "cold_start": _cold_start_budget(runs, meta.get("scenarios") or []),
+    }
+
+
+def plan_experiment(
+    *,
+    scenario_ids: list[str],
+    agent_arm_pairs: list[tuple[str, str]],
+    repeat: int,
+    shard_minutes: float,
+    per_run_seconds: float,
+    max_parallel: int = 4,
+) -> dict[str, Any]:
+    """Split the work by the cost unit, not by agent.
+
+    One agent's whole suite in one job is what turned a healthy 40-run matrix
+    into a three-hour timeout. The plan groups scenarios so each job fits a
+    wall-clock target; the workflow then runs those groups as a matrix.
+    """
+    overhead_s = 30.0
+    per_run_s = max(1.0, float(per_run_seconds)) + overhead_s
+    shards: list[dict[str, Any]] = []
+    for agent_id in sorted({agent for agent, _ in agent_arm_pairs}):
+        arms = [arm for agent, arm in agent_arm_pairs if agent == agent_id]
+        per_scenario_s = len(arms) * repeat * per_run_s
+        per_shard = (
+            max(1, int(float(shard_minutes) * 60 // per_scenario_s))
+            if shard_minutes > 0 else len(scenario_ids)
+        )
+        group: list[str] = []
+        index = 0
+        for scenario_id in scenario_ids:
+            group.append(scenario_id)
+            if len(group) >= per_shard:
+                index += 1
+                shards.append(_shard(agent_id, index, group, len(arms), repeat, per_run_s))
+                group = []
+        if group:
+            index += 1
+            shards.append(_shard(agent_id, index, group, len(arms), repeat, per_run_s))
+    total_runs = sum(shard["runs"] for shard in shards)
+    parallelism = max(1, int(max_parallel))
+    # Divisible runner time is not wall clock: the number that matters for a
+    # human waiting on the run is total run minutes divided by how many shards
+    # execute at once. Round up because the last wave is usually partial.
+    wall_minutes = round(total_runs * per_run_s / 60 / parallelism, 1)
+    return {
+        "total_runs": total_runs,
+        "total_run_minutes": round(total_runs * per_run_s / 60, 1),
+        "estimated_minutes": wall_minutes,
+        "max_parallel": parallelism,
+        "per_run_seconds": per_run_s,
+        "shards": shards,
+    }
+
+
+def _shard(agent_id: str, index: int, group: list[str], arms: int, repeat: int, per_run_s: float) -> dict[str, Any]:
+    runs = len(group) * arms * repeat
+    return {
+        "name": f"{agent_id}-{index}",
+        "agent": agent_id,
+        "scenarios": ",".join(group),
+        "runs": runs,
+        "estimated_minutes": round(runs * per_run_s / 60, 1),
+        # The first shard of an agent proves the loop before the rest spend
+        # tokens; a failed smoke stops that agent without touching its siblings.
+        "smoke": index == 1,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -745,6 +964,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--execute", action="store_true", help="run agents and write the matrix")
     parser.add_argument("--merge", action="append", default=[], metavar="REPORT_JSON",
                         help="merge shard report.json files into one matrix (repeatable)")
+    parser.add_argument("--expect-scenarios", default="",
+                        help="comma list of scenarios the experiment was supposed to cover; merge reports coverage")
+    parser.add_argument("--require-coverage", action="store_true",
+                        help="with --merge: exit 1 when a requested scenario is missing")
+    parser.add_argument("--plan", action="store_true",
+                        help="print the shard matrix and wall-clock estimate; run no agent")
+    parser.add_argument("--shard-minutes", type=float, default=60.0,
+                        help="target wall-clock minutes per shard for --plan (default: 60)")
+    parser.add_argument("--per-run-seconds", type=float, default=240.0,
+                        help="measured seconds per agent run for --plan's estimate (default: 240)")
+    parser.add_argument("--budget-minutes", type=float, default=240.0,
+                        help="--plan exits 1 when its wall-clock estimate exceeds this (0 disables; default: 240)")
+    parser.add_argument("--max-parallel", type=int, default=4,
+                        help="--plan: how many shards run at once, for the wall-clock estimate (default: 4)")
+    parser.add_argument("--report-only", default=None, metavar="DIR_OR_JOURNAL",
+                        help="rebuild report.json/report.md from a journal left by a cancelled run")
+    parser.add_argument("--resume", default=None, metavar="JOURNAL_JSON",
+                        help="reuse completed runs from an earlier journal instead of repeating them")
+    parser.add_argument("--max-consecutive-failures", type=int, default=3,
+                        help="abort the shard after this many consecutive agent/harness failures (0 disables; default: 3)")
     parser.add_argument("--agents", default="", help="comma list of agents, or all (claude,codex,opencode,pi)")
     parser.add_argument("--scenarios", default="all", help="comma list of scenario ids, or all")
     parser.add_argument("--suite", default="all", choices=["all", *SUITES],
@@ -773,10 +1012,28 @@ def main(argv: list[str] | None = None) -> int:
     if args.merge:
         stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
         out_root = Path(args.out).expanduser().resolve() if args.out else ROOT / ".agent-eval" / stamp
+        expected = (
+            parse_list(args.expect_scenarios, list(SCENARIOS), "scenario")
+            if args.expect_scenarios.strip() else None
+        )
         return merge_reports(
             args.merge, out_root,
             require_comparable=args.require_comparable, compare=compare_pair,
+            expect_scenarios=expected, require_coverage=args.require_coverage,
         )
+
+    if args.report_only:
+        target = Path(args.report_only).expanduser().resolve()
+        journal = target if target.name == "journal.json" else target / "journal.json"
+        try:
+            meta, runs = read_journal(journal)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            parser.error(f"--report-only: {exc}")
+        out_dir = target.parent if target.name == "journal.json" else target
+        payload = assemble_payload(meta, runs)
+        json_path, md_path = write_report(out_dir, payload)
+        print(f"wrote {json_path}\nwrote {md_path}", file=sys.stderr)
+        return 0
 
     if args.list:
         for suite in SUITES:
@@ -793,11 +1050,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {agent_id:28} {spec.label} ({available}, skill={spec.skill_injection})")
         return 0
 
-    modes = sum(bool(value) for value in (args.dry_run, args.execute, args.smoke))
+    modes = sum(bool(value) for value in (args.dry_run, args.execute, args.smoke, args.plan))
     if modes != 1:
-        parser.error("choose exactly one of --dry-run, --smoke or --execute (or use --list)")
+        parser.error("choose exactly one of --dry-run, --smoke, --plan or --execute (or use --list)")
     if args.smoke and not args.agents.strip():
         parser.error("--smoke needs --agents: the point is to prove the agents you are about to run")
+    if args.plan and not args.agents.strip():
+        parser.error("--plan needs --agents: the shard matrix is per provider")
 
     if args.repeat < 1:
         parser.error("--repeat must be at least 1")
@@ -853,6 +1112,37 @@ def main(argv: list[str] | None = None) -> int:
         if not name.isidentifier():
             parser.error(f"--pass-env expects an environment variable name, got {name!r}")
 
+    if args.plan:
+        plan = plan_experiment(
+            scenario_ids=scenario_ids,
+            agent_arm_pairs=agent_arm_pairs,
+            repeat=args.repeat,
+            shard_minutes=args.shard_minutes,
+            per_run_seconds=args.per_run_seconds,
+            max_parallel=args.max_parallel,
+        )
+        print(json.dumps(plan, indent=2))
+        for shard in plan["shards"]:
+            print(
+                f"shard {shard['name']}: {shard['scenarios']} "
+                f"({shard['runs']} run(s), ~{shard['estimated_minutes']} min)",
+                file=sys.stderr,
+            )
+        print(
+            f"plan: {plan['total_runs']} run(s), {plan['total_run_minutes']} runner-min, "
+            f"~{plan['estimated_minutes']} min wall clock at {plan['max_parallel']} parallel shard(s) "
+            f"(at {plan['per_run_seconds']:g} s per run including setup)",
+            file=sys.stderr,
+        )
+        if args.budget_minutes and plan["estimated_minutes"] > args.budget_minutes:
+            print(
+                f"plan: estimated {plan['estimated_minutes']} min exceeds --budget-minutes "
+                f"{args.budget_minutes:g}; split the scenarios or lower --repeat",
+                file=sys.stderr,
+            )
+            return 1
+        return 0
+
     binary = Path(args.binary).expanduser().resolve()
     build = build_identity(binary)
     skill = find_skill_dir(args.skill_dir)
@@ -883,13 +1173,60 @@ def main(argv: list[str] | None = None) -> int:
             agent_ids, out_root=out_root, binary=binary, skill=skill, extras=extras, args=args,
         )
 
+    meta: dict[str, Any] = {
+        "build": build,
+        "skill": skill_info,
+        "agents": {agent_id: AGENTS[agent_id].version() for agent_id in agent_ids},
+        "arms": arm_ids,
+        "passed_env": sorted(args.pass_env),
+        "agent_args": extras,
+        "repeat": args.repeat,
+        "scenarios": scenario_ids,
+        "scenario_prompts": {scenario_id: SCENARIOS[scenario_id].prompt for scenario_id in scenario_ids},
+        "compare_arms": list(compare_pair),
+        "require_complete": args.require_complete,
+        "skill_present": skill is not None,
+        "extra_notes": [],
+    }
+    requested_keys = {
+        (scenario_id, agent_id, arm, repeat)
+        for scenario_id in scenario_ids
+        for agent_id, arm in agent_arm_pairs
+        for repeat in range(1, args.repeat + 1)
+    }
+
     runs: list[dict[str, Any]] = []
+    resume_keys: set[tuple[str, str, str, int]] = set()
+    if args.resume:
+        resume_path = Path(args.resume).expanduser().resolve()
+        try:
+            resume_meta, resume_runs = read_journal(resume_path)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f"resume: cannot read {resume_path}: {exc}", file=sys.stderr)
+            return 1
+        if (resume_meta.get("build") or {}).get("sha256") != build["sha256"]:
+            print("resume: the journal was produced by a different binary; refusing to mix builds", file=sys.stderr)
+            return 1
+        for run in resume_runs:
+            key = (run.get("scenario"), run.get("agent"), run.get("arm"), run.get("repeat"))
+            if key in requested_keys and run.get("status") != "harness_error":
+                runs.append(run)
+                resume_keys.add(key)
+        meta["extra_notes"].append(f"resumed {len(runs)} completed run(s) from {resume_path}")
+
+    out_root.mkdir(parents=True, exist_ok=True)
+    write_journal(out_root, meta, runs)
+
+    consecutive = 0
+    aborted = False
     for scenario_id in scenario_ids:
         scenario = SCENARIOS[scenario_id]
         for agent_id, arm in agent_arm_pairs:
             spec = AGENTS[agent_id]
             if agent_id != "reference" and not shutil.which(spec.command):
                 for repeat in range(1, args.repeat + 1):
+                    if (scenario_id, agent_id, arm, repeat) in resume_keys:
+                        continue
                     runs.append({
                         "scenario": scenario_id, "agent": agent_id, "arm": arm, "repeat": repeat,
                         "status": "harness_error", "completed": False, "steps": None,
@@ -903,8 +1240,13 @@ def main(argv: list[str] | None = None) -> int:
                         "build_sha": build["sha256"], "agent_version": None,
                         "exit_code": None, "timed_out": False, "ports": {}, "artifacts": {},
                     })
+                write_journal(out_root, meta, runs)
                 continue
             for repeat in range(1, args.repeat + 1):
+                key = (scenario_id, agent_id, arm, repeat)
+                if key in resume_keys:
+                    print(f"skip {scenario_id} / {agent_id} / {arm} / {repeat}: resumed", file=sys.stderr)
+                    continue
                 print(f"run {scenario_id} / {agent_id} / {arm} / {repeat}...", file=sys.stderr)
                 record = execute_run(
                     scenario, agent_id, spec, repeat, arm=arm,
@@ -912,74 +1254,53 @@ def main(argv: list[str] | None = None) -> int:
                     build=build, extras=extras.get(agent_id, []),
                 )
                 runs.append(record)
+                # The journal is the evidence a cancelled job leaves behind:
+                # write it before anything that can fail.
+                write_journal(out_root, meta, runs)
                 print(
                     f"  {record['status']}: completed={record['completed']} "
                     f"steps={record['steps']} probes={record['process_probe_calls']} "
                     f"oob={record['oob_count']}",
                     file=sys.stderr,
                 )
+                if record["status"] in ("agent_error", "harness_error"):
+                    consecutive += 1
+                else:
+                    consecutive = 0
+                if args.max_consecutive_failures > 0 and consecutive >= args.max_consecutive_failures:
+                    print(
+                        f"aborting shard: {consecutive} consecutive agent/harness failures; "
+                        "the remaining runs would be evidence about the provider, not the product",
+                        file=sys.stderr,
+                    )
+                    aborted = True
+                    break
+            if aborted:
+                break
+        if aborted:
+            break
 
-    summary = summarize_runs(runs, build["sha256"])
-    comparison = compare_arms(summary, *compare_pair)
-    comparable = bool(summary) and all(row["comparable"] for row in summary)
-    notes: list[str] = []
-    if args.repeat < 2:
-        notes.append("repeat=1: rows are single observations, not a comparable repeat series")
-    if args.repeat < MIN_INTERVAL_RUNS:
-        notes.append(
-            f"repeat={args.repeat}: below {MIN_INTERVAL_RUNS} the report gives point estimates only; "
-            "completion intervals and min/max ranges stay empty"
+    if aborted:
+        meta["extra_notes"].append(
+            f"aborted after {consecutive} consecutive agent/harness failures; this report is partial"
         )
-    if not comparable and args.repeat >= 2:
-        notes.append("not every row is comparable; check harness/agent errors and the build sha")
-    if any(row["step_source"] and "fallback" in " ".join(row["step_source"]) for row in summary):
-        notes.append("at least one row fell back to shim command counts because provider events were not recognized")
-    if skill is None and any(arm_uses_skill(arm) for _, arm in agent_arm_pairs):
-        notes.append("no skill checkout found; skill-arm rows would not be comparable to a pinned skill")
-    if ARM_NATIVE in arm_ids:
-        notes.append(
-            "native rows are the control: no skill and an oberth shim that exits 127; "
-            "compare_arms only pairs rows with the same scenario, provider and binary"
-        )
-    if ARM_OBERTH_NOSKILL in arm_ids:
-        notes.append(
-            f"{ARM_OBERTH_NOSKILL} rows keep the product and the safety policy but drop the skill; "
-            f"pass --compare {ARM_OBERTH},{ARM_OBERTH_NOSKILL} to read the skill's contribution"
-        )
-    if args.require_complete and ARM_NATIVE in arm_ids:
-        notes.append("require-complete scores the control too; run it with --arms oberth when asserting product completion")
-    payload = {
-        "schema": REPORT_SCHEMA,
-        "generated_at": utc_stamp(),
-        "build": build,
-        "skill": skill_info,
-        "agents": {agent_id: AGENTS[agent_id].version() for agent_id in agent_ids},
-        "arms": arm_ids,
-        "passed_env": sorted(args.pass_env),
-        "agent_args": extras,
-        "repeat": args.repeat,
-        "scenarios": scenario_ids,
-        "scenario_prompts": {scenario_id: SCENARIOS[scenario_id].prompt for scenario_id in scenario_ids},
-        "comparable": comparable,
-        "runs": runs,
-        "summary": summary,
-        "compare_arms": list(compare_pair),
-        "comparison": comparison,
-        "notes": notes,
-        "cold_start": _cold_start_budget(runs, scenario_ids),
-    }
+        write_journal(out_root, meta, runs)
+
+    payload = assemble_payload(meta, runs)
     json_path, md_path = write_report(out_root, payload)
     print(f"wrote {json_path}\nwrote {md_path}", file=sys.stderr)
 
+    if aborted:
+        return 1
     if args.require_complete:
         bad = [
-            row for row in summary
+            row for row in payload["summary"]
             if row["valid_runs"] == 0 or row["completion_rate"] != 1 or row["oob_total"] != 0
         ]
         if bad:
             print(f"require-complete: {len(bad)} row(s) failed", file=sys.stderr)
             return 1
-    if args.require_comparable and not comparable:
+    if args.require_comparable and not payload["comparable"]:
         print("require-comparable: the matrix is not comparable", file=sys.stderr)
         return 1
     return 0

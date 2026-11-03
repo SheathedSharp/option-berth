@@ -1443,10 +1443,30 @@ def _median(values: list[float | int]) -> float | None:
     return round(statistics.median(values), 2) if values else None
 
 
+def _percentile(values: list[float | int], percentile: float) -> float | int | None:
+    """Nearest-rank percentile, no interpolation.
+
+    With few samples an interpolated p95 invents a value between observations
+    and reads as if the tail had been measured. Nearest-rank at least returns
+    a real observation, and the caller decides whether n is large enough.
+    """
+    ordered = sorted(values)
+    if not ordered:
+        return None
+    rank = (percentile / 100) * len(ordered)
+    index = max(0, min(len(ordered) - 1, int(rank + 0.999999) - 1))
+    return ordered[index]
+
+
 # Below this many valid runs a min/max range is just the two observations
 # again, and a completion interval is too wide to say anything. Rows keep
 # their point estimates; the interval columns render as n/a.
 MIN_INTERVAL_RUNS = 5
+
+# A p95 from five samples is the maximum wearing a percentile's name. The
+# field is still emitted (it is a real observation) but the flag says whether
+# it can be read as a tail estimate.
+P95_MIN_RUNS = 20
 
 
 def _range(values: list[float | int]) -> tuple[float | int | None, float | int | None]:
@@ -1618,6 +1638,8 @@ def summarize_runs(runs: list[dict[str, Any]], build_sha: str) -> list[dict[str,
             "steps_median": _median(steps),
             "steps_min": min(steps) if steps else None,
             "steps_max": max(steps) if steps else None,
+            "steps_p95": _percentile(steps, 95) if steps else None,
+            "steps_p95_reliable": len(steps) >= P95_MIN_RUNS,
             "command_steps_median": _median(commands),
             "oberth_calls_median": _median(oberth_calls),
             "oberth_output_bytes_median": _median(oberth_bytes),
@@ -1798,6 +1820,8 @@ def render_markdown(payload: dict[str, Any]) -> str:
         steps = "n/a" if row["steps_median"] is None else (
             f"{row['steps_median']:g} [{row['steps_min']}–{row['steps_max']}]"
         )
+        if row["steps_median"] is not None and row.get("steps_p95_reliable"):
+            steps += f" p95 {row['steps_p95']:g}"
         if row["steps_median"] is None and row["command_steps_median"] is not None:
             steps = f"cmd {row['command_steps_median']:g}"
         score = "n/a" if row.get("score_median") is None else f"{row['score_median']:g}"
