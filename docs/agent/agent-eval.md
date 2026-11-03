@@ -466,7 +466,7 @@ Workflow inputs (`workflow_dispatch` allows ten; the tuning knobs share one JSON
 | `budget_minutes` | `240` | whole-experiment wall-clock gate; `0` disables |
 | `max_parallel` | `4` | shards at once; also used by the plan's estimate |
 | `shard_timeout_minutes` | `120` | hard timeout for one shard job |
-| `run_timeout` | `300` | hard timeout for one agent run, in seconds |
+| `run_timeout` | `600` | hard timeout for one agent run, in seconds |
 | `max_consecutive_failures` | `3` | circuit breaker per shard; `0` disables |
 | `resume_run` | `""` | previous run id whose matching shards are resumed |
 

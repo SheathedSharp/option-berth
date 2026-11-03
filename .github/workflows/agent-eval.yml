@@ -43,7 +43,7 @@ on:
           JSON tuning object; unknown keys are rejected. Keys and defaults:
           compare (oberth,native), shard_minutes (60), per_run_seconds (240),
           budget_minutes (240), max_parallel (4), shard_timeout_minutes (120),
-          run_timeout (300), max_consecutive_failures (3), resume_run ("").
+          run_timeout (600), max_consecutive_failures (3), resume_run ("").
         required: false
         default: '{}'
         type: string
@@ -127,7 +127,7 @@ jobs:
               "budget_minutes": 240,
               "max_parallel": 4,
               "shard_timeout_minutes": 120,
-              "run_timeout": 300,
+              "run_timeout": 600,
               "max_consecutive_failures": 3,
               "resume_run": "",
           }
