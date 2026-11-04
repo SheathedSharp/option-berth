@@ -84,27 +84,27 @@ SHA256SUMS 校验说明。
 
 ### Cloudflare Pages（公开站点 `oberth.zayju.de`）
 
-公开站点由 Cloudflare Pages 从本仓库直接构建，GitHub Pages 保留为预览与回退。构建只依赖
-Python 标准库，不需要 npm 或私有令牌。
+公开站点由 `Product website / Cloudflare` 工作流部署。它由 `Product website` 的完成事件触发，
+只在同一提交的构建与浏览器验证成功、且事件是 `main` 的 push 时，才用 wrangler 把 `site/dist`
+发到 Pages 项目 `option-berth`。GitHub Pages 保留为预览与回退，两者读同一份构建。
 
-1. Cloudflare 控制台 → **Workers & Pages** → **Create** → **Pages** → **Connect to Git**，
-   选择 `SheathedSharp/option-berth`，生产分支 `main`。
-2. 构建配置：
-   - Build command：`SITE_URL=https://oberth.zayju.de/ python3 site/build.py`
-   - Build output directory：`site/dist`
-   - Root directory：留空（构建命令从仓库根运行）
-   - 环境变量：`SITE_URL=https://oberth.zayju.de/`（也可以直接写在构建命令里）
-3. **Custom domains** → **Set up a domain** → `oberth.zayju.de`。`zayju.de` 的 DNS 已在
-   Cloudflare 时，控制台会自动创建指向 `<project>.pages.dev` 的 CNAME；不在同一账户时，
-   手动添加 CNAME `oberth` → `<project>.pages.dev`，等待证书签发。
-4. 打开 `https://oberth.zayju.de/`，确认 `/en/`、`sitemap.xml`、`robots.txt` 与
-   canonical/`og:url` 都指向新域名。
+仓库 secret（已配置）：
 
-`SITE_URL` 只影响 canonical、`og:url`、`hreflang`、`robots.txt` 和 `sitemap.xml`；页面
-本身不含绝对地址，因此两种部署共用同一份 `site/dist` 结构。Cloudflare 构建设置新域名后，
-GitHub Pages 的构建仍按默认地址生成，作为预览；公开域名稳定后可把 `site/build.py` 的默认值
-改成新域名，或继续在 Pages 项目里保留 `SITE_URL`。
+| secret | 用途 |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | 部署 Pages |
+| `CLOUDFLARE_ACCOUNT_ID` | 指定账户 |
 
-Cloudflare Pages 的构建镜像需要 `python3`；`site/build.py` 只用标准库，若构建环境没有
-Python，可改用仓库的 `Product website` 工作流构建后，用 `wrangler pages deploy site/dist`
-做 Direct Upload（需要 `CLOUDFLARE_API_TOKEN` 与 `CLOUDFLARE_ACCOUNT_ID`）。
+手动部署（首次或工作流不可用时）：
+
+```sh
+SITE_URL=https://oberth.zayju.de/ python3 site/build.py
+CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... \
+  npx --yes wrangler@4.157.0 pages deploy site/dist \
+  --project-name option-berth --branch main --commit-dirty=true
+```
+
+自定义域：Pages 项目 → **Custom domains** → `oberth.zayju.de`。`zayju.de` 在同一 Cloudflare
+账户时会自动创建 CNAME；否则手动添加 CNAME `oberth` → `option-berth.pages.dev`（代理开启），
+等待证书签发。`SITE_URL` 只影响 canonical、`og:url`、`hreflang`、`robots.txt` 和
+`sitemap.xml`；页面本身不含绝对地址。
