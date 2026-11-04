@@ -72,6 +72,16 @@ test('command filter, empty state and Escape reset', async ({page}) => {
   await expect(page.locator('#command-empty')).toBeHidden();
 });
 
+test('measured proof is present in both locales', async ({page}) => {
+  await page.goto('./');
+  await expect(page.locator('#proof-title')).toBeVisible();
+  await expect(page.locator('.proof-table')).toContainText('40/40');
+  await expect(page.locator('.proof-table')).toContainText('29/40');
+  await page.locator('.language').click();
+  await expect(page.locator('#proof-title')).toContainText('Done is the metric.');
+  await expect(page.locator('.proof-table')).toContainText('40/40');
+});
+
 test('real static language navigation and product links', async ({page}) => {
   await page.goto('./');
   await expect(page.locator('.close-products a')).toHaveCount(3);

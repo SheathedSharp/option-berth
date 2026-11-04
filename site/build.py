@@ -4,10 +4,17 @@ from pathlib import Path
 from string import Template
 import html
 import json
+import os
 import shutil
 
 ROOT = Path(__file__).resolve().parent
-SITE = "https://sheathedsharp.github.io/option-berth/"
+# The canonical host is a build input: GitHub Pages remains the default preview,
+# while the public site is served from Cloudflare Pages on its own domain.
+SITE = os.environ.get("SITE_URL", "https://sheathedsharp.github.io/option-berth/").strip()
+if not SITE.startswith(("https://", "http://")):
+    raise ValueError("SITE_URL must be an absolute http(s) URL")
+if not SITE.endswith("/"):
+    SITE += "/"
 ASSETS = ("icon.svg", "mark.svg", "mark-dark.svg", "boot.js", "site.css", "site.js")
 
 

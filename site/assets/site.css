@@ -54,6 +54,17 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
   outline-offset: 3px;
 }
 [hidden] { display: none !important; }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
 .wrap {
   width: 100%;
   max-width: 1760px;
@@ -202,6 +213,81 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
   color: var(--ink);
 }
 .ok { color: var(--ok); }
+
+/* Measured proof */
+
+.proof {
+  padding-block: clamp(56px, 7vw, 112px);
+  background: var(--surface);
+}
+.proof-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: clamp(32px, 4vw, 72px);
+  align-items: start;
+}
+.proof-head h2 {
+  font-size: clamp(2rem, 1.5rem + 2vw, 3.25rem);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  color: var(--ink-strong);
+  text-wrap: balance;
+}
+.proof-head > p {
+  margin-top: 20px;
+  max-width: 36ch;
+  color: var(--ink);
+}
+.proof-result {
+  margin-top: 26px;
+  max-width: 34ch;
+  color: var(--accent-light);
+}
+.proof-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.proof-table thead th {
+  padding: 0 14px 12px;
+  text-align: left;
+  font-size: var(--step-small);
+  font-weight: 400;
+  color: var(--muted);
+}
+.proof-table thead th:first-child,
+.proof-table tbody th { padding-left: 0; }
+.proof-table tbody th {
+  width: 34%;
+  padding: 16px 14px;
+  text-align: left;
+  font-size: var(--step-body);
+  font-weight: 400;
+  color: var(--muted);
+}
+.proof-table tbody td {
+  padding: 16px 14px;
+  color: var(--ink-strong);
+  font-size: clamp(1.5rem, 1.2rem + 1vw, 2rem);
+  line-height: 1.1;
+}
+.proof-table tbody td span {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--step-small);
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.proof-table tbody tr:nth-child(odd) { background: var(--bg); }
+.proof-note {
+  margin-top: 18px;
+  max-width: 58ch;
+  font-size: var(--step-small);
+  line-height: 1.5;
+  color: var(--muted);
+}
+.proof-note .text-link { margin-left: 4px; }
 
 /* The one centred moment: the problem */
 
@@ -735,6 +821,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
 }
 
 @media (max-width: 900px) {
+  .proof-inner { grid-template-columns: minmax(0, 1fr); }
   .how { display: flex; flex-direction: column; }
   .how-split { display: contents; }
   .how-head { order: 0; }
@@ -765,6 +852,19 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
   .stage-names { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 16px; }
   .command-list a { padding: 14px 10px; margin-inline: -10px; }
   .command-name { font-size: var(--step-body); }
+  .proof-table thead { display: none; }
+  .proof-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 2px 16px;
+    padding: 14px;
+  }
+  .proof-table tbody th {
+    grid-column: 1 / -1;
+    width: auto;
+    padding: 0 0 6px;
+  }
+  .proof-table tbody td { padding: 0; }
   .facts-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .fact { min-height: 0; }
   .fact-lead, .fact-wide { grid-column: span 2; }
