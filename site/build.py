@@ -11,7 +11,7 @@ import shutil
 ROOT = Path(__file__).resolve().parent
 # The canonical host is a build input: GitHub Pages remains the default preview,
 # while the public site is served from Cloudflare Pages on its own domain.
-SITE = os.environ.get("SITE_URL", "https://sheathedsharp.github.io/option-berth/").strip()
+SITE = os.environ.get("SITE_URL", "https://oberth.zayju.de/").strip()
 if not SITE.startswith(("https://", "http://")):
     raise ValueError("SITE_URL must be an absolute http(s) URL")
 if not SITE.endswith("/"):
