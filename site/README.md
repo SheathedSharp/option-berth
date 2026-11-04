@@ -106,5 +106,7 @@ CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... \
 
 自定义域：Pages 项目 → **Custom domains** → `oberth.zayju.de`。`zayju.de` 在同一 Cloudflare
 账户时会自动创建 CNAME；否则手动添加 CNAME `oberth` → `option-berth.pages.dev`（代理开启），
-等待证书签发。`SITE_URL` 只影响 canonical、`og:url`、`hreflang`、`robots.txt` 和
-`sitemap.xml`；页面本身不含绝对地址。
+等待证书签发。`SITE_URL` 只影响 canonical、`og:url`、`hreflang`、`robots.txt` 和 `sitemap.xml`；页面本身不含绝对
+地址。默认值现在是公开域名 `https://oberth.zayju.de/`，Cloudflare 工作流显式传同一个地址；
+GitHub Pages 预览作为镜像也使用它。若要预览自指，构建时显式传
+`SITE_URL=https://sheathedsharp.github.io/option-berth/`。
