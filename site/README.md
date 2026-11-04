@@ -82,31 +82,20 @@ GitHub Pages。仓库 Pages 的发布源为 GitHub Actions。失败不会部署�
 下载入口指向官方 `releases/latest`，只承诺引擎 CLI 压缩包；不猜测版本，也不跳过
 SHA256SUMS 校验说明。
 
-### Cloudflare Pages（公开站点 `oberth.zayju.de`）
+### 自定义域（`oberth.zayju.de`）
 
-公开站点由 `Product website / Cloudflare` 工作流部署。它由 `Product website` 的完成事件触发，
-只在同一提交的构建与浏览器验证成功、且事件是 `main` 的 push 时，才用 wrangler 把 `site/dist`
-发到 Pages 项目 `option-berth`。GitHub Pages 保留为预览与回退，两者读同一份构建。
+公开站点由 GitHub Pages 提供，**不使用 Cloudflare Pages**。仓库 Settings → Pages 的 Custom
+domain 设为 `oberth.zayju.de`，DNS 里 `oberth` 的 CNAME 指向 `sheathedsharp.github.io`（DNS
+only，不代理）；GitHub 负责签发证书，HTTP 会 301 到 HTTPS。`Product website` 工作流合并到
+`main` 后把 `site/dist` 发布到 GitHub Pages，这一步同时更新公开站点。
 
-仓库 secret（已配置）：
-
-| secret | 用途 |
-|---|---|
-| `CLOUDFLARE_API_TOKEN` | 部署 Pages |
-| `CLOUDFLARE_ACCOUNT_ID` | 指定账户 |
-
-手动部署（首次或工作流不可用时）：
+`SITE_URL` 默认是公开域名 `https://oberth.zayju.de/`，构建出的 canonical、`og:url`、
+`hreflang`、`robots.txt` 与 `sitemap.xml` 都指向它。要在本地或预览站使用 GitHub Pages 的
+原始地址，构建时显式传：
 
 ```sh
-SITE_URL=https://oberth.zayju.de/ python3 site/build.py
-CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... \
-  npx --yes wrangler@4.157.0 pages deploy site/dist \
-  --project-name option-berth --branch main --commit-dirty=true
+SITE_URL=https://sheathedsharp.github.io/option-berth/ python3 site/build.py
 ```
 
-自定义域：Pages 项目 → **Custom domains** → `oberth.zayju.de`。`zayju.de` 在同一 Cloudflare
-账户时会自动创建 CNAME；否则手动添加 CNAME `oberth` → `option-berth.pages.dev`（代理开启），
-等待证书签发。`SITE_URL` 只影响 canonical、`og:url`、`hreflang`、`robots.txt` 和 `sitemap.xml`；页面本身不含绝对
-地址。默认值现在是公开域名 `https://oberth.zayju.de/`，Cloudflare 工作流显式传同一个地址；
-GitHub Pages 预览作为镜像也使用它。若要预览自指，构建时显式传
-`SITE_URL=https://sheathedsharp.github.io/option-berth/`。
+GitHub Pages 的软限制是每月 100 GB 流量与每小时 10 次构建；这个静态站只包含 11 个文件，
+不需要额外付费。
