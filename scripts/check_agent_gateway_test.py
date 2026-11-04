@@ -53,6 +53,41 @@ class RunChecksTests(unittest.TestCase):
         self.assertIn("text/event-stream", failed[0])
 
 
+class ConcurrencyTests(unittest.TestCase):
+    def test_every_concurrency_slot_probes_the_endpoint(self):
+        calls = []
+
+        def post(url, headers, payload, timeout):
+            calls.append(url)
+            return 200, "application/json", b'{"type":"message","content":[]}'
+
+        passed, failed = gateway.run_checks(
+            "https://example.test/v1", "key", ["claude"], {"anthropic": "model"},
+            post=post, concurrency=4,
+        )
+        self.assertEqual(failed, [])
+        self.assertEqual(len(calls), 4)
+        self.assertIn("4/4", passed[0])
+
+    def test_a_failed_concurrent_probe_is_reported_with_the_count(self):
+        def post(url, headers, payload, timeout):
+            return 503, "text/plain", b"overloaded"
+
+        passed, failed = gateway.run_checks(
+            "https://example.test/v1", "key", ["claude"], {"anthropic": "model"},
+            post=post, concurrency=2,
+        )
+        self.assertEqual(passed, [])
+        self.assertIn("2/2", failed[0])
+
+    def test_zero_concurrency_is_rejected(self):
+        with self.assertRaises(ValueError):
+            gateway.run_checks(
+                "https://example.test/v1", "key", ["claude"], {"anthropic": "model"},
+                concurrency=0,
+            )
+
+
 class AnthropicTests(unittest.TestCase):
     def test_json_message_passes(self):
         post = fake_post(200, "application/json", b'{"type":"message","content":[{"type":"text","text":"ok"}]}')

@@ -292,9 +292,54 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+  capacity:
+    name: Agent eval / capacity
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: agent-eval
+    steps:
+      - name: Check out the engine
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          path: source
+      - name: Probe the gateway at the planned concurrency
+        working-directory: source
+        shell: bash
+        env:
+          AGENT_GATEWAY_BASE_URL: ${{ secrets.LLM_GATEWAY_BASE_URL }}
+          AGENT_GATEWAY_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
+          CLAUDE_MODEL: ${{ inputs.claude_model }}
+          CODEX_MODEL: ${{ inputs.codex_model }}
+          OPENCODE_MODEL: ${{ inputs.opencode_model }}
+          PI_MODEL: ${{ inputs.pi_model }}
+          MAX_PARALLEL: ${{ fromJSON(needs.plan.outputs.options).max_parallel }}
+        run: |
+          set -euo pipefail
+          # The matrix assumes the provider can sustain max_parallel shards.
+          # Probe that assumption with a few real requests per agent before a
+          # shard spends a minute of model time: a model that is missing,
+          # overloaded or rejects the second turn fails here, cheaply.
+          for agent in ${AGENTS//,/ }; do
+            case "$agent" in
+              claude)   chat_model="$CLAUDE_MODEL" ;;
+              codex)    chat_model="$CODEX_MODEL" ;;
+              opencode) chat_model="$OPENCODE_MODEL" ;;
+              pi)       chat_model="$PI_MODEL" ;;
+              *) echo "unknown agent: $agent" >&2; exit 1 ;;
+            esac
+            python3 scripts/check_agent_gateway.py \
+              --agents "$agent" \
+              --claude-model "$CLAUDE_MODEL" \
+              --codex-model "$CODEX_MODEL" \
+              --chat-model "$chat_model" \
+              --concurrency "$MAX_PARALLEL"
+          done
+
   matrix:
     name: Agent eval / ${{ matrix.name }}
-    needs: plan
+    needs: [plan, capacity]
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ fromJSON(needs.plan.outputs.options).shard_timeout_minutes }}
     environment: agent-eval
@@ -494,6 +539,10 @@ jobs:
             --pass-env OPENCODE_CONFIG
             --pass-env PI_CODING_AGENT_DIR
             --pass-env PI_OFFLINE
+            --model "claude=$CLAUDE_MODEL"
+            --model "codex=$CODEX_MODEL"
+            --model "opencode=$OPENCODE_MODEL"
+            --model "pi=$PI_MODEL"
             --agent-arg claude=--permission-mode=bypassPermissions
             --agent-arg codex=--sandbox
             --agent-arg codex=danger-full-access
@@ -640,9 +689,11 @@ jobs:
             echo "No shard produced report.json." >&2
             exit 1
           fi
-          args=(--merge)
+          # --merge is an append flag: every report needs its own flag. Passing
+          # `--merge r1 r2` makes argparse reject the extra paths.
+          args=()
           for report in "${reports[@]}"; do
-            args+=("$report")
+            args+=(--merge "$report")
           done
           args+=(
             --out "$GITHUB_WORKSPACE/agent-eval-merged"

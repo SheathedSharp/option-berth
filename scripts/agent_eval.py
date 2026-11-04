@@ -674,7 +674,7 @@ def merge_reports(
 
     base = shards[0][1]
     for path, doc in shards[1:]:
-        for key in ("build", "skill", "repeat", "arms", "passed_env", "agent_args"):
+        for key in ("build", "skill", "repeat", "arms", "passed_env", "agent_args", "models"):
             if doc.get(key) != base.get(key):
                 print(
                     f"merge: shard {path} differs on {key}; refusing to combine incomparable rows",
@@ -753,6 +753,7 @@ def merge_reports(
         "arms": base.get("arms") or [ARM_OBERTH],
         "passed_env": base.get("passed_env") or [],
         "agent_args": base.get("agent_args") or {},
+        "models": base.get("models") or {},
         "repeat": base.get("repeat"),
         "scenarios": scenarios,
         "scenario_prompts": scenario_prompts,
@@ -862,6 +863,7 @@ def assemble_payload(meta: dict[str, Any], runs: list[dict[str, Any]]) -> dict[s
         "arms": arms,
         "passed_env": meta.get("passed_env") or [],
         "agent_args": meta.get("agent_args") or {},
+        "models": meta.get("models") or {},
         "repeat": repeat,
         "scenarios": meta.get("scenarios") or [],
         "scenario_prompts": meta.get("scenario_prompts") or {},
@@ -1003,6 +1005,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skip-preflight", action="store_true", help="skip the listener observation preflight")
     parser.add_argument("--pass-env", action="append", default=[], metavar="NAME", help="forward this environment variable to the run")
     parser.add_argument("--agent-arg", action="append", default=[], metavar="AGENT=ARG", help="extra provider argv element")
+    parser.add_argument("--model", action="append", default=[], metavar="AGENT=MODEL",
+                        help="record the provider's model in the report; merge refuses mismatches")
     parser.add_argument("--require-complete", action="store_true", help="exit 1 unless every valid run completed with no OOB")
     parser.add_argument("--require-comparable", action="store_true", help="exit 1 unless every row has repeat>=2 on one build")
     args = parser.parse_args(argv)
@@ -1108,6 +1112,17 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(f"unknown agent in --agent-arg: {agent_id}")
         extras.setdefault(agent_id, []).append(value)
 
+    models: dict[str, str] = {}
+    for item in args.model:
+        if "=" not in item:
+            parser.error("--model must be AGENT=MODEL")
+        agent_id, value = item.split("=", 1)
+        if agent_id not in AGENTS:
+            parser.error(f"unknown agent in --model: {agent_id}")
+        if not value.strip():
+            parser.error(f"--model {agent_id}= needs a non-empty model")
+        models[agent_id] = value.strip()
+
     for name in args.pass_env:
         if not name.isidentifier():
             parser.error(f"--pass-env expects an environment variable name, got {name!r}")
@@ -1180,6 +1195,7 @@ def main(argv: list[str] | None = None) -> int:
         "arms": arm_ids,
         "passed_env": sorted(args.pass_env),
         "agent_args": extras,
+        "models": models,
         "repeat": args.repeat,
         "scenarios": scenario_ids,
         "scenario_prompts": {scenario_id: SCENARIOS[scenario_id].prompt for scenario_id in scenario_ids},

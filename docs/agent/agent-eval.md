@@ -258,9 +258,12 @@ score, and is shown separately in the row as `agent error(s)`. One timeout affec
 observation and must not invalidate the other 31 data points in the same round.
 
 Comparison rows additionally require both the `oberth` and `native` sides to be comparable. The report
-records the skill version and commit, each agent CLI version, the variable names of `--pass-env`
-(values are not recorded) and explicit `--agent-arg`. Rows from different builds, different skills or
-different agent arguments cannot be compared with each other; the `native` arm does not use a skill.
+records the skill version and commit, each agent CLI version, the provider model (`--model
+AGENT=MODEL`), the variable names of `--pass-env` (values are not recorded) and explicit
+`--agent-arg`. Rows from different builds, different skills, different models or different agent
+arguments cannot be compared with each other; the `native` arm does not use a skill. The model is a
+first-class input on purpose: a run must name the model that produced its rows, and `--merge` refuses
+two shards that used different models for the same provider.
 
 `--require-comparable` exits 1 when the matrix is not comparable; `--require-complete` exits 1 when any
 row's completion rate is not 100% or a boundary violation occurred. Both only read the report and do not
@@ -423,7 +426,10 @@ turn, because the provider required `reasoning_content` on every earlier assista
 client never sends it. A one-request probe cannot observe a second-request requirement, and a probe
 that reimplements the client cannot observe a client-side refusal.
 
-The gate is therefore the real runner, minimized: **every shard job** runs `agent_eval.py --smoke`
+Two cheap gates run before a shard spends real time. First, the `capacity` job sends
+`max_parallel` simultaneous protocol probes per provider with the exact model the matrix will use; a
+missing model, a 403, an origin timeout or a provider that cannot sustain the planned concurrency
+fails there in a few requests. Second, **every shard job** runs `agent_eval.py --smoke`
 for its own provider before the scenario loop, using the **same** `common` argument array the matrix
 itself uses, so the preflight cannot test a different configuration from the one that runs. A shard
 is a fresh runner with a fresh agent install, so the smoke is repeated per shard on purpose: a
@@ -470,17 +476,20 @@ Workflow inputs (`workflow_dispatch` allows ten; the tuning knobs share one JSON
 | `max_consecutive_failures` | `3` | circuit breaker per shard; `0` disables |
 | `resume_run` | `""` | previous run id whose matching shards are resumed |
 
-The workflow has three jobs:
+The workflow has four jobs:
 
 1. **`plan`** (ungated — it calls no model): validate `options`, build `oberth`, preflight the
    fixtures, resolve the skill commit, and run `--plan` to produce the shard matrix and the budget
    check. The estimate and shard table are on the run page **before** any approval, so the reviewer
    sees what the run will cost;
-2. **`matrix`** (behind the `agent-eval` environment): one runner per shard (not per agent), at most
+2. **`capacity`** (behind the `agent-eval` environment): probe each provider with `max_parallel`
+   simultaneous protocol requests using its configured model. This is the concurrency assumption the
+   matrix makes, checked with a few requests instead of discovered over 90 minutes;
+3. **`matrix`** (behind the `agent-eval` environment): one runner per shard (not per agent), at most
    `max_parallel` at once. Each installs only its own provider, runs `--smoke`, then `--execute` on
    its scenario subset; a cancelled or failed shard rebuilds a partial report from its journal and
    uploads `agent-eval-shard-<shard>`;
-3. **`merge`**: unions the shards (`--merge`), reports coverage against the plan's scenarios, and
+4. **`merge`**: unions the shards (`--merge`), reports coverage against the plan's scenarios, and
    writes the merged report before a missing scenario can fail the gate.
 
 Wall clock is the plan's estimate: total run minutes divided by `max_parallel`, not the sum of one

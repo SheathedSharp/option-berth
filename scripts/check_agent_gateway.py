@@ -22,6 +22,7 @@ It never prints the key.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import sys
@@ -218,8 +219,17 @@ def endpoints_for_agents(agents: list[str]) -> list[str]:
 
 
 def run_checks(base: str, key: str, agents: list[str], models: dict[str, str], *,
-               post: Post = post_json, timeout: float = TIMEOUT) -> tuple[list[str], list[str]]:
-    """Check every endpoint the selected agents need; return successes and failures."""
+               post: Post = post_json, timeout: float = TIMEOUT,
+               concurrency: int = 1) -> tuple[list[str], list[str]]:
+    """Check every endpoint the selected agents need; return successes and failures.
+
+    ``concurrency`` probes one endpoint with that many simultaneous requests.
+    A matrix shard count is a capacity assumption about the provider; probing
+    it costs a few requests and turns a 90-minute run that dies on the second
+    burst into a failure before the first shard starts.
+    """
+    if concurrency < 1:
+        raise ValueError("concurrency must be at least 1")
     passed: list[str] = []
     failed: list[str] = []
     for endpoint in endpoints_for_agents(agents):
@@ -227,10 +237,30 @@ def run_checks(base: str, key: str, agents: list[str], models: dict[str, str], *
         if not model:
             failed.append(f"{endpoint}: no model configured")
             continue
-        try:
-            passed.append(CHECKS[endpoint](base, key, model, post=post, timeout=timeout))
-        except CheckError as exc:
-            failed.append(f"{endpoint}: {exc}")
+        check = CHECKS[endpoint]
+        if concurrency == 1:
+            try:
+                passed.append(check(base, key, model, post=post, timeout=timeout))
+            except CheckError as exc:
+                failed.append(f"{endpoint}: {exc}")
+            continue
+
+        def one() -> str | CheckError:
+            try:
+                return check(base, key, model, post=post, timeout=timeout)
+            except CheckError as exc:
+                return exc
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
+            outcomes = list(pool.map(lambda _: one(), range(concurrency)))
+        errors = [outcome for outcome in outcomes if isinstance(outcome, CheckError)]
+        if errors:
+            failed.append(
+                f"{endpoint}: {errors[0]} "
+                f"({len(errors)}/{concurrency} concurrent checks failed)"
+            )
+        else:
+            passed.append(f"{endpoint}: ok ({concurrency}/{concurrency} concurrent checks)")
     return passed, failed
 
 
@@ -246,6 +276,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--codex-model", default=os.environ.get("CODEX_MODEL", ""))
     parser.add_argument("--chat-model", default=os.environ.get("CHAT_MODEL", ""))
     parser.add_argument("--timeout", type=float, default=TIMEOUT)
+    parser.add_argument("--concurrency", type=int, default=1,
+                        help="simultaneous probes per endpoint (default: 1)")
     return parser
 
 
@@ -270,7 +302,12 @@ def main(argv: list[str] | None = None) -> int:
     except CheckError as exc:
         print(f"gateway check failed: {exc}", file=sys.stderr)
         return 2
-    passed, failed = run_checks(base, key, agents, models, timeout=args.timeout)
+    if args.concurrency < 1:
+        print("--concurrency must be at least 1", file=sys.stderr)
+        return 2
+    passed, failed = run_checks(
+        base, key, agents, models, timeout=args.timeout, concurrency=args.concurrency,
+    )
     for line in passed:
         print(line)
     for line in failed:
