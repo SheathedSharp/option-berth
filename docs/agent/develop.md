@@ -66,7 +66,7 @@ Scripts, release and brand generation:
 
 ```sh
 python3 -m unittest discover -s scripts -p '*_test.py'
-python3 brand/build-option-berth.py --check
+python3 scripts/brand_export.py --check
 python3 scripts/check_skill_contract.py --skill-dir ../option-berth-skill
 python3 scripts/agent_eval.py --list          # core/large/cold scenarios and the comparison arms
 python3 scripts/agent_eval.py --dry-run --suite large  # build the large fixture, launch no agent

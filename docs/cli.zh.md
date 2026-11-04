@@ -10,7 +10,7 @@
 和到完整帮助的指引；它是指路牌不是手册，分组命令清单只在 `oberth --help`。版本行在发布版本检查
 成功时带 `(latest)` 或 `(latest version vX.Y.Z)`；检查未知时只打印本机版本，不把“没查到”写成
 “最新”。发现更新时，首屏底部给出对应平台的安装命令和 `oberth daemon stop`。标记由
-`brand/build-option-berth.py` 从客户端几何源生成到 `engine/internal/cmd/mark_gen.go`，
+`scripts/brand_export.py` 从客户端几何源生成到 `engine/internal/cmd/mark_gen.go`，
 不手写；字标是轮廓字，终端里用粗体文字表示。
 
 标记按品牌自己的分工上两色：两条轨用墨色（深色终端用纸色），胶囊用陶土色。涂成一色时
