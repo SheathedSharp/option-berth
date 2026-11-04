@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"errors"
+	"net"
+	"strconv"
 	"sync"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/claims"
@@ -26,23 +28,29 @@ func claimsManager(rt *Runtime) (*claims.Manager, error) {
 	if st == nil {
 		return nil, errNoStore()
 	}
-	return claims.New(st.Claims(), claims.Options{
-		Listening:    func() (map[int]bool, error) { return listeningPorts(rt) },
-		DefaultCount: func(project string) int { return worktreePorts(rt, project) },
-	}), nil
+	listening, narrow, err := listeningState(rt)
+	if err != nil {
+		return nil, scanFailure(err)
+	}
+	return claimsManagerWithListening(rt, listening, narrow)
 }
 
 // claimsManagerWithListening is claimsManager for a caller that has already
 // observed the listener table. The probe is a full scan, so a caller holding
 // claimsMu must hand the observation in rather than let the manager run it
 // under the lock: no lock on this path may span IO.
-func claimsManagerWithListening(rt *Runtime, listening map[int]bool) (*claims.Manager, error) {
+//
+// narrow says the table cannot see every socket owner. A claim then verifies
+// each candidate by binding it; absence from the table is unknown, not free.
+func claimsManagerWithListening(rt *Runtime, listening map[int]bool, narrow bool) (*claims.Manager, error) {
 	st := rt.Store
 	if st == nil {
 		return nil, errNoStore()
 	}
 	return claims.New(st.Claims(), claims.Options{
 		Listening:    func() (map[int]bool, error) { return listening, nil },
+		Narrow:       narrow,
+		Bindable:     canBindPort,
 		DefaultCount: func(project string) int { return worktreePorts(rt, project) },
 	}), nil
 }
@@ -99,18 +107,58 @@ func configRank(cfg *groups.Config, project string) int {
 	return rank
 }
 
-// listeningPorts is the live scan as a set, which is how the claim probe skips
-// ports something is already serving on.
-func listeningPorts(rt *Runtime) (map[int]bool, error) {
-	rows, err := readPorts(rt, scanner.Include{})
+// listeningState is the live scan as a set plus whether that table can see
+// every socket owner. The set is how the claim probe skips ports something is
+// already serving on; the coverage says whether absence from the set is a fact.
+func listeningState(rt *Runtime) (map[int]bool, bool, error) {
+	snap, err := readSnapshot(rt, scanner.Include{})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	out := make(map[int]bool, len(rows))
-	for _, row := range rows {
+	out := make(map[int]bool, len(snap.Ports))
+	for _, row := range snap.Ports {
 		out[row.Port] = true
 	}
-	return out, nil
+	return out, snap.Observation.Narrow(), nil
+}
+
+// canBindPort is the positive test for "free": bind each address a local
+// service may use and close immediately. A claim that hands out a busy port
+// ends as EADDRINUSE in the service, and when the table cannot see other
+// users' sockets a bind failure is the only evidence that the port is taken.
+//
+// All four addresses are probed because a specific-address holder and a
+// wildcard holder do not conflict with each other on macOS: only the address
+// the service itself will bind can prove the port usable for it.
+func canBindPort(port int) bool {
+	probes := []struct{ network, host string }{
+		{"tcp4", "0.0.0.0"},
+		{"tcp4", "127.0.0.1"},
+	}
+	if ipv6Usable() {
+		probes = append(probes,
+			struct{ network, host string }{"tcp6", "::"},
+			struct{ network, host string }{"tcp6", "::1"})
+	}
+	for _, probe := range probes {
+		ln, err := net.Listen(probe.network, net.JoinHostPort(probe.host, strconv.Itoa(port)))
+		if err != nil {
+			return false
+		}
+		_ = ln.Close()
+	}
+	return true
+}
+
+// ipv6Usable keeps a host without IPv6 from losing every allocation: only a
+// family that exists can answer for a port.
+func ipv6Usable() bool {
+	ln, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		return false
+	}
+	_ = ln.Close()
+	return true
 }
 
 // claimsError maps the manager's failures onto the contract's error codes:

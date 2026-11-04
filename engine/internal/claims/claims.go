@@ -32,6 +32,11 @@ var ErrExhausted = errors.New("no free port left in the claim range")
 // ErrNoProject is returned when neither a key nor a project was given.
 var ErrNoProject = errors.New("a claim needs a project or a key")
 
+// ErrNarrowUnverified is returned when the listener table cannot see every
+// socket owner and no bind probe was supplied. Allocating from that table
+// would be a guess, and the service pays for a guess with EADDRINUSE.
+var ErrNarrowUnverified = errors.New("listener table cannot see every owner and no bind probe is configured")
+
 // Table is the persistence Manager needs; *store.Store's Claims view is the
 // production implementation.
 type Table interface {
@@ -55,6 +60,15 @@ type Options struct {
 	// likely the caller's own process, and taking the port away from it would
 	// break the idempotency the whole feature exists for).
 	Listening func() (map[int]bool, error)
+	// Narrow says Listening came from a table that cannot see every socket
+	// owner (the Darwin lsof fallback cannot see other users' sockets). A port
+	// absent from a narrow set is unknown, so each candidate is verified with
+	// Bindable instead of being taken as free.
+	Narrow bool
+	// Bindable reports whether this process can bind a port right now. It is
+	// the positive test used when Narrow is set; without it a narrow manager
+	// refuses to allocate rather than risk handing out a busy port.
+	Bindable func(port int) bool
 	// DefaultTTL overrides DefaultTTL for callers that pass no ttl.
 	DefaultTTL time.Duration
 	// DefaultCount is how many ports a request that names no count takes for
@@ -70,6 +84,8 @@ type Manager struct {
 	now          func() time.Time
 	ttl          time.Duration
 	live         func() (map[int]bool, error)
+	narrow       bool
+	bindable     func(port int) bool
 	defaultCount func(project string) int
 
 	mu sync.Mutex
@@ -79,7 +95,7 @@ type Manager struct {
 func New(t Table, o Options) *Manager {
 	m := &Manager{
 		table: t, rng: o.Range, now: o.Now, ttl: o.DefaultTTL, live: o.Listening,
-		defaultCount: o.DefaultCount,
+		narrow: o.Narrow, bindable: o.Bindable, defaultCount: o.DefaultCount,
 	}
 	if m.rng.Valid() != nil {
 		m.rng = DefaultRange
@@ -174,6 +190,9 @@ func (m *Manager) acquireOnce(key, project, worktree string, count int, ttl time
 	if err != nil {
 		return Result{}, err
 	}
+	if m.narrow && m.bindable == nil {
+		return Result{}, ErrNarrowUnverified
+	}
 
 	heldBy := make(map[int]string, len(rows))
 	own := make([]store.ClaimRow, 0, count)
@@ -203,6 +222,10 @@ func (m *Manager) acquireOnce(key, project, worktree string, count int, ttl time
 			continue
 		}
 		if holder, ok := heldBy[port]; ok && holder != key {
+			continue
+		}
+		// A narrow table cannot say that this port is free; a real bind can.
+		if m.narrow && !m.bindable(port) {
 			continue
 		}
 		chosen = append(chosen, port)
