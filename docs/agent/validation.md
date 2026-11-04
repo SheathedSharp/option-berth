@@ -190,6 +190,31 @@ Not covered here: the daemon's `groups.init` is unchanged. Its scan failure alre
 `observation_*` RPC error rather than an empty table, so it has no "empty table read as idle" path,
 and the CLI's `oberth init` does not go through the daemon.
 
+**Narrow-table coverage (2026-11-04)**: the lsof fallback still answers "can this process see its own
+listener", but it can no longer be read as "this port is free". Same machine (macOS 27.2 / 26B123),
+commits `94a90f6` and `9d863f1`, isolated `HOME`/`BERTH_HOME`, throwaway git project declaring
+`machine:` 445 (launchd), 12101 (another user) and 6379 (this user's redis):
+
+- `status --json --no-daemon` → `observation: {"state":"observable","source":"lsof",…}`; 445 and
+  12101 are `"listening": false, "listening_known": false`; 6379 is `"listening": true,
+  "listening_known": true`.
+- `status` → `listeners limited · …`, `depends on ldap 445 listening unknown · qq 12101 listening
+  unknown · redis 6379 listening`.
+- `serve --detach`, then `daemon status --json` → `observation.source: "lsof"` with the probe detail;
+  `status --json` through the daemon returns the same three rows; `daemon stop` afterwards, no daemon
+  left running.
+- `go test -count=1 -timeout=8m ./...` → clean. New cases:
+  `TestNarrowScanPublishesItsCollectorAndUnknownMachinePorts`,
+  `TestMachineReferencesPublishUnknownUnderANarrowTable`,
+  `TestScanGroupsObservedPublishesNarrowCoverage`,
+  `TestStatusPrintsUnknownForANarrowMachineReference`,
+  `TestNarrowTableVerifiesCandidatesByBinding`, `TestNarrowTableWithoutABindProbeFailsClosed`,
+  `TestCanBindPortSeesAnExistingListener`.
+
+Not run: a real `up --wait` with `port: auto` on a narrow table, and a second-user listener holding a
+port inside the claim range. The bind probe was measured against a real listener in the same process;
+the claim path is covered by the tests above, not by a real foreign holder.
+
 **The attention scenario tests after the consent gate (2026-11-02)**: gating the artifact on consent
 left two integration tests asserting a contract that no longer exists, and `main`'s nightly went red
 on both platforms (run `41355765757`, headSha `79b5c33`). Both failures are the tests' fault, not the
