@@ -18,6 +18,11 @@ The interface and the agent guidance are not in this repository; they are indepe
 [option-berth-skill](https://github.com/SheathedSharp/option-berth-skill) (the coding-agent skill).
 All three meet only at the CLI and its `--json` contract.
 
+For work that spans the products, keep the three clones in one directory as siblings (`option-berth`,
+`option-berth-macos`, `option-berth-skill`): the brand export reads the client's `BerthGeometry.swift`,
+the skill contract check reads the sibling skill checkout, and the client points at any engine through
+`BERTH_BIN`.
+
 Implementation boundaries and inviolable constraints are in the root [AGENTS.md](../../AGENTS.md);
 this page covers only how to move these files.
 
