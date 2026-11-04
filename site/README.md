@@ -48,14 +48,32 @@ CI=1 npm test                  # CI 两种浏览器引擎
 [docs/cli.md](../docs/cli.md)、[docs/architecture.md](../docs/agent/architecture.md) 和
 [docs/validation.md](../docs/agent/validation.md) 为准。
 
-首页的实测区（`proof`）不是示意数字，来自 2026-11-04 的 large 矩阵：8 个十服务栈场景 × 2 种
-方式 × 5 次重复 = 80 次运行，同一 agent（Codex CLI 0.166）、同一模型（`gpt-6-luna`）、同一
-二进制；0 个 agent error、0 个 harness error，覆盖率 8/8。结果：完成任务 40/40 对 29/40，
-轮次中位 5 对 9（P95 10 对 17），用时中位 45s 对 69s；8/8 场景轮次更少，两个臂 OOB 都是 0。
-单一 agent、单一模型、内部夹具，每格 n=5，P95 只作方向性证据；测量方法与门槛见
+首页的实测区（`proof`）不是示意数字，也不是手写常量。它读 `site/data/eval.json`，这份快照由
+`scripts/export_site_eval.py` 从一次 merged report 生成并提交，`site/build.py` 在构建时校验：
+缺文件、schema 不对、缺字段、没有 run URL 都会让构建失败。刷新一次快照：
+
+```sh
+# 1. 手动跑一次 agent eval（workflow_dispatch）
+# 2. 下载该 run 的 agent-eval-merged-* artifact，取出 report.json
+python3 scripts/export_site_eval.py report.json \
+  --out site/data/eval.json \
+  --run-url https://github.com/SheathedSharp/option-berth/actions/runs/<id> \
+  --suite large
+python3 site/build.py && (cd site && npm test)
+```
+
+快照 schema 是 `oberth.site-eval/v1`，只包含页面需要的事实：测量时间、run URL、agent/模型、
+repeat、场景数、两个臂的完成数/轮次 P50/P95/时长中位/OOB，以及「轮次更少的场景数」。CI 的
+report 结构变化时只改 exporter 与它的测试，页面的数据契约不变；页面本身不按 provider 组织
+文案，README 与快照记下确切条件，是为了让这组数字可复核，而不是把它外推成对所有模型都成立。
+
+当前快照来自 2026-11-04 的 large 矩阵：8 个十服务栈场景 × 2 种方式 × 5 次重复 = 80 次运行，
+同一 agent（Codex CLI 0.166）、同一模型（`gpt-6-luna`）、同一二进制；0 个 agent error、
+0 个 harness error，覆盖率 8/8。结果：完成任务 40/40 对 29/40，轮次中位 5 对 9（P95 10 对
+17），用时中位 45s 对 69s；8/8 场景轮次更少，两个臂 OOB 都是 0。单一 agent、单一模型、内部
+夹具，每格 n=5，P95 只作方向性证据；测量方法与门槛见
 [docs/agent/agent-eval.md](../docs/agent/agent-eval.md)，原始报告保存在对应 CI run 的
-`agent-eval-merged-*` artifact 里。页面不按 provider 组织文案；README 记下确切的测量条件，
-是为了让这组数字可复核，而不是把它外推成对所有模型都成立。
+`agent-eval-merged-*` artifact 里。
 
 ## Deploy
 
