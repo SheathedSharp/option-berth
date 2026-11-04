@@ -29,7 +29,7 @@ func TestGroupsCaptureOneSnapshotForAllWorktrees(t *testing.T) {
 	}}, []servicefacts.ExitRecord{{
 		Key: servicefacts.Key{Group: "right", Service: "worker"}, Exit: state.ServiceExit{RunID: "right-exit", Code: 1},
 	}})}
-	got := GroupsWith(nil, index, reg)
+	got := GroupsWith(nil, index, reg, false)
 	if reg.calls != 1 || len(got) != 2 {
 		t.Fatalf("capture calls=%d groups=%+v", reg.calls, got)
 	}
@@ -49,7 +49,7 @@ func TestGroupsDoNotJoinAnotherRunsListener(t *testing.T) {
 	}})
 	group := "shop"
 	listeners := []state.Port{{Group: &group, Port: 8000, PID: 77, Run: &state.Run{Group: group, Name: "worker", ID: "worker-run"}}}
-	got := GroupsWith(listeners, index, NoRuns{})[0]
+	got := GroupsWith(listeners, index, NoRuns{}, false)[0]
 	if got.Services[0].Running || got.Services[0].PID != nil || got.Services[0].PortActual != nil {
 		t.Fatalf("api claimed another service's listener: %+v", got.Services[0])
 	}
@@ -120,7 +120,7 @@ func TestPreUpgradeSpecHashIsNotDrift(t *testing.T) {
 		Run: state.ServiceRun{ID: "run", PID: 7, Cmd: "serve", Cwd: cfg.Dir,
 			SpecHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	}}, nil)}
-	svc := GroupsWith(nil, index, legacy)[0].Services[0]
+	svc := GroupsWith(nil, index, legacy, false)[0].Services[0]
 	if svc.RuntimeSpecHash == nil {
 		t.Fatalf("runtime spec hash = nil, want the recorded value published")
 	}

@@ -6,11 +6,23 @@ package state
 // that part of its table was unreadable. It is never a guess from environment
 // variables.
 type Observation struct {
-	State     string `json:"state"`
-	Code      string `json:"code,omitempty"`
+	State string `json:"state"`
+	Code  string `json:"code,omitempty"`
+	// Source names the collector that answered when it was not the platform's
+	// primary one ("lsof" on Darwin). A non-empty source means the table is
+	// narrow: it covers this user's sockets, so a port missing from it is
+	// unknown rather than free. Empty means the primary collector answered.
+	Source    string `json:"source,omitempty"`
 	Detail    string `json:"detail,omitempty"`
 	Hint      string `json:"hint,omitempty"`
 	CheckedAt string `json:"checked_at,omitempty"`
+}
+
+// Narrow reports whether the table this observation describes cannot cover
+// every socket owner. A narrow table is still usable for what it shows: a row
+// in it is a fact, and only absence is unknown.
+func (o *Observation) Narrow() bool {
+	return o != nil && o.Source != ""
 }
 
 const (

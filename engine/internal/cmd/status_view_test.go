@@ -178,7 +178,7 @@ func TestBriefStatusKeepsOnlyRuntimeFacts(t *testing.T) {
 		`"code_changed_since_start":true`, `"code_changed_files":2`,
 		`"code_hint":"oberth restart --only api"`,
 		`"exit_reason":"crashed"`, `"exit_code":2`, `"hint":"oberth logs worker --once"`,
-		`"machine":[{"name":"redis","port":6379,"listening":false}]`,
+		`"machine":[{"name":"redis","port":6379,"listening":false,"listening_known":false}]`,
 		`"identity":"wt_0123456789ab"`,
 	} {
 		if !strings.Contains(text, present) {

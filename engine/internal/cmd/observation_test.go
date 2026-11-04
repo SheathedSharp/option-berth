@@ -17,8 +17,8 @@ import (
 func blindObservation(t *testing.T) {
 	t.Helper()
 	prevPorts, prevProbe := scanPorts, scanProbe
-	scanPorts = func() ([]ports.ListeningPort, error) {
-		return nil, &ports.ObservationError{
+	scanPorts = func() ([]ports.ListeningPort, string, error) {
+		return nil, "", &ports.ObservationError{
 			Code:   ports.CodeObservationEmpty,
 			Detail: "netstat: exited 0 but printed no listening table",
 			Hint:   "run `oberth doctor --only listener_observation`",
@@ -79,8 +79,8 @@ func TestScanGroupsObservedKeepsReadableRowsWhenPartial(t *testing.T) {
 		Port: 18123, PID: os.Getpid(), BindAddress: "0.0.0.0", IPVersion: "IPv4", Cwd: dir,
 	}
 	prevPorts := scanPorts
-	scanPorts = func() ([]ports.ListeningPort, error) {
-		return []ports.ListeningPort{readable}, &ports.ObservationError{
+	scanPorts = func() ([]ports.ListeningPort, string, error) {
+		return []ports.ListeningPort{readable}, "", &ports.ObservationError{
 			Code: ports.CodeObservationIncomplete, Detail: "netstat: unreadable TCP rows: line 3",
 			Hint: "run doctor", Partial: true, Rows: []ports.ListeningPort{readable},
 		}

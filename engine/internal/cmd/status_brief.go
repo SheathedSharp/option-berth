@@ -94,9 +94,10 @@ type briefStats struct {
 }
 
 type briefMachine struct {
-	Name      string `json:"name"`
-	Port      int    `json:"port"`
-	Listening bool   `json:"listening"`
+	Name           string `json:"name"`
+	Port           int    `json:"port"`
+	Listening      bool   `json:"listening"`
+	ListeningKnown bool   `json:"listening_known"`
 }
 
 type briefExit struct {
@@ -152,6 +153,7 @@ func briefStatusFrom(doc statusDocument) briefStatusDocument {
 	for _, machine := range doc.Worktree.Machine {
 		out.Machine = append(out.Machine, briefMachine{
 			Name: machine.Name, Port: machine.Port, Listening: machine.Listening,
+			ListeningKnown: machine.ListeningKnown,
 		})
 	}
 

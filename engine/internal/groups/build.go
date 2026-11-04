@@ -14,7 +14,7 @@ import (
 // just stopped.
 //
 // index may be nil, in which case groups carry no services and no config path.
-func Groups(pp []state.Port, index *Index) []state.Group { return GroupsWith(pp, index, nil) }
+func Groups(pp []state.Port, index *Index) []state.Group { return GroupsWith(pp, index, nil, false) }
 
 // Liveness is the control path's readiness check for a portless dependency.
 // State publication instead consumes one servicefacts.Provider snapshot.
@@ -24,7 +24,10 @@ type Liveness interface {
 
 // GroupsWith captures runtime facts once when reg implements
 // servicefacts.Provider. Otherwise only observed listeners are available.
-func GroupsWith(pp []state.Port, index *Index, reg Registry) []state.Group {
+//
+// narrow says the listener table these rows came from cannot cover every
+// socket owner: a `machine:` port missing from it is then unknown, not absent.
+func GroupsWith(pp []state.Port, index *Index, reg Registry, narrow bool) []state.Group {
 	if index == nil {
 		index = NewIndex()
 	}
@@ -91,7 +94,7 @@ func GroupsWith(pp []state.Port, index *Index, reg Registry) []state.Group {
 			g.Source = state.SourceFile
 		}
 		g.Services = serviceRowsWithFacts(cfg, name, resolver)
-		g.Machine = machineRows(cfg, machinePorts)
+		g.Machine = machineRows(cfg, machinePorts, narrow)
 	}
 
 	out := make([]state.Group, 0, len(byName))
@@ -244,12 +247,17 @@ func optional(s string) *string {
 // listening: whether the declared port is there, and the service-manager unit
 // it resolved to. The rows looked up are the whole scan's, not the group's own
 // members — a dependency belongs to the machine's tier, not to this project.
-func machineRows(cfg *Config, ports map[int]struct{}) []state.MachineRef {
+func machineRows(cfg *Config, ports map[int]struct{}, narrow bool) []state.MachineRef {
 	out := make([]state.MachineRef, 0, len(cfg.Machine))
 	for _, m := range cfg.Machine {
-		ref := state.MachineRef{Name: m.Name, Port: m.Port}
-		_, ref.Listening = ports[m.Port]
-		out = append(out, ref)
+		_, listening := ports[m.Port]
+		out = append(out, state.MachineRef{
+			Name: m.Name, Port: m.Port, Listening: listening,
+			// Positive evidence stays a fact under a narrow table. Only
+			// absence needs the table's coverage to decide whether it is
+			// false or unknown.
+			ListeningKnown: listening || !narrow,
+		})
 	}
 	return out
 }

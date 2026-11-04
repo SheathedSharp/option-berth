@@ -44,13 +44,16 @@ foreground color and the capsule degrades to yellow. Nothing is colored under `N
   (Go, Homebrew Python and so on) runs `netstat` and gets exit 0 with no TCP table. That
   "not one row" case is still treated as observation_empty and the self-proof probe decides it;
   when the probe can see its own listener, this round falls back to collecting with `lsof` and
-  still reports observable. The `doctor` detail and the `daemon status` `observation` state that
-  this round was observed through lsof.
+  still reports observable. `observation.source` names the collector when it was not the primary one
+  (`lsof`); the primary collector leaves it empty. The `doctor` detail and the `daemon status`
+  `observation` describe the same round.
 - This fallback is narrower than `netstat`, and reading the result requires knowing two things: a
   non-root `lsof` cannot see other users' sockets, so a port held by a root process may be missing
   from the table; and a single `lsof` reports a dual-stack wildcard socket only as `::`, without
-  adding the other address family. A port absent from the result therefore does not carry the same
-  conclusion under the two collectors, and it is not evidence that a foreign port is free.
+  adding the other address family. A row in the table is a fact, but absence is not: consumers read
+  `observation.source` before concluding that a port is free. `machine[].listening_known` is false
+  for a port missing from a narrow table, `port: auto` verifies each candidate by binding it instead
+  of trusting absence, and the human `status` prints `listening unknown`.
 
 - --no-daemon makes read commands collect locally and directly; commands that must record runs and start/stop still need the daemon. When the daemon is unavailable, `status` still shows the most recent exit reason from local read-only history.
 - No wire field is accepted without being read. The protocol schema is generated from the daemon's Go types, so a field declared there is a promise every client may rely on; a field no handler acts on is worse than a missing one, because the call succeeds and the caller cannot tell it was ignored. Every field a method's params can carry is therefore read by this repository's own code, and `internal/daemon/rpc` fails the build otherwise. Withdrawing a published field is a protocol change; the names removed on purpose are recorded in that package so they cannot return silently.
@@ -228,7 +231,7 @@ truncation, and `files_truncated` being true means the list is only a prefix. Us
                     "waiting_on": ["db"], "last_prepare_ms": null}}
     ]},
   "ports": [3000, 3001],
-  "machine": [{"name": "redis", "port": 6379, "listening": true}],
+  "machine": [{"name": "redis", "port": 6379, "listening": true, "listening_known": true}],
   "exits": [{"run_id": "...", "name": "worker", "reason": "crashed", "code": 1,
              "exited_at": "2026-10-31T09:00:00Z", "hint": "oberth logs worker --once"}]
 }
@@ -355,6 +358,8 @@ or renaming one.
 | `manifest_runtime_mismatch` | `status` | Whether the running instance comes from an old manifest. |
 | `worktree.identity` | `status` | The expanded value of `${worktree}`, used to name per-worktree data. |
 | `observation.state` | `status` | Whether the listener table can be trusted; read it before `ports`. |
+| `observation.source` | `status` | The collector that answered when it was not the platform's primary one; non-empty means a missing port is unknown, not free. |
+| `machine[].listening_known` | `status` | Whether `listening` was observed; false means the table cannot see that port's owner. |
 | `attention_path` | `status` | The derived handoff file for the current abnormality; absent when there is none. |
 | `services[].starting` | `status` | Instantaneous facts of an in-progress start; not a run and not the same as `running`. |
 | `starting.phase` | `status` | `waiting_dependency`, `prepare` or `spawning`. |

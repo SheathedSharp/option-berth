@@ -68,14 +68,46 @@ machine:
 	if len(m) != 2 {
 		t.Fatalf("machine = %+v, want both references", m)
 	}
-	if m[0].Name != "mysql" || m[0].Port != 3306 || !m[0].Listening {
-		t.Errorf("mysql = %+v, want it listening on 3306", m[0])
+	if m[0].Name != "mysql" || m[0].Port != 3306 || !m[0].Listening || !m[0].ListeningKnown {
+		t.Errorf("mysql = %+v, want it listening and known on 3306", m[0])
 	}
 	if m[0].Unit != nil {
 		t.Errorf("mysql unit = %v, want no machine service-manager inference", m[0].Unit)
 	}
-	if m[1].Name != "ghost" || m[1].Listening || m[1].Unit != nil {
-		t.Errorf("ghost = %+v, want it not listening and with no unit", m[1])
+	if m[1].Name != "ghost" || m[1].Listening || !m[1].ListeningKnown || m[1].Unit != nil {
+		t.Errorf("ghost = %+v, want it not listening, known, and with no unit", m[1])
+	}
+}
+
+// A narrow table (the Darwin lsof fallback) cannot see other users' sockets.
+// A port it did show stays a fact; a missing one is unknown, not absent.
+func TestMachineReferencesPublishUnknownUnderANarrowTable(t *testing.T) {
+	f := newFixture(t)
+	writeFile(t, filepath.Join(f.repo, ConfigName), `name: option-berth
+machine:
+  - name: mysql
+    port: 3306
+  - name: ghost
+    port: 9999
+`)
+	index := NewIndex()
+	index.Observe(f.repo)
+
+	rows := Resolve([]state.Port{
+		{Port: 3306},
+		nativePort(8123, f.repo),
+	}, NoRuns{}, index)
+
+	got := GroupsWith(rows, index, NoRuns{}, true)
+	if len(got) != 1 || len(got[0].Machine) != 2 {
+		t.Fatalf("groups = %+v, want one with both references", got)
+	}
+	m := got[0].Machine
+	if !m[0].Listening || !m[0].ListeningKnown {
+		t.Errorf("mysql = %+v, want a seen port to stay known", m[0])
+	}
+	if m[1].Listening || m[1].ListeningKnown {
+		t.Errorf("ghost = %+v, want an unseen port to be unknown", m[1])
 	}
 }
 
