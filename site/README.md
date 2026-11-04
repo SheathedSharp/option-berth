@@ -85,9 +85,11 @@ SHA256SUMS 校验说明。
 ### 自定义域（`oberth.zayju.de`）
 
 公开站点由 GitHub Pages 提供，**不使用 Cloudflare Pages**。仓库 Settings → Pages 的 Custom
-domain 设为 `oberth.zayju.de`，DNS 里 `oberth` 的 CNAME 指向 `sheathedsharp.github.io`（DNS
-only，不代理）；GitHub 负责签发证书，HTTP 会 301 到 HTTPS。`Product website` 工作流合并到
-`main` 后把 `site/dist` 发布到 GitHub Pages，这一步同时更新公开站点。
+domain 设为 `oberth.zayju.de`，DNS 里 `oberth` 的 CNAME 指向 `sheathedsharp.github.io`。
+GitHub 的自定义域证书签发前，这条记录暂时开启 Cloudflare 代理以提供有效 TLS（Cloudflare
+只做 DNS/代理，不构建、不使用 Pages）；证书就绪后可关掉代理改为 DNS only，让 GitHub 直接
+终止 TLS。`Product website` 工作流合并到 `main` 后把 `site/dist` 发布到 GitHub Pages，
+这一步同时更新公开站点。
 
 `SITE_URL` 默认是公开域名 `https://oberth.zayju.de/`，构建出的 canonical、`og:url`、
 `hreflang`、`robots.txt` 与 `sitemap.xml` 都指向它。要在本地或预览站使用 GitHub Pages 的
