@@ -56,6 +56,30 @@ worker: API health=200</code></pre>
       </div>
     </section>
 
+    <section class="proof" aria-labelledby="proof-title">
+      <div class="wrap proof-inner">
+        <div class="proof-head">
+          <h2 id="proof-title" class="reveal">$proof_title</h2>
+          <p class="reveal">$proof_intro</p>
+          <p class="proof-result reveal">$proof_result</p>
+        </div>
+        <div class="proof-data reveal">
+          <table class="proof-table">
+            <caption class="sr-only">$proof_caption</caption>
+            <thead class="sr-only">
+              <tr><th scope="col">$proof_metric</th><th scope="col">$proof_with</th><th scope="col">$proof_without</th></tr>
+            </thead>
+            <tbody>
+              <tr><th scope="row">$proof_row_completion</th><td><strong>40/40</strong><span>100%</span></td><td><strong>29/40</strong><span>72.5%</span></td></tr>
+              <tr><th scope="row">$proof_row_turns</th><td><strong>5</strong><span>P95 10</span></td><td><strong>9</strong><span>P95 17</span></td></tr>
+              <tr><th scope="row">$proof_row_time</th><td><strong>45s</strong></td><td><strong>69s</strong></td></tr>
+            </tbody>
+          </table>
+          <p class="proof-note">$proof_note <a class="text-link" href="https://github.com/SheathedSharp/option-berth/blob/main/docs/agent/agent-eval.md">$proof_method_link <span aria-hidden="true">↗</span></a></p>
+        </div>
+      </div>
+    </section>
+
     <section class="pain" aria-labelledby="pain-title">
       <div class="wrap pain-inner">
         <h2 id="pain-title" class="reveal">$pain_title</h2>
