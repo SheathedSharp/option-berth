@@ -1402,6 +1402,7 @@ class JournalTests(unittest.TestCase):
             "build": {"sha256": "abc", "version": "test", "commit": "deadbeef"},
             "skill": {}, "agents": {"claude": "1"},
             "arms": [lib.ARM_OBERTH], "passed_env": [], "agent_args": {},
+            "models": {"claude": "model-a"},
             "repeat": 2, "scenarios": ["stack-start"],
             "scenario_prompts": {"stack-start": "do it"},
             "compare_arms": [lib.ARM_OBERTH, lib.ARM_NATIVE],
@@ -1434,10 +1435,12 @@ class JournalTests(unittest.TestCase):
             report = json.loads((out / "report.json").read_text(encoding="utf-8"))
             self.assertEqual(len(report["runs"]), 1)
             self.assertTrue(report["summary"])
+            self.assertEqual(report["models"], {"claude": "model-a"})
 
 
 class MergeUnionTests(unittest.TestCase):
-    def shard(self, agent: str, scenario_ids: list[str], *, version: str = "1") -> dict:
+    def shard(self, agent: str, scenario_ids: list[str], *, version: str = "1",
+              model: str = "model-a") -> dict:
         rows = []
         for scenario in scenario_ids:
             for arm in (lib.ARM_OBERTH, lib.ARM_NATIVE):
@@ -1458,7 +1461,7 @@ class MergeUnionTests(unittest.TestCase):
             "agents": {agent: version}, "arms": [lib.ARM_OBERTH, lib.ARM_NATIVE], "repeat": 2,
             "scenarios": scenario_ids,
             "scenario_prompts": {sid: f"prompt {sid}" for sid in scenario_ids},
-            "passed_env": [], "agent_args": {}, "runs": rows,
+            "passed_env": [], "agent_args": {}, "models": {agent: model}, "runs": rows,
         }
 
     def write(self, payload: dict, name: str, root: Path) -> Path:
@@ -1494,6 +1497,33 @@ class MergeUnionTests(unittest.TestCase):
             self.assertEqual(code, 1)
             report = json.loads((out / "report.json").read_text(encoding="utf-8"))
             self.assertTrue(any("missing scenarios" in note for note in report["notes"]))
+
+    def test_two_models_for_one_agent_are_refused(self) -> None:
+        import agent_eval
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            a = self.write(self.shard("claude", ["stack-start"], model="model-a"), "a.json", root)
+            b = self.write(self.shard("claude", ["stack-subset"], model="model-b"), "b.json", root)
+            code = agent_eval.merge_reports(
+                [str(a), str(b)], root / "merged", require_comparable=False,
+            )
+            self.assertEqual(code, 1)
+
+    def test_cli_merge_takes_one_flag_per_report(self) -> None:
+        # The workflow used to pass `--merge r1 r2`; argparse rejected r2. The
+        # CLI contract is one --merge flag per report, and this pins it.
+        import agent_eval
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            a = self.write(self.shard("claude", ["stack-start"]), "a.json", root)
+            b = self.write(self.shard("claude", ["stack-subset"]), "b.json", root)
+            out = root / "merged"
+            code = agent_eval.main(["--merge", str(a), "--merge", str(b), "--out", str(out)])
+            self.assertEqual(code, 0)
+            report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["scenarios"], ["stack-start", "stack-subset"])
 
     def test_two_cli_versions_for_one_agent_are_refused(self) -> None:
         import agent_eval
