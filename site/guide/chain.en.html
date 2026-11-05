@@ -1,0 +1,37 @@
+<p class="chapter-intro">Every command in this book reads or writes one chain: <strong>worktree → manifest → service → run → runtime facts</strong>. Each station has exactly one writer, and the next station reads only what the previous one published. There is no second source of state.</p>
+
+<h2 id="stations">Five stations</h2>
+<table class="chapter-table">
+  <caption class="sr-only">What each station publishes and what the next one reads</caption>
+  <thead><tr><th scope="col">Station</th><th scope="col">Who writes it</th><th scope="col">What it publishes</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">Worktree</th><td>Git, observed by the engine</td><td>The checkout root path and the <code>wt_…</code> identity a run belongs to.</td></tr>
+    <tr><th scope="row">Manifest</th><td>A person</td><td><code>oberth.yaml</code>: services, ports, dependencies, health checks, references.</td></tr>
+    <tr><th scope="row">Service</th><td>The engine at start</td><td>Which declaration was started, in which order, on which address.</td></tr>
+    <tr><th scope="row">Run</th><td>The engine's run registry</td><td>pid, start, end, exit code and the log path of one process.</td></tr>
+    <tr><th scope="row">Runtime facts</th><td>The observations of this round</td><td>Alive, listening, healthy, and the reason an earlier run ended.</td></tr>
+  </tbody>
+</table>
+
+<h2 id="order">The order is the contract</h2>
+<p>A single “is it up?” flag would collapse the chain, and every reader would have to re-derive the rest. Instead each step is published before the next one is allowed to decide anything: attribution happens before lifecycle, lifecycle before observation, and observation before readiness.</p>
+<p>That is why <code>up</code> can wait honestly, and why <code>status</code> can say a service is running while its port is unknown without contradicting itself.</p>
+
+<h2 id="attribution">A run belongs to the checkout that started it</h2>
+<p>Attribution uses this round's path observation, the manifest's content index and the run identity. Two worktrees of the same repository therefore never cross services: not a port, not a database name, not a stop.</p>
+<p>Ports follow the same rule. <code>port: auto</code> is reserved per run and handed back on stop, so the second checkout asking for “the API port” gets its own answer instead of a collision.</p>
+
+<h2 id="unknown">Unknown is a fact</h2>
+<p>Failure, cancellation and an incomplete scan may not become “free”, “gone” or “healthy”. Absence from a listener table means the fact was not observed — never that the port is free. A successful signal means the signal was delivered; it does not mean the process exited.</p>
+<aside class="note">
+  <p>This is the rule that keeps the chain honest: an unread fact is written as unknown, and unknown is not success. <a href="{{guide}}status/">status</a> is where you see it, and <a href="{{guide}}boundaries/">Where the product stops</a> is where it becomes a product boundary.</p>
+</aside>
+
+<h2 id="next">Where each station is taught</h2>
+<ul>
+  <li><a href="{{guide}}declare/">Declare what should run</a> — the manifest, and the one thing a model may not do to it.</li>
+  <li><a href="{{guide}}up/">up</a> — dependency order, automatic ports and what readiness really proves.</li>
+  <li><a href="{{guide}}worktrees/">Worktrees and runs</a> — attribution, data paths and leftover checkouts.</li>
+  <li><a href="{{guide}}logs/">logs</a> — the run's own output, without reassembling a shell one-liner.</li>
+  <li><a href="{{guide}}status/">status</a> — the four runtime facts, and the honest “I cannot see”.</li>
+</ul>

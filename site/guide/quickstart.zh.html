@@ -1,0 +1,71 @@
+<p class="chapter-intro">这一章把一个 checkout 从零带到跑起来的服务栈，再干净地停下来。示例是 Hello Worktree：两个 Python 3 进程，不装依赖、不要账号、不要 API key。</p>
+
+<h2 id="before">开始之前</h2>
+<p>你需要已在 <code>PATH</code> 上的 <code>oberth</code>（<a href="{{guide}}install/">安装 oberth</a>）、Python 3，以及仓库自带的示例目录。</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">get the example</figcaption>
+  <pre><code>git clone https://github.com/SheathedSharp/option-berth.git
+cd option-berth/examples/hello-worktree</code></pre>
+</figure>
+<p>除非显式传 <code>--allow-outside-home</code>，这个 checkout 必须位于你的 HOME 之下；默认情况下引擎拒绝管理 HOME 边界之外的服务栈。</p>
+
+<h2 id="declare">声明这套服务</h2>
+<p>示例已经带着一份 <code>oberth.yaml</code>。先读它，再运行任何命令：它就是全部输入。</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">oberth.yaml · hello-worktree</figcaption>
+  <pre><code>name: hello-worktree
+services:
+  - name: api
+    cmd: python3 -u api.py
+    port: auto
+    health: /health
+  - name: worker
+    cmd: python3 -u worker.py
+    depends_on: [api]
+    env:
+      API_URL: ${api.url}</code></pre>
+</figure>
+<p>两个服务。<code>api</code> 要求自动分配端口并带健康检查；<code>worker</code> 没有端口，在 <code>api</code> 之后启动，并通过 <code>${api.url}</code> 拿到 API 的真实地址。这里的每一项都不是从运行中的进程猜出来的。</p>
+<p>在你自己的项目里，这份文件由 <code>oberth init</code> 写出。agent 可以用 <code>oberth init draft</code> 起草，只有人会运行 <code>oberth init adopt</code>。</p>
+
+<h2 id="start">启动并等到就绪</h2>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">oberth up --wait</figcaption>
+  <pre><code>oberth up --wait --json</code></pre>
+</figure>
+<p><code>--wait</code> 只在每个服务真的就位后才返回：<code>api</code> 有绑定的监听、<code>/health</code> 通过，无端口的 <code>worker</code> 进程活着。还在启动的进程不算就绪，超时也不算成功。</p>
+
+<h2 id="read">读现在跑着什么</h2>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">oberth status</figcaption>
+  <pre><code>hello-worktree · main
+
+api      running   :21730   health 200
+worker   running   no port
+
+2 services · manifest oberth.yaml</code></pre>
+</figure>
+<p>这个端口属于本 checkout：同一仓库的另一个 worktree 会拿到不同的端口，因为 <code>port: auto</code> 是按一次运行分配的，不是按项目记住的。<code>no port</code> 是一条事实，不是失败——worker 通过它的运行记录被观察到。</p>
+<p>打开 <code>status</code> 打印的地址，就能看到 API 用它实际绑定的端口应答。同一次读取的 JSON 版本是 <code>oberth status --json --brief</code>，也是 agent 的开场读取。</p>
+
+<h2 id="log">读 worker 的日志</h2>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">oberth logs worker --once</figcaption>
+  <pre><code>worker: API health=200
+worker: API health=200
+worker: API health=200</code></pre>
+</figure>
+<p><code>--once</code> 读一次当前运行的日志就返回；不带它时 <code>logs</code> 会持续跟随。服务已经失败时，<code>--first-error</code> 给出当前运行的第一条错误，而不是最后一屏输出。</p>
+
+<h2 id="stop">停下来</h2>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">oberth down</figcaption>
+  <pre><code>oberth down --force --json</code></pre>
+</figure>
+<p><code>down</code> 停掉这个 worktree 启动的服务，并把端口预留交还。它不碰另一个 checkout、不碰普通用户的 daemon，也不碰清单从未声明过的进程。</p>
+
+<h2 id="isolation">亲手看一次隔离</h2>
+<p>给同一个仓库再建一个 Git worktree，在两边分别进入 <code>examples/hello-worktree</code> 并各自 <code>up</code>。两个 API 服务会拿到不同的端口。在其中一个里 <code>down</code>，另一个继续跑。</p>
+<aside class="note">
+  <p>这不是容器，也不是操作系统沙箱。它是运行归属与生命周期隔离：一次运行属于启动它的 checkout。<a href="{{guide}}worktrees/">多个 worktree 与运行</a>讲规则，<a href="{{guide}}down/">down</a>讲一次停止永远不该碰到什么。</p>
+</aside>

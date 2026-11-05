@@ -3,11 +3,15 @@ import { mkdir } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 
 const book = JSON.parse(readFileSync(new URL('../guide/book.json', import.meta.url), 'utf8'));
-const guidePath = (locale, slug) => {
-  const base = locale === 'en' ? 'guide/en/' : 'guide/';
-  return slug === 'overview' ? base : `${base}${slug}/`;
-};
+const locales = book.locales.map(locale => locale.id);
+// English is the default edition and lives at the guide root.
 const chapterPath = slug => (slug === 'overview' ? '' : `${slug}/`);
+const guidePath = (locale, slug) => {
+  const localeHome = book.locales.find(item => item.id === locale).prefix;
+  return `guide/${localeHome}${chapterPath(slug)}`;
+};
+
+/* ------------------------------------------------------------------ product page */
 
 for (const locale of ['', 'en/']) for (const width of [360, 390, 768, 1440]) {
   test(`${locale || 'zh'} layout at ${width}`, async ({ page }, testInfo) => {
@@ -130,74 +134,147 @@ test('no-JavaScript page keeps copy, language, commands and release link', async
   await context.close();
 });
 
-test('guide: every chapter renders both languages without console errors', async ({page}) => {
+test('homepage links to the English and Chinese guides', async ({page}) => {
+  await page.goto('./');
+  await expect(page.locator('.head-end a[href="guide/zh/"]')).toHaveCount(1);
+  await expect(page.locator('.site-foot a[href="guide/zh/"]')).toHaveCount(1);
+  await page.locator('.language').click();
+  await expect(page.locator('.head-end a[href="../guide/"]')).toHaveCount(1);
+  await expect(page.locator('.site-foot a[href="../guide/"]')).toHaveCount(1);
+});
+
+/* --------------------------------------------------------------------- guide */
+
+test('guide: every chapter renders in every locale without console errors', async ({page}) => {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
   for (const chapter of book.chapters) {
-    for (const locale of ['zh', 'en']) {
-      const response = await page.goto(guidePath(locale, chapter.slug));
+    for (const locale of book.locales) {
+      const response = await page.goto(guidePath(locale.id, chapter.slug));
       expect(response.status()).toBe(200);
-      await expect(page.locator('h1')).toContainText(chapter[locale].title);
-      await expect(page.locator('html')).toHaveAttribute('lang', locale === 'zh' ? 'zh-CN' : 'en');
+      await expect(page.locator('h1')).toHaveText(chapter.locales[locale.id].title);
+      await expect(page.locator('html')).toHaveAttribute('lang', locale.lang);
+      await expect(page.locator('.doc-prose h2').first()).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
-      await expect(page.locator('.page-toc a, .home-hero')).not.toHaveCount(0);
     }
   }
   expect(errors).toEqual([]);
 });
 
-test('guide: the chain explorer switches by pointer and keyboard', async ({page}) => {
-  await page.goto('guide/');
-  await expect(page.locator('.chain-panel')).toHaveCount(5);
-  await expect(page.locator('.chain-panel.is-active')).toHaveCount(1);
-  await page.locator('.chain-stop[data-station="manifest"]').click();
-  await expect(page.locator('.chain-panel[data-panel="manifest"]')).toHaveClass(/is-active/);
-  await expect(page.locator('.chain-stop[data-station="manifest"]')).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.locator('.chain-panel[data-panel="worktree"]')).toBeHidden();
-  await page.locator('.chain-stop[data-station="manifest"]').press('ArrowRight');
-  await expect(page.locator('.chain-panel[data-panel="service"]')).toHaveClass(/is-active/);
+test('guide: the rail is the whole book, with the current chapter marked', async ({page}) => {
+  await page.goto(guidePath('en', 'status'));
+  await expect(page.locator('.doc-rail .rail-part')).toHaveCount(book.parts.length);
+  await expect(page.locator('.doc-rail .rail-link')).toHaveCount(book.chapters.length);
+  await expect(page.locator('.doc-rail a[aria-current="page"]')).toHaveCount(1);
+  await expect(page.locator('.doc-rail a[aria-current="page"]')).toHaveText('status');
+  await expect(page.locator('.doc-crumbs')).toContainText('The core loop');
+  await page.locator('.doc-rail a[href$="quickstart/"]').click();
+  await expect(page).toHaveURL(/\/guide\/quickstart\/$/);
+  await expect(page.locator('.doc-rail a[aria-current="page"]')).toHaveText('Quickstart');
 });
 
-test('guide: no JavaScript still shows every chain panel and the whole contents', async ({browser, baseURL}) => {
+test('guide: previous and next follow the book order', async ({page}) => {
+  await page.goto(guidePath('en', 'logs'));
+  const index = book.chapters.findIndex(chapter => chapter.slug === 'logs');
+  const previous = book.chapters[index - 1];
+  const next = book.chapters[index + 1];
+  await expect(page.locator('.pager-prev strong')).toHaveText(previous.locales.en.title);
+  await expect(page.locator('.pager-next strong')).toHaveText(next.locales.en.title);
+  await page.locator('.pager-next').click();
+  await expect(page).toHaveURL(new RegExp(`/guide/${next.slug}/$`));
+});
+
+test('guide: language menu reaches the counterpart chapter', async ({page}) => {
+  await page.goto(guidePath('en', 'status'));
+  await page.locator('[data-lang-menu] summary').click();
+  const chinese = page.locator('[data-lang-menu] a[lang="zh-CN"]');
+  await expect(chinese).toHaveAttribute('href', '../zh/status/');
+  await chinese.click();
+  await expect(page).toHaveURL(/\/guide\/zh\/status\/$/);
+  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
+  await page.locator('[data-lang-menu] summary').click();
+  await page.locator('[data-lang-menu] a[lang="en"]').click();
+  await expect(page).toHaveURL(/\/guide\/status\/$/);
+});
+
+test('guide: the theme follows the system until the reader chooses', async ({page}) => {
+  await page.emulateMedia({colorScheme: 'dark'});
+  await page.goto(guidePath('en', 'status'));
+  await expect(page.locator('html')).not.toHaveAttribute('data-theme', 'light');
+  const dark = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+  await page.locator('[data-theme-toggle]').click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  const light = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+  expect(light).not.toBe(dark);
+  await expect(page.locator('[data-theme-toggle]')).toHaveAttribute('aria-label', /dark/i);
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(light);
+});
+
+test('guide: search finds a section of another chapter and navigates to it', async ({page}) => {
+  await page.goto(guidePath('en', 'install'));
+  await page.locator('[data-search-open]').click();
+  const dialog = page.locator('[data-search]');
+  await expect(dialog).toBeVisible();
+  await page.locator('[data-search-input]').fill('observation');
+  const results = dialog.locator('.doc-search-result');
+  await expect(results.first()).toBeVisible();
+  const hrefs = await results.evaluateAll(nodes => nodes.map(node => node.getAttribute('href')));
+  expect(hrefs.some(href => href.includes('status/#blind'))).toBe(true);
+  const target = dialog.locator('.doc-search-result[href*="status/#blind"]');
+  await target.click();
+  await expect(page).toHaveURL(/\/guide\/status\/#blind$/);
+  await expect(page.locator('#blind')).toBeVisible();
+});
+
+test('guide: search closes on Escape and is not offered without a query', async ({page}) => {
+  await page.goto(guidePath('en', 'status'));
+  await page.keyboard.press('/');
+  await expect(page.locator('[data-search]')).toBeVisible();
+  await expect(page.locator('[data-search-hint]')).toBeVisible();
+  await expect(page.locator('[data-search-empty]')).toBeHidden();
+  await page.locator('[data-search-input]').fill('zzzz');
+  await expect(page.locator('[data-search-empty]')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-search]')).toBeHidden();
+});
+
+test('guide: every code block offers a copy button', async ({page, context, browserName}) => {
+  // WebKit in Playwright has no clipboard permission to grant; there the copy
+  // falls back to execCommand, so only the button's own feedback is asserted.
+  if (browserName === 'chromium') await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.goto(guidePath('en', 'quickstart'));
+  const fragments = page.locator('.doc-prose figure.fragment');
+  const button = fragments.first().locator('.copy-button');
+  await expect(button).toBeVisible();
+  await expect(page.locator('.doc-prose .copy-button')).toHaveCount(await fragments.count());
+  await button.click();
+  await expect(button).toHaveText(book.labels.en.copied);
+  if (browserName === 'chromium') {
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toContain('git clone');
+  }
+});
+
+test('guide: no JavaScript still reads and navigates', async ({browser, baseURL}) => {
   const context = await browser.newContext({javaScriptEnabled: false});
   const page = await context.newPage();
-  await page.goto(baseURL + 'guide/');
+  await page.goto(baseURL + guidePath('en', 'status'));
   await expect(page.locator('h1')).toBeVisible();
-  await expect(page.locator('.chain-panel')).toHaveCount(5);
-  for (const panel of await page.locator('.chain-panel').all()) await expect(panel).toBeVisible();
-  await expect(page.locator('.contents-list a')).toHaveCount(book.chapters.length);
-  await page.locator('.language').click();
-  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-  await expect(page.locator('h1')).toHaveText('The option-berth guide');
+  await expect(page.locator('.doc-rail .rail-link')).toHaveCount(book.chapters.length);
+  await expect(page.locator('.doc-prose pre').first()).toBeVisible();
+  await expect(page.locator('[data-search-open]')).toBeHidden();
+  await expect(page.locator('[data-theme-toggle]')).toBeHidden();
+  await expect(page.locator('[data-rail-toggle]')).toBeHidden();
+  await page.locator('[data-lang-menu] summary').click();
+  await page.locator('[data-lang-menu] a[lang="zh-CN"]').click();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
+  await expect(page.locator('h1')).toHaveText(book.chapters.find(c => c.slug === 'status').locales.zh.title);
   await context.close();
 });
 
-test('guide: each edition keeps its own copy', async ({page}) => {
-  await page.goto('guide/');
-  await expect(page.locator('#chain-worktree')).toHaveText('worktree');
-  await expect(page.locator('.chain-panel[data-panel="worktree"] .chain-copy p')).toContainText('代码观察');
-  await expect(page.locator('.guide-foot-cols h2').first()).toHaveText('指南');
-  await page.goto('guide/en/');
-  await expect(page.locator('#chain-worktree')).toHaveText('Worktree');
-  await expect(page.locator('.chain-panel[data-panel="worktree"] .chain-copy p')).toContainText('Code observes');
-  await expect(page.locator('.guide-foot-cols h2').first()).toHaveText('Guide');
-});
-
-test('guide: language switch reaches the counterpart chapter', async ({page}) => {
-  await page.goto('guide/status/');
-  await expect(page.locator('.language')).toHaveAttribute('href', '../en/status/');
-  await expect(page.locator('.language')).toHaveText('EN');
-  await page.locator('.language').click();
-  await expect(page).toHaveURL(/\/guide\/en\/status\/$/);
-  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-  await expect(page.locator('.language')).toHaveText('中文');
-  await page.locator('.language').click();
-  await expect(page).toHaveURL(/\/guide\/status\/$/);
-  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
-});
-
-test('guide: machine entry points list every chapter', async ({request, baseURL}) => {
+test('guide: machine entry points list every chapter in every locale', async ({request, baseURL}) => {
   const llms = await (await request.get(baseURL + 'llms.txt')).text();
   const full = await (await request.get(baseURL + 'llms-full.txt')).text();
   const sitemap = await (await request.get(baseURL + 'sitemap.xml')).text();
@@ -205,20 +282,35 @@ test('guide: machine entry points list every chapter', async ({request, baseURL}
   expect(llms.startsWith('# option-berth')).toBe(true);
   expect(robots).toContain('llms.txt');
   for (const chapter of book.chapters) {
-    for (const locale of ['zh-CN', 'en']) {
-      const prefix = locale === 'en' ? 'guide/en/' : 'guide/';
-      const url = `https://oberth.zayju.de/${prefix}${chapterPath(chapter.slug)}`;
+    for (const locale of book.locales) {
+      const url = `https://oberth.zayju.de/${guidePath(locale.id, chapter.slug)}`;
       expect(llms).toContain(`](${url})`);
       expect(sitemap).toContain(`<loc>${url}</loc>`);
     }
-    expect(full).toContain(`URL: https://oberth.zayju.de/guide/en/${chapterPath(chapter.slug)}`);
-    expect(full).toContain(chapter.en.title);
+    expect(full).toContain(`URL: https://oberth.zayju.de/guide/${chapterPath(chapter.slug)}`);
+    expect(full).toContain(chapter.locales.en.title);
   }
   expect(llms).toContain('https://oberth.zayju.de/llms-full.txt');
   expect(full).toContain('oberth up --wait');
 });
 
-for (const [path, lang] of [['guide/', 'zh-CN'], ['guide/en/status/', 'en']]) for (const width of [360, 390, 768, 1440]) {
+test('guide: the first English URLs still forward to the default edition', async ({page}) => {
+  await page.goto('guide/en/status/');
+  await expect(page).toHaveURL(/\/guide\/status\/$/);
+  await page.goto('guide/en/');
+  await expect(page).toHaveURL(/\/guide\/$/);
+});
+
+test('guide: the search index is versioned and covers every chapter', async ({request, baseURL}) => {
+  const page = await request.get(baseURL + guidePath('en', 'install'));
+  const index = (await page.text()).match(/data-search-index="([^"]+)"/)[1];
+  expect(index).toMatch(/^(\.\.\/)+search-en\.json\?v=[0-9a-f]{8}$/);
+  const versioned = index.split('/').pop();
+  const data = await (await request.get(baseURL + 'guide/' + versioned)).json();
+  expect(data.chapters.map(chapter => chapter.slug)).toEqual(book.chapters.map(chapter => chapter.slug));
+});
+
+for (const path of ['guide/', 'guide/status/', 'guide/zh/', 'guide/zh/quickstart/']) for (const width of [360, 390, 768, 1440]) {
   test(`guide layout ${path} at ${width}`, async ({page}) => {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -227,28 +319,24 @@ for (const [path, lang] of [['guide/', 'zh-CN'], ['guide/en/status/', 'en']]) fo
     await page.emulateMedia({reducedMotion: 'reduce'});
     await page.goto(path);
     await expect(page.locator('h1')).toBeVisible();
-    await expect(page.locator('html')).toHaveAttribute('lang', lang);
+    await expect(page.locator('.doc-prose > *').first()).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
-    if (path === 'guide/') {
-      await expect(page.locator('.home-stage pre')).toBeVisible();
-      await expect(page.locator('.home-rail-station')).toHaveCount(5);
-      await page.locator('.contents-part').first().scrollIntoViewIfNeeded();
-      await expect(page.locator('.contents-list a').first()).toBeVisible();
-    } else {
-      await expect(page.locator('.chapter-body pre').first()).toBeVisible();
-      await expect(page.locator('.rail-station')).toHaveCount(5);
-      await page.locator('.chapter-nav').scrollIntoViewIfNeeded();
-      await expect(page.locator('.chapter-nav .chapter-link').first()).toBeVisible();
-    }
+    await page.locator('.doc-pager').scrollIntoViewIfNeeded();
+    await expect(page.locator('.doc-pager .pager-link').first()).toBeVisible();
     expect(errors).toEqual([]);
   });
 }
 
-test('homepage links to the guide in both languages', async ({page}) => {
-  await page.goto('./');
-  await expect(page.locator('.head-end a[href="guide/"]')).toHaveCount(1);
-  await expect(page.locator('.site-foot a[href="guide/"]')).toHaveCount(1);
-  await page.locator('.language').click();
-  await expect(page.locator('.head-end a[href="../guide/en/"]')).toHaveCount(1);
-  await expect(page.locator('.site-foot a[href="../guide/en/"]')).toHaveCount(1);
+test('guide: the rail opens as a drawer on a phone', async ({page}) => {
+  await page.setViewportSize({width: 390, height: 820});
+  await page.goto(guidePath('en', 'status'));
+  const toggle = page.locator('[data-rail-toggle]');
+  await expect(toggle).toBeVisible();
+  await expect(page.locator('[data-rail]')).toBeHidden();
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('[data-rail]')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('[data-rail]')).toBeHidden();
 });

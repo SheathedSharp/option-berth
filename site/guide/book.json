@@ -1,59 +1,40 @@
 {
+  "default": "en",
+  "locales": [
+    {"id": "en", "label": "English", "lang": "en", "og_locale": "en", "prefix": ""},
+    {"id": "zh", "label": "中文", "lang": "zh-CN", "og_locale": "zh_CN", "prefix": "zh/"}
+  ],
   "labels": {
-    "zh": {
-      "skip": "跳到正文",
-      "navigation": "主导航",
-      "footer_navigation": "指南页脚",
-      "nav_guide": "指南",
-      "nav_product": "官网",
-      "nav_github": "GitHub",
-      "toc_title": "目录",
-      "on_this_page": "本页",
-      "chain_title": "事实链",
-      "contract_title": "契约入口",
-      "previous": "上一章",
-      "next": "下一章",
-      "chapter_nav": "章节导航",
-      "foot_guide": "指南",
-      "foot_contract": "契约",
-      "foot_products": "产品",
-      "foot_machine": "机器入口",
-      "machine_note": "本章的英文全文也收录在机器入口里。",
-      "foot_overview": "总览",
-      "foot_install": "安装",
-      "foot_status": "核心循环",
-      "foot_cli": "CLI 契约",
-      "foot_product": "产品定义",
-      "foot_integrations": "接入",
-      "foot_work_records": "工作记录",
-      "foot_engine": "引擎",
-      "foot_client": "macOS 客户端",
-      "foot_skill": "coding agent skill",
-      "footer_line": "worktree 的运行事实层",
-      "footer_note": "本地优先 · 2026",
-      "guide_home": "指南总览",
-      "copy": "复制",
-      "copied": "已复制"
-    },
     "en": {
       "skip": "Skip to content",
-      "navigation": "Main navigation",
+      "navigation": "Site",
       "footer_navigation": "Guide footer",
       "nav_guide": "Guide",
       "nav_product": "Product",
       "nav_github": "GitHub",
+      "breadcrumb": "Breadcrumb",
       "toc_title": "Contents",
       "on_this_page": "On this page",
-      "chain_title": "The chain",
-      "contract_title": "The contract",
-      "previous": "Previous chapter",
-      "next": "Next chapter",
-      "chapter_nav": "Chapter navigation",
+      "contract_title": "Contract",
+      "previous": "Previous",
+      "next": "Next",
+      "chapter_nav": "Chapters",
+      "edit_page": "Edit this page",
+      "menu": "Contents",
+      "close": "Close",
+      "language": "Language",
+      "search_open": "Search the guide",
+      "search_placeholder": "Search the guide",
+      "search_hint": "Type to search every chapter and section.",
+      "search_empty": "No chapter or section matches that.",
+      "search_results": "Search results",
+      "theme_light": "Switch to the light theme",
+      "theme_dark": "Switch to the dark theme",
       "foot_guide": "Guide",
       "foot_contract": "Contract",
       "foot_products": "Products",
       "foot_machine": "Machine entry points",
-      "machine_note": "The English text of every chapter is also in the machine files.",
+      "machine_note": "Every chapter is also published as plain text for agents and editors.",
       "foot_overview": "Overview",
       "foot_install": "Install",
       "foot_status": "The core loop",
@@ -69,269 +50,387 @@
       "guide_home": "Guide overview",
       "copy": "Copy",
       "copied": "Copied"
+    },
+    "zh": {
+      "skip": "跳到正文",
+      "navigation": "站点",
+      "footer_navigation": "指南页脚",
+      "nav_guide": "指南",
+      "nav_product": "官网",
+      "nav_github": "GitHub",
+      "breadcrumb": "面包屑",
+      "toc_title": "目录",
+      "on_this_page": "本页",
+      "contract_title": "契约入口",
+      "previous": "上一章",
+      "next": "下一章",
+      "chapter_nav": "章节",
+      "edit_page": "编辑本页",
+      "menu": "目录",
+      "close": "关闭",
+      "language": "语言",
+      "search_open": "搜索指南",
+      "search_placeholder": "搜索指南",
+      "search_hint": "输入关键词，搜索全部章节与小节。",
+      "search_empty": "没有匹配的章节或小节。",
+      "search_results": "搜索结果",
+      "theme_light": "切换到浅色主题",
+      "theme_dark": "切换到深色主题",
+      "foot_guide": "指南",
+      "foot_contract": "契约",
+      "foot_products": "产品",
+      "foot_machine": "机器入口",
+      "machine_note": "每一章同时以纯文本发布，供 agent 与编辑器读取。",
+      "foot_overview": "总览",
+      "foot_install": "安装",
+      "foot_status": "核心循环",
+      "foot_cli": "CLI 契约",
+      "foot_product": "产品定义",
+      "foot_integrations": "接入",
+      "foot_work_records": "工作记录",
+      "foot_engine": "引擎",
+      "foot_client": "macOS 客户端",
+      "foot_skill": "coding agent skill",
+      "footer_line": "worktree 的运行事实层",
+      "footer_note": "本地优先 · 2026",
+      "guide_home": "指南总览",
+      "copy": "复制",
+      "copied": "已复制"
     }
   },
   "parts": [
-    {"id": "start", "zh": "开始", "en": "Start"},
-    {"id": "loop", "zh": "核心循环", "en": "The core loop"},
-    {"id": "together", "zh": "并行与交接", "en": "Parallel work and handoff"},
-    {"id": "frame", "zh": "边界与契约", "en": "Boundaries and contract"}
-  ],
-  "stations": [
-    {"id": "worktree", "zh": "worktree", "en": "Worktree"},
-    {"id": "manifest", "zh": "清单", "en": "Manifest"},
-    {"id": "service", "zh": "服务", "en": "Service"},
-    {"id": "run", "zh": "运行", "en": "Run"},
-    {"id": "facts", "zh": "运行事实", "en": "Runtime facts"}
+    {"id": "start", "title": {"en": "Start", "zh": "开始"}},
+    {"id": "concepts", "title": {"en": "Concepts", "zh": "概念"}},
+    {"id": "loop", "title": {"en": "The core loop", "zh": "核心循环"}},
+    {"id": "automation", "title": {"en": "Automation", "zh": "自动化"}},
+    {"id": "reference", "title": {"en": "Reference", "zh": "参考"}}
   ],
   "chapters": [
     {
       "slug": "overview",
       "part": "start",
-      "station": null,
-      "zh": {
-        "nav": "总览",
-        "title": "option-berth 指南",
-        "lede": "一个 checkout 该跑什么，是不是真的在跑，没跑为什么。这本指南讲清 oberth 每条命令背后那条事实链。",
-        "summary": "option-berth 是什么、事实链、核心闭环，以及整本书怎么读。"
-      },
-      "en": {
-        "nav": "Overview",
-        "title": "The option-berth guide",
-        "lede": "What a checkout should run, whether it really is running, and why not. This book teaches the chain of facts behind every oberth command.",
-        "summary": "What option-berth is, the chain of facts, the core loop, and how to read the rest of the book."
+      "locales": {
+        "en": {
+          "nav": "Overview",
+          "title": "The option-berth guide",
+          "lede": "What a checkout should run, whether it really is running, and why not. This book teaches the chain of facts behind every oberth command.",
+          "summary": "What option-berth is, the chain of facts, the core loop, and how to read the rest of the book."
+        },
+        "zh": {
+          "nav": "总览",
+          "title": "option-berth 指南",
+          "lede": "一个 checkout 该跑什么，是不是真的在跑，没跑为什么。这本指南讲清 oberth 每条命令背后那条事实链。",
+          "summary": "option-berth 是什么、事实链、核心闭环，以及整本书怎么读。"
+        }
       },
       "refs": [
-        {"zh": "产品定义", "en": "Product definition", "href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/product.md"},
-        {"zh": "CLI 契约", "en": "CLI contract", "href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md"}
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/product.md", "label": {"en": "Product definition", "zh": "产品定义"}},
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md", "label": {"en": "CLI contract", "zh": "CLI 契约"}}
       ]
     },
     {
       "slug": "install",
       "part": "start",
-      "station": null,
-      "zh": {
-        "nav": "安装",
-        "title": "安装 oberth",
-        "lede": "一个二进制，不需要模型账号，安装脚本不会启动任何服务。用 version 和 doctor 确认构建，再去声明第一个 worktree。",
-        "summary": "一行脚本、go install、Homebrew、发布包，以及平台边界。"
-      },
-      "en": {
-        "nav": "Install",
-        "title": "Install oberth",
-        "lede": "One binary, no model account, no service started by the installer. Confirm the build with version and doctor, then declare your first worktree.",
-        "summary": "The one-line script, go install, Homebrew, release archives, and the platform boundaries."
+      "locales": {
+        "en": {
+          "nav": "Install",
+          "title": "Install oberth",
+          "lede": "One binary, no model account, no service started by the installer. Confirm the build with version and doctor, then declare your first worktree.",
+          "summary": "The one-line script, go install, Homebrew, release archives, and the platform boundaries."
+        },
+        "zh": {
+          "nav": "安装",
+          "title": "安装 oberth",
+          "lede": "一个二进制，不需要模型账号，安装脚本不会启动任何服务。用 version 和 doctor 确认构建，再去声明第一个 worktree。",
+          "summary": "一行脚本、go install、Homebrew、发布包，以及平台边界。"
+        }
       },
       "refs": [
-        {"zh": "安装、升级与卸载", "en": "Install, upgrade and uninstall", "href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/install.md"}
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/install.md", "label": {"en": "Install, upgrade and uninstall", "zh": "安装、升级与卸载"}}
+      ]
+    },
+    {
+      "slug": "quickstart",
+      "part": "start",
+      "locales": {
+        "en": {
+          "nav": "Quickstart",
+          "title": "Your first worktree",
+          "lede": "One checkout, five commands, one honest answer: declare, start, read, log, stop. The example needs Python 3 and nothing else.",
+          "summary": "The whole loop on Hello Worktree, from an empty checkout to a clean stop."
+        },
+        "zh": {
+          "nav": "快速开始",
+          "title": "你的第一个 worktree",
+          "lede": "一个 checkout、五条命令、一个诚实的答案：声明、启动、读取、看日志、停止。示例只需要 Python 3。",
+          "summary": "在 Hello Worktree 上跑完整闭环：从一个空 checkout 到一个干净的停止。"
+        }
+      },
+      "refs": [
+        {"href": "https://github.com/SheathedSharp/option-berth/tree/main/examples/hello-worktree", "label": {"en": "Hello Worktree example", "zh": "Hello Worktree 示例"}},
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md", "label": {"en": "CLI contract", "zh": "CLI 契约"}}
+      ]
+    },
+    {
+      "slug": "chain",
+      "part": "concepts",
+      "locales": {
+        "en": {
+          "nav": "The chain of facts",
+          "title": "One chain of facts",
+          "lede": "Worktree → manifest → service → run → runtime facts. Each station has one writer, and the next station reads only what the previous one published.",
+          "summary": "Why the order is the contract, how attribution works, and why unknown is a fact."
+        },
+        "zh": {
+          "nav": "事实链",
+          "title": "一条事实链",
+          "lede": "worktree → 清单 → 服务 → 运行 → 运行事实。每个站点只有一个写入者，下一站只读上一站发布的东西。",
+          "summary": "为什么顺序就是契约、归属怎么确定，以及为什么未知也是一条事实。"
+        }
+      },
+      "refs": [
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/agent/architecture.md#one-chain-of-facts", "label": {"en": "Architecture · the chain of facts", "zh": "架构 · 事实链"}},
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/product.md#object-model", "label": {"en": "Product definition · object model", "zh": "产品定义 · 对象模型"}}
+      ]
+    },
+    {
+      "slug": "worktrees",
+      "part": "concepts",
+      "locales": {
+        "en": {
+          "nav": "Worktrees and runs",
+          "title": "Several worktrees at once",
+          "lede": "A run belongs to the checkout that started it. Two worktrees can run the same repository without sharing a port, a database or a stop.",
+          "summary": "Run ownership, automatic ports, ${worktree} data separation, leftover checkouts, and the events stream."
+        },
+        "zh": {
+          "nav": "worktree 与运行",
+          "title": "同时跑多个 worktree",
+          "lede": "一次运行属于启动它的 checkout。两个 worktree 可以同时跑同一个仓库，不共享端口、数据库或停止动作。",
+          "summary": "运行归属、自动端口、${worktree} 的数据隔离、遗留 checkout，以及 events 流。"
+        }
+      },
+      "refs": [
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/product.md#object-model", "label": {"en": "Product definition · object model", "zh": "产品定义 · 对象模型"}},
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/agent/architecture.md#start-stop-and-port-reservations", "label": {"en": "Architecture · start, stop and port reservations", "zh": "架构 · 启动、停止与端口预留"}}
       ]
     },
     {
       "slug": "declare",
       "part": "loop",
-      "station": "manifest",
-      "zh": {
-        "nav": "声明",
-        "title": "声明该跑什么",
-        "lede": "oberth.yaml 是每一条事实的输入。清单由人确认；agent 可以起草，但只有人能采纳。",
-        "summary": "init、init draft、init adopt，最小清单，以及会改变行为的字段。"
-      },
-      "en": {
-        "nav": "Declare",
-        "title": "Declare what should run",
-        "lede": "oberth.yaml is the input to every fact. A person confirms it; an agent may draft it, but only a person adopts it.",
-        "summary": "init, init draft and init adopt, the smallest manifest, and the fields that change behavior."
-      },
-      "refs": [
-        {"zh": "CLI 契约 · init", "en": "CLI contract · init", "href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-init"},
-        {"zh": "清单元数据与严格模式", "en": "Manifest references and strict mode", "href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#manifest-references"}
-      ]
-    },
-    {
-      "slug": "status",
-      "part": "loop",
-      "station": "facts",
-      "zh": {
-        "nav": "status",
-        "title": "status：现在到底跑着什么",
-        "lede": "一次读清 worktree、清单和运行记录——也包括那句诚实的“我看不见”。",
-        "summary": "进程、监听、健康、退出四种事实；表格、--brief、--json，以及观察失败。"
-      },
-      "en": {
-        "nav": "status",
-        "title": "status: what is really running",
-        "lede": "One read of the worktree, the manifest and the runs — including the honest answer “I cannot see”.",
-        "summary": "Process, listener, health and exit as four separate facts; the table, --brief, --json, and observation failures."
+      "locales": {
+        "en": {
+          "nav": "Declare",
+          "title": "Declare what should run",
+          "lede": "oberth.yaml is the input to every fact. A person confirms it; an agent may draft it, but only a person adopts it.",
+          "summary": "init, init draft and init adopt, the smallest manifest, and the fields that change behavior."
+        },
+        "zh": {
+          "nav": "声明",
+          "title": "声明该跑什么",
+          "lede": "oberth.yaml 是每一条事实的输入。清单由人确认；agent 可以起草，但只有人能采纳。",
+          "summary": "init、init draft、init adopt，最小清单，以及会改变行为的字段。"
+        }
       },
       "refs": [
-        {"zh": "CLI 契约 · status", "en": "CLI contract · status", "href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-status-path---json---no-mark---only-services---brief"},
-        {"zh": "架构 · 事实链", "en": "Architecture · the chain of facts", "href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/agent/architecture.md#one-chain-of-facts"}
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-init", "label": {"en": "CLI contract · init", "zh": "CLI 契约 · init"}},
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#manifest-references", "label": {"en": "Manifest references and strict mode", "zh": "清单元数据与严格模式"}}
       ]
     },
     {
       "slug": "up",
       "part": "loop",
-      "station": "service",
-      "zh": {
-        "nav": "up",
-        "title": "up：让它跑起来，并等到真的就绪",
-        "lede": "服务按 depends_on 顺序启动；--wait 只在真的开始监听并通过健康检查后才返回。",
-        "summary": "依赖顺序、prepare、自动端口、就绪、失败原因，以及不丢地址的重启。"
-      },
-      "en": {
-        "nav": "up",
-        "title": "up: make it run, and wait for real",
-        "lede": "Services start in depends_on order, and --wait returns only when they actually listen and pass their health checks.",
-        "summary": "Dependency order, prepare, automatic ports, readiness, failure reasons, and restart without losing the address."
+      "locales": {
+        "en": {
+          "nav": "up",
+          "title": "up: make it run, and wait for real",
+          "lede": "Services start in depends_on order, and --wait returns only when they actually listen and pass their health checks.",
+          "summary": "Dependency order, prepare, automatic ports, readiness, failure reasons, and restart without losing the address."
+        },
+        "zh": {
+          "nav": "up",
+          "title": "up：让它跑起来，并等到真的就绪",
+          "lede": "服务按 depends_on 顺序启动；--wait 只在真的开始监听并通过健康检查后才返回。",
+          "summary": "依赖顺序、prepare、自动端口、就绪、失败原因，以及不丢地址的重启。"
+        }
       },
       "refs": [
-        {"zh": "CLI 契约 · up", "en": "CLI contract · up", "href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-up-project---only-name---no-deps---wait--ready---wait-timeout-duration"},
-        {"zh": "CLI 契约 · restart", "en": "CLI contract · restart", "href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-restart-project---only-name---force---allow-outside-home---json"}
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-up-project---only-name---no-deps---wait--ready---wait-timeout-duration", "label": {"en": "CLI contract · up", "zh": "CLI 契约 · up"}},
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-restart-project---only-name---force---allow-outside-home---json", "label": {"en": "CLI contract · restart", "zh": "CLI 契约 · restart"}}
+      ]
+    },
+    {
+      "slug": "status",
+      "part": "loop",
+      "locales": {
+        "en": {
+          "nav": "status",
+          "title": "status: what is really running",
+          "lede": "One read of the worktree, the manifest and the runs — including the honest answer “I cannot see”.",
+          "summary": "Process, listener, health and exit as four separate facts; the table, --brief, --json, and observation failures."
+        },
+        "zh": {
+          "nav": "status",
+          "title": "status：现在到底跑着什么",
+          "lede": "一次读清 worktree、清单和运行记录——也包括那句诚实的“我看不见”。",
+          "summary": "进程、监听、健康、退出四种事实；表格、--brief、--json，以及观察失败。"
+        }
+      },
+      "refs": [
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-status-path---json---no-mark---only-services---brief", "label": {"en": "CLI contract · status", "zh": "CLI 契约 · status"}},
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/agent/architecture.md#one-chain-of-facts", "label": {"en": "Architecture · the chain of facts", "zh": "架构 · 事实链"}}
       ]
     },
     {
       "slug": "logs",
       "part": "loop",
-      "station": "run",
-      "zh": {
-        "nav": "logs",
-        "title": "logs：服务自己的输出",
-        "lede": "失败会留下日志、退出码和原因。logs 直接读它们，不用重新拼一条 shell 命令。",
-        "summary": "一次读取或持续跟随、当前运行的第一条错误，以及无端口 worker 的日志。"
-      },
-      "en": {
-        "nav": "logs",
-        "title": "logs: the service's own output",
-        "lede": "A failure has a log, an exit code and a reason. logs reads them directly, without reassembling a shell one-liner.",
-        "summary": "One read or a stream, the first error of the current run, and the log of a portless worker."
+      "locales": {
+        "en": {
+          "nav": "logs",
+          "title": "logs: the service's own output",
+          "lede": "A failure has a log, an exit code and a reason. logs reads them directly, without reassembling a shell one-liner.",
+          "summary": "One read or a stream, the first error of the current run, and the log of a portless worker."
+        },
+        "zh": {
+          "nav": "logs",
+          "title": "logs：服务自己的输出",
+          "lede": "失败会留下日志、退出码和原因。logs 直接读它们，不用重新拼一条 shell 命令。",
+          "summary": "一次读取或持续跟随、当前运行的第一条错误，以及无端口 worker 的日志。"
+        }
       },
       "refs": [
-        {"zh": "CLI 契约 · logs", "en": "CLI contract · logs", "href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-logs-serviceport---once---lines-n---follow---ip-address---json---run-currentid---first-error"}
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-logs-serviceport---once---lines-n---follow---ip-address---json---run-currentid---first-error", "label": {"en": "CLI contract · logs", "zh": "CLI 契约 · logs"}}
       ]
     },
     {
       "slug": "down",
       "part": "loop",
-      "station": "run",
-      "zh": {
-        "nav": "down",
-        "title": "down：停这个项目，不动整台机器",
-        "lede": "停止只作用于启动这些服务的 worktree，不会跨到另一个 checkout。",
-        "summary": "正常停止、checkout 已删除时的入口、同名组，以及 down 永远不碰的东西。"
-      },
-      "en": {
-        "nav": "down",
-        "title": "down: stop this project, not the machine",
-        "lede": "Stopping is scoped to the worktree that started the services. It never crosses into another checkout.",
-        "summary": "The normal stop, the deleted-checkout entry points, ambiguous groups, and what down never touches."
-      },
-      "refs": [
-        {"zh": "CLI 契约 · down", "en": "CLI contract · down", "href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-down-project---worktree-path----identity-wt_---force---json"},
-        {"zh": "CLI 契约 · worktrees", "en": "CLI contract · worktrees", "href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-worktrees---gone---json"}
-      ]
-    },
-    {
-      "slug": "many",
-      "part": "together",
-      "station": "worktree",
-      "zh": {
-        "nav": "多 worktree",
-        "title": "同时跑多个 worktree",
-        "lede": "一次运行属于启动它的 checkout。两个 worktree 可以同时跑同一个仓库，不共享端口、数据库或停止动作。",
-        "summary": "运行归属、自动端口、${worktree} 的数据隔离、遗留 checkout，以及 events 流。"
-      },
-      "en": {
-        "nav": "Many worktrees",
-        "title": "Several worktrees at once",
-        "lede": "A run belongs to the checkout that started it. Two worktrees can run the same repository without sharing a port, a database or a stop.",
-        "summary": "Run ownership, automatic ports, ${worktree} data separation, leftover checkouts, and the events stream."
+      "locales": {
+        "en": {
+          "nav": "down",
+          "title": "down: stop this project, not the machine",
+          "lede": "Stopping is scoped to the worktree that started the services. It never crosses into another checkout.",
+          "summary": "The normal stop, the deleted-checkout entry points, ambiguous groups, and what down never touches."
+        },
+        "zh": {
+          "nav": "down",
+          "title": "down：停这个项目，不动整台机器",
+          "lede": "停止只作用于启动这些服务的 worktree，不会跨到另一个 checkout。",
+          "summary": "正常停止、checkout 已删除时的入口、同名组，以及 down 永远不碰的东西。"
+        }
       },
       "refs": [
-        {"zh": "产品定义 · 对象模型", "en": "Product definition · object model", "href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/product.md#object-model"},
-        {"zh": "架构 · 启动、停止与端口预留", "en": "Architecture · start, stop and port reservations", "href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/agent/architecture.md#start-stop-and-port-reservations"}
-      ]
-    },
-    {
-      "slug": "workplace",
-      "part": "together",
-      "station": null,
-      "zh": {
-        "nav": "交接",
-        "title": "把工作留在下一个会话找得到的地方",
-        "lede": "worktree 上保存着工作记录：引擎跑过的命令、交给 agent 的每一轮工作，以及它们各自怎么结束。",
-        "summary": "workplace 命令、自动记录的内容、记录如何结束，以及为什么它不是运行事实。"
-      },
-      "en": {
-        "nav": "Handoff",
-        "title": "Leave work where the next session finds it",
-        "lede": "A worktree keeps work records: commands the engine ran, rounds handed to an agent, and how each one ended.",
-        "summary": "The workplace commands, what gets recorded automatically, how a record ends, and why it is not runtime truth."
-      },
-      "refs": [
-        {"zh": "工作记录契约", "en": "Work records contract", "href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/workplace.md"}
-      ]
-    },
-    {
-      "slug": "agents",
-      "part": "together",
-      "station": null,
-      "zh": {
-        "nav": "接入 agent",
-        "title": "把 oberth 放进 agent 的循环",
-        "lede": "接口只有 CLI 和 --json。集成就是在工具自己的 setup、run、cleanup 槽位里调用它——不装 hooks、不注册 MCP、不改任何工具配置。",
-        "summary": "三个调用时机、agent 开局的三次读取、接入配方，以及 hook 里最容易踩的坑。"
-      },
-      "en": {
-        "nav": "Coding agents",
-        "title": "Put oberth inside the agent's loop",
-        "lede": "The interface is the CLI and --json. Integration means calling it from the tool's own setup, run and cleanup slots — no hooks, no MCP, no configuration written for you.",
-        "summary": "The three moments to call oberth, the reads an agent opens with, recipes, and the pitfalls that bite in hooks."
-      },
-      "refs": [
-        {"zh": "接入编排工具与开发服务器", "en": "Integrating orchestration tools and dev servers", "href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/integrations.md"},
-        {"zh": "coding agent skill（独立产品）", "en": "Coding-agent skill (separate product)", "href": "https://github.com/SheathedSharp/option-berth-skill"}
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-down-project---worktree-path----identity-wt_---force---json", "label": {"en": "CLI contract · down", "zh": "CLI 契约 · down"}},
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#oberth-worktrees---gone---json", "label": {"en": "CLI contract · worktrees", "zh": "CLI 契约 · worktrees"}}
       ]
     },
     {
       "slug": "json",
-      "part": "together",
-      "station": null,
-      "zh": {
-        "nav": "JSON",
-        "title": "JSON 里的运行事实",
-        "lede": "每条命令都有唯一的机器形状：stdout 恰好一个 JSON 值，诊断写 stderr，错误码稳定。",
-        "summary": "规则、稳定错误码、一次 status 的完整读取，以及字段缺失不代表什么。"
-      },
-      "en": {
-        "nav": "JSON",
-        "title": "Facts as JSON",
-        "lede": "Every command has one machine shape: one JSON value on stdout, diagnostics on stderr, stable error codes.",
-        "summary": "The rules, the stable error codes, a worked status read, and what an absent field does not mean."
+      "part": "automation",
+      "locales": {
+        "en": {
+          "nav": "JSON",
+          "title": "Facts as JSON",
+          "lede": "Every command has one machine shape: one JSON value on stdout, diagnostics on stderr, stable error codes.",
+          "summary": "The rules, the stable error codes, a worked status read, and what an absent field does not mean."
+        },
+        "zh": {
+          "nav": "JSON",
+          "title": "JSON 里的运行事实",
+          "lede": "每条命令都有唯一的机器形状：stdout 恰好一个 JSON 值，诊断写 stderr，错误码稳定。",
+          "summary": "规则、稳定错误码、一次 status 的完整读取，以及字段缺失不代表什么。"
+        }
       },
       "refs": [
-        {"zh": "CLI 契约 · 通用规则", "en": "CLI contract · common rules", "href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#common-rules"},
-        {"zh": "CLI 契约 · agent 读取的 JSON 字段", "en": "CLI contract · agent-facing JSON fields", "href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#agent-facing-json-fields"}
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#common-rules", "label": {"en": "CLI contract · common rules", "zh": "CLI 契约 · 通用规则"}},
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#agent-facing-json-fields", "label": {"en": "CLI contract · agent-facing JSON fields", "zh": "CLI 契约 · agent 读取的 JSON 字段"}}
+      ]
+    },
+    {
+      "slug": "agents",
+      "part": "automation",
+      "locales": {
+        "en": {
+          "nav": "Coding agents",
+          "title": "Put oberth inside the agent's loop",
+          "lede": "The interface is the CLI and --json. Integration means calling it from the tool's own setup, run and cleanup slots — no hooks, no MCP, no configuration written for you.",
+          "summary": "The three moments to call oberth, the reads an agent opens with, recipes, and the pitfalls that bite in hooks."
+        },
+        "zh": {
+          "nav": "接入 agent",
+          "title": "把 oberth 放进 agent 的循环",
+          "lede": "接口只有 CLI 和 --json。集成就是在工具自己的 setup、run、cleanup 槽位里调用它——不装 hooks、不注册 MCP、不改任何工具配置。",
+          "summary": "三个调用时机、agent 开局的三次读取、接入配方，以及 hook 里最容易踩的坑。"
+        }
+      },
+      "refs": [
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/integrations.md", "label": {"en": "Integrating orchestration tools and dev servers", "zh": "接入编排工具与开发服务器"}},
+        {"href": "https://github.com/SheathedSharp/option-berth-skill", "label": {"en": "Coding-agent skill (separate product)", "zh": "coding agent skill（独立产品）"}}
+      ]
+    },
+    {
+      "slug": "workplace",
+      "part": "automation",
+      "locales": {
+        "en": {
+          "nav": "Handoff",
+          "title": "Leave work where the next session finds it",
+          "lede": "A worktree keeps work records: commands the engine ran, rounds handed to an agent, and how each one ended.",
+          "summary": "The workplace commands, what gets recorded automatically, how a record ends, and why it is not runtime truth."
+        },
+        "zh": {
+          "nav": "交接",
+          "title": "把工作留在下一个会话找得到的地方",
+          "lede": "worktree 上保存着工作记录：引擎跑过的命令、交给 agent 的每一轮工作，以及它们各自怎么结束。",
+          "summary": "workplace 命令、自动记录的内容、记录如何结束，以及为什么它不是运行事实。"
+        }
+      },
+      "refs": [
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/workplace.md", "label": {"en": "Work records contract", "zh": "工作记录契约"}}
+      ]
+    },
+    {
+      "slug": "diagnose",
+      "part": "reference",
+      "locales": {
+        "en": {
+          "nav": "When it fails",
+          "title": "When something looks wrong",
+          "lede": "Most confusion about a local stack is a missing fact, not a broken service. Each symptom here has one first command and one chapter.",
+          "summary": "A symptom-to-command table, the evidence to keep, and what is not a fix."
+        },
+        "zh": {
+          "nav": "出问题的时候",
+          "title": "看起来不对的时候",
+          "lede": "本地服务栈的大部分困惑，缺的是一条事实，不是服务坏了。每个症状对应一条命令、一章解释。",
+          "summary": "症状到命令的对照表、求助时要留下的证据，以及什么不是修复。"
+        }
+      },
+      "refs": [
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md#infrastructure-commands", "label": {"en": "CLI contract · infrastructure commands", "zh": "CLI 契约 · 基础设施命令"}},
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/agent/validation.md", "label": {"en": "What each check proves", "zh": "每种检查证明了什么"}}
       ]
     },
     {
       "slug": "boundaries",
-      "part": "frame",
-      "station": null,
-      "zh": {
-        "nav": "边界",
-        "title": "产品的边界",
-        "lede": "边界也是产品的一部分。这些是人和 agent 最先会问的问题。",
-        "summary": "没有图形界面、不做整机端口表、不写 Git、内核不看模型；外加按主题分组的契约入口。"
-      },
-      "en": {
-        "nav": "Boundaries",
-        "title": "Where the product stops",
-        "lede": "The boundaries are part of the product. These are the questions people and agents ask first.",
-        "summary": "No GUI, no machine-wide port radar, no Git writes, no model in the core; plus the contract, by topic."
+      "part": "reference",
+      "locales": {
+        "en": {
+          "nav": "Boundaries",
+          "title": "Where the product stops",
+          "lede": "The boundaries are part of the product. These are the questions people and agents ask first.",
+          "summary": "No GUI, no machine-wide port radar, no Git writes, no model in the core; plus the contract, by topic."
+        },
+        "zh": {
+          "nav": "边界",
+          "title": "产品的边界",
+          "lede": "边界也是产品的一部分。这些是人和 agent 最先会问的问题。",
+          "summary": "没有图形界面、不做整机端口表、不写 Git、内核不看模型；外加按主题分组的契约入口。"
+        }
       },
       "refs": [
-        {"zh": "产品定义 · 明确不做", "en": "Product definition · explicitly not done", "href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/product.md#explicitly-not-done"},
-        {"zh": "架构与支持边界", "en": "Architecture and support boundaries", "href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/agent/architecture.md"}
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/product.md#explicitly-not-done", "label": {"en": "Product definition · explicitly not done", "zh": "产品定义 · 明确不做"}},
+        {"href": "https://github.com/SheathedSharp/option-berth/blob/main/docs/agent/architecture.md", "label": {"en": "Architecture and support boundaries", "zh": "架构与支持边界"}}
       ]
     }
   ]
