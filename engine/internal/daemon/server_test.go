@@ -87,25 +87,8 @@ func newHarness(t *testing.T, ctx context.Context, tunes ...tune) *testHarness {
 	t.Helper()
 	h := &testHarness{t: t, loopDone: make(chan struct{})}
 	h.probe = refusedProbe
-	opts := scanner.Options{
-		DaemonVersion: "test",
-		Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
-			h.mu.Lock()
-			defer h.mu.Unlock()
-			return append([]ports.ListeningPort{}, h.rows...), nil
-		},
-		// Configured health must use the injected probe, not a real socket.
-		Probe: func(host string, port int, path string, timeout time.Duration) ports.HealthResult {
-			h.mu.Lock()
-			probe := h.probe
-			h.mu.Unlock()
-			return probe(host, port, path, timeout)
-		},
-		// The per-process sampler is faked for the same reason Scan is: it
-		// forks `ps` on Unix and a PowerShell on Windows once a second while
-		// a test keeps a subscription open.
-		SampleStats: h.sampleStats,
-	}
+
+	opts := h.scannerOptions()
 	for _, tune := range tunes {
 		tune(&opts)
 	}
@@ -120,6 +103,31 @@ func newHarness(t *testing.T, ctx context.Context, tunes ...tune) *testHarness {
 	}()
 	t.Cleanup(h.shutdown)
 	return h
+}
+
+// scannerOptions is the scanner configuration the harness runs on. Every seam
+// that would reach the real machine is faked, because a test that keeps a
+// subscription open would otherwise fork `ps` or open a real socket once a
+// second.
+func (h *testHarness) scannerOptions() scanner.Options {
+	return scanner.Options{
+		DaemonVersion: "test",
+		// Scan answers from the rows the test set, copied so a caller cannot
+		// mutate the harness's slice.
+		Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			return append([]ports.ListeningPort{}, h.rows...), nil
+		},
+		// Configured health goes through the injected probe, never a socket.
+		Probe: func(host string, port int, path string, timeout time.Duration) ports.HealthResult {
+			h.mu.Lock()
+			probe := h.probe
+			h.mu.Unlock()
+			return probe(host, port, path, timeout)
+		},
+		SampleStats: h.sampleStats,
+	}
 }
 
 // shutdown stops everything the harness started, in order, and returns only
