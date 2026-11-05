@@ -301,6 +301,21 @@ test('guide: the first English URLs still forward to the default edition', async
   await expect(page).toHaveURL(/\/guide\/$/);
 });
 
+test('assets are versioned so a cache cannot pair old CSS with new markup', async ({page, request, baseURL}) => {
+  for (const path of ['', 'en/', 'guide/', 'guide/zh/status/']) {
+    await page.goto(path);
+    const refs = await page.evaluate(() => [
+      ...[...document.querySelectorAll('link[rel="stylesheet"], script[src], img[src]')]
+        .map(element => element.getAttribute('href') || element.getAttribute('src')),
+    ].filter(href => href && !/^(https?:)?\/\//.test(href)));
+    expect(refs.length).toBeGreaterThan(0);
+    for (const href of refs) expect(href, `${path} → ${href}`).toMatch(/\?v=[0-9a-f]{8}$/);
+  }
+  const css = await request.get(baseURL + 'assets/guide.css');
+  expect(css.status()).toBe(200);
+  expect(await css.text()).toContain('.doc-shell');
+});
+
 test('guide: the search index is versioned and covers every chapter', async ({request, baseURL}) => {
   const page = await request.get(baseURL + guidePath('en', 'install'));
   const index = (await page.text()).match(/data-search-index="([^"]+)"/)[1];
