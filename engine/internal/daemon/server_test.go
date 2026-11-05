@@ -502,27 +502,31 @@ func TestIncludeFiltersEnrichments(t *testing.T) {
 	})
 	h.srv = New(Options{Socket: "/test/option-berth.sock", Version: "test", Scanner: h.loop})
 
-	plain := h.dial(ctx)
-	var plainSnap state.Snapshot
-	if e := plain.call("state.snapshot", rpc.StateSnapshotParams{}, &plainSnap); e != nil {
-		t.Fatalf("state.snapshot: %v", e)
-	}
+	plainSnap := h.snapshotAs(ctx, t, nil)
 	if plainSnap.Ports[0].Stats != nil {
 		t.Errorf("stats leaked to a caller that did not ask: %+v", plainSnap.Ports[0].Stats)
 	}
 
-	withStats := h.dial(ctx)
-	var statsSnap state.Snapshot
-	if e := withStats.call("state.snapshot",
-		rpc.StateSnapshotParams{Include: rpc.Include{"stats"}}, &statsSnap); e != nil {
-		t.Fatalf("state.snapshot with stats: %v", e)
-	}
+	statsSnap := h.snapshotAs(ctx, t, rpc.Include{"stats"})
 	if statsSnap.Ports[0].Stats == nil {
 		t.Fatal("stats missing for a caller that asked for them")
 	}
 	if statsSnap.Ports[0].Stats.CPUPercent != 1.5 {
 		t.Errorf("cpu_percent = %v, want 1.5", statsSnap.Ports[0].Stats.CPUPercent)
 	}
+}
+
+// snapshotAs opens a fresh client, asks for one state.snapshot with the given
+// include set, and returns it. Each caller gets its own connection so one test
+// can compare what two differently-scoped subscribers are served.
+func (h *testHarness) snapshotAs(ctx context.Context, t *testing.T, include rpc.Include) state.Snapshot {
+	t.Helper()
+	var snapshot state.Snapshot
+	if failure := h.dial(ctx).call("state.snapshot",
+		rpc.StateSnapshotParams{Include: include}, &snapshot); failure != nil {
+		t.Fatalf("state.snapshot(include=%v): %v", include, failure)
+	}
+	return snapshot
 }
 
 // TestQueueOverflowDisconnects is the spec's back-pressure rule: a client that
