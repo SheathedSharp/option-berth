@@ -87,7 +87,7 @@ root       1   ??    0.0 S    31T   0:00.40   0:00.09 /sbin/launchd
 rkrebs  1000   ??    3.1 S    31T   0:00.01   0:00.01 node server.js
         1000         0.0 S    37T   0:00.00   0:00.00 
 `
-	got := countPSThreads(out, map[int]bool{1: true, 1000: true})
+	got := tallyPSThreads(out, map[int]bool{1: true, 1000: true})
 	want := map[int]int{1: 3, 1000: 2}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("thread counts = %v, want %v", got, want)
@@ -101,7 +101,7 @@ func TestCountPSThreadsIgnoresUnrequestedPIDs(t *testing.T) {
 rkrebs  1000   ??    3.1 S    31T   0:00.01   0:00.01 node server.js
         1000         0.0 S    37T   0:00.00   0:00.00 
 `
-	got := countPSThreads(out, map[int]bool{1000: true, 2000: true})
+	got := tallyPSThreads(out, map[int]bool{1000: true, 2000: true})
 	if _, ok := got[2000]; ok {
 		t.Errorf("counts = %v, want no entry for the pid ps did not report", got)
 	}
