@@ -10,15 +10,13 @@ import (
 	"strings"
 )
 
-// applyConnectionCounts fills in every row's established-connection count from
-// a single listing of the machine's TCP connections.
+// applyConnectionCounts fills every row's established-connection count from a
+// single listing of the machine's TCP connections.
 //
-// It used to be one `lsof -iTCP:<port>` (or one `ss`) per listening port. On a
-// developer machine with three dozen listeners that is three dozen forks per
-// scan and, measured on macOS, 2.4 s of the 4.5 s a stats-enabled scan took —
-// all of it inside the lock that keeps scans and the stats tick from
-// interleaving, which starved the 1 s tick down to a delta every five or six
-// seconds. One listing costs 75 ms and answers for every port at once.
+// The per-port form ran one `lsof -iTCP:<port>` (or `ss`) for each listener.
+// On a machine with three dozen listeners that was three dozen forks per scan,
+// all inside the lock shared with the stats tick; one listing costs a fraction
+// of that and answers for every port at once.
 func applyConnectionCounts(pp []ListeningPort) {
 	applyConnectionCountsContext(context.Background(), pp)
 }
@@ -38,8 +36,8 @@ func applyConnectionCountsContext(ctx context.Context, pp []ListeningPort) {
 	}
 }
 
-// connectionCounts lists established TCP connections once and counts them per
-// local port.
+// connectionCounts lists the machine's established TCP connections once and
+// counts them per local port.
 func connectionCounts() map[int]int {
 	return connectionCountsContext(context.Background())
 }
@@ -93,105 +91,103 @@ func connectionCountsFor(ctx context.Context, platform string) map[int]int {
 
 // countLsofByPort counts `lsof -iTCP -sTCP:ESTABLISHED -n -P` by port.
 //
-// It reproduces exactly what the per-port `lsof -iTCP:<port>` calls reported,
-// halving included: `-i:<port>` matches a connection at *either* end, so a
-// loopback connection between two local processes showed up twice — once as
-// the server's fd and once as the client's — and the old code divided by two
-// to undo that. Both endpoints are counted here for the same reason, so the
-// published `connections` figure does not move for anyone.
+// It reports the same numbers the per-port `lsof -iTCP:<port>` calls did,
+// including the halving: `-i:<port>` matches at either end, so a loopback pair
+// appears twice — once as the server's fd, once as the client's — and the old
+// code divided by two. Counting both ends here keeps the published figure
+// unchanged.
 func countLsofByPort(out string) map[int]int {
-	hits := map[int]int{}
+	endpointHits := map[int]int{}
 	for _, line := range strings.Split(out, "\n") {
-		local, remote, ok := lsofEndpoints(line)
+		server, client, ok := lsofEndpoints(line)
 		if !ok {
 			continue
 		}
-		hits[local]++
-		hits[remote]++
+		endpointHits[server]++
+		endpointHits[client]++
 	}
-	counts := make(map[int]int, len(hits))
-	for port, n := range hits {
-		counts[port] = n / 2
+	counts := make(map[int]int, len(endpointHits))
+	for port, hits := range endpointHits {
+		counts[port] = hits / 2
 	}
 	return counts
 }
 
-// lsofEndpoints pulls the two port numbers out of an lsof NAME field of the
-// form "127.0.0.1:3000->127.0.0.1:52344 (ESTABLISHED)", IPv6 brackets and all.
+// lsofEndpoints pulls the two ports out of an lsof NAME field such as
+// "127.0.0.1:3000->127.0.0.1:52344 (ESTABLISHED)", IPv6 brackets included.
 func lsofEndpoints(line string) (local, remote int, ok bool) {
 	for _, field := range strings.Fields(line) {
-		arrow := strings.Index(field, "->")
-		if arrow < 0 {
+		left, right, paired := strings.Cut(field, "->")
+		if !paired {
 			continue
 		}
-		l, lok := portAfterColon(field[:arrow])
-		r, rok := portAfterColon(field[arrow+2:])
-		if lok && rok {
-			return l, r, true
+		localPort, localOK := portAfterColon(left)
+		remotePort, remoteOK := portAfterColon(right)
+		if localOK && remoteOK {
+			return localPort, remotePort, true
 		}
 	}
 	return 0, 0, false
 }
 
 // countSSByPort counts `ss -tn state established` by local port. `ss` reports
-// only the local end as the source, which is what the per-port
-// `sport = :<port>` filter selected, so no halving applies.
+// the local end as the source, which is what the per-port `sport = :<port>`
+// filter selected, so nothing is halved.
 //
-// The columns are read from the right, not by index: `ss` prints a State
-// column when it is not filtering by state and drops it when it is, so a
-// fixed index reads Send-Q on one machine and the local address on another.
-// The last two address-shaped fields are always local and peer.
+// Columns are read from the right, not by index: `ss` keeps a State column
+// when it is not filtering by state and drops it when it is, so a fixed index
+// reads Send-Q on one machine and the local address on another. The last two
+// address-shaped fields are always local and peer.
 func countSSByPort(out string) map[int]int {
 	counts := map[int]int{}
 	for _, line := range strings.Split(out, "\n") {
-		local, ok := ssLocalPort(strings.Fields(line))
-		if !ok {
-			continue
+		if local, ok := ssLocalPort(strings.Fields(line)); ok {
+			counts[local]++
 		}
-		counts[local]++
 	}
 	return counts
 }
 
-// ssLocalPort returns the local port of one `ss` row: the second-to-last field
-// that looks like an address with a port.
+// ssLocalPort is the local port of one `ss` row: the second-to-last field that
+// looks like an address with a port.
 func ssLocalPort(fields []string) (int, bool) {
-	var ports []int
-	for _, f := range fields {
-		if p, ok := portAfterColon(f); ok {
-			ports = append(ports, p)
+	ports := make([]int, 0, 2)
+	for _, field := range fields {
+		if port, ok := portAfterColon(field); ok {
+			ports = append(ports, port)
 		}
 	}
-	if len(ports) < 2 {
-		return 0, false
+	if len(ports) >= 2 {
+		return ports[len(ports)-2], true
 	}
-	return ports[len(ports)-2], true
+	return 0, false
 }
 
-// countNetstatByPort counts `netstat -ano` ESTABLISHED rows by local port.
+// countNetstatByPort counts the ESTABLISHED rows of `netstat -ano` by local
+// port.
 func countNetstatByPort(out string) map[int]int {
 	counts := map[int]int{}
 	for _, line := range strings.Split(out, "\n") {
-		fields := strings.Fields(strings.TrimSpace(line))
-		if len(fields) < 4 || strings.ToUpper(fields[3]) != "ESTABLISHED" {
+		columns := strings.Fields(strings.TrimSpace(line))
+		if len(columns) < 4 || strings.ToUpper(columns[3]) != "ESTABLISHED" {
 			continue
 		}
-		if port, ok := portAfterColon(fields[1]); ok {
+		if port, ok := portAfterColon(columns[1]); ok {
 			counts[port]++
 		}
 	}
 	return counts
 }
 
-// portAfterColon reads the port off an address, ignoring the IPv6 brackets and
-// the colons inside them.
-func portAfterColon(addr string) (int, bool) {
-	i := strings.LastIndex(addr, ":")
-	if i < 0 {
+// portAfterColon reads the port off an address, ignoring IPv6 brackets and the
+// colons inside them.
+func portAfterColon(address string) (int, bool) {
+	colon := strings.LastIndex(address, ":")
+	if colon < 0 {
 		return 0, false
 	}
-	port, err := strconv.Atoi(strings.TrimSpace(addr[i+1:]))
-	if err != nil || port <= 0 {
+	port, err := strconv.Atoi(strings.TrimSpace(address[colon+1:]))
+	if err != nil || port < 1 {
 		return 0, false
 	}
 	return port, true
