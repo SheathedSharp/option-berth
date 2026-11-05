@@ -14,268 +14,108 @@ func TestCachedSignalsCoverRejectsNewPID(t *testing.T) {
 	}
 }
 
-func TestResolveProcessName(t *testing.T) {
-	tests := []struct {
-		name      string
-		cmd       string
-		parentCmd string
-		cwd       string
-		want      string
-	}{
-		// .app bundles
-		{
-			name: ".app bundle",
-			cmd:  "/Applications/Visual Studio Code.app/Contents/MacOS/Electron --type=renderer",
-			want: "Visual Studio Code",
-		},
-
-		// Generic Go binary with cwd context
-		{
-			name: "Go binary in tmp/main with cwd",
-			cmd:  "/Users/me/projects/example-org-api/tmp/main",
-			cwd:  "/Users/me/projects/example-org-api",
-			want: "example-org-api/main",
-		},
-		{
-			name: "Go binary without cwd falls back to basename",
-			cmd:  "/Users/me/projects/example-org-api/tmp/main",
-			want: "main",
-		},
-		{
-			name: "binary in noise dir uses ancestor",
-			cmd:  "/Users/me/projects/myapp/build/server",
-			cwd:  "/Users/me/projects/myapp/build",
-			want: "myapp/server",
-		},
-
-		// Python -c (multiprocessing.spawn worker)
-		{
-			name:      "python -c with parent uvicorn",
-			cmd:       "/usr/bin/python -c from multiprocessing.spawn import spawn_main; spawn_main(...)",
-			parentCmd: "/Users/me/.venv/bin/python /Users/me/.venv/bin/uvicorn server:app --reload --port 8001",
-			want:      "uvicorn",
-		},
-		{
-			name:      "python -c with no parent falls back to interpreter",
-			cmd:       "python -c from foo import bar",
-			parentCmd: "",
-			want:      "python",
-		},
-
-		// uv / poetry runners
-		{
-			name: "uv run uvicorn",
-			cmd:  "uv run uvicorn server:app --port 8001",
-			want: "uvicorn",
-		},
-		{
-			name: "poetry run gunicorn",
-			cmd:  "poetry run gunicorn app:application",
-			want: "gunicorn",
-		},
-		{
-			name: "npx next dev",
-			cmd:  "npx next dev",
-			want: "next",
-		},
-
-		// python script vs module
-		{
-			name: "python /path/script.py",
-			cmd:  "/usr/bin/python /home/me/app/server.py --port 8000",
-			want: "server.py",
-		},
-		{
-			name: "python -m module",
-			cmd:  "python -m uvicorn server:app",
-			want: "uvicorn",
-		},
-		{
-			name: "python -m dotted.module",
-			cmd:  "python -m my.app.main",
-			want: "my.app.main",
-		},
-
-		// node
-		{
-			name: "node script.js",
-			cmd:  "/usr/local/bin/node /app/server.js",
-			want: "server.js",
-		},
-
-		// java
-		{
-			name: "java -cp classpath ClassName",
-			cmd:  "/usr/bin/java -cp dep1.jar:dep2.jar:dep3.jar com.myapp.SomeClass",
-			want: "com.myapp.SomeClass",
-		},
-		{
-			name: "java -classpath classpath ClassName",
-			cmd:  "java -classpath /path/to/dep1.jar:/path/to/dep2.jar com.example.Main",
-			want: "com.example.Main",
-		},
-		{
-			name: "java -jar app.jar",
-			cmd:  "java -jar /path/to/app.jar",
-			want: "app.jar",
-		},
-		{
-			name: "java with no class",
-			cmd:  "java",
-			want: "java",
-		},
-		{
-			name: "java --class-path long form",
-			cmd:  "java --class-path dep1.jar:dep2.jar com.example.Main",
-			want: "com.example.Main",
-		},
-		{
-			name: "java JVM flags before -cp",
-			cmd:  "java -Xmx1g -Dfoo=bar -cp app.jar com.example.Main",
-			want: "com.example.Main",
-		},
-		{
-			name: "java main class with trailing args",
-			cmd:  "java -cp app.jar com.example.Main --port 8080",
-			want: "com.example.Main",
-		},
-		{
-			name: "java bare main class no flags",
-			cmd:  "java com.example.Main",
-			want: "com.example.Main",
-		},
-		{
-			name: "java -cp at end with no value",
-			cmd:  "java -cp",
-			want: "java",
-		},
-		{
-			name: "java -m module/class",
-			cmd:  "java -p mods -m com.foo/com.foo.Main",
-			want: "com.foo.Main",
-		},
-		{
-			name: "java --module long form",
-			cmd:  "java --module-path mods --module com.foo/com.foo.Main",
-			want: "com.foo.Main",
-		},
-		{
-			name: "java --module=value equals form",
-			cmd:  "java --module-path mods --module=com.foo/com.foo.Main",
-			want: "com.foo.Main",
-		},
-		{
-			name: "java -m module only no class",
-			cmd:  "java -m com.foo",
-			want: "com.foo",
-		},
-
-		// Cwd should not be added when name already starts with it
-		{
-			name: "no double-prefix when name already includes cwd",
-			cmd:  "/usr/bin/myapp",
-			cwd:  "/projects/myapp",
-			want: "myapp",
-		},
-		// Cwd ignored for system home root
-		{
-			name: "skip Users home root",
-			cmd:  "/usr/local/bin/redis-server",
-			cwd:  "/Users",
-			want: "redis-server",
-		},
-
-		// Cwd of generic binary in build dir walks up
-		{
-			name: "cargo target/release walks up",
-			cmd:  "/projects/myapp/target/release/myapp-server",
-			cwd:  "/projects/myapp/target/release",
-			want: "myapp/myapp-server",
-		},
-
-		// Real-host cases (2026-10-01 capture, paths made generic): the names
-		// these must keep producing are the ones a developer saw on their
-		// machine, not a synthetic approximation.
-		{
-			name: "macOS app bundle ignores a home cwd",
-			cmd:  "/Applications/Warp.app/Contents/MacOS/stable",
-			cwd:  "/Users/dev",
-			want: "Warp",
-		},
-		{
-			name: "macOS app bundle ignores a support-data cwd",
-			cmd:  "/Applications/QQ.app/Contents/MacOS/QQ",
-			cwd:  "/Users/dev/Library/Application Support/QQ/Data",
-			want: "QQ",
-		},
-		{
-			name: "java -jar prepends the project directory",
-			cmd:  "java -Xms512m -Xmx1280m -jar target/example-project.jar --server.port=8089",
-			cwd:  "/Users/dev/code/example-project",
-			want: "example-project/example-project.jar",
-		},
-		{
-			name: "node vite binary runs from the frontend directory",
-			cmd:  "node --max-old-space-size=8192 ./node_modules/vite/bin/vite.js",
-			cwd:  "/Users/dev/code/example-project-web",
-			want: "example-project-web/vite.js",
-		},
-		{
-			name: "homebrew service keeps its formula directory",
-			cmd:  "/opt/homebrew/opt/redis/bin/redis-server 127.0.0.1:6379",
-			cwd:  "/opt/homebrew/var/db/redis",
-			want: "redis/redis-server",
-		},
-		{
-			name: "python -m http.server names the module",
-			cmd:  "python3 -m http.server 8000",
-			cwd:  "/Users/dev/code/site",
-			want: "site/http.server",
-		},
-		{
-			name: "a helper nested in an app names the app, not the helper",
-			cmd:  "/Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper (Plugin).app/Contents/MacOS/Code Helper (Plugin) --type=utility",
-			cwd:  "/Users/dev",
-			want: "Visual Studio Code",
-		},
-		{
-			name: "a tool inside an app's resources names the app",
-			cmd:  "/Applications/WorkBuddy.app/Contents/Resources/app.asar.unpacked/cli/bin/sandbox-cli --prewarm",
-			cwd:  "/Users/dev/WorkBuddy/2026-09-30-13-15-02",
-			want: "WorkBuddy",
-		},
-		{
-			// The JDK ships as an .app too; java running from it is still java,
-			// and the main class is the name that identifies the service.
-			name: "a bundled interpreter is not the product",
-			cmd:  "/opt/elasticsearch/jdk.app/Contents/Home/bin/java -Xshare:auto -Des.path.home=/opt/elasticsearch -cp /opt/elasticsearch/lib/* org.elasticsearch.bootstrap.Elasticsearch",
-			cwd:  "/opt/elasticsearch",
-			want: "elasticsearch/org.elasticsearch.bootstrap.Elasticsearch",
-		},
-		{
-			// RabbitMQ runs as the Erlang VM; the name that means anything is
-			// the release script its shell parent was started with.
-			name:      "erlang vm names its release script",
-			cmd:       "/opt/homebrew/Cellar/erlang@28/28.5.0.5/lib/erlang/erts-16.4.0.5/bin/beam.smp -W w -MBas ageffcbf",
-			parentCmd: "/bin/sh /opt/homebrew/Cellar/rabbitmq/4.3.5/libexec/rabbitmq-server",
-			cwd:       "/",
-			want:      "rabbitmq-server",
-		},
-		{
-			name: "a shell wrapping a script names the script",
-			cmd:  "/bin/sh /opt/services/payments/run-server.sh --port 9000",
-			cwd:  "/opt/services/payments",
-			want: "payments/run-server.sh",
-		},
+func checkResolved(t *testing.T, cmd, parent, cwd, want string) {
+	t.Helper()
+	if got := resolveProcessName(cmd, parent, cwd); got != want {
+		t.Errorf("\ncmd:       %q\nparentCmd: %q\ncwd:       %q\ngot:  %q\nwant: %q",
+			cmd, parent, cwd, got, want)
 	}
+}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := resolveProcessName(tc.cmd, tc.parentCmd, tc.cwd)
-			if got != tc.want {
-				t.Errorf("\ncmd:       %q\nparentCmd: %q\ncwd:       %q\ngot:  %q\nwant: %q",
-					tc.cmd, tc.parentCmd, tc.cwd, got, tc.want)
-			}
-		})
-	}
+func TestResolveBundlesAndBinaryPaths(t *testing.T) {
+	checkResolved(t,
+		"/Applications/Visual Studio Code.app/Contents/MacOS/Electron --type=renderer",
+		"", "", "Visual Studio Code")
+	checkResolved(t,
+		"/Applications/Warp.app/Contents/MacOS/stable",
+		"", "/Users/dev", "Warp")
+	checkResolved(t,
+		"/Applications/QQ.app/Contents/MacOS/QQ",
+		"", "/Users/dev/Library/Application Support/QQ/Data", "QQ")
+	checkResolved(t,
+		"/Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper (Plugin).app/Contents/MacOS/Code Helper (Plugin) --type=utility",
+		"", "/Users/dev", "Visual Studio Code")
+	checkResolved(t,
+		"/Applications/WorkBuddy.app/Contents/Resources/app.asar.unpacked/cli/bin/sandbox-cli --prewarm",
+		"", "/Users/dev/WorkBuddy/2026-09-30-13-15-02", "WorkBuddy")
+
+	checkResolved(t,
+		"/Users/me/projects/acme-api/tmp/main",
+		"", "/Users/me/projects/acme-api", "acme-api/main")
+	checkResolved(t,
+		"/Users/me/projects/acme-api/tmp/main",
+		"", "", "main")
+	checkResolved(t,
+		"/Users/me/projects/shop/build/server",
+		"", "/Users/me/projects/shop/build", "shop/server")
+	checkResolved(t,
+		"/projects/shop/target/release/shop-server",
+		"", "/projects/shop/target/release", "shop/shop-server")
+	checkResolved(t,
+		"/opt/homebrew/opt/redis/bin/redis-server 127.0.0.1:6379",
+		"", "/opt/homebrew/var/db/redis", "redis/redis-server")
+	checkResolved(t,
+		"/usr/bin/myapp",
+		"", "/projects/myapp", "myapp")
+	checkResolved(t,
+		"/usr/local/bin/redis-server",
+		"", "/Users", "redis-server")
+	checkResolved(t,
+		"/bin/sh /opt/services/payments/run-server.sh --port 9000",
+		"", "/opt/services/payments", "payments/run-server.sh")
+}
+
+func TestResolveInterpreterCommands(t *testing.T) {
+	checkResolved(t,
+		"/usr/bin/python -c from multiprocessing.spawn import spawn_main; spawn_main(...)",
+		"/Users/me/.venv/bin/python /Users/me/.venv/bin/uvicorn server:app --reload --port 8001",
+		"", "uvicorn")
+	checkResolved(t, "python -c from foo import bar", "", "", "python")
+
+	checkResolved(t, "uv run uvicorn server:app --port 8001", "", "", "uvicorn")
+	checkResolved(t, "poetry run gunicorn app:application", "", "", "gunicorn")
+	checkResolved(t, "npx next dev", "", "", "next")
+
+	checkResolved(t, "/usr/bin/python /home/me/app/server.py --port 8000", "", "", "server.py")
+	checkResolved(t, "python -m uvicorn server:app", "", "", "uvicorn")
+	checkResolved(t, "python -m my.app.main", "", "", "my.app.main")
+	checkResolved(t, "python3 -m http.server 8000", "", "/Users/dev/code/site", "site/http.server")
+
+	checkResolved(t, "/usr/local/bin/node /app/server.js", "", "", "server.js")
+	checkResolved(t,
+		"node --max-old-space-size=8192 ./node_modules/vite/bin/vite.js",
+		"", "/Users/dev/code/example-web", "example-web/vite.js")
+
+	checkResolved(t,
+		"/opt/homebrew/Cellar/erlang@28/28.5.0.5/lib/erlang/erts-16.4.0.5/bin/beam.smp -W w -MBas ageffcbf",
+		"/bin/sh /opt/homebrew/Cellar/rabbitmq/4.3.5/libexec/rabbitmq-server",
+		"/", "rabbitmq-server")
+
+	checkResolved(t,
+		"/opt/elasticsearch/jdk.app/Contents/Home/bin/java -Xshare:auto -Des.path.home=/opt/elasticsearch -cp /opt/elasticsearch/lib/* org.elasticsearch.bootstrap.Elasticsearch",
+		"", "/opt/elasticsearch",
+		"elasticsearch/org.elasticsearch.bootstrap.Elasticsearch")
+}
+
+func TestResolveJavaCommands(t *testing.T) {
+	checkResolved(t,
+		"/usr/bin/java -cp dep1.jar:dep2.jar:dep3.jar com.myapp.SomeClass",
+		"", "", "com.myapp.SomeClass")
+	checkResolved(t,
+		"java -classpath /path/to/dep1.jar:/path/to/dep2.jar com.example.Main",
+		"", "", "com.example.Main")
+	checkResolved(t, "java -jar /path/to/app.jar", "", "", "app.jar")
+	checkResolved(t, "java", "", "", "java")
+	checkResolved(t, "java --class-path dep1.jar:dep2.jar com.example.Main", "", "", "com.example.Main")
+	checkResolved(t, "java -Xmx1g -Dfoo=bar -cp app.jar com.example.Main", "", "", "com.example.Main")
+	checkResolved(t, "java -cp app.jar com.example.Main --port 8080", "", "", "com.example.Main")
+	checkResolved(t, "java com.example.Main", "", "", "com.example.Main")
+	checkResolved(t, "java -cp", "", "", "java")
+	checkResolved(t, "java -p mods -m com.foo/com.foo.Main", "", "", "com.foo.Main")
+	checkResolved(t, "java --module-path mods --module com.foo/com.foo.Main", "", "", "com.foo.Main")
+	checkResolved(t, "java --module-path mods --module=com.foo/com.foo.Main", "", "", "com.foo.Main")
+	checkResolved(t, "java -m com.foo", "", "", "com.foo")
+	checkResolved(t,
+		"java -Xms512m -Xmx1280m -jar target/example-project.jar --server.port=8089",
+		"", "/Users/dev/code/example-project", "example-project/example-project.jar")
 }
