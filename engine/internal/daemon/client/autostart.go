@@ -11,96 +11,112 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
 )
 
-// pollInterval is how often Autostart retries the dial while waiting.
+// pollInterval is how often WaitForSocket retries the dial.
 const pollInterval = 25 * time.Millisecond
 
-// NoAutostartEnv disables autostart for a whole process tree. `option-berth` never
-// starts a daemon behind the back of anything that sets it, which is what the
-// test harness (internal/testenv) and CI use to keep a build from leaving a
-// daemon running on the machine.
+// NoAutostartEnv disables autostart for a whole process tree. The test harness
+// and CI set it so a build never leaves a daemon behind on the machine.
 const NoAutostartEnv = "BERTH_NO_AUTOSTART"
 
-// Autostart spawns `oberth serve --detach` and waits, up to AutostartTimeout,
-// for the socket to accept connections (contract §7). binary defaults to the
-// running executable, so a client always starts the daemon it was built with.
+// Autostart spawns `oberth serve --detach` and waits up to AutostartTimeout
+// for the socket to accept connections. binary defaults to the running
+// executable, so a client starts the daemon it was built with.
 //
-// It refuses in two cases, both of them "this is not a oberth install": when
-// NoAutostartEnv is set, and when the executable it would spawn is a Go test
-// binary (see daemon.IsTestBinary — that spawn re-runs the test suite in the
-// background rather than starting a daemon).
+// It refuses in two cases, both meaning "this is not an oberth install": when
+// NoAutostartEnv is set, and when the executable is a Go test binary (spawning
+// it would re-run the test suite in the background rather than start a
+// daemon).
 func Autostart(ctx context.Context, binary, socket string) error {
-	if daemon.EnvEnabled(os.Getenv(NoAutostartEnv)) {
-		return fmt.Errorf("%w: autostart is disabled by %s=%s",
-			ErrNotRunning, NoAutostartEnv, os.Getenv(NoAutostartEnv))
+	if reason := disabledReason(); reason != nil {
+		return reason
 	}
-
-	exe, err := resolveBinary(binary)
+	executable, err := resolveBinary(binary)
 	if err != nil {
 		return err
 	}
-	if daemon.IsTestBinary(exe) && !daemon.TestDaemonAllowed() {
-		return fmt.Errorf("%w: refusing to autostart %s: it is a Go test binary, and `%s serve --detach` re-runs the whole test suite in the background instead of starting a daemon\nhint: a test needs an in-process daemon, or %s=1 to override",
-			ErrNotRunning, filepath.Base(exe), filepath.Base(exe), daemon.AllowTestDaemonEnv)
+	if err := refuseTestBinary(executable); err != nil {
+		return err
 	}
 
-	cmd := exec.Command(exe, "serve", "--detach")
-	cmd.Env = os.Environ()
-	if socket != "" {
-		cmd.Env = append(cmd.Env, "BERTH_SOCKET="+socket)
-	}
-	// `serve --detach` forks the real daemon and exits, so this wait is short.
-	out, err := cmd.CombinedOutput()
+	output, err := spawnDetached(executable, socket)
 	if err != nil {
 		return fmt.Errorf("%w: starting `%s serve --detach` failed: %v: %s",
-			ErrNotRunning, filepath.Base(exe), err, trim(out))
+			ErrNotRunning, filepath.Base(executable), err, clip(output))
 	}
-
 	return WaitForSocket(ctx, socket, AutostartTimeout)
 }
 
-// WaitForSocket blocks until the daemon accepts connections at socket, or the
+func disabledReason() error {
+	value := os.Getenv(NoAutostartEnv)
+	if !daemon.EnvEnabled(value) {
+		return nil
+	}
+	return fmt.Errorf("%w: autostart is disabled by %s=%s", ErrNotRunning, NoAutostartEnv, value)
+}
+
+func refuseTestBinary(executable string) error {
+	if !daemon.IsTestBinary(executable) || daemon.TestDaemonAllowed() {
+		return nil
+	}
+	return fmt.Errorf("%w: refusing to autostart %s: it is a Go test binary, and `%s serve --detach` re-runs the whole test suite in the background instead of starting a daemon\nhint: a test needs an in-process daemon, or %s=1 to override",
+		ErrNotRunning, filepath.Base(executable), filepath.Base(executable), daemon.AllowTestDaemonEnv)
+}
+
+func spawnDetached(executable, socket string) ([]byte, error) {
+	command := exec.Command(executable, "serve", "--detach")
+	command.Env = os.Environ()
+	if socket != "" {
+		command.Env = append(command.Env, "BERTH_SOCKET="+socket)
+	}
+	// `serve --detach` forks the real daemon and exits, so this wait is short.
+	return command.CombinedOutput()
+}
+
+// WaitForSocket blocks until the daemon accepts connections at socket or the
 // timeout expires.
 func WaitForSocket(ctx context.Context, socket string, timeout time.Duration) error {
 	if socket == "" {
 		socket = daemon.SocketPath()
 	}
-	deadline := time.Now().Add(timeout)
-	for {
-		if daemon.SocketAlive(socket) {
-			return nil
-		}
-		if time.Now().After(deadline) {
+	limit := time.Now().Add(timeout)
+	retry := time.NewTicker(pollInterval)
+	defer retry.Stop()
+	for !daemon.SocketAlive(socket) {
+		if time.Now().After(limit) {
 			return fmt.Errorf("%w: socket %s did not accept connections within %s",
 				ErrNotRunning, socket, timeout)
 		}
+		// Wait out one retry interval, or return early on cancellation.
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(pollInterval):
+		case <-retry.C:
 		}
 	}
+	return nil
 }
 
-// resolveBinary picks the executable to spawn: the caller's override, then the
-// running executable, then whatever `oberth` is on PATH.
+// resolveBinary chooses what to spawn: the override, then the running
+// executable, then `oberth` on PATH.
 func resolveBinary(binary string) (string, error) {
 	if binary != "" {
 		return binary, nil
 	}
-	if exe, err := os.Executable(); err == nil && exe != "" {
-		return exe, nil
+	if running, err := os.Executable(); err == nil && running != "" {
+		return running, nil
 	}
-	exe, err := exec.LookPath("oberth")
+	found, err := exec.LookPath("oberth")
 	if err != nil {
 		return "", fmt.Errorf("%w: cannot find the oberth binary to start it", ErrNotRunning)
 	}
-	return exe, nil
+	return found, nil
 }
 
-func trim(b []byte) string {
-	const max = 400
-	if len(b) > max {
-		b = b[:max]
+// clip bounds the command output quoted in an error.
+func clip(output []byte) string {
+	const limit = 400
+	if len(output) > limit {
+		output = output[:limit]
 	}
-	return string(b)
+	return string(output)
 }

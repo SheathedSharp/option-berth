@@ -1,7 +1,6 @@
-// Package client is the Go client for the oberth daemon. The CLI, `oberth mcp`
-// (spec 2) and any other in-process consumer all dial through here, so
-// autostart, the protocol version check and the subscription plumbing exist
-// once.
+// Package client is the Go client for the oberth daemon. The CLI, the agent
+// adapter and every other in-process consumer dial through it, so autostart,
+// the protocol check and subscription plumbing exist in one place.
 package client
 
 import (
@@ -10,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,245 +19,275 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 )
 
-// AutostartTimeout is how long a client waits for a daemon it spawned to start
-// accepting connections (contract §7).
+// AutostartTimeout bounds how long a client waits for the daemon it launched
+// to accept connections.
 const AutostartTimeout = 3 * time.Second
 
-// ClientInfo identifies the caller to the daemon in daemon.hello.
+// ClientInfo names the caller in daemon.hello and chooses the connection.
 type ClientInfo struct {
-	// Name is one of cli, app, mcp, tray.
+	// Name is the caller kind: cli, app, mcp or tray.
 	Name string
-	// Version is the caller's own version string.
+	// Version is the caller's own version.
 	Version string
-	// Keepalive asks the daemon to disable its idle timeout while connected.
+	// Keepalive disables the daemon's idle timeout for this connection.
 	Keepalive bool
-	// Socket overrides the resolved socket path. Empty uses daemon.SocketPath.
+	// Socket overrides daemon.SocketPath.
 	Socket string
-	// NoAutostart makes Connect fail instead of spawning `oberth serve -d`.
+	// NoAutostart fails Connect instead of running `oberth serve -d`.
 	NoAutostart bool
-	// BinaryPath overrides the executable autostart runs. Empty uses the
-	// running executable.
+	// BinaryPath overrides the executable autostart runs.
 	BinaryPath string
 }
 
-// ErrNotRunning is returned when no daemon is listening and autostart was
-// disabled or failed.
+// ErrNotRunning means no daemon is listening and autostart was disabled or
+// failed.
 var ErrNotRunning = errors.New("oberth daemon is not running")
 
-// ProtocolMismatchError is returned when the daemon speaks a different major
-// protocol version than this client was built against.
+// ProtocolMismatchError reports a daemon whose major protocol version differs
+// from the one this client was built for.
 type ProtocolMismatchError struct {
 	Daemon string
 	Client string
 }
 
 func (e *ProtocolMismatchError) Error() string {
-	return fmt.Sprintf("oberth daemon speaks protocol v%s, this client needs v%s. Restart it? (`oberth daemon restart`)",
+	return fmt.Sprintf(
+		"oberth daemon speaks protocol v%s, this client needs v%s. Restart it? (`oberth daemon restart`)",
 		e.Daemon, e.Client)
 }
 
-// Client is a connection to the daemon. It is safe for concurrent use.
+// Client is one connection to the daemon. It is safe for concurrent use.
 type Client struct {
-	conn   io.ReadWriteCloser
+	conn io.ReadWriteCloser
+
+	// Wire and identity.
 	enc    *rpc.Encoder
 	socket string
 	hello  rpc.DaemonHelloResult
 
-	mu       sync.Mutex
-	nextID   int64
-	pending  map[string]chan rpc.Message
-	subs     []*Subscription
-	streams  map[string]*Stream
+	// The request book and the notification registry.
+	mu      sync.Mutex
+	nextID  int64
+	pending map[string]chan rpc.Message
+	subs    []*Subscription
+	streams map[string]*Stream
+
+	// Connection state, guarded by mu.
 	closed   bool
 	closeErr error
 
+	// done is closed by shutdown.
 	done chan struct{}
 }
 
-// Connect dials the daemon, autostarting it with `oberth serve --detach` when
-// nothing is listening, and completes the daemon.hello handshake.
+// Connect dials the daemon, starting one with `oberth serve --detach` when
+// nothing is listening, then performs the daemon.hello handshake.
 func Connect(ctx context.Context, info ClientInfo) (*Client, error) {
-	socket := info.Socket
-	if socket == "" {
-		socket = daemon.SocketPath()
-	}
-
+	socket := socketFor(info)
 	conn, err := daemon.Dial(socket)
 	if err != nil {
-		if info.NoAutostart {
-			return nil, fmt.Errorf("%w (socket %s)", ErrNotRunning, socket)
-		}
-		if err := Autostart(ctx, info.BinaryPath, socket); err != nil {
-			return nil, err
-		}
-		conn, err = daemon.Dial(socket)
+		conn, err = startAndDial(ctx, socket, info)
 		if err != nil {
-			return nil, fmt.Errorf("%w: started it but could not connect to %s: %v",
-				ErrNotRunning, socket, err)
+			return nil, err
 		}
 	}
 	return handshake(ctx, conn, socket, info)
 }
 
-// Dial connects to an already-running daemon and never autostarts one.
+func socketFor(info ClientInfo) string {
+	if info.Socket != "" {
+		return info.Socket
+	}
+	return daemon.SocketPath()
+}
+
+// startAndDial runs autostart and retries the dial once.
+func startAndDial(ctx context.Context, socket string, info ClientInfo) (net.Conn, error) {
+	if info.NoAutostart {
+		return nil, fmt.Errorf("%w (socket %s)", ErrNotRunning, socket)
+	}
+	if err := Autostart(ctx, info.BinaryPath, socket); err != nil {
+		return nil, err
+	}
+	conn, err := daemon.Dial(socket)
+	if err != nil {
+		return nil, fmt.Errorf("%w: started it but could not connect to %s: %v",
+			ErrNotRunning, socket, err)
+	}
+	return conn, nil
+}
+
+// Dial connects to a daemon that is already running and never starts one.
 func Dial(ctx context.Context, info ClientInfo) (*Client, error) {
 	info.NoAutostart = true
 	return Connect(ctx, info)
 }
 
-// Attach speaks the daemon protocol over an already-open stream instead of a
-// socket this package dialled. The protocol is byte-for-byte the same as the
-// local socket, so calls, subscriptions and streams work unchanged.
+// Attach speaks the protocol over an already-open stream instead of a socket
+// this package dialled. Calls, subscriptions and streams behave exactly as on
+// the local socket.
 //
-// label names the connection in errors and in Socket(); it is not dialled.
+// label names the connection in errors and in Socket(); it is never dialled.
 // Closing the Client closes rwc.
 func Attach(ctx context.Context, rwc io.ReadWriteCloser, label string, info ClientInfo) (*Client, error) {
 	return handshake(ctx, rwc, label, info)
 }
 
 func handshake(ctx context.Context, conn io.ReadWriteCloser, socket string, info ClientInfo) (*Client, error) {
-	c := &Client{
-		conn:    conn,
-		enc:     rpc.NewEncoder(conn),
-		socket:  socket,
-		pending: map[string]chan rpc.Message{},
-		streams: map[string]*Stream{},
-		done:    make(chan struct{}),
-	}
-	go c.readLoop()
+	client := &Client{conn: conn, socket: socket, done: make(chan struct{})}
+	client.enc = rpc.NewEncoder(conn)
+	client.pending = map[string]chan rpc.Message{}
+	client.streams = map[string]*Stream{}
+	go client.readLoop()
 
 	var hello rpc.DaemonHelloResult
-	err := c.Call(ctx, "daemon.hello", rpc.DaemonHelloParams{
+	params := rpc.DaemonHelloParams{
 		Client:        info.Name,
 		ClientVersion: info.Version,
 		Keepalive:     info.Keepalive,
-	}, &hello)
-	if err != nil {
-		c.Close()
+	}
+	if err := client.Call(ctx, "daemon.hello", params, &hello); err != nil {
+		client.Close()
 		return nil, err
 	}
 	if err := CheckProtocol(hello.ProtocolVersion); err != nil {
-		c.Close()
+		client.Close()
 		return nil, err
 	}
-	c.hello = hello
-	return c, nil
+	client.hello = hello
+	return client, nil
 }
 
-// CheckProtocol compares a daemon's protocol_version against the one this
-// binary was built for. Only the major version has to match: additive changes
-// bump the minor (contract §7).
+// CheckProtocol compares the daemon's protocol version with this binary's.
+// Only the major has to match: additive changes bump the minor.
 func CheckProtocol(daemonVersion string) error {
-	got, err := majorOf(daemonVersion)
+	daemonMajor, err := majorOf(daemonVersion)
 	if err != nil {
 		return fmt.Errorf("daemon reported an unparseable protocol version %q", daemonVersion)
 	}
-	want, err := majorOf(rpc.ProtocolVersion)
+	clientMajor, err := majorOf(rpc.ProtocolVersion)
 	if err != nil {
 		return err
 	}
-	if got != want {
+	if daemonMajor != clientMajor {
 		return &ProtocolMismatchError{Daemon: daemonVersion, Client: rpc.ProtocolVersion}
 	}
 	return nil
 }
 
-func majorOf(v string) (int, error) {
-	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
-	head, _, _ := strings.Cut(v, ".")
-	if head == "" {
+func majorOf(version string) (int, error) {
+	trimmed := strings.TrimPrefix(strings.TrimSpace(version), "v")
+	major, _, _ := strings.Cut(trimmed, ".")
+	if major == "" {
 		return 0, fmt.Errorf("empty version")
 	}
-	return strconv.Atoi(head)
+	return strconv.Atoi(major)
 }
 
-// Hello is the handshake result: protocol and daemon versions, pid, socket and
-// capabilities.
+// Hello is the handshake result: versions, pid, socket and capabilities.
 func (c *Client) Hello() rpc.DaemonHelloResult { return c.hello }
 
 // Socket is the address this client is connected to.
 func (c *Client) Socket() string { return c.socket }
 
-// Call sends a request and decodes the result into out, which may be nil.
+// Call sends a request and decodes the result into out; out may be nil.
 func (c *Client) Call(ctx context.Context, method string, params, out any) error {
 	raw, err := marshalParams(params)
 	if err != nil {
 		return err
 	}
 
-	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
-		return c.closeErr
+	id, reply, err := c.registerCall()
+	if err != nil {
+		return err
 	}
-	c.nextID++
-	id := strconv.FormatInt(c.nextID, 10)
-	reply := make(chan rpc.Message, 1)
-	c.pending[id] = reply
-	c.mu.Unlock()
+	defer c.forgetCall(id)
 
-	defer func() {
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
-	}()
-
-	req := rpc.Request{
+	request := rpc.Request{
 		JSONRPC: rpc.Version,
 		ID:      json.RawMessage(id),
 		Method:  method,
 		Params:  raw,
 	}
-	if err := c.enc.Encode(req); err != nil {
+	if err := c.enc.Encode(request); err != nil {
 		return fmt.Errorf("sending %s: %w", method, err)
 	}
+	return c.awaitReply(ctx, reply, out)
+}
 
+// registerCall reserves an id and its reply channel, or reports a closed
+// connection.
+func (c *Client) registerCall() (string, chan rpc.Message, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return "", nil, c.closeErr
+	}
+	c.nextID++
+	id := strconv.FormatInt(c.nextID, 10)
+	reply := make(chan rpc.Message, 1)
+	c.pending[id] = reply
+	return id, reply, nil
+}
+
+func (c *Client) forgetCall(id string) {
+	c.mu.Lock()
+	delete(c.pending, id)
+	c.mu.Unlock()
+}
+
+func (c *Client) awaitReply(ctx context.Context, reply chan rpc.Message, out any) error {
 	select {
-	case <-ctx.Done():
-		return ctx.Err()
+	case msg := <-reply:
+		return decodeReply(msg, out)
 	case <-c.done:
 		return c.closeErr
-	case msg := <-reply:
-		if msg.Error != nil {
-			return msg.Error
-		}
-		if out == nil || len(msg.Result) == 0 {
-			return nil
-		}
-		return json.Unmarshal(msg.Result, out)
+	case <-ctx.Done():
+		return ctx.Err()
 	}
+}
+
+func decodeReply(msg rpc.Message, out any) error {
+	switch {
+	case msg.Error != nil:
+		return msg.Error
+	case out == nil, len(msg.Result) == 0:
+		return nil
+	}
+	return json.Unmarshal(msg.Result, out)
 }
 
 func marshalParams(params any) (json.RawMessage, error) {
 	if params == nil {
 		return json.RawMessage("{}"), nil
 	}
-	raw, err := json.Marshal(params)
+	encoded, err := json.Marshal(params)
 	if err != nil {
 		return nil, fmt.Errorf("marshalling params: %w", err)
 	}
-	return raw, nil
+	return encoded, nil
 }
 
-// readLoop demultiplexes responses to pending calls and notifications to
-// subscriptions.
+// readLoop routes responses to waiting calls and notifications to their
+// subscribers. It is the only reader of the connection.
 func (c *Client) readLoop() {
-	dec := rpc.NewDecoder(c.conn, daemon.MaxMessageBytes)
+	decoder := rpc.NewDecoder(c.conn, daemon.MaxMessageBytes)
 	for {
-		msg, err := dec.Next()
+		msg, err := decoder.Next()
 		if err != nil {
 			c.shutdown(fmt.Errorf("daemon connection closed: %w", err))
 			return
 		}
-		switch {
-		case msg.IsResponse():
+		if msg.IsResponse() {
 			c.mu.Lock()
-			ch, ok := c.pending[string(msg.ID)]
+			reply, waiting := c.pending[string(msg.ID)]
 			c.mu.Unlock()
-			if ok {
-				ch <- msg
+			if waiting {
+				reply <- msg
 			}
-		case msg.IsNotification():
+			continue
+		}
+		if msg.IsNotification() {
 			c.dispatchNotification(msg)
 		}
 	}
@@ -268,43 +298,44 @@ func (c *Client) dispatchNotification(msg rpc.Message) {
 		return
 	}
 	c.mu.Lock()
-	subs := append([]*Subscription{}, c.subs...)
+	listeners := append([]*Subscription{}, c.subs...)
 	c.mu.Unlock()
-	for _, s := range subs {
-		s.deliver(msg)
+	for _, listener := range listeners {
+		listener.deliver(msg)
 	}
 }
 
-// shutdown closes the client once, failing every pending call.
+// shutdown closes the connection once and fails every waiting call.
 func (c *Client) shutdown(err error) {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return
 	}
-	c.closed, c.closeErr = true, err
-	subs := c.subs
+	c.closed = true
+	c.closeErr = err
+	listeners := c.subs
 	c.subs = nil
 	c.mu.Unlock()
 
 	close(c.done)
 	_ = c.conn.Close()
-	for _, s := range subs {
-		s.close()
+	for _, listener := range listeners {
+		listener.close()
 	}
 	c.closeStreams(err)
-}
-
-// Close disconnects from the daemon.
-func (c *Client) Close() error {
-	c.shutdown(errors.New("client closed"))
-	return nil
 }
 
 // Done is closed when the connection drops.
 func (c *Client) Done() <-chan struct{} { return c.done }
 
-// Err returns why the connection closed, or nil while it is open.
+// Close disconnects from the daemon. It is safe to call more than once.
+func (c *Client) Close() error {
+	c.shutdown(errors.New("client closed"))
+	return nil
+}
+
+// Err reports why the connection closed, or nil while it is open.
 func (c *Client) Err() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
