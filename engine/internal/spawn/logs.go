@@ -9,8 +9,8 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 )
 
-// Log rotation policy for detached runs: 10 MiB per file, three generations
-// (`<name>.log`, `<name>.log.1`, `<name>.log.2`).
+// Detached-run log rotation: 10 MiB per file, three generations named
+// `<name>.log`, `<name>.log.1` and `<name>.log.2`.
 const (
 	LogMaxBytes int64 = 10 << 20
 	LogKeep           = 3
@@ -22,77 +22,77 @@ func LogDir() string { return paths.Logs() }
 // LogPath is where a detached run's stdout and stderr land:
 // <dir>/logs/<group>/<name>.log.
 func LogPath(group, name string) string {
-	if group == "" {
-		group = "ungrouped"
-	}
-	if name == "" {
-		name = "run"
-	}
-	return filepath.Join(LogDir(), sanitizeSegment(group), sanitizeSegment(name)+".log")
+	return filepath.Join(
+		LogDir(),
+		sanitizeSegment(defaulted(group, "ungrouped")),
+		sanitizeSegment(defaulted(name, "run"))+".log",
+	)
 }
 
-// OpenLog opens a run's log file for appending, rotating it first when it has
-// reached LogMaxBytes. A detached child holds the file descriptor for its whole
-// life, so rotation happens when the log is opened rather than mid-write:
-// renaming underneath a running writer would only make it write to a file
-// nobody can find.
-func OpenLog(path string) (*os.File, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+func defaulted(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+// OpenLog opens a run's log for appending, rotating it first if it has reached
+// LogMaxBytes. A detached child holds the descriptor for its whole life, so
+// rotation happens at open rather than mid-write: renaming under a running
+// writer would leave it writing to a file nobody can find.
+func OpenLog(logPath string) (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 		return nil, fmt.Errorf("creating the log directory: %w", err)
 	}
-	if err := Rotate(path); err != nil {
+	if err := Rotate(logPath); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
-		return nil, fmt.Errorf("opening %s: %w", path, err)
+		return nil, fmt.Errorf("opening %s: %w", logPath, err)
 	}
-	return f, nil
+	return file, nil
 }
 
-// Rotate shifts <path> to <path>.1 (and .1 to .2, dropping the oldest) when it
-// has reached LogMaxBytes. A missing or small file is left alone.
-func Rotate(path string) error {
-	info, err := os.Stat(path)
+// Rotate shifts <logPath> to <logPath>.1 (and .1 to .2, dropping the oldest)
+// once it has reached LogMaxBytes. A missing or small file is left alone.
+func Rotate(logPath string) error {
+	info, err := os.Stat(logPath)
 	if err != nil || info.Size() < LogMaxBytes {
 		return nil
 	}
-	for i := LogKeep - 1; i >= 1; i-- {
-		older := fmt.Sprintf("%s.%d", path, i)
-		if i == LogKeep-1 {
+	for generation := LogKeep - 1; generation >= 1; generation-- {
+		older := fmt.Sprintf("%s.%d", logPath, generation)
+		if generation == LogKeep-1 {
 			_ = os.Remove(older)
 		}
-		from := path
-		if i > 1 {
-			from = fmt.Sprintf("%s.%d", path, i-1)
+		source := logPath
+		if generation > 1 {
+			source = fmt.Sprintf("%s.%d", logPath, generation-1)
 		}
-		if _, err := os.Stat(from); err != nil {
+		if _, err := os.Stat(source); err != nil {
 			continue
 		}
-		if err := os.Rename(from, older); err != nil {
-			return fmt.Errorf("rotating %s: %w", from, err)
+		if err := os.Rename(source, older); err != nil {
+			return fmt.Errorf("rotating %s: %w", source, err)
 		}
 	}
 	return nil
 }
 
 // sanitizeSegment keeps a group or service name usable as one path element.
-func sanitizeSegment(s string) string {
-	s = strings.TrimSpace(s)
-	repl := func(r rune) rune {
-		switch r {
-		case '/', '\\', ':', '*', '?', '"', '<', '>', '|', 0:
-			return '-'
-		}
-		if r < 0x20 {
+func sanitizeSegment(value string) string {
+	value = strings.TrimSpace(value)
+	replace := func(r rune) rune {
+		if r < 0x20 || strings.ContainsRune(`/\\:*?"<>|`, r) {
 			return '-'
 		}
 		return r
 	}
-	s = strings.Map(repl, s)
-	s = strings.Trim(s, ". ")
-	if s == "" {
+	value = strings.Map(replace, value)
+	value = strings.Trim(value, ". ")
+	if value == "" {
 		return "run"
 	}
-	return s
+	return value
 }
