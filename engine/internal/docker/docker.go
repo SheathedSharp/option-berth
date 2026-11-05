@@ -338,90 +338,122 @@ func readHTTPBody(conn net.Conn) ([]byte, error) {
 	return io.ReadAll(reader)
 }
 
-// allContainerStatsCLI is the fallback using `docker stats` CLI.
+// statsRowFormat is the `docker stats` template: one tab-separated row per
+// container, which is the only shape this code parses.
+const statsRowFormat = "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.PIDs}}"
+
+// inspectRowFormat is the `docker inspect` template for the two fields
+// /stats does not carry.
+const inspectRowFormat = "{{.Name}}\t{{.State.Status}}\t{{.State.StartedAt}}"
+
+// allContainerStatsCLI samples every container through the `docker stats` CLI.
+// It is the fallback for Windows and for hosts where the Engine socket is not
+// reachable; the CLI does its own sampling, so one call covers them all.
 func allContainerStatsCLI() map[string]*ContainerStats {
-	result := make(map[string]*ContainerStats)
-
-	out, err := dockerOutput("stats", "--no-stream", "--format",
-		"{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.PIDs}}")
+	table, err := dockerOutput("stats", "--no-stream", "--format", statsRowFormat)
 	if err != nil {
-		return result
+		return map[string]*ContainerStats{}
 	}
-
-	scanner := bufio.NewScanner(strings.NewReader(strings.TrimSpace(string(out))))
-	for scanner.Scan() {
-		parts := strings.SplitN(scanner.Text(), "\t", 4)
-		if len(parts) < 4 {
-			continue
-		}
-		name := strings.TrimSpace(parts[0])
-		stats := &ContainerStats{}
-
-		cpuStr, _ := strings.CutSuffix(strings.TrimSpace(parts[1]), "%")
-		if v, err := strconv.ParseFloat(cpuStr, 64); err == nil {
-			stats.CPUPercent = v
-		}
-
-		memParts := strings.SplitN(strings.TrimSpace(parts[2]), " / ", 2)
-		if len(memParts) >= 1 {
-			stats.MemoryRSS = parseMemString(memParts[0])
-		}
-
-		if v, err := strconv.Atoi(strings.TrimSpace(parts[3])); err == nil {
-			stats.PIDs = v
-		}
-
-		result[name] = stats
-	}
-
-	// Fetch state/uptime via inspect
-	names := make([]string, 0, len(result))
-	for name := range result {
-		names = append(names, name)
-	}
-	if len(names) > 0 {
-		args := append([]string{"inspect", "--format", "{{.Name}}\t{{.State.Status}}\t{{.State.StartedAt}}"}, names...)
-		inspectOut, err := dockerOutput(args...)
-		if err == nil {
-			inspectScanner := bufio.NewScanner(strings.NewReader(strings.TrimSpace(string(inspectOut))))
-			for inspectScanner.Scan() {
-				parts := strings.SplitN(inspectScanner.Text(), "\t", 3)
-				if len(parts) < 3 {
-					continue
-				}
-				name := strings.TrimPrefix(strings.TrimSpace(parts[0]), "/")
-				if stats, ok := result[name]; ok {
-					stats.State = parts[1]
-					stats.Uptime = computeContainerUptime(parts[2])
-				}
-			}
-		}
-	}
-
-	return result
+	sampled := parseStatsTable(string(table))
+	applyInspect(sampled)
+	return sampled
 }
 
-// parseMemString parses Docker memory strings like "357.7MiB", "1.5GiB", "512KiB".
-func parseMemString(s string) int64 {
-	s = strings.TrimSpace(s)
-	multiplier := int64(1)
-	if after, found := strings.CutSuffix(s, "GiB"); found {
-		multiplier = 1 << 30
-		s = after
-	} else if after, found := strings.CutSuffix(s, "MiB"); found {
-		multiplier = 1 << 20
-		s = after
-	} else if after, found := strings.CutSuffix(s, "KiB"); found {
-		multiplier = 1 << 10
-		s = after
-	} else if after, found := strings.CutSuffix(s, "B"); found {
-		s = after
+// parseStatsTable reads the rows `docker stats` printed. A row that does not
+// have all four columns is skipped rather than reported with zeroes.
+func parseStatsTable(table string) map[string]*ContainerStats {
+	sampled := make(map[string]*ContainerStats)
+	rows := bufio.NewScanner(strings.NewReader(strings.TrimSpace(table)))
+	for rows.Scan() {
+		fields := strings.SplitN(rows.Text(), "\t", 4)
+		if len(fields) < 4 {
+			continue
+		}
+		sampled[strings.TrimSpace(fields[0])] = statsFromRow(fields[1], fields[2], fields[3])
 	}
-	v, err := strconv.ParseFloat(s, 64)
+	return sampled
+}
+
+// statsFromRow turns the cpu, memory and pids columns into a sample. Each
+// column is parsed on its own, so one unreadable value does not discard the
+// others.
+func statsFromRow(cpuColumn, memoryColumn, pidsColumn string) *ContainerStats {
+	stats := &ContainerStats{}
+
+	percent := strings.TrimSuffix(strings.TrimSpace(cpuColumn), "%")
+	if percent, err := strconv.ParseFloat(percent, 64); err == nil {
+		stats.CPUPercent = percent
+	}
+	// The memory column reads "357.7MiB / 7.66GiB": the first half is what the
+	// container uses, the second is the limit.
+	used, _, _ := strings.Cut(strings.TrimSpace(memoryColumn), " / ")
+	stats.MemoryRSS = parseMemString(used)
+
+	if pids, err := strconv.Atoi(strings.TrimSpace(pidsColumn)); err == nil {
+		stats.PIDs = pids
+	}
+	return stats
+}
+
+// applyInspect fills in state and start time, which `docker stats` does not
+// report. A failed inspect leaves the numbers alone rather than dropping the
+// rows, so a container still shows its usage without its uptime.
+func applyInspect(sampled map[string]*ContainerStats) {
+	if len(sampled) == 0 {
+		return
+	}
+	names := make([]string, 0, len(sampled))
+	for name := range sampled {
+		names = append(names, name)
+	}
+	described, err := dockerOutput(append([]string{"inspect", "--format", inspectRowFormat}, names...)...)
 	if err != nil {
-		return 0
+		return
 	}
-	return int64(v * float64(multiplier))
+
+	rows := bufio.NewScanner(strings.NewReader(strings.TrimSpace(string(described))))
+	for rows.Scan() {
+		fields := strings.SplitN(rows.Text(), "\t", 3)
+		if len(fields) < 3 {
+			continue
+		}
+		// inspect prints the name with its leading slash.
+		name := strings.TrimPrefix(strings.TrimSpace(fields[0]), "/")
+		if stats, listed := sampled[name]; listed {
+			stats.State = fields[1]
+			stats.Uptime = computeContainerUptime(fields[2])
+		}
+	}
+}
+
+// memoryUnits are the suffixes `docker stats` prints, largest first so a longer
+// suffix is tested before the "B" it ends with.
+var memoryUnits = []struct {
+	suffix string
+	scale  int64
+}{
+	{"GiB", 1 << 30},
+	{"MiB", 1 << 20},
+	{"KiB", 1 << 10},
+	{"B", 1},
+}
+
+// parseMemString turns a memory string such as "357.7MiB" or "512KiB" into
+// bytes. An unreadable value is zero.
+func parseMemString(printed string) int64 {
+	remaining := strings.TrimSpace(printed)
+	for _, unit := range memoryUnits {
+		digits, found := strings.CutSuffix(remaining, unit.suffix)
+		if !found {
+			continue
+		}
+		value, err := strconv.ParseFloat(strings.TrimSpace(digits), 64)
+		if err != nil {
+			return 0
+		}
+		return int64(value * float64(unit.scale))
+	}
+	return 0
 }
 
 // computeContainerUptime parses a Docker ISO 8601 timestamp and returns a human-readable duration.
