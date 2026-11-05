@@ -7,162 +7,166 @@ import (
 )
 
 // tempRepo builds a directory tree under a resolved temp dir. entries maps a
-// relative path to its content; a path ending in "/" is a directory.
+// relative path to its content; a path with no extension and empty content is
+// a directory.
 func tempRepo(t *testing.T, name string, entries map[string]string) string {
 	t.Helper()
-	base, err := filepath.EvalSymlinks(t.TempDir())
+	parent, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := filepath.Join(base, name)
+	root := filepath.Join(parent, name)
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for rel, content := range entries {
-		path := filepath.Join(root, rel)
-		if content == "" && filepath.Ext(rel) == "" {
-			if err := os.MkdirAll(path, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
+	for relative, body := range entries {
+		writeEntry(t, root, relative, body)
 	}
 	return root
 }
 
-func TestResolveGroupAndName(t *testing.T) {
-	gitRepo := tempRepo(t, "my-repo", map[string]string{".git": ""})
+func writeEntry(t *testing.T, root, relative, body string) {
+	t.Helper()
+	target := filepath.Join(root, relative)
+	if body == "" && filepath.Ext(relative) == "" {
+		if err := os.MkdirAll(target, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
 
-	configured := tempRepo(t, "checkout", map[string]string{
+func TestResolveGroupAndName(t *testing.T) {
+	repo := tempRepo(t, "shop-repo", map[string]string{".git": ""})
+
+	configured := tempRepo(t, "workspace", map[string]string{
 		".git": "",
-		".oberth.yaml": "name: option-berth\n" +
+		".oberth.yaml": "name: demo-app\n" +
 			"services:\n" +
-			"  - name: api\n" +
-			"    cmd: uv run uvicorn app:app\n" +
-			"    port: 8000\n" +
-			"  - name: web\n" +
-			"    cmd: npm run dev\n" +
+			"  - name: gateway\n" +
+			"    cmd: uv run gateway app:app\n" +
+			"    port: 8100\n" +
+			"  - name: frontend\n" +
+			"    cmd: pnpm run web\n" +
 			"    cwd: frontend\n" +
 			"    port: 5173\n",
 		"frontend/.keep": "x",
 	})
 
-	plain := tempRepo(t, "just-a-dir", nil)
+	loose := tempRepo(t, "loose-dir", nil)
 
 	cases := []struct {
-		desc      string
-		cwd       string
-		argv      []string
-		groupFlag string
-		nameFlag  string
-		wantGroup string
-		wantName  string
+		label         string
+		directory     string
+		command       []string
+		groupOverride string
+		nameOverride  string
+		group         string
+		name          string
 	}{
 		{
-			desc: "git root names the group, argv names the service",
-			cwd:  gitRepo, argv: []string{"npm", "run", "dev"},
-			wantGroup: "my-repo", wantName: "dev",
+			label:     "git root names the group, argv names the service",
+			directory: repo, command: []string{"pnpm", "run", "web"},
+			group: "shop-repo", name: "web",
 		},
 		{
-			desc: "a nested directory still resolves to the checkout",
-			cwd:  gitRepo, argv: []string{"./dev.sh"},
-			wantGroup: "my-repo", wantName: "dev.sh",
+			label:     "a nested directory still resolves to the checkout",
+			directory: repo, command: []string{"./serve.sh"},
+			group: "shop-repo", name: "serve.sh",
 		},
 		{
-			desc: ".oberth.yaml wins over the directory name",
-			cwd:  configured, argv: []string{"uv", "run", "uvicorn", "app:app"},
-			wantGroup: "option-berth", wantName: "api",
+			label:     "the manifest wins over the directory name",
+			directory: configured, command: []string{"uv", "run", "gateway", "app:app"},
+			group: "demo-app", name: "gateway",
 		},
 		{
-			desc: "a service with a cwd only matches when started there",
-			cwd:  configured, argv: []string{"npm", "run", "dev"},
-			wantGroup: "option-berth", wantName: "dev",
+			label:     "a service with a cwd does not match from the root",
+			directory: configured, command: []string{"pnpm", "run", "web"},
+			group: "demo-app", name: "web",
 		},
 		{
-			desc: "the service's own cwd matches it",
-			cwd:  filepath.Join(configured, "frontend"), argv: []string{"npm", "run", "dev"},
-			wantGroup: "option-berth", wantName: "web",
+			label:     "the service's own cwd matches it",
+			directory: filepath.Join(configured, "frontend"), command: []string{"pnpm", "run", "web"},
+			group: "demo-app", name: "frontend",
 		},
 		{
-			desc: "no config and no checkout falls back to the directory name",
-			cwd:  plain, argv: []string{"python3", "-m", "http.server"},
-			wantGroup: "just-a-dir", wantName: "http.server",
+			label:     "no manifest and no checkout uses the directory name",
+			directory: loose, command: []string{"python3", "-m", "http.server"},
+			group: "loose-dir", name: "http.server",
 		},
 		{
-			desc: "flags win over everything",
-			cwd:  configured, argv: []string{"uv", "run", "uvicorn", "app:app"},
-			groupFlag: "itest", nameFlag: "web",
-			wantGroup: "itest", wantName: "web",
+			label:     "flags win over everything",
+			directory: configured, command: []string{"uv", "run", "gateway", "app:app"},
+			groupOverride: "itest", nameOverride: "frontend",
+			group: "itest", name: "frontend",
 		},
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.desc, func(t *testing.T) {
-			got := Resolve(tc.cwd, tc.argv, tc.groupFlag, tc.nameFlag)
-			if got.Group != tc.wantGroup || got.Name != tc.wantName {
+		t.Run(tc.label, func(t *testing.T) {
+			got := Resolve(tc.directory, tc.command, tc.groupOverride, tc.nameOverride)
+			if got.Group != tc.group || got.Name != tc.name {
 				t.Fatalf("Resolve(%s, %q) = %q/%q, want %q/%q",
-					tc.cwd, tc.argv, got.Group, got.Name, tc.wantGroup, tc.wantName)
+					tc.directory, tc.command, got.Group, got.Name, tc.group, tc.name)
 			}
 		})
 	}
 }
 
 func TestResolveWorktreeGroupName(t *testing.T) {
-	main := tempRepo(t, "option-berth", map[string]string{".git/worktrees/feature/.keep": "x"})
-	wt := tempRepo(t, "feature", map[string]string{
-		".git": "gitdir: " + filepath.Join(main, ".git", "worktrees", "feature") + "\n",
+	main := tempRepo(t, "demo-app", map[string]string{".git/worktrees/feature-x/.keep": "x"})
+	worktree := tempRepo(t, "feature-x", map[string]string{
+		".git": "gitdir: " + filepath.Join(main, ".git", "worktrees", "feature-x") + "\n",
 	})
-	got := Resolve(wt, []string{"npm", "run", "dev"}, "", "")
-	if got.Group != "option-berth@feature" {
-		t.Fatalf("worktree group = %q, want option-berth@feature", got.Group)
+	got := Resolve(worktree, []string{"pnpm", "run", "web"}, "", "")
+	if got.Group != "demo-app@feature-x" {
+		t.Fatalf("worktree group = %q, want demo-app@feature-x", got.Group)
 	}
 }
 
-// TestResolveThroughASymlinkedCwd is the macOS $TMPDIR case (/var is a symlink
-// to /private/var): a run started in a directory reached through a symlink must
-// land in the same group as one started in the directory itself, and the group
-// must come from the `.oberth.yaml`, not from the name of the link.
+// macOS $TMPDIR is the case: /var is a symlink to /private/var, so a run in a
+// directory reached through a symlink must land in the same group as one in the
+// directory itself, and the group must come from the manifest, not the link.
 func TestResolveThroughASymlinkedCwd(t *testing.T) {
-	real := tempRepo(t, "proj", map[string]string{
+	real := tempRepo(t, "linked", map[string]string{
 		".git":         "",
-		".oberth.yaml": "name: my-app\n",
+		".oberth.yaml": "name: linked-app\n",
 	})
 	link := filepath.Join(t.TempDir(), "alias")
 	if err := os.Symlink(real, link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 
-	direct := Resolve(real, []string{"npm", "run", "dev"}, "", "")
-	if direct.Group != "my-app" {
-		t.Fatalf("direct group = %q, want my-app", direct.Group)
+	direct := Resolve(real, []string{"pnpm", "run", "web"}, "", "")
+	if direct.Group != "linked-app" {
+		t.Fatalf("direct group = %q, want linked-app", direct.Group)
 	}
 
-	via := Resolve(link, []string{"npm", "run", "dev"}, "", "")
-	if via.Group != "my-app" {
-		t.Fatalf("group through the symlink = %q, want my-app", via.Group)
+	viaLink := Resolve(link, []string{"pnpm", "run", "web"}, "", "")
+	if viaLink.Group != "linked-app" {
+		t.Fatalf("group through the link = %q, want linked-app", viaLink.Group)
 	}
-	if via.ConfigPath != direct.ConfigPath {
-		t.Fatalf("config path through the symlink = %q, want %q", via.ConfigPath, direct.ConfigPath)
+	if viaLink.ConfigPath != direct.ConfigPath {
+		t.Fatalf("config through the link = %q, want %q", viaLink.ConfigPath, direct.ConfigPath)
 	}
 }
 
-// TestResolveNamesTheRealDirectoryNotTheLink: with no config and no checkout
-// the group is the directory name, and that is the directory the link points
-// at, not the link.
+// With no manifest and no checkout the group is the directory the link points
+// at, not the link's own name.
 func TestResolveNamesTheRealDirectoryNotTheLink(t *testing.T) {
-	real := tempRepo(t, "checkout", nil)
+	real := tempRepo(t, "real-checkout", nil)
 	link := filepath.Join(t.TempDir(), "alias")
 	if err := os.Symlink(real, link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 
-	if got := Resolve(link, []string{"npm", "run", "dev"}, "", "").Group; got != "checkout" {
-		t.Fatalf("group = %q, want checkout", got)
+	if got := Resolve(link, []string{"pnpm", "run", "web"}, "", "").Group; got != "real-checkout" {
+		t.Fatalf("group = %q, want real-checkout", got)
 	}
 }

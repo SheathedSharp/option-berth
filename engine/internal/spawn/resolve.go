@@ -10,171 +10,171 @@ import (
 )
 
 // Resolution is the group and name a run is registered under, plus the
-// `oberth.yaml` (if any) that decided them.
+// `oberth.yaml` that decided them when there is one.
 type Resolution struct {
 	Group      string
 	Name       string
 	ConfigPath string
 }
 
-// Resolve implements steps 1 and 2 of the daemon spec's `oberth start`:
+// Resolve implements the first two steps of `oberth start`:
 //
 //	group: --group | nearest oberth.yaml | git root | base name of cwd
 //	name:  --name  | the oberth.yaml service whose cmd is this command
 //	       | InferName(argv)
 //
-// cwd may be empty, in which case the process working directory is used.
+// An empty cwd uses the process working directory.
 func Resolve(cwd string, argv []string, groupFlag, nameFlag string) Resolution {
-	if cwd == "" {
-		cwd, _ = os.Getwd()
+	directory := cwd
+	if directory == "" {
+		directory, _ = os.Getwd()
 	}
-	// One normalisation for the whole chain: the index, the git-root walk and
-	// the directory-name fallback all have to see the same spelling of this
-	// directory, or a cwd reached through a symlink (macOS $TMPDIR, /var vs
-	// /private/var) resolves to a different group than the same directory
-	// reached directly.
-	cwd = groups.Canonical(cwd)
+	// Normalise once for the whole chain: the index, the git-root walk and the
+	// directory fallback must see one spelling of this directory, or a cwd
+	// reached through a symlink (/var vs /private/var on macOS $TMPDIR) resolves
+	// to a different group than the same directory reached directly.
+	directory = groups.Canonical(directory)
 
 	index := groups.NewIndex()
-	index.Observe(cwd)
+	index.Observe(directory)
 	// NearestFor, not Nearest: a worktree kept inside the main checkout must
 	// not pick up the main checkout's file on the way up.
-	cfg := index.NearestFor(cwd)
+	config := index.NearestFor(directory)
 
-	res := Resolution{Group: strings.TrimSpace(groupFlag), Name: strings.TrimSpace(nameFlag)}
-	if cfg != nil {
-		res.ConfigPath = cfg.Path
+	resolution := Resolution{
+		Group: strings.TrimSpace(groupFlag),
+		Name:  strings.TrimSpace(nameFlag),
+	}
+	if config != nil {
+		resolution.ConfigPath = config.Path
 	}
 
-	if res.Group == "" {
-		res.Group = inferGroup(index, cwd, cfg)
+	if resolution.Group == "" {
+		resolution.Group = inferGroup(index, directory, config)
 	}
-	if res.Name == "" {
-		if svc, ok := matchService(cfg, cwd, argv); ok {
-			res.Name = svc
+	if resolution.Name == "" {
+		if service, matched := matchService(config, directory, argv); matched {
+			resolution.Name = service
 		} else {
-			res.Name = InferName(argv)
+			resolution.Name = InferName(argv)
 		}
 	}
-	return res
+	return resolution
 }
 
-// inferGroup is the group half of the chain, config first, then the checkout,
-// then the directory the command was started in. Both of the first two are
-// named the way the resolver names them, so a run started in a linked worktree
-// lands in `<project>@<worktree>` even when the worktree carries a copy of the
-// main checkout's `oberth.yaml`.
-func inferGroup(index *groups.Index, cwd string, cfg *groups.Config) string {
-	if cfg != nil && cfg.Name != "" {
-		return index.GroupOf(cfg)
+// inferGroup is the group half of the chain: config, then checkout, then the
+// directory the command was started in. The first two use the resolver's own
+// spelling, so a run in a linked worktree lands in `<project>@<worktree>` even
+// when that worktree carries a copy of the main checkout's manifest.
+func inferGroup(index *groups.Index, cwd string, config *groups.Config) string {
+	if config != nil && config.Name != "" {
+		return index.GroupOf(config)
 	}
-	if co, ok := groups.Locate(cwd); ok {
-		return index.CheckoutName(co)
+	if checkout, found := groups.Locate(cwd); found {
+		return index.CheckoutName(checkout)
 	}
 	return filepath.Base(cwd)
 }
 
-// matchService finds the service in cfg whose `cmd` is the command being
-// started. The comparison is on the argv split, so quoting and repeated spaces
-// in the YAML do not matter; a service with a `cwd` only matches when the
-// command is being started there.
-func matchService(cfg *groups.Config, cwd string, argv []string) (string, bool) {
-	if cfg == nil || len(argv) == 0 {
+// matchService finds the service whose `cmd` is the command being started. The
+// comparison is on argv, so YAML quoting and repeated spaces do not matter; a
+// service with a `cwd` matches only when the command starts there.
+func matchService(config *groups.Config, cwd string, argv []string) (string, bool) {
+	if config == nil || len(argv) == 0 {
 		return "", false
 	}
-	for _, svc := range cfg.Services {
-		if svc.Cmd == "" {
+	for _, service := range config.Services {
+		if service.Cmd == "" {
 			continue
 		}
-		if !argvMatches(splitCmd(svc.Cmd), argv) {
+		if !argvMatches(splitCmd(service.Cmd), argv) {
 			continue
 		}
-		if svc.Cwd != "" && groups.Canonical(cfg.ServiceDir(svc)) != cwd {
+		if service.Cwd != "" && groups.Canonical(config.ServiceDir(service)) != cwd {
 			continue
 		}
-		return svc.Name, true
+		return service.Name, true
 	}
 	return "", false
 }
 
-// argvMatches compares a service's cmd, split, with a command being started.
-// A token carrying a reference (`--port ${port}`) matches whatever it would
-// have expanded to, so a command typed out by hand still finds its service.
-func argvMatches(pattern, argv []string) bool {
-	if len(pattern) != len(argv) {
+// argvMatches compares a split service command with a command being started. A
+// token carrying a reference (`--port ${port}`) matches whatever it would have
+// expanded to, so a hand-typed command still finds its service.
+func argvMatches(expected, actual []string) bool {
+	if len(expected) != len(actual) {
 		return false
 	}
-	for i := range pattern {
-		if !groups.MatchesExpanded(pattern[i], argv[i]) {
+	for i := range expected {
+		if !groups.MatchesExpanded(expected[i], actual[i]) {
 			return false
 		}
 	}
 	return true
 }
 
-// SplitCmd turns a `oberth.yaml` `cmd:` string into argv with shell-style
-// quoting and no shell execution (contract §4).
+// SplitCmd turns a manifest `cmd:` into argv with shell-style quoting and no
+// shell execution.
 //
-// Backslashes follow the host's convention, because a `cmd:` is written for
-// the machine it runs on. On Unix a backslash escapes the character after it
+// Backslashes follow the host's convention, because a `cmd:` is written for the
+// machine it runs on. On Unix a backslash escapes the following character
 // (outside single quotes), so `/tmp/a\ b` is one argument. On Windows a
-// backslash is a path separator: `C:\srv\app.exe` has to survive verbatim, so
-// a backslash is literal except before a quote or another backslash inside
-// double quotes, which is how CommandLineToArgvW reads a command line.
-func SplitCmd(s string) []string { return splitCmd(s) }
+// backslash is a path separator: `C:\srv\app.exe` survives verbatim, and only a
+// quote or the backslash guarding one is escapable inside double quotes, as
+// CommandLineToArgvW reads it.
+func SplitCmd(text string) []string { return splitCmd(text) }
 
-func splitCmd(s string) []string { return splitCmdFor(s, runtime.GOOS == "windows") }
+func splitCmd(text string) []string { return splitCmdFor(text, runtime.GOOS == "windows") }
 
-// splitCmdFor is SplitCmd with the platform injected, so both conventions can
-// be tested on one host.
-func splitCmdFor(s string, windows bool) []string {
+// splitCmdFor is SplitCmd with the host injected, so both conventions can be
+// tested on one machine.
+func splitCmdFor(text string, windowsHost bool) []string {
 	var (
-		out   []string
-		cur   strings.Builder
-		have  bool
-		quote rune
+		arguments []string
+		current   strings.Builder
+		started   bool
+		quote     rune
 	)
-	runes := []rune(s)
-	for i := 0; i < len(runes); i++ {
-		c := runes[i]
+	symbols := []rune(text)
+	for i := 0; i < len(symbols); i++ {
+		ch := symbols[i]
 		switch {
-		case quote == 0 && (c == ' ' || c == '\t' || c == '\n' || c == '\r'):
-			if have {
-				out = append(out, cur.String())
-				cur.Reset()
-				have = false
+		case quote == 0 && (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'):
+			if started {
+				arguments = append(arguments, current.String())
+				current.Reset()
+				started = false
 			}
-		case quote == 0 && (c == '\'' || c == '"'):
-			quote, have = c, true
-		case quote != 0 && c == quote:
+		case quote == 0 && (ch == '\'' || ch == '"'):
+			quote, started = ch, true
+		case quote != 0 && ch == quote:
 			quote = 0
-		case c == '\\' && i+1 < len(runes) && escapesNext(quote, runes[i+1], windows):
+		case ch == '\\' && i+1 < len(symbols) && escapesNext(quote, symbols[i+1], windowsHost):
 			i++
-			cur.WriteRune(runes[i])
-			have = true
+			current.WriteRune(symbols[i])
+			started = true
 		default:
-			cur.WriteRune(c)
-			have = true
+			current.WriteRune(ch)
+			started = true
 		}
 	}
-	if have {
-		out = append(out, cur.String())
+	if started {
+		arguments = append(arguments, current.String())
 	}
-	return out
+	return arguments
 }
 
-// escapesNext reports whether a backslash before next is an escape rather than
-// a character of its own, inside the given quote (0 for unquoted).
-func escapesNext(quote, next rune, windows bool) bool {
-	if quote == '\'' {
-		// Single quotes are literal on every platform.
+// escapesNext reports whether a backslash before next escapes it rather than
+// standing alone, inside the given quote (0 means unquoted).
+func escapesNext(quoteChar, following rune, windowsHost bool) bool {
+	if quoteChar == '\'' {
+		// Single quotes are literal everywhere.
 		return false
 	}
-	if !windows {
+	if !windowsHost {
 		return true
 	}
 	// Windows: only a quote, or the backslash guarding one, is escapable, and
-	// only inside double quotes. Everywhere else a backslash is a path
-	// separator and stays one.
-	return quote == '"' && (next == '"' || next == '\\')
+	// only inside double quotes; elsewhere a backslash is a path separator.
+	return quoteChar == '"' && (following == '"' || following == '\\')
 }
