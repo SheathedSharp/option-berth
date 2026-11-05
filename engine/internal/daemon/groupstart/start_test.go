@@ -78,57 +78,70 @@ func serviceCmd(t *testing.T) string {
 	t.Helper()
 	self, err := os.Executable()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("resolving the test binary: %v", err)
 	}
-	// Single-quoted for YAML, double-quoted for the argv splitter: the value
-	// is one scalar that splits into [binary, -test.run=...].
+	// Single-quoted for YAML, double-quoted for the argv splitter: the value is
+	// one scalar that splits into [binary, -test.run=...].
 	return fmt.Sprintf("'%q -test.run=TestNothing'", self)
 }
 
-// dumpLogs prints what the started services wrote, so a failure says why the
+// dumpLogs prints what the started services wrote, so a failure says why a
 // child did not come up instead of only that it did not.
 func dumpLogs(t *testing.T, chunks []rpc.GroupsStartChunk) {
 	t.Helper()
-	for _, c := range chunks {
-		if c.LogPath == "" {
+	for _, chunk := range chunks {
+		if chunk.LogPath == "" {
 			continue
 		}
-		if raw, err := os.ReadFile(c.LogPath); err == nil {
-			t.Logf("%s log:\n%s", c.Service, raw)
+		written, err := os.ReadFile(chunk.LogPath)
+		if err != nil {
+			continue
 		}
+		t.Logf("%s log:\n%s", chunk.Service, written)
 	}
 }
 
 // freePort returns a port nothing is listening on right now.
 func freePort(t *testing.T) int {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("finding a free port: %v", err)
 	}
-	defer ln.Close()
-	return ln.Addr().(*net.TCPAddr).Port
+	defer listener.Close()
+	return listener.Addr().(*net.TCPAddr).Port
 }
 
 // probeScan is the daemon's scan in these tests: it dials the ports the test
 // cares about and reports the ones that answer, attributed to dir. Real
 // sockets, deterministic result.
-func probeScan(dir string, watch []int) func(scanner.Include) ([]ports.ListeningPort, error) {
+func probeScan(dir string, watching []int) func(scanner.Include) ([]ports.ListeningPort, error) {
 	return func(scanner.Include) ([]ports.ListeningPort, error) {
-		var out []ports.ListeningPort
-		for _, port := range watch {
-			conn, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(port), 100*time.Millisecond)
-			if err != nil {
+		var listening []ports.ListeningPort
+		for _, port := range watching {
+			if !dialableWithin(port, 100*time.Millisecond) {
 				continue
 			}
-			conn.Close()
-			out = append(out, ports.ListeningPort{
+			listening = append(listening, ports.ListeningPort{
 				Port: port, BindAddress: "127.0.0.1", IPVersion: "ipv4",
 				PID: os.Getpid(), Process: "listener", Cwd: dir,
 			})
 		}
-		return out, nil
+		return listening, nil
 	}
+}
+
+// dialableWithin reports whether something on loopback accepts a connection to
+// port within the deadline. It is the only thing these tests treat as "the
+// service is up"; the scan path uses a short deadline so a scan stays cheap,
+// while a test waiting for a child to come up can afford a longer one.
+func dialableWithin(port int, within time.Duration) bool {
+	conn, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(port), within)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 // startDaemon runs a real daemon on a temp socket with the given scan, and
@@ -167,7 +180,7 @@ func watchScan(dir string, w *watchList) func(scanner.Include) ([]ports.Listenin
 		w.mu.Unlock()
 		var out []ports.ListeningPort
 		for port, pid := range watched {
-			if !dialable(port) {
+			if !dialableWithin(port, 100*time.Millisecond) {
 				continue
 			}
 			out = append(out, ports.ListeningPort{
@@ -1287,14 +1300,8 @@ func exitsImmediately(t *testing.T) string {
 	return ""
 }
 
-func dialable(port int) bool {
-	conn, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(port), time.Second)
-	if err != nil {
-		return false
-	}
-	conn.Close()
-	return true
-}
+// dialable is dialableWithin with the deadline a test waiting on a child uses.
+func dialable(port int) bool { return dialableWithin(port, time.Second) }
 
 // killPIDs stops the children a test started, so a failed run does not leave
 // listeners behind.
