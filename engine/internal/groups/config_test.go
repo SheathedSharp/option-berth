@@ -1,35 +1,41 @@
 package groups
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func loadString(t *testing.T, dirName, body string) (*Config, error) {
+func loadBody(t *testing.T, dirName, body string) (*Config, error) {
 	t.Helper()
-	dir := mkdir(t, tempTree(t), dirName)
-	path := filepath.Join(dir, ConfigName)
+	path := filepath.Join(mkdir(t, tempTree(t), dirName), ConfigName)
 	writeFile(t, path, body)
 	return Load(path)
 }
 
+// loadString keeps the older test files on the shared loader.
+func loadString(t *testing.T, dirName, body string) (*Config, error) {
+	t.Helper()
+	return loadBody(t, dirName, body)
+}
+
 func TestLoadValidConfig(t *testing.T) {
-	cfg, err := loadString(t, "option-berth", `
+	cfg, err := loadBody(t, "option-berth", `
 name: option-berth
 services:
   - name: db
     prepare: mvn -DskipTests package
     cmd: docker compose up db
-    port: 5432
+    port: 5433
     health: /
   - name: api
     cmd: uv run uvicorn app:app
     cwd: backend
-    port: 8000
+    port: 8001
     depends_on: [db]
-ports: [9229]
+ports: [9230]
 `)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -46,13 +52,13 @@ ports: [9229]
 	if got, want := cfg.ServiceDir(cfg.Services[1]), filepath.Join(cfg.Dir, "backend"); got != want {
 		t.Errorf("ServiceDir = %q, want %q", got, want)
 	}
-	if len(cfg.Ports) != 1 || cfg.Ports[0] != 9229 {
+	if len(cfg.Ports) != 1 || cfg.Ports[0] != 9230 {
 		t.Errorf("ports = %v", cfg.Ports)
 	}
 }
 
 func TestLoadDefaultsNameToDirectory(t *testing.T) {
-	cfg, err := loadString(t, "storefront", "services: []\n")
+	cfg, err := loadBody(t, "storefront", "services: []\n")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -65,7 +71,7 @@ func TestLoadDefaultsNameToDirectory(t *testing.T) {
 // database started at login, which option-berth never starts or stops (decision
 // 0010). It survives a round trip: an edit through the app must not drop it.
 func TestMachineReferences(t *testing.T) {
-	cfg, err := loadString(t, "shop", `
+	cfg, err := loadBody(t, "shop", `
 name: shop
 services:
   - name: api
@@ -102,147 +108,147 @@ machine:
 
 func TestLoadValidationProblems(t *testing.T) {
 	tests := []struct {
-		name string
-		body string
-		want string
+		label    string
+		manifest string
+		mentions string
 	}{
 		{
-			name: "name with a slash",
-			body: "name: acme/web\n",
-			want: `name "acme/web" contains "/"`,
+			label:    "name with a slash",
+			manifest: "name: acme/web\n",
+			mentions: `name "acme/web" contains "/"`,
 		},
 		{
-			name: "name with whitespace",
-			body: "name: my project\n",
-			want: `contains " "`,
+			label:    "name with whitespace",
+			manifest: "name: my project\n",
+			mentions: `contains " "`,
 		},
 		{
-			name: "duplicate service names",
-			body: "name: p\nservices:\n  - name: api\n  - name: api\n",
-			want: "service api: duplicate name",
+			label:    "duplicate service names",
+			manifest: "name: p\nservices:\n  - name: api\n  - name: api\n",
+			mentions: "service api: duplicate name",
 		},
 		{
-			name: "cwd escapes the config directory",
-			body: "name: p\nservices:\n  - name: api\n    cwd: ../elsewhere\n",
-			want: "escapes the directory",
+			label:    "cwd escapes the config directory",
+			manifest: "name: p\nservices:\n  - name: api\n    cwd: ../elsewhere\n",
+			mentions: "escapes the directory",
 		},
 		{
-			name: "absolute cwd",
-			body: "name: p\nservices:\n  - name: api\n    cwd: /etc\n",
-			want: "escapes the directory",
+			label:    "absolute cwd",
+			manifest: "name: p\nservices:\n  - name: api\n    cwd: /etc\n",
+			mentions: "escapes the directory",
 		},
 		{
-			name: "port out of range",
-			body: "name: p\nservices:\n  - name: api\n    port: 70000\n",
-			want: "port 70000 is out of range",
+			label:    "port out of range",
+			manifest: "name: p\nservices:\n  - name: api\n    port: 70000\n",
+			mentions: "port 70000 is out of range",
 		},
 		{
-			name: "worktree_ports of zero",
-			body: "name: p\nworktree_ports: 0\n",
-			want: "worktree_ports: 0 is out of range 1-100",
+			label:    "worktree_ports of zero",
+			manifest: "name: p\nworktree_ports: 0\n",
+			mentions: "worktree_ports: 0 is out of range 1-100",
 		},
 		{
-			name: "worktree_ports above the cap",
-			body: "name: p\nworktree_ports: 101\n",
-			want: "worktree_ports: 101 is out of range 1-100",
+			label:    "worktree_ports above the cap",
+			manifest: "name: p\nworktree_ports: 101\n",
+			mentions: "worktree_ports: 101 is out of range 1-100",
 		},
 		{
-			name: "worktree_ports that is not a number",
-			body: "name: p\nworktree_ports: lots\n",
-			want: "lots",
+			label:    "worktree_ports that is not a number",
+			manifest: "name: p\nworktree_ports: lots\n",
+			mentions: "lots",
 		},
 		{
-			name: "zero port in the ports list",
-			body: "name: p\nports: [0]\n",
-			want: "ports: 0 is out of range",
+			label:    "zero port in the ports list",
+			manifest: "name: p\nports: [0]\n",
+			mentions: "ports: 0 is out of range",
 		},
 		{
-			name: "depends_on cycle",
-			body: "name: p\nservices:\n  - name: a\n    depends_on: [b]\n  - name: b\n    depends_on: [a]\n",
-			want: "depends_on has a cycle",
+			label:    "depends_on cycle",
+			manifest: "name: p\nservices:\n  - name: a\n    depends_on: [b]\n  - name: b\n    depends_on: [a]\n",
+			mentions: "depends_on has a cycle",
 		},
 		{
-			name: "depends_on self cycle",
-			body: "name: p\nservices:\n  - name: a\n    depends_on: [a]\n",
-			want: "depends_on has a cycle",
+			label:    "depends_on self cycle",
+			manifest: "name: p\nservices:\n  - name: a\n    depends_on: [a]\n",
+			mentions: "depends_on has a cycle",
 		},
 		{
-			name: "depends_on unknown service",
-			body: "name: p\nservices:\n  - name: a\n    depends_on: [ghost]\n",
-			want: `depends_on "ghost" is not a service`,
+			label:    "depends_on unknown service",
+			manifest: "name: p\nservices:\n  - name: a\n    depends_on: [ghost]\n",
+			mentions: `depends_on "ghost" is not a service`,
 		},
 		{
-			name: "stop: leave, the key that was replaced",
-			body: "name: p\nservices:\n  - name: mysql\n    cmd: brew services start mysql\n    port: 3306\n    stop: leave\n",
-			want: "service mysql has a `stop:` key: it was replaced by the top-level `machine:` list",
+			label:    "stop: leave, the key that was replaced",
+			manifest: "name: p\nservices:\n  - name: mysql\n    cmd: brew services start mysql\n    port: 3306\n    stop: leave\n",
+			mentions: "service mysql has a `stop:` key: it was replaced by the top-level `machine:` list",
 		},
 		{
-			name: "machine entry with no port",
-			body: "name: p\nmachine:\n  - name: mysql\n",
-			want: "machine mysql: port is required",
+			label:    "machine entry with no port",
+			manifest: "name: p\nmachine:\n  - name: mysql\n",
+			mentions: "machine mysql: port is required",
 		},
 		{
-			name: "machine entry with no name",
-			body: "name: p\nmachine:\n  - port: 3306\n",
-			want: "machine[0]: name is empty",
+			label:    "machine entry with no name",
+			manifest: "name: p\nmachine:\n  - port: 3306\n",
+			mentions: "machine[0]: name is empty",
 		},
 		{
-			name: "machine entry named after a service",
-			body: "name: p\nservices:\n  - name: api\nmachine:\n  - name: api\n    port: 3306\n",
-			want: "machine api: api is already a service in this file",
+			label:    "machine entry named after a service",
+			manifest: "name: p\nservices:\n  - name: api\nmachine:\n  - name: api\n    port: 3306\n",
+			mentions: "machine api: api is already a service in this file",
 		},
 		{
-			name: "duplicate machine names",
-			body: "name: p\nmachine:\n  - name: mysql\n    port: 3306\n  - name: mysql\n    port: 3307\n",
-			want: "machine mysql: duplicate name",
+			label:    "duplicate machine names",
+			manifest: "name: p\nmachine:\n  - name: mysql\n    port: 3306\n  - name: mysql\n    port: 3307\n",
+			mentions: "machine mysql: duplicate name",
 		},
 		{
-			name: "machine port out of range",
-			body: "name: p\nmachine:\n  - name: mysql\n    port: 70000\n",
-			want: "machine mysql: port 70000 is out of range",
+			label:    "machine port out of range",
+			manifest: "name: p\nmachine:\n  - name: mysql\n    port: 70000\n",
+			mentions: "machine mysql: port 70000 is out of range",
 		},
 		{
-			name: "expose at the top level",
-			body: "name: p\nexpose:\n  - 3000\n",
-			want: "has an `expose:` key: sharing is not configured in",
+			label:    "expose at the top level",
+			manifest: "name: p\nexpose:\n  - 3000\n",
+			mentions: "has an `expose:` key: sharing is not configured in",
 		},
 		{
-			name: "expose on a service",
-			body: "name: p\nservices:\n  - name: api\n    expose: true\n",
-			want: "service api has an `expose:` key: sharing is not configured in",
+			label:    "expose on a service",
+			manifest: "name: p\nservices:\n  - name: api\n    expose: true\n",
+			mentions: "service api has an `expose:` key: sharing is not configured in",
 		},
 		{
-			name: "share at the top level",
-			body: "name: p\nshare:\n  - 3000\n",
-			want: "has a `share:` key: sharing is not configured in",
+			label:    "share at the top level",
+			manifest: "name: p\nshare:\n  - 3000\n",
+			mentions: "has a `share:` key: sharing is not configured in",
 		},
 		{
-			name: "share on a service",
-			body: "name: p\nservices:\n  - name: api\n    share: public\n",
-			want: "service api has a `share:` key: sharing is not configured in",
+			label:    "share on a service",
+			manifest: "name: p\nservices:\n  - name: api\n    share: public\n",
+			mentions: "service api has a `share:` key: sharing is not configured in",
 		},
 		{
-			name: "share on a later service",
-			body: "name: p\nservices:\n  - name: web\n  - name: api\n    share: lan\n",
-			want: "service api has a `share:` key",
+			label:    "share on a later service",
+			manifest: "name: p\nservices:\n  - name: web\n  - name: api\n    share: lan\n",
+			mentions: "service api has a `share:` key",
 		},
 		{
-			name: "not yaml at all",
-			body: "name: [unterminated\n",
-			want: "",
+			label:    "not yaml at all",
+			manifest: "name: [unterminated\n",
+			mentions: "",
 		},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := loadString(t, "proj", tt.body)
+		t.Run(tt.label, func(t *testing.T) {
+			cfg, err := loadBody(t, "proj", tt.manifest)
 			if err == nil {
 				t.Fatalf("Load succeeded, want an error; got %+v", cfg)
 			}
 			if cfg != nil {
 				t.Errorf("Load returned a config alongside its error: %+v", cfg)
 			}
-			if tt.want != "" && !strings.Contains(err.Error(), tt.want) {
-				t.Errorf("error = %q, want it to mention %q", err, tt.want)
+			if tt.mentions != "" && !strings.Contains(err.Error(), tt.mentions) {
+				t.Errorf("error = %q, want it to mention %q", err, tt.mentions)
 			}
 			if !strings.Contains(err.Error(), ConfigName) {
 				t.Errorf("error %q does not name the offending file", err)
@@ -252,90 +258,96 @@ func TestLoadValidationProblems(t *testing.T) {
 }
 
 func TestLoadReportsEveryProblemAtOnce(t *testing.T) {
-	_, err := loadString(t, "proj", "name: bad name\nservices:\n  - name: a\n    port: 70000\n  - name: a\n")
+	_, err := loadBody(t, "proj", "name: bad name\nservices:\n  - name: a\n    port: 70000\n  - name: a\n")
 	if err == nil {
 		t.Fatal("want an error")
 	}
-	ce, ok := err.(*ConfigError)
-	if !ok {
+	var configErr *ConfigError
+	if !errors.As(err, &configErr) {
 		t.Fatalf("error is %T, want *ConfigError", err)
 	}
-	if len(ce.Problems) < 3 {
-		t.Errorf("problems = %v, want all three reported at once", ce.Problems)
+	if len(configErr.Problems) < 3 {
+		t.Errorf("problems = %v, want all three at once", configErr.Problems)
 	}
 }
 
 func TestLoadMissingFile(t *testing.T) {
 	if _, err := Load(filepath.Join(tempTree(t), ConfigName)); err == nil {
-		t.Fatal("want an error for a missing file")
+		t.Fatal("a missing manifest loaded")
 	}
 }
 
-// TestLoadServiceMetadata covers contract §13.1: description, icon and colour
-// are free-form strings read from the file and never inferred.
+// Metadata is free-form: read from the file, carried to the contract row, and
+// never inferred by the engine.
 func TestLoadServiceMetadata(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ConfigName)
-	writeFile(t, path, `name: demo
+	writeFile(t, path, `name: demo-meta
 services:
   - name: api
     cmd: uv run api
-    port: 8000
+    port: 8100
     health: /health
-    description: The HTTP API
-    icon: server
-    color: "#3b82f6"
+    description: HTTP API service
+    icon: globe
+    color: "#123456"
 `)
 
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	svc := cfg.Services[0]
-	if svc.Description != "The HTTP API" || svc.Icon != "server" || svc.Color != "#3b82f6" {
-		t.Fatalf("metadata not read: %+v", svc)
+	service := cfg.Services[0]
+	if service.Description != "HTTP API service" || service.Icon != "globe" || service.Color != "#123456" {
+		t.Fatalf("metadata not read: %+v", service)
 	}
 
-	row := ServiceRow(svc)
-	if row.Description == nil || *row.Description != "The HTTP API" {
-		t.Fatalf("description not carried to the contract row: %+v", row)
+	row := ServiceRow(service)
+	if row.Description == nil || *row.Description != service.Description {
+		t.Fatalf("description not carried: %+v", row)
 	}
-	if row.Icon == nil || *row.Icon != "server" || row.Color == nil || *row.Color != "#3b82f6" {
-		t.Fatalf("icon/colour not carried to the contract row: %+v", row)
+	if row.Icon == nil || *row.Icon != service.Icon {
+		t.Fatalf("icon not carried: %+v", row)
+	}
+	if row.Color == nil || *row.Color != service.Color {
+		t.Fatalf("colour not carried: %+v", row)
 	}
 }
 
-// TestServiceRowLeavesMetadataNull keeps "absent" distinct from "empty" on the
-// wire: a service without metadata publishes null, not "".
+// Absent metadata stays null on the wire rather than becoming "".
 func TestServiceRowLeavesMetadataNull(t *testing.T) {
-	row := ServiceRow(Service{Name: "db"})
-	if row.Description != nil || row.Icon != nil || row.Color != nil || row.Health != nil {
-		t.Fatalf("expected null metadata, got %+v", row)
+	published := ServiceRow(Service{Name: "db"})
+	if published.Description != nil {
+		t.Fatalf("description = %v, want null", published.Description)
+	}
+	if published.Icon != nil || published.Color != nil || published.Health != nil {
+		t.Fatalf("expected null metadata, got %+v", published)
 	}
 }
 
-// TestLoadWorktreePorts: the key is optional, and absent is nil rather than a
-// zero that would read as "claim nothing".
+// worktree_ports is optional; absent is nil, not a zero that would read as
+// "claim nothing".
 func TestLoadWorktreePorts(t *testing.T) {
-	cfg, err := loadString(t, "shop", "name: shop\nworktree_ports: 5\n")
+	loaded, err := loadBody(t, "shop", "name: shop\nworktree_ports: 5\n")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.WorktreePorts == nil || *cfg.WorktreePorts != 5 {
-		t.Fatalf("worktree_ports = %v, want 5", cfg.WorktreePorts)
+	if loaded.WorktreePorts == nil || *loaded.WorktreePorts != 5 {
+		t.Fatalf("worktree_ports = %v, want 5", loaded.WorktreePorts)
 	}
 
-	cfg, err = loadString(t, "plain", "name: plain\n")
+	absent, err := loadBody(t, "plain", "name: plain\n")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.WorktreePorts != nil {
-		t.Fatalf("worktree_ports = %d, want nil for a file without the key", *cfg.WorktreePorts)
+	if absent.WorktreePorts != nil {
+		t.Fatalf("worktree_ports = %d, want nil", *absent.WorktreePorts)
 	}
 
-	for _, n := range []int{1, MaxWorktreePorts} {
-		if _, err := loadString(t, "edge", fmt.Sprintf("name: edge\nworktree_ports: %d\n", n)); err != nil {
-			t.Errorf("worktree_ports %d should be valid: %v", n, err)
+	for _, value := range []int{1, MaxWorktreePorts} {
+		body := fmt.Sprintf("name: edge\nworktree_ports: %d\n", value)
+		if _, err := loadBody(t, "edge", body); err != nil {
+			t.Errorf("worktree_ports %d should be valid: %v", value, err)
 		}
 	}
 }
