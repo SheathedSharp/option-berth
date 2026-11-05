@@ -333,21 +333,32 @@ func (s *Server) closing() bool {
 // startConn registers a connection and starts its read and write loops.
 func (s *Server) startConn(ctx context.Context, nc net.Conn) {
 	c := newConn(s.nextConnID.Add(1), s, nc)
-
-	s.subsMu.Lock()
-	s.conns[c.id] = c
-	s.subsMu.Unlock()
+	s.registerConn(c)
 	s.touch()
 	s.logger.Debug("client connected", "conn", c.id)
 
+	// The writer is tracked on the connection, not on the server: it has to be
+	// known to be finished before the socket is closed, and that ordering is
+	// the connection's own business.
 	c.writerWG.Add(1)
 	go c.writeLoop()
+
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
+		// Closing here means a client that stops sending tears down its own
+		// connection, whether it disconnected or hit an error.
 		defer c.Close()
 		c.readLoop(ctx)
 	}()
+}
+
+// registerConn adds a connection to the registry under the lock the publisher
+// also takes, so no broadcast can miss a connection that is already answering.
+func (s *Server) registerConn(c *Conn) {
+	s.subsMu.Lock()
+	s.conns[c.id] = c
+	s.subsMu.Unlock()
 }
 
 // removeConn drops a connection from the registry. Called once per connection,
