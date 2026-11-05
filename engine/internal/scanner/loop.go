@@ -1236,6 +1236,28 @@ func healthStatus(h *state.Health) string {
 
 func (l *Loop) nowRFC3339() string { return l.now().Format(time.RFC3339) }
 
+// readSnapshot is the shape every read shares: refuse at once if the caller is
+// already gone, snap the interval back to the base when the read finishes,
+// serve the cache when it is fresh enough for this caller, and only then scan.
+//
+// mode is what separates an ordinary read from a readiness wait — how a scan
+// may be shared, and what a failure is allowed to fall back to.
+func (l *Loop) readSnapshot(
+	ctx context.Context,
+	include Include,
+	mode scanMode,
+	freshness func(Include) (state.Snapshot, bool),
+) (state.Snapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return state.Snapshot{}, err
+	}
+	defer l.Wake()
+	if cached, usable := freshness(include); usable {
+		return cached, nil
+	}
+	return l.scanNowContext(ctx, include, mode)
+}
+
 // Snapshot returns the current state for an RPC read. It reuses the cached
 // scan when it is younger than CacheTTL and already carries everything the
 // caller asked for; otherwise it scans now. Either way it wakes the loop, so
@@ -1252,15 +1274,7 @@ func (l *Loop) SnapshotAll(include Include) (state.Snapshot, error) {
 // SnapshotAllContext permits last-good fallback only for collection failures,
 // never for an owner that has cancelled its request.
 func (l *Loop) SnapshotAllContext(ctx context.Context, include Include) (state.Snapshot, error) {
-	if err := ctx.Err(); err != nil {
-		return state.Snapshot{}, err
-	}
-	defer l.Wake()
-
-	if snap, ok := l.cached(include); ok {
-		return snap, nil
-	}
-	return l.scanNowContext(ctx, include, mayCoalesce)
+	return l.readSnapshot(ctx, include, mayCoalesce, l.cached)
 }
 
 // SnapshotForReadiness reads the SAME attributed/health-probed state as an
@@ -1276,14 +1290,13 @@ func (l *Loop) SnapshotForReadiness() (state.Snapshot, error) {
 // SnapshotForReadinessContext carries the dependency wait's ownership through
 // queueing, collection and configured health. Cancellation is not cached.
 func (l *Loop) SnapshotForReadinessContext(ctx context.Context) (state.Snapshot, error) {
-	if err := ctx.Err(); err != nil {
-		return state.Snapshot{}, err
+	// The wait uses the scan floor rather than the idle TTL, and asks for the
+	// plain snapshot: a dependency wait is not a subscriber and has no include
+	// set of its own.
+	fresh := func(Include) (state.Snapshot, bool) {
+		return l.cachedWithin(Include{}, MinScanInterval)
 	}
-	defer l.Wake()
-	if snap, ok := l.cachedWithin(Include{}, MinScanInterval); ok {
-		return snap, nil
-	}
-	return l.scanNowContext(ctx, Include{}, readinessScan)
+	return l.readSnapshot(ctx, Include{}, readinessScan, fresh)
 }
 
 // A failed active observation is reusable as an error, not as stale success.
