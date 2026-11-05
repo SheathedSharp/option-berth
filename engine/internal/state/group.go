@@ -52,15 +52,17 @@ type Service struct {
 	// including when a very large source set was fingerprinted by digest only.
 	CodeChangedFiles *int    `json:"code_changed_files" jsonschema:"nullable"`
 	CodeHint         *string `json:"code_hint" jsonschema:"nullable"`
-	// Description, Icon and Color are user-authored metadata from
-	// `oberth.yaml` (contract §13.1). The daemon stores and serves them; what
-	// an icon or a colour means is the client's business.
-	Description *string  `json:"description" jsonschema:"nullable"`
-	Icon        *string  `json:"icon" jsonschema:"nullable"`
-	Color       *string  `json:"color" jsonschema:"nullable"`
-	DependsOn   []string `json:"depends_on"`
-	Running     bool     `json:"running"`
-	PortActual  *int     `json:"port_actual" jsonschema:"nullable"`
+	// Presentation metadata the person authored in `oberth.yaml`. The daemon
+	// stores and serves it; what an icon or colour means is the client's
+	// business.
+	Description *string `json:"description" jsonschema:"nullable"`
+	Icon        *string `json:"icon" jsonschema:"nullable"`
+	Color       *string `json:"color" jsonschema:"nullable"`
+
+	// What the declaration says and what the runtime answered.
+	DependsOn  []string `json:"depends_on"`
+	Running    bool     `json:"running"`
+	PortActual *int     `json:"port_actual" jsonschema:"nullable"`
 	// PID identifies the observed process when a service is running. RunID and
 	// StartedAt identify a live run option-berth owns. They are nullable because
 	// a service may be declared but stopped. Keeping these beside Running gives
@@ -156,19 +158,21 @@ type MachineRef struct {
 	Unit *string `json:"unit" jsonschema:"nullable"`
 }
 
-// Group is a set of ports that belong to one project. Members are port
-// numbers; clients join them against the ports list.
+// Group is one project's set of ports. Members are port numbers; a client joins
+// them against the ports collection.
 type Group struct {
-	// Host names the machine this group lives on (see Port.Host).
+	// Which machine this group belongs to (see Port.Host), and its name.
 	Host string `json:"host"`
 	Name string `json:"name"`
-	// Repo is the project every checkout of one repository shares: the main
-	// checkout's group name. A group that is not a git checkout's is its own
+
+	// Repo is the shared project of every checkout of one repository: the
+	// main checkout's group name. A group that is not a checkout is its own
 	// project, so Repo equals Name.
 	Repo string `json:"repo"`
-	// Worktree is a linked worktree's name, the `<worktree>` half of a
-	// `<repo>@<worktree>` group. It is empty for a main checkout and for a
-	// group that is not a checkout.
+
+	// Worktree is a linked worktree's name, the half after `@` in a
+	// `<repo>@<worktree>` group. Empty for the main checkout and for a group
+	// that is not a checkout at all.
 	Worktree string `json:"worktree"`
 	// Identity is the stable `${worktree}` token of the checkout this group
 	// lives in (`wt_` plus twelve hex digits). It is the value a manifest can
@@ -181,9 +185,11 @@ type Group struct {
 	Source     GroupSource `json:"source" jsonschema:"enum=auto,enum=file,enum=start"`
 	RootDir    *string     `json:"root_dir" jsonschema:"nullable"`
 	ConfigPath *string     `json:"config_path" jsonschema:"nullable"`
-	Status     string      `json:"status"` // running | partial | stopped
-	Members    []int       `json:"members"`
-	Services   []Service   `json:"services"`
+
+	// The group's observed state and its membership.
+	Status   string    `json:"status"` // running | partial | stopped
+	Members  []int     `json:"members"`
+	Services []Service `json:"services"`
 	// Machine is what the manifest declares as depending on services of this
 	// machine, joined against what is listening. Always an array.
 	Machine []MachineRef `json:"machine"`
@@ -238,17 +244,21 @@ func (g Group) ResourceTotals() *Resources {
 // Key is the stable delta identity for the group.
 func (g Group) Key() string { return PrefixKey(g.Host, g.Name) }
 
-// SessionRecord is a Session plus the aggregate counts the sessions collection
-// carries.
+// SessionRecord is a Session with the aggregate counts the sessions
+// collection publishes.
 type SessionRecord struct {
 	Session
+
+	// Where it was seen.
 	Host      string `json:"host"`
 	FirstSeen string `json:"first_seen"`
 	LastSeen  string `json:"last_seen"`
-	Runs      int    `json:"runs"`
-	Ports     int    `json:"ports"`
-	Groups    int    `json:"groups"`
-	Active    bool   `json:"active"`
+
+	// What it has done and whether it is still live.
+	Runs   int  `json:"runs"`
+	Ports  int  `json:"ports"`
+	Groups int  `json:"groups"`
+	Active bool `json:"active"`
 }
 
 // Key is the delta identity: the session id, namespaced by host.
