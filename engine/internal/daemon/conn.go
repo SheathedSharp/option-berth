@@ -251,41 +251,59 @@ func (c *Conn) readLoop(ctx context.Context) {
 	for {
 		msg, err := dec.Next()
 		if err != nil {
-			switch {
-			case errors.Is(err, io.EOF):
-				c.closeWithReason("client disconnected")
-			case errors.Is(err, rpc.ErrOversize):
-				c.replyError(nil, rpc.NewError(rpc.CodeInvalidParams,
-					"message exceeds the 4 MiB limit", ""))
-				continue
-			default:
-				var re *rpc.Error
-				if errors.As(err, &re) {
-					c.replyError(nil, re)
-					continue
-				}
-				c.closeWithReason("read error: " + err.Error())
+			if !c.survivesDecodeError(err) {
+				return
 			}
-			return
+			continue
 		}
-
-		switch {
-		case msg.IsRequest():
-			c.serve(ctx, msg)
-		case msg.IsNotification():
-			// The daemon accepts no client notifications yet; ignore them
-			// rather than closing, so a future client stays compatible.
-			c.srv.logger.Debug("ignoring client notification", "conn", c.id, "method", msg.Method)
-		default:
-			c.replyError(msg.ID, rpc.NewError(rpc.CodeInvalidParams,
-				"expected a request with both id and method", ""))
-		}
+		c.dispatch(ctx, msg)
 
 		select {
 		case <-c.closed:
 			return
 		default:
 		}
+	}
+}
+
+// survivesDecodeError decides what a decode failure means for the connection,
+// and reports whether the loop should keep reading.
+//
+// A clean EOF or an unreadable stream ends the connection. A message that was
+// merely too large or malformed gets an error reply and the loop continues: the
+// decoder has already resynchronised on the next line, and hanging up on a
+// client that sent one bad message helps nobody.
+func (c *Conn) survivesDecodeError(err error) bool {
+	switch {
+	case errors.Is(err, io.EOF):
+		c.closeWithReason("client disconnected")
+		return false
+	case errors.Is(err, rpc.ErrOversize):
+		c.replyError(nil, rpc.NewError(rpc.CodeInvalidParams,
+			"message exceeds the 4 MiB limit", ""))
+		return true
+	}
+	var protocolError *rpc.Error
+	if errors.As(err, &protocolError) {
+		c.replyError(nil, protocolError)
+		return true
+	}
+	c.closeWithReason("read error: " + err.Error())
+	return false
+}
+
+// dispatch acts on one decoded message.
+func (c *Conn) dispatch(ctx context.Context, msg rpc.Message) {
+	switch {
+	case msg.IsRequest():
+		c.serve(ctx, msg)
+	case msg.IsNotification():
+		// The daemon accepts no client notifications yet. Ignoring them keeps a
+		// future client compatible instead of getting it disconnected.
+		c.srv.logger.Debug("ignoring client notification", "conn", c.id, "method", msg.Method)
+	default:
+		c.replyError(msg.ID, rpc.NewError(rpc.CodeInvalidParams,
+			"expected a request with both id and method", ""))
 	}
 }
 
