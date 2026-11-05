@@ -1,7 +1,11 @@
-// Package scanner owns the daemon's single scan goroutine. It wraps the
-// existing ports/docker enrichment pipeline, keeps the last good Snapshot, and
-// publishes (previous, next) pairs so the daemon can compute whichever delta
-// flavours its subscribers asked for.
+// Package scanner is the daemon's one scan goroutine.
+//
+// One goroutine, because a scan is an lsof/ss/netstat sweep plus a docker round
+// trip and two of them on one machine measure each other. The loop keeps the
+// last snapshot that came back, and publishes each transition as a
+// (previous, next) pair — the daemon turns a pair into whichever delta flavours
+// its subscribers asked for, so the scanner never needs to know who is
+// watching or what shape they want.
 package scanner
 
 import (
@@ -19,61 +23,64 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// Timing constants from the spec's "Scanner loop" section.
+// Timing, in four groups: how often the loop samples, how far it backs off, how
+// health probes are bounded, and how long a caller may hold the gates.
 const (
-	// BaseInterval is the interval while anything is changing, and the
-	// default `daemon.scan_interval` sets.
+	// BaseInterval is the cadence while something is changing, and the default
+	// for `daemon.scan_interval`.
 	BaseInterval = 2 * time.Second
-	// MinScanInterval is the floor `daemon.scan_interval` may be set to. One
-	// scan is an `lsof`/`ss`/`netstat` plus a docker round trip; below a
-	// second a machine spends more of itself being measured than run.
+
+	// MinScanInterval is as fast as `daemon.scan_interval` may be set. One scan
+	// is an `lsof`/`ss`/`netstat` sweep plus a docker round trip, so below a
+	// second the machine spends more time being measured than running.
 	MinScanInterval = 1 * time.Second
-	// MaxInterval caps the backoff on unchanged scans while the daemon is
-	// serving RPC reads only. The constant is the ceiling at the default
-	// base; a configured base scales it by IdleMaxFactor.
-	MaxInterval = 10 * time.Second
-	// SubscribedMaxInterval caps the backoff while at least one subscriber is
-	// connected, so a live view never lags a change by more than this. Like
-	// MaxInterval it is the ceiling at the default base, scaled by
-	// SubscribedMaxFactor.
+
+	// MaxInterval and SubscribedMaxInterval are the two ceilings the backoff
+	// may reach. A live view must not lag a change by more than the second, so
+	// having a subscriber tightens the ceiling; with only RPC reads to answer,
+	// the loop can afford to wait longer.
+	MaxInterval           = 10 * time.Second
 	SubscribedMaxInterval = 5 * time.Second
-	// SubscribedMaxFactor and IdleMaxFactor scale the two ceilings with the
-	// base interval, so `daemon.scan_interval` moves the whole adaptive curve
-	// rather than only its floor. At the 2 s default they reproduce
-	// SubscribedMaxInterval and MaxInterval exactly.
+
+	// The two factors scale those ceilings with the base interval, so changing
+	// `daemon.scan_interval` moves the whole curve and not just its floor. At
+	// the 2 s default they reproduce the two ceilings above exactly.
 	SubscribedMaxFactor = 2.5
 	IdleMaxFactor       = 5
-	// BackoffFactor multiplies the interval after an unchanged scan.
+
+	// BackoffFactor multiplies the interval after a scan that changed nothing.
 	BackoffFactor = 1.5
+
 	// CacheTTL is how long an RPC read may reuse the last scan.
 	CacheTTL = 2 * time.Second
-	// HealthCadence keeps HTTP probes off the port-scan cadence.
+
+	// HealthCadence keeps HTTP probes off the port-scan cadence, HealthTimeout
+	// bounds one probe, and HealthBudget bounds a whole round however many
+	// ports are listening: ten probes run at once, so without the ceiling forty
+	// listeners would cost four waves of HealthTimeout, and a write handler's
+	// republish queues behind the scan paying for it.
 	HealthCadence = 10 * time.Second
-	// HealthTimeout bounds a single probe.
 	HealthTimeout = 2 * time.Second
-	// HealthBudget bounds a whole round of opt-in health probes, however many
-	// ports are listening. Ten probes run at once, so without a ceiling a
-	// machine with forty listeners costs four waves of HealthTimeout — and a
-	// write handler's republish is queued behind the scan that pays it
-	// (contract §44).
-	HealthBudget = 4 * time.Second
-	// ConfiguredHealthBudget is the same ceiling for the `oberth.yaml` health
-	// paths, which are probed on every tick rather than on HealthCadence.
+	HealthBudget  = 4 * time.Second
+
+	// ConfiguredHealthBudget is the same ceiling for `oberth.yaml` health paths,
+	// which are probed every tick rather than on HealthCadence.
 	ConfiguredHealthBudget = 2 * time.Second
+
 	// ScanLockBudget bounds RPC gate admission and the cooperative follow-up
-	// owned by Republish. It is not a hard limit on synchronous filesystem or
-	// store calls already in progress. Forced observations never turn a gate
+	// Republish owns. It is not a hard limit on synchronous filesystem or store
+	// calls already under way, and a forced observation never turns a gate
 	// failure into last-good success.
 	ScanLockBudget = 15 * time.Second
-	// StatsInterval is the fixed cadence of the stats-only tick: per-process
-	// cpu and memory plus this machine's load row, sampled without a port
-	// scan behind it. Unlike the scan interval it never backs off, and it
-	// only runs while someone is subscribed.
+
+	// StatsInterval is the fixed cadence of the stats-only tick: per-process cpu
+	// and memory plus this machine's load row, with no port scan behind it. It
+	// never backs off, and only runs while somebody is subscribed.
 	StatsInterval = 1 * time.Second
-	// MinStatsInterval is the floor `daemon.stats_interval` may be set to.
-	// Below it the sampler costs more than the numbers it publishes are
-	// worth: every tick is a `ps` per machine on Unix and a PowerShell on
-	// Windows.
+
+	// MinStatsInterval is as fast as `daemon.stats_interval` may be set. Below
+	// it the sampler costs more than the numbers it publishes: every tick is a
+	// `ps` per machine on Unix and a PowerShell on Windows.
 	MinStatsInterval = 250 * time.Millisecond
 )
 
@@ -283,25 +290,32 @@ type Loop struct {
 	lastErr       error
 }
 
-// New builds a Loop. It does not start scanning; call Run.
-func New(opts Options) *Loop {
+// withDefaults fills in every option a caller may leave nil, so the rest of the
+// loop never has to ask whether a seam was provided.
+func withDefaults(opts Options) Options {
 	if opts.Logger == nil {
 		opts.Logger = slog.New(slog.DiscardHandler)
 	}
 	if opts.Demand == nil {
+		// Nobody is watching: the loop parks itself until someone asks.
 		opts.Demand = func() (int, Include) { return 0, Include{} }
 	}
 	if opts.Publish == nil {
 		opts.Publish = func(state.Snapshot, state.Snapshot, []state.Event) {}
 	}
-	now := opts.Now
-	if now == nil {
-		now = time.Now
+	if opts.Now == nil {
+		opts.Now = time.Now
 	}
+	return opts
+}
+
+// New builds a Loop. It does not start scanning; call Run.
+func New(opts Options) *Loop {
+	opts = withDefaults(opts)
 	base := resolveScanInterval(opts.ScanInterval)
 	l := &Loop{
 		opts:      opts,
-		now:       now,
+		now:       opts.Now,
 		base:      base,
 		wake:      make(chan struct{}, 1),
 		statsWake: make(chan struct{}, 1),
@@ -310,19 +324,28 @@ func New(opts Options) *Loop {
 		orderGate: make(chan struct{}, 1),
 		interval:  base,
 	}
-	if l.opts.Scan == nil && l.opts.ScanContext == nil && l.opts.ScanSource == nil {
-		// The refresh cadence is the scan cadence: scans poke the watcher,
-		// and it asks Docker at most once per base interval. A refresh that
-		// changes the list wakes the loop, so a new container's port is
-		// enriched within one tick rather than one backed-off interval.
-		l.docker = docker.NewWatcher(docker.WatcherOptions{
-			Interval: base,
-			Logger:   opts.Logger,
-			OnChange: l.Wake,
-		})
-		l.opts.ScanSource = l.osScanSourceContext
-	}
+	l.attachDockerWatcher(base)
 	return l
+}
+
+// attachDockerWatcher gives a loop that has no injected scan source the real
+// one, with a docker watcher behind it.
+//
+// The refresh cadence is the scan cadence: scans poke the watcher and it asks
+// Docker at most once per base interval. A refresh that changes the container
+// list wakes the loop, so a new container's port is enriched within one tick
+// rather than one backed-off interval.
+func (l *Loop) attachDockerWatcher(base time.Duration) {
+	injected := l.opts.Scan != nil || l.opts.ScanContext != nil || l.opts.ScanSource != nil
+	if injected {
+		return
+	}
+	l.docker = docker.NewWatcher(docker.WatcherOptions{
+		Interval: base,
+		Logger:   l.opts.Logger,
+		OnChange: l.Wake,
+	})
+	l.opts.ScanSource = l.osScanSourceContext
 }
 
 // resolveScanInterval clamps a configured base scan interval. Zero (the unset
@@ -465,6 +488,17 @@ func (l *Loop) Wake() {
 	}
 }
 
+// runInBackground starts one auxiliary goroutine and counts it in the wait
+// group, so Run returns only once every helper has actually stopped rather
+// than merely been told to.
+func runInBackground(background *sync.WaitGroup, ctx context.Context, work func(context.Context)) {
+	background.Add(1)
+	go func() {
+		defer background.Done()
+		work(ctx)
+	}()
+}
+
 // Run drives the loop until ctx is cancelled. With zero subscribers it parks on
 // Wake and does no work at all; the next RPC or subscription starts it again.
 //
@@ -475,20 +509,12 @@ func (l *Loop) Wake() {
 // scan that may be 5 s apart.
 func (l *Loop) Run(ctx context.Context) {
 	var background sync.WaitGroup
-	background.Add(1)
-	go func() {
-		defer background.Done()
-		l.runStats(ctx)
-	}()
+	runInBackground(&background, ctx, l.runStats)
 	if l.docker != nil {
-		// The docker watcher refreshes the container list the scans read,
-		// in its own goroutine for the same reason: nothing on the scan
+		// The watcher refreshes the container list scans read, in its own
+		// goroutine for the same reason as the stats tick: nothing on the scan
 		// path waits on the docker CLI.
-		background.Add(1)
-		go func() {
-			defer background.Done()
-			l.docker.Run(ctx)
-		}()
+		runInBackground(&background, ctx, l.docker.Run)
 	}
 	defer background.Wait()
 
@@ -499,15 +525,12 @@ func (l *Loop) Run(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		subs, include := l.opts.Demand()
-		if subs == 0 {
-			// Parked: no scanning, no timer.
-			select {
-			case <-ctx.Done():
-				return
-			case <-l.wake:
-				continue
-			}
+		include, scanNow, finished := l.waitForDemand(ctx)
+		switch {
+		case finished:
+			return
+		case !scanNow:
+			continue // a wake arrived; re-read the demand
 		}
 
 		// A scan an RPC ran a moment ago is this tick's scan. Wake means "the
@@ -530,13 +553,7 @@ func (l *Loop) Run(ctx context.Context) {
 			wait = l.base
 		}
 
-		if !timer.Stop() {
-			select {
-			case <-timer.C:
-			default:
-			}
-		}
-		timer.Reset(wait)
+		armTimer(timer, wait)
 		select {
 		case <-ctx.Done():
 			return
@@ -550,6 +567,50 @@ func (l *Loop) Run(ctx context.Context) {
 	}
 }
 
+// armTimer restarts timer for wait.
+//
+// Reset on a timer that may already have fired leaves the old value in the
+// channel, so the next select would take it immediately and spin. Draining
+// first is what makes Reset safe here, and it has to be done this way round:
+// Stop reports whether it stopped the timer, and only then is there certainly
+// nothing to drain.
+func armTimer(timer *time.Timer, wait time.Duration) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(wait)
+}
+
+// waitForDemand answers what this tick should collect, and whether it should
+// collect anything at all.
+//
+// scanNow is false when a wake arrived while parked: the caller re-reads
+// Demand, because the wake may have been the subscriber that makes scanning
+// worth doing. finished means ctx ended.
+func (l *Loop) waitForDemand(ctx context.Context) (include Include, scanNow, finished bool) {
+	subscribers, wanted := l.opts.Demand()
+	if subscribers > 0 {
+		return wanted, true, false
+	}
+	// Parked: no scanning and no timer, so an idle daemon costs nothing.
+	select {
+	case <-ctx.Done():
+		return Include{}, false, true
+	case <-l.wake:
+		return Include{}, false, false
+	}
+}
+
+// abandoned is the result of a scan that stopped early: no new snapshot, the
+// one already cached, nothing changed, and the reason. Every early exit in the
+// scan path returns this shape, so it has one definition rather than nine.
+func (l *Loop) abandoned(err error) (state.Snapshot, state.Snapshot, bool, error) {
+	return state.Snapshot{}, l.Cached(), false, err
+}
+
 // scanAndPublish runs one scan, updates the cache, adapts the interval and
 // publishes when something changed. One scan at a time (see scanMu); the
 // publish itself happens inside scanLocked, under commitMu.
@@ -557,18 +618,33 @@ func (l *Loop) scanAndPublish(include Include) {
 	l.scanAndPublishContext(context.Background(), include)
 }
 
+// scanAndPublishContext runs one tick under the run gate, which is what keeps
+// two publishes from overlapping. The scan's own result is discarded: this path
+// exists to refresh the cache and publish, not to answer a caller.
 func (l *Loop) scanAndPublishContext(ctx context.Context, include Include) {
 	ctx, cancel := observationContext(ctx)
 	defer cancel()
-	if lockContext(ctx, l.runGate) != nil {
-		return
-	}
-	defer unlock(l.runGate)
-	if ctx.Err() != nil {
-		return
-	}
 
-	_, _, _, _ = l.scanLockedContext(ctx, include, Include{}, true)
+	release, admitted := l.admit(ctx)
+	if !admitted {
+		return
+	}
+	defer release()
+
+	l.scanLockedContext(ctx, include, Include{}, true)
+}
+
+// admit takes the run gate, reporting false when the caller gave up while
+// waiting for it. Nothing is held in that case, so the caller must not release.
+func (l *Loop) admit(ctx context.Context) (release func(), admitted bool) {
+	if lockContext(ctx, l.runGate) != nil {
+		return nil, false
+	}
+	if ctx.Err() != nil {
+		unlock(l.runGate)
+		return nil, false
+	}
+	return func() { unlock(l.runGate) }, true
 }
 
 // publish hands the transition to the daemon and then writes its port
@@ -577,6 +653,59 @@ func (l *Loop) scanAndPublishContext(ctx context.Context, include Include) {
 func (l *Loop) publish(prev, next state.Snapshot, events []state.Event) {
 	l.opts.Publish(prev, next, events)
 	l.record(events)
+}
+
+// collectRows runs whichever collector this loop was given and returns the rows
+// plus the source name, which is empty for collectors that cannot name one.
+//
+// The three cases are the three seams a caller can inject: a source that
+// reports its own name, one that reports only rows, and the plain closure the
+// tests use. Production is the first.
+func (l *Loop) collectRows(ctx context.Context, collect Include) ([]ports.ListeningPort, string, error) {
+	var (
+		rows   []ports.ListeningPort
+		source string
+		err    error
+	)
+	switch {
+	case l.opts.ScanSource != nil:
+		rows, source, err = l.opts.ScanSource(ctx, collect)
+	case l.opts.ScanContext != nil:
+		rows, err = l.opts.ScanContext(ctx, collect)
+	default:
+		rows, err = l.opts.Scan(collect)
+	}
+	return rows, source, err
+}
+
+// partialObservation records that a collector answered with the rows it could
+// read and a verdict on the rest. The code and hint come from the collector's
+// own error, so a sandboxed agent can tell which kind of blindness this was.
+func (l *Loop) partialObservation(reason error, source string) *state.Observation {
+	partial := &state.Observation{
+		State:     state.ObservationPartial,
+		Source:    source,
+		CheckedAt: l.nowRFC3339(),
+	}
+	var observed *ports.ObservationError
+	if errors.As(reason, &observed) {
+		partial.Code = observed.Code
+		partial.Detail = observed.Error()
+		partial.Hint = observed.Hint
+	}
+	return partial
+}
+
+// observableObservation records that this scan could see the machine, though a
+// narrow source (netstat, ss) cannot show every owner. Publishing the coverage
+// alongside the rows is what stops "no owner" from reading as "nothing there".
+func (l *Loop) observableObservation(source string) *state.Observation {
+	return &state.Observation{
+		State:     state.ObservationObservable,
+		Source:    source,
+		Detail:    ports.NarrowSourceDetail(source),
+		CheckedAt: l.nowRFC3339(),
+	}
 }
 
 // scanLocked performs a scan and swaps it into the cache. It returns the new
@@ -595,7 +724,7 @@ func (l *Loop) scanLocked(collect, carry Include, reportFailure bool) (next, pre
 
 func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, reportFailure bool) (next, prev state.Snapshot, changed bool, err error) {
 	if err := ctx.Err(); err != nil {
-		return state.Snapshot{}, l.Cached(), false, err
+		return l.abandoned(err)
 	}
 	// Read outside the mutex: Demand takes the server's own lock, which the
 	// server holds while calling back into the loop.
@@ -603,35 +732,19 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 	wantHealth := collect.Health && l.healthDue()
 
 	gen, refresh := l.beginScan()
-	var pp []ports.ListeningPort
-	source := ""
-	switch {
-	case l.opts.ScanSource != nil:
-		pp, source, err = l.opts.ScanSource(ctx, collect)
-	case l.opts.ScanContext != nil:
-		pp, err = l.opts.ScanContext(ctx, collect)
-	default:
-		pp, err = l.opts.Scan(collect)
-	}
+	pp, source, err := l.collectRows(ctx, collect)
 	if err := ctx.Err(); err != nil {
 		// Ownership ended, not a collector failure. Preserve the last outcome
 		// and freshness, and leave pending invalidation for a later observer.
-		return state.Snapshot{}, l.Cached(), false, err
+		return l.abandoned(err)
 	}
 	var observation *state.Observation
 	if err != nil {
 		if partial, ok := ports.PartialRows(err); ok {
 			// The readable rows are facts; the unreadable ones are not. Publish
-			// the rows together with the verdict so no port looks absent.
+			// them together with the verdict so no port looks absent.
 			pp = partial
-			var oe *ports.ObservationError
-			if errors.As(err, &oe) {
-				observation = &state.Observation{
-					State: state.ObservationPartial, Code: oe.Code, Source: source,
-					Detail: oe.Error(), Hint: oe.Hint,
-					CheckedAt: l.nowRFC3339(),
-				}
-			}
+			observation = l.partialObservation(err, source)
 			if reportFailure {
 				l.opts.Logger.Warn("scan partial, publishing readable rows", "error", err)
 			}
@@ -639,53 +752,14 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 		}
 	}
 	if err == nil && source != "" {
-		// The table is usable for what it shows but cannot see every owner.
-		// Publish that coverage with the rows; the self-probe question ("can
-		// this process see its own listener") stays answered by the source
-		// being able to show this process's socket at all.
-		observation = &state.Observation{
-			State:     state.ObservationObservable,
-			Source:    source,
-			Detail:    ports.NarrowSourceDetail(source),
-			CheckedAt: l.nowRFC3339(),
-		}
+		observation = l.observableObservation(source)
 	}
 	narrow := source != ""
 	if err != nil {
 		if reportFailure {
 			l.opts.Logger.Warn("scan failed, keeping last good state", "error", err)
 		}
-		// Failure notification is part of publication ordering too. A recovery
-		// must not commit between checking the outcome and reporting its error.
-		if lockErr := l.commitMu.LockContext(ctx); lockErr != nil {
-			return state.Snapshot{}, l.Cached(), false, lockErr
-		}
-		defer l.commitMu.Unlock()
-		if err := ctx.Err(); err != nil {
-			return state.Snapshot{}, l.Cached(), false, err
-		}
-		l.mu.Lock()
-		if gen >= l.outcomeSeq {
-			l.outcomeSeq = gen
-			l.lastErr = err
-			l.lastAttemptAt = l.now()
-			l.refreshAttempted = max(l.refreshAttempted, refresh)
-		}
-		l.scans++
-		prev = l.snap
-		current := gen == l.outcomeSeq
-		superseded := !current && l.haveSnap && l.lastErr == nil
-		l.mu.Unlock()
-		if superseded {
-			return prev, prev, false, nil
-		}
-		if reportFailure && current {
-			l.opts.Publish(prev, prev, []state.Event{{
-				Kind: "scan_error", At: l.nowRFC3339(),
-				Data: map[string]any{"error": err.Error()},
-			}})
-		}
-		return state.Snapshot{}, prev, false, err
+		return l.recordScanFailure(ctx, gen, refresh, err, reportFailure, prev)
 	}
 
 	if wantHealth {
@@ -698,7 +772,7 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 	// and the publish rides inside it so a later seq can never reach a client
 	// first (contract §38, §44).
 	if err := lockContext(ctx, l.orderGate); err != nil {
-		return state.Snapshot{}, l.Cached(), false, err
+		return l.abandoned(err)
 	}
 	defer unlock(l.orderGate)
 
@@ -707,11 +781,11 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 	// is assembled: what gets published is already attributed and named.
 	rows, groupRows, err := l.attributeContext(ctx, pp, narrow)
 	if err != nil {
-		return state.Snapshot{}, l.Cached(), false, err
+		return l.abandoned(err)
 	}
 	sessionRows, err := l.sessionsContext(ctx, rows)
 	if err != nil {
-		return state.Snapshot{}, l.Cached(), false, err
+		return l.abandoned(err)
 	}
 
 	// Configured health comes after attribution because it is the groups that
@@ -720,15 +794,15 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 	// is, not an opt-in statistic (step 1A.7). Its budget is what keeps this
 	// short enough to sit inside the ordering gate.
 	if err := ProbeConfiguredContext(ctx, rows, groupRows, l.ProbeContext, ConfiguredHealthBudget); err != nil {
-		return state.Snapshot{}, l.Cached(), false, err
+		return l.abandoned(err)
 	}
 
 	if err := l.commitMu.LockContext(ctx); err != nil {
-		return state.Snapshot{}, l.Cached(), false, err
+		return l.abandoned(err)
 	}
 	defer l.commitMu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return state.Snapshot{}, l.Cached(), false, err
+		return l.abandoned(err)
 	}
 
 	next, prev, changed = l.commitScan(commit{
@@ -751,25 +825,88 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 	return next, prev, changed, nil
 }
 
-// commit is one finished scan on its way into the cache.
+// recordScanFailure accounts for a collector that failed.
+//
+// Recording is part of publication ordering too, not just bookkeeping: a
+// recovery must not commit between deciding this outcome and reporting it, so
+// the commit lock is taken here and the result is published under it. An
+// attempt a later scan has already superseded records nothing and reports
+// nothing — its failure is no longer news.
+func (l *Loop) recordScanFailure(
+	ctx context.Context,
+	gen, refresh uint64,
+	failure error,
+	reportFailure bool,
+	prev state.Snapshot,
+) (state.Snapshot, state.Snapshot, bool, error) {
+	if lockErr := l.commitMu.LockContext(ctx); lockErr != nil {
+		return l.abandoned(lockErr)
+	}
+	defer l.commitMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return l.abandoned(err)
+	}
+
+	l.mu.Lock()
+	if gen >= l.outcomeSeq {
+		l.outcomeSeq = gen
+		l.lastErr = failure
+		l.lastAttemptAt = l.now()
+		l.refreshAttempted = max(l.refreshAttempted, refresh)
+	}
+	l.scans++
+	prev = l.snap
+	current := gen == l.outcomeSeq
+	stale := !current && l.haveSnap && l.lastErr == nil
+	l.mu.Unlock()
+
+	if stale {
+		return prev, prev, false, nil
+	}
+	if reportFailure && current {
+		l.opts.Publish(prev, prev, []state.Event{{
+			Kind: "scan_error",
+			At:   l.nowRFC3339(),
+			Data: map[string]any{"error": failure.Error()},
+		}})
+	}
+	return state.Snapshot{}, prev, false, failure
+}
+
+// commit is one finished scan on its way into the cache, in three parts: what
+// was asked for, in what order it happened, and what came back.
 type commit struct {
+	// The request.
 	subs    int
 	collect Include
 	carry   Include
 	health  bool
-	// seq is the number this scan took when its OS half began.
-	seq      uint64
-	refresh  uint64
-	pp       []ports.ListeningPort
-	rows     []state.Port
-	groups   []state.Group
-	sessions []state.SessionRecord
-	// observation is non-nil only when this scan could not read the whole
-	// table, or when it read a narrow table; the readable rows are still facts.
+
+	// Ordering. seq is the number this scan took when its OS half began;
+	// refresh is the change counter observed at that same moment.
+	seq     uint64
+	refresh uint64
+
+	// The findings. observation is non-nil only when the table could not be
+	// read whole, or was read from a narrow source — the readable rows are
+	// still facts either way. narrow says the source cannot see every socket
+	// owner, so an absent `machine:` port is unknown rather than false.
+	pp          []ports.ListeningPort
+	rows        []state.Port
+	groups      []state.Group
+	sessions    []state.SessionRecord
 	observation *state.Observation
-	// narrow says the table cannot see every socket owner, so an absent
-	// `machine:` port is unknown rather than false.
-	narrow bool
+	narrow      bool
+}
+
+// superseded reports whether a newer scan has already committed its snapshot.
+//
+// This scan asked the OS what was listening before that snapshot was captured,
+// so committing it now would put back ports the newer scan has already seen go
+// — the "no going backwards" half of contract §38, enforced here at the commit
+// rather than by forbidding two scans from overlapping at all.
+func (l *Loop) superseded(seq uint64) bool {
+	return l.haveSnap && seq < l.committedSeq
 }
 
 // commitScan swaps a finished scan into the cache and adapts the interval.
@@ -784,12 +921,7 @@ func (l *Loop) commitScan(c commit) (next, prev state.Snapshot, changed bool) {
 	rows, groupRows := c.rows, c.groups
 
 	l.scans++
-	if l.haveSnap && c.seq < l.committedSeq {
-		// Superseded. This scan asked the OS what was listening before the
-		// snapshot on the wire was captured, so committing it would put back
-		// ports a newer scan has already seen go — the "no going backwards"
-		// half of contract §38, now enforced at the commit rather than by
-		// forbidding two scans to overlap at all (contract §44).
+	if l.superseded(c.seq) {
 		return prev, prev, false
 	}
 
@@ -880,11 +1012,15 @@ func (l *Loop) dueIn() time.Duration {
 	return l.interval - l.now().Sub(at)
 }
 
-// healthDue reports whether the health cadence has elapsed.
+// healthDue reports whether it is time to probe health again. A loop that has
+// never probed is always due.
 func (l *Loop) healthDue() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.lastHealthAt.IsZero() || l.now().Sub(l.lastHealthAt) >= HealthCadence
+	if l.lastHealthAt.IsZero() {
+		return true
+	}
+	return l.now().Sub(l.lastHealthAt) >= HealthCadence
 }
 
 // maxIntervalLocked is the ceiling the backoff may reach right now: 2.5x the
@@ -945,63 +1081,96 @@ func snapshotChanged(prev, next state.Snapshot, withStats bool) bool {
 		len(d.Sessions.Added) > 0 || len(d.Sessions.Updated) > 0 || len(d.Sessions.Removed) > 0
 }
 
+// carryForward walks next and copies one field forward from each row's
+// predecessor in previous.
+//
+// Both carries below are this walk with a different answer to two questions:
+// when does a row still need the field, and what exactly gets copied. Keeping
+// the walk in one place is what stops the two from drifting apart, since they
+// must agree on which rows count as "the same run".
+func carryForward(previous, next []state.Port, alreadySet func(*state.Port) bool, copyFrom func(into, from *state.Port)) {
+	if len(previous) == 0 {
+		return
+	}
+	byKey := indexByKey(previous)
+	for i := range next {
+		row := &next[i]
+		if alreadySet(row) {
+			continue
+		}
+		before, listed := byKey[row.Key()]
+		if !listed || !sameRuntime(*before, *row) {
+			continue
+		}
+		copyFrom(row, before)
+	}
+}
+
+// indexByKey makes the previous snapshot addressable by port key, so a carry
+// can find each row's predecessor without walking the slice again. The
+// pointers are into previous, which the carries never mutate.
+func indexByKey(previous []state.Port) map[string]*state.Port {
+	byKey := make(map[string]*state.Port, len(previous))
+	for i := range previous {
+		byKey[previous[i].Key()] = &previous[i]
+	}
+	return byKey
+}
+
 // carryHealth copies health results from the previous snapshot onto rows that
 // were not probed this tick.
 //
 // all says whether to carry every result or only the configured ones. A
-// `oberth.yaml` health path is state rather than an opt-in statistic
-// (contract §22), so its last verdict is always better than the "unknown" a
-// skipped probe would publish; an opt-in probe is only carried while somebody
-// is still asking for health.
-func carryHealth(prev []state.Port, next []state.Port, all bool) {
-	if len(prev) == 0 {
-		return
-	}
-	byKey := make(map[string]*state.Port, len(prev))
-	for i := range prev {
-		byKey[prev[i].Key()] = &prev[i]
-	}
-	for i := range next {
-		if next[i].Health != nil {
-			continue
-		}
-		previous, ok := byKey[next[i].Key()]
-		if !ok || previous.Health == nil || !sameRuntime(*previous, next[i]) {
-			continue
-		}
-		if all || previous.Health.Configured {
-			next[i].Health = previous.Health
-		}
-	}
+// `oberth.yaml` health path is state rather than an opt-in statistic, so its
+// last verdict always beats the "unknown" a skipped probe would publish; an
+// opt-in probe only survives while somebody is still asking for health.
+func carryHealth(previous, next []state.Port, all bool) {
+	carryForward(previous, next,
+		func(row *state.Port) bool { return row.Health != nil },
+		func(into, from *state.Port) {
+			if from.Health == nil {
+				return
+			}
+			if all || from.Health.Configured {
+				into.Health = from.Health
+			}
+		})
 }
 
 // carryStats copies the previous snapshot's stats onto rows that were not
-// sampled this scan, keyed the same way health is. A port that appeared in
-// this scan and has no previous reading keeps a null `stats`; the 1 s stats
-// tick fills it in on its next pass.
-func carryStats(prev []state.Port, next []state.Port) {
-	mergeStats(prev, next, false)
+// sampled this scan. A port seen for the first time keeps a null `stats`; the
+// 1 s stats tick fills it in on its next pass.
+func carryStats(previous, next []state.Port) {
+	mergeStats(previous, next, false)
 }
 
-// replace is used only for re-attribution of the old OS batch: its embedded
-// stats predate the sampler, so the published snapshot wins for the same run.
-// A new OS scan instead keeps the fresh values it actually sampled.
-func mergeStats(prev []state.Port, next []state.Port, replace bool) {
-	if len(prev) == 0 {
-		return
+// mergeStats carries stats forward. replace is set only when re-attributing the
+// old OS batch, whose embedded stats predate the sampler: there the published
+// snapshot wins, while a new OS scan keeps the fresh values it sampled.
+func mergeStats(previous, next []state.Port, replace bool) {
+	carryForward(previous, next,
+		func(row *state.Port) bool { return row.Stats != nil && !replace },
+		func(into, from *state.Port) { into.Stats = from.Stats })
+}
+
+// keySet is the set of the given port keys, for asking "is this one among
+// them" while building events.
+func keySet(keys []string) map[string]bool {
+	set := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		set[key] = true
 	}
-	byKey := make(map[string]*state.Port, len(prev))
-	for i := range prev {
-		byKey[prev[i].Key()] = &prev[i]
+	return set
+}
+
+// indexPorts makes a snapshot's rows addressable by key, so a removed key can
+// be turned back into the row a `port_down` event needs to carry.
+func indexPorts(rows []state.Port) map[string]state.Port {
+	byKey := make(map[string]state.Port, len(rows))
+	for _, row := range rows {
+		byKey[row.Key()] = row
 	}
-	for i := range next {
-		if next[i].Stats != nil && !replace {
-			continue
-		}
-		if previous, ok := byKey[next[i].Key()]; ok && sameRuntime(*previous, next[i]) {
-			next[i].Stats = previous.Stats
-		}
-	}
+	return byKey
 }
 
 // deriveEvents turns a snapshot transition into the discrete events the tray
@@ -1013,10 +1182,7 @@ func deriveEvents(prev, next state.Snapshot, at string) []state.Event {
 	groups = append(groups, next.Groups...)
 
 	// A key that is both removed and added in one delta is a restart.
-	removed := make(map[string]bool, len(d.Ports.Removed))
-	for _, k := range d.Ports.Removed {
-		removed[k] = true
-	}
+	removed := keySet(d.Ports.Removed)
 
 	events := make([]state.Event, 0, len(d.Ports.Added)+len(d.Ports.Removed))
 	restarted := make(map[string]bool, len(d.Ports.Added))
@@ -1028,10 +1194,7 @@ func deriveEvents(prev, next state.Snapshot, at string) []state.Event {
 		}
 		events = append(events, eventForPort(next.Seq, kind, at, p, groups))
 	}
-	before := make(map[string]state.Port, len(prev.Ports))
-	for _, p := range prev.Ports {
-		before[p.Key()] = p
-	}
+	before := indexPorts(prev.Ports)
 	for _, key := range d.Ports.Removed {
 		if restarted[key] {
 			continue
@@ -1140,6 +1303,28 @@ func healthStatus(h *state.Health) string {
 
 func (l *Loop) nowRFC3339() string { return l.now().Format(time.RFC3339) }
 
+// readSnapshot is the shape every read shares: refuse at once if the caller is
+// already gone, snap the interval back to the base when the read finishes,
+// serve the cache when it is fresh enough for this caller, and only then scan.
+//
+// mode is what separates an ordinary read from a readiness wait — how a scan
+// may be shared, and what a failure is allowed to fall back to.
+func (l *Loop) readSnapshot(
+	ctx context.Context,
+	include Include,
+	mode scanMode,
+	freshness func(Include) (state.Snapshot, bool),
+) (state.Snapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return state.Snapshot{}, err
+	}
+	defer l.Wake()
+	if cached, usable := freshness(include); usable {
+		return cached, nil
+	}
+	return l.scanNowContext(ctx, include, mode)
+}
+
 // Snapshot returns the current state for an RPC read. It reuses the cached
 // scan when it is younger than CacheTTL and already carries everything the
 // caller asked for; otherwise it scans now. Either way it wakes the loop, so
@@ -1156,15 +1341,7 @@ func (l *Loop) SnapshotAll(include Include) (state.Snapshot, error) {
 // SnapshotAllContext permits last-good fallback only for collection failures,
 // never for an owner that has cancelled its request.
 func (l *Loop) SnapshotAllContext(ctx context.Context, include Include) (state.Snapshot, error) {
-	if err := ctx.Err(); err != nil {
-		return state.Snapshot{}, err
-	}
-	defer l.Wake()
-
-	if snap, ok := l.cached(include); ok {
-		return snap, nil
-	}
-	return l.scanNowContext(ctx, include, mayCoalesce)
+	return l.readSnapshot(ctx, include, mayCoalesce, l.cached)
 }
 
 // SnapshotForReadiness reads the SAME attributed/health-probed state as an
@@ -1180,14 +1357,13 @@ func (l *Loop) SnapshotForReadiness() (state.Snapshot, error) {
 // SnapshotForReadinessContext carries the dependency wait's ownership through
 // queueing, collection and configured health. Cancellation is not cached.
 func (l *Loop) SnapshotForReadinessContext(ctx context.Context) (state.Snapshot, error) {
-	if err := ctx.Err(); err != nil {
-		return state.Snapshot{}, err
+	// The wait uses the scan floor rather than the idle TTL, and asks for the
+	// plain snapshot: a dependency wait is not a subscriber and has no include
+	// set of its own.
+	fresh := func(Include) (state.Snapshot, bool) {
+		return l.cachedWithin(Include{}, MinScanInterval)
 	}
-	defer l.Wake()
-	if snap, ok := l.cachedWithin(Include{}, MinScanInterval); ok {
-		return snap, nil
-	}
-	return l.scanNowContext(ctx, Include{}, readinessScan)
+	return l.readSnapshot(ctx, Include{}, readinessScan, fresh)
 }
 
 // A failed active observation is reusable as an error, not as stale success.
@@ -1344,18 +1520,8 @@ func (l *Loop) scanNowContext(ctx context.Context, include Include, mode scanMod
 	}
 	defer unlock(l.rpcGate)
 
-	if mode == readinessScan {
-		if err := l.recentReadinessError(); err != nil {
-			return state.Snapshot{}, err
-		}
-		if snap, ok := l.cachedWithin(include, MinScanInterval); ok {
-			return snap, nil
-		}
-	}
-	if mode == mayCoalesce {
-		if snap, ok := l.scannedSince(asked, include); ok {
-			return snap, nil
-		}
+	if snap, reused, err := l.reuseIfFresh(asked, include, mode); err != nil || reused {
+		return snap, err
 	}
 
 	next, prev, _, err := l.scanLockedContext(ctx, include, l.demandInclude(), false)
@@ -1370,6 +1536,31 @@ func (l *Loop) scanNowContext(ctx context.Context, include Include, mode scanMod
 		return state.Snapshot{}, err
 	}
 	return next, nil
+}
+
+// reuseIfFresh answers a read from state that is already good enough for its
+// mode, so a burst of readers costs one scan rather than one scan each.
+//
+// The two modes ask different questions. A readiness wait has to know whether
+// the previous readiness round failed — that failure is reusable as an error,
+// never as stale success — and otherwise accepts a snapshot no older than the
+// scan floor. An ordinary read accepts one that a scan begun after the call
+// has already committed, which is the same thing without a clock.
+func (l *Loop) reuseIfFresh(asked uint64, include Include, mode scanMode) (state.Snapshot, bool, error) {
+	switch mode {
+	case readinessScan:
+		if err := l.recentReadinessError(); err != nil {
+			return state.Snapshot{}, false, err
+		}
+		if snap, usable := l.cachedWithin(include, MinScanInterval); usable {
+			return snap, true, nil
+		}
+	case mayCoalesce:
+		if snap, usable := l.scannedSince(asked, include); usable {
+			return snap, true, nil
+		}
+	}
+	return state.Snapshot{}, false, nil
 }
 
 // beginScan captures both scan order and the changes known before OS I/O.
@@ -1447,29 +1638,38 @@ func (l *Loop) demandInclude() Include {
 // snapHasStats reports whether the cached snapshot carries stats. Caller holds
 // the mutex.
 func (l *Loop) snapHasStats() bool {
-	for i := range l.snap.Ports {
-		if l.snap.Ports[i].Stats != nil {
+	for _, row := range l.snap.Ports {
+		if row.Stats != nil {
 			return true
 		}
 	}
+	// An empty snapshot counts as carrying stats: there is nothing to be
+	// missing, and treating it as covered stops a subscriber on an idle
+	// machine from forcing a sample every tick.
 	return len(l.snap.Ports) == 0
 }
 
 // Status is what `daemon.status` reports about the scanner.
 type Status struct {
 	LastScanAt time.Time
-	// IntervalMs is the adaptive cadence right now: somewhere between the
-	// base and whichever ceiling currently applies.
-	IntervalMs int
-	// BaseIntervalMs and StatsIntervalMs are the effective settings behind
-	// it: `daemon.scan_interval` and `daemon.stats_interval` after clamping.
-	// Both are fixed for the life of the daemon, so `daemon.status` is where
-	// you check that an edit to the config file took.
+
+	// Scans counts completed scans; Seq counts begun ones. Comparing the two
+	// is how a caller sees that a scan is in flight right now.
+	Scans int64
+	Seq   uint64
+
+	// IntervalMs is the adaptive cadence at this instant — somewhere between
+	// the base and whichever ceiling currently applies. BaseIntervalMs and
+	// StatsIntervalMs are the effective settings behind it, after clamping;
+	// both are fixed for the daemon's life, so this is where you confirm that
+	// an edit to the config file took effect.
+	IntervalMs      int
 	BaseIntervalMs  int
 	StatsIntervalMs int
-	Scans           int64
-	Seq             uint64
-	LastError       error
+
+	// LastError is the last collection failure, nil when the latest scan was
+	// clean.
+	LastError error
 }
 
 // Status returns the scanner's current counters.
@@ -1478,11 +1678,15 @@ func (l *Loop) Status() Status {
 	defer l.mu.Unlock()
 	return Status{
 		LastScanAt:      l.lastScanAt,
-		IntervalMs:      int(l.interval / time.Millisecond),
-		BaseIntervalMs:  int(l.base / time.Millisecond),
-		StatsIntervalMs: int(l.statsInterval() / time.Millisecond),
 		Scans:           l.scans,
 		Seq:             l.seq,
+		IntervalMs:      milliseconds(l.interval),
+		BaseIntervalMs:  milliseconds(l.base),
+		StatsIntervalMs: milliseconds(l.statsInterval()),
 		LastError:       l.lastErr,
 	}
 }
+
+// milliseconds renders a duration in whole milliseconds, the unit
+// `daemon.status` reports intervals in.
+func milliseconds(d time.Duration) int { return int(d / time.Millisecond) }
