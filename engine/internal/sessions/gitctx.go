@@ -9,62 +9,62 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// GitContext is the checkout a command is started in: the worktree name and
-// the branch, as spec 2 §3 defines them.
+// GitContext names where a command is running: the linked worktree, if there
+// is one, and the branch or short commit it is on.
 //
-// worktree is the base name of the checkout when it is a *linked* worktree —
-// `git worktree add` — and empty for the primary checkout, so a badge reading
-// "worktree feature-x" only ever appears where there really is one. branch is
-// the checked-out branch, or the short commit for a detached HEAD.
+// The worktree is the checkout's directory name only for a linked worktree
+// created by `git worktree add`; the primary checkout reports no worktree at
+// all, so a "worktree feature-x" badge never appears where none exists.
 //
-// Everything is read from the `.git` entry directly: `oberth start` must not
-// pay for a `git` subprocess on a path that runs before every dev server.
+// The answer is read straight from the `.git` entry. This runs before every
+// dev-server start, so paying for a git subprocess here is not an option.
 func GitContext(cwd string) (worktree, branch string) {
-	root, linked, ok := groups.Find(cwd)
-	if !ok {
+	root, linked, found := groups.Find(cwd)
+	if !found {
 		return "", ""
 	}
 	if linked != "" {
 		worktree = filepath.Base(root)
 	}
-	return worktree, branchOf(root)
+	return worktree, currentBranch(root)
 }
 
-// Capture is what a spawn path calls: the detected session with the git
-// context of the directory the command will run in filled in.
+// Capture is the spawn path's entry point: detect the session, then attach
+// the git context of the directory the command will run in.
 func Capture(cwd string, opts Options) (state.Session, bool) {
-	s, ok := Detect(opts)
-	if !ok {
+	session, found := Detect(opts)
+	if !found {
 		return state.Session{}, false
 	}
-	s.Worktree, s.Branch = GitContext(cwd)
-	return s, true
+	session.Worktree, session.Branch = GitContext(cwd)
+	return session, true
 }
 
-// branchOf reads HEAD for a checkout root, following the `.git` file of a
-// linked worktree or submodule to the directory that holds its own HEAD.
-func branchOf(root string) string {
-	gitDir := filepath.Join(root, ".git")
-	info, err := os.Lstat(gitDir)
+// currentBranch reads HEAD for a checkout root. A linked worktree or a
+// submodule points at its real git directory through a `.git` file instead of
+// a `.git` directory, so that pointer is followed first.
+func currentBranch(checkout string) string {
+	gitPath := filepath.Join(checkout, ".git")
+	info, err := os.Lstat(gitPath)
 	if err != nil {
 		return ""
 	}
 	if info.Mode().IsRegular() {
-		target := gitFileTarget(root, gitDir)
-		if target == "" {
+		gitPath = gitDirFromFile(checkout, gitPath)
+		if gitPath == "" {
 			return ""
 		}
-		gitDir = target
 	}
-	return parseHead(readTrimmed(filepath.Join(gitDir, "HEAD")))
+	return branchFromHEAD(readFileTrimmed(filepath.Join(gitPath, "HEAD")))
 }
 
-// gitFileTarget resolves the `gitdir:` line of a `.git` file to an absolute
-// path.
-func gitFileTarget(root, gitFile string) string {
-	for _, line := range strings.Split(readTrimmed(gitFile), "\n") {
-		rest, found := strings.CutPrefix(strings.TrimSpace(line), "gitdir:")
-		if !found {
+// gitDirFromFile resolves the `gitdir:` pointer in a `.git` file. A relative
+// target is relative to the checkout, not to the current working directory.
+func gitDirFromFile(checkout, file string) string {
+	for _, raw := range strings.Split(readFileTrimmed(file), "\n") {
+		line := strings.TrimSpace(raw)
+		rest, isPointer := strings.CutPrefix(line, "gitdir:")
+		if !isPointer {
 			continue
 		}
 		target := strings.TrimSpace(rest)
@@ -72,24 +72,24 @@ func gitFileTarget(root, gitFile string) string {
 			return ""
 		}
 		if !filepath.IsAbs(target) {
-			target = filepath.Join(root, target)
+			target = filepath.Join(checkout, target)
 		}
 		return filepath.Clean(target)
 	}
 	return ""
 }
 
-// parseHead turns a HEAD file into a branch name. A symbolic ref gives the
-// branch; a detached HEAD gives the short commit, which is still what a person
-// would call the thing they are on.
-func parseHead(head string) string {
+// branchFromHEAD turns the contents of HEAD into a display name: the branch
+// for a symbolic ref, the short hash for a detached HEAD. A ref outside
+// refs/heads/ (a remote-tracking ref, for instance) is shown as it is spelled.
+func branchFromHEAD(head string) string {
 	if head == "" {
 		return ""
 	}
-	if ref, found := strings.CutPrefix(head, "ref:"); found {
-		ref = strings.TrimSpace(ref)
-		if short, ok := strings.CutPrefix(ref, "refs/heads/"); ok {
-			return short
+	if symbolic, isRef := strings.CutPrefix(head, "ref:"); isRef {
+		ref := strings.TrimSpace(symbolic)
+		if name, onBranch := strings.CutPrefix(ref, "refs/heads/"); onBranch {
+			return name
 		}
 		return ref
 	}
@@ -99,10 +99,10 @@ func parseHead(head string) string {
 	return head
 }
 
-func readTrimmed(path string) string {
-	b, err := os.ReadFile(path)
+func readFileTrimmed(path string) string {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(b))
+	return strings.TrimSpace(string(data))
 }

@@ -8,35 +8,37 @@ import (
 	"strings"
 )
 
-// processTable lists pid, ppid and command in one `ps` call. Detection runs
-// once per `oberth start`, so one exec is the whole cost; a failure just means
-// the ancestor walk falls back to the parent pid.
+// processTable returns the host's processes for the ancestry walk. Detection
+// is paid once per `oberth start`, so a single `ps` is the whole budget; if it
+// fails the caller falls back to the parent pid.
 func processTable() []Process {
-	out, err := exec.Command("ps", "-Ao", "pid=,ppid=,comm=").Output()
+	raw, err := exec.Command("ps", "-Ao", "pid=,ppid=,comm=").Output()
 	if err != nil {
 		return nil
 	}
-	return parsePS(string(out))
+	return parsePS(string(raw))
 }
 
-// parsePS reads `pid ppid comm` rows. comm may contain spaces (a path), so the
-// first two fields are cut off and the rest is the command.
-func parsePS(out string) []Process {
-	var procs []Process
-	for _, line := range strings.Split(out, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
+// parsePS reads the `pid ppid comm` rows. A command may itself contain spaces
+// (it is often a full path followed by arguments), so only the first two
+// columns are parsed and the remainder is kept verbatim.
+func parsePS(raw string) []Process {
+	var rows []Process
+	for _, line := range strings.Split(raw, "\n") {
+		columns := strings.Fields(line)
+		if len(columns) < 3 {
 			continue
 		}
-		pid, err := strconv.Atoi(fields[0])
-		if err != nil {
+		pid, pidErr := strconv.Atoi(columns[0])
+		ppid, ppidErr := strconv.Atoi(columns[1])
+		if pidErr != nil || ppidErr != nil {
 			continue
 		}
-		ppid, err := strconv.Atoi(fields[1])
-		if err != nil {
-			continue
-		}
-		procs = append(procs, Process{PID: pid, PPID: ppid, Command: strings.Join(fields[2:], " ")})
+		rows = append(rows, Process{
+			PID:     pid,
+			PPID:    ppid,
+			Command: strings.Join(columns[2:], " "),
+		})
 	}
-	return procs
+	return rows
 }

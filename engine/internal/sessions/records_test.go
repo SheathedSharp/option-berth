@@ -7,127 +7,177 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-func at(s string) time.Time {
-	t, err := time.Parse(time.RFC3339, s)
+func moment(t *testing.T, value string) time.Time {
+	t.Helper()
+	parsed, err := time.Parse(time.RFC3339, value)
 	if err != nil {
-		panic(err)
+		t.Fatalf("bad fixture time %q: %v", value, err)
 	}
-	return t
+	return parsed
 }
 
-func port(n int, group string, session *state.Session) state.Port {
-	p := state.Port{Port: n, BindAddress: "127.0.0.1", PID: 1000 + n, Session: session}
-	if group != "" {
-		g := group
-		p.Group = &g
-	}
-	return p
-}
-
-func sess(id, tool string) state.Session {
+func identity(id, tool string) state.Session {
 	return state.Session{ID: id, Tool: tool, Worktree: "feature-x", Branch: "feature/x"}
 }
 
-func find(t *testing.T, recs []state.SessionRecord, id string) state.SessionRecord {
+func listening(port int, group string, owner *state.Session) state.Port {
+	row := state.Port{Port: port, BindAddress: "127.0.0.1", PID: 2000 + port, Session: owner}
+	if group != "" {
+		named := group
+		row.Group = &named
+	}
+	return row
+}
+
+func requireRecord(t *testing.T, records []state.SessionRecord, id string) state.SessionRecord {
 	t.Helper()
-	for _, r := range recs {
-		if r.ID == id {
-			return r
+	for _, record := range records {
+		if record.ID == id {
+			return record
 		}
 	}
-	t.Fatalf("no record for %q in %+v", id, recs)
+	t.Fatalf("no record %q among %+v", id, records)
 	return state.SessionRecord{}
 }
 
-func TestRecordsCountsRunsPortsAndGroups(t *testing.T) {
-	s1 := sess("s1", ToolClaudeCode)
-	s2 := sess("s2", ToolCodex)
-
+func TestRecordsJoinRunsPortsAndGroups(t *testing.T) {
+	claude := identity("s1", ToolClaudeCode)
+	codex := identity("s2", ToolCodex)
 	live := []Live{
-		{RunID: "r1", PID: 11, Group: "web", Session: s1, StartedAt: at("2026-09-01T10:00:00Z")},
-		{RunID: "r2", PID: 12, Group: "api", Session: s1, StartedAt: at("2026-09-01T10:01:00Z")},
+		{RunID: "r1", PID: 11, Group: "web", Session: claude, StartedAt: moment(t, "2026-09-01T10:00:00Z")},
+		{RunID: "r2", PID: 12, Group: "api", Session: claude, StartedAt: moment(t, "2026-09-01T10:01:00Z")},
 	}
-	known := []Known{
-		{Session: s1, FirstSeen: at("2026-09-01T09:00:00Z"), LastSeen: at("2026-09-01T10:01:00Z")},
-		{Session: s2, FirstSeen: at("2026-08-30T09:00:00Z"), LastSeen: at("2026-08-30T09:30:00Z")},
+	stored := []Known{
+		{Session: claude, FirstSeen: moment(t, "2026-09-01T09:00:00Z"), LastSeen: moment(t, "2026-09-01T10:01:00Z")},
+		{Session: codex, FirstSeen: moment(t, "2026-08-30T09:00:00Z"), LastSeen: moment(t, "2026-08-30T09:30:00Z")},
 	}
 	ports := []state.Port{
-		port(3000, "web", &s1),
-		port(3001, "api", &s1),
-		port(5432, "db", nil),
+		listening(3000, "web", &claude),
+		listening(3001, "api", &claude),
+		listening(5432, "db", nil),
 	}
 
-	recs := Records(known, live, ports)
-	if len(recs) != 2 {
-		t.Fatalf("got %d records, want 2: %+v", len(recs), recs)
+	records := Records(stored, live, ports)
+	if len(records) != 2 {
+		t.Fatalf("got %d records, want 2: %+v", len(records), records)
 	}
 
-	one := find(t, recs, "s1")
-	if one.Runs != 2 || one.Ports != 2 || one.Groups != 2 {
-		t.Errorf("s1 counts = runs %d, ports %d, groups %d; want 2, 2, 2",
-			one.Runs, one.Ports, one.Groups)
+	active := requireRecord(t, records, "s1")
+	if active.Runs != 2 || active.Ports != 2 || active.Groups != 2 {
+		t.Errorf("s1 counts: runs=%d ports=%d groups=%d, want 2/2/2",
+			active.Runs, active.Ports, active.Groups)
 	}
-	if !one.Active {
-		t.Error("s1 has live runs but is not active")
+	if !active.Active {
+		t.Error("s1 has live runs but reads inactive")
 	}
-	if one.FirstSeen != "2026-09-01T09:00:00Z" {
-		t.Errorf("s1 first_seen = %q", one.FirstSeen)
-	}
-
-	two := find(t, recs, "s2")
-	if two.Active || two.Runs != 0 || two.Ports != 0 {
-		t.Errorf("s2 = %+v, want an inactive session with no runs or ports", two)
+	if active.FirstSeen != "2026-09-01T09:00:00Z" {
+		t.Errorf("s1 first_seen = %q", active.FirstSeen)
 	}
 
-	// Active sessions sort first, so `oberth sessions` reads top-down.
-	if recs[0].ID != "s1" {
-		t.Errorf("active session is not first: %+v", recs)
+	inactive := requireRecord(t, records, "s2")
+	if inactive.Active || inactive.Runs != 0 || inactive.Ports != 0 {
+		t.Errorf("s2 = %+v, want no runs, no ports and inactive", inactive)
+	}
+	if records[0].ID != "s1" {
+		t.Errorf("active session is not listed first: %+v", records)
 	}
 }
 
-// A port stamped with a session the store has never heard of still shows up:
-// the daemon is the authority on what is running, not the database.
-func TestRecordsIncludesUnknownSessionsFromPorts(t *testing.T) {
-	s := sess("ghost", ToolCursor)
-	recs := Records(nil, nil, []state.Port{port(4000, "web", &s)})
-	if len(recs) != 1 {
-		t.Fatalf("got %d records, want 1", len(recs))
+func TestPortsIntroduceSessionsTheStoreNeverSaw(t *testing.T) {
+	ghost := identity("ghost", ToolCursor)
+	records := Records(nil, nil, []state.Port{listening(4000, "web", &ghost)})
+	if len(records) != 1 {
+		t.Fatalf("got %d records, want 1", len(records))
 	}
-	if recs[0].Ports != 1 || !recs[0].Active {
-		t.Errorf("record = %+v", recs[0])
+	if records[0].Ports != 1 || !records[0].Active {
+		t.Errorf("record = %+v", records[0])
 	}
 }
 
-// A live run's identity is fresher than the row written when the session was
-// first recorded: a rebase changes the branch under the same id.
-func TestRecordsPrefersTheLiveSessionOverTheStoredOne(t *testing.T) {
+func TestLiveIdentityRefreshesTheStoredOne(t *testing.T) {
 	stored := state.Session{ID: "s1", Tool: ToolClaudeCode, Branch: "old"}
 	live := state.Session{ID: "s1", Tool: ToolClaudeCode, Branch: "new"}
-	recs := Records(
-		[]Known{{Session: stored, LastSeen: at("2026-09-01T10:00:00Z")}},
-		[]Live{{RunID: "r1", Session: live}}, nil)
-	if recs[0].Branch != "new" {
-		t.Errorf("branch = %q, want the live run's", recs[0].Branch)
+	records := Records(
+		[]Known{{Session: stored, LastSeen: moment(t, "2026-09-01T10:00:00Z")}},
+		[]Live{{RunID: "r1", Session: live}},
+		nil,
+	)
+	if records[0].Branch != "new" {
+		t.Errorf("branch = %q, want the live run's", records[0].Branch)
+	}
+}
+
+func TestRecordsSkipSessionsWithoutIdentity(t *testing.T) {
+	empty := state.Session{Tool: ToolAgent}
+	records := Records(
+		[]Known{{Session: empty}, {Session: state.Session{ID: "real", Tool: ToolAgent}}},
+		[]Live{{RunID: "r1", Session: empty}},
+		[]state.Port{listening(3000, "web", &empty)},
+	)
+	if len(records) != 1 || records[0].ID != "real" {
+		t.Fatalf("records = %+v, want only the named session", records)
+	}
+}
+
+func TestRecordsCountDistinctGroupsOnly(t *testing.T) {
+	owner := identity("s1", ToolClaudeCode)
+	records := Records(nil,
+		[]Live{
+			{RunID: "r1", Group: "web", Session: owner},
+			{RunID: "r2", Group: "web", Session: owner},
+		},
+		[]state.Port{listening(3000, "web", &owner), listening(3001, "db", &owner)},
+	)
+	if len(records) != 1 || records[0].Groups != 2 {
+		t.Errorf("groups = %d, want 2 distinct names", records[0].Groups)
+	}
+}
+
+func TestRecordsOrderIsStableAndNewestFirst(t *testing.T) {
+	a := identity("a", ToolAgent)
+	b := identity("b", ToolAgent)
+	c := identity("c", ToolAgent)
+	records := Records([]Known{
+		{Session: b, LastSeen: moment(t, "2026-09-01T12:00:00Z")},
+		{Session: a, LastSeen: moment(t, "2026-09-01T12:00:00Z")},
+		{Session: c, LastSeen: moment(t, "2026-09-02T12:00:00Z")},
+	}, nil, nil)
+	got := []string{records[0].ID, records[1].ID, records[2].ID}
+	want := []string{"c", "a", "b"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order = %v, want %v", got, want)
+		}
 	}
 }
 
 func TestRunsOfAndPortsOf(t *testing.T) {
-	s1, s2 := sess("s1", ToolClaudeCode), sess("s2", ToolCodex)
+	claude := identity("s1", ToolClaudeCode)
+	codex := identity("s2", ToolCodex)
 	live := []Live{
-		{RunID: "late", Session: s1, StartedAt: at("2026-09-01T11:00:00Z")},
-		{RunID: "early", Session: s1, StartedAt: at("2026-09-01T10:00:00Z")},
-		{RunID: "other", Session: s2},
+		{RunID: "late", Session: claude, StartedAt: moment(t, "2026-09-01T11:00:00Z")},
+		{RunID: "early", Session: claude, StartedAt: moment(t, "2026-09-01T10:00:00Z")},
+		{RunID: "other", Session: codex},
 	}
-	got := RunsOf(live, "s1")
-	if len(got) != 2 || got[0].RunID != "early" {
-		t.Errorf("RunsOf = %+v, want early then late", got)
+	runs := RunsOf(live, "s1")
+	if len(runs) != 2 || runs[0].RunID != "early" {
+		t.Errorf("RunsOf = %+v, want early before late", runs)
 	}
 
-	ports := PortsOf([]state.Port{port(3000, "", &s1), port(3001, "", &s2)}, "s2")
+	ports := PortsOf([]state.Port{
+		listening(3000, "", &claude),
+		listening(3001, "", &codex),
+	}, "s2")
 	if len(ports) != 1 || ports[0].Port != 3001 {
 		t.Errorf("PortsOf = %+v", ports)
 	}
 	if PortsOf(nil, "s1") == nil {
-		t.Error("PortsOf returned nil rather than an empty slice")
+		t.Error("PortsOf returned nil instead of an empty slice")
+	}
+}
+
+func TestRetentionIsSevenDays(t *testing.T) {
+	if Retention != 7*24*time.Hour {
+		t.Errorf("Retention = %v", Retention)
 	}
 }
