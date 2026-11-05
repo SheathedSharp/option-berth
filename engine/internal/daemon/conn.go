@@ -215,6 +215,11 @@ func marshalNotification(method string, params any) ([]byte, error) {
 // closeWithReason shuts the connection down once, logging why.
 func (c *Conn) closeWithReason(reason string) {
 	c.closeOnce.Do(func() {
+		// The order matters: the closed channel stops both loops first, then
+		// streams are cancelled, then the socket goes, and only then is the
+		// connection removed from the registry — removing it last is what keeps
+		// a broadcast written during the teardown from targeting a socket that
+		// is already gone.
 		close(c.closed)
 		c.cancelAllStreams()
 		_ = c.nc.Close()
