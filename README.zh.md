@@ -7,7 +7,7 @@
 <p align="center"><strong>每份代码，各自成泊。</strong><br>Git worktree 的运行事实层：服务起没起来，为什么没起来。</p>
 <p align="center"><a href="README.md">English</a> · 简体中文</p>
 
-<p align="center"><a href="https://sheathedsharp.github.io/option-berth/">产品官网</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">下载最新引擎</a></p>
+<p align="center"><a href="https://oberth.zayju.de/">产品官网</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">下载最新引擎</a></p>
 
 ## 三个产品
 
@@ -74,8 +74,8 @@ GitHub 访问慢或被限制时：`go install` 加 `GOPROXY=https://goproxy.cn`�
 镜像，脚本入口也可以从 jsDelivr 获取。具体做法见
 [安装与卸载](docs/install.md#下载慢或被网络限制)。
 
-直接运行 `oberth` 会显示本机版本；有更新时首屏底部给出升级命令。也可以随时运行
-`oberth version --check` 主动检查，它只读发布信息，不下载、不安装。
+直接运行 `oberth` 会显示本机版本；有更新时终端命令会给出本平台的升级命令，首屏则显示完整升级块。
+也可以随时运行 `oberth version --check` 主动检查，它只读发布信息，不下载、不安装。
 
 ### Homebrew
 

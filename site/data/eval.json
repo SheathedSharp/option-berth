@@ -1,0 +1,38 @@
+{
+  "schema": "oberth.site-eval/v1",
+  "measured_at": "2026-11-04T08:34:50Z",
+  "run_url": "https://github.com/SheathedSharp/option-berth/actions/runs/41787506888",
+  "suite": "large",
+  "agent": {
+    "id": "codex",
+    "version": "codex-cli 0.166.0"
+  },
+  "model": "gpt-6-luna",
+  "repeat": 5,
+  "runs": 80,
+  "scenarios": 8,
+  "arms": [
+    "oberth",
+    "native"
+  ],
+  "metrics": {
+    "oberth": {
+      "completed": 40,
+      "total": 40,
+      "steps_p50": 5,
+      "steps_p95": 10,
+      "duration_p50_s": 45.485,
+      "oob_total": 0
+    },
+    "native": {
+      "completed": 29,
+      "total": 40,
+      "steps_p50": 9,
+      "steps_p95": 17,
+      "duration_p50_s": 69.286,
+      "oob_total": 0
+    }
+  },
+  "scenarios_with_fewer_turns": 8,
+  "comparable_scenarios": 8
+}
