@@ -537,41 +537,22 @@ func (h *testHarness) snapshotAs(ctx context.Context, t *testing.T, include rpc.
 	return snapshot
 }
 
-// TestQueueOverflowDisconnects is the spec's back-pressure rule: a client that
-// stops reading is disconnected, never allowed to block the scanner.
+// TestQueueOverflowDisconnects is the back-pressure rule: a client that stops
+// reading is disconnected, never allowed to block the scanner.
 func TestQueueOverflowDisconnects(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	h := newHarness(t, ctx)
 
-	clientSide, serverSide := net.Pipe()
-	defer clientSide.Close()
-	h.srv.startConn(ctx, serverSide)
+	conn := h.subscribeWithoutReading(ctx, t)
 
-	// Register as a subscriber by hand: the point of the test is what happens
-	// when nobody drains the socket, so we never read the reply.
-	h.srv.subsMu.Lock()
-	var conn *Conn
-	for _, c := range h.srv.conns {
-		conn = c
-	}
-	conn.subscribed, conn.events = true, true
-	h.srv.subsMu.Unlock()
-
-	// The writer goroutine takes one message and blocks on the unread pipe;
-	// everything after that piles up in the 256-slot queue.
-	for i := 0; i < QueueSize+50; i++ {
+	// The writer goroutine takes one message and then blocks on the unread
+	// pipe, so everything after that piles up in the queue.
+	for queued := 0; queued < QueueSize+50; queued++ {
 		h.srv.broadcastEvent(state.Event{Kind: "port_up", At: "now"})
 		select {
 		case <-conn.closed:
-			// closed is closed just before the connection is deregistered, so
-			// give that last step a moment rather than racing it.
-			for j := 0; j < 100 && h.srv.Clients() != 0; j++ {
-				time.Sleep(time.Millisecond)
-			}
-			if h.srv.Clients() != 0 {
-				t.Fatalf("overflowing client still registered after %d messages", i)
-			}
+			h.awaitDeregistered(t, queued)
 			return
 		default:
 		}
@@ -579,6 +560,41 @@ func TestQueueOverflowDisconnects(t *testing.T) {
 	}
 	t.Fatalf("client survived %d queued notifications; the %d-slot queue did not disconnect it",
 		QueueSize+50, QueueSize)
+}
+
+// subscribeWithoutReading attaches a client, marks its connection as a
+// subscriber behind the server's back, and then never reads from it — which is
+// exactly the misbehaviour the queue limit has to catch.
+func (h *testHarness) subscribeWithoutReading(ctx context.Context, t *testing.T) *Conn {
+	t.Helper()
+	clientSide, serverSide := net.Pipe()
+	t.Cleanup(func() { clientSide.Close() })
+	h.srv.startConn(ctx, serverSide)
+
+	h.srv.subsMu.Lock()
+	defer h.srv.subsMu.Unlock()
+	var subscribed *Conn
+	for _, candidate := range h.srv.conns {
+		subscribed = candidate
+	}
+	if subscribed == nil {
+		t.Fatal("the connection was not registered")
+	}
+	subscribed.subscribed, subscribed.events = true, true
+	return subscribed
+}
+
+// awaitDeregistered waits for the overflowing connection to be taken off the
+// client list. closed fires just before that step, so this gives it a moment
+// rather than racing it.
+func (h *testHarness) awaitDeregistered(t *testing.T, queued int) {
+	t.Helper()
+	for waited := 0; waited < 100 && h.srv.Clients() != 0; waited++ {
+		time.Sleep(time.Millisecond)
+	}
+	if h.srv.Clients() != 0 {
+		t.Fatalf("overflowing client still registered after %d messages", queued)
+	}
 }
 
 // TestShutdownAnswersBeforeClosing checks that daemon.shutdown replies and
