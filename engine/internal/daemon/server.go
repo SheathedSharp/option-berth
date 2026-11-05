@@ -1076,15 +1076,22 @@ func (s *Server) touch() { s.lastActive.Store(time.Now().UnixNano()) }
 // recountKeepalive recomputes how many connected clients asked the daemon to
 // stay up (daemon.hello{keepalive:true}).
 func (s *Server) recountKeepalive() {
+	s.keepalives.Store(s.countKeepalive())
+}
+
+// countKeepalive is how many connected clients asked the daemon to stay up. It
+// is counted rather than derived because each connection may change its mind,
+// and the idle watcher reads the number without holding the registry lock.
+func (s *Server) countKeepalive() int64 {
 	s.subsMu.RLock()
-	n := int64(0)
+	defer s.subsMu.RUnlock()
+	asking := int64(0)
 	for _, c := range s.conns {
 		if c.Keepalive() {
-			n++
+			asking++
 		}
 	}
-	s.subsMu.RUnlock()
-	s.keepalives.Store(n)
+	return asking
 }
 
 // idleCheckEvery is how often the idle countdown is polled: a quarter of the
