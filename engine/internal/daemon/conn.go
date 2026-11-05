@@ -106,13 +106,17 @@ func (c *Conn) RegisterStream(id string, cancel context.CancelFunc) {
 // CancelStream stops one stream. It reports whether the id was known.
 func (c *Conn) CancelStream(id string) bool {
 	c.mu.Lock()
-	cancel, ok := c.streams[id]
+	cancel, known := c.streams[id]
 	delete(c.streams, id)
 	c.mu.Unlock()
-	if ok {
-		cancel()
+
+	if !known {
+		return false
 	}
-	return ok
+	// Cancelled after the unlock, for the same reason cancelAllStreams cancels
+	// its batch there: the stream unwinds into code that may want c.mu again.
+	cancel()
+	return true
 }
 
 // cancelAllStreams stops every stream on this connection. Disconnecting
