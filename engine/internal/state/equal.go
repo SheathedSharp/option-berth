@@ -81,7 +81,7 @@ func machineEqual(a, b []MachineRef) bool {
 	}
 	for i := range a {
 		if a[i].Name != b[i].Name || a[i].Port != b[i].Port || a[i].Listening != b[i].Listening ||
-			!pointerEqual(a[i].Unit, b[i].Unit) {
+			a[i].ListeningKnown != b[i].ListeningKnown || !pointerEqual(a[i].Unit, b[i].Unit) {
 			return false
 		}
 	}

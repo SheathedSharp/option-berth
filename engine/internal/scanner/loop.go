@@ -119,9 +119,16 @@ type Options struct {
 	// (step 5A.8).
 	Scan func(include Include) ([]ports.ListeningPort, error)
 
-	// ScanContext takes precedence over Scan. Production uses this seam;
-	// legacy Scan callbacks remain synchronous and must return on their own.
+	// ScanContext takes precedence over Scan. Legacy Scan callbacks remain
+	// synchronous and must return on their own.
 	ScanContext func(ctx context.Context, include Include) ([]ports.ListeningPort, error)
+
+	// ScanSource takes precedence over ScanContext and also reports which
+	// collector answered ("" for the platform's primary one). Production uses
+	// this seam: a narrow source like the Darwin lsof fallback cannot see other
+	// users' sockets, so the snapshot has to publish that coverage with the
+	// rows instead of letting absence read as "not listening".
+	ScanSource func(ctx context.Context, include Include) ([]ports.ListeningPort, string, error)
 
 	// Probe overrides the health probe. Tests inject a fake; production leaves
 	// it nil and gets ports.ProbeHealth. Configured health goes through this
@@ -236,7 +243,10 @@ type Loop struct {
 	// makes a rename or a `oberth.yaml` write cost microseconds rather than a
 	// full scan (contract §44).
 	lastPorts []ports.ListeningPort
-	haveSnap  bool
+	// lastNarrow carries the last scan's table coverage into a republish, which
+	// re-attributes those same rows without scanning again.
+	lastNarrow bool
+	haveSnap   bool
 
 	// scanSeq numbers scans in the order their OS half begins, and
 	// committedSeq is the number of the scan the published snapshot came
@@ -300,7 +310,7 @@ func New(opts Options) *Loop {
 		orderGate: make(chan struct{}, 1),
 		interval:  base,
 	}
-	if l.opts.Scan == nil && l.opts.ScanContext == nil {
+	if l.opts.Scan == nil && l.opts.ScanContext == nil && l.opts.ScanSource == nil {
 		// The refresh cadence is the scan cadence: scans poke the watcher,
 		// and it asks Docker at most once per base interval. A refresh that
 		// changes the list wakes the loop, so a new container's port is
@@ -310,7 +320,7 @@ func New(opts Options) *Loop {
 			Logger:   opts.Logger,
 			OnChange: l.Wake,
 		})
-		l.opts.ScanContext = l.osScanContext
+		l.opts.ScanSource = l.osScanSourceContext
 	}
 	return l
 }
@@ -341,9 +351,16 @@ func (l *Loop) osScan(include Include) ([]ports.ListeningPort, error) {
 }
 
 func (l *Loop) osScanContext(ctx context.Context, include Include) ([]ports.ListeningPort, error) {
-	pp, err := ports.ScanContext(ctx)
+	pp, _, err := l.osScanSourceContext(ctx, include)
+	return pp, err
+}
+
+// osScanSourceContext is osScanContext plus the collector that answered, so a
+// narrow fallback table can be published as narrow.
+func (l *Loop) osScanSourceContext(ctx context.Context, include Include) ([]ports.ListeningPort, string, error) {
+	pp, source, err := ports.ScanContextSource(ctx)
 	if err != nil {
-		return nil, err
+		return nil, source, err
 	}
 	// The daemon's own self-probe binds a short-lived loopback socket. A
 	// regular scan that overlaps it would otherwise publish that socket as an
@@ -353,19 +370,19 @@ func (l *Loop) osScanContext(ctx context.Context, include Include) ([]ports.List
 	pp = withoutOwnListeners(pp)
 	l.docker.Enrich(pp)
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, source, err
 	}
 	// The owner deadline reaches metadata, cwd and full-stat commands.
 	// Filesystem/PEB syscalls remain synchronous, checked between operations.
 	if err := ports.EnrichContext(ctx, pp); err != nil {
-		return nil, err
+		return nil, source, err
 	}
 	if include.Stats {
 		if err := ports.EnrichStatsContext(ctx, pp, l.docker.Stats()); err != nil {
-			return nil, err
+			return nil, source, err
 		}
 	}
-	return pp, ctx.Err()
+	return pp, source, ctx.Err()
 }
 
 // withoutOwnListeners drops rows owned by the daemon process. In production
@@ -587,9 +604,13 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 
 	gen, refresh := l.beginScan()
 	var pp []ports.ListeningPort
-	if l.opts.ScanContext != nil {
+	source := ""
+	switch {
+	case l.opts.ScanSource != nil:
+		pp, source, err = l.opts.ScanSource(ctx, collect)
+	case l.opts.ScanContext != nil:
 		pp, err = l.opts.ScanContext(ctx, collect)
-	} else {
+	default:
 		pp, err = l.opts.Scan(collect)
 	}
 	if err := ctx.Err(); err != nil {
@@ -606,7 +627,7 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 			var oe *ports.ObservationError
 			if errors.As(err, &oe) {
 				observation = &state.Observation{
-					State: state.ObservationPartial, Code: oe.Code,
+					State: state.ObservationPartial, Code: oe.Code, Source: source,
 					Detail: oe.Error(), Hint: oe.Hint,
 					CheckedAt: l.nowRFC3339(),
 				}
@@ -617,6 +638,19 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 			err = nil
 		}
 	}
+	if err == nil && source != "" {
+		// The table is usable for what it shows but cannot see every owner.
+		// Publish that coverage with the rows; the self-probe question ("can
+		// this process see its own listener") stays answered by the source
+		// being able to show this process's socket at all.
+		observation = &state.Observation{
+			State:     state.ObservationObservable,
+			Source:    source,
+			Detail:    ports.NarrowSourceDetail(source),
+			CheckedAt: l.nowRFC3339(),
+		}
+	}
+	narrow := source != ""
 	if err != nil {
 		if reportFailure {
 			l.opts.Logger.Warn("scan failed, keeping last good state", "error", err)
@@ -671,7 +705,7 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 	// Resolve every port's group with the pins the store holds, apply the
 	// stored renames and build the group collection, all before the snapshot
 	// is assembled: what gets published is already attributed and named.
-	rows, groupRows, err := l.attributeContext(ctx, pp)
+	rows, groupRows, err := l.attributeContext(ctx, pp, narrow)
 	if err != nil {
 		return state.Snapshot{}, l.Cached(), false, err
 	}
@@ -709,6 +743,7 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 		groups:      groupRows,
 		sessions:    sessionRows,
 		observation: observation,
+		narrow:      narrow,
 	})
 	if changed {
 		l.publish(prev, next, deriveEvents(prev, next, l.nowRFC3339()))
@@ -730,8 +765,11 @@ type commit struct {
 	groups   []state.Group
 	sessions []state.SessionRecord
 	// observation is non-nil only when this scan could not read the whole
-	// table; the readable rows are still facts.
+	// table, or when it read a narrow table; the readable rows are still facts.
 	observation *state.Observation
+	// narrow says the table cannot see every socket owner, so an absent
+	// `machine:` port is unknown rather than false.
+	narrow bool
 }
 
 // commitScan swaps a finished scan into the cache and adapts the interval.
@@ -789,6 +827,7 @@ func (l *Loop) commitScan(c commit) (next, prev state.Snapshot, changed bool) {
 		l.statsScanSeq = c.seq
 	}
 	l.lastPorts = c.pp
+	l.lastNarrow = c.narrow
 	if c.health {
 		l.lastHealthAt = l.lastScanAt
 	}
@@ -879,7 +918,8 @@ func observationEqual(a, b *state.Observation) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	return a.State == b.State && a.Code == b.Code && a.Detail == b.Detail && a.Hint == b.Hint
+	return a.State == b.State && a.Code == b.Code && a.Source == b.Source &&
+		a.Detail == b.Detail && a.Hint == b.Hint
 }
 
 // snapshotChanged reports whether the diff between two snapshots is non-empty.

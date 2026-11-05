@@ -23,14 +23,14 @@ func AcquireServicePort(rt *Runtime, dir, service string) (int, error) {
 	// the time the table is read, which is the same race every observation on
 	// this chain accepts: a port that starts listening in between is caught by
 	// the listen-time bind failure, never by a longer-held lock.
-	listening, err := listeningPorts(rt)
+	listening, narrow, err := listeningState(rt)
 	if err != nil {
 		return 0, scanFailure(err)
 	}
 
 	claimsMu.Lock()
 	defer claimsMu.Unlock()
-	m, err := claimsManagerWithListening(rt, listening)
+	m, err := claimsManagerWithListening(rt, listening, narrow)
 	if err != nil {
 		return 0, err
 	}

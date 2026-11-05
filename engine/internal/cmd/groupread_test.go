@@ -35,7 +35,7 @@ services:
 
 	index := groups.NewIndex()
 	index.Observe(root)
-	got := groups.GroupsWith(nil, index, directRunRegistry{reg: runs.Load()})
+	got := groups.GroupsWith(nil, index, directRunRegistry{reg: runs.Load()}, false)
 	if len(got) != 1 || len(got[0].Services) != 1 {
 		t.Fatalf("groups = %+v, want one project with one service", got)
 	}
@@ -99,8 +99,8 @@ func TestDirectAndDaemonServiceFactsProduceTheSameRows(t *testing.T) {
 	}
 	left, right := "left", "right"
 	listeners := []state.Port{{Group: &left, Port: 8100, PID: 100}, {Group: &right, Port: 8101, PID: 101}}
-	want := groups.GroupsWith(listeners, index, daemon)
-	got := groups.GroupsWith(listeners, index, direct)
+	want := groups.GroupsWith(listeners, index, daemon, false)
+	got := groups.GroupsWith(listeners, index, direct, false)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("direct=%+v\ndaemon=%+v", got, want)
 	}

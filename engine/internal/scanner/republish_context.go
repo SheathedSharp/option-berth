@@ -27,7 +27,7 @@ func (l *Loop) RepublishContext(ctx context.Context) (err error) {
 		return err
 	}
 	l.mu.Lock()
-	pp, have := l.lastPorts, l.haveSnap
+	pp, have, narrow := l.lastPorts, l.haveSnap, l.lastNarrow
 	l.mu.Unlock()
 	if !have || len(pp) == 0 {
 		unlock(l.orderGate)
@@ -37,7 +37,7 @@ func (l *Loop) RepublishContext(ctx context.Context) (err error) {
 	defer unlock(l.orderGate)
 
 	subs, carry := l.opts.Demand()
-	rows, groupRows, err := l.attributeContext(ctx, pp)
+	rows, groupRows, err := l.attributeContext(ctx, pp, narrow)
 	if err != nil {
 		return err
 	}

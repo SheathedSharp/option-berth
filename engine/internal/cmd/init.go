@@ -640,7 +640,7 @@ func scanForProposal() ([]ports.ListeningPort, *groups.ListenerObservation, erro
 	// The package-level seam, not ports.Scan: this path is exercised in tests
 	// whose host cannot read its own listener table, and a starter is exactly
 	// the file those tests need to see degrade.
-	results, err := scanPorts()
+	results, _, err := scanPorts()
 	if err == nil {
 		return results, nil, nil
 	}

@@ -25,7 +25,7 @@ func BenchmarkGroupsWith(b *testing.B) {
 			index.Add(cfg)
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_ = GroupsWith(ports, index, nil)
+				_ = GroupsWith(ports, index, nil, false)
 			}
 		})
 	}

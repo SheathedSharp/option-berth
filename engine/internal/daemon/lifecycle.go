@@ -79,6 +79,7 @@ func (r *Runtime) RefreshObservation(ctx context.Context) *rpc.ObservationStatus
 	status := &rpc.ObservationStatus{
 		State:     string(result.State),
 		Code:      result.Code,
+		Source:    result.Source,
 		Detail:    result.Detail,
 		Hint:      result.Hint,
 		CheckedAt: time.Now().UTC().Format(time.RFC3339),

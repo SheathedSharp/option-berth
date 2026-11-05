@@ -1205,6 +1205,9 @@
         "listening": {
           "type": "boolean"
         },
+        "listening_known": {
+          "type": "boolean"
+        },
         "unit": {
           "oneOf": [
             {
@@ -1221,6 +1224,7 @@
         "name",
         "port",
         "listening",
+        "listening_known",
         "unit"
       ]
     },
@@ -1259,6 +1263,9 @@
           "type": "string"
         },
         "code": {
+          "type": "string"
+        },
+        "source": {
           "type": "string"
         },
         "detail": {
