@@ -966,11 +966,15 @@ func (l *Loop) dueIn() time.Duration {
 	return l.interval - l.now().Sub(at)
 }
 
-// healthDue reports whether the health cadence has elapsed.
+// healthDue reports whether it is time to probe health again. A loop that has
+// never probed is always due.
 func (l *Loop) healthDue() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.lastHealthAt.IsZero() || l.now().Sub(l.lastHealthAt) >= HealthCadence
+	if l.lastHealthAt.IsZero() {
+		return true
+	}
+	return l.now().Sub(l.lastHealthAt) >= HealthCadence
 }
 
 // maxIntervalLocked is the ceiling the backoff may reach right now: 2.5x the
@@ -1574,11 +1578,14 @@ func (l *Loop) demandInclude() Include {
 // snapHasStats reports whether the cached snapshot carries stats. Caller holds
 // the mutex.
 func (l *Loop) snapHasStats() bool {
-	for i := range l.snap.Ports {
-		if l.snap.Ports[i].Stats != nil {
+	for _, row := range l.snap.Ports {
+		if row.Stats != nil {
 			return true
 		}
 	}
+	// An empty snapshot counts as carrying stats: there is nothing to be
+	// missing, and treating it as covered stops a subscriber on an idle
+	// machine from forcing a sample every tick.
 	return len(l.snap.Ports) == 0
 }
 
