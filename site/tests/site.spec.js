@@ -241,16 +241,20 @@ test('guide: search closes on Escape and is not offered without a query', async 
   await expect(page.locator('[data-search]')).toBeHidden();
 });
 
-test('guide: every code block offers a copy button', async ({page, context}) => {
-  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+test('guide: every code block offers a copy button', async ({page, context, browserName}) => {
+  // WebKit in Playwright has no clipboard permission to grant; there the copy
+  // falls back to execCommand, so only the button's own feedback is asserted.
+  if (browserName === 'chromium') await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.goto(guidePath('en', 'quickstart'));
-  const first = page.locator('.doc-prose figure.fragment').first();
-  const button = first.locator('.copy-button');
+  const fragments = page.locator('.doc-prose figure.fragment');
+  const button = fragments.first().locator('.copy-button');
   await expect(button).toBeVisible();
+  await expect(page.locator('.doc-prose .copy-button')).toHaveCount(await fragments.count());
   await button.click();
-  await expect(page.locator('.doc-prose .copy-button').first()).toHaveText(book.labels.en.copied);
-  const clipboard = await page.evaluate(() => navigator.clipboard.readText());
-  expect(clipboard).toContain('git clone');
+  await expect(button).toHaveText(book.labels.en.copied);
+  if (browserName === 'chromium') {
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toContain('git clone');
+  }
 });
 
 test('guide: no JavaScript still reads and navigates', async ({browser, baseURL}) => {
