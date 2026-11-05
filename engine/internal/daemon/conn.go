@@ -161,11 +161,19 @@ func (c *Conn) enqueue(msg []byte) bool {
 	case c.out <- msg:
 		return true
 	default:
-		c.srv.logger.Warn("disconnecting client: outbound queue full",
-			"conn", c.id, "queue", QueueSize)
-		go c.closeWithReason("outbound queue overflow")
+		c.abandonSlowClient()
 		return false
 	}
+}
+
+// abandonSlowClient disconnects a client that has stopped reading. Its queue is
+// full, and waiting for it to drain would let one stalled client block whoever
+// is publishing. The close runs on its own goroutine because it takes the
+// connection registry lock, which a caller of enqueue may already hold.
+func (c *Conn) abandonSlowClient() {
+	c.srv.logger.Warn("disconnecting client: outbound queue full",
+		"conn", c.id, "queue", QueueSize)
+	go c.closeWithReason("outbound queue overflow")
 }
 
 // Notify sends a notification to this client.
