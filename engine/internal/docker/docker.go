@@ -81,28 +81,18 @@ func enrichFrom(pp []ports.ListeningPort, containers []container) {
 		}
 	}
 
+	// A row is stamped only when two things hold: the cached list claims the
+	// port, and the process actually holding it is Docker's own forwarder. The
+	// second check is issue #95 — while Docker is not answering the watcher
+	// keeps serving its last good list, so the claim alone can be stale, and
+	// stamping on it would make `ports.kill` run `docker stop` against a
+	// container that no longer owns the port instead of signalling the native
+	// process that does.
 	for i := range pp {
 		found, claimed := owner[pp[i].Port]
-		if !claimed {
-			continue
+		if claimed && heldByForwarder(&pp[i]) {
+			stampContainer(&pp[i], found)
 		}
-		if !heldByForwarder(&pp[i]) {
-			// The list says a container publishes this port, but a native
-			// process holds it. The list can be stale — the watcher keeps
-			// serving its last good one while Docker is not answering — and
-			// stamping the row would make `ports.kill` run `docker stop`
-			// against the wrong thing instead of signalling the real owner
-			// (issue #95).
-			continue
-		}
-		row := &pp[i]
-		row.Type = ports.PortTypeDocker
-		row.DockerContainer = found.container.name
-		row.DockerImage = found.container.image
-		row.DockerComposeService = found.container.composeService
-		row.DockerComposeProject = found.container.composeProject
-		row.DockerComposeWorkingDir = found.container.composeWorkingDir
-		row.DockerContainerPort = found.mapping.containerPort
 	}
 }
 
@@ -111,6 +101,17 @@ func enrichFrom(pp []ports.ListeningPort, containers []container) {
 type portOwner struct {
 	container *container
 	mapping   portMapping
+}
+
+// stampContainer copies one container's identity onto a listening row.
+func stampContainer(row *ports.ListeningPort, found portOwner) {
+	row.Type = ports.PortTypeDocker
+	row.DockerContainer = found.container.name
+	row.DockerImage = found.container.image
+	row.DockerComposeService = found.container.composeService
+	row.DockerComposeProject = found.container.composeProject
+	row.DockerComposeWorkingDir = found.container.composeWorkingDir
+	row.DockerContainerPort = found.mapping.containerPort
 }
 
 // ContainerStats is what one container is using. Every field is (re)set
