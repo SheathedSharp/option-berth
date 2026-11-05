@@ -1,0 +1,39 @@
+<p class="chapter-intro">失败会留下日志、退出码和原因。<code>logs</code> 读服务自己的输出和它所属的那次运行，而不是重新拼一条 shell 命令。</p>
+
+<h2 id="read">读一次，或持续跟随</h2>
+<p>按服务名读；端口形式仍然可用。<code>--once</code> 读一次就退出；不带它，<code>logs</code> 打印最近的行并继续跟随。<code>--lines N</code> 限制一次读取的行数，跟随模式写 NDJSON，一行一个值。</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">读一次</figcaption>
+  <pre><code>oberth logs api --once</code></pre>
+</figure>
+<ul>
+  <li>有监听的服务读那个进程的日志；无端口 worker 读它那次运行的服务日志文件。</li>
+  <li>日志文件跨运行追加。<code>--run current</code> 只读当前运行从记录偏移开始的那一段。</li>
+  <li><code>--json --once</code> 返回一个文档：<code>source</code>、<code>lines</code>、<code>truncated</code>、<code>service</code>、<code>run_id</code>、<code>pid</code> 和 <code>status</code>。</li>
+</ul>
+
+<h2 id="first-error">你真正需要的那条失败</h2>
+<p><code>--run current --first-error</code> 读当前运行，从固定词表里找第一条匹配的行：<code>error</code>、<code>exception</code>、<code>fatal</code>、<code>panic</code>、<code>traceback</code>，不区分大小写。它返回行号和原始文本。这是一个位置，不是根因判断；什么都不匹配时，JSON 写 <code>no_first_error</code>。</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">当前运行的第一条错误</figcaption>
+  <pre><code>oberth logs api --once --json --run current --first-error</code></pre>
+</figure>
+<p>文档会加上 <code>log_offset</code>、可选的 <code>run_start_unknown</code>，以及带 <code>line</code> 和 <code>text</code> 的 <code>first_error</code>，或 <code>no_first_error</code>。如果日志已经轮转、记录偏移越过文件末尾，读取会退回文件开头，并置上 <code>run_start_unknown</code>，让你知道这次的行可能包含更早的运行。</p>
+
+<h2 id="portless">无端口 worker 也有日志</h2>
+<p>没有监听的 worker 不是没有输出的服务。<code>oberth logs worker --once</code> 读那次运行的服务日志文件；运行记录提供状态和偏移。</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">worker 输出</figcaption>
+  <pre><code>worker: API health=200
+worker: API health=200
+worker: API health=200</code></pre>
+</figure>
+
+<h2 id="not">它不做什么</h2>
+<aside class="note">
+  <ul>
+    <li>它不读另一个 checkout 的服务。名字在本 worktree 的清单里解析。</li>
+    <li><code>--first-error</code> 找的是一个位置；它不判定原因，也不隐藏周围的上下文行。</li>
+    <li>它不凭空补一次启动。没有偏移的运行记录返回 <code>not_found</code>，并建议把服务重启一次；<code>--run</code> 还需要 daemon。</li>
+  </ul>
+</aside>

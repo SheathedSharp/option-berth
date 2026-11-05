@@ -1,0 +1,52 @@
+<p class="chapter-intro">每条命令都有唯一的机器形状：stdout 恰好一个 JSON 值，诊断写 stderr，错误码稳定。同一条命令同时回答人和 agent，只是读者不同。</p>
+
+<h2 id="rules">规则</h2>
+<ul>
+  <li>带普通 <code>--json</code> 时，stdout 恰好一个 JSON 值。诊断写 stderr，绝不混进来。</li>
+  <li>流式命令用 NDJSON：一行一个值。</li>
+  <li>退出码：0 成功，1 运行失败，2 参数或选项错误，130 被 Ctrl-C 中断。</li>
+  <li>错误形状是 <code>{"error":{"code":"…","message":"…","hint":"…"}}</code>。hint 指向真实存在的证据。</li>
+  <li>没有字段会被接受却不被读取。发布出去的字段是每个客户端都可以依赖的承诺，所以协议构建会在没有处理器的字段上失败。</li>
+</ul>
+
+<h2 id="codes">稳定错误码</h2>
+<table class="chapter-table">
+  <caption class="sr-only">稳定错误码</caption>
+  <thead><tr><th scope="col">分组</th><th scope="col">错误码</th><th scope="col">含义</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">输入</th><td><code>invalid_params</code>、<code>not_found</code>、<code>invalid_config</code>、<code>ambiguous</code></td><td>请求或声明是错的；消息会点名对象。</td></tr>
+    <tr><th scope="row">权限</th><td><code>permission_denied</code></td><td>操作被拒绝；hint 说明要改什么。</td></tr>
+    <tr><th scope="row">时间</th><td><code>timeout</code>、<code>daemon_busy</code></td><td>引擎放弃了，或另一个动作占着 daemon；先读 hint 再重试。</td></tr>
+    <tr><th scope="row">观察</th><td><code>observation_empty</code>、<code>observation_unrecognized</code>、<code>observation_incomplete</code>、<code>observation_blind</code>、<code>observation_bind_denied</code></td><td>没有一个表示“没有东西在监听”；检查 <code>observation.state</code> 与 <code>doctor --only listener_observation</code>。</td></tr>
+    <tr><th scope="row">内部</th><td><code>internal</code></td><td>意外失败；报告命令和版本，而不是只贴消息。</td></tr>
+  </tbody>
+</table>
+
+<h2 id="worked">一次完整读取</h2>
+<p>部分成功也仍然是一个值。下面这次 <code>up --json</code> 起了一个服务、失败了另一个；退出码是 1，两个结果都在同一个文档里。</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">oberth up --json</figcaption>
+  <pre><code>{"services":[
+  {"service":"api","state":"started","ready":false,"pid":1234,"port":3000},
+  {"service":"worker","state":"failed","reason":"start_failed",
+   "error":"exec: \"nosuchcmd\": executable file not found in $PATH",
+   "hint":"check the command and its working directory"}
+],"started":["api"],"skipped":[],"errors":["worker"]}</code></pre>
+</figure>
+<dl class="chapter-dl">
+  <dt><code>state</code></dt>
+  <dd><code>started</code>、<code>skipped</code> 或 <code>failed</code>：启动动作的结果，不是就绪声明。</dd>
+  <dt><code>reason</code></dt>
+  <dd>稳定、可分支的失败原因，例如 <code>start_failed</code>、<code>port_occupied</code> 或 <code>ready_timeout</code>。</dd>
+  <dt><code>hint</code></dt>
+  <dd>确定性的下一步，只指向真实存在的证据：进程真起来了才指向服务日志，依赖没就绪就指向依赖日志，没有可执行的下一步就什么都不给。</dd>
+  <dt><code>port_holder</code></dt>
+  <dd>在 <code>port_occupied</code> 时出现：占用者的端口、pid、命令和类型；如果是我们托管的服务，还带组名、服务名和 run id。</dd>
+  <dt><code>ready</code></dt>
+  <dd>CLI 的注解，不是 daemon 事实：<code>--wait</code> 确认就绪后为 <code>true</code>，没有等待时为 <code>false</code>。<code>false</code> 不是失败。</dd>
+</dl>
+
+<h2 id="absent">字段缺席不代表什么</h2>
+<aside class="note">
+  <p>缺席不是 0，也不是 false。没有 <code>observation</code> 说明监听表可用；没有 <code>running_services</code> 说明“没有观察”，不是 0。观察错误码不是“没有东西在监听”，未知也不是成功。事实读不到时，文档会说出来，而不是用默认值填上缺口。</p>
+</aside>

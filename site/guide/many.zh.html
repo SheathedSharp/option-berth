@@ -1,0 +1,33 @@
+<p class="chapter-intro">一次运行属于启动它的 checkout。两个 worktree 可以同时跑同一个仓库，不共享端口、数据库或停止动作。</p>
+
+<h2 id="ownership">运行属于它的 checkout</h2>
+<p>同一个仓库的不同 worktree 发布为 <code>&lt;project&gt;</code> 与 <code>&lt;project&gt;@&lt;worktree&gt;</code>，所以对一个的组作用域停止不会碰到另一个。<code>status --json</code> 发布 checkout 的身份，目录消失之后 <code>down --identity</code> 用的就是它。</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">看看这台机器见过的身份</figcaption>
+  <pre><code>oberth status --json
+oberth worktrees</code></pre>
+</figure>
+
+<h2 id="ports">端口是分配出来的，不是猜的</h2>
+<p>带 <code>port: auto</code> 的服务从这次运行拿到地址，引擎通过 <code>PORT</code> 注入。服务自己的 <code>env: PORT: 3000</code> 会覆盖注入值，让 <code>up --wait</code> 等错端口；要用就用 <code>${port}</code>。如果框架在端口被占时悄悄换一个，优先打开它的严格端口选项，让冲突变成一条可读的失败事实。</p>
+
+<h2 id="data">数据可以跟着 worktree 走</h2>
+<p><code>${worktree}</code> 是从规范化 checkout 根路径派生的稳定身份。同一个 worktree 每次启动都相同，主 checkout 与每个 linked worktree 各不相同，所以它适合拼进数据库名和相对数据目录。</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">一个身份，多处使用</figcaption>
+  <pre><code>DB_PATH: .berth/${worktree}/app.db
+DATABASE_URL: postgres://localhost/app_${worktree}</code></pre>
+</figure>
+<p>移动 checkout 目录会得到新身份；旧数据不会跟着搬。这是有意的：引擎只报告身份与路径的对应关系，留下什么由人决定。</p>
+
+<h2 id="gone">checkout 消失之后</h2>
+<p><code>worktrees --gone</code> 只保留 checkout 已经不存在的身份。<code>down --identity</code> 仍然能停掉属于它的运行和监听，并归还它的 <code>port: auto</code> 预留。引擎只报告和停止，从不删除数据库、数据目录或账本行。</p>
+
+<h2 id="events">不用轮询也能跟上变化</h2>
+<p><code>oberth events</code> 是给并行工作用的只读订阅。它接受 worktree、仓库或显式 workspace 过滤，写 NDJSON：第一行是 <code>state.snapshot</code>，之后是 <code>state.changed</code> 摘要。</p>
+<ul>
+  <li>第一条记录是快照，之后是变化。断线重连时把最后应用的 <code>seq</code> 作为 <code>after_seq</code> 传回。</li>
+  <li>流里只有运行事实摘要——没有日志、命令、工作目录或环境变量。</li>
+  <li>队列窗口过期或状态链不连续时，流返回完整快照，而不是假装缺口不存在。</li>
+  <li><code>--once</code> 只读快照，不注册 workspace 成员；人运行它主要是排查问题。</li>
+</ul>

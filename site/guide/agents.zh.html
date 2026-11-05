@@ -1,0 +1,66 @@
+<p class="chapter-intro">接口只有 CLI 和 <code>--json</code>。集成就是在工具自己的 setup、run、cleanup 槽位里调用它——不替你装 hooks、不注册 MCP server、不代你写任何配置。</p>
+
+<h2 id="moments">三个调用时机</h2>
+<p>工具提供生命周期槽位时，用同样的三次调用：创建之后启动，运行期间读取，结束时停止。</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">三次调用就是全部集成</figcaption>
+  <pre><code># after the checkout is created
+oberth up --wait --json
+# while it runs
+oberth status --json --brief
+# when the work ends
+oberth down --worktree /absolute/path/to/checkout</code></pre>
+</figure>
+
+<h2 id="reads">agent 开局的三次读取</h2>
+<p><code>oberth --help</code> 末尾有一段 <strong>For agents</strong>，给的是阅读模式，不是新命令。三次读取足够让会话定位自己，不用去拼 <code>ps</code>、<code>lsof</code> 或 <code>tail</code>。</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">开局模式</figcaption>
+  <pre><code>oberth status --json --brief
+oberth up --wait --json
+oberth logs &lt;service&gt; --once --json --run current --first-error</code></pre>
+</figure>
+<ul>
+  <li>先 <code>status</code>：声明了什么、跑着什么、哪个端口、健康过没过、最近为什么失败。</li>
+  <li>确实应该有东西在跑时才 <code>up --wait</code>；它等真实就绪，而不是睡一会儿。</li>
+  <li>失败之后才 <code>logs --run current --first-error</code>；它指向一行，不给猜测。</li>
+</ul>
+
+<h2 id="recipes">接入配方</h2>
+<p>工具自己的配置由用户写。项目级配置可以随仓库提交；产品不分发集成代码，也不写任何工具配置。</p>
+<table class="chapter-table">
+  <caption class="sr-only">常见工具里该在哪里调用 oberth</caption>
+  <thead><tr><th scope="col">工具</th><th scope="col">槽位</th><th scope="col">放什么</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">Cursor</th><td><code>.cursor/worktrees.json</code> → <code>setup-worktree-unix</code></td><td><code>up --wait</code>；Cursor 没有 teardown hook，删除前要自己跑 <code>down --worktree</code>。</td></tr>
+    <tr><th scope="row">Claude Code</th><td><code>WorktreeCreate</code> / <code>WorktreeRemove</code> hooks，或外层 wrapper</td><td><code>up --wait</code>；<code>down --worktree</code>。接管创建会替换 Claude 自己的 worktree 行为。</td></tr>
+    <tr><th scope="row">Codex</th><td>外层 wrapper，或桌面应用的 Local environments setup</td><td><code>up --wait</code>；清理仍要在删除前跑 <code>down</code>。</td></tr>
+    <tr><th scope="row">Conductor</th><td><code>.conductor/settings.toml</code> 的 setup 与 archive 槽位</td><td><code>up --wait</code>；<code>down --worktree</code>。</td></tr>
+  </tbody>
+</table>
+<p>最可移植的集成是 <code>AGENTS.md</code> 或 <code>CLAUDE.md</code> 里的一段话。下面是精简版；包含 <code>machine:</code> / <code>workspace:</code> 边界的完整段落见 <a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/integrations.md">docs/integrations.md</a>。引擎不会替你安装它。</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">AGENTS.md · 本地服务</figcaption>
+  <pre><code>## Local services
+
+The services in this worktree are managed by option-berth (`oberth`).
+Before starting or troubleshooting, read the facts with it first.
+
+- Run `oberth status --json` before guessing ports or digging through `ps`.
+- Start with `oberth up --wait --json`; do not reimplement dependency order.
+- On failure read `oberth logs &lt;service&gt; --once --json`; do not substitute a timeout for the reason.
+- When `observation.state` is not `observable`, say you cannot see the listener and follow the hint.
+- Stop this checkout with `oberth down`; never kill by a guessed pid.</code></pre>
+</figure>
+
+<h2 id="pitfalls">容易踩的坑</h2>
+<ul>
+  <li>hook 通常不加载你的 shell rc。用 <code>oberth</code> 的绝对路径，或显式设置 <code>PATH</code>；<code>node</code>、<code>npm</code>、<code>python3</code> 也必须能找到。</li>
+  <li>workspace 根不一定是 Git checkout 根。先 <code>cd "$(git rev-parse --show-toplevel)"</code>，并把同一个根传给 <code>down --worktree</code>。</li>
+  <li>不要给 <code>port: auto</code> 的服务硬编码 <code>PORT</code>：服务自己的 <code>env: PORT</code> 会覆盖注入值，让等待盯着错的端口。</li>
+  <li>优先打开框架的严格端口选项。悄悄换端口的框架会把冲突拖成迟到的 <code>ready_timeout</code>。</li>
+  <li>沙箱里观察可能是盲的。不要在循环里反复重开；跟着 <code>observation_*</code> 的 hint 换到外面重试。</li>
+</ul>
+
+<h2 id="skill">skill 是独立产品</h2>
+<p><a href="https://github.com/SheathedSharp/option-berth-skill">option-berth-skill</a> 教 agent 同一套 CLI 和 <code>--json</code> 形状。它单独安装，例如 <code>npx skills add SheathedSharp/option-berth-skill -g</code>。引擎不安装、不更新、也不依赖它；装不装是用户的决定。</p>

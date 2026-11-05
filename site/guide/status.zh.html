@@ -1,0 +1,58 @@
+<p class="chapter-intro"><code>status</code> 读 worktree、清单和它的运行记录，然后把运行事实原样返回。它是每个会话开局的命令，也被允许说“我看不见”。</p>
+
+<h2 id="four-facts">四种事实，不是一种</h2>
+<p>产品把 shell 一行命令会揉在一起的东西拆开。活着的进程、绑定的端口、通过的健康检查、退出原因，是四种不同的事实，一种不能推出下一种。</p>
+<table class="chapter-table">
+  <caption class="sr-only">四种运行事实</caption>
+  <thead><tr><th scope="col">事实</th><th scope="col">它回答的问题</th><th scope="col">它从哪里来</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">进程</th><td>进程还活着吗？</td><td>运行记录：pid、开始、结束、退出码。</td></tr>
+    <tr><th scope="row">监听</th><td>实际绑定了哪个地址？</td><td>监听观察，连同它自己的可信状态。</td></tr>
+    <tr><th scope="row">健康</th><td>服务通过它的健康检查吗？</td><td>声明的 HTTP、TCP 或命令检查。</td></tr>
+    <tr><th scope="row">退出</th><td>如果结束了，为什么？</td><td>最近一次退出原因，以及它指向的日志。</td></tr>
+  </tbody>
+</table>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">oberth status · hello-worktree</figcaption>
+  <pre><code>hello-worktree · main
+
+api      running   :21730   health 200
+worker   running   no port
+
+2 services · manifest oberth.yaml</code></pre>
+</figure>
+
+<h2 id="read">怎么读这张表</h2>
+<p>人读的表格按项目、服务、依赖、代码和失败原因排序。每个服务行同时带上声明的端口和当前的运行事实；失败区只显示最近一次退出，而且只有它仍是该服务当前的 <code>last_exit</code> 时才显示。</p>
+<ul>
+  <li>无端口 worker 显示为 <code>no port</code>。它通过运行记录观察，不靠监听。</li>
+  <li><code>port: auto</code> 在分配前显示 <code>auto port unassigned</code>；这不是失败。</li>
+  <li>只有清单没有声明的监听才会单独列出。属于某个服务的端口跟服务显示在一起。</li>
+  <li><code>code_changed_since_start</code> 说明进程跑的是比 checkout 旧的代码，并给出重启提示。这是代码事实，不是运行失败。</li>
+</ul>
+
+<h2 id="json">给 agent：--brief 与 --json</h2>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">开局读取</figcaption>
+  <pre><code>oberth status --json --brief</code></pre>
+</figure>
+<p><code>--json</code> 的顶层对象是 <code>worktree</code>。<code>--brief</code> 只保留运行事实，所以是最便宜的起点；完整读取才会加上 git 摘要、草稿、变化列表和每个服务的清单字段。</p>
+<ul>
+  <li><code>worktree.identity</code> 是 <code>wt_…</code> 值，<code>down --identity</code> 和数据路径都用它。</li>
+  <li><code>worktree.services[]</code> 带 <code>running</code>、<code>port_actual</code>、<code>health_status</code>、<code>pid</code> 和 <code>run_id</code>。</li>
+  <li><code>exits[]</code> 带原因、退出码，以及一个只指向真实存在证据的 <code>hint</code>。</li>
+  <li><code>observation</code> 只在监听表不可信时出现；它缺席，说明这张表可用。</li>
+</ul>
+
+<h2 id="blind">观察失败的时候</h2>
+<p>沙箱、权限墙或平台变化都可能打断监听扫描。引擎会报告 <code>observation_empty</code>、<code>observation_unrecognized</code>、<code>observation_incomplete</code>、<code>observation_blind</code> 或 <code>observation_bind_denied</code>。这些码没有一个是“没有东西在监听”，更不是“没在运行”。人读的表会写 <code>listening unknown</code>；<code>port: auto</code> 的候选端口靠实际绑定确认，而不是相信空表。</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">检查观察者本身</figcaption>
+  <pre><code>oberth doctor --only listener_observation</code></pre>
+</figure>
+<p>在失败的同一种进程里运行它。如果结果是 blind，换到普通终端重试，或在那里运行 <code>oberth serve --detach</code>；不要在沙箱里反复重开，再把超时读成失败。</p>
+
+<h2 id="never">status 永远不说什么</h2>
+<aside class="note">
+  <p>它不是整机端口表：它只回答这个 worktree 声明的服务，不回答主机上的每个 socket。它不把“为什么失败”交给模型；固定的原因码和日志才是答案。读不到的事实永远不会被写成事实：未知不是成功，字段缺席也不是 0。</p>
+</aside>

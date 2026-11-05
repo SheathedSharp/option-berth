@@ -1,0 +1,205 @@
+<section class="home-hero" aria-labelledby="home-title">
+  <div class="wrap home-hero-grid">
+    <div class="home-hero-copy">
+      <h1 id="home-title">The option-berth guide</h1>
+      <p class="home-lede">What a checkout should run, whether it really is running, and why not. This book teaches the chain of facts behind every <code>oberth</code> command.</p>
+      <div class="home-actions">
+        <a class="button" href="{{guide}}install/">Install oberth</a>
+        <a class="text-link" href="#chain">Read the chain</a>
+      </div>
+    </div>
+    <div class="home-stage" data-ui>
+      <div class="home-rail" data-llms-ignore aria-hidden="true">
+        <span class="home-rail-line"></span>
+        <span class="home-rail-station"><span class="rail-capsule"></span><span>Worktree</span></span>
+        <span class="home-rail-station"><span class="rail-capsule"></span><span>Manifest</span></span>
+        <span class="home-rail-station"><span class="rail-capsule"></span><span>Service</span></span>
+        <span class="home-rail-station"><span class="rail-capsule"></span><span>Run</span></span>
+        <span class="home-rail-station"><span class="rail-capsule"></span><span>Runtime facts</span></span>
+      </div>
+      <p class="fragment-label">oberth status · hello-worktree</p>
+      <pre><code>hello-worktree · main
+
+api      running   :21730   health 200
+worker   running   no port
+
+2 services · manifest oberth.yaml</code></pre>
+      <p class="home-stage-note">Two services. One has no port. Both are running.</p>
+    </div>
+  </div>
+</section>
+
+<section class="home-thesis" aria-labelledby="why-title">
+  <div class="wrap">
+    <h2 id="why-title">Why this book exists</h2>
+    <p class="home-statement">Worktrees solved parallel code, not parallel runtime. Four checkouts, four guesses. One chain of facts replaces them.</p>
+  </div>
+</section>
+
+<section class="home-chain" id="chain" aria-labelledby="chain-title">
+  <div class="wrap">
+    <h2 id="chain-title">One chain, five stations</h2>
+    <p class="home-section-lede">Each station is written by exactly one actor. The next station reads only what the previous one published — never a second source of state.</p>
+    <div class="chain" data-chain>
+      <div class="chain-rail" role="group" aria-label="The chain of facts" data-llms-ignore>
+        <button type="button" class="chain-stop is-active" data-station="worktree" aria-pressed="true"><span class="rail-capsule" aria-hidden="true"></span><span>Worktree</span></button>
+        <button type="button" class="chain-stop" data-station="manifest" aria-pressed="false"><span class="rail-capsule" aria-hidden="true"></span><span>Manifest</span></button>
+        <button type="button" class="chain-stop" data-station="service" aria-pressed="false"><span class="rail-capsule" aria-hidden="true"></span><span>Service</span></button>
+        <button type="button" class="chain-stop" data-station="run" aria-pressed="false"><span class="rail-capsule" aria-hidden="true"></span><span>Run</span></button>
+        <button type="button" class="chain-stop" data-station="facts" aria-pressed="false"><span class="rail-capsule" aria-hidden="true"></span><span>Runtime facts</span></button>
+      </div>
+      <div class="chain-panels">
+        <section class="chain-panel is-active" data-panel="worktree" aria-labelledby="chain-worktree">
+          <div class="chain-copy">
+            <h3 id="chain-worktree">Worktree</h3>
+            <p>Code observes the path and Git identity: repository, branch, dirty count. Everything else hangs from this root, and a run never belongs to a checkout it did not start in.</p>
+            <a class="text-link" href="{{guide}}many/">Read the chapter</a>
+          </div>
+          <div class="chain-fragment" data-ui>
+            <p class="fragment-label">oberth status --json</p>
+            <pre><code>{ "worktree": {
+  "root": "/work/hello-worktree",
+  "identity": "wt_0123456789ab"
+} }</code></pre>
+          </div>
+        </section>
+        <section class="chain-panel" data-panel="manifest" aria-labelledby="chain-manifest">
+          <div class="chain-copy">
+            <h3 id="chain-manifest">Manifest</h3>
+            <p>A person writes <code>oberth.yaml</code>; an agent may draft it, and only a person adopts it. The manifest declares services, ports, dependencies and health checks — nothing is guessed from a running process.</p>
+            <a class="text-link" href="{{guide}}declare/">Read the chapter</a>
+          </div>
+          <div class="chain-fragment" data-ui>
+            <p class="fragment-label">oberth.yaml · hello-worktree</p>
+            <pre><code>name: hello-worktree
+services:
+  - name: api
+    cmd: python3 -u api.py
+    port: auto
+    health: /health
+  - name: worker
+    cmd: python3 -u worker.py
+    depends_on: [api]</code></pre>
+          </div>
+        </section>
+        <section class="chain-panel" data-panel="service" aria-labelledby="chain-service">
+          <div class="chain-copy">
+            <h3 id="chain-service">Service</h3>
+            <p>One declaration says what to run, on which port, after which dependency and how to check it. <code>port: auto</code> gives every checkout its own address instead of a shared guess.</p>
+            <a class="text-link" href="{{guide}}up/">Read the chapter</a>
+          </div>
+          <div class="chain-fragment" data-ui>
+            <p class="fragment-label">oberth up --wait</p>
+            <pre><code>api      started   :21730   ready
+worker   started   no port</code></pre>
+          </div>
+        </section>
+        <section class="chain-panel" data-panel="run" aria-labelledby="chain-run">
+          <div class="chain-copy">
+            <h3 id="chain-run">Run</h3>
+            <p>The background process records one run: pid, start and end, exit code and log path. A portless worker is still a run — it simply has no listener.</p>
+            <a class="text-link" href="{{guide}}logs/">Read the chapter</a>
+          </div>
+          <div class="chain-fragment" data-ui>
+            <p class="fragment-label">oberth logs worker --once</p>
+            <pre><code>worker: API health=200
+worker: API health=200
+worker: API health=200</code></pre>
+          </div>
+        </section>
+        <section class="chain-panel" data-panel="facts" aria-labelledby="chain-facts">
+          <div class="chain-copy">
+            <h3 id="chain-facts">Runtime facts</h3>
+            <p>Code observes what is true now: alive, listening, healthy, and the last exit reason. These are four separate facts; one does not imply another, and an unreadable table is never written as “not running”.</p>
+            <a class="text-link" href="{{guide}}status/">Read the chapter</a>
+          </div>
+          <div class="chain-fragment" data-ui>
+            <p class="fragment-label">oberth status · hello-worktree</p>
+            <pre><code>api      running   :21730   health 200
+worker   running   no port</code></pre>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="home-loop" aria-labelledby="loop-title">
+  <div class="wrap">
+    <h2 id="loop-title">The core loop</h2>
+    <p class="home-section-lede">A person reads the table; an agent reads the same command with <code>--json</code>. One interface, two readers.</p>
+    <table class="loop-table">
+      <caption class="sr-only">What each core command replaces</caption>
+      <thead><tr><th scope="col">You want to</th><th scope="col">oberth</th><th scope="col">The shell answer it replaces</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Know what should run, and what does</th><td><code>oberth status</code></td><td>read <code>oberth.yaml</code>, then <code>ps</code>, <code>lsof</code> and <code>tail</code> against it</td></tr>
+        <tr><th scope="row">Start and wait for readiness</th><td><code>oberth up --wait</code></td><td><code>npm run dev &amp;</code>, sleep, then <code>curl</code> until it answers</td></tr>
+        <tr><th scope="row">Read a failure</th><td><code>oberth logs api --once</code></td><td>tail the right file and guess the exit code</td></tr>
+        <tr><th scope="row">Stop this checkout only</th><td><code>oberth down</code></td><td><code>kill</code> a pid assembled from <code>ps</code></td></tr>
+        <tr><th scope="row">Restart without changing the address</th><td><code>oberth restart --only api</code></td><td>find the port, kill, start, hope it is the same</td></tr>
+        <tr><th scope="row">Take over the last session</th><td><code>oberth workplace show</code></td><td>scrollback, shell history and memory</td></tr>
+        <tr><th scope="row">Find what a deleted checkout left</th><td><code>oberth worktrees --gone</code></td><td><code>ps aux | grep</code> and guess</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="home-contents" aria-labelledby="contents-title">
+  <div class="wrap">
+    <h2 id="contents-title">The book</h2>
+    <p class="home-section-lede">The core loop is four commands. The rest of the book widens it: declaration, parallel worktrees, handoff, JSON, boundaries.</p>
+    <div data-book-contents></div>
+  </div>
+</section>
+
+<section class="home-readers" aria-labelledby="readers-title">
+  <div class="wrap">
+    <h2 id="readers-title">Two readers, one interface</h2>
+    <div class="readers-grid">
+      <div class="reader">
+        <h3>If you are a person</h3>
+        <p>Install once, confirm the manifest once, then read the table. The same commands serve the whole loop.</p>
+        <pre data-ui><code>oberth status
+oberth up --wait
+oberth logs api --once</code></pre>
+        <a class="text-link" href="{{guide}}install/">Start with installation</a>
+      </div>
+      <div class="reader">
+        <h3>If you are a coding agent</h3>
+        <p>Open with <code>--brief</code>, start with <code>--wait</code>, and read the failure from the current run. Every read is one JSON value on stdout.</p>
+        <pre data-ui><code>oberth status --json --brief
+oberth up --wait --json
+oberth logs api --once --json --run current --first-error</code></pre>
+        <a class="text-link" href="{{guide}}json/">Read facts as JSON</a>
+      </div>
+    </div>
+    <p class="readers-note">Both readers use the same command. There is no second interface, no MCP server and no model in the core. <a href="{{root}}llms.txt">llms.txt</a> lists this book for machines.</p>
+  </div>
+</section>
+
+<section class="home-not" aria-labelledby="not-title">
+  <div class="wrap">
+    <h2 id="not-title">What this book is not</h2>
+    <div class="not-grid">
+      <p><strong>Not the contract.</strong> The exact CLI surface, JSON fields and manifest rules live in <a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md">docs/cli.md</a>. This book teaches the chain and points there.</p>
+      <p><strong>Not the product site.</strong> The <a href="{{root}}">homepage</a> shows the product; this is the long-form manual for people and agents who need to understand it.</p>
+      <p><strong>Not a framework tutorial.</strong> The examples use <a href="https://github.com/SheathedSharp/option-berth/tree/main/examples/hello-worktree">Hello Worktree</a> because it runs with Python 3 alone; the same chain applies to any stack.</p>
+    </div>
+  </div>
+</section>
+
+<section class="home-close" aria-labelledby="close-title">
+  <div class="wrap home-close-grid">
+    <div class="home-close-copy">
+      <h2 id="close-title">Start with one command.</h2>
+      <p>Install the engine, then read the first checkout. Nothing is written into your project until you adopt a manifest.</p>
+    </div>
+    <div class="close-panel" data-ui>
+      <p class="fragment-label">install · macOS or Linux</p>
+      <pre><code>curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh
+oberth version --json
+oberth doctor</code></pre>
+      <a class="text-link" href="{{guide}}install/">Install oberth</a>
+    </div>
+  </div>
+</section>

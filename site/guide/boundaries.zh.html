@@ -1,0 +1,64 @@
+<p class="chapter-intro">边界也是产品的一部分。这些是人和 agent 最先会问的问题，按产品的回答方式写。</p>
+
+<h2 id="questions">最先被问的问题</h2>
+<div class="faq-list">
+  <details class="faq-item" open>
+    <summary>它有图形界面吗？</summary>
+    <p>没有。<a href="https://github.com/SheathedSharp/option-berth-macos">macOS 客户端</a>是独立产品。它呈现同一份 CLI 事实，不增加 CLI 没有的能力；它不是第二个状态来源。</p>
+  </details>
+  <details class="faq-item">
+    <summary>它是整机端口表吗？</summary>
+    <p>不是。它只回答这个 worktree 声明的服务，不回答主机上的每个 socket。<code>machine:</code> 依赖只读观察，未过滤的流只是兼容视图。</p>
+  </details>
+  <details class="faq-item">
+    <summary>它会写我的 Git 或清单吗？</summary>
+    <p>Git 只读：不提交、不暂存、不切分支。<code>oberth.yaml</code> 只由人的 <code>oberth init adopt</code> 写入；agent 最多只能起草。</p>
+  </details>
+  <details class="faq-item">
+    <summary>“没有端口”等于“没在运行”吗？</summary>
+    <p>不等于。无端口 worker 通过运行记录观察。进程、监听、健康、退出是四种独立事实，一种推不出另一种。</p>
+  </details>
+  <details class="faq-item">
+    <summary>Windows 支持到什么程度？</summary>
+    <p>有原生构建、冒烟测试和一次 arm64 交叉构建。完整服务场景只在 macOS 与 Linux 验证；不从那些运行里推断 Windows 生命周期。</p>
+  </details>
+  <details class="faq-item">
+    <summary>需要模型账号或云端吗？</summary>
+    <p>不需要。引擎本地运行，没有内置模型推理，也没有云端同步。可选的模型评估（<code>oberth jev</code>）默认关闭，除非人主动启用，而且永远不进入控制路径。</p>
+  </details>
+  <details class="faq-item">
+    <summary>它会装 hooks、MCP server 或 agent skill 吗？</summary>
+    <p>不会。集成就是在你自己的脚本里调用 CLI。产品不装 hooks、不注册 MCP server、不写工具配置，也不安装<a href="https://github.com/SheathedSharp/option-berth-skill">coding agent skill</a>。</p>
+  </details>
+  <details class="faq-item">
+    <summary>能跟 Claude Code、Cursor、Codex、Conductor 一起用吗？</summary>
+    <p>能，在它们自己的 setup、run、cleanup 槽位或外层 wrapper 里调用。引擎不改它们的任何配置，配方是给你粘贴的文档。</p>
+  </details>
+  <details class="faq-item">
+    <summary>它会删掉什么？</summary>
+    <p>它停止服务、报告身份。它从不删除数据库、数据目录或账本行；那是人的决定。卸载是独立脚本，清空 <code>~/.option-berth</code> 需要显式参数。</p>
+  </details>
+</div>
+
+<h2 id="contract">按主题分组的契约</h2>
+<p>这本指南讲事实链和推理。确切的表面住在仓库的契约文档里，每条事实只有一个家。</p>
+<table class="chapter-table">
+  <caption class="sr-only">每份契约住在哪里</caption>
+  <thead><tr><th scope="col">主题</th><th scope="col">文档</th><th scope="col">它拥有什么</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">产品</th><td><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/product.md">docs/product.md</a></td><td>需求、对象模型、写边界，以及产品明确不做什么。</td></tr>
+    <tr><th scope="row">CLI</th><td><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md">docs/cli.md</a></td><td>命令表面、JSON 字段、错误码和清单引用。</td></tr>
+    <tr><th scope="row">安装</th><td><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/install.md">docs/install.md</a></td><td>每个渠道、升级、卸载和平台边界。</td></tr>
+    <tr><th scope="row">接入</th><td><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/integrations.md">docs/integrations.md</a></td><td>工具配方、AGENTS.md 段落，以及每个槽位的坑。</td></tr>
+    <tr><th scope="row">工作记录</th><td><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/workplace.md">docs/workplace.md</a></td><td>workplace 命令、记录块字段和它们的边界。</td></tr>
+    <tr><th scope="row">架构</th><td><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/agent/architecture.md">docs/agent/architecture.md</a></td><td>实现边界，以及代码如何强制那条事实链。</td></tr>
+  </tbody>
+</table>
+
+<h2 id="machines">机器入口</h2>
+<ul>
+  <li><a href="{{root}}llms.txt"><code>llms.txt</code></a>——指南与契约的精选索引，每条链接一行说明。</li>
+  <li><a href="{{root}}llms-full.txt"><code>llms-full.txt</code></a>——全部英文章节合在一个纯文本文件里。</li>
+  <li><a href="{{root}}sitemap.xml"><code>sitemap.xml</code></a>——两种语言的每个页面。</li>
+</ul>
+<p>HTML 页面是源；机器文件在构建时从同一份内容生成，所以它们不会悄悄和书脱节。</p>
