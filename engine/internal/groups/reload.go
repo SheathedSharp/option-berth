@@ -6,8 +6,8 @@ import "sort"
 // Attribution refreshes directly in its shared pass, avoiding a read/check
 // followed by a second full-index reload. This query remains useful to callers.
 func (x *Index) Stale() bool {
-	for dir, previous := range x.files {
-		if !sameManifest(previous, selectManifest(dir)) {
+	for dir, recorded := range x.files {
+		if !sameManifest(recorded, selectManifest(dir)) {
 			return true
 		}
 	}
@@ -16,51 +16,54 @@ func (x *Index) Stale() bool {
 
 // Known lists every config path the index has an opinion about, valid or not.
 func (x *Index) Known() []string {
-	seen := map[string]bool{}
-	out := []string{}
+	known := map[string]bool{}
+	paths := []string{}
+	add := func(path string) {
+		if path == "" || known[path] {
+			return
+		}
+		known[path] = true
+		paths = append(paths, path)
+	}
 	for _, cfg := range x.configs {
-		if cfg != nil && !seen[cfg.Path] {
-			seen[cfg.Path] = true
-			out = append(out, cfg.Path)
+		if cfg != nil {
+			add(cfg.Path)
 		}
 	}
 	for path := range x.invalid {
-		if !seen[path] {
-			seen[path] = true
-			out = append(out, path)
-		}
+		add(path)
 	}
-	sort.Strings(out)
-	return out
+	sort.Strings(paths)
+	return paths
 }
 
-// Named returns the valid config whose services are published as this group
-// (see GroupOf). The deepest directory wins, matching Configs' ordering, so a
-// nested project shadows the repository it sits in. Matching the group rather
-// than the file's `name:` is what keeps a linked worktree's copy of a
-// committed file from answering for the main checkout: the copy is
-// `<project>@<worktree>`, and only the main checkout's file is `<project>`.
+// Named returns the valid config whose services this group publishes (see
+// GroupOf). The deepest directory wins, as in Configs, so a nested project
+// shadows the repository around it. Matching the group rather than the file's
+// `name:` is what stops a linked worktree's committed copy from answering for
+// the main checkout: the copy is `<project>@<worktree>`, and only the main
+// checkout's file is `<project>`.
 func (x *Index) Named(name string) (*Config, bool) {
-	for _, cfg := range x.Configs() {
-		if x.GroupOf(cfg) == name {
-			return cfg, true
+	for _, candidate := range x.Configs() {
+		if x.GroupOf(candidate) == name {
+			return candidate, true
 		}
 	}
 	return nil, false
 }
 
-// ByPath returns the valid config read from this file. The lookup resolves
-// symlinks on both sides, because the index stores the resolved path the
-// scanner walked to while a client sends whatever the user typed — on macOS
-// that is /var/… against /private/var/….
+// ByPath returns the valid config read from this file. Symlinks are resolved
+// on both sides: the index stores the resolved path the scanner walked, while
+// a client sends whatever the user typed — on macOS /var/… against
+// /private/var/….
 func (x *Index) ByPath(path string) (*Config, bool) {
-	want := Canonical(path)
-	if want == "" {
+	resolved := Canonical(path)
+	if resolved == "" {
 		return nil, false
 	}
-	for _, cfg := range x.configs {
-		if cfg != nil && cfg.Path == want {
-			return cfg, true
+	for _, candidate := range x.configs {
+		if candidate != nil && candidate.Path == resolved {
+			return candidate, true
 		}
 	}
 	return nil, false
@@ -101,6 +104,8 @@ func (x *Index) Reload(roots []string) (int, []InvalidConfig) {
 }
 
 // LoadFile re-reads one config into the index, replacing whatever was there.
-// `groups.config.set` calls it after a write so the very next delta carries the
-// edited services.
-func (x *Index) LoadFile(path string) error { return x.AddFile(path) }
+// `groups.config.set` calls it after a write, so the next delta already carries
+// the edited services.
+func (x *Index) LoadFile(path string) error {
+	return x.AddFile(path)
+}

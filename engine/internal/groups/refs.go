@@ -4,8 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -20,13 +21,13 @@ import (
 // database name, a data directory) without sharing anything.
 //
 // Only those five shapes are references. Anything else between ${ and } —
-// ${HOME}, ${FOO:-x} — is left exactly as written, because a `cmd` has never
-// been expanded before and one that hands such a string to `sh -c` must keep
-// working.
-var refPattern = regexp.MustCompile(`\$\{([^{}$]*)\}`)
-
-// envKey is what an `env:` key may be: a portable variable name.
-var envKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+// ${HOME}, ${FOO:-x} — is returned as written: a `cmd` was never expanded
+// before, and one that hands such a string to `sh -c` must keep working.
+var (
+	refPattern = regexp.MustCompile(`\$\{([^{}$]*)\}`)
+	// envKey is the shape of a portable variable name.
+	envKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+)
 
 const (
 	refPort     = "port"
@@ -43,13 +44,13 @@ const (
 // "" for the service's own port; ok is false for anything that is not one —
 // including ${worktree}, which names no service.
 func parseRef(inner string) (service, field string, ok bool) {
-	switch inner {
-	case refPort, refURL:
+	if inner == refPort || inner == refURL {
 		return "", inner, true
 	}
-	for _, f := range []string{refPort, refURL} {
-		if svc, found := strings.CutSuffix(inner, "."+f); found && svc != "" {
-			return svc, f, true
+	for _, candidate := range []string{refPort, refURL} {
+		service, found := strings.CutSuffix(inner, "."+candidate)
+		if found && service != "" {
+			return service, candidate, true
 		}
 	}
 	return "", "", false
@@ -141,14 +142,14 @@ func Expand(text string, v Values) string {
 		if svc == "" {
 			svc = v.Self
 		}
-		port, ok := v.Ports[svc]
-		if !ok || port == 0 {
+		port, known := v.Ports[svc]
+		if !known || port < 1 {
 			return m
 		}
-		if field == refURL {
-			return URL(port)
+		if field != refURL {
+			return strconv.Itoa(port)
 		}
-		return strconv.Itoa(port)
+		return URL(port)
 	})
 }
 
@@ -156,22 +157,23 @@ func Expand(text string, v Values) string {
 // repeats; a bare ${port} or ${url} names self. ${worktree} names no service
 // and is never listed.
 func Refs(text, self string) []string {
-	var out []string
+	names := []string{}
 	seen := map[string]bool{}
-	for _, m := range refPattern.FindAllStringSubmatch(text, -1) {
-		svc, _, ok := parseRef(m[1])
-		if !ok {
+	for _, match := range refPattern.FindAllStringSubmatch(text, -1) {
+		name, _, isRef := parseRef(match[1])
+		if !isRef {
 			continue
 		}
-		if svc == "" {
-			svc = self
+		if name == "" {
+			name = self
 		}
-		if !seen[svc] {
-			seen[svc] = true
-			out = append(out, svc)
+		if seen[name] {
+			continue
 		}
+		seen[name] = true
+		names = append(names, name)
 	}
-	return out
+	return names
 }
 
 // MatchesExpanded reports whether actual could be pattern with its references
@@ -179,33 +181,33 @@ func Refs(text, self string) []string {
 // reference stands for any non-empty text. `oberth start -- uvicorn --port
 // 8123` matches a service whose cmd says `--port ${port}` this way.
 func MatchesExpanded(pattern, actual string) bool {
-	locs := refPattern.FindAllStringSubmatchIndex(pattern, -1)
-	if len(locs) == 0 {
+	matches := refPattern.FindAllStringSubmatchIndex(pattern, -1)
+	if len(matches) == 0 {
 		return pattern == actual
 	}
-	var b strings.Builder
-	b.WriteString("^")
-	last := 0
-	for _, loc := range locs {
-		b.WriteString(regexp.QuoteMeta(pattern[last:loc[0]]))
-		if isReference(pattern[loc[2]:loc[3]]) {
-			b.WriteString(".+")
+	var expression strings.Builder
+	expression.WriteString("^")
+	end := 0
+	for _, match := range matches {
+		expression.WriteString(regexp.QuoteMeta(pattern[end:match[0]]))
+		if isReference(pattern[match[2]:match[3]]) {
+			expression.WriteString(".+")
 		} else {
-			b.WriteString(regexp.QuoteMeta(pattern[loc[0]:loc[1]]))
+			expression.WriteString(regexp.QuoteMeta(pattern[match[0]:match[1]]))
 		}
-		last = loc[1]
+		end = match[1]
 	}
-	b.WriteString(regexp.QuoteMeta(pattern[last:]))
-	b.WriteString("$")
-	re, err := regexp.Compile(b.String())
-	return err == nil && re.MatchString(actual)
+	expression.WriteString(regexp.QuoteMeta(pattern[end:]))
+	expression.WriteString("$")
+	compiled, err := regexp.Compile(expression.String())
+	return err == nil && compiled.MatchString(actual)
 }
 
 // ServiceNamed returns the service with this name.
 func (c *Config) ServiceNamed(name string) (Service, bool) {
-	for _, s := range c.Services {
-		if s.Name == name {
-			return s, true
+	for i := range c.Services {
+		if c.Services[i].Name == name {
+			return c.Services[i], true
 		}
 	}
 	return Service{}, false
@@ -218,49 +220,49 @@ func (c *Config) ServiceNamed(name string) (Service, bool) {
 // Workspace references are read-only addresses resolved when a service starts,
 // so a health command — which is re-expanded by the scanner without that
 // resolution — may not name one.
-func (c *Config) refProblems(s Service, where string) []string {
-	var out []string
-	check := func(field, text string) {
-		for _, m := range refPattern.FindAllStringSubmatch(text, -1) {
-			svc, _, ok := parseRef(m[1])
-			if !ok {
+func (c *Config) refProblems(service Service, where string) []string {
+	var problems []string
+	inspect := func(field, text string) {
+		for _, match := range refPattern.FindAllStringSubmatch(text, -1) {
+			name, _, isRef := parseRef(match[1])
+			if !isRef {
 				continue
 			}
-			target, found := s, true
-			if svc != "" {
-				target, found = c.ServiceNamed(svc)
+			resolved, found := service, true
+			if name != "" {
+				resolved, found = c.ServiceNamed(name)
 			}
 			if found {
-				if !target.HasPort() {
-					out = append(out, fmt.Sprintf("%s: %s %s needs a port, and %s declares none", where, field, m[0], target.Name))
+				if !resolved.HasPort() {
+					problems = append(problems, fmt.Sprintf(
+						"%s: %s %s needs a port, and %s declares none",
+						where, field, match[0], resolved.Name))
 				}
 				continue
 			}
-			if svc == "" {
+			if name == "" {
 				continue
 			}
-			if _, ok := c.MachineNamed(svc); ok {
+			if _, ok := c.MachineNamed(name); ok {
 				continue
 			}
-			if _, ok := c.WorkspaceNamed(svc); ok {
+			if _, ok := c.WorkspaceNamed(name); ok {
 				if field == "health" {
-					out = append(out, fmt.Sprintf("%s: health %s names a workspace reference; workspace addresses are expanded in prepare, cmd and env only", where, m[0]))
+					problems = append(problems, fmt.Sprintf(
+						"%s: health %s names a workspace reference; workspace addresses are expanded in prepare, cmd and env only",
+						where, match[0]))
 				}
 				continue
 			}
-			out = append(out, fmt.Sprintf("%s: %s %s names no service %q", where, field, m[0], svc))
+			problems = append(problems, fmt.Sprintf(
+				"%s: %s %s names no service %q", where, field, match[0], name))
 		}
 	}
-	check("prepare", s.Prepare)
-	check("cmd", s.Cmd)
-	check("health", s.Health)
-	keys := make([]string, 0, len(s.Env))
-	for k := range s.Env {
-		keys = append(keys, k)
+	inspect("prepare", service.Prepare)
+	inspect("cmd", service.Cmd)
+	inspect("health", service.Health)
+	for _, key := range slices.Sorted(maps.Keys(service.Env)) {
+		inspect("env "+key, service.Env[key])
 	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		check("env "+k, s.Env[k])
-	}
-	return out
+	return problems
 }
