@@ -17,7 +17,7 @@ import (
 )
 
 // These tests fork real processes next to the rest of the suite, so every wait
-// is a poll with one generous bound. A deadline tight enough to feel fast is
+// is a poll against one generous bound. A deadline tight enough to feel fast is
 // only a bet that the machine is idle: on a loaded runner a fork, an exec and a
 // first write can take seconds. A correct run reaches the condition long before
 // the deadline and never spends it, so the bound is paid only by a real failure.
@@ -113,6 +113,36 @@ func awaitPID(t *testing.T, path string) int {
 	return pid
 }
 
+// mustSpawn starts req or ends the test. Every caller here treats a start
+// failure as fatal, and the error text is the request's own, so the helper does
+// not add context that would only repeat it.
+func mustSpawn(t *testing.T, req Request) *Handle {
+	t.Helper()
+	handle, err := Spawn(context.Background(), req)
+	if err != nil {
+		t.Fatalf("spawn %q: %v", req.Argv, err)
+	}
+	return handle
+}
+
+// mustWait reaps handle and returns its exit code.
+func mustWait(t *testing.T, handle *Handle) int {
+	t.Helper()
+	code, err := handle.Wait()
+	if err != nil {
+		t.Fatalf("waiting for the child: %v", err)
+	}
+	return code
+}
+
+// mustWrite puts content at path with mode, or ends the test.
+func mustWrite(t *testing.T, path, content string, mode os.FileMode) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), mode); err != nil {
+		t.Fatalf("writing %s: %v", path, err)
+	}
+}
+
 // announcePID is the shell fragment a helper uses to publish its own pid:
 // write to a temporary name, then rename, so a reader sees either no file or the
 // complete pid and never the empty file a plain `>` leaves between open and
@@ -128,71 +158,66 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+// TestSpawnInjectsTheRunEnvironment is the child-side half of "every run is
+// attributable": the BERTH_* variables are visible inside the child and carry
+// this run's identity, not whatever the daemon was started with.
 func TestSpawnInjectsTheRunEnvironment(t *testing.T) {
 	var out bytes.Buffer
-	handle, err := Spawn(context.Background(), Request{
-		Argv:     []string{"sh", "-c", `echo "$BERTH_GROUP/$BERTH_NAME/$BERTH_RUN_ID/$BERTH_PORT"`},
-		Cwd:      t.TempDir(),
-		Group:    "itest",
-		Name:     "web",
-		PortHint: 8123,
-		ID:       "run-1",
-		Stdout:   &out,
-		Stderr:   &out,
+	handle := mustSpawn(t, Request{
+		Argv: []string{"sh", "-c", `echo "$BERTH_GROUP/$BERTH_NAME/$BERTH_RUN_ID/$BERTH_PORT"`},
+		Cwd:  t.TempDir(),
+		// A run of the fixture project "itest", service "web", on port 8123.
+		Group: "itest", Name: "web", PortHint: 8123,
+		ID:     "run-1",
+		Stdout: &out, Stderr: &out,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	code, err := handle.Wait()
-	if err != nil || code != 0 {
-		t.Fatalf("child exited %d: %v (%s)", code, err, out.String())
+	if code := mustWait(t, handle); code != 0 {
+		t.Fatalf("child exited %d (%s)", code, out.String())
 	}
 	if got := strings.TrimSpace(out.String()); got != "itest/web/run-1/8123" {
-		t.Fatalf("child environment = %q", got)
+		t.Fatalf("child environment = %q, want itest/web/run-1/8123", got)
 	}
 }
 
+// TestSpawnPropagatesTheExitCode: `oberth start` exits with the command's own
+// code, so a script wrapping it can branch on failure.
 func TestSpawnPropagatesTheExitCode(t *testing.T) {
-	handle, err := Spawn(context.Background(), Request{
+	handle := mustSpawn(t, Request{
 		Argv:   []string{"sh", "-c", "exit 7"},
 		Cwd:    t.TempDir(),
 		Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	code, err := handle.Wait()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if code != 7 {
+	if code := mustWait(t, handle); code != 7 {
 		t.Fatalf("exit code = %d, want 7", code)
 	}
 }
 
-// TestForwardedInterruptKillsTheWholeProcessGroup is the acceptance behaviour
-// of `oberth start`: Ctrl+C on the starter takes down the command *and* the
+// TestForwardedInterruptKillsTheWholeProcessGroup is the acceptance behaviour of
+// `oberth start`: Ctrl+C on the starter takes down the command *and* the
 // listener it spawned, because the child runs in its own process group.
+// It is also the test that catches a forwarder installed too late: the child
+// then starts with SIGINT ignored, exec keeps it ignored, and neither process
+// ever sees the interrupt.
 func TestForwardedInterruptKillsTheWholeProcessGroup(t *testing.T) {
 	dir := t.TempDir()
+	// The grandchild's pid file, and the script that starts it.
 	pidFile := filepath.Join(dir, "pids")
 	script := filepath.Join(dir, "dev.sh")
 	// A dev.sh whose real work happens in a grandchild, the shape of every
 	// `npm run dev`: killing the child alone would orphan the listener. The
 	// grandchild publishes its pid before doing anything else, so the wait is
 	// bounded by one fork rather than by whatever the helper does next.
-	body := "#!/bin/sh\n" +
-		"sh -c '" + announcePID + "; exec sleep 300' " + shellQuote(pidFile) + "\n"
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	mustWrite(t, script,
+		"#!/bin/sh\n"+
+			"sh -c '"+announcePID+"; exec sleep 300' "+shellQuote(pidFile)+"\n",
+		0o755)
 
 	// A file rather than a pipe: a surviving grandchild would hold a pipe open
 	// and hide the very failure this test looks for.
 	logPath := filepath.Join(dir, "out.log")
 	out, err := os.Create(logPath)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("creating the child's log: %v", err)
 	}
 	defer out.Close()
 
@@ -202,13 +227,10 @@ func TestForwardedInterruptKillsTheWholeProcessGroup(t *testing.T) {
 	forwarder := CatchSignals()
 	defer forwarder.Stop()
 
-	handle, err := Spawn(context.Background(), Request{
+	handle := mustSpawn(t, Request{
 		Argv: []string{script}, Cwd: dir, Group: "itest", Name: "dev.sh",
 		Stdout: out, Stderr: out,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	forwarder.Forward(handle)
 	// Only on failure: a passing run has already reaped both processes, and
 	// signalling a reaped pid risks hitting whatever the OS recycled it into.
@@ -223,13 +245,14 @@ func TestForwardedInterruptKillsTheWholeProcessGroup(t *testing.T) {
 		t.Fatalf("the grandchild (pid %d) never started", grandchild)
 	}
 	t.Cleanup(func() {
-		if t.Failed() {
-			_ = syscall.Kill(grandchild, syscall.SIGKILL)
+		if !t.Failed() {
+			return
 		}
+		_ = syscall.Kill(grandchild, syscall.SIGKILL)
 	})
 
 	if err := syscall.Kill(os.Getpid(), syscall.SIGINT); err != nil {
-		t.Fatal(err)
+		t.Fatalf("sending SIGINT to the test process: %v", err)
 	}
 
 	exited := make(chan int, 1)
@@ -247,51 +270,75 @@ func TestForwardedInterruptKillsTheWholeProcessGroup(t *testing.T) {
 	awaitExit(t, "the grandchild", grandchild)
 }
 
-// TestDetachedRunSurvivesItsStarter re-execs this test binary as the starter, so
-// the child really is orphaned when the process that spawned it goes away.
-func TestDetachedRunSurvivesItsStarter(t *testing.T) {
-	dir := t.TempDir()
-	logDir := filepath.Join(dir, "logs")
-	pidFile := filepath.Join(dir, "pid")
-	// The detached child's working directory has to outlive the starter, so it
-	// is this test's temp dir and not one the starter cleans up on its way out.
-	// A child left standing in a deleted directory is not merely untidy: dash
-	// greets it with `sh: 0: getcwd() failed` on the run's own log, ahead of
-	// anything the command prints.
-	childCwd := filepath.Join(dir, "cwd")
-	if err := os.MkdirAll(childCwd, 0o755); err != nil {
-		t.Fatal(err)
-	}
+// fixture is what the starter child is told about its run: where its log goes,
+// where to publish its pid, and the directory it works in.
+type fixture struct {
+	logDir   string
+	pidFile  string
+	childCwd string
+}
 
+// newFixture lays out one detached-run fixture under a temp directory.
+func newFixture(t *testing.T) fixture {
+	t.Helper()
+	dir := t.TempDir()
+	layout := fixture{
+		logDir:   filepath.Join(dir, "logs"),
+		pidFile:  filepath.Join(dir, "pid"),
+		childCwd: filepath.Join(dir, "cwd"),
+	}
+	// The child's working directory has to outlive the starter, so it is this
+	// test's temp dir and not one the starter removes on its way out. A child
+	// left standing in a deleted directory is not merely untidy: dash greets it
+	// with `sh: 0: getcwd() failed`, printed onto the run's own log ahead of
+	// anything the command says.
+	if err := os.MkdirAll(layout.childCwd, 0o755); err != nil {
+		t.Fatalf("creating the child's working directory: %v", err)
+	}
+	return layout
+}
+
+// startDetachedChild re-execs this test binary as the starter. Only a real
+// second process can be killed out from under its child, which is the whole
+// point of the test this serves.
+func startDetachedChild(t *testing.T, layout fixture) {
+	t.Helper()
 	starter := exec.Command(os.Args[0], "-test.run=TestSpawnDetachedHelper", "-test.v")
 	starter.Env = append(os.Environ(),
 		"BERTH_SPAWN_HELPER=1",
-		"BERTH_SPAWN_LOGDIR="+logDir,
-		"BERTH_SPAWN_PIDFILE="+pidFile,
-		"BERTH_SPAWN_CWD="+childCwd,
+		"BERTH_SPAWN_LOGDIR="+layout.logDir,
+		"BERTH_SPAWN_PIDFILE="+layout.pidFile,
+		"BERTH_SPAWN_CWD="+layout.childCwd,
 	)
 	if out, err := starter.CombinedOutput(); err != nil {
-		t.Fatalf("starter failed: %v: %s", err, out)
+		t.Fatalf("the starter failed: %v: %s", err, out)
 	}
+}
+
+// TestDetachedRunSurvivesItsStarter is the promise a detached run makes: the
+// daemon that started it can exit and the run keeps serving.
+func TestDetachedRunSurvivesItsStarter(t *testing.T) {
+	layout := newFixture(t)
+	startDetachedChild(t, layout)
 
 	// The starter publishes the pid only once the child's output is on disk, so
 	// by here the log is readable — but it is still polled, because the starter
 	// is not the only writer this test does not synchronise with.
-	pid := awaitPID(t, pidFile)
+	pid := awaitPID(t, layout.pidFile)
 	t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
 
 	if !isRunning(pid) {
 		t.Fatalf("the detached run (pid %d) died with its starter", pid)
 	}
-	readWhenContaining(t, filepath.Join(logDir, "itest", "sleeper.log"), detachedMarker)
+	readWhenContaining(t, filepath.Join(layout.logDir, "itest", "sleeper.log"), detachedMarker)
 }
 
-// detachedMarker is the line the detached run prints, and the readiness signal
-// the starter waits for before it publishes the run's pid.
+// detachedMarker is what the detached run prints, and doubles as the readiness
+// signal: the starter publishes the pid only after this line is in the log.
 const detachedMarker = "detached-hello"
 
-// TestSpawnDetachedHelper is not a test: it is the starter process for
-// TestDetachedRunSurvivesItsStarter, and does nothing in a normal run.
+// TestSpawnDetachedHelper is not a test. It is the starter process
+// TestDetachedRunSurvivesItsStarter re-execs, and skips in a normal run.
 func TestSpawnDetachedHelper(t *testing.T) {
 	if os.Getenv("BERTH_SPAWN_HELPER") == "" {
 		t.Skip("helper process for TestDetachedRunSurvivesItsStarter")
@@ -306,16 +353,13 @@ func TestSpawnDetachedHelper(t *testing.T) {
 	t.Setenv("BERTH_LOG_DIR", logDir)
 	// `printf` rather than `echo`, and a marker with no escapes in it, so the
 	// line is byte-for-byte the same under every /bin/sh.
-	handle, err := Spawn(context.Background(), Request{
+	handle := mustSpawn(t, Request{
 		Argv:   []string{"sh", "-c", fmt.Sprintf("printf '%%s\n' %s; exec sleep 300", shellQuote(detachedMarker))},
 		Cwd:    os.Getenv("BERTH_SPAWN_CWD"),
 		Group:  "itest",
 		Name:   "sleeper",
 		Detach: true,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	// Readiness is the output itself: the pid is published only once the marker
 	// has reached the log, so the parent never races the child's first write.
 	// Waiting on the log also flushes out the shell's own start-up noise, which
@@ -329,17 +373,15 @@ func TestSpawnDetachedHelper(t *testing.T) {
 func publishPID(t *testing.T, path string, pid int) {
 	t.Helper()
 	temporary := path + ".tmp"
-	if err := os.WriteFile(temporary, []byte(strconv.Itoa(pid)), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	mustWrite(t, temporary, strconv.Itoa(pid), 0o644)
 	if err := os.Rename(temporary, path); err != nil {
-		t.Fatal(err)
+		t.Fatalf("publishing the pid file: %v", err)
 	}
 }
 
 // TestLogRotation pins the policy end to end: the path a group and name produce,
-// the size that triggers a rotation, the generations that survive it, and the
-// one that is dropped.
+// the size that triggers a rotation, the generations that survive it, and the one
+// that is dropped.
 func TestLogRotation(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("BERTH_LOG_DIR", dir)
@@ -354,10 +396,11 @@ func TestLogRotation(t *testing.T) {
 		t.Helper()
 		file, err := OpenLog(path)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("opening the log: %v", err)
 		}
 		if _, err := file.Write(bytes.Repeat([]byte{fillByte}, int(LogMaxBytes)+1)); err != nil {
-			t.Fatal(err)
+			file.Close()
+			t.Fatalf("writing past the limit: %v", err)
 		}
 		file.Close()
 	}
