@@ -275,23 +275,33 @@ func (s *Server) Serve(ctx context.Context) error {
 // producer can start.
 func (s *Server) waitProducers() { s.producers.Wait() }
 
-// accept is the accept loop. A failure after Shutdown has been requested is
-// the listener closing under us, not an error.
+// accept is the accept loop.
+//
+// A failure here is only a real failure when the listener was not supposed to
+// be closing. Shutdown closing it, or any net.ErrClosed from elsewhere, is the
+// normal way this loop ends.
 func (s *Server) accept(ctx context.Context) error {
 	for {
-		nc, err := s.ln.Accept()
-		if err != nil {
-			select {
-			case <-s.stopping:
-				return nil
-			default:
-			}
-			if errors.Is(err, net.ErrClosed) {
-				return nil
-			}
-			return fmt.Errorf("accept: %w", err)
+		conn, err := s.ln.Accept()
+		if err == nil {
+			s.startConn(ctx, conn)
+			continue
 		}
-		s.startConn(ctx, nc)
+		if s.closing() || errors.Is(err, net.ErrClosed) {
+			return nil
+		}
+		return fmt.Errorf("accept: %w", err)
+	}
+}
+
+// closing reports whether Shutdown has begun, which is what makes the listener
+// closing an expected event instead of a failure.
+func (s *Server) closing() bool {
+	select {
+	case <-s.stopping:
+		return true
+	default:
+		return false
 	}
 }
 
