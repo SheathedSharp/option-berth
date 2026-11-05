@@ -1,0 +1,37 @@
+<p class="chapter-intro">A worktree keeps work records: the commands the engine ran, the rounds handed to an agent, and how each one ended. It is what the next session reads to take over.</p>
+
+<h2 id="record">The record</h2>
+<p>One worktree can hold several workplaces, each keeping its entries in order. A workplace is a named stream of work; the current one receives new entries, and <code>list</code> marks it with <code>●</code>.</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">work records under this checkout</figcaption>
+  <pre><code>oberth workplace list
+oberth workplace new api-refactor
+oberth workplace show --limit 20</code></pre>
+</figure>
+<p>Selectors match in order: exact name, full id, id prefix, name prefix; several matches return <code>ambiguous</code> rather than picking one. <code>--worktree</code> defaults to the current directory and resolves to the checkout root, so different spellings of one checkout are the same record.</p>
+
+<h2 id="automatic">What gets recorded</h2>
+<ul>
+  <li><code>oberth start</code> writes the run into the current workplace. A detached run is closed by the daemon when it records that run's exit.</li>
+  <li><code>oberth agent stream</code> writes one entry per round: <code>turn.started</code> opens it, and <code>turn.completed</code> closes it with the outcome the provider reported.</li>
+  <li><code>oberth workplace record</code> writes what the engine cannot see: an agent's own attempts, the client's interactive shell, a native agent. Reporting the same <code>--id</code> again updates the entry, so a piece of work's start and end may arrive in any order.</li>
+</ul>
+
+<h2 id="ends">How an entry ends</h2>
+<p>An entry is <code>running</code>, <code>completed</code>, <code>failed</code> or <code>interrupted</code>. An entry with no observed end stays <code>running</code> and is never treated as success. A run stopped by <code>oberth</code> or by the user is <code>interrupted</code>, whatever signal exit code it left behind. Each workplace keeps at most 500 entries and drops the oldest beyond that.</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">a recorded block</figcaption>
+  <pre><code>{"id":"…","workplace":"…","seq":1,"kind":"shell","source":"engine",
+ "input":"npm test","status":"completed","run_id":"…","pid":1234,
+ "log_path":"…","exit_code":0,"started_at":"…","ended_at":"…"}</code></pre>
+</figure>
+
+<h2 id="not">It is not runtime truth</h2>
+<aside class="note">
+  <ul>
+    <li><code>status</code> never reads it to decide whether a service is running.</li>
+    <li><code>show</code> reads back what happened; it does not call the processes of that time back.</li>
+    <li>Without a daemon, reads still open the ledger read-only; writes need the daemon. <code>up</code> and <code>down</code> write no work record — that is a declared lifecycle, not a temporary work entry.</li>
+    <li>A record is evidence of work, not a session restore. It never pretends an unobserved end was a success.</li>
+  </ul>
+</aside>

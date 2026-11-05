@@ -7,7 +7,7 @@
 <p align="center"><strong>服务起没起来，不用再猜。</strong><br>Git worktree 的运行事实层：一份 checkout 该跑什么、是不是真在跑、没跑为什么。</p>
 <p align="center"><a href="README.md">English</a> · 简体中文</p>
 
-<p align="center"><a href="https://oberth.zayju.de/">产品官网</a> · <a href="docs/product.zh.md">产品定义</a> · <a href="docs/cli.zh.md">CLI</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">最新版本</a></p>
+<p align="center"><a href="https://oberth.zayju.de/">产品官网</a> · <a href="https://oberth.zayju.de/guide/">指南</a> · <a href="docs/product.zh.md">产品定义</a> · <a href="docs/cli.zh.md">CLI</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">最新版本</a> · <a href="https://oberth.zayju.de/llms.txt">llms.txt</a></p>
 
 ## 为什么需要 option-berth
 

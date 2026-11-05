@@ -1,0 +1,34 @@
+<p class="chapter-intro"><code>down</code> stops the services this worktree's manifest declares. It never crosses into another checkout, and it returns a <code>port: auto</code> reservation only after the stop is confirmed.</p>
+
+<h2 id="stop">The normal stop</h2>
+<p>With no argument, <code>down</code> uses the nearest manifest. It stops the project's services and returns the <code>port: auto</code> reservations once the action confirms they can be released. <code>--force</code> uses a forced signal directly; it does not skip the run-identity or reservation-release gates.</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">stop this project</figcaption>
+  <pre><code>oberth down</code></pre>
+</figure>
+
+<h2 id="gone">When the checkout is gone</h2>
+<p><code>--worktree PATH</code> stops by checkout root path, and <code>--identity wt_…</code> stops by identity. Neither can be combined with a project name or a manifest path. <code>worktrees --gone</code> lists the identities whose checkout no longer exists, so you can find the services and data a deleted checkout left behind.</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">stop after the directory is gone</figcaption>
+  <pre><code>oberth worktrees --gone
+oberth down --identity wt_0123456789ab</code></pre>
+</figure>
+<p>An identity the daemon has never seen returns <code>not_found</code>; it does not guess a group. When the target already has no runs or reservations, an explicit identity is still a successful empty stop.</p>
+
+<h2 id="ambiguous">When the target is ambiguous</h2>
+<p>Two checkouts can really take the same group name, for example two same-named directories under different parents. Their groups are already merged, so a group-scoped stop would hit both; <code>down</code> returns <code>ambiguous</code> instead of picking one for the caller. Name the process by port or pid with <code>kill</code>.</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">name the process instead</figcaption>
+  <pre><code>oberth kill 21730</code></pre>
+</figure>
+
+<h2 id="never">What down never touches</h2>
+<aside class="note">
+  <ul>
+    <li><code>machine:</code> dependencies. Their listener state is read-only; <code>down</code> does not stop them.</li>
+    <li>Another worktree's services. A stop by project name is group-scoped, and the other checkout's group is a different name.</li>
+    <li>Your data. The engine reports identities and stops services; deleting a database or data directory is a person's decision.</li>
+    <li>Signals already sent are not undone by an error. An incomplete stop, a failed observation or a refreshed reservation keeps the reservation and returns the error.</li>
+  </ul>
+</aside>

@@ -1,0 +1,64 @@
+<p class="chapter-intro">The boundaries are part of the product. These are the questions people and agents ask first, answered the way the product answers them.</p>
+
+<h2 id="questions">Questions people ask first</h2>
+<div class="faq-list">
+  <details class="faq-item" open>
+    <summary>Does it have a graphical interface?</summary>
+    <p>No. The <a href="https://github.com/SheathedSharp/option-berth-macos">macOS client</a> is a separate product. It presents the same CLI facts and grows no capability the CLI lacks; it is not a second source of state.</p>
+  </details>
+  <details class="faq-item">
+    <summary>Is it a machine-wide port radar?</summary>
+    <p>No. It answers for this worktree's declared services, not for every socket on the host. <code>machine:</code> dependencies are observed read-only, and an unfiltered stream is only a compatibility view.</p>
+  </details>
+  <details class="faq-item">
+    <summary>Does it write my Git or my manifest?</summary>
+    <p>Git is read-only: no commit, no stage, no branch switch. <code>oberth.yaml</code> is written only by a person's <code>oberth init adopt</code>; an agent may draft it and nothing more.</p>
+  </details>
+  <details class="faq-item">
+    <summary>Is “no port” the same as “not running”?</summary>
+    <p>No. A portless worker is observed through its run record. Process, listener, health and exit are four separate facts, and one does not imply another.</p>
+  </details>
+  <details class="faq-item">
+    <summary>How much Windows support is there?</summary>
+    <p>There is a native build and smoke test plus an arm64 cross-build. Full service scenarios are verified on macOS and Linux; Windows lifecycle claims are not made from those runs.</p>
+  </details>
+  <details class="faq-item">
+    <summary>Does it need a model account or a cloud?</summary>
+    <p>No. The engine runs locally, has no built-in model inference and no cloud sync. The optional model assessment (<code>oberth jev</code>) is off unless a person enables it, and it never enters the control path.</p>
+  </details>
+  <details class="faq-item">
+    <summary>Does it install hooks, an MCP server or the agent skill?</summary>
+    <p>No. Integration means calling the CLI from your own scripts. The product installs no hooks, registers no MCP server, writes no tool configuration and does not install the <a href="https://github.com/SheathedSharp/option-berth-skill">coding-agent skill</a>.</p>
+  </details>
+  <details class="faq-item">
+    <summary>Can it work with Claude Code, Cursor, Codex or Conductor?</summary>
+    <p>Yes, from their own setup, run and cleanup slots or an outer wrapper. The engine modifies none of their configuration, and the recipes are documentation you paste.</p>
+  </details>
+  <details class="faq-item">
+    <summary>What can it delete?</summary>
+    <p>It stops services and reports identities. It never deletes a database, a data directory or a ledger row; that stays a person's call. Uninstall is a separate script, and purging <code>~/.option-berth</code> requires an explicit flag.</p>
+  </details>
+</div>
+
+<h2 id="contract">The contract, by topic</h2>
+<p>This book teaches the chain and the reasoning. The exact surface lives in the repository's contract documents, one home per fact.</p>
+<table class="chapter-table">
+  <caption class="sr-only">Where each contract lives</caption>
+  <thead><tr><th scope="col">Topic</th><th scope="col">Document</th><th scope="col">What it owns</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">Product</th><td><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/product.md">docs/product.md</a></td><td>The need, the object model, write boundaries and what the product explicitly refuses to do.</td></tr>
+    <tr><th scope="row">CLI</th><td><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md">docs/cli.md</a></td><td>The command surface, JSON fields, error codes and manifest references.</td></tr>
+    <tr><th scope="row">Install</th><td><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/install.md">docs/install.md</a></td><td>Every channel, upgrade, uninstall and platform boundary.</td></tr>
+    <tr><th scope="row">Integrations</th><td><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/integrations.md">docs/integrations.md</a></td><td>Tool recipes, the AGENTS.md section and the pitfalls of each slot.</td></tr>
+    <tr><th scope="row">Work records</th><td><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/workplace.md">docs/workplace.md</a></td><td>The workplace commands, block fields and their boundaries.</td></tr>
+    <tr><th scope="row">Architecture</th><td><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/agent/architecture.md">docs/agent/architecture.md</a></td><td>Implementation boundaries and the chain of facts as code enforces it.</td></tr>
+  </tbody>
+</table>
+
+<h2 id="machines">Machine entry points</h2>
+<ul>
+  <li><a href="{{root}}llms.txt"><code>llms.txt</code></a> — a curated index of the guide and the contract, with one line per link.</li>
+  <li><a href="{{root}}llms-full.txt"><code>llms-full.txt</code></a> — every English chapter in one plain-text file.</li>
+  <li><a href="{{root}}sitemap.xml"><code>sitemap.xml</code></a> — every page in both languages.</li>
+</ul>
+<p>The HTML pages are the source; the machine files are generated from the same content at build time, so they cannot silently drift from the book.</p>

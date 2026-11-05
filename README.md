@@ -7,7 +7,7 @@
 <p align="center"><strong>Stop guessing what's running.</strong><br>The runtime facts layer for Git worktrees: what a checkout should run, whether it really is running, and why not.</p>
 <p align="center">English · <a href="README.zh.md">简体中文</a></p>
 
-<p align="center"><a href="https://oberth.zayju.de/">Website</a> · <a href="docs/product.md">Product</a> · <a href="docs/cli.md">CLI</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">Latest release</a></p>
+<p align="center"><a href="https://oberth.zayju.de/">Website</a> · <a href="https://oberth.zayju.de/guide/en/">Guide</a> · <a href="docs/product.md">Product</a> · <a href="docs/cli.md">CLI</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">Latest release</a> · <a href="https://oberth.zayju.de/llms.txt">llms.txt</a></p>
 
 ## Why this exists
 

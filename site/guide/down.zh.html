@@ -1,0 +1,34 @@
+<p class="chapter-intro"><code>down</code> 停的是这个 worktree 清单声明的服务。它不会跨到另一个 checkout，并且只在停止被确认之后归还 <code>port: auto</code> 预留。</p>
+
+<h2 id="stop">正常停止</h2>
+<p>不带参数时，<code>down</code> 使用最近的清单。它停掉项目服务，并在动作确认这些端口可以释放之后归还 <code>port: auto</code> 预留。<code>--force</code> 直接使用强制信号；它不会跳过运行归属或预留释放的门槛。</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">停这个项目</figcaption>
+  <pre><code>oberth down</code></pre>
+</figure>
+
+<h2 id="gone">checkout 已经不在了</h2>
+<p><code>--worktree PATH</code> 按 checkout 根路径停止，<code>--identity wt_…</code> 按身份停止。两者都不能和项目名或清单路径同时使用。<code>worktrees --gone</code> 列出 checkout 已经不存在的身份，让你找到已删除 checkout 留下的服务和数据。</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">目录删除之后再停</figcaption>
+  <pre><code>oberth worktrees --gone
+oberth down --identity wt_0123456789ab</code></pre>
+</figure>
+<p>daemon 从未见过的身份返回 <code>not_found</code>；它不会猜一个组。目标已经没有运行或预留时，显式身份仍然是一次成功的空停止。</p>
+
+<h2 id="ambiguous">目标有歧义的时候</h2>
+<p>两个 checkout 真的可能共用同一个组名，比如不同父目录下的两个同名目录。它们的组已经合并，按组停止会同时命中两边；这时 <code>down</code> 返回 <code>ambiguous</code>，不替调用方挑一个。改用端口或 pid 点名进程。</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">直接点名进程</figcaption>
+  <pre><code>oberth kill 21730</code></pre>
+</figure>
+
+<h2 id="never">down 永远不碰什么</h2>
+<aside class="note">
+  <ul>
+    <li><code>machine:</code> 依赖。它们的监听状态只读；<code>down</code> 不停它们。</li>
+    <li>另一个 worktree 的服务。按项目名停止是组作用域的，另一个 checkout 的组名不同。</li>
+    <li>你的数据。引擎报告身份、停止服务；删数据库或数据目录是人的决定。</li>
+    <li>已经发出的信号不会被错误撤销。停止不完整、动作后的观察失败或预留已被刷新，都会保留预留并返回错误。</li>
+  </ul>
+</aside>
