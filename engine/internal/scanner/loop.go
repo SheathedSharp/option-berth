@@ -534,13 +534,7 @@ func (l *Loop) Run(ctx context.Context) {
 			wait = l.base
 		}
 
-		if !timer.Stop() {
-			select {
-			case <-timer.C:
-			default:
-			}
-		}
-		timer.Reset(wait)
+		armTimer(timer, wait)
 		select {
 		case <-ctx.Done():
 			return
@@ -552,6 +546,23 @@ func (l *Loop) Run(ctx context.Context) {
 			l.mu.Unlock()
 		}
 	}
+}
+
+// armTimer restarts timer for wait.
+//
+// Reset on a timer that may already have fired leaves the old value in the
+// channel, so the next select would take it immediately and spin. Draining
+// first is what makes Reset safe here, and it has to be done this way round:
+// Stop reports whether it stopped the timer, and only then is there certainly
+// nothing to drain.
+func armTimer(timer *time.Timer, wait time.Duration) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(wait)
 }
 
 // scanAndPublish runs one scan, updates the cache, adapts the interval and
