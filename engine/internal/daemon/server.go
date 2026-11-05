@@ -38,37 +38,28 @@ func Capabilities() []string {
 		registeredCapabilities()...)
 }
 
-// Options configures a Server.
+// Options configures a Server. Every field may be left zero; New fills in the
+// empty ones.
 type Options struct {
-	// Socket is the address to listen on. Empty means SocketPath().
-	Socket string
-	// Version is the daemon's own version string, reported by daemon.hello.
-	Version string
-	// BinaryPath is the executable clients should re-exec to autostart us.
-	BinaryPath string
-	// IdleTimeout stops the daemon after this long with no clients, no
-	// subscribers and no keepalive. Zero disables it.
-	IdleTimeout time.Duration
-	// StatsInterval is the cadence of the scanner's stats-only tick
-	// (`daemon.stats_interval`). Zero means scanner.StatsInterval. Ignored
-	// when Scanner is set, since the caller built the loop itself.
-	StatsInterval time.Duration
-	// ScanInterval is the base cadence of the scanner's port scan
-	// (`daemon.scan_interval`). Zero means scanner.BaseInterval. Ignored when
-	// Scanner is set, for the same reason StatsInterval is.
-	ScanInterval time.Duration
-	// Logger receives the daemon's structured log. Required in production;
-	// tests may leave it nil for a discard logger.
-	Logger *slog.Logger
-	// Lock is an already-acquired single-instance lock. When nil, Serve takes
-	// one itself and releases it on exit.
-	Lock *Lock
-	// Scanner overrides the scan loop. Tests inject one; production leaves it
-	// nil and gets the OS scanner.
-	Scanner *scanner.Loop
-	// DBPath is the SQLite database to open. Empty means store.Path(); tests
-	// point it at a temp directory.
-	DBPath string
+	// Identity and location.
+	Socket     string // listen address; empty means SocketPath()
+	Version    string // the daemon's own version, reported by daemon.hello
+	BinaryPath string // what a client re-execs to autostart us
+	DBPath     string // SQLite file; empty means store.Path()
+
+	// Lifetime.
+	IdleTimeout time.Duration // stop after this long with nobody watching; zero disables
+
+	// Cadence. Both are ignored when Scanner is set: the caller then built the
+	// loop and chose its own intervals.
+	StatsInterval time.Duration // `daemon.stats_interval`; zero means the scanner default
+	ScanInterval  time.Duration // `daemon.scan_interval`; zero means the scanner default
+
+	// Collaborators. Logger is required in production and may be nil in tests,
+	// which get a discard logger.
+	Logger  *slog.Logger
+	Lock    *Lock         // an already-acquired lock; nil means Serve takes one and releases it
+	Scanner *scanner.Loop // an injected loop; nil means the OS scanner
 }
 
 // Server is the daemon: a listener, a set of connections, the subscription
