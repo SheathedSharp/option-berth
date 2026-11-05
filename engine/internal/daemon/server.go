@@ -463,17 +463,20 @@ func (s *Server) Clients() int {
 func (s *Server) demand() (int, scanner.Include) {
 	s.subsMu.RLock()
 	defer s.subsMu.RUnlock()
-	var inc scanner.Include
-	n := 0
+
+	var wanted scanner.Include
+	subscribers := 0
 	for _, c := range s.conns {
 		if !c.subscribed {
 			continue
 		}
-		n++
-		inc.Stats = inc.Stats || c.include.Stats
-		inc.Health = inc.Health || c.include.Health
+		subscribers++
+		// The include set is a union, not a majority: one subscriber asking for
+		// stats means the loop must collect them for everybody.
+		wanted.Stats = wanted.Stats || c.include.Stats
+		wanted.Health = wanted.Health || c.include.Health
 	}
-	return n, inc
+	return subscribers, wanted
 }
 
 // subscribe registers a connection as a subscriber and hands it either the
