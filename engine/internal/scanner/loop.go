@@ -598,6 +598,13 @@ func (l *Loop) waitForDemand(ctx context.Context) (include Include, scanNow, fin
 	}
 }
 
+// abandoned is the result of a scan that stopped early: no new snapshot, the
+// one already cached, nothing changed, and the reason. Every early exit in the
+// scan path returns this shape, so it has one definition rather than nine.
+func (l *Loop) abandoned(err error) (state.Snapshot, state.Snapshot, bool, error) {
+	return state.Snapshot{}, l.Cached(), false, err
+}
+
 // scanAndPublish runs one scan, updates the cache, adapts the interval and
 // publishes when something changed. One scan at a time (see scanMu); the
 // publish itself happens inside scanLocked, under commitMu.
@@ -643,7 +650,7 @@ func (l *Loop) scanLocked(collect, carry Include, reportFailure bool) (next, pre
 
 func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, reportFailure bool) (next, prev state.Snapshot, changed bool, err error) {
 	if err := ctx.Err(); err != nil {
-		return state.Snapshot{}, l.Cached(), false, err
+		return l.abandoned(err)
 	}
 	// Read outside the mutex: Demand takes the server's own lock, which the
 	// server holds while calling back into the loop.
@@ -664,7 +671,7 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 	if err := ctx.Err(); err != nil {
 		// Ownership ended, not a collector failure. Preserve the last outcome
 		// and freshness, and leave pending invalidation for a later observer.
-		return state.Snapshot{}, l.Cached(), false, err
+		return l.abandoned(err)
 	}
 	var observation *state.Observation
 	if err != nil {
@@ -710,7 +717,7 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 		}
 		defer l.commitMu.Unlock()
 		if err := ctx.Err(); err != nil {
-			return state.Snapshot{}, l.Cached(), false, err
+			return l.abandoned(err)
 		}
 		l.mu.Lock()
 		if gen >= l.outcomeSeq {
@@ -746,7 +753,7 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 	// and the publish rides inside it so a later seq can never reach a client
 	// first (contract §38, §44).
 	if err := lockContext(ctx, l.orderGate); err != nil {
-		return state.Snapshot{}, l.Cached(), false, err
+		return l.abandoned(err)
 	}
 	defer unlock(l.orderGate)
 
@@ -755,11 +762,11 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 	// is assembled: what gets published is already attributed and named.
 	rows, groupRows, err := l.attributeContext(ctx, pp, narrow)
 	if err != nil {
-		return state.Snapshot{}, l.Cached(), false, err
+		return l.abandoned(err)
 	}
 	sessionRows, err := l.sessionsContext(ctx, rows)
 	if err != nil {
-		return state.Snapshot{}, l.Cached(), false, err
+		return l.abandoned(err)
 	}
 
 	// Configured health comes after attribution because it is the groups that
@@ -768,15 +775,15 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 	// is, not an opt-in statistic (step 1A.7). Its budget is what keeps this
 	// short enough to sit inside the ordering gate.
 	if err := ProbeConfiguredContext(ctx, rows, groupRows, l.ProbeContext, ConfiguredHealthBudget); err != nil {
-		return state.Snapshot{}, l.Cached(), false, err
+		return l.abandoned(err)
 	}
 
 	if err := l.commitMu.LockContext(ctx); err != nil {
-		return state.Snapshot{}, l.Cached(), false, err
+		return l.abandoned(err)
 	}
 	defer l.commitMu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return state.Snapshot{}, l.Cached(), false, err
+		return l.abandoned(err)
 	}
 
 	next, prev, changed = l.commitScan(commit{
