@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="$lang">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="$description">
+  <meta name="theme-color" content="#1b1e22">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' $script_hash; style-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>$page_title</title>
+  <link rel="canonical" href="$canonical">
+  <link rel="alternate" hreflang="zh-CN" href="$alternate_zh">
+  <link rel="alternate" hreflang="en" href="$alternate_en">
+  <link rel="alternate" hreflang="x-default" href="$alternate_en">
+  <link rel="icon" type="image/svg+xml" href="${asset_path}icon.svg">
+  <script src="${asset_path}boot.js"></script>
+  <link rel="stylesheet" href="${asset_path}site.css">
+  <link rel="stylesheet" href="${asset_path}guide.css">
+  <script src="${asset_path}guide.js" defer></script>
+  <script src="${asset_path}site.js" defer></script>
+  <meta property="og:type" content="$og_type">
+  <meta property="og:title" content="$page_title">
+  <meta property="og:description" content="$description">
+  <meta property="og:url" content="$canonical">
+  <meta property="og:locale" content="$og_locale">
+  <meta name="twitter:card" content="summary">
+  <script type="application/ld+json">$jsonld</script>
+</head>
+<body class="guide-page">
+  <a class="skip-link" href="#main">$skip</a>
+  <header class="site-head">
+    <nav class="wrap head-row" aria-label="$navigation">
+      <a class="wordmark" href="$home_path" aria-label="option-berth"><img src="${asset_path}mark-dark.svg" width="24" height="24" alt=""><span>option<span class="hyphen">-</span>berth</span></a>
+      <div class="head-end"><a href="$guide_home">$nav_guide</a><a class="head-product" href="$home_path">$nav_product</a><a href="https://github.com/SheathedSharp/option-berth">$nav_github <span aria-hidden="true">↗</span></a><a class="language" href="$language_path" lang="$other_lang" hreflang="$other_lang">$language_label</a></div>
+    </nav>
+  </header>
+  <main id="main">
+$content
+  </main>
+  <footer class="guide-foot">
+    <div class="wrap guide-foot-inner">
+      <div class="guide-foot-mark">
+        <img src="${asset_path}mark-dark.svg" width="72" height="72" alt="">
+        <p>option-berth<br><span>$footer_line</span></p>
+      </div>
+      <nav class="guide-foot-cols" aria-label="$footer_navigation">
+        <div>
+          <h2>$foot_guide</h2>
+          <ul><li><a href="$url_overview">$foot_overview</a></li><li><a href="$url_install">$foot_install</a></li><li><a href="$url_status">$foot_status</a></li></ul>
+        </div>
+        <div>
+          <h2>$foot_contract</h2>
+          <ul><li><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md">$foot_cli</a></li><li><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/product.md">$foot_product</a></li><li><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/install.md">$foot_install</a></li><li><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/integrations.md">$foot_integrations</a></li><li><a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/workplace.md">$foot_work_records</a></li></ul>
+        </div>
+        <div>
+          <h2>$foot_products</h2>
+          <ul><li><a href="https://github.com/SheathedSharp/option-berth">$foot_engine</a></li><li><a href="https://github.com/SheathedSharp/option-berth-macos">$foot_client</a></li><li><a href="https://github.com/SheathedSharp/option-berth-skill">$foot_skill</a></li></ul>
+        </div>
+        <div>
+          <h2>$foot_machine</h2>
+          <ul><li><a href="${root_prefix}llms.txt">llms.txt</a></li><li><a href="${root_prefix}llms-full.txt">llms-full.txt</a></li><li><a href="${root_prefix}sitemap.xml">sitemap.xml</a></li></ul>
+        </div>
+      </nav>
+    </div>
+    <div class="wrap guide-foot-base"><p>$footer_note</p><p>MIT · option-berth</p></div>
+  </footer>
+</body>
+</html>
