@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Report how much of engine/ is still copied from the upstream Sonar checkout.
 
-The engine began as a copy of `github.com/raskrebs/sonar`. The MIT notice in
-`LICENSE` and `engine/LICENSE` covers what remains, so the notice can be
-removed only when this report is empty. That is an engine rewrite, not a
-rename: a rewritten file that keeps five consecutive upstream lines is still
-copied code.
+The engine began as a copy of `github.com/raskrebs/sonar`. The Sonar notice in
+`THIRD_PARTY_NOTICES.md` covers what remains, so it can be removed only when
+this report is empty. That is an engine rewrite, not a rename: a rewritten file
+that keeps five consecutive upstream lines is still copied code.
 
     git clone --depth 1 https://github.com/raskrebs/sonar /tmp/sonar
     python3 scripts/audit-upstream-origin.py --upstream /tmp/sonar
