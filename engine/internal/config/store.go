@@ -10,55 +10,53 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// This file is the read/modify/write half of the config used by the daemon's
-// `config.get`, `config.set` and `config.path` methods. It works on a plain
-// map rather than the Config struct so a key this build does not know about
-// survives a round trip — a newer app writing `remote.hosts` must not have it
-// deleted by an older daemon.
+// The daemon's `config.get`, `config.set` and `config.path` methods operate
+// on a plain map rather than the Config struct, so a key this build does not
+// know survives a round trip: a newer client writing `remote.hosts` must not
+// lose it to an older daemon.
 //
-// Comments do not survive: the file is re-marshalled from the map. The
-// pre-write copy at <path>.bak is what makes that recoverable.
+// Comments do not survive re-marshalling. The copy at <path>.bak is what makes
+// that recoverable.
 
-// BackupSuffix is appended to the config path for the copy Save keeps of the
-// file it is about to replace.
+// BackupSuffix is appended to the config path for the pre-write copy.
 const BackupSuffix = ".bak"
 
 // Map reads the config file into a JSON-safe map. A missing file is an empty
-// map, not an error: there is nothing wrong with never having written one.
+// map, not an error: never having written one is a normal state.
 func Map() (map[string]any, error) {
-	data, err := os.ReadFile(Path())
+	path := Path()
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return map[string]any{}, nil
 		}
-		return nil, fmt.Errorf("reading %s: %w", Path(), err)
+		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
-	var raw any
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", Path(), err)
+	var decoded any
+	if err := yaml.Unmarshal(data, &decoded); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
-	m, ok := normalize(raw).(map[string]any)
-	if !ok || m == nil {
+	root, ok := normalize(decoded).(map[string]any)
+	if !ok || root == nil {
 		return map[string]any{}, nil
 	}
-	return m, nil
+	return root, nil
 }
 
-// Apply merges patch into the config file and writes it back. A null value in
-// the patch removes the key; a nested map is merged key by key rather than
-// replacing the whole subtree, so setting `daemon.log_level` leaves `daemon.idle_timeout`
-// alone. The written config is returned.
+// Apply merges patch into the config file and writes it back. A null removes
+// the key; nested maps merge key by key, so setting `daemon.log_level` leaves
+// `daemon.idle_timeout` alone. The written config is returned.
 //
-// The merged config has to parse and validate as a Config; if it does not,
-// nothing is written and the validation messages come back as the error.
+// The merged result must parse and validate as a Config. When it does not,
+// nothing is written and the validation messages become the error.
 func Apply(patch map[string]any) (map[string]any, error) {
-	current, err := Map()
+	existing, err := Map()
 	if err != nil {
 		return nil, err
 	}
-	merged := merge(current, patch)
-	if err := validateMap(merged); err != nil {
-		return nil, err
+	merged := merge(existing, patch)
+	if problem := validateMap(merged); problem != nil {
+		return nil, problem
 	}
 	if err := Save(merged); err != nil {
 		return nil, err
@@ -66,42 +64,54 @@ func Apply(patch map[string]any) (map[string]any, error) {
 	return merged, nil
 }
 
-// Save writes m to the config file, copying whatever is there to <path>.bak
-// first. The file is written through a temporary file and renamed, so a crash
+// Save writes m to the config path, copying whatever is there to <path>.bak
+// first. The new file is written to a temporary file and renamed, so a crash
 // mid-write cannot leave a half-written config behind.
 func Save(m map[string]any) error {
 	path := Path()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("creating %s: %w", filepath.Dir(path), err)
+	mode, err := prepareSave(path)
+	if err != nil {
+		return err
 	}
-
-	mode := os.FileMode(0o644)
-	if info, err := os.Stat(path); err == nil {
-		mode = info.Mode().Perm()
-		if err := backup(path, mode); err != nil {
-			return err
-		}
-	}
-
 	body, err := yaml.Marshal(denormalize(m))
 	if err != nil {
 		return fmt.Errorf("encoding the config: %w", err)
 	}
+	return writeAtomically(path, body, mode)
+}
 
+// prepareSave creates the directory, remembers the current file mode and
+// keeps the pre-write copy. A file that does not exist yet uses 0644.
+func prepareSave(path string) (os.FileMode, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return 0, fmt.Errorf("creating %s: %w", filepath.Dir(path), err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0o644, nil
+	}
+	mode := info.Mode().Perm()
+	if err := backup(path, mode); err != nil {
+		return 0, err
+	}
+	return mode, nil
+}
+
+func writeAtomically(path string, body []byte, mode os.FileMode) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-*.yaml")
 	if err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
+		return writeError(path, err)
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }()
 	if _, err := tmp.Write(body); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("writing %s: %w", path, err)
+		return writeError(path, err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
+		return writeError(path, err)
 	}
 	if err := os.Chmod(tmp.Name(), mode); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
+		return writeError(path, err)
 	}
 	if err := os.Rename(tmp.Name(), path); err != nil {
 		return fmt.Errorf("replacing %s: %w", path, err)
@@ -109,80 +119,85 @@ func Save(m map[string]any) error {
 	return nil
 }
 
-// BackupPath is where Save parks the previous config.
-func BackupPath() string { return Path() + BackupSuffix }
+func writeError(path string, err error) error {
+	return fmt.Errorf("writing %s: %w", path, err)
+}
 
 func backup(path string, mode os.FileMode) error {
-	data, err := os.ReadFile(path)
+	previous, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", path, err)
 	}
-	if err := os.WriteFile(path+BackupSuffix, data, mode); err != nil {
-		return fmt.Errorf("writing %s: %w", path+BackupSuffix, err)
+	kept := path + BackupSuffix
+	if err := os.WriteFile(kept, previous, mode); err != nil {
+		return fmt.Errorf("writing %s: %w", kept, err)
 	}
 	return nil
 }
 
-// merge deep-merges patch into base and returns a new map. A nil value deletes
-// the key; two maps merge; anything else replaces.
+// BackupPath is where Save parks the previous config.
+func BackupPath() string { return Path() + BackupSuffix }
+
+// merge deep-merges patch into base and returns a new map. A nil deletes the
+// key, two maps merge, and anything else replaces.
 func merge(base, patch map[string]any) map[string]any {
 	out := make(map[string]any, len(base)+len(patch))
-	for k, v := range base {
-		out[k] = v
+	for key, value := range base {
+		out[key] = value
 	}
-	for k, v := range patch {
-		if v == nil {
-			delete(out, k)
+	for key, value := range patch {
+		if value == nil {
+			delete(out, key)
 			continue
 		}
-		sub, isMap := normalize(v).(map[string]any)
-		cur, wasMap := out[k].(map[string]any)
-		if isMap && wasMap {
-			out[k] = merge(cur, sub)
+		incoming, incomingIsMap := normalize(value).(map[string]any)
+		existing, existingIsMap := out[key].(map[string]any)
+		if incomingIsMap && existingIsMap {
+			out[key] = merge(existing, incoming)
 			continue
 		}
-		out[k] = normalize(v)
+		out[key] = normalize(value)
 	}
 	return out
 }
 
-// validateMap checks that a merged config still decodes into Config and that
-// every setting is one this build accepts.
+// validateMap decodes a merged config back into Config and rejects one whose
+// settings this build would repair.
 func validateMap(m map[string]any) error {
 	body, err := yaml.Marshal(denormalize(m))
 	if err != nil {
 		return fmt.Errorf("encoding the config: %w", err)
 	}
-	cfg := &Config{}
-	if err := yaml.Unmarshal(body, cfg); err != nil {
+	decoded := &Config{}
+	if err := yaml.Unmarshal(body, decoded); err != nil {
 		return fmt.Errorf("the merged config is not valid: %w", err)
 	}
-	if warnings := validate(cfg); len(warnings) > 0 {
-		return fmt.Errorf("%s", strings.Join(warnings, "; "))
+	if problems := validate(decoded); len(problems) > 0 {
+		return fmt.Errorf("%s", strings.Join(problems, "; "))
 	}
 	return nil
 }
 
-// normalize turns what YAML decoding produces into JSON-safe values: map keys
-// become strings and nested containers are converted in place.
+// normalize converts YAML's containers into JSON-safe ones: map keys become
+// strings and nested containers are converted recursively.
 func normalize(v any) any {
-	switch t := v.(type) {
+	switch typed := v.(type) {
 	case map[string]any:
-		out := make(map[string]any, len(t))
-		for k, val := range t {
-			out[k] = normalize(val)
+		out := make(map[string]any, len(typed))
+		for key, value := range typed {
+			out[key] = normalize(value)
 		}
 		return out
 	case map[any]any:
-		out := make(map[string]any, len(t))
-		for k, val := range t {
-			out[fmt.Sprint(k)] = normalize(val)
+		out := make(map[string]any, len(typed))
+		for key, value := range typed {
+			out[fmt.Sprint(key)] = normalize(value)
 		}
 		return out
 	case []any:
-		out := make([]any, len(t))
-		for i := range t {
-			out[i] = normalize(t[i])
+		out := make([]any, len(typed))
+		for index := range typed {
+			out[index] = normalize(typed[index])
 		}
 		return out
 	default:
@@ -190,39 +205,40 @@ func normalize(v any) any {
 	}
 }
 
-// denormalize is the inverse of normalize for the one case that matters:
-// `services` is keyed by port number, and writing "9000" as a quoted string
-// would stop Load from parsing it back.
+// denormalize undoes normalize where YAML cares: `services` is keyed by port
+// number, and a quoted "9000" would no longer decode as an int key.
 func denormalize(v any) any {
-	m, ok := v.(map[string]any)
+	mapping, ok := v.(map[string]any)
 	if !ok {
-		if list, isList := v.([]any); isList {
-			out := make([]any, len(list))
-			for i := range list {
-				out[i] = denormalize(list[i])
-			}
-			return out
+		list, isList := v.([]any)
+		if !isList {
+			return v
 		}
-		return v
-	}
-	numeric := len(m) > 0
-	for k := range m {
-		if _, err := strconv.Atoi(k); err != nil {
-			numeric = false
-			break
-		}
-	}
-	if !numeric {
-		out := make(map[string]any, len(m))
-		for k, val := range m {
-			out[k] = denormalize(val)
+		out := make([]any, len(list))
+		for index := range list {
+			out[index] = denormalize(list[index])
 		}
 		return out
 	}
-	out := make(map[int]any, len(m))
-	for k, val := range m {
-		n, _ := strconv.Atoi(k)
-		out[n] = denormalize(val)
+
+	allNumeric := len(mapping) > 0
+	for key := range mapping {
+		if _, err := strconv.Atoi(key); err != nil {
+			allNumeric = false
+			break
+		}
+	}
+	if !allNumeric {
+		out := make(map[string]any, len(mapping))
+		for key, value := range mapping {
+			out[key] = denormalize(value)
+		}
+		return out
+	}
+	out := make(map[int]any, len(mapping))
+	for key, value := range mapping {
+		number, _ := strconv.Atoi(key)
+		out[number] = denormalize(value)
 	}
 	return out
 }
