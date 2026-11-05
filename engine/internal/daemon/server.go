@@ -332,16 +332,23 @@ func (s *Server) removeConn(c *Conn, reason string) {
 	s.loop.Wake()
 }
 
+// connsSnapshot returns the connections registered right now, so a caller can
+// act on them — closing, draining — without holding the registry lock across
+// the I/O.
+func (s *Server) connsSnapshot() []*Conn {
+	s.subsMu.RLock()
+	defer s.subsMu.RUnlock()
+	conns := make([]*Conn, 0, len(s.conns))
+	for _, conn := range s.conns {
+		conns = append(conns, conn)
+	}
+	return conns
+}
+
 // closeAllConns disconnects every client.
 func (s *Server) closeAllConns(reason string) {
-	s.subsMu.RLock()
-	conns := make([]*Conn, 0, len(s.conns))
-	for _, c := range s.conns {
-		conns = append(conns, c)
-	}
-	s.subsMu.RUnlock()
-	for _, c := range conns {
-		c.closeWithReason(reason)
+	for _, conn := range s.connsSnapshot() {
+		conn.closeWithReason(reason)
 	}
 }
 
@@ -372,19 +379,26 @@ func (s *Server) Done() <-chan struct{} { return s.done }
 func (s *Server) drainQueues(timeout time.Duration) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		s.subsMu.RLock()
-		pending := 0
-		for _, c := range s.conns {
-			pending += len(c.out)
-		}
-		s.subsMu.RUnlock()
-		if pending == 0 {
-			// One more tick so the writer flushes what it has already taken.
+		if s.pendingWrites() == 0 {
+			// One more tick so a writer can flush what it has already taken
+			// off its queue.
 			time.Sleep(20 * time.Millisecond)
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// pendingWrites counts messages queued but not yet written, across every
+// connection.
+func (s *Server) pendingWrites() int {
+	s.subsMu.RLock()
+	defer s.subsMu.RUnlock()
+	pending := 0
+	for _, conn := range s.conns {
+		pending += len(conn.out)
+	}
+	return pending
 }
 
 // ----------------------------------------------------------- subscriptions ---
