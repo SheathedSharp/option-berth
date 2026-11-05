@@ -1000,36 +1000,34 @@ func snapshotChanged(prev, next state.Snapshot, withStats bool) bool {
 		len(d.Sessions.Added) > 0 || len(d.Sessions.Updated) > 0 || len(d.Sessions.Removed) > 0
 }
 
-// carryHealth copies health results from the previous snapshot onto rows that
-// were not probed this tick.
+// carryForward walks next and copies one field forward from each row's
+// predecessor in previous.
 //
-// all says whether to carry every result or only the configured ones. A
-// `oberth.yaml` health path is state rather than an opt-in statistic
-// (contract §22), so its last verdict is always better than the "unknown" a
-// skipped probe would publish; an opt-in probe is only carried while somebody
-// is still asking for health.
-func carryHealth(prev []state.Port, next []state.Port, all bool) {
-	if len(prev) == 0 {
+// Both carries below are this walk with a different answer to two questions:
+// when does a row still need the field, and what exactly gets copied. Keeping
+// the walk in one place is what stops the two from drifting apart, since they
+// must agree on which rows count as "the same run".
+func carryForward(previous, next []state.Port, alreadySet func(*state.Port) bool, copyFrom func(into, from *state.Port)) {
+	if len(previous) == 0 {
 		return
 	}
-	byKey := indexByKey(prev)
+	byKey := indexByKey(previous)
 	for i := range next {
-		if next[i].Health != nil {
+		row := &next[i]
+		if alreadySet(row) {
 			continue
 		}
-		previous, ok := byKey[next[i].Key()]
-		if !ok || previous.Health == nil || !sameRuntime(*previous, next[i]) {
+		before, listed := byKey[row.Key()]
+		if !listed || !sameRuntime(*before, *row) {
 			continue
 		}
-		if all || previous.Health.Configured {
-			next[i].Health = previous.Health
-		}
+		copyFrom(row, before)
 	}
 }
 
 // indexByKey makes the previous snapshot addressable by port key, so a carry
-// pass can find each row's predecessor without walking the slice again. The
-// pointers are into prev, which those passes never mutate.
+// can find each row's predecessor without walking the slice again. The
+// pointers are into previous, which the carries never mutate.
 func indexByKey(previous []state.Port) map[string]*state.Port {
 	byKey := make(map[string]*state.Port, len(previous))
 	for i := range previous {
@@ -1038,30 +1036,40 @@ func indexByKey(previous []state.Port) map[string]*state.Port {
 	return byKey
 }
 
-// carryStats copies the previous snapshot's stats onto rows that were not
-// sampled this scan, keyed the same way health is. A port that appeared in
-// this scan and has no previous reading keeps a null `stats`; the 1 s stats
-// tick fills it in on its next pass.
-func carryStats(prev []state.Port, next []state.Port) {
-	mergeStats(prev, next, false)
+// carryHealth copies health results from the previous snapshot onto rows that
+// were not probed this tick.
+//
+// all says whether to carry every result or only the configured ones. A
+// `oberth.yaml` health path is state rather than an opt-in statistic, so its
+// last verdict always beats the "unknown" a skipped probe would publish; an
+// opt-in probe only survives while somebody is still asking for health.
+func carryHealth(previous, next []state.Port, all bool) {
+	carryForward(previous, next,
+		func(row *state.Port) bool { return row.Health != nil },
+		func(into, from *state.Port) {
+			if from.Health == nil {
+				return
+			}
+			if all || from.Health.Configured {
+				into.Health = from.Health
+			}
+		})
 }
 
-// replace is used only for re-attribution of the old OS batch: its embedded
-// stats predate the sampler, so the published snapshot wins for the same run.
-// A new OS scan instead keeps the fresh values it actually sampled.
-func mergeStats(prev []state.Port, next []state.Port, replace bool) {
-	if len(prev) == 0 {
-		return
-	}
-	byKey := indexByKey(prev)
-	for i := range next {
-		if next[i].Stats != nil && !replace {
-			continue
-		}
-		if previous, ok := byKey[next[i].Key()]; ok && sameRuntime(*previous, next[i]) {
-			next[i].Stats = previous.Stats
-		}
-	}
+// carryStats copies the previous snapshot's stats onto rows that were not
+// sampled this scan. A port seen for the first time keeps a null `stats`; the
+// 1 s stats tick fills it in on its next pass.
+func carryStats(previous, next []state.Port) {
+	mergeStats(previous, next, false)
+}
+
+// mergeStats carries stats forward. replace is set only when re-attributing the
+// old OS batch, whose embedded stats predate the sampler: there the published
+// snapshot wins, while a new OS scan keeps the fresh values it sampled.
+func mergeStats(previous, next []state.Port, replace bool) {
+	carryForward(previous, next,
+		func(row *state.Port) bool { return row.Stats != nil && !replace },
+		func(into, from *state.Port) { into.Stats = from.Stats })
 }
 
 // deriveEvents turns a snapshot transition into the discrete events the tray
