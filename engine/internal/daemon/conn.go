@@ -119,14 +119,17 @@ func (c *Conn) cancelAllStreams() {
 	}
 }
 
-// requestShutdown marks the connection so the daemon stops once this request's
-// reply has been queued. daemon.shutdown uses it to answer before exiting.
+// requestShutdown records that this connection asked the daemon to stop, so the
+// stop happens after the reply has been queued rather than before. daemon.shutdown
+// relies on that ordering to answer at all.
 func (c *Conn) requestShutdown() {
 	c.mu.Lock()
 	c.shutdownOnIdle = true
 	c.mu.Unlock()
 }
 
+// shutdownRequested reports whether this connection asked for a shutdown. The
+// request is sticky: once set, it stays set for the connection's life.
 func (c *Conn) shutdownRequested() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
