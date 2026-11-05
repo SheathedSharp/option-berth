@@ -13,7 +13,11 @@ class ReadmeTests(unittest.TestCase):
             self.assertIn("option-berth-lockup-dark.svg", text)
             self.assertIn("option-berth-lockup-light.svg", text)
             self.assertIn("SheathedSharp", text)
-            self.assertIn("X1.X2.X3", text)
+            # The entry page routes to the home of each contract instead of restating it.
+            for target in ("docs/product.", "docs/cli.", "docs/install.",
+                           "docs/integrations.", "docs/workplace.",
+                           "docs/agent/architecture.md", "docs/agent/releasing.md"):
+                self.assertIn(target, text, (name, target))
             for match in re.finditer(r'\]\(([^)]+)\)|(?:src|srcset|href)="([^"]+)"', text):
                 target = next(value for value in match.groups() if value)
                 if target.startswith(("http:", "https:", "mailto:", "#")):
