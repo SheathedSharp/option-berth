@@ -23,61 +23,64 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// Timing constants from the spec's "Scanner loop" section.
+// Timing, in four groups: how often the loop samples, how far it backs off, how
+// health probes are bounded, and how long a caller may hold the gates.
 const (
-	// BaseInterval is the interval while anything is changing, and the
-	// default `daemon.scan_interval` sets.
+	// BaseInterval is the cadence while something is changing, and the default
+	// for `daemon.scan_interval`.
 	BaseInterval = 2 * time.Second
-	// MinScanInterval is the floor `daemon.scan_interval` may be set to. One
-	// scan is an `lsof`/`ss`/`netstat` plus a docker round trip; below a
-	// second a machine spends more of itself being measured than run.
+
+	// MinScanInterval is as fast as `daemon.scan_interval` may be set. One scan
+	// is an `lsof`/`ss`/`netstat` sweep plus a docker round trip, so below a
+	// second the machine spends more time being measured than running.
 	MinScanInterval = 1 * time.Second
-	// MaxInterval caps the backoff on unchanged scans while the daemon is
-	// serving RPC reads only. The constant is the ceiling at the default
-	// base; a configured base scales it by IdleMaxFactor.
-	MaxInterval = 10 * time.Second
-	// SubscribedMaxInterval caps the backoff while at least one subscriber is
-	// connected, so a live view never lags a change by more than this. Like
-	// MaxInterval it is the ceiling at the default base, scaled by
-	// SubscribedMaxFactor.
+
+	// MaxInterval and SubscribedMaxInterval are the two ceilings the backoff
+	// may reach. A live view must not lag a change by more than the second, so
+	// having a subscriber tightens the ceiling; with only RPC reads to answer,
+	// the loop can afford to wait longer.
+	MaxInterval           = 10 * time.Second
 	SubscribedMaxInterval = 5 * time.Second
-	// SubscribedMaxFactor and IdleMaxFactor scale the two ceilings with the
-	// base interval, so `daemon.scan_interval` moves the whole adaptive curve
-	// rather than only its floor. At the 2 s default they reproduce
-	// SubscribedMaxInterval and MaxInterval exactly.
+
+	// The two factors scale those ceilings with the base interval, so changing
+	// `daemon.scan_interval` moves the whole curve and not just its floor. At
+	// the 2 s default they reproduce the two ceilings above exactly.
 	SubscribedMaxFactor = 2.5
 	IdleMaxFactor       = 5
-	// BackoffFactor multiplies the interval after an unchanged scan.
+
+	// BackoffFactor multiplies the interval after a scan that changed nothing.
 	BackoffFactor = 1.5
+
 	// CacheTTL is how long an RPC read may reuse the last scan.
 	CacheTTL = 2 * time.Second
-	// HealthCadence keeps HTTP probes off the port-scan cadence.
+
+	// HealthCadence keeps HTTP probes off the port-scan cadence, HealthTimeout
+	// bounds one probe, and HealthBudget bounds a whole round however many
+	// ports are listening: ten probes run at once, so without the ceiling forty
+	// listeners would cost four waves of HealthTimeout, and a write handler's
+	// republish queues behind the scan paying for it.
 	HealthCadence = 10 * time.Second
-	// HealthTimeout bounds a single probe.
 	HealthTimeout = 2 * time.Second
-	// HealthBudget bounds a whole round of opt-in health probes, however many
-	// ports are listening. Ten probes run at once, so without a ceiling a
-	// machine with forty listeners costs four waves of HealthTimeout — and a
-	// write handler's republish is queued behind the scan that pays it
-	// (contract §44).
-	HealthBudget = 4 * time.Second
-	// ConfiguredHealthBudget is the same ceiling for the `oberth.yaml` health
-	// paths, which are probed on every tick rather than on HealthCadence.
+	HealthBudget  = 4 * time.Second
+
+	// ConfiguredHealthBudget is the same ceiling for `oberth.yaml` health paths,
+	// which are probed every tick rather than on HealthCadence.
 	ConfiguredHealthBudget = 2 * time.Second
+
 	// ScanLockBudget bounds RPC gate admission and the cooperative follow-up
-	// owned by Republish. It is not a hard limit on synchronous filesystem or
-	// store calls already in progress. Forced observations never turn a gate
+	// Republish owns. It is not a hard limit on synchronous filesystem or store
+	// calls already under way, and a forced observation never turns a gate
 	// failure into last-good success.
 	ScanLockBudget = 15 * time.Second
-	// StatsInterval is the fixed cadence of the stats-only tick: per-process
-	// cpu and memory plus this machine's load row, sampled without a port
-	// scan behind it. Unlike the scan interval it never backs off, and it
-	// only runs while someone is subscribed.
+
+	// StatsInterval is the fixed cadence of the stats-only tick: per-process cpu
+	// and memory plus this machine's load row, with no port scan behind it. It
+	// never backs off, and only runs while somebody is subscribed.
 	StatsInterval = 1 * time.Second
-	// MinStatsInterval is the floor `daemon.stats_interval` may be set to.
-	// Below it the sampler costs more than the numbers it publishes are
-	// worth: every tick is a `ps` per machine on Unix and a PowerShell on
-	// Windows.
+
+	// MinStatsInterval is as fast as `daemon.stats_interval` may be set. Below
+	// it the sampler costs more than the numbers it publishes: every tick is a
+	// `ps` per machine on Unix and a PowerShell on Windows.
 	MinStatsInterval = 250 * time.Millisecond
 )
 
