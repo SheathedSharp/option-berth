@@ -2,9 +2,11 @@ package docker
 
 import "github.com/sheathedsharp/option-berth/engine/internal/ports"
 
-// EnrichFromPS stamps pp from `docker ps --format psFormat` output, as a scan
-// does from the watcher's cached list. It lets the external test package drive
-// enrichment into the killer, which it cannot import from inside the package.
-func EnrichFromPS(pp []ports.ListeningPort, out []byte) {
-	enrichFrom(pp, parsePS(out))
+// EnrichFromPS stamps rows from `docker ps --format psFormat` output, the same
+// way a scan stamps them from the watcher's cached list.
+//
+// It is exported only for the external test package: the killer tests need to
+// drive enrichment without importing the unexported parse path.
+func EnrichFromPS(rows []ports.ListeningPort, psOutput []byte) {
+	enrichFrom(rows, parsePS(psOutput))
 }
