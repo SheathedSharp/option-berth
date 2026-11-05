@@ -5,317 +5,272 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
 
-// commented is the file every round-trip test starts from: comments above,
-// beside and inside the services list, plus a key order nobody would choose
+// sampleManifest is the file the round-trip tests start from: comments above,
+// beside and inside the services list, and a key order no one would choose
 // alphabetically.
-const commented = `# The option-berth repo itself.
+const sampleManifest = `# option-berth's own checkout.
 name: option-berth
+ports: [9229]
 services:
-  # The database has to be up before anything else.
+  # prime the database first.
   - name: db
     cmd: docker compose up db
-    port: 5432
+    port: 5433
   - name: api
-    cmd: uv run api          # served by uvicorn
+    cmd: uv run api          # uvicorn
     cwd: backend
-    port: 8000
+    port: 8001
     health: /health
     depends_on: [db]
-ports: [9229]
 `
 
-func writePatchable(t *testing.T, body string) string {
+func writeManifest(t *testing.T, body string) string {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, ConfigName)
+	path := filepath.Join(t.TempDir(), ConfigName)
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return path
 }
 
-func read(t *testing.T, path string) string {
+func readFile(t *testing.T, path string) string {
 	t.Helper()
-	data, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(data)
+	return string(raw)
 }
 
-// TestPatchServicesKeepsComments is the contract §13.2 promise: an edit made
-// from the desktop app must not eat the comments the author wrote.
-func TestPatchServicesKeepsComments(t *testing.T) {
-	path := writePatchable(t, commented)
-
-	cfg, err := PatchServices(path, []ServiceEdit{{
-		Name: "db",
-		Patch: ServicePatch{}.
-			SetString(FieldHealth, "/").
-			SetString(FieldColor, "blue"),
-	}})
+// patchOne applies a single-service patch and fails the test on error.
+func patchOne(t *testing.T, path, name string, patch ServicePatch) *Config {
+	t.Helper()
+	cfg, err := PatchServices(path, []ServiceEdit{{Name: name, Patch: patch}})
 	if err != nil {
-		t.Fatalf("PatchServices: %v", err)
+		t.Fatalf("PatchServices(%s): %v", name, err)
 	}
+	return cfg
+}
 
-	out := read(t, path)
-	for _, want := range []string{
-		"# The option-berth repo itself.",
-		"# The database has to be up before anything else.",
-		"# served by uvicorn",
-	} {
+func patchError(t *testing.T, path, name string, patch ServicePatch) error {
+	t.Helper()
+	_, err := PatchServices(path, []ServiceEdit{{Name: name, Patch: patch}})
+	return err
+}
+
+func requireMentions(t *testing.T, out string, wants ...string) {
+	t.Helper()
+	for _, want := range wants {
 		if !strings.Contains(out, want) {
-			t.Errorf("comment %q was lost:\n%s", want, out)
+			t.Errorf("output does not mention %q:\n%s", want, out)
 		}
 	}
-	if !strings.Contains(out, "health: /") || !strings.Contains(out, "color: blue") {
-		t.Errorf("the patch was not written:\n%s", out)
-	}
+}
 
-	// Key order: name, cmd and port stay where they were, and the new keys are
-	// inserted where a hand-written file would put them.
-	db := serviceBlock(t, out, "db")
-	if got := keysOf(db); !equalStrings(got, []string{"name", "cmd", "port", "health", "color"}) {
+func serviceLines(t *testing.T, yaml, name string) []string {
+	t.Helper()
+	var lines []string
+	capturing := false
+	for _, line := range strings.Split(yaml, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "- ") {
+			capturing = trimmed == "- name: "+name
+			if capturing {
+				lines = append(lines, strings.TrimPrefix(trimmed, "- "))
+			}
+			continue
+		}
+		if capturing {
+			if !strings.HasPrefix(line, "    ") || trimmed == "" {
+				break
+			}
+			lines = append(lines, trimmed)
+		}
+	}
+	if len(lines) == 0 {
+		t.Fatalf("no service %q in:\n%s", name, yaml)
+	}
+	return lines
+}
+
+func keyNames(lines []string) []string {
+	names := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		if name, _, ok := strings.Cut(line, ":"); ok {
+			names = append(names, strings.TrimSpace(name))
+		}
+	}
+	return names
+}
+
+func sameStrings(a, b []string) bool {
+	return slices.Equal(a, b)
+}
+
+// equalStrings keeps the older test files on the same comparison.
+func equalStrings(a, b []string) bool { return sameStrings(a, b) }
+
+// An edit made from a client must not eat the comments the author wrote.
+func TestPatchKeepsComments(t *testing.T) {
+	path := writeManifest(t, sampleManifest)
+
+	cfg := patchOne(t, path, "db", ServicePatch{}.
+		SetString(FieldHealth, "/").
+		SetString(FieldColor, "blue"))
+
+	out := readFile(t, path)
+	requireMentions(t, out,
+		"# option-berth's own checkout.",
+		"# prime the database first.",
+		"# uvicorn",
+		"health: /",
+		"color: blue")
+
+	if got := keyNames(serviceLines(t, out, "db")); !sameStrings(got, []string{"name", "cmd", "port", "health", "color"}) {
 		t.Errorf("db keys = %v", got)
 	}
-
 	if cfg.Services[0].Health != "/" || cfg.Services[0].Color != "blue" {
-		t.Errorf("returned config does not carry the patch: %+v", cfg.Services[0])
+		t.Errorf("the returned config lacks the patch: %+v", cfg.Services[0])
 	}
-	// The rest of the file is untouched.
 	if cfg.Services[1].Cmd != "uv run api" || len(cfg.Ports) != 1 || cfg.Ports[0] != 9229 {
 		t.Errorf("unrelated keys changed: %+v", cfg)
 	}
 }
 
-// TestPatchServicesNullClears covers the null half of ServicePatch: a key set
-// to null disappears from the file rather than being written as an empty
-// string.
-func TestPatchServicesNullClears(t *testing.T) {
-	path := writePatchable(t, commented)
+func TestPatchNullClearsTheKey(t *testing.T) {
+	path := writeManifest(t, sampleManifest)
 
-	if _, err := PatchServices(path, []ServiceEdit{{
-		Name:  "api",
-		Patch: ServicePatch{}.Clear(FieldHealth),
-	}}); err != nil {
-		t.Fatalf("PatchServices: %v", err)
-	}
+	patchOne(t, path, "api", ServicePatch{}.Clear(FieldHealth))
 
-	out := read(t, path)
+	out := readFile(t, path)
 	if strings.Contains(out, "health:") {
 		t.Errorf("health was not cleared:\n%s", out)
 	}
-	if !strings.Contains(out, "cwd: backend") || !strings.Contains(out, "depends_on:") {
-		t.Errorf("clearing one key disturbed its neighbours:\n%s", out)
-	}
+	requireMentions(t, out, "cwd: backend", "depends_on:")
 }
 
-// TestPatchServicesFromJSON is the wire path: absent keys are left alone and an
-// explicit null clears, which pointers alone cannot tell apart.
-func TestPatchServicesFromJSON(t *testing.T) {
+func TestPatchFromJSONDistinguishesAbsentFromNull(t *testing.T) {
 	var patch ServicePatch
 	if err := json.Unmarshal([]byte(`{"description": "The API", "health": null}`), &patch); err != nil {
 		t.Fatal(err)
 	}
-	if !equalStrings(patch.Sent, []string{"description", "health"}) {
+	if !sameStrings(patch.Sent, []string{"description", "health"}) {
 		t.Fatalf("sent keys = %v", patch.Sent)
 	}
 
-	path := writePatchable(t, commented)
-	cfg, err := PatchServices(path, []ServiceEdit{{Name: "api", Patch: patch}})
-	if err != nil {
-		t.Fatalf("PatchServices: %v", err)
+	path := writeManifest(t, sampleManifest)
+	cfg := patchOne(t, path, "api", patch)
+	api := cfg.Services[1]
+	if api.Description != "The API" {
+		t.Errorf("description not written: %+v", api)
 	}
-	if cfg.Services[1].Description != "The API" {
-		t.Errorf("description not written: %+v", cfg.Services[1])
+	if api.Health != "" {
+		t.Errorf("null did not clear health: %+v", api)
 	}
-	if cfg.Services[1].Health != "" {
-		t.Errorf("null did not clear health: %+v", cfg.Services[1])
-	}
-	if cfg.Services[1].Cwd != "backend" || cfg.Services[1].Port != 8000 {
-		t.Errorf("untouched keys were rewritten: %+v", cfg.Services[1])
+	if api.Cwd != "backend" || api.Port != 8001 {
+		t.Errorf("untouched keys were rewritten: %+v", api)
 	}
 }
 
-// TestPatchServicesUnknownService leaves the file alone and reports the name,
-// which the daemon turns into `not_found`.
-func TestPatchServicesUnknownService(t *testing.T) {
-	path := writePatchable(t, commented)
-	before := read(t, path)
+func TestPatchUnknownServiceLeavesTheFileAlone(t *testing.T) {
+	path := writeManifest(t, sampleManifest)
+	before := readFile(t, path)
 
-	_, err := PatchServices(path, []ServiceEdit{{
-		Name:  "worker",
-		Patch: ServicePatch{}.SetString(FieldIcon, "gear"),
-	}})
+	err := patchError(t, path, "worker", ServicePatch{}.SetString(FieldIcon, "gear"))
 	var missing *ServiceNotFoundError
 	if !errors.As(err, &missing) || missing.Name != "worker" {
-		t.Fatalf("expected a ServiceNotFoundError for worker, got %v", err)
+		t.Fatalf("err = %v, want ServiceNotFoundError for worker", err)
 	}
-	if read(t, path) != before {
-		t.Error("the file was rewritten despite the error")
+	if readFile(t, path) != before {
+		t.Error("the file changed despite the error")
 	}
 }
 
-// TestPatchServicesInvalidResultIsNotWritten: a patch that breaks validation
-// comes back as a *ConfigError and the file on disk is untouched, so an
-// out-of-range port from a client cannot leave a project unloadable.
-func TestPatchServicesInvalidResultIsNotWritten(t *testing.T) {
-	path := writePatchable(t, commented)
-	before := read(t, path)
+func TestPatchInvalidResultIsNotWritten(t *testing.T) {
+	path := writeManifest(t, sampleManifest)
+	before := readFile(t, path)
 
-	_, err := PatchServices(path, []ServiceEdit{{
-		Name:  "api",
-		Patch: ServicePatch{}.SetPort(70000),
-	}})
+	err := patchError(t, path, "api", ServicePatch{}.SetPort(70000))
 	var bad *ConfigError
 	if !errors.As(err, &bad) {
-		t.Fatalf("expected a *ConfigError, got %v", err)
+		t.Fatalf("err = %v, want *ConfigError", err)
 	}
 	if len(bad.Problems) == 0 || !strings.Contains(bad.Error(), "70000") {
 		t.Errorf("the error should name the bad port: %v", bad)
 	}
-	if read(t, path) != before {
-		t.Error("an invalid patch was written to disk")
+	if readFile(t, path) != before {
+		t.Error("an invalid patch reached the disk")
 	}
 }
 
-// TestPatchServicesQuotesWhenItMust: a colour like "#3b82f6" is a comment in
-// plain YAML, so the writer has to quote it and the file has to re-read.
-func TestPatchServicesQuotesWhenItMust(t *testing.T) {
-	path := writePatchable(t, commented)
+// A colour like "#3b82f6" is a comment in plain YAML, so the writer must quote
+// it and the file must read back.
+func TestPatchQuotesWhenItMust(t *testing.T) {
+	path := writeManifest(t, sampleManifest)
 
-	cfg, err := PatchServices(path, []ServiceEdit{{
-		Name: "db",
-		Patch: ServicePatch{}.
-			SetString(FieldColor, "#3b82f6").
-			SetString(FieldDescription, "Postgres: the one with the data"),
-	}})
-	if err != nil {
-		t.Fatalf("PatchServices: %v", err)
-	}
+	cfg := patchOne(t, path, "db", ServicePatch{}.
+		SetString(FieldColor, "#3b82f6").
+		SetString(FieldDescription, "Postgres: the one with the data"))
 	if cfg.Services[0].Color != "#3b82f6" {
-		t.Fatalf("colour did not survive: %q", cfg.Services[0].Color)
+		t.Fatalf("colour = %q", cfg.Services[0].Color)
 	}
 
 	again, err := Load(path)
 	if err != nil {
-		t.Fatalf("reloading the written file: %v", err)
+		t.Fatalf("reloading: %v", err)
 	}
-	if again.Services[0].Color != "#3b82f6" || again.Services[0].Description != "Postgres: the one with the data" {
-		t.Fatalf("re-read config lost a value: %+v", again.Services[0])
+	if again.Services[0].Color != "#3b82f6" ||
+		again.Services[0].Description != "Postgres: the one with the data" {
+		t.Fatalf("re-read lost a value: %+v", again.Services[0])
 	}
 }
 
-// TestPatchServicesRepeatedEdits keeps a second edit from duplicating a key.
-func TestPatchServicesRepeatedEdits(t *testing.T) {
-	path := writePatchable(t, commented)
+func TestPatchRepeatedEditsDoNotDuplicateKeys(t *testing.T) {
+	path := writeManifest(t, sampleManifest)
 
 	for _, icon := range []string{"database", "server"} {
-		if _, err := PatchServices(path, []ServiceEdit{{
-			Name:  "db",
-			Patch: ServicePatch{}.SetString(FieldIcon, icon),
-		}}); err != nil {
-			t.Fatalf("PatchServices(%s): %v", icon, err)
-		}
+		patchOne(t, path, "db", ServicePatch{}.SetString(FieldIcon, icon))
 	}
-	out := read(t, path)
-	if n := strings.Count(out, "icon:"); n != 1 {
-		t.Fatalf("icon written %d times:\n%s", n, out)
+	out := readFile(t, path)
+	if count := strings.Count(out, "icon:"); count != 1 {
+		t.Fatalf("icon written %d times:\n%s", count, out)
 	}
 	if !strings.Contains(out, "icon: server") {
 		t.Fatalf("the second edit did not win:\n%s", out)
 	}
 }
 
-// serviceBlock returns the lines of one service item from a rendered config.
-func serviceBlock(t *testing.T, yaml, name string) []string {
-	t.Helper()
-	var block []string
-	in := false
-	for _, line := range strings.Split(yaml, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "- ") {
-			in = trimmed == "- name: "+name
-			if in {
-				block = append(block, strings.TrimPrefix(trimmed, "- "))
-			}
-			continue
-		}
-		if in {
-			if !strings.HasPrefix(line, "    ") || trimmed == "" {
-				break
-			}
-			block = append(block, trimmed)
-		}
-	}
-	if len(block) == 0 {
-		t.Fatalf("no service %q in:\n%s", name, yaml)
-	}
-	return block
-}
-
-func keysOf(lines []string) []string {
-	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		if strings.HasPrefix(line, "#") {
-			continue
-		}
-		if key, _, ok := strings.Cut(line, ":"); ok {
-			out = append(out, strings.TrimSpace(key))
-		}
-	}
-	return out
-}
-
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-// TestPatchServicesChecksTheNameEvenForAnEmptyPatch: a patch that changes
-// nothing still has to name a service that exists, or a typo goes unreported.
-func TestPatchServicesChecksTheNameEvenForAnEmptyPatch(t *testing.T) {
-	path := writePatchable(t, commented)
-	_, err := PatchServices(path, []ServiceEdit{{Name: "worker"}})
+// A patch that changes nothing still has to name a service that exists.
+func TestPatchChecksTheNameEvenWhenEmpty(t *testing.T) {
+	path := writeManifest(t, sampleManifest)
+	err := patchError(t, path, "worker", ServicePatch{})
 	var missing *ServiceNotFoundError
 	if !errors.As(err, &missing) {
-		t.Fatalf("expected a ServiceNotFoundError, got %v", err)
+		t.Fatalf("err = %v, want ServiceNotFoundError", err)
 	}
 }
 
-// TestPatchServicesCollapsesTrailingCommentPadding pins a documented
-// limitation rather than a promise: yaml.v3 stores a trailing comment's text on
-// the node but not its column, and its emitter always writes exactly one space
-// in front of it, so `cmd: x     # note` comes back as `cmd: x # note`. The
-// comment is never lost, only its alignment. If a future yaml.v3 learns to
-// preserve the padding this test is what will notice, and the note in the
-// `groups.config.set` handler and the README can go.
-func TestPatchServicesCollapsesTrailingCommentPadding(t *testing.T) {
-	path := writePatchable(t, commented)
+// Trailing comment padding is a documented yaml.v3 limitation: the comment
+// survives, but its column does not, so `cmd: x     # note` comes back as
+// `cmd: x # note`. This test notices if a future version starts preserving it.
+func TestPatchCollapsesTrailingCommentPadding(t *testing.T) {
+	path := writeManifest(t, sampleManifest)
 
-	if _, err := PatchServices(path, []ServiceEdit{{
-		Name:  "db",
-		Patch: ServicePatch{}.SetString(FieldColor, "blue"),
-	}}); err != nil {
-		t.Fatalf("PatchServices: %v", err)
-	}
+	patchOne(t, path, "db", ServicePatch{}.SetString(FieldColor, "blue"))
 
-	out := read(t, path)
-	if !strings.Contains(out, "cmd: uv run api # served by uvicorn") {
-		t.Errorf("the trailing comment did not survive with a single space:\n%s", out)
+	out := readFile(t, path)
+	if !strings.Contains(out, "cmd: uv run api # uvicorn") {
+		t.Errorf("the trailing comment did not survive with one space:\n%s", out)
 	}
-	if strings.Contains(out, "cmd: uv run api          # served by uvicorn") {
-		t.Errorf("yaml.v3 now preserves the padding; drop the documented caveat:\n%s", out)
+	if strings.Contains(out, "cmd: uv run api          # uvicorn") {
+		t.Errorf("yaml.v3 now keeps the padding; drop the caveat:\n%s", out)
 	}
 }
