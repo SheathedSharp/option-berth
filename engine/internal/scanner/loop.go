@@ -840,25 +840,40 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 	return next, prev, changed, nil
 }
 
-// commit is one finished scan on its way into the cache.
+// commit is one finished scan on its way into the cache, in three parts: what
+// was asked for, in what order it happened, and what came back.
 type commit struct {
+	// The request.
 	subs    int
 	collect Include
 	carry   Include
 	health  bool
-	// seq is the number this scan took when its OS half began.
-	seq      uint64
-	refresh  uint64
-	pp       []ports.ListeningPort
-	rows     []state.Port
-	groups   []state.Group
-	sessions []state.SessionRecord
-	// observation is non-nil only when this scan could not read the whole
-	// table, or when it read a narrow table; the readable rows are still facts.
+
+	// Ordering. seq is the number this scan took when its OS half began;
+	// refresh is the change counter observed at that same moment.
+	seq     uint64
+	refresh uint64
+
+	// The findings. observation is non-nil only when the table could not be
+	// read whole, or was read from a narrow source — the readable rows are
+	// still facts either way. narrow says the source cannot see every socket
+	// owner, so an absent `machine:` port is unknown rather than false.
+	pp          []ports.ListeningPort
+	rows        []state.Port
+	groups      []state.Group
+	sessions    []state.SessionRecord
 	observation *state.Observation
-	// narrow says the table cannot see every socket owner, so an absent
-	// `machine:` port is unknown rather than false.
-	narrow bool
+	narrow      bool
+}
+
+// superseded reports whether a newer scan has already committed its snapshot.
+//
+// This scan asked the OS what was listening before that snapshot was captured,
+// so committing it now would put back ports the newer scan has already seen go
+// — the "no going backwards" half of contract §38, enforced here at the commit
+// rather than by forbidding two scans from overlapping at all.
+func (l *Loop) superseded(seq uint64) bool {
+	return l.haveSnap && seq < l.committedSeq
 }
 
 // commitScan swaps a finished scan into the cache and adapts the interval.
@@ -873,12 +888,7 @@ func (l *Loop) commitScan(c commit) (next, prev state.Snapshot, changed bool) {
 	rows, groupRows := c.rows, c.groups
 
 	l.scans++
-	if l.haveSnap && c.seq < l.committedSeq {
-		// Superseded. This scan asked the OS what was listening before the
-		// snapshot on the wire was captured, so committing it would put back
-		// ports a newer scan has already seen go — the "no going backwards"
-		// half of contract §38, now enforced at the commit rather than by
-		// forbidding two scans to overlap at all (contract §44).
+	if l.superseded(c.seq) {
 		return prev, prev, false
 	}
 
