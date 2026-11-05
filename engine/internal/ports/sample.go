@@ -11,28 +11,33 @@ import (
 )
 
 // ProcSample is one process's live resource usage, keyed by pid rather than by
-// socket. It is what the daemon's stats-only tick reads for the pids a
-// snapshot already names: no port scan behind it, no attribution, no health.
+// socket. The daemon's stats-only tick reads it for the pids a snapshot already
+// names: no port scan, no attribution, no health behind it.
 //
 // ThreadCount is 0 when the platform could not report it in the same call.
-// macOS is the case that matters: counting threads needs an additional `ps -M`
+// macOS is the case that matters: counting threads needs an extra `ps -M`
 // listing, so it stays on the scan tick and a sample carries 0, which callers
-// read as "unchanged" rather than as "no threads".
+// read as "unchanged", not as "no threads".
 type ProcSample struct {
-	CPUPercent  float64
-	MemoryRSS   int64
+	CPUPercent float64
+	MemoryRSS  int64
+
+	// Thread count and the raw start time, as ps printed it.
 	ThreadCount int
-	StartTime   string // raw, as ps printed it
-	Uptime      string
-	State       string
-	StartedAt   string // RFC3339, "" when the start time did not parse
+	StartTime   string
+
+	// Current process state and uptime.
+	Uptime string
+	State  string
+
+	// RFC3339 start time; "" when the raw value did not parse.
+	StartedAt string
 }
 
-// SampleProcStats reads cpu, memory, state and uptime for the given pids in a
-// single `ps` call (one PowerShell call on Windows). A pid the OS no longer
-// knows about is simply absent from the result: a process that exited between
-// the scan that listed it and this sample must not report zeroes that read
-// like facts.
+// SampleProcStats reads cpu, memory, state and uptime for the given pids in
+// one `ps` call (one PowerShell call on Windows). A pid the OS no longer knows
+// is absent from the result: a process that exited between the listing scan
+// and this sample must not report zeroes that read like facts.
 func SampleProcStats(pids []int) map[int]ProcSample {
 	return SampleProcStatsContext(context.Background(), pids)
 }
@@ -44,15 +49,7 @@ func SampleProcStatsContext(ctx context.Context, pids []int) map[int]ProcSample 
 	if len(pids) == 0 || ctx.Err() != nil {
 		return out
 	}
-	pidStrs := make([]string, 0, len(pids))
-	seen := make(map[int]bool, len(pids))
-	for _, pid := range pids {
-		if pid <= 0 || seen[pid] {
-			continue
-		}
-		seen[pid] = true
-		pidStrs = append(pidStrs, strconv.Itoa(pid))
-	}
+	pidStrs := uniquePIDStrings(pids)
 	if len(pidStrs) == 0 {
 		return out
 	}
@@ -60,6 +57,21 @@ func SampleProcStatsContext(ctx context.Context, pids []int) map[int]ProcSample 
 		return sampleProcStatsWindows(ctx, pidStrs)
 	}
 	return sampleProcStatsPS(ctx, pidStrs)
+}
+
+// uniquePIDStrings drops non-positive and repeated pids, keeping the caller's
+// order.
+func uniquePIDStrings(pids []int) []string {
+	seen := make(map[int]bool, len(pids))
+	out := make([]string, 0, len(pids))
+	for _, pid := range pids {
+		if pid <= 0 || seen[pid] {
+			continue
+		}
+		seen[pid] = true
+		out = append(out, strconv.Itoa(pid))
+	}
+	return out
 }
 
 // sampleProcStatsPS is the macOS/Linux sample: one `ps` for every pid at once.
@@ -79,24 +91,36 @@ func sampleProcStatsPS(ctx context.Context, pidStrs []string) map[int]ProcSample
 	}
 
 	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
-		fields := strings.Fields(strings.TrimSpace(line))
-		if len(fields) < 2 {
-			continue
+		pid, sample, ok := parsePSSampleLine(line)
+		if ok {
+			out[pid] = sample
 		}
-		pid, err := strconv.Atoi(fields[0])
-		if err != nil {
-			continue
-		}
-		var scratch ListeningPort
-		scratch.PID = pid
-		if runtime.GOOS == "darwin" {
-			parseDarwinStats(&scratch, fields[1:])
-		} else {
-			parseLinuxStats(&scratch, fields[1:])
-		}
-		out[pid] = sampleOf(scratch)
 	}
 	return out
+}
+
+// parsePSSampleLine reads one `ps` row into a pid and its sample.
+func parsePSSampleLine(line string) (int, ProcSample, bool) {
+	fields := strings.Fields(strings.TrimSpace(line))
+	if len(fields) < 2 {
+		return 0, ProcSample{}, false
+	}
+	pid, err := strconv.Atoi(fields[0])
+	if err != nil {
+		return 0, ProcSample{}, false
+	}
+	return pid, parseSampleFields(pid, fields[1:]), true
+}
+
+// parseSampleFields runs the platform's ps-field parser for one pid.
+func parseSampleFields(pid int, fields []string) ProcSample {
+	scratch := ListeningPort{PID: pid}
+	if runtime.GOOS == "darwin" {
+		parseDarwinStats(&scratch, fields)
+	} else {
+		parseLinuxStats(&scratch, fields)
+	}
+	return sampleOf(scratch)
 }
 
 // sampleProcStatsWindows is the same sample from one Get-Process call.
@@ -120,32 +144,41 @@ func sampleProcStatsWindows(ctx context.Context, pidStrs []string) map[int]ProcS
 	if err != nil || ctx.Err() != nil {
 		return out
 	}
-	for i, record := range records {
-		if i == 0 || len(record) < 5 {
-			continue // header, or a row Get-Process could not fill in
+	for index, record := range records {
+		if index == 0 {
+			continue // header
 		}
-		pid, err := strconv.Atoi(strings.TrimSpace(record[0]))
-		if err != nil {
-			continue
+		if pid, sample, usable := parseWindowsSample(record); usable {
+			out[pid] = sample
 		}
-		var scratch ListeningPort
-		scratch.PID = pid
-		parseWindowsStats(&scratch, record[1:])
-		out[pid] = sampleOf(scratch)
 	}
 	return out
 }
 
+// parseWindowsSample reads one Get-Process CSV row.
+func parseWindowsSample(record []string) (int, ProcSample, bool) {
+	if len(record) < 5 {
+		return 0, ProcSample{}, false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(record[0]))
+	if err != nil {
+		return 0, ProcSample{}, false
+	}
+	scratch := ListeningPort{PID: pid}
+	parseWindowsStats(&scratch, record[1:])
+	return pid, sampleOf(scratch), true
+}
+
 // sampleOf lifts the fields the per-OS parsers wrote onto a scratch row.
-func sampleOf(p ListeningPort) ProcSample {
+func sampleOf(row ListeningPort) ProcSample {
 	return ProcSample{
-		CPUPercent:  p.CPUPercent,
-		MemoryRSS:   p.MemoryRSS,
-		ThreadCount: p.ThreadCount,
-		StartTime:   p.StartTime,
-		Uptime:      p.Uptime,
-		State:       p.State,
-		StartedAt:   p.StartedAt,
+		CPUPercent:  row.CPUPercent,
+		MemoryRSS:   row.MemoryRSS,
+		ThreadCount: row.ThreadCount,
+		StartTime:   row.StartTime,
+		Uptime:      row.Uptime,
+		State:       row.State,
+		StartedAt:   row.StartedAt,
 	}
 }
 
@@ -167,19 +200,19 @@ func (s ProcSample) MatchesStart(startedAt string) bool {
 // Apply writes only identity-compatible samples onto a listening row. A zero
 // thread count means this call did not report one. Existing birth evidence is
 // retained, and an absent timestamp is filled without claiming proven identity.
-func (s ProcSample) Apply(p *ListeningPort) {
-	if !s.MatchesStart(p.StartedAt) {
+func (sample ProcSample) Apply(row *ListeningPort) {
+	if !sample.MatchesStart(row.StartedAt) {
 		return
 	}
-	p.CPUPercent = s.CPUPercent
-	p.MemoryRSS = s.MemoryRSS
-	p.State = s.State
-	p.Uptime = s.Uptime
-	p.StartTime = s.StartTime
-	if s.ThreadCount > 0 {
-		p.ThreadCount = s.ThreadCount
+	row.CPUPercent = sample.CPUPercent
+	row.MemoryRSS = sample.MemoryRSS
+	row.State = sample.State
+	row.Uptime = sample.Uptime
+	row.StartTime = sample.StartTime
+	if sample.ThreadCount > 0 {
+		row.ThreadCount = sample.ThreadCount
 	}
-	if p.StartedAt == "" {
-		p.StartedAt = s.StartedAt
+	if row.StartedAt == "" {
+		row.StartedAt = sample.StartedAt
 	}
 }
