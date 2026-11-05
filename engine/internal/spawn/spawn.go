@@ -305,135 +305,138 @@ func contextProblem(ctx context.Context) error {
 	return ctx.Err()
 }
 
-// Wait blocks until the child exits and returns the exit code the caller should
+// Wait blocks until the child exits and returns the code the caller should
 // exit with: the child's own, or 128+signal when it was killed.
-func (h *Handle) Wait() (int, error) {
-	if h == nil || h.cmd == nil {
+func (handle *Handle) Wait() (int, error) {
+	if handle == nil || handle.cmd == nil {
 		return 0, errors.New("spawn: no process to wait for")
 	}
-	err := h.cmd.Wait()
-	if err == nil {
+	waitErr := handle.cmd.Wait()
+	switch {
+	case waitErr == nil:
 		return 0, nil
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		if code := exitErr.ExitCode(); code >= 0 {
+	var exitFailure *exec.ExitError
+	if errors.As(waitErr, &exitFailure) {
+		if code := exitFailure.ExitCode(); code >= 0 {
 			return code, nil
 		}
-		return signalExitCode(exitErr), nil
+		return signalExitCode(exitFailure), nil
 	}
-	return 1, err
+	return 1, waitErr
 }
 
 // Signal forwards sig to the child's whole process group, so a dev server's
 // own children go down with it.
-func (h *Handle) Signal(sig os.Signal) error {
-	if h == nil || h.cmd == nil || h.cmd.Process == nil {
+func (handle *Handle) Signal(sig os.Signal) error {
+	if handle == nil || handle.cmd == nil || handle.cmd.Process == nil {
 		return errors.New("spawn: no process to signal")
 	}
-	return signalGroup(h.cmd.Process, sig)
+	return signalGroup(handle.cmd.Process, sig)
 }
 
 // Kill terminates the child's process group (or Job Object) without waiting.
-func (h *Handle) Kill() error {
-	if h == nil || h.cmd == nil || h.cmd.Process == nil {
+func (handle *Handle) Kill() error {
+	if handle == nil || handle.cmd == nil || handle.cmd.Process == nil {
 		return errors.New("spawn: no process to kill")
 	}
-	return killGroup(h.cmd.Process)
+	return killGroup(handle.cmd.Process)
 }
 
-// Process is the underlying child, for callers that need os.Process directly.
-func (h *Handle) Process() *os.Process {
-	if h == nil || h.cmd == nil {
+// Process exposes the underlying child to callers that need os.Process.
+func (handle *Handle) Process() *os.Process {
+	if handle == nil || handle.cmd == nil {
 		return nil
 	}
-	return h.cmd.Process
+	return handle.cmd.Process
 }
 
-// NewID returns a short random run id, the same shape `option-berth run --id` uses.
+// NewID returns a short random run id, the same shape `oberth run --id` uses.
 func NewID() string {
-	var b [4]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	var raw [4]byte
+	if _, err := rand.Read(raw[:]); err != nil {
 		return fmt.Sprintf("run%d", os.Getpid())
 	}
-	return hex.EncodeToString(b[:])
+	return hex.EncodeToString(raw[:])
 }
 
 // Forwarder relays the interrupts this process receives to a child's process
-// group (daemon spec, `oberth start` step 5).
+// group.
 //
-// It must be created *before* the child is started. Installing the handler
-// first is what guarantees the child starts with a default SIGINT disposition:
-// exec turns a caught signal into the default action, while an ignored one
-// stays ignored — and a `oberth start` line in a `dev.sh` is a background job,
-// so it inherits an ignored SIGINT from the shell. Without this, Ctrl+C would
-// reach neither option-berth nor the dev server it is supervising.
+// Create it *before* starting the child. Installing the handler first is what
+// guarantees the child starts with the default SIGINT disposition: exec turns
+// a caught signal into the default action while an ignored one stays ignored —
+// and an `oberth start` line in a `dev.sh` is a background job, which inherits
+// an ignored SIGINT. Without this, Ctrl+C reaches neither option-berth nor the
+// dev server it supervises.
 type Forwarder struct {
-	ch   chan os.Signal
-	stop chan struct{}
-	once sync.Once
+	// Signal plumbing.
+	signals chan os.Signal
+	done    chan struct{}
+	once    sync.Once
 
-	mu      sync.Mutex
-	handle  *Handle
-	pending []os.Signal
-	// caught records that an interrupt arrived: the child was stopped by the
-	// user rather than exiting on its own.
-	caught bool
+	// The child and any signals caught before it was known.
+	mu     sync.Mutex
+	handle *Handle
+	queued []os.Signal
+	// sawInterrupt records that an interrupt arrived: the child was stopped
+	// by the user rather than exiting on its own.
+	sawInterrupt bool
 }
 
 // Interrupted reports whether an interrupt reached this process while it
 // supervised the child, so the child's exit was asked for.
-func (f *Forwarder) Interrupted() bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.caught
+func (forwarder *Forwarder) Interrupted() bool {
+	forwarder.mu.Lock()
+	defer forwarder.mu.Unlock()
+	return forwarder.sawInterrupt
 }
 
 // CatchSignals starts catching SIGINT and SIGTERM. Nothing is forwarded until
-// Forward names the child; signals that arrive before then are replayed to it,
-// so a Ctrl+C in the moment between fork and registration is not lost.
+// Forward names the child; signals arriving before then are replayed to it, so
+// a Ctrl+C between fork and registration is not lost.
 func CatchSignals() *Forwarder {
-	f := &Forwarder{ch: make(chan os.Signal, 8), stop: make(chan struct{})}
-	signal.Notify(f.ch, os.Interrupt, syscall.SIGTERM)
-	go f.run()
-	return f
+	forwarder := &Forwarder{signals: make(chan os.Signal, 8), done: make(chan struct{})}
+	signal.Notify(forwarder.signals, os.Interrupt, syscall.SIGTERM)
+	go forwarder.run()
+	return forwarder
 }
 
-// Forward starts sending caught signals to h's process group.
-func (f *Forwarder) Forward(h *Handle) {
-	f.mu.Lock()
-	f.handle = h
-	pending := f.pending
-	f.pending = nil
-	f.mu.Unlock()
-	for _, sig := range pending {
-		_ = h.Signal(sig)
+// Forward starts sending caught signals to handle's process group.
+func (forwarder *Forwarder) Forward(handle *Handle) {
+	forwarder.mu.Lock()
+	forwarder.handle = handle
+	queued := forwarder.queued
+	forwarder.queued = nil
+	forwarder.mu.Unlock()
+	for _, sig := range queued {
+		_ = handle.Signal(sig)
 	}
 }
 
 // Stop stops catching signals and restores the default behaviour.
-func (f *Forwarder) Stop() {
-	f.once.Do(func() {
-		signal.Stop(f.ch)
-		close(f.stop)
+func (forwarder *Forwarder) Stop() {
+	forwarder.once.Do(func() {
+		signal.Stop(forwarder.signals)
+		close(forwarder.done)
 	})
 }
 
-func (f *Forwarder) run() {
+func (forwarder *Forwarder) run() {
 	for {
 		select {
-		case sig := <-f.ch:
-			f.mu.Lock()
-			f.caught = true
-			h := f.handle
-			if h == nil {
-				f.pending = append(f.pending, sig)
+		case sig := <-forwarder.signals:
+			forwarder.mu.Lock()
+			forwarder.sawInterrupt = true
+			handle := forwarder.handle
+			if handle == nil {
+				forwarder.queued = append(forwarder.queued, sig)
 			}
-			f.mu.Unlock()
-			if h != nil {
-				_ = h.Signal(sig)
+			forwarder.mu.Unlock()
+			if handle != nil {
+				_ = handle.Signal(sig)
 			}
-		case <-f.stop:
+		case <-forwarder.done:
 			return
 		}
 	}
