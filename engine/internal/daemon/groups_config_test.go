@@ -98,6 +98,16 @@ func newBareConfigCase(t *testing.T) *configCase {
 	return &configCase{harness: harness, client: harness.dial(ctx), dir: dir}
 }
 
+// assertFileHas fails unless the manifest on disk contains want. The hint says
+// what losing it would mean, so a failure names the consequence rather than
+// just the missing substring.
+func assertFileHas(t *testing.T, path, want, hint string) {
+	t.Helper()
+	if contents := readFixture(t, path); !strings.Contains(contents, want) {
+		t.Fatalf("%s (%q missing):\n%s", hint, want, contents)
+	}
+}
+
 // readFixture returns the manifest's bytes as they are on disk right now,
 // ending the test when it cannot be read. Several cases compare the file before
 // and after a handler, and a read failure there is always a broken fixture
@@ -217,16 +227,8 @@ func TestGroupsConfigSetWritesAndPublishes(t *testing.T) {
 		t.Fatalf("returned row = %+v", db)
 	}
 
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), "# the database goes first") {
-		t.Errorf("the comment was lost:\n%s", raw)
-	}
-	if !strings.Contains(string(raw), "color: blue") {
-		t.Errorf("the patch is not on disk:\n%s", raw)
-	}
+	assertFileHas(t, path, "# the database goes first", "the write dropped a comment the editor must preserve")
+	assertFileHas(t, path, "color: blue", "the patch never reached the file")
 
 	// The delta carries the edited group.
 	g, ok := edited["demo"]
@@ -434,11 +436,8 @@ func TestGroupsConfigSetAddsRenamesAndRemoves(t *testing.T) {
 	if len(g.Services) != 3 || g.Services[2].Name != "worker" {
 		t.Errorf("the published group is stale: %+v", g.Services)
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), "# the database goes first") {
+	raw := readFixture(t, path)
+	if !strings.Contains(raw, "# the database goes first") {
 		t.Errorf("the comment was lost:\n%s", raw)
 	}
 
@@ -450,11 +449,8 @@ func TestGroupsConfigSetAddsRenamesAndRemoves(t *testing.T) {
 	if len(res.Affected) != 1 || res.Affected[0] != "database" {
 		t.Errorf("affected = %v, want the new name", res.Affected)
 	}
-	raw, err = os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(raw), "depends_on: [db]") || !strings.Contains(string(raw), "depends_on: [database]") {
+	raw = readFixture(t, path)
+	if strings.Contains(raw, "depends_on: [db]") || !strings.Contains(raw, "depends_on: [database]") {
 		t.Errorf("the rename did not follow depends_on:\n%s", raw)
 	}
 	if g, ok := seen["demo"]; ok && g.Services[0].Name != "database" {
@@ -471,11 +467,8 @@ func TestGroupsConfigSetAddsRenamesAndRemoves(t *testing.T) {
 	if len(res.Affected) != 1 || res.Affected[0] != "database" {
 		t.Errorf("affected = %v", res.Affected)
 	}
-	raw, err = os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(raw), "database") {
+	raw = readFixture(t, path)
+	if strings.Contains(raw, "database") {
 		t.Errorf("the removed service is still referenced:\n%s", raw)
 	}
 	if len(res.Config.Services) != 2 {
