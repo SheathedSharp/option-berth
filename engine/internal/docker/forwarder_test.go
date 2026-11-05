@@ -6,40 +6,54 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
+// forwarderSpellings are what the three scanners really report for Docker's
+// port forwarders, including the truncations lsof (9 characters) and comm
+// (15) apply, the Windows suffix, and the paths a process name may arrive as.
+var forwarderSpellings = []string{
+	"com.docke",              // macOS lsof, truncated to 9 (verified on a real machine)
+	"com.docker.backend",     // lsof +c 0, or ps comm basename
+	"com.docker.back",        // Linux comm, truncated to 15
+	"com.docker.backend.exe", // Windows tasklist
+	"COM.DOCKER.BACKEND.EXE", // Windows filenames are case-insensitive
+	"vpnkit",                 // older Docker Desktop
+	"vpnkit.exe",             // older Docker Desktop on Windows
+	"docker-proxy",           // Linux userland proxy
+	"docker-pr",              // docker-proxy through lsof
+	"rootlesskit",            // rootless Docker
+	"rootlessport",           // rootless Docker
+	"slirp4netns",            // rootless Docker
+	"/usr/bin/docker-proxy",  // a path rather than a bare name
+	`C:\Docker\vpnkit.exe`,   // a Windows path
+}
+
+// nativeSpellings are the names issue #95 is about, plus the near-misses that
+// must not be mistaken for a forwarder.
+var nativeSpellings = []string{
+	"node", // the native processes holding a stale container's port
+	"python3",
+	"postgres",
+	"docker",              // the CLI never holds a published port
+	"dockerd",             // neither does the engine on Linux
+	"com.docker.backendx", // longer than a real name is not a truncation of it
+	"vpn",                 // shorter than minTruncatedName
+	"docker-",             // also under minTruncatedName
+	"",
+}
+
 func TestIsForwarderProcess(t *testing.T) {
-	cases := []struct {
-		name string
-		want bool
-	}{
-		// What the scanners really report for Docker's forwarders.
-		{"com.docke", true},              // macOS lsof, truncated to 9 (verified)
-		{"com.docker.backend", true},     // lsof +c 0, ps comm basename
-		{"com.docker.back", true},        // Linux comm, truncated to 15
-		{"com.docker.backend.exe", true}, // Windows tasklist
-		{"COM.DOCKER.BACKEND.EXE", true}, // Windows is case-insensitive
-		{"vpnkit", true},                 // older Docker Desktop
-		{"vpnkit.exe", true},             // older Docker Desktop on Windows
-		{"docker-proxy", true},           // Linux userland proxy
-		{"docker-pr", true},              // docker-proxy through lsof
-		{"rootlesskit", true},            // rootless Docker
-		{"rootlessport", true},           // rootless Docker
-		{"slirp4netns", true},            // rootless Docker
-		{"/usr/bin/docker-proxy", true},  // a path, not a bare name
-		{`C:\Docker\vpnkit.exe`, true},   // a Windows path
-		{"node", false},                  // the native processes #95 is about
-		{"python3", false},               // ...
-		{"postgres", false},              // ...
-		{"docker", false},                // the CLI never holds a published port
-		{"dockerd", false},               // nor does the engine on Linux
-		{"com.docker.backendx", false},   // longer than a real name is not a truncation
-		{"vpn", false},                   // a short prefix is not a truncation
-		{"docker-", false},               // under minTruncatedName
-		{"", false},
+	for _, spelling := range forwarderSpellings {
+		t.Run("forwarder/"+spelling, func(t *testing.T) {
+			if !isForwarderProcess(spelling) {
+				t.Errorf("isForwarderProcess(%q) = false, want true", spelling)
+			}
+		})
 	}
-	for _, c := range cases {
-		if got := isForwarderProcess(c.name); got != c.want {
-			t.Errorf("isForwarderProcess(%q) = %v, want %v", c.name, got, c.want)
-		}
+	for _, spelling := range nativeSpellings {
+		t.Run("native/"+spelling, func(t *testing.T) {
+			if isForwarderProcess(spelling) {
+				t.Errorf("isForwarderProcess(%q) = true, want false", spelling)
+			}
+		})
 	}
 }
 
@@ -49,20 +63,26 @@ func TestHeldByForwarder(t *testing.T) {
 		row   ports.ListeningPort
 		want  bool
 	}{
-		{"forwarder by name", ports.ListeningPort{Process: "com.docke"}, true},
-		{"native by name", ports.ListeningPort{Process: "node"}, false},
-		{"the name wins over the command", ports.ListeningPort{Process: "node", Command: "/usr/bin/docker-proxy -proto tcp"}, false},
-		{"forwarder by command", ports.ListeningPort{Command: "/Applications/Docker.app/Contents/MacOS/com.docker.backend services"}, true},
-		{"forwarder by quoted command", ports.ListeningPort{Command: `"C:\Program Files\Docker\Docker\resources\com.docker.backend.exe" --x`}, true},
-		{"native by command", ports.ListeningPort{Command: "node server.js"}, false},
-		// Windows' netstat names nothing before ports.Enrich: no evidence, so
-		// the cached list keeps applying.
-		{"owner unknown", ports.ListeningPort{PID: 4242}, true},
+		{"a forwarder reported by name", ports.ListeningPort{Process: "com.docke"}, true},
+		{"a native process reported by name", ports.ListeningPort{Process: "node"}, false},
+		// The name is the scanner's direct observation, so it outranks a
+		// command line that happens to mention a forwarder.
+		{"a name beats a misleading command", ports.ListeningPort{Process: "node", Command: "/usr/bin/docker-proxy -proto tcp"}, false},
+		{"a forwarder only in the command", ports.ListeningPort{Command: "/Applications/Docker.app/Contents/MacOS/com.docker.backend services"}, true},
+		{"a quoted Windows command", ports.ListeningPort{Command: `"C:\Program Files\Docker\Docker\resources\com.docker.backend.exe" --x`}, true},
+		{"a native process only in the command", ports.ListeningPort{Command: "node server.js"}, false},
+		// Windows' netstat reports pids without names before ports.Enrich runs.
+		// Nothing named the owner, so there is no evidence against the cached
+		// list and it keeps applying.
+		{"an owner nobody named", ports.ListeningPort{PID: 4242}, true},
 	}
-	for _, c := range cases {
-		if got := heldByForwarder(&c.row); got != c.want {
-			t.Errorf("%s: heldByForwarder = %v, want %v", c.label, got, c.want)
-		}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			row := tc.row
+			if got := heldByForwarder(&row); got != tc.want {
+				t.Errorf("heldByForwarder(%+v) = %v, want %v", row, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -73,17 +93,28 @@ func TestEnrichSkipsAPortANativeProcessHolds(t *testing.T) {
 
 	native := []ports.ListeningPort{{Port: 3000, PID: 501, Process: "node", Type: ports.PortTypeUser}}
 	enrichFrom(native, containers)
-	if p := native[0]; p.Type == ports.PortTypeDocker || p.DockerContainer != "" || p.DockerImage != "" ||
-		p.DockerComposeProject != "" || p.DockerComposeService != "" || p.DockerContainerPort != 0 {
-		t.Errorf("a port node holds was stamped from the cached list: %+v", p)
-	}
+	assertUnstamped(t, native[0])
 
 	forwarded := []ports.ListeningPort{{Port: 3000, PID: 77, Process: "com.docke"}}
 	enrichFrom(forwarded, containers)
-	p := forwarded[0]
-	if p.Type != ports.PortTypeDocker || p.DockerContainer != "itest-web-1" || p.DockerImage != "nginx:itest" ||
-		p.DockerComposeService != "web" || p.DockerComposeProject != "itestproj" ||
-		p.DockerComposeWorkingDir != "/src/app" || p.DockerContainerPort != 80 {
-		t.Errorf("the forwarder's port lost its container data: %+v", p)
+	if forwarded[0].Type != ports.PortTypeDocker || forwarded[0].DockerContainer != "itest-web-1" ||
+		forwarded[0].DockerImage != "nginx:itest" || forwarded[0].DockerComposeService != "web" ||
+		forwarded[0].DockerComposeProject != "itestproj" ||
+		forwarded[0].DockerComposeWorkingDir != "/src/app" || forwarded[0].DockerContainerPort != 80 {
+		t.Errorf("the forwarder's port lost its container data: %+v", forwarded[0])
+	}
+}
+
+// assertUnstamped fails when a row carries any container attribution at all.
+func assertUnstamped(t *testing.T, row ports.ListeningPort) {
+	t.Helper()
+	if row.Type == ports.PortTypeDocker {
+		t.Fatalf("row was marked as Docker's: %+v", row)
+	}
+	if row.DockerContainer != "" || row.DockerImage != "" || row.DockerContainerPort != 0 {
+		t.Fatalf("row was stamped from the cached list: %+v", row)
+	}
+	if row.DockerComposeProject != "" || row.DockerComposeService != "" || row.DockerComposeWorkingDir != "" {
+		t.Fatalf("row carries compose labels from the cached list: %+v", row)
 	}
 }
