@@ -634,6 +634,36 @@ func (l *Loop) publish(prev, next state.Snapshot, events []state.Event) {
 	l.record(events)
 }
 
+// partialObservation records that a collector answered with the rows it could
+// read and a verdict on the rest. The code and hint come from the collector's
+// own error, so a sandboxed agent can tell which kind of blindness this was.
+func (l *Loop) partialObservation(reason error, source string) *state.Observation {
+	partial := &state.Observation{
+		State:     state.ObservationPartial,
+		Source:    source,
+		CheckedAt: l.nowRFC3339(),
+	}
+	var observed *ports.ObservationError
+	if errors.As(reason, &observed) {
+		partial.Code = observed.Code
+		partial.Detail = observed.Error()
+		partial.Hint = observed.Hint
+	}
+	return partial
+}
+
+// observableObservation records that this scan could see the machine, though a
+// narrow source (netstat, ss) cannot show every owner. Publishing the coverage
+// alongside the rows is what stops "no owner" from reading as "nothing there".
+func (l *Loop) observableObservation(source string) *state.Observation {
+	return &state.Observation{
+		State:     state.ObservationObservable,
+		Source:    source,
+		Detail:    ports.NarrowSourceDetail(source),
+		CheckedAt: l.nowRFC3339(),
+	}
+}
+
 // scanLocked performs a scan and swaps it into the cache. It returns the new
 // snapshot, the one it replaced, and whether anything a client cares about
 // changed.
@@ -677,16 +707,9 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 	if err != nil {
 		if partial, ok := ports.PartialRows(err); ok {
 			// The readable rows are facts; the unreadable ones are not. Publish
-			// the rows together with the verdict so no port looks absent.
+			// them together with the verdict so no port looks absent.
 			pp = partial
-			var oe *ports.ObservationError
-			if errors.As(err, &oe) {
-				observation = &state.Observation{
-					State: state.ObservationPartial, Code: oe.Code, Source: source,
-					Detail: oe.Error(), Hint: oe.Hint,
-					CheckedAt: l.nowRFC3339(),
-				}
-			}
+			observation = l.partialObservation(err, source)
 			if reportFailure {
 				l.opts.Logger.Warn("scan partial, publishing readable rows", "error", err)
 			}
@@ -694,16 +717,7 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 		}
 	}
 	if err == nil && source != "" {
-		// The table is usable for what it shows but cannot see every owner.
-		// Publish that coverage with the rows; the self-probe question ("can
-		// this process see its own listener") stays answered by the source
-		// being able to show this process's socket at all.
-		observation = &state.Observation{
-			State:     state.ObservationObservable,
-			Source:    source,
-			Detail:    ports.NarrowSourceDetail(source),
-			CheckedAt: l.nowRFC3339(),
-		}
+		observation = l.observableObservation(source)
 	}
 	narrow := source != ""
 	if err != nil {
