@@ -6,32 +6,29 @@ import (
 	"time"
 )
 
-// agent.timeout falls back to the default rather than ever leaving a drafting
-// run with no ceiling, and never trusts a value that is not a positive
-// duration.
-func TestResolvedAgentTimeout(t *testing.T) {
-	tests := []struct {
-		name string
-		set  string
-		want time.Duration
+// A missing or unusable ceiling never leaves a drafting run unbounded.
+func TestResolvedAgentTimeoutNeverDropsTheCeiling(t *testing.T) {
+	cases := []struct {
+		label string
+		raw   string
+		want  time.Duration
 	}{
-		{"unset", "", DefaultAgentTimeout},
+		{"absent", "", DefaultAgentTimeout},
 		{"explicit", "45m", 45 * time.Minute},
 		{"zero", "0", DefaultAgentTimeout},
 		{"negative", "-5m", DefaultAgentTimeout},
-		{"nonsense", "soon", DefaultAgentTimeout},
+		{"not a duration", "soon", DefaultAgentTimeout},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := (AgentConfig{Timeout: tt.set}).ResolvedTimeout(); got != tt.want {
-				t.Errorf("ResolvedTimeout(%q) = %s, want %s", tt.set, got, tt.want)
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			if got := (AgentConfig{Timeout: tc.raw}).ResolvedTimeout(); got != tc.want {
+				t.Errorf("ResolvedTimeout(%q) = %s, want %s", tc.raw, got, tc.want)
 			}
 		})
 	}
 }
 
-// A bad agent.timeout is dropped with a warning, like every other duration.
-func TestValidateDropsABadAgentTimeout(t *testing.T) {
+func TestValidateDropsAnUnparseableAgentTimeout(t *testing.T) {
 	cfg := &Config{}
 	cfg.Agent.Timeout = "soon"
 	warnings := validate(cfg)

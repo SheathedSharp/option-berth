@@ -11,13 +11,18 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config holds user preferences loaded from ~/.option-berth/config.yaml.
+// Config is the user's preferences file, ~/.option-berth/config.yaml.
 type Config struct {
-	Daemon   DaemonConfig   `yaml:"daemon"`
-	Color    *bool          `yaml:"color"`    // pointer: nil = unset, distinguishes from explicit false
-	Services map[int]string `yaml:"services"` // port -> label, merged over built-in table
-	// Agent holds the drafting agent's settings (see agent.go): which local
-	// CLI `oberth init draft` runs, and how long it gets.
+	Daemon DaemonConfig `yaml:"daemon"`
+
+	// Color is a pointer so "unset" and an explicit false stay distinct.
+	Color *bool `yaml:"color"`
+
+	// Services labels custom or unknown ports, merged over the built-in
+	// table: port number to display name.
+	Services map[int]string `yaml:"services"`
+
+	// Agent configures `oberth init draft`; see agent.go.
 	Agent AgentConfig `yaml:"agent"`
 }
 
@@ -25,191 +30,205 @@ type Config struct {
 // subscribers and no keepalive connection.
 const DefaultIdleTimeout = 30 * time.Minute
 
-// DefaultStatsInterval and MinStatsInterval bound `daemon.stats_interval`, the
-// cadence of the daemon's stats-only tick. DefaultScanInterval and
-// MinScanInterval do the same for `daemon.scan_interval`, the base of the
-// port-scan cadence. All four mirror the scanner's own constants;
-// config does not import the scanner, which would drag the whole port
-// pipeline into every CLI command that reads a config file.
+// The cadence bounds for `daemon.stats_interval` and `daemon.scan_interval`.
+// These mirror the scanner's own constants; config does not import the
+// scanner, which would drag the whole port pipeline into every CLI command
+// that reads a config file.
 const (
+	// The stats tick: per-process cpu/memory plus the host load row.
 	DefaultStatsInterval = 1 * time.Second
 	MinStatsInterval     = 250 * time.Millisecond
-	DefaultScanInterval  = 2 * time.Second
-	MinScanInterval      = 1 * time.Second
+
+	// The port-scan cadence and its floor.
+	DefaultScanInterval = 2 * time.Second
+	MinScanInterval     = 1 * time.Second
 )
 
 // DaemonConfig holds `oberth serve` settings.
 type DaemonConfig struct {
-	// IdleTimeout is a Go duration ("30m", "2h"). "0" disables idle shutdown;
-	// empty means DefaultIdleTimeout.
+	// IdleTimeout is a Go duration ("30m", "2h"). "0" disables idle
+	// shutdown; empty means DefaultIdleTimeout.
 	IdleTimeout string `yaml:"idle_timeout"`
+
 	// LogLevel is debug, info, warn or error. Empty means info.
 	LogLevel string `yaml:"log_level"`
-	// StatsInterval is how often the daemon refreshes per-process cpu/memory
-	// and the machine's own load row while something is subscribed, as a Go
-	// duration ("1s", "500ms"). Empty means DefaultStatsInterval; anything
-	// below MinStatsInterval is clamped to it. It does not affect how often
-	// ports are scanned — that cadence is adaptive and owned by the scanner.
+
+	// StatsInterval is how often per-process cpu/memory and the host load
+	// row refresh while something is subscribed, as a Go duration ("1s",
+	// "500ms"). Empty means DefaultStatsInterval; values below
+	// MinStatsInterval are clamped. It never changes the port-scan cadence,
+	// which is adaptive and owned by the scanner.
 	StatsInterval string `yaml:"stats_interval"`
+
 	// ScanInterval is the base cadence of the port scan, as a Go duration
-	// ("2s", "5s"). Empty means DefaultScanInterval; anything below
-	// MinScanInterval is clamped to it. It sets the *base*: the scanner still
-	// backs off on unchanged scans, and the two ceilings it backs off to
-	// scale with this value, so raising it makes the whole curve slower
-	// rather than only its fastest step.
+	// ("2s", "5s"). Empty means DefaultScanInterval; values below
+	// MinScanInterval are clamped. It sets the base only: the scanner still
+	// backs off on unchanged scans, and both ceilings scale with this value,
+	// so raising it slows the whole curve rather than only its fastest step.
 	ScanInterval string `yaml:"scan_interval"`
 }
 
 // ResolvedIdleTimeout returns the parsed idle timeout, falling back to
-// DefaultIdleTimeout when the setting is absent. A zero return means "never".
+// DefaultIdleTimeout when the setting is absent or unusable. Zero means
+// "never shut down".
 func (d DaemonConfig) ResolvedIdleTimeout() time.Duration {
-	if strings.TrimSpace(d.IdleTimeout) == "" {
+	raw := strings.TrimSpace(d.IdleTimeout)
+	if raw == "" {
 		return DefaultIdleTimeout
 	}
-	v, err := time.ParseDuration(strings.TrimSpace(d.IdleTimeout))
-	if err != nil || v < 0 {
+	value, err := time.ParseDuration(raw)
+	if err != nil || value < 0 {
 		return DefaultIdleTimeout
 	}
-	return v
+	return value
 }
 
-// ResolvedStatsInterval returns the parsed stats cadence, falling back to
-// DefaultStatsInterval and never returning less than MinStatsInterval.
+// ResolvedStatsInterval returns the stats cadence, defaulting to
+// DefaultStatsInterval and never below MinStatsInterval.
 func (d DaemonConfig) ResolvedStatsInterval() time.Duration {
-	v, err := time.ParseDuration(strings.TrimSpace(d.StatsInterval))
-	if err != nil || v <= 0 {
-		// Including the unset case. There is no "off": the sampler already
-		// parks itself whenever nothing is subscribed, so a zero here would
-		// only mean a busy loop.
+	value, ok := positiveDuration(d.StatsInterval)
+	if !ok {
+		// Including the unset case. There is no "off": the sampler parks
+		// whenever nothing is subscribed, so zero would only be a busy loop.
 		return DefaultStatsInterval
 	}
-	if v < MinStatsInterval {
+	if value < MinStatsInterval {
 		return MinStatsInterval
 	}
-	return v
+	return value
 }
 
-// ResolvedScanInterval returns the parsed base scan cadence, falling back to
-// DefaultScanInterval and never returning less than MinScanInterval.
+// ResolvedScanInterval returns the base scan cadence, defaulting to
+// DefaultScanInterval and never below MinScanInterval.
 func (d DaemonConfig) ResolvedScanInterval() time.Duration {
-	v, err := time.ParseDuration(strings.TrimSpace(d.ScanInterval))
-	if err != nil || v <= 0 {
-		// Including the unset case. There is no "off": the loop already parks
-		// itself whenever nothing is subscribed and nothing is reading.
+	value, ok := positiveDuration(d.ScanInterval)
+	if !ok {
+		// Including the unset case. There is no "off": the loop parks
+		// whenever nothing is subscribed and nothing is reading.
 		return DefaultScanInterval
 	}
-	if v < MinScanInterval {
+	if value < MinScanInterval {
 		return MinScanInterval
 	}
-	return v
+	return value
 }
 
 // ResolvedLogLevel returns the configured level, defaulting to "info".
 func (d DaemonConfig) ResolvedLogLevel() string {
 	level := strings.ToLower(strings.TrimSpace(d.LogLevel))
-	if !validLogLevels[level] {
+	if !knownLogLevel(level) {
 		return "info"
 	}
 	return level
 }
 
-// Path returns the absolute path to the config file. The layout itself lives in
-// internal/paths — the directory is spelled out exactly once, there.
+func positiveDuration(raw string) (time.Duration, bool) {
+	value, err := time.ParseDuration(strings.TrimSpace(raw))
+	if err != nil || value <= 0 {
+		return 0, false
+	}
+	return value, true
+}
+
+func knownLogLevel(level string) bool {
+	switch level {
+	case "debug", "info", "warn", "error":
+		return true
+	}
+	return false
+}
+
+// Path returns the absolute config path. The directory layout is spelled out
+// exactly once, in internal/paths.
 func Path() string { return paths.ConfigPath() }
 
 // Load reads and validates the config file. It never returns an error: a
-// missing file yields an empty Config with no warnings; a malformed file or
-// invalid values yield a Config with the bad settings dropped plus
-// human-readable warning strings for the caller to print.
+// missing file yields an empty Config without warnings, while a malformed
+// file or invalid values yield a Config with the bad settings dropped plus
+// human-readable warnings for the caller to print.
 func Load() (*Config, []string) { return LoadFrom(Path()) }
 
-// LoadFrom is Load against an explicit file. `oberth doctor` uses it: its
-// checks read the config path in its Env, which a test points at a fixture,
-// and going through Path() would read the developer's own file instead.
+// LoadFrom is Load against an explicit file. `oberth doctor` uses it, because
+// its checks read the config path from its own Env and going through Path()
+// would read the developer's file instead of the fixture.
 func LoadFrom(path string) (*Config, []string) {
 	cfg := &Config{}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		// Missing/unreadable file is not an error — run with defaults.
+		// A missing or unreadable file is not an error: run on defaults.
 		return cfg, nil
 	}
-
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return &Config{}, []string{fmt.Sprintf("ignoring %s: %v", path, err)}
 	}
-
-	warnings := validate(cfg)
-	return cfg, warnings
+	return cfg, validate(cfg)
 }
 
 const template = `# option-berth configuration
-# All settings are optional. Uncomment and edit to override built-in defaults.
-# Explicit command-line flags always take precedence over this file.
+#
+# Every setting is optional. Uncomment a line to override the built-in
+# default. Command-line flags always win over this file.
 
 # daemon:
-#   # oberth serve stops after this long with no clients, no subscribers and
-#   # no keepalive connection. 0 keeps it running until you stop it.
+#   # Stop oberth serve after this long without a client, a subscriber or
+#   # a keepalive connection. 0 keeps it running until stopped by hand.
 #   idle_timeout: 30m
 #   # How much the daemon writes to ~/.option-berth/daemon.log.
 #   log_level: info     # debug | info | warn | error
-#   # How often cpu, memory and the host load strip refresh while the app (or
-#   # any other subscriber) is watching. Minimum 250ms.
+#   # How often cpu, memory and the host load row refresh while something
+#   # is watching. The floor is 250ms.
 #   stats_interval: 1s
-#   # The base cadence of the port scan. The scanner still slows itself down
-#   # on unchanged scans — to 2.5x this while something is subscribed and 5x
-#   # when only RPC reads are served — so this moves the whole curve.
-#   # Minimum 1s. Both intervals are read at startup: restart the daemon to
-#   # apply a change, and 'oberth daemon status' shows what is in effect.
+#   # Base cadence of the port scan. The scanner still backs off on an
+#   # unchanged machine — to 2.5x this while a subscriber is connected and
+#   # 5x when only RPC reads are served — so this moves the whole curve.
+#   # The floor is 1s. Both cadences are read at startup: restart the
+#   # daemon after changing them; oberth daemon status shows the values
+#   # in effect.
 #   scan_interval: 2s
 
-# color: true       # set false to disable colored output
+# color: true       # false turns off colored output
 
-# services:         # label custom/unknown ports (port: name)
+# services:         # labels for custom or unknown ports
 #   9000: php-fpm
 #   5050: my-dashboard
 
-# agent:            # drafting a oberth.yaml with your own local agent
-#                   # ('oberth init draft'). option-berth runs a CLI you
-#                   # already have; it never talks to a model itself, and a
-#                   # draft does not become the file until a person adopts it
-#                   # ('oberth init adopt').
-#   command: claude # claude | codex. Empty means auto-detect: the one
+# agent:            # how oberth init draft runs your own local agent
+#                   # option-berth never talks to a model itself; a draft
+#                   # becomes the manifest only when a person adopts it
+#                   # (oberth init adopt).
+#   command: claude # claude | codex. Empty auto-detects the one
 #                   # supported CLI on PATH.
-#   model: ""       # optional: the model to hand the CLI (claude --model,
-#                   # codex -m). Empty uses the CLI's own default. Names are
-#                   # not portable between the two CLIs.
-#   timeout: 20m    # one drafting run. Minutes, not seconds: the agent reads
-#                   # the project, and may build it and try services.
-#   args: []        # extra arguments for the agent CLI, before the prompt.
-#                   # This is where a permission posture you chose goes —
-#                   # option-berth adds none of its own, so the run starts with
-#                   # the CLI's own defaults. For example:
+#   model: ""       # handed to the CLI (claude --model, codex -m). Empty
+#                   # uses its default; names are not portable between CLIs.
+#   timeout: 20m    # one drafting run. Minutes, not seconds: the agent
+#                   # reads the project and may build and try services.
+#   args: []        # extra CLI arguments before the prompt. This is where
+#                   # a permission posture you chose goes — option-berth adds
+#                   # none, so the run starts with the CLI's own defaults.
+#                   # Examples:
 #                   #   ["--allowedTools", "Bash"]              (claude)
 #                   #   ["--sandbox", "workspace-write"]        (codex)
 
 # Environment overrides (no config key; set them in your shell):
-#   BERTH_DB       path to the database of names, pins and history
-#                  (default: option-berth.db next to this file)
-#   BERTH_SOCKET   path the daemon listens on and every client dials
-#                  (default: what 'oberth daemon path' prints)
+#   BERTH_DB       database for names, pins and history
+#                  (default: option-berth.db beside this file)
+#   BERTH_SOCKET   socket the daemon listens on and clients dial
+#                  (default: what oberth daemon path prints)
 #   BERTH_NO_AUTOSTART
-#                  set to 1 to stop clients starting a daemon that is not
-#                  already running; they report it as unavailable instead
+#                  1 stops clients from starting a daemon that is not
+#                  already running; they report it as unavailable
 #   BERTH_STRICT_MANIFEST
-#                  set to 1 to make an unknown key in oberth.yaml a load error
-#                  with its line and column instead of a warning
+#                  1 makes an unknown oberth.yaml key a load error with its
+#                  line and column instead of a warning
 `
 
-// WriteTemplate writes a commented starter config to Path(), creating the
-// parent directory if needed. It refuses to overwrite an existing file unless
-// force is true.
+// WriteTemplate writes the commented starter config to Path(), creating the
+// parent directory when needed. It refuses to overwrite unless force is true.
 func WriteTemplate(force bool) error {
 	path := Path()
-	if !force {
-		if _, err := os.Stat(path); err == nil {
-			return fmt.Errorf("config already exists at %s (use --force to overwrite)", path)
-		}
+	if err := ensureReplaceable(path, force); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("could not create config directory: %w", err)
@@ -220,63 +239,82 @@ func WriteTemplate(force bool) error {
 	return nil
 }
 
-var validLogLevels = map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
+func ensureReplaceable(path string, force bool) error {
+	if force {
+		return nil
+	}
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("config already exists at %s (use --force to overwrite)", path)
+	}
+	return nil
+}
 
-// validate checks settings and service ports, dropping any invalid value
-// and returning a warning for each. Valid neighboring settings are preserved.
+// durationRule describes how one duration setting is repaired after parsing.
+type durationRule struct {
+	key      string
+	fallback time.Duration
+	// allowZero keeps an explicit "0" meaningful (idle shutdown off).
+	allowZero bool
+	// floor, when positive, is the minimum accepted value.
+	floor time.Duration
+}
+
+// repairDuration drops or clamps one setting and appends the warning that
+// explains what happened. Valid neighbouring settings are untouched.
+func repairDuration(raw *string, rule durationRule, warnings *[]string) {
+	value := strings.TrimSpace(*raw)
+	if value == "" {
+		return
+	}
+	parsed, err := time.ParseDuration(value)
+	switch {
+	case err != nil, parsed < 0, !rule.allowZero && parsed == 0:
+		*warnings = append(*warnings, fmt.Sprintf(
+			"config: invalid %s %q — using %s", rule.key, value, rule.fallback))
+		*raw = ""
+	case rule.floor > 0 && parsed < rule.floor:
+		*warnings = append(*warnings, fmt.Sprintf(
+			"config: %s %q is below the %s minimum — using %s",
+			rule.key, value, rule.floor, rule.floor))
+		*raw = rule.floor.String()
+	}
+}
+
+// validate checks every setting and service port, dropping each invalid
+// value and returning one warning per repair. `command` is deliberately not
+// validated here: the supported set lives with the invocation matrix
+// (internal/draft), and an unknown name is reported where the list can be
+// shown — see cmd.resolveAgent.
 func validate(cfg *Config) []string {
 	var warnings []string
 
-	if v := strings.TrimSpace(cfg.Daemon.IdleTimeout); v != "" {
-		if d, err := time.ParseDuration(v); err != nil || d < 0 {
-			warnings = append(warnings, fmt.Sprintf("config: invalid daemon.idle_timeout %q — using %s", v, DefaultIdleTimeout))
-			cfg.Daemon.IdleTimeout = ""
-		}
-	}
+	repairDuration(&cfg.Daemon.IdleTimeout, durationRule{
+		key: "daemon.idle_timeout", fallback: DefaultIdleTimeout, allowZero: true,
+	}, &warnings)
+	repairDuration(&cfg.Daemon.StatsInterval, durationRule{
+		key: "daemon.stats_interval", fallback: DefaultStatsInterval, floor: MinStatsInterval,
+	}, &warnings)
+	repairDuration(&cfg.Daemon.ScanInterval, durationRule{
+		key: "daemon.scan_interval", fallback: DefaultScanInterval, floor: MinScanInterval,
+	}, &warnings)
+	repairDuration(&cfg.Agent.Timeout, durationRule{
+		key: "agent.timeout", fallback: DefaultAgentTimeout,
+	}, &warnings)
 
-	if v := strings.TrimSpace(cfg.Daemon.StatsInterval); v != "" {
-		if d, err := time.ParseDuration(v); err != nil || d <= 0 {
-			warnings = append(warnings, fmt.Sprintf("config: invalid daemon.stats_interval %q — using %s", v, DefaultStatsInterval))
-			cfg.Daemon.StatsInterval = ""
-		} else if d < MinStatsInterval {
-			warnings = append(warnings, fmt.Sprintf("config: daemon.stats_interval %q is below the %s minimum — using %s", v, MinStatsInterval, MinStatsInterval))
-			cfg.Daemon.StatsInterval = MinStatsInterval.String()
-		}
-	}
-
-	if v := strings.TrimSpace(cfg.Daemon.ScanInterval); v != "" {
-		if d, err := time.ParseDuration(v); err != nil || d <= 0 {
-			warnings = append(warnings, fmt.Sprintf("config: invalid daemon.scan_interval %q — using %s", v, DefaultScanInterval))
-			cfg.Daemon.ScanInterval = ""
-		} else if d < MinScanInterval {
-			warnings = append(warnings, fmt.Sprintf("config: daemon.scan_interval %q is below the %s minimum — using %s", v, MinScanInterval, MinScanInterval))
-			cfg.Daemon.ScanInterval = MinScanInterval.String()
-		}
-	}
-
-	if v := strings.TrimSpace(cfg.Daemon.LogLevel); v != "" && !validLogLevels[strings.ToLower(v)] {
-		warnings = append(warnings, fmt.Sprintf("config: invalid daemon.log_level %q — using info", v))
+	if level := strings.TrimSpace(cfg.Daemon.LogLevel); level != "" && !knownLogLevel(strings.ToLower(level)) {
+		warnings = append(warnings, fmt.Sprintf("config: invalid daemon.log_level %q — using info", level))
 		cfg.Daemon.LogLevel = ""
 	}
 
-	// The agent block. `command` is deliberately not validated here: the
-	// supported set lives with the invocation matrix (internal/draft), and an
-	// unknown name is reported where the list can come with it — see
-	// cmd.resolveAgent. A bad timeout is the same dropped-and-warned shape as
-	// every other duration.
-	if v := strings.TrimSpace(cfg.Agent.Timeout); v != "" {
-		if d, err := time.ParseDuration(v); err != nil || d <= 0 {
-			warnings = append(warnings, fmt.Sprintf("config: invalid agent.timeout %q — using %s", v, DefaultAgentTimeout))
-			cfg.Agent.Timeout = ""
-		}
-	}
-
 	for port := range cfg.Services {
-		if port < 1 || port > 65535 {
+		if !validPort(port) {
 			warnings = append(warnings, fmt.Sprintf("config: invalid service port %d — ignoring", port))
 			delete(cfg.Services, port)
 		}
 	}
-
 	return warnings
+}
+
+func validPort(port int) bool {
+	return port >= 1 && port <= 65535
 }
