@@ -305,18 +305,35 @@ func (c *Conn) serve(ctx context.Context, msg rpc.Message) {
 	}
 }
 
+// sendResponse is the one place a response is framed and queued, so a success
+// and a failure cannot drift apart in how they are addressed.
+func (c *Conn) sendResponse(id json.RawMessage, result json.RawMessage, failure *rpc.Error) {
+	if id == nil {
+		// A request that could not be parsed has no id, and JSON-RPC still
+		// requires a reply: null is the address for it.
+		id = json.RawMessage("null")
+	}
+	payload, err := json.Marshal(rpc.Response{
+		JSONRPC: rpc.Version,
+		ID:      id,
+		Result:  result,
+		Error:   failure,
+	})
+	if err != nil {
+		// Nowhere left to report this; dropping it beats recursing.
+		return
+	}
+	c.enqueue(payload)
+}
+
 // replyResult marshals and queues a successful response.
 func (c *Conn) replyResult(id json.RawMessage, result any) {
-	raw, err := json.Marshal(result)
+	encoded, err := json.Marshal(result)
 	if err != nil {
 		c.replyError(id, rpc.NewError(rpc.CodeInternal, "marshalling result: "+err.Error(), ""))
 		return
 	}
-	msg, err := json.Marshal(rpc.Response{JSONRPC: rpc.Version, ID: id, Result: raw})
-	if err != nil {
-		return
-	}
-	c.enqueue(msg)
+	c.sendResponse(id, encoded, nil)
 }
 
 // replyError queues an error response. A nil id still gets a response, per
