@@ -18,12 +18,38 @@ python3 -m http.server 8765 --bind 127.0.0.1 --directory site/dist
 ```
 
 构建只复制白名单资产（`icon.svg`、`mark.svg`、`mark-dark.svg`、`boot.js`、`site.css`、
-`site.js`），并检查中英两份文案的键集合一致。中文版在 `/`，英文版在 `/en/`；语言切换是
-普通链接，不依赖客户端翻译。`dist/` 是可丢弃产物，不进入源码提交。
+`site.js`、`guide.css`、`guide.js`），并检查中英两份文案的键集合一致。中文版在 `/`，英文版在
+`/en/`；指南在 `/guide/` 与 `/guide/en/`；语言切换是普通链接，不依赖客户端翻译。`dist/` 是
+可丢弃产物，不进入源码提交。
 
 页面用深色品牌变体作为底色，陶土色只出现在少数可操作元素和品牌标记上。字体使用系统字族：
 站点 CSP 只允许 `self`，README 也约定不加载外部字体，因此没有引用 `design-taste-frontend`
 方向单里的 Albert Sans；`mark-dark.svg` 是品牌深色字标，保证深色底上两条轨仍可读。
+
+## Guide book（`/guide/`）
+
+`site/guide/` 是给人读也给机器读的指南书，不替代 `/` 的产品页。`book.json` 是唯一的目录：
+章节顺序、所属部分、标题、一句摘要和契约链接。每章有两份 HTML 片段
+（`<slug>.zh.html` / `<slug>.en.html`）；构建用 `templates/guide.html` 套页面骨架，
+用 `templates/guide-chapter.html` 套章节的左栏、正文和右栏。
+
+构建会拒绝：两份片段的结构不一致（标题层级、表格行、列表项、代码块数量或代码文本不同）、
+章节缺少 h2 id、同页 id 重复、缺少对应语言的片段、正文残留 `{{guide}}` / `{{root}}`，
+以及 dist 中任何相对链接指向不存在的文件。
+
+`site/assets/guide.css` 只加书籍版式，调色板与字体来自 `site.css`；视觉母题是品牌标记的
+两条轨与陶土胶囊——首页的链、章节左栏的五站、标题下的胶囊标记都是同一个形状。
+`guide.js` 在 `site.js` 之前加载：先给阅读块加 `reveal`，再交给站点已有的 observer；
+它只驱动链的五站切换、本页目录高亮和移动端目录折叠。
+
+机器入口在 dist 根目录：`llms.txt`（英文优先的链接索引，含中文指南）、`llms-full.txt`
+（全部英文章节的纯文本）和 `sitemap.xml`。它们和 HTML 从同一份片段生成，不手写；
+`robots.txt` 带一行 `# Agent guide:`。章节页的 JSON-LD 走 CSP hash
+（`script-src 'self' 'sha256-…'`），内联结构化数据不会破坏零 console error 断言。
+
+加一章：在 `book.json` 里加条目（slug、part、station、两种语言的 nav/title/lede/summary、
+refs），再写两份片段；构建会检查结构镜像。改 part 或顺序只改 `book.json`，侧栏、首页目录、
+`llms.txt` 和 `sitemap.xml` 都会跟着生成。
 
 ## Browser verification
 
@@ -37,7 +63,10 @@ CI=1 npm test                  # CI 两种浏览器引擎
 
 回归覆盖两种语言、360/390/768/1440px、图片加载、无横向溢出、命令过滤与空状态、Escape
 重置、无 JavaScript 的基本可用性、减弱动态效果的初始值/实时变化，以及结尾的三产品链接。
-测试只启动 localhost 静态服务器；生产网站不会请求 npm、外部脚本或跟踪服务。
+指南另有 24 个页面的语言、标题、横向溢出与 console error 检查，链的五站切换（指针与键盘）、
+无脚本时五个面板全部可读、语言切换落到对应章节，以及 `llms.txt` / `llms-full.txt` /
+`sitemap.xml` 覆盖每一章。测试只启动 localhost 静态服务器；生产网站不会请求 npm、外部脚本
+或跟踪服务。
 
 ## Content evidence
 
