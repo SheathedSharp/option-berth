@@ -18,6 +18,11 @@ The interface and the agent guidance are not in this repository; they are indepe
 [option-berth-skill](https://github.com/SheathedSharp/option-berth-skill) (the coding-agent skill).
 All three meet only at the CLI and its `--json` contract.
 
+For work that spans the products, keep the three clones in one directory as siblings (`option-berth`,
+`option-berth-macos`, `option-berth-skill`): the brand export reads the client's `BerthGeometry.swift`,
+the skill contract check reads the sibling skill checkout, and the client points at any engine through
+`BERTH_BIN`.
+
 Implementation boundaries and inviolable constraints are in the root [AGENTS.md](../../AGENTS.md);
 this page covers only how to move these files.
 
@@ -66,7 +71,7 @@ Scripts, release and brand generation:
 
 ```sh
 python3 -m unittest discover -s scripts -p '*_test.py'
-python3 brand/build-option-berth.py --check
+python3 scripts/brand_export.py --check
 python3 scripts/check_skill_contract.py --skill-dir ../option-berth-skill
 python3 scripts/agent_eval.py --list          # core/large/cold scenarios and the comparison arms
 python3 scripts/agent_eval.py --dry-run --suite large  # build the large fixture, launch no agent
