@@ -6,117 +6,110 @@ import (
 	"testing"
 )
 
-// TestParseProcStatPPID covers the Linux shape ParentTable reads: field 2 of
-// /proc/<pid>/stat is the executable name in parentheses, and it may contain
-// both spaces and parentheses of its own, so the ppid can only be found from
-// the last ')' onwards.
+// The Linux shape: field 2 of /proc/<pid>/stat is the executable name in
+// parentheses and may itself contain spaces and parentheses, so the parent is
+// only found after the last ')'.
 func TestParseProcStatPPID(t *testing.T) {
 	cases := []struct {
-		name string
-		stat string
-		want int
-		ok   bool
+		label string
+		stat  string
+		want  int
+		ok    bool
 	}{
 		{
-			name: "a plain process",
-			stat: "4242 (listener) S 4200 4200 4200 0 -1 4194304 285 0 0 0 0 0 0 0 20 0 5 0 91234 0 0\n",
-			want: 4200,
-			ok:   true,
+			label: "plain process",
+			stat:  "5151 (listener) S 5100 5100 5100 0 -1 4194304 285 0 0 0 0 0 0 0 20 0 5 0 91234 0 0\n",
+			want:  5100,
+			ok:    true,
 		},
 		{
-			name: "a comm with spaces and parentheses",
-			// Next.js sets process.title to "next-server (v15.0.1)"; the
-			// kernel truncates comm to 15 bytes but keeps what fits verbatim.
-			stat: "812 (next-server (v) S 799 799 640 0 -1 4194560 9021 0 3 0 41 12 0 0 20 0 11 0 5512",
-			want: 799,
-			ok:   true,
+			label: "comm with spaces and parentheses",
+			stat:  "812 (next-server (v) S 799 799 640 0 -1 4194560 9021 0 3 0 41 12 0 0 20 0 11 0 5512",
+			want:  799,
+			ok:    true,
 		},
 		{
-			name: "a comm that itself looks like a stat line",
-			stat: "77 (evil) 1 (x) R 5 5 5 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 42",
-			want: 5,
-			ok:   true,
+			label: "comm that looks like a stat line",
+			stat:  "77 (evil) 1 (x) R 5 5 5 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 42",
+			want:  5,
+			ok:    true,
 		},
 		{
-			name: "init, whose parent is the kernel",
-			stat: "1 (systemd) S 0 1 1 0 -1 4194560 30112 0 0 0 90 250 0 0 20 0 1 0 12",
-			want: 0,
-			ok:   true,
+			label: "init, whose parent is the kernel",
+			stat:  "1 (systemd) S 0 1 1 0 -1 4194560 30112 0 0 0 90 250 0 0 20 0 1 0 12",
+			want:  0,
+			ok:    true,
 		},
 		{
-			name: "a truncated read",
-			stat: "4242 (listener) S",
-			ok:   false,
+			label: "truncated read",
+			stat:  "5151 (listener) S",
+			ok:    false,
 		},
 		{
-			name: "no comm at all",
-			stat: "not a stat line",
-			ok:   false,
+			label: "no comm",
+			stat:  "not a stat line",
+			ok:    false,
 		},
 		{
-			name: "a non-numeric ppid",
-			stat: "4242 (listener) S parent 4200 4200",
-			ok:   false,
+			label: "non-numeric parent",
+			stat:  "5151 (listener) S parent 5100 5100",
+			ok:    false,
 		},
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got, ok := parseProcStatPPID(tc.stat)
+		t.Run(tc.label, func(t *testing.T) {
+			parent, ok := parseProcStatPPID(tc.stat)
 			if ok != tc.ok {
 				t.Fatalf("ok = %v, want %v", ok, tc.ok)
 			}
-			if ok && got != tc.want {
-				t.Errorf("ppid = %d, want %d", got, tc.want)
+			if ok && parent != tc.want {
+				t.Errorf("ppid = %d, want %d", parent, tc.want)
 			}
 		})
 	}
 }
 
-// TestParentTableFindsThisProcess is the end-to-end check that whichever
-// implementation the platform uses reports a table containing this test and
-// the parent it actually has.
+// End to end: whichever implementation the platform uses must include this
+// test process and the parent it actually has.
 func TestParentTableFindsThisProcess(t *testing.T) {
 	table := ParentTable()
 	if len(table) == 0 {
 		t.Skip("no process table on this machine")
 	}
-	ppid, ok := table[os.Getpid()]
-	if !ok {
+	parent, found := table[os.Getpid()]
+	if !found {
 		t.Fatalf("the table has no entry for this process (pid %d)", os.Getpid())
 	}
-	if ppid != os.Getppid() {
-		t.Errorf("ppid = %d, want %d", ppid, os.Getppid())
+	if parent != os.Getppid() {
+		t.Errorf("ppid = %d, want %d", parent, os.Getppid())
 	}
 	if runtime.GOOS == "linux" {
-		// /proc answered, so `ps` was never needed.
 		if native := nativeParentTable(); len(native) == 0 {
 			t.Error("/proc yielded no parent table on Linux")
 		}
 	}
 }
 
-// TestProcessStartReadsTheRememberedTable: the run registry's identity check
-// reads start times from the same scan table the ancestry walks use. A pid the
-// table has no start time for is unknown, never evidence of anything.
+// The run registry's identity check reads start times from the same scan table
+// the ancestry walks use. A pid without a start time is unknown, never proof.
 func TestProcessStartReadsTheRememberedTable(t *testing.T) {
 	restore := scanParentTable.Load()
 	t.Cleanup(func() { scanParentTable.Store(restore) })
 
 	rememberParentEntries(map[int]pidEntry{
-		4242: {ppid: 1, startedAt: "Wed Mar 18 10:30:00 2026"},
-		4343: {ppid: 1}, // no start time recorded
+		5151: {ppid: 1, startedAt: "Thu Apr  9 08:15:00 2026"},
+		5252: {ppid: 1}, // no start time recorded
 	})
 
-	got, ok := ProcessStart(4242)
+	started, ok := ProcessStart(5151)
 	if !ok {
 		t.Fatal("ProcessStart found no answer for a remembered pid")
 	}
-	// lstart is local time; compare the wall-clock fields it parsed.
-	if s := got.Format("2006-01-02T15:04:05"); s != "2026-03-18T10:30:00" {
-		t.Fatalf("ProcessStart = %v, want 2026-03-18T10:30:00", got)
+	if stamp := started.Format("2006-01-02T15:04:05"); stamp != "2026-04-09T08:15:00" {
+		t.Fatalf("ProcessStart = %v, want 2026-04-09T08:15:00", started)
 	}
-	if _, ok := ProcessStart(4343); ok {
+	if _, ok := ProcessStart(5252); ok {
 		t.Fatal("a pid without a start time reported one")
 	}
 	if _, ok := ProcessStart(999999); ok {
