@@ -21,6 +21,25 @@ func ScanContext(ctx context.Context) ([]ListeningPort, error) {
 	return scanContext(ctx)
 }
 
+// ScanContextSource is ScanContext plus the collector that answered: empty for
+// the platform's primary collector, listenerSourceLsofName for the Darwin
+// fallback. A non-empty source means absence from the table is unknown, not
+// evidence that a port is free.
+func ScanContextSource(ctx context.Context) ([]ListeningPort, string, error) {
+	return scanContextSource(ctx)
+}
+
+// NarrowSourceDetail is the sentence published with a table read by a collector
+// that cannot see every socket owner. It states the consequence a reader needs:
+// a missing port is unknown, not free.
+func NarrowSourceDetail(source string) string {
+	if source == "" {
+		return ""
+	}
+	return "the listener table was read with " + source +
+		", which cannot see sockets owned by other users; a port missing from it is unknown, not free"
+}
+
 // scanContext is the one collection path. The self-probe uses it so it tests
 // exactly what a real read does; it must not call the probe itself, or a blind
 // process would recurse instead of reporting the blind spot.

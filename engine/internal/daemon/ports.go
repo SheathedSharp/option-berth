@@ -26,16 +26,27 @@ func init() {
 // subscriber is already collecting them, and a read with no loop behind it
 // scans for itself (reusing a scan younger than scanner.CacheTTL).
 func readPorts(rt *Runtime, include scanner.Include) ([]state.Port, error) {
+	snap, err := readSnapshot(rt, include)
+	if err != nil {
+		return nil, err
+	}
+	return snap.Ports, nil
+}
+
+// readSnapshot is readPorts plus the observation that came with the rows: a
+// caller deciding whether an absent port is free needs the table's coverage,
+// not only the rows.
+func readSnapshot(rt *Runtime, include scanner.Include) (state.Snapshot, error) {
 	if rt.Subscribers() > 0 {
 		if snap := rt.Scanner.Cached(); snap.Seq > 0 && cacheCovers(snap, include) {
-			return snap.Ports, nil
+			return snap, nil
 		}
 	}
 	snap, err := rt.Scanner.Snapshot(include)
 	if err != nil {
-		return nil, scanFailure(err)
+		return state.Snapshot{}, scanFailure(err)
 	}
-	return snap.Ports, nil
+	return snap, nil
 }
 
 // cacheCovers reports whether the cached snapshot was collected with the

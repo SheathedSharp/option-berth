@@ -123,18 +123,15 @@ func (l *Loop) Invalidate() {
 	l.Wake()
 }
 
-// attribute is the group half of a scan tick. It resolves every port's group,
-// remembers any newly seen `oberth.yaml` root and builds the group
-// collection.
-func (l *Loop) attribute(pp []ports.ListeningPort) ([]state.Port, []state.Group) {
-	rows, groups, _ := l.attributeContext(context.Background(), pp)
-	return rows, groups
-}
-
-// attributeContext cancels admission and checks between synchronous stages.
-// Store and filesystem calls already running must return. Completed index/root
+// attributeContext is the group half of a scan tick: it resolves every port's
+// group, remembers any newly seen `oberth.yaml` root and builds the group
+// collection. narrow travels with the rows so a `machine:` port missing from a
+// table that cannot see every owner is published as unknown, not absent.
+//
+// It cancels admission and checks between synchronous stages. Store and
+// filesystem calls already running must return. Completed index/root
 // observations are not rolled back when the enclosing publication is cancelled.
-func (l *Loop) attributeContext(ctx context.Context, pp []ports.ListeningPort) ([]state.Port, []state.Group, error) {
+func (l *Loop) attributeContext(ctx context.Context, pp []ports.ListeningPort, narrow bool) ([]state.Port, []state.Group, error) {
 	if err := l.attr.mu.LockContext(ctx); err != nil {
 		return nil, nil, err
 	}
@@ -172,7 +169,7 @@ func (l *Loop) attributeContext(ctx context.Context, pp []ports.ListeningPort) (
 	// A registry that knows the ports it assigned lets a `port: auto` service
 	// join its listener even when that listener is not in its process tree,
 	// and one that remembers exits lets a service that is down say it crashed.
-	groupRows := groups.GroupsWith(resolved, index, reg)
+	groupRows := groups.GroupsWith(resolved, index, reg, narrow)
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}

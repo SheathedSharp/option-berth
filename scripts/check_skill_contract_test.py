@@ -60,6 +60,8 @@ class ExtractionTests(unittest.TestCase):
                 "manifest_runtime_mismatch",
                 "worktree.identity",
                 "observation.state",
+                "observation.source",
+                "machine[].listening_known",
                 "attention_path",
                 "services[].starting",
                 "starting.phase",

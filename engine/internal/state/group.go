@@ -146,6 +146,11 @@ type MachineRef struct {
 	Name      string `json:"name"`
 	Port      int    `json:"port"`
 	Listening bool   `json:"listening"`
+	// ListeningKnown is false when the listener table this row was joined
+	// against cannot cover every socket owner (the Darwin lsof fallback cannot
+	// see other users' sockets). Listening is then not an observation, not a
+	// negative fact; a port that *is* in the table stays known and true.
+	ListeningKnown bool `json:"listening_known"`
 	// Unit is the service-manager unit the referenced port resolved to, when it
 	// resolved to one: the name that carries that service's other ports.
 	Unit *string `json:"unit" jsonschema:"nullable"`

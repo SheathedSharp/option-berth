@@ -46,7 +46,7 @@ func BenchmarkGroupsWithRegistry(b *testing.B) {
 			index.Add(cfg)
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_ = groups.GroupsWith(listeners, index, reg)
+				_ = groups.GroupsWith(listeners, index, reg, false)
 			}
 		})
 	}

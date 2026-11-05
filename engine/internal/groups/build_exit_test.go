@@ -26,7 +26,7 @@ func TestGroupsCarryTheLastExitOfAServiceThatIsDown(t *testing.T) {
 		Services: []Service{{Name: "api", Cmd: "run-api"}, {Name: "web", Cmd: "run-web"}},
 	})
 
-	gg := GroupsWith(nil, index, exitRegistry{})
+	gg := GroupsWith(nil, index, exitRegistry{}, false)
 	if len(gg) != 1 {
 		t.Fatalf("groups = %+v, want the one config's group", gg)
 	}
@@ -82,7 +82,7 @@ func TestGroupsSeeAServiceThatHoldsNoPort(t *testing.T) {
 		Services: []Service{{Name: "worker", Cmd: "run-worker"}, {Name: "api", Cmd: "run-api"}},
 	})
 
-	gg := GroupsWith(nil, index, liveRegistry{})
+	gg := GroupsWith(nil, index, liveRegistry{}, false)
 	if len(gg) != 1 {
 		t.Fatalf("groups = %+v", gg)
 	}
@@ -122,7 +122,7 @@ func TestGroupsExposeManifestRuntimeMismatch(t *testing.T) {
 		Name: "shop", Dir: "/nowhere/shop", Path: "/nowhere/shop/" + ConfigName,
 		Services: []Service{{Name: "api", Cmd: "old-api"}},
 	})
-	gg := GroupsWith(nil, index, driftRegistry{})
+	gg := GroupsWith(nil, index, driftRegistry{}, false)
 	if len(gg) != 1 || len(gg[0].Services) != 1 {
 		t.Fatalf("groups = %+v", gg)
 	}

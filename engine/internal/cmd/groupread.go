@@ -19,10 +19,14 @@ import (
 )
 
 // scanPorts and scanProbe are the observation seams. Production uses the real
-// collector; tests that exercise a later stage replace them so they do not
-// depend on the host's ability to read its own listener table.
+// collector and keeps the collector's name: a Darwin lsof fallback is still a
+// usable table for what it shows, but its absence is not evidence that a port
+// is free. Tests that exercise a later stage replace them so they do not depend
+// on the host's ability to read its own listener table.
 var (
-	scanPorts = ports.Scan
+	scanPorts = func() ([]ports.ListeningPort, string, error) {
+		return ports.ScanContextSource(context.Background())
+	}
 	scanProbe = ports.ProbeListenerObservation
 )
 
@@ -96,7 +100,7 @@ func scanGroups() ([]ports.ListeningPort, []state.Group, error) {
 // collector cannot produce a trustworthy table, the manifest and run registry
 // still describe what is declared and what was started; the ports are unknown.
 func scanGroupsObserved(ctx context.Context) ([]ports.ListeningPort, []state.Group, *rpc.ObservationStatus, error) {
-	results, scanErr := scanPorts()
+	results, source, scanErr := scanPorts()
 	var obs *rpc.ObservationStatus
 	if scanErr != nil {
 		if partial, ok := ports.PartialRows(scanErr); ok {
@@ -111,6 +115,7 @@ func scanGroupsObserved(ctx context.Context) ([]ports.ListeningPort, []state.Gro
 			obs = &rpc.ObservationStatus{
 				State:     state.ObservationPartial,
 				Code:      ports.CodeObservationIncomplete,
+				Source:    source,
 				Detail:    scanErr.Error(),
 				Hint:      hint,
 				CheckedAt: time.Now().UTC().Format(time.RFC3339),
@@ -126,18 +131,31 @@ func scanGroupsObserved(ctx context.Context) ([]ports.ListeningPort, []state.Gro
 			// first pass may have been transient. One retry settles it without
 			// publishing the probe's own socket.
 			if oe.Code == ports.CodeObservationEmpty && probe.State == ports.ObservationObservable {
-				if retry, err := scanPorts(); err == nil {
-					results = retry
+				if retry, retrySource, retryErr := scanPorts(); retryErr == nil {
+					results, source = retry, retrySource
 				}
 			}
 		}
+	}
+	narrow := source != ""
+	if obs == nil && narrow {
+		// The table was read cleanly, but by a collector that cannot see every
+		// owner. Publish that coverage instead of a healthy-looking empty.
+		obs = &rpc.ObservationStatus{
+			State:     state.ObservationObservable,
+			Source:    source,
+			Detail:    ports.NarrowSourceDetail(source),
+			CheckedAt: time.Now().UTC().Format(time.RFC3339),
+		}
+	} else if obs != nil && source != "" {
+		obs.Source = source
 	}
 	docker.EnrichPorts(results)
 	ports.Enrich(results)
 
 	resolved, index := groups.Attribute(results)
 	reportInvalidConfigs(index)
-	groupRows := groups.GroupsWith(resolved, index, directRunHistory())
+	groupRows := groups.GroupsWith(resolved, index, directRunHistory(), narrow)
 	groups.StampServicePortRuns(resolved, groupRows)
 	scanner.FillServiceStatsContext(ctx, groupRows, nil)
 	groups.FinalizeResources(groupRows)
@@ -191,6 +209,7 @@ func observationFromProbe(probe ports.ProbeResult, scanErr *ports.ObservationErr
 	return &rpc.ObservationStatus{
 		State:     string(state),
 		Code:      code,
+		Source:    probe.Source,
 		Detail:    detail,
 		Hint:      hint,
 		CheckedAt: time.Now().UTC().Format(time.RFC3339),

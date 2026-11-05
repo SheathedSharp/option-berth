@@ -329,3 +329,50 @@ func TestAPortTheSameKeyHoldsIsKeptEvenWhileItListens(t *testing.T) {
 		t.Fatalf("ports = %v, want to keep %d", second.Ports, base)
 	}
 }
+
+// A narrow table cannot say a port is free; a real bind can. The rejected
+// candidate must be skipped, not handed to a service that would fail on it.
+func TestNarrowTableVerifiesCandidatesByBinding(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "option-berth.db"))
+	if err != nil {
+		t.Fatalf("opening the store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	key := "myapp/feature-x"
+	base := claims.DefaultRange.Base(key)
+	probed := []int{}
+	m := claims.New(st.Claims(), claims.Options{
+		Listening: func() (map[int]bool, error) { return nil, nil },
+		Narrow:    true,
+		Bindable: func(port int) bool {
+			probed = append(probed, port)
+			return port != base
+		},
+	})
+	res := acquire(t, m, claims.Request{Project: "myapp", Worktree: "feature-x"})
+	if res.Ports[0] == base {
+		t.Fatalf("ports = %v, want the rejected %d skipped", res.Ports, base)
+	}
+	if len(probed) == 0 || probed[0] != base {
+		t.Fatalf("probed = %v, want the derived base port checked first", probed)
+	}
+}
+
+// Narrow without a bind probe would be a guess. Refusing is the only safe
+// answer; the caller can still choose a fixed port.
+func TestNarrowTableWithoutABindProbeFailsClosed(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "option-berth.db"))
+	if err != nil {
+		t.Fatalf("opening the store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	m := claims.New(st.Claims(), claims.Options{
+		Listening: func() (map[int]bool, error) { return nil, nil },
+		Narrow:    true,
+	})
+	if _, err := m.Acquire(claims.Request{Key: "myapp/main"}); !errors.Is(err, claims.ErrNarrowUnverified) {
+		t.Fatalf("err = %v, want ErrNarrowUnverified", err)
+	}
+}

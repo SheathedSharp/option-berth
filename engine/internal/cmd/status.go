@@ -263,7 +263,7 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool, only []stri
 			// A stopped project with no listener may not have reached the daemon's
 			// long-lived index yet. Read the manifest directly so the primary
 			// command works on a fresh worktree without a separate discovery step.
-			if local, ok := localStatusGroup(root, name, pp); ok {
+			if local, ok := localStatusGroup(root, name, pp, obs.Narrow()); ok {
 				group = local
 			}
 		}
@@ -474,7 +474,7 @@ func publishAttention(doc *statusDocument) string {
 // not indexed yet. It uses the same resolver and state conversion as the
 // normal scan path, but does not pretend that a local read knows daemon run
 // history; that history is added as soon as the daemon sees the project.
-func localStatusGroup(root, name string, pp []ports.ListeningPort) (*state.Group, bool) {
+func localStatusGroup(root, name string, pp []ports.ListeningPort, narrow bool) (*state.Group, bool) {
 	index := groups.NewIndex()
 	index.Observe(root)
 	rows := make([]state.Port, 0, len(pp))
@@ -483,7 +483,7 @@ func localStatusGroup(root, name string, pp []ports.ListeningPort) (*state.Group
 	}
 	// Include local run history: when the listener table is unavailable this
 	// is the only evidence that a declared service was started and is alive.
-	for _, candidate := range groups.GroupsWith(rows, index, directRunHistory()) {
+	for _, candidate := range groups.GroupsWith(rows, index, directRunHistory(), narrow) {
 		if candidate.Name == name {
 			copy := candidate
 			return &copy, true
@@ -493,10 +493,12 @@ func localStatusGroup(root, name string, pp []ports.ListeningPort) (*state.Group
 }
 
 // publicObservation keeps the healthy wire shape unchanged: an observable
-// process has no observation object. Any other verdict is a fact the reader
-// needs before treating an empty port list as idle.
+// process reading a complete table has no observation object. Any other
+// verdict is a fact the reader needs before treating an empty port list as
+// idle — including an observable verdict whose table is narrow, because
+// absence from that table is unknown rather than free.
 func publicObservation(obs *rpc.ObservationStatus) *rpc.ObservationStatus {
-	if obs == nil || obs.State == string(ports.ObservationObservable) {
+	if obs == nil || (obs.State == string(ports.ObservationObservable) && !obs.Narrow()) {
 		return nil
 	}
 	return obs
@@ -706,7 +708,14 @@ func printStatusHead(doc statusDocument) {
 	fmt.Println(head)
 
 	if doc.Observation != nil {
-		statusLine("listeners", display.Yellow("unknown")+" · "+doc.Observation.Detail)
+		// An observable narrow table still lists this user's ports; saying
+		// "unknown" above them would erase what the reader can see. Only a
+		// verdict that could not read a table takes the stronger word.
+		label := display.Yellow("unknown")
+		if doc.Observation.State == string(ports.ObservationObservable) {
+			label = display.Yellow("limited")
+		}
+		statusLine("listeners", label+" · "+doc.Observation.Detail)
 		if doc.Observation.Hint != "" {
 			statusLine("next", doc.Observation.Hint)
 		}
@@ -850,9 +859,14 @@ func printStatusMachine(doc statusDocument) {
 	parts := make([]string, 0, len(doc.Worktree.Machine))
 	for _, m := range doc.Worktree.Machine {
 		who := fmt.Sprintf("%s %d", m.Name, m.Port)
-		if m.Listening {
+		switch {
+		case m.Listening:
 			parts = append(parts, who+" listening")
-		} else {
+		case !m.ListeningKnown:
+			// The table that answered cannot see every owner; saying "not
+			// listening" here would turn "cannot look" into a negative fact.
+			parts = append(parts, who+" listening unknown")
+		default:
 			parts = append(parts, who+" not listening")
 		}
 	}

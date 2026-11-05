@@ -131,7 +131,7 @@ func TestAttributionAndSessionsAdmissionCancel(t *testing.T) {
 				_, err := l.sessionsContext(ctx, nil)
 				return err
 			}
-			_, _, err := l.attributeContext(ctx, nil)
+			_, _, err := l.attributeContext(ctx, nil, false)
 			return err
 		})
 		if l.attr.index != nil || calls.Load() != 0 {
