@@ -93,6 +93,22 @@ class AuditTests(unittest.TestCase):
         result = audit.audit(self.engine, self.upstream)
         self.assertEqual(result["files"], [])
 
+    def test_shared_import_list_is_not_evidence(self):
+        imports = """import (
+\t"fmt"
+\t"os"
+\t"sort"
+\t"strings"
+\t"time"
+)
+"""
+        body = "\nfunc Mine() {\n\tprintln(1)\n\tprintln(2)\n\tprintln(3)\n\tprintln(4)\n\tprintln(5)\n}\n"
+        self.write(self.upstream, "collect.go", imports + body)
+        self.write(self.engine, "collect.go", imports + body)
+        # The five shared import lines do not count; the six-line function body does.
+        result = audit.audit(self.engine, self.upstream)
+        self.assertEqual(result["lines"], 6)
+
     def test_min_run_sets_the_evidence_threshold(self):
         self.write(self.upstream, "collect.go", COPIED)
         self.write(self.engine, "collect.go", SHARED_HEADER + REWRITTEN)

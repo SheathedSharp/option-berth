@@ -22,17 +22,20 @@ import argparse
 import difflib
 import json
 import pathlib
+import re
 import sys
 
 DEFAULT_ENGINE = pathlib.Path(__file__).resolve().parent.parent / "engine"
 IGNORED = {"", "}", "{", ")", "(", "};", "})", "return", "return nil"}
+IMPORT_SPEC = re.compile(r'^[A-Za-z0-9_.]*\s*"[^"]*"$')
 
 
 def substantive(line: str) -> bool:
     stripped = line.strip()
-    if stripped in IGNORED:
+    if stripped in IGNORED or stripped.startswith(("package ", "import ")):
         return False
-    return not stripped.startswith(("package ", "import "))
+    # Import specifiers and bare string literals appear in any Go file.
+    return not IMPORT_SPEC.match(stripped)
 
 
 def copied_runs(upstream: str, candidate: str, min_run: int) -> list[tuple[int, int, int]]:
