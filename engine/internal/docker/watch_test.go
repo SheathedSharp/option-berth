@@ -90,7 +90,7 @@ func newBench(t *testing.T) *bench {
 
 // step runs one refresh when one is due, and reports whether it did.
 func (b *bench) step() bool {
-	if !b.watcher.due() {
+	if !b.watcher.shouldRefresh() {
 		return false
 	}
 	b.watcher.refresh(context.Background())
