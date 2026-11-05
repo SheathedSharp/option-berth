@@ -392,15 +392,21 @@ func (s *Server) closeAllConns(reason string) {
 func (s *Server) Shutdown() {
 	s.stopOnce.Do(func() {
 		s.graceful.Store(true)
-		s.broadcastEvent(state.Event{
-			Kind: "daemon_stopping",
-			At:   time.Now().Format(time.RFC3339),
-		})
+		s.announceStopping()
 		s.drainQueues(500 * time.Millisecond)
 		close(s.stopping)
 		if s.ln != nil {
 			_ = s.ln.Close()
 		}
+	})
+}
+
+// announceStopping tells every subscriber the daemon is going away, so a client
+// learns it before the socket does rather than seeing an unexplained close.
+func (s *Server) announceStopping() {
+	s.broadcastEvent(state.Event{
+		Kind: "daemon_stopping",
+		At:   time.Now().Format(time.RFC3339),
 	})
 }
 
