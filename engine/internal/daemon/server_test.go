@@ -87,25 +87,8 @@ func newHarness(t *testing.T, ctx context.Context, tunes ...tune) *testHarness {
 	t.Helper()
 	h := &testHarness{t: t, loopDone: make(chan struct{})}
 	h.probe = refusedProbe
-	opts := scanner.Options{
-		DaemonVersion: "test",
-		Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
-			h.mu.Lock()
-			defer h.mu.Unlock()
-			return append([]ports.ListeningPort{}, h.rows...), nil
-		},
-		// Configured health must use the injected probe, not a real socket.
-		Probe: func(host string, port int, path string, timeout time.Duration) ports.HealthResult {
-			h.mu.Lock()
-			probe := h.probe
-			h.mu.Unlock()
-			return probe(host, port, path, timeout)
-		},
-		// The per-process sampler is faked for the same reason Scan is: it
-		// forks `ps` on Unix and a PowerShell on Windows once a second while
-		// a test keeps a subscription open.
-		SampleStats: h.sampleStats,
-	}
+
+	opts := h.scannerOptions()
 	for _, tune := range tunes {
 		tune(&opts)
 	}
@@ -120,6 +103,31 @@ func newHarness(t *testing.T, ctx context.Context, tunes ...tune) *testHarness {
 	}()
 	t.Cleanup(h.shutdown)
 	return h
+}
+
+// scannerOptions is the scanner configuration the harness runs on. Every seam
+// that would reach the real machine is faked, because a test that keeps a
+// subscription open would otherwise fork `ps` or open a real socket once a
+// second.
+func (h *testHarness) scannerOptions() scanner.Options {
+	return scanner.Options{
+		DaemonVersion: "test",
+		// Scan answers from the rows the test set, copied so a caller cannot
+		// mutate the harness's slice.
+		Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			return append([]ports.ListeningPort{}, h.rows...), nil
+		},
+		// Configured health goes through the injected probe, never a socket.
+		Probe: func(host string, port int, path string, timeout time.Duration) ports.HealthResult {
+			h.mu.Lock()
+			probe := h.probe
+			h.mu.Unlock()
+			return probe(host, port, path, timeout)
+		},
+		SampleStats: h.sampleStats,
+	}
 }
 
 // shutdown stops everything the harness started, in order, and returns only
@@ -159,6 +167,16 @@ func (h *testHarness) sampleStats(pids []int) map[int]ports.ProcSample {
 		}
 	}
 	return out
+}
+
+// newClient starts a daemon a test only talks to, on a context this test
+// cancels when it ends, and returns a connected client. Tests that reach into
+// the harness use newHarness instead.
+func newClient(t *testing.T) *testClient {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	return newHarness(t, ctx).dial(ctx)
 }
 
 // setRows replaces what the fake scanner returns.
@@ -304,9 +322,7 @@ func TestHelloOverTheCodec(t *testing.T) {
 }
 
 func TestHelloRequiresAClientName(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	c := newHarness(t, ctx).dial(ctx)
+	c := newClient(t)
 
 	e := c.call("daemon.hello", rpc.DaemonHelloParams{ClientVersion: "1"}, nil)
 	if e == nil {
@@ -318,9 +334,7 @@ func TestHelloRequiresAClientName(t *testing.T) {
 }
 
 func TestUnknownMethodIsNotFound(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	c := newHarness(t, ctx).dial(ctx)
+	c := newClient(t)
 
 	e := c.call("ports.teleport", rpc.Empty{}, nil)
 	if e == nil {
@@ -335,9 +349,7 @@ func TestUnknownMethodIsNotFound(t *testing.T) {
 }
 
 func TestInvalidIncludeIsRejected(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	c := newHarness(t, ctx).dial(ctx)
+	c := newClient(t)
 
 	e := c.call("state.snapshot", map[string]any{"include": []string{"stats", "weather"}}, nil)
 	if e == nil {
@@ -502,21 +514,12 @@ func TestIncludeFiltersEnrichments(t *testing.T) {
 	})
 	h.srv = New(Options{Socket: "/test/option-berth.sock", Version: "test", Scanner: h.loop})
 
-	plain := h.dial(ctx)
-	var plainSnap state.Snapshot
-	if e := plain.call("state.snapshot", rpc.StateSnapshotParams{}, &plainSnap); e != nil {
-		t.Fatalf("state.snapshot: %v", e)
-	}
+	plainSnap := h.snapshotAs(ctx, t, nil)
 	if plainSnap.Ports[0].Stats != nil {
 		t.Errorf("stats leaked to a caller that did not ask: %+v", plainSnap.Ports[0].Stats)
 	}
 
-	withStats := h.dial(ctx)
-	var statsSnap state.Snapshot
-	if e := withStats.call("state.snapshot",
-		rpc.StateSnapshotParams{Include: rpc.Include{"stats"}}, &statsSnap); e != nil {
-		t.Fatalf("state.snapshot with stats: %v", e)
-	}
+	statsSnap := h.snapshotAs(ctx, t, rpc.Include{"stats"})
 	if statsSnap.Ports[0].Stats == nil {
 		t.Fatal("stats missing for a caller that asked for them")
 	}
@@ -525,41 +528,35 @@ func TestIncludeFiltersEnrichments(t *testing.T) {
 	}
 }
 
-// TestQueueOverflowDisconnects is the spec's back-pressure rule: a client that
-// stops reading is disconnected, never allowed to block the scanner.
+// snapshotAs opens a fresh client, asks for one state.snapshot with the given
+// include set, and returns it. Each caller gets its own connection so one test
+// can compare what two differently-scoped subscribers are served.
+func (h *testHarness) snapshotAs(ctx context.Context, t *testing.T, include rpc.Include) state.Snapshot {
+	t.Helper()
+	var snapshot state.Snapshot
+	if failure := h.dial(ctx).call("state.snapshot",
+		rpc.StateSnapshotParams{Include: include}, &snapshot); failure != nil {
+		t.Fatalf("state.snapshot(include=%v): %v", include, failure)
+	}
+	return snapshot
+}
+
+// TestQueueOverflowDisconnects is the back-pressure rule: a client that stops
+// reading is disconnected, never allowed to block the scanner.
 func TestQueueOverflowDisconnects(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	h := newHarness(t, ctx)
 
-	clientSide, serverSide := net.Pipe()
-	defer clientSide.Close()
-	h.srv.startConn(ctx, serverSide)
+	conn := h.subscribeWithoutReading(ctx, t)
 
-	// Register as a subscriber by hand: the point of the test is what happens
-	// when nobody drains the socket, so we never read the reply.
-	h.srv.subsMu.Lock()
-	var conn *Conn
-	for _, c := range h.srv.conns {
-		conn = c
-	}
-	conn.subscribed, conn.events = true, true
-	h.srv.subsMu.Unlock()
-
-	// The writer goroutine takes one message and blocks on the unread pipe;
-	// everything after that piles up in the 256-slot queue.
-	for i := 0; i < QueueSize+50; i++ {
+	// The writer goroutine takes one message and then blocks on the unread
+	// pipe, so everything after that piles up in the queue.
+	for queued := 0; queued < QueueSize+50; queued++ {
 		h.srv.broadcastEvent(state.Event{Kind: "port_up", At: "now"})
 		select {
 		case <-conn.closed:
-			// closed is closed just before the connection is deregistered, so
-			// give that last step a moment rather than racing it.
-			for j := 0; j < 100 && h.srv.Clients() != 0; j++ {
-				time.Sleep(time.Millisecond)
-			}
-			if h.srv.Clients() != 0 {
-				t.Fatalf("overflowing client still registered after %d messages", i)
-			}
+			h.awaitDeregistered(t, queued)
 			return
 		default:
 		}
@@ -567,6 +564,41 @@ func TestQueueOverflowDisconnects(t *testing.T) {
 	}
 	t.Fatalf("client survived %d queued notifications; the %d-slot queue did not disconnect it",
 		QueueSize+50, QueueSize)
+}
+
+// subscribeWithoutReading attaches a client, marks its connection as a
+// subscriber behind the server's back, and then never reads from it — which is
+// exactly the misbehaviour the queue limit has to catch.
+func (h *testHarness) subscribeWithoutReading(ctx context.Context, t *testing.T) *Conn {
+	t.Helper()
+	clientSide, serverSide := net.Pipe()
+	t.Cleanup(func() { clientSide.Close() })
+	h.srv.startConn(ctx, serverSide)
+
+	h.srv.subsMu.Lock()
+	defer h.srv.subsMu.Unlock()
+	var subscribed *Conn
+	for _, candidate := range h.srv.conns {
+		subscribed = candidate
+	}
+	if subscribed == nil {
+		t.Fatal("the connection was not registered")
+	}
+	subscribed.subscribed, subscribed.events = true, true
+	return subscribed
+}
+
+// awaitDeregistered waits for the overflowing connection to be taken off the
+// client list. closed fires just before that step, so this gives it a moment
+// rather than racing it.
+func (h *testHarness) awaitDeregistered(t *testing.T, queued int) {
+	t.Helper()
+	for waited := 0; waited < 100 && h.srv.Clients() != 0; waited++ {
+		time.Sleep(time.Millisecond)
+	}
+	if h.srv.Clients() != 0 {
+		t.Fatalf("overflowing client still registered after %d messages", queued)
+	}
 }
 
 // TestShutdownAnswersBeforeClosing checks that daemon.shutdown replies and
@@ -608,9 +640,7 @@ func TestShutdownAnswersBeforeClosing(t *testing.T) {
 // TestOversizeMessageIsRejectedNotFatal checks the 4 MiB framing limit: the
 // daemon answers with invalid_params and keeps the connection.
 func TestOversizeMessageIsRejectedNotFatal(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	c := newHarness(t, ctx).dial(ctx)
+	c := newClient(t)
 
 	go func() {
 		c.conn.SetWriteDeadline(time.Now().Add(pipeWrite))
@@ -639,9 +669,7 @@ func TestOversizeMessageIsRejectedNotFatal(t *testing.T) {
 // TestStreamCancelOnAnUnknownID keeps the contract §1 cancel path honest before
 // any streaming method exists to use it.
 func TestStreamCancelOnAnUnknownID(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	c := newHarness(t, ctx).dial(ctx)
+	c := newClient(t)
 
 	e := c.call("stream.cancel", rpc.StreamCancel{ID: "nope"}, nil)
 	if e == nil || e.Code != rpc.CodeNotFound {
