@@ -124,6 +124,29 @@ type stateReplay struct {
 
 // New builds a Server. It does not listen; call Serve.
 func New(opts Options) *Server {
+	opts = withServerDefaults(opts)
+	server := &Server{
+		opts:            opts,
+		logger:          opts.Logger,
+		socket:          opts.Socket,
+		conns:           map[uint64]*Conn{},
+		workspaceScopes: map[string]map[uint64]state.Scope{},
+		stopping:        make(chan struct{}),
+		done:            make(chan struct{}),
+	}
+	server.touch()
+
+	server.loop = server.scannerFor(opts)
+	server.loop.SetDemand(server.demand)
+	server.loop.SetPublisher(server.publish)
+	server.runtime = server.buildRuntime(opts)
+	server.loop.SetRuns(server.runtime.RunRegistry)
+	return server
+}
+
+// withServerDefaults fills in what a caller may leave empty, so the rest of the
+// constructor never has to ask.
+func withServerDefaults(opts Options) Options {
 	if opts.Logger == nil {
 		opts.Logger = slog.New(slog.DiscardHandler)
 	}
@@ -133,34 +156,33 @@ func New(opts Options) *Server {
 	if opts.Version == "" {
 		opts.Version = "dev"
 	}
-	s := &Server{
-		opts:            opts,
-		logger:          opts.Logger,
-		socket:          opts.Socket,
-		conns:           map[uint64]*Conn{},
-		workspaceScopes: map[string]map[uint64]state.Scope{},
-		stopping:        make(chan struct{}),
-		done:            make(chan struct{}),
-	}
-	s.touch()
+	return opts
+}
 
-	s.loop = opts.Scanner
-	if s.loop == nil {
-		s.loop = scanner.New(scanner.Options{
-			DaemonVersion: opts.Version,
-			Logger:        opts.Logger,
-			StatsInterval: opts.StatsInterval,
-			ScanInterval:  opts.ScanInterval,
-		})
+// scannerFor returns the scanner the server should drive: the injected one when
+// a test supplied it, otherwise a new loop configured from these options.
+func (s *Server) scannerFor(opts Options) *scanner.Loop {
+	if opts.Scanner != nil {
+		return opts.Scanner
 	}
-	s.loop.SetDemand(s.demand)
-	s.loop.SetPublisher(s.publish)
+	return scanner.New(scanner.Options{
+		DaemonVersion: opts.Version,
+		Logger:        opts.Logger,
+		StatsInterval: opts.StatsInterval,
+		ScanInterval:  opts.ScanInterval,
+	})
+}
 
+// buildRuntime records what this process is: its version, socket, binary and
+// start time, plus the handle the run registry hangs off.
+func (s *Server) buildRuntime(opts Options) *Runtime {
 	binary := opts.BinaryPath
 	if binary == "" {
+		// Best effort: a process that cannot name its own binary still serves,
+		// it just cannot tell a client where the CLI lives.
 		binary, _ = os.Executable()
 	}
-	s.runtime = &Runtime{
+	return &Runtime{
 		Version:    opts.Version,
 		Socket:     s.socket,
 		BinaryPath: binary,
@@ -170,8 +192,6 @@ func New(opts Options) *Server {
 		Scanner:    s.loop,
 		srv:        s,
 	}
-	s.loop.SetRuns(s.runtime.RunRegistry)
-	return s
 }
 
 // Runtime is the runtime handed to handlers and extension hooks.
