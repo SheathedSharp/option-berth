@@ -146,7 +146,7 @@ func (c Claims) DeleteObservedContext(ctx context.Context, observation ClaimObse
 	if len(observed) == 0 {
 		return 0, nil
 	}
-	byKey := make(map[string]map[int]claimEncoded)
+	byKey := make(map[string]map[int]encodedClaim)
 	ports := make(map[int]bool, len(observed))
 	for _, row := range observed {
 		if row.CreatedAt.IsZero() || row.ExpiresAt.IsZero() {
@@ -161,7 +161,7 @@ func (c Claims) DeleteObservedContext(ctx context.Context, observation ClaimObse
 		}
 		ports[e.port] = true
 		if byKey[e.key] == nil {
-			byKey[e.key] = make(map[int]claimEncoded)
+			byKey[e.key] = make(map[int]encodedClaim)
 		}
 		byKey[e.key][e.port] = e
 	}
@@ -210,7 +210,7 @@ func (c Claims) DeleteObservedContext(ctx context.Context, observation ClaimObse
 	return removed, nil
 }
 
-func matchingClaims(ctx context.Context, tx *sql.Tx, key string, expected map[int]claimEncoded) error {
+func matchingClaims(ctx context.Context, tx *sql.Tx, key string, expected map[int]encodedClaim) error {
 	rows, err := tx.QueryContext(ctx, `SELECT `+claimColumns+` FROM claims WHERE key = ?`, key)
 	if err != nil {
 		return fmt.Errorf("reading observed reservations: %w", err)
@@ -218,9 +218,9 @@ func matchingClaims(ctx context.Context, tx *sql.Tx, key string, expected map[in
 	defer func() { _ = rows.Close() }()
 	count := 0
 	for rows.Next() {
-		var current claimEncoded
+		var current encodedClaim
 		if err := rows.Scan(&current.port, &current.key, &current.project, &current.worktree,
-			&current.createdAt, &current.expiresAt); err != nil {
+			&current.expiresAt, &current.createdAt); err != nil {
 			return err
 		}
 		want, ok := expected[current.port]
