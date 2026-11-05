@@ -1050,6 +1050,21 @@ func (s *Server) recountKeepalive() {
 	s.keepalives.Store(n)
 }
 
+// idleCheckEvery is how often the idle countdown is polled: a quarter of the
+// timeout, so a stop lands within a quarter of the window, but never faster than
+// idleCheckInterval and never below a millisecond. A ticker rejects a
+// non-positive period, which is what the floor is for.
+func (s *Server) idleCheckEvery() time.Duration {
+	tick := idleCheckInterval
+	if quarter := s.opts.IdleTimeout / 4; quarter < tick {
+		tick = quarter
+	}
+	if tick <= 0 {
+		return time.Millisecond
+	}
+	return tick
+}
+
 // watchIdle stops the daemon once it has been idle for IdleTimeout. A
 // keepalive client or any subscriber counts as activity, so the desktop app
 // keeps the daemon alive simply by staying connected.
@@ -1057,14 +1072,7 @@ func (s *Server) watchIdle(ctx context.Context) {
 	if s.opts.IdleTimeout <= 0 {
 		return
 	}
-	tick := idleCheckInterval
-	if s.opts.IdleTimeout/4 < tick {
-		tick = s.opts.IdleTimeout / 4
-	}
-	if tick <= 0 {
-		tick = time.Millisecond
-	}
-	t := time.NewTicker(tick)
+	t := time.NewTicker(s.idleCheckEvery())
 	defer t.Stop()
 	for {
 		select {
