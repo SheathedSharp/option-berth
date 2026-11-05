@@ -98,6 +98,19 @@ func newBareConfigCase(t *testing.T) *configCase {
 	return &configCase{harness: harness, client: harness.dial(ctx), dir: dir}
 }
 
+// readFixture returns the manifest's bytes as they are on disk right now,
+// ending the test when it cannot be read. Several cases compare the file before
+// and after a handler, and a read failure there is always a broken fixture
+// rather than a behaviour under test.
+func readFixture(t *testing.T, path string) string {
+	t.Helper()
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	return string(contents)
+}
+
 // TestGroupsConfigGetByName returns the file as the resolver publishes it,
 // joined against what is actually running.
 func TestGroupsConfigGetByName(t *testing.T) {
@@ -265,10 +278,7 @@ func callCollectingGroups(t *testing.T, c *testClient, method string, params, ou
 func TestGroupsConfigSetErrors(t *testing.T) {
 	fixture := newConfigCase(t)
 	c, dir, path := fixture.client, fixture.dir, fixture.path
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	before := readFixture(t, path)
 
 	// A service the file does not declare.
 	if e := c.call("groups.config.set", rpc.GroupsConfigSetParams{
@@ -303,11 +313,8 @@ func TestGroupsConfigSetErrors(t *testing.T) {
 		t.Errorf("error = %+v, want invalid_params", e)
 	}
 
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(after) != string(before) {
+	after := readFixture(t, path)
+	if after != before {
 		t.Errorf("a failed write changed the file:\n%s", after)
 	}
 }
@@ -482,10 +489,7 @@ func TestGroupsConfigSetAddsRenamesAndRemoves(t *testing.T) {
 func TestGroupsConfigSetIsAtomic(t *testing.T) {
 	fixture := newConfigCase(t)
 	c, path := fixture.client, fixture.path
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	before := readFixture(t, path)
 
 	e := c.call("groups.config.set", rpc.GroupsConfigSetParams{
 		Path:     path,
@@ -500,11 +504,8 @@ func TestGroupsConfigSetIsAtomic(t *testing.T) {
 		t.Errorf("error = %+v, want 1011 conflict", e)
 	}
 
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(after) != string(before) {
+	after := readFixture(t, path)
+	if after != before {
 		t.Errorf("a failed edit changed the file:\n%s", after)
 	}
 }
@@ -513,10 +514,7 @@ func TestGroupsConfigSetIsAtomic(t *testing.T) {
 func TestGroupsConfigSetEditErrors(t *testing.T) {
 	fixture := newConfigCase(t)
 	c, path := fixture.client, fixture.path
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	before := readFixture(t, path)
 
 	cases := []struct {
 		name   string
@@ -560,11 +558,8 @@ func TestGroupsConfigSetEditErrors(t *testing.T) {
 		}
 	}
 
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(after) != string(before) {
+	after := readFixture(t, path)
+	if after != before {
 		t.Errorf("a failed edit changed the file:\n%s", after)
 	}
 }
