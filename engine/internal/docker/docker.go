@@ -46,15 +46,15 @@ func EnrichPorts(pp []ports.ListeningPort) {
 	enrichFrom(pp, containers)
 }
 
-// publishedPorts is the set of host ports the containers publish.
+// publishedPorts is the set of host ports these containers publish.
 func publishedPorts(containers []container) map[int]bool {
-	out := make(map[int]bool)
-	for i := range containers {
-		for _, pm := range containers[i].portMappings {
-			out[pm.hostPort] = true
+	published := map[int]bool{}
+	for _, running := range containers {
+		for _, mapping := range running.portMappings {
+			published[mapping.hostPort] = true
 		}
 	}
-	return out
+	return published
 }
 
 // enrichFrom marks every port a container publishes as Docker's and copies the
@@ -68,21 +68,21 @@ func enrichFrom(pp []ports.ListeningPort, containers []container) {
 		return
 	}
 
-	// Build a map of host port -> container info.
-	// Multiple listening entries may share the same port number (different bind addresses),
-	// so we match on port number — all binds of a Docker-published port get enriched.
-	hostPortMap := make(map[int]*container)
-	mappingMap := make(map[int]portMapping)
+	// One host port can have several listening rows (one per bind address), and
+	// all of them belong to the same container, so the lookup is keyed by port
+	// number rather than by the whole row. The container and the mapping that
+	// named it are kept together: a port published twice cannot disagree with
+	// itself, and two parallel maps could.
+	owner := make(map[int]portOwner, len(containers))
 	for i := range containers {
-		for _, pm := range containers[i].portMappings {
-			hostPortMap[pm.hostPort] = &containers[i]
-			mappingMap[pm.hostPort] = pm
+		for _, mapping := range containers[i].portMappings {
+			owner[mapping.hostPort] = portOwner{container: &containers[i], mapping: mapping}
 		}
 	}
 
 	for i := range pp {
-		c, ok := hostPortMap[pp[i].Port]
-		if !ok {
+		found, claimed := owner[pp[i].Port]
+		if !claimed {
 			continue
 		}
 		if !heldByForwarder(&pp[i]) {
@@ -94,14 +94,22 @@ func enrichFrom(pp []ports.ListeningPort, containers []container) {
 			// (issue #95).
 			continue
 		}
-		pp[i].Type = ports.PortTypeDocker
-		pp[i].DockerContainer = c.name
-		pp[i].DockerImage = c.image
-		pp[i].DockerComposeService = c.composeService
-		pp[i].DockerComposeProject = c.composeProject
-		pp[i].DockerComposeWorkingDir = c.composeWorkingDir
-		pp[i].DockerContainerPort = mappingMap[pp[i].Port].containerPort
+		row := &pp[i]
+		row.Type = ports.PortTypeDocker
+		row.DockerContainer = found.container.name
+		row.DockerImage = found.container.image
+		row.DockerComposeService = found.container.composeService
+		row.DockerComposeProject = found.container.composeProject
+		row.DockerComposeWorkingDir = found.container.composeWorkingDir
+		row.DockerContainerPort = found.mapping.containerPort
 	}
+}
+
+// portOwner is which container publishes a host port, and through which
+// mapping. The two travel together because a row needs both.
+type portOwner struct {
+	container *container
+	mapping   portMapping
 }
 
 // ContainerStats holds per-container resource usage.
