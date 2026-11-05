@@ -50,6 +50,9 @@ type Conn struct {
 	shutdownOnIdle bool
 }
 
+// newConn builds a connection with its queues ready. The outbound queue is
+// bounded here rather than by the caller: a client that stops reading must not
+// be able to grow the daemon's memory one message at a time.
 func newConn(id uint64, srv *Server, nc net.Conn) *Conn {
 	return &Conn{
 		id:      id,
@@ -75,8 +78,13 @@ func (c *Conn) Client() (name, version string, keepalive bool) {
 // simply overwrites it.
 func (c *Conn) setHello(name, version string, keepalive bool) {
 	c.mu.Lock()
-	c.client, c.clientVersion, c.keepalive, c.helloDone = name, version, keepalive, true
+	c.client = name
+	c.clientVersion = version
+	c.keepalive = keepalive
+	c.helloDone = true
 	c.mu.Unlock()
+	// The keepalive count is what decides whether an idle daemon may stop, so it
+	// is recomputed after every hello rather than derived on demand.
 	c.srv.recountKeepalive()
 }
 
