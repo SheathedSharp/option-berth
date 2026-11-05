@@ -255,17 +255,8 @@ func (s *Server) Serve(ctx context.Context) error {
 		return fmt.Errorf("starting daemon: %w", err)
 	}
 
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		s.loop.Run(ctx)
-	}()
-
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		s.watchIdle(ctx)
-	}()
+	s.runBackground(func() { s.loop.Run(ctx) })
+	s.runBackground(func() { s.watchIdle(ctx) })
 
 	s.logger.Info("daemon listening",
 		"socket", s.socket, "pid", s.runtime.PID, "version", s.opts.Version,
@@ -298,6 +289,16 @@ func (s *Server) Serve(ctx context.Context) error {
 // returned. Connections are already closed by the time this runs, so no new
 // producer can start.
 func (s *Server) waitProducers() { s.producers.Wait() }
+
+// runBackground starts one goroutine and counts it in s.wg, so Serve returns
+// only after everything it started has stopped rather than merely been told to.
+func (s *Server) runBackground(work func()) {
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		work()
+	}()
+}
 
 // accept is the accept loop.
 //
