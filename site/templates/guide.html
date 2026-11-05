@@ -4,19 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="$description">
-  <meta name="theme-color" content="#1b1e22">
+  <meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1b1e22" media="(prefers-color-scheme: dark)">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' $script_hash; style-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>$page_title</title>
   <link rel="canonical" href="$canonical">
-  <link rel="alternate" hreflang="zh-CN" href="$alternate_zh">
-  <link rel="alternate" hreflang="en" href="$alternate_en">
-  <link rel="alternate" hreflang="x-default" href="$alternate_en">
+  $alternates
   <link rel="icon" type="image/svg+xml" href="${asset_path}icon.svg">
   <script src="${asset_path}boot.js"></script>
   <link rel="stylesheet" href="${asset_path}site.css">
   <link rel="stylesheet" href="${asset_path}guide.css">
   <script src="${asset_path}guide.js" defer></script>
-  <script src="${asset_path}site.js" defer></script>
   <meta property="og:type" content="$og_type">
   <meta property="og:title" content="$page_title">
   <meta property="og:description" content="$description">
@@ -25,24 +23,32 @@
   <meta name="twitter:card" content="summary">
   <script type="application/ld+json">$jsonld</script>
 </head>
-<body class="guide-page">
+<body class="guide-page" data-copy="$copy" data-copied="$copied" data-search-index="$search_path">
   <a class="skip-link" href="#main">$skip</a>
-  <header class="site-head">
-    <nav class="wrap head-row" aria-label="$navigation">
-      <a class="wordmark" href="$home_path" aria-label="option-berth"><img src="${asset_path}mark-dark.svg" width="24" height="24" alt=""><span>option<span class="hyphen">-</span>berth</span></a>
-      <div class="head-end"><a href="$guide_home">$nav_guide</a><a class="head-product" href="$home_path">$nav_product</a><a href="https://github.com/SheathedSharp/option-berth">$nav_github <span aria-hidden="true">↗</span></a><a class="language" href="$language_path" lang="$other_lang" hreflang="$other_lang">$language_label</a></div>
-    </nav>
+  <header class="doc-top">
+    <div class="doc-top-inner">
+      <a class="doc-brand" href="$home_path"><img src="${asset_path}mark.svg" width="22" height="22" alt=""><span class="doc-brand-name">option<span class="doc-brand-hyphen">-</span>berth</span><span class="doc-brand-tag">$nav_guide</span></a>
+      <button class="doc-search-open" type="button" data-search-open aria-label="$search_open" hidden><span data-search-label>$search_open</span><kbd aria-hidden="true">/</kbd></button>
+      <nav class="doc-tools" aria-label="$navigation">
+        <details class="doc-lang" data-lang-menu>
+          <summary aria-label="$language"><span lang="$lang">$locale_label</span><span class="doc-caret" aria-hidden="true"></span></summary>
+          <ul>$language_menu</ul>
+        </details>
+        <a class="doc-tool" href="https://github.com/SheathedSharp/option-berth">$nav_github<span aria-hidden="true"> ↗</span></a>
+        <a class="doc-tool" href="$home_path">$nav_product</a>
+        <button class="doc-theme" type="button" data-theme-toggle data-label-light="$theme_light" data-label-dark="$theme_dark" aria-label="$theme_dark" hidden><span class="doc-theme-glyph" aria-hidden="true"></span></button>
+        <button class="doc-rail-toggle" type="button" data-rail-toggle aria-expanded="false" aria-controls="doc-rail" aria-label="$menu" hidden><span class="doc-rail-glyph" aria-hidden="true"></span><span>$menu</span></button>
+      </nav>
+    </div>
   </header>
-  <main id="main">
 $content
-  </main>
-  <footer class="guide-foot">
-    <div class="wrap guide-foot-inner">
-      <div class="guide-foot-mark">
-        <img src="${asset_path}mark-dark.svg" width="72" height="72" alt="">
+  <footer class="doc-foot">
+    <div class="doc-foot-inner">
+      <div class="doc-foot-mark">
+        <img src="${asset_path}mark.svg" width="56" height="56" alt="">
         <p>option-berth<br><span>$footer_line</span></p>
       </div>
-      <nav class="guide-foot-cols" aria-label="$footer_navigation">
+      <nav class="doc-foot-cols" aria-label="$footer_navigation">
         <div>
           <h2>$foot_guide</h2>
           <ul><li><a href="$url_overview">$foot_overview</a></li><li><a href="$url_install">$foot_install</a></li><li><a href="$url_status">$foot_status</a></li></ul>
@@ -61,7 +67,17 @@ $content
         </div>
       </nav>
     </div>
-    <div class="wrap guide-foot-base"><p>$footer_note</p><p>MIT · option-berth</p></div>
+    <div class="doc-foot-base"><p>$footer_note</p><p>MIT · option-berth</p></div>
   </footer>
+  <dialog class="doc-search" data-search data-guide-root="$guide_home" aria-label="$search_open">
+    <div class="doc-search-bar">
+      <input class="doc-search-input" type="search" data-search-input autocomplete="off" spellcheck="false" aria-controls="doc-search-results" aria-label="$search_placeholder" placeholder="$search_placeholder">
+      <button class="doc-search-close" type="button" data-search-close aria-label="$close"><kbd aria-hidden="true">esc</kbd></button>
+    </div>
+    <p class="doc-search-hint" data-search-hint>$search_hint</p>
+    <p class="doc-search-empty" data-search-empty hidden>$search_empty</p>
+    <p class="sr-only" role="status" data-search-status></p>
+    <ol class="doc-search-results" id="doc-search-results" data-search-results aria-label="$search_results"></ol>
+  </dialog>
 </body>
 </html>

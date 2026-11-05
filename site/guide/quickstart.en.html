@@ -1,0 +1,71 @@
+<p class="chapter-intro">This chapter takes one checkout from nothing to a running stack and back to a clean stop. The example is Hello Worktree: two Python 3 processes, no package installs, no accounts and no API keys.</p>
+
+<h2 id="before">Before you start</h2>
+<p>You need <code>oberth</code> on your <code>PATH</code> (<a href="{{guide}}install/">Install oberth</a>), Python 3, and the example directory, which ships in the repository.</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">get the example</figcaption>
+  <pre><code>git clone https://github.com/SheathedSharp/option-berth.git
+cd option-berth/examples/hello-worktree</code></pre>
+</figure>
+<p>The checkout must live inside your home directory unless you pass <code>--allow-outside-home</code>; the engine refuses to manage a stack outside the home boundary by default.</p>
+
+<h2 id="declare">Declare the stack</h2>
+<p>The example already carries an <code>oberth.yaml</code>. Read it before you run anything: it is the whole input.</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">oberth.yaml · hello-worktree</figcaption>
+  <pre><code>name: hello-worktree
+services:
+  - name: api
+    cmd: python3 -u api.py
+    port: auto
+    health: /health
+  - name: worker
+    cmd: python3 -u worker.py
+    depends_on: [api]
+    env:
+      API_URL: ${api.url}</code></pre>
+</figure>
+<p>Two services. <code>api</code> asks for an automatically assigned port and a health check; <code>worker</code> has no port, starts after <code>api</code>, and receives the API's real address through <code>${api.url}</code>. Nothing here is inferred from a running process.</p>
+<p>In your own project, <code>oberth init</code> writes this file. <code>oberth init draft</code> lets an agent propose one; only a person runs <code>oberth init adopt</code>.</p>
+
+<h2 id="start">Start it and wait</h2>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">oberth up --wait</figcaption>
+  <pre><code>oberth up --wait --json</code></pre>
+</figure>
+<p><code>--wait</code> returns only when each service is really there: a bound listener for <code>api</code>, a passing <code>/health</code>, and a live process for the portless worker. A process that is still booting is not readiness, and a timeout is not success.</p>
+
+<h2 id="read">Read what is running</h2>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">oberth status</figcaption>
+  <pre><code>hello-worktree · main
+
+api      running   :21730   health 200
+worker   running   no port
+
+2 services · manifest oberth.yaml</code></pre>
+</figure>
+<p>The port is this checkout's own: another worktree of the same repository gets a different one, because <code>port: auto</code> is assigned per run rather than remembered per project. <code>no port</code> is a fact, not a failure — the worker is observed through its run record.</p>
+<p>Open the address that <code>status</code> prints to see the API answer with the port it actually bound. The same read as JSON is <code>oberth status --json --brief</code>, which is what an agent opens with.</p>
+
+<h2 id="log">Read the worker's log</h2>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">oberth logs worker --once</figcaption>
+  <pre><code>worker: API health=200
+worker: API health=200
+worker: API health=200</code></pre>
+</figure>
+<p><code>--once</code> reads the current run's log and returns. Without it, <code>logs</code> follows. When a service has already failed, <code>--first-error</code> gives the first error of the current run instead of the last screen of output.</p>
+
+<h2 id="stop">Stop it</h2>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">oberth down</figcaption>
+  <pre><code>oberth down --force --json</code></pre>
+</figure>
+<p><code>down</code> stops the services that this worktree started and hands their port reservations back. It does not touch another checkout, a normal user daemon, or processes the manifest never declared.</p>
+
+<h2 id="isolation">See the isolation for yourself</h2>
+<p>Create a second Git worktree of the same repository, enter <code>examples/hello-worktree</code> in both, and run <code>up</code> in each. The two API services get different ports. Run <code>down</code> in one; the other keeps running.</p>
+<aside class="note">
+  <p>This is not a container or an operating-system sandbox. It is run ownership and lifecycle isolation: a run belongs to the checkout that started it. <a href="{{guide}}worktrees/">Worktrees and runs</a> explains the rules, and <a href="{{guide}}down/">down</a> explains what a stop may never reach.</p>
+</aside>

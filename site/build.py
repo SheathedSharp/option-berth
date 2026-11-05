@@ -29,14 +29,6 @@ GUIDE = ROOT / "guide"
 GUIDE_TEMPLATE = Template((ROOT / "templates" / "guide.html").read_text())
 CHAPTER_TEMPLATE = Template((ROOT / "templates" / "guide-chapter.html").read_text())
 REPO_URL = "https://github.com/SheathedSharp/option-berth"
-# Each station of the chain links to the chapter that explains it.
-STATION_CHAPTER = {
-    "worktree": "many",
-    "manifest": "declare",
-    "service": "up",
-    "run": "logs",
-    "facts": "status",
-}
 FOREIGN_HREF = ("http://", "https://", "mailto:", "tel:")
 BLOCK_TAGS = {
     "h1", "h2", "h3", "h4", "p", "ul", "ol", "li", "pre", "code", "table", "thead",
@@ -152,9 +144,20 @@ def _root_prefix(url: str) -> str:
     return "../" * len([part for part in url.strip("/").split("/") if part])
 
 
-def _guide_url(lang: str, slug: str) -> str:
-    base = "guide/" if lang == "zh-CN" else "guide/en/"
+def _guide_url(locale: dict, slug: str) -> str:
+    """Directory URL of one chapter in one locale.
+
+    The default locale lives at the guide root; every other locale adds its
+    prefix, so `/guide/` is the canonical English text and `/guide/zh/` its
+    Chinese counterpart.
+    """
+    base = "guide/" + locale["prefix"]
     return base if slug == "overview" else base + slug + "/"
+
+
+def _text(value: dict, locale: dict) -> str:
+    """One localised string from a map keyed by locale id."""
+    return str(value[locale["id"]])
 
 
 def load_book() -> dict:
@@ -171,50 +174,68 @@ def load_book() -> dict:
     except json.JSONDecodeError as exc:
         raise ValueError(f"guide book: book.json is not valid JSON: {exc}") from exc
 
+    locales = book.get("locales") or []
+    locale_ids = [item.get("id") for item in locales]
+    if not locales or len(locale_ids) != len(set(locale_ids)) or None in locale_ids:
+        raise ValueError("guide book: locales must be a non-empty list with unique ids")
+    prefixes = [str(item.get("prefix") or "") for item in locales]
+    if len(prefixes) != len(set(prefixes)):
+        raise ValueError("guide book: locale prefixes must be unique")
+    if prefixes[0] != "" or book.get("default") != locale_ids[0]:
+        raise ValueError("guide book: the first locale is the default and carries no prefix")
+    for item in locales:
+        for key in ("label", "lang", "og_locale"):
+            if not str(item.get(key) or "").strip():
+                raise ValueError(f"guide book: locale {item['id']} has no {key}")
+        prefix = str(item.get("prefix") or "")
+        if prefix and not (prefix.endswith("/") and not prefix.startswith("/")):
+            raise ValueError(f"guide book: locale {item['id']} prefix must look like 'zh/'")
+
     labels = book.get("labels") or {}
-    if set(labels) != {"zh", "en"} or set(labels["zh"]) != set(labels["en"]):
-        raise ValueError("guide book: labels must carry the same keys in both languages")
-    for locale in ("zh", "en"):
-        for key, value in labels[locale].items():
+    if set(labels) != set(locale_ids):
+        raise ValueError("guide book: labels must exist for every locale and no other")
+    keys = set(labels[locale_ids[0]])
+    for locale_id in locale_ids:
+        if set(labels[locale_id]) != keys:
+            raise ValueError("guide book: every locale must carry the same label keys")
+        for key, value in labels[locale_id].items():
             if not str(value).strip():
-                raise ValueError(f"guide book: labels.{locale}.{key} is empty")
+                raise ValueError(f"guide book: labels.{locale_id}.{key} is empty")
 
     parts = book.get("parts") or []
     chapters = book.get("chapters") or []
-    stations = book.get("stations") or []
     if not parts or not chapters:
         raise ValueError("guide book: parts and chapters may not be empty")
     part_ids = [part.get("id") for part in parts]
     if len(part_ids) != len(set(part_ids)) or None in part_ids:
         raise ValueError("guide book: part ids must be unique")
+    for part in parts:
+        if set(part.get("title") or {}) != set(locale_ids):
+            raise ValueError(f"guide book: part {part.get('id')} has no title in every locale")
     slugs = [chapter.get("slug") for chapter in chapters]
     if len(slugs) != len(set(slugs)) or None in slugs:
         raise ValueError("guide book: chapter slugs must be unique")
     if "overview" not in slugs:
         raise ValueError("guide book: the overview chapter is required")
-    station_ids = [station.get("id") for station in stations]
-    if set(station_ids) != set(STATION_CHAPTER) or len(station_ids) != len(set(station_ids)):
-        raise ValueError("guide book: stations must match the chain")
     for chapter in chapters:
         slug = chapter["slug"]
         if chapter.get("part") not in part_ids:
             raise ValueError(f"guide book: {slug} names an unknown part")
-        if chapter.get("station") not in [None, *station_ids]:
-            raise ValueError(f"guide book: {slug} names an unknown station")
-        for locale in ("zh", "en"):
-            side = chapter.get(locale) or {}
+        side = chapter.get("locales") or {}
+        if set(side) != set(locale_ids):
+            raise ValueError(f"guide book: {slug} must be written in every locale and no other")
+        for locale_id in locale_ids:
             for key in ("nav", "title", "lede", "summary"):
-                if not str(side.get(key) or "").strip():
-                    raise ValueError(f"guide book: {slug}.{locale}.{key} is empty")
-            fragment = GUIDE / f"{slug}.{locale}.html"
+                if not str(side[locale_id].get(key) or "").strip():
+                    raise ValueError(f"guide book: {slug}.locales.{locale_id}.{key} is empty")
+            fragment = GUIDE / f"{slug}.{locale_id}.html"
             if not fragment.is_file():
                 raise ValueError(f"guide book: missing chapter fragment {fragment.name}")
         for item in chapter.get("refs") or []:
             if not str(item.get("href") or "").startswith("https://"):
                 raise ValueError(f"guide book: {slug} has a non-https contract link")
-    for target in STATION_CHAPTER.values():
-        if target not in slugs:
-            raise ValueError(f"guide book: station target {target} does not exist")
+            if set(item.get("label") or {}) != set(locale_ids):
+                raise ValueError(f"guide book: {slug} has a contract link without every locale")
     return book
 
 
@@ -233,6 +254,8 @@ class _FragmentScan(HTMLParser):
         self._heading_text = []
         self._pre = 0
         self._pre_text = []
+        self.sections = []
+        self._section = None
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
@@ -243,6 +266,9 @@ class _FragmentScan(HTMLParser):
             self._heading_id = attrs.get("id")
             self._heading_text = []
             self.heading_levels.append(self._heading)
+            if tag == "h2":
+                self._section = {"id": attrs.get("id") or "", "title": "", "text": []}
+                self.sections.append(self._section)
             if tag in self.counts:
                 self.counts[tag] += 1
         if tag == "pre":
@@ -260,6 +286,8 @@ class _FragmentScan(HTMLParser):
         if tag in ("h1", "h2", "h3", "h4") and self._heading is not None:
             text = " ".join("".join(self._heading_text).split())
             self.headings.append((self._heading, self._heading_id, text))
+            if self._heading == 2 and self._section is not None:
+                self._section["title"] = text
             self._heading = None
         if tag == "pre" and self._pre:
             self._pre -= 1
@@ -270,6 +298,8 @@ class _FragmentScan(HTMLParser):
             self._heading_text.append(data)
         if self._pre:
             self._pre_text.append(data)
+        if self._section is not None and self._heading is None:
+            self._section["text"].append(data)
 
 
 def _scan(fragment: str) -> _FragmentScan:
@@ -285,17 +315,17 @@ def _check_fragment(scan: _FragmentScan, slug: str, locale: str) -> None:
     h2s = [(heading_id, text) for level, heading_id, text in scan.headings if level == 2]
     if not h2s:
         raise ValueError(f"guide book: {slug}.{locale}.html has no h2")
-    for heading_id, text in h2s:
+    for level, heading_id, text in scan.headings:
+        if level not in (2, 3):
+            continue
         if not heading_id:
-            raise ValueError(f"guide book: {slug}.{locale}.html has an h2 without an id")
+            raise ValueError(f"guide book: {slug}.{locale}.html has an h{level} without an id")
         if not text:
-            raise ValueError(f"guide book: {slug}.{locale}.html has an empty h2")
-    if len({heading_id for heading_id, _ in h2s}) != len(h2s):
-        raise ValueError(f"guide book: {slug}.{locale}.html repeats an h2 id")
-    if slug == "overview":
-        h1s = [item for item in scan.headings if item[0] == 1]
-        if len(h1s) != 1:
-            raise ValueError("guide book: the overview needs exactly one h1")
+            raise ValueError(f"guide book: {slug}.{locale}.html has an empty h{level}")
+    if any(level == 1 for level, _, _ in scan.headings):
+        raise ValueError(
+            f"guide book: {slug}.{locale}.html carries an h1; the page title comes from book.json"
+        )
 
 
 def _structure(scan: _FragmentScan) -> dict:
@@ -412,8 +442,8 @@ class _TextExtract(HTMLParser):
         return "```".join(segments).strip()
 
 
-def _resolve(fragment: str, lang: str, url: str) -> str:
-    guide = _rel(url, _guide_url(lang, "overview"))
+def _resolve(fragment: str, locale: dict, url: str) -> str:
+    guide = _rel(url, _guide_url(locale, "overview"))
     return fragment.replace("{{guide}}", guide).replace("{{root}}", _root_prefix(url))
 
 
@@ -421,109 +451,121 @@ def _esc(value: object) -> str:
     return html.escape(str(value), quote=True)
 
 
-def _toc_compact(book: dict, lang: str, url: str, current: str) -> str:
-    locale = "zh" if lang == "zh-CN" else "en"
-    out = ['<nav class="book-toc" aria-label="' + _esc(book["labels"][locale]["toc_title"]) + '">']
-    for part in book["parts"]:
-        out.append(f'<p class="toc-part">{_esc(part[locale])}</p><ol class="toc-list">')
-        for chapter in book["chapters"]:
-            if chapter["part"] != part["id"]:
-                continue
-            href = _rel(url, _guide_url(lang, chapter["slug"])) or "./"
-            marker = ' class="is-current" aria-current="page"' if chapter["slug"] == current else ""
-            out.append(f'<li><a href="{href}"{marker}>{_esc(chapter[locale]["nav"])}</a></li>')
-        out.append("</ol>")
-    out.append("</nav>")
-    return "\n".join(out)
-
-
-def _toc_full(book: dict, lang: str, url: str) -> str:
-    locale = "zh" if lang == "zh-CN" else "en"
-    out = ['<div class="contents-parts">']
-    for part in book["parts"]:
-        out.append(f'<section class="contents-part"><h3>{_esc(part[locale])}</h3><ol class="contents-list">')
-        for chapter in book["chapters"]:
-            if chapter["part"] != part["id"]:
-                continue
-            href = _rel(url, _guide_url(lang, chapter["slug"])) or "./"
-            out.append(
-                f'<li><a href="{href}"><span class="contents-title">{_esc(chapter[locale]["title"])}</span> '
-                f'<span class="contents-summary">{_esc(chapter[locale]["summary"])}</span></a></li>'
-            )
-        out.append("</ol></section>")
-    out.append("</div>")
-    return "\n".join(out)
-
-
-def _station_links(book: dict, lang: str, url: str, current: str | None) -> str:
-    locale = "zh" if lang == "zh-CN" else "en"
-    out = []
-    for station in book["stations"]:
-        target = _guide_url(lang, STATION_CHAPTER[station["id"]])
-        href = _rel(url, target) or "./"
-        on = station["id"] == current
-        marker = ' class="rail-station is-current" aria-current="true"' if on else ' class="rail-station"'
-        out.append(
-            f'<li><a{marker} href="{href}"><span class="rail-capsule" aria-hidden="true"></span>'
-            f'<span>{_esc(station[locale])}</span></a></li>'
-        )
-    return "\n".join(out)
-
-
 def _page_toc(scan: _FragmentScan) -> str:
-    return "\n".join(
-        f'<li><a href="#{_esc(heading_id)}">{_esc(text)}</a></li>'
-        for level, heading_id, text in scan.headings
-        if level == 2
-    )
+    out = []
+    for level, heading_id, text in scan.headings:
+        if level not in (2, 3):
+            continue
+        item_class = ' class="toc-sub"' if level == 3 else ""
+        out.append(f'<li{item_class}><a href="#{_esc(heading_id)}">{_esc(text)}</a></li>')
+    return "\n".join(out)
 
 
-def _refs(chapter: dict, locale: str) -> str:
+def _refs(chapter: dict, locale: dict) -> str:
     return "\n".join(
-        f'<li><a href="{_esc(item["href"])}">{_esc(item[locale])}</a></li>'
+        f'<li><a href="{_esc(item["href"])}">{_esc(str(item["label"][locale["id"]]))}</a></li>'
         for item in chapter.get("refs") or []
     )
 
 
-def _chapter_nav(book: dict, lang: str, chapter: dict, index: int, labels: dict) -> tuple[str, str]:
-    locale = "zh" if lang == "zh-CN" else "en"
-    url = _guide_url(lang, chapter["slug"])
+def _chapter_nav(book: dict, locale: dict, chapter: dict, index: int, labels: dict) -> tuple[str, str]:
+    url = _guide_url(locale, chapter["slug"])
     previous_html = ""
     next_html = ""
     if index > 0:
         previous = book["chapters"][index - 1]
-        href = _rel(url, _guide_url(lang, previous["slug"])) or "./"
+        href = _rel(url, _guide_url(locale, previous["slug"])) or "./"
+        title = previous["locales"][locale["id"]]["title"]
         previous_html = (
-            f'<a class="chapter-link chapter-prev" href="{href}"><span>{_esc(labels["previous"])}</span>'
-            f'<strong>{_esc(previous[locale]["title"])}</strong></a>'
+            f'<a class="pager-link pager-prev" href="{href}"><span>{_esc(labels["previous"])}</span>'
+            f'<strong>{_esc(title)}</strong></a>'
         )
     if index + 1 < len(book["chapters"]):
         following = book["chapters"][index + 1]
-        href = _rel(url, _guide_url(lang, following["slug"])) or "./"
+        href = _rel(url, _guide_url(locale, following["slug"])) or "./"
+        title = following["locales"][locale["id"]]["title"]
         next_html = (
-            f'<a class="chapter-link chapter-next" href="{href}"><span>{_esc(labels["next"])}</span>'
-            f'<strong>{_esc(following[locale]["title"])}</strong></a>'
+            f'<a class="pager-link pager-next" href="{href}"><span>{_esc(labels["next"])}</span>'
+            f'<strong>{_esc(title)}</strong></a>'
         )
     return previous_html, next_html
 
 
-def _jsonld(book: dict, lang: str, chapter: dict, canonical: str) -> dict:
-    locale = "zh" if lang == "zh-CN" else "en"
+def _rail(book: dict, locale: dict, url: str, current: str) -> str:
+    """The book's whole tree: one paragraph per part, one link per chapter."""
+    out = []
+    for part in book["parts"]:
+        out.append(f'<p class="rail-part">{_esc(_text(part["title"], locale))}</p>')
+        out.append('<ul class="rail-list">')
+        for chapter in book["chapters"]:
+            if chapter["part"] != part["id"]:
+                continue
+            href = _rel(url, _guide_url(locale, chapter["slug"])) or "./"
+            on = chapter["slug"] == current
+            marker = ' class="rail-link is-current" aria-current="page"' if on else ' class="rail-link"'
+            caption = chapter["locales"][locale["id"]]["nav"]
+            out.append(f'<li><a{marker} href="{href}">{_esc(caption)}</a></li>')
+        out.append("</ul>")
+    return "\n".join(out)
+
+
+def _edit_url(chapter: dict, locale: dict) -> str:
+    return f"{REPO_URL}/blob/main/site/guide/{chapter['slug']}.{locale['id']}.html"
+
+
+def _rel_file(url: str, target: str) -> str:
+    return posixpath.relpath(target, url.rstrip("/") or ".")
+
+
+def _relative_search(url: str, search_url: str) -> str:
+    """Relative address of the search index, version query kept."""
+    path, _, query = search_url.partition("?")
+    return _rel_file(url, path) + (f"?{query}" if query else "")
+
+
+def _search_index(book: dict, locale: dict, scans: dict) -> dict:
+    """One locale's searchable text, written next to the guide.
+
+    The browser searches this file instead of the DOM: the whole book is
+    indexed once at build time, so a result can point at a section of a
+    chapter the reader has not opened.
+    """
+    chapters = []
+    for chapter in book["chapters"]:
+        side = chapter["locales"][locale["id"]]
+        sections = []
+        for section in scans[chapter["slug"]][locale["id"]].sections:
+            text = " ".join(" ".join(section["text"]).split())
+            sections.append({"id": section["id"], "title": section["title"], "text": text[:600]})
+        chapters.append(
+            {
+                "slug": chapter["slug"],
+                "title": side["title"],
+                "url": "" if chapter["slug"] == "overview" else chapter["slug"] + "/",
+                "summary": side["summary"],
+                "sections": sections,
+            }
+        )
+    return {"locale": locale["id"], "chapters": chapters}
+
+
+def _jsonld(book: dict, locale: dict, chapter: dict, canonical: str) -> dict:
+    side = chapter["locales"][locale["id"]]
     author = {"@type": "Organization", "name": "option-berth", "url": REPO_URL}
     if chapter["slug"] == "overview":
         return {
             "@context": "https://schema.org",
             "@type": "Book",
-            "name": chapter[locale]["title"],
-            "description": chapter[locale]["lede"],
+            "name": side["title"],
+            "description": side["lede"],
             "url": canonical,
-            "inLanguage": lang,
+            "inLanguage": locale["lang"],
             "author": author,
             "hasPart": [
                 {
                     "@type": "Chapter",
-                    "name": other[locale]["title"],
-                    "url": SITE + _guide_url(lang, other["slug"]),
+                    "name": other["locales"][locale["id"]]["title"],
+                    "url": SITE + _guide_url(locale, other["slug"]),
                 }
                 for other in book["chapters"]
                 if other["slug"] != "overview"
@@ -533,15 +575,15 @@ def _jsonld(book: dict, lang: str, chapter: dict, canonical: str) -> dict:
     return {
         "@context": "https://schema.org",
         "@type": "TechArticle",
-        "headline": chapter[locale]["title"],
-        "description": chapter[locale]["lede"],
+        "headline": side["title"],
+        "description": side["lede"],
         "url": canonical,
-        "inLanguage": lang,
+        "inLanguage": locale["lang"],
         "author": author,
         "isPartOf": {
             "@type": "Book",
-            "name": guide_home[locale]["title"],
-            "url": SITE + _guide_url(lang, "overview"),
+            "name": guide_home["locales"][locale["id"]]["title"],
+            "url": SITE + _guide_url(locale, "overview"),
         },
     }
 
@@ -551,42 +593,60 @@ def _script_hash(value: str) -> str:
     return "'sha256-" + base64.b64encode(digest).decode("ascii") + "'"
 
 
-def _render_page(book: dict, lang: str, chapter: dict, content: str) -> str:
-    locale = "zh" if lang == "zh-CN" else "en"
-    labels = book["labels"][locale]
-    url = _guide_url(lang, chapter["slug"])
-    other_lang = "en" if lang == "zh-CN" else "zh-CN"
-    other_url = _guide_url(other_lang, chapter["slug"])
+def _render_page(book: dict, locale: dict, chapter: dict, content: str, search_url: str) -> str:
+    labels = book["labels"][locale["id"]]
+    side = chapter["locales"][locale["id"]]
+    url = _guide_url(locale, chapter["slug"])
     canonical = SITE + url
     home = chapter["slug"] == "overview"
-    title = chapter[locale]["title"]
-    page_title = f"{title} · {labels['footer_line']}" if home else f"{title} · option-berth"
-    jsonld = json.dumps(_jsonld(book, lang, chapter, canonical), ensure_ascii=False, separators=(",", ":"))
+    page_title = f"{side['title']} · {labels['footer_line']}" if home else f"{side['title']} · option-berth"
+    jsonld = json.dumps(_jsonld(book, locale, chapter, canonical), ensure_ascii=False, separators=(",", ":"))
     jsonld = jsonld.replace("<", "\\u003c")
     root = _root_prefix(url)
+    alternates = "".join(
+        f'<link rel="alternate" hreflang="{_esc(item["lang"])}" href="{_esc(SITE + _guide_url(item, chapter["slug"]))}">'
+        for item in book["locales"]
+    )
+    alternates += f'<link rel="alternate" hreflang="x-default" href="{_esc(SITE + _guide_url(book["locales"][0], chapter["slug"]))}">'
+    language_menu = "".join(
+        f'<li><a href="{_rel(url, _guide_url(item, chapter["slug"])) or "./"}" lang="{_esc(item["lang"])}"'
+        f'{" aria-current=\"true\"" if item["id"] == locale["id"] else ""}>{_esc(item["label"])}</a></li>'
+        for item in book["locales"]
+    )
     values = {
-        "lang": lang,
+        "lang": _esc(locale["lang"]),
         "page_title": _esc(page_title),
-        "description": _esc(chapter[locale]["lede"]),
+        "description": _esc(side["lede"]),
         "canonical": _esc(canonical),
-        "alternate_zh": _esc(SITE + _guide_url("zh-CN", chapter["slug"])),
-        "alternate_en": _esc(SITE + _guide_url("en", chapter["slug"])),
+        "alternates": alternates,
         "script_hash": _script_hash(jsonld),
         "jsonld": jsonld,
         "asset_path": root + "assets/",
         "home_path": root or "./",
-        "guide_home": _rel(url, _guide_url(lang, "overview")) or "./",
-        "language_path": _rel(url, other_url) or "./",
-        "other_lang": other_lang,
-        "language_label": "中文" if lang == "en" else "EN",
+        "guide_home": _rel(url, _guide_url(locale, "overview")) or "./",
+        "language_menu": language_menu,
+        "locale_label": _esc(locale["label"]),
+        "search_path": _esc(_relative_search(url, search_url)),
         "nav_guide": _esc(labels["nav_guide"]),
         "nav_product": _esc(labels["nav_product"]),
         "nav_github": _esc(labels["nav_github"]),
         "skip": _esc(labels["skip"]),
         "navigation": _esc(labels["navigation"]),
         "footer_navigation": _esc(labels["footer_navigation"]),
+        "language": _esc(labels["language"]),
+        "menu": _esc(labels["menu"]),
+        "close": _esc(labels["close"]),
+        "search_open": _esc(labels["search_open"]),
+        "search_placeholder": _esc(labels["search_placeholder"]),
+        "search_hint": _esc(labels["search_hint"]),
+        "search_empty": _esc(labels["search_empty"]),
+        "search_results": _esc(labels["search_results"]),
+        "theme_light": _esc(labels["theme_light"]),
+        "theme_dark": _esc(labels["theme_dark"]),
+        "copy": _esc(labels["copy"]),
+        "copied": _esc(labels["copied"]),
         "og_type": "website" if home else "article",
-        "og_locale": "zh_CN" if lang == "zh-CN" else "en",
+        "og_locale": _esc(locale["og_locale"]),
         "root_prefix": root,
         "footer_line": _esc(labels["footer_line"]),
         "footer_note": _esc(labels["footer_note"]),
@@ -604,9 +664,9 @@ def _render_page(book: dict, lang: str, chapter: dict, content: str) -> str:
         "foot_engine": _esc(labels["foot_engine"]),
         "foot_client": _esc(labels["foot_client"]),
         "foot_skill": _esc(labels["foot_skill"]),
-        "url_overview": _rel(url, _guide_url(lang, "overview")) or "./",
-        "url_install": _rel(url, _guide_url(lang, "install")) or "./",
-        "url_status": _rel(url, _guide_url(lang, "status")) or "./",
+        "url_overview": _rel(url, _guide_url(locale, "overview")) or "./",
+        "url_install": _rel(url, _guide_url(locale, "install")) or "./",
+        "url_status": _rel(url, _guide_url(locale, "status")) or "./",
         "content": content,
     }
     page = GUIDE_TEMPLATE.substitute(values)
@@ -616,6 +676,7 @@ def _render_page(book: dict, lang: str, chapter: dict, content: str) -> str:
 
 
 def _llms_txt(book: dict) -> str:
+    default = book["locales"][0]
     lines = [
         "# option-berth",
         "",
@@ -625,15 +686,16 @@ def _llms_txt(book: dict) -> str:
         "",
         "This guide is the long-form explanation. The authoritative contract for the CLI, JSON fields and the manifest is in the repository's docs/ directory (see Contract below).",
         "",
-        "## Guide",
+        f"## Guide ({default['label']})",
     ]
     for chapter in book["chapters"]:
-        side = chapter["en"]
-        lines.append(f"- [{side['title']}]({SITE}{_guide_url('en', chapter['slug'])}): {side['summary']}")
-    lines += ["", "## 中文指南"]
-    for chapter in book["chapters"]:
-        side = chapter["zh"]
-        lines.append(f"- [{side['title']}]({SITE}{_guide_url('zh-CN', chapter['slug'])}): {side['summary']}")
+        side = chapter["locales"][default["id"]]
+        lines.append(f"- [{side['title']}]({SITE}{_guide_url(default, chapter['slug'])}): {side['summary']}")
+    for locale in book["locales"][1:]:
+        lines += ["", f"## Guide ({locale['label']})"]
+        for chapter in book["chapters"]:
+            side = chapter["locales"][locale["id"]]
+            lines.append(f"- [{side['title']}]({SITE}{_guide_url(locale, chapter['slug'])}): {side['summary']}")
     lines += [
         "",
         "## Contract",
@@ -658,26 +720,28 @@ def _llms_txt(book: dict) -> str:
 
 
 def _llms_full(book: dict) -> str:
+    default = book["locales"][0]
     parts = [
         "# option-berth guide",
         "",
         "> option-berth (oberth) is the runtime facts layer for Git worktrees: what a checkout should run, whether it really is running, and why not.",
         "",
-        f"Canonical HTML: {SITE}guide/en/",
-        f"Chinese edition: {SITE}guide/",
+        f"Canonical HTML: {SITE}{_guide_url(default, 'overview')}",
+        *(
+            f"{item['label']} edition: {SITE}{_guide_url(item, 'overview')}"
+            for item in book["locales"][1:]
+        ),
         "",
     ]
     for chapter in book["chapters"]:
-        raw = (GUIDE / f"{chapter['slug']}.en.html").read_text(encoding="utf-8")
-        raw = raw.replace("{{root}}", SITE).replace("{{guide}}", SITE + "guide/en/")
-        if chapter["slug"] == "overview":
-            raw = raw.replace("<div data-book-contents></div>", _toc_full(book, "en", _guide_url("en", "overview")))
+        side = chapter["locales"][default["id"]]
+        raw = (GUIDE / f"{chapter['slug']}.{default['id']}.html").read_text(encoding="utf-8")
+        raw = raw.replace("{{root}}", SITE).replace("{{guide}}", SITE + _guide_url(default, "overview"))
         extractor = _TextExtract()
         extractor.feed(raw)
         extractor.close()
-        parts += ["---", "", f"URL: {SITE}{_guide_url('en', chapter['slug'])}", ""]
-        if chapter["slug"] != "overview":
-            parts += [f"# {chapter['en']['title']}", "", chapter["en"]["lede"], ""]
+        parts += ["---", "", f"URL: {SITE}{_guide_url(default, chapter['slug'])}", ""]
+        parts += [f"# {side['title']}", "", side["lede"], ""]
         parts += [extractor.text(), ""]
     return "\n".join(parts).strip() + "\n"
 
@@ -685,8 +749,8 @@ def _llms_full(book: dict) -> str:
 def _sitemap(book: dict) -> str:
     urls = [SITE, SITE + "en/"]
     for chapter in book["chapters"]:
-        for lang in ("zh-CN", "en"):
-            urls.append(SITE + _guide_url(lang, chapter["slug"]))
+        for locale in book["locales"]:
+            urls.append(SITE + _guide_url(locale, chapter["slug"]))
     body = "".join(f"<url><loc>{html.escape(url)}</loc></url>" for url in urls)
     return (
         '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
@@ -743,63 +807,108 @@ def _check_site_links(dist: Path) -> None:
         raise ValueError("site links:\n" + "\n".join(errors))
 
 
+def _write_legacy_redirects(dist: Path, book: dict) -> None:
+    """Keep the guide's first English URLs alive.
+
+    The guide used to live at /guide/en/ before English became the default
+    edition at /guide/. Those addresses are published in llms.txt, the sitemap
+    and other people's bookmarks, so each one forwards instead of 404ing.
+    """
+    if any(str(item["prefix"]).startswith("en") for item in book["locales"]):
+        return
+    default = book["locales"][0]
+    for chapter in book["chapters"]:
+        slug = chapter["slug"]
+        legacy = "guide/en/" + ("" if slug == "overview" else slug + "/")
+        url = _guide_url(default, slug)
+        target = _rel(legacy, url)
+        label = f"{chapter['locales'][default['id']]['title']} · option-berth"
+        page = (
+            "<!doctype html>\n"
+            f'<html lang="{_esc(default["lang"])}">\n<head>\n<meta charset="utf-8">\n'
+            '<meta name="robots" content="noindex">\n'
+            f'<meta http-equiv="refresh" content="0; url={_esc(target)}">\n'
+            f'<link rel="canonical" href="{_esc(SITE + url)}">\n'
+            f"<title>{_esc(label)}</title>\n</head>\n<body>\n"
+            f'<p><a href="{_esc(target)}">{_esc(label)}</a></p>\n</body>\n</html>\n'
+        )
+        path = dist / legacy / "index.html"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(page, encoding="utf-8")
+
+
 def _render_guide(dist: Path) -> dict:
     book = load_book()
+    locale_ids = [item["id"] for item in book["locales"]]
     scans = {}
     for chapter in book["chapters"]:
         scans[chapter["slug"]] = {}
-        for locale in ("zh", "en"):
-            fragment = (GUIDE / f"{chapter['slug']}.{locale}.html").read_text(encoding="utf-8")
+        for locale_id in locale_ids:
+            fragment = (GUIDE / f"{chapter['slug']}.{locale_id}.html").read_text(encoding="utf-8")
             scan = _scan(fragment)
-            _check_fragment(scan, chapter["slug"], locale)
-            scans[chapter["slug"]][locale] = scan
-        if _structure(scans[chapter["slug"]]["zh"]) != _structure(scans[chapter["slug"]]["en"]):
-            raise ValueError(
-                f"guide book: {chapter['slug']}.zh.html and {chapter['slug']}.en.html do not mirror "
-                "each other (headings, block counts or code blocks)"
-            )
+            _check_fragment(scan, chapter["slug"], locale_id)
+            scans[chapter["slug"]][locale_id] = scan
+        first = _structure(scans[chapter["slug"]][locale_ids[0]])
+        for locale_id in locale_ids[1:]:
+            if _structure(scans[chapter["slug"]][locale_id]) != first:
+                names = " and ".join(f"{chapter['slug']}.{item}.html" for item in (locale_ids[0], locale_id))
+                raise ValueError(
+                    f"guide book: {names} do not mirror each other (headings, block counts or code blocks)"
+                )
+
+    # The search index is written before the pages so each page can name its
+    # own copy: a version in the URL keeps a browser from serving yesterday's
+    # index against today's chapters.
+    searches = {}
+    (dist / "guide").mkdir(parents=True, exist_ok=True)
+    for locale in book["locales"]:
+        payload = json.dumps(_search_index(book, locale, scans), ensure_ascii=False, separators=(",", ":"))
+        version = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8]
+        name = f"search-{locale['id']}.json"
+        (dist / "guide" / name).write_text(payload, encoding="utf-8")
+        searches[locale["id"]] = f"guide/{name}?v={version}"
 
     for index, chapter in enumerate(book["chapters"]):
-        for lang in ("zh-CN", "en"):
-            locale = "zh" if lang == "zh-CN" else "en"
-            labels = book["labels"][locale]
-            url = _guide_url(lang, chapter["slug"])
-            fragment = (GUIDE / f"{chapter['slug']}.{locale}.html").read_text(encoding="utf-8")
-            body = _resolve(fragment, lang, url)
-            if chapter["slug"] == "overview":
-                marker = "<div data-book-contents></div>"
-                if body.count(marker) != 1:
-                    raise ValueError("guide book: the overview needs exactly one contents placeholder")
-                content = body.replace(marker, _toc_full(book, lang, url))
-            else:
-                scan = _scan(body)
-                previous_link, next_link = _chapter_nav(book, lang, chapter, index, labels)
-                content = CHAPTER_TEMPLATE.substitute(
-                    {
-                        "title": _esc(chapter[locale]["title"]),
-                        "lede": _esc(chapter[locale]["lede"]),
-                        "body": body,
-                        "station_links": _station_links(book, lang, url, chapter.get("station")),
-                        "toc": _toc_compact(book, lang, url, chapter["slug"]),
-                        "toc_title": _esc(labels["toc_title"]),
-                        "chain_title": _esc(labels["chain_title"]),
-                        "page_toc": _page_toc(scan),
-                        "on_this_page": _esc(labels["on_this_page"]),
-                        "contract_title": _esc(labels["contract_title"]),
-                        "refs": _refs(chapter, locale),
-                        "foot_machine": _esc(labels["foot_machine"]),
-                        "machine_note": _esc(labels["machine_note"]),
-                        "root_prefix": _root_prefix(url),
-                        "chapter_nav": _esc(labels["chapter_nav"]),
-                        "prev_link": previous_link,
-                        "next_link": next_link,
-                    }
-                )
-            page = _render_page(book, lang, chapter, content)
+        for locale in book["locales"]:
+            locale_id = locale["id"]
+            labels = book["labels"][locale_id]
+            side = chapter["locales"][locale_id]
+            url = _guide_url(locale, chapter["slug"])
+            fragment = (GUIDE / f"{chapter['slug']}.{locale_id}.html").read_text(encoding="utf-8")
+            body = _resolve(fragment, locale, url)
+            scan = _scan(body)
+            previous_link, next_link = _chapter_nav(book, locale, chapter, index, labels)
+            part = next(item for item in book["parts"] if item["id"] == chapter["part"])
+            content = CHAPTER_TEMPLATE.substitute(
+                {
+                    "rail": _rail(book, locale, url, chapter["slug"]),
+                    "toc_title": _esc(labels["toc_title"]),
+                    "breadcrumb": _esc(labels["breadcrumb"]),
+                    "nav_guide": _esc(labels["nav_guide"]),
+                    "guide_home": _rel(url, _guide_url(locale, "overview")) or "./",
+                    "part_title": _esc(_text(part["title"], locale)),
+                    "title": _esc(side["title"]),
+                    "body": body,
+                    "page_toc": _page_toc(scan),
+                    "on_this_page": _esc(labels["on_this_page"]),
+                    "contract_title": _esc(labels["contract_title"]),
+                    "refs": _refs(chapter, locale),
+                    "foot_machine": _esc(labels["foot_machine"]),
+                    "machine_note": _esc(labels["machine_note"]),
+                    "root_prefix": _root_prefix(url),
+                    "chapter_nav": _esc(labels["chapter_nav"]),
+                    "prev_link": previous_link,
+                    "next_link": next_link,
+                    "edit_url": _esc(_edit_url(chapter, locale)),
+                    "edit_page": _esc(labels["edit_page"]),
+                }
+            )
+            page = _render_page(book, locale, chapter, content, searches[locale_id])
             target = dist / url / "index.html"
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(page, encoding="utf-8")
 
+    _write_legacy_redirects(dist, book)
     (dist / "llms.txt").write_text(_llms_txt(book), encoding="utf-8")
     (dist / "llms-full.txt").write_text(_llms_full(book), encoding="utf-8")
     (dist / "sitemap.xml").write_text(_sitemap(book), encoding="utf-8")
@@ -840,7 +949,7 @@ def build() -> Path:
                       asset_path="../assets/" if english else "assets/", home_path="./",
                       language_path="../" if english else "en/", other_lang="zh-CN" if english else "en",
                       language_label="中文" if english else "EN",
-                      guide_path="../guide/en/" if english else "guide/")
+                      guide_path="../guide/" if english else "guide/zh/")
         values.update({key: html.escape(value, quote=True) for key, value in measured.items()})
         document = template.substitute(values)
         target = dist / "en" / "index.html" if english else dist / "index.html"

@@ -1,49 +1,50 @@
-<div class="book-shell wrap">
-  <aside class="book-rail">
-    <nav class="rail-chain" aria-label="$chain_title">
-      <p class="rail-chain-title">$chain_title</p>
-      <ol class="rail-stations">
-$station_links
-      </ol>
+<div class="doc-shell">
+  <aside class="doc-rail" id="doc-rail" data-rail>
+    <nav class="doc-rail-nav" aria-label="$toc_title">
+$rail
     </nav>
-    <details class="rail-toc" open>
-      <summary>$toc_title</summary>
-$toc
-    </details>
   </aside>
-  <article class="book-article">
-    <header class="chapter-head">
+  <main class="doc-body" id="main">
+    <article class="doc-article">
+      <nav class="doc-crumbs" aria-label="$breadcrumb">
+        <ol>
+          <li><a href="$guide_home">$nav_guide</a></li>
+          <li><span>$part_title</span></li>
+        </ol>
+      </nav>
       <h1>$title</h1>
-      <p class="chapter-lede">$lede</p>
-    </header>
-    <div class="chapter-body" data-chapter-body>
+      <div class="doc-prose" data-chapter-body>
 $body
-    </div>
-    <nav class="chapter-nav" aria-label="$chapter_nav">
+      </div>
+      <nav class="doc-pager" aria-label="$chapter_nav">
 $prev_link
 $next_link
-    </nav>
-  </article>
-  <aside class="book-aside">
-    <nav class="page-toc" aria-label="$on_this_page">
-      <h2>$on_this_page</h2>
-      <ol>
+      </nav>
+      <p class="doc-edit"><a href="$edit_url">$edit_page<span aria-hidden="true"> ↗</span></a></p>
+    </article>
+    <aside class="doc-aside">
+      <details class="doc-toc" data-toc open>
+        <summary>$on_this_page</summary>
+        <nav aria-label="$on_this_page">
+          <ol>
 $page_toc
-      </ol>
-    </nav>
-    <nav class="contract-links" aria-label="$contract_title">
-      <h2>$contract_title</h2>
-      <ul>
+          </ol>
+        </nav>
+      </details>
+      <nav class="doc-aside-refs" aria-label="$contract_title">
+        <h2>$contract_title</h2>
+        <ul>
 $refs
-      </ul>
-    </nav>
-    <nav class="machine-links" aria-label="$foot_machine">
-      <h2>$foot_machine</h2>
-      <p>$machine_note</p>
-      <ul>
-        <li><a href="${root_prefix}llms.txt">llms.txt</a></li>
-        <li><a href="${root_prefix}llms-full.txt">llms-full.txt</a></li>
-      </ul>
-    </nav>
-  </aside>
+        </ul>
+      </nav>
+      <div class="doc-aside-machine">
+        <h2>$foot_machine</h2>
+        <p>$machine_note</p>
+        <ul>
+          <li><a href="${root_prefix}llms.txt">llms.txt</a></li>
+          <li><a href="${root_prefix}llms-full.txt">llms-full.txt</a></li>
+        </ul>
+      </div>
+    </aside>
+  </main>
 </div>
