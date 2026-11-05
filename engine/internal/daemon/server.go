@@ -364,18 +364,30 @@ func (s *Server) registerConn(c *Conn) {
 // removeConn drops a connection from the registry. Called once per connection,
 // from Conn.closeWithReason.
 func (s *Server) removeConn(c *Conn, reason string) {
-	s.subsMu.Lock()
-	workspace, workspaceChanged := s.detachWorkspaceLocked(c)
-	delete(s.conns, c.id)
-	s.subsMu.Unlock()
+	workspace, workspaceChanged := s.forgetConn(c)
 	if workspaceChanged {
 		s.broadcastWorkspaceChanged(workspace, nil)
 	}
+
+	// The keepalive count has to be recomputed before anything else can ask
+	// whether an idle daemon may stop, and the wake makes the next scan see the
+	// ports this client was watching go quiet.
 	s.recountKeepalive()
 	s.touch()
 	s.logger.Debug("client disconnected", "conn", c.id, "reason", reason)
 	runDisconnectHooks(c.id)
 	s.loop.Wake()
+}
+
+// forgetConn drops a connection from the registry, detaching any workspace
+// relation it held on the way out. The workspace is returned rather than
+// broadcast here, because the broadcast must not run under subsMu.
+func (s *Server) forgetConn(c *Conn) (string, bool) {
+	s.subsMu.Lock()
+	defer s.subsMu.Unlock()
+	workspace, changed := s.detachWorkspaceLocked(c)
+	delete(s.conns, c.id)
+	return workspace, changed
 }
 
 // connsSnapshot returns the connections registered right now, so a caller can
