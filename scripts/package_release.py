@@ -93,6 +93,7 @@ def package(root: Path, system: str, arch: str, output: Path) -> list[Path]:
         notices = stage / "licenses"
         notices.mkdir()
         shutil.copyfile(root / "engine/LICENSE", notices / "engine-LICENSE")
+        shutil.copyfile(root / "THIRD_PARTY_NOTICES.md", notices / "third-party-notices.md")
         shutil.copyfile(root / "third_party/go-runtime-licenses.txt", notices / "retained-runtime-notices.txt")
         text, modules = runtime_notices(root, env)
         (notices / "target-runtime-notices.txt").write_text(text)
