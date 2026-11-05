@@ -161,73 +161,88 @@ func AllContainerStatsAsEntries() map[string]*ports.DockerStatsEntry {
 }
 
 // statsEntries converts per-container stats to the shape ports.EnrichStats
-// takes. No stats is nil.
+// takes. No stats at all is nil rather than an empty map, so a caller can tell
+// "nothing sampled" from "sampled, nothing running".
 func statsEntries(allStats map[string]*ContainerStats) map[string]*ports.DockerStatsEntry {
 	if len(allStats) == 0 {
 		return nil
 	}
-	result := make(map[string]*ports.DockerStatsEntry, len(allStats))
-	for name, s := range allStats {
-		result[name] = &ports.DockerStatsEntry{
-			CPUPercent: s.CPUPercent,
-			MemoryRSS:  s.MemoryRSS,
-			PIDs:       s.PIDs,
-			State:      s.State,
-			Uptime:     s.Uptime,
+	entries := make(map[string]*ports.DockerStatsEntry, len(allStats))
+	for name, measured := range allStats {
+		entries[name] = &ports.DockerStatsEntry{
+			CPUPercent: measured.CPUPercent,
+			MemoryRSS:  measured.MemoryRSS,
+			PIDs:       measured.PIDs,
+			State:      measured.State,
+			Uptime:     measured.Uptime,
 		}
 	}
-	return result
+	return entries
 }
 
-// AllContainerStats fetches stats for all running containers using the Docker
-// Engine API via Unix socket. Stats are fetched in parallel (~1s for CPU sampling).
-// Falls back to `docker stats` CLI if the socket is unavailable.
+// AllContainerStats samples every running container, listing them first.
 func AllContainerStats() map[string]*ContainerStats {
-	containers, err := listContainers()
+	listed, err := listContainers()
 	if err != nil {
-		return make(map[string]*ContainerStats)
+		return map[string]*ContainerStats{}
 	}
-	return statsFor(containers)
+	return statsFor(listed)
 }
 
-// statsFor fetches stats for the given containers, as AllContainerStats does
-// once it has listed them.
+// statsFor samples the given containers.
+//
+// On Linux the Engine API over the local socket is used, one request per
+// container in parallel: /stats?stream=false makes the daemon collect a CPU
+// sample for about a second before answering, so serialising the calls would
+// cost a second per container. Everything else — Windows, or a host with no
+// socket (Docker Desktop forwards through it only for some configurations) —
+// falls back to the `docker stats` CLI, which does the same sampling itself.
 func statsFor(containers []container) map[string]*ContainerStats {
-	result := make(map[string]*ContainerStats)
+	sampled := make(map[string]*ContainerStats)
 	if len(containers) == 0 {
-		return result
+		return sampled
 	}
+	if !hasEngineSocket() {
+		return allContainerStatsCLI()
+	}
+	for name, measured := range sampleViaAPI(containers) {
+		sampled[name] = measured
+	}
+	return sampled
+}
 
+// hasEngineSocket reports whether the Engine API is reachable over the local
+// socket, which is the only way this path talks to Docker.
+func hasEngineSocket() bool {
 	if runtime.GOOS == "windows" {
-		return allContainerStatsCLI()
+		return false
 	}
+	_, err := os.Stat(dockerSocket)
+	return err == nil
+}
 
-	if _, err := os.Stat(dockerSocket); err != nil {
-		return allContainerStatsCLI()
+// sampleViaAPI asks the Engine API about every container at once and returns
+// the ones that answered. A container whose request failed is simply absent.
+func sampleViaAPI(containers []container) map[string]*ContainerStats {
+	type sample struct {
+		name     string
+		measured *ContainerStats
 	}
-
-	type statsResult struct {
-		name  string
-		stats *ContainerStats
-	}
-
-	ch := make(chan statsResult, len(containers))
-
-	for _, c := range containers {
+	answered := make(chan sample, len(containers))
+	for _, running := range containers {
 		go func(name string) {
-			s := fetchContainerStatsAPI(name)
-			ch <- statsResult{name: name, stats: s}
-		}(c.name)
+			answered <- sample{name: name, measured: fetchContainerStatsAPI(name)}
+		}(running.name)
 	}
 
+	sampled := make(map[string]*ContainerStats, len(containers))
 	for range containers {
-		r := <-ch
-		if r.stats != nil {
-			result[r.name] = r.stats
+		got := <-answered
+		if got.measured != nil {
+			sampled[got.name] = got.measured
 		}
 	}
-
-	return result
+	return sampled
 }
 
 // fetchContainerStatsAPI fetches stats for a single container via the Docker socket API.
