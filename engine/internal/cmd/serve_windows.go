@@ -8,10 +8,11 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// detachProcess gives the daemon its own process group and no console, so it
-// survives the shell that started it and never receives its Ctrl+C.
-func detachProcess(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &windows.SysProcAttr{
+// detachProcess hands the daemon a new process group and no console, for the
+// same two reasons as on Unix: the launching shell may exit without taking the
+// daemon with it, and Ctrl+C must not reach it.
+func detachProcess(command *exec.Cmd) {
+	command.SysProcAttr = &windows.SysProcAttr{
 		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS,
 	}
 }

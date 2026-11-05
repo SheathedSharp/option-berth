@@ -7,8 +7,9 @@ import (
 	"syscall"
 )
 
-// detachProcess puts the daemon in its own session so it survives the shell
-// that started it and never receives the terminal's Ctrl+C.
-func detachProcess(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+// detachProcess puts the daemon in a session of its own. That is what lets it
+// outlive the shell that launched it and keeps the terminal's Ctrl+C from
+// reaching it: a session leader has no controlling terminal to deliver to.
+func detachProcess(command *exec.Cmd) {
+	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 }
