@@ -403,17 +403,12 @@ func (s *Server) pendingWrites() int {
 
 // ----------------------------------------------------------- subscriptions ---
 
-// Subscribers counts the connections currently subscribed to state.
+// Subscribers counts the connections currently subscribed to state. It is
+// demand's count without the include set, so the two cannot disagree about who
+// is watching.
 func (s *Server) Subscribers() int {
-	s.subsMu.RLock()
-	defer s.subsMu.RUnlock()
-	n := 0
-	for _, c := range s.conns {
-		if c.subscribed {
-			n++
-		}
-	}
-	return n
+	subscribers, _ := s.demand()
+	return subscribers
 }
 
 // Clients counts open connections, subscribed or not.
