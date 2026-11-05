@@ -7,28 +7,24 @@ import (
 	"time"
 )
 
-// ParentTable returns a pid -> ppid map for every process this user can see.
-// It is the same table the scanner builds while enriching listeners, exported
-// so the daemon's runs registry can walk a listener's ancestry back to the
-// `oberth start` that owns it without scanning ports first.
+// ParentTable maps every visible process to its parent. The scanner builds the
+// same table while enriching listeners; exporting it lets the daemon's run
+// registry walk a listener's ancestry back to the `oberth start` that owns it
+// without scanning ports first.
 //
-// On Linux the table comes straight from /proc: no exec, no output parsing,
-// and — unlike `ps` — nothing to install. procps is absent from plenty of
-// container images, and a missing `ps` used to mean every ancestry walk came
-// back empty, so a listener a run had spawned was never attributed to it.
-// Everywhere else the scan's own process table is reused while it is still
-// fresh (the registry asks at its own, shorter cadence — a second `ps -A`
-// moments after the scan's would be the same machine read twice). A stale or
-// missing scan table falls back to one `ps -A` call.
+// Linux reads /proc directly: no exec, no parsing of command output, and
+// nothing to install. Plenty of container images lack procps, and a missing
+// `ps` used to leave every ancestry walk empty, so a listener a run spawned
+// was never attributed to it.
 //
-// Windows has neither: no /proc, and no `ps -A` for batchGetProcessTable
-// to call, so both of those come back empty and the table used to be empty with
-// them — every ancestry walk on Windows failed, and a listener a `oberth start`
-// had spawned was never attributed to its run. The fallback is the parents the
-// last scan already learned: Get-CimInstance returns ParentProcessId alongside
-// the command line it was being asked for anyway, so this costs no process and
-// no second query. It covers the pids that have been scanned, which is exactly
-// the population the walk starts from.
+// On other Unix systems a fresh scan table is reused (the registry asks at a
+// shorter cadence, and a second `ps -A` moments later would read the same
+// machine twice); a stale or missing table falls back to one `ps -A`.
+//
+// Windows has neither /proc nor `ps -A`, so the fallback is what the last scan
+// learned: the CIM query already returns ParentProcessId beside the command
+// line, so the table costs no extra process and covers exactly the pids the
+// walk starts from.
 func ParentTable() map[int]int {
 	return collectParentTable(nativeParentTable, recentScanEntries, batchGetProcessTable)
 }
@@ -44,11 +40,11 @@ func collectParentTable(native func() map[int]int, recent func() *parentSnapshot
 	}
 	info := refresh()
 	if len(info) > 0 {
-		out := make(map[int]int, len(info))
-		for pid, e := range info {
-			out[pid] = e.ppid
+		parents := make(map[int]int, len(info))
+		for pid, entry := range info {
+			parents[pid] = entry.ppid
 		}
-		return out
+		return parents
 	}
 	return map[int]int{}
 }
@@ -57,19 +53,19 @@ func collectParentTable(native func() map[int]int, recent func() *parentSnapshot
 // Field 2 is the executable name in parentheses and may contain spaces and
 // parentheses, so parsing starts after the last closing parenthesis.
 func parseProcStatPPID(stat string) (int, bool) {
-	end := strings.LastIndexByte(stat, ')')
-	if end < 0 {
+	closing := strings.LastIndexByte(stat, ')')
+	if closing < 0 {
 		return 0, false
 	}
-	fields := strings.Fields(stat[end+1:])
-	if len(fields) < 2 {
+	columns := strings.Fields(stat[closing+1:])
+	if len(columns) < 2 {
 		return 0, false
 	}
-	ppid, err := strconv.Atoi(fields[1])
-	if err != nil || ppid < 0 {
+	parent, err := strconv.Atoi(columns[1])
+	if err != nil || parent < 0 {
 		return 0, false
 	}
-	return ppid, true
+	return parent, true
 }
 
 // parentSnapshot is one scan's process facts with the time they were learned,

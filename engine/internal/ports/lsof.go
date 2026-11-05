@@ -1,58 +1,50 @@
 package ports
 
-import "strconv"
+import (
+	"strconv"
+	"strings"
+)
 
 // cwdsFromLsof turns one `lsof -a -p <pids> -d cwd -Fpn` run into pid -> cwd.
-// The field output is a record per line, `p<pid>` introducing a process and
-// `n<path>` its working directory:
+// The field output is one record per line, `p<pid>` opening a process and
+// `n<path>` giving its working directory:
 //
 //	p1234
 //	n/Users/me/project
-//	p5678
-//	n/var/empty
 //
-// The error is honoured only when lsof printed nothing at all. lsof can exit
-// non-zero when one pid it was asked about has gone away, which is routine
-// when the caller is asking about
-// every listener on the machine, and it still prints every record it did
-// resolve. Dropping the whole batch on that error left *every* process without
-// a cwd for that scan, and a process with no cwd has no git root, so its group
-// and its display name silently fell back to something else for one tick and
-// then changed back.
+// The error matters only when lsof printed nothing. lsof can exit non-zero
+// when one pid it was asked about has gone away — routine when the caller asks
+// about every listener — while still printing every record it resolved.
+// Dropping the batch on that error left every process without a cwd for that
+// scan, and without a cwd there is no git root, so groups and names silently
+// fell back for one tick.
 //
-// It lives outside the darwin-only file so the parsing is tested everywhere,
-// not only on the platform that runs lsof.
+// The parser lives outside the darwin-only file so it is tested everywhere,
+// not only where lsof runs.
 func cwdsFromLsof(out []byte, err error) map[int]string {
-	result := make(map[int]string)
+	cwds := make(map[int]string)
 	if err != nil && len(out) == 0 {
-		return result
+		return cwds
 	}
 
-	current := 0
-	start := 0
-	text := string(out)
-	for i := 0; i <= len(text); i++ {
-		if i < len(text) && text[i] != '\n' {
+	owner := 0
+	for _, record := range strings.Split(string(out), "\n") {
+		if record == "" {
 			continue
 		}
-		line := text[start:i]
-		start = i + 1
-		if line == "" {
-			continue
-		}
-		switch line[0] {
+		switch record[0] {
 		case 'p':
-			pid, convErr := strconv.Atoi(line[1:])
-			if convErr == nil && pid > 0 {
-				current = pid
+			number, convErr := strconv.Atoi(record[1:])
+			if convErr == nil && number > 0 {
+				owner = number
 			} else {
-				current = 0
+				owner = 0
 			}
 		case 'n':
-			if current != 0 {
-				result[current] = line[1:]
+			if owner != 0 {
+				cwds[owner] = record[1:]
 			}
 		}
 	}
-	return result
+	return cwds
 }

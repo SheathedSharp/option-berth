@@ -5,27 +5,33 @@ import (
 	"strconv"
 )
 
-// nativeParentTable reads pid -> ppid from /proc, the authoritative source on
-// Linux. Every numeric directory under /proc is a process; its stat file
-// carries the parent. Processes that exit mid-walk are skipped.
+// nativeParentTable reads parent pids from /proc, the authoritative source on
+// Linux. Each numeric directory is a process and its stat file names the
+// parent; a process that exits mid-walk is simply skipped.
 func nativeParentTable() map[int]int {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil
 	}
-	out := make(map[int]int, len(entries))
-	for _, e := range entries {
-		pid, err := strconv.Atoi(e.Name())
-		if err != nil || pid <= 0 {
+	parents := make(map[int]int, len(entries))
+	for _, entry := range entries {
+		pid, convErr := strconv.Atoi(entry.Name())
+		if convErr != nil || pid <= 0 {
 			continue
 		}
-		stat, err := os.ReadFile("/proc/" + e.Name() + "/stat")
-		if err != nil {
-			continue
-		}
-		if ppid, ok := parseProcStatPPID(string(stat)); ok {
-			out[pid] = ppid
+		if parent, ok := procParent(entry.Name()); ok {
+			parents[pid] = parent
 		}
 	}
-	return out
+	return parents
+}
+
+// procParent reads one process's parent from its /proc stat file. A process
+// that exits mid-walk simply has no entry.
+func procParent(name string) (int, bool) {
+	stat, err := os.ReadFile("/proc/" + name + "/stat")
+	if err != nil {
+		return 0, false
+	}
+	return parseProcStatPPID(string(stat))
 }
