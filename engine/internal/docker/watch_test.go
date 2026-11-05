@@ -322,53 +322,63 @@ func TestStatsAreCollectedOnDemandAndDroppedOnFailure(t *testing.T) {
 	}
 }
 
-// The point of the step: a scan never waits on Docker, even while a
-// `docker ps` hangs, and the hanging one is cut off at the timeout.
+// TestAHangingDockerNeverBlocksAScan is the reason the watcher exists: while
+// `docker ps` hangs, a scan must still be able to enrich and to read stats, and
+// the hanging call is cut off once its own timeout expires.
 func TestAHangingDockerNeverBlocksAScan(t *testing.T) {
-	w := NewWatcher(WatcherOptions{Interval: time.Hour})
-	w.lookPath = func(string) (string, error) { return "/usr/local/bin/docker", nil }
-	w.timeout = 200 * time.Millisecond
-	started := make(chan struct{}, 1)
-	w.list = func(ctx context.Context) ([]container, error) {
+	watcher := NewWatcher(WatcherOptions{Interval: time.Hour})
+	watcher.lookPath = func(string) (string, error) { return "/usr/local/bin/docker", nil }
+	watcher.timeout = 200 * time.Millisecond
+
+	asked := make(chan struct{}, 1)
+	watcher.list = func(ctx context.Context) ([]container, error) {
 		select {
-		case started <- struct{}{}:
+		case asked <- struct{}{}:
 		default:
 		}
-		<-ctx.Done()
+		<-ctx.Done() // block until the probe timeout ends it
 		return nil, ctx.Err()
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { defer close(done); w.Run(ctx) }()
-	defer func() { cancel(); <-done }()
+	running := make(chan struct{})
+	go func() { defer close(running); watcher.Run(ctx) }()
+	defer func() { cancel(); <-running }()
 
 	select {
-	case <-started:
+	case <-asked:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the watcher never asked docker")
 	}
 
+	// A scan's two entry points, with the watcher's docker call still hung.
 	begin := time.Now()
 	for i := 0; i < 100; i++ {
-		pp := []ports.ListeningPort{{Port: 4000 + i}}
-		w.Enrich(pp)
-		_ = w.Stats()
+		watcher.Enrich([]ports.ListeningPort{{Port: 4000 + i}})
+		_ = watcher.Stats()
 	}
 	if took := time.Since(begin); took > 100*time.Millisecond {
 		t.Errorf("100 scans' worth of Enrich took %s while docker ps hung", took)
 	}
 
+	awaitHealthDown(t, watcher)
+}
+
+// awaitHealthDown waits for the watcher to give up on a hung docker, and checks
+// that it recorded the timeout as the reason.
+func awaitHealthDown(t *testing.T, watcher *Watcher) {
+	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		w.mu.Lock()
-		state, err := w.state, w.lastErr
-		w.mu.Unlock()
+		watcher.mu.Lock()
+		state, err := watcher.state, watcher.lastErr
+		watcher.mu.Unlock()
+
 		if state == healthDown {
 			if err == nil || !strings.Contains(err.Error(), "did not answer within 200ms") {
 				t.Errorf("lastErr = %v, want it to say the call timed out", err)
 			}
-			break
+			return
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("the hanging docker ps was never cut off")
@@ -392,11 +402,12 @@ func TestParsePSFeedsEnrichment(t *testing.T) {
 	b.step()
 	pp := []ports.ListeningPort{{Port: 8080, BindAddress: "0.0.0.0"}, {Port: 8080, BindAddress: "::"}, {Port: 3000}}
 	b.watcher.Enrich(pp)
-	for _, p := range pp[:2] {
-		if p.Type != ports.PortTypeDocker || p.DockerContainer != "shop-web-1" || p.DockerImage != "nginx:1.27" ||
-			p.DockerComposeService != "web" || p.DockerComposeProject != "shop" ||
-			p.DockerComposeWorkingDir != "/src/shop" || p.DockerContainerPort != 80 {
-			t.Errorf("port %s:%d = %+v", p.BindAddress, p.Port, p)
+	for _, row := range pp[:2] {
+		if row.Type != ports.PortTypeDocker || row.DockerContainer != "shop-web-1" ||
+			row.DockerImage != "nginx:1.27" || row.DockerComposeService != "web" ||
+			row.DockerComposeProject != "shop" || row.DockerComposeWorkingDir != "/src/shop" ||
+			row.DockerContainerPort != 80 {
+			t.Errorf("port %s:%d = %+v, want the shop-web-1 attribution", row.BindAddress, row.Port, row)
 		}
 	}
 	if pp[2].Type == ports.PortTypeDocker {
