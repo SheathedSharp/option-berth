@@ -588,6 +588,25 @@ def _jsonld(book: dict, locale: dict, chapter: dict, canonical: str) -> dict:
     }
 
 
+def _asset_versions() -> dict[str, str]:
+    """Short content hash per published asset.
+
+    GitHub Pages caches /assets/* for four hours, so an unversioned stylesheet
+    URL hands a returning reader yesterday's CSS with today's markup. The hash
+    makes every change a new URL; the query is ignored by the server.
+    """
+    return {
+        name: hashlib.sha256((ROOT / "assets" / name).read_bytes()).hexdigest()[:8]
+        for name in ASSETS
+    }
+
+
+def _version_assets(page: str, root: str, versions: dict[str, str]) -> str:
+    for name, version in versions.items():
+        page = page.replace(f"{root}assets/{name}", f"{root}assets/{name}?v={version}")
+    return page
+
+
 def _script_hash(value: str) -> str:
     digest = hashlib.sha256(value.encode("utf-8")).digest()
     return "'sha256-" + base64.b64encode(digest).decode("ascii") + "'"
@@ -672,7 +691,7 @@ def _render_page(book: dict, locale: dict, chapter: dict, content: str, search_u
     page = GUIDE_TEMPLATE.substitute(values)
     if "{{" in page:
         raise ValueError(f"guide book: {url} still carries an unresolved placeholder")
-    return page
+    return _version_assets(page, root, _asset_versions())
 
 
 def _llms_txt(book: dict) -> str:
@@ -791,6 +810,7 @@ def _check_site_links(dist: Path) -> None:
             if href.startswith(FOREIGN_HREF):
                 continue
             path_part, _, fragment = href.partition("#")
+            path_part = path_part.partition("?")[0]
             if not path_part:
                 if fragment and fragment not in scan.ids:
                     errors.append(f"{page.relative_to(dist)}: #{fragment} does not exist")
@@ -929,6 +949,7 @@ def build() -> Path:
     if set(locales) != {"zh-CN", "en"} or set(locales["zh-CN"]) != set(locales["en"]):
         raise ValueError("Both locales must provide the same complete content")
     measured = snapshot_values(load_snapshot())
+    versions = _asset_versions()
     for name in ASSETS:
         source = ROOT / "assets" / name
         if source.is_symlink() or not source.is_file():
@@ -952,6 +973,7 @@ def build() -> Path:
                       guide_path="../guide/" if english else "guide/zh/")
         values.update({key: html.escape(value, quote=True) for key, value in measured.items()})
         document = template.substitute(values)
+        document = _version_assets(document, "../" if english else "", versions)
         target = dist / "en" / "index.html" if english else dist / "index.html"
         target.parent.mkdir(exist_ok=True)
         target.write_text(document)

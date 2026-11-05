@@ -19,7 +19,10 @@ python3 -m http.server 8765 --bind 127.0.0.1 --directory site/dist
 ```
 
 构建只复制白名单资产（`icon.svg`、`mark.svg`、`mark-dark.svg`、`boot.js`、`site.css`、
-`site.js`、`guide.css`、`guide.js`），并检查中英两份文案的键集合一致。产品页中文在 `/`，英文在
+`site.js`、`guide.css`、`guide.js`），并检查中英两份文案的键集合一致。页面引用这些文件时
+一律带内容哈希（`assets/guide.css?v=a9af2b0e`）：GitHub Pages 给 `/assets/*` 的
+`cache-control` 是四小时，不带哈希的话，改完样式后的几小时里回访的读者会拿旧 CSS 配新
+HTML，页面看起来像样式全丢了。产品页中文在 `/`，英文在
 `/en/`；指南英文在 `/guide/`，中文在 `/guide/zh/`；语言切换是普通链接，不依赖客户端翻译。
 `dist/` 是可丢弃产物，不进入源码提交。
 
