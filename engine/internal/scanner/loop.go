@@ -618,18 +618,33 @@ func (l *Loop) scanAndPublish(include Include) {
 	l.scanAndPublishContext(context.Background(), include)
 }
 
+// scanAndPublishContext runs one tick under the run gate, which is what keeps
+// two publishes from overlapping. The scan's own result is discarded: this path
+// exists to refresh the cache and publish, not to answer a caller.
 func (l *Loop) scanAndPublishContext(ctx context.Context, include Include) {
 	ctx, cancel := observationContext(ctx)
 	defer cancel()
-	if lockContext(ctx, l.runGate) != nil {
-		return
-	}
-	defer unlock(l.runGate)
-	if ctx.Err() != nil {
-		return
-	}
 
-	_, _, _, _ = l.scanLockedContext(ctx, include, Include{}, true)
+	release, admitted := l.admit(ctx)
+	if !admitted {
+		return
+	}
+	defer release()
+
+	l.scanLockedContext(ctx, include, Include{}, true)
+}
+
+// admit takes the run gate, reporting false when the caller gave up while
+// waiting for it. Nothing is held in that case, so the caller must not release.
+func (l *Loop) admit(ctx context.Context) (release func(), admitted bool) {
+	if lockContext(ctx, l.runGate) != nil {
+		return nil, false
+	}
+	if ctx.Err() != nil {
+		unlock(l.runGate)
+		return nil, false
+	}
+	return func() { unlock(l.runGate) }, true
 }
 
 // publish hands the transition to the daemon and then writes its port
