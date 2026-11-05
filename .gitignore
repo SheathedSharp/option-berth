@@ -46,3 +46,4 @@ __pycache__/
 
 # Agent scenario matrices (local evidence, never product assets)
 .agent-eval/
+.wrangler/

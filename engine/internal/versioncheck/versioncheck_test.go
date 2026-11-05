@@ -114,6 +114,40 @@ func TestAPIRejectsNonReleaseTag(t *testing.T) {
 	}
 }
 
+// The CDN index lists every tag in repository order, module tags included. It
+// must pick the newest plain release itself, not the first or last entry.
+func TestCDNPicksNewestRelease(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/cdn" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"versions": []string{"1.9.0", "engine/v9.9.9", "1.10.0", "nightly", "v1.10.1"},
+		})
+	}))
+	defer server.Close()
+
+	tag, err := newTestChecker(t, server.URL).fromCDN(context.Background())
+	if err != nil {
+		t.Fatalf("fromCDN: %v", err)
+	}
+	if tag != "v1.10.1" {
+		t.Fatalf("tag = %q, want v1.10.1", tag)
+	}
+}
+
+func TestCDNRejectsIndexWithoutRelease(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"versions": []string{"engine/v2.0.0", "nightly"}})
+	}))
+	defer server.Close()
+
+	if _, err := newTestChecker(t, server.URL).fromCDN(context.Background()); err == nil {
+		t.Fatal("fromCDN accepted an index without a release tag")
+	}
+}
+
 func TestLookupReusesFreshCache(t *testing.T) {
 	now := time.Date(2026, 10, 29, 8, 0, 0, 0, time.UTC)
 	checker := newTestChecker(t, "http://127.0.0.1:1")
@@ -267,6 +301,56 @@ func TestLookupRecordsFailureAsUnknown(t *testing.T) {
 	}
 }
 
+// A release announced once stays announced: refreshing the cache must not
+// bring the footer back on the next command, and a newer release must get its
+// own announcement.
+func TestMarkNotifiedSurvivesLaterChecks(t *testing.T) {
+	now := time.Date(2026, 10, 29, 8, 0, 0, 0, time.UTC)
+	checker := newTestChecker(t, "http://127.0.0.1:1")
+	checker.now = func() time.Time { return now }
+	calls := 0
+	checker.fetch = func(context.Context) (string, error) {
+		calls++
+		return "v1.2.0", nil
+	}
+
+	if _, err := checker.lookup(context.Background(), "v1.1.2", false, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	checker.markNotified("v1.1.2", "v1.2.0")
+
+	// Still fresh: the cached answer carries the marker.
+	cached, err := checker.lookup(context.Background(), "v1.1.2", false, time.Second)
+	if err != nil || cached.Notified != "v1.2.0" {
+		t.Fatalf("cached state = %+v, %v, want the announced release", cached, err)
+	}
+	// Past the TTL a new check runs, but the marker is carried forward.
+	now = now.Add(SuccessTTL + time.Second)
+	refreshed, err := checker.lookup(context.Background(), "v1.1.2", false, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("fetches = %d, want the expired cache to be rechecked", calls)
+	}
+	if refreshed.Notified != "v1.2.0" || refreshed.Latest != "v1.2.0" {
+		t.Fatalf("refreshed state = %+v, want the marker and the latest", refreshed)
+	}
+}
+
+func TestMarkNotifiedIgnoresAnotherBuild(t *testing.T) {
+	checker := newTestChecker(t, "http://127.0.0.1:1")
+	checker.fetch = func(context.Context) (string, error) { return "v1.2.0", nil }
+	if _, err := checker.lookup(context.Background(), "v1.1.2", false, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	checker.markNotified("v1.0.0", "v1.2.0")
+	cached, ok := checker.read()
+	if !ok || cached.Notified != "" {
+		t.Fatalf("state = %+v, %v, want no marker for another build", cached, ok)
+	}
+}
+
 func TestLookupWritesOwnerOnlyState(t *testing.T) {
 	if filepath.Separator != '/' {
 		t.Skip("mode bits are POSIX-only")
@@ -359,6 +443,7 @@ func newTestChecker(t *testing.T, baseURL string) *checker {
 		client:     newClient(),
 		releaseURL: baseURL + "/releases/latest",
 		apiURL:     baseURL + "/api/releases/latest",
+		cdnURL:     baseURL + "/cdn",
 		statePath:  filepath.Join(t.TempDir(), "update-check.json"),
 		now:        time.Now,
 		successTTL: SuccessTTL,

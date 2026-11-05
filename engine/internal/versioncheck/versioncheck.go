@@ -1,10 +1,10 @@
 // Package versioncheck compares this build with the latest published release.
 //
-// It is read-only: it reads the newest release tag from the project's GitHub
-// release feed and tells the CLI whether a newer install exists. It never
-// downloads, installs or replaces a binary. The welcome screen reuses a cached
-// answer so a bare `oberth` does not pay for a network round-trip every time;
-// `oberth version --check` asks directly.
+// It is read-only: it reads the newest release tag from the project's release
+// feed and tells the CLI whether a newer install exists. It never downloads,
+// installs or replaces a binary. The welcome screen and the terminal footer
+// reuse a cached answer so a command does not pay for a network round-trip
+// every time; `oberth version --check` asks directly.
 package versioncheck
 
 import (
@@ -148,6 +148,10 @@ type State struct {
 	Latest    string    `json:"latest,omitempty"`
 	CheckedAt time.Time `json:"checked_at"`
 	Error     string    `json:"error,omitempty"`
+	// Notified is the latest release a terminal notice already named for this
+	// build. The welcome screen and `version --check` ignore it; the automatic
+	// footer reads it so one release is announced once, not on every command.
+	Notified string `json:"notified,omitempty"`
 }
 
 // Relation says how the build that made this observation relates to the
@@ -183,8 +187,14 @@ func Lookup(ctx context.Context, current string, force bool, timeout time.Durati
 // Enabled reports whether the welcome screen may run an implicit check: a
 // terminal is attached and the user has not opted out. Explicit
 // `version --check` does not consult this.
-func Enabled() bool {
-	info, err := os.Stdout.Stat()
+func Enabled() bool { return EnabledFile(os.Stdout) }
+
+// EnabledFile reports whether an implicit check may run for output written to
+// file: that stream is a terminal and the user has not opted out. The welcome
+// screen asks about stdout, the update footer about stderr — the stream the
+// notice would be written to is the one that has to be a terminal.
+func EnabledFile(file *os.File) bool {
+	info, err := file.Stat()
 	terminal := err == nil && info.Mode()&os.ModeCharDevice != 0
 	return enabledFrom(os.Getenv, terminal)
 }
@@ -203,13 +213,14 @@ func enabledFrom(getenv func(string) string, terminal bool) bool {
 	}
 }
 
-// defaultChecker reads the public GitHub release feed and caches under
-// BERTH_HOME, the one directory this program owns.
+// defaultChecker reads the public release feed and caches under BERTH_HOME,
+// the one directory this program owns.
 func defaultChecker() *checker {
 	return &checker{
 		client:     newClient(),
 		releaseURL: "https://github.com/" + Repository + "/releases/latest",
 		apiURL:     "https://api.github.com/repos/" + Repository + "/releases/latest",
+		cdnURL:     "https://data.jsdelivr.com/v1/package/gh/" + Repository,
 		statePath:  filepath.Join(paths.Dir(), paths.UpdateCheckFile),
 		now:        time.Now,
 		successTTL: SuccessTTL,
@@ -221,6 +232,7 @@ type checker struct {
 	client     *http.Client
 	releaseURL string
 	apiURL     string
+	cdnURL     string
 	statePath  string
 	now        func() time.Time
 	successTTL time.Duration
@@ -244,10 +256,9 @@ func (c *checker) fresh(state State, now time.Time) bool {
 func (c *checker) lookup(ctx context.Context, current string, force bool, timeout time.Duration) (State, error) {
 	current = strings.TrimSpace(current)
 	now := c.now()
-	if !force {
-		if cached, ok := c.read(); ok && cached.Current == current && c.fresh(cached, now) {
-			return cached, nil
-		}
+	cached, cachedOK := c.read()
+	if !force && cachedOK && cached.Current == current && c.fresh(cached, now) {
+		return cached, nil
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -260,6 +271,11 @@ func (c *checker) lookup(ctx context.Context, current string, force bool, timeou
 	} else {
 		state.Latest = latest
 	}
+	// A check must not forget that this release was already announced: the
+	// notice is once per (build, release), not once per cache refresh.
+	if cachedOK && cached.Current == current {
+		state.Notified = cached.Notified
+	}
 	_ = c.write(state)
 	if err != nil {
 		return state, err
@@ -267,17 +283,38 @@ func (c *checker) lookup(ctx context.Context, current string, force bool, timeou
 	return state, nil
 }
 
+// MarkNotified records that a terminal footer has named latest for current.
+// The next lookup for the same build carries the marker forward, so the footer
+// stays quiet until a newer release appears. The cache is advisory: losing the
+// race to another process costs at most a repeated notice, never a wrong fact.
+func MarkNotified(current, latest string) {
+	if !IsRelease(current) || !IsRelease(latest) {
+		return
+	}
+	defaultChecker().markNotified(current, latest)
+}
+
+func (c *checker) markNotified(current, latest string) {
+	cached, ok := c.read()
+	if !ok || cached.Current != current {
+		return
+	}
+	cached.Notified = latest
+	cached.CheckedAt = c.now()
+	_ = c.write(cached)
+}
+
 func (c *checker) latest(ctx context.Context) (string, error) {
 	if c.fetch != nil {
 		return c.fetch(ctx)
 	}
-	return firstRelease(ctx, c.fromReleasePage, c.fromAPI)
+	return firstRelease(ctx, c.fromReleasePage, c.fromAPI, c.fromCDN)
 }
 
-// firstRelease runs every source and returns the first valid answer. The two
-// GitHub endpoints are both authoritative; racing them means a blocked path
-// does not cost the other one its turn. A source that loses the race is
-// cancelled, and the buffered channel lets it finish without a goroutine leak.
+// firstRelease runs every source and returns the first valid answer. All three
+// endpoints are authoritative; racing them means a blocked path does not cost
+// the others their turn. A source that loses the race is cancelled, and the
+// buffered channel lets it finish without a goroutine leak.
 func firstRelease(ctx context.Context, sources ...func(context.Context) (string, error)) (string, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -391,6 +428,52 @@ func (c *checker) fromAPI(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("release API returned tag %q", document.TagName)
 	}
 	return tag, nil
+}
+
+// fromCDN reads jsDelivr's package index, which lists the repository's tags
+// from a CDN that stays reachable where github.com is slow or blocked. The
+// index holds every tag — module tags such as engine/v2.0.0 included — so the
+// newest plain release is chosen here rather than trusting list order.
+func (c *checker) fromCDN(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.cdnURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", userAgent)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("CDN index returned %s", resp.Status)
+	}
+	var document struct {
+		Versions []string `json:"versions"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 256<<10)).Decode(&document); err != nil {
+		return "", fmt.Errorf("CDN index response: %w", err)
+	}
+	best := ""
+	for _, version := range document.Versions {
+		if !IsRelease(version) {
+			continue
+		}
+		if best == "" {
+			best = version
+			continue
+		}
+		if order, ok := Compare(version, best); ok && order > 0 {
+			best = version
+		}
+	}
+	if best == "" {
+		return "", fmt.Errorf("CDN index listed no release tag")
+	}
+	if !strings.HasPrefix(best, "v") {
+		best = "v" + best
+	}
+	return best, nil
 }
 
 func (c *checker) read() (State, bool) {

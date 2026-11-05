@@ -76,7 +76,7 @@ def verify(root: Path) -> None:
     run(root, "go", "test", "-count=1", "magefiles/build.go", "magefiles/workflow.go", "magefiles/workflow_test.go", capture=False)
     run(root, sys.executable, "-m", "unittest", "discover", "-s", "scripts", "-p", "*_test.py", capture=False)
     if (root.parent / "option-berth-macos" / "Sources" / "BerthGeometry.swift").is_file():
-        run(root, sys.executable, "brand/build-option-berth.py", "--check", capture=False)
+        run(root, sys.executable, "scripts/brand_export.py", "--check", capture=False)
     else:
         # The 24x24 geometry is the macOS client's. Without a sibling checkout
         # there is nothing to compare against; say so instead of passing quietly.

@@ -7,7 +7,7 @@
 <p align="center"><strong>每份代码，各自成泊。</strong><br>Git worktree 的运行事实层：服务起没起来，为什么没起来。</p>
 <p align="center"><a href="README.md">English</a> · 简体中文</p>
 
-<p align="center"><a href="https://sheathedsharp.github.io/option-berth/">产品官网</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">下载最新引擎</a></p>
+<p align="center"><a href="https://oberth.zayju.de/">产品官网</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">下载最新引擎</a></p>
 
 ## 三个产品
 
@@ -20,11 +20,9 @@ option-berth 拆成三个独立产品，各自有仓库、版本与发布节奏�
 | **给 coding agent 的指引** | [SheathedSharp/option-berth-skill](https://github.com/SheathedSharp/option-berth-skill) | 教会 agent 读同一份事实、把服务跑起来、留下并取回工作记录 |
 
 三者只通过 CLI 与 `--json` 契约相连：客户端和 skill 都不自带第二份运行状态。
-开发和依赖安装时，把三个仓库放在同一个目录下即可（见下面「一起用」）。
 
 本仓库的 Release 只包含引擎 CLI（macOS/Linux/Windows 的 amd64 与 arm64 压缩包及
-`SHA256SUMS`）。引擎版本从 `1.0.0` 起；拆分前的 `v0.2.0`–`v0.8.2` 属于合并产品，
-已不在本仓库发布。客户端与 skill 各自在自己的仓库发版。
+`SHA256SUMS`）。客户端与 skill 各自在自己的仓库发版。
 
 ## 为什么需要 option-berth
 
@@ -67,7 +65,7 @@ Windows（PowerShell）：
 irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps1 | iex
 ```
 
-固定版本用 `--version v1.0.0`（Windows 为 `-Version v1.0.0`），换安装目录用 `--dir` / `-Dir`，
+固定版本用 `--version v2.0.0`（Windows 为 `-Version v2.0.0`），换安装目录用 `--dir` / `-Dir`，
 不想修改 PATH 用 `--no-modify-path` / `-NoModifyPath`。脚本只下载并校验 Release 压缩包，
 不启动服务、不写 Git；也可以先审阅 [install.sh](install.sh) / [install.ps1](install.ps1)，
 或直接下载 [Releases](https://github.com/SheathedSharp/option-berth/releases) 压缩包。
@@ -76,8 +74,8 @@ GitHub 访问慢或被限制时：`go install` 加 `GOPROXY=https://goproxy.cn`�
 镜像，脚本入口也可以从 jsDelivr 获取。具体做法见
 [安装与卸载](docs/install.md#下载慢或被网络限制)。
 
-直接运行 `oberth` 会显示本机版本；有更新时首屏底部给出升级命令。也可以随时运行
-`oberth version --check` 主动检查，它只读发布信息，不下载、不安装。
+直接运行 `oberth` 会显示本机版本；有更新时终端命令会给出本平台的升级命令，首屏则显示完整升级块。
+也可以随时运行 `oberth version --check` 主动检查，它只读发布信息，不下载、不安装。
 
 ### Homebrew
 
@@ -97,7 +95,7 @@ go install github.com/sheathedsharp/option-berth/engine/cmd/oberth@latest
 go install github.com/sheathedsharp/option-berth/engine/cmd/jev-attention@latest
 ```
 
-需要 v1.1.2 或更新版本。二进制进 `$(go env GOPATH)/bin` 或 `GOBIN`，该目录需要在 PATH 中。
+二进制进 `$(go env GOPATH)/bin` 或 `GOBIN`，该目录需要在 PATH 中。
 卸载时删除 `$(go env GOPATH)/bin/oberth` 与 `jev-attention`。
 
 卸载：
@@ -106,8 +104,8 @@ go install github.com/sheathedsharp/option-berth/engine/cmd/jev-attention@latest
 curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uninstall.sh | sh
 ```
 
-默认保留 `~/.option-berth` 运行状态，加 `--purge-state` 才会删除。Linux 还提供 `.deb` / `.rpm`
-（v1.1.2 起随 Release 发布）。完整安装、升级、卸载与各渠道说明见 [安装与卸载](docs/install.md)。
+默认保留 `~/.option-berth` 运行状态，加 `--purge-state` 才会删除。Linux 还提供 `.deb` / `.rpm`。
+完整安装、升级、卸载与各渠道说明见 [安装与卸载](docs/install.md)。
 
 完整服务场景面向 **macOS / Linux**。Windows 已有原生构建、冒烟及部分事实与持久化测试，
 不能视为完整生命周期支持。
@@ -150,12 +148,6 @@ oberth down --json
 接入自己的项目时，先运行 `oberth init`，再审阅并编辑生成的 `oberth.yaml`。
 也可以让已有 agent 起草，但 **draft 不等于授权**：只有你确认并执行 `init adopt` 后才落盘。
 完整字段、自动端口、依赖和健康检查见 [CLI 使用说明](docs/cli.md)。
-
-> **macOS 27 上的已知限制（v1.4.0 及更早）**：由 Go 等非 Apple 签名父进程启动时，`netstat`
-> 会以 0 退出却拿不到 TCP 表，因此 `up --wait`、`status` 与 `init` 可能报告
-> `observation_blind`——它表示「看不见」，不表示「没有服务在听」。出现时请到普通终端运行
-> `oberth doctor --only listener_observation` 确认。已在 `main` 修复（回退到 `lsof` 采集），
-> 该修复随下一个补丁版本发布，发布后本条移除。
 
 ## 每天使用的几条命令
 
@@ -208,19 +200,6 @@ oberth down --worktree /path/to/worktree   # 清理；checkout 已删除也能�
 端口参数（例如 Vite 要写 `--port ${port} --strictPort`），以及一段可以粘进 `AGENTS.md` 的说明，
 见 [接入编排工具与开发服务器](docs/integrations.md)。
 
-## 一起用
-
-三个仓库互不复制代码，按同一份 CLI 契约协作。开发或试用时放在同级目录：
-
-```sh
-git clone https://github.com/SheathedSharp/option-berth.git
-git clone https://github.com/SheathedSharp/option-berth-macos.git
-git clone https://github.com/SheathedSharp/option-berth-skill.git
-```
-
-客户端用 `BERTH_BIN` 指向任意一份 `oberth`；开发中的 skill 用软链指向同级 clone，
-正式安装用 `npx skills add`。
-
 ## 版本与贡献
 
 版本为 **X1.X2.X3**：X1 表示协议更新，X2 表示功能更新，X3 表示缺陷修复；
@@ -236,8 +215,7 @@ python3 -m unittest discover -s scripts -p '*_test.py'
 ```
 
 项目核心围绕 worktree、manifest、service、run 和运行事实自主设计。
-[产品边界](docs/product.md) 与 [架构说明](docs/agent/architecture.md) 记录当前契约，
-历史来源在 [UPSTREAM](engine/UPSTREAM.md) 中如实保留。
+[产品边界](docs/product.md) 与 [架构说明](docs/agent/architecture.md) 记录当前契约。
 
 ## 许可证
 

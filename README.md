@@ -7,7 +7,7 @@
 <p align="center"><strong>Every checkout, its own berth.</strong><br>The runtime facts layer for Git worktrees: whether your services are up, and why not.</p>
 <p align="center">English · <a href="README.zh.md">简体中文</a></p>
 
-<p align="center"><a href="https://sheathedsharp.github.io/option-berth/">Website</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">Download the latest engine</a></p>
+<p align="center"><a href="https://oberth.zayju.de/">Website</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">Download the latest engine</a></p>
 
 ## Three products
 
@@ -20,13 +20,10 @@ option-berth is three independent products, each with its own repository, versio
 | **Coding-agent skill** | [SheathedSharp/option-berth-skill](https://github.com/SheathedSharp/option-berth-skill) | Teaches an agent to read the same facts, run the services, and leave work behind for the next session |
 
 They meet only at the CLI and its `--json` contract: neither the client nor the skill keeps a second
-copy of the runtime state. Put the three clones side by side when you develop or try them together
-(see "Using the three together" below).
+copy of the runtime state.
 
 This repository's releases contain only the engine CLI (amd64 and arm64 archives for macOS, Linux and
-Windows, plus `SHA256SUMS`). The engine version line starts at `1.0.0`; the pre-split
-`v0.2.0`–`v0.8.2` releases belonged to the combined product and are no longer published here. The
-client and skill release from their own repositories.
+Windows, plus `SHA256SUMS`). The client and skill release from their own repositories.
 
 ## Why option-berth
 
@@ -71,7 +68,7 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps1 | iex
 ```
 
-Pin a version with `--version v1.0.0` (`-Version v1.0.0` on Windows), change the directory with
+Pin a version with `--version v2.0.0` (`-Version v2.0.0` on Windows), change the directory with
 `--dir` / `-Dir`, and skip the PATH edit with `--no-modify-path` / `-NoModifyPath`. The scripts only
 download and verify release archives: they start no service and write no Git data. Read
 [install.sh](install.sh) / [install.ps1](install.ps1) first if you prefer, or download the
@@ -81,9 +78,9 @@ When GitHub is slow or blocked, prefix `go install` with `GOPROXY=https://goprox
 fall back to mirrors automatically, and the script is also served through jsDelivr. See
 [Install and uninstall](docs/install.md) for the exact recipes.
 
-Running `oberth` shows the installed version, and the first screen prints the upgrade command when a
-newer release exists. Ask on demand with `oberth version --check`; it only reads release metadata and
-never downloads or installs anything.
+Running `oberth` shows the installed version; a terminal command ends with the upgrade command for this
+platform when a newer release exists, and the first screen shows the full block. Ask on demand with
+`oberth version --check`; it only reads release metadata and never downloads or installs anything.
 
 ### Homebrew
 
@@ -103,8 +100,8 @@ go install github.com/sheathedsharp/option-berth/engine/cmd/oberth@latest
 go install github.com/sheathedsharp/option-berth/engine/cmd/jev-attention@latest
 ```
 
-This requires v1.1.2 or newer. The binaries land in `$(go env GOPATH)/bin` or `GOBIN`, which must be on
-PATH. Uninstall by deleting `oberth` and `jev-attention` from that directory.
+The binaries land in `$(go env GOPATH)/bin` or `GOBIN`, which must be on PATH. Uninstall by deleting
+`oberth` and `jev-attention` from that directory.
 
 Uninstall:
 
@@ -113,7 +110,7 @@ curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uni
 ```
 
 The uninstaller keeps `~/.option-berth` runtime state unless you pass `--purge-state`. Linux also
-ships `.deb` / `.rpm` packages from v1.1.2 onwards. See
+ships `.deb` / `.rpm` packages. See
 [Install and uninstall](docs/install.md) for the full matrix, upgrades and manual archives.
 
 The complete service scenario targets **macOS / Linux**. Windows has a native build, smoke checks and
@@ -158,13 +155,6 @@ oberth down --json
 For your own project, run `oberth init`, then review and edit the generated `oberth.yaml`. An agent can
 draft one, but **a draft is not authorization**: nothing is written until you run `init adopt`.
 Fields, automatic ports, dependencies and health checks are in [the CLI guide](docs/cli.md).
-
-> **Known limitation on macOS 27 (v1.4.0 and earlier)**: when started from a parent process Apple
-> has not signed — Go, for instance — `netstat` exits 0 without printing the TCP table, so
-> `up --wait`, `status` and `init` can report `observation_blind`. That means "cannot look", not
-> "nothing is listening". Run `oberth doctor --only listener_observation` in a plain terminal to
-> confirm. Fixed on `main` (the collector falls back to `lsof`); the fix ships in the next patch
-> release, after which this note is removed.
 
 ## Everyday commands
 
@@ -220,19 +210,6 @@ configuration. Per-tool wiring, version requirements, the port flags for common 
 needs `--port ${port} --strictPort`), and a snippet to paste into `AGENTS.md` are in the
 [integration recipes](docs/integrations.md).
 
-## Using the three together
-
-The three repositories share no code; they meet at the CLI contract. Put them side by side:
-
-```sh
-git clone https://github.com/SheathedSharp/option-berth.git
-git clone https://github.com/SheathedSharp/option-berth-macos.git
-git clone https://github.com/SheathedSharp/option-berth-skill.git
-```
-
-The client points at any `oberth` through `BERTH_BIN`; develop the skill by symlinking the sibling
-clone, and install the published one with `npx skills add`.
-
 ## Versioning and contributing
 
 Versions are **X1.X2.X3**: X1 for a protocol change, X2 for a feature, X3 for a fix; raising a higher
@@ -250,8 +227,8 @@ python3 -m unittest discover -s scripts -p '*_test.py'
 ```
 
 The core is designed from this product's own needs around worktree, manifest, service, run and runtime
-facts. [Product boundaries](docs/product.md) and [architecture](docs/agent/architecture.md) hold the current
-contract; the historical origin is recorded in [UPSTREAM](engine/UPSTREAM.md).
+facts. [Product boundaries](docs/product.md) and [architecture](docs/agent/architecture.md) hold the
+current contract.
 
 ## License
 

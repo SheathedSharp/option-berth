@@ -2,7 +2,7 @@
 
 静态中英产品介绍，只讲 `oberth` 引擎：为什么不再靠猜、清单与运行事实、常用命令、
 安装包与边界。页面不连接 daemon，不使用遥测、外部字体、图片服务或运行时框架。
-图标、浅色字标与深色字标来自 `brand/` 的原始资产；正文、语言切换和下载入口在禁用
+图标、浅色字标与深色字标的站点副本在 `site/assets/`；正文、语言切换和下载入口在禁用
 JavaScript 时仍可用，舞台切换与复制按钮在无脚本时隐藏而不是留下死控件。
 
 产品界面与给 coding agent 的 skill 是独立产品，分别在
@@ -48,14 +48,32 @@ CI=1 npm test                  # CI 两种浏览器引擎
 [docs/cli.md](../docs/cli.md)、[docs/architecture.md](../docs/agent/architecture.md) 和
 [docs/validation.md](../docs/agent/validation.md) 为准。
 
-首页的实测区（`proof`）不是示意数字，来自 2026-11-04 的 large 矩阵：8 个十服务栈场景 × 2 种
-方式 × 5 次重复 = 80 次运行，同一 agent（Codex CLI 0.166）、同一模型（`gpt-6-luna`）、同一
-二进制；0 个 agent error、0 个 harness error，覆盖率 8/8。结果：完成任务 40/40 对 29/40，
-轮次中位 5 对 9（P95 10 对 17），用时中位 45s 对 69s；8/8 场景轮次更少，两个臂 OOB 都是 0。
-单一 agent、单一模型、内部夹具，每格 n=5，P95 只作方向性证据；测量方法与门槛见
+首页的实测区（`proof`）不是示意数字，也不是手写常量。它读 `site/data/eval.json`，这份快照由
+`scripts/export_site_eval.py` 从一次 merged report 生成并提交，`site/build.py` 在构建时校验：
+缺文件、schema 不对、缺字段、没有 run URL 都会让构建失败。刷新一次快照：
+
+```sh
+# 1. 手动跑一次 agent eval（workflow_dispatch）
+# 2. 下载该 run 的 agent-eval-merged-* artifact，取出 report.json
+python3 scripts/export_site_eval.py report.json \
+  --out site/data/eval.json \
+  --run-url https://github.com/SheathedSharp/option-berth/actions/runs/<id> \
+  --suite large
+python3 site/build.py && (cd site && npm test)
+```
+
+快照 schema 是 `oberth.site-eval/v1`，只包含页面需要的事实：测量时间、run URL、agent/模型、
+repeat、场景数、两个臂的完成数/轮次 P50/P95/时长中位/OOB，以及「轮次更少的场景数」。CI 的
+report 结构变化时只改 exporter 与它的测试，页面的数据契约不变；页面本身不按 provider 组织
+文案，README 与快照记下确切条件，是为了让这组数字可复核，而不是把它外推成对所有模型都成立。
+
+当前快照来自 2026-11-04 的 large 矩阵：8 个十服务栈场景 × 2 种方式 × 5 次重复 = 80 次运行，
+同一 agent（Codex CLI 0.166）、同一模型（`gpt-6-luna`）、同一二进制；0 个 agent error、
+0 个 harness error，覆盖率 8/8。结果：完成任务 40/40 对 29/40，轮次中位 5 对 9（P95 10 对
+17），用时中位 45s 对 69s；8/8 场景轮次更少，两个臂 OOB 都是 0。单一 agent、单一模型、内部
+夹具，每格 n=5，P95 只作方向性证据；测量方法与门槛见
 [docs/agent/agent-eval.md](../docs/agent/agent-eval.md)，原始报告保存在对应 CI run 的
-`agent-eval-merged-*` artifact 里。页面不按 provider 组织文案；README 记下确切的测量条件，
-是为了让这组数字可复核，而不是把它外推成对所有模型都成立。
+`agent-eval-merged-*` artifact 里。
 
 ## Deploy
 
@@ -64,29 +82,22 @@ GitHub Pages。仓库 Pages 的发布源为 GitHub Actions。失败不会部署�
 下载入口指向官方 `releases/latest`，只承诺引擎 CLI 压缩包；不猜测版本，也不跳过
 SHA256SUMS 校验说明。
 
-### Cloudflare Pages（公开站点 `oberth.zayju.de`）
+### 自定义域（`oberth.zayju.de`）
 
-公开站点由 Cloudflare Pages 从本仓库直接构建，GitHub Pages 保留为预览与回退。构建只依赖
-Python 标准库，不需要 npm 或私有令牌。
+公开站点由 GitHub Pages 提供，**不使用 Cloudflare Pages**。仓库 Settings → Pages 的 Custom
+domain 设为 `oberth.zayju.de`，DNS 里 `oberth` 的 CNAME 指向 `sheathedsharp.github.io`。
+GitHub 的自定义域证书签发前，这条记录暂时开启 Cloudflare 代理以提供有效 TLS（Cloudflare
+只做 DNS/代理，不构建、不使用 Pages）；证书就绪后可关掉代理改为 DNS only，让 GitHub 直接
+终止 TLS。`Product website` 工作流合并到 `main` 后把 `site/dist` 发布到 GitHub Pages，
+这一步同时更新公开站点。
 
-1. Cloudflare 控制台 → **Workers & Pages** → **Create** → **Pages** → **Connect to Git**，
-   选择 `SheathedSharp/option-berth`，生产分支 `main`。
-2. 构建配置：
-   - Build command：`SITE_URL=https://oberth.zayju.de/ python3 site/build.py`
-   - Build output directory：`site/dist`
-   - Root directory：留空（构建命令从仓库根运行）
-   - 环境变量：`SITE_URL=https://oberth.zayju.de/`（也可以直接写在构建命令里）
-3. **Custom domains** → **Set up a domain** → `oberth.zayju.de`。`zayju.de` 的 DNS 已在
-   Cloudflare 时，控制台会自动创建指向 `<project>.pages.dev` 的 CNAME；不在同一账户时，
-   手动添加 CNAME `oberth` → `<project>.pages.dev`，等待证书签发。
-4. 打开 `https://oberth.zayju.de/`，确认 `/en/`、`sitemap.xml`、`robots.txt` 与
-   canonical/`og:url` 都指向新域名。
+`SITE_URL` 默认是公开域名 `https://oberth.zayju.de/`，构建出的 canonical、`og:url`、
+`hreflang`、`robots.txt` 与 `sitemap.xml` 都指向它。要在本地或预览站使用 GitHub Pages 的
+原始地址，构建时显式传：
 
-`SITE_URL` 只影响 canonical、`og:url`、`hreflang`、`robots.txt` 和 `sitemap.xml`；页面
-本身不含绝对地址，因此两种部署共用同一份 `site/dist` 结构。Cloudflare 构建设置新域名后，
-GitHub Pages 的构建仍按默认地址生成，作为预览；公开域名稳定后可把 `site/build.py` 的默认值
-改成新域名，或继续在 Pages 项目里保留 `SITE_URL`。
+```sh
+SITE_URL=https://sheathedsharp.github.io/option-berth/ python3 site/build.py
+```
 
-Cloudflare Pages 的构建镜像需要 `python3`；`site/build.py` 只用标准库，若构建环境没有
-Python，可改用仓库的 `Product website` 工作流构建后，用 `wrangler pages deploy site/dist`
-做 Direct Upload（需要 `CLOUDFLARE_API_TOKEN` 与 `CLOUDFLARE_ACCOUNT_ID`）。
+GitHub Pages 的软限制是每月 100 GB 流量与每小时 10 次构建；这个静态站只包含 11 个文件，
+不需要额外付费。

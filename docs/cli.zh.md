@@ -10,7 +10,7 @@
 和到完整帮助的指引；它是指路牌不是手册，分组命令清单只在 `oberth --help`。版本行在发布版本检查
 成功时带 `(latest)` 或 `(latest version vX.Y.Z)`；检查未知时只打印本机版本，不把“没查到”写成
 “最新”。发现更新时，首屏底部给出对应平台的安装命令和 `oberth daemon stop`。标记由
-`brand/build-option-berth.py` 从客户端几何源生成到 `engine/internal/cmd/mark_gen.go`，
+`scripts/brand_export.py` 从客户端几何源生成到 `engine/internal/cmd/mark_gen.go`，
 不手写；字标是轮廓字，终端里用粗体文字表示。
 
 标记按品牌自己的分工上两色：两条轨用墨色（深色终端用纸色），胶囊用陶土色。涂成一色时
@@ -609,11 +609,13 @@ stderr 也说明一次。这与 `status` 的规则一致：看不见不是没在
 - `oberth -v` / `oberth --version`：简洁地打印当前 CLI 版本；`oberth config init|path|edit`、`oberth serve`、`oberth version`、`oberth completion`：配置与运行环境入口。
 - `oberth version --json` 输出当前构建的 `version`、`commit`、`built` 和 `platform`，供安装检查脚本确认实际运行的构建。
 - `oberth version --check` 读取最新发布标签，报告本机是否落后；`--check --json` 在原来的字段上增加
-  `latest`。它只读发布信息，不下载、不安装，也不替换正在运行的二进制。首屏的版本状态复用同一份
-  检查结果，成功时缓存 5 分钟、失败时缓存 30 分钟；只有终端会话会自动检查，单次最多等待 1 秒，
-  `BERTH_NO_UPDATE_CHECK=1` 可关闭。GitHub 不可达时 `--check` 以非零退出并说明原因，
-  首屏只显示本机版本。检查结果缓存在 `BERTH_HOME/update-check.json`
-  （默认 `~/.option-berth/update-check.json`），只为首屏复用，不是运行事实。
+  `latest`。它只读发布信息，不下载、不安装，也不替换正在运行的二进制。终端命令复用同一份检查结果：
+  首屏显示本机版本并给出完整升级块，其他输出给人看的命令在本机落后时以两行升级提示收尾。
+  同一构建对同一发布只提示一次。成功时缓存 5 分钟、失败时缓存 30 分钟，单次最多等待 1 秒，
+  `BERTH_NO_UPDATE_CHECK=1` 可关闭自动提示。JSON 输出、`--help` 与显式 `--check` 都不加这段提示。
+  检查同时读取 GitHub 的发布元数据和 CDN 上的标签列表，GitHub 慢或被限制时不会因此看不到新版本。
+  所有来源都不可达时 `--check` 以非零退出并说明原因，终端路径保持安静。检查结果缓存在
+  `BERTH_HOME/update-check.json`（默认 `~/.option-berth/update-check.json`），只为这些提示复用，不是运行事实。
 
 `oberth version --json` 的 stdout 是一个 JSON 值：
 

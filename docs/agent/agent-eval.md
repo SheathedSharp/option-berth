@@ -21,6 +21,31 @@ Judgement uses facts published by the engine, loopback HTTP, ports, effect files
 preserved processes. Judgement for large-project scenarios does not require the agent to produce a
 `status` document itself, so the control arm can use the same judgement.
 
+## What this pipeline proves — and what it does not
+
+This is a **benchmark, not a merge gate**. It answers one question: on a fixed scenario library, does
+an agent working with oberth complete more tasks, in fewer turns, than the same agent alone? The
+release gates are `engine.yml`, the nightly and the release workflow; a red eval says the model or the
+gateway changed, not that the product regressed.
+
+- **One experiment answers one question.** Run it when a decision needs evidence — a public claim, a
+  positioning change, a provider change — not on every PR. Add one dimension at a time (a provider,
+  `oberth-noskill`, or more repeats) and state the decision before spending the tokens.
+- **Do not infer from a single matrix.** One agent, one model and one suite do not generalize to every
+  provider; per-cell `repeat 5` makes p95 directional (`P95_MIN_RUNS` is 20); the `native` arm is a
+  no-product control, not a competing tool. There is no cross-build baseline, so the report is not a
+  regression gate.
+- **The public page reads a promoted snapshot.** `site/data/eval.json` is produced by
+  `scripts/export_site_eval.py` from a merged report and committed; the website never reads CI
+  internals. Regenerate it when a run is meant to be public evidence, not after every experiment.
+- **Sustaining it.** GitHub-hosted runners and one shared gateway are for occasional experiments. If
+  the benchmark becomes a trend, pin the agent and model versions and run the matrix on a persistent
+  machine (the Azure VPS) with a scheduled script; Actions stays the dispatch and collection layer.
+- **Cost is part of the design.** The workflow's `plan` job refuses an experiment over
+  `budget_minutes` before a model is called, `capacity` probes the planned concurrency, and each
+  shard has a timeout, a circuit breaker and a resumable journal. Do not remove these to make a run
+  "simpler".
+
 ## Scenario library
 
 ### Core scenarios
