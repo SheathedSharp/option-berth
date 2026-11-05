@@ -1,152 +1,209 @@
 package sessions
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-// env builds a Getenv over a fixed table.
-func env(pairs map[string]string) func(string) string {
-	return func(k string) string { return pairs[k] }
+// lookup builds a Getenv over a literal table.
+func lookup(table map[string]string) func(string) string {
+	return func(key string) string { return table[key] }
 }
 
-// procs is a fixed ancestry: 100 is the agent, 200 the shell it spawned, 300
-// the option-berth process doing the detecting.
-func procs() []Process {
+// agentChain is a three-process ancestry used by the detection tests:
+//
+//	300  the oberth command doing the detecting
+//	200  the shell around it
+//	100  the Claude Code process at the top
+func agentChain() []Process {
 	return []Process{
-		{PID: 300, PPID: 200, Command: "option-berth"},
+		{PID: 300, PPID: 200, Command: "oberth"},
 		{PID: 200, PPID: 100, Command: "/bin/zsh"},
 		{PID: 100, PPID: 1, Command: "/opt/homebrew/bin/claude"},
 	}
 }
 
-func TestDetectEnvMatrix(t *testing.T) {
+func detectWith(t *testing.T, table map[string]string) (id, tool, label string, detected, found bool) {
+	t.Helper()
+	session, ok := Detect(Options{Getenv: lookup(table), PID: 300, Processes: agentChain})
+	return session.ID, session.Tool, session.Label, session.Detected, ok
+}
+
+func TestNothingIdentifiesANSessionWithoutEvidence(t *testing.T) {
+	if _, _, _, _, found := detectWith(t, nil); found {
+		t.Fatal("an empty environment produced a session")
+	}
+	if _, _, _, _, found := detectWith(t, map[string]string{EnvClaudeCode: "0"}); found {
+		t.Fatal(`CLAUDECODE=0 was treated as a present agent`)
+	}
+	for _, off := range []string{"false", "no", "off", " FALSE "} {
+		if _, _, _, _, found := detectWith(t, map[string]string{EnvCursorAgent: off}); found {
+			t.Errorf("%q was treated as a present agent", off)
+		}
+	}
+}
+
+func TestDeclaredSessionIsTakenVerbatim(t *testing.T) {
 	cases := []struct {
 		name     string
-		env      map[string]string
-		wantOK   bool
+		declared string
 		id       string
 		tool     string
-		label    string
-		detected bool
 	}{
-		{
-			name:   "nothing",
-			env:    map[string]string{},
-			wantOK: false,
-		},
-		{
-			name:   "BERTH_SESSION is the contract and wins",
-			env:    map[string]string{EnvSession: "claude-code:abc123", EnvClaudeCode: "1"},
-			wantOK: true, id: "abc123", tool: "claude-code", detected: false,
-		},
-		{
-			name:   "BERTH_SESSION with a label",
-			env:    map[string]string{EnvSession: "codex:t-9", EnvSessionLabel: "refactor the killer"},
-			wantOK: true, id: "t-9", tool: "codex", label: "refactor the killer", detected: false,
-		},
-		{
-			name:   "BERTH_SESSION without a tool prefix",
-			env:    map[string]string{EnvSession: "just-an-id"},
-			wantOK: true, id: "just-an-id", tool: ToolAgent, detected: false,
-		},
-		{
-			name:   "generic BERTH_SESSION_ID",
-			env:    map[string]string{EnvSessionID: "id-7", EnvSessionLabel: "nightly"},
-			wantOK: true, id: "id-7", tool: ToolAgent, label: "nightly", detected: false,
-		},
-		{
-			name:   "generic id with an explicit tool",
-			env:    map[string]string{EnvSessionID: "id-7", EnvSessionTool: "aider"},
-			wantOK: true, id: "id-7", tool: "aider", detected: false,
-		},
-		{
-			name:   "Claude Code by CLAUDECODE, id from the ancestor pid",
-			env:    map[string]string{EnvClaudeCode: "1"},
-			wantOK: true, id: "pid-100", tool: ToolClaudeCode, detected: true,
-		},
-		{
-			name:   "Claude Code with its own session id",
-			env:    map[string]string{EnvClaudeCode: "1", EnvClaudeCodeSessionID: "cc-42"},
-			wantOK: true, id: "cc-42", tool: ToolClaudeCode, detected: true,
-		},
-		{
-			name:   "Claude Code from the session id alone",
-			env:    map[string]string{EnvClaudeSessionID: "cc-legacy"},
-			wantOK: true, id: "cc-legacy", tool: ToolClaudeCode, detected: true,
-		},
-		{
-			name:   "CLAUDECODE=0 is not an agent",
-			env:    map[string]string{EnvClaudeCode: "0"},
-			wantOK: false,
-		},
-		{
-			name:   "Codex by thread id",
-			env:    map[string]string{EnvCodexThreadID: "thr-1"},
-			wantOK: true, id: "thr-1", tool: ToolCodex, detected: true,
-		},
-		{
-			name:   "Codex by sandbox marker falls back to the parent pid",
-			env:    map[string]string{EnvCodexSandbox: "seatbelt"},
-			wantOK: true, id: "pid-200", tool: ToolCodex, detected: true,
-		},
-		{
-			name:   "Cursor",
-			env:    map[string]string{EnvCursorAgent: "1", EnvCursorAgentSessionID: "cur-3"},
-			wantOK: true, id: "cur-3", tool: ToolCursor, detected: true,
-		},
-		{
-			name:   "Claude Code wins over Codex when both are set",
-			env:    map[string]string{EnvClaudeCodeSessionID: "cc-1", EnvCodexThreadID: "thr-1"},
-			wantOK: true, id: "cc-1", tool: ToolClaudeCode, detected: true,
-		},
+		{"tool and id", "claude-code:abc123", "abc123", "claude-code"},
+		{"another tool", "codex:t-9", "t-9", "codex"},
+		{"id only", "just-an-id", "just-an-id", ToolAgent},
+		{"empty id after separator", "claude-code:", "claude-code:", ToolAgent},
+		{"padding is trimmed", "  cursor : c-1  ", "c-1", "cursor"},
 	}
-
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := Detect(Options{
-				Getenv:    env(tc.env),
-				PID:       300,
-				Processes: procs,
-			})
-			if ok != tc.wantOK {
-				t.Fatalf("ok = %v, want %v (session %+v)", ok, tc.wantOK, got)
+			id, tool, _, detected, found := detectWith(t, map[string]string{EnvSession: tc.declared})
+			if !found || id != tc.id || tool != tc.tool {
+				t.Fatalf("got id=%q tool=%q found=%v, want id=%q tool=%q", id, tool, found, tc.id, tc.tool)
 			}
-			if !ok {
-				return
-			}
-			if got.ID != tc.id {
-				t.Errorf("id = %q, want %q", got.ID, tc.id)
-			}
-			if got.Tool != tc.tool {
-				t.Errorf("tool = %q, want %q", got.Tool, tc.tool)
-			}
-			if got.Label != tc.label {
-				t.Errorf("label = %q, want %q", got.Label, tc.label)
-			}
-			if got.Detected != tc.detected {
-				t.Errorf("detected = %v, want %v", got.Detected, tc.detected)
+			if detected {
+				t.Error("a declared session was marked detected")
 			}
 		})
 	}
 }
 
-// A detected id is the agent's pid, not this process's: two commands the same
-// agent starts must land in one session.
-func TestDetectedIDIsStableAcrossCommands(t *testing.T) {
-	opts := func(pid int) Options {
-		return Options{Getenv: env(map[string]string{EnvClaudeCode: "1"}), PID: pid, Processes: procs}
+func TestDeclarationBeatsEveryMarker(t *testing.T) {
+	id, tool, _, detected, found := detectWith(t, map[string]string{
+		EnvSession:       "codex:t-old",
+		EnvClaudeCode:    "1",
+		EnvCodexThreadID: "t-new",
+		EnvCursorAgent:   "1",
+	})
+	if !found || id != "t-old" || tool != ToolCodex || detected {
+		t.Fatalf("declaration lost: id=%q tool=%q detected=%v", id, tool, detected)
 	}
-	first, _ := Detect(opts(300))
-	second, _ := Detect(opts(200))
-	if first.ID != second.ID {
-		t.Errorf("two commands of one agent got %q and %q", first.ID, second.ID)
-	}
-	if first.ID != "pid-100" {
-		t.Errorf("id = %q, want the agent's pid", first.ID)
+	if _, _, label, _, _ := detectWith(t, map[string]string{
+		EnvSession: "codex:t-old", EnvSessionLabel: "night shift",
+	}); label != "night shift" {
+		t.Errorf("label = %q", label)
 	}
 }
 
-func TestDetectFromEnvReadsAKeyValueSlice(t *testing.T) {
-	got, ok := DetectFromEnv([]string{"PATH=/bin", "BERTH_SESSION=cursor:c-1"}, Options{})
-	if !ok || got.ID != "c-1" || got.Tool != ToolCursor {
-		t.Fatalf("DetectFromEnv = %+v, %v", got, ok)
+func TestSplitSessionIDAndTool(t *testing.T) {
+	_, tool, _, detected, found := detectWith(t, map[string]string{EnvSessionID: "id-7"})
+	if !found || tool != ToolAgent || detected {
+		t.Fatalf("bare id gave tool=%q detected=%v found=%v", tool, detected, found)
+	}
+	_, tool, _, _, found = detectWith(t, map[string]string{EnvSessionID: "id-7", EnvSessionTool: "aider"})
+	if !found || tool != "aider" {
+		t.Fatalf("explicit tool gave %q", tool)
+	}
+}
+
+func TestClaudeCodeRecognition(t *testing.T) {
+	cases := []struct {
+		name string
+		env  map[string]string
+		id   string
+	}{
+		{"marker only, id from the agent process", map[string]string{EnvClaudeCode: "1"}, "pid-100"},
+		{"session id variable", map[string]string{EnvClaudeCode: "1", EnvClaudeCodeSessionID: "cc-42"}, "cc-42"},
+		{"legacy session id alone", map[string]string{EnvClaudeSessionID: "cc-legacy"}, "cc-legacy"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			id, tool, _, detected, found := detectWith(t, tc.env)
+			if !found || tool != ToolClaudeCode || id != tc.id || !detected {
+				t.Fatalf("got id=%q tool=%q detected=%v found=%v", id, tool, detected, found)
+			}
+		})
+	}
+}
+
+func TestCodexAndCursorRecognition(t *testing.T) {
+	id, tool, _, detected, found := detectWith(t, map[string]string{EnvCodexThreadID: "thr-1"})
+	if !found || tool != ToolCodex || id != "thr-1" || !detected {
+		t.Fatalf("codex thread = %q/%q/%v/%v", id, tool, detected, found)
+	}
+
+	// The sandbox marker names no id, and no codex process is in the chain,
+	// so the immediate parent supplies the id.
+	id, tool, _, detected, found = detectWith(t, map[string]string{EnvCodexSandbox: "seatbelt"})
+	if !found || tool != ToolCodex || id != "pid-200" || !detected {
+		t.Fatalf("codex sandbox = %q/%q/%v/%v", id, tool, detected, found)
+	}
+
+	id, tool, _, detected, found = detectWith(t, map[string]string{
+		EnvCursorAgent: "1", EnvCursorAgentSessionID: "cur-3",
+	})
+	if !found || tool != ToolCursor || id != "cur-3" || !detected {
+		t.Fatalf("cursor = %q/%q/%v/%v", id, tool, detected, found)
+	}
+}
+
+func TestClaudeCodeOutranksCodex(t *testing.T) {
+	_, tool, _, _, found := detectWith(t, map[string]string{
+		EnvClaudeCodeSessionID: "cc-1",
+		EnvCodexThreadID:       "thr-1",
+	})
+	if !found || tool != ToolClaudeCode {
+		t.Fatalf("tool = %q, want claude-code", tool)
+	}
+}
+
+func TestAncestryIDSurvivesAcrossCommands(t *testing.T) {
+	first, _ := Detect(Options{
+		Getenv: lookup(map[string]string{EnvClaudeCode: "1"}), PID: 300, Processes: agentChain,
+	})
+	second, _ := Detect(Options{
+		Getenv: lookup(map[string]string{EnvClaudeCode: "1"}), PID: 200, Processes: agentChain,
+	})
+	if first.ID != "pid-100" || second.ID != first.ID {
+		t.Errorf("ids %q and %q, want both pid-100", first.ID, second.ID)
+	}
+}
+
+func TestAncestryFallsBackToTheParentWhenTheAgentIsGone(t *testing.T) {
+	table := []Process{
+		{PID: 300, PPID: 200, Command: "oberth"},
+		{PID: 200, PPID: 1, Command: "zsh"},
+	}
+	got, ok := Detect(Options{
+		Getenv: lookup(map[string]string{EnvClaudeCode: "1"}),
+		PID:    300,
+		Processes: func() []Process {
+			return table
+		},
+	})
+	if !ok || got.ID != "pid-200" {
+		t.Fatalf("id = %q, want the parent pid-200", got.ID)
+	}
+}
+
+func TestProcessNameMatching(t *testing.T) {
+	claude := detector{tool: ToolClaudeCode, binaries: []string{"claude"}}
+	for _, command := range []string{"claude", "/usr/local/bin/claude", `C:\tools\Claude.EXE`, "  CLAUDE  "} {
+		if !claude.isAgent(command) {
+			t.Errorf("%q was not recognised", command)
+		}
+	}
+	for _, command := range []string{"", "claude-code", "/bin/zsh", "myclaude", "claude --resume"} {
+		if claude.isAgent(command) {
+			t.Errorf("%q was wrongly recognised", command)
+		}
+	}
+}
+
+func TestDetectFromEnvSlice(t *testing.T) {
+	got, found := DetectFromEnv([]string{"PATH=/bin", "BERTH_SESSION=cursor:c-1", "IGNORED"}, Options{})
+	if !found || got.ID != "c-1" || got.Tool != ToolCursor || got.Detected {
+		t.Fatalf("DetectFromEnv = %+v, %v", got, found)
+	}
+	if _, found := DetectFromEnv([]string{"PATH=/bin"}, Options{Getenv: lookup(map[string]string{EnvClaudeCode: "1"})}); found {
+		t.Fatal("the slice table did not replace the previous Getenv")
+	}
+}
+
+func TestBuildSessionDefaultsToThisProcess(t *testing.T) {
+	got := buildSession(ToolAgent, "", "", false)
+	if !strings.HasPrefix(got.ID, "pid-") {
+		t.Errorf("id = %q, want a pid token", got.ID)
 	}
 }

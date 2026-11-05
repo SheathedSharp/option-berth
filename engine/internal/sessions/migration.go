@@ -6,15 +6,14 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
-// Migration 005 is the version contract §8 reserves for sessions. It is
-// registered from here, not from internal/store, because that is what a
-// reserved version means: the store holds the slot open and the owning package
-// fills it in from its own init(). internal/store asserts that its own
-// embedded set never takes a reserved number.
+// Sessions own migration version 005. The store reserves the number and this
+// package supplies the schema, so only a binary that links sessions ever
+// creates the table. The store separately asserts that its own embedded
+// migrations never claim a reserved version.
 //
 //go:embed migrations/005_sessions.sql
-var migration005 string
+var sessionsMigration string
 
 func init() {
-	store.RegisterMigration(store.VersionSessions, "sessions", migration005)
+	store.RegisterMigration(store.VersionSessions, "sessions", sessionsMigration)
 }

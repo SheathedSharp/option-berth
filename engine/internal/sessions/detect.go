@@ -1,14 +1,16 @@
-// Package sessions attributes what option-berth starts to the agent session that
-// asked for it: which coding agent, which checkout, which branch.
+// Package sessions answers one question before a command starts: which coding
+// agent, in which checkout, asked for this run? The answer is attached to the
+// run and inherited by every port the run opens, so runtime facts can be read
+// back per agent instead of per anonymous process.
 //
-// The identity contract is spec 2 §3. `BERTH_SESSION` is the explicit form and
-// always wins — option-berth never guesses when it is set. Everything else is
-// best-effort detection from the environment an agent leaves behind, marked
-// Detected so a client can say "probably Claude Code" rather than claiming it.
+// Declaration beats recognition. BERTH_SESSION states the session outright and
+// is never questioned. BERTH_SESSION_ID and BERTH_SESSION_TOOL carry the same
+// information in two pieces. Only when neither is present does the package
+// read the environment a known agent leaves behind, and a session found that
+// way is marked Detected: it is a probable attribution, not a claim.
 //
-// Detection happens once, in the process that spawns the command (`option-berth
-// start`, or the daemon serving `runs.spawn`); the session then travels with
-// the run and is stamped onto every port that run opens.
+// The check runs once, in the process about to spawn the command. Later
+// readers consume the recorded session rather than detecting it again.
 package sessions
 
 import (
@@ -19,270 +21,274 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// The environment variables that name a session (spec 2 §3, plus the two
-// BERTH_SESSION_ID / BERTH_SESSION_TOOL spellings recorded under Contract
-// notes for callers that have an id but no tool string to prefix it with).
+// Environment keys that declare a session. The first four are the contract;
+// the rest are the markers the supported agents export themselves.
 const (
 	EnvSession      = "BERTH_SESSION"       // "<tool>:<id>", the explicit contract
 	EnvSessionID    = "BERTH_SESSION_ID"    // an id on its own
 	EnvSessionTool  = "BERTH_SESSION_TOOL"  // the tool for EnvSessionID
 	EnvSessionLabel = "BERTH_SESSION_LABEL" // human label, any form
 
-	EnvClaudeCode           = "CLAUDECODE"
-	EnvClaudeCodeSessionID  = "CLAUDE_CODE_SESSION_ID"
-	EnvClaudeSessionID      = "CLAUDE_SESSION_ID"
-	EnvCodexSandbox         = "CODEX_SANDBOX"
-	EnvCodexThreadID        = "CODEX_THREAD_ID"
+	// Claude Code
+	EnvClaudeCode          = "CLAUDECODE"
+	EnvClaudeCodeSessionID = "CLAUDE_CODE_SESSION_ID"
+	EnvClaudeSessionID     = "CLAUDE_SESSION_ID"
+	// Codex
+	EnvCodexSandbox  = "CODEX_SANDBOX"
+	EnvCodexThreadID = "CODEX_THREAD_ID"
+	// Cursor
 	EnvCursorAgent          = "CURSOR_AGENT"
 	EnvCursorAgentSessionID = "CURSOR_AGENT_SESSION_ID"
 )
 
-// Tool names published in Session.tool. They are the stable strings clients
-// switch on to pick an icon, so they never change spelling.
+// Tool names published in Session.tool. Clients switch on these strings to
+// choose an icon, so they are part of the stable interface.
 const (
 	ToolClaudeCode = "claude-code"
 	ToolCodex      = "codex"
 	ToolCursor     = "cursor"
-	// ToolAgent is what BERTH_SESSION_ID alone means: an agent that named
-	// itself an id but not a tool.
+	// ToolAgent covers a caller that supplied an id but named no tool.
 	ToolAgent = "agent"
 )
 
-// Process is one row of the ancestry walk: enough to find the nearest ancestor
-// that is the agent itself, so a detected session keeps one id for the life of
-// that agent process rather than changing with every command it runs.
+// Process is one row of the process table the ancestry walk reads.
 type Process struct {
 	PID     int
 	PPID    int
 	Command string
 }
 
-// Options is what Detect reads. The zero value reads the real environment, the
-// real pid and the real process table; tests fill in the fields they need.
+// Options supplies Detect's inputs. The zero value is the production path:
+// the real environment, the current pid and the platform's process table.
 type Options struct {
-	// Getenv looks a variable up. Nil means os.Getenv.
+	// Getenv reads one variable. Nil means os.Getenv.
 	Getenv func(string) string
-	// PID is the process detection starts walking up from. Zero means os.Getpid.
+	// PID is where the ancestry walk starts. Zero means os.Getpid.
 	PID int
-	// Processes lists the process table for the ancestor walk. Nil means the
-	// platform's own. A nil return falls back to the parent of PID.
+	// Processes returns the process table. Nil means the platform's own; an
+	// empty table leaves only the parent pid as a fallback id.
 	Processes func() []Process
 }
 
-// maxAncestry bounds the ancestor walk against a cyclic process table.
-const maxAncestry = 64
+// ancestorLimit stops a malformed or cyclic process table from looping.
+const ancestorLimit = 64
 
-// Detect resolves the agent session that spawned this process.
-//
-// ok is false when nothing in the environment names an agent: a plain shell
-// starts a plain run, and inventing a session for it would attribute every dev
-// server on the machine to something. Detected on the returned session
-// distinguishes "the agent told us" (false) from "we recognised its
-// environment" (true).
-func Detect(opts Options) (state.Session, bool) {
-	get := opts.Getenv
+// environment is the variable lookup Detect reads through, so the same logic
+// serves os.Getenv and a KEY=VALUE slice.
+type environment struct {
+	get func(string) string
+}
+
+func newEnvironment(get func(string) string) environment {
 	if get == nil {
 		get = os.Getenv
 	}
-	label := strings.TrimSpace(get(EnvSessionLabel))
-
-	// 1. The explicit contract. `<tool>:<id>`; a value with no colon is an id
-	//    from a tool that did not say which it is.
-	if raw := strings.TrimSpace(get(EnvSession)); raw != "" {
-		tool, id, found := strings.Cut(raw, ":")
-		if !found || strings.TrimSpace(id) == "" {
-			tool, id = ToolAgent, raw
-		}
-		return session(strings.TrimSpace(tool), strings.TrimSpace(id), label, false), true
-	}
-
-	// 2. An id on its own, for a caller that has one but no tool prefix.
-	if id := strings.TrimSpace(get(EnvSessionID)); id != "" {
-		tool := strings.TrimSpace(get(EnvSessionTool))
-		if tool == "" {
-			tool = ToolAgent
-		}
-		return session(tool, id, label, false), true
-	}
-
-	// 3. Best-effort detection, in the order spec 2 §3 lists the markers.
-	for _, m := range markers {
-		id, hit := m.match(get)
-		if !hit {
-			continue
-		}
-		if id == "" {
-			id = ancestorID(opts, m.tool)
-		}
-		return session(m.tool, id, label, true), true
-	}
-	return state.Session{}, false
+	return environment{get: get}
 }
 
-// DetectFromEnv is Detect over a `KEY=VALUE` slice, which is the shape an
-// environment arrives in over the wire (`runs.spawn {env}`) and the shape
-// exec.Cmd carries.
-func DetectFromEnv(env []string, opts Options) (state.Session, bool) {
-	table := map[string]string{}
-	for _, kv := range env {
-		if k, v, ok := strings.Cut(kv, "="); ok {
-			table[k] = v
-		}
-	}
-	opts.Getenv = func(k string) string { return table[k] }
-	return Detect(opts)
+// text returns the trimmed value, so padding never reaches the wire.
+func (e environment) text(key string) string {
+	return strings.TrimSpace(e.get(key))
 }
 
-// marker is one row of the detection matrix: the variables that say a tool is
-// present, and the variable that carries its own session id when it has one.
-type marker struct {
-	tool     string
-	present  []string
-	idFrom   []string
-	commands []string
-}
-
-// markers is spec 2 §3's table. Claude Code first: CLAUDECODE=1 is the marker
-// the agent itself exports, and CLAUDE_CODE_SESSION_ID is what the SessionStart
-// hook and the skill set (Contract notes).
-var markers = []marker{
-	{
-		tool:     ToolClaudeCode,
-		present:  []string{EnvClaudeCode, EnvClaudeCodeSessionID, EnvClaudeSessionID},
-		idFrom:   []string{EnvClaudeCodeSessionID, EnvClaudeSessionID},
-		commands: []string{"claude"},
-	},
-	{
-		tool:     ToolCodex,
-		present:  []string{EnvCodexThreadID, EnvCodexSandbox},
-		idFrom:   []string{EnvCodexThreadID},
-		commands: []string{"codex"},
-	},
-	{
-		tool:     ToolCursor,
-		present:  []string{EnvCursorAgent, EnvCursorAgentSessionID},
-		idFrom:   []string{EnvCursorAgentSessionID},
-		commands: []string{"cursor-agent", "cursor"},
-	},
-}
-
-// match reports whether this tool's environment is present and, when it is,
-// the id the tool named itself ("" when it named none).
-func (m marker) match(get func(string) string) (string, bool) {
-	hit := false
-	for _, key := range m.present {
-		if isSet(get(key)) {
-			hit = true
-			break
-		}
-	}
-	if !hit {
-		return "", false
-	}
-	for _, key := range m.idFrom {
-		if v := strings.TrimSpace(get(key)); v != "" {
-			return v, true
-		}
-	}
-	return "", true
-}
-
-// isSet treats the shell's own idea of "off" as unset: CLAUDECODE=0 in a
-// hand-written script means the agent is not there.
-func isSet(v string) bool {
-	switch strings.ToLower(strings.TrimSpace(v)) {
+// set reports whether a variable is present and not one of the shell's ways of
+// saying "off": a hand-written script may export CLAUDECODE=0.
+func (e environment) set(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(e.get(key))) {
 	case "", "0", "false", "no", "off":
 		return false
 	}
 	return true
 }
 
-// ancestorID is the fallback id for a tool that names none: the pid of the
-// nearest ancestor whose command is the agent, which is stable for the life of
-// that agent process — exactly the lifetime cleanup cares about.
-func ancestorID(opts Options, tool string) string {
-	pid := opts.PID
-	if pid == 0 {
-		pid = os.Getpid()
-	}
-	list := opts.Processes
-	if list == nil {
-		list = processTable
-	}
-
-	if procs := list(); len(procs) > 0 {
-		byPID := make(map[int]Process, len(procs))
-		for _, p := range procs {
-			byPID[p.PID] = p
-		}
-		names := commandsFor(tool)
-		cur := pid
-		for i := 0; i < maxAncestry; i++ {
-			p, ok := byPID[cur]
-			if !ok {
-				break
-			}
-			if matchesCommand(p.Command, names) {
-				return pidID(p.PID)
-			}
-			if p.PPID <= 1 || p.PPID == cur {
-				break
-			}
-			cur = p.PPID
-		}
-		// The agent's environment is here but the agent is not in our
-		// ancestry — a hook exported the variable into a shell the agent then
-		// detached from. The immediate parent still outlives this command,
-		// which exits in seconds, so it is the better id of the two.
-		if self, ok := byPID[pid]; ok && self.PPID > 1 {
-			return pidID(self.PPID)
-		}
-	}
-	if ppid := os.Getppid(); ppid > 1 {
-		return pidID(ppid)
-	}
-	return pidID(pid)
+// detector is one agent family: the variables that reveal it, the variables
+// that carry its own id, and the process names its binary uses.
+type detector struct {
+	tool     string
+	signals  []string
+	idKeys   []string
+	binaries []string
 }
 
-func commandsFor(tool string) []string {
-	for _, m := range markers {
-		if m.tool == tool {
-			return m.commands
-		}
-	}
-	return []string{tool}
+// detectorTable is the recognition order. Claude Code comes first because its
+// marker is the one most likely to coexist with another tool's in a nested
+// terminal.
+var detectorTable = []detector{
+	{
+		tool:     ToolClaudeCode,
+		signals:  []string{EnvClaudeCode, EnvClaudeCodeSessionID, EnvClaudeSessionID},
+		idKeys:   []string{EnvClaudeCodeSessionID, EnvClaudeSessionID},
+		binaries: []string{"claude"},
+	},
+	{
+		tool:     ToolCodex,
+		signals:  []string{EnvCodexThreadID, EnvCodexSandbox},
+		idKeys:   []string{EnvCodexThreadID},
+		binaries: []string{"codex"},
+	},
+	{
+		tool:     ToolCursor,
+		signals:  []string{EnvCursorAgent, EnvCursorAgentSessionID},
+		idKeys:   []string{EnvCursorAgentSessionID},
+		binaries: []string{"cursor-agent", "cursor"},
+	},
 }
 
-// matchesCommand compares a process command against the agent's binary names,
-// tolerating a full path and a Windows .exe suffix.
-func matchesCommand(cmd string, names []string) bool {
-	base := strings.ToLower(strings.TrimSpace(cmd))
-	if base == "" {
+// observe reports whether the agent is present and, when it is, the id the
+// agent named for itself (empty when it named none).
+func (d detector) observe(env environment) (string, bool) {
+	present := false
+	for _, key := range d.signals {
+		if env.set(key) {
+			present = true
+			break
+		}
+	}
+	if !present {
+		return "", false
+	}
+	for _, key := range d.idKeys {
+		if id := env.text(key); id != "" {
+			return id, true
+		}
+	}
+	return "", true
+}
+
+// isAgent reports whether a process command names this agent's binary. A full
+// path and the Windows .exe suffix are tolerated; a substring is not.
+func (d detector) isAgent(command string) bool {
+	name := strings.ToLower(strings.TrimSpace(command))
+	if name == "" {
 		return false
 	}
-	if i := strings.LastIndexAny(base, `/\`); i >= 0 {
-		base = base[i+1:]
+	if slash := strings.LastIndexAny(name, `/\`); slash >= 0 {
+		name = name[slash+1:]
 	}
-	base = strings.TrimSuffix(base, ".exe")
-	for _, n := range names {
-		if base == n {
+	name = strings.TrimSuffix(name, ".exe")
+	for _, binary := range d.binaries {
+		if name == binary {
 			return true
 		}
 	}
 	return false
 }
 
-func pidID(pid int) string { return "pid-" + strconv.Itoa(pid) }
+// Detect resolves the session that launched this process.
+//
+// The boolean is false when nothing identifies an agent. Inventing a session
+// for a plain shell would attribute every dev server on the machine to a
+// session that never existed, so absence stays absence.
+func Detect(opts Options) (state.Session, bool) {
+	env := newEnvironment(opts.Getenv)
+	label := env.text(EnvSessionLabel)
 
-// session builds the wire object, leaving the git context to Capture.
-func session(tool, id, label string, detected bool) state.Session {
+	if declared := env.text(EnvSession); declared != "" {
+		return declaredSession(declared, label), true
+	}
+
+	if id := env.text(EnvSessionID); id != "" {
+		tool := env.text(EnvSessionTool)
+		if tool == "" {
+			tool = ToolAgent
+		}
+		return buildSession(tool, id, label, false), true
+	}
+
+	for _, d := range detectorTable {
+		id, present := d.observe(env)
+		if !present {
+			continue
+		}
+		if id == "" {
+			id = ancestryID(opts, d)
+		}
+		return buildSession(d.tool, id, label, true), true
+	}
+
+	return state.Session{}, false
+}
+
+// declaredSession parses BERTH_SESSION. A value without a usable tool prefix
+// is an id that happens to contain a colon, not a tool name.
+func declaredSession(value, label string) state.Session {
+	tool, id, separated := strings.Cut(value, ":")
+	if !separated || strings.TrimSpace(id) == "" {
+		return buildSession(ToolAgent, value, label, false)
+	}
+	return buildSession(strings.TrimSpace(tool), strings.TrimSpace(id), label, false)
+}
+
+// DetectFromEnv runs Detect over a KEY=VALUE slice: the shape an environment
+// has on the wire (`runs.spawn {env}`) and inside exec.Cmd.
+func DetectFromEnv(env []string, opts Options) (state.Session, bool) {
+	values := make(map[string]string, len(env))
+	for _, pair := range env {
+		key, value, separated := strings.Cut(pair, "=")
+		if separated {
+			values[key] = value
+		}
+	}
+	opts.Getenv = func(key string) string { return values[key] }
+	return Detect(opts)
+}
+
+// ancestryID supplies the id for an agent that names none: the pid of the
+// nearest ancestor running the agent binary. That pid lasts as long as the
+// agent, which is the lifetime cleanup actually cares about.
+func ancestryID(opts Options, d detector) string {
+	start := opts.PID
+	if start == 0 {
+		start = os.Getpid()
+	}
+	list := opts.Processes
+	if list == nil {
+		list = processTable
+	}
+
+	if table := list(); len(table) > 0 {
+		index := make(map[int]Process, len(table))
+		for _, row := range table {
+			index[row.PID] = row
+		}
+		current := start
+		for hop := 0; hop < ancestorLimit; hop++ {
+			row, known := index[current]
+			if !known {
+				break
+			}
+			if d.isAgent(row.Command) {
+				return pidToken(row.PID)
+			}
+			if row.PPID <= 1 || row.PPID == current {
+				break
+			}
+			current = row.PPID
+		}
+		// The marker is set but the agent is not in our ancestry: a hook
+		// exported it into a shell the agent has already detached from. The
+		// immediate parent outlives this short-lived command, so it is the
+		// better id of the two.
+		if self, known := index[start]; known && self.PPID > 1 {
+			return pidToken(self.PPID)
+		}
+	}
+
+	if parent := os.Getppid(); parent > 1 {
+		return pidToken(parent)
+	}
+	return pidToken(start)
+}
+
+// buildSession produces the wire object; the git context is Capture's job.
+func buildSession(tool, id, label string, detected bool) state.Session {
 	if id == "" {
-		id = pidID(os.Getpid())
+		id = pidToken(os.Getpid())
 	}
-	return state.Session{
-		ID:       id,
-		Tool:     tool,
-		Label:    label,
-		Detected: detected,
-	}
+	session := state.Session{ID: id, Tool: tool, Label: label, Detected: detected}
+	return session
+}
+
+func pidToken(pid int) string {
+	return "pid-" + strconv.Itoa(pid)
 }

@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
@@ -12,169 +13,173 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
-// The sessions namespace (spec 2 §3). A session is an agent — Claude Code,
-// Codex, Cursor — that asked option-berth to start something. The run registry is the
-// authority on which sessions are live; the store remembers the rest for the
-// seven days `port_history` may still name them.
-//
-// The collection itself is built here and handed to the scanner, so `sessions`
-// rides in every snapshot and delta like the other four collections
-// (contract §5) instead of being a read-only side table.
+// Session attribution reaches the daemon through three doors: the scanner's
+// snapshot collection, the `sessions.kill` RPC, and the periodic sweep that
+// keeps recorded sessions inside their retention window. All three read the
+// same two sources — the live run registry and the store — so a session can
+// never be active in one place and forgotten in another.
 func init() {
 	RegisterHandler("sessions.kill", handleSessionsKill)
 	RegisterCapability("sessions")
 
 	OnStart(func(rt *Runtime) {
 		rt.Scanner.SetSessions(func(ports []state.Port) []state.SessionRecord {
-			return sessionRecords(rt, ports)
+			return sessionFacts{rt: rt}.records(ports)
 		})
-		startSessionMaintenance(rt)
+		sessionSweep.begin(rt)
 	})
-	OnShutdown(func(bool) { stopSessionMaintenance() })
+	OnShutdown(func(bool) { sessionSweep.halt() })
 }
 
-// sessionRuns is the optional interface the installed run registry implements
-// to report which agent session started each live run. It is an assertion
-// rather than a method on RunRegistry because internal/daemon/runsreg imports
-// this package, never the other way round (contract §8).
-type sessionRuns interface {
+// sessionRegistry is the optional half of the run registry that knows which
+// agent started each live run. It is an interface here because the registry
+// implementation imports this package, never the reverse.
+type sessionRegistry interface {
 	SessionRuns() []sessions.Live
 }
 
-// liveSessions is every live run that carries a session.
-func liveSessions(rt *Runtime) []sessions.Live {
-	if reg, ok := rt.Runs().(sessionRuns); ok {
-		return reg.SessionRuns()
-	}
-	return nil
+// sessionFacts joins the daemon's two session sources for the domain package.
+type sessionFacts struct {
+	rt *Runtime
 }
 
-// knownSessions is what the store remembers, live or not.
-func knownSessions(rt *Runtime) []sessions.Known {
-	if rt.Store == nil {
+// live is every run that still carries a session.
+func (f sessionFacts) live() []sessions.Live {
+	registry, ok := f.rt.Runs().(sessionRegistry)
+	if !ok {
 		return nil
 	}
-	rows, err := rt.Store.Sessions().List()
+	return registry.SessionRuns()
+}
+
+// known is what the store remembers, live or not. A store failure degrades to
+// "nothing remembered" and is stated once: the live registry still answers.
+func (f sessionFacts) known() []sessions.Known {
+	if f.rt.Store == nil {
+		return nil
+	}
+	rows, err := f.rt.Store.Sessions().List()
 	if err != nil {
-		rt.Logger.Warn("reading recorded sessions", "error", err)
+		f.rt.Logger.Warn("reading recorded sessions", "error", err)
 		return nil
 	}
-	out := make([]sessions.Known, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, sessions.Known{
-			Session:   sessionFromRow(r),
-			FirstSeen: r.FirstSeen,
-			LastSeen:  r.LastSeen,
-		})
+	out := make([]sessions.Known, len(rows))
+	for i, row := range rows {
+		out[i] = sessions.Known{
+			Session:   sessionFromRow(row),
+			FirstSeen: row.FirstSeen,
+			LastSeen:  row.LastSeen,
+		}
 	}
 	return out
 }
 
-func sessionFromRow(r store.SessionRow) state.Session {
+// records is the `sessions` collection for one scan tick.
+func (f sessionFacts) records(ports []state.Port) []state.SessionRecord {
+	return sessions.Records(f.known(), f.live(), ports)
+}
+
+func sessionFromRow(row store.SessionRow) state.Session {
 	return state.Session{
-		ID: r.ID, Tool: r.Tool, Label: r.Label,
-		Worktree: r.Worktree, Branch: r.Branch, Detected: r.Detected,
+		ID:       row.ID,
+		Tool:     row.Tool,
+		Label:    row.Label,
+		Worktree: row.Worktree,
+		Branch:   row.Branch,
+		Detected: row.Detected,
 	}
 }
 
-// sessionRecords is the `sessions` collection for one scan tick.
-func sessionRecords(rt *Runtime, ports []state.Port) []state.SessionRecord {
-	return sessions.Records(knownSessions(rt), liveSessions(rt), ports)
-}
-
-// handleSessionsKill stops everything one session started. It is the session
-// form of `groups.kill` (contract §3) and returns the same envelope: the
-// session's listening ports are the targets, plus the pid of any of its runs
-// that is not listening on anything yet, so "stop everything this session
-// started" also catches a dev server still coming up.
+// handleSessionsKill stops everything one session started. It returns the
+// same envelope as a group kill: every listening port stamped with the
+// session, plus the pid of any of its runs that has not opened a port yet, so
+// "stop this session" also reaches a server still starting.
 func handleSessionsKill(ctx context.Context, req *Request) (any, error) {
-	var p rpc.SessionsKillParams
-	if err := req.Bind(&p); err != nil {
+	var params rpc.SessionsKillParams
+	if err := req.Bind(&params); err != nil {
 		return nil, err
 	}
-	id := strings.TrimSpace(p.ID)
+	id := strings.TrimSpace(params.ID)
 	if id == "" {
 		return nil, rpc.NewError(rpc.CodeInvalidParams, "id is required",
 			`send {"id": "claude-code:abc123"}`)
 	}
 
-	snap, err := killSnapshot(ctx, req)
+	snapshot, err := killSnapshot(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	live := sessions.RunsOf(liveSessions(req.Runtime), id)
-	targets := sessionTargets(snap, live, id, req.Runtime.Runs().RunStart)
+	facts := sessionFacts{rt: req.Runtime}
+	live := sessions.RunsOf(facts.live(), id)
+	targets := sessionTargets(snapshot, live, id, req.Runtime.Runs().RunStart)
 	if len(targets) == 0 {
-		if _, ok := findSession(sessionRecords(req.Runtime, snap.Ports), id); !ok {
+		if _, known := findSession(facts.records(snapshot.Ports), id); !known {
 			return nil, sessionNotFound(id)
 		}
-		// A known session with nothing running: an empty envelope, not an
-		// error. "Stop everything this session started" succeeded trivially.
+		// A recorded session with nothing running: stopping it succeeded
+		// trivially, so this is an empty envelope rather than an error.
 		return killEnvelope(nil), nil
 	}
 
-	opts := killer.Options{
-		Tree:   p.Tree,
-		Force:  p.Force,
-		DryRun: p.DryRun,
-		Ports:  killerRows(snap),
+	options := killer.Options{
+		Tree:   params.Tree,
+		Force:  params.Force,
+		DryRun: params.DryRun,
+		Ports:  killerRows(snapshot),
 	}
-	opts.OnSignal = stopSignalObserver(req.Runtime, snap, targets, opts.DryRun, "")
-	rows := killer.KillPorts(ctx, targets, opts)
-	afterKill(req, opts.DryRun)
-	return killEnvelope(rows), nil
+	options.OnSignal = stopSignalObserver(req.Runtime, snapshot, targets, options.DryRun, "")
+	results := killer.KillPorts(ctx, targets, options)
+	afterKill(req, options.DryRun)
+	return killEnvelope(results), nil
 }
 
-// sessionTargets selects what a session owns: every listening port stamped
-// with it, then the root pid of any of its runs that owns none of them. runStart
-// attaches the run's recorded start to a pid target so the killer can refuse a
-// recycled pid; nil is allowed and means no claim.
-func sessionTargets(snap state.Snapshot, live []sessions.Live, id string, runStart func(int) (time.Time, bool)) []killer.Target {
-	var out []killer.Target
-	covered := map[int]bool{}
-	for _, p := range snap.Ports {
-		if p.Session == nil || p.Session.ID != id {
+// sessionTargets turns a session into kill targets. A port carries its bind
+// address; a run that owns no port carries its pid and, when the registry
+// remembers it, the start time the killer verifies before signalling.
+func sessionTargets(snapshot state.Snapshot, live []sessions.Live, id string, startOf func(int) (time.Time, bool)) []killer.Target {
+	targets := make([]killer.Target, 0, len(live))
+	onPort := make(map[int]bool, len(snapshot.Ports))
+	for i := range snapshot.Ports {
+		port := snapshot.Ports[i]
+		if port.Session == nil || port.Session.ID != id {
 			continue
 		}
-		out = append(out, killer.Target{Port: p.Port, BindAddress: p.BindAddress})
-		if p.Run != nil {
-			covered[p.Run.RootPID] = true
+		targets = append(targets, killer.Target{Port: port.Port, BindAddress: port.BindAddress})
+		if port.Run != nil {
+			onPort[port.Run.RootPID] = true
 		}
 	}
-	for _, l := range live {
-		if l.PID > 0 && !covered[l.PID] {
-			target := killer.Target{PID: l.PID}
-			if runStart != nil {
-				if started, ok := runStart(l.PID); ok {
-					target.StartedAt = started
-				}
+	for _, run := range live {
+		if run.PID <= 0 || onPort[run.PID] {
+			continue
+		}
+		target := killer.Target{PID: run.PID}
+		if startOf != nil {
+			if startedAt, known := startOf(run.PID); known {
+				target.StartedAt = startedAt
 			}
-			out = append(out, target)
 		}
+		targets = append(targets, target)
 	}
-	return out
+	return targets
 }
 
-// findSession matches a session by its full id, and — because the ids are long
-// — by a unique prefix, which is what makes `oberth sessions <id>` usable by
-// hand. An ambiguous prefix is reported rather than guessed.
+// findSession matches a full id first, then a unique prefix, which is what
+// makes a long id usable by hand. An ambiguous prefix is refused rather than
+// guessed.
 func findSession(records []state.SessionRecord, id string) (state.SessionRecord, bool) {
-	for _, rec := range records {
-		if rec.ID == id {
-			return rec, true
+	var candidate state.SessionRecord
+	matches := 0
+	for _, record := range records {
+		if record.ID == id {
+			return record, true
+		}
+		if strings.HasPrefix(record.ID, id) {
+			candidate = record
+			matches++
 		}
 	}
-	var hit state.SessionRecord
-	n := 0
-	for _, rec := range records {
-		if strings.HasPrefix(rec.ID, id) {
-			hit, n = rec, n+1
-		}
-	}
-	if n == 1 {
-		return hit, true
-	}
-	return state.SessionRecord{}, false
+	return candidate, matches == 1
 }
 
 func sessionNotFound(id string) error {
@@ -182,69 +187,80 @@ func sessionNotFound(id string) error {
 		"run `oberth status` to inspect the current worktree")
 }
 
-// sessionMaintenanceInterval is how often live sessions are touched and dead
-// ones pruned. It is a minute rather than the scan cadence because both are
-// database writes and neither is urgent: the seven-day window has a minute of
-// slack in it.
-const sessionMaintenanceInterval = time.Minute
+// sessionSweepInterval is one minute: both maintenance writes are cheap and
+// neither is urgent, and the retention window has a minute of slack in it.
+const sessionSweepInterval = time.Minute
 
-var sessionMaintenanceStop chan struct{}
+// sessionMaintenance owns the daemon's only session sweep goroutine. It holds
+// the stop channel behind a mutex so a restart cannot leave two sweeps
+// touching the same table.
+type sessionMaintenance struct {
+	mu   sync.Mutex
+	stop chan struct{}
+}
 
-// startSessionMaintenance keeps last_seen fresh for every live session and
-// drops the ones nothing has started anything with for sessions.Retention
-// (spec 2 §3: inactive sessions are kept 7 days, then pruned).
-func startSessionMaintenance(rt *Runtime) {
-	stopSessionMaintenance()
+var sessionSweep sessionMaintenance
+
+func (m *sessionMaintenance) begin(rt *Runtime) {
+	m.halt()
 	if rt.Store == nil {
 		return
 	}
 	stop := make(chan struct{})
-	sessionMaintenanceStop = stop
-	go func() {
-		t := time.NewTicker(sessionMaintenanceInterval)
-		defer t.Stop()
-		for {
-			select {
-			case <-stop:
-				return
-			case <-t.C:
-				SweepSessions(rt, time.Now())
-			}
-		}
-	}()
+	m.mu.Lock()
+	m.stop = stop
+	m.mu.Unlock()
+	go m.run(rt, stop)
 }
 
-func stopSessionMaintenance() {
-	if sessionMaintenanceStop != nil {
-		close(sessionMaintenanceStop)
-		sessionMaintenanceStop = nil
+func (m *sessionMaintenance) halt() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.stop == nil {
+		return
+	}
+	close(m.stop)
+	m.stop = nil
+}
+
+func (m *sessionMaintenance) run(rt *Runtime, stop chan struct{}) {
+	ticker := time.NewTicker(sessionSweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			SweepSessions(rt, time.Now())
+		}
 	}
 }
 
-// SweepSessions is one maintenance pass: touch the live sessions, prune the
-// ones last seen more than sessions.Retention ago. Exported so a test can run
-// a pass without waiting out the timer.
+// SweepSessions runs one maintenance pass: touch every live session and prune
+// the ones last seen longer than sessions.Retention ago. It is exported so a
+// test can run a pass without waiting for the ticker.
 func SweepSessions(rt *Runtime, now time.Time) {
 	if rt == nil || rt.Store == nil {
 		return
 	}
 	table := rt.Store.Sessions()
-	seen := map[string]bool{}
-	for _, l := range liveSessions(rt) {
-		if l.Session.ID == "" || seen[l.Session.ID] {
+	touched := make(map[string]bool)
+	for _, run := range (sessionFacts{rt: rt}).live() {
+		id := run.Session.ID
+		if id == "" || touched[id] {
 			continue
 		}
-		seen[l.Session.ID] = true
-		if err := table.Touch(l.Session.ID, now); err != nil {
-			rt.Logger.Warn("touching a live session", "session", l.Session.ID, "error", err)
+		touched[id] = true
+		if err := table.Touch(id, now); err != nil {
+			rt.Logger.Warn("touching a live session", "session", id, "error", err)
 		}
 	}
-	n, err := table.Prune(now.Add(-sessions.Retention))
+	removed, err := table.Prune(now.Add(-sessions.Retention))
 	if err != nil {
 		rt.Logger.Warn("pruning sessions", "error", err)
 		return
 	}
-	if n > 0 {
-		rt.Logger.Info("pruned inactive sessions", "count", n)
+	if removed > 0 {
+		rt.Logger.Info("pruned inactive sessions", "count", removed)
 	}
 }

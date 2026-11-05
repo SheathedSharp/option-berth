@@ -7,115 +7,124 @@ import (
 	"testing"
 )
 
-// gitRepo makes a real checkout with one commit. Everything here reads .git
-// directly, so the fixture has to be a real repository rather than a fake.
-func gitRepo(t *testing.T, dir string) {
+// initRepository creates a real repository with one commit. The code under
+// test reads .git directly, so a fake directory would prove nothing.
+func initRepository(t *testing.T, dir string) {
 	t.Helper()
-	run := func(args ...string) {
+	git := func(args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(cmd.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Skipf("git %v: %v\n%s", args, err, out)
+		command := exec.Command("git", args...)
+		command.Dir = dir
+		command.Env = append(command.Environ(),
+			"GIT_AUTHOR_NAME=fixture", "GIT_AUTHOR_EMAIL=fixture@example.invalid",
+			"GIT_COMMITTER_NAME=fixture", "GIT_COMMITTER_EMAIL=fixture@example.invalid")
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Skipf("git %v: %v\n%s", args, err, output)
 		}
 	}
-	run("init", "-q", "-b", "main", ".")
-	run("commit", "-q", "--allow-empty", "-m", "first")
+	git("init", "-q", "-b", "main", ".")
+	git("commit", "-q", "--allow-empty", "-m", "fixture")
 }
 
-func TestGitContextMainCheckoutHasNoWorktree(t *testing.T) {
+func TestPrimaryCheckoutHasBranchButNoWorktreeName(t *testing.T) {
 	root := t.TempDir()
-	gitRepo(t, root)
+	initRepository(t, root)
 
 	worktree, branch := GitContext(root)
 	if worktree != "" {
-		t.Errorf("worktree = %q, want empty for the primary checkout", worktree)
+		t.Errorf("worktree = %q, want empty for a primary checkout", worktree)
 	}
 	if branch != "main" {
 		t.Errorf("branch = %q, want main", branch)
 	}
 }
 
-func TestGitContextFromASubdirectory(t *testing.T) {
+func TestGitContextResolvesFromASubdirectory(t *testing.T) {
 	root := t.TempDir()
-	gitRepo(t, root)
-	sub := filepath.Join(root, "a", "b")
-	if err := os.MkdirAll(sub, 0o755); err != nil {
+	initRepository(t, root)
+	nested := filepath.Join(root, "pkg", "server")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-
-	_, branch := GitContext(sub)
-	if branch != "main" {
-		t.Errorf("branch from a subdirectory = %q, want main", branch)
+	if _, branch := GitContext(nested); branch != "main" {
+		t.Errorf("branch = %q, want main", branch)
 	}
 }
 
-func TestGitContextNamesALinkedWorktree(t *testing.T) {
-	base := t.TempDir()
-	root := filepath.Join(base, "repo")
+func TestLinkedWorktreeIsNamedByItsDirectory(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "repo")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	gitRepo(t, root)
+	initRepository(t, root)
 
-	linked := filepath.Join(base, "feature-x")
-	cmd := exec.Command("git", "worktree", "add", "-q", "-b", "feature/x", linked)
-	cmd.Dir = root
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Skipf("git worktree add: %v\n%s", err, out)
+	linked := filepath.Join(parent, "feature-x")
+	add := exec.Command("git", "worktree", "add", "-q", "-b", "feature/x", linked)
+	add.Dir = root
+	if output, err := add.CombinedOutput(); err != nil {
+		t.Skipf("git worktree add: %v\n%s", err, output)
 	}
 
 	worktree, branch := GitContext(linked)
-	if worktree != "feature-x" {
-		t.Errorf("worktree = %q, want feature-x", worktree)
+	if worktree != "feature-x" || branch != "feature/x" {
+		t.Errorf("linked worktree = %q/%q, want feature-x/feature/x", worktree, branch)
 	}
-	if branch != "feature/x" {
-		t.Errorf("branch = %q, want feature/x", branch)
-	}
-
-	// The primary checkout of the same repository still reports no worktree.
-	if w, _ := GitContext(root); w != "" {
-		t.Errorf("primary checkout reported worktree %q", w)
+	if name, _ := GitContext(root); name != "" {
+		t.Errorf("primary checkout reported worktree %q", name)
 	}
 }
 
-func TestGitContextOutsideARepository(t *testing.T) {
+func TestOutsideARepositoryThereIsNoContext(t *testing.T) {
 	worktree, branch := GitContext(t.TempDir())
 	if worktree != "" || branch != "" {
-		t.Errorf("GitContext outside a repo = %q, %q", worktree, branch)
+		t.Errorf("outside a repository = %q/%q, want empty", worktree, branch)
 	}
 }
 
-func TestCaptureFillsTheGitContext(t *testing.T) {
+func TestCaptureAddsTheGitContext(t *testing.T) {
 	root := t.TempDir()
-	gitRepo(t, root)
+	initRepository(t, root)
 
-	got, ok := Capture(root, Options{Getenv: env(map[string]string{EnvSession: "claude-code:s1"})})
-	if !ok {
-		t.Fatal("Capture found no session")
+	session, found := Capture(root, Options{Getenv: lookup(map[string]string{EnvSession: "claude-code:s1"})})
+	if !found || session.ID != "s1" || session.Branch != "main" {
+		t.Fatalf("Capture = %+v, %v", session, found)
 	}
-	if got.ID != "s1" || got.Branch != "main" {
-		t.Errorf("Capture = %+v", got)
-	}
-
-	if _, ok := Capture(root, Options{Getenv: env(nil), Processes: func() []Process { return nil }}); ok {
-		t.Error("Capture invented a session with no agent in the environment")
+	if _, found := Capture(root, Options{
+		Getenv:    lookup(nil),
+		Processes: func() []Process { return nil },
+	}); found {
+		t.Error("Capture invented a session with no agent evidence")
 	}
 }
 
-func TestParseHead(t *testing.T) {
-	for _, tc := range []struct{ head, want string }{
+func TestBranchFromHEAD(t *testing.T) {
+	cases := []struct {
+		head string
+		want string
+	}{
 		{"ref: refs/heads/main", "main"},
 		{"ref: refs/heads/feature/x", "feature/x"},
 		{"ref: refs/remotes/origin/main", "refs/remotes/origin/main"},
 		{"0123456789abcdef0123456789abcdef01234567", "0123456789ab"},
+		{"short", "short"},
 		{"", ""},
-	} {
-		if got := parseHead(tc.head); got != tc.want {
-			t.Errorf("parseHead(%q) = %q, want %q", tc.head, got, tc.want)
+	}
+	for _, tc := range cases {
+		if got := branchFromHEAD(tc.head); got != tc.want {
+			t.Errorf("branchFromHEAD(%q) = %q, want %q", tc.head, got, tc.want)
 		}
+	}
+}
+
+func TestGitDirPointerResolution(t *testing.T) {
+	checkout := t.TempDir()
+	pointer := filepath.Join(checkout, ".git")
+	if err := os.WriteFile(pointer, []byte("gitdir: ../.git/worktrees/copy\n"), 0o644); err != nil {
+		t.Fatalf("write pointer: %v", err)
+	}
+	want := filepath.Clean(filepath.Join(checkout, "../.git/worktrees/copy"))
+	if got := gitDirFromFile(checkout, pointer); got != want {
+		t.Errorf("gitdir = %q, want %q", got, want)
 	}
 }
