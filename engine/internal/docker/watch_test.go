@@ -97,11 +97,19 @@ func (b *bench) step() bool {
 	return true
 }
 
-// web is the container most cases use: one published port, full compose labels.
+// web is the container most cases use: it publishes exactly one host port and
+// carries the full set of compose labels, so a single fixture exercises both
+// the port mapping and the attribution path.
 var web = container{
-	name: "shop-web-1", image: "nginx:1.27",
-	portMappings:   []portMapping{{hostPort: 8080, containerPort: 80}},
-	composeService: "web", composeProject: "shop", composeWorkingDir: "/src/shop",
+	name:  "shop-web-1",
+	image: "nginx:1.27",
+	portMappings: []portMapping{{
+		hostPort:      8080,
+		containerPort: 80,
+	}},
+	composeService:    "web",
+	composeProject:    "shop",
+	composeWorkingDir: "/src/shop",
 }
 
 func TestBackoffScheduleDoublesToTheCap(t *testing.T) {
