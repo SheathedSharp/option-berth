@@ -64,32 +64,32 @@ func applyDisplayNameSignals(pp []ListeningPort, pidInfo map[int]pidEntry, cwds 
 	// 2. Process identity only: which run owns a listener is an attribution
 	//    decision and is made by the attribution layer (groups), which holds
 	//    the run registry. The collection layer reports what the OS shows.
-	for i := range pp {
-		pid := pp[i].PID
+	for index := range pp {
+		pid := pp[index].PID
 		if pid <= 0 {
 			continue
 		}
-		if info, ok := pidInfo[pid]; ok {
-			if info.ppid > 0 {
-				pp[i].PPID = info.ppid
+		if entry, ok := pidInfo[pid]; ok {
+			if entry.ppid > 0 {
+				pp[index].PPID = entry.ppid
 			}
 			// On Windows these were already filled from the CIM query; the
 			// Unix table is the only source for them, so an empty field means
 			// this table is where it comes from.
-			if pp[i].Command == "" {
-				pp[i].Command = info.cmd
+			if pp[index].Command == "" {
+				pp[index].Command = entry.cmd
 			}
-			if pp[i].StartedAt == "" && info.startedAt != "" {
-				pp[i].StartedAt = parseStartTime(info.startedAt)
+			if pp[index].StartedAt == "" && entry.startedAt != "" {
+				pp[index].StartedAt = parseStartTime(entry.startedAt)
 			}
-			if info.ppid > 1 {
-				if parent, ok := pidInfo[info.ppid]; ok {
-					pp[i].ParentCmd = parent.cmd
+			if entry.ppid > 1 {
+				if parent, ok := pidInfo[entry.ppid]; ok {
+					pp[index].ParentCmd = parent.cmd
 				}
 			}
 		}
 		if cwd, ok := cwds[pid]; ok {
-			pp[i].Cwd = cwd
+			pp[index].Cwd = cwd
 		}
 	}
 

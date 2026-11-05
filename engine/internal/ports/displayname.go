@@ -2,76 +2,79 @@ package ports
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
-// resolveProcessName produces a human-readable name for a process from its
-// command line, optionally augmented by its parent's command line and working
-// directory. It is a pure function — all I/O happens upstream in Enrich.
+// resolveProcessName turns a command line, its parent's command line and the
+// working directory into a name a person can read. It is pure: all I/O happens
+// upstream in Enrich.
 //
-// Resolution chain (each step may pass through to the next):
-//  1. .app bundle detection (macOS desktop apps)
-//  2. interpreter-aware basename (python script.py -> "script.py", uvicorn ...)
-//  3. parent-process unwrap when the cmdline is a worker spawned by a known
-//     supervisor (uvicorn --reload, gunicorn, multiprocessing.spawn)
-//  4. cwd augmentation: prepend the project directory when it adds context
-//     (e.g. "main" + cwd "example-org-api" -> "example-org-api/main")
+// The chain is:
+//  1. a macOS .app bundle names its product;
+//  2. the interpreter-aware basename of the command;
+//  3. the parent process, when the command itself is only an opaque runtime;
+//  4. the working directory, prepended when it adds project context.
 func resolveProcessName(cmd, parentCmd, cwd string) string {
 	if cmd == "" {
 		return ""
 	}
+	if product, isBundle := bundleProduct(cmd); isBundle {
+		return product
+	}
 
-	// An .app bundle already names itself completely: the bundle name is the
-	// product. The cwd a desktop app was launched from is usually the user's
-	// home or a support directory, so augmenting it adds noise ("dev/Warp",
-	// "Data/QQ"), not context.
-	if name, ok := appBundleName(cmd); ok {
+	resolved := describeCommand(cmd)
+	if opaqueName(resolved) {
+		resolved = parentDescription(resolved, parentCmd)
+	}
+	return withDirectory(resolved, cwd)
+}
+
+// parentDescription replaces an opaque name with the parent's description,
+// when the parent has a better one. Live-reload supervisors and
+// multiprocessing workers keep the meaningful invocation in the parent.
+func parentDescription(name, parentCmd string) string {
+	if parentCmd == "" {
 		return name
 	}
-
-	name := interpreterAwareBasename(cmd)
-
-	// If the resolved name is opaque (just an interpreter, or empty because
-	// the cmdline was `python -c "..."`), try the parent process. Live-reload
-	// supervisors and multiprocessing workers leave the meaningful invocation
-	// in the parent.
-	if isOpaqueName(name) && parentCmd != "" {
-		if parentName := interpreterAwareBasename(parentCmd); !isOpaqueName(parentName) {
-			name = parentName
-		}
+	parentName := describeCommand(parentCmd)
+	if opaqueName(parentName) {
+		return name
 	}
+	return parentName
+}
 
-	// Always augment with cwd context when it adds information.
-	if cwd != "" {
-		if augmented := augmentWithCwd(name, cwd); augmented != "" {
-			return augmented
-		}
+// withDirectory prepends cwd context when there is any.
+func withDirectory(name, cwd string) string {
+	if cwd == "" {
+		return name
+	}
+	if augmented := augmentWithCwd(name, cwd); augmented != "" {
+		return augmented
 	}
 	return name
 }
 
-// appBundleName returns the outermost app bundle a command belongs to, and
-// whether the command runs from one. Every executable inside a bundle names
-// the product — including a helper nested in Contents/Frameworks, which exists
-// only because the app does. The exception is a bundled interpreter:
-// Elasticsearch ships a `jdk.app`, and `java` running from it is still java,
-// not "jdk".
-func appBundleName(cmd string) (string, bool) {
-	if base := firstTokenBasename(cmd); base != "" && isInterpreter(base) {
+// bundleProduct returns the outermost .app bundle's name. Every executable
+// inside a bundle belongs to the product, including a helper nested under
+// Contents/Frameworks. A bundled interpreter is the exception: Elasticsearch
+// ships a jdk.app, and java running from it is still java, not "jdk".
+func bundleProduct(cmd string) (string, bool) {
+	if stem := executableBase(cmd); stem != "" && interpreterName(stem) {
 		return "", false
 	}
-	idx := strings.Index(cmd, ".app/")
-	if idx < 0 {
+	at := strings.Index(cmd, ".app/")
+	if at < 0 {
 		return "", false
 	}
-	return filepath.Base(cmd[:idx]), true
+	return filepath.Base(cmd[:at]), true
 }
 
-// firstTokenBasename is the basename of a command line's executable token. It
-// splits on the first space, which is wrong for the path itself when the path
-// contains spaces — it is only used to classify the executable, and a
-// mis-split path still lands on a plausible name for that.
-func firstTokenBasename(cmd string) string {
+// executableBase is the basename of the command's first token. Splitting on
+// the first space is wrong when the path itself contains spaces; the result is
+// only used to classify the executable, so a mis-split still yields a
+// plausible name.
+func executableBase(cmd string) string {
 	token, _, _ := strings.Cut(strings.TrimSpace(cmd), " ")
 	if token == "" {
 		return ""
@@ -79,247 +82,219 @@ func firstTokenBasename(cmd string) string {
 	return filepath.Base(token)
 }
 
-// interpreterAwareBasename extracts a meaningful name from a full command line.
-// Handles .app bundles, scripting interpreters, and inline-code flags.
-func interpreterAwareBasename(cmd string) string {
-	// .app bundles: paths may contain spaces (e.g., "Application Support"),
-	// so match before splitting on whitespace.
-	if name, ok := appBundleName(cmd); ok {
-		return name
+// describeCommand extracts a meaningful name from a full command line: bundle,
+// interpreter, inline code, module, runner subcommand or script.
+func describeCommand(cmd string) string {
+	// Match bundles before splitting on whitespace: their paths may contain
+	// spaces.
+	if product, isBundle := bundleProduct(cmd); isBundle {
+		return product
 	}
 
-	parts := strings.Fields(cmd)
-	if len(parts) == 0 {
+	tokens := strings.Fields(cmd)
+	if len(tokens) == 0 {
 		return ""
 	}
-	exec := parts[0]
-	base := filepath.Base(exec)
+	binary := filepath.Base(tokens[0])
 
-	// Inline-code flags: `python -c "from foo import ..."` / `node -e "..."`.
-	// The next token is source code, not a filename — we can't extract a
-	// useful name from it, so return just the interpreter and let the
-	// caller fall back to the parent process.
-	if len(parts) >= 2 && (parts[1] == "-c" || parts[1] == "-e") {
-		return base
+	// Inline-code flags: `python -c "…"` and `node -e "…"` are followed by
+	// source, not a filename. Return the interpreter and let the caller fall
+	// back to the parent process.
+	if len(tokens) >= 2 && (tokens[1] == "-c" || tokens[1] == "-e") {
+		return binary
 	}
 
-	if isInterpreter(base) {
-		// `python -m module.path arg`: -m takes a module name; show it.
-		if name := extractModuleArg(parts); name != "" {
-			return name
-		}
-		// `uv run uvicorn server:app`, `poetry run gunicorn ...`,
-		// `npx next dev`: skip the runner verb and use the next token.
-		if name := extractRunnerSubcommand(parts); name != "" {
-			return name
-		}
-		// java -cp/-classpath: skip the classpath value, return main class.
-		if base == "java" {
-			if name := extractJavaMainClass(parts); name != "" {
-				return name
-			}
-			return base
-		}
-		// `python /path/to/script.py arg1`: use the script basename.
-		if name := extractScriptArg(parts); name != "" {
-			return name
-		}
-		return base
+	if !interpreterName(binary) {
+		return binary
 	}
 
-	// Generic binary: just use its basename. cwd augmentation (later) will
-	// add project context if available.
-	return base
+	switch {
+	case moduleTarget(tokens) != "":
+		return moduleTarget(tokens)
+	case runnerTarget(tokens) != "":
+		return runnerTarget(tokens)
+	case binary == "java":
+		if target := javaTarget(tokens); target != "" {
+			return target
+		}
+		return binary
+	case scriptTarget(tokens) != "":
+		return scriptTarget(tokens)
+	}
+	return binary
 }
 
-// extractModuleArg handles `python -m foo.bar` -> "foo.bar".
-func extractModuleArg(parts []string) string {
-	for i := 1; i < len(parts)-1; i++ {
-		if parts[i] == "-m" {
-			return parts[i+1]
+// moduleTarget handles `python -m foo.bar` -> "foo.bar".
+func moduleTarget(tokens []string) string {
+	for i := 1; i < len(tokens)-1; i++ {
+		if tokens[i] == "-m" {
+			return tokens[i+1]
 		}
-		if !strings.HasPrefix(parts[i], "-") {
+		if !strings.HasPrefix(tokens[i], "-") {
 			return ""
 		}
 	}
 	return ""
 }
 
-// extractRunnerSubcommand handles `uv run uvicorn ...`, `poetry run gunicorn ...`,
-// `npx next dev`, etc. Returns the subcommand basename (e.g. "uvicorn").
-func extractRunnerSubcommand(parts []string) string {
-	if len(parts) < 2 {
+// runnerTarget handles `uv run uvicorn …`, `poetry run gunicorn …` and
+// `npx next dev`: skip the runner verb and use the subcommand's basename.
+func runnerTarget(tokens []string) string {
+	if len(tokens) < 2 {
 		return ""
 	}
-	exec := filepath.Base(parts[0])
-	if exec != "uv" && exec != "poetry" && exec != "npx" && exec != "pipenv" && exec != "pdm" && exec != "rye" {
-		return ""
-	}
-	// Find the first non-flag token after the runner verb.
-	start := 1
-	if exec == "uv" || exec == "poetry" || exec == "pipenv" || exec == "pdm" || exec == "rye" {
-		// These take a verb like "run" before the subcommand.
-		if len(parts) >= 3 && parts[1] == "run" {
+	runner := filepath.Base(tokens[0])
+	switch runner {
+	case "uv", "poetry", "pipenv", "pdm", "rye":
+		// These take a verb such as "run" before the subcommand.
+		start := 1
+		if len(tokens) >= 3 && tokens[1] == "run" {
 			start = 2
 		}
+		return firstPlainToken(tokens[start:])
+	case "npx":
+		return firstPlainToken(tokens[1:])
 	}
-	for i := start; i < len(parts); i++ {
-		if !strings.HasPrefix(parts[i], "-") {
-			return filepath.Base(parts[i])
+	return ""
+}
+
+// firstPlainToken is the first token that is not a flag, as a basename.
+func firstPlainToken(tokens []string) string {
+	for _, token := range tokens {
+		if !strings.HasPrefix(token, "-") {
+			return filepath.Base(token)
 		}
 	}
 	return ""
 }
 
-// extractScriptArg handles `python /path/script.py` -> "script.py".
-func extractScriptArg(parts []string) string {
-	for _, arg := range parts[1:] {
-		if strings.HasPrefix(arg, "-") {
-			continue
-		}
-		return filepath.Base(arg)
-	}
-	return ""
+// scriptTarget handles `python /path/script.py` -> "script.py".
+func scriptTarget(tokens []string) string {
+	return firstPlainToken(tokens[1:])
 }
 
-// extractJavaMainClass handles java command lines.
-// Returns the main class for -cp/-classpath/--class-path invocations, the
-// main class for -m/--module (module/Class), the jar basename for -jar,
-// or "" if no target is found.
-func extractJavaMainClass(parts []string) string {
-	for i := 1; i < len(parts); i++ {
-		arg := parts[i]
-		if arg == "-jar" {
-			if i+1 < len(parts) {
-				return filepath.Base(parts[i+1])
+// javaTarget handles java invocations: -jar, -m/--module, or the main class
+// after any flags and their values.
+func javaTarget(tokens []string) string {
+	for i := 1; i < len(tokens); i++ {
+		token := tokens[i]
+		if token == "-jar" {
+			if i+1 < len(tokens) {
+				return filepath.Base(tokens[i+1])
 			}
 			return ""
 		}
-		// -m/--module <module>[/<mainclass>]: the target is the value itself.
-		if arg == "-m" || arg == "--module" {
-			if i+1 < len(parts) {
-				return javaModuleTarget(parts[i+1])
+		if token == "-m" || token == "--module" {
+			if i+1 < len(tokens) {
+				return moduleClass(tokens[i+1])
 			}
 			return ""
 		}
-		if v, ok := strings.CutPrefix(arg, "--module="); ok {
-			return javaModuleTarget(v)
+		if value, hasPrefix := strings.CutPrefix(token, "--module="); hasPrefix {
+			return moduleClass(value)
 		}
-		// Flags that take a separate value we must skip so it isn't
+		// Flags that take a separate value must skip it, so the value is not
 		// mistaken for the main class.
-		if arg == "-cp" || arg == "-classpath" || arg == "--class-path" ||
-			arg == "-p" || arg == "--module-path" {
+		switch token {
+		case "-cp", "-classpath", "--class-path", "-p", "--module-path":
 			i++
 			continue
 		}
-		if strings.HasPrefix(arg, "-") {
+		if strings.HasPrefix(token, "-") {
 			continue
 		}
-		// First non-flag, non-value token is the main class.
-		return arg
+		return token
 	}
 	return ""
 }
 
-// javaModuleTarget extracts the main class from a `-m` value of the form
-// `module/ClassName`, or returns the module name when no class is given.
-func javaModuleTarget(v string) string {
-	if _, class, ok := strings.Cut(v, "/"); ok {
+// moduleClass reads a `-m` value of the form `module/ClassName`, or returns
+// the module name when no class is given.
+func moduleClass(value string) string {
+	if _, class, hasClass := strings.Cut(value, "/"); hasClass {
 		return class
 	}
-	return v
+	return value
 }
 
 // augmentWithCwd prefixes the name with the cwd's basename when that adds
-// useful project context. If the cwd basename is itself a noise directory
-// (tmp, build, target/release, ...) it walks up the path to find the first
+// project context. A noise directory is skipped by walking up to the first
 // meaningful ancestor.
 func augmentWithCwd(name, cwd string) string {
 	if name == "" || cwd == "" {
 		return name
 	}
-	cwdBase := filepath.Base(cwd)
-	if cwdBase == "" || cwdBase == "." || cwdBase == "/" {
+	base := filepath.Base(cwd)
+	if base == "" || base == "." || base == "/" {
 		return name
 	}
-	// Walk past noise dirs to find a real project root.
-	if isNoiseDir(cwdBase) {
-		cwdBase = meaningfulAncestor(cwd)
-		if cwdBase == "" {
+	if noiseDir(base) {
+		base = meaningfulAncestor(cwd)
+		if base == "" {
 			return name
 		}
 	}
-	// Don't prepend if the cwd basename is already part of the name.
-	if cwdBase == name || strings.HasPrefix(name, cwdBase+"/") {
+	// The directory already appears in the name.
+	if base == name || strings.HasPrefix(name, base+"/") {
 		return name
 	}
-	// Don't prepend filesystem-root-ish names that don't identify a project.
-	if cwdBase == "Users" || cwdBase == "home" {
+	// Filesystem roots do not identify a project.
+	if base == "Users" || base == "home" {
 		return name
 	}
-	return cwdBase + "/" + name
+	return base + "/" + name
 }
 
-// meaningfulAncestor walks up from a path, skipping noise directory names,
-// to find the first non-noise ancestor. Returns "" if none found.
+// meaningfulAncestor walks up from a path, skipping noise directories, and
+// returns the first real one. "" when there is none within six levels.
 func meaningfulAncestor(path string) string {
-	for i := 0; i < 6; i++ {
-		path = filepath.Dir(path)
-		base := filepath.Base(path)
-		if base == "" || base == "." || base == "/" {
+	current := path
+	for depth := 0; depth < 6; depth++ {
+		current = filepath.Dir(current)
+		name := filepath.Base(current)
+		if name == "" || name == "." || name == "/" {
 			return ""
 		}
-		if !isNoiseDir(base) {
-			return base
+		if !noiseDir(name) {
+			return name
 		}
 	}
 	return ""
 }
 
-// isInterpreter reports whether a basename is a scripting language runtime
-// whose first arg is typically the meaningful target (a script or module).
-func isInterpreter(base string) bool {
-	switch base {
-	case "python", "python2", "python3",
-		"node", "nodejs", "deno", "bun",
-		"ruby", "perl", "php",
-		"java",
-		"uv", "poetry", "pipenv", "pdm", "rye", "npx",
-		// A shell wrapping a script names the script, not itself:
-		// `/bin/sh /opt/.../rabbitmq-server` is the service.
-		"sh", "bash", "zsh", "fish":
-		return true
-	}
-	return false
+// interpreterNames are the runtimes whose first argument is usually the
+// meaningful target; a shell wrapping a script names the script, not itself.
+var interpreterNames = []string{
+	"python", "python2", "python3",
+	"node", "nodejs", "deno", "bun",
+	"ruby", "perl", "php",
+	"java",
+	"uv", "poetry", "pipenv", "pdm", "rye", "npx",
+	"sh", "bash", "zsh", "fish",
 }
 
-// isOpaqueName reports whether a name is just an interpreter or runtime,
-// giving the user no signal about what is actually running.
-func isOpaqueName(name string) bool {
-	switch name {
-	case "", "python", "python2", "python3",
-		"node", "nodejs", "deno", "bun",
-		"ruby", "perl", "php", "java",
-		"sh", "bash", "zsh", "fish",
-		"uv", "poetry", "npx",
-		// The Erlang VM says nothing; its parent (rabbitmq-server, a release
-		// script) does.
-		"beam.smp":
-		return true
-	}
-	return false
+// opaqueNames are the names that say nothing about what is running. The
+// Erlang VM says nothing; its parent (rabbitmq-server) does.
+var opaqueNames = []string{
+	"", "python", "python2", "python3",
+	"node", "nodejs", "deno", "bun",
+	"ruby", "perl", "php", "java",
+	"sh", "bash", "zsh", "fish",
+	"uv", "poetry", "npx",
+	"beam.smp",
 }
 
-// isNoiseDir reports whether a directory name is a generic build / temp
-// directory that doesn't identify a project (and so should be skipped when
-// augmenting names with cwd context).
-func isNoiseDir(name string) bool {
-	switch name {
-	case "tmp", "temp", "build", "dist", "bin", "out", "target",
-		"release", "debug", "cmd", "src", "pkg",
-		"node_modules", ".bin", ".venv", "venv", "env",
-		"__pycache__", ".cache", ".tox":
-		return true
-	}
-	return false
+// noiseDirectories are generic build and temp directories that do not
+// identify a project.
+var noiseDirectories = []string{
+	"tmp", "temp", "build", "dist", "bin", "out", "target",
+	"release", "debug", "cmd", "src", "pkg",
+	"node_modules", ".bin", ".venv", "venv", "env",
+	"__pycache__", ".cache", ".tox",
 }
+
+func interpreterName(binary string) bool { return slices.Contains(interpreterNames, binary) }
+
+func opaqueName(name string) bool { return slices.Contains(opaqueNames, name) }
+
+func noiseDir(name string) bool { return slices.Contains(noiseDirectories, name) }
