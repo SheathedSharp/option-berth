@@ -519,15 +519,12 @@ func (l *Loop) Run(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		subs, include := l.opts.Demand()
-		if subs == 0 {
-			// Parked: no scanning, no timer.
-			select {
-			case <-ctx.Done():
-				return
-			case <-l.wake:
-				continue
-			}
+		include, scanNow, finished := l.waitForDemand(ctx)
+		switch {
+		case finished:
+			return
+		case !scanNow:
+			continue // a wake arrived; re-read the demand
 		}
 
 		// A scan an RPC ran a moment ago is this tick's scan. Wake means "the
@@ -579,6 +576,26 @@ func armTimer(timer *time.Timer, wait time.Duration) {
 		}
 	}
 	timer.Reset(wait)
+}
+
+// waitForDemand answers what this tick should collect, and whether it should
+// collect anything at all.
+//
+// scanNow is false when a wake arrived while parked: the caller re-reads
+// Demand, because the wake may have been the subscriber that makes scanning
+// worth doing. finished means ctx ended.
+func (l *Loop) waitForDemand(ctx context.Context) (include Include, scanNow, finished bool) {
+	subscribers, wanted := l.opts.Demand()
+	if subscribers > 0 {
+		return wanted, true, false
+	}
+	// Parked: no scanning and no timer, so an idle daemon costs nothing.
+	select {
+	case <-ctx.Done():
+		return Include{}, false, true
+	case <-l.wake:
+		return Include{}, false, false
+	}
 }
 
 // scanAndPublish runs one scan, updates the cache, adapts the interval and
