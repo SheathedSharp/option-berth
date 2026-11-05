@@ -110,13 +110,24 @@ func (c *Conn) CancelStream(id string) bool {
 // cancelAllStreams stops every stream on this connection. Disconnecting
 // cancels all of a connection's streams (contract §1).
 func (c *Conn) cancelAllStreams() {
-	c.mu.Lock()
-	streams := c.streams
-	c.streams = map[string]context.CancelFunc{}
-	c.mu.Unlock()
-	for _, cancel := range streams {
+	for _, cancel := range c.replaceStreams(nil) {
 		cancel()
 	}
+}
+
+// replaceStreams installs next as the stream registry and returns the previous
+// one, so the caller can cancel after the lock is released. Cancelling under
+// c.mu would deadlock: a stream being torn down unwinds into code that may want
+// the connection again. A nil next means an empty registry.
+func (c *Conn) replaceStreams(next map[string]context.CancelFunc) map[string]context.CancelFunc {
+	if next == nil {
+		next = map[string]context.CancelFunc{}
+	}
+	c.mu.Lock()
+	previous := c.streams
+	c.streams = next
+	c.mu.Unlock()
+	return previous
 }
 
 // requestShutdown records that this connection asked the daemon to stop, so the
