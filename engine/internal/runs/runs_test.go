@@ -7,134 +7,138 @@ import (
 	"testing"
 )
 
-func TestPath(t *testing.T) {
-	t.Setenv("HOME", "/tmp/fakehome")
-	want := filepath.Join("/tmp/fakehome", ".option-berth", "runs.json")
+func isolateRunsHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	return home
+}
+
+func mustAdd(t *testing.T, entry Entry) {
+	t.Helper()
+	if err := Add(entry); err != nil {
+		t.Fatalf("Add(%+v): %v", entry, err)
+	}
+}
+
+func mustRemove(t *testing.T, pid int) {
+	t.Helper()
+	if err := Remove(pid); err != nil {
+		t.Fatalf("Remove(%d): %v", pid, err)
+	}
+}
+
+func writeRunsFile(t *testing.T, home, body string) {
+	t.Helper()
+	dir := filepath.Join(home, ".option-berth")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "runs.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPathSitsBesideTheConfig(t *testing.T) {
+	t.Setenv("HOME", "/tmp/runs-fixture-home")
+	want := filepath.Join("/tmp/runs-fixture-home", ".option-berth", "runs.json")
 	if got := Path(); got != want {
 		t.Errorf("Path() = %q, want %q", got, want)
 	}
 }
 
-func TestLoadMissingFile(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+func TestLoadWithoutAFileIsEmpty(t *testing.T) {
+	isolateRunsHome(t)
 	reg := Load()
 	if reg == nil || reg.Runs == nil {
-		t.Fatal("Load() of missing file should yield empty registry, not nil")
+		t.Fatal("a missing file produced a nil registry")
 	}
 	if len(reg.Runs) != 0 {
-		t.Errorf("missing file should yield empty registry, got %+v", reg.Runs)
+		t.Errorf("a missing file produced %+v", reg.Runs)
 	}
 }
 
-func TestAddSaveLoadRoundTrip(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-
-	// Use our own (live) pid so prune doesn't drop it.
+func TestAddThenLoadRoundTrips(t *testing.T) {
+	isolateRunsHome(t)
 	self := os.Getpid()
+
 	if err := Add(Entry{PID: self, Tag: "demo", ID: "abc123", Cmd: "python -m http.server"}); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-
-	reg := Load()
-	e, ok := reg.LookupByPID(self)
-	if !ok {
-		t.Fatalf("entry for pid %d not found after Add", self)
+	entry, found := Load().LookupByPID(self)
+	if !found {
+		t.Fatalf("pid %d is missing after Add", self)
 	}
-	if e.Tag != "demo" || e.ID != "abc123" {
-		t.Errorf("round-trip mismatch: got %+v", e)
+	if entry.Tag != "demo" || entry.ID != "abc123" {
+		t.Errorf("round trip = %+v", entry)
 	}
-	if e.StartedAt == "" {
-		t.Error("Add should stamp StartedAt")
+	if entry.StartedAt == "" {
+		t.Error("Add did not stamp StartedAt")
 	}
 }
 
-func TestRemove(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+func TestRemoveDeletesAndIsIdempotent(t *testing.T) {
+	isolateRunsHome(t)
 	self := os.Getpid()
-	if err := Add(Entry{PID: self, Tag: "x"}); err != nil {
-		t.Fatal(err)
+	mustAdd(t, Entry{PID: self, Tag: "x"})
+	mustRemove(t, self)
+	if _, found := Load().LookupByPID(self); found {
+		t.Error("the entry survived Remove")
 	}
-	if err := Remove(self); err != nil {
-		t.Fatalf("Remove: %v", err)
-	}
-	if _, ok := Load().LookupByPID(self); ok {
-		t.Error("entry still present after Remove")
-	}
-	// Removing a missing pid is a no-op.
 	if err := Remove(999999); err != nil {
-		t.Errorf("Remove of missing pid should be no-op, got %v", err)
+		t.Errorf("Remove of an unrecorded pid = %v, want nil", err)
 	}
 }
 
-func TestLoadPrunesDeadPIDs(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	// A live pid (ours) and a dead pid (a process we start then reap).
+func TestLoadPrunesDeadPIDsAndPersists(t *testing.T) {
+	isolateRunsHome(t)
 	self := os.Getpid()
-	dead := spawnAndReap(t)
+	dead := spawnReaped(t)
 
-	if err := Add(Entry{PID: self, Tag: "live"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := Add(Entry{PID: dead, Tag: "dead"}); err != nil {
-		t.Fatal(err)
-	}
+	mustAdd(t, Entry{PID: self, Tag: "live"})
+	mustAdd(t, Entry{PID: dead, Tag: "dead"})
 
 	reg := Load()
-	if _, ok := reg.LookupByPID(self); !ok {
-		t.Errorf("live pid %d was pruned", self)
+	if _, found := reg.LookupByPID(self); !found {
+		t.Errorf("the live pid %d was pruned", self)
 	}
-	if _, ok := reg.LookupByPID(dead); ok {
-		t.Errorf("dead pid %d should have been pruned", dead)
+	if _, found := reg.LookupByPID(dead); found {
+		t.Errorf("the dead pid %d survived", dead)
 	}
-
-	// Prune should have persisted: re-reading the file shows only the live pid.
-	reg2 := load()
-	if _, ok := reg2.Runs[dead]; ok {
-		t.Error("dead pid not removed from disk after prune")
+	if _, found := load().Runs[dead]; found {
+		t.Error("the dead pid was not removed from disk")
 	}
 }
 
-func TestLoadMalformedFileRecovers(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	dir := filepath.Join(home, ".option-berth")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "runs.json"), []byte("{not json"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+func TestLoadRecoversFromAMalformedFile(t *testing.T) {
+	home := isolateRunsHome(t)
+	writeRunsFile(t, home, "{not json")
 	reg := Load()
 	if reg == nil || reg.Runs == nil || len(reg.Runs) != 0 {
-		t.Errorf("malformed file should recover to empty registry, got %+v", reg)
+		t.Errorf("a malformed file recovered to %+v, want empty", reg)
 	}
 }
 
-// spawnAndReap starts a trivial short-lived process, waits for it to exit, and
-// returns its (now-dead) pid.
-func spawnAndReap(t *testing.T) int {
+// spawnReaped starts a trivial process, waits for it to exit and returns its
+// now-dead pid.
+func spawnReaped(t *testing.T) int {
 	t.Helper()
-	c := exec.Command("true")
-	if err := c.Start(); err != nil {
-		// Fall back to a portable no-op if `true` is unavailable.
-		c = exec.Command("sh", "-c", "exit 0")
-		if err := c.Start(); err != nil {
-			t.Skipf("cannot spawn helper process: %v", err)
+	command := exec.Command("true")
+	if err := command.Start(); err != nil {
+		command = exec.Command("sh", "-c", "exit 0")
+		if err := command.Start(); err != nil {
+			t.Skipf("cannot spawn a helper process: %v", err)
 		}
 	}
-	pid := c.Process.Pid
-	_ = c.Wait()
+	pid := command.Process.Pid
+	_ = command.Wait()
 	return pid
 }
 
-// TestAddCreatesTheConfigDirOwnerOnly: the runs mirror may be the first writer
-// of ~/.option-berth (a CLI `oberth run` before any daemon), and it must not
+// The runs mirror may be the first writer of ~/.option-berth, so it must not
 // leave a directory other users can list.
-func TestAddCreatesTheConfigDirOwnerOnly(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+func TestAddCreatesTheDirectoryOwnerOnly(t *testing.T) {
+	isolateRunsHome(t)
 	if err := Add(Entry{PID: os.Getpid(), Tag: "t"}); err != nil {
 		t.Fatalf("Add: %v", err)
 	}

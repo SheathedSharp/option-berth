@@ -20,6 +20,7 @@ func withLegacyLockUntil(deadline time.Time, fn func() error) error {
 		return fmt.Errorf("runs: could not create config dir: %w", err)
 	}
 
+	// Legacy sidecar timing.
 	const (
 		maxWait     = 2 * time.Second
 		staleAfter  = 5 * time.Second
@@ -44,7 +45,9 @@ func withLegacyLockUntil(deadline time.Time, fn func() error) error {
 		if !os.IsExist(err) {
 			return fmt.Errorf("runs: acquire lock: %w", err)
 		}
-		// Lock held by someone else. Break a stale lock left by a crash.
+		// Someone else holds the lock. It may be reclaimed only when it has
+		// outlived staleAfter and its owner is gone; a live writer is never
+		// robbed, even at the deadline.
 		if info, statErr := os.Stat(lp); statErr == nil {
 			if time.Since(info.ModTime()) > staleAfter && !lockOwnerAlive(lp) {
 				if err := os.Remove(lp); err == nil || os.IsNotExist(err) {
@@ -62,11 +65,9 @@ func withLegacyLockUntil(deadline time.Time, fn func() error) error {
 	}
 }
 
-func parentDir(p string) string {
-	for i := len(p) - 1; i >= 0; i-- {
-		if p[i] == '/' || p[i] == '\\' {
-			return p[:i]
-		}
+func parentDir(path string) string {
+	if cut := strings.LastIndexAny(path, `/\`); cut >= 0 {
+		return path[:cut]
 	}
 	return "."
 }

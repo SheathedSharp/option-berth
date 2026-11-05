@@ -4,17 +4,18 @@ package runs
 
 import "syscall"
 
-// pidAlive reports whether a process with the given PID currently exists.
-// Signal 0 performs error checking without actually sending a signal: a nil
-// error (or EPERM, meaning the process exists but we can't signal it) means the
-// process is alive; ESRCH means it's gone.
+// pidAlive reports whether a process currently exists. Signal 0 performs
+// permission and existence checks without delivering anything: nil means the
+// process is there, EPERM means it is there but owned by someone else, and
+// ESRCH means it is gone.
 func pidAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	err := syscall.Kill(pid, 0)
-	if err == nil {
+	switch err := syscall.Kill(pid, 0); err {
+	case nil, syscall.EPERM:
 		return true
+	default:
+		return false
 	}
-	return err == syscall.EPERM
 }
