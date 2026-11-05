@@ -1030,6 +1030,8 @@ func emptyDelta(d state.Delta) bool {
 func filterSnapshot(snap state.Snapshot, include scanner.Include, scope state.Scope) state.Snapshot {
 	snap.Ports = filterPorts(snap.Ports, include)
 	snap = scope.FilterSnapshot(snap)
+	// Collections are emptied rather than left null: a client decoding this
+	// expects arrays, and null would make every caller branch on it.
 	if snap.Groups == nil {
 		snap.Groups = []state.Group{}
 	}
