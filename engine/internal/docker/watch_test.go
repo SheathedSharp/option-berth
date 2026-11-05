@@ -112,18 +112,27 @@ var web = container{
 	composeWorkingDir: "/src/shop",
 }
 
+// TestBackoffScheduleDoublesToTheCap pins the whole schedule, not just its
+// shape: a change to MinBackoff or MaxBackoff should fail here rather than
+// silently alter how often a wedged docker is retried.
 func TestBackoffScheduleDoublesToTheCap(t *testing.T) {
-	want := []time.Duration{
-		5 * time.Second, 10 * time.Second, 20 * time.Second, 40 * time.Second,
-		80 * time.Second, 160 * time.Second, 5 * time.Minute, 5 * time.Minute,
+	schedule := []time.Duration{
+		MinBackoff,      // 5s
+		2 * MinBackoff,  // 10s
+		4 * MinBackoff,  // 20s
+		8 * MinBackoff,  // 40s
+		16 * MinBackoff, // 80s
+		32 * MinBackoff, // 160s
+		MaxBackoff,      // 5m, the sixth step already reaches it
+		MaxBackoff,      // and it stays there
 	}
-	for i, w := range want {
-		if got := backoffFor(i + 1); got != w {
-			t.Errorf("backoffFor(%d) = %s, want %s", i+1, got, w)
+	for attempt, expected := range schedule {
+		if actual := backoffFor(attempt + 1); actual != expected {
+			t.Errorf("backoffFor(%d) = %s, want %s", attempt+1, actual, expected)
 		}
 	}
-	if got := backoffFor(1000); got != MaxBackoff {
-		t.Errorf("backoffFor(1000) = %s, want the cap", got)
+	if far := backoffFor(1000); far != MaxBackoff {
+		t.Errorf("backoffFor(1000) = %s, want the cap %s", far, MaxBackoff)
 	}
 }
 

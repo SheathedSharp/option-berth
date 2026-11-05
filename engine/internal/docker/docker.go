@@ -16,15 +16,16 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
+// container is one row of `docker ps`, in the order psFormat asks for it.
 type container struct {
-	name           string
-	image          string
-	portMappings   []portMapping
-	composeService string
-	composeProject string
-	// composeWorkingDir is the directory `docker compose` was run from
-	// (label com.docker.compose.project.working_dir). The group resolver uses
-	// it to merge a Compose project into the git checkout it belongs to.
+	name           string        // Names
+	image          string        // Image
+	portMappings   []portMapping // Ports, already parsed
+	composeService string        // label com.docker.compose.service
+	composeProject string        // label com.docker.compose.project
+	// composeWorkingDir is where `docker compose` was run, from label
+	// com.docker.compose.project.working_dir. The group resolver uses it to
+	// merge a Compose project into the git checkout it belongs to.
 	composeWorkingDir string
 }
 
@@ -140,14 +141,21 @@ type apiCPUSample struct {
 // apiStatsResponse matches the Docker Engine /containers/{id}/stats response,
 // keeping only the fields this package reports.
 type apiStatsResponse struct {
-	CPUStats    apiCPUSample `json:"cpu_stats"`
-	PrecpuStats apiCPUSample `json:"precpu_stats"`
-	MemoryStats struct {
-		Usage uint64 `json:"usage"`
-	} `json:"memory_stats"`
-	PidsStats struct {
-		Current int `json:"current"`
-	} `json:"pids_stats"`
+	CPUStats    apiCPUSample   `json:"cpu_stats"`
+	PrecpuStats apiCPUSample   `json:"precpu_stats"`
+	MemoryStats apiMemoryUsage `json:"memory_stats"`
+	PidsStats   apiPidsUsage   `json:"pids_stats"`
+}
+
+// apiMemoryUsage is the memory section of a stats response. Usage is the
+// container's resident total, which is the number reported as MemoryRSS.
+type apiMemoryUsage struct {
+	Usage uint64 `json:"usage"`
+}
+
+// apiPidsUsage is the pids section of a stats response.
+type apiPidsUsage struct {
+	Current int `json:"current"`
 }
 
 // apiInspectState matches the relevant fields from /containers/{id}/json.
