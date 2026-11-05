@@ -611,21 +611,36 @@ func (s *Server) replayFrom(afterSeq uint64, current state.Snapshot) (state.Snap
 
 func (s *Server) queueReplay(c *Conn, item stateReplay, scope state.Scope) {
 	if scope.Empty() {
-		if msg := marshalDelta(item.prev, item.next, c.include, scope); msg != nil {
-			c.enqueue(msg)
-		}
-		if c.events && len(item.events) > 0 {
-			for _, msg := range marshalEvents(item.events, c.include, scope, item.next.Groups) {
-				c.enqueue(msg)
-			}
-		}
+		s.queueUnscopedReplay(c, item, scope)
 		return
+	}
+	s.queueScopedReplay(c, item, scope)
+}
+
+// queueUnscopedReplay sends a whole transition to a client watching everything:
+// one delta, then the events that transition produced, if it wants events.
+func (s *Server) queueUnscopedReplay(c *Conn, item stateReplay, scope state.Scope) {
+	if msg := marshalDelta(item.prev, item.next, c.include, scope); msg != nil {
+		c.enqueue(msg)
 	}
 	if !c.events {
 		return
 	}
+	for _, msg := range marshalEvents(item.events, c.include, scope, item.next.Groups) {
+		c.enqueue(msg)
+	}
+}
+
+// queueScopedReplay sends only what falls inside the client's scope, and only
+// to a client that asked for events. The group set spans both sides of the
+// transition, because a scope may name a group that the change removes.
+func (s *Server) queueScopedReplay(c *Conn, item stateReplay, scope state.Scope) {
+	if !c.events {
+		return
+	}
 	groups := append(append([]state.Group{}, item.prev.Groups...), item.next.Groups...)
-	for _, msg := range marshalStateChanges(state.StateChangesForTransition(item.prev, item.next, item.events), scope, groups) {
+	changes := state.StateChangesForTransition(item.prev, item.next, item.events)
+	for _, msg := range marshalStateChanges(changes, scope, groups) {
 		c.enqueue(msg)
 	}
 }
