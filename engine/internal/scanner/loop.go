@@ -744,37 +744,7 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 		if reportFailure {
 			l.opts.Logger.Warn("scan failed, keeping last good state", "error", err)
 		}
-		// Failure notification is part of publication ordering too. A recovery
-		// must not commit between checking the outcome and reporting its error.
-		if lockErr := l.commitMu.LockContext(ctx); lockErr != nil {
-			return state.Snapshot{}, l.Cached(), false, lockErr
-		}
-		defer l.commitMu.Unlock()
-		if err := ctx.Err(); err != nil {
-			return l.abandoned(err)
-		}
-		l.mu.Lock()
-		if gen >= l.outcomeSeq {
-			l.outcomeSeq = gen
-			l.lastErr = err
-			l.lastAttemptAt = l.now()
-			l.refreshAttempted = max(l.refreshAttempted, refresh)
-		}
-		l.scans++
-		prev = l.snap
-		current := gen == l.outcomeSeq
-		superseded := !current && l.haveSnap && l.lastErr == nil
-		l.mu.Unlock()
-		if superseded {
-			return prev, prev, false, nil
-		}
-		if reportFailure && current {
-			l.opts.Publish(prev, prev, []state.Event{{
-				Kind: "scan_error", At: l.nowRFC3339(),
-				Data: map[string]any{"error": err.Error()},
-			}})
-		}
-		return state.Snapshot{}, prev, false, err
+		return l.recordScanFailure(ctx, gen, refresh, err, reportFailure, prev)
 	}
 
 	if wantHealth {
@@ -838,6 +808,54 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 		l.publish(prev, next, deriveEvents(prev, next, l.nowRFC3339()))
 	}
 	return next, prev, changed, nil
+}
+
+// recordScanFailure accounts for a collector that failed.
+//
+// Recording is part of publication ordering too, not just bookkeeping: a
+// recovery must not commit between deciding this outcome and reporting it, so
+// the commit lock is taken here and the result is published under it. An
+// attempt a later scan has already superseded records nothing and reports
+// nothing — its failure is no longer news.
+func (l *Loop) recordScanFailure(
+	ctx context.Context,
+	gen, refresh uint64,
+	failure error,
+	reportFailure bool,
+	prev state.Snapshot,
+) (state.Snapshot, state.Snapshot, bool, error) {
+	if lockErr := l.commitMu.LockContext(ctx); lockErr != nil {
+		return l.abandoned(lockErr)
+	}
+	defer l.commitMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return l.abandoned(err)
+	}
+
+	l.mu.Lock()
+	if gen >= l.outcomeSeq {
+		l.outcomeSeq = gen
+		l.lastErr = failure
+		l.lastAttemptAt = l.now()
+		l.refreshAttempted = max(l.refreshAttempted, refresh)
+	}
+	l.scans++
+	prev = l.snap
+	current := gen == l.outcomeSeq
+	stale := !current && l.haveSnap && l.lastErr == nil
+	l.mu.Unlock()
+
+	if stale {
+		return prev, prev, false, nil
+	}
+	if reportFailure && current {
+		l.opts.Publish(prev, prev, []state.Event{{
+			Kind: "scan_error",
+			At:   l.nowRFC3339(),
+			Data: map[string]any{"error": failure.Error()},
+		}})
+	}
+	return state.Snapshot{}, prev, false, failure
 }
 
 // commit is one finished scan on its way into the cache, in three parts: what
