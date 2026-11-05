@@ -9,42 +9,41 @@ import (
 )
 
 // Process is one row of the system process table: enough to walk ancestry and
-// to name a process in a result row.
+// to name a process in a result.
 type Process struct {
-	PID     int
-	PPID    int
+	PID  int
+	PPID int
+
 	Command string
 }
 
-// ProcessTable is a pid -> Process snapshot of the machine, taken once per
-// KillPorts call so that a tree walk never races a moving process table.
+// ProcessTable is a pid -> Process snapshot taken once per KillPorts call, so a
+// tree walk never races a moving process table.
 type ProcessTable map[int]Process
 
-// maxTreeDepth bounds every ancestry/descendant walk so a pathological or
-// cyclic table (pid 1 reparenting, a pid reported as its own parent) can never
-// spin forever.
+// maxTreeDepth bounds every walk. A pathological table — pid 1 reparenting, or
+// a pid claiming itself as parent — can never spin forever.
 const maxTreeDepth = 64
 
 // Children returns the direct children of pid, sorted by pid for determinism.
 func (t ProcessTable) Children(pid int) []int {
-	var out []int
-	for child, p := range t {
-		if p.PPID == pid && child != pid {
-			out = append(out, child)
+	children := make([]int, 0, 4)
+	for candidate, process := range t {
+		if process.PPID == pid && candidate != pid {
+			children = append(children, candidate)
 		}
 	}
-	sort.Ints(out)
-	return out
+	sort.Ints(children)
+	return children
 }
 
-// Descendants returns pid and every process below it, children before parents
-// (post-order). Signalling in this order stops a supervisor's workers before
-// the supervisor itself, so a restart-on-exit parent has nothing left to
-// restart. pid itself is always last.
+// Descendants returns pid and everything below it, children before parents
+// (post-order). Signalling in that order stops a supervisor's workers before
+// the supervisor, so a restart-on-exit parent has nothing left to restart; pid
+// itself is always last.
 //
-// Processes not present in the table (a pid the scan saw but ps did not, or a
-// table this platform cannot build) still yield the single pid, so callers get
-// the same shape either way.
+// A pid the table never saw still yields itself, so callers get one shape
+// whether or not this platform can build a table.
 func (t ProcessTable) Descendants(pid int) []int {
 	if pid <= 0 {
 		return nil
@@ -80,42 +79,42 @@ func (t ProcessTable) Descendants(pid int) []int {
 // Ancestors returns the chain above pid, closest parent first, stopping at
 // pid 1 (or at the first pid missing from the table).
 func (t ProcessTable) Ancestors(pid int) []int {
-	var out []int
-	seen := map[int]bool{pid: true}
-	for cur, depth := pid, 0; depth < maxTreeDepth; depth++ {
-		p, ok := t[cur]
-		if !ok || p.PPID <= 1 || seen[p.PPID] {
+	var chain []int
+	visited := map[int]bool{pid: true}
+	current := pid
+	for depth := 0; depth < maxTreeDepth; depth++ {
+		process, known := t[current]
+		if !known || process.PPID <= 1 || visited[process.PPID] {
 			break
 		}
-		seen[p.PPID] = true
-		out = append(out, p.PPID)
-		cur = p.PPID
+		visited[process.PPID] = true
+		chain = append(chain, process.PPID)
+		current = process.PPID
 	}
-	return out
+	return chain
 }
 
 // Name returns a short, human-usable name for a pid: the basename of the
 // command's first word. Empty when the pid is unknown.
 func (t ProcessTable) Name(pid int) string {
-	p, ok := t[pid]
-	if !ok || p.Command == "" {
+	process, known := t[pid]
+	if !known || process.Command == "" {
 		return ""
 	}
-	fields := strings.Fields(p.Command)
+	fields := strings.Fields(process.Command)
 	if len(fields) == 0 {
 		return ""
 	}
 	first := fields[0]
-	if i := strings.LastIndexAny(first, "/\\"); i >= 0 && i+1 < len(first) {
-		first = first[i+1:]
+	if slash := strings.LastIndexAny(first, `/\`); slash >= 0 && slash+1 < len(first) {
+		first = first[slash+1:]
 	}
 	return first
 }
 
-// scanProcessTable snapshots the process table. On unix this is the same
-// `ps -A` call the scanner's enrichment uses; on Windows there is no cheap
-// equivalent and none is needed, because the Windows killer delegates tree
-// termination to `taskkill /T`.
+// scanProcessTable snapshots the machine. Unix uses the same `ps -A` call as
+// the scanner's enrichment; Windows has no cheap equivalent and needs none,
+// because its tree termination is delegated to `taskkill /T`.
 func scanProcessTable() ProcessTable {
 	table, _ := scanProcessTableContext(context.Background())
 	return table
@@ -140,36 +139,37 @@ func scanProcessTableContext(ctx context.Context) (ProcessTable, error) {
 	return parseProcessTable(string(out)), nil
 }
 
-// parseProcessTable parses `ps -A -o pid=,ppid=,command=` output. Split out so
-// tests can feed a fixture without running ps.
+// parseProcessTable reads `ps -A -o pid=,ppid=,command=` output. It is split
+// out so tests can feed a fixture without running ps.
 func parseProcessTable(out string) ProcessTable {
 	table := ProcessTable{}
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			continue
-		}
-		pid, err := strconv.Atoi(fields[0])
-		if err != nil {
-			continue
-		}
-		ppid, err := strconv.Atoi(fields[1])
-		if err != nil {
-			continue
-		}
-		// Consume the two numeric columns by position. Searching for PPID's
-		// digits can match inside PID (100 -> 1) and corrupt the command tail.
-		command := strings.TrimSpace(line[len(fields[0]):])
-		command = strings.TrimSpace(command[len(fields[1]):])
-		table[pid] = Process{
-			PID:     pid,
-			PPID:    ppid,
-			Command: command,
+		if process, ok := parseProcessRow(strings.TrimSpace(line)); ok {
+			table[process.PID] = process
 		}
 	}
 	return table
+}
+
+func parseProcessRow(line string) (Process, bool) {
+	if line == "" {
+		return Process{}, false
+	}
+	columns := strings.Fields(line)
+	if len(columns) < 3 {
+		return Process{}, false
+	}
+	pid, err := strconv.Atoi(columns[0])
+	if err != nil {
+		return Process{}, false
+	}
+	ppid, err := strconv.Atoi(columns[1])
+	if err != nil {
+		return Process{}, false
+	}
+	// The two numeric columns are consumed by position: searching for PPID's
+	// digits can match inside PID (100 → 1) and corrupt the command tail.
+	command := strings.TrimSpace(line[len(columns[0]):])
+	command = strings.TrimSpace(command[len(columns[1]):])
+	return Process{PID: pid, PPID: ppid, Command: command}, true
 }
