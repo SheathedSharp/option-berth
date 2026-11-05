@@ -5,46 +5,39 @@ import (
 	"strings"
 )
 
-// The other half of PrefixKey: taking a delta key apart again. Clients can
-// hand keys from the stream back as selectors without each handler learning
+// This file is the inverse of PrefixKey: it takes a delta key apart again, so
+// a client can feed keys from the stream back as selectors without learning
 // the grammar.
 
-// SplitHostPrefix takes a `"<host>/<rest>"` key apart. The prefix is only read
-// as a host when known says so, which keeps a group whose name happens to
-// contain a slash from being mistaken for a labeled row: callers provide the
-// known names, so the parser never has to guess.
-//
-// A key with no recognised prefix comes back unchanged with an empty host,
-// which is the localhost case and the overwhelmingly common one.
+// SplitHostPrefix separates a `"<host>/<rest>"` key. A leading segment counts
+// as a host only when it is localhost or known says so, which keeps a group
+// whose name contains a slash from being read as a labeled row. Anything else
+// is returned whole with an empty host — the localhost case.
 func SplitHostPrefix(key string, known func(string) bool) (host, rest string) {
-	name, after, found := strings.Cut(key, "/")
-	if !found || name == "" || after == "" {
+	name, tail, hasSlash := strings.Cut(key, "/")
+	switch {
+	case !hasSlash || name == "" || tail == "":
 		return "", key
-	}
-	if name == LocalhostName {
-		return LocalhostName, after
-	}
-	if known != nil && known(name) {
-		return name, after
+	case name == LocalhostName:
+		return LocalhostName, tail
+	case known != nil && known(name):
+		return name, tail
 	}
 	return "", key
 }
 
 // ParsePortKey reads the `"<port>"` or `"<port>:<bind_address>"` half of a port
-// key. The bind address may itself contain colons (`"::1"`, `"::"`), so the
-// split is at the first one only.
+// key. A bind address may contain colons itself (`"::1"`, `"::"`), so only the
+// first colon separates it.
 func ParsePortKey(key string) (port int, bind string, ok bool) {
 	key = strings.TrimSpace(key)
-	if key == "" {
+	head, tail, hasBind := strings.Cut(key, ":")
+	number, err := strconv.Atoi(head)
+	if err != nil || number < 1 || number > 65535 {
 		return 0, "", false
 	}
-	head, tail, found := strings.Cut(key, ":")
-	n, err := strconv.Atoi(head)
-	if err != nil || n <= 0 || n > 65535 {
-		return 0, "", false
+	if !hasBind {
+		return number, "", true
 	}
-	if !found {
-		return n, "", true
-	}
-	return n, tail, true
+	return number, tail, true
 }

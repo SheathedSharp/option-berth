@@ -2,23 +2,24 @@ package state
 
 import "testing"
 
-// TestDiffPublishesACheckoutChange: a checkout switching branches changes
-// nothing but its group's branch, and that still has to reach subscribers —
-// the group page shows it.
-func TestDiffPublishesACheckoutChange(t *testing.T) {
-	group := func(branch, worktree string) Group {
-		return Group{Name: "shop@feat", Repo: "shop", Worktree: worktree, Branch: branch,
-			Members: []int{}, Services: []Service{}}
-	}
-	prev := Snapshot{Groups: []Group{group("main", "feat")}}
-
-	for _, next := range []Group{group("fix", "feat"), group("main", "")} {
-		d := diff(prev, Snapshot{Groups: []Group{next}}, false)
-		if len(d.Groups.Updated) != 1 {
-			t.Errorf("changing %+v published %+v, want one updated group", next, d.Groups)
+// A checkout switching branches changes nothing but its group's branch, and
+// subscribers still need to see it: the group page shows the branch.
+func TestACheckoutChangeReachesSubscribers(t *testing.T) {
+	at := func(branch, worktree string) Group {
+		return Group{
+			Name: "shop@feat", Repo: "shop", Worktree: worktree, Branch: branch,
+			Members: []int{}, Services: []Service{},
 		}
 	}
-	if d := diff(prev, prev, false); len(d.Groups.Updated) != 0 {
-		t.Errorf("an unchanged group published %+v", d.Groups)
+	before := Snapshot{Groups: []Group{at("main", "feat")}}
+
+	for _, after := range []Group{at("fix", "feat"), at("main", "")} {
+		delta := diff(before, Snapshot{Groups: []Group{after}}, false)
+		if len(delta.Groups.Updated) != 1 {
+			t.Errorf("changing %+v published %+v, want one update", after, delta.Groups)
+		}
+	}
+	if delta := diff(before, before, false); len(delta.Groups.Updated) != 0 {
+		t.Errorf("an unchanged group published %+v", delta.Groups)
 	}
 }

@@ -2,15 +2,14 @@ package state
 
 import "cmp"
 
-// Diff computes the delta from prev to next, ignoring Stats when deciding
-// whether a port changed — a busy process must not produce a delta on every
-// scan. A port whose PID changed is reported as a remove plus an add (a
-// restart), never an update, so clients can tell "same server" from "new
-// process on the same socket".
+// Diff computes the delta from prev to next. Stats are ignored when deciding
+// whether a port changed: a busy process must not produce a delta on every
+// scan. A PID change becomes remove + add (a restart), never an update, so a
+// client can tell "same server" from "new process on the same socket".
 func Diff(prev, next Snapshot) Delta { return diff(prev, next, false) }
 
-// DiffWithStats is Diff except that a stats-only change counts as an update.
-// Used for subscribers that opted into stats.
+// DiffWithStats is Diff, except that a stats-only change counts as an update.
+// It serves subscribers that opted into stats.
 func DiffWithStats(prev, next Snapshot) Delta { return diff(prev, next, true) }
 
 func diff(prev, next Snapshot, withStats bool) Delta {
@@ -18,11 +17,15 @@ func diff(prev, next Snapshot, withStats bool) Delta {
 		Seq:   next.Seq,
 		At:    next.At,
 		Ports: diffPorts(prev.Ports, next.Ports, withStats),
-		Groups: diffKeyed(prev.Groups, next.Groups,
-			func(g Group) string { return g.Key() }, groupsEqual),
-		Sessions: diffKeyed(prev.Sessions, next.Sessions,
-			func(s SessionRecord) string { return s.Key() },
-			func(a, b SessionRecord) bool { return a == b }),
+		Groups: diffKeyed(
+			prev.Groups, next.Groups,
+			Group.Key, groupsEqual,
+		),
+		Sessions: diffKeyed(
+			prev.Sessions, next.Sessions,
+			SessionRecord.Key,
+			func(a, b SessionRecord) bool { return a == b },
+		),
 	}
 }
 
@@ -50,14 +53,17 @@ func diffUnorderedPorts(prev, next []Port, withStats bool) Change[Port] {
 		identity := portIdentity(p)
 		seen[identity] = struct{}{}
 		old, existed := before[identity]
-		switch {
-		case !existed:
+		if !existed {
 			ch.Added = append(ch.Added, p)
-		case old.PID != p.PID:
-			// Restart: the socket is the same but a different process owns it.
+			continue
+		}
+		if old.PID != p.PID {
+			// The socket is unchanged but a different process owns it.
 			ch.Removed = append(ch.Removed, p.Key())
 			ch.Added = append(ch.Added, p)
-		case !portsEqual(old, &p, withStats):
+			continue
+		}
+		if !portsEqual(old, &p, withStats) {
 			ch.Updated = append(ch.Updated, p)
 		}
 	}
@@ -93,30 +99,36 @@ func diffKeyed[T any](prev, next []T, key func(T) string, equal func(a, b T) boo
 		before[key(prev[i])] = &prev[i]
 	}
 
-	ch := emptyChange[T]()
-	seen := make(map[string]bool, len(next))
-	for _, v := range next {
-		k := key(v)
-		seen[k] = true
-		old, existed := before[k]
-		switch {
-		case !existed:
-			ch.Added = append(ch.Added, v)
-		case !equal(*old, v):
-			ch.Updated = append(ch.Updated, v)
+	change := emptyChange[T]()
+	present := make(map[string]bool, len(next))
+	for _, row := range next {
+		identity := key(row)
+		present[identity] = true
+		previous, existed := before[identity]
+		if !existed {
+			change.Added = append(change.Added, row)
+			continue
+		}
+		if !equal(*previous, row) {
+			change.Updated = append(change.Updated, row)
 		}
 	}
-	for _, v := range prev {
-		if !seen[key(v)] {
-			ch.Removed = append(ch.Removed, key(v))
+	for _, row := range prev {
+		identity := key(row)
+		if !present[identity] {
+			change.Removed = append(change.Removed, identity)
 		}
 	}
-	return ch
+	return change
 }
 
-// emptyChange returns a Change whose slices marshal as [] rather than null.
+// emptyChange returns a Change whose slices encode as [] rather than null.
 func emptyChange[T any]() Change[T] {
-	return Change[T]{Added: []T{}, Updated: []T{}, Removed: []string{}}
+	return Change[T]{
+		Added:   make([]T, 0),
+		Updated: make([]T, 0),
+		Removed: make([]string, 0),
+	}
 }
 
 // comparePortIdentity orders exactly the identity used by the hash fallback.
