@@ -28,7 +28,7 @@ func EnrichPortsContext(ctx context.Context, pp []ports.ListeningPort) error {
 func StopContainerContext(ctx context.Context, name string) error {
 	round, cancel := context.WithTimeout(ctx, CLITimeout)
 	defer cancel()
-	err := command(round, "stop", name).Run()
+	err := dockerCommand(round, "stop", name).Run()
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}

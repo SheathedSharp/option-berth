@@ -319,7 +319,7 @@ func readHTTPBody(conn net.Conn) ([]byte, error) {
 func allContainerStatsCLI() map[string]*ContainerStats {
 	result := make(map[string]*ContainerStats)
 
-	out, err := output("stats", "--no-stream", "--format",
+	out, err := dockerOutput("stats", "--no-stream", "--format",
 		"{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.PIDs}}")
 	if err != nil {
 		return result
@@ -358,7 +358,7 @@ func allContainerStatsCLI() map[string]*ContainerStats {
 	}
 	if len(names) > 0 {
 		args := append([]string{"inspect", "--format", "{{.Name}}\t{{.State.Status}}\t{{.State.StartedAt}}"}, names...)
-		inspectOut, err := output(args...)
+		inspectOut, err := dockerOutput(args...)
 		if err == nil {
 			inspectScanner := bufio.NewScanner(strings.NewReader(strings.TrimSpace(string(inspectOut))))
 			for inspectScanner.Scan() {
@@ -435,7 +435,7 @@ func formatContainerDuration(d time.Duration) string {
 
 // StopContainer stops a Docker container by name using `docker stop`.
 func StopContainer(name string) error {
-	cmd, stop := cli("stop", name)
+	cmd, stop := timedCommand("stop", name)
 	defer stop()
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to stop container %s: %w", name, err)
@@ -456,7 +456,7 @@ func listContainers() ([]container, error) {
 
 // listContainersCtx runs `docker ps` bound to ctx and parses the output.
 func listContainersCtx(ctx context.Context) ([]container, error) {
-	out, err := command(ctx, "ps", "--format", psFormat).Output()
+	out, err := dockerCommand(ctx, "ps", "--format", psFormat).Output()
 	if err != nil {
 		return nil, err
 	}
