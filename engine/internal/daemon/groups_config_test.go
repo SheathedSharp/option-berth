@@ -503,16 +503,19 @@ func TestGroupsConfigSetIsAtomic(t *testing.T) {
 	}
 }
 
-// TestGroupsConfigSetEditErrors walks the codes the new lists can return.
+// TestGroupsConfigSetEditErrors walks the refusals the edit lists can produce.
+// Every one of them must name a code a client can branch on, carry a hint, and
+// leave the file untouched — a rejected edit that still writes is worse than an
+// accepted one that fails later.
 func TestGroupsConfigSetEditErrors(t *testing.T) {
 	fixture := newConfigCase(t)
 	c, path := fixture.client, fixture.path
 	before := readFixture(t, path)
 
 	cases := []struct {
-		name   string
-		params rpc.GroupsConfigSetParams
-		want   string
+		label string
+		edit  rpc.GroupsConfigSetParams
+		want  string
 	}{
 		{"a name the file already has", rpc.GroupsConfigSetParams{
 			Path: path, Add: []groups.ServiceAdd{{Name: "api", Port: 9000}},
@@ -537,23 +540,24 @@ func TestGroupsConfigSetEditErrors(t *testing.T) {
 			Path: path, Add: []groups.ServiceAdd{{Name: "worker", Port: 9000, DependsOn: []string{"nope"}}},
 		}, "invalid_config"},
 	}
+
 	for _, tc := range cases {
-		e := c.call("groups.config.set", tc.params, nil)
-		if e == nil {
-			t.Errorf("%s: should have failed", tc.name)
-			continue
-		}
-		if e.Data.Code != tc.want {
-			t.Errorf("%s: error = %+v, want %s", tc.name, e, tc.want)
-		}
-		if e.Data.Hint == "" {
-			t.Errorf("%s: error carries no hint: %+v", tc.name, e)
-		}
+		t.Run(tc.label, func(t *testing.T) {
+			refusal := c.call("groups.config.set", tc.edit, nil)
+			if refusal == nil {
+				t.Fatalf("the edit was accepted, want %s", tc.want)
+			}
+			if refusal.Data.Code != tc.want {
+				t.Fatalf("code = %q, want %q (%+v)", refusal.Data.Code, tc.want, refusal)
+			}
+			if refusal.Data.Hint == "" {
+				t.Errorf("the refusal carries no hint: %+v", refusal)
+			}
+		})
 	}
 
-	after := readFixture(t, path)
-	if after != before {
-		t.Errorf("a failed edit changed the file:\n%s", after)
+	if after := readFixture(t, path); after != before {
+		t.Errorf("a refused edit changed the file:\n%s", after)
 	}
 }
 
