@@ -13,23 +13,24 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// rootKeyOrder is where a top-level key belongs in a `oberth.yaml`. It is the
-// same idea as keyOrder one level up: a `services:` list this package has to
-// create lands where a hand-written file would put it.
+// rootKeyOrder places a top-level key in a manifest. It mirrors keyOrder one
+// level down: a `services:` list this package creates still lands where a
+// hand-written file would put it.
 var rootKeyOrder = []string{"name", "services", "ports", FieldWorktreePorts}
 
 // IntChange is an edit to one optional integer key. The zero value leaves the
-// key alone; Set with a nil Value removes it; Set with a Value writes it. It
-// is how the wire's three states — absent, null, a number — reach the file.
+// key untouched; Set with a nil Value removes it; Set with a Value writes it.
+// That is how the wire's absent / null / number reach the file.
 type IntChange struct {
-	Set   bool
+	Set bool
+
 	Value *int
 }
 
-// SetInt is the change that writes n.
+// SetInt writes n.
 func SetInt(n int) IntChange { return IntChange{Set: true, Value: &n} }
 
-// ClearInt is the change that removes the key.
+// ClearInt removes the key.
 func ClearInt() IntChange { return IntChange{Set: true} }
 
 // ServiceAdd is a service to append to a `oberth.yaml`. It is the whole
@@ -87,93 +88,102 @@ func AddFrom(s Service) ServiceAdd {
 	}
 }
 
-// AddsFrom is AddFrom over a whole config, which is how a proposal becomes the
-// list of services to merge into a file that already exists.
+// AddsFrom turns a whole config into the add list a proposal merges into an
+// existing file.
 func AddsFrom(cfg *Config) []ServiceAdd {
-	out := make([]ServiceAdd, 0, len(cfg.Services))
-	for _, s := range cfg.Services {
-		out = append(out, AddFrom(s))
+	adds := make([]ServiceAdd, 0, len(cfg.Services))
+	for _, service := range cfg.Services {
+		adds = append(adds, AddFrom(service))
 	}
-	return out
+	return adds
 }
 
-// ServiceRename renames a service. Every depends_on entry naming From is
-// rewritten too, so the file stays valid across the rename.
+// ServiceRename renames a service and every depends_on entry naming it, so the
+// file stays valid across the rename.
 type ServiceRename struct {
 	From string `json:"from"`
 	To   string `json:"to"`
 }
 
-// ConfigEdit is one atomic set of changes to a `oberth.yaml`. The four lists
-// are applied in the order the fields are declared — remove, rename, add, then
-// the metadata patches — and each one sees the file as the previous ones left
-// it. Nothing is written unless every step succeeds and the result still
-// parses, so a failed edit leaves the file byte-identical.
+// ConfigEdit is one atomic set of changes to a manifest. The lists are applied
+// in declaration order — remove, rename, add, then metadata patches — and each
+// step sees the file the previous step left. Nothing is written unless every
+// step succeeds and the result still parses, so a failed edit leaves the file
+// byte-identical.
 //
-// Removing first is what makes `{"remove": ["old"], "add": [{"name": "new",
-// "port": 8000}]}` work when the two want the same port: the port is free by
-// the time the add is checked.
+// Removing first is what lets `{"remove": ["old"], "add": [{"name": "new",
+// "port": 8000}]}` reuse a port: by the time the add is checked, the port has
+// been released.
 type ConfigEdit struct {
-	Remove   []string        `json:"remove,omitempty"`
-	Rename   []ServiceRename `json:"rename,omitempty"`
-	Add      []ServiceAdd    `json:"add,omitempty"`
-	Services []ServiceEdit   `json:"services,omitempty"`
-	// WorktreePorts sets or removes the top-level worktree_ports key. It is
-	// applied last and touches no service, so it never shows in Affected.
+	// Structure.
+	Remove []string        `json:"remove,omitempty"`
+	Rename []ServiceRename `json:"rename,omitempty"`
+	Add    []ServiceAdd    `json:"add,omitempty"`
+
+	// Service metadata patches.
+	Services []ServiceEdit `json:"services,omitempty"`
+
+	// WorktreePorts sets or removes the top-level worktree_ports key. It runs
+	// last and touches no service, so it never appears in Affected.
 	WorktreePorts IntChange `json:"-"`
 }
 
-// Empty reports whether the edit asks for nothing at all.
+// Empty reports whether the edit asks for nothing.
 func (e ConfigEdit) Empty() bool {
-	return len(e.Remove) == 0 && len(e.Rename) == 0 && len(e.Add) == 0 && len(e.Services) == 0 &&
-		!e.WorktreePorts.Set
+	if e.WorktreePorts.Set {
+		return false
+	}
+	return len(e.Remove)+len(e.Rename)+len(e.Add)+len(e.Services) == 0
 }
 
-// Affected is the service names the edit touched, in the order it applied
-// them: a removed name, a rename's new name, an added name, a patched name.
-// It is what a mutating method reports as `affected` (contract §22).
+// Affected lists the service names the edit touched, in application order: a
+// removed name, a rename's new name, an added name, a patched name. A mutating
+// method reports it as `affected`.
 func (e ConfigEdit) Affected() []string {
-	out := make([]string, 0, len(e.Remove)+len(e.Rename)+len(e.Add)+len(e.Services))
-	for _, name := range e.Remove {
-		out = append(out, name)
+	names := make([]string, 0, len(e.Remove)+len(e.Rename)+len(e.Add)+len(e.Services))
+	names = append(names, e.Remove...)
+	for _, rename := range e.Rename {
+		names = append(names, rename.To)
 	}
-	for _, r := range e.Rename {
-		out = append(out, r.To)
+	for _, add := range e.Add {
+		names = append(names, add.Name)
 	}
-	for _, a := range e.Add {
-		out = append(out, a.Name)
+	for _, edit := range e.Services {
+		names = append(names, edit.Name)
 	}
-	for _, s := range e.Services {
-		out = append(out, s.Name)
-	}
-	return out
+	return names
 }
 
-// ServiceConflictError is returned when an add or a rename would give a file
-// two services with the same name, or two services claiming the same port. It
-// maps onto the contract's `conflict`.
+// ServiceConflictError reports an add or rename that would give a file two
+// services with one name, or two services claiming one port. It maps onto the
+// contract's `conflict`.
 type ServiceConflictError struct {
 	Path string
-	Name string // the service already holding the name or the port
-	Port int    // non-zero when the clash is a port rather than a name
+	// Name is the service already holding the name or the port.
+	Name string
+	// Port is non-zero when the clash is a port rather than a name.
+	Port int
 }
 
 func (e *ServiceConflictError) Error() string {
-	if e.Port != 0 {
-		return fmt.Sprintf("port %d is already service %q in %s", e.Port, e.Name, e.Path)
+	if e.Port == 0 {
+		return fmt.Sprintf("service %q already exists in %s", e.Name, e.Path)
 	}
-	return fmt.Sprintf("service %q already exists in %s", e.Name, e.Path)
+	return fmt.Sprintf("port %d is already service %q in %s", e.Port, e.Name, e.Path)
 }
 
-// RenderEdit applies an edit to the `oberth.yaml` at path and returns the bytes
-// it would write, without writing them. The rewrite goes through the YAML node
-// API rather than marshalling a struct, so comments, key order and the
-// author's own formatting survive (contract §13.2).
+// RenderEdit applies an edit to the manifest at path and returns the bytes it
+// would write, without writing them. It walks the YAML node tree rather than
+// marshalling a struct, so comments, key order and the author's formatting
+// survive.
 //
 // The returned Config is the file as it would then stand: it is parsed from the
-// rendered bytes, so what a later Load sees is what has been validated here.
+// rendered bytes, so a later Load sees exactly what was validated here.
 func RenderEdit(path string, edit ConfigEdit) ([]byte, *Config, error) {
-	return render(path, func(abs string, root *yaml.Node) error { return applyEdit(abs, root, edit) })
+	apply := func(abs string, root *yaml.Node) error {
+		return applyEdit(abs, root, edit)
+	}
+	return render(path, apply)
 }
 
 // SetConfigName writes a new top-level `name:` into a `oberth.yaml` and returns
@@ -181,137 +191,179 @@ func RenderEdit(path string, edit ConfigEdit) ([]byte, *Config, error) {
 // other edit, so comments and formatting survive, and nothing is written
 // unless the result validates. `groups.rename` renames a file project with it.
 func SetConfigName(path, name string) (*Config, error) {
-	out, cfg, err := render(path, func(_ string, root *yaml.Node) error {
+	rename := func(_ string, root *yaml.Node) error {
 		setKeyIn(root, "name", strNode(name), rootKeyOrder)
 		return nil
-	})
+	}
+	rendered, cfg, err := render(path, rename)
 	if err != nil {
 		return nil, err
 	}
-	if err := WriteConfigFile(cfg.Path, out); err != nil {
+	if err := WriteConfigFile(cfg.Path, rendered); err != nil {
 		return nil, err
 	}
 	return cfg, nil
 }
 
-// render reads the file at path, lets apply change its node tree, and returns
-// the bytes that would be written together with the config they parse to.
+// render reads path, lets apply change its node tree, and returns the bytes
+// that would be written together with the config they parse to.
 func render(path string, apply func(abs string, root *yaml.Node) error) ([]byte, *Config, error) {
-	abs, err := filepath.Abs(path)
+	resolved, err := filepath.Abs(path)
 	if err != nil {
 		return nil, nil, err
 	}
-	data, err := os.ReadFile(abs)
+	contents, err := os.ReadFile(resolved)
 	if err != nil {
 		return nil, nil, err
 	}
+	doc, err := decodeSingleDocument(contents, resolved)
+	if err != nil {
+		return nil, nil, err
+	}
+	root := documentRoot(doc)
+	if root == nil || root.Kind != yaml.MappingNode {
+		return nil, nil, &ConfigError{Path: resolved, Problems: []string{"the file is not a YAML mapping"}}
+	}
+	if err := apply(resolved, root); err != nil {
+		return nil, nil, err
+	}
+	return renderAndParse(resolved, doc)
+}
 
+// decodeSingleDocument checks the document boundary before anything edits it.
+// Checking only the rendered output would silently erase every document after
+// the first.
+func decodeSingleDocument(data []byte, abs string) (*yaml.Node, error) {
 	var doc yaml.Node
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	if err := decoder.Decode(&doc); err != nil {
-		return nil, nil, &ConfigError{Path: abs, Problems: []string{err.Error()}}
+		return nil, &ConfigError{Path: abs, Problems: []string{err.Error()}}
 	}
-	// Validate the document boundary before editing. Checking only the rendered
-	// output would silently erase every document after the first. Semantic
-	// validation remains after edits so a rename can still repair an invalid name.
 	var extra yaml.Node
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		problem := "expected a single YAML document"
 		if err != nil {
 			problem += ": " + err.Error()
 		}
-		return nil, nil, &ConfigError{Path: abs, Problems: []string{problem}}
+		return nil, &ConfigError{Path: abs, Problems: []string{problem}}
 	}
-	root := documentRoot(&doc)
-	if root == nil || root.Kind != yaml.MappingNode {
-		return nil, nil, &ConfigError{Path: abs, Problems: []string{"the file is not a YAML mapping"}}
-	}
+	return &doc, nil
+}
 
-	if err := apply(abs, root); err != nil {
-		return nil, nil, err
-	}
-
-	out, err := encode(&doc)
+// renderAndParse validates the bytes that would hit the disk, not the node
+// tree, so a rename can still repair a name that only the final file shows.
+func renderAndParse(abs string, doc *yaml.Node) ([]byte, *Config, error) {
+	rendered, err := encode(doc)
 	if err != nil {
 		return nil, nil, err
 	}
-	// Validate the bytes that would hit the disk, not the node tree.
-	cfg, err := parse(abs, out)
+	parsed, err := parse(abs, rendered)
 	if err != nil {
 		return nil, nil, err
 	}
-	return out, cfg, nil
+	return rendered, parsed, nil
 }
 
 // EditServices applies an edit and writes the file back. Nothing reaches the
 // disk unless the whole edit succeeded and the result validates.
 func EditServices(path string, edit ConfigEdit) (*Config, error) {
-	out, cfg, err := RenderEdit(path, edit)
+	rendered, cfg, err := RenderEdit(path, edit)
 	if err != nil {
 		return nil, err
 	}
-	if err := WriteConfigFile(cfg.Path, out); err != nil {
+	if err := WriteConfigFile(cfg.Path, rendered); err != nil {
 		return nil, err
 	}
 	return cfg, nil
 }
 
-// applyEdit mutates the node tree in place. It returns on the first problem,
-// and because the caller only writes after it returns nil, a half-applied tree
-// is thrown away rather than rendered.
+// applyEdit mutates the node tree in place and stops at the first problem.
+// The caller writes only after nil returns, so a half-applied tree is thrown
+// away instead of rendered.
 func applyEdit(abs string, root *yaml.Node, edit ConfigEdit) error {
-	for _, name := range edit.Remove {
+	if err := removeServices(abs, root, edit.Remove); err != nil {
+		return err
+	}
+	if err := renameServices(abs, root, edit.Rename); err != nil {
+		return err
+	}
+	if err := addServices(abs, root, edit.Add); err != nil {
+		return err
+	}
+	if err := patchServices(root, abs, edit.Services); err != nil {
+		return err
+	}
+	return applyWorktreePorts(root, edit.WorktreePorts)
+}
+
+func removeServices(abs string, root *yaml.Node, names []string) error {
+	for _, name := range names {
 		if err := removeService(abs, root, name); err != nil {
 			return err
 		}
 	}
-	for _, r := range edit.Rename {
-		if err := renameService(abs, root, r); err != nil {
+	return nil
+}
+
+func renameServices(abs string, root *yaml.Node, renames []ServiceRename) error {
+	for _, rename := range renames {
+		if err := renameService(abs, root, rename); err != nil {
 			return err
 		}
 	}
-	for _, add := range edit.Add {
+	return nil
+}
+
+func addServices(abs string, root *yaml.Node, adds []ServiceAdd) error {
+	for _, add := range adds {
 		if err := addService(abs, root, add); err != nil {
 			return err
 		}
 	}
+	return nil
+}
+
+func patchServices(root *yaml.Node, abs string, edits []ServiceEdit) error {
 	services := mappingValue(root, "services")
-	for _, e := range edit.Services {
-		// The service is checked even for a patch that changes nothing: a
-		// caller naming a service that is not there has made a mistake, and an
-		// empty patch is not the place to swallow it.
-		svc := findService(services, e.Name)
-		if svc == nil {
-			return &ServiceNotFoundError{Path: abs, Name: e.Name}
+	for _, edit := range edits {
+		// A named service is checked even for an empty patch: naming one that
+		// is not there is a mistake, and an empty patch is no place to hide it.
+		service := findService(services, edit.Name)
+		if service == nil {
+			return &ServiceNotFoundError{Path: abs, Name: edit.Name}
 		}
-		if e.Patch.Empty() {
+		if edit.Patch.Empty() {
 			continue
 		}
-		applyPatch(svc, e.Patch)
+		applyPatch(service, edit.Patch)
 	}
-	if c := edit.WorktreePorts; c.Set {
-		if c.Value == nil {
-			removeKey(root, FieldWorktreePorts)
-		} else {
-			// setKeyIn edits an existing value in place, so a comment beside
-			// `worktree_ports:` stays on that line.
-			setKeyIn(root, FieldWorktreePorts,
-				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.Itoa(*c.Value)}, rootKeyOrder)
-		}
+	return nil
+}
+
+func applyWorktreePorts(root *yaml.Node, change IntChange) error {
+	if !change.Set {
+		return nil
 	}
+	if change.Value == nil {
+		removeKey(root, FieldWorktreePorts)
+		return nil
+	}
+	// setKeyIn edits an existing value in place, keeping any comment beside
+	// `worktree_ports:` on that line.
+	setKeyIn(root, FieldWorktreePorts, intNode(*change.Value), rootKeyOrder)
 	return nil
 }
 
 // removeService drops a service from the list and from every other service's
 // depends_on, so the file that is left still validates.
 func removeService(abs string, root *yaml.Node, name string) error {
-	services := mappingValue(root, "services")
-	at := serviceIndex(services, name)
-	if at < 0 {
+	list := mappingValue(root, "services")
+	position := serviceIndex(list, name)
+	if position < 0 {
 		return &ServiceNotFoundError{Path: abs, Name: name}
 	}
-	services.Content = slices.Delete(services.Content, at, at+1)
-	for _, item := range services.Content {
+	list.Content = slices.Delete(list.Content, position, position+1)
+	for _, item := range list.Content {
 		if item.Kind == yaml.MappingNode {
 			dropDependency(item, name)
 		}
@@ -320,25 +372,25 @@ func removeService(abs string, root *yaml.Node, name string) error {
 }
 
 // renameService rewrites a service's name key and every reference to it.
-func renameService(abs string, root *yaml.Node, r ServiceRename) error {
-	services := mappingValue(root, "services")
-	svc := findService(services, r.From)
-	if svc == nil {
-		return &ServiceNotFoundError{Path: abs, Name: r.From}
+func renameService(abs string, root *yaml.Node, rename ServiceRename) error {
+	list := mappingValue(root, "services")
+	service := findService(list, rename.From)
+	if service == nil {
+		return &ServiceNotFoundError{Path: abs, Name: rename.From}
 	}
-	if r.From != r.To {
-		if findService(services, r.To) != nil {
-			return &ServiceConflictError{Path: abs, Name: r.To}
+	if rename.From != rename.To {
+		if findService(list, rename.To) != nil {
+			return &ServiceConflictError{Path: abs, Name: rename.To}
 		}
 	}
-	// The name scalar is edited in place, so a comment sitting on that line
-	// stays on it and the key keeps its position in the mapping.
-	if node := mappingValue(svc, "name"); node != nil {
-		node.Value = r.To
+	// The name scalar is edited in place, so a comment on that line stays on
+	// it and the key keeps its position in the mapping.
+	if node := mappingValue(service, "name"); node != nil {
+		node.Value = rename.To
 	}
-	for _, item := range services.Content {
+	for _, item := range list.Content {
 		if item.Kind == yaml.MappingNode {
-			renameDependency(item, r.From, r.To)
+			renameDependency(item, rename.From, rename.To)
 		}
 	}
 	return nil
@@ -351,86 +403,89 @@ func addService(abs string, root *yaml.Node, add ServiceAdd) error {
 }
 
 func appendServiceNode(abs string, root *yaml.Node, add Service, node *yaml.Node) error {
-	services := mappingValue(root, "services")
-	if services == nil || services.Kind != yaml.SequenceNode {
-		if services != nil {
-			// A `services:` that is not a list is a file this package will not
-			// guess at; say so rather than silently replacing it.
-			return &ConfigError{Path: abs, Problems: []string{"services is not a list"}}
-		}
-		services = &yaml.Node{Kind: yaml.SequenceNode}
-		setKeyIn(root, "services", services, rootKeyOrder)
+	services, err := serviceSequence(abs, root)
+	if err != nil {
+		return err
 	}
 	if findService(services, add.Name) != nil {
 		return &ServiceConflictError{Path: abs, Name: add.Name}
 	}
 	if add.Port != 0 {
-		if holder := servicePortHolder(services, add.Port); holder != "" {
-			return &ServiceConflictError{Path: abs, Name: holder, Port: add.Port}
+		if owner := servicePortHolder(services, add.Port); owner != "" {
+			return &ServiceConflictError{Path: abs, Name: owner, Port: add.Port}
 		}
 	}
 	services.Content = append(services.Content, node)
 	return nil
 }
 
+// serviceSequence returns the `services:` list, creating it when the file has
+// none. A `services:` that is not a list is refused rather than guessed at.
+func serviceSequence(abs string, root *yaml.Node) (*yaml.Node, error) {
+	services := mappingValue(root, "services")
+	if services == nil {
+		created := &yaml.Node{Kind: yaml.SequenceNode}
+		setKeyIn(root, "services", created, rootKeyOrder)
+		return created, nil
+	}
+	if services.Kind != yaml.SequenceNode {
+		return nil, &ConfigError{Path: abs, Problems: []string{"services is not a list"}}
+	}
+	return services, nil
+}
+
 // serviceNode renders one added service as the mapping the encoder writes.
 // Keys go in through setKey, so the order matches what `oberth init` produces
 // and what a hand-written file looks like.
 func serviceNode(add ServiceAdd) *yaml.Node {
-	m := &yaml.Node{Kind: yaml.MappingNode}
-	setKey(m, "name", strNode(add.Name))
-	if add.Prepare != "" {
-		setKey(m, "prepare", strNode(add.Prepare))
-	}
-	if len(add.PrepareInputs) > 0 {
-		seq := &yaml.Node{Kind: yaml.SequenceNode, Style: yaml.FlowStyle}
-		for _, input := range add.PrepareInputs {
-			seq.Content = append(seq.Content, strNode(input))
-		}
-		setKey(m, "prepare_inputs", seq)
-	}
-	if add.Cmd != "" {
-		setKey(m, "cmd", strNode(add.Cmd))
-	}
-	if add.Cwd != "" {
-		setKey(m, "cwd", strNode(add.Cwd))
-	}
+	mapping := &yaml.Node{Kind: yaml.MappingNode}
+	setText(mapping, "name", add.Name)
+	setText(mapping, "prepare", add.Prepare)
+	setFlowList(mapping, "prepare_inputs", add.PrepareInputs)
+	setText(mapping, "cmd", add.Cmd)
+	setText(mapping, "cwd", add.Cwd)
+	// A non-nil empty `sources:` is meaningful: it disables the code check.
 	if add.Sources != nil {
-		seq := &yaml.Node{Kind: yaml.SequenceNode, Style: yaml.FlowStyle}
-		for _, source := range add.Sources {
-			seq.Content = append(seq.Content, strNode(source))
-		}
-		setKey(m, "sources", seq)
+		setKey(mapping, "sources", flowList(add.Sources))
 	}
 	if add.Port != 0 {
-		setKey(m, FieldPort, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.Itoa(add.Port)})
+		setKey(mapping, FieldPort, intNode(add.Port))
 	}
 	if add.Health != "" {
-		setKey(m, FieldHealth, healthNode(ParseHealth(add.Health)))
+		setKey(mapping, FieldHealth, healthNode(ParseHealth(add.Health)))
 	}
-	if add.Description != "" {
-		setKey(m, FieldDescription, strNode(add.Description))
-	}
-	if add.Icon != "" {
-		setKey(m, FieldIcon, strNode(add.Icon))
-	}
-	if add.Color != "" {
-		setKey(m, FieldColor, strNode(add.Color))
-	}
-	if len(add.DependsOn) > 0 {
-		// Flow style, because that is how `depends_on: [db]` is written
-		// everywhere else in this file format.
-		seq := &yaml.Node{Kind: yaml.SequenceNode, Style: yaml.FlowStyle}
-		for _, dep := range add.DependsOn {
-			seq.Content = append(seq.Content, strNode(dep))
-		}
-		setKey(m, "depends_on", seq)
-	}
-	return m
+	setText(mapping, FieldDescription, add.Description)
+	setText(mapping, FieldIcon, add.Icon)
+	setText(mapping, FieldColor, add.Color)
+	setFlowList(mapping, "depends_on", add.DependsOn)
+	return mapping
 }
 
-func strNode(s string) *yaml.Node {
-	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: s}
+func setText(mapping *yaml.Node, key, value string) {
+	if value == "" {
+		return
+	}
+	setKey(mapping, key, strNode(value))
+}
+
+func setFlowList(mapping *yaml.Node, key string, values []string) {
+	if len(values) == 0 {
+		return
+	}
+	setKey(mapping, key, flowList(values))
+}
+
+// flowList is the `[a, b]` spelling the manifest uses for short lists.
+func flowList(values []string) *yaml.Node {
+	sequence := &yaml.Node{Kind: yaml.SequenceNode, Style: yaml.FlowStyle}
+	for _, value := range values {
+		sequence.Content = append(sequence.Content, strNode(value))
+	}
+	return sequence
+}
+
+func strNode(value string) *yaml.Node {
+	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
 }
 
 // serviceIndex is the position of a named service in the services sequence.
@@ -438,25 +493,25 @@ func serviceIndex(services *yaml.Node, name string) int {
 	if services == nil || services.Kind != yaml.SequenceNode {
 		return -1
 	}
-	for i, item := range services.Content {
+	for index, item := range services.Content {
 		if item.Kind == yaml.MappingNode && mappingName(item) == name {
-			return i
+			return index
 		}
 	}
 	return -1
 }
 
-// servicePortHolder is the name of the service already declaring this port.
+// servicePortHolder names the service already declaring this port.
 func servicePortHolder(services *yaml.Node, port int) string {
 	if services == nil || services.Kind != yaml.SequenceNode {
 		return ""
 	}
-	want := strconv.Itoa(port)
+	declared := strconv.Itoa(port)
 	for _, item := range services.Content {
 		if item.Kind != yaml.MappingNode {
 			continue
 		}
-		if node := mappingValue(item, FieldPort); node != nil && node.Value == want {
+		if node := mappingValue(item, FieldPort); node != nil && node.Value == declared {
 			return mappingName(item)
 		}
 	}
@@ -465,82 +520,81 @@ func servicePortHolder(services *yaml.Node, port int) string {
 
 // dropDependency removes one name from a service's depends_on, and the key
 // itself once nothing is left in it.
-func dropDependency(svc *yaml.Node, name string) {
-	deps := mappingValue(svc, "depends_on")
-	if deps == nil || deps.Kind != yaml.SequenceNode {
+func dropDependency(service *yaml.Node, name string) {
+	dependencies := mappingValue(service, "depends_on")
+	if dependencies == nil || dependencies.Kind != yaml.SequenceNode {
 		return
 	}
-	kept := make([]*yaml.Node, 0, len(deps.Content))
-	for _, dep := range deps.Content {
-		if dep.Value != name {
-			kept = append(kept, dep)
-		}
-	}
-	if len(kept) == len(deps.Content) {
+	before := len(dependencies.Content)
+	dependencies.Content = slices.DeleteFunc(dependencies.Content, func(dep *yaml.Node) bool {
+		return dep.Value == name
+	})
+	if len(dependencies.Content) == before {
 		return
 	}
-	if len(kept) == 0 {
-		removeKey(svc, "depends_on")
-		return
+	if len(dependencies.Content) == 0 {
+		removeKey(service, "depends_on")
 	}
-	deps.Content = kept
 }
 
 // renameDependency rewrites the depends_on entries naming from.
-func renameDependency(svc *yaml.Node, from, to string) {
-	deps := mappingValue(svc, "depends_on")
-	if deps == nil || deps.Kind != yaml.SequenceNode {
+func renameDependency(service *yaml.Node, from, to string) {
+	dependencies := mappingValue(service, "depends_on")
+	if dependencies == nil || dependencies.Kind != yaml.SequenceNode {
 		return
 	}
-	for _, dep := range deps.Content {
-		if dep.Value == from {
-			dep.Value = to
+	for _, entry := range dependencies.Content {
+		if entry.Value == from {
+			entry.Value = to
 		}
 	}
 }
 
-// Curate replaces a proposal's services with the caller's own list, which is
-// how `groups.init` writes a curated file in one call. An entry that names a
-// port the proposal also found keeps that proposal's cmd and cwd, so a client
-// editing only names, ports and metadata does not throw away the command
-// `oberth up` would need to start the service again.
+// Curate replaces a proposal's services with the caller's list, which is how
+// `groups.init` writes a curated file in one call. An entry naming a port the
+// proposal also found keeps that proposal's cmd and cwd, so a client editing
+// only names, ports and metadata does not throw away the command `oberth up`
+// needs to start the service again.
 func Curate(cfg *Config, services []ServiceAdd) *Config {
-	out := *cfg
-	out.Services = make([]Service, 0, len(services))
+	curated := *cfg
+	curated.Services = make([]Service, 0, len(services))
 	for _, add := range services {
-		svc := add.Service()
-		if svc.Cmd == "" || svc.Cwd == "" {
-			if from, ok := proposedForPort(cfg, add.Port); ok {
-				if svc.Cmd == "" {
-					svc.Cmd = from.Cmd
-				}
-				if svc.Cwd == "" {
-					svc.Cwd = from.Cwd
-				}
-			}
-		}
-		out.Services = append(out.Services, svc)
+		service := add.Service()
+		inheritExecution(&service, cfg, add.Port)
+		curated.Services = append(curated.Services, service)
 	}
-	return &out
+	return &curated
 }
 
-func proposedForPort(cfg *Config, port int) (Service, bool) {
+// inheritExecution keeps the proposed command for a service the caller
+// curated by port but did not describe. It fills only fields the caller left
+// empty.
+func inheritExecution(service *Service, cfg *Config, port int) {
+	if service.Cmd != "" && service.Cwd != "" {
+		return
+	}
 	if port == 0 {
-		return Service{}, false
+		return
 	}
-	for _, s := range cfg.Services {
-		if s.Port == port {
-			return s, true
+	for _, proposed := range cfg.Services {
+		if proposed.Port != port {
+			continue
 		}
+		if service.Cmd == "" {
+			service.Cmd = proposed.Cmd
+		}
+		if service.Cwd == "" {
+			service.Cwd = proposed.Cwd
+		}
+		return
 	}
-	return Service{}, false
 }
 
-// RenderServiceMerge uses complete parsed services for local draft adoption.
-// The public ServiceAdd RPC shape remains unchanged; draft execution fields
-// must not be projected through that intentionally narrower editing model.
+// RenderServiceMerge uses fully parsed services for local draft adoption. The
+// public ServiceAdd RPC shape stays narrower on purpose; draft-only execution
+// fields must not travel through it.
 func RenderServiceMerge(path string, services []Service) ([]byte, *Config, error) {
-	return render(path, func(abs string, root *yaml.Node) error {
+	merge := func(abs string, root *yaml.Node) error {
 		for _, service := range services {
 			var node yaml.Node
 			if err := node.Encode(service); err != nil {
@@ -551,5 +605,6 @@ func RenderServiceMerge(path string, services []Service) ([]byte, *Config, error
 			}
 		}
 		return nil
-	})
+	}
+	return render(path, merge)
 }

@@ -12,145 +12,156 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Patch field names, which are also the YAML keys they write.
+// YAML keys a service patch may write.
 const (
+	// Text metadata.
 	FieldDescription = "description"
 	FieldIcon        = "icon"
 	FieldColor       = "color"
 	FieldHealth      = "health"
-	FieldPort        = "port"
+
+	// The port hint.
+	FieldPort = "port"
 )
 
-// keyOrder is where a key belongs in a service mapping. A key the patch adds
-// is inserted at this position relative to the keys already there, so an
-// edited file still reads the way a hand-written one does. Keys nobody here
-// knows about sort last and are never moved.
+// keyOrder is where a key belongs in a service mapping. A key a patch adds is
+// inserted at that position relative to the keys already present, so an edited
+// file still reads like a hand-written one. Unknown keys sort last and never
+// move.
 var keyOrder = []string{"name", "prepare", "prepare_inputs", "cmd", "cwd", "sources", "port", "health", "description", "icon", "color", "depends_on"}
 
-// ServicePatch is the editable subset of one `oberth.yaml` service
-// (contract §13.2). Three states matter: a field the caller did not mention is
-// left alone, a field set to a value is written, and a field set to null is
-// removed from the file. JSON's absent/null distinction is lost by pointers
-// alone, so UnmarshalJSON records which keys were actually sent.
+// ServicePatch is the editable subset of one manifest service. Three states
+// matter: a key the caller did not mention stays as it is, a key with a value
+// is written, and a key with null is removed. Pointers alone lose JSON's
+// absent/null distinction, so UnmarshalJSON records which keys were sent.
 type ServicePatch struct {
+	// Text fields.
 	Description *string `json:"description,omitempty" jsonschema:"nullable"`
 	Icon        *string `json:"icon,omitempty" jsonschema:"nullable"`
 	Color       *string `json:"color,omitempty" jsonschema:"nullable"`
 	Health      *string `json:"health,omitempty" jsonschema:"nullable"`
-	Port        *int    `json:"port,omitempty" jsonschema:"nullable"`
+
+	// The port hint.
+	Port *int `json:"port,omitempty" jsonschema:"nullable"`
 
 	// Sent names the keys the caller included, whether or not their value was
-	// null. Go callers set it themselves; the wire form fills it in
-	// UnmarshalJSON. A patch with no keys sent is a no-op, not an error.
+	// null. Go callers set it directly; the wire form fills it in
+	// UnmarshalJSON. No keys sent means a no-op, not an error.
 	Sent []string `json:"-" jsonschema:"-"`
 }
 
 // UnmarshalJSON decodes the patch and remembers which keys were present.
 func (p *ServicePatch) UnmarshalJSON(data []byte) error {
-	type plain ServicePatch
-	var v plain
-	if err := json.Unmarshal(data, &v); err != nil {
+	type alias ServicePatch
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
-	var keys map[string]json.RawMessage
-	if err := json.Unmarshal(data, &keys); err != nil {
-		return err
-	}
-	*p = ServicePatch(v)
+	*p = ServicePatch(decoded)
 	p.Sent = p.Sent[:0]
+
+	var present map[string]json.RawMessage
+	if err := json.Unmarshal(data, &present); err != nil {
+		return err
+	}
 	for _, field := range []string{FieldDescription, FieldIcon, FieldColor, FieldHealth, FieldPort} {
-		if _, ok := keys[field]; ok {
+		if _, sent := present[field]; sent {
 			p.Sent = append(p.Sent, field)
 		}
 	}
 	return nil
 }
 
-// SetString returns the patch with field set to value.
+// SetString returns the patch with a text field set.
 func (p ServicePatch) SetString(field, value string) ServicePatch {
-	v := value
 	switch field {
 	case FieldDescription:
-		p.Description = &v
+		p.Description = pointerTo(value)
 	case FieldIcon:
-		p.Icon = &v
+		p.Icon = pointerTo(value)
 	case FieldColor:
-		p.Color = &v
+		p.Color = pointerTo(value)
 	case FieldHealth:
-		p.Health = &v
+		p.Health = pointerTo(value)
 	default:
 		return p
 	}
 	return p.mark(field)
 }
 
-// SetPort returns the patch with the service's port hint set.
+// SetPort returns the patch with the port hint set.
 func (p ServicePatch) SetPort(port int) ServicePatch {
-	v := port
-	p.Port = &v
+	p.Port = pointerTo(port)
 	return p.mark(FieldPort)
 }
 
-// Clear returns the patch with field marked for removal from the file.
-func (p ServicePatch) Clear(field string) ServicePatch {
+// Clear returns the patch with a field marked for removal.
+func (patch ServicePatch) Clear(field string) ServicePatch {
 	switch field {
 	case FieldDescription:
-		p.Description = nil
+		patch.Description = nil
 	case FieldIcon:
-		p.Icon = nil
+		patch.Icon = nil
 	case FieldColor:
-		p.Color = nil
+		patch.Color = nil
 	case FieldHealth:
-		p.Health = nil
+		patch.Health = nil
 	case FieldPort:
-		p.Port = nil
+		patch.Port = nil
 	default:
-		return p
+		return patch
 	}
-	return p.mark(field)
+	return patch.mark(field)
 }
 
+func pointerTo[T any](value T) *T { return &value }
+
 func (p ServicePatch) mark(field string) ServicePatch {
-	if !slices.Contains(p.Sent, field) {
-		p.Sent = append(append([]string{}, p.Sent...), field)
+	if slices.Contains(p.Sent, field) {
+		return p
 	}
+	p.Sent = append(append([]string{}, p.Sent...), field)
 	return p
 }
 
 // Empty reports whether the patch would change nothing.
 func (p ServicePatch) Empty() bool { return len(p.Sent) == 0 }
 
-// value returns the YAML scalar for one sent field, and whether the field
-// clears the key instead.
-func (p ServicePatch) value(field string) (node *yaml.Node, clear bool) {
+// value returns the YAML node for one sent field, and whether the field
+// removes the key instead.
+func (p ServicePatch) value(field string) (node *yaml.Node, remove bool) {
 	switch field {
 	case FieldDescription:
-		return strScalar(p.Description), p.Description == nil
+		return textOrRemove(p.Description)
 	case FieldIcon:
-		return strScalar(p.Icon), p.Icon == nil
+		return textOrRemove(p.Icon)
 	case FieldColor:
-		return strScalar(p.Color), p.Color == nil
+		return textOrRemove(p.Color)
 	case FieldHealth:
 		if p.Health == nil {
 			return nil, true
 		}
-		// Accept the published canonical form, so a client that reads
-		// tcp:5432 or command:pg_isready can write it back unchanged.
+		// Accept the canonical form so a client that read `tcp:5432` or
+		// `command:pg_isready` can write it back unchanged.
 		return healthNode(ParseHealth(*p.Health)), false
 	case FieldPort:
 		if p.Port == nil {
 			return nil, true
 		}
-		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.Itoa(*p.Port)}, false
+		return intNode(*p.Port), false
 	}
 	return nil, false
 }
 
-func strScalar(s *string) *yaml.Node {
-	if s == nil {
-		return nil
+func textOrRemove(value *string) (*yaml.Node, bool) {
+	if value == nil {
+		return nil, true
 	}
-	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: *s}
+	return strNode(*value), false
+}
+
+func intNode(value int) *yaml.Node {
+	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.Itoa(value)}
 }
 
 // ServiceEdit names the service a patch applies to.
@@ -159,33 +170,34 @@ type ServiceEdit struct {
 	Patch ServicePatch `json:"patch"`
 }
 
-// ServiceNotFoundError is returned when a patch names a service the file does
-// not declare. It maps onto the contract's `not_found`.
+// ServiceNotFoundError reports a patch naming a service the file does not
+// declare. It maps onto the contract's `not_found`.
 type ServiceNotFoundError struct {
 	Path string
 	Name string
 }
 
+// Error names the missing service and the file it was looked up in.
 func (e *ServiceNotFoundError) Error() string {
 	return fmt.Sprintf("no service %q in %s", e.Name, e.Path)
 }
 
-// PatchServices applies metadata edits to the services in a `oberth.yaml` and
-// writes the file back. It is EditServices with only the patch list filled in;
-// see ConfigEdit for adding, renaming and removing services.
+// PatchServices applies metadata edits to a manifest and writes it back. It is
+// EditServices with only the patch list filled in; ConfigEdit covers adding,
+// renaming and removing services.
 func PatchServices(path string, edits []ServiceEdit) (*Config, error) {
 	return EditServices(path, ConfigEdit{Services: edits})
 }
 
 // applyPatch sets, replaces or removes each sent key of one service mapping.
-func applyPatch(svc *yaml.Node, patch ServicePatch) {
+func applyPatch(service *yaml.Node, patch ServicePatch) {
 	for _, field := range patch.Sent {
-		node, clear := patch.value(field)
-		if clear {
-			removeKey(svc, field)
+		value, removing := patch.value(field)
+		if removing {
+			removeKey(service, field)
 			continue
 		}
-		setKey(svc, field, node)
+		setKey(service, field, value)
 	}
 }
 
@@ -194,29 +206,26 @@ func setKey(mapping *yaml.Node, key string, value *yaml.Node) {
 	setKeyIn(mapping, key, value, keyOrder)
 }
 
-// setKeyIn replaces the value of an existing key in place — keeping the key's
-// comments and position — or inserts the pair where order says it belongs.
+// setKeyIn replaces an existing key's value in place — keeping its comments
+// and position — or inserts the pair where the order says it belongs.
 func setKeyIn(mapping *yaml.Node, key string, value *yaml.Node, order []string) {
-	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		if mapping.Content[i].Value != key {
-			continue
-		}
-		old := mapping.Content[i+1]
-		value.HeadComment, value.LineComment, value.FootComment = old.HeadComment, old.LineComment, old.FootComment
-		mapping.Content[i+1] = value
+	if at := pairIndex(mapping, key); at >= 0 {
+		previous := mapping.Content[at+1]
+		value.HeadComment, value.LineComment, value.FootComment =
+			previous.HeadComment, previous.LineComment, previous.FootComment
+		mapping.Content[at+1] = value
 		return
 	}
-	pair := []*yaml.Node{{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, value}
-	at := insertionPoint(mapping, key, order)
-	mapping.Content = slices.Insert(mapping.Content, at, pair...)
+	pair := []*yaml.Node{keyNode(key), value}
+	mapping.Content = slices.Insert(mapping.Content, placement(mapping, key, order), pair...)
 }
 
-// insertionPoint is the index in a mapping's Content where a new key belongs:
-// before the first key that sorts after it, and at the end otherwise.
-func insertionPoint(mapping *yaml.Node, key string, order []string) int {
-	rank := keyRank(key, order)
+// placement is the Content index where a new key belongs: before the first key
+// that sorts after it, otherwise at the end.
+func placement(mapping *yaml.Node, key string, order []string) int {
+	target := keyRank(key, order)
 	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		if keyRank(mapping.Content[i].Value, order) > rank {
+		if keyRank(mapping.Content[i].Value, order) > target {
 			return i
 		}
 	}
@@ -224,99 +233,114 @@ func insertionPoint(mapping *yaml.Node, key string, order []string) int {
 }
 
 func keyRank(key string, order []string) int {
-	if i := slices.Index(order, key); i >= 0 {
-		return i
+	if at := slices.Index(order, key); at >= 0 {
+		return at
 	}
 	return len(order)
 }
 
-// removeKey drops a key and its value from a mapping.
-func removeKey(mapping *yaml.Node, key string) {
+func keyNode(key string) *yaml.Node {
+	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}
+}
+
+// pairIndex is the Content index of a mapping key, or -1.
+func pairIndex(mapping *yaml.Node, key string) int {
+	if mapping == nil {
+		return -1
+	}
 	for i := 0; i+1 < len(mapping.Content); i += 2 {
 		if mapping.Content[i].Value == key {
-			mapping.Content = slices.Delete(mapping.Content, i, i+2)
-			return
+			return i
 		}
+	}
+	return -1
+}
+
+// removeKey drops a key and its value from a mapping.
+func removeKey(mapping *yaml.Node, key string) {
+	if at := pairIndex(mapping, key); at >= 0 {
+		mapping.Content = slices.Delete(mapping.Content, at, at+2)
 	}
 }
 
-// findService returns the mapping node of the service with this name.
+// findService returns the mapping node of the named service.
 func findService(services *yaml.Node, name string) *yaml.Node {
-	if services == nil || services.Kind != yaml.SequenceNode {
+	at := serviceIndex(services, name)
+	if at < 0 {
 		return nil
 	}
-	for _, item := range services.Content {
-		if item.Kind == yaml.MappingNode && mappingName(item) == name {
-			return item
-		}
-	}
-	return nil
+	return services.Content[at]
 }
 
 // documentRoot unwraps a document node.
 func documentRoot(doc *yaml.Node) *yaml.Node {
-	if doc.Kind == yaml.DocumentNode {
-		if len(doc.Content) == 0 {
-			return nil
-		}
-		return doc.Content[0]
+	if doc.Kind != yaml.DocumentNode {
+		return doc
 	}
-	return doc
+	if len(doc.Content) == 0 {
+		return nil
+	}
+	return doc.Content[0]
 }
 
 // mappingValue returns the value node for a key of a mapping, or nil.
 func mappingValue(mapping *yaml.Node, key string) *yaml.Node {
-	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		if mapping.Content[i].Value == key {
-			return mapping.Content[i+1]
-		}
+	at := pairIndex(mapping, key)
+	if at < 0 {
+		return nil
 	}
-	return nil
+	return mapping.Content[at+1]
 }
 
-// encode renders the node tree back to YAML with the two-space indentation
-// `oberth.yaml` is written in.
+// encode renders the node tree with the two-space indentation manifests use.
 func encode(doc *yaml.Node) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(doc); err != nil {
+	var buffer bytes.Buffer
+	encoder := yaml.NewEncoder(&buffer)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(doc); err != nil {
 		return nil, fmt.Errorf("rendering the config: %w", err)
 	}
-	if err := enc.Close(); err != nil {
+	if err := encoder.Close(); err != nil {
 		return nil, fmt.Errorf("rendering the config: %w", err)
 	}
-	return buf.Bytes(), nil
+	return buffer.Bytes(), nil
 }
 
-// WriteConfigFile replaces a config atomically, keeping its current permissions so a
-// file the user chmodded stays that way. A caller that has already rendered the
-// bytes — `groups.init` merging into a file it just previewed — writes them
-// through here rather than through os.WriteFile, so a crash mid-write can never
-// leave a half a config behind.
+// WriteConfigFile replaces a config atomically, keeping its current
+// permissions. A caller that already rendered the bytes writes them through
+// here rather than os.WriteFile, so a crash mid-write cannot leave half a file
+// behind.
 func WriteConfigFile(path string, data []byte) error {
 	mode := os.FileMode(0o644)
 	if info, err := os.Stat(path); err == nil {
 		mode = info.Mode().Perm()
 	}
+	return writeConfigAtomically(path, data, mode)
+}
+
+func writeConfigAtomically(path string, data []byte, mode os.FileMode) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".option-berth-config-*")
 	if err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
+		return configWriteError(path, err)
 	}
-	name := tmp.Name()
-	defer os.Remove(name)
+	tempName := tmp.Name()
+	defer os.Remove(tempName)
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
-		return fmt.Errorf("writing %s: %w", path, err)
+		return configWriteError(path, err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
+		return configWriteError(path, err)
 	}
-	if err := os.Chmod(name, mode); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
+	if err := os.Chmod(tempName, mode); err != nil {
+		return configWriteError(path, err)
 	}
-	if err := os.Rename(name, path); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
+	if err := os.Rename(tempName, path); err != nil {
+		return configWriteError(path, err)
 	}
 	return nil
+}
+
+func configWriteError(path string, err error) error {
+	return fmt.Errorf("writing %s: %w", path, err)
 }
