@@ -81,9 +81,9 @@ When GitHub is slow or blocked, prefix `go install` with `GOPROXY=https://goprox
 fall back to mirrors automatically, and the script is also served through jsDelivr. See
 [Install and uninstall](docs/install.md) for the exact recipes.
 
-Running `oberth` shows the installed version, and the first screen prints the upgrade command when a
-newer release exists. Ask on demand with `oberth version --check`; it only reads release metadata and
-never downloads or installs anything.
+Running `oberth` shows the installed version; a terminal command ends with the upgrade command for this
+platform when a newer release exists, and the first screen shows the full block. Ask on demand with
+`oberth version --check`; it only reads release metadata and never downloads or installs anything.
 
 ### Homebrew
 

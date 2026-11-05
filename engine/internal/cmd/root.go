@@ -393,6 +393,10 @@ func init() {
 		}
 
 		ports.RegisterServices(cfg.Services)
+
+		// The footer's release check runs beside the command, not before it:
+		// by the time the result is written, the answer is usually waiting.
+		startUpdateProbe(cmd)
 	}
 }
 
@@ -405,6 +409,7 @@ var errSilent = errors.New("")
 func Execute() {
 	err := rootCmd.Execute()
 	if err == nil {
+		printUpdateNotice()
 		return
 	}
 	code := reportError(os.Stderr, err)

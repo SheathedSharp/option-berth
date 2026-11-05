@@ -222,11 +222,12 @@ Rerun the install command for your platform to replace the binaries; after upgra
 `oberth` first, then reinstall. Pin a version with `--version` / `-Version`.
 
 `oberth`'s first screen shows the local version; when an update exists, its footer gives the install
-command for this platform and `oberth daemon stop`. You can also run `oberth version --check` at any
-time. The automatic check reads GitHub release tags only, caches success for 5 minutes and failure for
-30 minutes, and downloads or installs nothing; `BERTH_NO_UPDATE_CHECK=1` disables the automatic check
-on the first screen. When the network is unreachable, the first screen shows only the local version and
-never presents it as the latest.
+command for this platform and `oberth daemon stop`. Every other terminal command that writes human
+output ends with the same upgrade information as a two-line footer, once per release. You can also run
+`oberth version --check` at any time. The automatic check reads release metadata only, caches success
+for 5 minutes and failure for 30 minutes, waits at most one second per command, and downloads or
+installs nothing; `BERTH_NO_UPDATE_CHECK=1` disables the automatic notices. When no release source
+answers, the terminal paths show only the local version and never present it as the latest.
 
 ## Channels not yet available
 
