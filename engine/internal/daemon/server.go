@@ -479,6 +479,17 @@ func (s *Server) demand() (int, scanner.Include) {
 	return subscribers, wanted
 }
 
+// subscribedReply is the opening frame a subscriber receives: the whole
+// snapshot for an unscoped subscription, or the stream projection for a scoped
+// one. The two shapes differ, which is why this is not just a filter call.
+func subscribedReply(base state.Snapshot, include scanner.Include, scope state.Scope) any {
+	if scope.Empty() {
+		return filterSnapshot(base, include, scope)
+	}
+	base.Ports = filterPorts(base.Ports, include)
+	return state.StreamSnapshotFor(base, scope)
+}
+
 // subscribe registers a connection as a subscriber and hands it either the
 // cached snapshot or the replay window's cursor snapshot as the reply to its
 // own state.subscribe call. Both registration and replay queuing happen under
@@ -518,19 +529,8 @@ func (s *Server) subscribe(c *Conn, id json.RawMessage, include scanner.Include,
 	base, replay, resumed := s.replayFrom(afterSeq, snap)
 	c.subscribed, c.include, c.events, c.scope = true, include, events, scope
 	effective := s.effectiveScopeLocked(scope)
-	var result any
-	if effective.Empty() {
-		result = filterSnapshot(base, include, effective)
-	} else {
-		base.Ports = filterPorts(base.Ports, include)
-		result = state.StreamSnapshotFor(base, effective)
-	}
-	raw, err := json.Marshal(result)
-	if err == nil {
-		msg, mErr := json.Marshal(rpc.Response{JSONRPC: rpc.Version, ID: id, Result: raw})
-		if mErr == nil {
-			c.enqueue(msg)
-		}
+	if raw, mErr := json.Marshal(subscribedReply(base, include, effective)); mErr == nil {
+		c.sendResponse(id, raw, nil)
 	}
 	if resumed {
 		for _, item := range replay {
