@@ -200,26 +200,39 @@ func (s *Server) Runtime() *Runtime { return s.runtime }
 // Socket is the address the server listens on.
 func (s *Server) Socket() string { return s.socket }
 
+// acquireSingleInstance takes the lock that makes this process the only daemon
+// on this socket. A lock the caller injected is borrowed, so Serve does not own
+// it and must not release it.
+func (s *Server) acquireSingleInstance() error {
+	if s.opts.Lock != nil {
+		s.lock = s.opts.Lock
+		return nil
+	}
+	lock, err := AcquireLock(lockPathFor(s.socket))
+	if err != nil {
+		return err
+	}
+	s.lock, s.ownLock = lock, true
+	return nil
+}
+
+// releaseSingleInstance gives up the lock, but only when this server took it.
+func (s *Server) releaseSingleInstance() {
+	if s.ownLock {
+		_ = s.lock.Release()
+	}
+}
+
 // Serve takes the single-instance lock, listens, and accepts connections until
 // ctx is cancelled or Shutdown is called. It returns ErrAlreadyRunning when
 // another daemon holds the lock.
 func (s *Server) Serve(ctx context.Context) error {
 	defer close(s.done)
 
-	if s.opts.Lock != nil {
-		s.lock = s.opts.Lock
-	} else {
-		lock, err := AcquireLock(lockPathFor(s.socket))
-		if err != nil {
-			return err
-		}
-		s.lock, s.ownLock = lock, true
+	if err := s.acquireSingleInstance(); err != nil {
+		return err
 	}
-	defer func() {
-		if s.ownLock {
-			_ = s.lock.Release()
-		}
-	}()
+	defer s.releaseSingleInstance()
 
 	// The lock is ours, so any socket file still on disk belongs to a daemon
 	// that died without cleaning up.
