@@ -18,11 +18,11 @@ import (
 // comm truncate (lsof to 9 characters by default, comm to 15), so a name is
 // also matched as a prefix of a full name — see forwarderProcess.
 var forwarderNames = []string{
-	// Docker Desktop's backend holds every published port on macOS and
-	// Windows; it is `com.docker.backend.exe` there. Verified on macOS with
-	// Docker Engine 29.2.1 (Docker Desktop): a container published with `-p 47311:80`
-	// is held by /Applications/Docker.app/Contents/MacOS/com.docker.backend,
-	// which lsof reports as the truncated "com.docke".
+	// Docker Desktop's backend holds every published port on macOS and Windows,
+	// as `com.docker.backend`. Verified on macOS with Docker Engine 29.2.1: a
+	// container published with `-p 47311:80` is held by
+	// /Applications/Docker.app/Contents/MacOS/com.docker.backend, which lsof
+	// reports as the truncated "com.docke".
 	"com.docker.backend",
 	// Older Docker Desktop builds forwarded through vpnkit, either as its own
 	// binary or under the com.docker prefix.

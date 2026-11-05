@@ -112,33 +112,36 @@ type portOwner struct {
 	mapping   portMapping
 }
 
-// ContainerStats holds per-container resource usage.
+// ContainerStats is what one container is using. Every field is (re)set
+// together by one measurement pass, so a partially filled value means the
+// container stopped answering halfway.
 type ContainerStats struct {
-	CPUPercent float64
-	MemoryRSS  int64
-	PIDs       int
-	State      string
-	Uptime     string
+	CPUPercent float64 // share of host CPU, scaled by online CPUs
+	MemoryRSS  int64   // resident bytes
+	PIDs       int     // processes inside the container
+	State      string  // running, exited, …
+	Uptime     string  // how long ago it started, rendered for a human
 }
 
-// dockerSocket is the default Docker Engine API socket path.
+// dockerSocket is where the Docker Engine API listens on a local install.
 const dockerSocket = "/var/run/docker.sock"
 
-// apiStatsResponse matches the Docker Engine /containers/{id}/stats response.
+// apiCPUSample is one CPU counter snapshot. The stats response carries two of
+// them — the current one and the one taken before it — and a percentage is
+// computed from the difference, which is why both counters are kept.
+type apiCPUSample struct {
+	CPUUsage struct {
+		TotalUsage uint64 `json:"total_usage"`
+	} `json:"cpu_usage"`
+	SystemCPUUsage uint64 `json:"system_cpu_usage"`
+	OnlineCPUs     int    `json:"online_cpus"`
+}
+
+// apiStatsResponse matches the Docker Engine /containers/{id}/stats response,
+// keeping only the fields this package reports.
 type apiStatsResponse struct {
-	CPUStats struct {
-		CPUUsage struct {
-			TotalUsage uint64 `json:"total_usage"`
-		} `json:"cpu_usage"`
-		SystemCPUUsage uint64 `json:"system_cpu_usage"`
-		OnlineCPUs     int    `json:"online_cpus"`
-	} `json:"cpu_stats"`
-	PrecpuStats struct {
-		CPUUsage struct {
-			TotalUsage uint64 `json:"total_usage"`
-		} `json:"cpu_usage"`
-		SystemCPUUsage uint64 `json:"system_cpu_usage"`
-	} `json:"precpu_stats"`
+	CPUStats    apiCPUSample `json:"cpu_stats"`
+	PrecpuStats apiCPUSample `json:"precpu_stats"`
 	MemoryStats struct {
 		Usage uint64 `json:"usage"`
 	} `json:"memory_stats"`
