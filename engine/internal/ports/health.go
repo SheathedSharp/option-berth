@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -10,11 +11,13 @@ import (
 	"time"
 )
 
-// HealthResult holds the outcome of probing a single port.
+// HealthResult is what one probe observed.
 type HealthResult struct {
 	Status     string
 	StatusCode int
 	Latency    time.Duration
+
+	// ObservedAt is when the probe ran, not when a snapshot was assembled.
 	ObservedAt time.Time
 }
 
@@ -34,20 +37,16 @@ func ProbeHealthContext(ctx context.Context, host string, port int, path string,
 	if path == "" {
 		path = "/"
 	}
-	host = HostForBind(host)
-	if strings.Contains(host, ":") {
-		host = "[" + host + "]"
+	target := HostForBind(host)
+	if strings.Contains(target, ":") {
+		target = "[" + target + "]"
 	}
-	client := &http.Client{
-		Timeout: timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	client := probeClient(timeout)
 
 	start := time.Now()
 	observedAt := start.UTC()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://%s:%d%s", host, port, path), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("http://%s:%d%s", target, port, path), nil)
 	if err != nil {
 		return HealthResult{Status: "non-http", ObservedAt: observedAt}
 	}
@@ -78,40 +77,42 @@ func ProbeHealthContext(ctx context.Context, host string, port int, path string,
 	return HealthResult{Status: "unhealthy", StatusCode: code, Latency: latency, ObservedAt: observedAt}
 }
 
-// isConnectionRefused checks whether the error chain contains a
-// "connection refused" indication.
-func isConnectionRefused(err error) bool {
-	for err != nil {
-		if e, ok := err.(*url.Error); ok {
-			err = e.Err
-			continue
-		}
-		// Check the string as a fallback — the stdlib wraps the
-		// syscall error in various layers.
-		if strings.Contains(fmt.Sprintf("%v", err), "connection refused") ||
-			strings.Contains(err.Error(), "connection refused") {
-			return true
-		}
-		break
+// probeClient is the client one probe uses: no redirects are followed, and the
+// whole request is bounded by timeout.
+func probeClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
-	return false
 }
 
-// MaxProbes bounds how many health probes run at once. It is the same ceiling
-// the configured-health probe in the scanner uses.
+// isConnectionRefused reports whether the error chain says the dial was
+// refused. The standard library wraps the syscall error in several layers, so
+// the inner error is unwrapped first and the text is the final fallback.
+func isConnectionRefused(err error) bool {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.Err != nil {
+		return isConnectionRefused(urlErr.Err)
+	}
+	return err != nil && strings.Contains(err.Error(), "connection refused")
+}
+
+// MaxProbes is how many health probes may run at once, the same ceiling the
+// scanner's configured-health probe uses.
 const MaxProbes = 10
 
-// EnrichHealth probes every port concurrently (max MaxProbes at a time) and
-// populates the Health* fields on each ListeningPort.
+// EnrichHealth probes every port concurrently, at most MaxProbes at a time,
+// and fills each row's Health fields.
 //
-// budget is the ceiling on the whole round, not on one probe: a machine with
-// forty listeners, ten of them sockets that accept and never answer, used to
-// cost four waves of `timeout` each — seconds of a scan that a `ports.kill`
-// or a `oberth.yaml` write was queued behind. A probe that would start after
-// the budget is spent is skipped (its port keeps whatever health the previous
-// tick found, see carryHealth), and one that starts near the end has its own
-// timeout clamped to what is left, so the round costs at most budget.
-// A zero or negative budget means no ceiling.
+// budget bounds the whole round, not one probe. On a machine with forty
+// listeners, ten of them sockets that accept and never answer, the old form
+// cost four waves of `timeout` — seconds during which a `ports.kill` or a
+// manifest write waited behind the scan. A probe that would start after the
+// budget is spent is skipped (its row keeps the previous tick's health, see
+// carryHealth), and one starting near the end has its timeout clamped to what
+// remains. Zero or negative budget means no ceiling.
 func EnrichHealth(pp []ListeningPort, timeout, budget time.Duration) {
 	EnrichHealthContext(context.Background(), pp, timeout, budget)
 }
@@ -120,13 +121,13 @@ func EnrichHealth(pp []ListeningPort, timeout, budget time.Duration) {
 // admitted probes before returning. The caller owns pp and must discard a
 // cancelled round; probes completed before cancellation may already be in pp.
 func EnrichHealthContext(ctx context.Context, pp []ListeningPort, timeout, budget time.Duration) {
-	var deadline time.Time
+	var cutoff time.Time
 	if budget > 0 {
-		deadline = time.Now().Add(budget)
+		cutoff = time.Now().Add(budget)
 	}
 
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, MaxProbes)
+	var group sync.WaitGroup
+	slots := make(chan struct{}, MaxProbes)
 
 admit:
 	for i := range pp {
@@ -134,48 +135,48 @@ admit:
 			break
 		}
 		select {
-		case sem <- struct{}{}:
+		case slots <- struct{}{}:
 		case <-ctx.Done():
 			break admit
 		}
-		if _, ok := ProbeBudget(timeout, deadline); !ok || ctx.Err() != nil {
-			<-sem
+		if _, ok := ProbeBudget(timeout, cutoff); !ok || ctx.Err() != nil {
+			<-slots
 			break
 		}
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			t, ok := ProbeBudget(timeout, deadline)
+		group.Add(1)
+		go func(index int) {
+			defer group.Done()
+			defer func() { <-slots }()
+			probeTimeout, ok := ProbeBudget(timeout, cutoff)
 			if !ok {
 				return
 			}
-			result := ProbeHealthContext(ctx, pp[idx].BindAddress, pp[idx].Port, "/", t)
+			result := ProbeHealthContext(ctx, pp[index].BindAddress, pp[index].Port, "/", probeTimeout)
 			if ctx.Err() != nil {
 				return
 			}
-			pp[idx].HealthStatus = result.Status
-			pp[idx].HealthCode = result.StatusCode
-			pp[idx].HealthLatency = result.Latency
-			pp[idx].HealthObservedAt = result.ObservedAt.Format(time.RFC3339Nano)
+			pp[index].HealthStatus = result.Status
+			pp[index].HealthCode = result.StatusCode
+			pp[index].HealthLatency = result.Latency
+			pp[index].HealthObservedAt = result.ObservedAt.Format(time.RFC3339Nano)
 		}(i)
 	}
-	wg.Wait()
+	group.Wait()
 }
 
-// ProbeBudget is the timeout one probe may use before deadline, and whether it
-// is worth starting at all. A zero deadline means no budget: the probe gets its
-// full timeout.
-func ProbeBudget(timeout time.Duration, deadline time.Time) (time.Duration, bool) {
-	if deadline.IsZero() {
+// ProbeBudget is the timeout one probe may use before cutoff, and whether it is
+// worth starting. A zero cutoff means no budget: the probe gets its full
+// timeout.
+func ProbeBudget(timeout time.Duration, cutoff time.Time) (time.Duration, bool) {
+	if cutoff.IsZero() {
 		return timeout, true
 	}
-	left := time.Until(deadline)
-	if left <= 0 {
+	remaining := time.Until(cutoff)
+	if remaining <= 0 {
 		return 0, false
 	}
-	if left < timeout {
-		return left, true
+	if remaining < timeout {
+		return remaining, true
 	}
 	return timeout, true
 }
