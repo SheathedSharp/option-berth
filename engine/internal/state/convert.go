@@ -2,21 +2,13 @@ package state
 
 import "github.com/sheathedsharp/option-berth/engine/internal/ports"
 
-// FromListening adapts the scanner model to the published contract model. It is
-// the only place that translation happens: `oberth list --json` uses it today
-// and the daemon's scanner loop (slice F1) uses it too, so both paths emit
-// byte-identical rows.
+// FromListening adapts the scanner model to the published contract model. It
+// is the only translation point, so a direct scan and a daemon read emit the
+// same rows.
 func FromListening(lp ports.ListeningPort) Port {
-	// Where the process works, not what it is: a working directory under a
-	// trash root means the project behind it was deleted and the process is
-	// only holding its port. It travels on the row so a client can label it —
-	// a redis in the trash is still a redis — and it is derived from the path
-	// by code, never asked of a model.
-	inTrash := ports.InTrash(lp.Cwd)
-
 	p := Port{
-		// A row built straight from a scan is this machine's own; a row that
-		// came back from the daemon already carries its optional host label.
+		// A row built from a scan is this machine's own; a row that came back
+		// through the daemon already carries its optional host label.
 		Host:          HostOf(lp.Host),
 		Port:          lp.Port,
 		BindAddress:   lp.BindAddress,
@@ -30,7 +22,7 @@ func FromListening(lp ports.ListeningPort) Port {
 		Name:          strPtr(lp.Name),
 		Command:       lp.Command,
 		Cwd:           lp.Cwd,
-		CwdInTrash:    inTrash,
+		CwdInTrash:    ports.InTrash(lp.Cwd),
 		CwdGone:       lp.CwdGone,
 		ProjectRoot:   strPtr(lp.ProjectRoot),
 		Group:         strPtr(lp.Group),
@@ -38,76 +30,93 @@ func FromListening(lp ports.ListeningPort) Port {
 		User:          lp.User,
 		StartedAt:     strPtr(lp.StartedAt),
 	}
-
 	if lp.GroupSource != "" {
-		gs := GroupSource(lp.GroupSource)
-		p.GroupSource = &gs
+		source := GroupSource(lp.GroupSource)
+		p.GroupSource = &source
 	}
-
-	// Run is null for anything option-berth did not start. The group comes from the
-	// runs registry, which records it since `oberth start` (step 1A.5); a run
-	// registered by the older `option-berth run --tag` reports its tag as both.
-	if lp.RunID != "" || lp.Tag != "" || lp.RunGroup != "" {
-		p.Run = &Run{ID: lp.RunID, Group: lp.RunGroup, Name: lp.Tag, RootPID: lp.RunRootPID}
-	}
-
-	// Stats and health are null unless they were actually collected.
-	if lp.CPUPercent != 0 || lp.MemoryRSS != 0 || lp.ThreadCount != 0 ||
-		lp.Uptime != "" || lp.State != "" || lp.Connections != 0 {
-		p.Stats = &Stats{
-			CPUPercent:  lp.CPUPercent,
-			MemoryRSS:   lp.MemoryRSS,
-			ThreadCount: lp.ThreadCount,
-			Uptime:      lp.Uptime,
-			State:       lp.State,
-			Connections: lp.Connections,
-		}
-	}
+	p.Run = runFromListening(lp)
+	p.Stats = statsFromListening(lp)
 	if lp.HealthStatus != "" {
-		status, reason := NormalizeHealth(lp.HealthStatus)
-		p.Health = &Health{
-			Status:     status,
-			Code:       lp.HealthCode,
-			LatencyMs:  lp.HealthLatency.Milliseconds(),
-			Reason:     reason,
-			ObservedAt: lp.HealthObservedAt,
-		}
+		p.Health = healthFromListening(lp)
 	}
-	if lp.DockerContainer != "" || lp.DockerImage != "" || lp.DockerComposeService != "" {
-		p.Docker = &Docker{
-			Container:      lp.DockerContainer,
-			Image:          lp.DockerImage,
-			ComposeService: lp.DockerComposeService,
-			ComposeProject: lp.DockerComposeProject,
-			ContainerPort:  lp.DockerContainerPort,
-		}
-	}
+	p.Docker = dockerFromListening(lp)
 	return p
 }
 
-// FromListeningAll converts a scan result to contract rows.
+// runFromListening is null for anything option-berth did not start. A run
+// registered by the older `run --tag` reports its tag as both group and name.
+func runFromListening(lp ports.ListeningPort) *Run {
+	if lp.RunID == "" && lp.Tag == "" && lp.RunGroup == "" {
+		return nil
+	}
+	return &Run{ID: lp.RunID, Group: lp.RunGroup, Name: lp.Tag, RootPID: lp.RunRootPID}
+}
+
+// statsFromListening is null unless something was actually collected.
+func statsFromListening(lp ports.ListeningPort) *Stats {
+	if lp.CPUPercent == 0 && lp.MemoryRSS == 0 && lp.ThreadCount == 0 &&
+		lp.Uptime == "" && lp.State == "" && lp.Connections == 0 {
+		return nil
+	}
+	return &Stats{
+		CPUPercent:  lp.CPUPercent,
+		MemoryRSS:   lp.MemoryRSS,
+		ThreadCount: lp.ThreadCount,
+
+		// The process's current state.
+		Uptime:      lp.Uptime,
+		State:       lp.State,
+		Connections: lp.Connections,
+	}
+}
+
+func healthFromListening(lp ports.ListeningPort) *Health {
+	status, reason := NormalizeHealth(lp.HealthStatus)
+	return &Health{
+		Status:     status,
+		Code:       lp.HealthCode,
+		LatencyMs:  lp.HealthLatency.Milliseconds(),
+		Reason:     reason,
+		ObservedAt: lp.HealthObservedAt,
+	}
+}
+
+func dockerFromListening(lp ports.ListeningPort) *Docker {
+	if lp.DockerContainer == "" && lp.DockerImage == "" && lp.DockerComposeService == "" {
+		return nil
+	}
+	return &Docker{
+		Container: lp.DockerContainer,
+		Image:     lp.DockerImage,
+
+		// Where Compose placed it.
+		ComposeService: lp.DockerComposeService,
+		ComposeProject: lp.DockerComposeProject,
+		ContainerPort:  lp.DockerContainerPort,
+	}
+}
+
+// FromListeningAll converts a whole scan result.
 func FromListeningAll(pp []ports.ListeningPort) []Port {
-	out := make([]Port, len(pp))
-	for i := range pp {
-		out[i] = FromListening(pp[i])
+	out := make([]Port, 0, len(pp))
+	for _, row := range pp {
+		out = append(out, FromListening(row))
 	}
 	return out
 }
 
-// portType maps the scanner's int enum to the contract's string enum.
+// portType maps the scanner's integer enum to the contract's string enum.
 func portType(t ports.PortType) PortType {
-	switch t {
-	case ports.PortTypeDocker:
+	if t == ports.PortTypeDocker {
 		return TypeDocker
-	default:
-		return TypeUser
 	}
+	return TypeUser
 }
 
-// strPtr returns nil for the empty string so absent values marshal as null.
-func strPtr(s string) *string {
-	if s == "" {
+// strPtr keeps absent values null on the wire.
+func strPtr(value string) *string {
+	if value == "" {
 		return nil
 	}
-	return &s
+	return &value
 }

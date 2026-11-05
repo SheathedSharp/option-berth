@@ -12,28 +12,26 @@ func RowsOf(s Snapshot) Rows {
 	return Rows{Ports: s.Ports, Groups: s.Groups, Sessions: s.Sessions}
 }
 
-// Tag stamps rows with the local host name used in their keys and wire data.
+// Tag stamps every row with the host name its keys and wire data use. The
+// input rows are copied, never mutated.
 func (r Rows) Tag(host string) Rows {
-	out := Rows{
-		Ports: make([]Port, len(r.Ports)), Groups: make([]Group, len(r.Groups)),
-		Sessions: make([]SessionRecord, len(r.Sessions)),
+	return Rows{
+		Ports:    tagEach(r.Ports, func(row *Port) { row.Host = host }),
+		Groups:   tagEach(r.Groups, func(row *Group) { row.Host = host }),
+		Sessions: tagEach(r.Sessions, func(row *SessionRecord) { row.Host = host }),
 	}
-	copy(out.Ports, r.Ports)
-	copy(out.Groups, r.Groups)
-	copy(out.Sessions, r.Sessions)
-	for i := range out.Ports {
-		out.Ports[i].Host = host
-	}
-	for i := range out.Groups {
-		out.Groups[i].Host = host
-	}
-	for i := range out.Sessions {
-		out.Sessions[i].Host = host
+}
+
+func tagEach[T any](rows []T, apply func(*T)) []T {
+	out := make([]T, len(rows))
+	copy(out, rows)
+	for i := range out {
+		apply(&out[i])
 	}
 	return out
 }
 
-// Append concatenates other onto r.
+// Append concatenates other onto this set of rows.
 func (r Rows) Append(other Rows) Rows {
 	r.Ports = append(r.Ports, other.Ports...)
 	r.Groups = append(r.Groups, other.Groups...)
@@ -43,21 +41,23 @@ func (r Rows) Append(other Rows) Rows {
 
 // Normalize replaces nil collections with empty arrays for the wire.
 func (r Rows) Normalize() Rows {
-	if r.Ports == nil {
-		r.Ports = []Port{}
+	return Rows{
+		Ports:    nonNil(r.Ports),
+		Groups:   nonNil(r.Groups),
+		Sessions: nonNil(r.Sessions),
 	}
-	if r.Groups == nil {
-		r.Groups = []Group{}
+}
+
+func nonNil[T any](rows []T) []T {
+	if rows == nil {
+		return []T{}
 	}
-	if r.Sessions == nil {
-		r.Sessions = []SessionRecord{}
-	}
-	return r
+	return rows
 }
 
 // Into copies the collections onto a snapshot.
 func (r Rows) Into(s Snapshot) Snapshot {
-	r = r.Normalize()
-	s.Ports, s.Groups, s.Sessions = r.Ports, r.Groups, r.Sessions
+	normalized := r.Normalize()
+	s.Ports, s.Groups, s.Sessions = normalized.Ports, normalized.Groups, normalized.Sessions
 	return s
 }

@@ -7,16 +7,14 @@ import (
 )
 
 // ToListening is the inverse of FromListening: it turns a published row back
-// into the scanner model the renderers and the OS helpers take. The daemon's
-// read handlers and every CLI command that reads through the daemon use it, so
-// `oberth list` prints the same table whether the rows came off the socket or
-// out of a direct scan.
+// into the scanner model that renderers and OS helpers take. The read handlers
+// and every daemon-backed CLI command use it, so a table printed from socket
+// rows matches one printed from a direct scan.
 //
 // The round trip is lossless for everything the CLI renders. Two scanner-only
-// fields have no wire representation and do not survive it: ParentCmd, whose
-// only job is to help DisplayName (carried across as Display instead), and
-// DockerComposeWorkingDir, which the group resolver consumes before a row is
-// ever published.
+// fields have no wire form: ParentCmd, whose only job is DisplayName (carried
+// as Display instead), and DockerComposeWorkingDir, which the group resolver
+// consumes before publication.
 func ToListening(p Port) ports.ListeningPort {
 	lp := ports.ListeningPort{
 		Host:          p.Host,
@@ -42,32 +40,32 @@ func ToListening(p Port) ports.ListeningPort {
 		lp.GroupSource = string(*p.GroupSource)
 	}
 	if p.Run != nil {
-		lp.RunID, lp.Tag, lp.RunRootPID, lp.RunGroup = p.Run.ID, p.Run.Name, p.Run.RootPID, p.Run.Group
+		lp.RunID, lp.Tag, lp.RunRootPID, lp.RunGroup =
+			p.Run.ID, p.Run.Name, p.Run.RootPID, p.Run.Group
 	}
 	if p.Stats != nil {
-		lp.CPUPercent = p.Stats.CPUPercent
-		lp.MemoryRSS = p.Stats.MemoryRSS
-		lp.ThreadCount = p.Stats.ThreadCount
-		lp.Uptime = p.Stats.Uptime
-		lp.State = p.Stats.State
-		lp.Connections = p.Stats.Connections
+		lp.CPUPercent, lp.MemoryRSS, lp.ThreadCount =
+			p.Stats.CPUPercent, p.Stats.MemoryRSS, p.Stats.ThreadCount
+		lp.Uptime, lp.State, lp.Connections =
+			p.Stats.Uptime, p.Stats.State, p.Stats.Connections
 	}
 	if p.Health != nil {
-		// The CLI's own renderers still speak the probe vocabulary, so the
-		// round trip hands back the reason when there is one.
-		lp.HealthStatus = p.Health.Status
-		if p.Health.Reason != "" {
-			lp.HealthStatus = p.Health.Reason
+		// The CLI's renderers still speak the probe vocabulary, so a known
+		// reason is handed back instead of the normalized word.
+		status := p.Health.Status
+		if reason := p.Health.Reason; reason != "" {
+			status = reason
 		}
+		lp.HealthStatus = status
 		lp.HealthCode = p.Health.Code
 		lp.HealthLatency = time.Duration(p.Health.LatencyMs) * time.Millisecond
 		lp.HealthObservedAt = p.Health.ObservedAt
 	}
 	if p.Docker != nil {
-		lp.DockerContainer = p.Docker.Container
-		lp.DockerImage = p.Docker.Image
-		lp.DockerComposeService = p.Docker.ComposeService
-		lp.DockerComposeProject = p.Docker.ComposeProject
+		lp.DockerContainer, lp.DockerImage =
+			p.Docker.Container, p.Docker.Image
+		lp.DockerComposeService, lp.DockerComposeProject =
+			p.Docker.ComposeService, p.Docker.ComposeProject
 		lp.DockerContainerPort = p.Docker.ContainerPort
 	}
 	return lp
@@ -75,26 +73,24 @@ func ToListening(p Port) ports.ListeningPort {
 
 // ToListeningAll converts a published collection back to scanner rows.
 func ToListeningAll(pp []Port) []ports.ListeningPort {
-	out := make([]ports.ListeningPort, len(pp))
-	for i := range pp {
-		out[i] = ToListening(pp[i])
+	out := make([]ports.ListeningPort, 0, len(pp))
+	for _, row := range pp {
+		out = append(out, ToListening(row))
 	}
 	return out
 }
 
 // listeningType maps the contract's string enum back to the scanner's ints.
 func listeningType(t PortType) ports.PortType {
-	switch t {
-	case TypeDocker:
+	if t == TypeDocker {
 		return ports.PortTypeDocker
-	default:
-		return ports.PortTypeUser
 	}
+	return ports.PortTypeUser
 }
 
-func derefStr(s *string) string {
-	if s == nil {
+func derefStr(value *string) string {
+	if value == nil {
 		return ""
 	}
-	return *s
+	return *value
 }

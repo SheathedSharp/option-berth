@@ -12,7 +12,9 @@ import (
 // Change is one collection's diff. Added and Updated carry full objects;
 // Removed carries keys. All three always marshal as arrays, never null.
 type Change[T any] struct {
-	Added   []T      `json:"added"`
+	Added []T `json:"added"`
+
+	// Updated rows replace their previous version by key.
 	Updated []T      `json:"updated"`
 	Removed []string `json:"removed"`
 }
