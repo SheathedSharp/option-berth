@@ -7,12 +7,12 @@ import (
 	"syscall"
 )
 
-// fileOwner reports the numeric owner of a file. The second result is false
-// when the platform does not expose one.
+// fileOwner reports the numeric uid that owns a file, and false when the
+// Stat_t behind it is not the shape this platform uses.
 func fileOwner(info os.FileInfo) (int, bool) {
-	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
+	stat, isStat := info.Sys().(*syscall.Stat_t)
+	if !isStat {
 		return 0, false
 	}
-	return int(st.Uid), true
+	return int(stat.Uid), true
 }
