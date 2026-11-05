@@ -6,21 +6,20 @@ import (
 	"testing"
 )
 
-func TestConfigInitWritesTemplate(t *testing.T) {
+func TestConfigInitWritesThenRefusesThenForces(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+
 	if err := runConfigInit(false); err != nil {
-		t.Fatalf("runConfigInit: %v", err)
+		t.Fatalf("first runConfigInit: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".option-berth", "config.yaml")); err != nil {
 		t.Errorf("config file not created: %v", err)
 	}
-	// Second call without force must fail.
 	if err := runConfigInit(false); err == nil {
-		t.Error("expected error on overwrite without force")
+		t.Error("a second run without force overwrote the file")
 	}
-	// With force it succeeds.
 	if err := runConfigInit(true); err != nil {
-		t.Errorf("force should overwrite: %v", err)
+		t.Errorf("force did not overwrite: %v", err)
 	}
 }
