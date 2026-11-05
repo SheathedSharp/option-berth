@@ -79,6 +79,10 @@ Homebrew, `go install`, Linux `.deb`/`.rpm`, pinned versions, uninstall, upgrade
 boundaries are in [Install and uninstall](docs/install.md). The scripts only download and verify release
 archives: they start no service and write no Git data.
 
+Running `oberth` shows the installed version and, when a newer release exists, the upgrade command for
+this platform. `oberth version --check` asks on demand; it only reads release metadata and never
+downloads or installs anything.
+
 The complete service lifecycle is supported on **macOS and Linux**. Windows has a native build, smoke
 checks and some fact/persistence tests, which is not full lifecycle support.
 

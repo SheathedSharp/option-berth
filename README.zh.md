@@ -75,6 +75,9 @@ irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps
 Homebrew、`go install`、Linux `.deb`/`.rpm`、固定版本、卸载、升级与各平台边界见
 [安装与卸载](docs/install.zh.md)。安装脚本只下载并校验发布包：不启动服务，也不写 Git。
 
+直接运行 `oberth` 会显示本机版本；有更新时给出本平台的升级命令。也可以随时运行
+`oberth version --check` 主动检查，它只读发布信息，不下载、不安装。
+
 完整服务生命周期在 **macOS 与 Linux** 上支持。Windows 有原生构建、冒烟检查及部分事实与持久化
 测试，不能视为完整生命周期支持。
 
