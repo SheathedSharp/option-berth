@@ -41,6 +41,8 @@ type Conn struct {
 	events     bool
 	scope      state.Scope
 
+	// Guarded by mu. Everything here describes this one connection and is read
+	// only by its own goroutines, which is why it does not share subsMu.
 	mu             sync.Mutex
 	client         string
 	clientVersion  string
