@@ -1606,18 +1606,24 @@ func (l *Loop) snapHasStats() bool {
 // Status is what `daemon.status` reports about the scanner.
 type Status struct {
 	LastScanAt time.Time
-	// IntervalMs is the adaptive cadence right now: somewhere between the
-	// base and whichever ceiling currently applies.
-	IntervalMs int
-	// BaseIntervalMs and StatsIntervalMs are the effective settings behind
-	// it: `daemon.scan_interval` and `daemon.stats_interval` after clamping.
-	// Both are fixed for the life of the daemon, so `daemon.status` is where
-	// you check that an edit to the config file took.
+
+	// Scans counts completed scans; Seq counts begun ones. Comparing the two
+	// is how a caller sees that a scan is in flight right now.
+	Scans int64
+	Seq   uint64
+
+	// IntervalMs is the adaptive cadence at this instant — somewhere between
+	// the base and whichever ceiling currently applies. BaseIntervalMs and
+	// StatsIntervalMs are the effective settings behind it, after clamping;
+	// both are fixed for the daemon's life, so this is where you confirm that
+	// an edit to the config file took effect.
+	IntervalMs      int
 	BaseIntervalMs  int
 	StatsIntervalMs int
-	Scans           int64
-	Seq             uint64
-	LastError       error
+
+	// LastError is the last collection failure, nil when the latest scan was
+	// clean.
+	LastError error
 }
 
 // Status returns the scanner's current counters.
@@ -1626,11 +1632,15 @@ func (l *Loop) Status() Status {
 	defer l.mu.Unlock()
 	return Status{
 		LastScanAt:      l.lastScanAt,
-		IntervalMs:      int(l.interval / time.Millisecond),
-		BaseIntervalMs:  int(l.base / time.Millisecond),
-		StatsIntervalMs: int(l.statsInterval() / time.Millisecond),
 		Scans:           l.scans,
 		Seq:             l.seq,
+		IntervalMs:      milliseconds(l.interval),
+		BaseIntervalMs:  milliseconds(l.base),
+		StatsIntervalMs: milliseconds(l.statsInterval()),
 		LastError:       l.lastErr,
 	}
 }
+
+// milliseconds renders a duration in whole milliseconds, the unit
+// `daemon.status` reports intervals in.
+func milliseconds(d time.Duration) int { return int(d / time.Millisecond) }
