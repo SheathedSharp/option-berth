@@ -634,6 +634,29 @@ func (l *Loop) publish(prev, next state.Snapshot, events []state.Event) {
 	l.record(events)
 }
 
+// collectRows runs whichever collector this loop was given and returns the rows
+// plus the source name, which is empty for collectors that cannot name one.
+//
+// The three cases are the three seams a caller can inject: a source that
+// reports its own name, one that reports only rows, and the plain closure the
+// tests use. Production is the first.
+func (l *Loop) collectRows(ctx context.Context, collect Include) ([]ports.ListeningPort, string, error) {
+	var (
+		rows   []ports.ListeningPort
+		source string
+		err    error
+	)
+	switch {
+	case l.opts.ScanSource != nil:
+		rows, source, err = l.opts.ScanSource(ctx, collect)
+	case l.opts.ScanContext != nil:
+		rows, err = l.opts.ScanContext(ctx, collect)
+	default:
+		rows, err = l.opts.Scan(collect)
+	}
+	return rows, source, err
+}
+
 // partialObservation records that a collector answered with the rows it could
 // read and a verdict on the rest. The code and hint come from the collector's
 // own error, so a sandboxed agent can tell which kind of blindness this was.
@@ -688,16 +711,7 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 	wantHealth := collect.Health && l.healthDue()
 
 	gen, refresh := l.beginScan()
-	var pp []ports.ListeningPort
-	source := ""
-	switch {
-	case l.opts.ScanSource != nil:
-		pp, source, err = l.opts.ScanSource(ctx, collect)
-	case l.opts.ScanContext != nil:
-		pp, err = l.opts.ScanContext(ctx, collect)
-	default:
-		pp, err = l.opts.Scan(collect)
-	}
+	pp, source, err := l.collectRows(ctx, collect)
 	if err := ctx.Err(); err != nil {
 		// Ownership ended, not a collector failure. Preserve the last outcome
 		// and freshness, and leave pending invalidation for a later observer.
