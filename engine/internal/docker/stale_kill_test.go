@@ -44,8 +44,8 @@ func TestAStaleContainerPortHeldByANativeProcessKillsTheProcess(t *testing.T) {
 	}}
 	docker.EnrichFromPS(rows, []byte(cachedPS))
 
-	if rows[0].DockerContainer != "" || rows[0].Type == ports.PortTypeDocker {
-		t.Fatalf("the native row was stamped with the cached container: %+v", rows[0])
+	if rows[0].Type == ports.PortTypeDocker || rows[0].DockerContainer != "" {
+		t.Fatalf("the cached container was stamped onto a port node holds: %+v", rows[0])
 	}
 	r := planKill(t, rows)
 	if r.Method == state.MethodDockerStop {
@@ -64,8 +64,8 @@ func TestAContainerPortHeldByTheForwarderStopsTheContainer(t *testing.T) {
 	}}
 	docker.EnrichFromPS(rows, []byte(cachedPS))
 
-	if rows[0].DockerContainer != "itest-web-1" || rows[0].Type != ports.PortTypeDocker {
-		t.Fatalf("the forwarder's row was not stamped: %+v", rows[0])
+	if rows[0].Type != ports.PortTypeDocker || rows[0].DockerContainer != "itest-web-1" {
+		t.Fatalf("a port the forwarder holds lost its container: %+v", rows[0])
 	}
 	r := planKill(t, rows)
 	if r.Method != state.MethodDockerStop || r.PID != 0 || !r.OK {

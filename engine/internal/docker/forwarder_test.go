@@ -57,6 +57,9 @@ func TestIsForwarderProcess(t *testing.T) {
 	}
 }
 
+// TestHeldByForwarder pins which observation the decision rests on: a reported
+// process name outranks a command line, and an owner nobody named is not
+// evidence against the cached list.
 func TestHeldByForwarder(t *testing.T) {
 	cases := []struct {
 		label string
@@ -87,7 +90,7 @@ func TestHeldByForwarder(t *testing.T) {
 }
 
 // TestEnrichSkipsAPortANativeProcessHolds is issue #95 at the enrichment step:
-// the cached list says itest-web-1 publishes 3000, but node holds 3000 now.
+// the cached list still says itest-web-1 publishes 3000, while node holds it.
 func TestEnrichSkipsAPortANativeProcessHolds(t *testing.T) {
 	containers := parsePS([]byte("itest-web-1\tnginx:itest\t0.0.0.0:3000->80/tcp\tweb\titestproj\t/src/app\n"))
 
