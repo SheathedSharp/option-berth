@@ -57,13 +57,75 @@ func resolvedDir(t *testing.T, dir string) string {
 	return dir
 }
 
+// configCase is one daemon whose index already holds the fixture manifest, a
+// client bound to it, and the directory and file the fixture was written to.
+// Cancelling the test's context shuts the daemon down; the helper arranges that
+// itself, so a test body starts at the call it means to make.
+type configCase struct {
+	harness *testHarness
+	client  *testClient
+	dir     string
+	path    string
+}
+
+// newConfigCase builds the fixture daemon the config handlers are exercised
+// against.
+func newConfigCase(t *testing.T) *configCase {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	harness, dir, path := configHarness(t, ctx)
+	return &configCase{
+		harness: harness,
+		client:  harness.dial(ctx),
+		dir:     dir,
+		path:    path,
+	}
+}
+
+// newBareConfigCase is newConfigCase without the fixture manifest: the test
+// writes its own file, so the daemon has never scanned the directory.
+func newBareConfigCase(t *testing.T) *configCase {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	// The directory is claimed before the harness so the harness stops before
+	// the directory it indexed is removed.
+	dir := resolvedDir(t, t.TempDir())
+	harness := newHarness(t, ctx)
+	return &configCase{harness: harness, client: harness.dial(ctx), dir: dir}
+}
+
+// assertFileHas fails unless the manifest on disk contains want. The hint says
+// what losing it would mean, so a failure names the consequence rather than
+// just the missing substring.
+func assertFileHas(t *testing.T, path, want, hint string) {
+	t.Helper()
+	if contents := readFixture(t, path); !strings.Contains(contents, want) {
+		t.Fatalf("%s (%q missing):\n%s", hint, want, contents)
+	}
+}
+
+// readFixture returns the manifest's bytes as they are on disk right now,
+// ending the test when it cannot be read. Several cases compare the file before
+// and after a handler, and a read failure there is always a broken fixture
+// rather than a behaviour under test.
+func readFixture(t *testing.T, path string) string {
+	t.Helper()
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	return string(contents)
+}
+
 // TestGroupsConfigGetByName returns the file as the resolver publishes it,
 // joined against what is actually running.
 func TestGroupsConfigGetByName(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	h, _, path := configHarness(t, ctx)
-	c := h.dial(ctx)
+	fixture := newConfigCase(t)
+	c, path := fixture.client, fixture.path
 
 	name := "demo"
 	var res rpc.GroupsConfigGetResult
@@ -90,13 +152,8 @@ func TestGroupsConfigGetByName(t *testing.T) {
 
 // TestGroupsConfigGetByPath also indexes a file the daemon has never scanned.
 func TestGroupsConfigGetByPath(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	// Claimed before the harness so the harness stops before the directory it
-	// has indexed is removed.
-	dir := resolvedDir(t, t.TempDir())
-	h := newHarness(t, ctx)
-	c := h.dial(ctx)
+	fixture := newBareConfigCase(t)
+	c, dir := fixture.client, fixture.dir
 
 	path := filepath.Join(dir, groups.ConfigName)
 	if err := os.WriteFile(path, []byte(configFixture), 0o644); err != nil {
@@ -113,10 +170,8 @@ func TestGroupsConfigGetByPath(t *testing.T) {
 }
 
 func TestGroupsConfigGetNotFound(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	h, dir, _ := configHarness(t, ctx)
-	c := h.dial(ctx)
+	fixture := newConfigCase(t)
+	c, dir := fixture.client, fixture.dir
 
 	name := "nope"
 	if e := c.call("groups.config.get", rpc.GroupsConfigGetParams{Name: &name}, nil); e == nil {
@@ -143,10 +198,8 @@ func TestGroupsConfigGetNotFound(t *testing.T) {
 // makes: patch a service, keep the comments, and see the change in a delta
 // without asking for it.
 func TestGroupsConfigSetWritesAndPublishes(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	h, _, path := configHarness(t, ctx)
-	c := h.dial(ctx)
+	fixture := newConfigCase(t)
+	c, path := fixture.client, fixture.path
 
 	// Subscribe first, so the delta the write publishes has somewhere to go.
 	var snap state.Snapshot
@@ -174,16 +227,8 @@ func TestGroupsConfigSetWritesAndPublishes(t *testing.T) {
 		t.Fatalf("returned row = %+v", db)
 	}
 
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), "# the database goes first") {
-		t.Errorf("the comment was lost:\n%s", raw)
-	}
-	if !strings.Contains(string(raw), "color: blue") {
-		t.Errorf("the patch is not on disk:\n%s", raw)
-	}
+	assertFileHas(t, path, "# the database goes first", "the write dropped a comment the editor must preserve")
+	assertFileHas(t, path, "color: blue", "the patch never reached the file")
 
 	// The delta carries the edited group.
 	g, ok := edited["demo"]
@@ -233,14 +278,9 @@ func callCollectingGroups(t *testing.T, c *testClient, method string, params, ou
 }
 
 func TestGroupsConfigSetErrors(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	h, dir, path := configHarness(t, ctx)
-	c := h.dial(ctx)
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	fixture := newConfigCase(t)
+	c, dir, path := fixture.client, fixture.dir, fixture.path
+	before := readFixture(t, path)
 
 	// A service the file does not declare.
 	if e := c.call("groups.config.set", rpc.GroupsConfigSetParams{
@@ -275,11 +315,8 @@ func TestGroupsConfigSetErrors(t *testing.T) {
 		t.Errorf("error = %+v, want invalid_params", e)
 	}
 
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(after) != string(before) {
+	after := readFixture(t, path)
+	if after != before {
 		t.Errorf("a failed write changed the file:\n%s", after)
 	}
 }
@@ -287,10 +324,8 @@ func TestGroupsConfigSetErrors(t *testing.T) {
 // TestGroupsReloadPicksUpANewFile: the index is long-lived, so this is the
 // method that makes a project created after the daemon started a group.
 func TestGroupsReloadPicksUpANewFile(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	h, dir, _ := configHarness(t, ctx)
-	c := h.dial(ctx)
+	fixture := newConfigCase(t)
+	c, dir := fixture.client, fixture.dir
 
 	sub := filepath.Join(dir, "nested")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
@@ -302,7 +337,7 @@ func TestGroupsReloadPicksUpANewFile(t *testing.T) {
 	}
 	// The daemon only knows the parent directory, so nothing has seen this
 	// file yet; the reload has to walk the roots it remembers.
-	h.loop.ObserveConfig(sub)
+	fixture.harness.loop.ObserveConfig(sub)
 
 	var res rpc.GroupsReloadResult
 	if e := c.call("groups.reload", rpc.Empty{}, &res); e != nil {
@@ -325,10 +360,8 @@ func TestGroupsReloadPicksUpANewFile(t *testing.T) {
 // TestGroupsReloadReportsBrokenFiles: a file that does not validate is listed,
 // never fatal.
 func TestGroupsReloadReportsBrokenFiles(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	h, _, path := configHarness(t, ctx)
-	c := h.dial(ctx)
+	fixture := newConfigCase(t)
+	c, path := fixture.client, fixture.path
 
 	if err := os.WriteFile(path, []byte("name: two words\nservices:\n  - name: api\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -372,10 +405,8 @@ func waitForGroup(t *testing.T, c *testClient, name string) *state.Group {
 // daemon owns every edit to a `.oberth.yaml`, so a client never has to write the
 // file itself to add a service or rename one.
 func TestGroupsConfigSetAddsRenamesAndRemoves(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	h, _, path := configHarness(t, ctx)
-	c := h.dial(ctx)
+	fixture := newConfigCase(t)
+	c, path := fixture.client, fixture.path
 
 	var snap state.Snapshot
 	if e := c.call("state.subscribe", rpc.StateSubscribeParams{}, &snap); e != nil {
@@ -405,11 +436,8 @@ func TestGroupsConfigSetAddsRenamesAndRemoves(t *testing.T) {
 	if len(g.Services) != 3 || g.Services[2].Name != "worker" {
 		t.Errorf("the published group is stale: %+v", g.Services)
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), "# the database goes first") {
+	raw := readFixture(t, path)
+	if !strings.Contains(raw, "# the database goes first") {
 		t.Errorf("the comment was lost:\n%s", raw)
 	}
 
@@ -421,11 +449,8 @@ func TestGroupsConfigSetAddsRenamesAndRemoves(t *testing.T) {
 	if len(res.Affected) != 1 || res.Affected[0] != "database" {
 		t.Errorf("affected = %v, want the new name", res.Affected)
 	}
-	raw, err = os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(raw), "depends_on: [db]") || !strings.Contains(string(raw), "depends_on: [database]") {
+	raw = readFixture(t, path)
+	if strings.Contains(raw, "depends_on: [db]") || !strings.Contains(raw, "depends_on: [database]") {
 		t.Errorf("the rename did not follow depends_on:\n%s", raw)
 	}
 	if g, ok := seen["demo"]; ok && g.Services[0].Name != "database" {
@@ -442,11 +467,8 @@ func TestGroupsConfigSetAddsRenamesAndRemoves(t *testing.T) {
 	if len(res.Affected) != 1 || res.Affected[0] != "database" {
 		t.Errorf("affected = %v", res.Affected)
 	}
-	raw, err = os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(raw), "database") {
+	raw = readFixture(t, path)
+	if strings.Contains(raw, "database") {
 		t.Errorf("the removed service is still referenced:\n%s", raw)
 	}
 	if len(res.Config.Services) != 2 {
@@ -458,14 +480,9 @@ func TestGroupsConfigSetAddsRenamesAndRemoves(t *testing.T) {
 // clashes after an add has already been applied must leave the file byte for
 // byte as it was.
 func TestGroupsConfigSetIsAtomic(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	h, _, path := configHarness(t, ctx)
-	c := h.dial(ctx)
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	fixture := newConfigCase(t)
+	c, path := fixture.client, fixture.path
+	before := readFixture(t, path)
 
 	e := c.call("groups.config.set", rpc.GroupsConfigSetParams{
 		Path:     path,
@@ -480,30 +497,25 @@ func TestGroupsConfigSetIsAtomic(t *testing.T) {
 		t.Errorf("error = %+v, want 1011 conflict", e)
 	}
 
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(after) != string(before) {
+	after := readFixture(t, path)
+	if after != before {
 		t.Errorf("a failed edit changed the file:\n%s", after)
 	}
 }
 
-// TestGroupsConfigSetEditErrors walks the codes the new lists can return.
+// TestGroupsConfigSetEditErrors walks the refusals the edit lists can produce.
+// Every one of them must name a code a client can branch on, carry a hint, and
+// leave the file untouched — a rejected edit that still writes is worse than an
+// accepted one that fails later.
 func TestGroupsConfigSetEditErrors(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	h, _, path := configHarness(t, ctx)
-	c := h.dial(ctx)
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	fixture := newConfigCase(t)
+	c, path := fixture.client, fixture.path
+	before := readFixture(t, path)
 
 	cases := []struct {
-		name   string
-		params rpc.GroupsConfigSetParams
-		want   string
+		label string
+		edit  rpc.GroupsConfigSetParams
+		want  string
 	}{
 		{"a name the file already has", rpc.GroupsConfigSetParams{
 			Path: path, Add: []groups.ServiceAdd{{Name: "api", Port: 9000}},
@@ -528,36 +540,32 @@ func TestGroupsConfigSetEditErrors(t *testing.T) {
 			Path: path, Add: []groups.ServiceAdd{{Name: "worker", Port: 9000, DependsOn: []string{"nope"}}},
 		}, "invalid_config"},
 	}
+
 	for _, tc := range cases {
-		e := c.call("groups.config.set", tc.params, nil)
-		if e == nil {
-			t.Errorf("%s: should have failed", tc.name)
-			continue
-		}
-		if e.Data.Code != tc.want {
-			t.Errorf("%s: error = %+v, want %s", tc.name, e, tc.want)
-		}
-		if e.Data.Hint == "" {
-			t.Errorf("%s: error carries no hint: %+v", tc.name, e)
-		}
+		t.Run(tc.label, func(t *testing.T) {
+			refusal := c.call("groups.config.set", tc.edit, nil)
+			if refusal == nil {
+				t.Fatalf("the edit was accepted, want %s", tc.want)
+			}
+			if refusal.Data.Code != tc.want {
+				t.Fatalf("code = %q, want %q (%+v)", refusal.Data.Code, tc.want, refusal)
+			}
+			if refusal.Data.Hint == "" {
+				t.Errorf("the refusal carries no hint: %+v", refusal)
+			}
+		})
 	}
 
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(after) != string(before) {
-		t.Errorf("a failed edit changed the file:\n%s", after)
+	if after := readFixture(t, path); after != before {
+		t.Errorf("a refused edit changed the file:\n%s", after)
 	}
 }
 
 // TestGroupsConfigSetRemoveThenAddReusesThePort: the lists are applied remove
 // first, so swapping one service for another on the same port is one call.
 func TestGroupsConfigSetRemoveThenAddReusesThePort(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	h, _, path := configHarness(t, ctx)
-	c := h.dial(ctx)
+	fixture := newConfigCase(t)
+	c, path := fixture.client, fixture.path
 
 	var res rpc.GroupsConfigSetResult
 	if e := c.call("groups.config.set", rpc.GroupsConfigSetParams{
