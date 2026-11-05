@@ -1107,6 +1107,26 @@ func mergeStats(previous, next []state.Port, replace bool) {
 		func(into, from *state.Port) { into.Stats = from.Stats })
 }
 
+// keySet is the set of the given port keys, for asking "is this one among
+// them" while building events.
+func keySet(keys []string) map[string]bool {
+	set := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		set[key] = true
+	}
+	return set
+}
+
+// indexPorts makes a snapshot's rows addressable by key, so a removed key can
+// be turned back into the row a `port_down` event needs to carry.
+func indexPorts(rows []state.Port) map[string]state.Port {
+	byKey := make(map[string]state.Port, len(rows))
+	for _, row := range rows {
+		byKey[row.Key()] = row
+	}
+	return byKey
+}
+
 // deriveEvents turns a snapshot transition into the discrete events the tray
 // and app show as notifications.
 func deriveEvents(prev, next state.Snapshot, at string) []state.Event {
@@ -1116,10 +1136,7 @@ func deriveEvents(prev, next state.Snapshot, at string) []state.Event {
 	groups = append(groups, next.Groups...)
 
 	// A key that is both removed and added in one delta is a restart.
-	removed := make(map[string]bool, len(d.Ports.Removed))
-	for _, k := range d.Ports.Removed {
-		removed[k] = true
-	}
+	removed := keySet(d.Ports.Removed)
 
 	events := make([]state.Event, 0, len(d.Ports.Added)+len(d.Ports.Removed))
 	restarted := make(map[string]bool, len(d.Ports.Added))
@@ -1131,10 +1148,7 @@ func deriveEvents(prev, next state.Snapshot, at string) []state.Event {
 		}
 		events = append(events, eventForPort(next.Seq, kind, at, p, groups))
 	}
-	before := make(map[string]state.Port, len(prev.Ports))
-	for _, p := range prev.Ports {
-		before[p.Key()] = p
-	}
+	before := indexPorts(prev.Ports)
 	for _, key := range d.Ports.Removed {
 		if restarted[key] {
 			continue
