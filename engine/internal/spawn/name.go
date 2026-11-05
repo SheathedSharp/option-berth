@@ -152,13 +152,14 @@ func withoutAssignments(argv []string) []string {
 }
 
 // launcherName reduces a token to the binary it names: no directory, no Windows
-// extension, lower-cased so the table lookup is case-insensitive.
+// extension, lower-cased so the table lookup is case-insensitive. Lower-casing
+// comes first because Windows is case-insensitive too: `NPM.EXE` is npm.
 func launcherName(token string) string {
-	base := lastElement(token)
+	base := strings.ToLower(lastElement(token))
 	for _, extension := range []string{".exe", ".cmd", ".bat"} {
 		base = strings.TrimSuffix(base, extension)
 	}
-	return strings.ToLower(base)
+	return base
 }
 
 // lastElement is the final path element of a token, honouring both separators
