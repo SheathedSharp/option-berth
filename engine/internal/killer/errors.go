@@ -7,41 +7,47 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
-// Error codes from the cross-spec contract's error model (§2). The killer only
-// produces the subset it can hit; the daemon and the CLI map them onto their
-// own transports.
+// Error codes from the contract's error model (§2). The killer emits only the
+// subset it can hit; the daemon and CLI map them onto their transports.
 const (
-	CodeNotFound         = "not_found"
-	CodeAmbiguous        = "ambiguous"
+	// The selector matched nothing.
+	CodeNotFound = "not_found"
+	// The selector matched several things.
+	CodeAmbiguous = "ambiguous"
+	// The OS refused the signal.
 	CodePermissionDenied = "permission_denied"
-	CodeInvalidSelector  = "invalid_selector"
-	CodeInternal         = "internal"
+	// The selector itself is invalid.
+	CodeInvalidSelector = "invalid_selector"
+	// The failure was not classified.
+	CodeInternal = "internal"
 )
 
-// CodedError carries a contract error code and its hint alongside the detail
-// message that ends up in a Result's Error field.
+// CodedError is a contract code and its hint beside the detail message that
+// lands in a Result's Error field.
 type CodedError struct {
 	Code   string
 	Detail string
 	Hint   string
-	Err    error
+
+	// Err is the underlying cause, when one exists.
+	Err error
 }
 
-func (e *CodedError) Error() string { return e.Detail }
-func (e *CodedError) Unwrap() error { return e.Err }
+func (coded *CodedError) Error() string { return coded.Detail }
+func (coded *CodedError) Unwrap() error { return coded.Err }
 
-func codedf(code, hint string, format string, args ...any) *CodedError {
-	return &CodedError{Code: code, Hint: hint, Detail: fmt.Sprintf(format, args...)}
+func codedf(code, hint, format string, values ...any) *CodedError {
+	return &CodedError{Code: code, Hint: hint, Detail: fmt.Sprintf(format, values...)}
 }
 
 // permissionErr is the contract's permission_denied with the sudo hint the
 // error-handling section requires of kill.
-func permissionErr(pid int, err error) *CodedError {
+func permissionErr(pid int, cause error) *CodedError {
 	return &CodedError{
 		Code:   CodePermissionDenied,
 		Detail: fmt.Sprintf("not permitted to signal PID %d", pid),
 		Hint:   "re-run with sudo",
-		Err:    err,
+		Err:    cause,
 	}
 }
 
@@ -51,28 +57,28 @@ func Code(err error) string {
 	if err == nil {
 		return ""
 	}
-	var c *CodedError
-	if errors.As(err, &c) {
-		return c.Code
+	var coded *CodedError
+	if errors.As(err, &coded) {
+		return coded.Code
 	}
 	// A collection failure before any target was resolved carries the
-	// collector's own code, so the CLI does not report a sandbox as an engine bug.
-	var oe *ports.ObservationError
-	if errors.As(err, &oe) {
-		return oe.Code
+	// collector's code, so a sandbox is not reported as an engine bug.
+	var observation *ports.ObservationError
+	if errors.As(err, &observation) {
+		return observation.Code
 	}
 	return CodeInternal
 }
 
 // Hint returns the actionable hint for err, or "" when there is none.
 func Hint(err error) string {
-	var c *CodedError
-	if errors.As(err, &c) {
-		return c.Hint
+	var coded *CodedError
+	if errors.As(err, &coded) {
+		return coded.Hint
 	}
-	var oe *ports.ObservationError
-	if errors.As(err, &oe) {
-		return oe.Hint
+	var observation *ports.ObservationError
+	if errors.As(err, &observation) {
+		return observation.Hint
 	}
 	return ""
 }
