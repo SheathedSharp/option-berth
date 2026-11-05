@@ -169,6 +169,16 @@ func (h *testHarness) sampleStats(pids []int) map[int]ports.ProcSample {
 	return out
 }
 
+// newClient starts a daemon a test only talks to, on a context this test
+// cancels when it ends, and returns a connected client. Tests that reach into
+// the harness use newHarness instead.
+func newClient(t *testing.T) *testClient {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	return newHarness(t, ctx).dial(ctx)
+}
+
 // setRows replaces what the fake scanner returns.
 func (h *testHarness) setRows(rows ...ports.ListeningPort) {
 	h.mu.Lock()
@@ -312,9 +322,7 @@ func TestHelloOverTheCodec(t *testing.T) {
 }
 
 func TestHelloRequiresAClientName(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	c := newHarness(t, ctx).dial(ctx)
+	c := newClient(t)
 
 	e := c.call("daemon.hello", rpc.DaemonHelloParams{ClientVersion: "1"}, nil)
 	if e == nil {
@@ -326,9 +334,7 @@ func TestHelloRequiresAClientName(t *testing.T) {
 }
 
 func TestUnknownMethodIsNotFound(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	c := newHarness(t, ctx).dial(ctx)
+	c := newClient(t)
 
 	e := c.call("ports.teleport", rpc.Empty{}, nil)
 	if e == nil {
@@ -343,9 +349,7 @@ func TestUnknownMethodIsNotFound(t *testing.T) {
 }
 
 func TestInvalidIncludeIsRejected(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	c := newHarness(t, ctx).dial(ctx)
+	c := newClient(t)
 
 	e := c.call("state.snapshot", map[string]any{"include": []string{"stats", "weather"}}, nil)
 	if e == nil {
@@ -636,9 +640,7 @@ func TestShutdownAnswersBeforeClosing(t *testing.T) {
 // TestOversizeMessageIsRejectedNotFatal checks the 4 MiB framing limit: the
 // daemon answers with invalid_params and keeps the connection.
 func TestOversizeMessageIsRejectedNotFatal(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	c := newHarness(t, ctx).dial(ctx)
+	c := newClient(t)
 
 	go func() {
 		c.conn.SetWriteDeadline(time.Now().Add(pipeWrite))
@@ -667,9 +669,7 @@ func TestOversizeMessageIsRejectedNotFatal(t *testing.T) {
 // TestStreamCancelOnAnUnknownID keeps the contract §1 cancel path honest before
 // any streaming method exists to use it.
 func TestStreamCancelOnAnUnknownID(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	c := newHarness(t, ctx).dial(ctx)
+	c := newClient(t)
 
 	e := c.call("stream.cancel", rpc.StreamCancel{ID: "nope"}, nil)
 	if e == nil || e.Code != rpc.CodeNotFound {
