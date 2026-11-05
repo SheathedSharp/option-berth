@@ -245,73 +245,81 @@ func sampleViaAPI(containers []container) map[string]*ContainerStats {
 	return sampled
 }
 
-// fetchContainerStatsAPI fetches stats for a single container via the Docker socket API.
+// Timeouts for the two Engine API calls one container needs. A stats request
+// makes the daemon collect a CPU sample, so it is allowed longer than the
+// inspect call that only reads metadata.
+const (
+	statsRequestTimeout   = 5 * time.Second
+	inspectRequestTimeout = 2 * time.Second
+)
+
+// fetchContainerStatsAPI samples one container over the Docker socket. A nil
+// result means the container did not answer, which the caller reports as an
+// absent row rather than as a container with zero usage.
 func fetchContainerStatsAPI(name string) *ContainerStats {
-	conn, err := net.Dial("unix", dockerSocket)
+	body, err := dockerAPIGet("/containers/"+name+"/stats?stream=false", statsRequestTimeout)
 	if err != nil {
 		return nil
 	}
-
-	stats := &ContainerStats{}
-
-	statsReq := fmt.Sprintf("GET /containers/%s/stats?stream=false HTTP/1.0\r\nHost: localhost\r\n\r\n", name)
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
-	_, err = conn.Write([]byte(statsReq))
-	if err != nil {
-		conn.Close()
+	var payload apiStatsResponse
+	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil
 	}
+	stats := measurements(payload)
 
-	statsBody, err := readHTTPBody(conn)
-	conn.Close()
-	if err != nil {
-		return nil
-	}
-
-	var apiStats apiStatsResponse
-	if err := json.Unmarshal(statsBody, &apiStats); err != nil {
-		return nil
-	}
-
-	cpuDelta := apiStats.CPUStats.CPUUsage.TotalUsage - apiStats.PrecpuStats.CPUUsage.TotalUsage
-	sysDelta := apiStats.CPUStats.SystemCPUUsage - apiStats.PrecpuStats.SystemCPUUsage
-	ncpu := apiStats.CPUStats.OnlineCPUs
-	if ncpu == 0 {
-		ncpu = 1
-	}
-	if sysDelta > 0 {
-		stats.CPUPercent = float64(cpuDelta) / float64(sysDelta) * float64(ncpu) * 100.0
-	}
-
-	stats.MemoryRSS = int64(apiStats.MemoryStats.Usage)
-	stats.PIDs = apiStats.PidsStats.Current
-
-	// Fetch /json for state and start time
-	conn2, err := net.Dial("unix", dockerSocket)
+	// State and start time live on a different endpoint. Losing it costs the
+	// row its state and uptime, not its numbers, so the failure is not fatal.
+	described, err := dockerAPIGet("/containers/"+name+"/json", inspectRequestTimeout)
 	if err != nil {
 		return stats
 	}
-	defer conn2.Close()
-
-	inspectReq := fmt.Sprintf("GET /containers/%s/json HTTP/1.0\r\nHost: localhost\r\n\r\n", name)
-	conn2.SetDeadline(time.Now().Add(2 * time.Second))
-	_, err = conn2.Write([]byte(inspectReq))
-	if err != nil {
-		return stats
-	}
-
-	inspectBody, err := readHTTPBody(conn2)
-	if err != nil {
-		return stats
-	}
-
 	var inspect apiInspectState
-	if err := json.Unmarshal(inspectBody, &inspect); err != nil {
+	if err := json.Unmarshal(described, &inspect); err != nil {
 		return stats
 	}
 	stats.State = inspect.State.Status
 	stats.Uptime = computeContainerUptime(inspect.State.StartedAt)
+	return stats
+}
 
+// dockerAPIGet performs one HTTP/1.0 GET against the Docker socket and returns
+// the response body.
+func dockerAPIGet(endpoint string, timeout time.Duration) ([]byte, error) {
+	conn, err := net.Dial("unix", dockerSocket)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+		return nil, err
+	}
+	request := "GET " + endpoint + " HTTP/1.0\r\nHost: localhost\r\n\r\n"
+	if _, err := conn.Write([]byte(request)); err != nil {
+		return nil, err
+	}
+	return readHTTPBody(conn)
+}
+
+// measurements turns one /stats response into the numbers this package reports.
+//
+// CPU is the share of the host's CPU time the container used between the two
+// samples the daemon took, scaled by the number of online CPUs so the figure is
+// comparable to what `docker stats` prints. A zero system delta means the two
+// samples are unusable, and no percentage is reported rather than an infinite
+// one.
+func measurements(payload apiStatsResponse) *ContainerStats {
+	stats := &ContainerStats{}
+	cpuDelta := payload.CPUStats.CPUUsage.TotalUsage - payload.PrecpuStats.CPUUsage.TotalUsage
+	systemDelta := payload.CPUStats.SystemCPUUsage - payload.PrecpuStats.SystemCPUUsage
+	online := payload.CPUStats.OnlineCPUs
+	if online == 0 {
+		online = 1
+	}
+	if systemDelta > 0 {
+		stats.CPUPercent = float64(cpuDelta) / float64(systemDelta) * float64(online) * 100
+	}
+	stats.MemoryRSS = int64(payload.MemoryStats.Usage)
+	stats.PIDs = payload.PidsStats.Current
 	return stats
 }
 
