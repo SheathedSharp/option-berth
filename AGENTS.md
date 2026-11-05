@@ -16,6 +16,12 @@ requires the PR author to be a repository maintainer; do not work around it. Com
 and cleanup are in the project skill
 [`option-berth-delivery`](.agents/skills/option-berth-delivery/SKILL.md).
 
+## Versions and releases
+
+The engine version is the single value in [`VERSION`](VERSION). What a version step means, which tags a
+release creates, which gates must pass and how a release is cut are in
+[docs/agent/releasing.md](docs/agent/releasing.md); do not restate or improvise them here.
+
 Contracts and practices each have a home; when they conflict, the contract wins:
 
 | What you need | Where to go |
