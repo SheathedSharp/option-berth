@@ -159,18 +159,24 @@ func (c *Conn) enqueue(msg []byte) bool {
 
 // Notify sends a notification to this client.
 func (c *Conn) Notify(method string, params any) error {
-	raw, err := json.Marshal(params)
+	framed, err := marshalNotification(method, params)
 	if err != nil {
 		return err
 	}
-	msg, err := json.Marshal(rpc.Notification{JSONRPC: rpc.Version, Method: method, Params: raw})
-	if err != nil {
-		return err
-	}
-	if !c.enqueue(msg) {
+	if !c.enqueue(framed) {
 		return errors.New("daemon: connection closed")
 	}
 	return nil
+}
+
+// marshalNotification frames one notification for the wire: params first, then
+// the envelope that names the method.
+func marshalNotification(method string, params any) ([]byte, error) {
+	encoded, err := json.Marshal(params)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(rpc.Notification{JSONRPC: rpc.Version, Method: method, Params: encoded})
 }
 
 // closeWithReason shuts the connection down once, logging why.
