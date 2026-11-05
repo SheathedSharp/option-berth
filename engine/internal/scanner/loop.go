@@ -1453,18 +1453,8 @@ func (l *Loop) scanNowContext(ctx context.Context, include Include, mode scanMod
 	}
 	defer unlock(l.rpcGate)
 
-	if mode == readinessScan {
-		if err := l.recentReadinessError(); err != nil {
-			return state.Snapshot{}, err
-		}
-		if snap, ok := l.cachedWithin(include, MinScanInterval); ok {
-			return snap, nil
-		}
-	}
-	if mode == mayCoalesce {
-		if snap, ok := l.scannedSince(asked, include); ok {
-			return snap, nil
-		}
+	if snap, reused, err := l.reuseIfFresh(asked, include, mode); err != nil || reused {
+		return snap, err
 	}
 
 	next, prev, _, err := l.scanLockedContext(ctx, include, l.demandInclude(), false)
@@ -1479,6 +1469,31 @@ func (l *Loop) scanNowContext(ctx context.Context, include Include, mode scanMod
 		return state.Snapshot{}, err
 	}
 	return next, nil
+}
+
+// reuseIfFresh answers a read from state that is already good enough for its
+// mode, so a burst of readers costs one scan rather than one scan each.
+//
+// The two modes ask different questions. A readiness wait has to know whether
+// the previous readiness round failed — that failure is reusable as an error,
+// never as stale success — and otherwise accepts a snapshot no older than the
+// scan floor. An ordinary read accepts one that a scan begun after the call
+// has already committed, which is the same thing without a clock.
+func (l *Loop) reuseIfFresh(asked uint64, include Include, mode scanMode) (state.Snapshot, bool, error) {
+	switch mode {
+	case readinessScan:
+		if err := l.recentReadinessError(); err != nil {
+			return state.Snapshot{}, false, err
+		}
+		if snap, usable := l.cachedWithin(include, MinScanInterval); usable {
+			return snap, true, nil
+		}
+	case mayCoalesce:
+		if snap, usable := l.scannedSince(asked, include); usable {
+			return snap, true, nil
+		}
+	}
+	return state.Snapshot{}, false, nil
 }
 
 // beginScan captures both scan order and the changes known before OS I/O.
