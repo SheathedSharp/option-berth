@@ -488,6 +488,17 @@ func (l *Loop) Wake() {
 	}
 }
 
+// runInBackground starts one auxiliary goroutine and counts it in the wait
+// group, so Run returns only once every helper has actually stopped rather
+// than merely been told to.
+func runInBackground(background *sync.WaitGroup, ctx context.Context, work func(context.Context)) {
+	background.Add(1)
+	go func() {
+		defer background.Done()
+		work(ctx)
+	}()
+}
+
 // Run drives the loop until ctx is cancelled. With zero subscribers it parks on
 // Wake and does no work at all; the next RPC or subscription starts it again.
 //
@@ -498,20 +509,12 @@ func (l *Loop) Wake() {
 // scan that may be 5 s apart.
 func (l *Loop) Run(ctx context.Context) {
 	var background sync.WaitGroup
-	background.Add(1)
-	go func() {
-		defer background.Done()
-		l.runStats(ctx)
-	}()
+	runInBackground(&background, ctx, l.runStats)
 	if l.docker != nil {
-		// The docker watcher refreshes the container list the scans read,
-		// in its own goroutine for the same reason: nothing on the scan
+		// The watcher refreshes the container list scans read, in its own
+		// goroutine for the same reason as the stats tick: nothing on the scan
 		// path waits on the docker CLI.
-		background.Add(1)
-		go func() {
-			defer background.Done()
-			l.docker.Run(ctx)
-		}()
+		runInBackground(&background, ctx, l.docker.Run)
 	}
 	defer background.Wait()
 
