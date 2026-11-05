@@ -456,136 +456,141 @@ func parseMemString(printed string) int64 {
 	return 0
 }
 
-// computeContainerUptime parses a Docker ISO 8601 timestamp and returns a human-readable duration.
+// dockerStartTimeLayouts are the two shapes Docker prints StartedAt in: a
+// UTC instant with nanoseconds, and the same with a numeric offset.
+var dockerStartTimeLayouts = []string{
+	"2006-01-02T15:04:05.999999999Z",
+	"2006-01-02T15:04:05.999999999Z07:00",
+}
+
+// computeContainerUptime renders how long ago a container started, from the
+// StartedAt Docker reports. An unparseable timestamp yields "" rather than a
+// wrong age.
 func computeContainerUptime(startedAt string) string {
-	layouts := []string{
-		"2006-01-02T15:04:05.999999999Z",
-		"2006-01-02T15:04:05.999999999Z07:00",
-	}
-	for _, layout := range layouts {
-		if t, err := time.Parse(layout, startedAt); err == nil {
-			d := time.Since(t)
-			return formatContainerDuration(d)
+	for _, layout := range dockerStartTimeLayouts {
+		started, err := time.Parse(layout, startedAt)
+		if err != nil {
+			continue
 		}
+		return formatContainerDuration(time.Since(started))
 	}
 	return ""
 }
 
-func formatContainerDuration(d time.Duration) string {
-	if d < time.Minute {
-		return fmt.Sprintf("%ds", int(d.Seconds()))
+// formatContainerDuration renders a container's age at the coarsest useful
+// resolution: seconds, minutes, hours, then days.
+func formatContainerDuration(age time.Duration) string {
+	switch {
+	case age < time.Minute:
+		return fmt.Sprintf("%ds", int(age.Seconds()))
+	case age < time.Hour:
+		return fmt.Sprintf("%dm%ds", int(age.Minutes()), int(age.Seconds())%60)
+	case age < 24*time.Hour:
+		return fmt.Sprintf("%dh%dm", int(age.Hours()), int(age.Minutes())%60)
+	default:
+		return fmt.Sprintf("%dd%dh", int(age.Hours())/24, int(age.Hours())%24)
 	}
-	if d < time.Hour {
-		return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
-	}
-	if d < 24*time.Hour {
-		h := int(d.Hours())
-		m := int(d.Minutes()) % 60
-		return fmt.Sprintf("%dh%dm", h, m)
-	}
-	days := int(d.Hours()) / 24
-	h := int(d.Hours()) % 24
-	return fmt.Sprintf("%dd%dh", days, h)
 }
 
-// StopContainer stops a Docker container by name using `docker stop`.
+// StopContainer stops a container by name through `docker stop`.
 func StopContainer(name string) error {
-	cmd, stop := timedCommand("stop", name)
-	defer stop()
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to stop container %s: %w", name, err)
+	stop, release := timedCommand("stop", name)
+	defer release()
+	if err := stop.Run(); err != nil {
+		return fmt.Errorf("stopping container %s: %w", name, err)
 	}
 	return nil
 }
 
-// psFormat is the `docker ps --format` template parsePS reads.
-const psFormat = "{{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Label \"com.docker.compose.service\"}}" +
-	"\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}"
+// psFormat is the `docker ps --format` template parsePS reads: one
+// tab-separated row per container, the compose labels last.
+const psFormat = "{{.Names}}\t{{.Image}}\t{{.Ports}}" +
+	"\t{{.Label \"com.docker.compose.service\"}}" +
+	"\t{{.Label \"com.docker.compose.project\"}}" +
+	"\t{{.Label \"com.docker.compose.project.working_dir\"}}"
 
-// listContainers runs `docker ps` under CLITimeout and parses the output.
+// listContainers runs `docker ps` under CLITimeout.
 func listContainers() ([]container, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), CLITimeout)
 	defer cancel()
 	return listContainersCtx(ctx)
 }
 
-// listContainersCtx runs `docker ps` bound to ctx and parses the output.
+// listContainersCtx runs `docker ps` bound to ctx and parses the answer.
 func listContainersCtx(ctx context.Context) ([]container, error) {
-	out, err := dockerCommand(ctx, "ps", "--format", psFormat).Output()
+	printed, err := dockerCommand(ctx, "ps", "--format", psFormat).Output()
 	if err != nil {
 		return nil, err
 	}
-	return parsePS(out), nil
+	return parsePS(printed), nil
 }
 
-// parsePS parses `docker ps --format psFormat` output, one container a line.
-func parsePS(out []byte) []container {
-	var containers []container
-	scanner := bufio.NewScanner(strings.NewReader(string(out)))
-	for scanner.Scan() {
-		line := scanner.Text()
-		parts := strings.SplitN(line, "\t", 6)
-		if len(parts) < 6 {
+// psColumns is how many tab-separated fields psFormat produces.
+const psColumns = 6
+
+// parsePS reads `docker ps --format psFormat` output. A row with fewer columns
+// than the template asks for is skipped: it is not a container this package can
+// describe.
+func parsePS(printed []byte) []container {
+	var listed []container
+	rows := bufio.NewScanner(strings.NewReader(string(printed)))
+	for rows.Scan() {
+		fields := strings.SplitN(rows.Text(), "\t", psColumns)
+		if len(fields) < psColumns {
 			continue
 		}
-
-		c := container{
-			name:              parts[0],
-			image:             parts[1],
-			portMappings:      parsePorts(parts[2]),
-			composeService:    parts[3],
-			composeProject:    parts[4],
-			composeWorkingDir: parts[5],
-		}
-		containers = append(containers, c)
-	}
-
-	return containers
-}
-
-// parsePorts parses Docker port strings like "0.0.0.0:3000->80/tcp, 0.0.0.0:3001->443/tcp".
-func parsePorts(raw string) []portMapping {
-	if raw == "" {
-		return nil
-	}
-
-	var mappings []portMapping
-	for _, entry := range strings.Split(raw, ", ") {
-		// Format: 0.0.0.0:3000->80/tcp or :::3000->80/tcp
-		arrowIdx := strings.Index(entry, "->")
-		if arrowIdx < 0 {
-			continue
-		}
-
-		hostPart := entry[:arrowIdx]
-		containerPart := entry[arrowIdx+2:]
-
-		// Extract host port (after last colon)
-		colonIdx := strings.LastIndex(hostPart, ":")
-		if colonIdx < 0 {
-			continue
-		}
-		hostPort, err := strconv.Atoi(hostPart[colonIdx+1:])
-		if err != nil {
-			continue
-		}
-
-		// Extract container port (before /tcp or /udp)
-		slashIdx := strings.Index(containerPart, "/")
-		cpStr := containerPart
-		if slashIdx >= 0 {
-			cpStr = containerPart[:slashIdx]
-		}
-		containerPort, err := strconv.Atoi(cpStr)
-		if err != nil {
-			continue
-		}
-
-		mappings = append(mappings, portMapping{
-			hostPort:      hostPort,
-			containerPort: containerPort,
+		listed = append(listed, container{
+			name:              fields[0],
+			image:             fields[1],
+			portMappings:      parsePorts(fields[2]),
+			composeService:    fields[3],
+			composeProject:    fields[4],
+			composeWorkingDir: fields[5],
 		})
 	}
+	return listed
+}
 
-	return mappings
+// parsePorts reads Docker's port list, where each entry reads
+// "[host]:<hostPort>-><containerPort>/<proto>" and entries are comma-separated.
+// Entries this package cannot use — no arrow, no host port — are dropped rather
+// than guessed at.
+func parsePorts(printed string) []portMapping {
+	if printed == "" {
+		return nil
+	}
+	var published []portMapping
+	for _, entry := range strings.Split(printed, ", ") {
+		mapping, usable := parsePortEntry(entry)
+		if usable {
+			published = append(published, mapping)
+		}
+	}
+	return published
+}
+
+// parsePortEntry reads one published-port entry. The host side is everything
+// before the arrow and the container side everything after it; the container
+// side may carry a "/tcp" or "/udp" suffix, which this package does not use.
+func parsePortEntry(entry string) (portMapping, bool) {
+	hostSide, containerSide, found := strings.Cut(entry, "->")
+	if !found {
+		return portMapping{}, false
+	}
+	// The address part can be a bare IPv6 address, so the port is whatever
+	// follows the last colon.
+	_, hostPortText, found := strings.Cut(hostSide, ":")
+	if !found {
+		return portMapping{}, false
+	}
+	hostPort, err := strconv.Atoi(hostPortText)
+	if err != nil {
+		return portMapping{}, false
+	}
+	containerPortText, _, _ := strings.Cut(containerSide, "/")
+	containerPort, err := strconv.Atoi(containerPortText)
+	if err != nil {
+		return portMapping{}, false
+	}
+	return portMapping{hostPort: hostPort, containerPort: containerPort}, true
 }
