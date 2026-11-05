@@ -9,86 +9,81 @@ import (
 
 func TestParsePositionPointsAtTheUnclosedBracket(t *testing.T) {
 	cases := []struct {
-		name     string
-		src      string
+		label    string
+		input    string
 		wantLine int
 		wantCol  int
 	}{
 		{
-			// The config the step was written for.
-			name: "flow sequence never closed", src: "list: [broken",
-			wantLine: 1, wantCol: 7,
-		},
-		{
-			// go-yaml blames line 1 here; the bracket is on line 2.
-			name: "unclosed bracket below the reported line",
-			src:  "a: 1\nb: [1,\nc: 2\n", wantLine: 2, wantCol: 4,
-		},
-		{
-			name: "unclosed mapping", src: "a: {x: 1\n", wantLine: 1, wantCol: 4,
-		},
-		{
-			name:     "the innermost one wins",
-			src:      "a: [1, {b: 2\n",
+			label: "flow sequence never closed", input: "items: [open",
 			wantLine: 1, wantCol: 8,
 		},
 		{
-			name:     "a bracket inside a quoted scalar is not an opener",
-			src:      "a: \"[\"\nb: [1\n",
-			wantLine: 2, wantCol: 4,
+			// go-yaml blames line 1 here; the bracket is on line 2.
+			label: "unclosed bracket below the reported line",
+			input: "first: 1\nsecond: [1,\nthird: 2\n", wantLine: 2, wantCol: 9,
 		},
 		{
-			name:     "a bracket in a comment is not an opener",
-			src:      "a: 1 # [\nb: [1\n",
-			wantLine: 2, wantCol: 4,
+			label: "unclosed mapping", input: "a: {x: 1\n", wantLine: 1, wantCol: 4,
+		},
+		{
+			label: "innermost wins", input: "a: [1, {b: 2\n", wantLine: 1, wantCol: 8,
+		},
+		{
+			label: "bracket inside a quoted scalar is not an opener",
+			input: "a: \"[\"\nb: [1\n", wantLine: 2, wantCol: 4,
+		},
+		{
+			label: "bracket in a comment is not an opener",
+			input: "a: 1 # [\nb: [1\n", wantLine: 2, wantCol: 4,
 		},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var node yaml.Node
-			err := yaml.Unmarshal([]byte(tc.src), &node)
+		t.Run(tc.label, func(t *testing.T) {
+			var parsed yaml.Node
+			err := yaml.Unmarshal([]byte(tc.input), &parsed)
 			if err == nil {
-				t.Fatalf("%q parsed cleanly; the fixture is not a syntax error", tc.src)
+				t.Fatalf("%q parsed cleanly; the fixture is not a syntax error", tc.input)
 			}
-			pos := parsePosition(tc.src, err)
-			if pos.Line != tc.wantLine || pos.Col != tc.wantCol {
+			at := parsePosition(tc.input, err)
+			if at.Line != tc.wantLine || at.Col != tc.wantCol {
 				t.Errorf("position = %d:%d, want %d:%d (yaml said %v)",
-					pos.Line, pos.Col, tc.wantLine, tc.wantCol, err)
+					at.Line, at.Col, tc.wantLine, tc.wantCol, err)
 			}
 		})
 	}
 }
 
 func TestParsePositionFallsBackToTheParsersLine(t *testing.T) {
-	const src = "a: *nope\n"
-	var node yaml.Node
-	err := yaml.Unmarshal([]byte(src), &node)
+	const input = "a: *nope\n"
+	var parsed yaml.Node
+	err := yaml.Unmarshal([]byte(input), &parsed)
 	if err == nil {
 		t.Fatal("an unknown anchor should not parse")
 	}
-	// go-yaml reports this one without a line at all, so there is nothing to
-	// point at and the check falls back to naming the file.
-	if pos := parsePosition(src, err); pos.Line != 0 {
-		t.Errorf("position = %d:%d, want no position", pos.Line, pos.Col)
+	// go-yaml reports this one with no line at all, so there is nothing to
+	// point at and the check names the file instead.
+	if at := parsePosition(input, err); at.Line != 0 {
+		t.Errorf("position = %d:%d, want no position", at.Line, at.Col)
 	}
 }
 
 func TestCaretMarksTheColumn(t *testing.T) {
-	got := caret("list: [broken", Position{Line: 1, Col: 7})
-	want := "  list: [broken\n        ^"
+	got := caret("items: [open", Position{Line: 1, Col: 8})
+	want := "  items: [open\n         ^"
 	if got != want {
 		t.Errorf("caret =\n%s\nwant\n%s", got, want)
 	}
 }
 
 func TestYamlMessageDropsTheRedundantPrefixes(t *testing.T) {
-	var node yaml.Node
-	err := yaml.Unmarshal([]byte("list: [broken"), &node)
+	var parsed yaml.Node
+	err := yaml.Unmarshal([]byte("items: [open"), &parsed)
 	got := yamlMessage(err)
 	if strings.Contains(got, "yaml:") || strings.Contains(got, "line 1") {
-		t.Errorf("message = %q, want it without the yaml: and line prefixes", got)
+		t.Errorf("message = %q, want no yaml:/line prefix", got)
 	}
 	if !strings.Contains(got, "','") {
-		t.Errorf("message = %q, want it to keep what the parser said", got)
+		t.Errorf("message = %q, want the parser's own words", got)
 	}
 }
