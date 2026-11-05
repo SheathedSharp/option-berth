@@ -7,7 +7,7 @@
 <p align="center"><strong>每份代码，各自成泊。</strong><br>Git worktree 的运行事实层：服务起没起来，为什么没起来。</p>
 <p align="center"><a href="README.md">English</a> · 简体中文</p>
 
-<p align="center"><a href="https://sheathedsharp.github.io/option-berth/">产品官网</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">下载最新引擎</a></p>
+<p align="center"><a href="https://oberth.zayju.de/">产品官网</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">下载最新引擎</a></p>
 
 ## 三个产品
 

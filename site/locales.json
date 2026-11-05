@@ -12,7 +12,7 @@
     "install_action": "安装 oberth",
     "read_contract": "看 CLI 契约",
     "proof_title": "跑完，才算数。",
-    "proof_intro": "80 次真实 agent 运行：8 个十服务栈场景 × 2 种方式 × 5 次重复，同一 agent、同一二进制。左列为带 oberth，右列为只用 agent。",
+    "proof_intro": "$proof_run_count 次真实 agent 运行：$proof_scenario_count 个十服务栈场景 × 2 种方式 × $proof_repeat 次重复，同一 agent、同一二进制。左列为带 oberth，右列为只用 agent。",
     "proof_caption": "真实 agent 运行结果对比",
     "proof_metric": "指标",
     "proof_with": "带 oberth",
@@ -20,8 +20,8 @@
     "proof_row_completion": "完成任务",
     "proof_row_turns": "轮次中位",
     "proof_row_time": "用时中位",
-    "proof_result": "8/8 场景轮次更少，两个臂都没有越界操作。",
-    "proof_note": "单一 agent、单一模型、内部夹具；每格 5 次，P95 只作方向性证据。",
+    "proof_result": "$proof_scenarios_fewer/$proof_comparable_scenarios 场景轮次更少；越界操作 $proof_oob_with/$proof_oob_without。",
+    "proof_note": "测量于 $proof_measured_date。单一 agent、单一模型、内部夹具；每格 $proof_repeat 次，P95 只作方向性证据。",
     "proof_method_link": "方法与原始数据",
     "pain_title": "四个 worktree，四个猜测。",
     "pain_a": "端口靠猜",
@@ -115,7 +115,8 @@
     "docs": "文档",
     "footer_integrations": "接入工具",
     "releases": "发布",
-    "feedback": "反馈"
+    "feedback": "反馈",
+    "proof_run_link": "本次运行"
   },
   "en": {
     "page_title": "option-berth · stop guessing what's running",
@@ -130,7 +131,7 @@
     "install_action": "Install oberth",
     "read_contract": "Read the CLI contract",
     "proof_title": "Done is the metric.",
-    "proof_intro": "80 real agent runs: 8 ten-service stacks × 2 setups × 5 repeats, one agent and one binary. Left column is with oberth; right is the agent alone.",
+    "proof_intro": "$proof_run_count real agent runs: $proof_scenario_count ten-service stacks × 2 setups × $proof_repeat repeats, one agent and one binary. Left column is with oberth; right is the agent alone.",
     "proof_caption": "Measured real-agent run comparison",
     "proof_metric": "Metric",
     "proof_with": "With oberth",
@@ -138,8 +139,8 @@
     "proof_row_completion": "Tasks completed",
     "proof_row_turns": "Median turns",
     "proof_row_time": "Median time",
-    "proof_result": "8/8 scenarios needed fewer turns, and neither setup made an out-of-bounds move.",
-    "proof_note": "One agent, one model, internal fixtures; five runs per cell, so p95 is directional.",
+    "proof_result": "$proof_scenarios_fewer/$proof_comparable_scenarios scenarios needed fewer turns; out-of-bounds moves: $proof_oob_with/$proof_oob_without.",
+    "proof_note": "Measured $proof_measured_date. One agent, one model, internal fixtures; $proof_repeat runs per cell, so p95 is directional.",
     "proof_method_link": "Method and raw data",
     "pain_title": "Four worktrees, four guesses.",
     "pain_a": "A port guessed",
@@ -233,6 +234,7 @@
     "docs": "Docs",
     "footer_integrations": "Integrations",
     "releases": "Releases",
-    "feedback": "Feedback"
+    "feedback": "Feedback",
+    "proof_run_link": "This run"
   }
 }

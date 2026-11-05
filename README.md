@@ -7,7 +7,7 @@
 <p align="center"><strong>Every checkout, its own berth.</strong><br>The runtime facts layer for Git worktrees: whether your services are up, and why not.</p>
 <p align="center">English · <a href="README.zh.md">简体中文</a></p>
 
-<p align="center"><a href="https://sheathedsharp.github.io/option-berth/">Website</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">Download the latest engine</a></p>
+<p align="center"><a href="https://oberth.zayju.de/">Website</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">Download the latest engine</a></p>
 
 ## Three products
 

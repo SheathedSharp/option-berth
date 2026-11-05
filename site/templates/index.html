@@ -70,12 +70,12 @@ worker: API health=200</code></pre>
               <tr><th scope="col">$proof_metric</th><th scope="col">$proof_with</th><th scope="col">$proof_without</th></tr>
             </thead>
             <tbody>
-              <tr><th scope="row">$proof_row_completion</th><td><strong>40/40</strong><span>100%</span></td><td><strong>29/40</strong><span>72.5%</span></td></tr>
-              <tr><th scope="row">$proof_row_turns</th><td><strong>5</strong><span>P95 10</span></td><td><strong>9</strong><span>P95 17</span></td></tr>
-              <tr><th scope="row">$proof_row_time</th><td><strong>45s</strong></td><td><strong>69s</strong></td></tr>
+              <tr><th scope="row">$proof_row_completion</th><td><strong>$proof_completion_with</strong><span>$proof_rate_with</span></td><td><strong>$proof_completion_without</strong><span>$proof_rate_without</span></td></tr>
+              <tr><th scope="row">$proof_row_turns</th><td><strong>$proof_turns_with</strong><span>$proof_turns_p95_with</span></td><td><strong>$proof_turns_without</strong><span>$proof_turns_p95_without</span></td></tr>
+              <tr><th scope="row">$proof_row_time</th><td><strong>$proof_time_with</strong></td><td><strong>$proof_time_without</strong></td></tr>
             </tbody>
           </table>
-          <p class="proof-note">$proof_note <a class="text-link" href="https://github.com/SheathedSharp/option-berth/blob/main/docs/agent/agent-eval.md">$proof_method_link <span aria-hidden="true">↗</span></a></p>
+          <p class="proof-note">$proof_note <a class="text-link" href="$proof_run_url">$proof_run_link <span aria-hidden="true">↗</span></a><span aria-hidden="true"> · </span><a class="text-link" href="https://github.com/SheathedSharp/option-berth/blob/main/docs/agent/agent-eval.md">$proof_method_link <span aria-hidden="true">↗</span></a></p>
         </div>
       </div>
     </section>
