@@ -342,20 +342,26 @@ func (c *Conn) dispatch(ctx context.Context, msg rpc.Message) {
 func (c *Conn) serve(ctx context.Context, msg rpc.Message) {
 	c.srv.touch()
 
-	h, ok := lookupHandler(msg.Method)
-	if !ok {
+	handler, served := lookupHandler(msg.Method)
+	if !served {
 		c.replyError(msg.ID, rpc.NewError(rpc.CodeNotFound,
 			"unknown method "+msg.Method,
 			"run `oberth daemon schema` to see the methods this daemon serves"))
 		return
 	}
 
-	req := &Request{Method: msg.Method, ID: msg.ID, Params: msg.Params, Conn: c, Runtime: c.srv.runtime}
-	// Dispatch directly to the registered local handler.
-	result, err := h(ctx, req)
+	request := &Request{
+		Method:  msg.Method,
+		ID:      msg.ID,
+		Params:  msg.Params,
+		Conn:    c,
+		Runtime: c.srv.runtime,
+	}
+	result, err := handler(ctx, request)
 	switch {
 	case errors.Is(err, ErrResponseSent):
-		// The handler wrote its own reply.
+		// The handler already wrote its own reply; adding one would be a
+		// protocol violation.
 	case err != nil:
 		c.replyError(msg.ID, errorFor(err))
 	default:
