@@ -1005,10 +1005,7 @@ func carryHealth(prev []state.Port, next []state.Port, all bool) {
 	if len(prev) == 0 {
 		return
 	}
-	byKey := make(map[string]*state.Port, len(prev))
-	for i := range prev {
-		byKey[prev[i].Key()] = &prev[i]
-	}
+	byKey := indexByKey(prev)
 	for i := range next {
 		if next[i].Health != nil {
 			continue
@@ -1021,6 +1018,17 @@ func carryHealth(prev []state.Port, next []state.Port, all bool) {
 			next[i].Health = previous.Health
 		}
 	}
+}
+
+// indexByKey makes the previous snapshot addressable by port key, so a carry
+// pass can find each row's predecessor without walking the slice again. The
+// pointers are into prev, which those passes never mutate.
+func indexByKey(previous []state.Port) map[string]*state.Port {
+	byKey := make(map[string]*state.Port, len(previous))
+	for i := range previous {
+		byKey[previous[i].Key()] = &previous[i]
+	}
+	return byKey
 }
 
 // carryStats copies the previous snapshot's stats onto rows that were not
@@ -1038,10 +1046,7 @@ func mergeStats(prev []state.Port, next []state.Port, replace bool) {
 	if len(prev) == 0 {
 		return
 	}
-	byKey := make(map[string]*state.Port, len(prev))
-	for i := range prev {
-		byKey[prev[i].Key()] = &prev[i]
-	}
+	byKey := indexByKey(prev)
 	for i := range next {
 		if next[i].Stats != nil && !replace {
 			continue
