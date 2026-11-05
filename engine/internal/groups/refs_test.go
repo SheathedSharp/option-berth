@@ -7,48 +7,59 @@ import (
 	"testing"
 )
 
-func TestExpand(t *testing.T) {
+func TestExpandReferenceShapes(t *testing.T) {
 	values := Values{
 		Self:     "api",
 		Worktree: "wt_0123456789ab",
 		Ports:    map[string]int{"api": 21408, "db": 21407},
 	}
-	for _, tt := range []struct{ in, want string }{
-		{"--port ${port}", "--port 21408"},
-		{"${url}/healthz", "http://localhost:21408/healthz"},
-		{"postgres://localhost:${db.port}/app", "postgres://localhost:21407/app"},
-		{"${db.url}", "http://localhost:21407"},
-		{"app_${worktree}", "app_wt_0123456789ab"},
-		{".data/${worktree}/app.db", ".data/wt_0123456789ab/app.db"},
-		// Not references: left exactly as written.
-		{"${HOME}/bin", "${HOME}/bin"},
-		{"${FOO:-x}", "${FOO:-x}"},
-		{"$port", "$port"},
-		// A reference to a service with no port in the map stays put.
-		{"${cache.port}", "${cache.port}"},
-	} {
-		if got := Expand(tt.in, values); got != tt.want {
-			t.Errorf("Expand(%q) = %q, want %q", tt.in, got, tt.want)
-		}
+	cases := []struct {
+		label string
+		input string
+		want  string
+	}{
+		{"own port", "--port ${port}", "--port 21408"},
+		{"own url", "${url}/healthz", "http://localhost:21408/healthz"},
+		{"another service's port", "postgres://localhost:${db.port}/app", "postgres://localhost:21407/app"},
+		{"another service's url", "${db.url}", "http://localhost:21407"},
+		{"worktree token", "app_${worktree}", "app_wt_0123456789ab"},
+		{"token inside a path", ".data/${worktree}/app.db", ".data/wt_0123456789ab/app.db"},
+
+		// Not references: returned verbatim.
+		{"shell variable", "${HOME}/bin", "${HOME}/bin"},
+		{"shell default", "${FOO:-x}", "${FOO:-x}"},
+		{"bare dollar", "$port", "$port"},
+
+		// A service with no known port leaves its reference untouched.
+		{"unknown port", "${cache.port}", "${cache.port}"},
 	}
-	// Without an identity the reference is left as written, like an unresolved
-	// port reference: a daemon that does not know the checkout must not guess.
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			if got := Expand(tc.input, values); got != tc.want {
+				t.Errorf("Expand(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+
+	// Without an identity the worktree reference stays as written: a daemon
+	// that does not know the checkout must not guess.
 	unknown := Values{Self: "api", Ports: values.Ports}
 	if got := Expand("app_${worktree}", unknown); got != "app_${worktree}" {
-		t.Errorf("Expand with no identity = %q, want the reference unchanged", got)
+		t.Errorf("Expand with no identity = %q", got)
 	}
 }
 
-func TestWorktreeToken(t *testing.T) {
+func TestWorktreeTokenIsStableAndDistinct(t *testing.T) {
 	dir := t.TempDir()
 	token := WorktreeToken(dir)
-	if token != WorktreeToken(dir) {
-		t.Fatalf("WorktreeToken(%q) is not stable across calls", dir)
+	if again := WorktreeToken(dir); again != token {
+		t.Fatalf("token changed between calls: %q then %q", token, again)
 	}
 	if !regexp.MustCompile(`^wt_[0-9a-f]{12}$`).MatchString(token) {
-		t.Errorf("token = %q, want wt_ followed by 12 hex digits", token)
+		t.Errorf("token = %q, want wt_ plus 12 hex digits", token)
 	}
-	// The same directory reached through `..` names the same checkout.
+
+	// The same directory reached through `..` is the same checkout.
 	spelled := dir + string(filepath.Separator) + ".." + string(filepath.Separator) + filepath.Base(dir)
 	if got := WorktreeToken(spelled); got != token {
 		t.Errorf("token through %q = %q, want %q", spelled, got, token)
@@ -56,114 +67,119 @@ func TestWorktreeToken(t *testing.T) {
 	if other := WorktreeToken(t.TempDir()); other == token {
 		t.Errorf("two directories share the token %q", token)
 	}
-	if got := WorktreeToken(""); got != "" {
-		t.Errorf("WorktreeToken(\"\") = %q, want empty", got)
+	if empty := WorktreeToken(""); empty != "" {
+		t.Errorf("WorktreeToken(\"\") = %q, want empty", empty)
 	}
 	if got := WorktreeTokenFor(dir); got != token {
 		t.Errorf("WorktreeTokenFor(%q) = %q, want %q", dir, got, token)
 	}
 }
 
-// TestWorktreeTokenPerCheckout: a nested manifest, the main checkout and a
-// linked worktree each resolve to their own checkout's token. Two worktrees of
-// one repository therefore never share a database name or data directory.
+// A nested manifest, its main checkout and a linked worktree each resolve to
+// their own checkout's token, so two worktrees never share a data directory.
 func TestWorktreeTokenPerCheckout(t *testing.T) {
-	c := newCheckouts(t, "shop", "feat")
-	nestedMain := mkdir(t, c.main, "api")
-	nestedWorktree := mkdir(t, c.wt, "web")
+	checkouts := newCheckouts(t, "shop", "feat")
+	nestedMain := mkdir(t, checkouts.main, "api")
+	nestedWorktree := mkdir(t, checkouts.wt, "web")
 
-	main := WorktreeTokenFor(nestedMain)
-	worktree := WorktreeTokenFor(nestedWorktree)
-	if main == worktree {
-		t.Fatalf("main and linked worktree share the token %q", main)
+	mainToken := WorktreeTokenFor(nestedMain)
+	wtToken := WorktreeTokenFor(nestedWorktree)
+	if mainToken == wtToken {
+		t.Fatalf("main and worktree share the token %q", mainToken)
 	}
-	if main != WorktreeTokenFor(c.main) {
-		t.Errorf("a nested manifest has a different token than its main checkout")
+	if mainToken != WorktreeTokenFor(checkouts.main) {
+		t.Error("a nested manifest has a different token than its main checkout")
 	}
-	if worktree != WorktreeTokenFor(c.wt) {
-		t.Errorf("a nested manifest has a different token than its worktree")
+	if wtToken != WorktreeTokenFor(checkouts.wt) {
+		t.Error("a nested manifest has a different token than its worktree")
 	}
 }
 
-func TestRefs(t *testing.T) {
-	got := Refs("x ${port} ${db.port} ${HOME} ${db.url} ${url} ${worktree}", "api")
-	if strings.Join(got, ",") != "api,db" {
-		t.Errorf("Refs = %v, want [api db]", got)
+func TestRefsListServicesOnly(t *testing.T) {
+	names := Refs("x ${port} ${db.port} ${HOME} ${db.url} ${url} ${worktree}", "api")
+	if joined := strings.Join(names, ","); joined != "api,db" {
+		t.Errorf("Refs = %v, want [api db]", names)
 	}
 }
 
-func TestMatchesExpanded(t *testing.T) {
-	for _, tt := range []struct {
-		pattern, actual string
-		want            bool
+func TestMatchesExpandedReferencePattern(t *testing.T) {
+	cases := []struct {
+		label   string
+		pattern string
+		actual  string
+		want    bool
 	}{
-		{"--port=${port}", "--port=8123", true},
-		{"--port=${port}", "--port=", false},
-		{"${port}", "8123", true},
-		{"--db=${worktree}", "--db=wt_0123456789ab", true},
-		{"--db=${worktree}", "--db=", false},
-		{"${HOME}", "${HOME}", true},
-		{"${HOME}", "/Users/me", false},
-		{"dev", "dev", true},
-		{"dev", "build", false},
-		{"a.b${port}", "axb1", false},
-	} {
-		if got := MatchesExpanded(tt.pattern, tt.actual); got != tt.want {
-			t.Errorf("MatchesExpanded(%q, %q) = %v, want %v", tt.pattern, tt.actual, got, tt.want)
-		}
+		{"port with a value", "--port=${port}", "--port=8123", true},
+		{"port with nothing", "--port=${port}", "--port=", false},
+		{"whole argument", "${port}", "8123", true},
+		{"worktree with a value", "--db=${worktree}", "--db=wt_0123456789ab", true},
+		{"worktree with nothing", "--db=${worktree}", "--db=", false},
+		{"literal shell variable", "${HOME}", "${HOME}", true},
+		{"expanded shell variable", "${HOME}", "/Users/me", false},
+		{"plain text", "dev", "dev", true},
+		{"different plain text", "dev", "build", false},
+		{"prefix must be exact", "a.b${port}", "axb1", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			if got := MatchesExpanded(tc.pattern, tc.actual); got != tc.want {
+				t.Errorf("MatchesExpanded(%q, %q) = %v, want %v",
+					tc.pattern, tc.actual, got, tc.want)
+			}
+		})
 	}
 }
 
 func TestLoadPortAutoAndEnv(t *testing.T) {
-	cfg, err := loadString(t, "shop", `
-name: shop
+	cfg, err := loadString(t, "store", `
+name: store
 services:
-  - name: db
-    cmd: docker compose up db
+  - name: postgres
+    cmd: docker compose up postgres
     port: auto
-  - name: api
+  - name: web
     cmd: uv run uvicorn app:app --port ${port}
     port: auto
-    depends_on: [db]
+    depends_on: [postgres]
     env:
-      DATABASE_URL: postgres://localhost:${db.port}/app
-      HOME_BIN: ${HOME}/bin
-  - name: worker
+      DATABASE_URL: postgres://localhost:${postgres.port}/app
+      PATH_HINT: ${HOME}/bin
+  - name: jobs
     cmd: uv run worker
 `)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	api, _ := cfg.ServiceNamed("api")
-	if !api.PortAuto || api.Port != 0 || !api.HasPort() {
-		t.Errorf("api = %+v, want an auto port", api)
+
+	web, _ := cfg.ServiceNamed("web")
+	if !web.PortAuto || web.Port != 0 || !web.HasPort() {
+		t.Errorf("web = %+v, want an auto port", web)
 	}
-	if api.Env["DATABASE_URL"] != "postgres://localhost:${db.port}/app" {
-		t.Errorf("env = %v", api.Env)
+	if web.Env["DATABASE_URL"] != "postgres://localhost:${postgres.port}/app" {
+		t.Errorf("env = %v", web.Env)
 	}
-	if worker, _ := cfg.ServiceNamed("worker"); worker.HasPort() {
-		t.Errorf("worker = %+v, want no port", worker)
+	if jobs, _ := cfg.ServiceNamed("jobs"); jobs.HasPort() {
+		t.Errorf("jobs = %+v, want no port", jobs)
 	}
 
-	out, err := Marshal(cfg)
+	rendered, err := Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(out), "port: auto") != 2 {
-		t.Errorf("Marshal lost port: auto:\n%s", out)
+	if count := strings.Count(string(rendered), "port: auto"); count != 2 {
+		t.Errorf("Marshal wrote %d auto ports:\n%s", count, rendered)
 	}
-	back, err := Parse(cfg.Path, out)
+	reloaded, err := Parse(cfg.Path, rendered)
 	if err != nil {
-		t.Fatalf("the marshalled file does not load: %v\n%s", err, out)
+		t.Fatalf("the marshalled file does not load: %v\n%s", err, rendered)
 	}
-	if db, _ := back.ServiceNamed("db"); !db.PortAuto {
-		t.Errorf("round trip lost port: auto: %+v", db)
+	if postgres, _ := reloaded.ServiceNamed("postgres"); !postgres.PortAuto {
+		t.Errorf("round trip lost port: auto: %+v", postgres)
 	}
 }
 
-// TestLoadAcceptsWorktreeReference: ${worktree} is a reference the daemon
-// resolves from the checkout, not a service name, so a manifest may use it in
-// cmd, prepare and env without declaring a service called "worktree".
+// ${worktree} is resolved from the checkout, not a declared service, so a
+// manifest may use it in cmd, prepare and env without declaring "worktree".
 func TestLoadAcceptsWorktreeReference(t *testing.T) {
 	cfg, err := loadString(t, "demo", `
 name: demo
@@ -180,34 +196,39 @@ services:
 	}
 	api, _ := cfg.ServiceNamed("api")
 	if api.Env["DATA_DIR"] != ".data/${worktree}" {
-		t.Errorf("env = %v, want the reference preserved for the daemon", api.Env)
+		t.Errorf("env = %v, want the reference preserved", api.Env)
 	}
 	if !cfg.UsesAssignedPorts() {
-		t.Error("UsesAssignedPorts = false, want a file the assigned-port daemon must handle")
+		t.Error("UsesAssignedPorts = false")
 	}
 }
 
 func TestLoadReferenceProblems(t *testing.T) {
-	for _, tt := range []struct{ name, body, want string }{
-		{"a port that is neither", "services:\n  - name: api\n    port: fast\n",
+	cases := []struct {
+		label    string
+		manifest string
+		mentions string
+	}{
+		{"neither a number nor auto", "services:\n  - name: api\n    port: fast\n",
 			"port must be a number or auto"},
-		{"an unknown service", "services:\n  - name: api\n    port: auto\n    cmd: run ${nope.port}\n",
+		{"unknown service in cmd", "services:\n  - name: api\n    port: auto\n    cmd: run ${nope.port}\n",
 			`names no service "nope"`},
-		{"an unknown service in prepare", "services:\n  - name: api\n    port: auto\n    prepare: build --port ${nope.port}\n",
+		{"unknown service in prepare", "services:\n  - name: api\n    port: auto\n    prepare: build --port ${nope.port}\n",
 			`prepare ${nope.port} names no service "nope"`},
-		{"a service with no port", "services:\n  - name: db\n  - name: api\n    env:\n      DB: ${db.port}\n",
+		{"dependency without a port", "services:\n  - name: db\n  - name: api\n    env:\n      DB: ${db.port}\n",
 			"needs a port, and db declares none"},
-		{"its own port when it has none", "services:\n  - name: api\n    cmd: run --port ${port}\n",
+		{"own port without a declaration", "services:\n  - name: api\n    cmd: run --port ${port}\n",
 			"needs a port, and api declares none"},
-		{"a bad variable name", "services:\n  - name: api\n    env:\n      BAD-KEY: x\n",
+		{"invalid env name", "services:\n  - name: api\n    env:\n      BAD-KEY: x\n",
 			`env "BAD-KEY" is not a variable name`},
-		{"a workspace reference in health is refused", "workspace:\n  - name: backend\n    worktree: ../backend\n    service: api\nservices:\n  - name: api\n    health:\n      command: curl -f ${backend.url}/health\n",
+		{"workspace reference in health", "workspace:\n  - name: backend\n    worktree: ../backend\n    service: api\nservices:\n  - name: api\n    health:\n      command: curl -f ${backend.url}/health\n",
 			"workspace addresses are expanded in prepare, cmd and env only"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := loadString(t, "demo", "name: demo\n"+tt.body)
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("Load error = %v, want it to contain %q", err, tt.want)
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			_, err := loadString(t, "demo", "name: demo\n"+tc.manifest)
+			if err == nil || !strings.Contains(err.Error(), tc.mentions) {
+				t.Fatalf("Load error = %v, want it to contain %q", err, tc.mentions)
 			}
 		})
 	}
@@ -238,7 +259,7 @@ services:
 		t.Fatalf("workspace = %+v", cfg.Workspace)
 	}
 	if !cfg.UsesManifestExtras() {
-		t.Error("UsesManifestExtras = false, want true for a file with workspace references")
+		t.Error("UsesManifestExtras = false for a file with workspace references")
 	}
 	out, err := Marshal(cfg)
 	if err != nil {
@@ -254,24 +275,29 @@ services:
 }
 
 func TestWorkspaceValidationProblems(t *testing.T) {
-	for _, tt := range []struct{ name, body, want string }{
-		{"no name", "workspace:\n  - worktree: ../backend\n    service: api\n",
+	cases := []struct {
+		label    string
+		manifest string
+		mentions string
+	}{
+		{"missing name", "workspace:\n  - worktree: ../backend\n    service: api\n",
 			"workspace[0]: name is empty"},
-		{"no worktree", "workspace:\n  - name: backend\n    service: api\n",
+		{"missing worktree", "workspace:\n  - name: backend\n    service: api\n",
 			"workspace backend: worktree is required"},
-		{"no service", "workspace:\n  - name: backend\n    worktree: ../backend\n",
+		{"missing service", "workspace:\n  - name: backend\n    worktree: ../backend\n",
 			"workspace backend: service is required"},
 		{"named after a service", "services:\n  - name: backend\nworkspace:\n  - name: backend\n    worktree: ../backend\n    service: api\n",
 			"workspace backend: backend is already a service in this file"},
-		{"named after a machine reference", "machine:\n  - name: backend\n    port: 3306\nworkspace:\n  - name: backend\n    worktree: ../backend\n    service: api\n",
+		{"named after a machine", "machine:\n  - name: backend\n    port: 3306\nworkspace:\n  - name: backend\n    worktree: ../backend\n    service: api\n",
 			"workspace backend: backend is already a machine reference in this file"},
 		{"duplicate names", "workspace:\n  - name: backend\n    worktree: ../a\n    service: api\n  - name: backend\n    worktree: ../b\n    service: api\n",
 			"workspace backend: duplicate name"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := loadString(t, "demo", "name: demo\n"+tt.body)
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("Load error = %v, want it to contain %q", err, tt.want)
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			_, err := loadString(t, "demo", "name: demo\n"+tc.manifest)
+			if err == nil || !strings.Contains(err.Error(), tc.mentions) {
+				t.Fatalf("Load error = %v, want it to contain %q", err, tc.mentions)
 			}
 		})
 	}
