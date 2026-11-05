@@ -1,7 +1,11 @@
-// Package scanner owns the daemon's single scan goroutine. It wraps the
-// existing ports/docker enrichment pipeline, keeps the last good Snapshot, and
-// publishes (previous, next) pairs so the daemon can compute whichever delta
-// flavours its subscribers asked for.
+// Package scanner is the daemon's one scan goroutine.
+//
+// One goroutine, because a scan is an lsof/ss/netstat sweep plus a docker round
+// trip and two of them on one machine measure each other. The loop keeps the
+// last snapshot that came back, and publishes each transition as a
+// (previous, next) pair — the daemon turns a pair into whichever delta flavours
+// its subscribers asked for, so the scanner never needs to know who is
+// watching or what shape they want.
 package scanner
 
 import (
