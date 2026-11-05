@@ -6,206 +6,186 @@ import (
 	"testing"
 )
 
-func TestParseLsof_MultipleBindsSamePort(t *testing.T) {
+func TestParseLsofMultipleBindsSamePort(t *testing.T) {
 	output := `COMMAND   PID  USER   FD   TYPE   DEVICE SIZE/OFF NODE NAME
-nginx   12345 root    6u  IPv4  1234567      0t0  TCP 192.168.2.5:80 (LISTEN)
-nginx   12345 root    7u  IPv4  1234568      0t0  TCP 172.31.96.5:80 (LISTEN)
-nginx   12345 root    8u  IPv4  1234569      0t0  TCP 192.168.4.5:443 (LISTEN)
-nginx   12345 root    9u  IPv4  1234570      0t0  TCP 192.168.4.5:80 (LISTEN)
+edge    23456 root    6u  IPv4  2234567      0t0  TCP 10.20.30.5:8081 (LISTEN)
+edge    23456 root    7u  IPv4  2234568      0t0  TCP 10.20.31.5:8081 (LISTEN)
+edge    23456 root    8u  IPv4  2234569      0t0  TCP 10.20.32.5:8443 (LISTEN)
+edge    23456 root    9u  IPv4  2234570      0t0  TCP 10.20.32.5:8081 (LISTEN)
 `
 	results := parseLsof(output)
-
 	if len(results) != 4 {
 		t.Fatalf("expected 4 entries, got %d", len(results))
 	}
 
-	// Verify all bind addresses are present
 	binds := map[string]bool{}
-	for _, r := range results {
-		binds[r.BindAddress+":"+itoa(r.Port)] = true
+	for _, result := range results {
+		binds[result.BindAddress+":"+itoa(result.Port)] = true
 	}
-	expected := []string{"192.168.2.5:80", "172.31.96.5:80", "192.168.4.5:443", "192.168.4.5:80"}
-	for _, e := range expected {
-		if !binds[e] {
-			t.Errorf("expected bind %s not found in results", e)
+	for _, want := range []string{"10.20.30.5:8081", "10.20.31.5:8081", "10.20.32.5:8443", "10.20.32.5:8081"} {
+		if !binds[want] {
+			t.Errorf("expected bind %s missing from results", want)
 		}
 	}
 }
 
-func TestParseLsof_DedupsSamePortAndBind(t *testing.T) {
+func TestParseLsofDedupsSamePortAndBind(t *testing.T) {
 	output := `COMMAND   PID  USER   FD   TYPE   DEVICE SIZE/OFF NODE NAME
-node    1234 user    6u  IPv4  1234567      0t0  TCP *:3000 (LISTEN)
-node    1234 user    7u  IPv4  1234568      0t0  TCP *:3000 (LISTEN)
+app     4321 dev     6u  IPv4  3234567      0t0  TCP *:4100 (LISTEN)
+app     4321 dev     7u  IPv4  3234568      0t0  TCP *:4100 (LISTEN)
 `
 	results := parseLsof(output)
-
 	if len(results) != 1 {
-		t.Fatalf("expected 1 entry (deduped), got %d", len(results))
+		t.Fatalf("expected 1 deduped entry, got %d", len(results))
 	}
 	if results[0].BindAddress != "0.0.0.0" {
-		t.Errorf("expected bind 0.0.0.0, got %s", results[0].BindAddress)
+		t.Errorf("bind = %s, want 0.0.0.0", results[0].BindAddress)
 	}
 }
 
-func TestParseSS_ProcessNameWithSpaces(t *testing.T) {
+func TestParseSSProcessNameWithSpaces(t *testing.T) {
 	// Next.js sets process.title to "next-server (v16.2.6)"; Linux truncates
-	// comm to 15 bytes ("next-server (v1"), so ss -p emits a quoted name that
-	// contains a space. strings.Fields must not be used to parse that blob.
+	// comm to 15 bytes, so ss -p emits a quoted name containing a space.
+	// strings.Fields must not be used to parse that blob.
 	output := `State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process
-LISTEN 0      511    *:3011             *:*    users:(("next-server (v1",pid=113211,fd=22))
-LISTEN 0      128    127.0.0.1:3000     0.0.0.0:* users:(("node",pid=1234,fd=18))
-LISTEN 0      128    *:8080             *:*
+LISTEN 0      511    *:4111             *:*    users:(("next-server (v1",pid=223211,fd=22))
+LISTEN 0      128    127.0.0.1:4100     0.0.0.0:* users:(("app",pid=4321,fd=18))
+LISTEN 0      128    *:8180             *:*
 `
-	results := parseSS(output)
-	if len(results) != 3 {
-		t.Fatalf("expected 3 entries, got %d", len(results))
+	rows := parseSS(output)
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(rows))
 	}
 
-	byPort := map[int]ListeningPort{}
-	for _, r := range results {
-		byPort[r.Port] = r
+	byNumber := map[int]ListeningPort{}
+	for _, result := range rows {
+		byNumber[result.Port] = result
 	}
 
-	next := byPort[3011]
-	if next.PID != 113211 {
-		t.Errorf("port 3011 PID = %d, want 113211", next.PID)
+	next := byNumber[4111]
+	if next.PID != 223211 || next.Process != "next-server (v1" || next.BindAddress != "0.0.0.0" {
+		t.Errorf("port 4111 = %+v", next)
 	}
-	if next.Process != "next-server (v1" {
-		t.Errorf("port 3011 process = %q, want %q", next.Process, "next-server (v1")
+	app := byNumber[4100]
+	if app.PID != 4321 || app.Process != "app" {
+		t.Errorf("port 4100 = %+v", app)
 	}
-	if next.BindAddress != "0.0.0.0" {
-		t.Errorf("port 3011 bind = %q, want 0.0.0.0", next.BindAddress)
-	}
-
-	node := byPort[3000]
-	if node.PID != 1234 || node.Process != "node" {
-		t.Errorf("port 3000 = pid %d name %q, want pid 1234 name node", node.PID, node.Process)
-	}
-
-	idle := byPort[8080]
+	idle := byNumber[8180]
 	if idle.PID != 0 || idle.Process != "" {
-		t.Errorf("port 8080 = pid %d name %q, want empty users blob", idle.PID, idle.Process)
+		t.Errorf("port 8180 = pid %d name %q, want empty users blob", idle.PID, idle.Process)
 	}
 }
 
-func TestParseSS_UsersBlobVariants(t *testing.T) {
-	tests := []struct {
-		name        string
-		line        string
-		wantProcess string
-		wantPID     int
+func TestParseSSUsersBlobVariants(t *testing.T) {
+	cases := []struct {
+		label   string
+		line    string
+		process string
+		pid     int
 	}{
 		{
-			name:        "one entry per file descriptor",
-			line:        `LISTEN 0      128    0.0.0.0:80    0.0.0.0:*    users:(("nginx",pid=1234,fd=6),("nginx",pid=1235,fd=6))`,
-			wantProcess: "nginx",
-			wantPID:     1234,
+			label:   "one entry per file descriptor",
+			line:    `LISTEN 0      128    0.0.0.0:8081    0.0.0.0:*    users:(("edge",pid=2345,fd=6),("edge",pid=2346,fd=6))`,
+			process: "edge",
+			pid:     2345,
 		},
 		{
-			// A process title can contain anything, including "pid=". The real
-			// PID is the one after the closing quote, not the one in the name.
-			name:        "name containing pid=",
-			line:        `LISTEN 0      511    *:3011        *:*          users:(("worker pid=7",pid=99001,fd=22))`,
-			wantProcess: "worker pid=7",
-			wantPID:     99001,
+			// A process title may contain "pid="; the real pid is the one
+			// after the closing quote.
+			label:   "name containing pid=",
+			line:    `LISTEN 0      511    *:4111        *:*          users:(("worker pid=7",pid=99002,fd=22))`,
+			process: "worker pid=7",
+			pid:     99002,
 		},
 		{
-			name:        "iproute2 without pid label",
-			line:        `LISTEN 0      128    0.0.0.0:22    0.0.0.0:*    users:(("sshd",987,3))`,
-			wantProcess: "sshd",
-			wantPID:     987,
+			label:   "iproute2 without a pid label",
+			line:    `LISTEN 0      128    0.0.0.0:22    0.0.0.0:*    users:(("sshd",654,3))`,
+			process: "sshd",
+			pid:     654,
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			output := "State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n" + tt.line + "\n"
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			output := "State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n" + tc.line + "\n"
 			results := parseSS(output)
-
 			if len(results) != 1 {
 				t.Fatalf("expected 1 entry, got %d", len(results))
 			}
-			if results[0].Process != tt.wantProcess {
-				t.Errorf("Process = %q, want %q", results[0].Process, tt.wantProcess)
-			}
-			if results[0].PID != tt.wantPID {
-				t.Errorf("PID = %d, want %d", results[0].PID, tt.wantPID)
+			if results[0].Process != tc.process || results[0].PID != tc.pid {
+				t.Errorf("process/pid = %q/%d, want %q/%d",
+					results[0].Process, results[0].PID, tc.process, tc.pid)
 			}
 		})
 	}
 }
 
-func TestParseSS_MultipleBindsSamePort(t *testing.T) {
+func TestParseSSMultipleBindsSamePort(t *testing.T) {
 	output := `State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process
-LISTEN 0      128    127.0.0.2:8080       0.0.0.0:*     users:(("nc",pid=1001,fd=3))
-LISTEN 0      128    127.0.0.3:8080       0.0.0.0:*     users:(("nc",pid=1002,fd=3))
-LISTEN 0      128    127.0.0.4:8080       0.0.0.0:*     users:(("nc",pid=1003,fd=3))
+LISTEN 0      128    127.0.1.2:8181       0.0.0.0:*     users:(("nc",pid=1101,fd=3))
+LISTEN 0      128    127.0.1.3:8181       0.0.0.0:*     users:(("nc",pid=1102,fd=3))
+LISTEN 0      128    127.0.1.4:8181       0.0.0.0:*     users:(("nc",pid=1103,fd=3))
 `
-	results := parseSS(output)
-
-	if len(results) != 3 {
-		t.Fatalf("expected 3 entries, got %d", len(results))
+	rows := parseSS(output)
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(rows))
 	}
-
-	addrs := map[string]bool{}
-	for _, r := range results {
-		addrs[r.BindAddress] = true
+	addresses := map[string]bool{}
+	for _, result := range rows {
+		addresses[result.BindAddress] = true
 	}
-	for _, addr := range []string{"127.0.0.2", "127.0.0.3", "127.0.0.4"} {
-		if !addrs[addr] {
-			t.Errorf("expected bind address %s not found", addr)
+	for _, want := range []string{"127.0.1.2", "127.0.1.3", "127.0.1.4"} {
+		if !addresses[want] {
+			t.Errorf("bind address %s missing", want)
 		}
 	}
 }
 
-func TestParseNetstat_MultipleBindsSamePort(t *testing.T) {
+func TestParseNetstatMultipleBindsSamePort(t *testing.T) {
 	output := `  Proto  Local Address          Foreign Address        State           PID
-  TCP    192.168.1.1:8080       0.0.0.0:0              LISTENING       1001
-  TCP    192.168.1.2:8080       0.0.0.0:0              LISTENING       1002
-  TCP    192.168.1.3:8080       0.0.0.0:0              LISTENING       1003
+  TCP    10.9.1.1:8181          0.0.0.0:0              LISTENING       1101
+  TCP    10.9.1.2:8181          0.0.0.0:0              LISTENING       1102
+  TCP    10.9.1.3:8181          0.0.0.0:0              LISTENING       1103
 `
 	results := parseNetstat(output)
-
 	if len(results) != 3 {
 		t.Fatalf("expected 3 entries, got %d", len(results))
 	}
-
-	addrs := map[string]bool{}
-	for _, r := range results {
-		addrs[r.BindAddress] = true
+	addresses := map[string]bool{}
+	for _, result := range results {
+		addresses[result.BindAddress] = true
 	}
-	for _, addr := range []string{"192.168.1.1", "192.168.1.2", "192.168.1.3"} {
-		if !addrs[addr] {
-			t.Errorf("expected bind address %s not found", addr)
+	for _, want := range []string{"10.9.1.1", "10.9.1.2", "10.9.1.3"} {
+		if !addresses[want] {
+			t.Errorf("bind address %s missing", want)
 		}
 	}
 }
 
 func TestPortKey(t *testing.T) {
-	lp := ListeningPort{Port: 8080, BindAddress: "127.0.0.1"}
-	if lp.PortKey() != "8080:127.0.0.1" {
-		t.Errorf("expected '8080:127.0.0.1', got '%s'", lp.PortKey())
+	row := ListeningPort{Port: 8080, BindAddress: "127.0.0.1"}
+	if got := row.PortKey(); got != "8080:127.0.0.1" {
+		t.Errorf("PortKey() = %q", got)
 	}
 }
 
-func TestURL_UsesBindAddress(t *testing.T) {
-	tests := []struct {
+func TestURLUsesBindAddress(t *testing.T) {
+	cases := []struct {
 		bind string
 		want string
 	}{
-		{"0.0.0.0", "http://localhost:3000"},
-		{"", "http://localhost:3000"},
-		{"[::]", "http://localhost:3000"},
-		{"::", "http://localhost:3000"},
-		{"::1", "http://[::1]:3000"},
-		{"192.168.1.5", "http://192.168.1.5:3000"},
-		{"127.0.0.1", "http://127.0.0.1:3000"},
+		{"0.0.0.0", "http://localhost:3100"},
+		{"", "http://localhost:3100"},
+		{"[::]", "http://localhost:3100"},
+		{"::", "http://localhost:3100"},
+		{"::1", "http://[::1]:3100"},
+		{"10.1.2.5", "http://10.1.2.5:3100"},
+		{"127.0.0.1", "http://127.0.0.1:3100"},
 	}
-	for _, tt := range tests {
-		lp := ListeningPort{Port: 3000, BindAddress: tt.bind}
-		got := lp.URL()
-		if got != tt.want {
-			t.Errorf("URL() with bind %q = %q, want %q", tt.bind, got, tt.want)
+	for _, tc := range cases {
+		row := ListeningPort{Port: 3100, BindAddress: tc.bind}
+		if got := row.URL(); got != tc.want {
+			t.Errorf("URL() with bind %q = %q, want %q", tc.bind, got, tc.want)
 		}
 	}
 }
@@ -214,148 +194,148 @@ func itoa(i int) string {
 	return fmt.Sprintf("%d", i)
 }
 
-// TestNormalizeBind pins contract §21: bind_address and ip_version always
-// agree. A dual-stack listener used to report "0.0.0.0" with "IPv6".
+// bind_address and ip_version always agree. A dual-stack listener used to
+// report "0.0.0.0" with "IPv6".
 func TestNormalizeBind(t *testing.T) {
-	tests := []struct {
-		name    string
-		raw     string
-		v6      bool
-		bind    string
-		version string
+	cases := []struct {
+		label           string
+		input           string
+		ipv6            bool
+		expectedBind    string
+		expectedVersion string
 	}{
+		// lsof spellings.
 		{"lsof v4 wildcard", "*", false, "0.0.0.0", "IPv4"},
 		{"lsof v6 wildcard", "*", true, "::", "IPv6"},
 		{"netstat v6 wildcard", "[::]", true, "::", "IPv6"},
 		{"ss v6 wildcard", "[::]", false, "::", "IPv6"},
+		// Bare literals.
 		{"bare v6 wildcard", "::", false, "::", "IPv6"},
 		{"v4 wildcard spelled out", "0.0.0.0", false, "0.0.0.0", "IPv4"},
 		{"v4 loopback", "127.0.0.1", false, "127.0.0.1", "IPv4"},
 		{"v6 loopback", "[::1]", false, "::1", "IPv6"},
-		{"v6 literal", "[fe80::1]", true, "fe80::1", "IPv6"},
-		{"lan address", "192.168.1.5", false, "192.168.1.5", "IPv4"},
+		// Literal addresses.
+		{"v6 literal", "[fe80::2]", true, "fe80::2", "IPv6"},
+		{"lan address", "10.1.2.5", false, "10.1.2.5", "IPv4"},
+		// Empty means the v4 wildcard.
 		{"empty is the v4 wildcard", "", false, "0.0.0.0", "IPv4"},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			bind, version := normalizeBind(tt.raw, tt.v6)
-			if bind != tt.bind || version != tt.version {
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			bind, version := normalizeBind(tc.input, tc.ipv6)
+			if bind != tc.expectedBind || version != tc.expectedVersion {
 				t.Errorf("normalizeBind(%q, %v) = (%q, %q), want (%q, %q)",
-					tt.raw, tt.v6, bind, version, tt.bind, tt.version)
+					tc.input, tc.ipv6, bind, version, tc.expectedBind, tc.expectedVersion)
 			}
-			wantV6 := version == "IPv6"
-			if gotV6 := strings.Contains(bind, ":"); gotV6 != wantV6 {
+			if gotV6 := strings.Contains(bind, ":"); gotV6 != (version == "IPv6") {
 				t.Errorf("bind %q and ip_version %q disagree", bind, version)
 			}
 		})
 	}
 }
 
-// TestParseLsof_DualStackWildcard is the smoke-test regression: a process
-// listening on both families yields one row per family, each self-consistent.
-func TestParseLsof_DualStackWildcard(t *testing.T) {
+// A process listening on both families yields one self-consistent row per
+// family.
+func TestParseLsofDualStackWildcard(t *testing.T) {
 	output := `COMMAND   PID  USER   FD   TYPE   DEVICE SIZE/OFF NODE NAME
-node    1234 user    6u  IPv4  1234567      0t0  TCP *:3000 (LISTEN)
-node    1234 user    7u  IPv6  1234568      0t0  TCP *:3000 (LISTEN)
-node    1234 user    8u  IPv6  1234569      0t0  TCP [::1]:4000 (LISTEN)
+app     4321 dev     6u  IPv4  4234567      0t0  TCP *:4100 (LISTEN)
+app     4321 dev     7u  IPv6  4234568      0t0  TCP *:4100 (LISTEN)
+app     4321 dev     8u  IPv6  4234569      0t0  TCP [::1]:4200 (LISTEN)
 `
-	results := parseLsof(output)
-	if len(results) != 3 {
-		t.Fatalf("expected 3 entries, got %d: %+v", len(results), results)
+	rows := parseLsof(output)
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 entries, got %d: %+v", len(rows), rows)
 	}
-	want := map[string]string{
+	expected := map[string]string{
 		"0.0.0.0": "IPv4",
 		"::":      "IPv6",
 		"::1":     "IPv6",
 	}
-	for _, r := range results {
-		version, ok := want[r.BindAddress]
-		if !ok {
-			t.Errorf("unexpected bind address %q", r.BindAddress)
+	for _, result := range rows {
+		version, known := expected[result.BindAddress]
+		if !known {
+			t.Errorf("unexpected bind address %q", result.BindAddress)
 			continue
 		}
-		if r.IPVersion != version {
-			t.Errorf("bind %q reported ip_version %q, want %q", r.BindAddress, r.IPVersion, version)
+		if result.IPVersion != version {
+			t.Errorf("bind %q reported %q, want %q", result.BindAddress, result.IPVersion, version)
 		}
 	}
 }
 
-// TestParseNetstat_DualStackWildcard covers the same thing on Windows, where
-// the v6 wildcard used to be folded onto the v4 row.
-func TestParseNetstat_DualStackWildcard(t *testing.T) {
+func TestParseNetstatDualStackWildcard(t *testing.T) {
 	output := `  Proto  Local Address          Foreign Address        State           PID
-  TCP    0.0.0.0:8000           0.0.0.0:0              LISTENING       1001
-  TCP    [::]:8000              [::]:0                 LISTENING       1001
+  TCP    0.0.0.0:8200           0.0.0.0:0              LISTENING       1101
+  TCP    [::]:8200              [::]:0                 LISTENING       1101
 `
 	results := parseNetstat(output)
 	if len(results) != 2 {
-		t.Fatalf("expected 2 entries (one per family), got %d: %+v", len(results), results)
+		t.Fatalf("expected 2 entries, got %d: %+v", len(results), results)
 	}
 	byBind := map[string]string{}
-	for _, r := range results {
-		byBind[r.BindAddress] = r.IPVersion
+	for _, result := range results {
+		byBind[result.BindAddress] = result.IPVersion
 	}
 	if byBind["0.0.0.0"] != "IPv4" {
-		t.Errorf("0.0.0.0 reported %q, want IPv4", byBind["0.0.0.0"])
+		t.Errorf("0.0.0.0 reported %q", byBind["0.0.0.0"])
 	}
 	if byBind["::"] != "IPv6" {
-		t.Errorf(":: reported %q, want IPv6", byBind["::"])
+		t.Errorf(":: reported %q", byBind["::"])
 	}
 }
 
-// TestParseNetstat_RealCapture runs the parser over a verbatim `netstat -ano`
-// capture: the two header lines, IPv4 and IPv6 listeners, established
-// connections that must be ignored, a LISTENING row owned by pid 0 and a dev
-// server. The Windows daemon sees no ports at all when this parser is wrong,
-// so it is pinned against real output rather than a hand-shaped sample.
-func TestParseNetstat_RealCapture(t *testing.T) {
+// A verbatim `netstat -ano` shape: headers, IPv4 and IPv6 listeners,
+// established connections that must be ignored, a pid-0 listener and a dev
+// server. Windows sees no ports at all when this parser is wrong, so it is
+// pinned against real output rather than a hand-shaped sample.
+func TestParseNetstatRealCapture(t *testing.T) {
 	output := "\r\nActive Connections\r\n\r\n" +
 		"  Proto  Local Address          Foreign Address        State           PID\r\n" +
-		"  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       1064\r\n" +
-		"  TCP    0.0.0.0:445            0.0.0.0:0              LISTENING       4\r\n" +
-		"  TCP    0.0.0.0:5040           0.0.0.0:0              LISTENING       0\r\n" +
-		"  TCP    127.0.0.1:49670        127.0.0.1:49671        ESTABLISHED     7276\r\n" +
-		"  TCP    127.0.0.1:52341        0.0.0.0:0              LISTENING       7276\r\n" +
-		"  TCP    10.1.0.4:49675         20.209.14.65:443       ESTABLISHED     3812\r\n" +
-		"  TCP    [::]:135               [::]:0                 LISTENING       1064\r\n" +
-		"  TCP    [::1]:52341            [::]:0                 LISTENING       7276\r\n" +
-		"  TCP    [::]:445               [::]:0                 TIME_WAIT       0\r\n" +
-		"  UDP    0.0.0.0:5353           *:*                                    2648\r\n"
+		"  TCP    0.0.0.0:136            0.0.0.0:0              LISTENING       1074\r\n" +
+		"  TCP    0.0.0.0:446            0.0.0.0:0              LISTENING       5\r\n" +
+		"  TCP    0.0.0.0:5051           0.0.0.0:0              LISTENING       0\r\n" +
+		"  TCP    127.0.0.1:49770        127.0.0.1:49771        ESTABLISHED     7376\r\n" +
+		"  TCP    127.0.0.1:53341        0.0.0.0:0              LISTENING       7376\r\n" +
+		"  TCP    10.2.0.4:49775         20.209.14.65:443       ESTABLISHED     3912\r\n" +
+		"  TCP    [::]:136               [::]:0                 LISTENING       1074\r\n" +
+		"  TCP    [::1]:53341            [::]:0                 LISTENING       7376\r\n" +
+		"  TCP    [::]:446               [::]:0                 TIME_WAIT       0\r\n" +
+		"  UDP    0.0.0.0:5353           *:*                                    2748\r\n"
 
-	got := parseNetstat(output)
-	if len(got) != 6 {
-		t.Fatalf("parsed %d rows, want the 6 LISTENING ones: %+v", len(got), got)
+	parsed := parseNetstat(output)
+	if len(parsed) != 6 {
+		t.Fatalf("parsed %d rows, want the 6 LISTENING ones: %+v", len(parsed), parsed)
 	}
 
-	type row struct {
+	type fact struct {
 		pid     int
 		bind    string
 		version string
 	}
-	byKey := map[string]row{}
-	for _, r := range got {
-		byKey[r.PortKey()] = row{r.PID, r.BindAddress, r.IPVersion}
+	byKey := map[string]fact{}
+	for _, result := range parsed {
+		byKey[result.PortKey()] = fact{result.PID, result.BindAddress, result.IPVersion}
 	}
-	want := map[string]row{
-		"135:0.0.0.0":     {1064, "0.0.0.0", "IPv4"},
-		"445:0.0.0.0":     {4, "0.0.0.0", "IPv4"},
-		"5040:0.0.0.0":    {0, "0.0.0.0", "IPv4"},
-		"52341:127.0.0.1": {7276, "127.0.0.1", "IPv4"},
-		"135:::":          {1064, "::", "IPv6"},
-		"52341:::1":       {7276, "::1", "IPv6"},
+	want := map[string]fact{
+		"136:0.0.0.0":     {1074, "0.0.0.0", "IPv4"},
+		"446:0.0.0.0":     {5, "0.0.0.0", "IPv4"},
+		"5051:0.0.0.0":    {0, "0.0.0.0", "IPv4"},
+		"53341:127.0.0.1": {7376, "127.0.0.1", "IPv4"},
+		"136:::":          {1074, "::", "IPv6"},
+		"53341:::1":       {7376, "::1", "IPv6"},
 	}
-	for key, w := range want {
-		g, ok := byKey[key]
-		if !ok {
+	for key, expected := range want {
+		actual, found := byKey[key]
+		if !found {
 			t.Errorf("%s missing from the parse: %+v", key, byKey)
 			continue
 		}
-		if g != w {
-			t.Errorf("%s = %+v, want %+v", key, g, w)
+		if actual != expected {
+			t.Errorf("%s = %+v, want %+v", key, actual, expected)
 		}
 	}
-	for _, unwanted := range []string{"49670:127.0.0.1", "49675:10.1.0.4", "445:::", "5353:0.0.0.0"} {
-		if _, ok := byKey[unwanted]; ok {
+	for _, unwanted := range []string{"49770:127.0.0.1", "49775:10.2.0.4", "446:::", "5353:0.0.0.0"} {
+		if _, found := byKey[unwanted]; found {
 			t.Errorf("%s was parsed; only TCP LISTENING rows belong in a scan", unwanted)
 		}
 	}
