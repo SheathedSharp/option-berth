@@ -287,25 +287,32 @@ type Loop struct {
 	lastErr       error
 }
 
-// New builds a Loop. It does not start scanning; call Run.
-func New(opts Options) *Loop {
+// withDefaults fills in every option a caller may leave nil, so the rest of the
+// loop never has to ask whether a seam was provided.
+func withDefaults(opts Options) Options {
 	if opts.Logger == nil {
 		opts.Logger = slog.New(slog.DiscardHandler)
 	}
 	if opts.Demand == nil {
+		// Nobody is watching: the loop parks itself until someone asks.
 		opts.Demand = func() (int, Include) { return 0, Include{} }
 	}
 	if opts.Publish == nil {
 		opts.Publish = func(state.Snapshot, state.Snapshot, []state.Event) {}
 	}
-	now := opts.Now
-	if now == nil {
-		now = time.Now
+	if opts.Now == nil {
+		opts.Now = time.Now
 	}
+	return opts
+}
+
+// New builds a Loop. It does not start scanning; call Run.
+func New(opts Options) *Loop {
+	opts = withDefaults(opts)
 	base := resolveScanInterval(opts.ScanInterval)
 	l := &Loop{
 		opts:      opts,
-		now:       now,
+		now:       opts.Now,
 		base:      base,
 		wake:      make(chan struct{}, 1),
 		statsWake: make(chan struct{}, 1),
@@ -314,19 +321,28 @@ func New(opts Options) *Loop {
 		orderGate: make(chan struct{}, 1),
 		interval:  base,
 	}
-	if l.opts.Scan == nil && l.opts.ScanContext == nil && l.opts.ScanSource == nil {
-		// The refresh cadence is the scan cadence: scans poke the watcher,
-		// and it asks Docker at most once per base interval. A refresh that
-		// changes the list wakes the loop, so a new container's port is
-		// enriched within one tick rather than one backed-off interval.
-		l.docker = docker.NewWatcher(docker.WatcherOptions{
-			Interval: base,
-			Logger:   opts.Logger,
-			OnChange: l.Wake,
-		})
-		l.opts.ScanSource = l.osScanSourceContext
-	}
+	l.attachDockerWatcher(base)
 	return l
+}
+
+// attachDockerWatcher gives a loop that has no injected scan source the real
+// one, with a docker watcher behind it.
+//
+// The refresh cadence is the scan cadence: scans poke the watcher and it asks
+// Docker at most once per base interval. A refresh that changes the container
+// list wakes the loop, so a new container's port is enriched within one tick
+// rather than one backed-off interval.
+func (l *Loop) attachDockerWatcher(base time.Duration) {
+	injected := l.opts.Scan != nil || l.opts.ScanContext != nil || l.opts.ScanSource != nil
+	if injected {
+		return
+	}
+	l.docker = docker.NewWatcher(docker.WatcherOptions{
+		Interval: base,
+		Logger:   l.opts.Logger,
+		OnChange: l.Wake,
+	})
+	l.opts.ScanSource = l.osScanSourceContext
 }
 
 // resolveScanInterval clamps a configured base scan interval. Zero (the unset
