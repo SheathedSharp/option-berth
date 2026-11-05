@@ -957,29 +957,33 @@ func filterSnapshot(snap state.Snapshot, include scanner.Include, scope state.Sc
 	return snap
 }
 
-func filterPorts(pp []state.Port, include scanner.Include) []state.Port {
+// filterPorts applies one subscriber's include set to a snapshot's rows. A set
+// that asks for everything leaves the slice untouched rather than copying it:
+// nothing is stripped, so a shared slice is safe.
+func filterPorts(rows []state.Port, include scanner.Include) []state.Port {
 	if include.Stats && include.Health {
-		return pp
+		return rows
 	}
-	out := make([]state.Port, len(pp))
-	for i := range pp {
-		out[i] = filterPort(pp[i], include)
+	filtered := make([]state.Port, len(rows))
+	for i := range rows {
+		filtered[i] = filterPort(rows[i], include)
 	}
-	return out
+	return filtered
 }
 
-// filterPort strips what this subscriber did not ask for. Health a
-// `oberth.yaml` asked the daemon to poll is the exception: the config declared
-// it, so it is state every subscriber sees whether or not it asked for
-// `include: ["health"]` (step 1A.7).
-func filterPort(p state.Port, include scanner.Include) state.Port {
+// filterPort strips what this subscriber did not ask for.
+//
+// Health that an `oberth.yaml` asked the daemon to poll is the exception: the
+// config declared it, so it is state every subscriber sees whether or not it
+// asked for `include: ["health"]`.
+func filterPort(row state.Port, include scanner.Include) state.Port {
 	if !include.Stats {
-		p.Stats = nil
+		row.Stats = nil
 	}
-	if !include.Health && p.Health != nil && !p.Health.Configured {
-		p.Health = nil
+	if !include.Health && row.Health != nil && !row.Health.Configured {
+		row.Health = nil
 	}
-	return p
+	return row
 }
 
 // ------------------------------------------------------------------- idle ---
