@@ -10,96 +10,95 @@ import (
 )
 
 func TestIsConnectionRefused(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want bool
+	cases := []struct {
+		label string
+		err   error
+		want  bool
 	}{
 		{
-			name: "connection refused",
-			err:  errors.New("connection refused"),
-			want: true,
+			label: "refused",
+			err:   errors.New("dial tcp: connection refused"),
+			want:  true,
 		},
 		{
-			name: "wrapped in url.Error",
-			err:  &url.Error{Op: "Get", URL: "http://localhost:9999", Err: errors.New("connection refused")},
-			want: true,
+			label: "wrapped in url.Error",
+			err:   &url.Error{Op: "Get", URL: "http://localhost:9999", Err: errors.New("connection refused")},
+			want:  true,
 		},
 		{
-			name: "timeout error",
-			err:  errors.New("i/o timeout"),
-			want: false,
+			label: "timeout",
+			err:   errors.New("i/o timeout"),
+			want:  false,
 		},
 		{
-			name: "unrelated error",
-			err:  errors.New("something else went wrong"),
-			want: false,
+			label: "unrelated",
+			err:   errors.New("something else went wrong"),
+			want:  false,
+		},
+		{
+			label: "no error",
+			err:   nil,
+			want:  false,
 		},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := isConnectionRefused(tt.err); got != tt.want {
-				t.Errorf("isConnectionRefused(%v) = %v, want %v", tt.err, got, tt.want)
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			if got := isConnectionRefused(tc.err); got != tc.want {
+				t.Errorf("isConnectionRefused(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
 	}
 }
 
-// TestEnrichHealthRoundIsBudgeted is step 1A.19. Ten probes run at once, so
-// forty listeners that accept and never answer used to cost four waves of the
-// per-probe timeout — inside the scan a kill or a `.oberth.yaml` write is queued
-// behind. The round is bounded now; the ports it did not reach keep whatever
-// the previous tick found (see carryHealth in the scanner).
+// Ten probes run at once, so forty listeners that accept and never answer used
+// to cost four waves of the per-probe timeout inside the scan lock. The round
+// is bounded; unreached ports keep the previous tick's health.
 func TestEnrichHealthRoundIsBudgeted(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Skipf("no loopback listener: %v", err)
 	}
-	defer ln.Close()
-	// Accept and never answer, which is what makes a probe wait out its
-	// timeout rather than fail fast.
+	defer listener.Close()
+	// Accept and never answer, so a probe waits out its timeout.
 	go func() {
 		for {
-			c, err := ln.Accept()
+			conn, err := listener.Accept()
 			if err != nil {
 				return
 			}
-			defer c.Close()
+			defer conn.Close()
 		}
 	}()
-	_, portStr, err := net.SplitHostPort(ln.Addr().String())
+	_, portText, err := net.SplitHostPort(listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
-	port, err := strconv.Atoi(portStr)
+	port, err := strconv.Atoi(portText)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	pp := make([]ListeningPort, 40)
-	for i := range pp {
-		pp[i] = ListeningPort{Port: port, BindAddress: "127.0.0.1"}
+	rows := make([]ListeningPort, 32)
+	for i := range rows {
+		rows[i] = ListeningPort{Port: port, BindAddress: "127.0.0.1"}
 	}
 
 	start := time.Now()
-	EnrichHealth(pp, time.Second, 300*time.Millisecond)
-	took := time.Since(start)
-
-	if took > 2*time.Second {
-		t.Fatalf("a round of 40 probes took %s, want it bounded by the budget", took)
+	EnrichHealth(rows, time.Second, 250*time.Millisecond)
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("a round of 32 probes took %s, want it bounded by the budget", took)
 	}
 }
 
 func TestProbeBudget(t *testing.T) {
-	if d, ok := ProbeBudget(2*time.Second, time.Time{}); !ok || d != 2*time.Second {
-		t.Errorf("no deadline: got %s/%v, want the full timeout", d, ok)
+	if limit, ok := ProbeBudget(3*time.Second, time.Time{}); !ok || limit != 3*time.Second {
+		t.Errorf("no cutoff: got %s/%v, want the full timeout", limit, ok)
 	}
 	if _, ok := ProbeBudget(time.Second, time.Now().Add(-time.Millisecond)); ok {
-		t.Error("a spent budget should not start another probe")
+		t.Error("a spent budget started another probe")
 	}
-	d, ok := ProbeBudget(time.Second, time.Now().Add(50*time.Millisecond))
-	if !ok || d > 50*time.Millisecond {
-		t.Errorf("near the deadline: got %s/%v, want the timeout clamped to what is left", d, ok)
+	limit, ok := ProbeBudget(time.Second, time.Now().Add(40*time.Millisecond))
+	if !ok || limit > 40*time.Millisecond {
+		t.Errorf("near the cutoff: got %s/%v, want the timeout clamped", limit, ok)
 	}
 }
