@@ -31,71 +31,78 @@ const (
 // AllGroupSources is the enum used by schema generation.
 var AllGroupSources = []GroupSource{SourceAuto, SourceFile, SourceStart}
 
-// Stats is resource usage for the owning process. Null unless the caller
-// opted into stats collection.
+// Stats is the owning process's resource usage. It is null unless stats
+// collection was requested.
 type Stats struct {
 	CPUPercent  float64 `json:"cpu_percent"`
 	MemoryRSS   int64   `json:"memory_rss_bytes"`
 	ThreadCount int     `json:"thread_count"`
-	Uptime      string  `json:"uptime"`
-	State       string  `json:"state"`
-	Connections int     `json:"connections"`
+
+	// The process's current state.
+	Uptime      string `json:"uptime"`
+	State       string `json:"state"`
+	Connections int    `json:"connections"`
 }
 
-// Health is the result of an HTTP probe. Null unless health was collected.
+// Health is the result of one health probe. It is null unless health was
+// collected.
 //
-// Status is exactly one of the contract's three words. Reason carries the
-// scanner's finer-grained verdict ("refused", "timeout", "non-http", ...) for
-// a client that wants to say *why* a service is failing; it is advisory and
-// clients must branch on Status.
+// Status is exactly one of the contract's three words. Reason keeps the
+// scanner's finer verdict ("refused", "timeout", "non-http", …) so a client
+// can say why a service is failing; it is advisory, and clients branch on
+// Status.
 type Health struct {
 	Status    string `json:"status" jsonschema:"enum=ok,enum=fail,enum=unknown"`
 	Code      int    `json:"code"`
 	LatencyMs int64  `json:"latency_ms"`
-	Reason    string `json:"reason,omitempty"`
-	// ObservedAt is when this verdict was obtained, rather than when a
-	// snapshot happened to be assembled. It lets clients tell a fresh probe
-	// from a carried result without consulting listener internals.
+
+	// Reason keeps the finer probe verdict behind Status.
+	Reason string `json:"reason,omitempty"`
+
+	// ObservedAt is when the verdict was obtained, not when a snapshot was
+	// assembled. A client can therefore tell a fresh probe from a carried
+	// result without reading listener internals.
 	ObservedAt string `json:"observed_at"`
 
-	// Configured marks a probe the daemon ran because a `oberth.yaml` service
-	// declares a `health:` path. Such a row is state, not an opt-in statistic,
-	// so it survives the per-subscriber `include` filter. It never goes on the
+	// Configured marks a probe the daemon ran because a manifest declares a
+	// `health:` path. That is state rather than an opt-in statistic, so it
+	// survives the subscriber's include filter. The flag never reaches the
 	// wire: a client sees the health object either way.
 	Configured bool `json:"-"`
 }
 
-// Health status values (contract §5, §13).
+// The three words the contract publishes.
 const (
 	HealthOK      = "ok"
 	HealthFail    = "fail"
 	HealthUnknown = "unknown"
 )
 
-// NormalizeHealth maps the scanner's probe vocabulary
-// ("healthy", "unhealthy", "refused", "timeout", "non-http") onto the three
-// words the contract publishes, keeping the original as the reason. It is the
-// one place the translation happens, so every published row agrees.
+// NormalizeHealth translates the scanner's probe vocabulary ("healthy",
+// "unhealthy", "refused", "timeout", "non-http", …) into those three words,
+// keeping the original as the reason. Every published row goes through this
+// one function.
 func NormalizeHealth(raw string) (status, reason string) {
 	switch raw {
 	case "":
 		return HealthUnknown, ""
-	case HealthOK, "healthy":
-		return HealthOK, raw
 	case HealthUnknown:
 		return HealthUnknown, ""
+	case HealthOK, "healthy":
+		return HealthOK, raw
 	case HealthFail:
 		return HealthFail, ""
-	default:
-		return HealthFail, raw
 	}
+	return HealthFail, raw
 }
 
-// Docker describes the container behind a published port. Null for native
-// processes.
+// Docker describes the container behind a published port; it is nil for a
+// native process.
 type Docker struct {
-	Container      string `json:"container"`
-	Image          string `json:"image"`
+	Container string `json:"container"`
+	Image     string `json:"image"`
+
+	// Where Compose placed it.
 	ComposeService string `json:"compose_service"`
 	ComposeProject string `json:"compose_project"`
 	ContainerPort  int    `json:"container_port"`
@@ -103,28 +110,34 @@ type Docker struct {
 
 // Run attributes a port to a process option-berth started. Null for anything else.
 type Run struct {
-	ID      string `json:"id"`
-	Group   string `json:"group"`
-	Name    string `json:"name"`
-	RootPID int    `json:"root_pid"`
+	ID    string `json:"id"`
+	Group string `json:"group"`
+	Name  string `json:"name"`
+
+	RootPID int `json:"root_pid"`
 }
 
-// Session is owned by spec 2; the daemon only carries it.
+// Session is owned by the session contract; the daemon only carries it.
 type Session struct {
-	ID       string `json:"id"`
-	Tool     string `json:"tool"`
-	Label    string `json:"label"`
+	// Who.
+	ID    string `json:"id"`
+	Tool  string `json:"tool"`
+	Label string `json:"label"`
+
+	// Where.
 	Worktree string `json:"worktree"`
 	Branch   string `json:"branch"`
-	Detected bool   `json:"detected"`
+
+	// How it was identified.
+	Detected bool `json:"detected"`
 }
 
-// Port is one listening socket as published by the daemon. Clients render
-// DisplayName and never derive their own name.
+// Port is one listening socket as the daemon publishes it. A client renders
+// DisplayName and never invents a name of its own.
 type Port struct {
-	// Host is the machine this row was observed on: "localhost" for the
-	// daemon's own machine, the registered name for a row multiplexed in from
-	// a caller that carries an explicit host tag. It is never empty on the wire.
+	// Host names the machine this row was observed on: "localhost" for this
+	// machine, or the registered name of a caller that multiplexes rows in.
+	// It is never empty on the wire.
 	Host        string `json:"host"`
 	Port        int    `json:"port"`
 	BindAddress string `json:"bind_address"`

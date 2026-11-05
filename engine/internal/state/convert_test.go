@@ -10,8 +10,8 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
-func TestFromListeningMapsContractFields(t *testing.T) {
-	lp := ports.ListeningPort{
+func TestFromListeningCarriesTheContractFields(t *testing.T) {
+	scan := ports.ListeningPort{
 		Port: 5173, BindAddress: "127.0.0.1", IPVersion: "IPv4",
 		PID: 48211, PPID: 48190, Process: "node",
 		Command:     "node /Users/me/code/option-berth/frontend/node_modules/.bin/vite",
@@ -21,127 +21,126 @@ func TestFromListeningMapsContractFields(t *testing.T) {
 		Tag: "frontend", RunID: "a1b2c3d4", RunRootPID: 48190,
 		StartedAt: "2026-09-02T09:12:41+02:00",
 	}
-	p := FromListening(lp)
+	row := FromListening(scan)
 
-	if p.PPID != 48190 || p.URL != "http://127.0.0.1:5173" {
-		t.Fatalf("%+v", p)
+	if row.PPID != 48190 || row.URL != "http://127.0.0.1:5173" {
+		t.Fatalf("row = %+v", row)
 	}
-	if p.DisplayName == "" {
-		t.Fatalf("display_name must be computed")
+	if row.DisplayName == "" {
+		t.Fatal("display_name was not computed")
 	}
-	if p.ProjectRoot == nil || *p.ProjectRoot != "/Users/me/code/option-berth" {
-		t.Fatalf("project_root = %v", p.ProjectRoot)
+	if row.ProjectRoot == nil || *row.ProjectRoot != "/Users/me/code/option-berth" {
+		t.Fatalf("project_root = %v", row.ProjectRoot)
 	}
-	if p.Group == nil || *p.Group != "option-berth" {
-		t.Fatalf("group = %v", p.Group)
+	if row.Group == nil || *row.Group != "option-berth" {
+		t.Fatalf("group = %v", row.Group)
 	}
-	if p.GroupSource == nil || *p.GroupSource != SourceAuto {
-		t.Fatalf("group_source = %v", p.GroupSource)
+	if row.GroupSource == nil || *row.GroupSource != SourceAuto {
+		t.Fatalf("group_source = %v", row.GroupSource)
 	}
-	if p.Run == nil || p.Run.ID != "a1b2c3d4" || p.Run.Name != "frontend" || p.Run.RootPID != 48190 {
-		t.Fatalf("run = %+v", p.Run)
+	if row.Run == nil || row.Run.ID != "a1b2c3d4" ||
+		row.Run.Name != "frontend" || row.Run.RootPID != 48190 {
+		t.Fatalf("run = %+v", row.Run)
 	}
-	if p.StartedAt == nil || *p.StartedAt != "2026-09-02T09:12:41+02:00" {
-		t.Fatalf("started_at = %v", p.StartedAt)
+	if row.StartedAt == nil || *row.StartedAt != "2026-09-02T09:12:41+02:00" {
+		t.Fatalf("started_at = %v", row.StartedAt)
 	}
-	if p.Type != TypeUser {
-		t.Fatalf("type = %q", p.Type)
+	if row.Type != TypeUser {
+		t.Fatalf("type = %q", row.Type)
 	}
-	if p.Stats != nil || p.Health != nil || p.Docker != nil {
-		t.Fatalf("uncollected sub-objects must be nil")
+	if row.Stats != nil || row.Health != nil || row.Docker != nil {
+		t.Fatal("uncollected sub-objects are not nil")
 	}
-	if p.Name != nil {
-		t.Fatalf("name must be null in F0")
+	if row.Name != nil {
+		t.Fatalf("name = %v, want null", row.Name)
 	}
 }
 
-func TestFromListeningMarksWorkDoneOutOfTheTrash(t *testing.T) {
+func TestFromListeningRecognisesATrashedWorkingDirectory(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		t.Skip("no home directory to build paths from")
 	}
-
 	cases := []struct {
-		name string
-		cwd  string
-		want bool
+		label string
+		cwd   string
+		want  bool
 	}{
 		{"a deleted project", filepath.Join(home, ".Trash", "bookkeeping-acceptance", "redis"), true},
-		{"a project directory", filepath.Join(home, "code", "shop"), false},
+		{"a live project", filepath.Join(home, "code", "shop"), false},
 		{"no working directory", "", false},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			p := FromListening(ports.ListeningPort{Port: 16379, Process: "redis-server", Cwd: tc.cwd})
-			if p.CwdInTrash != tc.want {
-				t.Errorf("cwd_in_trash for %q = %v, want %v", tc.cwd, p.CwdInTrash, tc.want)
+		t.Run(tc.label, func(t *testing.T) {
+			row := FromListening(ports.ListeningPort{Port: 16379, Process: "redis-server", Cwd: tc.cwd})
+			if row.CwdInTrash != tc.want {
+				t.Errorf("cwd_in_trash for %q = %v, want %v", tc.cwd, row.CwdInTrash, tc.want)
 			}
 		})
 	}
 }
 
-func TestFromListeningCarriesTheGoneDirectoryMarker(t *testing.T) {
-	// The orphan: 5173's cwd was deleted while the process kept listening.
-	p := FromListening(ports.ListeningPort{
-		Port: 5173, Process: "node", Cwd: "/Users/me/code/tmp/uat_for_example-worker/frontend/example-project-web",
+func TestFromListeningKeepsTheGoneDirectoryMarker(t *testing.T) {
+	// The process outlived its deleted working directory and still listens.
+	row := FromListening(ports.ListeningPort{
+		Port: 5173, Process: "node",
+		Cwd:     "/Users/me/code/tmp/uat_for_example-worker/frontend/example-project-web",
 		CwdGone: true,
 	})
-	if !p.CwdGone {
-		t.Errorf("cwd_gone = false, want true")
+	if !row.CwdGone {
+		t.Error("cwd_gone = false")
 	}
-	if p.CwdInTrash {
-		t.Errorf("a deleted directory is not a trashed one: cwd_in_trash = true")
+	if row.CwdInTrash {
+		t.Error("a deleted directory was labelled as trashed")
 	}
-	// It travels on the row so a client can label it, and the round trip back
-	// to the scanner model keeps it — the daemon's read handlers go through it.
-	if !ToListening(p).CwdGone {
-		t.Errorf("cwd_gone did not survive the round trip")
+	if !ToListening(row).CwdGone {
+		t.Error("cwd_gone did not survive the round trip")
 	}
 }
 
-func TestFromListeningStatsHealthDockerWhenCollected(t *testing.T) {
-	lp := ports.ListeningPort{
+func TestCollectedEnrichmentsBecomeObjects(t *testing.T) {
+	row := FromListening(ports.ListeningPort{
 		Port: 5432, BindAddress: "0.0.0.0", Type: ports.PortTypeDocker,
 		CPUPercent: 1.2, MemoryRSS: 183500800, ThreadCount: 14,
 		Uptime: "2h13m", State: "sleeping", Connections: 2,
+
+		// Probe and container.
 		HealthStatus: "ok", HealthCode: 200, HealthLatency: 4 * time.Millisecond,
 		DockerContainer: "db", DockerImage: "postgres:16",
 		DockerComposeService: "db", DockerComposeProject: "option-berth", DockerContainerPort: 5432,
+	})
+	if row.Stats == nil || row.Stats.CPUPercent != 1.2 || row.Stats.Connections != 2 {
+		t.Fatalf("stats = %+v", row.Stats)
 	}
-	p := FromListening(lp)
-	if p.Stats == nil || p.Stats.CPUPercent != 1.2 || p.Stats.Connections != 2 {
-		t.Fatalf("stats = %+v", p.Stats)
+	if row.Health == nil || row.Health.Code != 200 || row.Health.LatencyMs != 4 {
+		t.Fatalf("health = %+v", row.Health)
 	}
-	if p.Health == nil || p.Health.Code != 200 || p.Health.LatencyMs != 4 {
-		t.Fatalf("health = %+v", p.Health)
+	if row.Docker == nil || row.Docker.ComposeService != "db" {
+		t.Fatalf("docker = %+v", row.Docker)
 	}
-	if p.Docker == nil || p.Docker.ComposeService != "db" {
-		t.Fatalf("docker = %+v", p.Docker)
-	}
-	if p.Type != TypeDocker {
-		t.Fatalf("type = %q", p.Type)
+	if row.Type != TypeDocker {
+		t.Fatalf("type = %q", row.Type)
 	}
 }
 
-func TestFromListeningJSONHasNullStatsWhenNotCollected(t *testing.T) {
-	b, err := json.Marshal(FromListening(ports.ListeningPort{Port: 3000, BindAddress: "::1"}))
+func TestUncollectedStatsMarshalAsNull(t *testing.T) {
+	encoded, err := json.Marshal(FromListening(ports.ListeningPort{Port: 3000, BindAddress: "::1"}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var m map[string]any
-	if err := json.Unmarshal(b, &m); err != nil {
+	var fields map[string]any
+	if err := json.Unmarshal(encoded, &fields); err != nil {
 		t.Fatal(err)
 	}
-	if m["stats"] != nil {
-		t.Fatalf("stats = %v, want null", m["stats"])
+	if fields["stats"] != nil {
+		t.Fatalf("stats = %v, want null", fields["stats"])
 	}
-	if _, ok := m["display_name"]; !ok {
-		t.Fatalf("display_name missing")
+	for _, required := range []string{"display_name", "ppid"} {
+		if _, present := fields[required]; !present {
+			t.Fatalf("%q is missing from the row", required)
+		}
 	}
-	if _, ok := m["ppid"]; !ok {
-		t.Fatalf("ppid missing")
-	}
-	if _, ok := m["exposed_urls"]; ok {
-		t.Fatalf("dead key exposed_urls still marshals")
+	if _, dead := fields["exposed_urls"]; dead {
+		t.Fatal("the removed exposed_urls key still marshals")
 	}
 }

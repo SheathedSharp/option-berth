@@ -5,64 +5,74 @@ import (
 	"testing"
 )
 
-func TestPortKey(t *testing.T) {
-	p := Port{Port: 3000, BindAddress: "127.0.0.1"}
-	if got := p.Key(); got != "3000:127.0.0.1" {
+func TestPortKeyCombinesPortAndBind(t *testing.T) {
+	row := Port{Port: 3000, BindAddress: "127.0.0.1"}
+	if got := row.Key(); got != "3000:127.0.0.1" {
 		t.Fatalf("Key() = %q", got)
 	}
 }
 
-func TestPortJSONNullsForAbsentOptionals(t *testing.T) {
-	b, err := json.Marshal(Port{Port: 3000, BindAddress: "::", Type: TypeUser})
+func TestPortJSONEncodesAbsentOptionalsAsNull(t *testing.T) {
+	encoded, err := json.Marshal(Port{Port: 3000, BindAddress: "::", Type: TypeUser})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var m map[string]any
-	if err := json.Unmarshal(b, &m); err != nil {
+	var fields map[string]any
+	if err := json.Unmarshal(encoded, &fields); err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"name", "project_root", "group", "group_source", "session", "run", "stats", "health", "docker", "started_at"} {
-		v, ok := m[k]
-		if !ok {
-			t.Fatalf("key %q missing from Port JSON", k)
+	optional := []string{
+		"name", "project_root", "group", "group_source", "session",
+		"run", "stats", "health", "docker", "started_at",
+	}
+	for _, key := range optional {
+		value, present := fields[key]
+		if !present {
+			t.Fatalf("%q is missing", key)
 		}
-		if v != nil {
-			t.Fatalf("key %q = %v, want null", k, v)
+		if value != nil {
+			t.Fatalf("%q = %v, want null", key, value)
 		}
 	}
-	// The dead share/proxy fields were deleted (R3.1): they must marshal nowhere.
-	for _, k := range []string{"shares", "exposed_urls", "proxy_id", "proxy_target_port"} {
-		if _, ok := m[k]; ok {
-			t.Fatalf("dead key %q still marshals on Port", k)
+	// These share/proxy fields were removed; nothing may bring them back.
+	for _, removed := range []string{"shares", "exposed_urls", "proxy_id", "proxy_target_port"} {
+		if _, present := fields[removed]; present {
+			t.Fatalf("removed key %q still marshals", removed)
 		}
 	}
-	if m["type"] != "user" {
-		t.Fatalf("type = %v", m["type"])
+	if fields["type"] != "user" {
+		t.Fatalf("type = %v", fields["type"])
 	}
 }
 
-// TestNormalizeHealth pins the one published vocabulary: the desktop branches
-// on ok/fail/unknown and nothing else, while the probe's own word survives as
-// the reason (step 1A.7).
-func TestNormalizeHealth(t *testing.T) {
+// The published vocabulary has exactly three words; the probe's own word stays
+// as the reason so a client can explain a failure without branching on it.
+func TestNormalizeHealthVocabulary(t *testing.T) {
 	cases := []struct {
-		raw          string
-		want, reason string
+		raw    string
+		status string
+		reason string
 	}{
+		// Successes.
 		{"healthy", HealthOK, "healthy"},
 		{"ok", HealthOK, "ok"},
+
+		// Failures.
 		{"unhealthy", HealthFail, "unhealthy"},
 		{"refused", HealthFail, "refused"},
 		{"timeout", HealthFail, "timeout"},
 		{"non-http", HealthFail, "non-http"},
+
+		// Already-normalized and empty input.
 		{"fail", HealthFail, ""},
 		{"unknown", HealthUnknown, ""},
 		{"", HealthUnknown, ""},
 	}
-	for _, c := range cases {
-		got, reason := NormalizeHealth(c.raw)
-		if got != c.want || reason != c.reason {
-			t.Errorf("NormalizeHealth(%q) = %q, %q; want %q, %q", c.raw, got, reason, c.want, c.reason)
+	for _, tc := range cases {
+		status, reason := NormalizeHealth(tc.raw)
+		if status != tc.status || reason != tc.reason {
+			t.Errorf("NormalizeHealth(%q) = %q, %q; want %q, %q",
+				tc.raw, status, reason, tc.status, tc.reason)
 		}
 	}
 }
