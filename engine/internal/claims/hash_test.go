@@ -2,93 +2,99 @@ package claims
 
 import "testing"
 
-// The derived port is a contract between every option-berth on the machine — two
-// worktrees only agree because they both compute the same number — so the
-// hash is pinned to golden values here. A change to fnv1a32, to the key shape
-// or to DefaultRange moves every worktree's ports and must be a deliberate
-// edit to this table, not a silent refactor.
-func TestBaseIsPinnedAndProcessIndependent(t *testing.T) {
-	// Golden numbers: computed once, then frozen. Two processes agree because
-	// they both compute these, so a change here is a change every worktree on
-	// the machine feels.
-	//
-	// The two rows whose key carries the product name were re-pinned each time
-	// the product was renamed: the key is data, not a label, so renaming it
-	// moves the number. The other rows are upstream's and still match — which is
-	// the evidence that the derivation itself did not move.
-	golden := map[string]int{
-		"option-berth/main":        15680,
-		"myapp/feature-x":          21700,
-		"myapp/feature-y":          22190,
-		"option-berth/2A.6-claims": 21620,
-		"":                         11110,
+// The derived port is shared contract: every option-berth on the machine
+// computes it independently, so a change to the hash, the key shape or the
+// default range moves every worktree's ports. The numbers below are frozen on
+// purpose; changing one is a deliberate contract change, not a refactor.
+func TestDerivedPortsAreFrozen(t *testing.T) {
+	pinned := []struct {
+		key  string
+		port int
+	}{
+		{"option-berth/main", 15680},
+		{"myapp/feature-x", 21700},
+		{"myapp/feature-y", 22190},
+		{"option-berth/2A.6-claims", 21620},
+		{"", 11110},
 	}
-	for key, want := range golden {
-		if got := DefaultRange.Base(key); got != want {
-			t.Errorf("Base(%q) = %d, want the pinned %d (the derivation moved)", key, got, want)
+	for _, tc := range pinned {
+		if got := DefaultRange.Base(tc.key); got != tc.port {
+			t.Errorf("Base(%q) = %d, want the frozen %d", tc.key, got, tc.port)
 		}
 	}
 }
 
-func TestBaseIsInsideTheRangeAndOnABlockBoundary(t *testing.T) {
-	for _, key := range []string{"a/b", "option-berth/main", "x/y", "long-project-name/some-long-worktree-name"} {
-		got := DefaultRange.Base(key)
-		if got < DefaultRange.Start || got > DefaultRange.End {
-			t.Errorf("Base(%q) = %d, outside %d-%d", key, got, DefaultRange.Start, DefaultRange.End)
+func TestBaseStaysInsideTheWindowOnABlockBoundary(t *testing.T) {
+	keys := []string{"a/b", "option-berth/main", "p/q", "long-project-name/long-worktree-name"}
+	for _, key := range keys {
+		base := DefaultRange.Base(key)
+		if base < DefaultRange.Start || base > DefaultRange.End {
+			t.Errorf("Base(%q) = %d, outside %d-%d", key, base, DefaultRange.Start, DefaultRange.End)
 		}
-		if (got-DefaultRange.Start)%BlockSize != 0 {
-			t.Errorf("Base(%q) = %d, not on a %d-port block boundary", key, got, BlockSize)
+		if (base-DefaultRange.Start)%BlockSize != 0 {
+			t.Errorf("Base(%q) = %d, not aligned to a %d-port block", key, base, BlockSize)
 		}
 	}
 }
 
-func TestDifferentWorktreesLandInDifferentBlocks(t *testing.T) {
-	a := DefaultRange.Base(Key("myapp", "feature-x"))
-	b := DefaultRange.Base(Key("myapp", "feature-y"))
-	if a == b {
-		t.Fatalf("two worktrees derived the same base port %d", a)
+func TestSiblingWorktreesDoNotShareABlock(t *testing.T) {
+	x := DefaultRange.Base(Key("myapp", "feature-x"))
+	y := DefaultRange.Base(Key("myapp", "feature-y"))
+	if x == y {
+		t.Fatalf("two worktrees derived the same base %d", x)
 	}
 }
 
-func TestAtWalksUpwardAndWrapsInsideTheRange(t *testing.T) {
-	r := Range{Start: 10000, End: 10009}
+func TestAtCoversTheWindowOnceAndWraps(t *testing.T) {
+	window := Range{Start: 10000, End: 10009}
 	key := "wrap/me"
-	base := r.Base(key)
-	seen := map[int]bool{}
-	for i := 0; i < r.Span(); i++ {
-		p := r.At(key, i)
-		if p < r.Start || p > r.End {
-			t.Fatalf("At(%d) = %d, outside %d-%d", i, p, r.Start, r.End)
+	base := window.Base(key)
+
+	seen := make(map[int]bool, window.Span())
+	for offset := 0; offset < window.Span(); offset++ {
+		port := window.At(key, offset)
+		if port < window.Start || port > window.End {
+			t.Fatalf("At(%d) = %d, outside the window", offset, port)
 		}
-		if seen[p] {
-			t.Fatalf("At(%d) = %d repeated before the range was exhausted", i, p)
+		if seen[port] {
+			t.Fatalf("At(%d) repeated port %d before the window was covered", offset, port)
 		}
-		seen[p] = true
+		seen[port] = true
 	}
-	if len(seen) != r.Span() {
-		t.Fatalf("walked %d distinct ports, want the whole %d-port range", len(seen), r.Span())
+	if len(seen) != window.Span() {
+		t.Fatalf("covered %d ports, want %d", len(seen), window.Span())
 	}
-	if got := r.At(key, 1); got != r.Start+(base-r.Start+1)%r.Span() {
-		t.Errorf("At(1) = %d, want the port after the base", got)
+	if next := window.At(key, 1); next != window.Start+(base-window.Start+1)%window.Span() {
+		t.Errorf("At(1) = %d, want the port after the base", next)
 	}
 }
 
-func TestKeyAndSplitKey(t *testing.T) {
-	cases := []struct{ project, worktree, key string }{
+func TestKeyDefaultsAndTrimming(t *testing.T) {
+	cases := []struct {
+		project  string
+		worktree string
+		want     string
+	}{
 		{"option-berth", "", "option-berth/" + DefaultWorktree},
 		{"option-berth", "main", "option-berth/main"},
 		{" myapp ", " feature-x ", "myapp/feature-x"},
+		{"/myapp/", "/feature-x/", "myapp/feature-x"},
 	}
-	for _, c := range cases {
-		if got := Key(c.project, c.worktree); got != c.key {
-			t.Errorf("Key(%q, %q) = %q, want %q", c.project, c.worktree, got, c.key)
+	for _, tc := range cases {
+		if got := Key(tc.project, tc.worktree); got != tc.want {
+			t.Errorf("Key(%q, %q) = %q, want %q", tc.project, tc.worktree, got, tc.want)
 		}
 	}
-	if p, w := SplitKey("myapp/feature-x"); p != "myapp" || w != "feature-x" {
-		t.Errorf("SplitKey = %q, %q", p, w)
+}
+
+func TestSplitKeyRecoversItsParts(t *testing.T) {
+	project, worktree := SplitKey("myapp/feature-x")
+	if project != "myapp" || worktree != "feature-x" {
+		t.Errorf("SplitKey = %q/%q", project, worktree)
 	}
-	if p, w := SplitKey("myapp"); p != "myapp" || w != DefaultWorktree {
-		t.Errorf("SplitKey(%q) = %q, %q", "myapp", p, w)
+	project, worktree = SplitKey("myapp")
+	if project != "myapp" || worktree != DefaultWorktree {
+		t.Errorf("SplitKey of a bare project = %q/%q", project, worktree)
 	}
 }
 
@@ -96,9 +102,10 @@ func TestRangeValidation(t *testing.T) {
 	if err := DefaultRange.Valid(); err != nil {
 		t.Fatalf("DefaultRange is invalid: %v", err)
 	}
-	for _, r := range []Range{{0, 100}, {100, 70000}, {900, 800}} {
-		if err := r.Valid(); err == nil {
-			t.Errorf("%v was accepted", r)
+	invalid := []Range{{0, 100}, {100, 70000}, {900, 800}}
+	for _, window := range invalid {
+		if err := window.Valid(); err == nil {
+			t.Errorf("%v was accepted", window)
 		}
 	}
 }

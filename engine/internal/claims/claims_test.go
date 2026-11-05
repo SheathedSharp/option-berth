@@ -2,7 +2,6 @@ package claims_test
 
 import (
 	"errors"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -12,175 +11,199 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
-// newManager builds a manager over a real temp database, so the SQL that
-// enforces one holder per port is exercised together with the probe.
-func newManager(t *testing.T, listening map[int]bool, now func() time.Time) (*claims.Manager, *store.Store) {
+// managerWithStore builds a manager over a real temporary database, so the SQL
+// that enforces one holder per port runs together with the probe.
+func managerWithStore(t *testing.T, listening map[int]bool, clock func() time.Time) (*claims.Manager, *store.Store) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "option-berth.db"))
-	if err != nil {
-		t.Fatalf("opening the store: %v", err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-	return claims.New(st.Claims(), claims.Options{
-		Now:       now,
+	st := openStore(t)
+	m := claims.New(st.Claims(), claims.Options{
+		Now:       clock,
 		Listening: func() (map[int]bool, error) { return listening, nil },
-	}), st
+	})
+	return m, st
 }
 
-func acquire(t *testing.T, m *claims.Manager, req claims.Request) claims.Result {
+func mustAcquire(t *testing.T, m *claims.Manager, req claims.Request) claims.Result {
 	t.Helper()
-	res, err := m.Acquire(req)
+	result, err := m.Acquire(req)
 	if err != nil {
 		t.Fatalf("Acquire(%+v): %v", req, err)
 	}
-	return res
+	return result
 }
 
-func TestTheSameKeyAlwaysGetsTheSamePorts(t *testing.T) {
-	m, _ := newManager(t, nil, nil)
-	first := acquire(t, m, claims.Request{Project: "myapp", Worktree: "feature-x"})
-	second := acquire(t, m, claims.Request{Project: "myapp", Worktree: "feature-x"})
+func seedClaim(t *testing.T, st *store.Store, port int, key string, expires time.Time) {
+	t.Helper()
+	project, worktree, _ := strings.Cut(key, "/")
+	if err := st.Claims().Put(store.ClaimRow{
+		Port: port, Key: key, Project: project, Worktree: worktree, ExpiresAt: expires,
+	}); err != nil {
+		t.Fatalf("seeding claim %d/%s: %v", port, key, err)
+	}
+}
+
+func heldRows(t *testing.T, st *store.Store, key string) []store.ClaimRow {
+	t.Helper()
+	rows, err := st.Claims().Get(key)
+	if err != nil {
+		t.Fatalf("Get(%q): %v", key, err)
+	}
+	return rows
+}
+
+func allClaims(t *testing.T, st *store.Store) []store.ClaimRow {
+	t.Helper()
+	rows, err := st.Claims().List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	return rows
+}
+
+// projectCounts records DefaultCount's callers and answers a fixed block for
+// one project.
+type projectCounts struct {
+	asked []string
+	block int
+}
+
+func (p *projectCounts) countFor(project string) int {
+	p.asked = append(p.asked, project)
+	if project == "shop" {
+		return p.block
+	}
+	return 0
+}
+
+func TestSameKeySamePorts(t *testing.T) {
+	m, _ := managerWithStore(t, nil, nil)
+	first := mustAcquire(t, m, claims.Request{Project: "myapp", Worktree: "feature-x"})
+	second := mustAcquire(t, m, claims.Request{Project: "myapp", Worktree: "feature-x"})
 
 	if len(first.Ports) != 1 || first.Ports[0] != claims.DefaultRange.Base("myapp/feature-x") {
-		t.Fatalf("ports = %v, want the derived base port", first.Ports)
+		t.Fatalf("ports = %v, want the derived base", first.Ports)
 	}
 	if second.Ports[0] != first.Ports[0] {
-		t.Errorf("second acquire = %v, want the same port as %v", second.Ports, first.Ports)
+		t.Errorf("second acquire = %v, want %d", second.Ports, first.Ports[0])
 	}
 	if first.Key != "myapp/feature-x" {
 		t.Errorf("key = %q", first.Key)
 	}
 }
 
-func TestDifferentWorktreesGetDifferentPorts(t *testing.T) {
-	m, _ := newManager(t, nil, nil)
-	a := acquire(t, m, claims.Request{Project: "myapp", Worktree: "feature-x"})
-	b := acquire(t, m, claims.Request{Project: "myapp", Worktree: "feature-y"})
-	if a.Ports[0] == b.Ports[0] {
-		t.Fatalf("both worktrees got port %d", a.Ports[0])
+func TestSiblingWorktreesGetDifferentPorts(t *testing.T) {
+	m, _ := managerWithStore(t, nil, nil)
+	x := mustAcquire(t, m, claims.Request{Project: "myapp", Worktree: "feature-x"})
+	y := mustAcquire(t, m, claims.Request{Project: "myapp", Worktree: "feature-y"})
+	if x.Ports[0] == y.Ports[0] {
+		t.Fatalf("both worktrees received port %d", x.Ports[0])
 	}
 }
 
-func TestProbeSkipsListeningPorts(t *testing.T) {
+func TestListeningPortsAreSkipped(t *testing.T) {
 	key := "myapp/main"
 	base := claims.DefaultRange.Base(key)
-	m, _ := newManager(t, map[int]bool{base: true, base + 1: true}, nil)
+	m, _ := managerWithStore(t, map[int]bool{base: true, base + 1: true}, nil)
 
-	res := acquire(t, m, claims.Request{Key: key})
-	if res.Ports[0] != base+2 {
-		t.Fatalf("ports = %v, want the first port past the two listeners (%d)", res.Ports, base+2)
+	result := mustAcquire(t, m, claims.Request{Key: key})
+	if result.Ports[0] != base+2 {
+		t.Fatalf("ports = %v, want the first port after the two listeners (%d)", result.Ports, base+2)
 	}
 }
 
-func TestProbeSkipsPortsAnotherKeyHolds(t *testing.T) {
-	// Two keys derived to overlap: hold the whole of one key's block with a
-	// foreign claim and the second key has to walk past it.
+func TestPortsHeldByAnotherKeyAreSkipped(t *testing.T) {
 	key := "myapp/main"
 	base := claims.DefaultRange.Base(key)
-	m, st := newManager(t, nil, nil)
+	m, st := managerWithStore(t, nil, nil)
 
 	expires := time.Now().Add(time.Hour)
-	if err := st.Claims().Put(
-		store.ClaimRow{Port: base, Key: "other/main", Project: "other", Worktree: "main", ExpiresAt: expires},
-		store.ClaimRow{Port: base + 1, Key: "other/main", Project: "other", Worktree: "main", ExpiresAt: expires},
-	); err != nil {
-		t.Fatalf("seeding a foreign claim: %v", err)
-	}
+	seedClaim(t, st, base, "other/main", expires)
+	seedClaim(t, st, base+1, "other/main", expires)
 
-	res := acquire(t, m, claims.Request{Key: key, Count: 2})
-	for _, p := range res.Ports {
-		if p == base || p == base+1 {
-			t.Fatalf("ports = %v, want none of the foreign claim's ports", res.Ports)
-		}
+	result := mustAcquire(t, m, claims.Request{Key: key, Count: 2})
+	if len(result.Ports) != 2 {
+		t.Fatalf("ports = %v, want two", result.Ports)
 	}
-	if len(res.Ports) != 2 {
-		t.Fatalf("ports = %v, want two", res.Ports)
+	for _, port := range result.Ports {
+		if port == base || port == base+1 {
+			t.Fatalf("ports = %v, want none of the foreign claim's block", result.Ports)
+		}
 	}
 }
 
-// TestAnOmittedCountTakesTheProjectDefault: a request with no count asks
-// DefaultCount for its project (recovered from the key when only a key was
-// sent); an explicit count never asks; a project with no default gets one.
-func TestAnOmittedCountTakesTheProjectDefault(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "option-berth.db"))
-	if err != nil {
-		t.Fatalf("opening the store: %v", err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-	var asked []string
-	m := claims.New(st.Claims(), claims.Options{DefaultCount: func(project string) int {
-		asked = append(asked, project)
-		if project == "shop" {
-			return 4
-		}
-		return 0
-	}})
+// An omitted count asks the project default, including when only a key was
+// sent. An explicit count never asks, and a project without a default gets one
+// port.
+func TestOmittedCountUsesTheProjectDefault(t *testing.T) {
+	st := openStore(t)
+	counts := &projectCounts{block: 4}
+	m := claims.New(st.Claims(), claims.Options{DefaultCount: counts.countFor})
 
-	if res := acquire(t, m, claims.Request{Project: "shop", Worktree: "feature-x"}); len(res.Ports) != 4 {
-		t.Errorf("omitted count: ports = %v, want the project's block of 4", res.Ports)
+	if result := mustAcquire(t, m, claims.Request{Project: "shop", Worktree: "feature-x"}); len(result.Ports) != 4 {
+		t.Errorf("omitted count: ports = %v, want 4", result.Ports)
 	}
-	if res := acquire(t, m, claims.Request{Key: "shop/feature-y"}); len(res.Ports) != 4 {
-		t.Errorf("key only: ports = %v, want 4 from the project in the key", res.Ports)
+	if result := mustAcquire(t, m, claims.Request{Key: "shop/feature-y"}); len(result.Ports) != 4 {
+		t.Errorf("key only: ports = %v, want 4 from the key's project", result.Ports)
 	}
-	if res := acquire(t, m, claims.Request{Project: "shop", Worktree: "feature-z", Count: 2}); len(res.Ports) != 2 {
-		t.Errorf("explicit count: ports = %v, want the 2 asked for", res.Ports)
+	if result := mustAcquire(t, m, claims.Request{Project: "shop", Worktree: "feature-z", Count: 2}); len(result.Ports) != 2 {
+		t.Errorf("explicit count: ports = %v, want 2", result.Ports)
 	}
-	if res := acquire(t, m, claims.Request{Project: "other"}); len(res.Ports) != 1 {
-		t.Errorf("no default: ports = %v, want one", res.Ports)
+	if result := mustAcquire(t, m, claims.Request{Project: "other"}); len(result.Ports) != 1 {
+		t.Errorf("no default: ports = %v, want 1", result.Ports)
 	}
-	if got := strings.Join(asked, ","); got != "shop,shop,other" {
-		t.Errorf("DefaultCount was asked for %q, want shop,shop,other (never for an explicit count)", got)
+	if joined := strings.Join(counts.asked, ","); joined != "shop,shop,other" {
+		t.Errorf("DefaultCount asked for %q, want shop,shop,other", joined)
 	}
 }
 
-// TestTheCountCapFitsTheLargestWorktreeBlock: `.oberth.yaml` allows
-// worktree_ports up to 100, so the manager must grant 100 and refuse 101.
-func TestTheCountCapFitsTheLargestWorktreeBlock(t *testing.T) {
-	m, _ := newManager(t, nil, nil)
-	if res := acquire(t, m, claims.Request{Key: "big/main", Count: 100}); len(res.Ports) != 100 {
-		t.Fatalf("ports = %d, want 100", len(res.Ports))
+// The manifest allows a worktree block of up to 100 ports, so the manager must
+// grant 100 and refuse 101.
+func TestCountCapMatchesTheManifestBlock(t *testing.T) {
+	m, _ := managerWithStore(t, nil, nil)
+	if result := mustAcquire(t, m, claims.Request{Key: "big/main", Count: 100}); len(result.Ports) != 100 {
+		t.Fatalf("ports = %d, want 100", len(result.Ports))
 	}
 	if _, err := m.Acquire(claims.Request{Key: "bigger/main", Count: claims.MaxCount + 1}); err == nil {
-		t.Fatal("a count above MaxCount should be refused")
+		t.Fatal("a count above MaxCount was accepted")
 	}
 }
 
-func TestReacquireRefreshesTheTTLAndKeepsCreatedAt(t *testing.T) {
+func TestReacquireRefreshesExpiryAndKeepsCreation(t *testing.T) {
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	clock := now
-	m, st := newManager(t, nil, func() time.Time { return clock })
+	m, st := managerWithStore(t, nil, func() time.Time { return clock })
 
-	first := acquire(t, m, claims.Request{Key: "myapp/main", TTL: time.Hour})
+	first := mustAcquire(t, m, claims.Request{Key: "myapp/main", TTL: time.Hour})
 	if !first.ExpiresAt.Equal(now.Add(time.Hour)) {
 		t.Fatalf("expires_at = %v, want %v", first.ExpiresAt, now.Add(time.Hour))
 	}
 
 	clock = now.Add(30 * time.Minute)
-	second := acquire(t, m, claims.Request{Key: "myapp/main", TTL: time.Hour})
+	second := mustAcquire(t, m, claims.Request{Key: "myapp/main", TTL: time.Hour})
 	if second.Ports[0] != first.Ports[0] {
 		t.Fatalf("refresh moved the port: %v -> %v", first.Ports, second.Ports)
 	}
 	if !second.ExpiresAt.Equal(clock.Add(time.Hour)) {
-		t.Errorf("expires_at = %v, want the refreshed %v", second.ExpiresAt, clock.Add(time.Hour))
+		t.Errorf("expires_at = %v, want the refreshed value", second.ExpiresAt)
 	}
 
-	rows, err := st.Claims().Get("myapp/main")
-	if err != nil || len(rows) != 1 {
-		t.Fatalf("Get = %v, %v", rows, err)
+	rows := heldRows(t, st, "myapp/main")
+	if len(rows) != 1 {
+		t.Fatalf("held rows = %v, want one", rows)
 	}
-	if !rows[0].CreatedAt.Equal(now) {
-		t.Errorf("created_at = %v, want the original %v", rows[0].CreatedAt, now)
+	if created := rows[0].CreatedAt; !created.Equal(now) {
+		t.Errorf("created_at = %v, want the original %v", created, now)
 	}
 }
 
 func TestExpiredClaimsAreSweptAndTheirPortsReused(t *testing.T) {
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	clock := now
-	m, st := newManager(t, nil, func() time.Time { return clock })
+	m, st := managerWithStore(t, nil, func() time.Time { return clock })
 
-	stale := acquire(t, m, claims.Request{Key: "gone/main", TTL: time.Minute})
-
+	stale := mustAcquire(t, m, claims.Request{Key: "gone/main", TTL: time.Minute})
 	clock = now.Add(2 * time.Minute)
+
 	held, err := m.Held()
 	if err != nil {
 		t.Fatalf("Held: %v", err)
@@ -188,28 +211,21 @@ func TestExpiredClaimsAreSweptAndTheirPortsReused(t *testing.T) {
 	if len(held) != 0 {
 		t.Fatalf("Held = %+v, want the expired claim swept", held)
 	}
-	rows, err := st.Claims().List()
-	if err != nil || len(rows) != 0 {
-		t.Fatalf("rows = %v, %v; want the table swept", rows, err)
+	if rows := allClaims(t, st); len(rows) != 0 {
+		t.Fatalf("rows = %v, want the table swept", rows)
 	}
 
-	// The port is free again for a key that probes onto it.
-	if err := st.Claims().Put(store.ClaimRow{
-		Port: stale.Ports[0], Key: "next/main", Project: "next", Worktree: "main",
-		ExpiresAt: clock.Add(time.Hour),
-	}); err != nil {
-		t.Fatalf("reclaiming the expired port: %v", err)
-	}
+	seedClaim(t, st, stale.Ports[0], "next/main", clock.Add(time.Hour))
 }
 
 func TestCountShrinksAndGrowsAroundTheSamePorts(t *testing.T) {
-	m, _ := newManager(t, nil, nil)
-	three := acquire(t, m, claims.Request{Key: "myapp/main", Count: 3})
+	m, _ := managerWithStore(t, nil, nil)
+	three := mustAcquire(t, m, claims.Request{Key: "myapp/main", Count: 3})
 	if len(three.Ports) != 3 {
 		t.Fatalf("ports = %v, want three", three.Ports)
 	}
 
-	one := acquire(t, m, claims.Request{Key: "myapp/main", Count: 1})
+	one := mustAcquire(t, m, claims.Request{Key: "myapp/main", Count: 1})
 	if len(one.Ports) != 1 || one.Ports[0] != three.Ports[0] {
 		t.Fatalf("ports = %v, want just %d", one.Ports, three.Ports[0])
 	}
@@ -218,95 +234,86 @@ func TestCountShrinksAndGrowsAroundTheSamePorts(t *testing.T) {
 		t.Fatalf("Held: %v", err)
 	}
 	if len(held) != 1 || held[three.Ports[0]] != "myapp/main" {
-		t.Fatalf("held = %+v, want the surplus ports released", held)
+		t.Fatalf("held = %+v, want the surplus released", held)
 	}
 
-	grown := acquire(t, m, claims.Request{Key: "myapp/main", Count: 3})
-	if grown.Ports[0] != three.Ports[0] || len(grown.Ports) != 3 {
+	grown := mustAcquire(t, m, claims.Request{Key: "myapp/main", Count: 3})
+	if len(grown.Ports) != 3 || grown.Ports[0] != three.Ports[0] {
 		t.Fatalf("ports = %v, want to grow back around %v", grown.Ports, three.Ports)
 	}
 }
 
-func TestConcurrentAcquiresNeverCollide(t *testing.T) {
-	m, _ := newManager(t, nil, nil)
+func TestConcurrentAcquiresDoNotCollide(t *testing.T) {
+	m, _ := managerWithStore(t, nil, nil)
 
-	const keys = 24
-	var wg sync.WaitGroup
-	results := make([][]int, keys)
-	errs := make([]error, keys)
+	const workers = 24
+	results := make([][]int, workers)
+	failures := make([]error, workers)
 	start := make(chan struct{})
-	for i := 0; i < keys; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
+	var group sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		group.Add(1)
+		go func(index int) {
+			defer group.Done()
 			<-start
-			res, err := m.Acquire(claims.Request{
-				Project: "myapp", Worktree: string(rune('a' + i)), Count: 2,
+			result, err := m.Acquire(claims.Request{
+				Project: "myapp", Worktree: string(rune('a' + index)), Count: 2,
 			})
-			results[i], errs[i] = res.Ports, err
+			results[index], failures[index] = result.Ports, err
 		}(i)
 	}
 	close(start)
-	wg.Wait()
+	group.Wait()
 
-	seen := map[int]int{}
-	for i, err := range errs {
+	owner := make(map[int]int, workers*2)
+	for index, err := range failures {
 		if err != nil {
-			t.Fatalf("worker %d: %v", i, err)
+			t.Fatalf("worker %d: %v", index, err)
 		}
-		if len(results[i]) != 2 {
-			t.Fatalf("worker %d got %v, want two ports", i, results[i])
+		if len(results[index]) != 2 {
+			t.Fatalf("worker %d got %v, want two ports", index, results[index])
 		}
-		for _, p := range results[i] {
-			if prev, dup := seen[p]; dup {
-				t.Fatalf("workers %d and %d both got port %d", prev, i, p)
+		for _, port := range results[index] {
+			if previous, duplicate := owner[port]; duplicate {
+				t.Fatalf("workers %d and %d both got port %d", previous, index, port)
 			}
-			seen[p] = i
+			owner[port] = index
 		}
 	}
 }
 
-func TestReleaseFreesThePortsAndIsIdempotent(t *testing.T) {
-	m, _ := newManager(t, nil, nil)
-	res := acquire(t, m, claims.Request{Key: "myapp/main", Count: 2})
+func TestReleaseIsIdempotentAndFreesThePorts(t *testing.T) {
+	m, _ := managerWithStore(t, nil, nil)
+	reserved := mustAcquire(t, m, claims.Request{Key: "myapp/main", Count: 2})
 
-	n, err := m.Release("myapp/main")
-	if err != nil || n != 2 {
-		t.Fatalf("Release = %d, %v; want 2, nil", n, err)
+	if released, err := m.Release("myapp/main"); err != nil || released != 2 {
+		t.Fatalf("Release = %d, %v; want 2, nil", released, err)
 	}
-	n, err = m.Release("myapp/main")
-	if err != nil || n != 0 {
-		t.Fatalf("second Release = %d, %v; want 0, nil", n, err)
+	if released, err := m.Release("myapp/main"); err != nil || released != 0 {
+		t.Fatalf("second Release = %d, %v; want 0, nil", released, err)
 	}
-	held, err := m.Held()
-	if err != nil || len(held) != 0 {
+	if held, err := m.Held(); err != nil || len(held) != 0 {
 		t.Fatalf("Held = %v, %v; want empty", held, err)
 	}
-	// And the ports are handed out again.
-	again := acquire(t, m, claims.Request{Key: "myapp/main", Count: 2})
-	if again.Ports[0] != res.Ports[0] {
-		t.Errorf("after release ports = %v, want %v", again.Ports, res.Ports)
+
+	again := mustAcquire(t, m, claims.Request{Key: "myapp/main", Count: 2})
+	if again.Ports[0] != reserved.Ports[0] {
+		t.Errorf("after release ports = %v, want %v", again.Ports, reserved.Ports)
 	}
 }
 
 func TestAcquireNeedsAProjectOrKey(t *testing.T) {
-	m, _ := newManager(t, nil, nil)
+	m, _ := managerWithStore(t, nil, nil)
 	if _, err := m.Acquire(claims.Request{}); !errors.Is(err, claims.ErrNoProject) {
 		t.Fatalf("err = %v, want ErrNoProject", err)
 	}
 }
 
-func TestAFullRangeIsReportedNotSilentlyShort(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "option-berth.db"))
-	if err != nil {
-		t.Fatalf("opening the store: %v", err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-
-	small := claims.Range{Start: 20000, End: 20003}
+func TestFullRangeIsReported(t *testing.T) {
+	st := openStore(t)
 	listening := map[int]bool{20000: true, 20001: true, 20002: true, 20003: true}
 	m := claims.New(st.Claims(), claims.Options{
-		Range:     small,
+		Range:     claims.Range{Start: 20000, End: 20003},
 		Listening: func() (map[int]bool, error) { return listening, nil },
 	})
 	if _, err := m.Acquire(claims.Request{Key: "myapp/main"}); !errors.Is(err, claims.ErrExhausted) {
@@ -314,34 +321,25 @@ func TestAFullRangeIsReportedNotSilentlyShort(t *testing.T) {
 	}
 }
 
-func TestAPortTheSameKeyHoldsIsKeptEvenWhileItListens(t *testing.T) {
+func TestAKeyKeepsItsPortWhileItsOwnListenerRuns(t *testing.T) {
 	key := "myapp/main"
 	base := claims.DefaultRange.Base(key)
 	listening := map[int]bool{}
-	m, _ := newManager(t, listening, nil)
+	m, _ := managerWithStore(t, listening, nil)
 
-	first := acquire(t, m, claims.Request{Key: key})
-	// The caller starts its server on the port it was given; asking again must
-	// return the same port rather than stepping past its own listener.
+	first := mustAcquire(t, m, claims.Request{Key: key})
 	listening[first.Ports[0]] = true
-	second := acquire(t, m, claims.Request{Key: key})
+	second := mustAcquire(t, m, claims.Request{Key: key})
 	if second.Ports[0] != base {
 		t.Fatalf("ports = %v, want to keep %d", second.Ports, base)
 	}
 }
 
-// A narrow table cannot say a port is free; a real bind can. The rejected
-// candidate must be skipped, not handed to a service that would fail on it.
-func TestNarrowTableVerifiesCandidatesByBinding(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "option-berth.db"))
-	if err != nil {
-		t.Fatalf("opening the store: %v", err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-
+func TestNarrowTableVerifiesWithABindProbe(t *testing.T) {
+	st := openStore(t)
 	key := "myapp/feature-x"
 	base := claims.DefaultRange.Base(key)
-	probed := []int{}
+	var probed []int
 	m := claims.New(st.Claims(), claims.Options{
 		Listening: func() (map[int]bool, error) { return nil, nil },
 		Narrow:    true,
@@ -350,24 +348,17 @@ func TestNarrowTableVerifiesCandidatesByBinding(t *testing.T) {
 			return port != base
 		},
 	})
-	res := acquire(t, m, claims.Request{Project: "myapp", Worktree: "feature-x"})
-	if res.Ports[0] == base {
-		t.Fatalf("ports = %v, want the rejected %d skipped", res.Ports, base)
+	result := mustAcquire(t, m, claims.Request{Project: "myapp", Worktree: "feature-x"})
+	if result.Ports[0] == base {
+		t.Fatalf("ports = %v, want the rejected %d skipped", result.Ports, base)
 	}
 	if len(probed) == 0 || probed[0] != base {
-		t.Fatalf("probed = %v, want the derived base port checked first", probed)
+		t.Fatalf("probed = %v, want the derived base checked first", probed)
 	}
 }
 
-// Narrow without a bind probe would be a guess. Refusing is the only safe
-// answer; the caller can still choose a fixed port.
 func TestNarrowTableWithoutABindProbeFailsClosed(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "option-berth.db"))
-	if err != nil {
-		t.Fatalf("opening the store: %v", err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-
+	st := openStore(t)
 	m := claims.New(st.Claims(), claims.Options{
 		Listening: func() (map[int]bool, error) { return nil, nil },
 		Narrow:    true,

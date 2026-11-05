@@ -6,21 +6,19 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
-// Migration 006 is the version the cross-spec contract (§8) reserves for
-// claims. Like the other reserved slots it is registered from the package that
-// owns it rather than shipped inside internal/store, so a build that never
-// links claims never grows the table.
+// Version 006 belongs to claims. The store reserves the number and this
+// package supplies the schema, so a binary that never links claims never grows
+// the table. Any store built with claims linked — the daemon, and the CLI
+// through it — applies it on open.
 //
-// It is applied by any store the claims package is linked into — the daemon,
-// and the CLI through it. A database that reaches version 6 before migration
-// 005 (sessions) exists in the binary would never see 005 afterwards, because
-// store.migrate compares against the highest applied version; both migrations
-// ship in the same binary from the first release that has either, so the gap
-// only matters to a development build of one branch alone.
+// The store applies every registered version that has no schema_version row,
+// so a database already at 006 can still receive 005 later. Both migrations
+// ship in the same binary from the first release that has either; the gap only
+// exists in a development build of one branch alone.
 //
 //go:embed 006_claims.sql
-var migrationSQL string
+var claimsMigration string
 
 func init() {
-	store.RegisterMigration(store.VersionClaims, "claims", migrationSQL)
+	store.RegisterMigration(store.VersionClaims, "claims", claimsMigration)
 }

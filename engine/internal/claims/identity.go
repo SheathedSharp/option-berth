@@ -8,39 +8,28 @@ import (
 )
 
 // Identity derives the project and worktree a claim belongs to from a working
-// directory, letting an explicit project or worktree win over what the
-// directory says (spec 2 §4).
+// directory. An explicit project or worktree always wins over what the
+// directory says.
 //
-// It lives here rather than in the CLI because two callers ask the same
-// question from two different working directories: `option-berth claim`, from the
-// shell's cwd, and the `claim_port` MCP tool, from the directory the agent
-// started the MCP server in. A key that differed between them would hand the
-// same worktree two sets of ports, which is exactly what claims exist to
-// prevent.
+// Two callers ask this question from two different directories — the shell's
+// cwd for `oberth claim`, and the directory an agent started its MCP server in
+// — so the derivation lives here rather than in either caller. A key that
+// differed between them would give one worktree two sets of ports.
 //
-// A directory outside any git checkout claims under the directory's own name;
-// a directory that is not a checkout and has no name at all claims under
-// "option-berth", so a key is never empty.
+// A directory outside any checkout claims under its own name; one with no
+// usable name claims under "option-berth", so a key is never empty.
 func Identity(cwd, project, worktree string) (string, string) {
-	root, wt, ok := groups.Find(cwd)
+	root, linked, found := groups.Find(cwd)
 	switch {
-	case !ok:
-		if project == "" {
-			project = filepath.Base(cwd)
-		}
-	case wt != "":
+	case !found:
+		project = firstFilled(project, filepath.Base(cwd))
+	case linked != "":
 		// groups.Find spells a linked worktree "<repo>@<name>".
-		repo, name, _ := strings.Cut(wt, "@")
-		if project == "" {
-			project = repo
-		}
-		if worktree == "" {
-			worktree = name
-		}
+		repo, name, _ := strings.Cut(linked, "@")
+		project = firstFilled(project, repo)
+		worktree = firstFilled(worktree, name)
 	default:
-		if project == "" {
-			project = filepath.Base(root)
-		}
+		project = firstFilled(project, filepath.Base(root))
 	}
 	if project == "" {
 		project = "option-berth"
@@ -49,4 +38,11 @@ func Identity(cwd, project, worktree string) (string, string) {
 		worktree = DefaultWorktree
 	}
 	return project, worktree
+}
+
+func firstFilled(current, fallback string) string {
+	if current != "" {
+		return current
+	}
+	return fallback
 }
