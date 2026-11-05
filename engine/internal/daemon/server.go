@@ -884,34 +884,58 @@ func (s *Server) BroadcastEvent(ev state.Event) { s.broadcastEvent(ev) }
 func (s *Server) broadcastEvent(ev state.Event) {
 	s.subsMu.RLock()
 	defer s.subsMu.RUnlock()
-	cache := map[viewKey][][]byte{}
+
 	groups := s.loop.Cached().Groups
+	// One encoding is reused per (include, scope) pair: a room full of clients
+	// watching the same thing should not pay for the same marshal once each.
+	cache := map[viewKey][][]byte{}
 	for _, c := range s.conns {
 		if !c.subscribed || !c.events {
 			continue
 		}
-		effective := s.effectiveScopeLocked(c.scope)
-		view := viewKey{include: c.include, scope: effective.Key()}
-		if !effective.Empty() {
-			change := state.StateChangedForEvent(ev, s.loop.Cached().Seq, groups)
-			if !effective.MatchChangedIn(change, groups) {
-				continue
-			}
-			raw, err := json.Marshal(rpc.Notification{JSONRPC: rpc.Version, Method: rpc.MethodStateChanged, Params: mustJSON(change)})
-			if err == nil {
-				c.enqueue(raw)
-			}
-			continue
-		}
-		msgs, ok := cache[view]
-		if !ok {
-			msgs = marshalEvents([]state.Event{ev}, c.include, c.scope, groups)
-			cache[view] = msgs
-		}
-		for _, m := range msgs {
-			c.enqueue(m)
-		}
+		s.sendEventLocked(c, ev, groups, cache)
 	}
+}
+
+// sendEventLocked delivers one event to one subscriber: a scoped client gets a
+// state.changed if the event falls inside its scope, everyone else gets the
+// plain state.event notifications for its view. Caller holds subsMu.
+func (s *Server) sendEventLocked(c *Conn, ev state.Event, groups []state.Group, cache map[viewKey][][]byte) {
+	effective := s.effectiveScopeLocked(c.scope)
+	if !effective.Empty() {
+		s.sendScopedEventLocked(c, ev, groups, effective)
+		return
+	}
+
+	view := viewKey{include: c.include, scope: effective.Key()}
+	msgs, encoded := cache[view]
+	if !encoded {
+		msgs = marshalEvents([]state.Event{ev}, c.include, c.scope, groups)
+		cache[view] = msgs
+	}
+	for _, msg := range msgs {
+		c.enqueue(msg)
+	}
+}
+
+// sendScopedEventLocked sends an event only when it falls inside the client's
+// scope, as a state.changed notification. Caller holds subsMu.
+func (s *Server) sendScopedEventLocked(c *Conn, ev state.Event, groups []state.Group, scope state.Scope) {
+	change := state.StateChangedForEvent(ev, s.loop.Cached().Seq, groups)
+	if !scope.MatchChangedIn(change, groups) {
+		return
+	}
+	raw, err := json.Marshal(rpc.Notification{
+		JSONRPC: rpc.Version,
+		Method:  rpc.MethodStateChanged,
+		Params:  mustJSON(change),
+	})
+	if err != nil {
+		// A change that cannot be encoded is dropped rather than sent as a
+		// half-formed notification.
+		return
+	}
+	c.enqueue(raw)
 }
 
 // marshalDelta builds one state.delta notification for a given include set.
