@@ -9,118 +9,145 @@ import (
 	"sync"
 )
 
-// ErrOversize is returned by Decoder.Next when a single message exceeds the
-// decoder's size limit. The offending line is drained, so the decoder resyncs
-// on the next message rather than corrupting the stream.
+// ErrOversize marks a message that exceeded the decoder's per-message limit.
+// The offending line is drained rather than left in the buffer, so the decoder
+// resynchronises on the next message instead of reading fragments of this one.
 var ErrOversize = errors.New("rpc: message too large")
 
-// readChunk bounds how much ReadSlice returns per call; it is unrelated to the
-// message size limit, which is enforced by accumulation.
+// defaultMaxMessage bounds one message when the caller gives no limit.
+const defaultMaxMessage = 4 << 20
+
+// readChunk is how much ReadSlice hands back per call. It is a buffer size, not
+// a limit: the message limit is enforced by accumulating across chunks.
 const readChunk = 64 << 10
 
-// Encoder writes newline-delimited JSON messages. It is safe for concurrent
-// use: the daemon writes responses and broadcast notifications from different
-// goroutines onto one connection.
+// Encoder writes newline-delimited JSON.
+//
+// The lock is not incidental. The daemon answers calls and pushes broadcast
+// notifications from different goroutines onto one connection, and two
+// concurrent Encodes would interleave their bytes into a line neither side can
+// parse.
 type Encoder struct {
-	mu  sync.Mutex
-	enc *json.Encoder
+	mu      sync.Mutex
+	encoder *json.Encoder
 }
 
 // NewEncoder returns an Encoder writing to w.
 func NewEncoder(w io.Writer) *Encoder {
-	return &Encoder{enc: json.NewEncoder(w)}
+	return &Encoder{encoder: json.NewEncoder(w)}
 }
 
 // Encode writes one message followed by a newline.
-func (e *Encoder) Encode(v any) error {
+func (e *Encoder) Encode(message any) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.enc.Encode(v)
+	return e.encoder.Encode(message)
 }
 
-// Decoder reads newline-delimited JSON messages with a per-message size limit.
+// Decoder reads newline-delimited JSON with a per-message size limit.
 type Decoder struct {
-	r   *bufio.Reader
-	max int
+	reader *bufio.Reader
+	max    int
 }
 
-// NewDecoder returns a Decoder reading from r, rejecting any single message
-// longer than max bytes.
+// NewDecoder returns a Decoder reading from r that rejects any single message
+// longer than max bytes. A max of zero or less means defaultMaxMessage.
 func NewDecoder(r io.Reader, max int) *Decoder {
 	if max <= 0 {
-		max = 4 << 20
+		max = defaultMaxMessage
 	}
-	return &Decoder{r: bufio.NewReaderSize(r, readChunk), max: max}
+	return &Decoder{reader: bufio.NewReaderSize(r, readChunk), max: max}
 }
 
-// Next reads the next message. It returns io.EOF at end of stream, ErrOversize
-// (wrapped) for a message over the limit, and an *Error with CodeInvalidParams
-// for malformed JSON.
+// Next returns the next message.
+//
+//	io.EOF            the stream ended cleanly
+//	ErrOversize       the message was longer than the limit
+//	*Error            the line was not valid JSON (CodeInvalidParams)
 func (d *Decoder) Next() (Message, error) {
+	line, err := d.nextNonBlankLine()
+	if err != nil {
+		return Message{}, err
+	}
+	var message Message
+	if err := json.Unmarshal(line, &message); err != nil {
+		return Message{}, NewError(CodeInvalidParams,
+			fmt.Sprintf("malformed JSON message: %v", err),
+			"messages must be single-line JSON-RPC 2.0 objects")
+	}
+	return message, nil
+}
+
+// nextNonBlankLine skips keepalive lines. A blank line is not a message, and
+// treating one as a protocol error would close an idle connection that is
+// working exactly as intended.
+func (d *Decoder) nextNonBlankLine() ([]byte, error) {
 	for {
 		line, err := d.readLine()
 		if err != nil {
-			return Message{}, err
-		}
-		if len(line) == 0 {
-			continue // tolerate blank keepalive lines
-		}
-		var m Message
-		if err := json.Unmarshal(line, &m); err != nil {
-			return Message{}, NewError(CodeInvalidParams,
-				fmt.Sprintf("malformed JSON message: %v", err),
-				"messages must be single-line JSON-RPC 2.0 objects")
-		}
-		return m, nil
-	}
-}
-
-// readLine returns one newline-terminated line with the terminator stripped,
-// enforcing the size limit and draining an oversize line so the stream resyncs.
-func (d *Decoder) readLine() ([]byte, error) {
-	var buf []byte
-	over := false
-	total := 0
-
-	for {
-		chunk, err := d.r.ReadSlice('\n')
-		total += len(chunk)
-		if total > d.max {
-			over = true
-			buf = nil // stop retaining an oversize payload
-		} else if !over {
-			buf = append(buf, chunk...)
-		}
-
-		switch {
-		case errors.Is(err, bufio.ErrBufferFull):
-			continue
-		case errors.Is(err, io.EOF):
-			if total == 0 {
-				return nil, io.EOF
-			}
-			if over {
-				return nil, fmt.Errorf("%w: %d bytes exceeds limit %d", ErrOversize, total, d.max)
-			}
-			return trimEOL(buf), nil
-		case err != nil:
 			return nil, err
 		}
-
-		if over {
-			return nil, fmt.Errorf("%w: %d bytes exceeds limit %d", ErrOversize, total, d.max)
+		if len(line) > 0 {
+			return line, nil
 		}
-		return trimEOL(buf), nil
 	}
 }
 
-// trimEOL strips a trailing \n and an optional preceding \r.
-func trimEOL(b []byte) []byte {
-	if n := len(b); n > 0 && b[n-1] == '\n' {
-		b = b[:n-1]
+// readLine returns one line without its terminator, enforcing the size limit.
+//
+// An oversize line is read to its end and dropped rather than returned: the
+// bytes are already refused, and stopping mid-line would leave the rest of that
+// message to be parsed as the next one.
+func (d *Decoder) readLine() ([]byte, error) {
+	var (
+		line    []byte
+		total   int
+		tooLong bool
+	)
+	for {
+		chunk, err := d.reader.ReadSlice('\n')
+		total += len(chunk)
+		if total > d.max {
+			tooLong = true
+			line = nil // release the payload we are no longer going to return
+		} else if !tooLong {
+			line = append(line, chunk...)
+		}
+
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue // the line continues; keep accumulating
+		}
+		if err != nil && !errors.Is(err, io.EOF) {
+			return nil, err
+		}
+		// Either the line ended, or the stream did without a final newline.
+		if tooLong {
+			return nil, oversizeError(total, d.max)
+		}
+		if errors.Is(err, io.EOF) && total == 0 {
+			return nil, io.EOF
+		}
+		return trimEOL(line), nil
 	}
-	if n := len(b); n > 0 && b[n-1] == '\r' {
-		b = b[:n-1]
+}
+
+// oversizeError names the size and the limit, so the reader can tell a
+// misconfigured client from a protocol violation.
+func oversizeError(total, max int) error {
+	return fmt.Errorf("%w: %d bytes exceeds limit %d", ErrOversize, total, max)
+}
+
+// trimEOL strips a trailing \n and an optional \r before it, so a Windows line
+// ending does not end up inside the parsed JSON.
+func trimEOL(line []byte) []byte {
+	line = bytesTrimSuffix(line, '\n')
+	return bytesTrimSuffix(line, '\r')
+}
+
+// bytesTrimSuffix drops the last byte when it is want.
+func bytesTrimSuffix(line []byte, want byte) []byte {
+	if len(line) > 0 && line[len(line)-1] == want {
+		return line[:len(line)-1]
 	}
-	return b
+	return line
 }
