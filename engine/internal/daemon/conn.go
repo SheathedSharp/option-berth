@@ -196,45 +196,49 @@ func (c *Conn) Close() { c.closeWithReason("closed") }
 // connection closes; a write error closes the connection.
 func (c *Conn) writeLoop() {
 	defer c.writerWG.Done()
-	w := bufio.NewWriter(c.nc)
+	out := bufio.NewWriter(c.nc)
 	for {
 		select {
 		case <-c.closed:
-			// Best-effort flush of whatever is already queued.
-			for {
-				select {
-				case msg := <-c.out:
-					_, _ = w.Write(msg)
-					_, _ = w.WriteString("\n")
-				default:
-					_ = w.Flush()
-					return
-				}
-			}
+			// Best effort: push out whatever is already queued, then stop.
+			writeQueued(out, c.out)
+			_ = out.Flush()
+			return
 		case msg := <-c.out:
-			if _, err := w.Write(msg); err != nil {
+			if err := writeFramed(out, msg); err != nil {
 				c.closeWithReason("write error: " + err.Error())
 				return
 			}
-			if _, err := w.WriteString("\n"); err != nil {
+			// Coalesce whatever else is already queued into one flush, so a
+			// burst costs one syscall rather than one per message.
+			writeQueued(out, c.out)
+			if err := out.Flush(); err != nil {
 				c.closeWithReason("write error: " + err.Error())
 				return
 			}
-			// Coalesce whatever else is already queued into one flush.
-			drained := true
-			for drained {
-				select {
-				case more := <-c.out:
-					_, _ = w.Write(more)
-					_, _ = w.WriteString("\n")
-				default:
-					drained = false
-				}
-			}
-			if err := w.Flush(); err != nil {
-				c.closeWithReason("write error: " + err.Error())
-				return
-			}
+		}
+	}
+}
+
+// writeFramed writes one message and its newline terminator.
+func writeFramed(out *bufio.Writer, msg []byte) error {
+	if _, err := out.Write(msg); err != nil {
+		return err
+	}
+	_, err := out.WriteString("\n")
+	return err
+}
+
+// writeQueued writes everything already sitting in the queue, without waiting
+// for more. Errors are ignored: the caller flushes next, and a real write
+// failure surfaces there.
+func writeQueued(out *bufio.Writer, queue <-chan []byte) {
+	for {
+		select {
+		case msg := <-queue:
+			_ = writeFramed(out, msg)
+		default:
+			return
 		}
 	}
 }
