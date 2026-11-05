@@ -16,15 +16,16 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
+// container is one row of `docker ps`, in the order psFormat asks for it.
 type container struct {
-	name           string
-	image          string
-	portMappings   []portMapping
-	composeService string
-	composeProject string
-	// composeWorkingDir is the directory `docker compose` was run from
-	// (label com.docker.compose.project.working_dir). The group resolver uses
-	// it to merge a Compose project into the git checkout it belongs to.
+	name           string        // Names
+	image          string        // Image
+	portMappings   []portMapping // Ports, already parsed
+	composeService string        // label com.docker.compose.service
+	composeProject string        // label com.docker.compose.project
+	// composeWorkingDir is where `docker compose` was run, from label
+	// com.docker.compose.project.working_dir. The group resolver uses it to
+	// merge a Compose project into the git checkout it belongs to.
 	composeWorkingDir string
 }
 
@@ -46,15 +47,15 @@ func EnrichPorts(pp []ports.ListeningPort) {
 	enrichFrom(pp, containers)
 }
 
-// publishedPorts is the set of host ports the containers publish.
+// publishedPorts is the set of host ports these containers publish.
 func publishedPorts(containers []container) map[int]bool {
-	out := make(map[int]bool)
-	for i := range containers {
-		for _, pm := range containers[i].portMappings {
-			out[pm.hostPort] = true
+	published := map[int]bool{}
+	for _, running := range containers {
+		for _, mapping := range running.portMappings {
+			published[mapping.hostPort] = true
 		}
 	}
-	return out
+	return published
 }
 
 // enrichFrom marks every port a container publishes as Docker's and copies the
@@ -68,75 +69,94 @@ func enrichFrom(pp []ports.ListeningPort, containers []container) {
 		return
 	}
 
-	// Build a map of host port -> container info.
-	// Multiple listening entries may share the same port number (different bind addresses),
-	// so we match on port number — all binds of a Docker-published port get enriched.
-	hostPortMap := make(map[int]*container)
-	mappingMap := make(map[int]portMapping)
+	// One host port can have several listening rows (one per bind address), and
+	// all of them belong to the same container, so the lookup is keyed by port
+	// number rather than by the whole row. The container and the mapping that
+	// named it are kept together: a port published twice cannot disagree with
+	// itself, and two parallel maps could.
+	owner := make(map[int]portOwner, len(containers))
 	for i := range containers {
-		for _, pm := range containers[i].portMappings {
-			hostPortMap[pm.hostPort] = &containers[i]
-			mappingMap[pm.hostPort] = pm
+		for _, mapping := range containers[i].portMappings {
+			owner[mapping.hostPort] = portOwner{container: &containers[i], mapping: mapping}
 		}
 	}
 
+	// A row is stamped only when two things hold: the cached list claims the
+	// port, and the process actually holding it is Docker's own forwarder. The
+	// second check is issue #95 — while Docker is not answering the watcher
+	// keeps serving its last good list, so the claim alone can be stale, and
+	// stamping on it would make `ports.kill` run `docker stop` against a
+	// container that no longer owns the port instead of signalling the native
+	// process that does.
 	for i := range pp {
-		c, ok := hostPortMap[pp[i].Port]
-		if !ok {
-			continue
+		found, claimed := owner[pp[i].Port]
+		if claimed && heldByForwarder(&pp[i]) {
+			stampContainer(&pp[i], found)
 		}
-		if !heldByForwarder(&pp[i]) {
-			// The list says a container publishes this port, but a native
-			// process holds it. The list can be stale — the watcher keeps
-			// serving its last good one while Docker is not answering — and
-			// stamping the row would make `ports.kill` run `docker stop`
-			// against the wrong thing instead of signalling the real owner
-			// (issue #95).
-			continue
-		}
-		pp[i].Type = ports.PortTypeDocker
-		pp[i].DockerContainer = c.name
-		pp[i].DockerImage = c.image
-		pp[i].DockerComposeService = c.composeService
-		pp[i].DockerComposeProject = c.composeProject
-		pp[i].DockerComposeWorkingDir = c.composeWorkingDir
-		pp[i].DockerContainerPort = mappingMap[pp[i].Port].containerPort
 	}
 }
 
-// ContainerStats holds per-container resource usage.
-type ContainerStats struct {
-	CPUPercent float64
-	MemoryRSS  int64
-	PIDs       int
-	State      string
-	Uptime     string
+// portOwner is which container publishes a host port, and through which
+// mapping. The two travel together because a row needs both.
+type portOwner struct {
+	container *container
+	mapping   portMapping
 }
 
-// dockerSocket is the default Docker Engine API socket path.
+// stampContainer copies one container's identity onto a listening row.
+func stampContainer(row *ports.ListeningPort, found portOwner) {
+	row.Type = ports.PortTypeDocker
+	row.DockerContainer = found.container.name
+	row.DockerImage = found.container.image
+	row.DockerComposeService = found.container.composeService
+	row.DockerComposeProject = found.container.composeProject
+	row.DockerComposeWorkingDir = found.container.composeWorkingDir
+	row.DockerContainerPort = found.mapping.containerPort
+}
+
+// ContainerStats is what one container is using. Every field is (re)set
+// together by one measurement pass, so a partially filled value means the
+// container stopped answering halfway.
+type ContainerStats struct {
+	CPUPercent float64 // share of host CPU, scaled by online CPUs
+	MemoryRSS  int64   // resident bytes
+	PIDs       int     // processes inside the container
+	State      string  // running, exited, …
+	Uptime     string  // how long ago it started, rendered for a human
+}
+
+// dockerSocket is where the Docker Engine API listens on a local install.
 const dockerSocket = "/var/run/docker.sock"
 
-// apiStatsResponse matches the Docker Engine /containers/{id}/stats response.
+// apiCPUSample is one CPU counter snapshot. The stats response carries two of
+// them — the current one and the one taken before it — and a percentage is
+// computed from the difference, which is why both counters are kept.
+type apiCPUSample struct {
+	CPUUsage struct {
+		TotalUsage uint64 `json:"total_usage"`
+	} `json:"cpu_usage"`
+	SystemCPUUsage uint64 `json:"system_cpu_usage"`
+	OnlineCPUs     int    `json:"online_cpus"`
+}
+
+// apiStatsResponse matches the Docker Engine /containers/{id}/stats response,
+// keeping only the fields this package reports.
 type apiStatsResponse struct {
-	CPUStats struct {
-		CPUUsage struct {
-			TotalUsage uint64 `json:"total_usage"`
-		} `json:"cpu_usage"`
-		SystemCPUUsage uint64 `json:"system_cpu_usage"`
-		OnlineCPUs     int    `json:"online_cpus"`
-	} `json:"cpu_stats"`
-	PrecpuStats struct {
-		CPUUsage struct {
-			TotalUsage uint64 `json:"total_usage"`
-		} `json:"cpu_usage"`
-		SystemCPUUsage uint64 `json:"system_cpu_usage"`
-	} `json:"precpu_stats"`
-	MemoryStats struct {
-		Usage uint64 `json:"usage"`
-	} `json:"memory_stats"`
-	PidsStats struct {
-		Current int `json:"current"`
-	} `json:"pids_stats"`
+	CPUStats    apiCPUSample   `json:"cpu_stats"`
+	PrecpuStats apiCPUSample   `json:"precpu_stats"`
+	MemoryStats apiMemoryUsage `json:"memory_stats"`
+	PidsStats   apiPidsUsage   `json:"pids_stats"`
+}
+
+// apiMemoryUsage is the memory section of a stats response. Usage is the
+// container's resident total, which is the number reported as MemoryRSS.
+type apiMemoryUsage struct {
+	Usage uint64 `json:"usage"`
+}
+
+// apiPidsUsage is the pids section of a stats response.
+type apiPidsUsage struct {
+	Current int `json:"current"`
 }
 
 // apiInspectState matches the relevant fields from /containers/{id}/json.
@@ -153,142 +173,165 @@ func AllContainerStatsAsEntries() map[string]*ports.DockerStatsEntry {
 }
 
 // statsEntries converts per-container stats to the shape ports.EnrichStats
-// takes. No stats is nil.
+// takes. No stats at all is nil rather than an empty map, so a caller can tell
+// "nothing sampled" from "sampled, nothing running".
 func statsEntries(allStats map[string]*ContainerStats) map[string]*ports.DockerStatsEntry {
 	if len(allStats) == 0 {
 		return nil
 	}
-	result := make(map[string]*ports.DockerStatsEntry, len(allStats))
-	for name, s := range allStats {
-		result[name] = &ports.DockerStatsEntry{
-			CPUPercent: s.CPUPercent,
-			MemoryRSS:  s.MemoryRSS,
-			PIDs:       s.PIDs,
-			State:      s.State,
-			Uptime:     s.Uptime,
+	entries := make(map[string]*ports.DockerStatsEntry, len(allStats))
+	for name, measured := range allStats {
+		entries[name] = &ports.DockerStatsEntry{
+			CPUPercent: measured.CPUPercent,
+			MemoryRSS:  measured.MemoryRSS,
+			PIDs:       measured.PIDs,
+			State:      measured.State,
+			Uptime:     measured.Uptime,
 		}
 	}
-	return result
+	return entries
 }
 
-// AllContainerStats fetches stats for all running containers using the Docker
-// Engine API via Unix socket. Stats are fetched in parallel (~1s for CPU sampling).
-// Falls back to `docker stats` CLI if the socket is unavailable.
+// AllContainerStats samples every running container, listing them first.
 func AllContainerStats() map[string]*ContainerStats {
-	containers, err := listContainers()
+	listed, err := listContainers()
 	if err != nil {
-		return make(map[string]*ContainerStats)
+		return map[string]*ContainerStats{}
 	}
-	return statsFor(containers)
+	return statsFor(listed)
 }
 
-// statsFor fetches stats for the given containers, as AllContainerStats does
-// once it has listed them.
+// statsFor samples the given containers.
+//
+// On Linux the Engine API over the local socket is used, one request per
+// container in parallel: /stats?stream=false makes the daemon collect a CPU
+// sample for about a second before answering, so serialising the calls would
+// cost a second per container. Everything else — Windows, or a host with no
+// socket (Docker Desktop forwards through it only for some configurations) —
+// falls back to the `docker stats` CLI, which does the same sampling itself.
 func statsFor(containers []container) map[string]*ContainerStats {
-	result := make(map[string]*ContainerStats)
+	sampled := make(map[string]*ContainerStats)
 	if len(containers) == 0 {
-		return result
+		return sampled
 	}
+	if !hasEngineSocket() {
+		return allContainerStatsCLI()
+	}
+	for name, measured := range sampleViaAPI(containers) {
+		sampled[name] = measured
+	}
+	return sampled
+}
 
+// hasEngineSocket reports whether the Engine API is reachable over the local
+// socket, which is the only way this path talks to Docker.
+func hasEngineSocket() bool {
 	if runtime.GOOS == "windows" {
-		return allContainerStatsCLI()
+		return false
 	}
+	_, err := os.Stat(dockerSocket)
+	return err == nil
+}
 
-	if _, err := os.Stat(dockerSocket); err != nil {
-		return allContainerStatsCLI()
+// sampleViaAPI asks the Engine API about every container at once and returns
+// the ones that answered. A container whose request failed is simply absent.
+func sampleViaAPI(containers []container) map[string]*ContainerStats {
+	type sample struct {
+		name     string
+		measured *ContainerStats
 	}
-
-	type statsResult struct {
-		name  string
-		stats *ContainerStats
-	}
-
-	ch := make(chan statsResult, len(containers))
-
-	for _, c := range containers {
+	answered := make(chan sample, len(containers))
+	for _, running := range containers {
 		go func(name string) {
-			s := fetchContainerStatsAPI(name)
-			ch <- statsResult{name: name, stats: s}
-		}(c.name)
+			answered <- sample{name: name, measured: fetchContainerStatsAPI(name)}
+		}(running.name)
 	}
 
+	sampled := make(map[string]*ContainerStats, len(containers))
 	for range containers {
-		r := <-ch
-		if r.stats != nil {
-			result[r.name] = r.stats
+		got := <-answered
+		if got.measured != nil {
+			sampled[got.name] = got.measured
 		}
 	}
-
-	return result
+	return sampled
 }
 
-// fetchContainerStatsAPI fetches stats for a single container via the Docker socket API.
+// Timeouts for the two Engine API calls one container needs. A stats request
+// makes the daemon collect a CPU sample, so it is allowed longer than the
+// inspect call that only reads metadata.
+const (
+	statsRequestTimeout   = 5 * time.Second
+	inspectRequestTimeout = 2 * time.Second
+)
+
+// fetchContainerStatsAPI samples one container over the Docker socket. A nil
+// result means the container did not answer, which the caller reports as an
+// absent row rather than as a container with zero usage.
 func fetchContainerStatsAPI(name string) *ContainerStats {
-	conn, err := net.Dial("unix", dockerSocket)
+	body, err := dockerAPIGet("/containers/"+name+"/stats?stream=false", statsRequestTimeout)
 	if err != nil {
 		return nil
 	}
-
-	stats := &ContainerStats{}
-
-	statsReq := fmt.Sprintf("GET /containers/%s/stats?stream=false HTTP/1.0\r\nHost: localhost\r\n\r\n", name)
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
-	_, err = conn.Write([]byte(statsReq))
-	if err != nil {
-		conn.Close()
+	var payload apiStatsResponse
+	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil
 	}
+	stats := measurements(payload)
 
-	statsBody, err := readHTTPBody(conn)
-	conn.Close()
-	if err != nil {
-		return nil
-	}
-
-	var apiStats apiStatsResponse
-	if err := json.Unmarshal(statsBody, &apiStats); err != nil {
-		return nil
-	}
-
-	cpuDelta := apiStats.CPUStats.CPUUsage.TotalUsage - apiStats.PrecpuStats.CPUUsage.TotalUsage
-	sysDelta := apiStats.CPUStats.SystemCPUUsage - apiStats.PrecpuStats.SystemCPUUsage
-	ncpu := apiStats.CPUStats.OnlineCPUs
-	if ncpu == 0 {
-		ncpu = 1
-	}
-	if sysDelta > 0 {
-		stats.CPUPercent = float64(cpuDelta) / float64(sysDelta) * float64(ncpu) * 100.0
-	}
-
-	stats.MemoryRSS = int64(apiStats.MemoryStats.Usage)
-	stats.PIDs = apiStats.PidsStats.Current
-
-	// Fetch /json for state and start time
-	conn2, err := net.Dial("unix", dockerSocket)
+	// State and start time live on a different endpoint. Losing it costs the
+	// row its state and uptime, not its numbers, so the failure is not fatal.
+	described, err := dockerAPIGet("/containers/"+name+"/json", inspectRequestTimeout)
 	if err != nil {
 		return stats
 	}
-	defer conn2.Close()
-
-	inspectReq := fmt.Sprintf("GET /containers/%s/json HTTP/1.0\r\nHost: localhost\r\n\r\n", name)
-	conn2.SetDeadline(time.Now().Add(2 * time.Second))
-	_, err = conn2.Write([]byte(inspectReq))
-	if err != nil {
-		return stats
-	}
-
-	inspectBody, err := readHTTPBody(conn2)
-	if err != nil {
-		return stats
-	}
-
 	var inspect apiInspectState
-	if err := json.Unmarshal(inspectBody, &inspect); err != nil {
+	if err := json.Unmarshal(described, &inspect); err != nil {
 		return stats
 	}
 	stats.State = inspect.State.Status
 	stats.Uptime = computeContainerUptime(inspect.State.StartedAt)
+	return stats
+}
 
+// dockerAPIGet performs one HTTP/1.0 GET against the Docker socket and returns
+// the response body.
+func dockerAPIGet(endpoint string, timeout time.Duration) ([]byte, error) {
+	conn, err := net.Dial("unix", dockerSocket)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+		return nil, err
+	}
+	request := "GET " + endpoint + " HTTP/1.0\r\nHost: localhost\r\n\r\n"
+	if _, err := conn.Write([]byte(request)); err != nil {
+		return nil, err
+	}
+	return readHTTPBody(conn)
+}
+
+// measurements turns one /stats response into the numbers this package reports.
+//
+// CPU is the share of the host's CPU time the container used between the two
+// samples the daemon took, scaled by the number of online CPUs so the figure is
+// comparable to what `docker stats` prints. A zero system delta means the two
+// samples are unusable, and no percentage is reported rather than an infinite
+// one.
+func measurements(payload apiStatsResponse) *ContainerStats {
+	stats := &ContainerStats{}
+	cpuDelta := payload.CPUStats.CPUUsage.TotalUsage - payload.PrecpuStats.CPUUsage.TotalUsage
+	systemDelta := payload.CPUStats.SystemCPUUsage - payload.PrecpuStats.SystemCPUUsage
+	online := payload.CPUStats.OnlineCPUs
+	if online == 0 {
+		online = 1
+	}
+	if systemDelta > 0 {
+		stats.CPUPercent = float64(cpuDelta) / float64(systemDelta) * float64(online) * 100
+	}
+	stats.MemoryRSS = int64(payload.MemoryStats.Usage)
+	stats.PIDs = payload.PidsStats.Current
 	return stats
 }
 
@@ -307,222 +350,259 @@ func readHTTPBody(conn net.Conn) ([]byte, error) {
 	return io.ReadAll(reader)
 }
 
-// allContainerStatsCLI is the fallback using `docker stats` CLI.
+// statsRowFormat is the `docker stats` template: one tab-separated row per
+// container, which is the only shape this code parses.
+const statsRowFormat = "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.PIDs}}"
+
+// inspectRowFormat is the `docker inspect` template for the two fields
+// /stats does not carry.
+const inspectRowFormat = "{{.Name}}\t{{.State.Status}}\t{{.State.StartedAt}}"
+
+// allContainerStatsCLI samples every container through the `docker stats` CLI.
+// It is the fallback for Windows and for hosts where the Engine socket is not
+// reachable; the CLI does its own sampling, so one call covers them all.
 func allContainerStatsCLI() map[string]*ContainerStats {
-	result := make(map[string]*ContainerStats)
-
-	out, err := output("stats", "--no-stream", "--format",
-		"{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.PIDs}}")
+	table, err := dockerOutput("stats", "--no-stream", "--format", statsRowFormat)
 	if err != nil {
-		return result
+		return map[string]*ContainerStats{}
 	}
+	sampled := parseStatsTable(string(table))
+	applyInspect(sampled)
+	return sampled
+}
 
-	scanner := bufio.NewScanner(strings.NewReader(strings.TrimSpace(string(out))))
-	for scanner.Scan() {
-		parts := strings.SplitN(scanner.Text(), "\t", 4)
-		if len(parts) < 4 {
+// parseStatsTable reads the rows `docker stats` printed. A row that does not
+// have all four columns is skipped rather than reported with zeroes.
+func parseStatsTable(table string) map[string]*ContainerStats {
+	sampled := make(map[string]*ContainerStats)
+	rows := bufio.NewScanner(strings.NewReader(strings.TrimSpace(table)))
+	for rows.Scan() {
+		fields := strings.SplitN(rows.Text(), "\t", 4)
+		if len(fields) < 4 {
 			continue
 		}
-		name := strings.TrimSpace(parts[0])
-		stats := &ContainerStats{}
-
-		cpuStr, _ := strings.CutSuffix(strings.TrimSpace(parts[1]), "%")
-		if v, err := strconv.ParseFloat(cpuStr, 64); err == nil {
-			stats.CPUPercent = v
-		}
-
-		memParts := strings.SplitN(strings.TrimSpace(parts[2]), " / ", 2)
-		if len(memParts) >= 1 {
-			stats.MemoryRSS = parseMemString(memParts[0])
-		}
-
-		if v, err := strconv.Atoi(strings.TrimSpace(parts[3])); err == nil {
-			stats.PIDs = v
-		}
-
-		result[name] = stats
+		sampled[strings.TrimSpace(fields[0])] = statsFromRow(fields[1], fields[2], fields[3])
 	}
+	return sampled
+}
 
-	// Fetch state/uptime via inspect
-	names := make([]string, 0, len(result))
-	for name := range result {
+// statsFromRow turns the cpu, memory and pids columns into a sample. Each
+// column is parsed on its own, so one unreadable value does not discard the
+// others.
+func statsFromRow(cpuColumn, memoryColumn, pidsColumn string) *ContainerStats {
+	stats := &ContainerStats{}
+
+	percent := strings.TrimSuffix(strings.TrimSpace(cpuColumn), "%")
+	if percent, err := strconv.ParseFloat(percent, 64); err == nil {
+		stats.CPUPercent = percent
+	}
+	// The memory column reads "357.7MiB / 7.66GiB": the first half is what the
+	// container uses, the second is the limit.
+	used, _, _ := strings.Cut(strings.TrimSpace(memoryColumn), " / ")
+	stats.MemoryRSS = parseMemString(used)
+
+	if pids, err := strconv.Atoi(strings.TrimSpace(pidsColumn)); err == nil {
+		stats.PIDs = pids
+	}
+	return stats
+}
+
+// applyInspect fills in state and start time, which `docker stats` does not
+// report. A failed inspect leaves the numbers alone rather than dropping the
+// rows, so a container still shows its usage without its uptime.
+func applyInspect(sampled map[string]*ContainerStats) {
+	if len(sampled) == 0 {
+		return
+	}
+	names := make([]string, 0, len(sampled))
+	for name := range sampled {
 		names = append(names, name)
 	}
-	if len(names) > 0 {
-		args := append([]string{"inspect", "--format", "{{.Name}}\t{{.State.Status}}\t{{.State.StartedAt}}"}, names...)
-		inspectOut, err := output(args...)
-		if err == nil {
-			inspectScanner := bufio.NewScanner(strings.NewReader(strings.TrimSpace(string(inspectOut))))
-			for inspectScanner.Scan() {
-				parts := strings.SplitN(inspectScanner.Text(), "\t", 3)
-				if len(parts) < 3 {
-					continue
-				}
-				name := strings.TrimPrefix(strings.TrimSpace(parts[0]), "/")
-				if stats, ok := result[name]; ok {
-					stats.State = parts[1]
-					stats.Uptime = computeContainerUptime(parts[2])
-				}
-			}
-		}
-	}
-
-	return result
-}
-
-// parseMemString parses Docker memory strings like "357.7MiB", "1.5GiB", "512KiB".
-func parseMemString(s string) int64 {
-	s = strings.TrimSpace(s)
-	multiplier := int64(1)
-	if after, found := strings.CutSuffix(s, "GiB"); found {
-		multiplier = 1 << 30
-		s = after
-	} else if after, found := strings.CutSuffix(s, "MiB"); found {
-		multiplier = 1 << 20
-		s = after
-	} else if after, found := strings.CutSuffix(s, "KiB"); found {
-		multiplier = 1 << 10
-		s = after
-	} else if after, found := strings.CutSuffix(s, "B"); found {
-		s = after
-	}
-	v, err := strconv.ParseFloat(s, 64)
+	described, err := dockerOutput(append([]string{"inspect", "--format", inspectRowFormat}, names...)...)
 	if err != nil {
-		return 0
+		return
 	}
-	return int64(v * float64(multiplier))
+
+	rows := bufio.NewScanner(strings.NewReader(strings.TrimSpace(string(described))))
+	for rows.Scan() {
+		fields := strings.SplitN(rows.Text(), "\t", 3)
+		if len(fields) < 3 {
+			continue
+		}
+		// inspect prints the name with its leading slash.
+		name := strings.TrimPrefix(strings.TrimSpace(fields[0]), "/")
+		if stats, listed := sampled[name]; listed {
+			stats.State = fields[1]
+			stats.Uptime = computeContainerUptime(fields[2])
+		}
+	}
 }
 
-// computeContainerUptime parses a Docker ISO 8601 timestamp and returns a human-readable duration.
-func computeContainerUptime(startedAt string) string {
-	layouts := []string{
-		"2006-01-02T15:04:05.999999999Z",
-		"2006-01-02T15:04:05.999999999Z07:00",
-	}
-	for _, layout := range layouts {
-		if t, err := time.Parse(layout, startedAt); err == nil {
-			d := time.Since(t)
-			return formatContainerDuration(d)
+// memoryUnits are the suffixes `docker stats` prints, largest first so a longer
+// suffix is tested before the "B" it ends with.
+var memoryUnits = []struct {
+	suffix string
+	scale  int64
+}{
+	{"GiB", 1 << 30},
+	{"MiB", 1 << 20},
+	{"KiB", 1 << 10},
+	{"B", 1},
+}
+
+// parseMemString turns a memory string such as "357.7MiB" or "512KiB" into
+// bytes. An unreadable value is zero.
+func parseMemString(printed string) int64 {
+	remaining := strings.TrimSpace(printed)
+	for _, unit := range memoryUnits {
+		digits, found := strings.CutSuffix(remaining, unit.suffix)
+		if !found {
+			continue
 		}
+		value, err := strconv.ParseFloat(strings.TrimSpace(digits), 64)
+		if err != nil {
+			return 0
+		}
+		return int64(value * float64(unit.scale))
+	}
+	return 0
+}
+
+// dockerStartTimeLayouts are the two shapes Docker prints StartedAt in: a
+// UTC instant with nanoseconds, and the same with a numeric offset.
+var dockerStartTimeLayouts = []string{
+	"2006-01-02T15:04:05.999999999Z",
+	"2006-01-02T15:04:05.999999999Z07:00",
+}
+
+// computeContainerUptime renders how long ago a container started, from the
+// StartedAt Docker reports. An unparseable timestamp yields "" rather than a
+// wrong age.
+func computeContainerUptime(startedAt string) string {
+	for _, layout := range dockerStartTimeLayouts {
+		started, err := time.Parse(layout, startedAt)
+		if err != nil {
+			continue
+		}
+		return formatContainerDuration(time.Since(started))
 	}
 	return ""
 }
 
-func formatContainerDuration(d time.Duration) string {
-	if d < time.Minute {
-		return fmt.Sprintf("%ds", int(d.Seconds()))
+// formatContainerDuration renders a container's age at the coarsest useful
+// resolution: seconds, minutes, hours, then days.
+func formatContainerDuration(age time.Duration) string {
+	switch {
+	case age < time.Minute:
+		return fmt.Sprintf("%ds", int(age.Seconds()))
+	case age < time.Hour:
+		return fmt.Sprintf("%dm%ds", int(age.Minutes()), int(age.Seconds())%60)
+	case age < 24*time.Hour:
+		return fmt.Sprintf("%dh%dm", int(age.Hours()), int(age.Minutes())%60)
+	default:
+		return fmt.Sprintf("%dd%dh", int(age.Hours())/24, int(age.Hours())%24)
 	}
-	if d < time.Hour {
-		return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
-	}
-	if d < 24*time.Hour {
-		h := int(d.Hours())
-		m := int(d.Minutes()) % 60
-		return fmt.Sprintf("%dh%dm", h, m)
-	}
-	days := int(d.Hours()) / 24
-	h := int(d.Hours()) % 24
-	return fmt.Sprintf("%dd%dh", days, h)
 }
 
-// StopContainer stops a Docker container by name using `docker stop`.
+// StopContainer stops a container by name through `docker stop`.
 func StopContainer(name string) error {
-	cmd, stop := cli("stop", name)
-	defer stop()
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to stop container %s: %w", name, err)
+	stop, release := timedCommand("stop", name)
+	defer release()
+	if err := stop.Run(); err != nil {
+		return fmt.Errorf("stopping container %s: %w", name, err)
 	}
 	return nil
 }
 
-// psFormat is the `docker ps --format` template parsePS reads.
-const psFormat = "{{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Label \"com.docker.compose.service\"}}" +
-	"\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}"
+// psFormat is the `docker ps --format` template parsePS reads: one
+// tab-separated row per container, the compose labels last.
+const psFormat = "{{.Names}}\t{{.Image}}\t{{.Ports}}" +
+	"\t{{.Label \"com.docker.compose.service\"}}" +
+	"\t{{.Label \"com.docker.compose.project\"}}" +
+	"\t{{.Label \"com.docker.compose.project.working_dir\"}}"
 
-// listContainers runs `docker ps` under CLITimeout and parses the output.
+// listContainers runs `docker ps` under CLITimeout.
 func listContainers() ([]container, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), CLITimeout)
 	defer cancel()
 	return listContainersCtx(ctx)
 }
 
-// listContainersCtx runs `docker ps` bound to ctx and parses the output.
+// listContainersCtx runs `docker ps` bound to ctx and parses the answer.
 func listContainersCtx(ctx context.Context) ([]container, error) {
-	out, err := command(ctx, "ps", "--format", psFormat).Output()
+	printed, err := dockerCommand(ctx, "ps", "--format", psFormat).Output()
 	if err != nil {
 		return nil, err
 	}
-	return parsePS(out), nil
+	return parsePS(printed), nil
 }
 
-// parsePS parses `docker ps --format psFormat` output, one container a line.
-func parsePS(out []byte) []container {
-	var containers []container
-	scanner := bufio.NewScanner(strings.NewReader(string(out)))
-	for scanner.Scan() {
-		line := scanner.Text()
-		parts := strings.SplitN(line, "\t", 6)
-		if len(parts) < 6 {
+// psColumns is how many tab-separated fields psFormat produces.
+const psColumns = 6
+
+// parsePS reads `docker ps --format psFormat` output. A row with fewer columns
+// than the template asks for is skipped: it is not a container this package can
+// describe.
+func parsePS(printed []byte) []container {
+	var listed []container
+	rows := bufio.NewScanner(strings.NewReader(string(printed)))
+	for rows.Scan() {
+		fields := strings.SplitN(rows.Text(), "\t", psColumns)
+		if len(fields) < psColumns {
 			continue
 		}
-
-		c := container{
-			name:              parts[0],
-			image:             parts[1],
-			portMappings:      parsePorts(parts[2]),
-			composeService:    parts[3],
-			composeProject:    parts[4],
-			composeWorkingDir: parts[5],
-		}
-		containers = append(containers, c)
-	}
-
-	return containers
-}
-
-// parsePorts parses Docker port strings like "0.0.0.0:3000->80/tcp, 0.0.0.0:3001->443/tcp".
-func parsePorts(raw string) []portMapping {
-	if raw == "" {
-		return nil
-	}
-
-	var mappings []portMapping
-	for _, entry := range strings.Split(raw, ", ") {
-		// Format: 0.0.0.0:3000->80/tcp or :::3000->80/tcp
-		arrowIdx := strings.Index(entry, "->")
-		if arrowIdx < 0 {
-			continue
-		}
-
-		hostPart := entry[:arrowIdx]
-		containerPart := entry[arrowIdx+2:]
-
-		// Extract host port (after last colon)
-		colonIdx := strings.LastIndex(hostPart, ":")
-		if colonIdx < 0 {
-			continue
-		}
-		hostPort, err := strconv.Atoi(hostPart[colonIdx+1:])
-		if err != nil {
-			continue
-		}
-
-		// Extract container port (before /tcp or /udp)
-		slashIdx := strings.Index(containerPart, "/")
-		cpStr := containerPart
-		if slashIdx >= 0 {
-			cpStr = containerPart[:slashIdx]
-		}
-		containerPort, err := strconv.Atoi(cpStr)
-		if err != nil {
-			continue
-		}
-
-		mappings = append(mappings, portMapping{
-			hostPort:      hostPort,
-			containerPort: containerPort,
+		listed = append(listed, container{
+			name:              fields[0],
+			image:             fields[1],
+			portMappings:      parsePorts(fields[2]),
+			composeService:    fields[3],
+			composeProject:    fields[4],
+			composeWorkingDir: fields[5],
 		})
 	}
+	return listed
+}
 
-	return mappings
+// parsePorts reads Docker's port list, where each entry reads
+// "[host]:<hostPort>-><containerPort>/<proto>" and entries are comma-separated.
+// Entries this package cannot use — no arrow, no host port — are dropped rather
+// than guessed at.
+func parsePorts(printed string) []portMapping {
+	if printed == "" {
+		return nil
+	}
+	var published []portMapping
+	for _, entry := range strings.Split(printed, ", ") {
+		mapping, usable := parsePortEntry(entry)
+		if usable {
+			published = append(published, mapping)
+		}
+	}
+	return published
+}
+
+// parsePortEntry reads one published-port entry. The host side is everything
+// before the arrow and the container side everything after it; the container
+// side may carry a "/tcp" or "/udp" suffix, which this package does not use.
+func parsePortEntry(entry string) (portMapping, bool) {
+	hostSide, containerSide, found := strings.Cut(entry, "->")
+	if !found {
+		return portMapping{}, false
+	}
+	// The address part can be a bare IPv6 address, so the port is whatever
+	// follows the last colon.
+	_, hostPortText, found := strings.Cut(hostSide, ":")
+	if !found {
+		return portMapping{}, false
+	}
+	hostPort, err := strconv.Atoi(hostPortText)
+	if err != nil {
+		return portMapping{}, false
+	}
+	containerPortText, _, _ := strings.Cut(containerSide, "/")
+	containerPort, err := strconv.Atoi(containerPortText)
+	if err != nil {
+		return portMapping{}, false
+	}
+	return portMapping{hostPort: hostPort, containerPort: containerPort}, true
 }

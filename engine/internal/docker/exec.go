@@ -8,39 +8,41 @@ import (
 
 // CLITimeout bounds one `docker` invocation.
 //
-// The docker CLI talks to a daemon over a socket and has no timeout of its
-// own: when Docker Desktop is starting, paused or wedged, `docker stats` does
-// not fail, it waits. Ten seconds is far longer than a healthy
+// The docker CLI has no timeout of its own: it talks to a daemon over a socket,
+// and when Docker Desktop is starting, paused or wedged, `docker stats` does
+// not fail — it waits. Ten seconds is well beyond a healthy
 // `docker stats --no-stream` (about two) and short enough that a wedged daemon
-// degrades to "no container data" instead of a hung command (contract §44).
+// degrades to "no container data" rather than to a hung command.
 //
-// The daemon's scans no longer pay it: they read the container list a Watcher
-// keeps in the background (step 5A.8). It still bounds the one-shot CLI paths
-// and explicit actions such as `docker stop`.
+// Scans no longer pay this cost; they read the container list a Watcher keeps
+// in the background. It still bounds the one-shot CLI paths and explicit
+// actions such as `docker stop`.
 const CLITimeout = 10 * time.Second
 
-// waitDelay bounds how long a killed `docker` may keep its output pipe open.
-// A timed-out command is killed, but anything it started that inherited the
-// pipe would otherwise keep Output waiting after the deadline.
+// waitDelay bounds how long a killed `docker` may hold its output pipe open.
+// Killing the process is not enough on its own: anything it started that
+// inherited the pipe would keep Output waiting past the deadline.
 const waitDelay = time.Second
 
-// cli builds a `docker` command that cannot outlive CLITimeout. The returned
-// stop must be called once the output has been read.
-func cli(args ...string) (cmd *exec.Cmd, stop func()) {
-	ctx, cancel := context.WithTimeout(context.Background(), CLITimeout)
-	return command(ctx, args...), cancel
+// timedCommand is a `docker` command that cannot outlive CLITimeout. The
+// returned stop function releases the timer and must run once the output has
+// been read.
+func timedCommand(args ...string) (*exec.Cmd, func()) {
+	ctx, release := context.WithTimeout(context.Background(), CLITimeout)
+	return dockerCommand(ctx, args...), release
 }
 
-// command builds a `docker` command bound to ctx.
-func command(ctx context.Context, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.WaitDelay = waitDelay
-	return cmd
+// dockerCommand builds one `docker` invocation bound to ctx, with the pipe
+// delay applied so a killed child cannot strand its readers.
+func dockerCommand(ctx context.Context, args ...string) *exec.Cmd {
+	invocation := exec.CommandContext(ctx, "docker", args...)
+	invocation.WaitDelay = waitDelay
+	return invocation
 }
 
-// output runs one `docker` command under CLITimeout and returns its stdout.
-func output(args ...string) ([]byte, error) {
-	cmd, stop := cli(args...)
-	defer stop()
-	return cmd.Output()
+// dockerOutput is one `docker` call under CLITimeout, returning its stdout.
+func dockerOutput(args ...string) ([]byte, error) {
+	invocation, release := timedCommand(args...)
+	defer release()
+	return invocation.Output()
 }

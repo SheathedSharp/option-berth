@@ -14,166 +14,186 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
-// fakeDocker is a scripted `docker ps` for a Watcher under test.
-type fakeDocker struct {
-	mu    sync.Mutex
-	calls int
-	stats int
-	// next is what the next `docker ps` returns.
-	containers []container
-	err        error
+// scriptedDocker stands in for `docker ps`: it answers with whatever the test
+// last set, and counts how often it was asked.
+type scriptedDocker struct {
+	mu         sync.Mutex
+	psCalls    int
+	statsCalls int
+	running    []container
+	failure    error
 }
 
-func (f *fakeDocker) list(context.Context) ([]container, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.calls++
-	return f.containers, f.err
+func (d *scriptedDocker) list(context.Context) ([]container, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.psCalls++
+	return d.running, d.failure
 }
 
-func (f *fakeDocker) set(cs []container, err error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.containers, f.err = cs, err
+// answer replaces what the next `docker ps` will report.
+func (d *scriptedDocker) answer(running []container, failure error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.running, d.failure = running, failure
 }
 
-func (f *fakeDocker) count() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.calls
+func (d *scriptedDocker) psCount() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.psCalls
 }
 
-// clock is a manual clock.
-type clock struct{ t time.Time }
+// manualClock is moved by hand, so a backoff schedule can be walked without
+// waiting for it.
+type manualClock struct{ at time.Time }
 
-func (c *clock) now() time.Time          { return c.t }
-func (c *clock) advance(d time.Duration) { c.t = c.t.Add(d) }
+func (c *manualClock) now() time.Time           { return c.at }
+func (c *manualClock) advance(by time.Duration) { c.at = c.at.Add(by) }
 
-// harness is a Watcher wired to a fake docker, a manual clock and a captured
-// debug log. step does what one pass of Run does: refresh if due.
-type harness struct {
-	w       *Watcher
-	docker  *fakeDocker
-	clock   *clock
+// bench wires a Watcher to a scripted docker, a manual clock and a captured
+// debug log. Each pass does what one iteration of Run does: refresh if due.
+type bench struct {
+	watcher *Watcher
+	docker  *scriptedDocker
+	clock   *manualClock
 	log     *bytes.Buffer
 	changes int
 }
 
-func newHarness(t *testing.T) *harness {
+func newBench(t *testing.T) *bench {
 	t.Helper()
-	h := &harness{
-		docker: &fakeDocker{},
-		clock:  &clock{t: time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)},
+	b := &bench{
+		docker: &scriptedDocker{},
+		clock:  &manualClock{at: time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)},
 		log:    &bytes.Buffer{},
 	}
-	logger := slog.New(slog.NewTextHandler(h.log, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	h.w = NewWatcher(WatcherOptions{
+	logger := slog.New(slog.NewTextHandler(b.log, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	b.watcher = NewWatcher(WatcherOptions{
 		Interval: 2 * time.Second,
 		Logger:   logger,
-		OnChange: func() { h.changes++ },
-		Now:      h.clock.now,
+		OnChange: func() { b.changes++ },
+		Now:      b.clock.now,
 	})
-	h.w.lookPath = func(string) (string, error) { return "/usr/local/bin/docker", nil }
-	h.w.list = h.docker.list
-	h.w.stats = func(cs []container) map[string]*ContainerStats {
-		h.docker.stats++
-		out := map[string]*ContainerStats{}
-		for _, c := range cs {
-			out[c.name] = &ContainerStats{CPUPercent: 1.5, State: "running"}
+	b.watcher.lookPath = func(string) (string, error) { return "/usr/local/bin/docker", nil }
+	b.watcher.list = b.docker.list
+	b.watcher.stats = func(running []container) map[string]*ContainerStats {
+		b.docker.statsCalls++
+		collected := map[string]*ContainerStats{}
+		for _, c := range running {
+			collected[c.name] = &ContainerStats{CPUPercent: 1.5, State: "running"}
 		}
-		return out
+		return collected
 	}
-	return h
+	return b
 }
 
-// step runs one refresh if one is due and reports whether it did.
-func (h *harness) step() bool {
-	if !h.w.due() {
+// step runs one refresh when one is due, and reports whether it did.
+func (b *bench) step() bool {
+	if !b.watcher.shouldRefresh() {
 		return false
 	}
-	h.w.refresh(context.Background())
+	b.watcher.refresh(context.Background())
 	return true
 }
 
+// web is the container most cases use: it publishes exactly one host port and
+// carries the full set of compose labels, so a single fixture exercises both
+// the port mapping and the attribution path.
 var web = container{
-	name: "shop-web-1", image: "nginx:1.27",
-	portMappings:   []portMapping{{hostPort: 8080, containerPort: 80}},
-	composeService: "web", composeProject: "shop", composeWorkingDir: "/src/shop",
+	name:  "shop-web-1",
+	image: "nginx:1.27",
+	portMappings: []portMapping{{
+		hostPort:      8080,
+		containerPort: 80,
+	}},
+	composeService:    "web",
+	composeProject:    "shop",
+	composeWorkingDir: "/src/shop",
 }
 
+// TestBackoffScheduleDoublesToTheCap pins the whole schedule, not just its
+// shape: a change to MinBackoff or MaxBackoff should fail here rather than
+// silently alter how often a wedged docker is retried.
 func TestBackoffScheduleDoublesToTheCap(t *testing.T) {
-	want := []time.Duration{
-		5 * time.Second, 10 * time.Second, 20 * time.Second, 40 * time.Second,
-		80 * time.Second, 160 * time.Second, 5 * time.Minute, 5 * time.Minute,
+	schedule := []time.Duration{
+		MinBackoff,      // 5s
+		2 * MinBackoff,  // 10s
+		4 * MinBackoff,  // 20s
+		8 * MinBackoff,  // 40s
+		16 * MinBackoff, // 80s
+		32 * MinBackoff, // 160s
+		MaxBackoff,      // 5m, the sixth step already reaches it
+		MaxBackoff,      // and it stays there
 	}
-	for i, w := range want {
-		if got := backoffFor(i + 1); got != w {
-			t.Errorf("backoffFor(%d) = %s, want %s", i+1, got, w)
+	for attempt, expected := range schedule {
+		if actual := backoffFor(attempt + 1); actual != expected {
+			t.Errorf("backoffFor(%d) = %s, want %s", attempt+1, actual, expected)
 		}
 	}
-	if got := backoffFor(1000); got != MaxBackoff {
-		t.Errorf("backoffFor(1000) = %s, want the cap", got)
+	if far := backoffFor(1000); far != MaxBackoff {
+		t.Errorf("backoffFor(1000) = %s, want the cap %s", far, MaxBackoff)
 	}
 }
 
 // A failing Docker is asked again only once each backoff step has passed,
 // however often scans poke, and one success resets the schedule.
 func TestFailingDockerBacksOffAndASuccessResets(t *testing.T) {
-	h := newHarness(t)
-	h.docker.set(nil, errors.New("Cannot connect to the Docker daemon"))
+	b := newBench(t)
+	b.docker.answer(nil, errors.New("Cannot connect to the Docker daemon"))
 
-	if !h.step() {
+	if !b.step() {
 		t.Fatal("the first refresh did not run")
 	}
 	for n := 1; n <= 8; n++ {
 		wait := backoffFor(n)
 		// Scans poke every second meanwhile; none of them may reach Docker.
 		for elapsed := time.Second; elapsed < wait; elapsed += time.Second {
-			h.clock.advance(time.Second)
-			h.w.Enrich([]ports.ListeningPort{{Port: 9000 + int(elapsed/time.Second)}})
-			if h.step() {
+			b.clock.advance(time.Second)
+			b.watcher.Enrich([]ports.ListeningPort{{Port: 9000 + int(elapsed/time.Second)}})
+			if b.step() {
 				t.Fatalf("after failure %d a refresh ran %s in, before the %s backoff", n, elapsed, wait)
 			}
 		}
-		h.clock.advance(time.Second)
-		if !h.step() {
+		b.clock.advance(time.Second)
+		if !b.step() {
 			t.Fatalf("after failure %d no refresh ran once the %s backoff was up", n, wait)
 		}
 	}
-	if got := h.docker.count(); got != 9 {
+	if got := b.docker.psCount(); got != 9 {
 		t.Errorf("docker ps ran %d times, want 9", got)
 	}
 
-	h.docker.set([]container{web}, nil)
-	h.clock.advance(MaxBackoff)
-	if !h.step() {
+	b.docker.answer([]container{web}, nil)
+	b.clock.advance(MaxBackoff)
+	if !b.step() {
 		t.Fatal("no refresh after the cap")
 	}
-	if !h.w.Healthy() {
+	if !b.watcher.Healthy() {
 		t.Error("a successful docker ps did not mark the watcher healthy")
 	}
 	// Reset: the next refresh is one interval away, not a backoff step.
-	h.clock.advance(2 * time.Second)
-	if !h.step() {
+	b.clock.advance(2 * time.Second)
+	if !b.step() {
 		t.Error("after a success the watcher still waited out a backoff")
 	}
 }
 
 // While Docker fails, scans keep enriching from the last list that answered.
 func TestFailingDockerServesTheLastGoodList(t *testing.T) {
-	h := newHarness(t)
-	h.docker.set([]container{web}, nil)
-	h.step()
+	b := newBench(t)
+	b.docker.answer([]container{web}, nil)
+	b.step()
 
-	h.docker.set(nil, errors.New("boom"))
-	h.clock.advance(2 * time.Second)
-	h.step()
-	if h.w.Healthy() {
+	b.docker.answer(nil, errors.New("boom"))
+	b.clock.advance(2 * time.Second)
+	b.step()
+	if b.watcher.Healthy() {
 		t.Fatal("a failed docker ps left the watcher healthy")
 	}
 
 	pp := []ports.ListeningPort{{Port: 8080, Type: ports.PortTypeUser}}
-	h.w.Enrich(pp)
+	b.watcher.Enrich(pp)
 	if pp[0].Type != ports.PortTypeDocker || pp[0].DockerContainer != "shop-web-1" ||
 		pp[0].DockerComposeProject != "shop" || pp[0].DockerComposeWorkingDir != "/src/shop" {
 		t.Errorf("port 8080 = %+v, want it enriched from the last good list", pp[0])
@@ -182,42 +202,42 @@ func TestFailingDockerServesTheLastGoodList(t *testing.T) {
 
 // No docker on PATH: never exec, never back off, say so once.
 func TestNoDockerInstalledStaysSilentAndCheap(t *testing.T) {
-	h := newHarness(t)
-	h.w.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	b := newBench(t)
+	b.watcher.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 
 	for i := 0; i < 50; i++ {
-		h.w.Enrich([]ports.ListeningPort{{Port: 3000 + i}})
-		h.step()
-		h.clock.advance(2 * time.Second)
+		b.watcher.Enrich([]ports.ListeningPort{{Port: 3000 + i}})
+		b.step()
+		b.clock.advance(2 * time.Second)
 	}
-	if got := h.docker.count(); got != 0 {
+	if got := b.docker.psCount(); got != 0 {
 		t.Errorf("docker ps ran %d times with no docker installed", got)
 	}
-	if !h.w.retryAt.IsZero() || h.w.failures != 0 {
-		t.Errorf("not installed was treated as a failure: failures=%d retryAt=%s", h.w.failures, h.w.retryAt)
+	if !b.watcher.retryAt.IsZero() || b.watcher.failures != 0 {
+		t.Errorf("not installed was treated as a failure: failures=%d retryAt=%s", b.watcher.failures, b.watcher.retryAt)
 	}
-	if n := strings.Count(h.log.String(), "\n"); n != 1 {
-		t.Errorf("logged %d lines, want exactly one:\n%s", n, h.log.String())
+	if n := strings.Count(b.log.String(), "\n"); n != 1 {
+		t.Errorf("logged %d lines, want exactly one:\n%s", n, b.log.String())
 	}
 }
 
 // The debug log names the transitions, not every tick.
 func TestLogsOnlyOnHealthChanges(t *testing.T) {
-	h := newHarness(t)
-	h.docker.set([]container{web}, nil)
-	h.step()
-	h.clock.advance(2 * time.Second)
-	h.step()
-	if h.log.Len() != 0 {
-		t.Fatalf("healthy refreshes logged:\n%s", h.log.String())
+	b := newBench(t)
+	b.docker.answer([]container{web}, nil)
+	b.step()
+	b.clock.advance(2 * time.Second)
+	b.step()
+	if b.log.Len() != 0 {
+		t.Fatalf("healthy refreshes logged:\n%s", b.log.String())
 	}
 
-	h.docker.set(nil, errors.New("`docker ps` did not answer within 5s"))
+	b.docker.answer(nil, errors.New("`docker ps` did not answer within 5s"))
 	for i := 0; i < 4; i++ {
-		h.clock.advance(MaxBackoff)
-		h.step()
+		b.clock.advance(MaxBackoff)
+		b.step()
 	}
-	out := h.log.String()
+	out := b.log.String()
 	if n := strings.Count(out, "docker is not answering"); n != 1 {
 		t.Errorf("logged the failure %d times, want once:\n%s", n, out)
 	}
@@ -225,139 +245,149 @@ func TestLogsOnlyOnHealthChanges(t *testing.T) {
 		t.Errorf("the failure line does not carry the error:\n%s", out)
 	}
 
-	h.docker.set([]container{web}, nil)
-	h.clock.advance(MaxBackoff)
-	h.step()
-	h.clock.advance(2 * time.Second)
-	h.step()
-	if n := strings.Count(h.log.String(), "docker is answering again"); n != 1 {
-		t.Errorf("logged the recovery %d times, want once:\n%s", n, h.log.String())
+	b.docker.answer([]container{web}, nil)
+	b.clock.advance(MaxBackoff)
+	b.step()
+	b.clock.advance(2 * time.Second)
+	b.step()
+	if n := strings.Count(b.log.String(), "docker is answering again"); n != 1 {
+		t.Errorf("logged the recovery %d times, want once:\n%s", n, b.log.String())
 	}
 }
 
 // Routine refreshes are rate-limited to the interval; a port nobody knew about
 // asks for one early, a port already known or already published does not.
 func TestANewUnattributedPortAsksForAnEarlyRefresh(t *testing.T) {
-	h := newHarness(t)
-	h.docker.set([]container{web}, nil)
-	h.w.Enrich([]ports.ListeningPort{{Port: 3000}, {Port: 8080}})
-	h.step()
+	b := newBench(t)
+	b.docker.answer([]container{web}, nil)
+	b.watcher.Enrich([]ports.ListeningPort{{Port: 3000}, {Port: 8080}})
+	b.step()
 
-	h.clock.advance(500 * time.Millisecond)
-	h.w.Enrich([]ports.ListeningPort{{Port: 3000}, {Port: 8080}})
-	if h.step() {
+	b.clock.advance(500 * time.Millisecond)
+	b.watcher.Enrich([]ports.ListeningPort{{Port: 3000}, {Port: 8080}})
+	if b.step() {
 		t.Error("an unchanged port set refreshed before the interval")
 	}
 
-	h.clock.advance(100 * time.Millisecond)
-	h.w.Enrich([]ports.ListeningPort{{Port: 3000}, {Port: 8080}, {Port: 5432}})
-	if !h.step() {
+	b.clock.advance(100 * time.Millisecond)
+	b.watcher.Enrich([]ports.ListeningPort{{Port: 3000}, {Port: 8080}, {Port: 5432}})
+	if !b.step() {
 		t.Error("a new port no container publishes did not ask for an early refresh")
 	}
 
 	// A new container arrives with the port: the change wakes the loop.
-	before := h.changes
+	before := b.changes
 	db := container{name: "shop-db-1", portMappings: []portMapping{{hostPort: 5433, containerPort: 5432}}}
-	h.docker.set([]container{web, db}, nil)
-	h.clock.advance(100 * time.Millisecond)
-	h.w.Enrich([]ports.ListeningPort{{Port: 3000}, {Port: 8080}, {Port: 5432}, {Port: 5433}})
-	if !h.step() {
+	b.docker.answer([]container{web, db}, nil)
+	b.clock.advance(100 * time.Millisecond)
+	b.watcher.Enrich([]ports.ListeningPort{{Port: 3000}, {Port: 8080}, {Port: 5432}, {Port: 5433}})
+	if !b.step() {
 		t.Fatal("no early refresh for port 5433")
 	}
-	if h.changes != before+1 {
-		t.Errorf("OnChange ran %d times for one changed list, want 1", h.changes-before)
+	if b.changes != before+1 {
+		t.Errorf("OnChange ran %d times for one changed list, want 1", b.changes-before)
 	}
 
 	// Now 5433 is published by a known container; seeing it again is not news.
-	h.clock.advance(100 * time.Millisecond)
-	h.w.Enrich([]ports.ListeningPort{{Port: 3000}, {Port: 8080}, {Port: 5432}, {Port: 5433}})
-	if h.step() {
+	b.clock.advance(100 * time.Millisecond)
+	b.watcher.Enrich([]ports.ListeningPort{{Port: 3000}, {Port: 8080}, {Port: 5432}, {Port: 5433}})
+	if b.step() {
 		t.Error("a known port asked for an early refresh")
 	}
 
 	// An unchanged list does not wake anyone.
-	h.clock.advance(2 * time.Second)
-	h.step()
-	if h.changes != before+1 {
+	b.clock.advance(2 * time.Second)
+	b.step()
+	if b.changes != before+1 {
 		t.Error("an unchanged list called OnChange")
 	}
 }
 
 // Stats are only collected once a scan asks, and dropped while Docker fails.
 func TestStatsAreCollectedOnDemandAndDroppedOnFailure(t *testing.T) {
-	h := newHarness(t)
-	h.docker.set([]container{web}, nil)
-	h.step()
-	if h.docker.stats != 0 {
+	b := newBench(t)
+	b.docker.answer([]container{web}, nil)
+	b.step()
+	if b.docker.statsCalls != 0 {
 		t.Fatal("stats were collected before anyone asked")
 	}
-	if got := h.w.Stats(); got != nil {
+	if got := b.watcher.Stats(); got != nil {
 		t.Errorf("stats before the first collection = %v, want nil", got)
 	}
-	h.clock.advance(100 * time.Millisecond)
-	if !h.step() {
+	b.clock.advance(100 * time.Millisecond)
+	if !b.step() {
 		t.Fatal("the first Stats call did not ask for a refresh")
 	}
-	st := h.w.Stats()
+	st := b.watcher.Stats()
 	if st["shop-web-1"] == nil || st["shop-web-1"].State != "running" {
 		t.Errorf("stats = %v, want shop-web-1", st)
 	}
 
-	h.docker.set(nil, errors.New("boom"))
-	h.clock.advance(2 * time.Second)
-	h.step()
-	if got := h.w.Stats(); got != nil {
+	b.docker.answer(nil, errors.New("boom"))
+	b.clock.advance(2 * time.Second)
+	b.step()
+	if got := b.watcher.Stats(); got != nil {
 		t.Errorf("stats after a failure = %v, want none", got)
 	}
 }
 
-// The point of the step: a scan never waits on Docker, even while a
-// `docker ps` hangs, and the hanging one is cut off at the timeout.
+// TestAHangingDockerNeverBlocksAScan is the reason the watcher exists: while
+// `docker ps` hangs, a scan must still be able to enrich and to read stats, and
+// the hanging call is cut off once its own timeout expires.
 func TestAHangingDockerNeverBlocksAScan(t *testing.T) {
-	w := NewWatcher(WatcherOptions{Interval: time.Hour})
-	w.lookPath = func(string) (string, error) { return "/usr/local/bin/docker", nil }
-	w.timeout = 200 * time.Millisecond
-	started := make(chan struct{}, 1)
-	w.list = func(ctx context.Context) ([]container, error) {
+	watcher := NewWatcher(WatcherOptions{Interval: time.Hour})
+	watcher.lookPath = func(string) (string, error) { return "/usr/local/bin/docker", nil }
+	watcher.timeout = 200 * time.Millisecond
+
+	asked := make(chan struct{}, 1)
+	watcher.list = func(ctx context.Context) ([]container, error) {
 		select {
-		case started <- struct{}{}:
+		case asked <- struct{}{}:
 		default:
 		}
-		<-ctx.Done()
+		<-ctx.Done() // block until the probe timeout ends it
 		return nil, ctx.Err()
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { defer close(done); w.Run(ctx) }()
-	defer func() { cancel(); <-done }()
+	running := make(chan struct{})
+	go func() { defer close(running); watcher.Run(ctx) }()
+	defer func() { cancel(); <-running }()
 
 	select {
-	case <-started:
+	case <-asked:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the watcher never asked docker")
 	}
 
+	// A scan's two entry points, with the watcher's docker call still hung.
 	begin := time.Now()
 	for i := 0; i < 100; i++ {
-		pp := []ports.ListeningPort{{Port: 4000 + i}}
-		w.Enrich(pp)
-		_ = w.Stats()
+		watcher.Enrich([]ports.ListeningPort{{Port: 4000 + i}})
+		_ = watcher.Stats()
 	}
 	if took := time.Since(begin); took > 100*time.Millisecond {
 		t.Errorf("100 scans' worth of Enrich took %s while docker ps hung", took)
 	}
 
+	awaitHealthDown(t, watcher)
+}
+
+// awaitHealthDown waits for the watcher to give up on a hung docker, and checks
+// that it recorded the timeout as the reason.
+func awaitHealthDown(t *testing.T, watcher *Watcher) {
+	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		w.mu.Lock()
-		state, err := w.state, w.lastErr
-		w.mu.Unlock()
+		watcher.mu.Lock()
+		state, err := watcher.state, watcher.lastErr
+		watcher.mu.Unlock()
+
 		if state == healthDown {
 			if err == nil || !strings.Contains(err.Error(), "did not answer within 200ms") {
 				t.Errorf("lastErr = %v, want it to say the call timed out", err)
 			}
-			break
+			return
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("the hanging docker ps was never cut off")
@@ -376,16 +406,17 @@ func TestParsePSFeedsEnrichment(t *testing.T) {
 		t.Fatalf("parsed %d containers, want 2: %+v", len(cs), cs)
 	}
 
-	h := newHarness(t)
-	h.docker.set(cs, nil)
-	h.step()
+	b := newBench(t)
+	b.docker.answer(cs, nil)
+	b.step()
 	pp := []ports.ListeningPort{{Port: 8080, BindAddress: "0.0.0.0"}, {Port: 8080, BindAddress: "::"}, {Port: 3000}}
-	h.w.Enrich(pp)
-	for _, p := range pp[:2] {
-		if p.Type != ports.PortTypeDocker || p.DockerContainer != "shop-web-1" || p.DockerImage != "nginx:1.27" ||
-			p.DockerComposeService != "web" || p.DockerComposeProject != "shop" ||
-			p.DockerComposeWorkingDir != "/src/shop" || p.DockerContainerPort != 80 {
-			t.Errorf("port %s:%d = %+v", p.BindAddress, p.Port, p)
+	b.watcher.Enrich(pp)
+	for _, row := range pp[:2] {
+		if row.Type != ports.PortTypeDocker || row.DockerContainer != "shop-web-1" ||
+			row.DockerImage != "nginx:1.27" || row.DockerComposeService != "web" ||
+			row.DockerComposeProject != "shop" || row.DockerComposeWorkingDir != "/src/shop" ||
+			row.DockerContainerPort != 80 {
+			t.Errorf("port %s:%d = %+v, want the shop-web-1 attribution", row.BindAddress, row.Port, row)
 		}
 	}
 	if pp[2].Type == ports.PortTypeDocker {

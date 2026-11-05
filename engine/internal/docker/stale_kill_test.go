@@ -15,16 +15,19 @@ import (
 // Docker stopped answering: itest-web-1 published 3000.
 const cachedPS = "itest-web-1\tnginx:itest\t0.0.0.0:3000->80/tcp\tweb\titestproj\t/src/app\n"
 
-// planKill is what `ports.kill` on port 3000 would do with rows, without doing
-// it.
+// planKill answers what `ports.kill` on port 3000 would do with rows, without
+// doing any of it: the dry run resolves the owner and picks a method, then
+// stops.
 func planKill(t *testing.T, rows []ports.ListeningPort) killer.Result {
 	t.Helper()
-	results := killer.KillPorts(context.Background(), []killer.Target{{Port: 3000}},
+	const port = 3000
+	planned := killer.KillPorts(context.Background(),
+		[]killer.Target{{Port: port}},
 		killer.Options{Ports: rows, DryRun: true})
-	if len(results) != 1 {
-		t.Fatalf("results = %+v, want one row", results)
+	if len(planned) != 1 {
+		t.Fatalf("plan for port %d = %+v, want exactly one row", port, planned)
 	}
-	return results[0]
+	return planned[0]
 }
 
 // TestAStaleContainerPortHeldByANativeProcessKillsTheProcess is issue #95: the
@@ -32,13 +35,17 @@ func planKill(t *testing.T, rows []ports.ListeningPort) killer.Result {
 // took the port over. The kill must signal that process, not `docker stop`
 // the container.
 func TestAStaleContainerPortHeldByANativeProcessKillsTheProcess(t *testing.T) {
-	// A real pid, so the dry run can resolve it; nothing is signalled.
+	// A real pid, so the dry run can resolve it; nothing is signalled either
+	// way, which is the point of DryRun.
 	pid := os.Getpid()
-	rows := []ports.ListeningPort{{Port: 3000, PID: pid, Process: "node", BindAddress: "127.0.0.1", Type: ports.PortTypeUser}}
+	rows := []ports.ListeningPort{{
+		Port: 3000, PID: pid, Process: "node",
+		BindAddress: "127.0.0.1", Type: ports.PortTypeUser,
+	}}
 	docker.EnrichFromPS(rows, []byte(cachedPS))
 
-	if rows[0].DockerContainer != "" || rows[0].Type == ports.PortTypeDocker {
-		t.Fatalf("the native row was stamped with the cached container: %+v", rows[0])
+	if rows[0].Type == ports.PortTypeDocker || rows[0].DockerContainer != "" {
+		t.Fatalf("the cached container was stamped onto a port node holds: %+v", rows[0])
 	}
 	r := planKill(t, rows)
 	if r.Method == state.MethodDockerStop {
@@ -52,11 +59,13 @@ func TestAStaleContainerPortHeldByANativeProcessKillsTheProcess(t *testing.T) {
 // TestAContainerPortHeldByTheForwarderStopsTheContainer is the other half: the
 // same port held by Docker's forwarder still stops the container.
 func TestAContainerPortHeldByTheForwarderStopsTheContainer(t *testing.T) {
-	rows := []ports.ListeningPort{{Port: 3000, PID: os.Getpid(), Process: "com.docke", BindAddress: "127.0.0.1"}}
+	rows := []ports.ListeningPort{{
+		Port: 3000, PID: os.Getpid(), Process: "com.docke", BindAddress: "127.0.0.1",
+	}}
 	docker.EnrichFromPS(rows, []byte(cachedPS))
 
-	if rows[0].DockerContainer != "itest-web-1" || rows[0].Type != ports.PortTypeDocker {
-		t.Fatalf("the forwarder's row was not stamped: %+v", rows[0])
+	if rows[0].Type != ports.PortTypeDocker || rows[0].DockerContainer != "itest-web-1" {
+		t.Fatalf("a port the forwarder holds lost its container: %+v", rows[0])
 	}
 	r := planKill(t, rows)
 	if r.Method != state.MethodDockerStop || r.PID != 0 || !r.OK {
