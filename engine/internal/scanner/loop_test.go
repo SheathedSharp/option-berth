@@ -423,8 +423,8 @@ func TestStatusReportsTheEffectiveIntervals(t *testing.T) {
 	}
 }
 
-// TestASlowScanNeverCommitsOverANewerOne pins contract §38's "no going
-// backwards": a scan that began before a newer one and finishes after it must
+// TestASlowScanNeverCommitsOverANewerOne pins the "no going backwards" rule:
+// a scan that began before a newer one and finishes after it must
 // not put its older observation on the wire. The newer snapshot stays, no
 // delta is ever derived from the stale rows, and every published seq is
 // monotonic.

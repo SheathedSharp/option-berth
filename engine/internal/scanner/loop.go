@@ -123,7 +123,7 @@ type Options struct {
 	// Scan overrides the OS scan. Tests inject a fake; production leaves it nil
 	// and gets ports.Scan + ports.Enrich, with container data from a
 	// docker.Watcher's cached list rather than an inline `docker ps`
-	// (step 5A.8).
+	// The daemon never waits on the docker CLI for a scan.
 	Scan func(include Include) ([]ports.ListeningPort, error)
 
 	// ScanContext takes precedence over Scan. Legacy Scan callbacks remain
@@ -188,7 +188,7 @@ type Loop struct {
 
 	// docker keeps the container list the production scan enriches from,
 	// refreshed in the background so no scan — and so no handler queued
-	// behind one — ever waits on the docker CLI (step 5A.8). Nil when a test
+	// behind one — ever waits on the docker CLI. Nil when a test
 	// injects its own Scan.
 	docker *docker.Watcher
 
@@ -198,7 +198,8 @@ type Loop struct {
 	// it: a republish needs no OS call at all.
 	//
 	// It is a buffered channel rather than a sync.Mutex because a handler that
-	// waits for it has to wait *with a deadline* (contract §44).
+	// waits for it has to wait *with a deadline*, and a mutex cannot express
+	// that.
 	runGate chan struct{}
 
 	// rpcGate does the same for the scans an RPC starts: one at a time, so ten
@@ -206,28 +207,29 @@ type Loop struct {
 	// from runGate on purpose. A `ports.kill` needs a bare port list and gets
 	// it in a moment; the loop's own tick is collecting stats, which means
 	// `docker stats` and a machine-wide `lsof`, and queueing the first behind
-	// the second is what made a dry-run kill take double figures of seconds
-	// (contract §44). The two can overlap because ordering no longer depends
-	// on them not overlapping: attribution and the commit are serialized by
-	// orderGate, and a scan whose OS half is older than the published snapshot
-	// never commits (see commitScan).
+	// the second is what made a dry-run kill take double figures of seconds.
+	// The two can overlap because ordering does not depend on them not
+	// overlapping: attribution and the commit are serialized by orderGate, and
+	// a scan whose OS half is older than the published snapshot never commits
+	// (see commitScan).
 	rpcGate chan struct{}
 
-	// orderGate is what 1A.15's scanMu really guards: the attribution that
+	// orderGate guards the attribution that
 	// reads the store, the commit into the cache and the publish, taken by
 	// everything that publishes a re-attributed snapshot — a scan, a store
 	// write's republish.
 	//
-	// The rule it buys is unchanged (contract §38): a scan's attribution
-	// happens either wholly before a store write or wholly after it, so the
-	// tick that loaded the rename table before `ports.rename` wrote to it can
-	// no longer commit on top of the write and put the old display_name back.
-	// What changed in 1A.19 is where it starts. It used to be taken before the
-	// OS scan, which meant a rename, a group pin or a "Save color" waited out
-	// `lsof`, `ps`, `docker stats` and a round of health probes before its own
-	// microsecond of work — seconds of latency for a guarantee that only ever
-	// needed the store-reading half. Ordering is about attribution, not about
-	// asking the kernel which sockets are open (contract §44).
+	// The rule it buys: a scan's attribution happens either wholly before a
+	// store write or wholly after it, so a tick that loaded the rename table
+	// before that write can no longer commit on top of it and put the old
+	// display_name back.
+	//
+	// Where it starts matters as much as what it orders. Taken before the OS
+	// scan, a rename, a group pin or a colour change waits out `lsof`, `ps`,
+	// `docker stats` and a round of health probes before its own microsecond
+	// of work — seconds of latency for a guarantee that only ever needed the
+	// store-reading half. Ordering is about attribution, not about asking the
+	// kernel which sockets are open.
 	//
 	// Lock order is runGate, then orderGate, then commitMu; never the reverse.
 	orderGate chan struct{}
@@ -247,8 +249,8 @@ type Loop struct {
 	snap state.Snapshot
 	// lastPorts is the OS half of the last scan, before attribution. Republish
 	// re-attributes it instead of scanning the machine again, which is what
-	// makes a rename or a `oberth.yaml` write cost microseconds rather than a
-	// full scan (contract §44).
+	// makes a rename or an `oberth.yaml` write cost microseconds rather than a
+	// full scan.
 	lastPorts []ports.ListeningPort
 	// lastNarrow carries the last scan's table coverage into a republish, which
 	// re-attributes those same rows without scanning again.
@@ -366,7 +368,7 @@ func resolveScanInterval(d time.Duration) time.Duration {
 // data and container stats come from the watcher's cache, at most one refresh
 // old, instead of from a `docker ps` this scan would wait on. A wedged Docker
 // used to cost every scan the whole docker.CLITimeout, and every `ports.kill`
-// and `state.snapshot` queued behind it (step 5A.8).
+// and `state.snapshot` queued behind it.
 func (l *Loop) osScan(include Include) ([]ports.ListeningPort, error) {
 	ctx, cancel := observationContext(context.Background())
 	defer cancel()
@@ -538,7 +540,7 @@ func (l *Loop) Run(ctx context.Context) {
 		// current interval is not: without this floor every `ports.kill`,
 		// every `oberth list` that missed the cache and every write woke the
 		// loop into a second full scan, which is one more scan for the next
-		// caller to be queued behind (contract §44).
+		// caller to be queued behind.
 		//
 		// The floor is the *loop's* cadence and nothing else. A handler that
 		// asks for a scan gets one: Rescan is a forced scan (see scanMode)
@@ -715,7 +717,7 @@ func (l *Loop) observableObservation(source string) *state.Observation {
 // collect is what this scan asks the OS for. carry is what the *subscribers*
 // want the published snapshot to keep but this caller has no reason to pay
 // for: those fields are copied forward from the previous snapshot instead of
-// being collected again (contract §44). The scan loop's own tick passes its
+// being collected again. The scan loop's own tick passes its
 // demand as collect and nothing as carry; an RPC passes the caller's own
 // include as collect and the subscribers' as carry.
 func (l *Loop) scanLocked(collect, carry Include, reportFailure bool) (next, prev state.Snapshot, changed bool, err error) {
@@ -770,7 +772,7 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 	// that reads the store, the commit, and the publish. It is serialized
 	// against every store write's republish and against every other publisher,
 	// and the publish rides inside it so a later seq can never reach a client
-	// first (contract §38, §44).
+	// first.
 	if err := lockContext(ctx, l.orderGate); err != nil {
 		return l.abandoned(err)
 	}
@@ -791,7 +793,7 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 	// Configured health comes after attribution because it is the groups that
 	// say which port has a `health:` path. It runs on every tick regardless of
 	// `include`: a health path in a `oberth.yaml` is part of what the service
-	// is, not an opt-in statistic (step 1A.7). Its budget is what keeps this
+	// is, not an opt-in statistic. Its budget is what keeps this
 	// short enough to sit inside the ordering gate.
 	if err := ProbeConfiguredContext(ctx, rows, groupRows, l.ProbeContext, ConfiguredHealthBudget); err != nil {
 		return l.abandoned(err)
@@ -903,7 +905,7 @@ type commit struct {
 //
 // This scan asked the OS what was listening before that snapshot was captured,
 // so committing it now would put back ports the newer scan has already seen go
-// — the "no going backwards" half of contract §38, enforced here at the commit
+// — the "no going backwards" rule, enforced here at the commit
 // rather than by forbidding two scans from overlapping at all.
 func (l *Loop) superseded(seq uint64) bool {
 	return l.haveSnap && seq < l.committedSeq
@@ -934,14 +936,14 @@ func (l *Loop) commitScan(c commit) (next, prev state.Snapshot, changed bool) {
 	// Carry forward every probe result this scan did not take: between health
 	// cadences, for a configured probe the round's budget cut short, and for a
 	// scan an RPC started that had no reason to pay for a subscriber's health
-	// (contract §44). Without it a port flickers between "checked" and
+	//. Without it a port flickers between "checked" and
 	// "unknown" on the wire.
 	carryHealth(prev.Ports, rows, (c.collect.Health || c.carry.Health) && !c.health)
 
 	// Same for stats. A scan an RPC started collects none unless the caller
 	// asked, so it copies the subscribers' last readings across rather than
 	// publishing a snapshot with the numbers stripped out — and the 1 s stats
-	// tick refreshes them within the second anyway (contract §42).
+	// tick refreshes them within the second anyway.
 	if c.carry.Stats && !c.collect.Stats {
 		carryStats(prev.Ports, rows)
 	}
@@ -1382,7 +1384,7 @@ func (l *Loop) recentReadinessError() error {
 // Rescan scans now whatever the cache says, publishes the change it finds and
 // only then returns. It is what a write path calls: `ports.rename`,
 // `groups.assign` and the group config writes need the delta carrying the
-// change to be on the wire before their own reply is (contract §18), and a
+// change to be on the wire before their own reply is, and a
 // kill needs its selectors resolved against what is listening this instant.
 //
 // It is not Invalidate + Snapshot. That pair has a window between the two
@@ -1402,7 +1404,7 @@ func (l *Loop) RescanContext(ctx context.Context, include Include) (state.Snapsh
 }
 
 // Republish makes a store or `oberth.yaml` write visible on the wire without
-// scanning the machine (contract §44).
+// scanning the machine.
 //
 // The write changed how the ports the daemon already knows are *named and
 // grouped*, not which ports exist, so re-running attribution over the last
@@ -1479,8 +1481,8 @@ const (
 	// flight and then running a second is pure duplication.
 	mayCoalesce scanMode = iota
 	// forceScan is the write and kill path. `ports.kill` and `groups.kill`
-	// resolve their selectors against the scan they ask for (contract §17,
-	// §25) and a write's fallback republish has to see its own change, so
+	// resolve their selectors against the scan they ask for, and a write's
+	// fallback republish has to see its own change, so
 	// these always scan — never the one that happened to be in flight, and
 	// never the one that finished a moment ago.
 	forceScan
@@ -1629,7 +1631,7 @@ func (l *Loop) cachedWithin(include Include, maxAge time.Duration) (state.Snapsh
 // and every subscriber that opted into them would see them blink away and
 // back. It used to be *collected* again, which put `docker stats` and a round
 // of health probes on the critical path of every kill and every write; it is
-// copied forward now instead (contract §44).
+// copied forward now instead.
 func (l *Loop) demandInclude() Include {
 	_, want := l.opts.Demand()
 	return want

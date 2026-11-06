@@ -17,7 +17,7 @@ import (
 // It exists because those two things are the only parts of a snapshot that
 // change continuously, and the port scan they used to ride on is deliberately
 // adaptive: it backs off to 5 s while a subscriber watches an unchanging
-// machine (contract §37), which is right for ports and useless for a load
+// machine (), which is right for ports and useless for a load
 // meter. Sampling them apart lets the meter run at 1 s without pinning the
 // daemon to a full `lsof`/`netstat` scan at the same rate.
 //
@@ -165,19 +165,19 @@ func statsChanged(prev, next state.Snapshot) bool {
 		return true
 	}
 	for i := range next.Ports {
-		if !sameStats(prev.Ports[i].Stats, next.Ports[i].Stats) {
+		if !sameValue(prev.Ports[i].Stats, next.Ports[i].Stats) {
 			return true
 		}
 	}
 	for i := range next.Groups {
-		if !sameResources(prev.Groups[i].Resources, next.Groups[i].Resources) {
+		if !sameValue(prev.Groups[i].Resources, next.Groups[i].Resources) {
 			return true
 		}
 		if len(prev.Groups[i].Services) != len(next.Groups[i].Services) {
 			return true
 		}
 		for j := range next.Groups[i].Services {
-			if !sameStats(prev.Groups[i].Services[j].Stats, next.Groups[i].Services[j].Stats) {
+			if !sameValue(prev.Groups[i].Services[j].Stats, next.Groups[i].Services[j].Stats) {
 				return true
 			}
 		}
@@ -185,26 +185,18 @@ func statsChanged(prev, next state.Snapshot) bool {
 	return false
 }
 
-func sameStats(a, b *state.Stats) bool {
+// sameValue compares two optional values the way a snapshot diff needs: absent
+// on both sides is equal, absent on one is a change, and two present values are
+// compared by value. It is generic so the two row kinds share one rule rather
+// than one copy each.
+func sameValue[T comparable](a, b *T) bool {
 	switch {
 	case a == nil && b == nil:
 		return true
 	case a == nil || b == nil:
 		return false
-	default:
-		return *a == *b
 	}
-}
-
-func sameResources(a, b *state.Resources) bool {
-	switch {
-	case a == nil && b == nil:
-		return true
-	case a == nil || b == nil:
-		return false
-	default:
-		return *a == *b
-	}
+	return *a == *b
 }
 
 // mergePIDs unions two lists with no duplicates. The stats tick samples one
@@ -324,18 +316,30 @@ func statsPIDs(pp []state.Port) []int {
 // `connections` is carried forward too — counting them is an `lsof` (or `ss`,
 // or `netstat`) per port and stays on the scan tick.
 func refreshStats(rows []state.Port, samples map[int]ports.ProcSample) []state.Port {
-	return refreshStatsFrom(rows, samples, nil, false)
+	return refreshStatsAgainst(rows, samples, nil)
 }
 
-// A rebased sample must not enrich newly discovered or replacement runtimes.
-// The index is temporary and only built when publication advanced during I/O;
-// the ordinary stats tick retains its allocation-free unchanged-row path.
 func refreshStatsFrom(rows []state.Port, samples map[int]ports.ProcSample, basis []state.Port, validate bool) []state.Port {
+	if !validate {
+		return refreshStatsAgainst(rows, samples, nil)
+	}
+	return refreshStatsAgainst(rows, samples, basis)
+}
+
+// refreshStatsAgainst writes the sampled stats onto the rows that still name
+// the same runtime.
+//
+// basis is the snapshot the sample was taken against. When a publish advanced
+// during the IO, the sample belongs to an older generation and must not enrich
+// rows that appeared or were replaced since; nil means "the sample is current"
+// and skips that check entirely, which is the ordinary tick's path and costs no
+// allocation.
+func refreshStatsAgainst(rows []state.Port, samples map[int]ports.ProcSample, basis []state.Port) []state.Port {
 	if len(samples) == 0 {
 		return rows
 	}
 	var captured map[string]*state.Port
-	if validate {
+	if basis != nil {
 		captured = make(map[string]*state.Port, len(basis))
 		for i := range basis {
 			captured[basis[i].Key()] = &basis[i]
@@ -354,7 +358,7 @@ func refreshStatsFrom(rows []state.Port, samples map[int]ports.ProcSample, basis
 		if !ok || !sampleMatchesRuntime(out[i], s) {
 			continue
 		}
-		if validate {
+		if captured != nil {
 			old, found := captured[out[i].Key()]
 			if !found || !sameRuntime(*old, out[i]) {
 				continue

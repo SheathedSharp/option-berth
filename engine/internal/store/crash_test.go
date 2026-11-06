@@ -140,7 +140,7 @@ func TestCrashRecoveryKeepsWholeCommittedBatches(t *testing.T) {
 	}
 	defer st.Close()
 
-	rows, err := st.Query(nil, time.Time{}, crashBatches*crashBatchSize+10)
+	rows, err := st.History(HistoryFilter{Limit: crashBatches*crashBatchSize + 10})
 	if err != nil {
 		t.Fatalf("query after the crash: %v", err)
 	}

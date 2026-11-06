@@ -1,16 +1,17 @@
-// Package killer is option-berth's single implementation of "stop what is listening
-// here". The CLI (`oberth kill`, and the `kill-all` / `down` aliases), the
-// daemon's ports.kill / groups.kill, and the desktop app all
-// go through KillPorts, so the rules below hold everywhere:
+// Package killer is option-berth's one implementation of "stop what is listening
+// here". The CLI's `kill` and the daemon's kill requests both go through
+// KillPorts, so these rules hold for every caller:
 //
-//   - Docker-published ports are stopped with `docker stop`, never signalled.
-//   - A listener option-berth started is stopped by its process group when it has one
-//     of its own, otherwise by walking the run root's process tree, so the
-//     whole `npm → vite → esbuild` tree dies rather than just the leaf.
-//   - A tree is signalled children before parents. This is deterministic order,
-//     not a promise to freeze a concurrently changing OS process tree.
-//   - SIGTERM first; if the port is still listening after the grace period,
-//     SIGKILL — unless the caller opted out of escalation.
+//   - A Docker-published port is stopped with `docker stop`, never signalled. A
+//     port the container list claims while something else holds it is signalled
+//     instead: the list can be stale, the listener cannot.
+//   - A listener this engine started is stopped through its process group when
+//     it leads one, otherwise through its process tree, so an
+//     `npm → vite → esbuild` chain dies whole rather than at the leaf.
+//   - A tree is signalled children before parents. That is a deterministic
+//     order, not a promise to freeze a process tree the OS is still changing.
+//   - SIGTERM first, then SIGKILL if the port is still listening once the grace
+//     period is over — unless the caller opted out of escalation.
 //   - A dry run reports exactly the actions a real run would take, and takes
 //     none of them.
 package killer
@@ -31,20 +32,21 @@ import (
 )
 
 // DefaultGrace is how long a target gets to shut down after SIGTERM before the
-// killer escalates to SIGKILL (daemon spec: `--grace`, default 5s).
+// killer escalates to SIGKILL.
 const DefaultGrace = 5 * time.Second
 
-// pollInterval is how often the escalation wait re-checks a target.
+// pollInterval is how often the escalation wait re-checks a target. Polling is
+// what keeps a well-behaved process from costing the whole grace period.
 const pollInterval = 100 * time.Millisecond
 
-// Target addresses one thing to kill. Exactly one of Port, PID and RunID is set; BindAddress only disambiguates a Port that is bound to
-// several addresses (contract §3 selectors).
+// Target names one thing to stop. Exactly one of Port, PID and RunID is set;
+// BindAddress only disambiguates a Port bound to several addresses.
 //
-// StartedAt is an optional identity claim for a PID target: the caller records
-// when the process it means started. Before signalling, the killer checks the
-// live process started no later than that (plus tolerance), so a recycled pid
-// is reported instead of killed. Zero means no claim — an explicit `kill --pid`
-// says "this pid, now".
+// StartedAt is an optional identity claim on a PID target: when the caller
+// believes the process started. Before signalling, the killer checks that the
+// live process started no later than that, so a recycled pid is reported rather
+// than killed. Zero means no claim — an explicit `kill --pid` says "this pid,
+// now".
 type Target struct {
 	Port        int
 	BindAddress string
@@ -55,9 +57,9 @@ type Target struct {
 	Name string
 }
 
-// Options controls how targets are killed. The zero value is the documented
-// default: SIGTERM, escalate to SIGKILL after DefaultGrace, no tree walk
-// beyond what a option-berth-started run implies.
+// Options controls how targets are stopped. The zero value is the documented
+// default: SIGTERM, escalate to SIGKILL after DefaultGrace, and no tree walk
+// beyond the one an engine-started run already implies.
 type Options struct {
 	// Tree signals the target's whole process tree, not just the listener.
 	// A listener attributed to a option-berth-started run is always treated as a
@@ -84,7 +86,7 @@ type Options struct {
 	OnSignal func(rootPID int)
 }
 
-// grace resolves the escalation window.
+// grace is the escalation window in effect.
 func (o Options) grace() time.Duration {
 	if o.Grace <= 0 {
 		return DefaultGrace
@@ -92,20 +94,21 @@ func (o Options) grace() time.Duration {
 	return o.Grace
 }
 
-// escalating reports whether SIGTERM should be followed by SIGKILL.
+// escalating reports whether SIGTERM is followed by SIGKILL. A forced kill
+// already sent the strongest signal, so there is nothing to escalate to.
 func (o Options) escalating() bool {
 	if o.Force {
-		return false // already the strongest signal
+		return false
 	}
 	return o.Escalate == nil || *o.Escalate
 }
 
-// Result is one row of the outcome: what was done (or, for a dry run, would be
-// done) to a single process or container. It is the contract §3 kill row.
+// Result is one row of the outcome: what was done, or — for a dry run — what
+// would have been done, to one process or container.
 type Result = state.KillResult
 
-// Clock is the killer's view of time, injected so escalation can be tested
-// without waiting for a real grace period.
+// Clock is the killer's view of time, replaceable so escalation can be tested
+// without waiting out a real grace period.
 type Clock interface {
 	Now() time.Time
 	Sleep(d time.Duration)
@@ -156,9 +159,9 @@ func newEngine(ctx context.Context) *engine {
 }
 
 // KillPorts stops every target and returns one row per action, children before
-// parents. It never returns an error: a target that could not be resolved or
-// signalled comes back as a row with OK false, so partial failures are
-// reportable per target (daemon spec, "Error handling").
+// parents. It returns no error: a target that could not be resolved or
+// signalled comes back as a row with OK false, so a partial failure is reported
+// per target instead of hiding the targets that did stop.
 func KillPorts(ctx context.Context, targets []Target, opts Options) []Result {
 	if len(targets) == 0 {
 		return []Result{}
@@ -276,72 +279,113 @@ func (e *engine) kill(ctx context.Context, snapshot []ports.ListeningPort, targe
 
 // resolve turns one selector into the units it addresses. A run id can address
 // several listeners, so this returns a slice.
-func (e *engine) resolve(t Target, snapshot []ports.ListeningPort, opts Options) (resolved []*unit) {
-	// Presentation is applied after resolution, retaining every identity check.
-	defer func() {
-		if t.Name != "" {
-			for _, u := range resolved {
-				u.name = t.Name
-			}
+// resolve turns one selector into the units it addresses. A run id can address
+// several listeners, so the answer is a slice; a selector that matches nothing
+// comes back as one unit carrying the reason, so the caller still gets a row.
+func (e *engine) resolve(t Target, snapshot []ports.ListeningPort, opts Options) []*unit {
+	units := e.unitsFor(t, snapshot, opts)
+	// The caller's own label is presentation, applied only after every identity
+	// check has run: naming a target must not change which process it names.
+	if t.Name != "" {
+		for _, u := range units {
+			u.name = t.Name
 		}
-	}()
+	}
+	return units
+}
+
+// unitsFor dispatches on which selector the target set.
+func (e *engine) unitsFor(t Target, snapshot []ports.ListeningPort, opts Options) []*unit {
 	switch {
 	case t.RunID != "":
-		var out []*unit
-		for i := range snapshot {
-			if snapshot[i].RunID == t.RunID || snapshot[i].Tag == t.RunID {
-				out = append(out, e.unitFor(&snapshot[i], opts))
-			}
-		}
-		if len(out) == 0 {
-			return []*unit{{name: t.RunID, err: codedf(CodeNotFound, "", "no listening port belongs to run %s", t.RunID)}}
-		}
-		return out
+		return e.unitsForRun(t.RunID, snapshot, opts)
 	case t.Port > 0:
-		matches := matchPort(snapshot, t.Port, t.BindAddress)
-		switch len(matches) {
-		case 0:
-			where := strconv.Itoa(t.Port)
-			if t.BindAddress != "" {
-				where = t.BindAddress + ":" + where
-			}
-			return []*unit{{port: t.Port, bind: t.BindAddress,
-				err: codedf(CodeNotFound, "", "no process is listening on %s", where)}}
-		case 1:
-			return []*unit{e.unitFor(matches[0], opts)}
-		default:
-			var addrs []string
-			for _, m := range matches {
-				addrs = append(addrs, m.BindAddress)
-			}
-			return []*unit{{port: t.Port,
-				err: codedf(CodeAmbiguous, "re-run with --ip "+addrs[0], "port %d is bound to %d addresses: %s",
-					t.Port, len(addrs), strings.Join(addrs, ", "))}}
-		}
+		return e.unitsForPort(t, snapshot, opts)
 	case t.PID > 0:
-		if !validSignalPID(t.PID) {
-			return []*unit{{root: t.PID, err: codedf(CodeInvalidSelector, "", "invalid PID %d", t.PID)}}
-		}
-		var u *unit
-		for i := range snapshot {
-			if snapshot[i].PID == t.PID {
-				u = e.unitFor(&snapshot[i], opts)
-				break
-			}
-		}
-		if u == nil {
-			if !e.alive(t.PID) {
-				return []*unit{{root: t.PID, err: codedf(CodeNotFound, "", "no process with PID %d", t.PID)}}
-			}
-			u = &unit{root: t.PID, name: e.table.Name(t.PID), listenPID: t.PID}
-			e.fillProcesses(u, t.PID, opts.Tree)
-		}
-		// Keep this claim even when PID matched a listener. Selection is not
-		// the final signal boundary, and a listener must not erase run evidence.
-		u.addClaim(t.PID, t.StartedAt)
-		return []*unit{u}
+		return e.unitsForPID(t, snapshot, opts)
 	}
 	return []*unit{{err: codedf(CodeInvalidSelector, "", "empty target: set one of port, pid or run_id")}}
+}
+
+// unitsForRun addresses every listener the run recorded.
+func (e *engine) unitsForRun(runID string, snapshot []ports.ListeningPort, opts Options) []*unit {
+	var units []*unit
+	for i := range snapshot {
+		if snapshot[i].RunID == runID || snapshot[i].Tag == runID {
+			units = append(units, e.unitFor(&snapshot[i], opts))
+		}
+	}
+	if len(units) == 0 {
+		return []*unit{{name: runID, err: codedf(CodeNotFound, "", "no listening port belongs to run %s", runID)}}
+	}
+	return units
+}
+
+// unitsForPort addresses the listener on one port. A port bound to several
+// addresses is ambiguous on purpose: picking one would mean guessing which
+// process the caller meant, and the caller can say which with --ip.
+func (e *engine) unitsForPort(t Target, snapshot []ports.ListeningPort, opts Options) []*unit {
+	matches := matchPort(snapshot, t.Port, t.BindAddress)
+	switch len(matches) {
+	case 0:
+		return []*unit{{port: t.Port, bind: t.BindAddress, err: codedf(CodeNotFound, "",
+			"no process is listening on %s", where(t.Port, t.BindAddress))}}
+	case 1:
+		return []*unit{e.unitFor(matches[0], opts)}
+	}
+	return []*unit{{port: t.Port, err: ambiguousPort(t.Port, matches)}}
+}
+
+// where spells a port with its bind address when one was named.
+func where(port int, bind string) string {
+	if bind == "" {
+		return strconv.Itoa(port)
+	}
+	return bind + ":" + strconv.Itoa(port)
+}
+
+// ambiguousPort names every address the port is bound to and how to pick one.
+func ambiguousPort(port int, matches []*ports.ListeningPort) *CodedError {
+	addresses := make([]string, 0, len(matches))
+	for _, match := range matches {
+		addresses = append(addresses, match.BindAddress)
+	}
+	return codedf(CodeAmbiguous, "re-run with --ip "+addresses[0],
+		"port %d is bound to %d addresses: %s", port, len(addresses), strings.Join(addresses, ", "))
+}
+
+// unitsForPID addresses one pid. A pid the scan knows about is stopped as the
+// listener it is; otherwise its liveness is the only thing that can be
+// checked, and its tree is what gets signalled.
+func (e *engine) unitsForPID(t Target, snapshot []ports.ListeningPort, opts Options) []*unit {
+	if !validSignalPID(t.PID) {
+		return []*unit{{root: t.PID, err: codedf(CodeInvalidSelector, "", "invalid PID %d", t.PID)}}
+	}
+	if scanned := e.scannedPID(t.PID, snapshot, opts); scanned != nil {
+		// The identity claim survives even when the pid matched a listener:
+		// selection is not the final signal boundary, and a listener must not
+		// erase the run evidence attached to the pid.
+		scanned.addClaim(t.PID, t.StartedAt)
+		return []*unit{scanned}
+	}
+	if !e.alive(t.PID) {
+		return []*unit{{root: t.PID, err: codedf(CodeNotFound, "", "no process with PID %d", t.PID)}}
+	}
+	u := &unit{root: t.PID, name: e.table.Name(t.PID), listenPID: t.PID}
+	e.fillProcesses(u, t.PID, opts.Tree)
+	u.addClaim(t.PID, t.StartedAt)
+	return []*unit{u}
+}
+
+// scannedPID is the unit for a pid that also appears in the listener scan, or
+// nil when it does not.
+func (e *engine) scannedPID(pid int, snapshot []ports.ListeningPort, opts Options) *unit {
+	for i := range snapshot {
+		if snapshot[i].PID == pid {
+			return e.unitFor(&snapshot[i], opts)
+		}
+	}
+	return nil
 }
 
 // unitFor builds the unit for a scanned listener.
