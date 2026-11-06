@@ -45,25 +45,22 @@ func timeFromString(s string) (time.Time, error) {
 	return parsed.UTC(), nil
 }
 
-// ResetInfo describes a database that had to be thrown away because the file
-// on disk was not a usable SQLite database. The daemon turns this into a
-// state.event{kind:"db_reset"}.
+// ResetInfo records a database that was thrown away because the file on disk
+// was not one SQLite could read. The daemon reports it as a db_reset event, so
+// a person can find the parked file.
 type ResetInfo struct {
-	// Path is the database that was reset.
-	Path string
-	// MovedTo is where the unusable file was parked.
-	MovedTo string
-	// Reason is the driver error that triggered the reset.
-	Reason string
+	Path    string // the database that was reset
+	MovedTo string // where the unusable file went
+	Reason  string // the driver error that triggered it
 }
 
 // Options tunes Open. The zero value is what Open uses.
 type Options struct {
-	// OnReset, when set, is called after a corrupt database has been moved
-	// aside and recreated, before Open returns.
+	// OnReset runs after a corrupt database has been parked and replaced, and
+	// before Open returns. Nil is fine.
 	OnReset func(ResetInfo)
-	// BusyTimeout is how long a statement waits for a competing writer.
-	// Zero means five seconds.
+	// BusyTimeout bounds how long one statement waits for a competing writer;
+	// zero means five seconds.
 	BusyTimeout time.Duration
 }
 
@@ -92,12 +89,12 @@ type Store struct {
 // the tests and `oberth serve` with a temp root use.
 func Path() string { return paths.DB() }
 
-// Open opens (creating if needed) the database at path and migrates it to the
-// newest registered schema version. An empty path means Path().
+// Open opens the database at path, creating it if needed and migrating it to
+// the newest registered version. An empty path means Path().
 //
-// A file that is not a usable SQLite database is moved aside to
-// <path>.corrupt-<timestamp> and recreated from scratch; Open succeeds and
-// ResetHappened reports it.
+// A file that is not a usable SQLite database is parked as
+// <path>.corrupt-<timestamp> and replaced by a fresh one: Open still succeeds,
+// and ResetHappened says it happened.
 func Open(path string) (*Store, error) { return OpenWith(path, Options{}) }
 
 // OpenReadOnly opens an existing database without running migrations or
@@ -175,32 +172,23 @@ func recreate(path string, opts Options, cause error) (*Store, error) {
 	return fresh, nil
 }
 
-// openAt does the actual open + migrate, with no corruption recovery.
+// openAt opens and migrates, with no corruption recovery: it is openAt's caller
+// that decides whether a failure is worth starting over from.
 func openAt(path string, opts Options) (*Store, error) {
-	busy := opts.BusyTimeout
-	if busy <= 0 {
-		busy = 5 * time.Second
-	}
-	dsn := fmt.Sprintf(
-		"file:%s?_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)",
-		path, busy.Milliseconds(),
-	)
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite", dsnFor(path, opts.BusyTimeout))
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", path, err)
 	}
-	// A handful of pooled connections is plenty: writes are serialised in
-	// Go and readers are short.
+	// Writes are serialised in Go and readers are short, so a small pool is
+	// enough; the idle timeout keeps a quiet daemon from holding connections.
 	db.SetMaxOpenConns(8)
 	db.SetMaxIdleConns(4)
 	db.SetConnMaxIdleTime(5 * time.Minute)
 
-	s := &Store{db: db, path: path}
-
-	// Touch the schema so a file that is not a database fails here, where
-	// the caller can still recover, rather than on the first query.
-	var n int
-	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master`).Scan(&n); err != nil {
+	// Touch the schema first: a file that is not a database fails here, where
+	// the caller can still recover, rather than on the first real query.
+	var tables int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master`).Scan(&tables); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("opening %s: %w", path, err)
 	}
@@ -208,11 +196,27 @@ func openAt(path string, opts Options) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	// The database holds a person's service history; keep it owner-only.
 	if err := os.Chmod(path, 0o600); err != nil && !os.IsNotExist(err) {
 		_ = db.Close()
 		return nil, fmt.Errorf("securing %s: %w", path, err)
 	}
-	return s, nil
+	return &Store{db: db, path: path}, nil
+}
+
+// defaultBusyTimeout is how long one statement waits for a competing writer.
+const defaultBusyTimeout = 5 * time.Second
+
+// dsnFor is the connection string: WAL so readers proceed during a write, and
+// foreign keys on so a migration's constraints are real.
+func dsnFor(path string, busy time.Duration) string {
+	if busy <= 0 {
+		busy = defaultBusyTimeout
+	}
+	return fmt.Sprintf(
+		"file:%s?_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)",
+		path, busy.Milliseconds(),
+	)
 }
 
 // prepareFile makes sure the parent directory exists (0700) and that the
@@ -293,14 +297,14 @@ var corruptionPhrases = []string{
 
 // Close releases the database, leaving one file behind rather than three.
 //
-// WAL keeps a `-wal` and a `-shm` beside the database, and they are written
-// again by whichever pooled connection closes last — after Close has returned,
-// as far as the caller can tell. A daemon that has stopped, or a test whose
-// temp directory is being removed, has no way to wait for that: the removal
-// fails with "directory not empty" against a `-wal` recreated behind it.
-// Checkpointing and leaving WAL mode deletes both sidecars while we still hold
-// the connection that owns them. A busy database refuses the switch; that is
-// the state we were already in, so the error is not worth reporting.
+// WAL keeps a `-wal` and a `-shm` beside the database, and whichever pooled
+// connection closes last writes them again — after Close has returned, as far
+// as the caller can tell. A daemon that has stopped, or a test removing its
+// temp directory, cannot wait for that: the removal fails with "directory not
+// empty" against a sidecar recreated behind it. Checkpointing and leaving WAL
+// mode deletes both while we still hold the connection that owns them. A busy
+// database refuses the switch, which is the state we were already in, so that
+// error is not worth reporting.
 func (s *Store) Close() error {
 	if s == nil || s.db == nil {
 		return nil
@@ -308,16 +312,24 @@ func (s *Store) Close() error {
 	if s.readOnly {
 		return s.db.Close()
 	}
-	// Drop the idle pool: journal_mode can only change when one connection is
-	// left to change it.
+	s.checkpointAndLeaveWAL()
+	return s.db.Close()
+}
+
+// checkpointAndLeaveWAL folds the write-ahead log into the database and takes
+// the file out of WAL mode, both of which delete the two sidecars. It needs the
+// pool down to one connection: journal_mode only changes when one connection is
+// left to change it.
+func (s *Store) checkpointAndLeaveWAL() {
 	s.db.SetMaxIdleConns(0)
 	s.db.SetMaxOpenConns(1)
-	if conn, err := s.db.Conn(context.Background()); err == nil {
-		_, _ = conn.ExecContext(context.Background(), `PRAGMA wal_checkpoint(TRUNCATE)`)
-		_, _ = conn.ExecContext(context.Background(), `PRAGMA journal_mode(DELETE)`)
-		_ = conn.Close()
+	conn, err := s.db.Conn(context.Background())
+	if err != nil {
+		return
 	}
-	return s.db.Close()
+	defer func() { _ = conn.Close() }()
+	_, _ = conn.ExecContext(context.Background(), `PRAGMA wal_checkpoint(TRUNCATE)`)
+	_, _ = conn.ExecContext(context.Background(), `PRAGMA journal_mode(DELETE)`)
 }
 
 // DBPath is the file this store is backed by.
