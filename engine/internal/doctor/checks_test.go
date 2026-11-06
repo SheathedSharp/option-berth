@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,70 +16,85 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
+// mustMkdir and mustChmod keep the fixtures' setup failures out of the
+// assertions they precede.
+func mustMkdir(t *testing.T, path string, mode os.FileMode) {
+	t.Helper()
+	if err := os.MkdirAll(path, mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustChmod(t *testing.T, path string, mode os.FileMode) {
+	t.Helper()
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // --------------------------------------------------------------- the CLI ---
 
 func TestCLIOnPath(t *testing.T) {
-	t.Run("resolves to the running binary", func(t *testing.T) {
+	t.Run("the running binary is the one PATH finds", func(t *testing.T) {
 		env := fakeEnv(t)
 		self := write(t, filepath.Join(t.TempDir(), "option-berth"), "#!/bin/sh\n")
 		env.Executable = func() (string, error) { return self, nil }
 		env.LookPath = func(string) (string, error) { return self, nil }
-		got := run(t, env, checkCLIOnPath)
-		wantStatus(t, got, StatusOK)
+		wantStatus(t, run(t, env, checkCLIOnPath), StatusOK)
 	})
 
-	t.Run("another option-berth shadows this one", func(t *testing.T) {
+	t.Run("a second install shadows this one", func(t *testing.T) {
 		env := fakeEnv(t)
-		dir := t.TempDir()
-		self := write(t, filepath.Join(dir, "mine", "option-berth"), "#!/bin/sh\n")
-		other := write(t, filepath.Join(dir, "theirs", "option-berth"), "#!/bin/sh\n")
+		root := t.TempDir()
+		self := write(t, filepath.Join(root, "mine", "option-berth"), "#!/bin/sh\n")
+		other := write(t, filepath.Join(root, "theirs", "option-berth"), "#!/bin/sh\n")
 		env.Executable = func() (string, error) { return self, nil }
 		env.LookPath = func(string) (string, error) { return other, nil }
 
-		got := run(t, env, checkCLIOnPath)
-		wantStatus(t, got, StatusWarn)
-		if !strings.Contains(got.Detail, other) || !strings.Contains(got.Detail, self) {
-			t.Errorf("detail = %q, want it to name both binaries", got.Detail)
+		row := run(t, env, checkCLIOnPath)
+		wantStatus(t, row, StatusWarn)
+		for _, binary := range []string{self, other} {
+			if !strings.Contains(row.Detail, binary) {
+				t.Errorf("detail = %q, want it to name %s", row.Detail, binary)
+			}
 		}
 	})
 
-	t.Run("nothing on PATH at all", func(t *testing.T) {
-		env := fakeEnv(t)
-		got := run(t, env, checkCLIOnPath)
-		wantStatus(t, got, StatusFail)
+	t.Run("PATH has no oberth", func(t *testing.T) {
+		wantStatus(t, run(t, fakeEnv(t), checkCLIOnPath), StatusFail)
 	})
 }
 
 // ---------------------------------------------------------------- config ---
 
 func TestConfigParses(t *testing.T) {
-	t.Run("no file is a valid state", func(t *testing.T) {
+	t.Run("a missing file is a valid state", func(t *testing.T) {
 		wantStatus(t, run(t, fakeEnv(t), checkConfigParses), StatusOK)
 	})
 
-	t.Run("a broken file fails with a position and a caret", func(t *testing.T) {
+	t.Run("broken YAML fails with a position and a caret", func(t *testing.T) {
 		env := fakeEnv(t)
 		write(t, env.ConfigPath, "daemon: [broken")
-		got := run(t, env, checkConfigParses)
-		wantStatus(t, got, StatusFail)
-		if !got.Fixable {
-			t.Error("a broken config is the fix --fix exists for")
+		row := run(t, env, checkConfigParses)
+		wantStatus(t, row, StatusFail)
+		if !row.Fixable {
+			t.Error("a broken config is exactly what --fix exists for")
 		}
-		if !strings.Contains(got.Detail, env.ConfigPath+":1:9") {
-			t.Errorf("detail = %q, want it to carry <path>:1:7", got.Detail)
+		if !strings.Contains(row.Detail, env.ConfigPath+":1:9") {
+			t.Errorf("detail = %q, want it to carry %s:1:9", row.Detail, env.ConfigPath)
 		}
-		if !strings.Contains(got.Detail, "^") {
-			t.Errorf("detail = %q, want a caret under the column", got.Detail)
+		if !strings.Contains(row.Detail, "^") {
+			t.Errorf("detail = %q, want a caret under the column", row.Detail)
 		}
 	})
 
-	t.Run("a valid file parses", func(t *testing.T) {
+	t.Run("valid YAML parses", func(t *testing.T) {
 		env := fakeEnv(t)
 		write(t, env.ConfigPath, "daemon:\n  log_level: info\n")
 		wantStatus(t, run(t, env, checkConfigParses), StatusOK)
 	})
 
-	t.Run("a well-formed file with the wrong types only warns", func(t *testing.T) {
+	t.Run("well-formed YAML of the wrong shape only warns", func(t *testing.T) {
 		env := fakeEnv(t)
 		write(t, env.ConfigPath, "daemon: 3\n")
 		wantStatus(t, run(t, env, checkConfigParses), StatusWarn)
@@ -88,10 +104,10 @@ func TestConfigParses(t *testing.T) {
 func TestConfigDirWritable(t *testing.T) {
 	t.Run("a writable directory", func(t *testing.T) {
 		env := fakeEnv(t)
-		got := run(t, env, checkConfigDirWritable)
-		wantStatus(t, got, StatusOK)
-		if _, err := os.Stat(env.ConfigDir); err != nil {
-			t.Errorf("the check should have created %s: %v", env.ConfigDir, err)
+		row := run(t, env, checkConfigDirWritable)
+		wantStatus(t, row, StatusOK)
+		if info, err := os.Stat(env.ConfigDir); err != nil || !info.IsDir() {
+			t.Errorf("the check should have created %s as a directory: %v", env.ConfigDir, err)
 		}
 	})
 
@@ -100,24 +116,19 @@ func TestConfigDirWritable(t *testing.T) {
 			t.Skip("file modes do not stop this user from writing")
 		}
 		env := fakeEnv(t)
-		if err := os.MkdirAll(env.ConfigDir, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chmod(env.ConfigDir, 0o500); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { os.Chmod(env.ConfigDir, 0o700) })
+		mustMkdir(t, env.ConfigDir, 0o700)
+		mustChmod(t, env.ConfigDir, 0o500)
+		t.Cleanup(func() { mustChmod(t, env.ConfigDir, 0o700) })
 		wantStatus(t, run(t, env, checkConfigDirWritable), StatusFail)
 	})
 }
 
 func TestProjectConfig(t *testing.T) {
 	t.Run("absent warns and points at oberth init", func(t *testing.T) {
-		env := fakeEnv(t)
-		got := run(t, env, checkProjectConfig)
-		wantStatus(t, got, StatusWarn)
-		if !strings.Contains(got.Fix, "oberth init") {
-			t.Errorf("fix = %q", got.Fix)
+		row := run(t, fakeEnv(t), checkProjectConfig)
+		wantStatus(t, row, StatusWarn)
+		if !strings.Contains(row.Fix, "oberth init") {
+			t.Errorf("fix = %q", row.Fix)
 		}
 	})
 
@@ -125,10 +136,10 @@ func TestProjectConfig(t *testing.T) {
 		env := fakeEnv(t)
 		write(t, filepath.Join(env.Project, groups.ConfigName),
 			"name: demo\nservices:\n  - name: api\n    port: 3000\n")
-		got := run(t, env, checkProjectConfig)
-		wantStatus(t, got, StatusOK)
-		if !strings.Contains(got.Summary, "demo") || !strings.Contains(got.Summary, "1 service") {
-			t.Errorf("summary = %q, want the group name and the service count", got.Summary)
+		row := run(t, env, checkProjectConfig)
+		wantStatus(t, row, StatusOK)
+		if !strings.Contains(row.Summary, "demo") || !strings.Contains(row.Summary, "1 service") {
+			t.Errorf("summary = %q, want the group name and the service count", row.Summary)
 		}
 	})
 
@@ -138,30 +149,30 @@ func TestProjectConfig(t *testing.T) {
 		wantStatus(t, run(t, env, checkProjectConfig), StatusFail)
 	})
 
-	t.Run("the old dotfile name still loads, warns and is fixable", func(t *testing.T) {
+	t.Run("the old dotfile name loads, warns and is fixable", func(t *testing.T) {
 		env := fakeEnv(t)
 		write(t, filepath.Join(env.Project, groups.LegacyConfigName), "name: demo\n")
-		got := run(t, env, checkProjectConfig)
-		wantStatus(t, got, StatusWarn)
-		if !got.Fixable || !strings.Contains(got.Fix, "oberth doctor --fix --only project_config") {
-			t.Errorf("fix = %q (fixable %v), want an explicit filesystem-only repair", got.Fix, got.Fixable)
+		row := run(t, env, checkProjectConfig)
+		wantStatus(t, row, StatusWarn)
+		if !row.Fixable || !strings.Contains(row.Fix, "oberth doctor --fix --only project_config") {
+			t.Errorf("fix = %q (fixable %v), want an explicit filesystem-only repair", row.Fix, row.Fixable)
 		}
-		if !strings.Contains(got.Summary, "demo") {
-			t.Errorf("summary = %q, want the group it still loads", got.Summary)
+		if !strings.Contains(row.Summary, "demo") {
+			t.Errorf("summary = %q, want the group it still loads", row.Summary)
 		}
 	})
 
-	t.Run("a shadowed file warns and is not fixable", func(t *testing.T) {
+	t.Run("a shadowed spelling warns and is not fixable", func(t *testing.T) {
 		env := fakeEnv(t)
 		write(t, filepath.Join(env.Project, groups.ConfigName), "name: new\n")
 		write(t, filepath.Join(env.Project, groups.LegacyConfigName), "name: old\n")
-		got := run(t, env, checkProjectConfig)
-		wantStatus(t, got, StatusWarn)
-		if got.Fixable {
+		row := run(t, env, checkProjectConfig)
+		wantStatus(t, row, StatusWarn)
+		if row.Fixable {
 			t.Error("two files need a person to reconcile them; the check must not be fixable")
 		}
-		if !strings.Contains(got.Summary, "new") || !strings.Contains(got.Summary, groups.LegacyConfigName) {
-			t.Errorf("summary = %q, want the file in use and the ignored one", got.Summary)
+		if !strings.Contains(row.Summary, "new") || !strings.Contains(row.Summary, groups.LegacyConfigName) {
+			t.Errorf("summary = %q, want the file in use and the ignored one", row.Summary)
 		}
 	})
 }
@@ -169,20 +180,17 @@ func TestProjectConfig(t *testing.T) {
 // ---------------------------------------------------------------- daemon ---
 
 func aliveDaemon() DaemonInfo {
-	return DaemonInfo{
-		Reachable:       true,
-		Version:         "v1.2.3",
-		ProtocolVersion: rpc.ProtocolVersion,
-		Socket:          "/tmp/option-berth.sock",
-		PID:             4242,
-	}
+	info := DaemonInfo{Reachable: true, PID: 4242, Socket: "/tmp/option-berth.sock"}
+	info.Version = "v1.2.3"
+	info.ProtocolVersion = rpc.ProtocolVersion
+	return info
 }
 
 func TestDaemonReachable(t *testing.T) {
-	t.Run("no daemon fails and is fixable", func(t *testing.T) {
-		got := run(t, fakeEnv(t), checkDaemonReachable)
-		wantStatus(t, got, StatusFail)
-		if !got.Fixable {
+	t.Run("a stopped daemon fails and is fixable", func(t *testing.T) {
+		row := run(t, fakeEnv(t), checkDaemonReachable)
+		wantStatus(t, row, StatusFail)
+		if !row.Fixable {
 			t.Error("a stopped daemon is exactly what --fix restarts")
 		}
 	})
@@ -190,85 +198,83 @@ func TestDaemonReachable(t *testing.T) {
 	t.Run("a listening daemon", func(t *testing.T) {
 		env := fakeEnv(t)
 		env.Daemon = func(context.Context) DaemonInfo { return aliveDaemon() }
-		got := run(t, env, checkDaemonReachable)
-		wantStatus(t, got, StatusOK)
-		if !strings.Contains(got.Detail, "4242") {
-			t.Errorf("detail = %q, want the pid", got.Detail)
+		row := run(t, env, checkDaemonReachable)
+		wantStatus(t, row, StatusOK)
+		if !strings.Contains(row.Detail, "4242") {
+			t.Errorf("detail = %q, want the pid", row.Detail)
 		}
 	})
 
 	t.Run("answered from inside the daemon", func(t *testing.T) {
 		env := fakeEnv(t)
 		env.Daemon = func(context.Context) DaemonInfo {
-			d := aliveDaemon()
-			d.Local = true
-			return d
+			info := aliveDaemon()
+			info.Local = true
+			return info
 		}
 		wantStatus(t, run(t, env, checkDaemonReachable), StatusOK)
 	})
 }
 
 func TestDaemonVersionMatches(t *testing.T) {
-	t.Run("no daemon skips", func(t *testing.T) {
-		wantStatus(t, run(t, fakeEnv(t), checkDaemonVersionMatches), StatusSkip)
-	})
-
-	t.Run("same version", func(t *testing.T) {
-		env := fakeEnv(t)
-		env.Daemon = func(context.Context) DaemonInfo { return aliveDaemon() }
-		wantStatus(t, run(t, env, checkDaemonVersionMatches), StatusOK)
-	})
-
-	t.Run("a stale daemon warns and names the restart", func(t *testing.T) {
-		env := fakeEnv(t)
-		env.Daemon = func(context.Context) DaemonInfo {
-			d := aliveDaemon()
-			d.Version = "v0.9.0"
-			return d
-		}
-		got := run(t, env, checkDaemonVersionMatches)
-		wantStatus(t, got, StatusWarn)
-		if !strings.Contains(got.Summary, "v0.9.0") || !strings.Contains(got.Summary, "v1.2.3") {
-			t.Errorf("summary = %q, want both versions", got.Summary)
-		}
-		if got.Fix != "oberth daemon restart" {
-			t.Errorf("fix = %q", got.Fix)
-		}
-	})
+	for _, tc := range []struct {
+		name   string
+		daemon func() DaemonInfo
+		want   string
+	}{
+		{"no daemon", nil, StatusSkip},
+		{"same version", aliveDaemon, StatusOK},
+		{"a stale daemon", func() DaemonInfo {
+			info := aliveDaemon()
+			info.Version = "v0.9.0"
+			return info
+		}, StatusWarn},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := fakeEnv(t)
+			if tc.daemon != nil {
+				env.Daemon = func(context.Context) DaemonInfo { return tc.daemon() }
+			}
+			row := run(t, env, checkDaemonVersionMatches)
+			wantStatus(t, row, tc.want)
+			if tc.want != StatusWarn {
+				return
+			}
+			if !strings.Contains(row.Summary, "v0.9.0") || !strings.Contains(row.Summary, "v1.2.3") {
+				t.Errorf("summary = %q, want both versions", row.Summary)
+			}
+			if row.Fix != "oberth daemon restart" {
+				t.Errorf("fix = %q", row.Fix)
+			}
+		})
+	}
 }
 
 func TestDaemonProtocol(t *testing.T) {
-	t.Run("matching majors", func(t *testing.T) {
-		env := fakeEnv(t)
-		env.Daemon = func(context.Context) DaemonInfo { return aliveDaemon() }
-		wantStatus(t, run(t, env, checkDaemonProtocol), StatusOK)
-	})
-
-	t.Run("a newer minor still matches", func(t *testing.T) {
-		env := fakeEnv(t)
-		env.Daemon = func(context.Context) DaemonInfo {
-			d := aliveDaemon()
-			major, _ := protocolMajor(rpc.ProtocolVersion)
-			d.ProtocolVersion = fmt.Sprintf("%d.99.0", major)
-			return d
-		}
-		wantStatus(t, run(t, env, checkDaemonProtocol), StatusOK)
-	})
-
-	t.Run("a different major fails", func(t *testing.T) {
-		env := fakeEnv(t)
-		env.Daemon = func(context.Context) DaemonInfo {
-			d := aliveDaemon()
-			major, _ := protocolMajor(rpc.ProtocolVersion)
-			d.ProtocolVersion = fmt.Sprintf("%d.0.0", major+1)
-			return d
-		}
-		got := run(t, env, checkDaemonProtocol)
-		wantStatus(t, got, StatusFail)
-		if got.Fix != "oberth daemon restart" {
-			t.Errorf("fix = %q", got.Fix)
-		}
-	})
+	major, _ := protocolMajor(rpc.ProtocolVersion)
+	for _, tc := range []struct {
+		name     string
+		protocol string
+		want     string
+	}{
+		{"matching majors", rpc.ProtocolVersion, StatusOK},
+		{"a newer minor still matches", fmt.Sprintf("%d.99.0", major), StatusOK},
+		{"a different major fails", fmt.Sprintf("%d.0.0", major+1), StatusFail},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := fakeEnv(t)
+			env.Daemon = func(context.Context) DaemonInfo {
+				info := aliveDaemon()
+				info.ProtocolVersion = tc.protocol
+				return info
+			}
+			row := run(t, env, checkDaemonProtocol)
+			wantStatus(t, row, tc.want)
+			if tc.want == StatusFail && row.Fix != "oberth daemon restart" {
+				t.Errorf("fix = %q", row.Fix)
+			}
+		})
+	}
 }
 
 func TestSocketPermissions(t *testing.T) {
@@ -293,43 +299,47 @@ func TestSocketPermissions(t *testing.T) {
 		wantStatus(t, run(t, env, checkSocketPermissions), StatusFail)
 	})
 
-	t.Run("0600 is fine, 0666 is not", func(t *testing.T) {
-		env := fakeEnv(t)
-		write(t, env.SocketPath, "")
-		if err := os.Chmod(env.SocketPath, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		wantStatus(t, run(t, env, checkSocketPermissions), StatusOK)
-
-		if err := os.Chmod(env.SocketPath, 0o666); err != nil {
-			t.Fatal(err)
-		}
-		got := run(t, env, checkSocketPermissions)
-		wantStatus(t, got, StatusFail)
-		if !strings.Contains(got.Detail, "0666") {
-			t.Errorf("detail = %q, want the mode it found", got.Detail)
-		}
-	})
+	for _, tc := range []struct {
+		name   string
+		mode   os.FileMode
+		want   string
+		detail string
+	}{
+		{"0600 is fine", 0o600, StatusOK, ""},
+		{"0666 is not", 0o666, StatusFail, "0666"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := fakeEnv(t)
+			write(t, env.SocketPath, "")
+			mustChmod(t, env.SocketPath, tc.mode)
+			row := run(t, env, checkSocketPermissions)
+			wantStatus(t, row, tc.want)
+			if tc.detail != "" && !strings.Contains(row.Detail, tc.detail) {
+				t.Errorf("detail = %q, want the mode it found", row.Detail)
+			}
+		})
+	}
 }
 
 func TestDBOK(t *testing.T) {
 	t.Run("no database yet warns", func(t *testing.T) {
-		got := run(t, fakeEnv(t), checkDBOK)
-		wantStatus(t, got, StatusWarn)
+		wantStatus(t, run(t, fakeEnv(t), checkDBOK), StatusWarn)
 	})
 
 	t.Run("a real database reports its schema version", func(t *testing.T) {
 		env := fakeEnv(t)
-		db, err := store.Open(env.DBPath)
-		if err != nil {
-			t.Fatal(err)
+		db, openErr := store.Open(env.DBPath)
+		if openErr != nil {
+			t.Fatalf("open fixture database: %v", openErr)
 		}
-		db.Close()
+		if err := db.Close(); err != nil {
+			t.Fatalf("close fixture database: %v", err)
+		}
 
-		got := run(t, env, checkDBOK)
-		wantStatus(t, got, StatusOK)
-		if !strings.Contains(got.Summary, fmt.Sprintf("v%d", store.LatestVersion())) {
-			t.Errorf("summary = %q, want schema v%d", got.Summary, store.LatestVersion())
+		row := run(t, env, checkDBOK)
+		wantStatus(t, row, StatusOK)
+		if !strings.Contains(row.Summary, fmt.Sprintf("v%d", store.LatestVersion())) {
+			t.Errorf("summary = %q, want schema v%d", row.Summary, store.LatestVersion())
 		}
 	})
 }
@@ -337,51 +347,59 @@ func TestDBOK(t *testing.T) {
 // ------------------------------------------------------------ agent tools ---
 
 func TestDocker(t *testing.T) {
-	t.Run("not installed skips", func(t *testing.T) {
-		wantStatus(t, run(t, fakeEnv(t), checkDocker), StatusSkip)
-	})
-
-	t.Run("installed but not responding warns", func(t *testing.T) {
-		env := fakeEnv(t)
-		env.LookPath = func(name string) (string, error) {
-			if name == "docker" {
-				return "/usr/local/bin/docker", nil
-			}
-			return "", exec.ErrNotFound
+	onPath := func(name string) (string, error) {
+		if name == "docker" {
+			return "/usr/local/bin/docker", nil
 		}
-		wantStatus(t, run(t, env, checkDocker), StatusWarn)
-	})
-
-	t.Run("hanging is reported as not answering, not as not installed", func(t *testing.T) {
-		env := fakeEnv(t)
-		env.LookPath = func(string) (string, error) { return "/usr/local/bin/docker", nil }
-		env.Docker = func(context.Context) (string, error) {
+		return "", exec.ErrNotFound
+	}
+	for _, tc := range []struct {
+		name      string
+		installed bool
+		probe     func(context.Context) (string, error)
+		want      string
+		summary   string
+		detail    string
+	}{
+		{"not installed", false, nil, StatusSkip, "", ""},
+		{"installed but not responding", true, func(context.Context) (string, error) {
+			return "", errors.New("daemon down")
+		}, StatusWarn, "", ""},
+		{"hanging", true, func(context.Context) (string, error) {
 			return "", fmt.Errorf("%w: `docker info` did not answer within 2s", ErrDockerNotAnswering)
-		}
-		got := run(t, env, checkDocker)
-		wantStatus(t, got, StatusWarn)
-		if got.Summary != "docker CLI not answering" {
-			t.Errorf("summary = %q, want %q", got.Summary, "docker CLI not answering")
-		}
-	})
-
-	t.Run("responding is ok", func(t *testing.T) {
-		env := fakeEnv(t)
-		env.LookPath = func(string) (string, error) { return "/usr/local/bin/docker", nil }
-		env.Docker = func(context.Context) (string, error) { return "27.0.1", nil }
-		got := run(t, env, checkDocker)
-		wantStatus(t, got, StatusOK)
-		if !strings.Contains(got.Detail, "27.0.1") {
-			t.Errorf("detail = %q", got.Detail)
-		}
-	})
+		}, StatusWarn, "docker CLI not answering", ""},
+		{"responding", true, func(context.Context) (string, error) {
+			return "27.0.1", nil
+		}, StatusOK, "", "27.0.1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := fakeEnv(t)
+			if tc.installed {
+				env.LookPath = onPath
+				env.Docker = tc.probe
+			}
+			row := run(t, env, checkDocker)
+			wantStatus(t, row, tc.want)
+			if tc.summary != "" && row.Summary != tc.summary {
+				t.Errorf("summary = %q, want %q", row.Summary, tc.summary)
+			}
+			if tc.detail != "" && !strings.Contains(row.Detail, tc.detail) {
+				t.Errorf("detail = %q, want %s", row.Detail, tc.detail)
+			}
+		})
+	}
 }
 
 func TestHumanBytes(t *testing.T) {
 	for _, tc := range []struct {
 		in   int64
 		want string
-	}{{0, "0 B"}, {999, "999 B"}, {2048, "2.0 KiB"}, {5 << 20, "5.0 MiB"}} {
+	}{
+		{0, "0 B"},
+		{999, "999 B"},
+		{2048, "2.0 KiB"},
+		{5 << 20, "5.0 MiB"},
+	} {
 		if got := humanBytes(tc.in); got != tc.want {
 			t.Errorf("humanBytes(%d) = %q, want %q", tc.in, got, tc.want)
 		}
