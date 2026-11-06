@@ -578,3 +578,33 @@ func TestWithdrawalAfterACompletedWaitTouchesNoFurtherProcess(t *testing.T) {
 		t.Fatalf("probed %d times; the loop kept going after the request was withdrawn", probes)
 	}
 }
+
+// TestFailedEscalationDoesNotClaimTheHarderSignal pins what a refused SIGKILL
+// may say about itself. The method names the strongest action that actually
+// happened: if the OS refused the SIGKILL, the row keeps the SIGTERM it did
+// deliver. Rewriting it to sigkill would report an action nobody performed, and
+// a reader comparing rows would see a harder stop that never took place.
+func TestFailedEscalationDoesNotClaimTheHarderSignal(t *testing.T) {
+	m := newMachine(ProcessTable{42: {PID: 42}})
+	m.ports[3000] = portOpen // the port never closes, so escalation happens
+	// The SIGTERM lands; by the time the escalation is attempted the process
+	// has become one the OS will not let us signal.
+	m.react = func(m *machine, c signalCall) {
+		if !c.force {
+			m.process(c.pid).refuses = permissionErr(c.pid, errors.New("operation not permitted"))
+		}
+	}
+
+	rows := m.engine().kill(context.Background(), []ports.ListeningPort{listener(3000, 42)},
+		[]Target{{Port: 3000}}, Options{Grace: time.Second})
+
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if rows[0].OK || rows[0].Code != CodePermissionDenied {
+		t.Fatalf("row = %+v, want the refused escalation reported", rows[0])
+	}
+	if rows[0].Method != state.MethodSIGTERM {
+		t.Fatalf("method = %q, want the sigterm that was delivered, not a sigkill that was refused", rows[0].Method)
+	}
+}
