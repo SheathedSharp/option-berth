@@ -185,6 +185,7 @@ func conflicts(gg []state.Group, plan *RenamePlan) error {
 		}
 	}
 	next := slices.AppendSeq([]string{plan.Project}, maps.Values(plan.Renames))
+	slices.Sort(next)
 	for _, name := range next {
 		if taken[name] {
 			return &RenameError{Kind: RenameConflict,

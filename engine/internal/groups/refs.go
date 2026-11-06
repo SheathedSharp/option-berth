@@ -114,9 +114,11 @@ func WorktreeTokenFor(dir string) string {
 func WorktreeIdentityFor(dir string) (identity, root string) {
 	co, inRepo := Locate(dir)
 	if !inRepo {
-		return WorktreeToken(Canonical(dir)), Canonical(dir)
+		root = Canonical(dir)
+	} else {
+		root = co.Root
 	}
-	return WorktreeToken(co.Root), co.Root
+	return WorktreeToken(root), root
 }
 
 // HasWorktreeRef reports whether text carries ${worktree}.
