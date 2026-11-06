@@ -163,7 +163,7 @@ func openMigrated(t *testing.T, path string) *store.Store {
 		t.Fatalf("opening %s: %v", path, err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	if s.ResetHappened() {
+	if s.Reset() != nil {
 		t.Fatalf("the valid database %s was reset", path)
 	}
 	return s

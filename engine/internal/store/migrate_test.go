@@ -6,34 +6,57 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
-func tableExists(t *testing.T, db *sql.DB, name string) bool {
+// schemaObjectExists reports whether a table, trigger or index of this name is
+// in the database. A migration is proven by what it left behind, not by its
+// version row.
+func schemaObjectExists(t *testing.T, db *sql.DB, name string) bool {
 	t.Helper()
-	var n int
+	var found int
 	err := db.QueryRow(
 		`SELECT count(*) FROM sqlite_master WHERE type IN ('table','trigger','index') AND name = ?`,
 		name,
-	).Scan(&n)
+	).Scan(&found)
 	if err != nil {
-		t.Fatalf("querying sqlite_master for %q: %v", name, err)
+		t.Fatalf("reading sqlite_master for %q: %v", name, err)
 	}
-	return n > 0
+	return found > 0
 }
 
-func TestMigrateFromEmpty(t *testing.T) {
+// openRawBase opens path as a plain connection, for building a fixture the
+// migration engine should then upgrade.
+func openRawBase(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("opening %s raw: %v", path, err)
+	}
+	return raw
+}
+
+// recordVersion writes a schema_version row as if another build had.
+func recordVersion(t *testing.T, db *sql.DB, version int, name string) {
+	t.Helper()
+	if _, err := db.Exec(
+		`INSERT INTO schema_version(version, name, applied_at) VALUES(?, ?, ?)`,
+		version, name, nowString()); err != nil {
+		t.Fatalf("recording version %d: %v", version, err)
+	}
+}
+
+func TestAFreshDatabaseGetsEveryMigration(t *testing.T) {
 	s := openTemp(t)
 
-	v, err := s.Version()
+	version, err := s.Version()
 	if err != nil {
 		t.Fatalf("Version: %v", err)
 	}
-	if v != LatestVersion() {
-		t.Errorf("version = %d, want LatestVersion %d", v, LatestVersion())
+	if version != LatestVersion() {
+		t.Errorf("version = %d, want LatestVersion %d", version, LatestVersion())
 	}
-	if v < VersionIndexes {
-		t.Errorf("version = %d, want at least %d", v, VersionIndexes)
+	if version < VersionIndexes {
+		t.Errorf("version = %d, want at least %d", version, VersionIndexes)
 	}
 
 	for _, object := range []string{
@@ -41,25 +64,22 @@ func TestMigrateFromEmpty(t *testing.T) {
 		"port_events_ring", "known_roots",
 		"idx_port_events_at", "idx_port_events_port_at",
 	} {
-		if !tableExists(t, s.DB(), object) {
-			t.Errorf("%s missing after migrating from empty", object)
+		if !schemaObjectExists(t, s.DB(), object) {
+			t.Errorf("%s missing after migrating an empty database", object)
 		}
 	}
 }
 
-// TestMigrateFromV1 replays a database written by a option-berth that only had
-// migration 001 and checks that 002 lands on top without losing rows.
-func TestMigrateFromV1(t *testing.T) {
+// A database written by a build that only had migration 001 is upgraded in
+// place, and its rows of the tables the current code no longer writes survive:
+// an upgrade is not a rewrite of what a person already recorded.
+func TestAV1DatabaseUpgradesWithoutLosingItsRows(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "option-berth.db")
-
 	fixture, err := os.ReadFile(filepath.Join("testdata", "v1_schema.sql"))
 	if err != nil {
 		t.Fatalf("reading the v1 fixture: %v", err)
 	}
-	raw, err := sql.Open("sqlite", "file:"+path)
-	if err != nil {
-		t.Fatalf("creating the v1 database: %v", err)
-	}
+	raw := openRawBase(t, path)
 	if _, err := raw.Exec(string(fixture)); err != nil {
 		t.Fatalf("applying the v1 fixture: %v", err)
 	}
@@ -71,131 +91,56 @@ func TestMigrateFromV1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open on a v1 database: %v", err)
 	}
-	defer func() { _ = s.Close() }()
+	t.Cleanup(func() { _ = s.Close() })
 
-	if s.ResetHappened() {
+	if s.Reset() != nil {
 		t.Fatal("a valid v1 database was treated as corrupt")
 	}
-	if v, err := s.Version(); err != nil || v != LatestVersion() {
-		t.Fatalf("version after upgrade = %d (%v), want %d", v, err, LatestVersion())
+	if version, err := s.Version(); err != nil || version != LatestVersion() {
+		t.Fatalf("version after upgrade = %d (%v), want %d", version, err, LatestVersion())
 	}
-	if !tableExists(t, s.DB(), "known_roots") {
+	if !schemaObjectExists(t, s.DB(), "known_roots") {
 		t.Error("known_roots missing after the v1 -> v2 upgrade")
 	}
 
-	// v1 data survived. The tables are read with plain SQL: the code that used
-	// to write them (ports.rename / groups.assign) is gone, but the rows a v1
-	// database carries must still be there after the upgrade.
 	var rename string
 	if err := s.DB().QueryRow(
 		`SELECT name FROM renames WHERE key = ?`, "cwd:/home/me/code/shop:3000").Scan(&rename); err != nil || rename != "storefront" {
-		t.Errorf("v1 rename after upgrade = %q (%v); want storefront", rename, err)
+		t.Errorf("v1 rename after upgrade = %q (%v), want storefront", rename, err)
 	}
 	var pin string
 	if err := s.DB().QueryRow(
 		`SELECT group_name FROM group_pins WHERE key = ?`, "port:9999").Scan(&pin); err != nil || pin != "legacy" {
-		t.Errorf("v1 pin after upgrade = %q (%v); want legacy", pin, err)
+		t.Errorf("v1 pin after upgrade = %q (%v), want legacy", pin, err)
 	}
-	events, err := s.Query(nil, time.Time{}, 10)
+	events, err := s.History(HistoryFilter{Limit: 10})
 	if err != nil {
-		t.Fatalf("Query: %v", err)
+		t.Fatalf("History: %v", err)
 	}
 	if len(events) != 1 || events[0].DisplayName != "storefront" {
 		t.Errorf("v1 history after upgrade = %+v, want the seeded storefront event", events)
 	}
 
-	// Migration 001 is not replayed: schema_version keeps one row per version.
-	var applied int
-	if err := s.DB().QueryRow(`SELECT count(*) FROM schema_version WHERE version = 1`).Scan(&applied); err != nil {
+	// 001 is not replayed: one row per applied version.
+	var rowsForV1 int
+	if err := s.DB().QueryRow(`SELECT count(*) FROM schema_version WHERE version = 1`).Scan(&rowsForV1); err != nil {
 		t.Fatalf("counting schema_version rows for 001: %v", err)
 	}
-	if applied != 1 {
-		t.Errorf("schema_version has %d rows for version 1, want 1", applied)
+	if rowsForV1 != 1 {
+		t.Errorf("schema_version has %d rows for version 1, want 1", rowsForV1)
 	}
 }
 
-func TestRegisterMigrationRefusesDuplicates(t *testing.T) {
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("re-registering version 1 did not panic")
-		}
-	}()
-	RegisterMigration(VersionCore, "core-again", "CREATE TABLE nope(x);")
-}
-
-func TestRegisterMigrationRejectsBadInput(t *testing.T) {
-	cases := []struct {
-		name    string
-		version int
-		mname   string
-		sql     string
-	}{
-		{"zero version", 0, "x", "CREATE TABLE x(y);"},
-		{"negative version", -1, "x", "CREATE TABLE x(y);"},
-		{"no name", 900, "  ", "CREATE TABLE x(y);"},
-		{"no sql", 901, "x", "   "},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			defer func() {
-				if recover() == nil {
-					t.Fatal("expected a panic")
-				}
-			}()
-			RegisterMigration(tc.version, tc.mname, tc.sql)
-		})
-	}
-}
-
-func TestParseMigrationName(t *testing.T) {
-	v, name, err := parseMigrationName("002_indexes_roots.sql")
-	if err != nil || v != 2 || name != "indexes_roots" {
-		t.Errorf("parseMigrationName = %d, %q, %v; want 2, indexes_roots, nil", v, name, err)
-	}
-	if _, _, err := parseMigrationName("nope.sql"); err == nil {
-		t.Error("a file with no version prefix was accepted")
-	}
-	if _, _, err := parseMigrationName("abc_thing.sql"); err == nil {
-		t.Error("a file with a non-numeric version was accepted")
-	}
-}
-
-// TestReservedVersionsAreFree checks the embedded set, not the global
-// registry: another package's test may legitimately have filled a reserved
-// slot in by the time this runs.
-func TestReservedVersionsAreFree(t *testing.T) {
-	entries, err := migrationFS.ReadDir("migrations")
-	if err != nil {
-		t.Fatalf("reading embedded migrations: %v", err)
-	}
-	for _, e := range entries {
-		v, _, err := parseMigrationName(e.Name())
-		if err != nil {
-			t.Fatalf("%s: %v", e.Name(), err)
-		}
-		if owner, reserved := ReservedVersions[v]; reserved {
-			t.Errorf("%s takes version %03d, reserved for %s", e.Name(), v, owner)
-		}
-	}
-}
-
-// A migration registered below the highest applied version is still applied:
-// versions 003-006 belong to sibling packages, so a database can legitimately
-// reach 006 in a build that has no 005 linked in.
-func TestMigrateFillsAGapBelowTheHighestVersion(t *testing.T) {
+// A reserved version registered by a package this build does not link leaves a
+// gap: a database can reach 6 without 5. Reopening with 5 available must fill it
+// in, which is why migrate compares against the applied set and not MAX.
+func TestAMigrationBelowTheHighestAppliedVersionIsStillApplied(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "option-berth.db")
 	s, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	// Pretend a build with a later reserved migration has already run here.
-	if _, err := s.DB().Exec(
-		`INSERT INTO schema_version(version, name, applied_at) VALUES(?, 'later', ?)`,
-		VersionClaims, nowString()); err != nil {
-		t.Fatalf("recording a later version: %v", err)
-	}
-	// And that this build's migration 002 was never applied.
+	recordVersion(t, s.DB(), VersionClaims, "later")
 	if _, err := s.DB().Exec(`DELETE FROM schema_version WHERE version = ?`, VersionIndexes); err != nil {
 		t.Fatalf("removing the 002 row: %v", err)
 	}
@@ -207,39 +152,34 @@ func TestMigrateFillsAGapBelowTheHighestVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopening: %v", err)
 	}
-	defer func() { _ = reopened.Close() }()
+	t.Cleanup(func() { _ = reopened.Close() })
 
 	applied, err := appliedVersions(reopened.DB())
 	if err != nil {
 		t.Fatalf("appliedVersions: %v", err)
 	}
 	if !applied[VersionIndexes] {
-		t.Errorf("migration %03d was not applied under a higher version: %v", VersionIndexes, applied)
+		t.Errorf("migration %03d was not applied below a higher version: %v", VersionIndexes, applied)
 	}
 	if !applied[VersionClaims] {
 		t.Errorf("the pre-existing version row was lost: %v", applied)
 	}
-	if !tableExists(t, reopened.DB(), "known_roots") {
+	if !schemaObjectExists(t, reopened.DB(), "known_roots") {
 		t.Error("migration 002 did not run")
 	}
 }
 
-// TestOpenRefusesADatabaseNewerThanTheBuild: the forward-only boundary made
-// real. A file migrated by a newer build is refused with both versions named,
-// and the engine leaves it exactly as it found it — not moved aside, not
-// rewritten.
-func TestOpenRefusesADatabaseNewerThanTheBuild(t *testing.T) {
+// The forward-only boundary, made real: a file migrated by a newer build is
+// refused with both versions named, and left exactly as it was found — not
+// moved aside, not rewritten.
+func TestADatabaseFromANewerBuildIsRefused(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "option-berth.db")
 	s, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	future := LatestVersion() + 1
-	if _, err := s.DB().Exec(
-		`INSERT INTO schema_version(version, name, applied_at) VALUES(?, 'future', ?)`,
-		future, nowString()); err != nil {
-		t.Fatalf("recording a future version: %v", err)
-	}
+	recordVersion(t, s.DB(), future, "future")
 	if err := s.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
@@ -253,21 +193,73 @@ func TestOpenRefusesADatabaseNewerThanTheBuild(t *testing.T) {
 		t.Fatalf("Open error = %v, want SchemaTooNewError{database: %d, supported: %d}", err, future, LatestVersion())
 	}
 
-	// Untouched: no .corrupt sidecar (this is not corruption), and the future
-	// version row is still the only record of its kind.
-	if matches, _ := filepath.Glob(path + ".corrupt-*"); len(matches) != 0 {
-		t.Fatalf("a newer database was moved aside: %v", matches)
+	if sidecars, _ := filepath.Glob(path + ".corrupt-*"); len(sidecars) != 0 {
+		t.Fatalf("a newer database was parked as corrupt: %v", sidecars)
 	}
-	raw, err := sql.Open("sqlite", "file:"+path)
-	if err != nil {
-		t.Fatalf("reopening raw: %v", err)
-	}
+	raw := openRawBase(t, path)
 	defer func() { _ = raw.Close() }()
-	var n int
-	if err := raw.QueryRow(`SELECT count(*) FROM schema_version WHERE version = ?`, future).Scan(&n); err != nil {
+	var rows int
+	if err := raw.QueryRow(`SELECT count(*) FROM schema_version WHERE version = ?`, future).Scan(&rows); err != nil {
 		t.Fatalf("reading the future row: %v", err)
 	}
-	if n != 1 {
-		t.Fatalf("schema_version rows for the future version = %d, want the file untouched", n)
+	if rows != 1 {
+		t.Fatalf("schema_version rows for the future version = %d, want the file untouched", rows)
+	}
+}
+
+// Registration is a programming-time act, so its mistakes panic rather than
+// return: none of them may ever reach a running user's database.
+func TestRegisterMigrationPanicsOnMistakes(t *testing.T) {
+	cases := []struct {
+		what    string
+		version int
+		name    string
+		stmts   string
+	}{
+		{"zero version", 0, "x", "CREATE TABLE x(y);"},
+		{"negative version", -1, "x", "CREATE TABLE x(y);"},
+		{"no name", 900, "  ", "CREATE TABLE x(y);"},
+		{"no statements", 901, "x", "   "},
+		{"a version already taken", VersionCore, "core-again", "CREATE TABLE nope(x);"},
+	}
+	for _, c := range cases {
+		t.Run(c.what, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("registering %s did not panic", c.what)
+				}
+			}()
+			RegisterMigration(c.version, c.name, c.stmts)
+		})
+	}
+}
+
+func TestParseMigrationName(t *testing.T) {
+	version, name, err := parseMigrationName("002_indexes_roots.sql")
+	if err != nil || version != 2 || name != "indexes_roots" {
+		t.Errorf("parseMigrationName = %d, %q, %v; want 2, indexes_roots, nil", version, name, err)
+	}
+	for _, refused := range []string{"nope.sql", "abc_thing.sql"} {
+		if _, _, err := parseMigrationName(refused); err == nil {
+			t.Errorf("%q was accepted", refused)
+		}
+	}
+}
+
+// This checks the embedded set, not the global registry: another package's test
+// may legitimately have filled a reserved slot by the time this runs.
+func TestTheEmbeddedMigrationsAvoidReservedVersions(t *testing.T) {
+	entries, err := migrationFS.ReadDir("migrations")
+	if err != nil {
+		t.Fatalf("reading embedded migrations: %v", err)
+	}
+	for _, entry := range entries {
+		version, _, err := parseMigrationName(entry.Name())
+		if err != nil {
+			t.Fatalf("%s: %v", entry.Name(), err)
+		}
+		if owner, reserved := ReservedVersions[version]; reserved {
+			t.Errorf("%s takes version %03d, which is reserved for %s", entry.Name(), version, owner)
+		}
 	}
 }
