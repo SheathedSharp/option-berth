@@ -88,32 +88,42 @@ func checkConfigDirWritable(_ context.Context, env *Env) rpc.DoctorCheck {
 	return ok("config directory is writable", dir)
 }
 
-// checkProjectConfig looks for this project's `oberth.yaml`, first in the
-// directory the caller named and then at the git root above it — the same two
-// places every other command looks.
+// checkProjectConfig looks for this project's manifest, first in the directory
+// the caller named and then at every ancestor up to the git root — the same
+// search every other command performs.
 func checkProjectConfig(_ context.Context, env *Env) rpc.DoctorCheck {
 	if env.Project == "" {
 		return skip("no project directory", "")
 	}
-	for _, dir := range projectConfigDirs(env.Project) {
+	dirs := projectConfigDirs(env.Project)
+	if files := nearestManifest(dirs); len(files) > 0 {
+		return projectConfigResult(files[0], files[1:])
+	}
+	return missingProjectConfig(env.Project, dirs)
+}
+
+// nearestManifest returns the files of the first directory that holds a
+// manifest, or nil when none does.
+func nearestManifest(dirs []string) []string {
+	for _, dir := range dirs {
 		if files := groups.FilesIn(dir); len(files) > 0 {
-			return projectConfigResult(files[0], files[1:])
+			return files
 		}
 	}
-	return missingProjectConfig(env.Project)
+	return nil
 }
 
 // missingProjectConfig reports the paths that were looked at, not just the
 // absence, so a person can tell a misspelling from a wrong directory.
-func missingProjectConfig(project string) rpc.DoctorCheck {
-	dirs := projectConfigDirs(project)
-	looked := make([]string, 0, len(dirs)*len(groups.ConfigNames()))
+func missingProjectConfig(project string, dirs []string) rpc.DoctorCheck {
+	names := groups.ConfigNames()
+	looked := make([]string, 0, len(dirs)*len(names))
 	for _, dir := range dirs {
-		for _, name := range groups.ConfigNames() {
+		for _, name := range names {
 			looked = append(looked, filepath.Join(dir, name))
 		}
 	}
-	detail := "looked at " + strings.Join(uniquePaths(looked), ", ")
+	detail := "looked at " + strings.Join(looked, ", ")
 	if gitRootOf(project) == "" {
 		detail += fmt.Sprintf("\n%s is not inside a git repository, so there is no repository root to look at either", project)
 	}
@@ -176,33 +186,15 @@ func plural(n int, singular string) string {
 	}
 }
 
-func uniquePaths(in []string) []string {
-	first := make(map[string]struct{}, len(in))
-	out := make([]string, 0, len(in))
-	for _, path := range in {
-		if _, seen := first[path]; seen {
-			continue
-		}
-		first[path] = struct{}{}
-		out = append(out, path)
-	}
-	return out
-}
-
 // ProjectConfigFiles selects the nearest manifest within this checkout. Repair
-// and diagnosis share the same selection, including nested project directories.
+// and diagnosis share the same search, including nested project directories.
 func ProjectConfigFiles(dir string) []string {
-	for _, candidate := range projectConfigDirs(dir) {
-		if files := groups.FilesIn(candidate); len(files) > 0 {
-			return files
-		}
-	}
-	return nil
+	return nearestManifest(projectConfigDirs(dir))
 }
 
 // projectConfigDirs lists the directories the manifest search visits, from the
-// project directory up to the git root (or the filesystem root outside a
-// repository).
+// project directory up to the git root. Outside a repository it visits only
+// the project directory, because there is no root that bounds the walk.
 func projectConfigDirs(dir string) []string {
 	current := groups.Canonical(dir)
 	if current == "" {
