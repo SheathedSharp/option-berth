@@ -14,39 +14,43 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
-// fakeEnv is an Env whose every seam answers without touching the machine: no
-// PATH lookup escapes it, no socket is dialled, no release is fetched. Paths
-// point into t.TempDir(), so a check that reads a file reads a real one the
-// test wrote.
+// fakeEnv builds an Env whose every seam is either a t.TempDir() or a
+// deliberate refusal: no PATH lookup escapes it, no socket is dialled, no
+// release is fetched. Paths point into the temp directory, so a check that
+// reads a file reads one the test wrote.
 func fakeEnv(t *testing.T) *Env {
 	t.Helper()
 	home := t.TempDir()
-	return &Env{
+	configDir := filepath.Join(home, ".option-berth")
+	env := &Env{
 		Mode:       ModeCLI,
 		GOOS:       runtime.GOOS,
 		Version:    "v1.2.3",
 		Home:       home,
 		Project:    home,
-		ConfigPath: filepath.Join(home, ".option-berth", "config.yaml"),
-		ConfigDir:  filepath.Join(home, ".option-berth"),
-		SocketPath: filepath.Join(home, ".option-berth", "daemon.sock"),
-		DBPath:     filepath.Join(home, ".option-berth", "option-berth.db"),
+		ConfigPath: filepath.Join(configDir, "config.yaml"),
+		ConfigDir:  configDir,
+		SocketPath: filepath.Join(configDir, "daemon.sock"),
+		DBPath:     filepath.Join(configDir, "option-berth.db"),
 		UID:        os.Getuid(),
-		Executable: func() (string, error) { return filepath.Join(home, "bin", "option-berth"), nil },
-		LookPath:   func(string) (string, error) { return "", exec.ErrNotFound },
-		Daemon:     func(context.Context) DaemonInfo { return DaemonInfo{Err: errors.New("no daemon")} },
-		Docker:     func(context.Context) (string, error) { return "", errors.New("no docker in tests") },
-		ProbeObservation: func(context.Context) ports.ProbeResult {
-			return ports.ProbeResult{State: ports.ObservationObservable}
-		},
 	}
+	env.Executable = func() (string, error) { return filepath.Join(home, "bin", "option-berth"), nil }
+	env.LookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	env.Daemon = func(context.Context) DaemonInfo { return DaemonInfo{Err: errors.New("no daemon")} }
+	env.Docker = func(context.Context) (string, error) { return "", errors.New("no docker in tests") }
+	env.ProbeObservation = func(context.Context) ports.ProbeResult {
+		return ports.ProbeResult{State: ports.ObservationObservable}
+	}
+	return env
 }
 
 // write puts content at path, creating parents.
 func write(t *testing.T, path, content string) string {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
+	if dir := filepath.Dir(path); dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
@@ -54,43 +58,42 @@ func write(t *testing.T, path, content string) string {
 	return path
 }
 
-func run(t *testing.T, env *Env, fn func(context.Context, *Env) rpc.DoctorCheck) rpc.DoctorCheck {
+// run executes one check against an env with the standard defaults installed.
+func run(t *testing.T, env *Env, check func(context.Context, *Env) rpc.DoctorCheck) rpc.DoctorCheck {
 	t.Helper()
-	env.fill()
-	return fn(context.Background(), env)
+	env.resolve()
+	return check(context.Background(), env)
 }
 
-func wantStatus(t *testing.T, got rpc.DoctorCheck, status string) {
+func wantStatus(t *testing.T, row rpc.DoctorCheck, status string) {
 	t.Helper()
-	if got.Status != status {
-		t.Fatalf("status = %q (%s / %s), want %q", got.Status, got.Summary, got.Detail, status)
+	if row.Status != status {
+		t.Fatalf("status = %q (%s / %s), want %q", row.Status, row.Summary, row.Detail, status)
 	}
 }
 
 // -------------------------------------------------------------- selectors ---
 
 func TestOnlySelectsExactIDs(t *testing.T) {
-	ids := IDs()
-	if len(ids) < 8 {
-		t.Fatalf("only %d checks: %v", len(ids), ids)
+	if got := len(IDs()); got < 8 {
+		t.Fatalf("only %d checks: %v", got, IDs())
 	}
-	if !picked(nil, "db_ok") {
+	if !newSelection(nil).includes("db_ok") {
 		t.Error("an empty --only should select everything")
 	}
-	if !picked([]string{"db_ok"}, "db_ok") {
+	one := newSelection([]string{"db_ok"})
+	if !one.includes("db_ok") {
 		t.Error("--only db_ok should select db_ok")
 	}
-	if picked([]string{"db_ok"}, "docker") {
+	if one.includes("docker") {
 		t.Error("--only db_ok should not select docker")
 	}
 	if got := UnknownSelectors([]string{"db_ok", "nope"}); len(got) != 1 || got[0] != "nope" {
 		t.Errorf("unknown selectors = %v, want [nope]", got)
 	}
-	// A dotted family was the `mcp_registered.<client>` shape, and there is none
-	// left: the checks that had it went with the agent integration
-	// (docs/history/scope.md). A prefix that matches nothing is not a selector.
-	if got := Prefixes(); len(got) != 0 {
-		t.Errorf("prefixes = %v, want none: no check id has a dot any more", got)
+	// No check id has a dot any more, so there is no accepted prefix.
+	if prefixes := Prefixes(); len(prefixes) != 0 {
+		t.Errorf("prefixes = %v, want none: no check id has a dot", prefixes)
 	}
 }
 
@@ -110,14 +113,17 @@ func TestRunKeepsOnlyTheSelectedChecks(t *testing.T) {
 
 func TestRunDialsTheDaemonOnce(t *testing.T) {
 	env := *fakeEnv(t)
-	calls := 0
+	dials := 0
 	env.Daemon = func(context.Context) DaemonInfo {
-		calls++
-		return DaemonInfo{Reachable: true, Version: "v1.2.3", ProtocolVersion: rpc.ProtocolVersion}
+		dials++
+		return DaemonInfo{Reachable: true, Version: "v9.9.9", ProtocolVersion: rpc.ProtocolVersion}
 	}
-	Run(context.Background(), env, nil)
-	if calls != 1 {
-		t.Errorf("dialled the daemon %d times, want 1", calls)
+	result := Run(context.Background(), env, nil)
+	if dials != 1 {
+		t.Fatalf("dialled the daemon %d times, want 1", dials)
+	}
+	if result.DaemonVersion != "v9.9.9" {
+		t.Errorf("daemon version = %q, want the probed answer", result.DaemonVersion)
 	}
 }
 
@@ -126,16 +132,20 @@ func TestDaemonModeSkipsTheCLIOnlyChecks(t *testing.T) {
 	env.Mode = ModeDaemon
 	got := Run(context.Background(), env, nil)
 
-	cliOnly := map[string]bool{"cli_on_path": true, "daemon_version_matches": true}
+	cliOnly := map[string]bool{
+		"cli_on_path":            true,
+		"daemon_version_matches": true,
+		"daemon_build_matches":   true,
+	}
 	seen := 0
-	for _, c := range got.Checks {
-		if !cliOnly[c.ID] {
+	for _, row := range got.Checks {
+		if !cliOnly[row.ID] {
 			continue
 		}
 		seen++
-		wantStatus(t, c, StatusSkip)
-		if !strings.Contains(c.Detail, "CLI-only") {
-			t.Errorf("%s detail = %q, want it to say the check is CLI-only", c.ID, c.Detail)
+		wantStatus(t, row, StatusSkip)
+		if !strings.Contains(row.Detail, "CLI-only") {
+			t.Errorf("%s detail = %q, want it to say the check is CLI-only", row.ID, row.Detail)
 		}
 	}
 	if seen != len(cliOnly) {
@@ -148,13 +158,16 @@ func TestDaemonModeSkipsTheCLIOnlyChecks(t *testing.T) {
 }
 
 func TestRunIsNotOKOnlyWhenSomethingFailed(t *testing.T) {
-	env := *fakeEnv(t)
-	// No daemon is a fail.
-	if got := Run(context.Background(), env, []string{"daemon_reachable"}); got.OK {
-		t.Error("a failing check must make the run not ok")
-	}
-	// A missing .oberth.yaml is only a warning.
-	if got := Run(context.Background(), env, []string{"project_config"}); !got.OK {
-		t.Error("a warning must leave the run ok")
+	for _, tc := range []struct {
+		check  string
+		wantOK bool
+	}{
+		{"daemon_reachable", false},
+		{"project_config", true},
+	} {
+		env := *fakeEnv(t)
+		if got := Run(context.Background(), env, []string{tc.check}); got.OK != tc.wantOK {
+			t.Errorf("%s: ok = %v, want %v", tc.check, got.OK, tc.wantOK)
+		}
 	}
 }
