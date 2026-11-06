@@ -305,11 +305,15 @@ func status(g state.Group) string {
 	}
 }
 
-// sourceRank orders group sources by precedence so a group takes the strongest
-// source any of its members resolved with.
-var sourceRank = map[state.GroupSource]int{
-	state.SourceStart: 2,
-	state.SourceFile:  1,
+// rank orders group sources by precedence so a group takes the strongest source
+// any of its members resolved with. A pure function rather than a table: there
+// is no state here to mutate.
+func rank(s state.GroupSource) int {
+	if s == state.SourceStart {
+		return 2
+	}
+	if s == state.SourceFile {
+		return 1
+	}
+	return 0
 }
-
-func rank(s state.GroupSource) int { return sourceRank[s] }

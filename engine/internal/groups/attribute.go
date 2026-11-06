@@ -70,7 +70,7 @@ func AttributeWith(pp []ports.ListeningPort, runs Registry, index *Index) ([]sta
 	for i := range resolved {
 		pp[i].ProjectRoot = deref(resolved[i].ProjectRoot)
 		pp[i].Group = deref(resolved[i].Group)
-		pp[i].GroupSource = groupSourceName(resolved[i].GroupSource)
+		pp[i].GroupSource = deref(resolved[i].GroupSource)
 	}
 
 	return resolved, index
@@ -91,18 +91,13 @@ func attributionPass(index *Index, pp []ports.ListeningPort) *resolutionPass {
 	return &resolutionPass{index: index}
 }
 
-func deref(s *string) string {
+// deref reads a string-backed pointer, with the contract's empty string for
+// nil.
+func deref[T ~string](s *T) string {
 	if s == nil {
 		return ""
 	}
-	return *s
-}
-
-func groupSourceName(source *state.GroupSource) string {
-	if source == nil {
-		return ""
-	}
-	return string(*source)
+	return string(*s)
 }
 
 // stampSessions puts the agent session of the owning run onto every port it
