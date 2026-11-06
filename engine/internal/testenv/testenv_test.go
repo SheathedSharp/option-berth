@@ -6,62 +6,67 @@ import (
 	"testing"
 )
 
-// The guarantee the whole package exists for: after TestMain, nothing this
-// binary resolves from the environment points at the machine's real install.
+// The guarantee the whole package exists for: by the time a test runs, nothing
+// this binary resolves from the environment points at the machine's real
+// install.
 func TestIsolateMovesEverythingIntoTempDir(t *testing.T) {
 	if Root() == "" {
 		t.Fatal("Isolate did not run before the tests")
 	}
 	RequireIsolated(t, Home(), ConfigDir(), os.Getenv("HOME"), os.Getenv("BERTH_DB"))
 
-	real, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("resolving the home directory: %v", err)
-	}
-	if real != Home() {
-		t.Fatalf("os.UserHomeDir() = %s, want the isolated %s", real, Home())
+	if resolved := executableHome(t); resolved != Home() {
+		t.Fatalf("os.UserHomeDir() = %s, want the isolated %s", resolved, Home())
 	}
 	if _, err := os.Stat(ConfigDir()); err != nil {
 		t.Errorf("the isolated config directory is not there: %v", err)
 	}
 }
 
-// Autostart is off for the whole binary, and the opt-in a developer may have
-// in their shell does not survive into a test run.
+// Autostart is off for the whole binary, and an opt-in a developer happens to
+// have in their shell does not survive into a test run.
 func TestIsolateDisablesAutostart(t *testing.T) {
-	if got := os.Getenv(noAutostartEnv); got == "" {
-		t.Errorf("%s = %q, want it set", noAutostartEnv, got)
+	if os.Getenv(noAutostartEnv) == "" {
+		t.Errorf("%s is unset, want it on", noAutostartEnv)
 	}
-	if got, ok := os.LookupEnv(allowTestEnv); ok {
-		t.Errorf("%s = %q, want it unset", allowTestEnv, got)
+	if value, present := os.LookupEnv(allowTestEnv); present {
+		t.Errorf("%s = %q, want it removed", allowTestEnv, value)
 	}
 }
 
-// Isolation must not take the Go build cache with it: the integration
-// harnesses run `go build` to make the binary they drive, and a module cache
-// inside the throwaway HOME means re-downloading the module graph every run,
-// and failing outright with no network.
+// Isolation must not take the Go build cache with it: the integration harnesses
+// run `go build` to make the binary they drive, and a module cache inside the
+// throwaway HOME means re-downloading the module graph every run and failing
+// outright with no network.
 func TestIsolateKeepsTheGoCachesWhereTheyWere(t *testing.T) {
 	for _, key := range []string{"GOCACHE", "GOMODCACHE", "GOPATH"} {
-		v := os.Getenv(key)
-		if v == "" {
-			t.Errorf("%s is unset; a `go build` from a test would rebuild the world", key)
-			continue
-		}
-		if Isolated(v) {
-			t.Errorf("%s = %s, which is inside the throwaway test environment", key, v)
-		}
+		assertOutsideThisRun(t, key, os.Getenv(key))
+	}
+}
+
+// assertOutsideThisRun fails when an environment variable is unset or points
+// into the throwaway environment.
+func assertOutsideThisRun(t *testing.T, key, value string) {
+	t.Helper()
+	if value == "" {
+		t.Errorf("%s is unset; a `go build` from a test would rebuild the world", key)
+		return
+	}
+	if Isolated(value) {
+		t.Errorf("%s = %s, which is inside the throwaway test environment", key, value)
 	}
 }
 
 func TestIsolatedRejectsPathsOutside(t *testing.T) {
-	if Isolated("/etc/passwd") {
-		t.Error("/etc/passwd counted as isolated")
-	}
-	// Another run's directory is under the same machine temp directory and is
-	// no more this run's business than /etc is.
-	if Isolated(filepath.Join(machineTempDir(), "snrun-some-other-run")) {
-		t.Error("another run's temp directory counted as isolated")
+	for _, outside := range []string{
+		"/etc/passwd",
+		// Another run's directory is under the same machine temp directory and
+		// is no more this run's business than /etc is.
+		filepath.Join(machineTempDir(), "snrun-some-other-run"),
+	} {
+		if Isolated(outside) {
+			t.Errorf("%s counted as isolated", outside)
+		}
 	}
 	if Isolated() {
 		t.Error("no paths at all counted as isolated")
@@ -71,77 +76,89 @@ func TestIsolatedRejectsPathsOutside(t *testing.T) {
 	}
 }
 
-// The leak gate reads `ps` output, so the parsing is worth pinning: a gate
-// that quietly matched nothing would be worse than no gate.
-func TestIsDaemonOf(t *testing.T) {
+// The leak gate reads `ps` output, so the ownership rule is worth pinning: a
+// gate that quietly matched nothing would be worse than no gate.
+func TestTheOwnershipRules(t *testing.T) {
 	const exe = "/tmp/go-build123/b001/cmd.test"
-	tests := []struct {
+	// argv[1] is what makes a process a daemon, and whose binary it is decides
+	// whether it is this run's business.
+	type processCase struct {
+		what    string
 		cmdline string
-		want    bool
-	}{
-		{exe + " serve --detach", true},
-		{exe + " serve", true},
-		{exe + " -test.run=TestX", false},
-		{exe, false},
-		// Another package's test binary is another package's problem: `go test
-		// ./...` runs them at the same time.
-		{"/tmp/go-build123/b002/cmd.test serve --detach", false},
-		{"cmd.test serve", false},
-		{"/usr/local/bin/oberth serve", false}, // the developer's own daemon
-		{"grep serve", false},
-		{"", false},
+		mine    bool
 	}
-	for _, tt := range tests {
-		if got := isDaemonOf(exe, tt.cmdline); got != tt.want {
-			t.Errorf("isDaemonOf(%q) = %v, want %v", tt.cmdline, got, tt.want)
+	cases := []processCase{
+		{"serve --detach from this binary", exe + " serve --detach", true},
+		{"serve from this binary", exe + " serve", true},
+		{"a test run of this binary", exe + " -test.run=TestX", false},
+		{"this binary with no argument", exe, false},
+		// Another package's test binary is another package's problem: `go test
+		// ./...` runs them at the same time, under names that differ only in
+		// their build directory.
+		{"another package's test binary", "/tmp/go-build123/b002/cmd.test serve --detach", false},
+		{"a bare relative path", "cmd.test serve", false},
+		{"the developer's own daemon", "/usr/local/bin/oberth serve", false},
+		{"a grep", "grep serve", false},
+		{"an empty row", "", false},
+	}
+	for _, c := range cases {
+		if got := isOwnedProcess(exe, c.cmdline, false); got != c.mine {
+			t.Errorf("%s: isOwnedProcess(%q) = %v, want %v", c.what, c.cmdline, got, c.mine)
 		}
 	}
 }
 
-// isRunRootDaemon is the default second rule: anything under this run's root,
-// and nothing else, because nothing else put anything there.
-func TestIsRunRootDaemon(t *testing.T) {
+// Anything running `serve` from under this run's root is this run's, and nothing
+// else is: nothing else put anything there.
+func TestThisRunsRootIsOwned(t *testing.T) {
+	const notMine = "/some/build/oberth"
 	inRoot := filepath.Join(Root(), "option-berth-itest-bin123", "oberth")
-	if !isRunRootDaemon(inRoot + " serve") {
+	if !isOwnedProcess(notMine, inRoot+" serve", false) {
 		t.Errorf("%s serve was not recognised as this run's daemon", inRoot)
 	}
-	if isRunRootDaemon(inRoot + " list") {
+	if isOwnedProcess(notMine, inRoot+" list", false) {
 		t.Error("`oberth list` was mistaken for a daemon")
 	}
-	if isRunRootDaemon("/usr/local/bin/oberth serve") {
+	if isOwnedProcess(notMine, "/usr/local/bin/oberth serve", false) {
 		t.Error("an installed oberth daemon was mistaken for a test leak")
 	}
-	// The whole point: another run's binary is under the machine's temp
-	// directory too, and must not be touched.
+	// Another run's binary is under the machine's temp directory too, and must
+	// not be touched.
 	other := filepath.Join(machineTempDir(), "snrun999", "option-berth-itest-bin", "oberth")
-	if isRunRootDaemon(other + " serve") {
+	if isOwnedProcess(notMine, other+" serve", false) {
 		t.Errorf("%s serve, which belongs to another test run, matched", other)
 	}
 }
 
-// The opt-in wide net for CI keeps the old shape: any `oberth serve` from
-// anywhere under the machine's temp directory.
-func TestIsTempBuiltDaemon(t *testing.T) {
+// The opt-in wide net for CI is any `oberth` named `serve` from anywhere under
+// the machine's temp directory.
+func TestTheOptInWideNetIsMachineWide(t *testing.T) {
+	const notMine = "/some/build/oberth"
 	inTemp := filepath.Join(machineTempDir(), "option-berth-itest-bin123", "oberth")
-	if !isTempBuiltDaemon(inTemp + " serve") {
+	if !isOwnedProcess(notMine, inTemp+" serve", true) {
 		t.Errorf("%s serve was not recognised as a test-built daemon", inTemp)
 	}
-	if isTempBuiltDaemon("/usr/local/bin/oberth serve") {
+	if isOwnedProcess(notMine, "/usr/local/bin/oberth serve", true) {
 		t.Error("an installed oberth daemon was mistaken for a test leak")
 	}
-	if isTempBuiltDaemon(inTemp + " list") {
+	if isOwnedProcess(notMine, inTemp+" list", true) {
 		t.Error("`oberth list` was mistaken for a daemon")
+	}
+	// The wide net still wants a binary called oberth: a random temp binary is
+	// someone else's business.
+	if isOwnedProcess(notMine, filepath.Join(machineTempDir(), "other-bin", "tool")+" serve", true) {
+		t.Error("a non-oberth temp binary was counted as a leak")
 	}
 }
 
 // `ps -axo command=` joins argv with spaces and quotes nothing, so the
 // executable of a `serve` has to be found by the argument boundary rather than
 // by splitting on whitespace.
-func TestSplitServe(t *testing.T) {
-	tests := []struct {
-		cmdline string
-		want    string
-		ok      bool
+func TestSplitServeFindsTheExecutableBoundary(t *testing.T) {
+	cases := []struct {
+		cmdline   string
+		execution string
+		ok        bool
 	}{
 		{"/tmp/x/oberth serve", "/tmp/x/oberth", true},
 		{"/tmp/x/oberth serve --detach", "/tmp/x/oberth", true},
@@ -154,20 +171,23 @@ func TestSplitServe(t *testing.T) {
 		{"serve", "", false},
 		{"", "", false},
 	}
-	for _, tt := range tests {
-		got, ok := splitServe(tt.cmdline)
-		if got != tt.want || ok != tt.ok {
-			t.Errorf("splitServe(%q) = (%q, %v), want (%q, %v)", tt.cmdline, got, ok, tt.want, tt.ok)
+	for _, c := range cases {
+		got, ok := splitServe(c.cmdline)
+		if got != c.execution || ok != c.ok {
+			t.Errorf("splitServe(%q) = (%q, %v), want (%q, %v)", c.cmdline, got, ok, c.execution, c.ok)
 		}
 	}
 }
 
-func TestSplitPS(t *testing.T) {
-	pid, cmdline, ok := splitPS("  4242 /path/to/cmd.test serve --detach")
-	if !ok || pid != 4242 || cmdline != "/path/to/cmd.test serve --detach" {
-		t.Errorf("splitPS = (%d, %q, %v)", pid, cmdline, ok)
+func TestSplitPSReadsAPSRow(t *testing.T) {
+	pid, cmdline, readable := splitPS("  4242 /path/to/cmd.test serve --detach")
+	if !readable {
+		t.Fatal("a well-formed ps row did not parse")
 	}
-	if _, _, ok := splitPS("not-a-row"); ok {
+	if pid != 4242 || cmdline != "/path/to/cmd.test serve --detach" {
+		t.Errorf("splitPS = (%d, %q), want (4242, the command line)", pid, cmdline)
+	}
+	if _, _, readable := splitPS("not-a-row"); readable {
 		t.Error("a malformed ps row parsed as a process")
 	}
 }
@@ -175,4 +195,13 @@ func TestSplitPS(t *testing.T) {
 // Nothing in this package starts a daemon, so the gate has to agree.
 func TestNoDaemonsLeakFromThisBinary(t *testing.T) {
 	RequireNoLeakedDaemons(t)
+}
+
+func executableHome(t *testing.T) string {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("resolving the home directory: %v", err)
+	}
+	return home
 }

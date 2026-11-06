@@ -105,7 +105,7 @@ var web = container{
 	image: "nginx:1.27",
 	portMappings: []portMapping{{
 		hostPort:      8080,
-		containerPort: 80,
+		toPort: 80,
 	}},
 	composeService:    "web",
 	composeProject:    "shop",
@@ -277,7 +277,7 @@ func TestANewUnattributedPortAsksForAnEarlyRefresh(t *testing.T) {
 
 	// A new container arrives with the port: the change wakes the loop.
 	before := b.changes
-	db := container{name: "shop-db-1", portMappings: []portMapping{{hostPort: 5433, containerPort: 5432}}}
+	db := container{name: "shop-db-1", portMappings: []portMapping{{hostPort: 5433, toPort: 5432}}}
 	b.docker.answer([]container{web, db}, nil)
 	b.clock.advance(100 * time.Millisecond)
 	b.watcher.Enrich([]ports.ListeningPort{{Port: 3000}, {Port: 8080}, {Port: 5432}, {Port: 5433}})
