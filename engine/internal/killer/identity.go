@@ -27,11 +27,11 @@ func (e *engine) ownerError() error {
 }
 
 func (e *engine) captureIdentity(u *unit) {
-	if u.err != nil {
+	if u.refusal != nil {
 		return
 	}
 	if err := e.ownerError(); err != nil {
-		u.err = err
+		u.refusal = err
 		return
 	}
 	if u.container != "" || e.startTime == nil {
@@ -40,22 +40,22 @@ func (e *engine) captureIdentity(u *unit) {
 	u.observed = make(map[int]time.Time, len(u.pids)+2)
 	seen := make(map[int]bool, len(u.pids)+2)
 	capture := func(pid int) {
-		if pid <= 0 || seen[pid] || u.err != nil {
+		if pid <= 0 || seen[pid] || u.refusal != nil {
 			return
 		}
 		seen[pid] = true
 		if err := e.ownerError(); err != nil {
-			u.err = err
+			u.refusal = err
 			return
 		}
 		at, ok := e.startTime(pid)
 		if err := e.ownerError(); err != nil {
-			u.err = err
+			u.refusal = err
 			return
 		}
 		if ok && !at.IsZero() {
 			if claimed := u.claims[pid]; !claimed.IsZero() && at.After(claimed.Add(ports.StartTolerance)) {
-				u.err = replacedPID(pid)
+				u.refusal = replacedPID(pid)
 				return
 			}
 			u.observed[pid] = at

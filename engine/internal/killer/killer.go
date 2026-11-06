@@ -14,6 +14,10 @@
 //     period is over — unless the caller opted out of escalation.
 //   - A dry run reports exactly the actions a real run would take, and takes
 //     none of them.
+//
+// A request answers with contract rows, one per action. No phase rewrites the
+// request into a mutable result slice: a resolved unit carries the actions
+// planned against it and, once they have run, their outcome.
 package killer
 
 import (
@@ -195,6 +199,9 @@ func KillPorts(ctx context.Context, targets []Target, opts Options) []Result {
 	return rows
 }
 
+// failedTargets is the answer when nothing could even be attempted: one row per
+// target, each carrying why. Name stays the target's run id — the caller never
+// reached a listener, so there is no display name to report.
 func failedTargets(targets []Target, err error) []Result {
 	out := make([]Result, 0, len(targets))
 	for _, t := range targets {
@@ -221,8 +228,12 @@ func scanPortsContext(ctx context.Context) ([]ports.ListeningPort, error) {
 	return found, ctx.Err()
 }
 
-// unit is one resolved thing to kill: a container, a process group, or an
-// ordered list of pids (children first, root last).
+// unit is one resolved stoppable: a container, a process group, or a process
+// tree handed over as an ordered pid list (children first, root last).
+//
+// Resolution is over by the time a unit exists, so the only thing that changes
+// afterwards is stops: what the run plans to do to this unit and what came of
+// it. A refused target is a unit too, with a refusal and no stops to run.
 type unit struct {
 	tree      bool
 	claims    map[int]time.Time // recorded run/listener evidence, never replaced
@@ -236,11 +247,23 @@ type unit struct {
 	root      int    // the listener (or run root) this unit is anchored on
 	listenPID int    // the pid actually holding the socket, when there is one
 	depth     int    // ancestry depth of root, used to order units children-first
-	err       error  // resolution failure: emits a single failed row
-	rows      []int  // indexes into the result slice, filled during execution
+	refusal   error  // resolution said no: one failed row, nothing signalled
+	stops     []stop // one per planned action, filled by plan, settled by the run
 }
 
-// kill runs the four phases: resolve, order, signal, escalate.
+// stop is one action the run planned against a unit, with its outcome. A group
+// or container unit has exactly one; a process unit has one per pid. Keeping the
+// outcome here is what lets the phases stop looking their row up again.
+type stop struct {
+	pid    int
+	name   string
+	method state.KillMethod
+	ok     bool
+	err    error
+}
+
+// kill answers one stop request: resolve, order, plan, act, escalate, then
+// project. Nothing outside the units is mutated along the way.
 func (e *engine) kill(ctx context.Context, snapshot []ports.ListeningPort, targets []Target, opts Options) []Result {
 	if ctx == nil {
 		ctx = context.Background()
@@ -250,6 +273,7 @@ func (e *engine) kill(ctx context.Context, snapshot []ports.ListeningPort, targe
 	if err := ctx.Err(); err != nil {
 		return failedTargets(targets, err)
 	}
+
 	var units []*unit
 	for _, t := range targets {
 		units = append(units, e.resolve(t, snapshot, opts)...)
@@ -260,28 +284,48 @@ func (e *engine) kill(ctx context.Context, snapshot []ports.ListeningPort, targe
 	units = e.dedupe(units)
 	e.order(units)
 
-	results := make([]Result, 0, len(units))
 	for _, u := range units {
-		results = e.plan(u, opts, results)
+		e.plan(u, opts)
 	}
-	if opts.DryRun {
-		return results
+	if !opts.DryRun {
+		for _, u := range units {
+			e.execute(u, opts)
+		}
+		if opts.escalating() {
+			e.escalate(ctx, units, opts)
+		}
 	}
-
-	for _, u := range units {
-		e.execute(u, opts, results)
-	}
-	if opts.escalating() {
-		e.escalate(ctx, units, opts, results)
-	}
-	return results
+	return project(units)
 }
 
-// resolve turns one selector into the units it addresses. A run id can address
-// several listeners, so this returns a slice.
-// resolve turns one selector into the units it addresses. A run id can address
-// several listeners, so the answer is a slice; a selector that matches nothing
-// comes back as one unit carrying the reason, so the caller still gets a row.
+// project turns the settled units into contract rows: units outward-in, and
+// within a unit the order the run planned, which is children before parents.
+func project(units []*unit) []Result {
+	total := 0
+	for _, u := range units {
+		total += len(u.stops)
+	}
+	rows := make([]Result, 0, total)
+	for _, u := range units {
+		for _, s := range u.stops {
+			row := Result{
+				Port: u.port, BindAddress: u.bind,
+				PID: s.pid, Name: s.name,
+				Method: s.method, OK: s.ok,
+			}
+			if s.err != nil {
+				row.Error = s.err.Error()
+				row.Code = Code(s.err)
+			}
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+// resolve turns one target into the units it addresses. A run id can address
+// several listeners, so the answer is a slice; a target that matches nothing
+// comes back as one refusing unit, so the caller still gets a row that says why.
 func (e *engine) resolve(t Target, snapshot []ports.ListeningPort, opts Options) []*unit {
 	units := e.unitsFor(t, snapshot, opts)
 	// The caller's own label is presentation, applied only after every identity
@@ -298,25 +342,33 @@ func (e *engine) resolve(t Target, snapshot []ports.ListeningPort, opts Options)
 func (e *engine) unitsFor(t Target, snapshot []ports.ListeningPort, opts Options) []*unit {
 	switch {
 	case t.RunID != "":
-		return e.unitsForRun(t.RunID, snapshot, opts)
+		return e.unitsForRun(t, snapshot, opts)
 	case t.Port > 0:
 		return e.unitsForPort(t, snapshot, opts)
 	case t.PID > 0:
 		return e.unitsForPID(t, snapshot, opts)
 	}
-	return []*unit{{err: codedf(CodeInvalidSelector, "", "empty target: set one of port, pid or run_id")}}
+	return refusing(&unit{}, codedf(CodeInvalidSelector, "", "empty target: set one of port, pid or run_id"))
+}
+
+// refusing is the one way resolution says no: a unit that plans a single failed
+// row and signals nothing.
+func refusing(shape *unit, err error) []*unit {
+	shape.refusal = err
+	return []*unit{shape}
 }
 
 // unitsForRun addresses every listener the run recorded.
-func (e *engine) unitsForRun(runID string, snapshot []ports.ListeningPort, opts Options) []*unit {
+func (e *engine) unitsForRun(t Target, snapshot []ports.ListeningPort, opts Options) []*unit {
 	var units []*unit
 	for i := range snapshot {
-		if snapshot[i].RunID == runID || snapshot[i].Tag == runID {
+		if snapshot[i].RunID == t.RunID || snapshot[i].Tag == t.RunID {
 			units = append(units, e.unitFor(&snapshot[i], opts))
 		}
 	}
 	if len(units) == 0 {
-		return []*unit{{name: runID, err: codedf(CodeNotFound, "", "no listening port belongs to run %s", runID)}}
+		return refusing(&unit{name: t.RunID},
+			codedf(CodeNotFound, "", "no listening port belongs to run %s", t.RunID))
 	}
 	return units
 }
@@ -328,12 +380,12 @@ func (e *engine) unitsForPort(t Target, snapshot []ports.ListeningPort, opts Opt
 	matches := matchPort(snapshot, t.Port, t.BindAddress)
 	switch len(matches) {
 	case 0:
-		return []*unit{{port: t.Port, bind: t.BindAddress, err: codedf(CodeNotFound, "",
-			"no process is listening on %s", where(t.Port, t.BindAddress))}}
+		return refusing(&unit{port: t.Port, bind: t.BindAddress},
+			codedf(CodeNotFound, "", "no process is listening on %s", where(t.Port, t.BindAddress)))
 	case 1:
 		return []*unit{e.unitFor(matches[0], opts)}
 	}
-	return []*unit{{port: t.Port, err: ambiguousPort(t.Port, matches)}}
+	return refusing(&unit{port: t.Port}, ambiguousPort(t.Port, matches))
 }
 
 // where spells a port with its bind address when one was named.
@@ -359,7 +411,7 @@ func ambiguousPort(port int, matches []*ports.ListeningPort) *CodedError {
 // checked, and its tree is what gets signalled.
 func (e *engine) unitsForPID(t Target, snapshot []ports.ListeningPort, opts Options) []*unit {
 	if !validSignalPID(t.PID) {
-		return []*unit{{root: t.PID, err: codedf(CodeInvalidSelector, "", "invalid PID %d", t.PID)}}
+		return refusing(&unit{root: t.PID}, codedf(CodeInvalidSelector, "", "invalid PID %d", t.PID))
 	}
 	if scanned := e.scannedPID(t.PID, snapshot, opts); scanned != nil {
 		// The identity claim survives even when the pid matched a listener:
@@ -369,7 +421,7 @@ func (e *engine) unitsForPID(t Target, snapshot []ports.ListeningPort, opts Opti
 		return []*unit{scanned}
 	}
 	if !e.alive(t.PID) {
-		return []*unit{{root: t.PID, err: codedf(CodeNotFound, "", "no process with PID %d", t.PID)}}
+		return refusing(&unit{root: t.PID}, codedf(CodeNotFound, "", "no process with PID %d", t.PID))
 	}
 	u := &unit{root: t.PID, name: e.table.Name(t.PID), listenPID: t.PID}
 	e.fillProcesses(u, t.PID, opts.Tree)
@@ -392,7 +444,7 @@ func (e *engine) scannedPID(pid int, snapshot []ports.ListeningPort, opts Option
 func (e *engine) unitFor(lp *ports.ListeningPort, opts Options) *unit {
 	u := &unit{port: lp.Port, bind: lp.BindAddress, name: lp.DisplayName(), listenPID: lp.PID}
 	if !state.IsLocalhost(lp.Host) {
-		u.err = codedf(CodeInvalidSelector, "", "refusing to signal a listener from another host")
+		u.refusal = codedf(CodeInvalidSelector, "", "refusing to signal a listener from another host")
 		return u
 	}
 	if born, err := time.Parse(time.RFC3339, lp.StartedAt); err == nil {
@@ -404,7 +456,7 @@ func (e *engine) unitFor(lp *ports.ListeningPort, opts Options) *unit {
 		return u
 	}
 	if !validSignalPID(lp.PID) {
-		u.err = &CodedError{
+		u.refusal = &CodedError{
 			Code:   CodePermissionDenied,
 			Detail: fmt.Sprintf("could not resolve the process listening on port %d", lp.Port),
 			Hint:   "re-run with sudo for full visibility",
@@ -412,20 +464,18 @@ func (e *engine) unitFor(lp *ports.ListeningPort, opts Options) *unit {
 		return u
 	}
 
-	// A listener option-berth started is killed as a whole run: its process group
-	// when it leads one, otherwise its tree. Either way the supervisor and its
-	// workers go together.
-	root := lp.PID
-	tree := opts.Tree
+	// A listener this engine started is stopped as a whole run: its process
+	// group when it leads one, otherwise its tree. The supervisor and its
+	// workers go together either way.
+	root, tree := lp.PID, opts.Tree
 	if lp.RunRootPID > 0 {
-		root = lp.RunRootPID
-		tree = true
+		root, tree = lp.RunRootPID, true
 	}
-	u.root = root
 	if !validSignalPID(root) {
-		u.err = codedf(CodeInvalidSelector, "", "invalid run root PID %d", root)
+		u.refusal = codedf(CodeInvalidSelector, "", "invalid run root PID %d", root)
 		return u
 	}
+	u.root = root
 	if pgid, ok := e.groupOf(root); ok {
 		u.pgid = pgid
 		u.depth = len(e.table.Ancestors(root))
@@ -437,63 +487,69 @@ func (e *engine) unitFor(lp *ports.ListeningPort, opts Options) *unit {
 
 // fillProcesses records the pids this unit will signal, children first.
 func (e *engine) fillProcesses(u *unit, root int, tree bool) {
-	u.root = root
-	u.tree = tree
+	u.root, u.tree = root, tree
 	if tree && !e.nativeTree && e.tableErr != nil {
-		u.err = e.tableErr
+		u.refusal = e.tableErr
 		return
 	}
 	u.depth = len(e.table.Ancestors(root))
-	switch {
-	case !tree:
-		u.pids = []int{root}
-	case e.nativeTree:
-		// taskkill /T terminates the tree in one call; there is no PPID table
-		// to walk and no ordering for us to impose.
-		u.pids = []int{root}
-	default:
-		u.pids = e.table.Descendants(root)
-		if len(u.pids) == 0 {
-			u.pids = []int{root}
-		}
-	}
+	u.pids = e.processOrder(root, tree)
 }
 
-// dedupe drops pids already claimed by an earlier unit so overlapping targets
-// (a port and its own child port, `--all` over a whole tree) signal each
-// process exactly once.
+// processOrder is the pid list one unit signals: the root alone, or the root
+// with everything below it. Windows hands the whole tree to `taskkill /T`,
+// which has no PPID table for us to walk and no order for us to impose.
+func (e *engine) processOrder(root int, tree bool) []int {
+	if !tree || e.nativeTree {
+		return []int{root}
+	}
+	if pids := e.table.Descendants(root); len(pids) > 0 {
+		return pids
+	}
+	return []int{root}
+}
+
+// dedupe drops pids an earlier unit already claimed, so overlapping targets — a
+// port and its own child port, `--all` over one tree — signal each process
+// exactly once. A refusal and a container claim nothing and always survive.
 func (e *engine) dedupe(units []*unit) []*unit {
-	claimed := map[int]bool{}
+	claimedPIDs := map[int]bool{}
 	claimedGroups := map[int]bool{}
-	keptUnits := units[:0]
+	kept := make([]*unit, 0, len(units))
 	for _, u := range units {
-		if u.err != nil {
-			keptUnits = append(keptUnits, u)
-			continue
-		}
-		if u.pgid != 0 {
+		switch {
+		case u.refusal != nil, u.container != "":
+			kept = append(kept, u)
+		case u.pgid != 0:
 			if claimedGroups[u.pgid] {
 				continue
 			}
 			claimedGroups[u.pgid] = true
-			keptUnits = append(keptUnits, u)
-			claimed[u.pgid] = true
-			continue
-		}
-		kept := u.pids[:0]
-		for _, pid := range u.pids {
-			if claimed[pid] {
+			claimedPIDs[u.pgid] = true
+			kept = append(kept, u)
+		default:
+			fresh := unclaimed(u.pids, claimedPIDs)
+			if len(fresh) == 0 {
 				continue
 			}
-			claimed[pid] = true
-			kept = append(kept, pid)
-		}
-		u.pids = kept
-		if u.err != nil || u.container != "" || len(u.pids) > 0 {
-			keptUnits = append(keptUnits, u)
+			u.pids = fresh
+			kept = append(kept, u)
 		}
 	}
-	return keptUnits
+	return kept
+}
+
+// unclaimed marks every pid it has not seen yet and returns those in order.
+func unclaimed(pids []int, claimed map[int]bool) []int {
+	fresh := make([]int, 0, len(pids))
+	for _, pid := range pids {
+		if claimed[pid] {
+			continue
+		}
+		claimed[pid] = true
+		fresh = append(fresh, pid)
+	}
+	return fresh
 }
 
 // order sorts units so a unit rooted deeper in the process tree runs before its
@@ -503,88 +559,79 @@ func (e *engine) order(units []*unit) {
 	sort.SliceStable(units, func(i, j int) bool { return units[i].depth > units[j].depth })
 }
 
-// plan appends this unit's rows in the order they will be acted on, and records
-// where they landed so execute and escalate can update them in place.
-func (e *engine) plan(u *unit, opts Options, results []Result) []Result {
-	add := func(pid int, name string, method state.KillMethod) {
-		u.rows = append(u.rows, len(results))
-		results = append(results, Result{
-			Port:        u.port,
-			BindAddress: u.bind,
-			PID:         pid,
-			Name:        name,
-			Method:      method,
-			OK:          true,
-		})
-	}
-
-	switch {
-	case u.err != nil:
-		u.rows = append(u.rows, len(results))
-		results = append(results, Result{
-			Port: u.port, BindAddress: u.bind, PID: u.root, Name: u.name,
-			Method: state.MethodNone, OK: false, Error: u.err.Error(), Code: Code(u.err),
-		})
-	case u.container != "":
-		add(0, u.name, state.MethodDockerStop)
-	case u.pgid != 0:
-		add(u.pgid, u.name, signalMethod(opts.Force))
-	default:
-		for _, pid := range u.pids {
-			// The scanner's display name belongs to the process holding the
-			// socket; every other process in the tree is named from the
-			// process table, so a run root reads as "npm", not as its port.
-			name := e.table.Name(pid)
-			if u.name != "" && (pid == u.listenPID || pid == u.root) {
-				name = u.name
-			}
-			add(pid, name, signalMethod(opts.Force))
-		}
-	}
-	return results
-}
-
-// execute performs the planned actions for one unit and records failures.
-func (e *engine) execute(u *unit, opts Options, results []Result) {
-	if u.err != nil {
+// plan turns a resolved unit into the actions it will take and names each row
+// the way a reader expects: the scanner's display name for the process holding
+// the socket, the process table's name for the rest of a tree, the caller's
+// label for a group or container.
+func (e *engine) plan(u *unit, opts Options) {
+	if u.refusal != nil {
+		u.stops = []stop{{pid: u.root, name: u.name, method: state.MethodNone, err: u.refusal}}
 		return
 	}
-	fail := func(row int, err error) {
-		results[row].OK = false
-		results[row].Error = err.Error()
-		results[row].Code = Code(err)
+	if u.container != "" {
+		u.stops = []stop{{name: u.name, method: state.MethodDockerStop, ok: true}}
+		return
+	}
+	method := signalMethod(opts.Force)
+	if u.pgid != 0 {
+		u.stops = []stop{{pid: u.pgid, name: u.name, method: method, ok: true}}
+		return
+	}
+	u.stops = make([]stop, 0, len(u.pids))
+	for _, pid := range u.pids {
+		name := e.table.Name(pid)
+		if u.name != "" && (pid == u.listenPID || pid == u.root) {
+			name = u.name
+		}
+		u.stops = append(u.stops, stop{pid: pid, name: name, method: method, ok: true})
+	}
+}
+
+// execute performs the planned actions for one unit. A refused identity clears
+// the method as well as the row, because no signal was sent: reporting sigterm
+// there would claim an action that never happened.
+func (e *engine) execute(u *unit, opts Options) {
+	if u.refusal != nil {
+		return
+	}
+	settle := func(s *stop, err error) {
+		if err == nil {
+			return
+		}
+		s.ok = false
+		s.err = err
+	}
+	refuse := func(s *stop, err error) {
+		settle(s, err)
+		s.method = state.MethodNone
 	}
 
 	switch {
 	case u.container != "":
+		first := &u.stops[0]
 		if err := e.guard(u, 0); err != nil {
-			fail(u.rows[0], err)
-			results[u.rows[0]].Method = state.MethodNone
-		} else if err := e.dockerStop(u.container); err != nil {
-			fail(u.rows[0], err)
+			refuse(first, err)
+			return
 		}
+		settle(first, e.dockerStop(u.container))
 	case u.pgid != 0:
+		first := &u.stops[0]
 		if err := e.guard(u, u.pgid); err != nil {
-			fail(u.rows[0], err)
-			results[u.rows[0]].Method = state.MethodNone
-		} else if err := e.signalResult(u, e.signalGrp(u.pgid, opts.Force)); err != nil {
-			fail(u.rows[0], err)
+			refuse(first, err)
+			return
 		}
+		settle(first, e.signalResult(u, e.signalGrp(u.pgid, opts.Force)))
 	default:
 		for i, pid := range u.pids {
+			s := &u.stops[i]
 			if err := e.guard(u, pid); err != nil {
-				fail(u.rows[i], err)
-				results[u.rows[i]].Method = state.MethodNone
+				refuse(s, err)
 				continue
 			}
-			var err error
 			if e.nativeTree && u.tree {
-				err = e.signalResult(u, e.signalTree(pid, opts.Force))
+				settle(s, e.signalResult(u, e.signalTree(pid, opts.Force)))
 			} else {
-				err = e.signalResult(u, e.signalProc(pid, opts.Force))
-			}
-			if err != nil {
-				fail(u.rows[i], err)
+				settle(s, e.signalResult(u, e.signalProc(pid, opts.Force)))
 			}
 		}
 	}
