@@ -101,9 +101,7 @@ func Open(path string) (*Store, error) { return OpenWith(path, Options{}) }
 // changing journal mode. It is for local readers that need durable evidence
 // while the daemon is stopped; callers must close the returned store.
 func OpenReadOnly(path string) (*Store, error) {
-	if strings.TrimSpace(path) == "" {
-		path = Path()
-	}
+	path = databasePath(path)
 	if _, err := os.Stat(path); err != nil {
 		return nil, err
 	}
@@ -138,9 +136,7 @@ func OpenReadOnly(path string) (*Store, error) {
 // failure is returned, because a permission error or a full disk would recur on
 // the second attempt and losing the file would not help.
 func OpenWith(path string, opts Options) (*Store, error) {
-	if strings.TrimSpace(path) == "" {
-		path = Path()
-	}
+	path = databasePath(path)
 	if err := prepareFile(path); err != nil {
 		return nil, err
 	}
@@ -149,6 +145,14 @@ func OpenWith(path string, opts Options) (*Store, error) {
 		return store, err
 	}
 	return recreate(path, opts, err)
+}
+
+// databasePath resolves the one default every opener shares.
+func databasePath(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return Path()
+	}
+	return path
 }
 
 // recreate parks an unusable database and opens a fresh one in its place,
@@ -189,12 +193,10 @@ func openAt(path string, opts Options) (*Store, error) {
 	// the caller can still recover, rather than on the first real query.
 	var tables int
 	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master`).Scan(&tables); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("opening %s: %w", path, err)
+		return nil, closeAfterFailure(db, fmt.Errorf("opening %s: %w", path, err))
 	}
 	if err := migrate(db); err != nil {
-		_ = db.Close()
-		return nil, err
+		return nil, closeAfterFailure(db, err)
 	}
 	// The database holds a person's service history; keep it owner-only.
 	if err := os.Chmod(path, 0o600); err != nil && !os.IsNotExist(err) {
@@ -202,6 +204,13 @@ func openAt(path string, opts Options) (*Store, error) {
 		return nil, fmt.Errorf("securing %s: %w", path, err)
 	}
 	return &Store{db: db, path: path}, nil
+}
+
+// closeAfterFailure releases a handle that never became a usable Store, keeping
+// the original error as the one the caller sees.
+func closeAfterFailure(db *sql.DB, err error) error {
+	_ = db.Close()
+	return err
 }
 
 // defaultBusyTimeout is how long one statement waits for a competing writer.
@@ -247,10 +256,17 @@ func moveAside(path string) (string, error) {
 	if err := os.Rename(path, target); err != nil {
 		return "", err
 	}
+	moveSidecars(path, target)
+	return target, nil
+}
+
+// moveSidecars parks the WAL and shared-memory files beside the main one. A
+// sidecar that does not exist is not an error; the parked set is complete when
+// it is complete.
+func moveSidecars(path, target string) {
 	for _, suffix := range []string{"-wal", "-shm"} {
 		_ = os.Rename(path+suffix, target+suffix)
 	}
-	return target, nil
 }
 
 // freeCorruptName is a `<path>.corrupt-<stamp>` name that does not exist yet.

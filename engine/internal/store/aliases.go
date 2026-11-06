@@ -7,25 +7,40 @@ import "fmt"
 // project's main checkout, so that checkout and every linked worktree of it
 // pick the alias up together.
 
+// upsertGroupAlias keeps one row per main checkout: a second rename replaces
+// the first instead of failing on the key.
+const upsertGroupAlias = `
+INSERT INTO group_aliases (root, name, created_at)
+VALUES (?, ?, ?)
+ON CONFLICT(root) DO UPDATE SET
+	name = excluded.name,
+	created_at = excluded.created_at`
+
+// prepareAlias validates both halves of an alias write. The root is cleaned by
+// the same rule every other path-keyed table uses; the name has to be usable as
+// a project selector.
+func prepareAlias(root, name string) (string, error) {
+	clean, err := cleanRoot(root)
+	if err != nil {
+		return "", err
+	}
+	if err := validName(name); err != nil {
+		return "", err
+	}
+	return clean, nil
+}
+
 // SetGroupAlias names the project whose main checkout is at root, replacing any
 // alias it already had.
 func (s *Store) SetGroupAlias(root, name string) error {
-	clean, err := cleanRoot(root)
+	clean, err := prepareAlias(root, name)
 	if err != nil {
 		return err
 	}
-	if err := validName(name); err != nil {
-		return err
-	}
-	return s.exec(
-		`INSERT INTO group_aliases(root, name, created_at) VALUES(?, ?, ?)
-		 ON CONFLICT(root) DO UPDATE SET name = excluded.name, created_at = excluded.created_at`,
-		clean, name, nowString(),
-	)
+	return s.exec(upsertGroupAlias, clean, name, nowString())
 }
 
-// ClearGroupAlias forgets the alias for root. Clearing an absent one is not an
-// error.
+// ClearGroupAlias removes the alias for root; a missing row is not an error.
 func (s *Store) ClearGroupAlias(root string) error {
 	clean, err := cleanRoot(root)
 	if err != nil {
