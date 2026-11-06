@@ -5,47 +5,70 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-	"time"
 )
 
-// WAL means readers never block behind the writer. This drives both at once
-// and fails on the first error either side sees.
-func TestConcurrentReadersWhileWriting(t *testing.T) {
-	s := openTemp(t)
+// failureLog collects errors from goroutines that cannot call t.Fatalf
+// themselves.
+type failureLog struct {
+	mu   sync.Mutex
+	errs []error
+}
 
+func (l *failureLog) add(err error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.errs = append(l.errs, err)
+}
+
+// report fails the test once for each error any goroutine saw.
+func (l *failureLog) report(t *testing.T) {
+	t.Helper()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, err := range l.errs {
+		t.Errorf("concurrent access failed: %v", err)
+	}
+}
+
+// recordOne writes a single event through the ring's one write path.
+func recordOne(s *Store, port, pid int) error {
+	return s.AppendBatch([]HistoryEvent{{
+		Kind: EventPortUp, Port: port, PID: pid, DisplayName: "api", Group: "shop",
+	}})
+}
+
+// WAL means a reader never waits behind the writer. This drives both at once
+// and fails on the first error either side sees.
+func TestReadersDoNotWaitForTheWriter(t *testing.T) {
+	s := openTemp(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	var (
-		wg      sync.WaitGroup
-		mu      sync.Mutex
-		errs    []error
-		reads   int
-		writes  int
-		readers = 4
+		wg       sync.WaitGroup
+		problems failureLog
+		mu       sync.Mutex
+		reads    int
+		writes   int
 	)
-	fail := func(err error) {
-		mu.Lock()
-		errs = append(errs, err)
-		mu.Unlock()
-	}
+	const (
+		writerIterations = 300
+		readers          = 4
+	)
 
-	// One writer, hammering all three write paths.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		defer cancel()
-		for i := range 300 {
-			if err := s.Append(HistoryEvent{
-				Kind: EventPortUp, Port: 3000 + i%5, PID: i, DisplayName: "api", Group: "shop",
-			}); err != nil {
-				fail(err)
+		for i := range writerIterations {
+			if err := recordOne(s, 3000+i%5, i); err != nil {
+				problems.add(err)
 				return
 			}
 			if err := s.SetGroupAlias(filepath.Join("/code", "shop"), "shop"); err != nil {
-				fail(err)
+				problems.add(err)
 				return
 			}
 			if err := s.AddRoot(filepath.Join("/code", "p")); err != nil {
-				fail(err)
+				problems.add(err)
 				return
 			}
 			mu.Lock()
@@ -59,16 +82,16 @@ func TestConcurrentReadersWhileWriting(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for ctx.Err() == nil {
-				if _, err := s.Query(nil, time.Time{}, 20); err != nil {
-					fail(err)
+				if _, err := s.History(HistoryFilter{Limit: 20}); err != nil {
+					problems.add(err)
 					return
 				}
 				if _, err := s.GroupAliases(); err != nil {
-					fail(err)
+					problems.add(err)
 					return
 				}
 				if _, err := s.Roots(); err != nil {
-					fail(err)
+					problems.add(err)
 					return
 				}
 				mu.Lock()
@@ -78,60 +101,55 @@ func TestConcurrentReadersWhileWriting(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+	problems.report(t)
 
-	for _, err := range errs {
-		t.Errorf("concurrent access failed: %v", err)
-	}
-	if writes != 300 {
-		t.Errorf("writer completed %d iterations, want 300", writes)
+	if writes != writerIterations {
+		t.Errorf("the writer completed %d iterations, want %d", writes, writerIterations)
 	}
 	if reads == 0 {
-		t.Error("no read completed while the writer was running")
+		t.Error("not one read completed while the writer was running")
 	}
-	if n, err := s.HistoryCount(); err != nil || n != 300 {
-		t.Errorf("history holds %d rows (%v), want 300", n, err)
+	if count, err := s.HistoryCount(); err != nil || count != writerIterations {
+		t.Errorf("the ring holds %d rows (%v), want %d", count, err, writerIterations)
 	}
 }
 
-// Two Stores on the same file (the daemon plus, say, a one-shot CLI) must not
-// deadlock or lose writes.
-func TestTwoStoresOnTheSameFile(t *testing.T) {
+// Two Store handles on one file — the daemon plus a one-shot CLI — must neither
+// deadlock nor lose writes.
+func TestTwoStoresOnOneFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "option-berth.db")
-
-	a, err := Open(path)
+	first, err := Open(path)
 	if err != nil {
-		t.Fatalf("Open a: %v", err)
+		t.Fatalf("Open the first: %v", err)
 	}
-	defer func() { _ = a.Close() }()
-	b, err := Open(path)
+	t.Cleanup(func() { _ = first.Close() })
+	second, err := Open(path)
 	if err != nil {
-		t.Fatalf("Open b: %v", err)
+		t.Fatalf("Open the second: %v", err)
 	}
-	defer func() { _ = b.Close() }()
+	t.Cleanup(func() { _ = second.Close() })
 
-	var wg sync.WaitGroup
-	errs := make(chan error, 2)
-	for i, s := range []*Store{a, b} {
+	const perStore = 50
+	var (
+		wg       sync.WaitGroup
+		problems failureLog
+	)
+	for i, s := range []*Store{first, second} {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for j := range 50 {
-				if err := s.Append(HistoryEvent{
-					Kind: EventPortUp, Port: 3000 + i, PID: j,
-				}); err != nil {
-					errs <- err
+			for j := range perStore {
+				if err := recordOne(s, 3000+i, j); err != nil {
+					problems.add(err)
 					return
 				}
 			}
 		}()
 	}
 	wg.Wait()
-	close(errs)
-	for err := range errs {
-		t.Fatalf("concurrent write from two stores: %v", err)
-	}
+	problems.report(t)
 
-	if n, err := a.HistoryCount(); err != nil || n != 100 {
-		t.Errorf("history holds %d rows (%v), want 100", n, err)
+	if count, err := first.HistoryCount(); err != nil || count != 2*perStore {
+		t.Errorf("the ring holds %d rows (%v), want %d", count, err, 2*perStore)
 	}
 }
