@@ -1,19 +1,14 @@
-// Package store is the daemon's SQLite database: per-machine renames, group
-// pins, the port-event history ring and the set of known oberth.yaml roots.
+// Package store is the daemon's SQLite database: renames, group pins, the
+// port-event history ring, the set of known oberth.yaml roots, and the tables
+// sibling packages register for themselves.
 //
-// The database lives next to config.yaml (~/.option-berth/option-berth.db) and is
-// created on first use. It is driven by modernc.org/sqlite, a pure-Go driver,
-// so CGO_ENABLED=0 release builds keep working.
+// The file lives beside config.yaml (~/.option-berth/option-berth.db) and is
+// created on first use. modernc.org/sqlite is the driver — pure Go, so
+// CGO_ENABLED=0 release builds still work.
 //
-// The daemon normally owns the store. The CLI's no-daemon path may open it in
-// read-only mode to retain durable run-exit evidence while the daemon is down.
-//
-// Migrations are tracked per version, not by a high-water mark: schema_version
-// holds one row per applied migration and Open applies every registered
-// version that has no row. Versions 003-006 are reserved for sibling packages
-// (contract §8), so which of them a binary knows about depends on what it
-// links; a database that reached 006 without 005 registered still receives 005
-// the first time a build that owns it opens the file.
+// The daemon normally owns the store. The CLI's no-daemon path may open it
+// read-only to keep durable run-exit evidence while the daemon is down; see
+// OpenReadOnly.
 package store
 
 import (
@@ -33,21 +28,21 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
-// Time is stored as fixed-width UTC RFC 3339 text: nanoseconds are always
-// nine digits so string comparison is chronological and `since` filters can be
-// pushed into SQL.
+// Timestamps are stored as fixed-width UTC RFC 3339 text with nanoseconds
+// always at nine digits. That shape is deliberate: string comparison is then
+// chronological, so a `since` filter can be a plain SQL comparison.
 const timeLayout = "2006-01-02T15:04:05.000000000Z07:00"
-
-func nowString() string { return timeToString(time.Now()) }
 
 func timeToString(t time.Time) string { return t.UTC().Format(timeLayout) }
 
+func nowString() string { return timeToString(time.Now()) }
+
 func timeFromString(s string) (time.Time, error) {
-	t, err := time.Parse(time.RFC3339Nano, s)
+	parsed, err := time.Parse(time.RFC3339Nano, s)
 	if err != nil {
 		return time.Time{}, err
 	}
-	return t.UTC(), nil
+	return parsed.UTC(), nil
 }
 
 // ResetInfo describes a database that had to be thrown away because the file
@@ -72,10 +67,11 @@ type Options struct {
 	BusyTimeout time.Duration
 }
 
-// Store is an open option-berth database. It is safe for concurrent use: reads run
-// on the connection pool (WAL lets them proceed while a write is in flight)
-// and ordinary writes are serialised behind a mutex. Conditional control
-// release refuses contention; other Store handles can still cause SQLITE_BUSY.
+// Store is an open option-berth database. It is safe for concurrent use: reads
+// run on the connection pool, which WAL lets proceed while a write is in
+// flight, and ordinary writes are serialised behind one mutex. A conditional
+// write (the reservation release) refuses contention instead of queueing behind
+// it; another Store handle on the same file can still cause SQLITE_BUSY.
 type Store struct {
 	db       *sql.DB
 	path     string
@@ -83,9 +79,10 @@ type Store struct {
 
 	wmu sync.Mutex
 
-	// claimsRevision invalidates in-flight release observations after claims
-	// writes through this Store. Protected by wmu; not another claims table.
-	claimsRevision uint64
+	// reservationsRevision invalidates an in-flight release observation when a
+	// reservation is written through this Store. Guarded by wmu; it is a
+	// counter, not a second copy of the table.
+	reservationsRevision uint64
 
 	reset *ResetInfo
 }
@@ -138,6 +135,11 @@ func OpenReadOnly(path string) (*Store, error) {
 }
 
 // OpenWith is Open with options.
+//
+// Corruption is the one failure it recovers from: the unusable file is parked
+// beside itself and a fresh database is created in its place. Every other
+// failure is returned, because a permission error or a full disk would recur on
+// the second attempt and losing the file would not help.
 func OpenWith(path string, opts Options) (*Store, error) {
 	if strings.TrimSpace(path) == "" {
 		path = Path()
@@ -145,27 +147,28 @@ func OpenWith(path string, opts Options) (*Store, error) {
 	if err := prepareFile(path); err != nil {
 		return nil, err
 	}
-
-	s, err := openAt(path, opts)
-	if err == nil {
-		return s, nil
+	store, err := openAt(path, opts)
+	if err == nil || !isCorruption(err) {
+		return store, err
 	}
-	if !isCorruption(err) {
-		return nil, err
-	}
+	return recreate(path, opts, err)
+}
 
-	movedTo, mvErr := moveAside(path)
-	if mvErr != nil {
-		return nil, fmt.Errorf("%s is unusable (%v) and could not be moved aside: %w", path, err, mvErr)
+// recreate parks an unusable database and opens a fresh one in its place,
+// recording what happened so the daemon can report a db_reset event.
+func recreate(path string, opts Options, cause error) (*Store, error) {
+	movedTo, err := moveAside(path)
+	if err != nil {
+		return nil, fmt.Errorf("%s is unusable (%v) and could not be moved aside: %w", path, cause, err)
 	}
 	if err := prepareFile(path); err != nil {
 		return nil, err
 	}
-	fresh, freshErr := openAt(path, opts)
-	if freshErr != nil {
-		return nil, fmt.Errorf("recreating %s after moving the unusable file to %s: %w", path, movedTo, freshErr)
+	fresh, err := openAt(path, opts)
+	if err != nil {
+		return nil, fmt.Errorf("recreating %s after moving the unusable file to %s: %w", path, movedTo, err)
 	}
-	fresh.reset = &ResetInfo{Path: path, MovedTo: movedTo, Reason: err.Error()}
+	fresh.reset = &ResetInfo{Path: path, MovedTo: movedTo, Reason: cause.Error()}
 	if opts.OnReset != nil {
 		opts.OnReset(*fresh.reset)
 	}
@@ -252,24 +255,40 @@ func moveAside(path string) (string, error) {
 }
 
 // isCorruption reports whether err means "this file is not a database option-berth
-// can use" — the only failure Open recovers from by starting over. Disk
-// permissions, a full disk or a locked file are all propagated instead.
+// can use". It is the only failure Open recovers from by starting over; a
+// permission error, a full disk or a locked file is the caller's to see.
+//
+// The driver's own code is the first answer, because it is exact. Some
+// open-time failures arrive as plain strings with no code attached, so the
+// message is checked too — a shorter list than it looks, since these four
+// phrases are the only ways SQLite says "not a database".
 func isCorruption(err error) bool {
 	if err == nil {
 		return false
 	}
-	var serr *sqlite.Error
-	if errors.As(err, &serr) {
-		switch serr.Code() & 0xff {
+	var driverErr *sqlite.Error
+	if errors.As(err, &driverErr) {
+		switch driverErr.Code() & 0xff {
 		case sqlite3.SQLITE_NOTADB, sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_FORMAT:
 			return true
 		}
 	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "file is not a database") ||
-		strings.Contains(msg, "file is encrypted or is not a database") ||
-		strings.Contains(msg, "database disk image is malformed") ||
-		strings.Contains(msg, "malformed database schema")
+	message := strings.ToLower(err.Error())
+	for _, phrase := range corruptionPhrases {
+		if strings.Contains(message, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+// corruptionPhrases are the open-time messages SQLite prints when the file it
+// was handed is not a database it can read.
+var corruptionPhrases = []string{
+	"file is not a database",
+	"file is encrypted or is not a database",
+	"database disk image is malformed",
+	"malformed database schema",
 }
 
 // Close releases the database, leaving one file behind rather than three.

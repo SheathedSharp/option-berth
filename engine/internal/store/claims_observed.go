@@ -46,7 +46,7 @@ func (c Claims) ObserveContext(ctx context.Context, keys ...string) (ClaimObserv
 		ordered = append(ordered, key)
 	}
 	sort.Strings(ordered)
-	observation := ClaimObservation{owner: c.store, revision: c.store.claimsRevision}
+	observation := ClaimObservation{owner: c.store, revision: c.store.reservationsRevision}
 	for _, key := range ordered {
 		got, err := readObservedClaims(ctx, tx, key)
 		if err != nil {
@@ -84,7 +84,7 @@ func (c Claims) ObserveWorktreeContext(ctx context.Context, project, worktree st
 	if err != nil {
 		return ClaimObservation{}, fmt.Errorf("reading worktree reservations: %w", err)
 	}
-	observation := ClaimObservation{owner: c.store, revision: c.store.claimsRevision}
+	observation := ClaimObservation{owner: c.store, revision: c.store.reservationsRevision}
 	for rows.Next() {
 		row, err := decodeClaim(rows.Scan)
 		if err != nil {
@@ -175,7 +175,7 @@ func (c Claims) DeleteObservedContext(ctx context.Context, observation ClaimObse
 		return 0, errors.New("store: reservation release writer is busy; retry after observing")
 	}
 	defer c.store.wmu.Unlock()
-	if observation.owner != c.store || observation.revision != c.store.claimsRevision {
+	if observation.owner != c.store || observation.revision != c.store.reservationsRevision {
 		return 0, ErrClaimsChanged
 	}
 	tx, err := c.store.db.BeginTx(ctx, nil)
@@ -203,7 +203,7 @@ func (c Claims) DeleteObservedContext(ctx context.Context, observation ClaimObse
 		}
 		removed += int(n)
 	}
-	c.store.claimsRevision++
+	c.store.reservationsRevision++
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("releasing observed reservations: %w", err)
 	}
