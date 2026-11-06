@@ -57,8 +57,8 @@ func TestRepublishDoesNotScan(t *testing.T) {
 	}
 }
 
-// TestRepublishPublishesBeforeItReturns keeps contract §18's ordering: the
-// delta carrying the change is on the wire before the handler's reply, which
+// TestRepublishPublishesBeforeItReturns keeps the ordering a write depends on:
+// the delta carrying the change is on the wire before the handler's reply, which
 // is the reason republish is synchronous at all.
 func TestRepublishPublishesBeforeItReturns(t *testing.T) {
 	st := openStore(t)
@@ -119,7 +119,7 @@ func TestRepublishBeforeAnyScanFallsBackToOne(t *testing.T) {
 // scan an RPC starts collects what the *caller* asked for; what the
 // subscribers asked for is copied forward from the last snapshot instead of
 // being collected again, so `ports.kill` never waits on `docker stats` or a
-// health probe (contract §44) and no subscriber sees stats blink away.
+// health probe, and no subscriber sees stats blink away.
 func TestRPCScanDoesNotInheritDemandButKeepsIt(t *testing.T) {
 	var mu sync.Mutex
 	var asked []Include
@@ -180,7 +180,7 @@ func TestRPCScanDoesNotInheritDemandButKeepsIt(t *testing.T) {
 // TestOlderScanNeverOvertakesANewerOne is what lets an RPC's bare scan run
 // alongside the loop's expensive one: overlapping is fine, going backwards is
 // not. A scan whose OS half began before the published snapshot's must not
-// commit (contract §44).
+// commit.
 func TestOlderScanNeverOvertakesANewerOne(t *testing.T) {
 	release := make(chan struct{})
 	var slow atomic.Bool
@@ -283,7 +283,7 @@ func TestConfiguredHealthRoundIsBudgeted(t *testing.T) {
 // `time.Now` on Windows moves in steps of up to about 15 ms, so the scan that
 // had *just* finished read as having begun at the same instant as the call
 // that followed it, and a kill's rescan was answered with the snapshot it was
-// explicitly not allowed to use (contract §17, §25). The clock is stopped here
+// explicitly not allowed to use. The clock is stopped here
 // on purpose: that is the coarsest clock there is, and the rescan must still
 // scan on it.
 func TestRescanAlwaysScansOnAStoppedClock(t *testing.T) {
@@ -353,7 +353,7 @@ func TestReadDoesNotCoalesceOntoAScanThatBeganBeforeIt(t *testing.T) {
 	<-entered
 
 	// The tick holds the run gate, not the RPC gate: overlapping is the point
-	// (contract §44). The read scans and returns while the tick is still
+	// The read scans and returns while the tick is still
 	// blocked, so this assertion cannot race the tick's commit.
 	if _, err := l.Snapshot(Include{}); err != nil {
 		t.Fatalf("Snapshot: %v", err)

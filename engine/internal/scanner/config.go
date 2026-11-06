@@ -7,7 +7,7 @@ import (
 
 // The daemon's `oberth.yaml` index lives here, on the scan loop, because the
 // loop is the one thing that reads it every tick and the contract makes it
-// long-lived (contract §18). These accessors are how the group handlers
+// long-lived (). These accessors are how the group handlers
 // (`groups.config.get`, `groups.config.set`, `groups.reload`, `groups.start`)
 // reach it without a second copy going stale behind the first.
 
