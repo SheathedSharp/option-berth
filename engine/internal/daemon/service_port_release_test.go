@@ -48,9 +48,9 @@ func releaseFixture(t *testing.T) (*Runtime, *servicePortRelease, *releaseGuardF
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	cfg := &groups.Config{Dir: dir, Path: filepath.Join(dir, groups.ConfigName), Services: []groups.Service{{Name: "web", PortAuto: true}}}
-	project, worktree := claims.Identity(dir, "", "")
+	project, worktree := claims.Identity(dir)
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	row := store.ClaimRow{Port: 12501, Key: claims.ServiceKey(project, worktree, "web"), Project: project, Worktree: worktree, CreatedAt: at, ExpiresAt: at.Add(time.Hour)}
+	row := store.ClaimRow{Port: 12501, Key: (claims.Address{Project: project, Worktree: worktree, Service: "web"}).Key(), Project: project, Worktree: worktree, Since: at, Until: at.Add(time.Hour)}
 	if err := st.Claims().Put(row); err != nil {
 		t.Fatal(err)
 	}
@@ -74,13 +74,13 @@ func TestWorktreePortReleaseUsesTheRecordedClaimKey(t *testing.T) {
 	}
 	defer func() { _ = st.Close() }()
 	dir := t.TempDir()
-	project, worktree := claims.Identity(dir, "", "")
-	otherProject, otherWorktree := claims.Identity(t.TempDir(), "", "")
+	project, worktree := claims.Identity(dir)
+	otherProject, otherWorktree := claims.Identity(t.TempDir())
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	for _, row := range []store.ClaimRow{
-		{Port: 12501, Key: claims.ServiceKey(project, worktree, "web"), Project: project, Worktree: worktree, CreatedAt: at, ExpiresAt: at.Add(time.Hour)},
-		{Port: 12502, Key: claims.ServiceKey(project, worktree, "worker"), Project: project, Worktree: worktree, CreatedAt: at, ExpiresAt: at.Add(time.Hour)},
-		{Port: 12601, Key: claims.ServiceKey(otherProject, otherWorktree, "web"), Project: otherProject, Worktree: otherWorktree, CreatedAt: at, ExpiresAt: at.Add(time.Hour)},
+		{Port: 12501, Key: (claims.Address{Project: project, Worktree: worktree, Service: "web"}).Key(), Project: project, Worktree: worktree, Since: at, Until: at.Add(time.Hour)},
+		{Port: 12502, Key: (claims.Address{Project: project, Worktree: worktree, Service: "worker"}).Key(), Project: project, Worktree: worktree, Since: at, Until: at.Add(time.Hour)},
+		{Port: 12601, Key: (claims.Address{Project: otherProject, Worktree: otherWorktree, Service: "web"}).Key(), Project: otherProject, Worktree: otherWorktree, Since: at, Until: at.Add(time.Hour)},
 	} {
 		if err := st.Claims().Put(row); err != nil {
 			t.Fatal(err)
@@ -160,7 +160,7 @@ func TestServicePortReleaseUsesOriginalReservationAndAuthority(t *testing.T) {
 			case "refresh before commit":
 				guard.before = func() {
 					row := plan.observed.Rows[0]
-					row.ExpiresAt = row.ExpiresAt.Add(time.Minute)
+					row.Until = row.Until.Add(time.Minute)
 					if err := rt.Store.Claims().Put(row); err != nil {
 						t.Fatal(err)
 					}
@@ -239,7 +239,7 @@ func TestGroupsKillEmptyStopUsesReservationGuard(t *testing.T) {
 				scans++
 				if kind == "refresh during scan" {
 					row := plan.observed.Rows[0]
-					row.ExpiresAt = row.ExpiresAt.Add(time.Minute)
+					row.Until = row.Until.Add(time.Minute)
 					if err := rt.Store.Claims().Put(row); err != nil {
 						return nil, err
 					}

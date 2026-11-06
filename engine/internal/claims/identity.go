@@ -7,46 +7,33 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 )
 
-// Identity derives the project and worktree a claim belongs to from a working
-// directory, letting an explicit project or worktree win over what the
-// directory says (spec 2 §4).
+// Identity derives the checkout a directory belongs to: the project is the
+// repository and the worktree is the checkout within it, so two linked
+// worktrees of one repository are two identities and get different addresses.
 //
-// It lives here rather than in the CLI because two callers ask the same
-// question from two different working directories: `option-berth claim`, from the
-// shell's cwd, and the `claim_port` MCP tool, from the directory the agent
-// started the MCP server in. A key that differed between them would hand the
-// same worktree two sets of ports, which is exactly what claims exist to
-// prevent.
+// The daemon and the scanner both ask this question, from a directory that may
+// be the manifest's or a service's, so the derivation lives here rather than
+// being spelled out at each call site: a key that came out differently between
+// two callers would hand one worktree two sets of ports, which is exactly what
+// reservations exist to prevent.
 //
-// A directory outside any git checkout claims under the directory's own name;
-// a directory that is not a checkout and has no name at all claims under
-// "option-berth", so a key is never empty.
-func Identity(cwd, project, worktree string) (string, string) {
-	root, wt, ok := groups.Find(cwd)
+// A directory outside any git checkout is its own project named after the
+// directory, and a directory with no name at all is "option-berth", so a
+// project is never empty.
+func Identity(dir string) (project, worktree string) {
+	root, linked, ok := groups.Find(dir)
 	switch {
 	case !ok:
-		if project == "" {
-			project = filepath.Base(cwd)
-		}
-	case wt != "":
+		project = filepath.Base(dir)
+	case linked != "":
 		// groups.Find spells a linked worktree "<repo>@<name>".
-		repo, name, _ := strings.Cut(wt, "@")
-		if project == "" {
-			project = repo
-		}
-		if worktree == "" {
-			worktree = name
-		}
+		repo, name, _ := strings.Cut(linked, "@")
+		project, worktree = repo, name
 	default:
-		if project == "" {
-			project = filepath.Base(root)
-		}
+		project = filepath.Base(root)
 	}
 	if project == "" {
 		project = "option-berth"
 	}
-	if worktree == "" {
-		worktree = DefaultWorktree
-	}
-	return project, worktree
+	return project, worktreeName(worktree)
 }
