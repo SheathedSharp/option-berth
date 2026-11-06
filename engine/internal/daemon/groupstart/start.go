@@ -50,6 +50,11 @@ const dependencyPoll = 250 * time.Millisecond
 // delaying healthy services that take a little time to bind their port.
 const startupCheckWindow = 100 * time.Millisecond
 
+// errNoCommand is what SplitCmd leaves behind for an empty manifest value.
+// Each caller names the field it split, because "no cmd to run" and "empty
+// prepare command" are the words the user reads.
+var errNoCommand = errors.New("empty command")
+
 func init() {
 	daemon.RegisterHandler("groups.start", handleGroupsStart)
 	daemon.RegisterCapability("groups")
@@ -70,6 +75,28 @@ func handleGroupsStart(ctx context.Context, req *daemon.Request) (any, error) {
 	// published in: `<project>@<worktree>` for a worktree's copy of a
 	// committed file, never the `name:` the copy carries.
 	group := req.Runtime.Scanner.GroupOf(cfg)
+	plan, err := startPlan(cfg, p)
+	if err != nil {
+		return nil, err
+	}
+	call := &startCall{
+		rt:     req.Runtime,
+		cfg:    cfg,
+		group:  group,
+		params: p,
+		// One id for everything this call starts, so a client can tell the
+		// services it brought up from the ones that were already running.
+		meta: runsreg.Meta{ConfigPath: cfg.Path, StartID: spawn.NewID(), Origin: runsreg.Origin(req)},
+		end:  rpc.GroupsStartEnd{Started: []string{}, Skipped: []string{}, Errors: []string{}},
+	}
+	return daemon.StartStream(ctx, req, call.reply(), func(ctx context.Context, s *daemon.Stream) (any, error) {
+		return call.serve(ctx, s, plan)
+	})
+}
+
+// startPlan is the dependency-ordered work this call does, plus the caller's
+// errors for naming something the file does not declare.
+func startPlan(cfg *groups.Config, p rpc.GroupsStartParams) ([]groups.Step, error) {
 	plan, err := groups.PlanWith(cfg, groups.PlanOptions{
 		Only:                p.Only,
 		IncludeDependencies: p.IncludeDependencies,
@@ -87,250 +114,195 @@ func handleGroupsStart(ctx context.Context, req *daemon.Request) (any, error) {
 			cfg.Path+" declares no services to start",
 			"add a `services:` list, or start the command yourself with `oberth start`")
 	}
+	return plan, nil
+}
 
-	rt := req.Runtime
-	// One id for everything this call starts, so a client can tell the
-	// services it brought up from the ones that were already running.
-	meta := runsreg.Meta{ConfigPath: cfg.Path, StartID: spawn.NewID(), Origin: runsreg.Origin(req)}
-	initial := rpc.GroupsStartResult{
+// startCall is one `groups.start` invocation. Everything the per-service
+// pipeline reads — the runtime, the file, the group, the caller's parameters,
+// this call's one start id — is carried here once, so no step has to thread nine
+// arguments and none of them can be passed from the wrong call.
+//
+// The call owns no persisted state: the result it accumulates exists for the
+// length of the stream, and the in-flight attempt it publishes is the memory-only
+// fact attempts.go owns.
+type startCall struct {
+	rt     *daemon.Runtime
+	cfg    *groups.Config
+	group  string
+	params rpc.GroupsStartParams
+	meta   runsreg.Meta
+	end    rpc.GroupsStartEnd
+
+	// ctx and stream are set when the plan starts running; book is the ports
+	// table resolved once for the whole call.
+	ctx    context.Context
+	stream *daemon.Stream
+	book   *addressBook
+	// changed records that this call registered a run, so the scan cache is
+	// invalidated even when the call then failed.
+	changed bool
+}
+
+// reply is the stream's opening payload: the id naming this call, and the empty
+// affected list a start reports (it mutates runs, not groups).
+func (c *startCall) reply() rpc.GroupsStartResult {
+	return rpc.GroupsStartResult{
 		MutationResult: rpc.MutationResult{OK: true, Affected: []string{}},
-		StartID:        meta.StartID,
+		StartID:        c.meta.StartID,
 	}
-	return daemon.StartStream(ctx, req, initial, func(ctx context.Context, s *daemon.Stream) (any, error) {
-		// One start per group at a time. Two concurrent `up` calls would
-		// otherwise both pass alreadyRunning before either registers a run,
-		// and the loser of the race would report a bind failure for a service
-		// that is already coming up.
-		release, err := rt.AcquireGroup(ctx, group)
-		if err != nil {
-			return nil, err
-		}
-		defer release()
-		return run(ctx, rt, s, cfg, group, plan, p, meta)
-	})
+}
+
+// serve holds the group for the length of the call, then runs the plan.
+func (c *startCall) serve(ctx context.Context, s *daemon.Stream, plan []groups.Step) (any, error) {
+	// One start per group at a time. Two concurrent `up` calls would otherwise
+	// both pass alreadyRunning before either registers a run, and the loser of
+	// the race would report a bind failure for a service that is already
+	// coming up.
+	release, err := c.rt.AcquireGroup(ctx, c.group)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return c.run(ctx, s, plan)
 }
 
 // run starts the planned services one at a time, sending a chunk per service.
 // A service that fails never stops the ones after it: the caller asked for the
-// group, and a partial group is more useful than none.
-func run(ctx context.Context, rt *daemon.Runtime, s *daemon.Stream,
-	cfg *groups.Config, group string, plan []groups.Step, p rpc.GroupsStartParams,
-	meta runsreg.Meta) (rpc.GroupsStartEnd, error) {
-
-	end := rpc.GroupsStartEnd{Started: []string{}, Skipped: []string{}, Errors: []string{}}
-	changed := false
+// group, and a partial group is more useful than none. Only cancellation and a
+// stream that cannot carry a chunk end the plan early.
+func (c *startCall) run(ctx context.Context, s *daemon.Stream, plan []groups.Step) (rpc.GroupsStartEnd, error) {
+	c.ctx, c.stream = ctx, s
 	defer func() {
-		if changed || len(end.Errors) > 0 {
-			rt.Scanner.Invalidate()
+		// A run registered here is real even when the call then failed, and a
+		// recorded failure is a fact the cached snapshot does not have.
+		if c.changed || len(c.end.Errors) > 0 {
+			c.rt.Scanner.Invalidate()
 		}
 	}()
-	book, err := newAddressBook(ctx, rt, cfg, group)
+	book, err := newAddressBook(ctx, c.rt, c.cfg, c.group)
 	if err != nil {
-		return end, err
+		return c.end, err
 	}
+	c.book = book
 
 	for _, step := range plan {
 		if err := ctx.Err(); err != nil {
-			return end, err
+			return c.end, err
 		}
 		if len(step.IncludedBy) > 0 {
 			// The summary describes the plan, not the outcome: a dependency
 			// that fails still came in through a named root.
-			end.Included = append(end.Included, step.Service.Name)
-			sort.Strings(end.Included)
+			c.end.Included = append(c.end.Included, step.Service.Name)
+			sort.Strings(c.end.Included)
 		}
-		started, err := startOneService(ctx, rt, s, cfg, group, step, book, p, meta, &end)
-		// A run registered here is real even when the call then failed
-		// (cancellation or a failed stream send), so the scan cache still has
-		// to be invalidated before returning.
+		started, err := c.startService(step)
 		if started {
-			changed = true
+			c.changed = true
 		}
 		if err != nil {
-			return end, err
+			return c.end, err
 		}
 	}
-	return end, nil
+	return c.end, nil
 }
 
-// startOneService runs one plan step. It returns whether a run was registered
-// (so the caller knows to invalidate the scan) and a fatal error only for
-// cancellation or a failed stream send; a service failure is recorded in end
-// and does not stop the plan.
+// startService runs one plan step. It reports whether a run was registered (so
+// the caller knows to invalidate the scan) and returns a fatal error only for
+// cancellation or a failed stream send; a service failure is recorded in the
+// result and does not stop the plan.
 //
 // The in-flight attempt is created only after the already-running check, so a
 // skipped service never owns one. Its finish is deferred, which is what makes
 // every exit path — dependency failure, prepare failure, spawn failure,
 // cancellation — drop the attempt. On success it is dropped as soon as the run
 // is registered: from then on the run record is the only truth.
-func startOneService(ctx context.Context, rt *daemon.Runtime, s *daemon.Stream,
-	cfg *groups.Config, group string, step groups.Step, book *addressBook,
-	p rpc.GroupsStartParams, meta runsreg.Meta, end *rpc.GroupsStartEnd) (bool, error) {
-
+func (c *startCall) startService(step groups.Step) (bool, error) {
 	svc := step.Service
-	reason, runID, up, err := alreadyRunning(ctx, rt, group, svc)
+	reason, runID, up, err := alreadyRunning(c.ctx, c.rt, c.group, svc)
 	if err != nil {
 		return false, err
 	}
 	if up {
-		if err := s.Send(rpc.GroupsStartChunk{
+		if err := c.stream.Send(rpc.GroupsStartChunk{
 			Service: svc.Name, State: "skipped", Skipped: true, Reason: reason, RunID: runID,
 			IncludedBy: step.IncludedBy, ReadyTimeout: svc.EffectiveReadyTimeout().String(),
 		}); err != nil {
 			return false, err
 		}
-		end.Skipped = append(end.Skipped, svc.Name)
+		c.end.Skipped = append(c.end.Skipped, svc.Name)
 		return false, nil
 	}
 
-	attempt := beginStartAttempt(rt, group, meta.StartID, svc, dependencyNames(step.Waits), lastPrepareDuration(cfg.Path, svc.Name))
+	attempt := beginStartAttempt(c.rt, c.group, c.meta.StartID, svc, dependencyNames(step.Waits), lastPrepareDuration(c.cfg.Path, svc.Name))
 	defer attempt.finish()
-	if err := sendStartProgress(s, p, attempt); err != nil {
+	if err := sendStartProgress(c.stream, c.params, attempt); err != nil {
 		return false, err
 	}
 
-	if err := waitForProgress(ctx, rt, group, step.Waits, book, meta.StartID, attempt.setWaitingOn); err != nil {
-		if err := ctx.Err(); err != nil {
+	if err := waitForProgress(c.ctx, c.rt, c.group, step.Waits, c.book, c.meta.StartID, attempt.setWaitingOn); err != nil {
+		// Losing the request is not evidence that the service failed.
+		if err := c.ctx.Err(); err != nil {
 			return false, err
 		}
 		message := detail(err)
-		recordStartFailureReason(cfg, group, svc, meta, startFailureReason(message), message)
-		end.Errors = append(end.Errors, svc.Name)
-		rt.Scanner.Wake()
-		if err := s.Send(rpc.GroupsStartChunk{
-			Service: svc.Name, State: "failed", Reason: startFailureReason(message),
-			Error: message, Hint: dependencyHint(err), IncludedBy: step.IncludedBy,
-		}); err != nil {
-			return false, err
-		}
-		return false, nil
+		return false, c.reportFailure(svc, step, serviceFailure{
+			reason: startFailureReason(message), message: message, hint: dependencyHint(err),
+			recordReason: startFailureReason(message), recordMessage: message,
+		})
 	}
 
 	if strings.TrimSpace(svc.Prepare) != "" {
-		// The skip is an optimization, never a substitute for running the
-		// step when the evidence is incomplete. CheckCwd failing here means
-		// prepare() below will report the refusal with its own hint.
-		skipped := false
-		if cwd, err := runsreg.CheckCwd(cfg.ServiceDir(svc), p.AllowOutsideHome); err == nil &&
-			prepareUnchanged(cfg.Path, svc, cwd) {
-			rt.Logger.Info("prepare inputs unchanged; skipping", "group", group, "service", svc.Name)
-			skipped = true
-		}
-		if !skipped {
-			attempt.setPhase(phasePrepare, nil)
-			if err := sendStartProgress(s, p, attempt); err != nil {
-				return false, err
-			}
-			prepareStart := time.Now()
-			if err := prepare(ctx, cfg, group, svc, book, p); err != nil {
-				// Losing the request is not evidence that the service failed.
-				// prepare has already killed and reaped its attached child.
-				if err := ctx.Err(); err != nil {
-					return false, err
-				}
-				rt.Logger.Warn("preparing a service", "group", group, "service", svc.Name, "error", err)
-				// Same rule as the cmd path: the error's own hint, or none. A
-				// prepare step that failed before its log file was even created
-				// has no log to point at.
-				message, hint := detailAndHint(err)
-				recordStartFailure(cfg, group, svc, meta, "prepare: "+message)
-				end.Errors = append(end.Errors, svc.Name)
-				rt.Scanner.Wake()
-				if err := s.Send(rpc.GroupsStartChunk{
-					Service: svc.Name, State: "failed", Reason: "start_failed",
-					Error: "prepare failed: " + message, Hint: hint, IncludedBy: step.IncludedBy,
-				}); err != nil {
-					return false, err
-				}
-				return false, nil
-			}
-			// The duration is advisory evidence for the next `starting` read;
-			// a write failure is not a start failure.
-			attempt.setLastPrepare(time.Since(prepareStart).Milliseconds())
-			if err := recordPrepareDuration(cfg.Path, svc.Name, time.Since(prepareStart)); err != nil {
-				rt.Logger.Warn("recording prepare duration", "group", group, "service", svc.Name, "error", err)
-			}
-			// The step succeeded: remember exactly what it saw. A stamp
-			// write failure is not a start failure — the service can still
-			// run and the next start simply repeats prepare.
-			if cwd, err := runsreg.CheckCwd(cfg.ServiceDir(svc), p.AllowOutsideHome); err == nil {
-				if err := recordPrepareStamp(cfg.Path, svc, cwd); err != nil {
-					rt.Logger.Warn("recording prepare inputs", "group", group, "service", svc.Name, "error", err)
-				}
-			}
+		proceed, err := c.prepareStep(svc, step, attempt)
+		if !proceed {
+			return false, err
 		}
 	}
+
 	attempt.setPhase(phaseSpawning, nil)
-	if err := sendStartProgress(s, p, attempt); err != nil {
+	if err := sendStartProgress(c.stream, c.params, attempt); err != nil {
 		return false, err
 	}
-	if err := ctx.Err(); err != nil {
+	if err := c.ctx.Err(); err != nil {
 		return false, err
 	}
-	h, err := start(ctx, rt, cfg, group, svc, book, p, meta)
+	h, err := c.spawnService(svc)
 	// A registered run is the new owner of this service's facts. The attempt
 	// ends here whether the spawn succeeded or not; the deferred finish is then
 	// a no-op, and the run's exit evidence takes over on failure.
 	attempt.finish()
 	if err != nil {
-		if err := ctx.Err(); err != nil {
+		if err := c.ctx.Err(); err != nil {
 			return false, err
 		}
-		rt.Logger.Warn("starting a service", "group", group, "service", svc.Name, "error", err)
+		c.rt.Logger.Warn("starting a service", "group", c.group, "service", svc.Name, "error", err)
 		// The hint is the error's own, never a guess. Every failure on this
 		// path happened before a process existed, so a "read the logs" hint
 		// would name a file that was never written; the refusals that do
 		// have a next step carry it themselves.
 		message, hint := detailAndHint(err)
-		recordStartFailureReason(cfg, group, svc, meta, startFailureReason(message), message)
-		end.Errors = append(end.Errors, svc.Name)
-		rt.Scanner.Wake()
-		if err := s.Send(rpc.GroupsStartChunk{
-			Service: svc.Name, State: "failed", Reason: startFailureReason(message),
-			Error: message, Hint: hint, IncludedBy: step.IncludedBy,
-		}); err != nil {
-			return false, err
-		}
-		return false, nil
+		return false, c.reportFailure(svc, step, serviceFailure{
+			reason: startFailureReason(message), message: message, hint: hint,
+			recordReason: startFailureReason(message), recordMessage: message,
+		})
 	}
+
 	// A detached run is already registered. Cancelling the observation stops
 	// this plan, not that run; its reaper remains the sole exit owner.
 	timer := time.NewTimer(startupCheckWindow)
 	select {
-	case <-ctx.Done():
+	case <-c.ctx.Done():
 		timer.Stop()
-		return true, ctx.Err()
+		return true, c.ctx.Err()
 	case <-timer.C:
 	}
-	if err := ctx.Err(); err != nil {
+	if err := c.ctx.Err(); err != nil {
 		return true, err
 	}
 	if exit, ok := runsreg.Default.ExitForRun(h.ID, h.PID, h.StartedAt); ok {
-		end.Errors = append(end.Errors, svc.Name)
-		// A bind failure is explained by whoever still holds the port. This is
-		// the first read, so the caller gets the evidence without a second
-		// command. A scanner that is absent or cannot observe leaves the holder
-		// empty; it must never turn this failure into an internal error.
-		var holder *state.PortHolder
-		if exit.Reason == runsreg.ReasonPortOccupied && rt.Scanner != nil {
-			if snap, err := rt.Scanner.SnapshotAllContext(ctx, scanner.Include{}); err == nil {
-				holder = servicefacts.FindPortHolder(snap.Ports, servicefacts.PortHolderQuery{
-					Port: exit.PortHint, Group: group, Service: svc.Name, RunID: h.ID,
-				})
-			}
-		}
-		if err := s.Send(rpc.GroupsStartChunk{
-			Service: svc.Name, State: "failed", Reason: exit.Reason,
-			Error: fmt.Sprintf("service exited with code %d (%s)", exit.Code, exit.Reason),
-			Hint:  logsHint(svc.Name), PID: h.PID, RunID: h.ID, LogPath: h.LogPath,
-			PortHolder: holder, IncludedBy: step.IncludedBy,
-		}); err != nil {
-			return true, err
-		}
-		return true, nil
+		return true, c.reportExit(svc, step, h, exit)
 	}
-	end.Started = append(end.Started, svc.Name)
-	if err := s.Send(rpc.GroupsStartChunk{
+	c.end.Started = append(c.end.Started, svc.Name)
+	if err := c.stream.Send(rpc.GroupsStartChunk{
 		Service: svc.Name, State: "started", PID: h.PID, Port: h.PortHint, RunID: h.ID,
 		LogPath: h.LogPath, LogOffset: h.LogOffset, IncludedBy: step.IncludedBy,
 		ReadyTimeout: svc.EffectiveReadyTimeout().String(),
@@ -340,42 +312,79 @@ func startOneService(ctx context.Context, rt *daemon.Runtime, s *daemon.Stream,
 	return true, nil
 }
 
-// dependencyNames is what a `starting` chunk names as the outstanding waits.
-func dependencyNames(deps []groups.Service) []string {
-	names := make([]string, 0, len(deps))
-	for _, dep := range deps {
-		names = append(names, dep.Name)
+// prepareStep runs the service's optional build step, or skips it when the last
+// successful run saw exactly these inputs. It returns whether the service may
+// still be spawned, and a fatal error only for cancellation or a broken stream:
+// a failed prepare is reported here and the command is never started.
+func (c *startCall) prepareStep(svc groups.Service, step groups.Step, attempt *startAttempt) (bool, error) {
+	// The skip is an optimization, never a substitute for running the step when
+	// the evidence is incomplete. CheckCwd failing here means runPrepare below
+	// will report the refusal with its own hint.
+	if cwd, err := runsreg.CheckCwd(c.cfg.ServiceDir(svc), c.params.AllowOutsideHome); err == nil &&
+		prepareUnchanged(c.cfg.Path, svc, cwd) {
+		c.rt.Logger.Info("prepare inputs unchanged; skipping", "group", c.group, "service", svc.Name)
+		return true, nil
 	}
-	return names
+	attempt.setPhase(phasePrepare, nil)
+	if err := sendStartProgress(c.stream, c.params, attempt); err != nil {
+		return false, err
+	}
+	started := time.Now()
+	if err := c.runPrepare(svc); err != nil {
+		// prepare has already killed and reaped its attached child, so the
+		// request being cancelled says nothing about the service.
+		if err := c.ctx.Err(); err != nil {
+			return false, err
+		}
+		c.rt.Logger.Warn("preparing a service", "group", c.group, "service", svc.Name, "error", err)
+		// Same rule as the cmd path: the error's own hint, or none. A prepare
+		// step that failed before its log file was even created has no log to
+		// point at.
+		message, hint := detailAndHint(err)
+		return false, c.reportFailure(svc, step, serviceFailure{
+			reason: "start_failed", message: "prepare failed: " + message, hint: hint,
+			recordReason: runsreg.ReasonStartFailed, recordMessage: "prepare: " + message,
+		})
+	}
+	elapsed := time.Since(started)
+	// The duration is advisory evidence for the next `starting` read; a write
+	// failure is not a start failure.
+	attempt.setLastPrepare(elapsed.Milliseconds())
+	if err := recordPrepareDuration(c.cfg.Path, svc.Name, elapsed); err != nil {
+		c.rt.Logger.Warn("recording prepare duration", "group", c.group, "service", svc.Name, "error", err)
+	}
+	// The step succeeded: remember exactly what it saw. A stamp write failure
+	// is not a start failure — the service can still run and the next start
+	// simply repeats prepare.
+	if cwd, err := runsreg.CheckCwd(c.cfg.ServiceDir(svc), c.params.AllowOutsideHome); err == nil {
+		if err := recordPrepareStamp(c.cfg.Path, svc, cwd); err != nil {
+			c.rt.Logger.Warn("recording prepare inputs", "group", c.group, "service", svc.Name, "error", err)
+		}
+	}
+	return true, nil
 }
 
-// prepare runs a service's optional build/code-generation step to completion
+// runPrepare runs a service's optional build/code-generation step to completion
 // before the long-lived service process is spawned. It is deliberately not a
 // registered run: the manifest service remains the one thing `up` starts and
 // `down` stops. Preparation output is appended to that service's log so a
 // failed build is inspectable with `oberth logs <service> --once`.
-func prepare(ctx context.Context, cfg *groups.Config, group string,
-	svc groups.Service, book *addressBook, p rpc.GroupsStartParams) error {
-	if err := ctx.Err(); err != nil {
+func (c *startCall) runPrepare(svc groups.Service) error {
+	if err := c.ctx.Err(); err != nil {
 		return err
 	}
-	argv := spawn.SplitCmd(svc.Prepare)
-	if len(argv) == 0 {
+	argv, ports, err := c.command(svc.Prepare, svc)
+	if errors.Is(err, errNoCommand) {
 		return fmt.Errorf("service %s has an empty prepare command", svc.Name)
 	}
-	ports, err := book.forService(svc)
 	if err != nil {
 		return err
 	}
-	values := groups.Values{Self: svc.Name, Worktree: book.worktree, Ports: ports}
-	for i := range argv {
-		argv[i] = groups.Expand(argv[i], values)
-	}
-	cwd, err := runsreg.CheckCwd(cfg.ServiceDir(svc), p.AllowOutsideHome)
+	cwd, err := runsreg.CheckCwd(c.cfg.ServiceDir(svc), c.params.AllowOutsideHome)
 	if err != nil {
 		return err
 	}
-	logPath := spawn.LogPath(group, svc.Name)
+	logPath := spawn.LogPath(c.group, svc.Name)
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 		return fmt.Errorf("creating the log directory: %w", err)
 	}
@@ -384,15 +393,15 @@ func prepare(ctx context.Context, cfg *groups.Config, group string,
 		return fmt.Errorf("opening %s: %w", logPath, err)
 	}
 	defer log.Close()
-	env, err := serviceEnv(p.Env, cfg, svc, ports[svc.Name], ports, values)
+	env, err := c.serviceEnv(svc, ports[svc.Name], ports)
 	if err != nil {
 		return err
 	}
-	h, err := spawn.Spawn(ctx, spawn.Request{
+	h, err := spawn.Spawn(c.ctx, spawn.Request{
 		Argv:   argv,
 		Cwd:    cwd,
 		Env:    env,
-		Group:  group,
+		Group:  c.group,
 		Name:   svc.Name,
 		Stdout: log,
 		Stderr: log,
@@ -420,11 +429,158 @@ func prepare(ctx context.Context, cfg *groups.Config, group string,
 			return fmt.Errorf("prepare command exited with code %d", result.code)
 		}
 		return nil
-	case <-ctx.Done():
+	case <-c.ctx.Done():
 		_ = h.Kill()
 		<-done
-		return ctx.Err()
+		return c.ctx.Err()
 	}
+}
+
+// command is what a service's `prepare:` or `cmd:` text becomes: split into
+// arguments first, then expanded one argument at a time, so a reference can
+// never change how the text divides. It returns the ports those arguments
+// mention, which the caller also needs for the environment and the ready check.
+func (c *startCall) command(text string, svc groups.Service) ([]string, map[string]int, error) {
+	argv := spawn.SplitCmd(text)
+	if len(argv) == 0 {
+		return nil, nil, errNoCommand
+	}
+	ports, err := c.book.forService(svc)
+	if err != nil {
+		return nil, nil, err
+	}
+	values := groups.Values{Self: svc.Name, Worktree: c.book.worktree, Ports: ports}
+	for i := range argv {
+		argv[i] = groups.Expand(argv[i], values)
+	}
+	return argv, ports, nil
+}
+
+// spawnService starts one service through the run registry, so the ports it
+// opens are attributed to this group and this service name.
+func (c *startCall) spawnService(svc groups.Service) (*spawn.Handle, error) {
+	if err := c.ctx.Err(); err != nil {
+		return nil, err
+	}
+	argv, ports, err := c.command(svc.Cmd, svc)
+	if errors.Is(err, errNoCommand) {
+		return nil, fmt.Errorf("service %s has no cmd to run", svc.Name)
+	}
+	if err != nil {
+		return nil, err
+	}
+	cwd, err := runsreg.CheckCwd(c.cfg.ServiceDir(svc), c.params.AllowOutsideHome)
+	if err != nil {
+		return nil, err
+	}
+	port := ports[svc.Name]
+	runMeta := c.meta
+	runMeta.SpecHash = groups.ServiceSpecHash(svc)
+	env, err := c.serviceEnv(svc, port, ports)
+	if err != nil {
+		return nil, err
+	}
+	// The run id is chosen before the spawn so the source snapshot can be
+	// written first: an immediately exiting process then deletes a file that
+	// already exists, never one written after its run is gone.
+	runID := spawn.NewID()
+	c.captureCodeIdentity(runID, cwd, svc)
+	h, err := runsreg.Spawn(c.ctx, c.rt, spawn.Request{
+		ID:       runID,
+		Argv:     argv,
+		Cwd:      cwd,
+		Env:      env,
+		Group:    c.group,
+		Name:     svc.Name,
+		PortHint: port,
+		LogPath:  spawn.LogPath(c.group, svc.Name),
+	}, runMeta)
+	if err != nil {
+		_ = codeid.Remove(runID)
+		return nil, err
+	}
+	return h, nil
+}
+
+// captureCodeIdentity writes this run's source snapshot before the process
+// exists. Code identity is a check, not a startup dependency: an unreadable
+// source is logged and reported by status as unknown, never rendered as
+// "unchanged".
+func (c *startCall) captureCodeIdentity(runID, cwd string, svc groups.Service) {
+	sources, track := codeid.ResolveSources(svc.Sources)
+	if !track {
+		return
+	}
+	snap, err := codeid.Take(c.ctx, cwd, sources)
+	if err != nil {
+		c.logCodeIdentity(svc.Name, "reading sources", err)
+		return
+	}
+	if err := codeid.Save(runID, snap); err != nil {
+		c.logCodeIdentity(svc.Name, "storing source snapshot", err)
+	}
+}
+
+// logCodeIdentity keeps a failed code check visible without making it a
+// service-start failure.
+func (c *startCall) logCodeIdentity(service, what string, err error) {
+	if c.rt != nil && c.rt.Logger != nil {
+		c.rt.Logger.Warn("code identity unavailable", "service", service, "step", what, "error", err)
+	}
+}
+
+// serviceFailure is one failed step as it is reported. The registry's record and
+// the chunk a client reads are not always the same words — a prepare step keeps
+// "prepare: ..." while the client reads "prepare failed: ..." — so both are
+// carried explicitly instead of being derived twice at the call sites.
+type serviceFailure struct {
+	reason, message, hint       string
+	recordReason, recordMessage string
+}
+
+// reportFailure is the one exit for a failed step: it records the failure, wakes
+// the observer, and sends the chunk. A stream that cannot carry it is the only
+// thing returned, so no path can fail a service without leaving the same trace.
+func (c *startCall) reportFailure(svc groups.Service, step groups.Step, f serviceFailure) error {
+	recordStartFailureReason(c.cfg, c.group, svc, c.meta, f.recordReason, f.recordMessage)
+	c.end.Errors = append(c.end.Errors, svc.Name)
+	c.rt.Scanner.Wake()
+	return c.stream.Send(rpc.GroupsStartChunk{
+		Service: svc.Name, State: "failed", Reason: f.reason,
+		Error: f.message, Hint: f.hint, IncludedBy: step.IncludedBy,
+	})
+}
+
+// reportExit reports a service that exited inside the startup window.
+func (c *startCall) reportExit(svc groups.Service, step groups.Step, h *spawn.Handle, exit runsreg.Exit) error {
+	c.end.Errors = append(c.end.Errors, svc.Name)
+	// A bind failure is explained by whoever still holds the port. This is the
+	// first read, so the caller gets the evidence without a second command. A
+	// scanner that is absent or cannot observe leaves the holder empty; it must
+	// never turn this failure into an internal error.
+	var holder *state.PortHolder
+	if exit.Reason == runsreg.ReasonPortOccupied && c.rt.Scanner != nil {
+		if snap, err := c.rt.Scanner.SnapshotAllContext(c.ctx, scanner.Include{}); err == nil {
+			holder = servicefacts.FindPortHolder(snap.Ports, servicefacts.PortHolderQuery{
+				Port: exit.PortHint, Group: c.group, Service: svc.Name, RunID: h.ID,
+			})
+		}
+	}
+	return c.stream.Send(rpc.GroupsStartChunk{
+		Service: svc.Name, State: "failed", Reason: exit.Reason,
+		Error: fmt.Sprintf("service exited with code %d (%s)", exit.Code, exit.Reason),
+		Hint:  logsHint(svc.Name), PID: h.PID, RunID: h.ID, LogPath: h.LogPath,
+		PortHolder: holder, IncludedBy: step.IncludedBy,
+	})
+}
+
+// dependencyNames is what a `starting` chunk names as the outstanding waits.
+func dependencyNames(deps []groups.Service) []string {
+	names := make([]string, 0, len(deps))
+	for _, dep := range deps {
+		names = append(names, dep.Name)
+	}
+	return names
 }
 
 func logsHint(service string) string { return "oberth logs " + service + " --once" }
@@ -443,10 +599,6 @@ func startFailureReason(message string) string {
 	}
 }
 
-func recordStartFailure(cfg *groups.Config, group string, svc groups.Service, meta runsreg.Meta, message string) {
-	recordStartFailureReason(cfg, group, svc, meta, runsreg.ReasonStartFailed, message)
-}
-
 func recordStartFailureReason(cfg *groups.Config, group string, svc groups.Service, meta runsreg.Meta, reason, message string) {
 	runsreg.Default.StartFailedWithReason(runsreg.Record{
 		ID:         spawn.NewID(),
@@ -463,81 +615,6 @@ func recordStartFailureReason(cfg *groups.Config, group string, svc groups.Servi
 	}, reason, message)
 }
 
-// start spawns one service through the run registry, so the ports it opens are
-// attributed to this group and this service name. Its references are expanded
-// and its environment built here, once every port it names is known.
-func start(ctx context.Context, rt *daemon.Runtime, cfg *groups.Config, group string,
-	svc groups.Service, book *addressBook, p rpc.GroupsStartParams,
-	meta runsreg.Meta) (*spawn.Handle, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
-	argv := spawn.SplitCmd(svc.Cmd)
-	if len(argv) == 0 {
-		return nil, fmt.Errorf("service %s has no cmd to run", svc.Name)
-	}
-	ports, err := book.forService(svc)
-	if err != nil {
-		return nil, err
-	}
-	// Expanded after splitting, so a value can never change how the command
-	// splits into arguments.
-	values := groups.Values{Self: svc.Name, Worktree: book.worktree, Ports: ports}
-	for i := range argv {
-		argv[i] = groups.Expand(argv[i], values)
-	}
-	cwd, err := runsreg.CheckCwd(cfg.ServiceDir(svc), p.AllowOutsideHome)
-	if err != nil {
-		return nil, err
-	}
-	port := ports[svc.Name]
-	runMeta := meta
-	runMeta.SpecHash = groups.ServiceSpecHash(svc)
-	env, err := serviceEnv(p.Env, cfg, svc, port, ports, values)
-	if err != nil {
-		return nil, err
-	}
-	// The run id is chosen before the spawn so the source snapshot can be
-	// written first: an immediately exiting process then deletes a file that
-	// already exists, never one written after its run is gone.
-	runID := spawn.NewID()
-	sources, trackCode := codeid.ResolveSources(svc.Sources)
-	if trackCode {
-		snap, snapErr := codeid.Take(ctx, cwd, sources)
-		if snapErr != nil {
-			// Code identity is a check, not a startup dependency. Unknown is
-			// reported by status; it is never rendered as "unchanged".
-			logCodeIdentity(rt, svc.Name, "reading sources", snapErr)
-		} else if saveErr := codeid.Save(runID, snap); saveErr != nil {
-			logCodeIdentity(rt, svc.Name, "storing source snapshot", saveErr)
-		}
-	}
-	h, err := runsreg.Spawn(ctx, rt, spawn.Request{
-		ID:       runID,
-		Argv:     argv,
-		Cwd:      cwd,
-		Env:      env,
-		Group:    group,
-		Name:     svc.Name,
-		PortHint: port,
-		LogPath:  spawn.LogPath(group, svc.Name),
-	}, runMeta)
-	if err != nil {
-		_ = codeid.Remove(runID)
-		return nil, err
-	}
-	return h, nil
-}
-
-// logCodeIdentity keeps a failed code check visible without making it a
-// service-start failure.
-func logCodeIdentity(rt *daemon.Runtime, service, what string, err error) {
-	if rt != nil && rt.Logger != nil {
-		rt.Logger.Warn("code identity unavailable", "service", service, "step", what, "error", err)
-	}
-}
-
 // serviceEnv is the environment a service starts in, each layer winning over
 // the one before: the daemon's own, the caller's (the CLI sends its shell's),
 // the service's `env_file`, PORT for a service with a port, and the service's
@@ -547,10 +624,10 @@ func logCodeIdentity(rt *daemon.Runtime, service, what string, err error) {
 // The env file is read at start time, so the same committed manifest can point
 // every worktree at one file outside their checkouts. Its values are data: they
 // are not reference-expanded and never appear in status or logs.
-func serviceEnv(caller map[string]string, cfg *groups.Config, svc groups.Service, port int, ports map[string]int, values groups.Values) ([]string, error) {
+func (c *startCall) serviceEnv(svc groups.Service, port int, ports map[string]int) ([]string, error) {
 	env := newEnvSet(os.Environ())
-	env.apply(caller)
-	if path := cfg.EnvFilePath(svc); path != "" {
+	env.apply(c.params.Env)
+	if path := c.cfg.EnvFilePath(svc); path != "" {
 		fromFile, err := groups.EnvFileValues(path)
 		if err != nil {
 			return nil, fmt.Errorf("service %s: %w", svc.Name, err)
@@ -560,6 +637,7 @@ func serviceEnv(caller map[string]string, cfg *groups.Config, svc groups.Service
 	if port > 0 {
 		env.set("PORT", strconv.Itoa(port))
 	}
+	values := groups.Values{Self: svc.Name, Worktree: c.book.worktree, Ports: ports}
 	declared := make(map[string]string, len(svc.Env))
 	for key, value := range svc.Env {
 		declared[key] = groups.Expand(value, values)
@@ -1142,27 +1220,10 @@ func snapshotContext(ctx context.Context, rt *daemon.Runtime) (state.Snapshot, e
 // resolveConfig finds the `oberth.yaml` this call is about, by path or by
 // group name.
 func resolveConfig(rt *daemon.Runtime, p rpc.GroupsStartParams) (*groups.Config, error) {
-	if p.ConfigPath != nil && strings.TrimSpace(*p.ConfigPath) != "" {
-		path := strings.TrimSpace(*p.ConfigPath)
-		if cfg, ok := rt.Scanner.ConfigAt(path); ok {
-			return cfg, nil
-		}
-		if err := rt.Scanner.LoadConfig(path); err != nil {
-			var bad *groups.ConfigError
-			if errors.As(err, &bad) {
-				return nil, rpc.NewError(rpc.CodeInvalidConfig, bad.Error(),
-					"fix the file and try again")
-			}
-			return nil, rpc.NewError(rpc.CodeNotFound, "cannot read "+path+": "+err.Error(),
-				"`oberth init` writes a "+groups.ConfigName+" at the repository root")
-		}
-		if cfg, ok := rt.Scanner.ConfigAt(path); ok {
-			return cfg, nil
-		}
-		return nil, rpc.NewError(rpc.CodeNotFound, "no usable "+groups.ConfigName+" at "+path, "")
+	if path := trimmed(p.ConfigPath); path != "" {
+		return configAtPath(rt, path)
 	}
-	if p.Name != nil && strings.TrimSpace(*p.Name) != "" {
-		name := strings.TrimSpace(*p.Name)
+	if name := trimmed(p.Name); name != "" {
 		if cfg, ok := rt.Scanner.ConfigNamed(name); ok {
 			return cfg, nil
 		}
@@ -1172,6 +1233,39 @@ func resolveConfig(rt *daemon.Runtime, p rpc.GroupsStartParams) (*groups.Config,
 	}
 	return nil, rpc.NewError(rpc.CodeInvalidParams, "name or config_path is required",
 		`send {"name": "my-app"} or {"config_path": "/repo/oberth.yaml"}`)
+}
+
+// configAtPath answers with the file at path, loading it when the scanner has
+// not seen it yet. A file that cannot be read is the caller's path to fix; a
+// file that reads but declares nothing usable is a different answer.
+func configAtPath(rt *daemon.Runtime, path string) (*groups.Config, error) {
+	cfg, known := rt.Scanner.ConfigAt(path)
+	if !known {
+		if err := rt.Scanner.LoadConfig(path); err != nil {
+			return nil, configLoadError(path, err)
+		}
+		cfg, known = rt.Scanner.ConfigAt(path)
+	}
+	if !known {
+		return nil, rpc.NewError(rpc.CodeNotFound, "no usable "+groups.ConfigName+" at "+path, "")
+	}
+	return cfg, nil
+}
+
+func configLoadError(path string, err error) error {
+	var bad *groups.ConfigError
+	if errors.As(err, &bad) {
+		return rpc.NewError(rpc.CodeInvalidConfig, bad.Error(), "fix the file and try again")
+	}
+	return rpc.NewError(rpc.CodeNotFound, "cannot read "+path+": "+err.Error(),
+		"`oberth init` writes a "+groups.ConfigName+" at the repository root")
+}
+
+func trimmed(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 // detail unwraps an rpc error so a chunk carries the message a user reads
