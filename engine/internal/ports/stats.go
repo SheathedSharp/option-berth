@@ -8,91 +8,109 @@ import (
 	"time"
 )
 
-// parseDarwinStats reads `%cpu rss state lstart…`, where lstart is the five
-// tokens of "Mon Jan  2 15:04:05 2006".
-func parseDarwinStats(row *ListeningPort, columns []string) {
-	if len(columns) < 8 {
-		return
+// decodeDarwinSample reads one macOS `ps` row: %cpu, rss, state and the five
+// tokens of lstart. Threads are not in this call — `ps -M` supplies that count
+// on the scan tick — so it stays zero and callers read zero as unchanged.
+func decodeDarwinSample(columns []string) (ProcSample, bool) {
+	const width = 3 + lstartFields
+	if len(columns) < width {
+		return ProcSample{}, false
 	}
-	setCPU(row, columns[0])
-	setMemoryKilobytes(row, columns[1])
-	row.State = decodeState(columns[2])
-
-	started := strings.Join(columns[3:], " ")
-	row.StartTime = started
-	row.Uptime = computeUptime(started)
-	if row.StartedAt == "" {
-		row.StartedAt = parseStartTime(started)
+	sample := ProcSample{
+		CPUPercent: percent(columns[0]),
+		MemoryRSS:  kilobytes(columns[1]),
+		State:      decodeState(columns[2]),
 	}
-	// Thread count is not in this call: macOS needs a `ps -M` per pid, and the
-	// caller decides whether that fork is worth paying for. The scan tick pays
-	// it; the one-second stats tick does not.
+	return withStart(sample, strings.Join(columns[3:width], " ")), true
 }
 
-// parseLinuxStats reads `%cpu rss nlwp state lstart…`.
-func parseLinuxStats(row *ListeningPort, columns []string) {
-	if len(columns) < 9 {
-		return
+// decodeLinuxSample reads one Linux `ps` row, where nlwp follows memory.
+func decodeLinuxSample(columns []string) (ProcSample, bool) {
+	const width = 4 + lstartFields
+	if len(columns) < width {
+		return ProcSample{}, false
 	}
-	setCPU(row, columns[0])
-	setMemoryKilobytes(row, columns[1])
-	setThreads(row, columns[2])
-	row.State = decodeState(columns[3])
-
-	started := strings.Join(columns[4:], " ")
-	row.StartTime = started
-	row.Uptime = computeUptime(started)
-	if row.StartedAt == "" {
-		row.StartedAt = parseStartTime(started)
+	sample := ProcSample{
+		CPUPercent:  percent(columns[0]),
+		MemoryRSS:   kilobytes(columns[1]),
+		ThreadCount: integer(columns[2]),
+		State:       decodeState(columns[3]),
 	}
+	return withStart(sample, strings.Join(columns[4:width], " ")), true
 }
 
-// parseWindowsStats reads the CSV fields Get-Process produced: CPU,
-// WorkingSet64, ThreadCount, StartTime.
-func parseWindowsStats(row *ListeningPort, columns []string) {
-	if len(columns) < 4 {
-		return
+// decodeWindowsSample reads one Get-Process row through its named columns.
+// A row that names a pid but carries none of the numbers is not a sample:
+// writing zeroes would read as facts about a process the query could not see.
+func decodeWindowsSample(table csvTable, row []string) (int, ProcSample, bool) {
+	pid, err := strconv.Atoi(strings.TrimSpace(table.value(row, "id")))
+	if err != nil || pid <= 0 {
+		return 0, ProcSample{}, false
 	}
-	if value, err := strconv.ParseFloat(strings.TrimSpace(columns[0]), 64); err == nil {
-		row.CPUPercent = value
+	sample := ProcSample{
+		CPUPercent:  percent(strings.TrimSpace(table.value(row, "cpu"))),
+		MemoryRSS:   byteCount(strings.TrimSpace(table.value(row, "workingset64"))),
+		ThreadCount: integer(strings.TrimSpace(table.value(row, "threadcount"))),
+		State:       "running",
 	}
-	if value, err := strconv.ParseInt(strings.TrimSpace(columns[1]), 10, 64); err == nil {
-		row.MemoryRSS = value // WorkingSet64 is already in bytes
+	if started := strings.TrimSpace(table.value(row, "starttime")); started != "" {
+		sample = withStart(sample, started)
 	}
-	if value, err := strconv.Atoi(strings.TrimSpace(columns[2])); err == nil {
-		row.ThreadCount = value
+	if sample.CPUPercent == 0 && sample.MemoryRSS == 0 && sample.ThreadCount == 0 && sample.StartTime == "" {
+		return 0, ProcSample{}, false
 	}
-	row.State = "running"
+	return pid, sample, true
+}
 
-	started := strings.TrimSpace(columns[3])
+// withStart fills the raw start text and the two forms derived from it. An
+// unparsable value still survives as text: started_at is only published when
+// the instant parses, and uptime is only meaningful when it does.
+func withStart(sample ProcSample, started string) ProcSample {
+	started = strings.TrimSpace(started)
 	if started == "" {
-		return
+		return sample
 	}
-	row.StartTime = started
-	// StartTime is ISO 8601, formatted with .ToString('o') in PowerShell.
-	row.Uptime = computeUptime(started)
-	if row.StartedAt == "" {
-		row.StartedAt = parseStartTime(started)
-	}
+	sample.StartTime = started
+	sample.Uptime = computeUptime(started)
+	sample.StartedAt = parseStartTime(started)
+	return sample
 }
 
-func setCPU(row *ListeningPort, raw string) {
-	if value, err := strconv.ParseFloat(raw, 64); err == nil {
-		row.CPUPercent = value
+// percent reads ps's %cpu column. An unreadable value is unknown, not evidence
+// that the process used no CPU.
+func percent(raw string) float64 {
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0
 	}
+	return value
 }
 
-// setMemoryKilobytes converts ps's kilobyte RSS into bytes.
-func setMemoryKilobytes(row *ListeningPort, raw string) {
-	if value, err := strconv.ParseInt(raw, 10, 64); err == nil {
-		row.MemoryRSS = value * 1024
+// kilobytes converts ps's RSS column into bytes.
+func kilobytes(raw string) int64 {
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0
 	}
+	return value * 1024
 }
 
-func setThreads(row *ListeningPort, raw string) {
-	if value, err := strconv.Atoi(raw); err == nil {
-		row.ThreadCount = value
+// byteCount reads a count that is already in bytes, as Get-Process reports.
+func byteCount(raw string) int64 {
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0
 	}
+	return value
+}
+
+// integer reads a plain count such as nlwp or a thread count.
+func integer(raw string) int {
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0
+	}
+	return value
 }
 
 // countThreadsDarwin counts each pid's threads from one `ps -M`.
