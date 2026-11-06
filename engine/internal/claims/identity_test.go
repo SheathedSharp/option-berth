@@ -8,64 +8,67 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/claims"
 )
 
-// TestIdentityFromACheckout covers the three shapes a working directory can
-// have: a plain checkout, a linked worktree, and no repository at all.
+// tree creates a directory tree under a fresh temp root and returns the root.
+// A case names the shape it needs; nothing here repeats the fixture.
+func tree(t *testing.T, entries ...string) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, entry := range entries {
+		if err := os.MkdirAll(filepath.Join(root, entry), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+// TestIdentityFromACheckout covers the two shapes a working directory can have
+// inside a repository: the checkout root, and a directory below it. Both name
+// the same project and worktree, because a service's cwd may be a subdirectory
+// of the manifest.
 func TestIdentityFromACheckout(t *testing.T) {
-	repo := filepath.Join(t.TempDir(), "myapp")
-	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	sub := filepath.Join(repo, "web")
-	if err := os.MkdirAll(sub, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	root := tree(t, "myapp/.git", "myapp/web")
 
-	project, worktree := claims.Identity(sub, "", "")
-	if project != "myapp" || worktree != claims.DefaultWorktree {
-		t.Errorf("Identity(checkout) = %q/%q, want myapp/%s", project, worktree, claims.DefaultWorktree)
-	}
-
-	// Explicit arguments win over the directory.
-	if p, w := claims.Identity(sub, "other", "feature"); p != "other" || w != "feature" {
-		t.Errorf("Identity with arguments = %q/%q, want other/feature", p, w)
+	for _, dir := range []string{filepath.Join(root, "myapp"), filepath.Join(root, "myapp", "web")} {
+		project, worktree := claims.Identity(dir)
+		if project != "myapp" || worktree != claims.DefaultWorktree {
+			t.Errorf("Identity(%q) = %q/%q, want myapp/%s", dir, project, worktree, claims.DefaultWorktree)
+		}
 	}
 }
 
 func TestIdentityOutsideARepository(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "loose")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	project, worktree := claims.Identity(dir, "", "")
+	root := tree(t, "loose")
+	project, worktree := claims.Identity(filepath.Join(root, "loose"))
 	if project != "loose" || worktree != claims.DefaultWorktree {
 		t.Errorf("Identity(no repo) = %q/%q, want loose/%s", project, worktree, claims.DefaultWorktree)
 	}
 }
 
-// A linked worktree keeps the repository as the project and the checkout as
-// the worktree, so sibling worktrees of one repo get different keys.
+// A directory with no name of its own still yields a project, so a key is never
+// empty.
+func TestIdentityOfADirectoryWithNoName(t *testing.T) {
+	project, worktree := claims.Identity("/")
+	if project == "" || worktree != claims.DefaultWorktree {
+		t.Errorf("Identity(\"/\") = %q/%q, want a named project and %s", project, worktree, claims.DefaultWorktree)
+	}
+}
+
+// A linked worktree keeps the repository as the project and the checkout as the
+// worktree, so sibling worktrees of one repo get different addresses.
 func TestIdentityInALinkedWorktree(t *testing.T) {
-	root := t.TempDir()
-	main := filepath.Join(root, "myapp")
-	if err := os.MkdirAll(filepath.Join(main, ".git", "worktrees", "feature-x"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	linked := filepath.Join(root, "myapp-feature-x")
-	if err := os.MkdirAll(linked, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	gitfile := "gitdir: " + filepath.Join(main, ".git", "worktrees", "feature-x") + "\n"
-	if err := os.WriteFile(filepath.Join(linked, ".git"), []byte(gitfile), 0o644); err != nil {
+	root := tree(t, "myapp/.git/worktrees/feature-x", "myapp-feature-x")
+	gitfile := "gitdir: " + filepath.Join(root, "myapp", ".git", "worktrees", "feature-x") + "\n"
+	if err := os.WriteFile(filepath.Join(root, "myapp-feature-x", ".git"), []byte(gitfile), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	// groups.Find names a linked worktree "<repo>@<checkout dir>", so the
 	// worktree half is the directory the agent is working in.
-	project, worktree := claims.Identity(linked, "", "")
+	project, worktree := claims.Identity(filepath.Join(root, "myapp-feature-x"))
 	if project != "myapp" || worktree != "myapp-feature-x" {
 		t.Errorf("Identity(linked worktree) = %q/%q, want myapp/myapp-feature-x", project, worktree)
 	}
-	if key := claims.Key(project, worktree); key != "myapp/myapp-feature-x" {
-		t.Errorf("key = %q, want myapp/myapp-feature-x", key)
+	if key := (claims.Address{Project: project, Worktree: worktree, Service: "api"}).Key(); key != "myapp/myapp-feature-x/api" {
+		t.Errorf("key = %q, want myapp/myapp-feature-x/api", key)
 	}
 }

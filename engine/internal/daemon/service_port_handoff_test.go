@@ -64,7 +64,7 @@ func TestStopReleaseHandoffRetainsChangedReservations(t *testing.T) {
 	queued := &queuedReleaseFixture{releaseGuardFixture: guard}
 	queued.wait = func(ctx context.Context, mutate func() (int, error)) (int, error) {
 		changed := plan.observed.Rows[0]
-		changed.ExpiresAt = changed.ExpiresAt.Add(time.Second)
+		changed.Until = changed.Until.Add(time.Second)
 		if err := rt.Store.Claims().Put(changed); err != nil {
 			t.Fatal(err)
 		}

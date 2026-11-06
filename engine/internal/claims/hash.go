@@ -1,114 +1,95 @@
-// Package claims reserves ports for a (project, worktree) pair.
-//
-// A claim is book-keeping, not an OS-level bind: option-berth records that a port is
-// spoken for so parallel agents in different worktrees stop picking the same
-// one, and so the same worktree gets the same ports every time. A process
-// outside option-berth can still take a claimed port, which is why every acquire
-// probes the live scan before handing a port back.
-//
-// The derivation follows spec 2 §4: the key is `<project>/<worktree>`, the
-// starting port is a stable hash of that key into a 10-port block of the
-// configured range, and the probe walks upward from there.
 package claims
 
 import (
 	"fmt"
-	"strings"
+	"hash/fnv"
 )
 
-// DefaultWorktree is the worktree name for a primary checkout, so a repo
-// nobody has branched from still has a full key.
+// DefaultWorktree names the main checkout, so an address always has a worktree
+// half even when nobody branched.
 const DefaultWorktree = "main"
 
-// BlockSize is the stride between derived starting ports: neighbouring keys
-// land in different 10-port blocks, so a project needing a handful of ports
-// takes them without stepping on the next key's block.
-const BlockSize = 10
+// The product's claim window: 10-port blocks in 10000–32699, above the usual
+// dev-server ports and below every OS ephemeral range (Linux 32768+, macOS
+// 49152+), so a reserved port is never one the kernel hands to an outgoing
+// connection. The stride is what keeps neighbouring addresses from probing over
+// each other before the table is consulted.
+const (
+	blockSize  = 10
+	claimFirst = 10000
+	claimLast  = 32699
+)
 
-// Range is the window claims are derived from. DefaultRange follows spec 2 §4:
-// 10-port blocks in 10000–32699, above the usual dev-server ports and below
-// every OS ephemeral range (Linux 32768+, macOS 49152+), so a claimed port is
-// never one the kernel hands out to an outgoing connection.
-type Range struct {
-	Start int
-	End   int
-}
+// Range is the window ports are derived from.
+//
+// Its bounds are unexported and it is built by RangeOf, so a window that starts
+// below 1, ends above 65535 or runs backwards cannot exist in a running
+// program. The zero value is the product's own window.
+type Range struct{ first, last int }
 
-// DefaultRange is the range used when a caller does not configure one.
-var DefaultRange = Range{Start: 10000, End: 32699}
+// DefaultRange is the window used when a caller does not configure one.
+func DefaultRange() Range { return Range{first: claimFirst, last: claimLast} }
 
-// Valid reports whether r is a usable port window.
-func (r Range) Valid() error {
-	if r.Start < 1 || r.End > 65535 || r.Start > r.End {
-		return fmt.Errorf("claims: invalid port range %d-%d", r.Start, r.End)
+// RangeOf builds a window, refusing one no port could be derived from.
+func RangeOf(first, last int) (Range, error) {
+	if first < 1 || last > 65535 || first > last {
+		return Range{}, fmt.Errorf("claims: invalid port range %d-%d", first, last)
 	}
-	return nil
+	return Range{first: first, last: last}, nil
 }
 
-// Span is how many ports the range holds.
-func (r Range) Span() int { return r.End - r.Start + 1 }
+// First is the lowest port in the window.
+func (r Range) First() int { return r.bounds().first }
 
-// Key builds the claim key for a project and worktree. An empty worktree is
-// the primary checkout, which the spec names "main".
-func Key(project, worktree string) string {
-	p := strings.Trim(strings.TrimSpace(project), "/")
-	w := strings.Trim(strings.TrimSpace(worktree), "/")
-	if w == "" {
-		w = DefaultWorktree
-	}
-	return p + "/" + w
-}
+// Last is the highest port in the window.
+func (r Range) Last() int { return r.bounds().last }
 
-// ServiceKey is the claim key for one `port: auto` service in one checkout:
-// the checkout's key plus the service name, so the service gets the same port
-// every time that checkout starts it, and a different one in every other
-// checkout of the project.
-func ServiceKey(project, worktree, service string) string {
-	return Key(project, worktree) + "/" + strings.TrimSpace(service)
-}
+// Span is how many ports the window holds.
+func (r Range) Span() int { return r.bounds().size() }
 
-// SplitKey recovers the project and worktree a key was built from. A key with
-// no separator is all project, with the worktree defaulted.
-func SplitKey(key string) (project, worktree string) {
-	p, w, ok := strings.Cut(strings.TrimSpace(key), "/")
-	if !ok || strings.TrimSpace(w) == "" {
-		return p, DefaultWorktree
-	}
-	return p, w
-}
-
-// Base is the port a key's probe starts from: the same key always derives the
-// same port, in this process and in every other one, because the hash is
-// fnv-1a over the key alone.
+// Base is the port an address probes from first. The same address derives the
+// same start in this process and in every other one, because the hash is fnv-1a
+// over the key alone.
+//
+// A window narrower than one block has no block to stride into, so the hash is
+// spread across the whole of it instead.
 func (r Range) Base(key string) int {
-	h := fnv1a32(key)
-	blocks := r.Span() / BlockSize
-	if blocks < 1 {
-		return r.Start + int(h%uint32(r.Span()))
+	w := r.bounds()
+	hashed := fnv1a32(key)
+	blocks := uint32(w.size() / blockSize)
+	if blocks == 0 {
+		return w.first + int(hashed%uint32(w.size()))
 	}
-	return r.Start + int(h%uint32(blocks))*BlockSize
+	return w.first + int(hashed%blocks)*blockSize
 }
 
-// At is the i-th candidate port for key, counting from Base and wrapping back
-// to the start of the range rather than running off its end.
-func (r Range) At(key string, i int) int {
-	span := r.Span()
-	offset := (r.Base(key) - r.Start + i%span + span) % span
-	return r.Start + offset
+// Walk is the i-th port probed from base, counting up and wrapping back to the
+// start of the window rather than running off its end. It takes base already
+// computed, so a probe across a whole window hashes the key once.
+func (r Range) Walk(base, i int) int {
+	w := r.bounds()
+	span := w.size()
+	return w.first + (base-w.first+i%span+span)%span
 }
 
-// fnv1a32 is the 32-bit FNV-1a hash of s. Written out rather than taken from
-// hash/fnv so the constants are visible: the derived port is part of the
-// contract with every other option-berth on the machine and must never drift.
+// bounds fills the zero value with the product's window, and is the one place
+// that knows what that window is.
+func (r Range) bounds() Range {
+	if r.first == 0 && r.last == 0 {
+		return DefaultRange()
+	}
+	return r
+}
+
+func (r Range) size() int { return r.last - r.first + 1 }
+
+// fnv1a32 is the 32-bit FNV-1a hash of s. The derived port is a contract with
+// every other option-berth on the machine — two checkouts only agree on where a
+// service lives because they both compute the same number — so the standard
+// implementation is used rather than a local copy, and the golden test holds
+// its output to fixed values.
 func fnv1a32(s string) uint32 {
-	const (
-		offset = 2166136261
-		prime  = 16777619
-	)
-	h := uint32(offset)
-	for i := 0; i < len(s); i++ {
-		h ^= uint32(s[i])
-		h *= prime
-	}
-	return h
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(s))
+	return h.Sum32()
 }

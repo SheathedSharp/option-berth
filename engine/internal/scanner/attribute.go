@@ -348,7 +348,7 @@ func (l *Loop) recordIdentity(st Store, identity string, cfg *groups.Config) boo
 	if known, ok := l.attr.identities[identity]; ok && known == group {
 		return true
 	}
-	project, worktree := claims.Identity(cfg.Dir, "", "")
+	project, worktree := claims.Identity(cfg.Dir)
 	rec := store.WorktreeIdentity{
 		Identity: identity, Root: root, Group: group, ConfigPath: cfg.Path,
 		Project: project, Worktree: worktree,
