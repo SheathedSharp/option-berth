@@ -104,8 +104,8 @@ var web = container{
 	name:  "shop-web-1",
 	image: "nginx:1.27",
 	portMappings: []portMapping{{
-		hostPort:      8080,
-		toPort: 80,
+		hostPort: 8080,
+		toPort:   80,
 	}},
 	composeService:    "web",
 	composeProject:    "shop",
