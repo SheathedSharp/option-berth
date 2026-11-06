@@ -27,9 +27,12 @@
 - 退出码：0 成功，1 运行失败，2 参数或选项错误，130 被 Ctrl-C 中断。
 - JSON 错误形状为 {"error":{"code":"...","message":"...","hint":"..."}}。
   稳定的 code 包括 invalid_params、not_found、invalid_config、ambiguous、
-  permission_denied、timeout、daemon_busy、observation_empty、
-  observation_unrecognized、observation_incomplete、observation_blind、
-  observation_bind_denied 和 internal。观察类 code 都不是“没有监听”：
+  permission_denied、daemon_busy、observation_empty、observation_unrecognized、
+  observation_incomplete、observation_blind、observation_bind_denied 和 internal。
+  每个 code 属于三类之一：拒绝表示请求本身不对、原样重发不会成功；条件表示当时
+  环境未就绪、重试可能成功；故障表示引擎自身有问题。就绪超时不在其中：
+  `up --wait` 把它报成该服务的状态，所以它作为运行时事实传递，而不是传输层错误。
+  观察类 code 都不是“没有监听”：
   - observation_empty：采集命令以 0 退出但没有任何输出；由自证探针判定是真空表还是失明。
   - observation_unrecognized：有输出但没有可识别的表头，属于格式问题。
   - observation_incomplete：部分输出行无法解码。可读行照常发布，坏行对应的端口保持未知，
