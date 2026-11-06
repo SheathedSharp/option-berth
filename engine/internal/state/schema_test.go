@@ -1,4 +1,4 @@
-package display
+package state_test
 
 import (
 	"encoding/json"
