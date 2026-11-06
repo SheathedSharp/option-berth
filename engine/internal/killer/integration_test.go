@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -19,27 +21,33 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/testenv"
 )
 
-// This file exercises the killer against real processes: a shell that spawns a
+// This file runs the killer against real processes: a shell that spawns a
 // listener, which spawns a second listener of its own —
 //
 //	sh ── helper (port A) ── helper (port B)
 //
-// the shape of every dev server worth killing (`npm` → `vite` → its HMR
-// socket). Killing port A with --tree must leave nothing behind on either port.
+// which is the shape of every dev server worth killing (`npm` → `vite` → its
+// HMR socket). Stopping port A must leave nothing behind on either port.
+//
+// Each helper reports its own pid to a file, so a case never has to guess which
+// process owns a port: the answer comes from the process itself, not from
+// matching command lines in a table.
 
 const (
-	envHelperPort   = "BERTH_KILLER_HELPER_PORT"
-	envHelperChild  = "BERTH_KILLER_HELPER_CHILD_PORT"
-	envHelperIgnore = "BERTH_KILLER_HELPER_IGNORE_TERM"
+	envHelperPort    = "BERTH_KILLER_HELPER_PORT"
+	envHelperChild   = "BERTH_KILLER_HELPER_CHILD_PORT"
+	envHelperIgnore  = "BERTH_KILLER_HELPER_IGNORE_TERM"
+	envHelperPIDFile = "BERTH_KILLER_HELPER_PIDFILE"
 )
 
-// TestMain doubles as the helper process: re-executing the test binary with
-// BERTH_KILLER_HELPER_PORT set turns it into a listener instead of a test run.
-// A helper is not a test run, so it is not the thing testenv isolates — it
-// inherits the environment its parent was already isolated into.
+// TestMain doubles as the helper process: re-executing the test binary with a
+// helper port set turns it into a listener instead of a test run. A helper is
+// not a test run, so it is not the thing testenv isolates — it inherits the
+// environment its parent was already isolated into.
 func TestMain(m *testing.M) {
 	if port := os.Getenv(envHelperPort); port != "" {
-		runHelper(port, os.Getenv(envHelperChild), os.Getenv(envHelperIgnore) != "")
+		runHelper(port, os.Getenv(envHelperChild), os.Getenv(envHelperPIDFile),
+			os.Getenv(envHelperIgnore) != "")
 		return
 	}
 	os.Exit(testenv.Run(m))
@@ -49,7 +57,12 @@ func TestMain(m *testing.M) {
 // then blocks until it is signalled. With ignoreTerm it plays the wedged dev
 // server that only SIGKILL can stop; otherwise the default SIGTERM disposition
 // is what a well-behaved one gives us.
-func runHelper(port, childPort string, ignoreTerm bool) {
+//
+// Every helper reports its own pid into pidDir, named after the port it serves.
+// A helper knows its pid and its port and nothing else, so that name is the one
+// thing it can write without being told; a parent spawning a child therefore
+// does not have to pass an identity down.
+func runHelper(port, childPort, pidDir string, ignoreTerm bool) {
 	if ignoreTerm {
 		signal.Ignore(syscall.SIGTERM)
 	}
@@ -58,6 +71,12 @@ func runHelper(port, childPort string, ignoreTerm bool) {
 		os.Exit(1)
 	}
 	defer ln.Close()
+	// Report this process before serving, so a test never races the answer.
+	if pidDir != "" {
+		if err := os.WriteFile(pidFileFor(pidDir, port), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+			os.Exit(1)
+		}
+	}
 
 	if childPort != "" {
 		child := exec.Command(os.Args[0])
@@ -74,6 +93,9 @@ func runHelper(port, childPort string, ignoreTerm bool) {
 		_ = conn.Close()
 	}
 }
+
+// pidFileFor is the path a helper serving port reports itself to.
+func pidFileFor(dir, port string) string { return filepath.Join(dir, "helper-"+port+".pid") }
 
 // freePort asks the kernel for a port nothing is using and hands it back.
 func freePort(t *testing.T) int {
@@ -103,51 +125,90 @@ func waitForPort(t *testing.T, port int, want bool) {
 	t.Fatalf("port %d: still open=%v after 10s, wanted open=%v", port, !want, want)
 }
 
+// readPID waits for a helper to report the pid it runs as.
+func readPID(t *testing.T, path string) int {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if raw, err := os.ReadFile(path); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(raw))); err == nil {
+				return pid
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("no pid reported at %s within 10s", path)
+	return 0
+}
+
+// tree is one started helper tree: the ports it serves, the pids that serve
+// them, and the shell waiting on them.
+type tree struct {
+	parentPort, childPort int
+	parentPID, childPID   int
+	shell                 *exec.Cmd
+}
+
 // startTree launches `sh -c '<test binary> & wait'` so that the listener really
-// is a child of a shell, and returns the two ports it serves.
-func startTree(t *testing.T) (parentPort, childPort int, shell *exec.Cmd) {
+// is a child of a shell, and waits until both listeners answer.
+func startTree(t *testing.T) tree {
 	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatalf("locating the test binary: %v", err)
 	}
-	parentPort, childPort = freePort(t), freePort(t)
+	dir := t.TempDir()
+	parentPort, childPort := freePort(t), freePort(t)
+	got := tree{parentPort: parentPort, childPort: childPort}
 
-	shell = exec.Command("sh", "-c", `"$0" & wait`, exe)
+	shell := exec.Command("sh", "-c", `"$0" & wait`, exe)
 	shell.Env = append(os.Environ(),
 		envHelperPort+"="+strconv.Itoa(parentPort),
 		envHelperChild+"="+strconv.Itoa(childPort),
+		envHelperPIDFile+"="+dir,
 	)
 	if err := shell.Start(); err != nil {
 		t.Fatalf("starting the helper tree: %v", err)
 	}
+	got.shell = shell
 	t.Cleanup(func() {
 		// Whatever the test did, leave no strays behind.
 		if shell.Process != nil {
-			_ = syscallKillTree(shell.Process.Pid)
+			killTreeNow(shell.Process.Pid)
 		}
 		_ = shell.Wait()
 	})
 
 	waitForPort(t, parentPort, true)
 	waitForPort(t, childPort, true)
-	return parentPort, childPort, shell
+	got.parentPID = readPID(t, pidFileFor(dir, strconv.Itoa(parentPort)))
+	got.childPID = readPID(t, pidFileFor(dir, strconv.Itoa(childPort)))
+	return got
 }
 
-// syscallKillTree is the test's own belt-and-braces cleanup.
-func syscallKillTree(pid int) error {
+// snapshotForPID is a hand-built scan row for one pid and port, used when the
+// machine cannot show us the table itself.
+func snapshotForPID(pid, port int) ports.ListeningPort {
+	return ports.ListeningPort{
+		Port: port, PID: pid, BindAddress: "127.0.0.1",
+		Process: "killer.test", Type: ports.PortTypeUser,
+	}
+}
+
+// killTreeNow is the test's own belt-and-braces cleanup: SIGKILL the process
+// tree below pid so a failed case cannot leave a listener behind.
+func killTreeNow(pid int) {
 	table := scanProcessTable()
 	for _, p := range table.Descendants(pid) {
 		_ = signalProcess(p, true)
 	}
-	return nil
 }
 
-// snapshotFor returns the scanner's view of a port, falling back to a
-// hand-built row when the scan cannot see it (an unprivileged sandbox without
-// lsof still exercises everything that matters: the ps table, the signals and
-// the port probe).
-func snapshotFor(t *testing.T, port int) []ports.ListeningPort {
+// snapshotFor returns the scanner's view of a port when the machine can produce
+// one, and a hand-built row otherwise. The fallback still exercises everything
+// that matters here — the ps table, the signals, the port probe — so a sandbox
+// that cannot see the socket table does not turn these cases into skips.
+func snapshotFor(t *testing.T, port, knownPID int) []ports.ListeningPort {
 	t.Helper()
 	if found, err := ports.Scan(); err == nil {
 		docker.EnrichPorts(found)
@@ -158,41 +219,18 @@ func snapshotFor(t *testing.T, port int) []ports.ListeningPort {
 			}
 		}
 	}
-	pid := ownerOf(t, port)
-	return []ports.ListeningPort{{
-		Port: port, PID: pid, BindAddress: "127.0.0.1",
-		Process: "killer.test", Type: ports.PortTypeUser,
-	}}
-}
-
-// ownerOf finds the helper process listening on port in the ps table, by
-// matching the environment the shell handed it. Used only by the fallback path.
-func ownerOf(t *testing.T, port int) int {
-	t.Helper()
-	table := scanProcessTable()
-	exe, _ := os.Executable()
-	for pid, p := range table {
-		if p.Command == exe && pid != os.Getpid() {
-			// Two helpers share the command line; the one that answers on
-			// this port is the one whose descendants include the other.
-			if len(table.Descendants(pid)) > 1 {
-				return pid
-			}
-		}
-	}
-	t.Fatalf("could not find the process listening on port %d", port)
-	return 0
+	return []ports.ListeningPort{snapshotForPID(knownPID, port)}
 }
 
 func TestKillPortsStopsARealProcessTree(t *testing.T) {
 	if testing.Short() {
 		t.Skip("spawns real processes")
 	}
-	parentPort, childPort, shell := startTree(t)
+	tree := startTree(t)
 
 	results := KillPorts(context.Background(),
-		[]Target{{Port: parentPort}},
-		Options{Tree: true, Grace: 2 * time.Second, Ports: snapshotFor(t, parentPort)},
+		[]Target{{Port: tree.parentPort}},
+		Options{Tree: true, Grace: 2 * time.Second, Ports: snapshotFor(t, tree.parentPort, tree.parentPID)},
 	)
 
 	if len(results) == 0 {
@@ -204,12 +242,12 @@ func TestKillPortsStopsARealProcessTree(t *testing.T) {
 		}
 	}
 	// The listener and the port it spawned are both gone.
-	waitForPort(t, parentPort, false)
-	waitForPort(t, childPort, false)
+	waitForPort(t, tree.parentPort, false)
+	waitForPort(t, tree.childPort, false)
 
 	// And the shell that was waiting on them has nothing left to wait for.
 	done := make(chan struct{})
-	go func() { _ = shell.Wait(); close(done) }()
+	go func() { _ = tree.shell.Wait(); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
@@ -221,24 +259,26 @@ func TestKillPortsDryRunLeavesARealTreeRunning(t *testing.T) {
 	if testing.Short() {
 		t.Skip("spawns real processes")
 	}
-	parentPort, childPort, _ := startTree(t)
+	tree := startTree(t)
 
 	results := KillPorts(context.Background(),
-		[]Target{{Port: parentPort}},
-		Options{Tree: true, DryRun: true, Ports: snapshotFor(t, parentPort)},
+		[]Target{{Port: tree.parentPort}},
+		Options{Tree: true, DryRun: true, Ports: snapshotFor(t, tree.parentPort, tree.parentPID)},
 	)
 
 	if len(results) < 2 {
 		t.Fatalf("dry run planned %d rows, want the listener and its child", len(results))
 	}
-	if !portAnswers(parentPort) || !portAnswers(childPort) {
+	if !portAnswers(tree.parentPort) || !portAnswers(tree.childPort) {
 		t.Fatal("dry run killed something")
 	}
-	// The child is planned before the parent.
-	last := results[len(results)-1]
+	// The child is planned before the parent: the last row is the root, and
+	// every other planned pid sits below it in the process table.
+	root := results[len(results)-1].PID
+	below := scanProcessTable().Descendants(root)
 	for _, r := range results[:len(results)-1] {
-		if !contains(scanProcessTable().Descendants(last.PID), r.PID) {
-			t.Errorf("row %+v is not below the last row (PID %d)", r, last.PID)
+		if !contains(below, r.PID) {
+			t.Errorf("row %+v is not below the last row (PID %d)", r, root)
 		}
 	}
 }
@@ -261,10 +301,12 @@ func TestKillPortsEscalatesOnAProcessThatIgnoresSIGTERM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	pidDir := t.TempDir()
 	wedged := exec.Command(exe)
 	wedged.Env = append(os.Environ(),
 		envHelperPort+"="+strconv.Itoa(port),
 		envHelperIgnore+"=1",
+		envHelperPIDFile+"="+pidDir,
 	)
 	if err := wedged.Start(); err != nil {
 		t.Fatal(err)
@@ -279,10 +321,7 @@ func TestKillPortsEscalatesOnAProcessThatIgnoresSIGTERM(t *testing.T) {
 
 	// The listener ignores SIGTERM, so only the escalation to SIGKILL frees
 	// the port. A short grace keeps the test quick.
-	snapshot := []ports.ListeningPort{{
-		Port: port, PID: wedged.Process.Pid, BindAddress: "127.0.0.1",
-		Process: "killer.test", Type: ports.PortTypeUser,
-	}}
+	snapshot := []ports.ListeningPort{snapshotForPID(readPID(t, pidFileFor(pidDir, strconv.Itoa(port))), port)}
 	results := KillPorts(context.Background(), []Target{{Port: port}},
 		Options{Grace: 500 * time.Millisecond, Ports: snapshot})
 
