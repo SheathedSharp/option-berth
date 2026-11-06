@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -64,58 +64,62 @@ func Propose(root string, pp []ports.ListeningPort, index *Index) *Config {
 			candidates = append(candidates, p)
 		}
 	}
-	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].Port != candidates[j].Port {
-			return candidates[i].Port < candidates[j].Port
+	slices.SortFunc(candidates, func(a, b ports.ListeningPort) int {
+		if a.Port != b.Port {
+			return a.Port - b.Port
 		}
-		return candidates[i].PID < candidates[j].PID
+		return a.PID - b.PID
 	})
 
-	seen := map[string]bool{}
+	seen := map[listenerKey]bool{}
 	for _, p := range candidates {
 		// One listener on several bind addresses is one candidate.
-		if seen[serviceKey(p)] {
+		key := listenerKey{port: p.Port, pid: p.PID}
+		if seen[key] {
 			continue
 		}
-		seen[serviceKey(p)] = true
+		seen[key] = true
 		cfg.Candidates = append(cfg.Candidates, candidateOf(p, root, index))
 	}
 	return cfg
 }
 
-// serviceKey collapses the several bind addresses of one listener (IPv4 and
+// listenerKey collapses the several bind addresses of one listener (IPv4 and
 // IPv6, wildcard and loopback) into a single candidate.
-func serviceKey(p ports.ListeningPort) string { return fmt.Sprintf("%d/%d", p.Port, p.PID) }
+type listenerKey struct{ port, pid int }
 
 // candidateOf records what the scan saw for one listener, in the terms a reader
 // can use: the port, a name they will recognise, where the process works
 // relative to the project root, and enough to tell it apart from its neighbours
 // (pid and the command line it was started with).
 func candidateOf(p ports.ListeningPort, root string, index *Index) Candidate {
-	c := Candidate{
+	candidate := Candidate{
 		Port:    p.Port,
 		Process: candidateName(p),
 		PID:     p.PID,
 		Command: p.Command,
 	}
-	if dir := portDir(p, index); dir != "" && dir != root {
-		if rel, err := filepath.Rel(root, dir); err == nil && rel != "." {
-			c.Cwd = filepath.ToSlash(rel)
-		}
+	dir := portDir(p, index)
+	if dir == "" || dir == root {
+		return candidate
 	}
-	return c
+	if rel, err := filepath.Rel(root, dir); err == nil && rel != "." {
+		candidate.Cwd = filepath.ToSlash(rel)
+	}
+	return candidate
 }
 
 // candidateName is the label a reader will recognise: a Compose service name and
 // a run's tag both beat the process, which is all a plain listener has.
 func candidateName(p ports.ListeningPort) string {
-	if p.DockerComposeService != "" {
+	switch {
+	case p.DockerComposeService != "":
 		return p.DockerComposeService
-	}
-	if p.Tag != "" {
+	case p.Tag != "":
 		return p.Tag
+	default:
+		return p.DisplayName()
 	}
-	return p.DisplayName()
 }
 
 // portDir is the directory a port belongs to: the process cwd, the Compose
@@ -130,15 +134,14 @@ func candidateName(p ports.ListeningPort) string {
 // CLI sees. It only fires when the two better answers are absent, so the
 // direct path is unchanged.
 func portDir(p ports.ListeningPort, index *Index) string {
-	if p.Cwd != "" {
+	switch {
+	case p.Cwd != "":
 		return p.Cwd
+	case index.ComposeDir(p.DockerComposeProject) != "":
+		return index.ComposeDir(p.DockerComposeProject)
+	default:
+		return p.ProjectRoot
 	}
-	if p.DockerComposeProject != "" {
-		if dir := index.ComposeDir(p.DockerComposeProject); dir != "" {
-			return dir
-		}
-	}
-	return p.ProjectRoot
 }
 
 // Marshal renders a config as the bytes to write to disk, with the generated

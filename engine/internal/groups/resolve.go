@@ -1,9 +1,13 @@
 package groups
 
-import "github.com/sheathedsharp/option-berth/engine/internal/state"
+import (
+	"slices"
 
-// Registry attributes a port to a process option-berth started. It answers with the
-// whole run, not just its group, because `run`, `display_name` and
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
+)
+
+// Registry attributes a port to a process option-berth started. It answers
+// with the whole run, not just its group, because `run`, `display_name` and
 // `group_source: start` all have to come out of one lookup: a daemon that
 // resolved the group from its live registry but the run from the runs.json
 // mirror could publish `group_source: "start"` next to a null `run`.
@@ -14,8 +18,8 @@ type Registry interface {
 
 // SessionRegistry is the optional half of Registry: a registry that also knows
 // which agent session started a run reports it here, and AttributeWith stamps
-// it onto the port. A registry that does not
-// implement it simply publishes ports with a null session.
+// it onto the port. A registry that does not implement it publishes ports with
+// a null session.
 type SessionRegistry interface {
 	Session(p state.Port) (session state.Session, ok bool)
 }
@@ -28,9 +32,8 @@ type SessionRegistry interface {
 type PortRuns struct{}
 
 // Run returns the run already stamped on the port. Until `oberth start`
-// records a group, run.group is empty, so this
-// reports ok with only the name; the resolver then falls through to the file
-// and git-root rules.
+// records a group, run.group is empty, so this reports ok with only the name;
+// the resolver then falls through to the file and git-root rules.
 func (PortRuns) Run(p state.Port) (state.Run, bool) {
 	if p.Run == nil {
 		return state.Run{}, false
@@ -66,23 +69,27 @@ func (NoRuns) Run(state.Port) (state.Run, bool) { return state.Run{}, false }
 //
 // runs and index may both be nil.
 func Resolve(pp []state.Port, runs Registry, index *Index) []state.Port {
-	out := make([]state.Port, len(pp))
-	copy(out, pp)
+	out := slices.Clone(pp)
 	if index == nil {
 		index = NewIndex()
 	}
 	// Pathless evidence has no per-row directory to reuse. Keep its direct
 	// indexed-claim path rather than building filesystem memo tables for
 	// potentially one different manifest per listener.
-	pass := &resolutionPass{index: index}
-	for _, port := range pp {
-		if port.Cwd != "" || (port.Docker != nil && index.ComposeDir(port.Docker.ComposeProject) != "") {
-			pass = newResolutionPass(index)
-			break
-		}
-	}
+	pass := resolutionPassFor(index, pp)
 	pass.resolve(out, runs)
 	return out
+}
+
+// resolutionPassFor picks the pass shape for a batch: a fresh one as soon as a
+// row carries a directory to observe, a bare one otherwise.
+func resolutionPassFor(index *Index, pp []state.Port) *resolutionPass {
+	for _, port := range pp {
+		if port.Cwd != "" || (port.Docker != nil && index.ComposeDir(port.Docker.ComposeProject) != "") {
+			return newResolutionPass(index)
+		}
+	}
+	return &resolutionPass{index: index}
 }
 
 // resolve owns only the output array passed by its caller. Resolve copies a
@@ -131,6 +138,6 @@ func assign(p *state.Port, name string, source state.GroupSource) {
 	if name == "" {
 		return
 	}
-	n, s := name, source
-	p.Group, p.GroupSource = &n, &s
+	group, from := name, source
+	p.Group, p.GroupSource = &group, &from
 }
