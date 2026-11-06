@@ -42,7 +42,7 @@ func ProbeConfigured(rows []state.Port, gg []state.Group, probe Probe, budget ti
 // Unlike the opt-in `include: ["health"]` probe, this one runs on every tick
 // and for every subscriber: a health check in a config is a statement about
 // what the service *is*, not a statistic a client may or may not want, so the
-// daemon polls it as part of state (step 1A.7). HTTP and TCP share the port
+// daemon polls it as part of state. HTTP and TCP share the port
 // probe; a command check runs in the service's cwd. All kinds use
 // HealthTimeout, ten in flight, and one round budget.
 func probeConfigured(rows []state.Port, gg []state.Group, probe Probe, budget time.Duration) {
@@ -77,7 +77,7 @@ func ProbeConfiguredContext(ctx context.Context, rows []state.Port, gg []state.G
 
 	// The whole round is bounded, not just one probe. This runs inside the
 	// scan, which every write handler's republish and every kill's rescan is
-	// queued behind (contract §38), so a project that declares health checks on
+	// queued behind (), so a project that declares health checks on
 	// a dozen services — half of them accepting and never answering — must not
 	// be able to add waves of HealthTimeout to somebody's "Save" button.
 	var deadline time.Time
