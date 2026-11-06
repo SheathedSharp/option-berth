@@ -1,6 +1,7 @@
 package groups
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
@@ -22,6 +23,44 @@ type Liveness interface {
 	Live(group, service string) bool
 }
 
+// groupTable is the collection being built, keyed by group name, with the
+// member ports already added so a listener on two bind addresses counts once.
+type groupTable struct {
+	byName  map[string]*state.Group
+	members map[string]map[int]struct{}
+}
+
+func newGroupTable() *groupTable {
+	return &groupTable{
+		byName:  map[string]*state.Group{},
+		members: map[string]map[int]struct{}{},
+	}
+}
+
+// get returns the named group, creating the empty row on first sight.
+func (t *groupTable) get(name string) *state.Group {
+	if g, ok := t.byName[name]; ok {
+		return g
+	}
+	g := &state.Group{Name: name, Source: state.SourceAuto, Members: []int{}, Services: []state.Service{}, Machine: []state.MachineRef{}}
+	t.byName[name] = g
+	return g
+}
+
+// addMember records a listener's port on its group once.
+func (t *groupTable) addMember(g *state.Group, port int) {
+	seen := t.members[g.Name]
+	if seen == nil {
+		seen = map[int]struct{}{}
+		t.members[g.Name] = seen
+	}
+	if _, duplicate := seen[port]; duplicate {
+		return
+	}
+	seen[port] = struct{}{}
+	g.Members = append(g.Members, port)
+}
+
 // GroupsWith captures runtime facts once when reg implements
 // servicefacts.Provider. Otherwise only observed listeners are available.
 //
@@ -36,39 +75,21 @@ func GroupsWith(pp []state.Port, index *Index, reg Registry, narrow bool) []stat
 	if provider, ok := reg.(servicefacts.Provider); ok {
 		facts = provider.ServiceFacts()
 	}
-	byName := map[string]*state.Group{}
-	memberPorts := map[string]map[int]struct{}{}
+	table := newGroupTable()
 	machinePorts := make(map[int]struct{}, len(pp))
 	for _, p := range pp {
 		machinePorts[p.Port] = struct{}{}
-	}
-
-	order := func(name string) *state.Group {
-		g, ok := byName[name]
-		if !ok {
-			g = &state.Group{Name: name, Source: state.SourceAuto, Members: []int{}, Services: []state.Service{}, Machine: []state.MachineRef{}}
-			byName[name] = g
-		}
-		return g
 	}
 
 	for _, p := range pp {
 		if p.Group == nil || *p.Group == "" {
 			continue
 		}
-		g := order(*p.Group)
+		g := table.get(*p.Group)
 		if p.GroupSource != nil && rank(*p.GroupSource) > rank(g.Source) {
 			g.Source = *p.GroupSource
 		}
-		seen := memberPorts[*p.Group]
-		if seen == nil {
-			seen = map[int]struct{}{}
-			memberPorts[*p.Group] = seen
-		}
-		if _, exists := seen[p.Port]; !exists {
-			seen[p.Port] = struct{}{}
-			g.Members = append(g.Members, p.Port)
-		}
+		table.addMember(g, p.Port)
 		if g.RootDir == nil && p.ProjectRoot != nil {
 			root := *p.ProjectRoot
 			g.RootDir = &root
@@ -86,7 +107,7 @@ func GroupsWith(pp []state.Port, index *Index, reg Registry, narrow bool) []stat
 		// worktree with a copy of the main checkout's file is `<repo>@<wt>`
 		// here too, not a second group with the main checkout's name.
 		name := pass.groupOf(cfg)
-		g := order(name)
+		g := table.get(name)
 		path, dir := cfg.Path, cfg.Dir
 		g.ConfigPath = &path
 		g.RootDir = &dir
@@ -97,16 +118,16 @@ func GroupsWith(pp []state.Port, index *Index, reg Registry, narrow bool) []stat
 		g.Machine = machineRows(cfg, machinePorts, narrow)
 	}
 
-	out := make([]state.Group, 0, len(byName))
-	for _, g := range byName {
+	out := make([]state.Group, 0, len(table.byName))
+	for _, g := range table.byName {
 		sort.Ints(g.Members)
 		g.Status = status(*g)
 		pass.describeCheckout(g)
 		out = append(out, *g)
 	}
-	// Count and sum here so every caller of the shared join gets them. A
-	// caller that fills a portless worker's sample afterwards runs it again;
-	// the function is idempotent.
+	// Count and sum here so every caller of the shared join gets them. A caller
+	// that fills a portless worker's sample afterwards runs it again; the
+	// function is idempotent.
 	FinalizeResources(out)
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
@@ -172,15 +193,12 @@ func (r *resolutionPass) describeCheckout(g *state.Group) {
 	if g.RootDir == nil {
 		return
 	}
-	co, ok := r.locate(*g.RootDir)
-	if ok {
-		g.Identity = WorktreeToken(co.Root)
-	} else {
+	co, inRepo := r.locate(*g.RootDir)
+	if !inRepo {
 		g.Identity = WorktreeToken(*g.RootDir)
-	}
-	if !ok {
 		return
 	}
+	g.Identity = WorktreeToken(co.Root)
 	g.Branch = r.branch(co)
 	if !co.Linked() {
 		return
@@ -198,31 +216,33 @@ func ServiceRow(s Service) state.Service {
 	svc := state.Service{
 		Name:          s.Name,
 		Prepare:       s.Prepare,
-		PrepareInputs: append([]string{}, s.PrepareInputs...),
+		PrepareInputs: nonNilStrings(s.PrepareInputs),
 		Cmd:           s.Cmd,
 		Cwd:           s.Cwd,
 		Sources:       cloneStrings(s.Sources),
 		ReadyTimeout:  s.EffectiveReadyTimeout().String(),
-		DependsOn:     append([]string{}, s.DependsOn...),
-	}
-	if svc.DependsOn == nil {
-		svc.DependsOn = []string{}
-	}
-	if svc.PrepareInputs == nil {
-		svc.PrepareInputs = []string{}
+		DependsOn:     nonNilStrings(s.DependsOn),
+		PortAuto:      s.PortAuto,
+		Health:        optional(s.Health),
+		Description:   optional(s.Description),
+		Icon:          optional(s.Icon),
+		Color:         optional(s.Color),
 	}
 	if s.Port != 0 {
 		port := s.Port
 		svc.Port = &port
 	}
-	svc.PortAuto = s.PortAuto
-	svc.Health = optional(s.Health)
 	hash := ServiceSpecHash(s)
 	svc.ManifestHash = &hash
-	svc.Description = optional(s.Description)
-	svc.Icon = optional(s.Icon)
-	svc.Color = optional(s.Color)
 	return svc
+}
+
+// nonNilStrings clones a list and turns nil into the contract's empty array.
+func nonNilStrings(in []string) []string {
+	if in == nil {
+		return []string{}
+	}
+	return slices.Clone(in)
 }
 
 // ServiceRows adapts a whole config's services list.
@@ -266,40 +286,30 @@ func machineRows(cfg *Config, ports map[int]struct{}, narrow bool) []state.Machi
 // nothing is, and partial in between. A group with no services is running as
 // long as it has a listening port.
 func status(g state.Group) string {
-	if len(g.Services) == 0 {
+	declared := len(g.Services)
+	if declared == 0 {
 		if len(g.Members) > 0 {
 			return "running"
 		}
 		return "stopped"
 	}
-	up := 0
-	for _, s := range g.Services {
-		if s.Running {
-			up++
-		}
-	}
-	switch {
-	case up == len(g.Services):
+	switch running := g.RunningServiceCount(); {
+	case running == declared:
 		return "running"
-	case up == 0:
-		if len(g.Members) > 0 {
-			return "partial"
-		}
-		return "stopped"
-	default:
+	case running > 0:
 		return "partial"
+	case len(g.Members) > 0:
+		return "partial"
+	default:
+		return "stopped"
 	}
 }
 
-// rank orders group sources by precedence so a group takes the strongest
+// sourceRank orders group sources by precedence so a group takes the strongest
 // source any of its members resolved with.
-func rank(s state.GroupSource) int {
-	switch s {
-	case state.SourceStart:
-		return 2
-	case state.SourceFile:
-		return 1
-	default:
-		return 0
-	}
+var sourceRank = map[state.GroupSource]int{
+	state.SourceStart: 2,
+	state.SourceFile:  1,
 }
+
+func rank(s state.GroupSource) int { return sourceRank[s] }
