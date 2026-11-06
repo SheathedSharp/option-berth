@@ -206,7 +206,7 @@ func (c Claims) write(what string, fn func(*sql.Tx) error) error {
 	if err := fn(tx); err != nil {
 		return err
 	}
-	c.store.claimsRevision++
+	c.store.reservationsRevision++
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("%s: %w", what, err)
 	}
@@ -247,11 +247,11 @@ func (c Claims) deleteWhere(query string, args ...any) (int, error) {
 	}
 	n, err := result.RowsAffected()
 	if err != nil {
-		c.store.claimsRevision++
+		c.store.reservationsRevision++
 		return 0, err
 	}
 	if n > 0 {
-		c.store.claimsRevision++
+		c.store.reservationsRevision++
 	}
 	return int(n), nil
 }
