@@ -648,7 +648,8 @@ func newAddressBook(ctx context.Context, rt *daemon.Runtime, cfg *groups.Config,
 
 // port is the port a service runs on, or 0 for one that declares none. A fixed
 // port is itself. A `port: auto` service that is already up keeps its port;
-// one that is not gets its claim.
+// one that is not gets its claim. Both answers are memoized, including the
+// error, so one start asks the allocator once per name.
 func (b *addressBook) port(name string) (int, error) {
 	if port, ok := b.ports[name]; ok {
 		return port, nil
@@ -656,37 +657,48 @@ func (b *addressBook) port(name string) (int, error) {
 	if err, ok := b.errs[name]; ok {
 		return 0, err
 	}
-	svc, ok := b.cfg.ServiceNamed(name)
-	var (
-		port int
-		err  error
-	)
-	switch {
-	case ok && svc.HasPort():
-		switch {
-		case svc.Port != 0:
-			port = svc.Port
-		case b.live[name] != 0:
-			port = b.live[name]
-		default:
-			port, err = daemon.AcquireServicePort(b.rt, b.cfg.Dir, name)
-		}
-	case !ok:
-		// Not one of this file's services: a machine reference is a fixed
-		// port, and a workspace reference reads the other checkout's address.
-		// Neither is allocated or started here.
-		if machine, found := b.cfg.MachineNamed(name); found {
-			port = machine.Port
-		} else if _, found := b.cfg.WorkspaceNamed(name); found {
-			port, err = b.cfg.WorkspaceServiceAddress(name, b.groups)
-		}
-	}
+	port, err := b.resolve(name)
 	if err != nil {
 		b.errs[name] = err
 		return 0, err
 	}
 	b.ports[name] = port
 	return port, nil
+}
+
+// resolve names where a port comes from, in the order the manifest decides it:
+// this file's own declaration, a name that is only a machine reference, or a
+// workspace reference read from the other checkout's published facts.
+func (b *addressBook) resolve(name string) (int, error) {
+	svc, declared := b.cfg.ServiceNamed(name)
+	if !declared {
+		return b.referencePort(name)
+	}
+	if !svc.HasPort() {
+		// A declared service without a port has nothing to expand or wait for.
+		return 0, nil
+	}
+	switch {
+	case svc.Port != 0:
+		return svc.Port, nil
+	case b.live[name] != 0:
+		return b.live[name], nil
+	default:
+		return daemon.AcquireServicePort(b.rt, b.cfg.Dir, name)
+	}
+}
+
+// referencePort resolves a name that is not one of this file's services. A
+// machine reference is a fixed port; a workspace reference reads the other
+// checkout's address. Neither is allocated or started here.
+func (b *addressBook) referencePort(name string) (int, error) {
+	if machine, found := b.cfg.MachineNamed(name); found {
+		return machine.Port, nil
+	}
+	if _, found := b.cfg.WorkspaceNamed(name); found {
+		return b.cfg.WorkspaceServiceAddress(name, b.groups)
+	}
+	return 0, nil
 }
 
 // portContext checks ownership around synchronous allocation without pretending
@@ -709,14 +721,7 @@ func (b *addressBook) portContext(ctx context.Context, name string) (int, error)
 // forService resolves the ports a service's prepare, cmd and env need: its
 // own, and every service they refer to.
 func (b *addressBook) forService(svc groups.Service) (map[string]int, error) {
-	names := groups.Refs(svc.Prepare, svc.Name)
-	names = append(names, groups.Refs(svc.Cmd, svc.Name)...)
-	for _, v := range svc.Env {
-		names = append(names, groups.Refs(v, svc.Name)...)
-	}
-	if svc.HasPort() {
-		names = append(names, svc.Name)
-	}
+	names := serviceRefs(svc)
 	out := make(map[string]int, len(names))
 	for _, name := range names {
 		port, err := b.portContext(b.ctx, name)
@@ -726,6 +731,20 @@ func (b *addressBook) forService(svc groups.Service) (map[string]int, error) {
 		out[name] = port
 	}
 	return out, nil
+}
+
+// serviceRefs is every name a service mentions in `prepare:`, `cmd:` and
+// `env:`, plus its own when it declares a port.
+func serviceRefs(svc groups.Service) []string {
+	names := groups.Refs(svc.Prepare, svc.Name)
+	names = append(names, groups.Refs(svc.Cmd, svc.Name)...)
+	for _, value := range svc.Env {
+		names = append(names, groups.Refs(value, svc.Name)...)
+	}
+	if svc.HasPort() {
+		names = append(names, svc.Name)
+	}
+	return names
 }
 
 // alreadyRunning reports whether a service is up, and why we think so.
