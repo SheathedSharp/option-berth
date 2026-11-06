@@ -72,6 +72,12 @@ func TestConfigParses(t *testing.T) {
 		wantStatus(t, run(t, fakeEnv(t), checkConfigParses), StatusOK)
 	})
 
+	t.Run("an unreadable path fails", func(t *testing.T) {
+		env := fakeEnv(t)
+		mustMkdir(t, env.ConfigPath, 0o700)
+		wantStatus(t, run(t, env, checkConfigParses), StatusFail)
+	})
+
 	t.Run("broken YAML fails with a position and a caret", func(t *testing.T) {
 		env := fakeEnv(t)
 		write(t, env.ConfigPath, "daemon: [broken")
@@ -124,6 +130,13 @@ func TestConfigDirWritable(t *testing.T) {
 }
 
 func TestProjectConfig(t *testing.T) {
+	t.Run("no project directory skips", func(t *testing.T) {
+		env := fakeEnv(t)
+		env.Project = ""
+		// No resolve(): that would fill Project from the working directory.
+		wantStatus(t, checkProjectConfig(context.Background(), env), StatusSkip)
+	})
+
 	t.Run("absent warns and points at oberth init", func(t *testing.T) {
 		row := run(t, fakeEnv(t), checkProjectConfig)
 		wantStatus(t, row, StatusWarn)
@@ -175,6 +188,24 @@ func TestProjectConfig(t *testing.T) {
 			t.Errorf("summary = %q, want the file in use and the ignored one", row.Summary)
 		}
 	})
+}
+
+func TestProjectConfigFilesFindsNestedManifest(t *testing.T) {
+	root := t.TempDir()
+	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	write(t, filepath.Join(root, "apps", "api", groups.ConfigName), "name: nested\n")
+	nested := filepath.Join(root, "apps", "api", "src")
+	mustMkdir(t, nested, 0o755)
+
+	files := ProjectConfigFiles(nested)
+	if len(files) == 0 || filepath.Base(files[0]) != groups.ConfigName {
+		t.Fatalf("ProjectConfigFiles(%s) = %v, want the nested manifest", nested, files)
+	}
+	if !strings.Contains(files[0], filepath.Join("apps", "api")) {
+		t.Fatalf("ProjectConfigFiles(%s) = %v, want the manifest under apps/api", nested, files)
+	}
 }
 
 // ---------------------------------------------------------------- daemon ---
@@ -275,6 +306,20 @@ func TestDaemonProtocol(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("an unreadable version fails", func(t *testing.T) {
+		env := fakeEnv(t)
+		env.Daemon = func(context.Context) DaemonInfo {
+			info := aliveDaemon()
+			info.ProtocolVersion = "not-a-version"
+			return info
+		}
+		row := run(t, env, checkDaemonProtocol)
+		wantStatus(t, row, StatusFail)
+		if !strings.Contains(row.Summary, "unreadable protocol version") {
+			t.Errorf("summary = %q, want it to name the unreadable version", row.Summary)
+		}
+	})
 }
 
 func TestSocketPermissions(t *testing.T) {
@@ -387,6 +432,25 @@ func TestDocker(t *testing.T) {
 				t.Errorf("detail = %q, want %s", row.Detail, tc.detail)
 			}
 		})
+	}
+}
+
+func TestDockerProbeHelpers(t *testing.T) {
+	if version, err := dockerServerVersion([]byte(" 27.0.1\n")); err != nil || version != "27.0.1" {
+		t.Errorf("dockerServerVersion = %q, %v; want 27.0.1", version, err)
+	}
+	if _, err := dockerServerVersion(nil); err == nil {
+		t.Error("an empty docker answer must be an error")
+	}
+
+	exit := &exec.ExitError{Stderr: []byte("Cannot connect to the Docker daemon\nsecond line\n")}
+	if err := dockerCommandError(exit); err == nil || err.Error() != "Cannot connect to the Docker daemon" {
+		t.Errorf("dockerCommandError = %v, want the first stderr line", err)
+	}
+
+	sentinel := errors.New("boom")
+	if err := dockerCommandError(sentinel); !errors.Is(err, sentinel) {
+		t.Errorf("dockerCommandError = %v, want the original error", err)
 	}
 }
 
