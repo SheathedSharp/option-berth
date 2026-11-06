@@ -1,35 +1,19 @@
 package display
 
 import (
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
-
-	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
-// Text helpers for the human renderings: widths that ignore colour codes, and
-// paths under the home directory written as ~/….
+// Text helpers for the human renderings: a column width that ignores colour
+// codes and counts what a terminal actually draws.
 
 var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
-func visibleLen(s string) int {
-	return len(ansiRegex.ReplaceAllString(s, ""))
-}
-
-func padRight(s string, width int) string {
-	vl := visibleLen(s)
-	if vl >= width {
-		return s
-	}
-	return s + strings.Repeat(" ", width-vl)
-}
-
-// wideRunes are the East Asian Wide and Fullwidth ranges, as a terminal counts
-// them: one rune, two cells. Anything else is one cell — a good enough rule for
-// the labels and names this package pads.
-func runeWidth(r rune) int {
+// runeCells is how many terminal cells r takes. The East Asian Wide and
+// Fullwidth ranges take two; everything else takes one, which is the right rule
+// for the labels and names this package pads.
+func runeCells(r rune) int {
 	switch {
 	case r >= 0x1100 && r <= 0x115F, // Hangul Jamo
 		r >= 0x2E80 && r <= 0x303E, // CJK Radicals .. CJK punctuation
@@ -48,63 +32,22 @@ func runeWidth(r rune) int {
 }
 
 // DisplayWidth is how many terminal cells s occupies, ignoring ANSI codes and
-// counting wide runes as two. Plain visibleLen counts runes, which is why a
-// column holding both "failed" and a CJK word drifts.
+// counting a wide rune as two. Counting runes instead would make a column
+// holding both "failed" and a CJK word drift.
 func DisplayWidth(s string) int {
 	s = ansiRegex.ReplaceAllString(s, "")
-	w := 0
+	width := 0
 	for _, r := range s {
-		w += runeWidth(r)
+		width += runeCells(r)
 	}
-	return w
+	return width
 }
 
-// PadDisplay pads to a display-width column. Padded strings may already carry
-// ANSI codes.
+// PadDisplay pads to a display-width column, so a string that already carries
+// colour codes still lines up.
 func PadDisplay(s string, width int) string {
-	if vw := DisplayWidth(s); vw < width {
-		return s + strings.Repeat(" ", width-vw)
+	if drawn := DisplayWidth(s); drawn < width {
+		return s + strings.Repeat(" ", width-drawn)
 	}
 	return s
-}
-
-func colorStatus(status string) string {
-	switch status {
-	case "running":
-		return Green(status)
-	case "partial":
-		return Yellow(status)
-	case "stopped":
-		return Dim(status)
-	default:
-		return status
-	}
-}
-
-func plural(n int, word string) string {
-	if n == 1 {
-		return word
-	}
-	return word + "s"
-}
-
-func shortenHome(path string) string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" || path == home {
-		return path
-	}
-	if rel, err := filepath.Rel(home, path); err == nil &&
-		rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "~" + string(filepath.Separator) + rel
-	}
-	return path
-}
-
-func colorName(p ports.ListeningPort, name string) string {
-	switch p.Type {
-	case ports.PortTypeDocker:
-		return Magenta(name)
-	default:
-		return Green(name)
-	}
 }
