@@ -60,7 +60,7 @@ func (l *Loop) SetStore(s Store) {
 }
 
 // SetRuns installs the run-registry accessor. It is a function because
-// `oberth start` (step 1A.5) hands the daemon its registry after the loop is
+// `oberth start` hands the daemon its registry after the loop is
 // already scanning.
 func (l *Loop) SetRuns(f func() groups.Registry) {
 	if f == nil {
