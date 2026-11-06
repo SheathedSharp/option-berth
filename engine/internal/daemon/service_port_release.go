@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/claims"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
@@ -86,8 +87,12 @@ func captureWorktreePortRelease(ctx context.Context, rt *Runtime, project, workt
 		return nil, busy("claims are changing")
 	}
 	defer claimsMu.Unlock()
-	observed, err := rt.Store.Claims().ObserveWorktreeContext(ctx, project, worktree)
-	if err != nil {
+	var observed store.ClaimObservation
+	if err := retryingBusy(ctx, func() error {
+		var err error
+		observed, err = rt.Store.Claims().ObserveWorktreeContext(ctx, project, worktree)
+		return err
+	}); err != nil {
 		return nil, err
 	}
 	if len(observed.Rows) == 0 {
@@ -149,9 +154,46 @@ func (p *servicePortRelease) releaseWithWait(ctx context.Context, rt *Runtime, g
 			commit = queued.WithNoGroupRunsWait
 		}
 	}
-	return commit(ctx, group, p.configPath, func() (int, error) {
-		return p.store.Claims().DeleteObservedContext(ctx, p.observed)
+	var released int
+	err := retryingBusy(ctx, func() error {
+		var err error
+		released, err = commit(ctx, group, p.configPath, func() (int, error) {
+			return p.store.Claims().DeleteObservedContext(ctx, p.observed)
+		})
+		return err
 	})
+	return released, err
+}
+
+// busyRetryInterval is how long one retry waits. The lock it is waiting for is
+// held for one history insert, so this is a bound on patience, not a poll.
+const busyRetryInterval = 20 * time.Millisecond
+
+// busyRetries is how many times a store contention is retried inside the
+// caller's deadline.
+const busyRetries = 25
+
+// retryingBusy runs work, retrying while the store reports that another writer
+// holds the reservations table.
+//
+// Refusing the first contention made `down` fail outright whenever a scan
+// happened to be recording a port event: the release then reported "port
+// reservations retained" for a condition that resolves itself in milliseconds.
+// The retry is bounded and cancellable, so a genuinely stuck writer still ends
+// the call at the caller's deadline rather than holding it open.
+func retryingBusy(ctx context.Context, work func() error) error {
+	var err error
+	for attempt := 0; attempt < busyRetries; attempt++ {
+		if err = work(); !errors.Is(err, store.ErrClaimsBusy) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(busyRetryInterval):
+		}
+	}
+	return err
 }
 
 func finishGroupStop(ctx context.Context, req *Request, group string, plan *servicePortRelease, after state.Snapshot, scanErr error, results []state.KillResult) (any, error) {

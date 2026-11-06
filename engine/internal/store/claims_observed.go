@@ -12,6 +12,11 @@ import (
 // storage. Callers must observe again, not retry an unconditional key delete.
 var ErrClaimsChanged = errors.New("port reservations changed after observation")
 
+// ErrClaimsBusy means another writer held the reservations table for the instant
+// this read or release needed it. It is a condition, not a failure: the hold is
+// one history insert long, and the caller has a deadline to retry inside.
+var ErrClaimsBusy = errors.New("reservations are being written")
+
 // ClaimObservation is an operation-owned value snapshot. Rows must not be
 // changed by production callers. Its store-local revision detects even an
 // identical refresh or delete/recreate through the same Store, without holding
@@ -29,7 +34,7 @@ func (c Claims) ObserveContext(ctx context.Context, keys ...string) (ClaimObserv
 		return ClaimObservation{}, err
 	}
 	if !c.store.wmu.TryLock() {
-		return ClaimObservation{}, errors.New("store: claims writer is busy; retry observation")
+		return ClaimObservation{}, ErrClaimsBusy
 	}
 	defer c.store.wmu.Unlock()
 	tx, err := c.store.db.BeginTx(ctx, nil)
@@ -70,7 +75,7 @@ func (c Claims) ObserveWorktreeContext(ctx context.Context, project, worktree st
 		return ClaimObservation{}, err
 	}
 	if !c.store.wmu.TryLock() {
-		return ClaimObservation{}, errors.New("store: claims writer is busy; retry observation")
+		return ClaimObservation{}, ErrClaimsBusy
 	}
 	defer c.store.wmu.Unlock()
 	tx, err := c.store.db.BeginTx(ctx, nil)
@@ -172,7 +177,7 @@ func (c Claims) DeleteObservedContext(ctx context.Context, observation ClaimObse
 	sort.Strings(keys)
 	// Refuse contention rather than adding an uncancellable mutex wait to down.
 	if !c.store.wmu.TryLock() {
-		return 0, errors.New("store: reservation release writer is busy; retry after observing")
+		return 0, ErrClaimsBusy
 	}
 	defer c.store.wmu.Unlock()
 	if observation.owner != c.store || observation.revision != c.store.reservationsRevision {
