@@ -16,7 +16,7 @@
 量出 `engine/` 还复制了多少代码：同一相对路径下连续 5 行以上实质相同的代码算一段复制；
 空行、括号行以及 `package` / `import` 行不计，它们在任何 Go 文件里都会相同。
 
-2026-11-06 在 `refactor/engine-daemon-rewrite`（基于 `main` 的 `7aa022e2`）上对照
+2026-11-06 在 `refactor/engine-logs-native`（基于 `main` 的 `3d932c6e`）上对照
 sonar `main`（`f4c50506b09502642cfedf3f4f6a3031cf80e9f2`，2026-10-15）的结果：
 
 | 项 | 数量 |
