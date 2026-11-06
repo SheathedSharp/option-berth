@@ -1,64 +1,110 @@
+// Package claims books the port a `port: auto` service runs on.
+//
+// A reservation is book-keeping, not an OS bind: option-berth records that an
+// address belongs to one service so that parallel checkouts stop picking the
+// same port, and so a service that is started again gets the port it had
+// before. A process outside option-berth can still take a reserved port, which
+// is why every reservation is checked against the live listener table before it
+// is handed out.
 package claims
 
 import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
-// DefaultTTL is how long a claim lives when the caller does not say: one day,
-// the `claim_port` tool's default in spec 2.
-const DefaultTTL = 24 * time.Hour
-
-// MaxCount caps how many ports one key may hold, so a typo in `count` cannot
-// reserve a whole range. It is the same cap `oberth.yaml` puts on
-// worktree_ports, so a block a config asks for is always one Acquire grants.
-const MaxCount = groups.MaxWorktreePorts
-
-// acquireAttempts is how often Acquire re-derives its ports when the table
-// changed underneath it. Inside one daemon the mutex makes a second attempt
-// unnecessary; a second writer on the same database (two daemons on one HOME)
-// is what this is for.
-const acquireAttempts = 3
+// DefaultLease is how long a reservation lives without being renewed: one day.
+const DefaultLease = 24 * time.Hour
 
 // ErrExhausted is returned when the range holds no free port left.
 var ErrExhausted = errors.New("no free port left in the claim range")
 
-// ErrNoProject is returned when neither a key nor a project was given.
-var ErrNoProject = errors.New("a claim needs a project or a key")
+// ErrNoAddress is returned for a reservation that names no checkout or no
+// service. Such a row could not be found again by `down --worktree`, so it is
+// refused rather than stored.
+var ErrNoAddress = errors.New("a reservation needs a project and a service")
 
 // ErrNarrowUnverified is returned when the listener table cannot see every
-// socket owner and no bind probe was supplied. Allocating from that table
-// would be a guess, and the service pays for a guess with EADDRINUSE.
+// socket owner and no bind probe was supplied. Allocating from that table would
+// be a guess, and the service pays for a guess with EADDRINUSE.
 var ErrNarrowUnverified = errors.New("listener table cannot see every owner and no bind probe is configured")
 
-// Table is the persistence Manager needs; *store.Store's Claims view is the
+// Address names one service in one checkout: the subject a reservation is
+// about. Two checkouts of one repository are two addresses, and two services in
+// one checkout are two addresses.
+//
+// Worktree is the checkout's name within its repository — DefaultWorktree for
+// the main checkout, the directory name for a linked worktree. It is not the
+// `${worktree}` token; this one names the reservation's owner.
+type Address struct {
+	Project  string
+	Worktree string
+	Service  string
+}
+
+// Key is the row key this address is stored under: `<project>/<worktree>/<service>`.
+func (a Address) Key() string {
+	trimmed := a.trimmed()
+	return trimmed.Project + "/" + trimmed.Worktree + "/" + trimmed.Service
+}
+
+// trimmed is the address with its parts cleaned and its worktree defaulted, so
+// an empty worktree means the main checkout rather than an empty path segment.
+func (a Address) trimmed() Address {
+	return Address{
+		Project:  strings.Trim(strings.TrimSpace(a.Project), "/"),
+		Worktree: worktreeName(a.Worktree),
+		Service:  strings.TrimSpace(a.Service),
+	}
+}
+
+// validate refuses an address a reservation could not be found back from.
+func (a Address) validate() error {
+	trimmed := a.trimmed()
+	if trimmed.Project == "" || trimmed.Service == "" {
+		return ErrNoAddress
+	}
+	return nil
+}
+
+// Reservation is one booked address and the window it is booked for.
+type Reservation struct {
+	Address
+	// Port is the port this service was given.
+	Port int
+	// Since is when the service first took the port; it does not move on a
+	// renewal, so a reader can tell a long-held address from a fresh one.
+	Since time.Time
+	// Until is when the reservation lapses unless the service is started again.
+	Until time.Time
+}
+
+// Table is the persistence a Book needs; *store.Store's Claims view is the
 // production implementation.
 type Table interface {
 	Put(rows ...store.ClaimRow) error
-	Get(key string) ([]store.ClaimRow, error)
 	List() ([]store.ClaimRow, error)
-	Delete(key string) (int, error)
 	Expire(now time.Time) (int, error)
 }
 
-// Options tunes a Manager. The zero value uses the spec's range, the wall
-// clock and no listener probe.
+// Options tunes a Book. The zero value uses the default range, the wall clock,
+// no listener probe and the default lease.
 type Options struct {
-	// Range is the window ports are derived from. Zero means DefaultRange.
+	// Range is the window ports are derived from. The zero value is DefaultRange.
 	Range Range
-	// Now is the clock, replaced in tests.
-	Now func() time.Time
+	// Clock is the clock, replaced in tests.
+	Clock func() time.Time
 	// Listening reports the ports something is bound to right now — the
-	// daemon's scan snapshot. A claim never hands out a port that is already
-	// serving, except one this same key already holds (that listener is very
-	// likely the caller's own process, and taking the port away from it would
-	// break the idempotency the whole feature exists for).
+	// daemon's scan snapshot. A reservation never hands out a port that is
+	// already serving, except one this same service already holds: that
+	// listener is very likely its own process, and taking the port away from it
+	// would break the idempotency the whole feature exists for.
 	Listening func() (map[int]bool, error)
 	// Narrow says Listening came from a table that cannot see every socket
 	// owner (the Darwin lsof fallback cannot see other users' sockets). A port
@@ -66,273 +112,160 @@ type Options struct {
 	// Bindable instead of being taken as free.
 	Narrow bool
 	// Bindable reports whether this process can bind a port right now. It is
-	// the positive test used when Narrow is set; without it a narrow manager
+	// the positive test used when Narrow is set; without it a narrow book
 	// refuses to allocate rather than risk handing out a busy port.
 	Bindable func(port int) bool
-	// DefaultTTL overrides DefaultTTL for callers that pass no ttl.
-	DefaultTTL time.Duration
-	// DefaultCount is how many ports a request that names no count takes for
-	// a project: the daemon answers it from the project's `oberth.yaml`
-	// worktree_ports. A result of zero, or a nil func, means one port.
-	DefaultCount func(project string) int
+	// Lease overrides DefaultLease.
+	Lease time.Duration
 }
 
-// Manager is the claims book. One lives in the daemon, per database.
-type Manager struct {
-	table        Table
-	rng          Range
-	now          func() time.Time
-	ttl          time.Duration
-	live         func() (map[int]bool, error)
-	narrow       bool
-	bindable     func(port int) bool
-	defaultCount func(project string) int
+// Book issues the reservations. One lives in the daemon, per database.
+//
+// A Book holds one row per service rather than a block per checkout: the
+// product's unit is one `port: auto` service, and a service needs exactly one
+// port. There is no count to ask for and no block to fill.
+type Book struct {
+	table    Table
+	window   Range
+	clock    func() time.Time
+	lease    time.Duration
+	live     func() (map[int]bool, error)
+	narrow   bool
+	bindable func(port int) bool
 
+	// mu serialises reserve-and-write. Two of those interleaving would hand
+	// the same port to two services; the unique constraint on claims.port is
+	// the second line of defence, for a writer outside this Book.
 	mu sync.Mutex
 }
 
-// New builds a manager over a claims table.
-func New(t Table, o Options) *Manager {
-	m := &Manager{
-		table: t, rng: o.Range, now: o.Now, ttl: o.DefaultTTL, live: o.Listening,
-		narrow: o.Narrow, bindable: o.Bindable, defaultCount: o.DefaultCount,
+// New builds a book over a reservations table.
+func New(t Table, o Options) *Book {
+	b := &Book{
+		table: t, window: o.Range, clock: o.Clock, lease: o.Lease,
+		live: o.Listening, narrow: o.Narrow, bindable: o.Bindable,
 	}
-	if m.rng.Valid() != nil {
-		m.rng = DefaultRange
+	b.window = b.window.bounds()
+	if b.clock == nil {
+		b.clock = time.Now
 	}
-	if m.now == nil {
-		m.now = time.Now
+	if b.lease <= 0 {
+		b.lease = DefaultLease
 	}
-	if m.ttl <= 0 {
-		m.ttl = DefaultTTL
-	}
-	return m
+	return b
 }
 
-// Range reports the window this manager derives from.
-func (m *Manager) Range() Range { return m.rng }
+// Range reports the window this book derives from.
+func (b *Book) Range() Range { return b.window }
 
-// Request is one acquire. Key wins when set; otherwise it is derived from
-// Project and Worktree.
-type Request struct {
-	Key      string
-	Project  string
-	Worktree string
-	Count    int
-	TTL      time.Duration
-}
-
-// Result is what an acquire hands back.
-type Result struct {
-	Key       string
-	Project   string
-	Worktree  string
-	Ports     []int
-	CreatedAt time.Time
-	ExpiresAt time.Time
-}
-
-// Acquire reserves Count ports for a key and returns them.
+// Reserve returns the address this service runs on, booking it if it holds
+// none.
 //
-// The same key gets the same ports every time: the ports it already holds are
-// taken first, in port order, and only the shortfall is probed for. Probing
-// starts at the port derived from the key and walks upward, skipping ports
-// that are listening and ports another key holds. The TTL is refreshed on
-// every call, so a live agent keeps its block and an abandoned one lets go.
-func (m *Manager) Acquire(req Request) (Result, error) {
-	key, project, worktree, err := resolve(req)
-	if err != nil {
-		return Result{}, err
+// The same service gets the same port every time: a port it already holds is
+// returned as it stands, and only a service that holds none probes for one.
+// Probing starts at the port derived from the address and walks upward,
+// skipping ports that are listening and ports another service holds. The lease
+// is renewed on every call, so a service that is started regularly keeps its
+// address and one nobody starts any more lets go.
+func (b *Book) Reserve(a Address) (Reservation, error) {
+	if err := a.validate(); err != nil {
+		return Reservation{}, err
 	}
-	// An explicit count always wins; only an omitted one asks the project.
-	count := req.Count
-	if count == 0 && m.defaultCount != nil {
-		count = m.defaultCount(project)
-	}
-	if count == 0 {
-		count = 1
-	}
-	if count < 1 || count > MaxCount {
-		return Result{}, fmt.Errorf("claims: count must be between 1 and %d", MaxCount)
-	}
-	ttl := req.TTL
-	if ttl <= 0 {
-		ttl = m.ttl
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	var lastErr error
-	for attempt := 0; attempt < acquireAttempts; attempt++ {
-		res, err := m.acquireOnce(key, project, worktree, count, ttl)
-		if err == nil {
-			return res, nil
-		}
-		if !errors.Is(err, store.ErrClaimed) {
-			return Result{}, err
-		}
-		lastErr = err
-	}
-	return Result{}, lastErr
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.reserve(a.trimmed())
 }
 
-func (m *Manager) acquireOnce(key, project, worktree string, count int, ttl time.Duration) (Result, error) {
-	now := m.now()
-	if _, err := m.table.Expire(now); err != nil {
-		return Result{}, err
+// reserve is Reserve's body, called with the address cleaned and the lock held.
+func (b *Book) reserve(a Address) (Reservation, error) {
+	now := b.clock()
+	// A lease that ran out is not a reservation; sweep before reading so the
+	// table says what this acquire is about to be told.
+	if _, err := b.table.Expire(now); err != nil {
+		return Reservation{}, err
 	}
-	rows, err := m.table.List()
+	rows, err := b.table.List()
 	if err != nil {
-		return Result{}, err
+		return Reservation{}, err
 	}
-	listening, err := m.listening()
+	serving, err := b.holders()
 	if err != nil {
-		return Result{}, err
-	}
-	if m.narrow && m.bindable == nil {
-		return Result{}, ErrNarrowUnverified
+		return Reservation{}, err
 	}
 
-	heldBy := make(map[int]string, len(rows))
-	own := make([]store.ClaimRow, 0, count)
-	for _, r := range rows {
-		heldBy[r.Port] = r.Key
-		if r.Key == key {
-			own = append(own, r)
+	key := a.Key()
+	held := make(map[int]string, len(rows))
+	var mine []store.ClaimRow
+	for _, row := range rows {
+		held[row.Port] = row.Key
+		if row.Key == key {
+			mine = append(mine, row)
 		}
 	}
-	sort.Slice(own, func(i, j int) bool { return own[i].Port < own[j].Port })
 
-	created := make(map[int]time.Time, len(own))
-	chosen := make([]int, 0, count)
-	taken := make(map[int]bool, count)
-	for _, r := range own {
-		if len(chosen) == count {
-			break
-		}
-		chosen = append(chosen, r.Port)
-		taken[r.Port] = true
-		created[r.Port] = r.CreatedAt
+	port, since, ok := b.choose(key, mine, held, serving)
+	if !ok {
+		return Reservation{}, fmt.Errorf("%w (%d-%d): every port is serving or held by another service",
+			ErrExhausted, b.window.First(), b.window.Last())
+	}
+	if since.IsZero() {
+		// A port this service did not hold before starts its clock now, and
+		// the stored row keeps that moment on every later renewal.
+		since = now
 	}
 
-	for i := 0; len(chosen) < count && i < m.rng.Span(); i++ {
-		port := m.rng.At(key, i)
-		if taken[port] || listening[port] {
+	until := now.Add(b.lease)
+	if err := b.table.Put(store.ClaimRow{
+		Port: port, Key: key, Project: a.Project, Worktree: a.Worktree,
+		Since: since, Until: until,
+	}); err != nil {
+		return Reservation{}, err
+	}
+	return Reservation{Address: a, Port: port, Since: since, Until: until}, nil
+}
+
+// choose picks the port this service runs on. A port the service already holds
+// wins over everything else — including a listener on it, which is very likely
+// the service itself — and only a service that holds none probes the window.
+func (b *Book) choose(key string, mine []store.ClaimRow, held map[int]string, serving map[int]bool) (port int, since time.Time, ok bool) {
+	if len(mine) > 0 {
+		sort.Slice(mine, func(i, j int) bool { return mine[i].Port < mine[j].Port })
+		return mine[0].Port, mine[0].Since, true
+	}
+	base := b.window.Base(key)
+	for i := 0; i < b.window.Span(); i++ {
+		candidate := b.window.Walk(base, i)
+		if serving[candidate] {
 			continue
 		}
-		if holder, ok := heldBy[port]; ok && holder != key {
+		if holder, taken := held[candidate]; taken && holder != key {
 			continue
 		}
 		// A narrow table cannot say that this port is free; a real bind can.
-		if m.narrow && !m.bindable(port) {
+		if b.narrow && !b.bindable(candidate) {
 			continue
 		}
-		chosen = append(chosen, port)
-		taken[port] = true
+		return candidate, time.Time{}, true
 	}
-	if len(chosen) < count {
-		return Result{}, fmt.Errorf("%w (%d-%d): wanted %d, found %d",
-			ErrExhausted, m.rng.Start, m.rng.End, count, len(chosen))
-	}
-	sort.Ints(chosen)
-
-	// A shrinking count leaves ports behind; drop the whole key first so what
-	// the table holds is exactly what the caller was just told it holds.
-	if len(own) > len(chosen) {
-		if _, err := m.table.Delete(key); err != nil {
-			return Result{}, err
-		}
-	}
-
-	expires := now.Add(ttl)
-	write := make([]store.ClaimRow, 0, len(chosen))
-	for _, port := range chosen {
-		at, ok := created[port]
-		if !ok {
-			at = now
-		}
-		write = append(write, store.ClaimRow{
-			Port: port, Key: key, Project: project, Worktree: worktree,
-			CreatedAt: at, ExpiresAt: expires,
-		})
-	}
-	if err := m.table.Put(write...); err != nil {
-		return Result{}, err
-	}
-
-	first := now
-	for _, port := range chosen {
-		if at, ok := created[port]; ok && at.Before(first) {
-			first = at
-		}
-	}
-	return Result{
-		Key: key, Project: project, Worktree: worktree,
-		Ports: chosen, CreatedAt: first, ExpiresAt: expires,
-	}, nil
+	return 0, time.Time{}, false
 }
 
-// Release drops every port held under key and reports how many went. A key
-// nobody holds releases nothing, without erroring.
-func (m *Manager) Release(key string) (int, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, err := m.table.Expire(m.now()); err != nil {
-		return 0, err
+// holders is the live listener table, and the answer to whether a claim may be
+// derived from it at all.
+func (b *Book) holders() (map[int]bool, error) {
+	if b.narrow && b.bindable == nil {
+		return nil, ErrNarrowUnverified
 	}
-	return m.table.Delete(key)
+	if b.live == nil {
+		return nil, nil
+	}
+	return b.live()
 }
 
-// Held maps every claimed port to the key holding it, after sweeping expired
-// rows. `ports.next` uses it to skip foreign claims.
-func (m *Manager) Held() (map[int]string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, err := m.table.Expire(m.now()); err != nil {
-		return nil, err
+func worktreeName(worktree string) string {
+	trimmed := strings.Trim(strings.TrimSpace(worktree), "/")
+	if trimmed == "" {
+		return DefaultWorktree
 	}
-	rows, err := m.table.List()
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[int]string, len(rows))
-	for _, r := range rows {
-		out[r.Port] = r.Key
-	}
-	return out, nil
-}
-
-func (m *Manager) listening() (map[int]bool, error) {
-	if m.live == nil {
-		return map[int]bool{}, nil
-	}
-	live, err := m.live()
-	if err != nil {
-		return nil, err
-	}
-	if live == nil {
-		return map[int]bool{}, nil
-	}
-	return live, nil
-}
-
-// resolve turns a request into the key and the project/worktree stored with
-// it. An explicit key wins; project and worktree are then recovered from it
-// unless the caller sent them too.
-func resolve(req Request) (key, project, worktree string, err error) {
-	project, worktree = req.Project, req.Worktree
-	key = req.Key
-	if key == "" {
-		if project == "" {
-			return "", "", "", ErrNoProject
-		}
-		key = Key(project, worktree)
-	}
-	if project == "" {
-		project, worktree = SplitKey(key)
-	} else if worktree == "" {
-		worktree = DefaultWorktree
-	}
-	return key, project, worktree, nil
+	return trimmed
 }
