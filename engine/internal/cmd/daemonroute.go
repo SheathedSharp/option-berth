@@ -43,12 +43,11 @@ func noteFallbackBecause(err error) {
 
 // dialDaemon is the seam the CLI tests replace. It connects to a daemon that is
 // already listening and never starts one: every command routed through here
-// works without a daemon (spec, "CLI surface": `list`, `info`, `next`, `wait`,
-// `logs`, `graph` and `watch` all say "needs daemon: no"), so spawning a
-// background process behind the user's back would buy nothing they did not ask
-// for. `oberth serve`, the desktop app, and the commands that genuinely need the
-// daemon are what start it, and those autostart with `oberth serve --detach`
-// (contract §7).
+// works without a daemon — `status --no-daemon` and the `git` commands are the
+// clear cases — so spawning a background process behind the user's back would
+// buy nothing they did not ask for. `oberth serve` and the commands that
+// genuinely need the daemon are what start it, and those autostart with
+// `oberth serve --detach`
 var dialDaemon = func(ctx context.Context) (*client.Client, error) {
 	return client.Dial(ctx, client.ClientInfo{
 		Name:    "cli",

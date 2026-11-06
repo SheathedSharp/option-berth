@@ -17,7 +17,7 @@ import (
 // port belongs to group X", the confirmation list, the result lines and the
 // --json list — is produced by the same code as the direct path. Only the
 // signalling moves: the daemon kills, then rescans and records the port going
-// down, which is what the CLI's own killer could never do (contract §22).
+// down, which is what the CLI's own killer could never do.
 func killThroughDaemon(ctx context.Context, c *client.Client, args []string, bindIP string) error {
 	snapshot, err := daemonList(ctx, c)
 	if err != nil {

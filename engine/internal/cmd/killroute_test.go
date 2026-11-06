@@ -157,7 +157,7 @@ func runKillCmd(t *testing.T, args ...string) (string, error) {
 	return out, err
 }
 
-// TestKillJSONIsIdenticalOnBothPaths is the golden for contract §22's third
+// TestKillJSONIsIdenticalOnBothPaths is the golden for the third
 // follow-up: routing `oberth kill` through the daemon must not change a single
 // byte of what the user sees. A dry run is what makes the comparison possible —
 // the same process is planned twice, so pid, name and method are identical and
