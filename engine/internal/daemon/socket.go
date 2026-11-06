@@ -1,7 +1,7 @@
 // Package daemon implements `oberth serve`: the socket listener, the JSON-RPC
 // dispatcher, the subscription fan-out and the process lifecycle. Handlers for
 // namespaces owned by other packages register themselves with RegisterHandler
-// from their own init(), so this package never imports them (contract §8).
+// from their own init(), so this package never imports them.
 package daemon
 
 import (
@@ -11,7 +11,7 @@ import (
 )
 
 // WindowsPipe is the named pipe the daemon listens on under Windows
-// (contract §7).
+// .
 const WindowsPipe = paths.WindowsPipe
 
 // SocketPath resolves the address the daemon listens on and every client
@@ -32,7 +32,7 @@ func defaultSocketPath() string { return paths.SocketWithoutEnv() }
 // OwnsSocketDir reports whether the directory holding path is one option-berth makes
 // for itself, rather than a directory the user pointed BERTH_SOCKET at.
 // Only a directory we own may be tightened to 0700: `BERTH_SOCKET=/tmp/x.sock`
-// must not chmod /tmp (contract §21).
+// must not chmod /tmp.
 func OwnsSocketDir(path string) bool { return paths.OwnsSocketDir(path) }
 
 // ownsSocketDir is OwnsSocketDir with its environment injected, so the rule can

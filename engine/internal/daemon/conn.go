@@ -98,7 +98,7 @@ func (c *Conn) Keepalive() bool {
 }
 
 // RegisterStream records a cancel function for a streaming subscription so
-// stream.cancel and disconnect can both stop it (contract §1).
+// stream.cancel and disconnect can both stop it.
 func (c *Conn) RegisterStream(id string, cancel context.CancelFunc) {
 	c.mu.Lock()
 	c.streams[id] = cancel
@@ -122,7 +122,7 @@ func (c *Conn) CancelStream(id string) bool {
 }
 
 // cancelAllStreams stops every stream on this connection. Disconnecting
-// cancels all of a connection's streams (contract §1).
+// cancels all of a connection's streams.
 func (c *Conn) cancelAllStreams() {
 	for _, cancel := range c.replaceStreams(nil) {
 		cancel()

@@ -244,7 +244,7 @@ func handleSpawn(ctx context.Context, req *daemon.Request) (any, error) {
 // Spawn starts a detached run, registers it and reaps it. It is the one spawn
 // path the daemon has: `runs.spawn` calls it for a single command and
 // `groups.start` calls it once per service, so a service started from the
-// desktop is attributed exactly like one started from the CLI (contract §4).
+// desktop is attributed exactly like one started from the CLI.
 //
 // The caller has already resolved the group, the name and the working
 // directory; CheckCwd is the home-directory guard.

@@ -53,7 +53,7 @@ func TestStatusReportsTheDatabasePath(t *testing.T) {
 		t.Errorf("db_path = %q, want %q", after.DBPath, path)
 	}
 	if h.srv.runtime.DB == nil {
-		t.Error("Runtime.DB is nil; contract §8 hands extensions the raw handle")
+		t.Error("Runtime.DB is nil; the runtime hands extensions the raw handle")
 	}
 }
 

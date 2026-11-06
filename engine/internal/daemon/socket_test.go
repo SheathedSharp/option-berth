@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestSocketPathResolution walks contract §7's resolution order across the
+// TestSocketPathResolution walks the resolution order across the
 // whole environment matrix, on one host, for both platform branches.
 func TestSocketPathResolution(t *testing.T) {
 	home := func() (string, error) { return "/home/dev", nil }

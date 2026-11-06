@@ -16,7 +16,7 @@ import (
 // autostart path therefore forks a copy of itself every time it runs, and any
 // test in that copy which reaches the same path forks again — which is how one
 // afternoon of `go test` left 2,150 `cmd.test serve --detach` processes behind
-// and exhausted swap (step 1A.20).
+// and exhausted swap.
 //
 // The guard lives here because both ends need it: the client that would spawn
 // the daemon (internal/daemon/client.Autostart) and the `oberth serve` that

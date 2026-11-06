@@ -8,7 +8,7 @@ import (
 )
 
 // This file declares the params and results of every daemon method named in
-// the daemon spec's method table and in cross-spec contract §4. In slice F0
+// the method table. Each entry carries
 // they are placeholders: they fix the wire shape and drive schema generation,
 // and the slices that implement each method fill in the behaviour behind them.
 // Changing a field here changes the published protocol, so keep it in step
@@ -16,7 +16,7 @@ import (
 
 // ---------------------------------------------------------------- shared ---
 
-// Selector addresses one port (contract §3). Exactly one of Port, PID and
+// Selector addresses one port. Exactly one of Port, PID and
 // RunID is set; BindAddress only disambiguates Port.
 //
 // A client that holds a port key from the stream sets Port and BindAddress
@@ -30,17 +30,17 @@ type Selector struct {
 	RunID       *string `json:"run_id,omitempty"`
 }
 
-// MutationResult is the minimum every mutating method returns (contract §3).
+// MutationResult is the minimum every mutating method returns.
 // Affected holds port keys ("<port>:<bind_address>").
 type MutationResult struct {
 	OK       bool     `json:"ok"`
 	Affected []string `json:"affected"`
 }
 
-// KillEnvelope is the result of every kill-shaped method (contract §3). The row
+// KillEnvelope is the result of every kill-shaped method. The row
 // type is state.KillResult, the single Go type the killer, the CLI and the
 // daemon all produce, so it keeps the plain name in the generated schema
-// (contract §17) and the envelope around it is named for what it is.
+// and the envelope around it is named for what it is.
 type KillEnvelope struct {
 	MutationResult
 	Results []state.KillResult `json:"results"`
@@ -161,7 +161,7 @@ type DaemonSchemaResult struct {
 
 // DoctorCheck is one diagnostic `oberth doctor` and `daemon.doctor` report. It
 // is the single Go type behind the table, the CLI's `--json` and the wire
-// result (contract §17), so a client that renders one renders the other.
+// result, so a client that renders one renders the other.
 type DoctorCheck struct {
 	// ID names the check. Checks that exist once per external tool are
 	// dotted: `mcp_registered.claude_code`.
@@ -425,7 +425,7 @@ type GroupsStartEnd struct {
 	Included []string `json:"included,omitempty"`
 }
 
-// GroupsRenameParams renames a project (step 5A.6). Name is the project's name
+// GroupsRenameParams renames a project. Name is the project's name
 // or the name of any of its checkout groups: the rename always applies to the
 // project, so the main checkout's group becomes To and every linked worktree's
 // group becomes `<To>@<worktree>`. A project whose main checkout has a
@@ -453,13 +453,13 @@ type GroupsRenameResult struct {
 
 // GroupConfig is a `oberth.yaml` as the protocol carries it: the group name,
 // the services as contract rows, and the extra ports the file claims. It is
-// the `config` of groups.config.get and groups.config.set (contract §13.2).
+// the `config` of groups.config.get and groups.config.set.
 type GroupConfig struct {
 	Name     string          `json:"name"`
 	Services []state.Service `json:"services"`
 	Ports    []int           `json:"ports"`
 	// WorktreePorts is the file's worktree_ports: how many ports a claim for
-	// this project takes when it names no count (step 5A.7). Null when the
+	// this project takes when it names no count. Null when the
 	// file has no such key.
 	WorktreePorts *int `json:"worktree_ports" jsonschema:"nullable"`
 }
@@ -474,8 +474,8 @@ type GroupsConfigGetResult struct {
 	Config GroupConfig `json:"config"`
 }
 
-// GroupsConfigSetParams is one atomic edit of a `oberth.yaml` (contract §13.2,
-// extended by step 5A.4). The four lists may be combined in a single call and
+// GroupsConfigSetParams is one atomic edit of an `oberth.yaml`. The four lists
+// may be combined in a single call and
 // are applied in this order — Remove, Rename, Add, then the Services metadata
 // patches — with each list seeing the file as the previous ones left it.
 // Nothing is written unless the whole edit succeeds and the result still
@@ -494,7 +494,7 @@ type GroupsConfigSetParams struct {
 	// Remove deletes services and drops them from every other service's
 	// depends_on. An unknown name is `not_found`.
 	Remove []string `json:"remove,omitempty"`
-	// WorktreePorts edits the top-level worktree_ports key (step 5A.7):
+	// WorktreePorts edits the top-level worktree_ports key:
 	// omitted leaves it alone, a number (1-100) writes it, and null removes
 	// it. A value out of range is `invalid_config`, like any edit that would
 	// leave the file invalid.
@@ -538,7 +538,7 @@ func (p GroupsConfigSetParams) WorktreePortsChange() groups.IntChange {
 // GroupsConfigSetResult is the file after the write. Affected carries the
 // service names the edit touched, in the order it applied them — a removed
 // name, a rename's new name, an added name, a patched name: this method mutates
-// a config, not a port, so there is no port key to report (step 1A.7).
+// a config, not a port, so there is no port key to report.
 type GroupsConfigSetResult struct {
 	MutationResult
 	Path   string      `json:"path"`
@@ -559,7 +559,7 @@ type ConfigProblem struct {
 // GroupsInitParams asks for a proposed `oberth.yaml` for the checkout at
 // RootDir. Write is the contract's opt-in to actually writing it, so the
 // default is a preview; Force overwrites an existing file, while Merge appends
-// into one instead (contract §4, §16, step 5A.4). Force and Merge are mutually
+// into one instead. Force and Merge are mutually
 // exclusive.
 type GroupsInitParams struct {
 	RootDir string `json:"root_dir"`
@@ -600,7 +600,7 @@ type RunsRegisterParams struct {
 	PortHint  *int    `json:"port_hint,omitempty"`
 	StartedAt string  `json:"started_at"`
 	ID        *string `json:"id,omitempty"`
-	// Session is the agent session that asked for this run (spec 2 §3). The
+	// Session is the agent session that asked for this run. The
 	// caller detects it: `oberth start` reads its own environment, which is the
 	// agent's, while the daemon's is not.
 	Session *state.Session `json:"session,omitempty"`

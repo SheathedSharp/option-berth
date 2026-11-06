@@ -18,7 +18,7 @@ var streamSeq atomic.Uint64
 // nextStreamID allocates the id a stream's chunks carry.
 func nextStreamID() string { return fmt.Sprintf("sub-%d", streamSeq.Add(1)) }
 
-// Stream is one running streaming method (contract §1): the daemon replies to
+// Stream is one running streaming method: the daemon replies to
 // the call with a subscription id, pushes `stream.chunk {id, data}`
 // notifications, and finishes with `stream.end {id, data?, error?}`.
 //

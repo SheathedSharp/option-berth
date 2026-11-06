@@ -401,7 +401,7 @@ func waitForGroup(t *testing.T, c *testClient, name string) *state.Group {
 	return nil
 }
 
-// TestGroupsConfigSetAddsRenamesAndRemoves is step 5A.4's reason to exist: the
+// TestGroupsConfigSetAddsRenamesAndRemoves is why the call exists: the
 // daemon owns every edit to a `.oberth.yaml`, so a client never has to write the
 // file itself to add a service or rename one.
 func TestGroupsConfigSetAddsRenamesAndRemoves(t *testing.T) {
@@ -414,7 +414,7 @@ func TestGroupsConfigSetAddsRenamesAndRemoves(t *testing.T) {
 	}
 
 	// Add. The delta collected here is the one published before the reply was
-	// queued (contract §38, §44): the caller cannot see the acknowledgement
+	// queued: the caller cannot see the acknowledgement
 	// before the change.
 	var res rpc.GroupsConfigSetResult
 	seen := callCollectingGroups(t, c, "groups.config.set", rpc.GroupsConfigSetParams{

@@ -13,7 +13,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// `groups.rename` (step 5A.6) renames a project and, with it, every checkout of
+// `groups.rename` renames a project and, with it, every checkout of
 // it: the main checkout's group and each linked worktree's `<project>@<wt>`.
 // The name lives where the project already keeps it — the `name:` of the main
 // checkout's `oberth.yaml` — or, for a project with no file, in the daemon's
@@ -31,7 +31,7 @@ var (
 // group a `groups.rename` renamed. State that recorded a group name when it was
 // created follows the rename through it — a run's group does, from
 // internal/daemon/runsreg — without this package importing its owner
-// (contract §8).
+// .
 func OnGroupRename(f func(renames map[string]string)) {
 	if f == nil {
 		return

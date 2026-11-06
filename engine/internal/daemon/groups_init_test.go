@@ -314,7 +314,7 @@ func groupNamed(gg []state.Group, name string) (state.Group, bool) {
 }
 
 // TestGroupsInitCuratesTheProposal: a caller that has let a user name the
-// services writes the whole curated file in one call (step 5A.4). The list is
+// services writes the whole curated file in one call. The list is
 // the caller's word for word: a port the caller kept does not get a command or
 // a directory copied onto it from whatever happens to be listening there. That
 // copy used to look helpful and was the bug — it produced entries whose command

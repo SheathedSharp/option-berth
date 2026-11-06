@@ -13,7 +13,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// `groups.init` is `oberth init` over the wire (contract §4): it proposes a
+// `groups.init` is `oberth init` over the wire: it proposes a
 // `oberth.yaml` for a checkout from what is listening in it right now, and
 // optionally writes it.
 //
@@ -25,7 +25,7 @@ import (
 // is guessed — and that lives in one function both callers hand their ports to.
 //
 // The daemon has no working directory of the caller's, so unlike the CLI it
-// cannot default the root: `root_dir` is required (contract §4).
+// cannot default the root: `root_dir` is required.
 func init() {
 	RegisterHandler("groups.init", handleGroupsInit)
 	// The capability is already announced by groups_config.go; registering it
@@ -130,7 +130,7 @@ func handleGroupsInit(_ context.Context, req *Request) (any, error) {
 	}
 
 	// §16: `oberth init` refuses to overwrite without --force, and so does this.
-	// The registry (contract §2) has no `already_exists`, and inventing a code
+	// The registry has no `already_exists`, and inventing a code
 	// for one method is worse than the accurate hint, so this is
 	// `invalid_params` naming the parameters that unblock it.
 	if exists && !p.Force {
@@ -185,7 +185,7 @@ func mergeInit(req *Request, target string, cfg *groups.Config, snap state.Snaps
 
 // publishConfig indexes a file the daemon just wrote and republishes, so the
 // group reaches subscribers as a groups delta before the caller's own next read
-// (the same order `groups.config.set` keeps, contract §38 and §44).
+// (the same order `groups.config.set` keeps).
 func publishConfig(req *Request, path, group string, services int) {
 	if err := req.Runtime.Scanner.LoadConfig(path); err != nil {
 		req.Runtime.Logger.Warn("reloading a config after writing it", "path", path, "error", err)
@@ -206,7 +206,7 @@ func snapshotPorts(snap state.Snapshot) map[int]bool {
 // initRoot validates the caller's root and resolves it the way `oberth init`
 // resolves its own working directory: the git root above it when there is one,
 // so the file lands next to `.git` and matches the group the resolver already
-// publishes (§16).
+// publishes.
 func initRoot(raw string) (string, error) {
 	dir := strings.TrimSpace(raw)
 	if dir == "" {
@@ -234,7 +234,7 @@ func initRoot(raw string) (string, error) {
 }
 
 // initSnapshot is the state the proposal is built from: the same cache
-// `groups.list` reads, refreshed when nobody is keeping it warm (contract §20).
+// `groups.list` reads, refreshed when nobody is keeping it warm.
 func initSnapshot(rt *Runtime) (state.Snapshot, error) {
 	if rt.Subscribers() > 0 {
 		if snap := rt.Scanner.Cached(); snap.Seq > 0 {
@@ -249,7 +249,7 @@ func initSnapshot(rt *Runtime) (state.Snapshot, error) {
 }
 
 // serviceNames is the affected list: this method mutates a file, so what it
-// reports is service names, exactly as `groups.config.set` does (contract §22).
+// reports is service names, exactly as `groups.config.set` does.
 func serviceNames(cfg *groups.Config) []string {
 	out := make([]string, 0, len(cfg.Services))
 	for _, s := range cfg.Services {

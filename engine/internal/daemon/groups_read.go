@@ -25,7 +25,7 @@ func handleGroupsList(_ context.Context, req *Request) (any, error) {
 }
 
 // readGroups is readPorts' twin: served from the cache while a subscriber
-// keeps it fresh, and from a scan otherwise (contract §20).
+// keeps it fresh, and from a scan otherwise.
 func readGroups(rt *Runtime) ([]state.Group, error) {
 	if rt.Subscribers() > 0 {
 		if snap := rt.Scanner.Cached(); snap.Seq > 0 {
@@ -40,7 +40,7 @@ func readGroups(rt *Runtime) ([]state.Group, error) {
 }
 
 // orEmptyGroups keeps the collection an array on the wire, never null
-// (contract §6).
+// .
 func orEmptyGroups(groups []state.Group) []state.Group {
 	if groups == nil {
 		return []state.Group{}

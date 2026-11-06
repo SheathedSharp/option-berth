@@ -59,7 +59,7 @@ func readSnapshot(rt *Runtime, include scanner.Include) (state.Snapshot, error) 
 // and `health` is null for anything that was not probed, which on a machine
 // with one such row made *every* stats read miss the cache and scan the
 // machine again, while a subscriber was already collecting stats every second
-// (contract §42, §44). One row carrying the enrichment is what says the scan
+// . One row carrying the enrichment is what says the scan
 // behind this snapshot collected it.
 func cacheCovers(snap state.Snapshot, include scanner.Include) bool {
 	if !include.Stats && !include.Health {

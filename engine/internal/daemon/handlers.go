@@ -11,7 +11,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// The core method set for step 1A.1. Namespaces owned by later steps register
+// The core method set. Namespaces owned by other packages register
 // their own handlers from their own init(), so this list only grows sideways.
 func init() {
 	RegisterHandler("daemon.hello", handleHello)
