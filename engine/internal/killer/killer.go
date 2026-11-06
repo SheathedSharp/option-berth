@@ -111,17 +111,36 @@ func (o Options) escalating() bool {
 // would have been done, to one process or container.
 type Result = state.KillResult
 
-// Clock is the killer's view of time, replaceable so escalation can be tested
-// without waiting out a real grace period.
+// Clock is the killer's view of time. It is replaceable so escalation can be
+// tested without waiting out a real grace period.
+//
+// Waiting is part of the contract, not an add-on: the only wait this package
+// makes is the poll between escalation probes, and it must end when the request
+// does. A clock that can only sleep would leave a cancelled stop asleep for its
+// whole grace period, so the interface requires the wait to be interruptible
+// instead of discovering that capability by type assertion at the call site.
 type Clock interface {
 	Now() time.Time
-	Sleep(d time.Duration)
+	// Wait blocks for d and reports whether d elapsed. False means the request
+	// was withdrawn first, and the caller must stop treating the target as
+	// running.
+	Wait(ctx context.Context, d time.Duration) bool
 }
 
 type realClock struct{}
 
-func (realClock) Now() time.Time        { return time.Now() }
-func (realClock) Sleep(d time.Duration) { time.Sleep(d) }
+func (realClock) Now() time.Time { return time.Now() }
+
+func (realClock) Wait(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
 
 // engine holds the machine-facing dependencies so tests can substitute them.
 type engine struct {

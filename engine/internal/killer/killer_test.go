@@ -30,9 +30,17 @@ type fakeClock struct {
 }
 
 func (c *fakeClock) Now() time.Time { return c.now }
-func (c *fakeClock) Sleep(d time.Duration) {
+
+// Wait advances the fake clock instead of sleeping, and answers the same
+// question the real one does: did the wait finish, or was it interrupted?
+// A fake that always said "finished" would let a cancelled stop keep polling.
+func (c *fakeClock) Wait(ctx context.Context, d time.Duration) bool {
+	if err := ctx.Err(); err != nil {
+		return false
+	}
 	c.now = c.now.Add(d)
 	c.slept += d
+	return true
 }
 
 // proc is one process the fake machine knows about. Presence in the map is what

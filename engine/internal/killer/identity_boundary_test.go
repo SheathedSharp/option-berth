@@ -122,12 +122,18 @@ func TestCancellationStopsLaterSignalsAndDocker(t *testing.T) {
 	}
 }
 
+// cancelSleepClock withdraws the request exactly when the grace period would
+// otherwise be waited out.
 type cancelSleepClock struct {
 	fakeClock
 	cancel context.CancelFunc
 }
 
-func (c *cancelSleepClock) Sleep(d time.Duration) { c.fakeClock.Sleep(d); c.cancel() }
+func (c *cancelSleepClock) Wait(ctx context.Context, d time.Duration) bool {
+	c.fakeClock.Wait(ctx, d)
+	c.cancel()
+	return false
+}
 
 func TestCancellationAtGraceBoundaryNeverEscalates(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -371,4 +377,204 @@ func TestCancelledEscalationTouchesNoFurtherProcess(t *testing.T) {
 	}
 
 	e.kill(ctx, snapshot, []Target{{Port: 3000}}, Options{Grace: time.Millisecond})
+}
+
+// interruptibleClock is a clock whose only unusual property is the one the
+// Clock contract states: its wait ends when the request does.
+type interruptibleClock struct {
+	fakeClock
+	// waits counts completed waits; interrupted counts waits a cancellation cut
+	// short. They must never both advance for the same wait.
+	waits       int
+	interrupted int
+}
+
+func (c *interruptibleClock) Wait(ctx context.Context, d time.Duration) bool {
+	if ctx.Err() != nil {
+		c.interrupted++
+		return false
+	}
+	c.fakeClock.Wait(ctx, d)
+	c.waits++
+	return true
+}
+
+// TestCancelledGraceDoesNotWaitOutThePeriod pins the Clock contract from the
+// caller's side: when the request is withdrawn during the poll, the escalation
+// loop must stop then and there. A wait that reports "interrupted" and is
+// ignored would keep an abandoned stop polling for the rest of its grace.
+func TestCancelledGraceDoesNotWaitOutThePeriod(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := newMachine(ProcessTable{42: {PID: 42}})
+	m.ports[3000] = portOpen
+	e := m.engine()
+	clock := &interruptibleClock{fakeClock: *m.clock}
+	e.clock = clock
+	// Withdraw the request the moment the first signal is accepted, which is
+	// before the loop has decided to poll.
+	m.react = func(*machine, signalCall) { cancel() }
+
+	rows := e.kill(ctx, []ports.ListeningPort{listener(3000, 42)}, []Target{{Port: 3000}},
+		Options{Grace: time.Hour})
+
+	if clock.waits != 0 {
+		t.Fatalf("waited %d times for a request that was already withdrawn", clock.waits)
+	}
+	if len(m.signals) != 1 || m.signals[0].force {
+		t.Fatalf("signals = %+v, want the accepted SIGTERM and no escalation", m.signals)
+	}
+	if rows[0].OK {
+		t.Fatalf("row = %+v, want the interrupted stop reported as unfinished", rows[0])
+	}
+}
+
+// withdrawingClock withdraws the request during a wait, the way a person
+// pressing Ctrl-C lands: the stop is asleep when it has to give up.
+type withdrawingClock struct {
+	fakeClock
+	cancel context.CancelFunc
+}
+
+func (c *withdrawingClock) Wait(ctx context.Context, d time.Duration) bool {
+	c.cancel()
+	return false
+}
+
+// TestWithdrawnWaitTouchesNoFurtherProcess pins what an interrupted wait saves.
+// The escalation loop checks cancellation at its top anyway, so the observable
+// difference is one round of machine observation: a stop revoked during a poll
+// must not go on to probe the port or the processes it was about to escalate.
+func TestWithdrawnWaitTouchesNoFurtherProcess(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := newMachine(ProcessTable{42: {PID: 42}})
+	m.ports[3000] = portOpen
+	e := m.engine()
+	e.clock = &withdrawingClock{fakeClock: *m.clock, cancel: cancel}
+
+	probes, aliveChecks := 0, 0
+	probe := e.probe
+	e.probe = func(port int, bind string) portState { probes++; return probe(port, bind) }
+	alive := e.alive
+	e.alive = func(pid int) bool { aliveChecks++; return alive(pid) }
+
+	e.kill(ctx, []ports.ListeningPort{listener(3000, 42)}, []Target{{Port: 3000}}, Options{Grace: time.Hour})
+
+	// Before the wait: the escalation loop's own stillUp. After it: nothing.
+	if probes != 1 || aliveChecks != 0 {
+		t.Fatalf("probed after the request was withdrawn: probes=%d alive=%d", probes, aliveChecks)
+	}
+}
+
+// TestEscalationStopsWhenTheProbeItselfRevealsCancellation pins the two
+// cancellation checks inside the escalation loop. The request can be withdrawn
+// at any point — including while the loop is asking the machine about the port
+// — and the loop must stop rather than treat the result it just got as a
+// reason to keep going. Only a probe can cancel at this instant, so a case
+// built on a clock cannot reach it.
+func TestEscalationStopsWhenTheProbeItselfRevealsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := newMachine(ProcessTable{42: {PID: 42}})
+	m.ports[3000] = portOpen
+	e := m.engine()
+
+	probes := 0
+	probe := e.probe
+	e.probe = func(port int, bind string) portState {
+		probes++
+		cancel() // the person withdraws the stop while the probe is in flight
+		return probe(port, bind)
+	}
+
+	rows := e.kill(ctx, []ports.ListeningPort{listener(3000, 42)}, []Target{{Port: 3000}},
+		Options{Grace: time.Hour})
+
+	// One probe reported the port still open; that answer must not be acted on.
+	if probes != 1 {
+		t.Fatalf("kept probing after the request was withdrawn: %d probes", probes)
+	}
+	if len(m.signals) != 1 || m.signals[0].force {
+		t.Fatalf("signals = %+v, want the accepted SIGTERM and no escalation", m.signals)
+	}
+	if m.clock.slept != 0 {
+		t.Fatalf("slept %v after the request was withdrawn", m.clock.slept)
+	}
+	if rows[0].OK {
+		t.Fatalf("row = %+v, want the interrupted stop reported as unfinished", rows[0])
+	}
+}
+
+// TestCancelledProbeThatFindsThePortClosedStillReportsUnfinished pins the check
+// that sits between the probe and the pending set. A cancellation that lands
+// while the probe is in flight can make the probe report the port closed, and
+// "the port is free" is exactly the answer that ends escalation early. Ending
+// it there would leave the row claiming a completed stop for a request that was
+// withdrawn before anyone knew whether the process had exited.
+func TestCancelledProbeThatFindsThePortClosedStillReportsUnfinished(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := newMachine(ProcessTable{42: {PID: 42}})
+	m.ports[3000] = portOpen
+	e := m.engine()
+
+	probe := e.probe
+	e.probe = func(port int, bind string) portState {
+		cancel()
+		// The listener went away by itself just as the request was withdrawn.
+		return portClosed
+	}
+	_ = probe
+
+	rows := e.kill(ctx, []ports.ListeningPort{listener(3000, 42)}, []Target{{Port: 3000}},
+		Options{Grace: time.Hour})
+
+	if len(m.signals) != 1 || m.signals[0].force {
+		t.Fatalf("signals = %+v, want no escalation", m.signals)
+	}
+	if rows[0].OK {
+		t.Fatalf("row = %+v, want an interrupted stop reported as unfinished", rows[0])
+	}
+}
+
+// clockThatWithdrawsAfterWaiting lets one wait finish and then withdraws the
+// request, which is the instant only the loop's own cancellation check covers.
+type clockThatWithdrawsAfterWaiting struct {
+	fakeClock
+	cancel context.CancelFunc
+	waits  int
+}
+
+func (c *clockThatWithdrawsAfterWaiting) Wait(ctx context.Context, d time.Duration) bool {
+	c.fakeClock.Wait(ctx, d)
+	c.waits++
+	if c.waits == 1 {
+		c.cancel()
+	}
+	return true
+}
+
+// TestWithdrawalAfterACompletedWaitTouchesNoFurtherProcess pins the loop's own
+// cancellation check. A wait that finished normally says nothing about the
+// request still being wanted, so the next round must re-check before it probes
+// the machine again.
+func TestWithdrawalAfterACompletedWaitTouchesNoFurtherProcess(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := newMachine(ProcessTable{42: {PID: 42}})
+	m.ports[3000] = portOpen
+	e := m.engine()
+	clock := &clockThatWithdrawsAfterWaiting{fakeClock: *m.clock, cancel: cancel}
+	e.clock = clock
+
+	probes := 0
+	probe := e.probe
+	e.probe = func(port int, bind string) portState { probes++; return probe(port, bind) }
+
+	e.kill(ctx, []ports.ListeningPort{listener(3000, 42)}, []Target{{Port: 3000}}, Options{Grace: time.Hour})
+
+	if probes != 1 {
+		t.Fatalf("probed %d times; the loop kept going after the request was withdrawn", probes)
+	}
 }

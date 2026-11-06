@@ -23,26 +23,11 @@ func probePortContext(ctx context.Context, port int, bind string) portState {
 	}, port, bind)
 }
 
-func (realClock) SleepContext(ctx context.Context, d time.Duration) bool {
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-timer.C:
-		return true
-	}
-}
-
+// pause is the poll between escalation probes. It reports whether the wait
+// completed, so a withdrawn request stops the loop instead of sleeping out the
+// rest of its grace period.
 func (e *engine) pause(ctx context.Context, d time.Duration) bool {
-	if c, ok := e.clock.(interface {
-		SleepContext(context.Context, time.Duration) bool
-	}); ok {
-		return c.SleepContext(ctx, d)
-	}
-	// Legacy injected clocks are synchronous and must return.
-	e.clock.Sleep(d)
-	return ctx.Err() == nil
+	return e.clock.Wait(ctx, d)
 }
 
 // Saturate a caller's large grace rather than wrapping into an expired budget.
