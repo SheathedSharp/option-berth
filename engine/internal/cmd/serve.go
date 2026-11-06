@@ -121,7 +121,7 @@ func serveRun(cmd *cobra.Command, _ []string) error {
 // first non-flag argument — so `cmd.test serve --detach` silently ignores both
 // words and runs the entire test suite in the background against the config
 // directory it inherited. Every such process is a stray test run holding the
-// user's real ~/.oberth open, not a daemon (step 1A.20). Both entry
+// user's real ~/.oberth open, not a daemon. Both entry
 // points are covered: `serve` refuses here, and `serve --detach` re-execs this
 // same binary, so it never gets far enough to fork.
 func refuseTestBinaryDaemon() error {
@@ -135,7 +135,7 @@ func refuseTestBinaryDaemon() error {
 
 // detachDaemon re-execs this binary as a background `oberth serve` and waits for
 // the socket to come up, so the caller can rely on the daemon being ready when
-// the command returns (contract §7: within 3 s).
+// the command returns.
 func detachDaemon(ctx context.Context, socket string) error {
 	if daemon.SocketAlive(socket) {
 		pid := daemon.LockHolderPID(daemon.LockPath())
@@ -218,7 +218,7 @@ func waitForSocketGone(socket string, timeout time.Duration) {
 // connections and released the single-instance lock. The socket closes first
 // and the lock is released last, so a restart that only waited for the socket
 // raced the old daemon's teardown: the replacement started, lost the lock, and
-// exited "already running", leaving nothing running (contract §21).
+// exited "already running", leaving nothing running.
 func waitForDaemonGone(socket string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	waitForSocketGone(socket, timeout)

@@ -94,7 +94,7 @@ func runKill(cmd *cobra.Command, args []string) error {
 	}
 
 	// A reachable daemon does the killing, so it rescans straight afterwards
-	// and the history ring sees the port go down (contract §22). Without this
+	// and the history ring sees the port go down. Without this
 	// the daemon's own cache could still show the port for up to CacheTTL after
 	// `oberth kill` returned. The connect is dial-only, like the read commands
 	// in §20: killing is not a reason to start a daemon.
@@ -431,7 +431,7 @@ func freedURLs(results []killer.Result, snapshot []ports.ListeningPort) []string
 	return out
 }
 
-// writeKillJSON prints the contract §3 result list.
+// writeKillJSON prints the kill result list.
 func writeKillJSON(w io.Writer, results []killer.Result) error {
 	if results == nil {
 		results = []killer.Result{}

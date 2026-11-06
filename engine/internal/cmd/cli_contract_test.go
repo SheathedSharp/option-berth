@@ -92,7 +92,7 @@ func TestLowLevelCommandSurfacesStayNarrow(t *testing.T) {
 	}
 }
 
-// A daemon error keeps the code the wire promised (contract §2): callers branch
+// A daemon error keeps the code the wire promised: callers branch
 // on error.data.code, so the CLI must not flatten it into "internal".
 func TestDaemonErrorKeepsItsCode(t *testing.T) {
 	const detail = "no process is listening on 127.0.0.1:3000"
