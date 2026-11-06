@@ -23,9 +23,9 @@ sonar `main`（`f4c50506b09502642cfedf3f4f6a3031cf80e9f2`，2026-10-15）的结�
 | --- | --- |
 | 与上游同相对路径的 Go 文件 | 314 |
 | 其中逐字节相同 | 11 个文件 / 483 行 |
-| 含复制段的文件 | 168 |
-| 复制段 | 951 |
-| 复制行 | 15,229 |
+| 含复制段的文件 | 167 |
+| 复制段 | 949 |
+| 复制行 | 15,034 |
 
 `internal/claims`、`internal/display`、`internal/testenv` 与 `internal/store/claims*.go`
 已经归零；`internal/docker` 与 `internal/ports/displayname.go` 只剩结构体字段与表驱动
