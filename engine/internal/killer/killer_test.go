@@ -15,6 +15,7 @@ import (
 
 // ---------------------------------------------------------------- harness ---
 
+// signalCall is one delivery the fake machine recorded.
 type signalCall struct {
 	pid   int
 	force bool
@@ -34,97 +35,135 @@ func (c *fakeClock) Sleep(d time.Duration) {
 	c.slept += d
 }
 
-// fakeWorld is a scriptable machine: which pids are alive, which ports answer,
-// and a log of everything the killer did to it.
-type fakeWorld struct {
-	table  ProcessTable
-	clock  *fakeClock
-	alive  map[int]bool
-	open   map[int]bool // port -> still listening and answering
-	hangs  map[int]bool // port -> listening but not answering (a full accept queue)
-	groups map[int]int  // pid -> pgid, for runs that lead their own group
-	// startTimes is the live start time of each pid the identity check asks
-	// about; missing means the table has no answer.
-	startTimes map[int]time.Time
-	signals    []signalCall
-	stopped    []string
-	failKil    map[int]error
-	// killEffect runs after each successful signal so a test can describe how
-	// the machine reacts (a process that dies on SIGTERM, one that ignores it).
-	killEffect func(w *fakeWorld, c signalCall)
+// proc is one process the fake machine knows about. Presence in the map is what
+// "alive" means: one record carries liveness, birth evidence and signal refusal
+// together, so those three can never contradict each other the way three
+// parallel maps can.
+type proc struct {
+	// born is when the pid started. Zero means alive but no birth evidence,
+	// which is a different fact from a pid the machine does not know.
+	born time.Time
+	// group is the process group the pid leads. Zero means it leads none, so
+	// the killer walks the tree instead of signalling the group.
+	group int
+	// refuses is the error the signal adapter returns for this pid.
+	refuses error
 }
 
-func newWorld(table ProcessTable) *fakeWorld {
-	w := &fakeWorld{
-		table:      table,
-		clock:      &fakeClock{now: time.Unix(0, 0)},
-		alive:      map[int]bool{},
-		open:       map[int]bool{},
-		hangs:      map[int]bool{},
-		groups:     map[int]int{},
-		startTimes: map[int]time.Time{},
-		failKil:    map[int]error{},
+// machine is a scriptable stand-in for the host: which processes exist, what
+// one probe of a port establishes, and a log of every action taken against it.
+type machine struct {
+	table ProcessTable
+	clock *fakeClock
+	procs map[int]*proc
+	// ports maps a port to what a probe of it establishes. A port the map does
+	// not mention answers portClosed, the zero value.
+	ports   map[int]portState
+	signals []signalCall
+	stopped []string
+	// react runs after every delivery the adapter accepted, so a case can
+	// describe how the machine answers a signal: a process that dies, one that
+	// ignores it, one whose birth evidence disappears.
+	react func(m *machine, c signalCall)
+}
+
+func newMachine(table ProcessTable) *machine {
+	m := &machine{
+		table: table,
+		clock: &fakeClock{now: time.Unix(0, 0)},
+		procs: map[int]*proc{},
+		ports: map[int]portState{},
 	}
 	for pid := range table {
-		w.alive[pid] = true
+		m.procs[pid] = &proc{}
 	}
-	return w
+	return m
 }
 
-func (w *fakeWorld) engine() *engine {
-	return &engine{
-		table:      w.table,
-		clock:      w.clock,
-		nativeTree: false,
-		startTime: func(pid int) (time.Time, bool) {
-			at, ok := w.startTimes[pid]
-			return at, ok
-		},
-		signalProc: func(pid int, force bool) error { return w.record(signalCall{pid: pid, force: force}) },
-		signalGrp: func(pgid int, force bool) error {
-			return w.record(signalCall{pid: pgid, force: force, group: true})
-		},
-		signalTree: func(pid int, force bool) error { return w.record(signalCall{pid: pid, force: force}) },
-		groupOf: func(pid int) (int, bool) {
-			pgid, ok := w.groups[pid]
-			return pgid, ok
-		},
-		alive: func(pid int) bool { return w.alive[pid] },
-		probe: func(port int, bind string) portState {
-			switch {
-			case w.hangs[port]:
-				return portUnknown
-			case w.open[port]:
-				return portOpen
-			default:
-				return portClosed
-			}
-		},
-		dockerStop: func(name string) error { w.stopped = append(w.stopped, name); return nil },
+// process returns the record for pid, creating it if the machine did not know
+// the pid yet, so a test can describe one process in one expression.
+func (m *machine) process(pid int) *proc {
+	if p := m.procs[pid]; p != nil {
+		return p
 	}
+	p := &proc{}
+	m.procs[pid] = p
+	return p
 }
 
-// stop is the world's kill loop. It calls kill directly, so a case can inspect
-// the unit plan without building a real scan.
-func (w *fakeWorld) stop(snapshot []ports.ListeningPort, targets []Target, opts Options) []Result {
-	return w.engine().kill(context.Background(), snapshot, targets, opts)
+// exit removes a pid from the machine without going through a signal.
+func (m *machine) exit(pid int) { delete(m.procs, pid) }
+
+func (m *machine) alive(pid int) bool { return m.procs[pid] != nil }
+
+func (m *machine) born(pid int) (time.Time, bool) {
+	p := m.procs[pid]
+	if p == nil || p.born.IsZero() {
+		return time.Time{}, false
+	}
+	return p.born, true
 }
 
-func (w *fakeWorld) record(c signalCall) error {
-	w.signals = append(w.signals, c)
-	if err := w.failKil[c.pid]; err != nil {
-		return err
+func (m *machine) groupOf(pid int) (int, bool) {
+	if p := m.procs[pid]; p != nil && p.group != 0 {
+		return p.group, true
 	}
-	if w.killEffect != nil {
-		w.killEffect(w, c)
+	return 0, false
+}
+
+func (m *machine) probe(port int, _ string) portState { return m.ports[port] }
+
+func (m *machine) dockerStop(name string) error {
+	m.stopped = append(m.stopped, name)
+	return nil
+}
+
+// deliver is the signal adapter: it records the attempt, then lets one process
+// refuse it, then lets the case describe how the machine reacted.
+func (m *machine) deliver(c signalCall) error {
+	m.signals = append(m.signals, c)
+	if p := m.procs[c.pid]; p != nil && p.refuses != nil {
+		return p.refuses
+	}
+	if m.react != nil {
+		m.react(m, c)
 	}
 	return nil
 }
 
-// signalledPIDs returns the pids in the order they were signalled.
-func (w *fakeWorld) signalledPIDs() []int {
-	out := make([]int, 0, len(w.signals))
-	for _, c := range w.signals {
+// engine builds the production engine with every machine-facing dependency
+// pointed at this fake. Tree handling stays manual (nativeTree false) so the
+// PPID walk is what these cases exercise.
+func (m *machine) engine() *engine {
+	return &engine{
+		table:     m.table,
+		clock:     m.clock,
+		startTime: m.born,
+		signalProc: func(pid int, force bool) error {
+			return m.deliver(signalCall{pid: pid, force: force})
+		},
+		signalGrp: func(pgid int, force bool) error {
+			return m.deliver(signalCall{pid: pgid, force: force, group: true})
+		},
+		signalTree: func(pid int, force bool) error {
+			return m.deliver(signalCall{pid: pid, force: force})
+		},
+		groupOf:    m.groupOf,
+		alive:      m.alive,
+		probe:      m.probe,
+		dockerStop: m.dockerStop,
+	}
+}
+
+// stop runs one request against a given snapshot, so a case can inspect the
+// unit plan without building a real scan.
+func (m *machine) stop(snapshot []ports.ListeningPort, targets []Target, opts Options) []Result {
+	return m.engine().kill(context.Background(), snapshot, targets, opts)
+}
+
+func (m *machine) signalledPIDs() []int {
+	out := make([]int, 0, len(m.signals))
+	for _, c := range m.signals {
 		out = append(out, c.pid)
 	}
 	return out
@@ -164,11 +203,10 @@ func pidsOf(results []Result) []int {
 // ------------------------------------------------------------------ tests ---
 
 func TestDryRunPlansTheTreeAndTouchesNothing(t *testing.T) {
-	w := newWorld(npmTree())
-	w.open[3000] = true
-	snapshot := []ports.ListeningPort{listener(3000, 200)}
+	m := newMachine(npmTree())
+	m.ports[3000] = portOpen
 
-	results := w.stop(snapshot,
+	results := m.stop([]ports.ListeningPort{listener(3000, 200)},
 		[]Target{{Port: 3000}}, Options{Tree: true, DryRun: true})
 
 	if got, want := pidsOf(results), []int{400, 401, 300, 200}; !reflect.DeepEqual(got, want) {
@@ -182,18 +220,18 @@ func TestDryRunPlansTheTreeAndTouchesNothing(t *testing.T) {
 			t.Errorf("row %+v: every row carries the target port", r)
 		}
 	}
-	if len(w.signals) != 0 || len(w.stopped) != 0 {
-		t.Fatalf("dry run had side effects: signals=%v docker=%v", w.signals, w.stopped)
+	if len(m.signals) != 0 || len(m.stopped) != 0 {
+		t.Fatalf("dry run had side effects: signals=%v docker=%v", m.signals, m.stopped)
 	}
-	if w.clock.slept != 0 {
-		t.Fatalf("dry run waited %v", w.clock.slept)
+	if m.clock.slept != 0 {
+		t.Fatalf("dry run waited %v", m.clock.slept)
 	}
 }
 
 func TestDryRunNamesEveryProcessInTheTree(t *testing.T) {
-	w := newWorld(npmTree())
-	snapshot := []ports.ListeningPort{listener(3000, 200)}
-	results := w.stop(snapshot,
+	m := newMachine(npmTree())
+
+	results := m.stop([]ports.ListeningPort{listener(3000, 200)},
 		[]Target{{Port: 3000}}, Options{Tree: true, DryRun: true})
 
 	want := []string{"esbuild", "esbuild", "node", "node"}
@@ -207,12 +245,11 @@ func TestDryRunNamesEveryProcessInTheTree(t *testing.T) {
 }
 
 func TestWithoutTreeOnlyTheListenerIsSignalled(t *testing.T) {
-	w := newWorld(npmTree())
-	snapshot := []ports.ListeningPort{listener(3000, 200)}
+	m := newMachine(npmTree())
 
-	results := w.stop(snapshot, []Target{{Port: 3000}}, Options{})
+	results := m.stop([]ports.ListeningPort{listener(3000, 200)}, []Target{{Port: 3000}}, Options{})
 
-	if got := w.signalledPIDs(); !reflect.DeepEqual(got, []int{200}) {
+	if got := m.signalledPIDs(); !reflect.DeepEqual(got, []int{200}) {
 		t.Fatalf("signalled %v, want only the listener", got)
 	}
 	if len(results) != 1 || results[0].Method != state.MethodSIGTERM {
@@ -221,38 +258,37 @@ func TestWithoutTreeOnlyTheListenerIsSignalled(t *testing.T) {
 }
 
 func TestOverlappingProcessGroupTargetsSignalOnce(t *testing.T) {
-	w := newWorld(ProcessTable{200: {PID: 200}})
-	w.groups[200] = 200
-	snapshot := []ports.ListeningPort{
-		listener(3000, 200),
-		listener(3001, 200),
-	}
+	m := newMachine(ProcessTable{200: {PID: 200}})
+	m.process(200).group = 200
+	snapshot := []ports.ListeningPort{listener(3000, 200), listener(3001, 200)}
 
-	results := w.stop(snapshot,
-		[]Target{{Port: 3000}, {Port: 3001}}, Options{})
+	results := m.stop(snapshot, []Target{{Port: 3000}, {Port: 3001}}, Options{})
 
-	if got := w.signalledPIDs(); !reflect.DeepEqual(got, []int{200}) {
+	if got := m.signalledPIDs(); !reflect.DeepEqual(got, []int{200}) {
 		t.Fatalf("signalled %v, want one process-group signal", got)
 	}
 	if len(results) != 1 || results[0].Port != 3000 || !results[0].OK {
 		t.Fatalf("results = %+v, want one successful result for the first target", results)
 	}
+	if !m.signals[0].group {
+		t.Fatalf("signals = %+v, want the group adapter", m.signals)
+	}
 }
 
 func TestEscalatesToSIGKILLWhenThePortStaysOpen(t *testing.T) {
-	w := newWorld(npmTree())
-	w.open[3000] = true // the listener ignores SIGTERM
-	snapshot := []ports.ListeningPort{listener(3000, 200)}
+	m := newMachine(npmTree())
+	// The listener ignores SIGTERM: nothing about it changes.
+	m.ports[3000] = portOpen
 
-	results := w.stop(snapshot,
+	results := m.stop([]ports.ListeningPort{listener(3000, 200)},
 		[]Target{{Port: 3000}}, Options{Grace: time.Second})
 
 	want := []signalCall{{pid: 200}, {pid: 200, force: true}}
-	if !reflect.DeepEqual(w.signals, want) {
-		t.Fatalf("signals = %+v, want SIGTERM then SIGKILL", w.signals)
+	if !reflect.DeepEqual(m.signals, want) {
+		t.Fatalf("signals = %+v, want SIGTERM then SIGKILL", m.signals)
 	}
-	if w.clock.slept != time.Second {
-		t.Fatalf("waited %v, want the full one second grace", w.clock.slept)
+	if m.clock.slept != time.Second {
+		t.Fatalf("waited %v, want the full one second grace", m.clock.slept)
 	}
 	if got := methods(results); !reflect.DeepEqual(got, []state.KillMethod{state.MethodSIGKILL}) {
 		t.Fatalf("methods = %v, want the row rewritten to sigkill", got)
@@ -260,23 +296,22 @@ func TestEscalatesToSIGKILLWhenThePortStaysOpen(t *testing.T) {
 }
 
 func TestNoEscalationWhenThePortCloses(t *testing.T) {
-	w := newWorld(npmTree())
-	w.open[3000] = true
-	w.killEffect = func(w *fakeWorld, c signalCall) {
-		// A well-behaved process closes its listener on the first SIGTERM.
-		w.open[3000] = false
-		w.alive[c.pid] = false
+	m := newMachine(npmTree())
+	m.ports[3000] = portOpen
+	// A well-behaved process closes its listener and exits on the first SIGTERM.
+	m.react = func(m *machine, c signalCall) {
+		m.ports[3000] = portClosed
+		m.exit(c.pid)
 	}
-	snapshot := []ports.ListeningPort{listener(3000, 200)}
 
-	results := w.stop(snapshot,
+	results := m.stop([]ports.ListeningPort{listener(3000, 200)},
 		[]Target{{Port: 3000}}, Options{Grace: 5 * time.Second})
 
-	if len(w.signals) != 1 || w.signals[0].force {
-		t.Fatalf("signals = %+v, want a single SIGTERM", w.signals)
+	if len(m.signals) != 1 || m.signals[0].force {
+		t.Fatalf("signals = %+v, want a single SIGTERM", m.signals)
 	}
-	if w.clock.slept != 0 {
-		t.Fatalf("waited %v, want no wait once the port is free", w.clock.slept)
+	if m.clock.slept != 0 {
+		t.Fatalf("waited %v, want no wait once the port is free", m.clock.slept)
 	}
 	if results[0].Method != state.MethodSIGTERM {
 		t.Fatalf("method = %v, want sigterm", results[0].Method)
@@ -284,23 +319,22 @@ func TestNoEscalationWhenThePortCloses(t *testing.T) {
 }
 
 func TestEscalatesWhenTheProbeCannotTell(t *testing.T) {
-	w := newWorld(npmTree())
+	m := newMachine(npmTree())
 	// The listener that prompted this: it is still sitting on the port, its
 	// accept queue is full, and it never answers. On the real machine this read
 	// as "the port is free" — `ok: true`, method sigterm, one second, process
 	// untouched — because "could not connect" was one fact instead of two.
-	w.hangs[3000] = true
-	snapshot := []ports.ListeningPort{listener(3000, 200)}
+	m.ports[3000] = portUnknown
 
-	results := w.stop(snapshot,
+	results := m.stop([]ports.ListeningPort{listener(3000, 200)},
 		[]Target{{Port: 3000}}, Options{Grace: time.Second})
 
 	want := []signalCall{{pid: 200}, {pid: 200, force: true}}
-	if !reflect.DeepEqual(w.signals, want) {
-		t.Fatalf("signals = %+v, want SIGTERM then SIGKILL", w.signals)
+	if !reflect.DeepEqual(m.signals, want) {
+		t.Fatalf("signals = %+v, want SIGTERM then SIGKILL", m.signals)
 	}
-	if w.clock.slept != time.Second {
-		t.Fatalf("waited %v, want the full one second grace", w.clock.slept)
+	if m.clock.slept != time.Second {
+		t.Fatalf("waited %v, want the full one second grace", m.clock.slept)
 	}
 	if got := methods(results); !reflect.DeepEqual(got, []state.KillMethod{state.MethodSIGKILL}) {
 		t.Fatalf("methods = %v, want the row rewritten to sigkill", got)
@@ -308,19 +342,18 @@ func TestEscalatesWhenTheProbeCannotTell(t *testing.T) {
 }
 
 func TestNoEscalateOptionLeavesTheProcessAlone(t *testing.T) {
-	w := newWorld(npmTree())
-	w.open[3000] = true
+	m := newMachine(npmTree())
+	m.ports[3000] = portOpen
 	off := false
-	snapshot := []ports.ListeningPort{listener(3000, 200)}
 
-	results := w.stop(snapshot,
+	results := m.stop([]ports.ListeningPort{listener(3000, 200)},
 		[]Target{{Port: 3000}}, Options{Escalate: &off, Grace: time.Second})
 
-	if len(w.signals) != 1 || w.signals[0].force {
-		t.Fatalf("signals = %+v, want a single SIGTERM and no escalation", w.signals)
+	if len(m.signals) != 1 || m.signals[0].force {
+		t.Fatalf("signals = %+v, want a single SIGTERM and no escalation", m.signals)
 	}
-	if w.clock.slept != 0 {
-		t.Fatalf("waited %v with --no-escalate", w.clock.slept)
+	if m.clock.slept != 0 {
+		t.Fatalf("waited %v with --no-escalate", m.clock.slept)
 	}
 	if results[0].Method != state.MethodSIGTERM {
 		t.Fatalf("method = %v", results[0].Method)
@@ -328,18 +361,17 @@ func TestNoEscalateOptionLeavesTheProcessAlone(t *testing.T) {
 }
 
 func TestForceSkipsStraightToSIGKILL(t *testing.T) {
-	w := newWorld(npmTree())
-	w.open[3000] = true
-	snapshot := []ports.ListeningPort{listener(3000, 200)}
+	m := newMachine(npmTree())
+	m.ports[3000] = portOpen
 
-	results := w.stop(snapshot,
+	results := m.stop([]ports.ListeningPort{listener(3000, 200)},
 		[]Target{{Port: 3000}}, Options{Force: true})
 
-	if len(w.signals) != 1 || !w.signals[0].force {
-		t.Fatalf("signals = %+v, want one SIGKILL", w.signals)
+	if len(m.signals) != 1 || !m.signals[0].force {
+		t.Fatalf("signals = %+v, want one SIGKILL", m.signals)
 	}
-	if w.clock.slept != 0 {
-		t.Fatalf("--force waited %v", w.clock.slept)
+	if m.clock.slept != 0 {
+		t.Fatalf("--force waited %v", m.clock.slept)
 	}
 	if results[0].Method != state.MethodSIGKILL {
 		t.Fatalf("method = %v", results[0].Method)
@@ -347,20 +379,20 @@ func TestForceSkipsStraightToSIGKILL(t *testing.T) {
 }
 
 func TestEscalationOnlyHardKillsWhatIsStillAlive(t *testing.T) {
-	w := newWorld(npmTree())
-	w.open[3000] = true // the parent hangs on to the socket
-	w.killEffect = func(w *fakeWorld, c signalCall) {
-		if c.pid != 200 { // the workers exit, npm does not
-			w.alive[c.pid] = false
+	m := newMachine(npmTree())
+	m.ports[3000] = portOpen // the parent hangs on to the socket
+	// The workers exit on SIGTERM; the parent does not.
+	m.react = func(m *machine, c signalCall) {
+		if c.pid != 200 {
+			m.exit(c.pid)
 		}
 	}
-	snapshot := []ports.ListeningPort{listener(3000, 200)}
 
-	results := w.stop(snapshot,
+	results := m.stop([]ports.ListeningPort{listener(3000, 200)},
 		[]Target{{Port: 3000}}, Options{Tree: true, Grace: time.Second})
 
 	var hard []int
-	for _, c := range w.signals {
+	for _, c := range m.signals {
 		if c.force {
 			hard = append(hard, c.pid)
 		}
@@ -376,21 +408,20 @@ func TestEscalationOnlyHardKillsWhatIsStillAlive(t *testing.T) {
 }
 
 func TestDockerContainersAreStoppedNotSignalled(t *testing.T) {
-	w := newWorld(npmTree())
+	m := newMachine(npmTree())
 	snapshot := []ports.ListeningPort{listener(5432, 900, func(lp *ports.ListeningPort) {
 		lp.Type = ports.PortTypeDocker
 		lp.DockerContainer = "pg"
 		lp.DockerComposeService = "db"
 	})}
 
-	results := w.stop(snapshot,
-		[]Target{{Port: 5432}}, Options{Tree: true, Force: true})
+	results := m.stop(snapshot, []Target{{Port: 5432}}, Options{Tree: true, Force: true})
 
-	if len(w.signals) != 0 {
-		t.Fatalf("signalled a container: %+v", w.signals)
+	if len(m.signals) != 0 {
+		t.Fatalf("signalled a container: %+v", m.signals)
 	}
-	if !reflect.DeepEqual(w.stopped, []string{"pg"}) {
-		t.Fatalf("stopped = %v, want [pg]", w.stopped)
+	if !reflect.DeepEqual(m.stopped, []string{"pg"}) {
+		t.Fatalf("stopped = %v, want [pg]", m.stopped)
 	}
 	if results[0].Method != state.MethodDockerStop || results[0].Name != "db" {
 		t.Fatalf("row = %+v", results[0])
@@ -398,7 +429,7 @@ func TestDockerContainersAreStoppedNotSignalled(t *testing.T) {
 }
 
 func TestRunAttributedListenerKillsTheWholeRun(t *testing.T) {
-	w := newWorld(npmTree())
+	m := newMachine(npmTree())
 	// vite listens, but option-berth started the shell at pid 100.
 	snapshot := []ports.ListeningPort{listener(3000, 300, func(lp *ports.ListeningPort) {
 		lp.RunRootPID = 100
@@ -407,25 +438,25 @@ func TestRunAttributedListenerKillsTheWholeRun(t *testing.T) {
 	})}
 
 	// No --tree: run attribution implies the whole tree anyway.
-	w.stop(snapshot, []Target{{Port: 3000}}, Options{})
+	m.stop(snapshot, []Target{{Port: 3000}}, Options{})
 
-	if got, want := w.signalledPIDs(), []int{400, 401, 300, 200, 201, 100}; !reflect.DeepEqual(got, want) {
+	if got, want := m.signalledPIDs(), []int{400, 401, 300, 200, 201, 100}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("signalled %v, want the whole run tree children-first %v", got, want)
 	}
 }
 
 func TestRunWithItsOwnProcessGroupIsSignalledAsAGroup(t *testing.T) {
-	w := newWorld(npmTree())
-	w.groups[100] = 100 // spawned with Setpgid
+	m := newMachine(npmTree())
+	m.process(100).group = 100 // spawned with Setpgid
 	snapshot := []ports.ListeningPort{listener(3000, 300, func(lp *ports.ListeningPort) {
 		lp.RunRootPID = 100
 	})}
 
-	results := w.stop(snapshot, []Target{{Port: 3000}}, Options{})
+	results := m.stop(snapshot, []Target{{Port: 3000}}, Options{})
 
 	want := []signalCall{{pid: 100, group: true}}
-	if !reflect.DeepEqual(w.signals, want) {
-		t.Fatalf("signals = %+v, want one process-group signal", w.signals)
+	if !reflect.DeepEqual(m.signals, want) {
+		t.Fatalf("signals = %+v, want one process-group signal", m.signals)
 	}
 	if len(results) != 1 || results[0].PID != 100 {
 		t.Fatalf("results = %+v", results)
@@ -433,17 +464,17 @@ func TestRunWithItsOwnProcessGroupIsSignalledAsAGroup(t *testing.T) {
 }
 
 func TestRunIDTargetExpandsToEveryPortOfTheRun(t *testing.T) {
-	w := newWorld(npmTree())
+	m := newMachine(npmTree())
 	snapshot := []ports.ListeningPort{
 		listener(3000, 300, func(lp *ports.ListeningPort) { lp.RunID = "abc"; lp.RunRootPID = 300 }),
 		listener(24678, 300, func(lp *ports.ListeningPort) { lp.RunID = "abc"; lp.RunRootPID = 300 }),
 		listener(5173, 999),
 	}
 
-	results := w.stop(snapshot, []Target{{RunID: "abc"}}, Options{})
+	results := m.stop(snapshot, []Target{{RunID: "abc"}}, Options{})
 
 	// Both ports belong to the same tree; the shared pids are signalled once.
-	if got := w.signalledPIDs(); !reflect.DeepEqual(got, []int{400, 401, 300}) {
+	if got := m.signalledPIDs(); !reflect.DeepEqual(got, []int{400, 401, 300}) {
 		t.Fatalf("signalled %v", got)
 	}
 	if len(results) != 3 {
@@ -452,46 +483,46 @@ func TestRunIDTargetExpandsToEveryPortOfTheRun(t *testing.T) {
 }
 
 func TestOverlappingTargetsSignalEachProcessOnce(t *testing.T) {
-	w := newWorld(npmTree())
+	m := newMachine(npmTree())
 	// 3000 is npm's tree; 3001 is vite inside that same tree.
 	snapshot := []ports.ListeningPort{listener(3000, 200), listener(3001, 300)}
 
-	w.stop(snapshot,
-		[]Target{{Port: 3000}, {Port: 3001}}, Options{Tree: true})
+	m.stop(snapshot, []Target{{Port: 3000}, {Port: 3001}}, Options{Tree: true})
 
-	if got, want := w.signalledPIDs(), []int{400, 401, 300, 200}; !reflect.DeepEqual(got, want) {
+	if got, want := m.signalledPIDs(), []int{400, 401, 300, 200}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("signalled %v, want %v: the inner tree first, no pid twice", got, want)
 	}
 }
 
 func TestAmbiguousPortReportsTheBindAddresses(t *testing.T) {
-	w := newWorld(npmTree())
+	m := newMachine(npmTree())
 	snapshot := []ports.ListeningPort{
 		listener(3000, 200),
 		listener(3000, 201, func(lp *ports.ListeningPort) { lp.BindAddress = "::1" }),
 	}
 
-	results := w.stop(snapshot, []Target{{Port: 3000}}, Options{})
+	results := m.stop(snapshot, []Target{{Port: 3000}}, Options{})
 
 	if len(results) != 1 || results[0].OK || results[0].Method != state.MethodNone {
 		t.Fatalf("results = %+v, want one failed row", results)
 	}
-	if len(w.signals) != 0 {
-		t.Fatalf("signalled despite ambiguity: %+v", w.signals)
+	if len(m.signals) != 0 {
+		t.Fatalf("signalled despite ambiguity: %+v", m.signals)
 	}
 
 	// With --ip the same call resolves.
-	w2 := newWorld(npmTree())
-	results = w2.stop(snapshot,
-		[]Target{{Port: 3000, BindAddress: "::1"}}, Options{})
+	m2 := newMachine(npmTree())
+	results = m2.stop(snapshot, []Target{{Port: 3000, BindAddress: "::1"}}, Options{})
 	if len(results) != 1 || !results[0].OK || results[0].PID != 201 {
 		t.Fatalf("results = %+v", results)
 	}
 }
 
 func TestUnknownPortIsANotFoundRow(t *testing.T) {
-	w := newWorld(npmTree())
-	results := w.stop(nil, []Target{{Port: 9999}}, Options{})
+	m := newMachine(npmTree())
+
+	results := m.stop(nil, []Target{{Port: 9999}}, Options{})
+
 	if len(results) != 1 || results[0].OK || results[0].Port != 9999 {
 		t.Fatalf("results = %+v", results)
 	}
@@ -501,40 +532,43 @@ func TestUnknownPortIsANotFoundRow(t *testing.T) {
 }
 
 func TestHiddenListenerAsksForSudo(t *testing.T) {
-	w := newWorld(npmTree())
-	snapshot := []ports.ListeningPort{listener(3000, 0)}
-	results := w.stop(snapshot, []Target{{Port: 3000}}, Options{})
+	m := newMachine(npmTree())
+
+	results := m.stop([]ports.ListeningPort{listener(3000, 0)}, []Target{{Port: 3000}}, Options{})
 
 	if len(results) != 1 || results[0].OK {
 		t.Fatalf("results = %+v", results)
 	}
-	if len(w.signals) != 0 {
-		t.Fatalf("signalled PID 0: %+v", w.signals)
+	if len(m.signals) != 0 {
+		t.Fatalf("signalled PID 0: %+v", m.signals)
 	}
 }
 
 func TestSignalFailureIsReportedPerRow(t *testing.T) {
-	w := newWorld(npmTree())
-	w.failKil[200] = permissionErr(200, errors.New("operation not permitted"))
-	snapshot := []ports.ListeningPort{listener(3000, 200)}
+	m := newMachine(npmTree())
+	denied := permissionErr(200, errors.New("operation not permitted"))
+	m.process(200).refuses = denied
 
-	results := w.stop(snapshot, []Target{{Port: 3000}}, Options{})
+	results := m.stop([]ports.ListeningPort{listener(3000, 200)}, []Target{{Port: 3000}}, Options{})
 
 	if len(results) != 1 || results[0].OK {
 		t.Fatalf("results = %+v", results)
 	}
-	if Code(w.failKil[200]) != CodePermissionDenied || Hint(w.failKil[200]) != "re-run with sudo" {
+	if Code(denied) != CodePermissionDenied || Hint(denied) != "re-run with sudo" {
 		t.Fatalf("permission errors must map to the contract code and the sudo hint")
+	}
+	if results[0].Code != CodePermissionDenied {
+		t.Fatalf("row = %+v, want the failure's contract code", results[0])
 	}
 }
 
 func TestPIDTargetWithoutAListeningPort(t *testing.T) {
-	w := newWorld(npmTree())
+	m := newMachine(npmTree())
 	off := false
-	results := w.stop(nil, []Target{{PID: 300}},
-		Options{Tree: true, Escalate: &off})
 
-	if got := w.signalledPIDs(); !reflect.DeepEqual(got, []int{400, 401, 300}) {
+	results := m.stop(nil, []Target{{PID: 300}}, Options{Tree: true, Escalate: &off})
+
+	if got := m.signalledPIDs(); !reflect.DeepEqual(got, []int{400, 401, 300}) {
 		t.Fatalf("signalled %v", got)
 	}
 	if len(results) != 3 || results[0].Port != 0 {
@@ -543,36 +577,39 @@ func TestPIDTargetWithoutAListeningPort(t *testing.T) {
 }
 
 func TestPIDTargetEscalatesOnTheProcess(t *testing.T) {
-	w := newWorld(npmTree()) // every pid stays alive: nothing reacts to SIGTERM
-	w.stop(nil, []Target{{PID: 400}}, Options{Grace: time.Second})
+	m := newMachine(npmTree()) // every pid stays alive: nothing reacts to SIGTERM
+
+	m.stop(nil, []Target{{PID: 400}}, Options{Grace: time.Second})
 
 	want := []signalCall{{pid: 400}, {pid: 400, force: true}}
-	if !reflect.DeepEqual(w.signals, want) {
-		t.Fatalf("signals = %+v, want SIGTERM then SIGKILL", w.signals)
+	if !reflect.DeepEqual(m.signals, want) {
+		t.Fatalf("signals = %+v, want SIGTERM then SIGKILL", m.signals)
 	}
 }
 
 func TestEmptyTargetIsRejected(t *testing.T) {
-	w := newWorld(npmTree())
-	results := w.stop(nil, []Target{{}}, Options{})
+	m := newMachine(npmTree())
+
+	results := m.stop(nil, []Target{{}}, Options{})
+
 	if len(results) != 1 || results[0].OK {
 		t.Fatalf("results = %+v", results)
 	}
 }
 
 func TestCancelledContextStopsBeforeEscalation(t *testing.T) {
-	w := newWorld(npmTree())
-	w.open[3000] = true
+	m := newMachine(npmTree())
+	m.ports[3000] = portOpen
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	snapshot := []ports.ListeningPort{listener(3000, 200)}
 
 	// Cancel only after the initial accepted signal. A pre-canceled request
 	// correctly sends no signal and is covered by the admission tests.
-	w.engine().kill(ctx, snapshot, []Target{{Port: 3000}}, Options{Grace: time.Minute, OnSignal: func(int) { cancel() }})
+	m.engine().kill(ctx, []ports.ListeningPort{listener(3000, 200)}, []Target{{Port: 3000}},
+		Options{Grace: time.Minute, OnSignal: func(int) { cancel() }})
 
-	if len(w.signals) != 1 || w.signals[0].force {
-		t.Fatalf("signals = %+v, want the SIGTERM only", w.signals)
+	if len(m.signals) != 1 || m.signals[0].force {
+		t.Fatalf("signals = %+v, want the SIGTERM only", m.signals)
 	}
 }
 
@@ -662,15 +699,14 @@ func TestProbeOnARealPort(t *testing.T) {
 // run's recorded start. If the pid now belongs to a newer process, the run is
 // already gone — the target is refused at the last moment before signalling
 // instead of killing something this tool never started. A start within
-// tolerance, and no live answer, both keep the kill going.
+// tolerance, and no answer at all, both keep the kill going.
 func TestRecycledPIDTargetIsRefused(t *testing.T) {
 	base := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	target := []Target{{PID: 777, StartedAt: base}}
 
-	recycled := newWorld(ProcessTable{})
-	recycled.alive[777] = true
-	recycled.startTimes[777] = base.Add(time.Hour)
-	results := recycled.engine().kill(context.Background(), nil,
-		[]Target{{PID: 777, StartedAt: base}}, Options{})
+	recycled := newMachine(ProcessTable{})
+	recycled.process(777).born = base.Add(time.Hour)
+	results := recycled.engine().kill(context.Background(), nil, target, Options{})
 	if len(recycled.signals) != 0 {
 		t.Fatalf("signalled a recycled pid: %+v", recycled.signals)
 	}
@@ -678,19 +714,20 @@ func TestRecycledPIDTargetIsRefused(t *testing.T) {
 		t.Fatalf("result = %+v, want a refused target", results)
 	}
 
-	same := newWorld(ProcessTable{})
-	same.alive[777] = true
-	same.startTimes[777] = base.Add(time.Second)
-	same.killEffect = func(w *fakeWorld, c signalCall) { delete(w.alive, c.pid) }
-	same.engine().kill(context.Background(), nil, []Target{{PID: 777, StartedAt: base}}, Options{})
+	// Started within the tolerance: the same process, not a recycled pid.
+	same := newMachine(ProcessTable{})
+	same.process(777).born = base.Add(time.Second)
+	same.react = func(m *machine, c signalCall) { m.exit(c.pid) }
+	same.engine().kill(context.Background(), nil, target, Options{})
 	if len(same.signals) != 1 || same.signals[0].pid != 777 {
 		t.Fatalf("signals = %+v, want the recorded process signalled", same.signals)
 	}
 
-	unknown := newWorld(ProcessTable{})
-	unknown.alive[777] = true
-	unknown.killEffect = func(w *fakeWorld, c signalCall) { delete(w.alive, c.pid) }
-	unknown.engine().kill(context.Background(), nil, []Target{{PID: 777, StartedAt: base}}, Options{})
+	// No birth evidence at all is not evidence of replacement.
+	unknown := newMachine(ProcessTable{})
+	unknown.process(777)
+	unknown.react = func(m *machine, c signalCall) { m.exit(c.pid) }
+	unknown.engine().kill(context.Background(), nil, target, Options{})
 	if len(unknown.signals) != 1 || unknown.signals[0].pid != 777 {
 		t.Fatalf("signals = %+v, want an unknown start time to keep the kill", unknown.signals)
 	}
