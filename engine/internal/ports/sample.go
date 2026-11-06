@@ -2,7 +2,6 @@ package ports
 
 import (
 	"context"
-	"encoding/csv"
 	"fmt"
 	"runtime"
 	"strconv"
@@ -41,71 +40,86 @@ func SampleProcStats(pids []int) map[int]ProcSample {
 // yields no observations, never zero-valued replacements for existing facts.
 func SampleProcStatsContext(ctx context.Context, pids []int) map[int]ProcSample {
 	out := make(map[int]ProcSample, len(pids))
-	if len(pids) == 0 || ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return out
 	}
-	pidStrs := make([]string, 0, len(pids))
-	seen := make(map[int]bool, len(pids))
-	for _, pid := range pids {
-		if pid <= 0 || seen[pid] {
-			continue
-		}
-		seen[pid] = true
-		pidStrs = append(pidStrs, strconv.Itoa(pid))
-	}
-	if len(pidStrs) == 0 {
+	args := pidArguments(pids)
+	if len(args) == 0 {
 		return out
 	}
 	if runtime.GOOS == "windows" {
-		return sampleProcStatsWindows(ctx, pidStrs)
+		return sampleProcStatsWindows(ctx, args)
 	}
-	return sampleProcStatsPS(ctx, pidStrs)
+	return sampleProcStatsPS(ctx, args)
 }
 
-// sampleProcStatsPS is the macOS/Linux sample: one `ps` for every pid at once.
-func sampleProcStatsPS(ctx context.Context, pidStrs []string) map[int]ProcSample {
-	out := map[int]ProcSample{}
-
-	format := "pid=,%cpu=,rss=,nlwp=,state=,lstart="
-	if runtime.GOOS == "darwin" {
-		// No nlwp on BSD ps; the extra thread listing stays on the full scan.
-		format = "pid=,%cpu=,rss=,state=,lstart="
+// pidArguments renders the pids one batch command takes. Duplicates and
+// non-positive values are dropped; the order is the caller's.
+func pidArguments(pids []int) []string {
+	unique := uniquePIDs(pids)
+	args := make([]string, len(unique))
+	for i, pid := range unique {
+		args[i] = strconv.Itoa(pid)
 	}
-	sampleCmd, stopSample := boundedContext(ctx, "ps", "-o", format, "-p", strings.Join(pidStrs, ","))
+	return args
+}
+
+// sampleProcStatsPS samples through one `ps` invocation. The columns asked for
+// depend on the platform, so the decoder does too: macOS ps has no thread
+// column, and the scan tick supplies that count separately.
+func sampleProcStatsPS(ctx context.Context, pidArgs []string) map[int]ProcSample {
+	out := map[int]ProcSample{}
+	sampleCmd, stopSample := boundedContext(ctx, "ps", "-o", psSampleFormat(), "-p", strings.Join(pidArgs, ","))
 	defer stopSample()
 	raw, err := sampleCmd.Output()
 	if err != nil || ctx.Err() != nil {
 		return out
 	}
 
+	decode := decodeLinuxSample
+	if runtime.GOOS == "darwin" {
+		decode = decodeDarwinSample
+	}
 	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
-		fields := strings.Fields(strings.TrimSpace(line))
-		if len(fields) < 2 {
+		fields := strings.Fields(line)
+		pid, ok := samplePID(fields)
+		if !ok {
 			continue
 		}
-		pid, err := strconv.Atoi(fields[0])
-		if err != nil {
-			continue
+		if sample, ok := decode(fields[1:]); ok {
+			out[pid] = sample
 		}
-		var scratch ListeningPort
-		scratch.PID = pid
-		if runtime.GOOS == "darwin" {
-			parseDarwinStats(&scratch, fields[1:])
-		} else {
-			parseLinuxStats(&scratch, fields[1:])
-		}
-		out[pid] = sampleOf(scratch)
 	}
 	return out
 }
 
-// sampleProcStatsWindows is the same sample from one Get-Process call.
-func sampleProcStatsWindows(ctx context.Context, pidStrs []string) map[int]ProcSample {
-	out := map[int]ProcSample{}
+// psSampleFormat is the column list one sample asks for, in `ps -o` syntax.
+func psSampleFormat() string {
+	if runtime.GOOS == "darwin" {
+		return "pid=,%cpu=,rss=,state=,lstart="
+	}
+	return "pid=,%cpu=,rss=,nlwp=,state=,lstart="
+}
 
+// samplePID reads the pid ps printed for one row. A row without one is not a
+// process this sample was asked about.
+func samplePID(fields []string) (int, bool) {
+	if len(fields) < 2 {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(fields[0])
+	return pid, err == nil && pid > 0
+}
+
+// sampleProcStatsWindows samples through one Get-Process call. The output is
+// CSV, so it is read through the same named columns as the scan's process
+// query: a Select-Object order change must not move a start time into the
+// memory field.
+func sampleProcStatsWindows(ctx context.Context, pidArgs []string) map[int]ProcSample {
+	out := map[int]ProcSample{}
 	psCmd := fmt.Sprintf(
 		"Get-Process -Id %s -ErrorAction SilentlyContinue | Select-Object Id,CPU,WorkingSet64,@{N='ThreadCount';E={$_.Threads.Count}},@{N='StartTime';E={$_.StartTime.ToString('o')}} | ConvertTo-Csv -NoTypeInformation",
-		strings.Join(pidStrs, ","),
+		strings.Join(pidArgs, ","),
 	)
 	sampleCmd, stopSample := boundedContext(ctx, "powershell", "-NoProfile", "-Command", psCmd)
 	defer stopSample()
@@ -114,39 +128,14 @@ func sampleProcStatsWindows(ctx context.Context, pidStrs []string) map[int]ProcS
 		return out
 	}
 
-	r := csv.NewReader(strings.NewReader(strings.TrimSpace(string(raw))))
-	r.FieldsPerRecord = -1
-	records, err := r.ReadAll()
-	if err != nil || ctx.Err() != nil {
-		return out
-	}
-	for i, record := range records {
-		if i == 0 || len(record) < 5 {
-			continue // header, or a row Get-Process could not fill in
+	table := parseCSVTable(string(raw))
+	for _, row := range table.rows {
+		pid, sample, ok := decodeWindowsSample(table, row)
+		if ok {
+			out[pid] = sample
 		}
-		pid, err := strconv.Atoi(strings.TrimSpace(record[0]))
-		if err != nil {
-			continue
-		}
-		var scratch ListeningPort
-		scratch.PID = pid
-		parseWindowsStats(&scratch, record[1:])
-		out[pid] = sampleOf(scratch)
 	}
 	return out
-}
-
-// sampleOf lifts the fields the per-OS parsers wrote onto a scratch row.
-func sampleOf(p ListeningPort) ProcSample {
-	return ProcSample{
-		CPUPercent:  p.CPUPercent,
-		MemoryRSS:   p.MemoryRSS,
-		ThreadCount: p.ThreadCount,
-		StartTime:   p.StartTime,
-		Uptime:      p.Uptime,
-		State:       p.State,
-		StartedAt:   p.StartedAt,
-	}
 }
 
 // MatchesStart is the shared birth-identity rule for full and stats-only

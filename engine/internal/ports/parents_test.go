@@ -97,7 +97,7 @@ func TestProcessStartReadsTheRememberedTable(t *testing.T) {
 	restore := scanParentTable.Load()
 	t.Cleanup(func() { scanParentTable.Store(restore) })
 
-	rememberParentEntries(map[int]pidEntry{
+	rememberProcessFacts(map[int]processFacts{
 		5151: {ppid: 1, startedAt: "Thu Apr  9 08:15:00 2026"},
 		5252: {ppid: 1}, // no start time recorded
 	})

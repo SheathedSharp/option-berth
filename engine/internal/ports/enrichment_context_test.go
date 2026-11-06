@@ -57,11 +57,11 @@ func TestMetadataCancellationCannotWarmCaches(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			cwdCalls := 0
-			info, cwds, err := readDisplayNameSignals(ctx, []int{42}, func(context.Context) map[int]pidEntry {
+			info, cwds, err := readDisplayNameSignals(ctx, []int{42}, func(context.Context) map[int]processFacts {
 				if stage == "table" {
 					cancel()
 				}
-				return map[int]pidEntry{42: {ppid: 1, cmd: "late"}}
+				return map[int]processFacts{42: {ppid: 1, command: "late"}}
 			}, func(context.Context, []int) map[int]string {
 				cwdCalls++
 				cancel()
@@ -84,10 +84,10 @@ func TestMetadataPreCancelledRejectsCacheHit(t *testing.T) {
 	isolateSignalCaches(t)
 	displaySignalCache.at = time.Now()
 	displaySignalCache.covered = map[int]struct{}{42: {}}
-	displaySignalCache.pidInfo = map[int]pidEntry{42: {cmd: "cached"}}
+	displaySignalCache.pidInfo = map[int]processFacts{42: {command: "cached"}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	info, cwds, err := readDisplayNameSignals(ctx, []int{42}, func(context.Context) map[int]pidEntry { t.Fatal("table called"); return nil }, func(context.Context, []int) map[int]string { t.Fatal("cwd called"); return nil })
+	info, cwds, err := readDisplayNameSignals(ctx, []int{42}, func(context.Context) map[int]processFacts { t.Fatal("table called"); return nil }, func(context.Context, []int) map[int]string { t.Fatal("cwd called"); return nil })
 	if !errors.Is(err, context.Canceled) || info != nil || cwds != nil {
 		t.Fatalf("cancelled cache hit: %v %v %v", info, cwds, err)
 	}
@@ -98,14 +98,14 @@ func TestMetadataCancellationKeepsPriorObservation(t *testing.T) {
 	oldAt := time.Now()
 	displaySignalCache.at = oldAt
 	displaySignalCache.covered = map[int]struct{}{7: {}}
-	displaySignalCache.pidInfo = map[int]pidEntry{7: {cmd: "prior"}}
+	displaySignalCache.pidInfo = map[int]processFacts{7: {command: "prior"}}
 	displaySignalCache.cwds = map[int]string{7: "/prior"}
-	rememberParentEntries(map[int]pidEntry{7: {ppid: 1, cmd: "prior"}})
+	rememberProcessFacts(map[int]processFacts{7: {ppid: 1, command: "prior"}})
 	oldParent := scanParentTable.Load()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	_, _, err := readDisplayNameSignals(ctx, []int{42}, func(context.Context) map[int]pidEntry { return map[int]pidEntry{42: {cmd: "late"}} }, func(context.Context, []int) map[int]string { cancel(); return nil })
-	if !errors.Is(err, context.Canceled) || displaySignalCache.at != oldAt || displaySignalCache.pidInfo[7].cmd != "prior" || scanParentTable.Load() != oldParent {
+	_, _, err := readDisplayNameSignals(ctx, []int{42}, func(context.Context) map[int]processFacts { return map[int]processFacts{42: {command: "late"}} }, func(context.Context, []int) map[int]string { cancel(); return nil })
+	if !errors.Is(err, context.Canceled) || displaySignalCache.at != oldAt || displaySignalCache.pidInfo[7].command != "prior" || scanParentTable.Load() != oldParent {
 		t.Fatal("cancelled refresh modified prior observation")
 	}
 }
@@ -113,16 +113,16 @@ func TestMetadataCancellationKeepsPriorObservation(t *testing.T) {
 func TestMetadataPartialEvidenceAndRecovery(t *testing.T) {
 	isolateSignalCaches(t)
 	tableCalls := 0
-	table := func(context.Context) map[int]pidEntry {
+	table := func(context.Context) map[int]processFacts {
 		tableCalls++
 		if tableCalls == 1 {
-			return map[int]pidEntry{7: {ppid: 1, cmd: "seen"}}
+			return map[int]processFacts{7: {ppid: 1, command: "seen"}}
 		}
-		return map[int]pidEntry{7: {ppid: 1, cmd: "seen"}, 42: {ppid: 7, cmd: "recovered"}}
+		return map[int]processFacts{7: {ppid: 1, command: "seen"}, 42: {ppid: 7, command: "recovered"}}
 	}
 	dirs := func(context.Context, []int) map[int]string { return map[int]string{7: "/visible"} }
 	info, cwds, err := readDisplayNameSignals(context.Background(), []int{7, 42}, table, dirs)
-	if err != nil || info[7].cmd != "seen" || cwds[7] != "/visible" {
+	if err != nil || info[7].command != "seen" || cwds[7] != "/visible" {
 		t.Fatalf("lost partial facts: %v %v %v", info, cwds, err)
 	}
 	// Windows intentionally caches cwd coverage without a Unix ps table.
@@ -133,7 +133,7 @@ func TestMetadataPartialEvidenceAndRecovery(t *testing.T) {
 		t.Fatal("partial table claimed coverage of missing PID")
 	}
 	info, _, err = readDisplayNameSignals(context.Background(), []int{7, 42}, table, dirs)
-	if err != nil || info[42].cmd != "recovered" || tableCalls != 2 {
+	if err != nil || info[42].command != "recovered" || tableCalls != 2 {
 		t.Fatal("missing identity hidden behind TTL")
 	}
 	_, _, err = readDisplayNameSignals(context.Background(), []int{7, 42}, table, dirs)
@@ -181,9 +181,9 @@ func TestMetadataCacheHitDoesNotAllocateOrCollect(t *testing.T) {
 	isolateSignalCaches(t)
 	pids := []int{42}
 	tableCalls, cwdCalls := 0, 0
-	table := func(context.Context) map[int]pidEntry {
+	table := func(context.Context) map[int]processFacts {
 		tableCalls++
-		return map[int]pidEntry{42: {ppid: 1, cmd: "cached"}}
+		return map[int]processFacts{42: {ppid: 1, command: "cached"}}
 	}
 	dirs := func(context.Context, []int) map[int]string { cwdCalls++; return map[int]string{42: "/cached"} }
 	ctx := context.Background()
@@ -192,7 +192,7 @@ func TestMetadataCacheHitDoesNotAllocateOrCollect(t *testing.T) {
 	}
 	allocs := testing.AllocsPerRun(100, func() {
 		info, cwds, err := readDisplayNameSignals(ctx, pids, table, dirs)
-		if err != nil || info[42].cmd != "cached" || cwds[42] != "/cached" {
+		if err != nil || info[42].command != "cached" || cwds[42] != "/cached" {
 			t.Fatal("cache hit changed facts")
 		}
 	})

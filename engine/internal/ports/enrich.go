@@ -34,37 +34,8 @@ func EnrichContext(ctx context.Context, pp []ListeningPort) error {
 	// Unix learns all of it from the cached process table inside
 	// enrichDisplayNameSignals, so no per-tick `ps -p` runs here.
 	if runtime.GOOS == "windows" {
-		pids := collectPIDs(pp)
-		pidStrs := make([]string, len(pids))
-		for i, p := range pids {
-			pidStrs[i] = strconv.Itoa(p)
-		}
-		observed := beginProcessObservation()
-		commands := batchGetCommandsWindowsContext(ctx, pidStrs)
-		if err := ctx.Err(); err != nil {
+		if err := enrichWindowsIdentity(ctx, pp); err != nil {
 			return err
-		}
-		fillProcessNamesWindowsContext(ctx, pp, commands)
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		rememberObservedScanParents(commands, observed)
-		for i := range pp {
-			if info, ok := commands[pp[i].PID]; ok {
-				pp[i].Command = info.command
-				// Windows learns the parent from the same CIM query that
-				// fetched the command line, so the ancestry walk costs no
-				// second process table.
-				if info.ppid > 0 {
-					pp[i].PPID = info.ppid
-				}
-				// started_at is never gated by --stats: the contract publishes
-				// it on every row (contract §21). EnrichStats refines the same
-				// field with the raw ps lstart it parses anyway.
-				if pp[i].StartedAt == "" {
-					pp[i].StartedAt = info.startedAt
-				}
-			}
 		}
 	}
 
@@ -93,6 +64,33 @@ func EnrichContext(ctx context.Context, pp []ListeningPort) error {
 	return ctx.Err()
 }
 
+// enrichWindowsIdentity joins the CIM process query to the rows it describes.
+// The query carries the command line, the parent and the start time, which is
+// what Windows has instead of `ps -A`; tasklist is the fallback for names the
+// query withheld. A pid neither source answered for keeps empty fields, and a
+// cancelled round leaves the caller to discard the rows.
+func enrichWindowsIdentity(ctx context.Context, pp []ListeningPort) error {
+	args := pidArguments(collectPIDs(pp))
+	// The ticket is taken before the query so a table observed later cannot be
+	// overwritten by one observed earlier.
+	observed := beginProcessObservation()
+	commands := batchGetCommandsWindowsContext(ctx, args)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	fillProcessNamesWindowsContext(ctx, pp, commands)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	rememberObservedProcessFacts(commands, observed)
+	for i := range pp {
+		if facts, answered := commands[pp[i].PID]; answered {
+			applyProcessFacts(&pp[i], facts, commands)
+		}
+	}
+	return nil
+}
+
 // cwdGone answers whether the directory a process was started in is gone. An
 // empty cwd means nobody ever learned it, which is not the same thing.
 func cwdGone(cwd string) bool {
@@ -103,10 +101,10 @@ func cwdGone(cwd string) bool {
 	return errors.Is(err, os.ErrNotExist)
 }
 
-// EnrichStats populates CPU, memory, threads, uptime, state, and connections.
-// For Docker containers it uses pre-fetched dockerStats.
-// For native processes it batches all PIDs into a single ps call.
-// Called only when --stats is requested.
+// EnrichStats populates CPU, memory, threads, uptime, state and connections
+// for the rows a scan produced. Container numbers are joined by container id;
+// native numbers come from one batched process sample. Called only when stats
+// were requested.
 func EnrichStats(pp []ListeningPort, dockerStats map[string]*DockerStatsEntry) {
 	_ = EnrichStatsContext(context.Background(), pp, dockerStats)
 }
@@ -118,31 +116,32 @@ func EnrichStatsContext(ctx context.Context, pp []ListeningPort, dockerStats map
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	// Apply Docker stats
-	if dockerStats != nil {
-		for i := range pp {
-			if pp[i].Type == PortTypeDocker && pp[i].DockerContainer != "" {
-				if stats, ok := dockerStats[pp[i].DockerContainer]; ok {
-					pp[i].CPUPercent = stats.CPUPercent
-					pp[i].MemoryRSS = stats.MemoryRSS
-					pp[i].ThreadCount = stats.PIDs
-					pp[i].State = stats.State
-					pp[i].Uptime = stats.Uptime
-				}
-			}
-		}
-	}
-
-	// Batch native process stats into a single ps call
+	applyContainerStats(pp, dockerStats)
 	batchEnrichProcessStatsContext(ctx, pp)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-
 	// Connection counts, from one listing of the machine's TCP connections
 	// rather than one call per port.
 	applyConnectionCountsContext(ctx, pp)
 	return ctx.Err()
+}
+
+// applyContainerStats writes pre-fetched container numbers onto the rows that
+// belong to those containers. The container id is the join key; a row whose
+// container is not in the map keeps what the process table said.
+func applyContainerStats(pp []ListeningPort, stats map[string]*DockerStatsEntry) {
+	if len(stats) == 0 {
+		return
+	}
+	for i := range pp {
+		if pp[i].Type != PortTypeDocker || pp[i].DockerContainer == "" {
+			continue
+		}
+		if entry, known := stats[pp[i].DockerContainer]; known && entry != nil {
+			entry.applyTo(&pp[i])
+		}
+	}
 }
 
 // DockerStatsEntry holds pre-fetched per-container stats.
@@ -154,13 +153,12 @@ type DockerStatsEntry struct {
 	Uptime     string
 }
 
-// procInfo is what one always-on ps call reports per listening process: its
-// full command line and when it started. Both are unconditional — `started_at`
-// is not a stat (contract §21).
-type procInfo struct {
-	command   string
-	startedAt string // RFC3339, "" when ps did not report a parsable time
-	ppid      int    // 0 when the source did not report a parent
+// applyTo copies the container's numbers onto the row that reported it. These
+// are runtime facts, not process facts: the fields land in the same row as a
+// native sample, but nothing here proves the pid's identity.
+func (entry DockerStatsEntry) applyTo(row *ListeningPort) {
+	row.CPUPercent, row.MemoryRSS, row.ThreadCount = entry.CPUPercent, entry.MemoryRSS, entry.PIDs
+	row.State, row.Uptime = entry.State, entry.Uptime
 }
 
 // lstartFields is how many whitespace-separated tokens `ps -o lstart=` emits:
@@ -168,25 +166,17 @@ type procInfo struct {
 // displayname_signals.go beside the cache it feeds.)
 
 // fillProcessNamesWindows names the rows the CIM query left blank. tasklist
-// needs no WMI service and no elevation, so it answers when Get-CimInstance
-// does not, and a pid it cannot name simply stays unnamed: one process failing
-// to resolve must not cost the others their identity.
-func fillProcessNamesWindows(pp []ListeningPort, commands map[int]procInfo) {
+// needs no WMI service and no elevation, so it answers where Get-CimInstance
+// did not; a pid it cannot name simply stays unnamed, because one process
+// failing to resolve must not cost the others their identity.
+func fillProcessNamesWindows(pp []ListeningPort, commands map[int]processFacts) {
 	fillProcessNamesWindowsContext(context.Background(), pp, commands)
 }
 
-func fillProcessNamesWindowsContext(ctx context.Context, pp []ListeningPort, commands map[int]procInfo) {
-	missing := false
-	for i := range pp {
-		if pp[i].Process == "" && commands[pp[i].PID].command == "" {
-			missing = true
-			break
-		}
-	}
-	if !missing || ctx.Err() != nil {
+func fillProcessNamesWindowsContext(ctx context.Context, pp []ListeningPort, commands map[int]processFacts) {
+	if !anyUnnamed(pp, commands) || ctx.Err() != nil {
 		return
 	}
-
 	tasklistCmd, stopTasklist := boundedContext(ctx, "tasklist", "/NH", "/FO", "CSV")
 	defer stopTasklist()
 	out, err := tasklistCmd.Output()
@@ -198,10 +188,21 @@ func fillProcessNamesWindowsContext(ctx context.Context, pp []ListeningPort, com
 		if pp[i].Process != "" {
 			continue
 		}
-		if name, ok := names[pp[i].PID]; ok {
+		if name, known := names[pp[i].PID]; known {
 			pp[i].Process = name
 		}
 	}
+}
+
+// anyUnnamed reports whether tasklist could still add a name the CIM query did
+// not already supply.
+func anyUnnamed(pp []ListeningPort, commands map[int]processFacts) bool {
+	for i := range pp {
+		if pp[i].Process == "" && commands[pp[i].PID].command == "" {
+			return true
+		}
+	}
+	return false
 }
 
 // parseTasklist reads `tasklist /NH /FO CSV` into pid -> image name. There is
@@ -255,87 +256,60 @@ func eachCSVRow(out string, visit func([]string)) {
 
 // batchGetCommandsWindows fetches command lines and start times via PowerShell
 // Get-CimInstance on Windows.
-func batchGetCommandsWindows(pidStrs []string) map[int]procInfo {
+func batchGetCommandsWindows(pidStrs []string) map[int]processFacts {
 	observed := beginProcessObservation()
 	result := batchGetCommandsWindowsContext(context.Background(), pidStrs)
-	rememberObservedScanParents(result, observed)
+	rememberObservedProcessFacts(result, observed)
 	return result
 }
 
-func batchGetCommandsWindowsContext(ctx context.Context, pidStrs []string) map[int]procInfo {
-	result := make(map[int]procInfo)
+func batchGetCommandsWindowsContext(ctx context.Context, pidStrs []string) map[int]processFacts {
 	if len(pidStrs) == 0 || ctx.Err() != nil {
-		return result
+		return map[int]processFacts{}
 	}
-
-	// Build WMI filter: "ProcessId=123 or ProcessId=456"
-	var conditions []string
-	for _, p := range pidStrs {
-		conditions = append(conditions, "ProcessId="+p)
-	}
-	filter := strings.Join(conditions, " or ")
-
-	// ParentProcessId rides along on the query that was already being made:
-	// Windows has no `ps -A` to build a process table from, and spawning a
-	// second PowerShell per scan to learn one parent pid would cost more than
-	// everything else the scan does put together.
-	psCmd := fmt.Sprintf(
-		"Get-CimInstance Win32_Process -Filter '%s' | Select-Object ProcessId,ParentProcessId,@{N='StartedAt';E={$_.CreationDate.ToString('o')}},CommandLine | ConvertTo-Csv -NoTypeInformation",
-		filter,
-	)
-
-	cimCmd, stopCIM := boundedContext(ctx, "powershell", "-NoProfile", "-Command", psCmd)
+	cimCmd, stopCIM := boundedContext(ctx, "powershell", "-NoProfile", "-Command", cimProcessQuery(pidStrs))
 	defer stopCIM()
 	out, err := cimCmd.Output()
 	if err != nil || ctx.Err() != nil {
-		return result
+		return map[int]processFacts{}
 	}
-
-	result = parseCIMProcesses(string(out))
-	return result
+	return parseCIMProcesses(string(out))
 }
 
-// parseCIMProcesses reads the CSV Get-CimInstance produced.
-//
-// It finds its columns by name from the header rather than by position. The
-// query asks for ProcessId, ParentProcessId, StartedAt and CommandLine, and
-// Select-Object emits them in that order — but a positional parser turns any
-// future edit to that Select-Object list, or a PowerShell that orders or names
-// things differently, into silently misread rows: a parent pid read as a start
-// time, a command line read from the wrong column. Reading the header is one
-// map and removes the entire class.
-//
-// It is also tolerant per row. The previous parser called ReadAll and returned
-// nothing at all when any single line failed to parse, so one process with an
-// odd command line cost every other process on the machine its identity — and
-// on Windows identity is what decides whether a port is shown and which group
-// it joins. A row that cannot be read is skipped; the ones that can are kept.
-//
-// A row with no command line still counts: on Windows the command line is the
-// field most often withheld (another user's process, a protected one), and
-// dropping the row with it would throw away the parent pid and the start time
-// that did come back.
-func parseCIMProcesses(out string) map[int]procInfo {
-	result := map[int]procInfo{}
-	var cols map[string]int
-	eachCSVRow(out, func(record []string) {
-		// PowerShell 5.1 emits a `#TYPE …` line without -NoTypeInformation. The
-		// flag is passed, but skipping the line costs nothing and a missing flag
-		// would otherwise be read as the header.
-		if strings.HasPrefix(strings.TrimSpace(record[0]), "#TYPE") {
-			return
-		}
-		if cols == nil {
-			cols = cimColumns(record)
-			return
-		}
-		info, ok := cimRow(record, cols)
+// cimProcessQuery asks for everything one scan needs in one call. The parent
+// rides along because Windows has no `ps -A` to build a process table from; a
+// second PowerShell per scan to learn one parent pid would cost more than the
+// rest of the scan together.
+func cimProcessQuery(pidStrs []string) string {
+	conditions := make([]string, len(pidStrs))
+	for i, pid := range pidStrs {
+		conditions[i] = "ProcessId=" + pid
+	}
+	const fields = "ProcessId,ParentProcessId,@{N='StartedAt';E={$_.CreationDate.ToString('o')}},CommandLine"
+	return fmt.Sprintf(
+		"Get-CimInstance Win32_Process -Filter '%s' | Select-Object %s | ConvertTo-Csv -NoTypeInformation",
+		strings.Join(conditions, " or "), fields,
+	)
+}
+
+// parseCIMProcesses reads the CSV Get-CimInstance produced. Columns are found
+// by their header names, so Select-Object's order and PowerShell's
+// capitalisation cannot turn a parent pid into a start time. One unreadable
+// row costs only itself: identity decides whether a port is shown and which
+// group it joins, so the rows that could be read must survive the one that
+// could not. A row that exposes its pid while withholding its command line
+// still carries the parent and start time that did come back.
+func parseCIMProcesses(out string) map[int]processFacts {
+	table := parseCSVTable(out)
+	result := make(map[int]processFacts, len(table.rows))
+	if !table.knows("processid") {
+		return result // a header we cannot read names nothing
+	}
+	for _, row := range table.rows {
+		pid, info, ok := cimRow(table, row)
 		if ok {
-			result[info.pid] = info.procInfo
+			result[pid] = info
 		}
-	})
-	if _, understood := cols["processid"]; cols != nil && !understood {
-		return map[int]procInfo{} // a header we cannot read names nothing
 	}
 	return result
 }
@@ -344,118 +318,170 @@ func parseCIMProcesses(out string) map[int]procInfo {
 // row that names no process, and for one that carries no evidence at all:
 // a protected process may expose its pid while withholding its parent, its
 // command and its start time, and a row of nothing but a pid says nothing.
-func cimRow(record []string, cols map[string]int) (struct {
-	pid int
-	procInfo
-}, bool) {
-	var out struct {
-		pid int
-		procInfo
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(field(record, cols, "processid")))
+func cimRow(table csvTable, row []string) (int, processFacts, bool) {
+	pid, err := strconv.Atoi(strings.TrimSpace(table.value(row, "processid")))
 	if err != nil || pid <= 0 {
-		return out, false
+		return 0, processFacts{}, false
 	}
-	ppid, _ := strconv.Atoi(strings.TrimSpace(field(record, cols, "parentprocessid")))
-	command := strings.TrimSpace(field(record, cols, "commandline"))
-	startedAt := parseStartTime(field(record, cols, "startedat"))
+	ppid, _ := strconv.Atoi(strings.TrimSpace(table.value(row, "parentprocessid")))
+	command := strings.TrimSpace(table.value(row, "commandline"))
+	startedAt := parseStartTime(table.value(row, "startedat"))
 	if command == "" && ppid <= 0 && startedAt == "" {
-		return out, false
+		return 0, processFacts{}, false
 	}
-	out.pid = pid
-	out.procInfo = procInfo{command: command, startedAt: startedAt, ppid: ppid}
-	return out, true
+	return pid, processFacts{command: command, startedAt: startedAt, ppid: ppid}, true
 }
 
-// cimColumns maps a CSV header to column indexes, lowercased and trimmed so
-// the lookup does not depend on PowerShell's capitalisation.
-func cimColumns(header []string) map[string]int {
-	cols := make(map[string]int, len(header))
-	for i, name := range header {
+// csvTable is a decoded CSV document: the header's column positions and the
+// rows that could be read. PowerShell may prefix the document with a #TYPE
+// line, which is dropped before the header is taken.
+type csvTable struct {
+	columns map[string]int
+	rows    [][]string
+}
+
+// parseCSVTable reads a CSV document without letting one bad row end it.
+// Tolerating bad rows is deliberate: on Windows identity decides whether a
+// port is shown and which group it joins, so one odd command line must not
+// cost every other process its identity.
+func parseCSVTable(out string) csvTable {
+	var table csvTable
+	eachCSVRow(out, func(record []string) {
+		if strings.HasPrefix(strings.TrimSpace(record[0]), "#TYPE") {
+			return
+		}
+		if table.columns == nil {
+			table.columns = columnIndexes(record)
+			return
+		}
+		table.rows = append(table.rows, record)
+	})
+	return table
+}
+
+// knows reports whether the header named a column.
+func (t csvTable) knows(column string) bool {
+	_, known := t.columns[column]
+	return known
+}
+
+// value reads one named column, "" when the header lacked it or the row is
+// short.
+func (t csvTable) value(row []string, column string) string {
+	index, known := t.columns[column]
+	if !known || index >= len(row) {
+		return ""
+	}
+	return row[index]
+}
+
+// columnIndexes maps a CSV header to column positions. Names are lowercased
+// and trimmed, and a repeated name keeps its first position, so a lookup does
+// not depend on PowerShell's capitalisation or on Select-Object's order.
+func columnIndexes(header []string) map[string]int {
+	columns := make(map[string]int, len(header))
+	for index, name := range header {
 		key := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(name, "\ufeff")))
 		if key == "" {
 			continue
 		}
-		if _, taken := cols[key]; !taken {
-			cols[key] = i
+		if _, taken := columns[key]; !taken {
+			columns[key] = index
 		}
 	}
-	return cols
-}
-
-// field reads a named column, returning "" when the header did not have it or
-// the row is short.
-func field(rec []string, cols map[string]int, name string) string {
-	i, ok := cols[name]
-	if !ok || i >= len(rec) {
-		return ""
-	}
-	return rec[i]
+	return columns
 }
 
 // batchEnrichProcessStats fetches CPU, memory, state and uptime for every
-// non-Docker port. It goes through the same one-call sampler the daemon's
-// stats-only tick uses, so a row enriched by a scan and a row refreshed
-// between scans are filled from identical parsing.
-//
-// The sample is keyed by pid and applied to every row that pid owns. Keying
-// the other way round — one *ListeningPort per pid — silently dropped the
-// stats of every socket but the last when one process listened on several.
+// non-Docker port through the same one-call sampler the daemon's stats-only
+// tick uses, so a scanned row and a refreshed row are filled from identical
+// parsing. The sample is keyed by pid and applied to every row that pid owns:
+// a per-row sample would leave every socket but the last of a process empty.
 func batchEnrichProcessStats(pp []ListeningPort) {
 	batchEnrichProcessStatsContext(context.Background(), pp)
 }
 
 func batchEnrichProcessStatsContext(ctx context.Context, pp []ListeningPort) {
+	pids := nativePIDs(pp)
+	if len(pids) == 0 || ctx.Err() != nil {
+		return
+	}
+	samples := SampleProcStatsContext(ctx, pids)
+	if ctx.Err() != nil {
+		return
+	}
+	// macOS reports no thread count in the sampler's `ps`, so it takes a
+	// second (batched) call. It runs here, on the scan tick, and never on the
+	// 1 s stats tick.
+	if runtime.GOOS == "darwin" {
+		addThreadCounts(ctx, samples, pids)
+		if ctx.Err() != nil {
+			return
+		}
+	}
+	applyProcessSamples(pp, samples)
+}
+
+// nativePIDs are the pids whose resource facts this scan can read itself.
+func nativePIDs(pp []ListeningPort) []int {
 	pids := make([]int, 0, len(pp))
 	for i := range pp {
 		if pp[i].Type != PortTypeDocker && pp[i].PID > 0 {
 			pids = append(pids, pp[i].PID)
 		}
 	}
-	if len(pids) == 0 || ctx.Err() != nil {
-		return
-	}
+	return uniquePIDs(pids)
+}
 
-	samples := SampleProcStatsContext(ctx, pids)
-	if ctx.Err() != nil {
-		return
+// addThreadCounts folds the macOS thread listing into the samples it
+// describes. A pid the listing did not answer for keeps the zero that means
+// "not reported".
+func addThreadCounts(ctx context.Context, samples map[int]ProcSample, pids []int) {
+	threads := countThreadsDarwinContext(ctx, pids)
+	for pid, sample := range samples {
+		sample.ThreadCount = threads[pid]
+		samples[pid] = sample
 	}
+}
 
-	// macOS reports no thread count in the sampler's `ps`, so it takes a
-	// second (batched) call. It runs here, on the scan tick, and never on the
-	// 1 s stats tick.
-	if runtime.GOOS == "darwin" {
-		threads := countThreadsDarwinContext(ctx, pids)
-		if ctx.Err() != nil {
-			return
-		}
-		for pid, s := range samples {
-			s.ThreadCount = threads[pid]
-			samples[pid] = s
-		}
-	}
-
+// applyProcessSamples joins one sample batch to the rows its pids own. Keying
+// by pid, not by row, is what keeps every socket of one process filled; a pid
+// the sample did not answer for keeps what it had.
+func applyProcessSamples(pp []ListeningPort, samples map[int]ProcSample) {
 	for i := range pp {
 		if pp[i].Type == PortTypeDocker || pp[i].PID <= 0 {
 			continue
 		}
-		if s, ok := samples[pp[i].PID]; ok {
-			s.Apply(&pp[i])
+		if sample, known := samples[pp[i].PID]; known {
+			sample.Apply(&pp[i])
 		}
 	}
 }
 
-// collectPIDs returns unique non-zero PIDs from the port list.
+// collectPIDs is the distinct pid set a row set names, in first-seen order.
 func collectPIDs(pp []ListeningPort) []int {
-	seen := make(map[int]bool)
-	var pids []int
-	for _, p := range pp {
-		if p.PID > 0 && !seen[p.PID] {
-			seen[p.PID] = true
-			pids = append(pids, p.PID)
-		}
+	pids := make([]int, len(pp))
+	for i, row := range pp {
+		pids[i] = row.PID
 	}
-	return pids
+	return uniquePIDs(pids)
+}
+
+// uniquePIDs drops duplicates and anything that cannot name a process.
+func uniquePIDs(pids []int) []int {
+	seen := make(map[int]struct{}, len(pids))
+	out := make([]int, 0, len(pids))
+	for _, pid := range pids {
+		if pid <= 0 {
+			continue
+		}
+		if _, duplicate := seen[pid]; duplicate {
+			continue
+		}
+		seen[pid] = struct{}{}
+		out = append(out, pid)
+	}
+	return out
 }
 
 // InTrash reports whether a path is inside a trash directory.
