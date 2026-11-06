@@ -54,11 +54,8 @@ var skillLocations = []struct {
 func checkSkillVersion(_ context.Context, env *Env) rpc.DoctorCheck {
 	installs := findSkillInstalls(env.Home)
 	if len(installs) == 0 {
-		return rpc.DoctorCheck{
-			Status:  StatusSkip,
-			Summary: "the agent skill is not installed here",
-			Detail:  "install it from github.com/SheathedSharp/option-berth-skill if you want an agent taught this contract",
-		}
+		return skip("the agent skill is not installed here",
+			"install it from github.com/SheathedSharp/option-berth-skill if you want an agent taught this contract")
 	}
 
 	var parts []string
@@ -68,30 +65,18 @@ func checkSkillVersion(_ context.Context, env *Env) rpc.DoctorCheck {
 	detail := strings.Join(parts, "; ")
 
 	if dangling := danglingSkillInstalls(env.Home); len(dangling) > 0 {
-		return rpc.DoctorCheck{
-			Status:  StatusWarn,
-			Summary: "a skill link points at a checkout that is gone",
-			Detail:  detail,
-			Fix: fmt.Sprintf("repair the link, or reinstall the skill: %s",
-				strings.Join(dangling, ", ")),
-		}
+		return warn("a skill link points at a checkout that is gone", detail,
+			fmt.Sprintf("repair the link, or reinstall the skill: %s",
+				strings.Join(dangling, ", ")))
 	}
 	if providers, versions := disagreeingSkillVersions(installs); len(providers) > 1 {
-		return rpc.DoctorCheck{
-			Status: StatusWarn,
-			Summary: fmt.Sprintf("%d installed copies of the skill disagree on its version",
-				len(providers)),
-			Detail: detail,
-			Fix: fmt.Sprintf("keep one version: %s declare %s; a link follows its checkout, a copy only "+
+		return warn(fmt.Sprintf("%d installed copies of the skill disagree on its version", len(providers)),
+			detail,
+			fmt.Sprintf("keep one version: %s declare %s; a link follows its checkout, a copy only "+
 				"moves when the plugin is updated",
-				strings.Join(providers, " and "), strings.Join(versions, " vs ")),
-		}
+				strings.Join(providers, " and "), strings.Join(versions, " vs ")))
 	}
-	return rpc.DoctorCheck{
-		Status:  StatusOK,
-		Summary: "the installed skill copies agree",
-		Detail:  detail,
-	}
+	return ok("the installed skill copies agree", detail)
 }
 
 // findSkillInstalls reads every provider's skill entry under home. A provider
