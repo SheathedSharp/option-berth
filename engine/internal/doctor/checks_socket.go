@@ -11,10 +11,11 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 )
 
-// checkSocketPermissions is contract §21 read back off the disk: the socket
-// must be a same-user-only file, and the directory option-berth makes for it must be
-// 0700. Windows has neither — the pipe's ACL is applied at bind time and there
-// is no file to stat — so the check skips rather than inventing an equivalent.
+// checkSocketPermissions reads the socket's mode and owner back off the disk:
+// both must belong to this user alone, and the directory option-berth creates
+// for it must be 0700. Windows has neither — its named pipe carries an ACL
+// applied at bind time and no file to stat — so the row skips instead of
+// inventing an equivalent.
 func checkSocketPermissions(ctx context.Context, env *Env) rpc.DoctorCheck {
 	socket := env.SocketPath
 	if env.GOOS == "windows" || strings.HasPrefix(socket, `\\`) {
@@ -38,31 +39,38 @@ func checkSocketPermissions(ctx context.Context, env *Env) rpc.DoctorCheck {
 		return fail("cannot stat the socket", err.Error(), "")
 	}
 
-	var problems []string
+	note, problems := socketFacts(info, env, socket)
+	if len(problems) > 0 {
+		return fail("the socket is reachable by other users",
+			fmt.Sprintf("%s: %s", socket, strings.Join(problems, "; ")),
+			fmt.Sprintf("chmod 700 %s && chmod 600 %s", filepath.Dir(socket), socket))
+	}
+	return ok(fmt.Sprintf("socket is %04o and yours", info.Mode().Perm()), socket+note)
+}
+
+// socketFacts checks the three things a reader must trust: the socket mode, its
+// owner, and — when the daemon owns the directory — the directory mode. It
+// returns a readable note for the healthy case and one line per problem.
+func socketFacts(info os.FileInfo, env *Env, socket string) (note string, problems []string) {
 	mode := info.Mode().Perm()
 	if mode&0o077 != 0 {
 		problems = append(problems, fmt.Sprintf("mode is %04o, want 0600", mode))
 	}
-	if uid, ok := fileOwner(info); ok && env.UID >= 0 && uid != env.UID {
-		problems = append(problems, fmt.Sprintf("owned by uid %d, you are uid %d", uid, env.UID))
+	if owner, known := fileOwner(info); known && env.UID >= 0 && owner != env.UID {
+		problems = append(problems, fmt.Sprintf("owned by uid %d, you are uid %d", owner, env.UID))
 	}
-
 	dir := filepath.Dir(socket)
-	dirNote := ""
-	if daemon.OwnsSocketDir(socket) {
-		if dirInfo, err := os.Stat(dir); err == nil {
-			if dirMode := dirInfo.Mode().Perm(); dirMode&0o077 != 0 {
-				problems = append(problems, fmt.Sprintf("%s is %04o, want 0700", dir, dirMode))
-			} else {
-				dirNote = fmt.Sprintf(", %s is %04o", dir, dirMode)
-			}
-		}
+	if !daemon.OwnsSocketDir(socket) {
+		return "", problems
 	}
-
-	if len(problems) > 0 {
-		return fail("the socket is reachable by other users",
-			fmt.Sprintf("%s: %s", socket, strings.Join(problems, "; ")),
-			fmt.Sprintf("chmod 700 %s && chmod 600 %s", dir, socket))
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		return "", problems
 	}
-	return ok(fmt.Sprintf("socket is %04o and yours", mode), socket+dirNote)
+	dirMode := dirInfo.Mode().Perm()
+	if dirMode&0o077 != 0 {
+		problems = append(problems, fmt.Sprintf("%s is %04o, want 0700", dir, dirMode))
+		return "", problems
+	}
+	return fmt.Sprintf(", %s is %04o", dir, dirMode), problems
 }
