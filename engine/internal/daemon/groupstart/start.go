@@ -548,46 +548,65 @@ func logCodeIdentity(rt *daemon.Runtime, service, what string, err error) {
 // every worktree at one file outside their checkouts. Its values are data: they
 // are not reference-expanded and never appear in status or logs.
 func serviceEnv(caller map[string]string, cfg *groups.Config, svc groups.Service, port int, ports map[string]int, values groups.Values) ([]string, error) {
-	over := make(map[string]string, len(caller)+len(svc.Env)+1)
-	for k, v := range caller {
-		over[k] = v
-	}
+	env := newEnvSet(os.Environ())
+	env.apply(caller)
 	if path := cfg.EnvFilePath(svc); path != "" {
 		fromFile, err := groups.EnvFileValues(path)
 		if err != nil {
 			return nil, fmt.Errorf("service %s: %w", svc.Name, err)
 		}
-		for k, v := range fromFile {
-			over[k] = v
-		}
+		env.apply(fromFile)
 	}
 	if port > 0 {
-		over["PORT"] = strconv.Itoa(port)
+		env.set("PORT", strconv.Itoa(port))
 	}
-	for k, v := range svc.Env {
-		over[k] = groups.Expand(v, values)
+	declared := make(map[string]string, len(svc.Env))
+	for key, value := range svc.Env {
+		declared[key] = groups.Expand(value, values)
 	}
-	return layer(os.Environ(), over), nil
+	env.apply(declared)
+	return env.render(), nil
 }
 
-// layer returns base with every key in over replaced or added.
-func layer(base []string, over map[string]string) []string {
-	out := make([]string, 0, len(base)+len(over))
-	for _, kv := range base {
+// envSet is one process's environment under construction: the inherited
+// variables plus the overrides applied so far, in precedence order. Rendering
+// keeps the inherited order and appends the overrides sorted by key, so the same
+// input always produces the same bytes.
+type envSet struct {
+	base []string
+	over map[string]string
+}
+
+func newEnvSet(base []string) *envSet {
+	return &envSet{base: base, over: make(map[string]string)}
+}
+
+// apply layers every variable in vars on top of what is already set.
+func (e *envSet) apply(vars map[string]string) {
+	for key, value := range vars {
+		e.over[key] = value
+	}
+}
+
+func (e *envSet) set(key, value string) { e.over[key] = value }
+
+func (e *envSet) render() []string {
+	out := make([]string, 0, len(e.base)+len(e.over))
+	for _, kv := range e.base {
 		if key, _, ok := strings.Cut(kv, "="); ok {
-			if _, replaced := over[key]; replaced {
+			if _, replaced := e.over[key]; replaced {
 				continue
 			}
 		}
 		out = append(out, kv)
 	}
-	keys := make([]string, 0, len(over))
-	for k := range over {
-		keys = append(keys, k)
+	keys := make([]string, 0, len(e.over))
+	for key := range e.over {
+		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	for _, k := range keys {
-		out = append(out, k+"="+over[k])
+	for _, key := range keys {
+		out = append(out, key+"="+e.over[key])
 	}
 	return out
 }
