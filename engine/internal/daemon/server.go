@@ -38,37 +38,28 @@ func Capabilities() []string {
 		registeredCapabilities()...)
 }
 
-// Options configures a Server.
+// Options configures a Server. Every field may be left zero; New fills in the
+// empty ones.
 type Options struct {
-	// Socket is the address to listen on. Empty means SocketPath().
-	Socket string
-	// Version is the daemon's own version string, reported by daemon.hello.
-	Version string
-	// BinaryPath is the executable clients should re-exec to autostart us.
-	BinaryPath string
-	// IdleTimeout stops the daemon after this long with no clients, no
-	// subscribers and no keepalive. Zero disables it.
-	IdleTimeout time.Duration
-	// StatsInterval is the cadence of the scanner's stats-only tick
-	// (`daemon.stats_interval`). Zero means scanner.StatsInterval. Ignored
-	// when Scanner is set, since the caller built the loop itself.
-	StatsInterval time.Duration
-	// ScanInterval is the base cadence of the scanner's port scan
-	// (`daemon.scan_interval`). Zero means scanner.BaseInterval. Ignored when
-	// Scanner is set, for the same reason StatsInterval is.
-	ScanInterval time.Duration
-	// Logger receives the daemon's structured log. Required in production;
-	// tests may leave it nil for a discard logger.
-	Logger *slog.Logger
-	// Lock is an already-acquired single-instance lock. When nil, Serve takes
-	// one itself and releases it on exit.
-	Lock *Lock
-	// Scanner overrides the scan loop. Tests inject one; production leaves it
-	// nil and gets the OS scanner.
-	Scanner *scanner.Loop
-	// DBPath is the SQLite database to open. Empty means store.Path(); tests
-	// point it at a temp directory.
-	DBPath string
+	// Identity and location.
+	Socket     string // listen address; empty means SocketPath()
+	Version    string // the daemon's own version, reported by daemon.hello
+	BinaryPath string // what a client re-execs to autostart us
+	DBPath     string // SQLite file; empty means store.Path()
+
+	// Lifetime.
+	IdleTimeout time.Duration // stop after this long with nobody watching; zero disables
+
+	// Cadence. Both are ignored when Scanner is set: the caller then built the
+	// loop and chose its own intervals.
+	StatsInterval time.Duration // `daemon.stats_interval`; zero means the scanner default
+	ScanInterval  time.Duration // `daemon.scan_interval`; zero means the scanner default
+
+	// Collaborators. Logger is required in production and may be nil in tests,
+	// which get a discard logger.
+	Logger  *slog.Logger
+	Lock    *Lock         // an already-acquired lock; nil means Serve takes one and releases it
+	Scanner *scanner.Loop // an injected loop; nil means the OS scanner
 }
 
 // Server is the daemon: a listener, a set of connections, the subscription
@@ -124,6 +115,29 @@ type stateReplay struct {
 
 // New builds a Server. It does not listen; call Serve.
 func New(opts Options) *Server {
+	opts = withServerDefaults(opts)
+	server := &Server{
+		opts:            opts,
+		logger:          opts.Logger,
+		socket:          opts.Socket,
+		conns:           map[uint64]*Conn{},
+		workspaceScopes: map[string]map[uint64]state.Scope{},
+		stopping:        make(chan struct{}),
+		done:            make(chan struct{}),
+	}
+	server.touch()
+
+	server.loop = server.scannerFor(opts)
+	server.loop.SetDemand(server.demand)
+	server.loop.SetPublisher(server.publish)
+	server.runtime = server.buildRuntime(opts)
+	server.loop.SetRuns(server.runtime.RunRegistry)
+	return server
+}
+
+// withServerDefaults fills in what a caller may leave empty, so the rest of the
+// constructor never has to ask.
+func withServerDefaults(opts Options) Options {
 	if opts.Logger == nil {
 		opts.Logger = slog.New(slog.DiscardHandler)
 	}
@@ -133,34 +147,33 @@ func New(opts Options) *Server {
 	if opts.Version == "" {
 		opts.Version = "dev"
 	}
-	s := &Server{
-		opts:            opts,
-		logger:          opts.Logger,
-		socket:          opts.Socket,
-		conns:           map[uint64]*Conn{},
-		workspaceScopes: map[string]map[uint64]state.Scope{},
-		stopping:        make(chan struct{}),
-		done:            make(chan struct{}),
-	}
-	s.touch()
+	return opts
+}
 
-	s.loop = opts.Scanner
-	if s.loop == nil {
-		s.loop = scanner.New(scanner.Options{
-			DaemonVersion: opts.Version,
-			Logger:        opts.Logger,
-			StatsInterval: opts.StatsInterval,
-			ScanInterval:  opts.ScanInterval,
-		})
+// scannerFor returns the scanner the server should drive: the injected one when
+// a test supplied it, otherwise a new loop configured from these options.
+func (s *Server) scannerFor(opts Options) *scanner.Loop {
+	if opts.Scanner != nil {
+		return opts.Scanner
 	}
-	s.loop.SetDemand(s.demand)
-	s.loop.SetPublisher(s.publish)
+	return scanner.New(scanner.Options{
+		DaemonVersion: opts.Version,
+		Logger:        opts.Logger,
+		StatsInterval: opts.StatsInterval,
+		ScanInterval:  opts.ScanInterval,
+	})
+}
 
+// buildRuntime records what this process is: its version, socket, binary and
+// start time, plus the handle the run registry hangs off.
+func (s *Server) buildRuntime(opts Options) *Runtime {
 	binary := opts.BinaryPath
 	if binary == "" {
+		// Best effort: a process that cannot name its own binary still serves,
+		// it just cannot tell a client where the CLI lives.
 		binary, _ = os.Executable()
 	}
-	s.runtime = &Runtime{
+	return &Runtime{
 		Version:    opts.Version,
 		Socket:     s.socket,
 		BinaryPath: binary,
@@ -170,8 +183,6 @@ func New(opts Options) *Server {
 		Scanner:    s.loop,
 		srv:        s,
 	}
-	s.loop.SetRuns(s.runtime.RunRegistry)
-	return s
 }
 
 // Runtime is the runtime handed to handlers and extension hooks.
@@ -180,26 +191,39 @@ func (s *Server) Runtime() *Runtime { return s.runtime }
 // Socket is the address the server listens on.
 func (s *Server) Socket() string { return s.socket }
 
+// acquireSingleInstance takes the lock that makes this process the only daemon
+// on this socket. A lock the caller injected is borrowed, so Serve does not own
+// it and must not release it.
+func (s *Server) acquireSingleInstance() error {
+	if s.opts.Lock != nil {
+		s.lock = s.opts.Lock
+		return nil
+	}
+	lock, err := AcquireLock(lockPathFor(s.socket))
+	if err != nil {
+		return err
+	}
+	s.lock, s.ownLock = lock, true
+	return nil
+}
+
+// releaseSingleInstance gives up the lock, but only when this server took it.
+func (s *Server) releaseSingleInstance() {
+	if s.ownLock {
+		_ = s.lock.Release()
+	}
+}
+
 // Serve takes the single-instance lock, listens, and accepts connections until
 // ctx is cancelled or Shutdown is called. It returns ErrAlreadyRunning when
 // another daemon holds the lock.
 func (s *Server) Serve(ctx context.Context) error {
 	defer close(s.done)
 
-	if s.opts.Lock != nil {
-		s.lock = s.opts.Lock
-	} else {
-		lock, err := AcquireLock(lockPathFor(s.socket))
-		if err != nil {
-			return err
-		}
-		s.lock, s.ownLock = lock, true
+	if err := s.acquireSingleInstance(); err != nil {
+		return err
 	}
-	defer func() {
-		if s.ownLock {
-			_ = s.lock.Release()
-		}
-	}()
+	defer s.releaseSingleInstance()
 
 	// The lock is ours, so any socket file still on disk belongs to a daemon
 	// that died without cleaning up.
@@ -231,17 +255,8 @@ func (s *Server) Serve(ctx context.Context) error {
 		return fmt.Errorf("starting daemon: %w", err)
 	}
 
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		s.loop.Run(ctx)
-	}()
-
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		s.watchIdle(ctx)
-	}()
+	s.runBackground(func() { s.loop.Run(ctx) })
+	s.runBackground(func() { s.watchIdle(ctx) })
 
 	s.logger.Info("daemon listening",
 		"socket", s.socket, "pid", s.runtime.PID, "version", s.opts.Version,
@@ -275,56 +290,88 @@ func (s *Server) Serve(ctx context.Context) error {
 // producer can start.
 func (s *Server) waitProducers() { s.producers.Wait() }
 
-// accept is the accept loop. A failure after Shutdown has been requested is
-// the listener closing under us, not an error.
+// runBackground starts one goroutine and counts it in s.wg, so Serve returns
+// only after everything it started has stopped rather than merely been told to.
+func (s *Server) runBackground(work func()) {
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		work()
+	}()
+}
+
+// accept is the accept loop.
+//
+// A failure here is only a real failure when the listener was not supposed to
+// be closing. Shutdown closing it, or any net.ErrClosed from elsewhere, is the
+// normal way this loop ends.
 func (s *Server) accept(ctx context.Context) error {
 	for {
-		nc, err := s.ln.Accept()
-		if err != nil {
-			select {
-			case <-s.stopping:
-				return nil
-			default:
-			}
-			if errors.Is(err, net.ErrClosed) {
-				return nil
-			}
-			return fmt.Errorf("accept: %w", err)
+		conn, err := s.ln.Accept()
+		if err == nil {
+			s.startConn(ctx, conn)
+			continue
 		}
-		s.startConn(ctx, nc)
+		if s.closing() || errors.Is(err, net.ErrClosed) {
+			return nil
+		}
+		return fmt.Errorf("accept: %w", err)
+	}
+}
+
+// closing reports whether Shutdown has begun, which is what makes the listener
+// closing an expected event instead of a failure.
+func (s *Server) closing() bool {
+	select {
+	case <-s.stopping:
+		return true
+	default:
+		return false
 	}
 }
 
 // startConn registers a connection and starts its read and write loops.
 func (s *Server) startConn(ctx context.Context, nc net.Conn) {
 	c := newConn(s.nextConnID.Add(1), s, nc)
-
-	s.subsMu.Lock()
-	s.conns[c.id] = c
-	s.subsMu.Unlock()
+	s.registerConn(c)
 	s.touch()
 	s.logger.Debug("client connected", "conn", c.id)
 
+	// The writer is tracked on the connection, not on the server: it has to be
+	// known to be finished before the socket is closed, and that ordering is
+	// the connection's own business.
 	c.writerWG.Add(1)
 	go c.writeLoop()
+
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
+		// Closing here means a client that stops sending tears down its own
+		// connection, whether it disconnected or hit an error.
 		defer c.Close()
 		c.readLoop(ctx)
 	}()
 }
 
+// registerConn adds a connection to the registry under the lock the publisher
+// also takes, so no broadcast can miss a connection that is already answering.
+func (s *Server) registerConn(c *Conn) {
+	s.subsMu.Lock()
+	s.conns[c.id] = c
+	s.subsMu.Unlock()
+}
+
 // removeConn drops a connection from the registry. Called once per connection,
 // from Conn.closeWithReason.
 func (s *Server) removeConn(c *Conn, reason string) {
-	s.subsMu.Lock()
-	workspace, workspaceChanged := s.detachWorkspaceLocked(c)
-	delete(s.conns, c.id)
-	s.subsMu.Unlock()
+	workspace, workspaceChanged := s.forgetConn(c)
 	if workspaceChanged {
 		s.broadcastWorkspaceChanged(workspace, nil)
 	}
+
+	// The keepalive count has to be recomputed before anything else can ask
+	// whether an idle daemon may stop, and the wake makes the next scan see the
+	// ports this client was watching go quiet.
 	s.recountKeepalive()
 	s.touch()
 	s.logger.Debug("client disconnected", "conn", c.id, "reason", reason)
@@ -332,16 +379,34 @@ func (s *Server) removeConn(c *Conn, reason string) {
 	s.loop.Wake()
 }
 
+// forgetConn drops a connection from the registry, detaching any workspace
+// relation it held on the way out. The workspace is returned rather than
+// broadcast here, because the broadcast must not run under subsMu.
+func (s *Server) forgetConn(c *Conn) (string, bool) {
+	s.subsMu.Lock()
+	defer s.subsMu.Unlock()
+	workspace, changed := s.detachWorkspaceLocked(c)
+	delete(s.conns, c.id)
+	return workspace, changed
+}
+
+// connsSnapshot returns the connections registered right now, so a caller can
+// act on them — closing, draining — without holding the registry lock across
+// the I/O.
+func (s *Server) connsSnapshot() []*Conn {
+	s.subsMu.RLock()
+	defer s.subsMu.RUnlock()
+	conns := make([]*Conn, 0, len(s.conns))
+	for _, conn := range s.conns {
+		conns = append(conns, conn)
+	}
+	return conns
+}
+
 // closeAllConns disconnects every client.
 func (s *Server) closeAllConns(reason string) {
-	s.subsMu.RLock()
-	conns := make([]*Conn, 0, len(s.conns))
-	for _, c := range s.conns {
-		conns = append(conns, c)
-	}
-	s.subsMu.RUnlock()
-	for _, c := range conns {
-		c.closeWithReason(reason)
+	for _, conn := range s.connsSnapshot() {
+		conn.closeWithReason(reason)
 	}
 }
 
@@ -351,15 +416,21 @@ func (s *Server) closeAllConns(reason string) {
 func (s *Server) Shutdown() {
 	s.stopOnce.Do(func() {
 		s.graceful.Store(true)
-		s.broadcastEvent(state.Event{
-			Kind: "daemon_stopping",
-			At:   time.Now().Format(time.RFC3339),
-		})
+		s.announceStopping()
 		s.drainQueues(500 * time.Millisecond)
 		close(s.stopping)
 		if s.ln != nil {
 			_ = s.ln.Close()
 		}
+	})
+}
+
+// announceStopping tells every subscriber the daemon is going away, so a client
+// learns it before the socket does rather than seeing an unexplained close.
+func (s *Server) announceStopping() {
+	s.broadcastEvent(state.Event{
+		Kind: "daemon_stopping",
+		At:   time.Now().Format(time.RFC3339),
 	})
 }
 
@@ -372,14 +443,9 @@ func (s *Server) Done() <-chan struct{} { return s.done }
 func (s *Server) drainQueues(timeout time.Duration) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		s.subsMu.RLock()
-		pending := 0
-		for _, c := range s.conns {
-			pending += len(c.out)
-		}
-		s.subsMu.RUnlock()
-		if pending == 0 {
-			// One more tick so the writer flushes what it has already taken.
+		if s.pendingWrites() == 0 {
+			// One more tick so a writer can flush what it has already taken
+			// off its queue.
 			time.Sleep(20 * time.Millisecond)
 			return
 		}
@@ -387,19 +453,26 @@ func (s *Server) drainQueues(timeout time.Duration) {
 	}
 }
 
-// ----------------------------------------------------------- subscriptions ---
-
-// Subscribers counts the connections currently subscribed to state.
-func (s *Server) Subscribers() int {
+// pendingWrites counts messages queued but not yet written, across every
+// connection.
+func (s *Server) pendingWrites() int {
 	s.subsMu.RLock()
 	defer s.subsMu.RUnlock()
-	n := 0
-	for _, c := range s.conns {
-		if c.subscribed {
-			n++
-		}
+	pending := 0
+	for _, conn := range s.conns {
+		pending += len(conn.out)
 	}
-	return n
+	return pending
+}
+
+// ----------------------------------------------------------- subscriptions ---
+
+// Subscribers counts the connections currently subscribed to state. It is
+// demand's count without the include set, so the two cannot disagree about who
+// is watching.
+func (s *Server) Subscribers() int {
+	subscribers, _ := s.demand()
+	return subscribers
 }
 
 // Clients counts open connections, subscribed or not.
@@ -414,17 +487,31 @@ func (s *Server) Clients() int {
 func (s *Server) demand() (int, scanner.Include) {
 	s.subsMu.RLock()
 	defer s.subsMu.RUnlock()
-	var inc scanner.Include
-	n := 0
+
+	var wanted scanner.Include
+	subscribers := 0
 	for _, c := range s.conns {
 		if !c.subscribed {
 			continue
 		}
-		n++
-		inc.Stats = inc.Stats || c.include.Stats
-		inc.Health = inc.Health || c.include.Health
+		subscribers++
+		// The include set is a union, not a majority: one subscriber asking for
+		// stats means the loop must collect them for everybody.
+		wanted.Stats = wanted.Stats || c.include.Stats
+		wanted.Health = wanted.Health || c.include.Health
 	}
-	return n, inc
+	return subscribers, wanted
+}
+
+// subscribedReply is the opening frame a subscriber receives: the whole
+// snapshot for an unscoped subscription, or the stream projection for a scoped
+// one. The two shapes differ, which is why this is not just a filter call.
+func subscribedReply(base state.Snapshot, include scanner.Include, scope state.Scope) any {
+	if scope.Empty() {
+		return filterSnapshot(base, include, scope)
+	}
+	base.Ports = filterPorts(base.Ports, include)
+	return state.StreamSnapshotFor(base, scope)
 }
 
 // subscribe registers a connection as a subscriber and hands it either the
@@ -466,19 +553,8 @@ func (s *Server) subscribe(c *Conn, id json.RawMessage, include scanner.Include,
 	base, replay, resumed := s.replayFrom(afterSeq, snap)
 	c.subscribed, c.include, c.events, c.scope = true, include, events, scope
 	effective := s.effectiveScopeLocked(scope)
-	var result any
-	if effective.Empty() {
-		result = filterSnapshot(base, include, effective)
-	} else {
-		base.Ports = filterPorts(base.Ports, include)
-		result = state.StreamSnapshotFor(base, effective)
-	}
-	raw, err := json.Marshal(result)
-	if err == nil {
-		msg, mErr := json.Marshal(rpc.Response{JSONRPC: rpc.Version, ID: id, Result: raw})
-		if mErr == nil {
-			c.enqueue(msg)
-		}
+	if raw, mErr := json.Marshal(subscribedReply(base, include, effective)); mErr == nil {
+		c.sendResponse(id, raw, nil)
 	}
 	if resumed {
 		for _, item := range replay {
@@ -572,21 +648,36 @@ func (s *Server) replayFrom(afterSeq uint64, current state.Snapshot) (state.Snap
 
 func (s *Server) queueReplay(c *Conn, item stateReplay, scope state.Scope) {
 	if scope.Empty() {
-		if msg := marshalDelta(item.prev, item.next, c.include, scope); msg != nil {
-			c.enqueue(msg)
-		}
-		if c.events && len(item.events) > 0 {
-			for _, msg := range marshalEvents(item.events, c.include, scope, item.next.Groups) {
-				c.enqueue(msg)
-			}
-		}
+		s.queueUnscopedReplay(c, item, scope)
 		return
+	}
+	s.queueScopedReplay(c, item, scope)
+}
+
+// queueUnscopedReplay sends a whole transition to a client watching everything:
+// one delta, then the events that transition produced, if it wants events.
+func (s *Server) queueUnscopedReplay(c *Conn, item stateReplay, scope state.Scope) {
+	if msg := marshalDelta(item.prev, item.next, c.include, scope); msg != nil {
+		c.enqueue(msg)
 	}
 	if !c.events {
 		return
 	}
+	for _, msg := range marshalEvents(item.events, c.include, scope, item.next.Groups) {
+		c.enqueue(msg)
+	}
+}
+
+// queueScopedReplay sends only what falls inside the client's scope, and only
+// to a client that asked for events. The group set spans both sides of the
+// transition, because a scope may name a group that the change removes.
+func (s *Server) queueScopedReplay(c *Conn, item stateReplay, scope state.Scope) {
+	if !c.events {
+		return
+	}
 	groups := append(append([]state.Group{}, item.prev.Groups...), item.next.Groups...)
-	for _, msg := range marshalStateChanges(state.StateChangesForTransition(item.prev, item.next, item.events), scope, groups) {
+	changes := state.StateChangesForTransition(item.prev, item.next, item.events)
+	for _, msg := range marshalStateChanges(changes, scope, groups) {
 		c.enqueue(msg)
 	}
 }
@@ -820,34 +911,58 @@ func (s *Server) BroadcastEvent(ev state.Event) { s.broadcastEvent(ev) }
 func (s *Server) broadcastEvent(ev state.Event) {
 	s.subsMu.RLock()
 	defer s.subsMu.RUnlock()
-	cache := map[viewKey][][]byte{}
+
 	groups := s.loop.Cached().Groups
+	// One encoding is reused per (include, scope) pair: a room full of clients
+	// watching the same thing should not pay for the same marshal once each.
+	cache := map[viewKey][][]byte{}
 	for _, c := range s.conns {
 		if !c.subscribed || !c.events {
 			continue
 		}
-		effective := s.effectiveScopeLocked(c.scope)
-		view := viewKey{include: c.include, scope: effective.Key()}
-		if !effective.Empty() {
-			change := state.StateChangedForEvent(ev, s.loop.Cached().Seq, groups)
-			if !effective.MatchChangedIn(change, groups) {
-				continue
-			}
-			raw, err := json.Marshal(rpc.Notification{JSONRPC: rpc.Version, Method: rpc.MethodStateChanged, Params: mustJSON(change)})
-			if err == nil {
-				c.enqueue(raw)
-			}
-			continue
-		}
-		msgs, ok := cache[view]
-		if !ok {
-			msgs = marshalEvents([]state.Event{ev}, c.include, c.scope, groups)
-			cache[view] = msgs
-		}
-		for _, m := range msgs {
-			c.enqueue(m)
-		}
+		s.sendEventLocked(c, ev, groups, cache)
 	}
+}
+
+// sendEventLocked delivers one event to one subscriber: a scoped client gets a
+// state.changed if the event falls inside its scope, everyone else gets the
+// plain state.event notifications for its view. Caller holds subsMu.
+func (s *Server) sendEventLocked(c *Conn, ev state.Event, groups []state.Group, cache map[viewKey][][]byte) {
+	effective := s.effectiveScopeLocked(c.scope)
+	if !effective.Empty() {
+		s.sendScopedEventLocked(c, ev, groups, effective)
+		return
+	}
+
+	view := viewKey{include: c.include, scope: effective.Key()}
+	msgs, encoded := cache[view]
+	if !encoded {
+		msgs = marshalEvents([]state.Event{ev}, c.include, c.scope, groups)
+		cache[view] = msgs
+	}
+	for _, msg := range msgs {
+		c.enqueue(msg)
+	}
+}
+
+// sendScopedEventLocked sends an event only when it falls inside the client's
+// scope, as a state.changed notification. Caller holds subsMu.
+func (s *Server) sendScopedEventLocked(c *Conn, ev state.Event, groups []state.Group, scope state.Scope) {
+	change := state.StateChangedForEvent(ev, s.loop.Cached().Seq, groups)
+	if !scope.MatchChangedIn(change, groups) {
+		return
+	}
+	raw, err := json.Marshal(rpc.Notification{
+		JSONRPC: rpc.Version,
+		Method:  rpc.MethodStateChanged,
+		Params:  mustJSON(change),
+	})
+	if err != nil {
+		// A change that cannot be encoded is dropped rather than sent as a
+		// half-formed notification.
+		return
+	}
+	c.enqueue(raw)
 }
 
 // marshalDelta builds one state.delta notification for a given include set.
@@ -939,6 +1054,8 @@ func emptyDelta(d state.Delta) bool {
 func filterSnapshot(snap state.Snapshot, include scanner.Include, scope state.Scope) state.Snapshot {
 	snap.Ports = filterPorts(snap.Ports, include)
 	snap = scope.FilterSnapshot(snap)
+	// Collections are emptied rather than left null: a client decoding this
+	// expects arrays, and null would make every caller branch on it.
 	if snap.Groups == nil {
 		snap.Groups = []state.Group{}
 	}
@@ -948,29 +1065,33 @@ func filterSnapshot(snap state.Snapshot, include scanner.Include, scope state.Sc
 	return snap
 }
 
-func filterPorts(pp []state.Port, include scanner.Include) []state.Port {
+// filterPorts applies one subscriber's include set to a snapshot's rows. A set
+// that asks for everything leaves the slice untouched rather than copying it:
+// nothing is stripped, so a shared slice is safe.
+func filterPorts(rows []state.Port, include scanner.Include) []state.Port {
 	if include.Stats && include.Health {
-		return pp
+		return rows
 	}
-	out := make([]state.Port, len(pp))
-	for i := range pp {
-		out[i] = filterPort(pp[i], include)
+	filtered := make([]state.Port, len(rows))
+	for i := range rows {
+		filtered[i] = filterPort(rows[i], include)
 	}
-	return out
+	return filtered
 }
 
-// filterPort strips what this subscriber did not ask for. Health a
-// `oberth.yaml` asked the daemon to poll is the exception: the config declared
-// it, so it is state every subscriber sees whether or not it asked for
-// `include: ["health"]` (step 1A.7).
-func filterPort(p state.Port, include scanner.Include) state.Port {
+// filterPort strips what this subscriber did not ask for.
+//
+// Health that an `oberth.yaml` asked the daemon to poll is the exception: the
+// config declared it, so it is state every subscriber sees whether or not it
+// asked for `include: ["health"]`.
+func filterPort(row state.Port, include scanner.Include) state.Port {
 	if !include.Stats {
-		p.Stats = nil
+		row.Stats = nil
 	}
-	if !include.Health && p.Health != nil && !p.Health.Configured {
-		p.Health = nil
+	if !include.Health && row.Health != nil && !row.Health.Configured {
+		row.Health = nil
 	}
-	return p
+	return row
 }
 
 // ------------------------------------------------------------------- idle ---
@@ -981,15 +1102,37 @@ func (s *Server) touch() { s.lastActive.Store(time.Now().UnixNano()) }
 // recountKeepalive recomputes how many connected clients asked the daemon to
 // stay up (daemon.hello{keepalive:true}).
 func (s *Server) recountKeepalive() {
+	s.keepalives.Store(s.countKeepalive())
+}
+
+// countKeepalive is how many connected clients asked the daemon to stay up. It
+// is counted rather than derived because each connection may change its mind,
+// and the idle watcher reads the number without holding the registry lock.
+func (s *Server) countKeepalive() int64 {
 	s.subsMu.RLock()
-	n := int64(0)
+	defer s.subsMu.RUnlock()
+	asking := int64(0)
 	for _, c := range s.conns {
 		if c.Keepalive() {
-			n++
+			asking++
 		}
 	}
-	s.subsMu.RUnlock()
-	s.keepalives.Store(n)
+	return asking
+}
+
+// idleCheckEvery is how often the idle countdown is polled: a quarter of the
+// timeout, so a stop lands within a quarter of the window, but never faster than
+// idleCheckInterval and never below a millisecond. A ticker rejects a
+// non-positive period, which is what the floor is for.
+func (s *Server) idleCheckEvery() time.Duration {
+	tick := idleCheckInterval
+	if quarter := s.opts.IdleTimeout / 4; quarter < tick {
+		tick = quarter
+	}
+	if tick <= 0 {
+		return time.Millisecond
+	}
+	return tick
 }
 
 // watchIdle stops the daemon once it has been idle for IdleTimeout. A
@@ -999,14 +1142,7 @@ func (s *Server) watchIdle(ctx context.Context) {
 	if s.opts.IdleTimeout <= 0 {
 		return
 	}
-	tick := idleCheckInterval
-	if s.opts.IdleTimeout/4 < tick {
-		tick = s.opts.IdleTimeout / 4
-	}
-	if tick <= 0 {
-		tick = time.Millisecond
-	}
-	t := time.NewTicker(tick)
+	t := time.NewTicker(s.idleCheckEvery())
 	defer t.Stop()
 	for {
 		select {
