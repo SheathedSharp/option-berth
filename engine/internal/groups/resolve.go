@@ -14,7 +14,7 @@ type Registry interface {
 
 // SessionRegistry is the optional half of Registry: a registry that also knows
 // which agent session started a run reports it here, and AttributeWith stamps
-// it onto the port (spec 2 §3, contract §5). A registry that does not
+// it onto the port. A registry that does not
 // implement it simply publishes ports with a null session.
 type SessionRegistry interface {
 	Session(p state.Port) (session state.Session, ok bool)
@@ -28,7 +28,7 @@ type SessionRegistry interface {
 type PortRuns struct{}
 
 // Run returns the run already stamped on the port. Until `oberth start`
-// records a group (step 1A.5, contract §11.3) run.group is empty, so this
+// records a group, run.group is empty, so this
 // reports ok with only the name; the resolver then falls through to the file
 // and git-root rules.
 func (PortRuns) Run(p state.Port) (state.Run, bool) {
@@ -57,7 +57,7 @@ func (NoRuns) Run(state.Port) (state.Run, bool) { return state.Run{}, false }
 //     checkout only: an alias from `groups.rename`, else the `name:` of its
 //     `oberth.yaml`, else its directory name. A `oberth.yaml` at the
 //     checkout's root makes the source `file`; a linked worktree's own copy
-//     supplies services but never the name (step 5A.6)
+//     supplies services but never the name
 //  5. none — group stays null
 //
 // A run's group is kept, except that a run recorded under the project's own

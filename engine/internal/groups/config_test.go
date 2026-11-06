@@ -271,7 +271,8 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 }
 
-// TestLoadServiceMetadata covers contract §13.1: description, icon and colour
+// TestLoadServiceMetadata covers the service metadata fields: description,
+// icon and colour
 // are free-form strings read from the file and never inferred.
 func TestLoadServiceMetadata(t *testing.T) {
 	dir := t.TempDir()

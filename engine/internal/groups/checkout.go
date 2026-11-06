@@ -12,7 +12,7 @@ import (
 // and any number of linked worktrees (`git worktree add`). Each checkout is a
 // group of its own — `<project>` for the main checkout, `<project>@<worktree>`
 // for a linked one — and all of them share the project name, which only the
-// main checkout decides (step 5A.6). A worktree's copy of a committed
+// main checkout decides. A worktree's copy of a committed
 // `oberth.yaml` describes its services, never its name, so a stale copy cannot
 // fold the worktree back into the main checkout's group.
 type Checkout struct {
@@ -211,7 +211,7 @@ func (x *Index) within(cfg *Config, co Checkout) bool {
 
 // runGroup is the post-step that keeps a `oberth start` run in its checkout's
 // group. A run records the group its client inferred when it started, and a
-// client knows neither the daemon's aliases nor, if it predates step 5A.6,
+// client knows neither the daemon's aliases nor, if it predates that rule,
 // that a worktree is not its main checkout. So a run group that is the
 // project's own name — with or without the worktree — is the checkout's group
 // under its current name. Any other name was chosen with --group and stays.
