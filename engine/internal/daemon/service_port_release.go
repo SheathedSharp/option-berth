@@ -52,7 +52,7 @@ func captureServicePortRelease(ctx context.Context, rt *Runtime, cfg *groups.Con
 		return nil, errNoStore()
 	}
 	if !claimsMu.TryLock() {
-		return nil, errors.New("claims are changing; retry down")
+		return nil, busy("claims are changing")
 	}
 	defer claimsMu.Unlock()
 	plan := &servicePortRelease{store: rt.Store, configPath: cfg.Path}
@@ -83,7 +83,7 @@ func captureWorktreePortRelease(ctx context.Context, rt *Runtime, project, workt
 		return nil, errNoStore()
 	}
 	if !claimsMu.TryLock() {
-		return nil, errors.New("claims are changing; retry down")
+		return nil, busy("claims are changing")
 	}
 	defer claimsMu.Unlock()
 	observed, err := rt.Store.Claims().ObserveWorktreeContext(ctx, project, worktree)
@@ -132,7 +132,7 @@ func (p *servicePortRelease) releaseWithWait(ctx context.Context, rt *Runtime, g
 		return 0, errors.New("reservation store changed while stopping")
 	}
 	if !claimsMu.TryLock() {
-		return 0, errors.New("claims are changing; reservations retained")
+		return 0, busy("claims are changing")
 	}
 	defer claimsMu.Unlock()
 	// SetRuns is startup-only in production; hold its read lock through the
@@ -164,9 +164,26 @@ func finishGroupStop(ctx context.Context, req *Request, group string, plan *serv
 		// Preserve the existing wire schema and report failure to CLI clients too;
 		// down's text path does not inspect envelope.OK. Signals already sent and
 		// registry observations are not undone by this reservation failure.
-		return nil, rpc.NewError(rpc.CodeInternal, "stop attempted; port reservations retained: "+err.Error(),
+		// The code travels: a contention the caller can retry is daemon_busy,
+		// and everything else here is a real fault. Reporting both as
+		// "internal" told an agent to distrust its own retry.
+		code := rpc.CodeInternal
+		var rpcErr *rpc.Error
+		if errors.As(err, &rpcErr) {
+			code = rpcErr.Code
+		}
+		return nil, rpc.NewError(code, "stop attempted; port reservations retained: "+err.Error(),
 			"inspect status and daemon log, then retry down; already sent signals were not undone")
 	}
 	env.Released = released
 	return env, nil
+}
+
+// busy is the failure a caller is asked to retry: another operation holds what
+// this one needs, and the hold is short. It is a condition, not an engine fault,
+// which is the whole difference between an agent retrying and an agent giving
+// up on the daemon.
+func busy(what string) error {
+	return rpc.NewError(rpc.CodeBusy, what,
+		"retry in a moment; the daemon is finishing another reservation operation")
 }
