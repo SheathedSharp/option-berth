@@ -1,6 +1,9 @@
 package groups
 
-import "sort"
+import (
+	"maps"
+	"slices"
+)
 
 // Stale compares current selections and bytes without modifying the index.
 // Attribution refreshes directly in its shared pass, avoiding a read/check
@@ -16,29 +19,26 @@ func (x *Index) Stale() bool {
 
 // Known lists every config path the index has an opinion about, valid or not.
 func (x *Index) Known() []string {
-	seen := map[string]bool{}
-	out := []string{}
+	paths := make(map[string]struct{}, len(x.configs)+len(x.invalid))
 	for _, cfg := range x.configs {
-		if cfg != nil && !seen[cfg.Path] {
-			seen[cfg.Path] = true
-			out = append(out, cfg.Path)
+		if cfg != nil {
+			paths[cfg.Path] = struct{}{}
 		}
 	}
 	for path := range x.invalid {
-		if !seen[path] {
-			seen[path] = true
-			out = append(out, path)
-		}
+		paths[path] = struct{}{}
 	}
-	sort.Strings(out)
-	return out
+	if len(paths) == 0 {
+		return []string{}
+	}
+	return slices.Sorted(maps.Keys(paths))
 }
 
 // Named returns the valid config whose services are published as this group
 // (see GroupOf). The deepest directory wins, matching Configs' ordering, so a
 // nested project shadows the repository it sits in. Matching the group rather
-// than the file's `name:` is what keeps a linked worktree's copy of a
-// committed file from answering for the main checkout: the copy is
+// than the file's `name:` is what keeps a linked worktree's copy of a committed
+// file from answering for the main checkout: the copy is
 // `<project>@<worktree>`, and only the main checkout's file is `<project>`.
 func (x *Index) Named(name string) (*Config, bool) {
 	for _, cfg := range x.Configs() {
@@ -75,8 +75,8 @@ func (x *Index) Reload(roots []string) (int, []InvalidConfig) {
 	for dir := range x.files {
 		pass.probe(dir)
 	}
-	// Only Add's synthetic declarations need another discovery. Do not
-	// turn the canonical target of a symlink into a second watched origin.
+	// Only Add's synthetic declarations need another discovery. Do not turn the
+	// canonical target of a symlink into a second watched origin.
 	backed := make(map[*Config]bool, len(x.files))
 	for _, observed := range x.files {
 		backed[observed.cfg] = true

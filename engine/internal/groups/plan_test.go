@@ -137,6 +137,25 @@ func TestPlanKeepsFileOrderAtTheSameDepth(t *testing.T) {
 	}
 }
 
+// TestPlanKeepsDependencyDepthBeforeLaterFileOrder pins the exact walk the
+// planner uses: a service is emitted only after its dependencies, even when an
+// independent service sits earlier in the file. A breadth-first "ready set"
+// sort would emit worker before db here.
+func TestPlanKeepsDependencyDepthBeforeLaterFileOrder(t *testing.T) {
+	cfg := &Config{Name: "demo", Services: []Service{
+		{Name: "api", DependsOn: []string{"db"}},
+		{Name: "worker"},
+		{Name: "db"},
+	}}
+	steps, err := Plan(cfg, nil)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if got := planNames(steps); !equalStrings(got, []string{"db", "api", "worker"}) {
+		t.Fatalf("order = %v, want [db api worker]", got)
+	}
+}
+
 // includedByOf reads one step's IncludedBy, or nil when the service is absent.
 func includedByOf(steps []Step, name string) []string {
 	for _, step := range steps {

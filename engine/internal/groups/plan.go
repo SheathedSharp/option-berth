@@ -2,7 +2,8 @@ package groups
 
 import (
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -41,11 +42,11 @@ type UnknownServiceError struct {
 }
 
 func (e *UnknownServiceError) Error() string {
+	message := fmt.Sprintf("no service %q in %s", e.Name, e.Path)
 	if len(e.Known) == 0 {
-		return fmt.Sprintf("no service %q in %s", e.Name, e.Path)
+		return message
 	}
-	return fmt.Sprintf("no service %q in %s (it declares %s)",
-		e.Name, e.Path, strings.Join(e.Known, ", "))
+	return message + " (it declares " + strings.Join(e.Known, ", ") + ")"
 }
 
 // Plan orders a config's services for `oberth up`: dependencies first, then
@@ -76,13 +77,7 @@ func PlanWith(cfg *Config, opts PlanOptions) ([]Step, error) {
 	if cfg == nil {
 		return nil, nil
 	}
-	byName := make(map[string]Service, len(cfg.Services))
-	order := make(map[string]int, len(cfg.Services))
-	for i, s := range cfg.Services {
-		byName[s.Name] = s
-		order[s.Name] = i
-	}
-
+	byName, order := serviceOrder(cfg)
 	keep, err := selection(cfg, byName, opts.Only)
 	if err != nil {
 		return nil, err
@@ -95,28 +90,35 @@ func PlanWith(cfg *Config, opts PlanOptions) ([]Step, error) {
 		closure(sortedKeys(keep), byName, keep, includedBy)
 	}
 
-	sorted := topoSort(cfg, order)
-
 	steps := make([]Step, 0, len(keep))
-	for _, s := range sorted {
+	for _, s := range topoSort(cfg, order) {
 		if !keep[s.Name] {
 			continue
 		}
 		step := Step{Service: s, IncludedBy: sortedKeys(includedBy[s.Name])}
 		for _, dep := range s.DependsOn {
-			d, ok := byName[dep]
-			if !ok {
-				continue
+			if d, ok := byName[dep]; ok {
+				step.Waits = append(step.Waits, d)
 			}
-			step.Waits = append(step.Waits, d)
 		}
 		steps = append(steps, step)
 	}
 	return steps, nil
 }
 
+// serviceOrder indexes the file's services by name and by position.
+func serviceOrder(cfg *Config) (map[string]Service, map[string]int) {
+	byName := make(map[string]Service, len(cfg.Services))
+	order := make(map[string]int, len(cfg.Services))
+	for i, s := range cfg.Services {
+		byName[s.Name] = s
+		order[s.Name] = i
+	}
+	return byName, order
+}
+
 // closure adds every depends_on descendant of a root to keep and records which
-// explicit roots reached it. A visited set per root makes a hand-built config
+// explicit roots reached it. One visited set per root makes a hand-built config
 // with a cycle terminate; Load rejects those configs long before this runs.
 func closure(roots []string, byName map[string]Service, keep map[string]bool,
 	includedBy map[string]map[string]bool) {
@@ -125,22 +127,21 @@ func closure(roots []string, byName map[string]Service, keep map[string]bool,
 		explicit[root] = true
 	}
 	for _, root := range roots {
-		visited := map[string]bool{}
-		var visit func(name string)
-		visit = func(name string) {
-			if visited[name] {
-				return
-			}
-			visited[name] = true
+		visited := map[string]bool{root: true}
+		pending := []string{root}
+		for len(pending) > 0 {
+			name := pending[len(pending)-1]
+			pending = pending[:len(pending)-1]
 			svc, ok := byName[name]
 			if !ok {
-				return
+				continue
 			}
 			for _, dep := range svc.DependsOn {
 				dep = strings.TrimSpace(dep)
-				if _, ok := byName[dep]; !ok {
+				if _, ok := byName[dep]; !ok || visited[dep] {
 					continue
 				}
+				visited[dep] = true
 				if !explicit[dep] {
 					keep[dep] = true
 					if includedBy[dep] == nil {
@@ -148,10 +149,9 @@ func closure(roots []string, byName map[string]Service, keep map[string]bool,
 					}
 					includedBy[dep][root] = true
 				}
-				visit(dep)
+				pending = append(pending, dep)
 			}
 		}
-		visit(root)
 	}
 }
 
@@ -159,25 +159,21 @@ func sortedKeys(set map[string]bool) []string {
 	if len(set) == 0 {
 		return nil
 	}
-	out := make([]string, 0, len(set))
-	for name := range set {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(set))
 }
 
 // selection is the set of services the plan keeps.
 func selection(cfg *Config, byName map[string]Service, only []string) (map[string]bool, error) {
-	keep := make(map[string]bool, len(cfg.Services))
 	if len(only) == 0 {
+		keep := make(map[string]bool, len(cfg.Services))
 		for _, s := range cfg.Services {
 			keep[s.Name] = true
 		}
 		return keep, nil
 	}
-	for _, name := range only {
-		name = strings.TrimSpace(name)
+	keep := make(map[string]bool, len(only))
+	for _, raw := range only {
+		name := strings.TrimSpace(raw)
 		if name == "" {
 			continue
 		}
@@ -189,41 +185,64 @@ func selection(cfg *Config, byName map[string]Service, only []string) (map[strin
 	return keep, nil
 }
 
-// topoSort returns the services in dependency order, breaking ties by the
-// order the file lists them.
+// topoSort returns the services in dependency order, breaking ties by the order
+// the file lists them. It is an explicit-stack post-order walk: a service is
+// emitted only after everything it depends on.
 func topoSort(cfg *Config, order map[string]int) []Service {
-	state := map[string]int{} // 0 unvisited, 1 in progress, 2 done
-	out := make([]Service, 0, len(cfg.Services))
-
 	byName := make(map[string]Service, len(cfg.Services))
 	for _, s := range cfg.Services {
 		byName[s.Name] = s
 	}
 
-	var visit func(Service)
-	visit = func(s Service) {
-		switch state[s.Name] {
-		case 1, 2:
-			// Already emitted, or an edge back into the branch we are in: a
-			// cycle Load would have rejected. Either way, do not recurse.
-			return
-		}
-		state[s.Name] = 1
-		deps := append([]string{}, s.DependsOn...)
-		sort.SliceStable(deps, func(i, j int) bool { return order[deps[i]] < order[deps[j]] })
-		for _, dep := range deps {
-			if d, ok := byName[dep]; ok {
-				visit(d)
-			}
-		}
-		state[s.Name] = 2
-		out = append(out, s)
-	}
+	const (
+		unvisited = 0
+		onStack   = 1
+		emitted   = 2
+	)
+	state := make(map[string]int, len(byName))
+	out := make([]Service, 0, len(cfg.Services))
 
-	for _, s := range cfg.Services {
-		visit(s)
+	type frame struct {
+		service Service
+		deps    []string
+		next    int
+	}
+	for _, root := range cfg.Services {
+		if state[root.Name] != unvisited {
+			continue
+		}
+		state[root.Name] = onStack
+		stack := []frame{{service: root, deps: orderedDeps(root, order)}}
+		for len(stack) > 0 {
+			top := &stack[len(stack)-1]
+			if top.next < len(top.deps) {
+				name := top.deps[top.next]
+				top.next++
+				dep, ok := byName[name]
+				// An edge back into the current branch, or into an already
+				// emitted service: Load would have rejected a cycle, so there
+				// is nothing left to recurse into.
+				if !ok || state[name] != unvisited {
+					continue
+				}
+				state[name] = onStack
+				stack = append(stack, frame{service: dep, deps: orderedDeps(dep, order)})
+				continue
+			}
+			state[top.service.Name] = emitted
+			out = append(out, top.service)
+			stack = stack[:len(stack)-1]
+		}
 	}
 	return out
+}
+
+// orderedDeps lists a service's dependencies in the order the file declares
+// the services.
+func orderedDeps(s Service, order map[string]int) []string {
+	deps := slices.Clone(s.DependsOn)
+	slices.SortStableFunc(deps, func(a, b string) int { return order[a] - order[b] })
+	return deps
 }
 
 // names lists a config's service names in file order.

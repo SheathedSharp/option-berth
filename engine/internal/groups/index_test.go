@@ -41,6 +41,25 @@ func TestIndexReprobesADirectoryAfterManifestAppears(t *testing.T) {
 	}
 }
 
+// Empty lists keep the shape their callers were written against: Configs and
+// FilesIn are nil when there is nothing, while Invalid and Known are non-nil
+// empty slices because they are rendered directly.
+func TestEmptyIndexListsKeepTheirContract(t *testing.T) {
+	x := NewIndex()
+	if got := x.Configs(); got != nil {
+		t.Errorf("Configs() = %#v, want nil", got)
+	}
+	if got := x.Invalid(); got == nil {
+		t.Error("Invalid() = nil, want an empty slice")
+	}
+	if got := x.Known(); got == nil {
+		t.Error("Known() = nil, want an empty slice")
+	}
+	if got := FilesIn(tempTree(t)); got != nil {
+		t.Errorf("FilesIn(empty dir) = %#v, want nil", got)
+	}
+}
+
 func TestIndexObserveWalksUpToTheGitRoot(t *testing.T) {
 	base := tempTree(t)
 	repo := mkdir(t, base, "repo")

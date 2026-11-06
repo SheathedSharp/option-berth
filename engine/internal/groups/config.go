@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -42,14 +44,10 @@ var configNames = []string{
 // ConfigNames returns the spellings a directory is searched for, in order.
 func ConfigNames() []string { return append([]string(nil), configNames...) }
 
-// IsConfigName reports whether a base name is one option-berth reads as a config.
+// IsConfigName reports whether a base name is one option-berth reads as a
+// manifest.
 func IsConfigName(base string) bool {
-	for _, name := range configNames {
-		if base == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(configNames, base)
 }
 
 // IsLegacyName reports whether a base name is one of the dotfile spellings.
@@ -57,20 +55,26 @@ func IsLegacyName(base string) bool {
 	return IsConfigName(base) && strings.HasPrefix(base, ".")
 }
 
-// FilesIn lists the config files present in dir, in lookup order. The first is
-// the one option-berth uses; any others are shadowed by it.
+// FilesIn lists the manifest files present in dir, in lookup order. The first
+// is the one option-berth uses; any others are shadowed by it.
 func FilesIn(dir string) []string {
-	var out []string
+	var present []string
 	for _, name := range configNames {
 		path := filepath.Join(dir, name)
-		if info, err := os.Lstat(path); err == nil && !info.IsDir() {
-			out = append(out, path)
+		if isRegularFile(path) {
+			present = append(present, path)
 		}
 	}
-	return out
+	return present
 }
 
-// TargetIn is the file a write into dir goes to: the config already there, in
+// isRegularFile reports whether path exists and is not a directory.
+func isRegularFile(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && !info.IsDir()
+}
+
+// TargetIn is the file a write into dir goes to: the manifest already there, in
 // whatever spelling it has, so an edit never leaves two files side by side —
 // else a new ConfigName.
 func TargetIn(dir string) string {
@@ -166,11 +170,11 @@ func (s Service) HasPort() bool { return s.Port != 0 || s.PortAuto }
 // UnmarshalYAML reads `port: auto` into PortAuto and every other key as usual.
 // Any other non-number port is refused with a message that names both forms,
 // rather than the decoder's own "cannot unmarshal !!str".
-func (s *Service) UnmarshalYAML(n *yaml.Node) error {
+func (s *Service) UnmarshalYAML(node *yaml.Node) error {
 	type plain Service
-	if n.Kind != yaml.MappingNode {
+	if node.Kind != yaml.MappingNode {
 		var p plain
-		if err := n.Decode(&p); err != nil {
+		if err := node.Decode(&p); err != nil {
 			return err
 		}
 		*s = Service(p)
@@ -179,41 +183,43 @@ func (s *Service) UnmarshalYAML(n *yaml.Node) error {
 	auto := false
 	portLine, healthLine := 0, 0
 	var health HealthCheck
-	stripped := *n
-	stripped.Content = make([]*yaml.Node, 0, len(n.Content))
-	for i := 0; i+1 < len(n.Content); i += 2 {
-		k, v := n.Content[i], n.Content[i+1]
-		// Check before removing auto: otherwise the custom decoder hides duplicates.
-		if k.Value == "port" {
+	pairs := make([]*yaml.Node, 0, len(node.Content))
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key, value := node.Content[i], node.Content[i+1]
+		switch key.Value {
+		case "port":
+			// Checked before `auto` is removed: otherwise the custom decoder
+			// hides a duplicate key.
 			if portLine != 0 {
-				return fmt.Errorf(`line %d: mapping key "port" already defined at line %d`, k.Line, portLine)
+				return duplicateKey("port", key.Line, portLine)
 			}
-			portLine = k.Line
-		}
-		if k.Value == "health" {
+			portLine = key.Line
+			if value.Kind == yaml.ScalarNode {
+				switch tag := value.ShortTag(); {
+				case tag == "!!int" || tag == "!!null":
+				case value.Value == PortAutoValue:
+					auto = true
+					continue
+				default:
+					return fmt.Errorf("line %d: port must be a number or %s, not %q", value.Line, PortAutoValue, value.Value)
+				}
+			}
+		case "health":
 			if healthLine != 0 {
-				return fmt.Errorf(`line %d: mapping key "health" already defined at line %d`, k.Line, healthLine)
+				return duplicateKey("health", key.Line, healthLine)
 			}
-			healthLine = k.Line
-			h, err := decodeHealthNode(v)
+			healthLine = key.Line
+			parsed, err := decodeHealthNode(value)
 			if err != nil {
 				return err
 			}
-			health = h
+			health = parsed
 			continue
 		}
-		if k.Value == "port" && v.Kind == yaml.ScalarNode {
-			switch tag := v.ShortTag(); {
-			case tag == "!!int" || tag == "!!null":
-			case v.Value == PortAutoValue:
-				auto = true
-				continue
-			default:
-				return fmt.Errorf("line %d: port must be a number or %s, not %q", v.Line, PortAutoValue, v.Value)
-			}
-		}
-		stripped.Content = append(stripped.Content, k, v)
+		pairs = append(pairs, key, value)
 	}
+	stripped := *node
+	stripped.Content = pairs
 	var p plain
 	if err := stripped.Decode(&p); err != nil {
 		return err
@@ -222,6 +228,11 @@ func (s *Service) UnmarshalYAML(n *yaml.Node) error {
 	s.PortAuto = auto
 	s.Health = health.Canonical()
 	return nil
+}
+
+// duplicateKey is the error for a mapping that carries the same key twice.
+func duplicateKey(key string, line, first int) error {
+	return fmt.Errorf("line %d: mapping key %q already defined at line %d", line, key, first)
 }
 
 // MarshalYAML writes PortAuto back as `port: auto`, where a number would be,
@@ -251,25 +262,19 @@ func (s Service) MarshalYAML() (any, error) {
 		return nil, err
 	}
 	if s.PortAuto {
+		// `port: auto` goes where a number would: after the last of the keys
+		// that describe the command, and before anything metadata-shaped.
 		at := 0
 		for i := 0; i+1 < len(n.Content); i += 2 {
-			switch n.Content[i].Value {
-			case "name", "cmd", "cwd":
+			if slices.Contains([]string{"name", "cmd", "cwd"}, n.Content[i].Value) {
 				at = i + 2
 			}
 		}
-		pair := []*yaml.Node{
-			{Kind: yaml.ScalarNode, Tag: "!!str", Value: "port"},
-			{Kind: yaml.ScalarNode, Tag: "!!str", Value: PortAutoValue},
-		}
-		n.Content = append(n.Content[:at], append(pair, n.Content[at:]...)...)
+		n.Content = slices.Insert(n.Content, at, keyNode("port"), strNode(PortAutoValue))
 	}
 	if h := ParseHealth(s.Health); h.Kind == HealthTCP || h.Kind == HealthCommand {
-		for i := 0; i+1 < len(n.Content); i += 2 {
-			if n.Content[i].Value == "health" {
-				n.Content[i+1] = healthNode(h)
-				break
-			}
+		if at := pairIndex(&n, "health"); at >= 0 {
+			n.Content[at+1] = healthNode(h)
 		}
 	}
 	return &n, nil
@@ -507,19 +512,20 @@ type ConfigError struct {
 }
 
 func (e *ConfigError) Error() string {
-	return fmt.Sprintf("%s: %s", e.Path, strings.Join(e.Problems, "; "))
+	head := e.Path + ": "
+	if len(e.Problems) == 1 {
+		return head + e.Problems[0]
+	}
+	return head + strings.Join(e.Problems, "; ")
 }
 
-// Load reads and validates a `.oberth.yaml`. The returned error is a
+// Load reads and validates an `oberth.yaml`. The returned error is a
 // *ConfigError listing every validation problem; callers report it and carry
-// on, because an invalid config must never be fatal to a scan.
+// on, because an invalid manifest must never be fatal to a scan.
 func Load(path string) (*Config, error) {
-	// Canonical once, here: Path and Dir are the keys the index is built on,
-	// so a config read through a symlinked path must land under the same key
-	// as the same config found by walking a process's cwd.
-	abs := Canonical(path)
-	if abs == "" {
-		return nil, fmt.Errorf("no config path given")
+	abs, err := manifestPath(path)
+	if err != nil {
+		return nil, err
 	}
 	data, err := os.ReadFile(abs)
 	if err != nil {
@@ -528,73 +534,101 @@ func Load(path string) (*Config, error) {
 	return parse(abs, data)
 }
 
-// Parse validates config bytes as if they had been read from path. It is what
-// a caller rendering a config in memory — `groups.init` writing a curated
+// Parse validates manifest bytes as if they had been read from path. It is what
+// a caller rendering a manifest in memory — `groups.init` writing a curated
 // proposal — checks before putting anything on disk.
 func Parse(path string, data []byte) (*Config, error) {
-	abs := Canonical(path)
-	if abs == "" {
-		return nil, fmt.Errorf("no config path given")
+	abs, err := manifestPath(path)
+	if err != nil {
+		return nil, err
 	}
 	return parse(abs, data)
 }
 
-func parse(abs string, data []byte) (*Config, error) {
-	dir := filepath.Dir(abs)
+// manifestPath canonicalizes once, here: Path and Dir are the keys the index is
+// built on, so a manifest read through a symlinked path lands under the same key
+// as the same manifest found by walking a process's cwd.
+func manifestPath(path string) (string, error) {
+	abs := Canonical(path)
+	if abs == "" {
+		return "", fmt.Errorf("no config path given")
+	}
+	return abs, nil
+}
 
-	var doc yaml.Node
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	if err := decoder.Decode(&doc); err != nil && !errors.Is(err, io.EOF) {
+func parse(abs string, data []byte) (*Config, error) {
+	doc, err := manifestDocument(data)
+	if err != nil {
 		return nil, &ConfigError{Path: abs, Problems: []string{err.Error()}}
 	}
-	// A manifest is one document. Never silently discard trailing service declarations.
-	var extra yaml.Node
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		problem := "expected a single YAML document"
-		if err != nil {
-			problem += ": " + err.Error()
-		}
-		return nil, &ConfigError{Path: abs, Problems: []string{problem}}
-	}
-	if err := rejectRetiredKeys(&doc); err != nil {
+	if err := rejectRetiredKeys(doc); err != nil {
 		return nil, &ConfigError{Path: abs, Problems: []string{err.Error()}}
 	}
 	// Optional strict mode: a key this version does not know is an error
 	// instead of something to ignore. Off by default so an older installed
 	// CLI cannot silently refuse a manifest that only gained fields.
 	if StrictManifest() {
-		if problems := strictProblems(fieldWarnings(&doc)); len(problems) > 0 {
+		if problems := strictProblems(fieldWarnings(doc)); len(problems) > 0 {
 			return nil, &ConfigError{Path: abs, Problems: problems}
 		}
 	}
 
-	cfg := &Config{Path: abs, Dir: dir}
+	cfg := &Config{Path: abs, Dir: filepath.Dir(abs)}
 	if err := doc.Decode(cfg); err != nil {
 		return nil, &ConfigError{Path: abs, Problems: []string{err.Error()}}
 	}
-	cfg.Path, cfg.Dir = abs, dir
+	cfg.Path, cfg.Dir = abs, filepath.Dir(abs)
 	if cfg.Name == "" {
-		cfg.Name = filepath.Base(dir)
+		cfg.Name = filepath.Base(cfg.Dir)
 	}
-
 	if problems := cfg.validate(); len(problems) > 0 {
 		return nil, &ConfigError{Path: abs, Problems: problems}
 	}
 	return cfg, nil
 }
 
-// validate implements the rules from the daemon spec: a usable group name,
-// unique service names, cwd confined to the file's directory, ports in range
-// and an acyclic depends_on graph.
-func (c *Config) validate() []string {
-	var problems []string
+// manifestDocument decodes exactly one YAML document. A trailing document is an
+// error, never silently discarded service declarations.
+func manifestDocument(data []byte) (*yaml.Node, error) {
+	var doc yaml.Node
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	if err := decoder.Decode(&doc); err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	var trailing yaml.Node
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		problem := "expected a single YAML document"
+		if err != nil {
+			problem += ": " + err.Error()
+		}
+		return nil, errors.New(problem)
+	}
+	return &doc, nil
+}
 
+// validate applies the manifest contract: a usable group name, unique names in
+// one namespace, cwd and declared inputs confined to the manifest's directory,
+// ports in range, and an acyclic depends_on graph.
+func (c *Config) validate() []string {
+	problems := c.identityProblems()
+	serviceProblems, services := c.serviceProblems()
+	problems = append(problems, serviceProblems...)
+	machineProblems, machines := c.machineProblems(services)
+	problems = append(problems, machineProblems...)
+	problems = append(problems, c.workspaceProblems(services, machines)...)
+	problems = append(problems, c.dependencyProblems(services)...)
+	sort.Strings(problems)
+	return problems
+}
+
+// identityProblems checks the file's own name and top-level declarations.
+func (c *Config) identityProblems() []string {
+	var problems []string
 	if c.Name == "" {
 		problems = append(problems, "name is empty")
 	} else if i := strings.IndexAny(c.Name, "/\\ \t\n"); i >= 0 {
 		problems = append(problems, fmt.Sprintf("name %q contains %q; names may not contain slashes or whitespace", c.Name, c.Name[i:i+1]))
 	}
-
 	for _, p := range c.Ports {
 		if p < 1 || p > 65535 {
 			problems = append(problems, fmt.Sprintf("ports: %d is out of range 1-65535", p))
@@ -603,8 +637,14 @@ func (c *Config) validate() []string {
 	if n := c.WorktreePorts; n != nil && (*n < 1 || *n > MaxWorktreePorts) {
 		problems = append(problems, fmt.Sprintf("%s: %d is out of range 1-%d", FieldWorktreePorts, *n, MaxWorktreePorts))
 	}
+	return problems
+}
 
-	seen := map[string]bool{}
+// serviceProblems checks every entry, and answers the names it declares so the
+// reference lists can refuse a collision.
+func (c *Config) serviceProblems() ([]string, map[string]bool) {
+	var problems []string
+	seen := make(map[string]bool, len(c.Services))
 	for i, s := range c.Services {
 		where := fmt.Sprintf("services[%d]", i)
 		if s.Name == "" {
@@ -636,18 +676,22 @@ func (c *Config) validate() []string {
 		problems = append(problems, c.readyTimeoutProblems(s, where)...)
 		problems = append(problems, c.refProblems(s, where)...)
 	}
+	return problems, seen
+}
 
-	// `machine:` entries are references to services on this machine, not
-	// members of this project (decision 0010): each says what it is called and
-	// which port it is anchored to.
-	machines := map[string]bool{}
+// machineProblems checks `machine:` references: each is a name and the port it
+// is anchored to, and its name lives in the same namespace as this file's
+// services. They are references, not members: `up` and `down` never touch them.
+func (c *Config) machineProblems(services map[string]bool) ([]string, map[string]bool) {
+	var problems []string
+	machines := make(map[string]bool, len(c.Machine))
 	for i, m := range c.Machine {
 		where := fmt.Sprintf("machine[%d]", i)
 		if m.Name == "" {
 			problems = append(problems, where+": name is empty")
 		} else {
 			where = "machine " + m.Name
-			if seen[m.Name] {
+			if services[m.Name] {
 				problems = append(problems, fmt.Sprintf("%s: %s is already a service in this file", where, m.Name))
 			}
 			if machines[m.Name] {
@@ -662,18 +706,22 @@ func (c *Config) validate() []string {
 			problems = append(problems, fmt.Sprintf("%s: port %d is out of range 1-65535", where, m.Port))
 		}
 	}
+	return problems, machines
+}
 
-	// `workspace:` holds read-only references to services in other checkouts.
-	// Their names live in the same `${<name>.port}` namespace as this file's
-	// services and machine references, so the three may not collide.
-	workspaces := map[string]bool{}
+// workspaceProblems checks read-only references to services in other checkouts.
+// Their names live in the same `${<name>.port}` namespace as this file's
+// services and machine references, so the three may not collide.
+func (c *Config) workspaceProblems(services, machines map[string]bool) []string {
+	var problems []string
+	workspaces := make(map[string]bool, len(c.Workspace))
 	for i, w := range c.Workspace {
 		where := fmt.Sprintf("workspace[%d]", i)
 		if w.Name == "" {
 			problems = append(problems, where+": name is empty")
 		} else {
 			where = "workspace " + w.Name
-			if seen[w.Name] {
+			if services[w.Name] {
 				problems = append(problems, fmt.Sprintf("%s: %s is already a service in this file", where, w.Name))
 			}
 			if machines[w.Name] {
@@ -691,10 +739,16 @@ func (c *Config) validate() []string {
 			problems = append(problems, where+": service is required")
 		}
 	}
+	return problems
+}
 
+// dependencyProblems checks depends_on: every name must be a service in this
+// file, and the graph must not contain a cycle.
+func (c *Config) dependencyProblems(services map[string]bool) []string {
+	var problems []string
 	for _, s := range c.Services {
 		for _, dep := range s.DependsOn {
-			if !seen[dep] {
+			if !services[dep] {
 				problems = append(problems, fmt.Sprintf("service %s: depends_on %q is not a service in this file", s.Name, dep))
 			}
 		}
@@ -702,8 +756,6 @@ func (c *Config) validate() []string {
 	if cycle := c.findCycle(); len(cycle) > 0 {
 		problems = append(problems, "depends_on has a cycle: "+strings.Join(cycle, " -> "))
 	}
-
-	sort.Strings(problems)
 	return problems
 }
 
@@ -830,53 +882,59 @@ func (c *Config) ServiceDir(s Service) string {
 	return filepath.Join(c.Dir, filepath.FromSlash(s.Cwd))
 }
 
-// findCycle returns one depends_on cycle as a readable chain, or nil.
+// findCycle returns one depends_on cycle as a readable chain, or nil. The walk
+// is an explicit stack: Load refuses cycles, so this only has to terminate on a
+// hand-built Config.
 func (c *Config) findCycle() []string {
-	deps := map[string][]string{}
+	deps := make(map[string][]string, len(c.Services))
 	for _, s := range c.Services {
 		deps[s.Name] = append(deps[s.Name], s.DependsOn...)
 	}
 	const (
-		white = 0
-		grey  = 1
-		black = 2
+		unvisited = 0
+		onPath    = 1
+		finished  = 2
 	)
-	color := map[string]int{}
-	var stack []string
-	var walk func(string) []string
-	walk = func(n string) []string {
-		color[n] = grey
-		stack = append(stack, n)
-		for _, d := range deps[n] {
-			switch color[d] {
-			case grey:
-				// Cut the stack down to the repeated node.
-				for i, s := range stack {
-					if s == d {
-						return append(append([]string{}, stack[i:]...), d)
-					}
-				}
-				return []string{d, d}
-			case white:
-				if cyc := walk(d); cyc != nil {
-					return cyc
-				}
-			}
+	type frame struct {
+		name string
+		next int
+	}
+	state := make(map[string]int, len(deps))
+	for _, root := range slices.Sorted(maps.Keys(deps)) {
+		if state[root] != unvisited {
+			continue
 		}
-		stack = stack[:len(stack)-1]
-		color[n] = black
-		return nil
-	}
-	names := make([]string, 0, len(deps))
-	for n := range deps {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	for _, n := range names {
-		if color[n] == white {
-			if cyc := walk(n); cyc != nil {
-				return cyc
+		state[root] = onPath
+		path := []frame{{name: root}}
+		for len(path) > 0 {
+			top := &path[len(path)-1]
+			edges := deps[top.name]
+			if top.next < len(edges) {
+				dep := edges[top.next]
+				top.next++
+				switch state[dep] {
+				case onPath:
+					// Cut the walk down to the repeated name.
+					start := 0
+					for i := range path {
+						if path[i].name == dep {
+							start = i
+							break
+						}
+					}
+					chain := make([]string, 0, len(path)-start+1)
+					for _, step := range path[start:] {
+						chain = append(chain, step.name)
+					}
+					return append(chain, dep)
+				case unvisited:
+					state[dep] = onPath
+					path = append(path, frame{name: dep})
+				}
+				continue
 			}
+			state[top.name] = finished
+			path = path[:len(path)-1]
 		}
 	}
 	return nil
@@ -919,7 +977,7 @@ var retiredKeys = []retiredKey{
 	},
 }
 
-// rejectRetiredKeys fails a config that carries a key this engine no longer
+// rejectRetiredKeys fails a manifest that carries a key this engine no longer
 // accepts, naming the service it was on when it was on one.
 func rejectRetiredKeys(doc *yaml.Node) error {
 	root := documentRoot(doc)
@@ -931,22 +989,17 @@ func rejectRetiredKeys(doc *yaml.Node) error {
 			return retiredKeyError(retired, key, "")
 		}
 	}
-	for i := 0; i+1 < len(root.Content); i += 2 {
-		if root.Content[i].Value != "services" {
+	services := mappingValue(root, "services")
+	if services == nil || services.Kind != yaml.SequenceNode {
+		return nil
+	}
+	for _, service := range services.Content {
+		if service.Kind != yaml.MappingNode {
 			continue
 		}
-		list := root.Content[i+1]
-		if list.Kind != yaml.SequenceNode {
-			continue
-		}
-		for _, item := range list.Content {
-			if item.Kind != yaml.MappingNode {
-				continue
-			}
-			for _, retired := range retiredKeys {
-				if key := firstKeyOf(item, retired.keys); key != "" {
-					return retiredKeyError(retired, key, mappingName(item))
-				}
+		for _, retired := range retiredKeys {
+			if key := firstKeyOf(service, retired.keys); key != "" {
+				return retiredKeyError(retired, key, mappingName(service))
 			}
 		}
 	}
@@ -956,7 +1009,7 @@ func rejectRetiredKeys(doc *yaml.Node) error {
 // firstKeyOf is the first of keys the mapping carries, or "".
 func firstKeyOf(mapping *yaml.Node, keys []string) string {
 	for _, key := range keys {
-		if hasKey(mapping, key) {
+		if mappingValue(mapping, key) != nil {
 			return key
 		}
 	}
@@ -977,20 +1030,10 @@ func retiredKeyError(retired retiredKey, key, service string) error {
 	return fmt.Errorf("%s has %s `%s:` key: %s", where, article, key, retired.story)
 }
 
-func hasKey(mapping *yaml.Node, key string) bool {
-	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		if mapping.Content[i].Value == key {
-			return true
-		}
-	}
-	return false
-}
-
+// mappingName is the `name:` a service mapping declares, or "".
 func mappingName(mapping *yaml.Node) string {
-	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		if mapping.Content[i].Value == "name" {
-			return mapping.Content[i+1].Value
-		}
+	if value := mappingValue(mapping, "name"); value != nil {
+		return value.Value
 	}
 	return ""
 }
