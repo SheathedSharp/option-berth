@@ -127,7 +127,7 @@ func TestResolvePrecedence(t *testing.T) {
 		},
 		{
 			// The project half is the main checkout's name, and the main
-			// checkout's .oberth.yaml names it (step 5A.6).
+			// checkout's .oberth.yaml names it.
 			name:       "a worktree is its own group",
 			port:       nativePort(8100, f.worktree),
 			wantGroup:  "option-berth-cfg@feature-x",

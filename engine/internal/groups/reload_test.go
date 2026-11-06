@@ -17,7 +17,7 @@ func writeConfig(t *testing.T, dir, body string) string {
 }
 
 // TestReloadPicksUpANewFile is the case the daemon's long-lived index cannot
-// handle on its own (contract §18): a project configured after the daemon
+// handle on its own: a project configured after the daemon
 // started becomes a group on the next reload.
 func TestReloadPicksUpANewFile(t *testing.T) {
 	dir := t.TempDir()
