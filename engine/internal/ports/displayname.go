@@ -120,7 +120,10 @@ var (
 	runsScript = runtimeRule{targets: []interpreterRule{moduleTarget, scriptTarget}, opaque: true}
 	// runsTool hands its arguments to the tool that follows the runner verb.
 	runsTool = runtimeRule{targets: []interpreterRule{moduleTarget, runnerTarget}, opaque: true}
-	// runsItself is a runner whose own name still identifies the process.
+	// runsItself preserves the prior rule set, where pipenv/pdm/rye counted as
+	// interpreters but their bare names were still shown. Whether that should
+	// match runsTool is a behavior question, not a naming one; keep it until
+	// there is evidence for either answer.
 	runsItself = runtimeRule{targets: []interpreterRule{moduleTarget, runnerTarget}}
 )
 
@@ -283,8 +286,10 @@ func augmentWithCwd(name, cwd string) string {
 // temp directories say nothing about which project runs there, so the walk
 // goes up past them; a path with no other name has no context to add.
 func projectContextName(cwd string) string {
-	const maxWalk = 6
-	for walk := 0; walk <= maxWalk; walk++ {
+	// Six ancestors plus the cwd itself, the same reach the walk it replaces
+	// had before it gave up.
+	const ancestors = 6
+	for depth := 0; depth <= ancestors; depth++ {
 		base := filepath.Base(cwd)
 		if base == "" || base == "." || base == "/" || base == "\\" {
 			return ""

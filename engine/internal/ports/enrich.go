@@ -414,7 +414,7 @@ func batchEnrichProcessStatsContext(ctx context.Context, pp []ListeningPort) {
 	// second (batched) call. It runs here, on the scan tick, and never on the
 	// 1 s stats tick.
 	if runtime.GOOS == "darwin" {
-		samples = withThreadCounts(ctx, samples, pids)
+		addThreadCounts(ctx, samples, pids)
 		if ctx.Err() != nil {
 			return
 		}
@@ -433,16 +433,15 @@ func nativePIDs(pp []ListeningPort) []int {
 	return uniquePIDs(pids)
 }
 
-// withThreadCounts folds the macOS thread listing into the samples it
+// addThreadCounts folds the macOS thread listing into the samples it
 // describes. A pid the listing did not answer for keeps the zero that means
 // "not reported".
-func withThreadCounts(ctx context.Context, samples map[int]ProcSample, pids []int) map[int]ProcSample {
+func addThreadCounts(ctx context.Context, samples map[int]ProcSample, pids []int) {
 	threads := countThreadsDarwinContext(ctx, pids)
 	for pid, sample := range samples {
 		sample.ThreadCount = threads[pid]
 		samples[pid] = sample
 	}
-	return samples
 }
 
 // applyProcessSamples joins one sample batch to the rows its pids own. Keying
