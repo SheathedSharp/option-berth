@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"runtime"
 	"strconv"
@@ -29,22 +30,21 @@ type container struct {
 	composeWorkingDir string
 }
 
+// portMapping is one published pair from `docker ps`'s Ports column: the port
+// on the host, and the port it forwards to inside the container.
 type portMapping struct {
-	hostPort      int
-	containerPort int
+	hostPort int
+	toPort   int
 }
 
-// EnrichPorts queries Docker for running containers and enriches any ports
-// that match Docker-published host ports. Fails silently if Docker is unavailable.
-//
-// It asks Docker inline, bounded by CLITimeout, which suits a one-shot CLI
-// command. The daemon uses a Watcher instead, so no scan waits on Docker.
+// EnrichPorts marks the rows Docker publishes. It asks Docker inline, bounded
+// by CLITimeout, which suits a one-shot CLI command; the daemon holds a Watcher
+// instead so no scan waits on Docker. A missing or unanswering Docker leaves
+// every row as it was — an absent fact, not a native one.
 func EnrichPorts(pp []ports.ListeningPort) {
-	containers, err := listContainers()
-	if err != nil {
-		return
+	if containers, err := listContainers(); err == nil {
+		enrichFrom(pp, containers)
 	}
-	enrichFrom(pp, containers)
 }
 
 // publishedPorts is the set of host ports these containers publish.
@@ -58,12 +58,12 @@ func publishedPorts(containers []container) map[int]bool {
 	return published
 }
 
-// enrichFrom marks every port a container publishes as Docker's and copies the
-// container's name, image and compose labels onto it. It only reads
-// containers, so a Watcher can hand it the cached list without copying.
+// enrichFrom stamps the rows a container really publishes: the container's
+// identity, image and compose labels. It reads the container list and nothing
+// else, so a Watcher can hand it a cached list and pay no copy.
 //
-// A port the list claims but some other process holds is left alone: see
-// heldByForwarder.
+// A port the list claims while some other process holds it is left alone; that
+// is heldByForwarder's rule and the reason the claim is checked at all.
 func enrichFrom(pp []ports.ListeningPort, containers []container) {
 	if len(containers) == 0 {
 		return
@@ -111,7 +111,7 @@ func stampContainer(row *ports.ListeningPort, found portOwner) {
 	row.DockerComposeService = found.container.composeService
 	row.DockerComposeProject = found.container.composeProject
 	row.DockerComposeWorkingDir = found.container.composeWorkingDir
-	row.DockerContainerPort = found.mapping.containerPort
+	row.DockerContainerPort = found.mapping.toPort
 }
 
 // ContainerStats is what one container is using. Every field is (re)set
@@ -132,11 +132,14 @@ const dockerSocket = "/var/run/docker.sock"
 // them — the current one and the one taken before it — and a percentage is
 // computed from the difference, which is why both counters are kept.
 type apiCPUSample struct {
-	CPUUsage struct {
-		TotalUsage uint64 `json:"total_usage"`
-	} `json:"cpu_usage"`
-	SystemCPUUsage uint64 `json:"system_cpu_usage"`
-	OnlineCPUs     int    `json:"online_cpus"`
+	CPUUsage       apiCPUUsage `json:"cpu_usage"`
+	SystemCPUUsage uint64      `json:"system_cpu_usage"`
+	OnlineCPUs     int         `json:"online_cpus"`
+}
+
+// apiCPUUsage is the container's own CPU counter.
+type apiCPUUsage struct {
+	TotalUsage uint64 `json:"total_usage"`
 }
 
 // apiStatsResponse matches the Docker Engine /containers/{id}/stats response,
@@ -159,12 +162,16 @@ type apiPidsUsage struct {
 	Current int `json:"current"`
 }
 
-// apiInspectState matches the relevant fields from /containers/{id}/json.
-type apiInspectState struct {
-	State struct {
-		Status    string `json:"Status"`
-		StartedAt string `json:"StartedAt"`
-	} `json:"State"`
+// containerState is the two fields of a container's State object this package
+// reports, read from the Docker Engine's /containers/{id}/json.
+type containerState struct {
+	Status    string `json:"Status"`
+	StartedAt string `json:"StartedAt"`
+}
+
+// apiInspectResponse is the part of /containers/{id}/json this package uses.
+type apiInspectResponse struct {
+	State containerState `json:"State"`
 }
 
 // AllContainerStatsAsEntries returns stats for all containers as ports.DockerStatsEntry map.
@@ -285,7 +292,7 @@ func fetchContainerStatsAPI(name string) *ContainerStats {
 	if err != nil {
 		return stats
 	}
-	var inspect apiInspectState
+	var inspect apiInspectResponse
 	if err := json.Unmarshal(described, &inspect); err != nil {
 		return stats
 	}
@@ -295,18 +302,18 @@ func fetchContainerStatsAPI(name string) *ContainerStats {
 }
 
 // dockerAPIGet performs one HTTP/1.0 GET against the Docker socket and returns
-// the response body.
+// the response body. The deadline covers the whole exchange, so a wedged Docker
+// cannot hold a caller past its timeout.
 func dockerAPIGet(endpoint string, timeout time.Duration) ([]byte, error) {
 	conn, err := net.Dial("unix", dockerSocket)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
 		return nil, err
 	}
-	request := "GET " + endpoint + " HTTP/1.0\r\nHost: localhost\r\n\r\n"
-	if _, err := conn.Write([]byte(request)); err != nil {
+	if _, err := fmt.Fprintf(conn, "GET %s HTTP/1.0\r\nHost: localhost\r\n\r\n", endpoint); err != nil {
 		return nil, err
 	}
 	return readHTTPBody(conn)
@@ -335,19 +342,19 @@ func measurements(payload apiStatsResponse) *ContainerStats {
 	return stats
 }
 
-// readHTTPBody reads an HTTP/1.0 response from a connection and returns the body.
+// readHTTPBody reads one HTTP response from conn and returns its body. The
+// status line and headers are parsed rather than skipped so a non-200 answer is
+// reported instead of being decoded as if it were the payload.
 func readHTTPBody(conn net.Conn) ([]byte, error) {
-	reader := bufio.NewReader(conn)
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			return nil, err
-		}
-		if strings.TrimSpace(line) == "" {
-			break
-		}
+	response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		return nil, err
 	}
-	return io.ReadAll(reader)
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("docker API: %s", response.Status)
+	}
+	return io.ReadAll(response.Body)
 }
 
 // statsRowFormat is the `docker stats` template: one tab-separated row per
@@ -604,5 +611,5 @@ func parsePortEntry(entry string) (portMapping, bool) {
 	if err != nil {
 		return portMapping{}, false
 	}
-	return portMapping{hostPort: hostPort, containerPort: containerPort}, true
+	return portMapping{hostPort: hostPort, toPort: containerPort}, true
 }
