@@ -61,6 +61,56 @@ func TestLoadDefaultsNameToDirectory(t *testing.T) {
 	}
 }
 
+// A manifest is one document. An empty file is a valid empty manifest — the
+// directory names the group — while a second document is refused rather than
+// silently dropping the services it declares.
+func TestManifestDocumentEdges(t *testing.T) {
+	dir := mkdir(t, tempTree(t), "edges")
+	path := filepath.Join(dir, ConfigName)
+
+	cfg, err := Parse(path, nil)
+	if err != nil {
+		t.Fatalf("empty manifest: %v", err)
+	}
+	if cfg.Name != "edges" || len(cfg.Services) != 0 {
+		t.Errorf("empty manifest = %+v, want the directory name and no services", cfg)
+	}
+
+	if _, err := Parse(path, []byte("name: a\n---\nname: b\n")); err == nil ||
+		!strings.Contains(err.Error(), "single YAML document") {
+		t.Errorf("trailing document = %v, want the single-document refusal", err)
+	}
+	if _, err := Parse("", nil); err == nil {
+		t.Error("Parse accepted an empty path")
+	}
+	if _, err := Load(""); err == nil {
+		t.Error("Load accepted an empty path")
+	}
+}
+
+// The service decoder owns `port:` and `health:`; a duplicate in either is a
+// manifest error rather than last-one-wins.
+func TestDuplicateServiceKeysAreRefused(t *testing.T) {
+	for _, body := range []string{
+		"name: p\nservices:\n  - name: a\n    port: 1\n    port: 2\n",
+		"name: p\nservices:\n  - name: a\n    health: /x\n    health: /y\n",
+	} {
+		if _, err := Parse("/tmp/p/oberth.yaml", []byte(body)); err == nil ||
+			!strings.Contains(err.Error(), "already defined") {
+			t.Errorf("duplicate key = %v, want a duplicate-key error", err)
+		}
+	}
+}
+
+// A retired key is refused even on a service that declares no name: the
+// refusal must not depend on a `name:` being there to quote.
+func TestRetiredKeyOnAnUnnamedService(t *testing.T) {
+	_, err := Parse("/tmp/p/oberth.yaml", []byte("name: p\nservices:\n  - stop: mysql\n"))
+	if err == nil || !strings.Contains(err.Error(), "has a `stop:` key") {
+		t.Errorf("retired key on an unnamed service = %v", err)
+	}
+}
+
 // `machine:` is how a file says it depends on a service the machine runs — a
 // database started at login, which option-berth never starts or stops (decision
 // 0010). It survives a round trip: an edit through the app must not drop it.

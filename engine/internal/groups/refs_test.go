@@ -39,6 +39,36 @@ func TestExpand(t *testing.T) {
 	}
 }
 
+// The reference vocabulary is closed: only ${port}, ${url}, ${service.port}
+// and ${service.url} are service addresses. ${worktree} is an identity, not a
+// service, and everything else is text.
+func TestReferenceParsingIsAClosedSet(t *testing.T) {
+	for _, tt := range []struct {
+		inner string
+		want  reference
+		ok    bool
+	}{
+		{"port", reference{field: fieldPort}, true},
+		{"url", reference{field: fieldURL}, true},
+		{"api.port", reference{service: "api", field: fieldPort}, true},
+		{"api.url", reference{service: "api", field: fieldURL}, true},
+		{"a.b.url", reference{service: "a.b", field: fieldURL}, true},
+		{"worktree", reference{}, false},
+		{"HOME", reference{}, false},
+		{".port", reference{}, false},
+		{"port.", reference{}, false},
+		{"api.health", reference{}, false},
+	} {
+		got, ok := parseReference(tt.inner)
+		if got != tt.want || ok != tt.ok {
+			t.Errorf("parseReference(%q) = %+v, %v; want %+v, %v", tt.inner, got, ok, tt.want, tt.ok)
+		}
+	}
+	if !isReference("worktree") || isReference("HOME") {
+		t.Error("isReference must accept ${worktree} and refuse ${HOME}")
+	}
+}
+
 func TestWorktreeToken(t *testing.T) {
 	dir := t.TempDir()
 	token := WorktreeToken(dir)
