@@ -18,35 +18,24 @@ import (
 func checkSocketPermissions(ctx context.Context, env *Env) rpc.DoctorCheck {
 	socket := env.SocketPath
 	if env.GOOS == "windows" || strings.HasPrefix(socket, `\\`) {
-		return rpc.DoctorCheck{
-			Status:  StatusSkip,
-			Summary: "named pipe, not a file",
-			Detail: "on Windows the daemon listens on " + daemon.WindowsPipe +
-				", whose DACL grants only this user and SYSTEM when it is bound; there are no file modes to check",
-		}
+		return skip("named pipe, not a file",
+			"on Windows the daemon listens on "+daemon.WindowsPipe+
+				", whose DACL grants only this user and SYSTEM when it is bound; there are no file modes to check")
 	}
 	if socket == "" {
-		return rpc.DoctorCheck{Status: StatusSkip, Summary: "no socket path resolved"}
+		return skip("no socket path resolved", "")
 	}
 
 	info, err := os.Stat(socket)
 	if os.IsNotExist(err) {
 		if env.Daemon(ctx).Reachable {
-			return rpc.DoctorCheck{
-				Status:  StatusFail,
-				Summary: "the daemon answers but its socket is gone",
-				Detail:  socket + " does not exist",
-				Fix:     "oberth daemon restart",
-			}
+			return fail("the daemon answers but its socket is gone",
+				socket+" does not exist", "oberth daemon restart")
 		}
-		return rpc.DoctorCheck{
-			Status:  StatusSkip,
-			Summary: "no socket to check",
-			Detail:  socket + " appears when the daemon starts",
-		}
+		return skip("no socket to check", socket+" appears when the daemon starts")
 	}
 	if err != nil {
-		return rpc.DoctorCheck{Status: StatusFail, Summary: "cannot stat the socket", Detail: err.Error()}
+		return fail("cannot stat the socket", err.Error(), "")
 	}
 
 	var problems []string
@@ -71,16 +60,9 @@ func checkSocketPermissions(ctx context.Context, env *Env) rpc.DoctorCheck {
 	}
 
 	if len(problems) > 0 {
-		return rpc.DoctorCheck{
-			Status:  StatusFail,
-			Summary: "the socket is reachable by other users",
-			Detail:  fmt.Sprintf("%s: %s", socket, strings.Join(problems, "; ")),
-			Fix:     fmt.Sprintf("chmod 700 %s && chmod 600 %s", dir, socket),
-		}
+		return fail("the socket is reachable by other users",
+			fmt.Sprintf("%s: %s", socket, strings.Join(problems, "; ")),
+			fmt.Sprintf("chmod 700 %s && chmod 600 %s", dir, socket))
 	}
-	return rpc.DoctorCheck{
-		Status:  StatusOK,
-		Summary: fmt.Sprintf("socket is %04o and yours", mode),
-		Detail:  socket + dirNote,
-	}
+	return ok(fmt.Sprintf("socket is %04o and yours", mode), socket+dirNote)
 }

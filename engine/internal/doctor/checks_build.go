@@ -9,19 +9,21 @@ import (
 
 func checkDaemonBuildMatches(ctx context.Context, env *Env) rpc.DoctorCheck {
 	info := env.Daemon(ctx)
-	if !info.Reachable {
-		return rpc.DoctorCheck{Status: StatusSkip, Summary: "no daemon build to compare"}
+	switch {
+	case !info.Reachable:
+		return skip("no daemon build to compare", "")
+	case info.StatusErr != nil:
+		return warn("daemon build could not be observed", info.StatusErr.Error(), "oberth daemon status --json")
+	case !knownCommit(env.Commit) || !knownCommit(info.Commit):
+		return warn("build identity is unknown",
+			"a missing or development commit cannot confirm a build match",
+			"oberth version --json; oberth daemon status --json")
+	case env.Commit != info.Commit:
+		return warn("daemon and CLI come from different builds",
+			fmt.Sprintf("daemon commit %s; CLI commit %s", info.Commit, env.Commit),
+			"oberth daemon restart")
 	}
-	if info.StatusErr != nil {
-		return rpc.DoctorCheck{Status: StatusWarn, Summary: "daemon build could not be observed", Detail: info.StatusErr.Error(), Fix: "oberth daemon status --json"}
-	}
-	if !knownCommit(env.Commit) || !knownCommit(info.Commit) {
-		return rpc.DoctorCheck{Status: StatusWarn, Summary: "build identity is unknown", Detail: "a missing or development commit cannot confirm a build match", Fix: "oberth version --json; oberth daemon status --json"}
-	}
-	if env.Commit != info.Commit {
-		return rpc.DoctorCheck{Status: StatusWarn, Summary: "daemon and CLI come from different builds", Detail: fmt.Sprintf("daemon commit %s; CLI commit %s", info.Commit, env.Commit), Fix: "oberth daemon restart"}
-	}
-	return rpc.DoctorCheck{Status: StatusOK, Summary: "daemon and CLI build identities match", Detail: "commit " + env.Commit}
+	return ok("daemon and CLI build identities match", "commit "+env.Commit)
 }
 
 func knownCommit(commit string) bool {
