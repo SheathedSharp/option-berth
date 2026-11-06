@@ -55,7 +55,7 @@ func failHint(code, msg, hint string) error {
 }
 
 // cliError turns a daemon error into one this package can render. It keeps the
-// wire's own stable code (contract §2: clients branch on error.data.code, never
+// wire's own stable code: clients branch on error.data.code, never
 // on the numeric JSON-RPC code) and the hint the daemon attached.
 func cliError(err error) error {
 	if err == nil {

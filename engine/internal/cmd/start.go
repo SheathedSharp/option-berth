@@ -98,7 +98,7 @@ func startRun(cmd *cobra.Command, args []string) error {
 	}
 	// The agent session is detected here, in the process the agent actually
 	// spawned: the daemon's own environment is a service manager's, not an
-	// agent's, so it could never detect this (spec 2 §3).
+	// agent's, so it could never detect this.
 	session, _ := sessions.Capture(cwd, sessions.Options{})
 
 	startSession = session

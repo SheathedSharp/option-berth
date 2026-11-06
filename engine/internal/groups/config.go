@@ -82,8 +82,7 @@ func TargetIn(dir string) string {
 
 // Service is one entry of a config's `services:` list. Description, Icon and
 // Color are user-authored metadata the daemon never infers and never
-// interprets: it carries them onto state.Service so a client can render them
-// (contract §13.1).
+// interprets: it carries them onto state.Service so a client can render them.
 type Service struct {
 	Name string `yaml:"name" jsonschema_description:"Short name, unique in this file."`
 	// Prepare is an optional foreground command run immediately before Cmd.
@@ -336,7 +335,7 @@ type Config struct {
 	Workspace []WorkspaceRef `yaml:"workspace,omitempty" jsonschema_description:"Services in other checkouts, addressable by ${name.port} and ${name.url}. Read-only references: option-berth never starts or stops them."`
 	Ports     []int          `yaml:"ports,omitempty" jsonschema_description:"Extra ports the project claims beyond its services."`
 	// WorktreePorts is how many ports a claim for this project takes when the
-	// caller does not name a count (step 5A.7). Nil means the key is absent
+	// caller does not name a count. Nil means the key is absent
 	// and the claims default applies.
 	WorktreePorts *int `yaml:"worktree_ports,omitempty" jsonschema_description:"How many ports a linked-worktree claim takes by default."`
 
@@ -557,10 +556,7 @@ func parse(abs string, data []byte) (*Config, error) {
 		}
 		return nil, &ConfigError{Path: abs, Problems: []string{problem}}
 	}
-	if err := rejectShareKey(&doc); err != nil {
-		return nil, &ConfigError{Path: abs, Problems: []string{err.Error()}}
-	}
-	if err := rejectStopKey(&doc); err != nil {
+	if err := rejectRetiredKeys(&doc); err != nil {
 		return nil, &ConfigError{Path: abs, Problems: []string{err.Error()}}
 	}
 	// Optional strict mode: a key this version does not know is an error
@@ -886,55 +882,54 @@ func (c *Config) findCycle() []string {
 	return nil
 }
 
-// rejectStopKey fails a config that still carries the old `stop:` key. It was
-// replaced by the top-level `machine:` list (decision 0010): a service the
-// machine owns is a reference to it, not a service of this project — and `up`
-// must not start it either, which is the half the old key got wrong. Ignoring
-// the key would leave the file asserting something the engine no longer does.
-func rejectStopKey(doc *yaml.Node) error {
-	root := documentRoot(doc)
-	if root == nil || root.Kind != yaml.MappingNode {
-		return nil
-	}
-	for i := 0; i+1 < len(root.Content); i += 2 {
-		if root.Content[i].Value != "services" {
-			continue
-		}
-		list := root.Content[i+1]
-		if list.Kind != yaml.SequenceNode {
-			continue
-		}
-		for _, item := range list.Content {
-			if item.Kind != yaml.MappingNode || !hasKey(item, "stop") {
-				continue
-			}
-			where := "a service"
-			if name := mappingName(item); name != "" {
-				where = "service " + name
-			}
-			return fmt.Errorf("%s has a `stop:` key: it was replaced by the top-level `machine:` list "+
-				"(decision 0010). A service the machine owns is a reference now — one entry per service, "+
-				"`- name: mysql` with `port: 3306` — and `up` does not start it either", where)
-		}
-	}
-	return nil
+// A file may name a key this engine used to accept, or one it never will. Both
+// are refused rather than ignored: a key that silently does nothing leaves the
+// author believing it does something.
+//
+// The scan covers the top level and every entry of `services:`, because these
+// keys were accepted in both places and a file written against the old docs has
+// them wherever its author put them.
+
+// retiredKey is one refusal: the keys it covers and what to tell the author.
+type retiredKey struct {
+	keys  []string
+	where string // how a message names the service the key sat on
+	story string // why the key is gone and what replaced it
+	// article is the indefinite article the message uses for the key: "a
+	// `stop:`", "an `expose:`".
+	article string
 }
 
-// shareKeys are the keys a `.oberth.yaml` may not carry, at the top level or on
-// a service. `share:` is the verb; `expose:` is its old name, still refused so
-// a file written against the old docs gets the same answer.
-var shareKeys = []string{"share", "expose"}
+// retiredKeys are the refusals, in the order their messages should be tried.
+var retiredKeys = []retiredKey{
+	{
+		keys:    []string{"stop"},
+		where:   "service",
+		article: "a",
+		story: "it was replaced by the top-level `machine:` list. A service the machine " +
+			"owns is a reference now — one entry per service, `- name: mysql` with " +
+			"`port: 3306` — and `up` does not start it either",
+	},
+	{
+		keys:    []string{"share", "expose"},
+		where:   "service",
+		article: "a",
+		story: "sharing is not configured in " + ConfigName + ". Remote hosts and public " +
+			"sharing are outside what this engine does",
+	},
+}
 
-// rejectShareKey fails a config that carries a `share:` or an `expose:` key.
-// Sharing is not part of `.oberth.yaml`; saying so explicitly is friendlier
-// than ignoring a key the author expects to do something.
-func rejectShareKey(doc *yaml.Node) error {
+// rejectRetiredKeys fails a config that carries a key this engine no longer
+// accepts, naming the service it was on when it was on one.
+func rejectRetiredKeys(doc *yaml.Node) error {
 	root := documentRoot(doc)
 	if root == nil || root.Kind != yaml.MappingNode {
 		return nil
 	}
-	if key := firstShareKey(root); key != "" {
-		return shareKeyError(key, "")
+	for _, retired := range retiredKeys {
+		if key := firstKeyOf(root, retired.keys); key != "" {
+			return retiredKeyError(retired, key, "")
+		}
 	}
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		if root.Content[i].Value != "services" {
@@ -948,34 +943,38 @@ func rejectShareKey(doc *yaml.Node) error {
 			if item.Kind != yaml.MappingNode {
 				continue
 			}
-			if key := firstShareKey(item); key != "" {
-				return shareKeyError(key, mappingName(item))
+			for _, retired := range retiredKeys {
+				if key := firstKeyOf(item, retired.keys); key != "" {
+					return retiredKeyError(retired, key, mappingName(item))
+				}
 			}
 		}
 	}
 	return nil
 }
 
-func firstShareKey(mapping *yaml.Node) string {
-	for _, k := range shareKeys {
-		if hasKey(mapping, k) {
-			return k
+// firstKeyOf is the first of keys the mapping carries, or "".
+func firstKeyOf(mapping *yaml.Node, keys []string) string {
+	for _, key := range keys {
+		if hasKey(mapping, key) {
+			return key
 		}
 	}
 	return ""
 }
 
-func shareKeyError(key, service string) error {
+// retiredKeyError says where the key was and what to do instead. `expose:`
+// takes "an" rather than "a", so the article comes from the refusal.
+func retiredKeyError(retired retiredKey, key, service string) error {
 	where := ConfigName
 	if service != "" {
-		where = "service " + service
+		where = retired.where + " " + service
 	}
-	article := "a"
+	article := retired.article
 	if key == "expose" {
 		article = "an"
 	}
-	return fmt.Errorf("%s has %s `%s:` key: sharing is not configured in %s. "+
-		"A share is created at runtime with `option-berth share`, not in this file", where, article, key, ConfigName)
+	return fmt.Errorf("%s has %s `%s:` key: %s", where, article, key, retired.story)
 }
 
 func hasKey(mapping *yaml.Node, key string) bool {

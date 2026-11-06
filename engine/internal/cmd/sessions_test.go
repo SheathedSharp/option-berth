@@ -9,7 +9,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/sessions"
 )
 
-// `--session current` is spec 2 §3's shorthand: it resolves from this shell's
+// `--session current` is shorthand: it resolves from this shell's
 // own environment, and says so when there is nothing to resolve.
 func TestCurrentSessionResolvesFromTheEnvironment(t *testing.T) {
 	t.Setenv(sessions.EnvSession, "claude-code:abc123")
