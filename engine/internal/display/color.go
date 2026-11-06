@@ -6,51 +6,72 @@ import (
 	"strings"
 )
 
-// ANSI escape codes
-const (
-	reset     = "\033[0m"
-	bold      = "\033[1m"
-	underline = "\033[4m"
-	dim       = "\033[2m"
+// Style is the SGR parameters that turn terminal attributes on: the numbers
+// between ESC[ and m. Painting is the package's only output operation, so a
+// caller cannot emit an attribute it never closed.
+type Style []int
 
-	red     = "\033[31m"
-	green   = "\033[32m"
-	yellow  = "\033[33m"
-	blue    = "\033[34m"
-	magenta = "\033[35m"
-	cyan    = "\033[36m"
-	white   = "\033[37m"
-)
-
-// NoColor tracks whether color output is disabled.
-var NoColor bool
-
-func init() {
-	// Respect NO_COLOR convention (https://no-color.org)
-	if _, ok := os.LookupEnv("NO_COLOR"); ok {
-		NoColor = true
-		return
-	}
-
-	// Detect if stdout is a pipe/not a terminal
-	fi, err := os.Stdout.Stat()
-	if err == nil && (fi.Mode()&os.ModeCharDevice) == 0 {
-		NoColor = true
-		return
-	}
-
-	// Check TERM
-	term := os.Getenv("TERM")
-	if term == "dumb" || term == "" {
-		NoColor = true
-	}
-}
-
-func colorize(s string, codes ...string) string {
-	if NoColor {
+// Paint wraps s in this style. Colour that is off, or a style that names
+// nothing, leaves the text exactly as it was.
+func (st Style) Paint(s string) string {
+	if NoColor || len(st) == 0 {
 		return s
 	}
-	return strings.Join(codes, "") + s + reset
+	params := make([]string, len(st))
+	for i, code := range st {
+		params[i] = strconv.Itoa(code)
+	}
+	return "\033[" + strings.Join(params, ";") + "m" + s + "\033[0m"
+}
+
+// painter is Paint with the style already chosen: it is what each exported name
+// below is.
+func (st Style) painter() func(string) string {
+	return func(s string) string { return st.Paint(s) }
+}
+
+// The named styles this CLI uses. Status keeps to green/yellow/red/dim; the
+// brand pair (Ink, Accent) is separate and never means "healthy".
+var (
+	Bold      = Style{1}.painter()
+	Dim       = Style{2}.painter()
+	Underline = Style{4, 34}.painter()
+	Red       = Style{31}.painter()
+	Green     = Style{32}.painter()
+	Yellow    = Style{33}.painter()
+	Cyan      = Style{36}.painter()
+)
+
+// NoColor turns every style off for the whole process. It is set once at
+// startup from the environment and from what stdout is.
+var NoColor bool
+
+// ColorEnabled decides whether this process paints at all. It is a pure
+// function of its inputs, so every rule is testable without a terminal.
+//
+// NO_COLOR wins whenever it is set, whatever its value (no-color.org); a stdout
+// that is not a character device gets no colour because a pipe is going to a
+// file or another program; and TERM=dumb or an unset TERM means the terminal
+// cannot render it.
+func ColorEnabled(hasNoColorEnv bool, stdoutIsTerminal bool, term string) bool {
+	switch {
+	case hasNoColorEnv:
+		return false
+	case !stdoutIsTerminal:
+		return false
+	case term == "dumb" || term == "":
+		return false
+	}
+	return true
+}
+
+func init() {
+	_, hasNoColor := os.LookupEnv("NO_COLOR")
+	stdoutIsTerminal := false
+	if fi, err := os.Stdout.Stat(); err == nil {
+		stdoutIsTerminal = fi.Mode()&os.ModeCharDevice != 0
+	}
+	NoColor = !ColorEnabled(hasNoColor, stdoutIsTerminal, os.Getenv("TERM"))
 }
 
 // The brand palette, from the client's BerthGeometry.swift. The mark is two
@@ -58,9 +79,6 @@ func colorize(s string, codes ...string) string {
 // berth of its own — in terracotta. Each has a light and a dark form, so a dark
 // terminal gets paper rails and the lightened terracotta, exactly as the
 // client's dark lockup does.
-//
-// None of it is a status colour. Status stays green/yellow/red/dim, and the
-// brand README is explicit that terracotta never means "healthy".
 const (
 	inkRGB        = "#23262B"
 	paperRGB      = "#F8F6F2"
@@ -72,14 +90,40 @@ const (
 	accentSlot, darkAccentSlot = 131, 174
 )
 
-// brandColour picks the SGR parameters for one brand colour from what the
-// terminal advertises. basic is what an eight-colour terminal gets, and may be
-// empty, meaning "leave this alone" — the right answer for the rail, whose
-// ink/paper is best approximated by the terminal's own foreground.
+// The mark's two sequences, resolved once at startup.
+var ink, accent = markSequences(os.Getenv("COLORTERM"), os.Getenv("TERM"), os.Getenv("COLORFGBG"))
+
+// Ink paints in the mark's rail colour, or leaves the text alone when this
+// terminal has no colour near it.
+func Ink(s string) string { return brandPaint(s, ink) }
+
+// Accent paints in the mark's capsule colour.
+func Accent(s string) string { return brandPaint(s, accent) }
+
+func brandPaint(s, sequence string) string {
+	if NoColor || sequence == "" {
+		return s
+	}
+	return sequence + s + "\033[0m"
+}
+
+// markSequences resolves both of the mark's colours from what the terminal
+// advertises, so the pair can be pinned as a unit.
 //
-// Kept a pure function of the environment so every branch is testable without
-// a terminal.
-func brandColour(light, dark string, lightSlot, darkSlot int, basic, colorterm, term, colorfgbg string) string {
+// The two eight-colour fallbacks differ on purpose. The rail's ink/paper is
+// best approximated by the terminal's own foreground, so it is left alone. The
+// accent gets yellow: the basic eight have no terracotta, and xterm's yellow
+// (#AA5500) is the nearest of them to #A8543E — nearer than the red, which in
+// this CLI already means "failed".
+func markSequences(colorterm, term, colorfgbg string) (string, string) {
+	return brandSequence(inkRGB, paperRGB, inkSlot, paperSlot, "", colorterm, term, colorfgbg),
+		brandSequence(accentRGB, darkAccentRGB, accentSlot, darkAccentSlot, "\033[33m", colorterm, term, colorfgbg)
+}
+
+// brandSequence picks the SGR parameters for one brand colour from what the
+// terminal advertises. basic is what an eight-colour terminal gets, and may be
+// empty, meaning "leave this alone".
+func brandSequence(light, dark string, lightSlot, darkSlot int, basic, colorterm, term, colorfgbg string) string {
 	rgb, slot := light, lightSlot
 	if darkBackground(colorfgbg) {
 		rgb, slot = dark, darkSlot
@@ -93,22 +137,6 @@ func brandColour(light, dark string, lightSlot, darkSlot int, basic, colorterm, 
 		return basic
 	}
 }
-
-// markColours resolves both of the mark's colours from what the terminal
-// advertises, so the pair can be pinned as a unit.
-//
-// The two eight-colour fallbacks differ on purpose. The rail's ink/paper is
-// best approximated by the terminal's own foreground, so it is left alone. The
-// accent gets yellow: the basic eight have no terracotta, and xterm's yellow
-// (#AA5500) is the nearest of them to #A8543E — nearer than the red, which in
-// this CLI already means "failed".
-func markColours(colorterm, term, colorfgbg string) (string, string) {
-	return brandColour(inkRGB, paperRGB, inkSlot, paperSlot, "", colorterm, term, colorfgbg),
-		brandColour(accentRGB, darkAccentRGB, accentSlot, darkAccentSlot, yellow, colorterm, term, colorfgbg)
-}
-
-// The mark's two colours, resolved once at startup.
-var ink, accent = markColours(os.Getenv("COLORTERM"), os.Getenv("TERM"), os.Getenv("COLORFGBG"))
 
 func isTruecolor(colorterm string) bool {
 	colorterm = strings.ToLower(strings.TrimSpace(colorterm))
@@ -139,25 +167,3 @@ func sgrRGB(hex string) string {
 	}
 	return channel(1, 3) + ";" + channel(3, 5) + ";" + channel(5, 7)
 }
-
-// brand applies an already-resolved sequence. An empty sequence means this
-// terminal has no colour for it, and the text is left as it is.
-func brand(s, sequence string) string {
-	if NoColor || sequence == "" {
-		return s
-	}
-	return sequence + s + reset
-}
-
-func Bold(s string) string      { return colorize(s, bold) }
-func Dim(s string) string       { return colorize(s, dim) }
-func Ink(s string) string       { return brand(s, ink) }
-func Accent(s string) string    { return brand(s, accent) }
-func Red(s string) string       { return colorize(s, red) }
-func Green(s string) string     { return colorize(s, green) }
-func Yellow(s string) string    { return colorize(s, yellow) }
-func Blue(s string) string      { return colorize(s, blue) }
-func Magenta(s string) string   { return colorize(s, magenta) }
-func Cyan(s string) string      { return colorize(s, cyan) }
-func BoldCyan(s string) string  { return colorize(s, bold, cyan) }
-func Underline(s string) string { return colorize(s, underline, blue) }
