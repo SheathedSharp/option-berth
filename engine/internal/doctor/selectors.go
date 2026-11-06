@@ -24,10 +24,11 @@ func Prefixes() []string {
 
 // UnknownSelectors returns the entries of only that name no check.
 func UnknownSelectors(only []string) []string {
+	ids := IDs()
 	var bad []string
 	for _, entry := range newSelection(only) {
 		one := selection{entry}
-		if !one.selectsAny(IDs()) {
+		if !one.selectsAny(ids) {
 			bad = append(bad, entry)
 		}
 	}

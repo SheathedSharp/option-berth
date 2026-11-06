@@ -122,15 +122,12 @@ type Env struct {
 	ProbeObservation func(context.Context) ports.ProbeResult
 }
 
-// scope records who is able to answer a check.
+// scope records who is able to answer a check. The zero value means either
+// process can answer from what it observes.
 type scope uint8
 
-const (
-	// scopeAny means either process can answer from what it can observe.
-	scopeAny scope = iota
-	// scopeCLI means only the invoking CLI process holds the fact.
-	scopeCLI
-)
+// scopeCLI marks a check only the invoking CLI process holds the fact for.
+const scopeCLI scope = 1
 
 // check is one row of the table: a stable id, who can answer it, and the
 // question itself.
