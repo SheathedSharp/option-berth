@@ -9,50 +9,60 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 )
 
-// `daemon.doctor` exists so the desktop app can diagnose an installation
-// without shelling out to a CLI it may not have found yet. It runs the same
-// list `oberth doctor` runs and returns the same rows; the checks that are about
-// the CLI process come back as `skip` with a detail saying so (contract §8: the
-// handler lives here, and the daemon package never imports this one).
+const doctorMethod = "daemon.doctor"
+
 func init() {
-	daemon.RegisterHandler("daemon.doctor", handleDoctor)
+	daemon.RegisterHandler(doctorMethod, handleDoctor)
 	daemon.RegisterCapability("doctor")
 }
 
+// `daemon.doctor` lets the desktop app diagnose an installation without
+// shelling out to a CLI it may not have found. It runs the same table as
+// `oberth doctor`; rows that describe the invoking process come back as `skip`
+// with a reason. The handler lives here so the daemon package never imports the
+// doctor.
 func handleDoctor(ctx context.Context, req *daemon.Request) (any, error) {
-	var p rpc.DaemonDoctorParams
-	if err := req.Bind(&p); err != nil {
+	var params rpc.DaemonDoctorParams
+	if err := req.Bind(&params); err != nil {
 		return nil, err
 	}
-	if bad := UnknownSelectors(p.Only); len(bad) > 0 {
-		return nil, rpc.NewError(rpc.CodeInvalidParams,
+	if err := doctorParamsProblem(params); err != nil {
+		return nil, err
+	}
+	return Run(ctx, daemonEnv(req.Runtime, params), params.Only), nil
+}
+
+// doctorParamsProblem rejects a request the daemon cannot answer as asked,
+// before any check runs.
+func doctorParamsProblem(params rpc.DaemonDoctorParams) error {
+	if bad := UnknownSelectors(params.Only); len(bad) > 0 {
+		return rpc.NewError(rpc.CodeInvalidParams,
 			"unknown check "+strings.Join(bad, ", "),
 			"known checks: "+strings.Join(append(IDs(), Prefixes()...), ", "))
 	}
-	if p.Project != "" && !filepath.IsAbs(p.Project) {
-		return nil, rpc.NewError(rpc.CodeInvalidParams,
+	if params.Project != "" && !filepath.IsAbs(params.Project) {
+		return rpc.NewError(rpc.CodeInvalidParams,
 			"project must be an absolute path",
 			"the daemon has its own working directory, so a relative path would mean something else here")
 	}
+	return nil
+}
 
-	rt := req.Runtime
-	self := DaemonInfo{
-		Reachable:       true,
-		Local:           true,
-		Version:         rt.Version,
-		ProtocolVersion: rpc.ProtocolVersion,
-		Socket:          rt.Socket,
-		PID:             rt.PID,
-		DBPath:          rt.DBPath(),
-	}
-	env := Env{
+// daemonEnv describes this daemon process from the inside: its own identity,
+// its own paths, and no CLI-only seams.
+func daemonEnv(rt *daemon.Runtime, params rpc.DaemonDoctorParams) Env {
+	self := DaemonInfo{Reachable: true, Local: true, PID: rt.PID}
+	self.Version = rt.Version
+	self.ProtocolVersion = rpc.ProtocolVersion
+	self.Socket = rt.Socket
+	self.DBPath = rt.DBPath()
+	return Env{
 		Mode:       ModeDaemon,
 		Version:    rt.Version,
-		Project:    p.Project,
+		Project:    params.Project,
 		SocketPath: rt.Socket,
 		DBPath:     rt.DBPath(),
 		Daemon:     func(context.Context) DaemonInfo { return self },
 		Docker:     DockerProbe,
 	}
-	return Run(ctx, env, p.Only), nil
 }

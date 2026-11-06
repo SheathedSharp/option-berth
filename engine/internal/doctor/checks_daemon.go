@@ -63,14 +63,20 @@ func checkDaemonProtocol(ctx context.Context, env *Env) rpc.DoctorCheck {
 		fmt.Sprintf("this build speaks %s; majors match", rpc.ProtocolVersion))
 }
 
-func protocolMajor(v string) (int, error) {
-	head, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(v), "v"), ".")
-	return strconv.Atoi(head)
+// protocolMajor returns the leading integer of a protocol version. Only the
+// major has to agree between a daemon and this build.
+func protocolMajor(version string) (int, error) {
+	text := strings.TrimPrefix(strings.TrimSpace(version), "v")
+	if dot := strings.IndexByte(text, '.'); dot >= 0 {
+		text = text[:dot]
+	}
+	return strconv.Atoi(text)
 }
 
 // checkDBOK opens the database the daemon uses and reports its schema version
-// and size. It does not create one: a machine whose daemon has never run has
-// no database yet, which is normal rather than broken.
+// and size. It never creates or migrates one: a machine whose daemon has never
+// run has no database, which is normal, and a diagnosis must not change the
+// patient.
 func checkDBOK(_ context.Context, env *Env) rpc.DoctorCheck {
 	path := env.DBPath
 	if path == "" {
@@ -111,15 +117,18 @@ func checkDBOK(_ context.Context, env *Env) rpc.DoctorCheck {
 	return ok(fmt.Sprintf("schema v%d, %s", version, size), path)
 }
 
+// byteUnits is the ladder humanBytes climbs: bytes, then the binary prefixes.
+var byteUnits = [...]string{"B", "KiB", "MiB", "GiB", "TiB"}
+
 func humanBytes(n int64) string {
-	const unit = 1024
-	if n < unit {
+	if n < 1024 {
 		return fmt.Sprintf("%d B", n)
 	}
-	div, exp := int64(unit), 0
-	for v := n / unit; v >= unit && exp < 3; v /= unit {
-		div *= unit
-		exp++
+	value := float64(n)
+	unit := 0
+	for value >= 1024 && unit < len(byteUnits)-1 {
+		value /= 1024
+		unit++
 	}
-	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGT"[exp])
+	return fmt.Sprintf("%.1f %s", value, byteUnits[unit])
 }
