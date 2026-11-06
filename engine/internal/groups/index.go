@@ -3,7 +3,8 @@ package groups
 import (
 	"fmt"
 	"path/filepath"
-	"sort"
+	"slices"
+	"strings"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
@@ -13,8 +14,8 @@ import (
 // working directory of each Compose project.
 //
 // It is in-memory and rebuilt per command in the CLI's direct-scan path; the
-// daemon keeps one for its lifetime and the store step (1A.4) persists the
-// known roots so a config is remembered across restarts.
+// daemon keeps one for its lifetime and the store step persists the known roots
+// so a config is remembered across restarts.
 type Index struct {
 	configs map[string]*Config // config directory -> config
 	invalid map[string]error   // config path -> parse/validation error
@@ -36,10 +37,15 @@ type Index struct {
 	claimVersion uint64 // changes only when the immutable claim lists are rebuilt
 }
 
+// portClaim is one declaration that a port belongs to a config: the service
+// that declares it, or "" for a top-level `ports:` entry.
 type portClaim struct {
 	cfg     *Config
 	service string
 }
+
+// claimLookup answers whether one candidate config owns a port for a cwd.
+type claimLookup func(port int, cwd string, candidates []portClaim) (portClaim, bool)
 
 // InvalidConfig is one config file that could not be used, reported by
 // `oberth groups` and ignored by the resolver.
@@ -61,8 +67,8 @@ func NewIndex() *Index {
 	}
 }
 
-// Add installs an already parsed, caller-owned declaration. This in-memory
-// API does not claim to have read its file; AddFile is the disk-observing API.
+// Add installs an already parsed, caller-owned declaration. This in-memory API
+// does not claim to have read its file; AddFile is the disk-observing API.
 func (x *Index) Add(cfg *Config) {
 	if cfg == nil || cfg.Dir == "" {
 		return
@@ -130,16 +136,18 @@ func (x *Index) Configs() []*Config {
 		for _, cfg := range x.configs {
 			x.ordered = append(x.ordered, cfg)
 		}
-		sort.Slice(x.ordered, func(i, j int) bool {
-			di, dj := x.ordered[i].Dir, x.ordered[j].Dir
-			if len(di) != len(dj) {
-				return len(di) > len(dj)
+		slices.SortFunc(x.ordered, func(a, b *Config) int {
+			if len(a.Dir) != len(b.Dir) {
+				return len(b.Dir) - len(a.Dir)
 			}
-			return di < dj
+			return strings.Compare(a.Dir, b.Dir)
 		})
 		x.orderedDirty = false
 	}
-	return append([]*Config(nil), x.ordered...)
+	if len(x.ordered) == 0 {
+		return nil
+	}
+	return slices.Clone(x.ordered)
 }
 
 // Invalid returns the files that could not be used, sorted by path.
@@ -148,23 +156,22 @@ func (x *Index) Invalid() []InvalidConfig {
 	for path, err := range x.invalid {
 		out = append(out, InvalidConfig{Path: path, Err: err})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	slices.SortFunc(out, func(a, b InvalidConfig) int { return strings.Compare(a.Path, b.Path) })
 	return out
 }
 
 // MatchPort finds the config that claims a port: one whose `ports:` list
-// contains it, or one of whose services declares it, with the process cwd
-// under the file's directory. The deepest matching config wins.
+// contains it, or one of whose services declares it, with the process cwd under
+// the file's directory. The deepest matching config wins.
 //
 // A port with no cwd is not out of reach. Every platform can read a working
-// directory now (see ports.batchGetCwds), but plenty of individual rows still
-// arrive without one: a Docker container has no cwd of its own, and a process
-// that denies the scanner access keeps its own. Requiring one left every
-// `oberth.yaml` unable to claim the ports it declares — the group existed in
-// the index and no listener ever joined it. When the cwd is missing the
-// question that remains is still answerable: is there exactly one known config
-// claiming this port? One is an answer. Two is a guess, and a guess is worse
-// than no group at all.
+// directory now, but plenty of individual rows still arrive without one: a
+// Docker container has no cwd of its own, and a process that denies the scanner
+// access keeps its own. Requiring one left every `oberth.yaml` unable to claim
+// the ports it declares — the group existed in the index and no listener ever
+// joined it. When the cwd is missing the question that remains is still
+// answerable: is there exactly one known config claiming this port? One is an
+// answer. Two is a guess, and a guess is worse than no group at all.
 func (x *Index) MatchPort(p state.Port) (*Config, string, bool) {
 	return x.matchPort(p, func(_ int, cwd string, candidates []portClaim) (portClaim, bool) {
 		for _, c := range candidates {
@@ -176,8 +183,9 @@ func (x *Index) MatchPort(p state.Port) (*Config, string, bool) {
 	})
 }
 
-// The same claim rule serves standalone calls and a pass's normalized paths.
-func (x *Index) matchPort(p state.Port, lookup func(int, string, []portClaim) (portClaim, bool)) (*Config, string, bool) {
+// matchPort applies the same claim rule to standalone calls and a pass's
+// normalized paths.
+func (x *Index) matchPort(p state.Port, lookup claimLookup) (*Config, string, bool) {
 	candidates := x.claimsForPort(p.Port)
 	cwd := p.Cwd
 	// A container's own cwd is unavailable, but its Compose working directory
@@ -186,16 +194,17 @@ func (x *Index) matchPort(p state.Port, lookup func(int, string, []portClaim) (p
 	if cwd == "" && p.Docker != nil {
 		cwd = x.ComposeDir(p.Docker.ComposeProject)
 	}
-	if cwd != "" {
-		if c, ok := lookup(p.Port, cwd, candidates); ok {
-			return c.cfg, c.service, true
+	if cwd == "" {
+		if len(candidates) != 1 {
+			return nil, "", false
 		}
-		return nil, "", false
-	}
-	if len(candidates) == 1 {
 		return candidates[0].cfg, candidates[0].service, true
 	}
-	return nil, "", false
+	claim, ok := lookup(p.Port, cwd, candidates)
+	if !ok {
+		return nil, "", false
+	}
+	return claim.cfg, claim.service, true
 }
 
 // claimsForPort returns configs declaring port in the same deepest-first order
@@ -206,20 +215,20 @@ func (x *Index) claimsForPort(port int) []portClaim {
 	if x.claimsDirty {
 		x.claimIndex = make(map[int][]portClaim)
 		for _, cfg := range x.Configs() {
-			seen := make(map[int]bool, len(cfg.Services)+len(cfg.Ports))
+			declared := make(map[int]bool, len(cfg.Services)+len(cfg.Ports))
 			for _, svc := range cfg.Services {
-				if svc.Port == 0 || seen[svc.Port] {
+				if svc.Port == 0 || declared[svc.Port] {
 					continue
 				}
-				seen[svc.Port] = true
+				declared[svc.Port] = true
 				x.claimIndex[svc.Port] = append(x.claimIndex[svc.Port], portClaim{cfg: cfg, service: svc.Name})
 			}
-			for _, p := range cfg.Ports {
-				if p == 0 || seen[p] {
+			for _, port := range cfg.Ports {
+				if port == 0 || declared[port] {
 					continue
 				}
-				seen[p] = true
-				x.claimIndex[p] = append(x.claimIndex[p], portClaim{cfg: cfg})
+				declared[port] = true
+				x.claimIndex[port] = append(x.claimIndex[port], portClaim{cfg: cfg})
 			}
 		}
 		x.claimsDirty = false
@@ -245,9 +254,5 @@ func underCanonical(path, dir string) bool {
 	if err != nil {
 		return false
 	}
-	return rel == "." || (rel != ".." && !filepathHasParentPrefix(rel))
-}
-
-func filepathHasParentPrefix(rel string) bool {
-	return len(rel) >= 3 && rel[0] == '.' && rel[1] == '.' && rel[2] == filepath.Separator
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }

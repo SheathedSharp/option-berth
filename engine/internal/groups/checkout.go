@@ -8,22 +8,22 @@ import (
 
 // Checkout is where a directory sits in git.
 //
-// A repository can be checked out in several places at once: its main checkout
-// and any number of linked worktrees (`git worktree add`). Each checkout is a
-// group of its own — `<project>` for the main checkout, `<project>@<worktree>`
-// for a linked one — and all of them share the project name, which only the
-// main checkout decides. A worktree's copy of a committed
-// `oberth.yaml` describes its services, never its name, so a stale copy cannot
-// fold the worktree back into the main checkout's group.
+// One repository can be checked out several times: its main checkout and any
+// number of linked worktrees (`git worktree add`). Each is a group of its own —
+// `<project>` for the main checkout, `<project>@<worktree>` for a linked one —
+// and all of them share the project name, which only the main checkout
+// decides. A worktree's copy of a committed `oberth.yaml` describes its
+// services and never its name, so a stale copy cannot fold the worktree back
+// into the main checkout's group.
 type Checkout struct {
 	// Root is the directory holding the `.git` entry.
 	Root string
 	// Main is the main checkout's root: Root itself unless this is a linked
-	// worktree. A submodule, and a `.git` file nothing can parse, are their
-	// own main checkout.
+	// worktree. A submodule, and a `.git` file nothing can parse, are their own
+	// main checkout.
 	Main string
-	// Worktree is a linked worktree's name, the base name of Root. It is
-	// empty for a main checkout.
+	// Worktree is a linked worktree's name, the base name of Root. It is empty
+	// for a main checkout.
 	Worktree string
 	// head is the HEAD file the checkout's branch is read from, "" when there
 	// is nothing to read.
@@ -41,19 +41,20 @@ func Locate(dir string) (Checkout, bool) {
 }
 
 // locateCanonical walks an already normalized path. Callers outside this
-// package must use Locate; a pass normalizes each distinct input only once.
+// package must use Locate; a resolution pass normalizes each distinct input
+// only once.
 func locateCanonical(cur string) (Checkout, bool) {
 	if cur == "" {
 		return Checkout{}, false
 	}
-	for i := 0; i < maxWalk; i++ {
+	for climbed := 0; climbed < maxWalk; climbed++ {
 		gitPath := filepath.Join(cur, ".git")
 		if info, err := os.Lstat(gitPath); err == nil {
 			return checkoutAt(cur, gitPath, info.Mode().IsRegular()), true
 		}
 		parent := filepath.Dir(cur)
 		if parent == cur {
-			return Checkout{}, false
+			break
 		}
 		cur = parent
 	}
@@ -61,28 +62,33 @@ func locateCanonical(cur string) (Checkout, bool) {
 }
 
 // checkoutAt describes the checkout rooted at root, whose `.git` entry is a
-// directory or, for a linked worktree or a submodule, a file.
+// directory or, for a linked worktree or submodule, a file pointing at the
+// admin directory.
 func checkoutAt(root, gitPath string, isFile bool) Checkout {
 	co := Checkout{Root: root, Main: root}
 	if !isFile {
-		co.head = filepath.Join(gitPath, "HEAD")
+		co.head = headIn(gitPath)
 		return co
 	}
-	target := gitdirTarget(root, gitPath)
-	if target == "" {
+	admin := gitdirTarget(root, gitPath)
+	if admin == "" {
 		return co
 	}
-	co.head = filepath.Join(target, "HEAD")
-	if main := worktreeMain(target); main != "" {
+	co.head = headIn(admin)
+	if main := worktreeMain(admin); main != "" {
 		co.Main = Canonical(main)
 		co.Worktree = filepath.Base(root)
 	}
 	return co
 }
 
-// Branch reads this checkout's HEAD. Equal mtime and length do not prove
-// equal bytes (same-length branch switches and atomic replacement are valid).
-// A group-building pass shares one read per HEAD, but never across passes.
+// headIn is the HEAD file inside a git directory.
+func headIn(gitDir string) string { return filepath.Join(gitDir, "HEAD") }
+
+// Branch reads this checkout's HEAD. Equal mtime and length do not prove equal
+// bytes — same-length branch switches and atomic replacement are both valid —
+// so the file is read. A resolution pass shares one read per HEAD, never across
+// passes.
 func (x *Index) Branch(co Checkout) string {
 	if co.head == "" {
 		return ""
@@ -98,12 +104,12 @@ func (x *Index) Branch(co Checkout) string {
 // A detached HEAD holds a commit id instead, and a ref outside refs/heads is
 // not a branch; both answer "".
 func parseHead(data []byte) string {
-	ref, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "ref:")
-	if !ok {
+	ref, isRef := strings.CutPrefix(strings.TrimSpace(string(data)), "ref:")
+	if !isRef {
 		return ""
 	}
-	branch, ok := strings.CutPrefix(strings.TrimSpace(ref), "refs/heads/")
-	if !ok {
+	branch, isBranch := strings.CutPrefix(strings.TrimSpace(ref), "refs/heads/")
+	if !isBranch {
 		return ""
 	}
 	return branch
@@ -116,9 +122,10 @@ func parseHead(data []byte) string {
 func (x *Index) SetAliases(aliases map[string]string) {
 	x.aliases = make(map[string]string, len(aliases))
 	for root, name := range aliases {
-		if root != "" && name != "" {
-			x.aliases[filepath.Clean(root)] = name
+		if root == "" || name == "" {
+			continue
 		}
+		x.aliases[filepath.Clean(root)] = name
 	}
 }
 
@@ -157,10 +164,10 @@ func (x *Index) CheckoutName(co Checkout) string {
 
 func (r *resolutionPass) checkoutName(co Checkout) string {
 	name := r.projectName(co.Main)
-	if co.Linked() {
-		return name + "@" + co.Worktree
+	if !co.Linked() {
+		return name
 	}
-	return name
+	return name + "@" + co.Worktree
 }
 
 // GroupOf is the group a config's services are published under. A config at a
@@ -175,17 +182,18 @@ func (x *Index) GroupOf(cfg *Config) string {
 }
 
 func (r *resolutionPass) groupOf(cfg *Config) string {
-	co, ok := r.locate(cfg.Dir)
-	if !ok {
+	co, inRepo := r.locate(cfg.Dir)
+	if !inRepo {
 		return cfg.Name
 	}
-	if cfg.Dir == co.Root {
+	switch {
+	case cfg.Dir == co.Root:
 		return r.checkoutName(co)
-	}
-	if co.Linked() {
+	case co.Linked():
 		return cfg.Name + "@" + co.Worktree
+	default:
+		return cfg.Name
 	}
-	return cfg.Name
 }
 
 // NearestFor is Nearest confined to dir's own checkout when that checkout is a
@@ -193,14 +201,15 @@ func (r *resolutionPass) groupOf(cfg *Config) string {
 // `<repo>/.claude/worktrees/<name>`), and an unconfined walk from one of them
 // climbs straight into the main checkout's `oberth.yaml`.
 func (x *Index) NearestFor(dir string) *Config {
-	if co, ok := Locate(dir); ok {
-		cfg := x.Nearest(dir)
-		if cfg == nil || !x.within(cfg, co) {
-			return nil
-		}
-		return cfg
+	co, inRepo := Locate(dir)
+	if !inRepo {
+		return x.Nearest(dir)
 	}
-	return x.Nearest(dir)
+	cfg := x.Nearest(dir)
+	if cfg == nil || !x.within(cfg, co) {
+		return nil
+	}
+	return cfg
 }
 
 // within reports whether cfg may describe something in co: always for a main
@@ -209,27 +218,28 @@ func (x *Index) within(cfg *Config, co Checkout) bool {
 	return !co.Linked() || Under(cfg.Dir, co.Root)
 }
 
-// runGroup is the post-step that keeps a `oberth start` run in its checkout's
+// runGroup is the post-step that keeps an `oberth start` run in its checkout's
 // group. A run records the group its client inferred when it started, and a
-// client knows neither the daemon's aliases nor, if it predates that rule,
-// that a worktree is not its main checkout. So a run group that is the
-// project's own name — with or without the worktree — is the checkout's group
-// under its current name. Any other name was chosen with --group and stays.
+// client knows neither the daemon's aliases nor, if it predates that rule, that
+// a worktree is not its main checkout. So a run group that is the project's own
+// name — with or without the worktree — is the checkout's group under its
+// current name. Any other name was chosen with --group and stays.
 func (r *resolutionPass) runGroup(group string, co Checkout) string {
 	base := r.fileProjectName(co.Main)
-	alias := r.index.aliases[co.Main]
-	if co.Linked() {
-		switch group {
-		case base, base + "@" + co.Worktree:
-			return r.checkoutName(co)
-		}
-		if alias != "" && (group == alias || group == alias+"@"+co.Worktree) {
-			return r.checkoutName(co)
+	if !co.Linked() {
+		if group == base {
+			return r.projectName(co.Main)
 		}
 		return group
 	}
-	if group == base {
-		return r.projectName(co.Main)
+	current := r.checkoutName(co)
+	alias := r.index.aliases[co.Main]
+	switch {
+	case group == base, group == base+"@"+co.Worktree:
+		return current
+	case alias != "" && (group == alias || group == alias+"@"+co.Worktree):
+		return current
+	default:
+		return group
 	}
-	return group
 }
