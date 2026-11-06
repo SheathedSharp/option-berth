@@ -24,23 +24,15 @@ const BrokenSuffix = ".broken-"
 func checkConfigParses(_ context.Context, env *Env) rpc.DoctorCheck {
 	path := env.ConfigPath
 	if path == "" {
-		return rpc.DoctorCheck{Status: StatusSkip, Summary: "no config path resolved"}
+		return skip("no config path resolved", "")
 	}
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return rpc.DoctorCheck{
-			Status:  StatusOK,
-			Summary: "no config file, defaults apply",
-			Detail:  path + " does not exist, which is a valid state",
-			Fix:     "oberth config init writes a commented starter file",
-		}
+		return ok("no config file, defaults apply",
+			path+" does not exist, which is a valid state")
 	}
 	if err != nil {
-		return rpc.DoctorCheck{
-			Status:  StatusFail,
-			Summary: "cannot read the config file",
-			Detail:  err.Error(),
-		}
+		return fail("cannot read the config file", err.Error(), "")
 	}
 
 	src := string(data)
@@ -55,62 +47,37 @@ func checkConfigParses(_ context.Context, env *Env) rpc.DoctorCheck {
 		if marked := caret(src, pos); marked != "" {
 			detail += "\n" + marked
 		}
-		return rpc.DoctorCheck{
-			Status:  StatusFail,
-			Summary: "config.yaml does not parse",
-			Detail:  detail,
-			Fix: fmt.Sprintf("fix %s, or run `oberth doctor --fix` to move it to %s%s<timestamp> and write a fresh template",
-				path, filepath.Base(path), BrokenSuffix),
-			Fixable: true,
-		}
+		return failFixable("config.yaml does not parse", detail,
+			fmt.Sprintf("fix %s, or run `oberth doctor --fix` to move it to %s%s<timestamp> and write a fresh template",
+				path, filepath.Base(path), BrokenSuffix))
 	}
 
 	var cfg config.Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return rpc.DoctorCheck{
-			Status:  StatusWarn,
-			Summary: "config.yaml parses but some settings have the wrong type",
-			Detail:  fmt.Sprintf("%s: %v", path, err),
-			Fix:     "oberth config edit",
-		}
+		return warn("config.yaml parses but some settings have the wrong type",
+			fmt.Sprintf("%s: %v", path, err), "oberth config edit")
 	}
-	return rpc.DoctorCheck{
-		Status:  StatusOK,
-		Summary: "config.yaml parses",
-		Detail:  path,
-	}
+	return ok("config.yaml parses", path)
 }
 
 func checkConfigDirWritable(_ context.Context, env *Env) rpc.DoctorCheck {
 	dir := env.ConfigDir
 	if dir == "" {
-		return rpc.DoctorCheck{Status: StatusSkip, Summary: "no config directory resolved"}
+		return skip("no config directory resolved", "")
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return rpc.DoctorCheck{
-			Status:  StatusFail,
-			Summary: "cannot create the config directory",
-			Detail:  fmt.Sprintf("%s: %v", dir, err),
-			Fix:     "create it yourself, or point HOME somewhere writable",
-		}
+		return fail("cannot create the config directory", fmt.Sprintf("%s: %v", dir, err),
+			"create it yourself, or point HOME somewhere writable")
 	}
 	probe, err := os.CreateTemp(dir, ".doctor-*")
 	if err != nil {
-		return rpc.DoctorCheck{
-			Status:  StatusFail,
-			Summary: "config directory is not writable",
-			Detail:  fmt.Sprintf("%s: %v", dir, err),
-			Fix:     fmt.Sprintf("chmod u+w %s (the daemon writes its log, lock and database here)", dir),
-		}
+		return fail("config directory is not writable", fmt.Sprintf("%s: %v", dir, err),
+			fmt.Sprintf("chmod u+w %s (the daemon writes its log, lock and database here)", dir))
 	}
 	name := probe.Name()
 	probe.Close()
 	os.Remove(name)
-	return rpc.DoctorCheck{
-		Status:  StatusOK,
-		Summary: "config directory is writable",
-		Detail:  dir,
-	}
+	return ok("config directory is writable", dir)
 }
 
 // checkProjectConfig looks for this project's `oberth.yaml`, in the directory
@@ -119,7 +86,7 @@ func checkConfigDirWritable(_ context.Context, env *Env) rpc.DoctorCheck {
 func checkProjectConfig(_ context.Context, env *Env) rpc.DoctorCheck {
 	dir := env.Project
 	if dir == "" {
-		return rpc.DoctorCheck{Status: StatusSkip, Summary: "no project directory"}
+		return skip("no project directory", "")
 	}
 	root := gitRootOf(dir)
 
@@ -143,12 +110,8 @@ func checkProjectConfig(_ context.Context, env *Env) rpc.DoctorCheck {
 	if root == "" {
 		detail += fmt.Sprintf("\n%s is not inside a git repository, so there is no repository root to look at either", dir)
 	}
-	return rpc.DoctorCheck{
-		Status:  StatusWarn,
-		Summary: "no " + groups.ConfigName + " for this project",
-		Detail:  detail,
-		Fix:     "oberth init writes one from what is listening right now",
-	}
+	return warn("no "+groups.ConfigName+" for this project", detail,
+		"oberth init writes one from what is listening right now")
 }
 
 // projectConfigResult reports the config option-berth reads for a project. shadowed
@@ -157,19 +120,14 @@ func checkProjectConfig(_ context.Context, env *Env) rpc.DoctorCheck {
 func projectConfigResult(path string, shadowed []string) rpc.DoctorCheck {
 	cfg, warnings, err := groups.LoadWithWarnings(path)
 	if err != nil {
-		return rpc.DoctorCheck{
-			Status:  StatusFail,
-			Summary: filepath.Base(path) + " does not load",
-			Detail:  err.Error(),
-			Fix:     "edit " + path,
-		}
+		return fail(filepath.Base(path)+" does not load", err.Error(), "edit "+path)
 	}
 	if len(warnings) > 0 {
 		details := make([]string, 0, len(warnings))
 		for _, warning := range warnings {
 			details = append(details, warning.String())
 		}
-		return rpc.DoctorCheck{Status: StatusWarn, Summary: "manifest contains ignored fields", Detail: strings.Join(details, "\n"), Fix: "edit " + path}
+		return warn("manifest contains ignored fields", strings.Join(details, "\n"), "edit "+path)
 	}
 	summary := fmt.Sprintf("group %q, %d %s", cfg.Name, len(cfg.Services),
 		plural(len(cfg.Services), "service"))
@@ -180,27 +138,16 @@ func projectConfigResult(path string, shadowed []string) rpc.DoctorCheck {
 		for _, s := range shadowed {
 			names = append(names, filepath.Base(s))
 		}
-		return rpc.DoctorCheck{
-			Status:  StatusWarn,
-			Summary: fmt.Sprintf("%s, but %s is ignored next to %s", summary, strings.Join(names, " and "), base),
-			Detail:  fmt.Sprintf("option-berth reads %s and ignores %s", path, strings.Join(shadowed, ", ")),
-			Fix:     "move anything you still need into " + base + ", then delete " + strings.Join(names, " and "),
-		}
+		return warn(fmt.Sprintf("%s, but %s is ignored next to %s", summary, strings.Join(names, " and "), base),
+			fmt.Sprintf("option-berth reads %s and ignores %s", path, strings.Join(shadowed, ", ")),
+			"move anything you still need into "+base+", then delete "+strings.Join(names, " and "))
 	}
 	if groups.IsLegacyName(base) {
-		return rpc.DoctorCheck{
-			Status:  StatusWarn,
-			Summary: fmt.Sprintf("%s, under the old name %s", summary, base),
-			Detail:  path + " still works; new projects get " + groups.ConfigName,
-			Fix:     "oberth doctor --fix --only project_config",
-			Fixable: true,
-		}
+		return warnFixable(fmt.Sprintf("%s, under the old name %s", summary, base),
+			path+" still works; new projects get "+groups.ConfigName,
+			"oberth doctor --fix --only project_config")
 	}
-	return rpc.DoctorCheck{
-		Status:  StatusOK,
-		Summary: summary,
-		Detail:  path,
-	}
+	return ok(summary, path)
 }
 
 func plural(n int, word string) string {
