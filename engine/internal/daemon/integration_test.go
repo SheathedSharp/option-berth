@@ -120,7 +120,7 @@ var pipeSeq atomic.Int64
 
 // lockPath is where this env's daemon takes its single-instance lock: beside
 // the socket, or in the config dir when the transport is a named pipe
-// (contract §15).
+// .
 func (e *env) lockPath() string {
 	if runtime.GOOS == "windows" {
 		return filepath.Join(e.home, ".option-berth", "daemon.lock")
@@ -240,7 +240,7 @@ func TestHelloReportsVersionAndCapabilities(t *testing.T) {
 		t.Errorf("socket = %q, want %q", hello.Socket, e.socket)
 	}
 	if hello.BinaryPath == "" {
-		t.Error("binary_path is empty; contract §4 requires it for autostart")
+		t.Error("binary_path is empty; the contract requires it for autostart")
 	}
 	want := map[string]bool{"state": true, rpc.CapabilityStateScope: true, "ports.read": true}
 	for _, cap := range hello.Capabilities {
@@ -435,7 +435,7 @@ func TestDaemonStatusAndStopThroughTheCLI(t *testing.T) {
 	}
 }
 
-// TestAutostart is contract §7's autostart path: no daemon, one Connect, a
+// TestAutostart is the autostart path: no daemon, one Connect, a
 // daemon within 3 s.
 func TestAutostart(t *testing.T) {
 	e := newEnv(t)

@@ -13,10 +13,10 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// The `oberth.yaml` read/write namespace (contract §13.2) plus the reload that
+// The `oberth.yaml` read/write namespace plus the reload that
 // keeps the daemon's long-lived index in step with the disk. `groups.start`
 // lives in internal/daemon/groupstart, because starting a service needs the
-// run registry and this package must not import it (contract §8).
+// run registry and this package must not import it.
 func init() {
 	RegisterHandler("groups.config.get", handleGroupsConfigGet)
 	RegisterHandler("groups.config.set", handleGroupsConfigSet)
@@ -90,7 +90,7 @@ func handleGroupsConfigSet(_ context.Context, req *Request) (any, error) {
 
 	// Index the file the daemon just wrote, then republish: the edit reaches
 	// subscribers as a groups delta before the caller's own next read
-	// (contract §13.2, §38, §44).
+	//.
 	if err := req.Runtime.Scanner.LoadConfig(cfg.Path); err != nil {
 		req.Runtime.Logger.Warn("reloading a config after writing it", "path", cfg.Path, "error", err)
 	}
@@ -197,7 +197,7 @@ func checkConfigPath(path string) error {
 // missing file or service is `not_found`, a name or a port an added or renamed
 // service would take twice is `1011 conflict`, and a file that no longer
 // validates is `1006 invalid_config` with the problems in data.detail
-// (contract §13.2, step 5A.4).
+// .
 func configError(path string, err error) error {
 	var missing *groups.ServiceNotFoundError
 	if errors.As(err, &missing) {

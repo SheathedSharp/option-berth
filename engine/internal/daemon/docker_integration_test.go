@@ -51,7 +51,7 @@ func dockerCalls(calls, verb string) int {
 	return n
 }
 
-// TestAHungDockerDoesNotStallKillOrSnapshot is step 5A.8's regression test.
+// TestAHungDockerDoesNotStallKillOrSnapshot is the regression test.
 // With a Docker whose backend never answers, `docker ps` hangs; the daemon's
 // scans used to wait out the CLI timeout on every call, so a `ports.kill` took
 // over 25 s and the `state.snapshot` calls queued behind it timed out.
@@ -213,7 +213,7 @@ func forwarderCopy(t *testing.T, listener string) string {
 	return bin
 }
 
-// TestAStaleContainerListDoesNotClaimANativePort is step 5A.9's regression
+// TestAStaleContainerListDoesNotClaimANativePort is the regression
 // test (issue #95). Docker answers once, publishing the port as itest-web-1,
 // then wedges, so the watcher keeps serving that list. A native process then
 // takes the port. The row must not carry the container, and `ports.kill` must

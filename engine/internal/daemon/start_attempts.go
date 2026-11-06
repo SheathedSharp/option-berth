@@ -22,7 +22,7 @@ type StartAttempt struct {
 
 // StartAttemptLookup answers with the current attempt for one group+service.
 // The owning package installs it so this package never imports groupstart
-// (contract §8: the daemon must not depend on the package that registers a
+// (the daemon must not depend on the package that registers a
 // handler).
 type StartAttemptLookup func(rt *Runtime, group, service string) (StartAttempt, bool)
 

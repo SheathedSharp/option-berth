@@ -344,7 +344,7 @@ func TestUnknownMethodIsNotFound(t *testing.T) {
 		t.Errorf("error = %+v, want not_found", e)
 	}
 	if e.Data.Hint == "" {
-		t.Error("error carries no hint; contract §2 requires one")
+		t.Error("error carries no hint; the contract requires one")
 	}
 }
 
@@ -375,7 +375,7 @@ func TestSnapshotAndStatus(t *testing.T) {
 		t.Fatalf("snapshot ports = %+v, want one row on 8123", snap.Ports)
 	}
 	if snap.Groups == nil || snap.Sessions == nil {
-		t.Error("a snapshot collection marshalled as null; contract §11.2 requires arrays")
+		t.Error("a snapshot collection marshalled as null; the contract requires arrays")
 	}
 
 	var status rpc.DaemonStatusResult
@@ -666,7 +666,7 @@ func TestOversizeMessageIsRejectedNotFatal(t *testing.T) {
 	}
 }
 
-// TestStreamCancelOnAnUnknownID keeps the contract §1 cancel path honest before
+// TestStreamCancelOnAnUnknownID keeps the cancel path honest before
 // any streaming method exists to use it.
 func TestStreamCancelOnAnUnknownID(t *testing.T) {
 	c := newClient(t)

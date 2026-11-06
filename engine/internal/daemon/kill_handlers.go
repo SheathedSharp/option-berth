@@ -15,7 +15,7 @@ import (
 // The kill namespace. Both methods are thin: they turn wire selectors into
 // killer targets against the daemon's latest snapshot and hand the work to
 // killer.KillPorts, which is the same code path `oberth kill` takes, so the CLI,
-// the app and MCP cannot drift apart (contract §3, §17).
+// the app and MCP cannot drift apart.
 func init() {
 	RegisterHandler("ports.kill", handlePortsKill)
 	RegisterHandler("groups.kill", handleGroupsKill)
@@ -62,7 +62,7 @@ func handlePortsKill(ctx context.Context, req *Request) (any, error) {
 // afterKill rescans and publishes, so the ports that just went away are gone
 // from the very next read and their port_down rows reach the history ring even
 // when nobody is subscribed. Without it the caller's own `oberth list` would
-// still be served from the snapshot taken before the kill (step 1A.7).
+// still be served from the snapshot taken before the kill.
 func afterKill(req *Request, dryRun bool) (state.Snapshot, error) {
 	if dryRun {
 		return state.Snapshot{}, nil
@@ -85,7 +85,7 @@ func afterKill(req *Request, dryRun bool) (state.Snapshot, error) {
 // The scan it asks for is bare. A kill needs the pid and port of what is
 // listening, never a health verdict or a cpu reading, so it does not inherit a
 // subscriber's `include` — the published snapshot carries those forward
-// instead of collecting them again (contract §44). That is the difference
+// instead of collecting them again. That is the difference
 // between a dry run answering in a moment and one waiting out `docker stats`
 // and a round of health probes. Caller cancellation stops observation before
 // selector resolution; it does not cancel publication of a kill already done.
@@ -187,7 +187,7 @@ func bindAddresses(snap state.Snapshot, port int) []string {
 
 // groupTargets resolves a group name against the snapshot. The resolved group
 // is the primary signal; a run's group or id and a Docker Compose project are
-// accepted too, matching what `oberth kill -g` accepts (contract §17).
+// accepted too, matching what `oberth kill -g` accepts.
 func groupTargets(snap state.Snapshot, name string) []killer.Target {
 	return groupTargetsFor(snap, name, nil)
 }
@@ -221,7 +221,7 @@ func inSnapshotGroup(p state.Port, name string) bool {
 	return false
 }
 
-// killEnvelope wraps the killer's rows in the contract §3 mutation result.
+// killEnvelope wraps the killer's rows in the mutation result.
 // affected lists the port key of every row that succeeded, once each; ok is
 // true only when nothing failed.
 func killEnvelope(rows []state.KillResult) rpc.KillEnvelope {
@@ -254,7 +254,7 @@ func killEnvelope(rows []state.KillResult) rpc.KillEnvelope {
 }
 
 // killRPCError maps a killer error onto the contract's numeric error registry,
-// carrying its hint through to error.data.hint (contract §2).
+// carrying its hint through to error.data.hint.
 func killRPCError(err error) error {
 	code := rpc.CodeInternal
 	switch killer.Code(err) {

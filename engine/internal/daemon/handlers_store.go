@@ -12,7 +12,7 @@ import (
 )
 
 // The write paths that live in the database, plus the settings file behind
-// them. The read side of ports.* belongs to step 1A.6 and registers itself.
+// them. The read side of ports.* lives elsewhere and registers itself.
 func init() {
 	RegisterHandler("config.get", handleConfigGet)
 	RegisterHandler("config.set", handleConfigSet)
@@ -79,7 +79,7 @@ func handleConfigPath(_ context.Context, _ *Request) (any, error) {
 // change how the ports the daemon already knows are named and grouped, not
 // which ports exist, so re-running attribution over the last scan's own rows
 // answers the question — and it does so in microseconds instead of behind
-// `lsof`, `ps` and `docker stats` (contract §44). `Republish` wakes the loop,
+// `lsof`, `ps` and `docker stats`. `Republish` wakes the loop,
 // so a real scan follows.
 func republish(rt *Runtime) {
 	if err := rt.Scanner.Republish(); err != nil {

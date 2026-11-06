@@ -16,7 +16,7 @@
 量出 `engine/` 还复制了多少代码：同一相对路径下连续 5 行以上实质相同的代码算一段复制；
 空行、括号行以及 `package` / `import` 行不计，它们在任何 Go 文件里都会相同。
 
-2026-11-06 在 `refactor/engine-store-rewrite`（基于 `main` 的 `d025ddb0`）上对照
+2026-11-06 在 `refactor/engine-daemon-rewrite`（基于 `main` 的 `7aa022e2`）上对照
 sonar `main`（`f4c50506b09502642cfedf3f4f6a3031cf80e9f2`，2026-10-15）的结果：
 
 | 项 | 数量 |
@@ -24,8 +24,8 @@ sonar `main`（`f4c50506b09502642cfedf3f4f6a3031cf80e9f2`，2026-10-15）的结�
 | 与上游同相对路径的 Go 文件 | 314 |
 | 其中逐字节相同 | 11 个文件 / 483 行 |
 | 含复制段的文件 | 168 |
-| 复制段 | 936 |
-| 复制行 | 15,961 |
+| 复制段 | 951 |
+| 复制行 | 15,229 |
 
 `internal/claims`、`internal/display`、`internal/testenv` 与 `internal/store/claims*.go`
 已经归零；`internal/docker` 与 `internal/ports/displayname.go` 只剩结构体字段与表驱动

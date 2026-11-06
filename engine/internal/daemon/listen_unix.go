@@ -52,7 +52,7 @@ func removeStaleSocket(path string) error {
 // BERTH_SOCKET at is created 0700 when it is missing, but an existing one is
 // left exactly as it is: `BERTH_SOCKET=/tmp/x.sock` must neither fail on
 // "chmod /tmp: operation not permitted" nor silently tighten /tmp
-// (contract §21). The socket file is 0600 either way, which is what actually
+// . The socket file is 0600 either way, which is what actually
 // keeps other users out.
 func prepareSocketDir(dir string, ours bool) error {
 	existed := true

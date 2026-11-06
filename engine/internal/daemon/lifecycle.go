@@ -27,7 +27,7 @@ const observationTTL = 30 * time.Second
 // which is the safe direction: an unknown table must not look healthy.
 const observationProbeTimeout = 2 * time.Second
 
-// Runtime is what the daemon hands to extension packages (contract §8). Step
+// Runtime is what the daemon hands to extension packages. Step
 // 1A.1 exposed the scanner, the logger and the process identity and 1A.4 the
 // store; the process table, the port allocator and the spawn function are added
 // by the steps that introduce them.
@@ -44,7 +44,7 @@ type Runtime struct {
 	// history ring and the known `oberth.yaml` roots. Nil when the database
 	// could not be opened; every user of it must cope with that.
 	Store *store.Store
-	// DB is the raw handle contract §8 promises extension packages. It is the
+	// DB is the raw handle an extension package needs. It is the
 	// same connection pool Store uses.
 	DB  *sql.DB
 	srv *Server
@@ -101,7 +101,7 @@ func (r *Runtime) RefreshObservation(ctx context.Context) *rpc.ObservationStatus
 // RunRegistry is the set of processes `oberth start` spawned. The daemon carries
 // it so the group resolver can attribute a listener to the run that owns it
 // (group source `start`); internal/daemon/runsreg installs the implementation
-// from its own OnStart hook, so this package never imports it (contract §8).
+// from its own OnStart hook, so this package never imports it.
 type RunRegistry interface {
 	// Run reports the run that owns a port, matching groups.Registry so the
 	// resolver can take it as-is.
@@ -207,7 +207,7 @@ func registeredCapabilities() []string {
 }
 
 // OnStart registers a callback run once the socket is listening and the
-// runtime is complete, before the first connection is accepted (contract §8).
+// runtime is complete, before the first connection is accepted.
 func OnStart(f func(*Runtime)) {
 	OnStartChecked(func(rt *Runtime) error {
 		f(rt)

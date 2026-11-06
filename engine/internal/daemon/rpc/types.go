@@ -9,7 +9,7 @@ import "encoding/json"
 // Version is the JSON-RPC version string carried by every message.
 const Version = "2.0"
 
-// ProtocolVersion is the daemon protocol version (contract §7). Additive
+// ProtocolVersion is the daemon protocol version. Additive
 // changes bump the minor; a field a client can no longer send or read bumps
 // the major. 2.0.0 withdrew Selector.Key and the host envelope, neither of
 // which any handler read.
@@ -58,7 +58,7 @@ func (m Message) IsRequest() bool { return m.ID != nil && m.Method != "" }
 // IsResponse reports whether the message is a reply (id, no method).
 func (m Message) IsResponse() bool { return m.ID != nil && m.Method == "" }
 
-// Streaming and broadcast notification names (contract §1). Every streaming
+// Streaming and broadcast notification names. Every streaming
 // method replies with a subscription id and then pushes stream.chunk
 // notifications until stream.end; state.subscribe is the exception and keeps
 // its own broadcast names.

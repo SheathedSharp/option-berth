@@ -101,7 +101,7 @@ func tailArgv(lines int, follow bool, paths []string) []string {
 
 // handlePortsLogs is unary with follow:false ({source, lines, truncated}) and
 // streaming with follow:true, where the backlog and everything after it arrive
-// as stream.chunk notifications (contract §1).
+// as stream.chunk notifications.
 func handlePortsLogs(ctx context.Context, req *Request) (any, error) {
 	var p rpc.PortsLogsParams
 	if err := req.Bind(&p); err != nil {

@@ -55,7 +55,7 @@ type Record struct {
 	LogPath   string
 	LogOffset int64
 	// Session is the agent session that asked for this run, or the zero value
-	// when nothing did (spec 2 §3). It travels with the run so every port the
+	// when nothing did. It travels with the run so every port the
 	// run opens can be stamped with it.
 	Session state.Session
 

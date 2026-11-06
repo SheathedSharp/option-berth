@@ -1,6 +1,6 @@
 //go:build integration
 
-// Roadmap step 1A.10's acceptance path: a listener started inside a git
+// The acceptance path: a listener started inside a git
 // checkout is grouped under the repository, on every platform, with no
 // `oberth.yaml` anywhere near it.
 //
@@ -27,7 +27,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// TestCwdGroupsPortsUnderTheGitRoot is the demo for step 1A.10: two listeners
+// TestCwdGroupsPortsUnderTheGitRoot is the demo: two listeners
 // started inside one checkout — one at its root, one in a subdirectory — carry
 // the working directory they were started in, resolve a project_root at the
 // checkout, and land in the same `<repo>` group in the daemon snapshot without

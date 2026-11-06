@@ -10,8 +10,8 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// contractMethods is every method the daemon describes: spec 1's method table,
-// the additions in cross-spec contract §4, and the namespaces spec 3 and the
+// contractMethods is every method the daemon describes: the core table,
+// every namespace another package registers, and the names
 // relay session reserve. It is the whole protocol, not a sample.
 //
 // The direction is checked both ways (below): a method in this list that the
@@ -110,7 +110,7 @@ func TestBuildSchemaHasContractDefinitions(t *testing.T) {
 	for _, name := range []string{"Port", "Group", "Session",
 		"Snapshot", "Delta", "Event", "Error"} {
 		if _, ok := defs[name]; !ok {
-			t.Errorf("definition %q missing (contract §6)", name)
+			t.Errorf("definition %q missing", name)
 		}
 	}
 
@@ -228,7 +228,7 @@ func assertEnum(t *testing.T, raw json.RawMessage, want []string) {
 }
 
 // contractNotifications is every message the daemon pushes without being asked
-// (contract §1). They are half the protocol, and until they were described a
+// . They are half the protocol, and until they were described a
 // client had to hand-write them from prose.
 var contractNotifications = []string{
 	"state.delta", "state.event", "state.changed", "stream.chunk", "stream.end",

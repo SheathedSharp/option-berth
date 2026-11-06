@@ -1,9 +1,9 @@
 // Package groupstart serves `groups.start`: it walks a `oberth.yaml`'s
 // services in dependency order and spawns each one detached, streaming a chunk
-// per service as it goes (contract §1).
+// per service as it goes.
 //
 // It lives outside internal/daemon because starting a service needs the run
-// registry, and the daemon package must not import it (contract §8). Linking
+// registry, and the daemon package must not import it. Linking
 // this package in is what makes `groups.start` exist; internal/cmd does that
 // for the `option-berth` binary.
 package groupstart
@@ -68,7 +68,7 @@ func handleGroupsStart(ctx context.Context, req *daemon.Request) (any, error) {
 	}
 	// The group the services run under is the one the file's ports are
 	// published in: `<project>@<worktree>` for a worktree's copy of a
-	// committed file, never the `name:` the copy carries (step 5A.6).
+	// committed file, never the `name:` the copy carries.
 	group := req.Runtime.Scanner.GroupOf(cfg)
 	plan, err := groups.PlanWith(cfg, groups.PlanOptions{
 		Only:                p.Only,

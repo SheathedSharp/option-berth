@@ -230,7 +230,7 @@ func TestStreamSendFailsAfterCancel(t *testing.T) {
 	}
 }
 
-// TestSubscribeRepliesWithoutWaitingForAScan is contract §22's open follow-up:
+// TestSubscribeRepliesWithoutWaitingForAScan is an open follow-up:
 // `state.subscribe {include: ["stats"]}` used to rescan before replying, so on
 // a machine where collecting stats is slow the first snapshot arrived seconds
 // late. The reply now comes from the cache — stats may be null in it — and the
@@ -282,7 +282,7 @@ func TestSubscribeRepliesWithoutWaitingForAScan(t *testing.T) {
 	if delta.Ports.Added[0].Stats == nil || delta.Ports.Added[0].Stats.CPUPercent != 12.5 {
 		t.Fatalf("first delta carries stats %+v, want the collected ones", delta.Ports.Added[0].Stats)
 	}
-	// Seq semantics (§15) are unchanged: the delta continues from the snapshot
+	// Seq semantics are unchanged: the delta continues from the snapshot
 	// the subscribe reply carried.
 	if delta.Seq != snap.Seq+1 {
 		t.Errorf("delta seq = %d, want the snapshot's %d plus one", delta.Seq, snap.Seq)

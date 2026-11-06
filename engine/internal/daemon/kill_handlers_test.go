@@ -256,7 +256,7 @@ func TestKillResolvesAgainstTheDaemonsOwnScan(t *testing.T) {
 }
 
 // TestKillCostsExactlyOneScan pins the other half: resolving targets rescans
-// once (contract §25) and nothing scans again behind it.
+// once and nothing scans again behind it.
 func TestKillCostsExactlyOneScan(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -294,7 +294,7 @@ func TestGroupsKillReportsAnUnknownGroupAsNotFound(t *testing.T) {
 		t.Fatalf("error = %d/%q, want 1001/not_found", e.Code, e.Data.Code)
 	}
 	if e.Data.Hint == "" {
-		t.Error("hint is empty; contract §2 asks for an actionable one")
+		t.Error("hint is empty; the contract asks for an actionable one")
 	}
 }
 
@@ -379,7 +379,7 @@ func freeTestPort(t *testing.T) int {
 // TestKillRepublishesSoTheNextReadIsFresh: a kill drops the cached scan, so the
 // caller's own next `oberth list` does not still show the port it just freed,
 // and the port_down row reaches the history ring with nobody subscribed
-// (step 1A.7).
+// .
 func TestKillRepublishesSoTheNextReadIsFresh(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -244,7 +244,7 @@ func handleSpawn(ctx context.Context, req *daemon.Request) (any, error) {
 // Spawn starts a detached run, registers it and reaps it. It is the one spawn
 // path the daemon has: `runs.spawn` calls it for a single command and
 // `groups.start` calls it once per service, so a service started from the
-// desktop is attributed exactly like one started from the CLI (contract §4).
+// desktop is attributed exactly like one started from the CLI.
 //
 // The caller has already resolved the group, the name and the working
 // directory; CheckCwd is the home-directory guard.
@@ -362,24 +362,34 @@ func row(rec Record, snap state.Snapshot, portsKnown bool) rpc.RunRecord {
 	return out
 }
 
-// portsOf collects the ports a run owns from the last snapshot.
+// portsOf collects the ports a run owns from the last snapshot. A row belongs
+// to the run when it names the same root pid, or — for a run that has an id —
+// the same run id, which survives a pid the OS recycled.
 func portsOf(rec Record, snap state.Snapshot) []int {
-	out := []int{}
+	ports := []int{}
 	seen := map[int]bool{}
 	for i := range snap.Ports {
-		p := snap.Ports[i]
-		if p.Run == nil {
+		owner := snap.Ports[i].Run
+		if owner == nil || !ownedBy(*owner, rec) {
 			continue
 		}
-		if p.Run.RootPID != rec.PID && (rec.ID == "" || p.Run.ID != rec.ID) {
+		if seen[snap.Ports[i].Port] {
 			continue
 		}
-		if !seen[p.Port] {
-			seen[p.Port] = true
-			out = append(out, p.Port)
-		}
+		seen[snap.Ports[i].Port] = true
+		ports = append(ports, snap.Ports[i].Port)
 	}
-	return out
+	return ports
+}
+
+// ownedBy reports whether a snapshot row's run reference names this record. A
+// row that carries no run id can still be matched by its root pid, which is the
+// only evidence an older caller publishes.
+func ownedBy(ref state.Run, rec Record) bool {
+	if ref.RootPID == rec.PID {
+		return true
+	}
+	return rec.ID != "" && ref.ID == rec.ID
 }
 
 // snapshot reads the daemon's current state without forcing a scan when the
@@ -392,10 +402,27 @@ func snapshot(rt *daemon.Runtime) state.Snapshot {
 	return snap
 }
 
-// checkCwd cleans a client-supplied working directory and enforces the spec's
-// home-directory rule: the daemon refuses to touch anything outside the user's
-// home unless the caller explicitly opts in (daemon spec, "Transport details").
+// checkCwd is the one place that decides which directory the daemon may run a
+// command in. Two rules, in order: the path has to be a real absolute path, and
+// unless the caller opted out it has to be inside the user's home.
+//
+// The home rule exists because the daemon runs as the user: a request that
+// reached it from another account or a compromised client could otherwise ask
+// it to run a command anywhere on the machine.
 func checkCwd(cwd string, allowOutsideHome bool) (string, error) {
+	abs, err := absoluteCwd(cwd)
+	if err != nil {
+		return "", err
+	}
+	if allowOutsideHome {
+		return abs, nil
+	}
+	return withinHome(abs)
+}
+
+// absoluteCwd resolves a client-supplied path to one real absolute directory,
+// using the daemon's own working directory when the caller named none.
+func absoluteCwd(cwd string) (string, error) {
 	if strings.TrimSpace(cwd) == "" {
 		wd, err := os.Getwd()
 		if err != nil {
@@ -408,12 +435,18 @@ func checkCwd(cwd string, allowOutsideHome bool) (string, error) {
 		return "", rpc.NewError(rpc.CodeInvalidParams, "cwd is not a usable path: "+cwd, "")
 	}
 	abs = filepath.Clean(abs)
+	// Resolve the symlinks the path has: two spellings of one directory must
+	// not be able to fail the home check differently.
 	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
 		abs = resolved
 	}
-	if allowOutsideHome {
-		return abs, nil
-	}
+	return abs, nil
+}
+
+// withinHome refuses a directory outside the user's home. A host whose home
+// cannot be resolved is not refused: the rule cannot be applied, and refusing
+// everything would break a legitimate install rather than protect it.
+func withinHome(abs string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		return abs, nil
@@ -421,12 +454,12 @@ func checkCwd(cwd string, allowOutsideHome bool) (string, error) {
 	if resolved, err := filepath.EvalSymlinks(home); err == nil {
 		home = resolved
 	}
-	if !underHome(abs, home) {
-		return "", rpc.NewError(rpc.CodeOutsideHome,
-			fmt.Sprintf("%s is outside %s", abs, home),
-			"pass allow_outside_home: true to start commands outside your home directory")
+	if underHome(abs, home) {
+		return abs, nil
 	}
-	return abs, nil
+	return "", rpc.NewError(rpc.CodeOutsideHome,
+		fmt.Sprintf("%s is outside %s", abs, home),
+		"pass allow_outside_home: true to start commands outside your home directory")
 }
 
 // underHome reports whether path is home or inside it.

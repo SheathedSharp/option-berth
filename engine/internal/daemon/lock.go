@@ -106,7 +106,7 @@ func (l *Lock) Path() string { return l.path }
 // returns. It is what `oberth daemon restart` waits on: a daemon closes its
 // socket well before it releases the lock, so waiting for the socket to stop
 // accepting is not enough — the replacement daemon would start, fail to take
-// the lock, exit "already running", and leave nothing running (contract §21).
+// the lock, exit "already running", and leave nothing running.
 //
 // The lock is taken and immediately released, which is the only honest test
 // that it is free. File existence and its diagnostic PID do not prove lock
