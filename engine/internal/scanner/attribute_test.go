@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
@@ -84,7 +83,7 @@ func TestScanRecordsHistoryFromTheDiff(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	events, err := st.Query(nil, time.Time{}, 0)
+	events, err := st.History(store.HistoryFilter{})
 	if err != nil {
 		t.Fatalf("querying history: %v", err)
 	}

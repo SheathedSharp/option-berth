@@ -94,7 +94,7 @@ func Path() string { return paths.DB() }
 //
 // A file that is not a usable SQLite database is parked as
 // <path>.corrupt-<timestamp> and replaced by a fresh one: Open still succeeds,
-// and ResetHappened says it happened.
+// and Reset says it happened.
 func Open(path string) (*Store, error) { return OpenWith(path, Options{}) }
 
 // OpenReadOnly opens an existing database without running migrations or
@@ -219,35 +219,30 @@ func dsnFor(path string, busy time.Duration) string {
 	)
 }
 
-// prepareFile makes sure the parent directory exists (0700) and that the
-// database file, when it has to be created, is created 0600 rather than with
-// whatever the process umask would give it.
+// prepareFile makes the parent directory (0700) and creates the database file
+// (0600) when it is missing, so the file's permissions do not depend on the
+// process umask. An existing file is left alone — SQLite takes it from there.
 func prepareFile(path string) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("creating %s: %w", dir, err)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("creating the directory for %s: %w", path, err)
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return nil // already there; SQLite takes it from here
-		}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	switch {
+	case errors.Is(err, os.ErrExist):
+		return nil
+	case err != nil:
 		return fmt.Errorf("creating %s: %w", path, err)
 	}
 	// A zero-length file is a valid empty SQLite database.
-	return f.Close()
+	return file.Close()
 }
 
-// moveAside parks an unusable database (and its WAL sidecars) next to itself
-// and returns the new path of the main file.
+// moveAside parks an unusable database — and its WAL sidecars, so the parked
+// set is complete — beside itself, and returns the main file's new path.
 func moveAside(path string) (string, error) {
-	stamp := time.Now().UTC().Format("20060102-150405")
-	target := fmt.Sprintf("%s.corrupt-%s", path, stamp)
-	for i := 1; ; i++ {
-		if _, err := os.Stat(target); errors.Is(err, os.ErrNotExist) {
-			break
-		}
-		target = fmt.Sprintf("%s.corrupt-%s-%d", path, stamp, i)
+	target, err := freeCorruptName(path)
+	if err != nil {
+		return "", err
 	}
 	if err := os.Rename(path, target); err != nil {
 		return "", err
@@ -256,6 +251,23 @@ func moveAside(path string) (string, error) {
 		_ = os.Rename(path+suffix, target+suffix)
 	}
 	return target, nil
+}
+
+// freeCorruptName is a `<path>.corrupt-<stamp>` name that does not exist yet.
+// The counter is only reached when two resets land in the same second.
+func freeCorruptName(path string) (string, error) {
+	stamp := path + ".corrupt-" + time.Now().UTC().Format("20060102-150405")
+	target := stamp
+	for attempt := 1; ; attempt++ {
+		_, err := os.Stat(target)
+		if errors.Is(err, os.ErrNotExist) {
+			return target, nil
+		}
+		if err != nil {
+			return "", err
+		}
+		target = fmt.Sprintf("%s-%d", stamp, attempt)
+	}
 }
 
 // isCorruption reports whether err means "this file is not a database option-berth
@@ -339,17 +351,62 @@ func (s *Store) DBPath() string { return s.path }
 // extensions through Runtime; nothing inside option-berth should reach for it.
 func (s *Store) DB() *sql.DB { return s.db }
 
-// ResetHappened reports whether Open had to throw the previous database away.
-// The daemon calls it right after Open and emits state.event{kind:"db_reset"}.
-func (s *Store) ResetHappened() bool { return s != nil && s.reset != nil }
-
-// Reset returns the details of that reset, or nil if none happened.
+// Reset reports the database Open had to throw away, or nil when none was. The
+// daemon reads it right after Open and reports a db_reset event.
 func (s *Store) Reset() *ResetInfo {
 	if s == nil || s.reset == nil {
 		return nil
 	}
 	cp := *s.reset
 	return &cp
+}
+
+// writeTx is the statement surface a write callback gets: enough to run
+// statements inside the transaction the store opened, and nothing that could
+// commit or roll it back behind the store's back.
+type writeTx interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	Prepare(query string) (*sql.Stmt, error)
+}
+
+// write runs fn inside one transaction under the writer lock, so either every
+// statement fn ran is visible or none is. A failure rolls back and is reported
+// with the step the caller named.
+func (s *Store) write(what string, fn func(writeTx) error) error {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := fn(tx); err != nil {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	return nil
+}
+
+// textColumn reads a one-text-column result into a slice, in the order the
+// caller's query asks for.
+func (s *Store) textColumn(query string, args ...any) ([]string, error) {
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var values []string
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			return nil, err
+		}
+		values = append(values, value)
+	}
+	return values, rows.Err()
 }
 
 // exec runs one write statement with the writer lock held.
