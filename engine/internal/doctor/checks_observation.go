@@ -35,38 +35,18 @@ func checkListenerObservation(ctx context.Context, env *Env) rpc.DoctorCheck {
 	}
 
 	detail := strings.Join(parts, "; ")
-	if cli.State == ports.ObservationBindDenied {
-		return rpc.DoctorCheck{
-			Status:  StatusFail,
-			Summary: "this process cannot bind a local port",
-			Detail:  detail,
-			Fix:     fix,
-		}
-	}
-	if cli.State != ports.ObservationObservable {
-		return rpc.DoctorCheck{
-			Status:  StatusFail,
-			Summary: "this process cannot see its own listener",
-			Detail:  detail,
-			Fix:     fix,
-		}
-	}
-	if daemon != nil && daemon.State != string(ports.ObservationObservable) {
+	switch {
+	case cli.State == ports.ObservationBindDenied:
+		return fail("this process cannot bind a local port", detail, fix)
+	case cli.State != ports.ObservationObservable:
+		return fail("this process cannot see its own listener", detail, fix)
+	case daemon != nil && daemon.State != string(ports.ObservationObservable):
 		if daemon.Hint != "" {
 			fix = daemon.Hint
 		}
-		return rpc.DoctorCheck{
-			Status:  StatusFail,
-			Summary: "the daemon cannot see its own listeners",
-			Detail:  detail,
-			Fix:     fix,
-		}
+		return fail("the daemon cannot see its own listeners", detail, fix)
 	}
-	return rpc.DoctorCheck{
-		Status:  StatusOK,
-		Summary: "this process can see its own listener",
-		Detail:  detail,
-	}
+	return ok("this process can see its own listener", detail)
 }
 
 func observationState(state string) ports.ObservationState {
