@@ -5,47 +5,48 @@ import (
 	"strings"
 )
 
-// resolveProcessName produces a human-readable name for a process from its
-// command line, optionally augmented by its parent's command line and working
-// directory. It is a pure function — all I/O happens upstream in Enrich.
+// resolveProcessName names a process from its command line, with its parent's
+// command line and working directory as supporting evidence. It is pure: every
+// read happens upstream in Enrich.
 //
-// Resolution chain (each step may pass through to the next):
-//  1. .app bundle detection (macOS desktop apps)
-//  2. interpreter-aware basename (python script.py -> "script.py", uvicorn ...)
-//  3. parent-process unwrap when the cmdline is a worker spawned by a known
-//     supervisor (uvicorn --reload, gunicorn, multiprocessing.spawn)
-//  4. cwd augmentation: prepend the project directory when it adds context
-//     (e.g. "main" + cwd "example-org-api" -> "example-org-api/main")
+// Two rules run in order. The name comes from the command line, or from the
+// parent when the child is only a worker of it — a live-reload supervisor
+// leaves the meaningful invocation above. The project context is added after,
+// because it describes the process rather than identifying it.
 func resolveProcessName(cmd, parentCmd, cwd string) string {
 	if cmd == "" {
 		return ""
 	}
-
-	// An .app bundle already names itself completely: the bundle name is the
-	// product. The cwd a desktop app was launched from is usually the user's
-	// home or a support directory, so augmenting it adds noise ("dev/Warp",
-	// "Data/QQ"), not context.
+	// An .app names itself completely, and the directory a desktop app was
+	// launched from is usually the user's home or a support directory: adding
+	// it produces "dev/Warp", not context.
 	if name, ok := appBundleName(cmd); ok {
 		return name
 	}
+	return withProjectContext(namedProcess(cmd, parentCmd), cwd)
+}
 
+// namedProcess is what the command line runs, preferring the parent's
+// invocation when the child only names an interpreter.
+func namedProcess(cmd, parentCmd string) string {
 	name := interpreterAwareBasename(cmd)
-
-	// If the resolved name is opaque (just an interpreter, or empty because
-	// the cmdline was `python -c "..."`), try the parent process. Live-reload
-	// supervisors and multiprocessing workers leave the meaningful invocation
-	// in the parent.
-	if isOpaqueName(name) && parentCmd != "" {
-		if parentName := interpreterAwareBasename(parentCmd); !isOpaqueName(parentName) {
-			name = parentName
-		}
+	if !isOpaqueName(name) || parentCmd == "" {
+		return name
 	}
+	if above := interpreterAwareBasename(parentCmd); !isOpaqueName(above) {
+		return above
+	}
+	return name
+}
 
-	// Always augment with cwd context when it adds information.
-	if cwd != "" {
-		if augmented := augmentWithCwd(name, cwd); augmented != "" {
-			return augmented
-		}
+// withProjectContext prefixes the project's directory name when that says more
+// than the process name alone.
+func withProjectContext(name, cwd string) string {
+	if cwd == "" {
+		return name
+	}
+	if augmented := augmentWithCwd(name, cwd); augmented != "" {
+		return augmented
 	}
 	return name
 }
@@ -79,131 +80,151 @@ func firstTokenBasename(cmd string) string {
 	return filepath.Base(token)
 }
 
-// interpreterAwareBasename extracts a meaningful name from a full command line.
-// Handles .app bundles, scripting interpreters, and inline-code flags.
+// invocation is one command line split into what ran and what it was given.
+type invocation struct {
+	exec string   // basename of argv[0]
+	args []string // argv[1:]
+}
+
+// parseInvocation splits a command line, reporting false when it is empty.
+func parseInvocation(cmd string) (invocation, bool) {
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return invocation{}, false
+	}
+	return invocation{exec: filepath.Base(fields[0]), args: fields[1:]}, true
+}
+
+// inlineCode reports a `python -c …` / `node -e …` invocation, where the next
+// token is source rather than a filename.
+func (inv invocation) inlineCode() bool {
+	return len(inv.args) > 0 && (inv.args[0] == "-c" || inv.args[0] == "-e")
+}
+
+// interpreterRule reads the thing an interpreter actually runs out of its
+// arguments, and reports whether it recognized the shape.
+type interpreterRule func(invocation) (string, bool)
+
+// interpreterRules are tried in order, most specific first. Each one answers
+// only for its own shape, so adding a runtime means adding a rule rather than
+// another branch to one long function.
+var interpreterRules = []interpreterRule{
+	moduleTarget, // python -m foo.bar
+	runnerTarget, // uv run uvicorn …, npx next dev
+	scriptTarget, // python /path/to/script.py
+}
+
+// interpreterAwareBasename extracts a meaningful name from a full command line:
+// an app bundle names itself, an interpreter names what it runs, and anything
+// else is its own basename.
 func interpreterAwareBasename(cmd string) string {
-	// .app bundles: paths may contain spaces (e.g., "Application Support"),
-	// so match before splitting on whitespace.
+	// An .app path may contain spaces ("Application Support"), so it is matched
+	// before the command line is split.
 	if name, ok := appBundleName(cmd); ok {
 		return name
 	}
-
-	parts := strings.Fields(cmd)
-	if len(parts) == 0 {
+	inv, ok := parseInvocation(cmd)
+	if !ok {
 		return ""
 	}
-	exec := parts[0]
-	base := filepath.Base(exec)
-
-	// Inline-code flags: `python -c "from foo import ..."` / `node -e "..."`.
-	// The next token is source code, not a filename — we can't extract a
-	// useful name from it, so return just the interpreter and let the
-	// caller fall back to the parent process.
-	if len(parts) >= 2 && (parts[1] == "-c" || parts[1] == "-e") {
-		return base
+	if !isInterpreter(inv.exec) {
+		return inv.exec
 	}
-
-	if isInterpreter(base) {
-		// `python -m module.path arg`: -m takes a module name; show it.
-		if name := extractModuleArg(parts); name != "" {
+	if inv.inlineCode() {
+		return inv.exec
+	}
+	// java is terminal: its own flags decide the target, and a main class is
+	// not a script file, so the generic rules must not run after it.
+	if inv.exec == "java" {
+		if name, ok := javaTarget(inv); ok {
 			return name
 		}
-		// `uv run uvicorn server:app`, `poetry run gunicorn ...`,
-		// `npx next dev`: skip the runner verb and use the next token.
-		if name := extractRunnerSubcommand(parts); name != "" {
+		return inv.exec
+	}
+	for _, rule := range interpreterRules {
+		if name, ok := rule(inv); ok {
 			return name
 		}
-		// java -cp/-classpath: skip the classpath value, return main class.
-		if base == "java" {
-			if name := extractJavaMainClass(parts); name != "" {
-				return name
-			}
-			return base
-		}
-		// `python /path/to/script.py arg1`: use the script basename.
-		if name := extractScriptArg(parts); name != "" {
-			return name
-		}
-		return base
 	}
-
-	// Generic binary: just use its basename. cwd augmentation (later) will
-	// add project context if available.
-	return base
+	return inv.exec
 }
 
-// extractModuleArg handles `python -m foo.bar` -> "foo.bar".
-func extractModuleArg(parts []string) string {
-	for i := 1; i < len(parts)-1; i++ {
-		if parts[i] == "-m" {
-			return parts[i+1]
+// moduleTarget reads `python -m foo.bar` as "foo.bar". A non-flag argument
+// before -m means the interpreter was given a file, so this rule declines.
+func moduleTarget(inv invocation) (string, bool) {
+	for i, arg := range inv.args {
+		if arg == "-m" && i+1 < len(inv.args) {
+			return inv.args[i+1], true
 		}
-		if !strings.HasPrefix(parts[i], "-") {
-			return ""
+		if !strings.HasPrefix(arg, "-") {
+			return "", false
 		}
 	}
-	return ""
+	return "", false
 }
 
-// extractRunnerSubcommand handles `uv run uvicorn ...`, `poetry run gunicorn ...`,
-// `npx next dev`, etc. Returns the subcommand basename (e.g. "uvicorn").
-func extractRunnerSubcommand(parts []string) string {
-	if len(parts) < 2 {
-		return ""
-	}
-	exec := filepath.Base(parts[0])
-	if exec != "uv" && exec != "poetry" && exec != "npx" && exec != "pipenv" && exec != "pdm" && exec != "rye" {
-		return ""
-	}
-	// Find the first non-flag token after the runner verb.
-	start := 1
-	if exec == "uv" || exec == "poetry" || exec == "pipenv" || exec == "pdm" || exec == "rye" {
-		// These take a verb like "run" before the subcommand.
-		if len(parts) >= 3 && parts[1] == "run" {
-			start = 2
-		}
-	}
-	for i := start; i < len(parts); i++ {
-		if !strings.HasPrefix(parts[i], "-") {
-			return filepath.Base(parts[i])
-		}
-	}
-	return ""
+// packageRunners are the front-ends whose first non-flag argument names the
+// tool they hand off to. `npx next dev` runs next; `uv run uvicorn …` runs
+// uvicorn.
+var packageRunners = map[string]bool{
+	"uv": true, "poetry": true, "npx": true,
+	"pipenv": true, "pdm": true, "rye": true,
 }
 
-// extractScriptArg handles `python /path/script.py` -> "script.py".
-func extractScriptArg(parts []string) string {
-	for _, arg := range parts[1:] {
-		if strings.HasPrefix(arg, "-") {
-			continue
-		}
-		return filepath.Base(arg)
+// runnerTarget reads `npx next dev` and `uv run uvicorn …` as the tool after
+// the runner verb. A runner not in packageRunners declines.
+func runnerTarget(inv invocation) (string, bool) {
+	if !packageRunners[inv.exec] {
+		return "", false
 	}
-	return ""
+	rest := inv.args
+	// These front-ends take a "run" verb before the command; npx takes the
+	// command directly.
+	if len(rest) > 1 && rest[0] == "run" {
+		rest = rest[1:]
+	}
+	for _, arg := range rest {
+		if !strings.HasPrefix(arg, "-") {
+			return filepath.Base(arg), true
+		}
+	}
+	return "", false
+}
+
+// scriptTarget reads `python /path/script.py` as "script.py": the first
+// non-flag argument.
+func scriptTarget(inv invocation) (string, bool) {
+	for _, arg := range inv.args {
+		if !strings.HasPrefix(arg, "-") {
+			return filepath.Base(arg), true
+		}
+	}
+	return "", false
 }
 
 // extractJavaMainClass handles java command lines.
-// Returns the main class for -cp/-classpath/--class-path invocations, the
-// main class for -m/--module (module/Class), the jar basename for -jar,
-// or "" if no target is found.
-func extractJavaMainClass(parts []string) string {
-	for i := 1; i < len(parts); i++ {
+// javaTarget reads what a `java` invocation runs: the jar after -jar, the
+// module after -m/--module (taking `module/Class` to its class), or the main
+// class itself.
+func javaTarget(inv invocation) (string, bool) {
+	parts := inv.args
+	for i := 0; i < len(parts); i++ {
 		arg := parts[i]
 		if arg == "-jar" {
 			if i+1 < len(parts) {
-				return filepath.Base(parts[i+1])
+				return filepath.Base(parts[i+1]), true
 			}
-			return ""
+			return "", false
 		}
 		// -m/--module <module>[/<mainclass>]: the target is the value itself.
 		if arg == "-m" || arg == "--module" {
 			if i+1 < len(parts) {
-				return javaModuleTarget(parts[i+1])
+				return javaModuleTarget(parts[i+1]), true
 			}
-			return ""
+			return "", false
 		}
 		if v, ok := strings.CutPrefix(arg, "--module="); ok {
-			return javaModuleTarget(v)
+			return javaModuleTarget(v), true
 		}
 		// Flags that take a separate value we must skip so it isn't
 		// mistaken for the main class.
@@ -216,9 +237,9 @@ func extractJavaMainClass(parts []string) string {
 			continue
 		}
 		// First non-flag, non-value token is the main class.
-		return arg
+		return arg, true
 	}
-	return ""
+	return "", false
 }
 
 // javaModuleTarget extracts the main class from a `-m` value of the form
@@ -310,16 +331,16 @@ func isOpaqueName(name string) bool {
 	return false
 }
 
-// isNoiseDir reports whether a directory name is a generic build / temp
-// directory that doesn't identify a project (and so should be skipped when
-// augmenting names with cwd context).
-func isNoiseDir(name string) bool {
-	switch name {
-	case "tmp", "temp", "build", "dist", "bin", "out", "target",
-		"release", "debug", "cmd", "src", "pkg",
-		"node_modules", ".bin", ".venv", "venv", "env",
-		"__pycache__", ".cache", ".tox":
-		return true
-	}
-	return false
+// noiseDirs are generic build and temp directory names: seeing one in a
+// working directory says nothing about which project is running there, so cwd
+// augmentation walks past it.
+var noiseDirs = map[string]bool{
+	"tmp": true, "temp": true, "build": true, "dist": true,
+	"bin": true, "out": true, "target": true, "release": true,
+	"debug": true, "cmd": true, "src": true, "pkg": true,
+	"node_modules": true, ".bin": true, ".venv": true, "venv": true,
+	"env": true, "__pycache__": true, ".cache": true, ".tox": true,
 }
+
+// isNoiseDir reports whether a directory name identifies no particular project.
+func isNoiseDir(name string) bool { return noiseDirs[name] }
