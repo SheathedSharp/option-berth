@@ -29,10 +29,14 @@ var refPattern = regexp.MustCompile(`\$\{([^{}$]*)\}`)
 // envKey is what an `env:` key may be: a portable variable name.
 var envKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
+// refField is the address a reference names. It is a closed set: the only
+// values constructed anywhere are fieldPort and fieldURL.
+type refField string
+
 const (
-	refPort     = "port"
-	refURL      = "url"
-	refWorktree = "worktree"
+	fieldPort   refField = "port"
+	fieldURL    refField = "url"
+	refWorktree          = "worktree"
 
 	// worktreeTokenPrefix keeps the token usable as an unquoted SQL identifier,
 	// a filesystem path element and an environment value: a letter first, then
@@ -45,27 +49,25 @@ const (
 // text belongs to) and which of that service's addresses it asks for.
 type reference struct {
 	service string
-	field   string
+	field   refField
 }
 
 // parseReference reads the inside of ${...} as a service address. It answers
 // false for ${worktree} and for every shape this engine does not expand.
 func parseReference(inner string) (reference, bool) {
-	switch inner {
-	case refPort:
-		return reference{field: refPort}, true
-	case refURL:
-		return reference{field: refURL}, true
+	switch field := refField(inner); field {
+	case fieldPort, fieldURL:
+		return reference{field: field}, true
 	}
 	dot := strings.LastIndexByte(inner, '.')
 	if dot <= 0 {
 		return reference{}, false
 	}
-	service, field := inner[:dot], inner[dot+1:]
-	if field != refPort && field != refURL {
-		return reference{}, false
+	switch field := refField(inner[dot+1:]); field {
+	case fieldPort, fieldURL:
+		return reference{service: inner[:dot], field: field}, true
 	}
-	return reference{service: service, field: field}, true
+	return reference{}, false
 }
 
 // URL is what ${url} expands to for a port.
@@ -161,7 +163,7 @@ func Expand(text string, v Values) string {
 		if port == 0 {
 			return match
 		}
-		if ref.field == refURL {
+		if ref.field == fieldURL {
 			return URL(port)
 		}
 		return strconv.Itoa(port)
