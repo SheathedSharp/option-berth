@@ -17,47 +17,56 @@ import (
 // config.yaml.broken-20260906T121314Z. Nothing is ever deleted.
 const BrokenSuffix = ".broken-"
 
-// checkConfigParses reads the user's own config.yaml. A file that does not
-// parse is the one failure here that silently changes what every other command
-// does — config.Load drops the whole file on a syntax error and carries on with
-// defaults — so it fails loudly and points at the exact bracket.
+// checkConfigParses reads the user's own config.yaml. A syntax error here is
+// dangerous precisely because it is quiet: config.Load drops the file and
+// carries on with defaults. The row therefore fails loudly and points at the
+// exact bracket.
 func checkConfigParses(_ context.Context, env *Env) rpc.DoctorCheck {
 	path := env.ConfigPath
 	if path == "" {
 		return skip("no config path resolved", "")
 	}
 	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
+	switch {
+	case os.IsNotExist(err):
 		return ok("no config file, defaults apply",
 			path+" does not exist, which is a valid state")
-	}
-	if err != nil {
+	case err != nil:
 		return fail("cannot read the config file", err.Error(), "")
 	}
+	if row, refused := parseConfig(path, data); refused {
+		return row
+	}
+	return ok("config.yaml parses", path)
+}
 
-	src := string(data)
-	var node yaml.Node
-	if err := yaml.Unmarshal(data, &node); err != nil {
-		pos := parsePosition(src, err)
+// parseConfig separates the two YAML problems a config file can have: text
+// that is not YAML at all (repairable by moving the file aside), and YAML whose
+// shapes do not fit config.Config (a person has to correct it).
+func parseConfig(path string, data []byte) (rpc.DoctorCheck, bool) {
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		source := string(data)
+		pos := parsePosition(source, err)
 		where := path
 		if pos.Line > 0 {
 			where = fmt.Sprintf("%s:%d:%d", path, pos.Line, pos.Col)
 		}
 		detail := fmt.Sprintf("%s: %s", where, yamlMessage(err))
-		if marked := caret(src, pos); marked != "" {
+		if marked := caret(source, pos); marked != "" {
 			detail += "\n" + marked
 		}
-		return failFixable("config.yaml does not parse", detail,
-			fmt.Sprintf("fix %s, or run `oberth doctor --fix` to move it to %s%s<timestamp> and write a fresh template",
-				path, filepath.Base(path), BrokenSuffix))
+		fix := fmt.Sprintf("fix %s, or run `oberth doctor --fix` to move it to %s%s<timestamp> and write a fresh template",
+			path, filepath.Base(path), BrokenSuffix)
+		return failFixable("config.yaml does not parse", detail, fix), true
 	}
 
 	var cfg config.Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return warn("config.yaml parses but some settings have the wrong type",
-			fmt.Sprintf("%s: %v", path, err), "oberth config edit")
+			fmt.Sprintf("%s: %v", path, err), "oberth config edit"), true
 	}
-	return ok("config.yaml parses", path)
+	return rpc.DoctorCheck{}, false
 }
 
 func checkConfigDirWritable(_ context.Context, env *Env) rpc.DoctorCheck {
@@ -74,73 +83,75 @@ func checkConfigDirWritable(_ context.Context, env *Env) rpc.DoctorCheck {
 		return fail("config directory is not writable", fmt.Sprintf("%s: %v", dir, err),
 			fmt.Sprintf("chmod u+w %s (the daemon writes its log, lock and database here)", dir))
 	}
-	name := probe.Name()
 	probe.Close()
-	os.Remove(name)
+	os.Remove(probe.Name())
 	return ok("config directory is writable", dir)
 }
 
-// checkProjectConfig looks for this project's `oberth.yaml`, in the directory
-// the caller named and then at the git root above it — the two places every
-// other command looks.
+// checkProjectConfig looks for this project's manifest, first in the directory
+// the caller named and then at every ancestor up to the git root — the same
+// search every other command performs.
 func checkProjectConfig(_ context.Context, env *Env) rpc.DoctorCheck {
-	dir := env.Project
-	if dir == "" {
+	if env.Project == "" {
 		return skip("no project directory", "")
 	}
-	root := gitRootOf(dir)
+	dirs := projectConfigDirs(env.Project)
+	if files := nearestManifest(dirs); len(files) > 0 {
+		return projectConfigResult(files[0], files[1:])
+	}
+	return missingProjectConfig(env.Project, dirs)
+}
 
-	var looked []string
-	for _, base := range projectConfigDirs(dir) {
-		if base == "" {
-			continue
-		}
-		if present := groups.FilesIn(base); len(present) > 0 {
-			return projectConfigResult(present[0], present[1:])
-		}
-		for _, name := range groups.ConfigNames() {
-			looked = append(looked, filepath.Join(base, name))
-		}
-		if root == dir {
-			break
+// nearestManifest returns the files of the first directory that holds a
+// manifest, or nil when none does.
+func nearestManifest(dirs []string) []string {
+	for _, dir := range dirs {
+		if files := groups.FilesIn(dir); len(files) > 0 {
+			return files
 		}
 	}
+	return nil
+}
 
-	detail := "looked at " + strings.Join(dedupe(looked), ", ")
-	if root == "" {
-		detail += fmt.Sprintf("\n%s is not inside a git repository, so there is no repository root to look at either", dir)
+// missingProjectConfig reports the paths that were looked at, not just the
+// absence, so a person can tell a misspelling from a wrong directory.
+func missingProjectConfig(project string, dirs []string) rpc.DoctorCheck {
+	names := groups.ConfigNames()
+	looked := make([]string, 0, len(dirs)*len(names))
+	for _, dir := range dirs {
+		for _, name := range names {
+			looked = append(looked, filepath.Join(dir, name))
+		}
+	}
+	detail := "looked at " + strings.Join(looked, ", ")
+	if gitRootOf(project) == "" {
+		detail += fmt.Sprintf("\n%s is not inside a git repository, so there is no repository root to look at either", project)
 	}
 	return warn("no "+groups.ConfigName+" for this project", detail,
 		"oberth init writes one from what is listening right now")
 }
 
-// projectConfigResult reports the config option-berth reads for a project. shadowed
-// are the other spellings sitting next to it, which option-berth ignores; a file under
-// the old dotfile name still works, and the check says how to rename it.
+// projectConfigResult reports the manifest option-berth reads for a project.
+// shadowed holds the other spellings sitting next to it, which option-berth
+// ignores; a file under the old dotfile name still works, and the row says how
+// to rename it.
 func projectConfigResult(path string, shadowed []string) rpc.DoctorCheck {
 	cfg, warnings, err := groups.LoadWithWarnings(path)
 	if err != nil {
 		return fail(filepath.Base(path)+" does not load", err.Error(), "edit "+path)
 	}
 	if len(warnings) > 0 {
-		details := make([]string, 0, len(warnings))
-		for _, warning := range warnings {
-			details = append(details, warning.String())
-		}
-		return warn("manifest contains ignored fields", strings.Join(details, "\n"), "edit "+path)
+		return warn("manifest contains ignored fields", joinWarnings(warnings), "edit "+path)
 	}
 	summary := fmt.Sprintf("group %q, %d %s", cfg.Name, len(cfg.Services),
 		plural(len(cfg.Services), "service"))
 	base := filepath.Base(path)
 
 	if len(shadowed) > 0 {
-		names := make([]string, 0, len(shadowed))
-		for _, s := range shadowed {
-			names = append(names, filepath.Base(s))
-		}
-		return warn(fmt.Sprintf("%s, but %s is ignored next to %s", summary, strings.Join(names, " and "), base),
+		ignored := baseNames(shadowed)
+		return warn(fmt.Sprintf("%s, but %s is ignored next to %s", summary, strings.Join(ignored, " and "), base),
 			fmt.Sprintf("option-berth reads %s and ignores %s", path, strings.Join(shadowed, ", ")),
-			"move anything you still need into "+base+", then delete "+strings.Join(names, " and "))
+			"move anything you still need into "+base+", then delete "+strings.Join(ignored, " and "))
 	}
 	if groups.IsLegacyName(base) {
 		return warnFixable(fmt.Sprintf("%s, under the old name %s", summary, base),
@@ -150,50 +161,56 @@ func projectConfigResult(path string, shadowed []string) rpc.DoctorCheck {
 	return ok(summary, path)
 }
 
-func plural(n int, word string) string {
-	if n == 1 {
-		return word
+func joinWarnings(warnings []groups.FieldWarning) string {
+	lines := make([]string, len(warnings))
+	for i, warning := range warnings {
+		lines[i] = warning.String()
 	}
-	return word + "s"
+	return strings.Join(lines, "\n")
 }
 
-func dedupe(in []string) []string {
-	seen := map[string]bool{}
-	out := make([]string, 0, len(in))
-	for _, s := range in {
-		if seen[s] {
-			continue
-		}
-		seen[s] = true
-		out = append(out, s)
+func baseNames(paths []string) []string {
+	out := make([]string, len(paths))
+	for i, path := range paths {
+		out[i] = filepath.Base(path)
 	}
 	return out
 }
 
-// ProjectConfigFiles selects the nearest manifest within this checkout. Repair
-// and diagnosis share the same selection, including nested project directories.
-func ProjectConfigFiles(dir string) []string {
-	for _, base := range projectConfigDirs(dir) {
-		if files := groups.FilesIn(base); len(files) > 0 {
-			return files
-		}
+func plural(n int, singular string) string {
+	switch n {
+	case 1:
+		return singular
+	default:
+		return singular + "s"
 	}
-	return nil
 }
+
+// ProjectConfigFiles selects the nearest manifest within this checkout. Repair
+// and diagnosis share the same search, including nested project directories.
+func ProjectConfigFiles(dir string) []string {
+	return nearestManifest(projectConfigDirs(dir))
+}
+
+// projectConfigDirs lists the directories the manifest search visits, from the
+// project directory up to the git root. Outside a repository it visits only
+// the project directory, because there is no root that bounds the walk.
 func projectConfigDirs(dir string) []string {
-	dir = groups.Canonical(dir)
-	if dir == "" {
+	current := groups.Canonical(dir)
+	if current == "" {
 		return nil
 	}
-	root := gitRootOf(dir)
+	root := gitRootOf(current)
 	var dirs []string
 	for {
-		dirs = append(dirs, dir)
-		parent := filepath.Dir(dir)
-		if root == "" || dir == root || parent == dir {
-			break
+		dirs = append(dirs, current)
+		if root == "" || current == root {
+			return dirs
 		}
-		dir = parent
+		parent := filepath.Dir(current)
+		if parent == current {
+			return dirs
+		}
+		current = parent
 	}
-	return dirs
 }
