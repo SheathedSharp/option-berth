@@ -191,21 +191,13 @@ func processStartWith(pid int, recent func() *parentSnapshot, refresh func() map
 	if snap == nil {
 		return time.Time{}, false
 	}
-	e, ok := snap.entries[pid]
-	if !ok || e.startedAt == "" {
+	facts, ok := snap.entries[pid]
+	if !ok {
 		return time.Time{}, false
 	}
-	// parseStartTime normalizes both the unix raw lstart and the RFC3339 the
-	// Windows CIM query reports.
-	parsed := parseStartTime(e.startedAt)
-	if parsed == "" {
-		return time.Time{}, false
-	}
-	t, err := time.Parse(time.RFC3339, parsed)
-	if err != nil {
-		return time.Time{}, false
-	}
-	return t, true
+	// startTime reads both the unix raw lstart and the RFC3339 the Windows CIM
+	// query reports; one parse, not a format-then-parse round trip.
+	return startTime(facts.startedAt)
 }
 
 // scanParents returns a copy of what the last scan learned, however old.
