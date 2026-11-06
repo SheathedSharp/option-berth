@@ -28,11 +28,11 @@ func (c Claims) ObserveContext(ctx context.Context, keys ...string) (ClaimObserv
 	if err := ctx.Err(); err != nil {
 		return ClaimObservation{}, err
 	}
-	if !c.s.wmu.TryLock() {
+	if !c.store.wmu.TryLock() {
 		return ClaimObservation{}, errors.New("store: claims writer is busy; retry observation")
 	}
-	defer c.s.wmu.Unlock()
-	tx, err := c.s.db.BeginTx(ctx, nil)
+	defer c.store.wmu.Unlock()
+	tx, err := c.store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return ClaimObservation{}, err
 	}
@@ -46,7 +46,7 @@ func (c Claims) ObserveContext(ctx context.Context, keys ...string) (ClaimObserv
 		ordered = append(ordered, key)
 	}
 	sort.Strings(ordered)
-	observation := ClaimObservation{owner: c.s, revision: c.s.claimsRevision}
+	observation := ClaimObservation{owner: c.store, revision: c.store.claimsRevision}
 	for _, key := range ordered {
 		got, err := readObservedClaims(ctx, tx, key)
 		if err != nil {
@@ -69,11 +69,11 @@ func (c Claims) ObserveWorktreeContext(ctx context.Context, project, worktree st
 	if err := ctx.Err(); err != nil {
 		return ClaimObservation{}, err
 	}
-	if !c.s.wmu.TryLock() {
+	if !c.store.wmu.TryLock() {
 		return ClaimObservation{}, errors.New("store: claims writer is busy; retry observation")
 	}
-	defer c.s.wmu.Unlock()
-	tx, err := c.s.db.BeginTx(ctx, nil)
+	defer c.store.wmu.Unlock()
+	tx, err := c.store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return ClaimObservation{}, err
 	}
@@ -84,7 +84,7 @@ func (c Claims) ObserveWorktreeContext(ctx context.Context, project, worktree st
 	if err != nil {
 		return ClaimObservation{}, fmt.Errorf("reading worktree reservations: %w", err)
 	}
-	observation := ClaimObservation{owner: c.s, revision: c.s.claimsRevision}
+	observation := ClaimObservation{owner: c.store, revision: c.store.claimsRevision}
 	for rows.Next() {
 		row, err := decodeClaim(rows.Scan)
 		if err != nil {
@@ -146,10 +146,10 @@ func (c Claims) DeleteObservedContext(ctx context.Context, observation ClaimObse
 	if len(observed) == 0 {
 		return 0, nil
 	}
-	byKey := make(map[string]map[int]claimEncoded)
+	byKey := make(map[string]map[int]claimWrite)
 	ports := make(map[int]bool, len(observed))
 	for _, row := range observed {
-		if row.CreatedAt.IsZero() || row.ExpiresAt.IsZero() {
+		if row.Since.IsZero() || row.Until.IsZero() {
 			return 0, errors.New("store: reservation observation needs both timestamps")
 		}
 		e, err := encodeClaim(row)
@@ -161,7 +161,7 @@ func (c Claims) DeleteObservedContext(ctx context.Context, observation ClaimObse
 		}
 		ports[e.port] = true
 		if byKey[e.key] == nil {
-			byKey[e.key] = make(map[int]claimEncoded)
+			byKey[e.key] = make(map[int]claimWrite)
 		}
 		byKey[e.key][e.port] = e
 	}
@@ -171,14 +171,14 @@ func (c Claims) DeleteObservedContext(ctx context.Context, observation ClaimObse
 	}
 	sort.Strings(keys)
 	// Refuse contention rather than adding an uncancellable mutex wait to down.
-	if !c.s.wmu.TryLock() {
+	if !c.store.wmu.TryLock() {
 		return 0, errors.New("store: reservation release writer is busy; retry after observing")
 	}
-	defer c.s.wmu.Unlock()
-	if observation.owner != c.s || observation.revision != c.s.claimsRevision {
+	defer c.store.wmu.Unlock()
+	if observation.owner != c.store || observation.revision != c.store.claimsRevision {
 		return 0, ErrClaimsChanged
 	}
-	tx, err := c.s.db.BeginTx(ctx, nil)
+	tx, err := c.store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("releasing observed reservations: %w", err)
 	}
@@ -203,14 +203,14 @@ func (c Claims) DeleteObservedContext(ctx context.Context, observation ClaimObse
 		}
 		removed += int(n)
 	}
-	c.s.claimsRevision++
+	c.store.claimsRevision++
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("releasing observed reservations: %w", err)
 	}
 	return removed, nil
 }
 
-func matchingClaims(ctx context.Context, tx *sql.Tx, key string, expected map[int]claimEncoded) error {
+func matchingClaims(ctx context.Context, tx *sql.Tx, key string, expected map[int]claimWrite) error {
 	rows, err := tx.QueryContext(ctx, `SELECT `+claimColumns+` FROM claims WHERE key = ?`, key)
 	if err != nil {
 		return fmt.Errorf("reading observed reservations: %w", err)
@@ -218,9 +218,9 @@ func matchingClaims(ctx context.Context, tx *sql.Tx, key string, expected map[in
 	defer func() { _ = rows.Close() }()
 	count := 0
 	for rows.Next() {
-		var current claimEncoded
+		var current claimWrite
 		if err := rows.Scan(&current.port, &current.key, &current.project, &current.worktree,
-			&current.createdAt, &current.expiresAt); err != nil {
+			&current.since, &current.expiresAt); err != nil {
 			return err
 		}
 		want, ok := expected[current.port]

@@ -5,16 +5,18 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 )
 
-// AcquireServicePort claims the port a `port: auto` service runs on, for the
-// checkout the service's `oberth.yaml` sits in (dir). The claim sits under
-// claims.ServiceKey, so a claimed port is skipped by every other claim and by
-// `ports.next`, and the claim is refreshed
-// every time the service starts.
+// AcquireServicePort books the port a `port: auto` service runs on, for the
+// checkout the service's `oberth.yaml` sits in (dir). The reservation is keyed
+// by that checkout and the service name, so the service gets the same port
+// every time it starts, a sibling checkout never gets it, and every other
+// reservation and `ports.next` step around it. The lease is renewed on every
+// start.
 //
 // It is exported for internal/daemon/groupstart, which starts services but
-// cannot reach the claims book itself.
+// cannot reach the reservations book itself.
 func AcquireServicePort(rt *Runtime, dir, service string) (int, error) {
-	project, worktree := claims.Identity(dir, "", "")
+	project, worktree := claims.Identity(dir)
+	address := claims.Address{Project: project, Worktree: worktree, Service: service}
 
 	// Observe first, then lock. The listener probe is a full scan (lsof, ps and
 	// docker stats) and the slowest thing on this path; holding the daemon-wide
@@ -30,20 +32,15 @@ func AcquireServicePort(rt *Runtime, dir, service string) (int, error) {
 
 	claimsMu.Lock()
 	defer claimsMu.Unlock()
-	m, err := claimsManagerWithListening(rt, listening, narrow)
+	book, err := reservationsBook(rt, listening, narrow)
 	if err != nil {
 		return 0, err
 	}
-	res, err := m.Acquire(claims.Request{
-		Key:      claims.ServiceKey(project, worktree, service),
-		Project:  project,
-		Worktree: worktree,
-		Count:    1,
-	})
+	reserved, err := book.Reserve(address)
 	if err != nil {
-		return 0, claimsError("claiming a port for "+service, err)
+		return 0, claimsError("reserving a port for "+service, err)
 	}
-	return res.Ports[0], nil
+	return reserved.Port, nil
 }
 
 // configForGroup is the oberth.yaml whose services are published under a group

@@ -247,7 +247,7 @@ func killGroupTarget(rt *Runtime, p rpc.GroupsKillParams) (groupStopTarget, erro
 	target := groupStopTarget{group: group, cfg: cfg}
 	if cfg != nil {
 		target.configPath = cfg.Path
-		target.claimProject, target.claimWorktree = claims.Identity(cfg.Dir, "", "")
+		target.claimProject, target.claimWorktree = claims.Identity(cfg.Dir)
 		target.identity, _ = groups.WorktreeIdentityFor(cfg.Dir)
 	}
 	if err := ensureUniqueGroup(rt, group, target.identity); err != nil {
@@ -340,7 +340,7 @@ func targetFromConfig(rt *Runtime, cfg *groups.Config) (groupStopTarget, error) 
 	if err := ensureUniqueGroup(rt, group, identity); err != nil {
 		return groupStopTarget{}, err
 	}
-	project, worktree := claims.Identity(cfg.Dir, "", "")
+	project, worktree := claims.Identity(cfg.Dir)
 	return groupStopTarget{
 		group: group, cfg: cfg, configPath: cfg.Path,
 		claimProject: project, claimWorktree: worktree,
