@@ -635,14 +635,9 @@ func newAddressBook(ctx context.Context, rt *daemon.Runtime, cfg *groups.Config,
 			b.live[rec.Name] = rec.PortHint
 		}
 	}
-	for _, g := range snap.Groups {
-		if g.Name != group {
-			continue
-		}
-		for _, row := range g.Services {
-			if _, known := b.live[row.Name]; !known && row.Running && row.PortActual != nil {
-				b.live[row.Name] = *row.PortActual
-			}
+	for _, row := range groupRows(snap, group) {
+		if _, known := b.live[row.Name]; !known && row.Running && row.PortActual != nil {
+			b.live[row.Name] = *row.PortActual
 		}
 	}
 	if err := ctx.Err(); err != nil {
@@ -761,24 +756,44 @@ func alreadyRunning(ctx context.Context, rt *daemon.Runtime, group string, svc g
 	if err != nil {
 		return "", "", false, err
 	}
+	row, found := serviceRow(snap, group, svc.Name)
+	if !found || !row.Running {
+		return "", "", false, nil
+	}
+	if row.RunID != nil {
+		runID = *row.RunID
+	}
+	if row.PortActual != nil {
+		return fmt.Sprintf("already running on port %d", *row.PortActual), runID, true, nil
+	}
+	return "already running", runID, true, nil
+}
+
+// serviceRow is the one place a snapshot's row for one service is looked up.
+// Every readiness question here is about a single service of a single group, so
+// the two-level scan lives once instead of in each of them.
+func serviceRow(snap state.Snapshot, group, service string) (state.Service, bool) {
 	for _, g := range snap.Groups {
 		if g.Name != group {
 			continue
 		}
 		for _, row := range g.Services {
-			if row.Name != svc.Name || !row.Running {
-				continue
+			if row.Name == service {
+				return row, true
 			}
-			if row.RunID != nil {
-				runID = *row.RunID
-			}
-			if row.PortActual != nil {
-				return fmt.Sprintf("already running on port %d", *row.PortActual), runID, true, nil
-			}
-			return "already running", runID, true, nil
 		}
 	}
-	return "", "", false, nil
+	return state.Service{}, false
+}
+
+// groupRows is every service row one group publishes, in the snapshot's order.
+func groupRows(snap state.Snapshot, group string) []state.Service {
+	for _, g := range snap.Groups {
+		if g.Name == group {
+			return g.Services
+		}
+	}
+	return nil
 }
 
 // waitFor blocks until every dependency is ready, or gives up after
@@ -1036,18 +1051,8 @@ func pendingContext(ctx context.Context, rt *daemon.Runtime, group string, deps 
 // dependent must wait for the same service-level readiness fact that `up
 // --wait` and `status` expose.
 func healthy(snap state.Snapshot, group, service string) bool {
-	for _, g := range snap.Groups {
-		if g.Name != group {
-			continue
-		}
-		for _, row := range g.Services {
-			if row.Name != service {
-				continue
-			}
-			return row.HealthStatus != nil && row.HealthStatus.Status == state.HealthOK
-		}
-	}
-	return false
+	row, found := serviceRow(snap, group, service)
+	return found && row.HealthStatus != nil && row.HealthStatus.Status == state.HealthOK
 }
 
 // liveService checks the run registry directly before consulting the cached
@@ -1060,17 +1065,8 @@ func liveService(rt *daemon.Runtime, snap state.Snapshot, group, service string)
 		reg.Prune()
 		return live.Live(group, service)
 	}
-	for _, g := range snap.Groups {
-		if g.Name != group {
-			continue
-		}
-		for _, row := range g.Services {
-			if row.Name == service {
-				return row.Running
-			}
-		}
-	}
-	return false
+	row, found := serviceRow(snap, group, service)
+	return found && row.Running
 }
 
 // listening checks declared service facts before any raw-listener fallback.
@@ -1080,15 +1076,8 @@ func liveService(rt *daemon.Runtime, snap state.Snapshot, group, service string)
 // Only when the row is absent may an explicitly attributed local listener match.
 // Machine references are not service dependencies in groups.Plan.
 func listening(snap state.Snapshot, group string, dep groups.Service, port int) bool {
-	for _, g := range snap.Groups {
-		if g.Name != group {
-			continue
-		}
-		for _, row := range g.Services {
-			if row.Name == dep.Name {
-				return row.Running && row.PortActual != nil && *row.PortActual > 0
-			}
-		}
+	if row, found := serviceRow(snap, group, dep.Name); found {
+		return row.Running && row.PortActual != nil && *row.PortActual > 0
 	}
 	if port <= 0 || group == "" {
 		return false
