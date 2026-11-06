@@ -46,20 +46,10 @@ func AttributeWith(pp []ports.ListeningPort, runs Registry, index *Index) ([]sta
 	for i := range pp {
 		index.AddComposeProject(pp[i].DockerComposeProject, pp[i].DockerComposeWorkingDir)
 	}
+
 	// One pass owns path observations, including shared ancestors. Nothing
 	// survives this call: absent manifests and moved checkouts are rechecked.
-	pass := &resolutionPass{index: index}
-	if len(index.files) > 0 {
-		pass = newResolutionPass(index)
-	}
-	if pass.probed == nil {
-		for i := range pp {
-			if pp[i].Cwd != "" || index.ComposeDir(pp[i].DockerComposeProject) != "" {
-				pass = newResolutionPass(index)
-				break
-			}
-		}
-	}
+	pass := attributionPass(index, pp)
 	for dir := range index.files {
 		pass.probe(dir)
 	}
@@ -80,20 +70,34 @@ func AttributeWith(pp []ports.ListeningPort, runs Registry, index *Index) ([]sta
 	for i := range resolved {
 		pp[i].ProjectRoot = deref(resolved[i].ProjectRoot)
 		pp[i].Group = deref(resolved[i].Group)
-		pp[i].GroupSource = ""
-		if resolved[i].GroupSource != nil {
-			pp[i].GroupSource = string(*resolved[i].GroupSource)
-		}
+		pp[i].GroupSource = deref(resolved[i].GroupSource)
 	}
 
 	return resolved, index
 }
 
-func deref(s *string) string {
+// attributionPass picks the pass shape for this batch: a fresh one when the
+// index already carries files or the batch has a path to observe, and a bare
+// one for pathless rows.
+func attributionPass(index *Index, pp []ports.ListeningPort) *resolutionPass {
+	if len(index.files) > 0 {
+		return newResolutionPass(index)
+	}
+	for i := range pp {
+		if pp[i].Cwd != "" || index.ComposeDir(pp[i].DockerComposeProject) != "" {
+			return newResolutionPass(index)
+		}
+	}
+	return &resolutionPass{index: index}
+}
+
+// deref reads a string-backed pointer, with the contract's empty string for
+// nil.
+func deref[T ~string](s *T) string {
 	if s == nil {
 		return ""
 	}
-	return *s
+	return string(*s)
 }
 
 // stampSessions puts the agent session of the owning run onto every port it
@@ -102,7 +106,7 @@ func deref(s *string) string {
 // scanner rows: `session` is a daemon concept with no place in `runs.json`, so
 // the direct-scan path has nothing to stamp and this is a no-op there.
 func stampSessions(resolved []state.Port, runs Registry) {
-	reg, ok := runs.(SessionRegistry)
+	registry, ok := runs.(SessionRegistry)
 	if !ok {
 		return
 	}
@@ -110,10 +114,12 @@ func stampSessions(resolved []state.Port, runs Registry) {
 		if resolved[i].PID <= 0 || resolved[i].Run == nil {
 			continue
 		}
-		if s, found := reg.Session(resolved[i]); found && s.ID != "" {
-			session := s
-			resolved[i].Session = &session
+		session, found := registry.Session(resolved[i])
+		if !found || session.ID == "" {
+			continue
 		}
+		stamped := session
+		resolved[i].Session = &stamped
 	}
 }
 
