@@ -25,7 +25,7 @@ func TestIsolateRejectsInheritedPathOverrides(t *testing.T) {
 		RequireIsolated(t, paths.Dir(), paths.ConfigPath(), paths.Runs(),
 			paths.Logs(), paths.LogPath(), paths.DB())
 		if runtime.GOOS == "windows" {
-			if got := paths.Socket(); got != socketPath(sockRoot) {
+			if got := paths.Socket(); got != socketPath(current.socketDir) {
 				t.Fatalf("socket = %q, want this test process's pipe", got)
 			}
 		} else {
