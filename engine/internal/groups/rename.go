@@ -2,6 +2,8 @@ package groups
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
@@ -14,7 +16,7 @@ import (
 // becomes `<Project>@<worktree>`.
 type RenamePlan struct {
 	// Main is the main checkout's root, the key an alias is stored under. It is
-	// empty for a `oberth.yaml` project that is not a checkout's root.
+	// empty for an `oberth.yaml` project that is not a checkout's root.
 	Main string
 	// ConfigPath is the `oberth.yaml` to write the new `name:` into. Empty
 	// means the project has no file of its own and the name is stored as an
@@ -54,12 +56,13 @@ func (e *RenameError) Error() string { return e.Msg }
 // name follows it refuses `@`, which separates the project from the worktree
 // in a checkout's group name.
 func ValidProjectName(name string) error {
-	switch {
-	case name == "":
+	if name == "" {
 		return fmt.Errorf("the new name is empty")
-	case strings.ContainsAny(name, "@"):
+	}
+	if strings.ContainsRune(name, '@') {
 		return fmt.Errorf("%q contains @, which separates a project from its worktree", name)
-	case strings.ContainsAny(name, "/\\ \t\n\r"):
+	}
+	if strings.ContainsAny(name, "/\\ \t\n\r") {
 		return fmt.Errorf("%q contains a slash or whitespace; names are a single word", name)
 	}
 	return nil
@@ -69,44 +72,24 @@ func ValidProjectName(name string) error {
 // the published groups gg and the index they were built from. It changes
 // nothing: the caller writes the file or the alias and republishes.
 func PlanRename(gg []state.Group, x *Index, from, to string) (*RenamePlan, error) {
-	var g *state.Group
-	for i := range gg {
-		if gg[i].Name == from {
-			g = &gg[i]
-			break
-		}
-	}
-	if g == nil {
+	group := publishedGroup(gg, from)
+	if group == nil {
 		return nil, &RenameError{Kind: RenameNotFound,
 			Msg: "no project named " + from, Hint: "run `oberth status` inside its worktree"}
 	}
-	var (
-		co     Checkout
-		inRepo bool
-	)
-	if g.RootDir != nil {
-		co, inRepo = Locate(*g.RootDir)
-	}
-	if inRepo && g.Name == x.CheckoutName(co) {
+	co, inRepo := groupCheckout(group)
+	if inRepo && group.Name == x.CheckoutName(co) {
 		return planProject(gg, x, co.Main, to)
 	}
 
 	// Not a checkout's own group: whatever named it is not the project.
-	if g.Source == state.SourceStart {
+	if group.Source == state.SourceStart {
 		return nil, &RenameError{Kind: RenameRefused,
 			Msg:  from + " is named by the --group of the `oberth start` run in it, not by a project",
 			Hint: "restart the run with `oberth start --group " + to + "`"}
 	}
-	if g.ConfigPath != nil && !(inRepo && co.Linked()) {
-		if cfg, ok := x.ByPath(*g.ConfigPath); ok && x.GroupOf(cfg) == g.Name {
-			// A `oberth.yaml` project that is not a checkout's root: nested in
-			// one, or outside git altogether. Its file is its name.
-			plan := &RenamePlan{ConfigPath: cfg.Path, Project: to, Renames: map[string]string{}}
-			if from != to {
-				plan.Renames[from] = to
-			}
-			return plan, conflicts(gg, plan)
-		}
+	if plan, ok := configPlan(x, group, inRepo, co, from, to); ok {
+		return plan, conflicts(gg, plan)
 	}
 	if inRepo && co.Linked() {
 		return nil, &RenameError{Kind: RenameRefused,
@@ -116,6 +99,42 @@ func PlanRename(gg []state.Group, x *Index, from, to string) (*RenamePlan, error
 	return nil, &RenameError{Kind: RenameRefused,
 		Msg:  from + " is not a git checkout or a " + ConfigName + " project, so it has no name to change",
 		Hint: "a Compose project is named by Compose; `option-berth assign` pins ports to a group of your choosing"}
+}
+
+// publishedGroup is the group with this name, or nil.
+func publishedGroup(gg []state.Group, name string) *state.Group {
+	for i := range gg {
+		if gg[i].Name == name {
+			return &gg[i]
+		}
+	}
+	return nil
+}
+
+// groupCheckout is the checkout a published group lives in.
+func groupCheckout(group *state.Group) (Checkout, bool) {
+	if group.RootDir == nil {
+		return Checkout{}, false
+	}
+	return Locate(*group.RootDir)
+}
+
+// configPlan renames a `oberth.yaml` project that is not a checkout's root:
+// nested in one, or outside git altogether. Its file is its name. A worktree
+// copy of a committed file is not the project, so it has no plan.
+func configPlan(x *Index, group *state.Group, inRepo bool, co Checkout, from, to string) (*RenamePlan, bool) {
+	if group.ConfigPath == nil || (inRepo && co.Linked()) {
+		return nil, false
+	}
+	cfg, ok := x.ByPath(*group.ConfigPath)
+	if !ok || x.GroupOf(cfg) != group.Name {
+		return nil, false
+	}
+	plan := &RenamePlan{ConfigPath: cfg.Path, Project: to, Renames: map[string]string{}}
+	if from != to {
+		plan.Renames[from] = to
+	}
+	return plan, true
 }
 
 // planProject renames the project whose main checkout is at main, and with it
@@ -128,41 +147,48 @@ func planProject(gg []state.Group, x *Index, main, to string) (*RenamePlan, erro
 	if x.ProjectName(main) == to {
 		return plan, nil
 	}
-	for _, h := range gg {
-		if h.RootDir == nil {
-			continue
-		}
-		hc, ok := Locate(*h.RootDir)
-		if !ok || hc.Main != main || h.Name != x.CheckoutName(hc) {
+	for _, published := range gg {
+		co, ok := publishedCheckout(published, x, main)
+		if !ok {
 			continue
 		}
 		next := to
-		if hc.Linked() {
-			next = to + "@" + hc.Worktree
+		if co.Linked() {
+			next = to + "@" + co.Worktree
 		}
-		plan.Renames[h.Name] = next
+		plan.Renames[published.Name] = next
 	}
 	return plan, conflicts(gg, plan)
+}
+
+// publishedCheckout is the checkout of one published group, when that group is
+// a checkout of main's project under its current name.
+func publishedCheckout(group state.Group, x *Index, main string) (Checkout, bool) {
+	if group.RootDir == nil {
+		return Checkout{}, false
+	}
+	co, ok := Locate(*group.RootDir)
+	if !ok || co.Main != main || group.Name != x.CheckoutName(co) {
+		return Checkout{}, false
+	}
+	return co, true
 }
 
 // conflicts refuses a rename that would give a group a name some group outside
 // the rename already has. The project name itself is checked even when the
 // main checkout is not published right now, because it will be.
 func conflicts(gg []state.Group, plan *RenamePlan) error {
-	taken := map[string]bool{}
-	for _, h := range gg {
-		if _, moving := plan.Renames[h.Name]; !moving {
-			taken[h.Name] = true
+	taken := make(map[string]bool, len(gg))
+	for _, group := range gg {
+		if _, moving := plan.Renames[group.Name]; !moving {
+			taken[group.Name] = true
 		}
 	}
-	names := []string{plan.Project}
-	for _, next := range plan.Renames {
-		names = append(names, next)
-	}
-	for _, n := range names {
-		if taken[n] {
+	next := slices.AppendSeq([]string{plan.Project}, maps.Values(plan.Renames))
+	for _, name := range next {
+		if taken[name] {
 			return &RenameError{Kind: RenameConflict,
-				Msg: "a group named " + n + " already exists", Hint: "pick another name"}
+				Msg: "a group named " + name + " already exists", Hint: "pick another name"}
 		}
 	}
 	return nil
