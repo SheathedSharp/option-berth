@@ -166,33 +166,32 @@ func checks() []check {
 	)
 }
 
-// IDs lists every check id, in table order. `oberth doctor --only` validates
-// against it.
+// IDs lists every check id, in table order. `oberth doctor --only` validates a
+// selector against it.
 func IDs() []string {
 	all := checks()
-	out := make([]string, 0, len(all))
+	ids := make([]string, 0, len(all))
 	for _, c := range all {
-		out = append(out, c.id)
+		ids = append(ids, c.id)
 	}
-	return out
+	return ids
 }
 
 // Prefixes lists the selectors `--only` accepts that are not check ids: the
-// part before the dot of every dotted id, so `--only mcp_registered` means all
-// three MCP checks.
+// part before the dot of a dotted id, so a prefix selects every check under it.
 func Prefixes() []string {
 	seen := map[string]bool{}
-	var out []string
+	var prefixes []string
 	for _, id := range IDs() {
-		prefix, _, ok := strings.Cut(id, ".")
-		if !ok || seen[prefix] {
+		prefix, _, dotted := strings.Cut(id, ".")
+		if !dotted || seen[prefix] {
 			continue
 		}
 		seen[prefix] = true
-		out = append(out, prefix)
+		prefixes = append(prefixes, prefix)
 	}
-	sort.Strings(out)
-	return out
+	sort.Strings(prefixes)
+	return prefixes
 }
 
 // UnknownSelectors returns the entries of only that name no check.
@@ -247,19 +246,10 @@ func Run(ctx context.Context, env Env, only []string) rpc.DaemonDoctorResult {
 	env.fill()
 	sel := normalize(only)
 
-	// The daemon is dialled at most once per run, however many checks ask
-	// about it. Project-only checks never dial just to populate metadata.
-	var info DaemonInfo
-	var haveInfo bool
-	probe := env.Daemon
-	daemonOnce := func(ctx context.Context) DaemonInfo {
-		if !haveInfo {
-			info = probe(ctx)
-			haveInfo = true
-		}
-		return info
-	}
-	env.Daemon = daemonOnce
+	// The daemon is dialled at most once per run, however many checks ask about
+	// it. A run that selects only project checks never dials at all.
+	ask := once(env.Daemon)
+	env.Daemon = ask.ask
 
 	result := rpc.DaemonDoctorResult{OK: true, Checks: []rpc.DoctorCheck{}, Version: env.Version}
 	for _, c := range checks() {
@@ -283,25 +273,53 @@ func Run(ctx context.Context, env Env, only []string) rpc.DaemonDoctorResult {
 		}
 		result.Checks = append(result.Checks, got)
 	}
-	if haveInfo && info.Reachable {
-		result.DaemonVersion = info.Version
+	if reached, ok := ask.last(); ok && reached.Reachable {
+		result.DaemonVersion = reached.Version
 	}
 	return result
 }
 
+// probeCache remembers one answer so a run asks the daemon once. last reports
+// whether anything was asked at all, which decides whether the result carries
+// the daemon's version.
+func once(probe func(context.Context) DaemonInfo) *probeCache {
+	return &probeCache{probe: probe}
+}
+
+type probeCache struct {
+	probe  func(context.Context) DaemonInfo
+	answer DaemonInfo
+	asked  bool
+}
+
+func (c *probeCache) ask(ctx context.Context) DaemonInfo {
+	if !c.asked {
+		c.answer, c.asked = c.probe(ctx), true
+	}
+	return c.answer
+}
+
+func (c *probeCache) last() (DaemonInfo, bool) { return c.answer, c.asked }
+
 // fill installs the real world behind every seam the caller left empty.
+//
+// One rule per field, and the rule says only how to resolve that field. A
+// caller that wants the standard run passes nothing; a test that wants a
+// fixture passes exactly the field it cares about and leaves the rest to the
+// same defaults every other command uses.
 func (e *Env) fill() {
+	e.fillScalars()
+	e.fillPaths()
+	e.fillSeams()
+}
+
+// fillScalars resolves the facts about this process.
+func (e *Env) fillScalars() {
 	if e.Mode == "" {
 		e.Mode = ModeCLI
 	}
 	if e.GOOS == "" {
 		e.GOOS = runtime.GOOS
-	}
-	if e.Executable == nil {
-		e.Executable = os.Executable
-	}
-	if e.LookPath == nil {
-		e.LookPath = exec.LookPath
 	}
 	if e.UID == 0 {
 		e.UID = os.Getuid()
@@ -316,34 +334,43 @@ func (e *Env) fill() {
 			e.Project = wd
 		}
 	}
-	// The four paths default to what every other command resolves, so a
-	// caller that only wants the standard run passes none of them and a test
-	// that wants a fixture passes exactly the one it cares about.
-	if e.ConfigPath == "" {
-		e.ConfigPath = config.Path()
+}
+
+// fillPaths resolves the files and the address the checks look at.
+func (e *Env) fillPaths() {
+	setIfEmpty(&e.ConfigPath, config.Path)
+	setIfEmpty(&e.ConfigDir, daemon.ConfigDir)
+	setIfEmpty(&e.SocketPath, daemon.SocketPath)
+	setIfEmpty(&e.DBPath, store.Path)
+	setIfEmpty(&e.SettingsPath, paths.JevConfigPath)
+}
+
+// fillSeams resolves the functions a check calls to see something the doctor
+// cannot see for itself. A seam nobody wired reports errNoProbe, so the check
+// that needs it skips instead of reading an empty result as a fact.
+func (e *Env) fillSeams() {
+	if e.Executable == nil {
+		e.Executable = os.Executable
 	}
-	if e.ConfigDir == "" {
-		e.ConfigDir = daemon.ConfigDir()
-	}
-	if e.SocketPath == "" {
-		e.SocketPath = daemon.SocketPath()
-	}
-	if e.DBPath == "" {
-		e.DBPath = store.Path()
-	}
-	if e.SettingsPath == "" {
-		e.SettingsPath = paths.JevConfigPath()
+	if e.LookPath == nil {
+		e.LookPath = exec.LookPath
 	}
 	if e.Daemon == nil {
-		e.Daemon = func(context.Context) DaemonInfo {
-			return DaemonInfo{Err: errNoProbe}
-		}
+		e.Daemon = func(context.Context) DaemonInfo { return DaemonInfo{Err: errNoProbe} }
 	}
 	if e.Docker == nil {
 		e.Docker = func(context.Context) (string, error) { return "", errNoProbe }
 	}
 	if e.ProbeObservation == nil {
 		e.ProbeObservation = ports.ProbeListenerObservation
+	}
+}
+
+// setIfEmpty installs a resolved default only where the caller left the field
+// blank.
+func setIfEmpty(field *string, resolve func() string) {
+	if *field == "" {
+		*field = resolve()
 	}
 }
 
@@ -374,4 +401,69 @@ func exists(path string) bool {
 	}
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// ---------------------------------------------------------------------------
+// Result constructors.
+//
+// A check says three things and occasionally two more: what it saw, how bad it
+// is, and what to do next. Writing that as a struct literal leaves `Status:`
+// and `Summary:` repeated on every branch of every check, which is how a
+// reader loses the branch that actually differs. These four name the verdict,
+// so the branches read as the sentences they produce.
+// ---------------------------------------------------------------------------
+
+// ok is a check that found what it expected.
+func ok(summary, detail string) rpc.DoctorCheck {
+	return rpc.DoctorCheck{Status: StatusOK, Summary: summary, Detail: detail}
+}
+
+// warn is a state that works but is not what this build expects.
+func warn(summary, detail, fix string) rpc.DoctorCheck {
+	return rpc.DoctorCheck{Status: StatusWarn, Summary: summary, Detail: detail, Fix: fix}
+}
+
+// fail is a state that breaks something a person is about to rely on.
+func fail(summary, detail, fix string) rpc.DoctorCheck {
+	return rpc.DoctorCheck{Status: StatusFail, Summary: summary, Detail: detail, Fix: fix}
+}
+
+// skip is a check that did not apply, with the reason a reader needs to decide
+// whether it should have. It takes no fix: a skipped check is not a problem to
+// repair.
+func skip(summary, detail string) rpc.DoctorCheck {
+	return rpc.DoctorCheck{Status: StatusSkip, Summary: summary, Detail: detail}
+}
+
+// skipWithFix is skip for a check that did not apply *yet* and whose fix is the
+// way to make it apply — the optional Jev row, whose fix turns it on.
+func skipWithFix(summary, detail, fix string) rpc.DoctorCheck {
+	result := skip(summary, detail)
+	result.Fix = fix
+	return result
+}
+
+// The fixable forms carry the same four fields, with the repair flag set: the
+// doctor found something it can mend itself, so the CLI may offer to.
+func okFixable(summary, detail, fix string) rpc.DoctorCheck {
+	return fixable(ok(summary, detail))
+}
+
+func warnFixable(summary, detail, fix string) rpc.DoctorCheck {
+	return fixable(warn(summary, detail, fix))
+}
+
+func failFixable(summary, detail, fix string) rpc.DoctorCheck {
+	return fixable(fail(summary, detail, fix))
+}
+
+func skipFixable(summary, detail, fix string) rpc.DoctorCheck {
+	result := skip(summary, detail)
+	result.Fix = fix
+	return fixable(result)
+}
+
+func fixable(result rpc.DoctorCheck) rpc.DoctorCheck {
+	result.Fixable = true
+	return result
 }
