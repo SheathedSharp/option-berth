@@ -28,6 +28,9 @@ func (x *Index) Known() []string {
 	for path := range x.invalid {
 		paths[path] = struct{}{}
 	}
+	if len(paths) == 0 {
+		return []string{}
+	}
 	return slices.Sorted(maps.Keys(paths))
 }
 

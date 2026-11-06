@@ -58,7 +58,7 @@ func IsLegacyName(base string) bool {
 // FilesIn lists the manifest files present in dir, in lookup order. The first
 // is the one option-berth uses; any others are shadowed by it.
 func FilesIn(dir string) []string {
-	present := make([]string, 0, len(configNames))
+	var present []string
 	for _, name := range configNames {
 		path := filepath.Join(dir, name)
 		if isRegularFile(path) {

@@ -144,6 +144,9 @@ func (x *Index) Configs() []*Config {
 		})
 		x.orderedDirty = false
 	}
+	if len(x.ordered) == 0 {
+		return nil
+	}
 	return slices.Clone(x.ordered)
 }
 
