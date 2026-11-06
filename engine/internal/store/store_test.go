@@ -108,7 +108,7 @@ func TestOpenIsIdempotent(t *testing.T) {
 	if err := second.DB().QueryRow(`SELECT count(*) FROM schema_version`).Scan(&rows); err != nil {
 		t.Fatalf("counting schema_version: %v", err)
 	}
-	if want := len(registeredMigrations()); rows != want {
+	if want := len(registry.all()); rows != want {
 		t.Errorf("schema_version has %d rows, want one per registered migration (%d)", rows, want)
 	}
 }
