@@ -7,7 +7,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// RenamePlan is what renaming a project changes (`groups.rename`, step 5A.6).
+// RenamePlan is what renaming a project changes.
 //
 // A rename always applies to the project, whichever of its checkouts named it:
 // the main checkout's group becomes Project and every linked worktree's group

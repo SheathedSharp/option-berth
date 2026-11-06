@@ -137,7 +137,7 @@ func resolveOneAt(t *testing.T, x *Index, p state.Port) (string, state.GroupSour
 	return deref(got.Group), source
 }
 
-// TestWorktreeNaming is the step 5A.6 rule: every linked worktree is
+// TestWorktreeNaming: every linked worktree is
 // `<project>@<worktree>`, and only the main checkout decides the project.
 func TestWorktreeNaming(t *testing.T) {
 	t.Run("no config anywhere", func(t *testing.T) {
