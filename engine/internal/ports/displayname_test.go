@@ -3,7 +3,7 @@ package ports
 import "testing"
 
 func TestCachedSignalsCoverRejectsNewPID(t *testing.T) {
-	info := map[int]pidEntry{123: {ppid: 1, cmd: "worker"}}
+	info := map[int]processFacts{123: {ppid: 1, command: "worker"}}
 	covered := map[int]struct{}{123: {}}
 
 	if !cachedSignalsCover([]int{123}, covered, info) {

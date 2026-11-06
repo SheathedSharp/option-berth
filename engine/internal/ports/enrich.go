@@ -70,11 +70,7 @@ func EnrichContext(ctx context.Context, pp []ListeningPort) error {
 // query withheld. A pid neither source answered for keeps empty fields, and a
 // cancelled round leaves the caller to discard the rows.
 func enrichWindowsIdentity(ctx context.Context, pp []ListeningPort) error {
-	pids := collectPIDs(pp)
-	args := make([]string, len(pids))
-	for i, pid := range pids {
-		args[i] = strconv.Itoa(pid)
-	}
+	args := pidArguments(collectPIDs(pp))
 	// The ticket is taken before the query so a table observed later cannot be
 	// overwritten by one observed earlier.
 	observed := beginProcessObservation()
@@ -86,24 +82,10 @@ func enrichWindowsIdentity(ctx context.Context, pp []ListeningPort) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	rememberObservedScanParents(commands, observed)
+	rememberObservedProcessFacts(commands, observed)
 	for i := range pp {
-		info, answered := commands[pp[i].PID]
-		if !answered {
-			continue
-		}
-		if info.command != "" {
-			pp[i].Command = info.command
-		}
-		// The parent rides on the same query, so walking the ancestry costs no
-		// second process table.
-		if info.ppid > 0 {
-			pp[i].PPID = info.ppid
-		}
-		// started_at is never gated by --stats: the contract publishes it on
-		// every row. EnrichStats refines the same field from its own sample.
-		if pp[i].StartedAt == "" {
-			pp[i].StartedAt = info.startedAt
+		if facts, answered := commands[pp[i].PID]; answered {
+			applyProcessFacts(&pp[i], facts, commands)
 		}
 	}
 	return nil
@@ -179,15 +161,6 @@ func (entry DockerStatsEntry) applyTo(row *ListeningPort) {
 	row.State, row.Uptime = entry.State, entry.Uptime
 }
 
-// procInfo is what one always-on ps call reports per listening process: its
-// full command line and when it started. Both are unconditional — `started_at`
-// is not a stat (contract §21).
-type procInfo struct {
-	command   string
-	startedAt string // RFC3339, "" when ps did not report a parsable time
-	ppid      int    // 0 when the source did not report a parent
-}
-
 // lstartFields is how many whitespace-separated tokens `ps -o lstart=` emits:
 // "Mon Jan  2 15:04:05 2006". (The Unix process table parser lives in
 // displayname_signals.go beside the cache it feeds.)
@@ -196,11 +169,11 @@ type procInfo struct {
 // needs no WMI service and no elevation, so it answers where Get-CimInstance
 // did not; a pid it cannot name simply stays unnamed, because one process
 // failing to resolve must not cost the others their identity.
-func fillProcessNamesWindows(pp []ListeningPort, commands map[int]procInfo) {
+func fillProcessNamesWindows(pp []ListeningPort, commands map[int]processFacts) {
 	fillProcessNamesWindowsContext(context.Background(), pp, commands)
 }
 
-func fillProcessNamesWindowsContext(ctx context.Context, pp []ListeningPort, commands map[int]procInfo) {
+func fillProcessNamesWindowsContext(ctx context.Context, pp []ListeningPort, commands map[int]processFacts) {
 	if !anyUnnamed(pp, commands) || ctx.Err() != nil {
 		return
 	}
@@ -223,7 +196,7 @@ func fillProcessNamesWindowsContext(ctx context.Context, pp []ListeningPort, com
 
 // anyUnnamed reports whether tasklist could still add a name the CIM query did
 // not already supply.
-func anyUnnamed(pp []ListeningPort, commands map[int]procInfo) bool {
+func anyUnnamed(pp []ListeningPort, commands map[int]processFacts) bool {
 	for i := range pp {
 		if pp[i].Process == "" && commands[pp[i].PID].command == "" {
 			return true
@@ -283,22 +256,22 @@ func eachCSVRow(out string, visit func([]string)) {
 
 // batchGetCommandsWindows fetches command lines and start times via PowerShell
 // Get-CimInstance on Windows.
-func batchGetCommandsWindows(pidStrs []string) map[int]procInfo {
+func batchGetCommandsWindows(pidStrs []string) map[int]processFacts {
 	observed := beginProcessObservation()
 	result := batchGetCommandsWindowsContext(context.Background(), pidStrs)
-	rememberObservedScanParents(result, observed)
+	rememberObservedProcessFacts(result, observed)
 	return result
 }
 
-func batchGetCommandsWindowsContext(ctx context.Context, pidStrs []string) map[int]procInfo {
+func batchGetCommandsWindowsContext(ctx context.Context, pidStrs []string) map[int]processFacts {
 	if len(pidStrs) == 0 || ctx.Err() != nil {
-		return map[int]procInfo{}
+		return map[int]processFacts{}
 	}
 	cimCmd, stopCIM := boundedContext(ctx, "powershell", "-NoProfile", "-Command", cimProcessQuery(pidStrs))
 	defer stopCIM()
 	out, err := cimCmd.Output()
 	if err != nil || ctx.Err() != nil {
-		return map[int]procInfo{}
+		return map[int]processFacts{}
 	}
 	return parseCIMProcesses(string(out))
 }
@@ -326,9 +299,9 @@ func cimProcessQuery(pidStrs []string) string {
 // group it joins, so the rows that could be read must survive the one that
 // could not. A row that exposes its pid while withholding its command line
 // still carries the parent and start time that did come back.
-func parseCIMProcesses(out string) map[int]procInfo {
+func parseCIMProcesses(out string) map[int]processFacts {
 	table := parseCSVTable(out)
-	result := make(map[int]procInfo, len(table.rows))
+	result := make(map[int]processFacts, len(table.rows))
 	if !table.knows("processid") {
 		return result // a header we cannot read names nothing
 	}
@@ -345,18 +318,18 @@ func parseCIMProcesses(out string) map[int]procInfo {
 // row that names no process, and for one that carries no evidence at all:
 // a protected process may expose its pid while withholding its parent, its
 // command and its start time, and a row of nothing but a pid says nothing.
-func cimRow(table csvTable, row []string) (int, procInfo, bool) {
+func cimRow(table csvTable, row []string) (int, processFacts, bool) {
 	pid, err := strconv.Atoi(strings.TrimSpace(table.value(row, "processid")))
 	if err != nil || pid <= 0 {
-		return 0, procInfo{}, false
+		return 0, processFacts{}, false
 	}
 	ppid, _ := strconv.Atoi(strings.TrimSpace(table.value(row, "parentprocessid")))
 	command := strings.TrimSpace(table.value(row, "commandline"))
 	startedAt := parseStartTime(table.value(row, "startedat"))
 	if command == "" && ppid <= 0 && startedAt == "" {
-		return 0, procInfo{}, false
+		return 0, processFacts{}, false
 	}
-	return pid, procInfo{command: command, startedAt: startedAt, ppid: ppid}, true
+	return pid, processFacts{command: command, startedAt: startedAt, ppid: ppid}, true
 }
 
 // csvTable is a decoded CSV document: the header's column positions and the

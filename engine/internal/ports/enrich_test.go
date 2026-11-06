@@ -36,8 +36,8 @@ func TestParseProcessTable(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("parseProcessTable returned %d rows, want 2: %+v", len(got), got)
 	}
-	if want := "/usr/bin/node   server.js --port 3000"; got[1234].cmd != want {
-		t.Errorf("command = %q, want %q", got[1234].cmd, want)
+	if want := "/usr/bin/node   server.js --port 3000"; got[1234].command != want {
+		t.Errorf("command = %q, want %q", got[1234].command, want)
 	}
 	if got[1234].ppid != 1 {
 		t.Errorf("ppid = %d, want 1", got[1234].ppid)
@@ -45,8 +45,8 @@ func TestParseProcessTable(t *testing.T) {
 	if got[1234].startedAt == "" {
 		t.Errorf("startedAt = %q, want the raw lstart", got[1234].startedAt)
 	}
-	if want := "/Applications/Some App.app/Contents/MacOS/Some App"; got[567].cmd != want {
-		t.Errorf("command = %q, want %q", got[567].cmd, want)
+	if want := "/Applications/Some App.app/Contents/MacOS/Some App"; got[567].command != want {
+		t.Errorf("command = %q, want %q", got[567].command, want)
 	}
 }
 

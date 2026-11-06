@@ -31,7 +31,7 @@ func ParentTable() map[int]int {
 
 // collectParentTable separates source selection from platform I/O. A failed
 // refresh must not resurrect arbitrarily old ancestry (PIDs can be reused).
-func collectParentTable(native func() map[int]int, recent func() *parentSnapshot, refresh func() map[int]pidEntry) map[int]int {
+func collectParentTable(native func() map[int]int, recent func() *parentSnapshot, refresh func() map[int]processFacts) map[int]int {
 	if table := native(); len(table) > 0 {
 		return table
 	}
@@ -73,15 +73,19 @@ func parseProcStatPPID(stat string) (int, bool) {
 type parentSnapshot struct {
 	seq     uint64
 	at      time.Time
-	entries map[int]procEntry
+	entries map[int]processFacts
 }
 
-// procEntry is the identity the table remembers per pid: who its parent is and
-// when it started. The start time is what tells a recycled pid from the
-// process a run registry recorded — same integer, different lifetime.
-type procEntry struct {
+// processFacts is what one observation of the process table says about one pid:
+// its parent, the command line the source reported, and when it started. The
+// start time is what tells a recycled pid from the process a run registry
+// recorded — same integer, different lifetime. startedAt keeps the source's own
+// text (raw lstart on unix, RFC3339 from the Windows CIM query) and is parsed
+// only where a reader needs an instant.
+type processFacts struct {
 	ppid      int
-	startedAt string // raw lstart on unix, RFC3339 from the Windows CIM query
+	command   string
+	startedAt string
 }
 
 // scanParentTable holds the pid facts the most recent scan learned, for
@@ -108,7 +112,7 @@ func beginProcessObservation() processObservation {
 // rememberObservedEntries publishes immutable facts only in admission order.
 // Empty observations preserve the last table without renewing its age. The age
 // starts before IO, so slow collection does not grant stale facts a new TTL.
-func rememberObservedEntries(entries map[int]procEntry, observed processObservation) {
+func rememberObservedEntries(entries map[int]processFacts, observed processObservation) {
 	if len(entries) == 0 {
 		return
 	}
@@ -124,31 +128,22 @@ func rememberObservedEntries(entries map[int]procEntry, observed processObservat
 	}
 }
 
-// rememberScanParents is for already-observed facts; command callers retain a
-// ticket taken before collection and call rememberObservedScanParents instead.
-func rememberScanParents(info map[int]procInfo) {
-	rememberObservedScanParents(info, beginProcessObservation())
+// rememberProcessFacts is for facts already observed; a caller that collected
+// them itself keeps a ticket taken before the IO and calls
+// rememberObservedProcessFacts instead, so a delayed older table cannot
+// replace a newer one.
+func rememberProcessFacts(info map[int]processFacts) {
+	rememberObservedProcessFacts(info, beginProcessObservation())
 }
 
-func rememberObservedScanParents(info map[int]procInfo, observed processObservation) {
-	entries := make(map[int]procEntry, len(info))
-	for pid, e := range info {
+// rememberObservedProcessFacts publishes one observation under its admission
+// ticket. The map is copied so a later mutation by the collector cannot change
+// what a reader already received.
+func rememberObservedProcessFacts(info map[int]processFacts, observed processObservation) {
+	entries := make(map[int]processFacts, len(info))
+	for pid, facts := range info {
 		if pid > 0 {
-			entries[pid] = procEntry{ppid: e.ppid, startedAt: e.startedAt}
-		}
-	}
-	rememberObservedEntries(entries, observed)
-}
-
-func rememberParentEntries(info map[int]pidEntry) {
-	rememberObservedParentEntries(info, beginProcessObservation())
-}
-
-func rememberObservedParentEntries(info map[int]pidEntry, observed processObservation) {
-	entries := make(map[int]procEntry, len(info))
-	for pid, e := range info {
-		if pid > 0 {
-			entries[pid] = procEntry{ppid: e.ppid, startedAt: e.startedAt}
+			entries[pid] = facts
 		}
 	}
 	rememberObservedEntries(entries, observed)
@@ -184,7 +179,7 @@ func ProcessStart(pid int) (time.Time, bool) {
 	return processStartWith(pid, recentScanEntries, batchGetProcessTable)
 }
 
-func processStartWith(pid int, recent func() *parentSnapshot, refresh func() map[int]pidEntry) (time.Time, bool) {
+func processStartWith(pid int, recent func() *parentSnapshot, refresh func() map[int]processFacts) (time.Time, bool) {
 	if pid <= 0 {
 		return time.Time{}, false
 	}
@@ -224,7 +219,7 @@ func scanParents() map[int]int {
 
 // parentMap projects process facts onto the pid -> ppid map the ancestry walks
 // need. Entries without a parent are not part of a parent map.
-func parentMap(entries map[int]procEntry) map[int]int {
+func parentMap(entries map[int]processFacts) map[int]int {
 	out := make(map[int]int, len(entries))
 	for pid, e := range entries {
 		if pid > 0 && e.ppid > 0 {

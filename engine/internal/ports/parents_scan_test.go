@@ -98,7 +98,7 @@ func TestRememberScanParentsFeedsTheTable(t *testing.T) {
 		t.Fatalf("scanParents before any scan = %v, want empty", parents)
 	}
 
-	rememberScanParents(map[int]procInfo{
+	rememberProcessFacts(map[int]processFacts{
 		2222: {command: "node", ppid: 1200},
 		2223: {command: "python", ppid: 1200},
 		2224: {command: "orphan"}, // no parent reported: nothing to record
@@ -115,7 +115,7 @@ func TestRememberScanParentsFeedsTheTable(t *testing.T) {
 	}
 
 	// A scan that learned nothing leaves the last good table in place.
-	rememberScanParents(map[int]procInfo{})
+	rememberProcessFacts(map[int]processFacts{})
 	if again := scanParents(); len(again) != 2 {
 		t.Errorf("an empty scan cleared the table: %v", again)
 	}
