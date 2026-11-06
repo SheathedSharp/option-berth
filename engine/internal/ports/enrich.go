@@ -5,7 +5,6 @@ import (
 	"encoding/csv"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -205,35 +204,51 @@ func fillProcessNamesWindowsContext(ctx context.Context, pp []ListeningPort, com
 	}
 }
 
-// parseTasklist reads `tasklist /NH /FO CSV` into pid -> image name. Rows it
-// cannot parse are skipped; the ones it can are still returned.
+// parseTasklist reads `tasklist /NH /FO CSV` into pid -> image name. There is
+// no header: the image name is the first column and the pid the second.
 func parseTasklist(out string) map[int]string {
 	names := make(map[int]string)
-	r := csv.NewReader(strings.NewReader(strings.TrimSpace(out)))
-	r.FieldsPerRecord = -1
-	for {
-		rec, err := r.Read()
-		if errors.Is(err, io.EOF) {
-			return names
+	eachCSVRow(out, func(rec []string) {
+		if len(rec) < 2 {
+			return
 		}
+		pid, err := strconv.Atoi(strings.TrimSpace(rec[1]))
 		if err != nil {
-			// One unreadable line is one process we cannot name, not a reason
-			// to forget the ones already read.
+			return
+		}
+		if name := strings.TrimSpace(rec[0]); name != "" {
+			names[pid] = name
+		}
+	})
+	return names
+}
+
+// eachCSVRow feeds every readable row of a CSV document to visit, and skips the
+// ones it cannot read.
+//
+// One unreadable line is one process without a name, not a reason to forget the
+// processes already read: on Windows identity is what decides whether a port is
+// shown at all and which group it joins, so a single odd command line must not
+// cost every other process its identity.
+func eachCSVRow(out string, visit func([]string)) {
+	text := strings.TrimSpace(strings.TrimPrefix(out, "\ufeff"))
+	if text == "" {
+		return
+	}
+	reader := csv.NewReader(strings.NewReader(text))
+	reader.FieldsPerRecord = -1
+	reader.LazyQuotes = true
+	for {
+		record, err := reader.Read()
+		if err != nil {
 			var parseErr *csv.ParseError
 			if errors.As(err, &parseErr) {
 				continue
 			}
-			return names
+			return // io.EOF, or a failure that ends the document
 		}
-		if len(rec) < 2 {
-			continue
-		}
-		pid, err := strconv.Atoi(strings.TrimSpace(rec[1]))
-		if err != nil {
-			continue
-		}
-		if name := strings.TrimSpace(rec[0]); name != "" {
-			names[pid] = name
+		if len(record) > 0 {
+			visit(record)
 		}
 	}
 }
@@ -302,57 +317,54 @@ func batchGetCommandsWindowsContext(ctx context.Context, pidStrs []string) map[i
 // that did come back.
 func parseCIMProcesses(out string) map[int]procInfo {
 	result := map[int]procInfo{}
-	text := strings.TrimSpace(strings.TrimPrefix(out, "\ufeff"))
-	if text == "" {
-		return result
-	}
-	r := csv.NewReader(strings.NewReader(text))
-	r.FieldsPerRecord = -1
-	r.LazyQuotes = true
-
 	var cols map[string]int
-	for {
-		rec, err := r.Read()
-		if errors.Is(err, io.EOF) {
-			return result
-		}
-		if err != nil {
-			var parseErr *csv.ParseError
-			if errors.As(err, &parseErr) {
-				continue // one unreadable line, not the end of the batch
-			}
-			return result
-		}
-		if len(rec) == 0 {
-			continue
-		}
-		// PowerShell 5.1 emits a `#TYPE …` line unless -NoTypeInformation is
-		// passed. It is, but skipping the line costs nothing and a missing
-		// flag would otherwise be read as the header.
-		if strings.HasPrefix(strings.TrimSpace(rec[0]), "#TYPE") {
-			continue
+	eachCSVRow(out, func(record []string) {
+		// PowerShell 5.1 emits a `#TYPE …` line without -NoTypeInformation. The
+		// flag is passed, but skipping the line costs nothing and a missing flag
+		// would otherwise be read as the header.
+		if strings.HasPrefix(strings.TrimSpace(record[0]), "#TYPE") {
+			return
 		}
 		if cols == nil {
-			cols = cimColumns(rec)
-			if _, ok := cols["processid"]; !ok {
-				return result // not a header we understand
-			}
-			continue
+			cols = cimColumns(record)
+			return
 		}
-		pid, err := strconv.Atoi(strings.TrimSpace(field(rec, cols, "processid")))
-		if err != nil || pid <= 0 {
-			continue
+		info, ok := cimRow(record, cols)
+		if ok {
+			result[info.pid] = info.procInfo
 		}
-		ppid, _ := strconv.Atoi(strings.TrimSpace(field(rec, cols, "parentprocessid")))
-		cmd := strings.TrimSpace(field(rec, cols, "commandline"))
-		startedAt := parseStartTime(field(rec, cols, "startedat"))
-		// Protected processes may expose birth evidence but neither their
-		// parent nor command. Preserve the fact we have; do not invent others.
-		if cmd == "" && ppid <= 0 && startedAt == "" {
-			continue
-		}
-		result[pid] = procInfo{command: cmd, startedAt: startedAt, ppid: ppid}
+	})
+	if _, understood := cols["processid"]; cols != nil && !understood {
+		return map[int]procInfo{} // a header we cannot read names nothing
 	}
+	return result
+}
+
+// cimRow reads one CIM result row through the header. It reports false for a
+// row that names no process, and for one that carries no evidence at all:
+// a protected process may expose its pid while withholding its parent, its
+// command and its start time, and a row of nothing but a pid says nothing.
+func cimRow(record []string, cols map[string]int) (struct {
+	pid int
+	procInfo
+}, bool) {
+	var out struct {
+		pid int
+		procInfo
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(field(record, cols, "processid")))
+	if err != nil || pid <= 0 {
+		return out, false
+	}
+	ppid, _ := strconv.Atoi(strings.TrimSpace(field(record, cols, "parentprocessid")))
+	command := strings.TrimSpace(field(record, cols, "commandline"))
+	startedAt := parseStartTime(field(record, cols, "startedat"))
+	if command == "" && ppid <= 0 && startedAt == "" {
+		return out, false
+	}
+	out.pid = pid
+	out.procInfo = procInfo{command: command, startedAt: startedAt, ppid: ppid}
+	return out, true
 }
 
 // cimColumns maps a CSV header to column indexes, lowercased and trimmed so
