@@ -60,42 +60,43 @@ func enrichDisplayNameSignalsContext(ctx context.Context, pp []ListeningPort) er
 
 // applyDisplayNameSignals only joins observed facts. Missing process/cwd
 // evidence does not remove a listener or invent ownership and timestamps.
+//
+// Which run owns a listener is not decided here: that is attribution, and it
+// belongs to internal/groups, which holds the run registry. The collection
+// layer reports what the OS shows.
 func applyDisplayNameSignals(pp []ListeningPort, pidInfo map[int]pidEntry, cwds map[int]string) {
-	// 2. Process identity only: which run owns a listener is an attribution
-	//    decision and is made by the attribution layer (groups), which holds
-	//    the run registry. The collection layer reports what the OS shows.
 	for i := range pp {
-		pid := pp[i].PID
-		if pid <= 0 {
+		row := &pp[i]
+		if row.PID <= 0 {
 			continue
 		}
-		if info, ok := pidInfo[pid]; ok {
-			if info.ppid > 0 {
-				pp[i].PPID = info.ppid
-			}
-			// On Windows these were already filled from the CIM query; the
-			// Unix table is the only source for them, so an empty field means
-			// this table is where it comes from.
-			if pp[i].Command == "" {
-				pp[i].Command = info.cmd
-			}
-			if pp[i].StartedAt == "" && info.startedAt != "" {
-				pp[i].StartedAt = parseStartTime(info.startedAt)
-			}
-			if info.ppid > 1 {
-				if parent, ok := pidInfo[info.ppid]; ok {
-					pp[i].ParentCmd = parent.cmd
-				}
-			}
+		if info, observed := pidInfo[row.PID]; observed {
+			applyProcessIdentity(row, info, pidInfo)
 		}
-		if cwd, ok := cwds[pid]; ok {
-			pp[i].Cwd = cwd
+		if cwd, observed := cwds[row.PID]; observed {
+			row.Cwd = cwd
 		}
 	}
+}
 
-	// Project root and group attribution are not done here: they belong to
-	// internal/groups, which runs the full precedence chain (pin, run, config,
-	// Compose, git root) over the finished scan.
+// applyProcessIdentity writes what one process-table row contributes. A field
+// the row already carries wins: this table is a second observation, not a
+// correction, and an empty field means this table is where it comes from.
+func applyProcessIdentity(row *ListeningPort, info pidEntry, table map[int]pidEntry) {
+	if info.ppid > 0 {
+		row.PPID = info.ppid
+	}
+	if row.Command == "" {
+		row.Command = info.cmd
+	}
+	if row.StartedAt == "" && info.startedAt != "" {
+		row.StartedAt = parseStartTime(info.startedAt)
+	}
+	if info.ppid > 1 {
+		if parent, observed := table[info.ppid]; observed {
+			row.ParentCmd = parent.cmd
+		}
+	}
 }
 
 // cachedDisplayNameSignals returns immutable maps owned by the cache. Refreshes
