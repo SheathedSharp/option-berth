@@ -1,8 +1,8 @@
 // Package groups resolves which project a listening port belongs to.
 //
 // A group is a name plus the set of ports currently resolved to it. Groups are
-// never created explicitly: they exist because something — a manual pin, a
-// `oberth start` run, a `oberth.yaml`, a Compose project or a git checkout —
+// never created explicitly: they exist because something — a manual pin, an
+// `oberth start` run, an `oberth.yaml`, a Compose project or a git checkout —
 // resolves a port to them. Resolve applies that precedence chain; Groups turns
 // the resolved ports into the `state.Group` rows the daemon publishes.
 package groups
@@ -20,61 +20,62 @@ const maxWalk = 64
 // Find locates the git checkout that contains cwd.
 //
 // root is the directory holding the `.git` entry (a directory in a normal
-// clone, a file in a linked worktree or a submodule). worktree is the
-// qualified group name `<repo>@<worktree>` when root is a linked worktree —
-// that is, when its `.git` file points into another repository's `worktrees/`
-// directory — and empty otherwise. ok is false when cwd is empty or no
-// repository contains it.
+// clone, a file in a linked worktree or a submodule). worktree is the qualified
+// group name `<repo>@<worktree>` when root is a linked worktree — that is, when
+// its `.git` file points into another repository's `worktrees/` directory — and
+// empty otherwise. ok is false when cwd is empty or no repository contains it.
 //
-// It is the name-shaped projection of Locate, which owns checkout discovery:
-// one walk, one `.git` parse, so the two can never disagree about where a
-// checkout is or whether it is a linked worktree.
+// Find is the name-shaped view of Locate, which owns checkout discovery: both
+// share one walk and one `.git` parse, so they cannot disagree about where a
+// checkout is or whether it is linked.
 func Find(cwd string) (root, worktree string, ok bool) {
 	co, found := Locate(cwd)
 	if !found {
 		return "", "", false
 	}
-	if co.Linked() {
-		return co.Root, filepath.Base(co.Main) + "@" + co.Worktree, true
+	if !co.Linked() {
+		return co.Root, "", true
 	}
-	return co.Root, "", true
+	return co.Root, filepath.Base(co.Main) + "@" + co.Worktree, true
 }
 
 // GroupName is the automatic group name for a checkout: the qualified
 // `<repo>@<worktree>` name for a linked worktree, otherwise the base name of
 // the checkout directory.
 func GroupName(root, worktree string) string {
-	if worktree != "" {
+	switch {
+	case worktree != "":
 		return worktree
-	}
-	if root == "" {
+	case root == "":
 		return ""
+	default:
+		return filepath.Base(root)
 	}
-	return filepath.Base(root)
 }
 
 // gitdirTarget reads the `gitdir:` line of a `.git` file, made absolute against
-// root and cleaned. It is "" when the file cannot be read or has no such line.
+// root and cleaned. It is "" when the file cannot be read or carries no such
+// line.
 func gitdirTarget(root, gitFile string) string {
 	data, err := os.ReadFile(gitFile)
 	if err != nil {
 		return ""
 	}
-	target := ""
 	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if rest, found := strings.CutPrefix(line, "gitdir:"); found {
-			target = strings.TrimSpace(rest)
-			break
+		target, found := strings.CutPrefix(strings.TrimSpace(line), "gitdir:")
+		if !found {
+			continue
 		}
+		target = strings.TrimSpace(target)
+		if target == "" {
+			return ""
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(root, target)
+		}
+		return filepath.Clean(target)
 	}
-	if target == "" {
-		return ""
-	}
-	if !filepath.IsAbs(target) {
-		target = filepath.Join(root, target)
-	}
-	return filepath.Clean(target)
+	return ""
 }
 
 // worktreeMain is the main checkout's root when target is a linked worktree's
@@ -84,17 +85,17 @@ func worktreeMain(target string) string {
 	if target == "" {
 		return ""
 	}
-	worktreesDir := filepath.Dir(target)
-	if filepath.Base(worktreesDir) != "worktrees" {
+	parts := strings.Split(filepath.ToSlash(filepath.Clean(target)), "/")
+	if len(parts) < 3 {
 		return ""
 	}
-	gitDir := filepath.Dir(worktreesDir)
-	if filepath.Base(gitDir) != ".git" {
+	last := len(parts) - 1
+	if parts[last-1] != "worktrees" || parts[last-2] != ".git" {
 		return ""
 	}
-	main := filepath.Dir(gitDir)
-	repo := filepath.Base(main)
-	if repo == "" || repo == "." || repo == string(filepath.Separator) {
+	main := filepath.FromSlash(strings.Join(parts[:last-2], "/"))
+	switch filepath.Base(main) {
+	case "", ".", string(filepath.Separator):
 		return ""
 	}
 	return main
