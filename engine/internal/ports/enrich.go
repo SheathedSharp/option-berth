@@ -135,7 +135,7 @@ func applyContainerStats(pp []ListeningPort, stats map[string]*DockerStatsEntry)
 		return
 	}
 	for i := range pp {
-		if pp[i].Type != PortTypeDocker {
+		if pp[i].Type != PortTypeDocker || pp[i].DockerContainer == "" {
 			continue
 		}
 		if entry, known := stats[pp[i].DockerContainer]; known && entry != nil {
