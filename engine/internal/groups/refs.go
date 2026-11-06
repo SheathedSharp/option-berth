@@ -4,24 +4,25 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
 
 // A reference is how a service's `prepare`, `cmd` and `env` name a port: its
-// own with ${port} and ${url}, another service's with ${<service>.port} and
+// own with ${port} and ${url}, another's with ${<service>.port} and
 // ${<service>.url}. The daemon expands them when it starts the service, after
 // the port of every service they name is known.
 //
 // ${worktree} is the fifth shape: a stable token for the checkout holding the
-// manifest, so two worktrees of one repository can keep separate data (a
-// database name, a data directory) without sharing anything.
+// manifest, so two worktrees of one repository keep separate data (a database
+// name, a data directory) without sharing anything.
 //
 // Only those five shapes are references. Anything else between ${ and } —
-// ${HOME}, ${FOO:-x} — is left exactly as written, because a `cmd` has never
-// been expanded before and one that hands such a string to `sh -c` must keep
+// ${HOME}, ${FOO:-x} — stays exactly as written, because a `cmd` has never been
+// expanded before and one that hands such a string to `sh -c` must keep
 // working.
 var refPattern = regexp.MustCompile(`\$\{([^{}$]*)\}`)
 
@@ -37,22 +38,34 @@ const (
 	// a filesystem path element and an environment value: a letter first, then
 	// lowercase hex.
 	worktreeTokenPrefix = "wt_"
+	worktreeTokenHex    = 12
 )
 
-// parseRef reads the inside of ${...} as a service port reference. service is
-// "" for the service's own port; ok is false for anything that is not one —
-// including ${worktree}, which names no service.
-func parseRef(inner string) (service, field string, ok bool) {
+// reference is one parsed ${...}: the service it names ("" is the service the
+// text belongs to) and which of that service's addresses it asks for.
+type reference struct {
+	service string
+	field   string
+}
+
+// parseReference reads the inside of ${...} as a service address. It answers
+// false for ${worktree} and for every shape this engine does not expand.
+func parseReference(inner string) (reference, bool) {
 	switch inner {
-	case refPort, refURL:
-		return "", inner, true
+	case refPort:
+		return reference{field: refPort}, true
+	case refURL:
+		return reference{field: refURL}, true
 	}
-	for _, f := range []string{refPort, refURL} {
-		if svc, found := strings.CutSuffix(inner, "."+f); found && svc != "" {
-			return svc, f, true
-		}
+	dot := strings.LastIndexByte(inner, '.')
+	if dot <= 0 {
+		return reference{}, false
 	}
-	return "", "", false
+	service, field := inner[:dot], inner[dot+1:]
+	if field != refPort && field != refURL {
+		return reference{}, false
+	}
+	return reference{service: service, field: field}, true
 }
 
 // URL is what ${url} expands to for a port.
@@ -70,19 +83,20 @@ type Values struct {
 }
 
 // WorktreeToken is the stable identity ${worktree} expands to for the checkout
-// rooted at root: "wt_" followed by twelve hex digits of a hash of the canonical
-// path. The same checkout keeps the token across restarts; a main checkout and
-// each linked worktree get different tokens, because their roots differ.
+// rooted at root: "wt_" followed by twelve hex digits of a hash of the
+// canonical path. The same checkout keeps the token across restarts; a main
+// checkout and each linked worktree get different tokens, because their roots
+// differ.
 //
 // The token is an identifier, not a path: embed it in one (`.data/${worktree}`)
 // rather than expecting a directory. An empty root has no token.
 func WorktreeToken(root string) string {
-	root = Canonical(root)
-	if root == "" {
+	canonical := Canonical(root)
+	if canonical == "" {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(root))
-	return worktreeTokenPrefix + hex.EncodeToString(sum[:])[:12]
+	digest := sha256.Sum256([]byte(canonical))
+	return worktreeTokenPrefix + hex.EncodeToString(digest[:])[:worktreeTokenHex]
 }
 
 // WorktreeTokenFor is WorktreeToken for the checkout holding dir — the
@@ -98,27 +112,26 @@ func WorktreeTokenFor(dir string) string {
 // checkout — is the path whose existence decides whether the identity still
 // has a checkout.
 func WorktreeIdentityFor(dir string) (identity, root string) {
-	if co, ok := Locate(dir); ok {
-		root = co.Root
-	} else {
-		root = Canonical(dir)
+	co, inRepo := Locate(dir)
+	if !inRepo {
+		return WorktreeToken(Canonical(dir)), Canonical(dir)
 	}
-	return WorktreeToken(root), root
+	return WorktreeToken(co.Root), co.Root
 }
 
-// HasWorktreeRef reports whether text carries the ${worktree} reference.
+// HasWorktreeRef reports whether text carries ${worktree}.
 func HasWorktreeRef(text string) bool {
 	return strings.Contains(text, "${"+refWorktree+"}")
 }
 
-// isReference reports whether the inside of ${...} is one of the shapes the
-// daemon expands. ${worktree} is not a service, so callers that resolve service
-// names must use parseRef instead.
+// isReference reports whether the inside of ${...} is a shape the daemon
+// expands. ${worktree} names no service, so callers resolving service names
+// use parseReference instead.
 func isReference(inner string) bool {
 	if inner == refWorktree {
 		return true
 	}
-	_, _, ok := parseRef(inner)
+	_, ok := parseReference(inner)
 	return ok
 }
 
@@ -126,26 +139,27 @@ func isReference(inner string) bool {
 // reference whose value is not known is left as written, and so is anything
 // that is not a reference.
 func Expand(text string, v Values) string {
-	return refPattern.ReplaceAllStringFunc(text, func(m string) string {
-		inner := m[2 : len(m)-1]
+	return refPattern.ReplaceAllStringFunc(text, func(match string) string {
+		inner := match[2 : len(match)-1]
 		if inner == refWorktree {
 			if v.Worktree == "" {
-				return m
+				return match
 			}
 			return v.Worktree
 		}
-		svc, field, ok := parseRef(inner)
+		ref, ok := parseReference(inner)
 		if !ok {
-			return m
+			return match
 		}
-		if svc == "" {
-			svc = v.Self
+		owner := ref.service
+		if owner == "" {
+			owner = v.Self
 		}
-		port, ok := v.Ports[svc]
-		if !ok || port == 0 {
-			return m
+		port := v.Ports[owner]
+		if port == 0 {
+			return match
 		}
-		if field == refURL {
+		if ref.field == refURL {
 			return URL(port)
 		}
 		return strconv.Itoa(port)
@@ -157,18 +171,17 @@ func Expand(text string, v Values) string {
 // and is never listed.
 func Refs(text, self string) []string {
 	var out []string
-	seen := map[string]bool{}
-	for _, m := range refPattern.FindAllStringSubmatch(text, -1) {
-		svc, _, ok := parseRef(m[1])
+	for _, match := range refPattern.FindAllStringSubmatch(text, -1) {
+		ref, ok := parseReference(match[1])
 		if !ok {
 			continue
 		}
-		if svc == "" {
-			svc = self
+		name := ref.service
+		if name == "" {
+			name = self
 		}
-		if !seen[svc] {
-			seen[svc] = true
-			out = append(out, svc)
+		if !slices.Contains(out, name) {
+			out = append(out, name)
 		}
 	}
 	return out
@@ -183,22 +196,22 @@ func MatchesExpanded(pattern, actual string) bool {
 	if len(locs) == 0 {
 		return pattern == actual
 	}
-	var b strings.Builder
-	b.WriteString("^")
-	last := 0
+	var expr strings.Builder
+	expr.WriteByte('^')
+	written := 0
 	for _, loc := range locs {
-		b.WriteString(regexp.QuoteMeta(pattern[last:loc[0]]))
+		expr.WriteString(regexp.QuoteMeta(pattern[written:loc[0]]))
 		if isReference(pattern[loc[2]:loc[3]]) {
-			b.WriteString(".+")
+			expr.WriteString(".+")
 		} else {
-			b.WriteString(regexp.QuoteMeta(pattern[loc[0]:loc[1]]))
+			expr.WriteString(regexp.QuoteMeta(pattern[loc[0]:loc[1]]))
 		}
-		last = loc[1]
+		written = loc[1]
 	}
-	b.WriteString(regexp.QuoteMeta(pattern[last:]))
-	b.WriteString("$")
-	re, err := regexp.Compile(b.String())
-	return err == nil && re.MatchString(actual)
+	expr.WriteString(regexp.QuoteMeta(pattern[written:]))
+	expr.WriteByte('$')
+	compiled, err := regexp.Compile(expr.String())
+	return err == nil && compiled.MatchString(actual)
 }
 
 // ServiceNamed returns the service with this name.
@@ -216,51 +229,46 @@ func (c *Config) ServiceNamed(name string) (Service, bool) {
 // `workspace:` reference, and a service named directly has to have a port.
 //
 // Workspace references are read-only addresses resolved when a service starts,
-// so a health command — which is re-expanded by the scanner without that
-// resolution — may not name one.
+// so a health command — re-expanded by the scanner without that resolution —
+// may not name one.
 func (c *Config) refProblems(s Service, where string) []string {
-	var out []string
+	var problems []string
 	check := func(field, text string) {
-		for _, m := range refPattern.FindAllStringSubmatch(text, -1) {
-			svc, _, ok := parseRef(m[1])
+		for _, match := range refPattern.FindAllStringSubmatch(text, -1) {
+			ref, ok := parseReference(match[1])
 			if !ok {
 				continue
 			}
 			target, found := s, true
-			if svc != "" {
-				target, found = c.ServiceNamed(svc)
+			if ref.service != "" {
+				target, found = c.ServiceNamed(ref.service)
 			}
 			if found {
 				if !target.HasPort() {
-					out = append(out, fmt.Sprintf("%s: %s %s needs a port, and %s declares none", where, field, m[0], target.Name))
+					problems = append(problems, fmt.Sprintf("%s: %s %s needs a port, and %s declares none", where, field, match[0], target.Name))
 				}
 				continue
 			}
-			if svc == "" {
+			if ref.service == "" {
 				continue
 			}
-			if _, ok := c.MachineNamed(svc); ok {
+			if _, ok := c.MachineNamed(ref.service); ok {
 				continue
 			}
-			if _, ok := c.WorkspaceNamed(svc); ok {
+			if _, ok := c.WorkspaceNamed(ref.service); ok {
 				if field == "health" {
-					out = append(out, fmt.Sprintf("%s: health %s names a workspace reference; workspace addresses are expanded in prepare, cmd and env only", where, m[0]))
+					problems = append(problems, fmt.Sprintf("%s: health %s names a workspace reference; workspace addresses are expanded in prepare, cmd and env only", where, match[0]))
 				}
 				continue
 			}
-			out = append(out, fmt.Sprintf("%s: %s %s names no service %q", where, field, m[0], svc))
+			problems = append(problems, fmt.Sprintf("%s: %s %s names no service %q", where, field, match[0], ref.service))
 		}
 	}
 	check("prepare", s.Prepare)
 	check("cmd", s.Cmd)
 	check("health", s.Health)
-	keys := make([]string, 0, len(s.Env))
-	for k := range s.Env {
-		keys = append(keys, k)
+	for _, key := range slices.Sorted(maps.Keys(s.Env)) {
+		check("env "+key, s.Env[key])
 	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		check("env "+k, s.Env[k])
-	}
-	return out
+	return problems
 }
