@@ -23,14 +23,13 @@ sonar `main`（`f4c50506b09502642cfedf3f4f6a3031cf80e9f2`，2026-10-15）的结�
 | --- | --- |
 | 与上游同相对路径的 Go 文件 | 314 |
 | 其中逐字节相同 | 11 个文件 / 483 行 |
-| 含复制段的文件 | 169 |
-| 复制段 | 955 |
-| 复制行 | 16,518 |
+| 含复制段的文件 | 168 |
+| 复制段 | 936 |
+| 复制行 | 15,961 |
 
 `internal/claims`、`internal/display`、`internal/testenv` 与 `internal/store/claims*.go`
 已经归零；`internal/docker` 与 `internal/ports/displayname.go` 只剩结构体字段与表驱动
-用例数据。`internal/store` 的生产文件（`store.go`、`migrate.go`）已重写，用例还剩
-约 570 行未动。
+用例数据。`internal/store` 已整包重写：生产代码从 1,076 行降到 199 行。
 
 ```sh
 git clone --depth 1 https://github.com/raskrebs/sonar /tmp/sonar
