@@ -39,10 +39,10 @@ func captureServicePortRelease(ctx context.Context, rt *Runtime, cfg *groups.Con
 		return nil, err
 	}
 	keys := make(map[string]bool)
-	project, worktree := claims.Identity(cfg.Dir, "", "")
+	project, worktree := claims.Identity(cfg.Dir)
 	for _, svc := range cfg.Services {
 		if svc.PortAuto {
-			keys[claims.ServiceKey(project, worktree, svc.Name)] = true
+			keys[(claims.Address{Project: project, Worktree: worktree, Service: svc.Name}).Key()] = true
 		}
 	}
 	if len(keys) == 0 {
