@@ -104,6 +104,12 @@ func (w *fakeWorld) engine() *engine {
 	}
 }
 
+// stop is the world's kill loop. It calls kill directly, so a case can inspect
+// the unit plan without building a real scan.
+func (w *fakeWorld) stop(snapshot []ports.ListeningPort, targets []Target, opts Options) []Result {
+	return w.engine().kill(context.Background(), snapshot, targets, opts)
+}
+
 func (w *fakeWorld) record(c signalCall) error {
 	w.signals = append(w.signals, c)
 	if err := w.failKil[c.pid]; err != nil {
@@ -162,7 +168,7 @@ func TestDryRunPlansTheTreeAndTouchesNothing(t *testing.T) {
 	w.open[3000] = true
 	snapshot := []ports.ListeningPort{listener(3000, 200)}
 
-	results := w.engine().kill(context.Background(), snapshot,
+	results := w.stop(snapshot,
 		[]Target{{Port: 3000}}, Options{Tree: true, DryRun: true})
 
 	if got, want := pidsOf(results), []int{400, 401, 300, 200}; !reflect.DeepEqual(got, want) {
@@ -187,7 +193,7 @@ func TestDryRunPlansTheTreeAndTouchesNothing(t *testing.T) {
 func TestDryRunNamesEveryProcessInTheTree(t *testing.T) {
 	w := newWorld(npmTree())
 	snapshot := []ports.ListeningPort{listener(3000, 200)}
-	results := w.engine().kill(context.Background(), snapshot,
+	results := w.stop(snapshot,
 		[]Target{{Port: 3000}}, Options{Tree: true, DryRun: true})
 
 	want := []string{"esbuild", "esbuild", "node", "node"}
@@ -204,7 +210,7 @@ func TestWithoutTreeOnlyTheListenerIsSignalled(t *testing.T) {
 	w := newWorld(npmTree())
 	snapshot := []ports.ListeningPort{listener(3000, 200)}
 
-	results := w.engine().kill(context.Background(), snapshot, []Target{{Port: 3000}}, Options{})
+	results := w.stop(snapshot, []Target{{Port: 3000}}, Options{})
 
 	if got := w.signalledPIDs(); !reflect.DeepEqual(got, []int{200}) {
 		t.Fatalf("signalled %v, want only the listener", got)
@@ -222,7 +228,7 @@ func TestOverlappingProcessGroupTargetsSignalOnce(t *testing.T) {
 		listener(3001, 200),
 	}
 
-	results := w.engine().kill(context.Background(), snapshot,
+	results := w.stop(snapshot,
 		[]Target{{Port: 3000}, {Port: 3001}}, Options{})
 
 	if got := w.signalledPIDs(); !reflect.DeepEqual(got, []int{200}) {
@@ -238,7 +244,7 @@ func TestEscalatesToSIGKILLWhenThePortStaysOpen(t *testing.T) {
 	w.open[3000] = true // the listener ignores SIGTERM
 	snapshot := []ports.ListeningPort{listener(3000, 200)}
 
-	results := w.engine().kill(context.Background(), snapshot,
+	results := w.stop(snapshot,
 		[]Target{{Port: 3000}}, Options{Grace: time.Second})
 
 	want := []signalCall{{pid: 200}, {pid: 200, force: true}}
@@ -263,7 +269,7 @@ func TestNoEscalationWhenThePortCloses(t *testing.T) {
 	}
 	snapshot := []ports.ListeningPort{listener(3000, 200)}
 
-	results := w.engine().kill(context.Background(), snapshot,
+	results := w.stop(snapshot,
 		[]Target{{Port: 3000}}, Options{Grace: 5 * time.Second})
 
 	if len(w.signals) != 1 || w.signals[0].force {
@@ -286,7 +292,7 @@ func TestEscalatesWhenTheProbeCannotTell(t *testing.T) {
 	w.hangs[3000] = true
 	snapshot := []ports.ListeningPort{listener(3000, 200)}
 
-	results := w.engine().kill(context.Background(), snapshot,
+	results := w.stop(snapshot,
 		[]Target{{Port: 3000}}, Options{Grace: time.Second})
 
 	want := []signalCall{{pid: 200}, {pid: 200, force: true}}
@@ -307,7 +313,7 @@ func TestNoEscalateOptionLeavesTheProcessAlone(t *testing.T) {
 	off := false
 	snapshot := []ports.ListeningPort{listener(3000, 200)}
 
-	results := w.engine().kill(context.Background(), snapshot,
+	results := w.stop(snapshot,
 		[]Target{{Port: 3000}}, Options{Escalate: &off, Grace: time.Second})
 
 	if len(w.signals) != 1 || w.signals[0].force {
@@ -326,7 +332,7 @@ func TestForceSkipsStraightToSIGKILL(t *testing.T) {
 	w.open[3000] = true
 	snapshot := []ports.ListeningPort{listener(3000, 200)}
 
-	results := w.engine().kill(context.Background(), snapshot,
+	results := w.stop(snapshot,
 		[]Target{{Port: 3000}}, Options{Force: true})
 
 	if len(w.signals) != 1 || !w.signals[0].force {
@@ -350,7 +356,7 @@ func TestEscalationOnlyHardKillsWhatIsStillAlive(t *testing.T) {
 	}
 	snapshot := []ports.ListeningPort{listener(3000, 200)}
 
-	results := w.engine().kill(context.Background(), snapshot,
+	results := w.stop(snapshot,
 		[]Target{{Port: 3000}}, Options{Tree: true, Grace: time.Second})
 
 	var hard []int
@@ -377,7 +383,7 @@ func TestDockerContainersAreStoppedNotSignalled(t *testing.T) {
 		lp.DockerComposeService = "db"
 	})}
 
-	results := w.engine().kill(context.Background(), snapshot,
+	results := w.stop(snapshot,
 		[]Target{{Port: 5432}}, Options{Tree: true, Force: true})
 
 	if len(w.signals) != 0 {
@@ -401,7 +407,7 @@ func TestRunAttributedListenerKillsTheWholeRun(t *testing.T) {
 	})}
 
 	// No --tree: run attribution implies the whole tree anyway.
-	w.engine().kill(context.Background(), snapshot, []Target{{Port: 3000}}, Options{})
+	w.stop(snapshot, []Target{{Port: 3000}}, Options{})
 
 	if got, want := w.signalledPIDs(), []int{400, 401, 300, 200, 201, 100}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("signalled %v, want the whole run tree children-first %v", got, want)
@@ -415,7 +421,7 @@ func TestRunWithItsOwnProcessGroupIsSignalledAsAGroup(t *testing.T) {
 		lp.RunRootPID = 100
 	})}
 
-	results := w.engine().kill(context.Background(), snapshot, []Target{{Port: 3000}}, Options{})
+	results := w.stop(snapshot, []Target{{Port: 3000}}, Options{})
 
 	want := []signalCall{{pid: 100, group: true}}
 	if !reflect.DeepEqual(w.signals, want) {
@@ -434,7 +440,7 @@ func TestRunIDTargetExpandsToEveryPortOfTheRun(t *testing.T) {
 		listener(5173, 999),
 	}
 
-	results := w.engine().kill(context.Background(), snapshot, []Target{{RunID: "abc"}}, Options{})
+	results := w.stop(snapshot, []Target{{RunID: "abc"}}, Options{})
 
 	// Both ports belong to the same tree; the shared pids are signalled once.
 	if got := w.signalledPIDs(); !reflect.DeepEqual(got, []int{400, 401, 300}) {
@@ -450,7 +456,7 @@ func TestOverlappingTargetsSignalEachProcessOnce(t *testing.T) {
 	// 3000 is npm's tree; 3001 is vite inside that same tree.
 	snapshot := []ports.ListeningPort{listener(3000, 200), listener(3001, 300)}
 
-	w.engine().kill(context.Background(), snapshot,
+	w.stop(snapshot,
 		[]Target{{Port: 3000}, {Port: 3001}}, Options{Tree: true})
 
 	if got, want := w.signalledPIDs(), []int{400, 401, 300, 200}; !reflect.DeepEqual(got, want) {
@@ -465,7 +471,7 @@ func TestAmbiguousPortReportsTheBindAddresses(t *testing.T) {
 		listener(3000, 201, func(lp *ports.ListeningPort) { lp.BindAddress = "::1" }),
 	}
 
-	results := w.engine().kill(context.Background(), snapshot, []Target{{Port: 3000}}, Options{})
+	results := w.stop(snapshot, []Target{{Port: 3000}}, Options{})
 
 	if len(results) != 1 || results[0].OK || results[0].Method != state.MethodNone {
 		t.Fatalf("results = %+v, want one failed row", results)
@@ -476,7 +482,7 @@ func TestAmbiguousPortReportsTheBindAddresses(t *testing.T) {
 
 	// With --ip the same call resolves.
 	w2 := newWorld(npmTree())
-	results = w2.engine().kill(context.Background(), snapshot,
+	results = w2.stop(snapshot,
 		[]Target{{Port: 3000, BindAddress: "::1"}}, Options{})
 	if len(results) != 1 || !results[0].OK || results[0].PID != 201 {
 		t.Fatalf("results = %+v", results)
@@ -485,7 +491,7 @@ func TestAmbiguousPortReportsTheBindAddresses(t *testing.T) {
 
 func TestUnknownPortIsANotFoundRow(t *testing.T) {
 	w := newWorld(npmTree())
-	results := w.engine().kill(context.Background(), nil, []Target{{Port: 9999}}, Options{})
+	results := w.stop(nil, []Target{{Port: 9999}}, Options{})
 	if len(results) != 1 || results[0].OK || results[0].Port != 9999 {
 		t.Fatalf("results = %+v", results)
 	}
@@ -497,7 +503,7 @@ func TestUnknownPortIsANotFoundRow(t *testing.T) {
 func TestHiddenListenerAsksForSudo(t *testing.T) {
 	w := newWorld(npmTree())
 	snapshot := []ports.ListeningPort{listener(3000, 0)}
-	results := w.engine().kill(context.Background(), snapshot, []Target{{Port: 3000}}, Options{})
+	results := w.stop(snapshot, []Target{{Port: 3000}}, Options{})
 
 	if len(results) != 1 || results[0].OK {
 		t.Fatalf("results = %+v", results)
@@ -512,7 +518,7 @@ func TestSignalFailureIsReportedPerRow(t *testing.T) {
 	w.failKil[200] = permissionErr(200, errors.New("operation not permitted"))
 	snapshot := []ports.ListeningPort{listener(3000, 200)}
 
-	results := w.engine().kill(context.Background(), snapshot, []Target{{Port: 3000}}, Options{})
+	results := w.stop(snapshot, []Target{{Port: 3000}}, Options{})
 
 	if len(results) != 1 || results[0].OK {
 		t.Fatalf("results = %+v", results)
@@ -525,7 +531,7 @@ func TestSignalFailureIsReportedPerRow(t *testing.T) {
 func TestPIDTargetWithoutAListeningPort(t *testing.T) {
 	w := newWorld(npmTree())
 	off := false
-	results := w.engine().kill(context.Background(), nil, []Target{{PID: 300}},
+	results := w.stop(nil, []Target{{PID: 300}},
 		Options{Tree: true, Escalate: &off})
 
 	if got := w.signalledPIDs(); !reflect.DeepEqual(got, []int{400, 401, 300}) {
@@ -538,7 +544,7 @@ func TestPIDTargetWithoutAListeningPort(t *testing.T) {
 
 func TestPIDTargetEscalatesOnTheProcess(t *testing.T) {
 	w := newWorld(npmTree()) // every pid stays alive: nothing reacts to SIGTERM
-	w.engine().kill(context.Background(), nil, []Target{{PID: 400}}, Options{Grace: time.Second})
+	w.stop(nil, []Target{{PID: 400}}, Options{Grace: time.Second})
 
 	want := []signalCall{{pid: 400}, {pid: 400, force: true}}
 	if !reflect.DeepEqual(w.signals, want) {
@@ -548,7 +554,7 @@ func TestPIDTargetEscalatesOnTheProcess(t *testing.T) {
 
 func TestEmptyTargetIsRejected(t *testing.T) {
 	w := newWorld(npmTree())
-	results := w.engine().kill(context.Background(), nil, []Target{{}}, Options{})
+	results := w.stop(nil, []Target{{}}, Options{})
 	if len(results) != 1 || results[0].OK {
 		t.Fatalf("results = %+v", results)
 	}
