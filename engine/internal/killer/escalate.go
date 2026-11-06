@@ -6,48 +6,24 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// escalate implements the daemon spec's "SIGTERM, wait up to --grace (default
-// 5s), then SIGKILL if the port is still open". It polls the targets rather
-// than sleeping out the whole grace period, so a well-behaved process costs
-// one poll interval instead of five seconds. Docker units and units that
-// failed to resolve are never escalated.
+// escalate is SIGTERM, then SIGKILL for whatever is still standing once the
+// grace period is over. It polls instead of sleeping out the window, so a
+// process that exits promptly costs one poll interval rather than five seconds.
+// A Docker unit and a unit that never resolved are not escalated: the first has
+// no signal to escalate to, the second never ran.
 func (e *engine) escalate(ctx context.Context, units []*unit, opts Options, results []Result) {
-	pending := make([]*unit, 0, len(units))
-	for _, u := range units {
-		if u.err != nil || u.container != "" {
-			continue
-		}
-		for _, row := range u.rows {
-			if results[row].OK {
-				pending = append(pending, u)
-				break
-			}
-		}
-	}
-	cancelled := func() bool {
-		if ctx.Err() == nil {
-			return false
-		}
-		for _, u := range pending {
-			for _, row := range u.rows {
-				if results[row].OK {
-					results[row].OK = false
-					results[row].Error = "stop interrupted after initial signal: " + ctx.Err().Error()
-					results[row].Code = Code(ctx.Err())
-				}
-			}
-		}
-		return true
-	}
+	pending := escalateCandidates(units, results)
+	cancelled := func() bool { return noteCancellation(ctx, pending, results) }
 	scratch := make([]*unit, 0, len(pending))
 	deadline := e.clock.Now().Add(opts.grace())
+
 	for {
 		if cancelled() {
 			return
 		}
 		remaining := e.stillUp(pending, scratch)
-		// A cancelled TCP probe is not proof that a listener closed. Preserve the
-		// original pending list until after the ownership check.
+		// A cancelled probe is not evidence that a listener closed, so the
+		// cancellation check comes before pending is replaced.
 		if cancelled() {
 			return
 		}
@@ -69,6 +45,55 @@ func (e *engine) escalate(ctx context.Context, units []*unit, opts Options, resu
 		}
 		e.hardKill(u, results)
 	}
+}
+
+// escalateCandidates is the units whose initial signal actually landed. A unit
+// that failed to resolve, targets a container, or whose rows are all already
+// failures has nothing left to escalate.
+func escalateCandidates(units []*unit, results []Result) []*unit {
+	candidates := make([]*unit, 0, len(units))
+	for _, u := range units {
+		if u.err != nil || u.container != "" {
+			continue
+		}
+		if anyRowOK(u, results) {
+			candidates = append(candidates, u)
+		}
+	}
+	return candidates
+}
+
+// anyRowOK reports whether at least one of the unit's rows records a success.
+func anyRowOK(u *unit, results []Result) bool {
+	for _, row := range u.rows {
+		if results[row].OK {
+			return true
+		}
+	}
+	return false
+}
+
+// noteCancellation records a cancelled stop on every row that still claims
+// success, and reports whether the context was cancelled at all.
+//
+// A cancelled kill is not a completed one: the signal went out, so the row is
+// not a plain failure either, and the message says which of the two happened.
+func noteCancellation(ctx context.Context, pending []*unit, results []Result) bool {
+	err := ctx.Err()
+	if err == nil {
+		return false
+	}
+	for _, u := range pending {
+		for _, row := range u.rows {
+			if !results[row].OK {
+				continue
+			}
+			results[row].OK = false
+			results[row].Error = "stop interrupted after initial signal: " + err.Error()
+			results[row].Code = Code(err)
+		}
+	}
+	return true
 }
 
 // stillUp keeps the units that have not gone away. A unit anchored on a port is
