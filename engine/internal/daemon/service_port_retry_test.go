@@ -58,7 +58,7 @@ func TestFinishGroupStopRetryNeverSkipsNewEvidence(t *testing.T) {
 					return nil, errors.New("fixture incomplete scan")
 				case "changed reservation":
 					row := plan.observed.Rows[0]
-					row.ExpiresAt = row.ExpiresAt.Add(1)
+					row.Until = row.Until.Add(1)
 					if err := rt.Store.Claims().Put(row); err != nil {
 						t.Fatal(err)
 					}

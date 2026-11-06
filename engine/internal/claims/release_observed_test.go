@@ -11,7 +11,7 @@ import (
 
 func observedClaim(port int, key string) store.ClaimRow {
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	return store.ClaimRow{Port: port, Key: key, Project: "fixture", Worktree: "main", CreatedAt: at, ExpiresAt: at.Add(time.Hour)}
+	return store.ClaimRow{Port: port, Key: key, Project: "fixture", Worktree: "main", Since: at, Until: at.Add(time.Hour)}
 }
 
 func TestDeleteObservedClaimsRetainsChangedSets(t *testing.T) {
@@ -35,7 +35,7 @@ func TestDeleteObservedClaimsRetainsChangedSets(t *testing.T) {
 			writer := other.Claims()
 			switch change {
 			case "refresh":
-				a.ExpiresAt = a.ExpiresAt.Add(time.Second)
+				a.Until = a.Until.Add(time.Second)
 				err = writer.Put(a)
 			case "extra port":
 				err = writer.Put(observedClaim(12003, "a"))
@@ -50,7 +50,7 @@ func TestDeleteObservedClaimsRetainsChangedSets(t *testing.T) {
 				a.Project = "replacement"
 				err = writer.Put(a)
 			case "other key":
-				z.ExpiresAt = z.ExpiresAt.Add(time.Second)
+				z.Until = z.Until.Add(time.Second)
 				err = writer.Put(z)
 			}
 			if err != nil {
@@ -142,9 +142,9 @@ func TestDeleteObservedClaimsRejectsCanceledOrInvalidEvidence(t *testing.T) {
 			case "cancel":
 				cancel()
 			case "zero created":
-				observed.Rows[0].CreatedAt = time.Time{}
+				observed.Rows[0].Since = time.Time{}
 			case "zero expiry":
-				observed.Rows[0].ExpiresAt = time.Time{}
+				observed.Rows[0].Until = time.Time{}
 			case "duplicate":
 				observed.Rows = append(observed.Rows, row)
 			}
@@ -175,7 +175,7 @@ func TestDeleteObservedClaimsSeesAnotherStoreRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer other.Close()
-	row.ExpiresAt = row.ExpiresAt.Add(time.Minute)
+	row.Until = row.Until.Add(time.Minute)
 	if err := other.Claims().Put(row); err != nil {
 		t.Fatal(err)
 	}
