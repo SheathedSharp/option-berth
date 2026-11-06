@@ -109,8 +109,10 @@ type Env struct {
 	// LookPath resolves a command name against PATH.
 	LookPath func(string) (string, error)
 	// UID is the current user's numeric id on unix; -1 when unknown. The
-	// socket check compares it with the socket file's owner.
-	UID int
+	// socket check compares it with the socket file's owner. uidSet records
+	// that the caller supplied UID, so an explicit 0 (root) survives resolve.
+	UID    int
+	uidSet bool
 
 	// Daemon reports the daemon's identity, or why it could not be reached.
 	Daemon func(context.Context) DaemonInfo
@@ -130,7 +132,8 @@ type scope uint8
 const scopeCLI scope = 1
 
 // check is one row of the table: a stable id, who can answer it, and the
-// question itself.
+// question itself. ask assumes env.resolve() has run; Run is the only
+// production entry point that guarantees it.
 type check struct {
 	id    string
 	scope scope

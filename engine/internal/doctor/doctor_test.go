@@ -72,6 +72,29 @@ func wantStatus(t *testing.T, row rpc.DoctorCheck, status string) {
 	}
 }
 
+func TestResolveFillsTheUserID(t *testing.T) {
+	env := *fakeEnv(t)
+	env.UID = 0
+	env.uidSet = false
+	env.resolve()
+	if env.UID != os.Getuid() {
+		t.Fatalf("UID = %d, want the process uid %d", env.UID, os.Getuid())
+	}
+}
+
+func TestResolveKeepsExplicitRootUID(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("this test needs a non-root user to tell the sentinel from root")
+	}
+	env := *fakeEnv(t)
+	env.UID = 0
+	env.uidSet = true
+	env.resolve()
+	if env.UID != 0 {
+		t.Fatalf("UID = %d, want the explicit 0 (root)", env.UID)
+	}
+}
+
 // -------------------------------------------------------------- selectors ---
 
 func TestOnlySelectsExactIDs(t *testing.T) {

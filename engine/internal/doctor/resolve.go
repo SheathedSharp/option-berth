@@ -35,7 +35,7 @@ func (e *Env) resolveProcess() {
 	if e.GOOS == "" {
 		e.GOOS = runtime.GOOS
 	}
-	if e.UID == 0 {
+	if !e.uidSet && e.UID == 0 {
 		e.UID = os.Getuid()
 	}
 	if e.Home == "" {
