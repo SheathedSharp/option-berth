@@ -101,22 +101,48 @@ func (inv invocation) inlineCode() bool {
 	return len(inv.args) > 0 && (inv.args[0] == "-c" || inv.args[0] == "-e")
 }
 
-// interpreterRule reads the thing an interpreter actually runs out of its
+// interpreterRule reads the thing a runtime actually runs out of its
 // arguments, and reports whether it recognized the shape.
 type interpreterRule func(invocation) (string, bool)
 
-// interpreterRules are tried in order, most specific first. Each one answers
-// only for its own shape, so adding a runtime means adding a rule rather than
-// another branch to one long function.
-var interpreterRules = []interpreterRule{
-	moduleTarget, // python -m foo.bar
-	runnerTarget, // uv run uvicorn …, npx next dev
-	scriptTarget, // python /path/to/script.py
+// runtimeRule is what one executable does with its arguments: the shapes to
+// try, in order, and whether the bare name tells a reader anything. The two
+// facts are not the same question — a package runner names the tool it hands
+// off to, pipenv names itself — so one row carries both instead of two lists
+// that can drift apart.
+type runtimeRule struct {
+	targets []interpreterRule
+	opaque  bool
+}
+
+var (
+	// runsScript names a module or script given as an argument.
+	runsScript = runtimeRule{targets: []interpreterRule{moduleTarget, scriptTarget}, opaque: true}
+	// runsTool hands its arguments to the tool that follows the runner verb.
+	runsTool = runtimeRule{targets: []interpreterRule{moduleTarget, runnerTarget}, opaque: true}
+	// runsItself is a runner whose own name still identifies the process.
+	runsItself = runtimeRule{targets: []interpreterRule{moduleTarget, runnerTarget}}
+)
+
+// runtimeRules is the one table of executables that hide their target in the
+// argument list. An executable absent here is its own name.
+var runtimeRules = map[string]runtimeRule{
+	"python": runsScript, "python2": runsScript, "python3": runsScript,
+	"node": runsScript, "nodejs": runsScript, "deno": runsScript, "bun": runsScript,
+	"ruby": runsScript, "perl": runsScript, "php": runsScript,
+	"sh": runsScript, "bash": runsScript, "zsh": runsScript, "fish": runsScript,
+	"uv": runsTool, "poetry": runsTool, "npx": runsTool,
+	"pipenv": runsItself, "pdm": runsItself, "rye": runsItself,
+	// java selects its target with its own flags; a main class is not a script
+	// file, so it is terminal and the generic shapes never follow it.
+	"java": {targets: []interpreterRule{javaTarget}, opaque: true},
+	// The Erlang VM says nothing; its parent, a release script, does.
+	"beam.smp": {opaque: true},
 }
 
 // interpreterAwareBasename extracts a meaningful name from a full command line:
-// an app bundle names itself, an interpreter names what it runs, and anything
-// else is its own basename.
+// an app bundle names itself, a runtime names what it runs, and anything else
+// is its own basename.
 func interpreterAwareBasename(cmd string) string {
 	// An .app path may contain spaces ("Application Support"), so it is matched
 	// before the command line is split.
@@ -127,22 +153,12 @@ func interpreterAwareBasename(cmd string) string {
 	if !ok {
 		return ""
 	}
-	if !isInterpreter(inv.exec) {
+	runtime, hidesTarget := runtimeRules[inv.exec]
+	if !hidesTarget || inv.inlineCode() {
 		return inv.exec
 	}
-	if inv.inlineCode() {
-		return inv.exec
-	}
-	// java is terminal: its own flags decide the target, and a main class is
-	// not a script file, so the generic rules must not run after it.
-	if inv.exec == "java" {
-		if name, ok := javaTarget(inv); ok {
-			return name
-		}
-		return inv.exec
-	}
-	for _, rule := range interpreterRules {
-		if name, ok := rule(inv); ok {
+	for _, target := range runtime.targets {
+		if name, ok := target(inv); ok {
 			return name
 		}
 	}
@@ -202,133 +218,98 @@ func scriptTarget(inv invocation) (string, bool) {
 	return "", false
 }
 
-// extractJavaMainClass handles java command lines.
+// javaValueFlags are the java options whose next token is a value: stepping
+// over that token is what keeps a classpath from being read as the main class.
+var javaValueFlags = map[string]bool{
+	"-cp": true, "-classpath": true, "--class-path": true,
+	"-p": true, "--module-path": true,
+}
+
 // javaTarget reads what a `java` invocation runs: the jar after -jar, the
-// module after -m/--module (taking `module/Class` to its class), or the main
-// class itself.
+// module after -m/--module, or the first token that is neither a flag nor a
+// flag's value. Argument order decides; the first target seen wins.
 func javaTarget(inv invocation) (string, bool) {
-	parts := inv.args
-	for i := 0; i < len(parts); i++ {
-		arg := parts[i]
-		if arg == "-jar" {
-			if i+1 < len(parts) {
-				return filepath.Base(parts[i+1]), true
+	args := inv.args
+	for i := 0; i < len(args); i++ {
+		switch arg := args[i]; {
+		case arg == "-jar":
+			if i+1 < len(args) {
+				return filepath.Base(args[i+1]), true
 			}
 			return "", false
-		}
-		// -m/--module <module>[/<mainclass>]: the target is the value itself.
-		if arg == "-m" || arg == "--module" {
-			if i+1 < len(parts) {
-				return javaModuleTarget(parts[i+1]), true
+		case arg == "-m" || arg == "--module":
+			if i+1 < len(args) {
+				return moduleAndClass(args[i+1]), true
 			}
 			return "", false
+		case strings.HasPrefix(arg, "--module="):
+			return moduleAndClass(strings.TrimPrefix(arg, "--module=")), true
+		case javaValueFlags[arg]:
+			i++ // the value belongs to this flag, not to the class
+		case !strings.HasPrefix(arg, "-"):
+			return arg, true
 		}
-		if v, ok := strings.CutPrefix(arg, "--module="); ok {
-			return javaModuleTarget(v), true
-		}
-		// Flags that take a separate value we must skip so it isn't
-		// mistaken for the main class.
-		if arg == "-cp" || arg == "-classpath" || arg == "--class-path" ||
-			arg == "-p" || arg == "--module-path" {
-			i++
-			continue
-		}
-		if strings.HasPrefix(arg, "-") {
-			continue
-		}
-		// First non-flag, non-value token is the main class.
-		return arg, true
 	}
 	return "", false
 }
 
-// javaModuleTarget extracts the main class from a `-m` value of the form
-// `module/ClassName`, or returns the module name when no class is given.
-func javaModuleTarget(v string) string {
-	if _, class, ok := strings.Cut(v, "/"); ok {
+// moduleAndClass splits a `module/Class` target to its class; a bare module
+// name is already the answer.
+func moduleAndClass(value string) string {
+	if _, class, hasClass := strings.Cut(value, "/"); hasClass {
 		return class
 	}
-	return v
+	return value
 }
 
-// augmentWithCwd prefixes the name with the cwd's basename when that adds
-// useful project context. If the cwd basename is itself a noise directory
-// (tmp, build, target/release, ...) it walks up the path to find the first
-// meaningful ancestor.
+// augmentWithCwd prefixes the name with the project the process runs in when
+// that says more than the process name alone.
 func augmentWithCwd(name, cwd string) string {
 	if name == "" || cwd == "" {
 		return name
 	}
-	cwdBase := filepath.Base(cwd)
-	if cwdBase == "" || cwdBase == "." || cwdBase == "/" {
+	project := projectContextName(cwd)
+	switch project {
+	case "", "Users", "home": // filesystem roots identify no project
 		return name
 	}
-	// Walk past noise dirs to find a real project root.
-	if isNoiseDir(cwdBase) {
-		cwdBase = meaningfulAncestor(cwd)
-		if cwdBase == "" {
-			return name
-		}
+	if project == name || strings.HasPrefix(name, project+"/") {
+		return name // already present; do not repeat it
 	}
-	// Don't prepend if the cwd basename is already part of the name.
-	if cwdBase == name || strings.HasPrefix(name, cwdBase+"/") {
-		return name
-	}
-	// Don't prepend filesystem-root-ish names that don't identify a project.
-	if cwdBase == "Users" || cwdBase == "home" {
-		return name
-	}
-	return cwdBase + "/" + name
+	return project + "/" + name
 }
 
-// meaningfulAncestor walks up from a path, skipping noise directory names,
-// to find the first non-noise ancestor. Returns "" if none found.
-func meaningfulAncestor(path string) string {
-	for i := 0; i < 6; i++ {
-		path = filepath.Dir(path)
-		base := filepath.Base(path)
-		if base == "" || base == "." || base == "/" {
+// projectContextName is the cwd component worth showing. Generic build and
+// temp directories say nothing about which project runs there, so the walk
+// goes up past them; a path with no other name has no context to add.
+func projectContextName(cwd string) string {
+	const maxWalk = 6
+	for walk := 0; walk <= maxWalk; walk++ {
+		base := filepath.Base(cwd)
+		if base == "" || base == "." || base == "/" || base == "\\" {
 			return ""
 		}
 		if !isNoiseDir(base) {
 			return base
 		}
+		cwd = filepath.Dir(cwd)
 	}
 	return ""
 }
 
-// isInterpreter reports whether a basename is a scripting language runtime
-// whose first arg is typically the meaningful target (a script or module).
+// isInterpreter reports whether a basename is a runtime whose arguments name
+// the real target (a script, a module or the tool it hands off to).
 func isInterpreter(base string) bool {
-	switch base {
-	case "python", "python2", "python3",
-		"node", "nodejs", "deno", "bun",
-		"ruby", "perl", "php",
-		"java",
-		"uv", "poetry", "pipenv", "pdm", "rye", "npx",
-		// A shell wrapping a script names the script, not itself:
-		// `/bin/sh /opt/.../rabbitmq-server` is the service.
-		"sh", "bash", "zsh", "fish":
-		return true
-	}
-	return false
+	return len(runtimeRules[base].targets) > 0
 }
 
-// isOpaqueName reports whether a name is just an interpreter or runtime,
-// giving the user no signal about what is actually running.
+// isOpaqueName reports whether a bare name tells a reader nothing about what
+// is actually running.
 func isOpaqueName(name string) bool {
-	switch name {
-	case "", "python", "python2", "python3",
-		"node", "nodejs", "deno", "bun",
-		"ruby", "perl", "php", "java",
-		"sh", "bash", "zsh", "fish",
-		"uv", "poetry", "npx",
-		// The Erlang VM says nothing; its parent (rabbitmq-server, a release
-		// script) does.
-		"beam.smp":
+	if name == "" {
 		return true
 	}
-	return false
+	return runtimeRules[name].opaque
 }
 
 // noiseDirs are generic build and temp directory names: seeing one in a
