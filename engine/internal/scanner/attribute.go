@@ -55,13 +55,14 @@ func (l *Loop) SetStore(s Store) {
 	defer l.attr.mu.Unlock()
 	l.opts.Store = s
 	l.attr.seeded = false
-	l.attr.roots = map[string]bool{}        // acknowledgements belong to this store
-	l.attr.identities = map[string]string{} // and so do the identity rows
+	// Acknowledgements and identity rows belong to this store, not the last one.
+	l.attr.roots = make(map[string]bool)
+	l.attr.identities = make(map[string]string)
 }
 
 // SetRuns installs the run-registry accessor. It is a function because
-// `oberth start` hands the daemon its registry after the loop is
-// already scanning.
+// `oberth start` hands the daemon its registry after the loop is already
+// scanning.
 func (l *Loop) SetRuns(f func() groups.Registry) {
 	if f == nil {
 		return
@@ -89,6 +90,9 @@ func (l *Loop) sessions(rows []state.Port) []state.SessionRecord {
 	return out
 }
 
+// sessionsContext reads the installed builder under the attribution lock, then
+// runs it without holding that lock: the builder is the session owner's code
+// and may take its own.
 func (l *Loop) sessionsContext(ctx context.Context, rows []state.Port) ([]state.SessionRecord, error) {
 	if err := l.attr.mu.LockContext(ctx); err != nil {
 		return nil, err
@@ -137,10 +141,9 @@ func (l *Loop) attributeContext(ctx context.Context, pp []ports.ListeningPort, n
 	}
 	defer l.attr.mu.Unlock()
 
-	if l.attr.index == nil {
-		l.attr.index = groups.NewIndex()
-		l.attr.roots = map[string]bool{}
-	}
+	// Every stage below is synchronous; the context is the only thing that can
+	// stop the scan between them, and a stopped scan must not publish.
+	l.ensureIndex()
 	st := l.opts.Store
 	l.seedRoots(st)
 	if err := ctx.Err(); err != nil {
@@ -185,6 +188,50 @@ func (l *Loop) attributeContext(ctx context.Context, pp []ports.ListeningPort, n
 	return resolved, groupRows, nil
 }
 
+// ensureIndex gives the attribution its index and its two maps before the
+// first tick touches them. Caller holds attr.mu.
+func (l *Loop) ensureIndex() {
+	if l.attr.index == nil {
+		l.attr.index = groups.NewIndex()
+	}
+	if l.attr.roots == nil {
+		l.attr.roots = make(map[string]bool)
+	}
+	if l.attr.identities == nil {
+		l.attr.identities = make(map[string]string)
+	}
+}
+
+// rootState is what the seed step decided about one remembered root.
+type rootState uint8
+
+const (
+	// rootGone is a directory that no longer exists. Its persistent row is
+	// dropped (after its `${worktree}` identity is kept).
+	rootGone rootState = iota
+	// rootUnreadable is a denied or temporarily unavailable directory: not
+	// evidence of deletion, so the record stays and the seed retries later.
+	rootUnreadable
+	// rootPresent is a directory that exists; it joins the index.
+	rootPresent
+)
+
+// classifyRoot asks the filesystem what a remembered root is. Only "not
+// exist" and "not a directory" mean gone; any other stat error is unknown.
+func classifyRoot(root string) (rootState, error) {
+	info, err := os.Stat(root)
+	switch {
+	case os.IsNotExist(err):
+		return rootGone, err
+	case err != nil:
+		return rootUnreadable, err
+	case !info.IsDir():
+		return rootGone, nil
+	default:
+		return rootPresent, nil
+	}
+}
+
 // seedRoots loads the known `oberth.yaml` roots into the index once, so a
 // project configured before the last restart is a group again immediately,
 // without waiting for one of its processes to be seen.
@@ -206,8 +253,9 @@ func (l *Loop) seedRoots(st Store) {
 	complete := true
 	var discovered []string
 	for _, root := range roots {
-		info, err := os.Stat(root)
-		if os.IsNotExist(err) || (err == nil && !info.IsDir()) {
+		state, statErr := classifyRoot(root)
+		switch state {
+		case rootGone:
 			// The root is gone, but its `${worktree}` identity is not: a
 			// database or data directory built from that token may still be on
 			// disk. Record the pair without a group name — the manifest that
@@ -220,46 +268,47 @@ func (l *Loop) seedRoots(st Store) {
 			} else {
 				delete(l.attr.roots, root)
 			}
-			continue
-		}
-		if err != nil {
-			// A denied or temporarily unavailable directory is not evidence
-			// of deletion. Keep its persistent record and retry on a later tick.
+		case rootUnreadable:
 			complete = false
-			l.opts.Logger.Warn("reading oberth.yaml root; keeping its record", "dir", root, "error", err)
-			continue
-		}
-		if !l.attr.roots[root] {
-			discovered = append(discovered, root)
-			l.attr.roots[root] = true
+			l.opts.Logger.Warn("reading oberth.yaml root; keeping its record", "dir", root, "error", statErr)
+		case rootPresent:
+			if !l.attr.roots[root] {
+				discovered = append(discovered, root)
+				l.attr.roots[root] = true
+			}
 		}
 	}
 	if len(discovered) > 0 {
-		// Retain explicit roots even before they have a manifest; a silent
-		// project must become visible when its first declaration is created.
-		l.attr.index.Reload(discovered)
-		watched := make(map[string]bool, len(discovered))
-		for _, dir := range discovered {
-			watched[dir] = true
-		}
-		var seeded []*groups.Config
-		for _, cfg := range l.attr.index.Configs() {
-			if cfg != nil && watched[cfg.Dir] {
-				seeded = append(seeded, cfg)
-			}
-		}
-		l.recordIdentities(st, seeded)
+		l.seedDiscovered(st, discovered)
 	}
-	// Retry failures on the existing scan cadence, never in a busy loop or
-	// a new worker. Successful roots are not re-observed during that retry.
+	// Retry failures on the existing scan cadence, never in a busy loop or a
+	// new worker. Successful roots are not re-observed during that retry.
 	l.attr.seeded = complete
+}
+
+// seedDiscovered reloads the roots that were not seen before and writes the
+// identity of every checkout that now has a manifest.
+func (l *Loop) seedDiscovered(st Store, discovered []string) {
+	// Retain explicit roots even before they have a manifest; a silent project
+	// must become visible when its first declaration is created.
+	l.attr.index.Reload(discovered)
+	watched := make(map[string]bool, len(discovered))
+	for _, dir := range discovered {
+		watched[dir] = true
+	}
+	var seeded []*groups.Config
+	for _, cfg := range l.attr.index.Configs() {
+		if cfg != nil && watched[cfg.Dir] {
+			seeded = append(seeded, cfg)
+		}
+	}
+	l.recordIdentities(st, seeded)
 }
 
 // loadAliases hands the index this tick's project names from `groups.rename`.
 // It runs under the ordering gate, so a republish after a rename always resolves
-// with the name it just stored. A failed read keeps the
-// last tick's names rather than flapping every renamed project back to its
-// directory name.
+// with the name it just stored. A failed read keeps the last tick's names rather
+// than flapping every renamed project back to its directory name.
 func (l *Loop) loadAliases(st Store) {
 	if st == nil {
 		l.attr.index.SetAliases(nil)
@@ -285,7 +334,7 @@ func (l *Loop) registry() groups.Registry {
 	return groups.PortRuns{}
 }
 
-// rememberRoots persists a `oberth.yaml` directory the first time it is seen,
+// rememberRoots persists an `oberth.yaml` directory the first time it is seen,
 // so the next daemon start knows about the project without walking the disk.
 // It also keeps each checkout's `${worktree}` identity current: the ledger
 // survives the directory, and a group rename updates the name a later
@@ -324,10 +373,9 @@ func (l *Loop) recordIdentities(st Store, configs []*groups.Config) {
 			continue
 		}
 		identity, _ := groups.WorktreeIdentityFor(cfg.Dir)
-		if identity == "" {
-			continue
+		if identity != "" {
+			best[identity] = cfg
 		}
-		best[identity] = cfg
 	}
 	for identity, cfg := range best {
 		l.recordIdentity(st, identity, cfg)
@@ -343,7 +391,7 @@ func (l *Loop) recordIdentity(st Store, identity string, cfg *groups.Config) boo
 	group := l.attr.index.GroupOf(cfg)
 	_, root := groups.WorktreeIdentityFor(cfg.Dir)
 	if l.attr.identities == nil {
-		l.attr.identities = map[string]string{}
+		l.attr.identities = make(map[string]string)
 	}
 	if known, ok := l.attr.identities[identity]; ok && known == group {
 		return true
@@ -373,12 +421,13 @@ func (l *Loop) recordIdentityRoot(st Store, root string) {
 		return
 	}
 	if l.attr.identities == nil {
-		l.attr.identities = map[string]string{}
+		l.attr.identities = make(map[string]string)
 	}
 	if _, ok := l.attr.identities[identity]; ok {
 		return
 	}
-	if err := st.RecordWorktreeIdentity(store.WorktreeIdentity{Identity: identity, Root: canonical}); err != nil {
+	rec := store.WorktreeIdentity{Identity: identity, Root: canonical}
+	if err := st.RecordWorktreeIdentity(rec); err != nil {
 		l.opts.Logger.Warn("recording a vanished worktree identity", "dir", root, "error", err)
 		return
 	}
