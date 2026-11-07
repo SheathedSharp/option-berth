@@ -235,6 +235,67 @@ func TestANewGroupReadyTimeoutIsNotDropped(t *testing.T) {
 	}
 }
 
+func TestStatsSampleDoesNotRunAfterTheCallerLeavesOrWhenNobodyAsked(t *testing.T) {
+	calls := 0
+	l := New(Options{
+		Scan: fixedRows(ports.ListeningPort{Port: 9, PID: 7, Process: "app", MemoryRSS: 10}),
+		SampleStats: func([]int) map[int]ports.ProcSample {
+			calls++
+			return map[int]ports.ProcSample{7: {MemoryRSS: 99}}
+		},
+	})
+	if _, _, _, err := l.scanLocked(Include{}, Include{}, false); err != nil {
+		t.Fatal(err)
+	}
+	l.sampleStatsContext(context.Background(), Include{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	l.sampleStatsContext(ctx, Include{Stats: true})
+	if calls != 0 {
+		t.Fatalf("sampler ran %d times without a stats request or after the caller left", calls)
+	}
+	l.sampleStatsContext(context.Background(), Include{Stats: true})
+	if calls != 1 || l.Cached().Ports[0].Stats == nil || l.Cached().Ports[0].Stats.MemoryRSS != 99 {
+		t.Fatalf("calls=%d stats=%+v, a live stats request did not publish the sample", calls, l.Cached().Ports[0].Stats)
+	}
+}
+
+func TestProbeThatLosesItsCallerDoesNotPublishAVerdict(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	verdict, ok := probeTarget(ctx, func(context.Context, string, int, string, time.Duration) ports.HealthResult {
+		cancel()
+		return ports.HealthResult{Status: "healthy"}
+	}, healthTarget{kind: groups.HealthHTTP, host: "127.0.0.1", port: 9, path: "/"}, time.Second)
+	if ok || verdict.Status != "" {
+		t.Fatalf("ok=%v verdict=%+v, a cancelled probe published a verdict", ok, verdict)
+	}
+}
+
+func TestCancelledTickStopsInsteadOfScanningAgain(t *testing.T) {
+	frozen := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	now := frozen
+	scans := 0
+	l := New(Options{
+		Now:          func() time.Time { return now },
+		ScanInterval: MinScanInterval,
+		Scan: func(Include) ([]ports.ListeningPort, error) {
+			scans++
+			return []ports.ListeningPort{{Port: 9, PID: 1}}, nil
+		},
+	})
+	if _, _, _, err := l.scanLocked(Include{}, Include{}, false); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	timer := time.NewTimer(time.Hour)
+	defer timer.Stop()
+	stop := l.waitTick(ctx, timer, Include{})
+	if !stop || scans != 1 {
+		t.Fatalf("stop=%v scans=%d, a cancelled tick kept going", stop, scans)
+	}
+}
+
 func TestStartTimesInsideToleranceMatchAndOutsideDoNot(t *testing.T) {
 	base := time.Date(2026, 11, 7, 0, 0, 0, 0, time.UTC)
 	cases := []struct {
