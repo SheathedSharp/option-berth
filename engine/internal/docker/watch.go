@@ -54,11 +54,11 @@ type WatcherOptions struct {
 	// OnChange runs after a refresh that changed the container list, so the
 	// caller can scan again rather than wait for its next tick.
 	OnChange func()
-	// Now overrides the clock, for tests.
+	// Now is the clock; zero means time.Now. Tests substitute a manual one.
 	Now func() time.Time
 }
 
-// Watcher keeps the daemon's view of Docker off the scan path.
+// Watcher owns the daemon's cached view of Docker, off the scan path.
 //
 // Scans used to run `docker ps` inline, inside the gate that `ports.kill` and
 // `state.snapshot` queue behind, so a wedged Docker Desktop that never answered
@@ -68,39 +68,44 @@ type WatcherOptions struct {
 // fails. Container data is therefore at most one refresh stale, and never waited
 // for.
 type Watcher struct {
+	// Refresh policy and side channels, copied from WatcherOptions.
 	interval time.Duration
 	timeout  time.Duration
+	now      func() time.Time
 	logger   *slog.Logger
 	onChange func()
-	now      func() time.Time
 
-	// Seams for tests; production uses the real CLI.
-	lookPath func(string) (string, error)
-	list     func(ctx context.Context) ([]container, error)
+	// Docker access. Production installs the real CLI; a test replaces one
+	// seam without touching the others.
+	list     func(context.Context) ([]container, error)
 	stats    func([]container) map[string]*ContainerStats
+	lookPath func(string) (string, error)
 
+	// poke has one slot: a burst of scans coalesces into one pending refresh.
 	poke chan struct{}
 
 	mu sync.Mutex
-	// containers is the last good list. It is replaced, never modified in
-	// place, so a reader may keep the slice after dropping the mutex.
+	// Cached answers. containers is replaced, never modified in place, so a
+	// reader may keep the slice after dropping the mutex; statsCache is nil
+	// whenever the last attempt failed.
 	containers    []container
 	statsCache    map[string]*ports.DockerStatsEntry
 	statsWantedAt time.Time
-	// seen is the port set from the previous Enrich, used to spot new ports.
-	seen map[int]bool
-	// urgent asks for a refresh ahead of Interval: a scan saw a port it had not
-	// seen before and no container publishes it, or stats were just requested.
-	// A backoff still outranks it.
-	urgent      bool
+	seen          map[int]bool
+
+	// Refresh schedule. urgent asks for an out-of-band attempt; a backoff
+	// still outranks it.
+	urgent bool
+	// lastAttempt and retryAt bound the routine interval and the backoff.
 	lastAttempt time.Time
 	retryAt     time.Time
-	failures    int
-	state       health
-	lastErr     error
+	// failures counts consecutive failures; state is the last verdict.
+	failures int
+	state    health
+	lastErr  error
 }
 
-// NewWatcher builds a Watcher. It does nothing until Run.
+// NewWatcher constructs a Watcher; it stays idle until Run.
 func NewWatcher(options WatcherOptions) *Watcher {
 	watcher := &Watcher{
 		interval: options.Interval,
