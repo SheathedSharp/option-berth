@@ -10,25 +10,35 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// Step 1A.19. Everything here is about what a handler pays for, not about what
-// it publishes: the shape of the answers is pinned by the 1A.15, 1A.7 and
-// 1A.16 tests next to these.
+// What a handler pays for, not what it publishes: each test below checks the
+// latency rule the daemon promises (republish re-attributes instead of
+// scanning, forced scans never coalesce, an older observation never wins).
 
-// TestRepublishDoesNotScan is the step's headline. A store write's republish
-// used to run a whole scan — `lsof`, `ps`, `docker stats`, a round of health
-// probes — before its own reply, which is what made "Save color" in the app
-// take double figures of seconds.
-func TestRepublishDoesNotScan(t *testing.T) {
-	st := openStore(t)
+// project is a throwaway checkout with one manifest, and a store that knows it.
+func project(t *testing.T, body string) (Store, string) {
+	t.Helper()
 	dir := t.TempDir()
-	writeConfig(t, dir, "name: before\nports: [8123]\n")
+	writeConfig(t, dir, body)
+	return openStore(t), dir
+}
+
+func onePort(dir string) func(Include) ([]ports.ListeningPort, error) {
+	return func(Include) ([]ports.ListeningPort, error) {
+		return []ports.ListeningPort{{Port: 8123, PID: 42, Process: "python3", Cwd: dir}}, nil
+	}
+}
+
+// TestRepublishDoesNotScan: a store write's republish re-attributes the rows
+// the last scan already produced; it never asks the OS again.
+func TestRepublishDoesNotScan(t *testing.T) {
+	st, dir := project(t, "name: before\nports: [8123]\n")
 	var scans atomic.Int64
 	l := New(Options{
 		DaemonVersion: "test",
 		Store:         st,
-		Scan: func(Include) ([]ports.ListeningPort, error) {
+		Scan: func(include Include) ([]ports.ListeningPort, error) {
 			scans.Add(1)
-			return []ports.ListeningPort{{Port: 8123, PID: 42, Process: "python3", Cwd: dir}}, nil
+			return onePort(dir)(include)
 		},
 	})
 
@@ -38,41 +48,30 @@ func TestRepublishDoesNotScan(t *testing.T) {
 	if got := scans.Load(); got != 1 {
 		t.Fatalf("scans after the first read = %d, want 1", got)
 	}
-
-	// The project is renamed on disk. Republish re-attributes the rows the last
-	// scan already produced — the index re-reads a config whose stamp moved —
-	// so the new group is on the published frame without asking the OS for
-	// anything again.
 	writeConfig(t, dir, "name: shop\nports: [8123]\n")
 	if err := l.Republish(); err != nil {
 		t.Fatalf("Republish: %v", err)
 	}
 	if got := scans.Load(); got != 1 {
-		t.Fatalf("scans after Republish = %d, want no new scan", got)
+		t.Fatalf("scans after Republish = %d, want the first read only", got)
 	}
-
-	snap := l.Cached()
-	if len(snap.Ports) != 1 || deref(snap.Ports[0].Group) != "shop" {
-		t.Fatalf("cached snapshot = %+v, want the renamed group published from it", snap.Ports)
+	cached := l.Cached()
+	if len(cached.Ports) != 1 || deref(cached.Ports[0].Group) != "shop" {
+		t.Fatalf("cached = %+v, want the renamed group published without a scan", cached.Ports)
 	}
 }
 
-// TestRepublishPublishesBeforeItReturns keeps the ordering a write depends on:
-// the delta carrying the change is on the wire before the handler's reply, which
-// is the reason republish is synchronous at all.
+// TestRepublishPublishesBeforeItReturns: the delta carrying the change is on
+// the wire before the handler replies.
 func TestRepublishPublishesBeforeItReturns(t *testing.T) {
-	st := openStore(t)
-	dir := t.TempDir()
-	writeConfig(t, dir, "name: before\nports: [8123]\n")
+	st, dir := project(t, "name: before\nports: [8123]\n")
 	var mu sync.Mutex
 	var groups []string
 	l := New(Options{
 		DaemonVersion: "test",
 		Store:         st,
-		Demand:        func() (int, Include) { return 1, Include{} },
-		Scan: func(Include) ([]ports.ListeningPort, error) {
-			return []ports.ListeningPort{{Port: 8123, PID: 42, Process: "python3", Cwd: dir}}, nil
-		},
+		Demand:        oneSubscriber,
+		Scan:          onePort(dir),
 		Publish: func(_, next state.Snapshot, _ []state.Event) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -88,16 +87,15 @@ func TestRepublishPublishesBeforeItReturns(t *testing.T) {
 	if err := l.Republish(); err != nil {
 		t.Fatalf("Republish: %v", err)
 	}
-
 	mu.Lock()
 	defer mu.Unlock()
 	if len(groups) == 0 || groups[len(groups)-1] != "shop" {
-		t.Fatalf("published groups = %v, want the renamed group published by the time Republish returned", groups)
+		t.Fatalf("published groups = %v, want shop by the time Republish returned", groups)
 	}
 }
 
-// TestRepublishBeforeAnyScanFallsBackToOne: with nothing scanned yet there is
-// nothing to re-attribute, and the write still has to reach the wire.
+// TestRepublishBeforeAnyScanFallsBackToOne: nothing to re-attribute yet, so the
+// write still has to reach the wire through one real scan.
 func TestRepublishBeforeAnyScanFallsBackToOne(t *testing.T) {
 	var scans atomic.Int64
 	l := New(Options{
@@ -111,19 +109,15 @@ func TestRepublishBeforeAnyScanFallsBackToOne(t *testing.T) {
 		t.Fatalf("Republish: %v", err)
 	}
 	if got := scans.Load(); got != 1 {
-		t.Fatalf("scans = %d, want one scan when there is no snapshot to re-attribute", got)
+		t.Fatalf("scans = %d, want one fallback scan", got)
 	}
 }
 
-// TestRPCScanDoesNotInheritDemandButKeepsIt is the other half of the fix. A
-// scan an RPC starts collects what the *caller* asked for; what the
-// subscribers asked for is copied forward from the last snapshot instead of
-// being collected again, so `ports.kill` never waits on `docker stats` or a
-// health probe, and no subscriber sees stats blink away.
+// TestRPCScanDoesNotInheritDemandButKeepsIt: an RPC scan collects only what its
+// caller asked for, and carries the subscribers' last readings forward.
 func TestRPCScanDoesNotInheritDemandButKeepsIt(t *testing.T) {
 	var mu sync.Mutex
 	var asked []Include
-
 	l := New(Options{
 		DaemonVersion: "test",
 		Demand:        func() (int, Include) { return 1, Include{Stats: true, Health: true} },
@@ -133,8 +127,7 @@ func TestRPCScanDoesNotInheritDemandButKeepsIt(t *testing.T) {
 			mu.Unlock()
 			row := ports.ListeningPort{Port: 8123, PID: 42, Process: "python3"}
 			if inc.Stats {
-				row.CPUPercent = 12.5
-				row.MemoryRSS = 4096
+				row.CPUPercent, row.MemoryRSS = 12.5, 4096
 			}
 			if inc.Health {
 				row.HealthStatus = "healthy"
@@ -143,22 +136,19 @@ func TestRPCScanDoesNotInheritDemandButKeepsIt(t *testing.T) {
 		},
 	})
 
-	// The loop's own tick collects the demand.
 	l.scanAndPublish(Include{Stats: true, Health: true})
 	ticked := l.Cached()
 	if len(ticked.Ports) != 1 || ticked.Ports[0].Health == nil {
 		t.Fatalf("the tick published %+v, want a probed row", ticked.Ports)
 	}
-	want := *ticked.Ports[0].Health
+	verdict := *ticked.Ports[0].Health
 
-	// A kill's rescan asks for nothing.
 	snap, err := l.Rescan(Include{})
 	if err != nil {
 		t.Fatalf("Rescan: %v", err)
 	}
-
 	mu.Lock()
-	got := append([]Include{}, asked...)
+	got := append([]Include(nil), asked...)
 	mu.Unlock()
 	if len(got) != 2 {
 		t.Fatalf("scans = %d, want the tick and the rescan", len(got))
@@ -170,27 +160,22 @@ func TestRPCScanDoesNotInheritDemandButKeepsIt(t *testing.T) {
 		t.Fatalf("ports = %+v", snap.Ports)
 	}
 	if snap.Ports[0].Stats == nil || snap.Ports[0].Stats.CPUPercent != 12.5 {
-		t.Fatalf("stats = %+v, want the subscriber's last reading carried forward", snap.Ports[0].Stats)
+		t.Fatalf("stats = %+v, want the subscriber's reading carried forward", snap.Ports[0].Stats)
 	}
-	if snap.Ports[0].Health == nil || *snap.Ports[0].Health != want {
-		t.Fatalf("health = %+v, want the tick's verdict %+v carried forward", snap.Ports[0].Health, want)
+	if snap.Ports[0].Health == nil || *snap.Ports[0].Health != verdict {
+		t.Fatalf("health = %+v, want %+v carried forward", snap.Ports[0].Health, verdict)
 	}
 }
 
-// TestOlderScanNeverOvertakesANewerOne is what lets an RPC's bare scan run
-// alongside the loop's expensive one: overlapping is fine, going backwards is
-// not. A scan whose OS half began before the published snapshot's must not
-// commit.
+// TestOlderScanNeverOvertakesANewerOne: overlapping scans are fine, going
+// backwards is not. The scan that began first cannot commit after a newer one.
 func TestOlderScanNeverOvertakesANewerOne(t *testing.T) {
 	release := make(chan struct{})
 	var slow atomic.Bool
-
 	l := New(Options{
 		DaemonVersion: "test",
 		Scan: func(inc Include) ([]ports.ListeningPort, error) {
 			if inc.Stats {
-				// The loop's tick: started first, finishes last, and still
-				// sees the port that the bare scan below saw go away.
 				slow.Store(true)
 				<-release
 				return []ports.ListeningPort{
@@ -210,31 +195,30 @@ func TestOlderScanNeverOvertakesANewerOne(t *testing.T) {
 	for !slow.Load() {
 		time.Sleep(time.Millisecond)
 	}
-
-	// The bare scan starts second and commits first: one port.
 	if _, err := l.Rescan(Include{}); err != nil {
 		t.Fatalf("Rescan: %v", err)
 	}
+	// The newer scan must have committed before the older one finishes, or the
+	// assertion at the end would pass without exercising the ordering.
 	if got := len(l.Cached().Ports); got != 1 {
-		t.Fatalf("ports after the rescan = %d, want 1", got)
+		t.Fatalf("ports after the newer scan = %d, want 1", got)
 	}
 
 	close(release)
 	<-done
-
 	if got := len(l.Cached().Ports); got != 1 {
-		t.Fatalf("ports after the older scan committed = %d, want the newer scan to still win", got)
+		t.Fatalf("ports after the older scan finished = %d, want the newer snapshot", got)
 	}
 }
 
-// TestLockForGivesUp pins the deadline every handler path takes a gate with. A
-// scan that never returns must not turn into a reply that never comes.
+// TestLockForGivesUp: a held gate expires on its budget instead of turning a
+// handler's wait into a reply that never comes.
 func TestLockForGivesUp(t *testing.T) {
 	gate := make(chan struct{}, 1)
 	lock(gate)
 	start := time.Now()
 	if lockFor(gate, 20*time.Millisecond) {
-		t.Fatal("lockFor took a gate that was held")
+		t.Fatal("lockFor took a held gate")
 	}
 	if waited := time.Since(start); waited < 20*time.Millisecond {
 		t.Fatalf("gave up after %s, want at least the budget", waited)
@@ -246,20 +230,16 @@ func TestLockForGivesUp(t *testing.T) {
 	unlock(gate)
 }
 
-// TestConfiguredHealthRoundIsBudgeted: a service that accepts and never
-// answers must not add waves of HealthTimeout to the scan every write is
-// queued behind.
+// TestConfiguredHealthRoundIsBudgeted: forty slow probes cannot add waves of
+// HealthTimeout to the scan every write queues behind.
 func TestConfiguredHealthRoundIsBudgeted(t *testing.T) {
 	rows := make([]state.Port, 0, 40)
+	path := "/healthz"
 	gg := []state.Group{{Name: "slow"}}
-	for i := 0; i < 40; i++ {
+	for i := range 40 {
 		port := 9000 + i
 		rows = append(rows, state.Port{Port: port, BindAddress: "127.0.0.1"})
-		path := "/healthz"
-		p := port
-		gg[0].Services = append(gg[0].Services, state.Service{
-			Name: "svc", Health: &path, PortActual: &p,
-		})
+		gg[0].Services = append(gg[0].Services, state.Service{Name: "svc", Health: &path, PortActual: &port})
 	}
 
 	start := time.Now()
@@ -267,9 +247,7 @@ func TestConfiguredHealthRoundIsBudgeted(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		return ports.HealthResult{Status: "timeout"}
 	}, 80*time.Millisecond)
-	took := time.Since(start)
-
-	if took > 400*time.Millisecond {
+	if took := time.Since(start); took > 400*time.Millisecond {
 		t.Fatalf("a round of 40 probes took %s, want it bounded by the budget", took)
 	}
 	if rows[0].Health == nil {
@@ -277,15 +255,10 @@ func TestConfiguredHealthRoundIsBudgeted(t *testing.T) {
 	}
 }
 
-// TestRescanAlwaysScansOnAStoppedClock is the Windows regression from PR #75.
-//
-// Coalescing used to ask "did a scan begin after I asked?" with timestamps.
-// `time.Now` on Windows moves in steps of up to about 15 ms, so the scan that
-// had *just* finished read as having begun at the same instant as the call
-// that followed it, and a kill's rescan was answered with the snapshot it was
-// explicitly not allowed to use. The clock is stopped here
-// on purpose: that is the coarsest clock there is, and the rescan must still
-// scan on it.
+// TestRescanAlwaysScansOnAStoppedClock: the Windows regression. Coalescing used
+// timestamps, and time.Now on Windows steps in ~15 ms, so a kill's rescan was
+// answered with the snapshot it was not allowed to use. The clock is frozen
+// here on purpose; a forced scan must still scan.
 func TestRescanAlwaysScansOnAStoppedClock(t *testing.T) {
 	frozen := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	var scans atomic.Int64
@@ -301,37 +274,23 @@ func TestRescanAlwaysScansOnAStoppedClock(t *testing.T) {
 	if _, err := l.Snapshot(Include{}); err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	if got := scans.Load(); got != 1 {
-		t.Fatalf("scans after priming = %d, want 1", got)
-	}
-
-	for i := 2; i <= 4; i++ {
+	for want := int64(2); want <= 4; want++ {
 		if _, err := l.Rescan(Include{}); err != nil {
 			t.Fatalf("Rescan: %v", err)
 		}
-		if got := scans.Load(); got != int64(i) {
-			t.Fatalf("scans after Rescan %d = %d, want %d: a forced scan never coalesces", i-1, got, i)
+		if got := scans.Load(); got != want {
+			t.Fatalf("scans = %d, want %d: a forced scan never coalesces", got, want)
 		}
 	}
 }
 
-// TestReadDoesNotCoalesceOntoAScanThatBeganBeforeIt is the other side of the counter:
-// a read that arrives while a scan is in flight must scan for itself, because
-// that scan began first and saw a machine this caller has not seen yet.
-//
-// The tick's OS half is held on a channel for the whole assertion, so the read
-// is guaranteed to arrive mid-flight and the tick is guaranteed not to have
-// committed. An earlier version released the tick and then counted scans,
-// which made the result depend on whether the tick committed before the read
-// reached the cache — it did on Linux and not on macOS or Windows, and the
-// test failed on whichever runner won that race rather than on the behaviour
-// it was written for.
+// TestReadDoesNotCoalesceOntoAScanThatBeganBeforeIt: a read arriving mid-scan
+// scans for itself, because that scan saw a machine the caller has not.
 func TestReadDoesNotCoalesceOntoAScanThatBeganBeforeIt(t *testing.T) {
 	frozen := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var scans atomic.Int64
-
 	l := New(Options{
 		DaemonVersion: "test",
 		Now:           func() time.Time { return frozen },
@@ -352,90 +311,72 @@ func TestReadDoesNotCoalesceOntoAScanThatBeganBeforeIt(t *testing.T) {
 	}()
 	<-entered
 
-	// The tick holds the run gate, not the RPC gate: overlapping is the point
-	// The read scans and returns while the tick is still
-	// blocked, so this assertion cannot race the tick's commit.
+	// The tick holds the run gate, not the RPC gate: the read runs and returns
+	// while the tick is still blocked, so nothing here races its commit.
 	if _, err := l.Snapshot(Include{}); err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
 	if got := scans.Load(); got != 2 {
-		t.Fatalf("scans = %d, want the read to scan for itself rather than take the one already running", got)
+		t.Fatalf("scans = %d, want the read to scan for itself", got)
 	}
-
 	close(release)
 	<-tick
 }
 
-// TestCoalescingComparesScanNumbersNotTheClock states the rule directly, with
-// no goroutines and a stopped clock: a read may be handed a scan that began
-// after it asked, and never the one that was already running. Both answers
-// come from the scan counter, so they are the same on every platform.
+// TestCoalescingComparesScanNumbersNotTheClock states the rule without
+// goroutines: a read may take a scan that began after it asked, never the one
+// already running, and never a health or uncovered-stats read.
 func TestCoalescingComparesScanNumbersNotTheClock(t *testing.T) {
 	frozen := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	l := New(Options{
 		DaemonVersion: "test",
 		Now:           func() time.Time { return frozen },
-		Scan: func(Include) ([]ports.ListeningPort, error) {
-			return []ports.ListeningPort{{Port: 8123, PID: 42, Process: "python3"}}, nil
-		},
+		Scan:          fixedRows(ports.ListeningPort{Port: 8123, PID: 42, Process: "python3"}),
 	})
 	if _, err := l.Snapshot(Include{}); err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
 	if got := l.scanGeneration(); got != 1 {
-		t.Fatalf("scan generation = %d, want 1 after one scan", got)
+		t.Fatalf("scan generation = %d, want 1", got)
 	}
-
-	// Asked before scan 1 began: scan 1 answers it.
 	if _, ok := l.scannedSince(0, Include{}); !ok {
 		t.Error("a scan that began after the caller asked should answer it")
 	}
-	// Asked while (or after) scan 1 was running: it does not.
 	if _, ok := l.scannedSince(1, Include{}); ok {
-		t.Error("the scan that was already running must not answer a later caller")
+		t.Error("the scan already running must not answer a later caller")
 	}
-	// Health is never coalesced: the probes run on their own cadence.
 	if _, ok := l.scannedSince(0, Include{Health: true}); ok {
-		t.Error("a health read should never coalesce")
+		t.Error("a health read must never coalesce")
 	}
-	// Stats are only coalesced onto a snapshot that carries them.
 	if _, ok := l.scannedSince(0, Include{Stats: true}); ok {
-		t.Error("a stats read should not coalesce onto a snapshot with no stats")
+		t.Error("a stats read must not coalesce onto a snapshot without stats")
 	}
 }
 
-// TestAWriteDuringASlowScanStillPublishesItsChange pins the other half of the
-// no-backward rule: attribution runs under the ordering gate, so a store write
-// that lands while a scan is still collecting its OS half is part of the very
-// snapshot that scan commits. Without that, the slow scan's rows would reach
-// the wire bearing the before-the-write group.
+// TestAWriteDuringASlowScanStillPublishesItsChange: attribution runs under the
+// ordering gate, so a write that lands during the OS half is part of the very
+// snapshot that scan commits.
 func TestAWriteDuringASlowScanStillPublishesItsChange(t *testing.T) {
-	st := openStore(t)
-	dir := t.TempDir()
-	writeConfig(t, dir, "name: before\nports: [8123]\n")
-
+	st, dir := project(t, "name: before\nports: [8123]\n")
 	scanStarted := make(chan struct{})
 	releaseScan := make(chan struct{})
 	var calls atomic.Int32
 	l := New(Options{
 		DaemonVersion: "test",
 		Store:         st,
-		Demand:        func() (int, Include) { return 1, Include{} },
+		Demand:        oneSubscriber,
 		Scan: func(Include) ([]ports.ListeningPort, error) {
 			if calls.Add(1) == 2 {
 				close(scanStarted)
 				<-releaseScan
 			}
-			return []ports.ListeningPort{{Port: 8123, PID: 42, Process: "python3", Cwd: dir}}, nil
+			return onePort(dir)(Include{})
 		},
 	})
 
-	// The first read commits the "before" state and gives Republish rows to
-	// re-attribute.
 	if _, err := l.Snapshot(Include{}); err != nil {
 		t.Fatalf("first Snapshot: %v", err)
 	}
-
 	slowDone := make(chan struct{})
 	go func() {
 		defer close(slowDone)
@@ -443,21 +384,15 @@ func TestAWriteDuringASlowScanStillPublishesItsChange(t *testing.T) {
 	}()
 	<-scanStarted
 
-	// The write lands while the scan is out: the file changes and the write's
-	// republish publishes the new group.
 	writeConfig(t, dir, "name: shop\nports: [8123]\n")
 	if err := l.Republish(); err != nil {
 		t.Fatalf("Republish: %v", err)
 	}
-
 	close(releaseScan)
 	<-slowDone
 
 	final := l.Cached()
-	if len(final.Ports) != 1 {
-		t.Fatalf("final ports = %+v", final.Ports)
-	}
-	if got := deref(final.Ports[0].Group); got != "shop" {
-		t.Fatalf("final group = %q, want shop: the slow scan overwrote the write", got)
+	if len(final.Ports) != 1 || deref(final.Ports[0].Group) != "shop" {
+		t.Fatalf("final = %+v, want the write's group: the slow scan overwrote it", final.Ports)
 	}
 }
