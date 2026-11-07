@@ -24,13 +24,21 @@ const (
 // wire shape; the last three are columns the table carries and that are omitted
 // from JSON when empty.
 type HistoryEvent struct {
-	At          time.Time `json:"at"`
-	Kind        string    `json:"kind"`
-	Port        int       `json:"port"`
-	PID         int       `json:"pid"`
-	DisplayName string    `json:"display_name"`
-	Group       string    `json:"group"`
+	// At is when the event happened, in UTC.
+	At time.Time `json:"at"`
+	// Kind is one of the EventPort* constants.
+	Kind string `json:"kind"`
+	// Port is the listening port the event is about.
+	Port int `json:"port"`
+	// PID is the process that owned the port, when it was observed.
+	PID int `json:"pid"`
+	// DisplayName is the human name the port had at that moment.
+	DisplayName string `json:"display_name"`
+	// Group is the project group the port belonged to, when known.
+	Group string `json:"group"`
 
+	// The remaining columns are evidence kept for diagnosis; each is omitted
+	// from the wire shape when it was not observed.
 	Bind        string `json:"bind,omitempty"`
 	ProjectRoot string `json:"project_root,omitempty"`
 	Command     string `json:"command,omitempty"`

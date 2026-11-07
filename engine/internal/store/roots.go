@@ -11,6 +11,13 @@ import (
 // resolver rebuilds its index from them on daemon start instead of walking the
 // filesystem, and the config watcher watches them.
 
+// addRootSQL records a root once. A second observation of the same directory is
+// a no-op rather than an error, because scans see it repeatedly.
+const addRootSQL = `
+INSERT INTO known_roots (path, added_at)
+VALUES (?, ?)
+ON CONFLICT(path) DO NOTHING`
+
 // AddRoot records a directory as a known oberth.yaml root. The path is cleaned
 // first, and adding the same one twice is a no-op.
 func (s *Store) AddRoot(path string) error {
@@ -18,14 +25,10 @@ func (s *Store) AddRoot(path string) error {
 	if err != nil {
 		return err
 	}
-	return s.exec(
-		`INSERT INTO known_roots(path, added_at) VALUES(?, ?)
-		 ON CONFLICT(path) DO NOTHING`,
-		clean, nowString(),
-	)
+	return s.exec(addRootSQL, clean, nowString())
 }
 
-// Roots returns every known root, sorted.
+// Roots returns every known root in lexical order.
 func (s *Store) Roots() ([]string, error) {
 	roots, err := s.textColumn(`SELECT path FROM known_roots ORDER BY path`)
 	if err != nil {
@@ -34,13 +37,17 @@ func (s *Store) Roots() ([]string, error) {
 	return roots, nil
 }
 
-// RemoveRoot forgets a root. Removing an unknown root is not an error.
+// removeRootSQL deletes by the canonical spelling, which is what AddRoot
+// stored.
+const removeRootSQL = `DELETE FROM known_roots WHERE path = ?`
+
+// RemoveRoot forgets a root; deleting one that is not known is not an error.
 func (s *Store) RemoveRoot(path string) error {
 	clean, err := cleanRoot(path)
 	if err != nil {
 		return err
 	}
-	return s.exec(`DELETE FROM known_roots WHERE path = ?`, clean)
+	return s.exec(removeRootSQL, clean)
 }
 
 // CleanRoot is cleanRoot for callers outside this package that key their own
@@ -48,6 +55,9 @@ func (s *Store) RemoveRoot(path string) error {
 // tables need the same one the roots table uses: two spellings of one checkout
 // would be two sets of workplaces.
 func CleanRoot(path string) (string, error) { return cleanRoot(path) }
+
+// errEmptyRoot is the refusal that keeps an empty path from becoming a row.
+var errEmptyRoot = errors.New("store: root path is empty")
 
 // cleanRoot is the one spelling of a root path, and every write and delete goes
 // through it, so one directory cannot occupy two rows.
@@ -59,7 +69,7 @@ func CleanRoot(path string) (string, error) { return cleanRoot(path) }
 // and RemoveRoot deletes by string, so it could never remove the other one.
 func cleanRoot(path string) (string, error) {
 	if strings.TrimSpace(path) == "" {
-		return "", errors.New("store: root path is empty")
+		return "", errEmptyRoot
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
