@@ -543,37 +543,44 @@ func (l *Loop) Run(ctx context.Context) {
 		case !scanNow:
 			continue // a wake arrived; re-read the demand
 		}
-
-		// A scan an RPC ran a moment ago is this tick's scan. Wake means "the
-		// state you are holding may be stale", and a scan younger than the
-		// current interval is not: without this floor every `ports.kill`, every
-		// `oberth list` that missed the cache and every write woke the loop into
-		// a second full scan.
-		//
-		// The floor is the loop's cadence and nothing else. A handler that asks
-		// for a scan gets one: Rescan is a forced scan and never consults this,
-		// because resolving kill targets against the previous tick is the bug
-		// the scan counters exist to prevent.
-		wait := l.dueIn()
-		if wait <= 0 {
-			l.scanAndPublishContext(ctx, include)
-			wait = l.dueIn()
-		}
-		if wait <= 0 {
-			wait = l.base
-		}
-
-		armTimer(timer, wait)
-		select {
-		case <-ctx.Done():
+		if l.waitTick(ctx, timer, include) {
 			return
-		case <-timer.C:
-		case <-l.wake:
-			// A read or a new subscriber: back to the base interval.
-			l.mu.Lock()
-			l.interval = l.base
-			l.mu.Unlock()
 		}
+	}
+}
+
+// waitTick holds the loop until the cadence says a scan is due, then until
+// the timer, cancellation, or a wake. A scan an RPC ran a moment ago is this
+// tick's scan. Wake means "the state you are holding may be stale", and a
+// scan younger than the current interval is not: without this floor every
+// `ports.kill`, every `oberth list` that missed the cache and every write
+// woke the loop into a second full scan.
+//
+// The floor is the loop's cadence and nothing else. A handler that asks for
+// a scan gets one: Rescan is a forced scan and never consults this, because
+// resolving kill targets against the previous tick is the bug the scan
+// counters exist to prevent.
+func (l *Loop) waitTick(ctx context.Context, timer *time.Timer, include Include) (stop bool) {
+	wait := l.dueIn()
+	if wait <= 0 {
+		l.scanAndPublishContext(ctx, include)
+		wait = l.dueIn()
+	}
+	if wait <= 0 {
+		wait = l.base
+	}
+	armTimer(timer, wait)
+	select {
+	case <-ctx.Done():
+		return true
+	case <-timer.C:
+		return false
+	case <-l.wake:
+		// A read or a new subscriber: back to the base interval.
+		l.mu.Lock()
+		l.interval = l.base
+		l.mu.Unlock()
+		return false
 	}
 }
 
@@ -784,22 +791,31 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 	if reading.partial && reportFailure {
 		l.opts.Logger.Warn("scan partial, publishing readable rows", "error", reading.partialCause)
 	}
-	pp := reading.rows
-
 	if wantHealth {
-		ports.EnrichHealthContext(ctx, pp, HealthTimeout, HealthBudget)
+		ports.EnrichHealthContext(ctx, reading.rows, HealthTimeout, HealthBudget)
 	}
+	return l.commitOwnedScan(ctx, subs, collect, carry, wantHealth, gen, refresh, reading)
+}
 
-	// Everything from here on is the ordered half of the scan: the attribution
-	// that reads the store, the commit, and the publish. It is serialized
-	// against every store write's republish, and the publish rides inside it so
-	// a later sequence can never reach a client first.
+// commitOwnedScan is the ordered half of one scan: attribution that reads the
+// store, configured health, then commit and publish. It is serialized against
+// every store write's republish, and the publish rides inside that lock so a
+// later sequence can never reach a client first. A withdrawn caller abandons
+// the scan without committing a row or renewing freshness.
+func (l *Loop) commitOwnedScan(
+	ctx context.Context,
+	subs int,
+	collect, carry Include,
+	wantHealth bool,
+	gen, refresh uint64,
+	reading scanReading,
+) (next, prev state.Snapshot, changed bool, err error) {
 	if err := lockContext(ctx, l.orderGate); err != nil {
 		return l.abandoned(err)
 	}
 	defer unlock(l.orderGate)
 
-	rows, groupRows, err := l.attributeContext(ctx, pp, reading.narrow)
+	rows, groupRows, err := l.attributeContext(ctx, reading.rows, reading.narrow)
 	if err != nil {
 		return l.abandoned(err)
 	}
@@ -807,16 +823,14 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 	if err != nil {
 		return l.abandoned(err)
 	}
-
 	// Configured health comes after attribution because it is the groups that
 	// say which port has a `health:` path. It runs on every tick regardless of
-	// `include`: a health path in an `oberth.yaml` is part of what the service
-	// is, not an opt-in statistic. Its budget is what keeps this short enough to
-	// sit inside the ordering gate.
+	// `include`: a health path in an oberth.yaml is part of what the service
+	// is, not an opt-in statistic. Its budget is what keeps this short enough
+	// to sit inside the ordering gate.
 	if err := ProbeConfiguredContext(ctx, rows, groupRows, l.ProbeContext, ConfiguredHealthBudget); err != nil {
 		return l.abandoned(err)
 	}
-
 	if err := l.commitMu.LockContext(ctx); err != nil {
 		return l.abandoned(err)
 	}
@@ -832,7 +846,7 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 		health:      wantHealth,
 		seq:         gen,
 		refresh:     refresh,
-		pp:          pp,
+		pp:          reading.rows,
 		rows:        rows,
 		groups:      groupRows,
 		sessions:    sessionRows,
@@ -944,32 +958,41 @@ func (l *Loop) commitScan(c commit) (next, prev state.Snapshot, changed bool) {
 	if l.superseded(c.seq) {
 		return prev, prev, false
 	}
+	l.noteScanOutcome(c)
+	withStats := carryScanFields(prev, rows, groupRows, c)
+	return l.storeCommitted(prev, rows, groupRows, c, withStats)
+}
 
+// noteScanOutcome records that this generation produced a reading. An older
+// generation must not clear a newer failure or move the attempt clock.
+func (l *Loop) noteScanOutcome(c commit) {
 	if c.seq >= l.outcomeSeq {
 		l.outcomeSeq = c.seq
 		l.lastErr = nil
 		l.lastAttemptAt = l.now()
 	}
+}
 
-	// Carry forward every probe result this scan did not take: between health
-	// cadences, for a configured probe the round's budget cut short, and for a
-	// scan an RPC started that had no reason to pay for a subscriber's health.
-	// Without it a port flickers between "checked" and "unknown" on the wire.
+// carryScanFields copies probe results and stats this scan did not take.
+// Between health cadences, for a configured probe the round's budget cut
+// short, and for a scan an RPC started that had no reason to pay for a
+// subscriber's health, the previous verdict stays. Without it a port
+// flickers between "checked" and "unknown" on the wire. Service rows are
+// built before health is probed, so the join runs after the carry and
+// subscribers see the same readiness as dependencies.
+func carryScanFields(prev state.Snapshot, rows []state.Port, groupRows []state.Group, c commit) bool {
 	carryHealth(prev.Ports, rows, (c.collect.Health || c.carry.Health) && !c.health)
-
-	// Same for stats. A scan an RPC started collects none unless the caller
-	// asked, so it copies the subscribers' last readings across rather than
-	// publishing a snapshot with the numbers stripped out — and the 1 s stats
-	// tick refreshes them within the second anyway.
 	if c.carry.Stats && !c.collect.Stats {
 		carryStats(prev.Ports, rows)
 	}
-	// Service rows are built before health is probed. Rejoin after carrying
-	// health so service-level readiness is the same fact dependencies, status
-	// and subscribers observe.
 	syncConfiguredHealth(rows, groupRows)
-	withStats := c.collect.Stats || c.carry.Stats
+	return c.collect.Stats || c.carry.Stats
+}
 
+// storeCommitted writes the scan into the cache. Nothing a client can see
+// keeps the previous sequence and backs the interval off; a visible change
+// takes the next sequence and returns the loop to its base interval.
+func (l *Loop) storeCommitted(prev state.Snapshot, rows []state.Port, groupRows []state.Group, c commit, withStats bool) (next, outPrev state.Snapshot, changed bool) {
 	l.lastScanAt = l.now()
 	l.committedSeq = c.seq
 	l.refreshObserved = c.refresh
@@ -982,28 +1005,23 @@ func (l *Loop) commitScan(c commit) (next, prev state.Snapshot, changed bool) {
 	if c.health {
 		l.lastHealthAt = l.lastScanAt
 	}
-
 	// Every collection is always an array, never null.
 	local := state.Rows{
 		Ports:    rows,
 		Groups:   groupRows,
 		Sessions: c.sessions,
 	}.Tag(state.LocalhostName).Normalize()
-
 	next = local.Into(state.Snapshot{
 		At:            l.lastScanAt.Format(time.RFC3339),
 		DaemonVersion: l.opts.DaemonVersion,
 		Observation:   c.observation,
 	})
-
 	if l.haveSnap && !snapshotChanged(prev, next, withStats) {
-		// Nothing to publish: keep the previous seq and back the interval off.
 		next.Seq = prev.Seq
 		l.snap = next
 		l.interval = backoff(l.interval, l.base, l.maxIntervalLocked())
 		return next, prev, false
 	}
-
 	l.seq++
 	next.Seq = l.seq
 	l.snap = next
@@ -1090,15 +1108,25 @@ func snapshotChanged(prev, next state.Snapshot, withStats bool) bool {
 	if !observationEqual(prev.Observation, next.Observation) {
 		return true
 	}
-	var d state.Delta
+	return deltaHasRows(snapshotDelta(prev, next, withStats))
+}
+
+func snapshotDelta(prev, next state.Snapshot, withStats bool) state.Delta {
 	if withStats {
-		d = state.DiffWithStats(prev, next)
-	} else {
-		d = state.Diff(prev, next)
+		return state.DiffWithStats(prev, next)
 	}
-	return len(d.Ports.Added) > 0 || len(d.Ports.Updated) > 0 || len(d.Ports.Removed) > 0 ||
-		len(d.Groups.Added) > 0 || len(d.Groups.Updated) > 0 || len(d.Groups.Removed) > 0 ||
-		len(d.Sessions.Added) > 0 || len(d.Sessions.Updated) > 0 || len(d.Sessions.Removed) > 0
+	return state.Diff(prev, next)
+}
+
+// deltaHasRows reports whether any collection in the diff carries a row.
+// The observation verdict is compared separately: it can move while every
+// row stays put.
+func deltaHasRows(d state.Delta) bool {
+	return changeNonEmpty(d.Ports) || changeNonEmpty(d.Groups) || changeNonEmpty(d.Sessions)
+}
+
+func changeNonEmpty[T any](c state.Change[T]) bool {
+	return len(c.Added) > 0 || len(c.Updated) > 0 || len(c.Removed) > 0
 }
 
 // carryForward walks next and copies one field forward from each row's
@@ -1197,13 +1225,23 @@ func indexPorts(rows []state.Port) map[string]state.Port {
 // and app show as notifications.
 func deriveEvents(prev, next state.Snapshot, at string) []state.Event {
 	d := state.DiffWithStats(prev, next)
+	events := portTransitionEvents(prev, next, at, d)
+	// An unchanged group cannot introduce a new readiness timeout. Reuse the
+	// delta already computed instead of rejoining every service on idle ticks.
+	if len(d.Groups.Added)+len(d.Groups.Updated) == 0 {
+		return events
+	}
+	return appendReadyTimeouts(events, prev, next, at, changedGroupKeys(d))
+}
+
+// portTransitionEvents are the listener notifications: a port came up, went
+// down, restarted, or its health status moved. A key that is both removed and
+// added in one delta is a restart, not a down followed by an up.
+func portTransitionEvents(prev, next state.Snapshot, at string, d state.Delta) []state.Event {
 	groups := make([]state.Group, 0, len(prev.Groups)+len(next.Groups))
 	groups = append(groups, prev.Groups...)
 	groups = append(groups, next.Groups...)
-
-	// A key that is both removed and added in one delta is a restart.
 	removed := keySet(d.Ports.Removed)
-
 	events := make([]state.Event, 0, len(d.Ports.Added)+len(d.Ports.Removed))
 	restarted := make(map[string]bool, len(d.Ports.Added))
 	for i := range d.Ports.Added {
@@ -1230,67 +1268,107 @@ func deriveEvents(prev, next state.Snapshot, at string) []state.Event {
 			events = append(events, ev)
 		}
 	}
-	// An unchanged group cannot introduce a new readiness timeout. Reuse the
-	// delta already computed instead of rejoining every service on idle ticks.
-	if len(d.Groups.Added)+len(d.Groups.Updated) == 0 {
-		return events
-	}
-	changedGroups := make(map[string]bool, len(d.Groups.Added)+len(d.Groups.Updated))
+	return events
+}
+
+func changedGroupKeys(d state.Delta) map[string]bool {
+	changed := make(map[string]bool, len(d.Groups.Added)+len(d.Groups.Updated))
 	for _, group := range d.Groups.Added {
-		changedGroups[group.Key()] = true
+		changed[group.Key()] = true
 	}
 	for _, group := range d.Groups.Updated {
-		changedGroups[group.Key()] = true
+		changed[group.Key()] = true
 	}
-	// These indexes are per transition and read-only. Build them only when a
-	// ready_timeout needs comparison; changed groups must not cost G² + S².
-	var previousGroups map[string]*state.Group
+	return changed
+}
+
+// priorServices is the previous snapshot's services, indexed only after a
+// ready_timeout actually needs a comparison. Changed groups must not cost
+// a walk of every group and every service on the tick.
+type priorServices struct {
+	groups   map[string]*state.Group
+	services map[string]map[string]*state.Service
+	prev     []state.Group
+}
+
+func (p *priorServices) lookup(group state.Group, name string) (*state.Service, bool) {
+	if p.groups == nil {
+		p.groups = indexPriorGroups(p.prev)
+	}
+	if p.services == nil {
+		p.services = make(map[string]map[string]*state.Service)
+	}
+	byName, indexed := p.services[group.Key()]
+	if !indexed {
+		byName = indexGroupServices(p.groups[group.Key()])
+		p.services[group.Key()] = byName
+	}
+	svc, found := byName[name]
+	return svc, found
+}
+
+func indexPriorGroups(prev []state.Group) map[string]*state.Group {
+	groups := make(map[string]*state.Group, len(prev))
+	for i := range prev {
+		key := prev[i].Key()
+		if _, seen := groups[key]; !seen {
+			groups[key] = &prev[i]
+		}
+	}
+	return groups
+}
+
+func indexGroupServices(group *state.Group) map[string]*state.Service {
+	if group == nil {
+		return map[string]*state.Service{}
+	}
+	byName := make(map[string]*state.Service, len(group.Services))
+	for i := range group.Services {
+		name := group.Services[i].Name
+		if _, seen := byName[name]; !seen {
+			byName[name] = &group.Services[i]
+		}
+	}
+	return byName
+}
+
+func appendReadyTimeouts(events []state.Event, prev, next state.Snapshot, at string, changed map[string]bool) []state.Event {
+	prior := priorServices{prev: prev.Groups}
 	for _, group := range next.Groups {
-		if !changedGroups[group.Key()] {
+		if !changed[group.Key()] {
 			continue
 		}
-		var previousServices map[string]*state.Service
 		for _, service := range group.Services {
-			if service.LastExit == nil || service.LastExit.Reason != "ready_timeout" {
+			previous, existed := prior.lookup(group, service.Name)
+			if !newReadyTimeout(service, previous, existed) {
 				continue
 			}
-			if previousGroups == nil {
-				previousGroups = make(map[string]*state.Group, len(prev.Groups))
-				for i := range prev.Groups {
-					key := prev.Groups[i].Key()
-					if _, seen := previousGroups[key]; !seen {
-						previousGroups[key] = &prev.Groups[i]
-					}
-				}
-			}
-			if previousServices == nil {
-				previousServices = make(map[string]*state.Service)
-				if before := previousGroups[group.Key()]; before != nil {
-					previousServices = make(map[string]*state.Service, len(before.Services))
-					for i := range before.Services {
-						name := before.Services[i].Name
-						if _, seen := previousServices[name]; !seen {
-							previousServices[name] = &before.Services[i]
-						}
-					}
-				}
-			}
-			if previous, exists := previousServices[service.Name]; exists && sameServiceExit(previous.LastExit, service.LastExit) {
-				continue
-			}
-			groupName := group.Name
-			events = append(events, state.Event{
-				EventID: state.NewEventID(next.Seq, "ready_timeout", group.Key()+":"+service.Name),
-				Seq:     next.Seq,
-				Kind:    "ready_timeout",
-				At:      at,
-				Source:  state.EventSourceForGroup(group),
-				Group:   &groupName,
-				Data:    map[string]any{"service": service.Name, "reason": "ready_timeout"},
-			})
+			events = append(events, readyTimeoutEvent(next.Seq, at, group, service.Name))
 		}
 	}
 	return events
+}
+
+// newReadyTimeout is a readiness failure this transition has not already
+// reported. The same exit on the previous service row is the same fact.
+func newReadyTimeout(service state.Service, previous *state.Service, existed bool) bool {
+	if service.LastExit == nil || service.LastExit.Reason != "ready_timeout" {
+		return false
+	}
+	return !existed || !sameServiceExit(previous.LastExit, service.LastExit)
+}
+
+func readyTimeoutEvent(seq uint64, at string, group state.Group, service string) state.Event {
+	groupName := group.Name
+	return state.Event{
+		EventID: state.NewEventID(seq, "ready_timeout", group.Key()+":"+service),
+		Seq:     seq,
+		Kind:    "ready_timeout",
+		At:      at,
+		Source:  state.EventSourceForGroup(group),
+		Group:   &groupName,
+		Data:    map[string]any{"service": service, "reason": "ready_timeout"},
+	}
 }
 
 func sameServiceExit(a, b *state.ServiceExit) bool {
@@ -1526,30 +1604,40 @@ func (l *Loop) scanNowContext(ctx context.Context, include Include, mode scanMod
 	// consulting a clock.
 	asked := l.scanGeneration()
 	if err := lockForContext(ctx, l.rpcGate, ScanLockBudget); err != nil {
-		if err := ctx.Err(); err != nil {
-			return state.Snapshot{}, err
-		}
-		// Only reads may fall back. A control request must not resolve targets
-		// against an observation from before the forced scan it required.
-		if mode != mayCoalesce {
-			return state.Snapshot{}, fmt.Errorf("scanner busy for more than %s; fresh observation unavailable", ScanLockBudget)
-		}
-		l.opts.Logger.Warn("scanner busy, serving the last snapshot", "waited", ScanLockBudget)
-		return l.Cached(), nil
+		return l.scanWhileBusy(ctx, mode)
 	}
 	defer unlock(l.rpcGate)
-
 	if snap, reused, err := l.reuseIfFresh(asked, include, mode); err != nil || reused {
 		return snap, err
 	}
+	return l.finishScanNow(ctx, include, mode)
+}
 
+// scanWhileBusy answers a caller that could not take the RPC gate. Cancellation
+// wins over the busy fallback: the caller is gone. Only a read may then fall
+// back to the cache. A control request must not resolve targets against an
+// observation from before the forced scan it required.
+func (l *Loop) scanWhileBusy(ctx context.Context, mode scanMode) (state.Snapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return state.Snapshot{}, err
+	}
+	if mode != mayCoalesce {
+		return state.Snapshot{}, fmt.Errorf("scanner busy for more than %s; fresh observation unavailable", ScanLockBudget)
+	}
+	l.opts.Logger.Warn("scanner busy, serving the last snapshot", "waited", ScanLockBudget)
+	return l.Cached(), nil
+}
+
+// finishScanNow publishes the scan this caller waited for. A withdrawn caller
+// gets that error and not a row. A read that failed keeps the last good
+// snapshot when one exists; a control request returns the failure.
+func (l *Loop) finishScanNow(ctx context.Context, include Include, mode scanMode) (state.Snapshot, error) {
 	next, prev, _, err := l.scanLockedContext(ctx, include, l.demandInclude(), false)
 	if err := ctx.Err(); err != nil {
 		return state.Snapshot{}, err
 	}
 	if err != nil {
 		if mode == mayCoalesce && prev.Seq > 0 {
-			// Read-only requests retain the documented last-good fallback.
 			return prev, nil
 		}
 		return state.Snapshot{}, err

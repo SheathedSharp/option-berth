@@ -56,7 +56,7 @@ func TestRepublishDoesNotScan(t *testing.T) {
 		t.Fatalf("scans after Republish = %d, want the first read only", got)
 	}
 	cached := l.Cached()
-	if len(cached.Ports) != 1 || deref(cached.Ports[0].Group) != "shop" {
+	if len(cached.Ports) != 1 || stringValue(cached.Ports[0].Group) != "shop" {
 		t.Fatalf("cached = %+v, want the renamed group published without a scan", cached.Ports)
 	}
 }
@@ -76,7 +76,7 @@ func TestRepublishPublishesBeforeItReturns(t *testing.T) {
 			mu.Lock()
 			defer mu.Unlock()
 			for _, p := range next.Ports {
-				groups = append(groups, deref(p.Group))
+				groups = append(groups, stringValue(p.Group))
 			}
 		},
 	})
@@ -392,7 +392,7 @@ func TestAWriteDuringASlowScanStillPublishesItsChange(t *testing.T) {
 	<-slowDone
 
 	final := l.Cached()
-	if len(final.Ports) != 1 || deref(final.Ports[0].Group) != "shop" {
+	if len(final.Ports) != 1 || stringValue(final.Ports[0].Group) != "shop" {
 		t.Fatalf("final = %+v, want the write's group: the slow scan overwrote it", final.Ports)
 	}
 }

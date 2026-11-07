@@ -110,37 +110,15 @@ func runHealthRound(ctx context.Context, targets []healthTarget, probe ProbeCont
 	var wg sync.WaitGroup
 	slots := make(chan struct{}, maxHealthProbes)
 
-admit:
 	for i := range targets {
-		if ctx.Err() != nil {
-			break
-		}
-		select {
-		case slots <- struct{}{}:
-		case <-ctx.Done():
-			break admit
-		}
-		if _, ok := ports.ProbeBudget(HealthTimeout, deadline); !ok || ctx.Err() != nil {
-			<-slots
+		if !admitHealthProbe(ctx, slots, deadline) {
 			break
 		}
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			defer func() { <-slots }()
-			timeout, ok := ports.ProbeBudget(HealthTimeout, deadline)
-			if !ok {
-				return
-			}
-			if ctx.Err() != nil {
-				return
-			}
-			verdict, ok := probeTarget(ctx, probe, targets[i], timeout)
-			if !ok {
-				return
-			}
-			round.results[i] = verdict
-			round.probed[i] = true
+			recordHealthProbe(ctx, probe, targets[i], deadline, round, i)
 		}(i)
 	}
 	wg.Wait()
@@ -148,6 +126,42 @@ admit:
 		return nil, err
 	}
 	return round, nil
+}
+
+// admitHealthProbe takes one probe slot while the round still owns time and
+// the caller still owns the scan. A refused admission releases nothing the
+// caller held: either the slot was never taken, or it is put back before the
+// refusal. The caller stops admitting; probes already running still finish.
+func admitHealthProbe(ctx context.Context, slots chan struct{}, deadline time.Time) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	select {
+	case slots <- struct{}{}:
+	case <-ctx.Done():
+		return false
+	}
+	if _, ok := ports.ProbeBudget(HealthTimeout, deadline); !ok || ctx.Err() != nil {
+		<-slots
+		return false
+	}
+	return true
+}
+
+// recordHealthProbe writes one verdict into the round. A probe that loses its
+// budget or its caller leaves the slot unmarked, so the row keeps the carried
+// result instead of a verdict that was never observed.
+func recordHealthProbe(ctx context.Context, probe ProbeContext, target healthTarget, deadline time.Time, round *healthRound, i int) {
+	timeout, ok := ports.ProbeBudget(HealthTimeout, deadline)
+	if !ok || ctx.Err() != nil {
+		return
+	}
+	verdict, ok := probeTarget(ctx, probe, target, timeout)
+	if !ok {
+		return
+	}
+	round.results[i] = verdict
+	round.probed[i] = true
 }
 
 // probeTarget runs one target through the adapter its kind names. It reports
@@ -188,6 +202,15 @@ func probeTarget(ctx context.Context, probe ProbeContext, t healthTarget, timeou
 // listener to join through, so their verdict goes straight onto the service
 // row that declared them.
 func applyHealthRound(rows []state.Port, gg []state.Group, targets []healthTarget, round *healthRound) {
+	applyPortHealth(rows, targets, round)
+	syncConfiguredHealth(rows, gg)
+	applyCommandHealth(gg, targets, round)
+}
+
+// applyPortHealth writes listener-backed verdicts onto the port rows they
+// joined. Command checks have no listener, so they are skipped here and
+// written onto the service after the port join.
+func applyPortHealth(rows []state.Port, targets []healthTarget, round *healthRound) {
 	for i, t := range targets {
 		if !round.probed[i] || t.kind == groups.HealthCommand {
 			continue
@@ -197,17 +220,26 @@ func applyHealthRound(rows []state.Port, gg []state.Group, targets []healthTarge
 			rows[idx].Health = &verdict
 		}
 	}
-	syncConfiguredHealth(rows, gg)
+}
+
+// applyCommandHealth writes a command check onto the service that declared
+// it. A target that no longer names a service row is dropped: the verdict
+// would otherwise describe a service the snapshot does not contain.
+func applyCommandHealth(gg []state.Group, targets []healthTarget, round *healthRound) {
 	for i, t := range targets {
 		if !round.probed[i] || t.kind != groups.HealthCommand {
 			continue
 		}
-		if t.group < 0 || t.service < 0 || t.group >= len(gg) || t.service >= len(gg[t.group].Services) {
+		if !commandTargetInRange(gg, t) {
 			continue
 		}
 		verdict := round.results[i]
 		gg[t.group].Services[t.service].HealthStatus = &verdict
 	}
+}
+
+func commandTargetInRange(gg []state.Group, t healthTarget) bool {
+	return t.group >= 0 && t.service >= 0 && t.group < len(gg) && t.service < len(gg[t.group].Services)
 }
 
 // syncConfiguredHealth copies the configured health verdict from the port
@@ -221,6 +253,18 @@ func applyHealthRound(rows []state.Port, gg []state.Group, targets []healthTarge
 // ProbeConfiguredContext. A stopped command-checked service keeps no verdict,
 // because running the command would describe the machine, not the service.
 func syncConfiguredHealth(rows []state.Port, gg []state.Group) {
+	byPort := configuredHealthByPort(rows)
+	for gi := range gg {
+		for si := range gg[gi].Services {
+			joinServiceHealth(&gg[gi].Services[si], byPort)
+		}
+	}
+}
+
+// configuredHealthByPort indexes the configured verdicts a port row is
+// carrying. An opt-in probe that is not part of the declaration is not a
+// service's health.
+func configuredHealthByPort(rows []state.Port) map[int]*state.Health {
 	byPort := make(map[int]*state.Health)
 	for i := range rows {
 		h := rows[i].Health
@@ -230,24 +274,27 @@ func syncConfiguredHealth(rows []state.Port, gg []state.Group) {
 		copy := *h
 		byPort[rows[i].Port] = &copy
 	}
-	for gi := range gg {
-		for si := range gg[gi].Services {
-			svc := &gg[gi].Services[si]
-			if svc.Health != nil && groups.ParseHealth(*svc.Health).Kind == groups.HealthCommand {
-				if !svc.Running {
-					svc.HealthStatus = nil
-				}
-				continue
-			}
+	return byPort
+}
+
+// joinServiceHealth copies a listener's configured verdict onto the service
+// that owns that listener. A command check has no port to join through: a
+// stopped service drops the verdict, because running the command would
+// describe the machine, and a running one keeps the verdict the probe wrote.
+func joinServiceHealth(svc *state.Service, byPort map[int]*state.Health) {
+	if svc.Health != nil && groups.ParseHealth(*svc.Health).Kind == groups.HealthCommand {
+		if !svc.Running {
 			svc.HealthStatus = nil
-			if svc.PortActual == nil {
-				continue
-			}
-			if h, ok := byPort[*svc.PortActual]; ok {
-				copy := *h
-				svc.HealthStatus = &copy
-			}
 		}
+		return
+	}
+	svc.HealthStatus = nil
+	if svc.PortActual == nil {
+		return
+	}
+	if h, ok := byPort[*svc.PortActual]; ok {
+		copy := *h
+		svc.HealthStatus = &copy
 	}
 }
 
@@ -272,61 +319,89 @@ type healthTarget struct {
 // a result, so it is not probed; the group already reports the service as not
 // running. Command checks are built for running services, in the service's cwd,
 // with ${port}/${<service>.port} expanded the same way cmd and prepare are.
+type portCheck struct {
+	kind groups.HealthKind
+	path string
+}
+
 func healthTargets(rows []state.Port, gg []state.Group) []healthTarget {
-	type portCheck struct {
-		kind groups.HealthKind
-		path string
-	}
 	checks := make(map[int]portCheck)
 	var out []healthTarget
-
 	for gi := range gg {
-		portMap := groupPortMap(gg[gi])
-		for si := range gg[gi].Services {
-			svc := &gg[gi].Services[si]
-			if svc.Health == nil || *svc.Health == "" {
-				continue
-			}
-			h := groups.ParseHealth(*svc.Health)
-			if h.Kind == groups.HealthCommand {
-				// A command check runs in the service's cwd. Without the
-				// project root there is no cwd to run it in, and the daemon's
-				// own directory is not the service's: report no verdict rather
-				// than a wrong one.
-				if !svc.Running || gg[gi].RootDir == nil {
-					continue
-				}
-				// Resolving the token shells out to git; only a check that
-				// names ${worktree} pays for it.
-				worktree := ""
-				if strings.Contains(h.Command, "${worktree}") {
-					worktree = groups.WorktreeTokenFor(*gg[gi].RootDir)
-				}
-				expanded := groups.Expand(h.Command, groups.Values{
-					Self: svc.Name, Worktree: worktree, Ports: portMap,
-				})
-				out = append(out, healthTarget{
-					kind: groups.HealthCommand, argv: spawn.SplitCmd(expanded),
-					dir: filepath.Join(*gg[gi].RootDir, filepath.FromSlash(svc.Cwd)),
-					env: commandEnv(svc.PortActual), group: gi, service: si,
-				})
-				continue
-			}
-			if svc.PortActual == nil {
-				continue
-			}
-			if h.Kind == groups.HealthTCP {
-				if _, taken := checks[h.Port]; !taken {
-					checks[h.Port] = portCheck{kind: groups.HealthTCP}
-				}
-				continue
-			}
-			if _, taken := checks[*svc.PortActual]; !taken {
-				checks[*svc.PortActual] = portCheck{kind: groups.HealthHTTP, path: h.Path}
-			}
-		}
+		out = append(out, serviceHealthTargets(gg[gi], gi, checks)...)
 	}
+	return append(out, listeningHealthTargets(rows, checks)...)
+}
 
+// serviceHealthTargets turns one group's declarations into command probes and
+// notes the port checks that still have to be joined to a live listener.
+func serviceHealthTargets(group state.Group, gi int, checks map[int]portCheck) []healthTarget {
+	portMap := groupPortMap(group)
+	var out []healthTarget
+	for si := range group.Services {
+		svc := &group.Services[si]
+		if svc.Health == nil || *svc.Health == "" {
+			continue
+		}
+		h := groups.ParseHealth(*svc.Health)
+		if h.Kind == groups.HealthCommand {
+			if target, ok := commandHealthTarget(group, svc, h, portMap, gi, si); ok {
+				out = append(out, target)
+			}
+			continue
+		}
+		notePortCheck(checks, svc, h)
+	}
+	return out
+}
+
+// commandHealthTarget builds one command probe. Without the project root
+// there is no cwd to run it in, and the daemon's own directory is not the
+// service's: report no verdict rather than a wrong one. A service that is
+// not running is the same refusal.
+func commandHealthTarget(group state.Group, svc *state.Service, h groups.HealthCheck, portMap map[string]int, gi, si int) (healthTarget, bool) {
+	if !svc.Running || group.RootDir == nil {
+		return healthTarget{}, false
+	}
+	// Resolving the token shells out to git; only a check that names
+	// ${worktree} pays for it.
+	worktree := ""
+	if strings.Contains(h.Command, "${worktree}") {
+		worktree = groups.WorktreeTokenFor(*group.RootDir)
+	}
+	expanded := groups.Expand(h.Command, groups.Values{
+		Self: svc.Name, Worktree: worktree, Ports: portMap,
+	})
+	return healthTarget{
+		kind: groups.HealthCommand, argv: spawn.SplitCmd(expanded),
+		dir: filepath.Join(*group.RootDir, filepath.FromSlash(svc.Cwd)),
+		env: commandEnv(svc.PortActual), group: gi, service: si,
+	}, true
+}
+
+// notePortCheck remembers the first declaration for a listening port. A TCP
+// check names its own port; an HTTP check names the port the service actually
+// got. A later declaration for the same port does not replace the first.
+func notePortCheck(checks map[int]portCheck, svc *state.Service, h groups.HealthCheck) {
+	if svc.PortActual == nil {
+		return
+	}
+	if h.Kind == groups.HealthTCP {
+		if _, taken := checks[h.Port]; !taken {
+			checks[h.Port] = portCheck{kind: groups.HealthTCP}
+		}
+		return
+	}
+	if _, taken := checks[*svc.PortActual]; taken {
+		return
+	}
+	checks[*svc.PortActual] = portCheck{kind: groups.HealthHTTP, path: h.Path}
+}
+
+// listeningHealthTargets joins remembered port checks to the listener rows
+// that can carry a verdict. A declared check whose port is down has no row,
+// so it is not probed.
+func listeningHealthTargets(rows []state.Port, checks map[int]portCheck) []healthTarget {
 	byPort := make(map[int]*healthTarget)
 	var order []int
 	for i := range rows {
@@ -343,6 +418,7 @@ func healthTargets(rows []state.Port, gg []state.Group) []healthTarget {
 		t.rows = append(t.rows, i)
 		t.host = preferHost(t.host, rows[i])
 	}
+	out := make([]healthTarget, 0, len(order))
 	for _, port := range order {
 		out = append(out, *byPort[port])
 	}
