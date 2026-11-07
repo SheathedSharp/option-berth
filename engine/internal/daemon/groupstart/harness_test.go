@@ -8,6 +8,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -19,7 +21,56 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
+	"github.com/sheathedsharp/option-berth/engine/internal/testenv"
 )
+
+// The scenarios here start real processes, so the test binary doubles as the
+// service a manifest's `cmd:` names. Re-running this binary with the marker set
+// turns it into a listener before any test runs; every other invocation is an
+// ordinary test run inside an isolated HOME.
+const (
+	envListen = "BERTH_TEST_LISTEN"
+	envDelay  = "BERTH_TEST_LISTEN_DELAY"
+	// envEcho names variables, comma separated, the child prints as NAME=value
+	// before it listens, so a test can read the environment a service got.
+	envEcho = "BERTH_TEST_ECHO"
+)
+
+func TestMain(m *testing.M) {
+	if os.Getenv(envListen) == "" {
+		os.Exit(testenv.Run(m))
+	}
+	serveAsChild()
+}
+
+// serveAsChild is the process a manifest asked for: wait if the manifest asked,
+// print the environment it was handed, bind the port option-berth chose, and
+// accept until it is killed. It does nothing else, which is what makes it a fair
+// stand-in for "a service that comes up".
+func serveAsChild() {
+	if delay, err := time.ParseDuration(os.Getenv(envDelay)); err == nil && delay > 0 {
+		time.Sleep(delay)
+	}
+	for _, name := range strings.Split(os.Getenv(envEcho), ",") {
+		if name != "" {
+			fmt.Printf("%s=%s\n", name, os.Getenv(name))
+		}
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:"+os.Getenv("BERTH_PORT"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	defer listener.Close()
+	fmt.Println("listening on", os.Getenv("BERTH_PORT"))
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		conn.Close()
+	}
+}
 
 // startHarness is one isolated universe for a groups.start scenario: a throwaway
 // HOME, one project directory inside it, a daemon on a private socket, and the
@@ -357,6 +408,19 @@ func (h *startHarness) eventually(timeout time.Duration, what string, check func
 	}
 }
 
+// dialable reports whether something on loopback accepts a connection to port.
+// It is the only thing these scenarios treat as "the service is up".
+func dialable(port int) bool { return dialableWithin(port, time.Second) }
+
+func dialableWithin(port int, within time.Duration) bool {
+	conn, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(port), within)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
 // killChildren stops the processes this scenario caused. It runs on every exit
 // path, so a failure cannot leave a listener holding a port for the next test.
 func (h *startHarness) killChildren() {
@@ -463,3 +527,39 @@ func rpcCode(err error) string {
 	}
 	return ""
 }
+
+// containsString reports whether values holds want.
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+// exitsImmediately is a command that starts, does nothing and stops, standing in
+// for a service that never manages to listen.
+func exitsImmediately(t *testing.T) string {
+	t.Helper()
+	for _, candidate := range []string{"/usr/bin/true", "/bin/true"} {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	t.Skip("no true(1) on this system")
+	return ""
+}
+
+// skipOnWindows keeps the scenarios that need a re-exec child, a private unix
+// socket and POSIX signals on the platforms where those exist.
+func skipOnWindows(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the re-exec child, unix socket and process signals are not set up for Windows here")
+	}
+}
+
+// TestNothing is the -test.run target the spawned child uses; TestMain turns it
+// into a listener before it would ever run.
+func TestNothing(t *testing.T) {}
