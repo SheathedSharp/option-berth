@@ -21,11 +21,23 @@ func (l *Loop) RepublishContext(ctx context.Context) (err error) {
 		}
 	}()
 	if err := lockForContext(ctx, l.orderGate, ScanLockBudget); err != nil {
-		if errors.Is(err, errGateTimeout) {
-			return fmt.Errorf("scanner busy for more than %s; the change is saved and the next scan will publish it", ScanLockBudget)
-		}
-		return err
+		return republishWaitError(err)
 	}
+	return l.republishHeld(ctx)
+}
+
+func republishWaitError(err error) error {
+	if errors.Is(err, errGateTimeout) {
+		return fmt.Errorf("scanner busy for more than %s; the change is saved and the next scan will publish it", ScanLockBudget)
+	}
+	return err
+}
+
+// republishHeld re-attributes the ports the last scan already read. An empty
+// cache still has to observe the machine, so it releases the order gate and
+// falls through to a rescan. The gate stays held for the attribute, probe
+// and commit so a later sequence cannot pass this one.
+func (l *Loop) republishHeld(ctx context.Context) error {
 	l.mu.Lock()
 	pp, have, narrow := l.lastPorts, l.haveSnap, l.lastNarrow
 	l.mu.Unlock()
