@@ -60,28 +60,30 @@ func (l *Loop) SetStore(s Store) {
 	l.attr.identities = make(map[string]string)
 }
 
+// setSeam installs a late-bound seam under the attribution lock, so a setter
+// and a tick never race on the same Options field.
+func setSeam[T any](l *Loop, target *T, value T) {
+	l.attr.mu.Lock()
+	*target = value
+	l.attr.mu.Unlock()
+}
+
 // SetRuns installs the run-registry accessor. It is a function because
 // `oberth start` hands the daemon its registry after the loop is already
 // scanning.
 func (l *Loop) SetRuns(f func() groups.Registry) {
-	if f == nil {
-		return
+	if f != nil {
+		setSeam(l, &l.opts.Runs, f)
 	}
-	l.attr.mu.Lock()
-	defer l.attr.mu.Unlock()
-	l.opts.Runs = f
 }
 
 // SetSessions installs the sessions-collection builder. Like SetRuns it is a
 // setter because the daemon extension that owns sessions registers itself
 // after the loop is already scanning.
 func (l *Loop) SetSessions(f func(ports []state.Port) []state.SessionRecord) {
-	if f == nil {
-		return
+	if f != nil {
+		setSeam(l, &l.opts.Sessions, f)
 	}
-	l.attr.mu.Lock()
-	defer l.attr.mu.Unlock()
-	l.opts.Sessions = f
 }
 
 // sessions builds the snapshot's sessions collection, never nil.
@@ -442,32 +444,47 @@ func (l *Loop) record(events []state.Event) {
 	if st == nil || len(events) == 0 {
 		return
 	}
-	rows := make([]store.HistoryEvent, 0, len(events))
-	for _, ev := range events {
-		if ev.Port == nil {
-			continue
-		}
-		switch ev.Kind {
-		case store.EventPortUp, store.EventPortDown, store.EventPortRestarted:
-		default:
-			continue
-		}
-		p := *ev.Port
-		rows = append(rows, store.HistoryEvent{
-			At:          eventTime(ev.At, l.now()),
-			Kind:        ev.Kind,
-			Port:        p.Port,
-			PID:         p.PID,
-			DisplayName: p.DisplayName,
-			Group:       deref(p.Group),
-			Bind:        p.BindAddress,
-			ProjectRoot: deref(p.ProjectRoot),
-			Command:     p.Command,
-		})
-	}
+	rows := historyRows(events, l.now)
 	if err := st.AppendBatch(rows); err != nil {
 		l.opts.Logger.Warn("recording port history", "error", err)
 	}
+}
+
+// historyRows is the persisted half of a delta. A transition without a port
+// row, or of a kind the ring does not keep, contributes nothing.
+func historyRows(events []state.Event, now func() time.Time) []store.HistoryEvent {
+	rows := make([]store.HistoryEvent, 0, len(events))
+	for _, ev := range events {
+		row, keep := historyRow(ev, now())
+		if keep {
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+// historyRow maps one event onto the ring's columns.
+func historyRow(ev state.Event, at time.Time) (store.HistoryEvent, bool) {
+	if ev.Port == nil {
+		return store.HistoryEvent{}, false
+	}
+	switch ev.Kind {
+	case store.EventPortUp, store.EventPortDown, store.EventPortRestarted:
+	default:
+		return store.HistoryEvent{}, false
+	}
+	p := *ev.Port
+	return store.HistoryEvent{
+		At:          eventTime(ev.At, at),
+		Kind:        ev.Kind,
+		Port:        p.Port,
+		PID:         p.PID,
+		DisplayName: p.DisplayName,
+		Group:       deref(p.Group),
+		Bind:        p.BindAddress,
+		ProjectRoot: deref(p.ProjectRoot),
+		Command:     p.Command,
+	}, true
 }
 
 // store returns the installed store under the attribution lock.

@@ -667,13 +667,14 @@ func (l *Loop) publish(prev, next state.Snapshot, events []state.Event) {
 // commit; a failure keeps the last snapshot without renewing its freshness; a
 // withdrawn observation changes nothing at all.
 type scanReading struct {
-	rows      []ports.ListeningPort
-	source    string
-	narrow    bool
-	partial   bool
-	verdict   *state.Observation
-	failure   error
-	ownerGone bool
+	rows         []ports.ListeningPort
+	source       string
+	narrow       bool
+	partial      bool
+	partialCause error
+	verdict      *state.Observation
+	failure      error
+	ownerGone    bool
 }
 
 // read runs the loop's collector and classifies what came back.
@@ -696,7 +697,7 @@ func (l *Loop) read(ctx context.Context, include Include) scanReading {
 		// The readable rows are facts; the unreadable ones are not. Publish
 		// them together with the verdict so no port looks absent.
 		reading := scanReading{
-			rows: partial, source: source, narrow: narrow, partial: true,
+			rows: partial, source: source, narrow: narrow, partial: true, partialCause: err,
 			verdict: l.partialObservation(err, source),
 		}
 		if narrow {
@@ -781,7 +782,7 @@ func (l *Loop) scanLockedContext(ctx context.Context, collect, carry Include, re
 		return l.recordScanFailure(ctx, gen, refresh, reading.failure, reportFailure, prev)
 	}
 	if reading.partial && reportFailure {
-		l.opts.Logger.Warn("scan partial, publishing readable rows", "source", reading.source)
+		l.opts.Logger.Warn("scan partial, publishing readable rows", "error", reading.partialCause)
 	}
 	pp := reading.rows
 
