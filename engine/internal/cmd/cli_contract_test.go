@@ -58,6 +58,7 @@ func TestPublicCommandSurfaceLandsInTheDocumentedLayers(t *testing.T) {
 		"daemon": commandGroupInfra, "serve": commandGroupInfra,
 		"config": commandGroupInfra, "version": commandGroupInfra,
 		"completion": commandGroupInfra, "doctor": commandGroupInfra,
+		"feedback": commandGroupInfra,
 	}
 	public := 0
 	for _, command := range rootCmd.Commands() {
