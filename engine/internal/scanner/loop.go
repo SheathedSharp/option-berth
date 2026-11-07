@@ -1197,13 +1197,23 @@ func indexPorts(rows []state.Port) map[string]state.Port {
 // and app show as notifications.
 func deriveEvents(prev, next state.Snapshot, at string) []state.Event {
 	d := state.DiffWithStats(prev, next)
+	events := portTransitionEvents(prev, next, at, d)
+	// An unchanged group cannot introduce a new readiness timeout. Reuse the
+	// delta already computed instead of rejoining every service on idle ticks.
+	if len(d.Groups.Added)+len(d.Groups.Updated) == 0 {
+		return events
+	}
+	return appendReadyTimeouts(events, prev, next, at, changedGroupKeys(d))
+}
+
+// portTransitionEvents are the listener notifications: a port came up, went
+// down, restarted, or its health status moved. A key that is both removed and
+// added in one delta is a restart, not a down followed by an up.
+func portTransitionEvents(prev, next state.Snapshot, at string, d state.Delta) []state.Event {
 	groups := make([]state.Group, 0, len(prev.Groups)+len(next.Groups))
 	groups = append(groups, prev.Groups...)
 	groups = append(groups, next.Groups...)
-
-	// A key that is both removed and added in one delta is a restart.
 	removed := keySet(d.Ports.Removed)
-
 	events := make([]state.Event, 0, len(d.Ports.Added)+len(d.Ports.Removed))
 	restarted := make(map[string]bool, len(d.Ports.Added))
 	for i := range d.Ports.Added {
@@ -1230,67 +1240,107 @@ func deriveEvents(prev, next state.Snapshot, at string) []state.Event {
 			events = append(events, ev)
 		}
 	}
-	// An unchanged group cannot introduce a new readiness timeout. Reuse the
-	// delta already computed instead of rejoining every service on idle ticks.
-	if len(d.Groups.Added)+len(d.Groups.Updated) == 0 {
-		return events
-	}
-	changedGroups := make(map[string]bool, len(d.Groups.Added)+len(d.Groups.Updated))
+	return events
+}
+
+func changedGroupKeys(d state.Delta) map[string]bool {
+	changed := make(map[string]bool, len(d.Groups.Added)+len(d.Groups.Updated))
 	for _, group := range d.Groups.Added {
-		changedGroups[group.Key()] = true
+		changed[group.Key()] = true
 	}
 	for _, group := range d.Groups.Updated {
-		changedGroups[group.Key()] = true
+		changed[group.Key()] = true
 	}
-	// These indexes are per transition and read-only. Build them only when a
-	// ready_timeout needs comparison; changed groups must not cost G² + S².
-	var previousGroups map[string]*state.Group
+	return changed
+}
+
+// priorServices is the previous snapshot's services, indexed only after a
+// ready_timeout actually needs a comparison. Changed groups must not cost
+// a walk of every group and every service on the tick.
+type priorServices struct {
+	groups   map[string]*state.Group
+	services map[string]map[string]*state.Service
+	prev     []state.Group
+}
+
+func (p *priorServices) lookup(group state.Group, name string) (*state.Service, bool) {
+	if p.groups == nil {
+		p.groups = indexPriorGroups(p.prev)
+	}
+	if p.services == nil {
+		p.services = make(map[string]map[string]*state.Service)
+	}
+	byName, indexed := p.services[group.Key()]
+	if !indexed {
+		byName = indexGroupServices(p.groups[group.Key()])
+		p.services[group.Key()] = byName
+	}
+	svc, found := byName[name]
+	return svc, found
+}
+
+func indexPriorGroups(prev []state.Group) map[string]*state.Group {
+	groups := make(map[string]*state.Group, len(prev))
+	for i := range prev {
+		key := prev[i].Key()
+		if _, seen := groups[key]; !seen {
+			groups[key] = &prev[i]
+		}
+	}
+	return groups
+}
+
+func indexGroupServices(group *state.Group) map[string]*state.Service {
+	if group == nil {
+		return map[string]*state.Service{}
+	}
+	byName := make(map[string]*state.Service, len(group.Services))
+	for i := range group.Services {
+		name := group.Services[i].Name
+		if _, seen := byName[name]; !seen {
+			byName[name] = &group.Services[i]
+		}
+	}
+	return byName
+}
+
+func appendReadyTimeouts(events []state.Event, prev, next state.Snapshot, at string, changed map[string]bool) []state.Event {
+	prior := priorServices{prev: prev.Groups}
 	for _, group := range next.Groups {
-		if !changedGroups[group.Key()] {
+		if !changed[group.Key()] {
 			continue
 		}
-		var previousServices map[string]*state.Service
 		for _, service := range group.Services {
-			if service.LastExit == nil || service.LastExit.Reason != "ready_timeout" {
+			previous, existed := prior.lookup(group, service.Name)
+			if !newReadyTimeout(service, previous, existed) {
 				continue
 			}
-			if previousGroups == nil {
-				previousGroups = make(map[string]*state.Group, len(prev.Groups))
-				for i := range prev.Groups {
-					key := prev.Groups[i].Key()
-					if _, seen := previousGroups[key]; !seen {
-						previousGroups[key] = &prev.Groups[i]
-					}
-				}
-			}
-			if previousServices == nil {
-				previousServices = make(map[string]*state.Service)
-				if before := previousGroups[group.Key()]; before != nil {
-					previousServices = make(map[string]*state.Service, len(before.Services))
-					for i := range before.Services {
-						name := before.Services[i].Name
-						if _, seen := previousServices[name]; !seen {
-							previousServices[name] = &before.Services[i]
-						}
-					}
-				}
-			}
-			if previous, exists := previousServices[service.Name]; exists && sameServiceExit(previous.LastExit, service.LastExit) {
-				continue
-			}
-			groupName := group.Name
-			events = append(events, state.Event{
-				EventID: state.NewEventID(next.Seq, "ready_timeout", group.Key()+":"+service.Name),
-				Seq:     next.Seq,
-				Kind:    "ready_timeout",
-				At:      at,
-				Source:  state.EventSourceForGroup(group),
-				Group:   &groupName,
-				Data:    map[string]any{"service": service.Name, "reason": "ready_timeout"},
-			})
+			events = append(events, readyTimeoutEvent(next.Seq, at, group, service.Name))
 		}
 	}
 	return events
+}
+
+// newReadyTimeout is a readiness failure this transition has not already
+// reported. The same exit on the previous service row is the same fact.
+func newReadyTimeout(service state.Service, previous *state.Service, existed bool) bool {
+	if service.LastExit == nil || service.LastExit.Reason != "ready_timeout" {
+		return false
+	}
+	return !existed || !sameServiceExit(previous.LastExit, service.LastExit)
+}
+
+func readyTimeoutEvent(seq uint64, at string, group state.Group, service string) state.Event {
+	groupName := group.Name
+	return state.Event{
+		EventID: state.NewEventID(seq, "ready_timeout", group.Key()+":"+service),
+		Seq:     seq,
+		Kind:    "ready_timeout",
+		At:      at,
+		Source:  state.EventSourceForGroup(group),
+		Group:   &groupName,
+		Data:    map[string]any{"service": service, "reason": "ready_timeout"},
+	}
 }
 
 func sameServiceExit(a, b *state.ServiceExit) bool {
