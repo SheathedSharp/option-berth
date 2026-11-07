@@ -2,7 +2,6 @@ package groupstart
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"testing"
@@ -13,38 +12,6 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
-
-// startResult is what a background drain of a groups.start stream produced. It
-// avoids t.Fatal from a goroutine while a test polls state.snapshot.
-type startResult struct {
-	chunks []rpc.GroupsStartChunk
-	end    rpc.GroupsStartEnd
-	err    error
-}
-
-func drainStartStream(s *client.Stream) <-chan startResult {
-	out := make(chan startResult, 1)
-	go func() {
-		var chunks []rpc.GroupsStartChunk
-		for raw := range s.Chunks() {
-			var c rpc.GroupsStartChunk
-			if err := json.Unmarshal(raw, &c); err != nil {
-				out <- startResult{chunks: chunks, err: err}
-				return
-			}
-			chunks = append(chunks, c)
-		}
-		end := <-s.End()
-		if end.Err != nil {
-			out <- startResult{chunks: chunks, err: end.Err}
-			return
-		}
-		var summary rpc.GroupsStartEnd
-		err := end.Decode(&summary)
-		out <- startResult{chunks: chunks, end: summary, err: err}
-	}()
-	return out
-}
 
 // snapshotService returns the group and service row for a config path, or nil
 // when the daemon has not published them yet.
@@ -127,20 +94,16 @@ func hasPhase(chunks []rpc.GroupsStartChunk, phase string) bool {
 // with the attempt's phase and budget, the service is not running, and after
 // the run is registered the attempt is gone and the run row is the truth.
 func TestStartAttemptIsVisibleDuringPrepareAndGoneAfterSuccess(t *testing.T) {
-	skipOnWindows(t)
-	dir := isolate(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	h := newHarness(t)
+	ctx, c := h.ctx, h.client
 
-	port := freePort(t)
-	path := writeConfig(t, dir, fmt.Sprintf(`name: phases
+	path := h.manifest(fmt.Sprintf(`name: phases
 services:
   - name: web
     prepare: sh -c 'sleep 2'
     cmd: %s
     port: %d
-`, serviceCmd(t), port))
-	c := startDaemon(t, ctx, dir, []int{port})
+`, h.service(), h.freePort()))
 
 	var start rpc.GroupsStartResult
 	s, err := c.Stream(ctx, "groups.start", rpc.GroupsStartParams{ConfigPath: &path, Progress: true}, &start)
@@ -148,7 +111,7 @@ services:
 		t.Fatalf("groups.start: %v", err)
 	}
 	defer s.Close()
-	result := drainStartStream(s)
+	result := h.drainAsync(s)
 
 	group, svc := waitForStarting(t, ctx, c, path, "web", "prepare")
 	if svc.Running {
@@ -171,7 +134,6 @@ services:
 	if got.err != nil {
 		t.Fatalf("stream error: %v", got.err)
 	}
-	t.Cleanup(func() { killPIDs(got.chunks) })
 	if len(got.end.Started) != 1 || got.end.Started[0] != "web" {
 		t.Fatalf("end = %+v, want web started", got.end)
 	}
@@ -204,18 +166,16 @@ func TestStartAttemptIsClearedOnEveryFailurePath(t *testing.T) {
 	skipOnWindows(t)
 
 	t.Run("prepare_failure", func(t *testing.T) {
-		dir := isolate(t)
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		path := writeConfig(t, dir, fmt.Sprintf(`name: phases
+		h := newHarness(t)
+		ctx, c := h.ctx, h.client
+		path := h.manifest(fmt.Sprintf(`name: phases
 services:
   - name: web
     prepare: sh -c 'exit 7'
     cmd: %s
     port: %d
-`, serviceCmd(t), freePort(t)))
-		c := startDaemon(t, ctx, dir, nil)
-		chunks, end := runStart(t, ctx, c, path, true)
+`, h.service(), h.freePort()))
+		chunks, end := h.startChunks(rpc.GroupsStartParams{ConfigPath: &path, Progress: true})
 		if len(end.Errors) != 1 || end.Errors[0] != "web" {
 			t.Fatalf("end = %+v, want web failed", end)
 		}
@@ -230,11 +190,10 @@ services:
 		dependencyTimeout = 300 * time.Millisecond
 		t.Cleanup(func() { dependencyTimeout = old })
 
-		dir := isolate(t)
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		deadPort, livePort := freePort(t), freePort(t)
-		path := writeConfig(t, dir, fmt.Sprintf(`name: phases
+		h := newHarness(t)
+		ctx, c := h.ctx, h.client
+		deadPort, livePort := h.freePort(), h.freePort()
+		path := h.manifest(fmt.Sprintf(`name: phases
 services:
   - name: ghost
     cmd: sleep 30
@@ -243,10 +202,8 @@ services:
     cmd: %s
     port: %d
     depends_on: [ghost]
-`, deadPort, serviceCmd(t), livePort))
-		c := startDaemon(t, ctx, dir, []int{deadPort, livePort})
-		chunks, end := runStart(t, ctx, c, path, true)
-		t.Cleanup(func() { killPIDs(chunks) })
+`, deadPort, h.service(), livePort))
+		chunks, end := h.startChunks(rpc.GroupsStartParams{ConfigPath: &path, Progress: true})
 		if len(end.Errors) != 1 || end.Errors[0] != "web" {
 			t.Fatalf("end = %+v, want only web failed", end)
 		}
@@ -264,16 +221,14 @@ services:
 	})
 
 	t.Run("spawn_failure", func(t *testing.T) {
-		dir := isolate(t)
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		path := writeConfig(t, dir, `name: phases
+		h := newHarness(t)
+		ctx, c := h.ctx, h.client
+		path := h.manifest(`name: phases
 services:
   - name: web
     cmd: /nonexistent/oberth-test-binary
 `)
-		c := startDaemon(t, ctx, dir, nil)
-		_, end := runStart(t, ctx, c, path, true)
+		_, end := h.startChunks(rpc.GroupsStartParams{ConfigPath: &path, Progress: true})
 		if len(end.Errors) != 1 || end.Errors[0] != "web" {
 			t.Fatalf("end = %+v, want web failed", end)
 		}
@@ -284,27 +239,18 @@ services:
 // TestStartAttemptIsClearedOnCancellation: stream.cancel stops the start call,
 // and the attempt must disappear with it.
 func TestStartAttemptIsClearedOnCancellation(t *testing.T) {
-	skipOnWindows(t)
-	dir := isolate(t)
-	daemonCtx, stopDaemon := context.WithCancel(context.Background())
-	defer stopDaemon()
-	path := writeConfig(t, dir, fmt.Sprintf(`name: phases
+	h := newHarness(t)
+	daemonCtx, c := h.ctx, h.client
+	path := h.manifest(fmt.Sprintf(`name: phases
 services:
   - name: web
     prepare: sh -c 'sleep 5'
     cmd: %s
     port: %d
-`, serviceCmd(t), freePort(t)))
-	c := startDaemon(t, daemonCtx, dir, nil)
+`, h.service(), h.freePort()))
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	var start rpc.GroupsStartResult
-	s, err := c.Stream(ctx, "groups.start", rpc.GroupsStartParams{ConfigPath: &path, Progress: true}, &start)
-	if err != nil {
-		t.Fatalf("groups.start: %v", err)
-	}
-	result := drainStartStream(s)
+	s, _ := h.open(rpc.GroupsStartParams{ConfigPath: &path, Progress: true})
+	result := h.drainAsync(s)
 	waitForStarting(t, daemonCtx, c, path, "web", "prepare")
 	if err := s.Cancel(context.Background()); err != nil {
 		t.Fatalf("stream.cancel: %v", err)
@@ -330,20 +276,15 @@ func TestStartProgressIsGatedByProgress(t *testing.T) {
 		{name: "on", progress: true, want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := isolate(t)
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			port := freePort(t)
-			path := writeConfig(t, dir, fmt.Sprintf(`name: phases
+			h := newHarness(t)
+			path := h.manifest(fmt.Sprintf(`name: phases
 services:
   - name: web
     prepare: sh -c 'sleep 0.4'
     cmd: %s
     port: %d
-`, serviceCmd(t), port))
-			c := startDaemon(t, ctx, dir, []int{port})
-			chunks, end := runStartWithProgress(t, ctx, c, path, tc.progress)
-			t.Cleanup(func() { killPIDs(chunks) })
+`, h.service(), h.freePort()))
+			chunks, end := h.startChunks(rpc.GroupsStartParams{ConfigPath: &path, Progress: tc.progress})
 			if len(end.Started) != 1 {
 				t.Fatalf("end = %+v, want web started", end)
 			}
@@ -358,27 +299,19 @@ services:
 // TestStartAttemptAppearsInScopedSnapshot: the attempt is attached before the
 // scope projection, so a scoped reader selecting the worktree still sees it.
 func TestStartAttemptAppearsInScopedSnapshot(t *testing.T) {
-	skipOnWindows(t)
-	dir := isolate(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	port := freePort(t)
-	path := writeConfig(t, dir, fmt.Sprintf(`name: phases
+	h := newHarness(t)
+	ctx, c, dir := h.ctx, h.client, h.dir
+	path := h.manifest(fmt.Sprintf(`name: phases
 services:
   - name: web
     prepare: sh -c 'sleep 2'
     cmd: %s
     port: %d
-`, serviceCmd(t), port))
-	c := startDaemon(t, ctx, dir, []int{port})
+`, h.service(), h.freePort()))
 
-	var start rpc.GroupsStartResult
-	s, err := c.Stream(ctx, "groups.start", rpc.GroupsStartParams{ConfigPath: &path}, &start)
-	if err != nil {
-		t.Fatalf("groups.start: %v", err)
-	}
+	s, _ := h.open(rpc.GroupsStartParams{ConfigPath: &path})
 	defer s.Close()
-	result := drainStartStream(s)
+	result := h.drainAsync(s)
 	waitForStarting(t, ctx, c, path, "web", "prepare")
 
 	scope := state.Scope{Worktrees: []string{groups.Canonical(dir)}}
@@ -401,30 +334,27 @@ services:
 	if !found {
 		t.Fatalf("scoped snapshot did not include web: %+v", scoped.Worktrees)
 	}
-
-	got := <-result
-	t.Cleanup(func() { killPIDs(got.chunks) })
+	// Let the start finish before the harness tears the daemon down.
+	if got := <-result; got.err != nil {
+		t.Fatalf("stream error: %v", got.err)
+	}
 }
 
 // TestAnAlreadyRunningServiceOwnsNoAttempt: the skip path never creates one.
 func TestAnAlreadyRunningServiceOwnsNoAttempt(t *testing.T) {
-	skipOnWindows(t)
-	dir := isolate(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	path := writeConfig(t, dir, `name: phases
+	h := newHarness(t)
+	ctx, c := h.ctx, h.client
+	path := h.manifest(`name: phases
 services:
   - name: worker
     cmd: sleep 30
 `)
-	c := startDaemon(t, ctx, dir, nil)
 
-	first, firstEnd := runStart(t, ctx, c, path, true)
-	t.Cleanup(func() { killPIDs(first) })
+	_, firstEnd := h.startChunks(rpc.GroupsStartParams{ConfigPath: &path, Progress: true})
 	if len(firstEnd.Started) != 1 {
 		t.Fatalf("first end = %+v", firstEnd)
 	}
-	second, secondEnd := runStart(t, ctx, c, path, true)
+	second, secondEnd := h.startChunks(rpc.GroupsStartParams{ConfigPath: &path, Progress: true})
 	if len(secondEnd.Skipped) != 1 || len(secondEnd.Started) != 0 {
 		t.Fatalf("second end = %+v, want worker skipped", secondEnd)
 	}
@@ -432,22 +362,6 @@ services:
 		t.Fatalf("skipped start emitted progress: %+v", second)
 	}
 	waitForNoStarting(t, ctx, c, path, "worker")
-}
-
-func runStart(t *testing.T, ctx context.Context, c *client.Client, path string, progress bool) ([]rpc.GroupsStartChunk, rpc.GroupsStartEnd) {
-	t.Helper()
-	return runStartWithProgress(t, ctx, c, path, progress)
-}
-
-func runStartWithProgress(t *testing.T, ctx context.Context, c *client.Client, path string, progress bool) ([]rpc.GroupsStartChunk, rpc.GroupsStartEnd) {
-	t.Helper()
-	var start rpc.GroupsStartResult
-	s, err := c.Stream(ctx, "groups.start", rpc.GroupsStartParams{ConfigPath: &path, Progress: progress}, &start)
-	if err != nil {
-		t.Fatalf("groups.start: %v", err)
-	}
-	defer s.Close()
-	return collect(t, s)
 }
 
 // TestPrepareDurationSidecarIsIndependentAndAdvisory covers the advisory
