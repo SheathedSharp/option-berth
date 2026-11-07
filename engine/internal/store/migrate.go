@@ -41,6 +41,8 @@ const (
 // ReservedVersions names the feature that owns each held version, so a
 // duplicate registration can say whose number was taken.
 var ReservedVersions = map[int]string{
+	// Sibling packages register these from their own init; the label is what a
+	// duplicate-registration panic reports.
 	VersionShares:   "shares",
 	VersionProxies:  "proxies",
 	VersionSessions: "sessions",
@@ -164,11 +166,11 @@ func (e *SchemaTooNewError) Error() string {
 }
 
 const schemaVersionDDL = `
-CREATE TABLE IF NOT EXISTS schema_version (
-    version    INTEGER PRIMARY KEY,
-    name       TEXT NOT NULL,
-    applied_at TEXT NOT NULL
-);`
+CREATE TABLE IF NOT EXISTS schema_version(
+	version INTEGER PRIMARY KEY,
+	name TEXT NOT NULL,
+	applied_at TEXT NOT NULL
+)`
 
 // migrate brings db to the newest registered version.
 //
@@ -180,8 +182,8 @@ CREATE TABLE IF NOT EXISTS schema_version (
 // apply 5. Comparing against the highest applied version would have skipped it
 // for good.
 func migrate(db *sql.DB) error {
-	if _, err := db.Exec(schemaVersionDDL); err != nil {
-		return fmt.Errorf("creating schema_version: %w", err)
+	if err := ensureSchemaTable(db); err != nil {
+		return err
 	}
 	applied, err := appliedVersions(db)
 	if err != nil {
@@ -197,6 +199,15 @@ func migrate(db *sql.DB) error {
 		if err := applyMigration(db, m); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// ensureSchemaTable creates the ledger if this is a fresh file. It runs before
+// any version is read, so an empty database and an old one follow one path.
+func ensureSchemaTable(db *sql.DB) error {
+	if _, err := db.Exec(schemaVersionDDL); err != nil {
+		return fmt.Errorf("creating schema_version: %w", err)
 	}
 	return nil
 }
@@ -226,7 +237,12 @@ func appliedVersions(db *sql.DB) (map[int]bool, error) {
 		return nil, fmt.Errorf("reading schema_version: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
+	return scanVersions(rows)
+}
 
+// scanVersions turns the ledger rows into a set. The caller owns the rows and
+// closes them; this function only decodes.
+func scanVersions(rows *sql.Rows) (map[int]bool, error) {
 	applied := map[int]bool{}
 	for rows.Next() {
 		var version int
