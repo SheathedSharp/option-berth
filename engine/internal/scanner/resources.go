@@ -54,7 +54,7 @@ func FillServiceStatsContext(ctx context.Context, groups []state.Group, sample f
 			}
 			// A recycled pid must not inherit a recorded run's identity. The
 			// sample carries the process start; the run carries its own.
-			if !sameProcessStart(valueOrEmpty(svc.StartedAt), s.StartedAt) {
+			if !sameProcessStart(stringValue(svc.StartedAt), s.StartedAt) {
 				continue
 			}
 			svc.Stats = &state.Stats{
@@ -97,11 +97,4 @@ func sameProcessStart(recorded, sampled string) bool {
 		delta = -delta
 	}
 	return delta <= ports.StartTolerance
-}
-
-func valueOrEmpty(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
 }

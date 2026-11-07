@@ -480,9 +480,9 @@ func historyRow(ev state.Event, at time.Time) (store.HistoryEvent, bool) {
 		Port:        p.Port,
 		PID:         p.PID,
 		DisplayName: p.DisplayName,
-		Group:       deref(p.Group),
+		Group:       stringValue(p.Group),
 		Bind:        p.BindAddress,
-		ProjectRoot: deref(p.ProjectRoot),
+		ProjectRoot: stringValue(p.ProjectRoot),
 		Command:     p.Command,
 	}, true
 }
@@ -499,11 +499,4 @@ func eventTime(at string, fallback time.Time) time.Time {
 		return t
 	}
 	return fallback
-}
-
-func deref(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
 }
