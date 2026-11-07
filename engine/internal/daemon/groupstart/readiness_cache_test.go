@@ -13,7 +13,7 @@ import (
 
 func TestDependencyWaitDoesNotReuseIdleObservation(t *testing.T) {
 	dir := t.TempDir()
-	writeConfig(t, dir, "name: active-wait\nservices:\n  - name: api\n    cmd: serve\n    port: 8080\n")
+	writeManifest(t, dir, "name: active-wait\nservices:\n  - name: api\n    cmd: serve\n    port: 8080\n")
 	now := time.Now()
 	bound := false
 	l := scanner.New(scanner.Options{Now: func() time.Time { return now }, Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
@@ -36,7 +36,7 @@ func TestDependencyWaitDoesNotReuseIdleObservation(t *testing.T) {
 
 func TestDependencyWaitDoesNotAcceptLastGoodAfterCollectorFailure(t *testing.T) {
 	dir := t.TempDir()
-	writeConfig(t, dir, "name: active-wait\nservices:\n  - name: api\n    cmd: serve\n    port: 8080\n")
+	writeManifest(t, dir, "name: active-wait\nservices:\n  - name: api\n    cmd: serve\n    port: 8080\n")
 	now := time.Now()
 	fail := false
 	l := scanner.New(scanner.Options{Now: func() time.Time { return now }, Scan: func(scanner.Include) ([]ports.ListeningPort, error) {

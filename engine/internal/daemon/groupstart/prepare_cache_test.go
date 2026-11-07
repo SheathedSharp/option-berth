@@ -1,7 +1,6 @@
 package groupstart
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -128,37 +127,29 @@ func TestPrepareWithoutInputsAlwaysRuns(t *testing.T) {
 // same inputs. The second start must not run prepare; changing an input must
 // make the third start run it again.
 func TestSecondUpSkipsAnUnchangedPrepare(t *testing.T) {
-	skipOnWindows(t)
-	dir := isolate(t)
+	h := newHarness(t)
+	dir := h.dir
 	t.Setenv("BERTH_HOME", filepath.Join(dir, "berth"))
 	writePrepareFile(t, dir, "package.json", `{"name":"web"}`)
 	count := filepath.Join(dir, "prepare-runs")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	port := freePort(t)
-	path := writeConfig(t, dir, fmt.Sprintf(`name: prepare-cache
+	port := h.freePort()
+	path := h.manifest(fmt.Sprintf(`name: prepare-cache
 services:
   - name: web
     prepare: sh -c 'echo run >> %s'
     prepare_inputs: [package.json]
     cmd: %s
     port: %d
-`, count, serviceCmd(t), port))
-	c := startDaemon(t, ctx, dir, []int{port})
+`, count, h.service(), port))
 
 	startOnce := func() []rpc.GroupsStartChunk {
 		t.Helper()
-		var start rpc.GroupsStartResult
-		s, err := c.Stream(ctx, "groups.start", rpc.GroupsStartParams{ConfigPath: &path}, &start)
-		if err != nil {
-			t.Fatalf("groups.start: %v", err)
-		}
+		s, _ := h.open(rpc.GroupsStartParams{ConfigPath: &path})
 		defer s.Close()
-		chunks, end := collect(t, s)
+		chunks, end := h.drain(s)
 		for _, ch := range chunks {
 			if ch.Error != "" {
-				dumpLogs(t, chunks)
 				t.Fatalf("start failed: %+v", ch)
 			}
 		}

@@ -22,25 +22,18 @@ import (
 // prepare's whole process group, ends the start, and leaves no run behind —
 // a canceled prepare is not a service.
 func TestPrepareCancellationKillsThePrepareProcess(t *testing.T) {
-	dir := isolate(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	port := freePort(t)
-	pidFile := filepath.Join(dir, "prepare.pid")
-	path := writeConfig(t, dir, fmt.Sprintf(`name: prepare-cancel
+	h := newHarness(t)
+	port := h.freePort()
+	pidFile := filepath.Join(h.dir, "prepare.pid")
+	path := h.manifest(fmt.Sprintf(`name: prepare-cancel
 services:
   - name: api
     prepare: /bin/sh -c 'echo $$ > %s; sleep 30'
     cmd: %s
     port: %d
-`, pidFile, serviceCmd(t), port))
-	c := startDaemon(t, ctx, dir, []int{port})
+`, pidFile, h.service(), port))
 
-	var start rpc.GroupsStartResult
-	s, err := c.Stream(ctx, "groups.start", rpc.GroupsStartParams{ConfigPath: &path}, &start)
-	if err != nil {
-		t.Fatalf("groups.start: %v", err)
-	}
+	s, _ := h.open(rpc.GroupsStartParams{ConfigPath: &path})
 
 	// Wait for the prepare shell to announce its pid.
 	var pid int

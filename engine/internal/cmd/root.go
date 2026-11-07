@@ -236,6 +236,10 @@ var rootCmd = &cobra.Command{
 			return nil
 		}
 		printWelcome(cmd.OutOrStdout(), welcomeVersion())
+		// The first screen is the only place the product asks. It is also the
+		// only place that reaches every install channel — the scripts, brew,
+		// deb/rpm and `go install` all end up running this binary.
+		askFeedbackOnce()
 		return nil
 	},
 }

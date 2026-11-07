@@ -9,7 +9,9 @@
 无参数运行 `oberth` 显示首屏：品牌标记与字标、一句定位、本机版本、三条最常用命令（status / up / down）
 和到完整帮助的指引；它是指路牌不是手册，分组命令清单只在 `oberth --help`。版本行在发布版本检查
 成功时带 `(latest)` 或 `(latest version vX.Y.Z)`；检查未知时只打印本机版本，不把“没查到”写成
-“最新”。发现更新时，首屏底部给出对应平台的安装命令和 `oberth daemon stop`。标记由
+“最新”。发现更新时，首屏底部给出对应平台的安装命令和 `oberth daemon stop`。还没有记录过改进报告
+的决定时，首屏也可能问一次是否发送关于 oberth 自身的脱敏报告；这个问题和报告携带什么，写在
+基础设施命令一节的 `oberth feedback` 里。标记由
 `scripts/brand_export.py` 从客户端几何源生成到 `engine/internal/cmd/mark_gen.go`，
 不手写；字标是轮廓字，终端里用粗体文字表示。
 
@@ -72,7 +74,7 @@ CLI 按 **agent 想做的事**分层，不按内部模块分：事实是「现�
 | 操作 | `up` · `restart` · `down` · `start` · `kill` | 按清单起停，或明确点名一个低级进程入口 |
 | 代码与声明 | `git` · `init` | 只读代码上下文，以及这份 worktree 的清单 |
 | 交接 | `workplace` · `agent` · `jev` | 工作记录，把会话交给外部 coding agent；可选的模型评估（默认关闭） |
-| 基础设施 | `daemon` · `serve` · `config` · `version` · `completion` · `doctor` | 后台采集器、安装配置与自检 |
+| 基础设施 | `daemon` · `serve` · `config` · `version` · `completion` · `doctor` · `feedback` | 后台采集器、安装配置、自检与可选的改进报告 |
 
 `oberth --help` 末尾另有一节 **For agents**，给的是读法而不是命令：一次会话开头的三条读
 （`status --json --brief`、`up --wait --json`、`logs <service> --once --json --run current
@@ -635,6 +637,34 @@ stderr 也说明一次。这与 `status` 的规则一致：看不见不是没在
 
 `latest.version` 是发布源报告的最新标签；只有本机版本严格更旧时 `update_available` 才为 `true`，
 本机版本更新（例如从 `main` 构建）或无法比较（例如 `dev`）都为 `false`。
+
+### oberth feedback
+
+改进报告是可选的，说的是引擎自身。发布构建在首屏（无参数的 `oberth`）问一次，而且必须两端都是
+终端。答案以仅本人可读的方式记在 `BERTH_HOME/feedback.json`（默认 `~/.option-berth/feedback.json`）：
+跳过只会在升级后再问一次，已做的决定不再问；`BERTH_NO_FEEDBACK`（只要存在就关闭，和 `NO_COLOR`
+一样）同时关掉询问和发送。
+
+| 命令 | 做什么 |
+|---|---|
+| `oberth feedback status [--json]` | 已记录的决定、`gh` 能否直接提交，以及本安装在最近一天提交了几份 |
+| `oberth feedback on` / `oberth feedback off` | 不用等首屏，直接记录决定 |
+| `oberth feedback report [--json] [--dry-run]` | 组装并提交一份报告 |
+| `oberth feedback log [--json]` | 本安装提交过的报告 |
+
+`report` 只接受固定词汇：`--kind`（`slow`、`stalled`、`coarse`、`misleading`、`observation`、
+`other`）、`--command`（oberth 的命令名）、`--error-code`（引擎会发布的错误码）和 `--observation`
+（`observable`、`partial`、`blind`、`bind_denied`）。`--elapsed` 与 `--services` 按档位提交，不是
+原始数字；构建自己补上版本、提交和平台。`--note` 是报告人自己的话：先脱敏，上限 800 字节，
+看起来像凭据时直接拒绝，并且在传 `--yes` 之前要给人看过并确认。
+
+`gh` 已安装且已登录时，报告通过 `gh issue create` 用报告人自己的 GitHub 账号提交，因此那个账号在
+issue 上可见；否则命令打印一条预填好的 `issues/new` 链接由人提交，`--open` 会打开它。同一构建的
+同一个问题 24 小时内最多提交一次，一个安装滚动一天最多提交五份。本地账本在
+`BERTH_HOME/feedback/reports.ndjson`，它只是记录；删掉它只会让重复提交再次成为可能。
+
+报告永远不带路径、日志行、清单字段、命令行、worktree 身份或环境变量：它说的是引擎，不是它跑在
+哪个项目里。`--dry-run` 打印确切的标题和正文，什么都不发。
 
 ## 清单和状态的边界
 

@@ -81,6 +81,16 @@ const (
 	// It is advisory, not a second source of runtime truth: a failed or stale
 	// check is rendered as unknown, never as "current".
 	UpdateCheckFile = "update-check.json"
+	// FeedbackFile is the owner-only record of whether this installation agreed
+	// to send improvement reports. It is separate from config.yaml for the same
+	// reason jev.json is: a consent decision is not a general setting a config
+	// command should print or rewrite.
+	FeedbackFile = "feedback.json"
+	// FeedbackDir holds the ledger of reports this installation produced. It is
+	// advisory — deleting it only makes a duplicate report possible again.
+	FeedbackDir = "feedback"
+	// FeedbackLedgerFile is the append-only list of reports and their outcome.
+	FeedbackLedgerFile = "reports.ndjson"
 )
 
 // Environment variables that override what this package resolves. All three are
@@ -207,6 +217,15 @@ func ConfigPath() string { return filepath.Join(Dir(), ConfigFile) }
 // JevConfigPath is the local Jev settings file. The file is owned by the
 // optional agent-side adapter and the macOS settings page, not by the daemon.
 func JevConfigPath() string { return filepath.Join(Dir(), JevConfigFile) }
+
+// FeedbackPath is the consent record for optional improvement reports.
+func FeedbackPath() string { return filepath.Join(Dir(), FeedbackFile) }
+
+// FeedbackLedgerPath is the append-only record of improvement reports this
+// installation produced, so a repeated pattern is not filed twice.
+func FeedbackLedgerPath() string {
+	return filepath.Join(Dir(), FeedbackDir, FeedbackLedgerFile)
+}
 
 // JevTipPath is where `status` remembers when it last mentioned the optional
 // assessment, so a tip shown in one session does not repeat every read.
