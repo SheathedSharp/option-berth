@@ -157,6 +157,7 @@ func TestIntervalBoundaries(t *testing.T) {
 	}{
 		{0, BaseInterval},
 		{-time.Second, BaseInterval},
+		{time.Nanosecond, MinScanInterval},
 		{time.Millisecond, MinScanInterval},
 		{MinScanInterval - time.Nanosecond, MinScanInterval},
 		{MinScanInterval, MinScanInterval},
@@ -172,6 +173,7 @@ func TestIntervalBoundaries(t *testing.T) {
 	}{
 		{0, StatsInterval},
 		{-time.Second, StatsInterval},
+		{time.Nanosecond, MinStatsInterval},
 		{time.Millisecond, MinStatsInterval},
 		{MinStatsInterval, MinStatsInterval},
 		{time.Second, time.Second},
