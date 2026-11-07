@@ -212,13 +212,12 @@ func TestWakeWhileParkedRereadsDemand(t *testing.T) {
 	}
 }
 
-func TestDueAndNotYetDue(t *testing.T) {
+func TestADueScanRuns(t *testing.T) {
 	frozen := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
-	now := frozen
 	scans := 0
 	saw := make(chan struct{})
 	l := New(Options{
-		Now:          func() time.Time { return now },
+		Now:          func() time.Time { return frozen },
 		ScanInterval: MinScanInterval,
 		Scan: func(Include) ([]ports.ListeningPort, error) {
 			scans++
@@ -235,11 +234,13 @@ func TestDueAndNotYetDue(t *testing.T) {
 	if scans != 1 {
 		t.Fatalf("scans=%d, a scan that was due did not run", scans)
 	}
-	cancel()
+}
 
-	now = frozen
-	scans = 0
-	l = New(Options{
+func TestAScanOneNanosecondEarlyDoesNotRun(t *testing.T) {
+	frozen := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	now := frozen
+	scans := 0
+	l := New(Options{
 		Now:          func() time.Time { return now },
 		ScanInterval: MinScanInterval,
 		Scan: func(Include) ([]ports.ListeningPort, error) {
@@ -253,9 +254,9 @@ func TestDueAndNotYetDue(t *testing.T) {
 	now = frozen.Add(MinScanInterval - time.Nanosecond)
 	early, stop := context.WithCancel(context.Background())
 	stop()
-	other := time.NewTimer(time.Hour)
-	defer other.Stop()
-	l.waitTick(early, other, Include{})
+	timer := time.NewTimer(time.Hour)
+	defer timer.Stop()
+	l.waitTick(early, timer, Include{})
 	if scans != 1 {
 		t.Fatalf("scans=%d, a scan one nanosecond early ran", scans)
 	}
