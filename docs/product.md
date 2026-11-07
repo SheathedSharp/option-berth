@@ -202,6 +202,25 @@ client repository's contract.
 | Shared environment files | Read-only: read `env_file:` at start, never create or modify |
 | Other people's configuration | Never write: no hooks, no MCP registration, no changes to an agent's or orchestrator's configuration. Integration recipes are documentation the user pastes, not something the product writes |
 
+### Improvement reports (opt-in)
+
+Using oberth is the only way to find out where it gets in the way, so the product may ask, once,
+whether a redacted report about **the engine itself** may be filed when a fixed problem pattern shows
+up. The promise is narrow:
+
+- Nothing is sent without a recorded yes, and `oberth feedback off` or `BERTH_NO_FEEDBACK` ends it.
+- A report carries the version, platform, command name, stable error code, observation state and a
+  timing bucket — never a path, log line, command line, manifest field, worktree identity or
+  environment variable.
+- The reporter's own words are redacted, shown and confirmed before they leave the machine, and are
+  refused outright when they look like a credential.
+- It is filed through the person's own GitHub account when `gh` is signed in, so that account is
+  visible on the issue; otherwise it is a prefilled issue page the person submits.
+
+This is not the integration layer: the engine still writes no agent or orchestrator configuration and
+installs no hooks. When an agent should file a report belongs to the skill, which is a separate
+product.
+
 ## Explicitly not done
 
 - **A whole-machine port radar**: every port, system ports, four-way classification, a machine service
