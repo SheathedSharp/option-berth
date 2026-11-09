@@ -72,6 +72,32 @@ func lockContextWithin(t *testing.T, m *contextMutex, ctx context.Context) error
 	}
 }
 
+// rescanWithin runs a forced scan off the test goroutine and fails if it does
+// not come back: a scan that takes the RPC gate and never releases it would
+// otherwise hang the test binary instead of reporting the liveness failure.
+func rescanWithin(t *testing.T, l *Loop, include Include) state.Snapshot {
+	t.Helper()
+	type result struct {
+		snap state.Snapshot
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		snap, err := l.Rescan(include)
+		done <- result{snap: snap, err: err}
+	}()
+	select {
+	case r := <-done:
+		if r.err != nil {
+			t.Fatalf("Rescan: %v", r.err)
+		}
+		return r.snap
+	case <-time.After(time.Second):
+		t.Fatal("Rescan did not return")
+		return state.Snapshot{}
+	}
+}
+
 func cancelAtAdmission(t *testing.T, m *contextMutex, armNow bool, run func(*admissionWitness) error) {
 	t.Helper()
 	parent, cancel := context.WithCancel(context.Background())
@@ -187,9 +213,7 @@ func TestStatsAdmissionCancelsBeforeSamplingAndCommit(t *testing.T) {
 		l := New(Options{Scan: func(Include) ([]ports.ListeningPort, error) {
 			return []ports.ListeningPort{{Port: 4000, PID: 42, MemoryRSS: 100}}, nil
 		}})
-		if _, err := l.Rescan(Include{Stats: true}); err != nil {
-			t.Fatal(err)
-		}
+		rescanWithin(t, l, Include{Stats: true})
 		before := l.Cached()
 		var calls atomic.Int32
 		m := &l.statsMu
@@ -219,9 +243,7 @@ func TestRepublishCancelledCommitInvalidatesSavedWrite(t *testing.T) {
 	l := New(Options{Scan: func(Include) ([]ports.ListeningPort, error) {
 		return []ports.ListeningPort{{Port: 4000, PID: 42}}, nil
 	}})
-	if _, err := l.Rescan(Include{}); err != nil {
-		t.Fatal(err)
-	}
+	rescanWithin(t, l, Include{})
 	before, revision := l.Cached(), l.refreshRequested
 	cancelAtAdmission(t, &l.commitMu, false, func(ctx *admissionWitness) error {
 		l.SetSessions(func([]state.Port) []state.SessionRecord {
