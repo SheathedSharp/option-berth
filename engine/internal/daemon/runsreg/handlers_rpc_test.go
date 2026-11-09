@@ -1,12 +1,15 @@
 package runsreg
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
@@ -30,12 +33,17 @@ func resetRegistry(t *testing.T) {
 // the snapshot makes no OS call.
 func handlerRuntime(t *testing.T) *daemon.Runtime {
 	t.Helper()
-	logger := slog.New(slog.DiscardHandler)
-	loop := scanner.New(scanner.Options{
-		DaemonVersion: "test",
-		Logger:        logger,
-		Scan:          func(scanner.Include) ([]ports.ListeningPort, error) { return nil, nil },
-	})
+	return handlerRuntimeScan(t, nil, func(scanner.Include) ([]ports.ListeningPort, error) { return nil, nil })
+}
+
+// handlerRuntimeScan is handlerRuntime with an injected collector and logger,
+// for the tests that need to see a snapshot row or a warning.
+func handlerRuntimeScan(t *testing.T, logger *slog.Logger, scan func(scanner.Include) ([]ports.ListeningPort, error)) *daemon.Runtime {
+	t.Helper()
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
+	loop := scanner.New(scanner.Options{DaemonVersion: "test", Logger: logger, Scan: scan})
 	return &daemon.Runtime{Version: "test", Logger: logger, Scanner: loop}
 }
 
@@ -116,8 +124,9 @@ func TestHandleUnregisterCarriesTheOutcome(t *testing.T) {
 		if err != nil {
 			t.Fatalf("runs.unregister: %v", err)
 		}
-		if _, ok := result.(rpc.OKResult); !ok {
-			t.Fatalf("result = %#v, want OK", result)
+		ok, cast := result.(rpc.OKResult)
+		if !cast || !ok.OK {
+			t.Fatalf("result = %#v, want OK:true", result)
 		}
 		if len(Default.List()) != 0 || len(Default.Exits()) != 1 {
 			t.Fatalf("after an exit: runs=%d exits=%d, want 0/1", len(Default.List()), len(Default.Exits()))
@@ -285,6 +294,159 @@ func TestPortsOfCollectsOnlyOwnedPorts(t *testing.T) {
 	if ownedBy(state.Run{RootPID: 1}, rec) || ownedBy(state.Run{ID: "other"}, rec) {
 		t.Error("ownedBy accepted a port the run does not own")
 	}
+}
+
+// TestHandleListMarksAHintedRunStartingWhenTheSnapshotIsReadable pins that a
+// readable listener table is a fact: a port-hinted run whose port is not in it
+// is "starting", not "running". It kills the mutant that flips the readability
+// verdict.
+func TestHandleListMarksAHintedRunStartingWhenTheSnapshotIsReadable(t *testing.T) {
+	resetRegistry(t)
+	rt := handlerRuntime(t)
+	Default.Register(Record{ID: "run-starting", PID: os.Getpid(), PortHint: 3000})
+
+	result, err := handleList(context.Background(), handlerRequest(t, rt, "runs.list", struct{}{}))
+	if err != nil {
+		t.Fatalf("runs.list: %v", err)
+	}
+	list := result.(rpc.RunsListResult)
+	if len(list.Runs) != 1 || list.Runs[0].Status != "starting" {
+		t.Fatalf("rows = %+v, want the hinted run starting", list.Runs)
+	}
+}
+
+// TestHandleListJoinsObservedPorts pins that a readable snapshot is actually
+// used: the port observed for the run appears on its row. It kills the mutant
+// that discards the snapshot on success.
+func TestHandleListJoinsObservedPorts(t *testing.T) {
+	resetRegistry(t)
+	pid := os.Getpid()
+	rt := handlerRuntimeScan(t, nil, func(scanner.Include) ([]ports.ListeningPort, error) {
+		return []ports.ListeningPort{{Port: 3000, BindAddress: "127.0.0.1", PID: pid, RunID: "run-live", RunRootPID: pid}}, nil
+	})
+	Default.Register(Record{ID: "run-live", PID: pid, PortHint: 3000})
+
+	result, err := handleList(context.Background(), handlerRequest(t, rt, "runs.list", struct{}{}))
+	if err != nil {
+		t.Fatalf("runs.list: %v", err)
+	}
+	list := result.(rpc.RunsListResult)
+	if len(list.Runs) != 1 || len(list.Runs[0].Ports) != 1 || list.Runs[0].Ports[0] != 3000 {
+		t.Fatalf("rows = %+v, want the observed port 3000", list.Runs)
+	}
+	if list.Runs[0].Status != "running" {
+		t.Fatalf("status = %q, want running for a listening hinted port", list.Runs[0].Status)
+	}
+}
+
+// TestRowAndStatusHonourThePortHintBoundary pins the zero/one boundary of the
+// hint: only a positive hint is published, and the status rule reads the same
+// boundary. It kills the >= and 0->1 mutants on both.
+func TestRowAndStatusHonourThePortHintBoundary(t *testing.T) {
+	noHint := row(Record{ID: "r", PID: 1, PortHint: 0}, state.Snapshot{}, true)
+	if noHint.PortHint != nil || noHint.URL != "" {
+		t.Errorf("zero hint = %+v, want no hint and no url", noHint)
+	}
+	one := row(Record{ID: "r", PID: 1, PortHint: 1}, state.Snapshot{}, true)
+	if one.PortHint == nil || *one.PortHint != 1 {
+		t.Errorf("hint 1 = %+v, want the hint kept", one)
+	}
+	if got := runStatus(Record{PortHint: 1}, nil, true); got != "starting" {
+		t.Errorf("runStatus(hint 1, known, absent) = %q, want starting", got)
+	}
+	if got := runStatus(Record{PortHint: 0}, nil, true); got != "running" {
+		t.Errorf("runStatus(no hint, known) = %q, want running", got)
+	}
+}
+
+// TestRequirePIDKeepsAPositivePID pins the boundary: pid 1 is a valid pid and
+// only a non-positive one is refused.
+func TestRequirePIDKeepsAPositivePID(t *testing.T) {
+	if err := requirePID(1, "example"); err != nil {
+		t.Fatalf("requirePID(1) = %v, want nil", err)
+	}
+	if err := requirePID(0, "example"); err == nil {
+		t.Fatal("requirePID(0) = nil, want a refusal")
+	}
+}
+
+// TestRememberSessionDropsOnlyWhatItCannotWrite pins the early exits: an empty
+// id, a nil runtime or a runtime without a store records nothing and does not
+// dereference what is absent.
+func TestRememberSessionDropsOnlyWhatItCannotWrite(t *testing.T) {
+	rt := handlerRuntime(t) // Store is nil
+	rememberSession(rt, state.Session{ID: "sess-no-store", Tool: "codex"})
+	rememberSession(nil, state.Session{ID: "sess-no-runtime", Tool: "codex"})
+	rememberSession(rt, state.Session{})
+	if len(Default.List()) != 0 {
+		t.Fatal("rememberSession touched the run registry")
+	}
+}
+
+// TestRememberSessionWarnsOnlyWhenTheWriteFails pins the diagnostic rule: a
+// failed write is reported once and a successful one is silent. It kills the
+// mutant that warns on success.
+func TestRememberSessionWarnsOnlyWhenTheWriteFails(t *testing.T) {
+	t.Run("success is silent", func(t *testing.T) {
+		var log bytes.Buffer
+		rt := handlerRuntimeScan(t, slog.New(slog.NewTextHandler(&log, nil)), func(scanner.Include) ([]ports.ListeningPort, error) { return nil, nil })
+		st, err := store.Open(filepath.Join(t.TempDir(), "quiet.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = st.Close() })
+		rt.Store = st
+		rememberSession(rt, state.Session{ID: "sess-ok", Tool: "codex"})
+		if log.Len() != 0 {
+			t.Fatalf("a successful session write logged %q, want silence", log.String())
+		}
+	})
+	t.Run("failure warns", func(t *testing.T) {
+		var log bytes.Buffer
+		rt := handlerRuntimeScan(t, slog.New(slog.NewTextHandler(&log, nil)), func(scanner.Include) ([]ports.ListeningPort, error) { return nil, nil })
+		st, err := store.Open(filepath.Join(t.TempDir(), "closed.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = st.Close()
+		rt.Store = st
+		rememberSession(rt, state.Session{ID: "sess-closed", Tool: "codex"})
+		if !strings.Contains(log.String(), "recording an agent session") {
+			t.Fatalf("a failed session write logged %q, want the recording warning", log.String())
+		}
+	})
+}
+
+// TestHandleSpawnStartsAndReapsARun pins the success path end to end: the reply
+// carries an ok mutation and the new run's id, and the daemon reaps the process
+// into exit history. The test waits for the reaper before it lets the registry
+// be restored, so the reaping goroutine cannot race the cleanup.
+func TestHandleSpawnStartsAndReapsARun(t *testing.T) {
+	resetRegistry(t)
+	rt := handlerRuntime(t)
+	result, err := handleSpawn(context.Background(), handlerRequest(t, rt, "runs.spawn", rpc.RunsSpawnParams{
+		Argv: []string{"/bin/true"}, Cwd: t.TempDir(), AllowOutsideHome: true,
+	}))
+	if err != nil {
+		t.Fatalf("runs.spawn: %v", err)
+	}
+	spawned, ok := result.(rpc.RunsSpawnResult)
+	if !ok || spawned.RunID == "" {
+		t.Fatalf("result = %#v, want a spawned run with an id", result)
+	}
+	if !spawned.MutationResult.OK {
+		t.Error("the spawn reply did not report ok")
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, exit := range Default.Exits() {
+			if exit.ID == spawned.RunID {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("the spawned run was never reaped into exit history")
 }
 
 // asRPCError is errors.As without importing errors into every assertion.
