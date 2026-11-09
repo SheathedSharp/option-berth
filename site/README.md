@@ -1,6 +1,6 @@
 # Engine website / 引擎官网
 
-`site/` 是 `oberth` 引擎的静态官网和指南，只讲引擎本身。中文产品页在 `/`，英文在 `/en/`；指南英文在 `/guide/`，中文在 `/guide/zh/`。页面不连接 daemon，也不带遥测、外部字体、图片服务或运行时框架。图标、浅色字标和深色字标的站点副本在 `site/assets/`。
+`site/` 是 `oberth` 引擎的静态官网和指南，只讲引擎本身。中文产品页在 `/`，英文在 `/en/`；指南英文在 `/guide/`，中文在 `/guide/zh/`。页面不连接 daemon，也不带遥测、外部字体或图片服务。唯一的第三方脚本是随站点同源发布的 GSAP 3.15.1，只用于动效，许可与来源记在仓库根的 `THIRD_PARTY_NOTICES.md`；CSP 仍然是 `script-src 'self'`。图标、浅色字标和深色字标的站点副本在 `site/assets/`。
 
 禁用 JavaScript 时，正文、目录、语言切换和下载入口仍然可用。只有靠脚本才有意义的控件（产品页的舞台切换、指南的搜索、主题和抽屉）在没有脚本时不出现，而不是留下点了没反应的按钮。
 
@@ -16,8 +16,8 @@ python3 site/build.py
 python3 -m http.server 8765 --bind 127.0.0.1 --directory site/dist
 ```
 
-构建只复制白名单资产（`icon.svg`、`mark.svg`、`mark-dark.svg`、`boot.js`、`site.css`、
-`site.js`、`guide.css`、`guide.js`），并检查中英两份文案的键集合一致。
+构建只复制白名单资产（`icon.svg`、`mark.svg`、`mark-dark.svg`、`boot.js`、`gsap.min.js`、
+`site.css`、`site.js`、`guide.css`、`guide.js`），并检查中英两份文案的键集合一致。
 
 页面引用这些文件时一律带内容哈希（`assets/guide.css?v=a9af2b0e`）。GitHub Pages 给
 `/assets/*` 的 `cache-control` 是四小时；不带哈希的话，改完样式后的几小时里，回访的读者会
@@ -25,7 +25,17 @@ python3 -m http.server 8765 --bind 127.0.0.1 --directory site/dist
 
 `dist/` 是可丢弃产物，不进源码提交。语言切换是普通链接，不依赖客户端翻译。
 
-产品页用深色品牌变体做底色，陶土色只出现在少数可操作元素和品牌标记上。指南是一块阅读
+## 产品页的版式
+
+产品页是一张「泊位图」：12 栏满幅板面，8px 缝、16px 外边距，每块格子放一条真实事实
+（状态面板、清单、JSON、命令表、四个运行事实、安装片段）。陶土色只留在字标里，操作色是
+中性近白；实测区（proof）与结尾区（close）翻成浅色底，作为整页的节奏。任何一块格子的内容
+都来自真实运行，不写示意数字。
+
+页面只有一处真交互：状态面板上的 worktree 切换（`main` / `feature/ports`）。点一下，端口从
+`21730` 变成 `21741`，GSAP 用遮片式动画换行；没有脚本时只显示第一个 worktree，切换按钮不出现
+（`.js-only`）。动效全部走 `gsap.matchMedia()` 的 `prefers-reduced-motion` 分支，减弱动效时
+格子不位移、切换瞬时完成。指南是一块阅读
 界面，自带浅色和深色两套皮肤（默认跟随系统，可以手动切换），字标用浅色变体 `mark.svg`。
 字体只用系统字族：站点 CSP 只允许 `self`，所以没有引用 `design-taste-frontend` 方向单里的
 Albert Sans。`mark-dark.svg` 是品牌深色字标，保证深色底上两条轨仍然可读。
@@ -101,7 +111,7 @@ CI=1 npm test                  # CI 两种浏览器引擎
 ```
 
 回归覆盖两种语言、360/390/768/1440px、图片加载、无横向溢出、命令过滤与空状态、Escape
-重置、无 JavaScript 时的基本可用性、减弱动态效果的初始值和实时变化，以及结尾的三产品链接。
+重置、worktree 切换、减弱动效时格子不位移、无 JavaScript 时的基本可用性，以及结尾的三产品链接。
 
 指南另有这些检查：
 
