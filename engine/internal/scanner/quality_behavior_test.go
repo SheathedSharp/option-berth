@@ -232,3 +232,32 @@ func TestBusyReadServesTheCacheAndBusyControlFails(t *testing.T) {
 		t.Fatalf("busy wait scanned %d times, want the seed scan only", scans)
 	}
 }
+
+// TestProbeContextPrefersTheContextAwareSeam: ProbeContext carries the scan's
+// ownership, so it wins over the legacy synchronous Probe. A caller who has
+// already left gets neither a probe nor a verdict — cancellation is not a
+// health result.
+func TestProbeContextPrefersTheContextAwareSeam(t *testing.T) {
+	var legacy, contextual int
+	l := New(Options{
+		Probe: func(string, int, string, time.Duration) ports.HealthResult {
+			legacy++
+			return ports.HealthResult{Status: "legacy"}
+		},
+		ProbeContext: func(context.Context, string, int, string, time.Duration) ports.HealthResult {
+			contextual++
+			return ports.HealthResult{Status: "contextual"}
+		},
+	})
+
+	got := l.ProbeContext(context.Background(), "127.0.0.1", 8080, "/healthz", time.Second)
+	if got.Status != "contextual" || contextual != 1 || legacy != 0 {
+		t.Fatalf("probe = %+v contextual=%d legacy=%d, want the context-aware seam only", got, contextual, legacy)
+	}
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got := l.ProbeContext(cancelled, "127.0.0.1", 8080, "/healthz", time.Second); got.Status != "" || contextual != 1 {
+		t.Fatalf("cancelled probe = %+v contextual=%d, want no probe and no verdict", got, contextual)
+	}
+}
