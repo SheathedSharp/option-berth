@@ -114,10 +114,12 @@ func TestOlderScanCannotOverwriteAndAnEqualGenerationCan(t *testing.T) {
 		t.Fatalf("seed changed=%v err=%v", changed, err)
 	}
 	kept := l.Cached().Seq
-	if _, _, changed := l.commitScan(commit{seq: 0, rows: []state.Port{{Port: 10}}}); changed || l.Cached().Seq != kept || l.Cached().Ports[0].Port != 9 {
+	// The length checks come before the index in each condition: a commit that
+	// published nothing is an assertion failure, not an index panic.
+	if _, _, changed := l.commitScan(commit{seq: 0, rows: []state.Port{{Port: 10}}}); changed || l.Cached().Seq != kept || len(l.Cached().Ports) != 1 || l.Cached().Ports[0].Port != 9 {
 		t.Fatalf("older generation wrote port %+v seq %d", l.Cached().Ports, l.Cached().Seq)
 	}
-	if _, _, changed := l.commitScan(commit{seq: l.committedSeq, rows: []state.Port{{Port: 11}}}); !changed || l.Cached().Ports[0].Port != 11 {
+	if _, _, changed := l.commitScan(commit{seq: l.committedSeq, rows: []state.Port{{Port: 11}}}); !changed || len(l.Cached().Ports) != 1 || l.Cached().Ports[0].Port != 11 {
 		t.Fatalf("equal generation did not commit, port %+v", l.Cached().Ports)
 	}
 }
