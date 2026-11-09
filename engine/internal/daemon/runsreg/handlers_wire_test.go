@@ -64,9 +64,17 @@ func TestRunFromWireDropsUntrustworthyEvidence(t *testing.T) {
 // The home rule is the daemon's own boundary, so it is checked against the
 // environment it runs in: inside is allowed, outside is refused, and the
 // refusal is the caller's to lift.
+//
+// Both spellings of "the user's home" are set because os.UserHomeDir reads HOME
+// on Unix-likes and USERPROFILE on Windows. Setting only HOME would leave a
+// Windows run comparing against the real profile directory, where both the
+// inside and the outside temp directories live, and this refusal would never
+// happen. The production home probe is unchanged: this isolates the test's
+// environment, it does not claim a native Windows run.
 func TestCheckCwdEnforcesTheHomeBoundary(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	inside := filepath.Join(home, "project")
 	if err := os.MkdirAll(inside, 0o755); err != nil {
 		t.Fatal(err)
