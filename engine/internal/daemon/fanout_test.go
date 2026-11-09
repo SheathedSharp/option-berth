@@ -299,3 +299,115 @@ func TestNotificationFrameNeverCarriesEmptyParams(t *testing.T) {
 		t.Errorf("change = %+v, want a state.changed at seq 11", change)
 	}
 }
+
+// TestBroadcastEventSkipsNonSubscribersAndSilentViewers pins the recipient
+// rule of the standalone-event path: only a connection that is both subscribed
+// and asked for events may be woken. An unsubscribed connection and one that
+// only wants deltas must not receive the frame.
+func TestBroadcastEventSkipsNonSubscribersAndSilentViewers(t *testing.T) {
+	s := New(Options{Socket: "/test/broadcast-recipients.sock", Version: "test"})
+	silent := newConn(1, s, nil)
+	silent.subscribed, silent.events = true, false
+	outsider := newConn(2, s, nil)
+	outsider.subscribed, outsider.events = false, true
+	viewer := newConn(3, s, nil)
+	viewer.subscribed, viewer.events = true, true
+	for _, c := range []*Conn{silent, outsider, viewer} {
+		s.registerConn(c)
+	}
+
+	s.BroadcastEvent(state.Event{Kind: "probe", At: "now"})
+
+	if got := drain(silent); len(got) != 0 {
+		t.Errorf("a delta-only subscriber received %d standalone-event frames, want none", len(got))
+	}
+	if got := drain(outsider); len(got) != 0 {
+		t.Errorf("an unsubscribed connection received %d standalone-event frames, want none", len(got))
+	}
+	if got := drain(viewer); len(got) != 1 || notificationMethod(t, got[0]) != rpc.MethodStateEvent {
+		t.Errorf("the events subscriber received %d frames, want one state.event", len(got))
+	}
+}
+
+// TestFrameNotificationDropsAnUnencodablePayload pins the shared framing rule:
+// a payload the encoder refuses yields no frame and a false verdict, so no
+// caller can queue a notification whose params are absent. It kills the mutant
+// that returns a success verdict on the error path.
+func TestFrameNotificationDropsAnUnencodablePayload(t *testing.T) {
+	frame, ok := frameNotification(rpc.MethodStateChanged, unencodable{})
+	if ok || frame != nil {
+		t.Fatalf("frameNotification(unencodable) = %q/%v, want nil/false", frame, ok)
+	}
+}
+
+// TestEmptyTransitionDoesNotWakeASubscriber pins that a scan tick which changes
+// nothing produces no delta: a delta-only subscriber is not woken by an empty
+// frame. It kills the mutant that reports an empty delta as something to send.
+func TestEmptyTransitionDoesNotWakeASubscriber(t *testing.T) {
+	s := New(Options{Socket: "/test/empty-transition.sock", Version: "test"})
+	c := newConn(1, s, nil)
+	c.subscribed, c.events = true, false
+	s.registerConn(c)
+
+	snap := state.Snapshot{Seq: 10, Groups: []state.Group{{Name: "example-worker"}}}
+	s.publish(snap, snap, nil)
+
+	if got := drain(c); len(got) != 0 {
+		t.Fatalf("an unchanged transition woke a delta-only subscriber with %d frames, want none", len(got))
+	}
+}
+
+// TestWorkspaceSubscriptionIgnoresAReplayCursor pins the one thing a workspace
+// subscription must not do: replay from a cursor. Workspace membership is
+// outside the state sequence, so a member that joined or left while the client
+// was away cannot be reconstructed from replay; the subscription must always
+// open on the current snapshot. The first scan is sequence 1 and a second one
+// reaches sequence 2, so a cursor of 1 is inside the replay window; if the
+// workspace rule stopped forcing the cursor to zero, subscribe would queue a
+// replayed transition after the reply.
+func TestWorkspaceSubscriptionIgnoresAReplayCursor(t *testing.T) {
+	dir := t.TempDir()
+	body := "name: example\nservices:\n  - name: api\n    port: 8000\n"
+	if err := os.WriteFile(filepath.Join(dir, ".oberth.yaml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := dir
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		root = resolved
+	}
+	root = filepath.Clean(root)
+
+	rows := []ports.ListeningPort{{Port: 8000, PID: 1, Process: "python3", Cwd: dir}}
+	loop := scanner.New(scanner.Options{
+		DaemonVersion: "test",
+		Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
+			return rows, nil
+		},
+	})
+	s := New(Options{Socket: "/test/workspace-cursor.sock", Version: "test", Scanner: loop})
+	if _, err := loop.Snapshot(scanner.Include{}); err != nil {
+		t.Fatalf("first scan: %v", err)
+	}
+	rows = []ports.ListeningPort{{Port: 8000, PID: 2, Process: "python3", Cwd: dir}}
+	loop.Invalidate()
+	if _, err := loop.Snapshot(scanner.Include{}); err != nil {
+		t.Fatalf("second scan: %v", err)
+	}
+	if got := loop.Cached().Seq; got != 2 {
+		t.Fatalf("cached sequence = %d, want 2 so the cursor is inside the replay window", got)
+	}
+	// The workspace scope must include the attributed group, so a replayed
+	// transition would be visible if the cursor were honored.
+	scope := state.Scope{Workspace: "integration", Worktrees: []string{root}}
+	if groups := loop.Cached().Groups; len(groups) != 1 || !scope.MatchGroup(groups[0]) {
+		t.Fatalf("test setup: workspace scope %+v does not contain groups %+v", scope, groups)
+	}
+
+	c := newConn(7, s, nil)
+	if err := s.subscribe(c, json.RawMessage("1"), scanner.Include{}, true, scope, 1); err != nil {
+		t.Fatalf("workspace subscribe: %v", err)
+	}
+	if frames := drain(c); len(frames) != 1 {
+		t.Fatalf("workspace subscribe queued %d frames, want only the opening reply", len(frames))
+	}
+}
