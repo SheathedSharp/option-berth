@@ -651,3 +651,78 @@ func TestGroupsInitRefusesYAMLNextToAList(t *testing.T) {
 		}
 	}
 }
+
+// TestInitSnapshotTrustsAWarmCacheOnlyWhileSubscribed pins the rule that keeps
+// the proposal and a live subscriber's deltas from disagreeing: the cached
+// snapshot is used directly only when it exists and somebody is reading it.
+// Otherwise the call reads state the ordinary way, and an absent cache is never
+// mistaken for a warm one.
+func TestInitSnapshotTrustsAWarmCacheOnlyWhileSubscribed(t *testing.T) {
+	newRuntime := func(t *testing.T, scans *int) (*Runtime, *scanner.Loop) {
+		t.Helper()
+		loop := scanner.New(scanner.Options{
+			DaemonVersion: "test",
+			Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
+				*scans++
+				return []ports.ListeningPort{{Port: 8000, PID: 1, Process: "python3"}}, nil
+			},
+		})
+		return New(Options{Socket: "/test/init-snapshot.sock", Version: "test", Scanner: loop}).Runtime(), loop
+	}
+
+	t.Run("no subscriber forces a read", func(t *testing.T) {
+		scans := 0
+		rt, loop := newRuntime(t, &scans)
+		if _, err := loop.Snapshot(scanner.Include{}); err != nil {
+			t.Fatal(err)
+		}
+		if loop.Cached().Seq == 0 {
+			t.Fatal("test setup: the cache has no sequence")
+		}
+		loop.Invalidate() // a warm cache nobody is reading must still be refreshed
+		before := scans
+		if _, err := initSnapshot(rt); err != nil {
+			t.Fatalf("initSnapshot: %v", err)
+		}
+		if scans == before {
+			t.Fatal("initSnapshot trusted a warm cache while nobody was subscribed")
+		}
+	})
+
+	t.Run("a subscriber keeps it warm", func(t *testing.T) {
+		scans := 0
+		rt, loop := newRuntime(t, &scans)
+		if _, err := loop.Snapshot(scanner.Include{}); err != nil {
+			t.Fatal(err)
+		}
+		reader := newConn(1, rt.srv, nil)
+		reader.subscribed = true
+		rt.srv.registerConn(reader)
+		loop.Invalidate()
+		before := scans
+		snap, err := initSnapshot(rt)
+		if err != nil {
+			t.Fatalf("initSnapshot: %v", err)
+		}
+		if scans != before {
+			t.Fatal("initSnapshot rescanned despite a subscriber keeping the cache warm")
+		}
+		if snap.Seq != 1 {
+			t.Fatalf("returned sequence %d, want the warm cached 1", snap.Seq)
+		}
+	})
+
+	t.Run("an empty cache is never warm", func(t *testing.T) {
+		scans := 0
+		rt, _ := newRuntime(t, &scans)
+		reader := newConn(1, rt.srv, nil)
+		reader.subscribed = true
+		rt.srv.registerConn(reader)
+		if _, err := initSnapshot(rt); err != nil {
+			t.Fatalf("initSnapshot: %v", err)
+		}
+		if scans == 0 {
+			t.Fatal("initSnapshot treated an empty cache as a warm one")
+		}
+	})
+}
