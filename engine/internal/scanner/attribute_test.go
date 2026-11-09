@@ -44,6 +44,11 @@ func TestScanWithoutAStoreLeavesNamesAlone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
+	// The row is the precondition for reading its fields: a scan that published
+	// nothing is an assertion failure here, not an index panic three lines on.
+	if len(snap.Ports) != 1 {
+		t.Fatalf("ports = %+v, want the scanned row", snap.Ports)
+	}
 	if snap.Ports[0].Name != nil {
 		t.Errorf("name = %v, want null with no store", *snap.Ports[0].Name)
 	}
