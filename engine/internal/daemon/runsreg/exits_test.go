@@ -11,6 +11,49 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
+// TestExitRowDistinguishesMissingAndMinimumPortHint pins both sides of the
+// port-hint boundary: a run that named no port must not be given a URL or a
+// holder of its own, and the smallest port a caller can name is still carried
+// through. A boundary that only held on one side would either invent a listener
+// for every run or drop the one port hint a real run has.
+func TestExitRowDistinguishesMissingAndMinimumPortHint(t *testing.T) {
+	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.FixedZone("fixture", 8*60*60))
+	for _, tc := range []struct {
+		name string
+		hint int
+	}{
+		{"missing", 0},
+		{"minimum", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := exitRow(Exit{
+				Record:   Record{ID: "port-boundary", Group: "demo", Name: "api", PortHint: tc.hint},
+				Code:     7,
+				Reason:   ReasonCrashed,
+				ExitedAt: at,
+			}, nil)
+			// The exit's own facts are the same whatever it declared: how it
+			// ended, when, and that it no longer holds a port.
+			if got.Status != "exited" || got.ExitCode == nil || *got.ExitCode != 7 ||
+				got.Reason != ReasonCrashed || got.ExitedAt != at.UTC().Format(time.RFC3339) {
+				t.Fatalf("exit facts = %+v", got)
+			}
+			if len(got.Ports) != 0 || got.PortHolder != nil {
+				t.Fatalf("exit invented a live listener: %+v", got)
+			}
+			if tc.hint == 0 {
+				if got.PortHint != nil || got.URL != "" {
+					t.Fatalf("missing hint became a listener URL: %+v", got)
+				}
+				return
+			}
+			if got.PortHint == nil || *got.PortHint != 1 || got.URL != "http://localhost:1" {
+				t.Fatalf("minimum port hint was lost: %+v", got)
+			}
+		})
+	}
+}
+
 // TestExitedRecordsHowARunEnded: code 0 exited, anything else crashed, and a
 // run option-berth was stopping is stopped whatever its code.
 func TestExitedRecordsHowARunEnded(t *testing.T) {
