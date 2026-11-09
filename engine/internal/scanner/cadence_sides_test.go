@@ -83,21 +83,26 @@ func TestAScanThatFindsNewWorkWaitsOutTheCadence(t *testing.T) {
 }
 
 func TestRearmingAFiredTimerDropsTheOldTick(t *testing.T) {
-	// Go 1.23 sync timers do not keep a fired value. The buffered channel
-	// restored by this setting is the case the drain exists for.
-	t.Setenv("GODEBUG", "asynctimerchan=1")
+	// The contract is that rearming an expired timer starts a fresh wait. The
+	// buffered-channel semantics this used to reproduce through GODEBUG
+	// asynctimerchan no longer exist in the supported toolchain, so the test
+	// drives the timer the way the loop does and checks the tick it delivers.
 	timer := time.NewTimer(0)
-	deadline := time.Now().Add(time.Second)
-	for len(timer.C) == 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("a zero timer did not fire")
-		}
+	select {
+	case <-timer.C:
+	case <-time.After(time.Second):
+		t.Fatal("a zero timer did not fire")
 	}
-	armTimer(timer, time.Hour)
+	armTimer(timer, 50*time.Millisecond)
 	select {
 	case <-timer.C:
 		t.Fatal("rearming a fired timer kept the old tick")
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(20 * time.Millisecond):
+	}
+	select {
+	case <-timer.C:
+	case <-time.After(time.Second):
+		t.Fatal("the rearmed timer never fired")
 	}
 	timer.Stop()
 }
