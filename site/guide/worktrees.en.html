@@ -1,7 +1,7 @@
 <p class="chapter-intro">A run belongs to the checkout that started it. Two worktrees can run the same repository at once without sharing a port, a database or a stop.</p>
 
 <h2 id="ownership">A run belongs to its checkout</h2>
-<p>Different worktrees of one repository publish as <code>&lt;project&gt;</code> and <code>&lt;project&gt;@&lt;worktree&gt;</code>, so a group-scoped stop on one does not reach the other. <code>status --json</code> publishes the checkout's identity, and that identity is what <code>down --identity</code> uses after a directory is gone.</p>
+<p>Different worktrees of one repository publish as <code>&lt;project&gt;</code> and <code>&lt;project&gt;@&lt;worktree&gt;</code>, so a group-scoped stop on one does not reach the other. <code>status --json</code> publishes the checkout's identity, and <code>down --identity</code> uses that identity after the directory is gone.</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">see the identities this machine has seen</figcaption>
   <pre><code>oberth status --json
@@ -9,25 +9,25 @@ oberth worktrees</code></pre>
 </figure>
 
 <h2 id="ports">Ports are allocated, not guessed</h2>
-<p>A service with <code>port: auto</code> gets its address from the run, and the engine injects it through <code>PORT</code>. A service's own <code>env: PORT: 3000</code> overrides the injected value and makes <code>up --wait</code> wait on the wrong port; use <code>${port}</code> instead. If a framework quietly switches to another port when one is taken, prefer its strict-port option so a conflict becomes a readable failure fact.</p>
+<p>A service with <code>port: auto</code> gets its address from the run, and the engine injects it through <code>PORT</code>. If the service sets <code>env: PORT: 3000</code> itself, that value overrides the injected one and <code>up --wait</code> waits on the wrong port; use <code>${port}</code> instead. If a framework quietly moves to another port when one is taken, turn on its strict-port option so the conflict becomes a readable failure.</p>
 
 <h2 id="data">Data can follow the worktree</h2>
-<p><code>${worktree}</code> is a stable identity derived from the canonicalized checkout root. It is the same on every start for one worktree and different for the main checkout and each linked worktree, which makes it suitable for database names and relative data directories.</p>
+<p><code>${worktree}</code> is a stable identity derived from the canonicalized checkout root. It stays the same on every start of one worktree, and differs between the main checkout and each linked worktree, which makes it suitable for database names and relative data directories.</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">one identity, many uses</figcaption>
   <pre><code>DB_PATH: .berth/${worktree}/app.db
 DATABASE_URL: postgres://localhost/app_${worktree}</code></pre>
 </figure>
-<p>Moving the checkout directory yields a new identity; the old data is not moved with it. That is deliberate: the engine reports the correspondence between identities and paths, and a person decides what to keep.</p>
+<p>Move the checkout directory and you get a new identity; the old data does not move with it. That is deliberate: the engine reports the correspondence between identities and paths, and a person decides what to keep.</p>
 
 <h2 id="gone">When a checkout disappears</h2>
-<p><code>worktrees --gone</code> keeps only identities whose checkout no longer exists. <code>down --identity</code> still stops the runs and listeners belonging to one and returns its <code>port: auto</code> reservations. The engine only reports and stops; it never deletes a database, a data directory or a ledger row.</p>
+<p><code>worktrees --gone</code> keeps only the identities whose checkout no longer exists. <code>down --identity</code> still stops the runs and listeners that belong to one and returns its <code>port: auto</code> reservations. The engine only reports and stops; it never deletes a database, a data directory or a ledger row.</p>
 
 <h2 id="events">Follow changes without polling</h2>
-<p><code>oberth events</code> is the read-only subscription for parallel work. It takes a worktree, repository or explicit workspace filter and writes NDJSON: the first line is a <code>state.snapshot</code>, later lines are <code>state.changed</code> summaries.</p>
+<p><code>oberth events</code> is the read-only subscription for parallel work. It takes a worktree, repository or explicit workspace filter and writes NDJSON: the first line is a <code>state.snapshot</code>, and later lines are <code>state.changed</code> summaries.</p>
 <ul>
-  <li>The first record is a snapshot; later records are changes. A reconnect after a drop passes the last applied <code>seq</code> as <code>after_seq</code>.</li>
-  <li>Only runtime fact summaries cross the stream — no logs, commands, working directories or environment variables.</li>
+  <li>The first record is a snapshot and later records are changes. After a dropped connection, pass the last applied <code>seq</code> as <code>after_seq</code>.</li>
+  <li>Only runtime fact summaries cross the stream. Logs, commands, working directories and environment variables do not.</li>
   <li>When the queue window has expired or the state chain is discontinuous, the stream returns a full snapshot instead of pretending the gap did not happen.</li>
-  <li><code>--once</code> reads the snapshot only and registers no workspace membership; a human running it is mainly troubleshooting.</li>
+  <li><code>--once</code> reads the snapshot only and registers no workspace membership; a person running it is usually troubleshooting.</li>
 </ul>
