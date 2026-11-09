@@ -337,3 +337,51 @@ func TestStatsTickRunsWhileAScanIsInFlight(t *testing.T) {
 	close(release)
 	<-scanDone
 }
+
+// TestStatsSkipRowsThatAreNotThisMachines: a container's numbers come from
+// Docker and a remote row's pid belongs to another host, so the local process
+// sampler must not be asked about either.
+func TestStatsSkipRowsThatAreNotThisMachines(t *testing.T) {
+	pp := []state.Port{
+		{Port: 1, PID: 10, Host: state.LocalhostName, Stats: &state.Stats{}},
+		{Port: 2, PID: 20, Host: "build-host", Stats: &state.Stats{}},
+		{Port: 3, PID: 30, Host: state.LocalhostName, Type: state.TypeDocker, Stats: &state.Stats{}},
+		{Port: 4, PID: 0, Host: state.LocalhostName, Stats: &state.Stats{}},
+	}
+	if got := statsPIDs(pp); len(got) != 1 || got[0] != 10 {
+		t.Fatalf("pids = %v, want only the local non-container pid", got)
+	}
+}
+
+// TestServiceWithoutALiveProcessKeepsNoSample: a stopped service has no live
+// process, and a running one without a pid names none either. Neither gets a
+// sample: unknown stays nil rather than becoming zero.
+func TestServiceWithoutALiveProcessKeepsNoSample(t *testing.T) {
+	pid := 42
+	samples := map[int]ports.ProcSample{42: {CPUPercent: 5}}
+	cases := []struct {
+		name string
+		svc  state.Service
+	}{
+		{"stopped", state.Service{Name: "worker", Running: false, PID: &pid}},
+		{"running without a pid", state.Service{Name: "worker", Running: true}},
+	}
+	for _, tc := range cases {
+		svc := tc.svc
+		if got := sampledServiceStats(&svc, nil, samples); got != nil {
+			t.Fatalf("%s: stats = %+v, want nil", tc.name, got)
+		}
+	}
+}
+
+// TestAMissingSampleLeavesTheServiceUntouched: when the sampler answers for
+// other pids only, the service keeps its previous (nil) sample. A vanished
+// process is dropped from the sample, not zeroed on the wire.
+func TestAMissingSampleLeavesTheServiceUntouched(t *testing.T) {
+	pid := 42
+	groups := []state.Group{{Services: []state.Service{{Name: "worker", Running: true, PID: &pid}}}}
+	writeServiceSample(&groups[0].Services[0], map[int]ports.ProcSample{99: {CPUPercent: 5}})
+	if groups[0].Services[0].Stats != nil {
+		t.Fatalf("stats = %+v, want nil when the sample has nothing for the pid", groups[0].Services[0].Stats)
+	}
+}
