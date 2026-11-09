@@ -299,11 +299,14 @@ func rememberSession(rt *daemon.Runtime, s state.Session) {
 	if s.ID == "" || rt == nil || rt.Store == nil {
 		return
 	}
-	now := time.Now()
+	// first_seen and last_seen are left zero on purpose: the store reads zero
+	// as "now" and, on an id it already holds, writes only last_seen and the
+	// descriptive fields. Deciding the timestamp here would duplicate that
+	// rule in a second place, and the obvious spelling — this moment for both
+	// — is the one that would wipe a session's first appearance.
 	err := rt.Store.Sessions().Upsert(store.SessionRow{
 		ID: s.ID, Tool: s.Tool, Label: s.Label,
 		Worktree: s.Worktree, Branch: s.Branch, Detected: s.Detected,
-		FirstSeen: now, LastSeen: now,
 	})
 	if err != nil {
 		rt.Logger.Warn("recording an agent session", "session", s.ID, "error", err)
