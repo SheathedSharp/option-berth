@@ -111,6 +111,45 @@ func TestWorkspaceBindingUnionsExplicitRelations(t *testing.T) {
 	}
 }
 
+// TestWorkspaceOnlyResubscribeInheritsOnlyPeers pins the boundary a workspace
+// member crosses when it stops naming its own selectors. Two explicit members
+// A and B share a workspace; A resubscribes with the workspace label and no
+// selector. That is legal — B still defines the relation — and A must now see
+// exactly B's rows: its own old selector is gone, or switching to workspace-only
+// would silently keep a worktree the relation no longer names. The companion
+// case, where A is the only member and the same request fails with its old
+// binding intact, is TestFailedWorkspaceResubscribeKeepsExistingBinding.
+func TestWorkspaceOnlyResubscribeInheritsOnlyPeers(t *testing.T) {
+	s := New(Options{Socket: "/test/workspace-inherit.sock", Version: "test"})
+	memberA := newConn(1, s, nil)
+	memberB := newConn(2, s, nil)
+	aWorker := state.Scope{Workspace: "integration", Worktrees: []string{"/code/example-worker"}}
+	bDashboard := state.Scope{Workspace: "integration", Worktrees: []string{"/code/example-dashboard"}}
+	if err := s.subscribe(memberA, json.RawMessage("1"), scanner.Include{}, true, aWorker, 0); err != nil {
+		t.Fatalf("subscribing member A: %v", err)
+	}
+	if err := s.subscribe(memberB, json.RawMessage("2"), scanner.Include{}, true, bDashboard, 0); err != nil {
+		t.Fatalf("subscribing member B: %v", err)
+	}
+
+	workspaceOnly := state.Scope{Workspace: "integration"}
+	if err := s.subscribe(memberA, json.RawMessage("3"), scanner.Include{}, true, workspaceOnly, 0); err != nil {
+		t.Fatalf("workspace-only resubscribe with a peer member: %v", err)
+	}
+
+	s.subsMu.RLock()
+	effective := s.effectiveScopeLocked(memberA.scope)
+	s.subsMu.RUnlock()
+	worker := state.Group{Name: "example-worker", Repo: "example-worker", RootDir: stringPtr("/code/example-worker")}
+	dashboard := state.Group{Name: "example-dashboard", Repo: "example-dashboard", RootDir: stringPtr("/code/example-dashboard")}
+	if effective.MatchGroup(worker) {
+		t.Fatalf("A still sees its dropped selector after switching to workspace-only: %+v", effective)
+	}
+	if !effective.MatchGroup(dashboard) {
+		t.Fatalf("A does not inherit its peer's selector: %+v", effective)
+	}
+}
+
 func TestFailedWorkspaceResubscribeKeepsExistingBinding(t *testing.T) {
 	s := New(Options{Socket: "/test/workspace-resubscribe.sock", Version: "test"})
 	c := newConn(1, s, nil)
