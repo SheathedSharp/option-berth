@@ -371,24 +371,6 @@ func resolveScanInterval(d time.Duration) time.Duration {
 	}
 }
 
-// osScan is the production scan without an owner: the same pipeline
-// `oberth list` runs, so the daemon and the no-daemon path emit the same rows —
-// except that container data and container stats come from the watcher's
-// cache, at most one refresh old, instead of from a `docker ps` this scan would
-// wait on. A wedged Docker used to cost every scan the whole
-// docker.CLITimeout, and every `ports.kill` and `state.snapshot` queued behind
-// it; the cache removes that wait.
-func (l *Loop) osScan(include Include) ([]ports.ListeningPort, error) {
-	ctx, cancel := observationContext(context.Background())
-	defer cancel()
-	return l.osScanContext(ctx, include)
-}
-
-func (l *Loop) osScanContext(ctx context.Context, include Include) ([]ports.ListeningPort, error) {
-	pp, _, err := l.osScanSourceContext(ctx, include)
-	return pp, err
-}
-
 // osScanSourceContext is osScanContext plus the collector that answered, so a
 // narrow fallback table can be published as narrow.
 func (l *Loop) osScanSourceContext(ctx context.Context, include Include) ([]ports.ListeningPort, string, error) {
@@ -434,11 +416,6 @@ func withoutOwnListeners(pp []ports.ListeningPort) []ports.ListeningPort {
 		}
 	}
 	return out
-}
-
-// Probe runs one health probe through the loop's seam.
-func (l *Loop) Probe(host string, port int, path string, timeout time.Duration) ports.HealthResult {
-	return l.ProbeContext(context.Background(), host, port, path, timeout)
 }
 
 // ProbeContext uses one synchronous probe; cancellation is never a verdict.
