@@ -18,7 +18,7 @@
 <p>That is why <code>up --wait</code> can return a real answer, and why <code>status</code> can report a running service with an unknown port without contradicting itself.</p>
 
 <h2 id="attribution">A run belongs to the checkout that started it</h2>
-<p>Attribution uses three things: this round's path observation, the manifest's content index and the run identity. Two worktrees of the same repository therefore never share services, a port, a database name or a stop.</p>
+<p>Attribution combines three inputs: this round's path observation, the manifest's content index and the run identity. Two worktrees of the same repository therefore never share services, a port, a database name or a stop.</p>
 <p>Ports follow the same rule. <code>port: auto</code> is reserved per run and handed back on stop, so the second checkout asking for “the API port” gets its own answer instead of a collision.</p>
 
 <h2 id="unknown">An unread fact stays unknown</h2>
