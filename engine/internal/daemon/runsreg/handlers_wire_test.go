@@ -63,6 +63,52 @@ func TestRunFromWireDropsUntrustworthyEvidence(t *testing.T) {
 	}
 }
 
+// TestCheckCwdReportsAnUnavailableWorkingDirectory covers the one cwd the
+// daemon cannot name: the caller sent none and the daemon's own working
+// directory is gone. Both spellings of "no usable cwd" are their own error, and
+// the message is asserted because the code alone cannot tell them apart — a
+// failed `os.Getwd` that fell through to the Abs branch would answer
+// invalid_params either way, with a different remedy for the user.
+//
+// The deletion is of this process's own t.TempDir, restored by the cleanup
+// registered before it; on a filesystem that refuses to remove the active
+// directory the case is skipped rather than asserted.
+func TestCheckCwdReportsAnUnavailableWorkingDirectory(t *testing.T) {
+	original, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(original); err != nil {
+			t.Errorf("restoring cwd: %v", err)
+		}
+	})
+	if err := os.Remove(dir); err != nil {
+		t.Skipf("filesystem cannot remove the active cwd: %v", err)
+	}
+
+	_, err = CheckCwd("", true)
+	var failure *rpc.Error
+	if !errors.As(err, &failure) || failure.Code != rpc.CodeInvalidParams ||
+		failure.Message != "cwd is required" {
+		t.Fatalf("missing cwd = %v, want original required-cwd RPC error", err)
+	}
+
+	// A relative cwd in a directory that no longer exists has nothing to be
+	// relative to, so it is refused as an unusable path rather than resolved
+	// against a stale one.
+	_, err = CheckCwd("relative-child", true)
+	failure = nil
+	if !errors.As(err, &failure) || failure.Code != rpc.CodeInvalidParams ||
+		!strings.HasPrefix(failure.Message, "cwd is not a usable path:") {
+		t.Fatalf("relative path in unavailable cwd = %v", err)
+	}
+}
+
 // The home rule is the daemon's own boundary, so it is checked against the
 // environment it runs in: inside is allowed, outside is refused, and the
 // refusal is the caller's to lift.
