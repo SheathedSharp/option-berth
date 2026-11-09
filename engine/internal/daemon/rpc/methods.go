@@ -7,22 +7,22 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// This file declares the params and results of every daemon method named in
-// the method table. Each entry carries
-// they are placeholders: they fix the wire shape and drive schema generation,
-// and the slices that implement each method fill in the behaviour behind them.
-// Changing a field here changes the published protocol, so keep it in step
-// with the contract.
+// This file declares what a client sends and reads back for every method in the
+// table: one params type and one result type per method, plus the shared pieces
+// they are built from. The published schema is reflected from these types, so a
+// field added here is a promise to every client; docs/cli.md is where the same
+// promise is written down for readers, and the two move in one change.
 
 // ---------------------------------------------------------------- shared ---
 
-// Selector addresses one port. Exactly one of Port, PID and
-// RunID is set; BindAddress only disambiguates Port.
+// Selector names the one port a call acts on. A caller sets exactly one of
+// Port, PID and RunID; BindAddress only tells two listeners on the same port
+// apart.
 //
-// A client that holds a port key from the stream sets Port and BindAddress
-// rather than sending the joined form back: the daemon reads the three fields
-// it acts on, so a fourth spelling that has to be expanded first would be one
-// more shape with no reader behind it.
+// A client holding a port key from the stream takes it apart itself and sends
+// Port with BindAddress. The daemon reads the fields it acts on and nothing
+// else: a joined spelling it would have to expand first is the shape that gets
+// accepted and ignored, so no such field is published.
 type Selector struct {
 	Port        *int    `json:"port,omitempty"`
 	PID         *int    `json:"pid,omitempty"`
@@ -30,71 +30,73 @@ type Selector struct {
 	RunID       *string `json:"run_id,omitempty"`
 }
 
-// MutationResult is the minimum every mutating method returns.
-// Affected holds port keys ("<port>:<bind_address>").
+// MutationResult is what every mutating method returns at minimum. Affected
+// lists the ports the call touched, each as "<port>:<bind_address>"; a method
+// that edits a manifest reports the service names it changed there instead.
 type MutationResult struct {
 	OK       bool     `json:"ok"`
 	Affected []string `json:"affected"`
 }
 
-// KillEnvelope is the result of every kill-shaped method. The row
-// type is state.KillResult, the single Go type the killer, the CLI and the
-// daemon all produce, so it keeps the plain name in the generated schema
-// and the envelope around it is named for what it is.
+// KillEnvelope wraps the per-target outcome of a kill-shaped method. The rows
+// are state.KillResult — one Go type the killer, the CLI and the daemon all
+// fill in — so the schema publishes it under its plain name and this envelope
+// stays named for what it wraps.
 type KillEnvelope struct {
 	MutationResult
 	Results []state.KillResult `json:"results"`
-	// Released is how many claimed ports a `groups.kill` with release gave
-	// back (`oberth down`). Zero for every other kill.
+	// Released counts the claimed ports a `groups.kill` with release handed
+	// back, which is the `oberth down` path. Every other kill leaves it zero.
 	Released int `json:"released,omitempty"`
 }
 
-// Empty is the params or result of a method that takes or returns nothing.
+// Empty stands in for the params or result of a method with nothing to carry.
 type Empty struct{}
 
-// OKResult is a bare acknowledgement.
+// OKResult is the whole of a reply that only says the call went through.
 type OKResult struct {
 	OK bool `json:"ok"`
 }
 
-// CapabilityAutoPorts is announced by a daemon that understands the config
-// format v0.8.0 introduced: `port: auto`, `env:` and ${…} references. A client
-// holding such a file checks for it before handing the file over, because an
-// older daemon parses it itself and reports it as invalid — blaming the file
-// for the daemon's age.
-const CapabilityAutoPorts = "groups.autoports"
+// Capabilities are the optional behaviours a daemon announces in
+// daemon.hello. A client checks for one before sending a manifest or a field an
+// older daemon would drop without saying so: that silent drop, not the older
+// daemon itself, is what every name here exists to prevent.
+const (
+	// CapabilityAutoPorts covers `port: auto`, `env:` and ${…} references. An
+	// older daemon parses such a file itself and reports it invalid, which
+	// blames the file for the daemon's age.
+	CapabilityAutoPorts = "groups.autoports"
 
-// CapabilityManifestExtras is announced by daemons that understand the
-// manifest's `env_file:` and `workspace:` references. An older daemon ignores
-// both: it would start a service without the env file's values and leave a
-// workspace address unexpanded, so the CLI refuses to hand it such a file.
-const CapabilityManifestExtras = "groups.manifest.extras"
+	// CapabilityManifestExtras covers the manifest's `env_file:` and
+	// `workspace:` references. An older daemon ignores both, so a service would
+	// start without the env file's values and a workspace address would stay
+	// unexpanded.
+	CapabilityManifestExtras = "groups.manifest.extras"
 
-// CapabilityStartDependencies is announced by daemons whose groups.start
-// understands `include_dependencies: true`: growing the named services' plan
-// with their transitive depends_on closure. An older daemon ignores the field
-// and starts only the named services, so the CLI checks for this before
-// sending it.
-const CapabilityStartDependencies = "groups.start.dependencies"
+	// CapabilityStartDependencies covers `include_dependencies: true` in
+	// groups.start: growing the named services' plan with their transitive
+	// depends_on closure. An older daemon starts only the named services.
+	CapabilityStartDependencies = "groups.start.dependencies"
 
-// CapabilityReadyTimeout is announced by daemons that honour the manifest's
-// per-service `ready_timeout:` — both dependency waits and the budget they
-// publish on a start chunk. An older daemon ignores the field and keeps its
-// fixed 30s wait; the CLI refuses to hand it such a file rather than let a
-// slow dependency be failed at the wrong deadline.
-const CapabilityReadyTimeout = "groups.start.ready_timeout"
+	// CapabilityReadyTimeout covers the manifest's per-service `ready_timeout:`
+	// — both the dependency waits and the budget a start chunk publishes. An
+	// older daemon keeps its fixed 30s and would fail a slow dependency at the
+	// wrong deadline.
+	CapabilityReadyTimeout = "groups.start.ready_timeout"
 
-// CapabilityStateScope is announced by daemons that understand scoped state
-// snapshots and the redacted state.changed notification.
-const CapabilityStateScope = "state.scope"
+	// CapabilityStateScope covers scoped state snapshots and the redacted
+	// state.changed notification.
+	CapabilityStateScope = "state.scope"
 
-// CapabilityStartPhases is announced by daemons that publish a service's
-// in-flight start attempt: progress chunks on `groups.start` when the caller
-// asks for them, and a `starting` object on the service row. It is a diagnostic
-// enhancement, never a prerequisite: an old client that does not set progress
-// keeps the old stream, and a new client talking to an old daemon simply gets
-// no progress.
-const CapabilityStartPhases = "groups.start.phases"
+	// CapabilityStartPhases covers a service's in-flight start attempt:
+	// progress chunks on `groups.start` when the caller asks for them, and a
+	// `starting` object on the service row. It is diagnostic, never a
+	// prerequisite — an old client that does not set progress keeps the old
+	// stream, and a new client talking to an old daemon simply gets no
+	// progress.
+	CapabilityStartPhases = "groups.start.phases"
+)
 
 // Include lists the optional per-subscriber enrichments ("stats", "health").
 type Include []string
@@ -135,13 +137,13 @@ type DaemonStatusResult struct {
 	// own is the only way to see that. The CLI does exactly that.
 	Commit string `json:"commit"`
 	Built  string `json:"built"`
-	// ScanIntervalMs is the adaptive port-scan cadence right now; it moves
-	// between the base and a ceiling as scans come back unchanged.
+	// ScanIntervalMs is where the adaptive port-scan cadence sits right now: it
+	// moves between the base and a ceiling as scans come back unchanged.
 	ScanIntervalMs int `json:"scan_interval_ms"`
-	// ScanBaseIntervalMs and StatsIntervalMs are the effective settings
-	// behind it: `daemon.scan_interval` and `daemon.stats_interval` as this
-	// daemon resolved them at startup. Both are read once, so a config edit
-	// needs a daemon restart and these are how you check that it took.
+	// ScanBaseIntervalMs and StatsIntervalMs are the settings behind that
+	// cadence: `daemon.scan_interval` and `daemon.stats_interval` as this daemon
+	// resolved them at startup. Both are read once, so checking them is how you
+	// tell whether a config edit took without restarting the daemon to guess.
 	ScanBaseIntervalMs int `json:"scan_base_interval_ms"`
 	StatsIntervalMs    int `json:"stats_interval_ms"`
 	// Scans counts the port scans this daemon has run. Two clients reading
@@ -163,15 +165,15 @@ type DaemonSchemaResult struct {
 // is the single Go type behind the table, the CLI's `--json` and the wire
 // result, so a client that renders one renders the other.
 type DoctorCheck struct {
-	// ID names the check. Checks that exist once per external tool are
-	// dotted: `mcp_registered.claude_code`.
+	// ID names the check. A check that exists once per external tool is dotted
+	// with that tool: `mcp_registered.claude_code`.
 	ID string `json:"id"`
 	// Status is ok, warn, fail or skip. Only `fail` makes the run not ok.
 	Status string `json:"status"`
 	// Summary is the one line a table row shows.
 	Summary string `json:"summary"`
-	// Detail is the evidence: paths, versions, the parse error. It is also
-	// where a check the daemon cannot run from its own process says so.
+	// Detail is the evidence: paths, versions, the parse error. It is also where
+	// a check the daemon cannot run from its own process says so.
 	Detail string `json:"detail,omitempty"`
 	// Fix is the human hint: what to run, or what to edit.
 	Fix string `json:"fix,omitempty"`
@@ -181,11 +183,12 @@ type DoctorCheck struct {
 
 type DaemonDoctorParams struct {
 	// Only keeps just these checks. An entry matches a check id exactly, or
-	// every check under it when the id is dotted (`mcp_registered`).
+	// every check under it when the id names a tool and a single check with a
+	// dot (`mcp_registered`).
 	Only []string `json:"only,omitempty"`
 	// Project is the directory the project-scoped checks look at. Empty means
-	// the process's own working directory, which for the daemon is wherever it
-	// was started, so a client that cares always sends it.
+	// the process's own working directory — for the daemon, wherever it was
+	// started — so a client that cares sends it.
 	Project string `json:"project,omitempty"`
 }
 
@@ -205,9 +208,9 @@ type DaemonDoctorResult struct {
 
 type StateSnapshotParams struct {
 	Include Include `json:"include,omitempty"`
-	// Scope is carried on the wire as filter. Nil preserves the historical
-	// machine-wide snapshot; a scoped request returns the redacted stream
-	// projection rather than command/config details.
+	// Scope is sent as filter. Nil keeps the machine-wide snapshot a client
+	// written before scopes existed expects; a scoped request returns the
+	// redacted stream projection instead of command and config details.
 	Scope *state.Scope `json:"filter,omitempty"`
 }
 
@@ -242,13 +245,13 @@ func (r StateSnapshotResult) Stream() state.StreamSnapshot {
 type StateSubscribeParams struct {
 	Include Include `json:"include,omitempty"`
 	Events  bool    `json:"events,omitempty"`
-	// AfterSeq asks the daemon to resume from this published sequence. When
-	// the in-memory replay window no longer covers it, subscribe safely falls
-	// back to a fresh snapshot.
+	// AfterSeq asks the daemon to resume from this published sequence. When the
+	// in-memory replay window no longer covers it, subscribe safely falls back
+	// to a fresh snapshot.
 	AfterSeq uint64 `json:"after_seq,omitempty"`
-	// Scope is carried on the wire as filter. Nil preserves the historical
-	// machine-wide subscription for existing clients; scoped subscriptions use
-	// the redacted state.changed stream and must set Events.
+	// Scope is sent as filter. Nil keeps the machine-wide subscription clients
+	// written before scopes existed rely on; a scoped subscription reads the
+	// redacted state.changed stream and must set Events.
 	Scope *state.Scope `json:"filter,omitempty"`
 }
 
@@ -269,8 +272,8 @@ type PortsLogsParams struct {
 	Follow bool `json:"follow,omitempty"`
 }
 
-// PortsLogsResult is the unary reply (follow: false). With follow: true the
-// method also returns a subscription_id and pushes PortsLogsChunk.
+// PortsLogsResult answers a one-shot call. With follow set, the reply also
+// carries a subscription_id and the lines keep arriving as PortsLogsChunk.
 type PortsLogsResult struct {
 	Source         string   `json:"source"`
 	Lines          []string `json:"lines"`
@@ -332,10 +335,10 @@ type GroupsStartParams struct {
 	// it false and keeps restarting exactly what it names. Unknown names in
 	// Only are still not_found with or without it.
 	IncludeDependencies bool `json:"include_dependencies,omitempty"`
-	// Env is the environment the services start in, layered over the
-	// daemon's own. The CLI sends its shell's, so a service sees the PATH,
+	// Env is what the services start in, layered over the daemon's own
+	// environment. The CLI sends its shell's, so a service sees the PATH,
 	// toolchain and virtualenv it was started from rather than the daemon's.
-	// Omitted, the services get the daemon's environment.
+	// Omitted, the services inherit the daemon's.
 	Env map[string]string `json:"env,omitempty"`
 	// Progress asks the daemon to push in-flight `starting` chunks while a
 	// service waits for a dependency, runs prepare, or is being spawned. They
@@ -348,8 +351,8 @@ type GroupsStartParams struct {
 type GroupsStartResult struct {
 	MutationResult
 	SubscriptionID string `json:"subscription_id"`
-	// StartID is shared by every run this call starts, so the services
-	// brought up together can be told apart from the ones already running.
+	// StartID is shared by every run this call starts, so the services brought
+	// up together can be told apart from the ones already running.
 	StartID string `json:"start_id,omitempty"`
 }
 
@@ -395,8 +398,8 @@ type GroupsStartChunk struct {
 	ElapsedMS     int64    `json:"elapsed_ms,omitempty"`
 	WaitingOn     []string `json:"waiting_on,omitempty"`
 	LastPrepareMS *int64   `json:"last_prepare_ms,omitempty" jsonschema:"nullable"`
-	// LogOffset is how long log_path already was before this start. The file
-	// is appended to across runs, so a client following it starts here to
+	// LogOffset is how long log_path already was when this service started. The
+	// file is appended to across runs, so a client following it begins here to
 	// show this run and not the ones before.
 	LogOffset int64  `json:"log_offset,omitempty"`
 	Skipped   bool   `json:"skipped,omitempty"`
@@ -443,9 +446,10 @@ type GroupsRenameParams struct {
 	To   string `json:"to"`
 }
 
-// GroupsRenameResult carries in Affected the new name of every group the rename
-// changed — the project's and each checkout's — sorted, and in Name the
-// project's new name. Affected is empty when the project already had that name.
+// GroupsRenameResult reports what the rename changed: Affected holds the new
+// name of every group it touched — the project's and each checkout's, sorted —
+// and Name the project's new name. Both are empty when the project already had
+// that name.
 type GroupsRenameResult struct {
 	MutationResult
 	Name string `json:"name"`
@@ -494,10 +498,10 @@ type GroupsConfigSetParams struct {
 	// Remove deletes services and drops them from every other service's
 	// depends_on. An unknown name is `not_found`.
 	Remove []string `json:"remove,omitempty"`
-	// WorktreePorts edits the top-level worktree_ports key:
-	// omitted leaves it alone, a number (1-100) writes it, and null removes
-	// it. A value out of range is `invalid_config`, like any edit that would
-	// leave the file invalid.
+	// WorktreePorts edits the top-level worktree_ports key: omitted leaves it
+	// alone, a number in 1-100 writes it, and null removes it. A value out of
+	// range is `invalid_config`, like any edit that would leave the file
+	// invalid.
 	WorktreePorts *int `json:"worktree_ports,omitempty" jsonschema:"nullable"`
 
 	// WorktreePortsSent records that worktree_ports was present, null
@@ -509,30 +513,33 @@ type GroupsConfigSetParams struct {
 // UnmarshalJSON decodes the params and remembers whether worktree_ports was
 // sent at all.
 func (p *GroupsConfigSetParams) UnmarshalJSON(data []byte) error {
-	type plain GroupsConfigSetParams
-	var v plain
-	if err := json.Unmarshal(data, &v); err != nil {
+	// The alias drops this type's own UnmarshalJSON, so decoding it cannot
+	// recurse back here.
+	type wire GroupsConfigSetParams
+	var decoded wire
+	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
-	var keys map[string]json.RawMessage
-	if err := json.Unmarshal(data, &keys); err != nil {
+	// Only the key set distinguishes a null from an absent field: both land as
+	// a nil pointer in decoded, and only a null leaves bytes behind here.
+	var sent map[string]json.RawMessage
+	if err := json.Unmarshal(data, &sent); err != nil {
 		return err
 	}
-	*p = GroupsConfigSetParams(v)
-	_, p.WorktreePortsSent = keys[groups.FieldWorktreePorts]
+	*p = GroupsConfigSetParams(decoded)
+	_, p.WorktreePortsSent = sent[groups.FieldWorktreePorts]
 	return nil
 }
 
 // WorktreePortsChange is the edit the worktree_ports field asks for.
 func (p GroupsConfigSetParams) WorktreePortsChange() groups.IntChange {
-	switch {
-	case !p.WorktreePortsSent:
+	if !p.WorktreePortsSent {
 		return groups.IntChange{}
-	case p.WorktreePorts == nil:
-		return groups.ClearInt()
-	default:
-		return groups.SetInt(*p.WorktreePorts)
 	}
+	if p.WorktreePorts == nil {
+		return groups.ClearInt()
+	}
+	return groups.SetInt(*p.WorktreePorts)
 }
 
 // GroupsConfigSetResult is the file after the write. Affected carries the
@@ -600,13 +607,13 @@ type RunsRegisterParams struct {
 	PortHint  *int    `json:"port_hint,omitempty"`
 	StartedAt string  `json:"started_at"`
 	ID        *string `json:"id,omitempty"`
-	// Session is the agent session that asked for this run. The
-	// caller detects it: `oberth start` reads its own environment, which is the
-	// agent's, while the daemon's is not.
+	// Session is the agent session that asked for this run. The caller detects
+	// it: `oberth start` reads its own environment, which is the agent's, while
+	// the daemon's is not.
 	Session *state.Session `json:"session,omitempty"`
 	// AllowOutsideHome opts out of the daemon's refusal to record a run whose
-	// cwd is outside the user's home (daemon spec, "Transport details"). The
-	// CLI sets it; the MCP server does not.
+	// cwd is outside the user's home. The CLI sets it only when the caller asked
+	// for it: the refusal exists because the daemon runs as the user.
 	AllowOutsideHome bool `json:"allow_outside_home,omitempty"`
 }
 
