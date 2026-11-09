@@ -22,7 +22,7 @@
 <p>Ports follow the same rule. <code>port: auto</code> is reserved per run and handed back on stop, so the second checkout asking for “the API port” gets its own answer instead of a collision.</p>
 
 <h2 id="unknown">An unread fact stays unknown</h2>
-<p>Failure, cancellation and an incomplete scan may not become “free”, “gone” or “healthy”. A port missing from the listener table means the fact was not observed; it never means the port is free. A successful signal means the signal was delivered, not that the process exited.</p>
+<p>Failure, cancellation and an incomplete scan may not become “free”, “gone” or “healthy”. A port missing from the listener table means the fact was not observed. It never means the port is free. A successful signal means the signal was delivered, not that the process exited.</p>
 <aside class="note">
   <p>An unread fact is written as unknown, and unknown is not success. <a href="{{guide}}status/">status</a> shows this rule in action, and <a href="{{guide}}boundaries/">Where the product stops</a> turns it into a product boundary.</p>
 </aside>

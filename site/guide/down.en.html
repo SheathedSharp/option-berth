@@ -28,7 +28,7 @@ oberth down --identity wt_0123456789ab</code></pre>
   <ul>
     <li><code>machine:</code> dependencies. Their listener state is read-only, and <code>down</code> does not stop them.</li>
     <li>Another worktree's services. A stop by project name is group-scoped, and the other checkout publishes a different group.</li>
-    <li>Your data. The engine reports identities and stops services; deleting a database or data directory is a person's decision.</li>
-    <li>A signal that was already sent. An incomplete stop, a failed observation after the action, or a refreshed reservation keeps the reservation and returns the error.</li>
+    <li>Your data. The engine reports identities and stops services. Deleting a database or data directory is a person's decision.</li>
+    <li>Signals already sent. An error does not undo one, and an incomplete stop, a failed observation after the action or a refreshed reservation keeps the reservation and returns the error.</li>
   </ul>
 </aside>

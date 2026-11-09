@@ -18,7 +18,7 @@ oberth worktrees</code></pre>
   <pre><code>DB_PATH: .berth/${worktree}/app.db
 DATABASE_URL: postgres://localhost/app_${worktree}</code></pre>
 </figure>
-<p>Move the checkout directory and you get a new identity; the old data does not move with it. That is deliberate: the engine reports the correspondence between identities and paths, and a person decides what to keep.</p>
+<p>Move the checkout directory and you get a new identity. The old data does not move with it. That is deliberate: the engine reports the correspondence between identities and paths, and a person decides what to keep.</p>
 
 <h2 id="gone">When a checkout disappears</h2>
 <p><code>worktrees --gone</code> keeps only the identities whose checkout no longer exists. <code>down --identity</code> still stops the runs and listeners that belong to one and returns its <code>port: auto</code> reservations. The engine only reports and stops; it never deletes a database, a data directory or a ledger row.</p>

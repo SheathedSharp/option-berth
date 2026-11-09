@@ -1,4 +1,4 @@
-<p class="chapter-intro"><code>oberth</code> keeps one answer per Git worktree: what should run, whether it really is running, and why not when it is not. A person reads a table; a coding agent reads the same command with <code>--json</code>. This guide explains where that answer comes from.</p>
+<p class="chapter-intro"><code>oberth</code> keeps one answer per Git worktree: what should run, whether it really is running, and why not when it is not. A person reads a table; a coding agent reads the same command with <code>--json</code>. This guide shows how that answer is built, and where it can fail.</p>
 
 <h2 id="problem">Four checkouts, four guesses</h2>
 <p>Git worktrees solved parallel code, not parallel runtime. Four checkouts of one repository share a port range, a database name and a shell history, so every session works out the same three facts again, and works them out slightly differently.</p>
@@ -60,5 +60,5 @@ oberth logs api --once --json --run current --first-error</code></pre>
 
 <h2 id="not">What this guide is not</h2>
 <aside class="note">
-  <p><strong>Not the contract.</strong> The exact CLI surface, JSON fields and manifest rules live in <a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md">docs/cli.md</a>. This guide explains the chain and points there for detail. <strong>Not the product site.</strong> The <a href="{{root}}">homepage</a> shows the product itself. <strong>Not a framework tutorial.</strong> The examples use <a href="https://github.com/SheathedSharp/option-berth/tree/main/examples/hello-worktree">Hello Worktree</a> because it needs nothing but Python 3; the same chain applies to any stack.</p>
+  <p><strong>Not the contract.</strong> The exact CLI surface, JSON fields and manifest rules live in <a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md">docs/cli.md</a>. This guide explains the chain and points there for detail. <strong>Not the product site.</strong> The <a href="{{root}}">homepage</a> shows the product itself. <strong>Not a framework tutorial.</strong> The examples use <a href="https://github.com/SheathedSharp/option-berth/tree/main/examples/hello-worktree">Hello Worktree</a> because it needs nothing but Python 3. The same chain applies to any stack.</p>
 </aside>

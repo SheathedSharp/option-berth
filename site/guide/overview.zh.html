@@ -1,4 +1,4 @@
-<p class="chapter-intro"><code>oberth</code> 为每个 Git worktree 保留同一份答案：该跑什么、是不是真的在跑、没跑的时候为什么。人读一张表，coding agent 读同一条命令的 <code>--json</code>。这本指南讲这份答案从哪里来。</p>
+<p class="chapter-intro"><code>oberth</code> 为每个 Git worktree 保留同一份答案：该跑什么、是不是真的在跑、没跑的时候为什么。人读一张表，coding agent 读同一条命令的 <code>--json</code>。这本指南讲这份答案怎么建立，以及它可能在哪一步出问题。</p>
 
 <h2 id="problem">四个 checkout，四次猜测</h2>
 <p>worktree 解决的是并行写代码，不是并行跑服务。同一个仓库的四份 checkout 共用一段端口范围、一个数据库名和一份 shell 历史，于是每个会话都要把这同样的三件事重新推一遍，而且每次推出来的结果都略有出入。</p>
