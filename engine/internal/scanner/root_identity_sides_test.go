@@ -3,6 +3,8 @@ package scanner
 import (
 	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
@@ -103,5 +105,31 @@ func TestAFailedAliasReadKeepsThePreviousName(t *testing.T) {
 	l.loadAliases(st)
 	if got := l.attr.index.ProjectName(dir); got != "pretty" || warns.n != 1 {
 		t.Fatalf("name=%q warns=%d, a failed alias read replaced the previous name", got, warns.n)
+	}
+}
+
+// TestARootThatBecameAFileCountsAsGone: a remembered root whose path now names
+// a regular file is not a checkout any more. It is forgotten like a deleted
+// directory, and its identity is kept for a later `down --identity`.
+func TestARootThatBecameAFileCountsAsGone(t *testing.T) {
+	st := openStore(t)
+	file := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddRoot(file); err != nil {
+		t.Fatal(err)
+	}
+
+	l := loopWith(st)
+	if _, err := l.Snapshot(Include{}); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	roots, err := st.Roots()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(roots) != 0 {
+		t.Fatalf("known roots = %v, want the file-shaped root dropped", roots)
 	}
 }
