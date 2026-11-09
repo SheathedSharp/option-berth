@@ -388,13 +388,17 @@ func CheckCwd(cwd string, allowOutsideHome bool) (string, error) {
 	if allowOutsideHome {
 		return abs, nil
 	}
-	home, resolved := homeDir()
-	if !resolved {
+	home, err := os.UserHomeDir()
+	if err != nil {
 		// No home to compare against means the rule cannot be applied. Refusing
 		// every directory then would break a legitimate install rather than
-		// protect it.
+		// protect it. os.UserHomeDir reports an error exactly when it has no
+		// path to return, so there is no second empty-home case to handle.
 		return abs, nil
 	}
+	// Both sides are canonicalised inside groups.Under, which is the one place
+	// that decides whether one directory is under another; resolving the home
+	// again here would be a second, drift-prone copy of that rule.
 	if groups.Under(abs, home) {
 		return abs, nil
 	}
@@ -420,19 +424,6 @@ func absoluteCwd(cwd string) (string, error) {
 		return "", rpc.NewError(rpc.CodeInvalidParams, "cwd is not a usable path: "+cwd, "")
 	}
 	return groups.Canonical(abs), nil
-}
-
-// homeDir is the user's home with any symlinks resolved, and whether one could
-// be resolved at all.
-func homeDir() (string, bool) {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return "", false
-	}
-	if resolved, err := filepath.EvalSymlinks(home); err == nil {
-		return resolved, true
-	}
-	return home, true
 }
 
 // row renders one live run for `runs.list`: what the registry knows about it,

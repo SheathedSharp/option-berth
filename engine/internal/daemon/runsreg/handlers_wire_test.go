@@ -109,6 +109,79 @@ func TestCheckCwdReportsAnUnavailableWorkingDirectory(t *testing.T) {
 	}
 }
 
+// TestCheckCwdKeepsHomeBoundaryWhenLookupNeedsFallbacks covers the home
+// lookups that are not the happy path: no home at all, a home directory that
+// does not exist, and a home reached through a symlink whose two spellings name
+// the same directory.
+//
+// With no home the rule cannot be applied and the directory is allowed, which
+// is the documented baseline rather than a hole. The other two cases must still
+// answer inside and outside correctly, and the symlinked case pins that the
+// comparison is made between real paths: an alias and its target are one
+// directory, so a run named through either spelling is inside the same home.
+func TestCheckCwdKeepsHomeBoundaryWhenLookupNeedsFallbacks(t *testing.T) {
+	inside := func(t *testing.T, cwd string) {
+		t.Helper()
+		got, err := CheckCwd(cwd, false)
+		if err != nil || !filepath.IsAbs(got) {
+			t.Fatalf("inside %q = %q, %v", cwd, got, err)
+		}
+	}
+	outside := func(t *testing.T, cwd string) {
+		t.Helper()
+		_, err := CheckCwd(cwd, false)
+		var failure *rpc.Error
+		if !errors.As(err, &failure) || failure.Code != rpc.CodeOutsideHome {
+			t.Fatalf("outside %q = %v, want outside_home", cwd, err)
+		}
+	}
+
+	t.Run("home unavailable", func(t *testing.T) {
+		t.Setenv("HOME", "")
+		t.Setenv("USERPROFILE", "")
+		inside(t, t.TempDir())
+	})
+
+	t.Run("home not on disk", func(t *testing.T) {
+		home := filepath.Join(t.TempDir(), "missing-home")
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
+		inside(t, filepath.Join(home, "worktree"))
+		outside(t, t.TempDir())
+	})
+
+	t.Run("symlink home", func(t *testing.T) {
+		root := t.TempDir()
+		real := filepath.Join(root, "real")
+		alias := filepath.Join(root, "alias")
+		if err := os.Mkdir(real, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(real, alias); err != nil {
+			t.Skipf("symlink fixture unavailable: %v", err)
+		}
+		cwd := filepath.Join(real, "project")
+		if err := os.Mkdir(cwd, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("HOME", alias)
+		t.Setenv("USERPROFILE", alias)
+
+		inside(t, cwd)
+		inside(t, filepath.Join(alias, "project"))
+		outside(t, t.TempDir())
+
+		// The resolved answer is the real directory, not the alias: both
+		// spellings have to come out as one path, or later comparisons of two
+		// runs in the same directory would disagree.
+		got, err := CheckCwd(filepath.Join(alias, "project"), false)
+		want, resolveErr := filepath.EvalSymlinks(cwd)
+		if resolveErr != nil || err != nil || got != want {
+			t.Fatalf("canonical cwd=%q,%v want=%q,%v", got, err, want, resolveErr)
+		}
+	})
+}
+
 // The home rule is the daemon's own boundary, so it is checked against the
 // environment it runs in: inside is allowed, outside is refused, and the
 // refusal is the caller's to lift.
