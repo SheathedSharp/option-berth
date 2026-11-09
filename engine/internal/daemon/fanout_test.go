@@ -14,6 +14,62 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
+// TestUnsubscribeForgetsTheWholeViewAndStopsPublication is the cancellation
+// as a state machine rather than one field: a connection first holds a real
+// subscription (events, both include selectors and a workspace relation), is
+// then cancelled, and afterwards receives nothing from either publication path.
+//
+// The view check covers every part of the stored selection at once, because a
+// cancel that left one of them set is a different bug depending on which: a
+// retained `events` keeps the writer waking for frames it must not send, a
+// retained include set keeps the machine-wide scan collecting stats and health
+// for nobody, and a retained scope goes on contributing selectors that other
+// workspace members union into their own view. The workspace assertion is the
+// peer-visible half of the same fact.
+func TestUnsubscribeForgetsTheWholeViewAndStopsPublication(t *testing.T) {
+	loop := cachedGroups(t)
+	s := New(Options{Socket: "/test/unsubscribe-complete", Version: "test", Scanner: loop})
+	t.Cleanup(s.closeStore)
+	c := newConn(1, s, nil)
+	s.registerConn(c)
+
+	prev := loop.Cached()
+	if len(prev.Groups) == 0 || prev.Groups[0].RootDir == nil {
+		t.Fatal("fixture has no worktree")
+	}
+	scope := state.Scope{Worktrees: []string{*prev.Groups[0].RootDir}, Workspace: "cancel-fixture"}
+	if err := s.subscribe(c, json.RawMessage("1"), scanner.Include{Stats: true, Health: true}, true, scope, 0); err != nil {
+		t.Fatal(err)
+	}
+	if !c.subscribed || !c.events || !s.workspaceAvailable(scope.Workspace) {
+		t.Fatal("fixture did not establish a real event/workspace subscription")
+	}
+	drain(c)
+
+	s.unsubscribe(c)
+	if c.subscribed || c.events || c.include != (scanner.Include{}) || !c.scope.Empty() {
+		t.Fatalf("cancelled view retained state: subscribed=%v events=%v include=%+v scope=%+v",
+			c.subscribed, c.events, c.include, c.scope)
+	}
+	if s.workspaceAvailable(scope.Workspace) {
+		t.Fatal("cancelled workspace still has a recipient")
+	}
+
+	// Both publication paths are exercised after the cancel: a scan transition
+	// and a standalone broadcast event. Either one reaching this connection
+	// would mean the cancel only changed the counters and left the fan-out
+	// still addressing it.
+	drain(c)
+	next := prev
+	next.Seq++
+	next.Groups = []state.Group{{Name: "new-view", Repo: "new"}}
+	s.publish(prev, next, nil)
+	s.BroadcastEvent(state.Event{Kind: "cancelled-probe", At: "now"})
+	if frames := drain(c); len(frames) != 0 {
+		t.Fatalf("cancelled view received %d later frames", len(frames))
+	}
+}
+
 // unencodable fails json.Marshal on every field, which is the one thing a
 // state.changed payload from this daemon cannot do. It stands in for an encoder
 // fault so the fan-out's handling of one can be seen without a payload shape
