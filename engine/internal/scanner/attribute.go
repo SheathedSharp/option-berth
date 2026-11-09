@@ -255,29 +255,12 @@ func (l *Loop) seedRoots(st Store) {
 	complete := true
 	var discovered []string
 	for _, root := range roots {
-		state, statErr := classifyRoot(root)
-		switch state {
-		case rootGone:
-			// The root is gone, but its `${worktree}` identity is not: a
-			// database or data directory built from that token may still be on
-			// disk. Record the pair without a group name — the manifest that
-			// would name the group is gone too — and keep the row after the
-			// root is forgotten.
-			l.recordIdentityRoot(st, root)
-			if err := st.RemoveRoot(root); err != nil {
-				complete = false
-				l.opts.Logger.Warn("forgetting a vanished oberth.yaml root", "dir", root, "error", err)
-			} else {
-				delete(l.attr.roots, root)
-			}
-		case rootUnreadable:
+		found, ok := l.reconcileRoot(st, root)
+		if !ok {
 			complete = false
-			l.opts.Logger.Warn("reading oberth.yaml root; keeping its record", "dir", root, "error", statErr)
-		case rootPresent:
-			if !l.attr.roots[root] {
-				discovered = append(discovered, root)
-				l.attr.roots[root] = true
-			}
+		}
+		if found != "" {
+			discovered = append(discovered, found)
 		}
 	}
 	if len(discovered) > 0 {
@@ -288,19 +271,63 @@ func (l *Loop) seedRoots(st Store) {
 	l.attr.seeded = complete
 }
 
+// reconcileRoot applies one stored root. The three cases are the root's
+// presence — gone, unreadable, or still there — and stay one switch: each
+// case is that fact, not a separate job. A vanished root keeps the identity
+// a database may still be named from, then forgets the path.
+func (l *Loop) reconcileRoot(st Store, root string) (discovered string, complete bool) {
+	presence, statErr := classifyRoot(root)
+	complete = true
+	switch presence {
+	case rootGone:
+		complete = l.forgetVanishedRoot(st, root)
+	case rootUnreadable:
+		complete = false
+		l.opts.Logger.Warn("reading oberth.yaml root; keeping its record", "dir", root, "error", statErr)
+	case rootPresent:
+		// The acknowledgements are keyed by the canonical path: the store may
+		// hold an older spelling of the same directory (/var against
+		// /private/var on macOS), and that must not look like a new root.
+		key := groups.Canonical(root)
+		if !l.attr.roots[key] {
+			discovered = key
+			l.attr.roots[key] = true
+		}
+	}
+	return discovered, complete
+}
+
+func (l *Loop) forgetVanishedRoot(st Store, root string) bool {
+	// The root is gone, but its ${worktree} identity is not: a database or
+	// data directory built from that token may still be on disk. Record the
+	// pair without a group name — the manifest that would name the group is
+	// gone too — and keep the row after the root is forgotten.
+	l.recordIdentityRoot(st, root)
+	if err := st.RemoveRoot(root); err != nil {
+		l.opts.Logger.Warn("forgetting a vanished oberth.yaml root", "dir", root, "error", err)
+		return false
+	}
+	delete(l.attr.roots, groups.Canonical(root))
+	return true
+}
+
 // seedDiscovered reloads the roots that were not seen before and writes the
 // identity of every checkout that now has a manifest.
 func (l *Loop) seedDiscovered(st Store, discovered []string) {
 	// Retain explicit roots even before they have a manifest; a silent project
 	// must become visible when its first declaration is created.
 	l.attr.index.Reload(discovered)
+	// A stored root and the index's config directory can spell the same
+	// directory differently — a /var entry against the canonical /private/var
+	// on macOS is enough — so the membership test compares canonical paths, not
+	// the strings the store happened to keep.
 	watched := make(map[string]bool, len(discovered))
 	for _, dir := range discovered {
-		watched[dir] = true
+		watched[groups.Canonical(dir)] = true
 	}
 	var seeded []*groups.Config
 	for _, cfg := range l.attr.index.Configs() {
-		if cfg != nil && watched[cfg.Dir] {
+		if cfg != nil && watched[groups.Canonical(cfg.Dir)] {
 			seeded = append(seeded, cfg)
 		}
 	}
@@ -480,9 +507,9 @@ func historyRow(ev state.Event, at time.Time) (store.HistoryEvent, bool) {
 		Port:        p.Port,
 		PID:         p.PID,
 		DisplayName: p.DisplayName,
-		Group:       deref(p.Group),
+		Group:       stringValue(p.Group),
 		Bind:        p.BindAddress,
-		ProjectRoot: deref(p.ProjectRoot),
+		ProjectRoot: stringValue(p.ProjectRoot),
 		Command:     p.Command,
 	}, true
 }
@@ -499,11 +526,4 @@ func eventTime(at string, fallback time.Time) time.Time {
 		return t
 	}
 	return fallback
-}
-
-func deref(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
 }

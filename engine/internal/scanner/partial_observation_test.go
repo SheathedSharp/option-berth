@@ -104,3 +104,38 @@ func TestRecheckedHealthyObservationPublishesNothing(t *testing.T) {
 		t.Fatal("the previous partial verdict was not carried into prev")
 	}
 }
+
+// A collector that names itself and still returns partial rows publishes the
+// rows it read together with its coverage sentence. The sentence is the
+// stronger claim — absence from that table is unknown, not free — so it wins
+// over the plain partial verdict.
+func TestNarrowPartialRowsKeepTheCoverageVerdict(t *testing.T) {
+	partial := &ports.ObservationError{
+		Code:    ports.CodeObservationIncomplete,
+		Detail:  "lsof: unreadable rows: line 4",
+		Hint:    "run `oberth doctor --only listener_observation`",
+		Partial: true,
+		Rows:    []ports.ListeningPort{{Port: 8123, PID: 42, BindAddress: "127.0.0.1"}},
+	}
+	l := New(Options{
+		DaemonVersion: "test",
+		ScanSource: func(context.Context, Include) ([]ports.ListeningPort, string, error) {
+			return partial.Rows, "lsof", partial
+		},
+	})
+
+	snap, err := l.Snapshot(Include{})
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(snap.Ports) != 1 || snap.Ports[0].Port != 8123 {
+		t.Fatalf("ports = %+v, want the readable row", snap.Ports)
+	}
+	got := snap.Observation
+	if got == nil || got.State != state.ObservationObservable || got.Source != "lsof" {
+		t.Fatalf("observation = %+v, want the narrow coverage verdict", got)
+	}
+	if got.Detail != ports.NarrowSourceDetail("lsof") {
+		t.Fatalf("observation detail = %q, want the coverage sentence", got.Detail)
+	}
+}

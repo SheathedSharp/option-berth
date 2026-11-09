@@ -18,53 +18,65 @@ import (
 // service has no live process to sample. A missing sample stays nil: unknown
 // is not zero.
 func FillServiceStatsContext(ctx context.Context, groups []state.Group, sample func([]int) map[int]ports.ProcSample) {
-	pids := make([]int, 0, len(groups))
-	for i := range groups {
-		for j := range groups[i].Services {
-			svc := &groups[i].Services[j]
+	pids := unsampledServicePIDs(groups)
+	if len(pids) == 0 || ctx.Err() != nil {
+		return
+	}
+	samples := sampleServiceProcs(ctx, pids, sample)
+	if len(samples) == 0 || ctx.Err() != nil {
+		return
+	}
+	applyServiceSamples(groups, samples)
+}
+
+func unsampledServicePIDs(groupRows []state.Group) []int {
+	pids := make([]int, 0, len(groupRows))
+	for i := range groupRows {
+		for j := range groupRows[i].Services {
+			svc := &groupRows[i].Services[j]
 			if !needsProcessSample(svc) {
 				continue
 			}
 			pids = append(pids, *svc.PID)
 		}
 	}
-	if len(pids) == 0 || ctx.Err() != nil {
-		return
-	}
+	return pids
+}
 
-	var samples map[int]ports.ProcSample
+func sampleServiceProcs(ctx context.Context, pids []int, sample func([]int) map[int]ports.ProcSample) map[int]ports.ProcSample {
 	if sample != nil {
-		samples = sample(pids)
-	} else {
-		samples = ports.SampleProcStatsContext(ctx, pids)
+		return sample(pids)
 	}
-	if len(samples) == 0 || ctx.Err() != nil {
+	return ports.SampleProcStatsContext(ctx, pids)
+}
+
+func applyServiceSamples(groupRows []state.Group, samples map[int]ports.ProcSample) {
+	for i := range groupRows {
+		for j := range groupRows[i].Services {
+			writeServiceSample(&groupRows[i].Services[j], samples)
+		}
+	}
+}
+
+func writeServiceSample(svc *state.Service, samples map[int]ports.ProcSample) {
+	if !needsProcessSample(svc) {
 		return
 	}
-
-	for i := range groups {
-		for j := range groups[i].Services {
-			svc := &groups[i].Services[j]
-			if !needsProcessSample(svc) {
-				continue
-			}
-			s, ok := samples[*svc.PID]
-			if !ok {
-				continue
-			}
-			// A recycled pid must not inherit a recorded run's identity. The
-			// sample carries the process start; the run carries its own.
-			if !sameProcessStart(valueOrEmpty(svc.StartedAt), s.StartedAt) {
-				continue
-			}
-			svc.Stats = &state.Stats{
-				CPUPercent:  s.CPUPercent,
-				MemoryRSS:   s.MemoryRSS,
-				ThreadCount: s.ThreadCount,
-				Uptime:      s.Uptime,
-				State:       s.State,
-			}
-		}
+	s, ok := samples[*svc.PID]
+	if !ok {
+		return
+	}
+	// A recycled pid must not inherit a recorded run's identity. The sample
+	// carries the process start; the run carries its own.
+	if !sameProcessStart(stringValue(svc.StartedAt), s.StartedAt) {
+		return
+	}
+	svc.Stats = &state.Stats{
+		CPUPercent:  s.CPUPercent,
+		MemoryRSS:   s.MemoryRSS,
+		ThreadCount: s.ThreadCount,
+		Uptime:      s.Uptime,
+		State:       s.State,
 	}
 }
 
@@ -97,11 +109,4 @@ func sameProcessStart(recorded, sampled string) bool {
 		delta = -delta
 	}
 	return delta <= ports.StartTolerance
-}
-
-func valueOrEmpty(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
 }

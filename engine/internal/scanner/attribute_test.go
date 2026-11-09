@@ -1,6 +1,8 @@
 package scanner
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -41,6 +43,11 @@ func TestScanWithoutAStoreLeavesNamesAlone(t *testing.T) {
 	snap, err := l.Snapshot(Include{})
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
+	}
+	// The row is the precondition for reading its fields: a scan that published
+	// nothing is an assertion failure here, not an index panic three lines on.
+	if len(snap.Ports) != 1 {
+		t.Fatalf("ports = %+v, want the scanned row", snap.Ports)
 	}
 	if snap.Ports[0].Name != nil {
 		t.Errorf("name = %v, want null with no store", *snap.Ports[0].Name)
@@ -257,4 +264,33 @@ func resolved(t *testing.T, dir string) string {
 		abs = real
 	}
 	return filepath.Clean(abs)
+}
+
+// cancellingRoots withdraws the caller while the store is answering, which is
+// the boundary the attribution stages check between each other.
+type cancellingRoots struct {
+	identityLedger
+	cancel func()
+}
+
+func (c *cancellingRoots) Roots() ([]string, error) {
+	c.cancel()
+	return nil, nil
+}
+
+// TestAttributionStopsBetweenStagesWhenTheCallerLeaves: a scan that is
+// withdrawn while the store is answering must not go on to attribute, probe or
+// publish. The check between stages is what makes cancellation not success.
+func TestAttributionStopsBetweenStagesWhenTheCallerLeaves(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	l := New(Options{Store: &cancellingRoots{cancel: cancel}})
+
+	rows, groups, err := l.attributeContext(ctx, []ports.ListeningPort{{Port: 8123, PID: 42}}, false)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want the caller's cancellation", err)
+	}
+	if rows != nil || groups != nil {
+		t.Fatalf("rows=%v groups=%v, want nothing attributed for a withdrawn caller", rows, groups)
+	}
 }

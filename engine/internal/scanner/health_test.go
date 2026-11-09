@@ -1,6 +1,8 @@
 package scanner
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -273,5 +275,35 @@ func TestGroupPortMapIncludesMachineRefs(t *testing.T) {
 		if got := ports[name]; got != want {
 			t.Errorf("groupPortMap[%s] = %d, want %d", name, got, want)
 		}
+	}
+}
+
+// TestAConfiguredProbeThatLeavesAbortsTheScan: a configured probe runs inside
+// the scan. When the caller leaves during the probe, the round reports the
+// withdrawal and the scan publishes nothing — a cancelled probe is not a
+// health result.
+func TestAConfiguredProbeThatLeavesAbortsTheScan(t *testing.T) {
+	dir := resolved(t, t.TempDir())
+	port := 18088
+	writeConfig(t, dir, "name: probed\nservices:\n  - name: api\n    port: 18088\n    health: /healthz\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	l := New(Options{
+		DaemonVersion: "test",
+		Scan: func(Include) ([]ports.ListeningPort, error) {
+			return []ports.ListeningPort{{Port: port, BindAddress: "127.0.0.1", PID: 4242, Cwd: dir}}, nil
+		},
+		ProbeContext: func(context.Context, string, int, string, time.Duration) ports.HealthResult {
+			cancel()
+			return ports.HealthResult{Status: "healthy"}
+		},
+	})
+
+	snap, err := l.SnapshotAllContext(ctx, Include{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want the caller's cancellation", err)
+	}
+	if len(snap.Ports) != 0 || len(l.Cached().Ports) != 0 {
+		t.Fatalf("published %+v, want no snapshot when the probe was withdrawn", snap.Ports)
 	}
 }

@@ -26,6 +26,10 @@ func sameRuntime(a, b state.Port) bool {
 	return run(a) == run(b)
 }
 
+// stringValue is the package's one reading of an optional string: a nil
+// pointer is the empty string, and a present pointer is its text. History
+// rows, runtime identity and process-start checks all use this reading so a
+// missing field cannot disagree with itself across those paths.
 func stringValue(s *string) string {
 	if s == nil {
 		return ""

@@ -337,3 +337,90 @@ func TestStatsTickRunsWhileAScanIsInFlight(t *testing.T) {
 	close(release)
 	<-scanDone
 }
+
+// TestStatsSkipRowsThatAreNotThisMachines: a container's numbers come from
+// Docker and a remote row's pid belongs to another host, so the local process
+// sampler must not be asked about either.
+func TestStatsSkipRowsThatAreNotThisMachines(t *testing.T) {
+	pp := []state.Port{
+		{Port: 1, PID: 10, Host: state.LocalhostName, Stats: &state.Stats{}},
+		{Port: 2, PID: 20, Host: "build-host", Stats: &state.Stats{}},
+		{Port: 3, PID: 30, Host: state.LocalhostName, Type: state.TypeDocker, Stats: &state.Stats{}},
+		{Port: 4, PID: 0, Host: state.LocalhostName, Stats: &state.Stats{}},
+	}
+	if got := statsPIDs(pp); len(got) != 1 || got[0] != 10 {
+		t.Fatalf("pids = %v, want only the local non-container pid", got)
+	}
+}
+
+// TestServiceWithoutALiveProcessKeepsNoSample: a stopped service has no live
+// process, and a running one without a pid names none either. Neither gets a
+// sample: unknown stays nil rather than becoming zero.
+func TestServiceWithoutALiveProcessKeepsNoSample(t *testing.T) {
+	pid := 42
+	samples := map[int]ports.ProcSample{42: {CPUPercent: 5}}
+	cases := []struct {
+		name string
+		svc  state.Service
+	}{
+		{"stopped", state.Service{Name: "worker", Running: false, PID: &pid}},
+		{"running without a pid", state.Service{Name: "worker", Running: true}},
+	}
+	for _, tc := range cases {
+		svc := tc.svc
+		if got := sampledServiceStats(&svc, nil, samples); got != nil {
+			t.Fatalf("%s: stats = %+v, want nil", tc.name, got)
+		}
+	}
+}
+
+// TestAMissingSampleLeavesTheServiceUntouched: when the sampler answers for
+// other pids only, the service keeps its previous (nil) sample. A vanished
+// process is dropped from the sample, not zeroed on the wire.
+func TestAMissingSampleLeavesTheServiceUntouched(t *testing.T) {
+	pid := 42
+	groups := []state.Group{{Services: []state.Service{{Name: "worker", Running: true, PID: &pid}}}}
+	writeServiceSample(&groups[0].Services[0], map[int]ports.ProcSample{99: {CPUPercent: 5}})
+	if groups[0].Services[0].Stats != nil {
+		t.Fatalf("stats = %+v, want nil when the sample has nothing for the pid", groups[0].Services[0].Stats)
+	}
+}
+
+// TestAStaleStatsSampleIsNotPublished: a sample that was taken before a newer
+// full-stats scan committed belongs to the older generation. It must not be
+// merged into the newer rows and must not reach the publisher; a live probe of
+// the branch is what keeps the generation guard honest.
+func TestAStaleStatsSampleIsNotPublished(t *testing.T) {
+	var publishes atomic.Int32
+	var advance sync.Once
+	var loop *Loop
+	loop = New(Options{
+		DaemonVersion: "test",
+		Scan: func(Include) ([]ports.ListeningPort, error) {
+			return []ports.ListeningPort{{Port: 4000, PID: 42, Process: "worker", CPUPercent: 1, MemoryRSS: 100}}, nil
+		},
+		Publish: func(_, _ state.Snapshot, _ []state.Event) { publishes.Add(1) },
+		SampleStats: func([]int) map[int]ports.ProcSample {
+			// While this sample is being taken, a newer full-stats scan commits.
+			advance.Do(func() { loop.scanAndPublish(Include{Stats: true}) })
+			return map[int]ports.ProcSample{42: {CPUPercent: 99, MemoryRSS: 999, Uptime: "1s"}}
+		},
+	})
+
+	// A full-stats scan seeds the snapshot and the stats generation.
+	loop.scanAndPublish(Include{Stats: true})
+	publishes.Store(0)
+
+	loop.sampleStats(Include{Stats: true})
+
+	if got := publishes.Load(); got != 0 {
+		t.Fatalf("%d publishes, want none: a stale sample reached the wire", got)
+	}
+	snap := loop.Cached()
+	if len(snap.Ports) != 1 || snap.Ports[0].Stats == nil {
+		t.Fatalf("snapshot = %+v, want the scan's row with its stats", snap.Ports)
+	}
+	if got := snap.Ports[0].Stats.CPUPercent; got != 1 {
+		t.Fatalf("cpu = %v, want the scan's 1: a stale sample was merged", got)
+	}
+}

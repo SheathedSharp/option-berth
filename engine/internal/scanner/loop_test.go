@@ -16,6 +16,35 @@ import (
 // scanAndPublish, Rescan, Snapshot, Cached, Status — and checks the fact that
 // caller would see; none of them reaches into the commit internals.
 
+// TestCadenceConstantsArePinned pins the cadence contract in literals. The
+// other cadence tests compare against the constants themselves, so a constant
+// that moved would move its own expectation with it; these are the values
+// `daemon.status` and the spec promise.
+func TestCadenceConstantsArePinned(t *testing.T) {
+	cases := []struct {
+		name string
+		got  time.Duration
+		want time.Duration
+	}{
+		{"BaseInterval", BaseInterval, 2 * time.Second},
+		{"MinScanInterval", MinScanInterval, time.Second},
+		{"MaxInterval", MaxInterval, 10 * time.Second},
+		{"SubscribedMaxInterval", SubscribedMaxInterval, 5 * time.Second},
+		{"CacheTTL", CacheTTL, 2 * time.Second},
+		{"StatsInterval", StatsInterval, time.Second},
+		{"MinStatsInterval", MinStatsInterval, 250 * time.Millisecond},
+		{"HealthCadence", HealthCadence, 10 * time.Second},
+		{"HealthTimeout", HealthTimeout, 2 * time.Second},
+		{"HealthBudget", HealthBudget, 4 * time.Second},
+		{"ConfiguredHealthBudget", ConfiguredHealthBudget, 2 * time.Second},
+	}
+	for _, tc := range cases {
+		if tc.got != tc.want {
+			t.Errorf("%s = %s, want %s", tc.name, tc.got, tc.want)
+		}
+	}
+}
+
 func fixedRows(rows ...ports.ListeningPort) func(Include) ([]ports.ListeningPort, error) {
 	return func(Include) ([]ports.ListeningPort, error) {
 		return append([]ports.ListeningPort(nil), rows...), nil

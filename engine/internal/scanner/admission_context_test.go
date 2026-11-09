@@ -30,23 +30,91 @@ func (c *admissionWitness) Done() <-chan struct{} {
 	return c.Context.Done()
 }
 
+// lockWithin takes the gate with a deadline on the test's own goroutine. A
+// gate that never admits its holder is a liveness failure, and it has to be
+// reported in bounded time instead of hanging the whole test binary.
+func lockWithin(t *testing.T, m *contextMutex) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { defer close(done); m.Lock() }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("the gate never admitted its holder")
+	}
+}
+
+// releaseWithin is lockWithin's other half: a token that is never handed back
+// fails the test instead of blocking it.
+func releaseWithin(t *testing.T, release func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { defer close(done); release() }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Error("the gate never released its token")
+	}
+}
+
+// lockContextWithin keeps a direct admission bounded for the same reason: the
+// caller under test may never be woken.
+func lockContextWithin(t *testing.T, m *contextMutex, ctx context.Context) error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- m.LockContext(ctx) }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(time.Second):
+		t.Fatal("admission never returned")
+		return nil
+	}
+}
+
+// rescanWithin runs a forced scan off the test goroutine and fails if it does
+// not come back: a scan that takes the RPC gate and never releases it would
+// otherwise hang the test binary instead of reporting the liveness failure.
+func rescanWithin(t *testing.T, l *Loop, include Include) state.Snapshot {
+	t.Helper()
+	type result struct {
+		snap state.Snapshot
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		snap, err := l.Rescan(include)
+		done <- result{snap: snap, err: err}
+	}()
+	select {
+	case r := <-done:
+		if r.err != nil {
+			t.Fatalf("Rescan: %v", r.err)
+		}
+		return r.snap
+	case <-time.After(time.Second):
+		t.Fatal("Rescan did not return")
+		return state.Snapshot{}
+	}
+}
+
 func cancelAtAdmission(t *testing.T, m *contextMutex, armNow bool, run func(*admissionWitness) error) {
 	t.Helper()
 	parent, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	ctx := &admissionWitness{Context: parent, entered: make(chan struct{})}
 	ctx.armed.Store(armNow)
-	m.Lock()
+	lockWithin(t, m)
 	var once sync.Once
 	release := func() { once.Do(m.Unlock) }
-	defer release()
+	defer releaseWithin(t, release)
 	done := make(chan error, 1)
 	go func() { done <- run(ctx) }()
 	select {
 	case <-ctx.entered:
 	case <-time.After(time.Second):
 		cancel()
-		release()
+		releaseWithin(t, release)
 		select {
 		case <-done:
 		case <-time.After(time.Second):
@@ -61,7 +129,7 @@ func cancelAtAdmission(t *testing.T, m *contextMutex, armNow bool, run func(*adm
 			t.Fatalf("admission error = %v", err)
 		}
 	case <-time.After(time.Second):
-		release()
+		releaseWithin(t, release)
 		select {
 		case <-done:
 		case <-time.After(time.Second):
@@ -79,13 +147,13 @@ func TestContextMutexCancelledAdmissionRetainsOwner(t *testing.T) {
 	cancelAtAdmission(t, &m, true, func(ctx *admissionWitness) error {
 		return m.LockContext(ctx)
 	})
-	if err := m.LockContext(context.Background()); err != nil {
+	if err := lockContextWithin(t, &m, context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	m.Unlock()
+	releaseWithin(t, m.Unlock)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := m.LockContext(ctx); !errors.Is(err, context.Canceled) || len(m.gate) != 0 {
+	if err := lockContextWithin(t, &m, ctx); !errors.Is(err, context.Canceled) || len(m.gate) != 0 {
 		t.Fatalf("pre-cancelled admission: err=%v tokens=%d", err, len(m.gate))
 	}
 }
@@ -145,9 +213,7 @@ func TestStatsAdmissionCancelsBeforeSamplingAndCommit(t *testing.T) {
 		l := New(Options{Scan: func(Include) ([]ports.ListeningPort, error) {
 			return []ports.ListeningPort{{Port: 4000, PID: 42, MemoryRSS: 100}}, nil
 		}})
-		if _, err := l.Rescan(Include{Stats: true}); err != nil {
-			t.Fatal(err)
-		}
+		rescanWithin(t, l, Include{Stats: true})
 		before := l.Cached()
 		var calls atomic.Int32
 		m := &l.statsMu
@@ -177,9 +243,7 @@ func TestRepublishCancelledCommitInvalidatesSavedWrite(t *testing.T) {
 	l := New(Options{Scan: func(Include) ([]ports.ListeningPort, error) {
 		return []ports.ListeningPort{{Port: 4000, PID: 42}}, nil
 	}})
-	if _, err := l.Rescan(Include{}); err != nil {
-		t.Fatal(err)
-	}
+	rescanWithin(t, l, Include{})
 	before, revision := l.Cached(), l.refreshRequested
 	cancelAtAdmission(t, &l.commitMu, false, func(ctx *admissionWitness) error {
 		l.SetSessions(func([]state.Port) []state.SessionRecord {
