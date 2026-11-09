@@ -421,6 +421,12 @@ func TestRememberSessionWarnsOnlyWhenTheWriteFails(t *testing.T) {
 // carries an ok mutation and the new run's id, and the daemon reaps the process
 // into exit history. The test waits for the reaper before it lets the registry
 // be restored, so the reaping goroutine cannot race the cleanup.
+//
+// The exit the reaper recorded is checked for the facts only a detached spawn
+// can produce: a natural zero exit is "exited" rather than a stop option-berth
+// asked for, and the log the child's output went to is a real file. Removing
+// the detach at the spawn entry keeps the run reaped and the id intact — the
+// old assertions still pass — so this is the shape that tells the two apart.
 func TestHandleSpawnStartsAndReapsARun(t *testing.T) {
 	resetRegistry(t)
 	rt := handlerRuntime(t)
@@ -448,6 +454,20 @@ func TestHandleSpawnStartsAndReapsARun(t *testing.T) {
 	for time.Now().Before(deadline) {
 		for _, exit := range Default.Exits() {
 			if exit.ID == spawned.RunID {
+				// The process ended on its own with success, which is what
+				// "exited" means; a stop the daemon initiated is a different
+				// reason and would hide a spawn that never detached.
+				if exit.Code != 0 || exit.Reason != ReasonExited {
+					t.Fatalf("natural exit = %+v", exit)
+				}
+				// A detached run has no caller to hold its output, so the
+				// registry's own record has to name the file the child wrote.
+				if exit.LogPath == "" {
+					t.Fatal("detached run has no observed log path")
+				}
+				if info, err := os.Stat(exit.LogPath); err != nil || !info.Mode().IsRegular() {
+					t.Fatalf("detached log %q: stat=%v error=%v", exit.LogPath, info, err)
+				}
 				return
 			}
 		}
