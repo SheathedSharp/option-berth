@@ -104,9 +104,24 @@ func handleGroupsInit(_ context.Context, req *Request) (any, error) {
 		return nil, err
 	}
 
-	root, err := initRoot(p.RootDir)
+	plan, err := planInit(p, req.Runtime)
 	if err != nil {
 		return nil, err
+	}
+	if err := commitInitPlan(plan, p, req); err != nil {
+		return nil, err
+	}
+	return plan.result(), nil
+}
+
+// planInit resolves the caller's root and target file, reads the snapshot the
+// proposal is built from, and renders the bytes this call would write. It is
+// the read half of `groups.init`: nothing here touches the config file, so a
+// preview and a write start from exactly the same plan.
+func planInit(p rpc.GroupsInitParams, rt *Runtime) (initPlan, error) {
+	root, err := initRoot(p.RootDir)
+	if err != nil {
+		return initPlan{}, err
 	}
 	// A project that already has a config, under any accepted filename, is
 	// merged into or overwritten in place; only a project without one gets a
@@ -115,33 +130,32 @@ func handleGroupsInit(_ context.Context, req *Request) (any, error) {
 	// The daemon writes exactly one filename on a client's say-so, and this
 	// check is made here too rather than trusted to the join above.
 	if err := checkConfigPath(path); err != nil {
-		return nil, err
+		return initPlan{}, err
 	}
-	snap, err := initSnapshot(req.Runtime)
+	snap, err := initSnapshot(rt)
 	if err != nil {
-		return nil, err
+		return initPlan{}, err
 	}
+	return buildInitPlan(p, root, path, snap)
+}
 
-	plan, err := buildInitPlan(p, root, path, snap)
-	if err != nil {
-		return nil, err
-	}
+// commitInitPlan is the write half: a preview returns without touching disk; a
+// write refuses to replace a file the caller did not say to overwrite, then
+// puts the planned bytes down and republishes.
+func commitInitPlan(plan initPlan, p rpc.GroupsInitParams, req *Request) error {
 	if !p.Write {
 		// The default is a preview: the caller gets the bytes a write would
 		// put on disk and decides, and nothing has been written yet.
-		return plan.result(), nil
+		return nil
 	}
 	// A merge plan never carries `existing`: it appends to the file rather than
 	// replacing it, so the overwrite rule is the plain path's alone.
 	if plan.existing && !p.Force {
-		return nil, rpc.NewError(rpc.CodeInvalidParams, path+" already exists",
+		return rpc.NewError(rpc.CodeInvalidParams, plan.path+" already exists",
 			`pass {"force": true} to overwrite it or {"merge": true} to append to it, `+
 				"or read it with groups.config.get")
 	}
-	if err := plan.write(req); err != nil {
-		return nil, err
-	}
-	return plan.result(), nil
+	return plan.write(req)
 }
 
 // buildInitPlan turns the call and the snapshot into the file it would write.
