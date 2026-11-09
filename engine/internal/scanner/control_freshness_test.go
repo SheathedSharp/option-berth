@@ -71,12 +71,20 @@ func TestRecoveryBetweenFailureAndNotificationDoesNotEmitStaleError(t *testing.T
 	}})
 	done := make(chan struct{})
 	go func() { defer close(done); l.scanAndPublish(Include{}) }()
-	<-handler.entered
-	_, err := l.Rescan(Include{})
+	// The barrier is the failing scan's warning. A scan that never reaches it
+	// is a liveness failure and must not park the test until go test times out.
+	select {
+	case <-handler.entered:
+	case <-time.After(time.Second):
+		close(handler.release)
+		t.Fatal("the failing scan never reached its warning")
+	}
+	rescanWithin(t, l, Include{})
 	close(handler.release)
-	<-done
-	if err != nil {
-		t.Fatal(err)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("the blocked scan did not finish after its warning was released")
 	}
 	if reported.Load() != 0 {
 		t.Fatalf("old scan_error arrived after successful recovery: %d", reported.Load())

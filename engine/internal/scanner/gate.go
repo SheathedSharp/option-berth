@@ -20,14 +20,20 @@ func lockContext(ctx context.Context, gate chan struct{}) error {
 	}
 	select {
 	case gate <- struct{}{}:
-		if err := ctx.Err(); err != nil {
-			unlock(gate)
-			return err
-		}
-		return nil
+		return releaseIfGone(ctx, gate)
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// releaseIfGone gives the token back when the caller left during admission.
+// The gate is held only while the caller still owns the call.
+func releaseIfGone(ctx context.Context, gate chan struct{}) error {
+	if err := ctx.Err(); err != nil {
+		unlock(gate)
+		return err
+	}
+	return nil
 }
 
 func lockFor(gate chan struct{}, budget time.Duration) bool {
@@ -42,22 +48,21 @@ func lockForContext(ctx context.Context, gate chan struct{}, budget time.Duratio
 	}
 	select {
 	case gate <- struct{}{}:
-		if err := ctx.Err(); err != nil {
-			unlock(gate)
-			return err
-		}
-		return nil
+		return releaseIfGone(ctx, gate)
 	default:
 	}
+	return waitForGate(ctx, gate, budget)
+}
+
+// waitForGate is the queued half of a budgeted admission. The caller owns
+// one timer. Timeout stays a distinct error from cancellation: a cancelled
+// caller did not spend the budget, and a spent budget is not a cancellation.
+func waitForGate(ctx context.Context, gate chan struct{}, budget time.Duration) error {
 	timer := time.NewTimer(budget)
 	defer timer.Stop()
 	select {
 	case gate <- struct{}{}:
-		if err := ctx.Err(); err != nil {
-			unlock(gate)
-			return err
-		}
-		return nil
+		return releaseIfGone(ctx, gate)
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-timer.C:

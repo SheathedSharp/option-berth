@@ -1,6 +1,8 @@
 package scanner
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
@@ -108,5 +110,29 @@ func TestSessionChangeAlonePublishes(t *testing.T) {
 	}
 	if !snapshotChanged(prev, next, false) {
 		t.Error("a new session did not count as a change")
+	}
+}
+
+// TestASessionBuilderThatLeavesAbortsTheScan: the sessions builder is a seam
+// the daemon installs after the loop exists. A caller withdrawn inside it ends
+// the scan: nothing is attributed, nothing is published, and the error is the
+// caller's own cancellation rather than a stale snapshot.
+func TestASessionBuilderThatLeavesAbortsTheScan(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	l := New(Options{Scan: func(Include) ([]ports.ListeningPort, error) {
+		return []ports.ListeningPort{{Port: 8123, PID: 42, Process: "python3"}}, nil
+	}})
+	l.SetSessions(func([]state.Port) []state.SessionRecord {
+		cancel()
+		return nil
+	})
+
+	snap, err := l.SnapshotAllContext(ctx, Include{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want the caller's cancellation", err)
+	}
+	if len(snap.Ports) != 0 || len(l.Cached().Ports) != 0 {
+		t.Fatalf("published %+v, want no snapshot for a withdrawn scan", snap.Ports)
 	}
 }

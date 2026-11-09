@@ -11,34 +11,31 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// statsRig is a loop whose scan and per-process sampler are fakes, wired for
-// the stats-only tick: the scan reports a fixed port set and the sampler's
-// cpu figure climbs on every call.
+// The stats tick's smoke rig: a loop whose port scan is a fixed row set and
+// whose sampler counts its own calls, so a test can tell a sample from a scan.
+
+type published struct {
+	prev, next state.Snapshot
+}
+
 type statsRig struct {
 	loop *Loop
 
-	mu       sync.Mutex
-	rows     []ports.ListeningPort
-	gonePIDs map[int]bool
-	deltas   []published
+	mu     sync.Mutex
+	rows   []ports.ListeningPort
+	gone   map[int]bool
+	deltas []published
 
-	scans    atomic.Int64
-	samples  atomic.Int64
-	sampleAt atomic.Int64
-	subs     atomic.Int64
-	include  atomic.Bool
-}
-
-// published is one (prev, next) transition the loop handed to its publisher.
-type published struct {
-	prev, next state.Snapshot
-	at         time.Time
+	scans   atomic.Int64
+	samples atomic.Int64
+	subs    atomic.Int64
+	include atomic.Bool
 }
 
 func newStatsRig(t *testing.T) *statsRig {
 	t.Helper()
 	r := &statsRig{
-		gonePIDs: map[int]bool{},
+		gone: map[int]bool{},
 		rows: []ports.ListeningPort{
 			{Port: 3000, BindAddress: "127.0.0.1", PID: 100, Process: "node", CPUPercent: 1, MemoryRSS: 1 << 20, Connections: 7, ThreadCount: 4},
 			{Port: 5173, BindAddress: "127.0.0.1", PID: 200, Process: "vite", CPUPercent: 2, MemoryRSS: 2 << 20, Connections: 3, ThreadCount: 9},
@@ -53,30 +50,26 @@ func newStatsRig(t *testing.T) *statsRig {
 		Publish: func(prev, next state.Snapshot, _ []state.Event) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
-			r.deltas = append(r.deltas, published{prev: prev, next: next, at: time.Now()})
+			r.deltas = append(r.deltas, published{prev: prev, next: next})
 		},
 		Scan: func(Include) ([]ports.ListeningPort, error) {
 			r.scans.Add(1)
 			r.mu.Lock()
 			defer r.mu.Unlock()
-			return append([]ports.ListeningPort{}, r.rows...), nil
+			return append([]ports.ListeningPort(nil), r.rows...), nil
 		},
 		SampleStats: func(pids []int) map[int]ports.ProcSample {
 			n := r.samples.Add(1)
-			r.sampleAt.Store(time.Now().UnixNano())
 			r.mu.Lock()
 			defer r.mu.Unlock()
-			out := map[int]ports.ProcSample{}
+			out := make(map[int]ports.ProcSample, len(pids))
 			for _, pid := range pids {
-				if r.gonePIDs[pid] {
+				if r.gone[pid] {
 					continue
 				}
 				out[pid] = ports.ProcSample{
-					CPUPercent:  float64(n),
-					MemoryRSS:   int64(pid) << 10,
-					ThreadCount: 11,
-					State:       "running",
-					Uptime:      "1s",
+					CPUPercent: float64(n), MemoryRSS: int64(pid) << 10,
+					ThreadCount: 11, State: "running", Uptime: "1s",
 				}
 			}
 			return out
@@ -100,7 +93,6 @@ func (r *statsRig) run(t *testing.T) {
 	})
 }
 
-// subscribe fakes a client connecting with the given include set.
 func (r *statsRig) subscribe(stats bool) {
 	r.include.Store(stats)
 	r.subs.Store(1)
@@ -116,10 +108,9 @@ func (r *statsRig) unsubscribe() {
 func (r *statsRig) published() []published {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]published{}, r.deltas...)
+	return append([]published(nil), r.deltas...)
 }
 
-// waitFor polls until cond holds or the deadline passes.
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -132,87 +123,76 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
-// The sampler is dead weight on a daemon nobody is watching: `oberth list` and
-// `daemon status` go through Snapshot, which wakes the loop, and that must not
-// start a 1 s `ps` on a machine with no subscriber.
+// TestStatsTickParksUntilSomeoneSubscribes: an RPC read wakes the loop, but a
+// daemon nobody watches must not start a per-second process sampler.
 func TestStatsTickParksUntilSomeoneSubscribes(t *testing.T) {
 	r := newStatsRig(t)
 	r.run(t)
 
-	// An RPC read: it scans and wakes, but nobody is subscribed.
 	if _, err := r.loop.Snapshot(Include{}); err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
 	time.Sleep(200 * time.Millisecond)
 	if got := r.samples.Load(); got != 0 {
-		t.Fatalf("the stats sampler ran %d times with no subscribers, want 0", got)
+		t.Fatalf("sampler ran %d times with no subscribers", got)
 	}
 
 	r.subscribe(true)
-	waitFor(t, "the sampler to start on the first subscribe", func() bool {
-		return r.samples.Load() > 0
-	})
+	waitFor(t, "the sampler to start", func() bool { return r.samples.Load() > 0 })
 
 	r.unsubscribe()
-	// Let the tick in flight finish, then check it stops for good.
 	time.Sleep(100 * time.Millisecond)
 	before := r.samples.Load()
 	time.Sleep(250 * time.Millisecond)
 	if after := r.samples.Load(); after != before {
-		t.Errorf("the sampler ran %d more times after the last unsubscribe", after-before)
+		t.Errorf("sampler ran %d more times after the last unsubscribe", after-before)
 	}
 }
 
-// The tick keeps its own cadence: several samples land inside one base scan
-// interval, and the scan is not what produced them.
+// TestStatsTickRunsOnItsOwnCadence: several samples land inside the scan
+// cadence, and the scan is not what produced them.
 func TestStatsTickRunsOnItsOwnCadence(t *testing.T) {
 	r := newStatsRig(t)
 	r.run(t)
 	r.subscribe(true)
 
-	waitFor(t, "four stats samples", func() bool { return r.samples.Load() >= 4 })
+	waitFor(t, "four samples", func() bool { return r.samples.Load() >= 4 })
 	if scans := r.scans.Load(); scans > 3 {
-		t.Errorf("%d port scans while four stats samples were taken; the scan cadence was dragged along", scans)
+		t.Errorf("%d port scans while four samples were taken", scans)
 	}
 }
 
-// A stats tick publishes a delta whose only moving part is `stats`.
-// Everything else that identifies a port is carried through untouched, which
-// makes the delta invisible to a subscriber that did not ask for stats.
+// TestStatsTickNeverResetsTheScanInterval: a stats tick is not a scan, so it
+// neither moves the backoff nor the scan counter.
 func TestStatsTickNeverResetsTheScanInterval(t *testing.T) {
 	r := newStatsRig(t)
-
-	// Back the scan interval off with unchanged scans.
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		r.loop.scanAndPublish(Include{Stats: true})
 	}
 	backedOff := r.loop.Status().IntervalMs
-	if backedOff <= int(BaseInterval/time.Millisecond) {
-		t.Fatalf("interval = %dms, expected the backoff to have grown past %s", backedOff, BaseInterval)
+	if backedOff <= msOf(BaseInterval) {
+		t.Fatalf("interval = %dms, want a backed-off value", backedOff)
 	}
 	scans := r.scans.Load()
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		r.loop.sampleStats(Include{Stats: true})
 	}
-
-	st := r.loop.Status()
-	if st.IntervalMs != backedOff {
-		t.Errorf("the stats tick moved the scan interval: %dms -> %dms", backedOff, st.IntervalMs)
+	if got := r.loop.Status().IntervalMs; got != backedOff {
+		t.Errorf("stats tick moved the scan interval: %dms -> %dms", backedOff, got)
 	}
-	if st.Scans != scans {
-		t.Errorf("scan count = %d, want %d: a stats tick is not a scan", st.Scans, scans)
+	if got := r.loop.Status().Scans; got != scans {
+		t.Errorf("scan count = %d, want %d", got, scans)
 	}
-	if r.scans.Load() != scans {
-		t.Errorf("the stats tick called the OS scan %d times", r.scans.Load()-scans)
+	if got := r.scans.Load(); got != scans {
+		t.Errorf("stats tick called the OS scan %d times", got-scans)
 	}
 }
 
-// Nothing moved, nothing published: an empty delta is never sent (contract
-// §15), and a snapshot nobody was told about does not consume a seq.
+// TestStatsTickSuppressesAnEmptyDelta: nothing moved, so nothing is published
+// and no sequence number is burned.
 func TestStatsTickSuppressesAnEmptyDelta(t *testing.T) {
 	r := newStatsRig(t)
-	// A sampler and a host collector that both answer the same thing forever.
 	fixed := map[int]ports.ProcSample{
 		100: {CPUPercent: 1, MemoryRSS: 1 << 20, ThreadCount: 4, State: "running", Uptime: "1s"},
 		200: {CPUPercent: 2, MemoryRSS: 2 << 20, ThreadCount: 9, State: "running", Uptime: "1s"},
@@ -220,28 +200,24 @@ func TestStatsTickSuppressesAnEmptyDelta(t *testing.T) {
 	r.loop.opts.SampleStats = func([]int) map[int]ports.ProcSample { return fixed }
 
 	r.loop.scanAndPublish(Include{Stats: true})
-	// One tick to settle: the scan's own stats and the sampler's disagree
-	// about uptime and state, so the first sample after a scan really does
-	// move something.
+	// Settle: the scan's own numbers and the sampler's disagree once.
 	r.loop.sampleStats(Include{Stats: true})
 	seq := r.loop.Cached().Seq
 	published := len(r.published())
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		r.loop.sampleStats(Include{Stats: true})
 	}
-
 	if got := len(r.published()); got != published {
-		t.Errorf("%d deltas published by stats ticks where nothing moved", got-published)
+		t.Errorf("%d deltas published where nothing moved", got-published)
 	}
 	if got := r.loop.Cached().Seq; got != seq {
-		t.Errorf("seq = %d, want %d: an unpublished tick must not burn a sequence number", got, seq)
+		t.Errorf("seq = %d, want %d: an unpublished tick burned a number", got, seq)
 	}
 }
 
-// A process that exits between the scan that listed it and the sample that
-// refreshes it is absent from the sample. Its row keeps the stats it had —
-// zeroes would read like facts — and the next port scan is what removes it.
+// TestStatsTickHandlesAPIDDisappearing: a vanished pid keeps its last stats;
+// zeroes would read like facts, and removing the row is the scan's job.
 func TestStatsTickHandlesAPIDDisappearing(t *testing.T) {
 	r := newStatsRig(t)
 	r.loop.scanAndPublish(Include{Stats: true})
@@ -249,37 +225,36 @@ func TestStatsTickHandlesAPIDDisappearing(t *testing.T) {
 	before := r.loop.Cached()
 
 	r.mu.Lock()
-	r.gonePIDs[100] = true
+	r.gone[100] = true
 	r.mu.Unlock()
-
 	r.loop.sampleStats(Include{Stats: true})
 	after := r.loop.Cached()
 
 	if len(after.Ports) != len(before.Ports) {
-		t.Fatalf("the stats tick removed a row: %d -> %d ports", len(before.Ports), len(after.Ports))
+		t.Fatalf("the stats tick removed a row: %d -> %d", len(before.Ports), len(after.Ports))
 	}
 	gone, alive := after.Ports[0], after.Ports[1]
 	if gone.PID != 100 || alive.PID != 200 {
 		t.Fatalf("unexpected row order: %+v", after.Ports)
 	}
 	if *gone.Stats != *before.Ports[0].Stats {
-		t.Errorf("a vanished pid's stats were rewritten: %+v -> %+v", *before.Ports[0].Stats, *gone.Stats)
+		t.Errorf("a vanished pid's stats were rewritten")
 	}
 	if *alive.Stats == *before.Ports[1].Stats {
 		t.Error("the surviving pid's stats were not refreshed")
 	}
 }
 
+// TestStatsTickIsSerializedWithScans: writers hammering Rescan while the tick
+// runs still publish in sequence order.
 func TestStatsTickIsSerializedWithScans(t *testing.T) {
 	r := newStatsRig(t)
 	r.run(t)
 	r.subscribe(true)
 
-	// Writers hammering Rescan the way ports.rename does, while the stats
-	// tick runs at 30 ms.
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -296,10 +271,9 @@ func TestStatsTickIsSerializedWithScans(t *testing.T) {
 			}
 		}()
 	}
-	// Samples alone do not prove a publish: a scan can supersede a stats tick
-	// before it commits. Wait for both so the test actually exercises an
-	// interleaving instead of stopping on the first sample.
-	waitFor(t, "five stats samples and two publishes under load", func() bool {
+	// Samples alone do not prove a publish: a scan can supersede a tick before
+	// it commits, so wait for both.
+	waitFor(t, "five samples and two publishes under load", func() bool {
 		return r.samples.Load() >= 5 && len(r.published()) >= 2
 	})
 	close(stop)
@@ -307,22 +281,22 @@ func TestStatsTickIsSerializedWithScans(t *testing.T) {
 
 	seen := r.published()
 	if len(seen) < 2 {
-		t.Fatalf("only %d publishes; the test did not exercise anything", len(seen))
+		t.Fatalf("only %d publishes; nothing interleaved", len(seen))
 	}
 	var last uint64
 	for i, p := range seen {
 		if p.next.Seq <= last {
-			t.Fatalf("publish %d has seq %d after seq %d: publish order is not seq order", i, p.next.Seq, last)
+			t.Fatalf("publish %d has seq %d after %d", i, p.next.Seq, last)
 		}
 		last = p.next.Seq
 	}
 }
 
-// A stats tick refreshes only the processes named by the current local
-// snapshot, so unrelated pids are never sampled.
+// TestStatsTickRunsWhileAScanIsInFlight: the sampler never waits on a scan
+// that is still doing OS work, and its result still lands.
 func TestStatsTickRunsWhileAScanIsInFlight(t *testing.T) {
 	r := newStatsRig(t)
-	r.loop.scanAndPublish(Include{Stats: true}) // a snapshot to refresh
+	r.loop.scanAndPublish(Include{Stats: true})
 
 	scanning := make(chan struct{})
 	release := make(chan struct{})
@@ -333,7 +307,7 @@ func TestStatsTickRunsWhileAScanIsInFlight(t *testing.T) {
 			close(scanning)
 			<-release
 		})
-		return append([]ports.ListeningPort{}, rows...), nil
+		return append([]ports.ListeningPort(nil), rows...), nil
 	}
 
 	scanDone := make(chan struct{})
@@ -354,12 +328,99 @@ func TestStatsTickRunsWhileAScanIsInFlight(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		close(release)
 		<-scanDone
-		t.Fatal("the stats tick blocked behind a scan that was still doing OS work")
+		t.Fatal("the stats tick blocked behind a scan still doing OS work")
 	}
 	if got := r.loop.Cached().Seq; got <= before {
-		t.Errorf("seq = %d, want more than %d: the tick published nothing", got, before)
+		t.Errorf("seq = %d, want more than %d", got, before)
 	}
 
 	close(release)
 	<-scanDone
+}
+
+// TestStatsSkipRowsThatAreNotThisMachines: a container's numbers come from
+// Docker and a remote row's pid belongs to another host, so the local process
+// sampler must not be asked about either.
+func TestStatsSkipRowsThatAreNotThisMachines(t *testing.T) {
+	pp := []state.Port{
+		{Port: 1, PID: 10, Host: state.LocalhostName, Stats: &state.Stats{}},
+		{Port: 2, PID: 20, Host: "build-host", Stats: &state.Stats{}},
+		{Port: 3, PID: 30, Host: state.LocalhostName, Type: state.TypeDocker, Stats: &state.Stats{}},
+		{Port: 4, PID: 0, Host: state.LocalhostName, Stats: &state.Stats{}},
+	}
+	if got := statsPIDs(pp); len(got) != 1 || got[0] != 10 {
+		t.Fatalf("pids = %v, want only the local non-container pid", got)
+	}
+}
+
+// TestServiceWithoutALiveProcessKeepsNoSample: a stopped service has no live
+// process, and a running one without a pid names none either. Neither gets a
+// sample: unknown stays nil rather than becoming zero.
+func TestServiceWithoutALiveProcessKeepsNoSample(t *testing.T) {
+	pid := 42
+	samples := map[int]ports.ProcSample{42: {CPUPercent: 5}}
+	cases := []struct {
+		name string
+		svc  state.Service
+	}{
+		{"stopped", state.Service{Name: "worker", Running: false, PID: &pid}},
+		{"running without a pid", state.Service{Name: "worker", Running: true}},
+	}
+	for _, tc := range cases {
+		svc := tc.svc
+		if got := sampledServiceStats(&svc, nil, samples); got != nil {
+			t.Fatalf("%s: stats = %+v, want nil", tc.name, got)
+		}
+	}
+}
+
+// TestAMissingSampleLeavesTheServiceUntouched: when the sampler answers for
+// other pids only, the service keeps its previous (nil) sample. A vanished
+// process is dropped from the sample, not zeroed on the wire.
+func TestAMissingSampleLeavesTheServiceUntouched(t *testing.T) {
+	pid := 42
+	groups := []state.Group{{Services: []state.Service{{Name: "worker", Running: true, PID: &pid}}}}
+	writeServiceSample(&groups[0].Services[0], map[int]ports.ProcSample{99: {CPUPercent: 5}})
+	if groups[0].Services[0].Stats != nil {
+		t.Fatalf("stats = %+v, want nil when the sample has nothing for the pid", groups[0].Services[0].Stats)
+	}
+}
+
+// TestAStaleStatsSampleIsNotPublished: a sample that was taken before a newer
+// full-stats scan committed belongs to the older generation. It must not be
+// merged into the newer rows and must not reach the publisher; a live probe of
+// the branch is what keeps the generation guard honest.
+func TestAStaleStatsSampleIsNotPublished(t *testing.T) {
+	var publishes atomic.Int32
+	var advance sync.Once
+	var loop *Loop
+	loop = New(Options{
+		DaemonVersion: "test",
+		Scan: func(Include) ([]ports.ListeningPort, error) {
+			return []ports.ListeningPort{{Port: 4000, PID: 42, Process: "worker", CPUPercent: 1, MemoryRSS: 100}}, nil
+		},
+		Publish: func(_, _ state.Snapshot, _ []state.Event) { publishes.Add(1) },
+		SampleStats: func([]int) map[int]ports.ProcSample {
+			// While this sample is being taken, a newer full-stats scan commits.
+			advance.Do(func() { loop.scanAndPublish(Include{Stats: true}) })
+			return map[int]ports.ProcSample{42: {CPUPercent: 99, MemoryRSS: 999, Uptime: "1s"}}
+		},
+	})
+
+	// A full-stats scan seeds the snapshot and the stats generation.
+	loop.scanAndPublish(Include{Stats: true})
+	publishes.Store(0)
+
+	loop.sampleStats(Include{Stats: true})
+
+	if got := publishes.Load(); got != 0 {
+		t.Fatalf("%d publishes, want none: a stale sample reached the wire", got)
+	}
+	snap := loop.Cached()
+	if len(snap.Ports) != 1 || snap.Ports[0].Stats == nil {
+		t.Fatalf("snapshot = %+v, want the scan's row with its stats", snap.Ports)
+	}
+	if got := snap.Ports[0].Stats.CPUPercent; got != 1 {
+		t.Fatalf("cpu = %v, want the scan's 1: a stale sample was merged", got)
+	}
 }

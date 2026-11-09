@@ -40,3 +40,30 @@ func TestDeriveEventsIncludesReadyTimeout(t *testing.T) {
 		t.Fatalf("repeated events = %+v, want none", repeated)
 	}
 }
+
+// An unchanged group cannot produce a new readiness fact. With one group
+// moving and another standing still, only the moving group is joined: the
+// still one keeps its previous exit verbatim and emits nothing.
+func TestAnUnchangedGroupEmitsNoReadyTimeout(t *testing.T) {
+	rootA := "/code/a"
+	rootB := "/code/b"
+	stopped := state.Service{Name: "worker", LastExit: &state.ServiceExit{
+		Code: 1, Reason: "ready_timeout", At: "earlier", RunID: "run-b",
+	}}
+	beforeA := state.Group{Name: "a", Repo: "a", RootDir: &rootA, Services: []state.Service{{Name: "api", Running: true}}}
+	beforeB := state.Group{Name: "b", Repo: "b", RootDir: &rootB, Services: []state.Service{stopped}}
+	afterA := beforeA
+	afterA.Services = []state.Service{{Name: "api", Running: true}, {Name: "extra", Running: true}}
+	afterB := beforeB
+
+	events := deriveEvents(
+		state.Snapshot{Seq: 1, Groups: []state.Group{beforeA, beforeB}},
+		state.Snapshot{Seq: 2, At: "now", Groups: []state.Group{afterA, afterB}},
+		"now",
+	)
+	for _, ev := range events {
+		if ev.Kind == "ready_timeout" {
+			t.Fatalf("an unchanged group re-emitted its timeout: %+v", ev)
+		}
+	}
+}
