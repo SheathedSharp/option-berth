@@ -356,27 +356,15 @@ func serviceURL(port int) string { return "http://localhost:" + strconv.Itoa(por
 // released the port, there is no holder to name.
 func exitRow(e Exit, ports []state.Port) rpc.RunRecord {
 	code := e.Code
-	out := rpc.RunRecord{
-		ID:         e.ID,
-		PID:        e.PID,
-		Group:      e.Group,
-		Name:       e.Name,
-		Cmd:        e.Cmd,
-		Cwd:        e.Cwd,
-		StartedAt:  e.StartedAt.Format(time.RFC3339),
-		Ports:      []int{},
-		Status:     "exited",
-		ConfigPath: e.ConfigPath,
-		StartID:    e.StartID,
-		Origin:     e.Origin,
-		SpecHash:   e.SpecHash,
-		LogPath:    e.LogPath,
-		LogOffset:  &e.LogOffset,
-		ExitCode:   &code,
-		Reason:     e.Reason,
-		ExitedAt:   e.ExitedAt.UTC().Format(time.RFC3339),
-		LastLines:  e.LastLines,
-	}
+	// The run's own facts — identity, provenance, where it logs — are the same
+	// block a live row carries; only how it ended is new here.
+	out := liveRow(e.Record)
+	out.Ports = []int{}
+	out.Status = "exited"
+	out.ExitCode = &code
+	out.Reason = e.Reason
+	out.ExitedAt = e.ExitedAt.UTC().Format(time.RFC3339)
+	out.LastLines = e.LastLines
 	if e.PortHint > 0 {
 		hint := e.PortHint
 		out.PortHint = &hint
