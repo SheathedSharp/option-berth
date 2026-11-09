@@ -150,13 +150,13 @@ func TestBusyAdmissionChoosesCancelControlOrCache(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := l.scanWhileBusy(ctx, mayCoalesce); !errors.Is(err, context.Canceled) {
+	if _, err := l.scanWhileBusy(ctx, mayCoalesce, ScanLockBudget); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled admission = %v, want the caller's cancellation", err)
 	}
-	if _, err := l.scanWhileBusy(context.Background(), forceScan); err == nil || !strings.Contains(err.Error(), "fresh observation unavailable") {
+	if _, err := l.scanWhileBusy(context.Background(), forceScan, ScanLockBudget); err == nil || !strings.Contains(err.Error(), "fresh observation unavailable") {
 		t.Fatalf("forced admission = %v, want the busy refusal", err)
 	}
-	snap, err := l.scanWhileBusy(context.Background(), mayCoalesce)
+	snap, err := l.scanWhileBusy(context.Background(), mayCoalesce, ScanLockBudget)
 	if err != nil || len(snap.Ports) != 1 || snap.Ports[0].Port != 3000 {
 		t.Fatalf("read admission = %+v err=%v, want the cached port", snap.Ports, err)
 	}
@@ -198,6 +198,10 @@ func TestBusyReadServesTheCacheAndBusyControlFails(t *testing.T) {
 	lock(l.rpcGate)
 	defer unlock(l.rpcGate)
 
+	// The gate budget is supplied instead of waited out: the decision under
+	// test is what a caller does when admission is refused, not how long the
+	// production budget is. The constants themselves are pinned separately.
+	const budget = 50 * time.Millisecond
 	var wg sync.WaitGroup
 	wg.Add(2)
 	var read state.Snapshot
@@ -205,17 +209,16 @@ func TestBusyReadServesTheCacheAndBusyControlFails(t *testing.T) {
 	var controlErr error
 	go func() {
 		defer wg.Done()
-		read, readErr = l.SnapshotAllContext(context.Background(), Include{})
+		read, readErr = l.scanNowWithin(context.Background(), Include{}, mayCoalesce, budget)
 	}()
 	go func() {
 		defer wg.Done()
-		_, controlErr = l.RescanContext(context.Background(), Include{})
+		_, controlErr = l.scanNowWithin(context.Background(), Include{}, forceScan, budget)
 	}()
 	wg.Wait()
 
-	// The observation budget and the gate budget are the same length, so the
-	// wait ends as either the caller's deadline or the gate's own refusal.
-	// Neither result is a new scan.
+	// Neither result is a new scan: the read falls back to the cache, the
+	// control request refuses.
 	if readErr != nil && !errors.Is(readErr, context.DeadlineExceeded) {
 		t.Fatalf("busy read = %v, want the cache or the caller's deadline", readErr)
 	}

@@ -1594,6 +1594,15 @@ func (l *Loop) scanNow(include Include, mode scanMode) (state.Snapshot, error) {
 }
 
 func (l *Loop) scanNowContext(ctx context.Context, include Include, mode scanMode) (state.Snapshot, error) {
+	return l.scanNowWithin(ctx, include, mode, ScanLockBudget)
+}
+
+// scanNowWithin is scanNowContext with the RPC-gate budget supplied. Production
+// always passes ScanLockBudget; naming it as a parameter is what keeps the
+// decision the budget protects — a busy read falls back to the cache, a busy
+// control request refuses — testable without holding a gate for the whole
+// production budget.
+func (l *Loop) scanNowWithin(ctx context.Context, include Include, mode scanMode, gateBudget time.Duration) (state.Snapshot, error) {
 	ctx, cancel := observationContext(ctx)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
@@ -1603,8 +1612,8 @@ func (l *Loop) scanNowContext(ctx context.Context, include Include, mode scanMod
 	// a higher number, which is what "began after I asked" means without
 	// consulting a clock.
 	asked := l.scanGeneration()
-	if err := lockForContext(ctx, l.rpcGate, ScanLockBudget); err != nil {
-		return l.scanWhileBusy(ctx, mode)
+	if err := lockForContext(ctx, l.rpcGate, gateBudget); err != nil {
+		return l.scanWhileBusy(ctx, mode, gateBudget)
 	}
 	defer unlock(l.rpcGate)
 	if snap, reused, err := l.reuseIfFresh(asked, include, mode); err != nil || reused {
@@ -1617,14 +1626,14 @@ func (l *Loop) scanNowContext(ctx context.Context, include Include, mode scanMod
 // wins over the busy fallback: the caller is gone. Only a read may then fall
 // back to the cache. A control request must not resolve targets against an
 // observation from before the forced scan it required.
-func (l *Loop) scanWhileBusy(ctx context.Context, mode scanMode) (state.Snapshot, error) {
+func (l *Loop) scanWhileBusy(ctx context.Context, mode scanMode, gateBudget time.Duration) (state.Snapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return state.Snapshot{}, err
 	}
 	if mode != mayCoalesce {
-		return state.Snapshot{}, fmt.Errorf("scanner busy for more than %s; fresh observation unavailable", ScanLockBudget)
+		return state.Snapshot{}, fmt.Errorf("scanner busy for more than %s; fresh observation unavailable", gateBudget)
 	}
-	l.opts.Logger.Warn("scanner busy, serving the last snapshot", "waited", ScanLockBudget)
+	l.opts.Logger.Warn("scanner busy, serving the last snapshot", "waited", gateBudget)
 	return l.Cached(), nil
 }
 
