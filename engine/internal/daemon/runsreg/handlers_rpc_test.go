@@ -424,8 +424,15 @@ func TestRememberSessionWarnsOnlyWhenTheWriteFails(t *testing.T) {
 func TestHandleSpawnStartsAndReapsARun(t *testing.T) {
 	resetRegistry(t)
 	rt := handlerRuntime(t)
+	// The child has to be an executable this machine certainly has: the test
+	// binary itself, run with a -test.run pattern that matches no test, so it
+	// starts, exits at once and leaves nothing behind.
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatalf("locating the test binary: %v", err)
+	}
 	result, err := handleSpawn(context.Background(), handlerRequest(t, rt, "runs.spawn", rpc.RunsSpawnParams{
-		Argv: []string{"/bin/true"}, Cwd: t.TempDir(), AllowOutsideHome: true,
+		Argv: []string{self, "-test.run=^$"}, Cwd: t.TempDir(), AllowOutsideHome: true,
 	}))
 	if err != nil {
 		t.Fatalf("runs.spawn: %v", err)
