@@ -142,7 +142,7 @@
           "nav": "安装",
           "title": "安装 oberth",
           "lede": "一个二进制，不需要模型账号，安装脚本不会启动任何服务。用 version 和 doctor 确认构建，再去声明第一个 worktree。",
-          "summary": "一行脚本、go install、Homebrew、发布包，以及平台边界。"
+          "summary": "一行脚本、go install、Homebrew、发布包，以及平台支持。"
         }
       },
       "refs": [
@@ -163,7 +163,7 @@
           "nav": "快速开始",
           "title": "你的第一个 worktree",
           "lede": "一个 checkout、五条命令，从一个空目录到一个干净的停止：声明、启动、读取、看日志、停止。示例只需要 Python 3。",
-          "summary": "在 Hello Worktree 上跑完整闭环：从一个空 checkout 到一个干净的停止。"
+          "summary": "在 Hello Worktree 上把整个循环跑一遍：从一个空 checkout 到一个干净的停止。"
         }
       },
       "refs": [
@@ -267,7 +267,7 @@
           "nav": "status",
           "title": "status: what is running now",
           "lede": "One read of the worktree, the manifest and the runs, including the honest answer “I cannot see”.",
-          "summary": "Process, listener, health and exit as four separate facts; the table, --brief, --json, and observation failures."
+          "summary": "Process, listener, health and exit as four separate facts. The table, --brief, --json, and observation failures."
         },
         "zh": {
           "nav": "status",
