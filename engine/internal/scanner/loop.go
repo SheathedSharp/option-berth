@@ -1593,6 +1593,14 @@ func (l *Loop) scanNowWithin(ctx context.Context, include Include, mode scanMode
 		return l.scanWhileBusy(ctx, mode, gateBudget)
 	}
 	defer unlock(l.rpcGate)
+	// Admission is this call's linearization point: a caller who has left by
+	// the time the token is in hand must not be handed somebody else's scan as
+	// a fresh answer, and must not start one. A withdrawal that lands after
+	// this check is not observable here — no handler promises that a
+	// cancellation cannot race its return.
+	if err := ctx.Err(); err != nil {
+		return state.Snapshot{}, err
+	}
 	if snap, reused, err := l.reuseIfFresh(asked, include, mode); err != nil || reused {
 		return snap, err
 	}

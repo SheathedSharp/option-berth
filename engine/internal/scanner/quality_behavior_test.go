@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -259,5 +260,95 @@ func TestProbeContextPrefersTheContextAwareSeam(t *testing.T) {
 	cancel()
 	if got := l.ProbeContext(cancelled, "127.0.0.1", 8080, "/healthz", time.Second); got.Status != "" || contextual != 1 {
 		t.Fatalf("cancelled probe = %+v contextual=%d, want no probe and no verdict", got, contextual)
+	}
+}
+
+// cancelAfterWaiting reports cancellation from its Nth Err call onward and
+// signals the first time a select asks for Done. The signal is how the test
+// knows the read is parked in the gate, so a newer scan can commit before the
+// gate is handed over. A real context cannot be ordered that precisely, and a
+// sleep would only guess.
+type cancelAfterWaiting struct {
+	context.Context
+	calls  atomic.Int32
+	at     int32
+	once   sync.Once
+	parked chan struct{}
+}
+
+func (c *cancelAfterWaiting) Deadline() (time.Time, bool) {
+	// Inside the observation budget: the stage keeps the caller's own context
+	// instead of wrapping it in a timer whose Err would be the one observed.
+	return time.Now().Add(ObservationBudget), true
+}
+
+func (c *cancelAfterWaiting) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.parked) })
+	return c.Context.Done()
+}
+
+func (c *cancelAfterWaiting) Err() error {
+	if c.calls.Add(1) >= c.at {
+		return context.Canceled
+	}
+	return nil
+}
+
+// TestACancelledReadDoesNotTakeTheCachedAnswer: the RPC gate is the last point
+// at which a withdrawn read can be observed before it is handed somebody
+// else's scan. A caller who has left by then gets its cancellation, not a
+// snapshot, and the token goes back on the gate.
+func TestACancelledReadDoesNotTakeTheCachedAnswer(t *testing.T) {
+	var scans atomic.Int32
+	l := New(Options{Scan: func(Include) ([]ports.ListeningPort, error) {
+		scans.Add(1)
+		return []ports.ListeningPort{{Port: 8123, PID: 42, Process: "python3"}}, nil
+	}})
+	if _, err := l.Rescan(Include{}); err != nil {
+		t.Fatalf("seed Rescan: %v", err)
+	}
+	scans.Store(0)
+
+	lock(l.rpcGate)
+	parked := make(chan struct{})
+	ctx := &cancelAfterWaiting{Context: context.Background(), at: 4, parked: parked}
+	type result struct {
+		snap state.Snapshot
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		snap, err := l.scanNowWithin(ctx, Include{}, mayCoalesce, ScanLockBudget)
+		done <- result{snap: snap, err: err}
+	}()
+
+	// Wait until the read is parked in the gate, then let a newer scan commit.
+	// The read asked before that scan began, so its cached answer is the one a
+	// live caller would be served.
+	select {
+	case <-parked:
+	case <-time.After(time.Second):
+		unlock(l.rpcGate)
+		t.Fatal("the read never reached the gate")
+	}
+	l.scanAndPublish(Include{})
+	unlock(l.rpcGate)
+
+	select {
+	case got := <-done:
+		if !errors.Is(got.err, context.Canceled) {
+			t.Fatalf("err = %v, want the caller's cancellation", got.err)
+		}
+		if got.snap.Seq != 0 || len(got.snap.Ports) != 0 {
+			t.Fatalf("snap = %+v, want no snapshot for a withdrawn caller", got.snap)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the read did not return")
+	}
+	if len(l.rpcGate) != 0 {
+		t.Fatal("the token stayed taken after the caller was withdrawn")
+	}
+	if got := scans.Load(); got != 1 {
+		t.Fatalf("scans = %d, want the seed scan and the newer tick only", got)
 	}
 }
