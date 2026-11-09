@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -182,20 +184,114 @@ func TestMergedEnvReplacesKeysInsteadOfDuplicating(t *testing.T) {
 	t.Setenv("OB_TEST_REPLACED", "daemon")
 	got := mergedEnv(map[string]string{"OB_TEST_REPLACED": "caller", "OB_TEST_NEW": "value"})
 
-	values := map[string][]string{}
-	for _, pair := range got {
-		for i := 0; i < len(pair); i++ {
-			if pair[i] != '=' {
-				continue
-			}
-			values[pair[:i]] = append(values[pair[:i]], pair[i+1:])
-			break
-		}
-	}
+	values := envValues(t, got)
 	if v := values["OB_TEST_REPLACED"]; len(v) != 1 || v[0] != "caller" {
 		t.Errorf("OB_TEST_REPLACED = %v, want exactly the caller's value", v)
 	}
 	if v := values["OB_TEST_NEW"]; len(v) != 1 || v[0] != "value" {
 		t.Errorf("OB_TEST_NEW = %v, want the caller's value", v)
 	}
+}
+
+// Every key in the merged list arrives once, with a value, so an override
+// replaces the inherited entry instead of sitting beside it. The total says the
+// same thing from the other side: nothing is appended twice and nothing is
+// added that nobody asked for. Overrides the inherited environment already
+// carries do not lengthen the list, they replace.
+func TestMergedEnvEmitsOneWellFormedEntryPerKey(t *testing.T) {
+	const inherited = "OB_TEST_INHERITED"
+	t.Setenv(inherited, "daemon")
+
+	over := map[string]string{"OB_TEST_OVER": "caller", "OB_TEST_EXTRA": "second"}
+	got := mergedEnv(over)
+
+	values := envValues(t, got)
+	inheritedKeys := envValues(t, os.Environ())
+	if v := values[inherited]; len(v) != 1 || v[0] != "daemon" {
+		t.Errorf("%s = %v, want exactly the daemon's value", inherited, v)
+	}
+	for key, want := range over {
+		if v := values[key]; len(v) != 1 || v[0] != want {
+			t.Errorf("%s = %v, want exactly %q", key, v, want)
+		}
+	}
+
+	added := 0
+	for key := range over {
+		if _, seen := inheritedKeys[key]; !seen {
+			added++
+		}
+	}
+	if want := len(os.Environ()) + added; len(got) != want {
+		t.Errorf("mergedEnv returned %d entries, want %d: the inherited list plus the overrides it did not already carry", len(got), want)
+	}
+}
+
+// The inherited environment is not an upper bound on the caller's overrides: a
+// request that sends more variables than the daemon inherited still merges
+// every one of them, and does so without deciding the result's size up front.
+func TestMergedEnvMergesMoreOverridesThanTheInheritedEnvironment(t *testing.T) {
+	inherited := len(os.Environ())
+	over := make(map[string]string, inherited+10)
+	for i := 0; i < inherited+10; i++ {
+		over["OB_TEST_BULK_"+strconv.Itoa(i)] = "value-" + strconv.Itoa(i)
+	}
+
+	values := envValues(t, mergedEnv(over))
+	for key, want := range over {
+		if v := values[key]; len(v) != 1 || v[0] != want {
+			t.Fatalf("%s = %v, want exactly %q", key, v, want)
+		}
+	}
+}
+
+// A Windows drive designator puts the entry's first `=` in the key:
+// `=C:=C:\work` is the key `=C:` with the value `C:\work`, and it has to
+// survive as it came. This is the shape our envValues has to read the way Go's
+// own exec does; the test does not claim that a Windows run was made here.
+func TestEnvValuesKeepsWindowsDriveEntries(t *testing.T) {
+	values := envValues(t, []string{`=C:=C:\work`, "OB_SAMPLE=ok"})
+	if v := values["=C:"]; len(v) != 1 || v[0] != `C:\work` {
+		t.Errorf(`=C: = %v, want exactly the drive entry's value`, v)
+	}
+	if v := values["OB_SAMPLE"]; len(v) != 1 || v[0] != "ok" {
+		t.Errorf("OB_SAMPLE = %v, want the ordinary entry's value", v)
+	}
+}
+
+// envValues indexes a merged environment by key. It accepts what exec accepts,
+// including a Windows drive designator, and refuses only an entry that names no
+// variable at all — which is exactly the empty item a bad append would insert.
+func envValues(t *testing.T, pairs []string) map[string][]string {
+	t.Helper()
+	values := make(map[string][]string, len(pairs))
+	for _, pair := range pairs {
+		key, value, ok := splitEnvEntry(pair)
+		if !ok {
+			t.Fatalf("merged environment entry %q names no variable", pair)
+		}
+		values[key] = append(values[key], value)
+	}
+	return values
+}
+
+// splitEnvEntry cuts one entry into its key and value. A leading '=' belongs to
+// the key when the entry names a Windows drive, so `=C:=C:\work` is the key
+// `=C:` with the value `C:\work`; every other entry splits at its first '='.
+// It reports false only for an entry that names nothing.
+func splitEnvEntry(pair string) (key, value string, ok bool) {
+	sep := strings.IndexByte(pair, '=')
+	if sep < 0 {
+		return "", "", false
+	}
+	if sep == 0 {
+		// The designator's own '=' is the next one, and there has to be a
+		// drive letter between the two.
+		designator := strings.IndexByte(pair[1:], '=')
+		if designator < 1 {
+			return "", "", false
+		}
+		sep = 1 + designator
+	}
+	return pair[:sep], pair[sep+1:], true
 }
