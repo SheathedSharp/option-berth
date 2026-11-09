@@ -203,8 +203,12 @@ func (c *Conn) Notify(method string, params any) error {
 }
 
 // marshalNotification frames one notification for the wire: params first, then
-// the envelope that names the method.
-func marshalNotification(method string, params any) ([]byte, error) {
+// the envelope that names the method. It is the only place the daemon builds
+// that envelope, so a payload that cannot be encoded reaches every caller as an
+// error — to be dropped, not sent as a frame whose params are absent — instead
+// of each call site deciding for itself. It is a variable because the fan-out's
+// "one encoding per view" rule is only observable by counting calls.
+var marshalNotification = func(method string, params any) ([]byte, error) {
 	encoded, err := json.Marshal(params)
 	if err != nil {
 		return nil, err

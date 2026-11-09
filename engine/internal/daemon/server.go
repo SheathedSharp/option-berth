@@ -841,11 +841,7 @@ func (s *Server) broadcastWorkspaceChanged(workspace string, exclude *Conn) {
 		Changed:       []string{"workspace_changed"},
 		ObservedAt:    snap.At,
 	}
-	raw, err := json.Marshal(rpc.Notification{
-		JSONRPC: rpc.Version,
-		Method:  rpc.MethodStateChanged,
-		Params:  mustJSON(change),
-	})
+	raw, err := marshalNotification(rpc.MethodStateChanged, change)
 	if err != nil {
 		return
 	}
@@ -857,9 +853,67 @@ func (s *Server) broadcastWorkspaceChanged(workspace string, exclude *Conn) {
 	}
 }
 
+// changeSet is one transition as every scoped subscriber of a view sees it:
+// the redacted summaries built once, plus the group rows they are matched
+// against. Building it is per transition, not per subscriber.
+type changeSet struct {
+	changes []state.StateChanged
+	groups  []state.Group
+}
+
+func newChangeSet(prev, next state.Snapshot, events []state.Event) changeSet {
+	return changeSet{
+		changes: state.StateChangesForTransition(prev, next, events),
+		groups:  append(append([]state.Group{}, prev.Groups...), next.Groups...),
+	}
+}
+
+// frames is one view's wire encoding of a transition. Exactly one of the three
+// is populated for a given subscriber: a scoped view gets state.changed, an
+// unscoped one gets a delta and whichever events fall in its view.
+type frames struct {
+	delta   []byte
+	events  [][]byte
+	changes [][]byte
+}
+
+// viewFrames encodes a transition for one view, and only for that view: the
+// publishers call it behind a cache keyed by viewKey, so a room full of clients
+// watching the same thing pays for one encoding rather than one each. It is the
+// single place the fan-out decides which frames a subscriber's view produces,
+// so `publish` and `broadcastEvent` cannot drift into different rules.
+func viewFrames(prev, next state.Snapshot, events []state.Event, set changeSet, c *Conn, effective state.Scope) frames {
+	if !effective.Empty() {
+		// A scoped subscriber is only ever sent redacted summaries, and only if
+		// it asked for events. command and cwd never reach this wire.
+		if !c.events {
+			return frames{}
+		}
+		return frames{changes: marshalStateChanges(set.changes, effective, set.groups)}
+	}
+	out := frames{delta: marshalDelta(prev, next, c.include, c.scope)}
+	if c.events && len(events) > 0 {
+		out.events = marshalEvents(events, c.include, c.scope, next.Groups)
+	}
+	return out
+}
+
+// deliver queues a view's frames on the connection that holds the view.
+func (f frames) deliver(c *Conn) {
+	if f.delta != nil {
+		c.enqueue(f.delta)
+	}
+	for _, m := range f.changes {
+		c.enqueue(m)
+	}
+	for _, m := range f.events {
+		c.enqueue(m)
+	}
+}
+
 // publish fans a scanner transition out to subscribers. Scoped connections
 // receive only their redacted state.changed summaries; legacy connections keep
-// the historical delta/event view. Each wire view is marshalled once.
+// the historical delta/event view. Each wire view is encoded once.
 func (s *Server) publish(prev, next state.Snapshot, events []state.Event) {
 	s.subsMu.RLock()
 	defer s.subsMu.RUnlock()
@@ -870,57 +924,46 @@ func (s *Server) publish(prev, next state.Snapshot, events []state.Event) {
 	if s.listeningForEvents() {
 		events = append(s.takePending(), events...)
 	}
+	if !s.hasSubscriberLocked() {
+		return
+	}
 
-	deltaCache := map[viewKey][]byte{}
-	eventCache := map[viewKey][][]byte{}
-	changeCache := map[viewKey][][]byte{}
-
+	cache := map[viewKey]frames{}
+	// The change set is only worth building when somebody is watching a scope;
+	// a scan tick with no scoped subscriber is the common case.
+	var set changeSet
+	if s.hasScopedListenerLocked() {
+		set = newChangeSet(prev, next, events)
+	}
 	for _, c := range s.conns {
 		if !c.subscribed {
 			continue
 		}
 		effective := s.effectiveScopeLocked(c.scope)
 		view := viewKey{include: c.include, scope: effective.Key()}
-		if !effective.Empty() {
-			if !c.events {
-				continue
-			}
-			msgs, ok := changeCache[view]
-			if !ok {
-				changes := state.StateChangesForTransition(prev, next, events)
-				groups := append(append([]state.Group{}, prev.Groups...), next.Groups...)
-				msgs = marshalStateChanges(changes, effective, groups)
-				changeCache[view] = msgs
-			}
-			for _, m := range msgs {
-				c.enqueue(m)
-			}
-			continue
-		}
-		msg, ok := deltaCache[view]
+		encoded, ok := cache[view]
 		if !ok {
-			msg = marshalDelta(prev, next, c.include, c.scope)
-			deltaCache[view] = msg
+			encoded = viewFrames(prev, next, events, set, c, effective)
+			cache[view] = encoded
 		}
-		if msg != nil {
-			c.enqueue(msg)
-		}
-		if !c.events || len(events) == 0 {
-			continue
-		}
-		msgs, ok := eventCache[view]
-		if !ok {
-			msgs = marshalEvents(events, c.include, c.scope, next.Groups)
-			eventCache[view] = msgs
-		}
-		for _, m := range msgs {
-			c.enqueue(m)
-		}
+		encoded.deliver(c)
 	}
 }
 
-// viewKey identifies one subscriber's include set. The delta is marshalled
-// once per distinct view rather than once per subscriber.
+// hasSubscriberLocked reports whether any connection subscribed at all.
+// Caller holds subsMu.
+func (s *Server) hasSubscriberLocked() bool {
+	for _, c := range s.conns {
+		if c.subscribed {
+			return true
+		}
+	}
+	return false
+}
+
+// viewKey identifies one subscriber's view of the stream: what it opted into
+// collecting and what it is allowed to see. The frames are encoded once per
+// distinct view rather than once per subscriber.
 type viewKey struct {
 	include scanner.Include
 	scope   string
@@ -931,6 +974,18 @@ type viewKey struct {
 func (s *Server) listeningForEvents() bool {
 	for _, c := range s.conns {
 		if c.subscribed && c.events {
+			return true
+		}
+	}
+	return false
+}
+
+// hasScopedListenerLocked reports whether any subscriber is looking at a
+// non-empty scope, which is the only case where a transition has to be turned
+// into redacted summaries. Caller holds subsMu.
+func (s *Server) hasScopedListenerLocked() bool {
+	for _, c := range s.conns {
+		if c.subscribed && !s.effectiveScopeLocked(c.scope).Empty() {
 			return true
 		}
 	}
@@ -949,54 +1004,22 @@ func (s *Server) broadcastEvent(ev state.Event) {
 	groups := s.loop.Cached().Groups
 	// One encoding is reused per (include, scope) pair: a room full of clients
 	// watching the same thing should not pay for the same marshal once each.
-	cache := map[viewKey][][]byte{}
+	cache := map[viewKey]frames{}
+	set := changeSet{changes: []state.StateChanged{state.StateChangedForEvent(ev, s.loop.Cached().Seq, groups)}, groups: groups}
 	for _, c := range s.conns {
 		if !c.subscribed || !c.events {
 			continue
 		}
-		s.sendEventLocked(c, ev, groups, cache)
+		effective := s.effectiveScopeLocked(c.scope)
+		view := viewKey{include: c.include, scope: effective.Key()}
+		encoded, known := cache[view]
+		if !known {
+			encoded = viewFrames(state.Snapshot{}, state.Snapshot{Seq: s.loop.Cached().Seq, Groups: groups},
+				[]state.Event{ev}, set, c, effective)
+			cache[view] = encoded
+		}
+		encoded.deliver(c)
 	}
-}
-
-// sendEventLocked delivers one event to one subscriber: a scoped client gets a
-// state.changed if the event falls inside its scope, everyone else gets the
-// plain state.event notifications for its view. Caller holds subsMu.
-func (s *Server) sendEventLocked(c *Conn, ev state.Event, groups []state.Group, cache map[viewKey][][]byte) {
-	effective := s.effectiveScopeLocked(c.scope)
-	if !effective.Empty() {
-		s.sendScopedEventLocked(c, ev, groups, effective)
-		return
-	}
-
-	view := viewKey{include: c.include, scope: effective.Key()}
-	msgs, encoded := cache[view]
-	if !encoded {
-		msgs = marshalEvents([]state.Event{ev}, c.include, c.scope, groups)
-		cache[view] = msgs
-	}
-	for _, msg := range msgs {
-		c.enqueue(msg)
-	}
-}
-
-// sendScopedEventLocked sends an event only when it falls inside the client's
-// scope, as a state.changed notification. Caller holds subsMu.
-func (s *Server) sendScopedEventLocked(c *Conn, ev state.Event, groups []state.Group, scope state.Scope) {
-	change := state.StateChangedForEvent(ev, s.loop.Cached().Seq, groups)
-	if !scope.MatchChangedIn(change, groups) {
-		return
-	}
-	raw, err := json.Marshal(rpc.Notification{
-		JSONRPC: rpc.Version,
-		Method:  rpc.MethodStateChanged,
-		Params:  mustJSON(change),
-	})
-	if err != nil {
-		// A change that cannot be encoded is dropped rather than sent as a
-		// half-formed notification.
-		return
-	}
-	c.enqueue(raw)
 }
 
 // marshalDelta builds one state.delta notification for a given include set.
@@ -1060,22 +1083,15 @@ func marshalStateChanges(changes []state.StateChanged, scope state.Scope, groups
 		if !scope.MatchChangedIn(change, groups) {
 			continue
 		}
-		raw, err := json.Marshal(rpc.Notification{
-			JSONRPC: rpc.Version,
-			Method:  rpc.MethodStateChanged,
-			Params:  mustJSON(change),
-		})
+		raw, err := marshalNotification(rpc.MethodStateChanged, change)
 		if err != nil {
+			// A change that cannot be encoded is dropped rather than sent as a
+			// notification whose params are missing.
 			continue
 		}
 		out = append(out, raw)
 	}
 	return out
-}
-
-func mustJSON(v any) json.RawMessage {
-	raw, _ := json.Marshal(v)
-	return raw
 }
 
 func emptyDelta(d state.Delta) bool {
