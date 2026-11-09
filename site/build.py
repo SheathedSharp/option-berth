@@ -21,7 +21,7 @@ if not SITE.startswith(("https://", "http://")):
     raise ValueError("SITE_URL must be an absolute http(s) URL")
 if not SITE.endswith("/"):
     SITE += "/"
-ASSETS = ("icon.svg", "mark.svg", "mark-dark.svg", "boot.js", "site.css", "site.js", "guide.css", "guide.js")
+ASSETS = ("icon.svg", "mark.svg", "mark-dark.svg", "boot.js", "gsap.min.js", "site.css", "site.js", "guide.css", "guide.js")
 SNAPSHOT = ROOT / "data" / "eval.json"
 SNAPSHOT_SCHEMA = "oberth.site-eval/v1"
 ARMS = ("oberth", "native")
