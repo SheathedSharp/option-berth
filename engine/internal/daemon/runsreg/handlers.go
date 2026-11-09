@@ -223,7 +223,6 @@ func handleSpawn(ctx context.Context, req *daemon.Request) (any, error) {
 		Name:     res.Name,
 		PortHint: portOrZero(p.PortHint),
 		Session:  sessionOf(p, cwd),
-		Detach:   true,
 	}, Meta{Origin: Origin(req)})
 	if err != nil {
 		return nil, err
