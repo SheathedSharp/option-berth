@@ -285,9 +285,13 @@ func (l *Loop) reconcileRoot(st Store, root string) (discovered string, complete
 		complete = false
 		l.opts.Logger.Warn("reading oberth.yaml root; keeping its record", "dir", root, "error", statErr)
 	case rootPresent:
-		if !l.attr.roots[root] {
-			discovered = root
-			l.attr.roots[root] = true
+		// The acknowledgements are keyed by the canonical path: the store may
+		// hold an older spelling of the same directory (/var against
+		// /private/var on macOS), and that must not look like a new root.
+		key := groups.Canonical(root)
+		if !l.attr.roots[key] {
+			discovered = key
+			l.attr.roots[key] = true
 		}
 	}
 	return discovered, complete
@@ -303,7 +307,7 @@ func (l *Loop) forgetVanishedRoot(st Store, root string) bool {
 		l.opts.Logger.Warn("forgetting a vanished oberth.yaml root", "dir", root, "error", err)
 		return false
 	}
-	delete(l.attr.roots, root)
+	delete(l.attr.roots, groups.Canonical(root))
 	return true
 }
 
@@ -313,13 +317,17 @@ func (l *Loop) seedDiscovered(st Store, discovered []string) {
 	// Retain explicit roots even before they have a manifest; a silent project
 	// must become visible when its first declaration is created.
 	l.attr.index.Reload(discovered)
+	// A stored root and the index's config directory can spell the same
+	// directory differently — a /var entry against the canonical /private/var
+	// on macOS is enough — so the membership test compares canonical paths, not
+	// the strings the store happened to keep.
 	watched := make(map[string]bool, len(discovered))
 	for _, dir := range discovered {
-		watched[dir] = true
+		watched[groups.Canonical(dir)] = true
 	}
 	var seeded []*groups.Config
 	for _, cfg := range l.attr.index.Configs() {
-		if cfg != nil && watched[cfg.Dir] {
+		if cfg != nil && watched[groups.Canonical(cfg.Dir)] {
 			seeded = append(seeded, cfg)
 		}
 	}

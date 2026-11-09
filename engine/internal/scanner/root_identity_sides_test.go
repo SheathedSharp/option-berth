@@ -4,6 +4,8 @@ import (
 	"errors"
 	"log/slog"
 	"testing"
+
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 )
 
 func TestAnEmptyKnownRootListDoesNotRereadManifests(t *testing.T) {
@@ -40,7 +42,9 @@ func TestANewlySeenRootIsRecordedOnceAndNotInsertedAgain(t *testing.T) {
 	l.attr.index.Observe(other)
 	st := &countingRoots{roots: []string{dir}}
 	l.seedRoots(st)
-	if len(st.got) != 1 || st.got[0].Root != dir {
+	// The ledger stores the canonical checkout root, not the spelling the
+	// store happened to keep.
+	if len(st.got) != 1 || st.got[0].Root != groups.Canonical(dir) {
 		t.Fatalf("identities = %+v, the newly seen root was not recorded on its own", st.got)
 	}
 
