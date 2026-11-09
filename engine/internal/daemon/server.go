@@ -593,21 +593,29 @@ func (s *Server) subscribe(c *Conn, id json.RawMessage, include scanner.Include,
 		}
 	}
 	s.subsMu.Unlock()
-	newWorkspace := strings.TrimSpace(scope.Workspace)
-	if oldChanged && newChanged && oldWorkspace == newWorkspace {
-		s.broadcastWorkspaceChanged(newWorkspace, c)
-	} else {
-		if oldChanged {
-			s.broadcastWorkspaceChanged(oldWorkspace, c)
-		}
-		if newChanged {
-			s.broadcastWorkspaceChanged(newWorkspace, c)
-		}
-	}
+	s.announceWorkspaceChange(oldWorkspace, strings.TrimSpace(scope.Workspace), oldChanged, newChanged, c)
 
 	s.touch()
 	s.loop.Wake()
 	return nil
+}
+
+// announceWorkspaceChange tells the peers of any workspace whose membership
+// changed to refresh their relation-derived view. Staying in the same workspace
+// with a changed relation is one announcement; moving between workspaces tells
+// the one it left and the one it joined. The reconnecting connection is always
+// excluded, because it already received its own opening snapshot.
+func (s *Server) announceWorkspaceChange(oldWorkspace, newWorkspace string, oldChanged, newChanged bool, c *Conn) {
+	if oldChanged && newChanged && oldWorkspace == newWorkspace {
+		s.broadcastWorkspaceChanged(newWorkspace, c)
+		return
+	}
+	if oldChanged {
+		s.broadcastWorkspaceChanged(oldWorkspace, c)
+	}
+	if newChanged {
+		s.broadcastWorkspaceChanged(newWorkspace, c)
+	}
 }
 
 // recordReplay keeps the exact transition used for a live broadcast. It is
@@ -685,13 +693,14 @@ func (s *Server) queueReplay(c *Conn, item stateReplay, scope state.Scope) {
 // queueUnscopedReplay sends a whole transition to a client watching everything:
 // one delta, then the events that transition produced, if it wants events.
 func (s *Server) queueUnscopedReplay(c *Conn, item stateReplay, scope state.Scope) {
-	if msg := marshalDelta(item.prev, item.next, c.include, scope); msg != nil {
+	view := viewSpec{include: c.include, scope: scope, events: c.events}
+	if msg := deltaFrame(item.prev, item.next, view); msg != nil {
 		c.enqueue(msg)
 	}
-	if !c.events {
+	if !view.events {
 		return
 	}
-	for _, msg := range marshalEvents(item.events, c.include, scope, item.next.Groups) {
+	for _, msg := range eventFrames(item.events, view, item.next.Groups) {
 		c.enqueue(msg)
 	}
 }
@@ -868,34 +877,106 @@ func newChangeSet(prev, next state.Snapshot, events []state.Event) changeSet {
 	}
 }
 
-// frames is one view's wire encoding of a transition. Exactly one of the three
-// is populated for a given subscriber: a scoped view gets state.changed, an
-// unscoped one gets a delta and whichever events fall in its view.
+// eventChangeSet is the same view of a single standalone event: the redacted
+// summary the scoped fan-out routes, matched against the rows that event
+// happened on.
+func eventChangeSet(ev state.Event, snap state.Snapshot) changeSet {
+	return changeSet{
+		changes: []state.StateChanged{state.StateChangedForEvent(ev, snap.Seq, snap.Groups)},
+		groups:  snap.Groups,
+	}
+}
+
+// viewSpec is what one connection is entitled to receive. It is derived from
+// the connection once, under subsMu, and is the only input the frame
+// constructors read: the fields the subscriber asked to collect (include), the
+// rows its scope selects, and whether it wants the event stream at all.
+type viewSpec struct {
+	include scanner.Include
+	scope   state.Scope
+	events  bool
+}
+
+// scoped reports whether this view is narrower than the daemon's machine-wide
+// view. A scoped view is served redacted summaries and never the raw delta.
+func (v viewSpec) scoped() bool { return !v.scope.Empty() }
+
+// viewKey is the cache identity of a view. Every dimension a frame depends on
+// belongs in it: if two viewers that receive different frames shared a key, the
+// first one encoded would define the other's stream. events is in the key for
+// exactly that reason.
+type viewKey struct {
+	include scanner.Include
+	scope   string
+	events  bool
+}
+
+func (v viewSpec) key() viewKey {
+	return viewKey{include: v.include, scope: v.scope.Key(), events: v.events}
+}
+
+// frames is one view's wire output: the delta and/or events of an unscoped
+// viewer, or the redacted summaries of a scoped one. The kinds are never mixed
+// for a single view.
 type frames struct {
 	delta   []byte
 	events  [][]byte
 	changes [][]byte
 }
 
-// viewFrames encodes a transition for one view, and only for that view: the
-// publishers call it behind a cache keyed by viewKey, so a room full of clients
-// watching the same thing pays for one encoding rather than one each. It is the
-// single place the fan-out decides which frames a subscriber's view produces,
-// so `publish` and `broadcastEvent` cannot drift into different rules.
-func viewFrames(prev, next state.Snapshot, events []state.Event, set changeSet, c *Conn, effective state.Scope) frames {
-	if !effective.Empty() {
-		// A scoped subscriber is only ever sent redacted summaries, and only if
-		// it asked for events. command and cwd never reach this wire.
-		if !c.events {
+// frameCache encodes a fan-out once per distinct view. The key is built by
+// viewSpec.key, not by hand at each call site, so a dimension added to the view
+// cannot be forgotten by one publisher and remembered by the other.
+type frameCache struct {
+	frames map[viewKey]frames
+}
+
+func newFrameCache() *frameCache {
+	return &frameCache{frames: map[viewKey]frames{}}
+}
+
+// forView returns the frames already encoded for this view, or builds and keeps
+// them. The build closure must depend on nothing the key omits.
+func (fc *frameCache) forView(view viewSpec, build func() frames) frames {
+	if encoded, known := fc.frames[view.key()]; known {
+		return encoded
+	}
+	encoded := build()
+	fc.frames[view.key()] = encoded
+	return encoded
+}
+
+// transitionFrames encodes a published scan transition for one view. An
+// unscoped viewer gets the delta and, when it subscribed to events, the events
+// this transition raised; a scoped viewer gets only the redacted summaries of
+// the rows its scope selects, and only if it asked for events.
+func transitionFrames(prev, next state.Snapshot, events []state.Event, set changeSet, view viewSpec) frames {
+	if view.scoped() {
+		if !view.events {
 			return frames{}
 		}
-		return frames{changes: marshalStateChanges(set.changes, effective, set.groups)}
+		return frames{changes: marshalStateChanges(set.changes, view.scope, set.groups)}
 	}
-	out := frames{delta: marshalDelta(prev, next, c.include, c.scope)}
-	if c.events && len(events) > 0 {
-		out.events = marshalEvents(events, c.include, c.scope, next.Groups)
+	out := frames{delta: deltaFrame(prev, next, view)}
+	if view.events {
+		out.events = eventFrames(events, view, next.Groups)
 	}
 	return out
+}
+
+// standaloneEventFrames encodes one event that did not come from a scan
+// transition. A standalone event is not a transition — there is no previous
+// snapshot to diff — so it can never produce a delta. An unscoped events viewer
+// gets the event frame; a scoped viewer gets the redacted summary of the same
+// event.
+func standaloneEventFrames(ev state.Event, seq uint64, groups []state.Group, set changeSet, view viewSpec) frames {
+	if !view.events {
+		return frames{}
+	}
+	if view.scoped() {
+		return frames{changes: marshalStateChanges(set.changes, view.scope, set.groups)}
+	}
+	return frames{events: eventFrames([]state.Event{ev}, view, groups)}
 }
 
 // deliver queues a view's frames on the connection that holds the view.
@@ -911,44 +992,75 @@ func (f frames) deliver(c *Conn) {
 	}
 }
 
+// audience is what the connected subscribers collectively asked for, computed
+// in one pass so every fan-out decision reads one fact instead of rescanning
+// the registry per question.
+type audience struct {
+	subscribers bool
+	scoped      bool
+	events      bool
+}
+
+// audienceLocked summarizes the registry. Caller holds subsMu.
+func (s *Server) audienceLocked() audience {
+	var aud audience
+	for _, c := range s.conns {
+		if !c.subscribed {
+			continue
+		}
+		aud.subscribers = true
+		aud.events = aud.events || c.events
+		aud.scoped = aud.scoped || !s.effectiveScopeLocked(c.scope).Empty()
+	}
+	return aud
+}
+
+// viewForLocked derives the view a connection is entitled to right now.
+// Caller holds subsMu.
+func (s *Server) viewForLocked(c *Conn) viewSpec {
+	return viewSpec{include: c.include, scope: s.effectiveScopeLocked(c.scope), events: c.events}
+}
+
 // publish fans a scanner transition out to subscribers. Scoped connections
-// receive only their redacted state.changed summaries; legacy connections keep
-// the historical delta/event view. Each wire view is encoded once.
+// receive only their redacted state.changed summaries; unscoped connections
+// keep the historical delta/event view. Each wire view is encoded once.
 func (s *Server) publish(prev, next state.Snapshot, events []state.Event) {
 	s.subsMu.RLock()
 	defer s.subsMu.RUnlock()
 	s.recordReplay(prev, next, events)
 
-	// Events raised before anyone was listening ride out with the first delta
-	// that has somewhere to go.
-	if s.listeningForEvents() {
+	aud := s.audienceLocked()
+	// Events raised before anyone was listening ride out with the first publish
+	// that has an events viewer to carry them to.
+	if aud.events {
 		events = append(s.takePending(), events...)
 	}
-	if !s.hasSubscriberLocked() {
+	if !aud.subscribers {
 		return
 	}
 
-	cache := map[viewKey]frames{}
 	// The change set is only worth building when somebody is watching a scope;
 	// a scan tick with no scoped subscriber is the common case.
 	var set changeSet
-	if s.hasScopedListenerLocked() {
-		set = newChangeSet(prev, next, events)
+	if aud.scoped {
+		set = buildChangeSet(prev, next, events)
 	}
+	cache := newFrameCache()
 	for _, c := range s.conns {
 		if !c.subscribed {
 			continue
 		}
-		effective := s.effectiveScopeLocked(c.scope)
-		view := viewKey{include: c.include, scope: effective.Key()}
-		encoded, ok := cache[view]
-		if !ok {
-			encoded = viewFrames(prev, next, events, set, c, effective)
-			cache[view] = encoded
-		}
+		view := s.viewForLocked(c)
+		encoded := cache.forView(view, func() frames {
+			return transitionFrames(prev, next, events, set, view)
+		})
 		encoded.deliver(c)
 	}
 }
+
+// buildChangeSet is newChangeSet behind a seam, so a test can tell the "nobody
+// watches a scope" early exit from the work it skips.
+var buildChangeSet = newChangeSet
 
 // hasSubscriberLocked reports whether any connection subscribed at all.
 // Caller holds subsMu.
@@ -961,120 +1073,107 @@ func (s *Server) hasSubscriberLocked() bool {
 	return false
 }
 
-// viewKey identifies one subscriber's view of the stream: what it opted into
-// collecting and what it is allowed to see. The frames are encoded once per
-// distinct view rather than once per subscriber.
-type viewKey struct {
-	include scanner.Include
-	scope   string
-}
-
-// listeningForEvents reports whether any subscriber asked for events. Caller
-// holds subsMu.
-func (s *Server) listeningForEvents() bool {
-	for _, c := range s.conns {
-		if c.subscribed && c.events {
-			return true
-		}
-	}
-	return false
-}
-
-// hasScopedListenerLocked reports whether any subscriber is looking at a
-// non-empty scope, which is the only case where a transition has to be turned
-// into redacted summaries. Caller holds subsMu.
-func (s *Server) hasScopedListenerLocked() bool {
-	for _, c := range s.conns {
-		if c.subscribed && !s.effectiveScopeLocked(c.scope).Empty() {
-			return true
-		}
-	}
-	return false
-}
-
 // BroadcastEvent sends one event to subscribers that asked for events, applying
 // the scoped relation before it reaches the wire.
 func (s *Server) BroadcastEvent(ev state.Event) { s.broadcastEvent(ev) }
 
-// broadcastEvent sends one event to matching subscribers that asked for events.
+// broadcastEvent sends one standalone event to matching subscribers that asked
+// for events. It is the event path, not a transition: subscribers get the event
+// (or its redacted summary), never a delta.
 func (s *Server) broadcastEvent(ev state.Event) {
 	s.subsMu.RLock()
 	defer s.subsMu.RUnlock()
 
-	groups := s.loop.Cached().Groups
-	// One encoding is reused per (include, scope) pair: a room full of clients
-	// watching the same thing should not pay for the same marshal once each.
-	cache := map[viewKey]frames{}
-	set := changeSet{changes: []state.StateChanged{state.StateChangedForEvent(ev, s.loop.Cached().Seq, groups)}, groups: groups}
+	snap := s.loop.Cached()
+	set := eventChangeSet(ev, snap)
+	cache := newFrameCache()
 	for _, c := range s.conns {
 		if !c.subscribed || !c.events {
 			continue
 		}
-		effective := s.effectiveScopeLocked(c.scope)
-		view := viewKey{include: c.include, scope: effective.Key()}
-		encoded, known := cache[view]
-		if !known {
-			encoded = viewFrames(state.Snapshot{}, state.Snapshot{Seq: s.loop.Cached().Seq, Groups: groups},
-				[]state.Event{ev}, set, c, effective)
-			cache[view] = encoded
-		}
+		view := s.viewForLocked(c)
+		encoded := cache.forView(view, func() frames {
+			return standaloneEventFrames(ev, snap.Seq, snap.Groups, set, view)
+		})
 		encoded.deliver(c)
 	}
 }
 
-// marshalDelta builds one state.delta notification for a given include set.
-// It returns nil when the delta is empty for this subscriber, so a client that
-// asked for neither stats nor health is not woken by a stats-only tick.
-func marshalDelta(prev, next state.Snapshot, include scanner.Include, scope state.Scope) []byte {
-	prev = scope.FilterSnapshot(prev)
-	next = scope.FilterSnapshot(next)
-	var d state.Delta
-	if include.Stats {
-		d = state.DiffWithStats(prev, next)
-	} else {
-		d = state.Diff(prev, next)
-	}
-	if emptyDelta(d) {
+// deltaFrame builds one state.delta notification for a view. It returns nil
+// when the delta is empty for this subscriber, so a client that asked for
+// neither stats nor health is not woken by a stats-only tick.
+func deltaFrame(prev, next state.Snapshot, view viewSpec) []byte {
+	delta, ok := deltaFor(prev, next, view)
+	if !ok {
 		return nil
 	}
-	d.Ports.Added = filterPorts(d.Ports.Added, include)
-	d.Ports.Updated = filterPorts(d.Ports.Updated, include)
-
-	raw, err := json.Marshal(d)
-	if err != nil {
+	frame, ok := frameNotification(rpc.MethodStateDelta, delta)
+	if !ok {
 		return nil
 	}
-	msg, err := json.Marshal(rpc.Notification{
-		JSONRPC: rpc.Version, Method: rpc.MethodStateDelta, Params: raw,
-	})
-	if err != nil {
-		return nil
-	}
-	return msg
+	return frame
 }
 
-// marshalEvents builds one state.event notification per event.
-func marshalEvents(events []state.Event, include scanner.Include, scope state.Scope, groups []state.Group) [][]byte {
-	out := make([][]byte, 0, len(events))
+// deltaFor computes the row diff this view may see. Scope selects the rows
+// before the diff; include decides which diff is computed (with or without
+// stats) and which enrichment survives on the added and updated ports. The
+// envelope is not built here — deltaFrame owns that — so field permission and
+// wire framing stay two separate decisions.
+func deltaFor(prev, next state.Snapshot, view viewSpec) (state.Delta, bool) {
+	prev, next = view.scope.FilterSnapshot(prev), view.scope.FilterSnapshot(next)
+	delta := state.Diff(prev, next)
+	if view.include.Stats {
+		delta = state.DiffWithStats(prev, next)
+	}
+	if emptyDelta(delta) {
+		return state.Delta{}, false
+	}
+	delta.Ports.Added = filterPorts(delta.Ports.Added, view.include)
+	delta.Ports.Updated = filterPorts(delta.Ports.Updated, view.include)
+	return delta, true
+}
+
+// eventFrames builds one state.event notification per event this view may see.
+func eventFrames(events []state.Event, view viewSpec, groups []state.Group) [][]byte {
+	visible := visibleEvents(events, view, groups)
+	out := make([][]byte, 0, len(visible))
+	for _, ev := range visible {
+		if frame, ok := frameNotification(rpc.MethodStateEvent, ev); ok {
+			out = append(out, frame)
+		}
+	}
+	return out
+}
+
+// visibleEvents drops the events outside this view's scope and strips the port
+// enrichment the view did not ask for. Each event is copied before its port is
+// replaced, so filtering one view cannot mutate the transition another view is
+// about to read.
+func visibleEvents(events []state.Event, view viewSpec, groups []state.Group) []state.Event {
+	out := make([]state.Event, 0, len(events))
 	for _, ev := range events {
-		if !scope.MatchEvent(ev, groups) {
+		if !view.scope.MatchEvent(ev, groups) {
 			continue
 		}
 		if ev.Port != nil {
-			p := filterPort(*ev.Port, include)
-			ev.Port = &p
+			port := filterPort(*ev.Port, view.include)
+			ev.Port = &port
 		}
-		raw, err := json.Marshal(ev)
-		if err != nil {
-			continue
-		}
-		msg, err := json.Marshal(rpc.Notification{JSONRPC: rpc.Version, Method: rpc.MethodStateEvent, Params: raw})
-		if err != nil {
-			continue
-		}
-		out = append(out, msg)
+		out = append(out, ev)
 	}
 	return out
+}
+
+// frameNotification frames one payload as a notification and reports whether it
+// encoded. A payload the encoder refuses is dropped rather than sent as a frame
+// whose params are absent, so every caller either queues a decodable frame or
+// nothing.
+func frameNotification(method string, payload any) ([]byte, bool) {
+	frame, err := marshalNotification(method, payload)
+	if err != nil {
+		return nil, false
+	}
+	return frame, true
 }
 
 func marshalStateChanges(changes []state.StateChanged, scope state.Scope, groups []state.Group) [][]byte {
@@ -1083,13 +1182,11 @@ func marshalStateChanges(changes []state.StateChanged, scope state.Scope, groups
 		if !scope.MatchChangedIn(change, groups) {
 			continue
 		}
-		raw, err := marshalNotification(rpc.MethodStateChanged, change)
-		if err != nil {
-			// A change that cannot be encoded is dropped rather than sent as a
-			// notification whose params are missing.
-			continue
+		// A change that cannot be encoded is dropped rather than sent as a
+		// notification whose params are missing.
+		if frame, ok := frameNotification(rpc.MethodStateChanged, change); ok {
+			out = append(out, frame)
 		}
-		out = append(out, raw)
 	}
 	return out
 }

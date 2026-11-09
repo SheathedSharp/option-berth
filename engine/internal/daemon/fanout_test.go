@@ -4,9 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
@@ -57,27 +61,148 @@ func drain(c *Conn) [][]byte {
 	}
 }
 
-// TestScopedEventWithNoViewersIsNotEncoded pins the fan-out's cheapest early
-// exit. A transition is published for every scan tick whether or not any
-// scoped subscriber is listening; building the whole change set and encoding a
-// notification per tick for nobody is work the daemon pays forever.
-func TestScopedEventWithNoViewersIsNotEncoded(t *testing.T) {
-	s := New(Options{Socket: "/test/fanout-none.sock", Version: "test"})
-	encoded, _ := countNotifications(t)
-
-	s.subsMu.RLock()
-	if s.hasScopedListenerLocked() {
-		s.subsMu.RUnlock()
-		t.Fatal("a server with no subscribers reports a scoped listener")
+// cachedGroups makes a loop whose cached snapshot already carries a real group
+// row, so a standalone broadcast is fanned out against a non-empty state. It
+// scans once through the injected collector; the loop is not started, so
+// nothing else publishes behind the test's back.
+func cachedGroups(t *testing.T) *scanner.Loop {
+	t.Helper()
+	dir := t.TempDir()
+	body := "name: example\nservices:\n  - name: api\n    port: 8000\n"
+	if err := os.WriteFile(filepath.Join(dir, ".oberth.yaml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	s.subsMu.RUnlock()
+	loop := scanner.New(scanner.Options{
+		DaemonVersion: "test",
+		Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
+			return []ports.ListeningPort{{Port: 8000, PID: 42, Process: "python3", Cwd: dir}}, nil
+		},
+	})
+	if _, err := loop.Snapshot(scanner.Include{}); err != nil {
+		t.Fatalf("populating the cached snapshot: %v", err)
+	}
+	if len(loop.Cached().Groups) == 0 {
+		t.Fatal("test setup: the cached snapshot did not attribute the group")
+	}
+	return loop
+}
+
+// notificationMethod names the method of one already-queued frame.
+func notificationMethod(t *testing.T, raw []byte) string {
+	t.Helper()
+	var msg rpc.Notification
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		t.Fatalf("decoding notification %q: %v", raw, err)
+	}
+	return msg.Method
+}
+
+// TestBroadcastEventSendsNoDeltaToUnscopedViewers pins that a standalone event
+// is not a state transition. broadcastEvent exists for events that do not come
+// from a scan — daemon_stopping, a bridged event — so an unscoped events
+// subscriber must receive the state.event and nothing else. Reusing the
+// transition path here would spread an empty previous snapshot against the
+// cached groups and hand every subscriber a delta whose "added" list is the
+// whole machine and whose "at" is empty: a change nobody observed.
+func TestBroadcastEventSendsNoDeltaToUnscopedViewers(t *testing.T) {
+	s := New(Options{Socket: "/test/broadcast.sock", Version: "test", Scanner: cachedGroups(t)})
+	c := newConn(1, s, nil)
+	c.subscribed, c.events = true, true
+	s.registerConn(c)
+
+	s.BroadcastEvent(state.Event{Kind: "probe", At: "now"})
+
+	sawEvent := false
+	for _, raw := range drain(c) {
+		switch notificationMethod(t, raw) {
+		case rpc.MethodStateDelta:
+			t.Fatalf("an unscoped events subscriber received a state.delta for a standalone event: %s", raw)
+		case rpc.MethodStateEvent:
+			sawEvent = true
+		}
+	}
+	if !sawEvent {
+		t.Fatal("the standalone event was not delivered to a subscriber that asked for events")
+	}
+}
+
+// TestEventAndDeltaViewersShareNoCachedFrames pins the fan-out cache against
+// the one dimension a view's frames depend on but a naive key would omit. Two
+// connections with the same include set and scope differ only in whether they
+// asked for events; if the cache key omits that, whichever is visited first
+// decides the frames both receive — one silently drops the event it subscribed
+// to, the other receives an event it never asked for. The map order makes which
+// one breaks random, so this asserts on both connections and fails whichever
+// way the cache went wrong. It is therefore red before the key carries events
+// and green after, with no sleeps and no retry loop.
+func TestEventAndDeltaViewersShareNoCachedFrames(t *testing.T) {
+	s := New(Options{Socket: "/test/fanout-events-key.sock", Version: "test"})
+	root := "/code/example-worker"
+	port := state.Port{Host: "localhost", Port: 18090, BindAddress: "127.0.0.1", PID: 101, ProjectRoot: &root}
+	prev := state.Snapshot{Seq: 10, Groups: []state.Group{{Name: "example-worker", Repo: "example-worker", RootDir: &root}}}
+	next := state.Snapshot{Seq: 11, At: "2026-09-28T00:00:11Z", Groups: prev.Groups, Ports: []state.Port{port}}
+	events := []state.Event{{EventID: "11:port_up:localhost/18090", Seq: 11, Kind: "port_up", At: next.At, Port: &port}}
+
+	deltaOnly := newConn(1, s, nil)
+	deltaOnly.subscribed, deltaOnly.events = true, false
+	eventsToo := newConn(2, s, nil)
+	eventsToo.subscribed, eventsToo.events = true, true
+	s.registerConn(deltaOnly)
+	s.registerConn(eventsToo)
+
+	s.publish(prev, next, events)
+
+	for _, raw := range drain(deltaOnly) {
+		if notificationMethod(t, raw) == rpc.MethodStateEvent {
+			t.Fatalf("a delta-only subscriber received an event it never subscribed to: %s", raw)
+		}
+	}
+	var sawDelta, sawEvent bool
+	for _, raw := range drain(eventsToo) {
+		switch notificationMethod(t, raw) {
+		case rpc.MethodStateDelta:
+			sawDelta = true
+		case rpc.MethodStateEvent:
+			sawEvent = true
+		}
+	}
+	if !sawDelta || !sawEvent {
+		t.Fatalf("events subscriber got delta=%v event=%v, want both", sawDelta, sawEvent)
+	}
+}
+
+// TestUnscopedViewerDoesNotBuildTheScopedChangeSet pins the fan-out's cheapest
+// early exit against the case it actually protects. A transition is published
+// for every scan tick; an unscoped subscriber — the common legacy client that
+// wants events but no scope — must not pay to build the redacted change set for
+// scopes nobody is watching. Counting the builds, not the encodings, is what
+// makes the guard observable: delete `if aud.scoped` and the change set is
+// built for this subscriber, which fails here. The delta the subscriber did ask
+// for must still arrive.
+func TestUnscopedViewerDoesNotBuildTheScopedChangeSet(t *testing.T) {
+	s := New(Options{Socket: "/test/fanout-unscoped.sock", Version: "test"})
+	original := buildChangeSet
+	builds := 0
+	buildChangeSet = func(prev, next state.Snapshot, events []state.Event) changeSet {
+		builds++
+		return original(prev, next, events)
+	}
+	t.Cleanup(func() { buildChangeSet = original })
+
+	c := newConn(1, s, nil)
+	c.subscribed, c.events = true, true
+	s.registerConn(c)
 
 	root := "/code/example-worker"
 	prev := state.Snapshot{Seq: 10}
 	next := state.Snapshot{Seq: 11, Groups: []state.Group{{Name: "example-worker", Repo: "example-worker", RootDir: &root}}}
 	s.publish(prev, next, nil)
-	if got := encoded(); got != 0 {
-		t.Errorf("encoded %d notifications with no subscriber listening, want 0", got)
+
+	if builds != 0 {
+		t.Fatalf("built %d scoped change sets with no scoped viewer, want 0", builds)
+	}
+	if len(drain(c)) == 0 {
+		t.Fatal("the unscoped subscriber received nothing for a transition it watches")
 	}
 }
 

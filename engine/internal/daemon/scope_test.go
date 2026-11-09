@@ -31,9 +31,9 @@ func TestMarshalDeltaFiltersBeforeDiffing(t *testing.T) {
 	next.Ports[0].PID = 12
 	next.Ports[1].PID = 13
 
-	raw := marshalDelta(prev, next, scanner.Include{}, state.Scope{Worktrees: []string{selectedRoot}})
+	raw := deltaFrame(prev, next, viewSpec{scope: state.Scope{Worktrees: []string{selectedRoot}}})
 	if raw == nil {
-		t.Fatal("marshalDelta returned nil for a selected change")
+		t.Fatal("deltaFrame returned nil for a selected change")
 	}
 	var msg rpc.Notification
 	if err := json.Unmarshal(raw, &msg); err != nil {
