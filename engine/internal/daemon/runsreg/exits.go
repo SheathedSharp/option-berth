@@ -51,7 +51,8 @@ type Meta struct {
 }
 
 // Origin is the client a request came from, as it named itself in
-// daemon.hello: cli, app, mcp or tray.
+// daemon.hello. The engine's own client sends "cli"; the field is carried
+// through unchanged so a future caller kind does not need a daemon change.
 func Origin(req *daemon.Request) string {
 	if req == nil || req.Conn == nil {
 		return ""

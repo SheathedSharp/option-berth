@@ -45,7 +45,7 @@ type Record struct {
 	StartedAt time.Time
 	// ConfigPath, StartID and Origin say where a run came from: the
 	// oberth.yaml it was started from, the groups.start that started it with
-	// its siblings, and the client that asked for it (cli, app, mcp).
+	// its siblings, and the client name daemon.hello reported for it.
 	ConfigPath string
 	StartID    string
 	Origin     string

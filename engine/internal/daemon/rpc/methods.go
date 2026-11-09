@@ -102,7 +102,7 @@ type Include []string
 // ---------------------------------------------------------------- daemon ---
 
 type DaemonHelloParams struct {
-	Client        string `json:"client"` // cli | app | mcp | tray
+	Client        string `json:"client"` // the engine's own client sends "cli"
 	ClientVersion string `json:"client_version"`
 	Keepalive     bool   `json:"keepalive,omitempty"`
 }
@@ -651,7 +651,7 @@ type RunRecord struct {
 	Status string `json:"status"`
 	// ConfigPath, StartID and Origin say where the run came from: the
 	// oberth.yaml it was started from, the `groups.start` that started it with
-	// its siblings, and the client that asked (cli, app, mcp).
+	// its siblings, and the client name reported in daemon.hello.
 	ConfigPath string `json:"config_path,omitempty"`
 	StartID    string `json:"start_id,omitempty"`
 	Origin     string `json:"origin,omitempty"`

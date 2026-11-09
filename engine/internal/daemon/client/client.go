@@ -25,7 +25,8 @@ const AutostartTimeout = 3 * time.Second
 
 // ClientInfo names the caller in daemon.hello and chooses the connection.
 type ClientInfo struct {
-	// Name is the caller kind: cli, app, mcp or tray.
+	// Name is the caller kind reported in daemon.hello. The engine's own CLI
+	// sends "cli"; the daemon records whatever a client sends.
 	Name string
 	// Version is the caller's own version.
 	Version string
