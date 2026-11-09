@@ -385,3 +385,42 @@ func TestAMissingSampleLeavesTheServiceUntouched(t *testing.T) {
 		t.Fatalf("stats = %+v, want nil when the sample has nothing for the pid", groups[0].Services[0].Stats)
 	}
 }
+
+// TestAStaleStatsSampleIsNotPublished: a sample that was taken before a newer
+// full-stats scan committed belongs to the older generation. It must not be
+// merged into the newer rows and must not reach the publisher; a live probe of
+// the branch is what keeps the generation guard honest.
+func TestAStaleStatsSampleIsNotPublished(t *testing.T) {
+	var publishes atomic.Int32
+	var advance sync.Once
+	var loop *Loop
+	loop = New(Options{
+		DaemonVersion: "test",
+		Scan: func(Include) ([]ports.ListeningPort, error) {
+			return []ports.ListeningPort{{Port: 4000, PID: 42, Process: "worker", CPUPercent: 1, MemoryRSS: 100}}, nil
+		},
+		Publish: func(_, _ state.Snapshot, _ []state.Event) { publishes.Add(1) },
+		SampleStats: func([]int) map[int]ports.ProcSample {
+			// While this sample is being taken, a newer full-stats scan commits.
+			advance.Do(func() { loop.scanAndPublish(Include{Stats: true}) })
+			return map[int]ports.ProcSample{42: {CPUPercent: 99, MemoryRSS: 999, Uptime: "1s"}}
+		},
+	})
+
+	// A full-stats scan seeds the snapshot and the stats generation.
+	loop.scanAndPublish(Include{Stats: true})
+	publishes.Store(0)
+
+	loop.sampleStats(Include{Stats: true})
+
+	if got := publishes.Load(); got != 0 {
+		t.Fatalf("%d publishes, want none: a stale sample reached the wire", got)
+	}
+	snap := loop.Cached()
+	if len(snap.Ports) != 1 || snap.Ports[0].Stats == nil {
+		t.Fatalf("snapshot = %+v, want the scan's row with its stats", snap.Ports)
+	}
+	if got := snap.Ports[0].Stats.CPUPercent; got != 1 {
+		t.Fatalf("cpu = %v, want the scan's 1: a stale sample was merged", got)
+	}
+}
