@@ -1078,17 +1078,6 @@ func (s *Server) publish(prev, next state.Snapshot, events []state.Event) {
 // watches a scope" early exit from the work it skips.
 var buildChangeSet = newChangeSet
 
-// hasSubscriberLocked reports whether any connection subscribed at all.
-// Caller holds subsMu.
-func (s *Server) hasSubscriberLocked() bool {
-	for _, c := range s.conns {
-		if c.subscribed {
-			return true
-		}
-	}
-	return false
-}
-
 // BroadcastEvent sends one event to subscribers that asked for events, applying
 // the scoped relation before it reaches the wire.
 func (s *Server) BroadcastEvent(ev state.Event) { s.broadcastEvent(ev) }
