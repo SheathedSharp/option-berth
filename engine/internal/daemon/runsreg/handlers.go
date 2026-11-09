@@ -240,18 +240,29 @@ func handleSpawn(ctx context.Context, req *daemon.Request) (any, error) {
 }
 
 // sessionOf is the agent session a spawned run belongs to: the one the caller
-// sent, or — when it sent none — the one the request's own environment names.
+// sent, or — when it sent none, or sent one that names no agent — the one the
+// request's own environment names.
 //
 // The daemon's environment says nothing about the agent that called it, which
 // is why the session has to come over the wire at all; the env fallback exists
 // only for a caller that forwarded its environment instead of capturing one.
+//
+// The fallback keys off the id, not off a nil pointer: `{"session": {}}` is a
+// caller that sent the field without capturing anything, and the environment
+// can still name the agent, the worktree and the branch. A detected session
+// therefore replaces an id-less one, while a wire session that names an id is
+// the caller's word and is kept exactly.
 func sessionOf(p rpc.RunsSpawnParams, cwd string) state.Session {
+	session := state.Session{}
 	if p.Session != nil {
-		return *p.Session
+		session = *p.Session
+	}
+	if session.ID != "" {
+		return session
 	}
 	detected, ok := sessions.DetectFromEnv(envPairs(p.Env), sessions.Options{})
 	if !ok {
-		return state.Session{}
+		return session
 	}
 	detected.Worktree, detected.Branch = sessions.GitContext(cwd)
 	return detected
