@@ -5,29 +5,29 @@
   <figcaption class="fragment-label">install · macOS 或 Linux</figcaption>
   <pre><code>curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh</code></pre>
 </figure>
-<p>脚本读取 <code>uname</code>，挑出对应的 darwin/linux 与 amd64/arm64 压缩包，核对同名 <code>.sha256</code>，然后安装。不需要管理员权限。</p>
+<p>脚本读取 <code>uname</code>，挑出对应的 darwin 或 linux、amd64 或 arm64 压缩包，核对发布在同一目录下的 <code>.sha256</code>，然后安装。不需要管理员权限。</p>
 <ul>
   <li>二进制：<code>~/.local/bin/oberth</code> 与 <code>~/.local/bin/jev-attention</code>。</li>
   <li>许可证与构建清单：<code>~/.local/share/option-berth</code>。</li>
-  <li>PATH：在一份已有的 shell 启动文件里加一行，从不新建文件。</li>
+  <li>PATH：在你已有的一份 shell 启动文件里加一行。脚本从不新建文件。</li>
   <li>运行状态：<code>~/.option-berth</code>，安装脚本既不创建也不修改它。</li>
 </ul>
-<p>用 <code>--version v1.0.0</code> 固定版本，用 <code>--dir "$HOME/tools/bin"</code> 换目录，或用 <code>--no-modify-path</code> 不动你的 shell 文件。官方主机慢或不可达时，脚本会探测镜像；换源后仍须报告同一个 SHA256，安装才继续。</p>
+<p>用 <code>--version v1.0.0</code> 固定版本，用 <code>--dir "$HOME/tools/bin"</code> 装到别处，或用 <code>--no-modify-path</code> 不动 shell 文件。官方主机慢或不可达时，脚本会探测镜像；换源后仍须报告同一个 SHA256，安装才会继续。</p>
 
 <h2 id="windows">Windows</h2>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">install · Windows PowerShell</figcaption>
   <pre><code>irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps1 | iex</code></pre>
 </figure>
-<p>二进制落在 <code>%LOCALAPPDATA%\option-berth\bin</code>，只改当前用户的 PATH。用 <code>-Version</code> 固定版本，用 <code>-NoModifyPath</code> 不动 PATH。替换文件前，安装脚本会先停掉正在运行的 <code>oberth</code> daemon；它不会替你停项目服务。</p>
+<p>二进制落在 <code>%LOCALAPPDATA%\option-berth\bin</code>，只改当前用户的 PATH。用 <code>-Version</code> 固定版本，用 <code>-NoModifyPath</code> 不动 PATH。替换文件之前，安装脚本会停掉正在运行的 <code>oberth</code> daemon，但不会替你停项目服务。</p>
 
 <h2 id="other-ways">其他安装方式</h2>
 <table class="chapter-table">
   <caption class="sr-only">安装渠道</caption>
   <thead><tr><th scope="col">渠道</th><th scope="col">命令</th><th scope="col">适合什么</th></tr></thead>
   <tbody>
-    <tr><th scope="row">go install</th><td><code>go install github.com/sheathedsharp/option-berth/engine/cmd/oberth@latest</code></td><td>Go 1.25+，装进 <code>GOPATH/bin</code>；有模块代理即可。</td></tr>
-    <tr><th scope="row">Homebrew</th><td><code>brew install sheathedsharp/tap/oberth</code></td><td>自托管 tap 提供的引擎 CLI；还没有进 homebrew-core。</td></tr>
+    <tr><th scope="row">go install</th><td><code>go install github.com/sheathedsharp/option-berth/engine/cmd/oberth@latest</code></td><td>Go 1.25 或更新；装进 <code>GOPATH/bin</code>，有模块代理即可。</td></tr>
+    <tr><th scope="row">Homebrew</th><td><code>brew install sheathedsharp/tap/oberth</code></td><td>自托管 tap 提供的引擎 CLI，还没有进 homebrew-core。</td></tr>
     <tr><th scope="row">发布包</th><td>下载、核对 <code>SHA256SUMS</code>、放进 PATH</td><td>不想运行脚本时。</td></tr>
     <tr><th scope="row">Linux 包</th><td><code>.deb</code> 或 <code>.rpm</code></td><td>交给发行版管理；细节在安装契约里。</td></tr>
   </tbody>
@@ -39,15 +39,15 @@
   <pre><code>oberth version --json
 oberth doctor</code></pre>
 </figure>
-<p><code>version --json</code> 返回你实际装上的二进制之 <code>version</code>、<code>commit</code>、<code>built</code> 和 <code>platform</code>。<code>doctor</code> 检查清单、daemon、CLI 路径、日志目录，以及当前进程能不能看见监听。看不见就报告“看不见”并给出下一步，不会写成“没有东西在监听”。</p>
+<p><code>version --json</code> 返回你实际装上的二进制的 <code>version</code>、<code>commit</code>、<code>built</code> 和 <code>platform</code>。<code>doctor</code> 检查清单、daemon、CLI 路径、日志目录，以及当前进程能不能看见监听。看不见时，它报告自己是 blind 并给出下一步，不会写成“没有东西在监听”。</p>
 
-<h2 id="platforms">平台边界</h2>
-<p>完整服务场景只在 macOS 与 Linux 上验证。Windows 有原生构建、冒烟测试和一次 arm64 交叉构建；这不等于完整生命周期在 Windows 上也验证过。引擎没有图形界面：macOS 客户端是独立产品，coding agent skill 也是。</p>
+<h2 id="platforms">平台支持</h2>
+<p>完整服务场景只在 macOS 与 Linux 上验证。Windows 有原生构建、冒烟测试和一次 arm64 交叉构建，这不等于那边的服务生命周期被验证过。引擎没有图形界面：macOS 客户端是独立产品，coding agent skill 也是。</p>
 
 <h2 id="upgrade">升级与卸载</h2>
-<p>重新运行对应平台的安装命令即可升级；升级后执行一次 <code>oberth daemon stop</code>，下一次调用就起新构建。macOS 与 Linux 用 <code>uninstall.sh</code> 卸载，Windows 用 <code>uninstall.ps1</code>。卸载脚本会先停 daemon，并默认保留 <code>~/.option-berth</code>；传 <code>--purge-state</code> 才会一并删除。确切参数与各平台路径见 <a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/install.md">安装与卸载</a>。</p>
+<p>重新运行对应平台的安装命令即可升级。升级后执行一次 <code>oberth daemon stop</code>，下一次调用就会起新构建。macOS 与 Linux 用 <code>uninstall.sh</code> 卸载，Windows 用 <code>uninstall.ps1</code>。卸载脚本先停 daemon，默认保留 <code>~/.option-berth</code>；传 <code>--purge-state</code> 才会一并删除。确切参数与各平台路径见 <a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/install.md">安装与卸载</a>。</p>
 
 <aside class="note">
   <h2 id="not-does">安装脚本不做什么</h2>
-  <p>不启动服务、不写 Git 状态、不需要管理员权限。它不安装 macOS 客户端或 coding agent skill，也不会在你允许的那一行 PATH 之外改你的 shell。</p>
+  <p>不启动服务、不写 Git 状态、不需要管理员权限。它不安装 macOS 客户端或 coding agent skill；除了你允许的那一行 PATH，它不动你的 shell。</p>
 </aside>
