@@ -1,7 +1,7 @@
 <p class="chapter-intro"><code>up</code> 按依赖顺序启动清单声明的东西。<code>--wait</code> 只在选中的服务真的开始监听并通过健康检查后才返回。</p>
 
 <h2 id="order">按依赖顺序启动</h2>
-<p>服务按 <code>depends_on</code> 的顺序启动。带 <code>prepare:</code> 的服务先在同一工作目录跑前置命令，成功后才启动长时间运行的 <code>cmd:</code>。已经在跑的服务会被跳过；每个服务保留自己的日志文件和运行记录。</p>
+<p>服务按 <code>depends_on</code> 给出的顺序启动。带 <code>prepare:</code> 的服务先在同一工作目录跑前置命令，前置命令成功后才启动长时间运行的 <code>cmd:</code>。已经在跑的服务会被跳过，每个服务保留自己的日志文件和运行记录。</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">oberth up --wait</figcaption>
   <pre><code>api      started   :21730   ready
@@ -9,23 +9,23 @@ worker   started   no port</code></pre>
 </figure>
 
 <h2 id="wait">--wait 证明了什么</h2>
-<p>不带 <code>--wait</code>，<code>up</code> 只证明进程起来了，没有证明服务可用。带 <code>--wait</code>，有端口的服务必须开始监听；声明了 <code>health:</code> 的服务还必须通过检查；无端口 worker 的运行记录变为活跃才算就绪。已经在跑的服务也在等待范围内。</p>
+<p>不带 <code>--wait</code>，<code>up</code> 只证明进程起来了，没有证明服务可用。带 <code>--wait</code>，有端口的服务必须开始监听，声明了 <code>health:</code> 的服务还必须通过检查，无端口 worker 的运行记录变为活跃才算就绪。已经在跑的服务也在等待范围内。</p>
 <ul>
-  <li>每个服务按自己的 <code>ready_timeout:</code> 等待（默认 30s）。<code>--wait-timeout</code> 是整体上限，只会收紧、不会放宽每个服务的预算。</li>
-  <li><code>prepare:</code> 不计入就绪预算；慢安装要靠 <code>prepare_inputs:</code> 缓存，或调用方自己的脚本超时。</li>
-  <li>不等待时，已启动服务带 <code>ready: false</code>，表格写“就绪未确认”。这不是失败。</li>
-  <li>超时的服务是 <code>failed</code>，原因 <code>ready_timeout</code>；消息会说是服务自己的预算先到，还是调用方的上限先到。</li>
+  <li>每个服务按自己的 <code>ready_timeout:</code> 等待，默认 30s。<code>--wait-timeout</code> 是整体上限，只能收紧、不会放宽每个服务的预算。</li>
+  <li><code>prepare:</code> 不计入就绪预算。慢安装要靠 <code>prepare_inputs:</code> 缓存，或调用方自己的脚本超时。</li>
+  <li>不等待时，已启动的服务带 <code>ready: false</code>，表格写“就绪未确认”。这不是失败。</li>
+  <li>超时的服务是 <code>failed</code>，原因 <code>ready_timeout</code>；消息会说明是服务自己的预算先到，还是调用方的上限先到。</li>
 </ul>
 
-<h2 id="fails">失败的时候</h2>
-<p><code>services[]</code> 的每一项是 <code>started</code>、<code>skipped</code> 或 <code>failed</code>；失败带可分支的 <code>reason</code>，以及只指向真实存在证据的 <code>hint</code>。部分成功仍然恰好是一个 JSON 值，退出码 1。</p>
+<h2 id="fails">启动失败的时候</h2>
+<p><code>services[]</code> 的每一项是 <code>started</code>、<code>skipped</code> 或 <code>failed</code>。失败带可分支的 <code>reason</code>，以及只指向真实存在证据的 <code>hint</code>。部分成功仍然恰好是一个 JSON 值，退出码 1。</p>
 <table class="chapter-table">
   <caption class="sr-only">启动失败原因</caption>
   <thead><tr><th scope="col">原因</th><th scope="col">发生了什么</th><th scope="col">先读什么</th></tr></thead>
   <tbody>
     <tr><th scope="row"><code>start_failed</code></th><td>命令根本没起来。</td><td>hint：拒绝它的可执行文件、工作目录或环境。</td></tr>
     <tr><th scope="row"><code>port_occupied</code></th><td>固定端口已经被占用。</td><td><code>port_holder</code>：占用者的端口、pid、命令和类型。</td></tr>
-    <tr><th scope="row"><code>dependency_not_ready</code></th><td>依赖在等待期间退出了。</td><td>依赖的日志；消息带它的退出码和原因。</td></tr>
+    <tr><th scope="row"><code>dependency_not_ready</code></th><td>依赖在等待期间退出了。</td><td>依赖的日志；消息里带着它的退出码和原因。</td></tr>
     <tr><th scope="row"><code>dependency_timeout</code></th><td>依赖活着，但一直没就绪。</td><td>依赖自己的 <code>ready_timeout:</code> 和日志。</td></tr>
     <tr><th scope="row"><code>ready_timeout</code></th><td>服务自己没在预算内就绪。</td><td>服务的日志和它的就绪声明。</td></tr>
   </tbody>
@@ -43,7 +43,7 @@ worker   started   no port</code></pre>
   <ul>
     <li>服务工作目录默认必须在 <code>$HOME</code> 下。<code>--allow-outside-home</code> 是一个明确决定，不是静默回退。</li>
     <li><code>machine:</code> 依赖只被观察，<code>up</code> 从不启动或停止它们。</li>
-    <li><code>workspace:</code> 引用只提供地址；<code>up</code> 不启动另一个 checkout 的服务，也不跨 checkout 建立 <code>depends_on</code>。</li>
-    <li><code>up</code> 不写清单，也不写 Git。清单在这里被读之前，已经由人采纳。</li>
+    <li><code>workspace:</code> 引用只提供地址。<code>up</code> 不启动另一个 checkout 的服务，也不跨 checkout 建立 <code>depends_on</code>。</li>
+    <li><code>up</code> 不写清单，也不写 Git。清单在 <code>up</code> 读它之前，已经由人采纳。</li>
   </ul>
 </aside>

@@ -1,13 +1,13 @@
 <p class="chapter-intro">每一条事实都从一份声明开始。<code>oberth.yaml</code> 说清这个 checkout 跑什么；清单由人确认，引擎不会从它碰巧看见的进程里推断启动命令。</p>
 
 <h2 id="start">从 worktree 开始</h2>
-<p><code>oberth init</code> 从当前 checkout 生成一份可以直接审阅的起步清单。它听见的端口和项目文件里的声明只以注释出现，留给人的决定。监听扫描失败不会中断 <code>init</code>：注释写的是 <code>listening unknown</code>，带上观察错误码和下一步——因为“看不见”不是“没有东西在监听”。</p>
+<p><code>oberth init</code> 从当前 checkout 生成一份可以逐行审阅的起步清单。它听见的端口和项目文件里的声明只以注释形式出现，留给人决定。监听扫描失败不会中断 <code>init</code>：注释写的是 <code>listening unknown</code>，带上观察错误码和下一步，因为“看不见”不是“没有东西在监听”。</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">生成与预览</figcaption>
   <pre><code>oberth init
 oberth init --dry-run</code></pre>
 </figure>
-<p><code>--dry-run</code> 只预览不落盘；<code>--json</code> 是给机器的形状。扫描失败时，项目自己的声明和可复制的条目形状仍然保留。</p>
+<p><code>--dry-run</code> 只预览不落盘，<code>--json</code> 给的是机器形状。扫描失败时，项目自己的声明和可复制的条目形状仍然保留。</p>
 
 <h2 id="draft">agent 起草，人采纳</h2>
 <figure class="fragment" data-ui>
@@ -15,7 +15,7 @@ oberth init --dry-run</code></pre>
   <pre><code>oberth init draft claude
 oberth init adopt --dry-run --diff</code></pre>
 </figure>
-<p><code>init draft [agent]</code> 让配置好的本地 agent 起草清单。option-berth 不判断、不联网、不写盘：成功只产出一份草稿，默认归档在 <code>~/.option-berth/drafts/</code>。<code>init adopt</code> 才是写入 <code>oberth.yaml</code> 的那一步。已有清单必须明确给 <code>--replace</code> 或 <code>--merge</code>；<code>--dry-run</code> 与 <code>--diff</code> 先展示结果。草稿不是授权。</p>
+<p><code>init draft [agent]</code> 让配置好的本地 agent 起草清单。option-berth 不判断、不联网、不写盘：成功只产出一份草稿，默认归档在 <code>~/.option-berth/drafts/</code>。<code>init adopt</code> 才是写入 <code>oberth.yaml</code> 的那一步。已有清单必须明确给 <code>--replace</code> 或 <code>--merge</code>，<code>--dry-run</code> 加 <code>--diff</code> 先展示结果。草稿不是授权。</p>
 
 <h2 id="smallest">最小的清单</h2>
 <figure class="fragment" data-ui>
@@ -40,7 +40,7 @@ services:
     <tr><th scope="row"><code>services[].cmd</code></th><td>长时间运行的命令，按 argv 拆分，不经过隐藏的 shell。</td></tr>
     <tr><th scope="row"><code>port</code></th><td>一个固定数字，或 <code>auto</code>：引擎为每次运行分配端口并注入 <code>PORT</code>。</td></tr>
     <tr><th scope="row"><code>health</code></th><td>HTTP 路径、TCP 端口或命令。端口先开、协议后好的服务用命令形式。</td></tr>
-    <tr><th scope="row"><code>depends_on</code></th><td>启动顺序与就绪等待：依赖真的就绪后，后继服务才启动。</td></tr>
+    <tr><th scope="row"><code>depends_on</code></th><td>启动顺序与就绪等待：依赖真的就绪之后，依赖它的服务才启动。</td></tr>
     <tr><th scope="row"><code>env</code></th><td>字面值，以及 <code>${api.url}</code> 这类从本 worktree 地址簿展开的引用。</td></tr>
   </tbody>
 </table>
@@ -50,9 +50,9 @@ services:
   <dt><code>prepare:</code> 与 <code>prepare_inputs:</code></dt>
   <dd>在长时间运行的 <code>cmd:</code> 之前跑一条前置命令。声明的输入自上次成功后没有变化时，下一次 <code>up</code> 会跳过它，而不是重新装依赖。</dd>
   <dt><code>sources:</code></dt>
-  <dd>用来判断进程跑的是不是当前代码的文件。命中的变化由 <code>status</code> 发布为 <code>code_changed_since_start</code>；<code>sources: []</code> 为自行热加载的服务关掉这项检查。</dd>
+  <dd>用来判断进程跑的是不是当前代码的文件。它们变化时，<code>status</code> 发布 <code>code_changed_since_start</code>；<code>sources: []</code> 为自行热加载的服务关掉这项检查。</dd>
   <dt><code>ready_timeout:</code></dt>
-  <dd>服务自己的就绪预算（Go duration，默认 30s）。后继服务与 <code>up --wait</code> 都用它；<code>prepare:</code> 不计入其中。</dd>
+  <dd>服务自己的就绪预算，Go duration，默认 30s。后继服务与 <code>up --wait</code> 都用它，<code>prepare:</code> 不计入其中。</dd>
   <dt><code>env_file:</code></dt>
   <dd>启动时读取、从不回写的 dotenv 风格文件。相对路径从清单目录解析，所以多个 worktree 可以共享 checkout 外的同一份文件。</dd>
   <dt><code>machine:</code></dt>
@@ -64,9 +64,9 @@ services:
 <h2 id="not">清单不能做什么</h2>
 <aside class="note">
   <ul>
-    <li>未知键默认被忽略；<code>BERTH_STRICT_MANIFEST=1</code> 会把它们变成带行列位置的加载错误。发布的 schema 同样拒绝未知键。</li>
+    <li>未知键默认被忽略。<code>BERTH_STRICT_MANIFEST=1</code> 会把它们变成带行列位置的加载错误，发布的 schema 同样拒绝未知键。</li>
     <li>只接受一个 YAML 文档。第二个文档，或同一个服务重复声明 <code>port</code>，都是带行号的错误。</li>
-    <li>引用只有五种形状：服务自己的 <code>${port}</code>/<code>${url}</code>、另一个服务的地址、<code>machine:</code> 或 <code>workspace:</code> 的地址，以及 <code>${worktree}</code>。其他 <code>${...}</code> 按文本保留。</li>
+    <li>引用只有五种形状：服务自己的 <code>${port}</code> 或 <code>${url}</code>、另一个服务的地址、<code>machine:</code> 或 <code>workspace:</code> 的地址，以及 <code>${worktree}</code>。其他 <code>${...}</code> 按文本保留。</li>
     <li><code>machine:</code> 与 <code>workspace:</code> 都是只读的。<code>up</code>、<code>down</code> 和 <code>restart</code> 从不启动或停止对方。</li>
     <li>agent 的草稿永远不会写 <code>oberth.yaml</code>。只有人的 <code>init adopt</code> 会。</li>
   </ul>
