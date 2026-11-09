@@ -385,9 +385,9 @@ func (s *Server) removeConn(c *Conn, reason string) {
 func (s *Server) forgetConn(c *Conn) (string, bool) {
 	s.subsMu.Lock()
 	defer s.subsMu.Unlock()
-	workspace, changed := s.detachWorkspaceLocked(c)
+	workspace, _, held := s.detachWorkspaceLocked(c)
 	delete(s.conns, c.id)
-	return workspace, changed
+	return workspace, held
 }
 
 // connsSnapshot returns the connections registered right now, so a caller can
@@ -514,6 +514,14 @@ func subscribedReply(base state.Snapshot, include scanner.Include, scope state.S
 	return state.StreamSnapshotFor(base, scope)
 }
 
+// marshalSnapshot frames the opening reply of a state.subscribe. It is a
+// variable because that frame is the one reply the daemon marshals by hand, and
+// the failure path is a contract worth a regression: a value that cannot be
+// encoded must be answered with an error and must leave nothing registered.
+// Nothing outside this package can hand subscribe an unencodable snapshot, so
+// the seam is a test hook rather than a shape change on the wire.
+var marshalSnapshot = json.Marshal
+
 // subscribe registers a connection as a subscriber and hands it either the
 // cached snapshot or the replay window's cursor snapshot as the reply to its
 // own state.subscribe call. Both registration and replay queuing happen under
@@ -526,19 +534,28 @@ func subscribedReply(base state.Snapshot, include scanner.Include, scope state.S
 // asked for arrive in the first delta rather than delaying the reply by a scan.
 // A scoped view keeps the daemon's global sequence; gaps are expected when an
 // intervening publish changed only rows outside the selected scope.
+//
+// Nothing is registered until the opening frame has been encoded: the old
+// workspace relation is detached, the new one is validated and the reply is
+// framed first, and only a frame that encoded is committed to the registry. A
+// snapshot that cannot be marshalled is an engine fault, and answering it with
+// an error while leaving a subscription behind would have the client waiting
+// for a stream it was told it never got, keep the scanner collecting for a
+// subscriber that never saw a sequence, and — for a workspace member — leak
+// selectors the rest of that workspace would union into its own view. The error
+// is written before the lock is dropped so a later delta cannot overtake it.
 func (s *Server) subscribe(c *Conn, id json.RawMessage, include scanner.Include, events bool, scope state.Scope, afterSeq uint64) error {
 	s.subsMu.Lock()
+	// Detached before the new view is validated and computed, for two reasons:
+	// a workspace-only resubscribe by the last explicit member must see that it
+	// has nobody to inherit from, and the connection's own stale selectors must
+	// not leak into the reply it is about to receive.
+	oldWorkspace, previous, oldChanged := s.detachWorkspaceLocked(c)
 	if err := s.workspaceScopeErrorLocked(scope); err != nil {
-		s.subsMu.Unlock()
-		return err
-	}
-	oldWorkspace, oldChanged := s.detachWorkspaceLocked(c)
-	newChanged, err := s.attachWorkspaceLocked(c, scope)
-	if err != nil {
-		// A failed resubscribe must leave the existing relation intact. This
-		// matters when the connection was the sole explicit member of a
-		// workspace and tried to switch to a workspace-only scope.
-		s.restoreWorkspaceLocked(c, c.scope)
+		// A failed resubscribe must leave the existing relation intact, so the
+		// detach above is undone before the error goes back: by the time the
+		// lock is dropped no peer can tell this call ever ran.
+		s.restoreWorkspaceLocked(c, oldWorkspace, previous, oldChanged)
 		s.subsMu.Unlock()
 		return err
 	}
@@ -551,11 +568,25 @@ func (s *Server) subscribe(c *Conn, id json.RawMessage, include scanner.Include,
 		afterSeq = 0
 	}
 	base, replay, resumed := s.replayFrom(afterSeq, snap)
-	c.subscribed, c.include, c.events, c.scope = true, include, events, scope
+	// The view the client is about to have: its own selectors plus every
+	// current member of its workspace. The union is the same whether it is
+	// taken before or after this connection's own binding is written, which is
+	// what lets the reply be framed before the commit below.
 	effective := s.effectiveScopeLocked(scope)
-	if raw, mErr := json.Marshal(subscribedReply(base, include, effective)); mErr == nil {
-		c.sendResponse(id, raw, nil)
+	raw, mErr := marshalSnapshot(subscribedReply(base, include, effective))
+	if mErr != nil {
+		// Nothing was registered and nothing was queued, so there is no
+		// subscription to roll back — only the relation this call detached,
+		// which the undo puts back exactly as it was.
+		s.restoreWorkspaceLocked(c, oldWorkspace, previous, oldChanged)
+		c.replyError(id, rpc.NewError(rpc.CodeInternal, "marshalling snapshot: "+mErr.Error(), ""))
+		s.subsMu.Unlock()
+		s.touch()
+		return nil
 	}
+	newChanged := s.bindWorkspaceLocked(c, scope)
+	c.subscribed, c.include, c.events, c.scope = true, include, events, scope
+	c.sendResponse(id, raw, nil)
 	if resumed {
 		for _, item := range replay {
 			s.queueReplay(c, item, effective)
@@ -576,9 +607,6 @@ func (s *Server) subscribe(c *Conn, id json.RawMessage, include scanner.Include,
 
 	s.touch()
 	s.loop.Wake()
-	if err != nil {
-		c.replyError(id, rpc.NewError(rpc.CodeInternal, "marshalling snapshot: "+err.Error(), ""))
-	}
 	return nil
 }
 
@@ -685,37 +713,34 @@ func (s *Server) queueScopedReplay(c *Conn, item stateReplay, scope state.Scope)
 // unsubscribe drops a connection's subscription.
 func (s *Server) unsubscribe(c *Conn) {
 	s.subsMu.Lock()
-	workspace, changed := s.detachWorkspaceLocked(c)
+	workspace, _, held := s.detachWorkspaceLocked(c)
 	c.subscribed, c.include, c.events, c.scope = false, scanner.Include{}, false, state.Scope{}
 	s.subsMu.Unlock()
-	if changed {
+	if held {
 		s.broadcastWorkspaceChanged(workspace, nil)
 	}
 	s.touch()
 	s.loop.Wake()
 }
 
-func (s *Server) attachWorkspaceLocked(c *Conn, scope state.Scope) (bool, error) {
+// bindWorkspaceLocked commits a connection's explicit relation to its workspace
+// and reports whether the peer-visible membership changed. It is the write half
+// of a subscribe: callers validate and frame the reply first, so a subscription
+// that never reaches a client never reaches the registry either.
+func (s *Server) bindWorkspaceLocked(c *Conn, scope state.Scope) bool {
 	workspace := strings.TrimSpace(scope.Workspace)
-	if workspace == "" {
-		return false, nil
+	if workspace == "" || !scope.HasSelectors() {
+		return false
 	}
-	if err := s.workspaceScopeErrorLocked(scope); err != nil {
-		return false, err
-	}
+	concrete := scope.Concrete()
 	bindings := s.workspaceScopes[workspace]
-	changed := false
-	if scope.HasSelectors() {
-		if bindings == nil {
-			bindings = map[uint64]state.Scope{}
-			s.workspaceScopes[workspace] = bindings
-		}
-		concrete := scope.Concrete()
-		previous, existed := bindings[c.id]
-		changed = !existed || previous.Key() != concrete.Key()
-		bindings[c.id] = concrete
+	previous, existed := bindings[c.id]
+	if bindings == nil {
+		bindings = map[uint64]state.Scope{}
+		s.workspaceScopes[workspace] = bindings
 	}
-	return changed, nil
+	bindings[c.id] = concrete
+	return !existed || previous.Key() != concrete.Key()
 }
 
 func (s *Server) workspaceScopeErrorLocked(scope state.Scope) error {
@@ -728,26 +753,35 @@ func (s *Server) workspaceScopeErrorLocked(scope state.Scope) error {
 		"subscribe once with --workspace and an explicit --worktree or --repository")
 }
 
-func (s *Server) detachWorkspaceLocked(c *Conn) (string, bool) {
-	workspace := strings.TrimSpace(c.scope.Workspace)
+// detachWorkspaceLocked removes whatever relation the connection holds and
+// returns it, so the caller — a resubscribe that may still fail, or a
+// disconnect that is final — decides what happens to it. The concrete relation
+// is returned rather than re-read from c.scope, because c.scope is still the
+// old subscription when a rollback runs.
+func (s *Server) detachWorkspaceLocked(c *Conn) (workspace string, previous state.Scope, held bool) {
+	workspace = strings.TrimSpace(c.scope.Workspace)
 	if workspace == "" {
-		return "", false
+		return "", state.Scope{}, false
 	}
 	bindings := s.workspaceScopes[workspace]
 	if bindings == nil {
-		return workspace, false
+		return workspace, state.Scope{}, false
 	}
-	_, existed := bindings[c.id]
+	previous, held = bindings[c.id]
 	delete(bindings, c.id)
 	if len(bindings) == 0 {
 		delete(s.workspaceScopes, workspace)
 	}
-	return workspace, existed
+	return workspace, previous, held
 }
 
-func (s *Server) restoreWorkspaceLocked(c *Conn, scope state.Scope) {
-	workspace := strings.TrimSpace(scope.Workspace)
-	if workspace == "" || !scope.HasSelectors() {
+// restoreWorkspaceLocked puts back what detachWorkspaceLocked took away, and
+// nothing else. It is the undo of a subscribe that failed before it committed:
+// restoring a member that was never there would leave a failed request with a
+// visible side effect, and dropping the member it displaced would take a
+// worktree out of view for peers that never saw a change.
+func (s *Server) restoreWorkspaceLocked(c *Conn, workspace string, previous state.Scope, held bool) {
+	if workspace == "" || !held {
 		return
 	}
 	bindings := s.workspaceScopes[workspace]
@@ -755,7 +789,7 @@ func (s *Server) restoreWorkspaceLocked(c *Conn, scope state.Scope) {
 		bindings = map[uint64]state.Scope{}
 		s.workspaceScopes[workspace] = bindings
 	}
-	bindings[c.id] = scope.Concrete()
+	bindings[c.id] = previous
 }
 
 func (s *Server) effectiveScopeLocked(scope state.Scope) state.Scope {

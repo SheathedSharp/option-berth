@@ -101,14 +101,8 @@ func TestWorkspaceBindingUnionsExplicitRelations(t *testing.T) {
 	c1 := newConn(1, s, nil)
 	c2 := newConn(2, s, nil)
 	s.subsMu.Lock()
-	if _, err := s.attachWorkspaceLocked(c1, state.Scope{Workspace: "integration", Worktrees: []string{"/code/example-worker"}}); err != nil {
-		s.subsMu.Unlock()
-		t.Fatal(err)
-	}
-	if _, err := s.attachWorkspaceLocked(c2, state.Scope{Workspace: "integration", Worktrees: []string{"/code/example-dashboard"}}); err != nil {
-		s.subsMu.Unlock()
-		t.Fatal(err)
-	}
+	s.bindWorkspaceLocked(c1, state.Scope{Workspace: "integration", Worktrees: []string{"/code/example-worker"}})
+	s.bindWorkspaceLocked(c2, state.Scope{Workspace: "integration", Worktrees: []string{"/code/example-dashboard"}})
 	got := s.effectiveScopeLocked(state.Scope{Workspace: "integration"})
 	s.subsMu.Unlock()
 	if !got.MatchGroup(state.Group{Name: "example-worker", Repo: "example-worker", RootDir: stringPtr("/code/example-worker")}) ||
