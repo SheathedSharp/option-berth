@@ -1,7 +1,7 @@
-<p class="chapter-intro">The interface is the CLI and <code>--json</code>. Integration means calling it from the tool's own setup, run and cleanup slots — no hooks installed for you, no MCP server, no configuration written on your behalf.</p>
+<p class="chapter-intro">The interface is the CLI and <code>--json</code>. Integration means calling it from the tool's own setup, run and cleanup slots. The product installs no hooks for you, runs no MCP server, and writes no configuration on your behalf.</p>
 
 <h2 id="moments">Three moments</h2>
-<p>Where a tool offers lifecycle slots, use the same three calls: start after creation, read while running, stop at the end.</p>
+<p>Where a tool offers lifecycle slots, use the same three calls: start after the checkout is created, read while it runs, and stop at the end.</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">the integration, in three calls</figcaption>
   <pre><code># after the checkout is created
@@ -13,7 +13,7 @@ oberth down --worktree /absolute/path/to/checkout</code></pre>
 </figure>
 
 <h2 id="reads">The reads an agent opens with</h2>
-<p><code>oberth --help</code> ends with a <strong>For agents</strong> section that gives a reading pattern, not commands. The three reads are enough for a session to orient itself without assembling <code>ps</code>, <code>lsof</code> or <code>tail</code>.</p>
+<p><code>oberth --help</code> ends with a <strong>For agents</strong> section that gives a reading pattern, not new commands. Three reads are enough for a session to orient itself without assembling <code>ps</code>, <code>lsof</code> or <code>tail</code>.</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">the opening pattern</figcaption>
   <pre><code>oberth status --json --brief
@@ -21,24 +21,24 @@ oberth up --wait --json
 oberth logs &lt;service&gt; --once --json --run current --first-error</code></pre>
 </figure>
 <ul>
-  <li><code>status</code> first: what is declared, what runs, which port, whether health passed, why it last failed.</li>
-  <li><code>up --wait</code> only when something should be running; it waits for real readiness instead of a sleep.</li>
-  <li><code>logs --run current --first-error</code> only after a failure; it points at a line, not a guess.</li>
+  <li><code>status</code> first: what is declared, what runs, on which port, whether health passed, and why it last failed.</li>
+  <li><code>up --wait</code> only when something should be running. It waits for real readiness instead of a sleep.</li>
+  <li><code>logs --run current --first-error</code> only after a failure. It points at a line, not a guess.</li>
 </ul>
 
 <h2 id="recipes">Recipes</h2>
-<p>The tool's own configuration is written by the user. Project-level configuration can be committed; the product distributes no integration code and writes no tool configuration.</p>
+<p>Users write the tool's own configuration. Project-level configuration can be committed, but the product distributes no integration code and writes no tool configuration.</p>
 <table class="chapter-table">
   <caption class="sr-only">Where to call oberth in common tools</caption>
   <thead><tr><th scope="col">Tool</th><th scope="col">Slot</th><th scope="col">What to put there</th></tr></thead>
   <tbody>
-    <tr><th scope="row">Cursor</th><td><code>.cursor/worktrees.json</code> → <code>setup-worktree-unix</code></td><td><code>up --wait</code>; there is no teardown hook, so run <code>down --worktree</code> before deletion.</td></tr>
-    <tr><th scope="row">Claude Code</th><td><code>WorktreeCreate</code> / <code>WorktreeRemove</code> hooks, or an outer wrapper</td><td><code>up --wait</code>; <code>down --worktree</code>. Taking over creation replaces Claude's own worktree behavior.</td></tr>
-    <tr><th scope="row">Codex</th><td>an outer wrapper, or the desktop app's Local environments setup</td><td><code>up --wait</code>; cleanup still runs <code>down</code> before deletion.</td></tr>
-    <tr><th scope="row">Conductor</th><td><code>.conductor/settings.toml</code> setup and archive slots</td><td><code>up --wait</code>; <code>down --worktree</code>.</td></tr>
+    <tr><th scope="row">Cursor</th><td><code>.cursor/worktrees.json</code> → <code>setup-worktree-unix</code></td><td><code>up --wait</code>. There is no teardown hook, so run <code>down --worktree</code> before deletion.</td></tr>
+    <tr><th scope="row">Claude Code</th><td><code>WorktreeCreate</code> / <code>WorktreeRemove</code> hooks, or an outer wrapper</td><td><code>up --wait</code>, then <code>down --worktree</code>. Taking over creation replaces Claude's own worktree behavior.</td></tr>
+    <tr><th scope="row">Codex</th><td>an outer wrapper, or the desktop app's Local environments setup</td><td><code>up --wait</code>. Cleanup still runs <code>down</code> before deletion.</td></tr>
+    <tr><th scope="row">Conductor</th><td><code>.conductor/settings.toml</code> setup and archive slots</td><td><code>up --wait</code>, then <code>down --worktree</code>.</td></tr>
   </tbody>
 </table>
-<p>The most portable integration is a paragraph in <code>AGENTS.md</code> or <code>CLAUDE.md</code>. This is a compact version; the full section, including the <code>machine:</code> / <code>workspace:</code> boundary, is in <a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/integrations.md">docs/integrations.md</a>. The engine does not install it.</p>
+<p>The most portable integration is a paragraph in <code>AGENTS.md</code> or <code>CLAUDE.md</code>. This is a compact version; the full section, including the <code>machine:</code> and <code>workspace:</code> boundary, is in <a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/integrations.md">docs/integrations.md</a>. The engine does not install it.</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">AGENTS.md · local services</figcaption>
   <pre><code>## Local services
@@ -55,12 +55,12 @@ Before starting or troubleshooting, read the facts with it first.
 
 <h2 id="pitfalls">Pitfalls</h2>
 <ul>
-  <li>Hooks often do not load your shell rc. Use the absolute path to <code>oberth</code>, or set <code>PATH</code> explicitly; <code>node</code>, <code>npm</code> and <code>python3</code> must be on it too.</li>
-  <li>The workspace root is not always the Git checkout root. <code>cd "$(git rev-parse --show-toplevel)"</code> first, and pass the same root to <code>down --worktree</code>.</li>
-  <li>Do not hardcode <code>PORT</code> for a <code>port: auto</code> service: a service's own <code>env: PORT</code> overrides the injected value and makes the wait watch the wrong port.</li>
+  <li>Hooks often do not load your shell rc. Use the absolute path to <code>oberth</code>, or set <code>PATH</code> explicitly; <code>node</code>, <code>npm</code> and <code>python3</code> have to be on it too.</li>
+  <li>The workspace root is not always the Git checkout root. Run <code>cd "$(git rev-parse --show-toplevel)"</code> first, and pass the same root to <code>down --worktree</code>.</li>
+  <li>Do not hardcode <code>PORT</code> for a <code>port: auto</code> service. The service's own <code>env: PORT</code> overrides the injected value and makes the wait watch the wrong port.</li>
   <li>Prefer the framework's strict-port option. A framework that quietly switches ports turns a conflict into a late <code>ready_timeout</code>.</li>
-  <li>In a sandbox, observation may be blind. Do not retry the same start in a loop; follow the <code>observation_*</code> hint and retry outside it.</li>
+  <li>In a sandbox, observation may be blind. Do not retry the same start in a loop; follow the <code>observation_*</code> hint and retry outside the sandbox.</li>
 </ul>
 
 <h2 id="skill">The skill is a separate product</h2>
-<p><a href="https://github.com/SheathedSharp/option-berth-skill">option-berth-skill</a> teaches an agent the same CLI and <code>--json</code> shapes. It is installed separately, for example with <code>npx skills add SheathedSharp/option-berth-skill -g</code>. The engine does not install, update or require it; whether to install it is the user's decision.</p>
+<p><a href="https://github.com/SheathedSharp/option-berth-skill">option-berth-skill</a> teaches an agent the same CLI and the same <code>--json</code> shapes. It is installed separately, for example with <code>npx skills add SheathedSharp/option-berth-skill -g</code>. The engine does not install, update or require it; whether to install it is the user's decision.</p>

@@ -38,6 +38,13 @@ Linux 包的 `/usr/share/doc/option-berth/licenses/`）。哪些文件仍来自�
 声明的前提见 [engine/UPSTREAM.md](engine/UPSTREAM.md)。
 保留来源不表示后续架构基于该项目，也不将其已有作品宣称为本项目原创。
 
+## 站点资产：GSAP
+
+`site/assets/gsap.min.js` 是 GSAP 3.15.1（GreenSock Animation Platform）的原样副本，由
+`site/build.py` 随站点一起发布。它适用 GreenSock 的标准「不收费」许可
+（<https://gsap.com/standard-license>），版权归 GreenSock 所有，不因本项目采用 MIT 而重新
+许可。文件头的版权与许可声明保持原样；升级时整份替换，不手工修改。站点不加载任何外部脚本。
+
 ## 客户端资产
 
 macOS 客户端及其字体（Monaspace，SIL Open Font License 1.1）与终端依赖（SwiftTerm，MIT）

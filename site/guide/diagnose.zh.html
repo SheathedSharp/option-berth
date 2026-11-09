@@ -1,7 +1,7 @@
-<p class="chapter-intro">本地服务栈的大部分困惑，缺的是一条事实，不是服务坏了。这一页把一个症状路由到那条命令——它负责产出缺失的事实——再指向讲清它的章节。</p>
+<p class="chapter-intro">本地服务栈的大部分困惑，缺的是一条事实，不是服务坏了。这一页把一个症状送到那条产出缺失事实的命令，再指向讲清它的章节。</p>
 
 <h2 id="first">先做那次读取</h2>
-<p>几乎所有症状的第一条命令都是 <code>oberth status</code>：它把清单、运行记录和观察到的运行事实并排打印出来。如果它给出了失败原因，先读那个原因再看日志——原因点明了是哪个服务、哪个阶段。</p>
+<p>几乎所有症状的第一条命令都是 <code>oberth status</code>。它把清单、运行记录和观察到的运行事实并排打印出来。如果它给出了失败原因，先读那个原因，再看日志，因为原因点明了是哪个服务、哪个阶段。</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">the one read to start from</figcaption>
   <pre><code>oberth status</code></pre>
@@ -12,7 +12,7 @@
   <caption class="sr-only">每个症状与解释它的命令</caption>
   <thead><tr><th scope="col">你看到的</th><th scope="col">先运行</th><th scope="col">它意味着</th></tr></thead>
   <tbody>
-    <tr><th scope="row"><code>listening unknown</code>，或某个 <code>observation_*</code> 代码</th><td><code>oberth doctor --only listener_observation</code></td><td>是观察者读不到监听表，不是服务出了问题。换一个普通终端重试；不要把它读成失败。</td></tr>
+    <tr><th scope="row"><code>listening unknown</code>，或某个 <code>observation_*</code> 代码</th><td><code>oberth doctor --only listener_observation</code></td><td>是观察者读不到监听表，不是服务出了问题。换一个普通终端重试，不要把它读成失败。</td></tr>
     <tr><th scope="row"><code>up --wait</code> 一直不返回</th><td><code>oberth logs &lt;service&gt; --once</code></td><td>就绪是监听加健康。服务自己的输出会说明是哪一半没成。</td></tr>
     <tr><th scope="row">某一行服务带着退出与退出码</th><td><code>oberth logs &lt;service&gt; --once --first-error</code></td><td>当前运行的第一条错误，而不是最后一屏输出。</td></tr>
     <tr><th scope="row"><code>auto port unassigned</code></th><td><code>oberth status --json</code></td><td>不是失败：<code>port: auto</code> 还没有被分配。候选端口靠绑定验证，不靠相信一张空的监听表。</td></tr>

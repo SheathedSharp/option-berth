@@ -113,14 +113,14 @@
         "en": {
           "nav": "Overview",
           "title": "The option-berth guide",
-          "lede": "What a checkout should run, whether it really is running, and why not. This book teaches the chain of facts behind every oberth command.",
-          "summary": "What option-berth is, the chain of facts, the core loop, and how to read the rest of the book."
+          "lede": "What a checkout should run, whether it really is running, and why not. This guide explains the chain of facts behind every oberth command.",
+          "summary": "What option-berth is, the chain of facts, the core loop, and how to read the rest of the guide."
         },
         "zh": {
           "nav": "总览",
           "title": "option-berth 指南",
-          "lede": "一个 checkout 该跑什么，是不是真的在跑，没跑为什么。这本指南讲清 oberth 每条命令背后那条事实链。",
-          "summary": "option-berth 是什么、事实链、核心闭环，以及整本书怎么读。"
+          "lede": "一个 checkout 该跑什么、是不是真的在跑、没跑为什么。这本指南讲清 oberth 每条命令背后那条事实链。",
+          "summary": "option-berth 是什么、事实链、核心循环，以及这本指南怎么读。"
         }
       },
       "refs": [
@@ -135,14 +135,14 @@
         "en": {
           "nav": "Install",
           "title": "Install oberth",
-          "lede": "One binary, no model account, no service started by the installer. Confirm the build with version and doctor, then declare your first worktree.",
-          "summary": "The one-line script, go install, Homebrew, release archives, and the platform boundaries."
+          "lede": "One binary, no model account, and no service started by the installer. Confirm the build with version and doctor, then declare your first worktree.",
+          "summary": "The one-line script, go install, Homebrew, release archives, and the platform support."
         },
         "zh": {
           "nav": "安装",
           "title": "安装 oberth",
           "lede": "一个二进制，不需要模型账号，安装脚本不会启动任何服务。用 version 和 doctor 确认构建，再去声明第一个 worktree。",
-          "summary": "一行脚本、go install、Homebrew、发布包，以及平台边界。"
+          "summary": "一行脚本、go install、Homebrew、发布包，以及平台支持。"
         }
       },
       "refs": [
@@ -156,14 +156,14 @@
         "en": {
           "nav": "Quickstart",
           "title": "Your first worktree",
-          "lede": "One checkout, five commands, one honest answer: declare, start, read, log, stop. The example needs Python 3 and nothing else.",
+          "lede": "One checkout, five commands, from an empty directory to a clean stop: declare, start, read, log, stop. The example needs Python 3 and nothing else.",
           "summary": "The whole loop on Hello Worktree, from an empty checkout to a clean stop."
         },
         "zh": {
           "nav": "快速开始",
           "title": "你的第一个 worktree",
-          "lede": "一个 checkout、五条命令、一个诚实的答案：声明、启动、读取、看日志、停止。示例只需要 Python 3。",
-          "summary": "在 Hello Worktree 上跑完整闭环：从一个空 checkout 到一个干净的停止。"
+          "lede": "一个 checkout、五条命令，从一个空目录到一个干净的停止：声明、启动、读取、看日志、停止。示例只需要 Python 3。",
+          "summary": "在 Hello Worktree 上把整个循环跑一遍：从一个空 checkout 到一个干净的停止。"
         }
       },
       "refs": [
@@ -179,13 +179,13 @@
           "nav": "The chain of facts",
           "title": "One chain of facts",
           "lede": "Worktree → manifest → service → run → runtime facts. Each station has one writer, and the next station reads only what the previous one published.",
-          "summary": "Why the order is the contract, how attribution works, and why unknown is a fact."
+          "summary": "Why the order matters, how attribution works, and why an unread fact stays unknown."
         },
         "zh": {
           "nav": "事实链",
           "title": "一条事实链",
           "lede": "worktree → 清单 → 服务 → 运行 → 运行事实。每个站点只有一个写入者，下一站只读上一站发布的东西。",
-          "summary": "为什么顺序就是契约、归属怎么确定，以及为什么未知也是一条事实。"
+          "summary": "为什么顺序重要、归属怎么确定，以及没读到的事实为什么保持未知。"
         }
       },
       "refs": [
@@ -243,13 +243,13 @@
       "locales": {
         "en": {
           "nav": "up",
-          "title": "up: make it run, and wait for real",
+          "title": "up: start services and wait for readiness",
           "lede": "Services start in depends_on order, and --wait returns only when they actually listen and pass their health checks.",
           "summary": "Dependency order, prepare, automatic ports, readiness, failure reasons, and restart without losing the address."
         },
         "zh": {
           "nav": "up",
-          "title": "up：让它跑起来，并等到真的就绪",
+          "title": "up：启动服务并等到就绪",
           "lede": "服务按 depends_on 顺序启动；--wait 只在真的开始监听并通过健康检查后才返回。",
           "summary": "依赖顺序、prepare、自动端口、就绪、失败原因，以及不丢地址的重启。"
         }
@@ -265,14 +265,14 @@
       "locales": {
         "en": {
           "nav": "status",
-          "title": "status: what is really running",
-          "lede": "One read of the worktree, the manifest and the runs — including the honest answer “I cannot see”.",
-          "summary": "Process, listener, health and exit as four separate facts; the table, --brief, --json, and observation failures."
+          "title": "status: what is running now",
+          "lede": "One read of the worktree, the manifest and the runs, including the honest answer “I cannot see”.",
+          "summary": "Process, listener, health and exit as four separate facts. The table, --brief, --json, and observation failures."
         },
         "zh": {
           "nav": "status",
           "title": "status：现在到底跑着什么",
-          "lede": "一次读清 worktree、清单和运行记录——也包括那句诚实的“我看不见”。",
+          "lede": "一次读清 worktree、清单和运行记录，也包括那句诚实的“我看不见”。",
           "summary": "进程、监听、健康、退出四种事实；表格、--brief、--json，以及观察失败。"
         }
       },
@@ -288,13 +288,13 @@
         "en": {
           "nav": "logs",
           "title": "logs: the service's own output",
-          "lede": "A failure has a log, an exit code and a reason. logs reads them directly, without reassembling a shell one-liner.",
+          "lede": "A failure has a log, an exit code and a reason. logs reads them directly, without rebuilding a shell pipeline.",
           "summary": "One read or a stream, the first error of the current run, and the log of a portless worker."
         },
         "zh": {
           "nav": "logs",
           "title": "logs：服务自己的输出",
-          "lede": "失败会留下日志、退出码和原因。logs 直接读它们，不用重新拼一条 shell 命令。",
+          "lede": "失败会留下日志、退出码和原因。logs 直接读它们，不用重新拼一条 shell 管道。",
           "summary": "一次读取或持续跟随、当前运行的第一条错误，以及无端口 worker 的日志。"
         }
       },
@@ -308,13 +308,13 @@
       "locales": {
         "en": {
           "nav": "down",
-          "title": "down: stop this project, not the machine",
+          "title": "down: stop one project only",
           "lede": "Stopping is scoped to the worktree that started the services. It never crosses into another checkout.",
           "summary": "The normal stop, the deleted-checkout entry points, ambiguous groups, and what down never touches."
         },
         "zh": {
           "nav": "down",
-          "title": "down：停这个项目，不动整台机器",
+          "title": "down：只停一个项目",
           "lede": "停止只作用于启动这些服务的 worktree，不会跨到另一个 checkout。",
           "summary": "正常停止、checkout 已删除时的入口、同名组，以及 down 永远不碰的东西。"
         }
@@ -352,14 +352,14 @@
       "locales": {
         "en": {
           "nav": "Coding agents",
-          "title": "Put oberth inside the agent's loop",
-          "lede": "The interface is the CLI and --json. Integration means calling it from the tool's own setup, run and cleanup slots — no hooks, no MCP, no configuration written for you.",
+          "title": "Call oberth from a coding agent",
+          "lede": "The interface is the CLI and --json. Integration means calling it from the tool's own setup, run and cleanup slots. The product installs nothing and configures nothing for you.",
           "summary": "The three moments to call oberth, the reads an agent opens with, recipes, and the pitfalls that bite in hooks."
         },
         "zh": {
           "nav": "接入 agent",
-          "title": "把 oberth 放进 agent 的循环",
-          "lede": "接口只有 CLI 和 --json。集成就是在工具自己的 setup、run、cleanup 槽位里调用它——不装 hooks、不注册 MCP、不改任何工具配置。",
+          "title": "从 coding agent 调用 oberth",
+          "lede": "接口只有 CLI 和 --json。集成就是在工具自己的 setup、run、cleanup 槽位里调用它。产品不装 hooks、不注册 MCP，也不改任何工具配置。",
           "summary": "三个调用时机、agent 开局的三次读取、接入配方，以及 hook 里最容易踩的坑。"
         }
       },
@@ -374,13 +374,13 @@
       "locales": {
         "en": {
           "nav": "Handoff",
-          "title": "Leave work where the next session finds it",
+          "title": "Leave work for the next session",
           "lede": "A worktree keeps work records: commands the engine ran, rounds handed to an agent, and how each one ended.",
           "summary": "The workplace commands, what gets recorded automatically, how a record ends, and why it is not runtime truth."
         },
         "zh": {
           "nav": "交接",
-          "title": "把工作留在下一个会话找得到的地方",
+          "title": "把工作留给下一个会话",
           "lede": "worktree 上保存着工作记录：引擎跑过的命令、交给 agent 的每一轮工作，以及它们各自怎么结束。",
           "summary": "workplace 命令、自动记录的内容、记录如何结束，以及为什么它不是运行事实。"
         }
@@ -396,13 +396,13 @@
         "en": {
           "nav": "When it fails",
           "title": "When something looks wrong",
-          "lede": "Most confusion about a local stack is a missing fact, not a broken service. Each symptom here has one first command and one chapter.",
+          "lede": "Most confusion about a local stack comes from a missing fact, not from a broken service. Each symptom here has one first command and one chapter.",
           "summary": "A symptom-to-command table, the evidence to keep, and what is not a fix."
         },
         "zh": {
           "nav": "出问题的时候",
           "title": "看起来不对的时候",
-          "lede": "本地服务栈的大部分困惑，缺的是一条事实，不是服务坏了。每个症状对应一条命令、一章解释。",
+          "lede": "本地服务栈的大部分困惑，缺的是一条事实，不是服务坏了。每个症状对应一条命令和一章解释。",
           "summary": "症状到命令的对照表、求助时要留下的证据，以及什么不是修复。"
         }
       },

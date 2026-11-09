@@ -1,7 +1,7 @@
-<p class="chapter-intro"><code>status</code> reads the worktree, its manifest and its runs, then returns the runtime facts as they are. It is the one command a session opens with, and it is allowed to say it cannot see.</p>
+<p class="chapter-intro"><code>status</code> reads the worktree, its manifest and its runs, then returns the runtime facts as they are. It is the command a session opens with, and it is allowed to say that it cannot see.</p>
 
 <h2 id="four-facts">Four facts, not one</h2>
-<p>The product keeps apart things a shell one-liner collapses. A live process, a bound port, a passing health check and an exit reason are four different facts, and none of them implies the next.</p>
+<p>The product keeps apart what a shell one-liner collapses. A live process, a bound port, a passing health check and an exit reason are four different facts, and none of them implies the next.</p>
 <table class="chapter-table">
   <caption class="sr-only">The four runtime facts</caption>
   <thead><tr><th scope="col">Fact</th><th scope="col">The question it answers</th><th scope="col">Where it comes from</th></tr></thead>
@@ -23,12 +23,12 @@ worker   running   no port
 </figure>
 
 <h2 id="read">Read the table</h2>
-<p>The human table is ordered by project, service, dependencies, code and failure reason. Each service line carries both the declared port and the current runtime fact; the failure section shows only the most recent exit while it is still that service's current <code>last_exit</code>.</p>
+<p>The human table is ordered by project, then by service, dependencies, code and failure reason. Each service line carries both the declared port and the current runtime fact. The failure section shows the most recent exit only while it is still that service's current <code>last_exit</code>.</p>
 <ul>
   <li>A portless worker is printed as <code>no port</code>. It is observed through its run record, not through a listener.</li>
-  <li><code>port: auto</code> before assignment prints <code>auto port unassigned</code>; it is not a failure.</li>
+  <li>A <code>port: auto</code> service that has no port yet prints <code>auto port unassigned</code>. That is not a failure.</li>
   <li>Only listeners the manifest did not declare are listed separately. A port that belongs to a service appears with that service.</li>
-  <li><code>code_changed_since_start</code> says the process is running older code than the checkout, with a restart hint. It is a code fact, not a runtime failure.</li>
+  <li><code>code_changed_since_start</code> means the process is running older code than the checkout, and it comes with a restart hint. It is a code fact, not a runtime failure.</li>
 </ul>
 
 <h2 id="json">For agents: --brief and --json</h2>
@@ -36,23 +36,23 @@ worker   running   no port
   <figcaption class="fragment-label">the opening read</figcaption>
   <pre><code>oberth status --json --brief</code></pre>
 </figure>
-<p><code>--json</code>'s top-level object is <code>worktree</code>. <code>--brief</code> keeps only runtime facts, so it is the cheapest place to start; the full read adds the git summary, drafts, the change list and per-service manifest fields.</p>
+<p>The top-level object from <code>--json</code> is <code>worktree</code>. <code>--brief</code> keeps only the runtime facts, which makes it the cheapest place to start; the full read adds the git summary, drafts, the change list and the manifest fields of each service.</p>
 <ul>
-  <li><code>worktree.identity</code> is the <code>wt_…</code> value used by <code>down --identity</code> and by data paths.</li>
+  <li><code>worktree.identity</code> is the <code>wt_…</code> value that <code>down --identity</code> uses and that appears in data paths.</li>
   <li><code>worktree.services[]</code> carries <code>running</code>, <code>port_actual</code>, <code>health_status</code>, <code>pid</code> and <code>run_id</code>.</li>
-  <li><code>exits[]</code> carries the reason, the exit code and a <code>hint</code> that points at evidence that really exists.</li>
-  <li><code>observation</code> appears only when the listener table is untrustworthy; its silence means the table was usable.</li>
+  <li><code>exits[]</code> carries the reason, the exit code and a <code>hint</code> that points at evidence which really exists.</li>
+  <li><code>observation</code> appears only when the listener table cannot be trusted; when it is absent, the table was usable.</li>
 </ul>
 
 <h2 id="blind">When observation fails</h2>
-<p>A sandbox, a permission wall or a platform change can break the listener scan. The engine then reports <code>observation_empty</code>, <code>observation_unrecognized</code>, <code>observation_incomplete</code>, <code>observation_blind</code> or <code>observation_bind_denied</code>. None of those codes means “nothing is listening”, and still less “not running”. The human table says <code>listening unknown</code>; a <code>port: auto</code> candidate is verified by binding rather than by trusting an empty table.</p>
+<p>A sandbox, a permission wall or a platform change can break the listener scan. The engine then reports one of <code>observation_empty</code>, <code>observation_unrecognized</code>, <code>observation_incomplete</code>, <code>observation_blind</code> or <code>observation_bind_denied</code>. None of those codes means “nothing is listening”, and still less “not running”. The human table says <code>listening unknown</code>, and a <code>port: auto</code> candidate is verified by binding instead of by trusting an empty table.</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">check the observer itself</figcaption>
   <pre><code>oberth doctor --only listener_observation</code></pre>
 </figure>
-<p>Run it in the same kind of process that failed. If the result is blind, retry from a normal terminal, or run <code>oberth serve --detach</code> there and retry; do not loop the same start inside the sandbox and read timeouts as failures.</p>
+<p>Run this check in the same kind of process that failed. If the result is blind, retry from a normal terminal, or run <code>oberth serve --detach</code> there and retry. Do not loop the same start inside the sandbox and read timeouts as failures.</p>
 
 <h2 id="never">What status never says</h2>
 <aside class="note">
-  <p>It is not a machine-wide port radar: it answers for this worktree's declared services, not for every socket on the host. It does not hand “why did it fail” to a model; a fixed reason code and a log are the answer. And an unread fact is never written as a fact: unknown is not success, and an absent field is not zero.</p>
+  <p>It is not a machine-wide port radar: it answers for this worktree's declared services, not for every socket on the host. It does not hand “why did it fail” to a model. A fixed reason code and a log are the answer. An unread fact is never written as a fact, so unknown is not success and an absent field is not zero.</p>
 </aside>

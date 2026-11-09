@@ -1,27 +1,27 @@
-<p class="chapter-intro">A failure has a log, an exit code and a reason. <code>logs</code> reads the service's own output and the run it belongs to, instead of reassembling a shell one-liner.</p>
+<p class="chapter-intro">A failure has a log, an exit code and a reason. <code>logs</code> reads the service's own output and the run it belongs to, instead of rebuilding a shell pipeline.</p>
 
 <h2 id="read">One read or a stream</h2>
-<p>Ask by service name; the port form still works. <code>--once</code> reads once and exits; without it, <code>logs</code> prints the latest lines and keeps following. <code>--lines N</code> bounds a read, and follow mode writes NDJSON, one value per line.</p>
+<p>Ask by service name; the port form still works. <code>--once</code> reads once and exits. Without it, <code>logs</code> prints the latest lines and keeps following. <code>--lines N</code> bounds a read, and follow mode writes NDJSON, one value per line.</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">one read</figcaption>
   <pre><code>oberth logs api --once</code></pre>
 </figure>
 <ul>
-  <li>A service with a listener reads that process's log; a portless worker reads its run's service log file.</li>
-  <li>The log file is appended across runs. <code>--run current</code> reads only the part of the current run, starting at its recorded offset.</li>
-  <li><code>--json --once</code> returns one document: <code>source</code>, <code>lines</code>, <code>truncated</code>, <code>service</code>, <code>run_id</code>, <code>pid</code> and <code>status</code>.</li>
+  <li>A service with a listener reads that process's log. A portless worker reads its run's service log file.</li>
+  <li>The log file is appended across runs. <code>--run current</code> reads only the part belonging to the current run, starting at its recorded offset.</li>
+  <li><code>--json --once</code> returns one document with <code>source</code>, <code>lines</code>, <code>truncated</code>, <code>service</code>, <code>run_id</code>, <code>pid</code> and <code>status</code>.</li>
 </ul>
 
 <h2 id="first-error">The failure you actually need</h2>
-<p><code>--run current --first-error</code> reads the current run and locates the first matching line from a fixed vocabulary: <code>error</code>, <code>exception</code>, <code>fatal</code>, <code>panic</code>, <code>traceback</code>, case-insensitive. It returns the line number and the original text. It is a position, not a root-cause judgment; when nothing matches, the JSON says <code>no_first_error</code>.</p>
+<p><code>--run current --first-error</code> reads the current run and locates the first line that matches a fixed vocabulary: <code>error</code>, <code>exception</code>, <code>fatal</code>, <code>panic</code>, <code>traceback</code>, case-insensitive. It returns the line number and the original text. This is a position, not a root-cause judgment; when nothing matches, the JSON says <code>no_first_error</code>.</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">the current run's first error</figcaption>
   <pre><code>oberth logs api --once --json --run current --first-error</code></pre>
 </figure>
-<p>The document adds <code>log_offset</code>, an optional <code>run_start_unknown</code>, and <code>first_error</code> with <code>line</code> and <code>text</code>, or <code>no_first_error</code>. If the log rotated past the recorded offset, the read falls back to the start of the file and sets <code>run_start_unknown</code>, so you know the lines may include earlier runs.</p>
+<p>The document adds <code>log_offset</code>, an optional <code>run_start_unknown</code>, and <code>first_error</code> with <code>line</code> and <code>text</code>, or <code>no_first_error</code>. If the log has rotated past the recorded offset, the read falls back to the start of the file and sets <code>run_start_unknown</code>, so you know the lines may include earlier runs.</p>
 
 <h2 id="portless">A portless worker still has a log</h2>
-<p>A worker with no listener is not a service without output. <code>oberth logs worker --once</code> reads that run's service log file; the run record supplies the status and the offset.</p>
+<p>A worker with no listener is not a service without output. <code>oberth logs worker --once</code> reads that run's service log file, and the run record supplies the status and the offset.</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">worker output</figcaption>
   <pre><code>worker: API health=200
@@ -33,7 +33,7 @@ worker: API health=200</code></pre>
 <aside class="note">
   <ul>
     <li>It does not read another checkout's service. The name resolves in this worktree's manifest.</li>
-    <li><code>--first-error</code> finds a position; it does not decide the cause, and it does not hide the lines around it.</li>
-    <li>It does not invent a start. A run record without an offset returns <code>not_found</code> with a suggestion to restart the service once; <code>--run</code> also needs the daemon.</li>
+    <li><code>--first-error</code> finds a position. It does not decide the cause, and it does not hide the lines around it.</li>
+    <li>It does not invent a start. A run record without an offset returns <code>not_found</code> with a suggestion to restart the service once, and <code>--run</code> also needs the daemon.</li>
   </ul>
 </aside>

@@ -7,10 +7,10 @@
   <pre><code>git clone https://github.com/SheathedSharp/option-berth.git
 cd option-berth/examples/hello-worktree</code></pre>
 </figure>
-<p>The checkout must live inside your home directory unless you pass <code>--allow-outside-home</code>; the engine refuses to manage a stack outside the home boundary by default.</p>
+<p>The checkout has to live under your home directory unless you pass <code>--allow-outside-home</code>. By default the engine refuses to manage a stack outside that boundary.</p>
 
 <h2 id="declare">Declare the stack</h2>
-<p>The example already carries an <code>oberth.yaml</code>. Read it before you run anything: it is the whole input.</p>
+<p>The example already ships an <code>oberth.yaml</code>. Read it before you run anything, because it is the whole input.</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">oberth.yaml · hello-worktree</figcaption>
   <pre><code>name: hello-worktree
@@ -25,15 +25,15 @@ services:
     env:
       API_URL: ${api.url}</code></pre>
 </figure>
-<p>Two services. <code>api</code> asks for an automatically assigned port and a health check; <code>worker</code> has no port, starts after <code>api</code>, and receives the API's real address through <code>${api.url}</code>. Nothing here is inferred from a running process.</p>
-<p>In your own project, <code>oberth init</code> writes this file. <code>oberth init draft</code> lets an agent propose one; only a person runs <code>oberth init adopt</code>.</p>
+<p>Two services. <code>api</code> asks for an automatic port and a health check. <code>worker</code> has no port, starts after <code>api</code>, and receives the API's real address through <code>${api.url}</code>. None of this is inferred from a running process.</p>
+<p>In your own project, <code>oberth init</code> writes this file. An agent can propose one with <code>oberth init draft</code>; only a person runs <code>oberth init adopt</code>.</p>
 
 <h2 id="start">Start it and wait</h2>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">oberth up --wait</figcaption>
   <pre><code>oberth up --wait --json</code></pre>
 </figure>
-<p><code>--wait</code> returns only when each service is really there: a bound listener for <code>api</code>, a passing <code>/health</code>, and a live process for the portless worker. A process that is still booting is not readiness, and a timeout is not success.</p>
+<p><code>--wait</code> returns only when every service is really there: <code>api</code> has a bound listener and a passing <code>/health</code>, and the portless <code>worker</code> process is alive. A process that is still booting is not ready, and a timeout is not success.</p>
 
 <h2 id="read">Read what is running</h2>
 <figure class="fragment" data-ui>
@@ -45,8 +45,8 @@ worker   running   no port
 
 2 services · manifest oberth.yaml</code></pre>
 </figure>
-<p>The port is this checkout's own: another worktree of the same repository gets a different one, because <code>port: auto</code> is assigned per run rather than remembered per project. <code>no port</code> is a fact, not a failure — the worker is observed through its run record.</p>
-<p>Open the address that <code>status</code> prints to see the API answer with the port it actually bound. The same read as JSON is <code>oberth status --json --brief</code>, which is what an agent opens with.</p>
+<p>The port belongs to this checkout. Another worktree of the same repository gets a different one, because <code>port: auto</code> is assigned per run rather than remembered per project. <code>no port</code> is a fact, not a failure: the worker is observed through its run record.</p>
+<p>Open the address that <code>status</code> prints, and the API answers on the port it actually bound. The same read in JSON is <code>oberth status --json --brief</code>, which is what an agent opens with.</p>
 
 <h2 id="log">Read the worker's log</h2>
 <figure class="fragment" data-ui>
@@ -55,17 +55,17 @@ worker   running   no port
 worker: API health=200
 worker: API health=200</code></pre>
 </figure>
-<p><code>--once</code> reads the current run's log and returns. Without it, <code>logs</code> follows. When a service has already failed, <code>--first-error</code> gives the first error of the current run instead of the last screen of output.</p>
+<p><code>--once</code> reads the current run's log and returns. Without it, <code>logs</code> keeps following. When a service has already failed, <code>--first-error</code> gives you the first error of the current run instead of the last screen of output.</p>
 
 <h2 id="stop">Stop it</h2>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">oberth down</figcaption>
   <pre><code>oberth down --force --json</code></pre>
 </figure>
-<p><code>down</code> stops the services that this worktree started and hands their port reservations back. It does not touch another checkout, a normal user daemon, or processes the manifest never declared.</p>
+<p><code>down</code> stops the services this worktree started and hands their port reservations back. It does not touch another checkout, a normal user daemon, or a process the manifest never declared.</p>
 
 <h2 id="isolation">See the isolation for yourself</h2>
-<p>Create a second Git worktree of the same repository, enter <code>examples/hello-worktree</code> in both, and run <code>up</code> in each. The two API services get different ports. Run <code>down</code> in one; the other keeps running.</p>
+<p>Create a second Git worktree of the same repository, enter <code>examples/hello-worktree</code> in both, and run <code>up</code> in each. The two API services get different ports. Run <code>down</code> in one, and the other keeps running.</p>
 <aside class="note">
-  <p>This is not a container or an operating-system sandbox. It is run ownership and lifecycle isolation: a run belongs to the checkout that started it. <a href="{{guide}}worktrees/">Worktrees and runs</a> explains the rules, and <a href="{{guide}}down/">down</a> explains what a stop may never reach.</p>
+  <p>This is not a container or an operating-system sandbox. It is isolation of run ownership and lifecycle: a run belongs to the checkout that started it. <a href="{{guide}}worktrees/">Several worktrees at once</a> explains the rules, and <a href="{{guide}}down/">down</a> explains what a stop may never reach.</p>
 </aside>

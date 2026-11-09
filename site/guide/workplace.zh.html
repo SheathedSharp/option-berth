@@ -8,17 +8,17 @@
 oberth workplace new api-refactor
 oberth workplace show --limit 20</code></pre>
 </figure>
-<p>选择器按顺序匹配：精确名字、完整 id、id 前缀、名字前缀；多个命中返回 <code>ambiguous</code>，不替调用方挑一个。<code>--worktree</code> 默认当前目录，并解析到 checkout 根，所以同一个 checkout 的不同写法是同一条记录。</p>
+<p>选择器按顺序匹配：精确名字、完整 id、id 前缀、名字前缀。多个命中时返回 <code>ambiguous</code>，不替调用方挑一个。<code>--worktree</code> 默认当前目录，并解析到 checkout 根，所以同一个 checkout 的不同写法会落到同一条记录。</p>
 
 <h2 id="automatic">什么会被自动记录</h2>
 <ul>
-  <li><code>oberth start</code> 把这次运行写进当前 workplace。分离模式（<code>-d</code>）的运行由 daemon 在记录退出时关闭。</li>
+  <li><code>oberth start</code> 把这次运行写进当前 workplace。分离模式（<code>-d</code>）的运行，由 daemon 在记录到退出时关闭。</li>
   <li><code>oberth agent stream</code> 每轮写一个条目：<code>turn.started</code> 打开它，<code>turn.completed</code> 用提供方报告的结果关闭它。</li>
   <li><code>oberth workplace record</code> 写引擎看不见的工作：agent 自己的尝试、客户端里的交互 shell、原生 agent。重复报告同一个 <code>--id</code> 会更新条目，所以同一件事的开始和结束可以按任意顺序到达。</li>
 </ul>
 
 <h2 id="ends">条目怎么结束</h2>
-<p>条目的状态是 <code>running</code>、<code>completed</code>、<code>failed</code> 或 <code>interrupted</code>。没有观察到结束的条目保持 <code>running</code>，永远不会被当成成功。被 <code>oberth</code> 或用户停掉的运行是 <code>interrupted</code>，不管它留下了什么信号退出码。每个 workplace 最多保留 500 条，超出后丢弃最旧的。</p>
+<p>条目的状态是 <code>running</code>、<code>completed</code>、<code>failed</code> 或 <code>interrupted</code>。结束没被观察到的条目保持 <code>running</code>，永远不会被当成成功。被 <code>oberth</code> 或用户停掉的运行是 <code>interrupted</code>，不管它留下了什么信号退出码。每个 workplace 最多保留 500 条，超出后丢弃最旧的。</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">一条记录块</figcaption>
   <pre><code>{"id":"…","workplace":"…","seq":1,"kind":"shell","source":"engine",
@@ -31,7 +31,7 @@ oberth workplace show --limit 20</code></pre>
   <ul>
     <li><code>status</code> 从不读它来判断服务在不在跑。</li>
     <li><code>show</code> 读回当时发生了什么；它不会把当时的进程叫回来。</li>
-    <li>没有 daemon 时，读取仍以只读方式打开账本；写入需要 daemon。<code>up</code> 与 <code>down</code> 不写工作记录——那是声明的生命周期，不是临时工作条目。</li>
-    <li>记录是工作的证据，不是会话恢复。它从不把没观察到的结束伪装成成功。</li>
+    <li>没有 daemon 时，读取仍以只读方式打开账本，写入需要 daemon。<code>up</code> 与 <code>down</code> 不写工作记录，因为声明的生命周期不是一条临时工作条目。</li>
+    <li>记录是工作的证据，不是会话恢复。它从不把没观察到的结束说成成功。</li>
   </ul>
 </aside>

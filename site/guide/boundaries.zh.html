@@ -12,7 +12,7 @@
   </details>
   <details class="faq-item">
     <summary>它会写我的 Git 或清单吗？</summary>
-    <p>Git 只读：不提交、不暂存、不切分支。<code>oberth.yaml</code> 只由人的 <code>oberth init adopt</code> 写入；agent 最多只能起草。</p>
+    <p>Git 只读：不提交、不暂存、不切分支。<code>oberth.yaml</code> 只由人的 <code>oberth init adopt</code> 写入，agent 最多只能起草。</p>
   </details>
   <details class="faq-item">
     <summary>“没有端口”等于“没在运行”吗？</summary>
@@ -20,7 +20,7 @@
   </details>
   <details class="faq-item">
     <summary>Windows 支持到什么程度？</summary>
-    <p>有原生构建、冒烟测试和一次 arm64 交叉构建。完整服务场景只在 macOS 与 Linux 验证；不从那些运行里推断 Windows 生命周期。</p>
+    <p>有原生构建、冒烟测试和一次 arm64 交叉构建。完整服务场景只在 macOS 与 Linux 验证，不从那些运行里推断 Windows 生命周期。</p>
   </details>
   <details class="faq-item">
     <summary>需要模型账号或云端吗？</summary>
@@ -36,12 +36,12 @@
   </details>
   <details class="faq-item">
     <summary>它会删掉什么？</summary>
-    <p>它停止服务、报告身份。它从不删除数据库、数据目录或账本行；那是人的决定。卸载是独立脚本，清空 <code>~/.option-berth</code> 需要显式参数。</p>
+    <p>它停止服务、报告身份。它从不删除数据库、数据目录或账本行，那是人的决定。卸载是独立脚本，清空 <code>~/.option-berth</code> 需要显式参数。</p>
   </details>
 </div>
 
 <h2 id="contract">按主题分组的契约</h2>
-<p>这本指南讲事实链和推理。确切的表面住在仓库的契约文档里，每条事实只有一个家。</p>
+<p>这本指南讲事实链和背后的推理。确切的表面住在仓库的契约文档里，每条事实只有一个家。</p>
 <table class="chapter-table">
   <caption class="sr-only">每份契约住在哪里</caption>
   <thead><tr><th scope="col">主题</th><th scope="col">文档</th><th scope="col">它拥有什么</th></tr></thead>
@@ -57,8 +57,8 @@
 
 <h2 id="machines">机器入口</h2>
 <ul>
-  <li><a href="{{root}}llms.txt"><code>llms.txt</code></a>——指南与契约的精选索引，每条链接一行说明。</li>
-  <li><a href="{{root}}llms-full.txt"><code>llms-full.txt</code></a>——全部英文章节合在一个纯文本文件里。</li>
-  <li><a href="{{root}}sitemap.xml"><code>sitemap.xml</code></a>——两种语言的每个页面。</li>
+  <li><a href="{{root}}llms.txt"><code>llms.txt</code></a> 是指南与契约的精选索引，每条链接一行说明。</li>
+  <li><a href="{{root}}llms-full.txt"><code>llms-full.txt</code></a> 把全部英文章节放进一个纯文本文件。</li>
+  <li><a href="{{root}}sitemap.xml"><code>sitemap.xml</code></a> 列出两种语言的每个页面。</li>
 </ul>
-<p>HTML 页面是源；机器文件在构建时从同一份内容生成，所以它们不会悄悄和书脱节。</p>
+<p>HTML 页面是源。机器文件在构建时从同一份内容生成，所以它们不会悄悄和指南脱节。</p>

@@ -1,13 +1,13 @@
 <p class="chapter-intro">Every fact starts with a declaration. <code>oberth.yaml</code> says what this checkout runs; a person confirms it, and the engine never infers a start command from a process it happened to see.</p>
 
 <h2 id="start">Start from the worktree</h2>
-<p><code>oberth init</code> generates a reviewable starter from the current checkout. Listening ports and declarations found in project files appear only as comments, left for a person to decide. A failed listener scan does not abort <code>init</code>: the comment says <code>listening unknown</code> with the observation code and the next step, because “could not look” is not “nothing is listening”.</p>
+<p><code>oberth init</code> generates a starter manifest from the current checkout, in a form you can review. Listening ports and declarations found in project files appear only as comments, for a person to decide on. A failed listener scan does not abort <code>init</code>: the comment says <code>listening unknown</code> with the observation code and the next step, because “could not look” is not “nothing is listening”.</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">generate and preview</figcaption>
   <pre><code>oberth init
 oberth init --dry-run</code></pre>
 </figure>
-<p><code>--dry-run</code> previews without writing; <code>--json</code> is the machine shape. A failed scan still leaves the project's own declarations and an entry shape to copy.</p>
+<p><code>--dry-run</code> previews without writing, and <code>--json</code> gives the machine shape. Even when the scan fails, the project's own declarations and an entry shape to copy are still there.</p>
 
 <h2 id="draft">Let an agent draft, a person adopt</h2>
 <figure class="fragment" data-ui>
@@ -15,7 +15,7 @@ oberth init --dry-run</code></pre>
   <pre><code>oberth init draft claude
 oberth init adopt --dry-run --diff</code></pre>
 </figure>
-<p><code>init draft [agent]</code> asks the configured local agent for a manifest. option-berth judges nothing, goes online for nothing and writes nothing: success only produces a draft, archived by default under <code>~/.option-berth/drafts/</code>. <code>init adopt</code> is the step that writes <code>oberth.yaml</code>. An existing manifest needs an explicit <code>--replace</code> or <code>--merge</code>; <code>--dry-run</code> and <code>--diff</code> show the result first. A draft is not authorization.</p>
+<p><code>init draft [agent]</code> asks the configured local agent for a manifest. option-berth judges nothing, goes online for nothing and writes nothing: a successful run only produces a draft, archived by default under <code>~/.option-berth/drafts/</code>. <code>init adopt</code> is the step that writes <code>oberth.yaml</code>. An existing manifest needs an explicit <code>--replace</code> or <code>--merge</code>, and <code>--dry-run</code> with <code>--diff</code> shows the result first. A draft is not authorization.</p>
 
 <h2 id="smallest">The smallest manifest</h2>
 <figure class="fragment" data-ui>
@@ -41,20 +41,20 @@ services:
     <tr><th scope="row"><code>port</code></th><td>A fixed number, or <code>auto</code> so the engine allocates one per run and injects <code>PORT</code>.</td></tr>
     <tr><th scope="row"><code>health</code></th><td>An HTTP path, a TCP port or a command. A service that opens its port before its protocol is ready uses the command form.</td></tr>
     <tr><th scope="row"><code>depends_on</code></th><td>Start order and readiness waiting: a dependent starts only after its dependency is ready.</td></tr>
-    <tr><th scope="row"><code>env</code></th><td>Literal values and references such as <code>${api.url}</code>, expanded from this worktree's address book.</td></tr>
+    <tr><th scope="row"><code>env</code></th><td>Literal values, and references such as <code>${api.url}</code> that expand from this worktree's address book.</td></tr>
   </tbody>
 </table>
 
 <h2 id="fields">Fields that change behavior</h2>
 <dl class="chapter-dl">
   <dt><code>prepare:</code> and <code>prepare_inputs:</code></dt>
-  <dd>A prerequisite command runs before the long-running <code>cmd:</code>. When the declared inputs are unchanged since the last success, the next <code>up</code> skips it instead of reinstalling dependencies.</dd>
+  <dd>A prerequisite command that runs before the long-running <code>cmd:</code>. When the declared inputs have not changed since the last success, the next <code>up</code> skips it instead of reinstalling dependencies.</dd>
   <dt><code>sources:</code></dt>
-  <dd>The files that tell whether the process runs the current code. <code>status</code> publishes <code>code_changed_since_start</code>; <code>sources: []</code> turns the check off for a service that hot-reloads.</dd>
+  <dd>The files that tell whether the process is running the current code. <code>status</code> publishes <code>code_changed_since_start</code> when they have changed; <code>sources: []</code> turns the check off for a service that hot-reloads.</dd>
   <dt><code>ready_timeout:</code></dt>
-  <dd>The service's own readiness budget (Go duration, default 30s). Successors and <code>up --wait</code> use it; <code>prepare:</code> does not count against it.</dd>
+  <dd>The service's own readiness budget, as a Go duration, 30s by default. Successors and <code>up --wait</code> use it, and <code>prepare:</code> does not count against it.</dd>
   <dt><code>env_file:</code></dt>
-  <dd>A dotenv-style file read at start and never written back. Relative paths resolve from the manifest directory, so several worktrees can share one file outside the checkout.</dd>
+  <dd>A dotenv-style file, read at start and never written back. Relative paths resolve from the manifest directory, so several worktrees can share one file outside the checkout.</dd>
   <dt><code>machine:</code></dt>
   <dd>A dependency this project observes but never starts or stops: a database, middleware, a service someone else owns.</dd>
   <dt><code>workspace:</code></dt>
@@ -64,9 +64,9 @@ services:
 <h2 id="not">What the manifest may not do</h2>
 <aside class="note">
   <ul>
-    <li>Unknown keys are ignored by default; <code>BERTH_STRICT_MANIFEST=1</code> turns them into load errors with line and column positions. The published schema rejects them too.</li>
+    <li>Unknown keys are ignored by default. <code>BERTH_STRICT_MANIFEST=1</code> turns them into load errors with line and column positions, and the published schema rejects them too.</li>
     <li>One YAML document only. A second document, or the same service declaring <code>port</code> twice, is an error with a line number.</li>
-    <li>References are five shapes: the service's own <code>${port}</code>/<code>${url}</code>, another service's, a <code>machine:</code> or <code>workspace:</code> address, and <code>${worktree}</code>. Other <code>${...}</code> is kept as text.</li>
+    <li>A reference has one of five shapes: the service's own <code>${port}</code> or <code>${url}</code>, another service's address, a <code>machine:</code> or <code>workspace:</code> address, and <code>${worktree}</code>. Any other <code>${...}</code> stays text.</li>
     <li><code>machine:</code> and <code>workspace:</code> are read-only. <code>up</code>, <code>down</code> and <code>restart</code> never start or stop the other side.</li>
     <li>An agent's draft never writes <code>oberth.yaml</code>. Only a person's <code>init adopt</code> does.</li>
   </ul>

@@ -1,7 +1,7 @@
 <p class="chapter-intro"><code>status</code> 读 worktree、清单和它的运行记录，然后把运行事实原样返回。它是每个会话开局的命令，也被允许说“我看不见”。</p>
 
 <h2 id="four-facts">四种事实，不是一种</h2>
-<p>产品把 shell 一行命令会揉在一起的东西拆开。活着的进程、绑定的端口、通过的健康检查、退出原因，是四种不同的事实，一种不能推出下一种。</p>
+<p>产品把 shell 一行命令会揉在一起的东西拆开。活着的进程、绑定的端口、通过的健康检查、退出原因，是四种不同的事实，一种推不出下一种。</p>
 <table class="chapter-table">
   <caption class="sr-only">四种运行事实</caption>
   <thead><tr><th scope="col">事实</th><th scope="col">它回答的问题</th><th scope="col">它从哪里来</th></tr></thead>
@@ -23,10 +23,10 @@ worker   running   no port
 </figure>
 
 <h2 id="read">怎么读这张表</h2>
-<p>人读的表格按项目、服务、依赖、代码和失败原因排序。每个服务行同时带上声明的端口和当前的运行事实；失败区只显示最近一次退出，而且只有它仍是该服务当前的 <code>last_exit</code> 时才显示。</p>
+<p>人读的表格按项目排序，再看服务、依赖、代码和失败原因。每个服务行同时带上声明的端口和当前的运行事实。失败区只显示最近一次退出，而且只有它仍是该服务当前的 <code>last_exit</code> 时才显示。</p>
 <ul>
   <li>无端口 worker 显示为 <code>no port</code>。它通过运行记录观察，不靠监听。</li>
-  <li><code>port: auto</code> 在分配前显示 <code>auto port unassigned</code>；这不是失败。</li>
+  <li><code>port: auto</code> 的服务还没分到端口时显示 <code>auto port unassigned</code>。这不是失败。</li>
   <li>只有清单没有声明的监听才会单独列出。属于某个服务的端口跟服务显示在一起。</li>
   <li><code>code_changed_since_start</code> 说明进程跑的是比 checkout 旧的代码，并给出重启提示。这是代码事实，不是运行失败。</li>
 </ul>
@@ -45,14 +45,14 @@ worker   running   no port
 </ul>
 
 <h2 id="blind">观察失败的时候</h2>
-<p>沙箱、权限墙或平台变化都可能打断监听扫描。引擎会报告 <code>observation_empty</code>、<code>observation_unrecognized</code>、<code>observation_incomplete</code>、<code>observation_blind</code> 或 <code>observation_bind_denied</code>。这些码没有一个是“没有东西在监听”，更不是“没在运行”。人读的表会写 <code>listening unknown</code>；<code>port: auto</code> 的候选端口靠实际绑定确认，而不是相信空表。</p>
+<p>沙箱、权限墙或平台变化都可能打断监听扫描。引擎会报告 <code>observation_empty</code>、<code>observation_unrecognized</code>、<code>observation_incomplete</code>、<code>observation_blind</code> 或 <code>observation_bind_denied</code> 之一。这些码没有一个是“没有东西在监听”，更不是“没在运行”。人读的表会写 <code>listening unknown</code>，<code>port: auto</code> 的候选端口靠实际绑定确认，不靠相信一张空表。</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">检查观察者本身</figcaption>
   <pre><code>oberth doctor --only listener_observation</code></pre>
 </figure>
-<p>在失败的同一种进程里运行它。如果结果是 blind，换到普通终端重试，或在那里运行 <code>oberth serve --detach</code>；不要在沙箱里反复重开，再把超时读成失败。</p>
+<p>在失败的同一种进程里运行这项检查。如果结果是 blind，换到普通终端重试，或在那里运行 <code>oberth serve --detach</code> 再试。不要在沙箱里反复重开，再把超时读成失败。</p>
 
 <h2 id="never">status 永远不说什么</h2>
 <aside class="note">
-  <p>它不是整机端口表：它只回答这个 worktree 声明的服务，不回答主机上的每个 socket。它不把“为什么失败”交给模型；固定的原因码和日志才是答案。读不到的事实永远不会被写成事实：未知不是成功，字段缺席也不是 0。</p>
+  <p>它不是整机端口表：它只回答这个 worktree 声明的服务，不回答主机上的每个 socket。它不把“为什么失败”交给模型；固定的原因码和日志才是答案。读不到的事实永远不会被写成事实，所以未知不是成功，字段缺席也不是 0。</p>
 </aside>

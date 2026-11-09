@@ -1,33 +1,33 @@
-<p class="chapter-intro"><code>oberth</code> 为每个 Git worktree 保留同一个答案：该跑什么、是不是真的在跑、没跑为什么。人读一张表，coding agent 读同一条命令的 <code>--json</code>。这本指南讲清两者背后那条链。</p>
+<p class="chapter-intro"><code>oberth</code> 为每个 Git worktree 保留同一份答案：该跑什么、是不是真的在跑、没跑的时候为什么。人读一张表，coding agent 读同一条命令的 <code>--json</code>。这本指南讲这份答案怎么建立，以及它可能在哪一步出问题。</p>
 
 <h2 id="problem">四个 checkout，四次猜测</h2>
-<p>Git worktree 解决的是并行代码，不是并行运行时。同一个仓库的四个 checkout 共享一段端口范围、一个数据库名和一份 shell 历史，于是每个会话都要重新推导同样三件事——而且每次推导得都略有不同。</p>
-<p>oberth 把这些事实按同一个顺序只写一次，让每个读者读到同一份东西：<strong>worktree → 清单 → 服务 → 运行 → 运行事实</strong>。下游不会重新发明上游已经发布过的东西。</p>
+<p>worktree 解决的是并行写代码，不是并行跑服务。同一个仓库的四份 checkout 共用一段端口范围、一个数据库名和一份 shell 历史，于是每个会话都要把这同样的三件事重新推一遍，而且每次推出来的结果都略有出入。</p>
+<p>oberth 把这些事实按固定顺序写一次，每个读者读到的都是同一份：<strong>worktree → 清单 → 服务 → 运行 → 运行事实</strong>。后面的环节不会去猜前面的环节已经记下的东西。</p>
 
 <h2 id="chain">一条链，五个站点</h2>
 <table class="chapter-table">
   <caption class="sr-only">事实链的五个站点</caption>
-  <thead><tr><th scope="col">站点</th><th scope="col">它解决的问题</th><th scope="col">它不许做的事</th></tr></thead>
+  <thead><tr><th scope="col">站点</th><th scope="col">它解决什么问题</th><th scope="col">它不许做什么</th></tr></thead>
   <tbody>
     <tr><th scope="row">worktree</th><td>一次运行属于哪个 checkout？</td><td>属于它不是在其中启动的那个 checkout。</td></tr>
     <tr><th scope="row">清单</th><td>该跑什么、在哪个端口、依赖谁？</td><td>从运行中的进程去猜，或被模型采纳。</td></tr>
-    <tr><th scope="row">服务</th><td>哪条声明先启动、在哪个地址上？</td><td>在依赖就绪之前启动被依赖它的服务。</td></tr>
+    <tr><th scope="row">服务</th><td>哪条声明先启动、落在哪个地址上？</td><td>在依赖就绪之前启动依赖它的服务。</td></tr>
     <tr><th scope="row">运行</th><td>pid、开始、结束、退出码、日志路径。</td><td>因为进程存在就算作在监听。</td></tr>
     <tr><th scope="row">运行事实</th><td>活着、在监听、健康，以及为什么结束。</td><td>把读不到的表写成“没在运行”。</td></tr>
   </tbody>
 </table>
-<p><a href="{{guide}}chain/">事实链</a>按顺序走完这五个站点，每站一节。</p>
+<p><a href="{{guide}}chain/">一条事实链</a>按顺序走完这五个站点，每站一节。</p>
 
-<h2 id="loop">每天真正会跑的那个闭环</h2>
-<p>五条命令覆盖一个工作日。每一条都顶掉一段每个 checkout 都要重写一遍的 shell 单行。</p>
+<h2 id="loop">每天都会用到的命令</h2>
+<p>五条命令覆盖一个工作日，每一条都替你省掉一段每个 checkout 都得重写一遍的 shell 管道。</p>
 <table class="chapter-table">
   <caption class="sr-only">核心命令与被它们替代的做法</caption>
-  <thead><tr><th scope="col">你想</th><th scope="col">oberth</th><th scope="col">被替代的 shell 答案</th></tr></thead>
+  <thead><tr><th scope="col">你想</th><th scope="col">oberth</th><th scope="col">被替代的 shell 做法</th></tr></thead>
   <tbody>
     <tr><th scope="row">声明这套服务</th><td><code>oberth init</code></td><td>一段没人维护的 README 说明加一个脚本</td></tr>
     <tr><th scope="row">启动并等到真的就绪</th><td><code>oberth up --wait</code></td><td><code>npm run dev &amp;</code>、sleep，再 <code>curl</code> 到它应答</td></tr>
     <tr><th scope="row">知道该跑什么、正在跑什么</th><td><code>oberth status</code></td><td>读 <code>oberth.yaml</code>，再对着它 <code>ps</code>、<code>lsof</code> 和 <code>tail</code></td></tr>
-    <tr><th scope="row">读一次失败</th><td><code>oberth logs api --once</code></td><td>tail 对的那个文件，再猜退出码</td></tr>
+    <tr><th scope="row">读一次失败</th><td><code>oberth logs api --once</code></td><td>tail 对的文件，再猜退出码</td></tr>
     <tr><th scope="row">只停这个 checkout</th><td><code>oberth down</code></td><td>从 <code>ps</code> 里拼出一个 pid 再 <code>kill</code></td></tr>
   </tbody>
 </table>
@@ -44,12 +44,12 @@ worker   running   no port
 <h2 id="paths">这本指南怎么读</h2>
 <ul>
   <li><strong>第一次来。</strong>先<a href="{{guide}}install/">安装 oberth</a>，再跟<a href="{{guide}}quickstart/">第一个 worktree</a>走一遍：一个示例项目、五条命令，从一个空 checkout 到一个干净的停止。</li>
-  <li><strong>你已经在跑东西。</strong>读<a href="{{guide}}chain/">事实链</a>和<a href="{{guide}}worktrees/">多个 worktree 与运行</a>，命令章节按需查。</li>
+  <li><strong>你已经在跑本地服务。</strong>读<a href="{{guide}}chain/">一条事实链</a>和<a href="{{guide}}worktrees/">同时跑多个 worktree</a>，命令章节按需查。</li>
   <li><strong>你在接入 agent。</strong>从<a href="{{guide}}json/">JSON 里的运行事实</a>开始，再看<a href="{{guide}}agents/">接入 agent</a>的三个调用时机。</li>
 </ul>
 
 <h2 id="readers">两个读者，一个接口</h2>
-<p>没有第二个接口，没有 MCP server，内核里也没有模型。CLI 就是契约，<code>--json</code> 是同一份契约的机器形状。</p>
+<p>CLI 是唯一的接口。没有第二套 API，没有 MCP server，引擎里也没有模型；<code>--json</code> 是同一份契约换一个程序能读的形状。</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">agent 的开场读取</figcaption>
   <pre><code>oberth status --json --brief
@@ -60,5 +60,5 @@ oberth logs api --once --json --run current --first-error</code></pre>
 
 <h2 id="not">这本指南不是什么</h2>
 <aside class="note">
-  <p><strong>不是契约。</strong>确切的 CLI 面、JSON 字段与清单规则在 <a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md">docs/cli.md</a>；这本指南讲链，Contract 一栏负责指路。<strong>不是产品官网。</strong><a href="{{root}}">官网</a>展示产品本身。<strong>不是框架教程。</strong>示例用 <a href="https://github.com/SheathedSharp/option-berth/tree/main/examples/hello-worktree">Hello Worktree</a>，因为它只依赖 Python 3；同一条链适用于任何技术栈。</p>
+  <p><strong>不是契约。</strong>确切的 CLI 面、JSON 字段与清单规则在 <a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md">docs/cli.md</a>；这本指南讲链，细节去那里查。<strong>不是产品官网。</strong><a href="{{root}}">官网</a>展示产品本身。<strong>不是框架教程。</strong>示例用 <a href="https://github.com/SheathedSharp/option-berth/tree/main/examples/hello-worktree">Hello Worktree</a>，因为它只依赖 Python 3；同一条链适用于任何技术栈。</p>
 </aside>
