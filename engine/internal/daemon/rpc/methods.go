@@ -448,8 +448,8 @@ type GroupsRenameParams struct {
 
 // GroupsRenameResult reports what the rename changed: Affected holds the new
 // name of every group it touched — the project's and each checkout's, sorted —
-// and Name the project's new name. Both are empty when the project already had
-// that name.
+// and Name the project's new name. When the project already had that name,
+// Affected is empty and Name still carries the unchanged name.
 type GroupsRenameResult struct {
 	MutationResult
 	Name string `json:"name"`
@@ -612,8 +612,9 @@ type RunsRegisterParams struct {
 	// the daemon's is not.
 	Session *state.Session `json:"session,omitempty"`
 	// AllowOutsideHome opts out of the daemon's refusal to record a run whose
-	// cwd is outside the user's home. The CLI sets it only when the caller asked
-	// for it: the refusal exists because the daemon runs as the user.
+	// cwd is outside the user's home. `oberth start` sets it unconditionally:
+	// that command runs as the user and has no `--allow-outside-home` flag, so
+	// the refusal here protects callers that do not already speak for the user.
 	AllowOutsideHome bool `json:"allow_outside_home,omitempty"`
 }
 

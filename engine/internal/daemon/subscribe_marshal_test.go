@@ -152,10 +152,12 @@ func TestFailedMarshalLeavesNoWorkspaceBinding(t *testing.T) {
 }
 
 // TestFailedMarshalResubscribeKeepsWorkspaceRelation covers what a failed
-// subscribe does leave behind: it detaches the caller's old workspace binding and
-// attaches the new one before the reply is framed. That relation is ephemeral
-// state outside the sequence, and losing it on a failed resubscribe would change
-// which worktrees this connection is entitled to see on its next attempt.
+// subscribe does leave behind: a resubscribe detaches the caller's old workspace
+// binding, validates and frames the new reply, and only then would it attach the
+// new binding. A failure while framing therefore restores the pre-existing
+// relation rather than keeping the new one. That relation is ephemeral state
+// outside the sequence, and losing it on a failed resubscribe would change which
+// worktrees this connection is entitled to see on its next attempt.
 func TestFailedMarshalResubscribeKeepsWorkspaceRelation(t *testing.T) {
 	s := New(Options{Socket: "/test/subscribe-marshal.sock", Version: "test"})
 	c := newConn(1, s, nil)
