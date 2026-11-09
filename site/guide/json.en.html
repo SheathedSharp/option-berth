@@ -3,10 +3,10 @@
 <h2 id="rules">The rules</h2>
 <ul>
   <li>With plain <code>--json</code>, stdout holds exactly one JSON value. Diagnostics go to stderr and never mix into it.</li>
-  <li>Streaming commands use NDJSON: one value per line.</li>
-  <li>Exit codes are 0 for success, 1 for a run failure, 2 for an argument or option error, and 130 when interrupted by Ctrl-C.</li>
+  <li>Streaming commands use NDJSON, one value per line.</li>
+  <li>Exit codes are 0 for success, 1 for a run failure, 2 for an argument or option error, and 130 when Ctrl-C interrupts the command.</li>
   <li>An error is <code>{"error":{"code":"…","message":"…","hint":"…"}}</code>. The hint points at evidence that really exists.</li>
-  <li>No wire field is accepted without being read. A published field is a promise every client may rely on, so the protocol build fails on a field no handler acts on.</li>
+  <li>No wire field is accepted without being read. A published field is a promise every client may rely on, so the protocol build fails on a field that no handler acts on.</li>
 </ul>
 
 <h2 id="codes">The stable codes</h2>
@@ -16,9 +16,9 @@
   <tbody>
     <tr><th scope="row">Input</th><td><code>invalid_params</code>, <code>not_found</code>, <code>invalid_config</code>, <code>ambiguous</code></td><td>The request or the declaration is wrong; the message names the object.</td></tr>
     <tr><th scope="row">Permission</th><td><code>permission_denied</code></td><td>An operation was refused; the hint says what to change.</td></tr>
-    <tr><th scope="row">Time</th><td><code>timeout</code>, <code>daemon_busy</code></td><td>The engine gave up, or another action holds the daemon; read the hint, then retry.</td></tr>
-    <tr><th scope="row">Observation</th><td><code>observation_empty</code>, <code>observation_unrecognized</code>, <code>observation_incomplete</code>, <code>observation_blind</code>, <code>observation_bind_denied</code></td><td>None means “nothing is listening”; check <code>observation.state</code> and <code>doctor --only listener_observation</code>.</td></tr>
-    <tr><th scope="row">Internal</th><td><code>internal</code></td><td>An unexpected failure; report the command and the version, not just the message.</td></tr>
+    <tr><th scope="row">Time</th><td><code>timeout</code>, <code>daemon_busy</code></td><td>The engine gave up, or another action holds the daemon. Read the hint, then retry.</td></tr>
+    <tr><th scope="row">Observation</th><td><code>observation_empty</code>, <code>observation_unrecognized</code>, <code>observation_incomplete</code>, <code>observation_blind</code>, <code>observation_bind_denied</code></td><td>None of them means “nothing is listening”. Check <code>observation.state</code> and <code>doctor --only listener_observation</code>.</td></tr>
+    <tr><th scope="row">Internal</th><td><code>internal</code></td><td>An unexpected failure. Report the command and the version, not just the message.</td></tr>
   </tbody>
 </table>
 
@@ -39,14 +39,14 @@
   <dt><code>reason</code></dt>
   <dd>A stable, branchable failure reason such as <code>start_failed</code>, <code>port_occupied</code> or <code>ready_timeout</code>.</dd>
   <dt><code>hint</code></dt>
-  <dd>A deterministic next step that points at evidence that exists: the service's logs only if the process really came up, the dependency's logs when a dependency was not ready, nothing when there is no executable step.</dd>
+  <dd>A deterministic next step that points at evidence which exists. It names the service's logs only if the process really came up, and the dependency's logs when a dependency was not ready. When there is no executable step, it stays empty.</dd>
   <dt><code>port_holder</code></dt>
-  <dd>Present on <code>port_occupied</code>: the port, pid, command and kind of the holder, plus the managed group, service name and run id when it is one of ours.</dd>
+  <dd>Present on <code>port_occupied</code>: the port, pid, command and kind of the holder, plus the managed group, service name and run id when the holder is one of ours.</dd>
   <dt><code>ready</code></dt>
-  <dd>The CLI's annotation, not a daemon fact: <code>true</code> after <code>--wait</code> confirms readiness, <code>false</code> when no wait was requested. <code>false</code> is not a failure.</dd>
+  <dd>The CLI's annotation, not a daemon fact. It is <code>true</code> after <code>--wait</code> confirms readiness, and <code>false</code> when no wait was requested. <code>false</code> is not a failure.</dd>
 </dl>
 
 <h2 id="absent">What an absent field does not mean</h2>
 <aside class="note">
-  <p>Absent is not zero and not false. An absent <code>observation</code> means the listener table was usable; an absent <code>running_services</code> means “not observed”, not 0. An observation code is not “nothing is listening”, and unknown is not success. When a fact cannot be read, the document says so rather than filling the gap with a default.</p>
+  <p>Absent is not zero and not false. An absent <code>observation</code> means the listener table was usable; an absent <code>running_services</code> means “not observed”, not 0. An observation code does not mean “nothing is listening”, and unknown is not success. When a fact cannot be read, the document says so instead of filling the gap with a default.</p>
 </aside>
