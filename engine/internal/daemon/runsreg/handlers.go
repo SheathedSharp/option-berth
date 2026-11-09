@@ -515,18 +515,19 @@ func requirePID(pid int, example string) error {
 	return nil
 }
 
-// textOrEmpty reads an optional wire string.
-func textOrEmpty(s *string) string {
-	if s == nil {
-		return ""
+// valueOrZero reads an optional wire value, returning the type's zero when the
+// caller named none. The optional-field helpers below differ only in their
+// element type, so the nil rule lives here once instead of once per type.
+func valueOrZero[T any](value *T) T {
+	if value == nil {
+		var zero T
+		return zero
 	}
-	return *s
+	return *value
 }
 
+// textOrEmpty reads an optional wire string.
+func textOrEmpty(s *string) string { return valueOrZero(s) }
+
 // portOrZero reads an optional port hint; zero means the caller named none.
-func portOrZero(p *int) int {
-	if p == nil {
-		return 0
-	}
-	return *p
-}
+func portOrZero(p *int) int { return valueOrZero(p) }
