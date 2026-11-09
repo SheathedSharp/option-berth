@@ -197,6 +197,137 @@ func TestWorkspaceChangeReachesOnlyPeers(t *testing.T) {
 	s.broadcastWorkspaceChanged("   ", nil)
 }
 
+// TestWorkspaceBindingReportsOnlyAChangedRelation pins the write half of a
+// workspace subscription: a scope with no workspace, or a workspace label with
+// no selectors, binds nothing; the first concrete binding and a changed one are
+// reported as a peer-visible change, while re-binding the same relation is not.
+func TestWorkspaceBindingReportsOnlyAChangedRelation(t *testing.T) {
+	s := New(Options{Socket: "/test/workspace-bind.sock", Version: "test"})
+	c := newConn(1, s, nil)
+	if s.bindWorkspaceLocked(c, state.Scope{}) {
+		t.Error("an empty scope was bound and reported as a change")
+	}
+	if s.bindWorkspaceLocked(c, state.Scope{Workspace: "integration"}) {
+		t.Error("a workspace-only scope with no selectors was bound")
+	}
+	first := state.Scope{Workspace: "integration", Worktrees: []string{"/w/a"}}
+	if !s.bindWorkspaceLocked(c, first) {
+		t.Error("the first concrete binding was not reported as a change")
+	}
+	if s.bindWorkspaceLocked(c, first) {
+		t.Error("re-binding the same relation was reported as a change")
+	}
+	second := state.Scope{Workspace: "integration", Worktrees: []string{"/w/b"}}
+	if !s.bindWorkspaceLocked(c, second) {
+		t.Error("a changed relation was not reported as a change")
+	}
+	s.subsMu.RLock()
+	binding := s.workspaceScopes["integration"][c.id]
+	s.subsMu.RUnlock()
+	if binding.Key() != second.Concrete().Key() {
+		t.Errorf("stored binding = %+v, want the latest relation", binding)
+	}
+}
+
+// TestDetachWorkspaceReportsOnlyAHeldRelation pins what detach returns: no
+// workspace or no binding was not held, so a caller must not restore or
+// broadcast on its behalf. Only an actual member is removed and reported held.
+func TestDetachWorkspaceReportsOnlyAHeldRelation(t *testing.T) {
+	s := New(Options{Socket: "/test/workspace-detach.sock", Version: "test"})
+	c := newConn(1, s, nil)
+	if workspace, _, held := s.detachWorkspaceLocked(c); workspace != "" || held {
+		t.Fatalf("detaching a connection with no workspace = %q/%v, want empty/false", workspace, held)
+	}
+	c.scope = state.Scope{Workspace: "integration"}
+	if workspace, _, held := s.detachWorkspaceLocked(c); workspace != "integration" || held {
+		t.Fatalf("detaching a workspace with no bindings = %q/%v, want integration/false", workspace, held)
+	}
+	scope := state.Scope{Workspace: "integration", Worktrees: []string{"/w/a"}}
+	s.bindWorkspaceLocked(c, scope)
+	workspace, previous, held := s.detachWorkspaceLocked(c)
+	if !held || workspace != "integration" || previous.Key() != scope.Concrete().Key() {
+		t.Fatalf("detaching a held binding = %q/%+v/%v, want the stored relation", workspace, previous, held)
+	}
+}
+
+// TestRestoreWorkspaceIgnoresNothingToRestore pins the undo rule: a rollback
+// only puts back a relation that was actually detached. An empty workspace or a
+// binding that was never held must leave no member behind.
+func TestRestoreWorkspaceIgnoresNothingToRestore(t *testing.T) {
+	s := New(Options{Socket: "/test/workspace-restore.sock", Version: "test"})
+	c := newConn(1, s, nil)
+	s.restoreWorkspaceLocked(c, "", state.Scope{}, false)
+	s.restoreWorkspaceLocked(c, "integration", state.Scope{}, false)
+	if _, ok := s.workspaceScopes["integration"]; ok {
+		t.Fatal("a rollback restored a relation that was never held")
+	}
+	previous := state.Scope{Worktrees: []string{"/w/a"}}
+	s.restoreWorkspaceLocked(c, "integration", previous, true)
+	s.subsMu.RLock()
+	stored, ok := s.workspaceScopes["integration"][c.id]
+	s.subsMu.RUnlock()
+	if !ok || stored.Key() != previous.Key() {
+		t.Fatalf("restored binding = %+v/%v, want the detached relation", stored, ok)
+	}
+}
+
+// TestWorkspaceChangeEventIDsAreUnique pins that each membership change is a
+// distinct event: two changes must not share an EventID, or a client could drop
+// the second as a duplicate.
+func TestWorkspaceChangeEventIDsAreUnique(t *testing.T) {
+	s := New(Options{Socket: "/test/workspace-ids.sock", Version: "test"})
+	first := s.workspaceChange("integration")
+	second := s.workspaceChange("integration")
+	if first.EventID == "" || first.EventID == second.EventID {
+		t.Fatalf("workspace change ids = %q and %q, want two distinct ids", first.EventID, second.EventID)
+	}
+}
+
+// TestResubscribeAnnouncesTheRightWorkspacePeers pins which peers are told to
+// refresh when a member changes its relation. Staying in the same workspace is
+// one announcement, not two; moving away tells the workspace it left and the
+// one it joined, each once.
+func TestResubscribeAnnouncesTheRightWorkspacePeers(t *testing.T) {
+	s := New(Options{Socket: "/test/workspace-announce.sock", Version: "test"})
+	integrationPeer := newConn(1, s, nil)
+	integrationPeer.subscribed, integrationPeer.events = true, true
+	integrationPeer.scope = state.Scope{Workspace: "integration"}
+	deliveryPeer := newConn(2, s, nil)
+	deliveryPeer.subscribed, deliveryPeer.events = true, true
+	deliveryPeer.scope = state.Scope{Workspace: "delivery"}
+	s.registerConn(integrationPeer)
+	s.registerConn(deliveryPeer)
+
+	member := newConn(3, s, nil)
+	first := state.Scope{Workspace: "integration", Worktrees: []string{"/w/a"}}
+	second := state.Scope{Workspace: "integration", Worktrees: []string{"/w/b"}}
+	moved := state.Scope{Workspace: "delivery", Worktrees: []string{"/w/d"}}
+	if err := s.subscribe(member, json.RawMessage("1"), scanner.Include{}, true, first, 0); err != nil {
+		t.Fatalf("joining the integration workspace: %v", err)
+	}
+	drain(integrationPeer) // the join itself is announced once
+
+	if err := s.subscribe(member, json.RawMessage("2"), scanner.Include{}, true, second, 0); err != nil {
+		t.Fatalf("resubscribing inside the integration workspace: %v", err)
+	}
+	if got := drain(integrationPeer); len(got) != 1 {
+		t.Fatalf("same-workspace resubscribe announced %d times to a peer, want 1", len(got))
+	}
+	if got := drain(deliveryPeer); len(got) != 0 {
+		t.Fatalf("same-workspace resubscribe reached an unrelated workspace %d times", len(got))
+	}
+
+	if err := s.subscribe(member, json.RawMessage("3"), scanner.Include{}, true, moved, 0); err != nil {
+		t.Fatalf("moving to the delivery workspace: %v", err)
+	}
+	if got := drain(integrationPeer); len(got) != 1 {
+		t.Fatalf("moving away announced %d times to the old workspace, want 1", len(got))
+	}
+	if got := drain(deliveryPeer); len(got) != 1 {
+		t.Fatalf("moving in announced %d times to the new workspace, want 1", len(got))
+	}
+}
+
 func TestFailedWorkspaceResubscribeKeepsExistingBinding(t *testing.T) {
 	s := New(Options{Socket: "/test/workspace-resubscribe.sock", Version: "test"})
 	c := newConn(1, s, nil)
