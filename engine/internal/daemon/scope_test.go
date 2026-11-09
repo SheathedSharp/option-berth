@@ -150,6 +150,53 @@ func TestWorkspaceOnlyResubscribeInheritsOnlyPeers(t *testing.T) {
 	}
 }
 
+// TestWorkspaceChangeReachesOnlyPeers pins the membership-refresh broadcast: a
+// state.changed with Changed ["workspace_changed"] goes to the live event
+// viewers of that workspace and no one else. The connection that caused the
+// change is excluded (it already got its own opening snapshot), a member of a
+// different workspace or a viewer without events must not be woken, and an
+// empty workspace name names no peers and publishes nothing at all.
+func TestWorkspaceChangeReachesOnlyPeers(t *testing.T) {
+	s := New(Options{Socket: "/test/workspace-change.sock", Version: "test"})
+	conn := func(id uint64, workspace string, events bool) *Conn {
+		c := newConn(id, s, nil)
+		c.subscribed, c.events, c.scope = true, events, state.Scope{Workspace: workspace}
+		s.registerConn(c)
+		return c
+	}
+	peer := conn(1, "integration", true)
+	excluded := conn(2, "integration", true)
+	otherWorkspace := conn(3, "delivery", true)
+	silent := conn(4, "integration", false)
+
+	s.broadcastWorkspaceChanged("integration", excluded)
+
+	frames := drain(peer)
+	if len(frames) != 1 {
+		t.Fatalf("peer received %d frames, want one workspace_changed", len(frames))
+	}
+	var msg rpc.Notification
+	if err := json.Unmarshal(frames[0], &msg); err != nil {
+		t.Fatalf("notification: %v", err)
+	}
+	if msg.Method != rpc.MethodStateChanged {
+		t.Fatalf("method = %q, want %q", msg.Method, rpc.MethodStateChanged)
+	}
+	var change state.StateChanged
+	if err := json.Unmarshal(msg.Params, &change); err != nil {
+		t.Fatalf("state.changed: %v", err)
+	}
+	if change.Type != "state.changed" || len(change.Changed) != 1 || change.Changed[0] != "workspace_changed" {
+		t.Fatalf("change = %+v, want a workspace_changed summary", change)
+	}
+	for name, c := range map[string]*Conn{"excluded": excluded, "other workspace": otherWorkspace, "silent": silent} {
+		if got := drain(c); len(got) != 0 {
+			t.Errorf("%s received %d frames, want none", name, len(got))
+		}
+	}
+	s.broadcastWorkspaceChanged("   ", nil)
+}
+
 func TestFailedWorkspaceResubscribeKeepsExistingBinding(t *testing.T) {
 	s := New(Options{Socket: "/test/workspace-resubscribe.sock", Version: "test"})
 	c := newConn(1, s, nil)

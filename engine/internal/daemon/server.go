@@ -841,8 +841,23 @@ func (s *Server) broadcastWorkspaceChanged(workspace string, exclude *Conn) {
 	}
 	s.subsMu.RLock()
 	defer s.subsMu.RUnlock()
+	raw, ok := frameNotification(rpc.MethodStateChanged, s.workspaceChange(workspace))
+	if !ok {
+		return
+	}
+	for _, c := range s.conns {
+		if c.receivesWorkspaceChange(workspace, exclude) {
+			c.enqueue(raw)
+		}
+	}
+}
+
+// workspaceChange is the redacted summary a membership change publishes: it
+// carries no rows, only the fact that members should refresh the
+// relation-derived snapshot.
+func (s *Server) workspaceChange(workspace string) state.StateChanged {
 	snap := s.loop.Cached()
-	change := state.StateChanged{
+	return state.StateChanged{
 		Type:          "state.changed",
 		EventID:       state.OpaqueEventID(state.NewEventID(s.nextWorkspaceEvent.Add(1), "workspace_changed", state.OpaqueEventID(workspace))),
 		Seq:           snap.Seq,
@@ -850,16 +865,17 @@ func (s *Server) broadcastWorkspaceChanged(workspace string, exclude *Conn) {
 		Changed:       []string{"workspace_changed"},
 		ObservedAt:    snap.At,
 	}
-	raw, err := marshalNotification(rpc.MethodStateChanged, change)
-	if err != nil {
-		return
+}
+
+// receivesWorkspaceChange reports whether one connection is a peer of the
+// workspace that changed and should refresh: the connection that caused the
+// change, non-subscribers, event-less viewers and members of another workspace
+// are all excluded.
+func (c *Conn) receivesWorkspaceChange(workspace string, exclude *Conn) bool {
+	if c == exclude || !c.subscribed || !c.events {
+		return false
 	}
-	for _, c := range s.conns {
-		if c == exclude || !c.subscribed || !c.events || strings.TrimSpace(c.scope.Workspace) != workspace {
-			continue
-		}
-		c.enqueue(raw)
-	}
+	return strings.TrimSpace(c.scope.Workspace) == workspace
 }
 
 // changeSet is one transition as every scoped subscriber of a view sees it:
