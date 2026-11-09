@@ -5,81 +5,82 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// The daemon's `oberth.yaml` index lives here, on the scan loop, because the
-// loop is the one thing that reads it every tick and the contract makes it
-// long-lived (). These accessors are how the group handlers
-// (`groups.config.get`, `groups.config.set`, `groups.reload`, `groups.start`)
-// reach it without a second copy going stale behind the first.
+// The daemon's `oberth.yaml` index lives on the scan loop because the loop is
+// the one thing that reads it every tick, and the contract makes it live as
+// long as the daemon. The group handlers reach it through these accessors, so
+// there is never a second copy going stale behind the first.
 
-// index returns the loop's index, creating it if the first scan has not run
-// yet. The caller holds attr.mu.
-func (l *Loop) index() *groups.Index {
-	if l.attr.index == nil {
-		l.attr.index = groups.NewIndex()
-		if l.attr.roots == nil {
-			l.attr.roots = map[string]bool{}
-		}
-		if l.attr.identities == nil {
-			l.attr.identities = map[string]string{}
-		}
-	}
-	return l.attr.index
+// withIndex runs fn with the attribution lock held and the index in place.
+// Every accessor below is one query against that index; keeping admission and
+// creation in one helper is what stops an accessor from forgetting either.
+func withIndex(l *Loop, fn func(*groups.Index)) {
+	l.attr.mu.Lock()
+	defer l.attr.mu.Unlock()
+	l.ensureIndex()
+	fn(l.attr.index)
 }
 
 // Configs returns every valid `oberth.yaml` the daemon knows, deepest first.
 func (l *Loop) Configs() []*groups.Config {
-	l.attr.mu.Lock()
-	defer l.attr.mu.Unlock()
-	return l.index().Configs()
+	var configs []*groups.Config
+	withIndex(l, func(index *groups.Index) { configs = index.Configs() })
+	return configs
 }
 
 // ConfigNamed returns the config that names this group.
 func (l *Loop) ConfigNamed(name string) (*groups.Config, bool) {
-	l.attr.mu.Lock()
-	defer l.attr.mu.Unlock()
-	return l.index().Named(name)
+	var (
+		cfg *groups.Config
+		ok  bool
+	)
+	withIndex(l, func(index *groups.Index) { cfg, ok = index.Named(name) })
+	return cfg, ok
 }
 
 // GroupOf returns the group a config's services are published under. For a
 // config at a checkout's root that is the checkout's group, whatever the file's
 // own `name:` says: a linked worktree's copy names `<project>@<worktree>`.
 func (l *Loop) GroupOf(cfg *groups.Config) string {
-	l.attr.mu.Lock()
-	defer l.attr.mu.Unlock()
-	return l.index().GroupOf(cfg)
+	var group string
+	withIndex(l, func(index *groups.Index) { group = index.GroupOf(cfg) })
+	return group
 }
 
 // PlanGroupRename works out what `groups.rename` changes, against the groups
 // the caller read and the index they were built from.
 func (l *Loop) PlanGroupRename(gg []state.Group, from, to string) (*groups.RenamePlan, error) {
-	l.attr.mu.Lock()
-	defer l.attr.mu.Unlock()
-	return groups.PlanRename(gg, l.index(), from, to)
+	var (
+		plan *groups.RenamePlan
+		err  error
+	)
+	withIndex(l, func(index *groups.Index) { plan, err = groups.PlanRename(gg, index, from, to) })
+	return plan, err
 }
 
 // ConfigAt returns the config read from this file.
 func (l *Loop) ConfigAt(path string) (*groups.Config, bool) {
-	l.attr.mu.Lock()
-	defer l.attr.mu.Unlock()
-	return l.index().ByPath(path)
+	var (
+		cfg *groups.Config
+		ok  bool
+	)
+	withIndex(l, func(index *groups.Index) { cfg, ok = index.ByPath(path) })
+	return cfg, ok
 }
 
 // ObserveConfig indexes the `oberth.yaml` files at and above a directory, the
 // way a process cwd does during a scan. `groups.start --config-path` uses it so
 // a project the daemon has never seen still starts.
 func (l *Loop) ObserveConfig(dir string) {
-	l.attr.mu.Lock()
-	defer l.attr.mu.Unlock()
-	l.index().Observe(dir)
+	withIndex(l, func(index *groups.Index) { index.Observe(dir) })
 }
 
 // LoadConfig re-reads one config file into the index, replacing whatever was
 // there. `groups.config.set` calls it after its write so the next delta already
 // carries the edit.
 func (l *Loop) LoadConfig(path string) error {
-	l.attr.mu.Lock()
-	defer l.attr.mu.Unlock()
-	return l.index().LoadFile(path)
+	var err error
+	withIndex(l, func(index *groups.Index) { err = index.LoadFile(path) })
+	return err
 }
 
 // ReloadConfigs re-reads every known root: the ones in the store and the ones
@@ -87,20 +88,20 @@ func (l *Loop) LoadConfig(path string) error {
 // the daemon started, and returns how many valid configs remain plus the files
 // that could not be used.
 func (l *Loop) ReloadConfigs() (int, []groups.InvalidConfig) {
-	l.attr.mu.Lock()
-	defer l.attr.mu.Unlock()
-	return l.reloadLocked()
-}
-
-// reloadLocked is ReloadConfigs with attr.mu already held.
-func (l *Loop) reloadLocked() (int, []groups.InvalidConfig) {
-	var roots []string
-	if st := l.opts.Store; st != nil {
-		known, err := st.Roots()
-		if err != nil {
-			l.opts.Logger.Warn("reading known oberth.yaml roots", "error", err)
+	var (
+		valid   int
+		invalid []groups.InvalidConfig
+	)
+	withIndex(l, func(index *groups.Index) {
+		var roots []string
+		if st := l.opts.Store; st != nil {
+			known, err := st.Roots()
+			if err != nil {
+				l.opts.Logger.Warn("reading known oberth.yaml roots", "error", err)
+			}
+			roots = known
 		}
-		roots = known
-	}
-	return l.index().Reload(roots)
+		valid, invalid = index.Reload(roots)
+	})
+	return valid, invalid
 }

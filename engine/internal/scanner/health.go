@@ -41,10 +41,9 @@ func ProbeConfigured(rows []state.Port, gg []state.Group, probe Probe, budget ti
 //
 // Unlike the opt-in `include: ["health"]` probe, this one runs on every tick
 // and for every subscriber: a health check in a config is a statement about
-// what the service *is*, not a statistic a client may or may not want, so the
-// daemon polls it as part of state. HTTP and TCP share the port
-// probe; a command check runs in the service's cwd. All kinds use
-// HealthTimeout, ten in flight, and one round budget.
+// what the service is, not a statistic a client may or may not want. HTTP and
+// TCP share the port probe; a command check runs in the service's cwd. All
+// kinds use HealthTimeout, ten in flight, and one round budget.
 func probeConfigured(rows []state.Port, gg []state.Group, probe Probe, budget time.Duration) {
 	var contextual ProbeContext
 	if probe != nil {
@@ -75,112 +74,147 @@ func ProbeConfiguredContext(ctx context.Context, rows []state.Port, gg []state.G
 		return nil
 	}
 
-	// The whole round is bounded, not just one probe. This runs inside the
-	// scan, which every write handler's republish and every kill's rescan is
-	// queued behind (), so a project that declares health checks on
-	// a dozen services — half of them accepting and never answering — must not
-	// be able to add waves of HealthTimeout to somebody's "Save" button.
+	round, err := runHealthRound(ctx, targets, probe, budget)
+	if err != nil {
+		return err
+	}
+	applyHealthRound(rows, gg, targets, round)
+	return nil
+}
+
+// healthRound is one round's staged output. Results are written by their own
+// probe goroutine and read only after wg.Wait, so no lock is needed.
+type healthRound struct {
+	results []state.Health
+	probed  []bool
+}
+
+// runHealthRound admits probes up to maxHealthProbes and the round's deadline,
+// then joins every one it admitted.
+//
+// The budget is why this exists: the round runs inside the scan, which every
+// write handler's republish and every kill's rescan queue behind, so a project
+// that declares health checks on a dozen services — half of them accepting and
+// never answering — must not be able to add waves of HealthTimeout to
+// somebody's "Save" button.
+func runHealthRound(ctx context.Context, targets []healthTarget, probe ProbeContext, budget time.Duration) (*healthRound, error) {
 	var deadline time.Time
 	if budget > 0 {
 		deadline = time.Now().Add(budget)
 	}
 
-	results := make([]state.Health, len(targets))
-	probed := make([]bool, len(targets))
+	round := &healthRound{
+		results: make([]state.Health, len(targets)),
+		probed:  make([]bool, len(targets)),
+	}
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, maxHealthProbes)
+	slots := make(chan struct{}, maxHealthProbes)
+
 admit:
 	for i := range targets {
 		if ctx.Err() != nil {
 			break
 		}
 		select {
-		case sem <- struct{}{}:
+		case slots <- struct{}{}:
 		case <-ctx.Done():
 			break admit
 		}
 		if _, ok := ports.ProbeBudget(HealthTimeout, deadline); !ok || ctx.Err() != nil {
-			<-sem
+			<-slots
 			break
 		}
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			defer func() { <-sem }()
+			defer func() { <-slots }()
 			timeout, ok := ports.ProbeBudget(HealthTimeout, deadline)
 			if !ok {
 				return
 			}
-			t := targets[i]
 			if ctx.Err() != nil {
 				return
 			}
-			var r ports.HealthResult
-			switch t.kind {
-			case groups.HealthTCP:
-				r = ports.ProbeTCPContext(ctx, t.host, t.port, timeout)
-			case groups.HealthCommand:
-				r = ports.ProbeCommandContext(ctx, t.argv, t.dir, t.env, timeout)
-			default:
-				r = probe(ctx, t.host, t.port, t.path, timeout)
-			}
-			if ctx.Err() != nil {
+			verdict, ok := probeTarget(ctx, probe, targets[i], timeout)
+			if !ok {
 				return
 			}
-			status, reason := state.NormalizeHealth(r.Status)
-			observedAt := r.ObservedAt
-			if observedAt.IsZero() {
-				observedAt = time.Now().UTC()
-			}
-			results[i] = state.Health{
-				Status:     status,
-				Code:       r.StatusCode,
-				LatencyMs:  r.Latency.Milliseconds(),
-				Reason:     reason,
-				ObservedAt: observedAt.Format(time.RFC3339Nano),
-				Configured: true,
-			}
-			probed[i] = true
+			round.results[i] = verdict
+			round.probed[i] = true
 		}(i)
 	}
 	wg.Wait()
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
+	return round, nil
+}
 
-	// Port-backed results go onto the rows first; the join below copies them
-	// onto the service rows that own those listeners.
+// probeTarget runs one target through the adapter its kind names. It reports
+// false when the probe was interrupted: a cancelled probe is not a verdict, so
+// its row keeps whatever it had rather than publishing an observation that
+// never happened.
+func probeTarget(ctx context.Context, probe ProbeContext, t healthTarget, timeout time.Duration) (state.Health, bool) {
+	var result ports.HealthResult
+	switch t.kind {
+	case groups.HealthTCP:
+		result = ports.ProbeTCPContext(ctx, t.host, t.port, timeout)
+	case groups.HealthCommand:
+		result = ports.ProbeCommandContext(ctx, t.argv, t.dir, t.env, timeout)
+	default:
+		result = probe(ctx, t.host, t.port, t.path, timeout)
+	}
+	if ctx.Err() != nil {
+		return state.Health{}, false
+	}
+	status, reason := state.NormalizeHealth(result.Status)
+	observedAt := result.ObservedAt
+	if observedAt.IsZero() {
+		observedAt = time.Now().UTC()
+	}
+	return state.Health{
+		Status:     status,
+		Code:       result.StatusCode,
+		LatencyMs:  result.Latency.Milliseconds(),
+		Reason:     reason,
+		ObservedAt: observedAt.Format(time.RFC3339Nano),
+		Configured: true,
+	}, true
+}
+
+// applyHealthRound writes a completed round onto the snapshot it was computed
+// for. Port-backed results go onto the rows first; the join then copies them
+// onto the service rows that own those listeners. Command checks have no
+// listener to join through, so their verdict goes straight onto the service
+// row that declared them.
+func applyHealthRound(rows []state.Port, gg []state.Group, targets []healthTarget, round *healthRound) {
 	for i, t := range targets {
-		if !probed[i] || t.kind == groups.HealthCommand {
+		if !round.probed[i] || t.kind == groups.HealthCommand {
 			continue
 		}
-		h := results[i]
 		for _, idx := range t.rows {
-			row := h
-			rows[idx].Health = &row
+			verdict := round.results[i]
+			rows[idx].Health = &verdict
 		}
 	}
 	syncConfiguredHealth(rows, gg)
-	// Command checks have no listener to join through: write their verdict
-	// straight onto the service row that declared them.
 	for i, t := range targets {
-		if !probed[i] || t.kind != groups.HealthCommand {
+		if !round.probed[i] || t.kind != groups.HealthCommand {
 			continue
 		}
 		if t.group < 0 || t.service < 0 || t.group >= len(gg) || t.service >= len(gg[t.group].Services) {
 			continue
 		}
-		h := results[i]
-		gg[t.group].Services[t.service].HealthStatus = &h
+		verdict := round.results[i]
+		gg[t.group].Services[t.service].HealthStatus = &verdict
 	}
-	return nil
 }
 
 // syncConfiguredHealth copies the configured health verdict from the port
 // rows onto the service rows that declare the same listening port. The group
 // resolver runs before probes, so doing this join only in groups.services
-// would always publish the previous (usually nil) verdict. Keeping the join
-// at commit time also covers a carried result when the health budget skips a
+// would always publish the previous (usually nil) verdict. Keeping the join at
+// commit time also covers a carried result when the health budget skips a
 // round.
 //
 // A command check has no port join: its verdict is set directly by
@@ -243,7 +277,7 @@ func healthTargets(rows []state.Port, gg []state.Group) []healthTarget {
 		kind groups.HealthKind
 		path string
 	}
-	checks := map[int]portCheck{}
+	checks := make(map[int]portCheck)
 	var out []healthTarget
 
 	for gi := range gg {
@@ -293,7 +327,7 @@ func healthTargets(rows []state.Port, gg []state.Group) []healthTarget {
 		}
 	}
 
-	byPort := map[int]*healthTarget{}
+	byPort := make(map[int]*healthTarget)
 	var order []int
 	for i := range rows {
 		check, want := checks[rows[i].Port]
