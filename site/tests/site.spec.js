@@ -90,7 +90,7 @@ test('measured proof is present in both locales', async ({page}) => {
   await expect(page.locator('.proof-table')).toContainText('40/40');
   await expect(page.locator('.proof-table')).toContainText('29/40');
   await page.locator('.language').click();
-  await expect(page.locator('#proof-title')).toContainText('Done is the metric.');
+  await expect(page.locator('#proof-title')).toContainText('What the measured runs show');
   await expect(page.locator('.proof-table')).toContainText('40/40');
 });
 

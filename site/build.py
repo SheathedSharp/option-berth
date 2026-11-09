@@ -701,7 +701,7 @@ def _llms_txt(book: dict) -> str:
         "",
         "> option-berth (oberth) is the runtime facts layer for Git worktrees: what a checkout should run, whether it really is running, and why not.",
         "",
-        "oberth keeps one chain — worktree → manifest → service → run → runtime facts — so a person and a coding agent read the same answer. The CLI is the only interface; every command has a `--json` shape, and JSON stdout holds exactly one value.",
+        "oberth keeps one chain, worktree → manifest → service → run → runtime facts, so a person and a coding agent read the same answer. The CLI is the only interface. Every command has a `--json` shape, and JSON stdout holds exactly one value.",
         "",
         "This guide is the long-form explanation. The authoritative contract for the CLI, JSON fields and the manifest is in the repository's docs/ directory (see Contract below).",
         "",
@@ -760,7 +760,9 @@ def _llms_full(book: dict) -> str:
         extractor.feed(raw)
         extractor.close()
         parts += ["---", "", f"URL: {SITE}{_guide_url(default, chapter['slug'])}", ""]
-        parts += [f"# {side['title']}", "", side["lede"], ""]
+        # The lede is the page's meta description; the chapter's own intro opens
+        # the text, so printing both here only repeats the same sentences.
+        parts += [f"# {side['title']}", ""]
         parts += [extractor.text(), ""]
     return "\n".join(parts).strip() + "\n"
 
