@@ -26,6 +26,45 @@ func (c *cancelOnCall) Err() error {
 	return nil
 }
 
+// TestGateReturnsTheTokenWhenWithdrawnAfterAcquisition is the guard's other
+// half: the token is taken while the caller still owns the call, and the
+// withdrawal lands before the caller can use it. The token belongs back on the
+// gate; a leak here blocks every later scan.
+func TestGateReturnsTheTokenWhenWithdrawnAfterAcquisition(t *testing.T) {
+	for _, bounded := range []bool{false, true} {
+		gate := make(chan struct{}, 1)
+		// The entry check is the first Err call; the check with the token held
+		// is the second.
+		ctx := &cancelOnCall{Context: context.Background(), at: 2}
+		var err error
+		if bounded {
+			err = lockForContext(ctx, gate, time.Second)
+		} else {
+			err = lockContext(ctx, gate)
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("bounded=%v err=%v, want the caller's cancellation", bounded, err)
+		}
+		if len(gate) != 0 {
+			t.Fatalf("bounded=%v token stayed taken after the caller was withdrawn", bounded)
+		}
+	}
+}
+
+// TestGateTimeoutYieldsToCancellation: when the budget runs out at the same
+// moment the caller leaves, the answer is the cancellation, not a spent
+// budget. The caller is gone; it did not spend anything.
+func TestGateTimeoutYieldsToCancellation(t *testing.T) {
+	gate := make(chan struct{}, 1)
+	lock(gate)
+	defer unlock(gate)
+	// Entry check first; the check after the timer fires is the second.
+	ctx := &cancelOnCall{Context: context.Background(), at: 2}
+	if err := lockForContext(ctx, gate, 5*time.Millisecond); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want the caller's cancellation", err)
+	}
+}
+
 func TestAdmitReleasesTheTokenWhenWithdrawnAfterAcquisition(t *testing.T) {
 	l := New(Options{})
 	// lockContext checks at entry and again with the token held; the third
