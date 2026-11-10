@@ -291,6 +291,7 @@ func TestApplyDoctorFixesRepairsNothingWhenEveryCheckIsFine(t *testing.T) {
 func TestApplyDoctorFixesAsksBeforeTouchingAnything(t *testing.T) {
 	t.Setenv("BERTH_HOME", t.TempDir())
 	withDoctorFlags(t, func() { doctorYesFlag = false })
+	answerNextPrompt(t)
 
 	out, applied, err := applyDoctorFixesReport(t, sampleReport())
 	if err != nil {

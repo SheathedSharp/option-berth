@@ -453,14 +453,15 @@ func TestKillConfirmationShowsThePlanAndStopsNothingWithoutAConsent(t *testing.T
 		killAllFlag, killYesFlag = true, false
 	})
 	noDaemonReachable(t)
+	answerNextPrompt(t)
 
 	port := startListener(t)
-	var err error
+	var killErr error
 	out := captureStdout(t, func() {
-		err = killDirect(context.Background(), nil, "")
+		killErr = killDirect(context.Background(), nil, "")
 	})
-	if err != nil {
-		t.Fatalf("kill under confirmation: %v", err)
+	if killErr != nil {
+		t.Fatalf("kill under confirmation: %v", killErr)
 	}
 	if !strings.Contains(out, "Will stop ") || !strings.Contains(out, "Proceed? [y/N]") {
 		t.Fatalf("stdout = %q, want the plan it asks about", out)
