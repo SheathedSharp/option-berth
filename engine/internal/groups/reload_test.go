@@ -3,8 +3,8 @@ package groups
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
-	"time"
 )
 
 func writeConfig(t *testing.T, dir, body string) string {
@@ -16,98 +16,105 @@ func writeConfig(t *testing.T, dir, body string) string {
 	return path
 }
 
-// TestReloadPicksUpANewFile is the case the daemon's long-lived index cannot
-// handle on its own: a project configured after the daemon
-// started becomes a group on the next reload.
-func TestReloadPicksUpANewFile(t *testing.T) {
-	dir := t.TempDir()
-	x := NewIndex()
+// manifestIndexState is the caller-visible result of a reload, not an
+// implementation snapshot: usable groups, errors, and the canonical file keys.
+type manifestIndexState struct {
+	group    string
+	services []string
+	invalid  bool
+}
 
-	if loaded, bad := x.Reload([]string{dir}); loaded != 0 || len(bad) != 0 {
-		t.Fatalf("empty dir loaded %d configs, %v", loaded, bad)
+func assertManifestIndex(t *testing.T, x *Index, path string, roots []string, want manifestIndexState) {
+	t.Helper()
+	loaded, bad := x.Reload(roots)
+	count := 0
+	if want.group != "" {
+		count = 1
 	}
-
-	writeConfig(t, dir, "name: later\nservices:\n  - name: api\n    port: 8000\n")
-
-	loaded, bad := x.Reload([]string{dir})
-	if loaded != 1 || len(bad) != 0 {
-		t.Fatalf("reload loaded %d configs, errors %v", loaded, bad)
+	if loaded != count || len(x.Configs()) != count {
+		t.Fatalf("loaded/configs = %d/%d, want %d", loaded, len(x.Configs()), count)
 	}
-	cfg, ok := x.Named("later")
-	if !ok || cfg.Services[0].Name != "api" {
-		t.Fatalf("the new config is not in the index: %+v", cfg)
+	errors := 0
+	if want.invalid {
+		errors = 1
+	}
+	if len(bad) != errors {
+		t.Fatalf("invalid files = %v, want %d", bad, errors)
+	}
+	if want.invalid && bad[0].Path != Canonical(path) {
+		t.Errorf("error path = %s, want %s", bad[0].Path, Canonical(path))
+	}
+	if want.group == "" {
+		return
+	}
+	cfg, found := x.Named(want.group)
+	if !found {
+		t.Fatalf("Named(%q) missed reloaded manifest", want.group)
+	}
+	if got := names(cfg); !reflect.DeepEqual(got, want.services) {
+		t.Errorf("services = %v, want %v", got, want.services)
 	}
 }
 
-// TestReloadPicksUpAnEdit and forgets a file that was deleted.
+// The lifecycle keeps root discovery separate from subsequent reloads: once
+// observed, edits, invalid files and deletion must be reconciled with nil roots.
+func TestReloadPicksUpANewFile(t *testing.T) {
+	dir := t.TempDir()
+	x := NewIndex()
+	assertManifestIndex(t, x, filepath.Join(dir, ConfigName), []string{dir}, manifestIndexState{})
+	path := writeConfig(t, dir, "name: later\nservices:\n  - name: api\n    port: 8000\n")
+	assertManifestIndex(t, x, path, []string{dir}, manifestIndexState{group: "later", services: []string{"api"}})
+}
+
 func TestReloadPicksUpAnEditAndADelete(t *testing.T) {
 	dir := t.TempDir()
 	path := writeConfig(t, dir, "name: demo\nservices:\n  - name: api\n")
 	x := NewIndex()
 	x.Observe(dir)
-
-	if _, ok := x.Named("demo"); !ok {
+	if _, found := x.Named("demo"); !found {
 		t.Fatal("Observe did not index the config")
 	}
 	if x.Stale() {
-		t.Fatal("a freshly read index reports itself stale")
+		t.Fatal("freshly observed manifest is stale")
 	}
-
-	writeConfig(t, dir, "name: renamed\nservices:\n  - name: api\n  - name: web\n")
-	if !x.Stale() {
-		t.Fatal("an edited file did not register as stale")
-	}
-	if loaded, bad := x.Reload(nil); loaded != 1 || len(bad) != 0 {
-		t.Fatalf("reload after an edit: %d, %v", loaded, bad)
-	}
-	cfg, ok := x.Named("renamed")
-	if !ok || len(cfg.Services) != 2 {
-		t.Fatalf("the edit was not picked up: %+v", cfg)
-	}
-	if _, gone := x.Named("demo"); gone {
-		t.Error("the old group name survived the reload")
-	}
-
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
-	if !x.Stale() {
-		t.Fatal("a deleted file did not register as stale")
-	}
-	if loaded, _ := x.Reload(nil); loaded != 0 {
-		t.Fatalf("a deleted config is still loaded: %d", loaded)
-	}
-	if len(x.Configs()) != 0 {
-		t.Errorf("Configs still returns %d entries", len(x.Configs()))
+	for _, edit := range []struct {
+		title, body string
+		remove      bool
+		state       manifestIndexState
+	}{
+		{title: "edit", body: "name: renamed\nservices:\n  - name: api\n  - name: web\n", state: manifestIndexState{group: "renamed", services: []string{"api", "web"}}},
+		{title: "delete", remove: true},
+	} {
+		t.Run(edit.title, func(t *testing.T) {
+			if edit.remove {
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				writeConfig(t, dir, edit.body)
+			}
+			if !x.Stale() {
+				t.Fatal("changed manifest did not invalidate the index")
+			}
+			assertManifestIndex(t, x, path, nil, edit.state)
+			if _, found := x.Named("demo"); found {
+				t.Error("the pre-edit name is still published")
+			}
+		})
 	}
 }
 
-// TestReloadReportsInvalidFiles: a broken file is an error the caller reports,
-// never a fatal one, and fixing it is picked up by the next reload.
 func TestReloadReportsInvalidFiles(t *testing.T) {
 	dir := t.TempDir()
-	writeConfig(t, dir, "name: bad name\nservices:\n  - name: api\n")
-
+	path := writeConfig(t, dir, "name: bad name\nservices:\n  - name: api\n")
 	x := NewIndex()
-	loaded, bad := x.Reload([]string{dir})
-	if loaded != 0 || len(bad) != 1 {
-		t.Fatalf("reload = %d, %v", loaded, bad)
-	}
-	// Paths are reported canonically: the index normalises once on the way in.
-	if bad[0].Path != Canonical(filepath.Join(dir, ConfigName)) {
-		t.Errorf("error names %s", bad[0].Path)
-	}
-
-	// Two stats can land in the same filesystem timestamp; the size changes
-	// too, which is why Stale looks at both.
-	time.Sleep(10 * time.Millisecond)
+	assertManifestIndex(t, x, path, []string{dir}, manifestIndexState{invalid: true})
+	// The byte change, not a sleep or a timestamp tick, is the freshness proof.
 	writeConfig(t, dir, "name: fixed\nservices:\n  - name: api\n")
 	if !x.Stale() {
-		t.Fatal("fixing an invalid file did not register as stale")
+		t.Fatal("repairing an invalid file did not invalidate its observation")
 	}
-	if loaded, bad := x.Reload(nil); loaded != 1 || len(bad) != 0 {
-		t.Fatalf("reload after the fix: %d, %v", loaded, bad)
-	}
+	assertManifestIndex(t, x, path, nil, manifestIndexState{group: "fixed", services: []string{"api"}})
 }
 
 // TestKnownAndByPath are what the daemon's config handlers resolve through.
