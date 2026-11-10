@@ -15,6 +15,7 @@ import (
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/killer"
 	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
 	"github.com/spf13/cobra"
 )
@@ -222,6 +223,51 @@ func TestKillRoutesThroughTheDaemon(t *testing.T) {
 	for _, r := range rows {
 		if r.Port == port {
 			t.Fatalf("port %d is still in the daemon's table right after the kill", port)
+		}
+	}
+}
+
+// TestKillSelectorsCarryExactlyOneSubject pins the wire shape: a selector names
+// either a run, a pid or a port+bind, never a mixture. The daemon resolves that
+// one field; a selector carrying two would make which one wins an accident.
+func TestKillSelectorsCarryExactlyOneSubject(t *testing.T) {
+	got := killSelectors([]killer.Target{
+		{RunID: "run-1", PID: 42, Port: 3000},
+		{PID: 43, Port: 3001},
+		{Port: 3002, BindAddress: "127.0.0.1"},
+		{Port: 3003},
+	})
+	if len(got) != 4 {
+		t.Fatalf("selectors = %+v, want one per target", got)
+	}
+	if got[0].RunID == nil || *got[0].RunID != "run-1" || got[0].PID != nil || got[0].Port != nil {
+		t.Errorf("a run target must become a run selector only: %+v", got[0])
+	}
+	if got[1].PID == nil || *got[1].PID != 43 || got[1].Port != nil || got[1].RunID != nil {
+		t.Errorf("a pid target must become a pid selector only: %+v", got[1])
+	}
+	if got[2].Port == nil || *got[2].Port != 3002 || got[2].BindAddress == nil || *got[2].BindAddress != "127.0.0.1" {
+		t.Errorf("a port target keeps its bind address: %+v", got[2])
+	}
+	if got[3].Port == nil || *got[3].Port != 3003 || got[3].BindAddress != nil {
+		t.Errorf("no bind address means no bind field: %+v", got[3])
+	}
+}
+
+// TestGraceMsKeepsTheDaemonDefault: zero is the wire spelling for "use the
+// daemon's default grace", and a negative duration must not become a huge
+// unsigned millisecond count.
+func TestGraceMsKeepsTheDaemonDefault(t *testing.T) {
+	for _, tc := range []struct {
+		grace time.Duration
+		want  int
+	}{
+		{0, 0},
+		{-time.Second, 0},
+		{1500 * time.Millisecond, 1500},
+	} {
+		if got := graceMs(killer.Options{Grace: tc.grace}); got != tc.want {
+			t.Errorf("graceMs(%s) = %d, want %d", tc.grace, got, tc.want)
 		}
 	}
 }
