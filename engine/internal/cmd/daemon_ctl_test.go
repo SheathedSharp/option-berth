@@ -18,7 +18,6 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
-	"github.com/spf13/cobra"
 )
 
 func syntheticDaemonStatus(observation *rpc.ObservationStatus) daemonStatus {
@@ -207,14 +206,6 @@ func startDaemonWhereTheCommandLooks(t *testing.T) string {
 	return socket
 }
 
-// daemonTestCommand is the command a `daemon` subcommand runs under: it carries
-// a context, which is the only thing those RunE bodies ask of it.
-func daemonTestCommand() *cobra.Command {
-	cmd := &cobra.Command{}
-	cmd.SetContext(context.Background())
-	return cmd
-}
-
 // setDaemonJSONFlag installs --json for one test.
 func setDaemonJSONFlag(t *testing.T, asJSON bool) {
 	t.Helper()
@@ -231,7 +222,7 @@ func TestDaemonStatusDescribesTheRunningDaemon(t *testing.T) {
 	setDaemonJSONFlag(t, false)
 
 	var err error
-	out := captureStdout(t, func() { err = daemonStatusRun(daemonTestCommand(), nil) })
+	out := captureStdout(t, func() { err = daemonStatusRun(testCommand(), nil) })
 	if err != nil {
 		t.Fatalf("daemon status: %v", err)
 	}
@@ -256,7 +247,7 @@ func TestDaemonStatusJSONIsOneDocumentAboutTheSameDaemon(t *testing.T) {
 	setDaemonJSONFlag(t, true)
 
 	var err error
-	out := captureStdout(t, func() { err = daemonStatusRun(daemonTestCommand(), nil) })
+	out := captureStdout(t, func() { err = daemonStatusRun(testCommand(), nil) })
 	if err != nil {
 		t.Fatalf("daemon status --json: %v", err)
 	}
@@ -291,7 +282,7 @@ func TestDaemonStatusOfflineIsTheNotRunningAnswer(t *testing.T) {
 	setDaemonJSONFlag(t, false)
 
 	var err error
-	out := captureStdout(t, func() { err = daemonStatusRun(daemonTestCommand(), nil) })
+	out := captureStdout(t, func() { err = daemonStatusRun(testCommand(), nil) })
 	if out != "" {
 		t.Fatalf("stdout = %q, want nothing in text mode", out)
 	}
@@ -312,7 +303,7 @@ func TestDaemonStatusOfflineJSONStillAnswers(t *testing.T) {
 	setDaemonJSONFlag(t, true)
 
 	var err error
-	out := captureStdout(t, func() { err = daemonStatusRun(daemonTestCommand(), nil) })
+	out := captureStdout(t, func() { err = daemonStatusRun(testCommand(), nil) })
 	if err != errSilent {
 		t.Fatalf("err = %v, want the quiet exit", err)
 	}
@@ -335,7 +326,7 @@ func TestDaemonStopStopsTheDaemonItFound(t *testing.T) {
 	setDaemonJSONFlag(t, false)
 
 	var err error
-	out := captureStdout(t, func() { err = daemonStopRun(daemonTestCommand(), nil) })
+	out := captureStdout(t, func() { err = daemonStopRun(testCommand(), nil) })
 	if err != nil {
 		t.Fatalf("daemon stop: %v", err)
 	}
@@ -353,7 +344,7 @@ func TestDaemonStopJSONReportsTheSocket(t *testing.T) {
 	setDaemonJSONFlag(t, true)
 
 	var err error
-	out := captureStdout(t, func() { err = daemonStopRun(daemonTestCommand(), nil) })
+	out := captureStdout(t, func() { err = daemonStopRun(testCommand(), nil) })
 	if err != nil {
 		t.Fatalf("daemon stop --json: %v", err)
 	}
