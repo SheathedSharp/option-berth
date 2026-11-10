@@ -163,11 +163,15 @@ func mustJSON(t *testing.T, value any) string {
 	return string(raw)
 }
 
-// isolateDaemonPaths gives this test its own state directory and socket, so a
-// daemon started here is never the one another test is looking for.
+// isolateDaemonPaths gives this test its own state directory, database and
+// socket, so a daemon started here is never the one another test is looking
+// for and its ledger never names another test's checkout. The database needs
+// its own variable: $BERTH_DB outranks $BERTH_HOME for the store.
 func isolateDaemonPaths(t *testing.T) string {
 	t.Helper()
-	t.Setenv("BERTH_HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("BERTH_HOME", home)
+	t.Setenv("BERTH_DB", filepath.Join(home, "option-berth.db"))
 	socket := filepath.Join(t.TempDir(), "daemon.sock")
 	t.Setenv("BERTH_SOCKET", socket)
 	return socket

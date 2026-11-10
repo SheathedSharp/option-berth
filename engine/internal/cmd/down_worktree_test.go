@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
@@ -92,5 +94,126 @@ func TestDownParamsChoosesOneTarget(t *testing.T) {
 			}
 			tc.check(t, params)
 		})
+	}
+}
+
+// withDownFlags installs one flag combination for the duration of a test.
+func withDownFlags(t *testing.T, set func()) {
+	t.Helper()
+	oldForce, oldJSON := downForceFlag, downJSONFlag
+	oldWorktree, oldIdentity := downWorktreeFlag, downIdentityFlag
+	t.Cleanup(func() {
+		downForceFlag, downJSONFlag = oldForce, oldJSON
+		downWorktreeFlag, downIdentityFlag = oldWorktree, oldIdentity
+	})
+	downForceFlag, downJSONFlag, downWorktreeFlag, downIdentityFlag = false, false, "", ""
+	set()
+}
+
+// TestDownParamsFallsBackToTheNearestManifest: with no selector at all the
+// project is the manifest at or above the working directory, and that file is
+// what the daemon is asked to stop.
+func TestDownParamsFallsBackToTheNearestManifest(t *testing.T) {
+	dir := demoProject(t)
+	withDownFlags(t, func() {})
+
+	params, cfg, err := downParams(nil)
+	if err != nil {
+		t.Fatalf("downParams: %v", err)
+	}
+	if cfg == nil || cfg.Path != filepath.Join(dir, "oberth.yaml") {
+		t.Fatalf("config = %v, want the manifest at the working directory", cfg)
+	}
+	if params.ConfigPath == nil || *params.ConfigPath != cfg.Path {
+		t.Fatalf("params = %+v, want the manifest path as the selector", params)
+	}
+	if !params.Release {
+		t.Error("down must release the claimed ports")
+	}
+}
+
+// TestDownParamsWithoutAManifestFails: outside any project there is nothing to
+// name, and the error says so instead of stopping an empty group.
+func TestDownParamsWithoutAManifestFails(t *testing.T) {
+	t.Chdir(t.TempDir())
+	withDownFlags(t, func() {})
+
+	params, cfg, err := downParams(nil)
+	if err == nil {
+		t.Fatalf("downParams = %+v, %v; want the missing-manifest error", params, cfg)
+	}
+	if cfg != nil {
+		t.Errorf("config = %v, want none", cfg)
+	}
+}
+
+// TestDownStopsTheNearestProjectThroughTheDaemon drives the whole command
+// against a real daemon: the manifest is chosen here, the stop happens there,
+// and the answer is the documented "nothing was running" sentence.
+func TestDownStopsTheNearestProjectThroughTheDaemon(t *testing.T) {
+	demoProject(t)
+	resetRouting(t)
+	startDaemonWhereTheCommandLooks(t)
+	withDownFlags(t, func() {})
+
+	var err error
+	out := captureStdout(t, func() { err = downRun(testCommand(), nil) })
+	if err != nil {
+		t.Fatalf("down: %v", err)
+	}
+	if !strings.Contains(out, "Nothing was running.") {
+		t.Fatalf("stdout = %q, want the empty-stop sentence", out)
+	}
+}
+
+// TestDownJSONAnswersWithTheEnvelope: --json prints the daemon's own answer, so
+// a caller reads the same results and released count the text path renders.
+func TestDownJSONAnswersWithTheEnvelope(t *testing.T) {
+	demoProject(t)
+	resetRouting(t)
+	startDaemonWhereTheCommandLooks(t)
+	withDownFlags(t, func() { downJSONFlag = true })
+
+	var err error
+	out := captureStdout(t, func() { err = downRun(testCommand(), nil) })
+	if err != nil {
+		t.Fatalf("down --json: %v", err)
+	}
+	var env rpc.KillEnvelope
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("stdout is not one JSON document: %v\n%s", err, out)
+	}
+	if len(env.Results) != 0 {
+		t.Fatalf("results = %+v, want none for a project with nothing running", env.Results)
+	}
+}
+
+// TestDownReportsAnUnknownProject: a name the daemon cannot resolve is its
+// error, carried through with the wire's code.
+func TestDownReportsAnUnknownProject(t *testing.T) {
+	resetRouting(t)
+	startDaemonWhereTheCommandLooks(t)
+	withDownFlags(t, func() {})
+
+	err := downRun(testCommand(), []string{"no-such-project"})
+	if err == nil {
+		t.Fatal("down of an unknown project returned nil")
+	}
+	if got := exitCodeFor(err); got != exitFail {
+		t.Fatalf("exit code = %d, want %d", got, exitFail)
+	}
+}
+
+// TestDownWithoutADaemonFails: stopping is a daemon operation; with none
+// reachable the command reports the connection failure instead of pretending
+// the project is down.
+func TestDownWithoutADaemonFails(t *testing.T) {
+	demoProject(t)
+	resetRouting(t)
+	noDaemonReachable(t)
+	withDownFlags(t, func() {})
+
+	if err := downRun(testCommand(), nil); err == nil {
+		t.Fatal("down without a daemon returned nil")
 	}
 }
