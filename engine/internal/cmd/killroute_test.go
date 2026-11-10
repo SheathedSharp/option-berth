@@ -75,8 +75,9 @@ func startListener(t *testing.T) int {
 }
 
 // startScanningDaemon runs a daemon over a real socket with the production
-// scanner, so it sees the same processes the direct path scans.
-func startScanningDaemon(t *testing.T) {
+// scanner, so it sees the same processes the direct path scans. The returned
+// stop function shuts it down early, which is how a test ends a follow.
+func startScanningDaemon(t *testing.T) func() {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the unix-socket harness does not apply to named pipes")
@@ -95,10 +96,11 @@ func startScanningDaemon(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = srv.Serve(ctx) }()
-	t.Cleanup(func() {
+	stop := func() {
 		cancel()
 		<-srv.Done()
-	})
+	}
+	t.Cleanup(stop)
 	if err := client.WaitForSocket(ctx, socket, 5*time.Second); err != nil {
 		t.Fatalf("daemon did not come up: %v", err)
 	}
@@ -108,6 +110,7 @@ func startScanningDaemon(t *testing.T) {
 		return client.Dial(ctx, client.ClientInfo{Name: "cli", Version: "test", Socket: socket})
 	}
 	t.Cleanup(func() { dialDaemon = prev })
+	return stop
 }
 
 // captureStdout collects what fn prints, which is where every kill report goes.
