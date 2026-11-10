@@ -83,11 +83,15 @@ func completePort(cmd *cobra.Command, args []string, toComplete string) ([]strin
 	// run ownership so a `oberth start` service completes as its service name.
 	groups.StampRuns(pp)
 
-	var completions []string
-	for _, p := range pp {
-		portStr := strconv.Itoa(p.Port)
-		completions = append(completions, fmt.Sprintf("%s\t%s", portStr, p.DisplayName()))
-	}
+	return portCompletions(pp), cobra.ShellCompDirectiveNoFileComp
+}
 
-	return completions, cobra.ShellCompDirectiveNoFileComp
+// portCompletions is the candidate list: a port and the name a reader knows it
+// by, separated by a tab so the shell shows the name but inserts the number.
+func portCompletions(rows []ports.ListeningPort) []string {
+	completions := make([]string, 0, len(rows))
+	for _, row := range rows {
+		completions = append(completions, fmt.Sprintf("%s\t%s", strconv.Itoa(row.Port), row.DisplayName()))
+	}
+	return completions
 }
