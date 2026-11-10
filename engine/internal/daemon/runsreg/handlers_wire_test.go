@@ -71,8 +71,11 @@ func TestRunFromWireDropsUntrustworthyEvidence(t *testing.T) {
 // invalid_params either way, with a different remedy for the user.
 //
 // The deletion is of this process's own t.TempDir, restored by the cleanup
-// registered before it; on a filesystem that refuses to remove the active
-// directory the case is skipped rather than asserted.
+// registered before it. Losing the directory does not cost every platform the
+// same thing: removing the active cwd does not guarantee that os.Getwd then
+// fails, so the daemon's own lookup is observed first and the assertions only
+// run where "the daemon's cwd is gone" is actually true. A filesystem that
+// refuses to remove the active directory is skipped for the same reason.
 func TestCheckCwdReportsAnUnavailableWorkingDirectory(t *testing.T) {
 	original, err := os.Getwd()
 	if err != nil {
@@ -89,6 +92,15 @@ func TestCheckCwdReportsAnUnavailableWorkingDirectory(t *testing.T) {
 	})
 	if err := os.Remove(dir); err != nil {
 		t.Skipf("filesystem cannot remove the active cwd: %v", err)
+	}
+	// The branch under test is "the daemon cannot name its own cwd", and that
+	// depends on the platform's own lookup rather than on the removal: macOS
+	// still resolves the unlinked directory from its parent pointer, so the
+	// daemon would get a stale but usable path and have no failure to report.
+	// Ask the lookup instead of assuming the outcome, and say which capability
+	// was observed so a skip here cannot hide a real failure.
+	if wd, err := os.Getwd(); err == nil {
+		t.Skipf("os.Getwd still names the removed directory as %q on this platform: the daemon's own cwd cannot be made unavailable, so neither error branch below can be reached here", wd)
 	}
 
 	_, err = CheckCwd("", true)
