@@ -425,27 +425,39 @@ func (s *Store) textColumn(query string, args ...any) ([]string, error) {
 	return values, rows.Err()
 }
 
-// exec runs one write statement with the writer lock held.
-func (s *Store) exec(query string, args ...any) error {
+// writeLocked runs fn with the single-writer lock held. Every write path on
+// a Store handle goes through here so two methods cannot interleave Exec.
+func (s *Store) writeLocked(fn func() error) error {
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
-	_, err := s.db.Exec(query, args...)
-	return err
+	return fn()
 }
 
-// execRows is exec for a write whose row count the caller needs. It holds the
-// same writer lock, so it takes its place in the single-writer order; a driver
-// that cannot report the count returns zero after a write that happened.
+// exec runs one write statement with the writer lock held.
+func (s *Store) exec(query string, args ...any) error {
+	return s.writeLocked(func() error {
+		_, err := s.db.Exec(query, args...)
+		return err
+	})
+}
+
+// execRows is exec for a write whose row count the caller needs. It takes
+// its place in the same single-writer order; a driver that cannot report
+// the count returns zero after a write that happened.
 func (s *Store) execRows(query string, args ...any) (int, error) {
-	s.wmu.Lock()
-	defer s.wmu.Unlock()
-	res, err := s.db.Exec(query, args...)
-	if err != nil {
-		return 0, err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return 0, nil
-	}
-	return int(n), nil
+	var affected int
+	err := s.writeLocked(func() error {
+		res, err := s.db.Exec(query, args...)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			affected = 0
+			return nil
+		}
+		affected = int(n)
+		return nil
+	})
+	return affected, err
 }
