@@ -89,15 +89,7 @@ func upRun(cmd *cobra.Command, args []string) error {
 	}
 	defer c.Close()
 
-	if err := requireConfigSupport(c, cfg); err != nil {
-		return err
-	}
-	// A named project carries no manifest here, so the same capability rules
-	// run against the file the daemon will actually read.
-	if err := requireNamedProjectSupport(cmd.Context(), c, params); err != nil {
-		return err
-	}
-	if err := requireStartDependencySupport(c, params.IncludeDependencies); err != nil {
+	if err := requireStartSupport(cmd.Context(), c, params, cfg); err != nil {
 		return err
 	}
 	// Progress is an enhancement: ask for in-flight chunks only from a daemon
@@ -117,6 +109,23 @@ func upRun(cmd *cobra.Command, args []string) error {
 
 	return consumeStartWithWait(cmd.Context(), c, stream, upJSON, mode.wait, mode.timeout,
 		mode.timeoutSet, params, cfg)
+}
+
+// requireStartSupport refuses a request the running daemon cannot honour, before
+// any of it is sent: the manifest's own features, the file a named project
+// resolves to, and the depends_on closure each need a capability a daemon may
+// predate. Sending the request anyway would turn a daemon too old for the file
+// into an error about the file.
+func requireStartSupport(ctx context.Context, c *client.Client, params rpc.GroupsStartParams, cfg *groups.Config) error {
+	if err := requireConfigSupport(c, cfg); err != nil {
+		return err
+	}
+	// A named project carries no manifest here, so the same capability rules
+	// run against the file the daemon will actually read.
+	if err := requireNamedProjectSupport(ctx, c, params); err != nil {
+		return err
+	}
+	return requireStartDependencySupport(c, params.IncludeDependencies)
 }
 
 // upWaitMode is the readiness wait this invocation asked for. An explicit
