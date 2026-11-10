@@ -14,6 +14,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
+	"github.com/spf13/cobra"
 )
 
 // observableProbe keeps readiness tests focused on their own timing rules; the
@@ -609,5 +610,140 @@ func TestRestartParamsDontIncludeDependencies(t *testing.T) {
 	}
 	if params.IncludeDependencies {
 		t.Fatal("restart params must not ask for the closure")
+	}
+}
+
+// withUpFlags installs one flag combination for the duration of a test.
+func withUpFlags(t *testing.T, set func()) {
+	t.Helper()
+	oldOnly, oldJSON, oldOutside := upOnly, upJSON, upAllowOutsideHome
+	oldWait, oldNoDeps, oldTimeout := upWait, upNoDeps, upWaitTimeout
+	t.Cleanup(func() {
+		upOnly, upJSON, upAllowOutsideHome = oldOnly, oldJSON, oldOutside
+		upWait, upNoDeps, upWaitTimeout = oldWait, oldNoDeps, oldTimeout
+	})
+	upOnly, upJSON, upAllowOutsideHome = nil, false, false
+	upWait, upNoDeps, upWaitTimeout = false, false, 0
+	set()
+}
+
+// upTestCommand is the cobra command `up` runs under: the RunE reads the
+// --wait-timeout flag's Changed bit, so the flag has to exist.
+func upTestCommand() *cobra.Command {
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.Flags().Bool("wait", false, "")
+	cmd.Flags().Duration("wait-timeout", 0, "")
+	return cmd
+}
+
+// TestUpRejectsABadReadinessFlagBeforeDoingAnything: readiness is validated
+// before a project is resolved or an RPC is sent, so a typo cannot start half a
+// project and then fail on the flag.
+func TestUpRejectsABadReadinessFlagBeforeDoingAnything(t *testing.T) {
+	withUpFlags(t, func() { upWait, upWaitTimeout = false, time.Second })
+	cmd := upTestCommand()
+	if err := cmd.Flags().Set("wait-timeout", "1s"); err != nil {
+		t.Fatal(err)
+	}
+
+	err := upRun(cmd, nil)
+	var usage usageError
+	if !errors.As(err, &usage) {
+		t.Fatalf("err = %v, want a usage error", err)
+	}
+	if !strings.Contains(err.Error(), "--wait-timeout requires --wait") {
+		t.Fatalf("err = %v, want the flag combination named", err)
+	}
+}
+
+// TestUpRejectsANonPositiveTimeout: an explicit ceiling has to be a positive
+// budget; zero would mean "give up immediately".
+func TestUpRejectsANonPositiveTimeout(t *testing.T) {
+	withUpFlags(t, func() { upWait, upWaitTimeout = true, 0 })
+	cmd := upTestCommand()
+	if err := cmd.Flags().Set("wait-timeout", "0s"); err != nil {
+		t.Fatal(err)
+	}
+
+	err := upRun(cmd, nil)
+	var usage usageError
+	if !errors.As(err, &usage) {
+		t.Fatalf("err = %v, want a usage error", err)
+	}
+	if !strings.Contains(err.Error(), "must be positive") {
+		t.Fatalf("err = %v, want the positivity rule named", err)
+	}
+}
+
+// TestUpWithoutAManifestFails: outside a project there is nothing to start and
+// the error says what to do, without dialling the daemon.
+func TestUpWithoutAManifestFails(t *testing.T) {
+	t.Chdir(t.TempDir())
+	withUpFlags(t, func() {})
+	noDaemonReachable(t)
+
+	err := upRun(upTestCommand(), nil)
+	if err == nil || !strings.Contains(err.Error(), "oberth.yaml") {
+		t.Fatalf("err = %v, want the missing-manifest error", err)
+	}
+}
+
+// TestUpWithoutADaemonFails: starting services is the daemon's work; with none
+// reachable the command reports the connection failure rather than claiming the
+// project came up.
+func TestUpWithoutADaemonFails(t *testing.T) {
+	demoProject(t)
+	withUpFlags(t, func() {})
+	resetRouting(t)
+	noDaemonReachable(t)
+
+	if err := upRun(upTestCommand(), nil); err == nil {
+		t.Fatal("up without a daemon returned nil")
+	}
+}
+
+// TestUpStartsAProjectService drives the whole command against a real daemon:
+// the manifest is resolved here, groups.start runs there, and the summary
+// reports the service the daemon actually started. The service is a short sleep,
+// so it reclaims itself and leaves nothing behind.
+func TestUpStartsAProjectService(t *testing.T) {
+	dir := t.TempDir()
+	const manifest = "name: demo\nservices:\n  - name: worker\n    cmd: sh -c \"sleep 1\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "oberth.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	// The checkout is a test temp directory, outside the user's home.
+	withUpFlags(t, func() { upAllowOutsideHome = true })
+	resetRouting(t)
+	startDaemonWhereTheCommandLooks(t)
+
+	var err error
+	out := captureStdout(t, func() { err = upRun(upTestCommand(), nil) })
+	if err != nil {
+		t.Fatalf("up: %v", err)
+	}
+	if !strings.Contains(out, "worker") {
+		t.Fatalf("stdout = %q, want the started service named", out)
+	}
+	if !strings.Contains(out, "1 started") {
+		t.Fatalf("stdout = %q, want the summary of what the daemon started", out)
+	}
+}
+
+// TestUpNamedProjectMustBeResolvable: a named project is the daemon's to find,
+// so the failure is the daemon's own and is reported as such.
+func TestUpNamedProjectMustBeResolvable(t *testing.T) {
+	withUpFlags(t, func() {})
+	resetRouting(t)
+	startDaemonWhereTheCommandLooks(t)
+
+	err := upRun(upTestCommand(), []string{"no-such-project"})
+	if err == nil {
+		t.Fatal("up of an unknown project returned nil")
+	}
+	if got := exitCodeFor(err); got != exitFail {
+		t.Fatalf("exit code = %d, want %d", got, exitFail)
 	}
 }
