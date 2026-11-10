@@ -27,8 +27,8 @@ func newCheckouts(t *testing.T, mainName, wtName string) checkouts {
 }
 
 type checkoutWant struct {
-	root, main, worktree string
-	linked               bool
+	root, main, worktree, head string
+	linked                     bool
 }
 
 func requireLocate(t *testing.T, dir string, want checkoutWant) {
@@ -37,9 +37,9 @@ func requireLocate(t *testing.T, dir string, want checkoutWant) {
 	if !ok {
 		t.Fatalf("Locate(%q) found no checkout", dir)
 	}
-	if co.Root != want.root || co.Main != want.main || co.Worktree != want.worktree || co.Linked() != want.linked {
-		t.Errorf("Locate(%q) = %+v linked=%v, want root %q main %q worktree %q linked %v",
-			dir, co, co.Linked(), want.root, want.main, want.worktree, want.linked)
+	if co.Root != want.root || co.Main != want.main || co.Worktree != want.worktree || co.head != want.head || co.Linked() != want.linked {
+		t.Errorf("Locate(%q) = %#v linked=%v, want root %q main %q worktree %q head %q linked %v",
+			dir, co, co.Linked(), want.root, want.main, want.worktree, want.head, want.linked)
 	}
 }
 
@@ -55,8 +55,8 @@ func TestLocate(t *testing.T) {
 	c := newCheckouts(t, "shop", "feat")
 	deep := mkdir(t, c.wt, "web", "src")
 
-	requireLocate(t, mkdir(t, c.main, "api"), checkoutWant{root: c.main, main: c.main})
-	requireLocate(t, deep, checkoutWant{root: c.wt, main: c.main, worktree: "feat", linked: true})
+	requireLocate(t, mkdir(t, c.main, "api"), checkoutWant{root: c.main, main: c.main, head: filepath.Join(c.main, ".git", "HEAD")})
+	requireLocate(t, deep, checkoutWant{root: c.wt, main: c.main, worktree: "feat", head: filepath.Join(c.admin, "HEAD"), linked: true})
 
 	rel := mkdir(t, filepath.Dir(c.wt), "relwt")
 	target, err := filepath.Rel(rel, filepath.Join(c.main, ".git", "worktrees", "relwt"))
@@ -64,11 +64,11 @@ func TestLocate(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(rel, ".git"), "gitdir: "+target+"\n")
-	requireLocate(t, rel, checkoutWant{root: rel, main: c.main, worktree: "relwt", linked: true})
+	requireLocate(t, rel, checkoutWant{root: rel, main: c.main, worktree: "relwt", head: filepath.Join(c.main, ".git", "worktrees", "relwt", "HEAD"), linked: true})
 
 	sub := mkdir(t, c.main, "vendor", "lib")
 	writeFile(t, filepath.Join(sub, ".git"), "gitdir: ../../.git/modules/lib\n")
-	requireLocate(t, sub, checkoutWant{root: sub, main: sub})
+	requireLocate(t, sub, checkoutWant{root: sub, main: sub, head: filepath.Join(c.main, ".git", "modules", "lib", "HEAD")})
 
 	requireNoCheckout(t, tempTree(t))
 	requireNoCheckout(t, "")
@@ -77,7 +77,7 @@ func TestLocate(t *testing.T) {
 func TestLocateAcceptsEverySpellingOfTheWorktree(t *testing.T) {
 	c := newCheckouts(t, "shop", "feat")
 	sep := string(filepath.Separator)
-	want := checkoutWant{root: c.wt, main: c.main, worktree: "feat", linked: true}
+	want := checkoutWant{root: c.wt, main: c.main, worktree: "feat", head: filepath.Join(c.admin, "HEAD"), linked: true}
 	for _, dir := range []string{c.wt, c.wt + sep, filepath.Join(c.wt, "."), filepath.Join(c.wt, "x", "..")} {
 		requireLocate(t, dir, want)
 	}
@@ -279,9 +279,9 @@ func TestRunGroupFollowsTheCheckout(t *testing.T) {
 			if got[i].GroupSource != nil {
 				src = *got[i].GroupSource
 			}
-			if g != want.group || src != want.source || root != want.root {
-				t.Errorf("port %d group=%q source=%s root=%q, want %q %s %q",
-					want.port, g, src, root, want.group, want.source, want.root)
+			if got[i].Port != want.port || got[i].Cwd != want.cwd || g != want.group || src != want.source || root != want.root {
+				t.Errorf("got port %d cwd=%q group=%q source=%s root=%q, want %d %q %q %s %q",
+					got[i].Port, got[i].Cwd, g, src, root, want.port, want.cwd, want.group, want.source, want.root)
 			}
 		}
 	}
@@ -405,6 +405,15 @@ func TestGroupsFieldsForAGroupThatIsNotACheckout(t *testing.T) {
 	if g.RootDir != nil || g.ConfigPath != nil {
 		t.Errorf("root_dir/config_path = %v / %v, want nil", g.RootDir, g.ConfigPath)
 	}
+	if g.Host != "" || g.Resources != nil {
+		t.Errorf("host/resources = %q / %v, want empty / nil", g.Host, g.Resources)
+	}
+	if len(g.Members) != 1 || g.Members[0] != 5433 {
+		t.Errorf("members = %v, want [5433]", g.Members)
+	}
+	if len(g.Services) != 0 || len(g.Machine) != 0 || g.RunningServices != 0 {
+		t.Errorf("services/machine/running = %+v / %+v / %d, want empty / empty / 0", g.Services, g.Machine, g.RunningServices)
+	}
 }
 
 func TestNamedMatchesTheGroupNotTheFile(t *testing.T) {
@@ -414,16 +423,18 @@ func TestNamedMatchesTheGroupNotTheFile(t *testing.T) {
 	x := NewIndex()
 	x.Observe(c.wt)
 
-	if cfg, ok := x.Named("shop"); !ok || cfg.Dir != c.main {
-		t.Errorf("Named(shop) = %+v, %v; want the main checkout's file", cfg, ok)
+	cfg, ok := x.Named("shop")
+	if !ok || cfg == nil || cfg.Name != "shop" || cfg.Dir != c.main || cfg.Path != filepath.Join(c.main, ConfigName) {
+		t.Errorf("Named(shop) = %+v, %v; want name shop in the main checkout's file", cfg, ok)
 	}
-	if cfg, ok := x.Named("shop@feat"); !ok || cfg.Dir != c.wt {
-		t.Errorf("Named(shop@feat) = %+v, %v; want the worktree's copy", cfg, ok)
+	cfg, ok = x.Named("shop@feat")
+	if !ok || cfg == nil || cfg.Name != "shop" || cfg.Dir != c.wt || cfg.Path != filepath.Join(c.wt, ConfigName) {
+		t.Errorf("Named(shop@feat) = %+v, %v; want name shop (the file's name) at the worktree's copy", cfg, ok)
 	}
-	if cfg, ok := x.Named(""); ok {
+	if cfg, ok := x.Named(""); ok || cfg != nil {
 		t.Errorf("Named(\"\") = %+v, %v; want not found", cfg, ok)
 	}
-	if cfg, ok := x.Named("no-such"); ok {
+	if cfg, ok := x.Named("no-such"); ok || cfg != nil {
 		t.Errorf("Named(no-such) = %+v, %v; want not found", cfg, ok)
 	}
 }
