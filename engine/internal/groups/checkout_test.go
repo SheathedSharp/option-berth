@@ -168,6 +168,7 @@ func TestWorktreeNaming(t *testing.T) {
 	}
 	cases := []struct {
 		title, directory, mainConfig, linkedConfig string
+		observeMain                                bool
 		expected                                   []namingExpectation
 	}{
 		{title: "no config anywhere", directory: "app", expected: []namingExpectation{
@@ -179,7 +180,7 @@ func TestWorktreeNaming(t *testing.T) {
 				{"linked", 9999, "shop@feat", state.SourceFile},
 			}},
 		{title: "a copy with the same name as main is still its own group", directory: "shop",
-			mainConfig: manifest("shop", 8000), linkedConfig: manifest("shop", 8000), expected: []namingExpectation{
+			mainConfig: manifest("shop", 8000), linkedConfig: manifest("shop", 8000), observeMain: true, expected: []namingExpectation{
 				{"main", 8000, "shop", ""}, {"linked", 8000, "shop@feat", ""},
 			}},
 	}
@@ -193,12 +194,12 @@ func TestWorktreeNaming(t *testing.T) {
 				}
 			}
 			x := NewIndex()
-			x.Observe(c.wt)
-			// The same-name case used to observe both roots explicitly. Keep that
-			// discovery input, rather than relying on a lucky main-root probe.
-			if scenario.title == "a copy with the same name as main is still its own group" {
+			// Preserve the scenario's discovery order, independently of its
+			// human-readable title: main first only for the same-name copy.
+			if scenario.observeMain {
 				x.Observe(c.main)
 			}
+			x.Observe(c.wt)
 			checkNaming(t, x, directories, scenario.expected)
 		})
 	}
