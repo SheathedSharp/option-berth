@@ -198,6 +198,29 @@ func TestEveryFixableCheckHasAFix(t *testing.T) {
 	}
 }
 
+// TestDoctorFixMatchingIsExact: the comment above the fix table used to claim a
+// dotted id matched by prefix, while the code compared strings. The code was
+// right — a dotted check names one check — so this pins exact matching.
+func TestDoctorFixMatchingIsExact(t *testing.T) {
+	fix := doctorFix{id: "config_parses"}
+	for _, id := range []string{"config_parses", "config_parses.claude_code", "config", "config_parse"} {
+		want := id == "config_parses"
+		if got := fix.matches(id); got != want {
+			t.Errorf("matches(%q) = %v, want %v", id, got, want)
+		}
+	}
+}
+
+// TestSelectDoctorFixesFollowsTheReport: only failed or warned fixable rows
+// are repaired, in report order, and a fixable row without a registered fix
+// contributes nothing rather than a guessed repair.
+func TestSelectDoctorFixesFollowsTheReport(t *testing.T) {
+	todo := selectDoctorFixes(sampleReport())
+	if len(todo) != 1 || todo[0].id != "config_parses" {
+		t.Fatalf("todo = %+v, want only config_parses", todo)
+	}
+}
+
 func contains(haystack []string, needle string) bool {
 	for _, s := range haystack {
 		if s == needle {
