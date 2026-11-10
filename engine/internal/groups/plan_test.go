@@ -2,7 +2,7 @@ package groups
 
 import (
 	"errors"
-	"strings"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -29,44 +29,80 @@ func planNames(steps []Step) []string {
 	return out
 }
 
+func planSvc(cfg *Config, name string) Service {
+	for _, s := range cfg.Services {
+		if s.Name == name {
+			return s
+		}
+	}
+	panic("no service " + name)
+}
+
+func planStep(cfg *Config, name string, waitNames []string, included []string) Step {
+	var waits []Service
+	for _, w := range waitNames {
+		waits = append(waits, planSvc(cfg, w))
+	}
+	return Step{Service: planSvc(cfg, name), Waits: waits, IncludedBy: included}
+}
+
+func requirePlan(t *testing.T, want ...Step) func([]Step, error) {
+	t.Helper()
+	return func(got []Step, err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("Plan: %v", err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("plan = %#v, want %#v (names %v, want %v)", got, want, planNames(got), planNames(want))
+		}
+	}
+}
+
+func requireUnknownService(t *testing.T, err error, name, path string, known []string) {
+	t.Helper()
+	var unknown *UnknownServiceError
+	if !errors.As(err, &unknown) {
+		t.Fatalf("got %T %v, want *UnknownServiceError", err, err)
+	}
+	want := &UnknownServiceError{Path: path, Name: name, Known: known}
+	if !reflect.DeepEqual(unknown, want) {
+		t.Errorf("UnknownServiceError = %#v, want %#v", unknown, want)
+	}
+	if err.Error() != want.Error() {
+		t.Errorf("Error() = %q, want %q", err.Error(), want.Error())
+	}
+}
+
+func requireUnknownAP(t *testing.T, err error) {
+	t.Helper()
+	cfg := planConfig()
+	requireUnknownService(t, err, "ap", cfg.Path, []string{"frontend", "api", "db", "cache"})
+}
+
 // TestPlanOrdersDependenciesFirst: a service never starts before something it
 // declares depends_on.
 func TestPlanOrdersDependenciesFirst(t *testing.T) {
-	steps, err := Plan(planConfig(), nil)
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
-	got := planNames(steps)
-	want := []string{"db", "cache", "api", "frontend"}
-	if !equalStrings(got, want) {
-		t.Fatalf("order = %v, want %v", got, want)
-	}
+	cfg := planConfig()
+	requirePlan(t,
+		planStep(cfg, "db", nil, nil),
+		planStep(cfg, "cache", nil, nil),
+		planStep(cfg, "api", []string{"db", "cache"}, nil),
+		planStep(cfg, "frontend", []string{"api"}, nil),
+	)(Plan(cfg, nil))
 }
 
 // TestPlanWaitsOnEveryDependency: ported and no-port dependencies both need
 // readiness checks; groups.start uses a listener for the former and the run
 // registry for the latter.
 func TestPlanWaitsOnEveryDependency(t *testing.T) {
-	steps, err := Plan(planConfig(), nil)
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
-	for _, s := range steps {
-		switch s.Service.Name {
-		case "api":
-			if len(s.Waits) != 2 || s.Waits[0].Name != "db" || s.Waits[1].Name != "cache" {
-				t.Errorf("api waits = %+v, want db and cache", s.Waits)
-			}
-		case "frontend":
-			if len(s.Waits) != 1 || s.Waits[0].Name != "api" {
-				t.Errorf("frontend waits = %+v, want just api", s.Waits)
-			}
-		default:
-			if len(s.Waits) != 0 {
-				t.Errorf("%s waits = %+v, want none", s.Service.Name, s.Waits)
-			}
-		}
-	}
+	cfg := planConfig()
+	requirePlan(t,
+		planStep(cfg, "db", nil, nil),
+		planStep(cfg, "cache", nil, nil),
+		planStep(cfg, "api", []string{"db", "cache"}, nil),
+		planStep(cfg, "frontend", []string{"api"}, nil),
+	)(Plan(cfg, nil))
 }
 
 // TestPlanWaitsOnAutoPorts: a `port: auto` dependency has a port to wait for,
@@ -76,50 +112,31 @@ func TestPlanWaitsOnAutoPorts(t *testing.T) {
 		{Name: "db", Cmd: "postgres", PortAuto: true},
 		{Name: "api", Cmd: "uv run api", PortAuto: true, DependsOn: []string{"db"}},
 	}}
-	steps, err := Plan(cfg, nil)
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
-	if len(steps) != 2 || len(steps[1].Waits) != 1 || steps[1].Waits[0].Name != "db" {
-		t.Fatalf("steps = %+v, want api waiting on db", steps)
-	}
+	requirePlan(t,
+		planStep(cfg, "db", nil, nil),
+		planStep(cfg, "api", []string{"db"}, nil),
+	)(Plan(cfg, nil))
 }
 
 // TestPlanOnlyFilters keeps the dependency order among what is left and does
 // not drag unnamed services in.
 func TestPlanOnlyFilters(t *testing.T) {
-	steps, err := Plan(planConfig(), []string{"frontend", "db"})
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
-	if got := planNames(steps); !equalStrings(got, []string{"db", "frontend"}) {
-		t.Fatalf("order = %v, want [db frontend]", got)
-	}
+	cfg := planConfig()
 	// frontend still declares its wait: api may already be up, and
 	// `groups.start` decides what to do about it.
-	if len(steps[1].Waits) != 1 || steps[1].Waits[0].Name != "api" {
-		t.Fatalf("frontend waits = %+v", steps[1].Waits)
-	}
-
-	steps, err = Plan(planConfig(), []string{"api"})
-	if err != nil {
-		t.Fatalf("Plan --only api: %v", err)
-	}
-	if len(steps) != 1 || len(steps[0].Waits) != 2 || steps[0].Waits[0].Name != "db" || steps[0].Waits[1].Name != "cache" {
-		t.Fatalf("--only api waits = %+v, want db and cache", steps)
-	}
+	requirePlan(t,
+		planStep(cfg, "db", nil, nil),
+		planStep(cfg, "frontend", []string{"api"}, nil),
+	)(Plan(cfg, []string{"frontend", "db"}))
+	requirePlan(t,
+		planStep(cfg, "api", []string{"db", "cache"}, nil),
+	)(Plan(cfg, []string{"api"}))
 }
 
 // TestPlanUnknownOnly reports a typo rather than starting nothing.
 func TestPlanUnknownOnly(t *testing.T) {
 	_, err := Plan(planConfig(), []string{"ap"})
-	var unknown *UnknownServiceError
-	if !errors.As(err, &unknown) || unknown.Name != "ap" {
-		t.Fatalf("expected an UnknownServiceError for ap, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "api") {
-		t.Errorf("the error should list the real service names: %v", err)
-	}
+	requireUnknownAP(t, err)
 }
 
 // TestPlanKeepsFileOrderAtTheSameDepth: two independent services start in the
@@ -128,13 +145,11 @@ func TestPlanKeepsFileOrderAtTheSameDepth(t *testing.T) {
 	cfg := &Config{Name: "demo", Services: []Service{
 		{Name: "one"}, {Name: "two"}, {Name: "three"},
 	}}
-	steps, err := Plan(cfg, nil)
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
-	if got := planNames(steps); !equalStrings(got, []string{"one", "two", "three"}) {
-		t.Fatalf("order = %v", got)
-	}
+	requirePlan(t,
+		planStep(cfg, "one", nil, nil),
+		planStep(cfg, "two", nil, nil),
+		planStep(cfg, "three", nil, nil),
+	)(Plan(cfg, nil))
 }
 
 // TestPlanKeepsDependencyDepthBeforeLaterFileOrder pins the exact walk the
@@ -147,23 +162,11 @@ func TestPlanKeepsDependencyDepthBeforeLaterFileOrder(t *testing.T) {
 		{Name: "worker"},
 		{Name: "db"},
 	}}
-	steps, err := Plan(cfg, nil)
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
-	if got := planNames(steps); !equalStrings(got, []string{"db", "api", "worker"}) {
-		t.Fatalf("order = %v, want [db api worker]", got)
-	}
-}
-
-// includedByOf reads one step's IncludedBy, or nil when the service is absent.
-func includedByOf(steps []Step, name string) []string {
-	for _, step := range steps {
-		if step.Service.Name == name {
-			return step.IncludedBy
-		}
-	}
-	return nil
+	requirePlan(t,
+		planStep(cfg, "db", nil, nil),
+		planStep(cfg, "api", []string{"db"}, nil),
+		planStep(cfg, "worker", nil, nil),
+	)(Plan(cfg, nil))
 }
 
 // TestPlanWithIncludesTransitiveDependencies: --only web brings api and db too,
@@ -174,21 +177,11 @@ func TestPlanWithIncludesTransitiveDependencies(t *testing.T) {
 		{Name: "api", DependsOn: []string{"db"}},
 		{Name: "db"},
 	}}
-	steps, err := PlanWith(cfg, PlanOptions{Only: []string{"web"}, IncludeDependencies: true})
-	if err != nil {
-		t.Fatalf("PlanWith: %v", err)
-	}
-	if got := planNames(steps); !equalStrings(got, []string{"db", "api", "web"}) {
-		t.Fatalf("order = %v, want db api web", got)
-	}
-	if got := includedByOf(steps, "web"); got != nil {
-		t.Errorf("web IncludedBy = %v, want nil for the named service", got)
-	}
-	for _, name := range []string{"api", "db"} {
-		if got := includedByOf(steps, name); !equalStrings(got, []string{"web"}) {
-			t.Errorf("%s IncludedBy = %v, want [web]", name, got)
-		}
-	}
+	requirePlan(t,
+		planStep(cfg, "db", nil, []string{"web"}),
+		planStep(cfg, "api", []string{"db"}, []string{"web"}),
+		planStep(cfg, "web", []string{"api"}, nil),
+	)(PlanWith(cfg, PlanOptions{Only: []string{"web"}, IncludeDependencies: true}))
 }
 
 // TestPlanWithKeepsExplicitIdentity: a service both named and depended on is
@@ -200,27 +193,11 @@ func TestPlanWithKeepsExplicitIdentity(t *testing.T) {
 		{Name: "api", DependsOn: []string{"db"}},
 		{Name: "db"},
 	}}
-	steps, err := PlanWith(cfg, PlanOptions{
-		Only: []string{"web", "api"}, IncludeDependencies: true,
-	})
-	if err != nil {
-		t.Fatalf("PlanWith: %v", err)
-	}
-	if got := planNames(steps); !equalStrings(got, []string{"db", "api", "web"}) {
-		t.Fatalf("order = %v", got)
-	}
-	if got := includedByOf(steps, "api"); got != nil {
-		t.Errorf("api IncludedBy = %v, want nil because it was named", got)
-	}
-	if got := includedByOf(steps, "db"); !equalStrings(got, []string{"api", "web"}) {
-		t.Errorf("db IncludedBy = %v, want both named roots sorted", got)
-	}
-	// The named service still waits on what it declares.
-	for _, step := range steps {
-		if step.Service.Name == "web" && len(step.Waits) != 1 {
-			t.Errorf("web waits = %+v, want api", step.Waits)
-		}
-	}
+	requirePlan(t,
+		planStep(cfg, "db", nil, []string{"api", "web"}),
+		planStep(cfg, "api", []string{"db"}, nil),
+		planStep(cfg, "web", []string{"api"}, nil),
+	)(PlanWith(cfg, PlanOptions{Only: []string{"web", "api"}, IncludeDependencies: true}))
 }
 
 // TestPlanWithDiamondCountsEachRootOnce: two paths from a named root to the
@@ -232,64 +209,38 @@ func TestPlanWithDiamondCountsEachRootOnce(t *testing.T) {
 		{Name: "worker", DependsOn: []string{"base"}},
 		{Name: "base"},
 	}}
-	steps, err := PlanWith(cfg, PlanOptions{Only: []string{"web"}, IncludeDependencies: true})
-	if err != nil {
-		t.Fatalf("PlanWith: %v", err)
-	}
-	if got := includedByOf(steps, "base"); !equalStrings(got, []string{"web"}) {
-		t.Fatalf("base IncludedBy = %v, want [web] despite two paths", got)
-	}
+	requirePlan(t,
+		planStep(cfg, "base", nil, []string{"web"}),
+		planStep(cfg, "api", []string{"base"}, []string{"web"}),
+		planStep(cfg, "worker", []string{"base"}, []string{"web"}),
+		planStep(cfg, "web", []string{"api", "worker"}, nil),
+	)(PlanWith(cfg, PlanOptions{Only: []string{"web"}, IncludeDependencies: true}))
 }
 
 // TestPlanWithDuplicatesAreOneEntry: naming a service twice is not two starts.
 func TestPlanWithDuplicatesAreOneEntry(t *testing.T) {
-	steps, err := PlanWith(planConfig(), PlanOptions{
-		Only: []string{"api", " api ", "api"}, IncludeDependencies: true,
-	})
-	if err != nil {
-		t.Fatalf("PlanWith: %v", err)
-	}
-	if got := planNames(steps); !equalStrings(got, []string{"db", "cache", "api"}) {
-		t.Fatalf("order = %v", got)
-	}
+	cfg := planConfig()
+	requirePlan(t,
+		planStep(cfg, "db", nil, []string{"api"}),
+		planStep(cfg, "cache", nil, []string{"api"}),
+		planStep(cfg, "api", []string{"db", "cache"}, nil),
+	)(PlanWith(cfg, PlanOptions{Only: []string{"api", " api ", "api"}, IncludeDependencies: true}))
 }
 
 // TestPlanWithUnknownOnlyStillFails: closure does not turn a typo into a
 // silent partial start.
 func TestPlanWithUnknownOnlyStillFails(t *testing.T) {
 	_, err := PlanWith(planConfig(), PlanOptions{Only: []string{"ap"}, IncludeDependencies: true})
-	var unknown *UnknownServiceError
-	if !errors.As(err, &unknown) || unknown.Name != "ap" {
-		t.Fatalf("expected an UnknownServiceError for ap, got %v", err)
-	}
+	requireUnknownAP(t, err)
 }
 
 // TestPlanWithoutClosureKeepsRestartsMeaning: Plan and PlanWith(false) keep the
 // old only-services behaviour, which restart depends on.
 func TestPlanWithoutClosureKeepsRestartsMeaning(t *testing.T) {
-	for name, steps := range map[string][]Step{
-		"Plan": func() []Step {
-			steps, err := Plan(planConfig(), []string{"api"})
-			if err != nil {
-				t.Fatalf("Plan: %v", err)
-			}
-			return steps
-		}(),
-		"PlanWith": func() []Step {
-			steps, err := PlanWith(planConfig(), PlanOptions{Only: []string{"api"}})
-			if err != nil {
-				t.Fatalf("PlanWith: %v", err)
-			}
-			return steps
-		}(),
-	} {
-		if got := planNames(steps); !equalStrings(got, []string{"api"}) {
-			t.Errorf("%s kept %v, want only api", name, got)
-		}
-		if got := includedByOf(steps, "api"); got != nil {
-			t.Errorf("%s api IncludedBy = %v, want nil", name, got)
-		}
-	}
+	cfg := planConfig()
+	want := planStep(cfg, "api", []string{"db", "cache"}, nil)
+	requirePlan(t, want)(Plan(cfg, []string{"api"}))
+	requirePlan(t, want)(PlanWith(cfg, PlanOptions{Only: []string{"api"}}))
 }
 
 // TestPlanWithCyclicHandBuiltConfigTerminates: Load rejects cycles, but a
@@ -299,19 +250,25 @@ func TestPlanWithCyclicHandBuiltConfigTerminates(t *testing.T) {
 		{Name: "a", DependsOn: []string{"b"}},
 		{Name: "b", DependsOn: []string{"a"}},
 	}}
-	done := make(chan []Step, 1)
+	done := make(chan struct {
+		steps []Step
+		err   error
+	}, 1)
 	go func() {
 		steps, err := PlanWith(cfg, PlanOptions{Only: []string{"a"}, IncludeDependencies: true})
-		if err != nil {
-			t.Errorf("PlanWith: %v", err)
-		}
-		done <- steps
+		done <- struct {
+			steps []Step
+			err   error
+		}{steps, err}
 	}()
 	select {
-	case steps := <-done:
-		if len(steps) != 2 {
-			t.Fatalf("steps = %v, want both services once", planNames(steps))
-		}
+	case got := <-done:
+		// The walk emits b (reached from a, IncludedBy [a]) then a (the named
+		// root). Each still waits on the other. This is not file order.
+		requirePlan(t,
+			planStep(cfg, "b", []string{"a"}, []string{"a"}),
+			planStep(cfg, "a", []string{"b"}, nil),
+		)(got.steps, got.err)
 	case <-time.After(time.Second):
 		t.Fatal("PlanWith did not terminate on a cyclic hand-built config")
 	}
