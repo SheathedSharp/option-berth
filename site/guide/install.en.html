@@ -1,35 +1,35 @@
-<p class="chapter-intro">The installer does three things: resolve the latest release, verify the platform archive, and put the binaries on PATH. It does not touch your project, and it does not start the daemon.</p>
+<p class="chapter-intro">The installer does three things: it resolves the latest release, verifies the archive for your platform, and puts the binaries on your PATH. It does not touch your project, and it does not start the daemon.</p>
 
 <h2 id="one-line">One line, macOS and Linux</h2>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">install · macOS or Linux</figcaption>
   <pre><code>curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh</code></pre>
 </figure>
-<p>The script reads <code>uname</code>, picks the matching darwin/linux and amd64/arm64 archive, verifies its same-named <code>.sha256</code>, then installs. No administrator rights are needed.</p>
+<p>The script reads <code>uname</code>, picks the matching darwin or linux archive for amd64 or arm64, checks the <code>.sha256</code> file published beside it, and installs. It needs no administrator rights.</p>
 <ul>
   <li>Binaries: <code>~/.local/bin/oberth</code> and <code>~/.local/bin/jev-attention</code>.</li>
   <li>Licenses and build manifest: <code>~/.local/share/option-berth</code>.</li>
-  <li>PATH: one line added to an existing shell startup file, never a new one.</li>
+  <li>PATH: one line added to a shell startup file you already have. The script never creates a new one.</li>
   <li>Runtime state: <code>~/.option-berth</code>, which the installer neither creates nor modifies.</li>
 </ul>
-<p>Pin a version with <code>--version v1.0.0</code>, change the directory with <code>--dir "$HOME/tools/bin"</code>, or leave your shell files alone with <code>--no-modify-path</code>. The script also probes mirrors when the official host is slow or unreachable; a mirror must report the same SHA256 before the install continues.</p>
+<p>Pass <code>--version v1.0.0</code> to pin a release, <code>--dir "$HOME/tools/bin"</code> to install somewhere else, or <code>--no-modify-path</code> to leave your shell files alone. When the official host is slow or unreachable, the script probes mirrors, and a mirror has to report the same SHA256 before the install continues.</p>
 
 <h2 id="windows">Windows</h2>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">install · Windows PowerShell</figcaption>
   <pre><code>irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps1 | iex</code></pre>
 </figure>
-<p>Binaries land in <code>%LOCALAPPDATA%\option-berth\bin</code>, and only the current user's PATH is changed. Pin with <code>-Version</code>, leave PATH with <code>-NoModifyPath</code>. Before replacing files, the installer stops a running <code>oberth</code> daemon; it does not stop your services for you.</p>
+<p>The binaries land in <code>%LOCALAPPDATA%\option-berth\bin</code>, and only the current user's PATH changes. Pin a version with <code>-Version</code>, and leave PATH alone with <code>-NoModifyPath</code>. Before it replaces files, the installer stops a running <code>oberth</code> daemon, but it does not stop your services.</p>
 
-<h2 id="other-ways">Other ways in</h2>
+<h2 id="other-ways">Other ways to install</h2>
 <table class="chapter-table">
   <caption class="sr-only">Installation channels</caption>
   <thead><tr><th scope="col">Channel</th><th scope="col">Command</th><th scope="col">What it is for</th></tr></thead>
   <tbody>
-    <tr><th scope="row">go install</th><td><code>go install github.com/sheathedsharp/option-berth/engine/cmd/oberth@latest</code></td><td>Go 1.25+, lands in <code>GOPATH/bin</code>; a module proxy is enough.</td></tr>
-    <tr><th scope="row">Homebrew</th><td><code>brew install sheathedsharp/tap/oberth</code></td><td>The engine CLI from a self-hosted tap; not homebrew-core.</td></tr>
-    <tr><th scope="row">Release archive</th><td>download, verify <code>SHA256SUMS</code>, put it on PATH</td><td>When you would rather not run a script.</td></tr>
-    <tr><th scope="row">Linux packages</th><td><code>.deb</code> or <code>.rpm</code></td><td>Distribution-managed installs; details in the install contract.</td></tr>
+    <tr><th scope="row">go install</th><td><code>go install github.com/sheathedsharp/option-berth/engine/cmd/oberth@latest</code></td><td>Go 1.25 or newer. It installs into <code>GOPATH/bin</code> and needs only a module proxy.</td></tr>
+    <tr><th scope="row">Homebrew</th><td><code>brew install sheathedsharp/tap/oberth</code></td><td>The engine CLI from a self-hosted tap. It is not in homebrew-core.</td></tr>
+    <tr><th scope="row">Release archive</th><td>download, verify <code>SHA256SUMS</code>, put it on PATH</td><td>For when you would rather not run a script.</td></tr>
+    <tr><th scope="row">Linux packages</th><td><code>.deb</code> or <code>.rpm</code></td><td>Distribution-managed installs. Details are in the install contract.</td></tr>
   </tbody>
 </table>
 
@@ -39,15 +39,15 @@
   <pre><code>oberth version --json
 oberth doctor</code></pre>
 </figure>
-<p><code>version --json</code> returns <code>version</code>, <code>commit</code>, <code>built</code> and <code>platform</code> for the binary you actually installed. <code>doctor</code> checks the manifest, the daemon, the CLI path, the log directory and whether the current process can see listeners. A blind listener check is reported as blind, with the next step; it is not written as “nothing is listening”.</p>
+<p><code>version --json</code> returns <code>version</code>, <code>commit</code>, <code>built</code> and <code>platform</code> for the binary you actually installed. <code>doctor</code> checks the manifest, the daemon, the CLI path, the log directory, and whether the current process can see listeners. If the listener check cannot run, it reports that it is blind and gives the next step; it never writes “nothing is listening”.</p>
 
-<h2 id="platforms">Platform boundaries</h2>
-<p>Full service scenarios are verified on macOS and Linux. Windows has a native build and smoke test plus an arm64 cross-build; that is not a promise that the full lifecycle is verified there. The engine has no graphical interface: the macOS client is a separate product, and the coding-agent skill is another one.</p>
+<h2 id="platforms">Platform support</h2>
+<p>Full service scenarios are verified on macOS and Linux. Windows gets a native build, a smoke test and an arm64 cross-build, which is not the same as a verified service lifecycle there. The engine has no graphical interface: the macOS client is a separate product, and the coding-agent skill is another one.</p>
 
-<h2 id="upgrade">Upgrade and remove</h2>
-<p>Upgrade by rerunning the installer for your platform; after upgrading, run <code>oberth daemon stop</code> once and the next call starts the new build. Uninstall with <code>uninstall.sh</code> on macOS and Linux, or <code>uninstall.ps1</code> on Windows. The uninstaller stops the daemon first and keeps <code>~/.option-berth</code> unless you pass <code>--purge-state</code>. The exact flags and per-platform paths are in <a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/install.md">Install and uninstall</a>.</p>
+<h2 id="upgrade">Upgrade and uninstall</h2>
+<p>Rerun the installer for your platform to upgrade. Afterwards, run <code>oberth daemon stop</code> once and the next call starts the new build. On macOS and Linux, uninstall with <code>uninstall.sh</code>; on Windows, use <code>uninstall.ps1</code>. The uninstaller stops the daemon first and keeps <code>~/.option-berth</code> unless you pass <code>--purge-state</code>. The exact flags and per-platform paths are in <a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/install.md">Install and uninstall</a>.</p>
 
 <aside class="note">
   <h2 id="not-does">What the installer will not do</h2>
-  <p>It starts no service, writes no Git state and needs no administrator rights. It does not install the macOS client or the coding-agent skill, and it does not configure your shell beyond the one PATH line you allowed.</p>
+  <p>It starts no service, writes no Git state and needs no administrator rights. It does not install the macOS client or the coding-agent skill, and apart from the PATH line you allow, it leaves your shell alone.</p>
 </aside>

@@ -1,8 +1,8 @@
-<p class="chapter-intro"><code>oberth</code> keeps one answer per Git worktree: what should run, whether it really is running, and why not. A person reads a table; a coding agent reads the same command with <code>--json</code>. This book teaches the chain behind both.</p>
+<p class="chapter-intro"><code>oberth</code> keeps one answer per Git worktree: what should run, whether it really is running, and why not when it is not. A person reads a table; a coding agent reads the same command with <code>--json</code>. This guide shows how that answer is built, and where it can fail.</p>
 
 <h2 id="problem">Four checkouts, four guesses</h2>
-<p>Git worktrees solved parallel code, not parallel runtime. Four checkouts of one repository share a port range, a database name and a shell history, so every session re-derives the same three facts — and derives them slightly differently each time.</p>
-<p>oberth writes those facts once, in one order, and lets every reader read the same thing: <strong>worktree → manifest → service → run → runtime facts</strong>. Nothing downstream re-invents what upstream already published.</p>
+<p>Git worktrees solved parallel code, not parallel runtime. Four checkouts of one repository share a port range, a database name and a shell history, so every session works out the same three facts again, and works them out slightly differently.</p>
+<p>oberth writes those facts once, in a fixed order, and every reader reads the same copy: <strong>worktree → manifest → service → run → runtime facts</strong>. A later step does not guess at what an earlier step already recorded.</p>
 
 <h2 id="chain">One chain, five stations</h2>
 <table class="chapter-table">
@@ -16,10 +16,10 @@
     <tr><th scope="row">Runtime facts</th><td>Alive, listening, healthy, and why it ended.</td><td>Turn a table it could not read into “not running”.</td></tr>
   </tbody>
 </table>
-<p><a href="{{guide}}chain/">The chain of facts</a> follows the five stations in order, one chapter section each.</p>
+<p><a href="{{guide}}chain/">One chain of facts</a> walks the five stations in order, one section each.</p>
 
-<h2 id="loop">The loop you actually run</h2>
-<p>Five commands cover a working day. Each replaces a shell one-liner that had to be re-invented per checkout.</p>
+<h2 id="loop">The commands you use every day</h2>
+<p>Five commands cover a working day, and each one replaces a shell pipeline that had to be rebuilt for every checkout.</p>
 <table class="chapter-table">
   <caption class="sr-only">The core commands and what they replace</caption>
   <thead><tr><th scope="col">You want to</th><th scope="col">oberth</th><th scope="col">The shell answer it replaces</th></tr></thead>
@@ -41,24 +41,24 @@ worker   running   no port
 2 services · manifest oberth.yaml</code></pre>
 </figure>
 
-<h2 id="paths">How to read this book</h2>
+<h2 id="paths">How to read this guide</h2>
 <ul>
   <li><strong>First time here.</strong> <a href="{{guide}}install/">Install oberth</a>, then follow <a href="{{guide}}quickstart/">Your first worktree</a>: one example project, five commands, from an empty checkout to a clean stop.</li>
-  <li><strong>You already run things.</strong> Read <a href="{{guide}}chain/">the chain of facts</a> and <a href="{{guide}}worktrees/">worktrees and runs</a>, then use the command chapters as you need them.</li>
-  <li><strong>You are wiring an agent.</strong> Start at <a href="{{guide}}json/">Facts as JSON</a>, then <a href="{{guide}}agents/">coding agents</a> for the three moments to call oberth.</li>
+  <li><strong>You already run a local stack.</strong> Read <a href="{{guide}}chain/">One chain of facts</a> and <a href="{{guide}}worktrees/">Several worktrees at once</a>, then use the command chapters as you need them.</li>
+  <li><strong>You are wiring an agent.</strong> Start with <a href="{{guide}}json/">Facts as JSON</a>, then read <a href="{{guide}}agents/">Coding agents</a> for the three moments to call oberth.</li>
 </ul>
 
 <h2 id="readers">Two readers, one interface</h2>
-<p>There is no second interface, no MCP server and no model in the core. The CLI is the contract; <code>--json</code> is the same contract in a machine shape.</p>
+<p>The CLI is the only interface. There is no second API, no MCP server and no model inside the engine; <code>--json</code> is the same contract in a shape a program can read.</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">an agent's opening read</figcaption>
   <pre><code>oberth status --json --brief
 oberth up --wait --json
 oberth logs api --once --json --run current --first-error</code></pre>
 </figure>
-<p><a href="{{root}}llms.txt">llms.txt</a> lists this book for machines, and <a href="{{root}}llms-full.txt">llms-full.txt</a> carries every chapter as plain text.</p>
+<p><a href="{{root}}llms.txt">llms.txt</a> lists this guide for machines, and <a href="{{root}}llms-full.txt">llms-full.txt</a> carries every chapter as plain text.</p>
 
-<h2 id="not">What this book is not</h2>
+<h2 id="not">What this guide is not</h2>
 <aside class="note">
-  <p><strong>Not the contract.</strong> The exact CLI surface, JSON fields and manifest rules live in <a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md">docs/cli.md</a>; this book teaches the chain and points there. <strong>Not the product site.</strong> The <a href="{{root}}">homepage</a> shows the product. <strong>Not a framework tutorial.</strong> The examples use <a href="https://github.com/SheathedSharp/option-berth/tree/main/examples/hello-worktree">Hello Worktree</a> because it runs on Python 3 alone; the same chain applies to any stack.</p>
+  <p><strong>Not the contract.</strong> The exact CLI surface, JSON fields and manifest rules live in <a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md">docs/cli.md</a>. This guide explains the chain and points there for detail. <strong>Not the product site.</strong> The <a href="{{root}}">homepage</a> shows the product itself. <strong>Not a framework tutorial.</strong> The examples use <a href="https://github.com/SheathedSharp/option-berth/tree/main/examples/hello-worktree">Hello Worktree</a> because it needs nothing but Python 3. The same chain applies to any stack.</p>
 </aside>

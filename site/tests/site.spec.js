@@ -25,9 +25,9 @@ for (const locale of ['', 'en/']) for (const width of [360, 390, 768, 1440]) {
     await expect(page.locator('html')).toHaveAttribute('lang', locale ? 'en' : 'zh-CN');
     await page.locator('#install').scrollIntoViewIfNeeded();
     await expect(page.locator('#install h2')).toBeVisible();
-    await expect(page.locator('#install a[href$="releases/latest"]')).toBeVisible();
-    await expect(page.locator('#install a[href$="docs/install.md"]')).toBeVisible();
-    await expect(page.locator('.install-panel-release pre code')).toContainText('install.sh');
+    await expect(page.locator('a[href$="releases/latest"]')).toBeVisible();
+    await expect(page.locator('a[href$="docs/install.md"]')).toBeVisible();
+    await expect(page.locator('#install-release-code')).toContainText('install.sh');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
     for (const image of await page.locator('img:visible').all()) {
       await image.scrollIntoViewIfNeeded();
@@ -89,32 +89,60 @@ test('measured proof is present in both locales', async ({page}) => {
   await expect(page.locator('#proof-title')).toBeVisible();
   await expect(page.locator('.proof-table')).toContainText('40/40');
   await expect(page.locator('.proof-table')).toContainText('29/40');
-  await page.locator('.language').click();
+  await page.locator('.lang').click();
   await expect(page.locator('#proof-title')).toContainText('Done is the metric.');
   await expect(page.locator('.proof-table')).toContainText('40/40');
 });
 
 test('real static language navigation and product links', async ({page}) => {
   await page.goto('./');
-  await expect(page.locator('.close-products a')).toHaveCount(3);
-  await page.locator('.language').click();
+  await expect(page.locator('.products a')).toHaveCount(3);
+  await page.locator('.lang').click();
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-  await expect(page.locator('h1')).toContainText('Stop guessing');
-  await expect(page.locator('.close-products a[href$="option-berth-macos"]')).toHaveCount(1);
-  await page.locator('.language').click();
+  await expect(page.locator('h1')).toHaveText('option-berth');
+  await expect(page.locator('.hero-tagline')).toContainText('Stop guessing');
+  await expect(page.locator('.products a[href$="option-berth-macos"]')).toHaveCount(1);
+  await page.locator('.lang').click();
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
 });
 
-test('reduced motion on first load and live preference change', async ({page}) => {
+test('the worktree switch changes the berth without leaving the page', async ({page}) => {
+  await page.goto('./');
+  const first = page.locator('[data-wt-panel="0"]');
+  const second = page.locator('[data-wt-panel="1"]');
+  await expect(first).toBeVisible();
+  await expect(first).toContainText('main');
+  await expect(second).toBeHidden();
+  await page.locator('.wt-switch button[data-wt="1"]').click();
+  await expect(second).toBeVisible();
+  await expect(first).toBeHidden();
+  await expect(second).toContainText('feature/ports');
+  await expect(second).toContainText('21741');
+  await expect(page.locator('.wt-switch button[data-wt="1"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.wt-switch button[data-wt="0"]')).toHaveAttribute('aria-pressed', 'false');
+  await page.locator('.wt-switch button[data-wt="0"]').click();
+  await expect(first).toBeVisible();
+});
+
+test('reduced motion keeps every tile in place and the switch instant', async ({page}) => {
   await page.emulateMedia({reducedMotion: 'reduce'});
   await page.goto('./');
-  await expect(page.locator('html')).not.toHaveClass(/motion/);
-  expect(await page.locator('.hero-line .line').first().evaluate(el => getComputedStyle(el).animationName)).toBe('none');
+  await page.waitForTimeout(400);
+  const tiles = await page.locator('.board > .tile').evaluateAll(nodes =>
+    nodes.map(node => getComputedStyle(node).opacity + '|' + getComputedStyle(node).transform));
+  expect(tiles.every(value => value === '1|none')).toBe(true);
+  await page.locator('.wt-switch button[data-wt="1"]').click();
+  await expect(page.locator('[data-wt-panel="1"]')).toBeVisible();
+  await expect(page.locator('[data-wt-panel="0"]')).toBeHidden();
+});
+
+test('tiles arrive with motion when the reader allows it', async ({page}) => {
   await page.emulateMedia({reducedMotion: 'no-preference'});
-  await expect(page.locator('html')).toHaveClass(/motion/);
-  await page.emulateMedia({reducedMotion: 'reduce'});
-  await expect(page.locator('html')).not.toHaveClass(/motion/);
-  expect(await page.locator('.reveal').first().evaluate(el => getComputedStyle(el).opacity)).toBe('1');
+  await page.goto('./');
+  const first = page.locator('.board > .tile').first();
+  await expect.poll(() => first.evaluate(el => getComputedStyle(el).opacity), {timeout: 3000}).toBe('1');
+  const moved = await page.evaluate(() => window.gsap ? 1 : 0);
+  expect(moved).toBe(1);
 });
 
 test('no-JavaScript page keeps copy, language, commands and release link', async ({browser, baseURL}) => {
@@ -126,20 +154,20 @@ test('no-JavaScript page keeps copy, language, commands and release link', async
   await expect(page.locator('#command-list li:visible')).toHaveCount(6);
   await expect(page.locator('#command-empty')).toBeHidden();
   await page.locator('#install').scrollIntoViewIfNeeded();
-  await expect(page.locator('#install a[href$="releases/latest"]')).toBeVisible();
-  await expect(page.locator('#install a[href$="docs/install.md"]')).toBeVisible();
-  await expect(page.locator('.install-panel-release pre code')).toContainText('install.sh');
-  await page.locator('.language').click();
+  await expect(page.locator('a[href$="releases/latest"]')).toBeVisible();
+  await expect(page.locator('a[href$="docs/install.md"]')).toBeVisible();
+  await expect(page.locator('#install-release-code')).toContainText('install.sh');
+  await page.locator('.lang').click();
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   await context.close();
 });
 
 test('homepage links to the English and Chinese guides', async ({page}) => {
   await page.goto('./');
-  await expect(page.locator('.head-end a[href="guide/zh/"]')).toHaveCount(1);
+  await expect(page.locator('.bar nav a[href="guide/zh/"]')).toHaveCount(1);
   await expect(page.locator('.site-foot a[href="guide/zh/"]')).toHaveCount(1);
-  await page.locator('.language').click();
-  await expect(page.locator('.head-end a[href="../guide/"]')).toHaveCount(1);
+  await page.locator('.lang').click();
+  await expect(page.locator('.bar nav a[href="../guide/"]')).toHaveCount(1);
   await expect(page.locator('.site-foot a[href="../guide/"]')).toHaveCount(1);
 });
 

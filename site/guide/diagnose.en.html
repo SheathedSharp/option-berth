@@ -1,7 +1,7 @@
-<p class="chapter-intro">Most confusion about a local stack is a missing fact, not a broken service. This page routes a symptom to the one command that produces the missing fact, and then to the chapter that explains it.</p>
+<p class="chapter-intro">Most confusion about a local stack comes from a missing fact, not from a broken service. This page sends a symptom to the one command that produces the missing fact, and then to the chapter that explains it.</p>
 
 <h2 id="first">Start with the read</h2>
-<p><code>oberth status</code> is the first command for almost every symptom: it prints the manifest, the runs and the observed runtime facts side by side. If it prints a failure reason, read that reason before reading any log — it names the service and the phase.</p>
+<p><code>oberth status</code> is the first command for almost every symptom. It prints the manifest, the runs and the observed runtime facts side by side. When it reports a failure reason, read that reason before any log, because it names the service and the phase.</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">the one read to start from</figcaption>
   <pre><code>oberth status</code></pre>
@@ -12,12 +12,12 @@
   <caption class="sr-only">Each symptom and the command that explains it</caption>
   <thead><tr><th scope="col">What you see</th><th scope="col">Run this first</th><th scope="col">What it means</th></tr></thead>
   <tbody>
-    <tr><th scope="row"><code>listening unknown</code>, or an <code>observation_*</code> code</th><td><code>oberth doctor --only listener_observation</code></td><td>The observer, not the service, could not see the listener table. Retry from a normal terminal; do not read a timeout as a failure.</td></tr>
-    <tr><th scope="row"><code>up --wait</code> never returns</th><td><code>oberth logs &lt;service&gt; --once</code></td><td>Readiness is listener plus health. The service's own output says which half failed.</td></tr>
+    <tr><th scope="row"><code>listening unknown</code>, or an <code>observation_*</code> code</th><td><code>oberth doctor --only listener_observation</code></td><td>The observer could not read the listener table; the service is not the problem. Retry from a normal terminal, and do not read a timeout as a failure.</td></tr>
+    <tr><th scope="row"><code>up --wait</code> never returns</th><td><code>oberth logs &lt;service&gt; --once</code></td><td>Readiness is a listener plus health. The service's own output says which half failed.</td></tr>
     <tr><th scope="row">A service line shows an exit and a code</th><td><code>oberth logs &lt;service&gt; --once --first-error</code></td><td>The first error of the current run, not the last screen of output.</td></tr>
     <tr><th scope="row"><code>auto port unassigned</code></th><td><code>oberth status --json</code></td><td>Not a failure: <code>port: auto</code> has not been assigned yet. A candidate is verified by binding, not by trusting an empty listener table.</td></tr>
-    <tr><th scope="row"><code>code_changed_since_start</code></th><td><code>oberth restart</code></td><td>The process runs older code than the checkout. It is a code fact, not a runtime failure.</td></tr>
-    <tr><th scope="row">A stop hits the wrong project, or refuses</th><td><code>oberth down --worktree &lt;path&gt;</code></td><td>Several checkouts share a project name. Identify the checkout explicitly; do not widen the stop.</td></tr>
+    <tr><th scope="row"><code>code_changed_since_start</code></th><td><code>oberth restart</code></td><td>The process is running older code than the checkout. It is a code fact, not a runtime failure.</td></tr>
+    <tr><th scope="row">A stop hits the wrong project, or refuses</th><td><code>oberth down --worktree &lt;path&gt;</code></td><td>Several checkouts share a project name. Identify the checkout explicitly, and do not widen the stop.</td></tr>
     <tr><th scope="row">Services still run after a checkout was deleted</th><td><code>oberth worktrees --gone</code></td><td>The identity ledger kept the path. Stop them by worktree or identity; deleting data stays your job.</td></tr>
     <tr><th scope="row">“manifest not found”, or a draft you never adopted</th><td><code>oberth init</code></td><td>An agent may draft a manifest; only <code>oberth init adopt</code> makes it the input to anything.</td></tr>
     <tr><th scope="row">The project lives outside your home directory</th><td><code>oberth up --allow-outside-home</code> after review</td><td>The home boundary is a default, not an accident. Read the flag before you pass it.</td></tr>
@@ -34,5 +34,5 @@
 
 <h2 id="not-a-fix">What is not a fix</h2>
 <aside class="note">
-  <p>Raising a timeout, killing a pid by hand or starting the service outside oberth all make the symptom disappear while leaving the fact unread. The next session inherits the same unknown, one more layer deep. Read the reason first; change the manifest second.</p>
+  <p>Raising a timeout, killing a pid by hand, or starting the service outside oberth all make the symptom go away while the fact stays unread. The next session inherits the same unknown, one layer deeper. Read the reason first, and change the manifest second.</p>
 </aside>

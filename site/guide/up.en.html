@@ -1,7 +1,7 @@
 <p class="chapter-intro"><code>up</code> starts what the manifest declares, in dependency order. <code>--wait</code> returns only when the selected services actually listen and pass their health checks.</p>
 
 <h2 id="order">Start in dependency order</h2>
-<p>Services start in the order of <code>depends_on</code>. A service with <code>prepare:</code> runs that prerequisite first, in the same working directory, and only starts its long-running <code>cmd:</code> on success. Services already running are skipped; each service keeps its own log file and run record.</p>
+<p>Services start in the order given by <code>depends_on</code>. A service with <code>prepare:</code> runs that prerequisite first, in the same working directory, and starts its long-running <code>cmd:</code> only if the prerequisite succeeds. Services that are already running are skipped, and each service keeps its own log file and run record.</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">oberth up --wait</figcaption>
   <pre><code>api      started   :21730   ready
@@ -9,16 +9,16 @@ worker   started   no port</code></pre>
 </figure>
 
 <h2 id="wait">What --wait proves</h2>
-<p>Without <code>--wait</code>, <code>up</code> has started processes; it has not proved they are usable. With <code>--wait</code>, a service with a port must listen; a service that declares <code>health:</code> must also pass that check; a portless worker is ready when its run record becomes active. Services that were already running are included in the wait.</p>
+<p>Without <code>--wait</code>, <code>up</code> has started processes; it has not shown that they are usable. With <code>--wait</code>, a service with a port must listen, a service that declares <code>health:</code> must also pass that check, and a portless worker is ready when its run record becomes active. Services that were already running are included in the wait.</p>
 <ul>
-  <li>Each service waits by its own <code>ready_timeout:</code> (default 30s). <code>--wait-timeout</code> is an overall ceiling that only tightens the per-service budgets.</li>
-  <li><code>prepare:</code> does not count against the readiness budget; slow installs need <code>prepare_inputs:</code> caching or a larger script timeout on the caller's side.</li>
-  <li>Without waiting, a started service carries <code>ready: false</code> and the table says readiness was not confirmed. That is not a failure.</li>
-  <li>A service that times out is <code>failed</code> with reason <code>ready_timeout</code>; the message says whether the service's own budget or the caller's ceiling expired first.</li>
+  <li>Each service waits within its own <code>ready_timeout:</code>, 30s by default. <code>--wait-timeout</code> is an overall ceiling, and it can only tighten the per-service budgets, never loosen them.</li>
+  <li><code>prepare:</code> does not count against the readiness budget. A slow install needs <code>prepare_inputs:</code> caching, or a larger script timeout on the caller's side.</li>
+  <li>Without waiting, a started service carries <code>ready: false</code>, and the table says readiness was not confirmed. That is not a failure.</li>
+  <li>A service that times out is <code>failed</code> with reason <code>ready_timeout</code>, and the message says whether the service's own budget or the caller's ceiling expired first.</li>
 </ul>
 
-<h2 id="fails">When it fails</h2>
-<p>Each entry in <code>services[]</code> is <code>started</code>, <code>skipped</code> or <code>failed</code>; a failure carries a branchable <code>reason</code> and a <code>hint</code> that points at evidence that really exists. A partial success is still exactly one JSON value, with exit code 1.</p>
+<h2 id="fails">When a start fails</h2>
+<p>Each entry in <code>services[]</code> is <code>started</code>, <code>skipped</code> or <code>failed</code>. A failure carries a branchable <code>reason</code> and a <code>hint</code> that points at evidence which really exists. A partial success is still exactly one JSON value, with exit code 1.</p>
 <table class="chapter-table">
   <caption class="sr-only">Start failure reasons</caption>
   <thead><tr><th scope="col">Reason</th><th scope="col">What happened</th><th scope="col">What to read first</th></tr></thead>
@@ -26,13 +26,13 @@ worker   started   no port</code></pre>
     <tr><th scope="row"><code>start_failed</code></th><td>The command never started.</td><td>The hint: the executable, working directory or environment that refused it.</td></tr>
     <tr><th scope="row"><code>port_occupied</code></th><td>The fixed port was already taken.</td><td><code>port_holder</code>: the port, pid, command and kind of the holder.</td></tr>
     <tr><th scope="row"><code>dependency_not_ready</code></th><td>A dependency exited during the wait.</td><td>The dependency's logs; the message carries its exit code and reason.</td></tr>
-    <tr><th scope="row"><code>dependency_timeout</code></th><td>A dependency stayed alive but never became ready.</td><td>The dependency's own <code>ready_timeout:</code> and logs.</td></tr>
+    <tr><th scope="row"><code>dependency_timeout</code></th><td>A dependency stayed alive but never became ready.</td><td>The dependency's own <code>ready_timeout:</code> and its logs.</td></tr>
     <tr><th scope="row"><code>ready_timeout</code></th><td>The service itself did not become ready in budget.</td><td>The service's logs and its readiness declaration.</td></tr>
   </tbody>
 </table>
 
 <h2 id="restart">Restart without losing the address</h2>
-<p><code>restart</code> stops the project and starts it again. With <code>--only</code> it restarts just the named services while the rest keep running, and it preserves the worktree's <code>port: auto</code> reservation, so a service gets its original address back. <code>restart</code> does not wait for readiness; use <code>up --wait</code> when the caller needs proof.</p>
+<p><code>restart</code> stops the project and starts it again. With <code>--only</code> it restarts just the named services and leaves the rest running, and it keeps the worktree's <code>port: auto</code> reservation, so a service gets its original address back. <code>restart</code> does not wait for readiness; use <code>up --wait</code> when the caller needs proof.</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">keep the address</figcaption>
   <pre><code>oberth restart --only api</code></pre>
@@ -42,8 +42,8 @@ worker   started   no port</code></pre>
 <aside class="note">
   <ul>
     <li>Service working directories must be under <code>$HOME</code> by default. <code>--allow-outside-home</code> is an explicit decision, not a silent fallback.</li>
-    <li><code>machine:</code> dependencies are observed, never started or stopped by <code>up</code>.</li>
-    <li><code>workspace:</code> references supply addresses only; <code>up</code> never starts another checkout's service and never establishes <code>depends_on</code> across checkouts.</li>
-    <li><code>up</code> writes no manifest and no Git state. A manifest is adopted by a person before it is read here.</li>
+    <li><code>machine:</code> dependencies are observed, and <code>up</code> never starts or stops them.</li>
+    <li><code>workspace:</code> references supply addresses only. <code>up</code> never starts another checkout's service, and never establishes <code>depends_on</code> across checkouts.</li>
+    <li><code>up</code> writes no manifest and no Git state. A person adopts a manifest before <code>up</code> reads it here.</li>
   </ul>
 </aside>
