@@ -271,3 +271,28 @@ func TestGraceMsKeepsTheDaemonDefault(t *testing.T) {
 		}
 	}
 }
+
+// TestKillMethodFollowsTheSelection: only a group selection the daemon can
+// resolve by name uses groups.kill. The tree and no-escalate options have no
+// groups.kill field, so those rounds must fall back to the already-resolved
+// port targets.
+func TestKillMethodFollowsTheSelection(t *testing.T) {
+	noEscalate := false
+	for _, tc := range []struct {
+		name  string
+		group string
+		opts  killer.Options
+		want  string
+	}{
+		{"a port selection", "", killer.Options{}, "ports.kill"},
+		{"a group the daemon can resolve", "storefront", killer.Options{}, "groups.kill"},
+		{"a group that needs the tree flag", "storefront", killer.Options{Tree: true}, "ports.kill"},
+		{"a group that must not escalate", "storefront", killer.Options{Escalate: &noEscalate}, "ports.kill"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := killMethodFor(tc.group, tc.opts); got != tc.want {
+				t.Errorf("killMethodFor(%q) = %q, want %q", tc.group, got, tc.want)
+			}
+		})
+	}
+}

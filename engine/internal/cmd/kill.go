@@ -122,8 +122,14 @@ func killDirect(ctx context.Context, args []string, bindIP string) error {
 	opts := killOptions()
 	opts.Ports = snapshot
 
-	return killRun(ctx, targets, snapshot, opts,
-		confirm && !killYesFlag && !killDryRunFlag, killJSONFlag)
+	return killRequest{
+		exec:     killHere,
+		targets:  targets,
+		snapshot: snapshot,
+		opts:     opts,
+		confirm:  confirm && !killYesFlag && !killDryRunFlag,
+		asJSON:   killJSONFlag,
+	}.execute(ctx)
 }
 
 // killOptions is the killer configuration the flags describe, shared by both
@@ -142,23 +148,59 @@ func killOptions() killer.Options {
 	return opts
 }
 
-// killRun is the body every kill-shaped command shares: confirm the plan when
-// asked to, run it through the killer, print the outcome. `kill-all` and
-// `down` are nothing but different ways of choosing targets for it.
-func killRun(ctx context.Context, targets []killer.Target, snapshot []ports.ListeningPort,
-	opts killer.Options, confirm, asJSON bool) error {
-	// The confirmation lists the plan the killer actually produced, so the
+// killExecutor performs one round against the selected targets. dryRun asks
+// only for the plan, which is what the confirmation shows before the real
+// round; the caller decides where signalling happens (this process or the
+// daemon), while every prompt and report stays above this seam.
+type killExecutor func(ctx context.Context, targets []killer.Target, opts killer.Options, dryRun bool) ([]killer.Result, error)
+
+// killHere is the executor that signals from this process.
+func killHere(ctx context.Context, targets []killer.Target, opts killer.Options, dryRun bool) ([]killer.Result, error) {
+	round := opts
+	round.DryRun = dryRun
+	return killer.KillPorts(ctx, targets, round), nil
+}
+
+// killRequest is one kill operation after its targets have been chosen:
+// optionally confirm the plan, run it once, report the result. The port and
+// group forms, the hidden session form and the daemon and direct routes all
+// differ in how targets are selected or where the signal is sent, never in
+// this decision order.
+type killRequest struct {
+	exec     killExecutor
+	targets  []killer.Target
+	snapshot []ports.ListeningPort
+	opts     killer.Options
+	confirm  bool
+	asJSON   bool
+	// emptyPlan, when set, is the whole answer for a confirmed plan that
+	// selected nothing (a named session with no members). The port forms
+	// handle an empty selection before reaching here.
+	emptyPlan func()
+}
+
+func (r killRequest) execute(ctx context.Context) error {
+	// The confirmation lists the plan the executor actually produced, so the
 	// prompt shows exactly what will happen — including the whole tree.
-	if confirm {
-		plan := opts
-		plan.DryRun = true
-		if !confirmPlan(killer.KillPorts(ctx, targets, plan), snapshot) {
+	if r.confirm {
+		plan, err := r.exec(ctx, r.targets, r.opts, true)
+		if err != nil {
+			return cliError(err)
+		}
+		if len(plan) == 0 && r.emptyPlan != nil {
+			r.emptyPlan()
+			return nil
+		}
+		if !confirmPlan(plan, r.snapshot) {
 			fmt.Println("Aborted.")
 			return nil
 		}
 	}
-	results := killer.KillPorts(ctx, targets, opts)
-	return reportKill(os.Stdout, results, snapshot, asJSON, opts.DryRun)
+	results, err := r.exec(ctx, r.targets, r.opts, r.opts.DryRun)
+	if err != nil {
+		return cliError(err)
+	}
+	return reportKill(os.Stdout, results, r.snapshot, r.asJSON, r.opts.DryRun)
 }
 
 // scanForKill takes the enriched scan every selector is resolved against, and
