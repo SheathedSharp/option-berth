@@ -2,13 +2,23 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
+	"github.com/spf13/cobra"
 )
 
 func syntheticDaemonStatus(observation *rpc.ObservationStatus) daemonStatus {
@@ -152,4 +162,206 @@ func mustJSON(t *testing.T, value any) string {
 		t.Fatal(err)
 	}
 	return string(raw)
+}
+
+// isolateDaemonPaths gives this test its own state directory and socket, so a
+// daemon started here is never the one another test is looking for.
+func isolateDaemonPaths(t *testing.T) string {
+	t.Helper()
+	t.Setenv("BERTH_HOME", t.TempDir())
+	socket := filepath.Join(t.TempDir(), "daemon.sock")
+	t.Setenv("BERTH_SOCKET", socket)
+	return socket
+}
+
+// startDaemonWhereTheCommandLooks runs a real daemon on the socket `oberth
+// daemon` looks at. The command's own dial policy — dial the running daemon and
+// never start one — is then what the test exercises end to end.
+func startDaemonWhereTheCommandLooks(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the unix-socket harness does not apply to named pipes")
+	}
+	socket := isolateDaemonPaths(t)
+
+	srv := daemon.New(daemon.Options{
+		Socket:  socket,
+		Version: "test",
+		Scanner: scanner.New(scanner.Options{
+			DaemonVersion: "test",
+			Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
+				return nil, nil
+			},
+		}),
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { _ = srv.Serve(ctx) }()
+	if err := client.WaitForSocket(ctx, socket, 5*time.Second); err != nil {
+		cancel()
+		t.Fatalf("daemon did not come up: %v", err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		<-srv.Done()
+	})
+	return socket
+}
+
+// daemonTestCommand is the command a `daemon` subcommand runs under: it carries
+// a context, which is the only thing those RunE bodies ask of it.
+func daemonTestCommand() *cobra.Command {
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	return cmd
+}
+
+// setDaemonJSONFlag installs --json for one test.
+func setDaemonJSONFlag(t *testing.T, asJSON bool) {
+	t.Helper()
+	prev := daemonJSONFlag
+	daemonJSONFlag = asJSON
+	t.Cleanup(func() { daemonJSONFlag = prev })
+}
+
+// TestDaemonStatusDescribesTheRunningDaemon: the text answer is the daemon's
+// own status, read over the socket the command dials — including the pid of the
+// process that is serving it and the socket a reader would connect to.
+func TestDaemonStatusDescribesTheRunningDaemon(t *testing.T) {
+	socket := startDaemonWhereTheCommandLooks(t)
+	setDaemonJSONFlag(t, false)
+
+	var err error
+	out := captureStdout(t, func() { err = daemonStatusRun(daemonTestCommand(), nil) })
+	if err != nil {
+		t.Fatalf("daemon status: %v", err)
+	}
+	for _, want := range []string{
+		"running       yes",
+		fmt.Sprintf("pid           %d", os.Getpid()),
+		"version       test (protocol ",
+		"socket        " + socket,
+		"capabilities  [",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status output is missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestDaemonStatusJSONIsOneDocumentAboutTheSameDaemon checks the --json keys
+// against the live daemon: one JSON value on stdout, running, with its pid and
+// socket, and a build that matches the CLI's own.
+func TestDaemonStatusJSONIsOneDocumentAboutTheSameDaemon(t *testing.T) {
+	socket := startDaemonWhereTheCommandLooks(t)
+	setDaemonJSONFlag(t, true)
+
+	var err error
+	out := captureStdout(t, func() { err = daemonStatusRun(daemonTestCommand(), nil) })
+	if err != nil {
+		t.Fatalf("daemon status --json: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("stdout is not one JSON document: %v\n%s", err, out)
+	}
+	if doc["running"] != true {
+		t.Errorf("running = %v, want true", doc["running"])
+	}
+	if doc["pid"] != float64(os.Getpid()) {
+		t.Errorf("pid = %v, want the daemon's own pid %d", doc["pid"], os.Getpid())
+	}
+	if doc["socket"] != socket {
+		t.Errorf("socket = %v, want %q", doc["socket"], socket)
+	}
+	if doc["daemon_version"] != "test" {
+		t.Errorf("daemon_version = %v, want test", doc["daemon_version"])
+	}
+	if doc["protocol_version"] == "" || doc["protocol_version"] == nil {
+		t.Errorf("protocol_version = %v, want the negotiated one", doc["protocol_version"])
+	}
+	if doc["build_matches"] != true {
+		t.Errorf("build_matches = %v, want true for one binary", doc["build_matches"])
+	}
+}
+
+// TestDaemonStatusOfflineIsTheNotRunningAnswer: with no daemon the command says
+// so as an error with the documented code, and prints nothing on stdout.
+func TestDaemonStatusOfflineIsTheNotRunningAnswer(t *testing.T) {
+	isolateDaemonPaths(t)
+	setDaemonJSONFlag(t, false)
+
+	var err error
+	out := captureStdout(t, func() { err = daemonStatusRun(daemonTestCommand(), nil) })
+	if out != "" {
+		t.Fatalf("stdout = %q, want nothing in text mode", out)
+	}
+	code, _, hint := describe(err)
+	if code != "daemon_not_running" {
+		t.Fatalf("code = %q (%v), want daemon_not_running", code, err)
+	}
+	if !strings.Contains(hint, "oberth serve") {
+		t.Errorf("hint = %q, want the way to start one", hint)
+	}
+}
+
+// TestDaemonStatusOfflineJSONStillAnswers: `daemon status --json` documents
+// {"running": false} on stdout as an answer, with a quiet non-zero exit rather
+// than an error line.
+func TestDaemonStatusOfflineJSONStillAnswers(t *testing.T) {
+	isolateDaemonPaths(t)
+	setDaemonJSONFlag(t, true)
+
+	var err error
+	out := captureStdout(t, func() { err = daemonStatusRun(daemonTestCommand(), nil) })
+	if err != errSilent {
+		t.Fatalf("err = %v, want the quiet exit", err)
+	}
+	var doc map[string]any
+	if e := json.Unmarshal([]byte(out), &doc); e != nil {
+		t.Fatalf("stdout is not one JSON document: %v\n%s", e, out)
+	}
+	if doc["running"] != false {
+		t.Errorf("running = %v, want false", doc["running"])
+	}
+	if doc["socket"] == "" || doc["socket"] == nil {
+		t.Errorf("socket = %v, want the socket that was looked at", doc["socket"])
+	}
+}
+
+// TestDaemonStopStopsTheDaemonItFound: the stop waits until the socket is gone,
+// so a caller that runs `serve` next cannot race the previous daemon.
+func TestDaemonStopStopsTheDaemonItFound(t *testing.T) {
+	socket := startDaemonWhereTheCommandLooks(t)
+	setDaemonJSONFlag(t, false)
+
+	var err error
+	out := captureStdout(t, func() { err = daemonStopRun(daemonTestCommand(), nil) })
+	if err != nil {
+		t.Fatalf("daemon stop: %v", err)
+	}
+	if !strings.Contains(out, "oberth daemon stopped") {
+		t.Fatalf("stdout = %q, want the stopped sentence", out)
+	}
+	if daemon.SocketAlive(socket) {
+		t.Fatal("the socket is still alive after daemon stop returned")
+	}
+}
+
+// TestDaemonStopJSONReportsTheSocket: the JSON form answers {stopped, socket}.
+func TestDaemonStopJSONReportsTheSocket(t *testing.T) {
+	socket := startDaemonWhereTheCommandLooks(t)
+	setDaemonJSONFlag(t, true)
+
+	var err error
+	out := captureStdout(t, func() { err = daemonStopRun(daemonTestCommand(), nil) })
+	if err != nil {
+		t.Fatalf("daemon stop --json: %v", err)
+	}
+	var doc map[string]any
+	if e := json.Unmarshal([]byte(out), &doc); e != nil {
+		t.Fatalf("stdout is not one JSON document: %v\n%s", e, out)
+	}
+	if doc["stopped"] != true || doc["socket"] != socket {
+		t.Fatalf("document = %v, want stopped true and socket %q", doc, socket)
+	}
 }
