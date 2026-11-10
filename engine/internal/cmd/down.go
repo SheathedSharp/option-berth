@@ -50,42 +50,9 @@ func init() {
 
 func downRun(cmd *cobra.Command, args []string) error {
 	cmd.SilenceUsage = true
-	worktree := strings.TrimSpace(downWorktreeFlag)
-	identity := strings.TrimSpace(downIdentityFlag)
-	if worktree != "" && identity != "" {
-		return usageError{fmt.Errorf("--worktree and --identity cannot be combined")}
-	}
-	if (worktree != "" || identity != "") && len(args) == 1 {
-		return usageError{fmt.Errorf("a project argument cannot be combined with --worktree or --identity")}
-	}
-
-	params := rpc.GroupsKillParams{Force: downForceFlag, Release: true}
-	var local *groups.Config
-	switch {
-	case worktree != "":
-		// The daemon resolves paths against its own cwd; make the caller's
-		// answer independent of where it was typed.
-		abs, err := filepath.Abs(worktree)
-		if err != nil {
-			return usageError{fmt.Errorf("resolving --worktree %q: %w", worktree, err)}
-		}
-		params.WorktreePath = &abs
-	case identity != "":
-		params.Identity = &identity
-	case len(args) == 1:
-		params.Name = strings.TrimSpace(args[0])
-	default:
-		wd, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-		cfg, err := nearestConfig(wd)
-		if err != nil {
-			return err
-		}
-		path := cfg.Path
-		params.ConfigPath = &path
-		local = cfg
+	params, local, err := downParams(args)
+	if err != nil {
+		return err
 	}
 
 	c, err := connectForWrite(cmd.Context())
@@ -121,4 +88,50 @@ func downRun(cmd *cobra.Command, args []string) error {
 		fmt.Println(display.Dim(fmt.Sprintf("released %d claimed %s", env.Released, pluralWord(env.Released, "port"))))
 	}
 	return reportErr
+}
+
+// downParams chooses what to stop before any daemon call: one explicit
+// checkout (path or identity), one named project, or the manifest at or above
+// the working directory. The selectors are mutually exclusive, and a
+// filesystem path is made absolute here because the daemon resolves it
+// against its own working directory, not the shell's.
+func downParams(args []string) (rpc.GroupsKillParams, *groups.Config, error) {
+	params := rpc.GroupsKillParams{Force: downForceFlag, Release: true}
+	worktree := strings.TrimSpace(downWorktreeFlag)
+	identity := strings.TrimSpace(downIdentityFlag)
+
+	if worktree != "" && identity != "" {
+		return params, nil, usageError{fmt.Errorf("--worktree and --identity cannot be combined")}
+	}
+	if (worktree != "" || identity != "") && len(args) == 1 {
+		return params, nil, usageError{fmt.Errorf("a project argument cannot be combined with --worktree or --identity")}
+	}
+
+	switch {
+	case worktree != "":
+		abs, err := filepath.Abs(worktree)
+		if err != nil {
+			return params, nil, usageError{fmt.Errorf("resolving --worktree %q: %w", worktree, err)}
+		}
+		params.WorktreePath = &abs
+		return params, nil, nil
+	case identity != "":
+		params.Identity = &identity
+		return params, nil, nil
+	case len(args) == 1:
+		params.Name = strings.TrimSpace(args[0])
+		return params, nil, nil
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		return params, nil, err
+	}
+	cfg, err := nearestConfig(wd)
+	if err != nil {
+		return params, nil, err
+	}
+	path := cfg.Path
+	params.ConfigPath = &path
+	return params, cfg, nil
 }
