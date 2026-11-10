@@ -48,14 +48,18 @@ func serveRun(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	socket := daemon.SocketPath()
-
 	if serveDetach {
 		// The parent only forks; the process that becomes the daemon is the
 		// child, and it is the one that asks for the PATH below.
-		return detachDaemon(cmd.Context(), socket)
+		return detachDaemon(cmd.Context(), daemon.SocketPath())
 	}
+	return runForegroundDaemon(cmd.Context())
+}
 
+// runForegroundDaemon is the process that becomes the daemon. It owns the
+// machine-wide view rather than a project, so its working directory and PATH
+// must not be the checkout that happened to start it.
+func runForegroundDaemon(ctx context.Context) error {
 	// The daemon holds a working directory, not a project: it watches every
 	// checkout on the machine, and every service it starts gets an explicit
 	// cwd from its manifest. Inheriting the caller's directory made the
@@ -92,7 +96,7 @@ func serveRun(cmd *cobra.Command, _ []string) error {
 	}
 
 	srv := daemon.New(daemon.Options{
-		Socket:        socket,
+		Socket:        daemon.SocketPath(),
 		Version:       buildinfo.Version,
 		IdleTimeout:   loadedConfig.Daemon.ResolvedIdleTimeout(),
 		StatsInterval: loadedConfig.Daemon.ResolvedStatsInterval(),
@@ -100,7 +104,7 @@ func serveRun(cmd *cobra.Command, _ []string) error {
 		Logger:        logger,
 	})
 
-	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	if err := srv.Serve(ctx); err != nil {
@@ -137,12 +141,8 @@ func refuseTestBinaryDaemon() error {
 // the socket to come up, so the caller can rely on the daemon being ready when
 // the command returns.
 func detachDaemon(ctx context.Context, socket string) error {
-	if daemon.SocketAlive(socket) {
-		pid := daemon.LockHolderPID(daemon.LockPath())
-		if pid > 0 {
-			return fmt.Errorf("daemon already running (pid %d)", pid)
-		}
-		return fmt.Errorf("daemon already running")
+	if err := alreadyRunningError(socket); err != nil {
+		return err
 	}
 
 	exe, err := os.Executable()
@@ -152,12 +152,9 @@ func detachDaemon(ctx context.Context, socket string) error {
 
 	// The child inherits nothing but the environment: its output goes to the
 	// daemon log so a panic before the logger is up is still recoverable.
-	if err := os.MkdirAll(filepath.Dir(daemon.LogPath()), 0o700); err != nil {
-		return fmt.Errorf("creating the log directory: %w", err)
-	}
-	logFile, err := os.OpenFile(daemon.LogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	logFile, err := openDaemonLog()
 	if err != nil {
-		return fmt.Errorf("opening %s: %w", daemon.LogPath(), err)
+		return err
 	}
 	defer logFile.Close()
 
@@ -186,6 +183,32 @@ func detachDaemon(ctx context.Context, socket string) error {
 	}
 	fmt.Printf("oberth daemon started (pid %d), listening on %s\n", child.Process.Pid, socket)
 	return nil
+}
+
+// alreadyRunningError is the blocked-start decision behind `--detach`: a live
+// socket means another daemon already does the job, and the lock holder's pid
+// is part of the answer when it can be read. A free socket returns nil.
+func alreadyRunningError(socket string) error {
+	if !daemon.SocketAlive(socket) {
+		return nil
+	}
+	if pid := daemon.LockHolderPID(daemon.LockPath()); pid > 0 {
+		return fmt.Errorf("daemon already running (pid %d)", pid)
+	}
+	return fmt.Errorf("daemon already running")
+}
+
+// openDaemonLog prepares the log the detached child's stdout and stderr go to.
+// The directory is created owner-only, the same mode the state directory uses.
+func openDaemonLog() (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(daemon.LogPath()), 0o700); err != nil {
+		return nil, fmt.Errorf("creating the log directory: %w", err)
+	}
+	f, err := os.OpenFile(daemon.LogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("opening %s: %w", daemon.LogPath(), err)
+	}
+	return f, nil
 }
 
 // daemonWorkDir is where a daemon process runs: option-berth's own state
