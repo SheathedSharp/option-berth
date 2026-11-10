@@ -74,13 +74,9 @@ func init() {
 
 func upRun(cmd *cobra.Command, args []string) error {
 	// Validate before resolving a project or issuing any mutating RPC.
-	// An explicit --wait-timeout is a total ceiling and must be usable; when
-	// it is absent each service's own ready_timeout decides.
-	if cmd.Flags().Changed("wait-timeout") && upWaitTimeout <= 0 {
-		return usageError{fmt.Errorf("--wait-timeout must be positive")}
-	}
-	if cmd.Flags().Changed("wait-timeout") && !upWait {
-		return usageError{fmt.Errorf("--wait-timeout requires --wait or --ready")}
+	mode, err := upWaitModeFromFlags(cmd.Flags().Changed("wait-timeout"), upWait, upWaitTimeout)
+	if err != nil {
+		return err
 	}
 	params, cfg, err := upParams(args)
 	if err != nil {
@@ -119,8 +115,27 @@ func upRun(cmd *cobra.Command, args []string) error {
 	}
 	defer stream.Close()
 
-	return consumeStartWithWait(cmd.Context(), c, stream, upJSON, upWait, upWaitTimeout,
-		cmd.Flags().Changed("wait-timeout"), params, cfg)
+	return consumeStartWithWait(cmd.Context(), c, stream, upJSON, mode.wait, mode.timeout,
+		mode.timeoutSet, params, cfg)
+}
+
+// upWaitMode is the readiness wait this invocation asked for. An explicit
+// --wait-timeout is a total ceiling: it must be positive and only makes sense
+// together with --wait. Without it each service's own ready_timeout decides.
+type upWaitMode struct {
+	wait       bool
+	timeout    time.Duration
+	timeoutSet bool
+}
+
+func upWaitModeFromFlags(changed, wait bool, timeout time.Duration) (upWaitMode, error) {
+	if changed && timeout <= 0 {
+		return upWaitMode{}, usageError{fmt.Errorf("--wait-timeout must be positive")}
+	}
+	if changed && !wait {
+		return upWaitMode{}, usageError{fmt.Errorf("--wait-timeout requires --wait or --ready")}
+	}
+	return upWaitMode{wait: wait, timeout: timeout, timeoutSet: changed}, nil
 }
 
 // upParams turns the command line into groups.start params: a name when one was

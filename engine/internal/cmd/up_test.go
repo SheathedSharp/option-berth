@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -559,6 +560,43 @@ func TestPrintStartSummaryListsIncludedDependencies(t *testing.T) {
 	})
 	if strings.Contains(out, "included dependencies") {
 		t.Fatalf("summary = %q, want no included line when nothing was included", out)
+	}
+}
+
+// TestUpWaitModeValidatesBeforeTheStart: a timeout with no wait, or a
+// non-positive timeout, is a usage error raised before any project lookup or
+// RPC, while leaving the flags alone keeps each service's own budget.
+func TestUpWaitModeValidatesBeforeTheStart(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		changed bool
+		wait    bool
+		timeout time.Duration
+		wantErr bool
+		want    upWaitMode
+	}{
+		{"no flags", false, false, 0, false, upWaitMode{}},
+		{"wait without a timeout", false, true, 0, false, upWaitMode{wait: true}},
+		{"a ceiling", true, true, 2 * time.Second, false, upWaitMode{wait: true, timeout: 2 * time.Second, timeoutSet: true}},
+		{"a zero ceiling", true, true, 0, true, upWaitMode{}},
+		{"a ceiling without wait", true, false, time.Second, true, upWaitMode{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := upWaitModeFromFlags(tc.changed, tc.wait, tc.timeout)
+			if tc.wantErr {
+				var usage usageError
+				if !errors.As(err, &usage) {
+					t.Fatalf("err = %v, want a usage error", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("err = %v, want none", err)
+			}
+			if got != tc.want {
+				t.Errorf("mode = %+v, want %+v", got, tc.want)
+			}
+		})
 	}
 }
 
