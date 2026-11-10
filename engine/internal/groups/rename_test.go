@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -43,44 +44,39 @@ func renameKind(err error) (RenameErrorKind, bool) {
 	return 0, false
 }
 
-func TestPlanRenameFileProject(t *testing.T) {
-	c, x, gg := renameWorld(t, true)
-
-	// Named from the worktree: the rename is still the project's.
-	plan, err := PlanRename(gg, x, "shop@feat", "market")
+// requireRenamePlan compares the complete write intent. A project rename must
+// not silently lose an alias, redirect a file write or add unrelated groups.
+func requireRenamePlan(t *testing.T, published []state.Group, index *Index, from string, want RenamePlan) *RenamePlan {
+	t.Helper()
+	plan, err := PlanRename(published, index, from, want.Project)
 	if err != nil {
-		t.Fatalf("PlanRename: %v", err)
+		t.Fatalf("rename %s to %s: %v", from, want.Project, err)
 	}
-	if plan.ConfigPath != filepath.Join(c.main, ConfigName) {
-		t.Errorf("config path = %q, want the main checkout's file", plan.ConfigPath)
+	if !reflect.DeepEqual(plan, &want) {
+		t.Fatalf("rename intent = %#v, want %#v", plan, want)
 	}
-	if plan.Main != c.main || plan.Project != "market" {
-		t.Errorf("plan = %+v", plan)
-	}
-	if len(plan.Renames) != 2 || plan.Renames["shop"] != "market" || plan.Renames["shop@feat"] != "market@feat" {
-		t.Errorf("renames = %v", plan.Renames)
-	}
+	return plan
+}
+
+func TestPlanRenameFileProject(t *testing.T) {
+	c, x, published := renameWorld(t, true)
+	requireRenamePlan(t, published, x, "shop@feat", RenamePlan{
+		Main: c.main, ConfigPath: filepath.Join(c.main, ConfigName), Project: "market",
+		Renames: map[string]string{"shop": "market", "shop@feat": "market@feat"},
+	})
 }
 
 func TestPlanRenameAutoProject(t *testing.T) {
-	c, x, gg := renameWorld(t, false)
-	plan, err := PlanRename(gg, x, "shop", "market")
-	if err != nil {
-		t.Fatalf("PlanRename: %v", err)
-	}
-	if plan.ConfigPath != "" || plan.Main != c.main {
-		t.Errorf("plan = %+v, want an alias of the main checkout", plan)
-	}
-	if plan.Renames["shop"] != "market" || plan.Renames["shop@feat"] != "market@feat" {
-		t.Errorf("renames = %v", plan.Renames)
-	}
-
-	// Applied as an alias, the resolver agrees with the plan.
+	c, x, published := renameWorld(t, false)
+	plan := requireRenamePlan(t, published, x, "shop", RenamePlan{
+		Main: c.main, Project: "market", Renames: map[string]string{"shop": "market", "shop@feat": "market@feat"},
+	})
+	// Applying the write intent is a separate operation; the resolver must agree
+	// with both checkout names, not just with the plan's own map.
 	x.SetAliases(map[string]string{plan.Main: plan.Project})
-	pp := Resolve([]state.Port{nativePort(8000, c.main), nativePort(8001, c.wt)}, NoRuns{}, x)
-	if deref(pp[0].Group) != "market" || deref(pp[1].Group) != "market@feat" {
-		t.Errorf("after the alias: %q, %q", deref(pp[0].Group), deref(pp[1].Group))
-	}
+	checkNaming(t, x, map[string]string{"main": c.main, "linked": c.wt}, []namingExpectation{
+		{"main", 8000, "market", ""}, {"linked", 8001, "market@feat", ""},
+	})
 }
 
 func TestPlanRenameRefusals(t *testing.T) {
@@ -123,18 +119,13 @@ func TestPlanRenameConflictsOnAWorktreeName(t *testing.T) {
 
 func TestPlanRenameConfigOutsideACheckout(t *testing.T) {
 	dir := mkdir(t, tempTree(t), "loose")
-	writeFile(t, filepath.Join(dir, ConfigName), "name: loose\nports: [8000]\n")
+	path := filepath.Join(dir, ConfigName)
+	writeFile(t, path, "name: loose\nports: [8000]\n")
 	x := NewIndex()
 	x.Observe(dir)
-	gg := Groups(nil, x)
-
-	plan, err := PlanRename(gg, x, "loose", "tidy")
-	if err != nil {
-		t.Fatalf("PlanRename: %v", err)
-	}
-	if plan.ConfigPath != filepath.Join(dir, ConfigName) || plan.Main != "" || plan.Renames["loose"] != "tidy" {
-		t.Fatalf("plan = %+v", plan)
-	}
+	requireRenamePlan(t, Groups(nil, x), x, "loose", RenamePlan{
+		ConfigPath: path, Project: "tidy", Renames: map[string]string{"loose": "tidy"},
+	})
 }
 
 func TestValidProjectName(t *testing.T) {
