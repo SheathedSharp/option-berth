@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -60,17 +62,8 @@ func serveRun(cmd *cobra.Command, _ []string) error {
 // machine-wide view rather than a project, so its working directory and PATH
 // must not be the checkout that happened to start it.
 func runForegroundDaemon(ctx context.Context) error {
-	// The daemon holds a working directory, not a project: it watches every
-	// checkout on the machine, and every service it starts gets an explicit
-	// cwd from its manifest. Inheriting the caller's directory made the
-	// daemon's own cwd part of port attribution and left it pointing at a
-	// deleted worktree once that checkout went away.
-	workDir, err := daemonWorkDir()
-	if err != nil {
+	if err := enterDaemonWorkDir(); err != nil {
 		return err
-	}
-	if err := os.Chdir(workDir); err != nil {
-		return fmt.Errorf("moving the daemon to %s: %w", workDir, err)
 	}
 
 	// A service's environment is this process's, so this is the one place the
@@ -80,12 +73,7 @@ func runForegroundDaemon(ctx context.Context) error {
 	// it. See internal/userenv.
 	loginPath, pathChanged := userenv.Ensure(userenv.Timeout)
 
-	// A detached child's stderr is already redirected into the log file, so
-	// mirroring the logger there too would double every line.
-	alsoStderr := os.Getenv(detachedEnv) == ""
-
-	logger, closeLog, err := daemon.NewLogger(daemon.LogPath(),
-		daemon.ParseLogLevel(loadedConfig.Daemon.ResolvedLogLevel()), alsoStderr)
+	logger, closeLog, err := openDaemonLogger()
 	if err != nil {
 		return err
 	}
@@ -119,6 +107,33 @@ func runForegroundDaemon(ctx context.Context) error {
 	return nil
 }
 
+// enterDaemonWorkDir moves the daemon into option-berth's own state directory.
+//
+// The daemon holds a working directory, not a project: it watches every
+// checkout on the machine, and every service it starts gets an explicit cwd
+// from its manifest. Inheriting the caller's directory made the daemon's own
+// cwd part of port attribution and left it pointing at a deleted worktree once
+// that checkout went away.
+func enterDaemonWorkDir() error {
+	workDir, err := daemonWorkDir()
+	if err != nil {
+		return err
+	}
+	if err := os.Chdir(workDir); err != nil {
+		return fmt.Errorf("moving the daemon to %s: %w", workDir, err)
+	}
+	return nil
+}
+
+// openDaemonLogger opens the daemon's log at its configured level. A detached
+// child's stderr is already redirected into that same file, so mirroring the
+// logger there too would double every line.
+func openDaemonLogger() (*slog.Logger, io.Closer, error) {
+	alsoStderr := os.Getenv(detachedEnv) == ""
+	return daemon.NewLogger(daemon.LogPath(),
+		daemon.ParseLogLevel(loadedConfig.Daemon.ResolvedLogLevel()), alsoStderr)
+}
+
 // refuseTestBinaryDaemon stops a Go test binary from becoming the daemon.
 //
 // `go test` links a package into <pkg>.test, and Go's flag parser stops at the
@@ -144,45 +159,66 @@ func detachDaemon(ctx context.Context, socket string) error {
 	if err := alreadyRunningError(socket); err != nil {
 		return err
 	}
-
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("locating the option-berth binary: %w", err)
-	}
-
-	// The child inherits nothing but the environment: its output goes to the
-	// daemon log so a panic before the logger is up is still recoverable.
-	logFile, err := openDaemonLog()
+	child, logFile, err := detachedChild()
 	if err != nil {
 		return err
 	}
 	defer logFile.Close()
+
+	pid, err := startDaemonChild(child)
+	if err != nil {
+		return err
+	}
+	if err := client.WaitForSocket(ctx, socket, client.AutostartTimeout); err != nil {
+		return fmt.Errorf("%w (see %s)", err, daemon.LogPath())
+	}
+	fmt.Printf("oberth daemon started (pid %d), listening on %s\n", pid, socket)
+	return nil
+}
+
+// detachedChild is the process that becomes the daemon: this binary re-executed
+// as `serve`, detached from this shell, running in the state directory and with
+// the daemon log as its only output — so a panic before its logger is up is
+// still recoverable.
+func detachedChild() (*exec.Cmd, *os.File, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, nil, fmt.Errorf("locating the option-berth binary: %w", err)
+	}
+	logFile, err := openDaemonLog()
+	if err != nil {
+		return nil, nil, err
+	}
+	// The child re-checks this, but setting it here means the daemon never
+	// starts out inside the checkout that happened to autostart it.
+	workDir, err := daemonWorkDir()
+	if err != nil {
+		logFile.Close()
+		return nil, nil, err
+	}
 
 	child := exec.Command(exe, "serve")
 	child.Env = append(os.Environ(), detachedEnv+"=1")
 	child.Stdin = nil
 	child.Stdout = logFile
 	child.Stderr = logFile
-	// The child re-checks this, but setting it here means the daemon never
-	// starts out inside the checkout that happened to autostart it.
-	workDir, err := daemonWorkDir()
-	if err != nil {
-		return err
-	}
 	child.Dir = workDir
 	detachProcess(child)
+	return child, logFile, nil
+}
 
+// startDaemonChild launches the detached child and releases it: the daemon has
+// to outlive this process, so nothing here waits for it. The pid is the only
+// thing the caller can report about a process it deliberately does not reap.
+//
+// A test replaces this to observe the launch without making a second test
+// binary run the suite as a daemon.
+var startDaemonChild = func(child *exec.Cmd) (int, error) {
 	if err := child.Start(); err != nil {
-		return fmt.Errorf("starting the daemon: %w", err)
+		return 0, fmt.Errorf("starting the daemon: %w", err)
 	}
-	// Do not wait for the child: it is the daemon. Release its resources.
 	go func() { _ = child.Wait() }()
-
-	if err := client.WaitForSocket(ctx, socket, client.AutostartTimeout); err != nil {
-		return fmt.Errorf("%w (see %s)", err, daemon.LogPath())
-	}
-	fmt.Printf("oberth daemon started (pid %d), listening on %s\n", child.Process.Pid, socket)
-	return nil
+	return child.Process.Pid, nil
 }
 
 // alreadyRunningError is the blocked-start decision behind `--detach`: a live
