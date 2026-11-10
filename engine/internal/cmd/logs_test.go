@@ -30,6 +30,49 @@ func TestReadFileLogsReturnsTailAndSource(t *testing.T) {
 	}
 }
 
+// TestSelectBoundPortChoosesOneRow pins the lookup's three answers: the
+// matching row, the documented not_found, and ambiguous with the --ip remedy.
+func TestSelectBoundPortChoosesOneRow(t *testing.T) {
+	rows := []ports.ListeningPort{
+		{Port: 3000, BindAddress: "127.0.0.1"},
+		{Port: 3000, BindAddress: "0.0.0.0"},
+		{Port: 5432, BindAddress: "0.0.0.0"},
+	}
+
+	row, err := selectBoundPort(rows, 3000, "127.0.0.1")
+	if err != nil || row == nil || row.BindAddress != "127.0.0.1" {
+		t.Fatalf("row = %+v err = %v, want the bound listener", row, err)
+	}
+
+	_, err = selectBoundPort(rows, 3000, "")
+	if code, _, _ := describe(err); code != "ambiguous" {
+		t.Fatalf("code = %q, want ambiguous for a multi-bind port", code)
+	}
+
+	_, err = selectBoundPort(rows, 9999, "")
+	if code, msg, _ := describe(err); code != "not_found" || !strings.Contains(msg, "9999") {
+		t.Fatalf("code = %q msg = %q, want not_found naming the port", code, msg)
+	}
+
+	_, err = selectBoundPort(rows, 3000, "::1")
+	if code, msg, _ := describe(err); code != "not_found" || !strings.Contains(msg, "::1:3000") {
+		t.Fatalf("code = %q msg = %q, want not_found naming the bind address", code, msg)
+	}
+}
+
+// TestLogSelectorCarriesPortAndOnlyANonEmptyBind: the wire selector names the
+// port always and the bind address only when there is one.
+func TestLogSelectorCarriesPortAndOnlyANonEmptyBind(t *testing.T) {
+	sel := logSelector(ports.ListeningPort{Port: 3000, BindAddress: "127.0.0.1"})
+	if sel.Port == nil || *sel.Port != 3000 || sel.BindAddress == nil || *sel.BindAddress != "127.0.0.1" {
+		t.Fatalf("selector = %+v, want port and bind", sel)
+	}
+	sel = logSelector(ports.ListeningPort{Port: 5432})
+	if sel.Port == nil || *sel.Port != 5432 || sel.BindAddress != nil {
+		t.Fatalf("selector = %+v, want no bind field", sel)
+	}
+}
+
 func TestReadFileLogsMissingFileIsNotFound(t *testing.T) {
 	_, err := readFileLogs(filepath.Join(t.TempDir(), "missing.log"), 10)
 	if err == nil {
