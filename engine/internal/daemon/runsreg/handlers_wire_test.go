@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
@@ -63,19 +64,21 @@ func TestRunFromWireDropsUntrustworthyEvidence(t *testing.T) {
 	}
 }
 
-// TestCheckCwdReportsAnUnavailableWorkingDirectory covers the one cwd the
-// daemon cannot name: the caller sent none and the daemon's own working
-// directory is gone. Both spellings of "no usable cwd" are their own error, and
-// the message is asserted because the code alone cannot tell them apart — a
-// failed `os.Getwd` that fell through to the Abs branch would answer
+// TestCheckCwdReportsAnUnavailableWorkingDirectory covers the cwd the caller
+// did not name, so the daemon's own working directory stands in for it. When
+// that directory is gone the registration must not be answered with a path
+// that means nothing: both spellings of "no usable cwd" are their own error,
+// and the message is asserted because the code alone cannot tell them apart —
+// a failed `os.Getwd` that fell through to the Abs branch would answer
 // invalid_params either way, with a different remedy for the user.
 //
 // The deletion is of this process's own t.TempDir, restored by the cleanup
-// registered before it. Losing the directory does not cost every platform the
-// same thing: removing the active cwd does not guarantee that os.Getwd then
-// fails, so the daemon's own lookup is observed first and the assertions only
-// run where "the daemon's cwd is gone" is actually true. A filesystem that
-// refuses to remove the active directory is skipped for the same reason.
+// registered before it. Removing the active directory does not by itself make
+// the daemon's own cwd unavailable — macOS CI has been observed to still name
+// the removed directory through os.Getwd — so the lookup is asked which case
+// this is and each one is held to its own contract: a named directory is
+// accepted as the cwd, an unnamed one is the two errors below. A filesystem
+// that refuses to remove the active directory is skipped rather than asserted.
 func TestCheckCwdReportsAnUnavailableWorkingDirectory(t *testing.T) {
 	original, err := os.Getwd()
 	if err != nil {
@@ -93,14 +96,27 @@ func TestCheckCwdReportsAnUnavailableWorkingDirectory(t *testing.T) {
 	if err := os.Remove(dir); err != nil {
 		t.Skipf("filesystem cannot remove the active cwd: %v", err)
 	}
-	// The branch under test is "the daemon cannot name its own cwd", and that
-	// depends on the platform's own lookup rather than on the removal: macOS
-	// still resolves the unlinked directory from its parent pointer, so the
-	// daemon would get a stale but usable path and have no failure to report.
-	// Ask the lookup instead of assuming the outcome, and say which capability
-	// was observed so a skip here cannot hide a real failure.
+	// Both cases below are real: the daemon either can or cannot name its own
+	// cwd, and it is the platform's lookup — not the removal — that decides
+	// which one this run is in.
 	if wd, err := os.Getwd(); err == nil {
-		t.Skipf("os.Getwd still names the removed directory as %q on this platform: the daemon's own cwd cannot be made unavailable, so neither error branch below can be reached here", wd)
+		// The directory is unlinked but still named, so CheckCwd has a usable
+		// path and must accept it: the empty cwd resolves to the named
+		// directory, and a relative cwd resolves below it. The expectation
+		// goes through groups.Canonical because the daemon canonicalises what
+		// it returns and the named spelling need not be the real one — on
+		// macOS a temp directory can be reached through /var while its real
+		// spelling starts with /private/var.
+		base := groups.Canonical(wd)
+		got, err := CheckCwd("", true)
+		if err != nil || got != base {
+			t.Fatalf("empty cwd in a removed but still named directory = %q, %v; want %q", got, err, base)
+		}
+		got, err = CheckCwd("relative-child", true)
+		if want := filepath.Join(base, "relative-child"); err != nil || got != want {
+			t.Fatalf("relative cwd in a removed but still named directory = %q, %v; want %q", got, err, want)
+		}
+		return
 	}
 
 	_, err = CheckCwd("", true)
