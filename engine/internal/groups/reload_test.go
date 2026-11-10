@@ -1,6 +1,7 @@
 package groups
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -19,40 +20,94 @@ func writeConfig(t *testing.T, dir, body string) string {
 // manifestIndexState is the caller-visible result of a reload, not an
 // implementation snapshot: usable groups, errors, and the canonical file keys.
 type manifestIndexState struct {
-	group    string
-	services []string
-	invalid  bool
+	cfg     *Config
+	invalid *ConfigError
+}
+
+func requireConfig(t *testing.T, got *Config, want *Config) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("config = %#v, want %#v", got, want)
+	}
 }
 
 func assertManifestIndex(t *testing.T, x *Index, path string, roots []string, want manifestIndexState) {
 	t.Helper()
 	loaded, bad := x.Reload(roots)
-	count := 0
-	if want.group != "" {
-		count = 1
-	}
-	if loaded != count || len(x.Configs()) != count {
-		t.Fatalf("loaded/configs = %d/%d, want %d", loaded, len(x.Configs()), count)
-	}
-	errors := 0
-	if want.invalid {
-		errors = 1
-	}
-	if len(bad) != errors {
-		t.Fatalf("invalid files = %v, want %d", bad, errors)
-	}
-	if want.invalid && bad[0].Path != Canonical(path) {
-		t.Errorf("error path = %s, want %s", bad[0].Path, Canonical(path))
-	}
-	if want.group == "" {
+	canon := Canonical(path)
+	if want.invalid != nil {
+		ce := *want.invalid
+		if ce.Path == "" {
+			ce.Path = canon
+		}
+		if loaded != 0 || x.Configs() != nil {
+			t.Fatalf("loaded/configs = %d/%v, want 0/nil", loaded, x.Configs())
+		}
+		if len(bad) != 1 {
+			t.Fatalf("invalid files = %#v, want 1", bad)
+		}
+		if bad[0].Path != canon {
+			t.Errorf("error path = %s, want %s", bad[0].Path, canon)
+		}
+		var got *ConfigError
+		if !errors.As(bad[0].Err, &got) || !reflect.DeepEqual(got, &ce) {
+			t.Errorf("invalid error = %#v (%v), want %#v", bad[0].Err, bad[0].Err, &ce)
+		}
+		if !reflect.DeepEqual(x.Known(), []string{canon}) {
+			t.Errorf("Known() = %v, want the invalid path still listed", x.Known())
+		}
+		if _, ok := x.ByPath(path); ok {
+			t.Error("ByPath returned a config for an invalid file")
+		}
+		if x.Stale() {
+			t.Fatal("reloaded index is stale")
+		}
 		return
 	}
-	cfg, found := x.Named(want.group)
-	if !found {
-		t.Fatalf("Named(%q) missed reloaded manifest", want.group)
+	if !reflect.DeepEqual(bad, []InvalidConfig{}) {
+		t.Fatalf("invalid files = %#v, want none", bad)
 	}
-	if got := names(cfg); !reflect.DeepEqual(got, want.services) {
-		t.Errorf("services = %v, want %v", got, want.services)
+	if want.cfg == nil {
+		if loaded != 0 || x.Configs() != nil {
+			t.Fatalf("loaded/configs = %d/%v, want 0/nil", loaded, x.Configs())
+		}
+		if !reflect.DeepEqual(x.Known(), []string{}) {
+			t.Errorf("Known() = %v, want an empty list", x.Known())
+		}
+		if _, ok := x.ByPath(path); ok {
+			t.Error("ByPath returned a config when nothing is loaded")
+		}
+		if x.Stale() {
+			t.Fatal("reloaded index is stale")
+		}
+		return
+	}
+	cfg := *want.cfg
+	if cfg.Path == "" {
+		cfg.Path = canon
+	}
+	if cfg.Dir == "" {
+		cfg.Dir = filepath.Dir(canon)
+	}
+	if loaded != 1 || len(x.Configs()) != 1 {
+		t.Fatalf("loaded/configs = %d/%d, want 1", loaded, len(x.Configs()))
+	}
+	requireConfig(t, x.Configs()[0], &cfg)
+	got, found := x.Named(cfg.Name)
+	if !found {
+		t.Fatalf("Named(%q) missed reloaded manifest", cfg.Name)
+	}
+	requireConfig(t, got, &cfg)
+	if byPath, ok := x.ByPath(path); !ok {
+		t.Fatalf("ByPath(%s) missed reloaded manifest", path)
+	} else {
+		requireConfig(t, byPath, &cfg)
+	}
+	if !reflect.DeepEqual(x.Known(), []string{canon}) {
+		t.Errorf("Known() = %v, want [%s]", x.Known(), canon)
+	}
+	if x.Stale() {
+		t.Fatal("reloaded index is stale")
 	}
 }
 
@@ -63,7 +118,9 @@ func TestReloadPicksUpANewFile(t *testing.T) {
 	x := NewIndex()
 	assertManifestIndex(t, x, filepath.Join(dir, ConfigName), []string{dir}, manifestIndexState{})
 	path := writeConfig(t, dir, "name: later\nservices:\n  - name: api\n    port: 8000\n")
-	assertManifestIndex(t, x, path, []string{dir}, manifestIndexState{group: "later", services: []string{"api"}})
+	assertManifestIndex(t, x, path, []string{dir}, manifestIndexState{
+		cfg: &Config{Name: "later", Services: []Service{{Name: "api", Port: 8000}}},
+	})
 }
 
 func TestReloadPicksUpAnEditAndADelete(t *testing.T) {
@@ -77,12 +134,16 @@ func TestReloadPicksUpAnEditAndADelete(t *testing.T) {
 	if x.Stale() {
 		t.Fatal("freshly observed manifest is stale")
 	}
+	requireConfig(t, x.Configs()[0], &Config{
+		Name: "demo", Dir: Canonical(dir), Path: Canonical(path),
+		Services: []Service{{Name: "api"}},
+	})
 	for _, edit := range []struct {
 		title, body string
 		remove      bool
 		state       manifestIndexState
 	}{
-		{title: "edit", body: "name: renamed\nservices:\n  - name: api\n  - name: web\n", state: manifestIndexState{group: "renamed", services: []string{"api", "web"}}},
+		{title: "edit", body: "name: renamed\nservices:\n  - name: api\n  - name: web\n", state: manifestIndexState{cfg: &Config{Name: "renamed", Services: []Service{{Name: "api"}, {Name: "web"}}}}},
 		{title: "delete", remove: true},
 	} {
 		t.Run(edit.title, func(t *testing.T) {
@@ -108,13 +169,17 @@ func TestReloadReportsInvalidFiles(t *testing.T) {
 	dir := t.TempDir()
 	path := writeConfig(t, dir, "name: bad name\nservices:\n  - name: api\n")
 	x := NewIndex()
-	assertManifestIndex(t, x, path, []string{dir}, manifestIndexState{invalid: true})
+	assertManifestIndex(t, x, path, []string{dir}, manifestIndexState{
+		invalid: &ConfigError{Problems: []string{`name "bad name" contains " "; names may not contain slashes or whitespace`}},
+	})
 	// The byte change, not a sleep or a timestamp tick, is the freshness proof.
 	writeConfig(t, dir, "name: fixed\nservices:\n  - name: api\n")
 	if !x.Stale() {
 		t.Fatal("repairing an invalid file did not invalidate its observation")
 	}
-	assertManifestIndex(t, x, path, nil, manifestIndexState{group: "fixed", services: []string{"api"}})
+	assertManifestIndex(t, x, path, nil, manifestIndexState{
+		cfg: &Config{Name: "fixed", Services: []Service{{Name: "api"}}},
+	})
 }
 
 // TestKnownAndByPath are what the daemon's config handlers resolve through.
@@ -126,19 +191,23 @@ func TestKnownAndByPath(t *testing.T) {
 
 	// Observe resolves symlinks, so on macOS the indexed path is the
 	// /private/var form of the temp dir; that is the path the daemon serves.
-	known := x.Known()
-	if len(known) != 1 {
-		t.Fatalf("Known() = %v", known)
+	want := &Config{
+		Name: "demo", Dir: Canonical(dir), Path: Canonical(path),
+		Services: []Service{{Name: "api"}},
 	}
-	if filepath.Base(known[0]) != ConfigName {
-		t.Fatalf("Known() = %v", known)
+	if !reflect.DeepEqual(x.Known(), []string{Canonical(path)}) {
+		t.Fatalf("Known() = %v, want [%s]", x.Known(), Canonical(path))
 	}
-	if cfg, ok := x.ByPath(known[0]); !ok || cfg.Name != "demo" {
-		t.Fatalf("ByPath(%s) = %+v, %v", known[0], cfg, ok)
+	if cfg, ok := x.ByPath(x.Known()[0]); !ok {
+		t.Fatalf("ByPath(%s) missed the indexed path", x.Known()[0])
+	} else {
+		requireConfig(t, cfg, want)
 	}
 	// The path the user typed resolves too, symlinked temp dir and all.
-	if cfg, ok := x.ByPath(path); !ok || cfg.Name != "demo" {
-		t.Fatalf("ByPath(%s) = %+v, %v", path, cfg, ok)
+	if cfg, ok := x.ByPath(path); !ok {
+		t.Fatalf("ByPath(%s) missed the typed path", path)
+	} else {
+		requireConfig(t, cfg, want)
 	}
 	if _, ok := x.ByPath(filepath.Join(dir, "nope.yaml")); ok {
 		t.Error("ByPath matched a file that is not indexed")
