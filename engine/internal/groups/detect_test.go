@@ -3,6 +3,7 @@ package groups
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -14,24 +15,23 @@ func writeAt(t *testing.T, dir, name, body string) {
 	}
 }
 
-func declaredNames(declared []Declared) string {
-	out := make([]string, 0, len(declared))
-	for _, d := range declared {
-		out = append(out, d.Name)
+func requireDeclared(t *testing.T, got, want []Declared) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Detect = %#v, want %#v", got, want)
 	}
-	return strings.Join(out, ",")
 }
 
 func TestDetectNodeScript(t *testing.T) {
 	for _, tt := range []struct {
-		name, scripts, lock, wantCmd string
+		name, scripts, lock, wantName, wantCmd, wantSource string
 	}{
-		{"dev with npm", `{"dev":"vite","build":"vite build"}`, "", "npm run dev"},
-		{"start when there is no dev", `{"start":"node server.js"}`, "", "npm run start"},
-		{"dev wins over start", `{"start":"node server.js","dev":"vite"}`, "", "npm run dev"},
-		{"pnpm from the lockfile", `{"dev":"vite"}`, "pnpm-lock.yaml", "pnpm run dev"},
-		{"yarn from the lockfile", `{"dev":"vite"}`, "yarn.lock", "yarn run dev"},
-		{"bun from the lockfile", `{"dev":"vite"}`, "bun.lock", "bun run dev"},
+		{"dev with npm", `{"dev":"vite","build":"vite build"}`, "", "dev", "npm run dev", "package.json (scripts.dev)"},
+		{"start when there is no dev", `{"start":"node server.js"}`, "", "start", "npm run start", "package.json (scripts.start)"},
+		{"dev wins over start", `{"start":"node server.js","dev":"vite"}`, "", "dev", "npm run dev", "package.json (scripts.dev)"},
+		{"pnpm from the lockfile", `{"dev":"vite"}`, "pnpm-lock.yaml", "dev", "pnpm run dev", "package.json (scripts.dev)"},
+		{"yarn from the lockfile", `{"dev":"vite"}`, "yarn.lock", "dev", "yarn run dev", "package.json (scripts.dev)"},
+		{"bun from the lockfile", `{"dev":"vite"}`, "bun.lock", "dev", "bun run dev", "package.json (scripts.dev)"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -39,15 +39,9 @@ func TestDetectNodeScript(t *testing.T) {
 			if tt.lock != "" {
 				writeAt(t, dir, tt.lock, "")
 			}
-			got := Detect(dir)
-			if len(got) != 1 || got[0].Cmd != tt.wantCmd {
-				t.Fatalf("Detect = %+v, want one declaration running %q", got, tt.wantCmd)
-			}
-			// The comment that carries this into the file has to say where it
-			// came from: a command with no source is one a reader cannot check.
-			if !strings.Contains(got[0].Source, "package.json") {
-				t.Errorf("source = %q, want the file it was read from", got[0].Source)
-			}
+			requireDeclared(t, Detect(dir), []Declared{{
+				Name: tt.wantName, Cmd: tt.wantCmd, Source: tt.wantSource,
+			}})
 		})
 	}
 }
@@ -55,13 +49,9 @@ func TestDetectNodeScript(t *testing.T) {
 func TestDetectIgnoresAPackageWithNothingToRun(t *testing.T) {
 	dir := t.TempDir()
 	writeAt(t, dir, "package.json", `{"scripts":{"build":"tsc","test":"vitest"}}`)
-	if got := Detect(dir); len(got) != 0 {
-		t.Errorf("Detect = %+v, want nothing: neither script runs the project", got)
-	}
+	requireDeclared(t, Detect(dir), nil)
 	writeAt(t, dir, "package.json", "not json at all")
-	if got := Detect(dir); len(got) != 0 {
-		t.Errorf("Detect = %+v, want nothing from a broken package.json", got)
-	}
+	requireDeclared(t, Detect(dir), nil)
 }
 
 func TestDetectCompose(t *testing.T) {
@@ -90,47 +80,23 @@ services:
     image: redis
     ports: ["${CACHE_PORT:-6390}:6379"]
 `)
-	got := Detect(dir)
-	if declaredNames(got) != "api,cache,db,probe,web,worker" {
-		t.Fatalf("Detect = %s, want every compose service in name order", declaredNames(got))
-	}
-	byName := map[string]Declared{}
-	for _, d := range got {
-		byName[d.Name] = d
-	}
-	if d := byName["web"]; d.Port != 8080 || d.Cmd != "docker compose up web" {
-		t.Errorf("web = %+v", d)
-	}
-	if d := byName["api"]; d.Port != 8000 {
-		t.Errorf("api port = %d, want the host side of a three-part mapping", d.Port)
-	}
-	if d := byName["db"]; d.Port != 5433 {
-		t.Errorf("db port = %d, want the long syntax's published port", d.Port)
-	}
-	if d := byName["probe"]; d.Port != 0 {
-		t.Errorf("probe port = %d: a bare container port publishes nothing fixed", d.Port)
-	}
-	// `${VAR:-default}` is how most compose files spell a configurable port.
-	// Reading the colon inside it as the mapping's separator used to lose the
-	// port entirely, and a service with no port reads as "never running".
-	if d := byName["cache"]; d.Port != 6390 {
-		t.Errorf("cache port = %d, want the default from ${CACHE_PORT:-6390}", d.Port)
-	}
-	if d := byName["worker"]; d.Port != 0 || d.Cmd != "docker compose up worker" {
-		t.Errorf("worker = %+v, want a declaration with no port", d)
-	}
-	if d := byName["web"]; d.Source != "compose.yaml" {
-		t.Errorf("source = %q, want the file the declaration was read from", d.Source)
-	}
+	requireDeclared(t, Detect(dir), []Declared{
+		{Name: "api", Cmd: "docker compose up api", Port: 8000, Source: "compose.yaml"},
+		{Name: "cache", Cmd: "docker compose up cache", Port: 6390, Source: "compose.yaml"},
+		{Name: "db", Cmd: "docker compose up db", Port: 5433, Source: "compose.yaml"},
+		{Name: "probe", Cmd: "docker compose up probe", Source: "compose.yaml"},
+		{Name: "web", Cmd: "docker compose up web", Port: 8080, Source: "compose.yaml"},
+		{Name: "worker", Cmd: "docker compose up worker", Source: "compose.yaml"},
+	})
 }
 
 func TestDetectPrefersTheComposeFileComposeWouldUse(t *testing.T) {
 	dir := t.TempDir()
 	writeAt(t, dir, "compose.yaml", "services:\n  first:\n    image: a\n")
 	writeAt(t, dir, "docker-compose.yml", "services:\n  second:\n    image: b\n")
-	if got := Detect(dir); declaredNames(got) != "first" {
-		t.Errorf("Detect = %s, want compose.yaml to win", declaredNames(got))
-	}
+	requireDeclared(t, Detect(dir), []Declared{
+		{Name: "first", Cmd: "docker compose up first", Source: "compose.yaml"},
+	})
 }
 
 // A declaration is material for whoever writes the file, never a service: it
@@ -140,8 +106,21 @@ func TestDeclarationsAreCommentMaterial(t *testing.T) {
 	writeAt(t, dir, "compose.yaml", "services:\n  db:\n    image: postgres\n    ports: [\"5432:5432\"]\n")
 	writeAt(t, dir, "package.json", `{"scripts":{"dev":"vite"}}`)
 
+	declared := Detect(dir)
+	requireDeclared(t, declared, []Declared{
+		{Name: "dev", Cmd: "npm run dev", Source: "package.json (scripts.dev)"},
+		{Name: "db", Cmd: "docker compose up db", Port: 5432, Source: "compose.yaml"},
+	})
+
 	cfg := Propose(dir, nil, nil)
-	cfg.Declared = Detect(dir)
+	if cfg.Name != "shop" || cfg.Path != filepath.Join(dir, ConfigName) || cfg.Dir != dir {
+		t.Fatalf("Propose = name %q dir %q path %q, want shop in %s", cfg.Name, cfg.Dir, cfg.Path, dir)
+	}
+	if cfg.Services != nil || cfg.Candidates != nil {
+		t.Fatalf("Propose started with services %#v candidates %#v, want nil", cfg.Services, cfg.Candidates)
+	}
+
+	cfg.Declared = declared
 	data, err := Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -151,12 +130,13 @@ func TestDeclarationsAreCommentMaterial(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the file does not load: %v\n%s", err, out)
 	}
-	if len(parsed.Services) != 0 {
-		t.Errorf("services = %+v, want none: nothing but a person writes the list", parsed.Services)
+	if parsed.Name != "shop" || len(parsed.Services) != 0 || parsed.Declared != nil {
+		t.Errorf("parsed name=%q services=%#v declared=%#v; want shop, no services, declarations not loaded",
+			parsed.Name, parsed.Services, parsed.Declared)
 	}
 	for _, want := range []string{
-		"#   dev  npm run dev  [package.json (scripts.dev)]",
-		"#   db   docker compose up db  —  port 5432  [compose.yaml]",
+		"name: shop\nservices: []\n",
+		"# Stated by this project's own files. A command, but again not a declaration:\n# a compose service is one line of somebody else's file, and copying it up is\n# your call — `docker compose up <one service>` starts that service's\n# dependencies too, and those may be services you declare yourself.\n#\n#   dev  npm run dev  [package.json (scripts.dev)]\n#   db   docker compose up db  —  port 5432  [compose.yaml]\n#\n# Nothing was listening inside this project when this file was written.\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("%q is missing from the generated file:\n%s", want, out)
