@@ -64,6 +64,22 @@ func init() {
 	rootCmd.AddCommand(completionCmd)
 }
 
+// scanCompletionPorts is the listener scan completion asks for. Both halves of
+// its answer are the contract: the rows to name, and the failure that must not
+// be offered as "there is nothing to complete".
+var scanCompletionPorts = func() ([]ports.ListeningPort, error) {
+	pp, err := ports.Scan()
+	if err != nil {
+		return nil, err
+	}
+	docker.EnrichPorts(pp)
+	ports.Enrich(pp)
+	// Completion renders names without building the group collection; stamp
+	// run ownership so a `oberth start` service completes as its service name.
+	groups.StampRuns(pp)
+	return pp, nil
+}
+
 // completePort provides shell completions for commands that take a <port> argument.
 // It scans listening ports, enriches them with Docker and process info, and returns
 // completions formatted as "port\tdescription".
@@ -72,16 +88,10 @@ func completePort(cmd *cobra.Command, args []string, toComplete string) ([]strin
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 
-	pp, err := ports.Scan()
+	pp, err := scanCompletionPorts()
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveError
 	}
-
-	docker.EnrichPorts(pp)
-	ports.Enrich(pp)
-	// Completion renders names without building the group collection; stamp
-	// run ownership so a `oberth start` service completes as its service name.
-	groups.StampRuns(pp)
 
 	return portCompletions(pp), cobra.ShellCompDirectiveNoFileComp
 }
