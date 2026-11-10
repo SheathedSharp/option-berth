@@ -59,31 +59,37 @@ func TestIsForwarderProcess(t *testing.T) {
 
 // TestHeldByForwarder pins which observation the decision rests on: a reported
 // process name outranks a command line, and an owner nobody named is not
-// evidence against the cached list.
+// evidence against the cached list. The decision must not rewrite the row.
 func TestHeldByForwarder(t *testing.T) {
-	cases := []struct {
-		label string
-		row   ports.ListeningPort
-		want  bool
+	fixtures := []struct {
+		label   string
+		process string
+		command string
+		pid     int
+		want    bool
 	}{
-		{"a forwarder reported by name", ports.ListeningPort{Process: "com.docke"}, true},
-		{"a native process reported by name", ports.ListeningPort{Process: "node"}, false},
+		{label: "a forwarder reported by name", process: "com.docke", want: true},
+		{label: "a native process reported by name", process: "node", want: false},
 		// The name is the scanner's direct observation, so it outranks a
 		// command line that happens to mention a forwarder.
-		{"a name beats a misleading command", ports.ListeningPort{Process: "node", Command: "/usr/bin/docker-proxy -proto tcp"}, false},
-		{"a forwarder only in the command", ports.ListeningPort{Command: "/Applications/Docker.app/Contents/MacOS/com.docker.backend services"}, true},
-		{"a quoted Windows command", ports.ListeningPort{Command: `"C:\Program Files\Docker\Docker\resources\com.docker.backend.exe" --x`}, true},
-		{"a native process only in the command", ports.ListeningPort{Command: "node server.js"}, false},
+		{label: "a name beats a misleading command", process: "node", command: "/usr/bin/docker-proxy -proto tcp", want: false},
+		{label: "a forwarder only in the command", command: "/Applications/Docker.app/Contents/MacOS/com.docker.backend services", want: true},
+		{label: "a quoted Windows command", command: `"C:\Program Files\Docker\Docker\resources\com.docker.backend.exe" --x`, want: true},
+		{label: "a native process only in the command", command: "node server.js", want: false},
 		// Windows' netstat reports pids without names before ports.Enrich runs.
 		// Nothing named the owner, so there is no evidence against the cached
 		// list and it keeps applying.
-		{"an owner nobody named", ports.ListeningPort{PID: 4242}, true},
+		{label: "an owner nobody named", pid: 4242, want: true},
 	}
-	for _, tc := range cases {
-		t.Run(tc.label, func(t *testing.T) {
-			row := tc.row
-			if got := heldByForwarder(&row); got != tc.want {
-				t.Errorf("heldByForwarder(%+v) = %v, want %v", row, got, tc.want)
+	for _, fx := range fixtures {
+		t.Run(fx.label, func(t *testing.T) {
+			row := ports.ListeningPort{Process: fx.process, Command: fx.command, PID: fx.pid}
+			beforeProcess, beforeCommand, beforePID := row.Process, row.Command, row.PID
+			if got := heldByForwarder(&row); got != fx.want {
+				t.Errorf("heldByForwarder(%+v) = %v, want %v", row, got, fx.want)
+			}
+			if row.Process != beforeProcess || row.Command != beforeCommand || row.PID != beforePID {
+				t.Errorf("heldByForwarder mutated the row: %+v", row)
 			}
 		})
 	}
