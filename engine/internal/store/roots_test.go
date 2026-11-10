@@ -153,21 +153,13 @@ func TestRootsSurviveAReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "option-berth.db")
 	root := t.TempDir()
 
-	first, err := Open(path)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
+	first := mustOpenPath(t, path, "the first handle")
 	if err := first.AddRoot(root); err != nil {
 		t.Fatalf("AddRoot: %v", err)
 	}
-	if err := first.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
+	requireRoots(t, first, "before close", resolved(t, root))
+	closeStore(t, first)
 
-	second, err := Open(path)
-	if err != nil {
-		t.Fatalf("reopen: %v", err)
-	}
-	t.Cleanup(func() { _ = second.Close() })
+	second := mustOpenPath(t, path, "the reopened handle")
 	requireRoots(t, second, "after reopen", resolved(t, root))
 }
