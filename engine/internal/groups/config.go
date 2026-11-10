@@ -774,20 +774,21 @@ func (c *Config) dependencyProblems(services map[string]bool) []string {
 // Absolute paths are rejected outright: the field is documented as relative to
 // the file.
 func (c *Config) cwdInside(cwd string) bool {
-	if filepath.IsAbs(cwd) || strings.HasPrefix(cwd, "/") || strings.HasPrefix(cwd, `\`) {
+	if absoluteManifestPath(cwd) {
 		return false
 	}
-	rel := filepath.Clean(filepath.FromSlash(cwd))
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return false
-	}
-	return true
+	cleaned := filepath.Clean(filepath.FromSlash(cwd))
+	return cleaned != ".." && !strings.HasPrefix(cleaned, ".."+string(filepath.Separator))
 }
 
-// prepareInputProblems checks the files a prepare step declares. They are read
-// relative to the service's cwd, and they must stay inside the directory that
-// holds the manifest: a manifest may not hash files anywhere on the machine.
-// Declaring inputs without a command is a contradiction, not a harmless no-op.
+// absoluteManifestPath also recognizes the other platform's root separator.
+// This is lexical validation, not a filesystem/symlink containment check.
+func absoluteManifestPath(path string) bool {
+	return filepath.IsAbs(path) || strings.HasPrefix(path, "/") || strings.HasPrefix(path, `\`)
+}
+
+// prepareInputProblems checks command presence before looking at any paths;
+// absent inputs do not require prepare, while nonempty inputs always do.
 func (c *Config) prepareInputProblems(s Service, where string) []string {
 	if len(s.PrepareInputs) == 0 {
 		return nil
@@ -795,40 +796,39 @@ func (c *Config) prepareInputProblems(s Service, where string) []string {
 	if strings.TrimSpace(s.Prepare) == "" {
 		return []string{where + ": prepare_inputs needs a prepare command"}
 	}
+	return c.inputPathProblems(s.Cwd, "prepare_inputs", s.PrepareInputs, where)
+}
+
+// sourceProblems preserves the distinction in the declaration itself: nil
+// defaults to cwd, [] opts out. Neither form produces a validation problem.
+func (c *Config) sourceProblems(s Service, where string) []string {
+	return c.inputPathProblems(s.Cwd, "sources", s.Sources, where)
+}
+
+// inputPathProblems is the single containment policy for files the manifest
+// asks the engine to fingerprint. Inputs are cwd-relative, but may climb from
+// a nested cwd as long as they remain inside the manifest directory.
+func (c *Config) inputPathProblems(cwd, field string, paths []string, where string) []string {
 	var problems []string
-	for _, input := range s.PrepareInputs {
-		switch {
-		case strings.TrimSpace(input) == "":
-			problems = append(problems, where+": prepare_inputs has an empty path")
-		case filepath.IsAbs(input) || strings.HasPrefix(input, "/") || strings.HasPrefix(input, `\`):
-			problems = append(problems, fmt.Sprintf("%s: prepare_inputs path %q must be relative to cwd", where, input))
-		case !c.cwdInside(filepath.Join(s.Cwd, input)):
-			problems = append(problems, fmt.Sprintf("%s: prepare_inputs path %q escapes the directory holding %s", where, input, ConfigName))
+	for _, path := range paths {
+		if problem := c.inputPathProblem(cwd, field, path, where); problem != "" {
+			problems = append(problems, problem)
 		}
 	}
 	return problems
 }
 
-// sourceProblems checks the paths whose contents identify the running code.
-// They are read relative to the service's cwd, and like prepare_inputs they
-// may not reach anywhere on the machine. An explicit empty list is valid: it
-// opts a hot-reloading service out of the check.
-func (c *Config) sourceProblems(s Service, where string) []string {
-	if s.Sources == nil {
-		return nil
+func (c *Config) inputPathProblem(cwd, field, path, where string) string {
+	switch {
+	case strings.TrimSpace(path) == "":
+		return where + ": " + field + " has an empty path"
+	case absoluteManifestPath(path):
+		return fmt.Sprintf("%s: %s path %q must be relative to cwd", where, field, path)
+	case !c.cwdInside(filepath.Join(cwd, path)):
+		return fmt.Sprintf("%s: %s path %q escapes the directory holding %s", where, field, path, ConfigName)
+	default:
+		return ""
 	}
-	var problems []string
-	for _, source := range s.Sources {
-		switch {
-		case strings.TrimSpace(source) == "":
-			problems = append(problems, where+": sources has an empty path")
-		case filepath.IsAbs(source) || strings.HasPrefix(source, "/") || strings.HasPrefix(source, `\`):
-			problems = append(problems, fmt.Sprintf("%s: sources path %q must be relative to cwd", where, source))
-		case !c.cwdInside(filepath.Join(s.Cwd, source)):
-			problems = append(problems, fmt.Sprintf("%s: sources path %q escapes the directory holding %s", where, source, ConfigName))
-		}
-	}
-	return problems
 }
 
 // readyTimeoutProblems checks the declaration as written. An absent value
