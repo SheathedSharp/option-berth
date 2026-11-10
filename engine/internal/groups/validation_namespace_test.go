@@ -1,6 +1,7 @@
 package groups
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -49,5 +50,45 @@ func TestDeclarationPortAndPathBoundaries(t *testing.T) {
 	}
 	if got := cfg.validate(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("invalid declarations = %#v, want %#v", got, want)
+	}
+}
+
+// The two fingerprint inputs share containment, but not presence: sources: []
+// is an opt-out and prepare_inputs without prepare is still an error.
+func TestManifestInputPathsShareContainment(t *testing.T) {
+	cfg := &Config{Dir: "/synthetic/shop"}
+	for _, entry := range []struct{ path, cwd, problem string }{
+		{"file", "", ""}, {"../file", "nested", ""}, {"a/../file", "", ""},
+		{"", "", "empty"}, {" ", "", "empty"}, {"/absolute", "", "relative"},
+		{`\root`, "", "relative"}, {"..", "", "escape"}, {"../../file", "nested", "escape"},
+	} {
+		t.Run(entry.cwd+":"+entry.path, func(t *testing.T) {
+			svc := Service{Name: "api", Prepare: "build", Cwd: entry.cwd, PrepareInputs: []string{entry.path}, Sources: []string{entry.path}}
+			for field, got := range map[string][]string{
+				"prepare_inputs": cfg.prepareInputProblems(svc, "service api"), "sources": cfg.sourceProblems(svc, "service api"),
+			} {
+				var want []string
+				switch entry.problem {
+				case "empty":
+					want = []string{"service api: " + field + " has an empty path"}
+				case "relative":
+					want = []string{fmt.Sprintf("service api: %s path %q must be relative to cwd", field, entry.path)}
+				case "escape":
+					want = []string{fmt.Sprintf("service api: %s path %q escapes the directory holding oberth.yaml", field, entry.path)}
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Errorf("%s: got %v, want %v", field, got, want)
+				}
+			}
+		})
+	}
+	noCommand := Service{Prepare: " ", PrepareInputs: []string{"/bad", ""}}
+	if got := cfg.prepareInputProblems(noCommand, "service api"); !reflect.DeepEqual(got, []string{"service api: prepare_inputs needs a prepare command"}) {
+		t.Errorf("missing prepare = %v", got)
+	}
+	for _, sources := range [][]string{nil, {}} {
+		if got := cfg.sourceProblems(Service{Sources: sources}, "service api"); got != nil {
+			t.Errorf("absent/empty sources diagnostics = %#v", got)
+		}
 	}
 }
