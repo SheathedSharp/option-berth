@@ -109,8 +109,7 @@ func runKill(cmd *cobra.Command, args []string) error {
 // under --no-daemon and whenever the daemon is down, which is why it stays a
 // complete implementation rather than a degraded one.
 func killDirect(ctx context.Context, args []string, bindIP string) error {
-	snapshot := scanForKill()
-	targets, confirm, err := killTargets(args, snapshot, bindIP)
+	snapshot, targets, confirm, err := killSelection(args, bindIP, scanForKill)
 	if err != nil {
 		return err
 	}
@@ -130,6 +129,34 @@ func killDirect(ctx context.Context, args []string, bindIP string) error {
 		confirm:  confirm && !killYesFlag && !killDryRunFlag,
 		asJSON:   killJSONFlag,
 	}.execute(ctx)
+}
+
+// killSelection resolves the command line against a listener table, scanning
+// only when the selection actually needs one. An unreadable table is returned
+// as the observation failure it is: selecting nothing from it and reporting
+// "Nothing to stop." would turn "cannot see" into "nothing is running", and
+// `kill --all` would exit 0 without having observed a single listener.
+//
+// An explicit --pid is the exception: the pid is the whole subject, so the
+// operation never asked to observe and a blind collector must not fail it.
+func killSelection(args []string, bindIP string, scan func() ([]ports.ListeningPort, error)) ([]ports.ListeningPort, []killer.Target, bool, error) {
+	var snapshot []ports.ListeningPort
+	if killNeedsTable(args) {
+		found, err := scan()
+		if err != nil {
+			return nil, nil, false, err
+		}
+		snapshot = found
+	}
+	targets, confirm, err := killTargets(args, snapshot, bindIP)
+	return snapshot, targets, confirm, err
+}
+
+// killNeedsTable reports whether the selection is resolved from listeners:
+// positional arguments are read port-first, and the group and all selectors
+// are sweeps. Only --pid alone stands without a table.
+func killNeedsTable(args []string) bool {
+	return len(args) > 0 || killGroupFlag != "" || killAllFlag
 }
 
 // killOptions is the killer configuration the flags describe, shared by both
@@ -207,15 +234,15 @@ func (r killRequest) execute(ctx context.Context) error {
 // which the killer reuses instead of scanning a second time. Group attribution
 // is part of that enrichment: without it `-g` would only ever see a Compose
 // project or a run tag, never a `oberth.yaml` name or a git root.
-func scanForKill() []ports.ListeningPort {
+func scanForKill() ([]ports.ListeningPort, error) {
 	found, err := ports.Scan()
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	docker.EnrichPorts(found)
 	ports.Enrich(found)
 	groups.Attribute(found)
-	return found
+	return found, nil
 }
 
 // killTargets turns the command line into killer targets. The bool reports

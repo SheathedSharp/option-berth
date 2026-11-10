@@ -352,3 +352,63 @@ func TestKillTargetsSeeAFileGroup(t *testing.T) {
 		t.Fatalf("targets = %+v, want %+v", targets, want)
 	}
 }
+
+// --------------------------------------------------- observation failure ---
+
+func blindScan() error {
+	return &ports.ObservationError{
+		Code:   ports.CodeObservationBlind,
+		Detail: "the collector cannot see its own listener",
+	}
+}
+
+// TestKillSelectionRefusesABlindTable: an unreadable listener table is not an
+// empty table. `kill --all` must report the observation failure instead of
+// selecting nothing and exiting 0 as if everything had already stopped.
+func TestKillSelectionRefusesABlindTable(t *testing.T) {
+	resetKillFlags(t)
+	killAllFlag = true
+
+	snapshot, targets, confirm, err := killSelection(nil, "", func() ([]ports.ListeningPort, error) {
+		return nil, blindScan()
+	})
+	if err == nil {
+		t.Fatal("a failed scan must not become an empty selection")
+	}
+	var oe *ports.ObservationError
+	if !errors.As(err, &oe) || oe.Code != ports.CodeObservationBlind {
+		t.Fatalf("err = %v, want the collector's observation_blind code", err)
+	}
+	if snapshot != nil || targets != nil || confirm {
+		t.Fatalf("snapshot=%+v targets=%+v confirm=%v, want no selection at all", snapshot, targets, confirm)
+	}
+}
+
+// TestKillSelectionKeepsAnExplicitPIDWhenTheTableIsBlind: a pid named with
+// --pid is a complete subject. Observation is what failed, not the request, so
+// the kill must not require a table it does not use.
+func TestKillSelectionKeepsAnExplicitPIDWhenTheTableIsBlind(t *testing.T) {
+	resetKillFlags(t)
+	killPIDFlag = []int{12345}
+
+	scanned := false
+	targets, confirm, err := selectOnlyPID(t, func() { scanned = true })
+	if err != nil {
+		t.Fatalf("an explicit pid must not depend on the listener table: %v", err)
+	}
+	if scanned {
+		t.Error("the listener table was scanned for a selection that does not use it")
+	}
+	if confirm || len(targets) != 1 || targets[0].PID != 12345 {
+		t.Fatalf("targets = %+v confirm=%v, want the named pid only", targets, confirm)
+	}
+}
+
+func selectOnlyPID(t *testing.T, markScan func()) ([]killer.Target, bool, error) {
+	t.Helper()
+	_, targets, confirm, err := killSelection(nil, "", func() ([]ports.ListeningPort, error) {
+		markScan()
+		return nil, blindScan()
+	})
+	return targets, confirm, err
+}
