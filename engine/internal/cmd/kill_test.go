@@ -2,16 +2,23 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/sheathedsharp/option-berth/engine/internal/killer"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/sessions"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
@@ -411,4 +418,112 @@ func selectOnlyPID(t *testing.T, markScan func()) ([]killer.Target, bool, error)
 		return nil, blindScan()
 	})
 	return targets, confirm, err
+}
+
+// withKillFlags installs one flag combination and puts every kill flag back
+// afterwards. resetKillFlags only clears the selectors, while these tests also
+// set the confirmation, output and signalling flags.
+func withKillFlags(t *testing.T, set func()) {
+	t.Helper()
+	oldPID, oldGroup, oldSession := killPIDFlag, killGroupFlag, killSessionFlag
+	oldAll, oldTree, oldForce := killAllFlag, killTreeFlag, forceFlag
+	oldGrace, oldNoEscalate, oldYes := killGraceFlag, killNoEscalateFlag, killYesFlag
+	oldDry, oldJSON := killDryRunFlag, killJSONFlag
+	t.Cleanup(func() {
+		killPIDFlag, killGroupFlag, killSessionFlag = oldPID, oldGroup, oldSession
+		killAllFlag, killTreeFlag, forceFlag = oldAll, oldTree, oldForce
+		killGraceFlag, killNoEscalateFlag, killYesFlag = oldGrace, oldNoEscalate, oldYes
+		killDryRunFlag, killJSONFlag = oldDry, oldJSON
+	})
+	killPIDFlag, killGroupFlag, killSessionFlag = nil, "", ""
+	killAllFlag, killTreeFlag, forceFlag = false, false, false
+	killGraceFlag, killNoEscalateFlag, killYesFlag = killer.DefaultGrace, false, true
+	killDryRunFlag, killJSONFlag = false, false
+	set()
+}
+
+// TestKillConfirmationShowsThePlanAndStopsNothingWithoutAConsent pins the
+// confirm round: the plan the executor produced is printed, and an answer that
+// is not yes leaves the process running.
+func TestKillConfirmationShowsThePlanAndStopsNothingWithoutAConsent(t *testing.T) {
+	resetRouting(t)
+	// A sweep is the selection broad enough to be confirmed; a port named on
+	// its own is not.
+	withKillFlags(t, func() {
+		killAllFlag, killYesFlag = true, false
+	})
+	noDaemonReachable(t)
+
+	port := startListener(t)
+	var err error
+	out := captureStdout(t, func() {
+		err = killDirect(context.Background(), nil, "")
+	})
+	if err != nil {
+		t.Fatalf("kill under confirmation: %v", err)
+	}
+	if !strings.Contains(out, "Will stop ") || !strings.Contains(out, "Proceed? [y/N]") {
+		t.Fatalf("stdout = %q, want the plan it asks about", out)
+	}
+	if !strings.Contains(out, "Aborted.") {
+		t.Fatalf("stdout = %q, want the abort sentence", out)
+	}
+	conn, dialErr := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(port), 300*time.Millisecond)
+	if dialErr != nil {
+		t.Fatalf("the listener is gone: it was stopped without a consent (%v)", dialErr)
+	}
+	conn.Close()
+}
+
+// TestKillSessionCurrentWithoutAnAgentFails: `--session current` resolves from
+// this shell's environment, and there is nothing to resolve outside an agent.
+func TestKillSessionCurrentWithoutAnAgentFails(t *testing.T) {
+	withKillFlags(t, func() { killSessionFlag = "current" })
+	for _, key := range []string{
+		sessions.EnvSession, sessions.EnvSessionID, sessions.EnvClaudeCode,
+		sessions.EnvClaudeCodeSessionID, sessions.EnvClaudeSessionID,
+		sessions.EnvCodexThreadID, sessions.EnvCodexSandbox, sessions.EnvCursorAgent,
+		sessions.EnvCursorAgentSessionID,
+	} {
+		t.Setenv(key, "")
+	}
+
+	err := killSession(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "no agent session") {
+		t.Fatalf("err = %v, want the missing-session refusal", err)
+	}
+}
+
+// TestKillSessionNeedsTheDaemon: a session only exists in the daemon's run
+// registry, so the selector says so instead of falling back to a local scan.
+func TestKillSessionNeedsTheDaemon(t *testing.T) {
+	resetRouting(t)
+	withKillFlags(t, func() { killSessionFlag = "sess-1" })
+	prev := dialDaemon
+	dialDaemon = func(context.Context) (*client.Client, error) { return nil, client.ErrNotRunning }
+	t.Cleanup(func() { dialDaemon = prev })
+
+	err := killSession(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "sessions need a running daemon") {
+		t.Fatalf("err = %v, want the daemon requirement", err)
+	}
+}
+
+// TestKillSessionReportsASessionTheDaemonDoesNotKnow: the daemon owns session
+// membership, so its not_found for an unknown id is the answer the caller gets.
+func TestKillSessionReportsASessionTheDaemonDoesNotKnow(t *testing.T) {
+	resetRouting(t)
+	withKillFlags(t, func() { killSessionFlag = "sess-nobody" })
+	if runtime.GOOS == "windows" {
+		t.Skip("the unix-socket harness does not apply to named pipes")
+	}
+	startScanningDaemon(t)
+
+	err := killSession(context.Background())
+	if err == nil {
+		t.Fatal("killing an unknown session returned nil")
+	}
+	if code, _, _ := describe(err); code != "session_not_found" {
+		t.Fatalf("code = %q (%v), want the daemon's own session_not_found", code, err)
+	}
 }
