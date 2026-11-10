@@ -177,16 +177,14 @@ func isolateDaemonPaths(t *testing.T) string {
 	return socket
 }
 
-// startDaemonWhereTheCommandLooks runs a real daemon on the socket `oberth
-// daemon` looks at. The command's own dial policy — dial the running daemon and
-// never start one — is then what the test exercises end to end.
-func startDaemonWhereTheCommandLooks(t *testing.T) string {
+// runDaemonAt serves a real daemon on socket until the test ends. Its scan is
+// fixed and empty: these tests are about the command's own routing and output,
+// not about what the machine happens to be listening on.
+func runDaemonAt(t *testing.T, socket string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the unix-socket harness does not apply to named pipes")
 	}
-	socket := isolateDaemonPaths(t)
-
 	srv := daemon.New(daemon.Options{
 		Socket:  socket,
 		Version: "test",
@@ -207,6 +205,15 @@ func startDaemonWhereTheCommandLooks(t *testing.T) string {
 		cancel()
 		<-srv.Done()
 	})
+}
+
+// startDaemonWhereTheCommandLooks runs a real daemon on the socket `oberth
+// daemon` looks at. The command's own dial policy — dial the running daemon and
+// never start one — is then what the test exercises end to end.
+func startDaemonWhereTheCommandLooks(t *testing.T) string {
+	t.Helper()
+	socket := isolateDaemonPaths(t)
+	runDaemonAt(t, socket)
 	return socket
 }
 
