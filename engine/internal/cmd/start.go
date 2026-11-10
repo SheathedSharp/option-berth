@@ -170,33 +170,15 @@ func startDetached(cmd *cobra.Command, argv []string, cwd string, res spawn.Reso
 	ctx, cancel := context.WithTimeout(cmd.Context(), registerTimeout)
 	defer cancel()
 
-	if c, err := connectDaemon(ctx); err == nil {
-		defer c.Close()
-		params := rpc.RunsSpawnParams{
-			Argv:  argv,
-			Cwd:   cwd,
-			Env:   callerEnv(),
-			Group: &res.Group,
-			Name:  &res.Name,
-			// The CLI is the user: it may start commands anywhere.
-			AllowOutsideHome: true,
-		}
-		if startSession.ID != "" {
-			s := startSession
-			params.Session = &s
-		}
-		if startPort > 0 {
-			hint := startPort
-			params.PortHint = &hint
-		}
-		var out rpc.RunsSpawnResult
-		if err := c.Call(ctx, "runs.spawn", params, &out); err == nil {
-			printStarted(res, out.PID, out.LogPath)
-			recordDetachedRun(cwd, argv, out.RunID, out.PID, out.LogPath, time.Now().UTC())
-			return nil
-		} else if !errors.Is(err, client.ErrNotRunning) {
-			return err
-		}
+	var out rpc.RunsSpawnResult
+	err := daemonCall(ctx, connectDaemon, "runs.spawn", detachedSpawnParams(argv, cwd, res), &out)
+	if err == nil {
+		printStarted(res, out.PID, out.LogPath)
+		recordDetachedRun(cwd, argv, out.RunID, out.PID, out.LogPath, time.Now().UTC())
+		return nil
+	}
+	if !errors.Is(err, client.ErrNotRunning) {
+		return err
 	}
 
 	// No daemon: start it here anyway. The run is recorded in runs.json and
@@ -253,79 +235,111 @@ func printStarted(res spawn.Resolution, pid int, logPath string) {
 	}
 }
 
-// registerRun records the run with the daemon, falling back to runs.json when
-// there is none. It reports whether the daemon took it.
-func registerRun(h *spawn.Handle) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), registerTimeout)
-	defer cancel()
-
-	c, err := connectDaemon(ctx)
-	if err == nil {
-		defer c.Close()
-		params := rpc.RunsRegisterParams{
-			PID:              h.PID,
-			PPID:             h.PPID,
-			Group:            h.Group,
-			Name:             h.Name,
-			Cmd:              h.Cmd,
-			Cwd:              h.Cwd,
-			StartedAt:        h.StartedAt.Format(time.RFC3339),
-			ID:               &h.ID,
-			AllowOutsideHome: true,
-		}
-		if h.Session.ID != "" {
-			s := h.Session
-			params.Session = &s
-		}
-		if h.PortHint > 0 {
-			hint := h.PortHint
-			params.PortHint = &hint
-		}
-		var out rpc.RunsRegisterResult
-		if err := c.Call(ctx, "runs.register", params, &out); err == nil {
-			return true
-		}
+// detachedSpawnParams is the runs.spawn request: the caller's command and
+// environment, with the resolved group/name. A session or port hint is sent
+// only when there is one, because an absent field is the wire's "none".
+func detachedSpawnParams(argv []string, cwd string, res spawn.Resolution) rpc.RunsSpawnParams {
+	params := rpc.RunsSpawnParams{
+		Argv:  argv,
+		Cwd:   cwd,
+		Env:   callerEnv(),
+		Group: &res.Group,
+		Name:  &res.Name,
+		// The CLI is the user: it may start commands anywhere.
+		AllowOutsideHome: true,
 	}
+	if startSession.ID != "" {
+		s := startSession
+		params.Session = &s
+	}
+	if startPort > 0 {
+		hint := startPort
+		params.PortHint = &hint
+	}
+	return params
+}
 
-	if err := runs.Add(fallbackEntry(h)); err != nil {
-		fmt.Fprintf(os.Stderr, "option-berth: warning: could not record this run: %v\n", err)
+// registerRun records the run with the daemon, falling back to runs.json when
+// there is none. It reports whether the daemon took it. Registration is the
+// one call allowed to autostart a daemon: the record has to outlive this
+// command, and a failure of any kind falls back rather than losing the run.
+func registerRun(h *spawn.Handle) bool {
+	var out rpc.RunsRegisterResult
+	err := daemonCall(context.Background(), connectDaemon, "runs.register", registerParams(h), &out)
+	if err == nil {
+		return true
+	}
+	if addErr := runs.Add(fallbackEntry(h)); addErr != nil {
+		fmt.Fprintf(os.Stderr, "option-berth: warning: could not record this run: %v\n", addErr)
 	}
 	return false
 }
 
+// registerParams is the runs.register request. Like runs.spawn it sends the
+// session and port hint only when they carry a value.
+func registerParams(h *spawn.Handle) rpc.RunsRegisterParams {
+	params := rpc.RunsRegisterParams{
+		PID:              h.PID,
+		PPID:             h.PPID,
+		Group:            h.Group,
+		Name:             h.Name,
+		Cmd:              h.Cmd,
+		Cwd:              h.Cwd,
+		StartedAt:        h.StartedAt.Format(time.RFC3339),
+		ID:               &h.ID,
+		AllowOutsideHome: true,
+	}
+	if h.Session.ID != "" {
+		s := h.Session
+		params.Session = &s
+	}
+	if h.PortHint > 0 {
+		hint := h.PortHint
+		params.PortHint = &hint
+	}
+	return params
+}
+
 // unregisterRun removes the run again, wherever it was recorded.
 func unregisterRun(pid int, daemonKnows bool) {
-	if daemonKnows {
-		ctx, cancel := context.WithTimeout(context.Background(), registerTimeout)
-		defer cancel()
-		if c, err := connectRunningDaemon(ctx); err == nil {
-			defer c.Close()
-			var out rpc.OKResult
-			if err := c.Call(ctx, "runs.unregister", rpc.RunsUnregisterParams{PID: pid}, &out); err == nil {
-				return
-			}
-		}
-	}
-	_ = runs.Remove(pid)
+	endRun(pid, daemonKnows, rpc.RunsUnregisterParams{PID: pid})
 }
 
 // finishRun reports how an attached run ended, so the daemon keeps it among
 // the runs that exited. Without a daemon there is nowhere to keep it and the
 // runs.json entry is simply removed.
 func finishRun(pid int, daemonKnows bool, code int, stopped bool) {
+	endRun(pid, daemonKnows, rpc.RunsUnregisterParams{PID: pid, ExitCode: &code, Stopped: stopped})
+}
+
+// endRun removes the run from wherever it was recorded. params carries the
+// exit facts only when this call ends a run. Cleanup never autostarts a
+// daemon, and losing the daemon after registration leaves runs.json as the
+// place to remove from.
+func endRun(pid int, daemonKnows bool, params rpc.RunsUnregisterParams) {
 	if daemonKnows {
-		ctx, cancel := context.WithTimeout(context.Background(), registerTimeout)
-		defer cancel()
-		if c, err := connectRunningDaemon(ctx); err == nil {
-			defer c.Close()
-			var out rpc.OKResult
-			params := rpc.RunsUnregisterParams{PID: pid, ExitCode: &code, Stopped: stopped}
-			if err := c.Call(ctx, "runs.unregister", params, &out); err == nil {
-				return
-			}
+		var out rpc.OKResult
+		if err := daemonCall(context.Background(), connectRunningDaemon, "runs.unregister", params, &out); err == nil {
+			return
 		}
 	}
 	_ = runs.Remove(pid)
+}
+
+// daemonCall dials, makes exactly one call, and closes. Each caller chooses
+// the dial policy: registration and detached spawn may start a daemon, while
+// cleanup must not. The timeout bounds the whole round trip so a slow daemon
+// cannot delay the command the user asked for.
+func daemonCall(ctx context.Context, dial func(context.Context) (*client.Client, error),
+	method string, params, result any) error {
+	ctx, cancel := context.WithTimeout(ctx, registerTimeout)
+	defer cancel()
+	c, err := dial(ctx)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	return c.Call(ctx, method, params, result)
 }
 
 // fallbackEntry is the runs.json row for a run the daemon never saw. Tag holds
