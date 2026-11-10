@@ -1,7 +1,9 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -649,5 +651,137 @@ func TestGroupsInitRefusesYAMLNextToAList(t *testing.T) {
 		if e == nil || e.Data.Code != "invalid_params" {
 			t.Errorf("params %+v: error = %+v, want invalid_params", p, e)
 		}
+	}
+}
+
+// TestInitSnapshotTrustsAWarmCacheOnlyWhileSubscribed pins the rule that keeps
+// the proposal and a live subscriber's deltas from disagreeing: the cached
+// snapshot is used directly only when it exists and somebody is reading it.
+// Otherwise the call reads state the ordinary way, and an absent cache is never
+// mistaken for a warm one.
+func TestInitSnapshotTrustsAWarmCacheOnlyWhileSubscribed(t *testing.T) {
+	newRuntime := func(t *testing.T, scans *int) (*Runtime, *scanner.Loop) {
+		t.Helper()
+		loop := scanner.New(scanner.Options{
+			DaemonVersion: "test",
+			Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
+				*scans++
+				return []ports.ListeningPort{{Port: 8000, PID: 1, Process: "python3"}}, nil
+			},
+		})
+		return New(Options{Socket: "/test/init-snapshot.sock", Version: "test", Scanner: loop}).Runtime(), loop
+	}
+
+	t.Run("no subscriber forces a read", func(t *testing.T) {
+		scans := 0
+		rt, loop := newRuntime(t, &scans)
+		if _, err := loop.Snapshot(scanner.Include{}); err != nil {
+			t.Fatal(err)
+		}
+		if loop.Cached().Seq == 0 {
+			t.Fatal("test setup: the cache has no sequence")
+		}
+		loop.Invalidate() // a warm cache nobody is reading must still be refreshed
+		before := scans
+		if _, err := initSnapshot(rt); err != nil {
+			t.Fatalf("initSnapshot: %v", err)
+		}
+		if scans == before {
+			t.Fatal("initSnapshot trusted a warm cache while nobody was subscribed")
+		}
+	})
+
+	t.Run("a subscriber keeps it warm", func(t *testing.T) {
+		scans := 0
+		rt, loop := newRuntime(t, &scans)
+		if _, err := loop.Snapshot(scanner.Include{}); err != nil {
+			t.Fatal(err)
+		}
+		reader := newConn(1, rt.srv, nil)
+		reader.subscribed = true
+		rt.srv.registerConn(reader)
+		loop.Invalidate()
+		before := scans
+		snap, err := initSnapshot(rt)
+		if err != nil {
+			t.Fatalf("initSnapshot: %v", err)
+		}
+		if scans != before {
+			t.Fatal("initSnapshot rescanned despite a subscriber keeping the cache warm")
+		}
+		if snap.Seq != 1 {
+			t.Fatalf("returned sequence %d, want the warm cached 1", snap.Seq)
+		}
+	})
+
+	t.Run("an empty cache is never warm", func(t *testing.T) {
+		scans := 0
+		rt, _ := newRuntime(t, &scans)
+		reader := newConn(1, rt.srv, nil)
+		reader.subscribed = true
+		rt.srv.registerConn(reader)
+		if _, err := initSnapshot(rt); err != nil {
+			t.Fatalf("initSnapshot: %v", err)
+		}
+		if scans == 0 {
+			t.Fatal("initSnapshot treated an empty cache as a warm one")
+		}
+	})
+}
+
+// TestPublishConfigWarnsOnlyOnReloadFailure pins both halves of the reload
+// branch: a config that indexes cleanly publishes silently, and one that does
+// not is reported with its real error while the call still finishes publishing
+// and reporting the write. A quiet success and a loud failure are the same
+// branch seen from the two sides, so a test that only covers one leaves the
+// comparison free to invert.
+func TestPublishConfigWarnsOnlyOnReloadFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h, root, target := initHarness(t, ctx)
+	c := h.dial(ctx)
+
+	proposal, e := callInit(t, c, rpc.GroupsInitParams{RootDir: root})
+	if e != nil {
+		t.Fatalf("proposal: %v", e)
+	}
+	if err := os.WriteFile(target, []byte(proposal.YAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The runtime publishConfig needs is the scanner and a logger; giving it a
+	// private one keeps this test's diagnostics out of the daemon's log.
+	var output bytes.Buffer
+	rt := &Runtime{Scanner: h.loop, Logger: slog.New(slog.NewTextHandler(&output, nil))}
+	req := &Request{Runtime: rt}
+
+	publishConfig(req, target, proposal.Proposal.Name, 0)
+	if strings.Contains(output.String(), "reloading a config after writing it") {
+		t.Fatalf("successful reload warned: %s", output.String())
+	}
+	var listed rpc.GroupsListResult
+	if e := c.call("groups.list", nil, &listed); e != nil {
+		t.Fatalf("groups.list: %v", e)
+	}
+	g, ok := groupNamed(listed.Groups, proposal.Proposal.Name)
+	if !ok || g.Source != "file" {
+		t.Fatalf("written config was not published: %+v", listed.Groups)
+	}
+
+	// A file the index cannot parse must be reported with the error it failed
+	// on, not swallowed, and the write itself is still reported afterwards.
+	if err := os.WriteFile(target, []byte("name: [unterminated\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output.Reset()
+	publishConfig(req, target, proposal.Proposal.Name, 0)
+	text := output.String()
+	if !strings.Contains(text, "level=WARN") ||
+		!strings.Contains(text, "reloading a config after writing it") ||
+		!strings.Contains(text, "error=") || strings.Contains(text, "error=<nil>") {
+		t.Fatalf("failed reload warning = %s", text)
+	}
+	if !strings.Contains(text, "wrote "+groups.ConfigName) {
+		t.Fatalf("reload error suppressed write reporting: %s", text)
 	}
 }

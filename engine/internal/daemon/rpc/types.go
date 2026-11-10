@@ -1,7 +1,9 @@
 // Package rpc holds the JSON-RPC 2.0 wire types, the newline-delimited codec,
 // the error registry and the method-description registry the protocol schema is
-// generated from. It has no daemon logic; every client (CLI, MCP server, the
-// desktop app's Rust bridge via the generated schema) speaks this shape.
+// generated from.
+//
+// It carries no daemon logic: a client reads the shape from here or from the
+// generated schema, and the handlers live elsewhere.
 package rpc
 
 import "encoding/json"
@@ -9,10 +11,12 @@ import "encoding/json"
 // Version is the JSON-RPC version string carried by every message.
 const Version = "2.0"
 
-// ProtocolVersion is the daemon protocol version. Additive
-// changes bump the minor; a field a client can no longer send or read bumps
-// the major. 2.0.0 withdrew Selector.Key and the host envelope, neither of
-// which any handler read.
+// ProtocolVersion is the daemon protocol version. An additive change bumps the
+// minor; a change that removes a field a client can send or read bumps the
+// major.
+//
+// 2.0.0 removed two fields no handler read: Selector.Key and the host envelope
+// that every params type used to embed.
 const ProtocolVersion = "2.0.0"
 
 // Request is a client call. ID is raw so a client can use numbers or strings.

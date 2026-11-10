@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
 	"github.com/sheathedsharp/option-berth/engine/internal/sessions"
 	"github.com/sheathedsharp/option-berth/engine/internal/spawn"
@@ -17,14 +19,18 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
+// Handlers for the `runs.*` namespace. A run is one process option-berth
+// started; the registry is where it lives, and these four methods are the only
+// way a client adds one, ends one or reads them back.
+
 // Default is the registry this daemon serves. One daemon, one registry: the
-// handlers close over it and the OnStart hook publishes it to the runtime so
-// the group resolver can attribute ports through it.
+// handlers close over it, and the startup hook publishes it to the runtime so
+// port attribution and the group resolver read the same records.
 var Default = New()
 
-// pruneInterval matches the scanner's base tick: a run whose process is gone
-// disappears from `runs.list` about as fast as its port disappears from a
-// snapshot.
+// pruneInterval is the scanner's base tick. Pruning a dead run on the cadence
+// the ports are scanned at keeps `runs.list` and the port snapshot telling the
+// same story about the same process.
 const pruneInterval = scanner.BaseInterval
 
 func init() {
@@ -87,50 +93,60 @@ func handleRegister(ctx context.Context, req *daemon.Request) (any, error) {
 	if err := req.Bind(&p); err != nil {
 		return nil, err
 	}
-	if p.PID <= 0 {
-		return nil, rpc.NewError(rpc.CodeInvalidParams, "pid is required",
-			`send {"pid": <pid>, "group": "...", "name": "..."}`)
+	if err := requirePID(p.PID, `send {"pid": <pid>, "group": "...", "name": "..."}`); err != nil {
+		return nil, err
 	}
-	cwd, err := checkCwd(p.Cwd, p.AllowOutsideHome)
+	cwd, err := CheckCwd(p.Cwd, p.AllowOutsideHome)
 	if err != nil {
 		return nil, err
 	}
-
-	rec := Record{
-		PID:   p.PID,
-		PPID:  p.PPID,
-		Group: strings.TrimSpace(p.Group),
-		Name:  strings.TrimSpace(p.Name),
-		Cmd:   p.Cmd,
-		Cwd:   cwd,
-	}
-	if p.ID != nil {
-		rec.ID = *p.ID
-	}
-	if rec.ID == "" {
-		rec.ID = spawn.NewID()
-	}
-	if p.PortHint != nil {
-		rec.PortHint = *p.PortHint
-	}
-	if t, err := time.Parse(time.RFC3339, p.StartedAt); err == nil {
-		rec.StartedAt = t
-	}
-	if p.Session != nil && p.Session.ID != "" {
-		rec.Session = *p.Session
-	}
-	rec.Origin = Origin(req)
-
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	rec = Default.Register(rec)
+
+	rec := Default.Register(runFromWire(p, cwd, Origin(req)))
 	rememberSession(req.Runtime, rec.Session)
 	req.Runtime.Logger.Debug("run registered",
 		"id", rec.ID, "pid", rec.PID, "group", rec.Group, "name", rec.Name)
 	// The next scan should see the new run's ports, not wait out the backoff.
 	req.Runtime.Scanner.Invalidate()
 	return rpc.RunsRegisterResult{ID: rec.ID}, nil
+}
+
+// runFromWire is the record a `runs.register` call describes. The caller says
+// which process it started and where; everything else here is a default, so
+// this is a pure function of the request and the two facts that were already
+// checked (the working directory and the requesting client).
+//
+// A run the caller does not name gets an id here. That id is what makes a
+// recycled pid still attributable: the registry matches a port's run by id
+// before it falls back to the pid.
+func runFromWire(p rpc.RunsRegisterParams, cwd, origin string) Record {
+	rec := Record{
+		ID:       textOrEmpty(p.ID),
+		PID:      p.PID,
+		PPID:     p.PPID,
+		Group:    strings.TrimSpace(p.Group),
+		Name:     strings.TrimSpace(p.Name),
+		Cmd:      p.Cmd,
+		Cwd:      cwd,
+		PortHint: portOrZero(p.PortHint),
+		Origin:   origin,
+	}
+	if rec.ID == "" {
+		rec.ID = spawn.NewID()
+	}
+	// A start time the caller cannot spell in RFC3339 is not a reason to refuse
+	// the registration: the registry fills in the moment it recorded the run.
+	if started, err := time.Parse(time.RFC3339, p.StartedAt); err == nil {
+		rec.StartedAt = started
+	}
+	// An id-less session is not a session: it names no agent, so recording it
+	// would stamp ports with an identity nothing can look up.
+	if p.Session != nil && p.Session.ID != "" {
+		rec.Session = *p.Session
+	}
+	return rec
 }
 
 func handleUnregister(ctx context.Context, req *daemon.Request) (any, error) {
@@ -141,19 +157,20 @@ func handleUnregister(ctx context.Context, req *daemon.Request) (any, error) {
 	if err := req.Bind(&p); err != nil {
 		return nil, err
 	}
-	if p.PID <= 0 {
-		return nil, rpc.NewError(rpc.CodeInvalidParams, "pid is required", `send {"pid": <pid>}`)
+	if err := requirePID(p.PID, `send {"pid": <pid>}`); err != nil {
+		return nil, err
 	}
-	// A caller that waited on the run says how it ended, and the run joins the
-	// exit history; one that only lets go of it is simply forgotten.
+	// How the run ended is the caller's evidence: a caller that waited on the
+	// process says so and the run becomes exit history, while one that is only
+	// letting go of it leaves no outcome behind.
 	if p.ExitCode != nil {
 		Default.Exited(p.PID, *p.ExitCode, p.Stopped)
 	} else {
 		Default.Unregister(p.PID)
 	}
 	req.Runtime.Scanner.Invalidate()
-	// Unregistering a run nobody registered is not an error: `oberth start`
-	// always cleans up, whether or not the daemon saw the registration.
+	// Forgetting a run nobody registered is not an error: `oberth start` always
+	// cleans up after itself, whether or not the daemon saw the registration.
 	return rpc.OKResult{OK: true}, nil
 }
 
@@ -161,7 +178,7 @@ func handleList(ctx context.Context, req *daemon.Request) (any, error) {
 	// A run's identity and log path do not come from the listener table. When
 	// observation is blind, the ports are unknown — not the runs — so list what
 	// the registry knows and leave the per-run port list empty. Failing here
-	// used to make `logs --run` depend on a collector it never reads.
+	// would make `logs --run` depend on a collector it never reads.
 	snap, err := req.Runtime.Scanner.SnapshotAllContext(ctx, scanner.Include{})
 	portsKnown := err == nil
 	if err != nil {
@@ -192,53 +209,62 @@ func handleSpawn(ctx context.Context, req *daemon.Request) (any, error) {
 		return nil, rpc.NewError(rpc.CodeInvalidParams, "argv is required",
 			`send {"argv": ["npm", "run", "dev"], "cwd": "/path/to/repo"}`)
 	}
-	cwd, err := checkCwd(p.Cwd, p.AllowOutsideHome)
+	cwd, err := CheckCwd(p.Cwd, p.AllowOutsideHome)
 	if err != nil {
 		return nil, err
 	}
 
-	res := spawn.Resolve(cwd, p.Argv, deref(p.Group), deref(p.Name))
-	hint := 0
-	if p.PortHint != nil {
-		hint = *p.PortHint
-	}
-
-	// The daemon's own environment says nothing about the agent that called
-	// it, so a session has to be sent: `runs.spawn {session}` when the caller
-	// captured one, otherwise whatever the request's own env carries.
-	session := state.Session{}
-	if p.Session != nil {
-		session = *p.Session
-	}
-	if session.ID == "" {
-		if s, ok := sessions.DetectFromEnv(envSlice(p.Env), sessions.Options{}); ok {
-			s.Worktree, s.Branch = sessions.GitContext(cwd)
-			session = s
-		}
-	}
-
+	res := spawn.Resolve(cwd, p.Argv, textOrEmpty(p.Group), textOrEmpty(p.Name))
 	h, err := Spawn(ctx, req.Runtime, spawn.Request{
 		Argv:     p.Argv,
 		Cwd:      cwd,
-		Env:      mergeEnv(p.Env),
+		Env:      mergedEnv(p.Env),
 		Group:    res.Group,
 		Name:     res.Name,
-		PortHint: hint,
-		Session:  session,
-		Detach:   true,
+		PortHint: portOrZero(p.PortHint),
+		Session:  sessionOf(p, cwd),
 	}, Meta{Origin: Origin(req)})
 	if err != nil {
 		return nil, err
 	}
 
 	return rpc.RunsSpawnResult{
-		// A run has no ports yet at the moment it starts, so `affected` is
-		// empty; the ports arrive in the next state.delta.
+		// A run has no ports at the moment it starts, so `affected` is empty and
+		// the ports arrive with the next state.delta.
 		MutationResult: rpc.MutationResult{OK: true, Affected: []string{}},
 		RunID:          h.ID,
 		PID:            h.PID,
 		LogPath:        h.LogPath,
 	}, nil
+}
+
+// sessionOf is the agent session a spawned run belongs to: the one the caller
+// sent, or — when it sent none, or sent one that names no agent — the one the
+// request's own environment names.
+//
+// The daemon's environment says nothing about the agent that called it, which
+// is why the session has to come over the wire at all; the env fallback exists
+// only for a caller that forwarded its environment instead of capturing one.
+//
+// The fallback keys off the id, not off a nil pointer: `{"session": {}}` is a
+// caller that sent the field without capturing anything, and the environment
+// can still name the agent, the worktree and the branch. A detected session
+// therefore replaces an id-less one, while a wire session that names an id is
+// the caller's word and is kept exactly.
+func sessionOf(p rpc.RunsSpawnParams, cwd string) state.Session {
+	session := state.Session{}
+	if p.Session != nil {
+		session = *p.Session
+	}
+	if session.ID != "" {
+		return session
+	}
+	detected, ok := sessions.DetectFromEnv(envPairs(p.Env), sessions.Options{})
+	if !ok {
+		return session
+	}
+	detected.Worktree, detected.Branch = sessions.GitContext(cwd)
+	return detected
 }
 
 // Spawn starts a detached run, registers it and reaps it. It is the one spawn
@@ -256,8 +282,30 @@ func Spawn(ctx context.Context, rt *daemon.Runtime, req spawn.Request, meta Meta
 			"check the command and its working directory")
 	}
 
-	registry := Default
-	record := registry.Register(Record{
+	record := Default.Register(runFromHandle(h, meta))
+	rememberSession(rt, h.Session)
+	rt.Logger.Info("spawned a run",
+		"id", h.ID, "pid", h.PID, "group", h.Group, "name", h.Name, "log", h.LogPath)
+	rt.Scanner.Wake()
+
+	// Reap it: an unwaited child stays a zombie, and a zombie pid still looks
+	// alive to every liveness test, so the run would never be pruned.
+	go func(rt *daemon.Runtime, h *spawn.Handle) {
+		code, err := h.Wait()
+		e, _ := Default.ExitedRun(record, code, false)
+		rt.Logger.Info("run exited",
+			"id", h.ID, "pid", h.PID, "code", code, "reason", e.Reason, "error", err)
+		rt.Scanner.Invalidate()
+	}(rt, h)
+	return h, nil
+}
+
+// runFromHandle is the record a freshly started process becomes: the launch
+// facts the spawner observed, plus what the caller knew about why it started —
+// the manifest it came from, the start that grouped it, and the client that
+// asked.
+func runFromHandle(h *spawn.Handle, meta Meta) Record {
+	return Record{
 		ID:         h.ID,
 		PID:        h.PID,
 		PPID:       h.PPID,
@@ -274,22 +322,7 @@ func Spawn(ctx context.Context, rt *daemon.Runtime, req spawn.Request, meta Meta
 		SpecHash:   meta.SpecHash,
 		LogPath:    h.LogPath,
 		LogOffset:  h.LogOffset,
-	})
-	rememberSession(rt, h.Session)
-	rt.Logger.Info("spawned a run",
-		"id", h.ID, "pid", h.PID, "group", h.Group, "name", h.Name, "log", h.LogPath)
-	rt.Scanner.Wake()
-
-	// Reap it: an unwaited child stays a zombie, and a zombie pid still looks
-	// alive to every liveness test, so the run would never be pruned.
-	go func(rt *daemon.Runtime, h *spawn.Handle) {
-		code, err := h.Wait()
-		e, _ := registry.ExitedRun(record, code, false)
-		rt.Logger.Info("run exited",
-			"id", h.ID, "pid", h.PID, "code", code, "reason", e.Reason, "error", err)
-		rt.Scanner.Invalidate()
-	}(rt, h)
-	return h, nil
+	}
 }
 
 // rememberSession writes a session through to the store the moment a run
@@ -299,40 +332,125 @@ func rememberSession(rt *daemon.Runtime, s state.Session) {
 	if s.ID == "" || rt == nil || rt.Store == nil {
 		return
 	}
-	now := time.Now()
-	err := rt.Store.Sessions().Upsert(store.SessionRow{
+	// first_seen and last_seen are left zero on purpose: the store reads zero
+	// as "now" and, on an id it already holds, writes only last_seen and the
+	// descriptive fields. Deciding the timestamp here would duplicate that
+	// rule in a second place, and the obvious spelling — this moment for both
+	// — is the one that would wipe a session's first appearance.
+	row := store.SessionRow{
 		ID: s.ID, Tool: s.Tool, Label: s.Label,
 		Worktree: s.Worktree, Branch: s.Branch, Detected: s.Detected,
-		FirstSeen: now, LastSeen: now,
-	})
-	if err != nil {
+	}
+	if err := rt.Store.Sessions().Upsert(row); err != nil {
 		rt.Logger.Warn("recording an agent session", "session", s.ID, "error", err)
 	}
 }
 
-// envSlice renders a wire env map as the KEY=VALUE slice detection reads.
-func envSlice(env map[string]string) []string {
-	out := make([]string, 0, len(env))
-	for k, v := range env {
-		out = append(out, k+"="+v)
+// envPairs renders a wire env map as the KEY=VALUE slice session detection
+// reads, which is the shape an environment has inside a process.
+func envPairs(env map[string]string) []string {
+	pairs := make([]string, 0, len(env))
+	for key, value := range env {
+		pairs = append(pairs, key+"="+value)
 	}
-	return out
+	return pairs
+}
+
+// mergedEnv is the daemon's own environment with the caller's entries taking
+// the place of the keys they name. Nothing is merged when the caller sent no
+// overrides: the child then inherits the daemon's environment as it is.
+func mergedEnv(over map[string]string) []string {
+	if len(over) == 0 {
+		return nil
+	}
+	base := os.Environ()
+	merged := make([]string, 0, len(base)+len(over))
+	for _, pair := range base {
+		key, _, _ := strings.Cut(pair, "=")
+		if _, replaced := over[key]; replaced {
+			continue
+		}
+		merged = append(merged, pair)
+	}
+	for key, value := range over {
+		merged = append(merged, key+"="+value)
+	}
+	return merged
 }
 
 // CheckCwd cleans a working directory and enforces the home-directory rule.
 // `groups.start` reuses it so one place decides what the daemon may run.
 func CheckCwd(cwd string, allowOutsideHome bool) (string, error) {
-	return checkCwd(cwd, allowOutsideHome)
+	abs, err := absoluteCwd(cwd)
+	if err != nil {
+		return "", err
+	}
+	if allowOutsideHome {
+		return abs, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		// No home to compare against means the rule cannot be applied. Refusing
+		// every directory then would break a legitimate install rather than
+		// protect it. os.UserHomeDir reports an error exactly when it has no
+		// path to return, so there is no second empty-home case to handle.
+		return abs, nil
+	}
+	// Both sides are canonicalised inside groups.Under, which is the one place
+	// that decides whether one directory is under another; resolving the home
+	// again here would be a second, drift-prone copy of that rule.
+	if groups.Under(abs, home) {
+		return abs, nil
+	}
+	return "", rpc.NewError(rpc.CodeOutsideHome,
+		fmt.Sprintf("%s is outside %s", abs, home),
+		"pass allow_outside_home: true to start commands outside your home directory")
 }
 
-// row renders one run for `runs.list`, including the ports it currently holds
-// and whether it is still coming up.
+// absoluteCwd resolves a client-supplied path to one real absolute directory,
+// using the daemon's own working directory when the caller named none. Both
+// spellings of one directory — through a symlink or not — come out the same,
+// so the home check cannot pass one and fail the other.
+func absoluteCwd(cwd string) (string, error) {
+	if strings.TrimSpace(cwd) == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", rpc.NewError(rpc.CodeInvalidParams, "cwd is required", "")
+		}
+		cwd = wd
+	}
+	abs, err := filepath.Abs(cwd)
+	if err != nil {
+		return "", rpc.NewError(rpc.CodeInvalidParams, "cwd is not a usable path: "+cwd, "")
+	}
+	return groups.Canonical(abs), nil
+}
+
+// row renders one live run for `runs.list`: what the registry knows about it,
+// the ports it currently holds, and whether it is still coming up.
 //
 // portsKnown separates "the run has no port" from "the listener table could not
 // be read". Without it, a blind collector would make every port-hinted run look
 // like it was still starting.
 func row(rec Record, snap state.Snapshot, portsKnown bool) rpc.RunRecord {
-	out := rpc.RunRecord{
+	out := liveRow(rec)
+	out.Ports = portsOf(rec, snap)
+	out.Status = runStatus(rec, out.Ports, portsKnown)
+	if rec.PortHint > 0 {
+		// The desktop and `daemon.status` key off the hint: it is the one thing
+		// a run can say about itself before any scan sees it listening.
+		hint := rec.PortHint
+		out.PortHint = &hint
+		out.URL = serviceURL(hint)
+	}
+	return out
+}
+
+// liveRow is the part of a row that comes straight from the run's own record.
+// A run that has ended carries the same block, which is why exitRow starts here
+// too: identity, provenance and where it logs are the run's facts either way.
+func liveRow(rec Record) rpc.RunRecord {
+	return rpc.RunRecord{
 		ID:         rec.ID,
 		PID:        rec.PID,
 		Group:      rec.Group,
@@ -340,8 +458,6 @@ func row(rec Record, snap state.Snapshot, portsKnown bool) rpc.RunRecord {
 		Cmd:        rec.Cmd,
 		Cwd:        rec.Cwd,
 		StartedAt:  rec.StartedAt.Format(time.RFC3339),
-		Ports:      portsOf(rec, snap),
-		Status:     "running",
 		ConfigPath: rec.ConfigPath,
 		StartID:    rec.StartID,
 		Origin:     rec.Origin,
@@ -349,17 +465,15 @@ func row(rec Record, snap state.Snapshot, portsKnown bool) rpc.RunRecord {
 		LogPath:    rec.LogPath,
 		LogOffset:  &rec.LogOffset,
 	}
-	if rec.PortHint > 0 {
-		hint := rec.PortHint
-		out.PortHint = &hint
-		out.URL = serviceURL(hint)
-		if portsKnown && !contains(out.Ports, hint) {
-			// The expected port is not listening yet: the desktop and
-			// `daemon.status` show the run as coming up rather than missing.
-			out.Status = "starting"
-		}
+}
+
+// runStatus is "starting" while a port-hinted run has not bound its port and
+// the listener table was readable, and "running" in every other case.
+func runStatus(rec Record, ports []int, portsKnown bool) string {
+	if rec.PortHint > 0 && portsKnown && !slices.Contains(ports, rec.PortHint) {
+		return "starting"
 	}
-	return out
+	return "running"
 }
 
 // portsOf collects the ports a run owns from the last snapshot. A row belongs
@@ -392,121 +506,29 @@ func ownedBy(ref state.Run, rec Record) bool {
 	return rec.ID != "" && ref.ID == rec.ID
 }
 
-// snapshot reads the daemon's current state without forcing a scan when the
-// cache is warm.
-func snapshot(rt *daemon.Runtime) state.Snapshot {
-	snap, err := rt.Scanner.Snapshot(scanner.Include{})
-	if err != nil {
-		return rt.Scanner.Cached()
+// requirePID is the one place that decides a pid-less run call is invalid. It
+// carries the caller's own example shape, so the refusal shows a request they
+// can paste back rather than the registry's field names.
+func requirePID(pid int, example string) error {
+	if pid <= 0 {
+		return rpc.NewError(rpc.CodeInvalidParams, "pid is required", example)
 	}
-	return snap
+	return nil
 }
 
-// checkCwd is the one place that decides which directory the daemon may run a
-// command in. Two rules, in order: the path has to be a real absolute path, and
-// unless the caller opted out it has to be inside the user's home.
-//
-// The home rule exists because the daemon runs as the user: a request that
-// reached it from another account or a compromised client could otherwise ask
-// it to run a command anywhere on the machine.
-func checkCwd(cwd string, allowOutsideHome bool) (string, error) {
-	abs, err := absoluteCwd(cwd)
-	if err != nil {
-		return "", err
+// valueOrZero reads an optional wire value, returning the type's zero when the
+// caller named none. The optional-field helpers below differ only in their
+// element type, so the nil rule lives here once instead of once per type.
+func valueOrZero[T any](value *T) T {
+	if value == nil {
+		var zero T
+		return zero
 	}
-	if allowOutsideHome {
-		return abs, nil
-	}
-	return withinHome(abs)
+	return *value
 }
 
-// absoluteCwd resolves a client-supplied path to one real absolute directory,
-// using the daemon's own working directory when the caller named none.
-func absoluteCwd(cwd string) (string, error) {
-	if strings.TrimSpace(cwd) == "" {
-		wd, err := os.Getwd()
-		if err != nil {
-			return "", rpc.NewError(rpc.CodeInvalidParams, "cwd is required", "")
-		}
-		cwd = wd
-	}
-	abs, err := filepath.Abs(cwd)
-	if err != nil {
-		return "", rpc.NewError(rpc.CodeInvalidParams, "cwd is not a usable path: "+cwd, "")
-	}
-	abs = filepath.Clean(abs)
-	// Resolve the symlinks the path has: two spellings of one directory must
-	// not be able to fail the home check differently.
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = resolved
-	}
-	return abs, nil
-}
+// textOrEmpty reads an optional wire string.
+func textOrEmpty(s *string) string { return valueOrZero(s) }
 
-// withinHome refuses a directory outside the user's home. A host whose home
-// cannot be resolved is not refused: the rule cannot be applied, and refusing
-// everything would break a legitimate install rather than protect it.
-func withinHome(abs string) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return abs, nil
-	}
-	if resolved, err := filepath.EvalSymlinks(home); err == nil {
-		home = resolved
-	}
-	if underHome(abs, home) {
-		return abs, nil
-	}
-	return "", rpc.NewError(rpc.CodeOutsideHome,
-		fmt.Sprintf("%s is outside %s", abs, home),
-		"pass allow_outside_home: true to start commands outside your home directory")
-}
-
-// underHome reports whether path is home or inside it.
-func underHome(path, home string) bool {
-	if path == home {
-		return true
-	}
-	rel, err := filepath.Rel(home, path)
-	if err != nil {
-		return false
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-// mergeEnv layers a client's environment overrides onto the daemon's own.
-func mergeEnv(over map[string]string) []string {
-	if len(over) == 0 {
-		return nil
-	}
-	base := os.Environ()
-	out := make([]string, 0, len(base)+len(over))
-	for _, kv := range base {
-		if key, _, ok := strings.Cut(kv, "="); ok {
-			if _, replaced := over[key]; replaced {
-				continue
-			}
-		}
-		out = append(out, kv)
-	}
-	for k, v := range over {
-		out = append(out, k+"="+v)
-	}
-	return out
-}
-
-func deref(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
-}
-
-func contains(xs []int, x int) bool {
-	for _, v := range xs {
-		if v == x {
-			return true
-		}
-	}
-	return false
-}
+// portOrZero reads an optional port hint; zero means the caller named none.
+func portOrZero(p *int) int { return valueOrZero(p) }
