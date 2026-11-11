@@ -803,6 +803,24 @@ arm64 (host hash `b009fd81c24a`), Go 1.27.1 darwin/arm64.
 (`signalTree`, `fastStats`, `setProbe`, `defaultSocketPath`); they are unchanged from `main` and not
 part of this acceptance.
 
+### Process cleanup ownership
+
+Cleanup may only signal a process the run still owns. Three paths were narrowed:
+
+- `testenv.KillIfMatches` re-reads the pid with `ps eww -p <pid> -o command=` and applies the same
+  ownership predicate immediately before signalling; pid 1 and the test process are never candidates.
+  `reportAndKill` and the scenario socket sweep use it, and `TestKillIfMatchesRechecksTheProcessBeforeSignalling`
+  plus `TestKillIfMatchesStopsARealProcess` pin the decision and the real re-read.
+- The killer fixture starts its shell with `Setpgid` and cleans up the held process group; the old
+  fresh-table descendant walk (`killTreeNow`) is gone. The wedged-listener fixture follows the same
+  rule. `go test ./internal/killer` passes.
+- `daemon`'s `killTree` refuses numeric-pid signals once `cmd.ProcessState` is set: a waited-on pid may
+  already belong to another process, and there is nothing of that command left to stop.
+
+The integration suites above start real daemons and services, then assert no `serve` process survives;
+the measurement harness additionally re-reads each candidate pid before any signal and recorded no
+stray in either phase.
+
 ### Mutation of `internal/store/store.go`
 
 The harness is the repository's AST single-token mutator (`gen.go`) with `go test -overlay`,
