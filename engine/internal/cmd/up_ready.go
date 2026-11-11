@@ -101,7 +101,17 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 				if group == nil || svc == nil {
 					continue
 				}
-				if ready, _ := serviceReady(*group, portsNow, name); ready {
+				// Readiness is the selected run's, not the service name's. A
+				// row that names another run is a replacement, and a row that
+				// names none cannot confirm a named one: its listener and its
+				// health answer for whatever it does name.
+				if replacement, ok := replacementRun(selection, svc); ok {
+					markStartChunkFailed(chunks, summary, name, "run_replaced",
+						startReplacedMessage(selection, replacement), nil)
+					delete(selected, name)
+					continue
+				}
+				if ready, _ := serviceReady(*group, portsNow, name); ready && startRowConfirms(selection, svc) {
 					markStartChunkReady(chunks, name)
 					delete(selected, name)
 					continue
@@ -201,6 +211,41 @@ func startTimeoutMessage(selection startSelection, name string, timeout time.Dur
 	}
 	return fmt.Sprintf("timed out after %s waiting for %s to be ready (ready_timeout)",
 		selection.budget, name)
+}
+
+// replacementRun names the live run that took this selection's place. A row
+// for the same service that names another run answers for that run: its
+// listener and its health are evidence about the replacement, never about the
+// run this wait is about. Only two known run ids can disagree — a missing id
+// on either side is no identity evidence, and the wait keeps reading the row.
+func replacementRun(selection startSelection, svc *state.Service) (string, bool) {
+	if selection.runID == "" || svc == nil || !svc.Running || svc.RunID == nil {
+		return "", false
+	}
+	if *svc.RunID == "" || *svc.RunID == selection.runID {
+		return "", false
+	}
+	return *svc.RunID, true
+}
+
+// startRowConfirms reports whether the service row is evidence about the
+// selected run. A row that names no run cannot confirm a named one: whatever
+// is listening there is some process on the service's address, not this run's
+// readiness. A selection with no run id has nothing to compare and keeps
+// reading the row.
+func startRowConfirms(selection startSelection, svc *state.Service) bool {
+	if selection.runID == "" {
+		return true
+	}
+	return svc != nil && svc.RunID != nil && *svc.RunID == selection.runID
+}
+
+// startReplacedMessage states what ended the wait. It does not call the
+// replacement unhealthy: the point is that it is not the run this wait was
+// asked to confirm, so it cannot answer for it.
+func startReplacedMessage(selection startSelection, replacement string) string {
+	return fmt.Sprintf("the run this wait is about (%s) was replaced by %s while waiting",
+		selection.runID, replacement)
 }
 
 // startChunkReadyTimeout is the readiness budget the daemon published for one
