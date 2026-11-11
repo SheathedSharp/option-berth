@@ -70,7 +70,7 @@ func buildFakeProvider(t *testing.T, name string) string {
 
 func TestCodexLiveFakeBinaryTwoTurns(t *testing.T) {
 	root := t.TempDir()
-	os.Unsetenv("BERTH_AGENT_STREAM_FAKE")
+	t.Setenv("BERTH_AGENT_STREAM_FAKE", "")
 	bin := buildFakeProvider(t, "codex")
 	out := newCompletionSignal()
 	inR, inW := io.Pipe()
@@ -109,7 +109,7 @@ func TestCodexLiveFakeBinaryTwoTurns(t *testing.T) {
 
 func TestCodexLiveFakeBinaryBusyAndApproval(t *testing.T) {
 	root := t.TempDir()
-	os.Unsetenv("BERTH_AGENT_STREAM_FAKE")
+	t.Setenv("BERTH_AGENT_STREAM_FAKE", "")
 	bin := buildFakeProvider(t, "codex")
 	lookPath := func(name string) (string, error) {
 		if name == "codex" {
@@ -154,7 +154,7 @@ func TestCodexLiveFakeBinaryBusyAndApproval(t *testing.T) {
 
 func TestCodexLiveCloseInterruptsHold(t *testing.T) {
 	root := t.TempDir()
-	os.Unsetenv("BERTH_AGENT_STREAM_FAKE")
+	t.Setenv("BERTH_AGENT_STREAM_FAKE", "")
 	bin := buildFakeProvider(t, "codex")
 	inR, inW := io.Pipe()
 	go func() {
@@ -185,7 +185,7 @@ func TestCodexLiveCloseInterruptsHold(t *testing.T) {
 
 func TestCodexLiveRejectsUnknownProviderRequest(t *testing.T) {
 	root := t.TempDir()
-	os.Unsetenv("BERTH_AGENT_STREAM_FAKE")
+	t.Setenv("BERTH_AGENT_STREAM_FAKE", "")
 	bin := buildFakeProvider(t, "codex")
 	inR, inW := io.Pipe()
 	go func() {
@@ -213,7 +213,7 @@ func TestCodexLiveRejectsUnknownProviderRequest(t *testing.T) {
 
 func TestCodexLiveMapsItemDelta(t *testing.T) {
 	root := t.TempDir()
-	os.Unsetenv("BERTH_AGENT_STREAM_FAKE")
+	t.Setenv("BERTH_AGENT_STREAM_FAKE", "")
 	bin := buildFakeProvider(t, "codex")
 	inR, inW := io.Pipe()
 	go func() {
@@ -240,7 +240,7 @@ func TestCodexLiveMapsItemDelta(t *testing.T) {
 
 func TestTurnTextNotInProviderArgv(t *testing.T) {
 	root := t.TempDir()
-	os.Unsetenv("BERTH_AGENT_STREAM_FAKE")
+	t.Setenv("BERTH_AGENT_STREAM_FAKE", "")
 	fakeBin := buildFakeProvider(t, "codex")
 	argvLog := filepath.Join(t.TempDir(), "argv.log")
 	wrapper := filepath.Join(t.TempDir(), "codex")
@@ -277,7 +277,7 @@ func TestTurnTextNotInProviderArgv(t *testing.T) {
 
 func TestClaudeLiveFakeBinaryTurn(t *testing.T) {
 	root := t.TempDir()
-	os.Unsetenv("BERTH_AGENT_STREAM_FAKE")
+	t.Setenv("BERTH_AGENT_STREAM_FAKE", "")
 	bin := buildFakeProvider(t, "claude")
 	inR, inW := io.Pipe()
 	go func() {
@@ -308,7 +308,7 @@ func TestClaudeLiveFakeBinaryTurn(t *testing.T) {
 
 func TestClaudeLiveFakeAskUserNotice(t *testing.T) {
 	root := t.TempDir()
-	os.Unsetenv("BERTH_AGENT_STREAM_FAKE")
+	t.Setenv("BERTH_AGENT_STREAM_FAKE", "")
 	bin := buildFakeProvider(t, "claude")
 	inR, inW := io.Pipe()
 	go func() {
