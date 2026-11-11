@@ -8,7 +8,6 @@ import (
 	"os"
 	"strconv"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -602,17 +601,6 @@ func killHeldProcessDefault(id isolatedProcessIdentity) error {
 		return fmt.Errorf("%w: no held handle", errUnscopedKillCleanup)
 	}
 	return id.Handle.Kill()
-}
-
-func killHeldProcessGroupDefault(id isolatedProcessIdentity) error {
-	if id.Handle == nil || id.Handle.Pid <= 0 || id.Handle.Pid != id.PID {
-		return fmt.Errorf("%w: held process group is not this identity", errUnscopedKillCleanup)
-	}
-	err := syscall.Kill(-id.Handle.Pid, syscall.SIGKILL)
-	if err != nil && err != syscall.ESRCH {
-		return err
-	}
-	return nil
 }
 
 func withKillCleanupHooks(t *testing.T, proc, group func(isolatedProcessIdentity) error) {
