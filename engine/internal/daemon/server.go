@@ -1130,7 +1130,7 @@ func deltaFor(prev, next state.Snapshot, view viewSpec) (state.Delta, bool) {
 	if view.include.Stats {
 		delta = state.DiffWithStats(prev, next)
 	}
-	if emptyDelta(delta) {
+	if emptyDelta(delta) && state.SameObservation(prev.Observation, next.Observation) {
 		return state.Delta{}, false
 	}
 	delta.Ports.Added = filterPorts(delta.Ports.Added, view.include)

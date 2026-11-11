@@ -1,4 +1,13 @@
-package cmd
+// Package codefacts answers "is this process running the code that is on disk
+// now?" on demand, for a reader that already has the runtime group.
+//
+// The daemon's scan loop never calls this: it runs every few seconds and must
+// not re-read source trees. Both `oberth status` and the daemon's groups.code
+// read share this one implementation, so a client cannot get a different
+// answer from the CLI and the app. A missing snapshot, an unreadable source,
+// or a run from before this feature leaves the fields nil (unknown), never
+// false.
+package codefacts
 
 import (
 	"context"
@@ -10,21 +19,19 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// statusCodeTimeout bounds the optional source comparison. Status must still
-// answer when a source tree is huge or a filesystem is slow: the code fields
-// then stay unknown, which is not the same as "unchanged".
-const statusCodeTimeout = 10 * time.Second
+// timeout bounds the optional source comparison. The caller must still answer
+// when a source tree is huge or a filesystem is slow: the code fields then
+// stay unknown, which is not the same as "unchanged".
+const timeout = 10 * time.Second
 
-// annotateCodeFacts answers "is the process running the code that is on disk
-// now?" for services this reader can check. The daemon's scanner never does
-// this work: it runs every few seconds and must not re-read source trees. A
-// missing snapshot, an unreadable source, or a run from before this feature
-// leaves the fields null (unknown), never false.
-func annotateCodeFacts(ctx context.Context, group *state.Group, selected map[string]bool) {
+// Annotate fills the per-service code identity verdicts on group. selected
+// narrows the expensive read to those service names; nil checks every running
+// service.
+func Annotate(ctx context.Context, group *state.Group, selected map[string]bool) {
 	if group == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(ctx, statusCodeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	// Several services often share one source tree (they default to their own
 	// cwd, which may be the same directory). Hash each tree once per read.

@@ -155,7 +155,8 @@ worktree 汇总（`cpu_percent`、`memory_rss_bytes`、`services` 为贡献样�
 `code_changed_files`，并给出可直接执行的 `code_hint`（`oberth restart --only <service>`）。
 `code_head` 是启动时 checkout 的 commit，没有提交或不在 Git 检出中时缺省。这些字段缺省表示**未知**
 ——旧版本启动的运行、快照已删除、或源码当前读不到——不是“没变”。逐文件快照超过保存上限时，
-仍能回答是否变化，但文件数缺省。
+仍能回答是否变化，但文件数缺省。已经持有 group 行的客户端通过 daemon 的 `groups.code` 方法读
+同一份比较：字段名与「null 即未知」的规则相同，回复里没有的服务是未知，不是没变。
 
 监听表不可信时（例如 agent 沙箱拒绝系统内省），`status` 仍然返回清单、服务、运行记录、
 日志路径和最近退出；顶层带 `observation`（`state`、`code`、`detail`、`hint`、`checked_at`）。

@@ -292,6 +292,35 @@ type GroupsListResult struct {
 	Groups []state.Group `json:"groups"`
 }
 
+// GroupsCodeParams names one group. The comparison only runs for its running
+// services, so a reader must say which group it is asking about.
+type GroupsCodeParams struct {
+	Name string `json:"name"`
+}
+
+// GroupsCodeResult carries the same nullable code-identity verdicts `status`
+// publishes. A service absent from Services has no answer (unknown), and null
+// fields inside a row mean unknown; neither is "unchanged".
+type GroupsCodeResult struct {
+	Services []ServiceCode `json:"services"`
+}
+
+// ServiceCode is one running service's start-time code identity compared with
+// what is on disk now.
+type ServiceCode struct {
+	Name  string `json:"name"`
+	RunID string `json:"run_id"`
+	// CodeHead is the commit checked out when this run started, when the
+	// checkout had one.
+	CodeHead *string `json:"code_head,omitempty" jsonschema:"nullable"`
+	// Changed is true/false when the comparison ran, null when unknown.
+	Changed *bool `json:"code_changed_since_start,omitempty" jsonschema:"nullable"`
+	// ChangedFiles is the exact number of differing files, when both
+	// snapshots kept per-file evidence.
+	ChangedFiles *int    `json:"code_changed_files,omitempty" jsonschema:"nullable"`
+	Hint         *string `json:"code_hint,omitempty" jsonschema:"nullable"`
+}
+
 type GroupsKillParams struct {
 	Name string `json:"name"`
 	// ConfigPath names the group by its oberth.yaml instead of by name, for a

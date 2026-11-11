@@ -334,6 +334,9 @@
         },
         "sessions": {
           "$ref": "#/definitions/ChangeSessionRecord"
+        },
+        "observation": {
+          "$ref": "#/definitions/Observation"
         }
       },
       "type": "object",
@@ -342,7 +345,8 @@
         "at",
         "ports",
         "groups",
-        "sessions"
+        "sessions",
+        "observation"
       ]
     },
     "Docker": {
@@ -626,6 +630,31 @@
         "services",
         "ports",
         "worktree_ports"
+      ]
+    },
+    "GroupsCodeParams": {
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "name"
+      ]
+    },
+    "GroupsCodeResult": {
+      "properties": {
+        "services": {
+          "items": {
+            "$ref": "#/definitions/ServiceCode"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "services"
       ]
     },
     "GroupsConfigGetParams": {
@@ -2309,6 +2338,61 @@
         "name"
       ]
     },
+    "ServiceCode": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "code_head": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "code_changed_since_start": {
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "code_changed_files": {
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "code_hint": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "run_id"
+      ]
+    },
     "ServiceEdit": {
       "properties": {
         "name": {
@@ -3402,6 +3486,14 @@
       },
       "result": {
         "$ref": "#/definitions/DaemonStatusResult"
+      }
+    },
+    "groups.code": {
+      "params": {
+        "$ref": "#/definitions/GroupsCodeParams"
+      },
+      "result": {
+        "$ref": "#/definitions/GroupsCodeResult"
       }
     },
     "groups.config.get": {

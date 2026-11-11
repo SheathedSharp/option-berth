@@ -180,7 +180,10 @@ exactly, along with a directly executable `code_hint` (`oberth restart --only <s
 is the checkout's commit at start, absent when there is no commit or the checkout is not inside Git.
 These fields being absent means **unknown** — a run started by an older version, a deleted snapshot,
 or source that cannot be read right now — not "unchanged". When the per-file snapshot exceeds the
-storage limit, it can still answer whether something changed, but the file count is absent.
+storage limit, it can still answer whether something changed, but the file count is absent. A client
+that already holds the group rows reads the same comparison through the daemon's `groups.code`
+method: the field names and the null-means-unknown rule are the same, and a service absent from the
+reply is unknown, not unchanged.
 
 When the listener table cannot be trusted (for example an agent sandbox refuses system introspection),
 `status` still returns the manifest, services, run records, log paths and recent exits; the top level

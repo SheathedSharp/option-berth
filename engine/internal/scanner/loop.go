@@ -1062,15 +1062,10 @@ func backoff(d, base, max time.Duration) time.Duration {
 	}
 }
 
-// observationEqual compares two verdicts without treating a re-checked healthy
-// process as changed: CheckedAt is the moment of the probe, not a fact about
-// the table, so a process that keeps seeing itself publishes nothing new.
+// observationEqual keeps the verdict comparison in the state package: the
+// daemon must use the same rule to decide whether a delta needs a frame.
 func observationEqual(a, b *state.Observation) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	return a.State == b.State && a.Code == b.Code && a.Source == b.Source &&
-		a.Detail == b.Detail && a.Hint == b.Hint
+	return state.SameObservation(a, b)
 }
 
 // snapshotChanged reports whether the diff between two snapshots is non-empty.
