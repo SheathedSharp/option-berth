@@ -94,8 +94,8 @@ func TestWaitForStartReadyUsesEachServiceBudget(t *testing.T) {
 	chdir(t, dir)
 
 	chunks := []rpc.GroupsStartChunk{
-		{Service: "api", State: "started", ReadyTimeout: "15ms"},
-		{Service: "worker", State: "started", ReadyTimeout: "35ms"},
+		{Service: "api", State: "started", ReadyTimeout: "15ms", RunID: "run-api"},
+		{Service: "worker", State: "started", ReadyTimeout: "35ms", RunID: "run-worker"},
 	}
 	summary := rpc.GroupsStartEnd{Started: []string{"api", "worker"}}
 	timedOut, err := waitForStartReady(context.Background(),
@@ -103,8 +103,12 @@ func TestWaitForStartReadyUsesEachServiceBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(timedOut) != 2 || timedOut[0] != "api" || timedOut[1] != "worker" {
+	if len(timedOut) != 2 || timedOut[0].service != "api" || timedOut[1].service != "worker" {
 		t.Fatalf("timed out = %v, want both owned services", timedOut)
+	}
+	// The cleanup is authorized by run identity, not by the service name.
+	if timedOut[0].runID != "run-api" || timedOut[1].runID != "run-worker" {
+		t.Fatalf("timed out = %v, want each service's own run", timedOut)
 	}
 	byName := map[string]string{}
 	for _, chunk := range chunks {

@@ -166,7 +166,7 @@ func TestWaitForStartReadyUsesTimeoutAsStructuredFailure(t *testing.T) {
 	summary := rpc.GroupsStartEnd{Started: []string{"api"}, Errors: []string{}}
 	if timedOut, err := waitForStartReady(context.Background(), params, nil, chunks, &summary, time.Millisecond, true); err != nil {
 		t.Fatal(err)
-	} else if len(timedOut) != 1 || timedOut[0] != "api" {
+	} else if len(timedOut) != 1 || timedOut[0].service != "api" {
 		t.Fatalf("timed out = %v, want api", timedOut)
 	}
 	if chunks[0].State != "failed" || chunks[0].Reason != "ready_timeout" ||
@@ -415,14 +415,14 @@ func TestWaitForStartReadyMixedTimeoutCleansOnlyNewStarts(t *testing.T) {
 		t.Fatal(err)
 	}
 	chdir(t, dir)
-	chunks := []rpc.GroupsStartChunk{{Service: "old", State: "skipped", Skipped: true}, {Service: "new", State: "started"}}
+	chunks := []rpc.GroupsStartChunk{{Service: "old", State: "skipped", Skipped: true}, {Service: "new", State: "started", RunID: "run-new"}}
 	summary := rpc.GroupsStartEnd{Skipped: []string{"old"}, Started: []string{"new"}}
 	cleanup, err := waitForStartReady(context.Background(), rpc.GroupsStartParams{ConfigPath: &path}, nil, chunks, &summary, time.Millisecond, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cleanup) != 1 || cleanup[0] != "new" {
-		t.Fatalf("cleanup=%v, must exclude existing service", cleanup)
+	if len(cleanup) != 1 || cleanup[0].service != "new" || cleanup[0].runID != "run-new" {
+		t.Fatalf("cleanup=%v, must be the run this invocation started and only it", cleanup)
 	}
 	if len(summary.Errors) != 2 {
 		t.Fatalf("both services must fail readiness: %+v", summary)
