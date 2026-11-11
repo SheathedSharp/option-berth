@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 )
@@ -233,10 +234,10 @@ func TestRunLogRangeEndsWhereTheNextGenerationStarted(t *testing.T) {
 		LogPath: "/logs/api.log", StartedAt: "2026-11-01T10:08:00Z", LogOffset: int64Ptr(90)}
 	records := []rpc.RunRecord{live, second, first}
 
-	if got := runLogRange(first, records); got != (logRange{start: 0, end: 40}) {
+	if got := runLogRange(first, records); got != (logRange{start: 0, end: 40, ended: true}) {
 		t.Fatalf("first run range = %+v, want [0,40)", got)
 	}
-	if got := runLogRange(second, records); got != (logRange{start: 40, end: 90}) {
+	if got := runLogRange(second, records); got != (logRange{start: 40, end: 90, ended: true}) {
 		t.Fatalf("second run range = %+v, want [40,90)", got)
 	}
 	// The run that is still writing owns everything after its own start.
@@ -262,8 +263,25 @@ func TestRunLogRangeIgnoresRunsThatDidNotWriteAfterThisOne(t *testing.T) {
 		LogPath: "/logs/api.log", StartedAt: "2026-11-01T10:07:00Z", ExitedAt: "2026-11-01T10:08:00Z"}
 
 	records := []rpc.RunRecord{first, overlapping, elsewhere, unrecorded}
-	if got := runLogRange(first, records); got != (logRange{start: 0, end: -1}) {
-		t.Fatalf("range = %+v, want [0,EOF): nothing recorded where this run's bytes end", got)
+	if got := runLogRange(first, records); got != (logRange{start: 0, end: -1, ended: true}) {
+		t.Fatalf("range = %+v, want an ended range: nothing recorded where this run's bytes end, but it cannot write more", got)
+	}
+}
+
+// The newest finished run has no successor to record where it took over. It has
+// ended all the same, so its range stops at the file as it is when read: a
+// follow reads and returns instead of waiting for a generation that does not
+// exist yet.
+func TestRunLogRangeOfANewestFinishedRunEndsAtTheFile(t *testing.T) {
+	ended := rpc.RunRecord{ID: "r1", Group: "shop", Name: "api", Status: "exited",
+		LogPath: "/logs/api.log", StartedAt: "2026-11-01T10:00:00Z", ExitedAt: "2026-11-01T10:02:00Z",
+		LogOffset: int64Ptr(120)}
+	got := runLogRange(ended, []rpc.RunRecord{ended})
+	if !got.bounded() {
+		t.Fatalf("range = %+v, want a bound: the run has ended and cannot append", got)
+	}
+	if got.start != 120 || got.end != -1 {
+		t.Fatalf("range = %+v, want the run's own bytes up to the file end", got)
 	}
 }
 
@@ -305,6 +323,47 @@ func TestFollowOfAFinishedRunPrintsItsLinesAndStops(t *testing.T) {
 	}
 	if strings.Contains(out, "ERROR") {
 		t.Fatalf("output = %q, want nothing from the next run", out)
+	}
+}
+
+// The same follow for a run that has ended with no successor recorded yet — the
+// newest finished run. The file is still there to grow when the next generation
+// starts, so the read must stop at the file rather than follow it: bytes that
+// arrive afterwards belong to whichever run writes them, not to this one.
+func TestFollowOfAFinishedRunWithoutASuccessorReturns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "api.log")
+	if err := os.WriteFile(path, []byte("booting\nlistening on 3000\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ended := rpc.RunRecord{ID: "r1", Group: "shop", Name: "api", Status: "exited",
+		LogPath: path, StartedAt: "2026-11-01T10:00:00Z", ExitedAt: "2026-11-01T10:02:00Z",
+		LogOffset: int64Ptr(0)}
+	rng := runLogRange(ended, []rpc.RunRecord{ended})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	followed := make(chan error, 1)
+	done := make(chan struct{})
+	out := captureStdout(t, func() {
+		go func() {
+			defer close(done)
+			followed <- streamFileLogsFrom(ctx, path, rng, false, 10, logMetadata{Service: "api", RunID: "r1"})
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			// The follow had no end and started waiting for a future run's
+			// bytes: cancel it so the test can report it instead of hanging.
+			cancel()
+			<-done
+			t.Error("following a run that has ended did not return")
+		}
+	})
+	if err := <-followed; err != nil && !t.Failed() {
+		t.Fatal(err)
+	}
+	if !t.Failed() && !strings.Contains(out, "listening on 3000") {
+		t.Fatalf("output = %q, want the run's lines before returning", out)
 	}
 }
 
