@@ -266,6 +266,11 @@ func TestLoadValidationProblems(t *testing.T) {
 			problems: []string{"service api: port 70000 is out of range 1-65535"},
 		},
 		{
+			name:     "env_file contains a NUL byte",
+			body:     "name: p\nservices:\n  - name: api\n    env_file: \"a\\0b\"\n",
+			problems: []string{"service api: env_file contains a NUL byte"},
+		},
+		{
 			name:     "worktree_ports of zero",
 			body:     "name: p\nworktree_ports: 0\n",
 			problems: []string{"worktree_ports: 0 is out of range 1-100"},
