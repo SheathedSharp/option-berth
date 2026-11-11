@@ -120,6 +120,13 @@ A start accepts only readiness evidence for the current service. The no-port run
 the stop receipt are fixed before the first signal and are not re-derived from the same PID in a later
 stage. Operations are refused when reliable control identity is missing.
 
+A readiness timeout's cleanup is one of those operations: it names the run this invocation started for
+each service (`expect_runs` on `groups.kill`), and the daemon selects only listeners and no-port runs
+whose run id matches. A service another controller restarted during the wait is a different run and is
+left alone; a target whose identity cannot be verified is not selected either. The CLI refuses to send
+a name-only cleanup to a daemon that does not announce the capability, because that daemon would stop
+whatever answers to the name.
+
 `down` captures reservations before signalling, reuses a fresh scan after the actual stop, checks the
 original registry (including compatibility stopping records), and deletes only after comparing the full
 reservation set inside a short transaction. Failure, cancellation, partial stops, remaining runs or

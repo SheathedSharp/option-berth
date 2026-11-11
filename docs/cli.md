@@ -477,8 +477,12 @@ it exits 2 without running the start; a service that times out has state `failed
 `ready_timeout`, the message says whether the timeout came from that service's readiness budget or
 from the caller's `--wait-timeout` ceiling, and the command exits with code 1. Only runs newly started
 this time that time out enter stop cleanup; existing runs are not stopped or restarted because this
-wait failed. The `started` / `skipped` summary describes the start action, and readiness failures
-appear separately in `errors` and in each service's `state`. For runs newly started this time that
+wait failed. The cleanup names each run it started by `run_id`: a run another controller started for
+the same service while the wait was still running is a different run and is left alone. A daemon that
+does not announce `groups.kill.expect_runs` cannot scope a stop to named runs, so it is not sent a
+name-only cleanup: the command fails and says the timed-out runs are still running. The `started` /
+`skipped` summary describes the start action, and readiness failures appear separately in `errors`
+and in each service's `state`. For runs newly started this time that
 were cleaned up, the engine writes the same `ready_timeout` into the service's last exit facts, so
 `status`, the desktop service row, attention and the event stream do not show it as an ordinary manual
 stop. Health facts carry `status`, `code`, `reason` and `observed_at`; when a dependency declared

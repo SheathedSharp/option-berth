@@ -263,15 +263,46 @@ func consumeStartWithWait(ctx context.Context, c *client.Client, stream *client.
 	return nil
 }
 
+// killCaller is the part of the daemon client a timeout cleanup needs: one
+// call and the capability list. It is an interface so the stop request can be
+// tested without a live daemon.
+type killCaller interface {
+	Call(ctx context.Context, method string, params, result any) error
+	Hello() rpc.DaemonHelloResult
+}
+
 // stopTimedOutServices makes a readiness timeout terminal. The same group
 // mutation path used by `oberth down` stops portless workers as well as
-// listeners, while Only keeps already-running or skipped services untouched.
-func stopTimedOutServices(ctx context.Context, c *client.Client, params rpc.GroupsStartParams, services []string) error {
+// listeners, but the stop names the run this invocation started for each
+// service. A service name alone would also match a run another controller
+// started while this wait was running — that run is not ours to stop and must
+// survive the timeout. `expect_runs` also keeps the stop scoped, so
+// already-running or skipped services and their `port: auto` claims stay.
+//
+// A daemon that does not know `expect_runs` would silently drop the field and
+// stop by name, which is exactly the wrong run; the cleanup is refused then,
+// and an invocation that cannot name the run it started refuses too.
+func stopTimedOutServices(ctx context.Context, c killCaller, params rpc.GroupsStartParams, timedOut []startTimeout) error {
+	if !hasCapability(c.Hello(), rpc.CapabilityKillExpectRuns) {
+		return timeoutCleanupRefused(c.Hello(), timedOut,
+			"does not announce "+rpc.CapabilityKillExpectRuns+", so it would stop whatever answers to the service name")
+	}
+	expect := make([]rpc.RunExpectation, 0, len(timedOut))
+	for _, timedOutService := range timedOut {
+		if timedOutService.runID == "" {
+			return timeoutCleanupRefused(c.Hello(), timedOut,
+				"did not name the run it started for "+timedOutService.service)
+		}
+		expect = append(expect, rpc.RunExpectation{
+			Service: timedOutService.service,
+			RunID:   timedOutService.runID,
+		})
+	}
 	var env rpc.KillEnvelope
 	err := c.Call(ctx, "groups.kill", rpc.GroupsKillParams{
 		Name:       valueOrEmpty(params.Name),
 		ConfigPath: params.ConfigPath,
-		Only:       services,
+		ExpectRuns: expect,
 		Release:    true,
 		Reason:     "ready_timeout",
 	}, &env)
@@ -279,6 +310,22 @@ func stopTimedOutServices(ctx context.Context, c *client.Client, params rpc.Grou
 		return cliError(err)
 	}
 	return nil
+}
+
+// timeoutCleanupRefused says plainly that the timed-out runs were left running
+// and why: a cleanup that stops the wrong run must not read as success, and an
+// agent needs the state it is actually in.
+func timeoutCleanupRefused(hello rpc.DaemonHelloResult, timedOut []startTimeout, why string) error {
+	version := hello.DaemonVersion
+	if version == "" {
+		version = "an older version"
+	}
+	services := make([]string, 0, len(timedOut))
+	for _, service := range timedOut {
+		services = append(services, service.service)
+	}
+	return fmt.Errorf("the timed-out runs for %s were not stopped: the running daemon (%s) %s\nhint: they may still be running; stop them with `oberth down`, or restart the daemon with `oberth daemon restart`",
+		strings.Join(services, ", "), version, why)
 }
 
 func valueOrEmpty(value *string) string {

@@ -19,6 +19,7 @@ import (
 func init() {
 	RegisterHandler("ports.kill", handlePortsKill)
 	RegisterHandler("groups.kill", handleGroupsKill)
+	RegisterCapability(rpc.CapabilityKillExpectRuns)
 }
 
 func handlePortsKill(ctx context.Context, req *Request) (any, error) {
@@ -198,6 +199,31 @@ func groupTargetsFor(snap state.Snapshot, name string, only map[string]bool) []k
 		if inSnapshotGroup(p, name) && (only == nil || (p.Run != nil && only[p.Run.Name])) {
 			out = append(out, killer.Target{Port: p.Port, BindAddress: p.BindAddress})
 		}
+	}
+	return out
+}
+
+// expectedGroupTargets is the ownership-scoped port pass. A listener is a
+// target only when it belongs to a run the caller named: a service whose live
+// run is a different one was restarted by somebody else and is not this
+// caller's to stop. A row the snapshot cannot attribute to a run, or whose run
+// name contradicts the expectation, is left alone as well — an unverifiable
+// identity cannot widen a stop.
+func expectedGroupTargets(snap state.Snapshot, name string, expect map[string]string) []killer.Target {
+	wanted := make(map[string]string, len(expect))
+	for service, runID := range expect {
+		wanted[runID] = service
+	}
+	var out []killer.Target
+	for _, p := range snap.Ports {
+		if p.Run == nil || !inSnapshotGroup(p, name) {
+			continue
+		}
+		service, ok := wanted[p.Run.ID]
+		if !ok || (p.Run.Name != "" && p.Run.Name != service) {
+			continue
+		}
+		out = append(out, killer.Target{Port: p.Port, BindAddress: p.BindAddress})
 	}
 	return out
 }

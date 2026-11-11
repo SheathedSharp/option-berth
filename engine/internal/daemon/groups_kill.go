@@ -29,6 +29,10 @@ func handleGroupsKill(ctx context.Context, req *Request) (any, error) {
 		return nil, rpc.NewError(rpc.CodeInvalidParams, "unsupported stop reason "+p.Reason,
 			"use stopped or ready_timeout")
 	}
+	if len(p.Only) > 0 && len(p.ExpectRuns) > 0 {
+		return nil, rpc.NewError(rpc.CodeInvalidParams, "only and expect_runs are mutually exclusive",
+			"expect_runs names the runs to stop; only names services, whatever run each is")
+	}
 	target, err := killGroupTarget(req.Runtime, p)
 	if err != nil {
 		return nil, err
@@ -46,7 +50,13 @@ func handleGroupsKill(ctx context.Context, req *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	scoped := len(only) > 0
+	expect, err := expectFilter(req.Runtime, name, cfg, p.ExpectRuns)
+	if err != nil {
+		return nil, err
+	}
+	// Either selector makes the stop scoped, which is what keeps the group's
+	// `port: auto` claims attached to the services that keep running.
+	scoped := len(only) > 0 || len(expect) > 0
 
 	var portRelease *servicePortRelease
 	if p.Release && !p.DryRun && !scoped {
@@ -72,7 +82,12 @@ func handleGroupsKill(ctx context.Context, req *Request) (any, error) {
 		return nil, err
 	}
 
-	targets := groupTargetsFor(snap, name, only)
+	var targets []killer.Target
+	if len(expect) > 0 {
+		targets = expectedGroupTargets(snap, name, expect)
+	} else {
+		targets = groupTargetsFor(snap, name, only)
+	}
 	var pidTargets []killer.Target
 	var runSignal func(int)
 	if p.Release {
@@ -83,7 +98,7 @@ func handleGroupsKill(ctx context.Context, req *Request) (any, error) {
 		if cfg == nil {
 			cfg = configForGroup(req.Runtime, name)
 		}
-		pidTargets, runSignal, err = captureSilentGroupStop(req.Runtime, snap, name, only, p.Reason, p.DryRun)
+		pidTargets, runSignal, err = captureSilentGroupStop(req.Runtime, snap, name, only, expect, p.Reason, p.DryRun)
 		if err != nil {
 			return nil, rpc.NewError(rpc.CodeInternal, err.Error(), "inspect status before retrying down")
 		}
@@ -164,6 +179,65 @@ func serviceFilter(rt *Runtime, name string, cfg *groups.Config, requested []str
 	return selected, nil
 }
 
+// expectFilter validates the run identities a stop is allowed to touch and
+// returns service → run id. Both halves are required: a service alone would
+// stop a replacement run that another controller started, which is the race
+// this selector exists to close. The service is still checked against the
+// manifest so a typo is a caller error, not a quiet no-op.
+func expectFilter(rt *Runtime, name string, cfg *groups.Config, requested []rpc.RunExpectation) (map[string]string, error) {
+	if len(requested) == 0 {
+		return nil, nil
+	}
+	if cfg == nil {
+		cfg = configForGroup(rt, name)
+	}
+	if cfg == nil {
+		return nil, rpc.NewError(rpc.CodeNotFound, "no manifest describes group "+name,
+			"run `oberth status` to inspect this worktree")
+	}
+	known := make(map[string]bool, len(cfg.Services))
+	for _, svc := range cfg.Services {
+		known[svc.Name] = true
+	}
+	expected := make(map[string]string, len(requested))
+	for i := range requested {
+		service, runID, err := expectedRun(requested[i])
+		if err != nil {
+			return nil, err
+		}
+		if !known[service] {
+			return nil, rpc.NewError(rpc.CodeNotFound,
+				fmt.Sprintf("service %q is not declared by group %s", service, name),
+				"run `oberth status` to inspect this worktree")
+		}
+		if expected[service] != "" {
+			return nil, rpc.NewError(rpc.CodeInvalidParams,
+				fmt.Sprintf("expect_runs names service %q more than once", service),
+				"send one expected run per service")
+		}
+		expected[service] = runID
+	}
+	return expected, nil
+}
+
+// expectedRun reads one expectation and refuses an incomplete one. A service
+// without a run id is the name-only stop this selector replaces, so it is a
+// caller error rather than a silent widening.
+func expectedRun(raw rpc.RunExpectation) (string, string, error) {
+	service := strings.TrimSpace(raw.Service)
+	runID := strings.TrimSpace(raw.RunID)
+	if service == "" {
+		return "", "", rpc.NewError(rpc.CodeInvalidParams, "expect_runs contains an empty service name",
+			"name the service and the run id the stop is allowed to stop")
+	}
+	if runID == "" {
+		return "", "", rpc.NewError(rpc.CodeInvalidParams,
+			fmt.Sprintf("expect_runs names service %q without a run id", service),
+			"a service-only stop can reach a replacement run; name the run the caller started")
+	}
+	return service, runID, nil
+}
+
 // runsWithoutPorts removes runs whose process already appears in the port
 // targets. Port targets are killed in the first pass; sending the same pid
 // through the run-only pass would produce a duplicate result and a second
@@ -190,10 +264,16 @@ func runsWithoutPorts(snap state.Snapshot, name string, pids []int) []int {
 	return out
 }
 
-func groupPIDs(runs []state.Run, only map[string]bool) []int {
+func groupPIDs(runs []state.Run, only map[string]bool, expect map[string]string) []int {
 	var out []int
 	for _, run := range runs {
-		if only[run.Name] && run.RootPID > 0 {
+		if len(only) > 0 && !only[run.Name] {
+			continue
+		}
+		if len(expect) > 0 && expect[run.Name] != run.ID {
+			continue
+		}
+		if run.RootPID > 0 {
 			out = append(out, run.RootPID)
 		}
 	}

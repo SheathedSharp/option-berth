@@ -14,6 +14,15 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
+// startTimeout is one service this wait gave up on: the name it was started
+// under and the run this invocation started. The run id is what authorizes the
+// cleanup — a service name alone would also match a run another controller
+// started while this wait was still running.
+type startTimeout struct {
+	service string
+	runID   string
+}
+
 // waitForStartReady waits on the same state that status exposes. A service
 // with a configured health path is ready only after its listener reports ok;
 // every other service is ready once its run is live (or its listener is up).
@@ -21,7 +30,7 @@ import (
 // second readiness protocol to the daemon.
 func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *groups.Config,
 	chunks []rpc.GroupsStartChunk, summary *rpc.GroupsStartEnd, timeout time.Duration,
-	timeoutSet bool) ([]string, error) {
+	timeoutSet bool) ([]startTimeout, error) {
 	waitStart := time.Now()
 	// An explicit --wait-timeout is the ceiling for the whole invocation. It
 	// does not replace each service's own readiness budget; it only caps the
@@ -51,7 +60,7 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 	// start would read an exit from this same second as older than the wait.
 	// Align the timestamp fallback to the second; the run id stays primary.
 	fallbackSince := waitStart.UTC().Truncate(time.Second)
-	var timedOut []string
+	var timedOut []startTimeout
 	for {
 		pp, gg, obs, err := groupRowsObserved(ctx)
 		if obs != nil && obs.State != string(ports.ObservationObservable) {
@@ -94,8 +103,12 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 				}
 				// An older daemon may omit run_id on a skipped chunk. Once
 				// the service is live, the group row names its run, and
-				// that run is what this wait is about.
-				if selection.runID == "" && svc.Running && svc.RunID != nil {
+				// that run is what this wait is about. Only a run this
+				// invocation did not start is read from the live row: for
+				// its own start the chunk is the authority, and a run id
+				// copied from whatever is live now could be a replacement
+				// that the timeout cleanup must not touch.
+				if selection.runID == "" && !selection.owned && svc.Running && svc.RunID != nil {
 					selection.runID = *svc.RunID
 					selected[name] = selection
 				}
@@ -117,7 +130,7 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 			}
 		}
 		if len(selected) == 0 {
-			sort.Strings(timedOut)
+			sortStartTimeouts(timedOut)
 			return timedOut, nil
 		}
 		now := time.Now()
@@ -129,12 +142,12 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 				startTimeoutMessage(selection, name, timeout), nil)
 			// Waiting on an existing run does not authorize stopping it.
 			if selection.owned {
-				timedOut = append(timedOut, name)
+				timedOut = append(timedOut, startTimeout{service: name, runID: selection.runID})
 			}
 			delete(selected, name)
 		}
 		if len(selected) == 0 {
-			sort.Strings(timedOut)
+			sortStartTimeouts(timedOut)
 			return timedOut, nil
 		}
 		select {
@@ -193,6 +206,12 @@ func startChunkReadyTimeout(c rpc.GroupsStartChunk) time.Duration {
 		return d
 	}
 	return groups.DefaultReadyTimeout
+}
+
+// sortStartTimeouts orders the cleanup list by service, so the stop request
+// and its failure message read the same way on every run.
+func sortStartTimeouts(timeouts []startTimeout) {
+	sort.Slice(timeouts, func(i, j int) bool { return timeouts[i].service < timeouts[j].service })
 }
 
 // startSelection is what this invocation selected for one service: the run it

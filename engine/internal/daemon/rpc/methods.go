@@ -96,6 +96,13 @@ const (
 	// stream, and a new client talking to an old daemon simply gets no
 	// progress.
 	CapabilityStartPhases = "groups.start.phases"
+
+	// CapabilityKillExpectRuns covers `expect_runs` in groups.kill: a stop
+	// scoped to the runs the caller started, so a service another controller
+	// restarted in the meantime is left alone. An older daemon ignores the
+	// field and stops whatever answers to the service's name, which is exactly
+	// the replacement run that field exists to protect.
+	CapabilityKillExpectRuns = "groups.kill.expect_runs"
 )
 
 // Include lists the optional per-subscriber enrichments ("stats", "health").
@@ -343,6 +350,14 @@ type GroupsKillParams struct {
 	// Only narrows a project stop to these declared services. It is used by
 	// `oberth restart --only`; scoped stops keep auto-port claims.
 	Only []string `json:"only,omitempty"`
+	// ExpectRuns names the run each service must still be for this stop to
+	// touch it. It is the cleanup a readiness timeout uses: it stops the runs
+	// the caller started, not whatever now answers to the service's name, so a
+	// run another controller started during the wait is left alone. Mutually
+	// exclusive with Only — Only selects by service and would widen the stop
+	// past the named runs. Also scoped: a stop with expectations keeps the
+	// group's `port: auto` claims.
+	ExpectRuns []RunExpectation `json:"expect_runs,omitempty"`
 	// Release is `oberth down`: besides the group's listening ports it stops
 	// every run option-berth started in the group, port or not, and releases the
 	// claims the group's `port: auto` services hold. A group with a config
@@ -352,6 +367,17 @@ type GroupsKillParams struct {
 	// outcome. Ordinary stops leave this empty and are recorded as "stopped";
 	// `up --wait` uses "ready_timeout" so status, attention and events agree.
 	Reason string `json:"reason,omitempty" jsonschema:"enum=stopped,enum=ready_timeout"`
+}
+
+// RunExpectation is one service's expected run identity in a stop. Both fields
+// are required: without the run id the stop would be a name-only stop, which is
+// the thing this selector exists to avoid.
+type RunExpectation struct {
+	// Service is a service the group's manifest declares.
+	Service string `json:"service"`
+	// RunID is the run this caller started and may stop. A live run with the
+	// same service name but another id is not a target.
+	RunID string `json:"run_id"`
 }
 
 type GroupsStartParams struct {
