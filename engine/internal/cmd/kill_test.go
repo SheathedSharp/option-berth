@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"os"
@@ -20,6 +21,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/sheathedsharp/option-berth/engine/internal/sessions"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
+	"github.com/spf13/cobra"
 )
 
 func sampleResults() []killer.Result {
@@ -391,33 +393,163 @@ func TestKillSelectionRefusesABlindTable(t *testing.T) {
 	}
 }
 
-// TestKillSelectionKeepsAnExplicitPIDWhenTheTableIsBlind: a pid named with
-// --pid is a complete subject. Observation is what failed, not the request, so
-// the kill must not require a table it does not use.
-func TestKillSelectionKeepsAnExplicitPIDWhenTheTableIsBlind(t *testing.T) {
+// TestKillAllWithABlindTableIsTheDocumentedCLIFailure drives the real command
+// all the way to the exit contract: `kill --all --json` on a process that cannot
+// see its own listeners must write one JSON error document to stderr, nothing to
+// stdout, and exit 1 with the collector's own stable code. It is the user-visible
+// half of "cannot see is not nothing is running": the alternative is `[]` on
+// stdout and a zero exit, which reads as "everything was already stopped".
+func TestKillAllWithABlindTableIsTheDocumentedCLIFailure(t *testing.T) {
+	resetRouting(t)
+	// dry-run stays false: the contract is the real command's fail-closed
+	// exit, not a planned no-op. Isolation, not dry-run, is what keeps a
+	// missed hook from signalling anything.
+	withKillFlags(t, func() { killAllFlag, killJSONFlag, killYesFlag = true, true, true })
+	// No daemon: the command takes the direct path, which is the one that scans.
+	noDaemonReachable(t)
+	// The hook the direct path actually calls is scanForKill, not scanPorts
+	// (that seam belongs to status/group observation). A missed injection
+	// stays on the package test default, which refuses ports.Scan.
+	isolateKillScan(t, func() ([]ports.ListeningPort, error) {
+		return nil, blindScan()
+	})
+	isolateKillExecutor(t, refuseKillExecutorIfReached)
+	// The error is rendered by the root command after the subcommand returns, so
+	// the JSON mode has to be on there too.
+	prevJSON := jsonMode
+	jsonMode = true
+	t.Cleanup(func() { jsonMode = prevJSON })
+
+	cmd := &cobra.Command{RunE: runKill}
+	cmd.Flags().String("ip", "", "")
+	cmd.SetContext(context.Background())
+
+	var runErr error
+	stdout := captureStdout(t, func() { runErr = runKill(cmd, nil) })
+	if runErr == nil {
+		t.Fatal("a blind table answered --all with success")
+	}
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want nothing: the failure is not a result list", stdout)
+	}
+	if code := exitCodeFor(runErr); code != exitFail {
+		t.Fatalf("exit code = %d, want %d", code, exitFail)
+	}
+
+	var stderr bytes.Buffer
+	if status := reportError(&stderr, runErr); status != exitFail {
+		t.Fatalf("reportError = %d, want %d", status, exitFail)
+	}
+	var doc struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Hint    string `json:"hint"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(stderr.Bytes(), &doc); err != nil {
+		t.Fatalf("stderr is not one JSON document: %v\n%s", err, stderr.String())
+	}
+	if doc.Error.Code != ports.CodeObservationBlind {
+		t.Fatalf("error.code = %q, want %q", doc.Error.Code, ports.CodeObservationBlind)
+	}
+	if !strings.Contains(doc.Error.Message, "cannot see its own listener") {
+		t.Fatalf("error.message = %q, want the collector's own detail", doc.Error.Message)
+	}
+}
+
+// anOwnedRunRow is what the collector reports for one listener of a run the
+// registry knows: the row a scan produces before attribution stamps the run's
+// identity on it. The pid-only path has to keep that identity, because it is
+// what decides the stop's scope and what a reader is shown.
+func anOwnedRunRow(port, pid, rootPID int) ports.ListeningPort {
+	return ports.ListeningPort{
+		Port: port, PID: pid, BindAddress: "127.0.0.1", Type: ports.PortTypeUser,
+		Process: "cmd.test", Command: "/tmp/cmd.test -test.run=helper",
+		RunID: "run-1", RunGroup: "storefront", Tag: "api", RunRootPID: rootPID,
+	}
+}
+
+// TestKillSelectionResolvesAnExplicitPIDAgainstTheAttributedTable: naming a pid
+// does not make the listener table irrelevant. The enriched table is what
+// carries a listener's run ownership — the root whose tree the stop covers, the
+// service name a reader sees, and the address a report can say was released — so
+// `kill --pid <a run's listener>` must resolve against it exactly like every
+// other selector. Reading it only for the selectors that pick their targets out
+// of it made this one form stop a leaf instead of its run, and name the process
+// instead of the service.
+func TestKillSelectionResolvesAnExplicitPIDAgainstTheAttributedTable(t *testing.T) {
+	resetKillFlags(t)
+	killPIDFlag = []int{4242}
+	table := []ports.ListeningPort{anOwnedRunRow(3000, 4242, 4000)}
+
+	scanned := 0
+	snapshot, targets, confirm, err := killSelection(nil, "", func() ([]ports.ListeningPort, error) {
+		scanned++
+		return table, nil
+	})
+	if err != nil {
+		t.Fatalf("resolving an explicit pid: %v", err)
+	}
+	if scanned != 1 {
+		t.Fatalf("the listener table was read %d times, want the attribution read once", scanned)
+	}
+	if len(snapshot) != 1 || snapshot[0].RunRootPID != 4000 || snapshot[0].Tag != "api" {
+		t.Fatalf("snapshot = %+v, want the row that names the run", snapshot)
+	}
+	if confirm || len(targets) != 1 || targets[0].PID != 4242 {
+		t.Fatalf("targets = %+v confirm=%v, want the named pid only", targets, confirm)
+	}
+}
+
+// TestKillSelectionKeepsAnExplicitPIDWhenTheTableIsUnreadable pins the one
+// exception at the boundary where it belongs: a failed observation must not veto
+// a pid the caller named, because the pid is the whole subject. It is not an
+// exception to reading the table — that read is what the test above requires —
+// and it is not a promise that the kill can proceed without observation: the
+// killer still observes before it signals, so a blind machine still ends in a
+// failed row rather than a silent success.
+func TestKillSelectionKeepsAnExplicitPIDWhenTheTableIsUnreadable(t *testing.T) {
 	resetKillFlags(t)
 	killPIDFlag = []int{12345}
 
-	scanned := false
-	targets, confirm, err := selectOnlyPID(t, func() { scanned = true })
+	snapshot, targets, confirm, err := killSelection(nil, "", func() ([]ports.ListeningPort, error) {
+		return nil, blindScan()
+	})
 	if err != nil {
-		t.Fatalf("an explicit pid must not depend on the listener table: %v", err)
+		t.Fatalf("an explicit pid must not be denied by a failed observation: %v", err)
 	}
-	if scanned {
-		t.Error("the listener table was scanned for a selection that does not use it")
+	if snapshot != nil {
+		t.Fatalf("snapshot = %+v, want no rows to have been read", snapshot)
 	}
 	if confirm || len(targets) != 1 || targets[0].PID != 12345 {
 		t.Fatalf("targets = %+v confirm=%v, want the named pid only", targets, confirm)
 	}
 }
 
-func selectOnlyPID(t *testing.T, markScan func()) ([]killer.Target, bool, error) {
-	t.Helper()
-	_, targets, confirm, err := killSelection(nil, "", func() ([]ports.ListeningPort, error) {
-		markScan()
-		return nil, blindScan()
+// TestKillSelectionKeepsTheRowsAPartialReadProduced: a partial table is still
+// evidence about the listeners it does show. For an explicit pid that evidence
+// is the run attribution, so the readable row travels with the pid instead of
+// being discarded — the pid itself is signalled either way.
+func TestKillSelectionKeepsTheRowsAPartialReadProduced(t *testing.T) {
+	resetKillFlags(t)
+	killPIDFlag = []int{4242}
+	partial := []ports.ListeningPort{anOwnedRunRow(3000, 4242, 4000)}
+
+	snapshot, targets, _, err := killSelection(nil, "", func() ([]ports.ListeningPort, error) {
+		return partial, &ports.ObservationError{
+			Code: ports.CodeObservationIncomplete, Detail: "ss: unreadable row", Partial: true, Rows: partial,
+		}
 	})
-	return targets, confirm, err
+	if err != nil {
+		t.Fatalf("a partial table must not deny an explicit pid: %v", err)
+	}
+	if len(snapshot) != 1 || snapshot[0].RunRootPID != 4000 {
+		t.Fatalf("snapshot = %+v, want the row the collector did read", snapshot)
+	}
+	if len(targets) != 1 || targets[0].PID != 4242 {
+		t.Fatalf("targets = %+v, want the named pid", targets)
+	}
 }
 
 // withKillFlags installs one flag combination and puts every kill flag back

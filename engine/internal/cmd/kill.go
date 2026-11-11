@@ -131,31 +131,42 @@ func killDirect(ctx context.Context, args []string, bindIP string) error {
 	}.execute(ctx)
 }
 
-// killSelection resolves the command line against a listener table, scanning
-// only when the selection actually needs one. An unreadable table is returned
-// as the observation failure it is: selecting nothing from it and reporting
-// "Nothing to stop." would turn "cannot see" into "nothing is running", and
-// `kill --all` would exit 0 without having observed a single listener.
+// killSelection resolves the command line against the enriched listener table.
+// The table is read for every selector, not only for the ones that pick their
+// targets out of it: it is what carries a listener's run ownership, and that
+// ownership decides how much of a run `--pid` stops, what the result rows are
+// called, and which addresses a report says were released. Reading it only for
+// the table-driven selectors made `kill --pid <a run's listener>` stop a leaf
+// instead of its run and name the process instead of the service.
 //
-// An explicit --pid is the exception: the pid is the whole subject, so the
-// operation never asked to observe and a blind collector must not fail it.
+// A failed read never becomes an empty table. For the selectors that resolve
+// through it (`--all`, `--group`, a positional argument) the observation failure
+// is the answer: selecting nothing from a blind table and reporting "Nothing to
+// stop." would turn "cannot see" into "nothing is running", and `kill --all`
+// would exit 0 without having observed a single listener.
+//
+// An explicit `--pid` is the exception. The pid is the whole subject, so a
+// failed observation must not deny it — but that exception is about
+// *selection*, not about stopping without evidence: the killer observes again
+// before it signals, so a blind machine still ends in a failed row rather than
+// a silent success. A partial read keeps the rows it did produce, because those
+// rows are exactly the attribution this function exists to preserve.
 func killSelection(args []string, bindIP string, scan func() ([]ports.ListeningPort, error)) ([]ports.ListeningPort, []killer.Target, bool, error) {
-	var snapshot []ports.ListeningPort
-	if killNeedsTable(args) {
-		found, err := scan()
-		if err != nil {
+	snapshot, err := scan()
+	if err != nil {
+		if killRequiresObservation(args) {
 			return nil, nil, false, err
 		}
-		snapshot = found
+		snapshot, _ = ports.PartialRows(err)
 	}
 	targets, confirm, err := killTargets(args, snapshot, bindIP)
 	return snapshot, targets, confirm, err
 }
 
-// killNeedsTable reports whether the selection is resolved from listeners:
-// positional arguments are read port-first, and the group and all selectors
-// are sweeps. Only --pid alone stands without a table.
-func killNeedsTable(args []string) bool {
+// killRequiresObservation reports whether a failed observation vetoes this
+// selection: positional arguments are read port-first, and the group and all
+// selectors are sweeps. Only --pid alone survives a table it could not read.
+func killRequiresObservation(args []string) bool {
 	return len(args) > 0 || killGroupFlag != "" || killAllFlag
 }
 
