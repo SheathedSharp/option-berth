@@ -108,6 +108,13 @@ func runAppServer(in io.Reader, out io.Writer) error {
 			turnSeq++
 			turnID := fmt.Sprintf("t%d", turnSeq)
 			if text == "unknown" {
+				// The request is unsupported, so the turn stays open: the client
+				// marks itself busy and waits for a completion that only comes
+				// when the turn is interrupted. Record the turn as held, or
+				// turn/interrupt below has nothing to end and the client spins
+				// until its interrupt deadline expires.
+				holding = true
+				holdTurn = turnID
 				if err := write(map[string]any{
 					"jsonrpc": "2.0", "id": 200, "method": "item/permissions/unknownRequest",
 					"params": map[string]any{"reason": "unsupported"},
