@@ -37,11 +37,6 @@ type Daemon struct {
 // String is how a leak is named in the failure message.
 func (d Daemon) String() string { return "pid " + strconv.Itoa(d.PID) + ": " + d.Command }
 
-// ownedProcess decides whether a process belongs to this test run. A nil rule
-// list means "nothing is mine", which is the whole answer on Windows: there is
-// no cheap way to read another process's command line.
-type ownedProcess func(exe, cmdline string) bool
-
 // AssertNoLeakedDaemons finds whatever this test binary left running as a
 // daemon, kills it, and says so on stderr. It returns what it found, so the
 // caller can turn a non-empty result into a failing exit code; Run does.
