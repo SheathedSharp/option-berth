@@ -14,6 +14,11 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
+// startRows reads the state a readiness wait decides on. Production reads the
+// same snapshot status exposes; a test replaces it so a readiness rule can be
+// checked without a daemon or the host's listener table.
+var startRows = groupRowsObserved
+
 // startTimeout is one service this wait gave up on: the name it was started
 // under and the run this invocation started. The run id is what authorizes the
 // cleanup — a service name alone would also match a run another controller
@@ -62,7 +67,7 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 	fallbackSince := waitStart.UTC().Truncate(time.Second)
 	var timedOut []startTimeout
 	for {
-		pp, gg, obs, err := groupRowsObserved(ctx)
+		pp, gg, obs, err := startRows(ctx)
 		if obs != nil && obs.State != string(ports.ObservationObservable) {
 			// Waiting the full timeout would end by stopping the run it just
 			// started. "Cannot see" is a different outcome from "not ready".
