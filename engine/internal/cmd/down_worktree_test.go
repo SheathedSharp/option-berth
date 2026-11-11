@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/spf13/cobra"
 )
 
@@ -121,8 +122,8 @@ func TestDownParamsFallsBackToTheNearestManifest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("downParams: %v", err)
 	}
-	if cfg == nil || cfg.Path != filepath.Join(dir, "oberth.yaml") {
-		t.Fatalf("config = %v, want the manifest at the working directory", cfg)
+	if want := groups.Canonical(filepath.Join(dir, "oberth.yaml")); cfg == nil || cfg.Path != want {
+		t.Fatalf("config = %v, want the manifest at the working directory %s", cfg, want)
 	}
 	if params.ConfigPath == nil || *params.ConfigPath != cfg.Path {
 		t.Fatalf("params = %+v, want the manifest path as the selector", params)
