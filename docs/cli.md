@@ -480,7 +480,13 @@ this time that time out enter stop cleanup; existing runs are not stopped or res
 wait failed. The cleanup names each run it started by `run_id`: a run another controller started for
 the same service while the wait was still running is a different run and is left alone. A daemon that
 does not announce `groups.kill.expect_runs` cannot scope a stop to named runs, so it is not sent a
-name-only cleanup: the command fails and says the timed-out runs are still running. The `started` /
+name-only cleanup: the command fails and says the timed-out runs are still running. Readiness is
+attributed by the same identity: when the service row's live run is not the run this wait is about, the
+wait ends immediately with state `failed` and reason `run_replaced`, because the replacement's listener
+and health are its own evidence, not the original run's; nothing is stopped then, since the replacement
+is not this invocation's run. A row that names no run cannot confirm a named one: a listener not
+attributed to the run keeps the wait going instead of counting as its readiness. A chunk with no
+`run_id` at all carries no identity to compare, so the service row is read as before. The `started` /
 `skipped` summary describes the start action, and readiness failures appear separately in `errors`
 and in each service's `state`. For runs newly started this time that
 were cleaned up, the engine writes the same `ready_timeout` into the service's last exit facts, so
