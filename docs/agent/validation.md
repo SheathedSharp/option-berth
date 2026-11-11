@@ -866,6 +866,41 @@ real Docker daemon was used. Cross builds and vet are not native evidence. Windo
 Linux runner results exist for PR #270's head `8432e497`, whose tree was merged as `589b17a5`, not
 for `5ecf1f23`; this follow-up needs its own CI run before those rows can be claimed.
 
+### Spawn working-tree diff disposition (T0)
+
+The local `spawn` change was a working-tree diff, never a commit. Against baseline `4fc663b` it
+deleted two lines in `engine/internal/spawn/spawn.go`: the exported `Handle.Detached bool` field and
+its `Detached: req.Detach` assignment. The pre-image blob is
+`b17549f2f63fd1dc1ad2a99658f6661577cb986e`; the post-image blob recorded live was
+`4d999315e53b7c844425074eae1582ee4c43c1d4`, which is not in the object database.
+
+```diff
+@@ -94,7 +94,6 @@ type Handle struct {
+ 	// Launch facts.
+ 	StartedAt time.Time
+-	Detached  bool
+ 	Session   state.Session
+@@ -134,7 +133,6 @@ func Spawn(ctx context.Context, req Request) (*Handle, error) {
+ 		Cwd:       cwd,
+ 		PortHint:  req.PortHint,
+-		Detached:  req.Detach,
+ 		Session:   req.Session,
+```
+
+`Request` is unchanged, including `Request.Detach`; `Spawn(ctx context.Context, req Request)
+(*Handle, error)` is unchanged. `Handle.Detached` was written once and never read, and has no JSON,
+RPC or manifest surface. The last live observation was 2026-11-09T06:39Z (`M
+engine/internal/spawn/spawn.go`, blob `4d999315`); `main` at `589b17a5` is clean and still has the
+field. The D1 receive bundle that recorded the surrounding working tree is no longer on this machine,
+and no reset, stash or clean of this diff appears in any recorded command.
+
+**Maintainer decision (2026-11-11): discard.** The diff is not re-applied: it removes a write-only
+field, so it changes no behavior, no signature and no external surface, while touching `spawn` would
+violate the T0 freeze and invalidate the measured binary. No patch is stored: the two deleted lines
+are reproduced above and the pre-image remains in history. The S2 gate sentence is "`Request` and
+`Spawn` signatures unchanged; this diff is not included". The diff was only ever built and vetted in
+the 2026-11-06 transcript; no product test ran with it.
+
 ## Client verification
 
 The macOS client's verification scope is not here: it lives with the client code in
