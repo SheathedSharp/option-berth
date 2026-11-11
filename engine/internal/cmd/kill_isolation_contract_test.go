@@ -518,6 +518,22 @@ func TestKillScopeRefusesDockerContainerMetadata(t *testing.T) {
 	}
 }
 
+// TestKillScopeAdmitsADeclaredContainer is the positive half of the container
+// rule: a docker row whose exact container id the fixture declared is within
+// scope. It builds ownership through the same registration helper a fixture
+// uses, so the set the guard reads is the one the fixture populated.
+func TestKillScopeAdmitsADeclaredContainer(t *testing.T) {
+	registerIsolatedKillContainer(t, "ctr-synthetic")
+	owned := declaredKillOwnership(t)
+	row := ports.ListeningPort{
+		Port: 3100, BindAddress: "127.0.0.1", Type: ports.PortTypeDocker,
+		DockerContainer: "ctr-synthetic",
+	}
+	if err := guardIsolatedKillScope(owned, []killer.Target{{Port: 3100}}, killer.Options{Ports: []ports.ListeningPort{row}}); err != nil {
+		t.Fatalf("a declared container was refused: %v", err)
+	}
+}
+
 // TestKillScopeRefusesTreeOrGroupWideningBeyondDeclaredMembers: a tree plan
 // that names a member the fixture did not capture is refused. The check does
 // not invent members from a live process table.
