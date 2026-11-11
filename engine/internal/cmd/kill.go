@@ -109,7 +109,7 @@ func runKill(cmd *cobra.Command, args []string) error {
 // under --no-daemon and whenever the daemon is down, which is why it stays a
 // complete implementation rather than a degraded one.
 func killDirect(ctx context.Context, args []string, bindIP string) error {
-	snapshot, targets, confirm, err := killSelection(args, bindIP, scanForKill)
+	snapshot, targets, confirm, complete, err := killSelection(args, bindIP, scanForKill)
 	if err != nil {
 		return err
 	}
@@ -119,7 +119,13 @@ func killDirect(ctx context.Context, args []string, bindIP string) error {
 	}
 
 	opts := killOptions()
-	opts.Ports = snapshot
+	// Only a complete observation may stand in for the killer's own scan. A
+	// partial table is attribution for the report; publishing it here would
+	// suppress the killer's re-observation and let an unreadable row become a
+	// signal.
+	if complete {
+		opts.Ports = snapshot
+	}
 
 	return killRequest{
 		exec:     killHere,
@@ -151,16 +157,17 @@ func killDirect(ctx context.Context, args []string, bindIP string) error {
 // before it signals, so a blind machine still ends in a failed row rather than
 // a silent success. A partial read keeps the rows it did produce, because those
 // rows are exactly the attribution this function exists to preserve.
-func killSelection(args []string, bindIP string, scan func() ([]ports.ListeningPort, error)) ([]ports.ListeningPort, []killer.Target, bool, error) {
+func killSelection(args []string, bindIP string, scan func() ([]ports.ListeningPort, error)) ([]ports.ListeningPort, []killer.Target, bool, bool, error) {
 	snapshot, err := scan()
+	complete := err == nil
 	if err != nil {
 		if killRequiresObservation(args) {
-			return nil, nil, false, err
+			return nil, nil, false, false, err
 		}
 		snapshot, _ = ports.PartialRows(err)
 	}
 	targets, confirm, err := killTargets(args, snapshot, bindIP)
-	return snapshot, targets, confirm, err
+	return snapshot, targets, confirm, complete, err
 }
 
 // killRequiresObservation reports whether a failed observation vetoes this

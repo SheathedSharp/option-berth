@@ -378,11 +378,14 @@ func TestKillSelectionRefusesABlindTable(t *testing.T) {
 	resetKillFlags(t)
 	killAllFlag = true
 
-	snapshot, targets, confirm, err := killSelection(nil, "", func() ([]ports.ListeningPort, error) {
+	snapshot, targets, confirm, complete, err := killSelection(nil, "", func() ([]ports.ListeningPort, error) {
 		return nil, blindScan()
 	})
 	if err == nil {
 		t.Fatal("a failed scan must not become an empty selection")
+	}
+	if complete {
+		t.Fatal("a failed scan was reported as a complete observation")
 	}
 	var oe *ports.ObservationError
 	if !errors.As(err, &oe) || oe.Code != ports.CodeObservationBlind {
@@ -484,12 +487,15 @@ func TestKillSelectionResolvesAnExplicitPIDAgainstTheAttributedTable(t *testing.
 	table := []ports.ListeningPort{anOwnedRunRow(3000, 4242, 4000)}
 
 	scanned := 0
-	snapshot, targets, confirm, err := killSelection(nil, "", func() ([]ports.ListeningPort, error) {
+	snapshot, targets, confirm, complete, err := killSelection(nil, "", func() ([]ports.ListeningPort, error) {
 		scanned++
 		return table, nil
 	})
 	if err != nil {
 		t.Fatalf("resolving an explicit pid: %v", err)
+	}
+	if !complete {
+		t.Fatal("a successful table read was not reported as complete")
 	}
 	if scanned != 1 {
 		t.Fatalf("the listener table was read %d times, want the attribution read once", scanned)
@@ -513,11 +519,14 @@ func TestKillSelectionKeepsAnExplicitPIDWhenTheTableIsUnreadable(t *testing.T) {
 	resetKillFlags(t)
 	killPIDFlag = []int{12345}
 
-	snapshot, targets, confirm, err := killSelection(nil, "", func() ([]ports.ListeningPort, error) {
+	snapshot, targets, confirm, complete, err := killSelection(nil, "", func() ([]ports.ListeningPort, error) {
 		return nil, blindScan()
 	})
 	if err != nil {
 		t.Fatalf("an explicit pid must not be denied by a failed observation: %v", err)
+	}
+	if complete {
+		t.Fatal("a failed observation was reported as complete")
 	}
 	if snapshot != nil {
 		t.Fatalf("snapshot = %+v, want no rows to have been read", snapshot)
@@ -536,13 +545,16 @@ func TestKillSelectionKeepsTheRowsAPartialReadProduced(t *testing.T) {
 	killPIDFlag = []int{4242}
 	partial := []ports.ListeningPort{anOwnedRunRow(3000, 4242, 4000)}
 
-	snapshot, targets, _, err := killSelection(nil, "", func() ([]ports.ListeningPort, error) {
+	snapshot, targets, _, complete, err := killSelection(nil, "", func() ([]ports.ListeningPort, error) {
 		return partial, &ports.ObservationError{
 			Code: ports.CodeObservationIncomplete, Detail: "ss: unreadable row", Partial: true, Rows: partial,
 		}
 	})
 	if err != nil {
 		t.Fatalf("a partial table must not deny an explicit pid: %v", err)
+	}
+	if complete {
+		t.Fatal("a partial read was reported as a complete observation")
 	}
 	if len(snapshot) != 1 || snapshot[0].RunRootPID != 4000 {
 		t.Fatalf("snapshot = %+v, want the row the collector did read", snapshot)

@@ -414,6 +414,43 @@ func TestKillDirectForwardsTheAttributedSnapshotForAPIDOnlySelection(t *testing.
 	requireOneReportedRow(t, out, killer.Result{PID: syntheticPID, Name: row.Tag})
 }
 
+// TestKillDirectWithholdsAPartialTableFromTheKiller: a partial observation is
+// attribution for the report, not a complete table. The executor must receive
+// nil Ports so killer.KillPorts performs its own observation before signalling;
+// publishing the partial rows would suppress that second look and let an
+// unreadable row become a bare-pid kill.
+func TestKillDirectWithholdsAPartialTableFromTheKiller(t *testing.T) {
+	withKillFlags(t, func() {
+		killDryRunFlag, killJSONFlag, killYesFlag = false, true, true
+		killPIDFlag = []int{4242}
+	})
+
+	partial := []ports.ListeningPort{syntheticAttributedRow(3100, 4242, 4240, "api", "run-synthetic")}
+	isolateKillScan(t, func() ([]ports.ListeningPort, error) {
+		return partial, &ports.ObservationError{
+			Code: ports.CodeObservationIncomplete, Detail: "one row was unreadable", Partial: true, Rows: partial,
+		}
+	})
+	rounds := &recordedKillRounds{}
+	isolateKillExecutor(t, rounds.hook(killer.Result{
+		Host: state.LocalhostName, Port: 3100, BindAddress: "127.0.0.1",
+		PID: 4242, Name: "api", Method: state.MethodSIGTERM, OK: true,
+	}))
+
+	var runErr error
+	_ = captureStdout(t, func() { runErr = killDirect(context.Background(), nil, "") })
+	if runErr != nil {
+		t.Fatalf("killDirect on a partial selection: %v", runErr)
+	}
+	targets, opts, _ := rounds.only(t)
+	if opts.Ports != nil {
+		t.Fatalf("executor Ports = %+v, want nil so the killer re-observes", opts.Ports)
+	}
+	if len(targets) != 1 || targets[0].PID != 4242 {
+		t.Fatalf("targets = %+v, want the named pid", targets)
+	}
+}
+
 // TestKillDirectBlindSelectionStopsBeforeTheExecutor: a failed observation is the
 // selection's answer, not an empty table. With a blind synthetic scan, killDirect
 // must return the collector's own error and the executor must never be entered,
