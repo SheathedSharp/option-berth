@@ -26,6 +26,7 @@ func diff(prev, next Snapshot, withStats bool) Delta {
 			SessionRecord.Key,
 			func(a, b SessionRecord) bool { return a == b },
 		),
+		Observation: next.Observation,
 	}
 }
 

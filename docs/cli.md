@@ -180,7 +180,10 @@ exactly, along with a directly executable `code_hint` (`oberth restart --only <s
 is the checkout's commit at start, absent when there is no commit or the checkout is not inside Git.
 These fields being absent means **unknown** — a run started by an older version, a deleted snapshot,
 or source that cannot be read right now — not "unchanged". When the per-file snapshot exceeds the
-storage limit, it can still answer whether something changed, but the file count is absent.
+storage limit, it can still answer whether something changed, but the file count is absent. A client
+that already holds the group rows reads the same comparison through the daemon's `groups.code`
+method: the field names and the null-means-unknown rule are the same, and a service absent from the
+reply is unknown, not unchanged.
 
 When the listener table cannot be trusted (for example an agent sandbox refuses system introspection),
 `status` still returns the manifest, services, run records, log paths and recent exits; the top level
@@ -614,15 +617,19 @@ document:
  "run_id":"...","log_offset":1234,"first_error":{"line":42,"text":"ERROR could not connect"}}
 ~~~
 
-Service log files are appended across runs. `--run current` reads only the part of that service's
-current run that starts at `log_offset`; you can also pick an exact historical run with the `run_id`
-from `status --json`. `current` prefers a process that is still running and only falls back to the most
-recently finished one when there is none. `--run` accepts only service names, cannot be combined with
-`--ip`, and needs the daemon; when the daemon is unavailable it returns `daemon_unavailable`. Old run
-records without an offset return not_found with a suggestion to restart the service once. When the file
-has been rotated and the recorded offset is past the end of the file, reading falls back to the
-beginning of the file, and the JSON uses `run_start_unknown: true` to say that the lines this time may
-include earlier runs.
+Service log files are appended across runs. `--run` reads only one run's own part of that file: from
+`log_offset` to where the next run of that service started writing, so a later generation's lines —
+including the error it died on — are not reported as this run's. A run that is still writing owns
+everything after its start; two runs that overlap in time write interleaved bytes, and their parts
+cannot be told apart. `--run current` selects the service's current run, and any other value is an
+exact historical `run_id` from `status --json`. `current` prefers a process that is still running and
+only falls back to the most recently finished one when there is none. Following a run that has ended
+prints its lines and stops: nothing arrives for it afterwards. `--run` accepts only service names,
+cannot be combined with `--ip`, and needs the daemon; when the daemon is unavailable it returns
+`daemon_unavailable`. Old run records without an offset return not_found with a suggestion to restart
+the service once. When the file has been rotated and the recorded part is no longer in it, reading
+falls back to the beginning of the file, and the JSON uses `run_start_unknown: true` to say that the
+lines this time may include other runs.
 
 `--first-error` is used together with `--run`: it locates the first matching line of that run from a
 fixed vocabulary (case-insensitive error, exception, fatal, panic, traceback) and returns the line

@@ -155,7 +155,8 @@ worktree 汇总（`cpu_percent`、`memory_rss_bytes`、`services` 为贡献样�
 `code_changed_files`，并给出可直接执行的 `code_hint`（`oberth restart --only <service>`）。
 `code_head` 是启动时 checkout 的 commit，没有提交或不在 Git 检出中时缺省。这些字段缺省表示**未知**
 ——旧版本启动的运行、快照已删除、或源码当前读不到——不是“没变”。逐文件快照超过保存上限时，
-仍能回答是否变化，但文件数缺省。
+仍能回答是否变化，但文件数缺省。已经持有 group 行的客户端通过 daemon 的 `groups.code` 方法读
+同一份比较：字段名与「null 即未知」的规则相同，回复里没有的服务是未知，不是没变。
 
 监听表不可信时（例如 agent 沙箱拒绝系统内省），`status` 仍然返回清单、服务、运行记录、
 日志路径和最近退出；顶层带 `observation`（`state`、`code`、`detail`、`hint`、`checked_at`）。
@@ -508,13 +509,15 @@ daemon 是账本的唯一写者：它在扫描到清单时记录身份，重启�
  "run_id":"...","log_offset":1234,"first_error":{"line":42,"text":"ERROR could not connect"}}
 ~~~
 
-服务日志文件跨多次运行追加。`--run current` 只读该服务当前这次运行从 `log_offset` 开始的
-部分；也可以给 `status --json` 里的 `run_id` 精确选择一次历史运行。`current` 优先选仍在运行
-的进程，没有时才选最近结束的一次。`--run` 只接受服务名，
+服务日志文件跨多次运行追加。`--run` 只读该文件里这一次运行自己的那一段：从 `log_offset` 到
+同一服务下一次运行开始写入的位置，因此后续运行的行——包括它崩溃时那条错误——不会被当成这次
+运行输出的一部分。仍在运行的那次运行拥有起点之后的全部内容；两次运行在时间上重叠时，它们的
+字节交织在同一个文件里，无法区分。`--run current` 选该服务当前这次运行，其他值则是
+`status --json` 里的精确 `run_id`。`current` 优先选仍在运行的进程，没有时才选最近结束的一次。
+跟随一次已经结束的运行会打印它的行然后停止：之后不会再有属于它的输出。`--run` 只接受服务名，
 不能和 `--ip` 同时使用；它需要 daemon，daemon 不可用时返回 `daemon_unavailable`。旧运行记录
-没有 offset 时返回 not_found 并提示重启一次服务。文件被轮转、记录的
-offset 已越过文件末尾时，读取回退到文件开头，并在 JSON 里用 `run_start_unknown: true` 说明
-这次的行可能混入更早的运行。
+没有 offset 时返回 not_found 并提示重启一次服务。文件被轮转、记录的那一段已不在文件里时，
+读取回退到文件开头，并在 JSON 里用 `run_start_unknown: true` 说明这次的行可能混入其他运行。
 
 `--first-error` 与 `--run` 一起使用：按固定词表（不区分大小写的 error、exception、fatal、
 panic、traceback）定位该次运行的第一条匹配行，返回行号和原文。它是位置，不是根因判断；
