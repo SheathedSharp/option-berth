@@ -181,8 +181,13 @@ func killOptions() killer.Options {
 // daemon), while every prompt and report stays above this seam.
 type killExecutor func(ctx context.Context, targets []killer.Target, opts killer.Options, dryRun bool) ([]killer.Result, error)
 
-// killHere is the executor that signals from this process.
-func killHere(ctx context.Context, targets []killer.Target, opts killer.Options, dryRun bool) ([]killer.Result, error) {
+// killHere is the executor that signals from this process. Production points
+// it at signalListenersForKill, the only command implementation that may call
+// killer.KillPorts. Tests replace the hook; a missed replacement must fail
+// closed rather than signal an unowned process.
+var killHere killExecutor = signalListenersForKill
+
+func signalListenersForKill(ctx context.Context, targets []killer.Target, opts killer.Options, dryRun bool) ([]killer.Result, error) {
 	round := opts
 	round.DryRun = dryRun
 	return killer.KillPorts(ctx, targets, round), nil
@@ -230,11 +235,17 @@ func (r killRequest) execute(ctx context.Context) error {
 	return reportKill(os.Stdout, results, r.snapshot, r.asJSON, r.opts.DryRun)
 }
 
-// scanForKill takes the enriched scan every selector is resolved against, and
-// which the killer reuses instead of scanning a second time. Group attribution
-// is part of that enrichment: without it `-g` would only ever see a Compose
-// project or a run tag, never a `oberth.yaml` name or a git root.
-func scanForKill() ([]ports.ListeningPort, error) {
+// scanForKill is the observation seam the direct path resolves every selector
+// against, and which the killer reuses instead of scanning a second time.
+// Production points it at observeListenersForKill, the only command
+// implementation that may call ports.Scan. Tests replace the hook; a missed
+// replacement must fail closed rather than observe the machine.
+var scanForKill = observeListenersForKill
+
+// observeListenersForKill takes the enriched scan group attribution is part
+// of: without it `-g` would only ever see a Compose project or a run tag,
+// never a `oberth.yaml` name or a git root.
+func observeListenersForKill() ([]ports.ListeningPort, error) {
 	found, err := ports.Scan()
 	if err != nil {
 		return nil, err

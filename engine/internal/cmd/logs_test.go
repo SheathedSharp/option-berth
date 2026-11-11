@@ -355,11 +355,12 @@ func startLoggingService(t *testing.T) int {
 	cmd := exec.Command(os.Args[0], "-test.run=TestLogsHelperService", "-test.timeout=90s")
 	cmd.Env = append(os.Environ(), "BERTH_TEST_LOG_PORT="+portStr)
 	cmd.Stdout = logFile
+	born := time.Now().UTC()
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("starting the helper: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
+		_ = killOwnedIdentities(heldKillIdentity(cmd.Process, born))
 		_, _ = cmd.Process.Wait()
 		logFile.Close()
 	})
@@ -369,6 +370,11 @@ func startLoggingService(t *testing.T) int {
 		conn, dialErr := net.DialTimeout("tcp", "127.0.0.1:"+portStr, 200*time.Millisecond)
 		if dialErr == nil {
 			conn.Close()
+			registerIsolatedKillFixture(t, ports.ListeningPort{
+				Port: port, PID: cmd.Process.Pid, BindAddress: "127.0.0.1",
+				Type: ports.PortTypeUser,
+			}, heldKillIdentity(cmd.Process, born))
+			useIsolatedEnrichedKillScan(t)
 			return port
 		}
 		time.Sleep(20 * time.Millisecond)

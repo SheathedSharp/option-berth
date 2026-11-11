@@ -10,6 +10,16 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/killer"
 )
 
+// guardDaemonKill is the seam every daemon executor round passes before its
+// RPC. Production leaves it permissive: the client was dialled by dialDaemon
+// for the daemon the user asked for, so there is no wider scope to check. The
+// test binary replaces it with a guard that admits only the client instance a
+// test-owned fixture registered together with an explicit Scan, so a daemon
+// round whose fixture was forgotten refuses before any RPC instead of acting
+// through an arbitrary or shared daemon. It takes no target, pid or selector:
+// naming a subject is not ownership.
+var guardDaemonKill = func(*client.Client) error { return nil }
+
 // killThroughDaemon runs `oberth kill` as `ports.kill` / `groups.kill`.
 //
 // Target selection stays here, against the port table the daemon serves, so
@@ -47,6 +57,9 @@ func killThroughDaemon(ctx context.Context, c *client.Client, args []string, bin
 // the direct path would use.
 func killInDaemon(c *client.Client) killExecutor {
 	return func(ctx context.Context, targets []killer.Target, opts killer.Options, dryRun bool) ([]killer.Result, error) {
+		if err := guardDaemonKill(c); err != nil {
+			return nil, err
+		}
 		switch killMethodFor(killGroupFlag, opts) {
 		case "groups.kill":
 			var env rpc.KillEnvelope
@@ -157,6 +170,9 @@ func killSession(ctx context.Context) error {
 // daemon, so the daemon does the selecting.
 func killSessionInDaemon(c *client.Client, id string) killExecutor {
 	return func(ctx context.Context, _ []killer.Target, opts killer.Options, dryRun bool) ([]killer.Result, error) {
+		if err := guardDaemonKill(c); err != nil {
+			return nil, err
+		}
 		var env rpc.KillEnvelope
 		err := c.Call(ctx, "sessions.kill", rpc.SessionsKillParams{
 			ID:     id,
