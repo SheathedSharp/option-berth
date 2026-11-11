@@ -152,7 +152,7 @@ func TestDownParamsWithoutAManifestFails(t *testing.T) {
 // against a real daemon: the manifest is chosen here, the stop happens there,
 // and the answer is the documented "nothing was running" sentence.
 func TestDownStopsTheNearestProjectThroughTheDaemon(t *testing.T) {
-	demoProject(t)
+	demoProjectNamed(t, "down-stop")
 	resetRouting(t)
 	startDaemonWhereTheCommandLooks(t)
 	withDownFlags(t, func() {})
@@ -170,7 +170,7 @@ func TestDownStopsTheNearestProjectThroughTheDaemon(t *testing.T) {
 // TestDownJSONAnswersWithTheEnvelope: --json prints the daemon's own answer, so
 // a caller reads the same results and released count the text path renders.
 func TestDownJSONAnswersWithTheEnvelope(t *testing.T) {
-	demoProject(t)
+	demoProjectNamed(t, "down-envelope")
 	resetRouting(t)
 	startDaemonWhereTheCommandLooks(t)
 	withDownFlags(t, func() { downJSONFlag = true })

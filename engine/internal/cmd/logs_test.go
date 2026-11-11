@@ -167,8 +167,17 @@ func withLogsFlags(t *testing.T, set func()) {
 // returns that directory.
 func demoProject(t *testing.T) string {
 	t.Helper()
+	return demoProjectNamed(t, "demo")
+}
+
+// demoProjectNamed is demoProject with a project name chosen by the test. A
+// test that asks a daemon to stop the manifest by config path shares the
+// process-wide run registry with every other daemon in this binary, so a unique
+// name keeps an earlier test's same-named run out of the answer.
+func demoProjectNamed(t *testing.T, name string) string {
+	t.Helper()
 	dir := t.TempDir()
-	const manifest = "name: demo\nservices:\n  - name: worker\n    cmd: echo worker\n"
+	manifest := "name: " + name + "\nservices:\n  - name: worker\n    cmd: echo worker\n"
 	if err := os.WriteFile(filepath.Join(dir, "oberth.yaml"), []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
 	}
