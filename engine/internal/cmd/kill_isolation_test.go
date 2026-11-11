@@ -41,7 +41,7 @@ var (
 	errUnscopedKillCleanup = errors.New("test isolation: refused cleanup that would fall back to a bare pid tree")
 )
 
-func refuseUnscopedKillScan() ([]ports.ListeningPort, error) {
+func refuseUnscopedKillScan(context.Context) ([]ports.ListeningPort, error) {
 	return nil, errUnscopedKillScan
 }
 
@@ -351,7 +351,6 @@ func guardIsolatedKillScope(owned isolatedKillOwnership, targets []killer.Target
 	if opts.Ports == nil {
 		return errUnscopedKillScan
 	}
-	implied := map[int]time.Time{}
 	for _, row := range opts.Ports {
 		if row.Type == ports.PortTypeDocker || row.DockerContainer != "" {
 			if row.DockerContainer == "" || !owned.containers[row.DockerContainer] {
@@ -363,7 +362,6 @@ func guardIsolatedKillScope(owned isolatedKillOwnership, targets []killer.Target
 			if err := authorizeIsolatedPID(owned, row.PID, birth); err != nil {
 				return err
 			}
-			implied[row.PID] = birth
 		}
 		if row.RunRootPID != 0 {
 			rootBirth := birth
@@ -377,7 +375,6 @@ func guardIsolatedKillScope(owned isolatedKillOwnership, targets []killer.Target
 			} else if err := authorizeIsolatedPID(owned, row.RunRootPID, rootBirth); err != nil {
 				return err
 			}
-			implied[row.RunRootPID] = rootBirth
 		}
 	}
 	for _, target := range targets {
@@ -389,22 +386,12 @@ func guardIsolatedKillScope(owned isolatedKillOwnership, targets []killer.Target
 			if err := authorizeIsolatedPID(owned, target.PID, claim); err != nil {
 				return err
 			}
-			implied[target.PID] = claim
 		}
 	}
-	tree := opts.Tree
-	for _, row := range opts.Ports {
-		if row.RunRootPID != 0 {
-			tree = true
-		}
-	}
-	if tree {
-		for pid, birth := range implied {
-			if err := authorizeIsolatedPID(owned, pid, birth); err != nil {
-				return fmt.Errorf("%w: tree or group member %d is not a captured fixture identity", errUnscopedKillScope, pid)
-			}
-		}
-	}
+	// A tree plan also reaches descendants of a captured run root. Those
+	// processes were started by the fixture's own root and are not enumerated
+	// here: this guard is pure memory and must not walk a live process table.
+	// Every explicitly named row, run root and target is checked above.
 	return nil
 }
 
@@ -513,7 +500,7 @@ func listenerStillAccepts(row ports.ListeningPort) bool {
 
 func installIsolatedKillHooks(t *testing.T) {
 	t.Helper()
-	isolateKillScan(t, func() ([]ports.ListeningPort, error) {
+	isolateKillScan(t, func(context.Context) ([]ports.ListeningPort, error) {
 		return isolatedRegisteredSnapshot(t), nil
 	})
 	isolateKillExecutor(t, allowlistedKillHere(t))
@@ -525,12 +512,12 @@ func installIsolatedKillHooks(t *testing.T) {
 // contracts must not call it.
 func useIsolatedEnrichedKillScan(t *testing.T) {
 	t.Helper()
-	isolateKillScan(t, func() ([]ports.ListeningPort, error) {
+	isolateKillScan(t, func(context.Context) ([]ports.ListeningPort, error) {
 		return isolatedEnrichedSnapshot(t), nil
 	})
 }
 
-func isolateKillScan(t *testing.T, scan func() ([]ports.ListeningPort, error)) {
+func isolateKillScan(t *testing.T, scan func(context.Context) ([]ports.ListeningPort, error)) {
 	t.Helper()
 	if scan == nil {
 		t.Fatal("isolateKillScan requires a scan hook")

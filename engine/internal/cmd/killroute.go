@@ -15,9 +15,11 @@ import (
 // for the daemon the user asked for, so there is no wider scope to check. The
 // test binary replaces it with a guard that admits only the client instance a
 // test-owned fixture registered together with an explicit Scan, so a daemon
-// round whose fixture was forgotten refuses before any RPC instead of acting
-// through an arbitrary or shared daemon. It takes no target, pid or selector:
-// naming a subject is not ownership.
+// round whose fixture was forgotten refuses before its kill RPC instead of
+// acting through an arbitrary or shared daemon. The command has already made
+// its read-only snapshot call by then; it is only the signalling round that is
+// gated. It takes no target, pid or selector: naming a subject is not
+// ownership.
 var guardDaemonKill = func(*client.Client) error { return nil }
 
 // killThroughDaemon runs `oberth kill` as `ports.kill` / `groups.kill`.

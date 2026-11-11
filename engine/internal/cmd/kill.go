@@ -109,7 +109,7 @@ func runKill(cmd *cobra.Command, args []string) error {
 // under --no-daemon and whenever the daemon is down, which is why it stays a
 // complete implementation rather than a degraded one.
 func killDirect(ctx context.Context, args []string, bindIP string) error {
-	snapshot, targets, confirm, complete, err := killSelection(args, bindIP, scanForKill)
+	snapshot, targets, confirm, complete, err := killSelection(ctx, args, bindIP, scanForKill)
 	if err != nil {
 		return err
 	}
@@ -157,8 +157,8 @@ func killDirect(ctx context.Context, args []string, bindIP string) error {
 // before it signals, so a blind machine still ends in a failed row rather than
 // a silent success. A partial read keeps the rows it did produce, because those
 // rows are exactly the attribution this function exists to preserve.
-func killSelection(args []string, bindIP string, scan func() ([]ports.ListeningPort, error)) ([]ports.ListeningPort, []killer.Target, bool, bool, error) {
-	snapshot, err := scan()
+func killSelection(ctx context.Context, args []string, bindIP string, scan func(context.Context) ([]ports.ListeningPort, error)) ([]ports.ListeningPort, []killer.Target, bool, bool, error) {
+	snapshot, err := scan(ctx)
 	complete := err == nil
 	if err != nil {
 		if killRequiresObservation(args) {
@@ -262,16 +262,22 @@ var scanForKill = observeListenersForKill
 
 // observeListenersForKill takes the enriched scan group attribution is part
 // of: without it `-g` would only ever see a Compose project or a run tag,
-// never a `oberth.yaml` name or a git root.
-func observeListenersForKill() ([]ports.ListeningPort, error) {
-	found, err := ports.Scan()
+// never a `oberth.yaml` name or a git root. It takes the command context so a
+// slow collector can be interrupted; the killer's own re-observation keeps its
+// separate request budget.
+func observeListenersForKill(ctx context.Context) ([]ports.ListeningPort, error) {
+	found, err := ports.ScanContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	docker.EnrichPorts(found)
-	ports.Enrich(found)
+	if err := docker.EnrichPortsContext(ctx, found); err != nil {
+		return nil, err
+	}
+	if err := ports.EnrichContext(ctx, found); err != nil {
+		return nil, err
+	}
 	groups.Attribute(found)
-	return found, nil
+	return found, ctx.Err()
 }
 
 // killTargets turns the command line into killer targets. The bool reports

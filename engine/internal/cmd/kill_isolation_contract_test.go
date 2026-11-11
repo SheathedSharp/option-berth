@@ -51,7 +51,7 @@ func requirePreinstalledKillHooks(t *testing.T) {
 func TestKillHookDefaultsRefuseMissingHooks(t *testing.T) {
 	requirePreinstalledKillHooks(t)
 
-	if _, err := scanForKill(); !errors.Is(err, errUnscopedKillScan) {
+	if _, err := scanForKill(context.Background()); !errors.Is(err, errUnscopedKillScan) {
 		t.Fatalf("preinstalled scan hook err = %v, want %v", err, errUnscopedKillScan)
 	}
 	if _, err := killHere(context.Background(), []killer.Target{{Port: 3100}}, killer.Options{}, false); !errors.Is(err, errUnscopedKillSignal) {
@@ -106,9 +106,10 @@ func fakeDaemonKillScan() func(scanner.Include) ([]ports.ListeningPort, error) {
 }
 
 // TestKillDaemonRoutesRefuseWithoutABoundFixture: with the preinstalled guard and
-// no fixture binding, both daemon executors must stop before any RPC, in a real
-// round and in a dry run, so a forgotten fixture cannot reach an arbitrary or
-// shared daemon even when the round is only a plan.
+// no fixture binding, both daemon executors must stop before their kill RPC, in
+// a real round and in a dry run, so a forgotten fixture cannot signal through an
+// arbitrary or shared daemon even when the round is only a plan. The command's
+// read-only snapshot call is not what this contract gates.
 func TestKillDaemonRoutesRefuseWithoutABoundFixture(t *testing.T) {
 	requirePreinstalledKillHooks(t)
 
@@ -259,7 +260,7 @@ func syntheticAttributedRow(port, pid, rootPID int, tag, runID string) ports.Lis
 func countingKillScan(t *testing.T, rows ...ports.ListeningPort) *int {
 	t.Helper()
 	calls := new(int)
-	isolateKillScan(t, func() ([]ports.ListeningPort, error) {
+	isolateKillScan(t, func(context.Context) ([]ports.ListeningPort, error) {
 		(*calls)++
 		return append([]ports.ListeningPort(nil), rows...), nil
 	})
@@ -426,7 +427,7 @@ func TestKillDirectWithholdsAPartialTableFromTheKiller(t *testing.T) {
 	})
 
 	partial := []ports.ListeningPort{syntheticAttributedRow(3100, 4242, 4240, "api", "run-synthetic")}
-	isolateKillScan(t, func() ([]ports.ListeningPort, error) {
+	isolateKillScan(t, func(context.Context) ([]ports.ListeningPort, error) {
 		return partial, &ports.ObservationError{
 			Code: ports.CodeObservationIncomplete, Detail: "one row was unreadable", Partial: true, Rows: partial,
 		}
@@ -459,7 +460,7 @@ func TestKillDirectBlindSelectionStopsBeforeTheExecutor(t *testing.T) {
 	withKillFlags(t, func() {})
 
 	scanned := 0
-	isolateKillScan(t, func() ([]ports.ListeningPort, error) {
+	isolateKillScan(t, func(context.Context) ([]ports.ListeningPort, error) {
 		scanned++
 		return nil, &ports.ObservationError{
 			Code:   ports.CodeObservationBlind,
@@ -571,10 +572,11 @@ func TestKillScopeAdmitsADeclaredContainer(t *testing.T) {
 	}
 }
 
-// TestKillScopeRefusesTreeOrGroupWideningBeyondDeclaredMembers: a tree plan
-// that names a member the fixture did not capture is refused. The check does
-// not invent members from a live process table.
-func TestKillScopeRefusesTreeOrGroupWideningBeyondDeclaredMembers(t *testing.T) {
+// TestKillScopeRefusesAnUndeclaredTargetInATreePlan: a tree plan that names a
+// pid the fixture did not capture is refused by the explicit-target check.
+// Descendants of a captured root are not enumerated; this guard is pure memory
+// and must not walk a live process table.
+func TestKillScopeRefusesAnUndeclaredTargetInATreePlan(t *testing.T) {
 	owned := syntheticOwnership(4242, 4240)
 	row := syntheticRow(3100, 4242, 4240)
 	err := guardIsolatedKillScope(
@@ -799,7 +801,7 @@ func TestIsolatedRegisteredSnapshotDoesNotCallEnrichment(t *testing.T) {
 		t.Fatalf("registered snapshot = %+v, want the exact fixture row %+v", got, row)
 	}
 
-	scanned, err := scanForKill()
+	scanned, err := scanForKill(context.Background())
 	if err != nil {
 		t.Fatalf("installed registered scan: %v", err)
 	}
@@ -838,7 +840,7 @@ func TestIsolatedEnrichedSnapshotIsTheOptInEnrichmentPath(t *testing.T) {
 	}
 
 	useIsolatedEnrichedKillScan(t)
-	scanned, err := scanForKill()
+	scanned, err := scanForKill(context.Background())
 	if err != nil {
 		t.Fatalf("installed enriched scan: %v", err)
 	}

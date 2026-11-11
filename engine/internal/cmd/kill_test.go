@@ -378,7 +378,7 @@ func TestKillSelectionRefusesABlindTable(t *testing.T) {
 	resetKillFlags(t)
 	killAllFlag = true
 
-	snapshot, targets, confirm, complete, err := killSelection(nil, "", func() ([]ports.ListeningPort, error) {
+	snapshot, targets, confirm, complete, err := killSelection(context.Background(), nil, "", func(context.Context) ([]ports.ListeningPort, error) {
 		return nil, blindScan()
 	})
 	if err == nil {
@@ -393,6 +393,29 @@ func TestKillSelectionRefusesABlindTable(t *testing.T) {
 	}
 	if snapshot != nil || targets != nil || confirm {
 		t.Fatalf("snapshot=%+v targets=%+v confirm=%v, want no selection at all", snapshot, targets, confirm)
+	}
+}
+
+// TestKillSelectionPassesTheCommandContextToTheScan: the selection read is the
+// command's observation, so it must be cancellable with the command. A scan
+// that ignored the context would keep a stopped command waiting on a slow
+// collector. The hook records the context; no real collector runs.
+func TestKillSelectionPassesTheCommandContextToTheScan(t *testing.T) {
+	resetKillFlags(t)
+	killPIDFlag = []int{4242}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var got context.Context
+	_, _, _, _, err := killSelection(ctx, nil, "", func(scanCtx context.Context) ([]ports.ListeningPort, error) {
+		got = scanCtx
+		return nil, blindScan()
+	})
+	if err != nil {
+		t.Fatalf("an explicit pid must not be denied by a failed observation: %v", err)
+	}
+	if got != ctx {
+		t.Fatal("the scan did not receive the command context")
 	}
 }
 
@@ -413,7 +436,7 @@ func TestKillAllWithABlindTableIsTheDocumentedCLIFailure(t *testing.T) {
 	// The hook the direct path actually calls is scanForKill, not scanPorts
 	// (that seam belongs to status/group observation). A missed injection
 	// stays on the package test default, which refuses ports.Scan.
-	isolateKillScan(t, func() ([]ports.ListeningPort, error) {
+	isolateKillScan(t, func(context.Context) ([]ports.ListeningPort, error) {
 		return nil, blindScan()
 	})
 	isolateKillExecutor(t, refuseKillExecutorIfReached)
@@ -487,7 +510,7 @@ func TestKillSelectionResolvesAnExplicitPIDAgainstTheAttributedTable(t *testing.
 	table := []ports.ListeningPort{anOwnedRunRow(3000, 4242, 4000)}
 
 	scanned := 0
-	snapshot, targets, confirm, complete, err := killSelection(nil, "", func() ([]ports.ListeningPort, error) {
+	snapshot, targets, confirm, complete, err := killSelection(context.Background(), nil, "", func(context.Context) ([]ports.ListeningPort, error) {
 		scanned++
 		return table, nil
 	})
@@ -519,7 +542,7 @@ func TestKillSelectionKeepsAnExplicitPIDWhenTheTableIsUnreadable(t *testing.T) {
 	resetKillFlags(t)
 	killPIDFlag = []int{12345}
 
-	snapshot, targets, confirm, complete, err := killSelection(nil, "", func() ([]ports.ListeningPort, error) {
+	snapshot, targets, confirm, complete, err := killSelection(context.Background(), nil, "", func(context.Context) ([]ports.ListeningPort, error) {
 		return nil, blindScan()
 	})
 	if err != nil {
@@ -545,7 +568,7 @@ func TestKillSelectionKeepsTheRowsAPartialReadProduced(t *testing.T) {
 	killPIDFlag = []int{4242}
 	partial := []ports.ListeningPort{anOwnedRunRow(3000, 4242, 4000)}
 
-	snapshot, targets, _, complete, err := killSelection(nil, "", func() ([]ports.ListeningPort, error) {
+	snapshot, targets, _, complete, err := killSelection(context.Background(), nil, "", func(context.Context) ([]ports.ListeningPort, error) {
 		return partial, &ports.ObservationError{
 			Code: ports.CodeObservationIncomplete, Detail: "ss: unreadable row", Partial: true, Rows: partial,
 		}
