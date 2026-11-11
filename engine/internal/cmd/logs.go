@@ -288,17 +288,34 @@ func readFileLogs(path string, lines int) (logsDocument, error) {
 	return logsDocument{Source: path, Lines: all, Truncated: truncated}, nil
 }
 
+// streamFileLogs follows the whole file: the last n lines and everything after
+// them. It is the read that is not scoped to a run.
 func streamFileLogs(ctx context.Context, path string, asJSON bool, lines int, meta logMetadata) error {
-	return streamFileLogsFrom(ctx, path, -1, asJSON, lines, meta)
+	if err := requireLogFile(path); err != nil {
+		return err
+	}
+	if lines <= 0 {
+		lines = 10
+	}
+	return followFileLogs(ctx, path, []string{"-n", strconv.Itoa(lines)}, asJSON, meta)
+}
+
+// requireLogFile answers a path that has no file yet with the next command that
+// creates one, rather than with tail's own message.
+func requireLogFile(path string) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return failHint("not_found", "log file does not exist: "+path,
+			"start the service with `oberth up`")
+	}
+	return nil
 }
 
 // streamFileLogsFrom is streamFileLogs for one run: a non-negative offset is
 // where that run began, so the backlog and the follow both start there instead
 // of at the end of a file shared with earlier generations.
 func streamFileLogsFrom(ctx context.Context, path string, offset int64, asJSON bool, lines int, meta logMetadata) error {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return failHint("not_found", "log file does not exist: "+path,
-			"start the service with `oberth up`")
+	if err := requireLogFile(path); err != nil {
+		return err
 	}
 	if lines <= 0 {
 		lines = 10
@@ -311,6 +328,25 @@ func streamFileLogsFrom(ctx context.Context, path string, offset int64, asJSON b
 		}
 		args = []string{"-c", "+" + strconv.FormatInt(start+1, 10)}
 	}
+	return followFileLogs(ctx, path, args, asJSON, meta)
+}
+
+// logLineSink is the one place a followed line becomes output: one JSON value
+// per line when the caller asked for JSON, plain text otherwise.
+func logLineSink(path string, asJSON bool, meta logMetadata) func(string) error {
+	if !asJSON {
+		return func(line string) error {
+			fmt.Println(line)
+			return nil
+		}
+	}
+	enc := json.NewEncoder(os.Stdout)
+	return func(line string) error { return enc.Encode(logLineJSON(path, line, meta)) }
+}
+
+// followFileLogs runs tail with the given position arguments and prints every
+// line it produces until the command ends or the context is cancelled.
+func followFileLogs(ctx context.Context, path string, args []string, asJSON bool, meta logMetadata) error {
 	cmd := exec.CommandContext(ctx, "tail", append(args, "-f", path)...)
 	out, err := cmd.StdoutPipe()
 	if err != nil {
@@ -323,19 +359,12 @@ func streamFileLogsFrom(ctx context.Context, path string, offset int64, asJSON b
 	if !asJSON {
 		printLogHeader(path)
 	}
-	var enc *json.Encoder
-	if asJSON {
-		enc = json.NewEncoder(os.Stdout)
-	}
+	sink := logLineSink(path, asJSON, meta)
 	sc := bufio.NewScanner(out)
 	sc.Buffer(make([]byte, 32<<10), 1024*1024)
 	for sc.Scan() {
-		if asJSON {
-			if err := enc.Encode(logLineJSON(path, sc.Text(), meta)); err != nil {
-				return err
-			}
-		} else {
-			fmt.Println(sc.Text())
+		if err := sink(sc.Text()); err != nil {
+			return err
 		}
 	}
 	return sc.Err()
