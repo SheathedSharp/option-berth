@@ -30,6 +30,15 @@ func pragma(t *testing.T, s *Store, name string) string {
 	return value
 }
 
+func pragmaInt(t *testing.T, s *Store, name string) int {
+	t.Helper()
+	var value int
+	if err := s.DB().QueryRow(`PRAGMA ` + name).Scan(&value); err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	return value
+}
+
 // A new database is created ready to use: owner-only permissions, WAL, and a
 // busy timeout so a second writer waits instead of failing outright.
 func TestANewDatabaseIsCreatedReadyToUse(t *testing.T) {
@@ -59,12 +68,8 @@ func TestANewDatabaseIsCreatedReadyToUse(t *testing.T) {
 	if mode := pragma(t, s, "journal_mode"); !strings.EqualFold(mode, "wal") {
 		t.Errorf("journal_mode = %q, want wal", mode)
 	}
-	var busy int
-	if err := s.DB().QueryRow(`PRAGMA busy_timeout`).Scan(&busy); err != nil {
-		t.Fatalf("busy_timeout: %v", err)
-	}
-	if busy <= 0 {
-		t.Errorf("busy_timeout = %d, want a positive timeout", busy)
+	if timeout := pragmaInt(t, s, "busy_timeout"); timeout <= 0 {
+		t.Errorf("busy_timeout = %d, want a positive timeout", timeout)
 	}
 }
 
@@ -85,15 +90,8 @@ func TestReopeningChangesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Version: %v", err)
 	}
-	if err := first.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-
-	second, err := Open(path)
-	if err != nil {
-		t.Fatalf("second Open: %v", err)
-	}
-	t.Cleanup(func() { _ = second.Close() })
+	closeStore(t, first)
+	second := mustOpenPath(t, path, "the same file after a close")
 
 	after, err := second.Version()
 	if err != nil {

@@ -59,14 +59,23 @@ func TestAFreshDatabaseGetsEveryMigration(t *testing.T) {
 		t.Errorf("version = %d, want at least %d", version, VersionIndexes)
 	}
 
-	for _, object := range []string{
+	requireSchemaObjects(t, s.DB(),
 		"schema_version", "renames", "group_pins", "port_events",
 		"port_events_ring", "known_roots",
 		"idx_port_events_at", "idx_port_events_port_at",
-	} {
-		if !schemaObjectExists(t, s.DB(), object) {
-			t.Errorf("%s missing after migrating an empty database", object)
+	)
+}
+
+func requireSchemaObjects(t *testing.T, db *sql.DB, names ...string) {
+	t.Helper()
+	var missing []string
+	for _, name := range names {
+		if !schemaObjectExists(t, db, name) {
+			missing = append(missing, name)
 		}
+	}
+	if len(missing) != 0 {
+		t.Errorf("missing after migrating an empty database: %v", missing)
 	}
 }
 
@@ -80,18 +89,10 @@ func TestAV1DatabaseUpgradesWithoutLosingItsRows(t *testing.T) {
 		t.Fatalf("reading the v1 fixture: %v", err)
 	}
 	raw := openRawBase(t, path)
-	if _, err := raw.Exec(string(fixture)); err != nil {
-		t.Fatalf("applying the v1 fixture: %v", err)
-	}
-	if err := raw.Close(); err != nil {
-		t.Fatalf("closing the v1 database: %v", err)
-	}
+	applySQL(t, raw, string(fixture), "the v1 fixture")
+	closeDB(t, raw, "the v1 database")
 
-	s, err := Open(path)
-	if err != nil {
-		t.Fatalf("Open on a v1 database: %v", err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
+	s := mustOpenPath(t, path, "a v1 database")
 
 	if s.Reset() != nil {
 		t.Fatal("a valid v1 database was treated as corrupt")
@@ -141,18 +142,10 @@ func TestAMigrationBelowTheHighestAppliedVersionIsStillApplied(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	recordVersion(t, s.DB(), VersionClaims, "later")
-	if _, err := s.DB().Exec(`DELETE FROM schema_version WHERE version = ?`, VersionIndexes); err != nil {
-		t.Fatalf("removing the 002 row: %v", err)
-	}
-	if err := s.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
+	removeAppliedVersion(t, s, VersionIndexes)
+	closeStore(t, s)
 
-	reopened, err := Open(path)
-	if err != nil {
-		t.Fatalf("reopening: %v", err)
-	}
-	t.Cleanup(func() { _ = reopened.Close() })
+	reopened := mustOpenPath(t, path, "a database with a gap below MAX")
 
 	applied, err := appliedVersions(reopened.DB())
 	if err != nil {
@@ -261,5 +254,43 @@ func TestTheEmbeddedMigrationsAvoidReservedVersions(t *testing.T) {
 		if owner, reserved := ReservedVersions[version]; reserved {
 			t.Errorf("%s takes version %03d, which is reserved for %s", entry.Name(), version, owner)
 		}
+	}
+}
+
+func applySQL(t *testing.T, db *sql.DB, stmt, what string) {
+	t.Helper()
+	if _, err := db.Exec(stmt); err != nil {
+		t.Fatalf("applying %s: %v", what, err)
+	}
+}
+
+func closeDB(t *testing.T, db *sql.DB, what string) {
+	t.Helper()
+	if err := db.Close(); err != nil {
+		t.Fatalf("closing %s: %v", what, err)
+	}
+}
+
+func closeStore(t *testing.T, s *Store) {
+	t.Helper()
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func mustOpenPath(t *testing.T, path, what string) *Store {
+	t.Helper()
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on %s: %v", what, err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return s
+}
+
+func removeAppliedVersion(t *testing.T, s *Store, version int) {
+	t.Helper()
+	if _, err := s.DB().Exec(`DELETE FROM schema_version WHERE version = ?`, version); err != nil {
+		t.Fatalf("removing schema_version row %d: %v", version, err)
 	}
 }

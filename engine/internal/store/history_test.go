@@ -155,44 +155,39 @@ func TestAnEventNeedsAKindButNotATime(t *testing.T) {
 // A batch is all-or-nothing: one bad event refuses the whole write.
 func TestABatchIsAllOrNothing(t *testing.T) {
 	s := openTemp(t)
-	err := s.AppendBatch([]HistoryEvent{
-		{Kind: EventPortUp, Port: 3000},
-		{Port: 3001}, // no kind: the whole batch must roll back
-	})
-	if err == nil {
-		t.Fatal("AppendBatch accepted an event with no kind")
+	good := HistoryEvent{Kind: EventPortUp, Port: 3000}
+	bad := HistoryEvent{Port: 3001} // no kind: the whole batch must roll back
+	if err := s.AppendBatch([]HistoryEvent{good, bad}); err == nil {
+		t.Fatal("a batch with one typeless event was written")
 	}
-	if count, err := s.HistoryCount(); err != nil || count != 0 {
-		t.Errorf("a refused batch left %d rows (%v), want 0", count, err)
-	}
+	requireHistoryCount(t, s, 0)
 	if err := s.AppendBatch(nil); err != nil {
 		t.Errorf("AppendBatch(nil) = %v, want nil", err)
+	}
+	requireHistoryCount(t, s, 0)
+}
+
+func requireHistoryCount(t *testing.T, s *Store, want int) {
+	t.Helper()
+	count, err := s.HistoryCount()
+	if err != nil || count != want {
+		t.Errorf("the ring holds %d rows (%v), want %d", count, err, want)
 	}
 }
 
 func TestTheRingSurvivesAReopen(t *testing.T) {
 	path := t.TempDir() + "/option-berth.db"
-	first, err := Open(path)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
+	first := mustOpenPath(t, path, "the first handle")
 	record(t, first, HistoryEvent{Kind: EventPortUp, Port: 3000, DisplayName: "api"})
-	if err := first.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
+	closeStore(t, first)
 
-	second, err := Open(path)
-	if err != nil {
-		t.Fatalf("reopen: %v", err)
-	}
-	t.Cleanup(func() { _ = second.Close() })
-
+	second := mustOpenPath(t, path, "the reopened handle")
 	got, err := second.History(historyAt(0))
 	if err != nil {
 		t.Fatalf("History: %v", err)
 	}
-	if len(got) != 1 || got[0].DisplayName != "api" {
-		t.Errorf("history after reopen = %+v, want the api event", got)
+	if len(got) != 1 || got[0].DisplayName != "api" || got[0].Port != 3000 {
+		t.Errorf("history after reopen = %+v, want the api event on port 3000", got)
 	}
 }
 
@@ -206,17 +201,11 @@ func TestTheRingKeepsItsCapacity(t *testing.T) {
 	const overflow = 500
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	batch := make([]HistoryEvent, 0, HistoryCapacity+overflow)
-	for i := range HistoryCapacity + overflow {
-		batch = append(batch, HistoryEvent{
-			At:          base.Add(time.Duration(i) * time.Second),
-			Kind:        EventPortUp,
-			Port:        3000,
-			PID:         i,
-			DisplayName: fmt.Sprintf("event-%d", i),
-		})
-	}
+	total := HistoryCapacity + overflow
+	batch := overflowingHistory(base, total)
 	record(t, s, batch...)
+	wantNewest := fmt.Sprintf("event-%d", total-1)
+	wantOldest := fmt.Sprintf("event-%d", overflow)
 
 	if count, err := s.HistoryCount(); err != nil || count != HistoryCapacity {
 		t.Fatalf("the ring holds %d rows (%v), want exactly %d", count, err, HistoryCapacity)
@@ -226,8 +215,8 @@ func TestTheRingKeepsItsCapacity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("History: %v", err)
 	}
-	if want := fmt.Sprintf("event-%d", HistoryCapacity+overflow-1); newest[0].DisplayName != want {
-		t.Errorf("newest row = %q, want %q", newest[0].DisplayName, want)
+	if newest[0].DisplayName != wantNewest {
+		t.Errorf("newest row = %q, want %q", newest[0].DisplayName, wantNewest)
 	}
 
 	// The overflowing rows were dropped from the old end; the one right after
@@ -236,8 +225,11 @@ func TestTheRingKeepsItsCapacity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("History: %v", err)
 	}
-	if want := fmt.Sprintf("event-%d", overflow); oldest[len(oldest)-1].DisplayName != want {
-		t.Errorf("oldest surviving row = %q, want %q", oldest[len(oldest)-1].DisplayName, want)
+	if oldest[len(oldest)-1].DisplayName != wantOldest {
+		t.Errorf("oldest surviving row = %q, want %q", oldest[len(oldest)-1].DisplayName, wantOldest)
+	}
+	if !oldest[len(oldest)-1].At.Equal(base.Add(time.Duration(overflow) * time.Second)) {
+		t.Errorf("oldest surviving At = %s, want the overflow boundary", oldest[len(oldest)-1].At)
 	}
 
 	// One more event evicts one more row and the count stays put.
@@ -245,4 +237,20 @@ func TestTheRingKeepsItsCapacity(t *testing.T) {
 	if count, err := s.HistoryCount(); err != nil || count != HistoryCapacity {
 		t.Errorf("after one more event the ring holds %d rows (%v), want %d", count, err, HistoryCapacity)
 	}
+}
+
+func overflowingHistory(base time.Time, n int) []HistoryEvent {
+	batch := make([]HistoryEvent, n)
+	for i := range batch {
+		batch[i] = portUpAt(base.Add(time.Duration(i)*time.Second), i)
+	}
+	return batch
+}
+
+func portUpAt(at time.Time, pid int) HistoryEvent {
+	ev := HistoryEvent{Kind: EventPortUp, Port: 3000}
+	ev.At = at
+	ev.PID = pid
+	ev.DisplayName = fmt.Sprintf("event-%d", pid)
+	return ev
 }
