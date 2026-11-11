@@ -162,6 +162,10 @@ func startTree(t *testing.T) tree {
 	got := tree{parentPort: parentPort, childPort: childPort}
 
 	shell := exec.Command("sh", "-c", `"$0" & wait`, exe)
+	// One process group for the shell, the helper and the helper's child: the
+	// held leader is enough to clean up everything the fixture started, with no
+	// second trip through the process table.
+	shell.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	shell.Env = append(os.Environ(),
 		envHelperPort+"="+strconv.Itoa(parentPort),
 		envHelperChild+"="+strconv.Itoa(childPort),
@@ -173,9 +177,7 @@ func startTree(t *testing.T) tree {
 	got.shell = shell
 	t.Cleanup(func() {
 		// Whatever the test did, leave no strays behind.
-		if shell.Process != nil {
-			killTreeNow(shell.Process.Pid)
-		}
+		stopOwnedTree(shell)
 		_ = shell.Wait()
 	})
 
@@ -195,13 +197,20 @@ func snapshotForPID(pid, port int) ports.ListeningPort {
 	}
 }
 
-// killTreeNow is the test's own belt-and-braces cleanup: SIGKILL the process
-// tree below pid so a failed case cannot leave a listener behind.
-func killTreeNow(pid int) {
-	table := scanProcessTable()
-	for _, p := range table.Descendants(pid) {
-		_ = signalProcess(p, true)
+// stopOwnedTree is the test's own belt-and-braces cleanup: SIGKILL the process
+// group the fixture created, through the leader the test started with Setpgid.
+//
+// It deliberately does not walk a fresh process table. A numeric pid read back
+// from `ps` is not ownership evidence: the leader can exit and its pid be
+// reused before cleanup, and a descendant walk would then signal whatever now
+// sits below that pid. The held group id cannot be reused while the group still
+// has members.
+func stopOwnedTree(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
 	}
+	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	_ = cmd.Process.Kill()
 }
 
 // snapshotFor returns the scanner's view of a port when the machine can produce
@@ -303,6 +312,7 @@ func TestKillPortsEscalatesOnAProcessThatIgnoresSIGTERM(t *testing.T) {
 	}
 	pidDir := t.TempDir()
 	wedged := exec.Command(exe)
+	wedged.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	wedged.Env = append(os.Environ(),
 		envHelperPort+"="+strconv.Itoa(port),
 		envHelperIgnore+"=1",
@@ -312,9 +322,7 @@ func TestKillPortsEscalatesOnAProcessThatIgnoresSIGTERM(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if wedged.Process != nil {
-			_ = signalProcess(wedged.Process.Pid, true)
-		}
+		stopOwnedTree(wedged)
 		_ = wedged.Wait()
 	})
 	waitForPort(t, port, true)

@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // failureLog collects errors from goroutines that cannot call t.Fatalf
@@ -88,7 +89,19 @@ func TestReadersDoNotWaitForTheWriter(t *testing.T) {
 		reads.Add(1)
 		return nil
 	}, &problems)
-	wg.Wait()
+	// A reader or writer that blocks forever is a liveness failure, not a slow
+	// test: a leaked pooled connection starves the others and wg.Wait would
+	// hang until the package timeout. Bound the wait and name the condition.
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the writer and readers did not finish; a blocked store call can starve the pool")
+	}
 	problems.report(t)
 
 	if got := writes.Load(); got != writerIterations {

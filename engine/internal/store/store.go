@@ -109,11 +109,7 @@ func OpenReadOnly(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	uriPath := filepath.ToSlash(abs)
-	if !strings.HasPrefix(uriPath, "/") {
-		uriPath = "/" + uriPath
-	}
-	uri := url.URL{Scheme: "file", Path: uriPath, RawQuery: "mode=ro&_pragma=busy_timeout(1000)"}
+	uri := url.URL{Scheme: "file", Path: readOnlyURIPath(abs), RawQuery: "mode=ro&_pragma=busy_timeout(1000)"}
 	dsn := uri.String()
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -127,6 +123,18 @@ func OpenReadOnly(path string) (*Store, error) {
 		return nil, fmt.Errorf("opening %s read-only: %w", path, err)
 	}
 	return &Store{db: db, path: path, readOnly: true}, nil
+}
+
+// readOnlyURIPath is the URL path for a file: URI. A Windows absolute path
+// reaches here as `C:/...` after filepath.ToSlash, which is a drive letter, not
+// a URL path; the leading slash keeps it one path segment list instead of a
+// scheme-relative form. Unix paths already start with `/` and pass unchanged.
+func readOnlyURIPath(abs string) string {
+	uriPath := filepath.ToSlash(abs)
+	if !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	return uriPath
 }
 
 // OpenWith is Open with options.
@@ -146,6 +154,11 @@ func OpenWith(path string, opts Options) (*Store, error) {
 	}
 	return recreate(path, opts, err)
 }
+
+// chmodFile is the owner-only permission check's syscall seam. Tests replace it
+// to exercise a refusal a normal temp file cannot produce; production uses the
+// real chmod.
+var chmodFile = os.Chmod
 
 // databasePath resolves the one default every opener shares.
 func databasePath(path string) string {
@@ -199,7 +212,7 @@ func openAt(path string, opts Options) (*Store, error) {
 		return nil, closeAfterFailure(db, err)
 	}
 	// The database holds a person's service history; keep it owner-only.
-	if err := os.Chmod(path, 0o600); err != nil && !os.IsNotExist(err) {
+	if err := chmodFile(path, 0o600); err != nil && !os.IsNotExist(err) {
 		_ = db.Close()
 		return nil, fmt.Errorf("securing %s: %w", path, err)
 	}
@@ -344,20 +357,35 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// checkpointTimeout bounds the wait for the connection checkpointing needs. A
+// leaked or stuck connection is a bug, but it must not make Close hang forever:
+// daemon shutdown and a test's temp-directory cleanup both depend on Close
+// returning.
+const checkpointTimeout = 5 * time.Second
+
 // checkpointAndLeaveWAL folds the write-ahead log into the database and takes
 // the file out of WAL mode, both of which delete the two sidecars. It needs the
 // pool down to one connection: journal_mode only changes when one connection is
 // left to change it.
 func (s *Store) checkpointAndLeaveWAL() {
+	s.checkpointAndLeaveWALWithin(checkpointTimeout)
+}
+
+// checkpointAndLeaveWALWithin is checkpointAndLeaveWAL with an explicit budget.
+// The budget covers acquiring the connection and both pragmas: if a caller
+// holds the only connection, Close gives up instead of waiting forever.
+func (s *Store) checkpointAndLeaveWALWithin(budget time.Duration) {
 	s.db.SetMaxIdleConns(0)
 	s.db.SetMaxOpenConns(1)
-	conn, err := s.db.Conn(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
+	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return
 	}
 	defer func() { _ = conn.Close() }()
-	_, _ = conn.ExecContext(context.Background(), `PRAGMA wal_checkpoint(TRUNCATE)`)
-	_, _ = conn.ExecContext(context.Background(), `PRAGMA journal_mode(DELETE)`)
+	_, _ = conn.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`)
+	_, _ = conn.ExecContext(ctx, `PRAGMA journal_mode(DELETE)`)
 }
 
 // DBPath is the file this store is backed by.
