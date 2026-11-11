@@ -779,8 +779,9 @@ was actually run on this machine (macOS 27, arm64, Go `1.27.1`); the CI matrix i
 ## Residual cleanup acceptance: crash, mutation, and startup (2026-11-11)
 
 Source identity: branch `test/acceptance-final-20261111` at `5ecf1f23`, which merges `main` at
-`589b17a5` (PR #270). Baseline for the startup comparison is `ec5dbac9`, the base named by the
-residual-cleanup plan. Both binaries were built with
+`589b17a5` (PR #270). The documentation commits after `5ecf1f23` change no compiled file, so the
+measured binary is also the binary of the branch head. Baseline for the startup comparison is
+`ec5dbac9`, the base named by the residual-cleanup plan. Both binaries were built with
 `CGO_ENABLED=0 go build -trimpath -buildvcs=false`: candidate sha256
 `f37a3221b97424b9556a96cce31c4b8c564cd5c096ad0df59f348878b6dc869c`, baseline sha256
 `c171e90473117ca818d12c347f65a4f956a0bb20e461207b4a4bc91c89a94730`. The machine was macOS 27.2.1
