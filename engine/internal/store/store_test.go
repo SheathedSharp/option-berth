@@ -4,8 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // openTemp opens a store in a fresh temp directory and closes it when the test
@@ -193,5 +195,48 @@ func TestANonCorruptionFailureIsReported(t *testing.T) {
 	}
 	if _, err := Open(filepath.Join(locked, "option-berth.db")); err == nil {
 		t.Fatal("Open into an unwritable directory succeeded, want an error")
+	}
+}
+
+// Zero is the only busy timeout that means the default. A nonzero value is
+// used as given, even one too small to survive integer milliseconds.
+func TestBusyTimeoutZeroMeansDefault(t *testing.T) {
+	if got := dsnFor("option-berth.db", time.Nanosecond); !strings.Contains(got, "busy_timeout(0)") {
+		t.Errorf("one nanosecond busy timeout = %q, want it used as zero milliseconds", got)
+	}
+	for _, busy := range []time.Duration{0, -time.Second} {
+		if got := dsnFor("option-berth.db", busy); !strings.Contains(got, "busy_timeout(5000)") {
+			t.Errorf("busy timeout %v = %q, want the 5s default", busy, got)
+		}
+	}
+}
+
+// A nil error is not corruption: the caller asks this only after a failure,
+// and treating success as corruption would throw away a good database.
+func TestIsCorruptionRejectsNoError(t *testing.T) {
+	if isCorruption(nil) {
+		t.Fatal("a nil error was called corruption")
+	}
+}
+
+// Close is nil-safe, so a store that was never opened can still be released
+// by the same cleanup path as an open one.
+func TestCloseIsSafeOnANilStore(t *testing.T) {
+	var s *Store
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close on a nil store: %v", err)
+	}
+}
+
+// A one-column read returns every row in the query's order.
+func TestTextColumnReturnsTheRowsItRead(t *testing.T) {
+	s := storeWithConnector(t, fixedConn{})
+
+	values, err := s.textColumn(`SELECT 'one' UNION ALL SELECT 'two' ORDER BY 1`)
+	if err != nil {
+		t.Fatalf("textColumn: %v", err)
+	}
+	if want := []string{"one", "two"}; !slices.Equal(values, want) {
+		t.Fatalf("values = %q, want %q", values, want)
 	}
 }
