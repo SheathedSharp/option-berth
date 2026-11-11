@@ -49,12 +49,25 @@ type ownedProcess func(exe, cmdline string) bool
 // Windows has no ps and no cheap way to read another process's command line from
 // Go, so the check is unix-only. The guards it backs up are not.
 func AssertNoLeakedDaemons() []Daemon {
+	match := ownedDaemonMatcher()
 	leaked := waitForStrays(2*time.Second, 100*time.Millisecond, LeakedDaemons)
 	if len(leaked) == 0 {
 		return nil
 	}
-	reportAndKill(leaked)
+	reportAndKill(leaked, match)
 	return leaked
+}
+
+// ownedDaemonMatcher is the ownership rule the scan used, in the form the
+// re-read before a signal needs. It returns nil when this process cannot name
+// its own executable, in which case nothing is a candidate anyway.
+func ownedDaemonMatcher() func(string) bool {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil
+	}
+	gateAll := os.Getenv(gateAllEnv) == "1"
+	return func(cmdline string) bool { return isOwnedProcess(exe, cmdline, gateAll) }
 }
 
 // RequireNoLeakedDaemons is AssertNoLeakedDaemons for a single test: one test
@@ -82,25 +95,68 @@ func waitForStrays(window, every time.Duration, find func() []Daemon) []Daemon {
 	}
 }
 
-// reportAndKill says what survived and stops it, so a failed run does not leave
-// the machine dirtier than it found it.
-func reportAndKill(leaked []Daemon) {
+// reportAndKill says what survived and stops what is still the same process,
+// so a failed run does not leave the machine dirtier than it found it. The
+// ownership rule is applied again immediately before each signal: the scan and
+// the kill are separated by the scheduler, and a leaked daemon can exit and
+// have its pid reused in that window.
+func reportAndKill(leaked []Daemon, match func(string) bool) {
 	lines := []string{"", fmt.Sprintf("testenv: %d leaked daemon process(es) survived this test binary:", len(leaked))}
+	killed := 0
 	for _, d := range leaked {
-		lines = append(lines, "  "+d.String())
-		stop(d)
+		line := "  " + d.String()
+		if KillIfMatches(d.PID, match) {
+			killed++
+		} else {
+			line += " (not signalled: the pid no longer names this run's daemon)"
+		}
+		lines = append(lines, line)
 	}
-	lines = append(lines, "testenv: they were killed, but a test started a daemon it did not stop.")
+	switch {
+	case killed == len(leaked):
+		lines = append(lines, "testenv: they were killed, but a test started a daemon it did not stop.")
+	case killed > 0:
+		lines = append(lines, fmt.Sprintf("testenv: %d of them were killed; the rest no longer matched this run, but a test started a daemon it did not stop.", killed))
+	default:
+		lines = append(lines, "testenv: none were signalled because none still matched this run, but a test started a daemon it did not stop.")
+	}
 	fmt.Fprintln(os.Stderr, strings.Join(lines, "\n"))
 }
 
-// stop kills one leaked process, best-effort: the run has already failed.
-func stop(d Daemon) {
-	process, err := os.FindProcess(d.PID)
-	if err != nil {
-		return
+// KillIfMatches stops pid only when a fresh read of its command line still
+// satisfies match. It is the cleanup primitive for a process this run did not
+// start and therefore cannot hold an *os.Process for: the scan that named the
+// pid is not ownership evidence by itself.
+//
+// It returns whether a signal was delivered. pid 1 and this process are never
+// candidates, and a nil match refuses.
+func KillIfMatches(pid int, match func(string) bool) bool {
+	if pid <= 1 || pid == os.Getpid() || match == nil {
+		return false
 	}
-	_ = process.Kill()
+	line, err := processCommand(pid)
+	if err != nil || line == "" || !match(line) {
+		return false
+	}
+	return killProcess(pid) == nil
+}
+
+// processCommand is one process's command line from a fresh ps read, including
+// its environment where the platform's ps supports it. The environment is what
+// the scenario harness owns its processes by. Tests replace it.
+var processCommand = func(pid int) (string, error) {
+	out, err := exec.Command("ps", "eww", "-p", strconv.Itoa(pid), "-o", "command=").Output()
+	return strings.TrimSpace(string(out)), err
+}
+
+// killProcess delivers the signal a cleanup sends. Tests replace it so the
+// ownership decision can be checked without a real process.
+var killProcess = func(pid int) error {
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return process.Kill()
 }
 
 // LeakedDaemons lists the running `serve` processes this run owns.
