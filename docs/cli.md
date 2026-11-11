@@ -533,7 +533,10 @@ carry `ready:false`, and the human-readable output likewise marks readiness as u
 Stops all services in the project's manifest and, once the action confirms they can be released,
 returns the `port: auto` reservations. With no arguments the current directory's manifest is used.
 `--force` uses a forced signal directly and does not skip the run-identity or reservation-release
-gates. On success `--json` returns the stop result and the number actually released. `machine:`
+gates. On success `--json` returns the stop result and the number actually released. A service or run
+that could not be stopped is not success: `--json` still returns the envelope — `ok` false, with the
+failed rows carrying the reason — and the command exits 1, so a caller that reads only the status
+does not go on as if the project were down. `machine:`
 dependencies declared in the project manifest are read-only as to their listener state; `down` does
 not stop them.
 
