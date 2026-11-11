@@ -692,6 +692,29 @@ func TestKillCleanupRefusesAMismatchedHeldHandle(t *testing.T) {
 	}
 }
 
+// TestKillCleanupStillSignalsTheGroupWhenTheProcessHandleIsGone: the recorded
+// handle can already be finished while the process group it created still has
+// members. Cleanup must still attempt the group through its hook and report the
+// handle error; skipping the group would leave the fixture's other processes
+// behind.
+func TestKillCleanupStillSignalsTheGroupWhenTheProcessHandleIsGone(t *testing.T) {
+	var groups []int
+	withKillCleanupHooks(t, func(isolatedProcessIdentity) error {
+		return os.ErrProcessDone
+	}, func(id isolatedProcessIdentity) error {
+		groups = append(groups, id.PID)
+		return nil
+	})
+	id := heldKillProcessGroup(&os.Process{Pid: 4242}, isolatedSyntheticBirth)
+	err := killOwnedIdentities(id)
+	if !errors.Is(err, os.ErrProcessDone) {
+		t.Fatalf("killOwnedIdentities err = %v, want the process-done error", err)
+	}
+	if len(groups) != 1 || groups[0] != 4242 {
+		t.Fatalf("group hook pids = %v, want [4242]: a finished handle must not skip group cleanup", groups)
+	}
+}
+
 // TestKillCleanupUsesHeldHandleAndGroupHooksWithoutAProcessTable: a still-valid
 // held process-group identity is cleaned up only through the installed hooks.
 // Success is hook invocation, not a live signal or a descendant walk.

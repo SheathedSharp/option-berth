@@ -620,15 +620,19 @@ func cleanupHeldIdentity(id isolatedProcessIdentity) error {
 	if !id.usable() || !id.Held || id.Handle == nil || id.Handle.Pid != id.PID {
 		return fmt.Errorf("%w: cleanup requires a still-valid held create-time handle, not a bare pid", errUnscopedKillCleanup)
 	}
+	// The handle can already be finished while the group it created still has
+	// members (the root exited first). Attempt both and keep the first error:
+	// returning on the handle error would leak the group it owns.
+	var first error
 	if err := killHeldProcess(id); err != nil {
-		return err
+		first = err
 	}
 	if id.ProcessGroup {
-		if err := killHeldProcessGroup(id); err != nil {
-			return err
+		if err := killHeldProcessGroup(id); err != nil && first == nil {
+			first = err
 		}
 	}
-	return nil
+	return first
 }
 
 // killOwnedIdentities is the harness cleanup entry: the same identity policy
