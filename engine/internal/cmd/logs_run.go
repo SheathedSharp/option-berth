@@ -60,35 +60,46 @@ func logsFromRun(ctx context.Context, c *client.Client, target, selector string)
 }
 
 // logRange is the part of a log file one read covers, in bytes: [start, end).
-// A whole-file read is a range that starts at zero. end < 0 means the range
-// has no known end: the run that owns it is still writing, so the end of the
-// file is its end for as long as the read lasts.
+// A whole-file read is a range that starts at zero. end < 0 means no byte
+// position was recorded where the range stops; ended then says whether the run
+// that owns it has stopped writing. A run that is still writing owns everything
+// after its start, so the end of the file is its end for as long as the read
+// lasts; a run that has ended owns only what is already in the file.
 type logRange struct {
 	start int64
 	end   int64
+	// ended says the run that owns this range has exited. Nothing it wrote can
+	// appear after the file as it is when read, so the range cannot grow a line
+	// even when no later generation recorded where it took over.
+	ended bool
 }
 
 // bounded says the range's last byte is already written: a finished run cannot
-// grow another line, so following it is a read, not a wait.
-func (r logRange) bounded() bool { return r.end >= 0 }
+// grow another line, so following it is a read, not a wait. The one range that
+// is not bounded belongs to a run that is still writing.
+func (r logRange) bounded() bool { return r.end >= 0 || r.ended }
 
 // runLogRange is where one run's bytes end in the file its service appends to
 // across generations. The file is a single stream of bytes and only each run's
-// start was recorded, so the end is where the next generation took over: a run
-// that started after this one ended began writing exactly where this one
-// stopped. Without such a run the range stays open, which is the truth for the
-// newest run and for one that is still writing; closing it at the end of the
-// file instead would report a later run's lines — and the error it died on —
-// as this run's.
+// start was recorded, so the exact end is where the next generation took over:
+// a run that started after this one ended began writing exactly where this one
+// stopped. Without such a run — the newest finished one is the usual case — the
+// range still ends at the end of the file, because a run that has exited cannot
+// append. Leaving it open instead would make a follow wait for bytes that will
+// belong to a generation not yet started, under this run's name.
 func runLogRange(rec rpc.RunRecord, records []rpc.RunRecord) logRange {
 	rng := logRange{start: *rec.LogOffset, end: -1}
 	if rec.Status != "exited" {
 		return rng
 	}
+	// From here the run has ended: whatever it wrote is already in the file, so
+	// a read can stop at the file's end even when the loop below finds no exact
+	// byte to stop at.
+	rng.ended = true
 	endedAt := parseRunTime(rec.ExitedAt)
 	if endedAt.IsZero() {
 		// Without the moment this run ended, no later run can be shown to have
-		// started after it; an open range is the honest answer.
+		// started after it; the end of the file is the best bound there is.
 		return rng
 	}
 	for _, other := range records {
@@ -266,6 +277,12 @@ func readRunLines(path string, rng logRange) ([]string, []int64, bool, error) {
 	}
 	size := info.Size()
 	start, end := rng.start, rng.end
+	if end < 0 && rng.ended {
+		// The run has ended, so the file as it is now is where its range stops.
+		// Limiting the read to the size observed here keeps out bytes a later
+		// generation appends while this read is in progress.
+		end = size
+	}
 	unknown := false
 	// A rotation invalidates every recorded byte position: the start lies past
 	// the end of the file, or the range ends behind its own start because a

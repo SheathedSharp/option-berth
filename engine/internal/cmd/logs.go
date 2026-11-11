@@ -310,9 +310,10 @@ func requireLogFile(path string) error {
 	return nil
 }
 
-// streamFileLogsFrom follows one run's range of the file. A range with an end
-// belongs to a run that has finished, so it is printed and the read stops:
-// nothing that arrives afterwards can belong to that run.
+// streamFileLogsFrom follows one run's range of the file. A range that cannot
+// grow belongs to a run that has finished — either its end byte is recorded, or
+// the run has ended and the file as it is now is its end — so it is printed and
+// the read stops: nothing that arrives afterwards can belong to that run.
 func streamFileLogsFrom(ctx context.Context, path string, rng logRange, asJSON bool, lines int, meta logMetadata) error {
 	if err := requireLogFile(path); err != nil {
 		return err
