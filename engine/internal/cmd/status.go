@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/codefacts"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/sheathedsharp/option-berth/engine/internal/draft"
@@ -294,7 +295,7 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool, only []stri
 			codeSelection = selected
 		}
 	}
-	annotateCodeFacts(ctx, group, codeSelection)
+	codefacts.Annotate(ctx, group, codeSelection)
 
 	ports := make([]state.Port, 0, len(pp))
 	for _, p := range pp {

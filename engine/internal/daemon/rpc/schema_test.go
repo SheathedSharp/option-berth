@@ -24,7 +24,7 @@ var contractMethods = []string{
 	"daemon.doctor",
 	"state.snapshot", "state.subscribe", "state.unsubscribe", "stream.cancel",
 	"ports.kill", "ports.logs",
-	"groups.list", "groups.kill", "groups.start",
+	"groups.list", "groups.code", "groups.kill", "groups.start",
 	"groups.reload", "groups.init", "groups.rename",
 	"groups.config.get", "groups.config.set",
 	"runs.register", "runs.unregister", "runs.list", "runs.spawn",

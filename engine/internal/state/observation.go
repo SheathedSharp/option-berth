@@ -25,6 +25,17 @@ func (o *Observation) Narrow() bool {
 	return o != nil && o.Source != ""
 }
 
+// SameObservation compares two verdicts without treating a re-checked healthy
+// process as changed: CheckedAt is the moment of the probe, not a fact about
+// the table, so a process that keeps seeing itself publishes nothing new.
+func SameObservation(a, b *Observation) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.State == b.State && a.Code == b.Code && a.Source == b.Source &&
+		a.Detail == b.Detail && a.Hint == b.Hint
+}
+
 const (
 	// ObservationObservable: the collector saw the process's own listener.
 	ObservationObservable = "observable"

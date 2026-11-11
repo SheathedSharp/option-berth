@@ -26,6 +26,11 @@ type Delta struct {
 	Ports    Change[Port]          `json:"ports"`
 	Groups   Change[Group]         `json:"groups"`
 	Sessions Change[SessionRecord] `json:"sessions"`
+	// Observation is the listener-table verdict after this transition, always
+	// present so a null says "the primary collector answered" rather than
+	// "unchanged". The verdict can move while every row stays put; a delta that
+	// carried only row changes would leave a stale "blind" claim on screen.
+	Observation *Observation `json:"observation"`
 }
 
 // Event is a discrete notification, sent alongside deltas when a subscriber asked for events.

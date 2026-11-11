@@ -35,6 +35,7 @@ func oracleDiffInternal(prev, next Snapshot, withStats bool) Delta {
 		Sessions: oracleDiffKeyed(prev.Sessions, next.Sessions,
 			func(s SessionRecord) string { return s.Key() },
 			func(a, b SessionRecord) bool { return reflect.DeepEqual(a, b) }),
+		Observation: next.Observation,
 	}
 }
 
