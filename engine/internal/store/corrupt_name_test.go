@@ -3,6 +3,7 @@ package store
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +38,9 @@ func TestFreeCorruptNameCountsCollisions(t *testing.T) {
 // A stat failure that is not "does not exist" is reported, not retried as if
 // the name were free.
 func TestFreeCorruptNameReportsAStatFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows reports a path under a regular file as not existing")
+	}
 	dir := t.TempDir()
 	file := filepath.Join(dir, "not-a-directory")
 	if err := os.WriteFile(file, nil, 0o600); err != nil {
