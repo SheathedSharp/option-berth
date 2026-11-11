@@ -16,10 +16,6 @@ This repository's release assets are the engine only:
 
 No macOS application, DMG, notarized bundle, client screenshot or skill installer is published here.
 
-The engine module path is `github.com/sheathedsharp/option-berth/engine`;
-`go install github.com/sheathedsharp/option-berth/engine/cmd/oberth@vX.Y.Z` builds straight from the
-Git tag without going through release assets and without needing an extra module repository.
-
 The install entry points are `install.sh` (macOS/Linux) and `install.ps1` (Windows) at the repository
 root, plus the matching `uninstall.sh` / `uninstall.ps1`; they are not release assets and are served
 from `main`:
@@ -62,9 +58,8 @@ maintained only in their own repositories.
 
 The product version is **X1.X2.X3**, and the root `VERSION` file is the single source of the engine
 version (no `v`). Git tags use `vX1.X2.X3`, must be annotated, and must point at a verified commit that
-belongs to `main`'s history. Every release also creates an annotated `engine/vX1.X2.X3` tag on the same
-commit; it is the Go version tag for the `engine/` submodule, and
-`go install .../engine/cmd/oberth@vX1.X2.X3` depends on it.
+belongs to `main`'s history. The release assets are the only install channel the tag drives: the engine
+is not published as a Go module, and a release creates no `engine/` tag.
 
 | Change | Step | Example |
 | --- | --- | --- |
@@ -101,7 +96,7 @@ pushing; `scripts/release.py` keeps only `--verify-only` and `--validate-tag` fo
 1. Branch from `main`, change only `VERSION` (a protocol release also changes `ProtocolVersion` and
    regenerates the schema), commit `chore(release): vX.Y.Z`, and open a PR.
 2. Once the PR's required checks pass and it is confirmed, merge with a merge commit.
-3. Create the annotated tags `vX.Y.Z` and `engine/vX.Y.Z` on the merge commit and push them.
+3. Create the annotated tag `vX.Y.Z` on the merge commit and push it.
 4. `Verified release` runs `policy` / `verify` / `windows` / `package` / `publish` against the tag,
    executing the same gates as `scripts/release.py --verify-only` on the runner, and only then builds
    assets and promotes the draft.

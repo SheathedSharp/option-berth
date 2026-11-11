@@ -76,7 +76,7 @@ worktree、提交信息与用户确认的规则不变。
 ## 发布
 
 发布和普通改动走同一条 PR 路径：版本 PR 只改 `VERSION`（协议版本发布同时改
-`ProtocolVersion` 与生成的 schema），合并后在合并提交上创建注释标签 `vX.Y.Z` 与
-`engine/vX.Y.Z` 并推送。`Verified release` 在 runner 上跑完整门槛，通过后才构建和发布资产。
+`ProtocolVersion` 与生成的 schema），合并后在合并提交上创建注释标签 `vX.Y.Z` 并推送。
+`Verified release` 在 runner 上跑完整门槛，通过后才构建和发布资产。
 本机不再有创建版本提交、打标签或推送的快捷入口；`scripts/release.py` 只保留
 `--verify-only` 与 `--validate-tag`。打标签仍是发布动作，需要单独授权。
