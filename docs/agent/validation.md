@@ -836,12 +836,13 @@ It is evidence tooling, not a product script. Fifty-four samples:
 | compile / tool | 0 / 0 |
 
 The nine panics are mutation-induced illegal states (for example `textColumn` returning
-`nil, nil`); they are not counted as assertion kills. The three timeouts of the earlier run were
-traced to `Store.Close` waiting forever for a connection a mutated `checkpointAndLeaveWAL` had
-leaked; `Close` now bounds the checkpoint with a 5s context, and the concurrent reader/writer test
-waits with a 10s deadline instead of hanging until the package timeout. One survivor was a Windows
-drive-letter branch unreachable on darwin; it was made testable by extracting `readOnlyURIPath` and is
-now killed. No survivor remains.
+`nil, nil`); they are not counted as assertion kills. The three timeouts of the earlier run all came
+from a leaked or starved connection: `Store.Close` waited forever for a connection a mutated
+`checkpointAndLeaveWAL` had leaked (two samples), and the concurrent reader/writer test had no
+deadline when `textColumn` leaked rows and exhausted the pool (one sample). `Close` now bounds the
+checkpoint with a 5s context, and the concurrent test waits with a 10s deadline instead of hanging
+until the package timeout. One survivor was a Windows drive-letter branch unreachable on darwin; it
+was made testable by extracting `readOnlyURIPath` and is now killed. No survivor remains.
 
 ### Cold and warm startup
 
