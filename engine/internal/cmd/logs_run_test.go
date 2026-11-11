@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -18,7 +19,7 @@ func TestReadFileLogsFromStartsAtTheRunOffset(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	doc, err := readFileLogsFrom(path, int64(len(earlier)), 10)
+	doc, err := readFileLogsFrom(path, logRange{start: int64(len(earlier)), end: -1}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +31,7 @@ func TestReadFileLogsFromStartsAtTheRunOffset(t *testing.T) {
 	}
 
 	// The same read with a smaller tail reports only the end of this run.
-	doc, err = readFileLogsFrom(path, int64(len(earlier)), 2)
+	doc, err = readFileLogsFrom(path, logRange{start: int64(len(earlier)), end: -1}, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +48,7 @@ func TestReadFileLogsFromReportsARotation(t *testing.T) {
 	if err := os.WriteFile(path, []byte("only current contents\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	doc, err := readFileLogsFrom(path, 1<<20, 10)
+	doc, err := readFileLogsFrom(path, logRange{start: 1 << 20, end: -1}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +67,7 @@ func TestRunTailStartIsTheLastLinesOfTheRun(t *testing.T) {
 	if err := os.WriteFile(path, []byte(earlier+current), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	start, err := runTailStart(path, int64(len(earlier)), 2)
+	start, err := runTailStart(path, logRange{start: int64(len(earlier)), end: -1}, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +79,7 @@ func TestRunTailStartIsTheLastLinesOfTheRun(t *testing.T) {
 	}
 
 	// A run shorter than the tail starts at its own offset, not at the file top.
-	start, err = runTailStart(path, int64(len(earlier)), 10)
+	start, err = runTailStart(path, logRange{start: int64(len(earlier)), end: -1}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +122,7 @@ func TestLogsFirstErrorDocumentIsRunScoped(t *testing.T) {
 	t.Cleanup(func() { logsJSONFlag = prev })
 
 	out := captureStdout(t, func() {
-		if err := logsFirstErrorFromFile(path, offset, meta); err != nil {
+		if err := logsFirstErrorFromFile(path, logRange{start: offset, end: -1}, meta); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -153,7 +154,7 @@ func TestLogsFirstErrorReportsNoMatch(t *testing.T) {
 	t.Cleanup(func() { logsJSONFlag = prev })
 
 	out := captureStdout(t, func() {
-		if err := logsFirstErrorFromFile(path, 0, logMetadata{Service: "api"}); err != nil {
+		if err := logsFirstErrorFromFile(path, logRange{start: 0, end: -1}, logMetadata{Service: "api"}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -163,6 +164,147 @@ func TestLogsFirstErrorReportsNoMatch(t *testing.T) {
 	}
 	if doc.FirstError != nil || !doc.NoFirstError {
 		t.Fatalf("document = %+v, want no_first_error", doc)
+	}
+}
+
+// A run's read must stop where the next generation of the same service began
+// writing: the file is shared, and bytes past that point are another run's
+// output — including the error that a later run crashed on.
+func TestReadFileLogsFromStopsWhereTheNextRunBegan(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "api.log")
+	first := "booting\nlistening on 3000\n"
+	second := "ERROR could not connect\n"
+	if err := os.WriteFile(path, []byte(first+second), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	doc, err := readFileLogsFrom(path, logRange{start: 0, end: int64(len(first))}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(doc.Lines, "|"), "booting|listening on 3000"; got != want {
+		t.Fatalf("lines = %q, want %q", got, want)
+	}
+	if doc.RunStartUnknown {
+		t.Fatal("a range that is present in the file was reported as unknown")
+	}
+}
+
+func TestLogsFirstErrorDoesNotBorrowALaterRunsLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "api.log")
+	first := "booting\nlistening on 3000\n"
+	second := "ERROR could not connect\n"
+	if err := os.WriteFile(path, []byte(first+second), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	offset := int64(0)
+	prev := logsJSONFlag
+	logsJSONFlag = true
+	t.Cleanup(func() { logsJSONFlag = prev })
+
+	out := captureStdout(t, func() {
+		if err := logsFirstErrorFromFile(path, logRange{start: offset, end: int64(len(first))},
+			logMetadata{Service: "api", RunID: "run-1", LogOffset: &offset}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var doc logsDocument
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out)
+	}
+	if doc.FirstError != nil {
+		t.Fatalf("first_error = %+v, want none: that line belongs to the next run", doc.FirstError)
+	}
+	if !doc.NoFirstError {
+		t.Fatalf("document = %+v, want no_first_error", doc)
+	}
+}
+
+// runLogRange is the rule the read above depends on: a finished run ends where
+// the next generation started, and a run that is still writing has no end.
+func TestRunLogRangeEndsWhereTheNextGenerationStarted(t *testing.T) {
+	first := rpc.RunRecord{ID: "r1", Group: "shop", Name: "api", Status: "exited",
+		LogPath: "/logs/api.log", StartedAt: "2026-11-01T10:00:00Z", ExitedAt: "2026-11-01T10:02:00Z",
+		LogOffset: int64Ptr(0)}
+	second := rpc.RunRecord{ID: "r2", Group: "shop", Name: "api", Status: "exited",
+		LogPath: "/logs/api.log", StartedAt: "2026-11-01T10:05:00Z", ExitedAt: "2026-11-01T10:07:00Z",
+		LogOffset: int64Ptr(40)}
+	live := rpc.RunRecord{ID: "r3", Group: "shop", Name: "api", Status: "running",
+		LogPath: "/logs/api.log", StartedAt: "2026-11-01T10:08:00Z", LogOffset: int64Ptr(90)}
+	records := []rpc.RunRecord{live, second, first}
+
+	if got := runLogRange(first, records); got != (logRange{start: 0, end: 40}) {
+		t.Fatalf("first run range = %+v, want [0,40)", got)
+	}
+	if got := runLogRange(second, records); got != (logRange{start: 40, end: 90}) {
+		t.Fatalf("second run range = %+v, want [40,90)", got)
+	}
+	// The run that is still writing owns everything after its own start.
+	if got := runLogRange(live, records); got != (logRange{start: 90, end: -1}) {
+		t.Fatalf("live run range = %+v, want [90,EOF)", got)
+	}
+}
+
+func TestRunLogRangeIgnoresRunsThatDidNotWriteAfterThisOne(t *testing.T) {
+	first := rpc.RunRecord{ID: "r1", Group: "shop", Name: "api", Status: "exited",
+		LogPath: "/logs/api.log", StartedAt: "2026-11-01T10:00:00Z", ExitedAt: "2026-11-01T10:02:00Z",
+		LogOffset: int64Ptr(0)}
+	// Started while the first run was still alive: its bytes are interleaved
+	// with this run's, so no byte position separates the two.
+	overlapping := rpc.RunRecord{ID: "r2", Group: "shop", Name: "api", Status: "exited",
+		LogPath: "/logs/api.log", StartedAt: "2026-11-01T10:01:00Z", ExitedAt: "2026-11-01T10:03:00Z",
+		LogOffset: int64Ptr(10)}
+	// Another file entirely, and a record whose offset was never written down.
+	elsewhere := rpc.RunRecord{ID: "r3", Group: "shop@old", Name: "api", Status: "exited",
+		LogPath: "/other/api.log", StartedAt: "2026-11-01T10:05:00Z", ExitedAt: "2026-11-01T10:06:00Z",
+		LogOffset: int64Ptr(5)}
+	unrecorded := rpc.RunRecord{ID: "r4", Group: "shop", Name: "api", Status: "exited",
+		LogPath: "/logs/api.log", StartedAt: "2026-11-01T10:07:00Z", ExitedAt: "2026-11-01T10:08:00Z"}
+
+	records := []rpc.RunRecord{first, overlapping, elsewhere, unrecorded}
+	if got := runLogRange(first, records); got != (logRange{start: 0, end: -1}) {
+		t.Fatalf("range = %+v, want [0,EOF): nothing recorded where this run's bytes end", got)
+	}
+}
+
+// A rotation between two runs leaves a later run's offset behind this one's:
+// the file no longer holds this run at all, and the read says so instead of
+// showing the newer generation.
+func TestReadFileLogsFromReportsARotationBehindTheRun(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "api.log")
+	if err := os.WriteFile(path, []byte("a fresh generation\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := readFileLogsFrom(path, logRange{start: 40, end: 10}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !doc.RunStartUnknown {
+		t.Fatal("a range that ends behind its start was not reported as unknown")
+	}
+}
+
+// Following a run that has ended prints its lines and returns: nothing that
+// arrives later can belong to that run, so waiting would only show the next
+// generation's output under this run's name.
+func TestFollowOfAFinishedRunPrintsItsLinesAndStops(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "api.log")
+	first := "booting\nlistening on 3000\n"
+	second := "ERROR could not connect\n"
+	if err := os.WriteFile(path, []byte(first+second), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() {
+		if err := streamFileLogsFrom(context.Background(), path,
+			logRange{start: 0, end: int64(len(first))}, false, 10, logMetadata{Service: "api"}); err != nil {
+			t.Error(err)
+		}
+	})
+	if !strings.Contains(out, "booting") || !strings.Contains(out, "listening on 3000") {
+		t.Fatalf("output = %q, want this run's lines", out)
+	}
+	if strings.Contains(out, "ERROR") {
+		t.Fatalf("output = %q, want nothing from the next run", out)
 	}
 }
 

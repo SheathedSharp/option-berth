@@ -537,7 +537,10 @@ carry `ready:false`, and the human-readable output likewise marks readiness as u
 Stops all services in the project's manifest and, once the action confirms they can be released,
 returns the `port: auto` reservations. With no arguments the current directory's manifest is used.
 `--force` uses a forced signal directly and does not skip the run-identity or reservation-release
-gates. On success `--json` returns the stop result and the number actually released. `machine:`
+gates. On success `--json` returns the stop result and the number actually released. A service or run
+that could not be stopped is not success: `--json` still returns the envelope — `ok` false, with the
+failed rows carrying the reason — and the command exits 1, so a caller that reads only the status
+does not go on as if the project were down. `machine:`
 dependencies declared in the project manifest are read-only as to their listener state; `down` does
 not stop them.
 
@@ -618,15 +621,19 @@ document:
  "run_id":"...","log_offset":1234,"first_error":{"line":42,"text":"ERROR could not connect"}}
 ~~~
 
-Service log files are appended across runs. `--run current` reads only the part of that service's
-current run that starts at `log_offset`; you can also pick an exact historical run with the `run_id`
-from `status --json`. `current` prefers a process that is still running and only falls back to the most
-recently finished one when there is none. `--run` accepts only service names, cannot be combined with
-`--ip`, and needs the daemon; when the daemon is unavailable it returns `daemon_unavailable`. Old run
-records without an offset return not_found with a suggestion to restart the service once. When the file
-has been rotated and the recorded offset is past the end of the file, reading falls back to the
-beginning of the file, and the JSON uses `run_start_unknown: true` to say that the lines this time may
-include earlier runs.
+Service log files are appended across runs. `--run` reads only one run's own part of that file: from
+`log_offset` to where the next run of that service started writing, so a later generation's lines —
+including the error it died on — are not reported as this run's. A run that is still writing owns
+everything after its start; two runs that overlap in time write interleaved bytes, and their parts
+cannot be told apart. `--run current` selects the service's current run, and any other value is an
+exact historical `run_id` from `status --json`. `current` prefers a process that is still running and
+only falls back to the most recently finished one when there is none. Following a run that has ended
+prints its lines and stops: nothing arrives for it afterwards. `--run` accepts only service names,
+cannot be combined with `--ip`, and needs the daemon; when the daemon is unavailable it returns
+`daemon_unavailable`. Old run records without an offset return not_found with a suggestion to restart
+the service once. When the file has been rotated and the recorded part is no longer in it, reading
+falls back to the beginning of the file, and the JSON uses `run_start_unknown: true` to say that the
+lines this time may include other runs.
 
 `--first-error` is used together with `--run`: it locates the first matching line of that run from a
 fixed vocabulary (case-insensitive error, exception, fatal, panic, traceback) and returns the line
