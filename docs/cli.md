@@ -625,7 +625,10 @@ Service log files are appended across runs. `--run` reads only one run's own par
 `log_offset` to where the next run of that service started writing, so a later generation's lines —
 including the error it died on — are not reported as this run's. A run that is still writing owns
 everything after its start; two runs that overlap in time write interleaved bytes, and their parts
-cannot be told apart. `--run current` selects the service's current run, and any other value is an
+cannot be told apart. A run that has ended owns only the bytes already in the file: when no later
+generation has recorded where it took over — the newest finished run — its part ends at the end of
+the file as it is when read, so following it prints and returns instead of waiting for a generation
+that has not started yet. `--run current` selects the service's current run, and any other value is an
 exact historical `run_id` from `status --json`. `current` prefers a process that is still running and
 only falls back to the most recently finished one when there is none. Following a run that has ended
 prints its lines and stops: nothing arrives for it afterwards. `--run` accepts only service names,
