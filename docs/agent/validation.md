@@ -361,11 +361,6 @@ releases API, and do not contact real GitHub; cache reads and writes use a tempo
 automatic check on the first screen is enabled only in terminal sessions, and does not fire when the
 test process's stdout is not a terminal.
 
-`scripts/go_install_test.py` runs a real `go install` through a local file module proxy, installing
-`engine/cmd/oberth` and `engine/cmd/jev-attention`, and verifies that `version --json` uses the
-module version. This validates the module paths, the binary name of `cmd/oberth`, and the version
-fallback when `go install` does not go through `-ldflags`.
-
 The Linux package tests generate `.deb`/`.rpm` from fixture archives with `nfpm` and check control
 fields, install paths, license, and md5sums; when `dpkg-deb` is available the package is read with
 dpkg, and when `rpm` is available the package contents are listed. `nfpm` does not depend on
