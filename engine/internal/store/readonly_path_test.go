@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -43,5 +44,54 @@ func TestReadOnlyLiteralFilename(t *testing.T) {
 				t.Fatal("read-only connection allowed a write")
 			}
 		})
+	}
+}
+
+// The read-only reader is one connection: it is a small evidence path, and
+// keeping one connection leaves no pool to grow behind the caller.
+func TestOpenReadOnlyKeepsOneConnection(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "seed.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ro, err := OpenReadOnly(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ro.Close()
+	if !ro.readOnly {
+		t.Fatal("OpenReadOnly returned a writable handle")
+	}
+	if _, err := ro.Version(); err != nil {
+		t.Fatal(err)
+	}
+	stats := ro.DB().Stats()
+	if stats.MaxOpenConnections != 1 {
+		t.Errorf("MaxOpenConnections = %d, want 1", stats.MaxOpenConnections)
+	}
+	if stats.Idle != 1 {
+		t.Errorf("Idle = %d, want the one connection kept", stats.Idle)
+	}
+}
+
+// Closing a read-only store does not checkpoint: the handle cannot change
+// journal mode, so it must not run the checkpoint pragmas at all.
+func TestCloseDoesNotCheckpointAReadOnlyStore(t *testing.T) {
+	var queries []string
+	s := &Store{
+		db:       sql.OpenDB(fixedConnector{conn: fixedConn{record: &queries}}),
+		readOnly: true,
+	}
+
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if len(queries) != 0 {
+		t.Fatalf("read-only Close ran %q, want no checkpoint", queries)
 	}
 }
