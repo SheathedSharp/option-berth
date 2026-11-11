@@ -97,6 +97,21 @@ func (b *bench) step() bool {
 	return true
 }
 
+// assertQuietDuringBackoff walks the clock up to, but not including, the
+// backoff for this failure. Every simulated scan may enrich from the cache;
+// none may cause another docker list.
+func (b *bench) assertQuietDuringBackoff(t *testing.T, failures int) {
+	t.Helper()
+	wait := backoffFor(failures)
+	for elapsed := time.Second; elapsed < wait; elapsed += time.Second {
+		b.clock.advance(time.Second)
+		b.watcher.Enrich([]ports.ListeningPort{{Port: 9000 + int(elapsed/time.Second)}})
+		if b.step() {
+			t.Fatalf("after failure %d a refresh ran %s in, before the %s backoff", failures, elapsed, wait)
+		}
+	}
+}
+
 // web is the container most cases use: it publishes exactly one host port and
 // carries the full set of compose labels, so a single fixture exercises both
 // the port mapping and the attribution path.
@@ -145,19 +160,11 @@ func TestFailingDockerBacksOffAndASuccessResets(t *testing.T) {
 	if !b.step() {
 		t.Fatal("the first refresh did not run")
 	}
-	for n := 1; n <= 8; n++ {
-		wait := backoffFor(n)
-		// Scans poke every second meanwhile; none of them may reach Docker.
-		for elapsed := time.Second; elapsed < wait; elapsed += time.Second {
-			b.clock.advance(time.Second)
-			b.watcher.Enrich([]ports.ListeningPort{{Port: 9000 + int(elapsed/time.Second)}})
-			if b.step() {
-				t.Fatalf("after failure %d a refresh ran %s in, before the %s backoff", n, elapsed, wait)
-			}
-		}
+	for failures := 1; failures <= 8; failures++ {
+		b.assertQuietDuringBackoff(t, failures)
 		b.clock.advance(time.Second)
 		if !b.step() {
-			t.Fatalf("after failure %d no refresh ran once the %s backoff was up", n, wait)
+			t.Fatalf("after failure %d no refresh ran once the %s backoff was up", failures, backoffFor(failures))
 		}
 	}
 	if got := b.docker.psCount(); got != 9 {
@@ -194,13 +201,27 @@ func TestFailingDockerServesTheLastGoodList(t *testing.T) {
 
 	pp := []ports.ListeningPort{{Port: 8080, Type: ports.PortTypeUser}}
 	b.watcher.Enrich(pp)
-	if pp[0].Type != ports.PortTypeDocker || pp[0].DockerContainer != "shop-web-1" ||
-		pp[0].DockerComposeProject != "shop" || pp[0].DockerComposeWorkingDir != "/src/shop" {
-		t.Errorf("port 8080 = %+v, want it enriched from the last good list", pp[0])
+	requireAttributedTo(t, pp[0], web)
+}
+
+func requireAttributedTo(t *testing.T, row ports.ListeningPort, c container) {
+	t.Helper()
+	if row.Type != ports.PortTypeDocker {
+		t.Errorf("type = %q, want %q", row.Type, ports.PortTypeDocker)
+	}
+	if row.DockerContainer != c.name {
+		t.Errorf("container = %q, want %q", row.DockerContainer, c.name)
+	}
+	if row.DockerComposeProject != c.composeProject {
+		t.Errorf("compose project = %q, want %q", row.DockerComposeProject, c.composeProject)
+	}
+	if row.DockerComposeWorkingDir != c.composeWorkingDir {
+		t.Errorf("compose working dir = %q, want %q", row.DockerComposeWorkingDir, c.composeWorkingDir)
 	}
 }
 
-// No docker on PATH: never exec, never back off, say so once.
+// When docker is missing from PATH the watcher must never exec, never start a
+// backoff, and say so only once.
 func TestNoDockerInstalledStaysSilentAndCheap(t *testing.T) {
 	b := newBench(t)
 	b.watcher.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
@@ -390,20 +411,27 @@ func awaitHealthDown(t *testing.T, watcher *Watcher) {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("the hanging docker ps was never cut off")
+			t.Fatal("the hanging list call was still running after 5s")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 }
 
-// A healthy docker's `ps` output still enriches a port with the container and
-// its compose labels, exactly as the inline path did.
+// TestParsePSFeedsEnrichment feeds a raw `docker ps` table through the
+// watcher: a published port keeps the container and its compose labels, and a
+// port nobody publishes stays untouched.
 func TestParsePSFeedsEnrichment(t *testing.T) {
-	out := "shop-web-1\tnginx:1.27\t0.0.0.0:8080->80/tcp, :::8080->80/tcp\tweb\tshop\t/src/shop\n" +
+	const listed = "shop-web-1\tnginx:1.27\t0.0.0.0:8080->80/tcp, :::8080->80/tcp\tweb\tshop\t/src/shop\n" +
 		"loose\tredis:7\t\t\t\t\n"
-	cs := parsePS([]byte(out))
+	cs := parsePS([]byte(listed))
 	if len(cs) != 2 {
 		t.Fatalf("parsed %d containers, want 2: %+v", len(cs), cs)
+	}
+	if cs[0].name != "shop-web-1" || cs[1].name != "loose" {
+		t.Fatalf("parsed names = %q, %q, want shop-web-1 and loose", cs[0].name, cs[1].name)
+	}
+	if len(cs[1].portMappings) != 0 {
+		t.Errorf("loose published %v, want no host ports", cs[1].portMappings)
 	}
 
 	b := newBench(t)

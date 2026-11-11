@@ -327,21 +327,36 @@ func TestSocketPermissions(t *testing.T) {
 		env := fakeEnv(t)
 		env.GOOS = "windows"
 		env.SocketPath = `\\.\pipe\option-berth`
-		wantStatus(t, run(t, env, checkSocketPermissions), StatusSkip)
+		row := run(t, env, checkSocketPermissions)
+		wantStatus(t, row, StatusSkip)
+		if !strings.Contains(row.Summary, "named pipe") {
+			t.Errorf("summary = %q, want it to say the socket is a named pipe", row.Summary)
+		}
 	})
 
 	if runtime.GOOS == "windows" {
 		return
 	}
 
-	t.Run("no socket and no daemon skips", func(t *testing.T) {
-		wantStatus(t, run(t, fakeEnv(t), checkSocketPermissions), StatusSkip)
+	t.Run("an absent socket is a skip when no daemon answers", func(t *testing.T) {
+		row := run(t, fakeEnv(t), checkSocketPermissions)
+		wantStatus(t, row, StatusSkip)
+		if !strings.Contains(row.Summary, "no socket to check") {
+			t.Errorf("summary = %q, want it to say there is no socket to check", row.Summary)
+		}
 	})
 
-	t.Run("a daemon whose socket vanished fails", func(t *testing.T) {
+	t.Run("an absent socket fails when the daemon still answers", func(t *testing.T) {
 		env := fakeEnv(t)
 		env.Daemon = func(context.Context) DaemonInfo { return aliveDaemon() }
-		wantStatus(t, run(t, env, checkSocketPermissions), StatusFail)
+		row := run(t, env, checkSocketPermissions)
+		wantStatus(t, row, StatusFail)
+		if !strings.Contains(row.Summary, "socket is gone") {
+			t.Errorf("summary = %q, want it to say the socket is gone", row.Summary)
+		}
+		if row.Fix != "oberth daemon restart" {
+			t.Errorf("fix = %q, want a daemon restart", row.Fix)
+		}
 	})
 
 	for _, tc := range []struct {

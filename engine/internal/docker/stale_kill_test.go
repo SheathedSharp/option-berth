@@ -17,7 +17,7 @@ const cachedPS = "itest-web-1\tnginx:itest\t0.0.0.0:3000->80/tcp\tweb\titestproj
 
 // planKill answers what `ports.kill` on port 3000 would do with rows, without
 // doing any of it: the dry run resolves the owner and picks a method, then
-// stops.
+// stops. Execute and escalate are not reached (see killer.Options.DryRun).
 func planKill(t *testing.T, rows []ports.ListeningPort) killer.Result {
 	t.Helper()
 	const port = 3000
@@ -30,45 +30,55 @@ func planKill(t *testing.T, rows []ports.ListeningPort) killer.Result {
 	return planned[0]
 }
 
-// TestAStaleContainerPortHeldByANativeProcessKillsTheProcess is issue #95: the
-// cached list still says a container publishes 3000, but a native process
-// took the port over. The kill must signal that process, not `docker stop`
-// the container.
+func listeningOn3000(process string) ports.ListeningPort {
+	return ports.ListeningPort{
+		Port: 3000, PID: os.Getpid(), Process: process, BindAddress: "127.0.0.1",
+	}
+}
+
+// TestAStaleContainerPortHeldByANativeProcessKillsTheProcess is issue #95:
+// the cached list still says a container publishes 3000, but a native
+// process took the port over. The planned stop must be a signal to that
+// process, never a docker stop of the stale container.
 func TestAStaleContainerPortHeldByANativeProcessKillsTheProcess(t *testing.T) {
-	// A real pid, so the dry run can resolve it; nothing is signalled either
-	// way, which is the point of DryRun.
 	pid := os.Getpid()
-	rows := []ports.ListeningPort{{
-		Port: 3000, PID: pid, Process: "node",
-		BindAddress: "127.0.0.1", Type: ports.PortTypeUser,
-	}}
+	row := listeningOn3000("node")
+	row.Type = ports.PortTypeUser
+	rows := []ports.ListeningPort{row}
 	docker.EnrichFromPS(rows, []byte(cachedPS))
 
 	if rows[0].Type == ports.PortTypeDocker || rows[0].DockerContainer != "" {
 		t.Fatalf("the cached container was stamped onto a port node holds: %+v", rows[0])
 	}
-	r := planKill(t, rows)
-	if r.Method == state.MethodDockerStop {
-		t.Fatalf("the kill would docker-stop a container for a port node holds: %+v", r)
+	if rows[0].PID != pid {
+		t.Fatalf("enrichment changed the pid from %d to %d", pid, rows[0].PID)
 	}
-	if r.Method != state.MethodSIGTERM || r.PID != pid || !r.OK {
-		t.Errorf("row = %+v, want SIGTERM to pid %d", r, pid)
+
+	got := planKill(t, rows)
+	if got.Method == state.MethodDockerStop {
+		t.Fatalf("the kill would docker-stop a container for a port node holds: %+v", got)
+	}
+	if got.Method != state.MethodSIGTERM || got.PID != pid || !got.OK {
+		t.Errorf("plan = %+v, want SIGTERM to pid %d and OK", got, pid)
 	}
 }
 
-// TestAContainerPortHeldByTheForwarderStopsTheContainer is the other half: the
-// same port held by Docker's forwarder still stops the container.
+// TestAContainerPortHeldByTheForwarderStopsTheContainer is the other half:
+// the same cached list, when the holder is Docker's forwarder, still plans
+// a container stop and must not fall back to signalling the forwarder pid.
 func TestAContainerPortHeldByTheForwarderStopsTheContainer(t *testing.T) {
-	rows := []ports.ListeningPort{{
-		Port: 3000, PID: os.Getpid(), Process: "com.docke", BindAddress: "127.0.0.1",
-	}}
+	rows := []ports.ListeningPort{listeningOn3000("com.docke")}
 	docker.EnrichFromPS(rows, []byte(cachedPS))
 
 	if rows[0].Type != ports.PortTypeDocker || rows[0].DockerContainer != "itest-web-1" {
 		t.Fatalf("a port the forwarder holds lost its container: %+v", rows[0])
 	}
-	r := planKill(t, rows)
-	if r.Method != state.MethodDockerStop || r.PID != 0 || !r.OK {
-		t.Errorf("row = %+v, want docker_stop", r)
+
+	got := planKill(t, rows)
+	if got.Method != state.MethodDockerStop || got.PID != 0 || !got.OK {
+		t.Errorf("plan = %+v, want docker_stop with no process pid", got)
+	}
+	if got.Method == state.MethodSIGTERM {
+		t.Errorf("a forwarder-held port was planned as a process signal: %+v", got)
 	}
 }

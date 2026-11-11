@@ -9,6 +9,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/spf13/cobra"
 )
 
@@ -50,42 +51,9 @@ func init() {
 
 func downRun(cmd *cobra.Command, args []string) error {
 	cmd.SilenceUsage = true
-	worktree := strings.TrimSpace(downWorktreeFlag)
-	identity := strings.TrimSpace(downIdentityFlag)
-	if worktree != "" && identity != "" {
-		return usageError{fmt.Errorf("--worktree and --identity cannot be combined")}
-	}
-	if (worktree != "" || identity != "") && len(args) == 1 {
-		return usageError{fmt.Errorf("a project argument cannot be combined with --worktree or --identity")}
-	}
-
-	params := rpc.GroupsKillParams{Force: downForceFlag, Release: true}
-	var local *groups.Config
-	switch {
-	case worktree != "":
-		// The daemon resolves paths against its own cwd; make the caller's
-		// answer independent of where it was typed.
-		abs, err := filepath.Abs(worktree)
-		if err != nil {
-			return usageError{fmt.Errorf("resolving --worktree %q: %w", worktree, err)}
-		}
-		params.WorktreePath = &abs
-	case identity != "":
-		params.Identity = &identity
-	case len(args) == 1:
-		params.Name = strings.TrimSpace(args[0])
-	default:
-		wd, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-		cfg, err := nearestConfig(wd)
-		if err != nil {
-			return err
-		}
-		path := cfg.Path
-		params.ConfigPath = &path
-		local = cfg
+	params, local, err := downParams(args)
+	if err != nil {
+		return err
 	}
 
 	c, err := connectForWrite(cmd.Context())
@@ -110,7 +78,14 @@ func downRun(cmd *cobra.Command, args []string) error {
 	if downJSONFlag {
 		return printJSON(env)
 	}
+	return reportDown(env, snapshot)
+}
 
+// reportDown renders what groups.kill did: the per-process lines for whatever
+// was listening, and then the sentence about the reservations it gave back.
+// The released count is the daemon's, so it is printed whether or not anything
+// was listening.
+func reportDown(env rpc.KillEnvelope, snapshot []ports.ListeningPort) error {
 	var reportErr error
 	if len(env.Results) == 0 {
 		fmt.Println("Nothing was running.")
@@ -121,4 +96,64 @@ func downRun(cmd *cobra.Command, args []string) error {
 		fmt.Println(display.Dim(fmt.Sprintf("released %d claimed %s", env.Released, pluralWord(env.Released, "port"))))
 	}
 	return reportErr
+}
+
+// downParams chooses what to stop before any daemon call: one explicit
+// checkout (path or identity), one named project, or the manifest at or above
+// the working directory. The selectors are mutually exclusive, and a
+// filesystem path is made absolute here because the daemon resolves it
+// against its own working directory, not the shell's.
+func downParams(args []string) (rpc.GroupsKillParams, *groups.Config, error) {
+	params := rpc.GroupsKillParams{Force: downForceFlag, Release: true}
+	worktree := strings.TrimSpace(downWorktreeFlag)
+	identity := strings.TrimSpace(downIdentityFlag)
+	if err := exclusiveDownSelector(worktree, identity, args); err != nil {
+		return params, nil, err
+	}
+
+	switch {
+	case worktree != "":
+		abs, err := filepath.Abs(worktree)
+		if err != nil {
+			return params, nil, usageError{fmt.Errorf("resolving --worktree %q: %w", worktree, err)}
+		}
+		params.WorktreePath = &abs
+	case identity != "":
+		params.Identity = &identity
+	case len(args) == 1:
+		params.Name = strings.TrimSpace(args[0])
+	default:
+		return downParamsFromManifest(params)
+	}
+	return params, nil, nil
+}
+
+// exclusiveDownSelector refuses the combinations that name more than one
+// subject: stopping two checkouts at once would be two stops, not one, and
+// neither form can be combined with a project argument.
+func exclusiveDownSelector(worktree, identity string, args []string) error {
+	if worktree != "" && identity != "" {
+		return usageError{fmt.Errorf("--worktree and --identity cannot be combined")}
+	}
+	if (worktree != "" || identity != "") && len(args) == 1 {
+		return usageError{fmt.Errorf("a project argument cannot be combined with --worktree or --identity")}
+	}
+	return nil
+}
+
+// downParamsFromManifest is the form with no selector at all: the manifest at
+// or above the working directory is the project, and its parsed config is
+// returned so the stop can be checked against the daemon's capabilities.
+func downParamsFromManifest(params rpc.GroupsKillParams) (rpc.GroupsKillParams, *groups.Config, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return params, nil, err
+	}
+	cfg, err := nearestConfig(wd)
+	if err != nil {
+		return params, nil, err
+	}
+	path := cfg.Path
+	params.ConfigPath = &path
+	return params, cfg, nil
 }

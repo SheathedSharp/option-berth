@@ -97,12 +97,8 @@ func notRunning(socket string) error {
 }
 
 func daemonStatusRun(cmd *cobra.Command, _ []string) error {
-	socket := daemon.SocketPath()
-	c, err := connectRunning(cmd.Context())
+	c, err := runningClient(cmd.Context())
 	if err != nil {
-		if errors.Is(err, client.ErrNotRunning) {
-			return notRunning(socket)
-		}
 		return err
 	}
 	defer c.Close()
@@ -111,62 +107,95 @@ func daemonStatusRun(cmd *cobra.Command, _ []string) error {
 	if err := c.Call(cmd.Context(), "daemon.status", rpc.Empty{}, &status); err != nil {
 		return err
 	}
-	hello := c.Hello()
+	doc := daemonStatus{status: status, hello: c.Hello(), cliCommit: buildinfo.Commit}
 
 	if daemonJSONFlag {
-		body := map[string]any{
-			"running":               true,
-			"pid":                   status.PID,
-			"uptime":                status.Uptime,
-			"subscribers":           status.Subscribers,
-			"last_scan_at":          status.LastScanAt,
-			"scan_interval_ms":      status.ScanIntervalMs,
-			"scan_base_interval_ms": status.ScanBaseIntervalMs,
-			"stats_interval_ms":     status.StatsIntervalMs,
-			"scans":                 status.Scans,
-			"db_path":               status.DBPath,
-			"socket":                hello.Socket,
-			"daemon_version":        hello.DaemonVersion,
-			"protocol_version":      hello.ProtocolVersion,
-			"capabilities":          hello.Capabilities,
-			"build_commit":          status.Commit,
-			"build_date":            status.Built,
-			"build_matches":         status.Commit == "" || status.Commit == buildinfo.Commit,
-		}
-		if status.Observation != nil {
-			body["observation"] = status.Observation
-		}
-		return printJSON(body)
+		return printJSON(doc.jsonDoc())
 	}
-
-	fmt.Printf("running       yes\n")
-	fmt.Printf("pid           %d\n", status.PID)
-	fmt.Printf("version       %s (protocol %s)\n", hello.DaemonVersion, hello.ProtocolVersion)
-	fmt.Printf("build         %s, built %s\n", orUnknown(status.Commit), orUnknown(status.Built))
-	fmt.Printf("uptime        %s\n", status.Uptime)
-	fmt.Printf("subscribers   %d\n", status.Subscribers)
-	fmt.Printf("scan interval %dms\n", status.ScanIntervalMs)
-	fmt.Printf("scan base     %dms\n", status.ScanBaseIntervalMs)
-	fmt.Printf("stats tick    %dms\n", status.StatsIntervalMs)
-	fmt.Printf("scans         %d\n", status.Scans)
-	if status.LastScanAt != "" {
-		fmt.Printf("last scan     %s\n", status.LastScanAt)
-	}
-	fmt.Printf("socket        %s\n", hello.Socket)
-	if status.Observation != nil && status.Observation.State != string(ports.ObservationObservable) {
-		fmt.Printf("observation   %s (%s)\n", status.Observation.State, orUnknown(status.Observation.Code))
-		if status.Observation.Hint != "" {
-			fmt.Printf("hint          %s\n", status.Observation.Hint)
-		}
-	}
-	if status.DBPath != "" {
-		fmt.Printf("database      %s\n", status.DBPath)
-	}
-	fmt.Printf("capabilities  %v\n", hello.Capabilities)
+	doc.writeText(os.Stdout)
 	if note := staleDaemonNote(status.Commit, buildinfo.Commit); note != "" {
 		fmt.Fprintln(os.Stderr, display.Dim(note))
 	}
 	return nil
+}
+
+// runningClient dials a daemon that must already be running. Absence is the
+// documented not-running answer, not an error to autostart around: `oberth
+// daemon` never creates the daemon it is inspecting.
+func runningClient(ctx context.Context) (*client.Client, error) {
+	c, err := connectRunning(ctx)
+	if err != nil {
+		if errors.Is(err, client.ErrNotRunning) {
+			return nil, notRunning(daemon.SocketPath())
+		}
+		return nil, err
+	}
+	return c, nil
+}
+
+// daemonStatus is one read of the daemon, built once so the JSON document and
+// the text lines can never describe different values. cliCommit is this
+// process's build; the comparison with the daemon's is part of the answer.
+type daemonStatus struct {
+	status    rpc.DaemonStatusResult
+	hello     rpc.DaemonHelloResult
+	cliCommit string
+}
+
+func (s daemonStatus) jsonDoc() map[string]any {
+	body := map[string]any{
+		"running":               true,
+		"pid":                   s.status.PID,
+		"uptime":                s.status.Uptime,
+		"subscribers":           s.status.Subscribers,
+		"last_scan_at":          s.status.LastScanAt,
+		"scan_interval_ms":      s.status.ScanIntervalMs,
+		"scan_base_interval_ms": s.status.ScanBaseIntervalMs,
+		"stats_interval_ms":     s.status.StatsIntervalMs,
+		"scans":                 s.status.Scans,
+		"db_path":               s.status.DBPath,
+		"socket":                s.hello.Socket,
+		"daemon_version":        s.hello.DaemonVersion,
+		"protocol_version":      s.hello.ProtocolVersion,
+		"capabilities":          s.hello.Capabilities,
+		"build_commit":          s.status.Commit,
+		"build_date":            s.status.Built,
+		"build_matches":         s.status.Commit == "" || s.status.Commit == s.cliCommit,
+	}
+	if s.status.Observation != nil {
+		body["observation"] = s.status.Observation
+	}
+	return body
+}
+
+func (s daemonStatus) writeText(w io.Writer) {
+	line := func(format string, args ...any) { fmt.Fprintf(w, format+"\n", args...) }
+	line("running       yes")
+	line("pid           %d", s.status.PID)
+	line("version       %s (protocol %s)", s.hello.DaemonVersion, s.hello.ProtocolVersion)
+	line("build         %s, built %s", orUnknown(s.status.Commit), orUnknown(s.status.Built))
+	line("uptime        %s", s.status.Uptime)
+	line("subscribers   %d", s.status.Subscribers)
+	line("scan interval %dms", s.status.ScanIntervalMs)
+	line("scan base     %dms", s.status.ScanBaseIntervalMs)
+	line("stats tick    %dms", s.status.StatsIntervalMs)
+	line("scans         %d", s.status.Scans)
+	if s.status.LastScanAt != "" {
+		line("last scan     %s", s.status.LastScanAt)
+	}
+	line("socket        %s", s.hello.Socket)
+	// An observable daemon needs no row: the socket line already says the
+	// daemon is working. Anything else is the fact a caller must not miss.
+	if obs := s.status.Observation; obs != nil && obs.State != string(ports.ObservationObservable) {
+		line("observation   %s (%s)", obs.State, orUnknown(obs.Code))
+		if obs.Hint != "" {
+			line("hint          %s", obs.Hint)
+		}
+	}
+	if s.status.DBPath != "" {
+		line("database      %s", s.status.DBPath)
+	}
+	line("capabilities  %v", s.hello.Capabilities)
 }
 
 // staleDaemonNote is empty when the daemon is this build, and otherwise says
@@ -195,11 +224,8 @@ func orUnknown(s string) string {
 
 func daemonStopRun(cmd *cobra.Command, _ []string) error {
 	socket := daemon.SocketPath()
-	c, err := connectRunning(cmd.Context())
+	c, err := runningClient(cmd.Context())
 	if err != nil {
-		if errors.Is(err, client.ErrNotRunning) {
-			return notRunning(socket)
-		}
 		return err
 	}
 	defer c.Close()
