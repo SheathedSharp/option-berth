@@ -3,7 +3,6 @@ package agentstream
 import (
 	"bytes"
 	"io"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -12,7 +11,7 @@ import (
 
 func TestOpenCodeLiveFakeBinaryTwoTurns(t *testing.T) {
 	root := t.TempDir()
-	os.Unsetenv("BERTH_AGENT_STREAM_FAKE")
+	t.Setenv("BERTH_AGENT_STREAM_FAKE", "")
 	bin := buildFakeProvider(t, "opencode")
 	out := newCompletionSignal()
 	inR, inW := io.Pipe()
@@ -51,7 +50,7 @@ func TestOpenCodeLiveFakeBinaryTwoTurns(t *testing.T) {
 
 func TestOpenCodeLiveFakeBinaryBusyAndApproval(t *testing.T) {
 	root := t.TempDir()
-	os.Unsetenv("BERTH_AGENT_STREAM_FAKE")
+	t.Setenv("BERTH_AGENT_STREAM_FAKE", "")
 	bin := buildFakeProvider(t, "opencode")
 	lookPath := func(name string) (string, error) {
 		if name == "opencode" {

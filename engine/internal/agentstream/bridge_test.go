@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -112,7 +111,7 @@ func TestFakeStreamRequestRespond(t *testing.T) {
 
 func TestLiveStreamReturnsUnsupportedWithoutFake(t *testing.T) {
 	root := t.TempDir()
-	os.Unsetenv("BERTH_AGENT_STREAM_FAKE")
+	t.Setenv("BERTH_AGENT_STREAM_FAKE", "")
 	var out bytes.Buffer
 	in := strings.NewReader(`{"v":1,"type":"turn.start","id":"c1","text":"hello"}
 `)
