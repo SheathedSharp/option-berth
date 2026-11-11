@@ -640,102 +640,113 @@ func (c *Config) identityProblems() []string {
 	return problems
 }
 
-// serviceProblems checks every entry, and answers the names it declares so the
-// reference lists can refuse a collision.
+// declarationNames owns one list's names. Reference lists can consult earlier
+// lists without merging ownership: machine and workspace entries never become
+// runnable services, even when an invalid file repeats a name in all three.
+type declarationNames struct {
+	kind  string
+	names map[string]bool
+}
+
+func newDeclarationNames(kind string) declarationNames {
+	return declarationNames{kind: kind, names: make(map[string]bool)}
+}
+
+func (d declarationNames) register(name string, position int, earlier ...declarationNames) (string, []string) {
+	if name == "" {
+		list := d.kind
+		if list == "service" {
+			list = "services"
+		}
+		where := fmt.Sprintf("%s[%d]", list, position)
+		return where, []string{where + ": name is empty"}
+	}
+	where := d.kind + " " + name
+	var problems []string
+	for _, prior := range earlier {
+		if prior.names[name] {
+			problems = append(problems, fmt.Sprintf("%s: %s is already a %s in this file", where, name, prior.kind))
+		}
+	}
+	if d.names[name] {
+		problems = append(problems, where+": duplicate name")
+	}
+	d.names[name] = true
+	return where, problems
+}
+
+// serviceProblems validates runnable declarations separately from read-only
+// references. Every service contributes its diagnostics before dependency checks.
 func (c *Config) serviceProblems() ([]string, map[string]bool) {
+	declared := newDeclarationNames("service")
 	var problems []string
-	seen := make(map[string]bool, len(c.Services))
-	for i, s := range c.Services {
-		where := fmt.Sprintf("services[%d]", i)
-		if s.Name == "" {
-			problems = append(problems, where+": name is empty")
-		} else {
-			where = "service " + s.Name
-			if seen[s.Name] {
-				problems = append(problems, fmt.Sprintf("service %s: duplicate name", s.Name))
-			}
-			seen[s.Name] = true
-		}
-		if s.Port != 0 && (s.Port < 1 || s.Port > 65535) {
-			problems = append(problems, fmt.Sprintf("%s: port %d is out of range 1-65535", where, s.Port))
-		}
-		if s.Cwd != "" && !c.cwdInside(s.Cwd) {
-			problems = append(problems, fmt.Sprintf("%s: cwd %q escapes the directory holding %s", where, s.Cwd, ConfigName))
-		}
-		for key := range s.Env {
-			if !envKey.MatchString(key) {
-				problems = append(problems, fmt.Sprintf("%s: env %q is not a variable name", where, key))
-			}
-		}
-		if strings.ContainsRune(s.EnvFile, 0) {
-			problems = append(problems, where+": env_file contains a NUL byte")
-		}
-		problems = append(problems, c.prepareInputProblems(s, where)...)
-		problems = append(problems, c.sourceProblems(s, where)...)
-		problems = append(problems, c.healthProblems(s, where)...)
-		problems = append(problems, c.readyTimeoutProblems(s, where)...)
-		problems = append(problems, c.refProblems(s, where)...)
+	for position, svc := range c.Services {
+		where, naming := declared.register(svc.Name, position)
+		problems = append(problems, naming...)
+		problems = append(problems, c.serviceValueProblems(svc, where)...)
 	}
-	return problems, seen
+	return problems, declared.names
 }
 
-// machineProblems checks `machine:` references: each is a name and the port it
-// is anchored to, and its name lives in the same namespace as this file's
-// services. They are references, not members: `up` and `down` never touch them.
+func (c *Config) serviceValueProblems(s Service, where string) []string {
+	problems := c.serviceLocationProblems(s, where)
+	for key := range s.Env {
+		if !envKey.MatchString(key) {
+			problems = append(problems, fmt.Sprintf("%s: env %q is not a variable name", where, key))
+		}
+	}
+	if strings.ContainsRune(s.EnvFile, 0) {
+		problems = append(problems, where+": env_file contains a NUL byte")
+	}
+	problems = append(problems, c.prepareInputProblems(s, where)...)
+	problems = append(problems, c.sourceProblems(s, where)...)
+	problems = append(problems, c.healthProblems(s, where)...)
+	problems = append(problems, c.readyTimeoutProblems(s, where)...)
+	return append(problems, c.refProblems(s, where)...)
+}
+
+func (c *Config) serviceLocationProblems(s Service, where string) []string {
+	var problems []string
+	if s.Port != 0 && (s.Port < 1 || s.Port > 65535) {
+		problems = append(problems, fmt.Sprintf("%s: port %d is out of range 1-65535", where, s.Port))
+	}
+	if s.Cwd != "" && !c.cwdInside(s.Cwd) {
+		problems = append(problems, fmt.Sprintf("%s: cwd %q escapes the directory holding %s", where, s.Cwd, ConfigName))
+	}
+	return problems
+}
+
+// machineProblems keeps references in their own namespace while checking the
+// service names they are forbidden to shadow.
 func (c *Config) machineProblems(services map[string]bool) ([]string, map[string]bool) {
+	declared := newDeclarationNames("machine")
 	var problems []string
-	machines := make(map[string]bool, len(c.Machine))
-	for i, m := range c.Machine {
-		where := fmt.Sprintf("machine[%d]", i)
-		if m.Name == "" {
-			problems = append(problems, where+": name is empty")
-		} else {
-			where = "machine " + m.Name
-			if services[m.Name] {
-				problems = append(problems, fmt.Sprintf("%s: %s is already a service in this file", where, m.Name))
-			}
-			if machines[m.Name] {
-				problems = append(problems, where+": duplicate name")
-			}
-			machines[m.Name] = true
-		}
+	for position, ref := range c.Machine {
+		where, naming := declared.register(ref.Name, position, declarationNames{"service", services})
+		problems = append(problems, naming...)
 		switch {
-		case m.Port == 0:
+		case ref.Port == 0:
 			problems = append(problems, where+": port is required — it is what the reference is matched by")
-		case m.Port < 1 || m.Port > 65535:
-			problems = append(problems, fmt.Sprintf("%s: port %d is out of range 1-65535", where, m.Port))
+		case ref.Port < 1 || ref.Port > 65535:
+			problems = append(problems, fmt.Sprintf("%s: port %d is out of range 1-65535", where, ref.Port))
 		}
 	}
-	return problems, machines
+	return problems, declared.names
 }
 
-// workspaceProblems checks read-only references to services in other checkouts.
-// Their names live in the same `${<name>.port}` namespace as this file's
-// services and machine references, so the three may not collide.
+// workspaceProblems checks address references without adding them to the
+// services that a start plan may select.
 func (c *Config) workspaceProblems(services, machines map[string]bool) []string {
+	declared := newDeclarationNames("workspace")
 	var problems []string
-	workspaces := make(map[string]bool, len(c.Workspace))
-	for i, w := range c.Workspace {
-		where := fmt.Sprintf("workspace[%d]", i)
-		if w.Name == "" {
-			problems = append(problems, where+": name is empty")
-		} else {
-			where = "workspace " + w.Name
-			if services[w.Name] {
-				problems = append(problems, fmt.Sprintf("%s: %s is already a service in this file", where, w.Name))
-			}
-			if machines[w.Name] {
-				problems = append(problems, fmt.Sprintf("%s: %s is already a machine reference in this file", where, w.Name))
-			}
-			if workspaces[w.Name] {
-				problems = append(problems, where+": duplicate name")
-			}
-			workspaces[w.Name] = true
-		}
-		if strings.TrimSpace(w.Worktree) == "" {
+	for position, ref := range c.Workspace {
+		where, naming := declared.register(ref.Name, position,
+			declarationNames{"service", services}, declarationNames{"machine reference", machines})
+		problems = append(problems, naming...)
+		if strings.TrimSpace(ref.Worktree) == "" {
 			problems = append(problems, where+": worktree is required")
 		}
-		if strings.TrimSpace(w.Service) == "" {
+		if strings.TrimSpace(ref.Service) == "" {
 			problems = append(problems, where+": service is required")
 		}
 	}
@@ -763,20 +774,21 @@ func (c *Config) dependencyProblems(services map[string]bool) []string {
 // Absolute paths are rejected outright: the field is documented as relative to
 // the file.
 func (c *Config) cwdInside(cwd string) bool {
-	if filepath.IsAbs(cwd) || strings.HasPrefix(cwd, "/") || strings.HasPrefix(cwd, `\`) {
+	if absoluteManifestPath(cwd) {
 		return false
 	}
-	rel := filepath.Clean(filepath.FromSlash(cwd))
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return false
-	}
-	return true
+	cleaned := filepath.Clean(filepath.FromSlash(cwd))
+	return cleaned != ".." && !strings.HasPrefix(cleaned, ".."+string(filepath.Separator))
 }
 
-// prepareInputProblems checks the files a prepare step declares. They are read
-// relative to the service's cwd, and they must stay inside the directory that
-// holds the manifest: a manifest may not hash files anywhere on the machine.
-// Declaring inputs without a command is a contradiction, not a harmless no-op.
+// absoluteManifestPath also recognizes the other platform's root separator.
+// This is lexical validation, not a filesystem/symlink containment check.
+func absoluteManifestPath(path string) bool {
+	return filepath.IsAbs(path) || strings.HasPrefix(path, "/") || strings.HasPrefix(path, `\`)
+}
+
+// prepareInputProblems checks command presence before looking at any paths;
+// absent inputs do not require prepare, while nonempty inputs always do.
 func (c *Config) prepareInputProblems(s Service, where string) []string {
 	if len(s.PrepareInputs) == 0 {
 		return nil
@@ -784,40 +796,39 @@ func (c *Config) prepareInputProblems(s Service, where string) []string {
 	if strings.TrimSpace(s.Prepare) == "" {
 		return []string{where + ": prepare_inputs needs a prepare command"}
 	}
+	return c.inputPathProblems(s.Cwd, "prepare_inputs", s.PrepareInputs, where)
+}
+
+// sourceProblems preserves the distinction in the declaration itself: nil
+// defaults to cwd, [] opts out. Neither form produces a validation problem.
+func (c *Config) sourceProblems(s Service, where string) []string {
+	return c.inputPathProblems(s.Cwd, "sources", s.Sources, where)
+}
+
+// inputPathProblems is the single containment policy for files the manifest
+// asks the engine to fingerprint. Inputs are cwd-relative, but may climb from
+// a nested cwd as long as they remain inside the manifest directory.
+func (c *Config) inputPathProblems(cwd, field string, paths []string, where string) []string {
 	var problems []string
-	for _, input := range s.PrepareInputs {
-		switch {
-		case strings.TrimSpace(input) == "":
-			problems = append(problems, where+": prepare_inputs has an empty path")
-		case filepath.IsAbs(input) || strings.HasPrefix(input, "/") || strings.HasPrefix(input, `\`):
-			problems = append(problems, fmt.Sprintf("%s: prepare_inputs path %q must be relative to cwd", where, input))
-		case !c.cwdInside(filepath.Join(s.Cwd, input)):
-			problems = append(problems, fmt.Sprintf("%s: prepare_inputs path %q escapes the directory holding %s", where, input, ConfigName))
+	for _, path := range paths {
+		if problem := c.inputPathProblem(cwd, field, path, where); problem != "" {
+			problems = append(problems, problem)
 		}
 	}
 	return problems
 }
 
-// sourceProblems checks the paths whose contents identify the running code.
-// They are read relative to the service's cwd, and like prepare_inputs they
-// may not reach anywhere on the machine. An explicit empty list is valid: it
-// opts a hot-reloading service out of the check.
-func (c *Config) sourceProblems(s Service, where string) []string {
-	if s.Sources == nil {
-		return nil
+func (c *Config) inputPathProblem(cwd, field, path, where string) string {
+	switch {
+	case strings.TrimSpace(path) == "":
+		return where + ": " + field + " has an empty path"
+	case absoluteManifestPath(path):
+		return fmt.Sprintf("%s: %s path %q must be relative to cwd", where, field, path)
+	case !c.cwdInside(filepath.Join(cwd, path)):
+		return fmt.Sprintf("%s: %s path %q escapes the directory holding %s", where, field, path, ConfigName)
+	default:
+		return ""
 	}
-	var problems []string
-	for _, source := range s.Sources {
-		switch {
-		case strings.TrimSpace(source) == "":
-			problems = append(problems, where+": sources has an empty path")
-		case filepath.IsAbs(source) || strings.HasPrefix(source, "/") || strings.HasPrefix(source, `\`):
-			problems = append(problems, fmt.Sprintf("%s: sources path %q must be relative to cwd", where, source))
-		case !c.cwdInside(filepath.Join(s.Cwd, source)):
-			problems = append(problems, fmt.Sprintf("%s: sources path %q escapes the directory holding %s", where, source, ConfigName))
-		}
-	}
-	return problems
 }
 
 // readyTimeoutProblems checks the declaration as written. An absent value

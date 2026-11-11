@@ -1,6 +1,7 @@
 package groups
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
@@ -21,6 +22,13 @@ func (s sessionRunSet) Session(p state.Port) (state.Session, bool) {
 	return s.session, true
 }
 
+func requireResolvedPort(t *testing.T, got, want state.Port) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("port %d = %#v, want %#v", want.Port, got, want)
+	}
+}
+
 func TestAttributeWithStampsTheSession(t *testing.T) {
 	want := state.Session{
 		ID: "claude-code:abc", Tool: "claude-code",
@@ -31,27 +39,39 @@ func TestAttributeWithStampsTheSession(t *testing.T) {
 		{Port: 4000, PID: 12, Process: "python3", Command: "python3 -m http.server"},
 	}
 
-	resolved, _ := AttributeWith(pp,
+	resolved, index := AttributeWith(pp,
 		sessionRunSet{runSet: runSet{port: 4000, id: "r1", group: "itest", name: "web"}, session: want},
 		nil)
-
-	byPort := map[int]state.Port{}
-	for _, p := range resolved {
-		byPort[p.Port] = p
+	if index == nil {
+		t.Fatal("AttributeWith returned a nil index")
+	}
+	if len(index.Configs()) != 0 {
+		t.Errorf("index picked up %d configs, want none", len(index.Configs()))
+	}
+	if len(resolved) != 2 {
+		t.Fatalf("resolved %d ports, want 2", len(resolved))
 	}
 
-	got := byPort[4000].Session
-	if got == nil {
-		t.Fatal("the run's port was published with no session")
+	group := "itest"
+	source := state.SourceStart
+	run := state.Run{ID: "r1", Group: "itest", Name: "web", RootPID: 12}
+	requireResolvedPort(t, resolved[0], state.Port{
+		Host: "localhost", Port: 3000, URL: "http://localhost:3000",
+		PID: 11, Process: "node", DisplayName: "server.js",
+		Command: "node server.js", Type: state.TypeUser,
+	})
+	requireResolvedPort(t, resolved[1], state.Port{
+		Host: "localhost", Port: 4000, URL: "http://localhost:4000",
+		PID: 12, Process: "python3", DisplayName: "web",
+		Command: "python3 -m http.server", Type: state.TypeUser,
+		Group: &group, GroupSource: &source, Run: &run, Session: &want,
+	})
+	if pp[0].Group != "" || pp[0].GroupSource != "" || pp[0].RunID != "" || pp[0].RunGroup != "" || pp[0].Tag != "" || pp[0].RunRootPID != 0 {
+		t.Errorf("unattributed scanner row was stamped: %+v", pp[0])
 	}
-	if *got != want {
-		t.Errorf("session = %+v, want %+v", *got, want)
-	}
-	if byPort[4000].Run == nil || byPort[4000].Run.ID != "r1" {
-		t.Errorf("the session was stamped but the run was not: %+v", byPort[4000].Run)
-	}
-	if byPort[3000].Session != nil {
-		t.Errorf("an unattributed port got session %+v", byPort[3000].Session)
+	if pp[1].Group != "itest" || pp[1].GroupSource != "start" || pp[1].RunID != "r1" || pp[1].RunGroup != "itest" || pp[1].Tag != "web" || pp[1].RunRootPID != 12 {
+		t.Errorf("scanner row = group %q source %q run %q/%q/%q pid %d, want itest/start/r1/itest/web/12",
+			pp[1].Group, pp[1].GroupSource, pp[1].RunID, pp[1].RunGroup, pp[1].Tag, pp[1].RunRootPID)
 	}
 }
 
@@ -61,9 +81,17 @@ func TestAttributeWithoutASessionRegistryLeavesSessionsNull(t *testing.T) {
 	pp := []ports.ListeningPort{{Port: 4000, PID: 12, Process: "python3"}}
 	resolved, _ := AttributeWith(pp,
 		runSet{port: 4000, id: "r1", group: "itest", name: "web"}, nil)
-	if resolved[0].Session != nil {
-		t.Errorf("session = %+v, want nil", resolved[0].Session)
+	if len(resolved) != 1 {
+		t.Fatalf("resolved %d ports, want 1", len(resolved))
 	}
+	group := "itest"
+	source := state.SourceStart
+	run := state.Run{ID: "r1", Group: "itest", Name: "web", RootPID: 12}
+	requireResolvedPort(t, resolved[0], state.Port{
+		Host: "localhost", Port: 4000, URL: "http://localhost:4000",
+		PID: 12, Process: "python3", DisplayName: "web", Type: state.TypeUser,
+		Group: &group, GroupSource: &source, Run: &run,
+	})
 }
 
 // An empty session id is not a session: a registry that answers ok with a zero
@@ -72,7 +100,15 @@ func TestAttributeWithIgnoresAnEmptySessionID(t *testing.T) {
 	pp := []ports.ListeningPort{{Port: 4000, PID: 12, Process: "python3"}}
 	resolved, _ := AttributeWith(pp,
 		sessionRunSet{runSet: runSet{port: 4000, id: "r1", group: "g", name: "n"}}, nil)
-	if resolved[0].Session != nil {
-		t.Errorf("session = %+v, want nil", resolved[0].Session)
+	if len(resolved) != 1 {
+		t.Fatalf("resolved %d ports, want 1", len(resolved))
 	}
+	group := "g"
+	source := state.SourceStart
+	run := state.Run{ID: "r1", Group: "g", Name: "n", RootPID: 12}
+	requireResolvedPort(t, resolved[0], state.Port{
+		Host: "localhost", Port: 4000, URL: "http://localhost:4000",
+		PID: 12, Process: "python3", DisplayName: "n", Type: state.TypeUser,
+		Group: &group, GroupSource: &source, Run: &run,
+	})
 }

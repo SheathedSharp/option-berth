@@ -2,11 +2,101 @@ package groups
 
 import (
 	"path/filepath"
-	"strings"
+	"reflect"
 	"testing"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
+
+// proposeFileHeader is the exact measured Marshal header, including the editor
+// schema modeline. The production constant embeds a backtick around `oberth init`.
+var proposeFileHeader = `# yaml-language-server: $schema=https://raw.githubusercontent.com/SheathedSharp/option-berth/main/engine/docs/schema/manifest.schema.json
+# oberth.yaml — option-berth worktree service configuration, written by ` + "`oberth init`" + `.
+# Edit and commit it: option-berth uses it to name this worktree and to know
+# which services belong to it. https://github.com/sheathedsharp/option-berth/engine
+#
+# The services list below is yours to write. option-berth starts and stops exactly
+# what it declares, and it does not infer a service from a running process: a
+# process's command line is a snapshot of one run — the arguments a shell, an IDE
+# or a supervisor happened to pass — not a statement of how to bring the service
+# back. A file full of entries guessed that way looks finished and starts nothing.
+`
+
+// starterComment is the measured copy/machine/workspace comment block that
+// Marshal writes under the name and services.
+const starterComment = `
+# A service, to copy:
+#
+#   - name: api
+#     prepare: pnpm install          # optional: rebuild an artifact first
+#     prepare_inputs: [package.json, pnpm-lock.yaml]  # skip prepare while these are unchanged
+#     cmd: pnpm run dev              # what brings it back up
+#     port: 8000                     # optional: the port it binds
+#     cwd: .                         # optional: where to run it, relative to this file
+#     env_file: ../shared/dev.env    # optional: dotenv file read at start, never written
+#     health: /healthz               # optional: HTTP path; or {tcp: 5432} / {command: pg_isready}
+#     env:                           # optional, added to its environment
+#       NODE_ENV: development
+#
+# A service the machine owns (a database started at login, an already-running
+# redis) is not a service of this project: it goes in the file's own machine:
+# list as a reference — option-berth never starts or stops one, so it carries no
+# cmd:
+#   machine:
+#     - name: mysql
+#       port: 3306
+#
+# A service in another checkout is addressed the same way, read-only, through
+# workspace: — ${backend.url} then follows that checkout's own port, including
+# an assigned one, and nothing here starts or stops it:
+#   workspace:
+#     - name: backend
+#       worktree: ../backend
+#       service: api
+#
+`
+
+var listeningCommentIntro = `# Listening inside this project when this file was written. This is context to
+# write from, not a declaration — nothing here was added to the list for you.
+# The command line is how the process was started *this time*: it is there to
+# tell two listeners apart, not to be copied into ` + "`cmd:`" + `.
+#
+`
+
+const idleListeningComment = `# Nothing was listening inside this project when this file was written.
+`
+
+func requireProposedConfig(t *testing.T, got *Config, name, dir, path string, candidates []Candidate) {
+	t.Helper()
+	want := &Config{Name: name, Dir: dir, Path: path, Candidates: candidates}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("cfg = %#v, want %#v", got, want)
+	}
+}
+
+func requireLoadedProposal(t *testing.T, got *Config, name, path string) {
+	t.Helper()
+	// Load reports the checkout through resolved symlinks: on macOS a temp
+	// directory is spelled /var/... while the checkout it contains is
+	// /private/var/.... The expectation is the path Load must report, not the
+	// spelling the test happened to build it from.
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("resolving %s: %v", path, err)
+	}
+	want := &Config{Name: name, Dir: filepath.Dir(canonical), Path: canonical, Services: []Service{}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("loaded = %#v, want %#v", got, want)
+	}
+}
+
+func requireMarshal(t *testing.T, got []byte, body string) {
+	t.Helper()
+	want := proposeFileHeader + body
+	if string(got) != want {
+		t.Errorf("marshal =\n%s\nwant\n%s", got, want)
+	}
+}
 
 // TestProposeReportsWhatIsListening: a proposal declares no services at all. It
 // reports the listeners inside the checkout as candidates, which Marshal writes
@@ -34,26 +124,13 @@ func TestProposeReportsWhatIsListening(t *testing.T) {
 	}
 
 	cfg := Propose(f.repo, pp, index)
-
-	if cfg.Name != "option-berth" {
-		t.Errorf("name = %q, want the repo directory name", cfg.Name)
-	}
-	if len(cfg.Services) != 0 {
-		t.Fatalf("services = %+v, want none: a proposal declares nothing", cfg.Services)
-	}
-	if len(cfg.Candidates) != 5 {
-		t.Fatalf("candidates = %+v, want all five listeners inside the worktree", cfg.Candidates)
-	}
-	want := []struct {
-		port int
-		cwd  string
-	}{{22, ""}, {5432, "deploy"}, {7000, ""}, {8123, ""}, {8124, "backend"}}
-	for i, want := range want {
-		got := cfg.Candidates[i]
-		if got.Port != want.port || got.Cwd != want.cwd {
-			t.Errorf("candidate[%d] = %+v, want port %d cwd %q", i, got, want.port, want.cwd)
-		}
-	}
+	requireProposedConfig(t, cfg, "option-berth", f.repo, filepath.Join(f.repo, ConfigName), []Candidate{
+		{Port: 22, Process: "sshd", PID: 4},
+		{Port: 5432, Process: "db", Cwd: "deploy", PID: 9},
+		{Port: 7000, Process: "Figma", PID: 3},
+		{Port: 8123, Process: "option-berth/http.server", PID: 1, Command: "python3 -m http.server 8123"},
+		{Port: 8124, Process: "backend/http.server", Cwd: "backend", PID: 2, Command: "python3 -m http.server 8124"},
+	})
 
 	// What init writes must load back cleanly, and must tell the reader what was
 	// there without declaring any of it.
@@ -61,26 +138,21 @@ func TestProposeReportsWhatIsListening(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	requireMarshal(t, data, "name: option-berth\nservices: []\n"+starterComment+listeningCommentIntro+`#     22  sshd             .  pid 4
+#   5432  db               deploy  pid 9
+#   7000  Figma            .  pid 3
+#   8123  option-berth/http.server .  pid 1
+#       python3 -m http.server 8123
+#   8124  backend/http.server backend  pid 2
+#       python3 -m http.server 8124
+`)
 	path := filepath.Join(f.repo, ConfigName)
 	writeFile(t, path, string(data))
 	loaded, err := Load(path)
 	if err != nil {
 		t.Fatalf("the proposed config does not validate: %v", err)
 	}
-	if loaded.Name != cfg.Name || len(loaded.Services) != 0 {
-		t.Errorf("round trip = %+v, want the name and no services", loaded)
-	}
-	if !strings.HasPrefix(string(data), "# yaml-language-server: $schema=") {
-		t.Errorf("generated file does not start with the editor schema modeline:\n%s", data)
-	}
-	if !strings.Contains(string(data), "# "+ConfigName) {
-		t.Errorf("generated file has no header:\n%s", data)
-	}
-	for _, want := range []string{"services: []", "5432", "db", "8124", "backend"} {
-		if !strings.Contains(string(data), want) {
-			t.Errorf("generated file does not mention %q:\n%s", want, data)
-		}
-	}
+	requireLoadedProposal(t, loaded, "option-berth", path)
 }
 
 // TestMarshalWritesDeclaredServices: a list the caller put on the config — a
@@ -94,14 +166,13 @@ func TestMarshalWritesDeclaredServices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"services:\n  - name: api\n", "    cmd: pnpm run dev\n", "    cwd: backend\n"} {
-		if !strings.Contains(string(data), want) {
-			t.Errorf("generated file is missing %q:\n%s", want, data)
-		}
-	}
-	if strings.Contains(string(data), "services: []") {
-		t.Errorf("a declared list was written as empty:\n%s", data)
-	}
+	requireMarshal(t, data, `name: demo
+services:
+  - name: api
+    cmd: pnpm run dev
+    cwd: backend
+    port: 8000
+`+starterComment+idleListeningComment)
 }
 
 // TestMarshalQuotesANameYAMLWouldMisread: a project directory can be called
@@ -114,6 +185,7 @@ func TestMarshalQuotesANameYAMLWouldMisread(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		requireMarshal(t, data, "name: \""+name+"\"\nservices: []\n"+starterComment+idleListeningComment)
 		dir := t.TempDir()
 		path := filepath.Join(dir, ConfigName)
 		writeFile(t, path, string(data))
@@ -121,9 +193,7 @@ func TestMarshalQuotesANameYAMLWouldMisread(t *testing.T) {
 		if err != nil {
 			t.Fatalf("name %q does not validate: %v\n%s", name, err, data)
 		}
-		if loaded.Name != name {
-			t.Errorf("name %q came back as %q", name, loaded.Name)
-		}
+		requireLoadedProposal(t, loaded, name, path)
 	}
 }
 
@@ -139,37 +209,37 @@ func TestProposeNamesWorktrees(t *testing.T) {
 		{Port: 3002, PID: 3, Process: "!!!", Cwd: f.worktree},
 	}
 	cfg := Propose(f.worktree, pp, nil)
-	if cfg.Name != "option-berth@feature-x" {
-		t.Errorf("name = %q, want the qualified worktree name", cfg.Name)
+	requireProposedConfig(t, cfg, "option-berth@feature-x", f.worktree, filepath.Join(f.worktree, ConfigName), []Candidate{
+		{Port: 3000, Process: "node", PID: 1},
+		{Port: 3001, Process: "node", PID: 2},
+		{Port: 3002, Process: "!!!", PID: 3},
+	})
+	data, err := Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(cfg.Candidates) != 3 {
-		t.Fatalf("candidates = %+v, want all three listeners inside the worktree", cfg.Candidates)
-	}
-	for i, want := range []int{3000, 3001, 3002} {
-		if got := cfg.Candidates[i].Port; got != want {
-			t.Errorf("candidate %d = %d, want %d", i, got, want)
-		}
-	}
+	requireMarshal(t, data, "name: option-berth@feature-x\nservices: []\n"+starterComment+listeningCommentIntro+`#   3000  node             .  pid 1
+#   3001  node             .  pid 2
+#   3002  !!!              .  pid 3
+`)
 }
 
 func TestProposeEmptyRepo(t *testing.T) {
 	f := newFixture(t)
 	cfg := Propose(f.repo, nil, nil)
-	if len(cfg.Services) != 0 || len(cfg.Candidates) != 0 {
-		t.Fatalf("cfg = %+v, want nothing proposed and nothing seen", cfg)
-	}
+	requireProposedConfig(t, cfg, "option-berth", f.repo, filepath.Join(f.repo, ConfigName), nil)
 	data, err := Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "Nothing was listening inside this project") {
-		t.Errorf("an empty proposal should say so:\n%s", data)
-	}
+	requireMarshal(t, data, "name: option-berth\nservices: []\n"+starterComment+idleListeningComment)
 	path := filepath.Join(f.repo, ConfigName)
 	writeFile(t, path, string(data))
-	if _, err := Load(path); err != nil {
+	loaded, err := Load(path)
+	if err != nil {
 		t.Fatalf("an empty proposal does not validate: %v", err)
 	}
+	requireLoadedProposal(t, loaded, "option-berth", path)
 }
 
 // TestProposeUsesProjectRootWhenTheComposeDirIsGone is the daemon's case. A
@@ -193,13 +263,15 @@ func TestProposeUsesProjectRootWhenTheComposeDirIsGone(t *testing.T) {
 
 	// No index at all: the compose arm of portDir cannot answer.
 	cfg := Propose(f.repo, pp, nil)
-
-	if len(cfg.Candidates) != 1 {
-		t.Fatalf("candidates = %+v, want only the container inside the repo", cfg.Candidates)
+	requireProposedConfig(t, cfg, "option-berth", f.repo, filepath.Join(f.repo, ConfigName), []Candidate{
+		{Port: 5432, Process: "db", PID: 9},
+	})
+	data, err := Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := cfg.Candidates[0]; got.Port != 5432 || got.Process != "db" || got.Cwd != "" {
-		t.Errorf("candidate = %+v, want db on 5432 at the repo root", got)
-	}
+	requireMarshal(t, data, "name: option-berth\nservices: []\n"+starterComment+listeningCommentIntro+`#   5432  db               .  pid 9
+`)
 }
 
 // An unknown observation must never render as an idle machine. This is the
@@ -218,28 +290,19 @@ func TestProposeSaysListeningIsUnknownWhenTheScanFailed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(data)
-	if strings.Contains(text, "Nothing was listening") {
-		t.Fatalf("a failed scan was rendered as an idle machine:\n%s", text)
-	}
-	for _, want := range []string{
-		"Listening inside this project is unknown",
-		"observation_blind: bound 127.0.0.1:51234 but the listener table did not show it",
-		"next: retry outside the sandbox",
-	} {
-		if !strings.Contains(text, want) {
-			t.Errorf("the starter does not mention %q:\n%s", want, text)
-		}
-	}
-	if strings.Contains(text, "trailing line") {
-		t.Errorf("a multi-line collector diagnostic broke the comment:\n%s", text)
-	}
+	requireMarshal(t, data, "name: option-berth\nservices: []\n"+starterComment+`# Listening inside this project is unknown: the scan could not read
+# this machine's listener table when this file was written.
+#   observation_blind: bound 127.0.0.1:51234 but the listener table did not show it
+#   next: retry outside the sandbox
+`)
 	// The comment is the only change: the file still loads.
 	path := filepath.Join(f.repo, ConfigName)
-	writeFile(t, path, text)
-	if _, err := Load(path); err != nil {
+	writeFile(t, path, string(data))
+	loaded, err := Load(path)
+	if err != nil {
 		t.Fatalf("the degraded starter does not validate: %v", err)
 	}
+	requireLoadedProposal(t, loaded, "option-berth", path)
 }
 
 // A partial pass read some rows, so its candidates are facts and the file says
@@ -255,7 +318,5 @@ func TestProposePartialObservationKeepsTheIdleSentence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "Nothing was listening inside this project") {
-		t.Fatalf("a partial pass with no rows in this project should say so:\n%s", data)
-	}
+	requireMarshal(t, data, "name: option-berth\nservices: []\n"+starterComment+idleListeningComment)
 }

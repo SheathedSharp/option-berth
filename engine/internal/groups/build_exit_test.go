@@ -1,8 +1,11 @@
 package groups
 
 import (
+	"path/filepath"
+	"reflect"
 	"testing"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 	"github.com/sheathedsharp/option-berth/engine/internal/servicefacts"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
@@ -17,6 +20,33 @@ func (exitRegistry) ServiceFacts() servicefacts.Snapshot {
 	}})
 }
 
+func strPtr(s string) *string { return &s }
+
+func declaredService(s Service) state.Service {
+	row := ServiceRow(s)
+	path := filepath.Join(paths.Logs(), "shop", s.Name+".log")
+	row.LogPath = &path
+	return row
+}
+
+func shopGroup(status string, running int, services ...state.Service) []state.Group {
+	root := "/nowhere/shop"
+	cfgPath := "/nowhere/shop/" + ConfigName
+	return []state.Group{{
+		Name: "shop", Repo: "shop", Identity: WorktreeToken(root),
+		Source: state.SourceFile, RootDir: &root, ConfigPath: &cfgPath,
+		Status: status, Members: []int{}, Services: services,
+		Machine: []state.MachineRef{}, RunningServices: running,
+	}}
+}
+
+func requireGroups(t *testing.T, got, want []state.Group) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("groups = %#v, want %#v", got, want)
+	}
+}
+
 // TestGroupsCarryTheLastExitOfAServiceThatIsDown: a stopped service says how
 // it ended, so a client can show "crashed" rather than only "not running".
 func TestGroupsCarryTheLastExitOfAServiceThatIsDown(t *testing.T) {
@@ -27,20 +57,9 @@ func TestGroupsCarryTheLastExitOfAServiceThatIsDown(t *testing.T) {
 	})
 
 	gg := GroupsWith(nil, index, exitRegistry{}, false)
-	if len(gg) != 1 {
-		t.Fatalf("groups = %+v, want the one config's group", gg)
-	}
-	byName := map[string]state.Service{}
-	for _, s := range gg[0].Services {
-		byName[s.Name] = s
-	}
-	api, web := byName["api"], byName["web"]
-	if api.LastExit == nil || api.LastExit.Code != 1 || api.LastExit.Reason != "crashed" {
-		t.Errorf("api.LastExit = %+v, want the crash", api.LastExit)
-	}
-	if web.LastExit != nil {
-		t.Errorf("web.LastExit = %+v, want nothing for a service that never ran", web.LastExit)
-	}
+	api := declaredService(Service{Name: "api", Cmd: "run-api"})
+	api.LastExit = &state.ServiceExit{Code: 1, Reason: "crashed", At: "2026-09-13T10:00:00Z", RunID: "a"}
+	requireGroups(t, gg, shopGroup("stopped", 0, api, declaredService(Service{Name: "web", Cmd: "run-web"})))
 }
 
 // TestGroupsWithoutARegistryHaveNoExits: the direct-scan path has no registry
@@ -52,9 +71,7 @@ func TestGroupsWithoutARegistryHaveNoExits(t *testing.T) {
 		Services: []Service{{Name: "api", Cmd: "run-api"}},
 	})
 	gg := Groups(nil, index)
-	if len(gg) != 1 || len(gg[0].Services) != 1 || gg[0].Services[0].LastExit != nil {
-		t.Fatalf("groups = %+v", gg)
-	}
+	requireGroups(t, gg, shopGroup("stopped", 0, declaredService(Service{Name: "api", Cmd: "run-api"})))
 }
 
 // liveRegistry knows which services option-berth has a live run of.
@@ -83,28 +100,12 @@ func TestGroupsSeeAServiceThatHoldsNoPort(t *testing.T) {
 	})
 
 	gg := GroupsWith(nil, index, liveRegistry{}, false)
-	if len(gg) != 1 {
-		t.Fatalf("groups = %+v", gg)
-	}
-	byName := map[string]state.Service{}
-	for _, s := range gg[0].Services {
-		byName[s.Name] = s
-	}
-	if worker := byName["worker"]; !worker.Running {
-		t.Errorf("worker.Running = false, want the live run to be visible")
-	} else if worker.PortActual != nil {
-		t.Errorf("worker.PortActual = %v, want none: it holds no port", *worker.PortActual)
-	} else {
-		if worker.PID == nil || *worker.PID != 4242 || worker.RunID == nil || *worker.RunID != "run-worker" {
-			t.Errorf("worker runtime = %+v, want pid/run id evidence", worker)
-		}
-		if worker.StartedAt == nil || *worker.StartedAt != "2026-09-13T10:00:00Z" {
-			t.Errorf("worker started_at = %v, want live run timestamp", worker.StartedAt)
-		}
-	}
-	if api := byName["api"]; api.Running {
-		t.Errorf("api.Running = true, want only the service with a live run")
-	}
+	worker := declaredService(Service{Name: "worker", Cmd: "run-worker"})
+	worker.Running = true
+	worker.PID = intPtr(4242)
+	worker.RunID = strPtr("run-worker")
+	worker.StartedAt = strPtr("2026-09-13T10:00:00Z")
+	requireGroups(t, gg, shopGroup("partial", 1, worker, declaredService(Service{Name: "api", Cmd: "run-api"})))
 }
 
 type driftRegistry struct{ NoRuns }
@@ -123,11 +124,12 @@ func TestGroupsExposeManifestRuntimeMismatch(t *testing.T) {
 		Services: []Service{{Name: "api", Cmd: "old-api"}},
 	})
 	gg := GroupsWith(nil, index, driftRegistry{}, false)
-	if len(gg) != 1 || len(gg[0].Services) != 1 {
-		t.Fatalf("groups = %+v", gg)
-	}
-	svc := gg[0].Services[0]
-	if svc.RuntimeCmd == nil || *svc.RuntimeCmd != "new-api" || !svc.ManifestRuntimeMismatch {
-		t.Fatalf("runtime drift = %+v, want live command and mismatch", svc)
-	}
+	api := declaredService(Service{Name: "api", Cmd: "old-api"})
+	api.Running = true
+	api.PID = intPtr(7)
+	api.RunID = strPtr("run-api")
+	api.RuntimeCmd = strPtr("new-api")
+	api.RuntimeCwd = strPtr("/nowhere/shop")
+	api.ManifestRuntimeMismatch = true
+	requireGroups(t, gg, shopGroup("running", 1, api))
 }
