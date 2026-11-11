@@ -20,8 +20,9 @@ temporary debugging or research tasks as standing requirements.
 Code identity rides this chain but not the scan hot path: before spawning, `groupstart` captures one
 content fingerprint and HEAD for each path in `sources:`, writing them under `$BERTH_HOME/code` by run
 id and deleting them when the run ends or start cleanup runs. `status` recomputes and compares only for
-running services. The snapshot is this run's input evidence, not a second runtime fact: missing means
-unknown, not "unchanged".
+running services; the daemon's `groups.code` read uses the same `internal/codefacts` implementation for
+a client that already has the group rows, and publishes the same nullable fields. The snapshot is this
+run's input evidence, not a second runtime fact: missing means unknown, not "unchanged".
 
 The start attempt of `groups.start` is transient diagnostic fact on this chain, not a run.
 `groupstart` keeps `start_id`, phase, `started_at`, the effective `ready_timeout`, `waiting_on` and the

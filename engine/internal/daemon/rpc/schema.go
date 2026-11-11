@@ -318,6 +318,7 @@ func init() {
 	// Groups: listing, killing, the two long-running start paths, and the
 	// manifest edits that change what a group is.
 	Describe("groups.list", Empty{}, GroupsListResult{}, nil, nil)
+	Describe("groups.code", GroupsCodeParams{}, GroupsCodeResult{}, nil, nil)
 	Describe("groups.kill", GroupsKillParams{}, KillEnvelope{}, nil, nil)
 	Describe("groups.start", GroupsStartParams{}, GroupsStartResult{}, GroupsStartChunk{}, GroupsStartEnd{})
 	Describe("groups.rename", GroupsRenameParams{}, GroupsRenameResult{}, nil, nil)
