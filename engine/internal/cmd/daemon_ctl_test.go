@@ -163,6 +163,19 @@ func mustJSON(t *testing.T, value any) string {
 	return string(raw)
 }
 
+// shortSocketPath returns a unix socket path under a short temp directory.
+// t.TempDir() includes the test name, and macOS rejects socket paths over
+// roughly 104 bytes; the CI temp root plus a long test name overflows it.
+func shortSocketPath(t *testing.T, name string) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "sn")
+	if err != nil {
+		t.Fatalf("socket temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, name)
+}
+
 // isolateDaemonPaths gives this test its own state directory, database and
 // socket, so a daemon started here is never the one another test is looking
 // for and its ledger never names another test's checkout. The database needs
@@ -172,7 +185,7 @@ func isolateDaemonPaths(t *testing.T) string {
 	home := t.TempDir()
 	t.Setenv("BERTH_HOME", home)
 	t.Setenv("BERTH_DB", filepath.Join(home, "option-berth.db"))
-	socket := filepath.Join(t.TempDir(), "daemon.sock")
+	socket := shortSocketPath(t, "daemon.sock")
 	t.Setenv("BERTH_SOCKET", socket)
 	return socket
 }

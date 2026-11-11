@@ -45,7 +45,7 @@ func TestAlreadyRunningErrorFollowsTheSocket(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the daemon socket harness is unix-only")
 	}
-	socket := filepath.Join(t.TempDir(), "d.sock")
+	socket := shortSocketPath(t, "d.sock")
 	if err := alreadyRunningError(socket); err != nil {
 		t.Fatalf("a socket nobody listens on must not block the start: %v", err)
 	}
