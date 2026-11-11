@@ -310,25 +310,31 @@ func requireLogFile(path string) error {
 	return nil
 }
 
-// streamFileLogsFrom is streamFileLogs for one run: a non-negative offset is
-// where that run began, so the backlog and the follow both start there instead
-// of at the end of a file shared with earlier generations.
-func streamFileLogsFrom(ctx context.Context, path string, offset int64, asJSON bool, lines int, meta logMetadata) error {
+// streamFileLogsFrom follows one run's range of the file. A range with an end
+// belongs to a run that has finished, so it is printed and the read stops:
+// nothing that arrives afterwards can belong to that run.
+func streamFileLogsFrom(ctx context.Context, path string, rng logRange, asJSON bool, lines int, meta logMetadata) error {
 	if err := requireLogFile(path); err != nil {
 		return err
 	}
 	if lines <= 0 {
 		lines = 10
 	}
-	args := []string{"-n", strconv.Itoa(lines)}
-	if offset >= 0 {
-		start, err := runTailStart(path, offset, lines)
+	if rng.bounded() {
+		doc, err := readFileLogsFrom(path, rng, lines)
 		if err != nil {
 			return err
 		}
-		args = []string{"-c", "+" + strconv.FormatInt(start+1, 10)}
+		if !asJSON {
+			printLogHeader(path)
+		}
+		return printLogLines(path, doc.Lines, asJSON, meta)
 	}
-	return followFileLogs(ctx, path, args, asJSON, meta)
+	start, err := runTailStart(path, rng, lines)
+	if err != nil {
+		return err
+	}
+	return followFileLogs(ctx, path, []string{"-c", "+" + strconv.FormatInt(start+1, 10)}, asJSON, meta)
 }
 
 // logLineSink is the one place a followed line becomes output: one JSON value
@@ -342,6 +348,16 @@ func logLineSink(path string, asJSON bool, meta logMetadata) func(string) error 
 	}
 	enc := json.NewEncoder(os.Stdout)
 	return func(line string) error { return enc.Encode(logLineJSON(path, line, meta)) }
+}
+
+func printLogLines(path string, lines []string, asJSON bool, meta logMetadata) error {
+	sink := logLineSink(path, asJSON, meta)
+	for _, line := range lines {
+		if err := sink(line); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // followFileLogs runs tail with the given position arguments and prints every
@@ -500,14 +516,13 @@ type logMatch struct {
 }
 
 type logMetadata struct {
-	Service         string
-	RunID           string
-	PID             int
-	Status          string
-	ExitCode        *int
-	Reason          string
-	LogOffset       *int64
-	RunStartUnknown bool
+	Service   string
+	RunID     string
+	PID       int
+	Status    string
+	ExitCode  *int
+	Reason    string
+	LogOffset *int64
 }
 
 func applyLogMetadata(doc *logsDocument, meta logMetadata) {
@@ -518,7 +533,6 @@ func applyLogMetadata(doc *logsDocument, meta logMetadata) {
 	doc.ExitCode = meta.ExitCode
 	doc.Reason = meta.Reason
 	doc.LogOffset = meta.LogOffset
-	doc.RunStartUnknown = meta.RunStartUnknown
 }
 
 func logLineJSON(source, line string, meta logMetadata) map[string]any {
