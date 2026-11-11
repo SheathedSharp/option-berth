@@ -3,12 +3,14 @@ package cmd
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/spf13/cobra"
 )
 
@@ -186,6 +188,50 @@ func TestDownJSONAnswersWithTheEnvelope(t *testing.T) {
 	}
 	if len(env.Results) != 0 {
 		t.Fatalf("results = %+v, want none for a project with nothing running", env.Results)
+	}
+}
+
+// TestDownJSONExitsNonZeroWhenAStopFails: the envelope is the explanation, the
+// exit status is the gate. A caller that only reads the status must not delete
+// the worktree while a service is still running, so `--json` has to answer
+// non-zero whenever the daemon reports a failed stop. The listener is one the
+// killer must refuse — no PID to signal, and not a Docker port — which comes
+// back as a permission_denied row rather than the not_found that already means
+// "not running".
+func TestDownJSONExitsNonZeroWhenAStopFails(t *testing.T) {
+	// The manifest declares the port so the resolver can attribute the scanned
+	// listener to this project; nothing else about the pair is real.
+	dir := t.TempDir()
+	manifest := "name: down-json-fail\nservices:\n  - name: api\n    cmd: echo api\n    port: 34567\n"
+	if err := os.WriteFile(filepath.Join(dir, "oberth.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	resetRouting(t)
+	isolateDaemonPaths(t)
+	startTestDaemon(t, []ports.ListeningPort{{
+		Port: 34567, PID: 0, Process: "node", BindAddress: "127.0.0.1",
+		Cwd: dir,
+	}})
+	withDownFlags(t, func() { downJSONFlag = true })
+
+	var err error
+	out := captureStdout(t, func() { err = downRun(testCommand(), nil) })
+	var env rpc.KillEnvelope
+	if unmarshalErr := json.Unmarshal([]byte(out), &env); unmarshalErr != nil {
+		t.Fatalf("stdout is not one JSON document: %v\n%s", unmarshalErr, out)
+	}
+	if env.OK {
+		t.Fatalf("envelope ok = true, want false for the refused listener:\n%s", out)
+	}
+	if err == nil {
+		t.Fatal("down --json returned nil; a failed stop must exit non-zero")
+	}
+	if !errors.Is(err, errSilent) {
+		t.Fatalf("err = %v, want the silent sentinel: the envelope already says which rows failed", err)
+	}
+	if got := exitCodeFor(err); got != exitFail {
+		t.Fatalf("exit code = %d, want %d", got, exitFail)
 	}
 }
 

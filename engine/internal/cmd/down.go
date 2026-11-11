@@ -76,7 +76,20 @@ func downRun(cmd *cobra.Command, args []string) error {
 		return cliError(err)
 	}
 	if downJSONFlag {
-		return printJSON(env)
+		// The envelope is the explanation, the status is the gate. Printing the
+		// document and exiting 0 made a failed stop indistinguishable from a
+		// clean one to a caller that reads only the status, whose next step is
+		// to delete a worktree whose service is still running. The text path
+		// already answers non-zero through reportKill; this branch answers
+		// through the daemon's own verdict, as `restart --json` does for the
+		// same envelope.
+		if err := printJSON(env); err != nil {
+			return err
+		}
+		if !env.OK {
+			return errSilent
+		}
+		return nil
 	}
 	return reportDown(env, snapshot)
 }
