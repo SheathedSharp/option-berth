@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/config"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/sheathedsharp/option-berth/engine/internal/doctor"
@@ -198,6 +200,29 @@ func TestEveryFixableCheckHasAFix(t *testing.T) {
 	}
 }
 
+// TestDoctorFixMatchingIsExact: the comment above the fix table used to claim a
+// dotted id matched by prefix, while the code compared strings. The code was
+// right — a dotted check names one check — so this pins exact matching.
+func TestDoctorFixMatchingIsExact(t *testing.T) {
+	fix := doctorFix{id: "config_parses"}
+	for _, id := range []string{"config_parses", "config_parses.claude_code", "config", "config_parse"} {
+		want := id == "config_parses"
+		if got := fix.matches(id); got != want {
+			t.Errorf("matches(%q) = %v, want %v", id, got, want)
+		}
+	}
+}
+
+// TestSelectDoctorFixesFollowsTheReport: only failed or warned fixable rows
+// are repaired, in report order, and a fixable row without a registered fix
+// contributes nothing rather than a guessed repair.
+func TestSelectDoctorFixesFollowsTheReport(t *testing.T) {
+	todo := selectDoctorFixes(sampleReport())
+	if len(todo) != 1 || todo[0].id != "config_parses" {
+		t.Fatalf("todo = %+v, want only config_parses", todo)
+	}
+}
+
 func contains(haystack []string, needle string) bool {
 	for _, s := range haystack {
 		if s == needle {
@@ -228,4 +253,134 @@ func testCommand() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 	return cmd
+}
+
+// applyDoctorFixesReport drives the repair round around one report and returns
+// what it said on stderr plus how many repairs it applied.
+func applyDoctorFixesReport(t *testing.T, report rpc.DaemonDoctorResult) (string, int, error) {
+	t.Helper()
+	var applied int
+	var err error
+	out := captureStderr(t, func() {
+		applied, err = applyDoctorFixes(context.Background(), testCommand(), report)
+	})
+	return out, applied, err
+}
+
+// TestApplyDoctorFixesRepairsNothingWhenEveryCheckIsFine: ok and skip rows are
+// not repairs, however fixable the check says it is.
+func TestApplyDoctorFixesRepairsNothingWhenEveryCheckIsFine(t *testing.T) {
+	out, applied, err := applyDoctorFixesReport(t, rpc.DaemonDoctorResult{
+		OK: true,
+		Checks: []rpc.DoctorCheck{
+			{ID: "config_parses", Status: doctor.StatusOK, Fixable: true},
+			{ID: "project_config", Status: doctor.StatusSkip, Fixable: true},
+		},
+	})
+	if err != nil || applied != 0 {
+		t.Fatalf("applied = %d, err = %v; want nothing to repair", applied, err)
+	}
+	if !strings.Contains(out, "nothing to fix automatically") {
+		t.Fatalf("stderr = %q, want the nothing-to-fix sentence", out)
+	}
+}
+
+// TestApplyDoctorFixesAsksBeforeTouchingAnything: the plan lists the repairs
+// that actually exist — a fixable check with no registered repair is not
+// offered — and a run that is not confirmed changes nothing on disk.
+func TestApplyDoctorFixesAsksBeforeTouchingAnything(t *testing.T) {
+	t.Setenv("BERTH_HOME", t.TempDir())
+	withDoctorFlags(t, func() { doctorYesFlag = false })
+	answerNextPrompt(t)
+
+	out, applied, err := applyDoctorFixesReport(t, sampleReport())
+	if err != nil {
+		t.Fatalf("applyDoctorFixes: %v", err)
+	}
+	if applied != 0 {
+		t.Fatalf("applied = %d, want none without confirmation", applied)
+	}
+	if !strings.Contains(out, "repair config_parses") {
+		t.Errorf("stderr = %q, want the registered repair in the plan", out)
+	}
+	if strings.Contains(out, "hooks_installed") {
+		t.Errorf("stderr = %q, want no plan entry for a check without a repair", out)
+	}
+	if !strings.Contains(out, "nothing was changed") {
+		t.Errorf("stderr = %q, want the refusal sentence", out)
+	}
+	if _, statErr := os.Stat(config.Path()); !os.IsNotExist(statErr) {
+		t.Errorf("config %s exists after a refused --fix (stat: %v)", config.Path(), statErr)
+	}
+}
+
+// TestApplyDoctorFixesRepairsTheBrokenConfig runs the real registered repair:
+// the unparseable file is kept under its broken name and a fresh commented
+// template takes its place.
+func TestApplyDoctorFixesRepairsTheBrokenConfig(t *testing.T) {
+	t.Setenv("BERTH_HOME", t.TempDir())
+	withDoctorFlags(t, func() { doctorYesFlag = true })
+
+	path := config.Path()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("daemon: [broken\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, applied, err := applyDoctorFixesReport(t, sampleReport())
+	if err != nil {
+		t.Fatalf("applyDoctorFixes: %v", err)
+	}
+	if applied != 1 {
+		t.Fatalf("applied = %d, want the one registered repair; stderr:\n%s", applied, out)
+	}
+	if !strings.Contains(out, "config_parses: moved the broken config to") {
+		t.Fatalf("stderr = %q, want the repair's own account", out)
+	}
+
+	entries, readErr := os.ReadDir(filepath.Dir(path))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	kept := 0
+	for _, entry := range entries {
+		if strings.Contains(entry.Name(), doctor.BrokenSuffix) {
+			kept++
+		}
+	}
+	if kept != 1 {
+		t.Fatalf("broken copies kept = %d, want the unparseable file moved aside once", kept)
+	}
+	fresh, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatalf("no fresh config was written: %v", readErr)
+	}
+	if strings.Contains(string(fresh), "[broken") {
+		t.Fatal("the broken contents are still the config")
+	}
+	if !strings.Contains(string(fresh), "daemon:") {
+		t.Fatalf("fresh config = %q, want the template", fresh)
+	}
+}
+
+// TestApplyDoctorFixesReportsAFailedRepair: a repair that cannot run is
+// reported and counted as not applied, rather than being claimed as done.
+func TestApplyDoctorFixesReportsAFailedRepair(t *testing.T) {
+	t.Setenv("BERTH_HOME", t.TempDir())
+	withDoctorFlags(t, func() { doctorYesFlag = true })
+
+	out, applied, err := applyDoctorFixesReport(t, rpc.DaemonDoctorResult{
+		Checks: []rpc.DoctorCheck{{ID: "config_parses", Status: doctor.StatusFail, Fixable: true}},
+	})
+	if err != nil {
+		t.Fatalf("applyDoctorFixes: %v", err)
+	}
+	if applied != 0 {
+		t.Fatalf("applied = %d, want none for a repair that could not run", applied)
+	}
+	if !strings.Contains(out, "could not repair config_parses") {
+		t.Fatalf("stderr = %q, want the failure named", out)
+	}
 }

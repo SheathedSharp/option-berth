@@ -354,7 +354,7 @@ func TestGitDiffSaysWhyWhenThereIsNothingToShow(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			gitDiffFileFlag = tc.file
-			err := gitDiffRun(gitDiffCmd, nil)
+			_, err := runGit(t, gitDiffCmd, gitDiffRun)
 			var ce *cliErr
 			if !errors.As(err, &ce) || ce.Code != "not_found" {
 				t.Fatalf("err = %v, want a not_found cliErr", err)

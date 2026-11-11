@@ -74,13 +74,9 @@ func init() {
 
 func upRun(cmd *cobra.Command, args []string) error {
 	// Validate before resolving a project or issuing any mutating RPC.
-	// An explicit --wait-timeout is a total ceiling and must be usable; when
-	// it is absent each service's own ready_timeout decides.
-	if cmd.Flags().Changed("wait-timeout") && upWaitTimeout <= 0 {
-		return usageError{fmt.Errorf("--wait-timeout must be positive")}
-	}
-	if cmd.Flags().Changed("wait-timeout") && !upWait {
-		return usageError{fmt.Errorf("--wait-timeout requires --wait or --ready")}
+	mode, err := upWaitModeFromFlags(cmd.Flags().Changed("wait-timeout"), upWait, upWaitTimeout)
+	if err != nil {
+		return err
 	}
 	params, cfg, err := upParams(args)
 	if err != nil {
@@ -93,15 +89,7 @@ func upRun(cmd *cobra.Command, args []string) error {
 	}
 	defer c.Close()
 
-	if err := requireConfigSupport(c, cfg); err != nil {
-		return err
-	}
-	// A named project carries no manifest here, so the same capability rules
-	// run against the file the daemon will actually read.
-	if err := requireNamedProjectSupport(cmd.Context(), c, params); err != nil {
-		return err
-	}
-	if err := requireStartDependencySupport(c, params.IncludeDependencies); err != nil {
+	if err := requireStartSupport(cmd.Context(), c, params, cfg); err != nil {
 		return err
 	}
 	// Progress is an enhancement: ask for in-flight chunks only from a daemon
@@ -119,8 +107,44 @@ func upRun(cmd *cobra.Command, args []string) error {
 	}
 	defer stream.Close()
 
-	return consumeStartWithWait(cmd.Context(), c, stream, upJSON, upWait, upWaitTimeout,
-		cmd.Flags().Changed("wait-timeout"), params, cfg)
+	return consumeStartWithWait(cmd.Context(), c, stream, upJSON, mode.wait, mode.timeout,
+		mode.timeoutSet, params, cfg)
+}
+
+// requireStartSupport refuses a request the running daemon cannot honour, before
+// any of it is sent: the manifest's own features, the file a named project
+// resolves to, and the depends_on closure each need a capability a daemon may
+// predate. Sending the request anyway would turn a daemon too old for the file
+// into an error about the file.
+func requireStartSupport(ctx context.Context, c *client.Client, params rpc.GroupsStartParams, cfg *groups.Config) error {
+	if err := requireConfigSupport(c, cfg); err != nil {
+		return err
+	}
+	// A named project carries no manifest here, so the same capability rules
+	// run against the file the daemon will actually read.
+	if err := requireNamedProjectSupport(ctx, c, params); err != nil {
+		return err
+	}
+	return requireStartDependencySupport(c, params.IncludeDependencies)
+}
+
+// upWaitMode is the readiness wait this invocation asked for. An explicit
+// --wait-timeout is a total ceiling: it must be positive and only makes sense
+// together with --wait. Without it each service's own ready_timeout decides.
+type upWaitMode struct {
+	wait       bool
+	timeout    time.Duration
+	timeoutSet bool
+}
+
+func upWaitModeFromFlags(changed, wait bool, timeout time.Duration) (upWaitMode, error) {
+	if changed && timeout <= 0 {
+		return upWaitMode{}, usageError{fmt.Errorf("--wait-timeout must be positive")}
+	}
+	if changed && !wait {
+		return upWaitMode{}, usageError{fmt.Errorf("--wait-timeout requires --wait or --ready")}
+	}
+	return upWaitMode{wait: wait, timeout: timeout, timeoutSet: changed}, nil
 }
 
 // upParams turns the command line into groups.start params: a name when one was

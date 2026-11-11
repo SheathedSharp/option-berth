@@ -168,6 +168,23 @@ func TestFallbackNoteIsPrintedOncePerInvocation(t *testing.T) {
 	}
 }
 
+// TestDaemonUpStaysSilentAboutTheFallback: a command that has nothing to fall
+// back to asks whether a daemon is there; "using direct scan" would be a false
+// sentence for it, so the answer is a quiet false.
+func TestDaemonUpStaysSilentAboutTheFallback(t *testing.T) {
+	resetRouting(t)
+	noDaemonReachable(t)
+
+	out := captureStderr(t, func() {
+		if daemonUp(context.Background()) {
+			t.Error("daemonUp reported a daemon that cannot be reached")
+		}
+	})
+	if out != "" {
+		t.Fatalf("daemonUp wrote %q, want no note", out)
+	}
+}
+
 func TestNoDaemonFlagNeverDialsAndSaysNothing(t *testing.T) {
 	resetRouting(t)
 	noDaemonFlag = true

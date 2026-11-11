@@ -10,6 +10,18 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/killer"
 )
 
+// guardDaemonKill is the seam every daemon executor round passes before its
+// RPC. Production leaves it permissive: the client was dialled by dialDaemon
+// for the daemon the user asked for, so there is no wider scope to check. The
+// test binary replaces it with a guard that admits only the client instance a
+// test-owned fixture registered together with an explicit Scan, so a daemon
+// round whose fixture was forgotten refuses before its kill RPC instead of
+// acting through an arbitrary or shared daemon. The command has already made
+// its read-only snapshot call by then; it is only the signalling round that is
+// gated. It takes no target, pid or selector: naming a subject is not
+// ownership.
+var guardDaemonKill = func(*client.Client) error { return nil }
+
 // killThroughDaemon runs `oberth kill` as `ports.kill` / `groups.kill`.
 //
 // Target selection stays here, against the port table the daemon serves, so
@@ -32,63 +44,59 @@ func killThroughDaemon(ctx context.Context, c *client.Client, args []string, bin
 	}
 
 	opts := killOptions()
-	call := killCallFor(targets, opts)
-
-	if confirm && !killYesFlag && !killDryRunFlag {
-		plan, err := call(ctx, c, true)
-		if err != nil {
-			return cliError(err)
-		}
-		if !confirmPlan(plan, snapshot) {
-			fmt.Println("Aborted.")
-			return nil
-		}
-	}
-
-	results, err := call(ctx, c, opts.DryRun)
-	if err != nil {
-		return cliError(err)
-	}
-	return reportKill(os.Stdout, results, snapshot, killJSONFlag, opts.DryRun)
+	return killRequest{
+		exec:     killInDaemon(c),
+		targets:  targets,
+		snapshot: snapshot,
+		opts:     opts,
+		confirm:  confirm && !killYesFlag && !killDryRunFlag,
+		asJSON:   killJSONFlag,
+	}.execute(ctx)
 }
 
-// killCall performs one kill round-trip. dryRun is passed separately because a
-// confirmation asks for the plan before asking for the real thing.
-type killCall func(ctx context.Context, c *client.Client, dryRun bool) ([]killer.Result, error)
-
-// killCallFor picks the method. `-g` goes to groups.kill so the group is
-// resolved by the daemon that owns the snapshot; the flags groups.kill has no
-// field for (--tree, --no-escalate) send the group's members to ports.kill
-// instead, which supports them and acts on exactly the ports killTargets
-// already selected.
-func killCallFor(targets []killer.Target, opts killer.Options) killCall {
-	if killGroupFlag != "" && !opts.Tree && opts.Escalate == nil {
-		name := killGroupFlag
-		return func(ctx context.Context, c *client.Client, dryRun bool) ([]killer.Result, error) {
+// killInDaemon is the executor that asks the daemon to signal and then
+// rescan. The method choice is made once per round from the same selection
+// the direct path would use.
+func killInDaemon(c *client.Client) killExecutor {
+	return func(ctx context.Context, targets []killer.Target, opts killer.Options, dryRun bool) ([]killer.Result, error) {
+		if err := guardDaemonKill(c); err != nil {
+			return nil, err
+		}
+		switch killMethodFor(killGroupFlag, opts) {
+		case "groups.kill":
 			var env rpc.KillEnvelope
 			err := c.Call(ctx, "groups.kill", rpc.GroupsKillParams{
-				Name:    name,
+				Name:    killGroupFlag,
 				Force:   opts.Force,
 				GraceMs: graceMs(opts),
 				DryRun:  dryRun,
 			}, &env)
 			return env.Results, err
+		default:
+			var env rpc.KillEnvelope
+			err := c.Call(ctx, "ports.kill", rpc.PortsKillParams{
+				Targets:  killSelectors(targets),
+				Tree:     opts.Tree,
+				Force:    opts.Force,
+				GraceMs:  graceMs(opts),
+				Escalate: opts.Escalate,
+				DryRun:   dryRun,
+			}, &env)
+			return env.Results, err
 		}
 	}
+}
 
-	selectors := killSelectors(targets)
-	return func(ctx context.Context, c *client.Client, dryRun bool) ([]killer.Result, error) {
-		var env rpc.KillEnvelope
-		err := c.Call(ctx, "ports.kill", rpc.PortsKillParams{
-			Targets:  selectors,
-			Tree:     opts.Tree,
-			Force:    opts.Force,
-			GraceMs:  graceMs(opts),
-			Escalate: opts.Escalate,
-			DryRun:   dryRun,
-		}, &env)
-		return env.Results, err
+// killMethodFor picks the RPC. `-g` goes to groups.kill so the daemon that
+// owns the snapshot resolves the group itself; the flags groups.kill has no
+// field for (--tree, --no-escalate) send the group's members to ports.kill,
+// which supports them and acts on exactly the targets killTargets already
+// selected.
+func killMethodFor(group string, opts killer.Options) string {
+	if group != "" && !opts.Tree && opts.Escalate == nil {
+		return "groups.kill"
 	}
+	return "ports.kill"
 }
 
 // killSelectors turns the targets killTargets resolved into wire selectors. A
@@ -147,35 +155,33 @@ func killSession(ctx context.Context) error {
 		return cliError(err)
 	}
 
-	call := func(dryRun bool) ([]killer.Result, error) {
+	return killRequest{
+		exec:     killSessionInDaemon(c, id),
+		snapshot: snapshot,
+		opts:     killOptions(),
+		confirm:  !killYesFlag && !killDryRunFlag,
+		asJSON:   killJSONFlag,
+		emptyPlan: func() {
+			fmt.Printf("Session %s has nothing running.\n", id)
+		},
+	}.execute(ctx)
+}
+
+// killSessionInDaemon is the executor for the hidden session selector. It
+// ignores the resolved targets: a session's membership exists only inside the
+// daemon, so the daemon does the selecting.
+func killSessionInDaemon(c *client.Client, id string) killExecutor {
+	return func(ctx context.Context, _ []killer.Target, opts killer.Options, dryRun bool) ([]killer.Result, error) {
+		if err := guardDaemonKill(c); err != nil {
+			return nil, err
+		}
 		var env rpc.KillEnvelope
 		err := c.Call(ctx, "sessions.kill", rpc.SessionsKillParams{
 			ID:     id,
-			Tree:   killTreeFlag,
-			Force:  forceFlag,
+			Tree:   opts.Tree,
+			Force:  opts.Force,
 			DryRun: dryRun,
 		}, &env)
 		return env.Results, err
 	}
-
-	if !killYesFlag && !killDryRunFlag {
-		plan, err := call(true)
-		if err != nil {
-			return cliError(err)
-		}
-		if len(plan) == 0 {
-			fmt.Printf("Session %s has nothing running.\n", id)
-			return nil
-		}
-		if !confirmPlan(plan, snapshot) {
-			fmt.Println("Aborted.")
-			return nil
-		}
-	}
-
-	results, err := call(killDryRunFlag)
-	if err != nil {
-		return cliError(err)
-	}
-	return reportKill(os.Stdout, results, snapshot, killJSONFlag, killDryRunFlag)
 }

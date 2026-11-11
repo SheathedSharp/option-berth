@@ -44,59 +44,78 @@ var logsCmd = &cobra.Command{
 	GroupID:           commandGroupFacts,
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeLogTarget,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		bindIP, _ := cmd.Flags().GetString("ip")
-		if logsOnceFlag {
-			logsFollow = false
-		}
-		if logsFirstErr {
-			if logsRunFlag == "" {
-				return usageError{fmt.Errorf("--first-error needs --run current; without a run the file mixes earlier runs")}
-			}
-			logsFollow = false
-		}
-		if logsRunFlag != "" {
-			if bindIP != "" {
-				return usageError{fmt.Errorf("--ip selects a listener; --run selects a service run, so the two cannot be combined")}
-			}
-			c := daemonClient(cmd.Context())
-			if c == nil {
-				return failHint("daemon_unavailable", "logs --run needs the daemon",
-					"start one with `oberth serve --detach`")
-			}
-			defer c.Close()
-			return logsFromRun(cmd.Context(), c, args[0], logsRunFlag)
-		}
+	RunE:              logsRun,
+}
 
-		c := daemonClient(cmd.Context())
-		defer func() {
-			if c != nil {
-				c.Close()
-			}
-		}()
-		// Keep the direct port path's contract: structured output needs the
-		// daemon, while human output may fall back to the local process tools.
-		if c == nil {
-			if port, err := strconv.Atoi(args[0]); err == nil {
-				return logsDirect(cmd.Context(), port, bindIP)
-			}
-		}
-		row, logPath, err := resolveLogTarget(cmd.Context(), c, args[0], bindIP)
-		if err != nil {
-			return err
-		}
-		meta := logMetadataForTarget(cmd.Context(), c, args[0], row)
+func logsRun(cmd *cobra.Command, args []string) error {
+	bindIP, _ := cmd.Flags().GetString("ip")
+	if err := applyLogsFlags(bindIP); err != nil {
+		return err
+	}
+	if logsRunFlag != "" {
+		return logsFromRunTarget(cmd.Context(), args[0], logsRunFlag)
+	}
+	return logsFromResolvedTarget(cmd.Context(), args[0], bindIP)
+}
 
-		if logPath != "" {
-			return logsFromFile(cmd.Context(), logPath, meta)
-		}
+// applyLogsFlags turns the read-once selectors into their effect on following,
+// and refuses the combinations that cannot mean one thing: --first-error has no
+// scope without a run, and --ip and --run name different subjects.
+func applyLogsFlags(bindIP string) error {
+	if logsFirstErr && logsRunFlag == "" {
+		return usageError{fmt.Errorf("--first-error needs --run current; without a run the file mixes earlier runs")}
+	}
+	if logsRunFlag != "" && bindIP != "" {
+		return usageError{fmt.Errorf("--ip selects a listener; --run selects a service run, so the two cannot be combined")}
+	}
+	if logsOnceFlag || logsFirstErr {
+		logsFollow = false
+	}
+	return nil
+}
 
+// logsFromRunTarget reads one run's output. Runs exist only inside the daemon,
+// so this form has no direct fallback.
+func logsFromRunTarget(ctx context.Context, target, runID string) error {
+	c := daemonClient(ctx)
+	if c == nil {
+		return failHint("daemon_unavailable", "logs --run needs the daemon",
+			"start one with `oberth serve --detach`")
+	}
+	defer c.Close()
+	return logsFromRun(ctx, c, target, runID)
+}
+
+// logsFromResolvedTarget reads a listener's output or a service's log file: from
+// the file when the service declares one, through the daemon when it owns the
+// reader, and with the local process tools when there is no daemon.
+func logsFromResolvedTarget(ctx context.Context, target, bindIP string) error {
+	c := daemonClient(ctx)
+	defer func() {
 		if c != nil {
-			return logsThroughDaemon(cmd.Context(), c, row.Port, bindIP, meta)
+			c.Close()
 		}
+	}()
+	// Keep the direct port path's contract: structured output needs the
+	// daemon, while human output may fall back to the local process tools.
+	if c == nil {
+		if port, err := strconv.Atoi(target); err == nil {
+			return logsDirect(ctx, port, bindIP)
+		}
+	}
+	row, logPath, err := resolveLogTarget(ctx, c, target, bindIP)
+	if err != nil {
+		return err
+	}
+	meta := logMetadataForTarget(ctx, c, target, row)
 
-		return logsDirect(cmd.Context(), row.Port, bindIP)
-	},
+	if logPath != "" {
+		return logsFromFile(ctx, logPath, meta)
+	}
+	if c != nil {
+		return logsThroughDaemon(ctx, c, row.Port, bindIP, meta)
+	}
+	return logsDirect(ctx, row.Port, bindIP)
 }
 
 func logsDirect(_ context.Context, port int, bindIP string) error {
@@ -230,6 +249,12 @@ func logsFromFile(ctx context.Context, path string, meta logMetadata) error {
 		return err
 	}
 	applyLogMetadata(&doc, meta)
+	return printLogDocument(doc)
+}
+
+// printLogDocument is the one place a read document becomes output: one JSON
+// value, or the source header followed by the lines.
+func printLogDocument(doc logsDocument) error {
 	if logsJSONFlag {
 		return printJSON(doc)
 	}
@@ -324,22 +349,26 @@ func logsThroughDaemon(ctx context.Context, c *client.Client, port int, bindIP s
 	if err != nil {
 		return err
 	}
-
 	if !logsFollow {
-		doc, err := readLogsOnce(ctx, c, *row, logsLinesFlag, meta)
-		if err != nil {
-			return err
-		}
-		if logsJSONFlag {
-			return printJSON(doc)
-		}
-		printLogHeader(doc.Source)
-		for _, line := range doc.Lines {
-			fmt.Println(line)
-		}
-		return nil
+		return logsOnceThroughDaemon(ctx, c, *row, meta)
 	}
+	return logsFollowThroughDaemon(ctx, c, *row, meta)
+}
 
+// logsOnceThroughDaemon reads a listener's output once, through the daemon: no
+// terminal to hand to tail, so the reader stays here.
+func logsOnceThroughDaemon(ctx context.Context, c *client.Client, row ports.ListeningPort, meta logMetadata) error {
+	doc, err := readLogsOnce(ctx, c, row, logsLinesFlag, meta)
+	if err != nil {
+		return err
+	}
+	return printLogDocument(doc)
+}
+
+// logsFollowThroughDaemon attaches to a listener's output over the daemon's
+// stream. The daemon owns the `tail` (or `docker logs`), so several clients
+// watching the same port cost one reader, and the lines reach every one of them.
+func logsFollowThroughDaemon(ctx context.Context, c *client.Client, row ports.ListeningPort, meta logMetadata) error {
 	if !logsJSONFlag {
 		// In JSON mode this header would be plain text in front of a JSON
 		// document.
@@ -350,12 +379,9 @@ func logsThroughDaemon(ctx context.Context, c *client.Client, port int, bindIP s
 	}
 
 	params := rpc.PortsLogsParams{
-		Selector: rpc.Selector{
-			Port:        &row.Port,
-			BindAddress: strPtrOrNil(row.BindAddress),
-		},
-		Lines:  logsLinesFlag,
-		Follow: true,
+		Selector: logSelector(row),
+		Lines:    logsLinesFlag,
+		Follow:   true,
 	}
 
 	var res rpc.PortsLogsResult
@@ -368,8 +394,13 @@ func logsThroughDaemon(ctx context.Context, c *client.Client, port int, bindIP s
 	if logsJSONFlag {
 		return streamLogsJSON(s, meta)
 	}
+	return printLogStream(s, res.Source)
+}
 
-	printLogHeader(res.Source)
+// printLogStream writes one log line per chunk as it arrives, under the header
+// naming the source the daemon reported.
+func printLogStream(s *client.Stream, source string) error {
+	printLogHeader(source)
 	for raw := range s.Chunks() {
 		var chunk rpc.PortsLogsChunk
 		if err := json.Unmarshal(raw, &chunk); err != nil {
@@ -389,12 +420,9 @@ func logsThroughDaemon(ctx context.Context, c *client.Client, port int, bindIP s
 // through the daemon once.
 func readLogsOnce(ctx context.Context, c *client.Client, row ports.ListeningPort, lines int, meta logMetadata) (logsDocument, error) {
 	params := rpc.PortsLogsParams{
-		Selector: rpc.Selector{
-			Port:        &row.Port,
-			BindAddress: strPtrOrNil(row.BindAddress),
-		},
-		Lines:  lines,
-		Follow: false,
+		Selector: logSelector(row),
+		Lines:    lines,
+		Follow:   false,
 	}
 	var res rpc.PortsLogsResult
 	if err := c.Call(ctx, "ports.logs", params, &res); err != nil {
@@ -588,6 +616,12 @@ func printLogHeader(source string) {
 	}
 }
 
+// logSelector names one listener on the wire. It is the same selector for a
+// one-shot read and for a follow, so the two cannot resolve different rows.
+func logSelector(row ports.ListeningPort) rpc.Selector {
+	return rpc.Selector{Port: &row.Port, BindAddress: strPtrOrNil(row.BindAddress)}
+}
+
 // daemonFindPort resolves one port through state.snapshot, so the header a command
 // prints names the same process the daemon is about to act on.
 func daemonFindPort(ctx context.Context, c *client.Client, port int, bindIP string) (*ports.ListeningPort, error) {
@@ -595,6 +629,28 @@ func daemonFindPort(ctx context.Context, c *client.Client, port int, bindIP stri
 	if err != nil {
 		return nil, cliError(err)
 	}
+	return selectBoundPort(rows, port, bindIP)
+}
+
+// selectBoundPort is the pure half of the lookup: exactly one row, or the
+// documented not_found/ambiguous answer with the --ip remedy.
+func selectBoundPort(rows []ports.ListeningPort, port int, bindIP string) (*ports.ListeningPort, error) {
+	matches := listenersOnPort(rows, port, bindIP)
+	if len(matches) > 1 {
+		return nil, ambiguousBoundPort(port, matches)
+	}
+	if len(matches) == 1 {
+		return &matches[0], nil
+	}
+	if bindIP != "" {
+		return nil, fail("not_found", "no process found listening on %s:%d", bindIP, port)
+	}
+	return nil, fail("not_found", "no process found listening on port %d", port)
+}
+
+// listenersOnPort is the filter half: every row the selector could mean, in
+// table order.
+func listenersOnPort(rows []ports.ListeningPort, port int, bindIP string) []ports.ListeningPort {
 	var matches []ports.ListeningPort
 	for _, row := range rows {
 		if row.Port != port {
@@ -605,19 +661,17 @@ func daemonFindPort(ctx context.Context, c *client.Client, port int, bindIP stri
 		}
 		matches = append(matches, row)
 	}
-	switch {
-	case len(matches) == 0 && bindIP != "":
-		return nil, fail("not_found", "no process found listening on %s:%d", bindIP, port)
-	case len(matches) == 0:
-		return nil, fail("not_found", "no process found listening on port %d", port)
-	case len(matches) == 1:
-		return &matches[0], nil
-	}
+	return matches
+}
+
+// ambiguousBoundPort names the addresses a port answers on and the flag that
+// picks one. Picking silently would act on a process the caller did not mean.
+func ambiguousBoundPort(port int, matches []ports.ListeningPort) error {
 	addrs := make([]string, 0, len(matches))
-	for _, m := range matches {
-		addrs = append(addrs, m.BindAddress)
+	for _, match := range matches {
+		addrs = append(addrs, match.BindAddress)
 	}
-	return nil, failHint("ambiguous",
+	return failHint("ambiguous",
 		fmt.Sprintf("port %d is bound to multiple addresses: %s", port, strings.Join(addrs, ", ")),
 		fmt.Sprintf("use --ip to specify which one (e.g. --ip %s)", addrs[0]))
 }

@@ -2,13 +2,18 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/runs"
+	"github.com/sheathedsharp/option-berth/engine/internal/spawn"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
@@ -165,5 +170,138 @@ func TestOverlayRunAddressesFillsAssignedPorts(t *testing.T) {
 	}
 	if !sawRemote {
 		t.Fatal("a run with a manifest path did not create the remote group")
+	}
+}
+
+// TestDetachedSpawnParamsCarryOnlyWhatIsSet pins the runs.spawn request: the
+// command, its directory and environment always travel; a session or a port
+// hint only when this invocation has one, because an absent field is the wire's
+// "none".
+func TestDetachedSpawnParamsCarryOnlyWhatIsSet(t *testing.T) {
+	prevSession, prevPort := startSession, startPort
+	t.Cleanup(func() { startSession, startPort = prevSession, prevPort })
+	startSession, startPort = state.Session{}, 0
+
+	res := spawn.Resolution{Group: "demo", Name: "worker"}
+	params := detachedSpawnParams([]string{"sh", "-c", "exit 0"}, "/repo/wt", res)
+	if len(params.Argv) != 3 || params.Argv[0] != "sh" || params.Cwd != "/repo/wt" {
+		t.Fatalf("params = %+v, want the command and its directory", params)
+	}
+	if params.Group == nil || *params.Group != "demo" || params.Name == nil || *params.Name != "worker" {
+		t.Fatalf("params = %+v, want the resolved group and name", params)
+	}
+	if !params.AllowOutsideHome {
+		t.Error("the CLI is the user: starting a command anywhere must be allowed")
+	}
+	if params.Session != nil || params.PortHint != nil {
+		t.Fatalf("params = %+v, want no session and no port hint when there are none", params)
+	}
+	if params.Env["PATH"] != os.Getenv("PATH") {
+		t.Error("the caller's environment did not travel with the request")
+	}
+
+	startSession = state.Session{ID: "claude-code:abc", Tool: "claude-code"}
+	startPort = 3000
+	params = detachedSpawnParams([]string{"npm", "run", "dev"}, "/repo/wt", res)
+	if params.Session == nil || params.Session.ID != "claude-code:abc" {
+		t.Fatalf("session = %+v, want this invocation's own", params.Session)
+	}
+	if params.PortHint == nil || *params.PortHint != 3000 {
+		t.Fatalf("port hint = %v, want 3000", params.PortHint)
+	}
+}
+
+// TestStartDetachedHandsTheRunToTheDaemon: with a daemon, a detached start is
+// the daemon's spawn — the run exists in its registry afterwards, which is what
+// makes it outlive this shell.
+func TestStartDetachedHandsTheRunToTheDaemon(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the run spool harness is unix-only")
+	}
+	resetRouting(t)
+	socket := startDaemonWhereTheCommandLooks(t)
+	dir := t.TempDir()
+	argv := []string{"sh", "-c", "exit 0"}
+	res := spawn.Resolve(dir, argv, "demo", "worker")
+
+	var err error
+	out := captureStdout(t, func() { err = startDetached(testCommand(), argv, dir, res) })
+	if err != nil {
+		t.Fatalf("start --detach: %v", err)
+	}
+	if !strings.Contains(out, "demo/worker") || !strings.Contains(out, "started") {
+		t.Fatalf("stdout = %q, want the started line naming the run", out)
+	}
+
+	c, err := client.Dial(context.Background(), client.ClientInfo{Name: "cli", Version: "test", Socket: socket})
+	if err != nil {
+		t.Fatalf("connecting: %v", err)
+	}
+	defer c.Close()
+	var listed rpc.RunsListResult
+	if err := c.Call(context.Background(), "runs.list", rpc.Empty{}, &listed); err != nil {
+		t.Fatalf("runs.list: %v", err)
+	}
+	for _, rec := range append(listed.Runs, listed.Exited...) {
+		if rec.Name == "worker" && rec.Group == "demo" {
+			return
+		}
+	}
+	t.Fatalf("the daemon does not know the run it spawned: %+v", listed)
+}
+
+// TestStartDetachedFallsBackToTheRunFile: with no daemon the command still
+// starts the run (detached) and records it where the next daemon will adopt it,
+// instead of losing it behind a failed RPC.
+func TestStartDetachedFallsBackToTheRunFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the run spool harness is unix-only")
+	}
+	t.Setenv("BERTH_HOME", t.TempDir())
+	resetRouting(t)
+	prev := connectForWrite
+	connectForWrite = func(context.Context) (*client.Client, error) { return nil, client.ErrNotRunning }
+	t.Cleanup(func() { connectForWrite = prev })
+
+	dir := t.TempDir()
+	argv := []string{"sh", "-c", "exit 0"}
+	res := spawn.Resolve(dir, argv, "demo", "worker")
+
+	var err error
+	out := captureStdout(t, func() { err = startDetached(testCommand(), argv, dir, res) })
+	if err != nil {
+		t.Fatalf("start --detach without a daemon: %v", err)
+	}
+	if !strings.Contains(out, "demo/worker") {
+		t.Fatalf("stdout = %q, want the started line naming the run", out)
+	}
+	recorded := false
+	for _, entry := range runs.Load().Active() {
+		if entry.NameOf() == "worker" && entry.GroupOf() == "demo" {
+			recorded = true
+		}
+	}
+	if !recorded {
+		t.Fatal("the run was not recorded in runs.json, so no daemon will adopt it")
+	}
+}
+
+// TestStartDetachedReportsADaemonFailure: a daemon that answers with an error is
+// not the same as no daemon — the command reports it instead of spawning a
+// second copy of the run locally.
+func TestStartDetachedReportsADaemonFailure(t *testing.T) {
+	resetRouting(t)
+	prev := connectForWrite
+	connectForWrite = func(context.Context) (*client.Client, error) {
+		return nil, errors.New("permission denied for the socket")
+	}
+	t.Cleanup(func() { connectForWrite = prev })
+
+	dir := t.TempDir()
+	argv := []string{"sh", "-c", "exit 0"}
+	res := spawn.Resolve(dir, argv, "demo", "worker")
+	err := startDetached(testCommand(), argv, dir, res)
+	if err == nil || !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("err = %v, want the daemon's own failure", err)
 	}
 }

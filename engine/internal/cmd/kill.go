@@ -109,8 +109,7 @@ func runKill(cmd *cobra.Command, args []string) error {
 // under --no-daemon and whenever the daemon is down, which is why it stays a
 // complete implementation rather than a degraded one.
 func killDirect(ctx context.Context, args []string, bindIP string) error {
-	snapshot := scanForKill()
-	targets, confirm, err := killTargets(args, snapshot, bindIP)
+	snapshot, targets, confirm, complete, err := killSelection(ctx, args, bindIP, scanForKill)
 	if err != nil {
 		return err
 	}
@@ -120,10 +119,62 @@ func killDirect(ctx context.Context, args []string, bindIP string) error {
 	}
 
 	opts := killOptions()
-	opts.Ports = snapshot
+	// Only a complete observation may stand in for the killer's own scan. A
+	// partial table is attribution for the report; publishing it here would
+	// suppress the killer's re-observation and let an unreadable row become a
+	// signal.
+	if complete {
+		opts.Ports = snapshot
+	}
 
-	return killRun(ctx, targets, snapshot, opts,
-		confirm && !killYesFlag && !killDryRunFlag, killJSONFlag)
+	return killRequest{
+		exec:     killHere,
+		targets:  targets,
+		snapshot: snapshot,
+		opts:     opts,
+		confirm:  confirm && !killYesFlag && !killDryRunFlag,
+		asJSON:   killJSONFlag,
+	}.execute(ctx)
+}
+
+// killSelection resolves the command line against the enriched listener table.
+// The table is read for every selector, not only for the ones that pick their
+// targets out of it: it is what carries a listener's run ownership, and that
+// ownership decides how much of a run `--pid` stops, what the result rows are
+// called, and which addresses a report says were released. Reading it only for
+// the table-driven selectors made `kill --pid <a run's listener>` stop a leaf
+// instead of its run and name the process instead of the service.
+//
+// A failed read never becomes an empty table. For the selectors that resolve
+// through it (`--all`, `--group`, a positional argument) the observation failure
+// is the answer: selecting nothing from a blind table and reporting "Nothing to
+// stop." would turn "cannot see" into "nothing is running", and `kill --all`
+// would exit 0 without having observed a single listener.
+//
+// An explicit `--pid` is the exception. The pid is the whole subject, so a
+// failed observation must not deny it — but that exception is about
+// *selection*, not about stopping without evidence: the killer observes again
+// before it signals, so a blind machine still ends in a failed row rather than
+// a silent success. A partial read keeps the rows it did produce, because those
+// rows are exactly the attribution this function exists to preserve.
+func killSelection(ctx context.Context, args []string, bindIP string, scan func(context.Context) ([]ports.ListeningPort, error)) ([]ports.ListeningPort, []killer.Target, bool, bool, error) {
+	snapshot, err := scan(ctx)
+	complete := err == nil
+	if err != nil {
+		if killRequiresObservation(args) {
+			return nil, nil, false, false, err
+		}
+		snapshot, _ = ports.PartialRows(err)
+	}
+	targets, confirm, err := killTargets(args, snapshot, bindIP)
+	return snapshot, targets, confirm, complete, err
+}
+
+// killRequiresObservation reports whether a failed observation vetoes this
+// selection: positional arguments are read port-first, and the group and all
+// selectors are sweeps. Only --pid alone survives a table it could not read.
+func killRequiresObservation(args []string) bool {
+	return len(args) > 0 || killGroupFlag != "" || killAllFlag
 }
 
 // killOptions is the killer configuration the flags describe, shared by both
@@ -142,38 +193,91 @@ func killOptions() killer.Options {
 	return opts
 }
 
-// killRun is the body every kill-shaped command shares: confirm the plan when
-// asked to, run it through the killer, print the outcome. `kill-all` and
-// `down` are nothing but different ways of choosing targets for it.
-func killRun(ctx context.Context, targets []killer.Target, snapshot []ports.ListeningPort,
-	opts killer.Options, confirm, asJSON bool) error {
-	// The confirmation lists the plan the killer actually produced, so the
+// killExecutor performs one round against the selected targets. dryRun asks
+// only for the plan, which is what the confirmation shows before the real
+// round; the caller decides where signalling happens (this process or the
+// daemon), while every prompt and report stays above this seam.
+type killExecutor func(ctx context.Context, targets []killer.Target, opts killer.Options, dryRun bool) ([]killer.Result, error)
+
+// killHere is the executor that signals from this process. Production points
+// it at signalListenersForKill, the only command implementation that may call
+// killer.KillPorts. Tests replace the hook; a missed replacement must fail
+// closed rather than signal an unowned process.
+var killHere killExecutor = signalListenersForKill
+
+func signalListenersForKill(ctx context.Context, targets []killer.Target, opts killer.Options, dryRun bool) ([]killer.Result, error) {
+	round := opts
+	round.DryRun = dryRun
+	return killer.KillPorts(ctx, targets, round), nil
+}
+
+// killRequest is one kill operation after its targets have been chosen:
+// optionally confirm the plan, run it once, report the result. The port and
+// group forms, the hidden session form and the daemon and direct routes all
+// differ in how targets are selected or where the signal is sent, never in
+// this decision order.
+type killRequest struct {
+	exec     killExecutor
+	targets  []killer.Target
+	snapshot []ports.ListeningPort
+	opts     killer.Options
+	confirm  bool
+	asJSON   bool
+	// emptyPlan, when set, is the whole answer for a confirmed plan that
+	// selected nothing (a named session with no members). The port forms
+	// handle an empty selection before reaching here.
+	emptyPlan func()
+}
+
+func (r killRequest) execute(ctx context.Context) error {
+	// The confirmation lists the plan the executor actually produced, so the
 	// prompt shows exactly what will happen — including the whole tree.
-	if confirm {
-		plan := opts
-		plan.DryRun = true
-		if !confirmPlan(killer.KillPorts(ctx, targets, plan), snapshot) {
+	if r.confirm {
+		plan, err := r.exec(ctx, r.targets, r.opts, true)
+		if err != nil {
+			return cliError(err)
+		}
+		if len(plan) == 0 && r.emptyPlan != nil {
+			r.emptyPlan()
+			return nil
+		}
+		if !confirmPlan(plan, r.snapshot) {
 			fmt.Println("Aborted.")
 			return nil
 		}
 	}
-	results := killer.KillPorts(ctx, targets, opts)
-	return reportKill(os.Stdout, results, snapshot, asJSON, opts.DryRun)
+	results, err := r.exec(ctx, r.targets, r.opts, r.opts.DryRun)
+	if err != nil {
+		return cliError(err)
+	}
+	return reportKill(os.Stdout, results, r.snapshot, r.asJSON, r.opts.DryRun)
 }
 
-// scanForKill takes the enriched scan every selector is resolved against, and
-// which the killer reuses instead of scanning a second time. Group attribution
-// is part of that enrichment: without it `-g` would only ever see a Compose
-// project or a run tag, never a `oberth.yaml` name or a git root.
-func scanForKill() []ports.ListeningPort {
-	found, err := ports.Scan()
+// scanForKill is the observation seam the direct path resolves every selector
+// against, and which the killer reuses instead of scanning a second time.
+// Production points it at observeListenersForKill, the only command
+// implementation that may call ports.Scan. Tests replace the hook; a missed
+// replacement must fail closed rather than observe the machine.
+var scanForKill = observeListenersForKill
+
+// observeListenersForKill takes the enriched scan group attribution is part
+// of: without it `-g` would only ever see a Compose project or a run tag,
+// never a `oberth.yaml` name or a git root. It takes the command context so a
+// slow collector can be interrupted; the killer's own re-observation keeps its
+// separate request budget.
+func observeListenersForKill(ctx context.Context) ([]ports.ListeningPort, error) {
+	found, err := ports.ScanContext(ctx)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	docker.EnrichPorts(found)
-	ports.Enrich(found)
+	if err := docker.EnrichPortsContext(ctx, found); err != nil {
+		return nil, err
+	}
+	if err := ports.EnrichContext(ctx, found); err != nil {
+		return nil, err
+	}
 	groups.Attribute(found)
-	return found
+	return found, ctx.Err()
 }
 
 // killTargets turns the command line into killer targets. The bool reports

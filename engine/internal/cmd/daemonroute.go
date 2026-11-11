@@ -55,17 +55,28 @@ var dialDaemon = func(ctx context.Context) (*client.Client, error) {
 	})
 }
 
-// daemonClient returns a connected client, or nil when the caller should fall
-// back to a direct scan. A nil result with --no-daemon is silent; anything else
-// prints the one-line note first.
-func daemonClient(ctx context.Context) *client.Client {
+// dialOrNil returns a connected client, or nil when the caller should fall
+// back to a direct scan. --no-daemon skips the dial entirely; a failed dial is
+// silent here because whether it deserves a note depends on what the caller
+// does next.
+func dialOrNil(ctx context.Context) *client.Client {
 	if noDaemonFlag {
 		return nil
 	}
 	c, err := dialDaemon(ctx)
 	if err != nil {
-		noteFallback()
 		return nil
+	}
+	return c
+}
+
+// daemonClient returns a connected client, or nil when the caller should fall
+// back to a direct scan. A nil result with --no-daemon is silent; a daemon that
+// could not be reached prints the one-line note first.
+func daemonClient(ctx context.Context) *client.Client {
+	c := dialOrNil(ctx)
+	if c == nil && !noDaemonFlag {
+		noteFallback()
 	}
 	return c
 }
@@ -77,11 +88,8 @@ func daemonClient(ctx context.Context) *client.Client {
 // using direct scan" is a useful sentence for `list`, and a false one for a
 // caller about to say that the daemon is required.
 func daemonUp(ctx context.Context) bool {
-	if noDaemonFlag {
-		return false
-	}
-	c, err := dialDaemon(ctx)
-	if err != nil {
+	c := dialOrNil(ctx)
+	if c == nil {
 		return false
 	}
 	c.Close()

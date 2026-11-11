@@ -174,33 +174,57 @@ func greatestObservation(current, cached *rpc.ObservationStatus) *rpc.Observatio
 
 // ---------------------------------------------------------------- render ---
 
-func renderDoctor(w io.Writer, report rpc.DaemonDoctorResult) {
-	idWidth, summaryWidth := 0, 0
-	for _, c := range report.Checks {
-		if len(c.ID) > idWidth {
-			idWidth = len(c.ID)
+// doctorRow is one check as the table prints it: the glyph, id and summary
+// columns, the fix hint that belongs to this row, and the evidence lines a
+// failure carries. It is built before any column width is known so layout and
+// content are separate decisions.
+type doctorRow struct {
+	check  rpc.DoctorCheck
+	fix    string
+	detail []string
+}
+
+func doctorRows(report rpc.DaemonDoctorResult) []doctorRow {
+	rows := make([]doctorRow, 0, len(report.Checks))
+	for _, check := range report.Checks {
+		row := doctorRow{check: check}
+		if check.Fix != "" && check.Status != doctor.StatusOK && check.Status != doctor.StatusSkip {
+			row.fix = "→ " + check.Fix
 		}
-		if len(c.Summary) > summaryWidth {
-			summaryWidth = len(c.Summary)
+		// Only a failure earns its evidence in the table: it is the row a
+		// reader has to act on, and config_parses' caret is useless folded
+		// into one line.
+		if check.Status == doctor.StatusFail && check.Detail != "" {
+			row.detail = strings.Split(check.Detail, "\n")
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func renderDoctor(w io.Writer, report rpc.DaemonDoctorResult) {
+	rows := doctorRows(report)
+	idWidth, summaryWidth := 0, 0
+	for _, row := range rows {
+		if n := len(row.check.ID); n > idWidth {
+			idWidth = n
+		}
+		if n := len(row.check.Summary); n > summaryWidth {
+			summaryWidth = n
 		}
 	}
 
 	counts := map[string]int{}
-	for _, c := range report.Checks {
-		counts[c.Status]++
-		row := fmt.Sprintf("%s  %s  %s", doctorGlyph(c.Status),
-			padRight(c.ID, idWidth), padRight(c.Summary, summaryWidth))
-		if c.Fix != "" && c.Status != doctor.StatusOK && c.Status != doctor.StatusSkip {
-			row += "  " + display.Dim("→ "+c.Fix)
+	for _, row := range rows {
+		counts[row.check.Status]++
+		line := fmt.Sprintf("%s  %s  %s", doctorGlyph(row.check.Status),
+			padRight(row.check.ID, idWidth), padRight(row.check.Summary, summaryWidth))
+		if row.fix != "" {
+			line += "  " + display.Dim(row.fix)
 		}
-		fmt.Fprintln(w, strings.TrimRight(row, " "))
-		// Only a failure earns its evidence in the table: it is the row a
-		// reader has to act on, and config_parses' caret is useless folded
-		// into one line.
-		if c.Status == doctor.StatusFail && c.Detail != "" {
-			for _, line := range strings.Split(c.Detail, "\n") {
-				fmt.Fprintln(w, "   "+display.Dim(line))
-			}
+		fmt.Fprintln(w, strings.TrimRight(line, " "))
+		for _, detail := range row.detail {
+			fmt.Fprintln(w, "   "+display.Dim(detail))
 		}
 	}
 
@@ -272,10 +296,14 @@ func padRight(s string, width int) string {
 //
 // Project-scoped fixes honor --project; machine configuration repairs remain local.
 type doctorFix struct {
-	// id is the check it repairs; a dotted id matches by prefix too.
 	id  string
 	run func(ctx context.Context, cmd *cobra.Command) (string, error)
 }
+
+// matches reports whether this fix repairs exactly the named check. A dotted
+// id names one check, not a family: a fix registered for `config_parses` must
+// never be applied to some future `config_parses.<tool>` row.
+func (f doctorFix) matches(id string) bool { return f.id == id }
 
 func doctorFixes() []doctorFix {
 	fixes := []doctorFix{
@@ -310,20 +338,29 @@ func fixBrokenConfig(context.Context, *cobra.Command) (string, error) {
 	return fmt.Sprintf("moved the broken config to %s and wrote a fresh one", moved), nil
 }
 
-// applyDoctorFixes runs every safe fix for a check that is not ok, after
-// confirmation. It returns how many it applied.
-func applyDoctorFixes(ctx context.Context, cmd *cobra.Command, report rpc.DaemonDoctorResult) (int, error) {
+// selectDoctorFixes is the repair list for the checks that failed or warned
+// and advertised themselves as fixable, in report order. A fixable check with
+// no registered repair contributes nothing here; --fix cannot invent one.
+func selectDoctorFixes(report rpc.DaemonDoctorResult) []doctorFix {
+	fixes := doctorFixes()
 	var todo []doctorFix
-	for _, c := range report.Checks {
-		if !c.Fixable || c.Status == doctor.StatusOK || c.Status == doctor.StatusSkip {
+	for _, check := range report.Checks {
+		if !check.Fixable || check.Status == doctor.StatusOK || check.Status == doctor.StatusSkip {
 			continue
 		}
-		for _, f := range doctorFixes() {
-			if f.id == c.ID {
-				todo = append(todo, f)
+		for _, fix := range fixes {
+			if fix.matches(check.ID) {
+				todo = append(todo, fix)
 			}
 		}
 	}
+	return todo
+}
+
+// applyDoctorFixes runs every safe fix for a check that is not ok, after
+// confirmation. It returns how many it applied.
+func applyDoctorFixes(ctx context.Context, cmd *cobra.Command, report rpc.DaemonDoctorResult) (int, error) {
+	todo := selectDoctorFixes(report)
 	if len(todo) == 0 {
 		fmt.Fprintln(os.Stderr, "nothing to fix automatically")
 		return 0, nil

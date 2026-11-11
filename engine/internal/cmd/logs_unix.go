@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 	"syscall"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
@@ -20,55 +19,73 @@ func execDockerLogs(container string) error {
 		return fmt.Errorf("docker not found in PATH")
 	}
 
-	args := []string{"docker", "logs"}
-	if logsFollow {
-		args = append(args, "-f")
-	}
+	args := append([]string{"docker", "logs"}, followArgs()...)
 	args = append(args, container)
 
 	return syscall.Exec(dockerPath, args, os.Environ())
 }
 
-// tailLogSources tails discovered log files.
-func tailLogSources(sources []ports.LogSource) error {
-	// Print what we found
-	for _, s := range sources {
-		label := s.Path
-		if s.FD != "" {
-			label = fmt.Sprintf("%s (%s)", s.Path, s.FD)
-		}
-		fmt.Println(display.Dim("  " + label))
+// followArgs is the one place `--follow` becomes a collector flag.
+func followArgs() []string {
+	if logsFollow {
+		return []string{"-f"}
 	}
-	fmt.Println()
+	return nil
+}
 
-	var paths []string
-	for _, s := range sources {
-		paths = append(paths, s.Path)
-	}
-
+// execTail replaces this process with tail over the given paths: the terminal,
+// the signals and the exit status then belong to tail itself.
+func execTail(paths []string) error {
 	tailPath, err := exec.LookPath("tail")
 	if err != nil {
 		return fmt.Errorf("tail not found in PATH")
 	}
-
-	args := []string{"tail"}
-	if logsFollow {
-		args = append(args, "-f")
-	}
+	args := append([]string{"tail"}, followArgs()...)
 	args = append(args, paths...)
-
 	return syscall.Exec(tailPath, args, os.Environ())
 }
 
-// tailProcFD tries to tail /proc/<pid>/fd/1 (stdout) on Linux.
-func tailProcFD(pid int) error {
-	stdoutPath := fmt.Sprintf("/proc/%d/fd/1", pid)
-	stderrPath := fmt.Sprintf("/proc/%d/fd/2", pid)
+// printLogTargets names what is being tailed, one dim line each, then the
+// blank line that separates the header from the output.
+func printLogTargets(labels []string) {
+	for _, label := range labels {
+		fmt.Println(display.Dim("  " + label))
+	}
+	fmt.Println()
+}
 
-	var paths []string
-	for _, p := range []string{stdoutPath, stderrPath} {
-		if _, err := os.Stat(p); err == nil {
-			paths = append(paths, p)
+// tailLogSources tails the log files discovered for a listener.
+func tailLogSources(sources []ports.LogSource) error {
+	labels := make([]string, 0, len(sources))
+	paths := make([]string, 0, len(sources))
+	for _, source := range sources {
+		label := source.Path
+		if source.FD != "" {
+			label = fmt.Sprintf("%s (%s)", source.Path, source.FD)
+		}
+		labels = append(labels, label)
+		paths = append(paths, source.Path)
+	}
+	printLogTargets(labels)
+	return execTail(paths)
+}
+
+// tailProcFD tails a process's own stdout/stderr when no log file exists.
+// Linux exposes both through /proc; a process writing to a terminal or a pipe
+// has nothing to follow, and that is reported rather than guessed around.
+func tailProcFD(pid int) error {
+	paths := []string{}
+	labels := []string{}
+	for _, fd := range []struct {
+		path string
+		name string
+	}{
+		{fmt.Sprintf("/proc/%d/fd/1", pid), "stdout"},
+		{fmt.Sprintf("/proc/%d/fd/2", pid), "stderr"},
+	} {
+		if _, err := os.Stat(fd.path); err == nil {
+			paths = append(paths, fd.path)
+			labels = append(labels, fmt.Sprintf("%s (%s)", fd.path, fd.name))
 		}
 	}
 
@@ -80,26 +97,6 @@ func tailProcFD(pid int) error {
 				"  command > output.log 2>&1"))
 	}
 
-	// Print what we're tailing
-	for _, p := range paths {
-		name := "stdout"
-		if strings.HasSuffix(p, "/2") {
-			name = "stderr"
-		}
-		fmt.Println(display.Dim(fmt.Sprintf("  %s (%s)", p, name)))
-	}
-	fmt.Println()
-
-	tailPath, err := exec.LookPath("tail")
-	if err != nil {
-		return fmt.Errorf("tail not found in PATH")
-	}
-
-	args := []string{"tail"}
-	if logsFollow {
-		args = append(args, "-f")
-	}
-	args = append(args, paths...)
-
-	return syscall.Exec(tailPath, args, os.Environ())
+	printLogTargets(labels)
+	return execTail(paths)
 }
