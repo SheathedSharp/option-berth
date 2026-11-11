@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -216,6 +217,37 @@ func TestBusyTimeoutZeroMeansDefault(t *testing.T) {
 func TestIsCorruptionRejectsNoError(t *testing.T) {
 	if isCorruption(nil) {
 		t.Fatal("a nil error was called corruption")
+	}
+}
+
+// SQLite does not always attach a driver code to the error the opener sees; the
+// message remains the documented fallback. An unrelated failure stays a
+// failure rather than becoming a reset.
+func TestIsCorruptionRecognizesSQLitePhrases(t *testing.T) {
+	for _, phrase := range corruptionPhrases {
+		if !isCorruption(errors.New("query: " + phrase)) {
+			t.Errorf("%q was not recognized as corruption", phrase)
+		}
+	}
+	if isCorruption(errors.New("disk I/O error")) {
+		t.Error("an unrelated failure was called corruption")
+	}
+}
+
+// The owner-only permission check is not best-effort: when chmod refuses, the
+// store must close and report rather than keep a handle it could not secure.
+func TestOpenRefusesWhenThePermissionCheckFails(t *testing.T) {
+	previous := chmodFile
+	t.Cleanup(func() { chmodFile = previous })
+	chmodFile = func(string, os.FileMode) error { return os.ErrPermission }
+
+	s, err := Open(filepath.Join(t.TempDir(), "option-berth.db"))
+	if err == nil {
+		_ = s.Close()
+		t.Fatal("Open succeeded although the permission check failed")
+	}
+	if !strings.Contains(err.Error(), "securing") {
+		t.Fatalf("Open error = %v, want the securing failure", err)
 	}
 }
 

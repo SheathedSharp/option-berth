@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -165,4 +166,70 @@ func startStanding(t *testing.T, bin string) int {
 	}
 	t.Cleanup(halt)
 	return cmd.Process.Pid
+}
+
+// A cleanup that scanned the process table must not signal a pid that now
+// belongs to something else: the scan and the signal are separated by the
+// scheduler, and a leaked process can exit and have its pid reused in between.
+// KillIfMatches closes that window by re-reading the process before signalling.
+func TestKillIfMatchesRechecksTheProcessBeforeSignalling(t *testing.T) {
+	prevCommand, prevKill := processCommand, killProcess
+	t.Cleanup(func() { processCommand, killProcess = prevCommand, prevKill })
+
+	var killed []int
+	killProcess = func(pid int) error {
+		killed = append(killed, pid)
+		return nil
+	}
+	processCommand = func(int) (string, error) { return "old command line", nil }
+
+	if !KillIfMatches(4242, func(line string) bool { return line == "old command line" }) {
+		t.Fatal("a still-matching process was not signalled")
+	}
+	if len(killed) != 1 || killed[0] != 4242 {
+		t.Fatalf("killed = %v, want [4242]", killed)
+	}
+
+	processCommand = func(int) (string, error) { return "a different process", nil }
+	if KillIfMatches(4242, func(line string) bool { return line == "old command line" }) {
+		t.Fatal("a pid whose command changed was signalled")
+	}
+	if len(killed) != 1 {
+		t.Fatalf("killed = %v, want no second signal", killed)
+	}
+
+	if KillIfMatches(os.Getpid(), func(string) bool { return true }) {
+		t.Fatal("the test process itself was a kill candidate")
+	}
+	if KillIfMatches(1, func(string) bool { return true }) {
+		t.Fatal("pid 1 was a kill candidate")
+	}
+}
+
+// The re-read uses the same ps the scan uses, including the environment, and a
+// process this test owns is really stopped through it.
+func TestKillIfMatchesStopsARealProcess(t *testing.T) {
+	requiringPS(t)
+	if runtime.GOOS == "windows" {
+		t.Skip("the re-read reads ps")
+	}
+
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("starting the stand-in: %v", err)
+	}
+	pid := cmd.Process.Pid
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+
+	line, err := processCommand(pid)
+	if err != nil {
+		t.Fatalf("reading pid %d: %v", pid, err)
+	}
+	if !strings.Contains(line, "sleep") {
+		t.Fatalf("processCommand(%d) = %q, want the sleep command", pid, line)
+	}
+	if !KillIfMatches(pid, func(line string) bool { return strings.Contains(line, "sleep") }) {
+		t.Fatal("the scanned process was not signalled")
+	}
+	_ = cmd.Wait()
 }

@@ -94,8 +94,10 @@ func newEnv(t *testing.T) *env {
 
 // killLeakedServices kills anything still running with this env's socket in
 // its environment. The match is on the full socket path, so it cannot reach
-// another run's processes; Windows has no portable way to read another
-// process's environment and skips the sweep.
+// another run's processes; it is applied again immediately before each signal,
+// so a pid that exited and was reused in between is skipped rather than
+// stopped. Windows has no portable way to read another process's environment
+// and skips the sweep.
 func (e *env) killLeakedServices() {
 	if runtime.GOOS == "windows" {
 		return
@@ -105,7 +107,6 @@ func (e *env) killLeakedServices() {
 		return
 	}
 	needle := "BERTH_SOCKET=" + e.socket
-	self := os.Getpid()
 	for _, line := range strings.Split(string(out), "\n") {
 		if !strings.Contains(line, needle) {
 			continue
@@ -116,12 +117,12 @@ func (e *env) killLeakedServices() {
 			continue
 		}
 		pid, err := strconv.Atoi(line[:space])
-		if err != nil || pid == self {
+		if err != nil {
 			continue
 		}
-		if p, err := os.FindProcess(pid); err == nil {
-			_ = p.Kill()
-		}
+		testenv.KillIfMatches(pid, func(current string) bool {
+			return strings.Contains(current, needle)
+		})
 	}
 }
 
