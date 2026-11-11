@@ -24,15 +24,18 @@ type groupStopCapturer interface {
 	CaptureGroupStop(group, reason string) GroupStopCapture
 }
 
-func captureSilentGroupStop(rt *Runtime, snap state.Snapshot, group string, only map[string]bool, reason string, dryRun bool) ([]killer.Target, func(int), error) {
+// captureSilentGroupStop selects the runs that hold no port. only selects by
+// service name and expect by run identity; the caller never passes both, and
+// whichever is set narrows the list before any identity is captured.
+func captureSilentGroupStop(rt *Runtime, snap state.Snapshot, group string, only map[string]bool, expect map[string]string, reason string, dryRun bool) ([]killer.Target, func(int), error) {
 	reg := rt.Runs()
 	capturer, ok := reg.(groupStopCapturer)
 	if !ok {
 		// Preserve read-only compatibility. A legacy registry may list PIDs, but
 		// separate GroupRuns/RunStart calls cannot pin their generation atomically.
 		pids := reg.GroupPIDs(group)
-		if len(only) > 0 {
-			pids = groupPIDs(reg.GroupRuns(group), only)
+		if len(only) > 0 || len(expect) > 0 {
+			pids = groupPIDs(reg.GroupRuns(group), only, expect)
 		}
 		pids = runsWithoutPorts(snap, group, pids)
 		if len(pids) > 0 && !dryRun {
@@ -49,6 +52,9 @@ func captureSilentGroupStop(rt *Runtime, snap state.Snapshot, group string, only
 	pids := make([]int, 0, len(captured.Runs))
 	for _, run := range captured.Runs {
 		if len(only) > 0 && !only[run.Owner.Name] {
+			continue
+		}
+		if len(expect) > 0 && expect[run.Owner.Name] != run.Owner.ID {
 			continue
 		}
 		if run.Owner.RootPID <= 0 {

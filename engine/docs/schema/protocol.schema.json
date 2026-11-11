@@ -842,6 +842,12 @@
           },
           "type": "array"
         },
+        "expect_runs": {
+          "items": {
+            "$ref": "#/definitions/RunExpectation"
+          },
+          "type": "array"
+        },
         "release": {
           "type": "boolean"
         },
@@ -1681,6 +1687,21 @@
         "group",
         "name",
         "root_pid"
+      ]
+    },
+    "RunExpectation": {
+      "properties": {
+        "service": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "service",
+        "run_id"
       ]
     },
     "RunRecord": {
