@@ -1,6 +1,7 @@
 package groups
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
@@ -22,6 +23,22 @@ func (r runSet) Run(p state.Port) (state.Run, bool) {
 	return state.Run{ID: r.id, Group: r.group, Name: r.name, RootPID: p.PID}, true
 }
 
+func requireAttributedPort(t *testing.T, got, want state.Port) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("port %d = %#v, want %#v", want.Port, got, want)
+	}
+}
+
+func requireScannerStamp(t *testing.T, got ports.ListeningPort, group, source, runID, runGroup, tag string, rootPID int) {
+	t.Helper()
+	if got.Group != group || got.GroupSource != source || got.RunID != runID || got.RunGroup != runGroup || got.Tag != tag || got.RunRootPID != rootPID {
+		t.Errorf("scanner row = group %q source %q run %q/%q/%q pid %d, want %q/%q/%q/%q/%q/%d",
+			got.Group, got.GroupSource, got.RunID, got.RunGroup, got.Tag, got.RunRootPID,
+			group, source, runID, runGroup, tag, rootPID)
+	}
+}
+
 func TestAttributeWithAppliesTheRegistry(t *testing.T) {
 	pp := []ports.ListeningPort{
 		{Port: 3000, PID: 11, Process: "node", Command: "node server.js"},
@@ -31,25 +48,35 @@ func TestAttributeWithAppliesTheRegistry(t *testing.T) {
 	resolved, index := AttributeWith(pp,
 		runSet{port: 4000, id: "r1", group: "itest", name: "web"},
 		nil)
-
 	if index == nil {
 		t.Fatal("AttributeWith returned a nil index")
 	}
+	if len(index.Configs()) != 0 {
+		t.Errorf("index picked up %d configs, want none", len(index.Configs()))
+	}
+	if len(resolved) != 2 {
+		t.Fatalf("resolved %d ports, want 2", len(resolved))
+	}
+
 	// Nothing claims 3000: no registry answer, no config, no checkout.
-	if resolved[0].Group != nil {
-		t.Errorf("port 3000 group = %v, want nil", *resolved[0].Group)
-	}
-	if got := deref(resolved[1].Group); got != "itest" {
-		t.Errorf("port 4000 group = %q, want itest", got)
-	}
-	if resolved[1].GroupSource == nil || *resolved[1].GroupSource != state.SourceStart {
-		t.Errorf("port 4000 group_source = %v, want start", resolved[1].GroupSource)
-	}
+	group := "itest"
+	source := state.SourceStart
+	run := state.Run{ID: "r1", Group: "itest", Name: "web", RootPID: 12}
+	requireAttributedPort(t, resolved[0], state.Port{
+		Host: "localhost", Port: 3000, URL: "http://localhost:3000",
+		PID: 11, Process: "node", DisplayName: "server.js",
+		Command: "node server.js", Type: state.TypeUser,
+	})
+	requireAttributedPort(t, resolved[1], state.Port{
+		Host: "localhost", Port: 4000, URL: "http://localhost:4000",
+		PID: 12, Process: "python3", DisplayName: "web",
+		Command: "python3 -m http.server", Type: state.TypeUser,
+		Group: &group, GroupSource: &source, Run: &run,
+	})
 	// The scanner rows are written back too, so the direct-scan path sees the
 	// same attribution.
-	if pp[1].Group != "itest" || pp[1].GroupSource != "start" {
-		t.Errorf("scanner row = %q/%q, want itest/start", pp[1].Group, pp[1].GroupSource)
-	}
+	requireScannerStamp(t, pp[0], "", "", "", "", "", 0)
+	requireScannerStamp(t, pp[1], "itest", "start", "r1", "itest", "web", 12)
 }
 
 // TestAttributeWithPublishesTheRegistrysRun pins the invariant the daemon
@@ -63,20 +90,19 @@ func TestAttributeWithPublishesTheRegistrysRun(t *testing.T) {
 	}
 
 	resolved, _ := AttributeWith(pp, runSet{port: 4000, id: "r1", group: "itest", name: "web"}, nil)
-
-	if resolved[0].Run == nil {
-		t.Fatal("run is null; the registry's attribution never reached the row")
+	if len(resolved) != 1 {
+		t.Fatalf("resolved %d ports, want 1", len(resolved))
 	}
-	want := state.Run{ID: "r1", Group: "itest", Name: "web", RootPID: 12}
-	if *resolved[0].Run != want {
-		t.Errorf("run = %+v, want %+v", *resolved[0].Run, want)
-	}
-	if resolved[0].DisplayName != "web" {
-		t.Errorf("display_name = %q, want the name the run gave it", resolved[0].DisplayName)
-	}
-	if resolved[0].GroupSource == nil || *resolved[0].GroupSource != state.SourceStart {
-		t.Errorf("group_source = %v, want start", resolved[0].GroupSource)
-	}
+	group := "itest"
+	source := state.SourceStart
+	run := state.Run{ID: "r1", Group: "itest", Name: "web", RootPID: 12}
+	requireAttributedPort(t, resolved[0], state.Port{
+		Host: "localhost", Port: 4000, URL: "http://localhost:4000",
+		PID: 12, Process: "listener", DisplayName: "web",
+		Command: "/tmp/listener 4000", Type: state.TypeUser,
+		Group: &group, GroupSource: &source, Run: &run,
+	})
+	requireScannerStamp(t, pp[0], "itest", "start", "r1", "itest", "web", 12)
 }
 
 // TestAttributeWithKeepsStampedRunFieldsOnTheRow pins the PortRuns contract:
@@ -89,25 +115,35 @@ func TestAttributeWithKeepsStampedRunFieldsOnTheRow(t *testing.T) {
 	}
 
 	resolved, _ := AttributeWith(pp, PortRuns{}, nil)
-
-	if resolved[0].Run == nil || resolved[0].Run.Name != "web" || resolved[0].Run.RootPID != 9 {
-		t.Fatalf("run = %+v, want the stamped run", resolved[0].Run)
+	if len(resolved) != 1 {
+		t.Fatalf("resolved %d ports, want 1", len(resolved))
 	}
-	if got := deref(resolved[0].Group); got != "itest" {
-		t.Errorf("group = %q, want itest", got)
-	}
+	group := "itest"
+	source := state.SourceStart
+	run := state.Run{ID: "r1", Group: "itest", Name: "web", RootPID: 9}
+	requireAttributedPort(t, resolved[0], state.Port{
+		Host: "localhost", Port: 4000, URL: "http://localhost:4000",
+		PID: 12, Process: "listener", DisplayName: "web", Type: state.TypeUser,
+		Group: &group, GroupSource: &source, Run: &run,
+	})
+	requireScannerStamp(t, pp[0], "itest", "start", "r1", "itest", "web", 9)
 }
 
 func TestAttributeWithNilArgumentsIsAttributeWithoutTheWorkingDirectory(t *testing.T) {
 	pp := []ports.ListeningPort{{Port: 3000, PID: 11, Process: "node"}}
 	resolved, index := AttributeWith(pp, nil, nil)
-	if len(resolved) != 1 {
-		t.Fatalf("resolved %d ports, want 1", len(resolved))
-	}
-	if resolved[0].Group != nil {
-		t.Errorf("group = %v, want nil for a port with no cwd", *resolved[0].Group)
+	if index == nil {
+		t.Fatal("AttributeWith returned a nil index")
 	}
 	if len(index.Configs()) != 0 {
 		t.Errorf("index picked up %d configs, want none", len(index.Configs()))
 	}
+	if len(resolved) != 1 {
+		t.Fatalf("resolved %d ports, want 1", len(resolved))
+	}
+	requireAttributedPort(t, resolved[0], state.Port{
+		Host: "localhost", Port: 3000, URL: "http://localhost:3000",
+		PID: 11, Process: "node", DisplayName: "node", Type: state.TypeUser,
+	})
+	requireScannerStamp(t, pp[0], "", "", "", "", "", 0)
 }

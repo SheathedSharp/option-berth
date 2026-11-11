@@ -1,6 +1,7 @@
 package groups
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -25,91 +26,105 @@ func newCheckouts(t *testing.T, mainName, wtName string) checkouts {
 	return checkouts{main: main, wt: wt, admin: admin}
 }
 
+type checkoutWant struct {
+	root, main, worktree, head string
+	linked                     bool
+}
+
+func requireLocate(t *testing.T, dir string, want checkoutWant) {
+	t.Helper()
+	co, ok := Locate(dir)
+	if !ok {
+		t.Fatalf("Locate(%q) found no checkout", dir)
+	}
+	if co.Root != want.root || co.Main != want.main || co.Worktree != want.worktree || co.head != want.head || co.Linked() != want.linked {
+		t.Errorf("Locate(%q) = %#v linked=%v, want root %q main %q worktree %q head %q linked %v",
+			dir, co, co.Linked(), want.root, want.main, want.worktree, want.head, want.linked)
+	}
+}
+
+func requireNoCheckout(t *testing.T, dir string) {
+	t.Helper()
+	co, ok := Locate(dir)
+	if ok || co != (Checkout{}) {
+		t.Errorf("Locate(%q) = %+v, %v; want no checkout", dir, co, ok)
+	}
+}
+
 func TestLocate(t *testing.T) {
 	c := newCheckouts(t, "shop", "feat")
 	deep := mkdir(t, c.wt, "web", "src")
 
-	co, ok := Locate(mkdir(t, c.main, "api"))
-	if !ok || co.Root != c.main || co.Main != c.main || co.Linked() {
-		t.Fatalf("main checkout = %+v, %v", co, ok)
-	}
+	requireLocate(t, mkdir(t, c.main, "api"), checkoutWant{root: c.main, main: c.main, head: filepath.Join(c.main, ".git", "HEAD")})
+	requireLocate(t, deep, checkoutWant{root: c.wt, main: c.main, worktree: "feat", head: filepath.Join(c.admin, "HEAD"), linked: true})
 
-	co, ok = Locate(deep)
-	if !ok || co.Root != c.wt || co.Main != c.main || co.Worktree != "feat" || !co.Linked() {
-		t.Fatalf("worktree = %+v, %v", co, ok)
-	}
-
-	// A relative gitdir resolves against the worktree root.
 	rel := mkdir(t, filepath.Dir(c.wt), "relwt")
 	target, err := filepath.Rel(rel, filepath.Join(c.main, ".git", "worktrees", "relwt"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(rel, ".git"), "gitdir: "+target+"\n")
-	if co, ok := Locate(rel); !ok || co.Main != c.main || co.Worktree != "relwt" {
-		t.Fatalf("relative worktree = %+v, %v", co, ok)
-	}
+	requireLocate(t, rel, checkoutWant{root: rel, main: c.main, worktree: "relwt", head: filepath.Join(c.main, ".git", "worktrees", "relwt", "HEAD"), linked: true})
 
-	// A submodule's .git file points into .git/modules: it is its own main
-	// checkout, not a worktree of the superproject.
 	sub := mkdir(t, c.main, "vendor", "lib")
 	writeFile(t, filepath.Join(sub, ".git"), "gitdir: ../../.git/modules/lib\n")
-	if co, ok := Locate(sub); !ok || co.Root != sub || co.Main != sub || co.Linked() {
-		t.Fatalf("submodule = %+v, %v", co, ok)
-	}
+	requireLocate(t, sub, checkoutWant{root: sub, main: sub, head: filepath.Join(c.main, ".git", "modules", "lib", "HEAD")})
 
-	if _, ok := Locate(tempTree(t)); ok {
-		t.Fatal("found a checkout outside any repository")
-	}
-	if _, ok := Locate(""); ok {
-		t.Fatal("found a checkout for an empty path")
-	}
+	requireNoCheckout(t, tempTree(t))
+	requireNoCheckout(t, "")
 }
 
-// TestLocateAcceptsEverySpellingOfTheWorktree is the worktree half of the
-// Windows spellings test: with a trailing separator or a redundant `.`, a
-// worktree still names one root and one main checkout.
 func TestLocateAcceptsEverySpellingOfTheWorktree(t *testing.T) {
 	c := newCheckouts(t, "shop", "feat")
 	sep := string(filepath.Separator)
+	want := checkoutWant{root: c.wt, main: c.main, worktree: "feat", head: filepath.Join(c.admin, "HEAD"), linked: true}
 	for _, dir := range []string{c.wt, c.wt + sep, filepath.Join(c.wt, "."), filepath.Join(c.wt, "x", "..")} {
-		co, ok := Locate(dir)
-		if !ok || co.Root != c.wt || co.Main != c.main || co.Worktree != "feat" {
-			t.Errorf("Locate(%q) = %+v, %v", dir, co, ok)
-		}
+		requireLocate(t, dir, want)
 	}
 }
 
 func TestBranch(t *testing.T) {
 	c := newCheckouts(t, "shop", "feat")
 	x := NewIndex()
-	main, _ := Locate(c.main)
-	wt, _ := Locate(c.wt)
+	main, ok := Locate(c.main)
+	if !ok {
+		t.Fatal("Locate(main) found no checkout")
+	}
+	wt, ok := Locate(c.wt)
+	if !ok {
+		t.Fatal("Locate(worktree) found no checkout")
+	}
 
 	if got := x.Branch(main); got != "main" {
-		t.Errorf("main branch = %q", got)
+		t.Errorf("main branch = %q, want main", got)
 	}
 	if got := x.Branch(wt); got != "feature/x" {
-		t.Errorf("worktree branch = %q, want the HEAD in the main .git/worktrees/feat", got)
+		t.Errorf("worktree branch = %q, want feature/x from the admin HEAD", got)
 	}
 
-	// A checkout switch rewrites HEAD; the cache notices the new size.
 	writeFile(t, filepath.Join(c.admin, "HEAD"), "ref: refs/heads/fix\n")
 	if got := x.Branch(wt); got != "fix" {
-		t.Errorf("after switching, worktree branch = %q", got)
+		t.Errorf("after switching, worktree branch = %q, want fix", got)
 	}
-	// Detached.
+	// A same-length replacement must still be visible: length and mtime are not the contract.
+	writeFile(t, filepath.Join(c.admin, "HEAD"), "ref: refs/heads/dev\n")
+	if got := x.Branch(wt); got != "dev" {
+		t.Errorf("after a same-length switch, worktree branch = %q, want dev", got)
+	}
+
 	writeFile(t, filepath.Join(c.admin, "HEAD"), "4b825dc642cb6eb9a060e54bf8d69288fbee4904\n")
 	if got := x.Branch(wt); got != "" {
 		t.Errorf("detached HEAD branch = %q, want empty", got)
 	}
 
-	// A checkout with no readable HEAD, like the resolver fixtures.
 	bare := mkdir(t, tempTree(t), "nohead")
 	mkdir(t, bare, ".git")
-	co, _ := Locate(bare)
+	co, ok := Locate(bare)
+	if !ok {
+		t.Fatal("Locate(nohead) found no checkout")
+	}
 	if got := x.Branch(co); got != "" {
-		t.Errorf("branch without HEAD = %q", got)
+		t.Errorf("branch without HEAD = %q, want empty", got)
 	}
 }
 
@@ -139,193 +154,265 @@ func resolveOneAt(t *testing.T, x *Index, p state.Port) (string, state.GroupSour
 
 // TestWorktreeNaming: every linked worktree is
 // `<project>@<worktree>`, and only the main checkout decides the project.
+// namingExpectation describes one resolver observation; an empty source leaves
+// source unconstrained only where the previous test checked the name alone.
+type namingExpectation struct {
+	checkout string
+	port     int
+	group    string
+	source   state.GroupSource
+}
+
+func checkNaming(t *testing.T, x *Index, directories map[string]string, expected []namingExpectation) {
+	t.Helper()
+	for _, want := range expected {
+		got, source := resolveOneAt(t, x, nativePort(want.port, directories[want.checkout]))
+		if got != want.group {
+			t.Errorf("%s:%d group = %q, want %q", want.checkout, want.port, got, want.group)
+		}
+		if want.source != "" && source != want.source {
+			t.Errorf("%s:%d source = %s, want %s", want.checkout, want.port, source, want.source)
+		}
+	}
+}
+
 func TestWorktreeNaming(t *testing.T) {
-	t.Run("no config anywhere", func(t *testing.T) {
-		c := newCheckouts(t, "app", "feat")
-		x := NewIndex()
-		x.Observe(c.wt)
-		if g, s := resolveOneAt(t, x, nativePort(3000, c.main)); g != "app" || s != state.SourceAuto {
-			t.Errorf("main = %q/%s", g, s)
-		}
-		if g, s := resolveOneAt(t, x, nativePort(3001, c.wt)); g != "app@feat" || s != state.SourceAuto {
-			t.Errorf("worktree = %q/%s", g, s)
-		}
-	})
-
-	t.Run("a worktree's stale copy of the config never names it", func(t *testing.T) {
-		c := newCheckouts(t, "shop-dir", "feat")
-		writeFile(t, filepath.Join(c.main, ConfigName), "name: shop\nservices:\n  - name: api\n    port: 8000\n")
-		writeFile(t, filepath.Join(c.wt, ConfigName), "name: old-shop\nservices:\n  - name: api\n    port: 8100\n")
-		x := NewIndex()
-		x.Observe(c.wt)
-
-		if g, s := resolveOneAt(t, x, nativePort(8000, c.main)); g != "shop" || s != state.SourceFile {
-			t.Errorf("main = %q/%s", g, s)
-		}
-		// Claimed by the worktree's own file, named by the main checkout's.
-		if g, s := resolveOneAt(t, x, nativePort(8100, c.wt)); g != "shop@feat" || s != state.SourceFile {
-			t.Errorf("worktree port the copy claims = %q/%s", g, s)
-		}
-		if g, s := resolveOneAt(t, x, nativePort(9999, c.wt)); g != "shop@feat" || s != state.SourceFile {
-			t.Errorf("worktree port nothing claims = %q/%s", g, s)
-		}
-	})
-
-	t.Run("a copy with the same name as main is still its own group", func(t *testing.T) {
-		c := newCheckouts(t, "shop", "feat")
-		cfg := "name: shop\nservices:\n  - name: api\n    port: 8000\n"
-		writeFile(t, filepath.Join(c.main, ConfigName), cfg)
-		writeFile(t, filepath.Join(c.wt, ConfigName), cfg)
-		x := NewIndex()
-		x.Observe(c.main)
-		x.Observe(c.wt)
-		// Both checkouts run the api on 8000; each in its own group.
-		if g, _ := resolveOneAt(t, x, nativePort(8000, c.main)); g != "shop" {
-			t.Errorf("main = %q", g)
-		}
-		if g, _ := resolveOneAt(t, x, nativePort(8000, c.wt)); g != "shop@feat" {
-			t.Errorf("worktree = %q", g)
-		}
-	})
-
+	manifest := func(name string, port int) string {
+		return fmt.Sprintf("name: %s\nservices:\n  - name: api\n    port: %d\n", name, port)
+	}
+	cases := []struct {
+		title, directory, mainConfig, linkedConfig string
+		observeMain                                bool
+		expected                                   []namingExpectation
+	}{
+		{title: "no config anywhere", directory: "app", expected: []namingExpectation{
+			{"main", 3000, "app", state.SourceAuto}, {"linked", 3001, "app@feat", state.SourceAuto},
+		}},
+		{title: "a worktree's stale copy of the config never names it", directory: "shop-dir",
+			mainConfig: manifest("shop", 8000), linkedConfig: manifest("old-shop", 8100), expected: []namingExpectation{
+				{"main", 8000, "shop", state.SourceFile}, {"linked", 8100, "shop@feat", state.SourceFile},
+				{"linked", 9999, "shop@feat", state.SourceFile},
+			}},
+		{title: "a copy with the same name as main is still its own group", directory: "shop",
+			mainConfig: manifest("shop", 8000), linkedConfig: manifest("shop", 8000), observeMain: true, expected: []namingExpectation{
+				{"main", 8000, "shop", ""}, {"linked", 8000, "shop@feat", ""},
+			}},
+	}
+	for _, scenario := range cases {
+		t.Run(scenario.title, func(t *testing.T) {
+			c := newCheckouts(t, scenario.directory, "feat")
+			directories := map[string]string{"main": c.main, "linked": c.wt}
+			for role, body := range map[string]string{"main": scenario.mainConfig, "linked": scenario.linkedConfig} {
+				if body != "" {
+					writeFile(t, filepath.Join(directories[role], ConfigName), body)
+				}
+			}
+			x := NewIndex()
+			// Preserve the scenario's discovery order, independently of its
+			// human-readable title: main first only for the same-name copy.
+			if scenario.observeMain {
+				x.Observe(c.main)
+			}
+			x.Observe(c.wt)
+			checkNaming(t, x, directories, scenario.expected)
+		})
+	}
 	t.Run("a worktree kept inside the main checkout", func(t *testing.T) {
-		base := tempTree(t)
-		main := mkdir(t, base, "shop")
-		mkdir(t, main, ".git")
-		admin := filepath.Join(main, ".git", "worktrees", "feat")
-		mkdir(t, admin)
+		main := mkdir(t, tempTree(t), "shop")
+		admin := mkdir(t, main, ".git", "worktrees", "feat")
 		wt := mkdir(t, main, ".claude", "worktrees", "feat")
 		writeFile(t, filepath.Join(wt, ".git"), "gitdir: "+admin+"\n")
 		writeFile(t, filepath.Join(main, ConfigName), "name: shop\nports: [3000]\n")
 		x := NewIndex()
 		x.Observe(main)
 		x.Observe(wt)
-
-		// The main checkout's file claims 3000 and sits above the worktree,
-		// but it does not reach across into it.
-		if g, s := resolveOneAt(t, x, nativePort(3000, wt)); g != "shop@feat" || s != state.SourceAuto {
-			t.Errorf("worktree port = %q/%s, want shop@feat/auto", g, s)
-		}
-		if g, _ := resolveOneAt(t, x, nativePort(3000, main)); g != "shop" {
-			t.Errorf("main port = %q", g)
-		}
+		checkNaming(t, x, map[string]string{"main": main, "linked": wt}, []namingExpectation{
+			{"linked", 3000, "shop@feat", state.SourceAuto}, {"main", 3000, "shop", ""},
+		})
 	})
-
 	t.Run("an alias names the project and every worktree", func(t *testing.T) {
 		c := newCheckouts(t, "app", "feat")
 		x := NewIndex()
 		x.Observe(c.wt)
+		directories := map[string]string{"main": c.main, "linked": c.wt}
 		x.SetAliases(map[string]string{c.main: "store"})
-		if g, _ := resolveOneAt(t, x, nativePort(3000, c.main)); g != "store" {
-			t.Errorf("main = %q", g)
-		}
-		if g, _ := resolveOneAt(t, x, nativePort(3001, c.wt)); g != "store@feat" {
-			t.Errorf("worktree = %q", g)
-		}
+		checkNaming(t, x, directories, []namingExpectation{{"main", 3000, "store", ""}, {"linked", 3001, "store@feat", ""}})
 		x.SetAliases(nil)
-		if g, _ := resolveOneAt(t, x, nativePort(3001, c.wt)); g != "app@feat" {
-			t.Errorf("worktree after clearing = %q", g)
-		}
+		checkNaming(t, x, directories, []namingExpectation{{"linked", 3001, "app@feat", ""}})
 	})
-
 	t.Run("submodules keep their own name", func(t *testing.T) {
 		c := newCheckouts(t, "shop", "feat")
 		sub := mkdir(t, c.main, "vendor", "lib")
 		writeFile(t, filepath.Join(sub, ".git"), "gitdir: ../../.git/modules/lib\n")
 		x := NewIndex()
 		x.Observe(sub)
-		if g, _ := resolveOneAt(t, x, nativePort(4000, sub)); g != "lib" {
-			t.Errorf("submodule = %q, want lib", g)
-		}
+		checkNaming(t, x, map[string]string{"submodule": sub}, []namingExpectation{{"submodule", 4000, "lib", ""}})
 	})
 }
 
-// TestRunGroupFollowsTheCheckout: a run recorded under the project's own name
-// joins its checkout's group; one started with a --group of its own keeps it.
 func TestRunGroupFollowsTheCheckout(t *testing.T) {
 	c := newCheckouts(t, "app", "feat")
 	x := NewIndex()
 	x.Observe(c.wt)
 	runs := fakeRuns{
-		5000: {group: "app", name: "web"},      // a pre-5A.6 client in the worktree
-		5001: {group: "app@feat", name: "api"}, // the current spelling
-		5002: {group: "custom", name: "job"},   // --group custom
-		5003: {group: "app", name: "web"},      // in the main checkout
+		5000: {group: "app", name: "web"},
+		5001: {group: "app@feat", name: "api"},
+		5002: {group: "custom", name: "job"},
+		5003: {group: "app", name: "web"},
 	}
-	pp := Resolve([]state.Port{
-		nativePort(5000, c.wt), nativePort(5001, c.wt), nativePort(5002, c.wt), nativePort(5003, c.main),
-	}, runs, x)
-	want := []string{"app@feat", "app@feat", "custom", "app"}
-	for i, p := range pp {
-		if deref(p.Group) != want[i] {
-			t.Errorf("port %d group = %q, want %q", p.Port, deref(p.Group), want[i])
+
+	type followWant struct {
+		port   int
+		cwd    string
+		group  string
+		root   string
+		source state.GroupSource
+	}
+	assertFollow := func(t *testing.T, ports []state.Port, expected []followWant) {
+		t.Helper()
+		got := Resolve(ports, runs, x)
+		if len(got) != len(expected) {
+			t.Fatalf("Resolve returned %d ports, want %d", len(got), len(expected))
+		}
+		for i, want := range expected {
+			g, src, root := deref(got[i].Group), state.GroupSource(""), deref(got[i].ProjectRoot)
+			if got[i].GroupSource != nil {
+				src = *got[i].GroupSource
+			}
+			if got[i].Port != want.port || got[i].Cwd != want.cwd || g != want.group || src != want.source || root != want.root {
+				t.Errorf("got port %d cwd=%q group=%q source=%s root=%q, want %d %q %q %s %q",
+					got[i].Port, got[i].Cwd, g, src, root, want.port, want.cwd, want.group, want.source, want.root)
+			}
 		}
 	}
 
-	// After an alias, both spellings of the old name move with the project.
+	assertFollow(t, []state.Port{
+		nativePort(5000, c.wt), nativePort(5001, c.wt), nativePort(5002, c.wt), nativePort(5003, c.main),
+	}, []followWant{
+		{5000, c.wt, "app@feat", c.wt, state.SourceStart},
+		{5001, c.wt, "app@feat", c.wt, state.SourceStart},
+		{5002, c.wt, "custom", c.wt, state.SourceStart},
+		{5003, c.main, "app", c.main, state.SourceStart},
+	})
+
 	x.SetAliases(map[string]string{c.main: "store"})
-	pp = Resolve([]state.Port{nativePort(5001, c.wt), nativePort(5003, c.main)}, runs, x)
-	if deref(pp[0].Group) != "store@feat" || deref(pp[1].Group) != "store" {
-		t.Errorf("aliased run groups = %q, %q", deref(pp[0].Group), deref(pp[1].Group))
+	assertFollow(t, []state.Port{nativePort(5001, c.wt), nativePort(5003, c.main)}, []followWant{
+		{5001, c.wt, "store@feat", c.wt, state.SourceStart},
+		{5003, c.main, "store", c.main, state.SourceStart},
+	})
+}
+
+func groupsByName(t *testing.T, gg []state.Group) map[string]state.Group {
+	t.Helper()
+	byName := map[string]state.Group{}
+	for _, g := range gg {
+		if _, dup := byName[g.Name]; dup {
+			t.Fatalf("two groups named %q in %v", g.Name, groupNames(gg))
+		}
+		byName[g.Name] = g
+	}
+	return byName
+}
+
+func requireCheckoutGroup(t *testing.T, g state.Group, name, repo, worktree, branch, root, config, token string, running bool) {
+	t.Helper()
+	if g.Name != name || g.Repo != repo || g.Worktree != worktree || g.Branch != branch {
+		t.Errorf("%s fields = name %q repo %q worktree %q branch %q, want %q / %q / %q / %q",
+			name, g.Name, g.Repo, g.Worktree, g.Branch, name, repo, worktree, branch)
+	}
+	if g.Identity != token {
+		t.Errorf("%s identity = %q, want %q", name, g.Identity, token)
+	}
+	if g.Source != state.SourceFile {
+		t.Errorf("%s source = %s, want file", name, g.Source)
+	}
+	if g.RootDir == nil || *g.RootDir != root {
+		t.Errorf("%s root_dir = %v, want %s", name, g.RootDir, root)
+	}
+	if g.ConfigPath == nil || *g.ConfigPath != config {
+		t.Errorf("%s config_path = %v, want %s", name, g.ConfigPath, config)
+	}
+	wantStatus := "stopped"
+	if running {
+		wantStatus = "running"
+	}
+	if g.Status != wantStatus {
+		t.Errorf("%s status = %q, want %q", name, g.Status, wantStatus)
+	}
+	if running {
+		if len(g.Members) != 1 || g.Members[0] != 8000 || g.RunningServices != 1 {
+			t.Errorf("%s members/running = %v / %d, want [8000] / 1", name, g.Members, g.RunningServices)
+		}
+	} else if len(g.Members) != 0 || g.RunningServices != 0 {
+		t.Errorf("%s stopped members/running = %v / %d, want empty / 0", name, g.Members, g.RunningServices)
+	}
+	if len(g.Services) != 1 || g.Services[0].Name != "api" || g.Services[0].Running != running {
+		t.Errorf("%s services = %+v, want api running=%v", name, g.Services, running)
 	}
 }
 
-// TestGroupsPublishEachCheckoutOnce is the groups.list half: the main checkout
-// and the worktree are two groups with distinct names — even stopped ones
-// known only from the index — and each says which project, worktree and branch
-// it is.
 func TestGroupsPublishEachCheckoutOnce(t *testing.T) {
 	c := newCheckouts(t, "shop-dir", "feat")
 	writeFile(t, filepath.Join(c.main, ConfigName), "name: shop\nservices:\n  - name: api\n    port: 8000\n")
 	writeFile(t, filepath.Join(c.wt, ConfigName), "name: shop\nservices:\n  - name: api\n    port: 8000\n")
 
 	for _, running := range []bool{false, true} {
-		x := NewIndex()
-		x.Observe(c.wt)
-		var pp []state.Port
-		if running {
-			pp = Resolve([]state.Port{nativePort(8000, c.wt)}, NoRuns{}, x)
-		}
-		gg := Groups(pp, x)
-
-		byName := map[string]state.Group{}
-		for _, g := range gg {
-			if _, dup := byName[g.Name]; dup {
-				t.Fatalf("running=%v: two groups named %q in %+v", running, g.Name, gg)
+		t.Run(fmt.Sprintf("running=%v", running), func(t *testing.T) {
+			x := NewIndex()
+			x.Observe(c.wt)
+			var pp []state.Port
+			if running {
+				pp = Resolve([]state.Port{nativePort(8000, c.wt)}, NoRuns{}, x)
 			}
-			byName[g.Name] = g
-		}
-		main, ok := byName["shop"]
-		if !ok {
-			t.Fatalf("running=%v: no main group in %v", running, groupNames(gg))
-		}
-		wt, ok := byName["shop@feat"]
-		if !ok {
-			t.Fatalf("running=%v: no worktree group in %v", running, groupNames(gg))
-		}
-		if main.Repo != "shop" || main.Worktree != "" || main.Branch != "main" {
-			t.Errorf("main checkout fields = repo %q worktree %q branch %q", main.Repo, main.Worktree, main.Branch)
-		}
-		if wt.Repo != "shop" || wt.Worktree != "feat" || wt.Branch != "feature/x" {
-			t.Errorf("worktree fields = repo %q worktree %q branch %q", wt.Repo, wt.Worktree, wt.Branch)
-		}
-		if wt.ConfigPath == nil || *wt.ConfigPath != filepath.Join(c.wt, ConfigName) {
-			t.Errorf("worktree config_path = %v, want its own copy", wt.ConfigPath)
-		}
-		if main.Identity != WorktreeTokenFor(c.main) || wt.Identity != WorktreeTokenFor(c.wt) {
-			t.Errorf("identity = %q / %q, want %q / %q",
-				main.Identity, wt.Identity, WorktreeTokenFor(c.main), WorktreeTokenFor(c.wt))
-		}
-		if running && (len(wt.Services) != 1 || !wt.Services[0].Running || len(main.Members) != 0) {
-			t.Errorf("the worktree's api is the worktree's: main %+v, worktree %+v", main, wt)
-		}
+			byName := groupsByName(t, Groups(pp, x))
+			main, ok := byName["shop"]
+			if !ok {
+				t.Fatalf("no main group in %v", groupNames(mapValues(byName)))
+			}
+			wt, ok := byName["shop@feat"]
+			if !ok {
+				t.Fatalf("no worktree group in %v", groupNames(mapValues(byName)))
+			}
+			requireCheckoutGroup(t, main, "shop", "shop", "", "main", c.main, filepath.Join(c.main, ConfigName), WorktreeTokenFor(c.main), false)
+			requireCheckoutGroup(t, wt, "shop@feat", "shop", "feat", "feature/x", c.wt, filepath.Join(c.wt, ConfigName), WorktreeTokenFor(c.wt), running)
+		})
 	}
+}
+
+func mapValues(byName map[string]state.Group) []state.Group {
+	out := make([]state.Group, 0, len(byName))
+	for _, g := range byName {
+		out = append(out, g)
+	}
+	return out
 }
 
 func TestGroupsFieldsForAGroupThatIsNotACheckout(t *testing.T) {
 	gg := Groups(Resolve([]state.Port{composePort(5433, "loose", "db")}, NoRuns{}, NewIndex()), NewIndex())
-	if len(gg) != 1 || gg[0].Repo != "loose" || gg[0].Worktree != "" || gg[0].Branch != "" {
-		t.Fatalf("groups = %+v", gg)
+	if len(gg) != 1 {
+		t.Fatalf("len(groups) = %d, want 1", len(gg))
+	}
+	g := gg[0]
+	if g.Name != "loose" || g.Repo != "loose" || g.Worktree != "" || g.Branch != "" || g.Identity != "" {
+		t.Errorf("non-checkout group = %+v, want name and repo loose with empty worktree/branch/identity", g)
+	}
+	if g.Source != state.SourceAuto {
+		t.Errorf("source = %s, want auto", g.Source)
+	}
+	if g.Status != "running" {
+		t.Errorf("status = %q, want running", g.Status)
+	}
+	if g.RootDir != nil || g.ConfigPath != nil {
+		t.Errorf("root_dir/config_path = %v / %v, want nil", g.RootDir, g.ConfigPath)
+	}
+	if g.Host != "" || g.Resources != nil {
+		t.Errorf("host/resources = %q / %v, want empty / nil", g.Host, g.Resources)
+	}
+	if len(g.Members) != 1 || g.Members[0] != 5433 {
+		t.Errorf("members = %v, want [5433]", g.Members)
+	}
+	if len(g.Services) != 0 || len(g.Machine) != 0 || g.RunningServices != 0 {
+		t.Errorf("services/machine/running = %+v / %+v / %d, want empty / empty / 0", g.Services, g.Machine, g.RunningServices)
 	}
 }
 
@@ -336,11 +423,19 @@ func TestNamedMatchesTheGroupNotTheFile(t *testing.T) {
 	x := NewIndex()
 	x.Observe(c.wt)
 
-	if cfg, ok := x.Named("shop"); !ok || cfg.Dir != c.main {
-		t.Errorf("Named(shop) = %+v, %v; want the main checkout's file", cfg, ok)
+	cfg, ok := x.Named("shop")
+	if !ok || cfg == nil || cfg.Name != "shop" || cfg.Dir != c.main || cfg.Path != filepath.Join(c.main, ConfigName) {
+		t.Errorf("Named(shop) = %+v, %v; want name shop in the main checkout's file", cfg, ok)
 	}
-	if cfg, ok := x.Named("shop@feat"); !ok || cfg.Dir != c.wt {
-		t.Errorf("Named(shop@feat) = %+v, %v; want the worktree's copy", cfg, ok)
+	cfg, ok = x.Named("shop@feat")
+	if !ok || cfg == nil || cfg.Name != "shop" || cfg.Dir != c.wt || cfg.Path != filepath.Join(c.wt, ConfigName) {
+		t.Errorf("Named(shop@feat) = %+v, %v; want name shop (the file's name) at the worktree's copy", cfg, ok)
+	}
+	if cfg, ok := x.Named(""); ok || cfg != nil {
+		t.Errorf("Named(\"\") = %+v, %v; want not found", cfg, ok)
+	}
+	if cfg, ok := x.Named("no-such"); ok || cfg != nil {
+		t.Errorf("Named(no-such) = %+v, %v; want not found", cfg, ok)
 	}
 }
 
