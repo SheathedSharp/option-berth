@@ -5,40 +5,131 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
+
+// gitProjects is a disposable parent with named checkouts. "base" is the
+// parent itself, which must stay outside every repository boundary.
+func gitProjects(t *testing.T, names ...string) map[string]string {
+	t.Helper()
+	base := tempTree(t)
+	dirs := map[string]string{"base": base}
+	for _, name := range names {
+		dir := mkdir(t, base, name)
+		mkdir(t, dir, ".git")
+		dirs[name] = dir
+	}
+	return dirs
+}
+
+func writeManifests(t *testing.T, dirs map[string]string, files map[string]map[string]string) {
+	t.Helper()
+	for role, named := range files {
+		dir, ok := dirs[role]
+		if !ok {
+			t.Fatalf("unknown layout role %q", role)
+		}
+		for name, body := range named {
+			writeFile(t, filepath.Join(dir, name), body)
+		}
+	}
+}
+
+func observeRoles(t *testing.T, dirs map[string]string, roles ...string) *Index {
+	t.Helper()
+	x := NewIndex()
+	for _, role := range roles {
+		dir, ok := dirs[role]
+		if !ok {
+			t.Fatalf("unknown observe role %q", role)
+		}
+		x.Observe(dir)
+	}
+	return x
+}
+
+func assertManifestName(t *testing.T, cfg *Config, want string) {
+	t.Helper()
+	if want == "" {
+		if cfg != nil {
+			t.Fatalf("got %+v, want no manifest", cfg)
+		}
+		return
+	}
+	if cfg == nil || cfg.Name != want {
+		t.Fatalf("got %+v, want name %q", cfg, want)
+	}
+}
+
+func assertAtName(t *testing.T, x *Index, dir, want string) {
+	t.Helper()
+	assertManifestName(t, x.At(dir), want)
+}
+
+func assertNearestName(t *testing.T, x *Index, dir, want string) {
+	t.Helper()
+	assertManifestName(t, x.Nearest(dir), want)
+}
+
+// claimedPort is the caller-visible result of MatchPort: whether a unique
+// declaration owns the port, which project it is, and which service declared
+// it. A top-level ports: entry has an empty service.
+type claimedPort struct {
+	port    int
+	cwd     string
+	ok      bool
+	name    string
+	dir     string
+	service string
+}
+
+func assertClaims(t *testing.T, x *Index, claims ...claimedPort) {
+	t.Helper()
+	for _, want := range claims {
+		cfg, svc, ok := x.MatchPort(state.Port{Port: want.port, Cwd: want.cwd})
+		gotName, gotDir := "", ""
+		if cfg != nil {
+			gotName, gotDir = cfg.Name, cfg.Dir
+		}
+		if ok != want.ok || gotName != want.name || svc != want.service || (want.dir != "" && gotDir != want.dir) {
+			t.Fatalf("MatchPort(%d, %q) = name %q dir %q service %q ok=%v, want name %q dir %q service %q ok=%v",
+				want.port, want.cwd, gotName, gotDir, svc, ok, want.name, want.dir, want.service, want.ok)
+		}
+	}
+}
+
+func observeNamedFiles(t *testing.T, files map[string]string) (string, *Index) {
+	t.Helper()
+	dirs := gitProjects(t, "repo")
+	named := map[string]string{}
+	for name, body := range files {
+		named[name] = body
+	}
+	writeManifests(t, dirs, map[string]map[string]string{"repo": named})
+	return dirs["repo"], observeRoles(t, dirs, "repo")
+}
 
 // TestIndexReprobesADirectoryAfterManifestAppears pins the invalidation rule
 // from decision 0042: "no manifest here" is only valid until the directory's
 // entries change. A manifest written into an already-observed directory must
 // be found by the next observe, not stay invisible for the index's lifetime.
 func TestIndexReprobesADirectoryAfterManifestAppears(t *testing.T) {
-	base := tempTree(t)
-	repo := mkdir(t, base, "repo")
-	mkdir(t, repo, ".git")
-	deep := mkdir(t, repo, "services", "api")
-
-	x := NewIndex()
-	x.Observe(deep)
+	dirs := gitProjects(t, "repo")
+	deep := mkdir(t, dirs["repo"], "services", "api")
+	dirs["deep"] = deep
+	x := observeRoles(t, dirs, "deep")
 	if len(x.Configs()) != 0 {
 		t.Fatalf("configs before the manifest existed = %d, want 0", len(x.Configs()))
 	}
-
-	// The directory's mtime is the signal; a filesystem with coarse stamps
-	// needs the entry's time to actually move.
-	time.Sleep(10 * time.Millisecond)
-	writeFile(t, filepath.Join(repo, ConfigName), "name: repo\n")
-
+	// Appearance is a new selected path and new bytes, not a timestamp tick.
+	writeManifests(t, dirs, map[string]map[string]string{"repo": {ConfigName: "name: repo\n"}})
 	x.Observe(deep)
 	got := x.Configs()
 	if len(got) != 1 || got[0].Name != "repo" {
 		t.Fatalf("configs after the manifest = %+v, want the repo config", got)
 	}
-	if cfg := x.Nearest(deep); cfg == nil || cfg.Name != "repo" {
-		t.Fatalf("Nearest(%q) = %+v, want the repo config", deep, cfg)
-	}
+	assertNearestName(t, x, deep, "repo")
 }
 
 // Empty lists keep the shape their callers were written against: Configs and
@@ -61,68 +152,45 @@ func TestEmptyIndexListsKeepTheirContract(t *testing.T) {
 }
 
 func TestIndexObserveWalksUpToTheGitRoot(t *testing.T) {
-	base := tempTree(t)
-	repo := mkdir(t, base, "repo")
-	mkdir(t, repo, ".git")
-	deep := mkdir(t, repo, "services", "api")
-	writeFile(t, filepath.Join(repo, ConfigName), "name: repo\n")
-	// A config above the repository must not be picked up.
-	writeFile(t, filepath.Join(base, ConfigName), "name: outer\n")
-
-	x := NewIndex()
-	x.Observe(deep)
-
-	if cfg := x.Nearest(deep); cfg == nil || cfg.Name != "repo" {
-		t.Fatalf("Nearest(%q) = %+v, want the repo config", deep, cfg)
-	}
-	if x.At(base) != nil {
-		t.Error("Observe walked past the git root")
-	}
+	dirs := gitProjects(t, "repo")
+	dirs["deep"] = mkdir(t, dirs["repo"], "services", "api")
+	writeManifests(t, dirs, map[string]map[string]string{
+		"repo": {ConfigName: "name: repo\n"},
+		"base": {ConfigName: "name: outer\n"},
+	})
+	x := observeRoles(t, dirs, "deep")
+	assertNearestName(t, x, dirs["deep"], "repo")
+	assertAtName(t, x, dirs["base"], "")
 }
 
 func TestIndexObserveOutsideARepoOnlyLooksAtTheDirectory(t *testing.T) {
 	base := tempTree(t)
-	dir := mkdir(t, base, "loose")
-	writeFile(t, filepath.Join(dir, ConfigName), "name: loose\n")
-	writeFile(t, filepath.Join(base, ConfigName), "name: outer\n")
-
-	x := NewIndex()
-	x.Observe(dir)
-	if cfg := x.At(dir); cfg == nil || cfg.Name != "loose" {
-		t.Fatalf("At(%q) = %+v", dir, cfg)
-	}
-	if x.At(base) != nil {
-		t.Error("Observe walked up outside a repository")
-	}
+	dirs := map[string]string{"base": base, "loose": mkdir(t, base, "loose")}
+	writeManifests(t, dirs, map[string]map[string]string{
+		"loose": {ConfigName: "name: loose\n"},
+		"base":  {ConfigName: "name: outer\n"},
+	})
+	x := observeRoles(t, dirs, "loose")
+	assertAtName(t, x, dirs["loose"], "loose")
+	assertAtName(t, x, dirs["base"], "")
 }
 
 func TestIndexDeepestConfigWins(t *testing.T) {
-	base := tempTree(t)
-	repo := mkdir(t, base, "repo")
-	mkdir(t, repo, ".git")
-	inner := mkdir(t, repo, "frontend")
-	writeFile(t, filepath.Join(repo, ConfigName), "name: outer\nservices:\n  - name: api\n    port: 8000\n")
-	writeFile(t, filepath.Join(inner, ConfigName), "name: inner\nservices:\n  - name: web\n    port: 8000\n")
-
-	x := NewIndex()
-	x.Observe(inner)
-
-	cfg, svc, ok := x.MatchPort(state.Port{Port: 8000, Cwd: inner})
-	if !ok || cfg.Name != "inner" || svc != "web" {
-		t.Fatalf("MatchPort = (%v, %q, %v), want the inner config", cfg, svc, ok)
-	}
-	cfg, svc, ok = x.MatchPort(state.Port{Port: 8000, Cwd: repo})
-	if !ok || cfg.Name != "outer" || svc != "api" {
-		t.Fatalf("MatchPort from the repo root = (%v, %q, %v)", cfg, svc, ok)
-	}
-	// Two configs claim 8000, and with no cwd there is nothing to tell them
-	// apart: an ambiguous claim is not a group.
-	if _, _, ok := x.MatchPort(state.Port{Port: 8000}); ok {
-		t.Error("a port with no cwd must not pick between two configs that both claim it")
-	}
-	if _, _, ok := x.MatchPort(state.Port{Port: 9999, Cwd: inner}); ok {
-		t.Error("an unclaimed port must not match a config")
-	}
+	dirs := gitProjects(t, "repo")
+	dirs["inner"] = mkdir(t, dirs["repo"], "frontend")
+	writeManifests(t, dirs, map[string]map[string]string{
+		"repo":  {ConfigName: "name: outer\nservices:\n  - name: api\n    port: 8000\n"},
+		"inner": {ConfigName: "name: inner\nservices:\n  - name: web\n    port: 8000\n"},
+	})
+	x := observeRoles(t, dirs, "inner")
+	assertClaims(t, x,
+		claimedPort{port: 8000, cwd: dirs["inner"], ok: true, name: "inner", service: "web"},
+		claimedPort{port: 8000, cwd: dirs["repo"], ok: true, name: "outer", service: "api"},
+		// Two configs claim 8000, and with no cwd there is nothing to tell them
+		// apart: an ambiguous claim is not a group.
+		claimedPort{port: 8000, ok: false},
+		claimedPort{port: 9999, cwd: dirs["inner"], ok: false},
+	)
 }
 
 // TestIndexMatchesADeclaredPortWithoutACwd is the Windows gap: the scanner has
@@ -131,27 +199,16 @@ func TestIndexDeepestConfigWins(t *testing.T) {
 // and the group has to form — otherwise `oberth up` starts a group nothing ever
 // joins.
 func TestIndexMatchesADeclaredPortWithoutACwd(t *testing.T) {
-	base := tempTree(t)
-	repo := mkdir(t, base, "repo")
-	mkdir(t, repo, ".git")
-	writeFile(t, filepath.Join(repo, ConfigName),
-		"name: demo\nservices:\n  - name: api\n    port: 8000\nports: [8100]\n")
-
-	x := NewIndex()
-	x.Observe(repo)
-
-	cfg, svc, ok := x.MatchPort(state.Port{Port: 8000})
-	if !ok || cfg.Name != "demo" || svc != "api" {
-		t.Fatalf("MatchPort(service port, no cwd) = (%v, %q, %v), want the demo config's api", cfg, svc, ok)
-	}
-	cfg, svc, ok = x.MatchPort(state.Port{Port: 8100})
-	if !ok || cfg.Name != "demo" || svc != "" {
-		t.Fatalf("MatchPort(file port, no cwd) = (%v, %q, %v), want the demo config", cfg, svc, ok)
-	}
-	if _, _, ok := x.MatchPort(state.Port{Port: 9999}); ok {
-		t.Error("a port no config declares must not match")
-	}
-
+	dirs := gitProjects(t, "repo")
+	writeManifests(t, dirs, map[string]map[string]string{
+		"repo": {ConfigName: "name: demo\nservices:\n  - name: api\n    port: 8000\nports: [8100]\n"},
+	})
+	x := observeRoles(t, dirs, "repo")
+	assertClaims(t, x,
+		claimedPort{port: 8000, ok: true, name: "demo", service: "api"},
+		claimedPort{port: 8100, ok: true, name: "demo", service: ""},
+		claimedPort{port: 9999, ok: false},
+	)
 	// The resolver has to reach the same conclusion, since that is what puts
 	// the port in the group.
 	got := Resolve([]state.Port{{Port: 8000}}, NoRuns{}, x)[0]
@@ -164,60 +221,41 @@ func TestIndexMatchesADeclaredPortWithoutACwd(t *testing.T) {
 }
 
 func TestIndexClaimLookupRefreshesAfterConfigChanges(t *testing.T) {
+	// These directories are in-memory keys, not files created on the host.
 	x := NewIndex()
 	x.Add(&Config{Dir: "/tmp/one", Services: []Service{{Name: "api", Port: 8000}}})
-	if _, _, ok := x.MatchPort(state.Port{Port: 8000}); !ok {
-		t.Fatal("the first config did not claim its port")
-	}
+	assertClaims(t, x, claimedPort{port: 8000, ok: true, dir: "/tmp/one", service: "api"})
 
 	x.Add(&Config{Dir: "/tmp/two", Services: []Service{{Name: "web", Port: 8100}}})
-	if cfg, svc, ok := x.MatchPort(state.Port{Port: 8100}); !ok || cfg.Dir != "/tmp/two" || svc != "web" {
-		t.Fatalf("new config was not added to the claim index: cfg=%v service=%q ok=%v", cfg, svc, ok)
-	}
+	assertClaims(t, x, claimedPort{port: 8100, ok: true, dir: "/tmp/two", service: "web"})
 
 	x.Add(&Config{Dir: "/tmp/one", Services: []Service{{Name: "api", Port: 8200}}})
-	if _, _, ok := x.MatchPort(state.Port{Port: 8000}); ok {
-		t.Fatal("the replaced config kept its old port claim")
-	}
-	if cfg, svc, ok := x.MatchPort(state.Port{Port: 8200}); !ok || cfg.Dir != "/tmp/one" || svc != "api" {
-		t.Fatalf("replaced config was not re-indexed: cfg=%v service=%q ok=%v", cfg, svc, ok)
-	}
+	assertClaims(t, x,
+		claimedPort{port: 8000, ok: false},
+		claimedPort{port: 8200, ok: true, dir: "/tmp/one", service: "api"},
+	)
 }
 
 // TestIndexWillNotGuessBetweenTwoConfigsClaimingAPort: without a cwd, two
 // projects declaring the same port are indistinguishable, and a wrong group is
 // worse than none.
 func TestIndexWillNotGuessBetweenTwoConfigsClaimingAPort(t *testing.T) {
-	base := tempTree(t)
-	one := mkdir(t, base, "one")
-	mkdir(t, one, ".git")
-	two := mkdir(t, base, "two")
-	mkdir(t, two, ".git")
-	writeFile(t, filepath.Join(one, ConfigName), "name: one\nservices:\n  - name: api\n    port: 8000\n")
-	writeFile(t, filepath.Join(two, ConfigName), "name: two\nservices:\n  - name: api\n    port: 8000\n")
-
-	x := NewIndex()
-	x.Observe(one)
-	x.Observe(two)
-
-	if cfg, _, ok := x.MatchPort(state.Port{Port: 8000}); ok {
-		t.Errorf("MatchPort with no cwd chose %q; two configs claim 8000", cfg.Name)
-	}
-	// With a cwd the answer is unambiguous again.
-	if cfg, _, ok := x.MatchPort(state.Port{Port: 8000, Cwd: two}); !ok || cfg.Name != "two" {
-		t.Errorf("MatchPort(cwd two) = (%v, %v), want the two config", cfg, ok)
-	}
+	dirs := gitProjects(t, "one", "two")
+	writeManifests(t, dirs, map[string]map[string]string{
+		"one": {ConfigName: "name: one\nservices:\n  - name: api\n    port: 8000\n"},
+		"two": {ConfigName: "name: two\nservices:\n  - name: api\n    port: 8000\n"},
+	})
+	x := observeRoles(t, dirs, "one", "two")
+	assertClaims(t, x,
+		claimedPort{port: 8000, ok: false},
+		claimedPort{port: 8000, cwd: dirs["two"], ok: true, name: "two", service: "api"},
+	)
 }
 
 func TestIndexRecordsInvalidConfigsWithoutFailing(t *testing.T) {
-	base := tempTree(t)
-	repo := mkdir(t, base, "repo")
-	mkdir(t, repo, ".git")
-	writeFile(t, filepath.Join(repo, ConfigName), "name: a b\n")
-
-	x := NewIndex()
-	x.Observe(repo)
-
+	dirs := gitProjects(t, "repo")
+	writeManifests(t, dirs, map[string]map[string]string{"repo": {ConfigName: "name: a b\n"}})
+	x := observeRoles(t, dirs, "repo")
 	if got := x.Configs(); len(got) != 0 {
 		t.Fatalf("Configs = %v, want none", got)
 	}
@@ -226,55 +264,33 @@ func TestIndexRecordsInvalidConfigsWithoutFailing(t *testing.T) {
 		t.Fatalf("Invalid = %+v", invalid)
 	}
 	// The resolver must fall back to the git root, not blow up.
-	got := Resolve([]state.Port{nativePort(8123, repo)}, NoRuns{}, x)[0]
+	got := Resolve([]state.Port{nativePort(8123, dirs["repo"])}, NoRuns{}, x)[0]
 	if deref(got.Group) != "repo" {
 		t.Fatalf("group = %q, want the git root name", deref(got.Group))
 	}
 }
 
 func TestIndexAcceptsTheYmlSpelling(t *testing.T) {
-	base := tempTree(t)
-	repo := mkdir(t, base, "repo")
-	mkdir(t, repo, ".git")
-	writeFile(t, filepath.Join(repo, ".oberth.yml"), "name: ymlrepo\n")
-
-	x := NewIndex()
-	x.Observe(repo)
-	if cfg := x.At(repo); cfg == nil || cfg.Name != "ymlrepo" {
-		t.Fatalf("At = %+v", cfg)
-	}
+	dir, x := observeNamedFiles(t, map[string]string{".oberth.yml": "name: ymlrepo\n"})
+	assertAtName(t, x, dir, "ymlrepo")
 }
 
 // TestIndexReadsTheOldDotfile: projects committed before the rename keep
 // working, and so do the worktrees that carry a copy of their file.
 func TestIndexReadsTheOldDotfile(t *testing.T) {
-	base := tempTree(t)
-	repo := mkdir(t, base, "repo")
-	mkdir(t, repo, ".git")
-	writeFile(t, filepath.Join(repo, LegacyConfigName), "name: legacy\n")
-
-	x := NewIndex()
-	x.Observe(repo)
-	if cfg := x.At(repo); cfg == nil || cfg.Name != "legacy" {
-		t.Fatalf("At = %+v", cfg)
-	}
+	dir, x := observeNamedFiles(t, map[string]string{LegacyConfigName: "name: legacy\n"})
+	assertAtName(t, x, dir, "legacy")
 }
 
 // TestIndexPrefersTheCurrentName: with both files in one directory, oberth.yaml
 // is the one read and the dotfile is shadowed, never merged.
 func TestIndexPrefersTheCurrentName(t *testing.T) {
-	base := tempTree(t)
-	repo := mkdir(t, base, "repo")
-	mkdir(t, repo, ".git")
-	writeFile(t, filepath.Join(repo, LegacyConfigName), "name: old\n")
-	writeFile(t, filepath.Join(repo, ConfigName), "name: new\n")
-
-	x := NewIndex()
-	x.Observe(repo)
-	if cfg := x.At(repo); cfg == nil || cfg.Name != "new" {
-		t.Fatalf("At = %+v, want the oberth.yaml", cfg)
-	}
-	present := FilesIn(repo)
+	dir, x := observeNamedFiles(t, map[string]string{
+		LegacyConfigName: "name: old\n",
+		ConfigName:       "name: new\n",
+	})
+	assertAtName(t, x, dir, "new")
+	present := FilesIn(dir)
 	if len(present) != 2 || filepath.Base(present[0]) != ConfigName || filepath.Base(present[1]) != LegacyConfigName {
 		t.Errorf("FilesIn = %v, want oberth.yaml then .oberth.yaml", present)
 	}
@@ -328,12 +344,8 @@ func TestIndexKeysConfigsCanonically(t *testing.T) {
 		if err := x.AddFile(filepath.Join(viaLink, ConfigName)); err != nil {
 			t.Fatal(err)
 		}
-		if cfg := x.Nearest(repo); cfg == nil || cfg.Name != "my-app" {
-			t.Fatalf("Nearest(%s) = %+v after AddFile through a symlink", repo, cfg)
-		}
-		if cfg := x.At(viaLink); cfg == nil || cfg.Name != "my-app" {
-			t.Fatalf("At(%s) = %+v", viaLink, cfg)
-		}
+		assertNearestName(t, x, repo, "my-app")
+		assertAtName(t, x, viaLink, "my-app")
 	})
 
 	t.Run("Reload", func(t *testing.T) {
@@ -341,9 +353,7 @@ func TestIndexKeysConfigsCanonically(t *testing.T) {
 		if n, bad := x.Reload([]string{viaLink}); n != 1 || len(bad) != 0 {
 			t.Fatalf("Reload = %d, %v", n, bad)
 		}
-		if cfg := x.Nearest(filepath.Join(repo, "sub", "dir")); cfg == nil || cfg.Name != "my-app" {
-			t.Fatalf("Nearest below the repo = %+v after Reload through a symlink", cfg)
-		}
+		assertNearestName(t, x, filepath.Join(repo, "sub", "dir"), "my-app")
 	})
 
 	t.Run("ByPath", func(t *testing.T) {

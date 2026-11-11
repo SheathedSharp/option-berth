@@ -3,6 +3,7 @@ package groups
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -34,6 +35,30 @@ func writeFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func requireFindCheckout(t *testing.T, name, cwd, wantRoot, wantWorktree string, wantOK bool, wantGroup string, want Checkout) {
+	t.Helper()
+	t.Run(name, func(t *testing.T) {
+		root, worktree, ok := Find(cwd)
+		if root != wantRoot || worktree != wantWorktree || ok != wantOK {
+			t.Fatalf("Find(%q) = (%q, %q, %v), want (%q, %q, %v)",
+				cwd, root, worktree, ok, wantRoot, wantWorktree, wantOK)
+		}
+		if got := GroupName(root, worktree); got != wantGroup {
+			t.Fatalf("GroupName(%q, %q) = %q, want %q", root, worktree, got, wantGroup)
+		}
+		co, found := Locate(cwd)
+		if found != wantOK {
+			t.Fatalf("Locate(%q) found = %v, want %v", cwd, found, wantOK)
+		}
+		if !reflect.DeepEqual(co, want) {
+			t.Fatalf("Locate(%q) = %#v, want %#v", cwd, co, want)
+		}
+		if found && co.Linked() != (wantWorktree != "") {
+			t.Fatalf("Locate(%q).Linked() = %v, disagrees with Find worktree %q", cwd, co.Linked(), wantWorktree)
+		}
+	})
 }
 
 func TestFind(t *testing.T) {
@@ -74,48 +99,55 @@ func TestFind(t *testing.T) {
 
 	outside := mkdir(t, base, "outside", "deep")
 
-	tests := []struct {
-		name      string
-		cwd       string
-		wantRoot  string
-		wantWT    string
-		wantOK    bool
-		wantGroup string
-	}{
-		{"git dir at the root", clone, clone, "", true, "clone"},
-		{"git dir from a nested cwd", cloneDeep, clone, "", true, "clone"},
-		{"nested repo wins over its parent", nested, nested, "", true, "inner"},
-		{"worktree is qualified", wt, wt, "clone@feature-x", true, "clone@feature-x"},
-		{"worktree from a nested cwd", wtDeep, wt, "clone@feature-x", true, "clone@feature-x"},
-		{"worktree with a relative gitdir", relwt, relwt, "clone@relwt", true, "clone@relwt"},
-		{"submodule is not a worktree", sub, sub, "", true, "sub"},
-		{"unparseable git file", junk, junk, "", true, "junk"},
-		{"outside any repo", outside, "", "", false, ""},
-		{"empty cwd", "", "", "", false, ""},
+	main := func(root string) Checkout {
+		return Checkout{Root: root, Main: root, head: filepath.Join(root, ".git", "HEAD")}
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			root, wt, ok := Find(tt.cwd)
-			if root != tt.wantRoot || wt != tt.wantWT || ok != tt.wantOK {
-				t.Fatalf("Find(%q) = (%q, %q, %v), want (%q, %q, %v)",
-					tt.cwd, root, wt, ok, tt.wantRoot, tt.wantWT, tt.wantOK)
-			}
-			if got := GroupName(root, wt); got != tt.wantGroup {
-				t.Fatalf("GroupName(%q, %q) = %q, want %q", root, wt, got, tt.wantGroup)
-			}
-			// Find is the name-shaped projection of Locate; the two must never
-			// disagree about the root or about whether the checkout is linked.
-			co, found := Locate(tt.cwd)
-			if found != tt.wantOK {
-				t.Fatalf("Locate(%q) found = %v, want %v", tt.cwd, found, tt.wantOK)
-			}
-			if !found {
-				return
-			}
-			if co.Root != tt.wantRoot || (co.Linked() != (tt.wantWT != "")) {
-				t.Fatalf("Locate(%q) = %+v, disagrees with Find(%q) = (%q, %q)",
-					tt.cwd, co, tt.cwd, root, wt)
-			}
-		})
+	linked := func(root, name string) Checkout {
+		return Checkout{
+			Root:     root,
+			Main:     clone,
+			Worktree: name,
+			head:     filepath.Join(clone, ".git", "worktrees", name, "HEAD"),
+		}
+	}
+
+	requireFindCheckout(t, "git dir at the root", clone, clone, "", true, "clone", main(clone))
+	requireFindCheckout(t, "git dir from a nested cwd", cloneDeep, clone, "", true, "clone", main(clone))
+	requireFindCheckout(t, "nested repo wins over its parent", nested, nested, "", true, "inner", main(nested))
+	requireFindCheckout(t, "worktree is qualified", wt, wt, "clone@feature-x", true, "clone@feature-x", linked(wt, "feature-x"))
+	requireFindCheckout(t, "worktree from a nested cwd", wtDeep, wt, "clone@feature-x", true, "clone@feature-x", linked(wt, "feature-x"))
+	requireFindCheckout(t, "worktree with a relative gitdir", relwt, relwt, "clone@relwt", true, "clone@relwt", linked(relwt, "relwt"))
+	requireFindCheckout(t, "submodule is not a worktree", sub, sub, "", true, "sub", Checkout{
+		Root: sub, Main: sub, head: filepath.Join(clone, ".git", "modules", "sub", "HEAD"),
+	})
+	requireFindCheckout(t, "unparseable git file", junk, junk, "", true, "junk", Checkout{Root: junk, Main: junk})
+	requireFindCheckout(t, "outside any repo", outside, "", "", false, "", Checkout{})
+	requireFindCheckout(t, "empty cwd", "", "", "", false, "", Checkout{})
+
+	if Canonical(clone) != clone {
+		t.Fatalf("Find uses Canonical roots; Canonical(%q) = %q", clone, Canonical(clone))
+	}
+	wantRel := filepath.Join("..", "clone", ".git", "worktrees", "relwt")
+	if rel != wantRel {
+		t.Fatalf("relative gitdir fixture = %q, want %q", rel, wantRel)
+	}
+	gotRel, err := os.ReadFile(filepath.Join(relwt, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotRel) != "gitdir: "+wantRel+"\n" {
+		t.Fatalf("relative .git file = %q", gotRel)
+	}
+	if target := gitdirTarget(relwt, filepath.Join(relwt, ".git")); target != filepath.Join(clone, ".git", "worktrees", "relwt") {
+		t.Fatalf("gitdirTarget(relwt) = %q, want the absolute worktree admin path", target)
+	}
+	if target := gitdirTarget(junk, filepath.Join(junk, ".git")); target != "" {
+		t.Fatalf("gitdirTarget(junk) = %q, want empty", target)
+	}
+	if mainRoot := worktreeMain(filepath.Join(clone, ".git", "worktrees", "feature-x")); mainRoot != clone {
+		t.Fatalf("worktreeMain(feature-x admin) = %q, want %q", mainRoot, clone)
+	}
+	if mainRoot := worktreeMain(filepath.Join(clone, ".git", "modules", "sub")); mainRoot != "" {
+		t.Fatalf("worktreeMain(submodule admin) = %q, want empty", mainRoot)
 	}
 }
