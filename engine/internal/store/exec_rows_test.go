@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"io"
 	"testing"
 )
 
@@ -26,18 +27,42 @@ func (fixedDriver) Open(string) (driver.Conn, error) {
 type fixedConn struct {
 	result  driver.Result
 	execErr error
+	record  *[]string
 }
 
 func (fixedConn) Prepare(string) (driver.Stmt, error) {
 	return nil, errors.New("execRows does not prepare")
 }
 func (fixedConn) Close() error              { return nil }
-func (fixedConn) Begin() (driver.Tx, error) { return nil, errors.New("execRows does not begin") }
-func (c fixedConn) ExecContext(context.Context, string, []driver.NamedValue) (driver.Result, error) {
+func (fixedConn) Begin() (driver.Tx, error) { return fixedTx{}, nil }
+func (c fixedConn) ExecContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Result, error) {
+	if c.record != nil {
+		*c.record = append(*c.record, query)
+	}
 	if c.execErr != nil {
 		return nil, c.execErr
 	}
 	return c.result, nil
+}
+
+func (c fixedConn) QueryContext(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+	return &fixedRows{values: [][]driver.Value{{"one"}, {"two"}}}, nil
+}
+
+type fixedRows struct {
+	values [][]driver.Value
+	next   int
+}
+
+func (*fixedRows) Columns() []string { return []string{"value"} }
+func (*fixedRows) Close() error      { return nil }
+func (r *fixedRows) Next(dest []driver.Value) error {
+	if r.next >= len(r.values) {
+		return io.EOF
+	}
+	copy(dest, r.values[r.next])
+	r.next++
+	return nil
 }
 
 type fixedResult struct {
@@ -98,5 +123,31 @@ func TestExecRowsReportsAWriteFailure(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("affected = %d, want 0", n)
+	}
+}
+
+type fixedTx struct{}
+
+func (fixedTx) Commit() error   { return nil }
+func (fixedTx) Rollback() error { return nil }
+
+// A transaction that begins and commits is a successful write.
+func TestWriteCommitsASuccessfulTransaction(t *testing.T) {
+	s := storeWithConnector(t, fixedConn{})
+
+	if err := s.write("update", func(writeTx) error { return nil }); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+}
+
+// A callback failure is the caller's error, unchanged by the transaction
+// wrapper.
+func TestWriteReportsACallbackFailure(t *testing.T) {
+	s := storeWithConnector(t, fixedConn{})
+	boom := errors.New("boom")
+
+	err := s.write("update", func(writeTx) error { return boom })
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want %v", err, boom)
 	}
 }
