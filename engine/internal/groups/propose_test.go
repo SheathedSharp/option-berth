@@ -76,7 +76,15 @@ func requireProposedConfig(t *testing.T, got *Config, name, dir, path string, ca
 
 func requireLoadedProposal(t *testing.T, got *Config, name, path string) {
 	t.Helper()
-	want := &Config{Name: name, Dir: filepath.Dir(path), Path: path, Services: []Service{}}
+	// Load reports the checkout through resolved symlinks: on macOS a temp
+	// directory is spelled /var/... while the checkout it contains is
+	// /private/var/.... The expectation is the path Load must report, not the
+	// spelling the test happened to build it from.
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("resolving %s: %v", path, err)
+	}
+	want := &Config{Name: name, Dir: filepath.Dir(canonical), Path: canonical, Services: []Service{}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("loaded = %#v, want %#v", got, want)
 	}
