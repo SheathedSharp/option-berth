@@ -60,15 +60,6 @@ Windows 安装器同样支持镜像回退，也可以用代理入口启动：
 irm https://ghfast.top/https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps1 | iex
 ```
 
-`go install` 不经过 Release 资产，改用 Go 模块代理即可，校验和仍会核对：
-
-```sh
-GOPROXY=https://goproxy.cn go install github.com/sheathedsharp/option-berth/engine/cmd/oberth@latest
-```
-
-只设 `GOPROXY` 就够了：Go 会通过代理的 `/sumdb/` 端点校验模块。不要追加 `,direct`，
-代理未命中时会回落到直连 GitHub，也就是超时的那条路径；也不需要 `GOSUMDB=off`。
-
 第三方代理能看到下载流量，也可能被替换。需要严格来源时用 `--version` 固定版本，并对照
 Releases 里的 `SHA256SUMS`；发布包签名校验尚未提供。
 
@@ -88,18 +79,6 @@ irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps
 固定版本或不改 PATH：`.\install.ps1 -Version v1.0.0 -NoModifyPath`。
 Windows 安装器在替换文件前会检查 `oberth` / `jev-attention` 是否正在运行；
 正在运行就先执行 `oberth daemon stop`，再重新安装。
-
-## go install（Go 1.25+）
-
-```sh
-go install github.com/sheathedsharp/option-berth/engine/cmd/oberth@latest
-
-# Optional Jev adapter
-go install github.com/sheathedsharp/option-berth/engine/cmd/jev-attention@latest
-```
-
-需要 v1.1.2 或更新版本。固定版本用 `@v1.1.2`。二进制进 `$(go env GOPATH)/bin`（或 `GOBIN`），
-该目录需要在 PATH 中。
 
 ## Homebrew
 
@@ -169,9 +148,6 @@ irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uninstall.
 - 删除 `oberth` 与 `jev-attention`；
 - 删除安装器放在 `~/.local/share/option-berth` 的许可与构建清单；
 - 删除安装器写进 shell 启动文件的那一行（只删自己写的精确行，不动其他 PATH 配置）。
-
-`go install` 安装的二进制不由这些卸载器管理：直接删除 `$(go env GOPATH)/bin/oberth` 与
-`jev-attention`；运行状态的处理与下面相同。
 
 默认**保留** `~/.option-berth` 运行状态（数据库、日志、runs、配置）。确认不再需要时：
 

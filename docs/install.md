@@ -64,17 +64,6 @@ The Windows installer supports the same mirror fallback, and can also be launche
 irm https://ghfast.top/https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps1 | iex
 ```
 
-`go install` does not go through release assets, so a Go module proxy suffices and checksums are still
-verified:
-
-```sh
-GOPROXY=https://goproxy.cn go install github.com/sheathedsharp/option-berth/engine/cmd/oberth@latest
-```
-
-Setting only `GOPROXY` is enough: Go verifies the module through the proxy's `/sumdb/` endpoint. Do not
-append `,direct` — when the proxy misses, Go falls back to a direct GitHub connection, which is the path
-that times out; `GOSUMDB=off` is unnecessary too.
-
 A third-party proxy can see download traffic and can be replaced. When you need a strict origin, pin the
 version with `--version` and compare against the `SHA256SUMS` in Releases; release-archive signature
 verification is not available yet.
@@ -95,18 +84,6 @@ irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps
 Pin a version or leave PATH alone: `.\install.ps1 -Version v1.0.0 -NoModifyPath`.
 Before replacing files, the Windows installer checks whether `oberth` / `jev-attention` are running; if
 they are, it runs `oberth daemon stop` first and then reinstalls.
-
-## go install (Go 1.25+)
-
-```sh
-go install github.com/sheathedsharp/option-berth/engine/cmd/oberth@latest
-
-# Optional Jev adapter
-go install github.com/sheathedsharp/option-berth/engine/cmd/jev-attention@latest
-```
-
-This needs v1.1.2 or later. Pin a version with `@v1.1.2`. The binaries land in `$(go env GOPATH)/bin`
-(or `GOBIN`), which must be on PATH.
 
 ## Homebrew
 
@@ -181,9 +158,6 @@ The uninstaller:
 - Removes the licenses and build manifest the installer placed in `~/.local/share/option-berth`;
 - Removes the exact line the installer wrote into a shell startup file (only that line; other PATH
   configuration is untouched).
-
-Binaries installed by `go install` are not managed by these uninstallers: delete
-`$(go env GOPATH)/bin/oberth` and `jev-attention` directly; runtime state is handled as below.
 
 By default it **keeps** `~/.option-berth` runtime state (database, logs, runs, configuration). When you
 are sure it is no longer needed:
