@@ -95,3 +95,24 @@ func TestCloseDoesNotCheckpointAReadOnlyStore(t *testing.T) {
 		t.Fatalf("read-only Close ran %q, want no checkpoint", queries)
 	}
 }
+
+// A Windows absolute path reaches the file: URI as a drive letter after
+// filepath.ToSlash. It must become a path segment, not a scheme-relative
+// form; Unix absolute paths already start with a slash and pass unchanged.
+func TestReadOnlyURIPathKeepsTheDriveLetterInThePath(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		abs  string
+		want string
+	}{
+		{"unix absolute", "/tmp/option-berth.db", "/tmp/option-berth.db"},
+		{"windows drive", "C:/Users/dev/option-berth.db", "/C:/Users/dev/option-berth.db"},
+		{"already rooted", "/C:/Users/dev/option-berth.db", "/C:/Users/dev/option-berth.db"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := readOnlyURIPath(tc.abs); got != tc.want {
+				t.Fatalf("readOnlyURIPath(%q) = %q, want %q", tc.abs, got, tc.want)
+			}
+		})
+	}
+}
