@@ -776,12 +776,94 @@ was actually run on this machine (macOS 27, arm64, Go `1.27.1`); the CI matrix i
 - The `--binary` was a plain `go build`, which reports `version: dev`: the rows are self-consistent
   but not comparable to a released build.
 
-## Client verification
+## Residual cleanup acceptance: crash, mutation, and startup (2026-11-11)
 
-The macOS client's verification scope is not here: it lives with the client code in
-[option-berth-macos](https://github.com/SheathedSharp/option-berth-macos).
-This document describes only the engine's verification scope and platform boundaries; the two sides
-share one fact chain, but each side's checks prove only its own thing.
+Source identity: branch `test/acceptance-final-20261111` at `5ecf1f23`, which merges `main` at
+`589b17a5` (PR #270). Baseline for the startup comparison is `ec5dbac9`, the base named by the
+residual-cleanup plan. Both binaries were built with
+`CGO_ENABLED=0 go build -trimpath -buildvcs=false`: candidate sha256
+`f37a3221b97424b9556a96cce31c4b8c564cd5c096ad0df59f348878b6dc869c`, baseline sha256
+`c171e90473117ca818d12c347f65a4f956a0bb20e461207b4a4bc91c89a94730`. The machine was macOS 27.2.1
+arm64 (host hash `b009fd81c24a`), Go 1.27.1 darwin/arm64.
+
+### Static and package checks
+
+| Check | Command | Result |
+|---|---|---|
+| Vet | `go vet ./...` and `go vet -tags integration ./...` | exit 0 |
+| Staticcheck | `staticcheck ./internal/testenv ./internal/store` | no findings |
+| Duplication | `dupl -t 100` on `store`, `testenv`, `killer`, `scenario`, `daemon` | 2 pre-existing clone pairs, identical to `main` |
+| Full tests | `go test -count=1 -timeout=20m ./...` | all packages `ok` |
+| Race | `go test -race -count=1 ./internal/store ./internal/testenv ./internal/killer ./internal/daemon` | all packages `ok` |
+| Integration | `go test -tags integration -count=1 ./internal/daemon/... ./internal/scenario` | all packages `ok`, no stray `serve` process |
+| Cross build | `GOOS={linux,windows} GOARCH={amd64,arm64} go build ./...` and `go vet` on the changed packages | exit 0 for all four targets; not native execution |
+
+`staticcheck ./internal/killer ./internal/daemon` still reports pre-existing `U1000` findings
+(`signalTree`, `fastStats`, `setProbe`, `defaultSocketPath`); they are unchanged from `main` and not
+part of this acceptance.
+
+### Mutation of `internal/store/store.go`
+
+The harness is the repository's AST single-token mutator (`gen.go`) with `go test -overlay`,
+`-count=1`, `-failfast`, `-timeout=120s`, the whole `./internal/store` package, and four workers.
+It is evidence tooling, not a product script. Fifty-four samples:
+
+| Classification | Count |
+|---|---:|
+| assertion | 45 |
+| panic | 9 |
+| survived | 0 |
+| timeout | 0 |
+| compile / tool | 0 / 0 |
+
+The nine panics are mutation-induced illegal states (for example `textColumn` returning
+`nil, nil`); they are not counted as assertion kills. The three timeouts of the earlier run were
+traced to `Store.Close` waiting forever for a connection a mutated `checkpointAndLeaveWAL` had
+leaked; `Close` now bounds the checkpoint with a 5s context, and the concurrent reader/writer test
+waits with a 10s deadline instead of hanging until the package timeout. One survivor was a Windows
+drive-letter branch unreachable on darwin; it was made testable by extracting `readOnlyURIPath` and is
+now killed. No survivor remains.
+
+### Cold and warm startup
+
+Protocol: project is `examples/hello-worktree`, copied under a fresh isolated `HOME`; the socket is
+under a short `/tmp` path. Cold = fresh `HOME`, no daemon, no database, no reservations; the measured
+command is the first `oberth up --wait --json`, so daemon startup is inside it. Warm = one `HOME` for
+the phase, daemon started once and kept, services brought up and stopped once unmeasured; the measured
+command is `up --wait --json` with no service running. Cleanup used only the binary's own `down` and
+`daemon stop` against that `HOME`/socket, then a fresh `ps` re-check before any signal; no process-name
+or port sweep.
+
+| Arm | Phase | n | min ms | median ms | max ms |
+|---|---|---:|---:|---:|---:|
+| baseline `ec5dbac9` | cold | 10 | 1667.3 | 1744.1 | 1812.9 |
+| baseline `ec5dbac9` | warm | 10 | 1483.8 | 1503.9 | 1517.1 |
+| candidate `5ecf1f23` | cold | 10 | 1648.7 | 1706.1 | 2242.8 |
+| candidate `5ecf1f23` | warm | 10 | 1415.9 | 1451.6 | 1605.5 |
+| baseline `ec5dbac9`, second round | cold | 5 | 1698.6 | 1715.2 | 1749.9 |
+| baseline `ec5dbac9`, second round | warm | 5 | 1430.8 | 1491.2 | 1517.5 |
+
+Every successful sample reported `observation.state = observable` with source `lsof`; failed or
+unobservable runs were not counted. The candidate cold median sits inside the baseline's own
+round-to-round spread, and the warm median is about 2.7% below the second baseline round; neither is
+a controlled speedup claim. The 2242.8 ms candidate cold sample is a host-noise outlier and is kept
+in the table rather than discarded. No `serve` process survived the phase.
+
+### Fault injection
+
+- A fake `lsof` earlier in `PATH` that exits 1 with no output: `up --wait --json` exits 1 with
+  `code: observation_blind`; `status --json` reports `observation.state: blind` and `ports: []`, not
+  "nothing is listening".
+- `TestSecondServeRefusesAndStaleSocketIsCleaned`: a SIGKILLed daemon leaves a stale socket, the
+  second `serve` refuses, and the socket is cleaned. PASS.
+- `TestDaemonStopRestartKeepsServiceEvidence` and `TestSIGTERMEscalatesAndCleansServiceTree`: PASS.
+- `TestCrashRecoveryKeepsWholeCommittedBatches`: the child writer is SIGKILLed mid-transaction, the
+  database reopens cleanly, every visible batch is whole, and the sentinel survives. PASS.
+
+**Not run for this commit**: native Linux or Windows execution; Docker/Colima was not running and no
+real Docker daemon was used. Cross builds and vet are not native evidence. Windows x64 native and
+Linux runner results exist for PR #270's head `8432e497`, whose tree was merged as `589b17a5`, not
+for `5ecf1f23`; this follow-up needs its own CI run before those rows can be claimed.
 
 ## Client verification
 
