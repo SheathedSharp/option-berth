@@ -415,6 +415,21 @@ func TestKillDirectForwardsTheAttributedSnapshotForAPIDOnlySelection(t *testing.
 	requireOneReportedRow(t, out, killer.Result{PID: syntheticPID, Name: row.Tag})
 }
 
+// TestObserveListenersForKillHonoursACancelledContext: the production
+// observation checks the command's cancellation before starting a collector.
+// The context is already cancelled, so no command or listener table is touched.
+func TestObserveListenersForKillHonoursACancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	rows, err := observeListenersForKill(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if rows != nil {
+		t.Fatalf("rows = %+v, want none from a cancelled observation", rows)
+	}
+}
+
 // TestKillDirectWithholdsAPartialTableFromTheKiller: a partial observation is
 // attribution for the report, not a complete table. The executor must receive
 // nil Ports so killer.KillPorts performs its own observation before signalling;
