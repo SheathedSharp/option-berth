@@ -22,7 +22,7 @@ func enableJev(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	body := `{"schema":"oberth.attn-settings/v1","enabled":true,"provider":"typesafe","api_key":"k"}`
+	body := `{"schema":"oberth.attn-settings/v1","enabled":true,"endpoint":"https://assess.example/decisions","model":"test/model","api_key":"k"}`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}

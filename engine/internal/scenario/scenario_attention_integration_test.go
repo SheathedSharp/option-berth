@@ -80,7 +80,7 @@ func enableJevIn(t *testing.T, e *env) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("creating the model settings directory: %v", err)
 	}
-	body := `{"schema":"oberth.attn-settings/v1","enabled":true,"provider":"typesafe","api_key":"integration-placeholder"}`
+	body := `{"schema":"oberth.attn-settings/v1","enabled":true,"endpoint":"https://assess.example/decisions","model":"test/model","api_key":"integration-placeholder"}`
 	if err := os.WriteFile(filepath.Join(dir, "attn.json"), []byte(body), 0o600); err != nil {
 		t.Fatalf("writing the model settings file: %v", err)
 	}

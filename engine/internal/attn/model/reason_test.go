@@ -123,7 +123,7 @@ func TestUnreachableProviderIsANetworkReason(t *testing.T) {
 	server.Close() // nothing is listening any more
 
 	_, artifact := testArtifact(t)
-	_, err := Client{Endpoint: url, APIKey: "k", HTTPClient: server.Client(), Timeout: time.Second}.
+	_, err := Client{Endpoint: url, Model: "test/model", APIKey: "k", HTTPClient: server.Client(), Timeout: time.Second}.
 		Evaluate(context.Background(), artifact, TaskContext{Task: "why stuck", AuthorizedOptions: []string{"inspect_logs"}})
 	if got := ReasonFor(err); got != ReasonNetwork {
 		t.Fatalf("reason = %q, want %q (%v)", got, ReasonNetwork, err)
@@ -132,7 +132,7 @@ func TestUnreachableProviderIsANetworkReason(t *testing.T) {
 
 func TestNoKeyIsItsOwnReason(t *testing.T) {
 	_, artifact := testArtifact(t)
-	_, err := Client{Endpoint: DefaultEndpoint}.Evaluate(context.Background(), artifact,
+	_, err := Client{Endpoint: "https://assess.example/decisions"}.Evaluate(context.Background(), artifact,
 		TaskContext{Task: "why stuck", AuthorizedOptions: []string{"inspect_logs"}})
 	if got := ReasonFor(err); got != ReasonNoKey {
 		t.Fatalf("reason = %q, want %q", got, ReasonNoKey)

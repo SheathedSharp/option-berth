@@ -23,7 +23,7 @@ import (
 )
 
 var (
-	attnEnableProvider  string
+	attnEnablePreset    string
 	attnEnableEndpoint  string
 	attnEnableModel     string
 	attnEnableTimeout   time.Duration
@@ -36,10 +36,10 @@ var (
 
 var attnStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show whether model is on, and where its settings come from",
+	Short: "Show whether the assessment is on, and where its settings come from",
 	Long: "Report the resolved configuration without contacting a provider: on or off,\n" +
-		"which provider and endpoint, where the key came from, and the fixed reason when\n" +
-		"it cannot be used. The key itself is never printed, only a short fingerprint.",
+		"endpoint, model, where the key came from, and the fixed reason when it cannot\n" +
+		"be used. The key itself is never printed, only a short fingerprint.",
 	Args: cobra.NoArgs,
 	RunE: runAttnStatus,
 }
@@ -47,11 +47,12 @@ var attnStatusCmd = &cobra.Command{
 var attnEnableCmd = &cobra.Command{
 	Use:   "enable",
 	Short: "Store a key, prove it works, and turn the optional assessment on",
-	Long: "One step, in this order: choose a provider, read the key from standard input\n" +
-		"(--key-stdin), an environment variable (--key-env NAME), or a hidden terminal\n" +
-		"prompt; send one synthetic redacted event to prove the key answers; only then\n" +
-		"write the owner-only attn.json. A probe that fails writes nothing and prints the\n" +
-		"fixed reason, so a typo cannot leave a configuration that breaks every task.\n\n" +
+	Long: "One step, in this order: choose an endpoint and model (directly, or through a\n" +
+		"preset that fills both), read the key from standard input (--key-stdin), an\n" +
+		"environment variable (--key-env NAME), or a hidden terminal prompt; send one\n" +
+		"synthetic redacted event to prove the key answers; only then write the\n" +
+		"owner-only attn.json. A probe that fails writes nothing and prints the fixed\n" +
+		"reason, so a typo cannot leave a configuration that breaks every task.\n\n" +
 		"The command finishes by printing exactly what will and will not be sent.",
 	Args: cobra.NoArgs,
 	RunE: runAttnEnable,
@@ -68,7 +69,7 @@ var attnTestCmd = &cobra.Command{
 
 var attnDisableCmd = &cobra.Command{
 	Use:   "disable",
-	Short: "Stop using model but keep the stored key",
+	Short: "Stop using the assessment but keep the stored key",
 	Long: "Turn the assessment off. The key stays in attn.json unless --forget is given, so\n" +
 		"enabling again does not need it typed a second time. --forget removes it.",
 	Args: cobra.NoArgs,
@@ -86,10 +87,10 @@ var attnPreviewCmd = &cobra.Command{
 }
 
 func init() {
-	attnEnableCmd.Flags().StringVar(&attnEnableProvider, "provider", "openrouter",
-		"Provider: openrouter or typesafe")
-	attnEnableCmd.Flags().StringVar(&attnEnableEndpoint, "endpoint", "", "Override the provider endpoint")
-	attnEnableCmd.Flags().StringVar(&attnEnableModel, "model", "", "Override the provider model")
+	attnEnableCmd.Flags().StringVar(&attnEnablePreset, "preset", "",
+		"Fill endpoint and model from a preset ("+model.PresetNames()+"); optional")
+	attnEnableCmd.Flags().StringVar(&attnEnableEndpoint, "endpoint", "", "Endpoint URL (required unless --preset fills it)")
+	attnEnableCmd.Flags().StringVar(&attnEnableModel, "model", "", "Model name (required unless --preset fills it)")
 	attnEnableCmd.Flags().DurationVar(&attnEnableTimeout, "timeout", 0, "Request timeout (default 10s)")
 	attnEnableCmd.Flags().BoolVar(&attnKeyStdinFlag, "key-stdin", false,
 		"Read the key from the first line of standard input")
@@ -135,7 +136,9 @@ func runAttnStatus(cmd *cobra.Command, _ []string) error {
 		} else {
 			fmt.Fprintf(&b, "Attention: off (%s)\n", firstNonEmptyString(consent.Reason, model.ReasonDisabled))
 		}
-		fmt.Fprintf(&b, "  provider  %s\n", consent.Provider)
+		if consent.Preset != "" {
+			fmt.Fprintf(&b, "  preset    %s\n", consent.Preset)
+		}
 		fmt.Fprintf(&b, "  endpoint  %s\n", consent.Endpoint)
 		fmt.Fprintf(&b, "  model     %s\n", consent.Model)
 		fmt.Fprintf(&b, "  key       %s\n", keySourceLine(consent.KeySource, state["key_fingerprint"]))
@@ -166,8 +169,14 @@ func runAttnEnable(cmd *cobra.Command, _ []string) error {
 		current = model.LocalConfig{}
 	}
 	options := model.EnableOptions{
-		Provider: attnEnableProvider, Endpoint: attnEnableEndpoint, Model: attnEnableModel,
+		Preset: attnEnablePreset, Endpoint: attnEnableEndpoint, Model: attnEnableModel,
 		Timeout: attnEnableTimeout, KeyKind: model.KeyFromPrompt,
+	}
+	// Validate the endpoint and model before asking for a secret: a person who
+	// forgot --preset should not type a key only to be told the shape is wrong.
+	next := options.SettingsFrom(current)
+	if err := next.Validate(); err != nil {
+		return usageError{err}
 	}
 	switch {
 	case attnKeyStdinFlag:
@@ -188,7 +197,6 @@ func runAttnEnable(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	next := options.SettingsFrom(current)
 	next.APIKey = key
 	if err := next.Validate(); err != nil {
 		return usageError{err}
@@ -209,7 +217,7 @@ func runAttnEnable(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	state := model.Resolved{
-		Enabled: true, ConsentSource: model.SourceSettings, Provider: next.Provider,
+		Enabled: true, ConsentSource: model.SourceSettings, Preset: next.Preset,
 		Endpoint: next.Endpoint, Model: next.Model, Key: next.APIKey,
 		KeySource: model.SourceSettings, Timeout: next.Timeout(),
 	}
@@ -221,7 +229,7 @@ func runAttnEnable(cmd *cobra.Command, _ []string) error {
 		"sends":    model.SendsSummary(),
 	}, func() string {
 		return fmt.Sprintf("Attention: enabled (%s, key %s)\n  %s\n\n%s",
-			next.Provider, keySourceLine(model.SourceSettings, model.KeyFingerprint(next.APIKey)),
+			next.Model, keySourceLine(model.SourceSettings, model.KeyFingerprint(next.APIKey)),
 			path, model.HumanSendsSummary())
 	})
 }
@@ -235,9 +243,9 @@ func runAttnTest(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if consent.KeySource == model.SourceEnvironment || consent.KeySource == model.SourceFlag {
-		cfg.APIKey = consent.Key
-	}
+	// The probe must use the same effective fields a real assessment would:
+	// environment overrides are already merged into the resolved consent.
+	cfg.Endpoint, cfg.Model, cfg.APIKey = consent.Endpoint, consent.Model, consent.Key
 	if cfg.TimeoutMS == 0 {
 		cfg.TimeoutMS = int(consent.Timeout / time.Millisecond)
 	}
@@ -245,7 +253,7 @@ func runAttnTest(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 	probe := model.ProbeOnce(ctx, cfg)
 	document := map[string]any{
-		"status": "ok", "provider": consent.Provider, "model": probe.Model,
+		"status": "ok", "endpoint": consent.Endpoint, "model": probe.Model,
 		"latency_ms": probe.Latency.Milliseconds(),
 	}
 	if !probe.OK {

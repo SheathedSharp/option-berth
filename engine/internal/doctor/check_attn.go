@@ -25,7 +25,7 @@ func checkAttn(_ context.Context, env *Env) rpc.DoctorCheck {
 			"run `oberth attn status` to see the resolved state, then `oberth attn enable` to rewrite it")
 	}
 	// OneShot is deliberately empty: this row reports the committed setting, so
-	// an unrelated BERTH_JEV export cannot make doctor claim a provider is
+	// an unrelated BERTH_ATTN export cannot make doctor claim an endpoint is
 	// configured.
 	consent := model.Resolve(model.ResolveInput{Settings: cfg, SettingsPresent: present})
 	if !consent.Enabled {
@@ -38,6 +38,6 @@ func checkAttn(_ context.Context, env *Env) rpc.DoctorCheck {
 			"enabled in settings but no key resolved, so every assessment will report no_key",
 			"run `oberth attn enable` to store a key, or `oberth attn test` to see the current reason")
 	}
-	return ok("Attention: on · "+consent.Provider,
+	return ok("Attention: on · "+consent.Model,
 		"endpoint "+consent.Endpoint+", key from "+string(consent.KeySource))
 }

@@ -43,7 +43,10 @@ const (
 
 // EnableOptions is one `oberth attn enable` request.
 type EnableOptions struct {
-	Provider string
+	// Preset fills Endpoint and Model from a named pair of defaults. It is a
+	// convenience, not a provider restriction: explicit fields win, and an
+	// empty preset with explicit fields is a fully supported configuration.
+	Preset   string
 	Endpoint string
 	Model    string
 	Timeout  time.Duration
@@ -60,11 +63,15 @@ func (o EnableOptions) SettingsFrom(cfg LocalConfig) LocalConfig {
 	next := cfg
 	next.Schema = LocalConfigSchema
 	next.Enabled = true
-	if strings.TrimSpace(o.Provider) != "" {
-		next.Provider = strings.ToLower(strings.TrimSpace(o.Provider))
-	}
-	if next.Provider == "" {
-		next.Provider = ProviderOpenRouter
+	if preset := strings.ToLower(strings.TrimSpace(o.Preset)); preset != "" {
+		next.Preset = preset
+		if endpoint, modelName, ok := PresetDefaults(preset); ok {
+			next.Endpoint, next.Model = endpoint, modelName
+		}
+	} else if strings.TrimSpace(o.Endpoint) != "" || strings.TrimSpace(o.Model) != "" {
+		// Explicit fields with no preset describe a custom deployment; keeping
+		// the old preset label would claim defaults that no longer apply.
+		next.Preset = ""
 	}
 	if strings.TrimSpace(o.Endpoint) != "" {
 		next.Endpoint = strings.TrimSpace(o.Endpoint)
@@ -140,8 +147,8 @@ func ProbeWithClient(ctx context.Context, cfg LocalConfig, httpClient *http.Clie
 	}
 	artifact := syntheticProbeArtifact()
 	client := Client{
-		Endpoint:   firstNonEmpty(cfg.Endpoint, defaultEndpointFor(cfg.Provider)),
-		Model:      firstNonEmpty(cfg.Model, defaultModelFor(cfg.Provider)),
+		Endpoint:   cfg.Endpoint,
+		Model:      cfg.Model,
 		APIKey:     cfg.APIKey,
 		Timeout:    cfg.Timeout(),
 		HTTPClient: httpClient,
@@ -156,20 +163,6 @@ func ProbeWithClient(ctx context.Context, cfg LocalConfig, httpClient *http.Clie
 	result.OK = true
 	result.Text = "the provider answered a synthetic assessment"
 	return result
-}
-
-func defaultEndpointFor(provider string) string {
-	if strings.EqualFold(provider, ProviderOpenRouter) {
-		return DefaultOpenRouterEndpoint
-	}
-	return DefaultEndpoint
-}
-
-func defaultModelFor(provider string) string {
-	if strings.EqualFold(provider, ProviderOpenRouter) {
-		return DefaultOpenRouterModel
-	}
-	return DefaultModel
 }
 
 // syntheticProbeArtifact is a fixed, dated event so the probe request is a

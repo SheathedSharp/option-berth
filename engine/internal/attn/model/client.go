@@ -15,7 +15,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -27,14 +26,10 @@ import (
 )
 
 const (
-	DefaultEndpoint           = "https://api.typesafe.ai/v1/systemone"
-	DefaultModel              = "jev-latest"
-	DefaultOpenRouterEndpoint = "https://openrouter.ai/api/alpha/decisions"
-	DefaultOpenRouterModel    = "typesafe/jev-1.13"
-	DefaultTimeout            = 10 * time.Second
-	maxTaskBytes              = 2000
-	maxReasonBytes            = 256
-	maxServiceBytes           = 128
+	DefaultTimeout  = 10 * time.Second
+	maxTaskBytes    = 2000
+	maxReasonBytes  = 256
+	maxServiceBytes = 128
 )
 
 // ErrUnavailable means that no assessment was made. Callers should leave the
@@ -98,8 +93,8 @@ func (t TaskContext) validate(options []attn.Option) ([]string, error) {
 	return FilterAuthorizedOptions(options, t.AuthorizedOptions)
 }
 
-// Client calls the official TypeSafe System One endpoint. HTTPClient is
-// injectable for tests; nil uses http.DefaultClient.
+// Client calls one configured endpoint. HTTPClient is injectable for tests;
+// nil uses http.DefaultClient.
 type Client struct {
 	Endpoint   string
 	APIKey     string
@@ -113,15 +108,13 @@ func (c Client) normalized() (Client, error) {
 	if c.APIKey == "" {
 		return Client{}, WithReason(ReasonNoKey, ErrUnavailable)
 	}
-	if strings.TrimSpace(c.Endpoint) == "" {
-		c.Endpoint = DefaultEndpoint
+	c.Endpoint = strings.TrimSpace(c.Endpoint)
+	c.Model = strings.TrimSpace(c.Model)
+	if c.Endpoint == "" || c.Model == "" {
+		return Client{}, WithReason(ReasonInvalidConfig, ErrUnavailable)
 	}
-	u, err := url.Parse(c.Endpoint)
-	if err != nil || u.Scheme != "https" || u.Host == "" {
-		return Client{}, fmt.Errorf("attn: endpoint must be an HTTPS URL")
-	}
-	if strings.TrimSpace(c.Model) == "" {
-		c.Model = DefaultModel
+	if err := validateEndpoint(c.Endpoint); err != nil {
+		return Client{}, WithReason(ReasonInvalidConfig, fmt.Errorf("attn: %w", err))
 	}
 	if c.Timeout <= 0 {
 		c.Timeout = DefaultTimeout
