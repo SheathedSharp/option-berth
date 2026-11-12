@@ -4,24 +4,35 @@ import "testing"
 
 // TestRenameGroupsMovesRunsWithTheProject: a service started before its
 // project was renamed follows the rename instead of keeping a group of the old
-// name to itself.
+// name to itself, while a run in an unrelated group is left where it is. An
+// empty rename is a no-op that reports nothing moved.
 func TestRenameGroupsMovesRunsWithTheProject(t *testing.T) {
-	r := New()
-	r.Mirror = false
-	r.Register(Record{PID: 101, Group: "shop", Name: "api"})
-	r.Register(Record{PID: 102, Group: "shop@feat", Name: "api"})
-	r.Register(Record{PID: 103, Group: "other", Name: "job"})
-
-	if n := r.RenameGroups(map[string]string{"shop": "market", "shop@feat": "market@feat"}); n != 2 {
-		t.Fatalf("RenameGroups moved %d runs, want 2", n)
+	reg := New()
+	reg.Mirror = false
+	for _, rec := range []Record{
+		{PID: 611, Group: "shop", Name: "api"},
+		{PID: 612, Group: "shop@feat", Name: "api"},
+		{PID: 613, Group: "other", Name: "job"},
+	} {
+		reg.Register(rec)
 	}
-	for pid, want := range map[int]string{101: "market", 102: "market@feat", 103: "other"} {
-		rec, ok := r.Lookup(pid)
-		if !ok || rec.Group != want {
-			t.Errorf("pid %d group = %q (%v), want %q", pid, rec.Group, ok, want)
+
+	renames := map[string]string{"shop": "market", "shop@feat": "market@feat"}
+	if n := reg.RenameGroups(renames); n != 2 {
+		t.Fatalf("RenameGroups(%v) moved %d runs, want 2", renames, n)
+	}
+	for pid, want := range map[int]string{611: "market", 612: "market@feat", 613: "other"} {
+		rec, ok := reg.Lookup(pid)
+		if !ok {
+			t.Errorf("pid %d is no longer registered after the rename", pid)
+			continue
+		}
+		if rec.Group != want {
+			t.Errorf("pid %d group = %q, want %q", pid, rec.Group, want)
 		}
 	}
-	if n := r.RenameGroups(nil); n != 0 {
-		t.Errorf("an empty rename moved %d runs", n)
+
+	if n := reg.RenameGroups(nil); n != 0 {
+		t.Errorf("a nil rename moved %d runs, want none", n)
 	}
 }
