@@ -11,104 +11,111 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 )
 
-// streamSeq numbers subscriptions for the life of the process. Ids are unique
-// across connections so a log line can name one without also naming a client.
+// streamSeq numbers subscriptions for the process's whole life. Ids are unique
+// across connections, so a log line can name one without naming a client too.
 var streamSeq atomic.Uint64
 
-// nextStreamID allocates the id a stream's chunks carry.
-func nextStreamID() string { return fmt.Sprintf("sub-%d", streamSeq.Add(1)) }
+// nextStreamID allocates the id carried by a stream's chunks.
+func nextStreamID() string {
+	n := streamSeq.Add(1)
+	return fmt.Sprintf("sub-%d", n)
+}
 
-// Stream is one running streaming method: the daemon replies to
-// the call with a subscription id, pushes `stream.chunk {id, data}`
-// notifications, and finishes with `stream.end {id, data?, error?}`.
+// Stream is a running streaming method: the daemon answers the call with a
+// subscription id, pushes `stream.chunk {id, data}` notifications, and closes
+// with `stream.end {id, data?, error?}`.
 //
 // A stream ends when its producer returns, when the client sends
-// `stream.cancel {id}`, or when the connection drops — the last two both cancel
-// the producer's context, so a producer only has to honour ctx.
+// `stream.cancel {id}`, or when the connection drops — the latter two both
+// cancel the producer's context, so honouring ctx is all a producer needs.
 type Stream struct {
-	id   string
 	conn *Conn
+	id   string
 
-	ctx    context.Context
 	cancel context.CancelFunc
+	ctx    context.Context
 
 	once sync.Once
 }
 
-// ID is the subscription id the client was handed.
+// ID is the subscription id handed to the client.
 func (s *Stream) ID() string { return s.id }
 
-// Context is cancelled by stream.cancel, by the client disconnecting and by
+// Context is cancelled by stream.cancel, by the client disconnecting and by a
 // daemon shutdown. Producers must select on it.
 func (s *Stream) Context() context.Context { return s.ctx }
 
-// Done is closed when the stream is cancelled.
+// Done is closed once the stream is cancelled.
 func (s *Stream) Done() <-chan struct{} { return s.ctx.Done() }
 
-// Send pushes one chunk. It reports the cancellation cause once the stream is
-// over, so a producer that ignores Context still stops on the first Send.
+// Send pushes one chunk. Once the stream is over it reports the cancellation
+// cause, so a producer that ignores Context still stops at the first Send.
 func (s *Stream) Send(data any) error {
-	if err := s.ctx.Err(); err != nil {
+	err := s.ctx.Err()
+	if err != nil {
 		return err
 	}
-	raw, err := json.Marshal(data)
+	encoded, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("marshalling stream chunk: %w", err)
 	}
-	return s.conn.Notify(rpc.MethodStreamChunk, rpc.StreamChunk{ID: s.id, Data: raw})
+	return s.conn.Notify(rpc.MethodStreamChunk, rpc.StreamChunk{ID: s.id, Data: encoded})
 }
 
 // finish deregisters the stream and sends stream.end exactly once. A cancelled
-// stream still gets an end notification, without an error: the client asked for
-// it, so it is not a failure.
+// stream still gets its end notification, without an error: the client asked
+// for the cancellation, so it is not a failure.
 func (s *Stream) finish(data any, err error) {
-	s.once.Do(func() {
-		s.conn.CancelStream(s.id)
-		end := rpc.StreamEnd{ID: s.id}
-		if data != nil {
-			if raw, mErr := json.Marshal(data); mErr == nil {
-				end.Data = raw
-			}
-		}
-		if err != nil && !errors.Is(err, context.Canceled) {
-			end.Error = errorFor(err)
-		}
-		_ = s.conn.Notify(rpc.MethodStreamEnd, end)
-	})
+	s.once.Do(func() { s.sendEnd(data, err) })
 }
 
-// StreamFunc produces a stream's chunks. It returns the payload of stream.end
-// (nil for a stream with no final result) and an error, which becomes
-// stream.end's error object. Returning ctx.Err() after a cancellation is not an
-// error and is reported as a clean end.
+func (s *Stream) sendEnd(data any, failure error) {
+	s.conn.CancelStream(s.id)
+	ending := rpc.StreamEnd{ID: s.id}
+	if data != nil {
+		if encoded, mErr := json.Marshal(data); mErr == nil {
+			ending.Data = encoded
+		}
+	}
+	if failure != nil && !errors.Is(failure, context.Canceled) {
+		ending.Error = errorFor(failure)
+	}
+	_ = s.conn.Notify(rpc.MethodStreamEnd, ending)
+}
+
+// StreamFunc produces a stream's chunks. Its returned payload becomes
+// stream.end's body (nil for a stream with no final result), and its error
+// becomes stream.end's error object. Returning ctx.Err() after a cancellation
+// is not an error: it is reported as a clean end.
 type StreamFunc func(ctx context.Context, s *Stream) (any, error)
 
 // StartStream turns a handler into a streaming method. It allocates a
 // subscription id, replies to the call with `initial` plus that id, registers
-// the stream so stream.cancel and disconnect can stop it, and runs produce in
-// its own goroutine.
+// the stream so stream.cancel and a disconnect can stop it, and finally runs
+// produce on its own goroutine.
 //
-// initial must marshal to a JSON object (or be nil, for a bare
-// {subscription_id}). The reply is queued before produce starts, so no chunk
-// can overtake the id it belongs to.
+// initial has to marshal to a JSON object; nil stands for a bare
+// {subscription_id} reply. The reply is queued before produce starts, so no
+// chunk can overtake the id it belongs to.
 //
-// Handlers return its two values directly: it always reports ErrResponseSent.
+// A handler returns its two values directly: the error is always
+// ErrResponseSent.
 func StartStream(ctx context.Context, req *Request, initial any, produce StreamFunc) (any, error) {
 	id := nextStreamID()
-	result, err := withSubscriptionID(initial, id)
+	reply, err := withSubscriptionID(initial, id)
 	if err != nil {
 		return nil, err
 	}
 
 	sctx, cancel := context.WithCancel(ctx)
-	s := &Stream{id: id, conn: req.Conn, ctx: sctx, cancel: cancel}
+	s := &Stream{conn: req.Conn, id: id, ctx: sctx, cancel: cancel}
 
 	req.Conn.RegisterStream(id, cancel)
-	req.Conn.replyResult(req.ID, result)
+	req.Conn.replyResult(req.ID, reply)
 
-	// A producer outlives the handler that started it and the connection entry,
-	// which removeConn deletes, so it is counted on the server: it writes run
-	// and exit facts, and the store closes as soon as that wait returns.
+	// A producer outlives the handler that started it and the connection entry
+	// removeConn deletes, so it is counted on the server: it writes run and exit
+	// facts, and the store closes as soon as that wait returns.
 	srv := req.Conn.srv
 	if srv != nil {
 		srv.producers.Add(1)
@@ -118,30 +125,31 @@ func StartStream(ctx context.Context, req *Request, initial any, produce StreamF
 			defer srv.producers.Done()
 		}
 		defer cancel()
-		end, perr := produce(sctx, s)
-		s.finish(end, perr)
+		payload, produceErr := produce(sctx, s)
+		s.finish(payload, produceErr)
 	}()
 	return nil, ErrResponseSent
 }
 
 // withSubscriptionID merges the subscription id into a streaming method's
-// initial result. A non-object initial payload is a programming error in a
-// handler, not something a client can provoke, so it surfaces as an internal
-// error rather than invalid params.
+// initial result. An initial payload that is not an object is a handler's
+// programming error — no client can provoke it — so it surfaces as an internal
+// error instead of invalid params.
 func withSubscriptionID(initial any, id string) (json.RawMessage, error) {
 	if initial == nil {
 		return json.Marshal(rpc.StreamStart{SubscriptionID: id})
 	}
-	raw, err := json.Marshal(initial)
+	encoded, err := json.Marshal(initial)
 	if err != nil {
 		return nil, rpc.NewError(rpc.CodeInternal,
 			"marshalling stream reply: "+err.Error(), "")
 	}
-	fields := map[string]json.RawMessage{}
-	if err := json.Unmarshal(raw, &fields); err != nil {
+	object := map[string]json.RawMessage{}
+	err = json.Unmarshal(encoded, &object)
+	if err != nil {
 		return nil, rpc.NewError(rpc.CodeInternal,
-			fmt.Sprintf("a streaming method must reply with a JSON object, got %s", raw), "")
+			fmt.Sprintf("a streaming method must reply with a JSON object, got %s", encoded), "")
 	}
-	fields["subscription_id"], _ = json.Marshal(id)
-	return json.Marshal(fields)
+	object["subscription_id"], _ = json.Marshal(id)
+	return json.Marshal(object)
 }

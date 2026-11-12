@@ -10,77 +10,79 @@ import (
 	"time"
 )
 
-// ErrAlreadyRunning is returned by AcquireLock when another daemon holds the
-// lock. Its message carries the holder's pid when the lock file could be read.
+// ErrAlreadyRunning is what AcquireLock returns when another daemon holds the
+// lock. When the lock file could be read, the message names the holder's pid.
 type ErrAlreadyRunning struct {
-	PID  int
 	Path string
+	PID  int
 }
 
 func (e *ErrAlreadyRunning) Error() string {
-	if e.PID > 0 {
-		return fmt.Sprintf("daemon already running (pid %d)", e.PID)
+	if e.PID <= 0 {
+		return "daemon already running"
 	}
-	return "daemon already running"
+	return fmt.Sprintf("daemon already running (pid %d)", e.PID)
 }
 
-// IsAlreadyRunning reports whether err is (or wraps) ErrAlreadyRunning.
+// IsAlreadyRunning reports whether err is, or wraps, ErrAlreadyRunning.
 func IsAlreadyRunning(err error) bool {
-	var e *ErrAlreadyRunning
-	return errors.As(err, &e)
+	var target *ErrAlreadyRunning
+	return errors.As(err, &target)
 }
 
-// Lock is the single-instance lock: an advisory lock (flock on Unix,
-// LockFileEx on Windows) on <socket dir>/daemon.lock, whose contents are the
-// holder's pid so a second `oberth serve` can name the process it lost to.
+// Lock is the single-instance lock: an advisory lock (flock on Unix, LockFileEx
+// on Windows) over <socket dir>/daemon.lock, holding the holder's pid in its
+// contents so a second `oberth serve` can name the process it lost to.
 //
-// Unix locks the whole file; Windows locks one byte far past the end of it,
-// because a Windows lock also blocks reads of the range it covers and the pid
-// has to stay readable while the lock is held (see lock_windows.go).
+// On Unix the whole file is locked; on Windows one byte far past its end is,
+// since a Windows lock also blocks reads of the range it covers and the pid
+// must stay readable while the lock is held (see lock_windows.go).
 type Lock struct {
-	path string
 	f    *os.File
+	path string
 }
 
 // AcquireLock takes the lock without blocking. It returns ErrAlreadyRunning
 // when another process holds it.
 func AcquireLock(path string) (*Lock, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	err := os.MkdirAll(filepath.Dir(path), 0o700)
+	if err != nil {
 		return nil, fmt.Errorf("creating lock directory: %w", err)
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		if isLockedOpenError(err) {
-			// Windows can refuse the open itself while another process has the
-			// file locked or opened without sharing, where Unix would let us
-			// open it and only refuse the lock. It is the same answer —
-			// somebody else has it — so it gets the same error, and callers
+			// Windows may refuse the open itself while another process holds
+			// the file locked or opened without sharing, where Unix would let
+			// us open it and refuse only the lock. The answer is the same —
+			// somebody else has it — so it earns the same error, and callers
 			// that retry (WaitForLockRelease) keep retrying.
 			return nil, &ErrAlreadyRunning{PID: LockHolderPID(path), Path: path}
 		}
 		return nil, fmt.Errorf("opening lock file: %w", err)
 	}
-	// A daemon spawns children (`oberth start`, `oberth up`, autostart). None of
-	// them may inherit the lock handle: an inherited handle keeps the lock —
-	// and, on Windows, the file itself — alive after the daemon that took it
-	// has exited.
+	// A daemon spawns children (`oberth start`, `oberth up`, autostart), and
+	// none of them may inherit the lock handle: an inherited handle would keep
+	// the lock — and on Windows the file itself — alive after the daemon that
+	// took it has exited.
 	markNotInheritable(f)
 
-	if err := lockFile(f); err != nil {
-		pid := readLockPID(f)
+	err = lockFile(f)
+	if err != nil {
+		holderPID := readLockPID(f)
 		f.Close()
 		if errors.Is(err, errLockBusy) {
-			return nil, &ErrAlreadyRunning{PID: pid, Path: path}
+			return nil, &ErrAlreadyRunning{PID: holderPID, Path: path}
 		}
 		return nil, fmt.Errorf("locking %s: %w", path, err)
 	}
 
-	// The lock is ours: replace whatever pid was in there with our own.
-	if err := f.Truncate(0); err == nil {
-		if _, err := f.WriteAt([]byte(strconv.Itoa(os.Getpid())+"\n"), 0); err != nil {
+	// The lock is ours now, so whatever pid was in the file is replaced by ours.
+	if err = f.Truncate(0); err == nil {
+		if _, writeErr := f.WriteAt([]byte(strconv.Itoa(os.Getpid())+"\n"), 0); writeErr != nil {
 			unlockFile(f)
 			f.Close()
-			return nil, fmt.Errorf("writing lock file: %w", err)
+			return nil, fmt.Errorf("writing lock file: %w", writeErr)
 		}
 		_ = f.Sync()
 	}
@@ -112,42 +114,43 @@ func (l *Lock) Path() string { return l.path }
 // that it is free. File existence and its diagnostic PID do not prove lock
 // ownership; the kernel releases a crashed process's lock automatically.
 //
-// On Windows the wait has to survive one more failure mode: opening a file the
+// On Windows the wait survives one further failure mode: opening a file the
 // outgoing daemon still holds fails outright (ERROR_LOCK_VIOLATION or
-// ERROR_SHARING_VIOLATION) rather than blocking. AcquireLock reports those as
-// ErrAlreadyRunning, so they are retried here instead of aborting the restart.
+// ERROR_SHARING_VIOLATION) instead of blocking. AcquireLock reports both as
+// ErrAlreadyRunning, so this loop retries them rather than aborting the
+// restart.
 func WaitForLockRelease(path string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 
 	var last error
 	for {
 		lock, err := AcquireLock(path)
-		if err == nil {
-			_ = lock.Release()
-			return nil
+		if err != nil {
+			if !IsAlreadyRunning(err) {
+				// Anything except "somebody holds it" (an unreadable
+				// directory, say) will not fix itself by waiting.
+				return err
+			}
+			last = err
+			if !time.Now().Before(deadline) {
+				return fmt.Errorf("the previous daemon still holds %s after %s: %w", path, timeout, last)
+			}
+			time.Sleep(25 * time.Millisecond)
+			continue
 		}
-		if !IsAlreadyRunning(err) {
-			// Anything other than "someone holds it" (an unreadable directory,
-			// say) will not resolve itself by waiting.
-			return err
-		}
-		last = err
-
-		if !time.Now().Before(deadline) {
-			return fmt.Errorf("the previous daemon still holds %s after %s: %w", path, timeout, last)
-		}
-		time.Sleep(25 * time.Millisecond)
+		_ = lock.Release()
+		return nil
 	}
 }
 
-// LockHolderPID reads the pid recorded in a lock file. It returns 0 when the
-// file is missing or unreadable; it does not prove the process is alive.
+// LockHolderPID reads the pid a lock file records. A missing or unreadable
+// file yields 0; the value does not prove the process is alive.
 func LockHolderPID(path string) int {
-	data, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return 0
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
 	if err != nil {
 		return 0
 	}
@@ -155,12 +158,12 @@ func LockHolderPID(path string) int {
 }
 
 func readLockPID(f *os.File) int {
-	buf := make([]byte, 32)
-	n, _ := f.ReadAt(buf, 0)
+	raw := make([]byte, 32)
+	n, _ := f.ReadAt(raw, 0)
 	if n <= 0 {
 		return 0
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(buf[:n])))
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw[:n])))
 	if err != nil {
 		return 0
 	}

@@ -4,10 +4,11 @@ package daemon_test
 
 import "os/exec"
 
-// ownProcessGroup is a no-op on Windows: spawn already puts a started command
-// in a Job Object, which is what makes the tree die with it.
+// ownProcessGroup has nothing to do on Windows. Spawning a process already
+// puts it inside a Job Object, and the Job Object is what carries the kill
+// down the tree.
 func ownProcessGroup(*exec.Cmd) {}
 
-// killTree kills the command, and the Job Object takes the rest of the tree
-// with it.
+// killTree kills the command itself; the Job Object disposes of whatever it
+// started below it.
 func killTree(cmd *exec.Cmd) { _ = cmd.Process.Kill() }

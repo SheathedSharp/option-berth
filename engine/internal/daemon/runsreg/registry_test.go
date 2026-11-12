@@ -3,6 +3,7 @@ package runsreg
 import (
 	"encoding/json"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -11,20 +12,38 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// testRegistry is a registry with no process table and no runs.json behind it.
+// testRegistry hands back a registry whose liveness answer comes from the pids
+// named, and which reads neither the host process table nor a runs.json.
 func testRegistry(alive ...int) *Registry {
-	live := map[int]bool{}
+	live := make(map[int]bool, len(alive))
 	for _, pid := range alive {
 		live[pid] = true
 	}
-	r := New()
-	r.Mirror = false
-	r.Alive = func(pid int) bool { return live[pid] }
-	r.Parents = func() map[int]int { return nil }
-	// Synthetic PIDs have no host identity. Tests exercising PID reuse inject
-	// StartTime explicitly, just as ancestry tests inject Parents.
-	r.StartTime = nil
-	return r
+	reg := New()
+	reg.Mirror = false
+	reg.Alive = func(pid int) bool { return live[pid] }
+	reg.Parents = func() map[int]int { return nil }
+	// A synthetic pid has no host identity to read. Tests exercising PID reuse
+	// inject StartTime explicitly, just as ancestry tests inject Parents.
+	reg.StartTime = nil
+	return reg
+}
+
+// registerAll fills the registry with the records in the order given.
+func registerAll(reg *Registry, recs ...Record) {
+	for _, rec := range recs {
+		reg.Register(rec)
+	}
+}
+
+// runIDs names the runs in list order, so a failure message shows the order the
+// registry answered with rather than a struct dump.
+func runIDs(recs []Record) []string {
+	ids := make([]string, len(recs))
+	for i, rec := range recs {
+		ids[i] = rec.ID
+	}
+	return ids
 }
 
 // The helper must stay independent of the host even when a synthetic PID
@@ -49,66 +68,77 @@ func TestNewRegistryKeepsProcessIdentityReader(t *testing.T) {
 	}
 }
 
+// List answers oldest first whatever order the runs arrived in, and Unregister
+// removes a run exactly once.
 func TestRegisterListAndUnregister(t *testing.T) {
-	r := testRegistry(100, 200)
-	base := time.Date(2026, 9, 5, 10, 0, 0, 0, time.UTC)
+	reg := testRegistry(4100, 4200)
+	base := time.Date(2026, 2, 3, 9, 15, 0, 0, time.UTC)
+	registerAll(reg,
+		Record{ID: "later", PID: 4200, Group: "shop", Name: "api", StartedAt: base.Add(90 * time.Second)},
+		Record{ID: "earlier", PID: 4100, Group: "shop", Name: "web", StartedAt: base},
+	)
 
-	r.Register(Record{ID: "b", PID: 200, Group: "g", Name: "api", StartedAt: base.Add(time.Minute)})
-	r.Register(Record{ID: "a", PID: 100, Group: "g", Name: "web", StartedAt: base})
-
-	got := r.List()
-	if len(got) != 2 {
-		t.Fatalf("List = %d runs, want 2", len(got))
+	listed := reg.List()
+	if len(listed) != 2 {
+		t.Fatalf("List = %d runs, want 2", len(listed))
 	}
-	if got[0].ID != "a" || got[1].ID != "b" {
-		t.Fatalf("List is not oldest first: %v", []string{got[0].ID, got[1].ID})
+	if listed[0].ID != "earlier" || listed[1].ID != "later" {
+		t.Fatalf("List = %v, want the older run first", runIDs(listed))
 	}
 
-	if !r.Unregister(100) {
-		t.Fatal("Unregister(100) reported nothing to remove")
+	if !reg.Unregister(4100) {
+		t.Fatal("Unregister(4100) reported nothing to remove")
 	}
-	if r.Unregister(100) {
-		t.Fatal("Unregister(100) removed the same run twice")
+	if reg.Unregister(4100) {
+		t.Fatal("Unregister(4100) removed the same run twice")
 	}
-	if len(r.List()) != 1 {
-		t.Fatalf("List after unregister = %v", r.List())
+	if remaining := reg.List(); len(remaining) != 1 {
+		t.Fatalf("List after unregister = %v, want one run left", runIDs(remaining))
 	}
 }
 
+// A pid registered again keeps the run id it already had, so the code snapshot
+// and the exit history recorded under that id stay attached to it.
 func TestRegisterKeepsTheIDOfAReregisteredPID(t *testing.T) {
-	r := testRegistry(100)
-	r.Register(Record{ID: "keep", PID: 100, Group: "g", Name: "web"})
-	rec := r.Register(Record{PID: 100, Group: "g", Name: "web"})
-	if rec.ID != "keep" {
-		t.Fatalf("id = %q, want keep", rec.ID)
+	reg := testRegistry(4300)
+	first := reg.Register(Record{ID: "keep", PID: 4300, Group: "shop", Name: "web"})
+	second := reg.Register(Record{PID: 4300, Group: "shop", Name: "web"})
+	if second.ID != first.ID || second.ID != "keep" {
+		t.Fatalf("re-registered id = %q (first %q), want keep", second.ID, first.ID)
 	}
 }
 
+// Prune drops the run whose process is gone and keeps the live one.
 func TestPruneDropsDeadRuns(t *testing.T) {
-	r := testRegistry(100)
-	r.Register(Record{ID: "a", PID: 100, Group: "g", Name: "web"})
-	r.Register(Record{ID: "b", PID: 999, Group: "g", Name: "gone"})
+	reg := testRegistry(4400)
+	registerAll(reg,
+		Record{ID: "live", PID: 4400, Group: "shop", Name: "web"},
+		Record{ID: "dead", PID: 4499, Group: "shop", Name: "gone"},
+	)
 
-	r.Prune()
-	got := r.List()
-	if len(got) != 1 || got[0].PID != 100 {
-		t.Fatalf("Prune left %v, want only pid 100", got)
+	reg.Prune()
+	left := reg.List()
+	if len(left) != 1 || left[0].PID != 4400 {
+		t.Fatalf("Prune left %v, want only pid 4400", runIDs(left))
 	}
 }
 
 func TestRunAttributesAPortByItsPPIDAncestry(t *testing.T) {
-	r := testRegistry(100)
-	r.Register(Record{ID: "a", PID: 100, Group: "itest", Name: "web"})
-	// oberth start (100) -> npm (200) -> node (300) -> esbuild (400)
-	r.Parents = func() map[int]int { return map[int]int{400: 300, 300: 200, 200: 100} }
+	reg := testRegistry(4500)
+	reg.Register(Record{ID: "run-4500", PID: 4500, Group: "itest", Name: "web"})
+	// oberth start (4500) -> npm (4600) -> node (4700) -> esbuild (4800)
+	reg.Parents = func() map[int]int { return map[int]int{4800: 4700, 4700: 4600, 4600: 4500} }
 
-	run, ok := r.Run(state.Port{PID: 400, PPID: 300})
-	if !ok || run.Group != "itest" || run.Name != "web" || run.RootPID != 100 {
-		t.Fatalf("Run(descendant) = %+v/%v, want itest/web rooted at 100", run, ok)
+	run, ok := reg.Run(state.Port{PID: 4800, PPID: 4700})
+	if !ok {
+		t.Fatal("a descendant's port was attributed to no run")
+	}
+	if run.Group != "itest" || run.Name != "web" || run.RootPID != 4500 {
+		t.Fatalf("Run(descendant) = %+v, want itest/web rooted at 4500", run)
 	}
 
-	if _, ok := r.Run(state.Port{PID: 777, PPID: 1}); ok {
-		t.Fatal("an unrelated listener was attributed to a run")
+	if unrelated, ok := reg.Run(state.Port{PID: 4900, PPID: 1}); ok {
+		t.Fatalf("an unrelated listener was attributed to %+v", unrelated)
 	}
 }
 
@@ -118,42 +148,47 @@ func TestRunAttributesAPortByItsPPIDAncestry(t *testing.T) {
 // process table to work with, and it has to reach the `oberth start` that owns
 // the listener through it.
 func TestRunAttributesTheLinuxScannerShape(t *testing.T) {
-	r := testRegistry(100)
-	r.Register(Record{ID: "a", PID: 100, Group: "itest", Name: "web"})
-	// oberth start (100) -> the listener it spawned (300). ss gave no ppid.
-	r.Parents = func() map[int]int { return map[int]int{300: 100, 100: 42} }
+	reg := testRegistry(4500)
+	reg.Register(Record{ID: "run-4500", PID: 4500, Group: "itest", Name: "web"})
+	// oberth start (4500) -> the listener it spawned (4900); ss gave no ppid.
+	reg.Parents = func() map[int]int { return map[int]int{4900: 4500, 4500: 42} }
 
-	run, ok := r.Run(state.Port{PID: 300, PPID: 0})
+	run, ok := reg.Run(state.Port{PID: 4900, PPID: 0})
 	if !ok {
 		t.Fatal("a listener spawned by a run was not attributed to it")
 	}
-	if run.ID != "a" || run.Group != "itest" || run.Name != "web" || run.RootPID != 100 {
-		t.Fatalf("Run = %+v, want a/itest/web rooted at 100", run)
+	if run.ID != "run-4500" || run.Group != "itest" || run.Name != "web" || run.RootPID != 4500 {
+		t.Fatalf("Run = %+v, want itest/web rooted at 4500", run)
 	}
 }
 
 // TestRunAttributesTheRegisteredPIDItself covers `oberth start` in the
 // foreground: the run is registered under the pid of the child it spawned, and
-// that child is the process holding the socket, so no walk is needed and the
-// answer must not depend on a process table being readable at all.
+// that child holds the socket. No walk is needed, so the answer must not depend
+// on the process table being readable at all.
 func TestRunAttributesTheRegisteredPIDItself(t *testing.T) {
-	r := testRegistry(300)
-	r.Register(Record{ID: "a", PID: 300, Group: "itest", Name: "web"})
-	r.Parents = func() map[int]int { t.Fatal("the process table should not be needed"); return nil }
+	reg := testRegistry(4300)
+	reg.Register(Record{ID: "run-4300", PID: 4300, Group: "itest", Name: "web"})
+	reg.Parents = func() map[int]int { t.Fatal("the process table should not be needed"); return nil }
 
-	run, ok := r.Run(state.Port{PID: 300})
-	if !ok || run.ID != "a" || run.Name != "web" || run.RootPID != 300 {
-		t.Fatalf("Run = %+v/%v, want the registered run", run, ok)
+	run, ok := reg.Run(state.Port{PID: 4300})
+	if !ok {
+		t.Fatal("the registered run's own port was attributed to nothing")
+	}
+	if run.ID != "run-4300" || run.Name != "web" || run.RootPID != 4300 {
+		t.Fatalf("Run = %+v, want the registered run", run)
 	}
 }
 
+// The parent the scanner already resolved is evidence the registry holds, so it
+// answers before the process table is read.
 func TestRunUsesTheDirectParentBeforeTheProcessTable(t *testing.T) {
-	r := testRegistry(100)
-	r.Register(Record{ID: "a", PID: 100, Group: "itest", Name: "web"})
-	r.Parents = func() map[int]int { t.Fatal("the process table should not be needed"); return nil }
+	reg := testRegistry(4500)
+	reg.Register(Record{ID: "run-4500", PID: 4500, Group: "itest", Name: "web"})
+	reg.Parents = func() map[int]int { t.Fatal("the process table should not be needed"); return nil }
 
-	if run, ok := r.Run(state.Port{PID: 200, PPID: 100}); !ok || run.Group != "itest" {
-		t.Fatalf("Run(child) = %+v/%v", run, ok)
+	if run, ok := reg.Run(state.Port{PID: 4600, PPID: 4500}); !ok || run.Group != "itest" {
+		t.Fatalf("Run(child) = %+v/%v, want the parent's group", run, ok)
 	}
 }
 
@@ -171,76 +206,79 @@ func TestRunIgnoresAStaleStamp(t *testing.T) {
 	}
 }
 
-func TestImportLegacyTakesOverRunsJSON(t *testing.T) {
+// legacyRunsHome points HOME and USERPROFILE at a throwaway directory: that is
+// where the runs.json the import takes over lives.
+func legacyRunsHome(t *testing.T) {
+	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+}
 
-	live := os.Getpid()
-	if err := runs.Add(runs.Entry{PID: live, Tag: "legacy", ID: "old-1", Cmd: "npm run dev"}); err != nil {
-		t.Fatal(err)
+func TestImportLegacyTakesOverRunsJSON(t *testing.T) {
+	legacyRunsHome(t)
+	pid := os.Getpid()
+	if err := runs.Add(runs.Entry{PID: pid, Tag: "legacy", ID: "old-1", Cmd: "npm run dev"}); err != nil {
+		t.Fatalf("writing the legacy runs.json: %v", err)
 	}
 	if _, err := os.Stat(runs.Path()); err != nil {
 		t.Fatalf("runs.json was not written: %v", err)
 	}
 
-	r := New()
-	r.Mirror = false
-	if n, err := r.ImportLegacy(); err != nil || n != 1 {
-		t.Fatalf("ImportLegacy = %d/%v, want 1/nil", n, err)
+	reg := New()
+	reg.Mirror = false
+	moved, err := reg.ImportLegacy()
+	if err != nil || moved != 1 {
+		t.Fatalf("ImportLegacy = %d/%v, want 1/nil", moved, err)
 	}
 	if _, err := os.Stat(runs.Path()); !os.IsNotExist(err) {
 		t.Fatalf("runs.json survived the import: %v", err)
 	}
 
-	got := r.List()
-	if len(got) != 1 {
-		t.Fatalf("List = %v", got)
+	imported := reg.List()
+	if len(imported) != 1 {
+		t.Fatalf("List after the import = %v, want the imported run", runIDs(imported))
 	}
 	// A `option-berth run --tag legacy` entry carries no group or name of its own, so
 	// the tag stands for both (the documented alias).
-	if got[0].Group != "legacy" || got[0].Name != "legacy" || got[0].ID != "old-1" {
-		t.Fatalf("imported record = %+v", got[0])
+	if imported[0].Group != "legacy" || imported[0].Name != "legacy" || imported[0].ID != "old-1" {
+		t.Fatalf("imported record = %+v", imported[0])
 	}
 }
 
 func TestImportLegacyRewritesTheFileItOwns(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-
-	live := os.Getpid()
-	if err := runs.Add(runs.Entry{PID: live, Tag: "legacy", ID: "old-1"}); err != nil {
-		t.Fatal(err)
+	legacyRunsHome(t)
+	pid := os.Getpid()
+	if err := runs.Add(runs.Entry{PID: pid, Tag: "legacy", ID: "old-1"}); err != nil {
+		t.Fatalf("writing the legacy runs.json: %v", err)
 	}
 
-	r := New() // mirroring on: the daemon owns the file from here
-	if n, err := r.ImportLegacy(); err != nil || n != 1 {
-		t.Fatalf("ImportLegacy = %d/%v, want 1/nil", n, err)
+	reg := New() // mirroring on: the daemon owns the file from here
+	moved, err := reg.ImportLegacy()
+	if err != nil || moved != 1 {
+		t.Fatalf("ImportLegacy = %d/%v, want 1/nil", moved, err)
+	}
+
+	var rewritten struct {
+		Entries map[string]runs.Entry `json:"runs"`
 	}
 	data, err := os.ReadFile(runs.Path())
 	if err != nil {
 		t.Fatalf("the daemon did not rewrite runs.json: %v", err)
 	}
-	var file struct {
-		Runs map[string]runs.Entry `json:"runs"`
+	if err := json.Unmarshal(data, &rewritten); err != nil {
+		t.Fatalf("runs.json is not the documented shape: %v", err)
 	}
-	if err := json.Unmarshal(data, &file); err != nil {
-		t.Fatal(err)
-	}
-	entry, ok := file.Runs[itoa(live)]
+	entry, ok := rewritten.Entries[itoa(pid)]
 	if !ok {
-		t.Fatalf("runs.json = %s", data)
+		t.Fatalf("runs.json = %s, want an entry for pid %d", data, pid)
 	}
 	if entry.Group != "legacy" || entry.Name != "legacy" {
-		t.Fatalf("mirrored entry = %+v", entry)
+		t.Fatalf("mirrored entry = %+v, want the tag standing in for group and name", entry)
 	}
 }
 
-func itoa(i int) string {
-	b, _ := json.Marshal(i)
-	return string(b)
-}
+func itoa(i int) string { return strconv.Itoa(i) }
 
 // TestPruneDropsARecycledPID: a pid that now belongs to a newer process is not
 // the run the record names. This is the imported-runs case after a daemon

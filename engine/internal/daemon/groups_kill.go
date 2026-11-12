@@ -120,9 +120,9 @@ func handleGroupsKill(ctx context.Context, req *Request) (any, error) {
 	}
 
 	opts := killer.Options{
-		Force:  p.Force,
-		Grace:  time.Duration(p.GraceMs) * time.Millisecond,
 		DryRun: p.DryRun,
+		Grace:  time.Duration(p.GraceMs) * time.Millisecond,
+		Force:  p.Force,
 		Ports:  killerRows(snap),
 	}
 	var rows []state.KillResult
@@ -535,15 +535,17 @@ func configAtDir(rt *Runtime, dir string) *groups.Config {
 	return nil
 }
 
-// killGroupName is the group a groups.kill call is about: the name it sent, or
-// the group the daemon publishes a config's services under. The config comes
-// back too when the call named one.
+// killGroupName resolves the group a groups.kill call is about: either the name
+// it sent, or the group the daemon publishes a config's services under. When
+// the call named a config, that config comes back with it.
 func killGroupName(rt *Runtime, p rpc.GroupsKillParams) (string, *groups.Config, error) {
-	if name := strings.TrimSpace(p.Name); name != "" {
-		return name, nil, nil
+	groupName := strings.TrimSpace(p.Name)
+	if groupName != "" {
+		return groupName, nil, nil
 	}
-	if path := trimmed(p.ConfigPath); path != "" {
-		cfg, err := loadConfig(rt, path)
+	configPath := trimmed(p.ConfigPath)
+	if configPath != "" {
+		cfg, err := loadConfig(rt, configPath)
 		if err != nil {
 			return "", nil, err
 		}

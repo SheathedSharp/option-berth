@@ -134,6 +134,9 @@ type DaemonHelloResult struct {
 }
 
 type DaemonStatusResult struct {
+	// PID and Uptime identify the process and say how long it has been
+	// answering; Subscribers counts the live state subscriptions, and LastScanAt
+	// is when the port scanner last finished a pass.
 	PID         int    `json:"pid"`
 	Uptime      string `json:"uptime"`
 	Subscribers int    `json:"subscribers"`
@@ -175,7 +178,8 @@ type DoctorCheck struct {
 	// ID names the check. A check that exists once per external tool is dotted
 	// with that tool: `mcp_registered.claude_code`.
 	ID string `json:"id"`
-	// Status is ok, warn, fail or skip. Only `fail` makes the run not ok.
+	// Status is the verdict: ok, warn, fail or skip. Only `fail` makes the whole
+	// run not ok.
 	Status string `json:"status"`
 	// Summary is the one line a table row shows.
 	Summary string `json:"summary"`
@@ -200,14 +204,15 @@ type DaemonDoctorParams struct {
 }
 
 // DaemonDoctorResult is what both `oberth doctor --json` and `daemon.doctor`
-// return. OK is false when any check failed.
+// return. OK is false when at least one check failed.
 type DaemonDoctorResult struct {
 	OK     bool          `json:"ok"`
 	Checks []DoctorCheck `json:"checks"`
 	// Version is the version of the process that ran the checks: the CLI for
 	// `oberth doctor`, the daemon for `daemon.doctor`.
 	Version string `json:"version"`
-	// DaemonVersion is the daemon's version, empty when it is not reachable.
+	// DaemonVersion is the version the daemon answered with, empty when no
+	// daemon is reachable: `oberth doctor` still runs with none up.
 	DaemonVersion string `json:"daemon_version"`
 }
 
@@ -265,12 +270,19 @@ type StateSubscribeParams struct {
 // ----------------------------------------------------------------- ports ---
 
 type PortsKillParams struct {
-	Targets  []Selector `json:"targets"`
-	Tree     bool       `json:"tree,omitempty"`
-	Force    bool       `json:"force,omitempty"`
-	GraceMs  int        `json:"grace_ms,omitempty"`
-	Escalate *bool      `json:"escalate,omitempty"`
-	DryRun   bool       `json:"dry_run,omitempty"`
+	Targets []Selector `json:"targets"`
+	// Tree stops each target's whole process tree. A listener an
+	// option-berth-started run owns is stopped as a tree either way.
+	Tree bool `json:"tree,omitempty"`
+	// Force is already the strongest signal, so it skips the wait; GraceMs is
+	// the SIGTERM to SIGKILL window, zero meaning the engine's default.
+	Force   bool `json:"force,omitempty"`
+	GraceMs int  `json:"grace_ms,omitempty"`
+	// Escalate is three-valued: nil escalates after the grace window, an
+	// explicit false stops at SIGTERM. DryRun plans the kill and performs none
+	// of it.
+	Escalate *bool `json:"escalate,omitempty"`
+	DryRun   bool  `json:"dry_run,omitempty"`
 }
 
 type PortsLogsParams struct {
@@ -282,12 +294,18 @@ type PortsLogsParams struct {
 // PortsLogsResult answers a one-shot call. With follow set, the reply also
 // carries a subscription_id and the lines keep arriving as PortsLogsChunk.
 type PortsLogsResult struct {
-	Source         string   `json:"source"`
-	Lines          []string `json:"lines"`
-	Truncated      bool     `json:"truncated"`
-	SubscriptionID string   `json:"subscription_id,omitempty"`
+	Source string   `json:"source"`
+	Lines  []string `json:"lines"`
+	// Truncated says the tail filled the requested line count, so Lines is a
+	// window onto the end of the log rather than the whole of it.
+	Truncated bool `json:"truncated"`
+	// SubscriptionID is set only on a follow, which keeps sending the rest of
+	// the output as PortsLogsChunk.
+	SubscriptionID string `json:"subscription_id,omitempty"`
 }
 
+// PortsLogsChunk is one line pushed by a following ports.logs. Source is
+// repeated on every chunk so a multiplexed reader can tell two logs apart.
 type PortsLogsChunk struct {
 	Source string `json:"source"`
 	Line   string `json:"line"`
@@ -454,8 +472,8 @@ type GroupsStartChunk struct {
 	WaitingOn     []string `json:"waiting_on,omitempty"`
 	LastPrepareMS *int64   `json:"last_prepare_ms,omitempty" jsonschema:"nullable"`
 	// LogOffset is how long log_path already was when this service started. The
-	// file is appended to across runs, so a client following it begins here to
-	// show this run and not the ones before.
+	// file is appended to across runs, so a client that follows it begins here,
+	// which shows this run and not the generations before it.
 	LogOffset int64  `json:"log_offset,omitempty"`
 	Skipped   bool   `json:"skipped,omitempty"`
 	Reason    string `json:"reason,omitempty"`
@@ -517,40 +535,41 @@ type GroupConfig struct {
 	Name     string          `json:"name"`
 	Services []state.Service `json:"services"`
 	Ports    []int           `json:"ports"`
-	// WorktreePorts is the file's worktree_ports: how many ports a claim for
-	// this project takes when it names no count. Null when the
-	// file has no such key.
+	// WorktreePorts is the file's worktree_ports: the number of ports a claim for
+	// this project takes when it names no count. Null when the key is absent.
 	WorktreePorts *int `json:"worktree_ports" jsonschema:"nullable"`
 }
 
 type GroupsConfigGetParams struct {
+	// Name and Path name the file to read: the group as the daemon publishes it,
+	// or the oberth.yaml itself. A path wins when both are sent.
 	Name *string `json:"name,omitempty"`
 	Path *string `json:"path,omitempty"`
 }
 
+// GroupsConfigGetResult is where the file was found and what it declares.
 type GroupsConfigGetResult struct {
 	Path   string      `json:"path"`
 	Config GroupConfig `json:"config"`
 }
 
 // GroupsConfigSetParams is one atomic edit of an `oberth.yaml`. The four lists
-// may be combined in a single call and
-// are applied in this order — Remove, Rename, Add, then the Services metadata
-// patches — with each list seeing the file as the previous ones left it.
-// Nothing is written unless the whole edit succeeds and the result still
-// validates, so a call that fails leaves the file byte-identical.
+// may be combined in a single call, and they are applied in this order —
+// Remove, Rename, Add, then the Services metadata patches — each list seeing the
+// file as the previous ones left it. Nothing is written unless the whole edit
+// succeeds and the result still validates, so a failed call leaves the file
+// byte-identical.
 type GroupsConfigSetParams struct {
 	Path string `json:"path"`
-	// Services patches the metadata of services that already exist.
+	// Services patches the metadata of services that already exist; Add appends
+	// new ones, where a name or a port the file already uses is `conflict`.
 	Services []groups.ServiceEdit `json:"services,omitempty"`
-	// Add appends services. A name or a port the file already uses is
-	// `conflict`.
-	Add []groups.ServiceAdd `json:"add,omitempty"`
+	Add      []groups.ServiceAdd  `json:"add,omitempty"`
 	// Rename renames services everywhere in the file, depends_on references
-	// included. An unknown `from` is `not_found`, a `to` already in the file is
+	// included. An unknown `from` is `not_found`; a `to` already in the file is
 	// `conflict`.
 	Rename []groups.ServiceRename `json:"rename,omitempty"`
-	// Remove deletes services and drops them from every other service's
+	// Remove deletes services, and drops them from every other service's
 	// depends_on. An unknown name is `not_found`.
 	Remove []string `json:"remove,omitempty"`
 	// WorktreePorts edits the top-level worktree_ports key: omitted leaves it
@@ -559,14 +578,14 @@ type GroupsConfigSetParams struct {
 	// invalid.
 	WorktreePorts *int `json:"worktree_ports,omitempty" jsonschema:"nullable"`
 
-	// WorktreePortsSent records that worktree_ports was present, null
-	// included, because a pointer alone cannot tell null from absent.
-	// UnmarshalJSON fills it; a Go caller sets it by hand.
+	// WorktreePortsSent records that worktree_ports was present, null included:
+	// a pointer alone cannot tell null from absent. UnmarshalJSON fills it in; a
+	// Go caller sets it by hand.
 	WorktreePortsSent bool `json:"-" jsonschema:"-"`
 }
 
-// UnmarshalJSON decodes the params and remembers whether worktree_ports was
-// sent at all.
+// UnmarshalJSON decodes the params and remembers whether worktree_ports was sent
+// at all.
 func (p *GroupsConfigSetParams) UnmarshalJSON(data []byte) error {
 	// The alias drops this type's own UnmarshalJSON, so decoding it cannot
 	// recurse back here.
@@ -607,6 +626,8 @@ type GroupsConfigSetResult struct {
 	Config GroupConfig `json:"config"`
 }
 
+// GroupsReloadResult reports a reload of every known manifest: how many files
+// loaded, and the ones that could not be used.
 type GroupsReloadResult struct {
 	Loaded int             `json:"loaded"`
 	Errors []ConfigProblem `json:"errors"`
@@ -619,15 +640,16 @@ type ConfigProblem struct {
 }
 
 // GroupsInitParams asks for a proposed `oberth.yaml` for the checkout at
-// RootDir. Write is the contract's opt-in to actually writing it, so the
-// default is a preview; Force overwrites an existing file, while Merge appends
-// into one instead. Force and Merge are mutually
-// exclusive.
+// RootDir.
 type GroupsInitParams struct {
 	RootDir string `json:"root_dir"`
-	Write   bool   `json:"write,omitempty"`
-	Force   bool   `json:"force,omitempty"`
-	Merge   bool   `json:"merge,omitempty"`
+	// Write is the contract's opt-in to actually writing the file, so the
+	// default is a preview.
+	Write bool `json:"write,omitempty"`
+	// Force overwrites an existing file and Merge appends into one instead; the
+	// two are mutually exclusive.
+	Force bool `json:"force,omitempty"`
+	Merge bool `json:"merge,omitempty"`
 	// Services replaces the proposed service list with the caller's own, so a
 	// curated file can be written in one call. The entries are taken as given:
 	// nothing is copied onto them from what happens to be listening on their
@@ -643,8 +665,12 @@ type GroupsInitParams struct {
 	YAML string `json:"yaml,omitempty"`
 }
 
+// GroupsInitResult is the file as it now stands, together with the proposal it
+// was written from.
 type GroupsInitResult struct {
 	MutationResult
+	// Path is where the file now is, YAML what it holds, and Proposal the parsed
+	// rows a client renders its preview from.
 	Path     string      `json:"path"`
 	YAML     string      `json:"yaml"`
 	Proposal state.Group `json:"proposal"`
@@ -652,16 +678,24 @@ type GroupsInitResult struct {
 
 // ------------------------------------------------------------------ runs ---
 
+// RunsRegisterParams is what a caller that started a process itself reports:
+// which process it is, what it was started as, and where.
 type RunsRegisterParams struct {
-	PID       int     `json:"pid"`
-	PPID      int     `json:"ppid"`
-	Group     string  `json:"group"`
-	Name      string  `json:"name"`
-	Cmd       string  `json:"cmd"`
-	Cwd       string  `json:"cwd"`
-	PortHint  *int    `json:"port_hint,omitempty"`
-	StartedAt string  `json:"started_at"`
-	ID        *string `json:"id,omitempty"`
+	// PID is the process the caller started and PPID its parent; Group and Name
+	// are the manifest identity it was started under.
+	PID   int    `json:"pid"`
+	PPID  int    `json:"ppid"`
+	Group string `json:"group"`
+	Name  string `json:"name"`
+	// Cmd and Cwd are what it was started with, and StartedAt when it began;
+	// PortHint is the port it is expected to bind, if the caller knows one.
+	Cmd       string `json:"cmd"`
+	Cwd       string `json:"cwd"`
+	PortHint  *int   `json:"port_hint,omitempty"`
+	StartedAt string `json:"started_at"`
+	// ID lets the caller name the run itself. Absent, the registry gives it one,
+	// which is what keeps a recycled pid attributable.
+	ID *string `json:"id,omitempty"`
 	// Session is the agent session that asked for this run. The caller detects
 	// it: `oberth start` reads its own environment, which is the agent's, while
 	// the daemon's is not.
@@ -682,35 +716,39 @@ type RunsUnregisterParams struct {
 	// ExitCode is how the run ended, for a caller that waited on it —
 	// `oberth start` without --detach. Absent simply forgets the run.
 	ExitCode *int `json:"exit_code,omitempty"`
-	// Stopped says the run was asked to stop (a Ctrl+C), so a non-zero exit
+	// Stopped says the run was asked to stop (a Ctrl+C, say), so a non-zero exit
 	// code is not a crash.
 	Stopped bool `json:"stopped,omitempty"`
 }
 
 type RunsListResult struct {
 	Runs []RunRecord `json:"runs"`
-	// Exited is the runs that have ended, newest first, with their exit code
-	// and the last lines they logged. The daemon keeps a bounded history in its
-	// store and restores it when it restarts.
+	// Exited is the runs that have ended, newest first, with the code each one
+	// exited on and the last lines it logged. The daemon keeps a bounded history
+	// in its store and restores it when it restarts.
 	Exited []RunRecord `json:"exited"`
 }
 
 type RunRecord struct {
-	ID        string `json:"id"`
-	PID       int    `json:"pid"`
-	Group     string `json:"group"`
-	Name      string `json:"name"`
-	Cmd       string `json:"cmd"`
-	Cwd       string `json:"cwd"`
+	ID  string `json:"id"`
+	PID int    `json:"pid"`
+	// Group and Name are the manifest identity the run was started under; Cmd
+	// and Cwd are what it was started with.
+	Group string `json:"group"`
+	Name  string `json:"name"`
+	Cmd   string `json:"cmd"`
+	Cwd   string `json:"cwd"`
+	// StartedAt is RFC 3339, and Ports are the ones the last scan saw this run
+	// holding.
 	StartedAt string `json:"started_at"`
 	Ports     []int  `json:"ports"`
 	// PortHint is the port `oberth start --port` said this run would bind, or
 	// the one groups.start assigned a `port: auto` service.
 	PortHint *int `json:"port_hint,omitempty"`
-	// URL is where that port answers, for a run that has one.
+	// URL is the address that port answers on, for a run that has one.
 	URL string `json:"url,omitempty"`
-	// Status is "starting" while a run with a port hint has not bound it yet,
-	// "running" otherwise, and "exited" for a run in the exited list.
+	// Status is "starting" while a port-hinted run has not bound its port yet,
+	// "running" otherwise, and "exited" for a run that is in the exited list.
 	Status string `json:"status"`
 	// ConfigPath, StartID and Origin say where the run came from: the
 	// oberth.yaml it was started from, the `groups.start` that started it with
@@ -749,45 +787,66 @@ type RunRecord struct {
 }
 
 type RunsSpawnParams struct {
-	Argv             []string          `json:"argv"`
-	Cwd              string            `json:"cwd"`
-	Env              map[string]string `json:"env,omitempty"`
-	Group            *string           `json:"group,omitempty"`
-	Name             *string           `json:"name,omitempty"`
-	PortHint         *int              `json:"port_hint,omitempty"`
-	Session          *state.Session    `json:"session,omitempty"`
-	AllowOutsideHome bool              `json:"allow_outside_home,omitempty"`
+	Argv []string `json:"argv"`
+	// Cwd is where the command runs. Omitted, the daemon resolves its own
+	// working directory.
+	Cwd string `json:"cwd"`
+	// Env is layered over the daemon's own environment.
+	Env map[string]string `json:"env,omitempty"`
+	// Group and Name are the identity the caller wants the run recorded under;
+	// they are resolved, not taken literally.
+	Group *string `json:"group,omitempty"`
+	Name  *string `json:"name,omitempty"`
+	// PortHint is the port the caller expects this run to bind.
+	PortHint *int `json:"port_hint,omitempty"`
+	// Session is the agent session that asked for the run, and AllowOutsideHome
+	// opts out of the daemon's home-directory refusal.
+	Session          *state.Session `json:"session,omitempty"`
+	AllowOutsideHome bool           `json:"allow_outside_home,omitempty"`
 }
 
+// RunsSpawnResult is the started run: its id, the process behind it, and the
+// file its output goes to.
 type RunsSpawnResult struct {
 	MutationResult
-	RunID   string `json:"run_id"`
-	PID     int    `json:"pid"`
+	RunID string `json:"run_id"`
+	PID   int    `json:"pid"`
+	// LogPath is where the detached process appends what it prints.
 	LogPath string `json:"log_path"`
 }
 
+// SessionsKillParams stops what a session started. ID names the session; Tree,
+// Force and DryRun mean what they mean for a port kill.
 type SessionsKillParams struct {
-	ID     string `json:"id"`
-	Tree   bool   `json:"tree,omitempty"`
-	Force  bool   `json:"force,omitempty"`
-	DryRun bool   `json:"dry_run,omitempty"`
+	ID   string `json:"id"`
+	Tree bool   `json:"tree,omitempty"`
+	// Force skips the polite signal, and DryRun only reports what would be
+	// stopped.
+	Force  bool `json:"force,omitempty"`
+	DryRun bool `json:"dry_run,omitempty"`
 }
 
 // ---------------------------------------------------------------- config ---
 
+// ConfigGetResult is the daemon's config file as a plain map, so a key this
+// build does not know survives a round trip through it.
 type ConfigGetResult struct {
 	Config map[string]any `json:"config"`
 }
 
+// ConfigSetParams carries the keys to change. They are merged into the file as
+// written, which is why the same map type comes back.
 type ConfigSetParams struct {
 	Patch map[string]any `json:"patch"`
 }
 
+// ConfigSetResult is the config as it stands after the write.
 type ConfigSetResult struct {
 	OK     bool           `json:"ok"`
 	Config map[string]any `json:"config"`
 }
 
+// ConfigPathResult is where the daemon reads and writes its config.
 type ConfigPathResult struct {
 	Path string `json:"path"`
 }

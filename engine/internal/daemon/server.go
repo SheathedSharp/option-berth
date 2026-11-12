@@ -18,11 +18,11 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// DefaultIdleTimeout is the config default for daemon.idle_timeout. Zero means
-// "never idle out".
+// DefaultIdleTimeout is the config default for daemon.idle_timeout; zero means
+// the daemon never idles out.
 const DefaultIdleTimeout = 30 * time.Minute
 
-// idleCheckInterval bounds how often the idle watchdog wakes.
+// idleCheckInterval caps how often the idle watchdog can wake.
 const idleCheckInterval = 5 * time.Second
 
 // stateReplayCapacity bounds the in-memory resume window. A cursor older than
@@ -62,18 +62,18 @@ type Options struct {
 	Scanner *scanner.Loop // an injected loop; nil means the OS scanner
 }
 
-// Server is the daemon: a listener, a set of connections, the subscription
-// fan-out and the process lifecycle.
+// Server is the daemon: the listener it owns, the connections it tracks, the
+// fan-out that feeds subscribers, and its own lifecycle.
 type Server struct {
 	opts    Options
 	logger  *slog.Logger
 	socket  string
-	ln      net.Listener
 	runtime *Runtime
 	loop    *scanner.Loop
+	ln      net.Listener
 
-	lock    *Lock
 	ownLock bool
+	lock    *Lock
 
 	nextConnID         atomic.Uint64
 	nextWorkspaceEvent atomic.Uint64
@@ -95,11 +95,11 @@ type Server struct {
 	pendingMu sync.Mutex
 	pending   []state.Event
 
+	graceful atomic.Bool
+	wg       sync.WaitGroup
 	stopOnce sync.Once
 	stopping chan struct{}
 	done     chan struct{}
-	graceful atomic.Bool
-	wg       sync.WaitGroup
 	// producers counts stream goroutines across every connection. They run
 	// after their handler returns and outlive the connection entry, which
 	// removeConn deletes, so they are counted on the server rather than the
@@ -135,17 +135,17 @@ func New(opts Options) *Server {
 	return server
 }
 
-// withServerDefaults fills in what a caller may leave empty, so the rest of the
-// constructor never has to ask.
+// withServerDefaults fills in whatever a caller left empty, so no later step of
+// construction has to ask.
 func withServerDefaults(opts Options) Options {
 	if opts.Logger == nil {
 		opts.Logger = slog.New(slog.DiscardHandler)
 	}
-	if opts.Socket == "" {
-		opts.Socket = SocketPath()
-	}
 	if opts.Version == "" {
 		opts.Version = "dev"
+	}
+	if opts.Socket == "" {
+		opts.Socket = SocketPath()
 	}
 	return opts
 }
@@ -174,11 +174,11 @@ func (s *Server) buildRuntime(opts Options) *Runtime {
 		binary, _ = os.Executable()
 	}
 	return &Runtime{
+		StartedAt:  time.Now(),
 		Version:    opts.Version,
 		Socket:     s.socket,
 		BinaryPath: binary,
 		PID:        os.Getpid(),
-		StartedAt:  time.Now(),
 		Logger:     opts.Logger,
 		Scanner:    s.loop,
 		srv:        s,
@@ -214,9 +214,9 @@ func (s *Server) releaseSingleInstance() {
 	}
 }
 
-// Serve takes the single-instance lock, listens, and accepts connections until
-// ctx is cancelled or Shutdown is called. It returns ErrAlreadyRunning when
-// another daemon holds the lock.
+// Serve takes the single-instance lock, listens, then accepts connections until
+// ctx is cancelled or Shutdown is called. A second daemon on the same socket
+// gets ErrAlreadyRunning.
 func (s *Server) Serve(ctx context.Context) error {
 	defer close(s.done)
 
@@ -225,23 +225,23 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 	defer s.releaseSingleInstance()
 
-	// The lock is ours, so any socket file still on disk belongs to a daemon
-	// that died without cleaning up.
-	if err := removeStaleSocket(s.socket); err != nil {
+	// The lock is ours, so a socket file still on disk was left behind by a
+	// daemon that died without cleaning up.
+	err := removeStaleSocket(s.socket)
+	if err != nil {
 		return fmt.Errorf("removing stale socket %s: %w", s.socket, err)
 	}
 
-	ln, err := listen(s.socket)
+	s.ln, err = listen(s.socket)
 	if err != nil {
 		return fmt.Errorf("listening on %s: %w", s.socket, err)
 	}
-	s.ln = ln
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// The store comes up before the scanner so the first tick already resolves
-	// groups with the stored pins and publishes the stored names.
+	// Opening the store before the scanner lets the very first tick resolve
+	// groups with the stored pins and publish the stored names.
 	s.openStore()
 	defer s.closeStore()
 
@@ -249,7 +249,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	// Optional hooks retain their existing adapter, but failed required work
 	// must not be presented as an empty successful daemon.
 	if err := runStartHooks(s.runtime); err != nil {
-		_ = ln.Close()
+		_ = s.ln.Close()
 		runShutdownHooks(false)
 		_ = removeStaleSocket(s.socket)
 		return fmt.Errorf("starting daemon: %w", err)
@@ -262,13 +262,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		"socket", s.socket, "pid", s.runtime.PID, "version", s.opts.Version,
 		"idle_timeout", s.opts.IdleTimeout.String())
 
-	go func() {
-		select {
-		case <-ctx.Done():
-			s.Shutdown()
-		case <-s.stopping:
-		}
-	}()
+	go s.shutdownWhenDone(ctx)
 
 	acceptErr := s.accept(ctx)
 
@@ -298,6 +292,16 @@ func (s *Server) runBackground(work func()) {
 		defer s.wg.Done()
 		work()
 	}()
+}
+
+// shutdownWhenDone stops the daemon when the serve context ends. A shutdown
+// that is already under way needs nothing from here.
+func (s *Server) shutdownWhenDone(ctx context.Context) {
+	select {
+	case <-ctx.Done():
+		s.Shutdown()
+	case <-s.stopping:
+	}
 }
 
 // accept is the accept loop.
@@ -337,20 +341,18 @@ func (s *Server) startConn(ctx context.Context, nc net.Conn) {
 	s.touch()
 	s.logger.Debug("client connected", "conn", c.id)
 
-	// The writer is tracked on the connection, not on the server: it has to be
+	// The writer is tracked on the connection, not on the server: it must be
 	// known to be finished before the socket is closed, and that ordering is
 	// the connection's own business.
 	c.writerWG.Add(1)
-	go c.writeLoop()
+	go func() { c.writeLoop() }()
 
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
+	s.runBackground(func() {
 		// Closing here means a client that stops sending tears down its own
 		// connection, whether it disconnected or hit an error.
 		defer c.Close()
 		c.readLoop(ctx)
-	}()
+	})
 }
 
 // registerConn adds a connection to the registry under the lock the publisher
@@ -369,14 +371,20 @@ func (s *Server) removeConn(c *Conn, reason string) {
 		s.broadcastWorkspaceChanged(workspace, nil)
 	}
 
-	// The keepalive count has to be recomputed before anything else can ask
-	// whether an idle daemon may stop, and the wake makes the next scan see the
-	// ports this client was watching go quiet.
-	s.recountKeepalive()
-	s.touch()
+	// The keepalive count is recomputed before anything can ask whether an idle
+	// daemon may stop, and the wake makes the next scan see the ports this
+	// client was watching go quiet.
+	s.markDisconnected()
 	s.logger.Debug("client disconnected", "conn", c.id, "reason", reason)
 	runDisconnectHooks(c.id)
 	s.loop.Wake()
+}
+
+// markDisconnected records that a client went away: the keepalive count drops
+// first, then the idle clock restarts.
+func (s *Server) markDisconnected() {
+	s.recountKeepalive()
+	s.touch()
 }
 
 // forgetConn drops a connection from the registry, detaching any workspace
@@ -410,9 +418,9 @@ func (s *Server) closeAllConns(reason string) {
 	}
 }
 
-// Shutdown stops the daemon. It broadcasts state.event{daemon_stopping} to
-// every subscriber first (spec, daemon.shutdown), gives the writers a moment to
-// flush, and then closes the listener.
+// Shutdown stops the daemon. Subscribers first get
+// state.event{daemon_stopping} (spec, daemon.shutdown), the writers then get a
+// moment to flush, and only after that does the listener close.
 func (s *Server) Shutdown() {
 	s.stopOnce.Do(func() {
 		s.graceful.Store(true)
@@ -437,9 +445,9 @@ func (s *Server) announceStopping() {
 // Done is closed once Serve has returned.
 func (s *Server) Done() <-chan struct{} { return s.done }
 
-// drainQueues waits, up to timeout, for every connection's outbound queue to
-// empty, so a client sees daemon_stopping (and the reply to daemon.shutdown)
-// before the socket goes away.
+// drainQueues gives every connection's outbound queue up to timeout to empty,
+// so daemon_stopping (and the reply to daemon.shutdown) reaches a client before
+// the socket goes away.
 func (s *Server) drainQueues(timeout time.Duration) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -475,17 +483,19 @@ func (s *Server) Subscribers() int {
 	return subscribers
 }
 
-// Clients counts open connections, subscribed or not.
+// Clients is the number of open connections, whether subscribed or not.
 func (s *Server) Clients() int {
 	s.subsMu.RLock()
 	defer s.subsMu.RUnlock()
 	return len(s.conns)
 }
 
-// demand is the scanner's Demand callback: how many subscribers there are and
-// the union of what they asked to have collected.
+// demand is the scanner's Demand callback: the subscriber count and the union
+// of what those subscribers asked to have collected.
 func (s *Server) demand() (int, scanner.Include) {
 	s.subsMu.RLock()
+	// Read under the same lock the publisher takes, so the count and the
+	// include set describe one and the same registry.
 	defer s.subsMu.RUnlock()
 
 	var wanted scanner.Include
@@ -528,12 +538,12 @@ var marshalSnapshot = json.Marshal
 // the publish lock, so no delta can slip in between the opening frame and the
 // live stream.
 //
-// The reply never waits for a scan: the snapshot is whatever the loop last
-// published — with stats and health null when the loop has not been collecting
-// them — and Wake makes the loop scan immediately, so the fields the subscriber
-// asked for arrive in the first delta rather than delaying the reply by a scan.
-// A scoped view keeps the daemon's global sequence; gaps are expected when an
-// intervening publish changed only rows outside the selected scope.
+// The reply never waits on a scan: it carries whatever the loop last published,
+// with stats and health null while the loop is not collecting them. Wake makes
+// the loop scan at once, so the fields a subscriber asked for arrive in the
+// first delta instead of holding the reply back by a scan. A scoped view keeps
+// the daemon's global sequence; gaps are expected when an intervening publish
+// changed only rows outside the selected scope.
 //
 // Nothing is registered until the opening frame has been encoded: the old
 // workspace relation is detached, the new one is validated and the reply is
@@ -1248,11 +1258,11 @@ func filterPort(row state.Port, include scanner.Include) state.Port {
 
 // ------------------------------------------------------------------- idle ---
 
-// touch records client activity, resetting the idle countdown.
+// touch records client activity and so resets the idle countdown.
 func (s *Server) touch() { s.lastActive.Store(time.Now().UnixNano()) }
 
-// recountKeepalive recomputes how many connected clients asked the daemon to
-// stay up (daemon.hello{keepalive:true}).
+// recountKeepalive recomputes the number of connected clients that asked the
+// daemon to stay up (daemon.hello{keepalive:true}).
 func (s *Server) recountKeepalive() {
 	s.keepalives.Store(s.countKeepalive())
 }
@@ -1287,33 +1297,40 @@ func (s *Server) idleCheckEvery() time.Duration {
 	return tick
 }
 
-// watchIdle stops the daemon once it has been idle for IdleTimeout. A
-// keepalive client or any subscriber counts as activity, so the desktop app
-// keeps the daemon alive simply by staying connected.
+// watchIdle stops the daemon after IdleTimeout without activity. A keepalive
+// client or any subscriber counts as activity, so the desktop app keeps the
+// daemon alive just by staying connected.
 func (s *Server) watchIdle(ctx context.Context) {
 	if s.opts.IdleTimeout <= 0 {
 		return
 	}
-	t := time.NewTicker(s.idleCheckEvery())
-	defer t.Stop()
+	ticker := time.NewTicker(s.idleCheckEvery())
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-s.stopping:
 			return
-		case <-t.C:
-			if s.keepalives.Load() > 0 || s.Subscribers() > 0 {
+		case <-ticker.C:
+			if s.watched() {
 				s.touch()
 				continue
 			}
 			idle := time.Since(time.Unix(0, s.lastActive.Load()))
-			if idle >= s.opts.IdleTimeout {
-				s.logger.Info("idle timeout reached, stopping",
-					"idle", idle.Round(time.Second).String())
-				s.Shutdown()
-				return
+			if idle < s.opts.IdleTimeout {
+				continue
 			}
+			s.logger.Info("idle timeout reached, stopping",
+				"idle", idle.Round(time.Second).String())
+			s.Shutdown()
+			return
 		}
 	}
+}
+
+// watched reports whether a keepalive client or a subscriber is still watching,
+// which is what keeps an idle daemon up.
+func (s *Server) watched() bool {
+	return s.keepalives.Load() > 0 || s.Subscribers() > 0
 }

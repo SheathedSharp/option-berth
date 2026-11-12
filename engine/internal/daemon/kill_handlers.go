@@ -12,10 +12,9 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// The kill namespace. Both methods are thin: they turn wire selectors into
-// killer targets against the daemon's latest snapshot and hand the work to
-// killer.KillPorts, which is the same code path `oberth kill` takes, so the CLI,
-// the app and MCP cannot drift apart.
+// The kill namespace. These methods stay thin on purpose: wire selectors are
+// resolved against the daemon's latest snapshot, then killer.KillPorts does the
+// work — the very path `oberth kill` takes — so CLI, app and MCP cannot drift.
 func init() {
 	RegisterHandler("ports.kill", handlePortsKill)
 	RegisterHandler("groups.kill", handleGroupsKill)
@@ -24,7 +23,8 @@ func init() {
 
 func handlePortsKill(ctx context.Context, req *Request) (any, error) {
 	var p rpc.PortsKillParams
-	if err := req.Bind(&p); err != nil {
+	err := req.Bind(&p)
+	if err != nil {
 		return nil, err
 	}
 	if len(p.Targets) == 0 {
@@ -38,8 +38,8 @@ func handlePortsKill(ctx context.Context, req *Request) (any, error) {
 	}
 
 	targets := make([]killer.Target, 0, len(p.Targets))
-	for _, sel := range p.Targets {
-		t, err := selectorTarget(sel, snap)
+	for i := range p.Targets {
+		t, err := selectorTarget(p.Targets[i], snap)
 		if err != nil {
 			return nil, killRPCError(err)
 		}
@@ -47,11 +47,11 @@ func handlePortsKill(ctx context.Context, req *Request) (any, error) {
 	}
 
 	opts := killer.Options{
-		Tree:     p.Tree,
-		Force:    p.Force,
-		Grace:    time.Duration(p.GraceMs) * time.Millisecond,
-		Escalate: p.Escalate,
 		DryRun:   p.DryRun,
+		Force:    p.Force,
+		Escalate: p.Escalate,
+		Tree:     p.Tree,
+		Grace:    time.Duration(p.GraceMs) * time.Millisecond,
 		Ports:    killerRows(snap),
 	}
 	opts.OnSignal = stopSignalObserver(req.Runtime, snap, targets, opts.DryRun, "")
@@ -60,36 +60,36 @@ func handlePortsKill(ctx context.Context, req *Request) (any, error) {
 	return killEnvelope(rows), nil
 }
 
-// afterKill rescans and publishes, so the ports that just went away are gone
-// from the very next read and their port_down rows reach the history ring even
-// when nobody is subscribed. Without it the caller's own `oberth list` would
-// still be served from the snapshot taken before the kill.
+// afterKill takes a fresh scan and publishes it, so ports that were just
+// stopped are absent from the next read and their port_down rows reach the
+// history ring even with no subscriber. Skipping it would leave the caller's
+// own `oberth list` answering from the pre-kill snapshot.
 func afterKill(req *Request, dryRun bool) (state.Snapshot, error) {
 	if dryRun {
 		return state.Snapshot{}, nil
 	}
-	// Reconcile exited imported runs before publishing the post-stop snapshot.
-	// They have no child reaper in this daemon; a stale Running row would
-	// otherwise make the next restart skip a worker that already exited.
+	// Imported runs that exited are reconciled before the post-stop snapshot is
+	// published: this daemon has no child reaper for them, and a stale Running
+	// row would make the next restart skip a worker that is already gone.
 	req.Runtime.Runs().Prune()
 	return rescanAfterKill(req.Runtime)
 }
 
-// killSnapshot is the state selectors and group members are resolved against.
+// killSnapshot is the state that selectors and group members resolve against.
 //
-// It always scans: the cache may be up to CacheTTL old, and a group that gained
-// a service in that window would be killed only in part — which is exactly what
-// the direct `oberth kill` path, scanning at the moment it is asked, never does.
-// A kill is rare and deliberate; one scan is the right price for acting on what
-// is listening now.
+// It never reads the cache: up to CacheTTL of age would let a group that gained
+// a service in that window be killed only partly, which the direct
+// `oberth kill` path — scanning at the moment it is asked — never does. A kill
+// is rare and deliberate, so one scan is the right price for acting on what is
+// listening right now.
 //
-// The scan it asks for is bare. A kill needs the pid and port of what is
-// listening, never a health verdict or a cpu reading, so it does not inherit a
-// subscriber's `include` — the published snapshot carries those forward
-// instead of collecting them again. That is the difference
-// between a dry run answering in a moment and one waiting out `docker stats`
-// and a round of health probes. Caller cancellation stops observation before
-// selector resolution; it does not cancel publication of a kill already done.
+// That scan is bare. A kill only needs the pid and port of each listener, not a
+// health verdict or a cpu reading, so no subscriber's `include` is inherited;
+// the published snapshot carries those readings forward instead of collecting
+// them again. That is what separates a dry run that answers in a moment from
+// one that waits out `docker stats` and a round of health probes. Caller
+// cancellation stops observation before selectors resolve; it does not cancel
+// publication of a kill that already happened.
 func killSnapshot(ctx context.Context, req *Request) (state.Snapshot, error) {
 	snap, err := req.Runtime.Scanner.RescanContext(ctx, scanner.Include{})
 	if err := ctx.Err(); err != nil {
@@ -101,89 +101,110 @@ func killSnapshot(ctx context.Context, req *Request) (state.Snapshot, error) {
 	return snap, nil
 }
 
-// killerRows hands the killer the scan the handler just took.
+// killerRows hands the killer the scan the handler already took.
 //
-// Without it killer.KillPorts scans the machine again from inside the RPC, so
-// one `ports.kill` cost two full scans: the §25 rescan-before-select and the
-// killer's own. The second one is pure duplication — the rows are the same
-// enriched pipeline (ports.Scan + Docker + Enrich) the daemon's scanner ran a
-// moment earlier — and it is what made a dry run of an unknown port take
-// seconds. Every other caller of the killer (`oberth kill`, `kill-all`, `down`)
-// already passes the snapshot it resolved its targets against; the daemon now
-// does the same, which is also what keeps the two paths' output identical.
+// Without it killer.KillPorts would scan the machine a second time from inside
+// the RPC, so a single `ports.kill` cost two full scans: the §25
+// rescan-before-select plus the killer's own. The second is pure duplication —
+// the rows come from the same enriched pipeline (ports.Scan + Docker + Enrich)
+// the daemon's scanner ran a moment earlier — and it made a dry run of an
+// unknown port take seconds. Every other caller of the killer (`oberth kill`,
+// `kill-all`, `down`) already passes the snapshot its targets were resolved
+// against; the daemon does the same now, which also keeps the two paths'
+// output identical.
 func killerRows(snap state.Snapshot) []ports.ListeningPort {
 	rows := state.ToListeningAll(snap.Ports)
-	if rows == nil {
-		// Never nil: a nil slice tells the killer to go and scan for itself.
-		rows = []ports.ListeningPort{}
+	if rows != nil {
+		return rows
 	}
-	return rows
+	// Never nil: a nil slice would tell the killer to scan for itself.
+	return []ports.ListeningPort{}
 }
 
 // selectorTarget validates one wire selector and turns it into a killer target.
-// A port that the snapshot binds to exactly one address is pinned to it, so a
-// second listener appearing between the scan and the kill cannot widen the
-// request; anything the snapshot does not know about is passed through and
+// When the snapshot binds a port to exactly one address, the target is pinned
+// to it so a second listener appearing between scan and kill cannot widen the
+// request; whatever the snapshot does not know about is passed through and
 // comes back as a failed row rather than a failed call.
 func selectorTarget(sel rpc.Selector, snap state.Snapshot) (killer.Target, error) {
-	set := 0
-	for _, on := range []bool{sel.Port != nil, sel.PID != nil, sel.RunID != nil} {
-		if on {
-			set++
+	chosen := 0
+	for _, present := range []bool{sel.Port != nil, sel.PID != nil, sel.RunID != nil} {
+		if present {
+			chosen++
 		}
 	}
-	if set != 1 {
-		return killer.Target{}, &killer.CodedError{
-			Code:   killer.CodeInvalidSelector,
-			Detail: "a selector sets exactly one of port, pid and run_id",
-			Hint:   `bind_address only disambiguates port, for example {"port": 3000, "bind_address": "127.0.0.1"}`,
-		}
+	if chosen != 1 {
+		return killer.Target{}, invalidSelector("a selector sets exactly one of port, pid and run_id",
+			`bind_address only disambiguates port, for example {"port": 3000, "bind_address": "127.0.0.1"}`)
 	}
 
-	switch {
-	case sel.RunID != nil:
+	if sel.RunID != nil {
 		return killer.Target{RunID: *sel.RunID}, nil
-	case sel.PID != nil:
-		if *sel.PID <= 0 {
-			return killer.Target{}, &killer.CodedError{
-				Code:   killer.CodeInvalidSelector,
-				Detail: "pid must be positive",
-			}
+	}
+	if sel.PID != nil {
+		if err := checkSelectorPID(*sel.PID); err != nil {
+			return killer.Target{}, err
 		}
 		return killer.Target{PID: *sel.PID}, nil
 	}
 
 	port := *sel.Port
+	if err := checkSelectorPort(port); err != nil {
+		return killer.Target{}, err
+	}
+	bindAddr := ""
+	if sel.BindAddress != nil {
+		bindAddr = *sel.BindAddress
+	}
+	if bindAddr == "" {
+		if binds := bindAddresses(snap, port); len(binds) == 1 {
+			bindAddr = binds[0]
+		}
+	}
+	return killer.Target{Port: port, BindAddress: bindAddr}, nil
+}
+
+// invalidSelector builds the coded error every malformed selector earns.
+func invalidSelector(detail, hint string) error {
+	return &killer.CodedError{
+		Code:   killer.CodeInvalidSelector,
+		Detail: detail,
+		Hint:   hint,
+	}
+}
+
+func checkSelectorPID(pid int) error {
+	if pid <= 0 {
+		return &killer.CodedError{
+			Code:   killer.CodeInvalidSelector,
+			Detail: "pid must be positive",
+		}
+	}
+	return nil
+}
+
+func checkSelectorPort(port int) error {
 	if port <= 0 || port > 65535 {
-		return killer.Target{}, &killer.CodedError{
+		return &killer.CodedError{
 			Code:   killer.CodeInvalidSelector,
 			Detail: "port must be between 1 and 65535",
 		}
 	}
-	bind := ""
-	if sel.BindAddress != nil {
-		bind = *sel.BindAddress
-	}
-	if bind == "" {
-		if binds := bindAddresses(snap, port); len(binds) == 1 {
-			bind = binds[0]
-		}
-	}
-	return killer.Target{Port: port, BindAddress: bind}, nil
+	return nil
 }
 
 // bindAddresses lists the distinct addresses a port is bound to in the snapshot.
 func bindAddresses(snap state.Snapshot, port int) []string {
-	var out []string
-	seen := map[string]bool{}
+	var addresses []string
+	known := make(map[string]bool)
 	for _, p := range snap.Ports {
-		if p.Port != port || seen[p.BindAddress] {
+		if p.Port != port || known[p.BindAddress] {
 			continue
 		}
-		seen[p.BindAddress] = true
-		out = append(out, p.BindAddress)
+		known[p.BindAddress] = true
+		addresses = append(addresses, p.BindAddress)
 	}
-	return out
+	return addresses
 }
 
 // groupTargets resolves a group name against the snapshot. The resolved group
@@ -196,9 +217,13 @@ func groupTargets(snap state.Snapshot, name string) []killer.Target {
 func groupTargetsFor(snap state.Snapshot, name string, only map[string]bool) []killer.Target {
 	var out []killer.Target
 	for _, p := range snap.Ports {
-		if inSnapshotGroup(p, name) && (only == nil || (p.Run != nil && only[p.Run.Name])) {
-			out = append(out, killer.Target{Port: p.Port, BindAddress: p.BindAddress})
+		if !inSnapshotGroup(p, name) {
+			continue
 		}
+		if only != nil && (p.Run == nil || !only[p.Run.Name]) {
+			continue
+		}
+		out = append(out, killer.Target{Port: p.Port, BindAddress: p.BindAddress})
 	}
 	return out
 }
@@ -210,17 +235,17 @@ func groupTargetsFor(snap state.Snapshot, name string, only map[string]bool) []k
 // name contradicts the expectation, is left alone as well — an unverifiable
 // identity cannot widen a stop.
 func expectedGroupTargets(snap state.Snapshot, name string, expect map[string]string) []killer.Target {
-	wanted := make(map[string]string, len(expect))
+	byRun := make(map[string]string, len(expect))
 	for service, runID := range expect {
-		wanted[runID] = service
+		byRun[runID] = service
 	}
 	var out []killer.Target
 	for _, p := range snap.Ports {
 		if p.Run == nil || !inSnapshotGroup(p, name) {
 			continue
 		}
-		service, ok := wanted[p.Run.ID]
-		if !ok || (p.Run.Name != "" && p.Run.Name != service) {
+		service, known := byRun[p.Run.ID]
+		if !known || (p.Run.Name != "" && p.Run.Name != service) {
 			continue
 		}
 		out = append(out, killer.Target{Port: p.Port, BindAddress: p.BindAddress})
@@ -229,52 +254,52 @@ func expectedGroupTargets(snap state.Snapshot, name string, expect map[string]st
 }
 
 func inSnapshotGroup(p state.Port, name string) bool {
-	candidates := []string{}
+	names := make([]string, 0, 5)
 	if p.Group != nil {
-		candidates = append(candidates, *p.Group)
+		names = append(names, *p.Group)
 	}
 	if p.Run != nil {
-		candidates = append(candidates, p.Run.Group, p.Run.ID, p.Run.Name)
+		names = append(names, p.Run.Group, p.Run.ID, p.Run.Name)
 	}
 	if p.Docker != nil {
-		candidates = append(candidates, p.Docker.ComposeProject)
+		names = append(names, p.Docker.ComposeProject)
 	}
-	for _, c := range candidates {
-		if c != "" && strings.EqualFold(c, name) {
+	for _, candidate := range names {
+		if candidate != "" && strings.EqualFold(candidate, name) {
 			return true
 		}
 	}
 	return false
 }
 
-// killEnvelope wraps the killer's rows in the mutation result.
-// affected lists the port key of every row that succeeded, once each; ok is
-// true only when nothing failed.
+// killEnvelope wraps the killer's rows in the mutation result. ok is true only
+// when nothing failed, and affected lists the port key of every row that
+// succeeded, once each.
 func killEnvelope(rows []state.KillResult) rpc.KillEnvelope {
-	if rows == nil {
-		rows = []state.KillResult{}
+	results := rows
+	if results == nil {
+		results = []state.KillResult{}
 	}
-	env := rpc.KillEnvelope{Results: rows}
+	env := rpc.KillEnvelope{Results: results}
 	env.OK = true
 	env.Affected = []string{}
-	seen := map[string]bool{}
-	for _, r := range rows {
-		if !r.OK && r.Code != killer.CodeNotFound {
-			env.OK = false
+	seen := make(map[string]bool, len(results))
+	for i := range results {
+		r := results[i]
+		if r.OK {
+			key := r.Key()
+			if key != "" && !seen[key] {
+				seen[key] = true
+				env.Affected = append(env.Affected, key)
+			}
 			continue
 		}
 		// A not_found row is not a failure: the end state the caller asked for —
-		// the thing is not running — already holds, so the envelope stays ok
-		// (and the row is still in Results, saying so).
-		if !r.OK {
-			continue
+		// the thing is not running — already holds, so the envelope stays ok and
+		// the row still appears in Results saying so.
+		if r.Code != killer.CodeNotFound {
+			env.OK = false
 		}
-		key := r.Key()
-		if key == "" || seen[key] {
-			continue
-		}
-		seen[key] = true
-		env.Affected = append(env.Affected, key)
 	}
 	return env
 }
@@ -282,16 +307,21 @@ func killEnvelope(rows []state.KillResult) rpc.KillEnvelope {
 // killRPCError maps a killer error onto the contract's numeric error registry,
 // carrying its hint through to error.data.hint.
 func killRPCError(err error) error {
-	code := rpc.CodeInternal
-	switch killer.Code(err) {
+	return rpc.NewError(killErrorCode(killer.Code(err)), err.Error(), killer.Hint(err))
+}
+
+// killErrorCode translates the killer's classification into the numeric
+// registry; an unrecognized one is an internal error.
+func killErrorCode(class string) int {
+	switch class {
 	case killer.CodeNotFound:
-		code = rpc.CodeNotFound
+		return rpc.CodeNotFound
 	case killer.CodeAmbiguous:
-		code = rpc.CodeAmbiguous
+		return rpc.CodeAmbiguous
 	case killer.CodePermissionDenied:
-		code = rpc.CodePermission
+		return rpc.CodePermission
 	case killer.CodeInvalidSelector:
-		code = rpc.CodeInvalidSelector
+		return rpc.CodeInvalidSelector
 	}
-	return rpc.NewError(code, err.Error(), killer.Hint(err))
+	return rpc.CodeInternal
 }

@@ -20,156 +20,159 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// pipeWrite and pipeRead bound how long a test will wait on the in-memory
-// connection. They are hang-guards, not latency assertions: a handler that
-// never answers has to fail the test rather than hang it until `go test
-// -timeout` shoots the whole binary, but a handler that answers in 20 ms on a
-// laptop and 4 s on a contended two-core CI runner is not a bug, and a deadline
-// that calls it one produces exactly the flake this suite kept seeing — three
-// different tests, on three different branches, all failing as "read pipe: i/o
-// timeout" at the old 3 s.
+// The two pipe deadlines below are hang-guards, not latency budgets. A handler
+// that never answers has to fail its test rather than sit there until `go test
+// -timeout` shoots the whole binary; but a handler that answers in 20 ms on a
+// laptop and in four seconds on a loaded two-core CI runner is still a handler
+// that answered, and calling that a bug is exactly what produced the run of
+// "read pipe: i/o timeout" flakes this suite used to have at the old
+// three-second bound.
 //
-// net.Pipe is synchronous and unbuffered, so the server's write blocks until
-// the test reads; the write deadline needs the same headroom as the read.
+// net.Pipe is synchronous and has no buffer — the server's write returns only
+// once the test reads — so the write side needs the same headroom as the read
+// side.
 const (
 	pipeWrite = 30 * time.Second
 	pipeRead  = 30 * time.Second
-	// settle is how long a test may wait for work the daemon does on its own
-	// clock — a scan tick, a delta, a stream ending. The scan loop's base
-	// interval is 2 s, so anything under a few of those is a race with the
-	// runner rather than a bound on the daemon.
+	// settle bounds how long a test may wait for work the daemon schedules on
+	// its own clock: a scan tick, a delta, a stream ending. The scan loop's
+	// base interval is two seconds, so a bound of only a few of those would
+	// measure the runner rather than the daemon.
 	settle = 30 * time.Second
 )
 
-// testHarness is a Server wired to an in-memory connection, so the dispatcher,
-// the codec, the subscription registry and the fan-out are exercised together
-// without touching the filesystem or the OS scanner.
+// testHarness wires a Server to an in-memory connection: the dispatcher, the
+// codec, the subscription registry and the fan-out all take part, and neither
+// the filesystem nor the OS scanner is touched.
 //
-// "Without touching the OS" is load-bearing and is enforced by the seams below:
-// Scan, statistics and Probe are all faked, so no unit test spawns netstat, lsof,
-// ss, ps, tasklist, powershell or docker, and none opens a real socket. A
-// handler that reaches the OS behind those seams is a bug — it makes the test
-// measure the runner instead of the handler.
+// That last part is load-bearing, and the seams below are what enforce it:
+// Scan, the process sampler and Probe are all faked, so no unit test here
+// spawns netstat, lsof, ss, ps, tasklist, powershell or docker, and none opens
+// a listening socket. A handler that reaches the OS behind one of those seams
+// is a defect — the test would then be measuring the runner instead of the
+// handler.
 type testHarness struct {
 	t    *testing.T
 	srv  *Server
 	loop *scanner.Loop
 
-	stopLoop context.CancelFunc
-	loopDone chan struct{}
+	stopScan context.CancelFunc
+	scanDone chan struct{}
 
 	mu    sync.Mutex
 	rows  []ports.ListeningPort
 	probe scanner.Probe
 
-	// statsMove turns the per-process sampler from a constant into climbing readings.
+	// statsMove turns the per-process sampler from a constant answer into
+	// readings that climb on every call; sampleN counts those calls.
 	statsMove atomic.Bool
 	sampleN   atomic.Int64
 }
 
-// newHarness builds a server whose scan loop is already running, so a change to
-// the fake scan result reaches subscribers the way it does in production.
+// newHarness builds a server whose scan loop is already running, so a change
+// to the fake scan result reaches subscribers the way it does in production.
 //
-// A harness that opens a database must be built *after* the t.TempDir() that
-// holds it: cleanups run last-registered-first, and the harness has to stop
-// before the directory it writes into is removed.
-// tune lets a test adjust the scanner options the harness builds, before the
-// loop is constructed. The stats tick is what it is for: most tests only need
-// it to exist, and paying the production 1 s cadence for each of them makes
-// the suite slower without testing anything, so they turn it down.
+// A harness that opens a database has to be built *after* the t.TempDir() that
+// holds it: cleanups run newest-first, and the harness must stop before the
+// directory it writes into is removed.
+//
+// The optional tweaks adjust the scanner options before the loop is built. The
+// stats cadence is what they are for: most tests only need the tick to happen
+// at all, and paying the production one-second cadence in each of them costs
+// wall-clock without testing anything.
 type tune func(*scanner.Options)
 
-// fastStats is that knob: a cadence short enough that a test can wait for a
-// tick without waiting a second for it.
+// fastStats is the usual tweak: a cadence short enough that a test can wait
+// for a tick without waiting a second for it.
 func fastStats(o *scanner.Options) { o.StatsInterval = 50 * time.Millisecond }
 
 func newHarness(t *testing.T, ctx context.Context, tunes ...tune) *testHarness {
 	t.Helper()
-	h := &testHarness{t: t, loopDone: make(chan struct{})}
-	h.probe = refusedProbe
+	hn := &testHarness{t: t, scanDone: make(chan struct{})}
+	hn.probe = refusedProbe
 
-	opts := h.scannerOptions()
-	for _, tune := range tunes {
-		tune(&opts)
+	opts := hn.scannerOptions()
+	for _, tweak := range tunes {
+		tweak(&opts)
 	}
-	h.loop = scanner.New(opts)
-	h.srv = New(Options{Socket: "/test/option-berth.sock", Version: "test", Scanner: h.loop})
+	hn.loop = scanner.New(opts)
+	hn.srv = New(Options{Socket: "/test/option-berth.sock", Version: "test", Scanner: hn.loop})
 
 	runCtx, stop := context.WithCancel(ctx)
-	h.stopLoop = stop
+	hn.stopScan = stop
 	go func() {
-		defer close(h.loopDone)
-		h.loop.Run(runCtx)
+		defer close(hn.scanDone)
+		hn.loop.Run(runCtx)
 	}()
-	t.Cleanup(h.shutdown)
-	return h
+	t.Cleanup(hn.shutdown)
+	return hn
 }
 
 // scannerOptions is the scanner configuration the harness runs on. Every seam
 // that would reach the real machine is faked, because a test that keeps a
 // subscription open would otherwise fork `ps` or open a real socket once a
 // second.
-func (h *testHarness) scannerOptions() scanner.Options {
+func (hn *testHarness) scannerOptions() scanner.Options {
 	return scanner.Options{
 		DaemonVersion: "test",
-		// Scan answers from the rows the test set, copied so a caller cannot
-		// mutate the harness's slice.
+		// Scan answers from the rows the test installed, copied out so a caller
+		// cannot mutate the harness's own slice.
 		Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
-			h.mu.Lock()
-			defer h.mu.Unlock()
-			return append([]ports.ListeningPort{}, h.rows...), nil
+			hn.mu.Lock()
+			defer hn.mu.Unlock()
+			return append([]ports.ListeningPort{}, hn.rows...), nil
 		},
-		// Configured health goes through the injected probe, never a socket.
+		// Configured health goes through the injected probe and never a socket.
 		Probe: func(host string, port int, path string, timeout time.Duration) ports.HealthResult {
-			h.mu.Lock()
-			probe := h.probe
-			h.mu.Unlock()
+			hn.mu.Lock()
+			probe := hn.probe
+			hn.mu.Unlock()
 			return probe(host, port, path, timeout)
 		},
-		SampleStats: h.sampleStats,
+		SampleStats: hn.sampleStats,
 	}
 }
 
-// shutdown stops everything the harness started, in order, and returns only
-// once it has stopped.
+// shutdown stops everything the harness started, in order, and does not return
+// until it has stopped.
 //
-// Cancelling the test's context asks the loop to stop; it does not wait for it
-// to have stopped, and a scan already in flight goes on publishing — which
-// records history through the store, into the temp directory t.TempDir is
-// removing at that very moment. That race failed as "TempDir RemoveAll
-// cleanup: directory not empty", pointing at a SQLite -wal file recreated
-// behind the delete. Connections first (their handlers write too), then the
-// loop, then the database.
-func (h *testHarness) shutdown() {
-	h.srv.closeAllConns("test over")
-	h.srv.wg.Wait()
-	h.stopLoop()
-	<-h.loopDone
-	h.srv.closeStore()
+// Cancelling the test's context only asks the loop to stop; it does not wait
+// for it, and a scan already under way goes on publishing — which records
+// history through the store, into the temp directory t.TempDir is removing at
+// that very moment. That race showed up as "TempDir RemoveAll cleanup:
+// directory not empty", pointing at a SQLite -wal file recreated behind the
+// delete. So: connections first (their handlers write too), then the loop,
+// then the database.
+func (hn *testHarness) shutdown() {
+	hn.srv.closeAllConns("test over")
+	hn.srv.wg.Wait()
+	hn.stopScan()
+	<-hn.scanDone
+	hn.srv.closeStore()
 }
 
-// sampleStats is the harness's per-process sampler. It answers for nothing
-// unless the test asked for movement, so an ordinary harness test's stats are
-// whatever its fake rows carry.
-func (h *testHarness) sampleStats(pids []int) map[int]ports.ProcSample {
-	if !h.statsMove.Load() {
+// sampleStats is the harness's per-process sampler. Unless the test asked for
+// movement it answers for nothing, so an ordinary harness test's stats are
+// whatever its fake rows already carry.
+func (hn *testHarness) sampleStats(pids []int) map[int]ports.ProcSample {
+	if !hn.statsMove.Load() {
 		return nil
 	}
-	n := h.sampleN.Add(1)
-	out := make(map[int]ports.ProcSample, len(pids))
+	tick := hn.sampleN.Add(1)
+	answer := make(map[int]ports.ProcSample, len(pids))
 	for _, pid := range pids {
-		out[pid] = ports.ProcSample{
-			CPUPercent:  float64(n),
+		answer[pid] = ports.ProcSample{
+			CPUPercent:  float64(tick),
 			MemoryRSS:   int64(pid) << 10,
 			ThreadCount: 3,
 			State:       "running",
 			Uptime:      "1s",
 		}
 	}
-	return out
+	return answer
 }
 
-// newClient starts a daemon a test only talks to, on a context this test
+// newClient starts a daemon a test only talks to, on a context that test
 // cancels when it ends, and returns a connected client. Tests that reach into
 // the harness use newHarness instead.
 func newClient(t *testing.T) *testClient {
@@ -180,153 +183,157 @@ func newClient(t *testing.T) *testClient {
 }
 
 // setRows replaces what the fake scanner returns.
-func (h *testHarness) setRows(rows ...ports.ListeningPort) {
-	h.mu.Lock()
-	h.rows = rows
-	h.mu.Unlock()
+func (hn *testHarness) setRows(rows ...ports.ListeningPort) {
+	hn.mu.Lock()
+	hn.rows = rows
+	hn.mu.Unlock()
 }
 
 // setProbe replaces the fake health probe.
-func (h *testHarness) setProbe(p scanner.Probe) {
-	h.mu.Lock()
-	h.probe = p
-	h.mu.Unlock()
+func (hn *testHarness) setProbe(p scanner.Probe) {
+	hn.mu.Lock()
+	hn.probe = p
+	hn.mu.Unlock()
 }
 
-// refusedProbe is the harness default: nothing is really listening behind the
-// fake rows, so every probe is refused, deterministically and instantly.
+// refusedProbe is the harness default: nothing really listens behind the fake
+// rows, so every probe is refused — instantly and deterministically.
 func refusedProbe(_ string, _ int, _ string, _ time.Duration) ports.HealthResult {
 	return ports.HealthResult{Status: "refused"}
 }
 
 // dial attaches a client to the server over an in-memory pipe.
-func (h *testHarness) dial(ctx context.Context) *testClient {
-	h.t.Helper()
-	clientSide, serverSide := net.Pipe()
-	h.srv.startConn(ctx, serverSide)
-	c := &testClient{t: h.t, conn: clientSide, r: bufio.NewReader(clientSide)}
-	h.t.Cleanup(func() { clientSide.Close() })
-	return c
+func (hn *testHarness) dial(ctx context.Context) *testClient {
+	hn.t.Helper()
+	clientEnd, serverEnd := net.Pipe()
+	hn.srv.startConn(ctx, serverEnd)
+	cl := &testClient{t: hn.t, conn: clientEnd, r: bufio.NewReader(clientEnd)}
+	hn.t.Cleanup(func() { clientEnd.Close() })
+	return cl
 }
 
 type testClient struct {
 	t    *testing.T
 	conn net.Conn
 	r    *bufio.Reader
-	id   int
+	seq  int
 }
 
-// send writes one request and returns its id.
-func (c *testClient) send(method string, params any) string {
-	c.t.Helper()
-	c.id++
-	id := json.RawMessage(itoa(c.id))
+// send writes one request and returns the id it was given.
+func (cl *testClient) send(method string, params any) string {
+	cl.t.Helper()
+	cl.seq++
+	id := json.RawMessage(itoa(cl.seq))
 	raw, err := json.Marshal(params)
 	if err != nil {
-		c.t.Fatalf("marshalling params: %v", err)
+		cl.t.Fatalf("marshalling params: %v", err)
 	}
-	c.conn.SetWriteDeadline(time.Now().Add(pipeWrite))
-	if err := json.NewEncoder(c.conn).Encode(rpc.Request{
-		JSONRPC: rpc.Version, ID: id, Method: method, Params: raw,
-	}); err != nil {
-		c.t.Fatalf("sending %s: %v", method, err)
+	cl.conn.SetWriteDeadline(time.Now().Add(pipeWrite))
+	request := rpc.Request{JSONRPC: rpc.Version, ID: id, Method: method, Params: raw}
+	if err := json.NewEncoder(cl.conn).Encode(request); err != nil {
+		cl.t.Fatalf("sending %s: %v", method, err)
 	}
 	return string(id)
 }
 
 // read returns the next message from the daemon.
-func (c *testClient) read() rpc.Message {
-	c.t.Helper()
-	c.conn.SetReadDeadline(time.Now().Add(pipeRead))
-	line, err := c.r.ReadBytes('\n')
+func (cl *testClient) read() rpc.Message {
+	cl.t.Helper()
+	cl.conn.SetReadDeadline(time.Now().Add(pipeRead))
+	line, err := cl.r.ReadBytes('\n')
 	if err != nil {
-		c.t.Fatalf("reading from daemon: %v", err)
+		cl.t.Fatalf("reading from daemon: %v", err)
 	}
-	var m rpc.Message
-	if err := json.Unmarshal(line, &m); err != nil {
-		c.t.Fatalf("decoding %q: %v", line, err)
+	var msg rpc.Message
+	if err := json.Unmarshal(line, &msg); err != nil {
+		cl.t.Fatalf("decoding %q: %v", line, err)
 	}
-	return m
+	return msg
 }
 
-// call sends a request and returns the matching response, skipping any
-// notifications that arrive first.
-func (c *testClient) call(method string, params, out any) *rpc.Error {
-	c.t.Helper()
-	id := c.send(method, params)
+// call sends a request and returns the response that matches it, skipping any
+// notification that arrives first.
+func (cl *testClient) call(method string, params, out any) *rpc.Error {
+	cl.t.Helper()
+	id := cl.send(method, params)
 	for {
-		m := c.read()
-		if !m.IsResponse() || string(m.ID) != id {
+		msg := cl.read()
+		if !msg.IsResponse() || string(msg.ID) != id {
 			continue
 		}
-		if m.Error != nil {
-			return m.Error
+		if msg.Error != nil {
+			return msg.Error
 		}
-		if out != nil && len(m.Result) > 0 {
-			if err := json.Unmarshal(m.Result, out); err != nil {
-				c.t.Fatalf("decoding %s result: %v", method, err)
+		if out != nil && len(msg.Result) > 0 {
+			if err := json.Unmarshal(msg.Result, out); err != nil {
+				cl.t.Fatalf("decoding %s result: %v", method, err)
 			}
 		}
 		return nil
 	}
 }
 
+// itoa formats a request counter as a decimal string, so the client can build
+// ids without dragging strconv into this file.
 func itoa(i int) string {
 	if i == 0 {
 		return "0"
 	}
-	var b []byte
+	var digits []byte
 	for i > 0 {
-		b = append([]byte{byte('0' + i%10)}, b...)
+		digits = append([]byte{byte('0' + i%10)}, digits...)
 		i /= 10
 	}
-	return string(b)
+	return string(digits)
 }
 
-// TestHelloOverTheCodec runs a real request through the newline codec and the
-// dispatcher and checks the handshake the whole protocol hangs off.
+// TestHelloOverTheCodec pushes one real request through the newline codec and
+// the dispatcher, and checks the handshake the whole protocol hangs off.
 func TestHelloOverTheCodec(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	h := newHarness(t, ctx)
-	c := h.dial(ctx)
+	hn := newHarness(t, ctx)
+	cl := hn.dial(ctx)
 
 	var hello rpc.DaemonHelloResult
-	if e := c.call("daemon.hello", rpc.DaemonHelloParams{
+	if failure := cl.call("daemon.hello", rpc.DaemonHelloParams{
 		Client: "cli", ClientVersion: "1.2.3",
-	}, &hello); e != nil {
-		t.Fatalf("daemon.hello: %v", e)
+	}, &hello); failure != nil {
+		t.Fatalf("daemon.hello: %v", failure)
 	}
 
 	if hello.ProtocolVersion != rpc.ProtocolVersion {
 		t.Errorf("protocol_version = %q, want %q", hello.ProtocolVersion, rpc.ProtocolVersion)
 	}
 	if hello.DaemonVersion != "test" {
-		t.Errorf("daemon_version = %q, want test", hello.DaemonVersion)
+		t.Errorf("daemon_version = %q; the harness daemon is versioned \"test\"", hello.DaemonVersion)
 	}
-	if hello.PID == 0 || hello.StartedAt == "" {
-		t.Errorf("hello is missing pid or started_at: %+v", hello)
+	if hello.PID == 0 {
+		t.Errorf("hello reported no pid: %+v", hello)
+	}
+	if hello.StartedAt == "" {
+		t.Errorf("hello reported no started_at: %+v", hello)
 	}
 	if hello.Socket != "/test/option-berth.sock" {
 		t.Errorf("socket = %q, want /test/option-berth.sock", hello.Socket)
 	}
 	want := Capabilities()
-	if len(hello.Capabilities) != len(want) {
-		t.Fatalf("capabilities = %v, want %v", hello.Capabilities, want)
+	if got := hello.Capabilities; len(got) != len(want) {
+		t.Fatalf("capabilities = %v, want %v", got, want)
 	}
-	for i := range want {
-		if hello.Capabilities[i] != want[i] {
-			t.Errorf("capabilities = %v, want %v", hello.Capabilities, want)
+	for i, capability := range hello.Capabilities {
+		if capability != want[i] {
+			t.Errorf("capability %d = %q, want %q", i, capability, want[i])
 		}
 	}
 }
 
 func TestHelloRequiresAClientName(t *testing.T) {
-	c := newClient(t)
+	cl := newClient(t)
 
-	e := c.call("daemon.hello", rpc.DaemonHelloParams{ClientVersion: "1"}, nil)
+	e := cl.call("daemon.hello", rpc.DaemonHelloParams{ClientVersion: "1"}, nil)
 	if e == nil {
-		t.Fatal("daemon.hello with no client succeeded")
+		t.Fatal("daemon.hello accepted a request with no client name")
 	}
 	if e.Code != rpc.CodeInvalidParams || e.Data.Code != "invalid_params" {
 		t.Errorf("error = %+v, want invalid_params", e)
@@ -334,11 +341,11 @@ func TestHelloRequiresAClientName(t *testing.T) {
 }
 
 func TestUnknownMethodIsNotFound(t *testing.T) {
-	c := newClient(t)
+	cl := newClient(t)
 
-	e := c.call("ports.teleport", rpc.Empty{}, nil)
+	e := cl.call("ports.teleport", rpc.Empty{}, nil)
 	if e == nil {
-		t.Fatal("an unknown method succeeded")
+		t.Fatal("an unknown method was served")
 	}
 	if e.Code != rpc.CodeNotFound || e.Data.Code != "not_found" {
 		t.Errorf("error = %+v, want not_found", e)
@@ -349,13 +356,12 @@ func TestUnknownMethodIsNotFound(t *testing.T) {
 }
 
 func TestInvalidIncludeIsRejected(t *testing.T) {
-	c := newClient(t)
+	cl := newClient(t)
 
-	e := c.call("state.snapshot", map[string]any{"include": []string{"stats", "weather"}}, nil)
-	if e == nil {
+	params := map[string]any{"include": []string{"stats", "weather"}}
+	if e := cl.call("state.snapshot", params, nil); e == nil {
 		t.Fatal("an unknown include was accepted")
-	}
-	if e.Code != rpc.CodeInvalidParams {
+	} else if e.Code != rpc.CodeInvalidParams {
 		t.Errorf("error = %+v, want invalid_params", e)
 	}
 }
@@ -363,12 +369,12 @@ func TestInvalidIncludeIsRejected(t *testing.T) {
 func TestSnapshotAndStatus(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	h := newHarness(t, ctx)
-	h.setRows(ports.ListeningPort{Port: 8123, BindAddress: "127.0.0.1", PID: 42, Process: "python3"})
-	c := h.dial(ctx)
+	hn := newHarness(t, ctx)
+	hn.setRows(ports.ListeningPort{Port: 8123, BindAddress: "127.0.0.1", PID: 42, Process: "python3"})
+	cl := hn.dial(ctx)
 
 	var snap state.Snapshot
-	if e := c.call("state.snapshot", rpc.StateSnapshotParams{}, &snap); e != nil {
+	if e := cl.call("state.snapshot", rpc.StateSnapshotParams{}, &snap); e != nil {
 		t.Fatalf("state.snapshot: %v", e)
 	}
 	if len(snap.Ports) != 1 || snap.Ports[0].Port != 8123 {
@@ -379,115 +385,115 @@ func TestSnapshotAndStatus(t *testing.T) {
 	}
 
 	var status rpc.DaemonStatusResult
-	if e := c.call("daemon.status", rpc.Empty{}, &status); e != nil {
+	if e := cl.call("daemon.status", rpc.Empty{}, &status); e != nil {
 		t.Fatalf("daemon.status: %v", e)
 	}
-	if status.Subscribers != 0 {
-		t.Errorf("subscribers = %d before subscribing, want 0", status.Subscribers)
+	if got := status.Subscribers; got != 0 {
+		t.Errorf("status reports %d subscribers before any subscribe, want 0", got)
 	}
 	if status.ScanIntervalMs == 0 || status.LastScanAt == "" {
-		t.Errorf("status is missing scanner counters: %+v", status)
+		t.Errorf("status is missing its scanner counters: %+v", status)
 	}
 }
 
-// TestSubscribeThenDelta is the core streaming contract: subscribe replies with
-// the snapshot, and later changes arrive as state.delta notifications.
+// TestSubscribeThenDelta is the core streaming contract: subscribe replies
+// with the snapshot, and later changes arrive as state.delta notifications.
 func TestSubscribeThenDelta(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	h := newHarness(t, ctx)
-	c := h.dial(ctx)
+	hn := newHarness(t, ctx)
+	cl := hn.dial(ctx)
 
 	var snap state.Snapshot
-	if e := c.call("state.subscribe", rpc.StateSubscribeParams{Events: true}, &snap); e != nil {
+	if e := cl.call("state.subscribe", rpc.StateSubscribeParams{Events: true}, &snap); e != nil {
 		t.Fatalf("state.subscribe: %v", e)
 	}
-	if h.srv.Subscribers() != 1 {
-		t.Fatalf("Subscribers() = %d after subscribe, want 1", h.srv.Subscribers())
+	if got := hn.srv.Subscribers(); got != 1 {
+		t.Fatalf("Subscribers() = %d after subscribe, want 1", got)
 	}
 
-	h.setRows(ports.ListeningPort{Port: 8123, BindAddress: "127.0.0.1", PID: 42, Process: "python3"})
-	h.loop.Wake()
+	hn.setRows(ports.ListeningPort{Port: 8123, BindAddress: "127.0.0.1", PID: 42, Process: "python3"})
+	hn.loop.Wake()
 
 	var delta state.Delta
 	var event state.Event
 	deadline := time.Now().Add(settle)
 	for (len(delta.Ports.Added) == 0 || event.Kind == "") && time.Now().Before(deadline) {
-		m := c.read()
-		switch m.Method {
+		msg := cl.read()
+		switch msg.Method {
 		case rpc.MethodStateDelta:
-			json.Unmarshal(m.Params, &delta)
+			json.Unmarshal(msg.Params, &delta)
 		case rpc.MethodStateEvent:
-			json.Unmarshal(m.Params, &event)
+			json.Unmarshal(msg.Params, &event)
 		}
 	}
 
 	if len(delta.Ports.Added) != 1 || delta.Ports.Added[0].Port != 8123 {
-		t.Fatalf("delta = %+v, want 8123 added", delta.Ports)
+		t.Fatalf("delta = %+v, want one added row on 8123", delta.Ports)
 	}
 	if delta.Seq <= snap.Seq {
-		t.Errorf("delta seq %d did not advance past the snapshot seq %d", delta.Seq, snap.Seq)
+		t.Errorf("delta seq %d did not advance past snapshot seq %d", delta.Seq, snap.Seq)
 	}
 	if event.Kind != "port_up" {
 		t.Errorf("event kind = %q, want port_up", event.Kind)
 	}
 
-	if e := c.call("state.unsubscribe", rpc.Empty{}, nil); e != nil {
+	if e := cl.call("state.unsubscribe", rpc.Empty{}, nil); e != nil {
 		t.Fatalf("state.unsubscribe: %v", e)
 	}
-	if h.srv.Subscribers() != 0 {
-		t.Errorf("Subscribers() = %d after unsubscribe, want 0", h.srv.Subscribers())
+	if got := hn.srv.Subscribers(); got != 0 {
+		t.Errorf("Subscribers() = %d after unsubscribe, want 0", got)
 	}
 }
 
 // TestSubscribeResumesFromSequence reopens the wire after a published change
 // happened with no subscriber. The reconnect gets the exact cached snapshot at
 // its cursor and then the missing delta/event pair, rather than a fresh state
-// with no way to tell whether the transition was observed.
+// with no way to tell whether the transition was ever observed.
 func TestSubscribeResumesFromSequence(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	h := newHarness(t, ctx)
-	h.setRows(ports.ListeningPort{Port: 8123, BindAddress: "127.0.0.1", PID: 42, Process: "python3"})
-	c1 := h.dial(ctx)
+	hn := newHarness(t, ctx)
+	hn.setRows(ports.ListeningPort{Port: 8123, BindAddress: "127.0.0.1", PID: 42, Process: "python3"})
+	first := hn.dial(ctx)
 
-	if e := c1.call("state.subscribe", rpc.StateSubscribeParams{Events: true}, nil); e != nil {
+	if e := first.call("state.subscribe", rpc.StateSubscribeParams{Events: true}, nil); e != nil {
 		t.Fatalf("first state.subscribe: %v", e)
 	}
-	first := c1.nextDelta()
-	if first.Seq == 0 || len(first.Ports.Added) != 1 || first.Ports.Added[0].Port != 8123 {
-		t.Fatalf("first delta = %+v, want a nonzero 8123 baseline sequence", first)
+	baseline := first.nextDelta()
+	if baseline.Seq == 0 || len(baseline.Ports.Added) != 1 || baseline.Ports.Added[0].Port != 8123 {
+		t.Fatalf("first delta = %+v, want a nonzero 8123 baseline sequence", baseline)
 	}
-	if e := c1.call("state.unsubscribe", rpc.Empty{}, nil); e != nil {
+	if e := first.call("state.unsubscribe", rpc.Empty{}, nil); e != nil {
 		t.Fatalf("state.unsubscribe: %v", e)
 	}
 
-	h.setRows(
+	hn.setRows(
 		ports.ListeningPort{Port: 8123, BindAddress: "127.0.0.1", PID: 42, Process: "python3"},
 		ports.ListeningPort{Port: 8124, BindAddress: "127.0.0.1", PID: 43, Process: "worker"},
 	)
-	if _, err := h.loop.Rescan(scanner.Include{}); err != nil {
+	if _, err := hn.loop.Rescan(scanner.Include{}); err != nil {
 		t.Fatalf("second scan: %v", err)
 	}
 
-	c2 := h.dial(ctx)
+	second := hn.dial(ctx)
 	var resumed state.Snapshot
-	if e := c2.call("state.subscribe", rpc.StateSubscribeParams{
-		Events: true, AfterSeq: first.Seq,
+	if e := second.call("state.subscribe", rpc.StateSubscribeParams{
+		Events: true, AfterSeq: baseline.Seq,
 	}, &resumed); e != nil {
 		t.Fatalf("resuming state.subscribe: %v", e)
 	}
-	if resumed.Seq != first.Seq {
-		t.Fatalf("resume snapshot seq = %d, want cursor %d", resumed.Seq, first.Seq)
+	if resumed.Seq != baseline.Seq {
+		t.Fatalf("resume snapshot seq = %d, want cursor %d", resumed.Seq, baseline.Seq)
 	}
 
-	delta := c2.nextDelta()
-	if delta.Seq <= first.Seq || len(delta.Ports.Added) != 1 || delta.Ports.Added[0].Port != 8124 {
-		t.Fatalf("replayed delta = %+v, want 8124 after %d", delta, first.Seq)
+	replayed := second.nextDelta()
+	if replayed.Seq <= baseline.Seq || len(replayed.Ports.Added) != 1 || replayed.Ports.Added[0].Port != 8124 {
+		t.Fatalf("replayed delta = %+v, want 8124 after %d", replayed, baseline.Seq)
 	}
-	event := c2.nextNotification(rpc.MethodStateEvent)
+	notification := second.nextNotification(rpc.MethodStateEvent)
 	var got state.Event
-	if err := json.Unmarshal(event.Params, &got); err != nil {
+	if err := json.Unmarshal(notification.Params, &got); err != nil {
 		t.Fatalf("decoding replayed event: %v", err)
 	}
 	if got.Kind != "port_up" {
@@ -495,46 +501,46 @@ func TestSubscribeResumesFromSequence(t *testing.T) {
 	}
 }
 
-// TestIncludeFiltersEnrichments checks that a subscriber which did not ask for
-// stats never sees them, even when another subscriber made the scanner collect
-// them.
+// TestIncludeFiltersEnrichments checks that a subscriber which never asked for
+// stats does not see them, even once another subscriber has made the scanner
+// collect them.
 func TestIncludeFiltersEnrichments(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	h := &testHarness{t: t}
-	h.loop = scanner.New(scanner.Options{
+	hn := &testHarness{t: t}
+	hn.loop = scanner.New(scanner.Options{
 		DaemonVersion: "test",
 		Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
 			return []ports.ListeningPort{{
-				Port: 8123, BindAddress: "127.0.0.1", PID: 42, Process: "python3",
-				CPUPercent: 1.5, MemoryRSS: 1024,
+				Port: 9099, BindAddress: "127.0.0.1", PID: 4242, Process: "ruby",
+				CPUPercent: 2.5, MemoryRSS: 2048,
 			}}, nil
 		},
 	})
-	h.srv = New(Options{Socket: "/test/option-berth.sock", Version: "test", Scanner: h.loop})
+	hn.srv = New(Options{Socket: "/test/option-berth.sock", Version: "test", Scanner: hn.loop})
 
-	plainSnap := h.snapshotAs(ctx, t, nil)
+	plainSnap := hn.snapshotAs(ctx, t, nil)
 	if plainSnap.Ports[0].Stats != nil {
 		t.Errorf("stats leaked to a caller that did not ask: %+v", plainSnap.Ports[0].Stats)
 	}
 
-	statsSnap := h.snapshotAs(ctx, t, rpc.Include{"stats"})
+	statsSnap := hn.snapshotAs(ctx, t, rpc.Include{"stats"})
 	if statsSnap.Ports[0].Stats == nil {
 		t.Fatal("stats missing for a caller that asked for them")
 	}
-	if statsSnap.Ports[0].Stats.CPUPercent != 1.5 {
-		t.Errorf("cpu_percent = %v, want 1.5", statsSnap.Ports[0].Stats.CPUPercent)
+	if cpu := statsSnap.Ports[0].Stats.CPUPercent; cpu != 2.5 {
+		t.Errorf("cpu_percent = %v, want 2.5", cpu)
 	}
 }
 
 // snapshotAs opens a fresh client, asks for one state.snapshot with the given
-// include set, and returns it. Each caller gets its own connection so one test
-// can compare what two differently-scoped subscribers are served.
-func (h *testHarness) snapshotAs(ctx context.Context, t *testing.T, include rpc.Include) state.Snapshot {
+// include set, and returns it. Each caller gets a connection of its own, so one
+// test can compare what two differently-scoped subscribers are served.
+func (hn *testHarness) snapshotAs(ctx context.Context, t *testing.T, include rpc.Include) state.Snapshot {
 	t.Helper()
 	var snapshot state.Snapshot
-	if failure := h.dial(ctx).call("state.snapshot",
+	if failure := hn.dial(ctx).call("state.snapshot",
 		rpc.StateSnapshotParams{Include: include}, &snapshot); failure != nil {
 		t.Fatalf("state.snapshot(include=%v): %v", include, failure)
 	}
@@ -546,17 +552,17 @@ func (h *testHarness) snapshotAs(ctx context.Context, t *testing.T, include rpc.
 func TestQueueOverflowDisconnects(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	h := newHarness(t, ctx)
+	hn := newHarness(t, ctx)
 
-	conn := h.subscribeWithoutReading(ctx, t)
+	conn := hn.subscribeWithoutReading(ctx, t)
 
 	// The writer goroutine takes one message and then blocks on the unread
 	// pipe, so everything after that piles up in the queue.
 	for queued := 0; queued < QueueSize+50; queued++ {
-		h.srv.broadcastEvent(state.Event{Kind: "port_up", At: "now"})
+		hn.srv.broadcastEvent(state.Event{Kind: "port_up", At: "now"})
 		select {
 		case <-conn.closed:
-			h.awaitDeregistered(t, queued)
+			hn.awaitDeregistered(t, queued)
 			return
 		default:
 		}
@@ -569,153 +575,151 @@ func TestQueueOverflowDisconnects(t *testing.T) {
 // subscribeWithoutReading attaches a client, marks its connection as a
 // subscriber behind the server's back, and then never reads from it — which is
 // exactly the misbehaviour the queue limit has to catch.
-func (h *testHarness) subscribeWithoutReading(ctx context.Context, t *testing.T) *Conn {
+func (hn *testHarness) subscribeWithoutReading(ctx context.Context, t *testing.T) *Conn {
 	t.Helper()
-	clientSide, serverSide := net.Pipe()
-	t.Cleanup(func() { clientSide.Close() })
-	h.srv.startConn(ctx, serverSide)
+	clientEnd, serverEnd := net.Pipe()
+	t.Cleanup(func() { clientEnd.Close() })
+	hn.srv.startConn(ctx, serverEnd)
 
-	h.srv.subsMu.Lock()
-	defer h.srv.subsMu.Unlock()
-	var subscribed *Conn
-	for _, candidate := range h.srv.conns {
-		subscribed = candidate
+	hn.srv.subsMu.Lock()
+	defer hn.srv.subsMu.Unlock()
+	var subscriber *Conn
+	for _, candidate := range hn.srv.conns {
+		subscriber = candidate
 	}
-	if subscribed == nil {
+	if subscriber == nil {
 		t.Fatal("the connection was not registered")
 	}
-	subscribed.subscribed, subscribed.events = true, true
-	return subscribed
+	subscriber.subscribed, subscriber.events = true, true
+	return subscriber
 }
 
 // awaitDeregistered waits for the overflowing connection to be taken off the
 // client list. closed fires just before that step, so this gives it a moment
 // rather than racing it.
-func (h *testHarness) awaitDeregistered(t *testing.T, queued int) {
+func (hn *testHarness) awaitDeregistered(t *testing.T, queued int) {
 	t.Helper()
-	for waited := 0; waited < 100 && h.srv.Clients() != 0; waited++ {
+	for waited := 0; waited < 100 && hn.srv.Clients() != 0; waited++ {
 		time.Sleep(time.Millisecond)
 	}
-	if h.srv.Clients() != 0 {
+	if hn.srv.Clients() != 0 {
 		t.Fatalf("overflowing client still registered after %d messages", queued)
 	}
 }
 
-// TestShutdownAnswersBeforeClosing checks that daemon.shutdown replies and
-// emits daemon_stopping before the socket goes away.
+// TestShutdownAnswersBeforeClosing checks that daemon.shutdown gets its reply
+// out, and daemon_stopping with it, before the socket goes away.
 func TestShutdownAnswersBeforeClosing(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	h := newHarness(t, ctx)
-	c := h.dial(ctx)
+	hn := newHarness(t, ctx)
+	cl := hn.dial(ctx)
 
 	var snap state.Snapshot
-	if e := c.call("state.subscribe", rpc.StateSubscribeParams{Events: true}, &snap); e != nil {
+	if e := cl.call("state.subscribe", rpc.StateSubscribeParams{Events: true}, &snap); e != nil {
 		t.Fatalf("state.subscribe: %v", e)
 	}
 
-	id := c.send("daemon.shutdown", rpc.Empty{})
+	id := cl.send("daemon.shutdown", rpc.Empty{})
 
 	sawOK, sawStopping := false, false
 	for !sawOK || !sawStopping {
-		m := c.read()
+		msg := cl.read()
 		switch {
-		case m.IsResponse() && string(m.ID) == id:
+		case msg.IsResponse() && string(msg.ID) == id:
 			var ok rpc.OKResult
-			json.Unmarshal(m.Result, &ok)
+			json.Unmarshal(msg.Result, &ok)
 			if !ok.OK {
 				t.Fatalf("daemon.shutdown returned %+v", ok)
 			}
 			sawOK = true
-		case m.Method == rpc.MethodStateEvent:
+		case msg.Method == rpc.MethodStateEvent:
 			var ev state.Event
-			json.Unmarshal(m.Params, &ev)
-			if ev.Kind == "daemon_stopping" {
-				sawStopping = true
-			}
+			json.Unmarshal(msg.Params, &ev)
+			sawStopping = sawStopping || ev.Kind == "daemon_stopping"
 		}
 	}
 }
 
-// TestOversizeMessageIsRejectedNotFatal checks the 4 MiB framing limit: the
-// daemon answers with invalid_params and keeps the connection.
+// TestOversizeMessageIsRejectedNotFatal covers the 4 MiB framing limit: the
+// daemon answers invalid_params and the connection stays up.
 func TestOversizeMessageIsRejectedNotFatal(t *testing.T) {
-	c := newClient(t)
+	cl := newClient(t)
 
 	go func() {
-		c.conn.SetWriteDeadline(time.Now().Add(pipeWrite))
-		io.WriteString(c.conn, `{"jsonrpc":"2.0","id":1,"method":"daemon.status","params":{"pad":"`)
+		cl.conn.SetWriteDeadline(time.Now().Add(pipeWrite))
+		io.WriteString(cl.conn, `{"jsonrpc":"2.0","id":1,"method":"daemon.status","params":{"pad":"`)
 		chunk := strings.Repeat("x", 64<<10)
 		for written := 0; written < MaxMessageBytes+(1<<20); written += len(chunk) {
-			if _, err := io.WriteString(c.conn, chunk); err != nil {
+			if _, err := io.WriteString(cl.conn, chunk); err != nil {
 				return
 			}
 		}
-		io.WriteString(c.conn, "\"}}\n")
+		io.WriteString(cl.conn, "\"}}\n")
 	}()
 
-	m := c.read()
-	if m.Error == nil || m.Error.Code != rpc.CodeInvalidParams {
-		t.Fatalf("oversize message produced %+v, want invalid_params", m.Error)
+	msg := cl.read()
+	if msg.Error == nil || msg.Error.Code != rpc.CodeInvalidParams {
+		t.Fatalf("oversize message produced %+v, want invalid_params", msg.Error)
 	}
 
 	// The connection survives: the decoder resynced on the next line.
 	var status rpc.DaemonStatusResult
-	if e := c.call("daemon.status", rpc.Empty{}, &status); e != nil {
+	if e := cl.call("daemon.status", rpc.Empty{}, &status); e != nil {
 		t.Fatalf("daemon.status after an oversize message: %v", e)
 	}
 }
 
-// TestStreamCancelOnAnUnknownID keeps the cancel path honest before
-// any streaming method exists to use it.
+// TestStreamCancelOnAnUnknownID keeps the cancel path honest before any
+// streaming method exists to use it.
 func TestStreamCancelOnAnUnknownID(t *testing.T) {
-	c := newClient(t)
+	cl := newClient(t)
 
-	e := c.call("stream.cancel", rpc.StreamCancel{ID: "nope"}, nil)
+	e := cl.call("stream.cancel", rpc.StreamCancel{ID: "nope"}, nil)
 	if e == nil || e.Code != rpc.CodeNotFound {
 		t.Fatalf("stream.cancel on an unknown id = %+v, want not_found", e)
 	}
 }
 
-// TestIdleTimeoutStopsTheDaemon and TestKeepaliveDisablesIdleTimeout cover the
+// TestIdleTimeoutStopsTheDaemon and TestKeepaliveDisablesIdleTimeout are the
 // two halves of the idle rule.
 func TestIdleTimeoutStopsTheDaemon(t *testing.T) {
-	srv := New(Options{Socket: "/test/option-berth.sock", IdleTimeout: 40 * time.Millisecond,
+	idle := New(Options{Socket: "/test/option-berth.sock", IdleTimeout: 40 * time.Millisecond,
 		Scanner: scanner.New(scanner.Options{})})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go srv.watchIdle(ctx)
+	go idle.watchIdle(ctx)
 
 	select {
-	case <-srv.stopping:
+	case <-idle.stopping:
 	case <-time.After(3 * time.Second):
 		t.Fatal("the daemon did not stop after its idle timeout")
 	}
 }
 
 func TestKeepaliveDisablesIdleTimeout(t *testing.T) {
-	srv := New(Options{Socket: "/test/option-berth.sock", IdleTimeout: 40 * time.Millisecond,
+	idle := New(Options{Socket: "/test/option-berth.sock", IdleTimeout: 40 * time.Millisecond,
 		Scanner: scanner.New(scanner.Options{})})
-	srv.keepalives.Store(1)
+	idle.keepalives.Store(1)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go srv.watchIdle(ctx)
+	go idle.watchIdle(ctx)
 
 	select {
-	case <-srv.stopping:
+	case <-idle.stopping:
 		t.Fatal("the daemon idled out with a keepalive client connected")
 	case <-time.After(300 * time.Millisecond):
 	}
 }
 
 // nextDelta reads until a state.delta notification arrives and decodes it.
-func (c *testClient) nextDelta() state.Delta {
-	c.t.Helper()
+func (cl *testClient) nextDelta() state.Delta {
+	cl.t.Helper()
 	var d state.Delta
-	m := c.nextNotification(rpc.MethodStateDelta)
-	if err := json.Unmarshal(m.Params, &d); err != nil {
-		c.t.Fatalf("decoding state.delta: %v", err)
+	msg := cl.nextNotification(rpc.MethodStateDelta)
+	if err := json.Unmarshal(msg.Params, &d); err != nil {
+		cl.t.Fatalf("decoding state.delta: %v", err)
 	}
 	return d
 }
@@ -723,39 +727,39 @@ func (c *testClient) nextDelta() state.Delta {
 // subscribeAndSettle subscribes and waits for the delta the subscription's own
 // wake produces, so a test that needs the ports on screen has them. The
 // subscribe reply itself is the cached snapshot and may still be empty.
-func (c *testClient) subscribeAndSettle(p rpc.StateSubscribeParams) state.Delta {
-	c.t.Helper()
-	if e := c.call("state.subscribe", p, nil); e != nil {
-		c.t.Fatalf("state.subscribe: %v", e)
+func (cl *testClient) subscribeAndSettle(p rpc.StateSubscribeParams) state.Delta {
+	cl.t.Helper()
+	if e := cl.call("state.subscribe", p, nil); e != nil {
+		cl.t.Fatalf("state.subscribe: %v", e)
 	}
-	return c.nextDelta()
+	return cl.nextDelta()
 }
 
-// TestStatusReportsConfiguredIntervals: both `daemon.scan_interval` and
-// `daemon.stats_interval` are read once when the daemon starts, so
-// `daemon.status` is what tells a client — and the person who just edited the
-// config file and restarted — which values a running daemon is actually on.
+// TestStatusReportsConfiguredIntervals: `daemon.scan_interval` and
+// `daemon.stats_interval` are both read once at startup, so `daemon.status` is
+// the only way for a client — or for the person who just edited the config file
+// and restarted — to learn which values the running daemon is actually on.
 func TestStatusReportsConfiguredIntervals(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	h := newHarness(t, ctx, func(o *scanner.Options) {
+	hn := newHarness(t, ctx, func(o *scanner.Options) {
 		o.ScanInterval = 4 * time.Second
 		o.StatsInterval = 300 * time.Millisecond
 	})
-	c := h.dial(ctx)
+	cl := hn.dial(ctx)
 
 	var status rpc.DaemonStatusResult
-	if e := c.call("daemon.status", rpc.Empty{}, &status); e != nil {
-		t.Fatalf("daemon.status: %v", e)
+	if e := cl.call("daemon.status", rpc.Empty{}, &status); e != nil {
+		t.Fatalf("asking a running daemon for its status: %v", e)
 	}
 	if status.ScanBaseIntervalMs != 4000 {
-		t.Errorf("scan_base_interval_ms = %d, want 4000", status.ScanBaseIntervalMs)
+		t.Errorf("scan_base_interval_ms = %d, want the configured 4000", status.ScanBaseIntervalMs)
 	}
 	if status.StatsIntervalMs != 300 {
-		t.Errorf("stats_interval_ms = %d, want 300", status.StatsIntervalMs)
+		t.Errorf("stats_interval_ms = %d, want the configured 300", status.StatsIntervalMs)
 	}
-	// The adaptive interval is a separate number and still starts at the base
+	// The adaptive interval is a number of its own, and still starts at the base
 	// rather than at the 2 s constant.
 	if status.ScanIntervalMs < status.ScanBaseIntervalMs {
 		t.Errorf("scan_interval_ms = %d, want at least the %dms base",
@@ -764,25 +768,24 @@ func TestStatusReportsConfiguredIntervals(t *testing.T) {
 }
 
 // TestDroppedConnectionReclaimsItsSubscription: a subscriber that vanishes
-// without unsubscribing must not keep the loop scanning, and must not block
-// the fan-out to a live subscriber. The connection is closed under the server
-// — no state.unsubscribe — which is what a killed CLI or a dead app leaves
-// behind.
+// without unsubscribing must not keep the loop scanning, and must not block the
+// fan-out to a live subscriber. The connection is closed under the server — no
+// state.unsubscribe — which is what a killed CLI or a dead app leaves behind.
 func TestDroppedConnectionReclaimsItsSubscription(t *testing.T) {
 	for _, warm := range []bool{false, true} {
 		t.Run(fmt.Sprintf("cached=%v", warm), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			started, release := make(chan struct{}), make(chan struct{})
-			var first sync.Once
-			h := newHarness(t, ctx, func(o *scanner.Options) {
+			scanStarted, unblock := make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			hn := newHarness(t, ctx, func(o *scanner.Options) {
 				scan := o.Scan
 				o.Scan = func(include scanner.Include) ([]ports.ListeningPort, error) {
 					rows, err := scan(include)
-					first.Do(func() {
-						close(started)
+					once.Do(func() {
+						close(scanStarted)
 						select {
-						case <-release:
+						case <-unblock:
 						case <-ctx.Done():
 						}
 					})
@@ -791,35 +794,35 @@ func TestDroppedConnectionReclaimsItsSubscription(t *testing.T) {
 			})
 			// Cancel before the harness waits for the blocked collector on failure.
 			t.Cleanup(cancel)
-			h.setRows(ports.ListeningPort{Port: 8123, BindAddress: "127.0.0.1", PID: 42, Process: "python3"})
+			hn.setRows(ports.ListeningPort{Port: 8123, BindAddress: "127.0.0.1", PID: 42, Process: "python3"})
 			if warm {
-				close(release)
-				if _, err := h.loop.Rescan(scanner.Include{}); err != nil {
+				close(unblock)
+				if _, err := hn.loop.Rescan(scanner.Include{}); err != nil {
 					t.Fatal(err)
 				}
 			}
-			gone := h.dial(ctx)
+			gone := hn.dial(ctx)
 			if e := gone.call("state.subscribe", rpc.StateSubscribeParams{Events: true}, nil); e != nil {
 				t.Fatalf("state.subscribe: %v", e)
 			}
-			if got := h.srv.Subscribers(); got != 1 {
+			if got := hn.srv.Subscribers(); got != 1 {
 				t.Fatalf("Subscribers() = %d after subscribe, want 1", got)
 			}
 			select {
-			case <-started:
+			case <-scanStarted:
 			case <-time.After(settle):
 				t.Fatal("subscription never woke the collector")
 			}
 			gone.conn.Close()
 			deadline := time.Now().Add(settle)
-			for h.srv.Subscribers() != 0 && time.Now().Before(deadline) {
+			for hn.srv.Subscribers() != 0 && time.Now().Before(deadline) {
 				time.Sleep(time.Millisecond)
 			}
-			if got := h.srv.Subscribers(); got != 0 {
+			if got := hn.srv.Subscribers(); got != 0 {
 				t.Fatalf("Subscribers() = %d after drop, want 0", got)
 			}
 
-			live := h.dial(ctx)
+			live := hn.dial(ctx)
 			var snap state.Snapshot
 			if e := live.call("state.subscribe", rpc.StateSubscribeParams{Events: true}, &snap); e != nil {
 				t.Fatalf("live state.subscribe: %v", e)
@@ -830,20 +833,20 @@ func TestDroppedConnectionReclaimsItsSubscription(t *testing.T) {
 				}
 				// Force the initial 8123 delta to be pending on the live stream.
 				// It is valid and must be applied, not mistaken for the next change.
-				close(release)
+				close(unblock)
 				deadline = time.Now().Add(settle)
-				for len(h.loop.Cached().Ports) == 0 && time.Now().Before(deadline) {
+				for len(hn.loop.Cached().Ports) == 0 && time.Now().Before(deadline) {
 					time.Sleep(time.Millisecond)
 				}
-				if len(h.loop.Cached().Ports) != 1 {
+				if len(hn.loop.Cached().Ports) != 1 {
 					t.Fatal("initial collector never published")
 				}
 			}
-			h.setRows(
+			hn.setRows(
 				ports.ListeningPort{Port: 8123, BindAddress: "127.0.0.1", PID: 42, Process: "python3"},
 				ports.ListeningPort{Port: 8124, BindAddress: "127.0.0.1", PID: 43, Process: "worker"},
 			)
-			want, err := h.loop.Rescan(scanner.Include{})
+			want, err := hn.loop.Rescan(scanner.Include{})
 			if err != nil {
 				t.Fatalf("rescan: %v", err)
 			}

@@ -3,44 +3,55 @@ package daemon
 import "testing"
 
 func TestIsTestBinary(t *testing.T) {
-	tests := map[string]bool{
-		"/tmp/go-build123/b001/cmd.test":                  true,
-		"/tmp/go-build123/b001/daemon.test":               true,
-		`C:\Temp\go-build\b001\cmd.test.exe`:              true,
-		"cmd.test":                                        true,
-		"/usr/local/bin/oberth":                           false,
-		`C:\Program Files\option-berth\oberth.exe`:        false,
-		"/tmp/option-berth-itest-bin123/option-berth":     false,
-		"/home/dev/testing/option-berth":                  false,
-		"/home/dev/option-berth.test.backup/option-berth": false,
+	cases := []struct {
+		path string
+		test bool
+	}{
+		{path: "/tmp/go-build123/b001/cmd.test", test: true},
+		{path: "/tmp/go-build123/b001/daemon.test", test: true},
+		{path: `C:\Temp\go-build\b001\cmd.test.exe`, test: true},
+		{path: "cmd.test", test: true},
+		{path: "/usr/local/bin/oberth", test: false},
+		{path: `C:\Program Files\option-berth\oberth.exe`, test: false},
+		{path: "/tmp/option-berth-itest-bin123/option-berth", test: false},
+		{path: "/home/dev/testing/option-berth", test: false},
+		{path: "/home/dev/option-berth.test.backup/option-berth", test: false},
 	}
-	for path, want := range tests {
-		if got := IsTestBinary(path); got != want {
-			t.Errorf("IsTestBinary(%q) = %v, want %v", path, got, want)
+	for _, tc := range cases {
+		if got := IsTestBinary(tc.path); got != tc.test {
+			t.Errorf("IsTestBinary(%q) = %v, want %v", tc.path, got, tc.test)
 		}
 	}
 }
 
 func TestEnvEnabled(t *testing.T) {
-	off := []string{"", "0", "false", "no", " FALSE "}
-	for _, v := range off {
-		if EnvEnabled(v) {
-			t.Errorf("EnvEnabled(%q) = true, want false", v)
-		}
+	cases := []struct {
+		value string
+		on    bool
+	}{
+		{"", false},
+		{"0", false},
+		{"false", false},
+		{"no", false},
+		{" FALSE ", false},
+		{"1", true},
+		{"true", true},
+		{"yes", true},
+		{"anything", true},
 	}
-	for _, v := range []string{"1", "true", "yes", "anything"} {
-		if !EnvEnabled(v) {
-			t.Errorf("EnvEnabled(%q) = false, want true", v)
+	for _, tc := range cases {
+		if got := EnvEnabled(tc.value); got != tc.on {
+			t.Errorf("EnvEnabled(%q) = %v, want %v", tc.value, got, tc.on)
 		}
 	}
 }
 
 func TestTestDaemonAllowedFollowsTheEnvironment(t *testing.T) {
 	if TestDaemonAllowed() {
-		t.Fatalf("%s is set in a test run; the guard is disarmed", AllowTestDaemonEnv)
+		t.Fatalf("%s is set during a test run; the guard is disarmed", AllowTestDaemonEnv)
 	}
 	t.Setenv(AllowTestDaemonEnv, "1")
 	if !TestDaemonAllowed() {
-		t.Error("the explicit opt-in was not honoured")
+		t.Error("setting the opt-in variable explicitly did not arm the guard")
 	}
 }

@@ -54,21 +54,25 @@ func LockPath() string { return lockPathFor(SocketPath()) }
 
 func lockPathFor(socket string) string { return paths.Lock(socket) }
 
-// Dial connects to a listening daemon at path. It is the one place clients
-// learn whether the address is a unix socket or a named pipe.
-func Dial(path string) (net.Conn, error) { return dial(path) }
+// Dial connects to a listening daemon at path. Clients learn from this one
+// place whether the address is a unix socket or a named pipe.
+func Dial(path string) (net.Conn, error) {
+	return dial(path)
+}
 
-// Listen binds the daemon's socket at path with the platform's same-user-only
-// permissions: a 0700 directory holding a 0600 socket on Unix, a pipe whose
-// DACL grants only the current user and SYSTEM on Windows.
-func Listen(path string) (net.Listener, error) { return listen(path) }
+// Listen binds the daemon's socket at path under the platform's
+// same-user-only permissions: on Unix a 0700 directory holding a 0600 socket,
+// on Windows a pipe whose DACL grants only the current user and SYSTEM.
+func Listen(path string) (net.Listener, error) {
+	return listen(path)
+}
 
-// SocketAlive reports whether something is accepting connections at path.
+// SocketAlive reports whether something accepts connections at path.
 func SocketAlive(path string) bool {
-	c, err := dial(path)
+	conn, err := dial(path)
 	if err != nil {
 		return false
 	}
-	_ = c.Close()
+	_ = conn.Close()
 	return true
 }

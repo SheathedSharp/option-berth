@@ -44,13 +44,14 @@ func AcquireServicePort(rt *Runtime, dir, service string) (int, error) {
 }
 
 // configForGroup is the oberth.yaml whose services are published under a group
-// name, or nil for a group no config describes.
+// name; a group no config describes yields nil.
 func configForGroup(rt *Runtime, name string) *groups.Config {
 	if rt.Scanner == nil {
 		return nil
 	}
-	for _, cfg := range rt.Scanner.Configs() {
-		if rt.Scanner.GroupOf(cfg) == name {
+	configs := rt.Scanner.Configs()
+	for _, cfg := range configs {
+		if name == rt.Scanner.GroupOf(cfg) {
 			return cfg
 		}
 	}

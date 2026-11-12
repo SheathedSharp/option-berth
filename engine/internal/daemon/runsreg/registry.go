@@ -32,16 +32,24 @@ const parentsTTL = 2 * time.Second
 // The PPID-walk bounds and cycle guards live with the process table, in
 // ports.Ancestor; this registry only supplies the lookup.
 
-// Record is one registered run.
+// Record is one registered run: which process option-berth started, what it was
+// started as, and where its output goes.
 type Record struct {
-	ID        string
-	PID       int
-	PPID      int
-	Group     string
-	Name      string
-	Cmd       string
-	Cwd       string
-	PortHint  int
+	// ID identifies the run even after its pid is recycled; PID and PPID are the
+	// process and its parent at the moment it was registered.
+	ID   string
+	PID  int
+	PPID int
+	// Group and Name are the manifest identity the run was started under; Cmd
+	// and Cwd are what it was started with.
+	Group string
+	Name  string
+	Cmd   string
+	Cwd   string
+	// PortHint is the port the caller expected this run to bind, 0 for a run
+	// that declares none.
+	PortHint int
+	// StartedAt is when the process started, in the runner's own reading.
 	StartedAt time.Time
 	// ConfigPath, StartID and Origin say where a run came from: the
 	// oberth.yaml it was started from, the groups.start that started it with
@@ -50,8 +58,8 @@ type Record struct {
 	StartID    string
 	Origin     string
 	SpecHash   string
-	// LogPath and LogOffset are where a detached run's output goes and where
-	// this run's part of the file begins; its last lines are kept on exit.
+	// LogPath is the file a detached run writes to and LogOffset is where this
+	// run's part of it begins; the last lines are kept with the exit.
 	LogPath   string
 	LogOffset int64
 	// Session is the agent session that asked for this run, or the zero value
@@ -162,13 +170,22 @@ func (r *Registry) Register(rec Record) Record {
 		rec.StartedAt = r.clock()
 	}
 	r.mu.Lock()
-	if existing, ok := r.runs[rec.PID]; ok && rec.ID == "" {
-		rec.ID = existing.ID
-	}
+	rec = r.keepIDLocked(rec)
 	r.runs[rec.PID] = rec
 	r.mu.Unlock()
 
 	r.mirrorAddLocked(rec)
+	return rec
+}
+
+// keepIDLocked gives a re-registered pid the id it already had: registering the
+// same pid twice replaces the entry, and the same process keeps its identity.
+// The caller holds mu, so the id cannot be inherited from a run that is being
+// dropped in between.
+func (r *Registry) keepIDLocked(rec Record) Record {
+	if existing, ok := r.runs[rec.PID]; ok && rec.ID == "" {
+		rec.ID = existing.ID
+	}
 	return rec
 }
 
@@ -205,10 +222,10 @@ func (r *Registry) PruneCodeSnapshots() {
 	}
 }
 
-// RenameGroups moves every run recorded under an old group name to its new one
-// (`groups.rename`), so a service started before its project was renamed stays
-// in the project's group instead of keeping a group of the old name to itself.
-// It reports how many runs moved.
+// RenameGroups follows a `groups.rename`: every run recorded under an old group
+// name moves to the new one, so a service started before its project was
+// renamed stays in the project's group instead of keeping a group of the old
+// name to itself. It reports how many runs moved.
 func (r *Registry) RenameGroups(renames map[string]string) int {
 	if len(renames) == 0 {
 		return 0
@@ -216,21 +233,8 @@ func (r *Registry) RenameGroups(renames map[string]string) int {
 	r.mirrorMu.Lock()
 	defer r.mirrorMu.Unlock()
 	r.mu.Lock()
-	var moved []Record
-	for pid, rec := range r.runs {
-		next, ok := renames[rec.Group]
-		if !ok || next == "" {
-			continue
-		}
-		rec.Group = next
-		r.runs[pid] = rec
-		moved = append(moved, rec)
-	}
-	for i := range r.exits {
-		if next, ok := renames[r.exits[i].Group]; ok && next != "" {
-			r.exits[i].Group = next
-		}
-	}
+	moved := r.renameRunsLocked(renames)
+	r.renameExitsLocked(renames)
 	history := r.history
 	r.mu.Unlock()
 	for _, rec := range moved {
@@ -242,25 +246,63 @@ func (r *Registry) RenameGroups(renames map[string]string) int {
 	return len(moved)
 }
 
-// List returns the live runs, oldest first, after pruning dead ones.
+// renameRunsLocked moves the live runs and answers with the ones it moved, so
+// the caller can mirror each of them after mu is released. The caller holds mu.
+func (r *Registry) renameRunsLocked(renames map[string]string) []Record {
+	var moved []Record
+	for pid, rec := range r.runs {
+		next := renames[rec.Group]
+		if next == "" {
+			continue
+		}
+		rec.Group = next
+		r.runs[pid] = rec
+		moved = append(moved, rec)
+	}
+	return moved
+}
+
+// renameExitsLocked carries the recorded exits along with the runs: a run's
+// history belongs to the group it was started in, under whichever name. The
+// caller holds mu.
+func (r *Registry) renameExitsLocked(renames map[string]string) {
+	for i := range r.exits {
+		if next := renames[r.exits[i].Group]; next != "" {
+			r.exits[i].Group = next
+		}
+	}
+}
+
+// List returns the live runs, oldest first, after pruning the dead ones.
 func (r *Registry) List() []Record {
 	r.Prune()
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	out := r.visibleLocked()
+	sort.Slice(out, func(i, j int) bool { return out[i].before(out[j]) })
+	return out
+}
+
+// visibleLocked is what a reader may see: every registered run except the ones
+// already being stopped, whose exit is about to be recorded. The caller holds
+// mu.
+func (r *Registry) visibleLocked() []Record {
 	out := make([]Record, 0, len(r.runs))
 	for _, rec := range r.runs {
-		if rec.stopping {
-			continue
+		if !rec.stopping {
+			out = append(out, rec)
 		}
-		out = append(out, rec)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].StartedAt.Equal(out[j].StartedAt) {
-			return out[i].PID < out[j].PID
-		}
-		return out[i].StartedAt.Before(out[j].StartedAt)
-	})
 	return out
+}
+
+// before is the order List publishes: oldest start first, with the pid breaking
+// a tie so two runs started in the same instant keep a stable order.
+func (rec Record) before(other Record) bool {
+	if !rec.StartedAt.Equal(other.StartedAt) {
+		return rec.StartedAt.Before(other.StartedAt)
+	}
+	return rec.PID < other.PID
 }
 
 // Running reports the newest run recorded for group and service that has not
@@ -298,8 +340,8 @@ func (r *Registry) Running(group, service string) (Record, bool) {
 // Lookup returns the run registered for a pid.
 func (r *Registry) Lookup(pid int) (Record, bool) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	rec, ok := r.runs[pid]
+	r.mu.Unlock()
 	return rec, ok
 }
 
@@ -371,7 +413,7 @@ func (r *Registry) pidReused(pid int, rec Record) bool {
 	return started.After(rec.StartedAt.Add(ports.StartTolerance))
 }
 
-// Run implements groups.Registry: it attributes a listening port to the run
+// Run implements groups.Registry: a listening port is attributed to the run
 // that owns it by walking the port's PPID ancestry, so `npm run dev` -> vite ->
 // esbuild all resolve to the run that started them.
 //
@@ -437,8 +479,8 @@ func (r *Registry) RunStart(pid int) (time.Time, bool) {
 	return rec.StartedAt, true
 }
 
-// Session implements groups.SessionRegistry: it reports the agent session that
-// started the run owning this port, using the same PPID walk the run
+// Session implements groups.SessionRegistry. It answers with the agent session
+// behind the run that owns this port, found through the same PPID walk the
 // attribution uses, so a port and its run can never disagree about who started
 // them.
 func (r *Registry) Session(p state.Port) (state.Session, bool) {
@@ -455,34 +497,41 @@ func (r *Registry) Session(p state.Port) (state.Session, bool) {
 		// Standalone callers without captured attribution still resolve once.
 		rec, found = r.ancestor(p.PID, p.PPID)
 	}
-	if !found || rec.Session.ID == "" {
-		return state.Session{}, false
+	if found && rec.Session.ID != "" {
+		return rec.Session, true
 	}
-	return rec.Session, true
+	return state.Session{}, false
 }
 
 // SessionRuns lists every live run that carries a session. The daemon's
-// sessions handlers read it through an interface assertion on the installed
-// run registry, which is how package daemon reaches this data without
-// importing the package that registers itself into it.
+// sessions handlers read it through an interface assertion on the installed run
+// registry, which is how package daemon reaches this data without importing the
+// package that registers itself into it.
 func (r *Registry) SessionRuns() []sessions.Live {
 	out := []sessions.Live{}
 	for _, rec := range r.List() {
-		if rec.Session.ID == "" {
-			continue
+		if rec.Session.ID != "" {
+			out = append(out, live(rec))
 		}
-		out = append(out, sessions.Live{
-			RunID:     rec.ID,
-			PID:       rec.PID,
-			Group:     rec.Group,
-			Name:      rec.Name,
-			Cmd:       rec.Cmd,
-			Cwd:       rec.Cwd,
-			StartedAt: rec.StartedAt,
-			Session:   rec.Session,
-		})
 	}
 	return out
+}
+
+// live projects one run onto the session view: the identity of the run, then
+// what it was started as, then the session that asked for it.
+func live(rec Record) sessions.Live {
+	return sessions.Live{
+		RunID: rec.ID,
+		PID:   rec.PID,
+		Group: rec.Group,
+		Name:  rec.Name,
+		Cmd:   rec.Cmd,
+		Cwd:   rec.Cwd,
+		// StartedAt is the run's, not the session's: a session outlives the
+		// runs that carry it.
+		StartedAt: rec.StartedAt,
+		Session:   rec.Session,
+	}
 }
 
 // ancestor walks up from pid looking for a registered run. hintPPID is the
@@ -493,23 +542,31 @@ func (r *Registry) ancestor(pid, hintPPID int) (Record, bool) {
 	if pid <= 0 {
 		return Record{}, false
 	}
+	// The port's own process first, then the parent the scanner resolved: both
+	// are registry lookups, cheaper than reading the process table.
 	if rec, ok := r.Lookup(pid); ok {
 		return rec, true
 	}
+	// The parent the scanner already resolved is free evidence: it is checked
+	// before the process table is read at all.
 	if hintPPID > 1 {
 		if rec, ok := r.Lookup(hintPPID); ok {
 			return rec, true
 		}
 	}
-
-	r.mu.Lock()
-	empty := len(r.runs) == 0
-	r.mu.Unlock()
-	if empty {
+	if r.isEmpty() {
 		return Record{}, false
 	}
-
 	return ports.Ancestor(pid, r.parentTable(), r.Lookup)
+}
+
+// isEmpty reports whether nothing is registered at all. Walking the process
+// table for a registry that knows no run can only come back empty, so the walk
+// is skipped.
+func (r *Registry) isEmpty() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.runs) == 0
 }
 
 func (r *Registry) clock() time.Time {

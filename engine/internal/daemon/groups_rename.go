@@ -13,70 +13,77 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// `groups.rename` renames a project and, with it, every checkout of
-// it: the main checkout's group and each linked worktree's `<project>@<wt>`.
-// The name lives where the project already keeps it — the `name:` of the main
-// checkout's `oberth.yaml` — or, for a project with no file, in the daemon's
-// store, keyed by the main checkout's root.
+// `groups.rename` renames a project and, along with it, every checkout of that
+// project: the main checkout's group and each linked worktree's
+// `<project>@<wt>`. The name stays where the project already keeps it — the
+// `name:` of the main checkout's `oberth.yaml` — or, when a project has no
+// file, in the daemon's store, keyed by the main checkout's root.
 func init() {
+	registerRenameHandler()
+}
+
+func registerRenameHandler() {
 	RegisterHandler("groups.rename", handleGroupsRename)
 }
 
 var (
-	renameHooksMu sync.RWMutex
-	renameHooks   []func(renames map[string]string)
+	groupRenameMu    sync.RWMutex
+	groupRenameHooks []func(renames map[string]string)
 )
 
-// OnGroupRename registers a function that is told, old name → new, about every
-// group a `groups.rename` renamed. State that recorded a group name when it was
-// created follows the rename through it — a run's group does, from
-// internal/daemon/runsreg — without this package importing its owner
-// .
+// OnGroupRename registers a function told, old name → new, about every group a
+// `groups.rename` renamed. State that recorded a group name at creation time
+// follows the rename through this hook — a run's group does, from
+// internal/daemon/runsreg — without this package importing that owner.
 func OnGroupRename(f func(renames map[string]string)) {
 	if f == nil {
 		return
 	}
-	renameHooksMu.Lock()
-	renameHooks = append(renameHooks, f)
-	renameHooksMu.Unlock()
+	groupRenameMu.Lock()
+	groupRenameHooks = append(groupRenameHooks, f)
+	groupRenameMu.Unlock()
 }
 
 func notifyGroupRename(renames map[string]string) {
 	if len(renames) == 0 {
 		return
 	}
-	renameHooksMu.RLock()
-	hooks := append([]func(map[string]string){}, renameHooks...)
-	renameHooksMu.RUnlock()
-	for _, f := range hooks {
+	for _, f := range groupRenameHooksSnapshot() {
 		f(renames)
 	}
 }
 
+func groupRenameHooksSnapshot() []func(map[string]string) {
+	groupRenameMu.RLock()
+	defer groupRenameMu.RUnlock()
+	return append([]func(map[string]string){}, groupRenameHooks...)
+}
+
 func handleGroupsRename(_ context.Context, req *Request) (any, error) {
 	var p rpc.GroupsRenameParams
-	if err := req.Bind(&p); err != nil {
+	err := req.Bind(&p)
+	if err != nil {
 		return nil, err
 	}
-	from, to := strings.TrimSpace(p.Name), strings.TrimSpace(p.To)
+	to, from := strings.TrimSpace(p.To), strings.TrimSpace(p.Name)
 	if from == "" {
 		return nil, rpc.NewError(rpc.CodeInvalidParams, "name is required",
 			`send {"name": "<project or checkout group>", "to": "<new project name>"}`)
 	}
-	if err := groups.ValidProjectName(to); err != nil {
+	if err = groups.ValidProjectName(to); err != nil {
 		return nil, rpc.NewError(rpc.CodeInvalidParams, err.Error(),
 			"a project name is one word with no @, / or whitespace; a worktree's group adds @<worktree> to it")
 	}
 
 	rt := req.Runtime
-	snap, err := rt.Scanner.Snapshot(scanner.Include{})
+	snapshot, err := rt.Scanner.Snapshot(scanner.Include{})
 	if err != nil {
 		return nil, scanFailure(err)
 	}
-	local := make([]state.Group, 0, len(snap.Groups))
-	for _, g := range snap.Groups {
-		if state.IsLocalhost(g.Host) {
-			local = append(local, g)
+	local := make([]state.Group, 0, len(snapshot.Groups))
+	for i := range snapshot.Groups {
+		if state.IsLocalhost(snapshot.Groups[i].Host) {
+			local = append(local, snapshot.Groups[i])
 		}
 	}
 	plan, err := rt.Scanner.PlanGroupRename(local, from, to)
@@ -84,67 +91,74 @@ func handleGroupsRename(_ context.Context, req *Request) (any, error) {
 		return nil, renameError(err)
 	}
 	if len(plan.Renames) == 0 {
-		// Already called that: nothing to write and nothing to publish.
+		// The project already carries that name: nothing to write, nothing to
+		// publish.
 		return rpc.GroupsRenameResult{
 			MutationResult: rpc.MutationResult{OK: true, Affected: []string{}},
 			Name:           plan.Project,
 		}, nil
 	}
 
-	if plan.ConfigPath != "" {
-		cfg, err := groups.SetConfigName(plan.ConfigPath, to)
+	if plan.ConfigPath == "" {
+		db := rt.Store
+		if db == nil {
+			return nil, errNoStore()
+		}
+		if err = db.SetGroupAlias(plan.Main, to); err != nil {
+			return nil, storeError("saving the project name", err)
+		}
+	} else {
+		renamed, err := groups.SetConfigName(plan.ConfigPath, to)
 		if err != nil {
 			return nil, configError(plan.ConfigPath, err)
 		}
-		if err := rt.Scanner.LoadConfig(cfg.Path); err != nil {
-			rt.Logger.Warn("reloading a config after renaming its project", "path", cfg.Path, "error", err)
+		if err = rt.Scanner.LoadConfig(renamed.Path); err != nil {
+			rt.Logger.Warn("reloading a config after renaming its project", "path", renamed.Path, "error", err)
 		}
-		// The file names the project from now on. An alias stored before the
-		// file existed would still outrank it, so it goes.
+		// From here on the file names the project. An alias stored before that
+		// file existed would still outrank it, so it is dropped.
 		if st := rt.Store; st != nil && plan.Main != "" {
 			if err := st.ClearGroupAlias(plan.Main); err != nil {
 				rt.Logger.Warn("clearing a project alias", "root", plan.Main, "error", err)
 			}
 		}
-	} else {
-		st := rt.Store
-		if st == nil {
-			return nil, errNoStore()
-		}
-		if err := st.SetGroupAlias(plan.Main, to); err != nil {
-			return nil, storeError("saving the project name", err)
-		}
 	}
 
 	notifyGroupRename(plan.Renames)
 	rt.Logger.Info("project renamed", "from", from, "to", to, "groups", len(plan.Renames))
-	// Publish before replying, like every other write: the delta that removes
-	// the old names and adds the new ones is queued ahead of this response.
+	// Publishing happens before the reply, as for every other write: the delta
+	// removing the old names and adding the new ones is queued ahead of this
+	// response.
 	republish(rt)
 
-	affected := make([]string, 0, len(plan.Renames))
-	for _, next := range plan.Renames {
-		affected = append(affected, next)
+	names := make([]string, 0, len(plan.Renames))
+	for _, renamed := range plan.Renames {
+		names = append(names, renamed)
 	}
-	sort.Strings(affected)
+	sort.Strings(names)
 	return rpc.GroupsRenameResult{
-		MutationResult: rpc.MutationResult{OK: true, Affected: affected},
 		Name:           plan.Project,
+		MutationResult: rpc.MutationResult{OK: true, Affected: names},
 	}, nil
 }
 
-// renameError maps a refused rename onto the contract's error registry.
+// renameError maps a refused rename onto the contract's error registry: the
+// details (message and hint) belong to the groups package, only the code is
+// decided here.
 func renameError(err error) error {
-	var re *groups.RenameError
-	if !errors.As(err, &re) {
+	var refusal *groups.RenameError
+	if !errors.As(err, &refusal) {
 		return rpc.NewError(rpc.CodeInternal, err.Error(), "check `oberth daemon log`")
 	}
-	switch re.Kind {
-	case groups.RenameNotFound:
-		return rpc.NewError(rpc.CodeNotFound, re.Msg, re.Hint)
+	return renameKindError(refusal)
+}
+
+func renameKindError(refusal *groups.RenameError) error {
+	switch refusal.Kind {
 	case groups.RenameConflict:
-		return rpc.NewError(rpc.CodeConflict, re.Msg, re.Hint)
-	default:
-		return rpc.NewError(rpc.CodeInvalidParams, re.Msg, re.Hint)
+		return rpc.NewError(rpc.CodeConflict, refusal.Msg, refusal.Hint)
+	case groups.RenameNotFound:
+		return rpc.NewError(rpc.CodeNotFound, refusal.Msg, refusal.Hint)
 	}
+	return rpc.NewError(rpc.CodeInvalidParams, refusal.Msg, refusal.Hint)
 }

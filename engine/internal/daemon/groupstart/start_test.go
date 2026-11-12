@@ -91,12 +91,13 @@ func TestStartsInDependencyOrderAndWaits(t *testing.T) {
 	cmd := h.service()
 	path := h.manifest(fmt.Sprintf(`name: itest
 services:
-  - name: api
-    cmd: %s
+  - cmd: %s
+    name: api
     port: %d
-    depends_on: [db]
-  - name: db
-    cmd: %s
+    depends_on:
+      - db
+  - cmd: %s
+    name: db
     port: %d
     ready_timeout: 45s
 `, cmd, apiPort, cmd, dbPort))
@@ -257,15 +258,16 @@ func TestAutoPortsAreAssignedAndReferenced(t *testing.T) {
 	cmd := h.service()
 	path := h.manifest(fmt.Sprintf(`name: autotest
 services:
-  - name: api
-    cmd: %s
+  - cmd: %s
+    name: api
     port: auto
-    depends_on: [db]
+    depends_on:
+      - db
     env:
-      BERTH_TEST_ECHO: DB_URL,FROM_CALLER,PORT
       DB_URL: postgres://localhost:${db.port}/app
-  - name: db
-    cmd: %s
+      BERTH_TEST_ECHO: DB_URL,FROM_CALLER,PORT
+  - cmd: %s
+    name: db
     port: auto
 `, cmd, cmd))
 
@@ -387,8 +389,8 @@ func TestSkipsServicesThatAreAlreadyRunning(t *testing.T) {
 	taken, _ := h.occupiedPort()
 	path := h.manifest(fmt.Sprintf(`name: itest
 services:
-  - name: web
-    cmd: %s
+  - cmd: %s
+    name: web
     port: %d
 `, h.service(), taken))
 
@@ -420,13 +422,14 @@ func TestReportsADependencyThatExits(t *testing.T) {
 	deadPort, livePort := h.freePort(), h.freePort()
 	path := h.manifest(fmt.Sprintf(`name: itest
 services:
-  - name: ghost
-    cmd: %s
+  - cmd: %s
+    name: ghost
     port: %d
-  - name: api
-    cmd: %s
+  - cmd: %s
+    name: api
     port: %d
-    depends_on: [ghost]
+    depends_on:
+      - ghost
 `, exitsImmediately(t), deadPort, h.service(), livePort))
 
 	chunks, end := h.startChunks(rpc.GroupsStartParams{ConfigPath: &path})
@@ -458,13 +461,14 @@ func TestReportsATrueDependencyTimeout(t *testing.T) {
 	deadPort, livePort := h.freePort(), h.freePort()
 	path := h.manifest(fmt.Sprintf(`name: itest
 services:
-  - name: ghost
-    cmd: sleep 30
+  - cmd: sleep 30
+    name: ghost
     port: %d
-  - name: api
-    cmd: %s
+  - cmd: %s
+    name: api
     port: %d
-    depends_on: [ghost]
+    depends_on:
+      - ghost
 `, deadPort, h.service(), livePort))
 
 	chunks, end := h.startChunks(rpc.GroupsStartParams{ConfigPath: &path})
@@ -502,12 +506,13 @@ func TestReportsNoPortDependencyTimeout(t *testing.T) {
 			port := h.freePort()
 			path := h.manifest(fmt.Sprintf(`name: itest
 services:
-  - name: worker
-    cmd: %s
-  - name: api
-    cmd: %s
+  - cmd: %s
+    name: worker
+  - cmd: %s
+    name: api
     port: %d
-    depends_on: [worker]
+    depends_on:
+      - worker
 `, exitsImmediately(t), h.service(), port))
 
 			chunks, end := h.startChunks(rpc.GroupsStartParams{
@@ -559,11 +564,11 @@ func TestOnlyFiltersAndReportsATypo(t *testing.T) {
 	cmd := h.service()
 	path := h.manifest(fmt.Sprintf(`name: itest
 services:
-  - name: one
-    cmd: %s
+  - cmd: %s
+    name: one
     port: %d
-  - name: two
-    cmd: %s
+  - cmd: %s
+    name: two
     port: %d
 `, cmd, one, cmd, two))
 
@@ -603,16 +608,18 @@ func TestStartIncludesDependencyClosure(t *testing.T) {
 	cmd := h.service()
 	path := h.manifest(fmt.Sprintf(`name: itest
 services:
-  - name: web
-    cmd: %s
+  - cmd: %s
+    name: web
     port: %d
-    depends_on: [api]
-  - name: api
-    cmd: %s
+    depends_on:
+      - api
+  - cmd: %s
+    name: api
     port: %d
-    depends_on: [db]
-  - name: db
-    cmd: %s
+    depends_on:
+      - db
+  - cmd: %s
+    name: db
     port: %d
 `, cmd, webPort, cmd, apiPort, cmd, dbPort))
 
@@ -649,11 +656,11 @@ func TestStartWithoutClosureKeepsTheNamedOnly(t *testing.T) {
 	cmd := h.service()
 	path := h.manifest(fmt.Sprintf(`name: itest
 services:
-  - name: one
-    cmd: %s
+  - cmd: %s
+    name: one
     port: %d
-  - name: two
-    cmd: %s
+  - cmd: %s
+    name: two
     port: %d
 `, cmd, one, cmd, two))
 
