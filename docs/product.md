@@ -50,15 +50,14 @@ is no separate integration protocol.
 ## Design principles
 
 The product is designed from its own requirements; the core algorithms and low-level implementation
-follow this document's object model, write boundaries and CLI contract. Reference projects such as Sonar
+follow this document's object model, write boundaries and CLI contract. Reference projects and prior art
 offer ideas and engineering experience; they do not decide this project's architecture and are not the
 skeleton for later work. No object or capability unrelated to this product is kept merely to stay
 faithful to a reference design.
 
 Self-authored replacements advance behind verifiable module boundaries, keep the existing external
 contract, and are proven by behavior, isolation and performance — not by a rename or a new wrapper
-layer. Origins are recorded honestly in [`engine/UPSTREAM.md`](../engine/UPSTREAM.md); migration status
-is tracked only in [`backlog.md`](backlog.md).
+layer. Migration status is tracked only in [`backlog.md`](backlog.md).
 
 ## Object model
 

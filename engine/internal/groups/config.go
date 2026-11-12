@@ -32,8 +32,8 @@ const LegacyConfigName = ".oberth.yaml"
 // Only the first one present is used; `oberth doctor` reports the rest.
 //
 // **Nothing else is read.** Earlier releases also read the spellings this
-// project wore under its previous names, and the upstream project's (`sonar.*`);
-// both were dropped on 2026-09-24 (decision 0022). A spelling nobody writes is a
+// project wore under its previous names and one older config prefix; both were
+// dropped on 2026-09-24 (decision 0022). A spelling nobody writes is a
 // compatibility branch nobody exercises — and a broken one fails *silently*,
 // which is the failure this product likes least.
 //

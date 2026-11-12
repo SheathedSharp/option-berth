@@ -3,41 +3,6 @@
 option-berth 的自研代码由 SheathedSharp 及项目贡献者维护，适用根目录 [MIT](LICENSE)。第三方材料保留各自许可，不因本项目采用
 MIT 而重新许可。源码与发布包均保留适用声明；发布包还附带目标实际运行依赖的许可原文与构建清单。
 
-## 历史代码来源：Sonar
-
-引擎包含来自 `github.com/raskrebs/sonar` 的代码（参考提交
-`be48afbee89fd2381d0e2c8b0aa9ec1d81194546`），该部分适用下面的 MIT 许可：
-
-```text
-MIT License
-
-Copyright (c) 2026 RasKrebs
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
-根 [LICENSE](LICENSE) 与 [engine/LICENSE](engine/LICENSE) 只列本项目自己的版权；上游部分的
-声明按第三方组件记录在这里，并随发布产物分发（归档与 MSI 的 `licenses/third-party-notices.md`，
-Linux 包的 `/usr/share/doc/option-berth/licenses/`）。哪些文件仍来自上游、审计方法与移除这份
-声明的前提见 [engine/UPSTREAM.md](engine/UPSTREAM.md)。
-保留来源不表示后续架构基于该项目，也不将其已有作品宣称为本项目原创。
-
 ## 站点资产：GSAP
 
 `site/assets/gsap.min.js` 是 GSAP 3.15.1（GreenSock Animation Platform）的原样副本，由

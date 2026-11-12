@@ -176,12 +176,12 @@ class LinkTests(unittest.TestCase):
     def test_links_outside_docs_are_not_locale_checked(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            write(root, "engine/UPSTREAM.md", "# Upstream\n")
+            write(root, "engine/LICENSE", "MIT\n")
             pair(
                 root,
                 "demo",
-                GOOD_EN + "\nSee [upstream](../engine/UPSTREAM.md).\n",
-                GOOD_ZH + "\n见 [上游](../engine/UPSTREAM.md)。\n",
+                GOOD_EN + "\nSee [the license](../engine/LICENSE).\n",
+                GOOD_ZH + "\n见 [许可](../engine/LICENSE)。\n",
             )
             self.assertEqual(docs_check.check_pair(root / "docs" / "demo.md"), [])
 
