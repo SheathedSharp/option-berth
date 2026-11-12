@@ -64,7 +64,7 @@ func readAttnDoc(t *testing.T, status statusDoc) attnDoc {
 	return artifact
 }
 
-// enableJevIn is the person's consent, written where the daemon's child
+// enableAttentionIn is the person's consent, written where the daemon's child
 // processes read it. `status` publishes `attn_path` only once the
 // enhancement is enabled, so every test here that expects an artifact has to
 // state that the person turned it on — the same precondition a real install
@@ -74,7 +74,7 @@ func readAttnDoc(t *testing.T, status statusDoc) attnDoc {
 // The key is a placeholder: this file never calls a provider (an injectable
 // HTTP server covers model itself), and the artifact is derived from runtime
 // facts before any network step.
-func enableJevIn(t *testing.T, e *env) {
+func enableAttentionIn(t *testing.T, e *env) {
 	t.Helper()
 	dir := filepath.Join(e.home, ".option-berth")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -103,7 +103,7 @@ func attnServices(a attnDoc) map[string]string {
 func TestAttentionFailureMatrix(t *testing.T) {
 	e := newEnv(t)
 	e.serve()
-	enableJevIn(t, e)
+	enableAttentionIn(t, e)
 	b, err := FailureMatrix(filepath.Join(e.home, "attention-failures"))
 	if err != nil {
 		t.Fatalf("provision: %v", err)
@@ -200,7 +200,7 @@ func TestAttentionFailureMatrix(t *testing.T) {
 func TestAttentionNormalAndUndeclaredBoundaries(t *testing.T) {
 	e := newEnv(t)
 	e.serve()
-	enableJevIn(t, e)
+	enableAttentionIn(t, e)
 	b, err := APIServerAndWorker(filepath.Join(e.home, "attention-normal"))
 	if err != nil {
 		t.Fatalf("provision: %v", err)
@@ -271,7 +271,7 @@ func TestAttentionNormalAndUndeclaredBoundaries(t *testing.T) {
 func TestAttentionManifestConflictIsNotActionable(t *testing.T) {
 	e := newEnv(t)
 	e.serve()
-	enableJevIn(t, e)
+	enableAttentionIn(t, e)
 	b, err := APIServerAndWorker(filepath.Join(e.home, "attention-conflict"))
 	if err != nil {
 		t.Fatalf("provision: %v", err)

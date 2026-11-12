@@ -60,7 +60,7 @@ func TestTipDueTreatsAGarbledRecordAsDue(t *testing.T) {
 	}
 }
 
-func TestRecordJevTipIsOwnerOnly(t *testing.T) {
+func TestRecordAttnTipIsOwnerOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "jev-tip.json")
 	recordAttnTip(path, time.Now().UTC())
 	info, err := os.Stat(path)
@@ -126,13 +126,13 @@ func TestTipFiresWithAttnOffAndAnAnomaly(t *testing.T) {
 	}
 }
 
-// The published artifact gates on consent, so a read that derives an anomaly
-// while the assessment is off must hold the verdict and publish nothing. This is the pair
-// the tip reads: verdict present, path absent.
-func TestAnomalyVerdictSurvivesTheConsentGate(t *testing.T) {
+// The published artifact no longer gates on consent: a read that derives an
+// anomaly while the assessment is off still publishes the fact-only handoff and
+// marks it as unavailable. The tip reads the verdict, not the consent.
+func TestAnomalyVerdictSurvivesWithoutConsent(t *testing.T) {
 	t.Setenv("BERTH_HOME", t.TempDir())
 	if attnEnabled() {
-		t.Fatal("this case needs model to be off")
+		t.Fatal("this case needs the assessment to be off")
 	}
 	exited := time.Now().UTC()
 	doc := &statusDocument{Scope: display.Scope{Root: t.TempDir()}}
@@ -146,8 +146,11 @@ func TestAnomalyVerdictSurvivesTheConsentGate(t *testing.T) {
 		ExitedAt: exited.Format(time.RFC3339Nano),
 	}}
 	publishAttention(doc)
-	if doc.AttnPath != "" {
-		t.Fatalf("published %q without consent", doc.AttnPath)
+	if doc.AttnPath == "" {
+		t.Fatal("the fact-only handoff was not published without consent")
+	}
+	if doc.Attn == nil || doc.Attn.Enabled || doc.Attn.Assessment != "unavailable" {
+		t.Fatalf("attn state without consent = %+v", doc.Attn)
 	}
 	if !doc.attnEvent {
 		t.Fatal("the derived anomaly was discarded with the publication")
@@ -155,10 +158,10 @@ func TestAnomalyVerdictSurvivesTheConsentGate(t *testing.T) {
 }
 
 // The hint is one dim line: it must name the feature, say it is optional, and
-// give the one command that turns it on.
+// give the setup and consent commands that turn it on.
 func TestTipLineIsActionableAndShort(t *testing.T) {
 	line := attnTipLine()
-	for _, want := range []string{"model", "optional", "oberth attn enable"} {
+	for _, want := range []string{"model", "optional", "oberth attn config", "oberth attn on"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("tip %q does not mention %q", line, want)
 		}

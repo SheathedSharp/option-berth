@@ -53,8 +53,8 @@ Deleting data remains a person's job.
 
 `internal/attn` holds only the deterministic part: fact input, event classification, derivation,
 atomic publication, expiry and reads. It does not open a network connection, read a key or call a model.
-`internal/attn/model` holds the optional enrichment: the the model client, local settings, telemetry, preflight and
-the runner.
+`internal/attn/model` holds the optional enrichment: the model client, local settings, telemetry,
+preflight and the runner.
 
 `internal/cmd/attention_boundary_test.go` checks that boundary instead of leaving it as a comment:
 
@@ -66,12 +66,11 @@ the runner.
 So with no key, no `attn.json` and an unreachable provider, the control path still works: nothing
 leaves the machine, and no service start, stop or readiness decision depends on the enrichment.
 
-The artifact itself is gated on consent. `status` publishes it only once the person has enabled the model,
-which makes `attn_path` a signal an agent can act on directly: present means the enhancement is
-on; absent means either nothing needs assessing or the user never opted in, and the agent no longer
-has to tell those apart by reading the settings file. An install that turns the enhancement off also
-clears what was published before, so a stale artifact cannot keep inviting an assessment the person
-declined.
+The artifact is not gated on consent: it is a local, code-derived fact, and publishing it sends
+nothing anywhere. `attn_path` present means there is an anomaly; the adjacent `attn` block (consent,
+fixed reason, assessment state) is what an agent reads to decide whether it may run `oberth attn
+assess`. Turning the assessment off therefore keeps the fact-only handoff and changes only that
+block — the person's refusal is never inferred from whether a local file exists.
 
 ## Read-only addresses and shared environment
 

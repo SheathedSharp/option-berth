@@ -104,11 +104,13 @@ type statusDocument struct {
 	// AttnRevision lets an agent compare an artifact it read with the
 	// exact deterministic facts represented by this status response.
 	AttnRevision string `json:"attn_revision,omitempty"`
+	// Attn says whether this handoff can be assessed right now. It is present
+	// exactly when AttnPath is, so path presence means "there is an anomaly",
+	// not "the person opted in".
+	Attn *statusAttn `json:"attn,omitempty"`
 	// attnEvent is whether the deterministic classifier derived a definite
-	// anomaly, independent of whether it was published. It never reaches the
-	// wire: consent decides the artifact, this decides the one-line offer of the
-	// enhancement, and reading consent off the artifact would make that offer
-	// unreachable precisely when it is due.
+	// anomaly. It never reaches the wire: it drives the one-line offer of the
+	// enhancement, which must stay reachable while the assessment is off.
 	attnEvent bool
 	// Changed is absent on the first run: there is nothing to compare against,
 	// which is not the same as nothing having changed (`empty` inside says
@@ -363,29 +365,33 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool, only []stri
 	return doc, nil
 }
 
+// statusAttn is the consent and assessment state of the published handoff.
+// Assessment is "assessed" when the artifact already carries a validated
+// result, "pending" when the configuration could assess it now, and
+// "unavailable" otherwise; Reason carries the fixed code when nothing can run.
+type statusAttn struct {
+	Enabled    bool   `json:"enabled"`
+	Reason     string `json:"reason,omitempty"`
+	Assessment string `json:"assessment"`
+}
+
 // publishAttention makes the deterministic anomaly visible to an optional
 // agent adapter without putting a model or network call in status' read path.
 // Failure to publish the optional artifact never makes the facts unavailable.
 //
-// The artifact only exists once the person has enabled the enhancement. An
-// `attn_path` is therefore an unambiguous signal: an agent that sees one
-// knows model is on and may run `oberth attn assess`, and an agent that sees none
-// does not have to guess whether that is because nothing failed or because the
-// user never opted in. Publishing it unconditionally meant every reader had to
-// reconstruct that answer from the settings file.
-//
-// Deriving and publishing are two decisions, not one. The derivation is pure
-// fact work and always runs, so `status` knows whether there is an anomaly even
-// when it publishes nothing; only publication depends on consent. Collapsing
-// them would leave the offer of the enhancement ("there is something to assess
-// here") with no evidence to fire on, because the artifact it used to read is
-// exactly what consent removes.
+// The artifact is a local fact derived by code: publishing it sends nothing
+// anywhere, so consent is not what decides whether it exists. An `attn_path`
+// means "there is an anomaly"; the adjacent `attn` block says whether an
+// assessment is possible and why not. Keeping the two decisions separate means
+// an agent can use the fact-only handoff, and offer the enhancement, without
+// the person having configured a model first.
 func publishAttention(doc *statusDocument) string {
 	if doc == nil {
 		return ""
 	}
 	doc.AttnPath = ""
 	doc.AttnRevision = ""
+	doc.Attn = nil
 	doc.attnEvent = false
 	facts := attn.Facts{
 		WorktreeRoot: doc.Scope.Root,
@@ -462,20 +468,30 @@ func publishAttention(doc *statusDocument) string {
 		return ""
 	}
 	doc.attnEvent = true
-	if !attnEnabled() {
-		// The person has not opted in, so nothing is published. Clear a
-		// leftover artifact from before the enhancement was switched off:
-		// leaving it on disk would keep telling agents to assess.
-		_ = attn.Clear(paths.Dir(), doc.Scope.Root)
-		return ""
-	}
 	path, err := attn.Write(paths.Dir(), artifact)
 	if err != nil {
 		return ""
 	}
 	doc.AttnPath = path
 	doc.AttnRevision = artifact.StateRevision
+	doc.Attn = attnState(path)
 	return path
+}
+
+// attnState reports whether the published artifact can be assessed now. It
+// reads consent for this process, never the artifact, and never contacts an
+// endpoint.
+func attnState(path string) *statusAttn {
+	consent := attnResolvedConsent()
+	state := &statusAttn{Enabled: consent.Enabled, Reason: consent.Reason, Assessment: "unavailable"}
+	if stored, err := attn.Read(path); err == nil && stored.Assessment != nil {
+		state.Assessment = "assessed"
+		return state
+	}
+	if consent.Enabled && consent.Reason == "" {
+		state.Assessment = "pending"
+	}
+	return state
 }
 
 // localStatusGroup is the cold-start fallback for a manifest the daemon has
