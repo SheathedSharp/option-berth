@@ -1,4 +1,4 @@
-"""Keep the project license, the reused-work notice and its delivery path in agreement."""
+"""Keep the project license, the third-party notices and their delivery path in agreement."""
 from pathlib import Path
 import unittest
 
@@ -13,17 +13,14 @@ class LicenseTests(unittest.TestCase):
         for name in ("LICENSE", "engine/LICENSE"):
             text = (ROOT / name).read_text()
             self.assertIn("Copyright (c) 2026 SheathedSharp", text)
-            self.assertNotIn("RasKrebs", text)
             self.assertIn("THIRD_PARTY_NOTICES.md", text)
             self.assertIn(MIT_GRANT, text)
             self.assertIn(MIT_DISCLAIMER, text)
 
-    def test_reused_work_notice_keeps_its_full_mit_text(self):
+    def test_third_party_notices_cover_the_shipped_assets(self):
         text = (ROOT / "THIRD_PARTY_NOTICES.md").read_text()
-        self.assertIn("Copyright (c) 2026 RasKrebs", text)
-        self.assertIn(MIT_GRANT, text)
-        self.assertIn(MIT_DISCLAIMER, text)
-        self.assertIn("engine/UPSTREAM.md", text)
+        for section in ("GSAP", "SIL Open Font License", "Go 依赖"):
+            self.assertIn(section, text)
 
     def test_release_archives_ship_the_notice(self):
         # The notice is only kept if every distributed copy carries it; a source

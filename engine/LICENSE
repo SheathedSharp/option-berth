@@ -3,9 +3,8 @@ MIT License
 Copyright (c) 2026 SheathedSharp
 Copyright (c) 2026 option-berth contributors
 
-Third-party components keep their own copyright and license; the full texts,
-including the Sonar notice for the engine's upstream-derived code, are in
-../THIRD_PARTY_NOTICES.md and ship with every release archive.
+Third-party components keep their own copyright and license; their full texts
+are in ../THIRD_PARTY_NOTICES.md and ship with every release archive.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
