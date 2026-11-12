@@ -15,8 +15,8 @@ const reservedSharesDDL = `
 		CREATE TABLE shares (
 			id         TEXT PRIMARY KEY,
 			port       INTEGER NOT NULL,
-			url        TEXT NOT NULL,
-			created_at TEXT NOT NULL
+			created_at TEXT NOT NULL,
+			url        TEXT NOT NULL
 		);`
 
 func TestReservedMigrationFromAnotherPackage(t *testing.T) {

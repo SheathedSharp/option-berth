@@ -165,7 +165,7 @@ func TestPublishesAddAndRemove(t *testing.T) {
 	var mu sync.Mutex
 	var rows []ports.ListeningPort
 	var deltas []state.Delta
-	l := New(Options{
+	loop := New(Options{
 		Demand: oneSubscriber,
 		Scan: func(Include) ([]ports.ListeningPort, error) {
 			mu.Lock()
@@ -177,21 +177,21 @@ func TestPublishesAddAndRemove(t *testing.T) {
 		},
 	})
 
-	l.scanAndPublish(Include{})
+	loop.scanAndPublish(Include{})
 	mu.Lock()
-	rows = append(rows, ports.ListeningPort{Port: 8123, BindAddress: "127.0.0.1", PID: 42, Process: "python3"})
+	rows = append(rows, ports.ListeningPort{Port: 8321, BindAddress: "127.0.0.1", PID: 43, Process: "ruby"})
 	mu.Unlock()
-	l.scanAndPublish(Include{})
-	if last := deltas[len(deltas)-1]; len(last.Ports.Added) != 1 || last.Ports.Added[0].Port != 8123 {
-		t.Fatalf("expected 8123 in Added, got %+v", last.Ports)
+	loop.scanAndPublish(Include{})
+	if last := deltas[len(deltas)-1]; len(last.Ports.Added) != 1 || last.Ports.Added[0].Port != 8321 {
+		t.Fatalf("expected 8321 in Added, got %+v", last.Ports)
 	}
 
 	mu.Lock()
 	rows = nil
 	mu.Unlock()
-	l.scanAndPublish(Include{})
-	if last := deltas[len(deltas)-1]; len(last.Ports.Removed) != 1 || last.Ports.Removed[0] != "8123:127.0.0.1" {
-		t.Fatalf("expected 8123:127.0.0.1 in Removed, got %+v", last.Ports)
+	loop.scanAndPublish(Include{})
+	if last := deltas[len(deltas)-1]; len(last.Ports.Removed) != 1 || last.Ports.Removed[0] != "8321:127.0.0.1" {
+		t.Fatalf("expected 8321:127.0.0.1 in Removed, got %+v", last.Ports)
 	}
 }
 
@@ -199,63 +199,63 @@ func TestPublishesAddAndRemove(t *testing.T) {
 func TestSeqIsMonotonic(t *testing.T) {
 	var mu sync.Mutex
 	n := 0
-	l := New(Options{
+	loop := New(Options{
 		Demand: oneSubscriber,
 		Scan: func(Include) ([]ports.ListeningPort, error) {
 			mu.Lock()
 			defer mu.Unlock()
-			out := make([]ports.ListeningPort, n)
-			for i := range out {
-				out[i] = ports.ListeningPort{Port: 3000 + i, BindAddress: "127.0.0.1", PID: 1000 + i}
+			grown := make([]ports.ListeningPort, n)
+			for i := range grown {
+				grown[i] = ports.ListeningPort{Port: 3100 + i, BindAddress: "127.0.0.1", PID: 1000 + i}
 			}
-			return out, nil
+			return grown, nil
 		},
 	})
 
-	var seqs []uint64
+	var sequence []uint64
 	for range 4 {
-		l.scanAndPublish(Include{})
-		seqs = append(seqs, l.Status().Seq)
+		loop.scanAndPublish(Include{})
+		sequence = append(sequence, loop.Status().Seq)
 		mu.Lock()
 		n++
 		mu.Unlock()
 	}
-	for i := 1; i < len(seqs); i++ {
-		if seqs[i] <= seqs[i-1] {
-			t.Fatalf("seq did not advance: %v", seqs)
+	for i := 1; i < len(sequence); i++ {
+		if sequence[i] <= sequence[i-1] {
+			t.Fatalf("seq did not advance: %v", sequence)
 		}
 	}
 
-	before := l.Status().Seq
-	l.scanAndPublish(Include{})
-	l.scanAndPublish(Include{})
-	if got := l.Status().Seq; got != before+1 {
-		t.Fatalf("seq = %d after one change and one unchanged scan, want %d", got, before+1)
+	baseline := loop.Status().Seq
+	loop.scanAndPublish(Include{})
+	loop.scanAndPublish(Include{})
+	if got := loop.Status().Seq; got != baseline+1 {
+		t.Fatalf("seq = %d after one change and one unchanged scan, want %d", got, baseline+1)
 	}
 }
 
 // TestScanErrorKeepsLastGoodState: a failing collector emits scan_error and
 // leaves the last good snapshot alone.
 func TestScanErrorKeepsLastGoodState(t *testing.T) {
-	var fail atomic.Bool
+	var broken atomic.Bool
 	var events []state.Event
-	l := New(Options{
+	loop := New(Options{
 		Demand: oneSubscriber,
 		Scan: func(Include) ([]ports.ListeningPort, error) {
-			if fail.Load() {
+			if broken.Load() {
 				return nil, errors.New("lsof: not found")
 			}
-			return []ports.ListeningPort{{Port: 3000, BindAddress: "127.0.0.1", PID: 7}}, nil
+			return []ports.ListeningPort{{Port: 3100, BindAddress: "127.0.0.1", PID: 7}}, nil
 		},
 		Publish: func(_, _ state.Snapshot, ev []state.Event) { events = append(events, ev...) },
 	})
 
-	l.scanAndPublish(Include{})
-	good := l.Cached()
-	fail.Store(true)
-	l.scanAndPublish(Include{})
+	loop.scanAndPublish(Include{})
+	lastGood := loop.Cached()
+	broken.Store(true)
+	loop.scanAndPublish(Include{})
 
-	if got := l.Cached(); got.Seq != good.Seq || len(got.Ports) != 1 {
+	if got := loop.Cached(); got.Seq != lastGood.Seq || len(got.Ports) != 1 {
 		t.Fatalf("failed scan clobbered the last good snapshot: %+v", got)
 	}
 	for _, ev := range events {
@@ -290,32 +290,32 @@ func TestSnapshotUsesTheCacheWithinTTL(t *testing.T) {
 // TestLoopParksWithNoSubscribers: no subscribers, no scans, until something
 // wakes the loop.
 func TestLoopParksWithNoSubscribers(t *testing.T) {
-	var scans atomic.Int64
-	var subscribers atomic.Int64
-	l := New(Options{
-		Demand: func() (int, Include) { return int(subscribers.Load()), Include{} },
+	var collections atomic.Int64
+	var watching atomic.Int64
+	loop := New(Options{
+		Demand: func() (int, Include) { return int(watching.Load()), Include{} },
 		Scan: func(Include) ([]ports.ListeningPort, error) {
-			scans.Add(1)
+			collections.Add(1)
 			return nil, nil
 		},
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go l.Run(ctx)
+	go loop.Run(ctx)
 
 	time.Sleep(150 * time.Millisecond)
-	if got := scans.Load(); got != 0 {
-		t.Fatalf("loop scanned %d times with no subscribers", got)
+	if got := collections.Load(); got != 0 {
+		t.Fatalf("loop collected %d times with no subscribers", got)
 	}
 
-	subscribers.Store(1)
-	l.Wake()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) && scans.Load() == 0 {
+	watching.Store(1)
+	loop.Wake()
+	limit := time.Now().Add(2 * time.Second)
+	for time.Now().Before(limit) && collections.Load() == 0 {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if scans.Load() == 0 {
+	if collections.Load() == 0 {
 		t.Fatal("loop did not scan after a subscriber arrived")
 	}
 }

@@ -84,9 +84,9 @@ func (l *Loop) LoadConfig(path string) error {
 }
 
 // ReloadConfigs re-reads every known root: the ones in the store and the ones
-// the index already holds. It picks up files created, edited and deleted since
-// the daemon started, and returns how many valid configs remain plus the files
-// that could not be used.
+// the index already holds. Files created, edited or deleted since the daemon
+// started are picked up here; the result is how many valid configs remain, plus
+// the files that could not be used.
 func (l *Loop) ReloadConfigs() (int, []groups.InvalidConfig) {
 	var (
 		valid   int

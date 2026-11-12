@@ -15,12 +15,12 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// maxHealthProbes bounds how many configured health checks run at once, the
-// same ceiling the opt-in probe uses.
+// maxHealthProbes is how many configured health checks may be in flight at
+// once — the ceiling the opt-in probe already uses.
 const maxHealthProbes = ports.MaxProbes
 
-// Probe is one health check. Options.Probe replaces it for tests; production
-// is ports.ProbeHealth.
+// Probe is one health check. Tests replace it through Options.Probe;
+// production uses ports.ProbeHealth.
 type Probe func(host string, port int, path string, timeout time.Duration) ports.HealthResult
 
 // ProbeContext is a synchronous, context-aware health probe. It must return
@@ -461,21 +461,29 @@ func commandEnv(port *int) []string {
 	return append(env, "PORT="+v, "BERTH_PORT="+v)
 }
 
-// preferHost picks the loopback address to probe. A service bound on IPv4 (or
-// on every address) is reached at 127.0.0.1; one that only ever bound IPv6 is
-// reached at [::1]. Picking per port rather than per row is what keeps a
-// dual-stack listener from being probed twice with two different answers.
+// preferHost picks the loopback address to probe: a service bound on IPv4 (or
+// on every address) is reached at 127.0.0.1, one that only ever bound IPv6 at
+// [::1]. Choosing per port instead of per row is what keeps a dual-stack
+// listener from being probed twice with two different answers.
 func preferHost(current string, p state.Port) string {
 	if current == "127.0.0.1" {
 		return current
 	}
-	switch p.BindAddress {
-	case "::", "::1", "[::]", "[::1]":
-		if current == "" {
-			return "[::1]"
-		}
-		return current
-	default:
+	if !ipv6OnlyBind(p.BindAddress) {
 		return "127.0.0.1"
 	}
+	if current == "" {
+		return "[::1]"
+	}
+	return current
+}
+
+// ipv6OnlyBind reports whether an address a listener bound to can only be
+// reached over IPv6.
+func ipv6OnlyBind(bind string) bool {
+	switch bind {
+	case "::", "::1", "[::]", "[::1]":
+		return true
+	}
+	return false
 }

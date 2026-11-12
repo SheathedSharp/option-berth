@@ -45,17 +45,25 @@ type attribution struct {
 	identities map[string]string
 }
 
-// SetStore installs the store after construction. The daemon does it from
-// Serve, once the database is open; a nil store leaves the loop unpersisted.
+// SetStore installs the store after construction. The daemon calls it from
+// Serve once the database is open; leaving the store nil keeps the loop
+// unpersisted.
 func (l *Loop) SetStore(s Store) {
 	if s == nil {
 		return
 	}
 	l.attr.mu.Lock()
 	defer l.attr.mu.Unlock()
+	l.adoptStoreLocked(s)
+}
+
+// adoptStoreLocked points the loop at s and forgets everything cached from the
+// store it used before: acknowledgements and identity rows belong to the store
+// that recorded them, not to the one replacing it. Caller holds the attribution
+// lock.
+func (l *Loop) adoptStoreLocked(s Store) {
 	l.opts.Store = s
 	l.attr.seeded = false
-	// Acknowledgements and identity rows belong to this store, not the last one.
 	l.attr.roots = make(map[string]bool)
 	l.attr.identities = make(map[string]string)
 }
@@ -343,22 +351,22 @@ func (l *Loop) loadAliases(st Store) {
 		l.attr.index.SetAliases(nil)
 		return
 	}
-	aliases, err := st.GroupAliases()
+	names, err := st.GroupAliases()
 	if err != nil {
 		l.opts.Logger.Warn("reading project aliases", "error", err)
 		return
 	}
-	l.attr.index.SetAliases(aliases)
+	l.attr.index.SetAliases(names)
 }
 
 // registry is the run registry to attribute with: the one `oberth start`
-// installed, or the attribution the scanner already put on the port itself.
+// installed, or else the attribution the scanner already put on the port
+// itself.
 func (l *Loop) registry() groups.Registry {
-	if l.opts.Runs == nil {
-		return groups.PortRuns{}
-	}
-	if r := l.opts.Runs(); r != nil {
-		return r
+	if l.opts.Runs != nil {
+		if r := l.opts.Runs(); r != nil {
+			return r
+		}
 	}
 	return groups.PortRuns{}
 }
@@ -463,9 +471,9 @@ func (l *Loop) recordIdentityRoot(st Store, root string) {
 	l.attr.identities[identity] = ""
 }
 
-// record writes the port transitions of one published delta to the history
-// ring. Only the three port-scoped kinds are persisted; health_changed and
-// scan_error stay in-memory notifications.
+// record writes the port transitions of one published delta into the history
+// ring. Just the three port-scoped kinds are persisted; health_changed and
+// scan_error remain in-memory notifications.
 func (l *Loop) record(events []state.Event) {
 	st := l.store()
 	if st == nil || len(events) == 0 {
@@ -514,16 +522,19 @@ func historyRow(ev state.Event, at time.Time) (store.HistoryEvent, bool) {
 	}, true
 }
 
-// store returns the installed store under the attribution lock.
+// store hands back the installed store while holding the attribution lock.
 func (l *Loop) store() Store {
 	l.attr.mu.Lock()
 	defer l.attr.mu.Unlock()
 	return l.opts.Store
 }
 
+// eventTime parses an RFC 3339 timestamp, falling back to the caller's instant
+// when the field is missing or malformed.
 func eventTime(at string, fallback time.Time) time.Time {
-	if t, err := time.Parse(time.RFC3339, at); err == nil {
-		return t
+	parsed, err := time.Parse(time.RFC3339, at)
+	if err != nil {
+		return fallback
 	}
-	return fallback
+	return parsed
 }
