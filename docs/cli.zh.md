@@ -717,9 +717,9 @@ issue 上可见；否则命令打印一条预填好的 `issues/new` 链接由人
 
 只有上表五种形状是引用；其他 `${...}`（例如 `${HOME}`、`${FOO:-x}`）原样保留。
 `${worktree}` 不指向服务，不需要也不产生 `depends_on`；未声明的服务、没有端口的端口引用
-仍按清单校验拒绝。可运行示例见 [`examples/worktree-data`](../examples/worktree-data/README.md)；
-Docker Compose 的每 worktree 一套写法见 [`examples/compose-stack`](../examples/compose-stack/README.md)，
-它在 Linux CI 上验证 `port: auto`、`pg_isready` 健康检查和 `down` 真正停止容器。
+仍按清单校验拒绝。可运行示例见 [`examples/stack-workshop`](../examples/stack-workshop/README.md)：
+它把 `${worktree}` 同时用于 SQLite 路径和每 worktree 一套的 Compose 项目；README 里能看到
+`port: auto` 以 `PORT` 进入 Compose、`pg_isready` 健康检查，以及 `down` 让 Compose 自己停容器。
 
 ### 共享环境文件
 

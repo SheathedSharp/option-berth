@@ -849,10 +849,10 @@ engine only reports the correspondence between identities and paths.
 Only the five shapes in the table above are references; other `${...}` (for example `${HOME}`,
 `${FOO:-x}`) are kept as-is. `${worktree}` does not point at a service, so it neither needs nor
 produces `depends_on`; undeclared services and port references to a service with no port are still
-rejected by manifest validation. For a runnable example see
-[`examples/worktree-data`](../examples/worktree-data/README.md); for the per-worktree Docker Compose
-style see [`examples/compose-stack`](../examples/compose-stack/README.md), which validates
-`port: auto`, the `pg_isready` health check and `down` really stopping containers on Linux CI.
+rejected by manifest validation. For a runnable sample see
+[`examples/stack-workshop`](../examples/stack-workshop/README.md): it puts `${worktree}` into both a
+SQLite path and a per-worktree Compose project, and its README shows `port: auto` reaching Compose as
+`PORT`, the `pg_isready` health check and `down` letting Compose stop its containers.
 
 ### Shared environment files
 

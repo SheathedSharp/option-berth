@@ -822,6 +822,43 @@ class ScenarioEnv:
 
     # -- lifecycle ---------------------------------------------------------
 
+    def _cleanup_containers(self) -> list[str]:
+        """Remove Compose projects this run started, both arms included.
+
+        `oberth down --force` SIGKILLs a foreground `docker compose up`, so the
+        container survives that stop. Compose labels carry the project and its
+        working directory; anything under this run's root belongs to the run.
+        """
+        if not any((root / "docker-compose.yml").exists() for root in self.projects):
+            return []
+        try:
+            listed = subprocess.run(
+                ["docker", "ps", "-a", "--format",
+                 '{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.project.working_dir"}}'],
+                capture_output=True, text=True, timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return []
+        if listed.returncode:
+            return [f"docker ps failed during cleanup: {listed.stderr.strip()}"]
+        root = str(self.run_root)
+        projects: set[tuple[str, str]] = set()
+        for line in listed.stdout.splitlines():
+            project, _, workdir = line.partition("\t")
+            if project and workdir and (workdir == root or workdir.startswith(root + os.sep)):
+                projects.add((project, workdir))
+        notes = []
+        for project, workdir in sorted(projects):
+            try:
+                subprocess.run(
+                    ["docker", "compose", "-p", project, "--project-directory", workdir,
+                     "down", "--volumes", "--remove-orphans"],
+                    capture_output=True, text=True, timeout=120,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                notes.append(f"could not stop compose project {project}: {exc}")
+        return notes
+
     def cleanup(self, worktrees: dict[str, Path] | None = None) -> list[str]:
         notes: list[str] = []
         worktrees = worktrees or {}
@@ -830,6 +867,7 @@ class ScenarioEnv:
                 self.oberth(root, ["down", "--force", "--json"], timeout=20)
             except (OSError, subprocess.SubprocessError):
                 pass
+        notes.extend(self._cleanup_containers())
         known_pids: set[int] = set()
         for root in worktrees.values():
             try:

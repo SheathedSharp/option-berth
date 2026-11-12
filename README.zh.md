@@ -41,9 +41,9 @@ checkout 应该跑什么；引擎在边界内启动、观察和停止；人和 c
 
 仓库自带 [Hello Worktree](examples/hello-worktree/README.md)：一个只监听本机的 API 和一个无端口
 worker，只需 Python 3 标准库，不需要模型账号、容器或 pip 依赖。
-[Worktree Data](examples/worktree-data/README.md) 用 `${worktree}` 给每份 worktree 各自的数据库；
-[Stack Workshop](examples/stack-workshop/README.md) 是一份十服务整栈：慢启动的 auth、要构建的前端、
-要迁移的数据库，以及只读的 `machine:` 依赖。
+[Stack Workshop](examples/stack-workshop/README.md) 是复杂示例，也是手动 agent 基准的输入：
+十个 Python 服务加一个真实的 Postgres 容器，包含慢启动的 auth、要构建的前端、每 worktree 一份的
+迁移、无端口 worker，以及只读的 `machine:` 引用。它需要 Docker。
 
 ```sh
 # 已安装 oberth 后，从仓库根目录开始

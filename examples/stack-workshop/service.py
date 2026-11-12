@@ -2,18 +2,24 @@
 """A small HTTP service used by the stack example.
 
 It can warm up before binding (READY_DELAY) and can keep /health at 503 until
-the upstream services named in REQUIRE answer. Both are real behaviors a large
-stack has: a JVM takes time to listen, and an API is not healthy just because
-its own socket is open.
+the upstream services named in REQUIRE (HTTP) and TCP_REQUIRE (a raw socket)
+answer. Both are real behaviors a large stack has: a JVM takes time to listen,
+and an API is not healthy just because its own socket is open. When DB_PATH is
+set it also reports the row counts of this worktree's SQLite database, so a
+restart that reran `prepare:` can be checked for idempotence.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import socket
+import sqlite3
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, build_opener
 
 NAME = os.environ.get("SERVICE_NAME", "service")
@@ -21,7 +27,9 @@ PORT = int(os.environ["PORT"])
 READY_DELAY = float(os.environ.get("READY_DELAY", "0"))
 VERSION_FILE = os.environ.get("VERSION_FILE", "variant.txt")
 REQUIRED_FILE = os.environ.get("REQUIRED_FILE", "")
+DB_PATH = os.environ.get("DB_PATH", "")
 REQUIRE = [item.strip() for item in os.environ.get("REQUIRE", "").split(",") if item.strip()]
+TCP_REQUIRE = [item.strip() for item in os.environ.get("TCP_REQUIRE", "").split(",") if item.strip()]
 OPENER = build_opener(ProxyHandler({}))
 
 
@@ -36,6 +44,21 @@ def read_version() -> str:
 VERSION = read_version()
 
 
+def tcp_target(url: str) -> tuple[str, int]:
+    """Accept `host:port` or a URL such as `http://127.0.0.1:5432`."""
+    parts = urlsplit(url if "://" in url else f"tcp://{url}")
+    return parts.hostname or "127.0.0.1", parts.port or 0
+
+
+def wait_for_tcp(url: str) -> bool:
+    host, port = tcp_target(url)
+    try:
+        with socket.create_connection((host, port), timeout=1.0):
+            return True
+    except OSError:
+        return False
+
+
 def waiting_on() -> list[str]:
     waiting = []
     for url in REQUIRE:
@@ -45,7 +68,26 @@ def waiting_on() -> list[str]:
                     waiting.append(url)
         except Exception:  # noqa: BLE001 - a dependency probe is evidence, not control flow
             waiting.append(url)
+    for target in TCP_REQUIRE:
+        if not wait_for_tcp(target):
+            waiting.append(target)
     return waiting
+
+
+def db_facts() -> dict[str, object]:
+    if not DB_PATH:
+        return {}
+    path = Path(DB_PATH).resolve()
+    try:
+        db = sqlite3.connect(path)
+        try:
+            migrations = db.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
+            notes = db.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+        finally:
+            db.close()
+    except sqlite3.Error:
+        return {"db": str(path), "db_error": True}
+    return {"db": str(path), "migrations": migrations, "notes": notes}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -57,7 +99,8 @@ class Handler(BaseHTTPRequestHandler):
             body = {"ok": False, "service": NAME, "waiting_on": waiting}
         elif path in ("/", "/health", "/version"):
             code = 200
-            body = {"ok": True, "service": NAME, "version": VERSION, "pid": os.getpid()}
+            body = {"ok": True, "service": NAME, "version": VERSION, "pid": os.getpid(),
+                    **db_facts()}
         else:
             code = 404
             body = {"ok": False, "service": NAME, "path": path}
