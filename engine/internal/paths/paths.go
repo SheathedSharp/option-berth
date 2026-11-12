@@ -49,18 +49,16 @@ const (
 	LockFile   = "daemon.lock"
 	LogFile    = "daemon.log"
 	RunsFile   = "runs.json"
-	// JevConfigFile is the owner-only local configuration written by the
-	// macOS settings page. It is deliberately separate from config.yaml:
-	// that file is a general, human-readable settings map and must never
-	// become a place where an API key can be printed by config commands.
-	JevConfigFile = "jev.json"
-	// LegacyJevKeyFile is read-only compatibility for the pre-settings adapter.
-	// A new settings file takes precedence and can explicitly disable Jev.
-	LegacyJevKeyFile = "decide.key"
-	// JevTipFile records when `status` last showed the one-line optional-Jev
-	// hint. It is advisory: deleting it only makes the hint eligible again, so
-	// it is never read as a fact about the user's configuration.
-	JevTipFile = "jev-tip.json"
+	// AttnConfigFile is the owner-only local configuration of the optional
+	// model assessment. It is deliberately separate from config.yaml: that
+	// file is a general, human-readable settings map and must never become a
+	// place where an API key can be printed by config commands.
+	AttnConfigFile = "attn.json"
+	// AttnTipFile records when `status` last showed the one-line optional
+	// assessment hint. It is advisory: deleting it only makes the hint
+	// eligible again, so it is never read as a fact about the user's
+	// configuration.
+	AttnTipFile = "attn-tip.json"
 
 	LogsDir     = "logs"
 	DraftsDir   = "drafts"
@@ -83,7 +81,7 @@ const (
 	UpdateCheckFile = "update-check.json"
 	// FeedbackFile is the owner-only record of whether this installation agreed
 	// to send improvement reports. It is separate from config.yaml for the same
-	// reason jev.json is: a consent decision is not a general setting a config
+	// reason attn.json is: a consent decision is not a general setting a config
 	// command should print or rewrite.
 	FeedbackFile = "feedback.json"
 	// FeedbackDir holds the ledger of reports this installation produced. It is
@@ -214,9 +212,9 @@ func DB() string {
 // ConfigPath is config.yaml inside Dir.
 func ConfigPath() string { return filepath.Join(Dir(), ConfigFile) }
 
-// JevConfigPath is the local Jev settings file. The file is owned by the
-// optional agent-side adapter and the macOS settings page, not by the daemon.
-func JevConfigPath() string { return filepath.Join(Dir(), JevConfigFile) }
+// AttnConfigPath is the local attention settings file. The file is owned by
+// the optional model assessment, not by the daemon.
+func AttnConfigPath() string { return filepath.Join(Dir(), AttnConfigFile) }
 
 // FeedbackPath is the consent record for optional improvement reports.
 func FeedbackPath() string { return filepath.Join(Dir(), FeedbackFile) }
@@ -227,13 +225,9 @@ func FeedbackLedgerPath() string {
 	return filepath.Join(Dir(), FeedbackDir, FeedbackLedgerFile)
 }
 
-// JevTipPath is where `status` remembers when it last mentioned the optional
+// AttnTipPath is where `status` remembers when it last mentioned the optional
 // assessment, so a tip shown in one session does not repeat every read.
-func JevTipPath() string { return filepath.Join(Dir(), JevTipFile) }
-
-// LegacyJevKeyPath is retained so an existing adapter installation keeps
-// working until the user saves the new settings page once.
-func LegacyJevKeyPath() string { return filepath.Join(Dir(), LegacyJevKeyFile) }
+func AttnTipPath() string { return filepath.Join(Dir(), AttnTipFile) }
 
 // LogPath is the daemon's rotated log file.
 func LogPath() string { return filepath.Join(Dir(), LogFile) }

@@ -1,4 +1,4 @@
-// Command jev-attention is an optional, read-only Jev adapter. It reads a
+// Command jev-attention is an optional, read-only model adapter. It reads a
 // fact-only attention artifact and explicit agent context, asks TypeSafe's
 // typed endpoint for an assessment, and atomically writes only the validated
 // assessment back to that same artifact. It never starts, stops, or inspects a
@@ -19,21 +19,21 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/attention"
-	"github.com/sheathedsharp/option-berth/engine/internal/jev"
-	"github.com/sheathedsharp/option-berth/engine/internal/jev/runner"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn/model"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn/runner"
 )
 
 type output struct {
-	Status        string                `json:"status"`
-	AttentionPath string                `json:"attention_path,omitempty"`
-	PreflightPath string                `json:"preflight_path,omitempty"`
-	TelemetryPath string                `json:"telemetry_path,omitempty"`
-	Reason        string                `json:"reason,omitempty"`
-	Assessment    *attention.Assessment `json:"assessment,omitempty"`
-	TaskRelevant  *float64              `json:"task_relevant,omitempty"`
-	Model         string                `json:"model,omitempty"`
-	RequestID     string                `json:"request_id,omitempty"`
+	Status        string           `json:"status"`
+	AttnPath      string           `json:"attn_path,omitempty"`
+	PreflightPath string           `json:"preflight_path,omitempty"`
+	TelemetryPath string           `json:"telemetry_path,omitempty"`
+	Reason        string           `json:"reason,omitempty"`
+	Assessment    *attn.Assessment `json:"assessment,omitempty"`
+	TaskRelevant  *float64         `json:"task_relevant,omitempty"`
+	Model         string           `json:"model,omitempty"`
+	RequestID     string           `json:"request_id,omitempty"`
 }
 
 var errMissingOptions = errors.New("task context requires authorized_options or --authorize")
@@ -62,10 +62,10 @@ func main() {
 		draftGroup     = flag.String("draft-group", "", "pending draft group for adopt_manifest")
 		permission     = flag.String("permission", "", "explicit user permission context for action preflight")
 		userApproved   = flag.Bool("user-approved", false, "record that the user approved the proposed action (does not execute it)")
-		_              = flag.String("endpoint", "", "Jev endpoint (defaults to the resolved provider)")
-		_              = flag.String("model", "", "Jev model (defaults to the resolved provider)")
-		apiKey         = flag.String("api-key", "", "API key (defaults to jev.json, then the provider's environment variable; pass an empty value to disable)")
-		_              = flag.Duration("timeout", 0, "remote request timeout (defaults to jev.json or 10s)")
+		_              = flag.String("endpoint", "", "model endpoint (defaults to the resolved provider)")
+		_              = flag.String("model", "", "model model (defaults to the resolved provider)")
+		apiKey         = flag.String("api-key", "", "API key (defaults to attn.json, then the provider's environment variable; pass an empty value to disable)")
+		_              = flag.Duration("timeout", 0, "remote request timeout (defaults to attn.json or 10s)")
 	)
 	flag.Parse()
 	if *session {
@@ -74,7 +74,7 @@ func main() {
 	// The configured key must never be a flag default, or `--help` would echo a
 	// secret. Resolution happens once, here: an explicit --api-key wins verbatim
 	// (including an empty value, which disables the key for harnesses), and
-	// everything else comes from jev.Resolve so consent has exactly one rule.
+	// everything else comes from model.Resolve so consent has exactly one rule.
 	apiKeyProvided := false
 	flag.Visit(func(f *flag.Flag) {
 		if f.Name == "api-key" {
@@ -82,12 +82,6 @@ func main() {
 		}
 	})
 	consent := resolveConsent(*apiKey, apiKeyProvided)
-	// A user who configured a key and nothing else was relying on the old
-	// implicit enable. Say it once per process on stderr instead of failing
-	// quietly; the JSON output stays a single value on stdout.
-	if consent.MigrationHint {
-		fmt.Fprintln(os.Stderr, "jev-attention: Jev now needs explicit consent; environment keys only supply the key. Run `oberth jev enable` once, or set BERTH_JEV=1 for this process.")
-	}
 	if *qualityReport {
 		if *qualitySince < 0 {
 			fail("--since must not be negative")
@@ -118,7 +112,7 @@ func main() {
 		home := runner.TelemetryHome()
 		sessionID := runner.NewSessionID(*project)
 		runner.AppendLifecycleTelemetry(home, *project, "subscribed", sessionID, nil)
-		stats, err := runner.SubscribeWithStats(subscriptionContext, *oberth, *project, *interval, jev.Client{
+		stats, err := runner.SubscribeWithStats(subscriptionContext, *oberth, *project, *interval, model.Client{
 			Endpoint: consent.Endpoint, Model: consent.Model, APIKey: consent.Key, Timeout: consent.Timeout,
 		}, ctx, runner.ReadStatus, sessionID, func(result runner.Output, latency time.Duration) {
 			runner.AppendRunnerTelemetry(home, *project, ctx, result, nil, "subscription", latency)
@@ -138,7 +132,7 @@ func main() {
 			fail(contextErr.Error())
 		}
 		started := time.Now()
-		result, err := runner.Auto(context.Background(), *oberth, *project, jev.Client{
+		result, err := runner.Auto(context.Background(), *oberth, *project, model.Client{
 			Endpoint: consent.Endpoint, Model: consent.Model, APIKey: consent.Key, Timeout: consent.Timeout,
 		}, ctx, runner.ReadStatus)
 		telemetryPath := runner.AppendRunnerTelemetry(runner.TelemetryHome(), *project, ctx, result, err, "runner", time.Since(started))
@@ -166,57 +160,57 @@ func main() {
 	if contextErr != nil {
 		fail(contextErr.Error())
 	}
-	artifact, err := attention.Read(*attentionPath)
+	artifact, err := attn.Read(*attentionPath)
 	if err != nil {
 		fail(err.Error())
 	}
 	client, clientErr := consent.Client()
 	if clientErr != nil {
 		telemetryPath := runner.RecordManualAssessment(runner.TelemetryHome(), *attentionPath, artifact, ctx, nil, clientErr, "manual")
-		printJSON(output{Status: "unavailable", AttentionPath: *attentionPath, TelemetryPath: telemetryPath, Reason: consent.ReasonOr(clientErr)})
+		printJSON(output{Status: "unavailable", AttnPath: *attentionPath, TelemetryPath: telemetryPath, Reason: consent.ReasonOr(clientErr)})
 		return
 	}
 	result, err := client.Evaluate(context.Background(), artifact, ctx)
 	if err != nil {
-		if errors.Is(err, jev.ErrUnavailable) || errors.Is(err, jev.ErrStale) {
+		if errors.Is(err, model.ErrUnavailable) || errors.Is(err, model.ErrStale) {
 			telemetryPath := runner.RecordManualAssessment(runner.TelemetryHome(), *attentionPath, artifact, ctx, nil, err, "manual")
-			printJSON(output{Status: "unavailable", AttentionPath: *attentionPath, TelemetryPath: telemetryPath, Reason: jev.ReasonFor(err)})
+			printJSON(output{Status: "unavailable", AttnPath: *attentionPath, TelemetryPath: telemetryPath, Reason: model.ReasonFor(err)})
 			return
 		}
 		fail(err.Error())
 	}
-	if err := jev.Persist(*attentionPath, artifact, result); err != nil {
-		if errors.Is(err, jev.ErrStale) {
-			printJSON(output{Status: "unavailable", AttentionPath: *attentionPath, Reason: "artifact became stale"})
+	if err := model.Persist(*attentionPath, artifact, result); err != nil {
+		if errors.Is(err, model.ErrStale) {
+			printJSON(output{Status: "unavailable", AttnPath: *attentionPath, Reason: "artifact became stale"})
 			return
 		}
 		fail(err.Error())
 	}
 	telemetryPath := runner.RecordManualAssessment(runner.TelemetryHome(), *attentionPath, artifact, ctx, &result, nil, "manual")
-	printJSON(output{Status: "assessed", AttentionPath: *attentionPath, TelemetryPath: telemetryPath, Assessment: &result.Assessment, TaskRelevant: &result.TaskRelevant, Model: result.Model})
+	printJSON(output{Status: "assessed", AttnPath: *attentionPath, TelemetryPath: telemetryPath, Assessment: &result.Assessment, TaskRelevant: &result.TaskRelevant, Model: result.Model})
 }
 
-func runPreflight(statusPath, preflightPath, action, service, draftGroup, permission string, userApproved bool, consent jev.Resolved, task jev.TaskContext) error {
+func runPreflight(statusPath, preflightPath, action, service, draftGroup, permission string, userApproved bool, consent model.Resolved, task model.TaskContext) error {
 	home := strings.TrimSpace(os.Getenv("BERTH_HOME"))
 	if home == "" {
 		return errors.New("preflight requires BERTH_HOME so its derived request has an owned destination")
 	}
-	var request jev.Preflight
+	var request model.Preflight
 	var err error
 	if strings.TrimSpace(preflightPath) != "" {
-		request, err = jev.ReadPreflight(preflightPath)
+		request, err = model.ReadPreflight(preflightPath)
 		if err != nil {
 			return err
 		}
-		if filepath.Clean(preflightPath) != filepath.Clean(jev.PreflightPath(home, request)) {
+		if filepath.Clean(preflightPath) != filepath.Clean(model.PreflightPath(home, request)) {
 			return errors.New("preflight path is not the current BERTH_HOME derived request")
 		}
 		if strings.TrimSpace(statusPath) != "" {
-			snapshot, readErr := jev.ReadStatusSnapshot(statusPath, time.Time{})
+			snapshot, readErr := model.ReadStatusSnapshot(statusPath, time.Time{})
 			if readErr != nil {
 				return readErr
 			}
-			if err := jev.ValidatePreflight(request, snapshot, home, time.Time{}); err != nil {
+			if err := model.ValidatePreflight(request, snapshot, home, time.Time{}); err != nil {
 				return err
 			}
 		}
@@ -224,11 +218,11 @@ func runPreflight(statusPath, preflightPath, action, service, draftGroup, permis
 		if strings.TrimSpace(action) == "" {
 			return errors.New("--action is required with --status")
 		}
-		snapshot, readErr := jev.ReadStatusSnapshot(statusPath, time.Time{})
+		snapshot, readErr := model.ReadStatusSnapshot(statusPath, time.Time{})
 		if readErr != nil {
 			return readErr
 		}
-		request, err = jev.DerivePreflight(snapshot, jev.Intent{
+		request, err = model.DerivePreflight(snapshot, model.Intent{
 			Action: action, Service: service, DraftGroup: draftGroup,
 			UserPermission: permission, UserApproved: userApproved,
 		}, home, time.Time{})
@@ -236,7 +230,7 @@ func runPreflight(statusPath, preflightPath, action, service, draftGroup, permis
 			return err
 		}
 	}
-	path, err := jev.WritePreflight(home, request)
+	path, err := model.WritePreflight(home, request)
 	if err != nil {
 		return err
 	}
@@ -252,16 +246,16 @@ func runPreflight(statusPath, preflightPath, action, service, draftGroup, permis
 	if strings.TrimSpace(task.Task) == "" {
 		// Preflight's action intent is the minimum task context when the caller
 		// intentionally omitted a development summary. The full fixed option
-		// subset remains available for Jev to rank; it does not grant permission
+		// subset remains available for model to rank; it does not grant permission
 		// to execute any of those options.
 		task.Task = "Evaluate whether this proposed worktree action needs the user's choice"
 	}
 	task = preflightTaskContext(request, task)
 	result, callErr := client.Evaluate(context.Background(), artifact, task)
 	if callErr != nil {
-		if errors.Is(callErr, jev.ErrUnavailable) || errors.Is(callErr, jev.ErrStale) {
+		if errors.Is(callErr, model.ErrUnavailable) || errors.Is(callErr, model.ErrStale) {
 			telemetryPath := runner.RecordPreflightAssessment(home, request, task, nil, callErr)
-			printJSON(output{Status: "unavailable", PreflightPath: path, TelemetryPath: telemetryPath, RequestID: request.RequestID, Reason: jev.ReasonFor(callErr)})
+			printJSON(output{Status: "unavailable", PreflightPath: path, TelemetryPath: telemetryPath, RequestID: request.RequestID, Reason: model.ReasonFor(callErr)})
 			return nil
 		}
 		return callErr
@@ -269,7 +263,7 @@ func runPreflight(statusPath, preflightPath, action, service, draftGroup, permis
 	if err := request.AttachAssessment(result.Assessment); err != nil {
 		return err
 	}
-	if _, err := jev.WritePreflight(home, request); err != nil {
+	if _, err := model.WritePreflight(home, request); err != nil {
 		return err
 	}
 	telemetryPath := runner.RecordPreflightAssessment(home, request, task, &result, nil)
@@ -277,7 +271,7 @@ func runPreflight(statusPath, preflightPath, action, service, draftGroup, permis
 	return nil
 }
 
-func preflightTaskContext(request jev.Preflight, task jev.TaskContext) jev.TaskContext {
+func preflightTaskContext(request model.Preflight, task model.TaskContext) model.TaskContext {
 	base := strings.TrimSpace(task.Task)
 	target := request.Target.Service
 	if target == "" {
@@ -308,13 +302,13 @@ func preflightTaskContext(request jev.Preflight, task jev.TaskContext) jev.TaskC
 	return task
 }
 
-func loadContext(path, task, authorized string) (jev.TaskContext, error) {
-	var result jev.TaskContext
+func loadContext(path, task, authorized string) (model.TaskContext, error) {
+	var result model.TaskContext
 	var err error
 	if strings.TrimSpace(path) != "" {
-		result, err = jev.ReadTaskContext(path)
+		result, err = model.ReadTaskContext(path)
 		if err != nil {
-			return jev.TaskContext{}, err
+			return model.TaskContext{}, err
 		}
 	}
 	if strings.TrimSpace(task) != "" {

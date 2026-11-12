@@ -3,8 +3,8 @@
 package scenario
 
 // These tests exercise the attention handoff at the boundary where a real
-// daemon and CLI produce the facts. Jev itself is covered with an injectable
-// HTTP server in internal/attention; this file deliberately never calls a
+// daemon and CLI produce the facts. model itself is covered with an injectable
+// HTTP server in internal/attn; this file deliberately never calls a
 // remote model. The only human step in the product remains the fixed option
 // mapping documented by the skill and exercised by scripts/verify-attention-
 // handoff.py.
@@ -18,7 +18,7 @@ import (
 	"testing"
 )
 
-type attentionEventDoc struct {
+type attnEventDoc struct {
 	Kind    string `json:"kind"`
 	Service string `json:"service,omitempty"`
 	Machine string `json:"machine,omitempty"`
@@ -26,67 +26,67 @@ type attentionEventDoc struct {
 	Reason  string `json:"reason,omitempty"`
 }
 
-type attentionDoc struct {
-	Schema        string              `json:"schema"`
-	EventID       string              `json:"event_id"`
-	StateRevision string              `json:"state_revision"`
-	WorktreeRoot  string              `json:"worktree_root"`
-	FreshUntil    string              `json:"fresh_until"`
-	Event         attentionEventDoc   `json:"event"`
-	Events        []attentionEventDoc `json:"events"`
+type attnDoc struct {
+	Schema        string         `json:"schema"`
+	EventID       string         `json:"event_id"`
+	StateRevision string         `json:"state_revision"`
+	WorktreeRoot  string         `json:"worktree_root"`
+	FreshUntil    string         `json:"fresh_until"`
+	Event         attnEventDoc   `json:"event"`
+	Events        []attnEventDoc `json:"events"`
 	Options       []struct {
 		ID string `json:"id"`
 	} `json:"options"`
 }
 
-func readAttentionDoc(t *testing.T, status statusDoc) attentionDoc {
+func readAttnDoc(t *testing.T, status statusDoc) attnDoc {
 	t.Helper()
-	if status.AttentionPath == "" {
-		t.Fatal("status has no attention_path")
+	if status.AttnPath == "" {
+		t.Fatal("status has no attn_path")
 	}
-	data, err := os.ReadFile(status.AttentionPath)
+	data, err := os.ReadFile(status.AttnPath)
 	if err != nil {
 		t.Fatalf("read attention artifact: %v", err)
 	}
-	var artifact attentionDoc
+	var artifact attnDoc
 	if err := json.Unmarshal(data, &artifact); err != nil {
 		t.Fatalf("decode attention artifact: %v\n%s", err, data)
 	}
-	if artifact.Schema != "oberth.attention/v1" {
+	if artifact.Schema != "oberth.attn/v1" {
 		t.Fatalf("attention schema = %q", artifact.Schema)
 	}
 	if artifact.EventID == "" || artifact.StateRevision == "" || artifact.FreshUntil == "" {
 		t.Fatalf("attention identity/freshness missing: %+v", artifact)
 	}
-	if status.AttentionRevision != artifact.StateRevision {
-		t.Fatalf("status attention_revision = %q, artifact state_revision = %q", status.AttentionRevision, artifact.StateRevision)
+	if status.AttnRevision != artifact.StateRevision {
+		t.Fatalf("status attn_revision = %q, artifact state_revision = %q", status.AttnRevision, artifact.StateRevision)
 	}
 	return artifact
 }
 
 // enableJevIn is the person's consent, written where the daemon's child
-// processes read it. `status` publishes `attention_path` only once the
+// processes read it. `status` publishes `attn_path` only once the
 // enhancement is enabled, so every test here that expects an artifact has to
 // state that the person turned it on — the same precondition a real install
 // has after `oberth jev enable`. Without it these tests would assert against a
 // feature that is deliberately off, not against the handoff they describe.
 //
 // The key is a placeholder: this file never calls a provider (an injectable
-// HTTP server covers Jev itself), and the artifact is derived from runtime
+// HTTP server covers model itself), and the artifact is derived from runtime
 // facts before any network step.
 func enableJevIn(t *testing.T, e *env) {
 	t.Helper()
 	dir := filepath.Join(e.home, ".option-berth")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatalf("creating the Jev settings directory: %v", err)
+		t.Fatalf("creating the model settings directory: %v", err)
 	}
-	body := `{"schema":"oberth.jev-config/v1","enabled":true,"provider":"typesafe","api_key":"integration-placeholder"}`
-	if err := os.WriteFile(filepath.Join(dir, "jev.json"), []byte(body), 0o600); err != nil {
-		t.Fatalf("writing the Jev settings file: %v", err)
+	body := `{"schema":"oberth.attn-settings/v1","enabled":true,"provider":"typesafe","api_key":"integration-placeholder"}`
+	if err := os.WriteFile(filepath.Join(dir, "attn.json"), []byte(body), 0o600); err != nil {
+		t.Fatalf("writing the model settings file: %v", err)
 	}
 }
 
-func attentionServices(a attentionDoc) map[string]string {
+func attnServices(a attnDoc) map[string]string {
 	got := make(map[string]string, len(a.Events))
 	for _, event := range a.Events {
 		if event.Service != "" {
@@ -124,7 +124,7 @@ func TestAttentionFailureMatrix(t *testing.T) {
 		// of the first attention artifact does not mean every run has exited.
 		// Wait for the underlying terminal facts, then independently verify
 		// ALL event contents below. Keep the existing bounded wait budget.
-		if status.AttentionPath == "" || status.AttentionRevision == "" {
+		if status.AttnPath == "" || status.AttnRevision == "" {
 			return false
 		}
 		for _, name := range []string{"missing", "exited", "occupied"} {
@@ -135,13 +135,13 @@ func TestAttentionFailureMatrix(t *testing.T) {
 		}
 		return true
 	})
-	first := readAttentionDoc(t, firstStatus)
+	first := readAttnDoc(t, firstStatus)
 	want := map[string]string{
 		"missing":  "service_failed:start_failed",
 		"exited":   "service_failed:crashed",
 		"occupied": "port_occupied:port_occupied",
 	}
-	if got := attentionServices(first); len(got) != len(want) {
+	if got := attnServices(first); len(got) != len(want) {
 		t.Fatalf("attention events = %+v, want all simultaneous failures %+v", got, want)
 	} else {
 		for service, expected := range want {
@@ -158,9 +158,9 @@ func TestAttentionFailureMatrix(t *testing.T) {
 	}
 
 	repeatStatus := e.waitStatus(b.Root, func(status statusDoc) bool {
-		return status.AttentionPath == firstStatus.AttentionPath && status.AttentionRevision == first.StateRevision
+		return status.AttnPath == firstStatus.AttnPath && status.AttnRevision == first.StateRevision
 	})
-	repeat := readAttentionDoc(t, repeatStatus)
+	repeat := readAttnDoc(t, repeatStatus)
 	if repeat.EventID != first.EventID || repeat.StateRevision != first.StateRevision {
 		t.Fatalf("same failed run changed identity: first=%+v repeat=%+v", first, repeat)
 	}
@@ -170,8 +170,8 @@ func TestAttentionFailureMatrix(t *testing.T) {
 	if err := e.runJSON(b.Root, &logs, "logs", "exited", "--once", "--json"); err != nil {
 		t.Fatalf("inspect logs: %v", err)
 	}
-	afterLogs := e.waitStatus(b.Root, func(status statusDoc) bool { return status.AttentionPath != "" })
-	afterLogArtifact := readAttentionDoc(t, afterLogs)
+	afterLogs := e.waitStatus(b.Root, func(status statusDoc) bool { return status.AttnPath != "" })
+	afterLogArtifact := readAttnDoc(t, afterLogs)
 	if afterLogArtifact.EventID != first.EventID {
 		t.Fatalf("read-only log inspection changed event identity: %q -> %q", first.EventID, afterLogArtifact.EventID)
 	}
@@ -183,9 +183,9 @@ func TestAttentionFailureMatrix(t *testing.T) {
 		t.Fatal("second exited run unexpectedly succeeded")
 	}
 	secondStatus := e.waitStatus(b.Root, func(status statusDoc) bool {
-		return status.AttentionPath != "" && status.AttentionRevision != first.StateRevision
+		return status.AttnPath != "" && status.AttnRevision != first.StateRevision
 	})
-	second := readAttentionDoc(t, secondStatus)
+	second := readAttnDoc(t, secondStatus)
 	if second.EventID == first.EventID || second.StateRevision == first.StateRevision {
 		t.Fatalf("repeated crash was deduplicated as the old event: first=%+v second=%+v", first, second)
 	}
@@ -216,7 +216,7 @@ func TestAttentionNormalAndUndeclaredBoundaries(t *testing.T) {
 		t.Fatalf("up = %+v, err=%v", up, err)
 	}
 	status := e.waitStatus(b.Root, func(status statusDoc) bool {
-		return status.serviceRunning("api", b.Port, true) && status.AttentionPath == ""
+		return status.serviceRunning("api", b.Port, true) && status.AttnPath == ""
 	})
 	_ = status
 	var logs struct {
@@ -225,7 +225,7 @@ func TestAttentionNormalAndUndeclaredBoundaries(t *testing.T) {
 	if err := e.runJSON(b.Root, &logs, "logs", "api", "--once", "--json"); err != nil {
 		t.Fatalf("ordinary log read: %v", err)
 	}
-	if got := e.waitStatus(b.Root, func(status statusDoc) bool { return status.AttentionPath == "" }); got.AttentionPath != "" {
+	if got := e.waitStatus(b.Root, func(status statusDoc) bool { return status.AttnPath == "" }); got.AttnPath != "" {
 		t.Fatal("ordinary log read created attention")
 	}
 
@@ -237,8 +237,8 @@ func TestAttentionNormalAndUndeclaredBoundaries(t *testing.T) {
 	undeclared := e.waitStatus(b.Root, func(status statusDoc) bool {
 		return portsContain(status, extraPort)
 	})
-	if undeclared.AttentionPath != "" {
-		artifact := readAttentionDoc(t, undeclared)
+	if undeclared.AttnPath != "" {
+		artifact := readAttnDoc(t, undeclared)
 		t.Fatalf("an undeclared listener created a handoff: %+v", artifact.Events)
 	}
 	if err := undeclaredProcess.Process.Kill(); err != nil {
@@ -258,8 +258,8 @@ func TestAttentionNormalAndUndeclaredBoundaries(t *testing.T) {
 	}
 	if got := e.waitStatus(b.Root, func(status statusDoc) bool {
 		api, ok := status.service("api")
-		return ok && !api.Running && status.AttentionPath == ""
-	}); got.AttentionPath != "" {
+		return ok && !api.Running && status.AttnPath == ""
+	}); got.AttnPath != "" {
 		t.Fatal("normal stop left an attention request")
 	}
 }
@@ -287,7 +287,7 @@ func TestAttentionManifestConflictIsNotActionable(t *testing.T) {
 		t.Fatalf("up = %+v, err=%v", up, err)
 	}
 	clean := e.waitStatus(b.Root, func(status statusDoc) bool {
-		return status.AttentionPath == ""
+		return status.AttnPath == ""
 	})
 	_ = clean
 	manifest, err := os.ReadFile(b.Manifest)
@@ -307,7 +307,7 @@ func TestAttentionManifestConflictIsNotActionable(t *testing.T) {
 	if err == nil || len(stdout) != 0 || !strings.Contains(string(stderr), "duplicate") {
 		t.Fatalf("conflicting manifest status: stdout=%q stderr=%q err=%v", stdout, stderr, err)
 	}
-	if _, err := os.Stat(clean.AttentionPath); clean.AttentionPath != "" && err == nil {
-		t.Fatalf("manifest conflict left an actionable artifact at %s", clean.AttentionPath)
+	if _, err := os.Stat(clean.AttnPath); clean.AttnPath != "" && err == nil {
+		t.Fatalf("manifest conflict left an actionable artifact at %s", clean.AttnPath)
 	}
 }

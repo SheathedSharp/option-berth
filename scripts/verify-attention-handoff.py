@@ -65,7 +65,7 @@ def wait_for_attention(binary: Path, project: Path, home: Path) -> tuple[dict, d
     deadline = time.monotonic() + 12
     while time.monotonic() < deadline:
         status = read_status(binary, project, home)
-        path = status.get("attention_path")
+        path = status.get("attn_path")
         if path:
             artifact = json.loads(Path(path).read_text())
             return status, artifact
@@ -84,7 +84,7 @@ def choose(explicit: str | None) -> str:
     return choice
 
 
-def verify_subscription(adapter: Path, project: Path, home: Path) -> None:
+def verify_subscription(adapter: Path, binary: Path, project: Path, home: Path) -> None:
     """Exercise the built binary's long-lived NDJSON subscription path."""
     env = os.environ.copy()
     env["BERTH_HOME"] = str(home)
@@ -92,6 +92,8 @@ def verify_subscription(adapter: Path, project: Path, home: Path) -> None:
         [
             str(adapter),
             "--subscribe",
+            "--oberth",
+            str(binary),
             "--project",
             str(project),
             "--interval",
@@ -148,7 +150,7 @@ def verify_quality_telemetry(
     feedback.write_text(
         json.dumps(
             {
-                "schema": "oberth.attention.feedback/v1",
+                "schema": "oberth.attn.feedback/v1",
                 "event_id": event_id,
                 "state_revision": state_revision,
                 "worktree_id": worktree_id,
@@ -196,11 +198,11 @@ services:
     cmd: \"sh -c 'if test -e .once; then exec sleep 60; else touch .once; exit 1; fi'\"\n"""
         )
         # `status` only publishes the handoff once the person has enabled the
-        # optional enhancement; its presence is what tells an agent Jev is on.
-        # Enable it the way a user would, in this throwaway home.
-        settings = home / "jev.json"
+        # optional enhancement; its presence is what tells an agent the
+        # assessment is on. Enable it the way a user would, in this home.
+        settings = home / "attn.json"
         settings.write_text(
-            '{"schema":"oberth.jev-config/v1","enabled":true,'
+            '{"schema":"oberth.attn-settings/v1","enabled":true,'
             '"provider":"typesafe","api_key":"verification-only"}\n'
         )
         settings.chmod(0o600)
@@ -210,9 +212,9 @@ services:
             raise RuntimeError("fixture unexpectedly started on the first attempt")
 
         status, artifact = wait_for_attention(binary, project, home)
-        if artifact.get("schema") != "oberth.attention/v1":
+        if artifact.get("schema") != "oberth.attn/v1":
             raise RuntimeError(f"unexpected attention schema: {artifact.get('schema')!r}")
-        if artifact.get("state_revision") != status.get("attention_revision"):
+        if artifact.get("state_revision") != status.get("attn_revision"):
             raise RuntimeError("status and attention state revisions differ")
         if artifact.get("event", {}).get("service") != "worker":
             raise RuntimeError(f"unexpected event: {artifact.get('event')!r}")
@@ -225,6 +227,8 @@ services:
             project,
             home,
             "--auto",
+            "--oberth",
+            str(binary),
             "--project",
             str(project),
             "--task",
@@ -237,10 +241,10 @@ services:
         assessed = json.loads(adapter_result.stdout)
         if assessed.get("status") != "unavailable":
             raise RuntimeError(f"missing-key fallback was not used: {assessed}")
-        after_fallback = json.loads(Path(status["attention_path"]).read_text())
+        after_fallback = json.loads(Path(status["attn_path"]).read_text())
         if "assessment" in after_fallback:
             raise RuntimeError("fallback unexpectedly changed the fact-only artifact")
-        verify_subscription(adapter, project, home)
+        verify_subscription(adapter, binary, project, home)
 
         choice = choose(args.choice)
         if choice not in options:
@@ -248,18 +252,18 @@ services:
         if choice == "inspect_logs":
             run(binary, project, home, "logs", "worker", "--once", "--json")
             final = read_status(binary, project, home)
-            if not final.get("attention_path"):
+            if not final.get("attn_path"):
                 raise RuntimeError("inspection unexpectedly cleared attention")
         elif choice == "inspect_manifest":
             manifest = project / "oberth.yaml"
             if not manifest.is_file() or "name: hil-check" not in manifest.read_text():
                 raise RuntimeError("manifest inspection did not read the fixture manifest")
             final = read_status(binary, project, home)
-            if not final.get("attention_path"):
+            if not final.get("attn_path"):
                 raise RuntimeError("manifest inspection unexpectedly cleared attention")
         elif choice == "continue_without_action":
             final = read_status(binary, project, home)
-            if not final.get("attention_path"):
+            if not final.get("attn_path"):
                 raise RuntimeError("continuing unexpectedly cleared attention")
         else:
             run(binary, project, home, "restart", "--only", "worker", "--json")
@@ -267,7 +271,7 @@ services:
             while True:
                 final = read_status(binary, project, home)
                 service = final["worktree"]["services"][0]
-                if service.get("running") and not final.get("attention_path"):
+                if service.get("running") and not final.get("attn_path"):
                     break
                 if time.monotonic() >= deadline:
                     raise RuntimeError(f"restart did not recover status: {final}")
@@ -281,7 +285,7 @@ services:
             choice,
             assessed.get("worktree_id", ""),
             assessed.get("event_id", ""),
-            assessed.get("attention_revision", ""),
+            assessed.get("attn_revision", ""),
         )
 
         print(
@@ -290,7 +294,7 @@ services:
                     "status": "passed",
                     "choice": choice,
                     "event_id": artifact["event_id"],
-                    "attention_cleared": not bool(final.get("attention_path")),
+                    "attention_cleared": not bool(final.get("attn_path")),
                     "quality_labeled_cases": quality.get("labeled_cases"),
                 },
                 sort_keys=True,

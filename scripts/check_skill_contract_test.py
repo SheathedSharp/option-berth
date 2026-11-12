@@ -62,7 +62,7 @@ class ExtractionTests(unittest.TestCase):
                 "observation.state",
                 "observation.source",
                 "machine[].listening_known",
-                "attention_path",
+                "attn_path",
                 "services[].starting",
                 "starting.phase",
                 "starting.waiting_on",

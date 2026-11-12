@@ -226,8 +226,8 @@ type statusDoc struct {
 		At    string `json:"at"`
 		Empty bool   `json:"empty"`
 	} `json:"changed,omitempty"`
-	AttentionPath     string `json:"attention_path,omitempty"`
-	AttentionRevision string `json:"attention_revision,omitempty"`
+	AttnPath     string `json:"attn_path,omitempty"`
+	AttnRevision string `json:"attn_revision,omitempty"`
 	// Ports are the listeners attributed to this project. A port here that no
 	// declared service claims is "running but undeclared".
 	Ports []struct {
