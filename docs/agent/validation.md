@@ -17,14 +17,15 @@ release, use `python3 scripts/release.py --verify-only`.
 
 | Workflow | Trigger | Platforms and contents |
 |---|---|---|
-| Engine verification | PRs, manual | Automated: macOS / Ubuntu native build, vet, full engine unit tests, Mage workflow regression, Python helper tests, cross builds for the six release targets on Ubuntu, a checkout of `option-berth-skill` on Linux to verify agent contract coverage, and parsing of the install/uninstall scripts with Windows PowerShell 5.1. Manual runs additionally execute core race and real-service scenarios. |
+| CI | PRs, manual | Ubuntu: maps the changed paths to the checks they need and calls the matching workflow. `Gate / required checks` is the required check: it fails when a called check failed or was cancelled, and passes when the routing skipped one. |
+| Engine verification | PRs via `CI`, manual | Automated: macOS / Ubuntu native build, vet, full engine unit tests, Mage workflow regression, Python helper tests, cross builds for the six release targets on Ubuntu, a checkout of `option-berth-skill` on Linux to verify agent contract coverage, and parsing of the install/uninstall scripts with Windows PowerShell 5.1. Manual runs additionally execute core race and real-service scenarios. |
 | Nightly full verification | Daily 18:23 UTC, manual | macOS / Ubuntu: the same full gate as `scripts/release.py --verify-only`, including core race and real-service scenarios. |
-| Git read verification | PRs, manual | macOS / Ubuntu: repeated tests and race for Git, worktree, attribution, and observation. |
-| Checked-in examples | PRs, manual | macOS / Ubuntu: the minimal sample `hello-worktree` across two worktrees (distinct ports, a portless worker, stopping one side). No Docker, no benchmark. The complex sample `stack-workshop` is not part of this check; it is the input of the manual benchmark, which runs on Linux with Docker. |
-| Reused service readiness | PRs, manual | macOS / Ubuntu: reuse checks against real healthy and unhealthy services. |
-| Windows build verification | PRs, release tags, manual | Windows x64: native build, vet, CLI/Jev build, version JSON/help page, facts/persistence, and start, repeated start, collector recovery, and scoped stop for an isolated API / portless worker; Ubuntu: Windows arm64 cross build. |
+| Git read verification | PRs via `CI`, manual | macOS / Ubuntu: repeated tests and race for Git, worktree, attribution, and observation. |
+| Checked-in examples | PRs via `CI`, manual | macOS / Ubuntu: the minimal sample `hello-worktree` across two worktrees (distinct ports, a portless worker, stopping one side). No Docker, no benchmark. The complex sample `stack-workshop` is not part of this check; it is the input of the manual benchmark, which runs on Linux with Docker. |
+| Reused service readiness | PRs via `CI`, manual | macOS / Ubuntu: reuse checks against real healthy and unhealthy services. |
+| Windows build verification | PRs via `CI`, release tags, manual | Windows x64: native build, vet, CLI/Jev build, version JSON/help page, facts/persistence, and start, repeated start, collector recovery, and scoped stop for an isolated API / portless worker; Ubuntu: Windows arm64 cross build. |
 | Gate integrity | PR (`pull_request_target`) | Requires the PR author to be a repository maintainer when `.github/workflows/`, CODEOWNERS, the race list, release scripts, or quality-gate check scripts are modified. |
-| CI configuration | PRs, CI-related pushes to `main`, manual | Ubuntu: actionlint checks every workflow and verifies that the required checks match the workflow job names. The push trigger stays because this check also compares the live ruleset after a settings change outside a pull request. |
+| CI configuration | PRs via `CI`, CI-related pushes to `main`, manual | Ubuntu: actionlint checks every workflow and verifies that the required checks match the workflow job names. The push trigger stays because this check also compares the live ruleset after a settings change outside a pull request. |
 | Bounded ancestry comparison | Manual (evidence) | Ubuntu: compare a branch against a specified baseline with a bounded benchmark on the same runner; not a merge gate. |
 
 The single list of required checks is `.github/quality-gate-checks.json`; workflow job names are

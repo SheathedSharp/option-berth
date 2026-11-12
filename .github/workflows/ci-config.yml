@@ -1,9 +1,10 @@
 name: CI configuration
 
 on:
-  # No path filter on pull_request: a skipped required workflow leaves its
-  # check pending and blocks the PR.
-  pull_request:
+  # Called by ci.yml for pull requests. The push trigger stays because this
+  # check also compares the live ruleset after a settings change that never
+  # went through a pull request.
+  workflow_call:
   push:
     branches: [main]
     paths:
@@ -19,13 +20,9 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: ci-config-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   check:
-    name: CI config / lint and gate consistency
+    name: lint and gate consistency
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
