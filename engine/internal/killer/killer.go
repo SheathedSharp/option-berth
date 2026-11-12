@@ -46,18 +46,21 @@ const pollInterval = 100 * time.Millisecond
 // Target names one thing to stop. Exactly one of Port, PID and RunID is set;
 // BindAddress only disambiguates a Port bound to several addresses.
 //
-// StartedAt is an optional identity claim on a PID target: when the caller
-// believes the process started. Before signalling, the killer checks that the
-// live process started no later than that, so a recycled pid is reported rather
-// than killed. Zero means no claim — an explicit `kill --pid` says "this pid,
-// now".
+// A PID target may carry a birth claim: before signalling, the killer checks
+// that the live process started no later than StartedAt, so a recycled pid is
+// reported instead of killed. Zero means no claim — an explicit `kill --pid`
+// says "this pid, now".
 type Target struct {
+	// Exactly one selector is set; BindAddress only narrows a Port down when
+	// several addresses carry the same number.
 	Port        int
 	BindAddress string
 	PID         int
 	RunID       string
-	StartedAt   time.Time
-	// Name carries the caller's service label, never a selector or identity claim.
+
+	// StartedAt is a birth claim that belongs to a PID selector only.
+	StartedAt time.Time
+	// Name is the caller's label for the row; it never selects or claims.
 	Name string
 }
 
@@ -65,23 +68,18 @@ type Target struct {
 // default: SIGTERM, escalate to SIGKILL after DefaultGrace, and no tree walk
 // beyond the one an engine-started run already implies.
 type Options struct {
-	// Tree signals the target's whole process tree, not just the listener.
-	// A listener attributed to a option-berth-started run is always treated as a
-	// tree, with or without this flag.
-	Tree bool
-	// Force sends SIGKILL immediately and skips the escalation wait.
-	Force bool
-	// Grace is how long to wait after SIGTERM before escalating. Zero means
-	// DefaultGrace.
-	Grace time.Duration
-	// Escalate opts out of SIGTERM → SIGKILL escalation when set to false.
-	// Nil means the default, which is to escalate.
-	Escalate *bool
+	// What the request covers. A listener attributed to an option-berth-started
+	// run is stopped as a tree even when Tree is false.
+	Tree  bool
+	Ports []ports.ListeningPort // pre-collected scan; nil means scan here
+
+	// How it stops. Force is already the strongest signal, so it skips the wait.
+	Force    bool
+	Grace    time.Duration // SIGTERM → SIGKILL window; zero means DefaultGrace
+	Escalate *bool         // false opts out of escalation; nil means escalate
+
 	// DryRun plans the actions and performs none of them.
 	DryRun bool
-	// Ports is an optional pre-collected scan (enriched with Docker and
-	// process information). When nil, KillPorts takes its own scan.
-	Ports []ports.ListeningPort
 	// OnSignal receives the unit's root PID synchronously after a process,
 	// group or native-tree signal adapter returned success. It is not proof
 	// of exit. Dry runs, refused identities and failed signals never notify.
@@ -144,22 +142,27 @@ func (realClock) Wait(ctx context.Context, d time.Duration) bool {
 
 // engine holds the machine-facing dependencies so tests can substitute them.
 type engine struct {
-	ctx        context.Context
-	tableErr   error
-	table      ProcessTable
-	clock      Clock
+	ctx context.Context
+	// Time and liveness: the wait between escalation probes, what is still
+	// running, and when it was born (the recycle check on claimed pids).
+	clock     Clock
+	alive     func(pid int) bool
+	startTime func(pid int) (time.Time, bool)
+	// Process facts: the table the request resolved against, and how to find
+	// the group a pid leads.
+	table    ProcessTable
+	tableErr error
+	groupOf  func(pid int) (int, bool)
+	// Signal adapters, one per kind of subject.
 	signalProc func(pid int, force bool) error
 	signalGrp  func(pgid int, force bool) error
 	signalTree func(pid int, force bool) error
-	groupOf    func(pid int) (int, bool)
-	alive      func(pid int) bool
-	// startTime reports when the process behind a pid started, for the
-	// recycle check on identity-claiming targets (ports.ProcessStartFreshContext).
-	startTime  func(pid int) (time.Time, bool)
+	// The ends of the request: a port probe, a container stop, and the observer
+	// told about every accepted signal.
 	probe      func(port int, bind string) portState
 	dockerStop func(container string) error
-	nativeTree bool
 	onSignal   func(int)
+	nativeTree bool
 }
 
 func newEngine(ctx context.Context) *engine {
@@ -254,20 +257,31 @@ func scanPortsContext(ctx context.Context) ([]ports.ListeningPort, error) {
 // afterwards is stops: what the run plans to do to this unit and what came of
 // it. A refused target is a unit too, with a refusal and no stops to run.
 type unit struct {
-	tree      bool
-	claims    map[int]time.Time // recorded run/listener evidence, never replaced
-	observed  map[int]time.Time // live births captured for this plan only
+	// Selection and naming.
 	port      int
 	bind      string
 	name      string
 	container string // non-empty for a Docker target
-	pgid      int    // non-zero when the whole process group is signalled
-	pids      []int  // children-first order; ignored when pgid or container is set
-	root      int    // the listener (or run root) this unit is anchored on
-	listenPID int    // the pid actually holding the socket, when there is one
-	depth     int    // ancestry depth of root, used to order units children-first
-	refusal   error  // resolution said no: one failed row, nothing signalled
-	stops     []stop // one per planned action, filled by plan, settled by the run
+
+	// How it is stopped: a whole group, or a children-first pid list.
+	pgid int
+	pids []int
+
+	// Where it is anchored and how deep that sits in the process tree.
+	root      int
+	listenPID int
+	depth     int
+	tree      bool
+
+	// Identity evidence for this plan. claims are recorded run/listener
+	// evidence and are never replaced by a fresher observation.
+	claims   map[int]time.Time
+	observed map[int]time.Time
+
+	// Outcome: a refusal is one failed row and nothing signalled; otherwise one
+	// stop per planned action.
+	refusal error
+	stops   []stop
 }
 
 // stop is one action the run planned against a unit, with its outcome. A group
@@ -443,7 +457,7 @@ func (e *engine) unitsForPID(t Target, snapshot []ports.ListeningPort, opts Opti
 		return refusing(&unit{root: t.PID}, codedf(CodeNotFound, "", "no process with PID %d", t.PID))
 	}
 	u := &unit{root: t.PID, name: e.table.Name(t.PID), listenPID: t.PID}
-	e.fillProcesses(u, t.PID, opts.Tree)
+	e.fillProcesses(u, opts.Tree)
 	u.addClaim(t.PID, t.StartedAt)
 	return []*unit{u}
 }
@@ -495,18 +509,18 @@ func (e *engine) unitFor(lp *ports.ListeningPort, opts Options) *unit {
 		return u
 	}
 	u.root = root
-	if pgid, ok := e.groupOf(root); ok {
-		u.pgid = pgid
-		u.depth = len(e.table.Ancestors(root))
+	if pgid, leadsGroup := e.groupOf(root); leadsGroup {
+		u.pgid, u.depth = pgid, len(e.table.Ancestors(root))
 		return u
 	}
-	e.fillProcesses(u, root, tree)
+	e.fillProcesses(u, tree)
 	return u
 }
 
 // fillProcesses records the pids this unit will signal, children first.
-func (e *engine) fillProcesses(u *unit, root int, tree bool) {
-	u.root, u.tree = root, tree
+func (e *engine) fillProcesses(u *unit, tree bool) {
+	root := u.root
+	u.tree = tree
 	if tree && !e.nativeTree && e.tableErr != nil {
 		u.refusal = e.tableErr
 		return
@@ -571,9 +585,8 @@ func unclaimed(pids []int, claimed map[int]bool) []int {
 	return fresh
 }
 
-// order sorts units so a unit rooted deeper in the process tree runs before its
-// own ancestor: children before parents across targets, not just within one.
-// The sort is stable, so unrelated targets keep the caller's order.
+// order runs a deeper unit before the ancestor it belongs to, across targets as
+// well as within one. Stability keeps unrelated targets in the caller's order.
 func (e *engine) order(units []*unit) {
 	sort.SliceStable(units, func(i, j int) bool { return units[i].depth > units[j].depth })
 }
@@ -656,23 +669,22 @@ func (e *engine) execute(u *unit, opts Options) {
 	}
 }
 
-// signalMethod names the signal a non-escalated kill sends.
+// signalMethod is the method recorded for a stop that did not escalate.
 func signalMethod(force bool) state.KillMethod {
-	if force {
-		return state.MethodSIGKILL
+	if !force {
+		return state.MethodSIGTERM
 	}
-	return state.MethodSIGTERM
+	return state.MethodSIGKILL
 }
 
-// matchPort returns the scanned listeners on a port, filtered by bind address
-// when one was given.
+// matchPort returns the scanned listeners on a port; a non-empty bind address
+// keeps only the rows bound to it.
 func matchPort(snapshot []ports.ListeningPort, port int, bind string) []*ports.ListeningPort {
 	var out []*ports.ListeningPort
 	for i := range snapshot {
-		if snapshot[i].Port != port {
-			continue
-		}
-		if bind != "" && snapshot[i].BindAddress != bind {
+		wrongPort := snapshot[i].Port != port
+		wrongBind := bind != "" && snapshot[i].BindAddress != bind
+		if wrongPort || wrongBind {
 			continue
 		}
 		out = append(out, &snapshot[i])
@@ -713,12 +725,14 @@ func probePort(port int, bind string) portState {
 // tested without a machine that can produce a hung listener on demand.
 func probeWith(dial func(network, address string, timeout time.Duration) (net.Conn, error),
 	port int, bind string) portState {
-	host := bind
-	switch host {
+	host := "127.0.0.1"
+	switch bind {
 	case "", "0.0.0.0", "*":
-		host = "127.0.0.1"
+		// A wildcard listener is reachable on loopback.
 	case "::", "[::]":
 		host = "::1"
+	default:
+		host = bind
 	}
 	conn, err := dial("tcp", net.JoinHostPort(host, strconv.Itoa(port)), probeTimeout)
 	if err == nil {

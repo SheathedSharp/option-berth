@@ -2,6 +2,7 @@ package killer
 
 import (
 	"context"
+	"slices"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
@@ -110,30 +111,24 @@ func noteCancellation(ctx context.Context, pending []*unit) bool {
 func (e *engine) stillUp(units, scratch []*unit) []*unit {
 	out := scratch[:0]
 	for _, u := range units {
-		if u.port > 0 {
-			if e.probe(u.port, u.bind) != portClosed {
-				out = append(out, u)
-			}
+		portUnit := u.port > 0
+		// A timed-out probe proves nothing; only a refusal means gone.
+		if portUnit && e.probe(u.port, u.bind) == portClosed {
 			continue
 		}
-		if e.anyAlive(u) {
+		if portUnit || e.anyAlive(u) {
 			out = append(out, u)
 		}
 	}
 	return out
 }
 
-// anyAlive reports whether any process of the unit is still running.
+// anyAlive answers whether the unit still has a process running.
 func (e *engine) anyAlive(u *unit) bool {
 	if u.pgid != 0 {
 		return e.alive(u.pgid)
 	}
-	for _, pid := range u.pids {
-		if e.alive(pid) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(u.pids, e.alive)
 }
 
 // hardKill sends SIGKILL to whatever of the unit is left, keeping the
