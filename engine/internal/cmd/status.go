@@ -86,8 +86,13 @@ func init() {
 // statusDocument is what `status --json` prints. Every object in it belongs to
 // another command too, so a reader learns one shape per kind of thing.
 type statusDocument struct {
-	Scope    display.Scope   `json:"scope"`
-	Worktree state.Group     `json:"worktree"`
+	// ManifestMissing says the group is known only from its runtime facts: no
+	// oberth.yaml declares its services. An empty service list then means
+	// "nothing to read", not "nothing declared", and the two must not be
+	// published as the same answer.
+	ManifestMissing bool            `json:"manifest_missing,omitempty"`
+	Scope           display.Scope   `json:"scope"`
+	Worktree        state.Group     `json:"worktree"`
 	Ports    []state.Port    `json:"ports"`
 	Git      *git.Tree       `json:"git,omitempty"`
 	Drafts   []draft.Pending `json:"drafts"`
@@ -319,9 +324,10 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool, only []stri
 	}
 
 	doc := statusDocument{
-		Scope:       display.Scope{Kind: "worktree", Name: name, Root: root},
-		Worktree:    *group,
-		Ports:       ports,
+		ManifestMissing: missingManifest(*group),
+		Scope:           display.Scope{Kind: "worktree", Name: name, Root: root},
+		Worktree:        *group,
+		Ports:           ports,
 		Git:         tree,
 		Drafts:      []draft.Pending{},
 		Exits:       statusExits(ctx, name),
@@ -744,9 +750,28 @@ func statusLine(label, value string) {
 	fmt.Printf("  %s  %s\n", display.PadDisplay(display.Dim(label), statusLabelWidth()), value)
 }
 
+// missingManifest reports whether nothing on disk declares this group's
+// services. The daemon's row keeps the path it last read, so a deleted or moved
+// manifest leaves a config path that no longer exists; an empty service list
+// then means nothing was read, not that nothing was declared.
+func missingManifest(group state.Group) bool {
+	if group.ConfigPath == nil || *group.ConfigPath == "" {
+		return true
+	}
+	_, err := os.Stat(*group.ConfigPath)
+	return err != nil
+}
+
 // printStatusServices answers "what is supposed to run, and is it".
 func printStatusServices(doc statusDocument) {
 	if len(doc.Worktree.Services) == 0 {
+		if doc.ManifestMissing {
+			// The group is known from its runs and listeners, but nothing
+			// declares its services: "none declared" would state a fact this
+			// checkout never made.
+			statusLine("services", display.Dim("no manifest — `oberth init` writes one from what is listening right now"))
+			return
+		}
 		statusLine("services", display.Dim("none declared — `oberth init` writes the starter, `oberth init draft` asks an agent"))
 		return
 	}

@@ -390,3 +390,27 @@ func TestPublishAttentionClearsWhenDisabled(t *testing.T) {
 		t.Fatal("the artifact outlived the consent it was published under")
 	}
 }
+
+// A checkout can keep its runtime facts after its manifest is deleted, and the
+// daemon's row keeps the path it last read. An empty service list there means
+// nothing was read, not that nothing was declared, so the document has to say
+// which one it is.
+func TestMissingManifestDistinguishesAbsentFromEmpty(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "oberth.yaml")
+	if err := os.WriteFile(path, []byte("name: demo\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if missingManifest(state.Group{ConfigPath: &path}) {
+		t.Fatal("an existing manifest reads as missing")
+	}
+	if !missingManifest(state.Group{}) {
+		t.Fatal("a group with no config path is not reported as missing")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if !missingManifest(state.Group{ConfigPath: &path}) {
+		t.Fatal("a deleted manifest still reads as present")
+	}
+}
