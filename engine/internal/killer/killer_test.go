@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -15,18 +16,19 @@ import (
 
 // ---------------------------------------------------------------- harness ---
 
-// signalCall is one delivery the fake machine recorded.
+// fakeClock moves only when the code under test waits, so an escalation case
+// costs no real time and cannot flake on a loaded machine.
+type fakeClock struct {
+	now   time.Time
+	slept time.Duration
+}
+
+// signalCall is one delivery this fake host accepted: which pid, whether it was
+// the forced signal, and whether the group adapter carried it.
 type signalCall struct {
 	pid   int
 	force bool
 	group bool
-}
-
-// fakeClock advances only when the code under test sleeps, so an escalation
-// test costs no wall-clock time and cannot flake on a slow machine.
-type fakeClock struct {
-	now   time.Time
-	slept time.Duration
 }
 
 func (c *fakeClock) Now() time.Time { return c.now }
@@ -177,15 +179,9 @@ func (m *machine) signalledPIDs() []int {
 	return out
 }
 
-// listener is a scanned port row with just the fields the killer reads.
+// listener is a scanned port row carrying only what the killer reads.
 func listener(port, pid int, opts ...func(*ports.ListeningPort)) ports.ListeningPort {
-	lp := ports.ListeningPort{
-		Port:        port,
-		PID:         pid,
-		BindAddress: "127.0.0.1",
-		Process:     "node",
-		Type:        ports.PortTypeUser,
-	}
+	lp := ports.ListeningPort{Port: port, PID: pid, BindAddress: "127.0.0.1", Process: "node", Type: ports.PortTypeUser}
 	for _, o := range opts {
 		o(&lp)
 	}
@@ -193,17 +189,35 @@ func listener(port, pid int, opts ...func(*ports.ListeningPort)) ports.Listening
 }
 
 func methods(results []Result) []state.KillMethod {
-	out := make([]state.KillMethod, len(results))
-	for i, r := range results {
-		out[i] = r.Method
+	out := make([]state.KillMethod, 0, len(results))
+	for _, r := range results {
+		out = append(out, r.Method)
 	}
 	return out
 }
 
 func pidsOf(results []Result) []int {
-	out := make([]int, len(results))
-	for i, r := range results {
-		out[i] = r.PID
+	out := make([]int, 0, len(results))
+	for _, r := range results {
+		out = append(out, r.PID)
+	}
+	return out
+}
+
+func namesOf(results []Result) []string {
+	out := make([]string, 0, len(results))
+	for _, r := range results {
+		out = append(out, r.Name)
+	}
+	return out
+}
+
+func (m *machine) forcedPIDs() []int {
+	var out []int
+	for _, c := range m.signals {
+		if c.force {
+			out = append(out, c.pid)
+		}
 	}
 	return out
 }
@@ -217,15 +231,13 @@ func TestDryRunPlansTheTreeAndTouchesNothing(t *testing.T) {
 	results := m.stop([]ports.ListeningPort{listener(3000, 200)},
 		[]Target{{Port: 3000}}, Options{Tree: true, DryRun: true})
 
-	if got, want := pidsOf(results), []int{400, 401, 300, 200}; !reflect.DeepEqual(got, want) {
+	if got, want := pidsOf(results), []int{400, 401, 300, 200}; !slices.Equal(got, want) {
 		t.Fatalf("planned pids = %v, want %v (children before parents)", got, want)
 	}
 	for _, r := range results {
-		if r.Method != state.MethodSIGTERM || !r.OK {
-			t.Errorf("row %+v: want a successful sigterm plan", r)
-		}
-		if r.Port != 3000 || r.BindAddress != "127.0.0.1" {
-			t.Errorf("row %+v: every row carries the target port", r)
+		planned := r.Method == state.MethodSIGTERM && r.OK
+		if !planned || r.Port != 3000 || r.BindAddress != "127.0.0.1" {
+			t.Errorf("row %+v: want a successful sigterm plan for port 3000 on loopback", r)
 		}
 	}
 	if len(m.signals) != 0 || len(m.stopped) != 0 {
@@ -242,12 +254,7 @@ func TestDryRunNamesEveryProcessInTheTree(t *testing.T) {
 	results := m.stop([]ports.ListeningPort{listener(3000, 200)},
 		[]Target{{Port: 3000}}, Options{Tree: true, DryRun: true})
 
-	want := []string{"esbuild", "esbuild", "node", "node"}
-	got := make([]string, len(results))
-	for i, r := range results {
-		got[i] = r.Name
-	}
-	if !reflect.DeepEqual(got, want) {
+	if got, want := namesOf(results), []string{"esbuild", "esbuild", "node", "node"}; !slices.Equal(got, want) {
 		t.Fatalf("names = %v, want %v", got, want)
 	}
 }
@@ -399,29 +406,20 @@ func TestEscalationOnlyHardKillsWhatIsStillAlive(t *testing.T) {
 	results := m.stop([]ports.ListeningPort{listener(3000, 200)},
 		[]Target{{Port: 3000}}, Options{Tree: true, Grace: time.Second})
 
-	var hard []int
-	for _, c := range m.signals {
-		if c.force {
-			hard = append(hard, c.pid)
-		}
-	}
-	if !reflect.DeepEqual(hard, []int{200}) {
+	if hard := m.forcedPIDs(); !slices.Equal(hard, []int{200}) {
 		t.Fatalf("SIGKILLed %v, want only the process still alive", hard)
 	}
-	if got := methods(results); !reflect.DeepEqual(got, []state.KillMethod{
-		state.MethodSIGTERM, state.MethodSIGTERM, state.MethodSIGTERM, state.MethodSIGKILL,
-	}) {
-		t.Fatalf("methods = %v", got)
+	wantMethods := []state.KillMethod{state.MethodSIGTERM, state.MethodSIGTERM, state.MethodSIGTERM, state.MethodSIGKILL}
+	if got := methods(results); !slices.Equal(got, wantMethods) {
+		t.Fatalf("methods = %v, want %v", got, wantMethods)
 	}
 }
 
 func TestDockerContainersAreStoppedNotSignalled(t *testing.T) {
 	m := newMachine(npmTree())
-	snapshot := []ports.ListeningPort{listener(5432, 900, func(lp *ports.ListeningPort) {
-		lp.Type = ports.PortTypeDocker
-		lp.DockerContainer = "pg"
-		lp.DockerComposeService = "db"
-	})}
+	container := listener(5432, 900)
+	container.Type, container.DockerContainer, container.DockerComposeService = ports.PortTypeDocker, "pg", "db"
+	snapshot := []ports.ListeningPort{container}
 
 	results := m.stop(snapshot, []Target{{Port: 5432}}, Options{Tree: true, Force: true})
 
@@ -439,11 +437,9 @@ func TestDockerContainersAreStoppedNotSignalled(t *testing.T) {
 func TestRunAttributedListenerKillsTheWholeRun(t *testing.T) {
 	m := newMachine(npmTree())
 	// vite listens, but option-berth started the shell at pid 100.
-	snapshot := []ports.ListeningPort{listener(3000, 300, func(lp *ports.ListeningPort) {
-		lp.RunRootPID = 100
-		lp.RunID = "abc123"
-		lp.Tag = "web"
-	})}
+	vite := listener(3000, 300)
+	vite.RunRootPID, vite.RunID, vite.Tag = 100, "abc123", "web"
+	snapshot := []ports.ListeningPort{vite}
 
 	// No --tree: run attribution implies the whole tree anyway.
 	m.stop(snapshot, []Target{{Port: 3000}}, Options{})
@@ -531,11 +527,8 @@ func TestUnknownPortIsANotFoundRow(t *testing.T) {
 
 	results := m.stop(nil, []Target{{Port: 9999}}, Options{})
 
-	if len(results) != 1 || results[0].OK || results[0].Port != 9999 {
-		t.Fatalf("results = %+v", results)
-	}
-	if results[0].Error == "" {
-		t.Fatal("a failed row must carry its error")
+	if len(results) != 1 || results[0].OK || results[0].Port != 9999 || results[0].Error == "" {
+		t.Fatalf("results = %+v, want one not-found row carrying its error", results)
 	}
 }
 
@@ -622,15 +615,12 @@ func TestCancelledContextStopsBeforeEscalation(t *testing.T) {
 }
 
 func TestOptionDefaults(t *testing.T) {
-	var o Options
-	if o.grace() != DefaultGrace {
-		t.Errorf("grace = %v, want %v", o.grace(), DefaultGrace)
+	zero := Options{}
+	if got := zero.grace(); got != DefaultGrace {
+		t.Errorf("grace = %v, want %v", got, DefaultGrace)
 	}
-	if !o.escalating() {
-		t.Error("the zero Options must escalate")
-	}
-	if (Options{Force: true}).escalating() {
-		t.Error("--force is already the strongest signal; nothing to escalate to")
+	if !zero.escalating() || (Options{Force: true}).escalating() {
+		t.Error("zero options escalate; --force has nothing stronger to escalate to")
 	}
 }
 
