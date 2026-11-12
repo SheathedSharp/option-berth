@@ -45,7 +45,7 @@ oberth down --force --json
 
 ```sh
 mage buildEngine
-python3 scripts/verify-example.py --binary "$PWD/bin/oberth"
+python3 scripts/smoke.py --binary "$PWD/bin/oberth"
 ```
 
 脚本复制的就是本目录文件，不再维护另一份类似示例。它验证双 worktree、健康、自动端口、
