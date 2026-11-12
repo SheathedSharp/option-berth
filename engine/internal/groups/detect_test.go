@@ -23,7 +23,7 @@ func requireDeclared(t *testing.T, got, want []Declared) {
 }
 
 func TestDetectNodeScript(t *testing.T) {
-	for _, tt := range []struct {
+	for _, tc := range []struct {
 		name, scripts, lock, wantName, wantCmd, wantSource string
 	}{
 		{"dev with npm", `{"dev":"vite","build":"vite build"}`, "", "dev", "npm run dev", "package.json (scripts.dev)"},
@@ -33,14 +33,14 @@ func TestDetectNodeScript(t *testing.T) {
 		{"yarn from the lockfile", `{"dev":"vite"}`, "yarn.lock", "dev", "yarn run dev", "package.json (scripts.dev)"},
 		{"bun from the lockfile", `{"dev":"vite"}`, "bun.lock", "dev", "bun run dev", "package.json (scripts.dev)"},
 	} {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			writeAt(t, dir, "package.json", `{"scripts":`+tt.scripts+`}`)
-			if tt.lock != "" {
-				writeAt(t, dir, tt.lock, "")
+			if tc.lock != "" {
+				writeAt(t, dir, tc.lock, "")
 			}
+			writeAt(t, dir, "package.json", `{"scripts":`+tc.scripts+`}`)
 			requireDeclared(t, Detect(dir), []Declared{{
-				Name: tt.wantName, Cmd: tt.wantCmd, Source: tt.wantSource,
+				Name: tc.wantName, Cmd: tc.wantCmd, Source: tc.wantSource,
 			}})
 		})
 	}
@@ -58,34 +58,34 @@ func TestDetectCompose(t *testing.T) {
 	dir := t.TempDir()
 	writeAt(t, dir, "compose.yaml", `
 services:
-  web:
-    image: nginx
-    ports: ["8080:80"]
-    depends_on: [api]
-  api:
-    image: api
+  frontend:
+    image: nginx:alpine
+    ports: ["8081:80"]
+    depends_on: [backend]
+  backend:
+    image: ghcr.io/acme/api:2
     ports:
-      - "127.0.0.1:8000:8000"
-  db:
-    image: postgres
+      - "127.0.0.1:8100:8100"
+  postgres:
+    image: postgres:16
     ports:
       - target: 5432
         published: 5433
   worker:
-    image: worker
+    image: busybox:1.36
   probe:
     image: probe
-    ports: ["9000"]
-  cache:
-    image: redis
-    ports: ["${CACHE_PORT:-6390}:6379"]
+    ports: ["9001"]
+  redis:
+    image: redis:7
+    ports: ["${CACHE_PORT:-6391}:6379"]
 `)
 	requireDeclared(t, Detect(dir), []Declared{
-		{Name: "api", Cmd: "docker compose up api", Port: 8000, Source: "compose.yaml"},
-		{Name: "cache", Cmd: "docker compose up cache", Port: 6390, Source: "compose.yaml"},
-		{Name: "db", Cmd: "docker compose up db", Port: 5433, Source: "compose.yaml"},
+		{Name: "backend", Cmd: "docker compose up backend", Port: 8100, Source: "compose.yaml"},
+		{Name: "frontend", Cmd: "docker compose up frontend", Port: 8081, Source: "compose.yaml"},
+		{Name: "postgres", Cmd: "docker compose up postgres", Port: 5433, Source: "compose.yaml"},
 		{Name: "probe", Cmd: "docker compose up probe", Source: "compose.yaml"},
-		{Name: "web", Cmd: "docker compose up web", Port: 8080, Source: "compose.yaml"},
+		{Name: "redis", Cmd: "docker compose up redis", Port: 6391, Source: "compose.yaml"},
 		{Name: "worker", Cmd: "docker compose up worker", Source: "compose.yaml"},
 	})
 }
@@ -147,24 +147,23 @@ func TestDeclarationsAreCommentMaterial(t *testing.T) {
 // TestUsesAssignedPorts: the CLI asks this before handing a file to a daemon,
 // because one that predates the format parses it and blames the file.
 func TestUsesAssignedPorts(t *testing.T) {
-	for _, tt := range []struct {
-		name string
+	type assignedCase struct {
+		what string
 		cfg  *Config
 		want bool
-	}{
-		{"a fixed port is understood by any daemon",
-			&Config{Services: []Service{{Name: "db", Cmd: "postgres", Port: 5432}}}, false},
-		{"an auto port is not", &Config{Services: []Service{{Name: "api", PortAuto: true}}}, true},
-		{"an env block is not", &Config{Services: []Service{{Name: "api", Env: map[string]string{"A": "b"}}}}, true},
-		{"a reference in cmd is not",
-			&Config{Services: []Service{{Name: "api", Cmd: "api --port ${port}"}}}, true},
-		{"a reference in prepare is not",
-			&Config{Services: []Service{{Name: "api", Prepare: "build --port ${port}"}}}, true},
-		{"an empty file is", &Config{}, false},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.cfg.UsesAssignedPorts(); got != tt.want {
-				t.Errorf("UsesAssignedPorts = %v, want %v", got, tt.want)
+	}
+	cases := []assignedCase{
+		{"a fixed port", &Config{Services: []Service{{Name: "db", Cmd: "postgres", Port: 5432}}}, false},
+		{"an auto port", &Config{Services: []Service{{Name: "api", PortAuto: true}}}, true},
+		{"an env block", &Config{Services: []Service{{Name: "api", Env: map[string]string{"A": "b"}}}}, true},
+		{"a ${port} in cmd", &Config{Services: []Service{{Name: "api", Cmd: "api --port ${port}"}}}, true},
+		{"a ${port} in prepare", &Config{Services: []Service{{Name: "api", Prepare: "build --port ${port}"}}}, true},
+		{"an empty file", &Config{}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.what, func(t *testing.T) {
+			if got := tc.cfg.UsesAssignedPorts(); got != tc.want {
+				t.Errorf("UsesAssignedPorts for %s = %v, want %v", tc.what, got, tc.want)
 			}
 		})
 	}

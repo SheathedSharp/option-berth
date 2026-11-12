@@ -6,20 +6,19 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// Registry attributes a port to a process option-berth started. It answers
-// with the whole run, not just its group, because `run`, `display_name` and
-// `group_source: start` all have to come out of one lookup: a daemon that
-// resolved the group from its live registry but the run from the runs.json
-// mirror could publish `group_source: "start"` next to a null `run`.
+// Registry attributes a port to a process option-berth started. It hands back
+// the whole run rather than just its group, because `run`, `display_name` and
+// `group_source: start` must come from one lookup: a daemon that took the group
+// from its live registry and the run from the runs.json mirror could publish
+// `group_source: "start"` beside a null `run`.
 type Registry interface {
-	// Run returns the run that owns this port.
-	Run(p state.Port) (run state.Run, ok bool)
+	// Run answers the run that owns this port.
+	Run(p state.Port) (run state.Run, found bool)
 }
 
-// SessionRegistry is the optional half of Registry: a registry that also knows
-// which agent session started a run reports it here, and AttributeWith stamps
-// it onto the port. A registry that does not implement it publishes ports with
-// a null session.
+// SessionRegistry is the optional half of Registry. A registry that also knows
+// the agent session behind a run reports it here, and AttributeWith stamps it
+// onto the port; one that does not publishes a null session.
 type SessionRegistry interface {
 	Session(p state.Port) (session state.Session, ok bool)
 }
@@ -35,10 +34,10 @@ type PortRuns struct{}
 // records a group, run.group is empty, so this reports ok with only the name;
 // the resolver then falls through to the file and git-root rules.
 func (PortRuns) Run(p state.Port) (state.Run, bool) {
-	if p.Run == nil {
-		return state.Run{}, false
+	if p.Run != nil {
+		return *p.Run, true
 	}
-	return *p.Run, true
+	return state.Run{}, false
 }
 
 // NoRuns is the empty run registry.
@@ -63,9 +62,9 @@ func (NoRuns) Run(state.Port) (state.Run, bool) { return state.Run{}, false }
 //     supplies services but never the name
 //  5. none — group stays null
 //
-// A run's group is kept, except that a run recorded under the project's own
-// name is moved to its checkout's current group name (see runGroup), and a
-// config never claims a port across a linked worktree's boundary.
+// A run keeps its group, except that a run recorded under the project's own
+// name follows its checkout's current group name (see runGroup), and no config
+// claims a port across a linked worktree's boundary.
 //
 // runs and index may both be nil.
 func Resolve(pp []state.Port, runs Registry, index *Index) []state.Port {

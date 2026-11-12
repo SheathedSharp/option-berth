@@ -46,18 +46,13 @@ const header = `# yaml-language-server: $schema=` + ManifestSchemaURL + "\n" +
 // reading it — who knows whether it is `brew services start mysql` or `pnpm run
 // dev` — writes the service.
 //
-// index may be nil; it is only consulted for Compose working directories.
+// index may be nil; Propose only consults it for Compose working directories.
 func Propose(root string, pp []ports.ListeningPort, index *Index) *Config {
 	if index == nil {
 		index = NewIndex()
 	}
 	_, worktree, _ := Find(root)
-	cfg := &Config{
-		Name: GroupName(root, worktree),
-		Dir:  root,
-		Path: filepath.Join(root, ConfigName),
-	}
-
+	cfg := &Config{Name: GroupName(root, worktree), Dir: root, Path: filepath.Join(root, ConfigName)}
 	candidates := make([]ports.ListeningPort, 0, len(pp))
 	for _, p := range pp {
 		if dir := portDir(p, index); dir != "" && Under(dir, root) {
@@ -122,17 +117,17 @@ func candidateName(p ports.ListeningPort) string {
 	}
 }
 
-// portDir is the directory a port belongs to: the process cwd, the Compose
-// project's working directory for a container, or — when neither is at hand —
-// the project root the resolver already attributed the port to.
+// portDir answers the directory a port belongs to: the process cwd, a
+// container's Compose working directory, or — with neither at hand — the
+// project root the resolver already gave the port.
 //
-// The last arm is what lets the daemon propose from a published snapshot.
-// state.Port carries no Compose working directory (the resolver consumes it
-// before a row is published), but it does carry project_root, which for a
-// Compose container *is* the git root above that working directory. Without it
-// a `groups.init` served by the daemon would silently drop every container the
-// CLI sees. It only fires when the two better answers are absent, so the
-// direct path is unchanged.
+// That last arm is what lets the daemon propose from a published snapshot.
+// state.Port carries no Compose working directory, because the resolver
+// consumes it before publishing a row, but it does carry project_root; for a
+// Compose container that is the git root above the working directory. Without
+// the arm, a daemon-served `groups.init` would silently drop every container
+// the CLI sees. It fires only when the two better answers are absent, so the
+// direct path does not change.
 func portDir(p ports.ListeningPort, index *Index) string {
 	switch {
 	case p.Cwd != "":

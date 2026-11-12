@@ -7,33 +7,35 @@ import (
 	"testing"
 )
 
-// tempTree returns a temp dir with symlinks resolved, because Find resolves
-// them and macOS puts t.TempDir() behind /var -> /private/var.
+// tempTree hands back a temp dir whose symlinks are already resolved: Find
+// resolves them itself, and on macOS t.TempDir() sits behind /var ->
+// /private/var.
 func tempTree(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
-		dir = resolved
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return dir
 	}
-	return dir
+	return resolved
 }
 
 func mkdir(t *testing.T, parts ...string) string {
 	t.Helper()
-	p := filepath.Join(parts...)
-	if err := os.MkdirAll(p, 0o755); err != nil {
-		t.Fatal(err)
+	joined := filepath.Join(parts...)
+	if err := os.MkdirAll(joined, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", joined, err)
 	}
-	return p
+	return joined
 }
 
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
+		t.Fatalf("mkdir for %s: %v", path, err)
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
+		t.Fatalf("write %s: %v", path, err)
 	}
 }
 
@@ -64,39 +66,40 @@ func requireFindCheckout(t *testing.T, name, cwd, wantRoot, wantWorktree string,
 func TestFind(t *testing.T) {
 	base := tempTree(t)
 
-	// A normal clone with a .git directory and a nested source dir.
+	// A plain clone: a .git directory, plus a source dir several levels down.
 	clone := mkdir(t, base, "clone")
 	mkdir(t, clone, ".git")
 	cloneDeep := mkdir(t, clone, "backend", "app")
 
 	// A repository nested inside another repository.
-	nested := mkdir(t, clone, "vendor", "inner")
-	mkdir(t, nested, ".git")
+	inner := mkdir(t, clone, "vendor", "inner")
+	mkdir(t, inner, ".git")
 
-	// A linked worktree: .git is a file pointing into the main repo's
+	// A linked worktree: its .git is a file that points into the main repo's
 	// worktrees/ directory.
-	wt := mkdir(t, base, "worktrees", "feature-x")
-	writeFile(t, filepath.Join(wt, ".git"),
+	linkedTree := mkdir(t, base, "worktrees", "feature-x")
+	writeFile(t, filepath.Join(linkedTree, ".git"),
 		"gitdir: "+filepath.Join(clone, ".git", "worktrees", "feature-x")+"\n")
-	wtDeep := mkdir(t, wt, "frontend")
+	wtDeep := mkdir(t, linkedTree, "frontend")
 
-	// A worktree whose .git file uses a relative gitdir.
+	// A worktree whose .git file carries a relative gitdir.
 	relwt := mkdir(t, base, "relwt")
-	rel, err := filepath.Rel(relwt, filepath.Join(clone, ".git", "worktrees", "relwt"))
-	if err != nil {
-		t.Fatal(err)
+	rel, relErr := filepath.Rel(relwt, filepath.Join(clone, ".git", "worktrees", "relwt"))
+	if relErr != nil {
+		t.Fatalf("relative gitdir: %v", relErr)
 	}
 	writeFile(t, filepath.Join(relwt, ".git"), "gitdir: "+rel+"\n")
-
-	// A submodule: .git file into .git/modules, not a worktree.
-	sub := mkdir(t, base, "sub")
-	writeFile(t, filepath.Join(sub, ".git"),
-		"gitdir: "+filepath.Join(clone, ".git", "modules", "sub")+"\n")
 
 	// A .git file that says nothing useful.
 	junk := mkdir(t, base, "junk")
 	writeFile(t, filepath.Join(junk, ".git"), "not a gitdir line\n")
 
+	// A submodule: its .git file points into .git/modules, so it is no worktree.
+	sub := mkdir(t, base, "sub")
+	writeFile(t, filepath.Join(sub, ".git"),
+		"gitdir: "+filepath.Join(clone, ".git", "modules", "sub")+"\n")
+
+	// Somewhere with no repository anywhere above it.
 	outside := mkdir(t, base, "outside", "deep")
 
 	main := func(root string) Checkout {
@@ -113,9 +116,9 @@ func TestFind(t *testing.T) {
 
 	requireFindCheckout(t, "git dir at the root", clone, clone, "", true, "clone", main(clone))
 	requireFindCheckout(t, "git dir from a nested cwd", cloneDeep, clone, "", true, "clone", main(clone))
-	requireFindCheckout(t, "nested repo wins over its parent", nested, nested, "", true, "inner", main(nested))
-	requireFindCheckout(t, "worktree is qualified", wt, wt, "clone@feature-x", true, "clone@feature-x", linked(wt, "feature-x"))
-	requireFindCheckout(t, "worktree from a nested cwd", wtDeep, wt, "clone@feature-x", true, "clone@feature-x", linked(wt, "feature-x"))
+	requireFindCheckout(t, "nested repo wins over its parent", inner, inner, "", true, "inner", main(inner))
+	requireFindCheckout(t, "worktree is qualified", linkedTree, linkedTree, "clone@feature-x", true, "clone@feature-x", linked(linkedTree, "feature-x"))
+	requireFindCheckout(t, "worktree from a nested cwd", wtDeep, linkedTree, "clone@feature-x", true, "clone@feature-x", linked(linkedTree, "feature-x"))
 	requireFindCheckout(t, "worktree with a relative gitdir", relwt, relwt, "clone@relwt", true, "clone@relwt", linked(relwt, "relwt"))
 	requireFindCheckout(t, "submodule is not a worktree", sub, sub, "", true, "sub", Checkout{
 		Root: sub, Main: sub, head: filepath.Join(clone, ".git", "modules", "sub", "HEAD"),

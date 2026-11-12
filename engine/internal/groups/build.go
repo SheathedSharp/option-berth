@@ -108,9 +108,8 @@ func GroupsWith(pp []state.Port, index *Index, reg Registry, narrow bool) []stat
 		// here too, not a second group with the main checkout's name.
 		name := pass.groupOf(cfg)
 		g := table.get(name)
-		path, dir := cfg.Path, cfg.Dir
-		g.ConfigPath = &path
-		g.RootDir = &dir
+		configPath, rootDir := cfg.Path, cfg.Dir
+		g.ConfigPath, g.RootDir = &configPath, &rootDir
 		if rank(state.SourceFile) > rank(g.Source) {
 			g.Source = state.SourceFile
 		}
@@ -208,10 +207,9 @@ func (r *resolutionPass) describeCheckout(g *state.Group) {
 	}
 }
 
-// ServiceRow adapts one `oberth.yaml` service to the published contract row,
-// without any knowledge of what is running. `groups.config.get` returns the
-// file through it, so what the editor reads back is exactly what the resolver
-// publishes.
+// ServiceRow adapts one `oberth.yaml` service into the published contract row
+// without asking what is running. `groups.config.get` reads the file back
+// through it, so the editor sees exactly what the resolver publishes.
 func ServiceRow(s Service) state.Service {
 	svc := state.Service{
 		Name:          s.Name,
@@ -247,20 +245,20 @@ func nonNilStrings(in []string) []string {
 
 // ServiceRows adapts a whole config's services list.
 func ServiceRows(cfg *Config) []state.Service {
-	out := make([]state.Service, 0, len(cfg.Services))
+	rows := make([]state.Service, 0, len(cfg.Services))
 	for _, s := range cfg.Services {
-		out = append(out, ServiceRow(s))
+		rows = append(rows, ServiceRow(s))
 	}
-	return out
+	return rows
 }
 
 // optional turns an empty metadata string into the contract's null.
 func optional(s string) *string {
-	if s == "" {
-		return nil
+	if s != "" {
+		v := s
+		return &v
 	}
-	v := s
-	return &v
+	return nil
 }
 
 // machineRows renders a config's `machine:` references against what is
@@ -282,9 +280,9 @@ func machineRows(cfg *Config, ports map[int]struct{}, narrow bool) []state.Machi
 	return out
 }
 
-// status is running when everything the group declares is up, stopped when
-// nothing is, and partial in between. A group with no services is running as
-// long as it has a listening port.
+// status is running when every declared service is up, stopped when none is,
+// and partial otherwise; a group that declares no services is running while it
+// has a listening port.
 func status(g state.Group) string {
 	declared := len(g.Services)
 	if declared == 0 {

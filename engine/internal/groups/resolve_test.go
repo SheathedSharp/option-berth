@@ -8,22 +8,34 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-type fakeRun struct{ group, name string }
+// fakeRuns stands in for the daemon's registry: a port number maps to the run
+// recorded against it.
+type fakeRun struct {
+	group string
+	name  string
+}
+
 type fakeRuns map[int]fakeRun
 
 func (f fakeRuns) Run(p state.Port) (state.Run, bool) {
-	r, ok := f[p.Port]
-	return state.Run{Group: r.group, Name: r.name}, ok
+	rec, ok := f[p.Port]
+	if !ok {
+		return state.Run{}, false
+	}
+	return state.Run{Group: rec.group, Name: rec.name}, true
 }
 
-// resolveFixture builds a repo, a linked worktree, a Compose project inside the
-// repo and a Compose project outside any repo, and returns the paths.
+// fixture holds one of each checkout shape the resolver has to tell apart: a
+// clone, a directory inside it, a linked worktree of it, and a Compose project
+// both inside and outside the clone.
 type fixture struct {
-	repo       string // a clone with .git
-	repoSub    string // a directory inside the clone
-	worktree   string // a linked worktree of the clone
-	composeIn  string // compose working_dir inside the clone
-	composeOut string // compose working_dir outside any repo
+	// The clone, and a plain directory inside it.
+	repo    string
+	repoSub string
+	// A linked worktree of the clone, and the two compose working_dirs.
+	worktree   string
+	composeIn  string
+	composeOut string
 }
 
 func newFixture(t *testing.T) fixture {
@@ -31,28 +43,31 @@ func newFixture(t *testing.T) fixture {
 	base := tempTree(t)
 	repo := mkdir(t, base, "option-berth")
 	mkdir(t, repo, ".git")
+	worktree := mkdir(t, base, "wt", "feature-x")
 	f := fixture{
 		repo:       repo,
 		repoSub:    mkdir(t, repo, "backend"),
-		worktree:   mkdir(t, base, "wt", "feature-x"),
+		worktree:   worktree,
 		composeIn:  mkdir(t, repo, "deploy"),
 		composeOut: mkdir(t, base, "loose"),
 	}
-	writeFile(t, filepath.Join(f.worktree, ".git"),
+	writeFile(t, filepath.Join(worktree, ".git"),
 		"gitdir: "+filepath.Join(repo, ".git", "worktrees", "feature-x")+"\n")
 	return f
 }
 
 func nativePort(port int, cwd string) state.Port {
-	return state.Port{Port: port, BindAddress: "127.0.0.1", Cwd: cwd, Process: "python3"}
+	return state.Port{Cwd: cwd, Port: port, BindAddress: "127.0.0.1", Process: "python3"}
 }
 
 func composePort(port int, project, service string) state.Port {
-	return state.Port{
-		Port: port, BindAddress: "0.0.0.0", Process: "com.docke",
-		Type:   state.TypeDocker,
-		Docker: &state.Docker{Container: project + "-" + service + "-1", ComposeProject: project, ComposeService: service},
+	p := state.Port{Port: port, BindAddress: "0.0.0.0", Process: "com.docke", Type: state.TypeDocker}
+	p.Docker = &state.Docker{
+		Container:      project + "-" + service + "-1",
+		ComposeProject: project,
+		ComposeService: service,
 	}
+	return p
 }
 
 type resolvedWant struct {

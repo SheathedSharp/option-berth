@@ -50,11 +50,11 @@ type claimLookup func(port int, cwd string, candidates []portClaim) (portClaim, 
 // InvalidConfig is one config file that could not be used, reported by
 // `oberth groups` and ignored by the resolver.
 type InvalidConfig struct {
-	Path string
-	Err  error
+	Path string // the file as the scanner walked to it
+	Err  error  // why it was not usable
 }
 
-// NewIndex returns an empty index.
+// NewIndex builds an index that has observed nothing yet.
 func NewIndex() *Index {
 	return &Index{
 		configs:      map[string]*Config{},
@@ -101,29 +101,30 @@ func (x *Index) probeDir(dir string) {
 	x.acceptManifest(dir, selectManifest(dir), false)
 }
 
-// AddComposeProject records the working directory of a Compose project, read
-// from the `com.docker.compose.project.working_dir` label. It is what lets a
-// Compose container merge into the git-root group of the repo it was started
-// from instead of forming a group of its own.
+// AddComposeProject remembers the working directory a Compose project was
+// started from, as its `com.docker.compose.project.working_dir` label reports
+// it. That is what lets a container merge into the git-root group of its repo
+// instead of forming a group of its own.
 func (x *Index) AddComposeProject(project, workingDir string) {
-	if project == "" || workingDir == "" {
+	known := project != "" && workingDir != ""
+	if !known {
 		return
 	}
 	x.compose[project] = workingDir
 }
 
-// ComposeDir returns the recorded working directory of a Compose project.
+// ComposeDir answers the working directory recorded for a Compose project.
 func (x *Index) ComposeDir(project string) string { return x.compose[project] }
 
 // At returns the config in exactly this directory, or nil.
 func (x *Index) At(dir string) *Config {
-	if dir == "" {
-		return nil
+	if dir != "" {
+		return x.configs[Canonical(dir)]
 	}
-	return x.configs[Canonical(dir)]
+	return nil
 }
 
-// Nearest returns the config in dir or the closest ancestor of it, or nil.
+// Nearest returns the config in dir or its closest ancestor, or nil.
 func (x *Index) Nearest(dir string) *Config {
 	return (&resolutionPass{index: x}).nearest(dir)
 }
@@ -150,11 +151,11 @@ func (x *Index) Configs() []*Config {
 	return slices.Clone(x.ordered)
 }
 
-// Invalid returns the files that could not be used, sorted by path.
+// Invalid lists the files that could not be used, in path order.
 func (x *Index) Invalid() []InvalidConfig {
 	out := make([]InvalidConfig, 0, len(x.invalid))
-	for path, err := range x.invalid {
-		out = append(out, InvalidConfig{Path: path, Err: err})
+	for path, reason := range x.invalid {
+		out = append(out, InvalidConfig{Path: path, Err: reason})
 	}
 	slices.SortFunc(out, func(a, b InvalidConfig) int { return strings.Compare(a.Path, b.Path) })
 	return out

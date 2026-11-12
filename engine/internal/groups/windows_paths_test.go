@@ -48,7 +48,7 @@ func requireWindows(t *testing.T, reason string) {
 
 func TestFindAcceptsEverySpellingOfTheSameCheckout(t *testing.T) {
 	base := tempTree(t)
-	clone := mkdir(t, base, "api")
+	clone := mkdir(t, base, "gateway")
 	mkdir(t, clone, ".git")
 	deep := mkdir(t, clone, "services", "web")
 	sep := string(filepath.Separator)
@@ -66,7 +66,7 @@ func TestFindAcceptsEverySpellingOfTheSameCheckout(t *testing.T) {
 		filepath.Join(deep, "..", "..", "services", "web"),
 	}
 	for _, cwd := range spellings {
-		requireFind(t, cwd, wantRoot, "", "api")
+		requireFind(t, cwd, wantRoot, "", "gateway")
 	}
 
 	root, worktree, ok := Find("")
@@ -103,23 +103,25 @@ func TestCanonicalCollapsesTheSpellingsToOneKey(t *testing.T) {
 func TestWindowsPathShapes(t *testing.T) {
 	requireWindows(t, "drive letters and backslashes are only path syntax on Windows")
 	base := tempTree(t)
-	clone := mkdir(t, base, "api")
+	clone := mkdir(t, base, "gateway")
 	mkdir(t, clone, ".git")
 	deep := mkdir(t, clone, "services", "web")
 
-	if !strings.Contains(clone, `\`) || filepath.VolumeName(clone) == "" {
+	drive := filepath.VolumeName(clone)
+	if drive == "" || !strings.Contains(clone, `\`) {
 		t.Fatalf("the temp checkout %q is not a drive-letter path", clone)
 	}
 
-	// The PEB hands back a backslash path; a config or an env var may hand back
-	// the same directory with forward slashes, and Windows accepts both.
+	// The PEB hands back a backslash path, while a config or an env var may
+	// spell the same directory with forward slashes; Windows accepts both.
 	forward := strings.ReplaceAll(deep, `\`, `/`)
-	requireSameCanonical(t, Canonical(deep), forward)
-	if got := Canonical(deep); strings.Contains(got, "/") {
-		t.Errorf("Canonical(%q) = %q, which still contains a forward slash", deep, got)
+	canonical := Canonical(deep)
+	requireSameCanonical(t, canonical, forward)
+	if strings.Contains(canonical, "/") {
+		t.Errorf("Canonical(%q) = %q, which still contains a forward slash", deep, canonical)
 	}
 
-	// The drive letter's case is not a second project either.
+	// The drive letter's case does not make a second project either.
 	lower := strings.ToLower(clone[:1]) + clone[1:]
 	upper := strings.ToUpper(clone[:1]) + clone[1:]
 	requireSameCanonical(t, Canonical(upper), lower)
@@ -127,11 +129,11 @@ func TestWindowsPathShapes(t *testing.T) {
 	// Find walks up with filepath.Dir, which has to stop at the drive root
 	// rather than loop, and GroupName has to take the directory name off a
 	// backslash path.
-	requireFind(t, forward, Canonical(clone), "", "api")
+	requireFind(t, forward, Canonical(clone), "", "gateway")
 
-	// A directory that is not in any checkout still terminates: the walk from a
+	// A directory outside any checkout still terminates: the walk up from a
 	// drive root has nowhere left to go.
-	outside := filepath.VolumeName(clone) + `\`
+	outside := drive + `\`
 	if _, _, ok := Find(outside); ok {
 		if _, err := os.Stat(filepath.Join(outside, ".git")); err != nil {
 			t.Errorf("Find(%q) claimed a checkout at the drive root", outside)

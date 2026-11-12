@@ -11,28 +11,29 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// renameWorld is a project with a main checkout and a worktree, both running,
-// plus an unrelated repository called "store", resolved and built the way the
-// daemon publishes them.
+// renameWorld builds a project with a main checkout and a worktree, both
+// running, plus an unrelated repository called "store" — all resolved and built
+// the way the daemon publishes them.
 func renameWorld(t *testing.T, withConfig bool) (checkouts, *Index, []state.Group) {
 	t.Helper()
 	c := newCheckouts(t, "shop", "feat")
 	if withConfig {
+		// The comment in the main checkout's file must survive the rename.
 		writeFile(t, filepath.Join(c.main, ConfigName), "# the shop\nname: shop\nports: [8000]\n")
 		writeFile(t, filepath.Join(c.wt, ConfigName), "name: shop\nports: [8000]\n")
 	}
-	other := mkdir(t, filepath.Dir(c.main), "store")
-	mkdir(t, other, ".git")
+	storeRepo := mkdir(t, filepath.Dir(c.main), "store")
+	mkdir(t, storeRepo, ".git")
 
 	x := NewIndex()
-	for _, dir := range []string{c.main, c.wt, other} {
+	for _, dir := range []string{c.main, c.wt, storeRepo} {
 		x.Observe(dir)
 	}
+	started := fakeRuns{7100: {group: "started", name: "job"}}
 	pp := Resolve([]state.Port{
-		nativePort(8000, c.main), nativePort(8001, c.wt), nativePort(9000, other),
-	}, fakeRuns{7100: {group: "started", name: "job"}}, x)
-	pp = append(pp, Resolve([]state.Port{nativePort(7100, c.main)},
-		fakeRuns{7100: {group: "started", name: "job"}}, x)...)
+		nativePort(8000, c.main), nativePort(8001, c.wt), nativePort(9000, storeRepo),
+	}, started, x)
+	pp = append(pp, Resolve([]state.Port{nativePort(7100, c.main)}, started, x)...)
 	return c, x, Groups(pp, x)
 }
 
@@ -156,42 +157,42 @@ func TestValidProjectName(t *testing.T) {
 	}
 	for _, name := range []string{"shop", "my-app", "app_2.0"} {
 		if err := ValidProjectName(name); err != nil {
-			t.Errorf("ValidProjectName(%q) = %v", name, err)
+			t.Errorf("ValidProjectName(%q) = %v, want it accepted", name, err)
 		}
 	}
 }
 
 func TestSetConfigNameKeepsTheFile(t *testing.T) {
-	dir := tempTree(t)
-	path := filepath.Join(dir, ConfigName)
-	writeFile(t, path, "# the shop\nname: shop # short\nservices:\n  # first\n  - name: api\n    port: 8000\n")
+	root := tempTree(t)
+	path := filepath.Join(root, ConfigName)
+	writeFile(t, path, "# the shop\nname: shop # short\nservices:\n  # the api\n  - name: api\n    port: 8000\n")
 
-	cfg, err := SetConfigName(path, "market")
+	renamed, err := SetConfigName(path, "bazaar")
 	if err != nil {
 		t.Fatalf("SetConfigName: %v", err)
 	}
-	if cfg.Name != "market" {
-		t.Errorf("config name = %q, want market", cfg.Name)
+	if renamed.Name != "bazaar" {
+		t.Errorf("config name = %q, want bazaar", renamed.Name)
 	}
 	got, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
-	const rewritten = "# the shop\nname: market # short\nservices:\n  # first\n  - name: api\n    port: 8000\n"
+	const rewritten = "# the shop\nname: bazaar # short\nservices:\n  # the api\n  - name: api\n    port: 8000\n"
 	if string(got) != rewritten {
-		t.Errorf("rewritten file = %q, want comments and services kept around name: market", got)
+		t.Errorf("rewritten file = %q, want comments and services kept around name: bazaar", got)
 	}
 
 	bare := filepath.Join(tempTree(t), ConfigName)
 	writeFile(t, bare, "services:\n  - name: api\n")
-	if _, err := SetConfigName(bare, "market"); err != nil {
+	if _, err := SetConfigName(bare, "bazaar"); err != nil {
 		t.Fatalf("SetConfigName without a name key: %v", err)
 	}
 	data, err := os.ReadFile(bare)
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
-	const inserted = "name: market\nservices:\n  - name: api\n"
+	const inserted = "name: bazaar\nservices:\n  - name: api\n"
 	if string(data) != inserted {
 		t.Errorf("name not inserted first:\n%s", data)
 	}

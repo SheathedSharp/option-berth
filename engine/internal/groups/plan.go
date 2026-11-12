@@ -36,9 +36,9 @@ type PlanOptions struct {
 // UnknownServiceError names an `only` entry that is not in the file. It maps
 // onto the contract's `not_found`.
 type UnknownServiceError struct {
-	Path  string
-	Name  string
-	Known []string
+	Path  string   // the manifest that was searched
+	Name  string   // the `only` entry that is missing
+	Known []string // the services that file does declare
 }
 
 func (e *UnknownServiceError) Error() string {
@@ -59,12 +59,12 @@ func (e *UnknownServiceError) Error() string {
 // may already be running, which is the common case, and `groups.start` skips
 // what is up.
 //
-// Plan keeps the original meaning of `only`: it does not pull dependencies in.
-// Use PlanWith to include them.
+// Plan keeps `only` in its original sense and does not pull dependencies in;
+// PlanWith is the variant that does.
 //
-// Load has already rejected cycles and unknown depends_on, so the sort here
-// cannot loop; a config built by hand that still contains one degrades to file
-// order rather than dropping services.
+// Load has already rejected cycles and unknown depends_on, so the sort below
+// cannot loop. A hand-built config that still contains one falls back to file
+// order instead of dropping services.
 func Plan(cfg *Config, only []string) ([]Step, error) {
 	return PlanWith(cfg, PlanOptions{Only: only})
 }
@@ -110,9 +110,9 @@ func PlanWith(cfg *Config, opts PlanOptions) ([]Step, error) {
 func serviceOrder(cfg *Config) (map[string]Service, map[string]int) {
 	byName := make(map[string]Service, len(cfg.Services))
 	order := make(map[string]int, len(cfg.Services))
-	for i, s := range cfg.Services {
-		byName[s.Name] = s
-		order[s.Name] = i
+	for i := range cfg.Services {
+		s := cfg.Services[i]
+		byName[s.Name], order[s.Name] = s, i
 	}
 	return byName, order
 }
@@ -177,7 +177,7 @@ func selection(cfg *Config, byName map[string]Service, only []string) (map[strin
 		if name == "" {
 			continue
 		}
-		if _, ok := byName[name]; !ok {
+		if _, declared := byName[name]; !declared {
 			return nil, &UnknownServiceError{Path: cfg.Path, Name: name, Known: names(cfg)}
 		}
 		keep[name] = true
@@ -247,9 +247,9 @@ func orderedDeps(s Service, order map[string]int) []string {
 
 // names lists a config's service names in file order.
 func names(cfg *Config) []string {
-	out := make([]string, 0, len(cfg.Services))
-	for _, s := range cfg.Services {
-		out = append(out, s.Name)
+	out := make([]string, len(cfg.Services))
+	for i := range cfg.Services {
+		out[i] = cfg.Services[i].Name
 	}
 	return out
 }

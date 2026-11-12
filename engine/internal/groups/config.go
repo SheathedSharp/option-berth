@@ -74,11 +74,11 @@ func isRegularFile(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
-// TargetIn is the file a write into dir goes to: the manifest already there, in
-// whatever spelling it has, so an edit never leaves two files side by side —
-// else a new ConfigName.
+// TargetIn answers the file a write into dir goes to: the manifest already
+// present, in whatever spelling, so an edit never leaves two files side by
+// side — or else a fresh ConfigName.
 func TargetIn(dir string) string {
-	if present := FilesIn(dir); len(present) > 0 {
+	if present := FilesIn(dir); len(present) != 0 {
 		return present[0]
 	}
 	return filepath.Join(dir, ConfigName)
@@ -164,12 +164,12 @@ func (s Service) EffectiveReadyTimeout() time.Duration {
 	return d
 }
 
-// HasPort reports whether the service declares a port, fixed or auto.
+// HasPort answers whether the service fixes a port or asks for one.
 func (s Service) HasPort() bool { return s.Port != 0 || s.PortAuto }
 
-// UnmarshalYAML reads `port: auto` into PortAuto and every other key as usual.
-// Any other non-number port is refused with a message that names both forms,
-// rather than the decoder's own "cannot unmarshal !!str".
+// UnmarshalYAML reads `port: auto` into PortAuto and leaves other keys to the
+// usual decoding. Any other string port is refused with a message naming both
+// accepted forms, instead of the decoder's "cannot unmarshal !!str".
 func (s *Service) UnmarshalYAML(node *yaml.Node) error {
 	type plain Service
 	if node.Kind != yaml.MappingNode {
@@ -220,11 +220,11 @@ func (s *Service) UnmarshalYAML(node *yaml.Node) error {
 	}
 	stripped := *node
 	stripped.Content = pairs
-	var p plain
-	if err := stripped.Decode(&p); err != nil {
+	var decoded plain
+	if err := stripped.Decode(&decoded); err != nil {
 		return err
 	}
-	*s = Service(p)
+	*s = Service(decoded)
 	s.PortAuto = auto
 	s.Health = health.Canonical()
 	return nil
@@ -280,13 +280,12 @@ func (s Service) MarshalYAML() (any, error) {
 	return &n, nil
 }
 
-// MaxWorktreePorts is the largest block `worktree_ports` may ask for. It is
-// also the cap on a claim's explicit count, so a config can never ask for a
-// block the claims manager would refuse.
+// MaxWorktreePorts caps the block `worktree_ports` may request. The same cap
+// applies to a claim's explicit count, so a config cannot ask for a block the
+// claims manager would refuse.
 const MaxWorktreePorts = 100
 
-// FieldWorktreePorts is the top-level key naming the block size a worktree
-// claims.
+// FieldWorktreePorts is the top-level key that names a worktree's block size.
 const FieldWorktreePorts = "worktree_ports"
 
 // MachineRef is one entry of the file's top-level `machine:` list: a service
@@ -504,11 +503,11 @@ func (c *Config) WorkspaceNamed(name string) (WorkspaceRef, bool) {
 	return WorkspaceRef{}, false
 }
 
-// ConfigError reports every problem found in one file at once, so a user fixing
-// a config sees the whole list instead of one error per run.
+// ConfigError reports all problems found in one file together, so a person
+// fixing a config sees the complete list rather than one error per attempt.
 type ConfigError struct {
-	Path     string
-	Problems []string
+	Path     string   // the file that carries the problems
+	Problems []string // every problem found in that file
 }
 
 func (e *ConfigError) Error() string {
@@ -624,14 +623,15 @@ func (c *Config) validate() []string {
 // identityProblems checks the file's own name and top-level declarations.
 func (c *Config) identityProblems() []string {
 	var problems []string
-	if c.Name == "" {
+	switch i := strings.IndexAny(c.Name, "/\\ \t\n"); {
+	case c.Name == "":
 		problems = append(problems, "name is empty")
-	} else if i := strings.IndexAny(c.Name, "/\\ \t\n"); i >= 0 {
+	case i >= 0:
 		problems = append(problems, fmt.Sprintf("name %q contains %q; names may not contain slashes or whitespace", c.Name, c.Name[i:i+1]))
 	}
-	for _, p := range c.Ports {
-		if p < 1 || p > 65535 {
-			problems = append(problems, fmt.Sprintf("ports: %d is out of range 1-65535", p))
+	for _, port := range c.Ports {
+		if port < 1 || port > 65535 {
+			problems = append(problems, fmt.Sprintf("ports: %d is out of range 1-65535", port))
 		}
 	}
 	if n := c.WorktreePorts; n != nil && (*n < 1 || *n > MaxWorktreePorts) {
@@ -770,8 +770,8 @@ func (c *Config) dependencyProblems(services map[string]bool) []string {
 	return problems
 }
 
-// cwdInside reports whether a service cwd stays inside the config's directory.
-// Absolute paths are rejected outright: the field is documented as relative to
+// cwdInside answers whether a service cwd stays inside the config's directory.
+// An absolute path is refused outright: the field is documented as relative to
 // the file.
 func (c *Config) cwdInside(cwd string) bool {
 	if absoluteManifestPath(cwd) {
@@ -885,12 +885,12 @@ func (c *Config) healthProblems(s Service, where string) []string {
 	return nil
 }
 
-// ServiceDir returns the absolute working directory for a service.
+// ServiceDir answers the absolute working directory of a service.
 func (c *Config) ServiceDir(s Service) string {
-	if s.Cwd == "" {
-		return c.Dir
+	if s.Cwd != "" {
+		return filepath.Join(c.Dir, filepath.FromSlash(s.Cwd))
 	}
-	return filepath.Join(c.Dir, filepath.FromSlash(s.Cwd))
+	return c.Dir
 }
 
 // findCycle returns one depends_on cycle as a readable chain, or nil. The walk

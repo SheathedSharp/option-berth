@@ -8,22 +8,24 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// checkouts is a main checkout with a real-looking .git (HEAD on main) and one
-// linked worktree whose admin directory holds its own HEAD.
+// checkouts is one checkout pair: a main checkout whose .git looks real (HEAD
+// on main) and a linked worktree with its own admin directory and HEAD.
 type checkouts struct {
-	main, wt, admin string
+	main  string
+	wt    string
+	admin string
 }
 
 func newCheckouts(t *testing.T, mainName, wtName string) checkouts {
 	t.Helper()
 	base := tempTree(t)
-	main := mkdir(t, base, mainName)
-	writeFile(t, filepath.Join(main, ".git", "HEAD"), "ref: refs/heads/main\n")
-	admin := filepath.Join(main, ".git", "worktrees", wtName)
-	writeFile(t, filepath.Join(admin, "HEAD"), "ref: refs/heads/feature/x\n")
-	wt := mkdir(t, base, "wt", wtName)
-	writeFile(t, filepath.Join(wt, ".git"), "gitdir: "+admin+"\n")
-	return checkouts{main: main, wt: wt, admin: admin}
+	adminDir := filepath.Join(mkdir(t, base, mainName), ".git", "worktrees", wtName)
+	writeFile(t, filepath.Join(adminDir, "HEAD"), "ref: refs/heads/feature/x\n")
+	mainDir := filepath.Dir(filepath.Dir(filepath.Dir(adminDir)))
+	writeFile(t, filepath.Join(mainDir, ".git", "HEAD"), "ref: refs/heads/main\n")
+	wtDir := mkdir(t, base, "wt", wtName)
+	writeFile(t, filepath.Join(wtDir, ".git"), "gitdir: "+adminDir+"\n")
+	return checkouts{main: mainDir, wt: wtDir, admin: adminDir}
 }
 
 type checkoutWant struct {
@@ -59,11 +61,11 @@ func TestLocate(t *testing.T) {
 	requireLocate(t, deep, checkoutWant{root: c.wt, main: c.main, worktree: "feat", head: filepath.Join(c.admin, "HEAD"), linked: true})
 
 	rel := mkdir(t, filepath.Dir(c.wt), "relwt")
-	target, err := filepath.Rel(rel, filepath.Join(c.main, ".git", "worktrees", "relwt"))
-	if err != nil {
-		t.Fatal(err)
+	relGitdir, relErr := filepath.Rel(rel, filepath.Join(c.main, ".git", "worktrees", "relwt"))
+	if relErr != nil {
+		t.Fatalf("relative gitdir under %q: %v", rel, relErr)
 	}
-	writeFile(t, filepath.Join(rel, ".git"), "gitdir: "+target+"\n")
+	writeFile(t, filepath.Join(rel, ".git"), "gitdir: "+relGitdir+"\n")
 	requireLocate(t, rel, checkoutWant{root: rel, main: c.main, worktree: "relwt", head: filepath.Join(c.main, ".git", "worktrees", "relwt", "HEAD"), linked: true})
 
 	sub := mkdir(t, c.main, "vendor", "lib")
@@ -129,15 +131,19 @@ func TestBranch(t *testing.T) {
 }
 
 func TestParseHead(t *testing.T) {
-	for in, want := range map[string]string{
-		"ref: refs/heads/main\n":       "main",
-		"ref:refs/heads/feature/a-b":   "feature/a-b",
-		"ref: refs/remotes/origin/x\n": "",
-		"0123456789abcdef\n":           "",
-		"":                             "",
-	} {
-		if got := parseHead([]byte(in)); got != want {
-			t.Errorf("parseHead(%q) = %q, want %q", in, got, want)
+	heads := []struct {
+		raw    string
+		branch string
+	}{
+		{"ref: refs/heads/main\n", "main"},
+		{"ref:refs/heads/feature/a-b", "feature/a-b"},
+		{"ref: refs/remotes/origin/x\n", ""},
+		{"0123456789abcdef\n", ""},
+		{"", ""},
+	}
+	for _, head := range heads {
+		if branch := parseHead([]byte(head.raw)); branch != head.branch {
+			t.Errorf("parseHead(%q) = %q, want %q", head.raw, branch, head.branch)
 		}
 	}
 }
@@ -220,13 +226,14 @@ func TestWorktreeNaming(t *testing.T) {
 	t.Run("a worktree kept inside the main checkout", func(t *testing.T) {
 		main := mkdir(t, tempTree(t), "shop")
 		admin := mkdir(t, main, ".git", "worktrees", "feat")
-		wt := mkdir(t, main, ".claude", "worktrees", "feat")
-		writeFile(t, filepath.Join(wt, ".git"), "gitdir: "+admin+"\n")
+		inner := mkdir(t, main, ".claude", "worktrees", "feat")
+		writeFile(t, filepath.Join(inner, ".git"), "gitdir: "+admin+"\n")
 		writeFile(t, filepath.Join(main, ConfigName), "name: shop\nports: [3000]\n")
 		x := NewIndex()
-		x.Observe(main)
-		x.Observe(wt)
-		checkNaming(t, x, map[string]string{"main": main, "linked": wt}, []namingExpectation{
+		for _, dir := range []string{main, inner} {
+			x.Observe(dir)
+		}
+		checkNaming(t, x, map[string]string{"main": main, "linked": inner}, []namingExpectation{
 			{"linked", 3000, "shop@feat", state.SourceAuto}, {"main", 3000, "shop", ""},
 		})
 	})
@@ -242,24 +249,24 @@ func TestWorktreeNaming(t *testing.T) {
 	})
 	t.Run("submodules keep their own name", func(t *testing.T) {
 		c := newCheckouts(t, "shop", "feat")
-		sub := mkdir(t, c.main, "vendor", "lib")
-		writeFile(t, filepath.Join(sub, ".git"), "gitdir: ../../.git/modules/lib\n")
+		sub := mkdir(t, c.main, "vendor", "sdk")
+		writeFile(t, filepath.Join(sub, ".git"), "gitdir: ../../.git/modules/sdk\n")
 		x := NewIndex()
 		x.Observe(sub)
-		checkNaming(t, x, map[string]string{"submodule": sub}, []namingExpectation{{"submodule", 4000, "lib", ""}})
+		checkNaming(t, x, map[string]string{"submodule": sub}, []namingExpectation{{"submodule", 4000, "sdk", ""}})
 	})
 }
 
 func TestRunGroupFollowsTheCheckout(t *testing.T) {
-	c := newCheckouts(t, "app", "feat")
-	x := NewIndex()
-	x.Observe(c.wt)
+	ck := newCheckouts(t, "app", "feat")
 	runs := fakeRuns{
 		5000: {group: "app", name: "web"},
 		5001: {group: "app@feat", name: "api"},
 		5002: {group: "custom", name: "job"},
 		5003: {group: "app", name: "web"},
 	}
+	x := NewIndex()
+	x.Observe(ck.wt)
 
 	type followWant struct {
 		port   int
@@ -287,18 +294,18 @@ func TestRunGroupFollowsTheCheckout(t *testing.T) {
 	}
 
 	assertFollow(t, []state.Port{
-		nativePort(5000, c.wt), nativePort(5001, c.wt), nativePort(5002, c.wt), nativePort(5003, c.main),
+		nativePort(5000, ck.wt), nativePort(5001, ck.wt), nativePort(5002, ck.wt), nativePort(5003, ck.main),
 	}, []followWant{
-		{5000, c.wt, "app@feat", c.wt, state.SourceStart},
-		{5001, c.wt, "app@feat", c.wt, state.SourceStart},
-		{5002, c.wt, "custom", c.wt, state.SourceStart},
-		{5003, c.main, "app", c.main, state.SourceStart},
+		{5000, ck.wt, "app@feat", ck.wt, state.SourceStart},
+		{5001, ck.wt, "app@feat", ck.wt, state.SourceStart},
+		{5002, ck.wt, "custom", ck.wt, state.SourceStart},
+		{5003, ck.main, "app", ck.main, state.SourceStart},
 	})
 
-	x.SetAliases(map[string]string{c.main: "store"})
-	assertFollow(t, []state.Port{nativePort(5001, c.wt), nativePort(5003, c.main)}, []followWant{
-		{5001, c.wt, "store@feat", c.wt, state.SourceStart},
-		{5003, c.main, "store", c.main, state.SourceStart},
+	x.SetAliases(map[string]string{ck.main: "store"})
+	assertFollow(t, []state.Port{nativePort(5001, ck.wt), nativePort(5003, ck.main)}, []followWant{
+		{5001, ck.wt, "store@feat", ck.wt, state.SourceStart},
+		{5003, ck.main, "store", ck.main, state.SourceStart},
 	})
 }
 
@@ -352,17 +359,19 @@ func requireCheckoutGroup(t *testing.T, g state.Group, name, repo, worktree, bra
 }
 
 func TestGroupsPublishEachCheckoutOnce(t *testing.T) {
-	c := newCheckouts(t, "shop-dir", "feat")
-	writeFile(t, filepath.Join(c.main, ConfigName), "name: shop\nservices:\n  - name: api\n    port: 8000\n")
-	writeFile(t, filepath.Join(c.wt, ConfigName), "name: shop\nservices:\n  - name: api\n    port: 8000\n")
+	ck := newCheckouts(t, "shop-dir", "feat")
+	body := "name: shop\nservices:\n  - name: api\n    port: 8000\n"
+	for _, dir := range []string{ck.main, ck.wt} {
+		writeFile(t, filepath.Join(dir, ConfigName), body)
+	}
 
-	for _, running := range []bool{false, true} {
-		t.Run(fmt.Sprintf("running=%v", running), func(t *testing.T) {
+	for _, live := range []bool{false, true} {
+		t.Run(fmt.Sprintf("running=%v", live), func(t *testing.T) {
 			x := NewIndex()
-			x.Observe(c.wt)
+			x.Observe(ck.wt)
 			var pp []state.Port
-			if running {
-				pp = Resolve([]state.Port{nativePort(8000, c.wt)}, NoRuns{}, x)
+			if live {
+				pp = Resolve([]state.Port{nativePort(8000, ck.wt)}, NoRuns{}, x)
 			}
 			byName := groupsByName(t, Groups(pp, x))
 			main, ok := byName["shop"]
@@ -373,8 +382,8 @@ func TestGroupsPublishEachCheckoutOnce(t *testing.T) {
 			if !ok {
 				t.Fatalf("no worktree group in %v", groupNames(mapValues(byName)))
 			}
-			requireCheckoutGroup(t, main, "shop", "shop", "", "main", c.main, filepath.Join(c.main, ConfigName), WorktreeTokenFor(c.main), false)
-			requireCheckoutGroup(t, wt, "shop@feat", "shop", "feat", "feature/x", c.wt, filepath.Join(c.wt, ConfigName), WorktreeTokenFor(c.wt), running)
+			requireCheckoutGroup(t, main, "shop", "shop", "", "main", ck.main, filepath.Join(ck.main, ConfigName), WorktreeTokenFor(ck.main), false)
+			requireCheckoutGroup(t, wt, "shop@feat", "shop", "feat", "feature/x", ck.wt, filepath.Join(ck.wt, ConfigName), WorktreeTokenFor(ck.wt), live)
 		})
 	}
 }
@@ -417,18 +426,20 @@ func TestGroupsFieldsForAGroupThatIsNotACheckout(t *testing.T) {
 }
 
 func TestNamedMatchesTheGroupNotTheFile(t *testing.T) {
-	c := newCheckouts(t, "shop", "feat")
-	writeFile(t, filepath.Join(c.main, ConfigName), "name: shop\n")
-	writeFile(t, filepath.Join(c.wt, ConfigName), "name: shop\n")
+	ck := newCheckouts(t, "shop", "feat")
+	sameName := "name: shop\n"
+	for _, dir := range []string{ck.main, ck.wt} {
+		writeFile(t, filepath.Join(dir, ConfigName), sameName)
+	}
 	x := NewIndex()
-	x.Observe(c.wt)
+	x.Observe(ck.wt)
 
 	cfg, ok := x.Named("shop")
-	if !ok || cfg == nil || cfg.Name != "shop" || cfg.Dir != c.main || cfg.Path != filepath.Join(c.main, ConfigName) {
+	if !ok || cfg == nil || cfg.Name != "shop" || cfg.Dir != ck.main || cfg.Path != filepath.Join(ck.main, ConfigName) {
 		t.Errorf("Named(shop) = %+v, %v; want name shop in the main checkout's file", cfg, ok)
 	}
 	cfg, ok = x.Named("shop@feat")
-	if !ok || cfg == nil || cfg.Name != "shop" || cfg.Dir != c.wt || cfg.Path != filepath.Join(c.wt, ConfigName) {
+	if !ok || cfg == nil || cfg.Name != "shop" || cfg.Dir != ck.wt || cfg.Path != filepath.Join(ck.wt, ConfigName) {
 		t.Errorf("Named(shop@feat) = %+v, %v; want name shop (the file's name) at the worktree's copy", cfg, ok)
 	}
 	if cfg, ok := x.Named(""); ok || cfg != nil {
@@ -440,9 +451,9 @@ func TestNamedMatchesTheGroupNotTheFile(t *testing.T) {
 }
 
 func groupNames(gg []state.Group) []string {
-	out := make([]string, 0, len(gg))
-	for _, g := range gg {
-		out = append(out, g.Name)
+	names := make([]string, len(gg))
+	for i, g := range gg {
+		names[i] = g.Name
 	}
-	return out
+	return names
 }

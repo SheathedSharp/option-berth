@@ -29,6 +29,15 @@ func declaredService(s Service) state.Service {
 	return row
 }
 
+// shopConfig is the manifest these tests publish: the services they care about,
+// in a project called "shop" that exists on no disk.
+func shopConfig(services ...Service) *Config {
+	return &Config{
+		Name: "shop", Dir: "/nowhere/shop", Path: "/nowhere/shop/" + ConfigName,
+		Services: services,
+	}
+}
+
 func shopGroup(status string, running int, services ...state.Service) []state.Group {
 	root := "/nowhere/shop"
 	cfgPath := "/nowhere/shop/" + ConfigName
@@ -47,31 +56,25 @@ func requireGroups(t *testing.T, got, want []state.Group) {
 	}
 }
 
-// TestGroupsCarryTheLastExitOfAServiceThatIsDown: a stopped service says how
+// TestGroupsCarryTheLastExitOfAServiceThatIsDown: a stopped service reports how
 // it ended, so a client can show "crashed" rather than only "not running".
 func TestGroupsCarryTheLastExitOfAServiceThatIsDown(t *testing.T) {
-	index := NewIndex()
-	index.Add(&Config{
-		Name: "shop", Dir: "/nowhere/shop", Path: "/nowhere/shop/" + ConfigName,
-		Services: []Service{{Name: "api", Cmd: "run-api"}, {Name: "web", Cmd: "run-web"}},
-	})
+	idx := NewIndex()
+	idx.Add(shopConfig(Service{Name: "api", Cmd: "run-api"}, Service{Name: "web", Cmd: "run-web"}))
 
-	gg := GroupsWith(nil, index, exitRegistry{}, false)
+	built := GroupsWith(nil, idx, exitRegistry{}, false)
 	api := declaredService(Service{Name: "api", Cmd: "run-api"})
 	api.LastExit = &state.ServiceExit{Code: 1, Reason: "crashed", At: "2026-09-13T10:00:00Z", RunID: "a"}
-	requireGroups(t, gg, shopGroup("stopped", 0, api, declaredService(Service{Name: "web", Cmd: "run-web"})))
+	requireGroups(t, built, shopGroup("stopped", 0, api, declaredService(Service{Name: "web", Cmd: "run-web"})))
 }
 
-// TestGroupsWithoutARegistryHaveNoExits: the direct-scan path has no registry
-// at all, and must still build its groups.
+// TestGroupsWithoutARegistryHaveNoExits: the direct-scan path has no registry at
+// all, and must still build its groups.
 func TestGroupsWithoutARegistryHaveNoExits(t *testing.T) {
-	index := NewIndex()
-	index.Add(&Config{
-		Name: "shop", Dir: "/nowhere/shop", Path: "/nowhere/shop/" + ConfigName,
-		Services: []Service{{Name: "api", Cmd: "run-api"}},
-	})
-	gg := Groups(nil, index)
-	requireGroups(t, gg, shopGroup("stopped", 0, declaredService(Service{Name: "api", Cmd: "run-api"})))
+	idx := NewIndex()
+	idx.Add(shopConfig(Service{Name: "api", Cmd: "run-api"}))
+	built := Groups(nil, idx)
+	requireGroups(t, built, shopGroup("stopped", 0, declaredService(Service{Name: "api", Cmd: "run-api"})))
 }
 
 // liveRegistry knows which services option-berth has a live run of.
@@ -94,10 +97,7 @@ func (liveRegistry) ServiceFacts() servicefacts.Snapshot {
 // port for it would be a different lie.
 func TestGroupsSeeAServiceThatHoldsNoPort(t *testing.T) {
 	index := NewIndex()
-	index.Add(&Config{
-		Name: "shop", Dir: "/nowhere/shop", Path: "/nowhere/shop/" + ConfigName,
-		Services: []Service{{Name: "worker", Cmd: "run-worker"}, {Name: "api", Cmd: "run-api"}},
-	})
+	index.Add(shopConfig(Service{Name: "worker", Cmd: "run-worker"}, Service{Name: "api", Cmd: "run-api"}))
 
 	gg := GroupsWith(nil, index, liveRegistry{}, false)
 	worker := declaredService(Service{Name: "worker", Cmd: "run-worker"})
@@ -119,10 +119,7 @@ func (driftRegistry) ServiceFacts() servicefacts.Snapshot {
 
 func TestGroupsExposeManifestRuntimeMismatch(t *testing.T) {
 	index := NewIndex()
-	index.Add(&Config{
-		Name: "shop", Dir: "/nowhere/shop", Path: "/nowhere/shop/" + ConfigName,
-		Services: []Service{{Name: "api", Cmd: "old-api"}},
-	})
+	index.Add(shopConfig(Service{Name: "api", Cmd: "old-api"}))
 	gg := GroupsWith(nil, index, driftRegistry{}, false)
 	api := declaredService(Service{Name: "api", Cmd: "old-api"})
 	api.Running = true

@@ -8,25 +8,26 @@ import (
 )
 
 func planConfig() *Config {
+	services := []Service{
+		{Name: "frontend", Cmd: "npm run dev", Port: 5173, DependsOn: []string{"api"}},
+		{Name: "api", Cmd: "uv run api", Port: 8000, DependsOn: []string{"db", "cache"}},
+		{Name: "db", Cmd: "postgres", Port: 5432},
+		{Name: "cache", Cmd: "redis-server"},
+	}
 	return &Config{
-		Path: "/tmp/demo/.oberth.yaml",
-		Dir:  "/tmp/demo",
-		Name: "demo",
-		Services: []Service{
-			{Name: "frontend", Cmd: "npm run dev", Port: 5173, DependsOn: []string{"api"}},
-			{Name: "api", Cmd: "uv run api", Port: 8000, DependsOn: []string{"db", "cache"}},
-			{Name: "db", Cmd: "postgres", Port: 5432},
-			{Name: "cache", Cmd: "redis-server"},
-		},
+		Path:     "/tmp/demo/.oberth.yaml",
+		Dir:      "/tmp/demo",
+		Name:     "demo",
+		Services: services,
 	}
 }
 
 func planNames(steps []Step) []string {
-	out := make([]string, 0, len(steps))
-	for _, s := range steps {
-		out = append(out, s.Service.Name)
+	names := make([]string, len(steps))
+	for i, step := range steps {
+		names[i] = step.Service.Name
 	}
-	return out
+	return names
 }
 
 func planSvc(cfg *Config, name string) Service {
@@ -105,16 +106,16 @@ func TestPlanWaitsOnEveryDependency(t *testing.T) {
 	)(Plan(cfg, nil))
 }
 
-// TestPlanWaitsOnAutoPorts: a `port: auto` dependency has a port to wait for,
-// even though the file names no number.
+// TestPlanWaitsOnAutoPorts: a `port: auto` dependency is still something to
+// wait for, even though the file names no number.
 func TestPlanWaitsOnAutoPorts(t *testing.T) {
 	cfg := &Config{Name: "demo", Services: []Service{
-		{Name: "db", Cmd: "postgres", PortAuto: true},
-		{Name: "api", Cmd: "uv run api", PortAuto: true, DependsOn: []string{"db"}},
+		{Name: "postgres", Cmd: "postgres", PortAuto: true},
+		{Name: "api", Cmd: "uv run api", PortAuto: true, DependsOn: []string{"postgres"}},
 	}}
 	requirePlan(t,
-		planStep(cfg, "db", nil, nil),
-		planStep(cfg, "api", []string{"db"}, nil),
+		planStep(cfg, "postgres", nil, nil),
+		planStep(cfg, "api", []string{"postgres"}, nil),
 	)(Plan(cfg, nil))
 }
 
@@ -139,16 +140,16 @@ func TestPlanUnknownOnly(t *testing.T) {
 	requireUnknownAP(t, err)
 }
 
-// TestPlanKeepsFileOrderAtTheSameDepth: two independent services start in the
-// order the author wrote them.
+// TestPlanKeepsFileOrderAtTheSameDepth: independent services start in the order
+// the author wrote them.
 func TestPlanKeepsFileOrderAtTheSameDepth(t *testing.T) {
 	cfg := &Config{Name: "demo", Services: []Service{
-		{Name: "one"}, {Name: "two"}, {Name: "three"},
+		{Name: "alpha"}, {Name: "beta"}, {Name: "gamma"},
 	}}
 	requirePlan(t,
-		planStep(cfg, "one", nil, nil),
-		planStep(cfg, "two", nil, nil),
-		planStep(cfg, "three", nil, nil),
+		planStep(cfg, "alpha", nil, nil),
+		planStep(cfg, "beta", nil, nil),
+		planStep(cfg, "gamma", nil, nil),
 	)(Plan(cfg, nil))
 }
 

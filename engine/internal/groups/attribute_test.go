@@ -8,11 +8,12 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// runSet is a Registry that answers for one port number.
+// runSet is a Registry holding the single run these tests know about, reachable
+// through one port number.
 type runSet struct {
 	port  int
-	id    string
 	group string
+	id    string
 	name  string
 }
 
@@ -20,7 +21,9 @@ func (r runSet) Run(p state.Port) (state.Run, bool) {
 	if p.Port != r.port {
 		return state.Run{}, false
 	}
-	return state.Run{ID: r.id, Group: r.group, Name: r.name, RootPID: p.PID}, true
+	run := state.Run{ID: r.id, Group: r.group, Name: r.name}
+	run.RootPID = p.PID
+	return run, true
 }
 
 func requireAttributedPort(t *testing.T, got, want state.Port) {
