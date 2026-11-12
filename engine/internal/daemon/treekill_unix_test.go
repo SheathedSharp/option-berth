@@ -7,34 +7,36 @@ import (
 	"syscall"
 )
 
-// ownProcessGroup puts a command in a process group of its own so the test can
-// signal it separately from the `go test` process it was started from.
+// ownProcessGroup gives a command a process group of its own, so the test can
+// signal it without signalling the `go test` process that started it.
 func ownProcessGroup(cmd *exec.Cmd) {
-	if cmd.SysProcAttr == nil {
-		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	attr := cmd.SysProcAttr
+	if attr == nil {
+		attr = &syscall.SysProcAttr{}
+		cmd.SysProcAttr = attr
 	}
-	cmd.SysProcAttr.Setpgid = true
+	attr.Setpgid = true
 }
 
-// killTree SIGKILLs a command, everything below it in the process table and
-// its process group. All three: a `oberth start` child gets a process group of
-// its own, so the group kill alone would miss it, and the process table can be
-// a scan behind.
+// killTree SIGKILLs the command, every process the table reports below it, and
+// its process group — all three, because a `oberth start` child is put in a
+// process group of its own (the group kill alone would miss it) and the
+// process table can trail the truth by one scan.
 //
-// The signals are numeric-pid operations, so they are only safe while the
-// command is unreaped: a zombie keeps its pid allocated, and a pid that has
-// already been waited on can name an unrelated process. Once Wait has run there
-// is nothing of this command left to stop.
+// Each of those is a numeric-pid operation, so they are only safe while the
+// command is still unreaped: a zombie keeps its pid allocated, and a pid that
+// has already been waited on can name an unrelated process. Once Wait has run,
+// nothing of this command is left to signal.
 func killTree(cmd *exec.Cmd) {
 	if cmd == nil || cmd.Process == nil || cmd.ProcessState != nil {
 		return
 	}
-	pid := cmd.Process.Pid
-	for _, p := range descendants(pid) {
-		_ = syscall.Kill(p, syscall.SIGKILL)
+	root := cmd.Process.Pid
+	for _, pid := range descendants(root) {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
 	}
-	if pgid, err := syscall.Getpgid(pid); err == nil && pgid > 1 {
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	if group, err := syscall.Getpgid(root); err == nil && group > 1 {
+		_ = syscall.Kill(-group, syscall.SIGKILL)
 	}
 	_ = cmd.Process.Kill()
 }

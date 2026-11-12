@@ -12,27 +12,33 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// unregisterHandler drops a method again. Only tests need it: RegisterHandler
-// panics on a duplicate, so a test that installs a probe has to clean up.
+// unregisterHandler takes a method back out of the dispatch table. Only tests
+// need it: RegisterHandler panics on a duplicate, so a test that installs a
+// probe of its own has to undo that when the probe is done.
 func unregisterHandler(method string) {
 	handlersMu.Lock()
 	delete(handlers, method)
 	handlersMu.Unlock()
 }
 
-// streamProbe is a streaming method that emits whatever the test pushes onto
-// its channel, so the lifecycle can be driven step by step.
+// streamProbe is a streaming method that sends whatever the test pushes into
+// its channel, so a test can walk the stream lifecycle one step at a time.
 type streamProbe struct {
-	lines   chan string
-	started chan *Stream
-	done    chan error
+	writes   chan string
+	began    chan *Stream
+	finished chan error
+}
+
+// probeLine is the payload of one chunk the probe sends.
+type probeLine struct {
+	Line string `json:"line"`
 }
 
 func newStreamProbe() *streamProbe {
 	return &streamProbe{
-		lines:   make(chan string, 4),
-		started: make(chan *Stream, 1),
-		done:    make(chan error, 1),
+		writes:   make(chan string, 4),
+		began:    make(chan *Stream, 1),
+		finished: make(chan error, 1),
 	}
 }
 
@@ -40,19 +46,19 @@ func (p *streamProbe) handler(end any) Handler {
 	return func(ctx context.Context, req *Request) (any, error) {
 		return StartStream(ctx, req, map[string]any{"source": "probe"},
 			func(ctx context.Context, s *Stream) (any, error) {
-				p.started <- s
+				p.began <- s
 				for {
 					select {
 					case <-ctx.Done():
-						p.done <- ctx.Err()
+						p.finished <- ctx.Err()
 						return end, ctx.Err()
-					case line, ok := <-p.lines:
-						if !ok {
-							p.done <- nil
+					case line, open := <-p.writes:
+						if !open {
+							p.finished <- nil
 							return end, nil
 						}
 						if err := s.Send(map[string]string{"line": line}); err != nil {
-							p.done <- err
+							p.finished <- err
 							return end, err
 						}
 					}
@@ -61,13 +67,14 @@ func (p *streamProbe) handler(end any) Handler {
 	}
 }
 
-// nextNotification reads until a notification with the wanted method arrives.
+// nextNotification reads until a notification carrying the wanted method
+// arrives, and hands it back.
 func (c *testClient) nextNotification(method string) rpc.Message {
 	c.t.Helper()
 	for {
-		m := c.read()
-		if m.IsNotification() && m.Method == method {
-			return m
+		msg := c.read()
+		if msg.IsNotification() && msg.Method == method {
+			return msg
 		}
 	}
 }
@@ -76,65 +83,65 @@ func TestStreamChunkEndAndInitialReply(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	p := newStreamProbe()
-	RegisterHandler("test.streamChunks", p.handler(map[string]any{"lines": 2}))
+	probe := newStreamProbe()
+	RegisterHandler("test.streamChunks", probe.handler(map[string]any{"lines": 2}))
 	t.Cleanup(func() { unregisterHandler("test.streamChunks") })
 
-	h := newHarness(t, ctx)
-	c := h.dial(ctx)
+	hn := newHarness(t, ctx)
+	cl := hn.dial(ctx)
 
 	var start struct {
 		Source         string `json:"source"`
 		SubscriptionID string `json:"subscription_id"`
 	}
-	if e := c.call("test.streamChunks", rpc.Empty{}, &start); e != nil {
-		t.Fatalf("starting stream: %v", e)
+	if failure := cl.call("test.streamChunks", rpc.Empty{}, &start); failure != nil {
+		t.Fatalf("starting the stream: %v", failure)
 	}
 	if start.Source != "probe" {
-		t.Fatalf("initial payload lost: %+v", start)
+		t.Fatalf("the initial payload was lost: %+v", start)
 	}
 	if start.SubscriptionID == "" {
-		t.Fatal("no subscription_id in the streaming reply")
+		t.Fatal("the streaming reply carried no subscription_id")
 	}
 
-	p.lines <- "one"
-	p.lines <- "two"
+	sent := []string{"one", "two"}
+	for _, line := range sent {
+		probe.writes <- line
+	}
 
-	for _, want := range []string{"one", "two"} {
-		msg := c.nextNotification(rpc.MethodStreamChunk)
+	for _, want := range sent {
+		msg := cl.nextNotification(rpc.MethodStreamChunk)
 		var chunk rpc.StreamChunk
 		if err := json.Unmarshal(msg.Params, &chunk); err != nil {
-			t.Fatalf("decoding chunk: %v", err)
+			t.Fatalf("decoding the chunk: %v", err)
 		}
 		if chunk.ID != start.SubscriptionID {
 			t.Fatalf("chunk id = %q, want %q", chunk.ID, start.SubscriptionID)
 		}
-		var body struct {
-			Line string `json:"line"`
+		var payload probeLine
+		if err := json.Unmarshal(chunk.Data, &payload); err != nil {
+			t.Fatalf("decoding the chunk payload: %v", err)
 		}
-		if err := json.Unmarshal(chunk.Data, &body); err != nil {
-			t.Fatalf("decoding chunk data: %v", err)
-		}
-		if body.Line != want {
-			t.Fatalf("chunk line = %q, want %q", body.Line, want)
+		if payload.Line != want {
+			t.Fatalf("chunk line = %q, want %q", payload.Line, want)
 		}
 	}
 
-	close(p.lines)
+	close(probe.writes)
 
-	msg := c.nextNotification(rpc.MethodStreamEnd)
-	var end rpc.StreamEnd
-	if err := json.Unmarshal(msg.Params, &end); err != nil {
+	msg := cl.nextNotification(rpc.MethodStreamEnd)
+	var ending rpc.StreamEnd
+	if err := json.Unmarshal(msg.Params, &ending); err != nil {
 		t.Fatalf("decoding stream.end: %v", err)
 	}
-	if end.ID != start.SubscriptionID {
-		t.Fatalf("stream.end id = %q, want %q", end.ID, start.SubscriptionID)
+	if ending.ID != start.SubscriptionID {
+		t.Fatalf("stream.end id = %q, want %q", ending.ID, start.SubscriptionID)
 	}
-	if end.Error != nil {
-		t.Fatalf("stream.end carried an error: %v", end.Error)
+	if ending.Error != nil {
+		t.Fatalf("stream.end carried an error: %v", ending.Error)
 	}
-	if string(end.Data) != `{"lines":2}` {
-		t.Fatalf("stream.end data = %s, want the producer's final payload", end.Data)
+	if string(ending.Data) != `{"lines":2}` {
+		t.Fatalf("stream.end data = %s, want the producer's final payload", ending.Data)
 	}
 }
 
@@ -142,36 +149,36 @@ func TestStreamCancelStopsTheProducer(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	p := newStreamProbe()
-	RegisterHandler("test.streamCancel", p.handler(nil))
+	probe := newStreamProbe()
+	RegisterHandler("test.streamCancel", probe.handler(nil))
 	t.Cleanup(func() { unregisterHandler("test.streamCancel") })
 
-	h := newHarness(t, ctx)
-	c := h.dial(ctx)
+	hn := newHarness(t, ctx)
+	cl := hn.dial(ctx)
 
 	var start rpc.StreamStart
-	if e := c.call("test.streamCancel", rpc.Empty{}, &start); e != nil {
-		t.Fatalf("starting stream: %v", e)
+	if failure := cl.call("test.streamCancel", rpc.Empty{}, &start); failure != nil {
+		t.Fatalf("starting the stream: %v", failure)
 	}
-	<-p.started
+	<-probe.began
 
-	end := c.cancelStreamAndAwaitEnd(start.SubscriptionID)
+	ending := cl.cancelStreamAndAwaitEnd(start.SubscriptionID)
 
 	select {
-	case err := <-p.done:
+	case err := <-probe.finished:
 		if err == nil {
-			t.Fatal("producer stopped without a cancellation error")
+			t.Fatal("the producer stopped without a cancellation error")
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("cancelling the stream did not stop the producer")
+		t.Fatal("cancelling the stream left the producer running")
 	}
 
-	if end.Error != nil {
-		t.Fatalf("a cancelled stream must end cleanly, got %v", end.Error)
+	if ending.Error != nil {
+		t.Fatalf("a cancelled stream must end cleanly, got %v", ending.Error)
 	}
 
-	// The id is gone: cancelling twice is a not_found, not a second cancel.
-	if e := c.call("stream.cancel", rpc.StreamCancel{ID: start.SubscriptionID}, nil); e == nil {
+	// The id is gone: a second cancel is a not_found, not another cancel.
+	if e := cl.call("stream.cancel", rpc.StreamCancel{ID: start.SubscriptionID}, nil); e == nil {
 		t.Fatal("cancelling an ended stream should be not_found")
 	}
 }
@@ -180,30 +187,30 @@ func TestStreamDisconnectCancelsTheProducer(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	p := newStreamProbe()
-	RegisterHandler("test.streamDisconnect", p.handler(nil))
+	probe := newStreamProbe()
+	RegisterHandler("test.streamDisconnect", probe.handler(nil))
 	t.Cleanup(func() { unregisterHandler("test.streamDisconnect") })
 
-	h := newHarness(t, ctx)
-	c := h.dial(ctx)
+	hn := newHarness(t, ctx)
+	cl := hn.dial(ctx)
 
 	var start rpc.StreamStart
-	if e := c.call("test.streamDisconnect", rpc.Empty{}, &start); e != nil {
-		t.Fatalf("starting stream: %v", e)
+	if failure := cl.call("test.streamDisconnect", rpc.Empty{}, &start); failure != nil {
+		t.Fatalf("starting the stream: %v", failure)
 	}
-	s := <-p.started
+	live := <-probe.began
 
-	c.conn.Close()
+	cl.conn.Close()
 
 	select {
-	case <-p.done:
+	case <-probe.finished:
 	case <-time.After(2 * time.Second):
-		t.Fatal("disconnecting did not stop the producer")
+		t.Fatal("disconnecting left the producer running")
 	}
-	if s.Context().Err() == nil {
+	if live.Context().Err() == nil {
 		t.Fatal("the stream context is still live after a disconnect")
 	}
-	if s.conn.CancelStream(s.ID()) {
+	if live.conn.CancelStream(live.ID()) {
 		t.Fatal("the stream is still registered after a disconnect")
 	}
 }
@@ -212,77 +219,77 @@ func TestStreamSendFailsAfterCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	h := newHarness(t, ctx)
-	c := h.dial(ctx)
-	h.srv.subsMu.RLock()
+	hn := newHarness(t, ctx)
+	cl := hn.dial(ctx)
+	hn.srv.subsMu.RLock()
 	var conn *Conn
-	for _, cc := range h.srv.conns {
-		conn = cc
+	for _, candidate := range hn.srv.conns {
+		conn = candidate
 	}
-	h.srv.subsMu.RUnlock()
-	_ = c
+	hn.srv.subsMu.RUnlock()
+	_ = cl
 
-	sctx, scancel := context.WithCancel(ctx)
-	s := &Stream{id: "sub-test", conn: conn, ctx: sctx, cancel: scancel}
-	scancel()
+	streamCtx, stop := context.WithCancel(ctx)
+	s := &Stream{id: "sub-test", conn: conn, ctx: streamCtx, cancel: stop}
+	stop()
 	if err := s.Send(map[string]string{"line": "x"}); err == nil {
 		t.Fatal("Send on a cancelled stream should fail")
 	}
 }
 
-// TestSubscribeRepliesWithoutWaitingForAScan is an open follow-up:
-// `state.subscribe {include: ["stats"]}` used to rescan before replying, so on
-// a machine where collecting stats is slow the first snapshot arrived seconds
-// late. The reply now comes from the cache — stats may be null in it — and the
-// tick the subscription wakes delivers them in the first delta.
+// TestSubscribeRepliesWithoutWaitingForAScan covers an open follow-up:
+// `state.subscribe {include: ["stats"]}` used to rescan before it replied, so
+// on a machine where collecting stats is slow the first snapshot turned up
+// seconds late. The reply now comes from the cache — stats may be null in it —
+// and the tick the subscription wakes carries them in the first delta.
 func TestSubscribeRepliesWithoutWaitingForAScan(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	const scanDelay = 700 * time.Millisecond
-	h := &testHarness{t: t}
-	h.rows = []ports.ListeningPort{{
+	hn := &testHarness{t: t}
+	hn.rows = []ports.ListeningPort{{
 		Port: 8123, PID: 42, Process: "python3", Command: "python3 -m http.server",
 	}}
-	h.loop = scanner.New(scanner.Options{
+	hn.loop = scanner.New(scanner.Options{
 		DaemonVersion: "test",
 		Scan: func(inc scanner.Include) ([]ports.ListeningPort, error) {
 			time.Sleep(scanDelay)
-			h.mu.Lock()
-			defer h.mu.Unlock()
-			out := append([]ports.ListeningPort{}, h.rows...)
+			hn.mu.Lock()
+			defer hn.mu.Unlock()
+			rows := append([]ports.ListeningPort{}, hn.rows...)
 			if inc.Stats {
-				for i := range out {
-					out[i].CPUPercent, out[i].MemoryRSS = 12.5, 1<<20
+				for i := range rows {
+					rows[i].CPUPercent, rows[i].MemoryRSS = 12.5, 1<<20
 				}
 			}
-			return out, nil
+			return rows, nil
 		},
 	})
-	h.srv = New(Options{Socket: "/test/option-berth.sock", Version: "test", Scanner: h.loop})
-	go h.loop.Run(ctx)
-	c := h.dial(ctx)
+	hn.srv = New(Options{Socket: "/test/option-berth.sock", Version: "test", Scanner: hn.loop})
+	go hn.loop.Run(ctx)
+	cl := hn.dial(ctx)
 
-	start := time.Now()
+	started := time.Now()
 	var snap state.Snapshot
-	if e := c.call("state.subscribe", rpc.StateSubscribeParams{
+	if e := cl.call("state.subscribe", rpc.StateSubscribeParams{
 		Include: rpc.Include{"stats"},
 	}, &snap); e != nil {
 		t.Fatalf("state.subscribe: %v", e)
 	}
-	if took := time.Since(start); took > 100*time.Millisecond {
+	if took := time.Since(started); took > 100*time.Millisecond {
 		t.Fatalf("state.subscribe replied after %v against a %v scan, want under 100ms", took, scanDelay)
 	}
 
 	// The woken tick carries the fields the subscriber asked for.
-	delta := c.nextDelta()
+	delta := cl.nextDelta()
 	if len(delta.Ports.Added) != 1 {
 		t.Fatalf("first delta = %+v, want the port", delta.Ports)
 	}
-	if delta.Ports.Added[0].Stats == nil || delta.Ports.Added[0].Stats.CPUPercent != 12.5 {
-		t.Fatalf("first delta carries stats %+v, want the collected ones", delta.Ports.Added[0].Stats)
+	if stats := delta.Ports.Added[0].Stats; stats == nil || stats.CPUPercent != 12.5 {
+		t.Fatalf("first delta carries stats %+v, want the collected ones", stats)
 	}
-	// Seq semantics are unchanged: the delta continues from the snapshot
+	// Seq semantics are unchanged: the delta continues from the snapshot that
 	// the subscribe reply carried.
 	if delta.Seq != snap.Seq+1 {
 		t.Errorf("delta seq = %d, want the snapshot's %d plus one", delta.Seq, snap.Seq)
@@ -290,28 +297,29 @@ func TestSubscribeRepliesWithoutWaitingForAScan(t *testing.T) {
 }
 
 // A producer may finish before the cancel handler's acknowledgment is queued.
-// c.call deliberately skips notifications, so this test must collect BOTH
-// frames rather than assuming a response-before-notification ordering.
+// c.call deliberately skips notifications, so this helper has to collect BOTH
+// frames rather than assume a response-before-notification ordering.
 func (c *testClient) cancelStreamAndAwaitEnd(subscription string) rpc.StreamEnd {
 	c.t.Helper()
 	request := c.send("stream.cancel", rpc.StreamCancel{ID: subscription})
 	replied, ended := false, false
-	var end rpc.StreamEnd
+	var ending rpc.StreamEnd
 	for !replied || !ended {
 		msg := c.read()
-		if msg.IsResponse() && string(msg.ID) == request {
+		switch {
+		case msg.IsResponse() && string(msg.ID) == request:
 			if msg.Error != nil {
 				c.t.Fatalf("stream.cancel: %v", msg.Error)
 			}
-			var ok rpc.OKResult
-			if err := json.Unmarshal(msg.Result, &ok); err != nil || !ok.OK {
+			var ack rpc.OKResult
+			if err := json.Unmarshal(msg.Result, &ack); err != nil || !ack.OK {
 				c.t.Fatalf("invalid cancellation acknowledgment: %v", err)
 			}
 			if replied {
 				c.t.Fatal("duplicate cancellation acknowledgment")
 			}
 			replied = true
-		} else if msg.IsNotification() && msg.Method == rpc.MethodStreamEnd {
+		case msg.IsNotification() && msg.Method == rpc.MethodStreamEnd:
 			var next rpc.StreamEnd
 			if err := json.Unmarshal(msg.Params, &next); err != nil {
 				c.t.Fatal(err)
@@ -322,8 +330,8 @@ func (c *testClient) cancelStreamAndAwaitEnd(subscription string) rpc.StreamEnd 
 			if ended {
 				c.t.Fatal("duplicate stream end")
 			}
-			end, ended = next, true
+			ending, ended = next, true
 		}
 	}
-	return end
+	return ending
 }
