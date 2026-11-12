@@ -475,7 +475,8 @@ tightens, never loosens, each service's `ready_timeout:`: each service's deadlin
 two comes first; it must be positive and must enable `--wait` or `--ready` at the same time, otherwise
 it exits 2 without running the start; a service that times out has state `failed` with reason
 `ready_timeout`, the message says whether the timeout came from that service's readiness budget or
-from the caller's `--wait-timeout` ceiling, and the command exits with code 1. Only runs newly started
+from the caller's `--wait-timeout` ceiling and names the one that raises it (`ready_timeout:` for the
+budget, `--wait-timeout` for the ceiling), and the command exits with code 1. Only runs newly started
 this time that time out enter stop cleanup; existing runs are not stopped or restarted because this
 wait failed. The cleanup names each run it started by `run_id`: a run another controller started for
 the same service while the wait was still running is a different run and is left alone. A daemon that

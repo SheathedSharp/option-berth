@@ -27,6 +27,19 @@ func TestStartChunkReadyTimeoutFallsBackToDefault(t *testing.T) {
 	}
 }
 
+// The service's own budget ran out: the message must name the manifest field,
+// because that is the only way to raise it.
+func TestStartTimeoutMessagePointsAtTheManifestBudget(t *testing.T) {
+	budget := startTimeoutMessage(startSelection{budget: 30 * time.Second}, "api", 0)
+	if !strings.Contains(budget, "ready_timeout:") {
+		t.Fatalf("budget message = %q, want it to name ready_timeout:", budget)
+	}
+	ceiling := startTimeoutMessage(startSelection{budget: 3 * time.Minute, capped: true}, "api", 30*time.Second)
+	if !strings.Contains(ceiling, "--wait-timeout") || strings.Contains(ceiling, "ready_timeout:") {
+		t.Fatalf("ceiling message = %q, want the flag and not the manifest field", ceiling)
+	}
+}
+
 // An owned run is measured from its own StartedAt, so the time it already
 // spent starting counts against its budget. A skipped service is measured from
 // the wait start even though it has been running for a while.
