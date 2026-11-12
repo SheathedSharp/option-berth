@@ -16,7 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/ins
 
 | 内容 | 位置 |
 |---|---|
-| 二进制 | `~/.local/bin/oberth`、`~/.local/bin/jev-attention` |
+| 二进制 | `~/.local/bin/oberth` |
 | 许可与构建清单 | `~/.local/share/option-berth` |
 | PATH | 已有的 shell 启动文件里加一行（不新建启动文件） |
 | 运行状态 | `~/.option-berth`（安装器不创建、不改动） |
@@ -71,19 +71,19 @@ irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps
 
 | 内容 | 位置 |
 |---|---|
-| 二进制 | `%LOCALAPPDATA%\option-berth\bin\oberth.exe`、`jev-attention.exe` |
+| 二进制 | `%LOCALAPPDATA%\option-berth\bin\oberth.exe` |
 | 许可与构建清单 | `%LOCALAPPDATA%\option-berth` |
 | PATH | 当前用户的 PATH（不改系统 PATH） |
 | 运行状态 | `%USERPROFILE%\.option-berth` |
 
 固定版本或不改 PATH：`.\install.ps1 -Version v1.0.0 -NoModifyPath`。
-Windows 安装器在替换文件前会检查 `oberth` / `jev-attention` 是否正在运行；
+Windows 安装器在替换文件前会检查 `oberth` 是否正在运行；
 正在运行就先执行 `oberth daemon stop`，再重新安装。
 
 ## 手动下载发布包
 
 不想执行脚本时，从 [Releases](https://github.com/SheathedSharp/option-berth/releases)
-下载对应平台的压缩包，先核对 `SHA256SUMS`，再把 `oberth` 与 `jev-attention` 放到 PATH 中的目录：
+下载对应平台的压缩包，先核对 `SHA256SUMS`，再把 `oberth` 放到 PATH 中的目录：
 
 ```sh
 # darwin-arm64 and v1.0.0 as an example
@@ -92,7 +92,6 @@ curl -fLO https://github.com/SheathedSharp/option-berth/releases/download/v1.0.0
 shasum -a 256 -c option-berth-v1.0.0-darwin-arm64.tar.gz.sha256
 tar -xzf option-berth-v1.0.0-darwin-arm64.tar.gz
 install -m 0755 option-berth-v1.0.0-darwin-arm64/oberth ~/.local/bin/oberth
-install -m 0755 option-berth-v1.0.0-darwin-arm64/jev-attention ~/.local/bin/jev-attention
 ```
 
 压缩包内的 `LICENSE`、`licenses/` 与 `build-manifest.json` 建议保留；手动安装时它们不会自动复制。
@@ -112,7 +111,7 @@ sudo dnf install ./option-berth-1.0.0-1.x86_64.rpm
 sudo dnf remove option-berth
 ```
 
-安装包把 `oberth`、`jev-attention` 放到 `/usr/bin`，许可与构建清单放到
+安装包把 `oberth` 放到 `/usr/bin`，许可与构建清单放到
 `/usr/share/doc/option-berth`。`apt remove` / `dnf remove` 不删除 `~/.option-berth` 运行状态；
 确认不再需要后再执行 `oberth daemon stop` 并删除该目录。arm64 使用 `_arm64.deb` 与
 `.aarch64.rpm` 文件名。
@@ -134,7 +133,7 @@ irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uninstall.
 卸载器会：
 
 - 尽量先执行 `oberth daemon stop`，避免留下正在运行的旧进程；
-- 删除 `oberth` 与 `jev-attention`；
+- 删除 `oberth`；
 - 删除安装器放在 `~/.local/share/option-berth` 的许可与构建清单；
 - 删除安装器写进 shell 启动文件的那一行（只删自己写的精确行，不动其他 PATH 配置）。
 
@@ -158,7 +157,7 @@ curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uni
 
 ```sh
 oberth daemon stop
-rm -f ~/.local/bin/oberth ~/.local/bin/jev-attention
+rm -f ~/.local/bin/oberth
 rm -rf ~/.local/share/option-berth
 # Remove runtime state only when needed
 rm -rf ~/.option-berth

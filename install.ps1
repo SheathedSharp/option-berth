@@ -5,7 +5,7 @@ Install the released option-berth CLI on Windows without a Go toolchain.
 
 .DESCRIPTION
 Resolves the latest engine release, downloads the Windows archive for this
-machine, verifies its SHA256 sidecar, and installs oberth.exe + jev-attention.exe
+machine, verifies its SHA256 sidecar, and installs oberth.exe
 into %LOCALAPPDATA%\option-berth\bin. It starts no services and writes no Git data.
 
 When the official GitHub host is unreachable, downloads fall back to a short list
@@ -185,7 +185,7 @@ function Install-Oberth {
 
         Expand-Archive -Path $archivePath -DestinationPath $tmp -Force
         $root = Join-Path $tmp "option-berth-$Version-windows-$arch"
-        foreach ($name in 'oberth.exe', 'jev-attention.exe') {
+        foreach ($name in 'oberth.exe') {
             if (-not (Test-Path -LiteralPath (Join-Path $root $name) -PathType Leaf)) {
                 throw "archive is missing $name"
             }
@@ -193,13 +193,13 @@ function Install-Oberth {
 
         # A running executable is locked on Windows; refuse before replacing
         # either file so the install cannot end up half old and half new.
-        $running = @(Get-Process -Name 'oberth', 'jev-attention' -ErrorAction SilentlyContinue)
+        $running = @(Get-Process -Name 'oberth' -ErrorAction SilentlyContinue)
         if ($running.Count) {
             throw 'oberth is running; stop its services before installing'
         }
 
         New-Item -ItemType Directory -Force -Path $Dir | Out-Null
-        foreach ($name in 'oberth.exe', 'jev-attention.exe') {
+        foreach ($name in 'oberth.exe') {
             $target = Join-Path $Dir $name
             try {
                 Copy-Item -LiteralPath (Join-Path $root $name) -Destination $target -Force

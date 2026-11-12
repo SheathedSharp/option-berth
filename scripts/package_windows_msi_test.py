@@ -21,7 +21,6 @@ def make_zip(directory: Path) -> Path:
     stage = directory / "stage" / stem
     (stage / "licenses").mkdir(parents=True)
     (stage / "oberth.exe").write_bytes(b"fixture oberth\n")
-    (stage / "jev-attention.exe").write_bytes(b"fixture jev\n")
     (stage / "LICENSE").write_text("fixture licence\n")
     (stage / "build-manifest.json").write_text("{}\n")
     (stage / "licenses" / "engine-LICENSE").write_text("fixture engine licence\n")
@@ -52,7 +51,7 @@ class WindowsMsiTests(unittest.TestCase):
         self.assertEqual(package.name, f"option-berth-{VERSION}-windows-amd64.msi")
         self.assertTrue(package.with_name(package.name + ".sha256").is_file())
         files = subprocess.run(["msiinfo", "export", str(package), "File"], capture_output=True, text=True, check=True)
-        for name in ("oberth.exe", "jev-attention.exe", "LICENSE", "build-manifest.json", "engine-LICENSE"):
+        for name in ("oberth.exe", "LICENSE", "build-manifest.json", "engine-LICENSE"):
             self.assertIn(name, files.stdout)
         environment = subprocess.run(
             ["msiinfo", "export", str(package), "Environment"], capture_output=True, text=True, check=True

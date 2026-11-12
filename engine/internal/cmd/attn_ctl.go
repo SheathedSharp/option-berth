@@ -1,21 +1,18 @@
 package cmd
 
-// The setup half of `oberth attn`: status, enable, test, disable and preview.
-// These are the only commands that write the owner-only settings file, and the
-// only ones that print what would be sent. Everything here is offline except
-// `enable` and `test`, which probe once with a synthetic redacted event.
+// The person-facing half of `oberth attn`: status, config, on, off and test.
+// `config` is the only verb that writes credentials, and it probes once before
+// writing; `on` and `off` flip one boolean and never touch the network.
 
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/attn"
 	"github.com/sheathedsharp/option-berth/engine/internal/attn/model"
 	"github.com/sheathedsharp/option-berth/engine/internal/attn/runner"
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
@@ -23,39 +20,57 @@ import (
 )
 
 var (
-	attnEnablePreset    string
-	attnEnableEndpoint  string
-	attnEnableModel     string
-	attnEnableTimeout   time.Duration
-	attnKeyStdinFlag    bool
-	attnKeyEnvFlag      string
-	attnDisableForget   bool
-	attnPreviewTaskFlag string
-	attnPreviewAuthFlag []string
+	attnConfigPreset   string
+	attnConfigEndpoint string
+	attnConfigModel    string
+	attnConfigTimeout  time.Duration
+	attnKeyStdinFlag   bool
+	attnKeyEnvFlag     string
+	attnOffForgetFlag  bool
 )
 
 var attnStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show whether the assessment is on, and where its settings come from",
+	Short: "Show the resolved assessment state and its local quality data",
 	Long: "Report the resolved configuration without contacting a provider: on or off,\n" +
-		"endpoint, model, where the key came from, and the fixed reason when it cannot\n" +
-		"be used. The key itself is never printed, only a short fingerprint.",
+		"endpoint, model, where the key came from, the fixed reason when it cannot be\n" +
+		"used, and a summary of the local quality ledger. The key itself is never\n" +
+		"printed, only a short fingerprint.",
 	Args: cobra.NoArgs,
 	RunE: runAttnStatus,
 }
 
-var attnEnableCmd = &cobra.Command{
-	Use:   "enable",
-	Short: "Store a key, prove it works, and turn the optional assessment on",
-	Long: "One step, in this order: choose an endpoint and model (directly, or through a\n" +
-		"preset that fills both), read the key from standard input (--key-stdin), an\n" +
-		"environment variable (--key-env NAME), or a hidden terminal prompt; send one\n" +
-		"synthetic redacted event to prove the key answers; only then write the\n" +
-		"owner-only attn.json. A probe that fails writes nothing and prints the fixed\n" +
-		"reason, so a typo cannot leave a configuration that breaks every task.\n\n" +
-		"The command finishes by printing exactly what will and will not be sent.",
+var attnConfigCmd = &cobra.Command{
+	Use:   "config",
+	Short: "Store the endpoint, model and key, proving the key answers",
+	Long: "Write the owner-only attn.json. Give an endpoint and model directly, or use a\n" +
+		"preset that fills both. The key comes from standard input (--key-stdin), an\n" +
+		"environment variable (--key-env NAME), a hidden terminal prompt, or the\n" +
+		"already stored key when no key flag is given. One synthetic redacted request\n" +
+		"proves the configuration before anything is written; a failed probe leaves the\n" +
+		"existing file untouched. This verb changes credentials, not consent: it never\n" +
+		"turns the assessment on.",
 	Args: cobra.NoArgs,
-	RunE: runAttnEnable,
+	RunE: runAttnConfig,
+}
+
+var attnOnCmd = &cobra.Command{
+	Use:   "on",
+	Short: "Turn the assessment on (offline, one boolean)",
+	Long: "Set \"enabled\": true in attn.json. This is a consent flip, not a probe: run\n" +
+		"`oberth attn config` first to store a working configuration, and\n" +
+		"`oberth attn test` afterwards to verify it.",
+	Args: cobra.NoArgs,
+	RunE: runAttnOn,
+}
+
+var attnOffCmd = &cobra.Command{
+	Use:   "off",
+	Short: "Turn the assessment off but keep the stored key",
+	Long: "Set \"enabled\": false in attn.json. The key stays unless --forget is given, so\n" +
+		"turning it back on does not need it typed again.",
+	Args: cobra.NoArgs,
+	RunE: runAttnOff,
 }
 
 var attnTestCmd = &cobra.Command{
@@ -67,49 +82,23 @@ var attnTestCmd = &cobra.Command{
 	RunE: runAttnTest,
 }
 
-var attnDisableCmd = &cobra.Command{
-	Use:   "disable",
-	Short: "Stop using the assessment but keep the stored key",
-	Long: "Turn the assessment off. The key stays in attn.json unless --forget is given, so\n" +
-		"enabling again does not need it typed a second time. --forget removes it.",
-	Args: cobra.NoArgs,
-	RunE: runAttnDisable,
-}
-
-var attnPreviewCmd = &cobra.Command{
-	Use:   "preview",
-	Short: "Print the redacted request body for this worktree, without sending it",
-	Long: "Show exactly what would cross the boundary for the current status event: the\n" +
-		"worktree hash, the event summary, the evidence references and the fixed option\n" +
-		"IDs. It never contacts a provider and never includes logs, paths or the key.",
-	Args: cobra.NoArgs,
-	RunE: runAttnPreview,
-}
-
 func init() {
-	attnEnableCmd.Flags().StringVar(&attnEnablePreset, "preset", "",
+	attnConfigCmd.Flags().StringVar(&attnConfigPreset, "preset", "",
 		"Fill endpoint and model from a preset ("+model.PresetNames()+"); optional")
-	attnEnableCmd.Flags().StringVar(&attnEnableEndpoint, "endpoint", "", "Endpoint URL (required unless --preset fills it)")
-	attnEnableCmd.Flags().StringVar(&attnEnableModel, "model", "", "Model name (required unless --preset fills it)")
-	attnEnableCmd.Flags().DurationVar(&attnEnableTimeout, "timeout", 0, "Request timeout (default 10s)")
-	attnEnableCmd.Flags().BoolVar(&attnKeyStdinFlag, "key-stdin", false,
+	attnConfigCmd.Flags().StringVar(&attnConfigEndpoint, "endpoint", "", "Endpoint URL (required unless --preset fills it)")
+	attnConfigCmd.Flags().StringVar(&attnConfigModel, "model", "", "Model name (required unless --preset fills it)")
+	attnConfigCmd.Flags().DurationVar(&attnConfigTimeout, "timeout", 0, "Request timeout (default 10s)")
+	attnConfigCmd.Flags().BoolVar(&attnKeyStdinFlag, "key-stdin", false,
 		"Read the key from the first line of standard input")
-	attnEnableCmd.Flags().StringVar(&attnKeyEnvFlag, "key-env", "",
+	attnConfigCmd.Flags().StringVar(&attnKeyEnvFlag, "key-env", "",
 		"Read the key from this environment variable")
 
-	attnDisableCmd.Flags().BoolVar(&attnDisableForget, "forget", false, "Also delete the stored key")
-
-	attnPreviewCmd.Flags().StringVar(&attnPreviewTaskFlag, "task", "",
-		"Task summary to include (defaults to a generic one)")
-	attnPreviewCmd.Flags().StringSliceVar(&attnPreviewAuthFlag, "authorize", nil,
-		"Authorized option IDs to include")
-
-	attnCmd.AddCommand(attnStatusCmd, attnEnableCmd, attnTestCmd, attnDisableCmd, attnPreviewCmd)
+	attnOffCmd.Flags().BoolVar(&attnOffForgetFlag, "forget", false, "Also delete the stored key")
 }
 
-// attnPrint prints the document a script reads, or a short human block. The
-// default is human: these commands are run once by a person during setup, and
-// the JSON forms exist for the client and for tests.
+// attnPrint prints the document a script reads, or a short human block. Setup
+// verbs are run by a person, so the default is human; JSON exists for the client
+// and for tests.
 func attnPrint(value any, human func() string) error {
 	if attnJSONFlag {
 		return writeAttnValue(os.Stdout, value)
@@ -129,6 +118,14 @@ func runAttnStatus(cmd *cobra.Command, _ []string) error {
 			state["key_fingerprint"] = fingerprint
 		}
 	}
+	if attnStatusSinceFlag < 0 {
+		return usageError{errors.New("--since must not be negative")}
+	}
+	report, err := runner.QualityReport(attnStatusSinceFlag, attnQualityProjectFlag)
+	if err != nil {
+		return err
+	}
+	state["quality"] = report
 	return attnPrint(state, func() string {
 		var b strings.Builder
 		if consent.Enabled {
@@ -142,11 +139,31 @@ func runAttnStatus(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintf(&b, "  endpoint  %s\n", consent.Endpoint)
 		fmt.Fprintf(&b, "  model     %s\n", consent.Model)
 		fmt.Fprintf(&b, "  key       %s\n", keySourceLine(consent.KeySource, state["key_fingerprint"]))
+		fmt.Fprintf(&b, "  quality   %s\n", qualitySummary(report, attnStatusSinceFlag))
 		if !consent.Enabled {
 			fmt.Fprintf(&b, "  next      %s\n", model.ReasonHint(consent.Reason))
 		}
 		return strings.TrimRight(b.String(), "\n")
 	})
+}
+
+func qualitySummary(report model.QualityReport, since time.Duration) string {
+	window := "all"
+	if since > 0 {
+		window = strings.TrimSuffix(strings.TrimSuffix(since.String(), "0m0s"), "0s")
+	}
+	parts := []string{
+		fmt.Sprintf("window %s", window),
+		fmt.Sprintf("assessments %d", report.AssessmentRecords),
+		fmt.Sprintf("model calls %d", report.Sessions.ModelCalls),
+		fmt.Sprintf("cache hits %d", report.Sessions.CacheHits),
+		fmt.Sprintf("labeled %d/%d", report.LabeledCases, report.UniqueCases),
+	}
+	if report.HumanDecision.Precision != nil && report.HumanDecision.Recall != nil {
+		parts = append(parts, fmt.Sprintf("precision %.2f recall %.2f",
+			*report.HumanDecision.Precision, *report.HumanDecision.Recall))
+	}
+	return strings.Join(parts, " · ")
 }
 
 func keySourceLine(source model.Source, fingerprint any) string {
@@ -159,79 +176,183 @@ func keySourceLine(source model.Source, fingerprint any) string {
 	return string(source)
 }
 
-func runAttnEnable(cmd *cobra.Command, _ []string) error {
+func runAttnConfig(cmd *cobra.Command, _ []string) error {
 	if attnKeyStdinFlag && attnKeyEnvFlag != "" {
 		return usageError{errors.New("--key-stdin and --key-env are mutually exclusive")}
 	}
-	current, _, err := model.LoadLocalConfig()
+	current, present, err := model.LoadLocalConfig()
 	if err != nil {
-		// A malformed file is replaceable: enable is the repair path.
+		// A malformed file is replaceable: config is the repair path.
 		current = model.LocalConfig{}
 	}
-	options := model.EnableOptions{
-		Preset: attnEnablePreset, Endpoint: attnEnableEndpoint, Model: attnEnableModel,
-		Timeout: attnEnableTimeout, KeyKind: model.KeyFromPrompt,
+	if noAttnConfigFlags() {
+		return attnPrint(current.RedactedSettings(), func() string {
+			if !present {
+				return "Attention: not configured. Run `oberth attn config` with --preset or --endpoint/--model."
+			}
+			return humanSettings(current)
+		})
 	}
+	options := model.EnableOptions{
+		Preset: attnConfigPreset, Endpoint: attnConfigEndpoint,
+		Model: attnConfigModel, Timeout: attnConfigTimeout,
+	}
+	next := options.SettingsFrom(current)
 	// Validate the endpoint and model before asking for a secret: a person who
 	// forgot --preset should not type a key only to be told the shape is wrong.
-	next := options.SettingsFrom(current)
 	if err := next.Validate(); err != nil {
 		return usageError{err}
 	}
-	switch {
-	case attnKeyStdinFlag:
-		options.KeyKind = model.KeyFromStdin
-	case attnKeyEnvFlag != "":
-		options.KeyKind = model.KeyFromEnv
-		options.KeyEnv = attnKeyEnvFlag
-	default:
-		key, err := readSecretFromTerminal()
-		if err != nil {
-			return err
-		}
-		options.KeyValue = key
-	}
-	key, err := options.ResolveKey(os.Getenv, func() (string, error) {
-		return bufio.NewReader(os.Stdin).ReadString('\n')
-	})
-	if err != nil {
-		return err
+	key, keyErr := attnConfigKey(next.APIKey)
+	if keyErr != nil {
+		return keyErr
 	}
 	next.APIKey = key
 	if err := next.Validate(); err != nil {
 		return usageError{err}
 	}
-
 	ctx, cancel := context.WithTimeout(cmd.Context(), next.Timeout()+time.Second)
 	defer cancel()
 	probe := model.ProbeOnce(ctx, next)
 	if !probe.OK {
-		// Nothing is written: a configuration that does not work must not
-		// replace one that might.
+		// Nothing is written: a configuration that does not work must not replace
+		// one that might.
 		return failHint("attn_probe_failed",
-			fmt.Sprintf("the provider did not accept this key (%s)", probe.Reason),
-			probe.Text)
+			fmt.Sprintf("the endpoint did not accept this key (%s)", probe.Reason), probe.Text)
 	}
 	path := paths.AttnConfigPath()
 	if err := model.WriteSettings(path, next); err != nil {
 		return err
 	}
 	state := model.Resolved{
-		Enabled: true, ConsentSource: model.SourceSettings, Preset: next.Preset,
+		Enabled: next.Enabled, ConsentSource: model.SourceSettings, Preset: next.Preset,
 		Endpoint: next.Endpoint, Model: next.Model, Key: next.APIKey,
 		KeySource: model.SourceSettings, Timeout: next.Timeout(),
 	}
 	return attnPrint(map[string]any{
-		"status":   "enabled",
+		"status":   "configured",
 		"path":     path,
 		"settings": state.RedactedState(),
 		"probe":    map[string]any{"ok": true, "model": probe.Model, "latency_ms": probe.Latency.Milliseconds()},
 		"sends":    model.SendsSummary(),
 	}, func() string {
-		return fmt.Sprintf("Attention: enabled (%s, key %s)\n  %s\n\n%s",
+		return fmt.Sprintf("Attention: configured (%s, key %s)\n  %s\n\n%s",
 			next.Model, keySourceLine(model.SourceSettings, model.KeyFingerprint(next.APIKey)),
 			path, model.HumanSendsSummary())
 	})
+}
+
+func noAttnConfigFlags() bool {
+	return strings.TrimSpace(attnConfigPreset) == "" && strings.TrimSpace(attnConfigEndpoint) == "" &&
+		strings.TrimSpace(attnConfigModel) == "" && attnConfigTimeout == 0 &&
+		!attnKeyStdinFlag && strings.TrimSpace(attnKeyEnvFlag) == ""
+}
+
+// attnConfigKey answers which secret to store. An explicit source wins; no key
+// flag keeps the stored key, or prompts when there is none to keep.
+func attnConfigKey(stored string) (string, error) {
+	switch {
+	case attnKeyStdinFlag:
+		line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		if err != nil {
+			return "", err
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			return "", usageError{errors.New("standard input did not contain a key")}
+		}
+		return line, nil
+	case attnKeyEnvFlag != "":
+		value := strings.TrimSpace(os.Getenv(attnKeyEnvFlag))
+		if value == "" {
+			return "", usageError{fmt.Errorf("environment variable %s is empty", attnKeyEnvFlag)}
+		}
+		return value, nil
+	case strings.TrimSpace(stored) != "":
+		return strings.TrimSpace(stored), nil
+	default:
+		key, err := readSecretFromTerminal()
+		if err != nil {
+			return "", err
+		}
+		return key, nil
+	}
+}
+
+func humanSettings(cfg model.LocalConfig) string {
+	var b strings.Builder
+	state := "off"
+	if cfg.Enabled {
+		state = "on"
+	}
+	fmt.Fprintf(&b, "Attention: %s\n", state)
+	if cfg.Preset != "" {
+		fmt.Fprintf(&b, "  preset    %s\n", cfg.Preset)
+	}
+	fmt.Fprintf(&b, "  endpoint  %s\n", cfg.Endpoint)
+	fmt.Fprintf(&b, "  model     %s\n", cfg.Model)
+	fmt.Fprintf(&b, "  key       %s\n", keySourceLine(model.SourceSettings, model.KeyFingerprint(cfg.APIKey)))
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func runAttnOn(cmd *cobra.Command, _ []string) error {
+	cfg, present, err := model.LoadLocalConfig()
+	if err != nil {
+		return failHint("attn_invalid_config", "attention settings are not usable",
+			"run `oberth attn config` to rewrite them")
+	}
+	if !present {
+		return failHint("attn_not_configured", "attention is not configured",
+			"run `oberth attn config` first")
+	}
+	if cfg.Enabled {
+		return attnPrint(map[string]any{"status": "already_on"}, func() string {
+			return "Attention: already on"
+		})
+	}
+	cfg.Enabled = true
+	if err := cfg.Validate(); err != nil {
+		return failHint("attn_invalid_config", "attention is not fully configured",
+			"run `oberth attn config` to supply the endpoint and model")
+	}
+	if strings.TrimSpace(cfg.APIKey) == "" {
+		return failHint("attn_no_key", "no key is stored",
+			"run `oberth attn config --key-stdin` (or --key-env) to store one")
+	}
+	path := paths.AttnConfigPath()
+	if err := model.WriteSettings(path, cfg); err != nil {
+		return err
+	}
+	return attnPrint(map[string]any{"status": "enabled", "path": path}, func() string {
+		return "Attention: on\n  run `oberth attn test` to verify it answers"
+	})
+}
+
+func runAttnOff(cmd *cobra.Command, _ []string) error {
+	cfg, present, err := model.LoadLocalConfig()
+	if err != nil {
+		cfg = model.LocalConfig{}
+	}
+	if !present && cfg.APIKey == "" && !attnOffForgetFlag {
+		return attnPrint(map[string]any{"status": "already_off"}, func() string {
+			return "Attention: already off"
+		})
+	}
+	path := paths.AttnConfigPath()
+	if err := model.DisableSettings(path, cfg, attnOffForgetFlag); err != nil {
+		return err
+	}
+	status := "disabled"
+	if attnOffForgetFlag {
+		status = "disabled_and_forgotten"
+	}
+	return attnPrint(map[string]any{"status": status, "path": path, "key_kept": !attnOffForgetFlag},
+		func() string {
+			if attnOffForgetFlag {
+				return "Attention: off, stored key removed"
+			}
+			return "Attention: off, stored key kept (use --forget to remove it)"
+		})
 }
 
 func runAttnTest(cmd *cobra.Command, _ []string) error {
@@ -263,7 +384,7 @@ func runAttnTest(cmd *cobra.Command, _ []string) error {
 	}
 	if err := attnPrint(document, func() string {
 		if probe.OK {
-			return fmt.Sprintf("Attention: the provider answered (%s, %dms)", probe.Model, probe.Latency.Milliseconds())
+			return fmt.Sprintf("Attention: the endpoint answered (%s, %dms)", probe.Model, probe.Latency.Milliseconds())
 		}
 		return fmt.Sprintf("Attention: unavailable (%s)\n  next: %s", probe.Reason, probe.Text)
 	}); err != nil {
@@ -273,72 +394,6 @@ func runAttnTest(cmd *cobra.Command, _ []string) error {
 		return errSilent
 	}
 	return nil
-}
-
-func runAttnDisable(cmd *cobra.Command, _ []string) error {
-	cfg, present, err := model.LoadLocalConfig()
-	if err != nil {
-		cfg = model.LocalConfig{}
-	}
-	if !present && cfg.APIKey == "" && !attnDisableForget {
-		// Nothing to turn off. Saying so is better than writing a file that
-		// looks like a decision nobody made.
-		return attnPrint(map[string]any{"status": "already_off"}, func() string {
-			return "Attention: already off"
-		})
-	}
-	path := paths.AttnConfigPath()
-	if err := model.DisableSettings(path, cfg, attnDisableForget); err != nil {
-		return err
-	}
-	status := "disabled"
-	if attnDisableForget {
-		status = "disabled_and_forgotten"
-	}
-	return attnPrint(map[string]any{"status": status, "path": path, "key_kept": !attnDisableForget},
-		func() string {
-			if attnDisableForget {
-				return "Attention: disabled, stored key removed"
-			}
-			return "Attention: disabled, stored key kept (use --forget to remove it)"
-		})
-}
-
-// runAttnPreview builds the request the adapter would send for the current
-// worktree event and prints it. It is the honesty test a person runs before
-// enabling: if what is shown is not acceptable, do not enable.
-func runAttnPreview(cmd *cobra.Command, _ []string) error {
-	status, err := runner.ReadStatus(cmd.Context(), attnOberthFlag, attnProjectFlag)
-	if err != nil {
-		return err
-	}
-	if status.AttnPath == "" {
-		return attnPrint(map[string]any{"status": "clear"}, func() string {
-			return "No current anomaly, so there is nothing to assess."
-		})
-	}
-	artifact, err := attn.ReadFresh(status.AttnPath, time.Time{})
-	if err != nil {
-		return failHint("stale", "the attention artifact is stale", model.ReasonHint(model.ReasonStale))
-	}
-	task := model.TaskContext{
-		Task: firstNonEmptyString(attnPreviewTaskFlag,
-			"Describe what an assessment would send for this event"),
-		AuthorizedOptions: attnPreviewAuthFlag,
-	}
-	if len(task.AuthorizedOptions) == 0 {
-		for _, option := range artifact.Options {
-			task.AuthorizedOptions = append(task.AuthorizedOptions, option.ID)
-		}
-	}
-	body, err := model.PreviewRequest(artifact, task)
-	if err != nil {
-		return usageError{err}
-	}
-	return attnPrint(map[string]any{"status": "preview", "request": body}, func() string {
-		encoded, _ := json.MarshalIndent(body, "", "  ")
-		return string(encoded)
-	})
 }
 
 func firstNonEmptyString(values ...string) string {

@@ -16,7 +16,7 @@ The script resolves the latest release, picks darwin/linux and amd64/arm64 from 
 
 | Content | Location |
 |---|---|
-| Binaries | `~/.local/bin/oberth`, `~/.local/bin/jev-attention` |
+| Binaries | `~/.local/bin/oberth` |
 | Licenses and build manifest | `~/.local/share/option-berth` |
 | PATH | One line added to an existing shell startup file (never a new one) |
 | Runtime state | `~/.option-berth` (the installer neither creates nor modifies it) |
@@ -76,20 +76,19 @@ irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps
 
 | Content | Location |
 |---|---|
-| Binaries | `%LOCALAPPDATA%\option-berth\bin\oberth.exe`, `jev-attention.exe` |
+| Binaries | `%LOCALAPPDATA%\option-berth\bin\oberth.exe` |
 | Licenses and build manifest | `%LOCALAPPDATA%\option-berth` |
 | PATH | The current user's PATH (the system PATH is never modified) |
 | Runtime state | `%USERPROFILE%\.option-berth` |
 
 Pin a version or leave PATH alone: `.\install.ps1 -Version v1.0.0 -NoModifyPath`.
-Before replacing files, the Windows installer checks whether `oberth` / `jev-attention` are running; if
-they are, it runs `oberth daemon stop` first and then reinstalls.
+Before replacing files, the Windows installer checks whether `oberth` is running; if it is, it runs `oberth daemon stop` first and then reinstalls.
 
 ## Download a release manually
 
 When you would rather not run a script, download the archive for your platform from
 [Releases](https://github.com/SheathedSharp/option-berth/releases), verify `SHA256SUMS` first, then put
-`oberth` and `jev-attention` in a directory on PATH:
+`oberth` in a directory on PATH:
 
 ```sh
 # darwin-arm64 and v1.0.0 as an example
@@ -98,7 +97,6 @@ curl -fLO https://github.com/SheathedSharp/option-berth/releases/download/v1.0.0
 shasum -a 256 -c option-berth-v1.0.0-darwin-arm64.tar.gz.sha256
 tar -xzf option-berth-v1.0.0-darwin-arm64.tar.gz
 install -m 0755 option-berth-v1.0.0-darwin-arm64/oberth ~/.local/bin/oberth
-install -m 0755 option-berth-v1.0.0-darwin-arm64/jev-attention ~/.local/bin/jev-attention
 ```
 
 Keeping the archive's `LICENSE`, `licenses/` and `build-manifest.json` is recommended; a manual install
@@ -119,7 +117,7 @@ sudo dnf install ./option-berth-1.0.0-1.x86_64.rpm
 sudo dnf remove option-berth
 ```
 
-The packages put `oberth` and `jev-attention` in `/usr/bin` and the licenses and build manifest in
+The package puts `oberth` in `/usr/bin` and the licenses and build manifest in
 `/usr/share/doc/option-berth`. `apt remove` / `dnf remove` do not delete `~/.option-berth` runtime
 state; once you are sure it is no longer needed, run `oberth daemon stop` and delete that directory.
 arm64 uses the `_arm64.deb` and `.aarch64.rpm` file names.
@@ -141,7 +139,7 @@ irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uninstall.
 The uninstaller:
 
 - Tries `oberth daemon stop` first, so no old process keeps running;
-- Removes `oberth` and `jev-attention`;
+- Removes `oberth`;
 - Removes the licenses and build manifest the installer placed in `~/.local/share/option-berth`;
 - Removes the exact line the installer wrote into a shell startup file (only that line; other PATH
   configuration is untouched).
@@ -168,7 +166,7 @@ A manual uninstall is equivalent to:
 
 ```sh
 oberth daemon stop
-rm -f ~/.local/bin/oberth ~/.local/bin/jev-attention
+rm -f ~/.local/bin/oberth
 rm -rf ~/.local/share/option-berth
 # Remove runtime state only when needed
 rm -rf ~/.option-berth

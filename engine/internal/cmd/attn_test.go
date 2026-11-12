@@ -32,20 +32,20 @@ func TestAttnIsInTheHandoffLayer(t *testing.T) {
 func TestAttnSurfaceIsTheRunnerAndSetupVerbs(t *testing.T) {
 	want := map[string]bool{
 		// the runner: what an agent calls while working
-		"assess": false, "session": false, "feedback": false, "report": false,
+		"assess": false, "feedback": false, "preflight": false,
 		// setup and explanation: what a person calls once
-		"status": false, "enable": false, "test": false, "disable": false, "preview": false,
+		"status": false, "config": false, "on": false, "off": false, "test": false,
 	}
 	for _, sub := range attnCmd.Commands() {
 		if _, ok := want[sub.Name()]; !ok {
-			t.Errorf("unexpected jev subcommand %q", sub.Name())
+			t.Errorf("unexpected attn subcommand %q", sub.Name())
 			continue
 		}
 		want[sub.Name()] = true
 	}
 	for name, seen := range want {
 		if !seen {
-			t.Errorf("jev %s is missing", name)
+			t.Errorf("attn %s is missing", name)
 		}
 	}
 }

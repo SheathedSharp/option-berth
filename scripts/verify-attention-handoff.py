@@ -84,56 +84,36 @@ def choose(explicit: str | None) -> str:
     return choice
 
 
-def verify_subscription(adapter: Path, binary: Path, project: Path, home: Path) -> None:
-    """Exercise the built binary's long-lived NDJSON subscription path."""
-    env = os.environ.copy()
-    env["BERTH_HOME"] = str(home)
-    process = subprocess.Popen(
-        [
-            str(adapter),
-            "--subscribe",
-            "--oberth",
-            str(binary),
-            "--project",
-            str(project),
-            "--interval",
-            "100ms",
-            "--task",
-            "make the worker available for the development task",
-            "--authorize",
-            "inspect_logs,inspect_manifest,restart_service,continue_without_action",
-            "--api-key",
-            "",
-        ],
-        cwd=project,
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+def verify_follow_without_key(binary: Path, project: Path, home: Path) -> None:
+    """A follow session that can never assess stops with the fixed reason.
+
+    The long-lived NDJSON lifecycle itself is covered by the runner package
+    tests; this harness must not keep a process alive that has no key to call
+    anything with, and must not contact a provider.
+    """
+    result = run(
+        binary,
+        project,
+        home,
+        "attn",
+        "assess",
+        "--follow",
+        "--oberth",
+        str(binary),
+        "--project",
+        str(project),
+        "--task",
+        "make the worker available for the development task",
+        "--authorize",
+        "inspect_logs,inspect_manifest,restart_service,continue_without_action",
     )
-    time.sleep(0.8)
-    process.terminate()
-    try:
-        stdout, stderr = process.communicate(timeout=3)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        stdout, stderr = process.communicate(timeout=3)
-    if process.returncode not in (0, -15):
-        raise RuntimeError(f"subscription failed with {process.returncode}: {stderr}")
-    records = [json.loads(line) for line in stdout.splitlines() if line.strip()]
-    statuses = [record.get("status") for record in records]
-    if "subscribed" not in statuses or "unavailable" not in statuses or "stopped" not in statuses:
-        raise RuntimeError(f"subscription did not publish the expected lifecycle: {records}")
-    ledger = home / "quality" / "events.ndjson"
-    if not ledger.is_file():
-        raise RuntimeError("subscription did not create the quality ledger")
-    observations = [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
-    if not any(item.get("source") == "subscription" and item.get("latency_ms", 0) > 0 for item in observations):
-        raise RuntimeError("subscription quality observations did not record latency")
+    record = json.loads(result.stdout)
+    if record.get("status") != "unavailable" or record.get("reason") != "no_key":
+        raise RuntimeError(f"a keyless follow session did not stop cleanly: {record}")
 
 
 def verify_quality_telemetry(
-    adapter: Path,
+    binary: Path,
     project: Path,
     home: Path,
     artifact: dict,
@@ -164,12 +144,12 @@ def verify_quality_telemetry(
             }
         )
     )
-    recorded = run(adapter, project, home, "--feedback", str(feedback), "--project", str(project))
+    recorded = run(binary, project, home, "attn", "feedback", "--file", str(feedback), "--project", str(project))
     feedback_result = json.loads(recorded.stdout)
     if feedback_result.get("status") != "feedback_recorded":
         raise RuntimeError(f"feedback was not recorded: {feedback_result}")
-    report_result = run(adapter, project, home, "--quality-report", "--quality-project", project.name)
-    report = json.loads(report_result.stdout)
+    report_result = run(binary, project, home, "attn", "status", "--json", "--since", "0", "--quality-project", project.name)
+    report = json.loads(report_result.stdout).get("quality", {})
     if report.get("feedback_records", 0) < 1 or report.get("labeled_cases", 0) < 1:
         raise RuntimeError(f"quality report did not join the labelled event: {report}")
     if not ledger.read_text().strip():
@@ -184,8 +164,7 @@ def main() -> int:
 
     repo = Path(__file__).resolve().parents[1]
     binary = repo / "bin" / "oberth"
-    adapter = repo / "bin" / "jev-attention"
-    if not binary.is_file() or not adapter.is_file():
+    if not binary.is_file():
         raise RuntimeError("build first with `mage build`")
 
     project = Path(tempfile.mkdtemp(prefix="oberth-hil-", dir=Path.home()))
@@ -201,10 +180,13 @@ services:
         # optional enhancement; its presence is what tells an agent the
         # assessment is on. Enable it the way a user would, in this home.
         settings = home / "attn.json"
+        # No key is stored: this harness never contacts a provider. With the
+        # assessment enabled but no key, the runner must still publish the
+        # fact-only handoff and report the fixed no_key reason.
         settings.write_text(
             '{"schema":"oberth.attn-settings/v1","enabled":true,'
             '"preset":"typesafe","endpoint":"https://assess.example/decisions",'
-            '"model":"test/model","api_key":"verification-only"}\n'
+            '"model":"test/model"}\n'
         )
         settings.chmod(0o600)
 
@@ -224,10 +206,11 @@ services:
             raise RuntimeError(f"artifact contains an unknown option: {sorted(options)}")
 
         adapter_result = run(
-            adapter,
+            binary,
             project,
             home,
-            "--auto",
+            "attn",
+            "assess",
             "--oberth",
             str(binary),
             "--project",
@@ -236,8 +219,6 @@ services:
             "make the worker available for the development task",
             "--authorize",
             "inspect_logs,inspect_manifest,restart_service,continue_without_action",
-            "--api-key",
-            "",
         )
         assessed = json.loads(adapter_result.stdout)
         if assessed.get("status") != "unavailable":
@@ -245,7 +226,7 @@ services:
         after_fallback = json.loads(Path(status["attn_path"]).read_text())
         if "assessment" in after_fallback:
             raise RuntimeError("fallback unexpectedly changed the fact-only artifact")
-        verify_subscription(adapter, binary, project, home)
+        verify_follow_without_key(binary, project, home)
 
         choice = choose(args.choice)
         if choice not in options:
@@ -279,7 +260,7 @@ services:
                 time.sleep(0.25)
 
         quality = verify_quality_telemetry(
-            adapter,
+            binary,
             project,
             home,
             artifact,

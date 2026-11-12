@@ -1,9 +1,8 @@
 package cmd
 
-// `oberth attn` carries the attention runner that used to live only in the
-// separate `jev-attention` binary. It is the same protocol and the same JSON:
-// the standalone command stays as a thin shell over this package during the
-// migration, and the scripted acceptance check does not have to change.
+// `oberth attn` is the optional model assessment of a runtime anomaly: the
+// agent-facing runner, the action preflight, local quality feedback, and the
+// person-facing setup verbs. It is one command, not a second binary.
 //
 // The layer is Handoff, not Facts: this command asks an optional provider about
 // a runtime anomaly and hands a choice back to the person. It never starts,
@@ -15,12 +14,15 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/attn"
 	"github.com/sheathedsharp/option-berth/engine/internal/attn/model"
 	"github.com/sheathedsharp/option-berth/engine/internal/attn/runner"
+	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 	"github.com/spf13/cobra"
 )
 
@@ -33,13 +35,22 @@ var (
 	attnTaskFileFlag  string
 	attnAuthorizeFlag []string
 	attnIntervalFlag  time.Duration
+	attnFollowFlag    bool
+	attnDryRunFlag    bool
 	attnOberthFlag    string
 
 	attnFeedbackFileFlag   string
 	attnArtifactFlag       string
-	attnRawFlag            bool
-	attnQualitySinceFlag   time.Duration
+	attnStatusSinceFlag    time.Duration
 	attnQualityProjectFlag string
+
+	attnPreflightStatusFlag     string
+	attnPreflightFileFlag       string
+	attnPreflightActionFlag     string
+	attnPreflightServiceFlag    string
+	attnPreflightDraftFlag      string
+	attnPreflightPermissionFlag string
+	attnPreflightApprovedFlag   bool
 )
 
 var attnCmd = &cobra.Command{
@@ -50,36 +61,32 @@ var attnCmd = &cobra.Command{
 		"whether the next step needs the person's choice.\n\n" +
 		"Off by default. Only `enabled: true` in the owner-only attn.json under\n" +
 		"BERTH_HOME, or a one-shot BERTH_ATTN=1 for this process, lets this command\n" +
-		"contact a provider; a key in the environment supplies the secret but is not\n" +
-		"consent. `oberth status` only publishes `attn_path` when model is enabled,\n" +
-		"so its presence already means the person opted in.\n\n" +
+		"contact a configured endpoint; a key in the environment supplies the secret\n" +
+		"but is not consent. `oberth status` only publishes `attn_path` when the\n" +
+		"assessment is enabled, so its presence already means the person opted in.\n\n" +
 		"The command never starts, stops or restarts a service. It reads\n" +
 		"`oberth status --json`, validates the published artifact against that exact\n" +
-		"revision, sends a redacted summary, and prints one JSON value when model cannot\n" +
-		"answer, the reason is one fixed code (`no_key`, `disabled`, `unauthorized`,\n" +
-		"`rate_limited`, `timeout`, `network`, `provider_error`, `bad_response`, `stale`).",
+		"revision, sends a redacted summary, and prints one JSON value when the model\n" +
+		"cannot answer; the reason is one fixed code (`no_key`, `disabled`,\n" +
+		"`unauthorized`, `rate_limited`, `timeout`, `network`, `provider_error`,\n" +
+		"`bad_response`, `stale`).",
+	Args: cobra.NoArgs,
+	RunE: runAttnStatus,
 }
 
 var attnAssessCmd = &cobra.Command{
 	Use:   "assess",
 	Short: "One status read, one anomaly assessment, one handoff",
 	Long: "Read `oberth status --json`, verify the published artifact still matches that\n" +
-		"revision, ask the provider, and print the handoff. The authorized option IDs\n" +
-		"are the agent's explicit allow-list; artifact options are candidates, never\n" +
-		"permission. This is the former `jev-attention --auto`.",
+		"revision, ask the configured endpoint, and print the handoff. The authorized\n" +
+		"option IDs are the agent's explicit allow-list; artifact options are\n" +
+		"candidates, never permission.\n\n" +
+		"With --follow, keep polling for the lifetime of a task and emit NDJSON: one\n" +
+		"`subscribed` record, then only changed handoffs, and `stopped` on\n" +
+		"cancellation. With --dry-run, print the exact redacted request for the\n" +
+		"current event without contacting anything.",
 	Args: cobra.NoArgs,
 	RunE: runAttnAssess,
-}
-
-var attnSessionCmd = &cobra.Command{
-	Use:   "session",
-	Short: "Keep watching for a task and emit only changed handoffs",
-	Long: "Poll `oberth status --json` for the lifetime of a task and emit NDJSON: one\n" +
-		"`subscribed` record, then only changed event/revision/assessment handoffs, and\n" +
-		"`stopped` when the process is cancelled. Repeated polls of unchanged facts are\n" +
-		"deliberately silent.",
-	Args: cobra.NoArgs,
-	RunE: runAttnSession,
 }
 
 var attnFeedbackCmd = &cobra.Command{
@@ -92,14 +99,16 @@ var attnFeedbackCmd = &cobra.Command{
 	RunE: runAttnFeedback,
 }
 
-var attnReportCmd = &cobra.Command{
-	Use:   "report",
-	Short: "Summarize local attention quality as JSON",
-	Long: "Read the local quality ledger and report coverage, assessment availability,\n" +
-		"routing reasons, and the labelled precision/recall of the handoff policy. A\n" +
-		"metric stays null until there are enough real labels; it is never zero-filled.",
+var attnPreflightCmd = &cobra.Command{
+	Use:   "preflight",
+	Short: "Derive and optionally assess a bounded action request",
+	Long: "Turn a freshly captured `oberth status --json` snapshot into a bounded preflight\n" +
+		"request under BERTH_HOME/attention/preflight. Without consent the request is\n" +
+		"still written for the agent to present; with consent only needs_human, task\n" +
+		"relevance and the ranking of the fixed options are attached. The command never\n" +
+		"executes the action.",
 	Args: cobra.NoArgs,
-	RunE: runAttnReport,
+	RunE: runAttnPreflight,
 }
 
 func init() {
@@ -112,18 +121,41 @@ func init() {
 		"JSON file containing task and authorized_options")
 	attnCmd.PersistentFlags().StringSliceVar(&attnAuthorizeFlag, "authorize", nil,
 		"Authorized option IDs for this task (comma separated); overrides the context file")
-	attnSessionCmd.Flags().DurationVar(&attnIntervalFlag, "interval", 2*time.Second, "Poll interval")
+
+	attnAssessCmd.Flags().BoolVar(&attnFollowFlag, "follow", false,
+		"Keep polling and emit only changed handoffs as NDJSON")
+	attnAssessCmd.Flags().BoolVar(&attnDryRunFlag, "dry-run", false,
+		"Print the redacted request for the current event without sending it")
+	attnAssessCmd.Flags().DurationVar(&attnIntervalFlag, "interval", 2*time.Second,
+		"Poll interval (with --follow)")
+
+	attnStatusCmd.Flags().DurationVar(&attnStatusSinceFlag, "since", 168*time.Hour,
+		"Quality ledger lookback window (0 means all records)")
+	attnStatusCmd.Flags().StringVar(&attnQualityProjectFlag, "quality-project", "",
+		"Project label or worktree id to filter quality data on")
 
 	attnFeedbackCmd.Flags().StringVar(&attnFeedbackFileFlag, "file", "", "Feedback JSON document to append")
 	attnFeedbackCmd.Flags().StringVar(&attnArtifactFlag, "attention", "",
 		"Attention artifact the feedback refers to, to check its identity")
 	_ = attnFeedbackCmd.MarkFlagRequired("file")
 
-	attnReportCmd.Flags().DurationVar(&attnQualitySinceFlag, "since", 0, "Lookback window (for example 168h)")
-	attnReportCmd.Flags().StringVar(&attnQualityProjectFlag, "quality-project", "",
-		"Project label or worktree id to filter on")
+	attnPreflightCmd.Flags().StringVar(&attnPreflightStatusFlag, "status", "",
+		"Fresh status --json file to derive or validate the request from")
+	attnPreflightCmd.Flags().StringVar(&attnPreflightFileFlag, "preflight", "",
+		"Existing preflight JSON to assess")
+	attnPreflightCmd.Flags().StringVar(&attnPreflightActionFlag, "action", "",
+		"Action: start_service, restart_service, stop_service or adopt_manifest")
+	attnPreflightCmd.Flags().StringVar(&attnPreflightServiceFlag, "service", "",
+		"Declared service target for start_service or restart_service")
+	attnPreflightCmd.Flags().StringVar(&attnPreflightDraftFlag, "draft-group", "",
+		"Pending draft group for adopt_manifest")
+	attnPreflightCmd.Flags().StringVar(&attnPreflightPermissionFlag, "permission", "",
+		"Explicit user-permission context for the proposed action")
+	attnPreflightCmd.Flags().BoolVar(&attnPreflightApprovedFlag, "user-approved", false,
+		"Record that the user approved the proposed action (does not execute it)")
 
-	attnCmd.AddCommand(attnAssessCmd, attnSessionCmd, attnFeedbackCmd, attnReportCmd)
+	attnCmd.AddCommand(attnAssessCmd, attnFeedbackCmd, attnPreflightCmd,
+		attnStatusCmd, attnConfigCmd, attnOnCmd, attnOffCmd, attnTestCmd)
 	rootCmd.AddCommand(attnCmd)
 }
 
@@ -131,6 +163,23 @@ func init() {
 // an unset allow-list is an error, because a candidate option in an artifact is
 // not permission to act on it.
 func attnTaskContext() (model.TaskContext, error) {
+	task, err := attnOptionalTaskContext()
+	if err != nil {
+		return task, err
+	}
+	if strings.TrimSpace(task.Task) == "" {
+		return task, usageError{errors.New("--task or --task-context is required")}
+	}
+	if len(task.AuthorizedOptions) == 0 {
+		return task, usageError{errors.New("--authorize (or authorized_options) is required")}
+	}
+	return task, nil
+}
+
+// attnOptionalTaskContext applies the task flags without requiring them. The
+// action preflight uses this: its request already names the action and target,
+// so an agent may omit the development-task summary.
+func attnOptionalTaskContext() (model.TaskContext, error) {
 	var task model.TaskContext
 	var err error
 	if strings.TrimSpace(attnTaskFileFlag) != "" {
@@ -145,17 +194,11 @@ func attnTaskContext() (model.TaskContext, error) {
 	if len(attnAuthorizeFlag) > 0 {
 		task.AuthorizedOptions = append([]string(nil), attnAuthorizeFlag...)
 	}
-	if strings.TrimSpace(task.Task) == "" {
-		return task, usageError{errors.New("--task or --task-context is required")}
-	}
-	if len(task.AuthorizedOptions) == 0 {
-		return task, usageError{errors.New("--authorize (or authorized_options) is required")}
-	}
 	return task, nil
 }
 
-// attnResolvedConsent is the same single resolution the standalone command uses.
-// A reason means "do not call the provider", never "guess a default".
+// attnResolvedConsent is the one consent resolution every attn verb uses. A
+// reason means "do not call the endpoint", never "guess a default".
 func attnResolvedConsent() model.Resolved {
 	input := model.ResolveInputFromEnvironment()
 	input.Settings, input.SettingsPresent, input.SettingsErr = model.LoadLocalConfig()
@@ -163,15 +206,24 @@ func attnResolvedConsent() model.Resolved {
 }
 
 func runAttnAssess(cmd *cobra.Command, _ []string) error {
+	if attnFollowFlag && attnDryRunFlag {
+		return usageError{errors.New("--follow and --dry-run are mutually exclusive")}
+	}
 	task, err := attnTaskContext()
 	if err != nil {
 		return err
 	}
+	if attnDryRunFlag {
+		return runAttnDryRun(cmd, task)
+	}
 	consent := attnResolvedConsent()
+	if attnFollowFlag {
+		return runAttnFollow(cmd, task, consent)
+	}
 	started := time.Now()
-	// model being off does not mean "no handoff": the runner still reads status
-	// and builds the fact-only request, then reports the fixed reason. Only the
-	// provider call is skipped, which is what the person refused.
+	// The assessment being off does not mean "no handoff": the runner still reads
+	// status and builds the fact-only request, then reports the fixed reason. Only
+	// the provider call is skipped, which is what the person refused.
 	client, clientErr := consent.Client()
 	if clientErr != nil {
 		// The client is empty, so the runner treats this as "no key": it never
@@ -190,15 +242,12 @@ func runAttnAssess(cmd *cobra.Command, _ []string) error {
 	return writeAttnOutput(cmd.OutOrStdout(), result)
 }
 
-func runAttnSession(cmd *cobra.Command, _ []string) error {
-	task, err := attnTaskContext()
-	if err != nil {
-		return err
-	}
+// runAttnFollow is the long-lived form of assess. It polls the facts and emits
+// only changed handoffs, so an agent does not rebuild the request by hand.
+func runAttnFollow(cmd *cobra.Command, task model.TaskContext, consent model.Resolved) error {
 	if attnIntervalFlag <= 0 {
 		return usageError{errors.New("--interval must be positive")}
 	}
-	consent := attnResolvedConsent()
 	// A session on a disabled configuration is not a silent no-op: it reports
 	// the fixed reason and stops, so an agent does not wait for events that can
 	// never arrive.
@@ -224,6 +273,37 @@ func runAttnSession(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// runAttnDryRun prints exactly what the next assessment would send for the
+// current event. It is the honesty check, and it is offline by construction.
+func runAttnDryRun(cmd *cobra.Command, task model.TaskContext) error {
+	status, err := runner.ReadStatus(cmd.Context(), attnOberthFlag, attnProjectFlag)
+	if err != nil {
+		return err
+	}
+	if status.AttnPath == "" {
+		return attnPrint(map[string]any{"status": "clear"}, func() string {
+			return "No current anomaly, so there is nothing to assess."
+		})
+	}
+	artifact, err := attn.ReadFresh(status.AttnPath, time.Time{})
+	if err != nil {
+		return failHint("stale", "the attention artifact is stale", model.ReasonHint(model.ReasonStale))
+	}
+	if len(task.AuthorizedOptions) == 0 {
+		for _, option := range artifact.Options {
+			task.AuthorizedOptions = append(task.AuthorizedOptions, option.ID)
+		}
+	}
+	body, err := model.PreviewRequest(artifact, task)
+	if err != nil {
+		return usageError{err}
+	}
+	return attnPrint(map[string]any{"status": "preview", "request": body}, func() string {
+		encoded, _ := json.MarshalIndent(body, "", "  ")
+		return string(encoded)
+	})
+}
+
 func runAttnFeedback(cmd *cobra.Command, _ []string) error {
 	result, err := runner.Feedback(attnFeedbackFileFlag, attnArtifactFlag, attnProjectFlag)
 	if err != nil {
@@ -234,20 +314,144 @@ func runAttnFeedback(cmd *cobra.Command, _ []string) error {
 	})
 }
 
-func runAttnReport(cmd *cobra.Command, _ []string) error {
-	if attnQualitySinceFlag < 0 {
-		return usageError{errors.New("--since must not be negative")}
-	}
-	report, err := runner.QualityReport(attnQualitySinceFlag, attnQualityProjectFlag)
+// attnPreflightOutput is the JSON an agent reads back from `attn preflight`.
+type attnPreflightOutput struct {
+	Status        string           `json:"status"`
+	PreflightPath string           `json:"preflight_path,omitempty"`
+	TelemetryPath string           `json:"telemetry_path,omitempty"`
+	Reason        string           `json:"reason,omitempty"`
+	Assessment    *attn.Assessment `json:"assessment,omitempty"`
+	TaskRelevant  *float64         `json:"task_relevant,omitempty"`
+	Model         string           `json:"model,omitempty"`
+	RequestID     string           `json:"request_id,omitempty"`
+}
+
+func runAttnPreflight(cmd *cobra.Command, _ []string) error {
+	task, err := attnOptionalTaskContext()
 	if err != nil {
 		return err
 	}
-	return writeAttnValue(cmd.OutOrStdout(), report)
+	consent := attnResolvedConsent()
+	home := paths.Dir()
+	var request model.Preflight
+	if strings.TrimSpace(attnPreflightFileFlag) != "" {
+		request, err = model.ReadPreflight(attnPreflightFileFlag)
+		if err != nil {
+			return err
+		}
+		if filepath.Clean(attnPreflightFileFlag) != filepath.Clean(model.PreflightPath(home, request)) {
+			return errors.New("preflight path is not the current BERTH_HOME derived request")
+		}
+		if strings.TrimSpace(attnPreflightStatusFlag) != "" {
+			snapshot, readErr := model.ReadStatusSnapshot(attnPreflightStatusFlag, time.Time{})
+			if readErr != nil {
+				return readErr
+			}
+			if err := model.ValidatePreflight(request, snapshot, home, time.Time{}); err != nil {
+				return err
+			}
+		}
+	} else {
+		if strings.TrimSpace(attnPreflightActionFlag) == "" {
+			return usageError{errors.New("--action is required with --status")}
+		}
+		snapshot, readErr := model.ReadStatusSnapshot(attnPreflightStatusFlag, time.Time{})
+		if readErr != nil {
+			return readErr
+		}
+		request, err = model.DerivePreflight(snapshot, model.Intent{
+			Action: attnPreflightActionFlag, Service: attnPreflightServiceFlag,
+			DraftGroup: attnPreflightDraftFlag, UserPermission: attnPreflightPermissionFlag,
+			UserApproved: attnPreflightApprovedFlag,
+		}, home, time.Time{})
+		if err != nil {
+			return err
+		}
+	}
+	path, err := model.WritePreflight(home, request)
+	if err != nil {
+		return err
+	}
+	// Writing the request is not consent to send it: without consent the agent
+	// still gets the bounded preflight document to present directly.
+	client, clientErr := consent.Client()
+	if clientErr != nil {
+		telemetryPath := runner.RecordPreflightAssessment(home, request, task, nil, clientErr)
+		return writeAttnValue(cmd.OutOrStdout(), attnPreflightOutput{
+			Status: "unavailable", PreflightPath: path, TelemetryPath: telemetryPath,
+			RequestID: request.RequestID, Reason: consent.ReasonOr(clientErr),
+		})
+	}
+	artifact := request.AssessmentArtifactForAdapter()
+	if strings.TrimSpace(task.Task) == "" {
+		// The action intent is the minimum task context when the caller omitted a
+		// development summary. The fixed options remain candidates, not permission.
+		task.Task = "Evaluate whether this proposed worktree action needs the user's choice"
+	}
+	task = preflightTaskContext(request, task)
+	result, callErr := client.Evaluate(cmd.Context(), artifact, task)
+	if callErr != nil {
+		if errors.Is(callErr, model.ErrUnavailable) || errors.Is(callErr, model.ErrStale) {
+			telemetryPath := runner.RecordPreflightAssessment(home, request, task, nil, callErr)
+			return writeAttnValue(cmd.OutOrStdout(), attnPreflightOutput{
+				Status: "unavailable", PreflightPath: path, TelemetryPath: telemetryPath,
+				RequestID: request.RequestID, Reason: model.ReasonFor(callErr),
+			})
+		}
+		return callErr
+	}
+	if err := request.AttachAssessment(result.Assessment); err != nil {
+		return err
+	}
+	if _, err := model.WritePreflight(home, request); err != nil {
+		return err
+	}
+	telemetryPath := runner.RecordPreflightAssessment(home, request, task, &result, nil)
+	return writeAttnValue(cmd.OutOrStdout(), attnPreflightOutput{
+		Status: "assessed", PreflightPath: path, TelemetryPath: telemetryPath,
+		RequestID: request.RequestID, Assessment: &result.Assessment,
+		TaskRelevant: &result.TaskRelevant, Model: result.Model,
+	})
+}
+
+func preflightTaskContext(request model.Preflight, task model.TaskContext) model.TaskContext {
+	base := strings.TrimSpace(task.Task)
+	target := request.Target.Service
+	if target == "" {
+		target = request.Target.Project
+	}
+	if request.Target.DraftGroup != "" {
+		target = request.Target.DraftGroup
+	}
+	suffix := formatPreflightSuffix(request.Intent.Action, target, request.Intent.UserPermission)
+	available := 2000 - len([]byte(suffix))
+	if len([]byte(base)) > available {
+		base = string([]byte(base)[:available])
+	}
+	task.Task = strings.TrimSpace(base + suffix)
+	if len(task.AuthorizedOptions) == 0 {
+		task.AuthorizedOptions = make([]string, 0, len(request.Options))
+		for _, option := range request.Options {
+			task.AuthorizedOptions = append(task.AuthorizedOptions, option.ID)
+		}
+		if len(task.AuthorizedOptions) == 0 && request.Intent.Action != "" {
+			task.AuthorizedOptions = []string{request.Intent.Action}
+		}
+	}
+	return task
+}
+
+func formatPreflightSuffix(action, target, permission string) string {
+	suffix := " Proposed fixed action: " + action + "; target: " + target + "; user permission context: " + permission + "."
+	if len([]byte(suffix)) > 1800 {
+		suffix = string([]byte(suffix)[:1800])
+	}
+	return suffix
 }
 
 // writeAttnOutput prints a runner result. The JSON is the protocol the agent
 // reads, so it is written whether or not --json was given; the flag stays for
-// symmetry with the rest of the CLI and for a future human view.
+// symmetry with the rest of the CLI and for the human status view.
 func writeAttnOutput(writer io.Writer, result runner.Output) error {
 	return writeAttnValue(writer, result)
 }
