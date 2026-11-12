@@ -73,7 +73,7 @@ CLI 按 **agent 想做的事**分层，不按内部模块分：事实是「现�
 | 事实 | `status` · `logs` · `events` · `worktrees` | 当前项目的声明、实况与变化；本机见过的 checkout 身份 |
 | 操作 | `up` · `restart` · `down` · `start` · `kill` | 按清单起停，或明确点名一个低级进程入口 |
 | 代码与声明 | `git` · `init` | 只读代码上下文，以及这份 worktree 的清单 |
-| 交接 | `workplace` · `agent` · `jev` | 工作记录，把会话交给外部 coding agent；可选的模型评估（默认关闭） |
+| 交接 | `workplace` · `agent` · `attn` | 工作记录，把会话交给外部 coding agent；可选的模型评估（默认关闭） |
 | 基础设施 | `daemon` · `serve` · `config` · `version` · `completion` · `doctor` · `feedback` | 后台采集器、安装配置、自检与可选的改进报告 |
 
 `oberth --help` 末尾另有一节 **For agents**，给的是读法而不是命令：一次会话开头的三条读
@@ -224,76 +224,76 @@ changed 是第一次运行时缺省的可选字段。ports 仍是给脚本核对
 `worktree.services[]` 的 `pid`、`run_id` 和 `started_at` 在服务由 option-berth 正在运行时提供，
 无端口 worker 也能靠这些字段核对实际运行记录；`log_path` 始终由引擎给出。
 
-在用户启用可选的 Jev 增强之后，状态里出现确定的异常事件才会带 `attention_path`。它指向
+在用户启用可选的模型评估之后，状态里出现确定的异常事件才会带 `attn_path`。它指向
 `BERTH_HOME/attention/` 下的一个可重算、可过期的 agent 交接文件；没有当前异常时该字段缺省。
-**这个字段出现本身就是「用户已启用增强」的信号**：看到它的 agent 可以运行 `oberth jev assess`，
-看不到的 agent 也不必再猜是「没有异常」还是「从没开过 Jev」。未启用时 `status` 不发布，并清掉
-关闭之前留下的文件。有异常时同时提供 `attention_revision`，它必须与文件中的 `state_revision`
+**这个字段出现本身就是「用户已启用增强」的信号**：看到它的 agent 可以运行 `oberth attn assess`，
+看不到的 agent 也不必再猜是「没有异常」还是「从没开过该评估」。未启用时 `status` 不发布，并清掉
+关闭之前留下的文件。有异常时同时提供 `attn_revision`，它必须与文件中的 `state_revision`
 相等，供 agent 在同一份 `status` 响应中核对文件是否仍对应当前事实。
 未声明的监听不是异常：`status` 已经列出该端口及其属主，agent 没有启动它，也不该去停它。
-核心文件是 `oberth.attention/v1`，包含 `event_id`、`state_revision`、`worktree_root`、
+核心文件是 `oberth.attn/v1`，包含 `event_id`、`state_revision`、`worktree_root`、
 可选的 `branch`、`generated_at`、`fresh_until`、`first_seen`、`last_seen`、可选的 `recovered_at`、`event`、
 可选的完整 `events` 数组、`evidence` 和固定 `options`，不包含 shell 命令或模型调用结果；
 `event` 保留为第一个异常的兼容字段，多个同时异常必须以 `events` 为准；
 可选的 attention adapter 可以在文件上补充 `assessment`，但 agent 仍须先重新读取 `status --json`，
-核对 worktree、`attention_revision` 与 `state_revision`，以及 `fresh_until`，再向用户提出选择。
+核对 worktree、`attn_revision` 与 `state_revision`，以及 `fresh_until`，再向用户提出选择。
 `assessment.context_id`（若存在）只是 adapter 对当前任务和授权选项 allow-list 的哈希缓存键，
 不属于运行事实，也不授予执行权限。
 这个文件是派生通知，不是新的运行事实来源；
-Jev 不在 daemon 或 `status` 的控制路径里：确定性部分在 `internal/attention`，Jev 客户端在
-`internal/jev`，这条依赖边界由 `internal/cmd/attention_boundary_test.go` 检查。
+模型客户端不在 daemon 或 `status` 的控制路径里：确定性部分在 `internal/attn`，模型客户端在
+`internal/attn/model`，这条依赖边界由 `internal/cmd/attention_boundary_test.go` 检查。
 
-可选的模型评估是交接层的 `oberth jev`。agent 应使用一次调用完成状态读取、异常验证、评估
+可选的模型评估是交接层的 `oberth attn`。agent 应使用一次调用完成状态读取、异常验证、评估
 和 HIL 输出：
 
 ~~~sh
 # for short tasks pass arguments directly, no need to write a file
-oberth jev assess --project "$PWD" \
+oberth attn assess --project "$PWD" \
   --task "keep the API healthy while the integration test runs" \
   --authorize inspect_logs,inspect_port,restart_service,continue_without_action,ask_user_for_context
 ~~~
 
-`oberth jev enable` 是一步开启：读密钥（`--key-stdin`、`--key-env NAME` 或终端隐藏
-输入），发一次合成的脱敏探测，**只有探测成功才写** `jev.json`；探测失败时已有配置保持不动。
-`oberth jev status` 不联网报告解析结果，`oberth jev test` 联网探测一次，`oberth jev preview`
-打印当前事件将要发送的脱敏请求体但不发送，`oberth jev disable [--forget]` 关闭（默认保留密钥，
+`oberth attn enable` 是一步开启：读密钥（`--key-stdin`、`--key-env NAME` 或终端隐藏
+输入），发一次合成的脱敏探测，**只有探测成功才写** `attn.json`；探测失败时已有配置保持不动。
+`oberth attn status` 不联网报告解析结果，`oberth attn test` 联网探测一次，`oberth attn preview`
+打印当前事件将要发送的脱敏请求体但不发送，`oberth attn disable [--forget]` 关闭（默认保留密钥，
 `--forget` 才会删除）。`oberth doctor` 增加一行离线状态；人读 `status` 在未启用且当前有异常时，
 每两周提示一次，`BERTH_NO_TIPS=1` 可关闭。
 
-`oberth jev assess` 即原来的 `jev-attention --auto`，`oberth jev session` 即
-`--session`/`--subscribe`，`oberth jev feedback` / `oberth jev report` 即 `--feedback` 与
+`oberth attn assess` 即原来的 `jev-attention --auto`，`oberth attn session` 即
+`--session`/`--subscribe`，`oberth attn feedback` / `oberth attn report` 即 `--feedback` 与
 `--quality-report`。独立二进制 `jev-attention` 在迁移期是同一 runner 的薄壳，
 `scripts/verify-attention-handoff.py` 和 skill 因此不用改；它不会长期分发。
 
 上下文文件包含 `task` 和必填的 `authorized_options`，**由 agent 自己写**：机器上没有任何东西
 替你生成它，路径也由 agent 选（并行的任务各用一个文件，不要共用一个 `/tmp` 路径）。
 `--task` 与 `--authorize` 覆盖文件里的同名字段；两者都没有时 runner 直接报错，不会替 agent
-猜一个授权集。适配器只向选定的 Jev provider 发送脱敏的事实摘要，
+猜一个授权集。适配器只向选定的提供商发送脱敏的事实摘要，
 不会读取日志或起停服务。runner 输出 `clear`、`continue`、`human_required`、`unavailable` 或
 `stale`；成功时把校验后的 `assessment` 原子写回同一文件，并在返回前复读状态。
-没有可用的环境变量或 GUI 本地 Jev 配置、网络失败、响应无效、文件过期或状态修订变化时，事实文件保持不变。
-macOS 设置页写入的 `~/.option-berth/jev.json`（隔离运行时为 `$BERTH_HOME/jev.json`）由
-`oberth jev` 自动读取，并且是唯一的持久同意：`enabled: true` 开启，`enabled: false` 即使环境
+没有可用的环境变量或 本地模型配置、网络失败、响应无效、文件过期或状态修订变化时，事实文件保持不变。
+`oberth attn enable` 写入的 `~/.option-berth/attn.json`（隔离运行时为 `$BERTH_HOME/attn.json`）由
+`oberth attn` 自动读取，并且是唯一的持久同意：`enabled: true` 开启，`enabled: false` 即使环境
 里有密钥也保持关闭。显式 `OPENROUTER_API_KEY` / `TYPESAFE_API_KEY` 只提供密钥并选定 provider，不
-开启 Jev；`BERTH_JEV=1` 只为当前进程开启。每次不可用都带固定原因码（`no_key`、`disabled`、
+开启评估；`BERTH_ATTN=1` 只为当前进程开启。每次不可用都带固定原因码（`no_key`、`disabled`、
 `invalid_config`、`unauthorized`、`rate_limited`、`timeout`、`network`、`provider_error`、
 `bad_response`、`stale`），而不是 provider 的错误原文。
 `--auto`、`--session` 和 `--subscribe` 必须显式提供 `authorized_options`；artifact 的 `options` 只是候选集，
 不会自动变成 agent 的授权。
-需要在任务生命周期内持续发现异常时，agent 应使用 `oberth jev session --interval 2s`（底层别名仍为
+需要在任务生命周期内持续发现异常时，agent 应使用 `oberth attn session --interval 2s`（底层别名仍为
 `--subscribe`），
 它以 NDJSON 只输出新的 event/revision/assessment 变化，并在取消时结束。
 完整参数和隐私边界见
-[`jev-adapter.md`](agent/jev-adapter.md)。
+[`attn-adapter.md`](agent/attn-adapter.md)。
 
-`oberth jev assess` / `oberth jev session` 会在 `$BERTH_HOME/quality/events.ndjson`
+`oberth attn assess` / `oberth attn session` 会在 `$BERTH_HOME/quality/events.ndjson`
 留下脱敏的本地质量观测。开发 agent 在真实交互后可用
-`oberth jev feedback --file <json>` 回写人工标签和动作结果，再用
-`oberth jev report [--since 168h]` 查看标注覆盖率、assessment
-可用率、路由原因与模型/选项分布、人工升级 precision/recall/F1、Jev 的
+`oberth attn feedback --file <json>` 回写人工标签和动作结果，再用
+`oberth attn report [--since 168h]` 查看标注覆盖率、assessment
+可用率、路由原因与模型/选项分布、人工升级 precision/recall/F1、模型的
 `needs_human` / `task_relevant` 概率误差、推荐命中率、动作成功率、解决率和发现延迟。
 质量记录不属于 `status` 事实，也不改变任何执行权限；报告的 `sessions` 对象会说明会话、轮询、事件、
-Jev 调用、缓存命中和无事件轮询数量；没有真实反馈时指标保持 `null`。
+模型调用、缓存命中和无事件轮询数量；没有真实反馈时指标保持 `null`。
 
 ### agent 读取的 JSON 字段
 
@@ -315,7 +315,7 @@ Jev 调用、缓存命中和无事件轮询数量；没有真实反馈时指标�
 | `observation.state` | `status` | 监听表是否可信；先读它再读 `ports`。 |
 | `observation.source` | `status` | 不是主采集器时回答本轮采集器；非空表示缺失的端口是未知，不是空闲。 |
 | `machine[].listening_known` | `status` | `listening` 是否是观察到的；false 表示这张表看不到该端口的所有者。 |
-| `attention_path` | `status` | 当前异常的派生交接文件；没有异常时缺省。 |
+| `attn_path` | `status` | 当前异常的派生交接文件；没有异常时缺省。 |
 | `services[].starting` | `status` | 正在启动的瞬时事实；不是 run，也不等于 `running`。 |
 | `starting.phase` | `status` | `waiting_dependency`、`prepare` 或 `spawning`。 |
 | `starting.waiting_on` | `status` | 仍在等的依赖；观察失败时保留上次已知集合。 |

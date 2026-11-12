@@ -75,7 +75,7 @@ command's options.
 | Facts | `status` · `logs` · `events` · `worktrees` | The current project's declarations, runtime facts and changes; checkout identities this machine has seen |
 | Operations | `up` · `restart` · `down` · `start` · `kill` | Start and stop by manifest, or explicitly name a low-level process entry point |
 | Code and declaration | `git` · `init` | Read-only code context, and this worktree's manifest |
-| Handoff | `workplace` · `agent` · `jev` | Work records, handing the session to an external coding agent, and the optional model assessment (off by default) |
+| Handoff | `workplace` · `agent` · `attn` | Work records, handing the session to an external coding agent, and the optional model assessment (off by default) |
 | Infrastructure | `daemon` · `serve` · `config` · `version` · `completion` · `doctor` · `feedback` | Background collector, install configuration, self-check and optional improvement reports |
 
 `oberth --help` ends with a **For agents** section that gives a reading pattern, not commands: the
@@ -259,53 +259,53 @@ file exists. Use logs for detailed output. `worktree.services[]`'s `pid`, `run_i
 are provided while the service is being run by option-berth, so even a portless worker can be
 verified against the actual run record through these fields; `log_path` is always given by the engine.
 
-Once the optional Jev enhancement is enabled, a definite abnormal event in the state also puts
-`attention_path` in the JSON. It points at a recomputable, expirable agent handoff file under
+Once the optional attention enhancement is enabled, a definite abnormal event in the state also puts
+`attn_path` in the JSON. It points at a recomputable, expirable agent handoff file under
 `BERTH_HOME/attention/`; with no current abnormality the field is absent. **Its presence is the
-signal that the person enabled the enhancement** — an agent that sees one may run `oberth jev
+signal that the person enabled the enhancement** — an agent that sees one may run `oberth attn
 assess`, and an agent that sees none does not have to guess whether that is because nothing is wrong
-or because Jev was never turned on. Without consent `status` publishes nothing and clears an artifact
+or because the model was never turned on. Without consent `status` publishes nothing and clears an artifact
 left over from before the enhancement was switched off. When there is an abnormality,
-`attention_revision` is provided as well and must equal the file's `state_revision`, so the agent can
+`attn_revision` is provided as well and must equal the file's `state_revision`, so the agent can
 check inside the same `status` response whether the file still corresponds to current facts. An
 undeclared listener is not an abnormality: `status` already lists the port with its owner, and a
 process the agent did not start is not one it should stop. The core file is
-`oberth.attention/v1`, containing `event_id`, `state_revision`, `worktree_root`, optional `branch`,
+`oberth.attn/v1`, containing `event_id`, `state_revision`, `worktree_root`, optional `branch`,
 `generated_at`, `fresh_until`, `first_seen`, `last_seen`, optional `recovered_at`, `event`, an
 optional full `events` array, `evidence` and fixed `options`, and containing no shell commands or
 model invocation results; `event` is kept as a compatibility field for the first abnormality, and when
 several are abnormal at once `events` is authoritative; an optional attention adapter may add
 `assessment` to the file, but the agent must still re-read `status --json` first and verify the
-worktree, `attention_revision` against `state_revision`, and `fresh_until`, before offering the user a
+worktree, `attn_revision` against `state_revision`, and `fresh_until`, before offering the user a
 choice. `assessment.context_id` (if present) is only the adapter's hash cache key over the current task
 and the authorized-option allow-list; it is not a runtime fact and grants no execution permission.
-This file is a derived notification, not a new source of runtime truth. Jev is not on the daemon's or
-`status`'s control path: the deterministic part lives in `internal/attention`, the Jev client in
-`internal/jev`, and `internal/cmd/attention_boundary_test.go` checks that dependency boundary.
+This file is a derived notification, not a new source of runtime truth. The model client is not on the daemon's or
+`status`'s control path: the deterministic part lives in `internal/attn`, the model client in
+`internal/attn/model`, and `internal/cmd/attention_boundary_test.go` checks that dependency boundary.
 
-The optional assessment runs as `oberth jev` in the Handoff layer. An agent should complete status
+The optional assessment runs as `oberth attn` in the Handoff layer. An agent should complete status
 reading, abnormality verification, assessment and HIL output in a single invocation:
 
 ~~~sh
 # for short tasks pass arguments directly, no need to write a file
-oberth jev assess --project "$PWD" \
+oberth attn assess --project "$PWD" \
   --task "keep the API healthy while the integration test runs" \
   --authorize inspect_logs,inspect_port,restart_service,continue_without_action,ask_user_for_context
 ~~~
 
-`oberth jev enable` is the one step that turns the assessment on: it reads a key
+`oberth attn enable` is the one step that turns the assessment on: it reads a key
 (`--key-stdin`, `--key-env NAME`, or hidden terminal input), sends one synthetic
-redacted probe, and only writes `jev.json` when the probe succeeds — a failed
-probe leaves the existing configuration untouched. `oberth jev status` reports
-the resolved state without a network call, `oberth jev test` probes once,
-`oberth jev preview` prints the exact redacted body for the current event without
-sending it, and `oberth jev disable [--forget]` turns it off while keeping the
+redacted probe, and only writes `attn.json` when the probe succeeds — a failed
+probe leaves the existing configuration untouched. `oberth attn status` reports
+the resolved state without a network call, `oberth attn test` probes once,
+`oberth attn preview` prints the exact redacted body for the current event without
+sending it, and `oberth attn disable [--forget]` turns it off while keeping the
 key unless `--forget` is given. `oberth doctor` gains one offline row for the same
 state, and a human `status` read mentions the feature once every two weeks when
 it is off and an anomaly is present; `BERTH_NO_TIPS=1` silences that hint.
 
-`oberth jev assess` is the former `jev-attention --auto`, `oberth jev session` is the former
-`--session`/`--subscribe`, and `oberth jev feedback` / `oberth jev report` are the former
+`oberth attn assess` is the former `jev-attention --auto`, `oberth attn session` is the former
+`--session`/`--subscribe`, and `oberth attn feedback` / `oberth attn report` are the former
 `--feedback` and `--quality-report`. The standalone `jev-attention` binary stays as a thin shell over
 the same runner during the migration, so `scripts/verify-attention-handoff.py` and the skill keep
 working; it is not distributed indefinitely.
@@ -315,34 +315,34 @@ itself**: nothing on the machine generates it for you, and the path is chosen by
 (parallel tasks each use their own file; do not share one `/tmp` path). `--task` and `--authorize`
 override the same-named fields in the file; when neither is given the runner errors out directly and
 will not guess an authorization set on the agent's behalf. The adapter sends only a redacted fact
-summary to the selected Jev provider and does not read logs or start and stop services. The runner
+summary to the selected provider and does not read logs or start and stop services. The runner
 outputs `clear`, `continue`, `human_required`, `unavailable` or `stale`; on success it atomically
 writes the validated `assessment` back to the same file and re-reads the state before returning. When
-there is no usable environment variable or GUI-local Jev configuration, or on network failure,
+there is no usable environment variable or GUI-local model configuration, or on network failure,
 invalid response, expired file or changed state revision, the fact file is left unchanged. The
-`~/.option-berth/jev.json` written by the macOS settings page (`$BERTH_HOME/jev.json` for isolated
-runs) is read automatically by `oberth jev` and is the only persistent consent: `enabled: true`
-turns Jev on, `enabled: false` keeps it off even when a key is present. An explicit
+`~/.option-berth/attn.json` written by `oberth attn enable` (`$BERTH_HOME/attn.json` for isolated
+runs) is read automatically by `oberth attn` and is the only persistent consent: `enabled: true`
+turns the model on, `enabled: false` keeps it off even when a key is present. An explicit
 `OPENROUTER_API_KEY` / `TYPESAFE_API_KEY` supplies the key and selects the provider but does not
-enable Jev; `BERTH_JEV=1` enables it for one process. Each unavailable answer carries one fixed
+enable the model; `BERTH_ATTN=1` enables it for one process. Each unavailable answer carries one fixed
 reason (`no_key`, `disabled`, `invalid_config`, `unauthorized`, `rate_limited`, `timeout`, `network`,
 `provider_error`, `bad_response`, `stale`) rather than a provider's error text. `--auto`, `--session` and
 `--subscribe` must be given `authorized_options` explicitly; the artifact's `options` is only a
 candidate set and does not automatically become the agent's authorization. To keep discovering
 abnormalities over a task's lifetime, the agent should use
-`oberth jev session --interval 2s`, which emits
+`oberth attn session --interval 2s`, which emits
 only new event/revision/assessment changes as NDJSON and ends on cancellation. Full arguments and the
 privacy boundary are in
-[`jev-adapter.md`](agent/jev-adapter.md).
+[`attn-adapter.md`](agent/attn-adapter.md).
 
-`oberth jev assess` / `oberth jev session` leave redacted local quality observations in
+`oberth attn assess` / `oberth attn session` leave redacted local quality observations in
 `$BERTH_HOME/quality/events.ndjson`. After a real interaction, a development agent can write back
-human labels and action outcomes with `oberth jev feedback --file <json>`, then use
-`oberth jev report [--since 168h]` to view label coverage, assessment availability,
-routing reasons and the model/option distribution, human-escalation precision/recall/F1, Jev's
+human labels and action outcomes with `oberth attn feedback --file <json>`, then use
+`oberth attn report [--since 168h]` to view label coverage, assessment availability,
+routing reasons and the model/option distribution, human-escalation precision/recall/F1, the model's
 `needs_human` / `task_relevant` probability error, recommendation hit rate, action success rate,
 resolution rate and detection latency. Quality records are not `status` facts and change no execution
-permission; the report's `sessions` object explains the number of sessions, polls, events, Jev calls,
+permission; the report's `sessions` object explains the number of sessions, polls, events, the model calls,
 cache hits and no-event polls; with no real feedback the metrics stay `null`.
 
 ### Agent-facing JSON fields
@@ -366,7 +366,7 @@ or renaming one.
 | `observation.state` | `status` | Whether the listener table can be trusted; read it before `ports`. |
 | `observation.source` | `status` | The collector that answered when it was not the platform's primary one; non-empty means a missing port is unknown, not free. |
 | `machine[].listening_known` | `status` | Whether `listening` was observed; false means the table cannot see that port's owner. |
-| `attention_path` | `status` | The derived handoff file for the current abnormality; absent when there is none. |
+| `attn_path` | `status` | The derived handoff file for the current abnormality; absent when there is none. |
 | `services[].starting` | `status` | Instantaneous facts of an in-progress start; not a run and not the same as `running`. |
 | `starting.phase` | `status` | `waiting_dependency`, `prepare` or `spawning`. |
 | `starting.waiting_on` | `status` | Dependencies still being waited on; keeps the last known set when observation fails. |
