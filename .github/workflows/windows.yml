@@ -1,17 +1,13 @@
 name: Windows build verification
 on:
   # The PR gate must run the native Windows path, not only the PowerShell
-  # parse job in the engine workflow. No path filter on pull_request: a
-  # skipped required workflow leaves its check pending and blocks the PR.
+  # parse job in the engine workflow. The pull request is the only automatic
+  # trigger: `main` accepts pull requests only, so a push cannot skip this
+  # check. Release tags call this workflow and run it again.
+  # No path filter on pull_request: a skipped required workflow leaves its
+  # check pending and blocks the PR.
   workflow_call:
   pull_request:
-  push:
-    branches: [main]
-    paths:
-      - 'engine/**'
-      - 'install.ps1'
-      - 'uninstall.ps1'
-      - '.github/workflows/windows.yml'
   workflow_dispatch:
 permissions:
   contents: read

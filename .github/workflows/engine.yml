@@ -5,23 +5,13 @@ on:
   # build, vet, unit tests and the fast helper suites on both supported engine
   # platforms. Core race tests and real service scenarios stay on manual
   # dispatch and on the tag-driven release workflow.
+  # The pull request is the only automatic trigger: `main` accepts pull
+  # requests only, so a push cannot skip this check, and the merge commit
+  # carries the tree that just passed. Nightly and release tags run the full
+  # gate instead of a second copy on every merge.
   # No path filter here: a skipped path-filtered workflow leaves a required
   # check pending and blocks the PR.
   pull_request:
-  push:
-    branches: [main]
-    paths:
-      - 'engine/**'
-      - 'docs/cli.md'
-      - 'docs/cli.zh.md'
-      - 'magefiles/**'
-      - 'scripts/**'
-      - 'install.sh'
-      - 'install.ps1'
-      - 'uninstall.sh'
-      - 'uninstall.ps1'
-      - '.github/workflows/engine.yml'
-      - '.github/workflows/release.yml'
   workflow_dispatch:
 
 permissions:
