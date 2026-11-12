@@ -4,13 +4,48 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/runsreg"
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
+
+// The restart bug at its decision point: the stop half leaves a run record
+// behind until the reap, and the start half must not report that record as a
+// service that is already up.
+func TestStartAfterStopDoesNotReuseTheStoppedRun(t *testing.T) {
+	previous := runsreg.Default
+	runsreg.Default = runsreg.New()
+	runsreg.Default.Mirror = false
+	runsreg.Default.Alive = func(int) bool { return true }
+	runsreg.Default.Parents = func() map[int]int { return nil }
+	runsreg.Default.StartTime = nil
+	t.Cleanup(func() { runsreg.Default = previous })
+
+	rec := runsreg.Default.Register(runsreg.Record{
+		PID: 4242, Group: "example", Name: "worker", StartedAt: time.Unix(1, 0),
+	})
+	observe := runsreg.Default.StopSignalObserver([]state.Run{{RootPID: rec.PID, ID: rec.ID}}, runsreg.ReasonStopped)
+	if observe == nil {
+		t.Fatal("no stop observer for the registered run")
+	}
+	observe(rec.PID)
+
+	rt := &daemon.Runtime{Scanner: scanner.New(scanner.Options{Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
+		return nil, nil
+	}})}
+	reason, _, up, err := alreadyRunning(context.Background(), rt, "example", groups.Service{Name: "worker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if up {
+		t.Fatalf("start decision reused the stopped run: %s", reason)
+	}
+}
 
 func TestLifecycleObservationPropagatesOwnerCancellation(t *testing.T) {
 	previous := runsreg.Default
