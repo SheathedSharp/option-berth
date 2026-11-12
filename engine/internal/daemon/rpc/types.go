@@ -17,7 +17,11 @@ const Version = "2.0"
 //
 // 2.0.0 removed two fields no handler read: Selector.Key and the host envelope
 // that every params type used to embed.
-const ProtocolVersion = "2.0.0"
+//
+// 2.1.0 added the groups.code method and GroupsKillParams.ExpectRuns. Both are
+// additive, so a client must gate them on the daemon's advertised capabilities
+// (CapabilityKillExpectRuns) rather than on this version.
+const ProtocolVersion = "2.1.0"
 
 // Request is a client call. ID is raw so a client can use numbers or strings.
 type Request struct {
