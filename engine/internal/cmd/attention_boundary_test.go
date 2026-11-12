@@ -11,7 +11,7 @@ import (
 )
 
 // The Jev adapter is optional. "Optional" has to mean something the build can
-// check, not a comment: if a control-path package ever imports internal/jev,
+// check, not a comment: if a control-path package ever imports internal/attn/model,
 // then a missing key, an expired setting or a slow provider becomes able to
 // reach `status`, `up`, `down`, `restart` or `logs`. These two tests turn that
 // promise into a failing build.
@@ -52,7 +52,7 @@ func TestDaemonAndScannerNeverImportTheJevClient(t *testing.T) {
 	for _, pkg := range []string{"../daemon", "../scanner", "../groups", "../ports", "../servicefacts"} {
 		t.Run(filepath.Base(pkg), func(t *testing.T) {
 			for _, dep := range dependencyClosure(t, pkg) {
-				if dep == "internal/jev" || strings.HasPrefix(dep, "internal/jev/") {
+				if dep == "internal/attn/model" || strings.HasPrefix(dep, "internal/attn/model/") {
 					t.Fatalf("%s depends on %s: the Jev client is off the control path", pkg, dep)
 				}
 			}
@@ -65,7 +65,7 @@ func TestDaemonAndScannerNeverImportTheJevClient(t *testing.T) {
 // check would also pass today, but this one says which file went wrong, and it
 // keeps working while a package is being moved around.
 func TestControlPathCommandsNeverImportTheJevClient(t *testing.T) {
-	const jevImport = `"github.com/sheathedsharp/option-berth/engine/internal/jev"`
+	const jevImport = `"github.com/sheathedsharp/option-berth/engine/internal/attn/model"`
 	files := []string{"status.go", "up.go", "down.go", "restart.go", "logs.go", "start.go"}
 	fset := token.NewFileSet()
 	for _, name := range files {
@@ -78,7 +78,7 @@ func TestControlPathCommandsNeverImportTheJevClient(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s: unquote %s: %v", name, spec.Path.Value, err)
 			}
-			if path == "github.com/sheathedsharp/option-berth/engine/internal/jev" || strings.Contains(path, "internal/jev") {
+			if path == "github.com/sheathedsharp/option-berth/engine/internal/attn/model" || strings.Contains(path, "internal/attn/model") {
 				t.Errorf("%s imports %s; the optional Jev client stays out of the control path", name, jevImport)
 			}
 		}

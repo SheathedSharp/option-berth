@@ -1,4 +1,4 @@
-package jev
+package model
 
 // `oberth jev enable` is the one step that turns the optional assessment on.
 // It stores the key the person chose, proves the key works with a single
@@ -56,9 +56,9 @@ type EnableOptions struct {
 }
 
 // SettingsFrom turns the request into the on-disk shape, without the key.
-func (o EnableOptions) SettingsFrom(cfg LocalJevConfig) LocalJevConfig {
+func (o EnableOptions) SettingsFrom(cfg LocalConfig) LocalConfig {
 	next := cfg
-	next.Schema = LocalJevConfigSchema
+	next.Schema = LocalConfigSchema
 	next.Enabled = true
 	if strings.TrimSpace(o.Provider) != "" {
 		next.Provider = strings.ToLower(strings.TrimSpace(o.Provider))
@@ -124,13 +124,13 @@ type ProbeResult struct {
 // ProbeOnce sends one synthetic, redacted event through the real client. It is
 // the same request shape a real assessment uses, so a key that passes here is a
 // key that works; nothing about the person's worktree is included.
-func ProbeOnce(ctx context.Context, cfg LocalJevConfig) ProbeResult {
+func ProbeOnce(ctx context.Context, cfg LocalConfig) ProbeResult {
 	return ProbeWithClient(ctx, cfg, nil)
 }
 
 // ProbeWithClient is ProbeOnce with an injectable HTTP client, so a test can
 // point the probe at a local server without touching http.DefaultClient.
-func ProbeWithClient(ctx context.Context, cfg LocalJevConfig, httpClient *http.Client) ProbeResult {
+func ProbeWithClient(ctx context.Context, cfg LocalConfig, httpClient *http.Client) ProbeResult {
 	started := time.Now()
 	task := TaskContext{
 		Task: "Connection check: confirm this key can answer a structured assessment.",
@@ -162,14 +162,14 @@ func defaultEndpointFor(provider string) string {
 	if strings.EqualFold(provider, ProviderOpenRouter) {
 		return DefaultOpenRouterEndpoint
 	}
-	return DefaultJevEndpoint
+	return DefaultEndpoint
 }
 
 func defaultModelFor(provider string) string {
 	if strings.EqualFold(provider, ProviderOpenRouter) {
 		return DefaultOpenRouterModel
 	}
-	return DefaultJevModel
+	return DefaultModel
 }
 
 // syntheticProbeArtifact is a fixed, dated event so the probe request is a
@@ -196,7 +196,7 @@ func syntheticProbeArtifact() attn.Artifact {
 // WriteSettings atomically stores an owner-only settings file. The directory is
 // created owner-only too: a settings file whose parent is world-readable is not
 // "0600 in spirit".
-func WriteSettings(path string, cfg LocalJevConfig) error {
+func WriteSettings(path string, cfg LocalConfig) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
@@ -243,9 +243,9 @@ func WriteSettings(path string, cfg LocalJevConfig) error {
 
 // DisableSettings turns the committed setting off without deleting the key, so
 // a person who only wants Jev to stop does not have to paste the key again.
-func DisableSettings(path string, cfg LocalJevConfig, forget bool) error {
+func DisableSettings(path string, cfg LocalConfig, forget bool) error {
 	next := cfg
-	next.Schema = LocalJevConfigSchema
+	next.Schema = LocalConfigSchema
 	next.Enabled = false
 	if forget {
 		next.APIKey = ""
@@ -259,7 +259,7 @@ func DisableSettings(path string, cfg LocalJevConfig, forget bool) error {
 	return WriteSettings(path, next)
 }
 
-func writeDisabledSettings(path string, cfg LocalJevConfig) error {
+func writeDisabledSettings(path string, cfg LocalConfig) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}

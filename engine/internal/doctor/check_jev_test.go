@@ -12,7 +12,7 @@ import (
 // installation look broken. The three states a person can act on are off,
 // on-with-a-key, and on-without-one.
 
-func writeJevSettings(t *testing.T, env *Env, body string, mode os.FileMode) {
+func writeSettings(t *testing.T, env *Env, body string, mode os.FileMode) {
 	t.Helper()
 	path := filepath.Join(env.Home, ".option-berth", "jev.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -37,7 +37,7 @@ func TestJevCheckReportsOffWithoutFailing(t *testing.T) {
 
 func TestJevCheckReportsOnWithProvider(t *testing.T) {
 	env := fakeEnv(t)
-	writeJevSettings(t, env, `{"schema":"oberth.jev-config/v1","enabled":true,"provider":"openrouter","api_key":"k"}`, 0o600)
+	writeSettings(t, env, `{"schema":"oberth.jev-config/v1","enabled":true,"provider":"openrouter","api_key":"k"}`, 0o600)
 	got := run(t, env, checkJev)
 	wantStatus(t, got, StatusOK)
 	if got.Summary != "Jev: on · openrouter" {
@@ -51,7 +51,7 @@ func TestJevCheckReportsOnWithProvider(t *testing.T) {
 
 func TestJevCheckWarnsWhenEnabledWithoutAKey(t *testing.T) {
 	env := fakeEnv(t)
-	writeJevSettings(t, env, `{"schema":"oberth.jev-config/v1","enabled":true,"provider":"typesafe"}`, 0o600)
+	writeSettings(t, env, `{"schema":"oberth.jev-config/v1","enabled":true,"provider":"typesafe"}`, 0o600)
 	got := run(t, env, checkJev)
 	wantStatus(t, got, StatusWarn)
 	if got.Fix == "" {
@@ -64,12 +64,12 @@ func TestJevCheckWarnsWhenEnabledWithoutAKey(t *testing.T) {
 // where it becomes visible.
 func TestJevCheckWarnsOnUnusableSettings(t *testing.T) {
 	env := fakeEnv(t)
-	writeJevSettings(t, env, `{"schema":"oberth.jev-config/v1",`, 0o600)
+	writeSettings(t, env, `{"schema":"oberth.jev-config/v1",`, 0o600)
 	got := run(t, env, checkJev)
 	wantStatus(t, got, StatusWarn)
 
 	env2 := fakeEnv(t)
-	writeJevSettings(t, env2, `{"schema":"oberth.jev-config/v1","enabled":true,"api_key":"k"}`, 0o644)
+	writeSettings(t, env2, `{"schema":"oberth.jev-config/v1","enabled":true,"api_key":"k"}`, 0o644)
 	got = run(t, env2, checkJev)
 	wantStatus(t, got, StatusWarn)
 }

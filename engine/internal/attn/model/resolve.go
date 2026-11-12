@@ -1,4 +1,4 @@
-package jev
+package model
 
 // Consent resolution. One function decides every question the adapter used to
 // answer in scattered default* helpers: is Jev enabled, which provider and
@@ -53,7 +53,7 @@ type ResolveInput struct {
 	OneShot string
 	// Settings is the loaded jev.json; Present distinguishes "absent" from
 	// "present and enabled: false", which are different answers.
-	Settings        LocalJevConfig
+	Settings        LocalConfig
 	SettingsPresent bool
 	// SettingsErr is a malformed or unsafe settings file. It is reported as
 	// invalid configuration, never silently ignored.
@@ -144,13 +144,13 @@ func oneShotConsent(value string) bool {
 // settings file is a closed door with a reason, not a fall-through to
 // whatever the environment happens to hold.
 func Resolve(in ResolveInput) Resolved {
-	resolved := Resolved{Timeout: DefaultJevTimeout}
+	resolved := Resolved{Timeout: DefaultTimeout}
 
 	settingsUsable := in.SettingsPresent && in.SettingsErr == nil
 	if in.SettingsErr != nil {
 		resolved.Provider = ProviderTypeSafe
-		resolved.Endpoint = firstNonEmpty(in.TypeSafeURL, DefaultJevEndpoint)
-		resolved.Model = firstNonEmpty(in.TypeSafeMod, DefaultJevModel)
+		resolved.Endpoint = firstNonEmpty(in.TypeSafeURL, DefaultEndpoint)
+		resolved.Model = firstNonEmpty(in.TypeSafeMod, DefaultModel)
 		resolved.Reason = ReasonInvalidConfig
 		return resolved
 	}
@@ -242,8 +242,8 @@ func providerEndpointAndModel(provider string, in ResolveInput, settingsUsable b
 		}
 		return firstNonEmpty(in.OpenRouterURL, endpoint), firstNonEmpty(in.OpenRouterMod, model)
 	}
-	endpoint := DefaultJevEndpoint
-	model := DefaultJevModel
+	endpoint := DefaultEndpoint
+	model := DefaultModel
 	if settingsUsable && !strings.EqualFold(in.Settings.Provider, ProviderOpenRouter) {
 		endpoint = firstNonEmpty(in.Settings.Endpoint, endpoint)
 		model = firstNonEmpty(in.Settings.Model, model)

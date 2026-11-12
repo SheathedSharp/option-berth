@@ -1,4 +1,4 @@
-package jev
+package model
 
 import (
 	"os"
@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func writeLocalJevConfig(t *testing.T, body string, mode os.FileMode) string {
+func writeLocalConfig(t *testing.T, body string, mode os.FileMode) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "jev.json")
 	if err := os.WriteFile(path, []byte(body), mode); err != nil {
@@ -16,8 +16,8 @@ func writeLocalJevConfig(t *testing.T, body string, mode os.FileMode) string {
 	return path
 }
 
-func TestLoadLocalJevConfigValidatesAndTrims(t *testing.T) {
-	path := writeLocalJevConfig(t, `{
+func TestLoadLocalConfigValidatesAndTrims(t *testing.T) {
+	path := writeLocalConfig(t, `{
       "schema":"oberth.jev-config/v1",
       "enabled":true,
       "provider":" OpenRouter ",
@@ -26,7 +26,7 @@ func TestLoadLocalJevConfigValidatesAndTrims(t *testing.T) {
       "api_key":"  sk-test  ",
       "timeout_ms":12000
     }`, 0o600)
-	cfg, present, err := LoadLocalJevConfigFrom(path)
+	cfg, present, err := LoadLocalConfigFrom(path)
 	if err != nil || !present {
 		t.Fatalf("load = %+v, present=%v, err=%v", cfg, present, err)
 	}
@@ -38,22 +38,22 @@ func TestLoadLocalJevConfigValidatesAndTrims(t *testing.T) {
 	}
 }
 
-func TestLoadLocalJevConfigMissingIsDistinctFromDisabled(t *testing.T) {
+func TestLoadLocalConfigMissingIsDistinctFromDisabled(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.json")
-	if _, present, err := LoadLocalJevConfigFrom(path); err != nil || present {
+	if _, present, err := LoadLocalConfigFrom(path); err != nil || present {
 		t.Fatalf("missing = present=%v err=%v", present, err)
 	}
 
-	disabled := writeLocalJevConfig(t, `{"schema":"oberth.jev-config/v1","enabled":false}`, 0o600)
-	cfg, present, err := LoadLocalJevConfigFrom(disabled)
+	disabled := writeLocalConfig(t, `{"schema":"oberth.jev-config/v1","enabled":false}`, 0o600)
+	cfg, present, err := LoadLocalConfigFrom(disabled)
 	if err != nil || !present || cfg.Enabled {
 		t.Fatalf("disabled = %+v present=%v err=%v", cfg, present, err)
 	}
 }
 
-func TestLoadLocalJevConfigRejectsBroadPermissions(t *testing.T) {
-	path := writeLocalJevConfig(t, `{"enabled":true,"api_key":"secret"}`, 0o644)
-	if _, present, err := LoadLocalJevConfigFrom(path); err == nil || !present {
+func TestLoadLocalConfigRejectsBroadPermissions(t *testing.T) {
+	path := writeLocalConfig(t, `{"enabled":true,"api_key":"secret"}`, 0o644)
+	if _, present, err := LoadLocalConfigFrom(path); err == nil || !present {
 		t.Fatalf("broad permissions accepted: present=%v err=%v", present, err)
 	}
 }

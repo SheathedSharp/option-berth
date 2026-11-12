@@ -1,4 +1,4 @@
-package jev
+package model
 
 // What `oberth jev preview` shows and what `oberth jev enable` prints afterwards.
 // Both answer the same question in different tenses: "what exactly crosses the
@@ -21,16 +21,16 @@ func PreviewRequest(artifact attn.Artifact, task TaskContext) (map[string]any, e
 	}
 	// The preview has no configured model: name the placeholder the shape uses
 	// so a reader is never told a specific model was chosen.
-	body := jevRequest{
+	body := apiRequest{
 		State: safeState(artifact, task, options),
 		Model: "<the configured model>",
-		Questions: map[string]jevQuestion{
+		Questions: map[string]apiQuestion{
 			"task_relevant": {Type: "noul"},
 			"needs_human":   {Type: "noul"},
 		},
 	}
 	if len(options) > 1 {
-		body.Questions["next_option"] = jevQuestion{Type: "choice"}
+		body.Questions["next_option"] = apiQuestion{Type: "choice"}
 	}
 	encoded, err := encodePreview(body)
 	if err != nil {
@@ -42,7 +42,7 @@ func PreviewRequest(artifact attn.Artifact, task TaskContext) (map[string]any, e
 // encodePreview renders the request as the generic map a command prints, with
 // field names preserved. Going through the typed struct keeps the preview and
 // the real request from drifting apart.
-func encodePreview(body jevRequest) (map[string]any, error) {
+func encodePreview(body apiRequest) (map[string]any, error) {
 	state := map[string]any{
 		"task":               body.State.Task,
 		"worktree_id":        body.State.WorktreeID,
@@ -70,7 +70,7 @@ func encodePreview(body jevRequest) (map[string]any, error) {
 	return map[string]any{"state": state, "questions": questions}, nil
 }
 
-func previewEvent(event jevEvent) map[string]any {
+func previewEvent(event apiEvent) map[string]any {
 	out := map[string]any{"kind": event.Kind}
 	for key, value := range map[string]any{
 		"service": event.Service, "reason": event.Reason, "run_id": event.RunID,

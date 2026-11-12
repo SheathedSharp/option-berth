@@ -1,4 +1,4 @@
-package jev
+package model
 
 import (
 	"bytes"
@@ -270,10 +270,10 @@ func TestBuildQualityReportExplainsSessionCoverage(t *testing.T) {
 	now := time.Date(2026, 9, 27, 5, 0, 0, 0, time.UTC)
 	records := []TelemetryRecord{
 		{Schema: TelemetrySchema, RecordID: "start", RecordedAt: now.Format(time.RFC3339Nano), Kind: "lifecycle", Source: "subscription", Project: "example-worker", SessionID: "session-1", Status: "subscribed"},
-		{Schema: TelemetrySchema, RecordID: "stop", RecordedAt: now.Add(time.Minute).Format(time.RFC3339Nano), Kind: "lifecycle", Source: "subscription", Project: "example-worker", SessionID: "session-1", Status: "stopped", Polls: 12, EventsSeen: 1, JevCalls: 1, CacheHits: 3, NoEventPolls: 11},
+		{Schema: TelemetrySchema, RecordID: "stop", RecordedAt: now.Add(time.Minute).Format(time.RFC3339Nano), Kind: "lifecycle", Source: "subscription", Project: "example-worker", SessionID: "session-1", Status: "stopped", Polls: 12, EventsSeen: 1, ModelCalls: 1, CacheHits: 3, NoEventPolls: 11},
 	}
 	report := BuildQualityReport(records, time.Time{}, "example-worker", now.Add(2*time.Minute))
-	want := SessionMetric{Started: 1, Stopped: 1, Polls: 12, EventsSeen: 1, JevCalls: 1, CacheHits: 3, NoEventPolls: 11}
+	want := SessionMetric{Started: 1, Stopped: 1, Polls: 12, EventsSeen: 1, ModelCalls: 1, CacheHits: 3, NoEventPolls: 11}
 	if report.Sessions != want {
 		t.Fatalf("sessions = %+v, want %+v", report.Sessions, want)
 	}

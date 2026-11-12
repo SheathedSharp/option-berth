@@ -1,4 +1,4 @@
-package jev
+package model
 
 // Preflight is an optional adapter handoff before an agent's proposed side
 // effect. Its schema distinguishes agent intent from code-produced runtime

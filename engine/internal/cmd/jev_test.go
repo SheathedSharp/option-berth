@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/jev"
-	"github.com/sheathedsharp/option-berth/engine/internal/jev/runner"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn/model"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn/runner"
 )
 
 // `oberth jev` carries the runner the standalone binary used to own. What has to
@@ -119,8 +119,8 @@ func TestDisabledConsentProducesNoClient(t *testing.T) {
 	if _, err := consent.Client(); err == nil {
 		t.Fatal("a disabled configuration produced a client")
 	}
-	if got := consent.ReasonOr(nil); got != jev.ReasonDisabled {
-		t.Fatalf("reason = %q, want %q", got, jev.ReasonDisabled)
+	if got := consent.ReasonOr(nil); got != model.ReasonDisabled {
+		t.Fatalf("reason = %q, want %q", got, model.ReasonDisabled)
 	}
 }
 

@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/attn"
-	"github.com/sheathedsharp/option-berth/engine/internal/jev"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn/model"
 )
 
 // The runner lives in the optional agent-side command. Only the documented
@@ -61,7 +61,7 @@ type Output struct {
 	SessionID         string           `json:"session_id,omitempty"`
 	FreshUntil        string           `json:"fresh_until,omitempty"`
 	Assessment        *attn.Assessment `json:"assessment,omitempty"`
-	JevCalled         bool             `json:"jev_called,omitempty"`
+	ModelCalled       bool             `json:"jev_called,omitempty"`
 	Cached            bool             `json:"cached,omitempty"`
 	Decision          *HILDecision     `json:"decision,omitempty"`
 	Request           *HILRequest      `json:"request,omitempty"`
@@ -78,7 +78,7 @@ type Output struct {
 type SubscriptionStats struct {
 	Polls        int
 	EventsSeen   int
-	JevCalls     int
+	ModelCalls   int
 	CacheHits    int
 	NoEventPolls int
 	Unavailable  int
@@ -160,24 +160,24 @@ func ReadStatus(ctx context.Context, binary, project string) (Status, error) {
 func ArtifactFor(s Status) (attn.Artifact, error) {
 	a, err := attn.ReadFresh(s.AttentionPath, time.Time{})
 	if err != nil {
-		return a, jev.ErrStale
+		return a, model.ErrStale
 	}
 	if s.AttentionRevision == "" || a.StateRevision != s.AttentionRevision ||
 		filepath.Clean(a.WorktreeRoot) != filepath.Clean(s.Scope.Root) ||
 		a.EventID == "" || a.RecoveredAt != "" {
-		return a, jev.ErrStale
+		return a, model.ErrStale
 	}
 	return a, nil
 }
 
-func Auto(ctx context.Context, binary, project string, client jev.Client, task jev.TaskContext,
+func Auto(ctx context.Context, binary, project string, client model.Client, task model.TaskContext,
 	readStatus func(context.Context, string, string) (Status, error)) (Output, error) {
 	s, err := readStatus(ctx, binary, project)
 	if err != nil {
 		return Output{}, err
 	}
 	if s.AttentionPath == "" {
-		return Output{Status: "clear", WorktreeID: jev.WorktreeID(s.Scope.Root), WorktreeRoot: s.Scope.Root}, nil
+		return Output{Status: "clear", WorktreeID: model.WorktreeID(s.Scope.Root), WorktreeRoot: s.Scope.Root}, nil
 	}
 	a, err := ArtifactFor(s)
 	if err != nil {
@@ -191,19 +191,19 @@ func Auto(ctx context.Context, binary, project string, client jev.Client, task j
 	// Long-running agents can declare a broad fixed allow-list. Only its
 	// intersection with this event's deterministic candidates reaches Jev or
 	// the HIL request; candidate publication itself never grants permission.
-	authorized, err := jev.FilterAuthorizedOptions(a.Options, task.AuthorizedOptions)
+	authorized, err := model.FilterAuthorizedOptions(a.Options, task.AuthorizedOptions)
 	if err != nil {
 		return Output{}, fmt.Errorf("runner: %w", err)
 	}
 	task.AuthorizedOptions = authorized
-	result, cached := jev.CachedResult(a, task)
+	result, cached := model.CachedResult(a, task)
 	var callErr error
 	jevCalled := false
 	if !cached {
 		jevCalled = strings.TrimSpace(client.APIKey) != ""
 		result, callErr = client.Evaluate(ctx, a, task)
 	}
-	if callErr != nil && !errors.Is(callErr, jev.ErrUnavailable) && !errors.Is(callErr, jev.ErrStale) {
+	if callErr != nil && !errors.Is(callErr, model.ErrUnavailable) && !errors.Is(callErr, model.ErrStale) {
 		return Output{}, callErr
 	}
 	// A remote call can take seconds. Refresh facts before publishing the HIL
@@ -213,25 +213,25 @@ func Auto(ctx context.Context, binary, project string, client jev.Client, task j
 		return Output{}, err
 	}
 	if fresh.AttentionPath == "" {
-		return Output{Status: "clear", WorktreeID: jev.WorktreeID(fresh.Scope.Root), WorktreeRoot: fresh.Scope.Root}, nil
+		return Output{Status: "clear", WorktreeID: model.WorktreeID(fresh.Scope.Root), WorktreeRoot: fresh.Scope.Root}, nil
 	}
 	latest, err := ArtifactFor(fresh)
 	if err != nil || fresh.AttentionPath != s.AttentionPath || latest.EventID != a.EventID || latest.StateRevision != a.StateRevision {
 		return StaleOutput(fresh), nil
 	}
-	if errors.Is(callErr, jev.ErrStale) {
+	if errors.Is(callErr, model.ErrStale) {
 		return StaleOutput(fresh), nil
 	}
 	if callErr == nil && !cached {
-		if err := jev.Persist(s.AttentionPath, a, result); err != nil {
-			if errors.Is(err, jev.ErrStale) {
+		if err := model.Persist(s.AttentionPath, a, result); err != nil {
+			if errors.Is(err, model.ErrStale) {
 				return StaleOutput(fresh), nil
 			}
 			return Output{}, err
 		}
 	}
-	out := Output{AttentionPath: s.AttentionPath, AttentionRevision: a.StateRevision, EventID: a.EventID, FreshUntil: latest.FreshUntil, Cached: cached, WorktreeID: jev.WorktreeID(fresh.Scope.Root), WorktreeRoot: fresh.Scope.Root}
-	out.JevCalled = jevCalled
+	out := Output{AttentionPath: s.AttentionPath, AttentionRevision: a.StateRevision, EventID: a.EventID, FreshUntil: latest.FreshUntil, Cached: cached, WorktreeID: model.WorktreeID(fresh.Scope.Root), WorktreeRoot: fresh.Scope.Root}
+	out.ModelCalled = jevCalled
 	if callErr == nil {
 		out.Assessment = &result.Assessment
 		out.ContextID = result.Assessment.ContextID
@@ -240,7 +240,7 @@ func Auto(ctx context.Context, binary, project string, client jev.Client, task j
 	out.Decision = &d
 	if callErr != nil {
 		out.Status = "unavailable"
-		out.Reason = jev.ReasonFor(callErr)
+		out.Reason = model.ReasonFor(callErr)
 	} else if d.NeedsHuman {
 		out.Status = "human_required"
 	} else {
@@ -268,15 +268,15 @@ func Auto(ctx context.Context, binary, project string, client jev.Client, task j
 
 func StaleOutput(status Status) Output {
 	d := HILDecision{NeedsHuman: true, Reason: "state_changed_refresh_required", Policy: "oberth.hil/v1"}
-	return Output{Status: "stale", WorktreeID: jev.WorktreeID(status.Scope.Root), Decision: &d, WorktreeRoot: status.Scope.Root}
+	return Output{Status: "stale", WorktreeID: model.WorktreeID(status.Scope.Root), Decision: &d, WorktreeRoot: status.Scope.Root}
 }
 
 // Subscribe keeps the optional adapter outside the daemon while giving an
 // agent a durable event stream for the lifetime of its current task. It emits
 // only when the status/event/assessment state changes; repeated polls of the
 // same revision are deliberately silent.
-func Subscribe(ctx context.Context, binary, project string, interval time.Duration, client jev.Client,
-	task jev.TaskContext, readStatus func(context.Context, string, string) (Status, error),
+func Subscribe(ctx context.Context, binary, project string, interval time.Duration, client model.Client,
+	task model.TaskContext, readStatus func(context.Context, string, string) (Status, error),
 	emit func(any) error) error {
 	return SubscribeWithObserver(ctx, binary, project, interval, client, task, readStatus, "", nil, emit)
 }
@@ -284,15 +284,15 @@ func Subscribe(ctx context.Context, binary, project string, interval time.Durati
 // SubscribeWithObserver keeps the same protocol while allowing the command
 // entrypoint to append local quality observations. The observer cannot modify
 // the result or execute an option.
-func SubscribeWithObserver(ctx context.Context, binary, project string, interval time.Duration, client jev.Client,
-	task jev.TaskContext, readStatus func(context.Context, string, string) (Status, error),
+func SubscribeWithObserver(ctx context.Context, binary, project string, interval time.Duration, client model.Client,
+	task model.TaskContext, readStatus func(context.Context, string, string) (Status, error),
 	sessionID string, observe func(Output, time.Duration), emit func(any) error) error {
 	_, err := SubscribeWithStats(ctx, binary, project, interval, client, task, readStatus, sessionID, observe, emit)
 	return err
 }
 
-func SubscribeWithStats(ctx context.Context, binary, project string, interval time.Duration, client jev.Client,
-	task jev.TaskContext, readStatus func(context.Context, string, string) (Status, error),
+func SubscribeWithStats(ctx context.Context, binary, project string, interval time.Duration, client model.Client,
+	task model.TaskContext, readStatus func(context.Context, string, string) (Status, error),
 	sessionID string, observe func(Output, time.Duration), emit func(any) error) (SubscriptionStats, error) {
 	stats := SubscriptionStats{seen: make(map[string]bool)}
 	if interval <= 0 {
@@ -332,8 +332,8 @@ func SubscribeWithStats(ctx context.Context, binary, project string, interval ti
 		if result.Cached {
 			stats.CacheHits++
 		}
-		if result.JevCalled {
-			stats.JevCalls++
+		if result.ModelCalled {
+			stats.ModelCalls++
 		}
 		if result.Status == "unavailable" {
 			stats.Unavailable++
@@ -383,11 +383,11 @@ func (result Output) DecisionReason() string {
 }
 
 func SubscriptionReason(err error) string {
-	if errors.Is(err, jev.ErrStale) {
+	if errors.Is(err, model.ErrStale) {
 		return "state_changed_refresh_required"
 	}
-	if errors.Is(err, jev.ErrUnavailable) {
-		return "jev_unavailable"
+	if errors.Is(err, model.ErrUnavailable) {
+		return "model_unavailable"
 	}
 	return "runner_cycle_failed"
 }

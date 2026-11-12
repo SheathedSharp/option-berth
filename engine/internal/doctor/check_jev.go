@@ -8,15 +8,15 @@ package doctor
 import (
 	"context"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/attn/model"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
-	"github.com/sheathedsharp/option-berth/engine/internal/jev"
 )
 
 func checkJev(_ context.Context, env *Env) rpc.DoctorCheck {
 	// The settings live under the same home every other check reads, so this
 	// row describes the installation being examined rather than whatever home
 	// the process happens to have.
-	cfg, present, err := jev.LoadLocalJevConfigFrom(env.SettingsPath)
+	cfg, present, err := model.LoadLocalConfigFrom(env.SettingsPath)
 	if err != nil {
 		// A malformed file is the one state a person cannot discover from the
 		// outside: it is present, so nothing falls back, and the reason is only
@@ -27,7 +27,7 @@ func checkJev(_ context.Context, env *Env) rpc.DoctorCheck {
 	// OneShot is deliberately empty: this row reports the committed setting, so
 	// an unrelated BERTH_JEV export cannot make doctor claim a provider is
 	// configured.
-	consent := jev.Resolve(jev.ResolveInput{Settings: cfg, SettingsPresent: present})
+	consent := model.Resolve(model.ResolveInput{Settings: cfg, SettingsPresent: present})
 	if !consent.Enabled {
 		return skipWithFix("Jev: off (optional)",
 			"the optional model assessment is not enabled; runtime facts, services and every control command work without it",

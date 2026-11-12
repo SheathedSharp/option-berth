@@ -1,11 +1,11 @@
 package attn
 
 // The adapter boundary between the deterministic artifact and the optional Jev
-// client (internal/jev).
+// client (internal/attn/model).
 //
 // internal/attn owns the artifact and its on-disk protocol: identity,
 // atomic publication, the read-modify-write lock, and the staleness signal.
-// internal/jev owns every call that leaves the machine. It needs the same lock
+// internal/attn/model owns every call that leaves the machine. It needs the same lock
 // when it appends its local quality ledger, because that ledger and the
 // artifact share one owner directory; exposing the lock keeps the client from
 // reaching back into a private helper and keeps the critical section identical

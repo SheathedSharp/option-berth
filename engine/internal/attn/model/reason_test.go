@@ -1,4 +1,4 @@
-package jev
+package model
 
 import (
 	"context"
@@ -132,7 +132,7 @@ func TestUnreachableProviderIsANetworkReason(t *testing.T) {
 
 func TestNoKeyIsItsOwnReason(t *testing.T) {
 	_, artifact := testArtifact(t)
-	_, err := Client{Endpoint: DefaultJevEndpoint}.Evaluate(context.Background(), artifact,
+	_, err := Client{Endpoint: DefaultEndpoint}.Evaluate(context.Background(), artifact,
 		TaskContext{Task: "why stuck", AuthorizedOptions: []string{"inspect_logs"}})
 	if got := ReasonFor(err); got != ReasonNoKey {
 		t.Fatalf("reason = %q, want %q", got, ReasonNoKey)

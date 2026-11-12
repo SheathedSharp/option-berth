@@ -1,4 +1,4 @@
-package jev
+package model
 
 // This file contains the optional Jev adapter. It is intentionally separate
 // from status and the daemon: a missing key, a network failure, or an invalid
@@ -27,11 +27,11 @@ import (
 )
 
 const (
-	DefaultJevEndpoint        = "https://api.typesafe.ai/v1/systemone"
-	DefaultJevModel           = "jev-latest"
+	DefaultEndpoint           = "https://api.typesafe.ai/v1/systemone"
+	DefaultModel              = "jev-latest"
 	DefaultOpenRouterEndpoint = "https://openrouter.ai/api/alpha/decisions"
 	DefaultOpenRouterModel    = "typesafe/jev-1.13"
-	DefaultJevTimeout         = 10 * time.Second
+	DefaultTimeout            = 10 * time.Second
 	maxTaskBytes              = 2000
 	maxReasonBytes            = 256
 	maxServiceBytes           = 128
@@ -114,17 +114,17 @@ func (c Client) normalized() (Client, error) {
 		return Client{}, WithReason(ReasonNoKey, ErrUnavailable)
 	}
 	if strings.TrimSpace(c.Endpoint) == "" {
-		c.Endpoint = DefaultJevEndpoint
+		c.Endpoint = DefaultEndpoint
 	}
 	u, err := url.Parse(c.Endpoint)
 	if err != nil || u.Scheme != "https" || u.Host == "" {
 		return Client{}, fmt.Errorf("attention: Jev endpoint must be an HTTPS URL")
 	}
 	if strings.TrimSpace(c.Model) == "" {
-		c.Model = DefaultJevModel
+		c.Model = DefaultModel
 	}
 	if c.Timeout <= 0 {
-		c.Timeout = DefaultJevTimeout
+		c.Timeout = DefaultTimeout
 	}
 	if c.HTTPClient == nil {
 		c.HTTPClient = http.DefaultClient
@@ -132,28 +132,28 @@ func (c Client) normalized() (Client, error) {
 	return c, nil
 }
 
-// jevRequest and jevResponse mirror TypeSafe's documented HTTP contract. The
+// apiRequest and apiResponse mirror TypeSafe's documented HTTP contract. The
 // state sent here is deliberately a small, redacted summary; log contents and
 // environment variables never cross this boundary.
-type jevRequest struct {
-	State     jevState               `json:"state"`
+type apiRequest struct {
+	State     apiState               `json:"state"`
 	Model     string                 `json:"model"`
-	Questions map[string]jevQuestion `json:"questions"`
+	Questions map[string]apiQuestion `json:"questions"`
 }
 
-type jevState struct {
+type apiState struct {
 	Task              string     `json:"task"`
 	WorktreeID        string     `json:"worktree_id"`
 	Branch            string     `json:"branch,omitempty"`
 	StateRevision     string     `json:"state_revision"`
-	Event             jevEvent   `json:"event"`
-	Events            []jevEvent `json:"events,omitempty"`
+	Event             apiEvent   `json:"event"`
+	Events            []apiEvent `json:"events,omitempty"`
 	EvidenceRefs      []string   `json:"evidence_refs"`
 	CandidateOptions  []string   `json:"candidate_options"`
 	AuthorizedOptions []string   `json:"authorized_options"`
 }
 
-type jevEvent struct {
+type apiEvent struct {
 	Kind         string `json:"kind"`
 	Service      string `json:"service,omitempty"`
 	Reason       string `json:"reason,omitempty"`
@@ -165,18 +165,18 @@ type jevEvent struct {
 	ExitCode     *int   `json:"exit_code,omitempty"`
 }
 
-type jevQuestion struct {
+type apiQuestion struct {
 	Type         string `json:"type"`
 	Instructions string `json:"instructions"`
 	Criteria     any    `json:"criteria,omitempty"`
 }
 
-type jevResponse struct {
+type apiResponse struct {
 	Model   string               `json:"model"`
-	Answers map[string]jevAnswer `json:"answers"`
+	Answers map[string]apiAnswer `json:"answers"`
 }
 
-type jevAnswer struct {
+type apiAnswer struct {
 	Type          string             `json:"type"`
 	Noul          *float64           `json:"noul,omitempty"`
 	Choice        string             `json:"choice,omitempty"`
@@ -215,7 +215,7 @@ func (c Client) Evaluate(ctx context.Context, artifact attn.Artifact, task TaskC
 		return Result{}, err
 	}
 	state := safeState(artifact, task, options)
-	questions := map[string]jevQuestion{
+	questions := map[string]apiQuestion{
 		"task_relevant": {
 			Type:         "noul",
 			Instructions: "Does this deterministic runtime event materially affect the development task in state.task?",
@@ -238,13 +238,13 @@ func (c Client) Evaluate(ctx context.Context, artifact attn.Artifact, task TaskC
 		for _, id := range options {
 			criteria[id] = optionDescription(id)
 		}
-		questions["next_option"] = jevQuestion{
+		questions["next_option"] = apiQuestion{
 			Type:         "choice",
 			Instructions: "Which authorized, pre-defined next step should the agent present first to the user?",
 			Criteria:     criteria,
 		}
 	}
-	payload := jevRequest{State: state, Model: client.Model, Questions: questions}
+	payload := apiRequest{State: state, Model: client.Model, Questions: questions}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return Result{}, fmt.Errorf("attention: encode Jev request: %w", err)
@@ -276,7 +276,7 @@ func (c Client) Evaluate(ctx context.Context, artifact attn.Artifact, task TaskC
 		// details and errors should never become agent-visible evidence.
 		return Result{}, WithReason(reasonFromStatus(resp.StatusCode), fmt.Errorf("%w: Jev HTTP status %d", ErrUnavailable, resp.StatusCode))
 	}
-	var decoded jevResponse
+	var decoded apiResponse
 	if err := json.Unmarshal(responseBody, &decoded); err != nil {
 		return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: invalid Jev response", ErrUnavailable))
 	}
@@ -314,7 +314,7 @@ func CachedResult(artifact attn.Artifact, task TaskContext) (Result, bool) {
 	return Result{Assessment: a, TaskRelevant: *a.TaskRelevant, Model: a.Model}, true
 }
 
-func safeState(a attn.Artifact, task TaskContext, authorized []string) jevState {
+func safeState(a attn.Artifact, task TaskContext, authorized []string) apiState {
 	refs := make([]string, 0, len(a.Evidence))
 	for _, evidence := range a.Evidence {
 		if ref := safeRef(evidence.Ref); ref != "" {
@@ -325,7 +325,7 @@ func safeState(a attn.Artifact, task TaskContext, authorized []string) jevState 
 	if len(events) == 0 {
 		events = []attn.Event{a.Event}
 	}
-	jevEvents := make([]jevEvent, 0, len(events))
+	jevEvents := make([]apiEvent, 0, len(events))
 	for _, event := range events {
 		jevEvents = append(jevEvents, safeEvent(event))
 	}
@@ -333,7 +333,7 @@ func safeState(a attn.Artifact, task TaskContext, authorized []string) jevState 
 	if len(jevEvents) > 0 {
 		firstEvent = jevEvents[0]
 	}
-	return jevState{
+	return apiState{
 		Task:              redactText(task.Task, maxTaskBytes),
 		WorktreeID:        hashWorktree(a.WorktreeRoot),
 		Branch:            redactText(redactIdentifier(a.Branch, maxServiceBytes), maxServiceBytes),
@@ -346,8 +346,8 @@ func safeState(a attn.Artifact, task TaskContext, authorized []string) jevState 
 	}
 }
 
-func safeEvent(event attn.Event) jevEvent {
-	return jevEvent{
+func safeEvent(event attn.Event) apiEvent {
+	return apiEvent{
 		Kind:         redactText(redactIdentifier(string(event.Kind), maxReasonBytes), maxReasonBytes),
 		Service:      redactText(redactIdentifier(event.Service, maxServiceBytes), maxServiceBytes),
 		Reason:       redactText(redactIdentifier(event.Reason, maxReasonBytes), maxReasonBytes),
@@ -381,7 +381,7 @@ func optionDescription(id string) string {
 	return "A pre-defined option in the attention artifact."
 }
 
-func validateResponse(response jevResponse, options []string, configuredModel string) (Result, error) {
+func validateResponse(response apiResponse, options []string, configuredModel string) (Result, error) {
 	if response.Answers == nil {
 		return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: Jev response has no answers", ErrUnavailable))
 	}
@@ -429,7 +429,7 @@ func validateResponse(response jevResponse, options []string, configuredModel st
 	return Result{Assessment: assessment, TaskRelevant: relevant, Model: assessment.Model}, nil
 }
 
-func validateNoul(answer jevAnswer, key string) (float64, error) {
+func validateNoul(answer apiAnswer, key string) (float64, error) {
 	if answer.Type != "noul" || answer.Noul == nil || !finite(*answer.Noul) {
 		return 0, WithReason(ReasonBadResponse, fmt.Errorf("%w: invalid %s answer", ErrUnavailable, key))
 	}

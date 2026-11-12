@@ -1,4 +1,4 @@
-package jev
+package model
 
 // Fixed reasons for "Jev is not available". A caller that has to tell a person
 // why nothing happened needs a closed vocabulary, not a provider's error text:

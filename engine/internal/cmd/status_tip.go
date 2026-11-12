@@ -18,8 +18,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/attn/model"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
-	"github.com/sheathedsharp/option-berth/engine/internal/jev"
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 )
 
@@ -137,9 +137,9 @@ func isTerminalStdout() bool {
 // current shell is a decision for that process, not a reason to stop telling
 // the next person the feature exists.
 func jevEnabled() bool {
-	cfg, present, err := jev.LoadLocalJevConfig()
+	cfg, present, err := model.LoadLocalConfig()
 	if err != nil {
 		return false
 	}
-	return jev.Resolve(jev.ResolveInput{Settings: cfg, SettingsPresent: present}).Enabled
+	return model.Resolve(model.ResolveInput{Settings: cfg, SettingsPresent: present}).Enabled
 }

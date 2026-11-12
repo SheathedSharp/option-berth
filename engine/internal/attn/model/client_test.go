@@ -1,4 +1,4 @@
-package jev
+package model
 
 import (
 	"context"
@@ -43,7 +43,7 @@ func TestJevEvaluateRedactsStateAndPersistsOnlyValidatedAssessment(t *testing.T)
 		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
 			t.Errorf("authorization = %q", got)
 		}
-		var request jevRequest
+		var request apiRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}

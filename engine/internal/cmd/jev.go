@@ -19,8 +19,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/jev"
-	"github.com/sheathedsharp/option-berth/engine/internal/jev/runner"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn/model"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn/runner"
 	"github.com/spf13/cobra"
 )
 
@@ -130,13 +130,13 @@ func init() {
 // jevTaskContext loads the agent's explicit authorization. There is no default:
 // an unset allow-list is an error, because a candidate option in an artifact is
 // not permission to act on it.
-func jevTaskContext() (jev.TaskContext, error) {
-	var task jev.TaskContext
+func jevTaskContext() (model.TaskContext, error) {
+	var task model.TaskContext
 	var err error
 	if strings.TrimSpace(jevTaskFileFlag) != "" {
-		task, err = jev.ReadTaskContext(jevTaskFileFlag)
+		task, err = model.ReadTaskContext(jevTaskFileFlag)
 		if err != nil {
-			return jev.TaskContext{}, err
+			return model.TaskContext{}, err
 		}
 	}
 	if strings.TrimSpace(jevTaskFlag) != "" {
@@ -156,13 +156,13 @@ func jevTaskContext() (jev.TaskContext, error) {
 
 // jevResolvedConsent is the same single resolution the standalone command uses.
 // A reason means "do not call the provider", never "guess a default".
-func jevResolvedConsent() jev.Resolved {
-	input := jev.ResolveInputFromEnvironment()
-	input.Settings, input.SettingsPresent, input.SettingsErr = jev.LoadLocalJevConfig()
-	legacy, err := jev.ReadLegacyJevKey()
+func jevResolvedConsent() model.Resolved {
+	input := model.ResolveInputFromEnvironment()
+	input.Settings, input.SettingsPresent, input.SettingsErr = model.LoadLocalConfig()
+	legacy, err := model.ReadLegacyJevKey()
 	input.LegacyKey, input.LegacyErr = legacy, err
 	input.LegacyFound = strings.TrimSpace(legacy) != ""
-	return jev.Resolve(input)
+	return model.Resolve(input)
 }
 
 func runJevAssess(cmd *cobra.Command, _ []string) error {
@@ -179,7 +179,7 @@ func runJevAssess(cmd *cobra.Command, _ []string) error {
 	if clientErr != nil {
 		// The client is empty, so the runner treats this as "no key": it never
 		// calls out, and the reason it prints is the consent decision.
-		client = jev.Client{}
+		client = model.Client{}
 	}
 	result, err := runner.Auto(cmd.Context(), jevOberthFlag, jevProjectFlag, client, task, runner.ReadStatus)
 	if err != nil {

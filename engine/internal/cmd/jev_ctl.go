@@ -16,8 +16,8 @@ import (
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/attn"
-	"github.com/sheathedsharp/option-berth/engine/internal/jev"
-	"github.com/sheathedsharp/option-berth/engine/internal/jev/runner"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn/model"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn/runner"
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 	"github.com/spf13/cobra"
 )
@@ -120,11 +120,11 @@ func jevPrint(value any, human func() string) error {
 func runJevStatus(cmd *cobra.Command, _ []string) error {
 	consent := jevResolvedConsent()
 	state := consent.RedactedState()
-	cfg, present, err := jev.LoadLocalJevConfig()
+	cfg, present, err := model.LoadLocalConfig()
 	state["settings_present"] = present
 	state["settings_valid"] = err == nil
 	if present && err == nil {
-		if fingerprint := jev.KeyFingerprint(cfg.APIKey); fingerprint != "" {
+		if fingerprint := model.KeyFingerprint(cfg.APIKey); fingerprint != "" {
 			state["key_fingerprint"] = fingerprint
 		}
 	}
@@ -133,21 +133,21 @@ func runJevStatus(cmd *cobra.Command, _ []string) error {
 		if consent.Enabled {
 			fmt.Fprintf(&b, "Jev: on (%s)\n", consent.ConsentSource)
 		} else {
-			fmt.Fprintf(&b, "Jev: off (%s)\n", firstNonEmptyString(consent.Reason, jev.ReasonDisabled))
+			fmt.Fprintf(&b, "Jev: off (%s)\n", firstNonEmptyString(consent.Reason, model.ReasonDisabled))
 		}
 		fmt.Fprintf(&b, "  provider  %s\n", consent.Provider)
 		fmt.Fprintf(&b, "  endpoint  %s\n", consent.Endpoint)
 		fmt.Fprintf(&b, "  model     %s\n", consent.Model)
 		fmt.Fprintf(&b, "  key       %s\n", keySourceLine(consent.KeySource, state["key_fingerprint"]))
 		if !consent.Enabled {
-			fmt.Fprintf(&b, "  next      %s\n", jev.ReasonHint(consent.Reason))
+			fmt.Fprintf(&b, "  next      %s\n", model.ReasonHint(consent.Reason))
 		}
 		return strings.TrimRight(b.String(), "\n")
 	})
 }
 
-func keySourceLine(source jev.Source, fingerprint any) string {
-	if source == jev.SourceNone {
+func keySourceLine(source model.Source, fingerprint any) string {
+	if source == model.SourceNone {
 		return "not configured"
 	}
 	if text, ok := fingerprint.(string); ok && text != "" {
@@ -160,20 +160,20 @@ func runJevEnable(cmd *cobra.Command, _ []string) error {
 	if jevKeyStdinFlag && jevKeyEnvFlag != "" {
 		return usageError{errors.New("--key-stdin and --key-env are mutually exclusive")}
 	}
-	current, _, err := jev.LoadLocalJevConfig()
+	current, _, err := model.LoadLocalConfig()
 	if err != nil {
 		// A malformed file is replaceable: enable is the repair path.
-		current = jev.LocalJevConfig{}
+		current = model.LocalConfig{}
 	}
-	options := jev.EnableOptions{
+	options := model.EnableOptions{
 		Provider: jevEnableProvider, Endpoint: jevEnableEndpoint, Model: jevEnableModel,
-		Timeout: jevEnableTimeout, KeyKind: jev.KeyFromPrompt,
+		Timeout: jevEnableTimeout, KeyKind: model.KeyFromPrompt,
 	}
 	switch {
 	case jevKeyStdinFlag:
-		options.KeyKind = jev.KeyFromStdin
+		options.KeyKind = model.KeyFromStdin
 	case jevKeyEnvFlag != "":
-		options.KeyKind = jev.KeyFromEnv
+		options.KeyKind = model.KeyFromEnv
 		options.KeyEnv = jevKeyEnvFlag
 	default:
 		key, err := readSecretFromTerminal()
@@ -196,7 +196,7 @@ func runJevEnable(cmd *cobra.Command, _ []string) error {
 
 	ctx, cancel := context.WithTimeout(cmd.Context(), next.Timeout()+time.Second)
 	defer cancel()
-	probe := jev.ProbeOnce(ctx, next)
+	probe := model.ProbeOnce(ctx, next)
 	if !probe.OK {
 		// Nothing is written: a configuration that does not work must not
 		// replace one that might.
@@ -205,37 +205,37 @@ func runJevEnable(cmd *cobra.Command, _ []string) error {
 			probe.Text)
 	}
 	path := paths.JevConfigPath()
-	if err := jev.WriteSettings(path, next); err != nil {
+	if err := model.WriteSettings(path, next); err != nil {
 		return err
 	}
-	state := jev.Resolved{
-		Enabled: true, ConsentSource: jev.SourceSettings, Provider: next.Provider,
+	state := model.Resolved{
+		Enabled: true, ConsentSource: model.SourceSettings, Provider: next.Provider,
 		Endpoint: next.Endpoint, Model: next.Model, Key: next.APIKey,
-		KeySource: jev.SourceSettings, Timeout: next.Timeout(),
+		KeySource: model.SourceSettings, Timeout: next.Timeout(),
 	}
 	return jevPrint(map[string]any{
 		"status":   "enabled",
 		"path":     path,
 		"settings": state.RedactedState(),
 		"probe":    map[string]any{"ok": true, "model": probe.Model, "latency_ms": probe.Latency.Milliseconds()},
-		"sends":    jev.SendsSummary(),
+		"sends":    model.SendsSummary(),
 	}, func() string {
 		return fmt.Sprintf("Jev: enabled (%s, key %s)\n  %s\n\n%s",
-			next.Provider, keySourceLine(jev.SourceSettings, jev.KeyFingerprint(next.APIKey)),
-			path, jev.HumanSendsSummary())
+			next.Provider, keySourceLine(model.SourceSettings, model.KeyFingerprint(next.APIKey)),
+			path, model.HumanSendsSummary())
 	})
 }
 
 func runJevTest(cmd *cobra.Command, _ []string) error {
 	consent := jevResolvedConsent()
 	if !consent.Enabled {
-		return failHint("jev_disabled", "Jev is off", jev.ReasonHint(firstNonEmptyString(consent.Reason, jev.ReasonDisabled)))
+		return failHint("jev_disabled", "Jev is off", model.ReasonHint(firstNonEmptyString(consent.Reason, model.ReasonDisabled)))
 	}
-	cfg, _, err := jev.LoadLocalJevConfig()
+	cfg, _, err := model.LoadLocalConfig()
 	if err != nil {
 		return err
 	}
-	if consent.KeySource == jev.SourceEnvironment || consent.KeySource == jev.SourceFlag {
+	if consent.KeySource == model.SourceEnvironment || consent.KeySource == model.SourceFlag {
 		cfg.APIKey = consent.Key
 	}
 	if cfg.TimeoutMS == 0 {
@@ -243,7 +243,7 @@ func runJevTest(cmd *cobra.Command, _ []string) error {
 	}
 	ctx, cancel := context.WithTimeout(cmd.Context(), consent.Timeout+time.Second)
 	defer cancel()
-	probe := jev.ProbeOnce(ctx, cfg)
+	probe := model.ProbeOnce(ctx, cfg)
 	document := map[string]any{
 		"status": "ok", "provider": consent.Provider, "model": probe.Model,
 		"latency_ms": probe.Latency.Milliseconds(),
@@ -268,9 +268,9 @@ func runJevTest(cmd *cobra.Command, _ []string) error {
 }
 
 func runJevDisable(cmd *cobra.Command, _ []string) error {
-	cfg, present, err := jev.LoadLocalJevConfig()
+	cfg, present, err := model.LoadLocalConfig()
 	if err != nil {
-		cfg = jev.LocalJevConfig{}
+		cfg = model.LocalConfig{}
 	}
 	if !present && cfg.APIKey == "" && !jevDisableForget {
 		// Nothing to turn off. Saying so is better than writing a file that
@@ -280,7 +280,7 @@ func runJevDisable(cmd *cobra.Command, _ []string) error {
 		})
 	}
 	path := paths.JevConfigPath()
-	if err := jev.DisableSettings(path, cfg, jevDisableForget); err != nil {
+	if err := model.DisableSettings(path, cfg, jevDisableForget); err != nil {
 		return err
 	}
 	status := "disabled"
@@ -311,9 +311,9 @@ func runJevPreview(cmd *cobra.Command, _ []string) error {
 	}
 	artifact, err := attn.ReadFresh(status.AttentionPath, time.Time{})
 	if err != nil {
-		return failHint("stale", "the attention artifact is stale", jev.ReasonHint(jev.ReasonStale))
+		return failHint("stale", "the attention artifact is stale", model.ReasonHint(model.ReasonStale))
 	}
-	task := jev.TaskContext{
+	task := model.TaskContext{
 		Task: firstNonEmptyString(jevPreviewTaskFlag,
 			"Describe what an assessment would send for this event"),
 		AuthorizedOptions: jevPreviewAuthFlag,
@@ -323,7 +323,7 @@ func runJevPreview(cmd *cobra.Command, _ []string) error {
 			task.AuthorizedOptions = append(task.AuthorizedOptions, option.ID)
 		}
 	}
-	body, err := jev.PreviewRequest(artifact, task)
+	body, err := model.PreviewRequest(artifact, task)
 	if err != nil {
 		return usageError{err}
 	}

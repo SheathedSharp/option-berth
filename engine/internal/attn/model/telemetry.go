@@ -1,4 +1,4 @@
-package jev
+package model
 
 // This file contains the optional, local quality ledger for the agent-side
 // attention adapter.  It is deliberately separate from runtime facts: records
@@ -62,7 +62,7 @@ type TelemetryRecord struct {
 	AuthorizedOptions []string           `json:"authorized_options,omitempty"`
 	Polls             int                `json:"polls,omitempty"`
 	EventsSeen        int                `json:"events_seen,omitempty"`
-	JevCalls          int                `json:"jev_calls,omitempty"`
+	ModelCalls        int                `json:"jev_calls,omitempty"`
 	CacheHits         int                `json:"cache_hits,omitempty"`
 	NoEventPolls      int                `json:"no_event_polls,omitempty"`
 	Unavailable       int                `json:"unavailable,omitempty"`
@@ -150,7 +150,7 @@ type SessionMetric struct {
 	Errors       int `json:"errors"`
 	Polls        int `json:"polls"`
 	EventsSeen   int `json:"events_seen"`
-	JevCalls     int `json:"jev_calls"`
+	ModelCalls   int `json:"model_calls"`
 	CacheHits    int `json:"cache_hits"`
 	NoEventPolls int `json:"no_event_polls"`
 	Unavailable  int `json:"unavailable"`
@@ -447,7 +447,7 @@ func normalizeTelemetry(record TelemetryRecord, now time.Time) (TelemetryRecord,
 		}
 	}
 	for name, value := range map[string]int{
-		"polls": record.Polls, "events_seen": record.EventsSeen, "jev_calls": record.JevCalls,
+		"polls": record.Polls, "events_seen": record.EventsSeen, "model_calls": record.ModelCalls,
 		"cache_hits": record.CacheHits, "no_event_polls": record.NoEventPolls, "unavailable": record.Unavailable,
 	} {
 		if value < 0 {
@@ -608,7 +608,7 @@ func BuildQualityReport(records []TelemetryRecord, since time.Time, projectFilte
 			}
 			report.Sessions.Polls += record.Polls
 			report.Sessions.EventsSeen += record.EventsSeen
-			report.Sessions.JevCalls += record.JevCalls
+			report.Sessions.ModelCalls += record.ModelCalls
 			report.Sessions.CacheHits += record.CacheHits
 			report.Sessions.NoEventPolls += record.NoEventPolls
 			report.Sessions.Unavailable += record.Unavailable
