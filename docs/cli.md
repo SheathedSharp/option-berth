@@ -259,15 +259,18 @@ file exists. Use logs for detailed output. `worktree.services[]`'s `pid`, `run_i
 are provided while the service is being run by option-berth, so even a portless worker can be
 verified against the actual run record through these fields; `log_path` is always given by the engine.
 
-Once the optional attention enhancement is enabled, a definite abnormal event in the state also puts
-`attn_path` in the JSON. It points at a recomputable, expirable agent handoff file under
-`BERTH_HOME/attention/`; with no current abnormality the field is absent. **Its presence is the
-signal that the person enabled the enhancement** — an agent that sees one may run `oberth attn
-assess`, and an agent that sees none does not have to guess whether that is because nothing is wrong
-or because the model was never turned on. Without consent `status` publishes nothing and clears an artifact
-left over from before the enhancement was switched off. When there is an abnormality,
-`attn_revision` is provided as well and must equal the file's `state_revision`, so the agent can
-check inside the same `status` response whether the file still corresponds to current facts. An
+A definite abnormal event in the state puts a fact-only handoff in the JSON, whether or not the
+optional assessment is enabled. `attn_path` points at a recomputable, expirable agent handoff file
+under `BERTH_HOME/attention/`; with no current abnormality the field is absent. **Its presence means
+"there is an anomaly", not "the person opted in"** — publishing a local fact sends nothing anywhere,
+so consent cannot decide whether it exists. The adjacent `attn` block says whether that handoff can
+be assessed now: `enabled` is the consent bit, `reason` is the fixed code when nothing can run, and
+`assessment` is `assessed` (the file already carries a validated result), `pending` (an enabled,
+complete configuration could assess it), or `unavailable`. An agent may use the fact-only handoff
+without a configured model; it must check `attn.enabled` before running `oberth attn assess`.
+When there is an abnormality, `attn_revision` is provided as well and must equal the file's
+`state_revision`, so the agent can check inside the same `status` response whether the file still
+corresponds to current facts. An
 undeclared listener is not an abnormality: `status` already lists the port with its owner, and a
 process the agent did not start is not one it should stop. The core file is
 `oberth.attn/v1`, containing `event_id`, `state_revision`, `worktree_root`, optional `branch`,
@@ -369,6 +372,7 @@ or renaming one.
 | `observation.source` | `status` | The collector that answered when it was not the platform's primary one; non-empty means a missing port is unknown, not free. |
 | `machine[].listening_known` | `status` | Whether `listening` was observed; false means the table cannot see that port's owner. |
 | `attn_path` | `status` | The derived handoff file for the current abnormality; absent when there is none. |
+| `attn` | `status` | Whether that handoff can be assessed now: `enabled`, fixed `reason`, `assessment` (`assessed`, `pending` or `unavailable`). |
 | `services[].starting` | `status` | Instantaneous facts of an in-progress start; not a run and not the same as `running`. |
 | `starting.phase` | `status` | `waiting_dependency`, `prepare` or `spawning`. |
 | `starting.waiting_on` | `status` | Dependencies still being waited on; keeps the last known set when observation fails. |

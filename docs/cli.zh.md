@@ -224,11 +224,14 @@ changed 是第一次运行时缺省的可选字段。ports 仍是给脚本核对
 `worktree.services[]` 的 `pid`、`run_id` 和 `started_at` 在服务由 option-berth 正在运行时提供，
 无端口 worker 也能靠这些字段核对实际运行记录；`log_path` 始终由引擎给出。
 
-在用户启用可选的模型评估之后，状态里出现确定的异常事件才会带 `attn_path`。它指向
+状态里出现确定的异常事件就会带事实型交接文件，与是否启用可选评估无关。`attn_path` 指向
 `BERTH_HOME/attention/` 下的一个可重算、可过期的 agent 交接文件；没有当前异常时该字段缺省。
-**这个字段出现本身就是「用户已启用增强」的信号**：看到它的 agent 可以运行 `oberth attn assess`，
-看不到的 agent 也不必再猜是「没有异常」还是「从没开过该评估」。未启用时 `status` 不发布，并清掉
-关闭之前留下的文件。有异常时同时提供 `attn_revision`，它必须与文件中的 `state_revision`
+**它出现表示「有异常」，不表示「用户已同意」**——发布一个本地事实不向任何地方发送数据，
+所以同意不能决定它是否存在。相邻的 `attn` 块说明这份交接现在能否被评估：`enabled` 是同意位，
+`reason` 是当前无法运行时的固定原因码，`assessment` 取 `assessed`（文件已带校验过的结果）、
+`pending`（已启用且配置完整，可以评估）或 `unavailable`。agent 可以在没有配置模型时使用
+事实型交接文件，但在运行 `oberth attn assess` 前必须检查 `attn.enabled`。
+有异常时同时提供 `attn_revision`，它必须与文件中的 `state_revision`
 相等，供 agent 在同一份 `status` 响应中核对文件是否仍对应当前事实。
 未声明的监听不是异常：`status` 已经列出该端口及其属主，agent 没有启动它，也不该去停它。
 核心文件是 `oberth.attn/v1`，包含 `event_id`、`state_revision`、`worktree_root`、
@@ -315,6 +318,7 @@ oberth attn assess --project "$PWD" \
 | `observation.source` | `status` | 不是主采集器时回答本轮采集器；非空表示缺失的端口是未知，不是空闲。 |
 | `machine[].listening_known` | `status` | `listening` 是否是观察到的；false 表示这张表看不到该端口的所有者。 |
 | `attn_path` | `status` | 当前异常的派生交接文件；没有异常时缺省。 |
+| `attn` | `status` | 这份交接现在能否被评估：`enabled`、固定 `reason`、`assessment`（`assessed`、`pending` 或 `unavailable`）。 |
 | `services[].starting` | `status` | 正在启动的瞬时事实；不是 run，也不等于 `running`。 |
 | `starting.phase` | `status` | `waiting_dependency`、`prepare` 或 `spawning`。 |
 | `starting.waiting_on` | `status` | 仍在等的依赖；观察失败时保留上次已知集合。 |
