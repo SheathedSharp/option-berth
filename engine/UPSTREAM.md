@@ -31,7 +31,10 @@
 **9,621**（对照 `f4c50506`）、**9,659**（对照 `be48afbe`），生产 3,852、
 测试 5,758。
 
-按包（对照 `26dbcae`，后续分支）：
+2026-11-12 的 ports 重写在此基础上继续下降：对照 `26dbcae` 为 **8,933** 行 / 664 段，
+分布在 135 个文件（生产 3,564、测试 5,369）。
+
+按包（对照 `26dbcae`，ports 重写后）：
 
 | 包 | 生产 | 测试 | 合计 |
 | --- | ---: | ---: | ---: |
@@ -39,12 +42,12 @@
 | `internal/cmd` | 837 | 703 | 1,540 |
 | `internal/groups` | 336 | 506 | 842 |
 | `internal/scanner` | 220 | 540 | 760 |
-| `internal/ports` | 288 | 389 | 677 |
+| `internal/ports` | 0 | 0 | 0 |
 | `internal/killer` | 86 | 158 | 244 |
 | `internal/store` | 12 | 5 | 17 |
 
-`internal/claims`、`internal/display`、`internal/testenv` 与 `internal/store/claims*.go`
-已经归零；`internal/docker` 与 `internal/ports/displayname.go` 只剩结构体字段与表驱动
+`internal/claims`、`internal/display`、`internal/testenv`、`internal/ports` 与
+`internal/store/claims*.go` 已经归零；`internal/docker` 只剩结构体字段与表驱动
 用例数据。`internal/store` 已整包重写：生产代码从 1,076 行降到 199 行。
 
 ```sh
