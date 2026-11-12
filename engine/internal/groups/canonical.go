@@ -23,11 +23,11 @@ func Canonical(path string) string {
 	if path == "" {
 		return ""
 	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
+	abs, absErr := filepath.Abs(path)
+	if absErr != nil {
 		abs = filepath.Clean(path)
 	}
-	if resolved, ok := symlinksResolved(abs); ok {
+	if resolved, exists := symlinksResolved(abs); exists {
 		return resolved
 	}
 	return resolveMissingTail(abs)

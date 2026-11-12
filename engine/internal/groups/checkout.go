@@ -25,17 +25,17 @@ type Checkout struct {
 	// Worktree is a linked worktree's name, the base name of Root. It is empty
 	// for a main checkout.
 	Worktree string
-	// head is the HEAD file the checkout's branch is read from, "" when there
-	// is nothing to read.
+	// head points at the HEAD file the branch is read from; "" when there is
+	// nothing to read.
 	head string
 }
 
-// Linked reports whether the checkout is a linked worktree.
+// Linked reports whether this checkout is a linked worktree.
 func (c Checkout) Linked() bool { return c.Worktree != "" }
 
-// Locate finds the checkout that contains dir. It walks up the way Find does
-// and answers the same root, plus the main checkout a linked worktree belongs
-// to and the HEAD its branch is read from. Paths are canonical.
+// Locate finds the checkout containing dir. It climbs the way Find does and
+// answers the same root, plus the main checkout of a linked worktree and the
+// HEAD file its branch is read from. Paths are canonical.
 func Locate(dir string) (Checkout, bool) {
 	return locateCanonical(Canonical(dir))
 }
@@ -49,7 +49,7 @@ func locateCanonical(cur string) (Checkout, bool) {
 	}
 	for climbed := 0; climbed < maxWalk; climbed++ {
 		gitPath := filepath.Join(cur, ".git")
-		if info, err := os.Lstat(gitPath); err == nil {
+		if info, statErr := os.Lstat(gitPath); statErr == nil {
 			return checkoutAt(cur, gitPath, info.Mode().IsRegular()), true
 		}
 		parent := filepath.Dir(cur)
@@ -115,10 +115,9 @@ func parseHead(data []byte) string {
 	return branch
 }
 
-// SetAliases installs the project names the daemon stores for projects that
-// have no `oberth.yaml` to write a name into (`groups.rename`), keyed by the
-// main checkout's root. The scanner sets them every tick from the store; a nil
-// map clears them.
+// SetAliases installs the project names `groups.rename` stores for projects
+// with no `oberth.yaml` to hold one, keyed by the main checkout's root. The
+// scanner refreshes them every tick; a nil map clears them.
 func (x *Index) SetAliases(aliases map[string]string) {
 	x.aliases = make(map[string]string, len(aliases))
 	for root, name := range aliases {
@@ -170,13 +169,12 @@ func (r *resolutionPass) checkoutName(co Checkout) string {
 	return name + "@" + co.Worktree
 }
 
-// GroupOf is the group a config's services are published under. A config at a
-// checkout's root is that checkout's own, so it takes the checkout's group
-// name rather than its `name:` — which is exactly what keeps a worktree's copy
-// of a committed file from claiming the main checkout's name. A config below
-// the root is a nested project with a name of its own, qualified with the
-// worktree when it sits in one. A config outside any checkout is named by its
-// file.
+// GroupOf answers the group a config's services are published under. A config
+// at a checkout's root belongs to that checkout, so it takes the checkout's
+// group name instead of its `name:` — which is what stops a worktree's copy of
+// a committed file from claiming the main checkout's name. Below the root, a
+// config is a nested project with its own name, qualified with the worktree
+// when it sits in one. Outside any checkout, the file names itself.
 func (x *Index) GroupOf(cfg *Config) string {
 	return (&resolutionPass{index: x}).groupOf(cfg)
 }
@@ -212,8 +210,8 @@ func (x *Index) NearestFor(dir string) *Config {
 	return cfg
 }
 
-// within reports whether cfg may describe something in co: always for a main
-// checkout, and only from inside the worktree for a linked one.
+// within reports whether cfg can describe something in co: any config for a
+// main checkout, and only one inside the worktree for a linked checkout.
 func (x *Index) within(cfg *Config, co Checkout) bool {
 	return !co.Linked() || Under(cfg.Dir, co.Root)
 }

@@ -43,12 +43,12 @@ func Detect(root string) []Declared {
 	return append(out, detectCompose(root)...)
 }
 
-// nodeScripts is the order package.json scripts are preferred in: the one a
-// developer runs to work on the project.
-var nodeScripts = []string{"dev", "start"}
+// nodeScripts is the preference order for package.json scripts: the one a
+// developer starts the project with.
+var nodeScripts = [...]string{"dev", "start"}
 
-// detectNodeScript reads package.json's dev script, run by whichever package
-// manager the lockfile commits the project to.
+// detectNodeScript reads the dev script from package.json, run through the
+// package manager the committed lockfile names.
 func detectNodeScript(root string) (Declared, bool) {
 	data, err := os.ReadFile(filepath.Join(root, "package.json"))
 	if err != nil {

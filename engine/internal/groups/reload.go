@@ -41,26 +41,25 @@ func (x *Index) Known() []string {
 // file from answering for the main checkout: the copy is
 // `<project>@<worktree>`, and only the main checkout's file is `<project>`.
 func (x *Index) Named(name string) (*Config, bool) {
-	for _, cfg := range x.Configs() {
-		if x.GroupOf(cfg) == name {
-			return cfg, true
+	configs := x.Configs()
+	for i := range configs {
+		if x.GroupOf(configs[i]) == name {
+			return configs[i], true
 		}
 	}
 	return nil, false
 }
 
-// ByPath returns the valid config read from this file. The lookup resolves
-// symlinks on both sides, because the index stores the resolved path the
-// scanner walked to while a client sends whatever the user typed — on macOS
-// that is /var/… against /private/var/….
+// ByPath returns the valid config read from this file. Symlinks are resolved on
+// both sides: the index stores the path the scanner walked to, while a client
+// sends whatever the user typed — on macOS /var/… against /private/var/….
 func (x *Index) ByPath(path string) (*Config, bool) {
 	want := Canonical(path)
-	if want == "" {
-		return nil, false
-	}
-	for _, cfg := range x.configs {
-		if cfg != nil && cfg.Path == want {
-			return cfg, true
+	if want != "" {
+		for _, cfg := range x.configs {
+			if cfg != nil && cfg.Path == want {
+				return cfg, true
+			}
 		}
 	}
 	return nil, false
@@ -100,7 +99,7 @@ func (x *Index) Reload(roots []string) (int, []InvalidConfig) {
 	return len(x.configs), x.Invalid()
 }
 
-// LoadFile re-reads one config into the index, replacing whatever was there.
-// `groups.config.set` calls it after a write so the very next delta carries the
-// edited services.
+// LoadFile re-reads one config, replacing whatever the index held for it.
+// `groups.config.set` calls it after a write so the next delta already carries
+// the edited services.
 func (x *Index) LoadFile(path string) error { return x.AddFile(path) }

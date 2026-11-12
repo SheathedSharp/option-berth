@@ -11,50 +11,50 @@ import (
 
 // RenamePlan is what renaming a project changes.
 //
-// A rename always applies to the project, whichever of its checkouts named it:
-// the main checkout's group becomes Project and every linked worktree's group
+// The rename always applies to the project, whichever checkout named it: the
+// main checkout's group becomes Project, and every linked worktree's group
 // becomes `<Project>@<worktree>`.
 type RenamePlan struct {
-	// Main is the main checkout's root, the key an alias is stored under. It is
-	// empty for an `oberth.yaml` project that is not a checkout's root.
-	Main string
-	// ConfigPath is the `oberth.yaml` to write the new `name:` into. Empty
-	// means the project has no file of its own and the name is stored as an
-	// alias of Main instead.
-	ConfigPath string
-	// Project is the new project name.
+	// Project is the requested new name.
 	Project string
-	// Renames maps every group name that changes to its new name. It is empty
-	// when the project already has the name asked for.
+	// Main is the main checkout's root, the key an alias is stored under; empty
+	// when the project is an `oberth.yaml` that is not a checkout's root.
+	Main string
+	// ConfigPath is the `oberth.yaml` that receives the new `name:`. Empty means
+	// the project has no file of its own, so the name is stored as an alias of
+	// Main.
+	ConfigPath string
+	// Renames maps each group name that changes to its new name; empty when the
+	// project already carries the requested one.
 	Renames map[string]string
 }
 
-// RenameErrorKind says why a rename cannot be done.
+// RenameErrorKind tells why a rename cannot be done.
 type RenameErrorKind int
 
 const (
-	// RenameNotFound: no group has the name the caller gave.
+	// RenameNotFound means no group carries the name the caller gave.
 	RenameNotFound RenameErrorKind = iota
-	// RenameRefused: the group exists but its name is not the project's to
-	// change — a pin or a run's --group names it, or nothing does.
+	// RenameRefused means the group exists, but its name is not the project's
+	// to change: a pin or a run's --group names it, or nothing does.
 	RenameRefused
-	// RenameConflict: a group outside the project already has a name the
-	// rename would give.
+	// RenameConflict means a group outside the project already carries a name
+	// this rename would hand out.
 	RenameConflict
 )
 
 // RenameError is a rename that cannot be done.
 type RenameError struct {
-	Kind RenameErrorKind
-	Msg  string
-	Hint string
+	Kind RenameErrorKind // why the rename cannot be done
+	Msg  string          // the sentence shown to the user
+	Hint string          // what to do instead, when there is something
 }
 
 func (e *RenameError) Error() string { return e.Msg }
 
-// ValidProjectName checks a new project name. On top of the rules every group
-// name follows it refuses `@`, which separates the project from the worktree
-// in a checkout's group name.
+// ValidProjectName checks a new project name against the group-name rules and
+// one more: it refuses `@`, the character separating a project from its
+// worktree in a checkout's group name.
 func ValidProjectName(name string) error {
 	if name == "" {
 		return fmt.Errorf("the new name is empty")
@@ -68,9 +68,9 @@ func ValidProjectName(name string) error {
 	return nil
 }
 
-// PlanRename works out what renaming the group from to `to` means, against
-// the published groups gg and the index they were built from. It changes
-// nothing: the caller writes the file or the alias and republishes.
+// PlanRename works out what renaming the group from to `to` means, given the
+// published groups gg and the index behind them. Nothing is changed here: the
+// caller writes the file or the alias and republishes.
 func PlanRename(gg []state.Group, x *Index, from, to string) (*RenamePlan, error) {
 	group := publishedGroup(gg, from)
 	if group == nil {
@@ -92,13 +92,17 @@ func PlanRename(gg []state.Group, x *Index, from, to string) (*RenamePlan, error
 		return plan, conflicts(gg, plan)
 	}
 	if inRepo && co.Linked() {
-		return nil, &RenameError{Kind: RenameRefused,
-			Msg:  from + " is a project nested in the worktree " + co.Worktree,
-			Hint: "rename it in the main checkout's copy of its " + ConfigName}
+		return nil, &RenameError{
+			Kind: RenameRefused,
+			Msg:  from + " belongs to a project nested in worktree " + co.Worktree,
+			Hint: "rename it from the main checkout's copy of its " + ConfigName,
+		}
 	}
-	return nil, &RenameError{Kind: RenameRefused,
-		Msg:  from + " is not a git checkout or a " + ConfigName + " project, so it has no name to change",
-		Hint: "a Compose project is named by Compose; `option-berth assign` pins ports to a group of your choosing"}
+	return nil, &RenameError{
+		Kind: RenameRefused,
+		Msg:  from + " is neither a git checkout nor a " + ConfigName + " project, so it has no name to change",
+		Hint: "Compose names its own projects; `option-berth assign` pins ports to a group you choose",
+	}
 }
 
 // publishedGroup is the group with this name, or nil.
@@ -137,12 +141,12 @@ func configPlan(x *Index, group *state.Group, inRepo bool, co Checkout, from, to
 	return plan, true
 }
 
-// planProject renames the project whose main checkout is at main, and with it
-// every checkout group of that project that is published right now.
+// planProject renames the project rooted at main, and with it every checkout
+// group of that project currently published.
 func planProject(gg []state.Group, x *Index, main, to string) (*RenamePlan, error) {
 	plan := &RenamePlan{Main: main, Project: to, Renames: map[string]string{}}
-	if cfg := x.At(main); cfg != nil {
-		plan.ConfigPath = cfg.Path
+	if current := x.At(main); current != nil {
+		plan.ConfigPath = current.Path
 	}
 	if x.ProjectName(main) == to {
 		return plan, nil

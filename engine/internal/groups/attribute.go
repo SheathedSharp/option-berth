@@ -7,19 +7,17 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// Attribute runs the resolver over a direct scan. It builds an index from what
-// the scan saw — every `oberth.yaml` above a process cwd, every Compose
-// project's working directory, plus the config in the caller's own working
-// directory — resolves the group of every port, writes Group, GroupSource and
-// ProjectRoot back onto the scanner rows, and returns the resolved contract
-// rows together with the index.
+// Attribute resolves groups for a direct scan. The index it builds covers what
+// the scan itself saw — each `oberth.yaml` above a process cwd, each Compose
+// project's working directory — plus the config in the caller's own directory.
+// Every port gets Group, GroupSource and ProjectRoot written back onto its
+// scanner row; the returned slice is the contract rows and the index.
 //
-// This is the no-daemon path: `oberth status`, `oberth kill` and `oberth init`
-// call it. Run ownership is resolved here too, from runs.json and the process
-// tree (see DirectRuns): the collection layer reports what the OS shows, and
-// this layer decides which worktree, service and run it belongs to. The
-// daemon's scanner calls AttributeWith instead, with a long-lived index and
-// the `oberth start` registry.
+// `oberth status`, `oberth kill` and `oberth init` take this no-daemon path.
+// Run ownership is settled here too, from runs.json and the ancestry walk
+// (DirectRuns): the collector reports what the OS shows, this layer decides
+// the worktree, service and run. The daemon's scanner calls AttributeWith
+// instead, with a long-lived index and the `oberth start` registry.
 func Attribute(pp []ports.ListeningPort) ([]state.Port, *Index) {
 	index := NewIndex()
 	if wd, err := os.Getwd(); err == nil {
@@ -100,11 +98,11 @@ func deref[T ~string](s *T) string {
 	return string(*s)
 }
 
-// stampSessions puts the agent session of the owning run onto every port it
-// owns, from the same registry and the same ancestry walk that decided the
-// run. It runs after Resolve because it stamps the contract rows, not the
-// scanner rows: `session` is a daemon concept with no place in `runs.json`, so
-// the direct-scan path has nothing to stamp and this is a no-op there.
+// stampSessions writes the owning run's agent session onto every port that run
+// owns. The registry and the ancestry walk are the same ones that decided the
+// run, and the stamp lands on contract rows rather than scanner rows — which
+// is why it runs after Resolve. `session` is a daemon concept that runs.json
+// does not carry, so the direct-scan path has nothing to stamp.
 func stampSessions(resolved []state.Port, runs Registry) {
 	registry, ok := runs.(SessionRegistry)
 	if !ok {

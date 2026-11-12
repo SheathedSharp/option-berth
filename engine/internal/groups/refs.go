@@ -196,33 +196,33 @@ func Refs(text, self string) []string {
 // reference stands for any non-empty text. `oberth start -- uvicorn --port
 // 8123` matches a service whose cmd says `--port ${port}` this way.
 func MatchesExpanded(pattern, actual string) bool {
-	locs := refPattern.FindAllStringSubmatchIndex(pattern, -1)
-	if len(locs) == 0 {
+	captures := refPattern.FindAllStringSubmatchIndex(pattern, -1)
+	if len(captures) == 0 {
 		return pattern == actual
 	}
 	var expr strings.Builder
-	expr.WriteByte('^')
-	written := 0
-	for _, loc := range locs {
-		expr.WriteString(regexp.QuoteMeta(pattern[written:loc[0]]))
-		if isReference(pattern[loc[2]:loc[3]]) {
+	expr.WriteString("^")
+	cursor := 0
+	for _, span := range captures {
+		expr.WriteString(regexp.QuoteMeta(pattern[cursor:span[0]]))
+		if isReference(pattern[span[2]:span[3]]) {
 			expr.WriteString(".+")
 		} else {
-			expr.WriteString(regexp.QuoteMeta(pattern[loc[0]:loc[1]]))
+			expr.WriteString(regexp.QuoteMeta(pattern[span[0]:span[1]]))
 		}
-		written = loc[1]
+		cursor = span[1]
 	}
-	expr.WriteString(regexp.QuoteMeta(pattern[written:]))
-	expr.WriteByte('$')
+	expr.WriteString(regexp.QuoteMeta(pattern[cursor:]))
+	expr.WriteString("$")
 	compiled, err := regexp.Compile(expr.String())
 	return err == nil && compiled.MatchString(actual)
 }
 
 // ServiceNamed returns the service with this name.
 func (c *Config) ServiceNamed(name string) (Service, bool) {
-	for _, s := range c.Services {
-		if s.Name == name {
-			return s, true
+	for i := range c.Services {
+		if c.Services[i].Name == name {
+			return c.Services[i], true
 		}
 	}
 	return Service{}, false
