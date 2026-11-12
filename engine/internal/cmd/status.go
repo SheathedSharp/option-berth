@@ -86,11 +86,12 @@ func init() {
 // statusDocument is what `status --json` prints. Every object in it belongs to
 // another command too, so a reader learns one shape per kind of thing.
 type statusDocument struct {
-	// ManifestMissing says the group is known only from its runtime facts: no
+	// manifestMissing says the group is known only from its runtime facts: no
 	// oberth.yaml declares its services. An empty service list then means
 	// "nothing to read", not "nothing declared", and the two must not be
-	// published as the same answer.
-	ManifestMissing bool            `json:"manifest_missing,omitempty"`
+	// printed as the same answer. It stays off the wire: the full document
+	// already publishes a null `worktree.config_path` for this state.
+	manifestMissing bool
 	Scope           display.Scope   `json:"scope"`
 	Worktree        state.Group     `json:"worktree"`
 	Ports    []state.Port    `json:"ports"`
@@ -324,7 +325,7 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool, only []stri
 	}
 
 	doc := statusDocument{
-		ManifestMissing: missingManifest(*group),
+		manifestMissing: missingManifest(*group),
 		Scope:           display.Scope{Kind: "worktree", Name: name, Root: root},
 		Worktree:        *group,
 		Ports:           ports,
@@ -765,7 +766,7 @@ func missingManifest(group state.Group) bool {
 // printStatusServices answers "what is supposed to run, and is it".
 func printStatusServices(doc statusDocument) {
 	if len(doc.Worktree.Services) == 0 {
-		if doc.ManifestMissing {
+		if doc.manifestMissing {
 			// The group is known from its runs and listeners, but nothing
 			// declares its services: "none declared" would state a fact this
 			// checkout never made.

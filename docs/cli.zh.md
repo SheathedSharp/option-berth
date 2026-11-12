@@ -311,7 +311,6 @@ Jev 调用、缓存命中和无事件轮询数量；没有真实反馈时指标�
 | `services[].port_holder` | `up` | 端口冲突时与 `status` 同形状的占用者证据。 |
 | `health_status` | `status` | 声明健康检查的结果与原因。 |
 | `manifest_runtime_mismatch` | `status` | 运行实例是否来自旧清单。 |
-| `manifest_missing` | `status` | 该 group 只由运行记录与监听得知，磁盘上没有声明其服务的 `oberth.yaml`；此时 `services` 为空表示没读到清单，而不是清单声明了零个服务。 |
 | `worktree.identity` | `status` | `${worktree}` 的展开值，用于命名 per-worktree 数据。 |
 | `observation.state` | `status` | 监听表是否可信；先读它再读 `ports`。 |
 | `observation.source` | `status` | 不是主采集器时回答本轮采集器；非空表示缺失的端口是未知，不是空闲。 |

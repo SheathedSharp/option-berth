@@ -15,10 +15,7 @@ import (
 // remains the place for drafts, the repository summary, the change ledger and
 // the attention handoff.
 type briefStatusDocument struct {
-	// ManifestMissing is the full document's fact, carried here because the
-	// brief reader is the one most likely to see an empty service list.
-	ManifestMissing bool                     `json:"manifest_missing,omitempty"`
-	Scope           display.Scope            `json:"scope"`
+	Scope       display.Scope          `json:"scope"`
 	Worktree    briefWorktree          `json:"worktree"`
 	Ports       []int                  `json:"ports"`
 	Machine     []briefMachine         `json:"machine,omitempty"`
@@ -136,8 +133,7 @@ func briefStartingFrom(in *state.ServiceStarting) *briefStarting {
 
 func briefStatusFrom(doc statusDocument) briefStatusDocument {
 	out := briefStatusDocument{
-		ManifestMissing: doc.ManifestMissing,
-		Scope:           doc.Scope,
+		Scope: doc.Scope,
 		Worktree: briefWorktree{
 			Name:            doc.Worktree.Name,
 			Identity:        doc.Worktree.Identity,

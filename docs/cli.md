@@ -362,7 +362,6 @@ or renaming one.
 | `services[].port_holder` | `up` | Holder evidence, same shape as in `status`, when the port conflicts. |
 | `health_status` | `status` | The result and reason of the declared health check. |
 | `manifest_runtime_mismatch` | `status` | Whether the running instance comes from an old manifest. |
-| `manifest_missing` | `status` | The group is known only from its runs and listeners; no `oberth.yaml` on disk declares its services. An empty `services` list then means nothing was read, not that nothing was declared. |
 | `worktree.identity` | `status` | The expanded value of `${worktree}`, used to name per-worktree data. |
 | `observation.state` | `status` | Whether the listener table can be trusted; read it before `ports`. |
 | `observation.source` | `status` | The collector that answered when it was not the platform's primary one; non-empty means a missing port is unknown, not free. |
