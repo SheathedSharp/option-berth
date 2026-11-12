@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
@@ -18,11 +18,11 @@ import (
 // state the person enabled the enhancement first.
 func enableJev(t *testing.T) {
 	t.Helper()
-	path := paths.JevConfigPath()
+	path := paths.AttnConfigPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	body := `{"schema":"oberth.jev-config/v1","enabled":true,"provider":"typesafe","api_key":"k"}`
+	body := `{"schema":"oberth.attn-settings/v1","enabled":true,"provider":"typesafe","api_key":"k"}`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -44,20 +44,20 @@ func TestPublishAttentionWritesFactArtifact(t *testing.T) {
 	if path == "" {
 		t.Fatal("publishAttention returned no path")
 	}
-	artifact, err := attention.Read(path)
+	artifact, err := attn.Read(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if doc.AttentionRevision != artifact.StateRevision {
-		t.Fatalf("attention_revision = %q, artifact state_revision = %q", doc.AttentionRevision, artifact.StateRevision)
+	if doc.AttnRevision != artifact.StateRevision {
+		t.Fatalf("attn_revision = %q, artifact state_revision = %q", doc.AttnRevision, artifact.StateRevision)
 	}
-	if artifact.Event.Kind != attention.EventServiceFailed || artifact.Assessment != nil {
+	if artifact.Event.Kind != attn.EventServiceFailed || artifact.Assessment != nil {
 		t.Fatalf("artifact = %+v, want fact-only service failure", artifact)
 	}
-	if err := attention.Clear(home, root); err != nil {
+	if err := attn.Clear(home, root); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := attention.Read(path); err == nil {
+	if _, err := attn.Read(path); err == nil {
 		t.Fatal("cleared attention artifact still exists")
 	}
 }
@@ -78,13 +78,13 @@ func TestPublishAttentionPreservesAssessmentOnStableRefresh(t *testing.T) {
 		t.Fatal("publishAttention returned no path")
 	}
 	needsHuman := 0.9
-	if err := attention.UpdateAssessment(path, attention.Assessment{NeedsHuman: &needsHuman, NextOption: "restart_service"}); err != nil {
+	if err := attn.UpdateAssessment(path, attn.Assessment{NeedsHuman: &needsHuman, NextOption: "restart_service"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := publishAttention(&doc); got != path {
 		t.Fatalf("path changed across refresh: %q -> %q", path, got)
 	}
-	artifact, err := attention.Read(path)
+	artifact, err := attn.Read(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,13 +115,13 @@ func TestPublishAttentionCarriesScopedPortsAndHistory(t *testing.T) {
 	if path == "" {
 		t.Fatal("publishAttention returned no path")
 	}
-	artifact, err := attention.Read(path)
+	artifact, err := attn.Read(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// One event, not two: the scoped listener is a fact `status` shows, and an
 	// undeclared listener is no longer an anomaly worth a handoff.
-	if len(artifact.Events) != 1 || artifact.Events[0].Kind != attention.EventManifestConflict {
+	if len(artifact.Events) != 1 || artifact.Events[0].Kind != attn.EventManifestConflict {
 		t.Fatalf("events = %+v, want the manifest conflict only", artifact.Events)
 	}
 }
@@ -146,10 +146,10 @@ func TestPublishAttentionClearsAfterRecovery(t *testing.T) {
 	if got := publishAttention(&recovered); got != "" {
 		t.Fatalf("recovery returned attention path %q", got)
 	}
-	if recovered.AttentionPath != "" || recovered.AttentionRevision != "" {
-		t.Fatalf("recovery left status handoff fields: path=%q revision=%q", recovered.AttentionPath, recovered.AttentionRevision)
+	if recovered.AttnPath != "" || recovered.AttnRevision != "" {
+		t.Fatalf("recovery left status handoff fields: path=%q revision=%q", recovered.AttnPath, recovered.AttnRevision)
 	}
-	if _, err := attention.Read(path); err == nil {
+	if _, err := attn.Read(path); err == nil {
 		t.Fatal("recovery left stale attention artifact")
 	}
 }
@@ -335,7 +335,7 @@ func TestPrintStatusServicesUsesOneRowPerService(t *testing.T) {
 	}
 }
 
-// An `attention_path` is a signal in itself: its presence means the person
+// An `attn_path` is a signal in itself: its presence means the person
 // enabled the enhancement. Without the gate every agent had to reconstruct
 // that from the settings file before it could decide whether to run `oberth jev
 // assess`, and a disabled install still left an artifact telling it to.
@@ -350,16 +350,16 @@ func TestPublishAttentionIsSilentUntilEnabled(t *testing.T) {
 		}}},
 	}
 	if path := publishAttention(&doc); path != "" {
-		t.Fatalf("published %q while Jev is disabled", path)
+		t.Fatalf("published %q while model is disabled", path)
 	}
-	if doc.AttentionPath != "" || doc.AttentionRevision != "" {
-		t.Fatalf("doc carries an artifact: %q / %q", doc.AttentionPath, doc.AttentionRevision)
+	if doc.AttnPath != "" || doc.AttnRevision != "" {
+		t.Fatalf("doc carries an artifact: %q / %q", doc.AttnPath, doc.AttnRevision)
 	}
 
 	// Enabling it makes the same facts publish; the gate is the only difference.
 	enableJev(t)
 	if path := publishAttention(&doc); path == "" {
-		t.Fatal("enabled Jev published no artifact")
+		t.Fatal("enabled model published no artifact")
 	}
 }
 
@@ -378,15 +378,15 @@ func TestPublishAttentionClearsWhenDisabled(t *testing.T) {
 	enableJev(t)
 	path := publishAttention(&doc)
 	if path == "" {
-		t.Fatal("enabled Jev published no artifact")
+		t.Fatal("enabled model published no artifact")
 	}
-	if err := os.Remove(paths.JevConfigPath()); err != nil {
+	if err := os.Remove(paths.AttnConfigPath()); err != nil {
 		t.Fatal(err)
 	}
 	if got := publishAttention(&doc); got != "" {
 		t.Fatalf("still published %q after the settings file was removed", got)
 	}
-	if _, err := attention.Read(path); err == nil {
+	if _, err := attn.Read(path); err == nil {
 		t.Fatal("the artifact outlived the consent it was published under")
 	}
 }

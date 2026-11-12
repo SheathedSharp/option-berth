@@ -166,7 +166,7 @@ func TestBriefStatusKeepsOnlyRuntimeFacts(t *testing.T) {
 
 	for _, absent := range []string{
 		`"cmd"`, `"cwd"`, `"manifest_hash"`, `"last_exit"`, `"pid"`, `"log_path"`,
-		`"git"`, `"changed"`, `"drafts"`, `"attention_path"`,
+		`"git"`, `"changed"`, `"drafts"`, `"attn_path"`,
 	} {
 		if strings.Contains(text, absent) {
 			t.Errorf("brief document contains %s: %s", absent, text)

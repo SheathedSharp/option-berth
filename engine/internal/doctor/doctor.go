@@ -81,7 +81,7 @@ type DaemonInfo struct {
 // every test binary already runs with an isolated HOME (internal/testenv), and
 // reading a real temp file is more honest than faking os.ReadFile.
 type Env struct {
-	// SettingsPath is the owner-only jev.json for this installation.
+	// SettingsPath is the owner-only attn.json for this installation.
 	SettingsPath string
 	// Mode is who is running the checks.
 	Mode Mode
@@ -162,7 +162,7 @@ var catalog = []check{
 	{id: "agent_skill", ask: checkSkillVersion},
 	// The optional assessment goes last: it is enrichment, and its row must
 	// never push a fact or a control check off the table.
-	{id: "jev", ask: checkJev},
+	{id: "attn", ask: checkAttn},
 }
 
 // IDs lists every check id, in table order. `oberth doctor --only` validates a

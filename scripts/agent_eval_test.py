@@ -45,7 +45,7 @@ def status_doc(services: list[dict] | None = None, machine: list[dict] | None = 
                attention: str | None = None) -> dict:
     doc = {"worktree": {"name": "fixture", "services": services or [], "machine": machine or []}}
     if attention:
-        doc["attention_path"] = attention
+        doc["attn_path"] = attention
     return doc
 
 

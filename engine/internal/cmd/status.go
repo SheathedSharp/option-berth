@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn"
 	"github.com/sheathedsharp/option-berth/engine/internal/codefacts"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
@@ -92,18 +92,18 @@ type statusDocument struct {
 	Git      *git.Tree       `json:"git,omitempty"`
 	Drafts   []draft.Pending `json:"drafts"`
 	Exits    []rpc.RunRecord `json:"exits"`
-	// AttentionPath points to a derived, fact-only handoff for an optional
+	// AttnPath points to a derived, fact-only handoff for an optional
 	// agent adapter. It is absent when there is no current anomaly.
-	AttentionPath string `json:"attention_path,omitempty"`
-	// AttentionRevision lets an agent compare an artifact it read with the
+	AttnPath string `json:"attn_path,omitempty"`
+	// AttnRevision lets an agent compare an artifact it read with the
 	// exact deterministic facts represented by this status response.
-	AttentionRevision string `json:"attention_revision,omitempty"`
-	// attentionEvent is whether the deterministic classifier derived a definite
+	AttnRevision string `json:"attn_revision,omitempty"`
+	// attnEvent is whether the deterministic classifier derived a definite
 	// anomaly, independent of whether it was published. It never reaches the
 	// wire: consent decides the artifact, this decides the one-line offer of the
 	// enhancement, and reading consent off the artifact would make that offer
 	// unreachable precisely when it is due.
-	attentionEvent bool
+	attnEvent bool
 	// Changed is absent on the first run: there is nothing to compare against,
 	// which is not the same as nothing having changed (`empty` inside says
 	// that).
@@ -137,22 +137,22 @@ func statusRun(cmd *cobra.Command, args []string) error {
 		return printJSON(doc)
 	}
 	printStatus(doc)
-	maybePrintJevTip(&doc)
+	maybePrintAttnTip(&doc)
 	return nil
 }
 
-// maybePrintJevTip is the one-line, rate-limited offer of the optional
+// maybePrintAttnTip is the one-line, rate-limited offer of the optional
 // assessment. It runs only in the human view, after the facts, and only when
-// Jev is off and there is an anomaly it could assess — status_tip.go has the
+// the assessment is off and there is an anomaly it could assess — status_tip.go has the
 // rest of the rules.
-func maybePrintJevTip(doc *statusDocument) {
+func maybePrintAttnTip(doc *statusDocument) {
 	now := time.Now().UTC()
-	if jevEnabled() || !jevTipWanted(doc, now) {
+	if attnEnabled() || !attnTipWanted(doc, now) {
 		return
 	}
 	fmt.Fprintln(os.Stdout)
-	fmt.Fprintln(os.Stdout, jevTipLine())
-	recordJevTip(paths.JevTipPath(), now)
+	fmt.Fprintln(os.Stdout, attnTipLine())
+	recordAttnTip(paths.AttnTipPath(), now)
 }
 
 // statusDir is the directory a status read is about: the argument, or the
@@ -361,8 +361,8 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool, only []stri
 // Failure to publish the optional artifact never makes the facts unavailable.
 //
 // The artifact only exists once the person has enabled the enhancement. An
-// `attention_path` is therefore an unambiguous signal: an agent that sees one
-// knows Jev is on and may run `oberth jev assess`, and an agent that sees none
+// `attn_path` is therefore an unambiguous signal: an agent that sees one
+// knows model is on and may run `oberth attn assess`, and an agent that sees none
 // does not have to guess whether that is because nothing failed or because the
 // user never opted in. Publishing it unconditionally meant every reader had to
 // reconstruct that answer from the settings file.
@@ -377,17 +377,17 @@ func publishAttention(doc *statusDocument) string {
 	if doc == nil {
 		return ""
 	}
-	doc.AttentionPath = ""
-	doc.AttentionRevision = ""
-	doc.attentionEvent = false
-	facts := attention.Facts{
+	doc.AttnPath = ""
+	doc.AttnRevision = ""
+	doc.attnEvent = false
+	facts := attn.Facts{
 		WorktreeRoot: doc.Scope.Root,
 		Branch:       doc.Worktree.Branch,
-		Services:     make([]attention.Service, 0, len(doc.Worktree.Services)),
-		Machine:      make([]attention.Machine, 0, len(doc.Worktree.Machine)),
+		Services:     make([]attn.Service, 0, len(doc.Worktree.Services)),
+		Machine:      make([]attn.Machine, 0, len(doc.Worktree.Machine)),
 	}
 	for _, service := range doc.Worktree.Services {
-		item := attention.Service{
+		item := attn.Service{
 			Name:    service.Name,
 			Running: service.Running,
 		}
@@ -414,7 +414,7 @@ func publishAttention(doc *statusDocument) string {
 			item.StartedAt = *service.StartedAt
 		}
 		if service.LastExit != nil {
-			item.LastExit = &attention.Exit{
+			item.LastExit = &attn.Exit{
 				Code:   service.LastExit.Code,
 				Reason: service.LastExit.Reason,
 				RunID:  service.LastExit.RunID,
@@ -426,12 +426,12 @@ func publishAttention(doc *statusDocument) string {
 		facts.Services = append(facts.Services, item)
 	}
 	for _, machine := range doc.Worktree.Machine {
-		facts.Machine = append(facts.Machine, attention.Machine{
+		facts.Machine = append(facts.Machine, attn.Machine{
 			Name: machine.Name, Port: machine.Port, Listening: machine.Listening,
 		})
 	}
 	for _, port := range doc.Ports {
-		item := attention.Listener{Port: port.Port, Cwd: port.Cwd}
+		item := attn.Listener{Port: port.Port, Cwd: port.Cwd}
 		if port.ProjectRoot != nil {
 			item.ProjectRoot = *port.ProjectRoot
 		}
@@ -442,32 +442,32 @@ func publishAttention(doc *statusDocument) string {
 		if err != nil {
 			continue
 		}
-		facts.History = append(facts.History, attention.ExitHistory{
+		facts.History = append(facts.History, attn.ExitHistory{
 			Service: run.Name, Reason: run.Reason, RunID: run.ID, At: at,
 		})
 	}
-	facts.StateRevision = attention.Revision(facts)
+	facts.StateRevision = attn.Revision(facts)
 	facts.ObservedAt = time.Now().UTC()
-	artifact, ok := attention.Derive(facts, facts.ObservedAt, attention.DefaultTTL)
+	artifact, ok := attn.Derive(facts, facts.ObservedAt, attn.DefaultTTL)
 	if !ok {
 		// No anomaly: there is nothing to offer and nothing to publish.
-		_ = attention.Clear(paths.Dir(), doc.Scope.Root)
+		_ = attn.Clear(paths.Dir(), doc.Scope.Root)
 		return ""
 	}
-	doc.attentionEvent = true
-	if !jevEnabled() {
+	doc.attnEvent = true
+	if !attnEnabled() {
 		// The person has not opted in, so nothing is published. Clear a
 		// leftover artifact from before the enhancement was switched off:
 		// leaving it on disk would keep telling agents to assess.
-		_ = attention.Clear(paths.Dir(), doc.Scope.Root)
+		_ = attn.Clear(paths.Dir(), doc.Scope.Root)
 		return ""
 	}
-	path, err := attention.Write(paths.Dir(), artifact)
+	path, err := attn.Write(paths.Dir(), artifact)
 	if err != nil {
 		return ""
 	}
-	doc.AttentionPath = path
-	doc.AttentionRevision = artifact.StateRevision
+	doc.AttnPath = path
+	doc.AttnRevision = artifact.StateRevision
 	return path
 }
 

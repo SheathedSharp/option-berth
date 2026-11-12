@@ -12,9 +12,9 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// The optional-Jev hint is a courtesy, so every rule around it is about not
+// The optional-model hint is a courtesy, so every rule around it is about not
 // becoming noise: it appears only in the human view, only when there is an
-// anomaly, only while Jev is off, and at most once per interval.
+// anomaly, only while the assessment is off, and at most once per interval.
 
 func TestTipDueHonoursTheRecordedTime(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "jev-tip.json")
@@ -25,7 +25,7 @@ func TestTipDueHonoursTheRecordedTime(t *testing.T) {
 		t.Fatal("a missing record was not due")
 	}
 
-	recordJevTip(path, now)
+	recordAttnTip(path, now)
 
 	// Just after: not due.
 	if tipDue(path, now.Add(time.Hour)) {
@@ -47,7 +47,7 @@ func TestTipDueTreatsAGarbledRecordAsDue(t *testing.T) {
 	dir := t.TempDir()
 	for name, body := range map[string]string{
 		"not json":      "{",
-		"bad timestamp": `{"jev_shown_at":"yesterday"}`,
+		"bad timestamp": `{"attn_shown_at":"yesterday"}`,
 		"empty object":  `{}`,
 	} {
 		path := filepath.Join(dir, name+".json")
@@ -62,7 +62,7 @@ func TestTipDueTreatsAGarbledRecordAsDue(t *testing.T) {
 
 func TestRecordJevTipIsOwnerOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "jev-tip.json")
-	recordJevTip(path, time.Now().UTC())
+	recordAttnTip(path, time.Now().UTC())
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
@@ -78,20 +78,20 @@ func TestTipIsSuppressed(t *testing.T) {
 	t.Cleanup(func() { t.Setenv(noTipsEnv, "") })
 	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
 	// The anomaly is the classifier's verdict. It is deliberately not paired
-	// with an AttentionPath: that field only exists once the person opted in,
+	// with an AttnPath: that field only exists once the person opted in,
 	// which is the state the tip is not shown in.
-	withAnomaly := &statusDocument{attentionEvent: true}
+	withAnomaly := &statusDocument{attnEvent: true}
 
 	t.Run("no anomaly", func(t *testing.T) {
 		t.Setenv(noTipsEnv, "")
-		if jevTipWanted(&statusDocument{}, now) {
+		if attnTipWanted(&statusDocument{}, now) {
 			t.Fatal("the tip appeared with nothing to assess")
 		}
 	})
 
 	t.Run("opted out", func(t *testing.T) {
 		t.Setenv(noTipsEnv, "1")
-		if jevTipWanted(withAnomaly, now) {
+		if attnTipWanted(withAnomaly, now) {
 			t.Fatal("the tip ignored BERTH_NO_TIPS")
 		}
 	})
@@ -103,36 +103,36 @@ func TestTipIsSuppressed(t *testing.T) {
 		if isTerminalStdout() {
 			t.Skip("stdout is a terminal in this environment")
 		}
-		if jevTipWanted(withAnomaly, now) {
+		if attnTipWanted(withAnomaly, now) {
 			t.Fatal("the tip appeared on a non-terminal stdout")
 		}
 	})
 }
 
 // The tip must be reachable in the state it exists for. Requiring a published
-// artifact made it dead code: consent gates the artifact, so with Jev off there
+// artifact made it dead code: consent gates the artifact, so with model off there
 // is never a path to read, and the offer was silent in precisely the case it
 // describes. The terminal is passed in so a passing pipe cannot stand in for a
 // working decision.
-func TestTipFiresWithJevOffAndAnAnomaly(t *testing.T) {
+func TestTipFiresWithAttnOffAndAnAnomaly(t *testing.T) {
 	t.Setenv(noTipsEnv, "")
 	t.Setenv("BERTH_HOME", t.TempDir())
-	if jevEnabled() {
-		t.Fatal("this case needs Jev to be off")
+	if attnEnabled() {
+		t.Fatal("this case needs model to be off")
 	}
-	doc := &statusDocument{attentionEvent: true}
-	if !jevTipEligible(doc, time.Now().UTC(), true) {
-		t.Fatal("a Jev-off read with a derived anomaly withheld the tip")
+	doc := &statusDocument{attnEvent: true}
+	if !attnTipEligible(doc, time.Now().UTC(), true) {
+		t.Fatal("a model-off read with a derived anomaly withheld the tip")
 	}
 }
 
 // The published artifact gates on consent, so a read that derives an anomaly
-// while Jev is off must hold the verdict and publish nothing. This is the pair
+// while the assessment is off must hold the verdict and publish nothing. This is the pair
 // the tip reads: verdict present, path absent.
 func TestAnomalyVerdictSurvivesTheConsentGate(t *testing.T) {
 	t.Setenv("BERTH_HOME", t.TempDir())
-	if jevEnabled() {
-		t.Fatal("this case needs Jev to be off")
+	if attnEnabled() {
+		t.Fatal("this case needs model to be off")
 	}
 	exited := time.Now().UTC()
 	doc := &statusDocument{Scope: display.Scope{Root: t.TempDir()}}
@@ -146,10 +146,10 @@ func TestAnomalyVerdictSurvivesTheConsentGate(t *testing.T) {
 		ExitedAt: exited.Format(time.RFC3339Nano),
 	}}
 	publishAttention(doc)
-	if doc.AttentionPath != "" {
-		t.Fatalf("published %q without consent", doc.AttentionPath)
+	if doc.AttnPath != "" {
+		t.Fatalf("published %q without consent", doc.AttnPath)
 	}
-	if !doc.attentionEvent {
+	if !doc.attnEvent {
 		t.Fatal("the derived anomaly was discarded with the publication")
 	}
 }
@@ -157,8 +157,8 @@ func TestAnomalyVerdictSurvivesTheConsentGate(t *testing.T) {
 // The hint is one dim line: it must name the feature, say it is optional, and
 // give the one command that turns it on.
 func TestTipLineIsActionableAndShort(t *testing.T) {
-	line := jevTipLine()
-	for _, want := range []string{"Jev", "optional", "oberth jev enable"} {
+	line := attnTipLine()
+	for _, want := range []string{"model", "optional", "oberth attn enable"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("tip %q does not mention %q", line, want)
 		}
