@@ -48,15 +48,10 @@ var (
 // Describe registers a method's wire contract. The packages that own a
 // namespace call it from their own init().
 func Describe(method string, params, result, chunk, end any) {
-	registry[method] = Description{ // keyed by method: a later registration of
-		// the same name replaces the earlier one, which is how an owning package
-		// can correct a definition the core set declared
-		Method: method,
-		Params: params,
-		Result: result,
-		Chunk:  chunk,
-		End:    end,
-	}
+	// The registry is keyed by method, so a later registration of the same name
+	// replaces the earlier one: that is how an owning package corrects a
+	// definition the core set declared.
+	registry[method] = Description{Method: method, Params: params, Result: result, Chunk: chunk, End: end}
 }
 
 // DescribeNotification registers a notification the daemon pushes. Without it
@@ -121,14 +116,19 @@ type NotificationSchema struct {
 // Document is the bundle `oberth daemon schema` prints and
 // docs/schema/protocol.schema.json holds.
 type Document struct {
-	Schema          string                        `json:"$schema"`
-	ID              string                        `json:"$id"`
-	Title           string                        `json:"title"`
-	Description     string                        `json:"description"`
-	ProtocolVersion string                        `json:"protocol_version"`
-	Definitions     map[string]json.RawMessage    `json:"definitions"`
-	Methods         map[string]MethodSchema       `json:"methods"`
-	Notifications   map[string]NotificationSchema `json:"notifications"`
+	Schema string `json:"$schema"`
+	ID     string `json:"$id"`
+	Title  string `json:"title"`
+	// Description is the first thing a reader of the file meets; it says where
+	// the document came from and that it is generated rather than written.
+	Description     string `json:"description"`
+	ProtocolVersion string `json:"protocol_version"`
+	// The collections a client generates from: the named data-model types, each
+	// method's params and result (with the two stream payloads), and the
+	// notifications the daemon pushes.
+	Definitions   map[string]json.RawMessage    `json:"definitions"`
+	Methods       map[string]MethodSchema       `json:"methods"`
+	Notifications map[string]NotificationSchema `json:"notifications"`
 }
 
 // schemaID is the document's canonical $id. It is a location, not a fetchable

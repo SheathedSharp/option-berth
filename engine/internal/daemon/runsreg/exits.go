@@ -33,16 +33,19 @@ const (
 const (
 	// maxExits caps the exit history.
 	maxExits = store.RunExitLimit
-	// lastLineCount and tailBytes bound the log lines kept with an exit.
+
+	// lastLineCount and tailBytes bound the log lines an exit keeps.
 	lastLineCount = 20
 	tailBytes     = 16 << 10
-	// stopWindow is how long after an exit a kill may still correct it to
-	// stopped: the kill can win the race against being marked as one.
+
+	// stopWindow bounds how long a kill may still correct a just-recorded exit
+	// to stopped: the kill can win the race against being marked as one.
 	stopWindow = 30 * time.Second
 )
 
-// Meta is what a caller knows about where a run comes from, beyond the spawn
-// request itself.
+// Meta is what a caller knows about a run beyond the spawn request: the
+// manifest it was started from, the start that grouped it with its siblings,
+// the client that asked, and the identity of what ran.
 type Meta struct {
 	ConfigPath string
 	StartID    string
@@ -55,22 +58,29 @@ type Meta struct {
 // through unchanged so a future caller kind does not need a daemon change.
 func Origin(req *daemon.Request) string {
 	if req == nil || req.Conn == nil {
+		// A request with no connection has named no client, so the run it is
+		// about to register stays origin-less rather than misattributed.
 		return ""
 	}
 	name, _, _ := req.Conn.Client()
 	return name
 }
 
-// Exit is a run that ended: the record it had, and how it ended.
+// Exit is a run that ended: the record it carried while it was live, and how it
+// ended.
 type Exit struct {
 	Record
-	Code      int
-	Reason    string
+	// Code is the process's own exit status; Reason is the normalized outcome
+	// the wire publishes, which is not always what the code alone says.
+	Code   int
+	Reason string
+	// ExitedAt and LastLines are the when and the tail: enough for a reader to
+	// place a run that is gone without opening its log file.
 	ExitedAt  time.Time
 	LastLines []string
 }
 
-// ServiceExit is the exit as a service row carries it.
+// ServiceExit projects the exit onto the row a service carries.
 func (e Exit) ServiceExit() state.ServiceExit {
 	return state.ServiceExit{
 		Code:     e.Code,
@@ -81,15 +91,16 @@ func (e Exit) ServiceExit() state.ServiceExit {
 	}
 }
 
+// exitReason names how a run ended from the two facts the exit itself carries:
+// whether it was asked to stop, and the code it left.
 func exitReason(code int, stopped bool) string {
-	switch {
-	case stopped:
+	if stopped {
 		return ReasonStopped
-	case code == 0:
-		return ReasonExited
-	default:
-		return ReasonCrashed
 	}
+	if code == 0 {
+		return ReasonExited
+	}
+	return ReasonCrashed
 }
 
 func occupiedExit(reason string, lines []string) string {
@@ -227,26 +238,46 @@ func (r *Registry) StoppingWithReason(pids []int, reason string) {
 func (r *Registry) LastExit(group, service string) (state.ServiceExit, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, rec := range r.runs {
-		if rec.Group == group && rec.Name == service {
-			return state.ServiceExit{}, false
-		}
+	if r.hasRunLocked(group, service) {
+		return state.ServiceExit{}, false
 	}
-	for i := len(r.exits) - 1; i >= 0; i-- {
-		if e := r.exits[i]; e.Group == group && e.Name == service {
-			return e.ServiceExit(), true
-		}
+	e, ok := r.newestExitLocked(func(e Exit) bool { return e.Group == group && e.Name == service })
+	if !ok {
+		return state.ServiceExit{}, false
 	}
-	return state.ServiceExit{}, false
+	return e.ServiceExit(), true
 }
 
-// Exits returns the exit history, newest first.
+// hasRunLocked reports whether a run of this group and service is registered at
+// all, stopping or not. The caller holds mu.
+func (r *Registry) hasRunLocked(group, service string) bool {
+	for _, rec := range r.runs {
+		if rec.Group == group && rec.Name == service {
+			return true
+		}
+	}
+	return false
+}
+
+// newestExitLocked is the one backward scan the exit queries share: the exit
+// history is oldest first, so the newest match is found from its end. The caller
+// holds mu.
+func (r *Registry) newestExitLocked(matches func(Exit) bool) (Exit, bool) {
+	for i := len(r.exits) - 1; i >= 0; i-- {
+		if matches(r.exits[i]) {
+			return r.exits[i], true
+		}
+	}
+	return Exit{}, false
+}
+
+// Exits returns the recorded exits, newest first.
 func (r *Registry) Exits() []Exit {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := make([]Exit, 0, len(r.exits))
-	for i := len(r.exits) - 1; i >= 0; i-- {
-		out = append(out, r.exits[i])
+	out := make([]Exit, len(r.exits))
+	for i, e := range r.exits {
+		out[len(out)-1-i] = e
 	}
 	return out
 }
@@ -258,12 +289,7 @@ func (r *Registry) Exits() []Exit {
 func (r *Registry) LatestExit(group, service string) (Exit, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for i := len(r.exits) - 1; i >= 0; i-- {
-		if r.exits[i].Group == group && r.exits[i].Name == service {
-			return r.exits[i], true
-		}
-	}
-	return Exit{}, false
+	return r.newestExitLocked(func(e Exit) bool { return e.Group == group && e.Name == service })
 }
 
 // ExitForPID returns the recorded exit of one process. The startup window uses
@@ -273,12 +299,7 @@ func (r *Registry) LatestExit(group, service string) (Exit, bool) {
 func (r *Registry) ExitForPID(pid int) (Exit, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for i := len(r.exits) - 1; i >= 0; i-- {
-		if r.exits[i].PID == pid {
-			return r.exits[i], true
-		}
-	}
-	return Exit{}, false
+	return r.newestExitLocked(func(e Exit) bool { return e.PID == pid })
 }
 
 func storeRow(e Exit) store.RunExitRow {
@@ -305,46 +326,69 @@ func exitFromStore(row store.RunExitRow) Exit {
 	}
 }
 
-// tailLines returns the last n lines a run wrote to its log: from offset, where
-// the run began, or from the top of a file that was rotated since. At most
-// tailBytes are read; a line cut by that limit is dropped.
+// tailLines returns the last n lines a run wrote to its log: counted from
+// offset, where the run began, or from the top of a file that was rotated since.
+// A line cut by the tailBytes window is dropped rather than half-reported.
 func tailLines(path string, offset int64, n int) []string {
-	f, err := os.Open(path)
-	if err != nil {
+	tail, ok := readTail(path, offset)
+	if !ok {
 		return nil
 	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return nil
-	}
-	size := info.Size()
-	if offset > size {
-		offset = 0
-	}
-	start := offset
-	if size-start > tailBytes {
-		start = size - tailBytes
-	}
-	buf := make([]byte, size-start)
-	if _, err := f.ReadAt(buf, start); err != nil && !errors.Is(err, io.EOF) {
-		return nil
-	}
-	text := strings.TrimRight(string(buf), "\r\n")
+	text := strings.TrimRight(string(tail.data), "\r\n")
 	if text == "" {
 		return nil
 	}
 	lines := strings.Split(text, "\n")
-	if start > offset && len(lines) > 1 {
+	if tail.start > tail.from && len(lines) > 1 {
+		// The read did not open on a line boundary, so its first entry is the
+		// tail of a line the reader never saw the start of.
 		lines = lines[1:]
 	}
 	if len(lines) > n {
 		lines = lines[len(lines)-n:]
 	}
-	for i := range lines {
-		lines[i] = strings.TrimRight(lines[i], "\r")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, "\r")
 	}
 	return lines
+}
+
+// logTail is the part of a log file one tail is read from. from is where the
+// run's own output begins and start is where the read actually opened, which
+// differs when the file outgrew the tailBytes window.
+type logTail struct {
+	data  []byte
+	start int64
+	from  int64
+}
+
+// readTail reads the bytes a tail may come from. A missing or unreadable file
+// has no tail at all.
+func readTail(path string, offset int64) (logTail, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return logTail{}, false
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return logTail{}, false
+	}
+	size := info.Size()
+	if offset > size {
+		// The file is shorter than where the run began: it was rotated, so the
+		// whole of it belongs to this run.
+		offset = 0
+	}
+	tail := logTail{from: offset, start: offset}
+	if size-tail.start > tailBytes {
+		tail.start = size - tailBytes
+	}
+	tail.data = make([]byte, size-tail.start)
+	if _, err := f.ReadAt(tail.data, tail.start); err != nil && !errors.Is(err, io.EOF) {
+		return logTail{}, false
+	}
+	return tail, true
 }
 
 // serviceURL is the address a run's port hint stands for.
