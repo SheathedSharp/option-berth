@@ -1,14 +1,10 @@
 name: Reused service readiness
 on:
+  # The pull request is the only automatic trigger: `main` accepts pull
+  # requests only, so a push cannot skip this check.
   # No path filter on pull_request: a skipped required workflow leaves its
   # check pending and blocks the PR.
   pull_request:
-  push:
-    branches: [main]
-    paths:
-      - 'engine/**'
-      - 'scripts/verify-reused-readiness.py'
-      - '.github/workflows/readiness.yml'
   workflow_dispatch:
 permissions:
   contents: read
