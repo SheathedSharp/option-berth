@@ -293,22 +293,27 @@ oberth attn assess --project "$PWD" \
   --authorize inspect_logs,inspect_port,restart_service,continue_without_action,ask_user_for_context
 ~~~
 
-`oberth attn enable` is the one step that turns the assessment on: it reads a key
-(`--key-stdin`, `--key-env NAME`, or hidden terminal input), sends one synthetic
-redacted probe, and only writes `attn.json` when the probe succeeds — a failed
-probe leaves the existing configuration untouched. `oberth attn status` reports
-the resolved state without a network call, `oberth attn test` probes once,
-`oberth attn preview` prints the exact redacted body for the current event without
-sending it, and `oberth attn disable [--forget]` turns it off while keeping the
-key unless `--forget` is given. `oberth doctor` gains one offline row for the same
-state, and a human `status` read mentions the feature once every two weeks when
-it is off and an anomaly is present; `BERTH_NO_TIPS=1` silences that hint.
+`oberth attn config` is the only verb that writes credentials: it takes an endpoint
+and model (directly, or through a preset that fills both), reads the key from
+`--key-stdin`, `--key-env NAME`, hidden terminal input, or keeps the stored key,
+sends one synthetic redacted probe, and only writes `attn.json` when the probe
+succeeds — a failed probe leaves the existing configuration untouched. `config`
+changes credentials, not consent. `oberth attn on` and `oberth attn off [--forget]`
+flip the single `enabled` boolean and never touch the network. `oberth attn test`
+probes the current effective configuration once. `oberth attn status` reports the
+resolved state, the fixed reason when it cannot be used, and a summary of the
+local quality ledger; `--json` carries the same data plus the full `quality`
+object. `oberth doctor` gains one offline row for the same state, and a human
+`status` read mentions the feature once every two weeks when it is off and an
+anomaly is present; `BERTH_NO_TIPS=1` silences that hint.
 
-`oberth attn assess` is the former `jev-attention --auto`, `oberth attn session` is the former
-`--session`/`--subscribe`, and `oberth attn feedback` / `oberth attn report` are the former
-`--feedback` and `--quality-report`. The standalone `jev-attention` binary stays as a thin shell over
-the same runner during the migration, so `scripts/verify-attention-handoff.py` and the skill keep
-working; it is not distributed indefinitely.
+`oberth attn assess` is the one-shot runner. `--dry-run` prints the exact redacted
+request for the current event without sending it, and `--follow` keeps the same
+loop alive for a task, emitting NDJSON (`subscribed`, only changed handoffs, and
+`stopped` on cancellation). `oberth attn feedback` labels what a person actually
+decided, and `oberth attn preflight` derives a bounded action request from a fresh
+status snapshot. There is one `oberth` binary; none of these is a separate
+executable.
 
 The context file contains `task` and the required `authorized_options`, and is **written by the agent
 itself**: nothing on the machine generates it for you, and the path is chosen by the agent too
@@ -320,30 +325,27 @@ outputs `clear`, `continue`, `human_required`, `unavailable` or `stale`; on succ
 writes the validated `assessment` back to the same file and re-reads the state before returning. When
 there is no usable environment endpoint, model or key, or on network failure,
 invalid response, expired file or changed state revision, the fact file is left unchanged. The
-`~/.option-berth/attn.json` written by `oberth attn enable` (`$BERTH_HOME/attn.json` for isolated
+`~/.option-berth/attn.json` written by `oberth attn config` (`$BERTH_HOME/attn.json` for isolated
 runs) is read automatically by `oberth attn` and is the only persistent consent: `enabled: true`
 turns the model on, `enabled: false` keeps it off even when a key is present. An explicit
 `BERTH_ATTN_ENDPOINT` / `BERTH_ATTN_MODEL` / `BERTH_ATTN_KEY` supplies those fields but does not
 enable the model; `BERTH_ATTN=1` enables it for one process. Each unavailable answer carries one fixed
 reason (`no_key`, `disabled`, `invalid_config`, `unauthorized`, `rate_limited`, `timeout`, `network`,
-`provider_error`, `bad_response`, `stale`) rather than a provider's error text. `--auto`, `--session` and
-`--subscribe` must be given `authorized_options` explicitly; the artifact's `options` is only a
-candidate set and does not automatically become the agent's authorization. To keep discovering
-abnormalities over a task's lifetime, the agent should use
-`oberth attn session --interval 2s`, which emits
-only new event/revision/assessment changes as NDJSON and ends on cancellation. Full arguments and the
+`provider_error`, `bad_response`, `stale`) rather than a provider's error text. `assess` and
+`assess --follow` must be given `authorized_options` explicitly; the artifact's `options` is only a
+candidate set and does not automatically become the agent's authorization. Full arguments and the
 privacy boundary are in
 [`attn-adapter.md`](agent/attn-adapter.md).
 
-`oberth attn assess` / `oberth attn session` leave redacted local quality observations in
+`oberth attn assess` / `assess --follow` leave redacted local quality observations in
 `$BERTH_HOME/quality/events.ndjson`. After a real interaction, a development agent can write back
 human labels and action outcomes with `oberth attn feedback --file <json>`, then use
-`oberth attn report [--since 168h]` to view label coverage, assessment availability,
+`oberth attn status --json [--since 168h]` to view label coverage, assessment availability,
 routing reasons and the model/option distribution, human-escalation precision/recall/F1, the model's
 `needs_human` / `task_relevant` probability error, recommendation hit rate, action success rate,
-resolution rate and detection latency. Quality records are not `status` facts and change no execution
-permission; the report's `sessions` object explains the number of sessions, polls, events, the model calls,
-cache hits and no-event polls; with no real feedback the metrics stay `null`.
+resolution rate and detection latency under `quality`. Quality records are not `status` facts and
+change no execution permission; the `sessions` object explains the number of sessions, polls, events,
+the model calls, cache hits and no-event polls; with no real feedback the metrics stay `null`.
 
 ### Agent-facing JSON fields
 

@@ -101,9 +101,6 @@ def build_release(root: Path, helper=True):
     oberth = stage / "oberth"
     oberth.write_text("#!/bin/sh\nif [ \"$1\" = version ]; then echo 'option-berth v9.9.9 (fixture)'; fi\nexit 0\n")
     oberth.chmod(0o755)
-    adapter = stage / "jev-attention"
-    adapter.write_text("#!/bin/sh\nexit 0\n")
-    adapter.chmod(0o755)
     if helper:
         shutil.copyfile(HELPER, stage / "install-path.sh")
     (stage / "LICENSE").write_text("fixture licence\n")
@@ -181,7 +178,6 @@ class InstallTests(unittest.TestCase):
         result = self.install()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(os.access(self.installed("oberth"), os.X_OK))
-        self.assertTrue(os.access(self.installed("jev-attention"), os.X_OK))
         self.assertIn("option-berth v9.9.9 (fixture)", result.stdout)
         self.assertIn('export PATH="$HOME/.local/bin:$PATH"', rc.read_text())
         self.assertIn("PATH       added to .zshrc", result.stdout)

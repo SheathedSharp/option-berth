@@ -31,19 +31,13 @@ type project struct {
 	date    string
 }
 
-// Build compiles the engine and the optional Jev adapter.
+// Build compiles the engine: the CLI, its daemon, and every optional module.
 func Build() error {
 	p, err := loadProject()
 	if err != nil {
 		return err
 	}
-	if err := buildEngine(p); err != nil {
-		return err
-	}
-	if err := buildJev(p); err != nil {
-		return err
-	}
-	return nil
+	return buildEngine(p)
 }
 
 // BuildEngine compiles the Go CLI and daemon.
@@ -53,15 +47,6 @@ func BuildEngine() error {
 		return err
 	}
 	return buildEngine(p)
-}
-
-// BuildJev compiles the optional Jev attention adapter.
-func BuildJev() error {
-	p, err := loadProject()
-	if err != nil {
-		return err
-	}
-	return buildJev(p)
 }
 
 // BuildClient compiles the macOS application.
@@ -282,18 +267,6 @@ func buildEngine(p project) error {
 	return nil
 }
 
-func buildJev(p project) error {
-	bin := filepath.Join(p.root, "bin", "jev-attention")
-	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
-		return err
-	}
-	if err := command(p.engine, "go", "build", "-trimpath", "-o", bin, "./cmd/jev-attention"); err != nil {
-		return err
-	}
-	fmt.Printf("built %s\n", bin)
-	return nil
-}
-
 // clientMoved names the product that now owns the macOS interface. Mage stays a
 // single product's build tool rather than pretending to build a sibling repo.
 func clientMoved() error {
@@ -306,9 +279,6 @@ func installCLI(p project) error {
 	if err := buildEngine(p); err != nil {
 		return err
 	}
-	if err := buildJev(p); err != nil {
-		return err
-	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -318,9 +288,6 @@ func installCLI(p project) error {
 		return err
 	}
 	if err := command(p.root, "install", "-m", "0755", filepath.Join(p.root, "bin", "oberth"), filepath.Join(localBin, "oberth")); err != nil {
-		return err
-	}
-	if err := command(p.root, "install", "-m", "0755", filepath.Join(p.root, "bin", "jev-attention"), filepath.Join(localBin, "jev-attention")); err != nil {
 		return err
 	}
 	return command(p.root, "sh", filepath.Join(p.root, "scripts", "install-path.sh"), localBin)

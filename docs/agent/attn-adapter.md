@@ -7,18 +7,19 @@ current development task and needs the user's choice, then stores only the
 validated typed assessment in the same artifact. It never reads service logs,
 starts or stops a process, edits a manifest, or invents a command.
 
-The verbs map one-to-one onto the standalone binary's flags, and the JSON is the
-same object the agent already parsed:
+It is one `oberth` binary, not a second executable. The verbs split by audience:
 
-| `oberth attn` | standalone shell |
-|---|---|
-| `assess` | `jev-attention --auto` |
-| `session` | `jev-attention --session` / `--subscribe` |
-| `feedback --file` | `jev-attention --feedback` |
-| `report` | `jev-attention --quality-report` |
-
-`engine/cmd/jev-attention` remains as a thin shell over the same runner package
-(`internal/attn/runner`) while existing scripts and the installed skill catch up.
+| `oberth attn` | Who | What |
+|---|---|---|
+| `status` | person | resolved state, fixed reason, local quality summary |
+| `config` | person | store endpoint/model/key after a synthetic probe |
+| `on` / `off [--forget]` | person | flip the single consent boolean |
+| `test` | person | probe the effective configuration once |
+| `assess` | agent | one status read, one assessment, one handoff |
+| `assess --follow` | agent | the same loop as NDJSON for a task's lifetime |
+| `assess --dry-run` | agent/person | the exact redacted request, not sent |
+| `preflight` | agent | derive and optionally assess a bounded action |
+| `feedback` | agent | label what a person actually decided |
 
 The adapter speaks one wire contract: a structured `state`, `model` and typed
 `questions` request, answered with typed `answers`. TypeSafe's endpoint and
@@ -33,22 +34,25 @@ wire contract.
 
 ## Turning it on
 
-`oberth attn enable` is the one step, in this order: give an endpoint and model
-(directly, or through a preset that fills both), read the key, prove the key
-answers, then write the owner-only file.
+`oberth attn config` is the one step that stores credentials, in this order: give
+an endpoint and model (directly, or through a preset that fills both), read the
+key, prove the key answers, then write the owner-only file. It never turns the
+assessment on; `oberth attn on` flips that one boolean, and `oberth attn off`
+flips it back (`--forget` also removes the key).
 
 ```sh
 # a script or CI job: the key never appears in an argument list
-printf '%s' "$KEY" | oberth attn enable --preset openrouter --key-stdin
+oberth attn config --preset openrouter --key-stdin < key.txt
+oberth attn on
 
 # read it from an existing variable
-oberth attn enable --preset typesafe --key-env ATTN_KEY
+oberth attn config --preset typesafe --key-env ATTN_KEY
 
 # any compatible endpoint: no preset, explicit fields
-oberth attn enable --endpoint https://assess.example/decisions --model team/model --key-env ATTN_KEY
+oberth attn config --endpoint https://assess.example/decisions --model team/model --key-env ATTN_KEY
 
 # a person at a terminal: hidden input
-oberth attn enable --preset openrouter
+oberth attn config --preset openrouter
 ```
 
 The proof is one synthetic, redacted assessment — the same request shape a real
@@ -59,15 +63,15 @@ will not be sent.
 
 | Command | What it does | Network |
 |---|---|---|
-| `oberth attn status` | resolved state: on or off, provider, key source, fingerprint, reason | no |
-| `oberth attn enable` | store a key, probe once, then write the settings | once |
-| `oberth attn test` | one synthetic probe against the current settings | once |
-| `oberth attn preview` | the exact redacted body for this worktree's current event | no |
-| `oberth attn disable` | turn it off, keeping the key; `--forget` removes it | no |
+| `oberth attn status` | resolved state, reason, fingerprint, quality summary | no |
+| `oberth attn config` | store endpoint/model/key, probe once, then write | once |
+| `oberth attn test` | one synthetic probe against the effective settings | once |
+| `oberth attn on` / `off` | flip the single consent boolean | no |
+| `oberth attn assess --dry-run` | the exact redacted request for this worktree | no |
 
 `status` never prints a key, only a short fingerprint so a person can tell two
-keys apart. `preview` is the honesty check to run before enabling: if the body it
-shows is not acceptable, do not enable.
+keys apart. `assess --dry-run` is the honesty check to run before turning it on:
+if the body it shows is not acceptable, do not enable.
 
 Hidden terminal input uses the platform's own termios through `golang.org/x/sys`,
 which the engine already depends on; `golang.org/x/term` is deliberately not
@@ -77,20 +81,19 @@ surface is a native build and a smoke test, not full acceptance.
 
 ## Run it
 
-For a task that keeps services running, prefer the task-scoped session form:
+For a task that keeps services running, prefer the task-scoped follow form:
 
 ```sh
-oberth attn session --project "$PWD" --task-context "${TMPDIR:-/tmp}/oberth-task-$$.json"
+oberth attn assess --follow --project "$PWD" --task-context "${TMPDIR:-/tmp}/oberth-task-$$.json"
 ```
 
 The path is the agent's to choose: nothing on the machine creates this file, so
 give each task its own — a fixed `/tmp` name lets two parallel agents overwrite
 each other's allow-list.
 
-`session` is the long-lived form (`--subscribe` in the standalone shell). The
-agent starts it after the initial status read and stops it with the task. It
-polls facts continuously but calls the model only for a new event/revision or an
-uncached assessment.
+`--follow` is the long-lived form of `assess`. The agent starts it after the
+initial status read and stops it with the task. It polls facts continuously but
+calls the model only for a new event/revision or an uncached assessment.
 
 The agent-side runner performs the status read and exact artifact lookup in one
 operation. Do not scan the `BERTH_HOME/attention` directory:
@@ -120,10 +123,10 @@ for this task/allow-list, and the local `telemetry_path` used for quality
 observations. The agent must map a user's explicit choice to an existing documented CLI command.
 The runner never executes the selected option.
 
-For a task that remains active while services run, use the subscription mode:
+For a task that remains active while services run, use the follow mode:
 
 ```sh
-oberth attn session --project "$PWD" --interval 2s \
+oberth attn assess --follow --project "$PWD" --interval 2s \
   --task-context "${TMPDIR:-/tmp}/oberth-task-$$.json"
 ```
 
@@ -165,7 +168,7 @@ The code is what a caller branches on, so a person gets a next step written for
 that code rather than a provider's error body. A failure this client does not
 recognise is `provider_error`; it is never left blank.
 
-`oberth attn enable` is the persistent setup path. It writes an owner-only file
+`oberth attn config` writes the settings; `oberth attn on` is the consent flip. It writes an owner-only file
 at `~/.option-berth/attn.json` (or `$BERTH_HOME/attn.json` in an isolated run):
 
 ```json
@@ -273,12 +276,12 @@ permission.
 Inspect the accumulated evidence with:
 
 ```sh
-oberth attn report
-oberth attn report --since 168h --quality-project example-worker
-oberth attn report --since 168h --quality-project example-api
+oberth attn status --json --since 0
+oberth attn status --json --since 168h --quality-project example-worker
+oberth attn status --json --since 168h --quality-project example-api
 ```
 
-The report includes session lifecycle and polling counts, observation/status counts, labelled/unlabelled-case
+The `quality` object includes session lifecycle and polling counts, observation/status counts, labelled/unlabelled-case
 coverage, assessment availability, routing-reason and model/option breakdowns,
 user decisions, the conservative human-routing precision/recall/F1, the model's
 `needs_human` and `task_relevant` Brier scores and mean absolute errors,
@@ -291,15 +294,13 @@ Ledger write failures are diagnostic only and do not change the runner result.
 
 When an agent is preparing a side effect that is not itself a runtime fact, a
 preflight request can be derived from a freshly saved `oberth status --json`
-response. In this release it is still reached through the standalone shell:
-`oberth attn` carries the runner verbs above, not the preflight flags, so the
-command below is `jev-attention`, not `oberth attn`. The request is an external
-adapter artifact under `BERTH_HOME/attention/preflight/`; it never enters the
-daemon or replaces the runtime attention artifact:
+response. The request is an external adapter artifact under
+`BERTH_HOME/attention/preflight/`; it never enters the daemon or replaces the
+runtime attention artifact:
 
 ```sh
 oberth status --json > /tmp/oberth-status.json
-jev-attention --status /tmp/oberth-status.json \
+oberth attn preflight --status /tmp/oberth-status.json \
   --action restart_service --service api \
   --permission 'show this choice to the user before restarting' \
   --task 'Get the API ready for the integration test'
@@ -314,10 +315,10 @@ that is present in the same snapshot, belongs to the current worktree, and
 resolves to a regular file under `BERTH_HOME/drafts`; the request records its
 SHA-256 so a changed draft becomes stale.
 
-The command writes the bounded request before contacting the model. Without a key or
-when the model is unavailable it returns `status: "unavailable"` while leaving the
-preflight request available for the agent to present directly. With the model, only
-`needs_human`, task relevance, and the ranking of the bounded follow-up options
+The command writes the bounded request before contacting the endpoint. Without a
+key or when the assessment is disabled it returns `status: "unavailable"` while
+leaving the preflight request available for the agent to present directly. With
+consent, only `needs_human`, task relevance, and the ranking of the bounded follow-up options
 are written as an assessment; the action target and user-permission context are
 included in the redacted task context so the model cannot assess a generic action
 detached from the proposed target. The adapter never invokes `up`, `restart`,

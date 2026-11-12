@@ -31,7 +31,7 @@ this page covers only how to move these files.
 From the repository root:
 
 ```sh
-mage build          # engine + optional adapter
+mage build          # engine (CLI + daemon + optional modules)
 mage buildEngine    # engine only → ./bin/oberth
 mage runCLI "status --json"
 mage runDaemon      # start a daemon with the CLI just built (isolated use)

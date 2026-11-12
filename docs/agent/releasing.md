@@ -25,8 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/ins
 ```
 
 The script resolves `releases/latest` (or pins a tag with `--version`), downloads the archive and its
-same-named `.sha256` for the platform, verifies before extracting, installs `oberth` and
-`jev-attention` into `~/.local/bin` (`%LOCALAPPDATA%\option-berth\bin` on Windows), leaves `LICENSE`,
+same-named `.sha256` for the platform, verifies before extracting, installs `oberth` into `~/.local/bin` (`%LOCALAPPDATA%\option-berth\bin` on Windows), leaves `LICENSE`,
 `licenses/` and the build manifest in `~/.local/share/option-berth`
 (`%LOCALAPPDATA%\option-berth` on Windows), configures PATH through the bundled `install-path.sh`, and
 finally runs `oberth version` as a self-check. It starts no service, writes no Git state and needs no
@@ -142,7 +141,7 @@ A genuine failure is never handled by deleting assertions, relaxing timeouts or 
    fact/persistence checks.
 3. Build six CLI archives for Darwin/Linux/Windows on amd64 and arm64, and generate amd64/arm64 `.deb`
    and `.rpm` packages on Linux targets.
-4. Each CLI archive contains `oberth`, the optional `jev-attention`, `install-path.sh`, the build
+4. Each CLI archive contains `oberth`, `install-path.sh`, the build
    manifest, the license texts the target actually depends on, and `SHA256SUMS`; Linux packages extract
    binaries and licenses from that same archive rather than building separate content.
 5. After verifying that all targets exist and hashing them, create a GitHub draft release, upload,

@@ -45,6 +45,24 @@ type LocalConfig struct {
 	TimeoutMS int    `json:"timeout_ms"`
 }
 
+// RedactedSettings is the stored shape without the secret, for `attn config`
+// with no flags and for diagnostics.
+func (c LocalConfig) RedactedSettings() map[string]any {
+	state := map[string]any{
+		"enabled":    c.Enabled,
+		"endpoint":   c.Endpoint,
+		"model":      c.Model,
+		"timeout_ms": c.Timeout().Milliseconds(),
+	}
+	if c.Preset != "" {
+		state["preset"] = c.Preset
+	}
+	if c.APIKey != "" {
+		state["key_present"] = true
+	}
+	return state
+}
+
 // LocalConfigPath returns the path shared by setup commands and isolated runs.
 func LocalConfigPath() string { return paths.AttnConfigPath() }
 

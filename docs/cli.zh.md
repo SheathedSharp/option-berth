@@ -253,43 +253,42 @@ oberth attn assess --project "$PWD" \
   --authorize inspect_logs,inspect_port,restart_service,continue_without_action,ask_user_for_context
 ~~~
 
-`oberth attn enable` 是一步开启：读密钥（`--key-stdin`、`--key-env NAME` 或终端隐藏
-输入），发一次合成的脱敏探测，**只有探测成功才写** `attn.json`；探测失败时已有配置保持不动。
-`oberth attn status` 不联网报告解析结果，`oberth attn test` 联网探测一次，`oberth attn preview`
-打印当前事件将要发送的脱敏请求体但不发送，`oberth attn disable [--forget]` 关闭（默认保留密钥，
-`--forget` 才会删除）。`oberth doctor` 增加一行离线状态；人读 `status` 在未启用且当前有异常时，
-每两周提示一次，`BERTH_NO_TIPS=1` 可关闭。
+`oberth attn config` 是唯一写凭据的动词：给出 endpoint 与 model（直接给，或用 preset
+一并填入），从 `--key-stdin`、`--key-env NAME`、终端隐藏输入读取密钥，或保留已存密钥，
+发一次合成的脱敏探测，**只有探测成功才写** `attn.json`；探测失败时已有配置保持不动。
+`config` 改的是凭据，不是同意。`oberth attn on` 与 `oberth attn off [--forget]` 只翻转
+一个 `enabled` 布尔值，不联网。`oberth attn test` 用当前有效配置探测一次。
+`oberth attn status` 报告解析结果、不可用时的固定原因，以及本地质量账本摘要；`--json`
+同时输出完整 `quality` 对象。`oberth doctor` 增加一行离线状态；人读 `status` 在未启用且
+当前有异常时，每两周提示一次，`BERTH_NO_TIPS=1` 可关闭。
 
-`oberth attn assess` 即原来的 `jev-attention --auto`，`oberth attn session` 即
-`--session`/`--subscribe`，`oberth attn feedback` / `oberth attn report` 即 `--feedback` 与
-`--quality-report`。独立二进制 `jev-attention` 在迁移期是同一 runner 的薄壳，
-`scripts/verify-attention-handoff.py` 和 skill 因此不用改；它不会长期分发。
+`oberth attn assess` 是一次性 runner。`--dry-run` 打印当前事件将要发送的脱敏请求体但不发送；
+`--follow` 让同一循环在任务生命周期内持续运行，以 NDJSON 输出 `subscribed`、仅变化的手递
+和取消时的 `stopped`。`oberth attn feedback` 记录人实际做出的决定，`oberth attn preflight`
+从新鲜的状态快照派生一个有界的动作请求。只有一个 `oberth` 二进制，它们都不是独立可执行文件。
 
 上下文文件包含 `task` 和必填的 `authorized_options`，**由 agent 自己写**：机器上没有任何东西
 替你生成它，路径也由 agent 选（并行的任务各用一个文件，不要共用一个 `/tmp` 路径）。
 `--task` 与 `--authorize` 覆盖文件里的同名字段；两者都没有时 runner 直接报错，不会替 agent
-猜一个授权集。适配器只向选定的提供商发送脱敏的事实摘要，
+猜一个授权集。适配器只向选定的 endpoint 发送脱敏的事实摘要，
 不会读取日志或起停服务。runner 输出 `clear`、`continue`、`human_required`、`unavailable` 或
 `stale`；成功时把校验后的 `assessment` 原子写回同一文件，并在返回前复读状态。
 没有可用的环境 endpoint、model 或 key、网络失败、响应无效、文件过期或状态修订变化时，事实文件保持不变。
-`oberth attn enable` 写入的 `~/.option-berth/attn.json`（隔离运行时为 `$BERTH_HOME/attn.json`）由
+`oberth attn config` 写入的 `~/.option-berth/attn.json`（隔离运行时为 `$BERTH_HOME/attn.json`）由
 `oberth attn` 自动读取，并且是唯一的持久同意：`enabled: true` 开启，`enabled: false` 即使环境
 里有密钥也保持关闭。显式 `BERTH_ATTN_ENDPOINT` / `BERTH_ATTN_MODEL` / `BERTH_ATTN_KEY` 只提供这三个
 字段，不开启评估；`BERTH_ATTN=1` 只为当前进程开启。每次不可用都带固定原因码（`no_key`、`disabled`、
 `invalid_config`、`unauthorized`、`rate_limited`、`timeout`、`network`、`provider_error`、
 `bad_response`、`stale`），而不是 provider 的错误原文。
-`--auto`、`--session` 和 `--subscribe` 必须显式提供 `authorized_options`；artifact 的 `options` 只是候选集，
+`assess` 与 `assess --follow` 必须显式提供 `authorized_options`；artifact 的 `options` 只是候选集，
 不会自动变成 agent 的授权。
-需要在任务生命周期内持续发现异常时，agent 应使用 `oberth attn session --interval 2s`（底层别名仍为
-`--subscribe`），
-它以 NDJSON 只输出新的 event/revision/assessment 变化，并在取消时结束。
 完整参数和隐私边界见
 [`attn-adapter.md`](agent/attn-adapter.md)。
 
-`oberth attn assess` / `oberth attn session` 会在 `$BERTH_HOME/quality/events.ndjson`
+`oberth attn assess` / `assess --follow` 会在 `$BERTH_HOME/quality/events.ndjson`
 留下脱敏的本地质量观测。开发 agent 在真实交互后可用
 `oberth attn feedback --file <json>` 回写人工标签和动作结果，再用
-`oberth attn report [--since 168h]` 查看标注覆盖率、assessment
+`oberth attn status --json [--since 168h]` 查看 `quality` 中的标注覆盖率、assessment
 可用率、路由原因与模型/选项分布、人工升级 precision/recall/F1、模型的
 `needs_human` / `task_relevant` 概率误差、推荐命中率、动作成功率、解决率和发现延迟。
 质量记录不属于 `status` 事实，也不改变任何执行权限；报告的 `sessions` 对象会说明会话、轮询、事件、

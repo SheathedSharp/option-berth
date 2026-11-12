@@ -21,10 +21,9 @@ def make_archive(directory: Path) -> Path:
     stem = f"option-berth-v{VERSION}-linux-amd64"
     stage = directory / "stage" / stem
     (stage / "licenses").mkdir(parents=True)
-    for name in ("oberth", "jev-attention"):
-        path = stage / name
-        path.write_bytes(f"fixture {name}\n".encode())
-        path.chmod(0o755)
+    path = stage / "oberth"
+    path.write_bytes(b"fixture oberth\n")
+    path.chmod(0o755)
     (stage / "LICENSE").write_text("fixture licence\n")
     (stage / "build-manifest.json").write_text('{"version": "1.0.0"}\n')
     (stage / "licenses" / "engine-LICENSE").write_text("fixture engine licence\n")
@@ -86,7 +85,6 @@ class LinuxPackageTests(unittest.TestCase):
         self.assertIn(b"usr/bin/oberth", control["./md5sums"])
         data = tar_members(entries["data.tar.gz"])
         self.assertEqual(data["./usr/bin/oberth"], b"fixture oberth\n")
-        self.assertEqual(data["./usr/bin/jev-attention"], b"fixture jev-attention\n")
         self.assertEqual(data["./usr/share/doc/option-berth/LICENSE"], b"fixture licence\n")
         self.assertEqual(data["./usr/share/doc/option-berth/licenses/engine-LICENSE"], b"fixture engine licence\n")
         self.assertIn(b'"version"', data["./usr/share/doc/option-berth/build-manifest.json"])
