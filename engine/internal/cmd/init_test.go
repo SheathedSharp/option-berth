@@ -110,6 +110,39 @@ func TestInitDraftThenAdopt(t *testing.T) {
 	}
 }
 
+// A declaration can be inherited from another checkout by naming its path: a
+// fresh worktree starts without a manifest, and inheriting one is the documented
+// way to avoid drafting the same services from zero.
+func TestInitAdoptFromAnotherCheckout(t *testing.T) {
+	t.Cleanup(clearInitFlags())
+	declaration := "name: inherited\nservices:\n  - name: api\n    cmd: echo hi\n"
+	other := projectDir(t)
+	source := filepath.Join(other, groups.ConfigName)
+	if err := os.WriteFile(source, []byte(declaration), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	worktree := projectDir(t)
+	chdir(t, worktree)
+
+	if err := initAdoptRun(initAdoptCmd, []string{source}); err != nil {
+		t.Fatalf("init adopt from another checkout: %v", err)
+	}
+	written, err := os.ReadFile(filepath.Join(worktree, groups.ConfigName))
+	if err != nil {
+		t.Fatalf("the inherited manifest was not written: %v", err)
+	}
+	if string(written) != declaration {
+		t.Fatalf("inherited bytes = %q, want %q", written, declaration)
+	}
+	cfg, err := groups.Parse(filepath.Join(worktree, groups.ConfigName), written)
+	if err != nil {
+		t.Fatalf("the inherited manifest does not parse: %v", err)
+	}
+	if len(cfg.Services) != 1 || cfg.Services[0].Name != "api" {
+		t.Fatalf("inherited services = %+v", cfg.Services)
+	}
+}
+
 // Draft JSON is one documented document on stdout, with the draft in it.
 func TestInitDraftJSONShape(t *testing.T) {
 	t.Cleanup(clearInitFlags())

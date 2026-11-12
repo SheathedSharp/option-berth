@@ -570,12 +570,13 @@ stderr 也说明一次。这与 `status` 的规则一致：看不见不是没在
 `--progress` 输出 NDJSON 进度事件，适合客户端在 agent 工作期间显示当前阶段；最后一行是
 `type: "done"` 的完整结果。
 
-#### oberth init adopt [draft] [--replace|--merge] [--dry-run] [--diff] [--json]
+#### oberth init adopt [draft|path] [--replace|--merge] [--dry-run] [--diff] [--json]
 
-把人选中的草稿写进当前 worktree 的 `oberth.yaml`。不带路径时采用该项目最新草稿；这一步
-才会落盘。已有清单必须明确选择 `--replace` 或 `--merge`。`--dry-run` 只预览将要写入的
-完整清单；再加 `--diff` 时，输出当前清单与采纳结果的只读 unified diff（JSON 输出放在
-`diff` 字段），不写清单也不移动草稿。
+把人选中的草稿——或任意按路径指定的既有清单——写进当前 worktree 的 `oberth.yaml`。不带路径时
+采用该项目最新草稿；带路径就是从另一份 checkout 继承声明的方式，之后两边各自独立。这一步才
+会落盘。已有清单必须明确选择 `--replace` 或 `--merge`。`--dry-run` 只预览将要写入的完整清单；
+再加 `--diff` 时，输出当前清单与采纳结果的只读 unified diff（JSON 输出放在 `diff` 字段），
+不写清单也不移动草稿。
 
 ## 各层其余命令
 
@@ -684,6 +685,13 @@ issue 上可见；否则命令打印一条预填好的 `issues/new` 链接由人
 ## 清单和状态的边界
 
 - 清单由人写；agent 只能起草，`oberth init adopt` 才采纳。
+- 清单属于 worktree 目录，不属于分支、也不属于仓库：引擎按文件系统查找它，从不问 git 它是否被
+  跟踪。项目是否提交这份清单由项目自己决定；唯一的差别是：在已声明的 `sources:` 路径下，被
+  跟踪的清单进入指纹，被忽略的不会。
+- 新 checkout 一开始没有清单。`oberth init adopt <path>` 可以从任何既有 checkout 拷一份声明
+  进来；之后两者各自独立。
+- 当前文件名是 `oberth.yaml`。`.oberth.yaml` 和 `oberth.yml` 仍会被读取，不会再以它们新建，
+  被遮蔽的或遗留的拼写由 `oberth doctor` 报告。
 - option-berth 只读 git，不提交、不暂存、不切分支。
 - machine: 是项目依赖的只读引用；up / down 不会替它起停。
 - workspace: 是另一个 checkout 的服务地址引用；up / down / restart 不会替对方起停，也不建立
