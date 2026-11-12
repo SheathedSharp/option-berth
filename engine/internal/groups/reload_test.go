@@ -10,11 +10,11 @@ import (
 
 func writeConfig(t *testing.T, dir, body string) string {
 	t.Helper()
-	path := filepath.Join(dir, ConfigName)
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
+	configPath := filepath.Join(dir, ConfigName)
+	if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("write %s: %v", configPath, err)
 	}
-	return path
+	return configPath
 }
 
 // manifestIndexState is the caller-visible result of a reload, not an
@@ -124,10 +124,10 @@ func TestReloadPicksUpANewFile(t *testing.T) {
 }
 
 func TestReloadPicksUpAnEditAndADelete(t *testing.T) {
-	dir := t.TempDir()
-	path := writeConfig(t, dir, "name: demo\nservices:\n  - name: api\n")
+	root := t.TempDir()
+	configPath := writeConfig(t, root, "name: demo\nservices:\n  - name: api\n")
 	x := NewIndex()
-	x.Observe(dir)
+	x.Observe(root)
 	if _, found := x.Named("demo"); !found {
 		t.Fatal("Observe did not index the config")
 	}
@@ -135,7 +135,7 @@ func TestReloadPicksUpAnEditAndADelete(t *testing.T) {
 		t.Fatal("freshly observed manifest is stale")
 	}
 	requireConfig(t, x.Configs()[0], &Config{
-		Name: "demo", Dir: Canonical(dir), Path: Canonical(path),
+		Name: "demo", Dir: Canonical(root), Path: Canonical(configPath),
 		Services: []Service{{Name: "api"}},
 	})
 	for _, edit := range []struct {
@@ -148,16 +148,16 @@ func TestReloadPicksUpAnEditAndADelete(t *testing.T) {
 	} {
 		t.Run(edit.title, func(t *testing.T) {
 			if edit.remove {
-				if err := os.Remove(path); err != nil {
+				if err := os.Remove(configPath); err != nil {
 					t.Fatal(err)
 				}
 			} else {
-				writeConfig(t, dir, edit.body)
+				writeConfig(t, root, edit.body)
 			}
 			if !x.Stale() {
 				t.Fatal("changed manifest did not invalidate the index")
 			}
-			assertManifestIndex(t, x, path, nil, edit.state)
+			assertManifestIndex(t, x, configPath, nil, edit.state)
 			if _, found := x.Named("demo"); found {
 				t.Error("the pre-edit name is still published")
 			}
@@ -184,19 +184,19 @@ func TestReloadReportsInvalidFiles(t *testing.T) {
 
 // TestKnownAndByPath are what the daemon's config handlers resolve through.
 func TestKnownAndByPath(t *testing.T) {
-	dir := t.TempDir()
-	path := writeConfig(t, dir, "name: demo\nservices:\n  - name: api\n")
+	root := t.TempDir()
+	configPath := writeConfig(t, root, "name: demo\nservices:\n  - name: api\n")
 	x := NewIndex()
-	x.Observe(dir)
+	x.Observe(root)
 
 	// Observe resolves symlinks, so on macOS the indexed path is the
-	// /private/var form of the temp dir; that is the path the daemon serves.
+	// /private/var spelling of the temp dir — the path the daemon serves.
 	want := &Config{
-		Name: "demo", Dir: Canonical(dir), Path: Canonical(path),
+		Name: "demo", Dir: Canonical(root), Path: Canonical(configPath),
 		Services: []Service{{Name: "api"}},
 	}
-	if !reflect.DeepEqual(x.Known(), []string{Canonical(path)}) {
-		t.Fatalf("Known() = %v, want [%s]", x.Known(), Canonical(path))
+	if !reflect.DeepEqual(x.Known(), []string{Canonical(configPath)}) {
+		t.Fatalf("Known() = %v, want [%s]", x.Known(), Canonical(configPath))
 	}
 	if cfg, ok := x.ByPath(x.Known()[0]); !ok {
 		t.Fatalf("ByPath(%s) missed the indexed path", x.Known()[0])
@@ -204,12 +204,12 @@ func TestKnownAndByPath(t *testing.T) {
 		requireConfig(t, cfg, want)
 	}
 	// The path the user typed resolves too, symlinked temp dir and all.
-	if cfg, ok := x.ByPath(path); !ok {
-		t.Fatalf("ByPath(%s) missed the typed path", path)
+	if cfg, ok := x.ByPath(configPath); !ok {
+		t.Fatalf("ByPath(%s) missed the typed path", configPath)
 	} else {
 		requireConfig(t, cfg, want)
 	}
-	if _, ok := x.ByPath(filepath.Join(dir, "nope.yaml")); ok {
+	if _, ok := x.ByPath(filepath.Join(root, "nope.yaml")); ok {
 		t.Error("ByPath matched a file that is not indexed")
 	}
 }

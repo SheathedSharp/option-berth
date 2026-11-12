@@ -256,14 +256,13 @@ func TestIndexRecordsInvalidConfigsWithoutFailing(t *testing.T) {
 	dirs := gitProjects(t, "repo")
 	writeManifests(t, dirs, map[string]map[string]string{"repo": {ConfigName: "name: a b\n"}})
 	x := observeRoles(t, dirs, "repo")
-	if got := x.Configs(); len(got) != 0 {
-		t.Fatalf("Configs = %v, want none", got)
+	if errs := x.Invalid(); len(errs) != 1 || !strings.Contains(errs[0].Err.Error(), "whitespace") {
+		t.Fatalf("Invalid = %+v, want one whitespace complaint", errs)
 	}
-	invalid := x.Invalid()
-	if len(invalid) != 1 || !strings.Contains(invalid[0].Err.Error(), "whitespace") {
-		t.Fatalf("Invalid = %+v", invalid)
+	if cfgs := x.Configs(); len(cfgs) != 0 {
+		t.Fatalf("Configs = %v, want none", cfgs)
 	}
-	// The resolver must fall back to the git root, not blow up.
+	// Resolving still works: the group falls back to the git root name.
 	got := Resolve([]state.Port{nativePort(8123, dirs["repo"])}, NoRuns{}, x)[0]
 	if deref(got.Group) != "repo" {
 		t.Fatalf("group = %q, want the git root name", deref(got.Group))
@@ -300,66 +299,72 @@ func TestIndexPrefersTheCurrentName(t *testing.T) {
 // and only a directory without one gets a new oberth.yaml.
 func TestTargetIn(t *testing.T) {
 	base := tempTree(t)
-	empty := mkdir(t, base, "empty")
-	if got := TargetIn(empty); got != filepath.Join(empty, ConfigName) {
-		t.Errorf("TargetIn(empty) = %s, want a new %s", got, ConfigName)
+	fresh := mkdir(t, base, "fresh")
+	if want := filepath.Join(fresh, ConfigName); TargetIn(fresh) != want {
+		t.Errorf("TargetIn(fresh) = %s, want a new %s", TargetIn(fresh), want)
 	}
-	legacy := mkdir(t, base, "legacy")
-	writeFile(t, filepath.Join(legacy, LegacyConfigName), "name: legacy\n")
-	if got := TargetIn(legacy); got != filepath.Join(legacy, LegacyConfigName) {
-		t.Errorf("TargetIn(legacy) = %s, want the existing %s", got, LegacyConfigName)
+	old := mkdir(t, base, "old")
+	writeFile(t, filepath.Join(old, LegacyConfigName), "name: legacy\n")
+	if want := filepath.Join(old, LegacyConfigName); TargetIn(old) != want {
+		t.Errorf("TargetIn(old) = %s, want the existing %s", TargetIn(old), want)
 	}
 }
 
 func TestIsLegacyName(t *testing.T) {
-	for name, want := range map[string]bool{
-		".oberth.yaml": true, ".oberth.yml": true,
-		"oberth.yaml": false, "oberth.yml": false, ".env": false,
+	for _, tc := range []struct {
+		name   string
+		legacy bool
+	}{
+		{".oberth.yaml", true},
+		{".oberth.yml", true},
+		{"oberth.yaml", false},
+		{"oberth.yml", false},
+		{".env", false},
 	} {
-		if got := IsLegacyName(name); got != want {
-			t.Errorf("IsLegacyName(%q) = %v, want %v", name, got, want)
+		if got := IsLegacyName(tc.name); got != tc.legacy {
+			t.Errorf("IsLegacyName(%q) = %v, want %v", tc.name, got, tc.legacy)
 		}
 	}
 }
 
-// TestIndexKeysConfigsCanonically: a config reached through an unresolved path
-// — a Reload root the store handed back, or a path a client typed — has to land
-// under the same key as the same directory found by walking a process cwd. On
-// macOS those two spellings differ for everything under $TMPDIR (/var against
-// /private/var), and a mismatch makes the config invisible to Nearest, so
-// `oberth start` falls back to the git root or the directory name.
+// TestIndexKeysConfigsCanonically: however a config's path was spelled — a
+// Reload root handed back by the store, or a path a client typed — it has to
+// land under the same key as that directory found by walking a process cwd.
+// On macOS the two spellings differ for everything under $TMPDIR (/var against
+// /private/var), and a mismatch hides the config from Nearest, leaving `oberth
+// start` to fall back to the git root or the directory name.
 func TestIndexKeysConfigsCanonically(t *testing.T) {
-	real := tempTree(t)
-	repo := mkdir(t, real, "repo")
-	writeFile(t, filepath.Join(repo, ConfigName), "name: my-app\n")
+	realDir := tempTree(t)
+	project := mkdir(t, realDir, "repo")
+	writeFile(t, filepath.Join(project, ConfigName), "name: my-app\n")
 
-	link := filepath.Join(t.TempDir(), "alias")
-	if err := os.Symlink(real, link); err != nil {
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(realDir, alias); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	viaLink := filepath.Join(link, "repo")
+	viaAlias := filepath.Join(alias, "repo")
 
 	t.Run("AddFile", func(t *testing.T) {
 		x := NewIndex()
-		if err := x.AddFile(filepath.Join(viaLink, ConfigName)); err != nil {
+		if err := x.AddFile(filepath.Join(viaAlias, ConfigName)); err != nil {
 			t.Fatal(err)
 		}
-		assertNearestName(t, x, repo, "my-app")
-		assertAtName(t, x, viaLink, "my-app")
+		assertNearestName(t, x, project, "my-app")
+		assertAtName(t, x, viaAlias, "my-app")
 	})
 
 	t.Run("Reload", func(t *testing.T) {
 		x := NewIndex()
-		if n, bad := x.Reload([]string{viaLink}); n != 1 || len(bad) != 0 {
+		if n, bad := x.Reload([]string{viaAlias}); n != 1 || len(bad) != 0 {
 			t.Fatalf("Reload = %d, %v", n, bad)
 		}
-		assertNearestName(t, x, filepath.Join(repo, "sub", "dir"), "my-app")
+		assertNearestName(t, x, filepath.Join(project, "sub", "dir"), "my-app")
 	})
 
 	t.Run("ByPath", func(t *testing.T) {
 		x := NewIndex()
-		x.Observe(repo)
-		if cfg, ok := x.ByPath(filepath.Join(viaLink, ConfigName)); !ok || cfg.Name != "my-app" {
+		x.Observe(project)
+		if cfg, ok := x.ByPath(filepath.Join(viaAlias, ConfigName)); !ok || cfg.Name != "my-app" {
 			t.Fatalf("ByPath through a symlink = %+v, %v", cfg, ok)
 		}
 	})

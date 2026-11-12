@@ -8,18 +8,18 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// sessionRunSet is a Registry that also implements SessionRegistry, which is
-// what the daemon's run registry looks like once a run carries a session.
+// sessionRunSet is a Registry that also implements SessionRegistry: the shape
+// the daemon's run registry takes once a run carries a session.
 type sessionRunSet struct {
 	runSet
 	session state.Session
 }
 
 func (s sessionRunSet) Session(p state.Port) (state.Session, bool) {
-	if p.Port != s.port {
-		return state.Session{}, false
+	if p.Port == s.port {
+		return s.session, true
 	}
-	return s.session, true
+	return state.Session{}, false
 }
 
 func requireResolvedPort(t *testing.T, got, want state.Port) {
@@ -31,8 +31,8 @@ func requireResolvedPort(t *testing.T, got, want state.Port) {
 
 func TestAttributeWithStampsTheSession(t *testing.T) {
 	want := state.Session{
-		ID: "claude-code:abc", Tool: "claude-code",
-		Worktree: "feature-x", Branch: "feature/x", Detected: true,
+		ID: "claude-code:def", Tool: "claude-code",
+		Worktree: "feature-y", Branch: "feature/y", Detected: true,
 	}
 	pp := []ports.ListeningPort{
 		{Port: 3000, PID: 11, Process: "node", Command: "node server.js"},

@@ -15,22 +15,23 @@ func TestExpand(t *testing.T) {
 		Worktree: "wt_0123456789ab",
 		Ports:    map[string]int{"api": 21408, "db": 21407},
 	}
-	for _, tt := range []struct{ in, want string }{
+	cases := []struct{ in, want string }{
 		{"--port ${port}", "--port 21408"},
 		{"${url}/healthz", "http://localhost:21408/healthz"},
 		{"postgres://localhost:${db.port}/app", "postgres://localhost:21407/app"},
 		{"${db.url}", "http://localhost:21407"},
 		{"app_${worktree}", "app_wt_0123456789ab"},
 		{".data/${worktree}/app.db", ".data/wt_0123456789ab/app.db"},
-		// Not references: left exactly as written.
+		// Shell syntax is not one of our references and comes back untouched.
 		{"${HOME}/bin", "${HOME}/bin"},
 		{"${FOO:-x}", "${FOO:-x}"},
 		{"$port", "$port"},
-		// A reference to a service with no port in the map stays put.
+		// A service with no port in the map leaves its reference alone.
 		{"${cache.port}", "${cache.port}"},
-	} {
-		if got := Expand(tt.in, values); got != tt.want {
-			t.Errorf("Expand(%q) = %q, want %q", tt.in, got, tt.want)
+	}
+	for _, tc := range cases {
+		if got := Expand(tc.in, values); got != tc.want {
+			t.Errorf("Expand(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 	if got := URL(21408); got != "http://localhost:21408" {
@@ -138,10 +139,11 @@ func TestRefs(t *testing.T) {
 }
 
 func TestMatchesExpanded(t *testing.T) {
-	for _, tt := range []struct {
+	type matchCase struct {
 		pattern, actual string
 		want            bool
-	}{
+	}
+	cases := []matchCase{
 		{"--port=${port}", "--port=8123", true},
 		{"--port=${port}", "--port=", false},
 		{"${port}", "8123", true},
@@ -149,12 +151,13 @@ func TestMatchesExpanded(t *testing.T) {
 		{"--db=${worktree}", "--db=", false},
 		{"${HOME}", "${HOME}", true},
 		{"${HOME}", "/Users/me", false},
-		{"dev", "dev", true},
-		{"dev", "build", false},
+		{"seed", "seed", true},
+		{"seed", "build", false},
 		{"a.b${port}", "axb1", false},
-	} {
-		if got := MatchesExpanded(tt.pattern, tt.actual); got != tt.want {
-			t.Errorf("MatchesExpanded(%q, %q) = %v, want %v", tt.pattern, tt.actual, got, tt.want)
+	}
+	for _, tc := range cases {
+		if got := MatchesExpanded(tc.pattern, tc.actual); got != tc.want {
+			t.Errorf("MatchesExpanded(%q, %q) = %v, want %v", tc.pattern, tc.actual, got, tc.want)
 		}
 	}
 }
@@ -163,47 +166,47 @@ func TestLoadPortAutoAndEnv(t *testing.T) {
 	cfg := mustLoad(t, "shop", `
 name: shop
 services:
-  - name: db
-    cmd: docker compose up db
+  - name: store
+    cmd: docker compose up store
     port: auto
-  - name: api
-    cmd: uv run uvicorn app:app --port ${port}
+  - name: app
+    cmd: uv run uvicorn app.main:app --port ${port}
     port: auto
-    depends_on: [db]
+    depends_on: [store]
     env:
-      DATABASE_URL: postgres://localhost:${db.port}/app
+      DATABASE_URL: postgres://localhost:${store.port}/app
       HOME_BIN: ${HOME}/bin
-  - name: worker
+  - name: job
     cmd: uv run worker
 `)
 	if cfg.Name != "shop" {
 		t.Errorf("Name = %q, want shop", cfg.Name)
 	}
-	requireNamedService(t, cfg, Service{Name: "db", Cmd: "docker compose up db", PortAuto: true})
+	requireNamedService(t, cfg, Service{Name: "store", Cmd: "docker compose up store", PortAuto: true})
 	requireNamedService(t, cfg, Service{
-		Name: "api", Cmd: "uv run uvicorn app:app --port ${port}", PortAuto: true,
-		DependsOn: []string{"db"},
-		Env:       map[string]string{"DATABASE_URL": "postgres://localhost:${db.port}/app", "HOME_BIN": "${HOME}/bin"},
+		Name: "app", Cmd: "uv run uvicorn app.main:app --port ${port}", PortAuto: true,
+		DependsOn: []string{"store"},
+		Env:       map[string]string{"DATABASE_URL": "postgres://localhost:${store.port}/app", "HOME_BIN": "${HOME}/bin"},
 	})
-	requireNamedService(t, cfg, Service{Name: "worker", Cmd: "uv run worker"})
+	requireNamedService(t, cfg, Service{Name: "job", Cmd: "uv run worker"})
 	if !cfg.UsesAssignedPorts() || cfg.UsesManifestExtras() {
 		t.Errorf("UsesAssignedPorts=%v UsesManifestExtras=%v, want true, false", cfg.UsesAssignedPorts(), cfg.UsesManifestExtras())
 	}
 	requireMarshalDeclares(t, cfg, ""+
 		"name: shop\n"+
 		"services:\n"+
-		"  - name: db\n"+
-		"    cmd: docker compose up db\n"+
+		"  - name: store\n"+
+		"    cmd: docker compose up store\n"+
 		"    port: auto\n"+
-		"  - name: api\n"+
-		"    cmd: uv run uvicorn app:app --port ${port}\n"+
+		"  - name: app\n"+
+		"    cmd: uv run uvicorn app.main:app --port ${port}\n"+
 		"    port: auto\n"+
 		"    depends_on:\n"+
-		"      - db\n"+
+		"      - store\n"+
 		"    env:\n"+
-		"      DATABASE_URL: postgres://localhost:${db.port}/app\n"+
+		"      DATABASE_URL: postgres://localhost:${store.port}/app\n"+
 		"      HOME_BIN: ${HOME}/bin\n"+
-		"  - name: worker\n"+
+		"  - name: job\n"+
 		"    cmd: uv run worker\n")
 }
 

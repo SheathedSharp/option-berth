@@ -14,9 +14,11 @@ import (
 func loadString(t *testing.T, dirName, body string) (*Config, error) {
 	t.Helper()
 	dir := mkdir(t, tempTree(t), dirName)
-	path := filepath.Join(dir, ConfigName)
-	writeFile(t, path, body)
-	return Load(path)
+	configPath := filepath.Join(dir, ConfigName)
+	if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("write %s: %v", configPath, err)
+	}
+	return Load(configPath)
 }
 
 func mustLoad(t *testing.T, dirName, body string) *Config {
@@ -83,16 +85,16 @@ func TestLoadValidConfig(t *testing.T) {
 	cfg := mustLoad(t, "option-berth", `name: option-berth
 services:
   - name: db
-    prepare: mvn -DskipTests package
+    prepare: mvn -q -DskipTests package
     cmd: docker compose up db
-    port: 5432
-    health: /
+    port: 5433
+    health: /ready
   - name: api
-    cmd: uv run uvicorn app:app
-    cwd: backend
-    port: 8000
+    cmd: uv run uvicorn app.main:app
+    cwd: server
+    port: 8100
     depends_on: [db]
-ports: [9229]
+ports: [9230]
 `)
 	if cfg.Name != "option-berth" {
 		t.Errorf("Name = %q, want option-berth", cfg.Name)
@@ -101,23 +103,23 @@ ports: [9229]
 		t.Fatalf("len(Services) = %d, want 2", len(cfg.Services))
 	}
 	db, api := cfg.Services[0], cfg.Services[1]
-	if db.Name != "db" || db.Cmd != "docker compose up db" || db.Port != 5432 || db.Health != "/" {
-		t.Errorf("first service = %+v, want db on 5432 with health /", db)
+	if db.Name != "db" || db.Cmd != "docker compose up db" || db.Port != 5433 || db.Health != "/ready" {
+		t.Errorf("first service = %+v, want db on 5433 with health /ready", db)
 	}
-	if db.Prepare != "mvn -DskipTests package" {
+	if db.Prepare != "mvn -q -DskipTests package" {
 		t.Errorf("Services[0].Prepare = %q, want the written Maven package command", db.Prepare)
 	}
-	if api.Name != "api" || api.Cmd != "uv run uvicorn app:app" || api.Cwd != "backend" || api.Port != 8000 {
-		t.Errorf("second service = %+v, want api in backend on 8000", api)
+	if api.Name != "api" || api.Cmd != "uv run uvicorn app.main:app" || api.Cwd != "server" || api.Port != 8100 {
+		t.Errorf("second service = %+v, want api in server on 8100", api)
 	}
 	if !reflect.DeepEqual(api.DependsOn, []string{"db"}) {
 		t.Errorf("api.DependsOn = %v, want [db]", api.DependsOn)
 	}
-	if got := cfg.ServiceDir(api); got != filepath.Join(cfg.Dir, "backend") {
-		t.Errorf("ServiceDir(api) = %q, want %s/backend", got, cfg.Dir)
+	if got := cfg.ServiceDir(api); got != filepath.Join(cfg.Dir, "server") {
+		t.Errorf("ServiceDir(api) = %q, want %s/server", got, cfg.Dir)
 	}
-	if !reflect.DeepEqual(cfg.Ports, []int{9229}) {
-		t.Errorf("Ports = %v, want [9229]", cfg.Ports)
+	if !reflect.DeepEqual(cfg.Ports, []int{9230}) {
+		t.Errorf("Ports = %v, want [9230]", cfg.Ports)
 	}
 }
 
@@ -416,26 +418,26 @@ func TestLoadServiceMetadata(t *testing.T) {
 	cfg := mustLoad(t, "demo", `name: demo
 services:
   - name: api
-    cmd: uv run api
+    cmd: uv run api.main
     port: 8000
-    health: /health
+    health: /healthz
     description: The HTTP API
-    icon: server
-    color: "#3b82f6"
+    icon: globe
+    color: "#2563eb"
 `)
 	svc := cfg.Services[0]
-	if svc.Description != "The HTTP API" || svc.Icon != "server" || svc.Color != "#3b82f6" {
+	if svc.Description != "The HTTP API" || svc.Icon != "globe" || svc.Color != "#2563eb" {
 		t.Errorf("metadata = %+v, want description/icon/color as written", svc)
 	}
 	row := ServiceRow(svc)
 	if row.Description == nil || *row.Description != "The HTTP API" {
 		t.Errorf("ServiceRow.Description = %v, want pointer to The HTTP API", row.Description)
 	}
-	if row.Icon == nil || *row.Icon != "server" {
-		t.Errorf("ServiceRow.Icon = %v, want pointer to server", row.Icon)
+	if row.Icon == nil || *row.Icon != "globe" {
+		t.Errorf("ServiceRow.Icon = %v, want pointer to globe", row.Icon)
 	}
-	if row.Color == nil || *row.Color != "#3b82f6" {
-		t.Errorf("ServiceRow.Color = %v, want pointer to #3b82f6", row.Color)
+	if row.Color == nil || *row.Color != "#2563eb" {
+		t.Errorf("ServiceRow.Color = %v, want pointer to #2563eb", row.Color)
 	}
 }
 

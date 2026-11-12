@@ -108,18 +108,18 @@ func TestProposeReportsWhatIsListening(t *testing.T) {
 	index.AddComposeProject("option-berth", f.composeIn)
 
 	pp := []ports.ListeningPort{
-		{Port: 8124, PID: 2, Process: "python3", Command: "python3 -m http.server 8124", Cwd: f.repoSub},
-		{Port: 8123, PID: 1, Process: "python3", Command: "python3 -m http.server 8123", Cwd: f.repo},
-		// The same listener on a second bind address must not repeat.
-		{Port: 8123, PID: 1, Process: "python3", Command: "python3 -m http.server 8123", Cwd: f.repo, BindAddress: "::1"},
 		// A Compose container started from inside the repo.
 		{Port: 5432, PID: 9, Process: "com.docke", Type: ports.PortTypeDocker,
 			DockerContainer: "option-berth-db-1", DockerImage: "postgres:17",
 			DockerComposeService: "db", DockerComposeProject: "option-berth"},
-		// All listeners whose cwd is inside the worktree are candidates; a process
+		// All listeners whose cwd is inside the checkout are candidates; a process
 		// type is evidence, not a project ownership filter.
 		{Port: 7000, PID: 3, Process: "Figma", Cwd: f.repo},
 		{Port: 22, PID: 4, Process: "sshd", Type: ports.PortTypeUser, Cwd: f.repo},
+		{Port: 8124, PID: 2, Process: "python3", Command: "python3 -m http.server 8124", Cwd: f.repoSub},
+		{Port: 8123, PID: 1, Process: "python3", Command: "python3 -m http.server 8123", Cwd: f.repo},
+		// One listener seen on a second bind address is still one candidate.
+		{Port: 8123, PID: 1, Process: "python3", Command: "python3 -m http.server 8123", Cwd: f.repo, BindAddress: "::1"},
 		{Port: 9999, PID: 5, Process: "node", Cwd: f.composeOut},
 	}
 
@@ -146,13 +146,13 @@ func TestProposeReportsWhatIsListening(t *testing.T) {
 #   8124  backend/http.server backend  pid 2
 #       python3 -m http.server 8124
 `)
-	path := filepath.Join(f.repo, ConfigName)
-	writeFile(t, path, string(data))
-	loaded, err := Load(path)
-	if err != nil {
-		t.Fatalf("the proposed config does not validate: %v", err)
+	configPath := filepath.Join(f.repo, ConfigName)
+	writeFile(t, configPath, string(data))
+	loaded, loadErr := Load(configPath)
+	if loadErr != nil {
+		t.Fatalf("the proposed config does not validate: %v", loadErr)
 	}
-	requireLoadedProposal(t, loaded, "option-berth", path)
+	requireLoadedProposal(t, loaded, "option-berth", configPath)
 }
 
 // TestMarshalWritesDeclaredServices: a list the caller put on the config — a
@@ -204,23 +204,23 @@ func TestMarshalQuotesANameYAMLWouldMisread(t *testing.T) {
 func TestProposeNamesWorktrees(t *testing.T) {
 	f := newFixture(t)
 	pp := []ports.ListeningPort{
-		{Port: 3000, PID: 1, Process: "node", Cwd: f.worktree},
-		{Port: 3001, PID: 2, Process: "node", Cwd: f.worktree},
-		{Port: 3002, PID: 3, Process: "!!!", Cwd: f.worktree},
+		{Port: 3010, PID: 1, Process: "node", Cwd: f.worktree},
+		{Port: 3011, PID: 2, Process: "node", Cwd: f.worktree},
+		{Port: 3012, PID: 3, Process: "!!!", Cwd: f.worktree},
 	}
 	cfg := Propose(f.worktree, pp, nil)
 	requireProposedConfig(t, cfg, "option-berth@feature-x", f.worktree, filepath.Join(f.worktree, ConfigName), []Candidate{
-		{Port: 3000, Process: "node", PID: 1},
-		{Port: 3001, Process: "node", PID: 2},
-		{Port: 3002, Process: "!!!", PID: 3},
+		{Port: 3010, Process: "node", PID: 1},
+		{Port: 3011, Process: "node", PID: 2},
+		{Port: 3012, Process: "!!!", PID: 3},
 	})
 	data, err := Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	requireMarshal(t, data, "name: option-berth@feature-x\nservices: []\n"+starterComment+listeningCommentIntro+`#   3000  node             .  pid 1
-#   3001  node             .  pid 2
-#   3002  !!!              .  pid 3
+	requireMarshal(t, data, "name: option-berth@feature-x\nservices: []\n"+starterComment+listeningCommentIntro+`#   3010  node             .  pid 1
+#   3011  node             .  pid 2
+#   3012  !!!              .  pid 3
 `)
 }
 
@@ -256,12 +256,12 @@ func TestProposeUsesProjectRootWhenTheComposeDirIsGone(t *testing.T) {
 			DockerComposeService: "db", DockerComposeProject: "option-berth",
 			ProjectRoot: f.repo},
 		// Attributed to a checkout that is not the one being reported on.
-		{Port: 6379, PID: 10, Process: "com.docke", Type: ports.PortTypeDocker,
-			DockerContainer: "other-cache-1", DockerComposeService: "cache",
-			DockerComposeProject: "other", ProjectRoot: f.composeOut},
+		{Port: 6380, PID: 10, Process: "com.docke", Type: ports.PortTypeDocker,
+			DockerContainer: "elsewhere-redis-1", DockerComposeService: "redis",
+			DockerComposeProject: "elsewhere", ProjectRoot: f.composeOut},
 	}
 
-	// No index at all: the compose arm of portDir cannot answer.
+	// With no index at all, the compose arm of portDir cannot answer.
 	cfg := Propose(f.repo, pp, nil)
 	requireProposedConfig(t, cfg, "option-berth", f.repo, filepath.Join(f.repo, ConfigName), []Candidate{
 		{Port: 5432, Process: "db", PID: 9},

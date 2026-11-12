@@ -14,19 +14,19 @@ import (
 
 func TestGroupsFromPortsOnly(t *testing.T) {
 	f := newFixture(t)
-	index := NewIndex()
-	index.Observe(f.repoSub)
+	idx := NewIndex()
+	idx.Observe(f.repoSub)
 
-	pp := Resolve([]state.Port{
+	ports := Resolve([]state.Port{
 		nativePort(8123, f.repoSub),
 		nativePort(8124, f.repo),
 		nativePort(3000, ""),
-	}, NoRuns{}, index)
-	if len(pp) != 3 {
-		t.Fatalf("Resolve returned %d ports, want 3", len(pp))
+	}, NoRuns{}, idx)
+	if len(ports) != 3 {
+		t.Fatalf("Resolve returned %d ports, want 3", len(ports))
 	}
 
-	requireOneGroup(t, Groups(pp, index), state.Group{
+	requireOneGroup(t, Groups(ports, idx), state.Group{
 		Name: "option-berth", Repo: "option-berth",
 		Identity: WorktreeToken(f.repo), Source: state.SourceAuto,
 		RootDir: &f.repo, Status: "running", Members: []int{8123, 8124},
@@ -83,7 +83,7 @@ func TestGroupsStatusFromServices(t *testing.T) {
 	webHash := "e3hr8249vm80p51bph2fn45bl5ll5u7j72ti7e3gk8dsnludrlb0"
 	workerHash := "qebi5bgj4l1b94b9nnd6330hrsntb3kvplijkhqle2ctmpeqvf70"
 
-	tests := []struct {
+	cases := []struct {
 		name             string
 		listening        []state.Port
 		status           string
@@ -116,16 +116,16 @@ func TestGroupsStatusFromServices(t *testing.T) {
 			worker: publishedService("worker", nil, nil, nil, workerHash, true, intPtr(9000)),
 		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			index := NewIndex()
-			index.Observe(f.repo)
-			requireOneGroup(t, Groups(Resolve(tt.listening, NoRuns{}, index), index), state.Group{
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			idx := NewIndex()
+			idx.Observe(f.repo)
+			requireOneGroup(t, Groups(Resolve(tc.listening, NoRuns{}, idx), idx), state.Group{
 				Name: "option-berth", Repo: "option-berth",
 				Identity: WorktreeToken(f.repo), Source: state.SourceFile,
-				RootDir: &f.repo, ConfigPath: &config, Status: tt.status,
-				Members: tt.members, Services: []state.Service{tt.api, tt.web, tt.worker},
-				Machine: []state.MachineRef{}, RunningServices: tt.running,
+				RootDir: &f.repo, ConfigPath: &config, Status: tc.status,
+				Members: tc.members, Services: []state.Service{tc.api, tc.web, tc.worker},
+				Machine: []state.MachineRef{}, RunningServices: tc.running,
 			})
 		})
 	}
@@ -230,23 +230,23 @@ func requireOneGroup(t *testing.T, got []state.Group, want state.Group) {
 
 func compileDefinition(t *testing.T, name string) *jsonschema.Schema {
 	t.Helper()
-	path := filepath.Join("..", "..", "docs", "schema", "protocol.schema.json")
-	f, err := os.Open(path)
-	if err != nil {
-		t.Fatalf("%v (run `go generate ./...`)", err)
+	schemaPath := filepath.Join("..", "..", "docs", "schema", "protocol.schema.json")
+	file, openErr := os.Open(schemaPath)
+	if openErr != nil {
+		t.Fatalf("%v (run `go generate ./...`)", openErr)
 	}
-	defer f.Close()
-	doc, err := jsonschema.UnmarshalJSON(f)
-	if err != nil {
-		t.Fatal(err)
+	defer file.Close()
+	document, parseErr := jsonschema.UnmarshalJSON(file)
+	if parseErr != nil {
+		t.Fatalf("protocol.schema.json: %v", parseErr)
 	}
-	c := jsonschema.NewCompiler()
-	if err := c.AddResource("protocol.schema.json", doc); err != nil {
-		t.Fatal(err)
+	compiler := jsonschema.NewCompiler()
+	if addErr := compiler.AddResource("protocol.schema.json", document); addErr != nil {
+		t.Fatalf("add protocol.schema.json: %v", addErr)
 	}
-	sch, err := c.Compile("protocol.schema.json#/definitions/" + name)
-	if err != nil {
-		t.Fatal(err)
+	sch, compileErr := compiler.Compile("protocol.schema.json#/definitions/" + name)
+	if compileErr != nil {
+		t.Fatalf("compile %s: %v", name, compileErr)
 	}
 	return sch
 }
