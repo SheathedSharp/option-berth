@@ -236,13 +236,13 @@ func appliedVersions(db *sql.DB) (map[int]bool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading schema_version: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 	return scanVersions(rows)
 }
 
-// scanVersions turns the ledger rows into a set. The caller owns the rows and
-// closes them; this function only decodes.
+// scanVersions turns the ledger rows into a set and closes them; the caller
+// hands over ownership and only reads the decoded result.
 func scanVersions(rows *sql.Rows) (map[int]bool, error) {
+	defer func() { _ = rows.Close() }()
 	applied := map[int]bool{}
 	for rows.Next() {
 		var version int

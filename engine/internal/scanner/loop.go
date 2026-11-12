@@ -87,14 +87,15 @@ const (
 	MinStatsInterval = 250 * time.Millisecond
 )
 
-// Include is the per-subscriber opt-in from `state.subscribe {include}`.
+// Include is the per-subscriber opt-in that a `state.subscribe {include}`
+// request carries.
 type Include struct {
 	Stats  bool
 	Health bool
 }
 
-// Demand reports what the daemon's subscribers currently want. Returning zero
-// subscribers parks the loop until Wake is called.
+// Demand reports what the daemon's subscribers currently want. Zero
+// subscribers park the loop until Wake is called.
 type Demand func() (subscribers int, include Include)
 
 // Publisher receives every published change. prev is the snapshot the delta is
@@ -114,13 +115,13 @@ type Options struct {
 	Store Store
 
 	// Runs returns the run registry group attribution consults. It is a
-	// function because `oberth start` installs the registry after the loop is
-	// built; nil, or a nil return, means groups.PortRuns{}.
+	// function because `oberth start` installs the registry only after the loop
+	// exists; nil, or a nil return, means groups.PortRuns{}.
 	Runs func() groups.Registry
 
-	// Sessions builds the snapshot's `sessions` collection from the ports the
+	// Sessions builds the snapshot's `sessions` collection out of the ports the
 	// tick just resolved. It is a function for the same reason Runs is: the
-	// daemon installs it from an OnStart hook, after the loop exists. Nil
+	// daemon installs it from an OnStart hook, once the loop exists. Nil
 	// publishes an empty collection.
 	Sessions func(ports []state.Port) []state.SessionRecord
 
@@ -166,15 +167,16 @@ type Options struct {
 	ScanInterval time.Duration
 
 	// StatsInterval overrides the stats-only tick's cadence
-	// (`daemon.stats_interval`): zero means StatsInterval; anything below
-	// MinStatsInterval is clamped to it.
+	// (`daemon.stats_interval`): zero means StatsInterval, and anything under
+	// MinStatsInterval is clamped up to it.
 	StatsInterval time.Duration
 
-	// Now overrides the clock, for tests.
+	// Now overrides the clock for tests.
 	Now func() time.Time
 }
 
-// Loop is the scan goroutine plus the cached snapshot RPC reads serve from.
+// Loop is the scan goroutine plus the cached snapshot that RPC reads are
+// served from.
 type Loop struct {
 	opts Options
 	now  func() time.Time
@@ -288,12 +290,12 @@ func New(opts Options) *Loop {
 		opts:      opts,
 		now:       opts.Now,
 		base:      base,
+		interval:  base,
 		wake:      make(chan struct{}, 1),
 		statsWake: make(chan struct{}, 1),
 		runGate:   make(chan struct{}, 1),
-		rpcGate:   make(chan struct{}, 1),
 		orderGate: make(chan struct{}, 1),
-		interval:  base,
+		rpcGate:   make(chan struct{}, 1),
 	}
 	l.attachDockerWatcher(base)
 	return l
@@ -438,19 +440,21 @@ func (l *Loop) ProbeContext(ctx context.Context, host string, port int, path str
 	return result
 }
 
-// SetDemand installs the demand callback after construction. The daemon uses it
-// because the server and the loop refer to each other.
+// SetDemand installs the demand callback after construction. The daemon needs
+// the setter because the server and the loop refer to each other.
 func (l *Loop) SetDemand(d Demand) {
-	if d != nil {
-		l.opts.Demand = d
+	if d == nil {
+		return
 	}
+	l.opts.Demand = d
 }
 
-// SetPublisher installs the publish callback after construction.
+// SetPublisher installs the publish callback after the loop is built.
 func (l *Loop) SetPublisher(p Publisher) {
-	if p != nil {
-		l.opts.Publish = p
+	if p == nil {
+		return
 	}
+	l.opts.Publish = p
 }
 
 // Cached returns the last published snapshot without scanning.
@@ -466,12 +470,15 @@ func (l *Loop) Cached() state.Snapshot {
 // Wake nudges a stopped or backed-off loop to scan now. Called when a
 // subscriber connects or an RPC reads state.
 func (l *Loop) Wake() {
+	nudge(l.wake)
+	nudge(l.statsWake)
+}
+
+// nudge signals ch without blocking. A signal the buffer already holds is left
+// alone, so a burst of callers costs one wake-up rather than a queue of them.
+func nudge(ch chan struct{}) {
 	select {
-	case l.wake <- struct{}{}:
-	default:
-	}
-	select {
-	case l.statsWake <- struct{}{}:
+	case ch <- struct{}{}:
 	default:
 	}
 }
@@ -553,7 +560,8 @@ func (l *Loop) waitTick(ctx context.Context, timer *time.Timer, include Include)
 	case <-timer.C:
 		return false
 	case <-l.wake:
-		// A read or a new subscriber: back to the base interval.
+		// Somebody is reading or has just subscribed: drop back to the base
+		// interval rather than serve them a backed-off cadence.
 		l.mu.Lock()
 		l.interval = l.base
 		l.mu.Unlock()
@@ -566,14 +574,14 @@ func (l *Loop) waitTick(ctx context.Context, timer *time.Timer, include Include)
 // immediately and spin; draining first is what makes Reset safe. Stop reports
 // whether it stopped the timer, and only then is there certainly nothing to
 // drain.
-func armTimer(timer *time.Timer, wait time.Duration) {
+func armTimer(timer *time.Timer, delay time.Duration) {
 	if !timer.Stop() {
 		select {
 		case <-timer.C:
 		default:
 		}
 	}
-	timer.Reset(wait)
+	timer.Reset(delay)
 }
 
 // waitForDemand answers what this tick should collect, and whether it should
@@ -920,15 +928,14 @@ func (l *Loop) superseded(seq uint64) bool {
 	return l.haveSnap && seq < l.committedSeq
 }
 
-// commitScan swaps a finished scan into the cache and adapts the interval.
-// Caller holds the ordering gate and commitMu; this takes l.mu for the swap
-// itself.
+// commitScan swaps a finished scan into the cache and adapts the interval. The
+// caller holds the ordering gate and commitMu; the swap itself takes l.mu.
 func (l *Loop) commitScan(c commit) (next, prev state.Snapshot, changed bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	l.subs = c.subs
 	prev = l.snap
+	l.subs = c.subs
 	rows, groupRows := c.rows, c.groups
 
 	l.scans++
@@ -1001,8 +1008,8 @@ func (l *Loop) storeCommitted(prev state.Snapshot, rows []state.Port, groupRows 
 	}
 	l.seq++
 	next.Seq = l.seq
-	l.snap = next
 	l.haveSnap = true
+	l.snap = next
 	l.interval = l.base
 	return next, prev, true
 }
@@ -1042,14 +1049,15 @@ func (l *Loop) healthDue() bool {
 // than that, and 5x when the daemon only answers RPC reads. At the default 2 s
 // base those are the 5 s and 10 s of the contract. Caller holds the mutex.
 func (l *Loop) maxIntervalLocked() time.Duration {
-	factor := float64(IdleMaxFactor)
+	scale := float64(IdleMaxFactor)
 	if l.subs > 0 {
-		factor = SubscribedMaxFactor
+		scale = SubscribedMaxFactor
 	}
-	return time.Duration(float64(l.base) * factor)
+	return time.Duration(float64(l.base) * scale)
 }
 
-// backoff multiplies the interval by 1.5, floored at base and capped at max.
+// backoff multiplies the interval by 1.5, with base as its floor and max as its
+// ceiling.
 func backoff(d, base, max time.Duration) time.Duration {
 	next := time.Duration(float64(d) * BackoffFactor)
 	switch {
@@ -1215,18 +1223,18 @@ func portTransitionEvents(prev, next state.Snapshot, at string, d state.Delta) [
 	groups = append(groups, next.Groups...)
 	removed := keySet(d.Ports.Removed)
 	events := make([]state.Event, 0, len(d.Ports.Added)+len(d.Ports.Removed))
-	restarted := make(map[string]bool, len(d.Ports.Added))
+	restartedKeys := make(map[string]bool, len(d.Ports.Added))
 	for i := range d.Ports.Added {
 		p := d.Ports.Added[i]
 		kind := "port_up"
 		if removed[p.Key()] {
-			kind, restarted[p.Key()] = "port_restarted", true
+			kind, restartedKeys[p.Key()] = "port_restarted", true
 		}
 		events = append(events, eventForPort(next.Seq, kind, at, p, groups))
 	}
 	before := indexPorts(prev.Ports)
 	for _, key := range d.Ports.Removed {
-		if restarted[key] {
+		if restartedKeys[key] {
 			continue
 		}
 		events = append(events, eventForPort(next.Seq, "port_down", at, before[key], groups))
@@ -1501,13 +1509,13 @@ func (l *Loop) Republish() error {
 // RPC cache TTL and `daemon status` read exactly what they would have if the
 // write had never happened. Caller holds the ordering gate and commitMu.
 func (l *Loop) commitRepublish(
-	subs int, carry Include,
+	subscribers int, carry Include,
 	rows []state.Port, groupRows []state.Group, sessionRows []state.SessionRecord,
 ) (next, prev state.Snapshot, changed bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	l.subs = subs
+	l.subs = subscribers
 	prev = l.snap
 
 	carryHealth(prev.Ports, rows, true)
@@ -1667,30 +1675,37 @@ func (l *Loop) beginScan() (generation, refresh uint64) {
 	return l.scanSeq, l.refreshRequested
 }
 
-// scanGeneration is the number of the last scan to have begun.
+// scanGeneration is the number of the scan that began most recently.
 func (l *Loop) scanGeneration() uint64 {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.scanSeq
 }
 
-// scannedSince reports the cached snapshot when a scan that began strictly
-// after generation gen has already committed one carrying what the caller
-// asked for.
+// scannedSince serves the cached snapshot when a scan that began strictly after
+// generation gen has already committed one, and that snapshot carries whatever
+// the caller asked for.
 //
-// Strictly after, and counted rather than timed: a scan numbered gen is the one
-// that was already running (or had just finished) when the caller asked, and
-// serving its result would be serving state from before the call. That
-// distinction is invisible to `time.Now` on a platform whose clock moves in
-// milliseconds, which is how a kill's rescan came to be skipped on Windows and
-// nowhere else.
+// Strictly after, and counted rather than timed: the scan numbered gen is the
+// one that was already running (or had just finished) when the caller asked, so
+// serving its result would be serving state from before the call. A clock
+// cannot draw that line — `time.Now` moves in milliseconds on some platforms,
+// which is how a kill's rescan came to be skipped on Windows and nowhere else.
 //
-// Health never coalesces either way: the probes run on their own cadence, so
-// "a scan happened" says nothing about whether it probed.
+// Health never coalesces either way: the probes keep their own cadence, so "a
+// scan happened" says nothing about whether it probed.
 func (l *Loop) scannedSince(gen uint64, include Include) (state.Snapshot, bool) {
 	if include.Health {
 		return state.Snapshot{}, false
 	}
+	return l.cachedCommittedAfter(gen, include)
+}
+
+// cachedCommittedAfter is the rest of scannedSince. It takes l.mu itself and
+// reports the cached snapshot only when the scan behind it began strictly after
+// gen, finished clean, nothing has invalidated it since, and include is
+// covered.
+func (l *Loop) cachedCommittedAfter(gen uint64, include Include) (state.Snapshot, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if !l.haveSnap || l.lastErr != nil || l.committedSeq <= gen || l.refreshObserved != l.refreshRequested {
@@ -1702,8 +1717,8 @@ func (l *Loop) scannedSince(gen uint64, include Include) (state.Snapshot, bool) 
 	return l.snap, true
 }
 
-// cached returns the cached snapshot when it is younger than CacheTTL and
-// already carries everything the caller asked for.
+// cached is the read path's view of the cache: the snapshot, but only while it
+// is younger than CacheTTL and covers what the caller asked for.
 func (l *Loop) cached(include Include) (state.Snapshot, bool) {
 	return l.cachedWithin(include, CacheTTL)
 }
@@ -1719,20 +1734,19 @@ func (l *Loop) cachedWithin(include Include, maxAge time.Duration) (state.Snapsh
 
 // demandInclude is what the subscribers want a published snapshot to keep.
 //
-// A scan started by a read is published like any other, so it must not drop
-// what a tick would have carried: without this an `oberth list` in the middle
-// of a subscribed session would publish a snapshot with the stats stripped out,
-// and every subscriber that opted into them would see them blink away and back.
-// It used to be collected again, which put `docker stats` and a round of health
-// probes on the critical path of every kill and every write; it is copied
-// forward now instead.
+// A read-driven scan is published like any other, so it must not drop what a
+// tick would have carried: without this an `oberth list` in the middle of a
+// subscribed session would publish a snapshot with the stats stripped out, and
+// every subscriber that opted into them would watch them blink away and back.
+// Carrying them forward is also what keeps `docker stats` and a round of health
+// probes off the critical path of every kill and every write.
 func (l *Loop) demandInclude() Include {
 	_, want := l.opts.Demand()
 	return want
 }
 
-// snapHasStats reports whether the cached snapshot carries stats. Caller holds
-// the mutex.
+// snapHasStats reports whether the cached snapshot carries stats at all. It
+// reads l.snap, so the caller has to hold the mutex.
 func (l *Loop) snapHasStats() bool {
 	for _, row := range l.snap.Ports {
 		if row.Stats != nil {
@@ -1768,14 +1782,14 @@ type Status struct {
 	LastError error
 }
 
-// Status returns the scanner's current counters.
+// Status reports the scanner's current counters.
 func (l *Loop) Status() Status {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return Status{
-		LastScanAt:      l.lastScanAt,
 		Scans:           l.scans,
 		Seq:             l.seq,
+		LastScanAt:      l.lastScanAt,
 		IntervalMs:      milliseconds(l.interval),
 		BaseIntervalMs:  milliseconds(l.base),
 		StatsIntervalMs: milliseconds(l.statsInterval()),

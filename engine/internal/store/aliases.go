@@ -40,16 +40,20 @@ func (s *Store) SetGroupAlias(root, name string) error {
 	return s.exec(upsertGroupAlias, clean, name, nowString())
 }
 
+// clearGroupAlias drops the single row keyed by a main checkout root. Deleting
+// an absent row is not an error.
+const clearGroupAlias = `DELETE FROM group_aliases WHERE root = ?`
+
 // ClearGroupAlias removes the alias for root; a missing row is not an error.
 func (s *Store) ClearGroupAlias(root string) error {
 	clean, err := cleanRoot(root)
 	if err != nil {
 		return err
 	}
-	return s.exec(`DELETE FROM group_aliases WHERE root = ?`, clean)
+	return s.exec(clearGroupAlias, clean)
 }
 
-// GroupAliases returns every alias as main checkout root → project name.
+// GroupAliases maps every main checkout root to the project name set for it.
 func (s *Store) GroupAliases() (map[string]string, error) {
 	aliases, err := s.allKeyed(`SELECT root, name FROM group_aliases`)
 	if err != nil {
