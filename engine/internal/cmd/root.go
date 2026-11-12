@@ -237,7 +237,7 @@ var rootCmd = &cobra.Command{
 		}
 		printWelcome(cmd.OutOrStdout(), welcomeVersion())
 		// The first screen is the only place the product asks. It is also the
-		// only place that reaches every install channel — the scripts, brew and
+		// only place that reaches every install channel — the scripts and
 		// deb/rpm all end up running this binary.
 		askFeedbackOnce()
 		return nil
