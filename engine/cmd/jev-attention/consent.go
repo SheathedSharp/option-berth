@@ -2,30 +2,27 @@ package main
 
 // The adapter's single consent resolution. Every question the old default*
 // helpers answered separately — enabled, provider, endpoint, model, key,
-// timeout, reason — is answered once, by jev.Resolve, from the settings file the
-// client writes, the environment, and the legacy key. Flags override the fields
-// they name and nothing else.
+// timeout, reason — is answered once, by model.Resolve, from the settings file
+// the setup command writes and the environment. Flags override the fields they
+// name and nothing else.
 
 import (
 	"flag"
 	"strings"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/jev"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn/model"
 )
 
-// resolveConsent loads the settings and the legacy key, then applies the flags
-// that were actually given. explicitKey is the parsed --api-key value, and
-// keyProvided distinguishes an explicit empty value (which turns the key off
-// for a harness) from an unset flag.
-func resolveConsent(explicitKey string, keyProvided bool) jev.Resolved {
-	input := jev.ResolveInputFromEnvironment()
-	input.Settings, input.SettingsPresent, input.SettingsErr = jev.LoadLocalJevConfig()
-	legacy, legacyErr := jev.ReadLegacyJevKey()
-	input.LegacyKey, input.LegacyErr = legacy, legacyErr
-	input.LegacyFound = strings.TrimSpace(legacy) != ""
+// resolveConsent loads the settings, then applies the flags that were actually
+// given. explicitKey is the parsed --api-key value, and keyProvided
+// distinguishes an explicit empty value (which turns the key off for a
+// harness) from an unset flag.
+func resolveConsent(explicitKey string, keyProvided bool) model.Resolved {
+	input := model.ResolveInputFromEnvironment()
+	input.Settings, input.SettingsPresent, input.SettingsErr = model.LoadLocalConfig()
 
-	resolved := jev.Resolve(input)
+	resolved := model.Resolve(input)
 	// --endpoint, --model and --timeout name a field to override. They do not
 	// grant consent: a flag on a disabled configuration still ends in the fixed
 	// "disabled" reason.
@@ -45,9 +42,9 @@ func resolveConsent(explicitKey string, keyProvided bool) jev.Resolved {
 		// harness path and stays unchanged.
 		resolved.Key = strings.TrimSpace(explicitKey)
 		if resolved.Key != "" {
-			resolved.KeySource = jev.SourceFlag
+			resolved.KeySource = model.SourceFlag
 		} else {
-			resolved.KeySource = jev.SourceNone
+			resolved.KeySource = model.SourceNone
 		}
 	}
 	return resolved
