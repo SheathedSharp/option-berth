@@ -1,26 +1,15 @@
 name: Windows build verification
 on:
-  # The PR gate must run the native Windows path, not only the PowerShell
-  # parse job in the engine workflow. No path filter on pull_request: a
-  # skipped required workflow leaves its check pending and blocks the PR.
+  # Called by ci.yml for pull requests and by release.yml for a release tag.
+  # The native Windows path must run, not only the PowerShell parse job in the
+  # engine workflow.
   workflow_call:
-  pull_request:
-  push:
-    branches: [main]
-    paths:
-      - 'engine/**'
-      - 'install.ps1'
-      - 'uninstall.ps1'
-      - '.github/workflows/windows.yml'
   workflow_dispatch:
 permissions:
   contents: read
-concurrency:
-  group: windows-${{ github.ref }}
-  cancel-in-progress: true
 jobs:
   native:
-    name: Windows x64 native build and smoke
+    name: x64 native build and smoke
     runs-on: windows-2025
     timeout-minutes: 15
     env:
@@ -73,7 +62,7 @@ jobs:
           go test -count=1 -timeout=5m ./internal/claims ./internal/store ./internal/state ./internal/servicefacts ./internal/git
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   arm64:
-    name: Windows arm64 cross-build
+    name: arm64 cross-build
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:

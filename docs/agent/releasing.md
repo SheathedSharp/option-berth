@@ -183,8 +183,8 @@ scenario, or native execution on Windows arm64.
 ## Preflight before tagging
 
 The automated release CI runs `Verified release` (verify, package, publish) only when a **`v*` annotated
-tag** matching `VERSION` is pushed; the automatic gates on PRs and `main` pushes cover build, vet, unit
-tests and helper-script tests, as described in [validation.md](validation.md). The daily
+tag** matching `VERSION` is pushed; the automatic gates on pull requests cover build, vet, unit tests
+and helper-script tests, as described in [validation.md](validation.md). The daily
 `Nightly full verification` runs the release-equivalent full gate set on the default branch; confirm it
 passes before tagging so problems that only surface there are not left for after the release. To rerun
 locally, use `python3 scripts/release.py --verify-only`; it reads only the currently checked-out commit.

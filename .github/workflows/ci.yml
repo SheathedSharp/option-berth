@@ -1,0 +1,103 @@
+name: CI
+
+# One entry point for every automatic check. The path routing lives in
+# scripts/changed_areas.py; a job that is skipped reports no check of its own,
+# so `gate` is the required check and it fails only when a job that had to run
+# did not pass. `main` accepts pull requests only, so the merge commit carries
+# the tree that just passed here and nothing runs a second time after merge.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      engine: ${{ steps.areas.outputs.engine }}
+      windows: ${{ steps.areas.outputs.windows }}
+      git: ${{ steps.areas.outputs.git }}
+      examples: ${{ steps.areas.outputs.examples }}
+      readiness: ${{ steps.areas.outputs.readiness }}
+      ci: ${{ steps.areas.outputs.ci }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Map the change to the checks it needs
+        id: areas
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            python3 scripts/changed_areas.py --all
+          else
+            git fetch --no-tags --quiet origin "$BASE"
+            python3 scripts/changed_areas.py --base "$BASE" --head "$HEAD"
+          fi
+
+  engine:
+    name: Engine
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
+    uses: ./.github/workflows/engine.yml
+
+  windows:
+    name: Windows
+    needs: changes
+    if: needs.changes.outputs.windows == 'true'
+    uses: ./.github/workflows/windows.yml
+
+  git-read:
+    name: Git read
+    needs: changes
+    if: needs.changes.outputs.git == 'true'
+    uses: ./.github/workflows/git-read.yml
+
+  examples:
+    name: Examples
+    needs: changes
+    if: needs.changes.outputs.examples == 'true'
+    uses: ./.github/workflows/examples.yml
+
+  readiness:
+    name: Reused readiness
+    needs: changes
+    if: needs.changes.outputs.readiness == 'true'
+    uses: ./.github/workflows/readiness.yml
+
+  ci-config:
+    name: CI configuration
+    needs: changes
+    if: needs.changes.outputs.ci == 'true'
+    uses: ./.github/workflows/ci-config.yml
+
+  gate:
+    name: Gate / required checks
+    needs: [changes, engine, windows, git-read, examples, readiness, ci-config]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Record every area result
+        shell: bash
+        run: echo '${{ toJSON(needs) }}' | python3 -m json.tool
+      - name: Fail when an area that had to run did not pass
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        shell: bash
+        run: |
+          echo "::error::a check that had to run did not pass; see the job results above"
+          exit 1
