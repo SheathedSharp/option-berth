@@ -120,7 +120,7 @@ func recordAttnTip(path string, now time.Time) {
 // turn it on. One line, because it sits under a status table a reader is
 // scanning.
 func attnTipLine() string {
-	return display.Dim("Attention: an optional model can assess this anomaly; `oberth attn enable` turns it on")
+	return display.Dim("Attention: an optional model can assess this anomaly; `oberth attn config` and `oberth attn on` turn it on")
 }
 
 // isTerminalStdout follows the same character-device test the rest of the CLI
@@ -133,7 +133,7 @@ func isTerminalStdout() bool {
 	return info.Mode()&os.ModeCharDevice != 0
 }
 
-// attnEnabled reports the committed consent only: a one-shot BERTH_JEV in the
+// attnEnabled reports the committed consent only: a one-shot BERTH_ATTN in the
 // current shell is a decision for that process, not a reason to stop telling
 // the next person the feature exists.
 func attnEnabled() bool {

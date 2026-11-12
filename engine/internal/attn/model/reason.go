@@ -86,13 +86,13 @@ func ReasonFor(err error) string {
 func ReasonHint(code string) string {
 	switch code {
 	case ReasonNoKey:
-		return "run `oberth attn enable` to store a key and turn the assessment on"
+		return "run `oberth attn config` to store a key, then `oberth attn on`"
 	case ReasonDisabled:
-		return "the assessment is off; run `oberth attn enable`, or set BERTH_JEV=1 to allow it for this one process"
+		return "the assessment is off; run `oberth attn on`, or set BERTH_ATTN=1 to allow it for this one process"
 	case ReasonInvalidConfig:
-		return "attn.json is not usable; run `oberth attn status` and then `oberth attn enable` to rewrite it"
+		return "attn.json is not usable; run `oberth attn status` and then `oberth attn config` to rewrite it"
 	case ReasonUnauthorized:
-		return "the provider rejected the key; run `oberth attn enable` to store a current one"
+		return "the provider rejected the key; run `oberth attn config` to store a current one"
 	case ReasonRateLimited:
 		return "the provider is rate limiting this key; retry later or switch provider"
 	case ReasonTimeout:

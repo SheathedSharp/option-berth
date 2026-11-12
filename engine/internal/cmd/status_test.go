@@ -13,10 +13,10 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// enableJev writes the settings file that grants consent. Publishing the
+// enableAttention writes the settings file that grants consent. Publishing the
 // attention artifact is gated on it, so every case that expects a path has to
 // state the person enabled the enhancement first.
-func enableJev(t *testing.T) {
+func enableAttention(t *testing.T) {
 	t.Helper()
 	path := paths.AttnConfigPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -31,7 +31,7 @@ func enableJev(t *testing.T) {
 func TestPublishAttentionWritesFactArtifact(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("BERTH_HOME", home)
-	enableJev(t)
+	enableAttention(t)
 	code := 1
 	root := t.TempDir()
 	doc := statusDocument{
@@ -65,7 +65,7 @@ func TestPublishAttentionWritesFactArtifact(t *testing.T) {
 func TestPublishAttentionPreservesAssessmentOnStableRefresh(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("BERTH_HOME", home)
-	enableJev(t)
+	enableAttention(t)
 	root := t.TempDir()
 	doc := statusDocument{
 		Scope: display.Scope{Root: root},
@@ -96,7 +96,7 @@ func TestPublishAttentionPreservesAssessmentOnStableRefresh(t *testing.T) {
 func TestPublishAttentionCarriesScopedPortsAndHistory(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("BERTH_HOME", home)
-	enableJev(t)
+	enableAttention(t)
 	root := t.TempDir()
 	declared, actual := 3000, 3001
 	projectRoot := root
@@ -129,7 +129,7 @@ func TestPublishAttentionCarriesScopedPortsAndHistory(t *testing.T) {
 func TestPublishAttentionClearsAfterRecovery(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("BERTH_HOME", home)
-	enableJev(t)
+	enableAttention(t)
 	root := t.TempDir()
 	failed := statusDocument{
 		Scope: display.Scope{Root: root},
@@ -335,11 +335,9 @@ func TestPrintStatusServicesUsesOneRowPerService(t *testing.T) {
 	}
 }
 
-// An `attn_path` is a signal in itself: its presence means the person
-// enabled the enhancement. Without the gate every agent had to reconstruct
-// that from the settings file before it could decide whether to run `oberth jev
-// assess`, and a disabled install still left an artifact telling it to.
-func TestPublishAttentionIsSilentUntilEnabled(t *testing.T) {
+// The artifact is a local fact, not a consent decision: an agent can use the
+// fact-only handoff and offer the enhancement before any model is configured.
+func TestPublishAttentionDoesNotDependOnConsent(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("BERTH_HOME", home)
 	root := t.TempDir()
@@ -349,23 +347,28 @@ func TestPublishAttentionIsSilentUntilEnabled(t *testing.T) {
 			Name: "api", LastExit: &state.ServiceExit{Code: 1, Reason: "start_failed"},
 		}}},
 	}
-	if path := publishAttention(&doc); path != "" {
-		t.Fatalf("published %q while model is disabled", path)
+	if path := publishAttention(&doc); path == "" {
+		t.Fatal("no artifact was published without consent")
 	}
-	if doc.AttnPath != "" || doc.AttnRevision != "" {
-		t.Fatalf("doc carries an artifact: %q / %q", doc.AttnPath, doc.AttnRevision)
+	if doc.AttnPath == "" || doc.AttnRevision == "" || doc.Attn == nil {
+		t.Fatalf("doc is missing the handoff: %+v", doc)
+	}
+	if doc.Attn.Enabled || doc.Attn.Assessment != "unavailable" || doc.Attn.Reason == "" {
+		t.Fatalf("attn state without consent = %+v", doc.Attn)
 	}
 
-	// Enabling it makes the same facts publish; the gate is the only difference.
-	enableJev(t)
+	// Storing consent changes the state, not whether the facts are published.
+	enableAttention(t)
 	if path := publishAttention(&doc); path == "" {
 		t.Fatal("enabled model published no artifact")
 	}
+	if doc.Attn == nil || !doc.Attn.Enabled || doc.Attn.Assessment != "pending" || doc.Attn.Reason != "" {
+		t.Fatalf("attn state with consent = %+v", doc.Attn)
+	}
 }
 
-// Turning the enhancement off must also clear what is already on disk, or a
-// stale artifact keeps telling agents to assess after the person said no.
-func TestPublishAttentionClearsWhenDisabled(t *testing.T) {
+// Turning the assessment off must not take the fact-only handoff away.
+func TestPublishAttentionSurvivesTurningItOff(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("BERTH_HOME", home)
 	root := t.TempDir()
@@ -375,7 +378,7 @@ func TestPublishAttentionClearsWhenDisabled(t *testing.T) {
 			Name: "api", LastExit: &state.ServiceExit{Code: 1, Reason: "start_failed"},
 		}}},
 	}
-	enableJev(t)
+	enableAttention(t)
 	path := publishAttention(&doc)
 	if path == "" {
 		t.Fatal("enabled model published no artifact")
@@ -383,11 +386,14 @@ func TestPublishAttentionClearsWhenDisabled(t *testing.T) {
 	if err := os.Remove(paths.AttnConfigPath()); err != nil {
 		t.Fatal(err)
 	}
-	if got := publishAttention(&doc); got != "" {
-		t.Fatalf("still published %q after the settings file was removed", got)
+	if got := publishAttention(&doc); got != path {
+		t.Fatalf("path after disabling = %q, want %q", got, path)
 	}
-	if _, err := attn.Read(path); err == nil {
-		t.Fatal("the artifact outlived the consent it was published under")
+	if _, err := attn.Read(path); err != nil {
+		t.Fatalf("the fact-only artifact disappeared with consent: %v", err)
+	}
+	if doc.Attn == nil || doc.Attn.Enabled {
+		t.Fatalf("attn state after disabling = %+v", doc.Attn)
 	}
 }
 
