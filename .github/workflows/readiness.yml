@@ -1,19 +1,14 @@
 name: Reused service readiness
 on:
-  # The pull request is the only automatic trigger: `main` accepts pull
-  # requests only, so a push cannot skip this check.
-  # No path filter on pull_request: a skipped required workflow leaves its
-  # check pending and blocks the PR.
-  pull_request:
+  # Called by ci.yml, which owns the pull request trigger and the path
+  # routing. A manual dispatch still runs this check on its own.
+  workflow_call:
   workflow_dispatch:
 permissions:
   contents: read
-concurrency:
-  group: readiness-${{ github.ref }}
-  cancel-in-progress: true
 jobs:
   native:
-    name: Reused readiness / ${{ matrix.os }}
+    name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
