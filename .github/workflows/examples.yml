@@ -8,7 +8,7 @@ on:
     paths:
       - 'examples/**'
       - 'engine/**'
-      - 'scripts/verify-example.py'
+      - 'scripts/smoke.py'
       - '.github/workflows/examples.yml'
   workflow_dispatch:
 permissions:
@@ -33,11 +33,13 @@ jobs:
         with:
           go-version-file: engine/go.mod
           cache-dependency-path: engine/go.sum
-      - name: Verify the checked-in examples in two worktrees
+      # The minimal sample only: no Docker, no benchmark. The complex sample
+      # runs in the manual benchmark, which is the only consumer that needs it.
+      - name: Run the per-PR smoke check
         shell: bash
         run: |
           set -euo pipefail
           output=$(mktemp -d)
           trap 'rm -rf "$output"' EXIT
           (cd engine && go build -o "$output/oberth" ./cmd/oberth)
-          python3 scripts/verify-example.py --binary "$output/oberth"
+          python3 scripts/smoke.py --binary "$output/oberth"

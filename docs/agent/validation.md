@@ -19,7 +19,7 @@ workflow in Actions; to re-run locally before a release, use `python3 scripts/re
 | Engine verification | PRs, engine-related pushes to `main`, manual | Automated: macOS / Ubuntu native build, vet, full engine unit tests, Mage workflow regression, Python helper tests, cross builds for the six release targets on Ubuntu, a checkout of `option-berth-skill` on Linux to verify agent contract coverage, and parsing of the install/uninstall scripts with Windows PowerShell 5.1. Manual runs additionally execute core race and real-service scenarios. |
 | Nightly full verification | Daily 18:23 UTC, manual | macOS / Ubuntu: the same full gate as `scripts/release.py --verify-only`, including core race and real-service scenarios. |
 | Git read verification | PRs, related pushes to `main`, manual | macOS / Ubuntu: repeated tests and race for Git, worktree, attribution, and observation. |
-| Checked-in examples | PRs, engine-related pushes to `main`, manual | macOS / Ubuntu: verify the checked-in examples across two worktrees, including the separate database, the idempotent migration, and stopping one side. Compose examples are verified only on Linux rows with Docker (separate project per worktree, `port: auto` mapping, `pg_isready`, and `down` on one side to stop the containers); macOS runners have no Docker, so the report shows a skip, which does not count as platform evidence. |
+| Checked-in examples | PRs, engine-related pushes to `main`, manual | macOS / Ubuntu: the minimal sample `hello-worktree` across two worktrees (distinct ports, a portless worker, stopping one side). No Docker, no benchmark. The complex sample `stack-workshop` is not part of this check; it is the input of the manual benchmark, which runs on Linux with Docker. |
 | Reused service readiness | PRs, engine-related pushes to `main`, manual | macOS / Ubuntu: reuse checks against real healthy and unhealthy services. |
 | Windows build verification | PRs, engine-related pushes to `main`, release tags, manual | Windows x64: native build, vet, CLI/Jev build, version JSON/help page, facts/persistence, and start, repeated start, collector recovery, and scoped stop for an isolated API / portless worker; Ubuntu: Windows arm64 cross build. |
 | Gate integrity | PR (`pull_request_target`) | Requires the PR author to be a repository maintainer when `.github/workflows/`, CODEOWNERS, the race list, release scripts, or quality-gate check scripts are modified. |
@@ -512,12 +512,12 @@ through `scripts/agent_eval.py`; the contract and metrics are in [agent-eval.md]
 - **large**: full-stack start of the ten-service stack, starting only a sub-stack, slow dependency,
   old code still running, three worktrees in parallel; plus three accuracy-lure scenarios (the port
   belongs to an external process, a same-name service in another checkout, only the frontend
-  changed). The fixtures are shared with the public example [stack-workshop](../../examples/stack-workshop/README.md).
+  changed). The sample and its scripts are shared with [stack-workshop](../../examples/stack-workshop/README.md).
 
 Each run uses an isolated `HOME` / `BERTH_HOME` / disposable project, and passes credentials and
 provider parameters only through the named `--pass-env` and `--agent-arg`; the harness itself adds
-no approval-bypass or sandbox-disabling arguments. The `oberth` and `native` control arms use the
-same fixtures and the same verdicts, the native arm does not stage the skill, and the `oberth` shim
+no approval-bypass or sandbox-disabling arguments. The `oberth` and `native` modes use the same
+sample and the same verdicts, the native mode does not stage the skill, and the `oberth` shim
 exits with 127.
 
 The report gives completion rate, step count, `oberth` calls, process probes, output bytes, elapsed
@@ -631,10 +631,12 @@ was actually run on this machine; the CI matrix below the change is not implied.
   The baseline rerun that would produce that comparison was triggered on `main` but had not been
   approved when this was written.
 
-## Manual tier: real JVM / Node / Compose (2026-11-01)
+## Manual runs: real JVM / Node / Compose (2026-11-01)
 
-The large-stack fixtures use only the Python standard library on purpose. These three runs check
-that the engine also drives real toolchains; they are manual, not part of the standing matrix.
+The complex sample is Python plus one Postgres container. These three runs checked that the engine also
+drives real toolchains; they were manual, not part of the benchmark matrix. The Compose part has since
+become the `db` service of the [stack-workshop](../../examples/stack-workshop/README.md) sample, which
+the manual benchmark uses; it is not part of the per-PR Examples check.
 
 Environment: macOS 27.2 / 26B123, arm64; OpenJDK 21.0.12; Maven 3.9; Node 26.9.0; Docker 29.8.2
 through colima, Compose 5.5.1. Every run used a throwaway `HOME` / `BERTH_HOME` under `/tmp` and a
@@ -652,18 +654,20 @@ disposable git repository, and every daemon and container was removed at the end
   with `/health`; `dist/` is gitignored. `up --wait` reported `prepare 440ms`, `spawning 443ms`,
   `✓ web http://localhost:19670`. After editing `src/app.html`, `status` reported
   `code changed since start (1 file)`; `down` + `up --wait` rebuilt and served the new content.
-- **Compose**: the checked-in [compose-stack](../../examples/compose-stack/README.md) example
-  (`postgres:16-alpine`, `port: auto`, `pg_isready` health command). Two environment preconditions
-  had to be met before it could run, and both are properties of this machine rather than of the
-  example: the isolated `HOME` hid `~/.docker/cli-plugins`, so `docker compose` degraded to
-  `docker` + an unknown subcommand (exit 125); and the colima context needs
+- **Compose**: the standalone `compose-stack` example of this run (`postgres:16-alpine`, `port: auto`,
+  `pg_isready` health command), which has since become the `db` service of the checked-in
+  [stack-workshop](../../examples/stack-workshop/README.md) fixture. Two environment preconditions had
+  to be met before it could run, and both are properties of this machine rather than of the example:
+  the isolated `HOME` hid `~/.docker/cli-plugins`, so `docker compose` degraded to `docker` + an
+  unknown subcommand (exit 125); and the colima context needs
   `DOCKER_HOST=unix://$HOME/.colima/default/docker.sock`, without which the container client cannot
   reach the API. With both handled, the container started and `compose exec -T db pg_isready`
   answered `accepting connections`, but `oberth up --wait` still reported
   `timed out after 30s waiting for db to be ready` while `status` showed `auto port unassigned`
-  and the container was healthy. **This one is an open gap**: the compose example does not reach
-  ready on this machine, and the cause has not been isolated (the health command and the container
-  both work when driven by hand). It is recorded as a failure, not as a pass.
+  and the container was healthy. **This one is an open gap on this machine**: the standalone example
+  reached ready in the Linux Examples job, but this colima host did not, and the cause has not been
+  isolated (the health command and the container both work when driven by hand). It is recorded as a
+  failure, not as a pass.
 - **Not run**: the `native` arm on any of these three, and any real coding agent on them. They prove
   the engine drives real toolchains; they say nothing about agent behaviour.
 

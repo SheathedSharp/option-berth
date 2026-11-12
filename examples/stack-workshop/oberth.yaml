@@ -1,6 +1,7 @@
-# A ten-service stack with a slow dependency, a prepared frontend, a migrated
-# database, a portless worker and read-only machine dependencies. Every command
-# is explicit: nothing here is inferred from a running process.
+# A ten-service Python stack plus one real Postgres container, a slow
+# dependency, a prepared frontend, a migrated database, portless workers and a
+# read-only machine dependency. Every command is explicit: nothing here is
+# inferred from a running process. The stack needs Docker for the `db` service.
 name: stack-workshop
 services:
   - name: auth
@@ -20,16 +21,30 @@ services:
       SERVICE_NAME: catalog
       VERSION_FILE: variant.txt
 
+  # A real Postgres container. `docker compose up` stays in the foreground so a
+  # normal `oberth down` sends SIGTERM to Compose and Compose stops its own
+  # containers; `down --force` sends SIGKILL and would leave them running.
+  # `-p app_${worktree}` gives every checkout its own project, network and
+  # volume, and `port: auto` is handed to Compose as PORT.
+  - name: db
+    cmd: docker compose -f docker-compose.yml -p app_${worktree} up
+    port: auto
+    health:
+      command: docker compose -f docker-compose.yml -p app_${worktree} exec -T db pg_isready -U app -d app_${worktree}
+    env:
+      DB_NAME: app_${worktree}
+
   - name: api
     prepare: python3 migrate.py
     prepare_inputs: [schema.sql]
     cmd: python3 -u service.py
     port: auto
     health: /health
-    depends_on: [auth, catalog]
+    depends_on: [auth, catalog, db]
     env:
       SERVICE_NAME: api
       DB_PATH: .berth/${worktree}/app.db
+      TCP_REQUIRE: ${db.url}
       VERSION_FILE: variant.txt
       REQUIRE: ${auth.url}/health,${catalog.url}/health
 
@@ -97,10 +112,9 @@ services:
       API_URL: ${api.url}
       HEARTBEAT: .berth/${worktree}/notifier.heartbeat
 
-# Read-only references. The stack reads them if they exist; `up` and `down`
-# never start or stop them.
+# Read-only reference. The stack reads it if it exists; `up` and `down` never
+# start or stop it. Postgres is no longer a machine reference: it is the `db`
+# service above, owned and started per worktree.
 machine:
-  - name: postgres
-    port: 5432
   - name: redis
     port: 6379
