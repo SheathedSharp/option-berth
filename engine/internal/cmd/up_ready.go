@@ -206,11 +206,14 @@ func anchorStart(selection startSelection, svc *state.Service, waitStart, hardDe
 // other sends whoever reads the failure after the wrong number.
 func startTimeoutMessage(selection startSelection, name string, timeout time.Duration) string {
 	if selection.capped && timeout > 0 {
-		return fmt.Sprintf("exceeded the %s --wait-timeout waiting for %s to be ready (ready budget %s)",
-			timeout, name, selection.budget)
+		return fmt.Sprintf("exceeded the %s --wait-timeout waiting for %s to be ready (ready budget %s); "+
+			"raise --wait-timeout to wait longer", timeout, name, selection.budget)
 	}
-	return fmt.Sprintf("timed out after %s waiting for %s to be ready (ready_timeout)",
-		selection.budget, name)
+	// Name the manifest field: the reason code alone reads as an internal
+	// verdict, and `--wait-timeout` can only shorten the wait, so the reader
+	// would see no way to give the service more time.
+	return fmt.Sprintf("timed out after %s waiting for %s to be ready (ready_timeout); "+
+		"raise ready_timeout: on this service to give it longer", selection.budget, name)
 }
 
 // replacementRun names the live run that took this selection's place. A row
