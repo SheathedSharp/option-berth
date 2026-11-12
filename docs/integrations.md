@@ -119,6 +119,11 @@ A few easy pitfalls:
 - **The workspace root is not the Git checkout root**: `up` finds the nearest `oberth.yaml` from the
   cwd. If the tool's workspace directory contains several levels of directories, first
   `cd "$(git rev-parse --show-toplevel)"`, and pass the same root to `down --worktree`.
+- **A new worktree has no manifest**: the declaration belongs to the directory, so a fresh
+  `git worktree add` starts empty whatever a sibling worktree declared. Inherit one with
+  `oberth init adopt <another-checkout>/oberth.yaml` (`--dry-run --diff` first) instead of drafting
+  from zero. If the project does not track the manifest, add `oberth.yaml` to `.gitignore`: it is then
+  the only record of how that directory runs, and `git clean -xdf` deletes it for good.
 - **Do not hardcode `PORT`**: for a `port: auto` service the engine allocates the port and injects it
   through the environment as `PORT`. A service's own `env:` takes precedence over the injected
   `PORT`, so `env: PORT: 3000` overrides the allocated value and makes `up --wait` wait on the wrong

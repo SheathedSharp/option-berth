@@ -62,7 +62,7 @@ func Resolve(cwd string, argv []string, groupFlag, nameFlag string) Resolution {
 //
 // The first two are named the way the resolver names them, so a run started in
 // a linked worktree lands in `<project>@<worktree>` even when that worktree
-// carries a copy of the main checkout's `oberth.yaml`.
+// carries a declaration of its own.
 func groupFor(index *groups.Index, cwd string, config *groups.Config) string {
 	if config != nil && config.Name != "" {
 		return index.GroupOf(config)

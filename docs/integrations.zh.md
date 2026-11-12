@@ -100,6 +100,10 @@ oberth down --identity wt_...                       # by identity, when the dire
 - **工作区根不等于 Git checkout 根**：`up` 从 cwd 找最近的 `oberth.yaml`。工具的工作区目录
   如果包含多层目录，先 `cd "$(git rev-parse --show-toplevel)"`，并把同一个根传给
   `down --worktree`。
+- **新 worktree 没有清单**：声明属于目录，所以刚 `git worktree add` 出来的目录是空的，不管
+  旁边的树声明了什么。用 `oberth init adopt <另一份 checkout>/oberth.yaml` 继承一份（先加
+  `--dry-run --diff` 看差异），不要从零起草。项目如果不打算跟踪清单，就把 `oberth.yaml` 加进
+  `.gitignore`：它从此是该目录运行方式的唯一记录，`git clean -xdf` 会把它永久删掉。
 - **不要写死 `PORT`**：`port: auto` 的服务由引擎分配端口并通过环境注入 `PORT`。服务自己的
   `env:` 优先级高于注入的 `PORT`，所以 `env: PORT: 3000` 会覆盖分配值，导致 `up --wait`
   等错端口。用 `${port}` 引用，或 `env: { PORT: "${port}" }`。

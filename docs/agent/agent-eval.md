@@ -111,8 +111,8 @@ the same command work in an arm with no `oberth`.
 
 Judgement is the same for all three shapes: a manifest exists and declares services, every expected service
 is declared, running and healthy, each runs on the port its repository declares, each answers `/health`
-with 200, no tracked file other than `oberth.yaml` changed, and Git history is intact. The judge never asks
-who wrote the manifest.
+with 200, no tracked file changed (the adopted manifest is untracked), and Git history is intact. The judge
+never asks who wrote the manifest.
 
 **The harness adopts, not a person.** No person is in the loop once a run starts, so the run's own harness
 adopts — under one fixed rule: only a draft that already passes `init adopt --dry-run` is written, and the
