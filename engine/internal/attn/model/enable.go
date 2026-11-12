@@ -1,6 +1,6 @@
 package model
 
-// `oberth attn enable` is the one step that turns the optional assessment on.
+// `oberth attn config` is the one step that stores the optional assessment settings.
 // It stores the key the person chose, proves the key works with a single
 // redacted probe, and only then writes the owner-only settings file.
 //
@@ -41,7 +41,7 @@ const (
 	KeyFromPrompt KeySourceKind = "prompt"
 )
 
-// EnableOptions is one `oberth attn enable` request.
+// EnableOptions is one `oberth attn config` request.
 type EnableOptions struct {
 	// Preset fills Endpoint and Model from a named pair of defaults. It is a
 	// convenience, not a provider restriction: explicit fields win, and an
