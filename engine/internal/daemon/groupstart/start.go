@@ -37,12 +37,12 @@ import (
 // start: a slow database must not mean nothing came up.
 const DependencyTimeout = 30 * time.Second
 
-// dependencyTimeout is the value actually used, so tests do not have to wait
-// out the real one to see a timeout reported.
+// dependencyTimeout is what the wait actually uses. Tests shorten it so a
+// timeout is observable without sitting out the real budget.
 var dependencyTimeout = DependencyTimeout
 
-// dependencyPoll is how often the wait re-reads the daemon's state. The
-// scanner's own cache means a poll costs nothing until it is stale.
+// dependencyPoll paces the re-reads of the daemon's state while the wait for a
+// dependency runs. A poll costs nothing until the scanner's cache goes stale.
 const dependencyPoll = 250 * time.Millisecond
 
 // startupCheckWindow catches commands that fail before they can become a
@@ -748,10 +748,10 @@ func newAddressBook(ctx context.Context, rt *daemon.Runtime, cfg *groups.Config,
 // one that is not gets its claim. Both answers are memoized, including the
 // error, so one start asks the allocator once per name.
 func (b *addressBook) port(name string) (int, error) {
-	if port, ok := b.ports[name]; ok {
+	if port, known := b.ports[name]; known {
 		return port, nil
 	}
-	if err, ok := b.errs[name]; ok {
+	if err, failed := b.errs[name]; failed {
 		return 0, err
 	}
 	port, err := b.resolve(name)

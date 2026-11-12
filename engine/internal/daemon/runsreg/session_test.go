@@ -8,83 +8,98 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-func agentSession() state.Session {
+// fixtureSession is one attributed coding-agent session, filled in on every
+// field so that one dropped on the way through the registry shows up as a
+// mismatch rather than as an equal zero value.
+func fixtureSession() state.Session {
 	return state.Session{
-		ID: "claude-code:abc", Tool: sessions.ToolClaudeCode,
-		Label: "ship 2A.4", Worktree: "feature-x", Branch: "feature/x", Detected: true,
+		ID: "claude-code:zz9", Tool: sessions.ToolClaudeCode,
+		Label: "port the runsreg tests", Worktree: "feature-y", Branch: "feature/y",
+		Detected: true,
 	}
 }
 
 // A session registered with a run comes back on the run, on the ports the run
 // owns, and in the list the daemon's sessions handlers read.
 func TestSessionRoundTrip(t *testing.T) {
-	r := testRegistry(100)
-	started := time.Date(2026, 9, 6, 9, 0, 0, 0, time.UTC)
-	r.Register(Record{
-		ID: "run1", PID: 100, Group: "web", Name: "dev", Cmd: "npm run dev",
-		Cwd: "/home/me/code/shop", StartedAt: started, Session: agentSession(),
+	reg := testRegistry(500)
+	startedAt := time.Date(2026, 4, 17, 14, 30, 0, 0, time.UTC)
+	reg.Register(Record{
+		ID: "run-500", PID: 500, Group: "storefront", Name: "vite",
+		Cmd: "npm run dev", Cwd: "/home/dev/code/storefront",
+		StartedAt: startedAt, Session: fixtureSession(),
 	})
 
-	rec, ok := r.Lookup(100)
-	if !ok || rec.Session.ID != "claude-code:abc" {
-		t.Fatalf("Lookup = %+v, %v", rec, ok)
+	rec, ok := reg.Lookup(500)
+	if !ok {
+		t.Fatal("the run was not registered")
+	}
+	if rec.Session.ID != fixtureSession().ID {
+		t.Fatalf("Lookup session = %+v, want %+v", rec.Session, fixtureSession())
 	}
 
-	got, ok := r.Session(state.Port{PID: 100})
+	byPID, ok := reg.Session(state.Port{PID: 500})
 	if !ok {
 		t.Fatal("Session did not attribute the run's own pid")
 	}
-	if got != agentSession() {
-		t.Errorf("Session = %+v, want %+v", got, agentSession())
+	if byPID != fixtureSession() {
+		t.Errorf("Session = %+v, want %+v", byPID, fixtureSession())
 	}
 
-	live := r.SessionRuns()
+	live := reg.SessionRuns()
 	if len(live) != 1 {
 		t.Fatalf("SessionRuns = %+v, want one entry", live)
 	}
 	want := sessions.Live{
-		RunID: "run1", PID: 100, Group: "web", Name: "dev", Cmd: "npm run dev",
-		Cwd: "/home/me/code/shop", StartedAt: started, Session: agentSession(),
+		RunID: "run-500", PID: 500, Group: "storefront", Name: "vite",
+		Cmd: "npm run dev", Cwd: "/home/dev/code/storefront",
+		StartedAt: startedAt, Session: fixtureSession(),
 	}
 	if live[0] != want {
-		t.Errorf("SessionRuns[0] = %+v, want %+v", live[0], want)
+		t.Errorf("SessionRuns = %+v, want the run projected with its session as %+v", live, want)
 	}
 }
 
-// A child of the run inherits its session, through the same PPID walk that
-// decides the run itself: `npm run dev` -> vite -> esbuild is one session.
+// A grandchild of the run carries the same session as the run itself: the PPID
+// walk that decides attribution is the one that answers this, so `npm run dev`
+// -> vite -> esbuild stays a single session.
 func TestSessionFollowsThePPIDWalk(t *testing.T) {
-	r := testRegistry(100)
-	r.Parents = func() map[int]int { return map[int]int{300: 200, 200: 100, 100: 1} }
-	r.Register(Record{ID: "run1", PID: 100, Group: "web", Name: "dev", Session: agentSession()})
+	reg := testRegistry(700)
+	reg.Parents = func() map[int]int { return map[int]int{900: 800, 800: 700, 700: 1} }
+	reg.Register(Record{ID: "run-700", PID: 700, Group: "storefront", Name: "vite", Session: fixtureSession()})
 
-	if got, ok := r.Session(state.Port{PID: 300, PPID: 200}); !ok || got.ID != "claude-code:abc" {
-		t.Errorf("a grandchild's port got session %+v, %v", got, ok)
+	got, ok := reg.Session(state.Port{PID: 900, PPID: 800})
+	if !ok {
+		t.Fatal("a grandchild's port was attributed to no run")
+	}
+	if got.ID != fixtureSession().ID {
+		t.Errorf("a grandchild's port got session %+v, want %+v", got, fixtureSession())
 	}
 }
 
 // A run nobody attributed to a session has none, and neither do its ports:
 // a plain shell must not invent a session for every dev server on the machine.
 func TestRunsWithoutASessionReportNone(t *testing.T) {
-	r := testRegistry(100)
-	r.Register(Record{ID: "run1", PID: 100, Group: "web", Name: "dev"})
+	reg := testRegistry(700)
+	reg.Register(Record{ID: "run-700", PID: 700, Group: "storefront", Name: "vite"})
 
-	if _, ok := r.Session(state.Port{PID: 100}); ok {
-		t.Error("a run with no session reported one")
+	if got, ok := reg.Session(state.Port{PID: 700}); ok {
+		t.Errorf("a run with no session reported %+v", got)
 	}
-	if live := r.SessionRuns(); len(live) != 0 {
+	live := reg.SessionRuns()
+	if len(live) != 0 {
 		t.Errorf("SessionRuns = %+v, want empty", live)
 	}
-	if r.SessionRuns() == nil {
+	if live == nil {
 		t.Error("SessionRuns returned nil rather than an empty slice")
 	}
 }
 
 // A dead run leaves the session list with it, so "active" means what it says.
 func TestSessionRunsDropsDeadRuns(t *testing.T) {
-	r := testRegistry()
-	r.Register(Record{ID: "run1", PID: 100, Session: agentSession()})
-	if live := r.SessionRuns(); len(live) != 0 {
+	reg := testRegistry()
+	reg.Register(Record{ID: "run-701", PID: 701, Session: fixtureSession()})
+	if live := reg.SessionRuns(); len(live) != 0 {
 		t.Errorf("SessionRuns kept a dead run: %+v", live)
 	}
 }

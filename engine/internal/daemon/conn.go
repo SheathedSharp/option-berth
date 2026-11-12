@@ -14,66 +14,68 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// QueueSize bounds a connection's outbound queue. A client that stops reading
-// fills it and is disconnected rather than blocking the scanner (spec,
-// "Subscriptions").
+// QueueSize is the capacity of a connection's outbound queue. A client that
+// stops reading fills the queue and is disconnected instead of blocking the
+// scanner (spec, "Subscriptions").
 const QueueSize = 256
 
-// MaxMessageBytes is the framing limit from the spec's "Transport details".
+// MaxMessageBytes is the framing limit the spec states under "Transport
+// details".
 const MaxMessageBytes = 4 << 20
 
-// Conn is one client connection: a read loop that dispatches requests and a
-// write loop that drains a bounded outbound queue.
+// Conn is a single client connection: the read loop that dispatches its
+// requests, and the write loop that drains its bounded outbound queue.
 type Conn struct {
+	nc  net.Conn
 	id  uint64
 	srv *Server
-	nc  net.Conn
 
-	out       chan []byte
+	writerWG  sync.WaitGroup
 	closeOnce sync.Once
 	closed    chan struct{}
-	writerWG  sync.WaitGroup
+	out       chan []byte
 
-	// Guarded by srv.subsMu, because the publisher reads them while fanning
-	// out and state.subscribe must register atomically with its own reply.
-	subscribed bool
-	include    scanner.Include
+	// Guarded by srv.subsMu: the publisher reads these while fanning out, and
+	// state.subscribe has to register them atomically with its own reply.
 	events     bool
+	subscribed bool
 	scope      state.Scope
+	include    scanner.Include
 
 	// Guarded by mu. Everything here describes this one connection and is read
 	// only by its own goroutines, which is why it does not share subsMu.
 	mu             sync.Mutex
-	client         string
-	clientVersion  string
-	keepalive      bool
 	helloDone      bool
+	keepalive      bool
+	clientVersion  string
+	client         string
 	streams        map[string]context.CancelFunc
 	shutdownOnIdle bool
 }
 
 // newConn builds a connection with its queues ready. The outbound queue is
-// bounded here rather than by the caller: a client that stops reading must not
-// be able to grow the daemon's memory one message at a time.
+// bounded right here rather than by the caller: a client that stops reading
+// must not be able to grow the daemon's memory one message at a time.
 func newConn(id uint64, srv *Server, nc net.Conn) *Conn {
 	return &Conn{
+		nc:      nc,
 		id:      id,
 		srv:     srv,
-		nc:      nc,
+		streams: map[string]context.CancelFunc{},
 		out:     make(chan []byte, QueueSize),
 		closed:  make(chan struct{}),
-		streams: map[string]context.CancelFunc{},
 	}
 }
 
-// ID is the connection's daemon-assigned identifier, used in log lines.
+// ID is the daemon-assigned identifier of this connection, used in log lines.
 func (c *Conn) ID() uint64 { return c.id }
 
-// Client is the {name, version, keepalive} the client sent with daemon.hello.
+// Client is the {name, version, keepalive} triple sent with daemon.hello.
 func (c *Conn) Client() (name, version string, keepalive bool) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.client, c.clientVersion, c.keepalive
+	name, version, keepalive = c.client, c.clientVersion, c.keepalive
+	c.mu.Unlock()
+	return name, version, keepalive
 }
 
 // setHello records the client identity. A second hello on the same connection
@@ -93,16 +95,17 @@ func (c *Conn) setHello(name, version string, keepalive bool) {
 // Keepalive reports whether this client asked the daemon to stay up.
 func (c *Conn) Keepalive() bool {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.keepalive
+	keepalive := c.keepalive
+	c.mu.Unlock()
+	return keepalive
 }
 
-// RegisterStream records a cancel function for a streaming subscription so
-// stream.cancel and disconnect can both stop it.
+// RegisterStream records the cancel function of a streaming subscription, so
+// both stream.cancel and a disconnect can stop it.
 func (c *Conn) RegisterStream(id string, cancel context.CancelFunc) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.streams[id] = cancel
-	c.mu.Unlock()
 }
 
 // CancelStream stops one stream. It reports whether the id was known.
@@ -154,28 +157,38 @@ func (c *Conn) requestShutdown() {
 }
 
 // shutdownRequested reports whether this connection asked for a shutdown. The
-// request is sticky: once set, it stays set for the connection's life.
+// request is sticky: once set it stays set for the rest of the connection's
+// life.
 func (c *Conn) shutdownRequested() bool {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.shutdownOnIdle
+	requested := c.shutdownOnIdle
+	c.mu.Unlock()
+	return requested
 }
 
-// enqueue puts one pre-marshalled message on the outbound queue. It never
-// blocks: a full queue means the client is not reading, and the connection is
-// closed instead (spec, "Subscriptions"). It reports whether the message was
-// accepted.
+// enqueue puts one pre-marshalled message on the outbound queue without ever
+// blocking. A full queue means the client is not reading, so the connection is
+// closed instead (spec, "Subscriptions"); the report says whether the message
+// was accepted.
 func (c *Conn) enqueue(msg []byte) bool {
-	select {
-	case <-c.closed:
+	if c.closing() {
 		return false
-	default:
 	}
 	select {
 	case c.out <- msg:
 		return true
 	default:
-		c.abandonSlowClient()
+	}
+	c.abandonSlowClient()
+	return false
+}
+
+// closing reports whether the connection has already been closed.
+func (c *Conn) closing() bool {
+	select {
+	case <-c.closed:
+		return true
+	default:
 		return false
 	}
 }
@@ -218,23 +231,25 @@ var marshalNotification = func(method string, params any) ([]byte, error) {
 
 // closeWithReason shuts the connection down once, logging why.
 func (c *Conn) closeWithReason(reason string) {
-	c.closeOnce.Do(func() {
-		// The order matters: the closed channel stops both loops first, then
-		// streams are cancelled, then the socket goes, and only then is the
-		// connection removed from the registry — removing it last is what keeps
-		// a broadcast written during the teardown from targeting a socket that
-		// is already gone.
-		close(c.closed)
-		c.cancelAllStreams()
-		_ = c.nc.Close()
-		c.srv.removeConn(c, reason)
-	})
+	c.closeOnce.Do(func() { c.teardown(reason) })
 }
 
-// Close ends the connection.
+// teardown releases a connection in the one order that is safe: the closed
+// channel stops both loops first, streams are cancelled next, then the socket
+// goes, and only then does the connection leave the registry. Removing it last
+// is what stops a broadcast written during teardown from targeting a socket
+// that is already gone.
+func (c *Conn) teardown(reason string) {
+	close(c.closed)
+	c.cancelAllStreams()
+	c.nc.Close()
+	c.srv.removeConn(c, reason)
+}
+
+// Close ends this connection.
 func (c *Conn) Close() { c.closeWithReason("closed") }
 
-// writeLoop drains the outbound queue onto the socket. It exits when the
+// writeLoop drains the outbound queue onto the socket. It exits once the
 // connection closes; a write error closes the connection.
 func (c *Conn) writeLoop() {
 	defer c.writerWG.Done()
@@ -289,9 +304,9 @@ func writeQueued(out *bufio.Writer, queue <-chan []byte) {
 // Requests are served one at a time, in order, so a subscribe reply can never
 // overtake the deltas that follow it.
 func (c *Conn) readLoop(ctx context.Context) {
-	dec := rpc.NewDecoder(c.nc, MaxMessageBytes)
+	decoder := rpc.NewDecoder(c.nc, MaxMessageBytes)
 	for {
-		msg, err := dec.Next()
+		msg, err := decoder.Next()
 		if err != nil {
 			if !c.survivesDecodeError(err) {
 				return
@@ -369,13 +384,11 @@ func (c *Conn) serve(ctx context.Context, msg rpc.Message) {
 		Runtime: c.srv.runtime,
 	}
 	result, err := handler(ctx, request)
-	switch {
-	case errors.Is(err, ErrResponseSent):
-		// The handler already wrote its own reply; adding one would be a
-		// protocol violation.
-	case err != nil:
+	if err != nil && !errors.Is(err, ErrResponseSent) {
 		c.replyError(msg.ID, errorFor(err))
-	default:
+	} else if err == nil {
+		// A handler that sent its own reply (ErrResponseSent) must not get a
+		// second one; that would be a protocol violation.
 		c.replyResult(msg.ID, result)
 	}
 
@@ -415,13 +428,14 @@ func (c *Conn) replyResult(id json.RawMessage, result any) {
 	c.sendResponse(id, encoded, nil)
 }
 
-// replyError queues an error response. A nil id still gets a response, per
-// JSON-RPC, so a client that sent an unparseable request learns why.
+// replyError queues an error response. Per JSON-RPC a nil id still gets an
+// answer, so a client whose request could not be parsed learns why.
 func (c *Conn) replyError(id json.RawMessage, e *rpc.Error) {
 	if id == nil {
 		id = json.RawMessage("null")
 	}
-	msg, err := json.Marshal(rpc.Response{JSONRPC: rpc.Version, ID: id, Error: e})
+	response := rpc.Response{JSONRPC: rpc.Version, ID: id, Error: e}
+	msg, err := json.Marshal(response)
 	if err != nil {
 		return
 	}

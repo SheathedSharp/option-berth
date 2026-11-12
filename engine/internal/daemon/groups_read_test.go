@@ -1,42 +1,42 @@
 package daemon
 
 import (
-	"context"
 	"testing"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// TestGroupsListServesTheSnapshotsGroups: `groups.list` is the groups the scan
-// already resolved, so the list an agent reads and the groups a subscriber sees
-// cannot disagree.
+// TestGroupsListServesTheSnapshotsGroups holds `groups.list` to the groups the
+// scan already resolved: the list an agent reads and the groups a subscriber
+// sees come from one snapshot, so the two cannot drift apart.
 func TestGroupsListServesTheSnapshotsGroups(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	c := newPortsHarness(t, ctx)
+	cl := newPortsHarness(t, t.Context())
 
-	var res rpc.GroupsListResult
-	if e := c.call("groups.list", rpc.Empty{}, &res); e != nil {
+	var listed rpc.GroupsListResult
+	if e := cl.call("groups.list", rpc.Empty{}, &listed); e != nil {
 		t.Fatalf("groups.list: %v", e)
 	}
-	if res.Groups == nil {
-		t.Fatal("groups must always be an array, never null")
+	// An empty answer is still an array: a client that ranges over the field
+	// must never have to special-case "no groups".
+	if listed.Groups == nil {
+		t.Fatal("groups.list answered null, want an array")
 	}
 
-	var snapshot struct {
+	var snap struct {
 		Groups []state.Group `json:"groups"`
 	}
-	if e := c.call("state.snapshot", rpc.StateSnapshotParams{}, &snapshot); e != nil {
+	if e := cl.call("state.snapshot", rpc.StateSnapshotParams{}, &snap); e != nil {
 		t.Fatalf("state.snapshot: %v", e)
 	}
-	if len(res.Groups) != len(snapshot.Groups) {
-		t.Fatalf("groups.list returned %d groups, the snapshot has %d",
-			len(res.Groups), len(snapshot.Groups))
+	if len(snap.Groups) != len(listed.Groups) {
+		t.Fatalf("the snapshot holds %d groups, groups.list answered %d",
+			len(snap.Groups), len(listed.Groups))
 	}
-	for i := range res.Groups {
-		if res.Groups[i].Name != snapshot.Groups[i].Name {
-			t.Errorf("group %d = %q, snapshot says %q", i, res.Groups[i].Name, snapshot.Groups[i].Name)
+	for i, g := range snap.Groups {
+		if listed.Groups[i].Name != g.Name {
+			t.Errorf("group %d: groups.list says %q, the snapshot says %q",
+				i, listed.Groups[i].Name, g.Name)
 		}
 	}
 }

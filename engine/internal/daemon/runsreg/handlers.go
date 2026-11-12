@@ -34,11 +34,15 @@ var Default = New()
 const pruneInterval = scanner.BaseInterval
 
 func init() {
+	daemon.RegisterCapability("runs")
+	// One handler per method the namespace publishes. The table is closed, so a
+	// method is added here deliberately rather than resolved by a lookup that
+	// could miss.
 	daemon.RegisterHandler("runs.register", handleRegister)
 	daemon.RegisterHandler("runs.unregister", handleUnregister)
 	daemon.RegisterHandler("runs.list", handleList)
 	daemon.RegisterHandler("runs.spawn", handleSpawn)
-	daemon.RegisterCapability("runs")
+	// A rename has to move the runs recorded under the old group name too.
 	daemon.OnGroupRename(func(renames map[string]string) { Default.RenameGroups(renames) })
 
 	daemon.OnStartChecked(func(rt *daemon.Runtime) error {
@@ -200,14 +204,15 @@ func handleList(ctx context.Context, req *daemon.Request) (any, error) {
 	return rpc.RunsListResult{Runs: rows, Exited: exited}, nil
 }
 
+// handleSpawn is `runs.spawn`: one detached command, started through the same
+// path a manifest service takes.
 func handleSpawn(ctx context.Context, req *daemon.Request) (any, error) {
 	var p rpc.RunsSpawnParams
 	if err := req.Bind(&p); err != nil {
 		return nil, err
 	}
-	if len(p.Argv) == 0 {
-		return nil, rpc.NewError(rpc.CodeInvalidParams, "argv is required",
-			`send {"argv": ["npm", "run", "dev"], "cwd": "/path/to/repo"}`)
+	if err := requireArgv(p.Argv); err != nil {
+		return nil, err
 	}
 	cwd, err := CheckCwd(p.Cwd, p.AllowOutsideHome)
 	if err != nil {
@@ -229,12 +234,12 @@ func handleSpawn(ctx context.Context, req *daemon.Request) (any, error) {
 	}
 
 	return rpc.RunsSpawnResult{
+		RunID:   h.ID,
+		PID:     h.PID,
+		LogPath: h.LogPath,
 		// A run has no ports at the moment it starts, so `affected` is empty and
 		// the ports arrive with the next state.delta.
 		MutationResult: rpc.MutationResult{OK: true, Affected: []string{}},
-		RunID:          h.ID,
-		PID:            h.PID,
-		LogPath:        h.LogPath,
 	}, nil
 }
 
@@ -272,24 +277,23 @@ func sessionOf(p rpc.RunsSpawnParams, cwd string) state.Session {
 // `groups.start` calls it once per service, so a service started from the
 // desktop is attributed exactly like one started from the CLI.
 //
-// The caller has already resolved the group, the name and the working
-// directory; CheckCwd is the home-directory guard.
+// The group, the name and the working directory are already resolved when this
+// runs, and CheckCwd has applied the home-directory guard.
 func Spawn(ctx context.Context, rt *daemon.Runtime, req spawn.Request, meta Meta) (*spawn.Handle, error) {
 	req.Detach = true
 	h, err := spawn.Spawn(ctx, req)
 	if err != nil {
-		return nil, rpc.NewError(rpc.CodeInternal, err.Error(),
-			"check the command and its working directory")
+		return nil, spawnFailed(err)
 	}
 
 	record := Default.Register(runFromHandle(h, meta))
 	rememberSession(rt, h.Session)
-	rt.Logger.Info("spawned a run",
-		"id", h.ID, "pid", h.PID, "group", h.Group, "name", h.Name, "log", h.LogPath)
+	rt.Logger.Info("spawned a run", "id", h.ID, "pid", h.PID, "group", h.Group,
+		"name", h.Name, "log", h.LogPath)
 	rt.Scanner.Wake()
 
-	// Reap it: an unwaited child stays a zombie, and a zombie pid still looks
-	// alive to every liveness test, so the run would never be pruned.
+	// Reap it. An unwaited child stays a zombie, and a zombie pid still passes
+	// every liveness test, so such a run would never be pruned.
 	go func(rt *daemon.Runtime, h *spawn.Handle) {
 		code, err := h.Wait()
 		e, _ := Default.ExitedRun(record, code, false)
@@ -300,34 +304,41 @@ func Spawn(ctx context.Context, rt *daemon.Runtime, req spawn.Request, meta Meta
 	return h, nil
 }
 
+// spawnFailed is the refusal a process that could not be started gets: the
+// command and the working directory are the two things its caller can fix.
+func spawnFailed(err error) error {
+	return rpc.NewError(rpc.CodeInternal, err.Error(), "check the command and its working directory")
+}
+
 // runFromHandle is the record a freshly started process becomes: the launch
 // facts the spawner observed, plus what the caller knew about why it started —
 // the manifest it came from, the start that grouped it, and the client that
 // asked.
 func runFromHandle(h *spawn.Handle, meta Meta) Record {
-	return Record{
-		ID:         h.ID,
-		PID:        h.PID,
-		PPID:       h.PPID,
-		Group:      h.Group,
-		Name:       h.Name,
-		Cmd:        h.Cmd,
-		Cwd:        h.Cwd,
-		PortHint:   h.PortHint,
-		StartedAt:  h.StartedAt,
-		Session:    h.Session,
-		ConfigPath: meta.ConfigPath,
-		StartID:    meta.StartID,
-		Origin:     meta.Origin,
-		SpecHash:   meta.SpecHash,
-		LogPath:    h.LogPath,
-		LogOffset:  h.LogOffset,
+	rec := Record{
+		ID:   h.ID,
+		PID:  h.PID,
+		PPID: h.PPID,
+		// The launch itself, as the spawner observed it.
+		Group:     h.Group,
+		Name:      h.Name,
+		Cmd:       h.Cmd,
+		Cwd:       h.Cwd,
+		PortHint:  h.PortHint,
+		StartedAt: h.StartedAt,
+		Session:   h.Session,
+		LogPath:   h.LogPath,
+		LogOffset: h.LogOffset,
 	}
+	// Where the run came from is the caller's knowledge, not the spawner's.
+	rec.ConfigPath, rec.StartID, rec.Origin = meta.ConfigPath, meta.StartID, meta.Origin
+	rec.SpecHash = meta.SpecHash
+	return rec
 }
 
 // rememberSession writes a session through to the store the moment a run
-// carries one, so an agent's session survives a daemon restart and stays
-// readable for the seven days after its last run exits.
+// carries one. That is what keeps an agent's session readable across a daemon
+// restart, and for the seven days after its last run exits.
 func rememberSession(rt *daemon.Runtime, s state.Session) {
 	if s.ID == "" || rt == nil || rt.Store == nil {
 		return
@@ -413,17 +424,24 @@ func CheckCwd(cwd string, allowOutsideHome bool) (string, error) {
 // so the home check cannot pass one and fail the other.
 func absoluteCwd(cwd string) (string, error) {
 	if strings.TrimSpace(cwd) == "" {
+		// No directory was named, so the daemon's own is the one meant.
 		wd, err := os.Getwd()
 		if err != nil {
-			return "", rpc.NewError(rpc.CodeInvalidParams, "cwd is required", "")
+			return "", invalidCwd("cwd is required")
 		}
 		cwd = wd
 	}
 	abs, err := filepath.Abs(cwd)
 	if err != nil {
-		return "", rpc.NewError(rpc.CodeInvalidParams, "cwd is not a usable path: "+cwd, "")
+		return "", invalidCwd("cwd is not a usable path: " + cwd)
 	}
 	return groups.Canonical(abs), nil
+}
+
+// invalidCwd is how a caller-supplied working directory is refused. The message
+// carries what is wrong with it, and there is no next step to hint at.
+func invalidCwd(message string) error {
+	return rpc.NewError(rpc.CodeInvalidParams, message, "")
 }
 
 // row renders one live run for `runs.list`: what the registry knows about it,
@@ -450,21 +468,23 @@ func row(rec Record, snap state.Snapshot, portsKnown bool) rpc.RunRecord {
 // A run that has ended carries the same block, which is why exitRow starts here
 // too: identity, provenance and where it logs are the run's facts either way.
 func liveRow(rec Record) rpc.RunRecord {
-	return rpc.RunRecord{
-		ID:         rec.ID,
-		PID:        rec.PID,
-		Group:      rec.Group,
-		Name:       rec.Name,
-		Cmd:        rec.Cmd,
-		Cwd:        rec.Cwd,
-		StartedAt:  rec.StartedAt.Format(time.RFC3339),
-		ConfigPath: rec.ConfigPath,
-		StartID:    rec.StartID,
-		Origin:     rec.Origin,
-		SpecHash:   rec.SpecHash,
-		LogPath:    rec.LogPath,
-		LogOffset:  &rec.LogOffset,
+	out := rpc.RunRecord{
+		ID:  rec.ID,
+		PID: rec.PID,
+		// The manifest identity the run was started under, and what was run.
+		Group: rec.Group,
+		Name:  rec.Name,
+		Cmd:   rec.Cmd,
+		Cwd:   rec.Cwd,
 	}
+	// The rest is renderings of the same record: the start time as the wire's
+	// RFC 3339 string, the provenance, and where the run logs.
+	out.StartedAt = rec.StartedAt.Format(time.RFC3339)
+	out.ConfigPath, out.StartID, out.Origin = rec.ConfigPath, rec.StartID, rec.Origin
+	out.SpecHash = rec.SpecHash
+	out.LogPath = rec.LogPath
+	out.LogOffset = &rec.LogOffset
+	return out
 }
 
 // runStatus is "starting" while a port-hinted run has not bound its port and
@@ -514,6 +534,17 @@ func requirePID(pid int, example string) error {
 		return rpc.NewError(rpc.CodeInvalidParams, "pid is required", example)
 	}
 	return nil
+}
+
+// requireArgv is the one place that decides a spawn without a command is
+// invalid. Like requirePID it answers with a request the caller can paste back,
+// so the refusal shows their own shape rather than the registry's field names.
+func requireArgv(argv []string) error {
+	if len(argv) > 0 {
+		return nil
+	}
+	return rpc.NewError(rpc.CodeInvalidParams, "argv is required",
+		`send {"argv": ["npm", "run", "dev"], "cwd": "/path/to/repo"}`)
 }
 
 // valueOrZero reads an optional wire value, returning the type's zero when the

@@ -1,9 +1,11 @@
 package rpc
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -34,11 +36,69 @@ var contractMethods = []string{
 	"config.get", "config.set", "config.path",
 }
 
+// schemaDocument decodes the generated document into the generic shape a client
+// generator reads it in, so the checks below are about the wire document rather
+// than about the Go types it was reflected from.
+func schemaDocument(t *testing.T) map[string]any {
+	t.Helper()
+	var document map[string]any
+	if err := json.Unmarshal(Marshal(), &document); err != nil {
+		t.Fatalf("decoding the generated schema: %v", err)
+	}
+	return document
+}
+
+// schemaObject returns one object-valued member of the document, failing when
+// the member is absent or is not an object.
+func schemaObject(t *testing.T, parent map[string]any, key string) map[string]any {
+	t.Helper()
+	object, ok := parent[key].(map[string]any)
+	if !ok {
+		t.Fatalf("schema has no %s object", key)
+	}
+	return object
+}
+
+// definitionProperties returns the properties of one named definition, failing
+// when the definition or its properties are missing.
+func definitionProperties(t *testing.T, definitions map[string]any, name string) map[string]any {
+	t.Helper()
+	definition, ok := definitions[name].(map[string]any)
+	if !ok {
+		t.Fatalf("definition %q is missing from the schema", name)
+	}
+	properties, ok := definition["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("definition %q has no properties", name)
+	}
+	return properties
+}
+
+// requireEntries fails for every named entry the collection does not carry.
+func requireEntries(t *testing.T, collection string, entries map[string]any, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		if _, ok := entries[name]; !ok {
+			t.Errorf("%s[%q] is missing from the schema", collection, name)
+		}
+	}
+}
+
+// requireProperties fails for every property the object does not carry.
+func requireProperties(t *testing.T, subject string, object map[string]any, properties ...string) {
+	t.Helper()
+	for _, property := range properties {
+		if _, ok := object[property]; !ok {
+			t.Errorf("%s has no %q property", subject, property)
+		}
+	}
+}
+
 func TestEveryContractMethodIsDescribed(t *testing.T) {
-	got := Methods()
-	for _, m := range contractMethods {
-		if _, ok := got[m]; !ok {
-			t.Errorf("method %q is in the contract but not described", m)
+	described := Methods()
+	for _, method := range contractMethods {
+		if _, ok := described[method]; !ok {
+			t.Errorf("method %q is in the contract but not described", method)
 		}
 	}
 }
@@ -68,89 +128,66 @@ func TestEveryDescribedMethodIsInTheContract(t *testing.T) {
 // expose.* was renamed to share.* and its provider methods deleted before any
 // handler served them (docs/SHARE.md in option-berth-relay, "The rename").
 func TestNoExposeMethods(t *testing.T) {
-	for _, m := range MethodNames() {
-		if strings.HasPrefix(m, "expose.") {
-			t.Errorf("method %q is described; expose.* was renamed to share.*", m)
+	for _, method := range MethodNames() {
+		if strings.HasPrefix(method, "expose.") {
+			t.Errorf("method %q is described; expose.* was renamed to share.*", method)
 		}
 	}
-	doc := string(Marshal())
-	for _, gone := range []string{`"expose.`, "ProviderInfo", "ExposeInstallProvider", `"Tunnel"`, "ChangeTunnel"} {
-		if strings.Contains(doc, gone) {
-			t.Errorf("the generated schema still mentions %s", gone)
+	document := string(Marshal())
+	for _, retired := range []string{`"expose.`, "ProviderInfo", "ExposeInstallProvider", `"Tunnel"`, "ChangeTunnel"} {
+		if strings.Contains(document, retired) {
+			t.Errorf("the generated schema still mentions %s", retired)
 		}
 	}
 }
 
+// A streaming method answers with a subscription id and then pushes payloads, so
+// a client cannot type its stream unless the description names both payloads.
 func TestStreamingMethodsDeclareChunkAndEnd(t *testing.T) {
-	for _, m := range []string{"groups.start"} {
-		d, ok := Methods()[m]
-		if !ok {
-			t.Fatalf("method %q not described", m)
-		}
-		if d.Chunk == nil || d.End == nil {
-			t.Errorf("streaming method %q must declare chunk and end types", m)
-		}
+	const streaming = "groups.start"
+	described, ok := Methods()[streaming]
+	if !ok {
+		t.Fatalf("method %q not described", streaming)
+	}
+	if described.Chunk == nil || described.End == nil {
+		t.Errorf("streaming method %q must declare chunk and end types", streaming)
 	}
 }
 
 func TestBuildSchemaHasContractDefinitions(t *testing.T) {
-	b, err := json.Marshal(BuildSchema())
-	if err != nil {
-		t.Fatal(err)
-	}
-	var m map[string]any
-	if err := json.Unmarshal(b, &m); err != nil {
-		t.Fatal(err)
-	}
+	document := schemaDocument(t)
 
-	defs, ok := m["definitions"].(map[string]any)
-	if !ok {
-		t.Fatalf("schema has no definitions map")
-	}
-	for _, name := range []string{"Port", "Group", "Session",
-		"Snapshot", "Delta", "Event", "Error"} {
-		if _, ok := defs[name]; !ok {
-			t.Errorf("definition %q missing", name)
-		}
-	}
+	definitions := schemaObject(t, document, "definitions")
+	requireEntries(t, "definitions", definitions,
+		"Port", "Group", "Session", "Snapshot", "Delta", "Event", "Error")
 
-	port, ok := defs["Port"].(map[string]any)["properties"].(map[string]any)
-	if !ok {
-		t.Fatalf("Port definition has no properties")
-	}
-	for _, prop := range []string{"display_name", "ppid", "project_root", "group",
-		"group_source", "run", "stats", "started_at", "session"} {
-		if _, ok := port[prop]; !ok {
-			t.Errorf("Port has no %q property", prop)
-		}
-	}
+	port := definitionProperties(t, definitions, "Port")
+	requireProperties(t, "Port", port,
+		"display_name", "ppid", "project_root", "group", "group_source",
+		"run", "stats", "started_at", "session")
 	// The dead share/tunnel/proxy fields were removed (R3.1): they must be gone.
-	for _, prop := range []string{"shares", "exposed_urls", "proxy_id", "proxy_target_port"} {
-		if _, ok := port[prop]; ok {
-			t.Errorf("Port still has dead %q property", prop)
+	for _, dead := range []string{"shares", "exposed_urls", "proxy_id", "proxy_target_port"} {
+		if _, ok := port[dead]; ok {
+			t.Errorf("Port still has dead %q property", dead)
 		}
 	}
 
-	methods, ok := m["methods"].(map[string]any)
-	if !ok {
-		t.Fatalf("schema has no methods map")
-	}
-	for _, name := range contractMethods {
-		entry, ok := methods[name].(map[string]any)
+	methods := schemaObject(t, document, "methods")
+	for _, method := range contractMethods {
+		entry, ok := methods[method].(map[string]any)
 		if !ok {
-			t.Errorf("methods[%q] missing from schema", name)
+			t.Errorf("methods[%q] missing from schema", method)
 			continue
 		}
-		if _, ok := entry["params"]; !ok {
-			t.Errorf("methods[%q] has no params schema", name)
-		}
-		if _, ok := entry["result"]; !ok {
-			t.Errorf("methods[%q] has no result schema", name)
+		for _, half := range []string{"params", "result"} {
+			if _, ok := entry[half]; !ok {
+				t.Errorf("methods[%q] has no %s schema", method, half)
+			}
 		}
 	}
 
-	if m["protocol_version"] != ProtocolVersion {
-		t.Errorf("protocol_version = %v, want %s", m["protocol_version"], ProtocolVersion)
+	if document["protocol_version"] != ProtocolVersion {
+		t.Errorf("protocol_version = %v, want %s", document["protocol_version"], ProtocolVersion)
 	}
 }
 
@@ -166,64 +203,73 @@ func TestStateFilterUsesTheAgreedWireField(t *testing.T) {
 	}
 }
 
+// The document a client reads and the document the daemon generates must be the
+// same bytes, so a type change cannot ship beside a stale schema file.
 func TestCheckedInSchemaIsUpToDate(t *testing.T) {
 	path := filepath.Join("..", "..", "..", "docs", "schema", "protocol.schema.json")
-	onDisk, err := os.ReadFile(path)
+	checkedIn, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("%v (run `go generate ./...`)", err)
 	}
-	if unixEOL(string(onDisk)) != unixEOL(string(Marshal())) {
+	if generated := Marshal(); !bytes.Equal(foldLineEndings(checkedIn), foldLineEndings(generated)) {
 		t.Fatalf("%s is stale; run `go generate ./...`", path)
 	}
 }
 
-// unixEOL folds CRLF to LF. .gitattributes pins the checked-in schema to LF so
-// the file a Windows CI checkout compares is the file `go generate` wrote, but
-// a developer's checkout made before that (or with core.autocrlf forced on)
+// foldLineEndings folds CRLF to LF. .gitattributes pins the checked-in schema to
+// LF so the file a Windows CI checkout compares is the file `go generate` wrote,
+// but a developer's checkout made before that (or with core.autocrlf forced on)
 // still has CRLF on disk, and the schema's content is what this test is about,
 // not its line endings.
-func unixEOL(s string) string { return strings.ReplaceAll(s, "\r\n", "\n") }
+func foldLineEndings(b []byte) []byte {
+	return bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n"))
+}
 
 // TestSchemaEnumsMatchGoEnums guards against the Go enum constants and the
 // struct-tag enums in the generated schema drifting apart.
 func TestSchemaEnumsMatchGoEnums(t *testing.T) {
-	var doc struct {
+	var document struct {
 		Definitions map[string]struct {
 			Properties map[string]json.RawMessage `json:"properties"`
 		} `json:"definitions"`
 	}
-	if err := json.Unmarshal(Marshal(), &doc); err != nil {
-		t.Fatal(err)
+	if err := json.Unmarshal(Marshal(), &document); err != nil {
+		t.Fatalf("decoding the generated schema: %v", err)
 	}
 
-	wantTypes := make([]string, 0, len(state.AllPortTypes))
-	for _, v := range state.AllPortTypes {
-		wantTypes = append(wantTypes, string(v))
+	portTypes := make([]string, 0, len(state.AllPortTypes))
+	for _, value := range state.AllPortTypes {
+		portTypes = append(portTypes, string(value))
 	}
-	assertEnum(t, doc.Definitions["Port"].Properties["type"], wantTypes)
+	groupSources := make([]string, 0, len(state.AllGroupSources))
+	for _, value := range state.AllGroupSources {
+		groupSources = append(groupSources, string(value))
+	}
 
-	wantSources := make([]string, 0, len(state.AllGroupSources))
-	for _, v := range state.AllGroupSources {
-		wantSources = append(wantSources, string(v))
+	for _, want := range []struct {
+		definition string
+		property   string
+		enum       []string
+	}{
+		{"Port", "type", portTypes},
+		{"Group", "source", groupSources},
+	} {
+		assertEnum(t, document.Definitions[want.definition].Properties[want.property], want.enum)
 	}
-	assertEnum(t, doc.Definitions["Group"].Properties["source"], wantSources)
 }
 
+// assertEnum checks one property's enum against the Go values it is generated
+// from: same members, same order.
 func assertEnum(t *testing.T, raw json.RawMessage, want []string) {
 	t.Helper()
-	var got struct {
+	var property struct {
 		Enum []string `json:"enum"`
 	}
-	if err := json.Unmarshal(raw, &got); err != nil {
+	if err := json.Unmarshal(raw, &property); err != nil {
 		t.Fatalf("decoding %s: %v", raw, err)
 	}
-	if len(got.Enum) != len(want) {
-		t.Fatalf("enum = %v, want %v", got.Enum, want)
-	}
-	for i := range want {
-		if got.Enum[i] != want[i] {
-			t.Fatalf("enum = %v, want %v", got.Enum, want)
-		}
+	if !slices.Equal(property.Enum, want) {
+		t.Fatalf("enum = %v, want %v", property.Enum, want)
 	}
 }
 
@@ -235,57 +281,37 @@ var contractNotifications = []string{
 }
 
 func TestEveryNotificationIsDescribed(t *testing.T) {
-	got := Notifications()
-	for _, n := range contractNotifications {
-		if _, ok := got[n]; !ok {
-			t.Errorf("notification %q is in the contract but not described", n)
+	described := Notifications()
+	for _, name := range contractNotifications {
+		if _, ok := described[name]; !ok {
+			t.Errorf("notification %q is in the contract but not described", name)
 		}
 	}
-	if names := NotificationNames(); len(names) != len(got) {
-		t.Errorf("NotificationNames returned %d of %d notifications", len(names), len(got))
+	if names := NotificationNames(); len(names) != len(described) {
+		t.Errorf("NotificationNames returned %d of %d notifications", len(names), len(described))
 	}
 }
 
 // TestSchemaCarriesNotificationsAndTheStreamEnvelope: a generator reading the
 // document alone must be able to type every inbound message, envelope included.
 func TestSchemaCarriesNotificationsAndTheStreamEnvelope(t *testing.T) {
-	var m map[string]any
-	if err := json.Unmarshal(Marshal(), &m); err != nil {
-		t.Fatal(err)
-	}
+	document := schemaDocument(t)
 
-	notifications, ok := m["notifications"].(map[string]any)
-	if !ok {
-		t.Fatalf("schema has no notifications map")
-	}
-	for _, name := range contractNotifications {
-		entry, ok := notifications[name].(map[string]any)
+	notifications := schemaObject(t, document, "notifications")
+	for _, notification := range contractNotifications {
+		entry, ok := notifications[notification].(map[string]any)
 		if !ok {
-			t.Errorf("notifications[%q] missing from schema", name)
+			t.Errorf("notifications[%q] missing from schema", notification)
 			continue
 		}
 		if _, ok := entry["params"]; !ok {
-			t.Errorf("notifications[%q] has no params schema", name)
+			t.Errorf("notifications[%q] has no params schema", notification)
 		}
 	}
 
-	defs, ok := m["definitions"].(map[string]any)
-	if !ok {
-		t.Fatalf("schema has no definitions map")
-	}
-	for _, name := range []string{"StreamChunk", "StreamEnd", "StreamStart"} {
-		if _, ok := defs[name]; !ok {
-			t.Errorf("definition %q missing; a client cannot read a stream without it", name)
-		}
-	}
+	definitions := schemaObject(t, document, "definitions")
+	requireEntries(t, "definitions", definitions, "StreamChunk", "StreamEnd", "StreamStart")
 
-	chunk, ok := defs["StreamChunk"].(map[string]any)["properties"].(map[string]any)
-	if !ok {
-		t.Fatalf("StreamChunk definition has no properties")
-	}
-	for _, prop := range []string{"id", "data"} {
-		if _, ok := chunk[prop]; !ok {
-			t.Errorf("StreamChunk has no %q property", prop)
-		}
-	}
+	chunk := definitionProperties(t, definitions, "StreamChunk")
+	requireProperties(t, "StreamChunk", chunk, "id", "data")
 }

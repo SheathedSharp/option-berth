@@ -117,42 +117,43 @@ func descriptorPaths(pid int) []string {
 // as stream.chunk notifications.
 func handlePortsLogs(ctx context.Context, req *Request) (any, error) {
 	var p rpc.PortsLogsParams
-	if err := req.Bind(&p); err != nil {
+	err := req.Bind(&p)
+	if err != nil {
 		return nil, err
 	}
-	lines := p.Lines
-	if lines <= 0 {
-		lines = defaultLogLines
+	requested := p.Lines
+	if requested <= 0 {
+		requested = defaultLogLines
 	}
 
-	rows, err := readPorts(req.Runtime, scanner.Include{})
+	listening, err := readPorts(req.Runtime, scanner.Include{})
 	if err != nil {
 		return nil, err
 	}
-	row, err := resolvePort(rows, p.Selector)
+	match, err := resolvePort(listening, p.Selector)
 	if err != nil {
 		return nil, err
 	}
-	source, err := resolveLogSource(row, lines)
+	source, err := resolveLogSource(match, requested)
 	if err != nil {
 		return nil, err
 	}
 
 	if !p.Follow {
-		out, err := source.Tail(ctx, lines)
+		out, err := source.Tail(ctx, requested)
 		if err != nil {
 			return nil, err
 		}
 		return rpc.PortsLogsResult{
 			Source:    source.Label(),
 			Lines:     out,
-			Truncated: len(out) >= lines,
+			Truncated: len(out) >= requested,
 		}, nil
 	}
 
 	initial := rpc.PortsLogsResult{Source: source.Label(), Lines: []string{}}
 	return StartStream(ctx, req, initial, func(ctx context.Context, s *Stream) (any, error) {
-		return nil, source.Follow(ctx, lines, func(line string) error {
+		return nil, source.Follow(ctx, requested, func(line string) error {
 			return s.Send(rpc.PortsLogsChunk{Source: source.Label(), Line: line})
 		})
 	})
@@ -178,16 +179,16 @@ func streamCommand(ctx context.Context, argv []string, emit func(string) error) 
 	if _, err := exec.LookPath(argv[0]); err != nil {
 		return rpc.NewError(rpc.CodeUnsupported, argv[0]+" is not on PATH", "")
 	}
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	pipe, err := cmd.StdoutPipe()
+	command := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	pipe, err := command.StdoutPipe()
 	if err != nil {
 		return rpc.NewError(rpc.CodeInternal, "opening the log pipe: "+err.Error(), "")
 	}
-	cmd.Stderr = cmd.Stdout
-	if err := cmd.Start(); err != nil {
+	command.Stderr = command.Stdout
+	if err := command.Start(); err != nil {
 		return rpc.NewError(rpc.CodeInternal, fmt.Sprintf("starting %s: %v", argv[0], err), "")
 	}
-	defer func() { _ = cmd.Wait() }()
+	defer func() { _ = command.Wait() }()
 
 	scanner := bufio.NewScanner(pipe)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)

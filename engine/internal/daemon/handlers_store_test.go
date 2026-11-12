@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,81 +12,83 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
-// storeHarness is a harness with a temp database already open and one port
-// listening, which is what every write path needs.
-func storeHarness(t *testing.T, ctx context.Context, rows ...ports.ListeningPort) (*testHarness, *store.Store) {
+// storeHarness is a harness whose temp database is already open and which sees
+// one port listening — what every write path needs.
+func storeHarness(t *testing.T, rows ...ports.ListeningPort) (*testHarness, *store.Store) {
 	t.Helper()
-	// The temp directory is claimed first so its removal is the last cleanup
-	// to run: the harness holds the database inside it and has to close it
-	// before anything deletes the file.
+	// The temp directory is claimed first so its removal is the last cleanup to
+	// run: the harness keeps the database inside it and must close it before
+	// anything deletes the file.
 	db := filepath.Join(t.TempDir(), "option-berth.db")
-	h := newHarness(t, ctx)
+	h := newHarness(t, t.Context())
 	st := h.withStore(db)
 	if len(rows) == 0 {
-		rows = []ports.ListeningPort{{
-			Port: 8123, PID: 42, Process: "python3", Command: "python3 -m http.server",
-		}}
+		// One plain user process is enough: the write paths only need a row to
+		// attribute history to.
+		rows = []ports.ListeningPort{
+			{Port: 8123, PID: 42, Process: "python3", Command: "python3 -m http.server"},
+		}
 	}
 	h.setRows(rows...)
 	return h, st
 }
 
 func TestConfigRoundTripThroughTheDaemon(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 
-	h := newHarness(t, ctx)
-	c := h.dial(ctx)
+	h := newHarness(t, t.Context())
+	cl := h.dial(t.Context())
 
-	var path rpc.ConfigPathResult
-	if e := c.call("config.path", rpc.Empty{}, &path); e != nil {
+	var configPath rpc.ConfigPathResult
+	if e := cl.call("config.path", rpc.Empty{}, &configPath); e != nil {
 		t.Fatalf("config.path: %v", e)
 	}
-	// 断言两件事：daemon 解析出来的路径**和这边自己算的一致**（跨进程布局一致），
-	// 以及它落在隔离的 home 里。刻意不写死 `.config/option-berth` 那种形状 ——
-	// 布局改过一次，把形状当不变量的断言会在每次搬家时假报警。
-	if want := filepath.Join(paths.Dir(), paths.ConfigFile); path.Path != want {
-		t.Errorf("path = %q, want %q", path.Path, want)
+	// Two things are asserted here: the daemon resolves the path this side
+	// computes (one cross-process layout), and it lands inside the isolated
+	// home. The `.config/option-berth` shape is deliberately not hard-coded —
+	// the layout moved once, and treating the shape as an invariant would cry
+	// wolf every time it moves again.
+	if want := filepath.Join(paths.Dir(), paths.ConfigFile); configPath.Path != want {
+		t.Errorf("path = %q, want %q", configPath.Path, want)
 	}
-	if !strings.HasPrefix(path.Path, home+string(filepath.Separator)) {
-		t.Errorf("path = %q, want it under the temp home %s", path.Path, home)
+	if !strings.HasPrefix(configPath.Path, home+string(filepath.Separator)) {
+		t.Errorf("path = %q, want it under the temp home %s", configPath.Path, home)
 	}
 
-	var set rpc.ConfigSetResult
-	if e := c.call("config.set", rpc.ConfigSetParams{
+	var setResult rpc.ConfigSetResult
+	if e := cl.call("config.set", rpc.ConfigSetParams{
 		Patch: map[string]any{"daemon": map[string]any{"log_level": "debug"}},
-	}, &set); e != nil {
+	}, &setResult); e != nil {
 		t.Fatalf("config.set: %v", e)
 	}
-	if !set.OK {
+	if !setResult.OK {
 		t.Error("config.set did not report ok")
 	}
-	if _, err := os.Stat(path.Path); err != nil {
+	if _, err := os.Stat(configPath.Path); err != nil {
 		t.Fatalf("config.set wrote no file: %v", err)
 	}
 
-	var got rpc.ConfigGetResult
-	if e := c.call("config.get", rpc.Empty{}, &got); e != nil {
+	var gotConfig rpc.ConfigGetResult
+	if e := cl.call("config.get", rpc.Empty{}, &gotConfig); e != nil {
 		t.Fatalf("config.get: %v", e)
 	}
-	if got.Config["daemon"].(map[string]any)["log_level"] != "debug" {
-		t.Errorf("config = %v, want daemon.log_level debug", got.Config)
+	if level := gotConfig.Config["daemon"].(map[string]any)["log_level"]; level != "debug" {
+		t.Errorf("config = %v, want daemon.log_level debug", gotConfig.Config)
 	}
 
 	// A second write keeps the previous file next to it.
-	if e := c.call("config.set", rpc.ConfigSetParams{
+	if e := cl.call("config.set", rpc.ConfigSetParams{
 		Patch: map[string]any{"daemon": map[string]any{"log_level": "info"}},
 	}, nil); e != nil {
-		t.Fatalf("config.set: %v", e)
+		t.Fatalf("the second config.set: %v", e)
 	}
-	if _, err := os.Stat(path.Path + ".bak"); err != nil {
+	if _, err := os.Stat(configPath.Path + ".bak"); err != nil {
 		t.Errorf("no backup beside the config: %v", err)
 	}
 
-	if e := c.call("config.set", rpc.ConfigSetParams{
+	if e := cl.call("config.set", rpc.ConfigSetParams{
 		Patch: map[string]any{"daemon": map[string]any{"log_level": "sideways"}},
 	}, nil); e == nil || e.Data.Code != "invalid_params" {
 		t.Errorf("error = %+v, want invalid_params for a rejected value", e)
