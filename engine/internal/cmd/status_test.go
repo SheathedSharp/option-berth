@@ -18,11 +18,11 @@ import (
 // state the person enabled the enhancement first.
 func enableJev(t *testing.T) {
 	t.Helper()
-	path := paths.JevConfigPath()
+	path := paths.AttnConfigPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	body := `{"schema":"oberth.jev-config/v1","enabled":true,"provider":"typesafe","api_key":"k"}`
+	body := `{"schema":"oberth.attn-settings/v1","enabled":true,"provider":"typesafe","api_key":"k"}`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -380,7 +380,7 @@ func TestPublishAttentionClearsWhenDisabled(t *testing.T) {
 	if path == "" {
 		t.Fatal("enabled Jev published no artifact")
 	}
-	if err := os.Remove(paths.JevConfigPath()); err != nil {
+	if err := os.Remove(paths.AttnConfigPath()); err != nil {
 		t.Fatal(err)
 	}
 	if got := publishAttention(&doc); got != "" {

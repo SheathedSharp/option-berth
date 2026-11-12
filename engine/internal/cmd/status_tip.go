@@ -63,7 +63,7 @@ func jevTipEligible(doc *statusDocument, now time.Time, terminal bool) bool {
 	if !terminal {
 		return false
 	}
-	return tipDue(paths.JevTipPath(), now)
+	return tipDue(paths.AttnTipPath(), now)
 }
 
 // tipDue reads the record and answers whether enough time has passed. A missing
@@ -96,7 +96,7 @@ func recordJevTip(path string, now time.Time) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".jev-tip-*.tmp")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".attn-tip-*.tmp")
 	if err != nil {
 		return
 	}

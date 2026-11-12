@@ -48,8 +48,8 @@ var jevCmd = &cobra.Command{
 	GroupID: commandGroupHandoff,
 	Long: "Ask an optional model whether a runtime anomaly affects the current task, and\n" +
 		"whether the next step needs the person's choice.\n\n" +
-		"Off by default. Only `enabled: true` in the owner-only jev.json under\n" +
-		"BERTH_HOME, or a one-shot BERTH_JEV=1 for this process, lets this command\n" +
+		"Off by default. Only `enabled: true` in the owner-only attn.json under\n" +
+		"BERTH_HOME, or a one-shot BERTH_ATTN=1 for this process, lets this command\n" +
 		"contact a provider; a key in the environment supplies the secret but is not\n" +
 		"consent. `oberth status` only publishes `attention_path` when Jev is enabled,\n" +
 		"so its presence already means the person opted in.\n\n" +
@@ -159,9 +159,6 @@ func jevTaskContext() (model.TaskContext, error) {
 func jevResolvedConsent() model.Resolved {
 	input := model.ResolveInputFromEnvironment()
 	input.Settings, input.SettingsPresent, input.SettingsErr = model.LoadLocalConfig()
-	legacy, err := model.ReadLegacyJevKey()
-	input.LegacyKey, input.LegacyErr = legacy, err
-	input.LegacyFound = strings.TrimSpace(legacy) != ""
 	return model.Resolve(input)
 }
 

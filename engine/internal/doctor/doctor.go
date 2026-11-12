@@ -81,7 +81,7 @@ type DaemonInfo struct {
 // every test binary already runs with an isolated HOME (internal/testenv), and
 // reading a real temp file is more honest than faking os.ReadFile.
 type Env struct {
-	// SettingsPath is the owner-only jev.json for this installation.
+	// SettingsPath is the owner-only attn.json for this installation.
 	SettingsPath string
 	// Mode is who is running the checks.
 	Mode Mode

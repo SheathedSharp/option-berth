@@ -90,7 +90,7 @@ func ReasonHint(code string) string {
 	case ReasonDisabled:
 		return "Jev is off; run `oberth jev enable`, or set BERTH_JEV=1 to allow it for this one process"
 	case ReasonInvalidConfig:
-		return "jev.json is not usable; run `oberth jev status` and then `oberth jev enable` to rewrite it"
+		return "attn.json is not usable; run `oberth jev status` and then `oberth jev enable` to rewrite it"
 	case ReasonUnauthorized:
 		return "the provider rejected the key; run `oberth jev enable` to store a current one"
 	case ReasonRateLimited:

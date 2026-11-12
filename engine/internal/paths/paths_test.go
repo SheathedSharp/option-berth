@@ -38,8 +38,7 @@ func TestEverythingIsInTheOneDirectory(t *testing.T) {
 		got  string
 	}{
 		{"config", ConfigPath()},
-		{"Jev settings", JevConfigPath()},
-		{"legacy Jev key", LegacyJevKeyPath()},
+		{"attention settings", AttnConfigPath()},
 		{"database", DB()},
 		{"socket", Socket()},
 		{"log file", LogPath()},

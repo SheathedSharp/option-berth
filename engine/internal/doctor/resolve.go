@@ -56,7 +56,7 @@ func (e *Env) resolvePaths() {
 	resolvePath(&e.ConfigDir, daemon.ConfigDir)
 	resolvePath(&e.SocketPath, daemon.SocketPath)
 	resolvePath(&e.DBPath, store.Path)
-	resolvePath(&e.SettingsPath, paths.JevConfigPath)
+	resolvePath(&e.SettingsPath, paths.AttnConfigPath)
 }
 
 // resolveSeams fills the functions a check calls to see something the doctor

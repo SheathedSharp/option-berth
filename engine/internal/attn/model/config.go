@@ -1,9 +1,10 @@
 package model
 
-// Local Jev configuration is intentionally owned by the optional adapter and
-// the desktop settings page. Keeping it outside config.yaml means generic
-// `oberth config get` output can never echo an API key, while the agent-side
-// runner can still find the setting without a daemon or a shell profile.
+// The local model configuration is intentionally owned by the optional
+// assessment and its setup command. Keeping it outside config.yaml means
+// generic `oberth config get` output can never echo an API key, while the
+// agent-side runner can still find the setting without a daemon or a shell
+// profile.
 
 import (
 	"encoding/json"
@@ -20,7 +21,7 @@ import (
 )
 
 const (
-	LocalConfigSchema = "oberth.jev-config/v1"
+	LocalConfigSchema = "oberth.attn-settings/v1"
 	maxLocalConfig    = 64 * 1024
 	maxLocalKey       = 4096
 	minLocalTimeout   = 250 * time.Millisecond
@@ -40,14 +41,14 @@ type LocalConfig struct {
 	TimeoutMS int    `json:"timeout_ms"`
 }
 
-// LocalConfigPath returns the path shared by the GUI and the adapter.
-func LocalConfigPath() string { return paths.JevConfigPath() }
+// LocalConfigPath returns the path shared by setup commands and isolated runs.
+func LocalConfigPath() string { return paths.AttnConfigPath() }
 
 // LoadLocalConfig reads the local settings file. present distinguishes a
-// missing file from an explicitly disabled file, which is important: once a
-// user turns Jev off, the legacy decide.key must not silently re-enable it.
+// missing file from an explicitly disabled file: once a person turns the
+// assessment off, an environment key must not silently re-enable it.
 func LoadLocalConfig() (cfg LocalConfig, present bool, err error) {
-	return LoadLocalConfigFrom(paths.JevConfigPath())
+	return LoadLocalConfigFrom(paths.AttnConfigPath())
 }
 
 // LoadLocalConfigFrom is injectable for tests and isolated acceptance runs.
@@ -57,29 +58,29 @@ func LoadLocalConfigFrom(path string) (cfg LocalConfig, present bool, err error)
 		if os.IsNotExist(statErr) {
 			return LocalConfig{}, false, nil
 		}
-		return LocalConfig{}, true, fmt.Errorf("reading Jev settings: %w", statErr)
+		return LocalConfig{}, true, fmt.Errorf("reading attention settings: %w", statErr)
 	}
 	if !info.Mode().IsRegular() {
-		return LocalConfig{}, true, errors.New("Jev settings are not a regular file")
+		return LocalConfig{}, true, errors.New("attention settings are not a regular file")
 	}
 	if info.Size() > maxLocalConfig {
-		return LocalConfig{}, true, errors.New("Jev settings file is too large")
+		return LocalConfig{}, true, errors.New("attention settings file is too large")
 	}
 	if err := ownerOnly(path, info.Mode().Perm()); err != nil {
 		return LocalConfig{}, true, err
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return LocalConfig{}, true, fmt.Errorf("reading Jev settings: %w", err)
+		return LocalConfig{}, true, fmt.Errorf("reading attention settings: %w", err)
 	}
 	defer file.Close()
 	decoder := json.NewDecoder(io.LimitReader(file, maxLocalConfig))
 	if err := decoder.Decode(&cfg); err != nil {
-		return LocalConfig{}, true, errors.New("Jev settings are not valid JSON")
+		return LocalConfig{}, true, errors.New("attention settings are not valid JSON")
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
-		return LocalConfig{}, true, errors.New("Jev settings contain more than one JSON value")
+		return LocalConfig{}, true, errors.New("attention settings contain more than one JSON value")
 	}
 	if err := cfg.Validate(); err != nil {
 		return LocalConfig{}, true, err
@@ -92,31 +93,31 @@ func LoadLocalConfigFrom(path string) (cfg LocalConfig, present bool, err error)
 // to the adapter's ordinary unavailable path.
 func (c *LocalConfig) Validate() error {
 	if c.Schema != "" && c.Schema != LocalConfigSchema {
-		return errors.New("Jev settings schema is unsupported")
+		return errors.New("attention settings schema is unsupported")
 	}
 	c.Provider = strings.ToLower(strings.TrimSpace(c.Provider))
 	if c.Provider == "" {
 		c.Provider = "openrouter"
 	}
 	if c.Provider != "openrouter" && c.Provider != "typesafe" {
-		return errors.New("Jev settings provider is unsupported")
+		return errors.New("attention settings provider is unsupported")
 	}
 	c.Endpoint = strings.TrimSpace(c.Endpoint)
 	if c.Endpoint != "" {
 		u, err := url.Parse(c.Endpoint)
 		if err != nil || u.Scheme != "https" || u.Host == "" {
-			return errors.New("Jev settings endpoint must be an HTTPS URL")
+			return errors.New("attention settings endpoint must be an HTTPS URL")
 		}
 	}
 	c.Model = strings.TrimSpace(c.Model)
 	c.APIKey = strings.TrimSpace(c.APIKey)
 	if len(c.APIKey) > maxLocalKey {
-		return errors.New("Jev settings API key is too long")
+		return errors.New("attention settings API key is too long")
 	}
 	if c.TimeoutMS != 0 {
 		timeout := time.Duration(c.TimeoutMS) * time.Millisecond
 		if timeout < minLocalTimeout || timeout > maxLocalTimeout {
-			return errors.New("Jev settings timeout is outside the supported range")
+			return errors.New("attention settings timeout is outside the supported range")
 		}
 	}
 	return nil
@@ -134,45 +135,11 @@ func (c LocalConfig) Timeout() time.Duration {
 	return timeout
 }
 
-// ReadLegacyJevKey retains compatibility with the first adapter prototype.
-// It is only consulted when jev.json is absent; an explicit local settings
-// file, including enabled=false, always wins.
-func ReadLegacyJevKey() (string, error) {
-	path := paths.LegacyJevKeyPath()
-	info, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil
-		}
-		return "", fmt.Errorf("reading legacy Jev key: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return "", errors.New("legacy Jev key is not a regular file")
-	}
-	if err := ownerOnly(path, info.Mode().Perm()); err != nil {
-		return "", err
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return "", fmt.Errorf("reading legacy Jev key: %w", err)
-	}
-	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, maxLocalKey+1))
-	if err != nil {
-		return "", fmt.Errorf("reading legacy Jev key: %w", err)
-	}
-	key := strings.TrimSpace(string(data))
-	if len(key) > maxLocalKey {
-		return "", errors.New("legacy Jev key is too long")
-	}
-	return key, nil
-}
-
 func ownerOnly(path string, mode os.FileMode) error {
 	if runtime.GOOS != "windows" && mode.Perm()&0o077 != 0 {
 		// Do not include the filename in this message: callers can surface it
 		// to an agent without revealing where a user's home is mounted.
-		return errors.New("Jev settings permissions must be owner-only")
+		return errors.New("attention settings permissions must be owner-only")
 	}
 	return nil
 }

@@ -214,7 +214,7 @@ func WriteSettings(path string, cfg LocalConfig) error {
 	if err != nil {
 		return fmt.Errorf("encode settings: %w", err)
 	}
-	tmp, err := os.CreateTemp(dir, ".jev-*.tmp")
+	tmp, err := os.CreateTemp(dir, ".attn-*.tmp")
 	if err != nil {
 		return fmt.Errorf("create temporary settings file: %w", err)
 	}
@@ -271,7 +271,7 @@ func writeDisabledSettings(path string, cfg LocalConfig) error {
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".jev-*.tmp")
+	tmp, err := os.CreateTemp(dir, ".attn-*.tmp")
 	if err != nil {
 		return err
 	}

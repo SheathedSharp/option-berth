@@ -21,7 +21,7 @@ func checkJev(_ context.Context, env *Env) rpc.DoctorCheck {
 		// A malformed file is the one state a person cannot discover from the
 		// outside: it is present, so nothing falls back, and the reason is only
 		// visible here.
-		return warn("Jev settings are not usable", err.Error(),
+		return warn("attention settings are not usable", err.Error(),
 			"run `oberth jev status` to see the resolved state, then `oberth jev enable` to rewrite it")
 	}
 	// OneShot is deliberately empty: this row reports the committed setting, so

@@ -2,9 +2,9 @@ package main
 
 // The adapter's single consent resolution. Every question the old default*
 // helpers answered separately — enabled, provider, endpoint, model, key,
-// timeout, reason — is answered once, by model.Resolve, from the settings file the
-// client writes, the environment, and the legacy key. Flags override the fields
-// they name and nothing else.
+// timeout, reason — is answered once, by model.Resolve, from the settings file
+// the setup command writes and the environment. Flags override the fields they
+// name and nothing else.
 
 import (
 	"flag"
@@ -14,16 +14,13 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/attn/model"
 )
 
-// resolveConsent loads the settings and the legacy key, then applies the flags
-// that were actually given. explicitKey is the parsed --api-key value, and
-// keyProvided distinguishes an explicit empty value (which turns the key off
-// for a harness) from an unset flag.
+// resolveConsent loads the settings, then applies the flags that were actually
+// given. explicitKey is the parsed --api-key value, and keyProvided
+// distinguishes an explicit empty value (which turns the key off for a
+// harness) from an unset flag.
 func resolveConsent(explicitKey string, keyProvided bool) model.Resolved {
 	input := model.ResolveInputFromEnvironment()
 	input.Settings, input.SettingsPresent, input.SettingsErr = model.LoadLocalConfig()
-	legacy, legacyErr := model.ReadLegacyJevKey()
-	input.LegacyKey, input.LegacyErr = legacy, legacyErr
-	input.LegacyFound = strings.TrimSpace(legacy) != ""
 
 	resolved := model.Resolve(input)
 	// --endpoint, --model and --timeout name a field to override. They do not

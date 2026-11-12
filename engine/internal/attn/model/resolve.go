@@ -1,15 +1,14 @@
 package model
 
-// Consent resolution. One function decides every question the adapter used to
-// answer in scattered default* helpers: is Jev enabled, which provider and
-// endpoint, which key, and — when it cannot run — which fixed reason a caller
-// may show.
+// Consent resolution. One function decides every question the caller could
+// otherwise answer in scattered default* helpers: is the assessment enabled,
+// which provider and endpoint, which key, and — when it cannot run — which
+// fixed reason a caller may show.
 //
 // The rule this file encodes: an environment variable is a secret, not consent.
 // A key sitting in a shell profile is not the person saying "send this event to
-// a provider"; only `enabled: true` in the owner-only jev.json, or a single
-// one-shot BERTH_JEV=1 for that process, is. The old decide.key file was never
-// consent either, so it can supply a key but can never switch Jev on.
+// a provider"; only `enabled: true` in the owner-only attn.json, or a single
+// one-shot BERTH_ATTN=1 for that process, is.
 
 import (
 	"os"
@@ -18,27 +17,23 @@ import (
 )
 
 // Source says where an effective setting came from. It is deliberately part of
-// the resolved value: `oberth jev status` reports it, and the migration hint for
-// environment-only users depends on telling the two apart.
+// the resolved value: `oberth attn status` reports it.
 type Source string
 
 const (
 	// SourceNone means nothing configured this setting.
 	SourceNone Source = ""
-	// SourceSettings is the owner-only jev.json the client's settings page writes.
+	// SourceSettings is the owner-only attn.json the setup command writes.
 	SourceSettings Source = "settings"
 	// SourceEnvironment is a provider key or endpoint from the environment.
 	SourceEnvironment Source = "environment"
-	// SourceOneShot is BERTH_JEV=1, consent for this process only.
+	// SourceOneShot is BERTH_ATTN=1, consent for this process only.
 	SourceOneShot Source = "one-shot"
-	// SourceLegacyKey is the pre-settings decide.key file. It can carry a key,
-	// never consent.
-	SourceLegacyKey Source = "legacy_key"
 	// SourceFlag is an explicit command-line flag.
 	SourceFlag Source = "flag"
 )
 
-// Provider names, matching the jev.json provider field.
+// Provider names, matching the attn.json provider field.
 const (
 	ProviderOpenRouter = "openrouter"
 	ProviderTypeSafe   = "typesafe"
@@ -49,9 +44,9 @@ const (
 // value instead of reading os.Getenv inside resolution is what makes the
 // consent matrix table-testable.
 type ResolveInput struct {
-	// OneShot is BERTH_JEV. "1" (or "true") grants consent for this process.
+	// OneShot is BERTH_ATTN. "1" (or "true") grants consent for this process.
 	OneShot string
-	// Settings is the loaded jev.json; Present distinguishes "absent" from
+	// Settings is the loaded attn.json; Present distinguishes "absent" from
 	// "present and enabled: false", which are different answers.
 	Settings        LocalConfig
 	SettingsPresent bool
@@ -65,18 +60,13 @@ type ResolveInput struct {
 	TypeSafeKey   string
 	TypeSafeURL   string
 	TypeSafeMod   string
-	// LegacyKey is decide.key, read only to supply a secret.
-	LegacyKey   string
-	LegacyErr   error
-	LegacyFound bool
 }
 
 // ResolveInputFromEnvironment reads the process environment. It never reads a
-// file: the caller loads settings and the legacy key so an isolated run can
-// point them at its own paths.
+// file, so an isolated run can point settings at its own path.
 func ResolveInputFromEnvironment() ResolveInput {
 	return ResolveInput{
-		OneShot:       strings.TrimSpace(os.Getenv("BERTH_JEV")),
+		OneShot:       strings.TrimSpace(os.Getenv("BERTH_ATTN")),
 		OpenRouterKey: strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")),
 		OpenRouterURL: strings.TrimSpace(os.Getenv("OPENROUTER_ENDPOINT")),
 		OpenRouterMod: strings.TrimSpace(os.Getenv("OPENROUTER_MODEL")),
@@ -92,7 +82,7 @@ type Resolved struct {
 	// Enabled reports whether this process may contact a provider at all.
 	Enabled bool
 	// ConsentSource says which declaration enabled it, so status can explain
-	// why Jev is on without exposing a key.
+	// why the assessment is on without exposing a key.
 	ConsentSource Source
 	// Provider is the selected provider, empty when nothing was configured.
 	Provider string
@@ -101,17 +91,13 @@ type Resolved struct {
 	// Key is the secret to send. It is never logged, copied into telemetry or
 	// written into an attention artifact.
 	Key string
-	// KeySource says where the secret came from, so `oberth jev status` can
+	// KeySource says where the secret came from, so `oberth attn status` can
 	// report "key from environment" without printing the key.
 	KeySource Source
 	Timeout   time.Duration
 	// Reason is the fixed reason code when Enabled is false, and empty when it
 	// is true. See the Reason* constants.
 	Reason string
-	// MigrationHint asks the caller to print the one-line notice that consent
-	// now has to be explicit. It is set for a user who has a usable key from
-	// the environment or decide.key but has never enabled Jev in settings.
-	MigrationHint bool
 }
 
 // Fixed reason codes. Callers may branch on these; they are a closed set so a
@@ -199,11 +185,11 @@ func Resolve(in ResolveInput) Resolved {
 		resolved.Timeout = in.Settings.Timeout()
 	}
 
-	// The key search is independent of consent, so a migration hint can say
-	// "there is a usable key here, you only have to enable Jev". A key found
-	// without consent is then dropped from the value: a disabled Resolved must
-	// not be able to leak a secret into a log line or a JSON document, and the
-	// only thing it was needed for is the boolean below.
+	// The key search is independent of consent so the closed door can be named
+	// precisely. A key found without consent is then dropped from the value: a
+	// disabled Resolved must not be able to leak a secret into a log line or a
+	// JSON document, and the only thing it was needed for is the distinction
+	// below.
 	key, keySource := pickKey(resolved.Provider, in, settingsUsable)
 
 	if resolved.Enabled {
@@ -222,10 +208,6 @@ func Resolve(in ResolveInput) Resolved {
 		resolved.Reason = ReasonDisabled
 	case key != "":
 		resolved.Reason = ReasonDisabled
-		// A key from the environment or decide.key with no declared consent is
-		// the breaking case: those users relied on the old implicit enable. Tell
-		// them once, from the shell, instead of failing silently.
-		resolved.MigrationHint = true
 	default:
 		resolved.Reason = ReasonNoKey
 	}
@@ -252,9 +234,7 @@ func providerEndpointAndModel(provider string, in ResolveInput, settingsUsable b
 }
 
 // pickKey answers where the secret comes from. The environment wins over the
-// stored key, which is the order the adapter already documented and what CI and
-// one-off isolated runs rely on; decide.key comes last because it predates the
-// settings page and can never switch Jev on by itself.
+// stored key, which is what CI and one-off isolated runs rely on.
 func pickKey(provider string, in ResolveInput, settingsUsable bool) (string, Source) {
 	if provider == ProviderTypeSafe && in.TypeSafeKey != "" {
 		return in.TypeSafeKey, SourceEnvironment
@@ -269,8 +249,6 @@ func pickKey(provider string, in ResolveInput, settingsUsable bool) (string, Sou
 		return in.OpenRouterKey, SourceEnvironment
 	case settingsUsable && strings.TrimSpace(in.Settings.APIKey) != "":
 		return strings.TrimSpace(in.Settings.APIKey), SourceSettings
-	case in.LegacyFound && strings.TrimSpace(in.LegacyKey) != "":
-		return strings.TrimSpace(in.LegacyKey), SourceLegacyKey
 	}
 	return "", SourceNone
 }

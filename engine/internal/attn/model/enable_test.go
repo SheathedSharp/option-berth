@@ -62,7 +62,7 @@ func TestEnableKeySources(t *testing.T) {
 
 func TestWriteSettingsIsOwnerOnlyAndAtomic(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "nested", "jev.json")
+	path := filepath.Join(dir, "nested", "attn.json")
 	cfg := LocalConfig{
 		Schema: LocalConfigSchema, Enabled: true, Provider: ProviderOpenRouter,
 		APIKey: "test-key", TimeoutMS: 5000,
@@ -95,7 +95,7 @@ func TestWriteSettingsIsOwnerOnlyAndAtomic(t *testing.T) {
 
 // An empty key is not a configuration: `enable` must not publish one.
 func TestWriteSettingsRefusesAnEmptyKey(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "jev.json")
+	path := filepath.Join(t.TempDir(), "attn.json")
 	if err := WriteSettings(path, LocalConfig{Schema: LocalConfigSchema, Enabled: true}); err == nil {
 		t.Fatal("settings with an empty key were written")
 	}

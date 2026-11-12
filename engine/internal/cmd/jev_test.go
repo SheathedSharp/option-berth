@@ -110,7 +110,7 @@ func TestDisabledConsentProducesNoClient(t *testing.T) {
 	t.Setenv("BERTH_HOME", home)
 	t.Setenv("OPENROUTER_API_KEY", "environment-only-key")
 	t.Setenv("TYPESAFE_API_KEY", "")
-	t.Setenv("BERTH_JEV", "")
+	t.Setenv("BERTH_ATTN", "")
 
 	consent := jevResolvedConsent()
 	if consent.Enabled {

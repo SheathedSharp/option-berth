@@ -152,7 +152,7 @@ func maybePrintJevTip(doc *statusDocument) {
 	}
 	fmt.Fprintln(os.Stdout)
 	fmt.Fprintln(os.Stdout, jevTipLine())
-	recordJevTip(paths.JevTipPath(), now)
+	recordJevTip(paths.AttnTipPath(), now)
 }
 
 // statusDir is the directory a status read is about: the argument, or the

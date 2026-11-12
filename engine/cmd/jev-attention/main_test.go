@@ -59,21 +59,12 @@ func TestConsentComesOnlyFromAnExplicitEnable(t *testing.T) {
 		wantEnabled bool
 		wantReason  string
 		wantKey     string
-		wantMigrate bool
 	}{
 		{
 			name:        "environment key alone is not consent",
 			input:       model.ResolveInput{OpenRouterKey: "env-key"},
 			wantEnabled: false,
 			wantReason:  model.ReasonDisabled,
-			wantMigrate: true,
-		},
-		{
-			name:        "legacy decide.key alone is not consent",
-			input:       model.ResolveInput{LegacyKey: "legacy-key", LegacyFound: true},
-			wantEnabled: false,
-			wantReason:  model.ReasonDisabled,
-			wantMigrate: true,
 		},
 		{
 			name:        "settings enabled is consent and supplies its own key",
@@ -94,17 +85,16 @@ func TestConsentComesOnlyFromAnExplicitEnable(t *testing.T) {
 			wantReason:  model.ReasonDisabled,
 		},
 		{
-			name:        "one-shot BERTH_JEV is consent without a settings file",
+			name:        "one-shot BERTH_ATTN is consent without a settings file",
 			input:       model.ResolveInput{OneShot: "1", TypeSafeKey: "env-key"},
 			wantEnabled: true,
 			wantKey:     "env-key",
 		},
 		{
-			name:        "BERTH_JEV=0 is not consent",
+			name:        "BERTH_ATTN=0 is not consent",
 			input:       model.ResolveInput{OneShot: "0", TypeSafeKey: "env-key"},
 			wantEnabled: false,
 			wantReason:  model.ReasonDisabled,
-			wantMigrate: true,
 		},
 		{
 			name:        "enabled settings with no key anywhere reports no_key",
@@ -130,9 +120,6 @@ func TestConsentComesOnlyFromAnExplicitEnable(t *testing.T) {
 			}
 			if tc.wantKey != "" && got.Key != tc.wantKey {
 				t.Fatalf("key = %q, want %q", got.Key, tc.wantKey)
-			}
-			if got.MigrationHint != tc.wantMigrate {
-				t.Fatalf("migration hint = %v, want %v", got.MigrationHint, tc.wantMigrate)
 			}
 			if !got.Enabled && got.Key != "" {
 				t.Fatalf("a disabled configuration still resolved a key: %q", got.Key)
@@ -178,8 +165,8 @@ func TestLocalJevSettingsSelectOpenRouterDefaults(t *testing.T) {
 	t.Setenv("BERTH_HOME", home)
 	t.Setenv("OPENROUTER_API_KEY", "")
 	t.Setenv("TYPESAFE_API_KEY", "")
-	if err := os.WriteFile(filepath.Join(home, "jev.json"), []byte(`{
-      "schema":"oberth.jev-config/v1",
+	if err := os.WriteFile(filepath.Join(home, "attn.json"), []byte(`{
+      "schema":"oberth.attn-settings/v1",
       "enabled":true,
       "provider":"openrouter",
       "endpoint":"https://local.example/decisions",
@@ -210,10 +197,7 @@ func TestEnvironmentKeySelectsTheProviderButNotConsent(t *testing.T) {
 	t.Setenv("TYPESAFE_API_KEY", "")
 	got := resolveConsent("", false)
 	if got.Enabled {
-		t.Fatalf("an environment key enabled Jev: %+v", got)
-	}
-	if !got.MigrationHint {
-		t.Fatal("an environment-only user did not get the migration hint")
+		t.Fatalf("an environment key enabled the assessment: %+v", got)
 	}
 	if got.Provider != model.ProviderOpenRouter || got.Endpoint != "https://env.example/decisions" || got.Model != "env/jev" {
 		t.Fatalf("provider selection = %+v", got)
@@ -225,7 +209,7 @@ func TestExplicitAPIKeyFlagWinsAndCanDisable(t *testing.T) {
 	t.Setenv("BERTH_HOME", home)
 	t.Setenv("OPENROUTER_API_KEY", "")
 	t.Setenv("TYPESAFE_API_KEY", "")
-	if err := os.WriteFile(filepath.Join(home, "jev.json"), []byte(`{"schema":"oberth.jev-config/v1","enabled":true,"provider":"openrouter","api_key":"local-key"}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(home, "attn.json"), []byte(`{"schema":"oberth.attn-settings/v1","enabled":true,"provider":"openrouter","api_key":"local-key"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if got := resolveConsent("", false); got.Key != "local-key" {

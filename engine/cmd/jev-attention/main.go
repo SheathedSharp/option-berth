@@ -64,8 +64,8 @@ func main() {
 		userApproved   = flag.Bool("user-approved", false, "record that the user approved the proposed action (does not execute it)")
 		_              = flag.String("endpoint", "", "Jev endpoint (defaults to the resolved provider)")
 		_              = flag.String("model", "", "Jev model (defaults to the resolved provider)")
-		apiKey         = flag.String("api-key", "", "API key (defaults to jev.json, then the provider's environment variable; pass an empty value to disable)")
-		_              = flag.Duration("timeout", 0, "remote request timeout (defaults to jev.json or 10s)")
+		apiKey         = flag.String("api-key", "", "API key (defaults to attn.json, then the provider's environment variable; pass an empty value to disable)")
+		_              = flag.Duration("timeout", 0, "remote request timeout (defaults to attn.json or 10s)")
 	)
 	flag.Parse()
 	if *session {
@@ -82,12 +82,6 @@ func main() {
 		}
 	})
 	consent := resolveConsent(*apiKey, apiKeyProvided)
-	// A user who configured a key and nothing else was relying on the old
-	// implicit enable. Say it once per process on stderr instead of failing
-	// quietly; the JSON output stays a single value on stdout.
-	if consent.MigrationHint {
-		fmt.Fprintln(os.Stderr, "jev-attention: Jev now needs explicit consent; environment keys only supply the key. Run `oberth jev enable` once, or set BERTH_JEV=1 for this process.")
-	}
 	if *qualityReport {
 		if *qualitySince < 0 {
 			fail("--since must not be negative")

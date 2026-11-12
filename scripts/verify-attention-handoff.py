@@ -196,11 +196,11 @@ services:
     cmd: \"sh -c 'if test -e .once; then exec sleep 60; else touch .once; exit 1; fi'\"\n"""
         )
         # `status` only publishes the handoff once the person has enabled the
-        # optional enhancement; its presence is what tells an agent Jev is on.
-        # Enable it the way a user would, in this throwaway home.
-        settings = home / "jev.json"
+        # optional enhancement; its presence is what tells an agent the
+        # assessment is on. Enable it the way a user would, in this home.
+        settings = home / "attn.json"
         settings.write_text(
-            '{"schema":"oberth.jev-config/v1","enabled":true,'
+            '{"schema":"oberth.attn-settings/v1","enabled":true,'
             '"provider":"typesafe","api_key":"verification-only"}\n'
         )
         settings.chmod(0o600)
@@ -210,7 +210,7 @@ services:
             raise RuntimeError("fixture unexpectedly started on the first attempt")
 
         status, artifact = wait_for_attention(binary, project, home)
-        if artifact.get("schema") != "oberth.attention/v1":
+        if artifact.get("schema") != "oberth.attn/v1":
             raise RuntimeError(f"unexpected attention schema: {artifact.get('schema')!r}")
         if artifact.get("state_revision") != status.get("attention_revision"):
             raise RuntimeError("status and attention state revisions differ")

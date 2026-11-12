@@ -50,7 +50,7 @@ var jevEnableCmd = &cobra.Command{
 	Long: "One step, in this order: choose a provider, read the key from standard input\n" +
 		"(--key-stdin), an environment variable (--key-env NAME), or a hidden terminal\n" +
 		"prompt; send one synthetic redacted event to prove the key answers; only then\n" +
-		"write the owner-only jev.json. A probe that fails writes nothing and prints the\n" +
+		"write the owner-only attn.json. A probe that fails writes nothing and prints the\n" +
 		"fixed reason, so a typo cannot leave a configuration that breaks every task.\n\n" +
 		"The command finishes by printing exactly what will and will not be sent.",
 	Args: cobra.NoArgs,
@@ -69,7 +69,7 @@ var jevTestCmd = &cobra.Command{
 var jevDisableCmd = &cobra.Command{
 	Use:   "disable",
 	Short: "Stop using Jev but keep the stored key",
-	Long: "Turn the assessment off. The key stays in jev.json unless --forget is given, so\n" +
+	Long: "Turn the assessment off. The key stays in attn.json unless --forget is given, so\n" +
 		"enabling again does not need it typed a second time. --forget removes it.",
 	Args: cobra.NoArgs,
 	RunE: runJevDisable,
@@ -204,7 +204,7 @@ func runJevEnable(cmd *cobra.Command, _ []string) error {
 			fmt.Sprintf("the provider did not accept this key (%s)", probe.Reason),
 			probe.Text)
 	}
-	path := paths.JevConfigPath()
+	path := paths.AttnConfigPath()
 	if err := model.WriteSettings(path, next); err != nil {
 		return err
 	}
@@ -279,7 +279,7 @@ func runJevDisable(cmd *cobra.Command, _ []string) error {
 			return "Jev: already off"
 		})
 	}
-	path := paths.JevConfigPath()
+	path := paths.AttnConfigPath()
 	if err := model.DisableSettings(path, cfg, jevDisableForget); err != nil {
 		return err
 	}
