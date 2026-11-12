@@ -84,7 +84,7 @@ def choose(explicit: str | None) -> str:
     return choice
 
 
-def verify_subscription(adapter: Path, project: Path, home: Path) -> None:
+def verify_subscription(adapter: Path, binary: Path, project: Path, home: Path) -> None:
     """Exercise the built binary's long-lived NDJSON subscription path."""
     env = os.environ.copy()
     env["BERTH_HOME"] = str(home)
@@ -92,6 +92,8 @@ def verify_subscription(adapter: Path, project: Path, home: Path) -> None:
         [
             str(adapter),
             "--subscribe",
+            "--oberth",
+            str(binary),
             "--project",
             str(project),
             "--interval",
@@ -148,7 +150,7 @@ def verify_quality_telemetry(
     feedback.write_text(
         json.dumps(
             {
-                "schema": "oberth.attention.feedback/v1",
+                "schema": "oberth.attn.feedback/v1",
                 "event_id": event_id,
                 "state_revision": state_revision,
                 "worktree_id": worktree_id,
@@ -225,6 +227,8 @@ services:
             project,
             home,
             "--auto",
+            "--oberth",
+            str(binary),
             "--project",
             str(project),
             "--task",
@@ -240,7 +244,7 @@ services:
         after_fallback = json.loads(Path(status["attn_path"]).read_text())
         if "assessment" in after_fallback:
             raise RuntimeError("fallback unexpectedly changed the fact-only artifact")
-        verify_subscription(adapter, project, home)
+        verify_subscription(adapter, binary, project, home)
 
         choice = choose(args.choice)
         if choice not in options:
