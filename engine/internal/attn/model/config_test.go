@@ -20,7 +20,7 @@ func TestLoadLocalConfigValidatesAndTrims(t *testing.T) {
 	path := writeLocalConfig(t, `{
       "schema":"oberth.attn-settings/v1",
       "enabled":true,
-      "provider":" OpenRouter ",
+      "preset":" OpenRouter ",
       "endpoint":"https://openrouter.example/decisions",
       "model":" typesafe/jev-1.13 ",
       "api_key":"  sk-test  ",
@@ -30,7 +30,7 @@ func TestLoadLocalConfigValidatesAndTrims(t *testing.T) {
 	if err != nil || !present {
 		t.Fatalf("load = %+v, present=%v, err=%v", cfg, present, err)
 	}
-	if !cfg.Enabled || cfg.Provider != "openrouter" || cfg.APIKey != "sk-test" {
+	if !cfg.Enabled || cfg.Preset != "openrouter" || cfg.APIKey != "sk-test" {
 		t.Fatalf("normalized config = %+v", cfg)
 	}
 	if cfg.Timeout() != 12*time.Second {

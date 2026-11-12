@@ -64,7 +64,8 @@ func TestWriteSettingsIsOwnerOnlyAndAtomic(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "nested", "attn.json")
 	cfg := LocalConfig{
-		Schema: LocalConfigSchema, Enabled: true, Provider: ProviderOpenRouter,
+		Schema: LocalConfigSchema, Enabled: true, Preset: "openrouter",
+		Endpoint: "https://assess.example/decisions", Model: "test/model",
 		APIKey: "test-key", TimeoutMS: 5000,
 	}
 	if err := WriteSettings(path, cfg); err != nil {
@@ -96,7 +97,7 @@ func TestWriteSettingsIsOwnerOnlyAndAtomic(t *testing.T) {
 // An empty key is not a configuration: `enable` must not publish one.
 func TestWriteSettingsRefusesAnEmptyKey(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "attn.json")
-	if err := WriteSettings(path, LocalConfig{Schema: LocalConfigSchema, Enabled: true}); err == nil {
+	if err := WriteSettings(path, LocalConfig{Schema: LocalConfigSchema, Enabled: true, Endpoint: "https://assess.example/decisions", Model: "test/model"}); err == nil {
 		t.Fatal("settings with an empty key were written")
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -106,7 +107,7 @@ func TestWriteSettingsRefusesAnEmptyKey(t *testing.T) {
 
 func TestDisableKeepsOrForgetsTheKey(t *testing.T) {
 	dir := t.TempDir()
-	cfg := LocalConfig{Schema: LocalConfigSchema, Enabled: true, Provider: ProviderOpenRouter, APIKey: "kept-key"}
+	cfg := LocalConfig{Schema: LocalConfigSchema, Enabled: true, Preset: "openrouter", Endpoint: "https://assess.example/decisions", Model: "test/model", APIKey: "kept-key"}
 
 	kept := filepath.Join(dir, "kept.json")
 	if err := DisableSettings(kept, cfg, false); err != nil {
@@ -147,7 +148,7 @@ func TestProbeOnceSucceedsAndClassifiesFailures(t *testing.T) {
 			"needs_human":{"type":"noul","noul":0.8}}}`))
 	}))
 	defer good.Close()
-	cfg := LocalConfig{Provider: ProviderTypeSafe, Endpoint: good.URL, APIKey: "k", TimeoutMS: 3000}
+	cfg := LocalConfig{Endpoint: good.URL, Model: "test/model", APIKey: "k", TimeoutMS: 3000}
 	result := ProbeWithClient(context.Background(), cfg, good.Client())
 	if !result.OK {
 		t.Fatalf("probe failed: %+v", result)
@@ -160,7 +161,7 @@ func TestProbeOnceSucceedsAndClassifiesFailures(t *testing.T) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer bad.Close()
-	result = ProbeWithClient(context.Background(), LocalConfig{Provider: ProviderTypeSafe, Endpoint: bad.URL, APIKey: "k", TimeoutMS: 3000}, bad.Client())
+	result = ProbeWithClient(context.Background(), LocalConfig{Endpoint: bad.URL, Model: "test/model", APIKey: "k", TimeoutMS: 3000}, bad.Client())
 	if result.OK || result.Reason != ReasonUnauthorized {
 		t.Fatalf("failed probe = %+v, want unauthorized", result)
 	}

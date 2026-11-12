@@ -51,8 +51,9 @@ func TestLoadContextFileAndFlagOverrides(t *testing.T) {
 // permission. These tables pin the rule the old default* helpers encoded by
 // accident — environment keys used to switch model on by their mere presence.
 func TestConsentComesOnlyFromAnExplicitEnable(t *testing.T) {
-	enabled := model.LocalConfig{Schema: model.LocalConfigSchema, Enabled: true, Provider: "openrouter", APIKey: "settings-key"}
-	disabled := model.LocalConfig{Schema: model.LocalConfigSchema, Enabled: false, Provider: "openrouter", APIKey: "settings-key"}
+	const endpoint, modelName = "https://assess.example/decisions", "test/model"
+	enabled := model.LocalConfig{Schema: model.LocalConfigSchema, Enabled: true, Preset: "openrouter", Endpoint: endpoint, Model: modelName, APIKey: "settings-key"}
+	disabled := model.LocalConfig{Schema: model.LocalConfigSchema, Enabled: false, Preset: "openrouter", Endpoint: endpoint, Model: modelName, APIKey: "settings-key"}
 	cases := []struct {
 		name        string
 		input       model.ResolveInput
@@ -62,7 +63,7 @@ func TestConsentComesOnlyFromAnExplicitEnable(t *testing.T) {
 	}{
 		{
 			name:        "environment key alone is not consent",
-			input:       model.ResolveInput{OpenRouterKey: "env-key"},
+			input:       model.ResolveInput{Key: "env-key"},
 			wantEnabled: false,
 			wantReason:  model.ReasonDisabled,
 		},
@@ -74,37 +75,37 @@ func TestConsentComesOnlyFromAnExplicitEnable(t *testing.T) {
 		},
 		{
 			name:        "settings enabled falls back to the environment key",
-			input:       model.ResolveInput{Settings: enabled, SettingsPresent: true, OpenRouterKey: "env-key"},
+			input:       model.ResolveInput{Settings: enabled, SettingsPresent: true, Key: "env-key"},
 			wantEnabled: true,
 			wantKey:     "env-key",
 		},
 		{
 			name:        "explicitly disabled settings are not overridden by a key",
-			input:       model.ResolveInput{Settings: disabled, SettingsPresent: true, OpenRouterKey: "env-key"},
+			input:       model.ResolveInput{Settings: disabled, SettingsPresent: true, Key: "env-key"},
 			wantEnabled: false,
 			wantReason:  model.ReasonDisabled,
 		},
 		{
 			name:        "one-shot BERTH_ATTN is consent without a settings file",
-			input:       model.ResolveInput{OneShot: "1", TypeSafeKey: "env-key"},
+			input:       model.ResolveInput{OneShot: "1", Endpoint: endpoint, Model: modelName, Key: "env-key"},
 			wantEnabled: true,
 			wantKey:     "env-key",
 		},
 		{
 			name:        "BERTH_ATTN=0 is not consent",
-			input:       model.ResolveInput{OneShot: "0", TypeSafeKey: "env-key"},
+			input:       model.ResolveInput{OneShot: "0", Endpoint: endpoint, Model: modelName, Key: "env-key"},
 			wantEnabled: false,
 			wantReason:  model.ReasonDisabled,
 		},
 		{
 			name:        "enabled settings with no key anywhere reports no_key",
-			input:       model.ResolveInput{Settings: model.LocalConfig{Schema: model.LocalConfigSchema, Enabled: true, Provider: "typesafe"}, SettingsPresent: true},
+			input:       model.ResolveInput{Settings: model.LocalConfig{Schema: model.LocalConfigSchema, Enabled: true, Endpoint: endpoint, Model: modelName}, SettingsPresent: true},
 			wantEnabled: true,
 			wantReason:  model.ReasonNoKey,
 		},
 		{
 			name:        "a malformed settings file is a closed door, not a fallthrough",
-			input:       model.ResolveInput{SettingsPresent: true, SettingsErr: errors.New("bad json"), OpenRouterKey: "env-key"},
+			input:       model.ResolveInput{SettingsPresent: true, SettingsErr: errors.New("bad json"), Key: "env-key"},
 			wantEnabled: false,
 			wantReason:  model.ReasonInvalidConfig,
 		},
@@ -129,23 +130,24 @@ func TestConsentComesOnlyFromAnExplicitEnable(t *testing.T) {
 }
 
 func TestResolvedClientRefusesWithoutConsent(t *testing.T) {
-	withoutConsent := model.Resolved{Key: "k", Endpoint: model.DefaultEndpoint, Reason: model.ReasonDisabled}
+	withoutConsent := model.Resolved{Key: "k", Endpoint: "https://assess.example/decisions", Model: "test/model", Reason: model.ReasonDisabled}
 	if _, err := withoutConsent.Client(); err == nil {
 		t.Fatal("a disabled configuration produced a client")
 	}
-	enabled := model.Resolved{Enabled: true, Key: "k", Endpoint: model.DefaultEndpoint, Model: model.DefaultModel, Timeout: time.Second}
+	enabled := model.Resolved{Enabled: true, Key: "k", Endpoint: "https://assess.example/decisions", Model: "test/model", Timeout: time.Second}
 	client, err := enabled.Client()
 	if err != nil {
 		t.Fatalf("enabled configuration: %v", err)
 	}
-	if client.APIKey != "k" || client.Endpoint != model.DefaultEndpoint {
+	if client.APIKey != "k" || client.Endpoint != "https://assess.example/decisions" {
 		t.Fatalf("client = %+v", client)
 	}
 }
 
 func TestRedactedStateNeverCarriesTheKey(t *testing.T) {
 	resolved := model.Resolve(model.ResolveInput{Settings: model.LocalConfig{
-		Schema: model.LocalConfigSchema, Enabled: true, Provider: "openrouter", APIKey: "secret-key",
+		Schema: model.LocalConfigSchema, Enabled: true, Preset: "openrouter",
+		Endpoint: "https://assess.example/decisions", Model: "test/model", APIKey: "secret-key",
 	}, SettingsPresent: true})
 	state := resolved.RedactedState()
 	encoded, err := json.Marshal(state)
@@ -160,24 +162,23 @@ func TestRedactedStateNeverCarriesTheKey(t *testing.T) {
 	}
 }
 
-func TestLocalJevSettingsSelectOpenRouterDefaults(t *testing.T) {
+func TestLocalSettingsSupplyEndpointModelAndKey(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("BERTH_HOME", home)
-	t.Setenv("OPENROUTER_API_KEY", "")
-	t.Setenv("TYPESAFE_API_KEY", "")
+	t.Setenv("BERTH_ATTN_KEY", "")
 	if err := os.WriteFile(filepath.Join(home, "attn.json"), []byte(`{
       "schema":"oberth.attn-settings/v1",
       "enabled":true,
-      "provider":"openrouter",
+      "preset":"openrouter",
       "endpoint":"https://local.example/decisions",
-      "model":"local/jev",
+      "model":"local/model",
       "api_key":"local-key",
       "timeout_ms":5000
     }`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	got := resolveConsent("", false)
-	if !got.Enabled || got.Endpoint != "https://local.example/decisions" || got.Model != "local/jev" {
+	if !got.Enabled || got.Preset != "openrouter" || got.Endpoint != "https://local.example/decisions" || got.Model != "local/model" {
 		t.Fatalf("resolved = %+v", got)
 	}
 	if got.Key != "local-key" || got.Timeout != 5*time.Second {
@@ -188,28 +189,29 @@ func TestLocalJevSettingsSelectOpenRouterDefaults(t *testing.T) {
 	}
 }
 
-func TestEnvironmentKeySelectsTheProviderButNotConsent(t *testing.T) {
+func TestEnvironmentFieldsSupplyEndpointAndModelButNotConsent(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("BERTH_HOME", home)
-	t.Setenv("OPENROUTER_API_KEY", "environment-key")
-	t.Setenv("OPENROUTER_ENDPOINT", "https://env.example/decisions")
-	t.Setenv("OPENROUTER_MODEL", "env/jev")
-	t.Setenv("TYPESAFE_API_KEY", "")
+	t.Setenv("BERTH_ATTN_KEY", "environment-key")
+	t.Setenv("BERTH_ATTN_ENDPOINT", "https://env.example/decisions")
+	t.Setenv("BERTH_ATTN_MODEL", "env/model")
 	got := resolveConsent("", false)
 	if got.Enabled {
 		t.Fatalf("an environment key enabled the assessment: %+v", got)
 	}
-	if got.Provider != model.ProviderOpenRouter || got.Endpoint != "https://env.example/decisions" || got.Model != "env/jev" {
-		t.Fatalf("provider selection = %+v", got)
+	if got.Endpoint != "https://env.example/decisions" || got.Model != "env/model" {
+		t.Fatalf("environment fields = %+v", got)
+	}
+	if got.Key != "" {
+		t.Fatalf("a disabled configuration leaked the key: %q", got.Key)
 	}
 }
 
 func TestExplicitAPIKeyFlagWinsAndCanDisable(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("BERTH_HOME", home)
-	t.Setenv("OPENROUTER_API_KEY", "")
-	t.Setenv("TYPESAFE_API_KEY", "")
-	if err := os.WriteFile(filepath.Join(home, "attn.json"), []byte(`{"schema":"oberth.attn-settings/v1","enabled":true,"provider":"openrouter","api_key":"local-key"}`), 0o600); err != nil {
+	t.Setenv("BERTH_ATTN_KEY", "")
+	if err := os.WriteFile(filepath.Join(home, "attn.json"), []byte(`{"schema":"oberth.attn-settings/v1","enabled":true,"preset":"openrouter","endpoint":"https://assess.example/decisions","model":"test/model","api_key":"local-key"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if got := resolveConsent("", false); got.Key != "local-key" {
@@ -244,7 +246,7 @@ func TestRunPreflightWritesFactRequestWhenModelUnavailable(t *testing.T) {
 	}
 	t.Setenv("BERTH_HOME", home)
 	// No consent: the request must still be written, and no provider contacted.
-	disabled := model.Resolved{Endpoint: model.DefaultEndpoint, Model: model.DefaultModel, Timeout: time.Second, Reason: model.ReasonDisabled}
+	disabled := model.Resolved{Endpoint: "https://assess.example/decisions", Model: "test/model", Timeout: time.Second, Reason: model.ReasonDisabled}
 	if err := runPreflight(statusPath, "", "restart_service", "api", "", "ask before restart", false, disabled, model.TaskContext{}); err != nil {
 		t.Fatal(err)
 	}

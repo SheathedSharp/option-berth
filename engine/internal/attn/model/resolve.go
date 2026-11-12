@@ -2,13 +2,17 @@ package model
 
 // Consent resolution. One function decides every question the caller could
 // otherwise answer in scattered default* helpers: is the assessment enabled,
-// which provider and endpoint, which key, and — when it cannot run — which
-// fixed reason a caller may show.
+// which endpoint and model, which key, and — when it cannot run — which fixed
+// reason a caller may show.
 //
 // The rule this file encodes: an environment variable is a secret, not consent.
 // A key sitting in a shell profile is not the person saying "send this event to
 // a provider"; only `enabled: true` in the owner-only attn.json, or a single
 // one-shot BERTH_ATTN=1 for that process, is.
+//
+// Endpoint, model and key are three independent fields. Nothing here selects a
+// provider: a preset only fills defaults while the setup command writes the
+// file, and the environment overrides those same fields per process.
 
 import (
 	"os"
@@ -25,18 +29,12 @@ const (
 	SourceNone Source = ""
 	// SourceSettings is the owner-only attn.json the setup command writes.
 	SourceSettings Source = "settings"
-	// SourceEnvironment is a provider key or endpoint from the environment.
+	// SourceEnvironment is a key, endpoint or model from the environment.
 	SourceEnvironment Source = "environment"
 	// SourceOneShot is BERTH_ATTN=1, consent for this process only.
 	SourceOneShot Source = "one-shot"
 	// SourceFlag is an explicit command-line flag.
 	SourceFlag Source = "flag"
-)
-
-// Provider names, matching the attn.json provider field.
-const (
-	ProviderOpenRouter = "openrouter"
-	ProviderTypeSafe   = "typesafe"
 )
 
 // ResolveInput is everything the environment can contribute. Tests set it
@@ -53,26 +51,20 @@ type ResolveInput struct {
 	// SettingsErr is a malformed or unsafe settings file. It is reported as
 	// invalid configuration, never silently ignored.
 	SettingsErr error
-	// Environment provider keys. A non-empty key is what selects a provider.
-	OpenRouterKey string
-	OpenRouterURL string
-	OpenRouterMod string
-	TypeSafeKey   string
-	TypeSafeURL   string
-	TypeSafeMod   string
+	// Endpoint, Model and Key override the stored fields for this process.
+	Endpoint string
+	Model    string
+	Key      string
 }
 
 // ResolveInputFromEnvironment reads the process environment. It never reads a
 // file, so an isolated run can point settings at its own path.
 func ResolveInputFromEnvironment() ResolveInput {
 	return ResolveInput{
-		OneShot:       strings.TrimSpace(os.Getenv("BERTH_ATTN")),
-		OpenRouterKey: strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")),
-		OpenRouterURL: strings.TrimSpace(os.Getenv("OPENROUTER_ENDPOINT")),
-		OpenRouterMod: strings.TrimSpace(os.Getenv("OPENROUTER_MODEL")),
-		TypeSafeKey:   strings.TrimSpace(os.Getenv("TYPESAFE_API_KEY")),
-		TypeSafeURL:   strings.TrimSpace(os.Getenv("TYPESAFE_ENDPOINT")),
-		TypeSafeMod:   strings.TrimSpace(os.Getenv("TYPESAFE_MODEL")),
+		OneShot:  strings.TrimSpace(os.Getenv("BERTH_ATTN")),
+		Endpoint: strings.TrimSpace(os.Getenv("BERTH_ATTN_ENDPOINT")),
+		Model:    strings.TrimSpace(os.Getenv("BERTH_ATTN_MODEL")),
+		Key:      strings.TrimSpace(os.Getenv("BERTH_ATTN_KEY")),
 	}
 }
 
@@ -84,8 +76,9 @@ type Resolved struct {
 	// ConsentSource says which declaration enabled it, so status can explain
 	// why the assessment is on without exposing a key.
 	ConsentSource Source
-	// Provider is the selected provider, empty when nothing was configured.
-	Provider string
+	// Preset is the setup label stored with the configuration, if any. It has
+	// no effect on resolution; endpoint and model are already explicit.
+	Preset   string
 	Endpoint string
 	Model    string
 	// Key is the secret to send. It is never logged, copied into telemetry or
@@ -115,7 +108,7 @@ const (
 	ReasonStale         = "stale"
 )
 
-// oneShotConsent reports whether BERTH_JEV grants consent for this process.
+// oneShotConsent reports whether BERTH_ATTN grants consent for this process.
 // Only an explicit affirmative counts; "0", "false" and any other value do not.
 func oneShotConsent(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
@@ -126,23 +119,20 @@ func oneShotConsent(value string) bool {
 	}
 }
 
-// Resolve applies the consent rule and picks one provider. A malformed
-// settings file is a closed door with a reason, not a fall-through to
-// whatever the environment happens to hold.
+// Resolve applies the consent rule and returns the three explicit fields. A
+// malformed settings file is a closed door with a reason, not a fall-through
+// to whatever the environment happens to hold.
 func Resolve(in ResolveInput) Resolved {
 	resolved := Resolved{Timeout: DefaultTimeout}
 
 	settingsUsable := in.SettingsPresent && in.SettingsErr == nil
 	if in.SettingsErr != nil {
-		resolved.Provider = ProviderTypeSafe
-		resolved.Endpoint = firstNonEmpty(in.TypeSafeURL, DefaultEndpoint)
-		resolved.Model = firstNonEmpty(in.TypeSafeMod, DefaultModel)
 		resolved.Reason = ReasonInvalidConfig
 		return resolved
 	}
 
-	// Consent is decided first and on its own. Everything below this block is
-	// about which provider to use, never about whether it is allowed to run.
+	// Consent is decided first and on its own. Everything below is about which
+	// fields to use, never about whether the call is allowed to run.
 	switch {
 	case settingsUsable && in.Settings.Enabled:
 		resolved.Enabled, resolved.ConsentSource = true, SourceSettings
@@ -157,43 +147,28 @@ func Resolve(in ResolveInput) Resolved {
 		resolved.Reason = ReasonDisabled
 	}
 
-	provider := ""
 	if settingsUsable {
-		provider = strings.ToLower(strings.TrimSpace(in.Settings.Provider))
-	}
-	// The environment may name the provider by supplying its key. It does not
-	// grant consent, but once consent exists the key says which provider the
-	// secret belongs to.
-	if provider == "" {
-		switch {
-		case in.OpenRouterKey != "":
-			provider = ProviderOpenRouter
-		case in.TypeSafeKey != "":
-			provider = ProviderTypeSafe
-		}
-	}
-	if provider == "" && settingsUsable {
-		provider = strings.ToLower(strings.TrimSpace(in.Settings.Provider))
-	}
-	resolved.Provider = provider
-	if resolved.Provider == "" {
-		resolved.Provider = ProviderTypeSafe
-	}
-
-	resolved.Endpoint, resolved.Model = providerEndpointAndModel(resolved.Provider, in, settingsUsable)
-	if settingsUsable && in.Settings.Timeout() > 0 {
+		resolved.Preset = in.Settings.Preset
+		resolved.Endpoint = in.Settings.Endpoint
+		resolved.Model = in.Settings.Model
 		resolved.Timeout = in.Settings.Timeout()
 	}
+	resolved.Endpoint = firstNonEmpty(in.Endpoint, resolved.Endpoint)
+	resolved.Model = firstNonEmpty(in.Model, resolved.Model)
 
 	// The key search is independent of consent so the closed door can be named
 	// precisely. A key found without consent is then dropped from the value: a
 	// disabled Resolved must not be able to leak a secret into a log line or a
 	// JSON document, and the only thing it was needed for is the distinction
 	// below.
-	key, keySource := pickKey(resolved.Provider, in, settingsUsable)
+	key, keySource := pickKey(in, settingsUsable)
 
 	if resolved.Enabled {
 		resolved.Key, resolved.KeySource = key, keySource
+		if resolved.Endpoint == "" || resolved.Model == "" {
+			resolved.Reason = ReasonInvalidConfig
+			return resolved
+		}
 		if resolved.Key == "" {
 			resolved.Reason = ReasonNoKey
 		}
@@ -214,40 +189,13 @@ func Resolve(in ResolveInput) Resolved {
 	return resolved
 }
 
-func providerEndpointAndModel(provider string, in ResolveInput, settingsUsable bool) (string, string) {
-	if provider == ProviderOpenRouter {
-		endpoint := DefaultOpenRouterEndpoint
-		model := DefaultOpenRouterModel
-		if settingsUsable && strings.EqualFold(in.Settings.Provider, ProviderOpenRouter) {
-			endpoint = firstNonEmpty(in.Settings.Endpoint, endpoint)
-			model = firstNonEmpty(in.Settings.Model, model)
-		}
-		return firstNonEmpty(in.OpenRouterURL, endpoint), firstNonEmpty(in.OpenRouterMod, model)
-	}
-	endpoint := DefaultEndpoint
-	model := DefaultModel
-	if settingsUsable && !strings.EqualFold(in.Settings.Provider, ProviderOpenRouter) {
-		endpoint = firstNonEmpty(in.Settings.Endpoint, endpoint)
-		model = firstNonEmpty(in.Settings.Model, model)
-	}
-	return firstNonEmpty(in.TypeSafeURL, endpoint), firstNonEmpty(in.TypeSafeMod, model)
-}
-
 // pickKey answers where the secret comes from. The environment wins over the
 // stored key, which is what CI and one-off isolated runs rely on.
-func pickKey(provider string, in ResolveInput, settingsUsable bool) (string, Source) {
-	if provider == ProviderTypeSafe && in.TypeSafeKey != "" {
-		return in.TypeSafeKey, SourceEnvironment
+func pickKey(in ResolveInput, settingsUsable bool) (string, Source) {
+	if in.Key != "" {
+		return in.Key, SourceEnvironment
 	}
-	if provider == ProviderOpenRouter && in.OpenRouterKey != "" {
-		return in.OpenRouterKey, SourceEnvironment
-	}
-	switch {
-	case in.TypeSafeKey != "":
-		return in.TypeSafeKey, SourceEnvironment
-	case in.OpenRouterKey != "":
-		return in.OpenRouterKey, SourceEnvironment
-	case settingsUsable && strings.TrimSpace(in.Settings.APIKey) != "":
+	if settingsUsable && strings.TrimSpace(in.Settings.APIKey) != "" {
 		return strings.TrimSpace(in.Settings.APIKey), SourceSettings
 	}
 	return "", SourceNone
@@ -260,6 +208,9 @@ func (r Resolved) Client() (Client, error) {
 	if !r.Enabled {
 		return Client{}, ErrUnavailable
 	}
+	if strings.TrimSpace(r.Endpoint) == "" || strings.TrimSpace(r.Model) == "" {
+		return Client{}, WithReason(ReasonInvalidConfig, ErrUnavailable)
+	}
 	if strings.TrimSpace(r.Key) == "" {
 		return Client{}, ErrUnavailable
 	}
@@ -271,12 +222,14 @@ func (r Resolved) Client() (Client, error) {
 func (r Resolved) RedactedState() map[string]any {
 	state := map[string]any{
 		"enabled":        r.Enabled,
-		"provider":       r.Provider,
 		"endpoint":       r.Endpoint,
 		"model":          r.Model,
 		"timeout_ms":     r.Timeout.Milliseconds(),
 		"key_source":     string(r.KeySource),
 		"consent_source": string(r.ConsentSource),
+	}
+	if r.Preset != "" {
+		state["preset"] = r.Preset
 	}
 	if r.Reason != "" {
 		state["reason"] = r.Reason

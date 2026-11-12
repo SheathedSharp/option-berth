@@ -20,29 +20,35 @@ same object the agent already parsed:
 `engine/cmd/jev-attention` remains as a thin shell over the same runner package
 (`internal/attn/runner`) while existing scripts and the installed skill catch up.
 
-The adapter supports TypeSafe's endpoint and OpenRouter's Jev Decisions API.
-For OpenRouter, use `POST https://openrouter.ai/api/alpha/decisions` with the
-`typesafe/jev-1.13` model. Both endpoints accept the same structured `state`,
-model, and typed `questions`; responses contain typed `answers`. The adapter
-uses two `noul` questions (`task_relevant`, `needs_human`) and a `choice`
-question for the authorized fixed options. See the [OpenRouter Jev guide](https://openrouter.ai/blog/insights/what-is-jev/)
+The adapter speaks one wire contract: a structured `state`, `model` and typed
+`questions` request, answered with typed `answers`. TypeSafe's endpoint and
+OpenRouter's Jev Decisions API both implement it; any other endpoint that
+implements the same shape works too. Endpoint, model and key are independent
+fields — the `openrouter` and `typesafe` presets only fill the first two while
+you configure, and are never consulted at runtime. The adapter uses two `noul`
+questions (`task_relevant`, `needs_human`) and a `choice` question for the
+authorized fixed options. See the [OpenRouter Jev guide](https://openrouter.ai/blog/insights/what-is-jev/)
 and [TypeSafe API reference](https://docs.typesafe.ai/api/) for the upstream
 wire contract.
 
 ## Turning it on
 
-`oberth attn enable` is the one step, in this order: choose a provider, read the
-key, prove the key answers, then write the owner-only file.
+`oberth attn enable` is the one step, in this order: give an endpoint and model
+(directly, or through a preset that fills both), read the key, prove the key
+answers, then write the owner-only file.
 
 ```sh
 # a script or CI job: the key never appears in an argument list
-printf '%s' "$KEY" | oberth attn enable --provider openrouter --key-stdin
+printf '%s' "$KEY" | oberth attn enable --preset openrouter --key-stdin
 
 # read it from an existing variable
-oberth attn enable --provider typesafe --key-env TYPESAFE_API_KEY
+oberth attn enable --preset typesafe --key-env ATTN_KEY
+
+# any compatible endpoint: no preset, explicit fields
+oberth attn enable --endpoint https://assess.example/decisions --model team/model --key-env ATTN_KEY
 
 # a person at a terminal: hidden input
-oberth attn enable --provider openrouter
+oberth attn enable --preset openrouter
 ```
 
 The proof is one synthetic, redacted assessment — the same request shape a real
@@ -126,12 +132,10 @@ assessment handoffs, and `stopped` when the agent cancels the process. It polls
 `oberth status --json --no-mark`, so the daemon and core CLI remain model free
 and no hook or MCP registration is needed.
 
-When `OPENROUTER_API_KEY` is present, the adapter selects
-`https://openrouter.ai/api/alpha/decisions` and `typesafe/jev-1.13`
-automatically. `OPENROUTER_ENDPOINT` and `OPENROUTER_MODEL` can override
-those defaults. `TYPESAFE_API_KEY`, `TYPESAFE_ENDPOINT`, and `TYPESAFE_MODEL`
-remain available for the native TypeSafe endpoint. Never put either provider's
-key in a repository file or a task-context JSON file.
+For CI and one-off runs the same three fields come from the environment:
+`BERTH_ATTN_ENDPOINT`, `BERTH_ATTN_MODEL` and `BERTH_ATTN_KEY`. They override
+the stored fields for that process only. Never put a key in a repository file or
+a task-context JSON file.
 
 ### An environment key is a secret, not consent
 
@@ -143,12 +147,11 @@ to be sent to a provider. Only two things turn the assessment on:
 | `"enabled": true` in the owner-only `attn.json` | every process that shares this `BERTH_HOME` |
 | `BERTH_ATTN=1` (`true`, `yes` or `on`) | this process only, for CI and one-off runs |
 
-Everything else only supplies settings: `OPENROUTER_API_KEY` / `TYPESAFE_API_KEY`
-and their endpoint/model variables pick the provider and the secret. An
-`attn.json` that says `"enabled": false` is a decision the person already made,
-so an environment key does not override it. One resolution function decides all
-of this, and the setup command's `--endpoint`, `--model` and `--timeout` change
-the field they name without granting consent.
+Everything else only supplies settings: `BERTH_ATTN_ENDPOINT`,
+`BERTH_ATTN_MODEL` and `BERTH_ATTN_KEY` change the field they name and never
+grant consent. An `attn.json` that says `"enabled": false` is a decision the
+person already made, so an environment key does not override it. One resolution
+function decides all of this.
 
 ### Fixed reasons instead of provider text
 
@@ -169,7 +172,7 @@ at `~/.option-berth/attn.json` (or `$BERTH_HOME/attn.json` in an isolated run):
 {
   "schema": "oberth.attn-settings/v1",
   "enabled": true,
-  "provider": "openrouter",
+  "preset": "openrouter",
   "endpoint": "https://openrouter.ai/api/alpha/decisions",
   "model": "typesafe/jev-1.13",
   "api_key": "…",
@@ -179,9 +182,9 @@ at `~/.option-berth/attn.json` (or `$BERTH_HOME/attn.json` in an isolated run):
 
 The adapter reads this file automatically, so an agent does not need to
 re-export a shell variable for every task. This file is the only persistent
-consent: an explicit `OPENROUTER_API_KEY` or `TYPESAFE_API_KEY` supplies the key
-and selects the provider but does not enable the model, and `enabled: false`
-keeps it off even when a key is present in the environment. The key never
+consent: an environment key supplies the secret but does not enable the model,
+and `enabled: false` keeps it off even when a key is present in the environment.
+The key never
 appears in attention artifacts, quality telemetry, or daemon output.
 
 For one-off use, `--task` and `--authorize inspect_logs,restart_service` can

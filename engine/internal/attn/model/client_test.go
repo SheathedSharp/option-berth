@@ -78,6 +78,7 @@ func TestAttnEvaluateRedactsStateAndPersistsOnlyValidatedAssessment(t *testing.T
 	defer server.Close()
 	result, err := (Client{
 		Endpoint:   server.URL,
+		Model:      "test/model",
 		APIKey:     "test-key",
 		HTTPClient: server.Client(),
 	}).Evaluate(context.Background(), artifact, TaskContext{
@@ -127,7 +128,7 @@ func TestAttnRejectsInvalidProbabilitiesAndUnauthorizedChoice(t *testing.T) {
 		_, _ = w.Write([]byte(`{"model":"jev-latest","answers":{"task_relevant":{"type":"noul","noul":0.5},"needs_human":{"type":"noul","noul":0.5},"next_option":{"type":"choice","choice":"run_shell","probabilities":{"inspect_logs":1.2,"restart_service":-0.2},"confidence":1.2}}}`))
 	}))
 	defer server.Close()
-	_, err := (Client{Endpoint: server.URL, APIKey: "k", HTTPClient: server.Client()}).Evaluate(context.Background(), artifact, TaskContext{Task: "fix", AuthorizedOptions: []string{"inspect_logs", "restart_service"}})
+	_, err := (Client{Endpoint: server.URL, Model: "test/model", APIKey: "k", HTTPClient: server.Client()}).Evaluate(context.Background(), artifact, TaskContext{Task: "fix", AuthorizedOptions: []string{"inspect_logs", "restart_service"}})
 	if !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("err = %v, want unavailable validation error", err)
 	}
@@ -146,7 +147,7 @@ func TestAttnRejectsStaleArtifactBeforeRemoteCall(t *testing.T) {
 	if !ok {
 		t.Fatal("expected anomaly artifact")
 	}
-	_, err := (Client{APIKey: "key"}).Evaluate(context.Background(), a, TaskContext{Task: "fix", AuthorizedOptions: []string{"inspect_logs"}})
+	_, err := (Client{Endpoint: "https://assess.example/decisions", Model: "test/model", APIKey: "key"}).Evaluate(context.Background(), a, TaskContext{Task: "fix", AuthorizedOptions: []string{"inspect_logs"}})
 	if !errors.Is(err, attn.ErrStale) {
 		t.Fatalf("err = %v, want ErrStale", err)
 	}

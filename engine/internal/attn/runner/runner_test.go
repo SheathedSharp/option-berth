@@ -139,7 +139,7 @@ func TestAutoNormalDoesNotCallModel(t *testing.T) {
 	calls := 0
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))
 	defer srv.Close()
-	out, err := Auto(context.Background(), "unused", ".", model.Client{Endpoint: srv.URL, APIKey: "test", HTTPClient: srv.Client()}, model.TaskContext{Task: "edit docs"},
+	out, err := Auto(context.Background(), "unused", ".", model.Client{Endpoint: srv.URL, Model: "test/model", APIKey: "test", HTTPClient: srv.Client()}, model.TaskContext{Task: "edit docs"},
 		func(context.Context, string, string) (Status, error) { return Status{}, nil })
 	if err != nil || out.Status != "clear" || calls != 0 {
 		t.Fatalf("out=%+v err=%v calls=%d", out, err, calls)
@@ -175,7 +175,7 @@ func TestAutoAssessesRefreshesCachesAndBindsTask(t *testing.T) {
 		}})
 	}))
 	defer srv.Close()
-	client := model.Client{Endpoint: srv.URL, APIKey: "test", HTTPClient: srv.Client()}
+	client := model.Client{Endpoint: srv.URL, Model: "test/model", APIKey: "test", HTTPClient: srv.Client()}
 	read := func(context.Context, string, string) (Status, error) { reads++; return s, nil }
 	task := model.TaskContext{Task: "fix api", AuthorizedOptions: authorizedFor(a)}
 	out, err := Auto(context.Background(), "unused", ".", client, task, read)
@@ -221,7 +221,7 @@ func TestAutoUnavailableKeepsFactsAndRequestsHuman(t *testing.T) {
 				}
 			}))
 			defer srv.Close()
-			client := model.Client{Endpoint: srv.URL, APIKey: "test", HTTPClient: srv.Client()}
+			client := model.Client{Endpoint: srv.URL, Model: "test/model", APIKey: "test", HTTPClient: srv.Client()}
 			if mode == "no_key" {
 				client.APIKey = ""
 			}
@@ -397,7 +397,7 @@ func TestAutoSendsOnlyExplicitAuthorizedCandidates(t *testing.T) {
 		_, _ = w.Write([]byte(`{"model":"jev-test","answers":{"task_relevant":{"type":"noul","noul":0.4},"needs_human":{"type":"noul","noul":0.2}}}`))
 	}))
 	defer srv.Close()
-	out, err := Auto(context.Background(), "unused", ".", model.Client{Endpoint: srv.URL, APIKey: "test", HTTPClient: srv.Client()}, model.TaskContext{
+	out, err := Auto(context.Background(), "unused", ".", model.Client{Endpoint: srv.URL, Model: "test/model", APIKey: "test", HTTPClient: srv.Client()}, model.TaskContext{
 		Task: "inspect api", AuthorizedOptions: []string{"inspect_logs"},
 	}, func(context.Context, string, string) (Status, error) { return s, nil })
 	if err != nil {
@@ -449,7 +449,7 @@ func TestAutoIntersectsBroadKnownAuthorizationWithEventCandidates(t *testing.T) 
 		_, _ = w.Write([]byte(`{"model":"jev-test","answers":{"task_relevant":{"type":"noul","noul":0.4},"needs_human":{"type":"noul","noul":0.2}}}`))
 	}))
 	defer srv.Close()
-	out, err := Auto(context.Background(), "unused", ".", model.Client{Endpoint: srv.URL, APIKey: "test", HTTPClient: srv.Client()}, model.TaskContext{
+	out, err := Auto(context.Background(), "unused", ".", model.Client{Endpoint: srv.URL, Model: "test/model", APIKey: "test", HTTPClient: srv.Client()}, model.TaskContext{
 		Task: "inspect api", AuthorizedOptions: []string{absent, wanted},
 	}, func(context.Context, string, string) (Status, error) { return s, nil })
 	if err != nil {
