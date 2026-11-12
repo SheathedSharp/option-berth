@@ -382,17 +382,18 @@ func init() {
 		}
 
 		cfg, warnings := config.Load()
-		for _, w := range warnings {
-			fmt.Fprintln(os.Stderr, w)
+		for _, warning := range warnings {
+			fmt.Fprintln(os.Stderr, warning)
 		}
 		loadedConfig = cfg
 
-		// color: false in config disables ANSI; an explicit --no-color flag
-		// also wins. We never force color ON (would corrupt piped output).
-		if cfg.Color != nil && !*cfg.Color {
-			display.NoColor = true
-		}
+		// color: false in the config turns ANSI off, and so does an explicit
+		// --no-color. Color is never forced ON: that would corrupt piped output.
+		off := cfg.Color != nil && !*cfg.Color
 		if nc, _ := cmd.Flags().GetBool("no-color"); nc {
+			off = true
+		}
+		if off {
 			display.NoColor = true
 		}
 

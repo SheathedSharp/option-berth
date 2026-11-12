@@ -9,26 +9,28 @@ import (
 )
 
 var (
-	kernel32                               = syscall.NewLazyDLL("kernel32.dll")
-	procGetConsoleMode                     = kernel32.NewProc("GetConsoleMode")
-	procSetConsoleMode                     = kernel32.NewProc("SetConsoleMode")
-	enableVirtualTerminalProcessing uint32 = 0x0004
+	k32                     = syscall.NewLazyDLL("kernel32.dll")
+	queryConsoleMode        = k32.NewProc("GetConsoleMode")
+	applyConsoleMode        = k32.NewProc("SetConsoleMode")
+	vtOutputModeFlag uint32 = 0x0004
 )
 
-var vtEnabled bool
+// vtReady records that this process already asked the console for VT support;
+// the request is made at most once.
+var vtReady bool
 
-// enableVTProcessing enables ANSI escape code support on Windows consoles.
+// enableVTProcessing turns on ANSI escape code support for a Windows console.
 func enableVTProcessing() {
-	if vtEnabled {
+	if vtReady {
 		return
 	}
-	vtEnabled = true
+	vtReady = true
 
-	handle := os.Stdout.Fd()
+	out := os.Stdout.Fd()
 	var mode uint32
-	r, _, _ := procGetConsoleMode.Call(handle, uintptr(unsafe.Pointer(&mode)))
-	if r == 0 {
+	ok, _, _ := queryConsoleMode.Call(out, uintptr(unsafe.Pointer(&mode)))
+	if ok == 0 {
 		return
 	}
-	procSetConsoleMode.Call(handle, uintptr(mode|enableVirtualTerminalProcessing))
+	applyConsoleMode.Call(out, uintptr(mode|vtOutputModeFlag))
 }

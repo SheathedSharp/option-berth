@@ -28,17 +28,17 @@ func observableProbe(t *testing.T) {
 	t.Cleanup(func() { scanProbe = prev })
 }
 
-// chdir moves into dir for the duration of a test.
+// chdir moves into dir for the duration of a test and returns there after it.
 func chdir(t *testing.T, dir string) {
 	t.Helper()
-	was, err := os.Getwd()
+	origin, err := os.Getwd()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("reading the working directory: %v", err)
 	}
 	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
+		t.Fatalf("changing to %s: %v", dir, err)
 	}
-	t.Cleanup(func() { _ = os.Chdir(was) })
+	t.Cleanup(func() { _ = os.Chdir(origin) })
 }
 
 func TestNormalizeStartChunkAddsStructuredFailure(t *testing.T) {
@@ -275,34 +275,34 @@ func TestPrintStartChunkShowsUnconfirmedReadiness(t *testing.T) {
 // TestUpParamsUsesTheConfigInTheWorkingDirectory: with no argument, `oberth up`
 // starts the project you are standing in.
 func TestUpParamsUsesTheConfigInTheWorkingDirectory(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, groups.ConfigName),
-		[]byte("name: demo\nservices:\n  - name: api\n    cmd: uv run api\n"), 0o644); err != nil {
-		t.Fatal(err)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, groups.ConfigName),
+		[]byte("name: catalog\nservices:\n  - name: web\n    cmd: uv run web\n"), 0o644); err != nil {
+		t.Fatalf("writing the manifest: %v", err)
 	}
-	chdir(t, dir)
+	chdir(t, root)
 
 	upOnly = nil
 	upAllowOutsideHome = false
-	params, _, err := upParams(nil)
+	resolved, _, err := upParams(nil)
 	if err != nil {
 		t.Fatalf("upParams: %v", err)
 	}
-	if params.Name != nil {
-		t.Errorf("name = %v, want nil when the group comes from the cwd", params.Name)
+	if resolved.Name != nil {
+		t.Errorf("name = %v, want nil when the group comes from the cwd", resolved.Name)
 	}
-	if params.ConfigPath == nil || filepath.Base(*params.ConfigPath) != groups.ConfigName {
-		t.Fatalf("config_path = %v", params.ConfigPath)
+	if resolved.ConfigPath == nil || filepath.Base(*resolved.ConfigPath) != groups.ConfigName {
+		t.Fatalf("config_path = %v", resolved.ConfigPath)
 	}
 }
 
 func TestUpParamsPassesOutsideHomeOptIn(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, groups.ConfigName),
-		[]byte("name: demo\nservices:\n  - name: api\n    cmd: uv run api\n"), 0o644); err != nil {
-		t.Fatal(err)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, groups.ConfigName),
+		[]byte("name: catalog\nservices:\n  - name: web\n    cmd: uv run web\n"), 0o644); err != nil {
+		t.Fatalf("writing the manifest: %v", err)
 	}
-	chdir(t, dir)
+	chdir(t, root)
 	upOnly = nil
 	upAllowOutsideHome = true
 	t.Cleanup(func() { upAllowOutsideHome = false })
@@ -319,55 +319,55 @@ func TestUpParamsPassesOutsideHomeOptIn(t *testing.T) {
 // TestUpParamsPassesTheGroupName straight through, so the daemon resolves it
 // against every config it knows and not only the one under the cwd.
 func TestUpParamsPassesTheGroupName(t *testing.T) {
-	upOnly = []string{"api", "db"}
+	upOnly = []string{"web", "db"}
 	t.Cleanup(func() { upOnly = nil })
 
-	params, _, err := upParams([]string{"  storefront "})
+	params, _, err := upParams([]string{"  shopfront "})
 	if err != nil {
 		t.Fatalf("upParams: %v", err)
 	}
-	if params.Name == nil || *params.Name != "storefront" {
-		t.Fatalf("name = %v, want storefront", params.Name)
+	if params.Name == nil || *params.Name != "shopfront" {
+		t.Fatalf("name = %v, want shopfront", params.Name)
 	}
 	if params.ConfigPath != nil {
 		t.Errorf("config_path = %v, want nil when a group is named", params.ConfigPath)
 	}
-	if len(params.Only) != 2 || params.Only[0] != "api" {
+	if len(params.Only) != 2 || params.Only[0] != "web" {
 		t.Errorf("only = %v", params.Only)
 	}
 }
 
-// TestUpParamsWithoutAConfig says what to do next rather than just failing.
+// TestUpParamsWithoutAConfig says what to do next rather than only failing.
 func TestUpParamsWithoutAConfig(t *testing.T) {
 	chdir(t, t.TempDir())
-	upOnly = nil
+	upOnly = []string(nil)
 
-	_, _, err := upParams(nil)
-	if err == nil {
+	_, _, runErr := upParams(nil)
+	if runErr == nil {
 		t.Fatal("expected an error with no .oberth.yaml anywhere")
 	}
-	if !strings.Contains(err.Error(), "oberth init") {
-		t.Errorf("error should say how to make one: %v", err)
+	if !strings.Contains(runErr.Error(), "oberth init") {
+		t.Errorf("error should say how to make one: %v", runErr)
 	}
 }
 
 // TestUpParamsReportsABrokenConfig instead of pretending there is none: the
 // two problems have completely different fixes.
 func TestUpParamsReportsABrokenConfig(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, groups.ConfigName),
-		[]byte("name: two words\nservices:\n  - name: api\n"), 0o644); err != nil {
-		t.Fatal(err)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, groups.ConfigName),
+		[]byte("name: two words\nservices:\n  - name: web\n"), 0o644); err != nil {
+		t.Fatalf("writing the manifest: %v", err)
 	}
-	chdir(t, dir)
-	upOnly = nil
+	chdir(t, root)
+	upOnly = []string(nil)
 
-	_, _, err := upParams(nil)
-	if err == nil {
+	_, _, runErr := upParams(nil)
+	if runErr == nil {
 		t.Fatal("expected an error for an invalid config")
 	}
-	if !strings.Contains(err.Error(), "cannot be used") || !strings.Contains(err.Error(), "whitespace") {
-		t.Errorf("error = %v, want it to name the validation problem", err)
+	if !strings.Contains(runErr.Error(), "cannot be used") || !strings.Contains(runErr.Error(), "whitespace") {
+		t.Errorf("error = %v, want it to name the validation problem", runErr)
 	}
 }
 

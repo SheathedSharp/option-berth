@@ -141,10 +141,7 @@ func logsDirect(_ context.Context, port int, bindIP string) error {
 	groups.StampRuns(enriched)
 	*lp = enriched[0]
 
-	fmt.Printf("%s %s (PID %s)\n\n",
-		display.Dim("Attaching to"),
-		display.Bold(lp.DisplayName()),
-		display.Cyan(fmt.Sprintf("%d", lp.PID)))
+	printAttachHeader(lp.DisplayName(), lp.PID)
 
 	// Docker containers: use docker logs.
 	if lp.Type == ports.PortTypeDocker && lp.DockerContainer != "" {
@@ -418,10 +415,7 @@ func logsFollowThroughDaemon(ctx context.Context, c *client.Client, row ports.Li
 	if !logsJSONFlag {
 		// In JSON mode this header would be plain text in front of a JSON
 		// document.
-		fmt.Printf("%s %s (PID %s)\n\n",
-			display.Dim("Attaching to"),
-			display.Bold(row.DisplayName()),
-			display.Cyan(fmt.Sprintf("%d", row.PID)))
+		printAttachHeader(row.DisplayName(), row.PID)
 	}
 
 	params := rpc.PortsLogsParams{
@@ -430,29 +424,38 @@ func logsFollowThroughDaemon(ctx context.Context, c *client.Client, row ports.Li
 		Follow:   true,
 	}
 
-	var res rpc.PortsLogsResult
-	s, err := c.Stream(ctx, "ports.logs", params, &res)
+	var result rpc.PortsLogsResult
+	stream, err := c.Stream(ctx, "ports.logs", params, &result)
 	if err != nil {
 		return cliError(err)
 	}
-	defer s.Close()
+	defer stream.Close()
 
 	if logsJSONFlag {
-		return streamLogsJSON(s, meta)
+		return streamLogsJSON(stream, meta)
 	}
-	return printLogStream(s, res.Source)
+	return printLogStream(stream, result.Source)
+}
+
+// printAttachHeader is the line a follow session opens with: the listener it
+// attached to, named and identified.
+func printAttachHeader(name string, pid int) {
+	fmt.Printf("%s %s (PID %s)\n\n",
+		display.Dim("Attaching to"),
+		display.Bold(name),
+		display.Cyan(fmt.Sprintf("%d", pid)))
 }
 
 // printLogStream writes one log line per chunk as it arrives, under the header
 // naming the source the daemon reported.
 func printLogStream(s *client.Stream, source string) error {
 	printLogHeader(source)
-	for raw := range s.Chunks() {
-		var chunk rpc.PortsLogsChunk
-		if err := json.Unmarshal(raw, &chunk); err != nil {
+	for payload := range s.Chunks() {
+		var entry rpc.PortsLogsChunk
+		if err := json.Unmarshal(payload, &entry); err != nil {
 			continue
 		}
-		fmt.Println(chunk.Line)
+		fmt.Println(entry.Line)
 	}
 	if end := <-s.End(); end.Err != nil {
 		return cliError(end.Err)
@@ -695,17 +698,17 @@ func selectBoundPort(rows []ports.ListeningPort, port int, bindIP string) (*port
 // listenersOnPort is the filter half: every row the selector could mean, in
 // table order.
 func listenersOnPort(rows []ports.ListeningPort, port int, bindIP string) []ports.ListeningPort {
-	var matches []ports.ListeningPort
-	for _, row := range rows {
-		if row.Port != port {
+	var hits []ports.ListeningPort
+	for _, listener := range rows {
+		if listener.Port != port {
 			continue
 		}
-		if bindIP != "" && row.BindAddress != bindIP {
+		if bindIP != "" && listener.BindAddress != bindIP {
 			continue
 		}
-		matches = append(matches, row)
+		hits = append(hits, listener)
 	}
-	return matches
+	return hits
 }
 
 // ambiguousBoundPort names the addresses a port answers on and the flag that

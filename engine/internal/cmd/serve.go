@@ -40,12 +40,13 @@ var serveCmd = &cobra.Command{
 }
 
 func init() {
-	serveCmd.Flags().BoolVarP(&serveDetach, "detach", "d", false,
+	flags := serveCmd.Flags()
+	flags.BoolVarP(&serveDetach, "detach", "d", false,
 		"Start the daemon in the background and return once it accepts connections")
 	rootCmd.AddCommand(serveCmd)
 }
 
-func serveRun(cmd *cobra.Command, _ []string) error {
+func serveRun(command *cobra.Command, _ []string) error {
 	if err := refuseTestBinaryDaemon(); err != nil {
 		return err
 	}
@@ -53,9 +54,9 @@ func serveRun(cmd *cobra.Command, _ []string) error {
 	if serveDetach {
 		// The parent only forks; the process that becomes the daemon is the
 		// child, and it is the one that asks for the PATH below.
-		return detachDaemon(cmd.Context(), daemon.SocketPath())
+		return detachDaemon(command.Context(), daemon.SocketPath())
 	}
-	return runForegroundDaemon(cmd.Context())
+	return runForegroundDaemon(command.Context())
 }
 
 // runForegroundDaemon is the process that becomes the daemon. It owns the
@@ -95,16 +96,17 @@ func runForegroundDaemon(ctx context.Context) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := srv.Serve(ctx); err != nil {
-		if daemon.IsAlreadyRunning(err) {
-			// Not a crash: another daemon is doing the job.
-			fmt.Fprintln(os.Stderr, "error:", err)
-			fmt.Fprintf(os.Stderr, "hint: `oberth daemon status` shows it, `oberth daemon restart` replaces it\n")
-			os.Exit(1)
-		}
-		return err
+	serveErr := srv.Serve(ctx)
+	switch {
+	case serveErr == nil:
+		return nil
+	case daemon.IsAlreadyRunning(serveErr):
+		// Another daemon already does the job; this is a refusal, not a crash.
+		fmt.Fprintln(os.Stderr, "error:", serveErr)
+		fmt.Fprintf(os.Stderr, "hint: `oberth daemon status` shows it, `oberth daemon restart` replaces it\n")
+		os.Exit(1)
 	}
-	return nil
+	return serveErr
 }
 
 // enterDaemonWorkDir moves the daemon into option-berth's own state directory.
@@ -134,22 +136,22 @@ func openDaemonLogger() (*slog.Logger, io.Closer, error) {
 		daemon.ParseLogLevel(loadedConfig.Daemon.ResolvedLogLevel()), alsoStderr)
 }
 
-// refuseTestBinaryDaemon stops a Go test binary from becoming the daemon.
+// refuseTestBinaryDaemon keeps a Go test binary from turning into the daemon.
 //
 // `go test` links a package into <pkg>.test, and Go's flag parser stops at the
 // first non-flag argument — so `cmd.test serve --detach` silently ignores both
 // words and runs the entire test suite in the background against the config
-// directory it inherited. Every such process is a stray test run holding the
-// user's real ~/.oberth open, not a daemon. Both entry
-// points are covered: `serve` refuses here, and `serve --detach` re-execs this
-// same binary, so it never gets far enough to fork.
+// directory it inherited. A process like that is a stray test run holding the
+// user's real ~/.oberth open, not a daemon. Both entry points are covered:
+// `serve` refuses here, and `serve --detach` re-execs this same binary, so it
+// never gets far enough to fork.
 func refuseTestBinaryDaemon() error {
-	exe, err := os.Executable()
-	if err != nil || !daemon.IsTestBinary(exe) || daemon.TestDaemonAllowed() {
+	self, err := os.Executable()
+	if err != nil || !daemon.IsTestBinary(self) || daemon.TestDaemonAllowed() {
 		return nil
 	}
 	return fmt.Errorf("refusing to run %s as the oberth daemon: it is a Go test binary, so this would re-run the test suite rather than serve\nhint: start a daemon in-process from the test, or set %s=1 if you really mean it",
-		filepath.Base(exe), daemon.AllowTestDaemonEnv)
+		filepath.Base(self), daemon.AllowTestDaemonEnv)
 }
 
 // detachDaemon re-execs this binary as a background `oberth serve` and waits for
@@ -181,7 +183,7 @@ func detachDaemon(ctx context.Context, socket string) error {
 // the daemon log as its only output — so a panic before its logger is up is
 // still recoverable.
 func detachedChild() (*exec.Cmd, *os.File, error) {
-	exe, err := os.Executable()
+	binary, err := os.Executable()
 	if err != nil {
 		return nil, nil, fmt.Errorf("locating the option-berth binary: %w", err)
 	}
@@ -197,14 +199,14 @@ func detachedChild() (*exec.Cmd, *os.File, error) {
 		return nil, nil, err
 	}
 
-	child := exec.Command(exe, "serve")
-	child.Env = append(os.Environ(), detachedEnv+"=1")
-	child.Stdin = nil
-	child.Stdout = logFile
-	child.Stderr = logFile
-	child.Dir = workDir
-	detachProcess(child)
-	return child, logFile, nil
+	proc := exec.Command(binary, "serve")
+	proc.Env = append(os.Environ(), detachedEnv+"=1")
+	proc.Stdin = nil
+	proc.Stdout = logFile
+	proc.Stderr = logFile
+	proc.Dir = workDir
+	detachProcess(proc)
+	return proc, logFile, nil
 }
 
 // startDaemonChild launches the detached child and releases it: the daemon has
@@ -259,14 +261,17 @@ func daemonWorkDir() (string, error) {
 }
 
 // stopTimeout bounds how long `daemon stop` and `daemon restart` wait for the
-// previous daemon to let go of the socket and the lock.
+// previous daemon to release the socket and the lock.
 const stopTimeout = 10 * time.Second
 
 // waitForSocketGone is the inverse of WaitForSocket, used by `daemon restart`.
 func waitForSocketGone(socket string, timeout time.Duration) {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	giveUp := time.Now().Add(timeout)
+	for {
 		if !daemon.SocketAlive(socket) {
+			return
+		}
+		if !time.Now().Before(giveUp) {
 			return
 		}
 		time.Sleep(25 * time.Millisecond)
@@ -274,19 +279,19 @@ func waitForSocketGone(socket string, timeout time.Duration) {
 }
 
 // waitForDaemonGone waits until the previous daemon has both stopped accepting
-// connections and released the single-instance lock. The socket closes first
-// and the lock is released last, so a restart that only waited for the socket
-// raced the old daemon's teardown: the replacement started, lost the lock, and
-// exited "already running", leaving nothing running.
+// connections and released the single-instance lock. The socket closes first,
+// the lock goes last, so a restart that waited only for the socket raced the
+// old daemon's teardown: the replacement started, lost the lock, and exited
+// "already running", leaving nothing running.
 func waitForDaemonGone(socket string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
+	giveUp := time.Now().Add(timeout)
 	waitForSocketGone(socket, timeout)
 
-	remaining := time.Until(deadline)
-	if remaining < time.Second {
-		remaining = time.Second
+	left := time.Until(giveUp)
+	if left < time.Second {
+		left = time.Second
 	}
-	if err := daemon.WaitForLockRelease(daemon.LockPath(), remaining); err != nil {
+	if err := daemon.WaitForLockRelease(daemon.LockPath(), left); err != nil {
 		return fmt.Errorf("the running daemon did not shut down: %w\nhint: `oberth daemon status` shows it; kill it and retry", err)
 	}
 	return nil

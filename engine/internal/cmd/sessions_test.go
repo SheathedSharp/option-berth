@@ -9,33 +9,33 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/sessions"
 )
 
-// `--session current` is shorthand: it resolves from this shell's
-// own environment, and says so when there is nothing to resolve.
+// `--session current` is shorthand: it resolves from this shell's own
+// environment, and says so when there is nothing there to resolve.
 func TestCurrentSessionResolvesFromTheEnvironment(t *testing.T) {
-	t.Setenv(sessions.EnvSession, "claude-code:abc123")
-	got, err := currentSession("current")
+	t.Setenv(sessions.EnvSession, "claude-code:run42")
+	resolved, err := currentSession("current")
 	if err != nil {
 		t.Fatalf("currentSession: %v", err)
 	}
-	if got != "abc123" {
-		t.Errorf("currentSession(current) = %q, want abc123", got)
+	if resolved != "run42" {
+		t.Errorf("currentSession(current) = %q, want run42", resolved)
 	}
 
 	// Anything else is passed through untouched.
-	if got, err := currentSession("some-id"); err != nil || got != "some-id" {
-		t.Errorf("currentSession(some-id) = %q, %v", got, err)
+	if literal, err := currentSession("some-id"); err != nil || literal != "some-id" {
+		t.Errorf("currentSession(some-id) = %q, %v", literal, err)
 	}
-	if got, err := currentSession(""); err != nil || got != "" {
-		t.Errorf("currentSession(\"\") = %q, %v", got, err)
+	if blank, err := currentSession(""); err != nil || blank != "" {
+		t.Errorf("currentSession(\"\") = %q, %v", blank, err)
 	}
 }
 
 func TestCurrentSessionWithoutAnAgentIsAnError(t *testing.T) {
 	for _, key := range []string{
-		sessions.EnvSession, sessions.EnvSessionID, sessions.EnvClaudeCode,
-		sessions.EnvClaudeCodeSessionID, sessions.EnvClaudeSessionID,
-		sessions.EnvCodexThreadID, sessions.EnvCodexSandbox, sessions.EnvCursorAgent,
-		sessions.EnvCursorAgentSessionID,
+		sessions.EnvClaudeCode, sessions.EnvClaudeCodeSessionID,
+		sessions.EnvClaudeSessionID, sessions.EnvSession, sessions.EnvSessionID,
+		sessions.EnvCodexSandbox, sessions.EnvCodexThreadID,
+		sessions.EnvCursorAgent, sessions.EnvCursorAgentSessionID,
 	} {
 		t.Setenv(key, "")
 	}
@@ -45,15 +45,15 @@ func TestCurrentSessionWithoutAnAgentIsAnError(t *testing.T) {
 }
 
 func TestSessionsCommandWithoutADaemonSaysSo(t *testing.T) {
-	prev := dialDaemon
+	saved := dialDaemon
 	dialDaemon = func(context.Context) (*client.Client, error) { return nil, client.ErrNotRunning }
-	t.Cleanup(func() { dialDaemon = prev })
+	t.Cleanup(func() { dialDaemon = saved })
 
-	_, err := sessionsDaemon(context.Background())
-	if err == nil {
+	_, runErr := sessionsDaemon(context.Background())
+	if runErr == nil {
 		t.Fatal("sessionsDaemon without a daemon did not fail")
 	}
-	if !strings.Contains(err.Error(), "oberth serve") {
-		t.Errorf("error = %q, want it to name the command that starts a daemon", err)
+	if !strings.Contains(runErr.Error(), "oberth serve") {
+		t.Errorf("error = %q, want it to name the command that starts a daemon", runErr)
 	}
 }

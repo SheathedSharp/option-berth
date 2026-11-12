@@ -20,19 +20,24 @@ import (
 )
 
 var (
-	killPIDFlag        []int
-	killGroupFlag      string
-	killSessionFlag    string
-	killAllFlag        bool
-	killTreeFlag       bool
-	forceFlag          bool
-	killGraceFlag      time.Duration
+	// Selectors: positional ports or pids, or one of these filters.
+	killPIDFlag     []int
+	killGroupFlag   string
+	killSessionFlag string
+	killAllFlag     bool
+
+	// How the stop is carried out.
+	killTreeFlag  bool
+	killForceFlag bool
+	killGraceFlag time.Duration
+	// Escalation and confirmation.
 	killNoEscalateFlag bool
 	killYesFlag        bool
 	killDryRunFlag     bool
 	killJSONFlag       bool
 )
 
+// killCmd is the one-stop command: port, pid, group or every listener.
 var killCmd = &cobra.Command{
 	Use:     "kill [port|pid ...]",
 	Short:   "Stop a named listener or process",
@@ -50,44 +55,44 @@ Examples:
 
 A positional argument is read as a port; a number no one is listening on that
 matches a running process is read as a pid.`,
-	ValidArgsFunction: completePort,
 	RunE:              runKill,
+	ValidArgsFunction: completePort,
 }
 
 func init() {
-	killCmd.Flags().IntSliceVar(&killPIDFlag, "pid", nil, "Kill by process id (repeatable)")
-	killCmd.Flags().StringVarP(&killGroupFlag, "group", "g", "", "Kill every port in a group")
-	killCmd.Flags().StringVar(&killSessionFlag, "session", "",
-		"Stop everything an agent `session` started (`current` is this shell's own)")
-	killCmd.Flags().BoolVar(&killAllFlag, "all", false, "Kill every listening port")
-	killCmd.Flags().BoolVar(&killTreeFlag, "tree", false, "Kill the target's whole process tree, children first")
-	killCmd.Flags().BoolVarP(&forceFlag, "force", "f", false, "Send SIGKILL instead of SIGTERM")
-	killCmd.Flags().DurationVar(&killGraceFlag, "grace", killer.DefaultGrace,
-		"How long to wait after SIGTERM before escalating (e.g. 10s)")
-	killCmd.Flags().BoolVar(&killNoEscalateFlag, "no-escalate", false, "Never escalate to SIGKILL")
-	killCmd.Flags().BoolVarP(&killYesFlag, "yes", "y", false, "Skip the confirmation prompt")
-	killCmd.Flags().BoolVar(&killDryRunFlag, "dry-run", false, "Show what would be killed and do nothing")
-	killCmd.Flags().String("ip", "", "Bind address, when a port is bound to several")
-	killCmd.Flags().BoolVar(&killJSONFlag, "json", false, "Print the result list as JSON")
+	flags := killCmd.Flags()
+	flags.IntSliceVar(&killPIDFlag, "pid", nil, "Kill by process id (repeatable)")
+	flags.StringVarP(&killGroupFlag, "group", "g", "", "Kill every port in a group")
+	flags.StringVar(&killSessionFlag, "session", "", "Stop everything an agent `session` started (`current` is this shell's own)")
+	flags.BoolVar(&killAllFlag, "all", false, "Kill every listening port")
+	flags.BoolVar(&killTreeFlag, "tree", false, "Kill the target's whole process tree, children first")
+	flags.BoolVarP(&killForceFlag, "force", "f", false, "Send SIGKILL instead of SIGTERM")
+	flags.DurationVar(&killGraceFlag, "grace", killer.DefaultGrace, "How long to wait after SIGTERM before escalating (e.g. 10s)")
+	flags.BoolVar(&killNoEscalateFlag, "no-escalate", false, "Never escalate to SIGKILL")
+	flags.BoolVarP(&killYesFlag, "yes", "y", false, "Skip the confirmation prompt")
+	flags.BoolVar(&killDryRunFlag, "dry-run", false, "Show what would be killed and do nothing")
+	flags.String("ip", "", "Bind address, when a port is bound to several")
+	flags.BoolVar(&killJSONFlag, "json", false, "Print the result list as JSON")
+
 	// Group and agent-session selectors belonged to the old machine-wide run
 	// registry surface. Keep them parseable for existing scripts, but make the
 	// public escape hatch start with a named port or pid; project lifecycle is
 	// `down`, and worktree state is `status`.
 	for _, name := range []string{"group", "session"} {
-		_ = killCmd.Flags().MarkHidden(name)
+		_ = flags.MarkHidden(name)
 	}
-	killCmd.MarkFlagsMutuallyExclusive("group", "all")
-	killCmd.MarkFlagsMutuallyExclusive("session", "all")
-	killCmd.MarkFlagsMutuallyExclusive("session", "group")
+	for _, pair := range [][2]string{{"group", "all"}, {"session", "all"}, {"session", "group"}} {
+		killCmd.MarkFlagsMutuallyExclusive(pair[0], pair[1])
+	}
 	rootCmd.AddCommand(killCmd)
 }
 
 func runKill(cmd *cobra.Command, args []string) error {
 	cmd.SilenceUsage = true
-	bindIP, _ := cmd.Flags().GetString("ip")
+	bind, _ := cmd.Flags().GetString("ip")
 
 	if killSessionFlag != "" {
-		if len(args) > 0 || len(killPIDFlag) > 0 {
+		if len(args) != 0 || len(killPIDFlag) != 0 {
 			return fmt.Errorf("--session cannot be combined with ports or pids")
 		}
 		return killSession(cmd.Context())
@@ -100,22 +105,22 @@ func runKill(cmd *cobra.Command, args []string) error {
 	// in §20: killing is not a reason to start a daemon.
 	if c := daemonClient(cmd.Context()); c != nil {
 		defer c.Close()
-		return killThroughDaemon(cmd.Context(), c, args, bindIP)
+		return killThroughDaemon(cmd.Context(), c, args, bind)
 	}
-	return killDirect(cmd.Context(), args, bindIP)
+	return killDirect(cmd.Context(), args, bind)
 }
 
 // killDirect is the no-daemon path: scan here, kill here. It is also what runs
 // under --no-daemon and whenever the daemon is down, which is why it stays a
 // complete implementation rather than a degraded one.
 func killDirect(ctx context.Context, args []string, bindIP string) error {
-	snapshot, targets, confirm, complete, err := killSelection(ctx, args, bindIP, scanForKill)
+	rows, targets, confirm, complete, err := killSelection(ctx, args, bindIP, scanForKill)
 	if err != nil {
 		return err
 	}
 
 	if len(targets) == 0 {
-		return reportKill(os.Stdout, nil, snapshot, killJSONFlag, killDryRunFlag)
+		return reportKill(os.Stdout, nil, rows, killJSONFlag, killDryRunFlag)
 	}
 
 	opts := killOptions()
@@ -124,13 +129,13 @@ func killDirect(ctx context.Context, args []string, bindIP string) error {
 	// suppress the killer's re-observation and let an unreadable row become a
 	// signal.
 	if complete {
-		opts.Ports = snapshot
+		opts.Ports = rows
 	}
 
 	return killRequest{
 		exec:     killHere,
 		targets:  targets,
-		snapshot: snapshot,
+		snapshot: rows,
 		opts:     opts,
 		confirm:  confirm && !killYesFlag && !killDryRunFlag,
 		asJSON:   killJSONFlag,
@@ -181,14 +186,14 @@ func killRequiresObservation(args []string) bool {
 // paths so the daemon is asked for exactly what the direct path would do.
 func killOptions() killer.Options {
 	opts := killer.Options{
-		Tree:   killTreeFlag,
-		Force:  forceFlag,
-		Grace:  killGraceFlag,
 		DryRun: killDryRunFlag,
+		Tree:   killTreeFlag,
+		Force:  killForceFlag,
+		Grace:  killGraceFlag,
 	}
 	if killNoEscalateFlag {
-		off := false
-		opts.Escalate = &off
+		neverEscalate := false
+		opts.Escalate = &neverEscalate
 	}
 	return opts
 }
@@ -283,31 +288,29 @@ func observeListenersForKill(ctx context.Context) ([]ports.ListeningPort, error)
 // killTargets turns the command line into killer targets. The bool reports
 // whether the selection is broad enough to confirm before acting.
 func killTargets(args []string, snapshot []ports.ListeningPort, bindIP string) ([]killer.Target, bool, error) {
-	var targets []killer.Target
+	targets := make([]killer.Target, 0, len(killPIDFlag)+len(args))
 	for _, pid := range killPIDFlag {
 		targets = append(targets, killer.Target{PID: pid})
 	}
 	for _, arg := range args {
-		n, err := strconv.Atoi(arg)
-		if err != nil || n <= 0 {
+		number, convErr := strconv.Atoi(arg)
+		if convErr != nil || number <= 0 {
 			return nil, false, fmt.Errorf("invalid port or pid: %s", arg)
 		}
-		targets = append(targets, positionalTarget(n, snapshot, bindIP))
+		targets = append(targets, positionalTarget(number, snapshot, bindIP))
 	}
 
-	switch {
-	case killGroupFlag != "":
-		if len(targets) > 0 {
+	if killGroupFlag != "" {
+		if len(targets) != 0 {
 			return nil, false, fmt.Errorf("--group cannot be combined with ports or pids")
 		}
-		members := groupMembers(snapshot, killGroupFlag)
-		if len(members) == 0 {
-			return nil, false, fmt.Errorf("no listening port belongs to group %q", killGroupFlag)
+		if members := groupMembers(snapshot, killGroupFlag); len(members) != 0 {
+			return members, true, nil
 		}
-		return members, true, nil
-
-	case killAllFlag:
-		if len(targets) > 0 {
+		return nil, false, fmt.Errorf("no listening port belongs to group %q", killGroupFlag)
+	}
+	if killAllFlag {
+		if len(targets) != 0 {
 			return nil, false, fmt.Errorf("--all cannot be combined with ports or pids")
 		}
 		// An empty sweep is not a failure: there was simply nothing to stop.
@@ -320,8 +323,8 @@ func killTargets(args []string, snapshot []ports.ListeningPort, bindIP string) (
 	return targets, false, nil
 }
 
-// positionalTarget reads a bare number as a port, falling back to a pid when
-// nothing is listening on it but a process with that id exists.
+// positionalTarget treats a bare number as a port, unless nothing listens on
+// it while a process with that id exists.
 func positionalTarget(n int, snapshot []ports.ListeningPort, bindIP string) killer.Target {
 	return positionalTargetWithProbe(n, snapshot, bindIP, killer.Alive)
 }
@@ -339,22 +342,21 @@ func positionalTargetWithProbe(n int, snapshot []ports.ListeningPort, bindIP str
 }
 
 // groupMembers resolves a group name against the scan. The scanner's `group`
-// field is the primary signal; a `option-berth run` tag or id and a Docker Compose
-// project name are accepted too, so the flag works for everything that is
-// grouped today.
+// field is the primary signal; an `oberth run` tag or id and a Docker Compose
+// project name are accepted too, so the flag reaches everything grouped today.
 func groupMembers(snapshot []ports.ListeningPort, name string) []killer.Target {
-	var out []killer.Target
-	for _, p := range snapshot {
-		if inGroup(p, name) {
-			out = append(out, killer.Target{Port: p.Port, BindAddress: p.BindAddress})
+	targets := make([]killer.Target, 0, len(snapshot))
+	for _, row := range snapshot {
+		if inGroup(row, name) {
+			targets = append(targets, killer.Target{Port: row.Port, BindAddress: row.BindAddress})
 		}
 	}
-	return out
+	return targets
 }
 
 func inGroup(p ports.ListeningPort, name string) bool {
-	for _, candidate := range []string{p.Group, p.Tag, p.RunID, p.DockerComposeProject} {
-		if candidate != "" && strings.EqualFold(candidate, name) {
+	for _, field := range []string{p.Group, p.Tag, p.RunID, p.DockerComposeProject} {
+		if field != "" && strings.EqualFold(field, name) {
 			return true
 		}
 	}
@@ -375,17 +377,18 @@ func sweepTargets(snapshot []ports.ListeningPort) []killer.Target {
 // confirmPlan prints the planned actions and asks before taking them.
 func confirmPlan(plan []killer.Result, snapshot []ports.ListeningPort) bool {
 	fmt.Printf("Will stop %d process(es):\n", len(plan))
-	for _, r := range plan {
-		fmt.Printf("  - %s\n", describeResult(r, snapshot))
+	for i := range plan {
+		fmt.Printf("  - %s\n", describeResult(plan[i], snapshot))
 	}
 	fmt.Print("\nProceed? [y/N] ")
 	var answer string
 	fmt.Scanln(&answer)
-	return strings.EqualFold(strings.TrimSpace(answer), "y")
+	answer = strings.TrimSpace(answer)
+	return strings.EqualFold(answer, "y")
 }
 
-// reportKill prints the outcome and returns a non-nil error when any target
-// failed, so the command exits 1 (daemon spec, "Error handling").
+// reportKill prints the outcome. Any target that failed (a missing one does
+// not count) makes the returned error non-nil, so the command exits 1.
 //
 // **A target that was already gone is not a failure.** The end state the caller
 // asked for — that thing is not running — already holds, so its row is reported
@@ -394,8 +397,8 @@ func confirmPlan(plan []killer.Result, snapshot []ports.ListeningPort) bool {
 // `1 of 3 targets failed` while everything really was stopped.
 func reportKill(w io.Writer, results []killer.Result, snapshot []ports.ListeningPort, asJSON, dryRun bool) error {
 	failed := 0
-	for _, r := range results {
-		if !r.OK && !alreadyGone(r) {
+	for i := range results {
+		if !results[i].OK && !alreadyGone(results[i]) {
 			failed++
 		}
 	}
@@ -404,16 +407,18 @@ func reportKill(w io.Writer, results []killer.Result, snapshot []ports.Listening
 		if err := writeKillJSON(w, results); err != nil {
 			return err
 		}
-		if failed > 0 {
+		if failed != 0 {
 			return errSilent
 		}
 		return nil
 	}
 
+	// Nothing to report is still a successful answer.
 	if len(results) == 0 {
 		fmt.Fprintln(w, "Nothing to stop.")
 		return nil
 	}
+	// A dry run says up front that nothing below was carried out.
 	if dryRun {
 		fmt.Fprintf(w, "Dry run: %d action(s), children first.\n", len(results))
 	}
@@ -480,67 +485,67 @@ func killVerb(r killer.Result, dryRun bool) string {
 
 // describeResult names the process or container a row acted on.
 func describeResult(r killer.Result, snapshot []ports.ListeningPort) string {
-	name := r.Name
-	if name == "" {
-		name = "unknown"
+	label := r.Name
+	if label == "" {
+		label = "unknown"
 	}
-	var b strings.Builder
-	b.WriteString(display.Bold(name))
+	var out strings.Builder
+	out.WriteString(display.Bold(label))
 	if r.PID > 0 {
-		fmt.Fprintf(&b, " (PID %d)", r.PID)
+		fmt.Fprintf(&out, " (PID %d)", r.PID)
 	}
 	if r.Port > 0 {
-		fmt.Fprintf(&b, " on port %d", r.Port)
+		fmt.Fprintf(&out, " on port %d", r.Port)
 		if bindAmbiguous(snapshot, r.Port) && r.BindAddress != "" {
-			fmt.Fprintf(&b, " [%s]", r.BindAddress)
+			fmt.Fprintf(&out, " [%s]", r.BindAddress)
 		}
 	}
-	return b.String()
+	return out.String()
 }
 
 // bindAmbiguous reports whether a port number appears more than once in the
 // scan, in which case the bind address is worth printing.
 func bindAmbiguous(snapshot []ports.ListeningPort, port int) bool {
-	seen := 0
-	for _, p := range snapshot {
-		if p.Port == port {
-			seen++
+	matches := 0
+	for _, row := range snapshot {
+		if row.Port == port {
+			matches++
 		}
 	}
-	return seen > 1
+	return matches > 1
 }
 
-// freedURLs lists the distinct URLs of the ports that were successfully acted
-// on, in the order they appear in the results.
+// freedURLs lists the URLs the successful rows released: distinct, in the order
+// the results report them.
 func freedURLs(results []killer.Result, snapshot []ports.ListeningPort) []string {
 	byKey := map[string]string{}
 	for i := range snapshot {
 		byKey[snapshot[i].PortKey()] = snapshot[i].URL()
 	}
-	var out []string
-	seen := map[string]bool{}
-	for _, r := range results {
-		if !r.OK || r.Port == 0 {
+	var urls []string
+	emitted := map[string]bool{}
+	for _, row := range results {
+		if !row.OK || row.Port == 0 {
 			continue
 		}
-		key := r.Key()
-		if seen[key] {
+		key := row.Key()
+		if emitted[key] {
 			continue
 		}
-		seen[key] = true
-		if url, ok := byKey[key]; ok {
-			out = append(out, url)
+		emitted[key] = true
+		if url, found := byKey[key]; found {
+			urls = append(urls, url)
 		}
 	}
-	return out
+	return urls
 }
 
 // writeKillJSON prints the kill result list.
-func writeKillJSON(w io.Writer, results []killer.Result) error {
-	if results == nil {
-		results = []killer.Result{}
+func writeKillJSON(w io.Writer, rows []killer.Result) error {
+	if rows == nil {
+		rows = []killer.Result{}
 	}
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(results)
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(rows)
 }

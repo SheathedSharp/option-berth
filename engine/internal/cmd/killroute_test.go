@@ -27,11 +27,11 @@ import (
 // a real port. With BERTH_TEST_PIDFILE it also reports the pid it runs as, so a
 // case about "the pid the user named" never has to guess it from a table.
 func TestKillHelperListener(t *testing.T) {
-	port := os.Getenv("BERTH_TEST_LISTEN")
-	if port == "" {
+	listenOn := os.Getenv("BERTH_TEST_LISTEN")
+	if listenOn == "" {
 		t.Skip("helper process, driven by TestKillRoutesThroughTheDaemon")
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:"+port)
+	ln, err := net.Listen("tcp", "127.0.0.1:"+listenOn)
 	if err != nil {
 		t.Fatalf("helper could not listen: %v", err)
 	}
@@ -41,59 +41,61 @@ func TestKillHelperListener(t *testing.T) {
 		}
 	}
 	defer ln.Close()
-	time.Sleep(60 * time.Second)
+	time.Sleep(time.Minute)
 }
 
-// startListener spawns the helper on a free port and returns the port. The
-// process is killed on cleanup whether or not the test killed it itself.
+// startListener runs the helper against a free port and reports which port it
+// took. Cleanup kills the process whether or not the test got there first.
 func startListener(t *testing.T) int {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the kill routing harness is unix-only")
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	reserved, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("reserving a port: %v", err)
 	}
-	_, portStr, _ := net.SplitHostPort(ln.Addr().String())
-	ln.Close()
-	port, _ := strconv.Atoi(portStr)
+	_, portText, _ := net.SplitHostPort(reserved.Addr().String())
+	reserved.Close()
+	port, _ := strconv.Atoi(portText)
 
 	pidFile := filepath.Join(t.TempDir(), "listener.pid")
-	cmd := exec.Command(os.Args[0], "-test.run=TestKillHelperListener", "-test.timeout=90s")
-	cmd.Env = append(os.Environ(),
-		"BERTH_TEST_LISTEN="+portStr,
+	helper := exec.Command(os.Args[0], "-test.run=TestKillHelperListener", "-test.timeout=90s")
+	helper.Env = append(os.Environ(),
+		"BERTH_TEST_LISTEN="+portText,
 		"BERTH_TEST_PIDFILE="+pidFile,
 	)
 	born := time.Now().UTC()
-	if err := cmd.Start(); err != nil {
+	if err := helper.Start(); err != nil {
 		t.Fatalf("starting the helper: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = killOwnedIdentities(heldKillIdentity(cmd.Process, born))
-		_, _ = cmd.Process.Wait()
+		_ = killOwnedIdentities(heldKillIdentity(helper.Process, born))
+		_, _ = helper.Process.Wait()
 	})
 
-	listened := false
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", "127.0.0.1:"+portStr, 200*time.Millisecond)
-		if err == nil {
-			conn.Close()
-			listened = true
+	listening := false
+	giveUp := time.Now().Add(5 * time.Second)
+	for time.Now().Before(giveUp) {
+		probe, dialErr := net.DialTimeout("tcp", "127.0.0.1:"+portText, 200*time.Millisecond)
+		if dialErr == nil {
+			probe.Close()
+			listening = true
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if !listened {
+	if !listening {
 		t.Fatalf("the helper never listened on %d", port)
 	}
 	var pid int
-	deadline = time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if raw, err := os.ReadFile(pidFile); err == nil {
-			if n, err := strconv.Atoi(strings.TrimSpace(string(raw))); err == nil {
-				pid = n
+	giveUp = time.Now().Add(5 * time.Second)
+	for time.Now().Before(giveUp) {
+		raw, readErr := os.ReadFile(pidFile)
+		if readErr == nil {
+			reported, convErr := strconv.Atoi(strings.TrimSpace(string(raw)))
+			if convErr == nil {
+				pid = reported
 				break
 			}
 		}
@@ -102,12 +104,12 @@ func startListener(t *testing.T) int {
 	if pid == 0 {
 		t.Fatalf("the helper never reported its pid")
 	}
-	if pid != cmd.Process.Pid {
-		t.Fatalf("helper pid file %d is not the held process %d; a bare child pid is not ownership", pid, cmd.Process.Pid)
+	if pid != helper.Process.Pid {
+		t.Fatalf("helper pid file %d is not the held process %d; a bare child pid is not ownership", pid, helper.Process.Pid)
 	}
 	registerIsolatedKillFixture(t, ports.ListeningPort{
 		Port: port, PID: pid, BindAddress: "127.0.0.1", Type: ports.PortTypeUser,
-	}, heldKillIdentity(cmd.Process, born))
+	}, heldKillIdentity(helper.Process, born))
 	useIsolatedEnrichedKillScan(t)
 	return port
 }
@@ -139,12 +141,12 @@ func startScanningDaemonWithScan(t *testing.T, scan func(scanner.Include) ([]por
 	if runtime.GOOS == "windows" {
 		t.Skip("the unix-socket harness does not apply to named pipes")
 	}
-	dir, err := os.MkdirTemp("", "sn")
+	socketDir, err := os.MkdirTemp("", "sn")
 	if err != nil {
 		t.Fatalf("temp dir: %v", err)
 	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
-	socket := filepath.Join(dir, "d.sock")
+	t.Cleanup(func() { os.RemoveAll(socketDir) })
+	socket := filepath.Join(socketDir, "d.sock")
 
 	srv := daemon.New(daemon.Options{
 		Socket:  socket,
@@ -182,39 +184,39 @@ func startScanningDaemonWithScan(t *testing.T, scan func(scanner.Include) ([]por
 	return stop
 }
 
-// captureStdout collects what fn prints, which is where every kill report goes.
+// captureStdout collects what fn printed; every kill report goes there.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
-	r, w, err := os.Pipe()
+	reader, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("pipe: %v", err)
 	}
-	prev := os.Stdout
-	os.Stdout = w
+	saved := os.Stdout
+	os.Stdout = writer
 
-	done := make(chan string, 1)
+	collected := make(chan string, 1)
 	go func() {
-		var buf bytes.Buffer
-		_, _ = io.Copy(&buf, r)
-		done <- buf.String()
+		var sink bytes.Buffer
+		_, _ = io.Copy(&sink, reader)
+		collected <- sink.String()
 	}()
 
 	fn()
 
-	os.Stdout = prev
-	w.Close()
-	out := <-done
-	r.Close()
-	return out
+	os.Stdout = saved
+	writer.Close()
+	text := <-collected
+	reader.Close()
+	return text
 }
 
 // setKillFlags installs one flag combination for the duration of a test.
 func setKillFlags(t *testing.T, dryRun, asJSON bool) {
 	t.Helper()
-	prevDry, prevJSON, prevYes := killDryRunFlag, killJSONFlag, killYesFlag
+	savedDry, savedJSON, savedYes := killDryRunFlag, killJSONFlag, killYesFlag
 	killDryRunFlag, killJSONFlag, killYesFlag = dryRun, asJSON, true
 	t.Cleanup(func() {
-		killDryRunFlag, killJSONFlag, killYesFlag = prevDry, prevJSON, prevYes
+		killDryRunFlag, killJSONFlag, killYesFlag = savedDry, savedJSON, savedYes
 	})
 }
 
@@ -238,83 +240,83 @@ func answerNextPrompt(t *testing.T) {
 	})
 }
 
-// runKillCmd drives the real command, so the routing decision itself — daemon
-// when one is reachable, direct scan otherwise — is what the test exercises.
+// runKillCmd drives the real command, so what the test exercises is the routing
+// decision itself: daemon when one answers, direct scan otherwise.
 func runKillCmd(t *testing.T, args ...string) (string, error) {
 	t.Helper()
-	cmd := &cobra.Command{RunE: runKill}
-	cmd.Flags().String("ip", "", "")
-	cmd.SetContext(context.Background())
-	var err error
-	out := captureStdout(t, func() { err = runKill(cmd, args) })
-	return out, err
+	c := &cobra.Command{RunE: runKill}
+	c.Flags().String("ip", "", "")
+	c.SetContext(context.Background())
+	var runErr error
+	printed := captureStdout(t, func() { runErr = runKill(c, args) })
+	return printed, runErr
 }
 
-// TestKillJSONIsIdenticalOnBothPaths is the golden for the third
-// follow-up: routing `oberth kill` through the daemon must not change a single
-// byte of what the user sees. A dry run is what makes the comparison possible —
-// the same process is planned twice, so pid, name and method are identical and
-// the two JSON documents have to match exactly.
+// TestKillJSONIsIdenticalOnBothPaths is the golden for the third follow-up:
+// routing `oberth kill` through the daemon must not change one byte of what the
+// user sees. The dry run is what makes the comparison possible — the same
+// process is planned twice, so pid, name and method are identical and both JSON
+// documents have to match exactly.
 func TestKillJSONIsIdenticalOnBothPaths(t *testing.T) {
 	resetRouting(t)
 	setKillFlags(t, true, true)
 	port := startListener(t)
-	arg := []string{strconv.Itoa(port)}
+	target := []string{strconv.Itoa(port)}
 
 	noDaemonReachable(t)
-	direct, err := runKillCmd(t, arg...)
+	directOut, err := runKillCmd(t, target...)
 	if err != nil {
 		t.Fatalf("the direct path failed: %v", err)
 	}
-	if !bytes.Contains([]byte(direct), []byte(`"port": `+arg[0])) {
-		t.Fatalf("the direct path did not find the listener:\n%s", direct)
+	if !bytes.Contains([]byte(directOut), []byte(`"port": `+target[0])) {
+		t.Fatalf("the direct path did not find the listener:\n%s", directOut)
 	}
 
 	resetRouting(t)
 	startScanningDaemon(t)
-	routed, err := runKillCmd(t, arg...)
+	daemonOut, err := runKillCmd(t, target...)
 	if err != nil {
 		t.Fatalf("the daemon path failed: %v", err)
 	}
 
-	if routed != direct {
-		t.Fatalf("--json differs between the two paths:\n daemon:\n%s\n direct:\n%s", routed, direct)
+	if daemonOut != directOut {
+		t.Fatalf("--json differs between the two paths:\n daemon:\n%s\n direct:\n%s", daemonOut, directOut)
 	}
 }
 
-// TestKillRoutesThroughTheDaemon: with a daemon reachable the kill happens in
-// the daemon, which rescans straight afterwards — so the port is gone from the
-// daemon's own port table immediately, instead of lingering in its cache for up
-// to CacheTTL as it did when the CLI killed directly.
+// TestKillRoutesThroughTheDaemon: with a daemon reachable the kill happens
+// inside it, and it rescans straight afterwards. The port therefore leaves the
+// daemon's own table at once instead of lingering in its cache for up to
+// CacheTTL, which is what happened while the CLI killed directly.
 func TestKillRoutesThroughTheDaemon(t *testing.T) {
 	resetRouting(t)
 	setKillFlags(t, false, true)
-	port := startListener(t)
+	listenPort := startListener(t)
 	startScanningDaemon(t)
 
-	out, err := runKillCmd(t, strconv.Itoa(port))
+	printed, err := runKillCmd(t, strconv.Itoa(listenPort))
 	if err != nil {
-		t.Fatalf("kill through the daemon: %v\n%s", err, out)
+		t.Fatalf("kill through the daemon: %v\n%s", err, printed)
 	}
-	if !bytes.Contains([]byte(out), []byte(`"ok": true`)) {
-		t.Fatalf("nothing was stopped:\n%s", out)
+	if !bytes.Contains([]byte(printed), []byte(`"ok": true`)) {
+		t.Fatalf("nothing was stopped:\n%s", printed)
 	}
 
 	ctx := context.Background()
-	c, err := dialDaemon(ctx)
+	conn, err := dialDaemon(ctx)
 	if err != nil {
 		t.Fatalf("connecting: %v", err)
 	}
-	defer c.Close()
+	defer conn.Close()
 
-	// The daemon's own view is already up to date: no sleeping out the cache.
-	rows, err := daemonList(ctx, c)
+	// Nothing has to wait out the cache: the daemon's view already moved on.
+	rows, err := daemonList(ctx, conn)
 	if err != nil {
 		t.Fatalf("state.snapshot: %v", err)
 	}
-	for _, r := range rows {
-		if r.Port == port {
-			t.Fatalf("port %d is still in the daemon's table right after the kill", port)
+	for _, row := range rows {
+		if row.Port == listenPort {
+			t.Fatalf("port %d is still in the daemon's table right after the kill", listenPort)
 		}
 	}
 }

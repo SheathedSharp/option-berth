@@ -24,30 +24,29 @@ var guardDaemonKill = func(*client.Client) error { return nil }
 
 // killThroughDaemon runs `oberth kill` as `ports.kill` / `groups.kill`.
 //
-// Target selection stays here, against the port table the daemon serves, so
-// every message the user can see — the invalid-selector errors, "no listening
-// port belongs to group X", the confirmation list, the result lines and the
-// --json list — is produced by the same code as the direct path. Only the
-// signalling moves: the daemon kills, then rescans and records the port going
-// down, which is what the CLI's own killer could never do.
-func killThroughDaemon(ctx context.Context, c *client.Client, args []string, bindIP string) error {
-	snapshot, err := daemonList(ctx, c)
+// Selection runs here, against the table the daemon serves, so the sentences a
+// user sees — invalid selector, "no listening port belongs to group X", the
+// confirmation list, result lines and the --json list — come from the same code
+// as the direct path. Only signalling moves: the daemon kills, rescans and
+// records the port going down, which the CLI's own killer could not do.
+func killThroughDaemon(ctx context.Context, conn *client.Client, args []string, bindIP string) error {
+	rows, err := daemonList(ctx, conn)
 	if err != nil {
 		return cliError(err)
 	}
-	targets, confirm, err := killTargets(args, snapshot, bindIP)
+	targets, confirm, err := killTargets(args, rows, bindIP)
 	if err != nil {
 		return err
 	}
 	if len(targets) == 0 {
-		return reportKill(os.Stdout, nil, snapshot, killJSONFlag, killDryRunFlag)
+		return reportKill(os.Stdout, nil, rows, killJSONFlag, killDryRunFlag)
 	}
 
 	opts := killOptions()
 	return killRequest{
-		exec:     killInDaemon(c),
+		exec:     killInDaemon(conn),
 		targets:  targets,
-		snapshot: snapshot,
+		snapshot: rows,
 		opts:     opts,
 		confirm:  confirm && !killYesFlag && !killDryRunFlag,
 		asJSON:   killJSONFlag,
@@ -99,70 +98,70 @@ func killMethodFor(group string, opts killer.Options) string {
 	return "ports.kill"
 }
 
-// killSelectors turns the targets killTargets resolved into wire selectors. A
-// selector sets exactly one of port and pid, which is what the targets already
-// are: nothing here re-selects.
-func killSelectors(targets []killer.Target) []rpc.Selector {
-	out := make([]rpc.Selector, 0, len(targets))
-	for _, t := range targets {
-		var sel rpc.Selector
+// killSelectors turns resolved targets into wire selectors. A selector carries
+// exactly one of port and pid — the targets are already that shape, so nothing
+// is re-selected here.
+func killSelectors(resolved []killer.Target) []rpc.Selector {
+	selectors := make([]rpc.Selector, 0, len(resolved))
+	for _, target := range resolved {
+		var selector rpc.Selector
 		switch {
-		case t.RunID != "":
-			id := t.RunID
-			sel.RunID = &id
-		case t.PID > 0:
-			pid := t.PID
-			sel.PID = &pid
+		case target.RunID != "":
+			runID := target.RunID
+			selector.RunID = &runID
+		case target.PID > 0:
+			pid := target.PID
+			selector.PID = &pid
 		default:
-			port := t.Port
-			sel.Port = &port
-			if t.BindAddress != "" {
-				bind := t.BindAddress
-				sel.BindAddress = &bind
+			port := target.Port
+			selector.Port = &port
+			if target.BindAddress != "" {
+				bind := target.BindAddress
+				selector.BindAddress = &bind
 			}
 		}
-		out = append(out, sel)
+		selectors = append(selectors, selector)
 	}
-	return out
+	return selectors
 }
 
-// graceMs is --grace on the wire. Zero means "the daemon's default", which is
-// the same default the killer applies locally.
+// graceMs is --grace on the wire. Zero means "the daemon's default", the same
+// default the killer applies locally.
 func graceMs(opts killer.Options) int {
-	if opts.Grace <= 0 {
-		return 0
+	if opts.Grace > 0 {
+		return int(opts.Grace.Milliseconds())
 	}
-	return int(opts.Grace.Milliseconds())
+	return 0
 }
 
-// killSession is `oberth kill --session <id>`: the session form of `-g`,
+// killSession is `oberth kill --session <id>`, the session form of `-g`. It is
 // answered by `sessions.kill` for the same reason `-g` is answered by
-// `groups.kill` — the daemon owns the membership, so it does the selecting.
-// There is no direct-scan path: a session only exists in the daemon.
+// `groups.kill`: the daemon owns the membership and therefore selects. No
+// direct-scan path exists, because a session only exists in the daemon.
 func killSession(ctx context.Context) error {
-	id, err := currentSession(killSessionFlag)
+	sessionID, err := currentSession(killSessionFlag)
 	if err != nil {
 		return err
 	}
-	c, err := sessionsDaemon(ctx)
+	conn, err := sessionsDaemon(ctx)
 	if err != nil {
 		return err
 	}
-	defer c.Close()
+	defer conn.Close()
 
-	snapshot, err := daemonList(ctx, c)
+	snapshot, err := daemonList(ctx, conn)
 	if err != nil {
 		return cliError(err)
 	}
 
 	return killRequest{
-		exec:     killSessionInDaemon(c, id),
+		exec:     killSessionInDaemon(conn, sessionID),
 		snapshot: snapshot,
 		opts:     killOptions(),
 		confirm:  !killYesFlag && !killDryRunFlag,
 		asJSON:   killJSONFlag,
 		emptyPlan: func() {
-			fmt.Printf("Session %s has nothing running.\n", id)
+			fmt.Printf("Session %s has nothing running.\n", sessionID)
 		},
 	}.execute(ctx)
 }

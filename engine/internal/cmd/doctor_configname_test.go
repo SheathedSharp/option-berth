@@ -9,20 +9,20 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 )
 
-// TestRenameLegacyConfigPlain: outside git the fix is a plain rename.
+// TestRenameLegacyConfigPlain: outside git the repair is a plain rename.
 func TestRenameLegacyConfigPlain(t *testing.T) {
-	dir := t.TempDir()
-	old := filepath.Join(dir, groups.LegacyConfigName)
-	if err := os.WriteFile(old, []byte("name: demo\n"), 0o644); err != nil {
-		t.Fatal(err)
+	root := t.TempDir()
+	legacy := filepath.Join(root, groups.LegacyConfigName)
+	if err := os.WriteFile(legacy, []byte("name: catalog\n"), 0o644); err != nil {
+		t.Fatalf("writing the legacy file: %v", err)
 	}
-	if _, err := renameLegacyConfig(dir, groups.FilesIn(dir)); err != nil {
+	if _, err := renameLegacyConfig(root, groups.FilesIn(root)); err != nil {
 		t.Fatalf("rename: %v", err)
 	}
-	if _, err := os.Stat(old); !os.IsNotExist(err) {
-		t.Errorf("%s is still there", old)
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Errorf("%s is still there", legacy)
 	}
-	if data, err := os.ReadFile(filepath.Join(dir, groups.ConfigName)); err != nil || string(data) != "name: demo\n" {
+	if data, err := os.ReadFile(filepath.Join(root, groups.ConfigName)); err != nil || string(data) != "name: catalog\n" {
 		t.Errorf("%s = %q, %v", groups.ConfigName, data, err)
 	}
 }
@@ -32,43 +32,45 @@ func TestRenameLegacyConfigPreservesGitIndex(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not installed")
 	}
-	dir := t.TempDir()
+	root := t.TempDir()
 	gitIn := func(args ...string) {
 		t.Helper()
-		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v: %s", args, err, out)
 		}
 	}
 	gitIn("init", "-q")
-	if err := os.WriteFile(filepath.Join(dir, groups.LegacyConfigName), []byte("name: demo\n"), 0o644); err != nil {
-		t.Fatal(err)
+	if err := os.WriteFile(filepath.Join(root, groups.LegacyConfigName), []byte("name: catalog\n"), 0o644); err != nil {
+		t.Fatalf("writing the legacy file: %v", err)
 	}
 	gitIn("add", groups.LegacyConfigName)
 
-	if _, err := renameLegacyConfig(dir, groups.FilesIn(dir)); err != nil {
+	if _, err := renameLegacyConfig(root, groups.FilesIn(root)); err != nil {
 		t.Fatalf("rename: %v", err)
 	}
-	if tracked(dir, groups.ConfigName) {
+	if tracked(root, groups.ConfigName) {
 		t.Errorf("%s was unexpectedly staged by the fix", groups.ConfigName)
 	}
-	if !tracked(dir, groups.LegacyConfigName) {
+	if !tracked(root, groups.LegacyConfigName) {
 		t.Errorf("%s was unexpectedly removed from the Git index", groups.LegacyConfigName)
 	}
 }
 
-// TestRenameLegacyConfigRefusesTwoFiles: with both names present the fix
-// touches nothing — one of them would be lost.
+// TestRenameLegacyConfigRefusesTwoFiles: with both names present the repair
+// touches nothing, because one of the two would be lost.
 func TestRenameLegacyConfigRefusesTwoFiles(t *testing.T) {
-	dir := t.TempDir()
-	for name, body := range map[string]string{groups.ConfigName: "name: new\n", groups.LegacyConfigName: "name: old\n"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
-			t.Fatal(err)
+	root := t.TempDir()
+	present := map[string]string{groups.ConfigName: "name: new\n", groups.LegacyConfigName: "name: old\n"}
+	for name, body := range present {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("writing %s: %v", name, err)
 		}
 	}
-	if _, err := renameLegacyConfig(dir, groups.FilesIn(dir)); err == nil {
+	if _, err := renameLegacyConfig(root, groups.FilesIn(root)); err == nil {
 		t.Fatal("renamed with two config files present")
 	}
-	if data, _ := os.ReadFile(filepath.Join(dir, groups.ConfigName)); string(data) != "name: new\n" {
+	if data, _ := os.ReadFile(filepath.Join(root, groups.ConfigName)); string(data) != "name: new\n" {
 		t.Errorf("%s changed: %q", groups.ConfigName, data)
 	}
 }

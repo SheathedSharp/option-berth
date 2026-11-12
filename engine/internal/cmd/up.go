@@ -178,35 +178,39 @@ func projectStartParams(args []string, only []string, allowOutsideHome bool) (rp
 		Only:             only,
 		AllowOutsideHome: allowOutsideHome,
 	}
-	// The services run as if started from this shell: the toolchain they need is
-	// this machine's, and there is no other machine to be confused about.
+	// Services inherit this shell's environment: the toolchain they need is this
+	// machine's, and there is no other machine to be confused about.
 	params.Env = callerEnv()
 	if len(args) == 1 {
-		// Named from anywhere: the file is the daemon's to find, so there is
-		// nothing here to check against it.
-		name := strings.TrimSpace(args[0])
-		params.Name = &name
+		// A named project is resolved by the daemon, which is the side that
+		// reads the file, so nothing here has to check it first.
+		named := strings.TrimSpace(args[0])
+		params.Name = &named
 		return params, nil, nil
 	}
-	wd, err := os.Getwd()
+	cwd, err := os.Getwd()
 	if err != nil {
 		return params, nil, fmt.Errorf("resolving the working directory: %w", err)
 	}
 	index := groups.NewIndex()
-	index.Observe(wd)
-	cfg := index.Nearest(wd)
-	if cfg == nil {
-		// A file that is there but broken is a different problem from no file
-		// at all, and saying so is the difference between a two-second fix and
-		// a puzzled `ls -a`.
-		if bad := index.Invalid(); len(bad) > 0 {
-			return params, nil, fmt.Errorf("%s cannot be used: %w", groups.ConfigName, bad[0].Err)
-		}
-		return params, nil, fmt.Errorf("no %s at or above %s\nhint: `oberth init` writes one, or name a project: `oberth up <project>`",
-			groups.ConfigName, shortPath(wd))
+	index.Observe(cwd)
+	found := index.Nearest(cwd)
+	if found == nil {
+		return params, nil, missingConfigError(index, cwd)
 	}
-	params.ConfigPath = &cfg.Path
-	return params, cfg, nil
+	params.ConfigPath = &found.Path
+	return params, found, nil
+}
+
+// missingConfigError explains why no manifest answered for dir. A file that is
+// there but unparseable is a different problem from no file at all, and naming
+// the difference is what separates a two-second fix from a puzzled `ls -a`.
+func missingConfigError(index *groups.Index, dir string) error {
+	if invalid := index.Invalid(); len(invalid) > 0 {
+		return fmt.Errorf("%s cannot be used: %w", groups.ConfigName, invalid[0].Err)
+	}
+	return fmt.Errorf("no %s at or above %s\nhint: `oberth init` writes one, or name a project: `oberth up <project>`",
+		groups.ConfigName, shortPath(dir))
 }
 
 // consumeStart prints one line per service as the daemon reports it, then the
@@ -218,7 +222,7 @@ func consumeStart(stream *client.Stream, asJSON bool) error {
 
 func consumeStartWithWait(ctx context.Context, c *client.Client, stream *client.Stream, asJSON, wait bool,
 	waitTimeout time.Duration, waitTimeoutSet bool, params rpc.GroupsStartParams, cfg *groups.Config) error {
-	chunks, summary, err := collectStartChunks(stream, os.Stderr, wait, asJSON)
+	results, summary, err := collectStartChunks(stream, os.Stderr, wait, asJSON)
 	if err != nil {
 		return err
 	}
@@ -227,7 +231,7 @@ func consumeStartWithWait(ctx context.Context, c *client.Client, stream *client.
 		if !asJSON {
 			fmt.Println(display.Dim("waiting for services to be ready…"))
 		}
-		timedOut, err := waitForStartReady(ctx, params, cfg, chunks, &summary, waitTimeout, waitTimeoutSet)
+		timedOut, err := waitForStartReady(ctx, params, cfg, results, &summary, waitTimeout, waitTimeoutSet)
 		if err != nil {
 			return err
 		}
@@ -240,13 +244,13 @@ func consumeStartWithWait(ctx context.Context, c *client.Client, stream *client.
 		if err := printJSON(struct {
 			Services []rpc.GroupsStartChunk `json:"services"`
 			rpc.GroupsStartEnd
-		}{Services: chunks, GroupsStartEnd: summary}); err != nil {
+		}{Services: results, GroupsStartEnd: summary}); err != nil {
 			return err
 		}
 	} else {
 		if wait {
-			for _, chunk := range chunks {
-				printStartChunk(chunk)
+			for _, result := range results {
+				printStartChunk(result)
 			}
 		}
 		printStartSummary(summary)
@@ -347,40 +351,40 @@ type startChunkStream interface {
 // go to progress (stderr in production) and are dropped here, so services[],
 // the readiness wait and the summary never treat them as services.
 func collectStartChunks(stream startChunkStream, progress io.Writer, wait, asJSON bool) ([]rpc.GroupsStartChunk, rpc.GroupsStartEnd, error) {
-	var chunks []rpc.GroupsStartChunk
-	for chunk := range stream.Chunks() {
-		var c rpc.GroupsStartChunk
-		if err := json.Unmarshal(chunk, &c); err != nil {
+	var outcomes []rpc.GroupsStartChunk
+	for payload := range stream.Chunks() {
+		var outcome rpc.GroupsStartChunk
+		if err := json.Unmarshal(payload, &outcome); err != nil {
 			continue
 		}
-		if isStartProgressChunk(c) {
+		if isStartProgressChunk(outcome) {
 			// A daemon may still send progress when a peer asked for it;
 			// this invocation's own contract decides whether it is shown.
 			if !asJSON {
-				printStartProgress(progress, c)
+				printStartProgress(progress, outcome)
 			}
 			continue
 		}
-		normalizeStartChunk(&c)
+		normalizeStartChunk(&outcome)
 		if !wait {
 			// This invocation did not wait, so it cannot claim readiness.
 			// Say only what it knows: the daemon reported a started process.
-			markStartChunkUnconfirmed(&c)
+			markStartChunkUnconfirmed(&outcome)
 		}
-		chunks = append(chunks, c)
+		outcomes = append(outcomes, outcome)
 		if !asJSON && !wait {
-			printStartChunk(c)
+			printStartChunk(outcome)
 		}
 	}
 	end := <-stream.End()
 	var summary rpc.GroupsStartEnd
 	if end.Err != nil {
-		return chunks, summary, cliError(end.Err)
+		return outcomes, summary, cliError(end.Err)
 	}
 	if err := end.Decode(&summary); err != nil {
-		return chunks, summary, err
+		return outcomes, summary, err
 	}
-	return chunks, summary, nil
+	return outcomes, summary, nil
 }
 
 // isStartProgressChunk reports whether a chunk is an in-flight observation
@@ -490,9 +494,9 @@ func printStartChunk(c rpc.GroupsStartChunk) {
 	default:
 		// The address, not the port number: a terminal makes a URL clickable,
 		// and opening the thing you just started is the next thing you do.
-		where := display.Dim(fmt.Sprintf("pid %d  %s", c.PID, shortPath(c.LogPath)))
+		location := display.Dim(fmt.Sprintf("pid %d  %s", c.PID, shortPath(c.LogPath)))
 		if c.Port > 0 {
-			where = display.Underline(groups.URL(c.Port)) + "  " + where
+			location = display.Underline(groups.URL(c.Port)) + "  " + location
 		}
 		marker, suffix := display.Green("✓"), ""
 		if c.Ready == nil || !*c.Ready {
@@ -503,13 +507,14 @@ func printStartChunk(c rpc.GroupsStartChunk) {
 		if len(c.IncludedBy) > 0 {
 			suffix += "  " + display.Dim("(dependency of "+strings.Join(c.IncludedBy, ", ")+")")
 		}
-		fmt.Printf("  %s %s  %s%s\n", marker, display.Bold(c.Service), where, suffix)
+		fmt.Printf("  %s %s  %s%s\n", marker, display.Bold(c.Service), location, suffix)
 	}
 }
 
 func printStartSummary(end rpc.GroupsStartEnd) {
 	parts := []string{fmt.Sprintf("%d started", len(end.Started))}
-	if len(end.Skipped) > 0 {
+	switch {
+	case len(end.Skipped) > 0:
 		parts = append(parts, fmt.Sprintf("%d already running", len(end.Skipped)))
 	}
 	if len(end.Errors) > 0 {
@@ -524,12 +529,18 @@ func printStartSummary(end rpc.GroupsStartEnd) {
 // shortPath renders a path under the home directory as ~/….
 func shortPath(path string) string {
 	home, err := os.UserHomeDir()
-	if err != nil || home == "" || path == "" || !strings.HasPrefix(path, home) {
-		return path
-	}
-	rel, err := filepath.Rel(home, path)
 	if err != nil {
 		return path
 	}
-	return filepath.Join("~", rel)
+	switch {
+	case home == "", path == "":
+		return path
+	case !strings.HasPrefix(path, home):
+		return path
+	}
+	rest, err := filepath.Rel(home, path)
+	if err != nil {
+		return path
+	}
+	return filepath.Join("~", rest)
 }

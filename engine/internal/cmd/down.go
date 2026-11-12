@@ -40,11 +40,12 @@ var downCmd = &cobra.Command{
 }
 
 func init() {
-	downCmd.Flags().BoolVarP(&downForceFlag, "force", "f", false, "Send SIGKILL instead of SIGTERM")
-	downCmd.Flags().BoolVar(&downJSONFlag, "json", false, "Output as JSON")
-	downCmd.Flags().StringVar(&downWorktreeFlag, "worktree", "",
+	flags := downCmd.Flags()
+	flags.BoolVarP(&downForceFlag, "force", "f", false, "Send SIGKILL instead of SIGTERM")
+	flags.BoolVar(&downJSONFlag, "json", false, "Output as JSON")
+	flags.StringVar(&downWorktreeFlag, "worktree", "",
 		"Stop the checkout at this root path, even if its directory is gone")
-	downCmd.Flags().StringVar(&downIdentityFlag, "identity", "",
+	flags.StringVar(&downIdentityFlag, "identity", "",
 		"Stop the checkout with this wt_ identity, even if its directory is gone")
 	rootCmd.AddCommand(downCmd)
 }
@@ -66,13 +67,13 @@ func downRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	snapshot, err := daemonList(cmd.Context(), c)
+	rows, err := daemonList(cmd.Context(), c)
 	if err != nil {
 		return cliError(err)
 	}
 
-	var env rpc.KillEnvelope
-	if err := c.Call(cmd.Context(), "groups.kill", params, &env); err != nil {
+	var envelope rpc.KillEnvelope
+	if err := c.Call(cmd.Context(), "groups.kill", params, &envelope); err != nil {
 		return cliError(err)
 	}
 	if downJSONFlag {
@@ -83,32 +84,32 @@ func downRun(cmd *cobra.Command, args []string) error {
 		// already answers non-zero through reportKill; this branch answers
 		// through the daemon's own verdict, as `restart --json` does for the
 		// same envelope.
-		if err := printJSON(env); err != nil {
+		if err := printJSON(envelope); err != nil {
 			return err
 		}
-		if !env.OK {
+		if !envelope.OK {
 			return errSilent
 		}
 		return nil
 	}
-	return reportDown(env, snapshot)
+	return reportDown(envelope, rows)
 }
 
 // reportDown renders what groups.kill did: the per-process lines for whatever
 // was listening, and then the sentence about the reservations it gave back.
 // The released count is the daemon's, so it is printed whether or not anything
 // was listening.
-func reportDown(env rpc.KillEnvelope, snapshot []ports.ListeningPort) error {
-	var reportErr error
-	if len(env.Results) == 0 {
+func reportDown(envelope rpc.KillEnvelope, rows []ports.ListeningPort) error {
+	var renderErr error
+	if len(envelope.Results) == 0 {
 		fmt.Println("Nothing was running.")
 	} else {
-		reportErr = reportKill(os.Stdout, env.Results, snapshot, false, false)
+		renderErr = reportKill(os.Stdout, envelope.Results, rows, false, false)
 	}
-	if env.Released > 0 {
-		fmt.Println(display.Dim(fmt.Sprintf("released %d claimed %s", env.Released, pluralWord(env.Released, "port"))))
+	if envelope.Released > 0 {
+		fmt.Println(display.Dim(fmt.Sprintf("released %d claimed %s", envelope.Released, pluralWord(envelope.Released, "port"))))
 	}
-	return reportErr
+	return renderErr
 }
 
 // downParams chooses what to stop before any daemon call: one explicit
