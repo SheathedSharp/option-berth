@@ -33,31 +33,31 @@ func onePort(dir string) func(Include) ([]ports.ListeningPort, error) {
 // TestRepublishDoesNotScan: a store write's republish re-attributes the rows
 // the last scan already produced; it never asks the OS again.
 func TestRepublishDoesNotScan(t *testing.T) {
-	st, dir := project(t, "name: before\nports: [8123]\n")
-	var scans atomic.Int64
-	l := New(Options{
+	store, root := project(t, "name: before\nports: [8123]\n")
+	var collections atomic.Int64
+	loop := New(Options{
 		DaemonVersion: "test",
-		Store:         st,
+		Store:         store,
 		Scan: func(include Include) ([]ports.ListeningPort, error) {
-			scans.Add(1)
-			return onePort(dir)(include)
+			collections.Add(1)
+			return onePort(root)(include)
 		},
 	})
 
-	if _, err := l.Snapshot(Include{}); err != nil {
+	if _, err := loop.Snapshot(Include{}); err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	if got := scans.Load(); got != 1 {
+	if got := collections.Load(); got != 1 {
 		t.Fatalf("scans after the first read = %d, want 1", got)
 	}
-	writeConfig(t, dir, "name: shop\nports: [8123]\n")
-	if err := l.Republish(); err != nil {
+	writeConfig(t, root, "name: shop\nports: [8123]\n")
+	if err := loop.Republish(); err != nil {
 		t.Fatalf("Republish: %v", err)
 	}
-	if got := scans.Load(); got != 1 {
+	if got := collections.Load(); got != 1 {
 		t.Fatalf("scans after Republish = %d, want the first read only", got)
 	}
-	cached := l.Cached()
+	cached := loop.Cached()
 	if len(cached.Ports) != 1 || stringValue(cached.Ports[0].Group) != "shop" {
 		t.Fatalf("cached = %+v, want the renamed group published without a scan", cached.Ports)
 	}
@@ -99,18 +99,18 @@ func TestRepublishPublishesBeforeItReturns(t *testing.T) {
 // TestRepublishBeforeAnyScanFallsBackToOne: nothing to re-attribute yet, so the
 // write still has to reach the wire through one real scan.
 func TestRepublishBeforeAnyScanFallsBackToOne(t *testing.T) {
-	var scans atomic.Int64
-	l := New(Options{
+	var collections atomic.Int64
+	loop := New(Options{
 		DaemonVersion: "test",
 		Scan: func(Include) ([]ports.ListeningPort, error) {
-			scans.Add(1)
-			return []ports.ListeningPort{{Port: 8123, PID: 42, Process: "python3"}}, nil
+			collections.Add(1)
+			return []ports.ListeningPort{{Port: 8234, Process: "node", PID: 42}}, nil
 		},
 	})
-	if err := l.Republish(); err != nil {
+	if err := loop.Republish(); err != nil {
 		t.Fatalf("Republish: %v", err)
 	}
-	if got := scans.Load(); got != 1 {
+	if got := collections.Load(); got != 1 {
 		t.Fatalf("scans = %d, want one fallback scan", got)
 	}
 }
@@ -118,97 +118,97 @@ func TestRepublishBeforeAnyScanFallsBackToOne(t *testing.T) {
 // TestRPCScanDoesNotInheritDemandButKeepsIt: an RPC scan collects only what its
 // caller asked for, and carries the subscribers' last readings forward.
 func TestRPCScanDoesNotInheritDemandButKeepsIt(t *testing.T) {
-	var mu sync.Mutex
-	var asked []Include
-	l := New(Options{
+	var requestsMu sync.Mutex
+	var requests []Include
+	loop := New(Options{
 		DaemonVersion: "test",
 		Demand:        func() (int, Include) { return 1, Include{Stats: true, Health: true} },
-		Scan: func(inc Include) ([]ports.ListeningPort, error) {
-			mu.Lock()
-			asked = append(asked, inc)
-			mu.Unlock()
-			row := ports.ListeningPort{Port: 8123, PID: 42, Process: "python3"}
-			if inc.Stats {
+		Scan: func(want Include) ([]ports.ListeningPort, error) {
+			requestsMu.Lock()
+			requests = append(requests, want)
+			requestsMu.Unlock()
+			row := ports.ListeningPort{Port: 8234, Process: "node", PID: 42}
+			if want.Stats {
 				row.CPUPercent, row.MemoryRSS = 12.5, 4096
 			}
-			if inc.Health {
+			if want.Health {
 				row.HealthStatus = "healthy"
 			}
 			return []ports.ListeningPort{row}, nil
 		},
 	})
 
-	l.scanAndPublish(Include{Stats: true, Health: true})
-	ticked := l.Cached()
+	loop.scanAndPublish(Include{Stats: true, Health: true})
+	ticked := loop.Cached()
 	if len(ticked.Ports) != 1 || ticked.Ports[0].Health == nil {
 		t.Fatalf("the tick published %+v, want a probed row", ticked.Ports)
 	}
 	verdict := *ticked.Ports[0].Health
 
-	snap, err := l.Rescan(Include{})
+	fresh, err := loop.Rescan(Include{})
 	if err != nil {
 		t.Fatalf("Rescan: %v", err)
 	}
-	mu.Lock()
-	got := append([]Include(nil), asked...)
-	mu.Unlock()
-	if len(got) != 2 {
-		t.Fatalf("scans = %d, want the tick and the rescan", len(got))
+	requestsMu.Lock()
+	collected := append([]Include(nil), requests...)
+	requestsMu.Unlock()
+	if len(collected) != 2 {
+		t.Fatalf("scans = %d, want the tick and the rescan", len(collected))
 	}
-	if got[1].Stats || got[1].Health {
-		t.Fatalf("the rescan collected %+v, want a bare scan", got[1])
+	if collected[1].Stats || collected[1].Health {
+		t.Fatalf("the rescan collected %+v, want a bare scan", collected[1])
 	}
-	if len(snap.Ports) != 1 {
-		t.Fatalf("ports = %+v", snap.Ports)
+	if len(fresh.Ports) != 1 {
+		t.Fatalf("ports = %+v", fresh.Ports)
 	}
-	if snap.Ports[0].Stats == nil || snap.Ports[0].Stats.CPUPercent != 12.5 {
-		t.Fatalf("stats = %+v, want the subscriber's reading carried forward", snap.Ports[0].Stats)
+	if fresh.Ports[0].Stats == nil || fresh.Ports[0].Stats.CPUPercent != 12.5 {
+		t.Fatalf("stats = %+v, want the subscriber's reading carried forward", fresh.Ports[0].Stats)
 	}
-	if snap.Ports[0].Health == nil || *snap.Ports[0].Health != verdict {
-		t.Fatalf("health = %+v, want %+v carried forward", snap.Ports[0].Health, verdict)
+	if fresh.Ports[0].Health == nil || *fresh.Ports[0].Health != verdict {
+		t.Fatalf("health = %+v, want %+v carried forward", fresh.Ports[0].Health, verdict)
 	}
 }
 
 // TestOlderScanNeverOvertakesANewerOne: overlapping scans are fine, going
 // backwards is not. The scan that began first cannot commit after a newer one.
 func TestOlderScanNeverOvertakesANewerOne(t *testing.T) {
-	release := make(chan struct{})
-	var slow atomic.Bool
-	l := New(Options{
+	resume := make(chan struct{})
+	var blocked atomic.Bool
+	loop := New(Options{
 		DaemonVersion: "test",
-		Scan: func(inc Include) ([]ports.ListeningPort, error) {
-			if inc.Stats {
-				slow.Store(true)
-				<-release
+		Scan: func(want Include) ([]ports.ListeningPort, error) {
+			if want.Stats {
+				blocked.Store(true)
+				<-resume
 				return []ports.ListeningPort{
-					{Port: 8123, PID: 42, Process: "python3"},
-					{Port: 8124, PID: 43, Process: "python3"},
+					{Port: 8234, Process: "node", PID: 42},
+					{Port: 8235, Process: "node", PID: 43},
 				}, nil
 			}
-			return []ports.ListeningPort{{Port: 8123, PID: 42, Process: "python3"}}, nil
+			return []ports.ListeningPort{{Port: 8234, Process: "node", PID: 42}}, nil
 		},
 	})
 
-	done := make(chan struct{})
+	tickDone := make(chan struct{})
 	go func() {
-		defer close(done)
-		l.scanAndPublish(Include{Stats: true})
+		defer close(tickDone)
+		loop.scanAndPublish(Include{Stats: true})
 	}()
-	for !slow.Load() {
+	for !blocked.Load() {
 		time.Sleep(time.Millisecond)
 	}
-	if _, err := l.Rescan(Include{}); err != nil {
+	if _, err := loop.Rescan(Include{}); err != nil {
 		t.Fatalf("Rescan: %v", err)
 	}
 	// The newer scan must have committed before the older one finishes, or the
 	// assertion at the end would pass without exercising the ordering.
-	if got := len(l.Cached().Ports); got != 1 {
+	if got := len(loop.Cached().Ports); got != 1 {
 		t.Fatalf("ports after the newer scan = %d, want 1", got)
 	}
 
-	close(release)
-	<-done
-	if got := len(l.Cached().Ports); got != 1 {
+	close(resume)
+	<-tickDone
+	if got := len(loop.Cached().Ports); got != 1 {
 		t.Fatalf("ports after the older scan finished = %d, want the newer snapshot", got)
 	}
 }
@@ -216,20 +216,20 @@ func TestOlderScanNeverOvertakesANewerOne(t *testing.T) {
 // TestLockForGivesUp: a held gate expires on its budget instead of turning a
 // handler's wait into a reply that never comes.
 func TestLockForGivesUp(t *testing.T) {
-	gate := make(chan struct{}, 1)
-	lock(gate)
-	start := time.Now()
-	if lockFor(gate, 20*time.Millisecond) {
+	held := make(chan struct{}, 1)
+	lock(held)
+	begin := time.Now()
+	if lockFor(held, 20*time.Millisecond) {
 		t.Fatal("lockFor took a held gate")
 	}
-	if waited := time.Since(start); waited < 20*time.Millisecond {
+	if waited := time.Since(begin); waited < 20*time.Millisecond {
 		t.Fatalf("gave up after %s, want at least the budget", waited)
 	}
-	unlock(gate)
-	if !lockFor(gate, time.Second) {
+	unlock(held)
+	if !lockFor(held, time.Second) {
 		t.Fatal("lockFor could not take a free gate")
 	}
-	unlock(gate)
+	unlock(held)
 }
 
 // TestConfiguredHealthRoundIsBudgeted: forty slow probes cannot add waves of
@@ -244,12 +244,12 @@ func TestConfiguredHealthRoundIsBudgeted(t *testing.T) {
 		gg[0].Services = append(gg[0].Services, state.Service{Name: "svc", Health: &path, PortActual: &port})
 	}
 
-	start := time.Now()
+	begin := time.Now()
 	probeConfigured(rows, gg, func(string, int, string, time.Duration) ports.HealthResult {
 		time.Sleep(50 * time.Millisecond)
 		return ports.HealthResult{Status: "timeout"}
 	}, 80*time.Millisecond)
-	if took := time.Since(start); took > 400*time.Millisecond {
+	if took := time.Since(begin); took > 400*time.Millisecond {
 		t.Fatalf("a round of 40 probes took %s, want it bounded by the budget", took)
 	}
 	if rows[0].Health == nil {
@@ -263,24 +263,24 @@ func TestConfiguredHealthRoundIsBudgeted(t *testing.T) {
 // here on purpose; a forced scan must still scan.
 func TestRescanAlwaysScansOnAStoppedClock(t *testing.T) {
 	frozen := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
-	var scans atomic.Int64
-	l := New(Options{
+	var collections atomic.Int64
+	loop := New(Options{
 		DaemonVersion: "test",
 		Now:           func() time.Time { return frozen },
 		Scan: func(Include) ([]ports.ListeningPort, error) {
-			scans.Add(1)
-			return []ports.ListeningPort{{Port: 8123, PID: 42, Process: "python3"}}, nil
+			collections.Add(1)
+			return []ports.ListeningPort{{Port: 8234, Process: "node", PID: 42}}, nil
 		},
 	})
 
-	if _, err := l.Snapshot(Include{}); err != nil {
+	if _, err := loop.Snapshot(Include{}); err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
 	for want := int64(2); want <= 4; want++ {
-		if _, err := l.Rescan(Include{}); err != nil {
+		if _, err := loop.Rescan(Include{}); err != nil {
 			t.Fatalf("Rescan: %v", err)
 		}
-		if got := scans.Load(); got != want {
+		if got := collections.Load(); got != want {
 			t.Fatalf("scans = %d, want %d: a forced scan never coalesces", got, want)
 		}
 	}
@@ -290,39 +290,39 @@ func TestRescanAlwaysScansOnAStoppedClock(t *testing.T) {
 // scans for itself, because that scan saw a machine the caller has not.
 func TestReadDoesNotCoalesceOntoAScanThatBeganBeforeIt(t *testing.T) {
 	frozen := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	var scans atomic.Int64
-	l := New(Options{
+	inFlight := make(chan struct{})
+	resume := make(chan struct{})
+	var collections atomic.Int64
+	loop := New(Options{
 		DaemonVersion: "test",
 		Now:           func() time.Time { return frozen },
-		Scan: func(inc Include) ([]ports.ListeningPort, error) {
-			scans.Add(1)
-			if inc.Stats {
-				close(entered)
-				<-release
+		Scan: func(want Include) ([]ports.ListeningPort, error) {
+			collections.Add(1)
+			if want.Stats {
+				close(inFlight)
+				<-resume
 			}
-			return []ports.ListeningPort{{Port: 8123, PID: 42, Process: "python3"}}, nil
+			return []ports.ListeningPort{{Port: 8234, Process: "node", PID: 42}}, nil
 		},
 	})
 
-	tick := make(chan struct{})
+	tickDone := make(chan struct{})
 	go func() {
-		defer close(tick)
-		l.scanAndPublish(Include{Stats: true})
+		defer close(tickDone)
+		loop.scanAndPublish(Include{Stats: true})
 	}()
-	<-entered
+	<-inFlight
 
 	// The tick holds the run gate, not the RPC gate: the read runs and returns
 	// while the tick is still blocked, so nothing here races its commit.
-	if _, err := l.Snapshot(Include{}); err != nil {
+	if _, err := loop.Snapshot(Include{}); err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	if got := scans.Load(); got != 2 {
+	if got := collections.Load(); got != 2 {
 		t.Fatalf("scans = %d, want the read to scan for itself", got)
 	}
-	close(release)
-	<-tick
+	close(resume)
+	<-tickDone
 }
 
 // TestCoalescingComparesScanNumbersNotTheClock states the rule without

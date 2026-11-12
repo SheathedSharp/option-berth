@@ -14,9 +14,10 @@ import (
 // openStore gives a test its own database file.
 func openStore(t *testing.T) *store.Store {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "option-berth.db"))
+	path := filepath.Join(t.TempDir(), "option-berth.db")
+	st, err := store.Open(path)
 	if err != nil {
-		t.Fatalf("opening the store: %v", err)
+		t.Fatalf("opening %s: %v", path, err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	return st
@@ -24,23 +25,23 @@ func openStore(t *testing.T) *store.Store {
 
 // loopWith builds a loop over a fixed scan result, backed by st.
 func loopWith(st Store, rows ...ports.ListeningPort) *Loop {
-	l := New(Options{
+	fixed := append([]ports.ListeningPort(nil), rows...)
+	return New(Options{
 		DaemonVersion: "test",
 		Store:         st,
 		Scan: func(Include) ([]ports.ListeningPort, error) {
-			out := make([]ports.ListeningPort, len(rows))
-			copy(out, rows)
+			out := make([]ports.ListeningPort, len(fixed))
+			copy(out, fixed)
 			return out, nil
 		},
 	})
-	return l
 }
 
 func TestScanWithoutAStoreLeavesNamesAlone(t *testing.T) {
-	l := loopWith(nil, ports.ListeningPort{
-		Port: 8123, PID: 42, Process: "python3", Command: "python3 -m http.server",
+	loop := loopWith(nil, ports.ListeningPort{
+		Port: 8234, Process: "node", PID: 42, Command: "node server.js",
 	})
-	snap, err := l.Snapshot(Include{})
+	snap, err := loop.Snapshot(Include{})
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
@@ -50,7 +51,7 @@ func TestScanWithoutAStoreLeavesNamesAlone(t *testing.T) {
 		t.Fatalf("ports = %+v, want the scanned row", snap.Ports)
 	}
 	if snap.Ports[0].Name != nil {
-		t.Errorf("name = %v, want null with no store", *snap.Ports[0].Name)
+		t.Errorf("name = %v, want null while no store is installed", *snap.Ports[0].Name)
 	}
 	if snap.Ports[0].DisplayName == "" {
 		t.Error("display_name is empty; the derived name should still be there")
@@ -60,33 +61,33 @@ func TestScanWithoutAStoreLeavesNamesAlone(t *testing.T) {
 func TestScanRecordsHistoryFromTheDiff(t *testing.T) {
 	st := openStore(t)
 
-	up := ports.ListeningPort{Port: 8123, PID: 42, Process: "python3", Command: "python3 -m http.server"}
-	var rows []ports.ListeningPort
-	l := New(Options{
+	listener := ports.ListeningPort{Port: 8234, PID: 42, Process: "node", Command: "node server.js"}
+	var feed []ports.ListeningPort
+	loop := New(Options{
 		DaemonVersion: "test",
 		Store:         st,
 		Scan: func(Include) ([]ports.ListeningPort, error) {
-			out := make([]ports.ListeningPort, len(rows))
-			copy(out, rows)
+			out := make([]ports.ListeningPort, len(feed))
+			copy(out, feed)
 			return out, nil
 		},
 	})
 
-	rows = []ports.ListeningPort{up}
-	if _, err := l.Snapshot(Include{}); err != nil {
+	feed = []ports.ListeningPort{listener}
+	if _, err := loop.Snapshot(Include{}); err != nil {
 		t.Fatal(err)
 	}
 	// Same key, new PID: the diff calls that a restart, not an up/down pair.
-	restarted := up
-	restarted.PID = 43
-	rows = []ports.ListeningPort{restarted}
-	l.Invalidate()
-	if _, err := l.Snapshot(Include{}); err != nil {
+	rebound := listener
+	rebound.PID = 43
+	feed = []ports.ListeningPort{rebound}
+	loop.Invalidate()
+	if _, err := loop.Snapshot(Include{}); err != nil {
 		t.Fatal(err)
 	}
-	rows = nil
-	l.Invalidate()
-	if _, err := l.Snapshot(Include{}); err != nil {
+	feed = nil
+	loop.Invalidate()
+	if _, err := loop.Snapshot(Include{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -95,41 +96,41 @@ func TestScanRecordsHistoryFromTheDiff(t *testing.T) {
 		t.Fatalf("querying history: %v", err)
 	}
 	var kinds []string
-	for _, e := range events {
-		kinds = append(kinds, e.Kind)
+	for _, event := range events {
+		kinds = append(kinds, event.Kind)
 	}
 	want := []string{store.EventPortDown, store.EventPortRestarted, store.EventPortUp}
 	if len(kinds) != len(want) {
 		t.Fatalf("history kinds = %v, want %v", kinds, want)
 	}
-	for i := range want {
-		if kinds[i] != want[i] {
-			t.Fatalf("history kinds = %v, want %v (newest first)", kinds, want)
+	for i, kind := range kinds {
+		if kind != want[i] {
+			t.Fatalf("history kind %d = %q, want %q (newest first)", i, kind, want[i])
 		}
 	}
-	if events[0].Port != 8123 || events[0].Command == "" {
-		t.Errorf("history row = %+v, want port 8123 with its command", events[0])
+	if events[0].Port != 8234 || events[0].Command == "" {
+		t.Errorf("history row = %+v, want port 8234 with its command", events[0])
 	}
 }
 
 func TestSeedsTheIndexFromKnownRoots(t *testing.T) {
 	st := openStore(t)
-	dir := t.TempDir()
-	writeConfig(t, dir, "name: seeded\n")
-	if err := st.AddRoot(dir); err != nil {
+	root := t.TempDir()
+	writeConfig(t, root, "name: seeded\n")
+	if err := st.AddRoot(root); err != nil {
 		t.Fatal(err)
 	}
 
-	l := loopWith(st)
-	snap, err := l.Snapshot(Include{})
+	loop := loopWith(st)
+	snap, err := loop.Snapshot(Include{})
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
 	if len(snap.Groups) != 1 || snap.Groups[0].Name != "seeded" {
 		t.Fatalf("groups = %+v, want the seeded config's group", snap.Groups)
 	}
-	if snap.Groups[0].Status != "stopped" {
-		t.Errorf("status = %q, want stopped for a project with nothing running", snap.Groups[0].Status)
+	if status := snap.Groups[0].Status; status != "stopped" {
+		t.Errorf("status = %q, want stopped for a project with nothing running", status)
 	}
 }
 
@@ -150,9 +151,9 @@ func TestDropsVanishedRootsOnSeed(t *testing.T) {
 		}
 	}
 
-	l := loopWith(st)
-	if _, err := l.Snapshot(Include{}); err != nil {
-		t.Fatalf("Snapshot: %v", err)
+	loop := loopWith(st)
+	if _, err := loop.Snapshot(Include{}); err != nil {
+		t.Fatalf("Snapshot with a vanished root recorded: %v", err)
 	}
 
 	roots, err := st.Roots()
@@ -173,9 +174,9 @@ func TestDropsVanishedRootsOnSeed(t *testing.T) {
 	}
 	// The project itself is untouched: forgetting the path is not forgetting
 	// the config.
-	snap, err := l.Snapshot(Include{})
+	snap, err := loop.Snapshot(Include{})
 	if err != nil {
-		t.Fatalf("Snapshot: %v", err)
+		t.Fatalf("Snapshot after the seed: %v", err)
 	}
 	if len(snap.Groups) != 1 || snap.Groups[0].Name != "live" {
 		t.Fatalf("groups = %+v, want the surviving project", snap.Groups)
@@ -184,49 +185,49 @@ func TestDropsVanishedRootsOnSeed(t *testing.T) {
 
 func TestRemembersNewlySeenRoots(t *testing.T) {
 	st := openStore(t)
-	dir := t.TempDir()
-	writeConfig(t, dir, "name: observed\n")
+	root := t.TempDir()
+	writeConfig(t, root, "name: observed\n")
 
-	l := loopWith(st, ports.ListeningPort{
-		Port: 8123, PID: 42, Process: "python3", Command: "python3 -m http.server", Cwd: dir,
+	loop := loopWith(st, ports.ListeningPort{
+		Port: 8234, Process: "node", PID: 42, Command: "node server.js", Cwd: root,
 	})
-	if _, err := l.Snapshot(Include{}); err != nil {
-		t.Fatalf("Snapshot: %v", err)
+	if _, err := loop.Snapshot(Include{}); err != nil {
+		t.Fatalf("Snapshot after the first scan: %v", err)
 	}
 
 	roots, err := st.Roots()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(roots) != 1 || roots[0] != resolved(t, dir) {
-		t.Fatalf("known roots = %v, want [%s]", roots, resolved(t, dir))
+	if want := []string{resolved(t, root)}; len(roots) != 1 || roots[0] != want[0] {
+		t.Fatalf("known roots = %v, want %v", roots, want)
 	}
 }
 
 func TestInvalidateForcesTheNextReadToRescan(t *testing.T) {
-	scans := 0
-	l := New(Options{
+	calls := 0
+	loop := New(Options{
 		DaemonVersion: "test",
 		Scan: func(Include) ([]ports.ListeningPort, error) {
-			scans++
+			calls++
 			return nil, nil
 		},
 	})
-	if _, err := l.Snapshot(Include{}); err != nil {
+	if _, err := loop.Snapshot(Include{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := l.Snapshot(Include{}); err != nil {
+	if _, err := loop.Snapshot(Include{}); err != nil {
 		t.Fatal(err)
 	}
-	if scans != 1 {
-		t.Fatalf("scans = %d, want the second read served from the cache", scans)
+	if calls != 1 {
+		t.Fatalf("collector calls = %d, want the second read served from the cache", calls)
 	}
-	l.Invalidate()
-	if _, err := l.Snapshot(Include{}); err != nil {
+	loop.Invalidate()
+	if _, err := loop.Snapshot(Include{}); err != nil {
 		t.Fatal(err)
 	}
-	if scans != 2 {
-		t.Fatalf("scans = %d, want a rescan after Invalidate", scans)
+	if calls != 2 {
+		t.Fatalf("collector calls = %d, want a rescan after Invalidate", calls)
 	}
 }
 
@@ -249,21 +250,23 @@ func TestSetStoreInstallsOneAfterConstruction(t *testing.T) {
 
 func writeConfig(t *testing.T, dir, body string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, ".oberth.yaml"), []byte(body), 0o600); err != nil {
-		t.Fatal(err)
+	path := filepath.Join(dir, ".oberth.yaml")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("writing %s: %v", path, err)
 	}
 }
 
 func resolved(t *testing.T, dir string) string {
 	t.Helper()
-	abs, err := filepath.Abs(dir)
+	full, err := filepath.Abs(dir)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("resolving %s: %v", dir, err)
 	}
-	if real, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = real
+	real, err := filepath.EvalSymlinks(full)
+	if err != nil {
+		return filepath.Clean(full)
 	}
-	return filepath.Clean(abs)
+	return filepath.Clean(real)
 }
 
 // cancellingRoots withdraws the caller while the store is answering, which is

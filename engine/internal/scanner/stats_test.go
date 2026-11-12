@@ -36,27 +36,29 @@ func newStatsRig(t *testing.T) *statsRig {
 	t.Helper()
 	r := &statsRig{
 		gone: map[int]bool{},
-		rows: []ports.ListeningPort{
-			{Port: 3000, BindAddress: "127.0.0.1", PID: 100, Process: "node", CPUPercent: 1, MemoryRSS: 1 << 20, Connections: 7, ThreadCount: 4},
-			{Port: 5173, BindAddress: "127.0.0.1", PID: 200, Process: "vite", CPUPercent: 2, MemoryRSS: 2 << 20, Connections: 3, ThreadCount: 9},
-		},
+	}
+	r.rows = []ports.ListeningPort{
+		{Port: 3311, BindAddress: "127.0.0.1", PID: 101, Process: "deno", CPUPercent: 1, MemoryRSS: 1 << 20, Connections: 7, ThreadCount: 4},
+		{Port: 5277, BindAddress: "127.0.0.1", PID: 202, Process: "esbuild", CPUPercent: 2, MemoryRSS: 2 << 20, Connections: 3, ThreadCount: 9},
 	}
 	r.loop = New(Options{
 		DaemonVersion: "test",
 		StatsInterval: 30 * time.Millisecond,
 		Demand: func() (int, Include) {
-			return int(r.subs.Load()), Include{Stats: r.include.Load()}
+			wanted := Include{Stats: r.include.Load()}
+			return int(r.subs.Load()), wanted
 		},
 		Publish: func(prev, next state.Snapshot, _ []state.Event) {
 			r.mu.Lock()
-			defer r.mu.Unlock()
 			r.deltas = append(r.deltas, published{prev: prev, next: next})
+			r.mu.Unlock()
 		},
 		Scan: func(Include) ([]ports.ListeningPort, error) {
 			r.scans.Add(1)
 			r.mu.Lock()
-			defer r.mu.Unlock()
-			return append([]ports.ListeningPort(nil), r.rows...), nil
+			snapshotRows := append([]ports.ListeningPort(nil), r.rows...)
+			r.mu.Unlock()
+			return snapshotRows, nil
 		},
 		SampleStats: func(pids []int) map[int]ports.ProcSample {
 			n := r.samples.Add(1)
@@ -78,33 +80,36 @@ func newStatsRig(t *testing.T) *statsRig {
 	return r
 }
 
-// run starts the loop and stops it when the test ends.
+// run drives the loop in the background until the test finishes.
 func (r *statsRig) run(t *testing.T) {
 	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
+	runCtx, stop := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
 	go func() {
-		defer close(done)
-		r.loop.Run(ctx)
+		defer close(stopped)
+		r.loop.Run(runCtx)
 	}()
 	t.Cleanup(func() {
-		cancel()
-		<-done
+		stop()
+		<-stopped
 	})
 }
 
-func (r *statsRig) subscribe(stats bool) {
-	r.include.Store(stats)
+// subscribe fakes a client connecting with the given include set.
+func (r *statsRig) subscribe(withStats bool) {
+	r.include.Store(withStats)
 	r.subs.Store(1)
 	r.loop.Wake()
 }
 
+// unsubscribe parks the tick again by dropping the last subscriber.
 func (r *statsRig) unsubscribe() {
 	r.subs.Store(0)
 	r.include.Store(false)
 	r.loop.Wake()
 }
 
+// published snapshots the deltas the loop has handed over so far.
 func (r *statsRig) published() []published {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -113,8 +118,8 @@ func (r *statsRig) published() []published {
 
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	limit := time.Now().Add(5 * time.Second)
+	for time.Now().Before(limit) {
 		if cond() {
 			return
 		}
@@ -194,8 +199,8 @@ func TestStatsTickNeverResetsTheScanInterval(t *testing.T) {
 func TestStatsTickSuppressesAnEmptyDelta(t *testing.T) {
 	r := newStatsRig(t)
 	fixed := map[int]ports.ProcSample{
-		100: {CPUPercent: 1, MemoryRSS: 1 << 20, ThreadCount: 4, State: "running", Uptime: "1s"},
-		200: {CPUPercent: 2, MemoryRSS: 2 << 20, ThreadCount: 9, State: "running", Uptime: "1s"},
+		101: {CPUPercent: 1, MemoryRSS: 1 << 20, ThreadCount: 4, State: "running", Uptime: "1s"},
+		202: {CPUPercent: 2, MemoryRSS: 2 << 20, ThreadCount: 9, State: "running", Uptime: "1s"},
 	}
 	r.loop.opts.SampleStats = func([]int) map[int]ports.ProcSample { return fixed }
 
@@ -219,25 +224,25 @@ func TestStatsTickSuppressesAnEmptyDelta(t *testing.T) {
 // TestStatsTickHandlesAPIDDisappearing: a vanished pid keeps its last stats;
 // zeroes would read like facts, and removing the row is the scan's job.
 func TestStatsTickHandlesAPIDDisappearing(t *testing.T) {
-	r := newStatsRig(t)
-	r.loop.scanAndPublish(Include{Stats: true})
-	r.loop.sampleStats(Include{Stats: true})
-	before := r.loop.Cached()
+	rig := newStatsRig(t)
+	rig.loop.scanAndPublish(Include{Stats: true})
+	rig.loop.sampleStats(Include{Stats: true})
+	before := rig.loop.Cached()
 
-	r.mu.Lock()
-	r.gone[100] = true
-	r.mu.Unlock()
-	r.loop.sampleStats(Include{Stats: true})
-	after := r.loop.Cached()
+	rig.mu.Lock()
+	rig.gone[101] = true
+	rig.mu.Unlock()
+	rig.loop.sampleStats(Include{Stats: true})
+	after := rig.loop.Cached()
 
 	if len(after.Ports) != len(before.Ports) {
 		t.Fatalf("the stats tick removed a row: %d -> %d", len(before.Ports), len(after.Ports))
 	}
-	gone, alive := after.Ports[0], after.Ports[1]
-	if gone.PID != 100 || alive.PID != 200 {
+	vanished, alive := after.Ports[0], after.Ports[1]
+	if vanished.PID != 101 || alive.PID != 202 {
 		t.Fatalf("unexpected row order: %+v", after.Ports)
 	}
-	if *gone.Stats != *before.Ports[0].Stats {
+	if *vanished.Stats != *before.Ports[0].Stats {
 		t.Errorf("a vanished pid's stats were rewritten")
 	}
 	if *alive.Stats == *before.Ports[1].Stats {
@@ -252,15 +257,15 @@ func TestStatsTickIsSerializedWithScans(t *testing.T) {
 	r.run(t)
 	r.subscribe(true)
 
-	var wg sync.WaitGroup
-	stop := make(chan struct{})
+	var workers sync.WaitGroup
+	quit := make(chan struct{})
 	for range 4 {
-		wg.Add(1)
+		workers.Add(1)
 		go func() {
-			defer wg.Done()
+			defer workers.Done()
 			for {
 				select {
-				case <-stop:
+				case <-quit:
 					return
 				default:
 				}
@@ -276,8 +281,8 @@ func TestStatsTickIsSerializedWithScans(t *testing.T) {
 	waitFor(t, "five samples and two publishes under load", func() bool {
 		return r.samples.Load() >= 5 && len(r.published()) >= 2
 	})
-	close(stop)
-	wg.Wait()
+	close(quit)
+	workers.Wait()
 
 	seen := r.published()
 	if len(seen) < 2 {
@@ -298,44 +303,44 @@ func TestStatsTickRunsWhileAScanIsInFlight(t *testing.T) {
 	r := newStatsRig(t)
 	r.loop.scanAndPublish(Include{Stats: true})
 
-	scanning := make(chan struct{})
-	release := make(chan struct{})
-	var once sync.Once
-	rows := r.rows
+	entered := make(chan struct{})
+	proceed := make(chan struct{})
+	var first sync.Once
+	fixed := r.rows
 	r.loop.opts.Scan = func(Include) ([]ports.ListeningPort, error) {
-		once.Do(func() {
-			close(scanning)
-			<-release
+		first.Do(func() {
+			close(entered)
+			<-proceed
 		})
-		return append([]ports.ListeningPort(nil), rows...), nil
+		return append([]ports.ListeningPort(nil), fixed...), nil
 	}
 
-	scanDone := make(chan struct{})
+	scanOver := make(chan struct{})
 	go func() {
-		defer close(scanDone)
+		defer close(scanOver)
 		r.loop.scanAndPublish(Include{Stats: true})
 	}()
-	<-scanning
+	<-entered
 
 	before := r.loop.Cached().Seq
-	done := make(chan struct{})
+	tickDone := make(chan struct{})
 	go func() {
-		defer close(done)
+		defer close(tickDone)
 		r.loop.sampleStats(Include{Stats: true})
 	}()
 	select {
-	case <-done:
+	case <-tickDone:
 	case <-time.After(2 * time.Second):
-		close(release)
-		<-scanDone
+		close(proceed)
+		<-scanOver
 		t.Fatal("the stats tick blocked behind a scan still doing OS work")
 	}
 	if got := r.loop.Cached().Seq; got <= before {
 		t.Errorf("seq = %d, want more than %d", got, before)
 	}
 
-	close(release)
-	<-scanDone
+	close(proceed)
+	<-scanOver
 }
 
 // TestStatsSkipRowsThatAreNotThisMachines: a container's numbers come from
