@@ -1,9 +1,9 @@
 package model
 
-// Fixed reasons for "Jev is not available". A caller that has to tell a person
+// Fixed reasons for "model is not available". A caller that has to tell a person
 // why nothing happened needs a closed vocabulary, not a provider's error text:
 // the same reason goes into the JSON output, the local quality ledger and the
-// `oberth jev test` hint, and no branch guesses from a substring.
+// `oberth attn test` hint, and no branch guesses from a substring.
 
 import (
 	"context"
@@ -23,9 +23,9 @@ type ReasonError struct {
 
 func (e ReasonError) Error() string {
 	if e.Detail == "" {
-		return "attention: Jev unavailable: " + e.Code
+		return "attn: unavailable: " + e.Code
 	}
-	return "attention: Jev unavailable: " + e.Code + ": " + e.Detail
+	return "attn: unavailable: " + e.Code + ": " + e.Detail
 }
 
 func (e ReasonError) Unwrap() error {
@@ -86,25 +86,25 @@ func ReasonFor(err error) string {
 func ReasonHint(code string) string {
 	switch code {
 	case ReasonNoKey:
-		return "run `oberth jev enable` to store a key and turn the assessment on"
+		return "run `oberth attn enable` to store a key and turn the assessment on"
 	case ReasonDisabled:
-		return "Jev is off; run `oberth jev enable`, or set BERTH_JEV=1 to allow it for this one process"
+		return "the assessment is off; run `oberth attn enable`, or set BERTH_JEV=1 to allow it for this one process"
 	case ReasonInvalidConfig:
-		return "attn.json is not usable; run `oberth jev status` and then `oberth jev enable` to rewrite it"
+		return "attn.json is not usable; run `oberth attn status` and then `oberth attn enable` to rewrite it"
 	case ReasonUnauthorized:
-		return "the provider rejected the key; run `oberth jev enable` to store a current one"
+		return "the provider rejected the key; run `oberth attn enable` to store a current one"
 	case ReasonRateLimited:
 		return "the provider is rate limiting this key; retry later or switch provider"
 	case ReasonTimeout:
-		return "the provider did not answer in time; retry, or run `oberth jev test` to check connectivity"
+		return "the provider did not answer in time; retry, or run `oberth attn test` to check connectivity"
 	case ReasonNetwork:
-		return "the provider is unreachable from this machine; check the network or proxy, then `oberth jev test`"
+		return "the provider is unreachable from this machine; check the network or proxy, then `oberth attn test`"
 	case ReasonBadResponse:
-		return "the provider answered in a shape this client cannot validate; run `oberth jev test` for the reason"
+		return "the provider answered in a shape this client cannot validate; run `oberth attn test` for the reason"
 	case ReasonStale:
 		return "the state changed while the answer was in flight; re-read `oberth status --json` and assess the new event"
 	default:
-		return "the provider returned an error; run `oberth jev test` for the fixed reason and next step"
+		return "the provider returned an error; run `oberth attn test` for the fixed reason and next step"
 	}
 }
 

@@ -345,8 +345,8 @@ def _judge_dependency_not_ready(probe: Probe, state: ScenarioState) -> Verdict:
         check("GET /health returns 200", probe.http["api_health"].status == 200, _http_detail(probe.http["api_health"])),
         check("ledger-db is published as not listening", bool(ref) and ref.get("listening") is False,
               repr(ref)),
-        check("no current attention handoff", not doc.get("attention_path") if isinstance(doc, dict) else False,
-              str((doc or {}).get("attention_path"))),
+        check("no current attention handoff", not doc.get("attn_path") if isinstance(doc, dict) else False,
+              str((doc or {}).get("attn_path"))),
     ]
     return Verdict(
         completed=all(item["ok"] for item in checks),

@@ -309,7 +309,7 @@ func ReadPreflight(path string) (Preflight, error) {
 	return request, nil
 }
 
-// AttachAssessment validates a Jev result against this preflight's fixed
+// AttachAssessment validates a model result against this preflight's fixed
 // options. It does not imply user approval and it never executes the intent.
 func (request *Preflight) AttachAssessment(assessment attn.Assessment) error {
 	if request == nil {
@@ -324,7 +324,7 @@ func (request *Preflight) AttachAssessment(assessment attn.Assessment) error {
 }
 
 // AssessmentArtifactForAdapter exposes the same redacted, fixed-option shape
-// as an ordinary attention artifact solely for the shared Jev client. The
+// as an ordinary attention artifact solely for the shared model client. The
 // preflight document remains the source of intent and persistence.
 func (request Preflight) AssessmentArtifactForAdapter() attn.Artifact {
 	return request.assessmentArtifact()

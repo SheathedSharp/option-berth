@@ -62,7 +62,7 @@ type TelemetryRecord struct {
 	AuthorizedOptions []string           `json:"authorized_options,omitempty"`
 	Polls             int                `json:"polls,omitempty"`
 	EventsSeen        int                `json:"events_seen,omitempty"`
-	ModelCalls        int                `json:"jev_calls,omitempty"`
+	ModelCalls        int                `json:"model_calls,omitempty"`
 	CacheHits         int                `json:"cache_hits,omitempty"`
 	NoEventPolls      int                `json:"no_event_polls,omitempty"`
 	Unavailable       int                `json:"unavailable,omitempty"`
@@ -70,7 +70,7 @@ type TelemetryRecord struct {
 }
 
 // TelemetryDecision is the adapter's actual conservative routing decision,
-// which is distinct from Jev's needs_human probability.
+// which is distinct from model's needs_human probability.
 type TelemetryDecision struct {
 	NeedsHuman bool   `json:"needs_human"`
 	Reason     string `json:"reason"`
@@ -142,7 +142,7 @@ type QualityReport struct {
 	Sessions           SessionMetric        `json:"sessions"`
 }
 
-// SessionMetric explains why a quality ledger has no Jev calls. The counts
+// SessionMetric explains why a quality ledger has no model calls. The counts
 // distinguish an idle/no-event session from an adapter that was never armed.
 type SessionMetric struct {
 	Started      int `json:"started"`
@@ -217,7 +217,7 @@ func telemetryBackupPath(home string) string {
 }
 
 // WorktreeID is the stable, non-reversible identifier used in local telemetry
-// and in the redacted Jev state.
+// and in the redacted model state.
 func WorktreeID(root string) string { return hashWorktree(root) }
 
 // ProjectLabel returns only the final directory component, with controls

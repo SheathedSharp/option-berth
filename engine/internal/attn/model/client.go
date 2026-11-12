@@ -1,6 +1,6 @@
 package model
 
-// This file contains the optional Jev adapter. It is intentionally separate
+// This file contains the optional model adapter. It is intentionally separate
 // from status and the daemon: a missing key, a network failure, or an invalid
 // model response must never change the runtime facts or the CLI control path.
 
@@ -39,7 +39,7 @@ const (
 
 // ErrUnavailable means that no assessment was made. Callers should leave the
 // fact-only artifact untouched and let the agent ask the user directly.
-var ErrUnavailable = errors.New("attention: Jev unavailable")
+var ErrUnavailable = errors.New("attn: model unavailable")
 
 // ErrStale is the artifact writer's sentinel, re-exported for callers that only
 // import this package: a response that arrived after the event changed must be
@@ -118,7 +118,7 @@ func (c Client) normalized() (Client, error) {
 	}
 	u, err := url.Parse(c.Endpoint)
 	if err != nil || u.Scheme != "https" || u.Host == "" {
-		return Client{}, fmt.Errorf("attention: Jev endpoint must be an HTTPS URL")
+		return Client{}, fmt.Errorf("attn: endpoint must be an HTTPS URL")
 	}
 	if strings.TrimSpace(c.Model) == "" {
 		c.Model = DefaultModel
@@ -247,7 +247,7 @@ func (c Client) Evaluate(ctx context.Context, artifact attn.Artifact, task TaskC
 	payload := apiRequest{State: state, Model: client.Model, Questions: questions}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return Result{}, fmt.Errorf("attention: encode Jev request: %w", err)
+		return Result{}, fmt.Errorf("attn: encode request: %w", err)
 	}
 	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > client.Timeout {
 		var cancel context.CancelFunc
@@ -256,7 +256,7 @@ func (c Client) Evaluate(ctx context.Context, artifact attn.Artifact, task TaskC
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, client.Endpoint, bytes.NewReader(body))
 	if err != nil {
-		return Result{}, fmt.Errorf("attention: create Jev request: %w", err)
+		return Result{}, fmt.Errorf("attn: create request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+client.APIKey)
 	req.Header.Set("Content-Type", "application/json")
@@ -274,11 +274,11 @@ func (c Client) Evaluate(ctx context.Context, artifact attn.Artifact, task TaskC
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// Do not return the response body: providers may echo state or account
 		// details and errors should never become agent-visible evidence.
-		return Result{}, WithReason(reasonFromStatus(resp.StatusCode), fmt.Errorf("%w: Jev HTTP status %d", ErrUnavailable, resp.StatusCode))
+		return Result{}, WithReason(reasonFromStatus(resp.StatusCode), fmt.Errorf("%w: HTTP status %d", ErrUnavailable, resp.StatusCode))
 	}
 	var decoded apiResponse
 	if err := json.Unmarshal(responseBody, &decoded); err != nil {
-		return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: invalid Jev response", ErrUnavailable))
+		return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: invalid response", ErrUnavailable))
 	}
 	result, err := validateResponse(decoded, options, client.Model)
 	if err != nil {
@@ -325,13 +325,13 @@ func safeState(a attn.Artifact, task TaskContext, authorized []string) apiState 
 	if len(events) == 0 {
 		events = []attn.Event{a.Event}
 	}
-	jevEvents := make([]apiEvent, 0, len(events))
+	apiEvents := make([]apiEvent, 0, len(events))
 	for _, event := range events {
-		jevEvents = append(jevEvents, safeEvent(event))
+		apiEvents = append(apiEvents, safeEvent(event))
 	}
 	firstEvent := safeEvent(a.Event)
-	if len(jevEvents) > 0 {
-		firstEvent = jevEvents[0]
+	if len(apiEvents) > 0 {
+		firstEvent = apiEvents[0]
 	}
 	return apiState{
 		Task:              redactText(task.Task, maxTaskBytes),
@@ -339,7 +339,7 @@ func safeState(a attn.Artifact, task TaskContext, authorized []string) apiState 
 		Branch:            redactText(redactIdentifier(a.Branch, maxServiceBytes), maxServiceBytes),
 		StateRevision:     redactIdentifier(a.StateRevision, 128),
 		Event:             firstEvent,
-		Events:            jevEvents,
+		Events:            apiEvents,
 		EvidenceRefs:      refs,
 		CandidateOptions:  optionIDs(a.Options),
 		AuthorizedOptions: append([]string(nil), authorized...),
@@ -383,7 +383,7 @@ func optionDescription(id string) string {
 
 func validateResponse(response apiResponse, options []string, configuredModel string) (Result, error) {
 	if response.Answers == nil {
-		return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: Jev response has no answers", ErrUnavailable))
+		return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: model response has no answers", ErrUnavailable))
 	}
 	required := []string{"task_relevant", "needs_human"}
 	if len(options) > 1 {
@@ -391,7 +391,7 @@ func validateResponse(response apiResponse, options []string, configuredModel st
 	}
 	for _, key := range required {
 		if _, ok := response.Answers[key]; !ok {
-			return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: Jev response omitted %s", ErrUnavailable, key))
+			return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: model response omitted %s", ErrUnavailable, key))
 		}
 	}
 	relevant, err := validateNoul(response.Answers["task_relevant"], "task_relevant")
@@ -412,7 +412,7 @@ func validateResponse(response apiResponse, options []string, configuredModel st
 			return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: invalid next_option confidence", ErrUnavailable))
 		}
 		if !contains(options, choice.Choice) {
-			return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: Jev selected unauthorized option %q", ErrUnavailable, choice.Choice))
+			return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: model selected unauthorized option %q", ErrUnavailable, choice.Choice))
 		}
 		probabilities, err := validateChoiceProbabilities(choice.Probabilities, options)
 		if err != nil {

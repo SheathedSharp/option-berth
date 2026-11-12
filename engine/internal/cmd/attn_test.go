@@ -11,32 +11,32 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/attn/runner"
 )
 
-// `oberth jev` carries the runner the standalone binary used to own. What has to
+// `oberth attn` carries the runner the standalone binary used to own. What has to
 // stay true: it lives in the Handoff layer, it refuses to guess an
 // authorization, and being disabled never invents an answer.
 
-func TestJevIsInTheHandoffLayer(t *testing.T) {
-	if jevCmd.GroupID != commandGroupHandoff {
-		t.Fatalf("jev group = %q, want %q", jevCmd.GroupID, commandGroupHandoff)
+func TestAttnIsInTheHandoffLayer(t *testing.T) {
+	if attnCmd.GroupID != commandGroupHandoff {
+		t.Fatalf("jev group = %q, want %q", attnCmd.GroupID, commandGroupHandoff)
 	}
 	// A model-mediated handoff is not a fact command and not a control command:
 	// pinning the absence here is what keeps a future contributor from
 	// reclassifying it to make an unrelated test pass.
 	for _, forbidden := range []string{commandGroupFacts, commandGroupOperations} {
-		if jevCmd.GroupID == forbidden {
+		if attnCmd.GroupID == forbidden {
 			t.Fatalf("jev is in %q; it hands a choice to a person", forbidden)
 		}
 	}
 }
 
-func TestJevSurfaceIsTheRunnerAndSetupVerbs(t *testing.T) {
+func TestAttnSurfaceIsTheRunnerAndSetupVerbs(t *testing.T) {
 	want := map[string]bool{
 		// the runner: what an agent calls while working
 		"assess": false, "session": false, "feedback": false, "report": false,
 		// setup and explanation: what a person calls once
 		"status": false, "enable": false, "test": false, "disable": false, "preview": false,
 	}
-	for _, sub := range jevCmd.Commands() {
+	for _, sub := range attnCmd.Commands() {
 		if _, ok := want[sub.Name()]; !ok {
 			t.Errorf("unexpected jev subcommand %q", sub.Name())
 			continue
@@ -53,25 +53,25 @@ func TestJevSurfaceIsTheRunnerAndSetupVerbs(t *testing.T) {
 // The authorization is the agent's, never the artifact's. A missing allow-list
 // has to fail as a usage error, because the alternative — guessing from the
 // candidate options — would turn publication into permission.
-func TestJevRequiresAnExplicitAuthorization(t *testing.T) {
+func TestAttnRequiresAnExplicitAuthorization(t *testing.T) {
 	t.Cleanup(func() {
-		jevTaskFlag, jevTaskFileFlag, jevAuthorizeFlag = "", "", nil
+		attnTaskFlag, attnTaskFileFlag, attnAuthorizeFlag = "", "", nil
 	})
-	jevTaskFlag = "get the worker running"
-	jevTaskFileFlag = ""
-	jevAuthorizeFlag = nil
-	if _, err := jevTaskContext(); err == nil {
+	attnTaskFlag = "get the worker running"
+	attnTaskFileFlag = ""
+	attnAuthorizeFlag = nil
+	if _, err := attnTaskContext(); err == nil {
 		t.Fatal("a task without --authorize was accepted")
 	}
 
-	jevTaskFlag = ""
-	jevAuthorizeFlag = []string{"inspect_logs"}
-	if _, err := jevTaskContext(); err == nil {
+	attnTaskFlag = ""
+	attnAuthorizeFlag = []string{"inspect_logs"}
+	if _, err := attnTaskContext(); err == nil {
 		t.Fatal("an allow-list without a task was accepted")
 	}
 
-	jevTaskFlag = "get the worker running"
-	task, err := jevTaskContext()
+	attnTaskFlag = "get the worker running"
+	task, err := attnTaskContext()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,18 +80,18 @@ func TestJevRequiresAnExplicitAuthorization(t *testing.T) {
 	}
 }
 
-func TestJevTaskContextFileAndFlagOverride(t *testing.T) {
+func TestAttnTaskContextFileAndFlagOverride(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "task.json")
 	if err := os.WriteFile(path, []byte(`{"task":"old","authorized_options":["inspect_logs"]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		jevTaskFlag, jevTaskFileFlag, jevAuthorizeFlag = "", "", nil
+		attnTaskFlag, attnTaskFileFlag, attnAuthorizeFlag = "", "", nil
 	})
-	jevTaskFileFlag = path
-	jevTaskFlag = "new"
-	jevAuthorizeFlag = []string{"restart_service", "inspect_manifest"}
-	task, err := jevTaskContext()
+	attnTaskFileFlag = path
+	attnTaskFlag = "new"
+	attnAuthorizeFlag = []string{"restart_service", "inspect_manifest"}
+	task, err := attnTaskContext()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,9 +112,9 @@ func TestDisabledConsentProducesNoClient(t *testing.T) {
 	t.Setenv("TYPESAFE_API_KEY", "")
 	t.Setenv("BERTH_ATTN", "")
 
-	consent := jevResolvedConsent()
+	consent := attnResolvedConsent()
 	if consent.Enabled {
-		t.Fatalf("an environment key enabled Jev: %+v", consent)
+		t.Fatalf("an environment key enabled model: %+v", consent)
 	}
 	if _, err := consent.Client(); err == nil {
 		t.Fatal("a disabled configuration produced a client")
@@ -126,10 +126,10 @@ func TestDisabledConsentProducesNoClient(t *testing.T) {
 
 // The output the agent parses must not carry an absolute worktree path: the
 // same redaction rule that keeps it out of telemetry keeps it out of stdout.
-func TestJevOutputNeverCarriesTheWorktreeRoot(t *testing.T) {
+func TestAttnOutputNeverCarriesTheWorktreeRoot(t *testing.T) {
 	var buf strings.Builder
 	output := runner.Output{Status: "clear", WorktreeID: "abc123", WorktreeRoot: "/Users/alice/work/repo"}
-	if err := writeJevOutput(&buf, output); err != nil {
+	if err := writeAttnOutput(&buf, output); err != nil {
 		t.Fatal(err)
 	}
 	var decoded map[string]any

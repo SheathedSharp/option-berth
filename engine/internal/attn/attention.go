@@ -1,6 +1,6 @@
 // Package attention defines the derived handoff artifact an optional adapter
 // can publish for a coding agent. It deliberately has no daemon or model
-// dependency: runtime facts remain option-berth's source of truth, while Jev
+// dependency: runtime facts remain option-berth's source of truth, while model
 // may enrich an artifact outside the control path.
 package attn
 
@@ -377,7 +377,7 @@ func Classify(f Facts) (Event, bool) {
 }
 
 // Derive creates a fact-only artifact. Assessment is intentionally nil until
-// an optional external adapter adds a Jev result.
+// an optional external adapter adds a model result.
 func Derive(f Facts, now time.Time, ttl time.Duration) (Artifact, bool) {
 	events := ClassifyAll(f)
 	if len(events) == 0 {
@@ -581,7 +581,7 @@ var artifactMu sync.Mutex
 // Write atomically publishes an artifact with owner-only permissions. If the
 // previous artifact represents the same event at the same state revision, its
 // adapter assessment is retained while generated/freshness metadata is
-// refreshed. This keeps a status poll from erasing a Jev result.
+// refreshed. This keeps a status poll from erasing a model result.
 func Write(home string, artifact Artifact) (string, error) {
 	artifactMu.Lock()
 	defer artifactMu.Unlock()
@@ -712,7 +712,7 @@ func IsFresh(artifact Artifact, now time.Time) bool {
 }
 
 // UpdateAssessment validates and atomically persists an adapter assessment.
-// It is the safe read-modify-write path for a Jev adapter; status writes use
+// It is the safe read-modify-write path for a model adapter; status writes use
 // Write and preserve the resulting assessment when identity and revision
 // still match.
 func UpdateAssessment(path string, assessment Assessment) error {

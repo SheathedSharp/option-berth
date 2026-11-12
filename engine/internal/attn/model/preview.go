@@ -1,6 +1,6 @@
 package model
 
-// What `oberth jev preview` shows and what `oberth jev enable` prints afterwards.
+// What `oberth attn preview` shows and what `oberth attn enable` prints afterwards.
 // Both answer the same question in different tenses: "what exactly crosses the
 // boundary?" A person enabling an optional remote assessment is entitled to a
 // concrete answer, not a promise in a document.
@@ -139,7 +139,7 @@ func HumanSendsSummary() string {
 	writeBullets(&b, sendsNever)
 	b.WriteString("Depends on the event:\n")
 	writeBullets(&b, sendsDepends)
-	b.WriteString("\nRun `oberth jev preview` to see the exact body for the current event.")
+	b.WriteString("\nRun `oberth attn preview` to see the exact body for the current event.")
 	return b.String()
 }
 

@@ -266,7 +266,7 @@ func (r Resolved) Client() (Client, error) {
 	return Client{Endpoint: r.Endpoint, Model: r.Model, APIKey: r.Key, Timeout: r.Timeout}, nil
 }
 
-// RedactedState is what `oberth jev status` may print: everything about the
+// RedactedState is what `oberth attn status` may print: everything about the
 // configuration except the secret itself.
 func (r Resolved) RedactedState() map[string]any {
 	state := map[string]any{

@@ -1,4 +1,4 @@
-// Command jev-attention is an optional, read-only Jev adapter. It reads a
+// Command jev-attention is an optional, read-only model adapter. It reads a
 // fact-only attention artifact and explicit agent context, asks TypeSafe's
 // typed endpoint for an assessment, and atomically writes only the validated
 // assessment back to that same artifact. It never starts, stops, or inspects a
@@ -26,7 +26,7 @@ import (
 
 type output struct {
 	Status        string           `json:"status"`
-	AttentionPath string           `json:"attention_path,omitempty"`
+	AttnPath      string           `json:"attn_path,omitempty"`
 	PreflightPath string           `json:"preflight_path,omitempty"`
 	TelemetryPath string           `json:"telemetry_path,omitempty"`
 	Reason        string           `json:"reason,omitempty"`
@@ -62,8 +62,8 @@ func main() {
 		draftGroup     = flag.String("draft-group", "", "pending draft group for adopt_manifest")
 		permission     = flag.String("permission", "", "explicit user permission context for action preflight")
 		userApproved   = flag.Bool("user-approved", false, "record that the user approved the proposed action (does not execute it)")
-		_              = flag.String("endpoint", "", "Jev endpoint (defaults to the resolved provider)")
-		_              = flag.String("model", "", "Jev model (defaults to the resolved provider)")
+		_              = flag.String("endpoint", "", "model endpoint (defaults to the resolved provider)")
+		_              = flag.String("model", "", "model model (defaults to the resolved provider)")
 		apiKey         = flag.String("api-key", "", "API key (defaults to attn.json, then the provider's environment variable; pass an empty value to disable)")
 		_              = flag.Duration("timeout", 0, "remote request timeout (defaults to attn.json or 10s)")
 	)
@@ -167,27 +167,27 @@ func main() {
 	client, clientErr := consent.Client()
 	if clientErr != nil {
 		telemetryPath := runner.RecordManualAssessment(runner.TelemetryHome(), *attentionPath, artifact, ctx, nil, clientErr, "manual")
-		printJSON(output{Status: "unavailable", AttentionPath: *attentionPath, TelemetryPath: telemetryPath, Reason: consent.ReasonOr(clientErr)})
+		printJSON(output{Status: "unavailable", AttnPath: *attentionPath, TelemetryPath: telemetryPath, Reason: consent.ReasonOr(clientErr)})
 		return
 	}
 	result, err := client.Evaluate(context.Background(), artifact, ctx)
 	if err != nil {
 		if errors.Is(err, model.ErrUnavailable) || errors.Is(err, model.ErrStale) {
 			telemetryPath := runner.RecordManualAssessment(runner.TelemetryHome(), *attentionPath, artifact, ctx, nil, err, "manual")
-			printJSON(output{Status: "unavailable", AttentionPath: *attentionPath, TelemetryPath: telemetryPath, Reason: model.ReasonFor(err)})
+			printJSON(output{Status: "unavailable", AttnPath: *attentionPath, TelemetryPath: telemetryPath, Reason: model.ReasonFor(err)})
 			return
 		}
 		fail(err.Error())
 	}
 	if err := model.Persist(*attentionPath, artifact, result); err != nil {
 		if errors.Is(err, model.ErrStale) {
-			printJSON(output{Status: "unavailable", AttentionPath: *attentionPath, Reason: "artifact became stale"})
+			printJSON(output{Status: "unavailable", AttnPath: *attentionPath, Reason: "artifact became stale"})
 			return
 		}
 		fail(err.Error())
 	}
 	telemetryPath := runner.RecordManualAssessment(runner.TelemetryHome(), *attentionPath, artifact, ctx, &result, nil, "manual")
-	printJSON(output{Status: "assessed", AttentionPath: *attentionPath, TelemetryPath: telemetryPath, Assessment: &result.Assessment, TaskRelevant: &result.TaskRelevant, Model: result.Model})
+	printJSON(output{Status: "assessed", AttnPath: *attentionPath, TelemetryPath: telemetryPath, Assessment: &result.Assessment, TaskRelevant: &result.TaskRelevant, Model: result.Model})
 }
 
 func runPreflight(statusPath, preflightPath, action, service, draftGroup, permission string, userApproved bool, consent model.Resolved, task model.TaskContext) error {
@@ -246,7 +246,7 @@ func runPreflight(statusPath, preflightPath, action, service, draftGroup, permis
 	if strings.TrimSpace(task.Task) == "" {
 		// Preflight's action intent is the minimum task context when the caller
 		// intentionally omitted a development summary. The full fixed option
-		// subset remains available for Jev to rank; it does not grant permission
+		// subset remains available for model to rank; it does not grant permission
 		// to execute any of those options.
 		task.Task = "Evaluate whether this proposed worktree action needs the user's choice"
 	}

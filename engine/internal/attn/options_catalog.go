@@ -1,7 +1,7 @@
 package attn
 
 // OptionPolicy is the fixed, human-facing vocabulary shared by the artifact,
-// Jev adapter, and agent skill. It intentionally describes a safe action
+// model adapter, and agent skill. It intentionally describes a safe action
 // class rather than carrying shell text or command arguments.
 type OptionPolicy struct {
 	ID                     string
@@ -25,7 +25,7 @@ var fixedOptionCatalog = []OptionPolicy{
 
 // OptionCatalog returns a copy so callers cannot mutate the shared fixed
 // vocabulary. New IDs must be added here and documented in the distributable
-// agent skill before they can enter an artifact or a Jev question.
+// agent skill before they can enter an artifact or a model question.
 func OptionCatalog() []OptionPolicy {
 	result := make([]OptionPolicy, len(fixedOptionCatalog))
 	copy(result, fixedOptionCatalog)

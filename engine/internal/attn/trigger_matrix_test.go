@@ -8,7 +8,7 @@ import (
 )
 
 // This labeled matrix measures deterministic event publication. It is not a
-// Jev accuracy or probability-calibration dataset: no model is consulted and
+// model accuracy or probability-calibration dataset: no model is consulted and
 // the labels express the project's runtime boundaries rather than opinions
 // about whether an agent should interrupt a person.
 func TestAttentionTriggerPrecisionMatrix(t *testing.T) {

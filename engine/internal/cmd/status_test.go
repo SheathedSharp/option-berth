@@ -48,8 +48,8 @@ func TestPublishAttentionWritesFactArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if doc.AttentionRevision != artifact.StateRevision {
-		t.Fatalf("attention_revision = %q, artifact state_revision = %q", doc.AttentionRevision, artifact.StateRevision)
+	if doc.AttnRevision != artifact.StateRevision {
+		t.Fatalf("attn_revision = %q, artifact state_revision = %q", doc.AttnRevision, artifact.StateRevision)
 	}
 	if artifact.Event.Kind != attn.EventServiceFailed || artifact.Assessment != nil {
 		t.Fatalf("artifact = %+v, want fact-only service failure", artifact)
@@ -146,8 +146,8 @@ func TestPublishAttentionClearsAfterRecovery(t *testing.T) {
 	if got := publishAttention(&recovered); got != "" {
 		t.Fatalf("recovery returned attention path %q", got)
 	}
-	if recovered.AttentionPath != "" || recovered.AttentionRevision != "" {
-		t.Fatalf("recovery left status handoff fields: path=%q revision=%q", recovered.AttentionPath, recovered.AttentionRevision)
+	if recovered.AttnPath != "" || recovered.AttnRevision != "" {
+		t.Fatalf("recovery left status handoff fields: path=%q revision=%q", recovered.AttnPath, recovered.AttnRevision)
 	}
 	if _, err := attn.Read(path); err == nil {
 		t.Fatal("recovery left stale attention artifact")
@@ -335,7 +335,7 @@ func TestPrintStatusServicesUsesOneRowPerService(t *testing.T) {
 	}
 }
 
-// An `attention_path` is a signal in itself: its presence means the person
+// An `attn_path` is a signal in itself: its presence means the person
 // enabled the enhancement. Without the gate every agent had to reconstruct
 // that from the settings file before it could decide whether to run `oberth jev
 // assess`, and a disabled install still left an artifact telling it to.
@@ -350,16 +350,16 @@ func TestPublishAttentionIsSilentUntilEnabled(t *testing.T) {
 		}}},
 	}
 	if path := publishAttention(&doc); path != "" {
-		t.Fatalf("published %q while Jev is disabled", path)
+		t.Fatalf("published %q while model is disabled", path)
 	}
-	if doc.AttentionPath != "" || doc.AttentionRevision != "" {
-		t.Fatalf("doc carries an artifact: %q / %q", doc.AttentionPath, doc.AttentionRevision)
+	if doc.AttnPath != "" || doc.AttnRevision != "" {
+		t.Fatalf("doc carries an artifact: %q / %q", doc.AttnPath, doc.AttnRevision)
 	}
 
 	// Enabling it makes the same facts publish; the gate is the only difference.
 	enableJev(t)
 	if path := publishAttention(&doc); path == "" {
-		t.Fatal("enabled Jev published no artifact")
+		t.Fatal("enabled model published no artifact")
 	}
 }
 
@@ -378,7 +378,7 @@ func TestPublishAttentionClearsWhenDisabled(t *testing.T) {
 	enableJev(t)
 	path := publishAttention(&doc)
 	if path == "" {
-		t.Fatal("enabled Jev published no artifact")
+		t.Fatal("enabled model published no artifact")
 	}
 	if err := os.Remove(paths.AttnConfigPath()); err != nil {
 		t.Fatal(err)

@@ -1,6 +1,6 @@
 package model
 
-// `oberth jev enable` is the one step that turns the optional assessment on.
+// `oberth attn enable` is the one step that turns the optional assessment on.
 // It stores the key the person chose, proves the key works with a single
 // redacted probe, and only then writes the owner-only settings file.
 //
@@ -41,7 +41,7 @@ const (
 	KeyFromPrompt KeySourceKind = "prompt"
 )
 
-// EnableOptions is one `oberth jev enable` request.
+// EnableOptions is one `oberth attn enable` request.
 type EnableOptions struct {
 	Provider string
 	Endpoint string
@@ -242,7 +242,7 @@ func WriteSettings(path string, cfg LocalConfig) error {
 }
 
 // DisableSettings turns the committed setting off without deleting the key, so
-// a person who only wants Jev to stop does not have to paste the key again.
+// a person who only wants model to stop does not have to paste the key again.
 func DisableSettings(path string, cfg LocalConfig, forget bool) error {
 	next := cfg
 	next.Schema = LocalConfigSchema

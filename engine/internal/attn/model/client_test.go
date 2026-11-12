@@ -37,7 +37,7 @@ func testArtifact(t *testing.T) (string, attn.Artifact) {
 	return path, a
 }
 
-func TestJevEvaluateRedactsStateAndPersistsOnlyValidatedAssessment(t *testing.T) {
+func TestAttnEvaluateRedactsStateAndPersistsOnlyValidatedAssessment(t *testing.T) {
 	path, artifact := testArtifact(t)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
@@ -105,7 +105,7 @@ func TestJevEvaluateRedactsStateAndPersistsOnlyValidatedAssessment(t *testing.T)
 	}
 }
 
-func TestJevNoKeyLeavesArtifactUntouched(t *testing.T) {
+func TestAttnNoKeyLeavesArtifactUntouched(t *testing.T) {
 	path, artifact := testArtifact(t)
 	_, err := (Client{}).Evaluate(context.Background(), artifact, TaskContext{Task: "fix", AuthorizedOptions: []string{"inspect_logs"}})
 	if !errors.Is(err, ErrUnavailable) {
@@ -120,7 +120,7 @@ func TestJevNoKeyLeavesArtifactUntouched(t *testing.T) {
 	}
 }
 
-func TestJevRejectsInvalidProbabilitiesAndUnauthorizedChoice(t *testing.T) {
+func TestAttnRejectsInvalidProbabilitiesAndUnauthorizedChoice(t *testing.T) {
 	path, artifact := testArtifact(t)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -140,7 +140,7 @@ func TestJevRejectsInvalidProbabilitiesAndUnauthorizedChoice(t *testing.T) {
 	}
 }
 
-func TestJevRejectsStaleArtifactBeforeRemoteCall(t *testing.T) {
+func TestAttnRejectsStaleArtifactBeforeRemoteCall(t *testing.T) {
 	now := time.Now().UTC().Add(-2 * time.Minute)
 	a, ok := attn.Derive(attn.Facts{StateRevision: "1", ObservedAt: now, WorktreeRoot: "/tmp/repo", Services: []attn.Service{{Name: "api", LastExit: &attn.Exit{Reason: "start_failed", At: now}}}}, now, time.Second)
 	if !ok {

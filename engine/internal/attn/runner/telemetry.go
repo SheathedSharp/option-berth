@@ -28,7 +28,7 @@ func AppendRunnerTelemetry(home, project string, task model.TaskContext, result 
 	record := model.TelemetryRecord{
 		Kind: "assessment", Source: source, Project: model.ProjectLabel(root),
 		WorktreeID: model.WorktreeID(root), Status: result.Status, Reason: result.Reason,
-		EventID: result.EventID, StateRevision: result.AttentionRevision,
+		EventID: result.EventID, StateRevision: result.AttnRevision,
 		SessionID:  result.SessionID,
 		FreshUntil: result.FreshUntil, Cached: result.Cached,
 		LatencyMS: latency.Milliseconds(), AuthorizedOptions: append([]string(nil), task.AuthorizedOptions...),

@@ -65,7 +65,7 @@ def wait_for_attention(binary: Path, project: Path, home: Path) -> tuple[dict, d
     deadline = time.monotonic() + 12
     while time.monotonic() < deadline:
         status = read_status(binary, project, home)
-        path = status.get("attention_path")
+        path = status.get("attn_path")
         if path:
             artifact = json.loads(Path(path).read_text())
             return status, artifact
@@ -212,7 +212,7 @@ services:
         status, artifact = wait_for_attention(binary, project, home)
         if artifact.get("schema") != "oberth.attn/v1":
             raise RuntimeError(f"unexpected attention schema: {artifact.get('schema')!r}")
-        if artifact.get("state_revision") != status.get("attention_revision"):
+        if artifact.get("state_revision") != status.get("attn_revision"):
             raise RuntimeError("status and attention state revisions differ")
         if artifact.get("event", {}).get("service") != "worker":
             raise RuntimeError(f"unexpected event: {artifact.get('event')!r}")
@@ -237,7 +237,7 @@ services:
         assessed = json.loads(adapter_result.stdout)
         if assessed.get("status") != "unavailable":
             raise RuntimeError(f"missing-key fallback was not used: {assessed}")
-        after_fallback = json.loads(Path(status["attention_path"]).read_text())
+        after_fallback = json.loads(Path(status["attn_path"]).read_text())
         if "assessment" in after_fallback:
             raise RuntimeError("fallback unexpectedly changed the fact-only artifact")
         verify_subscription(adapter, project, home)
@@ -248,18 +248,18 @@ services:
         if choice == "inspect_logs":
             run(binary, project, home, "logs", "worker", "--once", "--json")
             final = read_status(binary, project, home)
-            if not final.get("attention_path"):
+            if not final.get("attn_path"):
                 raise RuntimeError("inspection unexpectedly cleared attention")
         elif choice == "inspect_manifest":
             manifest = project / "oberth.yaml"
             if not manifest.is_file() or "name: hil-check" not in manifest.read_text():
                 raise RuntimeError("manifest inspection did not read the fixture manifest")
             final = read_status(binary, project, home)
-            if not final.get("attention_path"):
+            if not final.get("attn_path"):
                 raise RuntimeError("manifest inspection unexpectedly cleared attention")
         elif choice == "continue_without_action":
             final = read_status(binary, project, home)
-            if not final.get("attention_path"):
+            if not final.get("attn_path"):
                 raise RuntimeError("continuing unexpectedly cleared attention")
         else:
             run(binary, project, home, "restart", "--only", "worker", "--json")
@@ -267,7 +267,7 @@ services:
             while True:
                 final = read_status(binary, project, home)
                 service = final["worktree"]["services"][0]
-                if service.get("running") and not final.get("attention_path"):
+                if service.get("running") and not final.get("attn_path"):
                     break
                 if time.monotonic() >= deadline:
                     raise RuntimeError(f"restart did not recover status: {final}")
@@ -281,7 +281,7 @@ services:
             choice,
             assessed.get("worktree_id", ""),
             assessed.get("event_id", ""),
-            assessed.get("attention_revision", ""),
+            assessed.get("attn_revision", ""),
         )
 
         print(
@@ -290,7 +290,7 @@ services:
                     "status": "passed",
                     "choice": choice,
                     "event_id": artifact["event_id"],
-                    "attention_cleared": not bool(final.get("attention_path")),
+                    "attention_cleared": not bool(final.get("attn_path")),
                     "quality_labeled_cases": quality.get("labeled_cases"),
                 },
                 sort_keys=True,

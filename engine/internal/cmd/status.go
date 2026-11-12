@@ -92,18 +92,18 @@ type statusDocument struct {
 	Git      *git.Tree       `json:"git,omitempty"`
 	Drafts   []draft.Pending `json:"drafts"`
 	Exits    []rpc.RunRecord `json:"exits"`
-	// AttentionPath points to a derived, fact-only handoff for an optional
+	// AttnPath points to a derived, fact-only handoff for an optional
 	// agent adapter. It is absent when there is no current anomaly.
-	AttentionPath string `json:"attention_path,omitempty"`
-	// AttentionRevision lets an agent compare an artifact it read with the
+	AttnPath string `json:"attn_path,omitempty"`
+	// AttnRevision lets an agent compare an artifact it read with the
 	// exact deterministic facts represented by this status response.
-	AttentionRevision string `json:"attention_revision,omitempty"`
-	// attentionEvent is whether the deterministic classifier derived a definite
+	AttnRevision string `json:"attn_revision,omitempty"`
+	// attnEvent is whether the deterministic classifier derived a definite
 	// anomaly, independent of whether it was published. It never reaches the
 	// wire: consent decides the artifact, this decides the one-line offer of the
 	// enhancement, and reading consent off the artifact would make that offer
 	// unreachable precisely when it is due.
-	attentionEvent bool
+	attnEvent bool
 	// Changed is absent on the first run: there is nothing to compare against,
 	// which is not the same as nothing having changed (`empty` inside says
 	// that).
@@ -137,22 +137,22 @@ func statusRun(cmd *cobra.Command, args []string) error {
 		return printJSON(doc)
 	}
 	printStatus(doc)
-	maybePrintJevTip(&doc)
+	maybePrintAttnTip(&doc)
 	return nil
 }
 
-// maybePrintJevTip is the one-line, rate-limited offer of the optional
+// maybePrintAttnTip is the one-line, rate-limited offer of the optional
 // assessment. It runs only in the human view, after the facts, and only when
-// Jev is off and there is an anomaly it could assess — status_tip.go has the
+// the assessment is off and there is an anomaly it could assess — status_tip.go has the
 // rest of the rules.
-func maybePrintJevTip(doc *statusDocument) {
+func maybePrintAttnTip(doc *statusDocument) {
 	now := time.Now().UTC()
-	if jevEnabled() || !jevTipWanted(doc, now) {
+	if attnEnabled() || !attnTipWanted(doc, now) {
 		return
 	}
 	fmt.Fprintln(os.Stdout)
-	fmt.Fprintln(os.Stdout, jevTipLine())
-	recordJevTip(paths.AttnTipPath(), now)
+	fmt.Fprintln(os.Stdout, attnTipLine())
+	recordAttnTip(paths.AttnTipPath(), now)
 }
 
 // statusDir is the directory a status read is about: the argument, or the
@@ -361,8 +361,8 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool, only []stri
 // Failure to publish the optional artifact never makes the facts unavailable.
 //
 // The artifact only exists once the person has enabled the enhancement. An
-// `attention_path` is therefore an unambiguous signal: an agent that sees one
-// knows Jev is on and may run `oberth jev assess`, and an agent that sees none
+// `attn_path` is therefore an unambiguous signal: an agent that sees one
+// knows model is on and may run `oberth attn assess`, and an agent that sees none
 // does not have to guess whether that is because nothing failed or because the
 // user never opted in. Publishing it unconditionally meant every reader had to
 // reconstruct that answer from the settings file.
@@ -377,9 +377,9 @@ func publishAttention(doc *statusDocument) string {
 	if doc == nil {
 		return ""
 	}
-	doc.AttentionPath = ""
-	doc.AttentionRevision = ""
-	doc.attentionEvent = false
+	doc.AttnPath = ""
+	doc.AttnRevision = ""
+	doc.attnEvent = false
 	facts := attn.Facts{
 		WorktreeRoot: doc.Scope.Root,
 		Branch:       doc.Worktree.Branch,
@@ -454,8 +454,8 @@ func publishAttention(doc *statusDocument) string {
 		_ = attn.Clear(paths.Dir(), doc.Scope.Root)
 		return ""
 	}
-	doc.attentionEvent = true
-	if !jevEnabled() {
+	doc.attnEvent = true
+	if !attnEnabled() {
 		// The person has not opted in, so nothing is published. Clear a
 		// leftover artifact from before the enhancement was switched off:
 		// leaving it on disk would keep telling agents to assess.
@@ -466,8 +466,8 @@ func publishAttention(doc *statusDocument) string {
 	if err != nil {
 		return ""
 	}
-	doc.AttentionPath = path
-	doc.AttentionRevision = artifact.StateRevision
+	doc.AttnPath = path
+	doc.AttnRevision = artifact.StateRevision
 	return path
 }
 

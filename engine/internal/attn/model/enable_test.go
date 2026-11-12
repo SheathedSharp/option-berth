@@ -254,7 +254,7 @@ func TestSendsSummaryCoversBothDirections(t *testing.T) {
 	if !strings.Contains(text, "Will be sent") || !strings.Contains(text, "Will never be sent") {
 		t.Fatalf("human summary = %q", text)
 	}
-	if !strings.Contains(text, "oberth jev preview") {
+	if !strings.Contains(text, "oberth attn preview") {
 		t.Fatal("the human summary does not point at the exact body")
 	}
 }

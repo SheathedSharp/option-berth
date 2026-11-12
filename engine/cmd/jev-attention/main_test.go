@@ -49,7 +49,7 @@ func TestLoadContextFileAndFlagOverrides(t *testing.T) {
 
 // Consent is the one behavior change in this package: a key is a secret, not
 // permission. These tables pin the rule the old default* helpers encoded by
-// accident — environment keys used to switch Jev on by their mere presence.
+// accident — environment keys used to switch model on by their mere presence.
 func TestConsentComesOnlyFromAnExplicitEnable(t *testing.T) {
 	enabled := model.LocalConfig{Schema: model.LocalConfigSchema, Enabled: true, Provider: "openrouter", APIKey: "settings-key"}
 	disabled := model.LocalConfig{Schema: model.LocalConfigSchema, Enabled: false, Provider: "openrouter", APIKey: "settings-key"}
@@ -223,7 +223,7 @@ func TestExplicitAPIKeyFlagWinsAndCanDisable(t *testing.T) {
 	}
 }
 
-func TestRunPreflightWritesFactRequestWhenJevUnavailable(t *testing.T) {
+func TestRunPreflightWritesFactRequestWhenModelUnavailable(t *testing.T) {
 	home := t.TempDir()
 	root := filepath.Join(t.TempDir(), "repo")
 	statusPath := filepath.Join(t.TempDir(), "status.json")

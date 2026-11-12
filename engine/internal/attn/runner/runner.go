@@ -22,8 +22,8 @@ type Status struct {
 	Scope struct {
 		Root string `json:"root"`
 	} `json:"scope"`
-	AttentionPath     string `json:"attention_path"`
-	AttentionRevision string `json:"attention_revision"`
+	AttnPath     string `json:"attn_path"`
+	AttnRevision string `json:"attn_revision"`
 }
 
 type HILDecision struct {
@@ -50,21 +50,21 @@ type HILRequest struct {
 }
 
 type Output struct {
-	Status            string           `json:"status"`
-	Reason            string           `json:"reason,omitempty"`
-	AttentionPath     string           `json:"attention_path,omitempty"`
-	TelemetryPath     string           `json:"telemetry_path,omitempty"`
-	WorktreeID        string           `json:"worktree_id,omitempty"`
-	AttentionRevision string           `json:"attention_revision,omitempty"`
-	EventID           string           `json:"event_id,omitempty"`
-	ContextID         string           `json:"context_id,omitempty"`
-	SessionID         string           `json:"session_id,omitempty"`
-	FreshUntil        string           `json:"fresh_until,omitempty"`
-	Assessment        *attn.Assessment `json:"assessment,omitempty"`
-	ModelCalled       bool             `json:"jev_called,omitempty"`
-	Cached            bool             `json:"cached,omitempty"`
-	Decision          *HILDecision     `json:"decision,omitempty"`
-	Request           *HILRequest      `json:"request,omitempty"`
+	Status        string           `json:"status"`
+	Reason        string           `json:"reason,omitempty"`
+	AttnPath      string           `json:"attn_path,omitempty"`
+	TelemetryPath string           `json:"telemetry_path,omitempty"`
+	WorktreeID    string           `json:"worktree_id,omitempty"`
+	AttnRevision  string           `json:"attn_revision,omitempty"`
+	EventID       string           `json:"event_id,omitempty"`
+	ContextID     string           `json:"context_id,omitempty"`
+	SessionID     string           `json:"session_id,omitempty"`
+	FreshUntil    string           `json:"fresh_until,omitempty"`
+	Assessment    *attn.Assessment `json:"assessment,omitempty"`
+	ModelCalled   bool             `json:"model_called,omitempty"`
+	Cached        bool             `json:"cached,omitempty"`
+	Decision      *HILDecision     `json:"decision,omitempty"`
+	Request       *HILRequest      `json:"request,omitempty"`
 	// WorktreeRoot is used only for the local quality ledger and is deliberately
 	// excluded from the agent-facing JSON output: an absolute path is not a
 	// fact the agent needs, and leaking one would break the redaction the
@@ -158,11 +158,11 @@ func ReadStatus(ctx context.Context, binary, project string) (Status, error) {
 }
 
 func ArtifactFor(s Status) (attn.Artifact, error) {
-	a, err := attn.ReadFresh(s.AttentionPath, time.Time{})
+	a, err := attn.ReadFresh(s.AttnPath, time.Time{})
 	if err != nil {
 		return a, model.ErrStale
 	}
-	if s.AttentionRevision == "" || a.StateRevision != s.AttentionRevision ||
+	if s.AttnRevision == "" || a.StateRevision != s.AttnRevision ||
 		filepath.Clean(a.WorktreeRoot) != filepath.Clean(s.Scope.Root) ||
 		a.EventID == "" || a.RecoveredAt != "" {
 		return a, model.ErrStale
@@ -176,7 +176,7 @@ func Auto(ctx context.Context, binary, project string, client model.Client, task
 	if err != nil {
 		return Output{}, err
 	}
-	if s.AttentionPath == "" {
+	if s.AttnPath == "" {
 		return Output{Status: "clear", WorktreeID: model.WorktreeID(s.Scope.Root), WorktreeRoot: s.Scope.Root}, nil
 	}
 	a, err := ArtifactFor(s)
@@ -189,7 +189,7 @@ func Auto(ctx context.Context, binary, project string, client model.Client, task
 		return Output{}, errors.New("runner: explicit authorized_options are required")
 	}
 	// Long-running agents can declare a broad fixed allow-list. Only its
-	// intersection with this event's deterministic candidates reaches Jev or
+	// intersection with this event's deterministic candidates reaches model or
 	// the HIL request; candidate publication itself never grants permission.
 	authorized, err := model.FilterAuthorizedOptions(a.Options, task.AuthorizedOptions)
 	if err != nil {
@@ -198,9 +198,9 @@ func Auto(ctx context.Context, binary, project string, client model.Client, task
 	task.AuthorizedOptions = authorized
 	result, cached := model.CachedResult(a, task)
 	var callErr error
-	jevCalled := false
+	modelCalled := false
 	if !cached {
-		jevCalled = strings.TrimSpace(client.APIKey) != ""
+		modelCalled = strings.TrimSpace(client.APIKey) != ""
 		result, callErr = client.Evaluate(ctx, a, task)
 	}
 	if callErr != nil && !errors.Is(callErr, model.ErrUnavailable) && !errors.Is(callErr, model.ErrStale) {
@@ -212,26 +212,26 @@ func Auto(ctx context.Context, binary, project string, client model.Client, task
 	if err != nil {
 		return Output{}, err
 	}
-	if fresh.AttentionPath == "" {
+	if fresh.AttnPath == "" {
 		return Output{Status: "clear", WorktreeID: model.WorktreeID(fresh.Scope.Root), WorktreeRoot: fresh.Scope.Root}, nil
 	}
 	latest, err := ArtifactFor(fresh)
-	if err != nil || fresh.AttentionPath != s.AttentionPath || latest.EventID != a.EventID || latest.StateRevision != a.StateRevision {
+	if err != nil || fresh.AttnPath != s.AttnPath || latest.EventID != a.EventID || latest.StateRevision != a.StateRevision {
 		return StaleOutput(fresh), nil
 	}
 	if errors.Is(callErr, model.ErrStale) {
 		return StaleOutput(fresh), nil
 	}
 	if callErr == nil && !cached {
-		if err := model.Persist(s.AttentionPath, a, result); err != nil {
+		if err := model.Persist(s.AttnPath, a, result); err != nil {
 			if errors.Is(err, model.ErrStale) {
 				return StaleOutput(fresh), nil
 			}
 			return Output{}, err
 		}
 	}
-	out := Output{AttentionPath: s.AttentionPath, AttentionRevision: a.StateRevision, EventID: a.EventID, FreshUntil: latest.FreshUntil, Cached: cached, WorktreeID: model.WorktreeID(fresh.Scope.Root), WorktreeRoot: fresh.Scope.Root}
-	out.ModelCalled = jevCalled
+	out := Output{AttnPath: s.AttnPath, AttnRevision: a.StateRevision, EventID: a.EventID, FreshUntil: latest.FreshUntil, Cached: cached, WorktreeID: model.WorktreeID(fresh.Scope.Root), WorktreeRoot: fresh.Scope.Root}
+	out.ModelCalled = modelCalled
 	if callErr == nil {
 		out.Assessment = &result.Assessment
 		out.ContextID = result.Assessment.ContextID
@@ -323,7 +323,7 @@ func SubscribeWithStats(ctx context.Context, binary, project string, interval ti
 			stats.NoEventPolls++
 		}
 		if result.EventID != "" {
-			caseKey := result.EventID + "\x00" + result.AttentionRevision
+			caseKey := result.EventID + "\x00" + result.AttnRevision
 			if !stats.seen[caseKey] {
 				stats.seen[caseKey] = true
 				stats.EventsSeen++
@@ -372,7 +372,7 @@ func SubscriptionStopped(sessionID string) map[string]string {
 func SubscriptionKey(result Output) string {
 	assessment, _ := json.Marshal(result.Assessment)
 	return fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s", result.Status, result.EventID,
-		result.AttentionRevision, result.DecisionReason(), string(assessment))
+		result.AttnRevision, result.DecisionReason(), string(assessment))
 }
 
 func (result Output) DecisionReason() string {

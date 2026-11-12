@@ -162,7 +162,7 @@ var catalog = []check{
 	{id: "agent_skill", ask: checkSkillVersion},
 	// The optional assessment goes last: it is enrichment, and its row must
 	// never push a fact or a control check off the table.
-	{id: "jev", ask: checkJev},
+	{id: "attn", ask: checkAttn},
 }
 
 // IDs lists every check id, in table order. `oberth doctor --only` validates a

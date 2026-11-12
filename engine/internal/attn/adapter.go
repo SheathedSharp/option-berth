@@ -1,6 +1,6 @@
 package attn
 
-// The adapter boundary between the deterministic artifact and the optional Jev
+// The adapter boundary between the deterministic artifact and the optional model
 // client (internal/attn/model).
 //
 // internal/attn owns the artifact and its on-disk protocol: identity,

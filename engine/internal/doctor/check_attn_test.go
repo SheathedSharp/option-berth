@@ -24,10 +24,10 @@ func writeSettings(t *testing.T, env *Env, body string, mode os.FileMode) {
 	env.SettingsPath = path
 }
 
-func TestJevCheckReportsOffWithoutFailing(t *testing.T) {
+func TestAttnCheckReportsOffWithoutFailing(t *testing.T) {
 	env := fakeEnv(t)
 	env.SettingsPath = filepath.Join(env.Home, ".option-berth", "attn.json")
-	got := run(t, env, checkJev)
+	got := run(t, env, checkAttn)
 	// Skip, not fail: nothing is wrong, the feature is simply not enabled.
 	wantStatus(t, got, StatusSkip)
 	if got.Summary == "" || got.Fix == "" {
@@ -35,12 +35,12 @@ func TestJevCheckReportsOffWithoutFailing(t *testing.T) {
 	}
 }
 
-func TestJevCheckReportsOnWithProvider(t *testing.T) {
+func TestAttnCheckReportsOnWithProvider(t *testing.T) {
 	env := fakeEnv(t)
 	writeSettings(t, env, `{"schema":"oberth.attn-settings/v1","enabled":true,"provider":"openrouter","api_key":"k"}`, 0o600)
-	got := run(t, env, checkJev)
+	got := run(t, env, checkAttn)
 	wantStatus(t, got, StatusOK)
-	if got.Summary != "Jev: on · openrouter" {
+	if got.Summary != "Attention: on · openrouter" {
 		t.Fatalf("summary = %q", got.Summary)
 	}
 	// The key must never appear in a doctor row.
@@ -49,10 +49,10 @@ func TestJevCheckReportsOnWithProvider(t *testing.T) {
 	}
 }
 
-func TestJevCheckWarnsWhenEnabledWithoutAKey(t *testing.T) {
+func TestAttnCheckWarnsWhenEnabledWithoutAKey(t *testing.T) {
 	env := fakeEnv(t)
 	writeSettings(t, env, `{"schema":"oberth.attn-settings/v1","enabled":true,"provider":"typesafe"}`, 0o600)
-	got := run(t, env, checkJev)
+	got := run(t, env, checkAttn)
 	wantStatus(t, got, StatusWarn)
 	if got.Fix == "" {
 		t.Fatalf("check = %+v, want a next step", got)
@@ -62,29 +62,29 @@ func TestJevCheckWarnsWhenEnabledWithoutAKey(t *testing.T) {
 // A malformed or world-readable settings file is the state a person cannot
 // discover from the outside: it is present, so nothing falls back. This row is
 // where it becomes visible.
-func TestJevCheckWarnsOnUnusableSettings(t *testing.T) {
+func TestAttnCheckWarnsOnUnusableSettings(t *testing.T) {
 	env := fakeEnv(t)
 	writeSettings(t, env, `{"schema":"oberth.attn-settings/v1",`, 0o600)
-	got := run(t, env, checkJev)
+	got := run(t, env, checkAttn)
 	wantStatus(t, got, StatusWarn)
 
 	env2 := fakeEnv(t)
 	writeSettings(t, env2, `{"schema":"oberth.attn-settings/v1","enabled":true,"api_key":"k"}`, 0o644)
-	got = run(t, env2, checkJev)
+	got = run(t, env2, checkAttn)
 	wantStatus(t, got, StatusWarn)
 }
 
-func TestJevCheckIsInTheTableAndSelectable(t *testing.T) {
+func TestAttnCheckIsInTheTableAndSelectable(t *testing.T) {
 	found := false
 	for _, id := range IDs() {
-		if id == "jev" {
+		if id == "attn" {
 			found = true
 		}
 	}
 	if !found {
 		t.Fatalf("jev is not in the doctor table: %v", IDs())
 	}
-	if bad := UnknownSelectors([]string{"jev"}); len(bad) != 0 {
+	if bad := UnknownSelectors([]string{"attn"}); len(bad) != 0 {
 		t.Fatalf("--only jev is rejected: %v", bad)
 	}
 }

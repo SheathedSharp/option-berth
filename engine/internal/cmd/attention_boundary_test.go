@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// The Jev adapter is optional. "Optional" has to mean something the build can
+// The model adapter is optional. "Optional" has to mean something the build can
 // check, not a comment: if a control-path package ever imports internal/attn/model,
 // then a missing key, an expired setting or a slow provider becomes able to
 // reach `status`, `up`, `down`, `restart` or `logs`. These two tests turn that
@@ -44,27 +44,27 @@ func modulePath(t *testing.T) string {
 	return strings.TrimSpace(string(out))
 }
 
-// TestDaemonAndScannerNeverImportTheJevClient pins the two long-running
+// TestDaemonAndScannerNeverImportTheModelClient pins the two long-running
 // processes: the daemon observes facts and the scanner reduces them, and
 // neither may acquire a network client. This is the boundary that lets a
 // user run the whole engine with no key and no settings file at all.
-func TestDaemonAndScannerNeverImportTheJevClient(t *testing.T) {
+func TestDaemonAndScannerNeverImportTheModelClient(t *testing.T) {
 	for _, pkg := range []string{"../daemon", "../scanner", "../groups", "../ports", "../servicefacts"} {
 		t.Run(filepath.Base(pkg), func(t *testing.T) {
 			for _, dep := range dependencyClosure(t, pkg) {
 				if dep == "internal/attn/model" || strings.HasPrefix(dep, "internal/attn/model/") {
-					t.Fatalf("%s depends on %s: the Jev client is off the control path", pkg, dep)
+					t.Fatalf("%s depends on %s: the model client is off the control path", pkg, dep)
 				}
 			}
 		})
 	}
 }
 
-// TestControlPathCommandsNeverImportTheJevClient reads the import blocks of the
+// TestControlPathCommandsNeverImportTheModelClient reads the import blocks of the
 // commands an agent uses to inspect and change running services. A transitive
 // check would also pass today, but this one says which file went wrong, and it
 // keeps working while a package is being moved around.
-func TestControlPathCommandsNeverImportTheJevClient(t *testing.T) {
+func TestControlPathCommandsNeverImportTheModelClient(t *testing.T) {
 	const jevImport = `"github.com/sheathedsharp/option-berth/engine/internal/attn/model"`
 	files := []string{"status.go", "up.go", "down.go", "restart.go", "logs.go", "start.go"}
 	fset := token.NewFileSet()
@@ -79,7 +79,7 @@ func TestControlPathCommandsNeverImportTheJevClient(t *testing.T) {
 				t.Fatalf("%s: unquote %s: %v", name, spec.Path.Value, err)
 			}
 			if path == "github.com/sheathedsharp/option-berth/engine/internal/attn/model" || strings.Contains(path, "internal/attn/model") {
-				t.Errorf("%s imports %s; the optional Jev client stays out of the control path", name, jevImport)
+				t.Errorf("%s imports %s; the optional model client stays out of the control path", name, jevImport)
 			}
 		}
 	}

@@ -122,7 +122,7 @@ func runnerFixture(t *testing.T) (Status, attn.Artifact) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := Status{AttentionPath: path, AttentionRevision: a.StateRevision}
+	s := Status{AttnPath: path, AttnRevision: a.StateRevision}
 	s.Scope.Root = root
 	return s, a
 }
@@ -182,7 +182,7 @@ func TestAutoAssessesRefreshesCachesAndBindsTask(t *testing.T) {
 	if err != nil || out.Status != "continue" || out.Cached || !out.ModelCalled || calls != 1 || reads != 2 {
 		t.Fatalf("out=%+v err=%v calls=%d reads=%d", out, err, calls, reads)
 	}
-	stored, err := attn.Read(s.AttentionPath)
+	stored, err := attn.Read(s.AttnPath)
 	if err != nil || stored.Assessment == nil || stored.StateRevision != a.StateRevision || stored.EventID != a.EventID {
 		t.Fatalf("stored=%+v err=%v", stored, err)
 	}
@@ -209,7 +209,7 @@ func TestAutoUnavailableKeepsFactsAndRequestsHuman(t *testing.T) {
 	for _, mode := range []string{"no_key", "http_error", "malformed"} {
 		t.Run(mode, func(t *testing.T) {
 			s, artifact := runnerFixture(t)
-			before, _ := os.ReadFile(s.AttentionPath)
+			before, _ := os.ReadFile(s.AttnPath)
 			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if mode == "no_key" {
 					t.Error("no key made HTTP call")
@@ -226,7 +226,7 @@ func TestAutoUnavailableKeepsFactsAndRequestsHuman(t *testing.T) {
 				client.APIKey = ""
 			}
 			out, err := Auto(context.Background(), "unused", ".", client, model.TaskContext{Task: "fix api", AuthorizedOptions: authorizedFor(artifact)}, func(context.Context, string, string) (Status, error) { return s, nil })
-			after, _ := os.ReadFile(s.AttentionPath)
+			after, _ := os.ReadFile(s.AttnPath)
 			if err != nil || out.Status != "unavailable" || out.ModelCalled != (mode != "no_key") || !out.Decision.NeedsHuman || out.Assessment != nil || out.Request == nil || string(before) != string(after) {
 				t.Fatalf("out=%+v err=%v changed=%t", out, err, string(before) != string(after))
 			}
@@ -240,7 +240,7 @@ func TestAutoRefusesStaleAndCrossWorktreeRequests(t *testing.T) {
 			s, a := runnerFixture(t)
 			reads := 0
 			if mode == "revision" {
-				s.AttentionRevision = "other"
+				s.AttnRevision = "other"
 			}
 			if mode == "root" {
 				s.Scope.Root = "/other/project"
@@ -248,16 +248,16 @@ func TestAutoRefusesStaleAndCrossWorktreeRequests(t *testing.T) {
 			if mode == "expired" {
 				a.FreshUntil = time.Now().Add(-time.Minute).Format(time.RFC3339Nano)
 				data, _ := json.Marshal(a)
-				_ = os.WriteFile(s.AttentionPath, data, 0600)
+				_ = os.WriteFile(s.AttnPath, data, 0600)
 			}
 			out, err := Auto(context.Background(), "unused", ".", model.Client{}, model.TaskContext{Task: "fix", AuthorizedOptions: authorizedFor(a)}, func(context.Context, string, string) (Status, error) {
 				reads++
 				copy := s
 				if reads == 2 && mode == "changed_during_call" {
-					copy.AttentionRevision = "new"
+					copy.AttnRevision = "new"
 				}
 				if reads == 2 && mode == "recovered_during_call" {
-					copy.AttentionPath = ""
+					copy.AttnPath = ""
 				}
 				return copy, nil
 			})

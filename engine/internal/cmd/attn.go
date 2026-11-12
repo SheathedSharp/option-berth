@@ -1,6 +1,6 @@
 package cmd
 
-// `oberth jev` carries the attention runner that used to live only in the
+// `oberth attn` carries the attention runner that used to live only in the
 // separate `jev-attention` binary. It is the same protocol and the same JSON:
 // the standalone command stays as a thin shell over this package during the
 // migration, and the scripted acceptance check does not have to change.
@@ -24,26 +24,26 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// The flags of the whole `jev` family. They are package variables for the same
+// The flags of the whole `attn` family. They are package variables for the same
 // reason every other command's are: the tree is built once per process.
 var (
-	jevJSONFlag      bool
-	jevProjectFlag   string
-	jevTaskFlag      string
-	jevTaskFileFlag  string
-	jevAuthorizeFlag []string
-	jevIntervalFlag  time.Duration
-	jevOberthFlag    string
+	attnJSONFlag      bool
+	attnProjectFlag   string
+	attnTaskFlag      string
+	attnTaskFileFlag  string
+	attnAuthorizeFlag []string
+	attnIntervalFlag  time.Duration
+	attnOberthFlag    string
 
-	jevFeedbackFileFlag   string
-	jevAttentionFileFlag  string
-	jevRawFlag            bool
-	jevQualitySinceFlag   time.Duration
-	jevQualityProjectFlag string
+	attnFeedbackFileFlag   string
+	attnArtifactFlag       string
+	attnRawFlag            bool
+	attnQualitySinceFlag   time.Duration
+	attnQualityProjectFlag string
 )
 
-var jevCmd = &cobra.Command{
-	Use:     "jev",
+var attnCmd = &cobra.Command{
+	Use:     "attn",
 	Short:   "Optional model assessment of a runtime anomaly (off unless enabled)",
 	GroupID: commandGroupHandoff,
 	Long: "Ask an optional model whether a runtime anomaly affects the current task, and\n" +
@@ -51,16 +51,16 @@ var jevCmd = &cobra.Command{
 		"Off by default. Only `enabled: true` in the owner-only attn.json under\n" +
 		"BERTH_HOME, or a one-shot BERTH_ATTN=1 for this process, lets this command\n" +
 		"contact a provider; a key in the environment supplies the secret but is not\n" +
-		"consent. `oberth status` only publishes `attention_path` when Jev is enabled,\n" +
+		"consent. `oberth status` only publishes `attn_path` when model is enabled,\n" +
 		"so its presence already means the person opted in.\n\n" +
 		"The command never starts, stops or restarts a service. It reads\n" +
 		"`oberth status --json`, validates the published artifact against that exact\n" +
-		"revision, sends a redacted summary, and prints one JSON value when Jev cannot\n" +
+		"revision, sends a redacted summary, and prints one JSON value when model cannot\n" +
 		"answer, the reason is one fixed code (`no_key`, `disabled`, `unauthorized`,\n" +
 		"`rate_limited`, `timeout`, `network`, `provider_error`, `bad_response`, `stale`).",
 }
 
-var jevAssessCmd = &cobra.Command{
+var attnAssessCmd = &cobra.Command{
 	Use:   "assess",
 	Short: "One status read, one anomaly assessment, one handoff",
 	Long: "Read `oberth status --json`, verify the published artifact still matches that\n" +
@@ -68,10 +68,10 @@ var jevAssessCmd = &cobra.Command{
 		"are the agent's explicit allow-list; artifact options are candidates, never\n" +
 		"permission. This is the former `jev-attention --auto`.",
 	Args: cobra.NoArgs,
-	RunE: runJevAssess,
+	RunE: runAttnAssess,
 }
 
-var jevSessionCmd = &cobra.Command{
+var attnSessionCmd = &cobra.Command{
 	Use:   "session",
 	Short: "Keep watching for a task and emit only changed handoffs",
 	Long: "Poll `oberth status --json` for the lifetime of a task and emit NDJSON: one\n" +
@@ -79,71 +79,71 @@ var jevSessionCmd = &cobra.Command{
 		"`stopped` when the process is cancelled. Repeated polls of unchanged facts are\n" +
 		"deliberately silent.",
 	Args: cobra.NoArgs,
-	RunE: runJevSession,
+	RunE: runAttnSession,
 }
 
-var jevFeedbackCmd = &cobra.Command{
+var attnFeedbackCmd = &cobra.Command{
 	Use:   "feedback",
 	Short: "Record what a person actually decided about one handoff",
 	Long: "Append one agent quality-feedback JSON document to the local ledger. This is\n" +
 		"the label that makes the ledger answer 'was a person needed'; it never changes\n" +
 		"the attention artifact and never grants permission.",
 	Args: cobra.NoArgs,
-	RunE: runJevFeedback,
+	RunE: runAttnFeedback,
 }
 
-var jevReportCmd = &cobra.Command{
+var attnReportCmd = &cobra.Command{
 	Use:   "report",
 	Short: "Summarize local attention quality as JSON",
 	Long: "Read the local quality ledger and report coverage, assessment availability,\n" +
 		"routing reasons, and the labelled precision/recall of the handoff policy. A\n" +
 		"metric stays null until there are enough real labels; it is never zero-filled.",
 	Args: cobra.NoArgs,
-	RunE: runJevReport,
+	RunE: runAttnReport,
 }
 
 func init() {
-	jevCmd.PersistentFlags().BoolVar(&jevJSONFlag, "json", false, "Output as JSON")
-	jevCmd.PersistentFlags().StringVar(&jevProjectFlag, "project", ".", "Worktree directory to read")
-	jevCmd.PersistentFlags().StringVar(&jevOberthFlag, "oberth", "oberth", "oberth executable to read status with")
+	attnCmd.PersistentFlags().BoolVar(&attnJSONFlag, "json", false, "Output as JSON")
+	attnCmd.PersistentFlags().StringVar(&attnProjectFlag, "project", ".", "Worktree directory to read")
+	attnCmd.PersistentFlags().StringVar(&attnOberthFlag, "oberth", "oberth", "oberth executable to read status with")
 
-	jevCmd.PersistentFlags().StringVar(&jevTaskFlag, "task", "", "Task summary (alternative to --task-context)")
-	jevCmd.PersistentFlags().StringVar(&jevTaskFileFlag, "task-context", "",
+	attnCmd.PersistentFlags().StringVar(&attnTaskFlag, "task", "", "Task summary (alternative to --task-context)")
+	attnCmd.PersistentFlags().StringVar(&attnTaskFileFlag, "task-context", "",
 		"JSON file containing task and authorized_options")
-	jevCmd.PersistentFlags().StringSliceVar(&jevAuthorizeFlag, "authorize", nil,
+	attnCmd.PersistentFlags().StringSliceVar(&attnAuthorizeFlag, "authorize", nil,
 		"Authorized option IDs for this task (comma separated); overrides the context file")
-	jevSessionCmd.Flags().DurationVar(&jevIntervalFlag, "interval", 2*time.Second, "Poll interval")
+	attnSessionCmd.Flags().DurationVar(&attnIntervalFlag, "interval", 2*time.Second, "Poll interval")
 
-	jevFeedbackCmd.Flags().StringVar(&jevFeedbackFileFlag, "file", "", "Feedback JSON document to append")
-	jevFeedbackCmd.Flags().StringVar(&jevAttentionFileFlag, "attention", "",
+	attnFeedbackCmd.Flags().StringVar(&attnFeedbackFileFlag, "file", "", "Feedback JSON document to append")
+	attnFeedbackCmd.Flags().StringVar(&attnArtifactFlag, "attention", "",
 		"Attention artifact the feedback refers to, to check its identity")
-	_ = jevFeedbackCmd.MarkFlagRequired("file")
+	_ = attnFeedbackCmd.MarkFlagRequired("file")
 
-	jevReportCmd.Flags().DurationVar(&jevQualitySinceFlag, "since", 0, "Lookback window (for example 168h)")
-	jevReportCmd.Flags().StringVar(&jevQualityProjectFlag, "quality-project", "",
+	attnReportCmd.Flags().DurationVar(&attnQualitySinceFlag, "since", 0, "Lookback window (for example 168h)")
+	attnReportCmd.Flags().StringVar(&attnQualityProjectFlag, "quality-project", "",
 		"Project label or worktree id to filter on")
 
-	jevCmd.AddCommand(jevAssessCmd, jevSessionCmd, jevFeedbackCmd, jevReportCmd)
-	rootCmd.AddCommand(jevCmd)
+	attnCmd.AddCommand(attnAssessCmd, attnSessionCmd, attnFeedbackCmd, attnReportCmd)
+	rootCmd.AddCommand(attnCmd)
 }
 
-// jevTaskContext loads the agent's explicit authorization. There is no default:
+// attnTaskContext loads the agent's explicit authorization. There is no default:
 // an unset allow-list is an error, because a candidate option in an artifact is
 // not permission to act on it.
-func jevTaskContext() (model.TaskContext, error) {
+func attnTaskContext() (model.TaskContext, error) {
 	var task model.TaskContext
 	var err error
-	if strings.TrimSpace(jevTaskFileFlag) != "" {
-		task, err = model.ReadTaskContext(jevTaskFileFlag)
+	if strings.TrimSpace(attnTaskFileFlag) != "" {
+		task, err = model.ReadTaskContext(attnTaskFileFlag)
 		if err != nil {
 			return model.TaskContext{}, err
 		}
 	}
-	if strings.TrimSpace(jevTaskFlag) != "" {
-		task.Task = jevTaskFlag
+	if strings.TrimSpace(attnTaskFlag) != "" {
+		task.Task = attnTaskFlag
 	}
-	if len(jevAuthorizeFlag) > 0 {
-		task.AuthorizedOptions = append([]string(nil), jevAuthorizeFlag...)
+	if len(attnAuthorizeFlag) > 0 {
+		task.AuthorizedOptions = append([]string(nil), attnAuthorizeFlag...)
 	}
 	if strings.TrimSpace(task.Task) == "" {
 		return task, usageError{errors.New("--task or --task-context is required")}
@@ -154,22 +154,22 @@ func jevTaskContext() (model.TaskContext, error) {
 	return task, nil
 }
 
-// jevResolvedConsent is the same single resolution the standalone command uses.
+// attnResolvedConsent is the same single resolution the standalone command uses.
 // A reason means "do not call the provider", never "guess a default".
-func jevResolvedConsent() model.Resolved {
+func attnResolvedConsent() model.Resolved {
 	input := model.ResolveInputFromEnvironment()
 	input.Settings, input.SettingsPresent, input.SettingsErr = model.LoadLocalConfig()
 	return model.Resolve(input)
 }
 
-func runJevAssess(cmd *cobra.Command, _ []string) error {
-	task, err := jevTaskContext()
+func runAttnAssess(cmd *cobra.Command, _ []string) error {
+	task, err := attnTaskContext()
 	if err != nil {
 		return err
 	}
-	consent := jevResolvedConsent()
+	consent := attnResolvedConsent()
 	started := time.Now()
-	// Jev being off does not mean "no handoff": the runner still reads status
+	// model being off does not mean "no handoff": the runner still reads status
 	// and builds the fact-only request, then reports the fixed reason. Only the
 	// provider call is skipped, which is what the person refused.
 	client, clientErr := consent.Client()
@@ -178,81 +178,81 @@ func runJevAssess(cmd *cobra.Command, _ []string) error {
 		// calls out, and the reason it prints is the consent decision.
 		client = model.Client{}
 	}
-	result, err := runner.Auto(cmd.Context(), jevOberthFlag, jevProjectFlag, client, task, runner.ReadStatus)
+	result, err := runner.Auto(cmd.Context(), attnOberthFlag, attnProjectFlag, client, task, runner.ReadStatus)
 	if err != nil {
 		return err
 	}
 	if consent.Reason != "" {
 		result.Status, result.Reason = "unavailable", consent.Reason
 	}
-	telemetryPath := runner.AppendRunnerTelemetry(runner.TelemetryHome(), jevProjectFlag, task, result, err, "runner", time.Since(started))
+	telemetryPath := runner.AppendRunnerTelemetry(runner.TelemetryHome(), attnProjectFlag, task, result, err, "runner", time.Since(started))
 	result.TelemetryPath = telemetryPath
-	return writeJevOutput(cmd.OutOrStdout(), result)
+	return writeAttnOutput(cmd.OutOrStdout(), result)
 }
 
-func runJevSession(cmd *cobra.Command, _ []string) error {
-	task, err := jevTaskContext()
+func runAttnSession(cmd *cobra.Command, _ []string) error {
+	task, err := attnTaskContext()
 	if err != nil {
 		return err
 	}
-	if jevIntervalFlag <= 0 {
+	if attnIntervalFlag <= 0 {
 		return usageError{errors.New("--interval must be positive")}
 	}
-	consent := jevResolvedConsent()
+	consent := attnResolvedConsent()
 	// A session on a disabled configuration is not a silent no-op: it reports
 	// the fixed reason and stops, so an agent does not wait for events that can
 	// never arrive.
 	client, clientErr := consent.Client()
 	if clientErr != nil {
-		return writeJevOutput(cmd.OutOrStdout(), runner.Output{Status: "unavailable", Reason: consent.ReasonOr(clientErr)})
+		return writeAttnOutput(cmd.OutOrStdout(), runner.Output{Status: "unavailable", Reason: consent.ReasonOr(clientErr)})
 	}
 	subscriptionContext, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	sessionID := runner.NewSessionID(jevProjectFlag)
-	runner.AppendLifecycleTelemetry(runner.TelemetryHome(), jevProjectFlag, "subscribed", sessionID, nil)
-	stats, err := runner.SubscribeWithStats(subscriptionContext, jevOberthFlag, jevProjectFlag, jevIntervalFlag,
+	sessionID := runner.NewSessionID(attnProjectFlag)
+	runner.AppendLifecycleTelemetry(runner.TelemetryHome(), attnProjectFlag, "subscribed", sessionID, nil)
+	stats, err := runner.SubscribeWithStats(subscriptionContext, attnOberthFlag, attnProjectFlag, attnIntervalFlag,
 		client, task, runner.ReadStatus, sessionID,
 		func(result runner.Output, latency time.Duration) {
-			runner.AppendRunnerTelemetry(runner.TelemetryHome(), jevProjectFlag, task, result, nil, "subscription", latency)
+			runner.AppendRunnerTelemetry(runner.TelemetryHome(), attnProjectFlag, task, result, nil, "subscription", latency)
 		},
-		func(value any) error { return writeJevValue(cmd.OutOrStdout(), value) })
+		func(value any) error { return writeAttnValue(cmd.OutOrStdout(), value) })
 	if err != nil {
-		runner.AppendLifecycleTelemetry(runner.TelemetryHome(), jevProjectFlag, "error", sessionID, &stats)
+		runner.AppendLifecycleTelemetry(runner.TelemetryHome(), attnProjectFlag, "error", sessionID, &stats)
 		return err
 	}
-	runner.AppendLifecycleTelemetry(runner.TelemetryHome(), jevProjectFlag, "stopped", sessionID, &stats)
+	runner.AppendLifecycleTelemetry(runner.TelemetryHome(), attnProjectFlag, "stopped", sessionID, &stats)
 	return nil
 }
 
-func runJevFeedback(cmd *cobra.Command, _ []string) error {
-	result, err := runner.Feedback(jevFeedbackFileFlag, jevAttentionFileFlag, jevProjectFlag)
+func runAttnFeedback(cmd *cobra.Command, _ []string) error {
+	result, err := runner.Feedback(attnFeedbackFileFlag, attnArtifactFlag, attnProjectFlag)
 	if err != nil {
 		return err
 	}
-	return writeJevValue(cmd.OutOrStdout(), map[string]string{
+	return writeAttnValue(cmd.OutOrStdout(), map[string]string{
 		"status": "feedback_recorded", "telemetry_path": result.Path, "request_id": result.RecordID,
 	})
 }
 
-func runJevReport(cmd *cobra.Command, _ []string) error {
-	if jevQualitySinceFlag < 0 {
+func runAttnReport(cmd *cobra.Command, _ []string) error {
+	if attnQualitySinceFlag < 0 {
 		return usageError{errors.New("--since must not be negative")}
 	}
-	report, err := runner.QualityReport(jevQualitySinceFlag, jevQualityProjectFlag)
+	report, err := runner.QualityReport(attnQualitySinceFlag, attnQualityProjectFlag)
 	if err != nil {
 		return err
 	}
-	return writeJevValue(cmd.OutOrStdout(), report)
+	return writeAttnValue(cmd.OutOrStdout(), report)
 }
 
-// writeJevOutput prints a runner result. The JSON is the protocol the agent
+// writeAttnOutput prints a runner result. The JSON is the protocol the agent
 // reads, so it is written whether or not --json was given; the flag stays for
 // symmetry with the rest of the CLI and for a future human view.
-func writeJevOutput(writer io.Writer, result runner.Output) error {
-	return writeJevValue(writer, result)
+func writeAttnOutput(writer io.Writer, result runner.Output) error {
+	return writeAttnValue(writer, result)
 }
 
-func writeJevValue(writer io.Writer, value any) error {
+func writeAttnValue(writer io.Writer, value any) error {
 	encoder := json.NewEncoder(writer)
 	return encoder.Encode(value)
 }
