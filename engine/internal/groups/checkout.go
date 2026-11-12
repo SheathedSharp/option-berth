@@ -12,9 +12,9 @@ import (
 // number of linked worktrees (`git worktree add`). Each is a group of its own —
 // `<project>` for the main checkout, `<project>@<worktree>` for a linked one —
 // and all of them share the project name, which only the main checkout
-// decides. A worktree's copy of a committed `oberth.yaml` describes its
-// services and never its name, so a stale copy cannot fold the worktree back
-// into the main checkout's group.
+// decides. A worktree's copy of the declaration describes its services and
+// never its name, so a stale copy cannot fold the worktree back into the main
+// checkout's group.
 type Checkout struct {
 	// Root is the directory holding the `.git` entry.
 	Root string

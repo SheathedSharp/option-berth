@@ -16,9 +16,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ConfigName is the file a project commits at its repository root to name its
-// group and describe its services. It is what option-berth writes; configNames is
-// everything it reads.
+// ConfigName is the file a worktree declares at its checkout root to name its
+// group and describe its services. It belongs to that directory: the engine
+// finds it on the filesystem and never asks git whether it is tracked, so
+// committing it is the project's decision. It is what option-berth writes;
+// configNames is everything it reads.
 const ConfigName = "oberth.yaml"
 
 // LegacyConfigName is an older dotfile spelling of the same file. It is still
