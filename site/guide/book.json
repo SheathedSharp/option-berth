@@ -136,13 +136,13 @@
           "nav": "Install",
           "title": "Install oberth",
           "lede": "One binary, no model account, and no service started by the installer. Confirm the build with version and doctor, then declare your first worktree.",
-          "summary": "The one-line script, go install, Homebrew, release archives, and the platform support."
+          "summary": "The one-line script, release archives, Linux packages, and the platform support."
         },
         "zh": {
           "nav": "安装",
           "title": "安装 oberth",
           "lede": "一个二进制，不需要模型账号，安装脚本不会启动任何服务。用 version 和 doctor 确认构建，再去声明第一个 worktree。",
-          "summary": "一行脚本、go install、Homebrew、发布包，以及平台支持。"
+          "summary": "一行脚本、发布包、Linux 包，以及平台支持。"
         }
       },
       "refs": [
