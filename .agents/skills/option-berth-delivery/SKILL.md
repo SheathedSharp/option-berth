@@ -55,6 +55,11 @@ worktree、提交信息与用户确认的规则不变。
 
    用 merge commit，不 squash、不 rebase，除非用户明确要求。不要在本地把主题分支
    合入 `main` 后直接 `git push origin main`。
+
+   这条命令是**入队**：`main` 走合并队列，队列会把本 PR 与在它之前的 PR 合成一个队列提交，
+   在上面重跑 `CI` 的 gate 与 `Gate integrity`，全绿才真正合并。入队后用
+   `gh pr checks <branch> --watch` 看队列上的结果；队列失败时 PR 会留在队列里，修好后
+   重新入队，不要绕过。
 7. 同步并清理：
 
    ```sh
