@@ -54,9 +54,9 @@ go vet ./...
 go test -count=1 -timeout=8m ./...
 ```
 
-PRs and pushes to `main` run these three on macOS/Linux automatically, along with the Mage and Python
-helper tests, plus a native build and script parsing on Windows; the Linux job also cross-builds six
-release targets with `CGO_ENABLED=0`. The full gates — core race tests, real service scenarios — still
+PRs run these three on macOS/Linux automatically, along with the Mage and Python helper tests, plus
+a native build and script parsing on Windows; the Linux job also cross-builds six release targets
+with `CGO_ENABLED=0`. The full gates — core race tests, real service scenarios — still
 run per [validation.md](validation.md) on the daily, manual or release paths. CI-configuration changes
 also run actionlint and the required-checks consistency check; the list is in
 `.github/quality-gate-checks.json`.
