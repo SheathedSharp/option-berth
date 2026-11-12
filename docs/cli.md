@@ -692,13 +692,15 @@ agent, or the only one available on PATH, is used. `--progress` outputs NDJSON p
 suitable for a client to show the current stage while the agent works; the last line is the full
 result with `type: "done"`.
 
-#### oberth init adopt [draft] [--replace|--merge] [--dry-run] [--diff] [--json]
+#### oberth init adopt [draft|path] [--replace|--merge] [--dry-run] [--diff] [--json]
 
-Writes the draft a human selected into the current worktree's `oberth.yaml`. Without a path the
-project's latest draft is adopted; this is the step that writes to disk. An existing manifest requires
-an explicit `--replace` or `--merge`. `--dry-run` only previews the complete manifest that would be
-written; adding `--diff` outputs a read-only unified diff of the current manifest against the adopted
-result (the JSON output puts it in the `diff` field), writing no manifest and moving no draft.
+Writes the draft a human selected — or any manifest named by path — into the current worktree's
+`oberth.yaml`. Without a path the project's latest draft is adopted; a path is how a new worktree
+inherits a declaration from another checkout, and the two are independent afterwards. This is the
+step that writes to disk. An existing manifest requires an explicit `--replace` or `--merge`.
+`--dry-run` only previews the complete manifest that would be written; adding `--diff` outputs a
+read-only unified diff of the current manifest against the adopted result (the JSON output puts it in
+the `diff` field), writing no manifest and moving no draft.
 
 ## Remaining commands by layer
 
@@ -812,6 +814,14 @@ the exact title and body and sends nothing.
 ## Manifest and state boundaries
 
 - The manifest is written by humans; an agent may only draft, and only `oberth init adopt` adopts it.
+- The manifest belongs to the worktree directory, not to the branch and not to the repository: the
+  engine finds it by walking the filesystem and never asks git whether it is tracked. Whether a
+  project commits it is the project's decision; the one behavior that follows from it: a tracked
+  manifest under a declared `sources:` path is part of that fingerprint, an ignored one never is.
+- A new checkout starts without one. `oberth init adopt <path>` copies a declaration from any
+  existing checkout into this worktree; after that the two are independent.
+- `oberth.yaml` is the current name. `.oberth.yaml` and `oberth.yml` are still read, nothing new is
+  created under them, and `oberth doctor` reports a shadowed or legacy spelling.
 - option-berth only reads git; it does not commit, does not stage, does not switch branches.
 - machine: is a read-only reference to a project dependency; up / down do not start or stop it on its behalf.
 - workspace: is an address reference to a service in another checkout; up / down / restart do not start or stop the other side on its behalf, and do not establish a
