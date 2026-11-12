@@ -34,6 +34,9 @@ class AreasTests(unittest.TestCase):
     def test_examples_change_only_runs_the_example_smoke(self):
         self.assertEqual(needed(areas.areas_for(["examples/hello-worktree/README.md"])), {"examples"})
 
+    def test_routing_script_change_runs_every_area(self):
+        self.assertEqual(needed(areas.areas_for(["scripts/changed_areas.py"])), set(areas.AREAS))
+
     def test_readiness_script_change_runs_engine_and_readiness(self):
         self.assertEqual(needed(areas.areas_for(["scripts/verify-reused-readiness.py"])), {"engine", "readiness"})
 

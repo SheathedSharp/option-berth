@@ -17,6 +17,23 @@ worktree、提交信息与用户确认的规则不变。
 任何要进入 `main` 的改动：feat、fix、docs、ci、chore。发布提交、标签与发布脚本的原子
 推送是例外，见 [docs/releasing.md](../../../docs/agent/releasing.md)。
 
+## 本仓库的范式（个人仓库）
+
+这个仓库只有一个维护者，组织仓库的组件在这里要么不适用、要么是空转：
+
+| 组件 | 这里的取舍 |
+|---|---|
+| 合并队列 | 不启用。GitHub 只在组织仓库上提供它；单人也没有并发合并竞争，`strict` 已保证合并提交的树就是通过检查的树。 |
+| 评审批准 | 0 个必需批准——一个人无法批准自己。 |
+| CODEOWNERS | 不使用。它只在要求 CODEOWNERS 评审时才生效，而作者永远是维护者本人；`Gate integrity` 用自己的文件清单做同样的事。 |
+| required checks | 恰好 2 条：`Gate / required checks`（内容）和 `Gate integrity / maintainer-owned CI changes`（CI 配置只能由维护者改）。多一条都是噪音。 |
+| develop / release 分支 | 不建。发版是打标签，不是开分支。 |
+| 标签 | `v*` 标签不可删除、不可移动，已发布的版本不再改写。 |
+| nightly | 每天跑完整门槛（race、真实服务、容器），这是单人仓库的第二个评审人。 |
+
+和 agent 协作时，唯一必须保留的组织级组件就是那条 gate：agent 会在红灯前继续推送，
+所以「只有通过检查才能进入 main」必须是机器强制，而不是约定。
+
 ## 流程
 
 1. 在独立 worktree 的主题分支上完成改动（全局 `git-workflow`）。本地验证按
@@ -45,8 +62,8 @@ worktree、提交信息与用户确认的规则不变。
    失败时按实际日志修复并重新推送；不绕过检查、不关闭 workflow、不放宽超时、
    不把旧提交的绿灯当成本次结果。核心 race 与真实服务场景由每日
    `Nightly full verification` 与发版流程覆盖，PR 通过不等于这两项已跑。修改
-   workflow、CODEOWNERS、race 清单或发布/检查脚本时，`Gate integrity` 要求 PR 作者
-   是仓库维护者（`OWNER` / `MEMBER` / `COLLABORATOR`），不要尝试绕过。
+   workflow、race 清单或发布/检查脚本时，`Gate integrity` 要求 PR 作者是仓库维护者
+   （`OWNER` / `MEMBER` / `COLLABORATOR`），不要尝试绕过。
 6. 得到用户明确确认后才合并：
 
    ```sh
