@@ -91,11 +91,6 @@ def validate_tag(root: Path, tag: str) -> None:
         raise ValueError("release tag must be annotated")
     if run(root, "git", "rev-parse", "refs/tags/" + tag + "^{commit}") != run(root, "git", "rev-parse", "HEAD"):
         raise ValueError("checkout is not the tagged commit")
-    module_tag = "engine/" + tag
-    if run(root, "git", "cat-file", "-t", "refs/tags/" + module_tag) != "tag":
-        raise ValueError("engine module tag must be annotated")
-    if run(root, "git", "rev-parse", "refs/tags/" + module_tag + "^{commit}") != run(root, "git", "rev-parse", "HEAD"):
-        raise ValueError("engine module tag does not point at the tagged commit")
     run(root, "git", "merge-base", "--is-ancestor", "HEAD", "origin/main")
 
 

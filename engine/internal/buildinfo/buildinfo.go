@@ -30,9 +30,9 @@ func VersionString() string {
 
 // VersionValue returns the normalized SemVer value stamped into this build.
 //
-// `go install module@version` does not apply this package's link flags, so the
-// stamped value stays "dev". In that case the module version is still available
-// through the build info and is what a user expects `oberth version` to show.
+// A build that does not apply this package's link flags leaves the stamped
+// value at "dev". In that case the module version is still available through
+// the build info and is what a user expects `oberth version` to show.
 // Development builds keep their explicit `dev` marker.
 func VersionValue() string {
 	return versionValue(Version, debug.ReadBuildInfo)

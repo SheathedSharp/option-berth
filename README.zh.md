@@ -72,7 +72,7 @@ Windows（PowerShell）：
 irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps1 | iex
 ```
 
-Homebrew、`go install`、Linux `.deb`/`.rpm`、固定版本、卸载、升级与各平台边界见
+Homebrew、Linux `.deb`/`.rpm`、固定版本、卸载、升级与各平台边界见
 [安装与卸载](docs/install.zh.md)。安装脚本只下载并校验发布包：不启动服务，也不写 Git。
 
 直接运行 `oberth` 会显示本机版本；有更新时给出本平台的升级命令。也可以随时运行

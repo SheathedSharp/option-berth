@@ -22,8 +22,8 @@ func TestVersionValueFallsBackToModuleVersion(t *testing.T) {
 	}{
 		{name: "linked version wins", stamped: "1.2.3", read: installed, want: "v1.2.3"},
 		{name: "linked v prefix is kept", stamped: "v1.2.3", read: installed, want: "v1.2.3"},
-		{name: "go install falls back to module version", stamped: "dev", read: installed, want: "v1.2.3"},
-		{name: "go install normalizes bare module version", stamped: "dev", read: func() (*debug.BuildInfo, bool) {
+		{name: "unstamped build falls back to module version", stamped: "dev", read: installed, want: "v1.2.3"},
+		{name: "unstamped build normalizes bare module version", stamped: "dev", read: func() (*debug.BuildInfo, bool) {
 			return &debug.BuildInfo{Main: debug.Module{Version: "1.2.3"}}, true
 		}, want: "v1.2.3"},
 		{name: "development build keeps dev", stamped: "dev", read: devel, want: "dev"},
