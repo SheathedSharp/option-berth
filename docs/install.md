@@ -85,19 +85,6 @@ Pin a version or leave PATH alone: `.\install.ps1 -Version v1.0.0 -NoModifyPath`
 Before replacing files, the Windows installer checks whether `oberth` / `jev-attention` are running; if
 they are, it runs `oberth daemon stop` first and then reinstalls.
 
-## Homebrew
-
-A self-hosted tap, so there is no need to wait for homebrew-core inclusion. It installs the engine CLI
-(`oberth` and `jev-attention`), not the macOS client. The formula points at published archives, with
-checksums recorded in the tap.
-
-```sh
-brew install sheathedsharp/tap/oberth
-```
-
-Upgrade with `brew upgrade oberth`. `brew install option-berth` still waits on homebrew-core inclusion,
-which does not exist yet.
-
 ## Download a release manually
 
 When you would rather not run a script, download the archive for your platform from
@@ -205,13 +192,11 @@ answers, the terminal paths show only the local version and never present it as 
 
 ## Channels not yet available
 
-- **Homebrew core**: `brew install option-berth` needs homebrew-core inclusion, which is not available
-  yet. The self-hosted tap is described in the Homebrew section above.
 - **Scoop**: needs a separate bucket repository, which this repository does not maintain.
 - **winget**: needs a submission to microsoft/winget-pkgs and review for every version update.
 - **Chocolatey**: needs a community package repository and review, similar to winget.
 
-The currently available paths are the scripts above, the Homebrew tap, manual release downloads and the
+The currently available paths are the scripts above, manual release downloads and the
 Linux `.deb`/`.rpm`. A Windows MSI is not available yet.
 
 ## Platform boundaries

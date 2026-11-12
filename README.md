@@ -75,7 +75,7 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps1 | iex
 ```
 
-Homebrew, Linux `.deb`/`.rpm`, pinned versions, uninstall, upgrades and the platform
+Linux `.deb`/`.rpm`, pinned versions, uninstall, upgrades and the platform
 boundaries are in [Install and uninstall](docs/install.md). The scripts only download and verify release
 archives: they start no service and write no Git data.
 
