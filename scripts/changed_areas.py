@@ -38,10 +38,11 @@ AREAS: dict[str, tuple[str, ...]] = {
     "readiness": ("engine/", "scripts/verify-reused-readiness.py"),
     "ci": (
         ".github/workflows/",
-        ".github/CODEOWNERS",
         ".github/quality-gate-checks.json",
         "scripts/check_ci_gate.py",
         "scripts/check_ci_gate_test.py",
+        "scripts/changed_areas.py",
+        "scripts/changed_areas_test.py",
         "scripts/race-packages.txt",
         "scripts/release.py",
     ),

@@ -39,6 +39,24 @@ func TestStopReceiptDoesNotHideLiveRun(t *testing.T) {
 	}
 }
 
+// A restart stops the run and immediately starts it again. Between the
+// accepted signal and the reap the record stays listed on purpose, so the
+// start decision needs its own answer: a run option-berth has begun stopping
+// is not a reason to report the new start as already done.
+func TestRunningIgnoresARunThatReceivedAStopReceipt(t *testing.T) {
+	r, rec, observe := stopReceiptFixture(t)
+	if _, ok := r.Running(rec.Group, rec.Name); !ok {
+		t.Fatal("a run without a stop receipt must count as running")
+	}
+	observe(rec.PID)
+	if got, ok := r.Running(rec.Group, rec.Name); ok {
+		t.Fatalf("a run with an accepted stop signal still counts as running: %+v", got)
+	}
+	if len(r.List()) != 1 {
+		t.Fatal("the record must stay visible for the reap")
+	}
+}
+
 func TestNoStopReceiptPreservesFailureAndCrashFacts(t *testing.T) {
 	r, rec, observe := stopReceiptFixture(t)
 	observe(999) // an unrelated unit cannot mark this run

@@ -11,8 +11,8 @@ Merging happens through a remote PR: push the topic branch to `origin`, wait for
 on that PR (the list is [`.github/quality-gate-checks.json`](.github/quality-gate-checks.json), with
 `main`'s ruleset as the authority), and merge with a merge commit once the user confirms. Never merge a
 topic branch into `main` locally and push it. The release script's atomic push is the exception.
-When a change touches a workflow, CODEOWNERS, the race list or a release/check script, `Gate integrity`
-requires the PR author to be a repository maintainer; do not work around it. Commands, failure handling
+When a change touches a workflow, the race list or a release/check script, `Gate integrity` requires
+the PR author to be a repository maintainer; do not work around it. Commands, failure handling
 and cleanup are in the project skill
 [`option-berth-delivery`](.agents/skills/option-berth-delivery/SKILL.md).
 

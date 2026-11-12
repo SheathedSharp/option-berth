@@ -849,6 +849,9 @@ func serviceRefs(svc groups.Service) []string {
 // The run registry is asked first, because it knows the instant a service has
 // been spawned while the scanner only knows a second or two later: two
 // `oberth up` runs in quick succession must not start the same service twice.
+// The question is asked with Running, not List: a run that has already been
+// told to stop stays in the registry until its reap, and a restart's start
+// half must not read the process it just stopped as one that is still up.
 // The group's resolved state answers for everything option-berth did not start — it
 // already joins declared ports, run names and display names against what is
 // listening.
@@ -856,16 +859,7 @@ func alreadyRunning(ctx context.Context, rt *daemon.Runtime, group string, svc g
 	if err := ctx.Err(); err != nil {
 		return "", "", false, err
 	}
-	// List is oldest first; the newest matching run is the one the CLI will
-	// later read, so name that one rather than the first.
-	var newest *runsreg.Record
-	list := runsreg.Default.List()
-	for i := range list {
-		if list[i].Group == group && list[i].Name == svc.Name {
-			newest = &list[i]
-		}
-	}
-	if newest != nil {
+	if newest, found := runsreg.Default.Running(group, svc.Name); found {
 		return fmt.Sprintf("already started by option-berth (pid %d)", newest.PID), newest.ID, true, ctx.Err()
 	}
 	snap, err := snapshotContext(ctx, rt)
