@@ -43,9 +43,10 @@ lifecycle boundaries.
 
 The repository ships [Hello Worktree](examples/hello-worktree/README.md): one API that only listens on
 localhost and one portless worker, Python 3 standard library only — no model account, container or pip
-dependency. [Worktree Data](examples/worktree-data/README.md) adds a database per worktree through
-`${worktree}`, and [Stack Workshop](examples/stack-workshop/README.md) is a ten-service stack with a
-slow-starting auth, a built frontend, a migration and read-only `machine:` dependencies.
+dependency. [Stack Workshop](examples/stack-workshop/README.md) is the complex sample, and the input of
+the manual agent benchmark: ten Python services plus a real Postgres container, with a slow-starting
+auth, a built frontend, a migration per worktree, portless workers and a read-only `machine:`
+reference. It needs Docker.
 
 ```sh
 # With oberth installed, from the repository root

@@ -1,20 +1,25 @@
-# Agent scenario library and release matrix
+# Agent benchmark
 
-The entry point is `scripts/agent_eval.py`. It turns the manual acceptance round of 2026-10-28 into a
-fixed scenario library, reruns it on the **same build** every time, and outputs completion rate, step
-count, duration, output bytes, process probes, wrongful stops and boundary-violation counts for
-"scenario × agent × control arm".
+`scripts/agent_eval.py` is the manual benchmark. It asks an agent to perform one task on a sample
+project, with and without oberth, reruns the same build every time, and reports completion rate, step
+count, duration, output bytes, process probes, wrongful stops and boundary violations.
 
-Scenarios come in three tiers:
+Vocabulary: a **task** is one thing the agent is asked to do; a **group** is a set of tasks (the
+`--suite` value); a **mode** is `oberth` or `native` (the `--arms` value). The code and `--scenarios`
+call a task a "scenario"; that is the same thing under an older name.
+
+Tasks come in three groups:
 
 - **core** (`scripts/agent_eval_scenarios.py`): single-file small services, each proving one failure
   path.
-- **large** (`scripts/agent_eval_stacks.py`): a ten-service stack covering slow dependencies, build
-  artifacts, database migration, a worker without a port, and three worktrees in parallel. The service
-  scripts are shared with the public example
+- **large** (`scripts/agent_eval_stacks.py`): ten Python services plus a real Postgres container,
+  covering slow dependencies, build artifacts, database migration, a worker without a port, three
+  worktrees in parallel and the container lifecycle. The service scripts and
+  `docker-compose.yml` are shared with the sample
   [`examples/stack-workshop`](../../examples/stack-workshop/README.md); no second copy is maintained.
+  This group needs Docker and runs on Linux.
 - **cold** (`scripts/agent_eval_cold.py`): a repository with **no** `oberth.yaml`, so the run has to
-  draft, adopt and then start the project. The other two tiers begin from a manifest a person already
+  draft, adopt and then start the project. The other two groups begin from a manifest a person already
   wrote; this one measures the step a new user actually takes.
 
 Judgement uses facts published by the engine, loopback HTTP, ports, effect files and the PIDs of
@@ -541,13 +546,13 @@ reference-agent or fake-engine rows.
 
 ## Platform and boundaries
 
-- Supports macOS / Linux. The shim uses a Unix shebang; Windows is out of scope for this tool.
-- The large-project fixtures likewise use only the Python 3 standard library; there are no Docker, JVM
-  or Node dependencies. Real JVM / Node builds / compose Postgres+Redis are a separate manual tier and
-  do not enter the standing matrix.
-- The large-project fixtures start ten to thirty real processes and must run in an environment that can
-  observe listeners; in a sandbox `--dry-run --suite large` exits 2 at preflight or at the first real
-  start — this is an environment limitation, not a fixture failure.
+- The harness supports macOS / Linux; the large group needs Docker and runs on Linux (the workflow uses
+  `ubuntu-24.04`). The shim uses a Unix shebang; Windows is out of scope for this tool.
+- The large group starts ten to thirty Python processes plus one Postgres container per worktree and
+  must run in an environment that can observe listeners. When Docker is missing, `--dry-run --suite
+  large` exits 2 at preflight; that is an environment limit, not a fixture failure.
+- JVM and Node builds are not part of the benchmark; the Python services plus Postgres are the only
+  runtimes it measures.
 - Provider event parsing is implemented against known shapes; when a shape changes, step count degrades
   to command count and is annotated, never silently zeroed.
 - Timeouts, authentication failures and provider crashes are recorded as `agent_error` and must not be
