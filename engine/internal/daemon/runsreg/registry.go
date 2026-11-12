@@ -263,6 +263,38 @@ func (r *Registry) List() []Record {
 	return out
 }
 
+// Running reports the newest run recorded for group and service that has not
+// been asked to stop.
+//
+// It answers the start decision, which is a different question from List: a
+// record with an accepted stop signal stays visible until its reap, because
+// hiding a still-live process would be a lie. But that run is on its way out,
+// and counting it as running would make a start — the start half of a restart
+// in particular — report "already started" for the process option-berth just
+// stopped. Newest first by the same order as List, so the run named here is
+// the one the caller would otherwise have read.
+func (r *Registry) Running(group, service string) (Record, bool) {
+	r.Prune()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var newest Record
+	found := false
+	for _, rec := range r.runs {
+		if rec.stopping || rec.stoppingReason != "" {
+			continue
+		}
+		if rec.Group != group || rec.Name != service {
+			continue
+		}
+		if !found || rec.StartedAt.After(newest.StartedAt) ||
+			(rec.StartedAt.Equal(newest.StartedAt) && rec.PID > newest.PID) {
+			newest = rec
+			found = true
+		}
+	}
+	return newest, found
+}
+
 // Lookup returns the run registered for a pid.
 func (r *Registry) Lookup(pid int) (Record, bool) {
 	r.mu.Lock()
