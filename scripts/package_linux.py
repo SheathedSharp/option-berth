@@ -2,8 +2,8 @@
 """Build .deb and .rpm packages from one released Linux archive with nfpm.
 
 The archive is the source of truth: the script verifies its .sha256 sidecar,
-extracts exactly the files the release ships, and installs the same oberth,
-jev-attention, licence and build manifest into both packages. nfpm writes the
+extracts exactly the files the release ships, and installs the same oberth binary,
+licence and build manifest into both packages. nfpm writes the
 package metadata, so cross-architecture packages do not require rpmbuild.
 """
 from __future__ import annotations
@@ -75,10 +75,6 @@ depends:
 contents:
   - src: {quoted(root / "oberth")}
     dst: /usr/bin/oberth
-    file_info:
-      mode: 0755
-  - src: {quoted(root / "jev-attention")}
-    dst: /usr/bin/jev-attention
     file_info:
       mode: 0755
   - src: {quoted(root / "LICENSE")}

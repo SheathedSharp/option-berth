@@ -4,7 +4,7 @@
 Remove an option-berth CLI installed by install.ps1.
 
 .DESCRIPTION
-Stops the daemon if it can, removes oberth.exe + jev-attention.exe, removes the
+Stops the daemon if it can, removes oberth.exe, removes the
 notices install.ps1 left in %LOCALAPPDATA%\option-berth, and removes the install
 directory from the user PATH. It keeps the %USERPROFILE%\.option-berth state
 directory unless -PurgeState is passed.
@@ -44,13 +44,13 @@ function Uninstall-Oberth {
         Start-Sleep -Milliseconds 300
     }
 
-    $running = @(Get-Process -Name 'oberth', 'jev-attention' -ErrorAction SilentlyContinue)
+    $running = @(Get-Process -Name 'oberth' -ErrorAction SilentlyContinue)
     if ($running.Count) {
         throw 'oberth is still running; stop its services before uninstalling'
     }
 
     $removed = @()
-    foreach ($name in 'oberth.exe', 'jev-attention.exe') {
+    foreach ($name in 'oberth.exe') {
         $target = Join-Path $Dir $name
         if (Test-Path -LiteralPath $target -PathType Leaf) {
             Remove-Item -LiteralPath $target -Force

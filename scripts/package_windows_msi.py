@@ -22,7 +22,6 @@ ROOT = Path(__file__).resolve().parent.parent
 UPGRADE_CODE = "2222ABC8-68C6-4E44-8B8A-6B964F6E9044"
 COMPONENT_GUIDS = {
     "Oberth": "F5329347-80B3-4675-9AFC-F17D60016111",
-    "Jev": "00BA2482-A984-4C7F-B6C6-1E56F01186D6",
     "Notices": "58A79179-4A21-4E61-8D4B-5ADA001A68A5",
 }
 
@@ -66,10 +65,9 @@ def file_element(identifier: str, path: Path, key_path: bool = False) -> str:
 
 def msixml(root: Path, version: str, permanent: str = "yes") -> str:
     oberth = root / "oberth.exe"
-    jev = root / "jev-attention.exe"
     license_file = root / "LICENSE"
     manifest = root / "build-manifest.json"
-    for path in (oberth, jev, license_file, manifest):
+    for path in (oberth, license_file, manifest):
         if not path.is_file():
             raise ValueError(f"archive is missing {path.name}")
     notices = sorted(path for path in (root / "licenses").glob("*") if path.is_file())
@@ -91,9 +89,6 @@ def msixml(root: Path, version: str, permanent: str = "yes") -> str:
                    "=-PATH" means set on install and remove only that entry on uninstall. -->
               <Environment Id="Path" Name="PATH" Value="[BINDIR]" Part="last" Action="set" System="no" Permanent="{permanent}"/>
             </Component>
-            <Component Id="Jev" Guid="{COMPONENT_GUIDS['Jev']}">
-{file_element('FileJev', jev, True)}
-            </Component>
           </Directory>
           <Directory Id="NOTICESDIR" Name="licenses">
             <Component Id="Notices" Guid="{COMPONENT_GUIDS['Notices']}">
@@ -107,7 +102,6 @@ def msixml(root: Path, version: str, permanent: str = "yes") -> str:
     </Directory>
     <Feature Id="DefaultFeature" Title="option-berth" Level="1">
       <ComponentRef Id="Oberth"/>
-      <ComponentRef Id="Jev"/>
       <ComponentRef Id="Notices"/>
     </Feature>
   </Product>
@@ -122,7 +116,7 @@ def verify_msi(path: Path) -> None:
     files = subprocess.run([msiinfo, "export", str(path), "File"], capture_output=True, text=True, timeout=20)
     if files.returncode:
         raise RuntimeError("msiinfo could not read the File table")
-    for name in ("oberth.exe", "jev-attention.exe", "LICENSE", "build-manifest.json"):
+    for name in ("oberth.exe", "LICENSE", "build-manifest.json"):
         if name not in files.stdout:
             raise RuntimeError(f"MSI File table is missing {name}")
     environment = subprocess.run([msiinfo, "export", str(path), "Environment"], capture_output=True, text=True, timeout=20)

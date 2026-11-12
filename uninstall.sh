@@ -4,7 +4,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uninstall.sh | sh
 #
-# The script stops the daemon if it can, removes oberth + jev-attention and the
+# The script stops the daemon if it can, removes oberth and the
 # notices install.sh placed under ~/.local/share/option-berth, and removes the
 # PATH lines the installer added. It keeps ~/.option-berth state unless
 # --purge-state is passed.
@@ -85,7 +85,7 @@ if [ -x "$DIR/oberth" ]; then
 fi
 
 removed=""
-for name in oberth jev-attention; do
+for name in oberth; do
 	if [ -e "$DIR/$name" ]; then
 		rm -f "$DIR/$name"
 		removed="$removed $name"

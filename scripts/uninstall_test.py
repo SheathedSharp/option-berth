@@ -17,10 +17,9 @@ class UninstallTests(unittest.TestCase):
         self.home.mkdir()
         self.bin = self.home / ".local" / "bin"
         self.bin.mkdir(parents=True)
-        for name in ("oberth", "jev-attention"):
-            binary = self.bin / name
-            binary.write_text("#!/bin/sh\nexit 0\n")
-            binary.chmod(0o755)
+        binary = self.bin / "oberth"
+        binary.write_text("#!/bin/sh\nexit 0\n")
+        binary.chmod(0o755)
         self.data = self.home / ".local" / "share" / "option-berth"
         (self.data / "licenses").mkdir(parents=True)
         (self.data / "LICENSE").write_text("licence\n")
@@ -61,7 +60,6 @@ class UninstallTests(unittest.TestCase):
         result = self.run_uninstaller()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse((self.bin / "oberth").exists())
-        self.assertFalse((self.bin / "jev-attention").exists())
         self.assertFalse(self.data.exists())
         self.assertTrue(self.state.is_dir())
         text = rc.read_text()
@@ -69,7 +67,7 @@ class UninstallTests(unittest.TestCase):
         self.assertIn("export EDITOR=vi", text)
         self.assertIn('export PATH="$HOME/tools/bin:$PATH"', text)
         self.assertNotIn("option-berth", text)
-        self.assertIn("removed    oberth jev-attention", result.stdout)
+        self.assertIn("removed    oberth", result.stdout)
         self.assertIn("state      kept", result.stdout)
 
     def test_keep_path_leaves_shell_files_alone(self):

@@ -36,7 +36,7 @@ def json_stream(text: str):
 
 
 def runtime_notices(root: Path, env: dict[str, str]) -> tuple[str, list[dict[str, str]]]:
-    packages = json_stream(command(root / "engine", env, "go", "list", "-deps", "-json", "./cmd/oberth", "./cmd/jev-attention"))
+    packages = json_stream(command(root / "engine", env, "go", "list", "-deps", "-json", "./cmd/oberth"))
     modules = {}
     for package in packages:
         module = package.get("Module")
@@ -86,7 +86,7 @@ def package(root: Path, system: str, arch: str, output: Path) -> list[Path]:
         stage = Path(tmp) / stem
         stage.mkdir()
         suffix = ".exe" if system == "windows" else ""
-        for name, source in (("oberth", "./cmd/oberth"), ("jev-attention", "./cmd/jev-attention")):
+        for name, source in (("oberth", "./cmd/oberth"),):
             command(root / "engine", env, "go", "build", "-trimpath", "-ldflags", flags, "-o", str(stage / (name + suffix)), source)
         shutil.copyfile(root / "LICENSE", stage / "LICENSE")
         shutil.copyfile(root / "scripts" / "install-path.sh", stage / "install-path.sh")

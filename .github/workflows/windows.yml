@@ -36,8 +36,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go build -o ../bin/oberth.exe ./cmd/oberth
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go build -o ../bin/jev-attention.exe ./cmd/jev-attention
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native CLI smoke without starting services
         run: |
           $json = & ../bin/oberth.exe version --json

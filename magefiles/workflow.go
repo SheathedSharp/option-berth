@@ -9,9 +9,6 @@ import (
 // Engine builds only the CLI/daemon; the canonical BuildEngine name remains.
 func Engine() error { return BuildEngine() }
 
-// Jev builds only the optional attention adapter.
-func Jev() error { return BuildJev() }
-
 // Client builds only the macOS client.
 func Client() error { return BuildClient() }
 

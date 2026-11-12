@@ -69,7 +69,7 @@ func AppendRunnerTelemetry(home, project string, task model.TaskContext, result 
 	}
 	path, err := model.AppendTelemetry(home, record)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "jev-attention: quality telemetry unavailable: %v\n", err)
+		fmt.Fprintf(os.Stderr, "oberth attn: quality telemetry unavailable: %v\n", err)
 		return model.TelemetryPath(home)
 	}
 	return path
@@ -115,7 +115,7 @@ func RecordManualAssessment(home, artifactPath string, artifact attn.Artifact, t
 		record.Reason = TelemetryErrorReason(callErr)
 	}
 	if _, err := model.AppendTelemetry(home, record); err != nil {
-		fmt.Fprintf(os.Stderr, "jev-attention: quality telemetry unavailable: %v\n", err)
+		fmt.Fprintf(os.Stderr, "oberth attn: quality telemetry unavailable: %v\n", err)
 	}
 	return model.TelemetryPath(home)
 }
@@ -143,7 +143,7 @@ func RecordPreflightAssessment(home string, request model.Preflight, task model.
 		record.Reason = TelemetryErrorReason(callErr)
 	}
 	if _, err := model.AppendTelemetry(home, record); err != nil {
-		fmt.Fprintf(os.Stderr, "jev-attention: quality telemetry unavailable: %v\n", err)
+		fmt.Fprintf(os.Stderr, "oberth attn: quality telemetry unavailable: %v\n", err)
 	}
 	return model.TelemetryPath(home)
 }
@@ -201,8 +201,7 @@ func bindFeedbackIdentity(input *model.FeedbackInput, root string) error {
 
 // Feedback records one agent quality-feedback document and returns where it
 // landed. Printing belongs to the command; the identity binding and the ledger
-// write belong here, so both `jev-attention --feedback` and `oberth jev
-// feedback` call exactly one implementation.
+// write belong here, so `oberth attn feedback` has exactly one implementation.
 func Feedback(feedbackPath, artifactPath, project string) (model.FeedbackRecordResult, error) {
 	var input model.FeedbackInput
 	if err := model.ReadJSONValueStrict(feedbackPath, &input); err != nil {

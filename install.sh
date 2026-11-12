@@ -5,7 +5,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh
 #
 # The script resolves the latest engine release, downloads the archive for this
-# machine, verifies its SHA256 sidecar, and installs oberth + jev-attention into
+# machine, verifies its SHA256 sidecar, and installs oberth into
 # ~/.local/bin. Licences and the build manifest stay in ~/.local/share/option-berth.
 # It starts no services and writes no Git data.
 #
@@ -358,12 +358,12 @@ actual=$(sha256_file "$tmp/$archive")
 
 tar -xzf "$tmp/$archive" -C "$tmp"
 root="$tmp/option-berth-$VERSION-$os-$arch"
-for name in oberth jev-attention; do
+for name in oberth; do
 	[ -f "$root/$name" ] || fail "archive is missing $name"
 done
 
 mkdir -p "$DIR"
-for name in oberth jev-attention; do
+for name in oberth; do
 	staged="$DIR/.$name.$$"
 	cp "$root/$name" "$staged"
 	chmod 0755 "$staged"
