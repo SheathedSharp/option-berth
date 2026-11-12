@@ -4,15 +4,19 @@ on:
   # Run from the base branch, never from the pull request head. This job only
   # reads the PR file list through the API; it must not checkout or execute
   # pull request code.
+  # The merge queue reports the same check for merge group commits: the author
+  # check already ran on the pull request head, and enqueueing does not change
+  # who wrote the change, so the queue job only records that fact.
   pull_request_target:
     types: [opened, synchronize, reopened]
+  merge_group:
 
 permissions:
   contents: read
   pull-requests: read
 
 concurrency:
-  group: gate-integrity-${{ github.event.pull_request.number }}
+  group: gate-integrity-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -21,7 +25,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - name: Merge group commits keep the author the pull request already passed
+        if: github.event_name == 'merge_group'
+        shell: bash
+        run: echo "The maintainer check ran on the pull request head; the queue does not change authorship."
       - name: Require a maintainer for quality gate changes
+        if: github.event_name == 'pull_request_target'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}

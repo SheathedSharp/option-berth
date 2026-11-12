@@ -3,10 +3,12 @@ name: CI
 # One entry point for every automatic check. The path routing lives in
 # scripts/changed_areas.py; a job that is skipped reports no check of its own,
 # so `gate` is the required check and it fails only when a job that had to run
-# did not pass. `main` accepts pull requests only, so the merge commit carries
-# the tree that just passed here and nothing runs a second time after merge.
+# did not pass. The merge queue runs the same gate on the merged tree, so the
+# queue commit is checked as a whole and nothing runs a second time after the
+# merge lands on `main`.
 on:
   pull_request:
+  merge_group:
   workflow_dispatch:
 
 permissions:
@@ -38,16 +40,25 @@ jobs:
         shell: bash
         env:
           EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+          QUEUE_HEAD: ${{ github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            python3 scripts/changed_areas.py --all
-          else
-            git fetch --no-tags --quiet origin "$BASE"
-            python3 scripts/changed_areas.py --base "$BASE" --head "$HEAD"
-          fi
+          case "$EVENT" in
+            workflow_dispatch)
+              python3 scripts/changed_areas.py --all
+              ;;
+            merge_group)
+              git fetch --no-tags --quiet origin "$QUEUE_BASE"
+              python3 scripts/changed_areas.py --base "$QUEUE_BASE" --head "$QUEUE_HEAD"
+              ;;
+            *)
+              git fetch --no-tags --quiet origin "$PR_BASE"
+              python3 scripts/changed_areas.py --base "$PR_BASE" --head "$PR_HEAD"
+              ;;
+          esac
 
   engine:
     name: Engine
