@@ -17,11 +17,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func sampleReport() rpc.DaemonDoctorResult {
+// doctorSample is one report with a row of every status: ok, skip, fail and
+// warn, each carrying the fields the table renders for it.
+func doctorSample() rpc.DaemonDoctorResult {
 	return rpc.DaemonDoctorResult{
 		OK:            false,
-		Version:       "v1.2.3",
-		DaemonVersion: "v1.2.3",
+		Version:       "v2.3.4",
+		DaemonVersion: "v2.3.4",
 		Checks: []rpc.DoctorCheck{
 			{ID: "cli_on_path", Status: doctor.StatusOK, Summary: "oberth resolves from PATH", Detail: "/usr/local/bin/oberth"},
 			{ID: "docker", Status: doctor.StatusSkip, Summary: "docker is not installed"},
@@ -41,15 +43,15 @@ func sampleReport() rpc.DaemonDoctorResult {
 }
 
 func TestRenderDoctorTable(t *testing.T) {
-	restore := display.NoColor
+	previous := display.NoColor
 	display.NoColor = true
-	t.Cleanup(func() { display.NoColor = restore })
+	t.Cleanup(func() { display.NoColor = previous })
 
-	var buf bytes.Buffer
-	renderDoctor(&buf, sampleReport())
-	out := buf.String()
+	var out bytes.Buffer
+	renderDoctor(&out, doctorSample())
+	rendered := out.String()
 
-	for _, want := range []string{
+	for _, expected := range []string{
 		"ok    cli_on_path",
 		"skip  docker",
 		"FAIL  config_parses",
@@ -60,57 +62,57 @@ func TestRenderDoctorTable(t *testing.T) {
 		"list: [broken",
 		"^",
 	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("table is missing %q:\n%s", want, out)
+		if !strings.Contains(rendered, expected) {
+			t.Errorf("table is missing %q:\n%s", expected, rendered)
 		}
 	}
 	// A healthy row must not carry a fix hint or its detail.
-	if strings.Contains(out, "/usr/local/bin/oberth") {
-		t.Errorf("an ok row should not print its detail:\n%s", out)
+	if strings.Contains(rendered, "/usr/local/bin/oberth") {
+		t.Errorf("an ok row should not print its detail:\n%s", rendered)
 	}
-	if !strings.Contains(out, "something is wrong: 1 fail, 1 warn, 1 ok, 1 skip") {
-		t.Errorf("verdict is missing or wrong:\n%s", out)
+	if !strings.Contains(rendered, "something is wrong: 1 fail, 1 warn, 1 ok, 1 skip") {
+		t.Errorf("verdict is missing or wrong:\n%s", rendered)
 	}
 }
 
 func TestRenderDoctorVerdicts(t *testing.T) {
-	restore := display.NoColor
+	previous := display.NoColor
 	display.NoColor = true
-	t.Cleanup(func() { display.NoColor = restore })
+	t.Cleanup(func() { display.NoColor = previous })
 
 	cases := []struct {
-		name   string
-		report rpc.DaemonDoctorResult
-		want   string
+		label   string
+		input   rpc.DaemonDoctorResult
+		verdict string
 	}{
 		{
-			name: "all ok",
-			report: rpc.DaemonDoctorResult{OK: true, Checks: []rpc.DoctorCheck{
-				{ID: "a", Status: doctor.StatusOK, Summary: "fine"},
+			label: "all ok",
+			input: rpc.DaemonDoctorResult{OK: true, Checks: []rpc.DoctorCheck{
+				{ID: "only", Status: doctor.StatusOK, Summary: "nothing to report"},
 			}},
-			want: "all good: 1 ok",
+			verdict: "all good: 1 ok",
 		},
 		{
-			name: "warnings only",
-			report: rpc.DaemonDoctorResult{OK: true, Checks: []rpc.DoctorCheck{
-				{ID: "a", Status: doctor.StatusWarn, Summary: "hmm"},
+			label: "warnings only",
+			input: rpc.DaemonDoctorResult{OK: true, Checks: []rpc.DoctorCheck{
+				{ID: "only", Status: doctor.StatusWarn, Summary: "check the port table"},
 			}},
-			want: "mostly healthy: 1 warn",
+			verdict: "mostly healthy: 1 warn",
 		},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			renderDoctor(&buf, tc.report)
-			if !strings.Contains(buf.String(), tc.want) {
-				t.Errorf("verdict = %q, want it to contain %q", buf.String(), tc.want)
+		t.Run(tc.label, func(t *testing.T) {
+			var out bytes.Buffer
+			renderDoctor(&out, tc.input)
+			if !strings.Contains(out.String(), tc.verdict) {
+				t.Errorf("verdict = %q, want it to contain %q", out.String(), tc.verdict)
 			}
 		})
 	}
 }
 
-// TestDoctorJSON drives the command itself, so the JSON a script parses is the
-// JSON this test asserts on.
+// TestDoctorJSON drives the real command, so the document asserted here is the
+// document a script parses.
 func TestDoctorJSON(t *testing.T) {
 	withDoctorFlags(t, func() {
 		doctorJSONFlag = true
@@ -123,79 +125,80 @@ func TestDoctorJSON(t *testing.T) {
 		}
 	})
 
-	var got rpc.DaemonDoctorResult
-	if err := json.Unmarshal([]byte(out), &got); err != nil {
+	var doc rpc.DaemonDoctorResult
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
 		t.Fatalf("output is not JSON: %v\n%s", err, out)
 	}
-	if len(got.Checks) != 2 {
-		t.Fatalf("got %d checks, want the 2 that were selected: %+v", len(got.Checks), got.Checks)
+	if len(doc.Checks) != 2 {
+		t.Fatalf("got %d checks, want the 2 that were selected: %+v", len(doc.Checks), doc.Checks)
 	}
-	ids := []string{got.Checks[0].ID, got.Checks[1].ID}
+	ids := []string{doc.Checks[0].ID, doc.Checks[1].ID}
 	if ids[0] != "db_ok" || ids[1] != "docker" {
 		t.Errorf("ids = %v, want [db_ok docker] in table order", ids)
 	}
-	for _, c := range got.Checks {
-		switch c.Status {
+	for _, check := range doc.Checks {
+		switch check.Status {
 		case doctor.StatusOK, doctor.StatusWarn, doctor.StatusFail, doctor.StatusSkip:
 		default:
-			t.Errorf("%s has status %q", c.ID, c.Status)
+			t.Errorf("%s has status %q", check.ID, check.Status)
 		}
 	}
-	if got.Version == "" {
-		t.Error("version is empty")
+	if doc.Version == "" {
+		t.Error("the report carries no version")
 	}
 }
 
 // TestDoctorExitsNonZeroOnAFailure pins the contract a script depends on: the
-// command returns errSilent, which Execute turns into exit 1 without printing
-// anything more.
+// command answers errSilent, which Execute turns into exit 1 and no further
+// output.
 func TestDoctorExitsNonZeroOnAFailure(t *testing.T) {
 	withDoctorFlags(t, func() {
 		// No daemon runs in an isolated test binary, so this one fails.
 		doctorOnlyFlag = []string{"daemon_reachable"}
 	})
-	err := errors.New("")
-	captureStdout(t, func() { err = doctorRun(testCommand(), nil) })
-	if !errors.Is(err, errSilent) {
-		t.Fatalf("error = %v, want errSilent", err)
+	runErr := errors.New("")
+	captureStdout(t, func() { runErr = doctorRun(testCommand(), nil) })
+	if !errors.Is(runErr, errSilent) {
+		t.Fatalf("error = %v, want errSilent", runErr)
 	}
 }
 
 func TestDoctorRejectsAnUnknownCheck(t *testing.T) {
 	withDoctorFlags(t, func() { doctorOnlyFlag = []string{"not_a_check"} })
-	err := doctorRun(testCommand(), nil)
-	if err == nil || !strings.Contains(err.Error(), "not_a_check") {
-		t.Fatalf("error = %v, want it to name the unknown check", err)
+	runErr := doctorRun(testCommand(), nil)
+	if runErr == nil || !strings.Contains(runErr.Error(), "not_a_check") {
+		t.Fatalf("error = %v, want it to name the unknown check", runErr)
 	}
 }
 
 func TestDoctorProjectMustBeADirectory(t *testing.T) {
-	withDoctorFlags(t, func() { doctorProjectFlag = os.DevNull })
+	target := os.DevNull
+	withDoctorFlags(t, func() { doctorProjectFlag = target })
 	if _, err := doctorProject(); err == nil {
 		t.Fatal("a --project that is not a directory should be refused")
 	}
 }
 
 // TestEveryFixableCheckHasAFix keeps the two lists in step: a check that
-// advertises Fixable with no entry in doctorFixes would print an offer
-// `--fix` cannot keep.
+// advertises Fixable with nothing registered in doctorFixes would print an
+// offer `--fix` cannot keep.
 func TestEveryFixableCheckHasAFix(t *testing.T) {
-	have := map[string]bool{}
-	for _, f := range doctorFixes() {
-		have[f.id] = true
+	registered := map[string]bool{}
+	for _, fix := range doctorFixes() {
+		registered[fix.id] = true
 	}
 	// The ids the doctor package marks fixable, spelled out here so a new one
 	// has to be considered rather than silently unhandled.
 	for _, id := range []string{
 		"config_parses", "project_config", "daemon_reachable",
 	} {
-		if !have[id] {
+		if !registered[id] {
 			t.Errorf("no fix registered for %s", id)
 		}
 	}
-	for _, f := range doctorFixes() {
-		if !contains(doctor.IDs(), f.id) {
-			t.Errorf("fix %s repairs a check that does not exist", f.id)
+	for _, fix := range doctorFixes() {
+		if !contains(doctor.IDs(), fix.id) {
+			t.Errorf("fix %s repairs a check that does not exist", fix.id)
 		}
 	}
 }
@@ -206,9 +209,9 @@ func TestEveryFixableCheckHasAFix(t *testing.T) {
 func TestDoctorFixMatchingIsExact(t *testing.T) {
 	fix := doctorFix{id: "config_parses"}
 	for _, id := range []string{"config_parses", "config_parses.claude_code", "config", "config_parse"} {
-		want := id == "config_parses"
-		if got := fix.matches(id); got != want {
-			t.Errorf("matches(%q) = %v, want %v", id, got, want)
+		expected := id == "config_parses"
+		if matched := fix.matches(id); matched != expected {
+			t.Errorf("matches(%q) = %v, want %v", id, matched, expected)
 		}
 	}
 }
@@ -217,32 +220,40 @@ func TestDoctorFixMatchingIsExact(t *testing.T) {
 // are repaired, in report order, and a fixable row without a registered fix
 // contributes nothing rather than a guessed repair.
 func TestSelectDoctorFixesFollowsTheReport(t *testing.T) {
-	todo := selectDoctorFixes(sampleReport())
+	todo := selectDoctorFixes(doctorSample())
 	if len(todo) != 1 || todo[0].id != "config_parses" {
 		t.Fatalf("todo = %+v, want only config_parses", todo)
 	}
 }
 
-func contains(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
+func contains(list []string, want string) bool {
+	found := false
+	for _, item := range list {
+		if item == want {
+			found = true
+			break
 		}
 	}
-	return false
+	return found
 }
 
-// ---------------------------------------------------------------- helpers ---
+// ------------------------------------------------------------------ shared ---
 
-// withDoctorFlags sets the command's package-level flags for one test and puts
-// them back afterwards.
+// withDoctorFlags installs one set of package-level flag values for a test and
+// restores the previous ones when it ends.
 func withDoctorFlags(t *testing.T, set func()) {
 	t.Helper()
-	oldJSON, oldFix, oldYes := doctorJSONFlag, doctorFixFlag, doctorYesFlag
-	oldOnly, oldProject := doctorOnlyFlag, doctorProjectFlag
+	type flagSet struct {
+		json    bool
+		fix     bool
+		yes     bool
+		only    []string
+		project string
+	}
+	saved := flagSet{doctorJSONFlag, doctorFixFlag, doctorYesFlag, doctorOnlyFlag, doctorProjectFlag}
 	t.Cleanup(func() {
-		doctorJSONFlag, doctorFixFlag, doctorYesFlag = oldJSON, oldFix, oldYes
-		doctorOnlyFlag, doctorProjectFlag = oldOnly, oldProject
+		doctorJSONFlag, doctorFixFlag, doctorYesFlag = saved.json, saved.fix, saved.yes
+		doctorOnlyFlag, doctorProjectFlag = saved.only, saved.project
 	})
 	doctorJSONFlag, doctorFixFlag, doctorYesFlag = false, false, false
 	doctorOnlyFlag, doctorProjectFlag = nil, ""
@@ -250,9 +261,9 @@ func withDoctorFlags(t *testing.T, set func()) {
 }
 
 func testCommand() *cobra.Command {
-	cmd := &cobra.Command{}
-	cmd.SetContext(context.Background())
-	return cmd
+	c := &cobra.Command{}
+	c.SetContext(context.Background())
+	return c
 }
 
 // applyDoctorFixesReport drives the repair round around one report and returns
@@ -293,7 +304,7 @@ func TestApplyDoctorFixesAsksBeforeTouchingAnything(t *testing.T) {
 	withDoctorFlags(t, func() { doctorYesFlag = false })
 	answerNextPrompt(t)
 
-	out, applied, err := applyDoctorFixesReport(t, sampleReport())
+	out, applied, err := applyDoctorFixesReport(t, doctorSample())
 	if err != nil {
 		t.Fatalf("applyDoctorFixes: %v", err)
 	}
@@ -323,13 +334,13 @@ func TestApplyDoctorFixesRepairsTheBrokenConfig(t *testing.T) {
 
 	path := config.Path()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
+		t.Fatalf("creating the config directory: %v", err)
 	}
 	if err := os.WriteFile(path, []byte("daemon: [broken\n"), 0o600); err != nil {
-		t.Fatal(err)
+		t.Fatalf("writing the broken config: %v", err)
 	}
 
-	out, applied, err := applyDoctorFixesReport(t, sampleReport())
+	out, applied, err := applyDoctorFixesReport(t, doctorSample())
 	if err != nil {
 		t.Fatalf("applyDoctorFixes: %v", err)
 	}
@@ -342,7 +353,7 @@ func TestApplyDoctorFixesRepairsTheBrokenConfig(t *testing.T) {
 
 	entries, readErr := os.ReadDir(filepath.Dir(path))
 	if readErr != nil {
-		t.Fatal(readErr)
+		t.Fatalf("reading the config directory: %v", readErr)
 	}
 	kept := 0
 	for _, entry := range entries {

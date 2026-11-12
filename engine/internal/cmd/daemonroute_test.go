@@ -18,82 +18,81 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
 )
 
-// routedRows is the scan the in-process daemon serves. Nothing here is
-// enriched, so what the daemon publishes and what the direct path renders from
-// the same rows are comparable byte for byte. Groups are left unset: both paths
-// run the resolver, and it is the resolver's answer that has to agree.
+// routedRows is the scan the in-process daemon serves. None of it is enriched,
+// so the rows the daemon publishes and the rows the direct path renders are
+// comparable byte for byte. Groups stay unset: both paths run the resolver, and
+// it is the resolver's answer that has to agree.
 func routedRows() []ports.ListeningPort {
 	return []ports.ListeningPort{
 		{
-			Port: 3000, PID: 100, Process: "node", Command: "node server.js",
 			BindAddress: "127.0.0.1", IPVersion: "IPv4", Type: ports.PortTypeUser,
+			Port: 3000, PID: 100, Process: "node", Command: "node server.js",
 			User: "dev", Cwd: "/home/dev/web",
 		},
 		{
-			Port: 5432, PID: 200, Process: "com.docker.backend",
 			BindAddress: "0.0.0.0", IPVersion: "IPv4", Type: ports.PortTypeDocker,
+			Port: 5432, PID: 200, Process: "com.docker.backend",
 			DockerContainer: "db-1", DockerImage: "postgres:17",
 			DockerComposeService: "db", DockerComposeProject: "shop",
 			DockerContainerPort: 5432,
 		},
 		{
-			Port: 7000, PID: 300, Process: "Figma",
 			BindAddress: "127.0.0.1", IPVersion: "IPv4", Type: ports.PortTypeUser,
+			Port: 7000, PID: 300, Process: "Figma",
 		},
 	}
 }
 
-// startTestDaemon runs a daemon over a real socket with a fixed scan result and
-// points the CLI's dialer at it for the rest of the test.
-func startTestDaemon(t *testing.T, rows []ports.ListeningPort) {
+// startTestDaemon brings up a daemon over a real socket whose scan answers with
+// rows, and points the CLI's dialers at it for the rest of the test.
+func startTestDaemon(t *testing.T, table []ports.ListeningPort) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the unix-socket harness does not apply to named pipes")
 	}
 
-	// Not t.TempDir(): a unix socket path is capped at ~104 bytes on macOS and
-	// the test name would blow the budget.
-	dir, err := os.MkdirTemp("", "sn")
+	// Deliberately not t.TempDir(): a unix socket path is capped at ~104 bytes on
+	// macOS, and the test name alone would blow that budget.
+	socketDir, err := os.MkdirTemp("", "sn")
 	if err != nil {
 		t.Fatalf("temp dir: %v", err)
 	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
-	socket := filepath.Join(dir, "d.sock")
+	t.Cleanup(func() { os.RemoveAll(socketDir) })
+	socket := filepath.Join(socketDir, "d.sock")
 
-	srv := daemon.New(daemon.Options{
-		Socket:  socket,
-		Version: "test",
+	server := daemon.New(daemon.Options{
 		Scanner: scanner.New(scanner.Options{
 			DaemonVersion: "test",
 			Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
-				return append([]ports.ListeningPort{}, rows...), nil
+				return append([]ports.ListeningPort{}, table...), nil
 			},
 		}),
+		Socket:  socket,
+		Version: "test",
 	})
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() { _ = srv.Serve(ctx) }()
+	ctx, stop := context.WithCancel(context.Background())
+	go func() { _ = server.Serve(ctx) }()
 	t.Cleanup(func() {
-		cancel()
-		<-srv.Done()
+		stop()
+		<-server.Done()
 	})
 	if err := client.WaitForSocket(ctx, socket, 5*time.Second); err != nil {
 		t.Fatalf("daemon did not come up: %v", err)
 	}
 
-	prev := dialDaemon
-	dialDaemon = func(ctx context.Context) (*client.Client, error) {
+	savedDialer := dialDaemon
+	reach := func(ctx context.Context) (*client.Client, error) {
 		return client.Dial(ctx, client.ClientInfo{Name: "cli", Version: "test", Socket: socket})
 	}
-	t.Cleanup(func() { dialDaemon = prev })
+	dialDaemon = reach
+	t.Cleanup(func() { dialDaemon = savedDialer })
 
-	// The same daemon is where this CLI writes. A command that autostarts would
-	// otherwise start a second daemon of its own instead of reaching this one —
-	// which is what the harness is here to prevent.
-	prevWrite := connectForWrite
-	connectForWrite = func(ctx context.Context) (*client.Client, error) {
-		return client.Dial(ctx, client.ClientInfo{Name: "cli", Version: "test", Socket: socket})
-	}
-	t.Cleanup(func() { connectForWrite = prevWrite })
+	// Reads and writes must both land on this daemon: a command that autostarts
+	// would otherwise start a second daemon of its own instead of reaching this
+	// one, which is precisely what the harness exists to prevent.
+	savedWrite := connectForWrite
+	connectForWrite = reach
+	t.Cleanup(func() { connectForWrite = savedWrite })
 }
 
 // noDaemonReachable makes every connection attempt fail, the way an empty
@@ -115,56 +114,56 @@ func noDaemonReachable(t *testing.T) {
 // keep, so tests do not leak into each other.
 func resetRouting(t *testing.T) {
 	t.Helper()
-	prevFlag := noDaemonFlag
+	savedFlag := noDaemonFlag
 	noDaemonFlag = false
 	fallbackNoteOnce = sync.Once{}
 	t.Cleanup(func() {
-		noDaemonFlag = prevFlag
+		noDaemonFlag = savedFlag
 		fallbackNoteOnce = sync.Once{}
 	})
 }
 
-// captureStderr collects what fn writes to the real os.Stderr, which is where
-// the fallback note goes.
+// captureStderr collects what fn wrote to the real os.Stderr; the fallback note
+// goes there.
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
-	r, w, err := os.Pipe()
+	reader, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("pipe: %v", err)
 	}
-	prev := os.Stderr
-	os.Stderr = w
+	saved := os.Stderr
+	os.Stderr = writer
 
-	done := make(chan string, 1)
+	collected := make(chan string, 1)
 	go func() {
-		var buf bytes.Buffer
-		_, _ = io.Copy(&buf, r)
-		done <- buf.String()
+		var sink bytes.Buffer
+		_, _ = io.Copy(&sink, reader)
+		collected <- sink.String()
 	}()
 
 	fn()
 
-	os.Stderr = prev
-	w.Close()
-	out := <-done
-	r.Close()
-	return out
+	os.Stderr = saved
+	writer.Close()
+	text := <-collected
+	reader.Close()
+	return text
 }
 
 func TestFallbackNoteIsPrintedOncePerInvocation(t *testing.T) {
 	resetRouting(t)
 	noDaemonReachable(t)
 
-	out := captureStderr(t, func() {
+	stderrText := captureStderr(t, func() {
 		for range 3 {
-			if c := daemonClient(context.Background()); c != nil {
+			if conn := daemonClient(context.Background()); conn != nil {
 				t.Error("daemonClient returned a client with no daemon reachable")
-				c.Close()
+				conn.Close()
 			}
 		}
 	})
-	if n := bytes.Count([]byte(out), []byte("note: daemon unavailable, using direct scan")); n != 1 {
-		t.Fatalf("the fallback note appeared %d times, want exactly 1:\n%s", n, out)
+	if count := bytes.Count([]byte(stderrText), []byte("note: daemon unavailable, using direct scan")); count != 1 {
+		t.Fatalf("the fallback note appeared %d times, want exactly 1:\n%s", count, stderrText)
 	}
 }
 
@@ -189,20 +188,20 @@ func TestNoDaemonFlagNeverDialsAndSaysNothing(t *testing.T) {
 	resetRouting(t)
 	noDaemonFlag = true
 
-	prev := dialDaemon
+	saved := dialDaemon
 	dialDaemon = func(context.Context) (*client.Client, error) {
 		t.Error("--no-daemon still dialled the daemon")
 		return nil, errors.New("unreachable")
 	}
-	t.Cleanup(func() { dialDaemon = prev })
+	t.Cleanup(func() { dialDaemon = saved })
 
-	out := captureStderr(t, func() {
-		if c := daemonClient(context.Background()); c != nil {
+	stderrText := captureStderr(t, func() {
+		if conn := daemonClient(context.Background()); conn != nil {
 			t.Error("--no-daemon returned a client")
-			c.Close()
+			conn.Close()
 		}
 	})
-	if out != "" {
-		t.Fatalf("--no-daemon printed %q; it is a deliberate choice, not a fallback", out)
+	if stderrText != "" {
+		t.Fatalf("--no-daemon printed %q; it is a deliberate choice, not a fallback", stderrText)
 	}
 }
