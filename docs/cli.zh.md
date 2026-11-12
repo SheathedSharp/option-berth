@@ -271,11 +271,11 @@ oberth attn assess --project "$PWD" \
 猜一个授权集。适配器只向选定的提供商发送脱敏的事实摘要，
 不会读取日志或起停服务。runner 输出 `clear`、`continue`、`human_required`、`unavailable` 或
 `stale`；成功时把校验后的 `assessment` 原子写回同一文件，并在返回前复读状态。
-没有可用的环境变量或 本地模型配置、网络失败、响应无效、文件过期或状态修订变化时，事实文件保持不变。
+没有可用的环境 endpoint、model 或 key、网络失败、响应无效、文件过期或状态修订变化时，事实文件保持不变。
 `oberth attn enable` 写入的 `~/.option-berth/attn.json`（隔离运行时为 `$BERTH_HOME/attn.json`）由
 `oberth attn` 自动读取，并且是唯一的持久同意：`enabled: true` 开启，`enabled: false` 即使环境
-里有密钥也保持关闭。显式 `OPENROUTER_API_KEY` / `TYPESAFE_API_KEY` 只提供密钥并选定 provider，不
-开启评估；`BERTH_ATTN=1` 只为当前进程开启。每次不可用都带固定原因码（`no_key`、`disabled`、
+里有密钥也保持关闭。显式 `BERTH_ATTN_ENDPOINT` / `BERTH_ATTN_MODEL` / `BERTH_ATTN_KEY` 只提供这三个
+字段，不开启评估；`BERTH_ATTN=1` 只为当前进程开启。每次不可用都带固定原因码（`no_key`、`disabled`、
 `invalid_config`、`unauthorized`、`rate_limited`、`timeout`、`network`、`provider_error`、
 `bad_response`、`stale`），而不是 provider 的错误原文。
 `--auto`、`--session` 和 `--subscribe` 必须显式提供 `authorized_options`；artifact 的 `options` 只是候选集，

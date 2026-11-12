@@ -318,12 +318,12 @@ will not guess an authorization set on the agent's behalf. The adapter sends onl
 summary to the selected provider and does not read logs or start and stop services. The runner
 outputs `clear`, `continue`, `human_required`, `unavailable` or `stale`; on success it atomically
 writes the validated `assessment` back to the same file and re-reads the state before returning. When
-there is no usable environment variable or GUI-local model configuration, or on network failure,
+there is no usable environment endpoint, model or key, or on network failure,
 invalid response, expired file or changed state revision, the fact file is left unchanged. The
 `~/.option-berth/attn.json` written by `oberth attn enable` (`$BERTH_HOME/attn.json` for isolated
 runs) is read automatically by `oberth attn` and is the only persistent consent: `enabled: true`
 turns the model on, `enabled: false` keeps it off even when a key is present. An explicit
-`OPENROUTER_API_KEY` / `TYPESAFE_API_KEY` supplies the key and selects the provider but does not
+`BERTH_ATTN_ENDPOINT` / `BERTH_ATTN_MODEL` / `BERTH_ATTN_KEY` supplies those fields but does not
 enable the model; `BERTH_ATTN=1` enables it for one process. Each unavailable answer carries one fixed
 reason (`no_key`, `disabled`, `invalid_config`, `unauthorized`, `rate_limited`, `timeout`, `network`,
 `provider_error`, `bad_response`, `stale`) rather than a provider's error text. `--auto`, `--session` and
