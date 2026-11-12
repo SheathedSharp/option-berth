@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"os"
+	"strings"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/spf13/cobra"
@@ -15,17 +16,27 @@ var daemonCmd = &cobra.Command{
 	GroupID: commandGroupInfra,
 }
 
+// daemonSchemaLong is the schema command's long help, one entry per output line.
+var daemonSchemaLong = strings.Join([]string{
+	"Print the JSON Schema describing every daemon type and method.",
+	"It is generated from the Go types and is byte-identical to the copy",
+	"checked in at docs/schema/protocol.schema.json.",
+}, "\n")
+
 var daemonSchemaCmd = &cobra.Command{
 	Use:   "schema",
 	Short: "Print the daemon protocol JSON Schema",
-	Long: "Print the JSON Schema describing every daemon type and method.\n" +
-		"It is generated from the Go types and is byte-identical to the copy\n" +
-		"checked in at docs/schema/protocol.schema.json.",
-	Args: cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		_, err := os.Stdout.Write(rpc.Marshal())
-		return err
-	},
+	Long:  daemonSchemaLong,
+	Args:  cobra.NoArgs,
+	RunE:  runDaemonSchema,
+}
+
+// runDaemonSchema writes the generated schema to stdout, where it is the whole
+// answer.
+func runDaemonSchema(_ *cobra.Command, _ []string) error {
+	schema := rpc.Marshal()
+	_, err := os.Stdout.Write(schema)
+	return err
 }
 
 func init() {

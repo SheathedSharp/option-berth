@@ -12,22 +12,22 @@ import (
 
 // execDockerLogs runs docker logs for a container.
 func execDockerLogs(container string) error {
-	dockerPath, err := exec.LookPath("docker")
+	binary, err := exec.LookPath("docker")
 	if err != nil {
 		return fmt.Errorf("docker not found in PATH")
 	}
 
-	args := []string{"logs"}
+	argv := []string{"logs"}
 	if logsFollow {
-		args = append(args, "-f")
+		argv = append(argv, "-f")
 	}
-	args = append(args, container)
+	argv = append(argv, container)
 
-	cmd := exec.Command(dockerPath, args...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	c := exec.Command(binary, argv...)
+	c.Stdin = os.Stdin
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	return c.Run()
 }
 
 // tailLogSources is not supported on Windows.

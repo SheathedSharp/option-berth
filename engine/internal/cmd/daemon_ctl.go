@@ -19,54 +19,55 @@ import (
 )
 
 var (
-	daemonJSONFlag   bool
+	// JSON prints the contract document instead of the human text.
+	daemonJSONFlag bool
+	// Follow keeps the log open after the tail has been printed.
 	daemonFollowFlag bool
-	daemonLinesFlag  int
+	// Lines is how much of the log the tail prints first.
+	daemonLinesFlag int
 )
 
 var daemonStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show whether the daemon is running, and what it is doing",
-	Args:  cobra.NoArgs,
 	RunE:  daemonStatusRun,
+	Args:  cobra.NoArgs,
 }
 
 var daemonStopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop the running daemon",
-	Args:  cobra.NoArgs,
 	RunE:  daemonStopRun,
+	Args:  cobra.NoArgs,
 }
 
 var daemonRestartCmd = &cobra.Command{
 	Use:   "restart",
 	Short: "Stop the daemon if it is running, then start it detached",
-	Args:  cobra.NoArgs,
 	RunE:  daemonRestartRun,
+	Args:  cobra.NoArgs,
 }
 
 var daemonPathCmd = &cobra.Command{
 	Use:   "path",
 	Short: "Print the socket path the daemon listens on",
-	Args:  cobra.NoArgs,
 	RunE:  daemonPathRun,
+	Args:  cobra.NoArgs,
 }
 
 var daemonLogCmd = &cobra.Command{
 	Use:   "log",
 	Short: "Print the daemon log",
-	Args:  cobra.NoArgs,
 	RunE:  daemonLogRun,
+	Args:  cobra.NoArgs,
 }
 
 func init() {
-	daemonStatusCmd.Flags().BoolVar(&daemonJSONFlag, "json", false, "Output as JSON")
-	daemonPathCmd.Flags().BoolVar(&daemonJSONFlag, "json", false, "Output as JSON")
-	daemonStopCmd.Flags().BoolVar(&daemonJSONFlag, "json", false, "Output as JSON")
-	daemonRestartCmd.Flags().BoolVar(&daemonJSONFlag, "json", false, "Output as JSON")
+	for _, command := range []*cobra.Command{daemonStatusCmd, daemonPathCmd, daemonStopCmd, daemonRestartCmd} {
+		command.Flags().BoolVar(&daemonJSONFlag, "json", false, "Output as JSON")
+	}
 	daemonLogCmd.Flags().BoolVarP(&daemonFollowFlag, "follow", "f", false, "Follow the log as it grows")
 	daemonLogCmd.Flags().IntVarP(&daemonLinesFlag, "lines", "n", 50, "Number of trailing lines to print")
-
 	daemonCmd.AddCommand(daemonStatusCmd, daemonStopCmd, daemonRestartCmd, daemonPathCmd, daemonLogCmd)
 }
 
@@ -97,17 +98,17 @@ func notRunning(socket string) error {
 }
 
 func daemonStatusRun(cmd *cobra.Command, _ []string) error {
-	c, err := runningClient(cmd.Context())
+	conn, err := runningClient(cmd.Context())
 	if err != nil {
 		return err
 	}
-	defer c.Close()
+	defer conn.Close()
 
 	var status rpc.DaemonStatusResult
-	if err := c.Call(cmd.Context(), "daemon.status", rpc.Empty{}, &status); err != nil {
-		return err
+	if callErr := conn.Call(cmd.Context(), "daemon.status", rpc.Empty{}, &status); callErr != nil {
+		return callErr
 	}
-	doc := daemonStatus{status: status, hello: c.Hello(), cliCommit: buildinfo.Commit}
+	doc := daemonStatus{status: status, hello: conn.Hello(), cliCommit: buildinfo.Commit}
 
 	if daemonJSONFlag {
 		return printJSON(doc.jsonDoc())
@@ -224,18 +225,18 @@ func orUnknown(s string) string {
 
 func daemonStopRun(cmd *cobra.Command, _ []string) error {
 	socket := daemon.SocketPath()
-	c, err := runningClient(cmd.Context())
+	conn, err := runningClient(cmd.Context())
 	if err != nil {
 		return err
 	}
-	defer c.Close()
+	defer conn.Close()
 
-	var ok rpc.OKResult
-	if err := c.Call(cmd.Context(), "daemon.shutdown", rpc.Empty{}, &ok); err != nil {
-		return err
+	var ack rpc.OKResult
+	if callErr := conn.Call(cmd.Context(), "daemon.shutdown", rpc.Empty{}, &ack); callErr != nil {
+		return callErr
 	}
-	if err := waitForDaemonGone(socket, stopTimeout); err != nil {
-		return err
+	if waitErr := waitForDaemonGone(socket, stopTimeout); waitErr != nil {
+		return waitErr
 	}
 	if daemonJSONFlag {
 		return printJSON(map[string]any{"stopped": true, "socket": socket})
@@ -246,18 +247,18 @@ func daemonStopRun(cmd *cobra.Command, _ []string) error {
 
 func daemonRestartRun(cmd *cobra.Command, _ []string) error {
 	socket := daemon.SocketPath()
-	if c, err := connectRunning(cmd.Context()); err == nil {
-		var ok rpc.OKResult
-		_ = c.Call(cmd.Context(), "daemon.shutdown", rpc.Empty{}, &ok)
-		c.Close()
-		// The old daemon releases its lock after it closes its socket, so the
-		// replacement must wait for the lock, not for the socket.
-		if err := waitForDaemonGone(socket, stopTimeout); err != nil {
-			return err
+	if conn, dialErr := connectRunning(cmd.Context()); dialErr == nil {
+		var ack rpc.OKResult
+		_ = conn.Call(cmd.Context(), "daemon.shutdown", rpc.Empty{}, &ack)
+		conn.Close()
+		// The old daemon releases its lock only after closing its socket, so the
+		// replacement waits for the lock rather than for the socket.
+		if waitErr := waitForDaemonGone(socket, stopTimeout); waitErr != nil {
+			return waitErr
 		}
 	}
-	if err := detachDaemon(cmd.Context(), socket); err != nil {
-		return err
+	if detachErr := detachDaemon(cmd.Context(), socket); detachErr != nil {
+		return detachErr
 	}
 	if daemonJSONFlag {
 		return printJSON(map[string]any{"restarted": true, "socket": socket})
@@ -279,23 +280,23 @@ func daemonPathRun(*cobra.Command, []string) error {
 }
 
 func daemonLogRun(cmd *cobra.Command, _ []string) error {
-	path := daemon.LogPath()
-	f, err := os.Open(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("no daemon log at %s yet — start the daemon with `oberth serve`", path)
+	logPath := daemon.LogPath()
+	logFile, openErr := os.Open(logPath)
+	if openErr != nil {
+		if os.IsNotExist(openErr) {
+			return fmt.Errorf("no daemon log at %s yet — start the daemon with `oberth serve`", logPath)
 		}
-		return err
+		return openErr
 	}
-	defer f.Close()
+	defer logFile.Close()
 
-	if err := printTail(f, daemonLinesFlag); err != nil {
-		return err
+	if tailErr := printTail(logFile, daemonLinesFlag); tailErr != nil {
+		return tailErr
 	}
 	if !daemonFollowFlag {
 		return nil
 	}
-	return followFile(cmd.Context(), f)
+	return followFile(cmd.Context(), logFile)
 }
 
 // printTail writes the last n lines of f to stdout and leaves the file offset
@@ -303,8 +304,8 @@ func daemonLogRun(cmd *cobra.Command, _ []string) error {
 func printTail(f *os.File, n int) error { return printTailTo(f, n, os.Stdout) }
 func printTailTo(f *os.File, n int, out io.Writer) error {
 	if n <= 0 {
-		_, err := f.Seek(0, io.SeekEnd)
-		return err
+		_, seekErr := f.Seek(0, io.SeekEnd)
+		return seekErr
 	}
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)

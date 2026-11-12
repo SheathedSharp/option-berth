@@ -83,9 +83,9 @@ func configPathForProject(gg []state.Group, name string) string {
 //
 // The daemon parses `oberth.yaml` itself, so one that predates `port: auto`
 // answers with "cannot unmarshal !!str `auto` into int" — an error about the
-// file, for a problem with the daemon. This says the true thing instead, and
-// what to do about it. A daemon from before capabilities were announced at all
-// is treated the same way, which is right: it is older still.
+// file, for a problem with the daemon. This says what is actually true, and
+// what to do about it. A daemon from before capabilities were announced at
+// all is treated the same way, which is right: it is older still.
 func requireConfigSupport(c *client.Client, cfg *groups.Config) error {
 	return requireConfigSupportFor(c, cfg, true)
 }

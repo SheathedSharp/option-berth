@@ -14,12 +14,12 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// noDaemonFlag is the persistent --no-daemon flag: it forces the direct scan
-// path for every read command, without the fallback note.
+// noDaemonFlag is the persistent --no-daemon flag. It pins every read command
+// to the direct scan path and drops the fallback note with it.
 var noDaemonFlag bool
 
 // fallbackNoteOnce keeps the "daemon unavailable" note to one line per
-// invocation, however many times a command reaches for the daemon (spec,
+// invocation, no matter how many times a command reaches for the daemon (spec,
 // "Error handling").
 var fallbackNoteOnce sync.Once
 
@@ -114,23 +114,23 @@ func daemonList(ctx context.Context, c *client.Client) ([]ports.ListeningPort, e
 	return state.ToListeningAll(snap.Ports), nil
 }
 
-// listInclude maps the CLI's --stats / --health onto the wire's include.
+// listInclude maps the CLI's --stats / --health onto the wire's include list.
 func listInclude(stats, health bool) rpc.Include {
-	inc := rpc.Include{}
+	include := rpc.Include{}
 	if stats {
-		inc = append(inc, "stats")
+		include = append(include, "stats")
 	}
 	if health {
-		inc = append(inc, "health")
+		include = append(include, "health")
 	}
-	return inc
+	return include
 }
 
 // strPtrOrNil is the helper the params builders share: an empty string means
 // "no filter", which the wire spells as an absent field.
-func strPtrOrNil(s string) *string {
-	if s == "" {
+func strPtrOrNil(value string) *string {
+	if value == "" {
 		return nil
 	}
-	return &s
+	return &value
 }

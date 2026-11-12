@@ -24,18 +24,21 @@ import (
 )
 
 var (
-	startGroup  string
-	startName   string
-	startPort   int
+	// What the run is called and where it belongs.
+	startGroup string
+	startName  string
+	startPort  int
+
+	// Whether to hand the run to the daemon instead of staying in this shell.
 	startDetach bool
 
-	// startSession is the agent session this invocation belongs to, detected
+	// startSession is the agent session this invocation belongs to: detected
 	// once in startRun and carried into whichever spawn path runs.
 	startSession state.Session
 )
 
-// registerTimeout bounds the daemon round-trips around a run. A slow or absent
-// daemon must never delay the command the user actually asked for.
+// registerTimeout bounds the daemon round-trips around a run; a slow or absent
+// daemon must never delay the command the user asked for.
 const registerTimeout = 5 * time.Second
 
 var startCmd = &cobra.Command{
@@ -113,48 +116,49 @@ func startRun(cmd *cobra.Command, args []string) error {
 // child owns its own process group, signals are forwarded to it and option-berth exits
 // with the child's code.
 func startAttached(cmd *cobra.Command, argv []string, cwd string, res spawn.Resolution) error {
-	// Catch the interrupts before the child exists: a `oberth start` line in a
-	// dev.sh runs as a background job with SIGINT ignored, and installing a
+	// Catch interrupts before the child exists: an `oberth start` line in a
+	// dev.sh runs as a background job with SIGINT ignored, so installing the
 	// handler here is what gives the child a working Ctrl+C again.
 	fwd := spawn.CatchSignals()
 	defer fwd.Stop()
 
-	h, err := spawn.Spawn(cmd.Context(), spawn.Request{
-		Argv:     argv,
+	request := spawn.Request{
+		PortHint: startPort,
 		Cwd:      cwd,
+		Argv:     argv,
 		Group:    res.Group,
 		Name:     res.Name,
-		PortHint: startPort,
 		Session:  startSession,
-	})
+	}
+	h, err := spawn.Spawn(cmd.Context(), request)
 	if err != nil {
 		return err
 	}
 	fwd.Forward(h)
 
-	daemonKnows := registerRun(h)
-	defer unregisterRun(h.PID, daemonKnows)
+	inDaemon := registerRun(h)
+	defer unregisterRun(h.PID, inDaemon)
 
 	// The run is recorded in the worktree's active workplace as it happens,
 	// with the run identity and log path that make the block checkable later.
 	recorder := startRecording(cwd)
 	defer recorder.Close()
 	blockID := recorder.startShell(argv, h.ID, h.PID, h.LogPath, h.StartedAt)
-	code, err := h.Wait()
+	exitCode, err := h.Wait()
 	if err != nil {
 		return fmt.Errorf("running %q: %w", argv[0], err)
 	}
 	// The daemon keeps how it ended, and knows a Ctrl+C we forwarded is not a
 	// crash however the child chose to exit.
-	finishRun(h.PID, daemonKnows, code, fwd.Interrupted())
-	recorder.endShell(blockID, code, fwd.Interrupted())
+	finishRun(h.PID, inDaemon, exitCode, fwd.Interrupted())
+	recorder.endShell(blockID, exitCode, fwd.Interrupted())
 	// The record is flushed before the exit below, which skips deferred work.
 	recorder.Close()
-	if code != 0 {
+	if exitCode != 0 {
 		// Mirror the child's exit code without cobra printing usage over it.
 		cmd.SilenceUsage, cmd.SilenceErrors = true, true
 		fwd.Stop()
-		os.Exit(code)
+		os.Exit(exitCode)
 	}
 	return nil
 }
@@ -183,15 +187,16 @@ func startDetached(cmd *cobra.Command, argv []string, cwd string, res spawn.Reso
 
 	// No daemon: start it here anyway. The run is recorded in runs.json and
 	// adopted by the next daemon that starts.
-	h, err := spawn.Spawn(cmd.Context(), spawn.Request{
-		Argv:     argv,
+	request := spawn.Request{
+		Detach:   true,
+		PortHint: startPort,
 		Cwd:      cwd,
+		Argv:     argv,
 		Group:    res.Group,
 		Name:     res.Name,
-		PortHint: startPort,
 		Session:  startSession,
-		Detach:   true,
-	})
+	}
+	h, err := spawn.Spawn(cmd.Context(), request)
 	if err != nil {
 		return err
 	}
@@ -217,19 +222,19 @@ func recordDetachedRun(cwd string, argv []string, runID string, pid int, logPath
 // groups.start take, so what the daemon starts runs with the user's PATH,
 // toolchain and virtualenv rather than the daemon's own.
 func callerEnv() map[string]string {
-	out := map[string]string{}
-	for _, kv := range os.Environ() {
+	env := make(map[string]string)
+	for _, entry := range os.Environ() {
+		key, value, found := strings.Cut(entry, "=")
 		// Windows keeps per-drive entries like "=C:=C:\" with an empty key.
-		if k, v, ok := strings.Cut(kv, "="); ok && k != "" {
-			out[k] = v
+		if found && key != "" {
+			env[key] = value
 		}
 	}
-	return out
+	return env
 }
 
 func printStarted(res spawn.Resolution, pid int, logPath string) {
-	fmt.Printf("%s %s (pid %d)\n",
-		display.Dim("started"), display.Cyan(res.Group+"/"+res.Name), pid)
+	fmt.Printf("%s %s (pid %d)\n", display.Dim("started"), display.Cyan(res.Group+"/"+res.Name), pid)
 	if logPath != "" {
 		fmt.Printf("%s %s\n", display.Dim("logs"), logPath)
 	}
@@ -240,21 +245,21 @@ func printStarted(res spawn.Resolution, pid int, logPath string) {
 // only when there is one, because an absent field is the wire's "none".
 func detachedSpawnParams(argv []string, cwd string, res spawn.Resolution) rpc.RunsSpawnParams {
 	params := rpc.RunsSpawnParams{
+		Group: &res.Group,
+		Name:  &res.Name,
 		Argv:  argv,
 		Cwd:   cwd,
 		Env:   callerEnv(),
-		Group: &res.Group,
-		Name:  &res.Name,
 		// The CLI is the user: it may start commands anywhere.
 		AllowOutsideHome: true,
 	}
 	if startSession.ID != "" {
-		s := startSession
-		params.Session = &s
+		session := startSession
+		params.Session = &session
 	}
 	if startPort > 0 {
-		hint := startPort
-		params.PortHint = &hint
+		portHint := startPort
+		params.PortHint = &portHint
 	}
 	return params
 }
@@ -279,45 +284,45 @@ func registerRun(h *spawn.Handle) bool {
 // session and port hint only when they carry a value.
 func registerParams(h *spawn.Handle) rpc.RunsRegisterParams {
 	params := rpc.RunsRegisterParams{
-		PID:              h.PID,
-		PPID:             h.PPID,
+		AllowOutsideHome: true,
 		Group:            h.Group,
 		Name:             h.Name,
+		PID:              h.PID,
+		PPID:             h.PPID,
+		ID:               &h.ID,
 		Cmd:              h.Cmd,
 		Cwd:              h.Cwd,
 		StartedAt:        h.StartedAt.Format(time.RFC3339),
-		ID:               &h.ID,
-		AllowOutsideHome: true,
 	}
 	if h.Session.ID != "" {
-		s := h.Session
-		params.Session = &s
+		session := h.Session
+		params.Session = &session
 	}
 	if h.PortHint > 0 {
-		hint := h.PortHint
-		params.PortHint = &hint
+		portHint := h.PortHint
+		params.PortHint = &portHint
 	}
 	return params
 }
 
 // unregisterRun removes the run again, wherever it was recorded.
-func unregisterRun(pid int, daemonKnows bool) {
-	endRun(pid, daemonKnows, rpc.RunsUnregisterParams{PID: pid})
+func unregisterRun(pid int, inDaemon bool) {
+	endRun(pid, inDaemon, rpc.RunsUnregisterParams{PID: pid})
 }
 
 // finishRun reports how an attached run ended, so the daemon keeps it among
 // the runs that exited. Without a daemon there is nowhere to keep it and the
 // runs.json entry is simply removed.
-func finishRun(pid int, daemonKnows bool, code int, stopped bool) {
-	endRun(pid, daemonKnows, rpc.RunsUnregisterParams{PID: pid, ExitCode: &code, Stopped: stopped})
+func finishRun(pid int, inDaemon bool, code int, stopped bool) {
+	endRun(pid, inDaemon, rpc.RunsUnregisterParams{PID: pid, ExitCode: &code, Stopped: stopped})
 }
 
 // endRun removes the run from wherever it was recorded. params carries the
 // exit facts only when this call ends a run. Cleanup never autostarts a
 // daemon, and losing the daemon after registration leaves runs.json as the
 // place to remove from.
-func endRun(pid int, daemonKnows bool, params rpc.RunsUnregisterParams) {
-	if daemonKnows {
+func endRun(pid int, inDaemon bool, params rpc.RunsUnregisterParams) {
+	if inDaemon {
 		var out rpc.OKResult
 		if err := daemonCall(context.Background(), connectRunningDaemon, "runs.unregister", params, &out); err == nil {
 			return
@@ -346,16 +351,16 @@ func daemonCall(ctx context.Context, dial func(context.Context) (*client.Client,
 // the group so an older `oberth list` still attributes the ports.
 func fallbackEntry(h *spawn.Handle) runs.Entry {
 	return runs.Entry{
-		PID:       h.PID,
-		Tag:       h.Group,
 		ID:        h.ID,
-		Cmd:       h.Cmd,
-		StartedAt: h.StartedAt.Format(time.RFC3339),
+		PID:       h.PID,
+		PPID:      h.PPID,
+		Tag:       h.Group,
 		Group:     h.Group,
 		Name:      h.Name,
+		Cmd:       h.Cmd,
 		Cwd:       h.Cwd,
-		PPID:      h.PPID,
 		PortHint:  h.PortHint,
+		StartedAt: h.StartedAt.Format(time.RFC3339),
 	}
 }
 

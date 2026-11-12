@@ -14,15 +14,15 @@ import (
 
 // execDockerLogs execs into docker logs for a container.
 func execDockerLogs(container string) error {
-	dockerPath, err := exec.LookPath("docker")
+	binary, err := exec.LookPath("docker")
 	if err != nil {
 		return fmt.Errorf("docker not found in PATH")
 	}
 
-	args := append([]string{"docker", "logs"}, followArgs()...)
-	args = append(args, container)
+	argv := append([]string{"docker", "logs"}, followArgs()...)
+	argv = append(argv, container)
 
-	return syscall.Exec(dockerPath, args, os.Environ())
+	return syscall.Exec(binary, argv, os.Environ())
 }
 
 // followArgs is the one place `--follow` becomes a collector flag.
@@ -90,11 +90,10 @@ func tailProcFD(pid int) error {
 	}
 
 	if len(paths) == 0 {
-		return fmt.Errorf("no log sources found for PID %d\n\n%s",
-			pid,
-			display.Dim("The process may be writing to a terminal or pipe that cannot be captured.\n"+
-				"Try restarting the process with output redirected to a file:\n"+
-				"  command > output.log 2>&1"))
+		hint := display.Dim("The process may be writing to a terminal or pipe that cannot be captured.\n" +
+			"Try restarting the process with output redirected to a file:\n" +
+			"  command > output.log 2>&1")
+		return fmt.Errorf("no log sources found for PID %d\n\n%s", pid, hint)
 	}
 
 	printLogTargets(labels)

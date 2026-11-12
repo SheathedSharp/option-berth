@@ -24,10 +24,15 @@ import (
 )
 
 var (
-	doctorJSONFlag    bool
-	doctorFixFlag     bool
-	doctorYesFlag     bool
-	doctorOnlyFlag    []string
+	// Output and selection.
+	doctorJSONFlag bool
+	doctorOnlyFlag []string
+
+	// Repair, and whether to ask first.
+	doctorFixFlag bool
+	doctorYesFlag bool
+
+	// Where the project checks look.
 	doctorProjectFlag string
 )
 
@@ -35,36 +40,32 @@ var doctorCmd = &cobra.Command{
 	Use:     "doctor",
 	Short:   "Check that this option-berth installation is healthy",
 	GroupID: commandGroupInfra,
-	Long: "Run every self-check option-berth has: the binary on PATH, the config file, the\n" +
-		"daemon and its socket, the database, this project's\n" +
-		"oberth.yaml and docker.\n\n" +
-		"Each check is ok, warn, fail or skip. The exit code is 0 unless something\n" +
-		"failed, so `oberth doctor` works in a script. `--fix` applies the repairs\n" +
-		"that are safe to make unattended and runs the checks again.",
-	Args: cobra.NoArgs,
-	// The report is the output; a failing check must not also print a bare
-	// "Error:" line under the table. Execute() still prints a real error.
+	RunE:    doctorRun,
+	Args:    cobra.NoArgs,
+	// The report is the output, so a failing check must not also print a bare
+	// "Error:" line beneath it; Execute still prints a real error.
 	SilenceUsage:  true,
 	SilenceErrors: true,
-	RunE:          doctorRun,
+	Long: "Run every self-check option-berth has: the binary on PATH, the config file, the\ndaemon and its socket, the database, this project's\n" +
+		"oberth.yaml and docker.\n\nEach check is ok, warn, fail or skip. The exit code is 0 unless something\n" +
+		"failed, so `oberth doctor` works in a script. `--fix` applies the repairs\n" +
+		"that are safe to make unattended and runs the checks again.",
 }
 
 func init() {
-	doctorCmd.Flags().BoolVar(&doctorJSONFlag, "json", false, "Output as JSON")
-	doctorCmd.Flags().BoolVar(&doctorFixFlag, "fix", false,
-		"Apply safe fixes to the selected project, then check again")
-	doctorCmd.Flags().BoolVar(&doctorYesFlag, "yes", false, "Do not ask before applying a fix")
-	doctorCmd.Flags().StringSliceVar(&doctorOnlyFlag, "only", nil,
-		"Run only these checks (comma separated)")
-	doctorCmd.Flags().StringVar(&doctorProjectFlag, "project", "",
-		"Directory the project checks look at (default: the working directory)")
+	flags := doctorCmd.Flags()
+	flags.BoolVar(&doctorJSONFlag, "json", false, "Output as JSON")
+	flags.BoolVar(&doctorFixFlag, "fix", false, "Apply safe fixes to the selected project, then check again")
+	flags.BoolVar(&doctorYesFlag, "yes", false, "Do not ask before applying a fix")
+	flags.StringSliceVar(&doctorOnlyFlag, "only", nil, "Run only these checks (comma separated)")
+	flags.StringVar(&doctorProjectFlag, "project", "", "Directory the project checks look at (default: the working directory)")
 	rootCmd.AddCommand(doctorCmd)
 }
 
 func doctorRun(cmd *cobra.Command, _ []string) error {
-	if bad := doctor.UnknownSelectors(doctorOnlyFlag); len(bad) > 0 {
+	if unknown := doctor.UnknownSelectors(doctorOnlyFlag); len(unknown) != 0 {
 		return fmt.Errorf("unknown check %s\nknown checks: %s",
-			strings.Join(bad, ", "), strings.Join(doctor.IDs(), ", "))
+			strings.Join(unknown, ", "), strings.Join(doctor.IDs(), ", "))
 	}
 	project, err := doctorProject()
 	if err != nil {
@@ -72,29 +73,29 @@ func doctorRun(cmd *cobra.Command, _ []string) error {
 	}
 
 	ctx := cmd.Context()
-	env := doctorEnv(project)
-	report := doctor.Run(ctx, env, doctorOnlyFlag)
+	result := doctor.Run(ctx, doctorEnv(project), doctorOnlyFlag)
 
 	if doctorFixFlag {
-		applied, err := applyDoctorFixes(ctx, cmd, report)
-		if err != nil {
-			return err
+		applied, fixErr := applyDoctorFixes(ctx, cmd, result)
+		if fixErr != nil {
+			return fixErr
 		}
 		if applied > 0 {
-			report = doctor.Run(ctx, doctorEnv(project), doctorOnlyFlag)
+			result = doctor.Run(ctx, doctorEnv(project), doctorOnlyFlag)
 		}
 	}
 
-	if doctorJSONFlag {
-		out, err := json.MarshalIndent(report, "", "  ")
+	switch {
+	case doctorJSONFlag:
+		encoded, err := json.MarshalIndent(result, "", "  ")
 		if err != nil {
 			return err
 		}
-		fmt.Println(string(out))
-	} else {
-		renderDoctor(os.Stdout, report)
+		fmt.Println(string(encoded))
+	default:
+		renderDoctor(os.Stdout, result)
 	}
-	if !report.OK {
+	if !result.OK {
 		return errSilent
 	}
 	return nil
@@ -104,14 +105,14 @@ func doctorProject() (string, error) {
 	if doctorProjectFlag == "" {
 		return os.Getwd()
 	}
-	abs, err := filepath.Abs(doctorProjectFlag)
+	target, err := filepath.Abs(doctorProjectFlag)
 	if err != nil {
 		return "", err
 	}
-	if info, err := os.Stat(abs); err != nil || !info.IsDir() {
+	if info, err := os.Stat(target); err != nil || !info.IsDir() {
 		return "", fmt.Errorf("--project %s is not a directory", doctorProjectFlag)
 	}
-	return abs, nil
+	return target, nil
 }
 
 // doctorEnv is the CLI's view of the world: the running binary, docker, and a
@@ -133,34 +134,33 @@ func doctorEnv(project string) doctor.Env {
 
 func doctorDaemonProbe(ctx context.Context) doctor.DaemonInfo {
 	socket := daemon.SocketPath()
-	c, err := client.Dial(ctx, client.ClientInfo{Name: "cli", Version: buildinfo.Version})
-	if err != nil {
-		// A daemon speaking another protocol major is running, not absent:
-		// reporting it as unreachable would hide the one check that explains
-		// what is actually wrong.
-		var mismatch *client.ProtocolMismatchError
-		if errors.As(err, &mismatch) {
-			return doctor.DaemonInfo{Reachable: true, ProtocolVersion: mismatch.Daemon, Socket: socket}
+	conn, dialErr := client.Dial(ctx, client.ClientInfo{Name: "cli", Version: buildinfo.Version})
+	if dialErr != nil {
+		// Another protocol major is a daemon that is running, not one that is
+		// absent; calling it unreachable would hide the check that explains it.
+		var versionMismatch *client.ProtocolMismatchError
+		if errors.As(dialErr, &versionMismatch) {
+			return doctor.DaemonInfo{Reachable: true, ProtocolVersion: versionMismatch.Daemon, Socket: socket}
 		}
-		return doctor.DaemonInfo{Err: err, Socket: socket}
+		return doctor.DaemonInfo{Err: dialErr, Socket: socket}
 	}
-	defer c.Close()
+	defer conn.Close()
 
-	hello := c.Hello()
+	hello := conn.Hello()
 	var status rpc.DaemonStatusResult
-	statusErr := c.Call(ctx, "daemon.status", rpc.Empty{}, &status)
-	info := doctor.DaemonInfo{
+	statusErr := conn.Call(ctx, "daemon.status", rpc.Empty{}, &status)
+	probe := doctor.DaemonInfo{
 		Reachable:       true,
-		Commit:          status.Commit,
-		StatusErr:       statusErr,
-		Version:         hello.DaemonVersion,
-		ProtocolVersion: hello.ProtocolVersion,
 		Socket:          hello.Socket,
 		PID:             hello.PID,
+		Version:         hello.DaemonVersion,
+		ProtocolVersion: hello.ProtocolVersion,
+		Commit:          status.Commit,
 		DBPath:          status.DBPath,
+		StatusErr:       statusErr,
 		Observation:     greatestObservation(status.Observation, hello.Observation),
 	}
-	return info
+	return probe
 }
 
 // greatestObservation prefers the status probe (current) over the hello cache
@@ -233,17 +233,17 @@ func renderDoctor(w io.Writer, report rpc.DaemonDoctorResult) {
 }
 
 func doctorVerdict(report rpc.DaemonDoctorResult, counts map[string]int) string {
-	var parts []string
+	var summaryParts []string
 	for _, status := range []string{doctor.StatusFail, doctor.StatusWarn, doctor.StatusOK, doctor.StatusSkip} {
-		if n := counts[status]; n > 0 {
-			parts = append(parts, fmt.Sprintf("%d %s", n, status))
+		if n := counts[status]; n != 0 {
+			summaryParts = append(summaryParts, fmt.Sprintf("%d %s", n, status))
 		}
 	}
-	summary := strings.Join(parts, ", ")
+	summary := strings.Join(summaryParts, ", ")
 
 	fixable := 0
-	for _, c := range report.Checks {
-		if c.Fixable && (c.Status == doctor.StatusFail || c.Status == doctor.StatusWarn) {
+	for _, check := range report.Checks {
+		if check.Fixable && (check.Status == doctor.StatusFail || check.Status == doctor.StatusWarn) {
 			fixable++
 		}
 	}
@@ -252,30 +252,27 @@ func doctorVerdict(report rpc.DaemonDoctorResult, counts map[string]int) string 
 		hint = display.Dim(fmt.Sprintf("  (`oberth doctor --fix` repairs %d of them)", fixable))
 	}
 
-	switch {
-	case !report.OK:
+	if !report.OK {
 		return display.Red("something is wrong: ") + summary + hint
-	case counts[doctor.StatusWarn] > 0:
-		return display.Yellow("mostly healthy: ") + summary + hint
-	default:
-		return display.Green("all good: ") + summary
 	}
+	if counts[doctor.StatusWarn] > 0 {
+		return display.Yellow("mostly healthy: ") + summary + hint
+	}
+	return display.Green("all good: ") + summary
 }
 
-// doctorGlyph is a symbol and a word, not one or the other: the symbol is what
-// the eye finds when the terminal has colour, and the word is what survives
-// NO_COLOR, a pipe and a screenshot.
+// doctorGlyph pairs a symbol with a word: the symbol is what the eye finds in a
+// colour terminal, the word is what survives NO_COLOR, a pipe and a screenshot.
 func doctorGlyph(status string) string {
-	switch status {
-	case doctor.StatusOK:
-		return display.Green("\u2714 ok  ")
-	case doctor.StatusWarn:
-		return display.Yellow("! warn")
-	case doctor.StatusFail:
-		return display.Red("\u2716 FAIL")
-	default:
-		return display.Dim("\u00b7 skip")
+	glyphs := map[string]string{
+		doctor.StatusOK:   display.Green("\u2714 ok  "),
+		doctor.StatusWarn: display.Yellow("! warn"),
+		doctor.StatusFail: display.Red("\u2716 FAIL"),
 	}
+	if glyph, known := glyphs[status]; known {
+		return glyph
+	}
+	return display.Dim("\u00b7 skip")
 }
 
 // padRight pads to a width counted in runes, not bytes: paths and labels carry
@@ -290,14 +287,14 @@ func padRight(s string, width int) string {
 
 // ------------------------------------------------------------------- fix ---
 
-// doctorFix is one repair `--fix` may apply. Every one of them is a call the
-// user could have made themselves from the check's own fix hint; nothing here
-// deletes anything, and the broken config is moved aside rather than replaced.
+// doctorFix is one repair `--fix` can apply. Each is a call the user could have
+// made from the check's own hint; no repair deletes anything, and a broken
+// config is moved aside rather than overwritten.
 //
-// Project-scoped fixes honor --project; machine configuration repairs remain local.
+// Project-scoped repairs honor --project; machine configuration stays local.
 type doctorFix struct {
-	id  string
-	run func(ctx context.Context, cmd *cobra.Command) (string, error)
+	id  string                                                        // the check it repairs
+	run func(ctx context.Context, cmd *cobra.Command) (string, error) // what it does
 }
 
 // matches reports whether this fix repairs exactly the named check. A dotted
@@ -309,33 +306,35 @@ func doctorFixes() []doctorFix {
 	fixes := []doctorFix{
 		{id: "config_parses", run: fixBrokenConfig},
 		{id: "project_config", run: fixLegacyConfigName},
-		{id: "daemon_reachable", run: func(ctx context.Context, cmd *cobra.Command) (string, error) {
-			if err := daemonRestartRun(cmd, nil); err != nil {
-				return "", err
-			}
-			return "restarted the daemon", nil
-		}},
+		{id: "daemon_reachable", run: restartDaemonFix},
 	}
-	// Fixes repair this machine's own setup only; nothing here writes into
-	// another tool's configuration.
+	// A fix repairs this machine's own setup only; none writes into another
+	// tool's configuration.
 	sort.Slice(fixes, func(i, j int) bool { return fixes[i].id < fixes[j].id })
 	return fixes
 }
 
+// restartDaemonFix is the repair behind a failed daemon check.
+func restartDaemonFix(_ context.Context, cmd *cobra.Command) (string, error) {
+	if err := daemonRestartRun(cmd, nil); err != nil {
+		return "", err
+	}
+	return "restarted the daemon", nil
+}
+
 // fixBrokenConfig moves an unparseable config.yaml aside and writes a fresh
-// commented template in its place. The old file is kept: it is the only copy of
-// whatever the user meant to write.
+// commented template in its place. The old file is the only copy of what the
+// user meant to write, so it is kept.
 func fixBrokenConfig(context.Context, *cobra.Command) (string, error) {
-	path := config.Path()
-	stamp := time.Now().UTC().Format("20060102T150405Z")
-	moved := path + doctor.BrokenSuffix + stamp
-	if err := os.Rename(path, moved); err != nil {
-		return "", fmt.Errorf("could not move %s aside: %w", path, err)
+	configPath := config.Path()
+	aside := configPath + doctor.BrokenSuffix + time.Now().UTC().Format("20060102T150405Z")
+	if err := os.Rename(configPath, aside); err != nil {
+		return "", fmt.Errorf("could not move %s aside: %w", configPath, err)
 	}
 	if err := config.WriteTemplate(true); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("moved the broken config to %s and wrote a fresh one", moved), nil
+	return fmt.Sprintf("moved the broken config to %s and wrote a fresh one", aside), nil
 }
 
 // selectDoctorFixes is the repair list for the checks that failed or warned
@@ -360,15 +359,15 @@ func selectDoctorFixes(report rpc.DaemonDoctorResult) []doctorFix {
 // applyDoctorFixes runs every safe fix for a check that is not ok, after
 // confirmation. It returns how many it applied.
 func applyDoctorFixes(ctx context.Context, cmd *cobra.Command, report rpc.DaemonDoctorResult) (int, error) {
-	todo := selectDoctorFixes(report)
-	if len(todo) == 0 {
+	planned := selectDoctorFixes(report)
+	if len(planned) == 0 {
 		fmt.Fprintln(os.Stderr, "nothing to fix automatically")
 		return 0, nil
 	}
 
 	fmt.Fprintf(os.Stderr, "oberth doctor --fix will:\n")
-	for _, f := range todo {
-		fmt.Fprintf(os.Stderr, "  repair %s\n", f.id)
+	for _, fix := range planned {
+		fmt.Fprintf(os.Stderr, "  repair %s\n", fix.id)
 	}
 	if !doctorYesFlag && !confirmDoctorFix() {
 		fmt.Fprintln(os.Stderr, "nothing was changed")
@@ -376,32 +375,32 @@ func applyDoctorFixes(ctx context.Context, cmd *cobra.Command, report rpc.Daemon
 	}
 
 	applied := 0
-	for _, f := range todo {
-		what, err := f.run(ctx, cmd)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "could not repair %s: %v\n", f.id, err)
+	for _, fix := range planned {
+		what, runErr := fix.run(ctx, cmd)
+		if runErr != nil {
+			fmt.Fprintf(os.Stderr, "could not repair %s: %v\n", fix.id, runErr)
 			continue
 		}
-		fmt.Fprintf(os.Stderr, "%s: %s\n", f.id, what)
+		fmt.Fprintf(os.Stderr, "%s: %s\n", fix.id, what)
 		applied++
 	}
 	fmt.Fprintln(os.Stderr)
 	return applied, nil
 }
 
-// confirmDoctorFix asks once on the terminal. A non-interactive run (a pipe, a
-// CI job) answers no rather than blocking, which is why `--yes` exists.
+// confirmDoctorFix asks once on the terminal. With a pipe or a CI job there is
+// nobody to ask, so the answer is no; `--yes` is the way past it.
 func confirmDoctorFix() bool {
-	info, err := os.Stdin.Stat()
-	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
+	stat, statErr := os.Stdin.Stat()
+	if statErr != nil || stat.Mode()&os.ModeCharDevice == 0 {
 		fmt.Fprintln(os.Stderr, "stdin is not a terminal; pass --yes to apply these")
 		return false
 	}
 	fmt.Fprint(os.Stderr, "apply? [y/N] ")
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
-	if err != nil {
+	typed, readErr := bufio.NewReader(os.Stdin).ReadString('\n')
+	if readErr != nil {
 		return false
 	}
-	answer := strings.ToLower(strings.TrimSpace(line))
+	answer := strings.ToLower(strings.TrimSpace(typed))
 	return answer == "y" || answer == "yes"
 }
