@@ -8,24 +8,28 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// The read half of the groups namespace. A group is derived state — the
-// scanner resolves every port to a project and joins the `oberth.yaml`
-// services onto it — so listing groups is reading the same snapshot the ports
-// read uses, not a second computation that could disagree with it.
+// The read half of the groups namespace. A group is derived state: the scanner
+// resolves each port to a project and joins that project's `oberth.yaml`
+// services onto it, so listing groups reads the very snapshot the ports read
+// uses rather than a second computation that might disagree with it.
 func init() {
+	registerGroupsReadHandler()
+}
+
+func registerGroupsReadHandler() {
 	RegisterHandler("groups.list", handleGroupsList)
 }
 
 func handleGroupsList(_ context.Context, req *Request) (any, error) {
-	groups, err := readGroups(req.Runtime)
+	rows, err := readGroups(req.Runtime)
 	if err != nil {
 		return nil, err
 	}
-	return rpc.GroupsListResult{Groups: groups}, nil
+	return rpc.GroupsListResult{Groups: rows}, nil
 }
 
-// readGroups is readPorts' twin: served from the cache while a subscriber
-// keeps it fresh, and from a scan otherwise.
+// readGroups is readPorts' twin: it is served from the cache while a subscriber
+// keeps that cache fresh, and from a scan otherwise.
 func readGroups(rt *Runtime) ([]state.Group, error) {
 	if rt.Subscribers() > 0 {
 		if snap := rt.Scanner.Cached(); snap.Seq > 0 {
@@ -39,11 +43,10 @@ func readGroups(rt *Runtime) ([]state.Group, error) {
 	return orEmptyGroups(joinStartAttempts(rt, snap.Groups)), nil
 }
 
-// orEmptyGroups keeps the collection an array on the wire, never null
-// .
-func orEmptyGroups(groups []state.Group) []state.Group {
-	if groups == nil {
-		return []state.Group{}
+// orEmptyGroups keeps the collection an array on the wire rather than null.
+func orEmptyGroups(rows []state.Group) []state.Group {
+	if rows != nil {
+		return rows
 	}
-	return groups
+	return []state.Group{}
 }
