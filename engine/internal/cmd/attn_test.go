@@ -108,13 +108,12 @@ func TestAttnTaskContextFileAndFlagOverride(t *testing.T) {
 func TestDisabledConsentProducesNoClient(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("BERTH_HOME", home)
-	t.Setenv("OPENROUTER_API_KEY", "environment-only-key")
-	t.Setenv("TYPESAFE_API_KEY", "")
+	t.Setenv("BERTH_ATTN_KEY", "environment-only-key")
 	t.Setenv("BERTH_ATTN", "")
 
 	consent := attnResolvedConsent()
 	if consent.Enabled {
-		t.Fatalf("an environment key enabled model: %+v", consent)
+		t.Fatalf("an environment key enabled the assessment: %+v", consent)
 	}
 	if _, err := consent.Client(); err == nil {
 		t.Fatal("a disabled configuration produced a client")

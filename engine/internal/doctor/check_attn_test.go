@@ -35,12 +35,12 @@ func TestAttnCheckReportsOffWithoutFailing(t *testing.T) {
 	}
 }
 
-func TestAttnCheckReportsOnWithProvider(t *testing.T) {
+func TestAttnCheckReportsOnWithModel(t *testing.T) {
 	env := fakeEnv(t)
-	writeSettings(t, env, `{"schema":"oberth.attn-settings/v1","enabled":true,"provider":"openrouter","api_key":"k"}`, 0o600)
+	writeSettings(t, env, `{"schema":"oberth.attn-settings/v1","enabled":true,"endpoint":"https://assess.example/decisions","model":"test/model","api_key":"k"}`, 0o600)
 	got := run(t, env, checkAttn)
 	wantStatus(t, got, StatusOK)
-	if got.Summary != "Attention: on · openrouter" {
+	if got.Summary != "Attention: on · test/model" {
 		t.Fatalf("summary = %q", got.Summary)
 	}
 	// The key must never appear in a doctor row.
@@ -51,7 +51,7 @@ func TestAttnCheckReportsOnWithProvider(t *testing.T) {
 
 func TestAttnCheckWarnsWhenEnabledWithoutAKey(t *testing.T) {
 	env := fakeEnv(t)
-	writeSettings(t, env, `{"schema":"oberth.attn-settings/v1","enabled":true,"provider":"typesafe"}`, 0o600)
+	writeSettings(t, env, `{"schema":"oberth.attn-settings/v1","enabled":true,"endpoint":"https://assess.example/decisions","model":"test/model"}`, 0o600)
 	got := run(t, env, checkAttn)
 	wantStatus(t, got, StatusWarn)
 	if got.Fix == "" {

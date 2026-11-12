@@ -203,7 +203,8 @@ services:
         settings = home / "attn.json"
         settings.write_text(
             '{"schema":"oberth.attn-settings/v1","enabled":true,'
-            '"provider":"typesafe","api_key":"verification-only"}\n'
+            '"preset":"typesafe","endpoint":"https://assess.example/decisions",'
+            '"model":"test/model","api_key":"verification-only"}\n'
         )
         settings.chmod(0o600)
 

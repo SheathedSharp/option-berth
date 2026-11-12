@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"runtime"
@@ -28,13 +29,16 @@ const (
 	maxLocalTimeout   = 2 * time.Minute
 )
 
-// LocalConfig is the on-disk shape written by the macOS settings page.
+// LocalConfig is the on-disk shape written by `oberth attn config`.
 // APIKey is never included in telemetry, attention artifacts, or diagnostic
 // output. The file itself is required to be owner-only on Unix systems.
+//
+// Preset is a setup label only: it records which defaults filled Endpoint and
+// Model. Runtime resolution never consults it.
 type LocalConfig struct {
 	Schema    string `json:"schema"`
 	Enabled   bool   `json:"enabled"`
-	Provider  string `json:"provider"`
+	Preset    string `json:"preset,omitempty"`
 	Endpoint  string `json:"endpoint"`
 	Model     string `json:"model"`
 	APIKey    string `json:"api_key"`
@@ -95,21 +99,27 @@ func (c *LocalConfig) Validate() error {
 	if c.Schema != "" && c.Schema != LocalConfigSchema {
 		return errors.New("attention settings schema is unsupported")
 	}
-	c.Provider = strings.ToLower(strings.TrimSpace(c.Provider))
-	if c.Provider == "" {
-		c.Provider = "openrouter"
-	}
-	if c.Provider != "openrouter" && c.Provider != "typesafe" {
-		return errors.New("attention settings provider is unsupported")
+	c.Preset = strings.ToLower(strings.TrimSpace(c.Preset))
+	if c.Preset != "" {
+		if _, _, ok := PresetDefaults(c.Preset); !ok {
+			return fmt.Errorf("attention settings preset is unknown; use one of %s, or leave it empty", PresetNames())
+		}
 	}
 	c.Endpoint = strings.TrimSpace(c.Endpoint)
 	if c.Endpoint != "" {
-		u, err := url.Parse(c.Endpoint)
-		if err != nil || u.Scheme != "https" || u.Host == "" {
-			return errors.New("attention settings endpoint must be an HTTPS URL")
+		if err := validateEndpoint(c.Endpoint); err != nil {
+			return fmt.Errorf("attention settings: %w", err)
 		}
 	}
 	c.Model = strings.TrimSpace(c.Model)
+	if c.Enabled {
+		if c.Endpoint == "" {
+			return errors.New("attention settings endpoint is required when the assessment is enabled")
+		}
+		if c.Model == "" {
+			return errors.New("attention settings model is required when the assessment is enabled")
+		}
+	}
 	c.APIKey = strings.TrimSpace(c.APIKey)
 	if len(c.APIKey) > maxLocalKey {
 		return errors.New("attention settings API key is too long")
@@ -121,6 +131,32 @@ func (c *LocalConfig) Validate() error {
 		}
 	}
 	return nil
+}
+
+// validateEndpoint accepts the two shapes the adapter can actually talk to:
+// HTTPS anywhere, or plain HTTP on a loopback host for a local deployment.
+func validateEndpoint(endpoint string) error {
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Host == "" {
+		return errors.New("endpoint must be an absolute URL")
+	}
+	if u.Scheme == "https" {
+		return nil
+	}
+	if u.Scheme == "http" && isLoopbackHost(u.Hostname()) {
+		return nil
+	}
+	return errors.New("endpoint must be HTTPS, or HTTP on a loopback host")
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // Timeout returns the configured timeout or the adapter default.
