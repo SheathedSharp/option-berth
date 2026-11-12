@@ -749,7 +749,7 @@ class LargeFixtureTests(unittest.TestCase):
     def env(self) -> lib.ScenarioEnv:
         return lib.ScenarioEnv(self.root / "env", self.binary, os.environ.get("PATH", ""))
 
-    def test_single_stack_writes_ten_services_and_effects(self) -> None:
+    def test_single_stack_writes_every_service_and_effect(self) -> None:
         env = self.env()
         state = stacks.LARGE_SCENARIOS["stack-start"].setup(env)
         try:
@@ -836,11 +836,12 @@ class LargeJudgeTests(unittest.TestCase):
         self.write_heartbeats(state)
         scenario = stacks.LARGE_SCENARIOS["stack-start"]
         http = self.health(version="v1")
+        doc = status_doc([status_service("db", 7000)])
         with mock.patch.object(stacks, "port_open", return_value=True):
-            good = scenario.judge(probe({"main": status_doc()}, http), state)
+            good = scenario.judge(probe({"main": doc}, http), state)
             self.assertTrue(good.completed, [item for item in good.checks if not item["ok"]])
             state.effects["worker"].unlink()
-            bad = scenario.judge(probe({"main": status_doc()}, http), state)
+            bad = scenario.judge(probe({"main": doc}, http), state)
             self.assertFalse(bad.completed)
 
     def test_stack_subset_uses_single_worktree_effect_keys(self) -> None:
@@ -851,8 +852,9 @@ class LargeJudgeTests(unittest.TestCase):
         )
         scenario = stacks.LARGE_SCENARIOS["stack-subset"]
         http = self.health(version="v1")
+        doc = status_doc([status_service("db", 7000)])
         with mock.patch.object(stacks, "port_open", return_value=False):
-            good = scenario.judge(probe({"main": status_doc()}, http), state)
+            good = scenario.judge(probe({"main": doc}, http), state)
             self.assertTrue(good.completed, [item for item in good.checks if not item["ok"]])
             self.assertTrue(any("worker stayed stopped" in item["name"] for item in good.checks))
             # A heartbeat means the worker was started despite the subset task.
@@ -861,7 +863,7 @@ class LargeJudgeTests(unittest.TestCase):
                 json.dumps({"t": time.time(), "service": "worker", "ok": True}) + "\n",
                 encoding="utf-8",
             )
-            bad = scenario.judge(probe({"main": status_doc()}, http), state)
+            bad = scenario.judge(probe({"main": doc}, http), state)
             self.assertFalse(bad.completed)
 
     def test_stack_stale_requires_new_versions_and_untouched_pids(self) -> None:
@@ -955,7 +957,7 @@ class LargeJudgeTests(unittest.TestCase):
         self.write_heartbeats(state, prefix="wt_")
         http = self.health(prefix="wt_", version="v1")
         main_doc = status_doc([status_service(name, 4000 + index) for index, name in enumerate(stacks.SERVICES)])
-        wt_doc = status_doc()
+        wt_doc = status_doc([status_service("db", 6000)])
         scenario = stacks.LARGE_SCENARIOS["stack-same-name-other-worktree"]
         with mock.patch.object(stacks, "port_open", return_value=True):
             good = scenario.judge(probe({"main": main_doc, "wt": wt_doc}, http), state)

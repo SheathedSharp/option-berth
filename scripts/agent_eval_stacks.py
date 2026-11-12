@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -28,6 +29,7 @@ from agent_eval_lib import (
     Verdict,
     check,
     free_port,
+    healthy,
     port_open,
     service,
     up_pid,
@@ -37,13 +39,17 @@ from agent_eval_scenarios import Scenario
 EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "stack-workshop"
 SOURCE_FILES = (
     "service.py", "worker.py", "build.py", "migrate.py", "schema.sql",
-    "src/app.html", "variant.txt",
+    "src/app.html", "variant.txt", "docker-compose.yml",
 )
-PORT_SERVICES = ("auth", "catalog", "api", "gateway", "web", "search", "billing", "ingest")
+HTTP_SERVICES = ("auth", "catalog", "api", "gateway", "web", "search", "billing", "ingest")
+CONTAINER_SERVICES = ("db",)
+PORT_SERVICES = HTTP_SERVICES + CONTAINER_SERVICES
 WORKER_SERVICES = ("worker", "notifier")
 SERVICES = PORT_SERVICES + WORKER_SERVICES
-API_AND_DEPS = ("auth", "catalog", "api")
+API_AND_DEPS = ("auth", "catalog", "db", "api")
 HEARTBEAT_MAX_AGE_S = 60
+IMAGE = "postgres:16-alpine"
+_image_ready = False
 
 
 # --------------------------------------------------------------------------- #
@@ -75,6 +81,7 @@ def _manifest(name: str, label: str, ports: dict[str, int], machine: dict[str, i
         prepare: str | None = None,
         inputs: tuple[str, ...] = (),
         env: dict[str, str] | None = None,
+        health_command: str | None = None,
     ) -> None:
         lines.append(f"  - name: {service_name}")
         if prepare:
@@ -84,7 +91,11 @@ def _manifest(name: str, label: str, ports: dict[str, int], machine: dict[str, i
         lines.append(f"    cmd: {cmd}")
         if port:
             lines.append(f"    port: {ports[service_name]}")
-            lines.append("    health: /health")
+            if health_command:
+                lines.append("    health:")
+                lines.append(f"      command: {health_command}")
+            else:
+                lines.append("    health: /health")
         if deps:
             lines.append("    depends_on: [" + ", ".join(deps) + "]")
         merged = dict(env or {})
@@ -101,13 +112,21 @@ def _manifest(name: str, label: str, ports: dict[str, int], machine: dict[str, i
     })
     add("catalog", env={"SERVICE_NAME": "catalog", "VERSION_FILE": "variant.txt"})
     add(
+        "db",
+        cmd=f"docker compose -f docker-compose.yml -p app_{label} up",
+        health_command=(f"docker compose -f docker-compose.yml -p app_{label} exec -T db "
+                        f"pg_isready -U app -d app_{label}"),
+        env={"DB_NAME": f"app_{label}"},
+    )
+    add(
         "api",
         prepare="python3 migrate.py",
         inputs=("schema.sql",),
-        deps=("auth", "catalog"),
+        deps=("auth", "catalog", "db"),
         env={
             "SERVICE_NAME": "api",
             "DB_PATH": f".berth/{label}/app.db",
+            "TCP_REQUIRE": url("db"),
             "VERSION_FILE": "variant.txt",
             "REQUIRE": f"{url('auth')}/health,{url('catalog')}/health",
         },
@@ -158,13 +177,40 @@ def _allocate_ports() -> dict[str, int]:
 
 
 def _machine_ports() -> dict[str, int]:
-    return {"postgres": free_port(), "redis": free_port()}
+    return {"redis": free_port()}
+
+
+def ensure_image() -> None:
+    global _image_ready
+    if _image_ready:
+        return
+    done = subprocess.run(["docker", "pull", IMAGE], capture_output=True, text=True, timeout=300)
+    if done.returncode:
+        raise RuntimeError(f"{IMAGE} could not be pulled: {done.stderr.strip()}")
+    _image_ready = True
+
+
+def _fixture_readme(label: str, ports: dict[str, int]) -> str:
+    rows = "\n".join(f"| `{name}` | {ports[name]} |" for name in PORT_SERVICES)
+    return (
+        f"# stack-{label}\n\n"
+        "Every service is declared in `oberth.yaml`, including its env and health check.\n"
+        "This file gives the raw commands so the same project can be started without\n"
+        "oberth; the service env comes from the manifest.\n\n"
+        "| service | port |\n|---|---|\n"
+        f"{rows}\n\n"
+        "```sh\n"
+        f"PORT={ports['db']} DB_NAME=app_{label} "
+        f"docker compose -f docker-compose.yml -p app_{label} up\n"
+        "```\n"
+    )
 
 
 def _project_files(label: str, ports: dict[str, int], machine: dict[str, int],
                    *, slow_auth: int = 0,
                    extra_env: dict[str, dict[str, str]] | None = None) -> dict[str, str]:
     files = _source_files()
+    files["README.md"] = _fixture_readme(label, ports)
     files[".gitignore"] = ".berth/\ndist/\nconfig/\n"
     files["scripts/generate_rates.py"] = (
         "#!/usr/bin/env python3\n"
@@ -302,9 +348,17 @@ def _health_checks(probe: Probe, state: ScenarioState, label: str, services: tup
     prefix = f"{label}_" if multi else ""
     checks = []
     for name in services:
-        if name in PORT_SERVICES:
+        if name in HTTP_SERVICES:
             key = f"{prefix}{name}_health"
             checks.append(check(f"{label} {name} answers /health", _ok(probe, key), _http_detail(probe, key)))
+        elif name in CONTAINER_SERVICES:
+            doc = probe.statuses.get(label)
+            item = service(doc, name)
+            checks.append(check(
+                f"{label} {name} container is healthy",
+                healthy(doc, name),
+                f"status={json.dumps(item)[:200] if item else 'missing'}",
+            ))
         else:
             path = state.effects[f"{prefix}{name}"]
             ok, detail = _heartbeat(path)
@@ -348,7 +402,7 @@ def _urls_for(label: str, ports: dict[str, int], *, multi: bool) -> dict[str, st
     prefix = f"{label}_" if multi else ""
     urls = {
         f"{prefix}{name}_health": f"http://127.0.0.1:{ports[name]}/health"
-        for name in PORT_SERVICES
+        for name in HTTP_SERVICES
     }
     urls[f"{prefix}api_version"] = f"http://127.0.0.1:{ports['api']}/version"
     urls[f"{prefix}web_version"] = f"http://127.0.0.1:{ports['web']}/version"

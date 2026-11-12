@@ -75,7 +75,7 @@ from agent_eval_cold import (
     write_reference_draft,
 )
 from agent_eval_scenarios import SCENARIOS as CORE_SCENARIOS, Scenario
-from agent_eval_stacks import LARGE_SCENARIOS
+from agent_eval_stacks import LARGE_SCENARIOS, ensure_image
 
 # The core library proves the failure paths on small fixtures. The large library
 # keeps the same shape but puts the task inside a ten-service stack with slow
@@ -183,6 +183,24 @@ def build_identity(binary: Path) -> dict[str, Any]:
         "platform": platform_name,
         "repo_commit": repo_commit,
     }
+
+
+def require_docker() -> None:
+    """The complex benchmark runs a real Postgres container; no Docker, no run."""
+    checks = (
+        (["docker", "info", "--format", "{{.ServerVersion}}"], "a running Docker daemon"),
+        (["docker", "compose", "version"], "the docker compose plugin"),
+    )
+    for argv, what in checks:
+        try:
+            done = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise PreflightError(f"the complex benchmark needs {what}: {exc}") from exc
+        if done.returncode:
+            raise PreflightError(
+                f"the complex benchmark needs {what}; `{' '.join(argv)}` failed:\n"
+                f"  {(done.stderr or done.stdout).strip()}"
+            )
 
 
 def preflight(binary: Path, out_root: Path, pass_env: list[str]) -> None:
@@ -1172,6 +1190,14 @@ def main(argv: list[str] | None = None) -> int:
     print(f"skill: {skill_info['path']} ({skill_info['version']} @ {skill_info['commit']})", file=sys.stderr)
 
     if not args.skip_preflight:
+        if any(SCENARIOS[scenario_id].suite == "large" for scenario_id in scenario_ids):
+            print("preflight: checking Docker for the complex benchmark...", file=sys.stderr)
+            try:
+                require_docker()
+                ensure_image()
+            except (PreflightError, RuntimeError) as exc:
+                print(f"preflight failed:\n{exc}", file=sys.stderr)
+                return 2
         print("preflight: verifying that oberth can observe listeners...", file=sys.stderr)
         try:
             preflight(binary, out_root, args.pass_env)
