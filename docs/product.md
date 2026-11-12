@@ -7,9 +7,9 @@ The single product definition for this repository. Implementation and support bo
 
 ## The need
 
-> When you let agents write code across several worktrees at once, anyone holding any one checkout
-> should be able to answer, with **one command**: **what should this run, is it really running, and if
-> not, why** — and then actually start it and stop it.
+> When you let agents write code across several worktrees at once, anyone holding any one declared
+> checkout should be able to answer, with **one command**: **what should this run, is it really
+> running, and if not, why** — and then actually start it and stop it.
 
 The through-line is **what a coding agent can do**, not what a UI can do: an agent should not have to
 guess a port, page through the process table, or come back and ask a person "is your service up?" to
@@ -244,7 +244,7 @@ product.
 
 ## Success criteria
 
-1. An agent runs one `oberth status --json` in a real project directory and knows whether the service
+1. An agent runs one `oberth status --json` in a real declared worktree and knows whether the service
    should run, whether it is running, and which line to read when it failed — without asking a person
    and without assembling `lsof` / `ps` / `tail` itself.
 2. The agent starts, stops and restarts by itself; the runtime facts, process and log in the service row
