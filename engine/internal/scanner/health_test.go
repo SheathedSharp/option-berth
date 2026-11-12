@@ -21,12 +21,12 @@ import (
 // round trip, so a synthetic socket would prove nothing.
 func healthServer(t *testing.T, status int) (*httptest.Server, int) {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/healthz" {
-			w.WriteHeader(http.StatusNotFound)
+	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/healthz" {
+			rw.WriteHeader(http.StatusNotFound)
 			return
 		}
-		w.WriteHeader(status)
+		rw.WriteHeader(status)
 	}))
 	_, portText, err := net.SplitHostPort(srv.Listener.Addr().String())
 	if err != nil {
@@ -43,27 +43,27 @@ func healthServer(t *testing.T, status int) (*httptest.Server, int) {
 // manifest in dir that gives the service a health path.
 func healthLoop(t *testing.T, dir string, port int) (*Loop, *[]state.Event, *sync.Mutex) {
 	t.Helper()
-	dir = resolved(t, dir)
-	writeConfig(t, dir, "name: probed\nservices:\n  - name: api\n    port: "+
+	root := resolved(t, dir)
+	writeConfig(t, root, "name: probed\nservices:\n  - name: api\n    port: "+
 		strconv.Itoa(port)+"\n    health: /healthz\n")
 
-	var mu sync.Mutex
-	var seen []state.Event
-	l := New(Options{
+	var eventsMu sync.Mutex
+	var events []state.Event
+	loop := New(Options{
 		DaemonVersion: "test",
 		Scan: func(Include) ([]ports.ListeningPort, error) {
 			return []ports.ListeningPort{{
 				Port: port, BindAddress: "127.0.0.1", IPVersion: "ipv4",
-				PID: 4242, Process: "python3", Command: "python3 -m http.server", Cwd: dir,
+				PID: 4343, Process: "node", Command: "node server.js", Cwd: root,
 			}}, nil
 		},
-		Publish: func(_, _ state.Snapshot, events []state.Event) {
-			mu.Lock()
-			seen = append(seen, events...)
-			mu.Unlock()
+		Publish: func(_, _ state.Snapshot, batch []state.Event) {
+			eventsMu.Lock()
+			events = append(events, batch...)
+			eventsMu.Unlock()
 		},
 	})
-	return l, &seen, &mu
+	return loop, &events, &eventsMu
 }
 
 // TestConfiguredHealthIsPolledWithoutAsking: a `health:` path in a manifest is
@@ -73,19 +73,19 @@ func TestConfiguredHealthIsPolledWithoutAsking(t *testing.T) {
 	srv, port := healthServer(t, http.StatusOK)
 	defer srv.Close()
 
-	l, _, _ := healthLoop(t, t.TempDir(), port)
-	snap, err := l.Snapshot(Include{})
+	loop, _, _ := healthLoop(t, t.TempDir(), port)
+	snap, err := loop.Snapshot(Include{})
 	if err != nil {
-		t.Fatalf("Snapshot: %v", err)
+		t.Fatalf("Snapshot of the configured loop: %v", err)
 	}
 	if len(snap.Ports) != 1 {
 		t.Fatalf("ports = %+v", snap.Ports)
 	}
-	h := snap.Ports[0].Health
-	if h == nil || h.Status != state.HealthOK || h.Code != http.StatusOK {
-		t.Fatalf("health = %+v, want ok/200", h)
+	verdict := snap.Ports[0].Health
+	if verdict == nil || verdict.Status != state.HealthOK || verdict.Code != http.StatusOK {
+		t.Fatalf("health = %+v, want ok/200", verdict)
 	}
-	if !h.Configured {
+	if !verdict.Configured {
 		t.Error("the probe is not marked configured, so include would strip it")
 	}
 	if len(snap.Groups) != 1 || len(snap.Groups[0].Services) != 1 {
@@ -167,39 +167,39 @@ func TestConfiguredHealthBudgetBoundsTheRound(t *testing.T) {
 // and the transition is published as health_changed.
 func TestConfiguredHealthFailsWhenTheServerGoesAway(t *testing.T) {
 	srv, port := healthServer(t, http.StatusOK)
-	l, seen, mu := healthLoop(t, t.TempDir(), port)
+	loop, events, eventsMu := healthLoop(t, t.TempDir(), port)
 
-	if _, err := l.Snapshot(Include{}); err != nil {
+	if _, err := loop.Snapshot(Include{}); err != nil {
 		t.Fatalf("first Snapshot: %v", err)
 	}
 	srv.Close()
-	l.Invalidate()
+	loop.Invalidate()
 
-	snap, err := l.Snapshot(Include{})
+	snap, err := loop.Snapshot(Include{})
 	if err != nil {
 		t.Fatalf("second Snapshot: %v", err)
 	}
-	h := snap.Ports[0].Health
-	if h == nil || h.Status != state.HealthFail {
-		t.Fatalf("health after the server closed = %+v, want fail", h)
+	health := snap.Ports[0].Health
+	if health == nil || health.Status != state.HealthFail {
+		t.Fatalf("health after the server closed = %+v, want fail", health)
 	}
-	if h.Reason == "" {
+	if health.Reason == "" {
 		t.Error("a failing probe should say why")
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
-	var changed *state.Event
-	for i := range *seen {
-		if (*seen)[i].Kind == "health_changed" {
-			changed = &(*seen)[i]
+	eventsMu.Lock()
+	defer eventsMu.Unlock()
+	var transition *state.Event
+	for i := range *events {
+		if (*events)[i].Kind == "health_changed" {
+			transition = &(*events)[i]
 		}
 	}
-	if changed == nil {
-		t.Fatalf("no health_changed event in %+v", *seen)
+	if transition == nil {
+		t.Fatalf("no health_changed event in %+v", *events)
 	}
-	if changed.Data["from"] != state.HealthOK || changed.Data["to"] != state.HealthFail {
-		t.Errorf("health_changed data = %+v, want ok -> fail", changed.Data)
+	if transition.Data["from"] != state.HealthOK || transition.Data["to"] != state.HealthFail {
+		t.Errorf("health_changed data = %+v, want ok -> fail", transition.Data)
 	}
 }
 
@@ -209,14 +209,14 @@ func TestConfiguredHealthReportsANonOKCode(t *testing.T) {
 	srv, port := healthServer(t, http.StatusServiceUnavailable)
 	defer srv.Close()
 
-	l, _, _ := healthLoop(t, t.TempDir(), port)
-	snap, err := l.Snapshot(Include{})
+	loop, _, _ := healthLoop(t, t.TempDir(), port)
+	snap, err := loop.Snapshot(Include{})
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	h := snap.Ports[0].Health
-	if h == nil || h.Status != state.HealthFail || h.Code != http.StatusServiceUnavailable {
-		t.Fatalf("health = %+v, want fail/503", h)
+	health := snap.Ports[0].Health
+	if health == nil || health.Status != state.HealthFail || health.Code != http.StatusServiceUnavailable {
+		t.Fatalf("health = %+v, want fail/503", health)
 	}
 }
 
@@ -226,15 +226,15 @@ func TestNoHealthPathMeansNoProbe(t *testing.T) {
 	srv, port := healthServer(t, http.StatusOK)
 	defer srv.Close()
 
-	dir := resolved(t, t.TempDir())
-	writeConfig(t, dir, "name: plain\nservices:\n  - name: api\n    port: "+strconv.Itoa(port)+"\n")
-	l := New(Options{
+	root := resolved(t, t.TempDir())
+	writeConfig(t, root, "name: plain\nservices:\n  - name: api\n    port: "+strconv.Itoa(port)+"\n")
+	loop := New(Options{
 		DaemonVersion: "test",
 		Scan: func(Include) ([]ports.ListeningPort, error) {
-			return []ports.ListeningPort{{Port: port, BindAddress: "127.0.0.1", PID: 4242, Process: "python3", Cwd: dir}}, nil
+			return []ports.ListeningPort{{Port: port, BindAddress: "127.0.0.1", PID: 4343, Process: "node", Cwd: root}}, nil
 		},
 	})
-	snap, err := l.Snapshot(Include{})
+	snap, err := loop.Snapshot(Include{})
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}

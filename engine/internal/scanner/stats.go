@@ -19,12 +19,11 @@ import (
 // ports and useless for a load meter. Sampling them apart lets the meter run at
 // 1 s without pinning the daemon to a full `lsof`/`netstat` scan at that rate.
 //
-// It parks whenever nothing is subscribed, so an unsubscribed daemon —
-// answering `oberth list` and `daemon status` over RPC — samples nothing at
-// all.
+// It parks whenever nothing is subscribed, so a daemon that is only answering
+// `oberth list` and `daemon status` over RPC samples nothing whatsoever.
 func (l *Loop) runStats(ctx context.Context) {
-	interval := l.statsInterval()
-	timer := time.NewTimer(interval)
+	cadence := l.statsInterval()
+	timer := time.NewTimer(cadence)
 	defer timer.Stop()
 
 	for ctx.Err() == nil {
@@ -44,7 +43,7 @@ func (l *Loop) runStats(ctx context.Context) {
 		l.sampleStatsContext(round, include)
 		cancel()
 
-		armTimer(timer, interval)
+		armTimer(timer, cadence)
 		select {
 		case <-ctx.Done():
 			return
@@ -53,16 +52,18 @@ func (l *Loop) runStats(ctx context.Context) {
 	}
 }
 
-// statsInterval is the cadence, clamped to something a machine can sustain.
+// statsInterval is the cadence this loop samples at, clamped to something a
+// machine can sustain.
 func (l *Loop) statsInterval() time.Duration {
 	d := l.opts.StatsInterval
-	if d <= 0 {
+	switch {
+	case d <= 0:
 		return StatsInterval
-	}
-	if d < MinStatsInterval {
+	case d < MinStatsInterval:
 		return MinStatsInterval
+	default:
+		return d
 	}
-	return d
 }
 
 // statsBasis is what one stats round was sampled against: the snapshot it read
@@ -85,10 +86,10 @@ func (l *Loop) captureStatsBasis() (statsBasis, bool) {
 	return statsBasis{snap: l.snap, scan: l.committedSeq, stats: l.statsScanSeq}, true
 }
 
-// sampleStats runs one stats-only tick and publishes what moved.
+// sampleStats runs a single stats-only tick and publishes whatever moved.
 //
-// It never touches the scan interval, the scan counters or `lastScanAt`: the
-// port scan's adaptive cadence, the RPC cache TTL and `daemon status` all read
+// It leaves the scan interval, the scan counters and `lastScanAt` alone: the
+// port scan's adaptive cadence, the RPC cache TTL and `daemon status` read
 // exactly what they read before this tick existed.
 func (l *Loop) sampleStats(include Include) {
 	l.sampleStatsContext(context.Background(), include)
@@ -393,11 +394,11 @@ func statsPIDs(pp []state.Port) []int {
 // Every other field is carried through untouched, which makes a stats delta
 // invisible to a subscriber that did not ask for stats.
 //
-// A row the sample has nothing to say about keeps the stats it had: a pid that
-// vanished between the scan and this tick is dropped from the sample, not
-// zeroed on the wire, and the next port scan is what removes the row.
-// `connections` is carried forward too — counting them is an `lsof` (or `ss`,
-// or `netstat`) per port and stays on the scan tick.
+// A row the sample says nothing about keeps the stats it already had: a pid
+// that vanished between the scan and this tick is dropped from the sample
+// rather than zeroed on the wire, and the next port scan is what removes the
+// row. `connections` is carried forward as well — counting them costs an
+// `lsof` (or `ss`, or `netstat`) per port and stays on the scan tick.
 func refreshStats(rows []state.Port, samples map[int]ports.ProcSample) []state.Port {
 	return refreshStatsAgainst(rows, samples, nil)
 }
