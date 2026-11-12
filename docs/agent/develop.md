@@ -31,7 +31,7 @@ this page covers only how to move these files.
 From the repository root:
 
 ```sh
-mage build          # engine + Jev adapter
+mage build          # engine + optional adapter
 mage buildEngine    # engine only → ./bin/oberth
 mage runCLI "status --json"
 mage runDaemon      # start a daemon with the CLI just built (isolated use)
@@ -132,7 +132,7 @@ in". `scope` matches the tree you touched (`engine`, `docs`, `ci`, `brand`, …)
 
 - CLI and RPC contract: [cli.md](../cli.md); product boundaries: [product.md](../product.md);
   implementation and the chain of facts: [architecture.md](architecture.md)
-- Optional attention adapter: [jev-adapter.md](jev-adapter.md)
+- Optional attention adapter: [attn-adapter.md](attn-adapter.md)
 - Integrating orchestrators and dev servers: [integrations.md](../integrations.md)
 - Client: [option-berth-macos](https://github.com/SheathedSharp/option-berth-macos)
 - Coding-agent skill: [option-berth-skill](https://github.com/SheathedSharp/option-berth-skill)

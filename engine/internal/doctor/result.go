@@ -31,7 +31,7 @@ func skip(summary, detail string) rpc.DoctorCheck {
 }
 
 // skipWithFix is skip for a check that did not apply *yet* and whose fix is the
-// way to make it apply — the optional Jev row, whose fix turns it on.
+// way to make it apply — the optional model row, whose fix turns it on.
 func skipWithFix(summary, detail, fix string) rpc.DoctorCheck {
 	row := skip(summary, detail)
 	row.Fix = fix
