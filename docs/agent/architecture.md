@@ -38,8 +38,8 @@ as running, never affects group status, and disappears when the daemon restarts.
 sidecar serves diagnostic reads only and never decides whether anything runs or is skipped.
 
 The core is driven by this project's own requirements; databases, syscalls and platform adapters may
-keep mature implementations, and nothing is rewritten for the sake of a "self-authored ratio". Origins
-and copyright stay separate in [engine/UPSTREAM.md](../../engine/UPSTREAM.md) and the licenses.
+keep mature implementations, and nothing is rewritten for the sake of a "self-authored ratio". The
+licenses and third-party notices carry the origins and copyright that apply.
 
 The closing end of a worktree also rides this chain: `${worktree}` derives from the checkout root path,
 and the daemon records `identity → root path → most recent group name / claim key` in

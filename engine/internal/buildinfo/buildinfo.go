@@ -3,8 +3,8 @@
 //
 // It is deliberately separate from the update check. `oberth version --check`
 // only reads the latest published tag; nothing in this tree downloads a binary
-// or replaces the running executable — see UPSTREAM.md for why the fork removed
-// that machinery instead of repointing it.
+// or replaces the running executable — the fork removed that machinery instead
+// of repointing it.
 package buildinfo
 
 import (
