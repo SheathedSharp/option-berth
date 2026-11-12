@@ -31,25 +31,25 @@
 **9,621**（对照 `f4c50506`）、**9,659**（对照 `be48afbe`），生产 3,852、
 测试 5,758。
 
-2026-11-12 的 ports 与 killer 重写在此基础上继续下降：对照 `26dbcae` 为 **8,689**
-行 / 636 段，分布在 131 个文件（生产 3,478、测试 5,211）。
+2026-11-12 的 ports、killer 与 groups 重写在此基础上继续下降：对照 `26dbcae` 为
+**7,847** 行 / 535 段，分布在 100 个文件（生产 3,142、测试 4,705）。
 
-按包（对照 `26dbcae`，ports 与 killer 重写后）：
+按包（对照 `26dbcae`，ports、killer 与 groups 重写后）：
 
 | 包 | 生产 | 测试 | 合计 |
 | --- | ---: | ---: | ---: |
 | `internal/daemon` | 2,073 | 3,457 | 5,530 |
 | `internal/cmd` | 837 | 703 | 1,540 |
-| `internal/groups` | 336 | 506 | 842 |
+| `internal/groups` | 0 | 0 | 0 |
 | `internal/scanner` | 220 | 540 | 760 |
 | `internal/ports` | 0 | 0 | 0 |
 | `internal/killer` | 0 | 0 | 0 |
 | `internal/store` | 12 | 5 | 17 |
 
-`internal/claims`、`internal/display`、`internal/testenv`、`internal/ports`、
-`internal/killer` 与 `internal/store/claims*.go` 已经归零；`internal/docker` 只剩
-结构体字段与表驱动用例数据。`internal/store` 已整包重写：生产代码从 1,076 行降到
-199 行。
+`internal/claims`、`internal/display`、`internal/testenv`、`internal/groups`、
+`internal/ports`、`internal/killer` 与 `internal/store/claims*.go` 已经归零；
+`internal/docker` 只剩结构体字段与表驱动用例数据。`internal/store` 已整包重写：
+生产代码从 1,076 行降到 199 行。
 
 ```sh
 git clone https://github.com/raskrebs/sonar /tmp/sonar
