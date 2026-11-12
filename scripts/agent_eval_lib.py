@@ -829,6 +829,8 @@ class ScenarioEnv:
         container survives that stop. Compose labels carry the project and its
         working directory; anything under this run's root belongs to the run.
         """
+        if not any((root / "docker-compose.yml").exists() for root in self.projects):
+            return []
         try:
             listed = subprocess.run(
                 ["docker", "ps", "-a", "--format",
