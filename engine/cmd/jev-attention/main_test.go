@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn"
 	"github.com/sheathedsharp/option-berth/engine/internal/jev"
 )
 
@@ -280,7 +280,7 @@ func TestRunPreflightWritesFactRequestWhenJevUnavailable(t *testing.T) {
 func TestPreflightContextOffersOnlyFixedRequestOptions(t *testing.T) {
 	request := jev.Preflight{
 		Intent:  jev.Intent{Action: "restart_service"},
-		Options: []attention.Option{{ID: "restart_service"}, {ID: "inspect_manifest"}, {ID: "continue_without_action"}},
+		Options: []attn.Option{{ID: "restart_service"}, {ID: "inspect_manifest"}, {ID: "continue_without_action"}},
 	}
 	ctx := preflightTaskContext(request, jev.TaskContext{Task: "prepare the integration test"})
 	if ctx.Task == "" || len(ctx.AuthorizedOptions) != len(request.Options) {

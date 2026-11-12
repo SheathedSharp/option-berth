@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn"
 	"github.com/sheathedsharp/option-berth/engine/internal/jev"
 )
 
@@ -40,31 +40,31 @@ type OptionView struct {
 }
 
 type HILRequest struct {
-	Event      attention.Event      `json:"event"`
-	Events     []attention.Event    `json:"events,omitempty"`
-	Evidence   []attention.Evidence `json:"evidence"`
-	Options    []OptionView         `json:"options"`
-	FirstSeen  string               `json:"first_seen,omitempty"`
-	LastSeen   string               `json:"last_seen,omitempty"`
-	FreshUntil string               `json:"fresh_until,omitempty"`
+	Event      attn.Event      `json:"event"`
+	Events     []attn.Event    `json:"events,omitempty"`
+	Evidence   []attn.Evidence `json:"evidence"`
+	Options    []OptionView    `json:"options"`
+	FirstSeen  string          `json:"first_seen,omitempty"`
+	LastSeen   string          `json:"last_seen,omitempty"`
+	FreshUntil string          `json:"fresh_until,omitempty"`
 }
 
 type Output struct {
-	Status            string                `json:"status"`
-	Reason            string                `json:"reason,omitempty"`
-	AttentionPath     string                `json:"attention_path,omitempty"`
-	TelemetryPath     string                `json:"telemetry_path,omitempty"`
-	WorktreeID        string                `json:"worktree_id,omitempty"`
-	AttentionRevision string                `json:"attention_revision,omitempty"`
-	EventID           string                `json:"event_id,omitempty"`
-	ContextID         string                `json:"context_id,omitempty"`
-	SessionID         string                `json:"session_id,omitempty"`
-	FreshUntil        string                `json:"fresh_until,omitempty"`
-	Assessment        *attention.Assessment `json:"assessment,omitempty"`
-	JevCalled         bool                  `json:"jev_called,omitempty"`
-	Cached            bool                  `json:"cached,omitempty"`
-	Decision          *HILDecision          `json:"decision,omitempty"`
-	Request           *HILRequest           `json:"request,omitempty"`
+	Status            string           `json:"status"`
+	Reason            string           `json:"reason,omitempty"`
+	AttentionPath     string           `json:"attention_path,omitempty"`
+	TelemetryPath     string           `json:"telemetry_path,omitempty"`
+	WorktreeID        string           `json:"worktree_id,omitempty"`
+	AttentionRevision string           `json:"attention_revision,omitempty"`
+	EventID           string           `json:"event_id,omitempty"`
+	ContextID         string           `json:"context_id,omitempty"`
+	SessionID         string           `json:"session_id,omitempty"`
+	FreshUntil        string           `json:"fresh_until,omitempty"`
+	Assessment        *attn.Assessment `json:"assessment,omitempty"`
+	JevCalled         bool             `json:"jev_called,omitempty"`
+	Cached            bool             `json:"cached,omitempty"`
+	Decision          *HILDecision     `json:"decision,omitempty"`
+	Request           *HILRequest      `json:"request,omitempty"`
 	// WorktreeRoot is used only for the local quality ledger and is deliberately
 	// excluded from the agent-facing JSON output: an absolute path is not a
 	// fact the agent needs, and leaking one would break the redaction the
@@ -88,13 +88,13 @@ type SubscriptionStats struct {
 // Conservative routing thresholds, not claims of calibrated probabilities.
 // Even a confident model cannot authorize a side effect. A close Choice
 // distribution also needs the user's context.
-func DecideHIL(a *attention.Assessment) HILDecision {
+func DecideHIL(a *attn.Assessment) HILDecision {
 	d := HILDecision{NeedsHuman: true, Reason: "assessment_unavailable", Policy: "oberth.hil/v1"}
 	if a == nil {
 		return d
 	}
 	d.NextOption = a.NextOption
-	policy, ok := attention.OptionPolicyFor(a.NextOption)
+	policy, ok := attn.OptionPolicyFor(a.NextOption)
 	if !ok {
 		d.Reason = "unknown_option"
 		return d
@@ -157,8 +157,8 @@ func ReadStatus(ctx context.Context, binary, project string) (Status, error) {
 	return status, nil
 }
 
-func ArtifactFor(s Status) (attention.Artifact, error) {
-	a, err := attention.ReadFresh(s.AttentionPath, time.Time{})
+func ArtifactFor(s Status) (attn.Artifact, error) {
+	a, err := attn.ReadFresh(s.AttentionPath, time.Time{})
 	if err != nil {
 		return a, jev.ErrStale
 	}
@@ -255,7 +255,7 @@ func Auto(ctx context.Context, binary, project string, client jev.Client, task j
 			if allowed != option.ID {
 				continue
 			}
-			policy, ok := attention.OptionPolicyFor(option.ID)
+			policy, ok := attn.OptionPolicyFor(option.ID)
 			if !ok {
 				return Output{}, errors.New("runner: unknown fixed option")
 			}

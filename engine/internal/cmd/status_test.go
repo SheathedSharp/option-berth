@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
@@ -44,20 +44,20 @@ func TestPublishAttentionWritesFactArtifact(t *testing.T) {
 	if path == "" {
 		t.Fatal("publishAttention returned no path")
 	}
-	artifact, err := attention.Read(path)
+	artifact, err := attn.Read(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if doc.AttentionRevision != artifact.StateRevision {
 		t.Fatalf("attention_revision = %q, artifact state_revision = %q", doc.AttentionRevision, artifact.StateRevision)
 	}
-	if artifact.Event.Kind != attention.EventServiceFailed || artifact.Assessment != nil {
+	if artifact.Event.Kind != attn.EventServiceFailed || artifact.Assessment != nil {
 		t.Fatalf("artifact = %+v, want fact-only service failure", artifact)
 	}
-	if err := attention.Clear(home, root); err != nil {
+	if err := attn.Clear(home, root); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := attention.Read(path); err == nil {
+	if _, err := attn.Read(path); err == nil {
 		t.Fatal("cleared attention artifact still exists")
 	}
 }
@@ -78,13 +78,13 @@ func TestPublishAttentionPreservesAssessmentOnStableRefresh(t *testing.T) {
 		t.Fatal("publishAttention returned no path")
 	}
 	needsHuman := 0.9
-	if err := attention.UpdateAssessment(path, attention.Assessment{NeedsHuman: &needsHuman, NextOption: "restart_service"}); err != nil {
+	if err := attn.UpdateAssessment(path, attn.Assessment{NeedsHuman: &needsHuman, NextOption: "restart_service"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := publishAttention(&doc); got != path {
 		t.Fatalf("path changed across refresh: %q -> %q", path, got)
 	}
-	artifact, err := attention.Read(path)
+	artifact, err := attn.Read(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,13 +115,13 @@ func TestPublishAttentionCarriesScopedPortsAndHistory(t *testing.T) {
 	if path == "" {
 		t.Fatal("publishAttention returned no path")
 	}
-	artifact, err := attention.Read(path)
+	artifact, err := attn.Read(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// One event, not two: the scoped listener is a fact `status` shows, and an
 	// undeclared listener is no longer an anomaly worth a handoff.
-	if len(artifact.Events) != 1 || artifact.Events[0].Kind != attention.EventManifestConflict {
+	if len(artifact.Events) != 1 || artifact.Events[0].Kind != attn.EventManifestConflict {
 		t.Fatalf("events = %+v, want the manifest conflict only", artifact.Events)
 	}
 }
@@ -149,7 +149,7 @@ func TestPublishAttentionClearsAfterRecovery(t *testing.T) {
 	if recovered.AttentionPath != "" || recovered.AttentionRevision != "" {
 		t.Fatalf("recovery left status handoff fields: path=%q revision=%q", recovered.AttentionPath, recovered.AttentionRevision)
 	}
-	if _, err := attention.Read(path); err == nil {
+	if _, err := attn.Read(path); err == nil {
 		t.Fatal("recovery left stale attention artifact")
 	}
 }
@@ -386,7 +386,7 @@ func TestPublishAttentionClearsWhenDisabled(t *testing.T) {
 	if got := publishAttention(&doc); got != "" {
 		t.Fatalf("still published %q after the settings file was removed", got)
 	}
-	if _, err := attention.Read(path); err == nil {
+	if _, err := attn.Read(path); err == nil {
 		t.Fatal("the artifact outlived the consent it was published under")
 	}
 }

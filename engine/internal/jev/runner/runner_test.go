@@ -13,54 +13,54 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn"
 	"github.com/sheathedsharp/option-berth/engine/internal/jev"
 )
 
 func probability(v float64) *float64 { return &v }
 
 func TestHILPolicyBoundaries(t *testing.T) {
-	base := func() *attention.Assessment {
-		return &attention.Assessment{
+	base := func() *attn.Assessment {
+		return &attn.Assessment{
 			NeedsHuman: probability(.1), Confidence: probability(.9), TaskRelevant: probability(.9),
 			NextOption: "inspect_logs", Probabilities: map[string]float64{"inspect_logs": .8, "restart_service": .2},
 		}
 	}
 	cases := []struct {
 		name   string
-		mutate func(*attention.Assessment)
+		mutate func(*attn.Assessment)
 		human  bool
 		reason string
 	}{
-		{"safe inspection", func(*attention.Assessment) {}, false, "confident_read_only_step"},
-		{"restart despite low score", func(a *attention.Assessment) { a.NextOption = "restart_service" }, true, "explicit_choice_required"},
-		{"start", func(a *attention.Assessment) { a.NextOption = "start_service" }, true, "explicit_choice_required"},
-		{"stop", func(a *attention.Assessment) { a.NextOption = "stop_service" }, true, "explicit_choice_required"},
-		{"adopt", func(a *attention.Assessment) { a.NextOption = "adopt_manifest" }, true, "explicit_choice_required"},
-		{"context", func(a *attention.Assessment) { a.NextOption = "ask_user_for_context" }, true, "explicit_choice_required"},
-		{"high probability", func(a *attention.Assessment) { a.NeedsHuman = probability(.70) }, true, "human_probability_high"},
-		{"threshold is safe at .30", func(a *attention.Assessment) { a.NeedsHuman = probability(.30) }, false, "confident_read_only_step"},
-		{"uncertain probability", func(a *attention.Assessment) { a.NeedsHuman = probability(.31) }, true, "uncertain_assessment"},
-		{"low confidence", func(a *attention.Assessment) { a.Confidence = probability(.69) }, true, "uncertain_assessment"},
-		{"confidence threshold is safe at .70", func(a *attention.Assessment) { a.Confidence = probability(.70) }, false, "confident_read_only_step"},
-		{"close options", func(a *attention.Assessment) {
+		{"safe inspection", func(*attn.Assessment) {}, false, "confident_read_only_step"},
+		{"restart despite low score", func(a *attn.Assessment) { a.NextOption = "restart_service" }, true, "explicit_choice_required"},
+		{"start", func(a *attn.Assessment) { a.NextOption = "start_service" }, true, "explicit_choice_required"},
+		{"stop", func(a *attn.Assessment) { a.NextOption = "stop_service" }, true, "explicit_choice_required"},
+		{"adopt", func(a *attn.Assessment) { a.NextOption = "adopt_manifest" }, true, "explicit_choice_required"},
+		{"context", func(a *attn.Assessment) { a.NextOption = "ask_user_for_context" }, true, "explicit_choice_required"},
+		{"high probability", func(a *attn.Assessment) { a.NeedsHuman = probability(.70) }, true, "human_probability_high"},
+		{"threshold is safe at .30", func(a *attn.Assessment) { a.NeedsHuman = probability(.30) }, false, "confident_read_only_step"},
+		{"uncertain probability", func(a *attn.Assessment) { a.NeedsHuman = probability(.31) }, true, "uncertain_assessment"},
+		{"low confidence", func(a *attn.Assessment) { a.Confidence = probability(.69) }, true, "uncertain_assessment"},
+		{"confidence threshold is safe at .70", func(a *attn.Assessment) { a.Confidence = probability(.70) }, false, "confident_read_only_step"},
+		{"close options", func(a *attn.Assessment) {
 			a.Probabilities = map[string]float64{"inspect_logs": .55, "restart_service": .45}
 		}, true, "close_options"},
-		{"option gap threshold is safe at .20", func(a *attention.Assessment) {
+		{"option gap threshold is safe at .20", func(a *attn.Assessment) {
 			a.Probabilities = map[string]float64{"inspect_logs": .60, "restart_service": .40}
 		}, false, "confident_read_only_step"},
-		{"missing confidence", func(a *attention.Assessment) { a.Confidence = nil }, true, "incomplete_assessment"},
-		{"unknown option", func(a *attention.Assessment) { a.NextOption = "run_shell" }, true, "unknown_option"},
-		{"ignore relevant event", func(a *attention.Assessment) {
+		{"missing confidence", func(a *attn.Assessment) { a.Confidence = nil }, true, "incomplete_assessment"},
+		{"unknown option", func(a *attn.Assessment) { a.NextOption = "run_shell" }, true, "unknown_option"},
+		{"ignore relevant event", func(a *attn.Assessment) {
 			a.NextOption = "continue_without_action"
 			a.Probabilities = map[string]float64{"continue_without_action": 1}
 		}, true, "relevant_event_requires_choice"},
-		{"ignore unrelated event", func(a *attention.Assessment) {
+		{"ignore unrelated event", func(a *attn.Assessment) {
 			a.TaskRelevant = probability(.1)
 			a.NextOption = "continue_without_action"
 			a.Probabilities = map[string]float64{"continue_without_action": 1}
 		}, false, "confident_read_only_step"},
-		{"relevance threshold is safe at .30", func(a *attention.Assessment) {
+		{"relevance threshold is safe at .30", func(a *attn.Assessment) {
 			a.TaskRelevant = probability(.30)
 			a.NextOption = "continue_without_action"
 			a.Probabilities = map[string]float64{"continue_without_action": 1}
@@ -107,18 +107,18 @@ func TestHILPolicyBoundaries(t *testing.T) {
 	}
 }
 
-func runnerFixture(t *testing.T) (Status, attention.Artifact) {
+func runnerFixture(t *testing.T) (Status, attn.Artifact) {
 	t.Helper()
 	root := t.TempDir()
 	now := time.Now().UTC()
-	a, ok := attention.Derive(attention.Facts{WorktreeRoot: root, ObservedAt: now, Services: []attention.Service{
-		{Name: "api", LastExit: &attention.Exit{Code: 1, Reason: "start_failed", At: now, RunID: "api-1"}},
-		{Name: "worker", LastExit: &attention.Exit{Code: 1, Reason: "crashed", At: now, RunID: "worker-1"}},
+	a, ok := attn.Derive(attn.Facts{WorktreeRoot: root, ObservedAt: now, Services: []attn.Service{
+		{Name: "api", LastExit: &attn.Exit{Code: 1, Reason: "start_failed", At: now, RunID: "api-1"}},
+		{Name: "worker", LastExit: &attn.Exit{Code: 1, Reason: "crashed", At: now, RunID: "worker-1"}},
 	}}, now, time.Minute)
 	if !ok {
 		t.Fatal("fixture has no anomaly")
 	}
-	path, err := attention.Write(t.TempDir(), a)
+	path, err := attn.Write(t.TempDir(), a)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func runnerFixture(t *testing.T) (Status, attention.Artifact) {
 	return s, a
 }
 
-func authorizedFor(a attention.Artifact) []string {
+func authorizedFor(a attn.Artifact) []string {
 	result := make([]string, 0, len(a.Options))
 	for _, option := range a.Options {
 		result = append(result, option.ID)
@@ -153,8 +153,8 @@ func TestAutoAssessesRefreshesCachesAndBindsTask(t *testing.T) {
 		calls++
 		var body struct {
 			State struct {
-				Authorized []string          `json:"authorized_options"`
-				Events     []attention.Event `json:"events"`
+				Authorized []string     `json:"authorized_options"`
+				Events     []attn.Event `json:"events"`
 			} `json:"state"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -182,7 +182,7 @@ func TestAutoAssessesRefreshesCachesAndBindsTask(t *testing.T) {
 	if err != nil || out.Status != "continue" || out.Cached || !out.JevCalled || calls != 1 || reads != 2 {
 		t.Fatalf("out=%+v err=%v calls=%d reads=%d", out, err, calls, reads)
 	}
-	stored, err := attention.Read(s.AttentionPath)
+	stored, err := attn.Read(s.AttentionPath)
 	if err != nil || stored.Assessment == nil || stored.StateRevision != a.StateRevision || stored.EventID != a.EventID {
 		t.Fatalf("stored=%+v err=%v", stored, err)
 	}
@@ -418,7 +418,7 @@ func TestAutoIntersectsBroadKnownAuthorizationWithEventCandidates(t *testing.T) 
 	s, artifact := runnerFixture(t)
 	wanted := artifact.Options[0].ID
 	absent := ""
-	for _, policy := range attention.OptionCatalog() {
+	for _, policy := range attn.OptionCatalog() {
 		found := false
 		for _, option := range artifact.Options {
 			if policy.ID == option.ID {

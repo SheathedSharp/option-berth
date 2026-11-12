@@ -10,27 +10,27 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn"
 )
 
-func testArtifact(t *testing.T) (string, attention.Artifact) {
+func testArtifact(t *testing.T) (string, attn.Artifact) {
 	t.Helper()
 	home := t.TempDir()
 	root := "/Users/alice/work/my-repo"
 	now := time.Now().UTC()
-	a, ok := attention.Derive(attention.Facts{
+	a, ok := attn.Derive(attn.Facts{
 		StateRevision: "184",
 		ObservedAt:    now,
 		WorktreeRoot:  root,
 		Branch:        "feature/attention",
-		Services: []attention.Service{{Name: "api", LastExit: &attention.Exit{
+		Services: []attn.Service{{Name: "api", LastExit: &attn.Exit{
 			Code: 1, Reason: "start_failed", At: now,
 		}}},
 	}, now, time.Minute)
 	if !ok {
 		t.Fatal("expected anomaly artifact")
 	}
-	path, err := attention.Write(home, a)
+	path, err := attn.Write(home, a)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestJevEvaluateRedactsStateAndPersistsOnlyValidatedAssessment(t *testing.T)
 	if err := Persist(path, artifact, result); err != nil {
 		t.Fatal(err)
 	}
-	got, err := attention.Read(path)
+	got, err := attn.Read(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestJevNoKeyLeavesArtifactUntouched(t *testing.T) {
 	if !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("err = %v, want ErrUnavailable", err)
 	}
-	got, err := attention.Read(path)
+	got, err := attn.Read(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestJevRejectsInvalidProbabilitiesAndUnauthorizedChoice(t *testing.T) {
 	if !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("err = %v, want unavailable validation error", err)
 	}
-	got, readErr := attention.Read(path)
+	got, readErr := attn.Read(path)
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
@@ -142,35 +142,35 @@ func TestJevRejectsInvalidProbabilitiesAndUnauthorizedChoice(t *testing.T) {
 
 func TestJevRejectsStaleArtifactBeforeRemoteCall(t *testing.T) {
 	now := time.Now().UTC().Add(-2 * time.Minute)
-	a, ok := attention.Derive(attention.Facts{StateRevision: "1", ObservedAt: now, WorktreeRoot: "/tmp/repo", Services: []attention.Service{{Name: "api", LastExit: &attention.Exit{Reason: "start_failed", At: now}}}}, now, time.Second)
+	a, ok := attn.Derive(attn.Facts{StateRevision: "1", ObservedAt: now, WorktreeRoot: "/tmp/repo", Services: []attn.Service{{Name: "api", LastExit: &attn.Exit{Reason: "start_failed", At: now}}}}, now, time.Second)
 	if !ok {
 		t.Fatal("expected anomaly artifact")
 	}
 	_, err := (Client{APIKey: "key"}).Evaluate(context.Background(), a, TaskContext{Task: "fix", AuthorizedOptions: []string{"inspect_logs"}})
-	if !errors.Is(err, attention.ErrStale) {
+	if !errors.Is(err, attn.ErrStale) {
 		t.Fatalf("err = %v, want ErrStale", err)
 	}
 }
 
 func TestFixedOptionCatalogIsKnownAndDefensiveCopy(t *testing.T) {
-	catalog := attention.OptionCatalog()
+	catalog := attn.OptionCatalog()
 	if len(catalog) < 9 {
 		t.Fatalf("catalog = %+v, want the complete fixed option vocabulary", catalog)
 	}
 	for _, id := range []string{"inspect_manifest", "start_service", "stop_service", "adopt_manifest"} {
-		policy, ok := attention.OptionPolicyFor(id)
+		policy, ok := attn.OptionPolicyFor(id)
 		if !ok || policy.ID != id {
 			t.Fatalf("option %q missing from catalog", id)
 		}
 	}
 	catalog[0].ID = "arbitrary_shell"
-	if attention.KnownOptionID("arbitrary_shell") {
+	if attn.KnownOptionID("arbitrary_shell") {
 		t.Fatal("catalog mutation changed the fixed vocabulary")
 	}
 }
 
 func TestFilterAuthorizedOptionsIntersectsBroadFixedAllowList(t *testing.T) {
-	options := []attention.Option{{ID: "inspect_logs"}, {ID: "restart_service"}}
+	options := []attn.Option{{ID: "inspect_logs"}, {ID: "restart_service"}}
 	got, err := FilterAuthorizedOptions(options, []string{
 		"continue_without_action", "restart_service", "inspect_logs", "inspect_logs",
 	})
@@ -189,7 +189,7 @@ func TestFilterAuthorizedOptionsIntersectsBroadFixedAllowList(t *testing.T) {
 }
 
 func TestOptionDescriptionsNeverBecomeShellCommands(t *testing.T) {
-	for _, policy := range attention.OptionCatalog() {
+	for _, policy := range attn.OptionCatalog() {
 		if policy.Description == "" || strings.ContainsAny(policy.Description, "\n\r") {
 			t.Fatalf("unsafe description for %q: %q", policy.ID, policy.Description)
 		}

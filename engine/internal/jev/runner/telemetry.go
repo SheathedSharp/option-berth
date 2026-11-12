@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn"
 	"github.com/sheathedsharp/option-berth/engine/internal/jev"
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 )
@@ -92,7 +92,7 @@ func AppendLifecycleTelemetry(home, project, status, sessionID string, stats *Su
 	_, _ = jev.AppendTelemetry(home, record)
 }
 
-func RecordManualAssessment(home, artifactPath string, artifact attention.Artifact, task jev.TaskContext, result *jev.Result, callErr error, source string) string {
+func RecordManualAssessment(home, artifactPath string, artifact attn.Artifact, task jev.TaskContext, result *jev.Result, callErr error, source string) string {
 	record := jev.TelemetryRecord{
 		Kind: "assessment", Source: source, Project: jev.ProjectLabel(artifact.WorktreeRoot),
 		WorktreeID: jev.WorktreeID(artifact.WorktreeRoot), EventID: artifact.EventID,
@@ -209,7 +209,7 @@ func Feedback(feedbackPath, artifactPath, project string) (jev.FeedbackRecordRes
 		return jev.FeedbackRecordResult{}, fmt.Errorf("read feedback: %w", err)
 	}
 	if strings.TrimSpace(artifactPath) != "" {
-		artifact, err := attention.Read(artifactPath)
+		artifact, err := attn.Read(artifactPath)
 		if err != nil {
 			return jev.FeedbackRecordResult{}, fmt.Errorf("read attention artifact: %w", err)
 		}

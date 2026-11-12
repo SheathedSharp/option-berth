@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn"
 )
 
 // `enable` is the one command that both writes a secret and proves it works.
@@ -187,17 +187,17 @@ func TestKeyFingerprintNeverEchoesTheKey(t *testing.T) {
 // task's absolute paths or the key.
 func TestPreviewRequestShowsTheBoundaryWithoutSecrets(t *testing.T) {
 	declared := 3000
-	artifact := attention.Artifact{
-		Schema: attention.Schema, EventID: "event-1", StateRevision: "rev-1",
+	artifact := attn.Artifact{
+		Schema: attn.Schema, EventID: "event-1", StateRevision: "rev-1",
 		WorktreeRoot: "/Users/alice/work/private-project", Branch: "feature/x",
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano),
 		FreshUntil:  time.Now().UTC().Add(time.Minute).Format(time.RFC3339Nano),
-		Event: attention.Event{
-			Kind: attention.EventServiceFailed, Service: "api", Reason: "start_failed",
+		Event: attn.Event{
+			Kind: attn.EventServiceFailed, Service: "api", Reason: "start_failed",
 			DeclaredPort: &declared, At: time.Now().UTC().Format(time.RFC3339Nano),
 		},
-		Evidence: []attention.Evidence{{Ref: "status.worktree.services[api].last_exit", LogPath: "/Users/alice/work/private-project/api.log"}},
-		Options:  []attention.Option{{ID: "inspect_logs"}, {ID: "restart_service"}},
+		Evidence: []attn.Evidence{{Ref: "status.worktree.services[api].last_exit", LogPath: "/Users/alice/work/private-project/api.log"}},
+		Options:  []attn.Option{{ID: "inspect_logs"}, {ID: "restart_service"}},
 	}
 	body, err := PreviewRequest(artifact, TaskContext{
 		Task: "fix the api startup", AuthorizedOptions: []string{"inspect_logs", "restart_service"},
@@ -229,9 +229,9 @@ func TestPreviewRequestShowsTheBoundaryWithoutSecrets(t *testing.T) {
 }
 
 func TestPreviewRequiresAnAuthorizedOption(t *testing.T) {
-	artifact := attention.Artifact{
-		Options: []attention.Option{{ID: "inspect_logs"}},
-		Event:   attention.Event{Kind: attention.EventServiceFailed, Service: "api"},
+	artifact := attn.Artifact{
+		Options: []attn.Option{{ID: "inspect_logs"}},
+		Event:   attn.Event{Kind: attn.EventServiceFailed, Service: "api"},
 	}
 	if _, err := PreviewRequest(artifact, TaskContext{
 		Task: "fix it", AuthorizedOptions: []string{"stop_service"},

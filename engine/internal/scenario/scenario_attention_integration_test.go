@@ -4,7 +4,7 @@ package scenario
 
 // These tests exercise the attention handoff at the boundary where a real
 // daemon and CLI produce the facts. Jev itself is covered with an injectable
-// HTTP server in internal/attention; this file deliberately never calls a
+// HTTP server in internal/attn; this file deliberately never calls a
 // remote model. The only human step in the product remains the fixed option
 // mapping documented by the skill and exercised by scripts/verify-attention-
 // handoff.py.

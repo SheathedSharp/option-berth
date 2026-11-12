@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn"
 )
 
 // KeySourceKind says where `enable` should read the secret from. The three
@@ -174,22 +174,22 @@ func defaultModelFor(provider string) string {
 
 // syntheticProbeArtifact is a fixed, dated event so the probe request is a
 // valid assessment request without any local facts.
-func syntheticProbeArtifact() attention.Artifact {
+func syntheticProbeArtifact() attn.Artifact {
 	at := time.Now().UTC()
 	code := 1
-	return attention.Artifact{
-		Schema:        attention.Schema,
+	return attn.Artifact{
+		Schema:        attn.Schema,
 		EventID:       "probe-connection-check",
 		StateRevision: "probe-connection-check",
 		WorktreeRoot:  "/probe",
 		GeneratedAt:   at.Format(time.RFC3339Nano),
 		FreshUntil:    at.Add(5 * time.Minute).Format(time.RFC3339Nano),
-		Event: attention.Event{
-			Kind: attention.EventServiceFailed, Service: "probe", Reason: "start_failed",
+		Event: attn.Event{
+			Kind: attn.EventServiceFailed, Service: "probe", Reason: "start_failed",
 			ExitCode: &code, At: at.Format(time.RFC3339Nano),
 		},
-		Evidence: []attention.Evidence{{Ref: "status.worktree.services[probe].last_exit"}},
-		Options:  []attention.Option{{ID: "inspect_logs"}, {ID: "continue_without_action"}},
+		Evidence: []attn.Evidence{{Ref: "status.worktree.services[probe].last_exit"}},
+		Options:  []attn.Option{{ID: "inspect_logs"}, {ID: "continue_without_action"}},
 	}
 }
 

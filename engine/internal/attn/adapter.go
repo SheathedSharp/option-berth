@@ -1,9 +1,9 @@
-package attention
+package attn
 
 // The adapter boundary between the deterministic artifact and the optional Jev
 // client (internal/jev).
 //
-// internal/attention owns the artifact and its on-disk protocol: identity,
+// internal/attn owns the artifact and its on-disk protocol: identity,
 // atomic publication, the read-modify-write lock, and the staleness signal.
 // internal/jev owns every call that leaves the machine. It needs the same lock
 // when it appends its local quality ledger, because that ledger and the

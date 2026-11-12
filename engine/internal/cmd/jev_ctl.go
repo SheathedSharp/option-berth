@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn"
 	"github.com/sheathedsharp/option-berth/engine/internal/jev"
 	"github.com/sheathedsharp/option-berth/engine/internal/jev/runner"
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
@@ -309,7 +309,7 @@ func runJevPreview(cmd *cobra.Command, _ []string) error {
 			return "No current anomaly, so there is nothing to assess."
 		})
 	}
-	artifact, err := attention.ReadFresh(status.AttentionPath, time.Time{})
+	artifact, err := attn.ReadFresh(status.AttentionPath, time.Time{})
 	if err != nil {
 		return failHint("stale", "the attention artifact is stale", jev.ReasonHint(jev.ReasonStale))
 	}

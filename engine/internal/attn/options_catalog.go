@@ -1,4 +1,4 @@
-package attention
+package attn
 
 // OptionPolicy is the fixed, human-facing vocabulary shared by the artifact,
 // Jev adapter, and agent skill. It intentionally describes a safe action

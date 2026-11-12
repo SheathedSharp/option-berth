@@ -9,12 +9,12 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn"
 )
 
 // PreviewRequest returns the body the client would POST for this artifact and
 // task, built by the same function the real call uses. It contacts nothing.
-func PreviewRequest(artifact attention.Artifact, task TaskContext) (map[string]any, error) {
+func PreviewRequest(artifact attn.Artifact, task TaskContext) (map[string]any, error) {
 	options, err := task.validate(artifact.Options)
 	if err != nil {
 		return nil, err

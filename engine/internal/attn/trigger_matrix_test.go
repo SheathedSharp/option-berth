@@ -1,4 +1,4 @@
-package attention
+package attn
 
 import (
 	"encoding/json"

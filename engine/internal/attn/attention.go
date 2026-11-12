@@ -2,7 +2,7 @@
 // can publish for a coding agent. It deliberately has no daemon or model
 // dependency: runtime facts remain option-berth's source of truth, while Jev
 // may enrich an artifact outside the control path.
-package attention
+package attn
 
 import (
 	"crypto/sha256"

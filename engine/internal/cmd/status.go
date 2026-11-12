@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn"
 	"github.com/sheathedsharp/option-berth/engine/internal/codefacts"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
@@ -380,14 +380,14 @@ func publishAttention(doc *statusDocument) string {
 	doc.AttentionPath = ""
 	doc.AttentionRevision = ""
 	doc.attentionEvent = false
-	facts := attention.Facts{
+	facts := attn.Facts{
 		WorktreeRoot: doc.Scope.Root,
 		Branch:       doc.Worktree.Branch,
-		Services:     make([]attention.Service, 0, len(doc.Worktree.Services)),
-		Machine:      make([]attention.Machine, 0, len(doc.Worktree.Machine)),
+		Services:     make([]attn.Service, 0, len(doc.Worktree.Services)),
+		Machine:      make([]attn.Machine, 0, len(doc.Worktree.Machine)),
 	}
 	for _, service := range doc.Worktree.Services {
-		item := attention.Service{
+		item := attn.Service{
 			Name:    service.Name,
 			Running: service.Running,
 		}
@@ -414,7 +414,7 @@ func publishAttention(doc *statusDocument) string {
 			item.StartedAt = *service.StartedAt
 		}
 		if service.LastExit != nil {
-			item.LastExit = &attention.Exit{
+			item.LastExit = &attn.Exit{
 				Code:   service.LastExit.Code,
 				Reason: service.LastExit.Reason,
 				RunID:  service.LastExit.RunID,
@@ -426,12 +426,12 @@ func publishAttention(doc *statusDocument) string {
 		facts.Services = append(facts.Services, item)
 	}
 	for _, machine := range doc.Worktree.Machine {
-		facts.Machine = append(facts.Machine, attention.Machine{
+		facts.Machine = append(facts.Machine, attn.Machine{
 			Name: machine.Name, Port: machine.Port, Listening: machine.Listening,
 		})
 	}
 	for _, port := range doc.Ports {
-		item := attention.Listener{Port: port.Port, Cwd: port.Cwd}
+		item := attn.Listener{Port: port.Port, Cwd: port.Cwd}
 		if port.ProjectRoot != nil {
 			item.ProjectRoot = *port.ProjectRoot
 		}
@@ -442,16 +442,16 @@ func publishAttention(doc *statusDocument) string {
 		if err != nil {
 			continue
 		}
-		facts.History = append(facts.History, attention.ExitHistory{
+		facts.History = append(facts.History, attn.ExitHistory{
 			Service: run.Name, Reason: run.Reason, RunID: run.ID, At: at,
 		})
 	}
-	facts.StateRevision = attention.Revision(facts)
+	facts.StateRevision = attn.Revision(facts)
 	facts.ObservedAt = time.Now().UTC()
-	artifact, ok := attention.Derive(facts, facts.ObservedAt, attention.DefaultTTL)
+	artifact, ok := attn.Derive(facts, facts.ObservedAt, attn.DefaultTTL)
 	if !ok {
 		// No anomaly: there is nothing to offer and nothing to publish.
-		_ = attention.Clear(paths.Dir(), doc.Scope.Root)
+		_ = attn.Clear(paths.Dir(), doc.Scope.Root)
 		return ""
 	}
 	doc.attentionEvent = true
@@ -459,10 +459,10 @@ func publishAttention(doc *statusDocument) string {
 		// The person has not opted in, so nothing is published. Clear a
 		// leftover artifact from before the enhancement was switched off:
 		// leaving it on disk would keep telling agents to assess.
-		_ = attention.Clear(paths.Dir(), doc.Scope.Root)
+		_ = attn.Clear(paths.Dir(), doc.Scope.Root)
 		return ""
 	}
-	path, err := attention.Write(paths.Dir(), artifact)
+	path, err := attn.Write(paths.Dir(), artifact)
 	if err != nil {
 		return ""
 	}

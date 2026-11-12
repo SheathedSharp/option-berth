@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn"
 )
 
 const (
@@ -44,7 +44,7 @@ var ErrUnavailable = errors.New("attention: Jev unavailable")
 // ErrStale is the artifact writer's sentinel, re-exported for callers that only
 // import this package: a response that arrived after the event changed must be
 // discarded, not attached.
-var ErrStale = attention.ErrStale
+var ErrStale = attn.ErrStale
 
 // TaskContext is supplied by the development agent for each assessment. The
 // adapter requires both a task summary and an explicit allow-list of options;
@@ -58,7 +58,7 @@ type TaskContext struct {
 // returns only the options offered by the current deterministic event. A broad
 // allow-list is useful to a long-running agent, but event candidates never
 // become permission merely because they appear in the artifact.
-func FilterAuthorizedOptions(options []attention.Option, authorized []string) ([]string, error) {
+func FilterAuthorizedOptions(options []attn.Option, authorized []string) ([]string, error) {
 	offered := make(map[string]bool, len(options))
 	for _, option := range options {
 		if option.ID != "" {
@@ -72,7 +72,7 @@ func FilterAuthorizedOptions(options []attention.Option, authorized []string) ([
 		if id == "" || seen[id] {
 			continue
 		}
-		if !attention.KnownOptionID(id) {
+		if !attn.KnownOptionID(id) {
 			return nil, fmt.Errorf("attention: authorization contains unknown option %q", id)
 		}
 		seen[id] = true
@@ -87,7 +87,7 @@ func FilterAuthorizedOptions(options []attention.Option, authorized []string) ([
 	return result, nil
 }
 
-func (t TaskContext) validate(options []attention.Option) ([]string, error) {
+func (t TaskContext) validate(options []attn.Option) ([]string, error) {
 	t.Task = strings.TrimSpace(t.Task)
 	if t.Task == "" {
 		return nil, errors.New("attention: task context is required")
@@ -188,7 +188,7 @@ type jevAnswer struct {
 // value that was used to construct it. Usage is not currently persisted in the
 // artifact; keeping it here lets a CLI report it without adding facts.
 type Result struct {
-	Assessment   attention.Assessment
+	Assessment   attn.Assessment
 	TaskRelevant float64
 	Model        string
 }
@@ -196,7 +196,7 @@ type Result struct {
 // Evaluate sends two Noul questions and, when there is more than one
 // authorized option, one Choice question. The caller must persist the result
 // with Persist; this method never mutates an artifact or executes an action.
-func (c Client) Evaluate(ctx context.Context, artifact attention.Artifact, task TaskContext) (Result, error) {
+func (c Client) Evaluate(ctx context.Context, artifact attn.Artifact, task TaskContext) (Result, error) {
 	client, err := c.normalized()
 	if err != nil {
 		return Result{}, err
@@ -204,7 +204,7 @@ func (c Client) Evaluate(ctx context.Context, artifact attention.Artifact, task 
 	if strings.TrimSpace(artifact.EventID) == "" || strings.TrimSpace(artifact.StateRevision) == "" {
 		return Result{}, errors.New("attention: artifact is missing identity")
 	}
-	if strings.TrimSpace(artifact.WorktreeRoot) == "" || artifact.Event.Kind == attention.EventNone {
+	if strings.TrimSpace(artifact.WorktreeRoot) == "" || artifact.Event.Kind == attn.EventNone {
 		return Result{}, errors.New("attention: artifact is missing event identity")
 	}
 	if _, err := parseFreshUntil(artifact); err != nil {
@@ -299,22 +299,22 @@ func assessmentContextID(task TaskContext, authorized []string) string {
 
 // CachedResult reuses a validated assessment only for the same live event and
 // explicit task/option context. A changed task must be assessed again.
-func CachedResult(artifact attention.Artifact, task TaskContext) (Result, bool) {
+func CachedResult(artifact attn.Artifact, task TaskContext) (Result, bool) {
 	options, err := task.validate(artifact.Options)
-	if err != nil || artifact.Assessment == nil || !attention.IsFresh(artifact, time.Time{}) || artifact.RecoveredAt != "" {
+	if err != nil || artifact.Assessment == nil || !attn.IsFresh(artifact, time.Time{}) || artifact.RecoveredAt != "" {
 		return Result{}, false
 	}
 	a := *artifact.Assessment
 	if a.ContextID != assessmentContextID(task, options) || a.TaskRelevant == nil {
 		return Result{}, false
 	}
-	if err := attention.AttachAssessment(&artifact, a); err != nil {
+	if err := attn.AttachAssessment(&artifact, a); err != nil {
 		return Result{}, false
 	}
 	return Result{Assessment: a, TaskRelevant: *a.TaskRelevant, Model: a.Model}, true
 }
 
-func safeState(a attention.Artifact, task TaskContext, authorized []string) jevState {
+func safeState(a attn.Artifact, task TaskContext, authorized []string) jevState {
 	refs := make([]string, 0, len(a.Evidence))
 	for _, evidence := range a.Evidence {
 		if ref := safeRef(evidence.Ref); ref != "" {
@@ -323,7 +323,7 @@ func safeState(a attention.Artifact, task TaskContext, authorized []string) jevS
 	}
 	events := a.Events
 	if len(events) == 0 {
-		events = []attention.Event{a.Event}
+		events = []attn.Event{a.Event}
 	}
 	jevEvents := make([]jevEvent, 0, len(events))
 	for _, event := range events {
@@ -346,7 +346,7 @@ func safeState(a attention.Artifact, task TaskContext, authorized []string) jevS
 	}
 }
 
-func safeEvent(event attention.Event) jevEvent {
+func safeEvent(event attn.Event) jevEvent {
 	return jevEvent{
 		Kind:         redactText(redactIdentifier(string(event.Kind), maxReasonBytes), maxReasonBytes),
 		Service:      redactText(redactIdentifier(event.Service, maxServiceBytes), maxServiceBytes),
@@ -360,7 +360,7 @@ func safeEvent(event attention.Event) jevEvent {
 	}
 }
 
-func optionIDs(options []attention.Option) []string {
+func optionIDs(options []attn.Option) []string {
 	ids := make([]string, 0, len(options))
 	for _, option := range options {
 		if option.ID != "" {
@@ -372,7 +372,7 @@ func optionIDs(options []attention.Option) []string {
 }
 
 func optionDescription(id string) string {
-	if policy, ok := attention.OptionPolicyFor(id); ok {
+	if policy, ok := attn.OptionPolicyFor(id); ok {
 		if policy.RequiresExplicitChoice {
 			return policy.Description + " This is a side effect requiring the user's choice."
 		}
@@ -402,7 +402,7 @@ func validateResponse(response jevResponse, options []string, configuredModel st
 	if err != nil {
 		return Result{}, err
 	}
-	assessment := attention.Assessment{NeedsHuman: &needsHuman, TaskRelevant: &relevant}
+	assessment := attn.Assessment{NeedsHuman: &needsHuman, TaskRelevant: &relevant}
 	if len(options) == 1 {
 		assessment.NextOption = options[0]
 		assessment.Probabilities = map[string]float64{options[0]: 1}
@@ -471,7 +471,7 @@ func contains(values []string, wanted string) bool {
 	return false
 }
 
-func parseFreshUntil(a attention.Artifact) (time.Time, error) {
+func parseFreshUntil(a attn.Artifact) (time.Time, error) {
 	if strings.TrimSpace(a.FreshUntil) == "" {
 		return time.Time{}, errors.New("attention: artifact has no freshness deadline")
 	}
@@ -480,7 +480,7 @@ func parseFreshUntil(a attention.Artifact) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("attention: invalid freshness deadline: %w", err)
 	}
 	if !time.Now().UTC().Before(fresh) {
-		return time.Time{}, attention.ErrStale
+		return time.Time{}, attn.ErrStale
 	}
 	return fresh, nil
 }
@@ -488,26 +488,26 @@ func parseFreshUntil(a attention.Artifact) (time.Time, error) {
 // Persist re-reads the artifact after the remote call, ensuring an assessment
 // can only be attached to the same event and revision. It writes through the
 // existing attention writer and therefore preserves atomic 0600 publication.
-func Persist(path string, original attention.Artifact, result Result) error {
+func Persist(path string, original attn.Artifact, result Result) error {
 	if err := validateAssessment(&original, result.Assessment); err != nil {
 		return err
 	}
 	if _, err := parseFreshUntil(original); err != nil {
 		return err
 	}
-	return attention.CompareAndSwap(path, original.EventID, original.StateRevision, func(latest *attention.Artifact) error {
+	return attn.CompareAndSwap(path, original.EventID, original.StateRevision, func(latest *attn.Artifact) error {
 		if latest.WorktreeRoot != original.WorktreeRoot || latest.Branch != original.Branch {
-			return attention.ErrStale
+			return attn.ErrStale
 		}
 		if _, err := parseFreshUntil(*latest); err != nil {
 			return err
 		}
-		return attention.AttachAssessment(latest, result.Assessment)
+		return attn.AttachAssessment(latest, result.Assessment)
 	})
 }
 
-func validateAssessment(artifact *attention.Artifact, assessment attention.Assessment) error {
-	if err := attention.AttachAssessment(artifact, assessment); err != nil {
+func validateAssessment(artifact *attn.Artifact, assessment attn.Assessment) error {
+	if err := attn.AttachAssessment(artifact, assessment); err != nil {
 		return err
 	}
 	return nil

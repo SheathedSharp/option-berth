@@ -19,21 +19,21 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn"
 	"github.com/sheathedsharp/option-berth/engine/internal/jev"
 	"github.com/sheathedsharp/option-berth/engine/internal/jev/runner"
 )
 
 type output struct {
-	Status        string                `json:"status"`
-	AttentionPath string                `json:"attention_path,omitempty"`
-	PreflightPath string                `json:"preflight_path,omitempty"`
-	TelemetryPath string                `json:"telemetry_path,omitempty"`
-	Reason        string                `json:"reason,omitempty"`
-	Assessment    *attention.Assessment `json:"assessment,omitempty"`
-	TaskRelevant  *float64              `json:"task_relevant,omitempty"`
-	Model         string                `json:"model,omitempty"`
-	RequestID     string                `json:"request_id,omitempty"`
+	Status        string           `json:"status"`
+	AttentionPath string           `json:"attention_path,omitempty"`
+	PreflightPath string           `json:"preflight_path,omitempty"`
+	TelemetryPath string           `json:"telemetry_path,omitempty"`
+	Reason        string           `json:"reason,omitempty"`
+	Assessment    *attn.Assessment `json:"assessment,omitempty"`
+	TaskRelevant  *float64         `json:"task_relevant,omitempty"`
+	Model         string           `json:"model,omitempty"`
+	RequestID     string           `json:"request_id,omitempty"`
 }
 
 var errMissingOptions = errors.New("task context requires authorized_options or --authorize")
@@ -166,7 +166,7 @@ func main() {
 	if contextErr != nil {
 		fail(contextErr.Error())
 	}
-	artifact, err := attention.Read(*attentionPath)
+	artifact, err := attn.Read(*attentionPath)
 	if err != nil {
 		fail(err.Error())
 	}

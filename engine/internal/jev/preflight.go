@@ -17,10 +17,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/attention"
+	"github.com/sheathedsharp/option-berth/engine/internal/attn"
 )
 
-const PreflightSchema = "oberth.attention.preflight/v1"
+const PreflightSchema = "oberth.attn.preflight/v1"
 const PreflightTTL = 2 * time.Minute
 const StatusMaxAge = 30 * time.Second
 
@@ -76,18 +76,18 @@ type PreflightTarget struct {
 }
 
 type Preflight struct {
-	Schema        string                `json:"schema"`
-	RequestID     string                `json:"request_id"`
-	WorktreeRoot  string                `json:"worktree_root"`
-	Branch        string                `json:"branch,omitempty"`
-	StateRevision string                `json:"state_revision"`
-	GeneratedAt   string                `json:"generated_at"`
-	FreshUntil    string                `json:"fresh_until"`
-	Intent        Intent                `json:"intent"`
-	Target        PreflightTarget       `json:"target"`
-	Evidence      []attention.Evidence  `json:"evidence"`
-	Options       []attention.Option    `json:"options"`
-	Assessment    *attention.Assessment `json:"assessment,omitempty"`
+	Schema        string           `json:"schema"`
+	RequestID     string           `json:"request_id"`
+	WorktreeRoot  string           `json:"worktree_root"`
+	Branch        string           `json:"branch,omitempty"`
+	StateRevision string           `json:"state_revision"`
+	GeneratedAt   string           `json:"generated_at"`
+	FreshUntil    string           `json:"fresh_until"`
+	Intent        Intent           `json:"intent"`
+	Target        PreflightTarget  `json:"target"`
+	Evidence      []attn.Evidence  `json:"evidence"`
+	Options       []attn.Option    `json:"options"`
+	Assessment    *attn.Assessment `json:"assessment,omitempty"`
 }
 
 // ReadStatusSnapshot accepts only a freshly captured status file. The adapter
@@ -137,7 +137,7 @@ func DerivePreflight(snapshot StatusSnapshot, intent Intent, home string, now ti
 		return Preflight{}, errors.New("attention: explicit user_permission context is required (up to 2000 bytes)")
 	}
 	intent.UserPermission = redactText(intent.UserPermission, maxTaskBytes)
-	if !attention.KnownOptionID(intent.Action) {
+	if !attn.KnownOptionID(intent.Action) {
 		return Preflight{}, fmt.Errorf("attention: unknown preflight action %q", intent.Action)
 	}
 	root := filepath.Clean(snapshot.Scope.Root)
@@ -145,8 +145,8 @@ func DerivePreflight(snapshot StatusSnapshot, intent Intent, home string, now ti
 		return Preflight{}, errors.New("attention: invalid status worktree")
 	}
 	target := PreflightTarget{Project: snapshot.Worktree.Name}
-	refs := []attention.Evidence{{Ref: "status.scope.root"}, {Ref: "status.worktree"}}
-	var options []attention.Option
+	refs := []attn.Evidence{{Ref: "status.scope.root"}, {Ref: "status.worktree"}}
+	var options []attn.Option
 	switch intent.Action {
 	case "start_service", "restart_service":
 		if intent.Service == "" || intent.DraftGroup != "" {
@@ -163,8 +163,8 @@ func DerivePreflight(snapshot StatusSnapshot, intent Intent, home string, now ti
 			return Preflight{}, errors.New("attention: target is not a declared worktree service")
 		}
 		target.Service = intent.Service
-		refs = append(refs, attention.Evidence{Ref: "status.worktree.services"})
-		options = []attention.Option{{ID: intent.Action}, {ID: "inspect_manifest"}, {ID: "continue_without_action"}, {ID: "ask_user_for_context"}}
+		refs = append(refs, attn.Evidence{Ref: "status.worktree.services"})
+		options = []attn.Option{{ID: intent.Action}, {ID: "inspect_manifest"}, {ID: "continue_without_action"}, {ID: "ask_user_for_context"}}
 	case "stop_service":
 		if intent.Service != "" || intent.DraftGroup != "" {
 			return Preflight{}, errors.New("attention: stop_service is project-wide; service/draft selectors are unsupported")
@@ -176,7 +176,7 @@ func DerivePreflight(snapshot StatusSnapshot, intent Intent, home string, now ti
 			return Preflight{}, errors.New("attention: project has no declared services to stop")
 		}
 		sort.Strings(target.Services)
-		options = []attention.Option{{ID: intent.Action}, {ID: "continue_without_action"}, {ID: "ask_user_for_context"}}
+		options = []attn.Option{{ID: intent.Action}, {ID: "continue_without_action"}, {ID: "ask_user_for_context"}}
 	case "adopt_manifest":
 		if strings.TrimSpace(home) == "" {
 			return Preflight{}, errors.New("attention: adopt_manifest requires BERTH_HOME")
@@ -203,8 +203,8 @@ func DerivePreflight(snapshot StatusSnapshot, intent Intent, home string, now ti
 		if target.DraftHash == "" {
 			return Preflight{}, errors.New("attention: selected draft has no current worktree evidence")
 		}
-		refs = append(refs, attention.Evidence{Ref: "status.drafts"})
-		options = []attention.Option{{ID: intent.Action}, {ID: "inspect_manifest"}, {ID: "continue_without_action"}, {ID: "ask_user_for_context"}}
+		refs = append(refs, attn.Evidence{Ref: "status.drafts"})
+		options = []attn.Option{{ID: intent.Action}, {ID: "inspect_manifest"}, {ID: "continue_without_action"}, {ID: "ask_user_for_context"}}
 	default:
 		return Preflight{}, errors.New("attention: preflight action must be start_service, restart_service, stop_service, or adopt_manifest")
 	}
@@ -252,7 +252,7 @@ func draftChecksum(path string) (string, error) {
 }
 
 func PreflightPath(home string, request Preflight) string {
-	return filepath.Join(home, attention.AttentionDir, "preflight", hashWorktree(request.WorktreeRoot)+"-"+request.RequestID+".json")
+	return filepath.Join(home, attn.AttentionDir, "preflight", hashWorktree(request.WorktreeRoot)+"-"+request.RequestID+".json")
 }
 
 func WritePreflight(home string, request Preflight) (string, error) {
@@ -311,12 +311,12 @@ func ReadPreflight(path string) (Preflight, error) {
 
 // AttachAssessment validates a Jev result against this preflight's fixed
 // options. It does not imply user approval and it never executes the intent.
-func (request *Preflight) AttachAssessment(assessment attention.Assessment) error {
+func (request *Preflight) AttachAssessment(assessment attn.Assessment) error {
 	if request == nil {
 		return errors.New("attention: nil preflight")
 	}
 	artifact := request.assessmentArtifact()
-	if err := attention.AttachAssessment(&artifact, assessment); err != nil {
+	if err := attn.AttachAssessment(&artifact, assessment); err != nil {
 		return err
 	}
 	request.Assessment = artifact.Assessment
@@ -326,7 +326,7 @@ func (request *Preflight) AttachAssessment(assessment attention.Assessment) erro
 // AssessmentArtifactForAdapter exposes the same redacted, fixed-option shape
 // as an ordinary attention artifact solely for the shared Jev client. The
 // preflight document remains the source of intent and persistence.
-func (request Preflight) AssessmentArtifactForAdapter() attention.Artifact {
+func (request Preflight) AssessmentArtifactForAdapter() attn.Artifact {
 	return request.assessmentArtifact()
 }
 
@@ -339,20 +339,20 @@ func ValidatePreflight(request Preflight, snapshot StatusSnapshot, home string, 
 	}
 	deadline, err := time.Parse(time.RFC3339Nano, request.FreshUntil)
 	if err != nil || !now.Before(deadline) {
-		return attention.ErrStale
+		return attn.ErrStale
 	}
 	derived, err := DerivePreflight(snapshot, request.Intent, home, now)
 	if err != nil {
 		return err
 	}
 	if derived.RequestID != request.RequestID || derived.WorktreeRoot != request.WorktreeRoot || derived.StateRevision != request.StateRevision {
-		return attention.ErrStale
+		return attn.ErrStale
 	}
 	return nil
 }
 
 // assessmentArtifact is a translation for the typed client, not a runtime
 // event publication. The preflight schema retains the actual intent/source.
-func (request Preflight) assessmentArtifact() attention.Artifact {
-	return attention.Artifact{Schema: attention.Schema, EventID: request.RequestID, StateRevision: request.StateRevision, WorktreeRoot: request.WorktreeRoot, Branch: request.Branch, GeneratedAt: request.GeneratedAt, FreshUntil: request.FreshUntil, Event: attention.Event{Kind: attention.EventKind("agent_action_intent"), Service: request.Target.Service, Reason: request.Intent.Action, At: request.GeneratedAt}, Evidence: request.Evidence, Options: request.Options}
+func (request Preflight) assessmentArtifact() attn.Artifact {
+	return attn.Artifact{Schema: attn.Schema, EventID: request.RequestID, StateRevision: request.StateRevision, WorktreeRoot: request.WorktreeRoot, Branch: request.Branch, GeneratedAt: request.GeneratedAt, FreshUntil: request.FreshUntil, Event: attn.Event{Kind: attn.EventKind("agent_action_intent"), Service: request.Target.Service, Reason: request.Intent.Action, At: request.GeneratedAt}, Evidence: request.Evidence, Options: request.Options}
 }
