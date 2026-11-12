@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	Schema       = "oberth.attention/v1"
+	Schema       = "oberth.attn/v1"
 	AttentionDir = "attention"
 	DefaultTTL   = 10 * time.Minute
 )

@@ -52,7 +52,7 @@ func readAttnDoc(t *testing.T, status statusDoc) attnDoc {
 	if err := json.Unmarshal(data, &artifact); err != nil {
 		t.Fatalf("decode attention artifact: %v\n%s", err, data)
 	}
-	if artifact.Schema != "oberth.attention/v1" {
+	if artifact.Schema != "oberth.attn/v1" {
 		t.Fatalf("attention schema = %q", artifact.Schema)
 	}
 	if artifact.EventID == "" || artifact.StateRevision == "" || artifact.FreshUntil == "" {
