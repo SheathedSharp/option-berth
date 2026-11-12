@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -53,44 +54,45 @@ func TestMain(m *testing.M) {
 	os.Exit(testenv.Run(m))
 }
 
-// runHelper listens on port, optionally spawns a child helper on childPort, and
-// then blocks until it is signalled. With ignoreTerm it plays the wedged dev
-// server that only SIGKILL can stop; otherwise the default SIGTERM disposition
-// is what a well-behaved one gives us.
-//
-// Every helper reports its own pid into pidDir, named after the port it serves.
-// A helper knows its pid and its port and nothing else, so that name is the one
-// thing it can write without being told; a parent spawning a child therefore
-// does not have to pass an identity down.
+// runHelper is the listener a test starts by re-executing this binary. It
+// serves its port until it is signalled, and with ignoreTerm it plays the wedged
+// dev server only SIGKILL can stop. Before serving it writes its own pid into
+// pidDir under the port's name, because a helper knows its pid and its port and
+// nothing else; that lets a parent spawn a child without passing an identity
+// down.
 func runHelper(port, childPort, pidDir string, ignoreTerm bool) {
 	if ignoreTerm {
 		signal.Ignore(syscall.SIGTERM)
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:"+port)
+	sock, err := net.Listen("tcp", "127.0.0.1:"+port)
 	if err != nil {
 		os.Exit(1)
 	}
-	defer ln.Close()
-	// Report this process before serving, so a test never races the answer.
+	defer sock.Close()
 	if pidDir != "" {
-		if err := os.WriteFile(pidFileFor(pidDir, port), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		pid := strconv.Itoa(os.Getpid())
+		if err := os.WriteFile(pidFileFor(pidDir, port), []byte(pid), 0o600); err != nil {
 			os.Exit(1)
 		}
 	}
-
 	if childPort != "" {
-		child := exec.Command(os.Args[0])
-		child.Env = append(os.Environ(), envHelperPort+"="+childPort, envHelperChild+"=")
-		if err := child.Start(); err != nil {
-			os.Exit(1)
-		}
+		spawnHelper(childPort)
 	}
 	for {
-		conn, err := ln.Accept()
+		conn, err := sock.Accept()
 		if err != nil {
 			return
 		}
 		_ = conn.Close()
+	}
+}
+
+// spawnHelper starts one more helper on port, as this helper's child.
+func spawnHelper(port string) {
+	child := exec.Command(os.Args[0])
+	child.Env = append(os.Environ(), envHelperPort+"="+port, envHelperChild+"=")
+	if err := child.Start(); err != nil {
+		os.Exit(1)
 	}
 }
 
@@ -100,12 +102,26 @@ func pidFileFor(dir, port string) string { return filepath.Join(dir, "helper-"+p
 // freePort asks the kernel for a port nothing is using and hands it back.
 func freePort(t *testing.T) int {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	sock, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("reserving a port: %v", err)
 	}
-	defer ln.Close()
-	return ln.Addr().(*net.TCPAddr).Port
+	defer sock.Close()
+	addr, ok := sock.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("reserved %T, want a TCP address", sock.Addr())
+	}
+	return addr.Port
+}
+
+// mustExecutable is this test binary's path, which is also the helper program.
+func mustExecutable(t *testing.T) string {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("locating the test binary: %v", err)
+	}
+	return exe
 }
 
 // portAnswers is the test's own question — "is something accepting here?" — and
@@ -116,13 +132,15 @@ func portAnswers(port int) bool { return probePort(port, "127.0.0.1") == portOpe
 func waitForPort(t *testing.T, port int, want bool) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
+	for {
 		if portAnswers(port) == want {
 			return
 		}
+		if time.Now().After(deadline) {
+			t.Fatalf("port %d: still open=%v after 10s, wanted open=%v", port, !want, want)
+		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("port %d: still open=%v after 10s, wanted open=%v", port, !want, want)
 }
 
 // readPID waits for a helper to report the pid it runs as.
@@ -153,10 +171,7 @@ type tree struct {
 // is a child of a shell, and waits until both listeners answer.
 func startTree(t *testing.T) tree {
 	t.Helper()
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatalf("locating the test binary: %v", err)
-	}
+	exe := mustExecutable(t)
 	dir := t.TempDir()
 	parentPort, childPort := freePort(t), freePort(t)
 	got := tree{parentPort: parentPort, childPort: childPort}
@@ -219,13 +234,15 @@ func stopOwnedTree(cmd *exec.Cmd) {
 // that cannot see the socket table does not turn these cases into skips.
 func snapshotFor(t *testing.T, port, knownPID int) []ports.ListeningPort {
 	t.Helper()
-	if found, err := ports.Scan(); err == nil {
-		docker.EnrichPorts(found)
-		ports.Enrich(found)
-		for i := range found {
-			if found[i].Port == port {
-				return found
-			}
+	found, err := ports.Scan()
+	if err != nil {
+		return []ports.ListeningPort{snapshotForPID(knownPID, port)}
+	}
+	docker.EnrichPorts(found)
+	ports.Enrich(found)
+	for _, row := range found {
+		if row.Port == port {
+			return found
 		}
 	}
 	return []ports.ListeningPort{snapshotForPID(knownPID, port)}
@@ -242,25 +259,31 @@ func TestKillPortsStopsARealProcessTree(t *testing.T) {
 		Options{Tree: true, Grace: 2 * time.Second, Ports: snapshotFor(t, tree.parentPort, tree.parentPID)},
 	)
 
-	if len(results) == 0 {
-		t.Fatal("no result rows")
-	}
-	for _, r := range results {
-		if !r.OK {
-			t.Errorf("row %+v failed: %s", r, r.Error)
-		}
-	}
+	requireAllOK(t, results)
 	// The listener and the port it spawned are both gone.
 	waitForPort(t, tree.parentPort, false)
 	waitForPort(t, tree.childPort, false)
 
 	// And the shell that was waiting on them has nothing left to wait for.
-	done := make(chan struct{})
-	go func() { _ = tree.shell.Wait(); close(done) }()
+	exited := make(chan struct{})
+	go func() { _ = tree.shell.Wait(); close(exited) }()
 	select {
-	case <-done:
+	case <-exited:
 	case <-time.After(10 * time.Second):
 		t.Fatal("the shell is still running after its tree was killed")
+	}
+}
+
+// requireAllOK fails the test when any row reports a stop that did not happen.
+func requireAllOK(t *testing.T, results []Result) {
+	t.Helper()
+	if len(results) == 0 {
+		t.Fatal("no result rows")
+	}
+	for i, r := range results {
+		if !r.OK {
+			t.Errorf("row %d (%+v) failed: %s", i, r, r.Error)
+		}
 	}
 }
 
@@ -286,30 +309,17 @@ func TestKillPortsDryRunLeavesARealTreeRunning(t *testing.T) {
 	root := results[len(results)-1].PID
 	below := scanProcessTable().Descendants(root)
 	for _, r := range results[:len(results)-1] {
-		if !contains(below, r.PID) {
+		if !slices.Contains(below, r.PID) {
 			t.Errorf("row %+v is not below the last row (PID %d)", r, root)
 		}
 	}
-}
-
-func contains(haystack []int, needle int) bool {
-	for _, v := range haystack {
-		if v == needle {
-			return true
-		}
-	}
-	return false
 }
 
 func TestKillPortsEscalatesOnAProcessThatIgnoresSIGTERM(t *testing.T) {
 	if testing.Short() {
 		t.Skip("spawns real processes")
 	}
-	port := freePort(t)
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	port, exe := freePort(t), mustExecutable(t)
 	pidDir := t.TempDir()
 	wedged := exec.Command(exe)
 	wedged.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -330,14 +340,10 @@ func TestKillPortsEscalatesOnAProcessThatIgnoresSIGTERM(t *testing.T) {
 	// The listener ignores SIGTERM, so only the escalation to SIGKILL frees
 	// the port. A short grace keeps the test quick.
 	snapshot := []ports.ListeningPort{snapshotForPID(readPID(t, pidFileFor(pidDir, strconv.Itoa(port))), port)}
-	results := KillPorts(context.Background(), []Target{{Port: port}},
-		Options{Grace: 500 * time.Millisecond, Ports: snapshot})
+	results := KillPorts(context.Background(), []Target{{Port: port}}, Options{Grace: 500 * time.Millisecond, Ports: snapshot})
 
-	if len(results) != 1 {
-		t.Fatalf("results = %+v", results)
-	}
-	if results[0].Method != state.MethodSIGKILL {
-		t.Fatalf("method = %q, want sigkill after the grace period", results[0].Method)
+	if len(results) != 1 || results[0].Method != state.MethodSIGKILL {
+		t.Fatalf("results = %+v, want one sigkill row after the grace period", results)
 	}
 	waitForPort(t, port, false)
 }
