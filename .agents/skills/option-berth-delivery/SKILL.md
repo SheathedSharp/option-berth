@@ -45,8 +45,8 @@ worktree、提交信息与用户确认的规则不变。
    失败时按实际日志修复并重新推送；不绕过检查、不关闭 workflow、不放宽超时、
    不把旧提交的绿灯当成本次结果。核心 race 与真实服务场景由每日
    `Nightly full verification` 与发版流程覆盖，PR 通过不等于这两项已跑。修改
-   workflow、CODEOWNERS、race 清单或发布/检查脚本时，`Gate integrity` 要求 PR 作者
-   是仓库维护者（`OWNER` / `MEMBER` / `COLLABORATOR`），不要尝试绕过。
+   workflow、race 清单或发布/检查脚本时，`Gate integrity` 要求 PR 作者是仓库维护者
+   （`OWNER` / `MEMBER` / `COLLABORATOR`），不要尝试绕过。
 6. 得到用户明确确认后才合并：
 
    ```sh
