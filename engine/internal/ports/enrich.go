@@ -144,13 +144,17 @@ func applyContainerStats(pp []ListeningPort, stats map[string]*DockerStatsEntry)
 	}
 }
 
-// DockerStatsEntry holds pre-fetched per-container stats.
+// DockerStatsEntry is a container's resource picture, sampled by the Docker
+// watcher before rows are built; a row joins it by container id. State and
+// Uptime describe the container, while CPU, memory and the pid count are the
+// load it reported.
 type DockerStatsEntry struct {
+	State  string
+	Uptime string
+
 	CPUPercent float64
 	MemoryRSS  int64
 	PIDs       int
-	State      string
-	Uptime     string
 }
 
 // applyTo copies the container's numbers onto the row that reported it. These

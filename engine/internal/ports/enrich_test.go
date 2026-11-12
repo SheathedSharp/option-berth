@@ -1,148 +1,134 @@
 package ports
 
 import (
+	"maps"
 	"os"
 	"runtime"
 	"testing"
 	"time"
 )
 
+// The Unix process table reaches the engine as one `ps` call, so these tests
+// describe what the parser has to survive: a command line full of spaces, rows
+// that are not processes, and a start time printed in the host's zone without
+// saying which zone that is.
+
 func TestParseStartTime(t *testing.T) {
-	if got := parseStartTime("Wed Mar 18 10:30:00 2026"); got != "2026-03-18T10:30:00Z" {
-		// ps prints local time; compare only the date/time prefix.
-		if len(got) < 19 || got[:19] != "2026-03-18T10:30:00" {
-			t.Fatalf("parseStartTime(lstart) = %q", got)
-		}
+	// lstart carries no zone, so only the date and time prefix is comparable.
+	if got := parseStartTime("Tue Nov  3 08:15:00 2026"); len(got) < 19 || got[:19] != "2026-11-03T08:15:00" {
+		t.Fatalf("lstart became %q", got)
 	}
-	if got := parseStartTime("2026-09-02T09:12:41+02:00"); got != "2026-09-02T09:12:41+02:00" {
-		t.Fatalf("parseStartTime(rfc3339) = %q", got)
+	if got := parseStartTime("2026-10-01T12:00:00Z"); got != "2026-10-01T12:00:00Z" {
+		t.Fatalf("an RFC3339 timestamp became %q", got)
 	}
-	if got := parseStartTime("nonsense"); got != "" {
-		t.Fatalf("parseStartTime(garbage) = %q", got)
+	if got := parseStartTime("not a time"); got != "" {
+		t.Fatalf("unparseable input became %q, want empty", got)
 	}
 }
 
-// TestParseProcessTable covers the cached always-on table that carries the
-// command line, parent and process start time in one ps call. The command may
-// contain any whitespace, so it is taken as the remainder of the line, not as
-// fields.
-func TestParseProcessTable(t *testing.T) {
-	out := ` 1234   1 Wed Mar 18 10:30:00 2026 /usr/bin/node   server.js --port 3000
- 567  42 Wed Mar 18 09:00:01 2026 /Applications/Some App.app/Contents/MacOS/Some App
- bad line
- 99   1 Wed Mar 18 09:00:01 2026
+func TestParseProcessTableKeepsCommandsWhole(t *testing.T) {
+	out := ` 4321   1 Tue Nov  3 08:15:00 2026 /usr/bin/python3  worker.py --queue default
+ 87  4321 Tue Nov  3 08:16:02 2026 /Applications/Example App.app/Contents/MacOS/Example App
+ this line is not a process row
+ 90   1 Tue Nov  3 08:17:00 2026
 `
 	got := parseProcessTable(out)
 	if len(got) != 2 {
 		t.Fatalf("parseProcessTable returned %d rows, want 2: %+v", len(got), got)
 	}
-	if want := "/usr/bin/node   server.js --port 3000"; got[1234].command != want {
-		t.Errorf("command = %q, want %q", got[1234].command, want)
+	if want := "/usr/bin/python3  worker.py --queue default"; got[4321].command != want {
+		t.Errorf("command = %q, want %q", got[4321].command, want)
 	}
-	if got[1234].ppid != 1 {
-		t.Errorf("ppid = %d, want 1", got[1234].ppid)
+	if got[4321].ppid != 1 {
+		t.Errorf("ppid = %d, want 1", got[4321].ppid)
 	}
-	if got[1234].startedAt == "" {
-		t.Errorf("startedAt = %q, want the raw lstart", got[1234].startedAt)
+	if got[4321].startedAt == "" {
+		t.Error("the raw lstart was dropped")
 	}
-	if want := "/Applications/Some App.app/Contents/MacOS/Some App"; got[567].command != want {
-		t.Errorf("command = %q, want %q", got[567].command, want)
+	if want := "/Applications/Example App.app/Contents/MacOS/Example App"; got[87].command != want {
+		t.Errorf("command = %q, want %q", got[87].command, want)
 	}
 }
 
-// TestEnrichPopulatesStartedAtWithoutStats is the smoke-test regression:
-// started_at was null in every state.snapshot row because only EnrichStats
-// filled it. Enrich alone must set it, for the process running this test.
-func TestEnrichPopulatesStartedAtWithoutStats(t *testing.T) {
+func TestEnrichSetsStartedAtWithoutStats(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("the ps table this exercises is the Unix path")
+		t.Skip("the ps table this exercises belongs to the Unix path")
 	}
-	pp := []ListeningPort{{Port: 1, PID: os.Getpid(), Process: "option-berth.test"}}
-	Enrich(pp) // no EnrichStats: started_at is not gated by --stats
+	rows := []ListeningPort{{Port: 1, PID: os.Getpid(), Process: "option-berth.test"}}
+	Enrich(rows) // EnrichStats is not called: started_at must not depend on stats
 
-	if pp[0].StartedAt == "" {
+	if rows[0].StartedAt == "" {
 		t.Fatal("Enrich left started_at empty for the current process")
 	}
-	started, err := time.Parse(time.RFC3339, pp[0].StartedAt)
+	started, err := time.Parse(time.RFC3339, rows[0].StartedAt)
 	if err != nil {
-		t.Fatalf("started_at %q is not RFC3339: %v", pp[0].StartedAt, err)
+		t.Fatalf("started_at %q is not RFC3339: %v", rows[0].StartedAt, err)
 	}
 	if age := time.Since(started); age < 0 || age > 24*time.Hour {
-		t.Errorf("started_at %s is %s away from now; want a plausible start time", pp[0].StartedAt, age)
+		t.Errorf("started_at %s is %s away from now; want a plausible start time", rows[0].StartedAt, age)
 	}
-	if pp[0].Uptime != "" || pp[0].CPUPercent != 0 {
-		t.Errorf("Enrich collected stats it was not asked for: uptime=%q cpu=%v", pp[0].Uptime, pp[0].CPUPercent)
+	if rows[0].Uptime != "" || rows[0].CPUPercent != 0 {
+		t.Errorf("Enrich collected stats it was not asked for: uptime=%q cpu=%v", rows[0].Uptime, rows[0].CPUPercent)
 	}
 }
 
-// TestUptimeIsLocalTimeNotUTC pins the fix for a negative `stats.uptime`: `ps`
-// prints lstart in local time with no zone, and parsing it as UTC put the start
-// instant a whole UTC offset away — so a process that had been up for fifteen
-// seconds in a +02:00 zone reported "-7185s" while `started_at`, which already
-// parsed in the local zone, was right.
-func TestUptimeIsLocalTimeNotUTC(t *testing.T) {
-	for _, zone := range []string{"Europe/Copenhagen", "America/Los_Angeles", "UTC"} {
+func TestUptimeReadsLstartInTheHostZone(t *testing.T) {
+	for _, zone := range []string{"Europe/Berlin", "America/Denver", "UTC"} {
 		loc, err := time.LoadLocation(zone)
 		if err != nil {
 			t.Skipf("no zone database: %v", err)
 		}
 		t.Run(zone, func(t *testing.T) {
-			prev := time.Local
+			previous := time.Local
 			time.Local = loc
-			t.Cleanup(func() { time.Local = prev })
+			t.Cleanup(func() { time.Local = previous })
 
-			started := time.Date(2026, 9, 6, 10, 30, 0, 0, loc)
-			lstart := started.Format("Mon Jan  2 15:04:05 2006")
+			start := time.Date(2026, 11, 3, 8, 15, 0, 0, loc)
+			lstart := start.Format("Mon Jan  2 15:04:05 2006")
 
-			if got := computeUptimeAt(lstart, started.Add(15*time.Second)); got != "15s" {
-				t.Errorf("uptime 15s after the start = %q, want 15s", got)
+			// Reading lstart as UTC would put the start a whole offset away and
+			// turn a just-started process into a negative uptime.
+			for _, tc := range []struct {
+				elapsed time.Duration
+				want    string
+			}{
+				{15 * time.Second, "15s"},
+				{90 * time.Minute, "1h30m"},
+			} {
+				if got := computeUptimeAt(lstart, start.Add(tc.elapsed)); got != tc.want {
+					t.Errorf("uptime %s after the start = %q, want %q", tc.elapsed, got, tc.want)
+				}
 			}
-			if got := computeUptimeAt(lstart, started.Add(90*time.Minute)); got != "1h30m" {
-				t.Errorf("uptime 90m after the start = %q, want 1h30m", got)
-			}
-			// started_at and uptime read the same instant, so they agree.
-			if got := parseStartTime(lstart); got != started.Format(time.RFC3339) {
-				t.Errorf("started_at = %q, want %q", got, started.Format(time.RFC3339))
+			// started_at and uptime must describe the same instant.
+			if got := parseStartTime(lstart); got != start.Format(time.RFC3339) {
+				t.Errorf("started_at = %q, want %q", got, start.Format(time.RFC3339))
 			}
 		})
 	}
 }
 
-// TestUptimeNeverGoesNegative: a clock that steps back, or a start time a
-// moment in the future, reads as 0s rather than as a negative duration.
-func TestUptimeNeverGoesNegative(t *testing.T) {
-	started := time.Date(2026, 9, 6, 10, 30, 0, 0, time.Local)
-	lstart := started.Format("Mon Jan  2 15:04:05 2006")
-	if got := computeUptimeAt(lstart, started.Add(-2*time.Hour)); got != "0s" {
+func TestUptimeFloorsAtZeroAndStaysEmptyWhenUnknown(t *testing.T) {
+	start := time.Date(2026, 11, 3, 8, 15, 0, 0, time.Local)
+	lstart := start.Format("Mon Jan  2 15:04:05 2006")
+	if got := computeUptimeAt(lstart, start.Add(-2*time.Hour)); got != "0s" {
 		t.Fatalf("uptime with a backwards clock = %q, want 0s", got)
 	}
-}
-
-// TestUptimeOfAnUnparseableStartIsEmpty, so a client can tell "not known" from
-// "just started".
-func TestUptimeOfAnUnparseableStartIsEmpty(t *testing.T) {
-	if got := computeUptimeAt("nonsense", time.Now()); got != "" {
-		t.Fatalf("uptime of garbage = %q, want empty", got)
+	if got := computeUptimeAt("not a time", time.Now()); got != "" {
+		t.Fatalf("uptime of an unparseable start = %q, want empty", got)
 	}
 }
 
-// TestParseTasklist: the fallback that names a process when the CIM query does
-// not. A row it cannot read costs that row only.
-func TestParseTasklist(t *testing.T) {
-	out := "\"System Idle Process\",\"0\",\"Services\",\"0\",\"8 K\"\r\n" +
-		"\"listener.exe\",\"7276\",\"Console\",\"1\",\"5,120 K\"\r\n" +
-		"\"not a row\"\r\n" +
-		"\"svchost.exe\",\"nope\",\"Services\",\"0\",\"9,000 K\"\r\n" +
-		"\"node.exe\",\"3812\",\"Console\",\"1\",\"42,000 K\"\r\n"
+// parseTasklist is the fallback that names a process when the CIM query cannot:
+// one unreadable row costs only that row.
+func TestParseTasklistSkipsUnreadableRows(t *testing.T) {
+	out := "\"Worker.exe\",\"4242\",\"Console\",\"1\",\"12,000 K\"\r\n" +
+		"\"System Idle Process\",\"0\",\"Services\",\"0\",\"8 K\"\r\n" +
+		"\"broken row\"\r\n" +
+		"\"BadPid.exe\",\"not-a-pid\",\"Console\",\"1\",\"1 K\"\r\n"
 
 	got := parseTasklist(out)
-	want := map[int]string{0: "System Idle Process", 7276: "listener.exe", 3812: "node.exe"}
-	if len(got) != len(want) {
+	want := map[int]string{4242: "Worker.exe", 0: "System Idle Process"}
+	if !maps.Equal(got, want) {
 		t.Fatalf("parseTasklist = %v, want %v", got, want)
-	}
-	for pid, name := range want {
-		if got[pid] != name {
-			t.Errorf("pid %d = %q, want %q", pid, got[pid], name)
-		}
 	}
 }

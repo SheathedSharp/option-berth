@@ -13,25 +13,31 @@ import (
 // socket. It is what the daemon's stats-only tick reads for the pids a
 // snapshot already names: no port scan behind it, no attribution, no health.
 //
+// The fields answer three different questions, so they are grouped that way:
+// when the process started, what it costs, and what state it is in.
+//
 // ThreadCount is 0 when the platform could not report it in the same call.
-// macOS is the case that matters: counting threads needs an additional `ps -M`
+// macOS is the case that matters: counting threads needs a separate `ps -M`
 // listing, so it stays on the scan tick and a sample carries 0, which callers
 // read as "unchanged" rather than as "no threads".
 type ProcSample struct {
+	// StartTime is raw, as ps printed it; StartedAt is RFC3339 and empty when
+	// the start time did not parse.
+	StartTime string
+	StartedAt string
+
 	CPUPercent  float64
 	MemoryRSS   int64
 	ThreadCount int
-	StartTime   string // raw, as ps printed it
-	Uptime      string
-	State       string
-	StartedAt   string // RFC3339, "" when the start time did not parse
+
+	State  string
+	Uptime string
 }
 
-// SampleProcStats reads cpu, memory, state and uptime for the given pids in a
-// single `ps` call (one PowerShell call on Windows). A pid the OS no longer
-// knows about is simply absent from the result: a process that exited between
-// the scan that listed it and this sample must not report zeroes that read
-// like facts.
+// SampleProcStats samples cpu, memory, state and uptime for pids in one batch:
+// a single `ps` call on Unix and one PowerShell call on Windows. A pid the OS
+// no longer knows is left out rather than reported as zero — a process that
+// exited between the listing and this sample must not look idle.
 func SampleProcStats(pids []int) map[int]ProcSample {
 	return SampleProcStatsContext(context.Background(), pids)
 }
@@ -160,11 +166,8 @@ func (s ProcSample) Apply(p *ListeningPort) {
 	if !s.MatchesStart(p.StartedAt) {
 		return
 	}
-	p.CPUPercent = s.CPUPercent
-	p.MemoryRSS = s.MemoryRSS
-	p.State = s.State
-	p.Uptime = s.Uptime
-	p.StartTime = s.StartTime
+	p.CPUPercent, p.MemoryRSS, p.State = s.CPUPercent, s.MemoryRSS, s.State
+	p.Uptime, p.StartTime = s.Uptime, s.StartTime
 	if s.ThreadCount > 0 {
 		p.ThreadCount = s.ThreadCount
 	}
