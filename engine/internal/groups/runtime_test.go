@@ -83,6 +83,20 @@ func TestServiceRowsCopyHealthAndReuseManifestFingerprint(t *testing.T) {
 	}
 }
 
+// The executable the spawner recorded is published on the service row; status
+// compares its mtime with the run's start time to answer the artifact question.
+func TestServiceRowCarriesTheRunExecutable(t *testing.T) {
+	cfg := &Config{Dir: "/nonexistent/shop", Services: []Service{{Name: "api", Cmd: "serve"}}}
+	facts := servicefacts.Capture([]servicefacts.RunRecord{{
+		Key: servicefacts.Key{Group: "shop", Service: "api"},
+		Run: state.ServiceRun{ID: "run", PID: 42, Executable: "/work/shop/bin/api"},
+	}}, nil)
+	row := serviceRowsWithFacts(cfg, "shop", servicefacts.NewResolver(facts, nil))[0]
+	if row.ExecutablePath == nil || *row.ExecutablePath != "/work/shop/bin/api" {
+		t.Fatalf("executable path = %v, want the run's resolved program", row.ExecutablePath)
+	}
+}
+
 // TestExpandedRuntimeCommandIsNotDrift: the daemon expands ${worktree} and
 // ${port} before spawning, so the recorded command legitimately differs from
 // the manifest spelling. A matching spec hash is the verdict; comparing the

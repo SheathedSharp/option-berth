@@ -179,6 +179,40 @@ func TestSpawnInjectsTheRunEnvironment(t *testing.T) {
 	}
 }
 
+// The executable a run started is recorded as an absolute path: it is what a
+// later status read compares with the run's start time to answer whether the
+// artifact on disk is still the one this process is running.
+func TestSpawnRecordsTheResolvedExecutable(t *testing.T) {
+	handle := mustSpawn(t, Request{
+		Argv:   []string{"sh", "-c", "true"},
+		Cwd:    t.TempDir(),
+		Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{},
+	})
+	if code := mustWait(t, handle); code != 0 {
+		t.Fatalf("child exited %d", code)
+	}
+	if !filepath.IsAbs(handle.Executable) || filepath.Base(handle.Executable) != "sh" {
+		t.Fatalf("executable = %q, want the absolute path of sh", handle.Executable)
+	}
+
+	dir := t.TempDir()
+	script := filepath.Join(dir, "serve.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	relative := mustSpawn(t, Request{
+		Argv:   []string{"./serve.sh"},
+		Cwd:    dir,
+		Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{},
+	})
+	if code := mustWait(t, relative); code != 0 {
+		t.Fatalf("child exited %d", code)
+	}
+	if relative.Executable != script {
+		t.Fatalf("executable = %q, want %q", relative.Executable, script)
+	}
+}
+
 // TestSpawnPropagatesTheExitCode: `oberth start` exits with the command's own
 // code, so a script wrapping it can branch on failure.
 func TestSpawnPropagatesTheExitCode(t *testing.T) {

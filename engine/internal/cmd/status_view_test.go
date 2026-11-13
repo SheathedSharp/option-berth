@@ -195,6 +195,31 @@ func TestBriefStatusKeepsOnlyRuntimeFacts(t *testing.T) {
 	}
 }
 
+// The executable facts are runtime facts: a brief reader must see the same
+// artifact verdict the full document publishes.
+func TestBriefStatusCarriesTheExecutableFacts(t *testing.T) {
+	doc := statusScopeFixture()
+	changed := true
+	doc.Worktree.Services[0].ExecutablePath = strPtrOrNil("/work/shop/bin/api")
+	doc.Worktree.Services[0].ExecutableModifiedAt = strPtrOrNil("2026-11-13T10:02:00Z")
+	doc.Worktree.Services[0].ExecutableChangedSinceStart = &changed
+
+	brief := briefStatusFrom(doc)
+	raw, err := json.Marshal(brief)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"executable_path":"/work/shop/bin/api"`,
+		`"executable_modified_at":"2026-11-13T10:02:00Z"`,
+		`"executable_changed_since_start":true`,
+	} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("brief document is missing %s: %s", want, raw)
+		}
+	}
+}
+
 // TestBriefStatusCarriesStarting: `--brief --json` is a reader's document for a
 // project that may be mid-start, so the in-flight attempt must be there with
 // the same facts the full document publishes.

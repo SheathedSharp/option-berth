@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/codeid"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
@@ -127,5 +128,61 @@ func TestAnnotateLeavesUnknownCodeUnknown(t *testing.T) {
 	Annotate(context.Background(), redefined, nil)
 	if redefined.Services[0].CodeChangedSinceStart != nil {
 		t.Fatal("a changed source declaration was compared against the old baseline")
+	}
+}
+
+// A directly-run binary rebuilt after the run started is the artifact
+// question `sources:` cannot answer: build output is excluded from the source
+// fingerprint. The executable facts compare the program's current mtime with
+// the run's start time, with one second of tolerance for the published
+// timestamp's precision.
+func TestAnnotateReportsARebuiltExecutable(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "api")
+	if err := os.WriteFile(exe, []byte("v1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(exe, start, start); err != nil {
+		t.Fatal(err)
+	}
+	group := &state.Group{Services: []state.Service{{
+		Name: "api", Running: true,
+		StartedAt:      stringPtr(start.Format(time.RFC3339)),
+		ExecutablePath: stringPtr(exe),
+	}}}
+
+	Annotate(context.Background(), group, nil)
+	svc := group.Services[0]
+	if svc.ExecutableChangedSinceStart == nil || *svc.ExecutableChangedSinceStart {
+		t.Fatalf("fresh executable = %+v, want an explicit false", svc)
+	}
+	if svc.ExecutableModifiedAt == nil {
+		t.Fatal("the executable's mtime was not published")
+	}
+
+	rebuilt := start.Add(2 * time.Second)
+	if err := os.Chtimes(exe, rebuilt, rebuilt); err != nil {
+		t.Fatal(err)
+	}
+	Annotate(context.Background(), group, nil)
+	svc = group.Services[0]
+	if svc.ExecutableChangedSinceStart == nil || !*svc.ExecutableChangedSinceStart {
+		t.Fatalf("rebuilt executable = %+v, want changed", svc)
+	}
+}
+
+// A path that no longer exists or a run without a start time leaves the
+// executable facts absent: unknown, not "unchanged".
+func TestAnnotateLeavesExecutableUnknownWhenItCannotRead(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "gone")
+	group := &state.Group{Services: []state.Service{{
+		Name: "api", Running: true,
+		StartedAt:      stringPtr("2026-11-13T10:00:00Z"),
+		ExecutablePath: stringPtr(missing),
+	}}}
+	Annotate(context.Background(), group, nil)
+	if svc := group.Services[0]; svc.ExecutableChangedSinceStart != nil || svc.ExecutableModifiedAt != nil {
+		t.Fatalf("missing executable = %+v, want unknown", svc)
 	}
 }
