@@ -59,6 +59,9 @@ func serviceEqual(a, b *Service) bool {
 		a.Running == b.Running && pointerEqual(a.PortActual, b.PortActual) && pointerEqual(a.PID, b.PID) &&
 		pointerEqual(a.RunID, b.RunID) && pointerEqual(a.StartedAt, b.StartedAt) &&
 		pointerEqual(a.LogPath, b.LogPath) && pointerEqual(a.Stats, b.Stats) &&
+		pointerEqual(a.ExecutablePath, b.ExecutablePath) &&
+		pointerEqual(a.ExecutableModifiedAt, b.ExecutableModifiedAt) &&
+		pointerEqual(a.ExecutableChangedSinceStart, b.ExecutableChangedSinceStart) &&
 		sameExit(a.LastExit, b.LastExit) && sameStarting(a.Starting, b.Starting)
 }
 

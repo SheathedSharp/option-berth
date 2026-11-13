@@ -142,6 +142,7 @@ func TestRestartKeepsARunsLogRange(t *testing.T) {
 	want := rec
 	want.LogPath = filepath.Join(t.TempDir(), "worker.log")
 	want.LogOffset = 1234
+	want.Executable = filepath.Join(t.TempDir(), "worker")
 	r.Register(want)
 
 	restarted := New()
@@ -155,6 +156,9 @@ func TestRestartKeepsARunsLogRange(t *testing.T) {
 	if got.LogPath != want.LogPath || got.LogOffset != want.LogOffset {
 		t.Fatalf("imported log range = (%q, %d), want (%q, %d)",
 			got.LogPath, got.LogOffset, want.LogPath, want.LogOffset)
+	}
+	if got.Executable != want.Executable {
+		t.Fatalf("imported executable = %q, want %q", got.Executable, want.Executable)
 	}
 }
 

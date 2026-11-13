@@ -97,7 +97,8 @@ CLI 按 **agent 想做的事**分层，不按内部模块分：事实是「现�
 服务做，不会为范围外的服务重读源码。
 
 `--brief` 只保留运行时事实：服务与依赖的状态、声明/实际端口、健康结果、当前退出原因和
-下一步、代码变更（`code_changed_since_start`、`code_changed_files`、`code_hint`），以及
+下一步、代码变更（`code_changed_since_start`、`code_changed_files`、`code_hint`）、可执行文件
+事实（`executable_path`、`executable_modified_at`、`executable_changed_since_start`），以及
 监听端口与 `observation`。它不输出 `git`、`drafts`、`changed`、attention 交接或每个服务
 一份的清单字段；需要这些时用完整 `status`。
 
@@ -165,6 +166,12 @@ worktree 汇总（`cpu_percent`、`memory_rss_bytes`、`services` 为贡献样�
 仍能回答是否变化，但文件数缺省。已经持有 group 行的客户端通过 daemon 的 `groups.code` 方法读
 同一份比较：字段名与「null 即未知」的规则相同，回复里没有的服务是未知，不是没变。
 
+由本引擎启动的运行，`executable_path` 是它启动的程序的解析路径，`executable_modified_at` 是读取时
+该文件的修改时间，`executable_changed_since_start` 在文件新于运行开始时间时为 `true`（已吸收
+公开的开始时间只到秒的精度）。这是源码检查的编译产物对应项：直接运行的二进制在运行开始后被
+重新构建会报 changed，解释器的脚本仍由 `sources:` 覆盖。这些字段缺省表示**未知**——运行早于
+该事实、路径无法解析、或文件已不在——不是“没变”。
+
 监听表不可信时（例如 agent 沙箱拒绝系统内省），`status` 仍然返回清单、服务、运行记录、
 日志路径和最近退出；顶层带 `observation`（`state`、`code`、`detail`、`hint`、`checked_at`）。
 完全失明时 `ports` 为空、`port_actual` 为 null；部分行不可读时 `ports` 只含可读行，
@@ -203,6 +210,9 @@ JSON 顶层固定包含：
        "health": {"status": "ok", "code": 200},
        "code_changed_since_start": true, "code_changed_files": 2,
        "code_hint": "oberth restart --only api",
+       "executable_path": "/work/demo/bin/api",
+       "executable_modified_at": "2026-10-31T10:00:30Z",
+       "executable_changed_since_start": false,
        "stats": {"cpu_percent": 1.2, "memory_rss_bytes": 104857600}},
       {"name": "worker", "running": false, "exit_reason": "crashed", "exit_code": 1,
        "hint": "oberth logs worker --once"},

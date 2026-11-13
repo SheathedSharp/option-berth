@@ -48,6 +48,12 @@ type Entry struct {
 	// file" for a process that is still writing to it.
 	LogPath   string `json:"logPath,omitempty"`
 	LogOffset int64  `json:"logOffset,omitempty"`
+
+	// Executable is the absolute path of the program this run started. It is
+	// what status compares with the run's start time to tell a process running
+	// the current artifact from one still on an older build; the mirror keeps
+	// it across a daemon restart.
+	Executable string `json:"executable,omitempty"`
 }
 
 // GroupOf is the group this run attributes its ports to.

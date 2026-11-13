@@ -23,6 +23,7 @@ func (r *Registry) ServiceFacts() servicefacts.Snapshot {
 			Run: state.ServiceRun{
 				ID: rec.ID, PID: rec.PID, StartedAt: rec.StartedAt.UTC().Format(time.RFC3339),
 				Cmd: rec.Cmd, Cwd: rec.Cwd, SpecHash: rec.SpecHash,
+				Executable: rec.Executable,
 			},
 			StartedAt: rec.StartedAt, PortHint: rec.PortHint, Stopping: rec.stopping,
 		})
