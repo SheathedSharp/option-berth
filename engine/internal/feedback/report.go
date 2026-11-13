@@ -45,6 +45,40 @@ var kindLabels = map[Kind]string{
 	KindOther:       "something else about using oberth",
 }
 
+// kindShort is the same vocabulary for a terminal list: a row has to fit one
+// line, and the issue body keeps the full sentence above.
+var kindShort = map[Kind]string{
+	KindSlow:        "a command or start was far slower than the work",
+	KindStalled:     "no progress and no output while waiting",
+	KindCoarse:      "the facts were too coarse to decide what to do",
+	KindMisleading:  "a published fact or hint did not match",
+	KindObservation: "the listener table could not be read",
+	KindOther:       "something else about using oberth",
+}
+
+// KindOption is one row of the report-kind vocabulary: the identifier a report
+// stores, the sentence the issue carries, and the short line a picker shows.
+type KindOption struct {
+	Kind  Kind
+	Label string
+	Short string
+}
+
+// KindOptions returns the vocabulary in the same stable order as KindNames,
+// with the words a person reads instead of a second hand-written list in the
+// command.
+func KindOptions() []KindOption {
+	names := KindNames()
+	options := make([]KindOption, 0, len(names))
+	for _, name := range names {
+		kind := Kind(name)
+		options = append(options, KindOption{
+			Kind: kind, Label: kindLabels[kind], Short: kindShort[kind],
+		})
+	}
+	return options
+}
+
 // Command is the oberth command the report is about.
 type Command string
 

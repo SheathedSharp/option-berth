@@ -202,3 +202,25 @@ func TestFingerprintIgnoresTheNoteAndElapsed(t *testing.T) {
 		t.Fatal("a different kind must fingerprint differently")
 	}
 }
+
+// The picker draws KindOptions. A kind without words would be a row a person
+// cannot choose from, and the short line has to stay short enough to survive a
+// one-line terminal row.
+func TestKindOptionsCoverTheVocabulary(t *testing.T) {
+	options := KindOptions()
+	names := KindNames()
+	if len(options) != len(names) {
+		t.Fatalf("options = %d, want one per kind (%d)", len(options), len(names))
+	}
+	for i, option := range options {
+		if string(option.Kind) != names[i] {
+			t.Fatalf("option %d = %q, want %q", i, option.Kind, names[i])
+		}
+		if strings.TrimSpace(option.Label) == "" || strings.TrimSpace(option.Short) == "" {
+			t.Errorf("%s has no words to show", option.Kind)
+		}
+		if len(option.Short) > 60 {
+			t.Errorf("%s short line is %d characters, too wide for a picker row", option.Kind, len(option.Short))
+		}
+	}
+}

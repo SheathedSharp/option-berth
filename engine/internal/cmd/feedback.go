@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bufio"
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -13,6 +12,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/sheathedsharp/option-berth/engine/internal/feedback"
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
+	"github.com/sheathedsharp/option-berth/engine/internal/terminal"
 	"github.com/sheathedsharp/option-berth/engine/internal/versioncheck"
 	"github.com/spf13/cobra"
 )
@@ -58,9 +58,13 @@ func newFeedbackCommand() *cobra.Command {
 	}
 	statusCmd := &cobra.Command{
 		Use:   "status",
-		Short: "Show whether reports are on and where they would go",
-		Args:  cobra.NoArgs,
-		RunE:  runFeedbackStatus,
+		Short: "Show whether reports are on, who files them, and how many there are",
+		Long: "Report the recorded decision, the GitHub account `gh` is signed in as, the\n" +
+			"local count of reports this installation produced, and the daily limit. It\n" +
+			"reads the local gh credential only; `oberth feedback log` reads each filed\n" +
+			"issue's state through the same login.",
+		Args: cobra.NoArgs,
+		RunE: runFeedbackStatus,
 	}
 	onCmd := &cobra.Command{
 		Use:   "on",
@@ -79,16 +83,22 @@ func newFeedbackCommand() *cobra.Command {
 		Short: "Compose one report and file it",
 		Long: "Compose a report from facts the caller states and file it: through `gh` with\n" +
 			"the user's own account when it is signed in, otherwise as a prefilled issue URL\n" +
-			"the person submits. The same complaint from the same build is filed at most\n" +
-			"once a day, and one installation files at most five reports a day.",
+			"the person submits. On a terminal without --kind/--command it asks for them\n" +
+			"from the same fixed vocabulary with the arrow keys, then shows the exact\n" +
+			"report before sending. The same complaint from the same build is filed at\n" +
+			"most once a day, and one installation files at most five reports a day.",
 		Args: cobra.NoArgs,
 		RunE: runFeedbackReport,
 	}
 	logCmd := &cobra.Command{
 		Use:   "log",
-		Short: "List the reports this installation filed",
-		Args:  cobra.NoArgs,
-		RunE:  runFeedbackLog,
+		Short: "Show what this installation reported and what happened to each issue",
+		Long: "List the reports this installation produced with the issue's state, close date\n" +
+			"and labels, read through the person's own gh login. Without a signed-in gh the\n" +
+			"local record still prints and each filed report says why its state is unknown.\n" +
+			"--json carries the same data plus a summary, for an agent reading the loop.",
+		Args: cobra.NoArgs,
+		RunE: runFeedbackLog,
 	}
 
 	reportCmd.Flags().StringVar(&feedbackKindFlag, "kind", "",
@@ -147,32 +157,37 @@ func feedbackDisabledByEnv() bool {
 	}
 }
 
-func runFeedbackStatus(*cobra.Command, []string) error {
+func runFeedbackStatus(cmd *cobra.Command, _ []string) error {
 	consent, present, loadErr := feedback.LoadConsent(paths.FeedbackPath())
 	entries, _ := feedback.ReadLedger(paths.FeedbackLedgerPath())
-	available, _ := feedback.GHAvailable(context.Background())
+	account := feedback.GHLogin(cmd.Context())
+	totals := feedback.Totals(entries)
 	now := time.Now()
 
 	channel := "url"
-	if available {
+	if account.Available {
 		channel = "gh"
 	}
 	out := struct {
-		Schema        string `json:"schema"`
-		Decision      string `json:"decision"`
-		Enabled       bool   `json:"enabled"`
-		DisabledByEnv bool   `json:"disabled_by_env"`
-		Channel       string `json:"channel"`
-		Path          string `json:"path"`
-		LedgerPath    string `json:"ledger_path"`
-		Reports24h    int    `json:"reports_24h"`
-		DailyLimit    int    `json:"daily_limit"`
+		Schema        string                `json:"schema"`
+		Decision      string                `json:"decision"`
+		Enabled       bool                  `json:"enabled"`
+		DisabledByEnv bool                  `json:"disabled_by_env"`
+		Channel       string                `json:"channel"`
+		GitHub        feedback.GHAccount    `json:"github"`
+		Reports       feedback.LedgerTotals `json:"reports"`
+		Path          string                `json:"path"`
+		LedgerPath    string                `json:"ledger_path"`
+		Reports24h    int                   `json:"reports_24h"`
+		DailyLimit    int                   `json:"daily_limit"`
 	}{
 		Schema:        feedback.ConsentSchema,
 		Decision:      feedbackDecision(consent, present, loadErr),
 		Enabled:       loadErr == nil && present && consent.Enabled() && !feedbackDisabledByEnv(),
 		DisabledByEnv: feedbackDisabledByEnv(),
 		Channel:       channel,
+		GitHub:        account,
+		Reports:       totals,
 		Path:          paths.FeedbackPath(),
 		LedgerPath:    paths.FeedbackLedgerPath(),
 		Reports24h:    feedback.CountSince(entries, now, 24*time.Hour),
@@ -187,13 +202,51 @@ func runFeedbackStatus(*cobra.Command, []string) error {
 		fmt.Printf("record     %s\n", display.Yellow("unreadable: "+loadErr.Error()))
 	}
 	fmt.Printf("sending    %s\n", yesNo(out.Enabled))
-	fmt.Printf("channel    %s\n", channel)
+	// Who files a report is part of the decision, so it is on the status
+	// screen rather than a line the person only meets after composing one.
+	fmt.Printf("github     %s\n", githubLine(account))
 	fmt.Printf("recorded   %s\n", out.Path)
+	fmt.Printf("reports    %s\n", feedbackTotalsLine(totals))
+	if totals.Filed > 0 {
+		fmt.Printf("           `oberth feedback log` shows each issue's state\n")
+	}
 	fmt.Printf("last 24h   %d of %d reports\n", out.Reports24h, out.DailyLimit)
 	if feedbackDisabledByEnv() {
 		fmt.Printf("environment %s is set, so nothing is sent or asked\n", feedbackOffEnv)
 	}
 	return nil
+}
+
+// githubLine is the one sentence a person reads about who files the report.
+func githubLine(account feedback.GHAccount) string {
+	switch {
+	case account.Available && account.Account != "":
+		return "signed in as " + account.Account
+	case account.Available:
+		return "signed in"
+	default:
+		return "not available (" + account.Reason + ")"
+	}
+}
+
+// feedbackTotalsLine is the local half: how many reports this installation
+// produced and how many of them reached GitHub. Issue state is `feedback log`,
+// because reading it needs a live gh.
+func feedbackTotalsLine(totals feedback.LedgerTotals) string {
+	if totals.Total == 0 {
+		return "none recorded"
+	}
+	return fmt.Sprintf("%d recorded · %d filed · %d prefilled · last %s",
+		totals.Total, totals.Filed, totals.Prefilled, shortDate(totals.LastAt))
+}
+
+// shortDate is an RFC3339 timestamp as a calendar day. An unparsable value is
+// left as written rather than replaced with a guess.
+func shortDate(at string) string {
+	if parsed, err := time.Parse(time.RFC3339, at); err == nil {
+		return parsed.Format("2006-01-02")
+	}
+	return at
 }
 
 func yesNo(value bool) string {
@@ -203,19 +256,28 @@ func yesNo(value bool) string {
 	return "off"
 }
 
-func runFeedbackOn(*cobra.Command, []string) error {
+func runFeedbackOn(cmd *cobra.Command, _ []string) error {
 	consent := feedback.Decide(feedback.DecisionEnabled, buildinfo.VersionValue(), time.Now())
 	if err := feedback.WriteConsent(paths.FeedbackPath(), consent); err != nil {
 		return err
 	}
+	account := feedback.GHLogin(cmd.Context())
 	if feedbackOnJSON {
 		return printJSON(map[string]any{
 			"schema":   feedback.ConsentSchema,
 			"decision": string(feedback.DecisionEnabled),
+			"github":   account,
 			"path":     paths.FeedbackPath(),
 		})
 	}
 	fmt.Printf("improvement reports are on; the decision is recorded in %s\n", paths.FeedbackPath())
+	// Turning it on is the moment the person can still change who files it, so
+	// the account is named here rather than only when a report is composed.
+	if account.Available {
+		fmt.Printf("github     %s; a filed report uses this account\n", githubLine(account))
+	} else {
+		fmt.Printf("github     %s; a report opens a prefilled issue page you submit\n", githubLine(account))
+	}
 	fmt.Println(display.Dim("nothing is sent until a report is filed, and a free-text note is always shown first"))
 	return nil
 }
@@ -251,6 +313,20 @@ func runFeedbackReport(cmd *cobra.Command, _ []string) error {
 		return failHint("invalid_config",
 			"improvement reports are off for this installation",
 			"run `oberth feedback on` if you want to send this one")
+	}
+
+	// With no kind or command and a terminal to draw on, ask instead of
+	// refusing: the fixed vocabulary is easier to pick than to memorise.
+	composed := false
+	if feedbackComposeApplies() {
+		if err := composeFeedback(); err != nil {
+			if errors.Is(err, terminal.ErrCancelled) {
+				fmt.Fprintln(cmd.OutOrStdout(), "cancelled; nothing was sent")
+				return nil
+			}
+			return err
+		}
+		composed = true
 	}
 
 	report, err := feedback.Build(feedback.Input{
@@ -297,11 +373,12 @@ func runFeedbackReport(cmd *cobra.Command, _ []string) error {
 				"nothing was sent; the local record is "+paths.FeedbackLedgerPath())
 		}
 		// A note is the reporter's own words, so it never leaves the machine
-		// without the person seeing it. Everything else is a fixed vocabulary
-		// or a bucket and may go once consent is recorded.
-		if report.Note != "" && !feedbackYesFlag {
-			if !confirmFeedbackNote(report.Preview()) {
-				return usageError{errors.New("nothing was sent: the note needs confirmation, or pass --yes after reading it with --dry-run")}
+		// without the person seeing it. A report composed interactively gets
+		// the same look even without a note: the person just built it, so the
+		// last step should show the exact thing that will be filed.
+		if (report.Note != "" || composed) && !feedbackYesFlag {
+			if !confirmFeedbackReport(report.Preview()) {
+				return usageError{errors.New("nothing was sent: the report needs confirmation, or pass --yes after reading it with --dry-run")}
 			}
 		}
 	}
@@ -369,12 +446,12 @@ func runFeedbackReport(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// confirmFeedbackNote shows the exact report on stderr — --json stdout must
+// confirmFeedbackReport shows the exact report on stderr — --json stdout must
 // stay one value — and asks once. A non-terminal answers no.
-func confirmFeedbackNote(preview string) bool {
+func confirmFeedbackReport(preview string) bool {
 	info, err := os.Stdin.Stat()
 	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
-		fmt.Fprintln(os.Stderr, "stdin is not a terminal; pass --yes to send the note after reading it")
+		fmt.Fprintln(os.Stderr, "stdin is not a terminal; pass --yes to send the report after reading it with --dry-run")
 		return false
 	}
 	fmt.Fprintln(os.Stderr, preview)
@@ -387,35 +464,131 @@ func confirmFeedbackNote(preview string) bool {
 	return answer == "y" || answer == "yes"
 }
 
-func runFeedbackLog(*cobra.Command, []string) error {
+// runFeedbackLog is the response half of the feedback loop: what this
+// installation reported, and what happened to each issue. It reads GitHub
+// through the person's own gh login; without gh the local record still prints
+// and every filed report says why its state is unknown.
+func runFeedbackLog(cmd *cobra.Command, _ []string) error {
 	entries, err := feedback.ReadLedger(paths.FeedbackLedgerPath())
 	if err != nil {
 		return err
 	}
-	if len(entries) > feedback.LedgerShow {
-		entries = entries[len(entries)-feedback.LedgerShow:]
+	account := feedback.GHLogin(cmd.Context())
+	lookup := feedback.LookupIssues(cmd.Context(), account, feedback.DefaultRepo, feedback.FiledIssueNumbers(entries))
+	logged := feedback.LogEntries(entries, lookup)
+	outcomes := make([]feedback.Outcome, len(logged))
+	for i := range logged {
+		outcomes[i] = logged[i].Outcome
+	}
+	summary := feedback.Summarize(entries, outcomes)
+
+	shown := logged
+	if len(shown) > feedback.LedgerShow {
+		shown = shown[len(shown)-feedback.LedgerShow:]
 	}
 	if feedbackLogJSON {
-		if entries == nil {
-			entries = []feedback.Entry{}
-		}
-		return printJSON(map[string]any{
-			"schema":  feedback.ReportSchema,
-			"entries": entries,
-			"path":    paths.FeedbackLedgerPath(),
+		return printJSON(struct {
+			Schema      string                 `json:"schema"`
+			GitHub      feedback.GHAccount     `json:"github"`
+			Summary     feedback.ReportSummary `json:"summary"`
+			Entries     []feedback.LogEntry    `json:"entries"`
+			Path        string                 `json:"path"`
+			IssueReason string                 `json:"issue_reason,omitempty"`
+		}{
+			Schema:      feedback.ReportSchema,
+			GitHub:      account,
+			Summary:     summary,
+			Entries:     shown,
+			Path:        paths.FeedbackLedgerPath(),
+			IssueReason: lookup.Reason,
 		})
 	}
-	if len(entries) == 0 {
+
+	fmt.Printf("github     %s\n", githubLine(account))
+	fmt.Printf("reports    %s\n", feedbackTotalsLine(summary.LedgerTotals))
+	if summary.Filed > 0 {
+		fmt.Printf("issues     %s\n", feedbackOutcomeLine(summary))
+		if !account.Available {
+			fmt.Printf("           `gh auth login` is needed to read issue state\n")
+		}
+	}
+	if len(shown) == 0 {
+		fmt.Println()
 		fmt.Println("no reports have been filed from this installation")
 		return nil
 	}
-	for _, entry := range entries {
-		fmt.Printf("%s  %-10s %-12s %s\n", entry.Kind, entry.Command, entry.Channel, entry.At)
-		if entry.URL != "" {
-			fmt.Printf("  %s\n", entry.URL)
-		}
+	if len(shown) < len(logged) {
+		fmt.Printf("           showing the last %d of %d\n", len(shown), len(logged))
+	}
+	for _, item := range shown {
+		fmt.Println()
+		printFeedbackEntry(item)
 	}
 	return nil
+}
+
+// feedbackOutcomeLine is the closed set of issue outcomes, in the order a
+// person reads them: still open, then the two ways it can be closed, then the
+// reports whose state could not be read.
+func feedbackOutcomeLine(summary feedback.ReportSummary) string {
+	return fmt.Sprintf("%d open · %d resolved · %d closed as not planned · %d unknown",
+		summary.Open, summary.Resolved, summary.NotPlanned, summary.Unknown)
+}
+
+func printFeedbackEntry(item feedback.LogEntry) {
+	number := "page"
+	if item.Issue != nil {
+		number = fmt.Sprintf("#%d", item.Issue.Number)
+	} else if parsed, ok := feedback.IssueNumber(item.URL); ok {
+		number = fmt.Sprintf("#%d", parsed)
+	}
+	fmt.Printf("%-6s %s · %s · %s · %s\n", number, item.Kind, item.Command, item.Version, shortDate(item.At))
+	fmt.Printf("  %s\n", feedbackOutcomeText(item.Outcome))
+	if item.URL != "" {
+		fmt.Printf("  %s\n", item.URL)
+	}
+}
+
+// feedbackOutcomeText is one line per entry: the state word, then the GitHub
+// context that makes it checkable (close date, last update, labels).
+func feedbackOutcomeText(outcome feedback.Outcome) string {
+	switch outcome.Status {
+	case feedback.OutcomeOpen:
+		if outcome.Issue == nil {
+			return "open"
+		}
+		return "open" + issueContext(outcome.Issue)
+	case feedback.OutcomeResolved:
+		if outcome.Issue == nil {
+			return "resolved"
+		}
+		return "resolved" + issueContext(outcome.Issue)
+	case feedback.OutcomeNotPlanned:
+		if outcome.Issue == nil {
+			return "closed as not planned"
+		}
+		return "closed as not planned" + issueContext(outcome.Issue)
+	case feedback.OutcomeNotFiled:
+		return "prefilled page only; not confirmed filed"
+	default:
+		return outcome.ReasonText()
+	}
+}
+
+func issueContext(issue *feedback.Issue) string {
+	var parts []string
+	if issue.ClosedAt != "" {
+		parts = append(parts, "closed "+shortDate(issue.ClosedAt))
+	} else if issue.UpdatedAt != "" {
+		parts = append(parts, "updated "+shortDate(issue.UpdatedAt))
+	}
+	if len(issue.Labels) > 0 {
+		parts = append(parts, "labels: "+strings.Join(issue.Labels, ", "))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " · " + strings.Join(parts, " · ")
 }
 
 // askFeedbackOnce is the first screen's question. It asks at most once per

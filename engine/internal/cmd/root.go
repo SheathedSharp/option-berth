@@ -147,13 +147,49 @@ func logoBlock(extra ...string) string {
 	return strings.Join(lines, "\n")
 }
 
+// signpostRow is one command on the first screen: what to type and why.
+type signpostRow struct{ cmd, what string }
+
 // quickStart is the first screen's whole point: the commands a work session
 // actually runs, so the screen answers "what do I type" before "what exists".
 // Everything else stays one --help away.
-var quickStart = []struct{ cmd, what string }{
+var quickStart = []signpostRow{
 	{"oberth status", "What this worktree declares, what is running, what changed"},
 	{"oberth up", "Start this worktree's services"},
 	{"oberth down", "Stop them and give the ports back"},
+}
+
+// optionalStart is the second group on the first screen: capabilities that are
+// real, commonly reached for, and not part of starting a worktree. They stay
+// out of quickStart so a reader does not mistake "optional" for "required".
+var optionalStart = []signpostRow{
+	{"oberth attn", "Ask a model whether a runtime anomaly matters (off by default)"},
+	{"oberth feedback report", "File a problem with oberth itself"},
+}
+
+// signpost renders one titled group with its descriptions in a single column.
+// The width is shared by every group on the screen, so the two groups and the
+// help rows line up as one block rather than three independent lists.
+func signpost(w io.Writer, title string, width int, rows []signpostRow) {
+	fmt.Fprintln(w, "  "+title)
+	for _, row := range rows {
+		fmt.Fprintf(w, "    %s  %s\n", display.Bold(display.PadDisplay(row.cmd, width)), display.Dim(row.what))
+	}
+}
+
+// signpostWidth is the widest command on the first screen. It is computed over
+// every group before any is printed, so the alignment cannot depend on which
+// group happens to be rendered first.
+func signpostWidth(groups ...[]signpostRow) int {
+	width := 0
+	for _, rows := range groups {
+		for _, row := range rows {
+			if n := display.DisplayWidth(row.cmd); n > width {
+				width = n
+			}
+		}
+	}
+	return width
 }
 
 // agentReads is the reading pattern `oberth --help` hands a coding agent, and
@@ -262,26 +298,18 @@ func welcomeVersion() versioncheck.State {
 // everything else. It is a signpost, not the manual — the grouped command list
 // stays on `oberth --help` (gh's split between first screen and help).
 func printWelcome(w io.Writer, version versioncheck.State) {
-	fmt.Fprintln(w, logoBlock(versionLine(version)))
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "  Start here:")
-	width := 0
-	for _, q := range quickStart {
-		if n := len(q.cmd); n > width {
-			width = n
-		}
-	}
-	for _, q := range quickStart {
-		fmt.Fprintf(w, "    %s  %s\n", display.Bold(display.PadDisplay(q.cmd, width)), display.Dim(q.what))
-	}
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "  Learn more:")
-	for _, q := range []struct{ cmd, what string }{
+	learnMore := []signpostRow{
 		{"oberth --help", "Every command, grouped by what it is for"},
 		{"oberth doctor", "Check this installation"},
-	} {
-		fmt.Fprintf(w, "    %s  %s\n", display.Bold(display.PadDisplay(q.cmd, width)), display.Dim(q.what))
 	}
+	width := signpostWidth(quickStart, optionalStart, learnMore)
+	fmt.Fprintln(w, logoBlock(versionLine(version)))
+	fmt.Fprintln(w)
+	signpost(w, "Start here:", width, quickStart)
+	fmt.Fprintln(w)
+	signpost(w, "Optional:", width, optionalStart)
+	fmt.Fprintln(w)
+	signpost(w, "Learn more:", width, learnMore)
 	if version.UpdateAvailable() {
 		printUpgrade(w, version.Latest)
 	}

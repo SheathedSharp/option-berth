@@ -8,9 +8,10 @@ left for the next person or agent to take over. For every other command, oberth 
 authoritative; this document does not build a second contract here.
 
 Running `oberth` with no arguments shows the first screen: the brand mark and wordmark, a one-line
-positioning statement, the local version, the three most-used commands (status / up / down) and a
-pointer to the full help; it is a signpost, not a manual — the grouped command list appears only in
-`oberth --help`. The version line carries `(latest)` or `(latest version vX.Y.Z)` when the release
+positioning statement, the local version, the three commands a work session starts with (status / up /
+down), the optional capabilities a person reaches for next (`attn` and `feedback report`, in their own
+group so they do not read as required) and a pointer to the full help; it is a signpost, not a manual —
+the grouped command list appears only in `oberth --help`. The version line carries `(latest)` or `(latest version vX.Y.Z)` when the release
 version check succeeds; when the check is unknown it prints only the local version and does not write
 "not found" as "latest". When an update is found, the bottom of the first screen gives the install
 command for the corresponding platform and `oberth daemon stop`. When no improvement-report decision
@@ -296,19 +297,25 @@ oberth attn assess --project "$PWD" \
   --authorize inspect_logs,inspect_port,restart_service,continue_without_action,ask_user_for_context
 ~~~
 
-`oberth attn config` is the only verb that writes credentials: it takes an endpoint
-and model (directly, or through a preset that fills both), reads the key from
-`--key-stdin`, `--key-env NAME`, hidden terminal input, or keeps the stored key,
-sends one synthetic redacted probe, and only writes `attn.json` when the probe
-succeeds — a failed probe leaves the existing configuration untouched. `config`
-changes credentials, not consent. `oberth attn on` and `oberth attn off [--forget]`
-flip the single `enabled` boolean and never touch the network. `oberth attn test`
-probes the current effective configuration once. `oberth attn status` reports the
-resolved state, the fixed reason when it cannot be used, and a summary of the
-local quality ledger; `--json` carries the same data plus the full `quality`
-object. `oberth doctor` gains one offline row for the same state, and a human
-`status` read mentions the feature once every two weeks when it is off and an
-anomaly is present; `BERTH_NO_TIPS=1` silences that hint.
+`oberth attn config` is the only verb that writes credentials. Run with no flags on a terminal it
+asks three questions with the arrow keys — provider, model, key — and every list ends with a custom
+row, so an endpoint or model the build does not list can still be configured. A preset is a
+convenience, not a provider restriction: `openrouter` fills
+`https://openrouter.ai/api/alpha/decisions` and defaults to `typesafe/jev-1.14`, and its list carries
+the current decision models that endpoint serves (TypeSafe Jev, OpenAI GPT-6 Luna Decisions, Google
+Gemini Decision 1, Microsoft Decision 1, Perplexity Decider, Cloudflare Clef, LiquidAI d1.1, Upstage
+Solar Decide, Morph Reflex); `typesafe` fills `https://api.typesafe.ai/v1/systemone` with
+`jev-latest` and `jev-preview`. Scripts and CI keep the flag form: an endpoint and model directly,
+or `--preset NAME`, with the key from `--key-stdin`, `--key-env NAME`, hidden terminal input, or
+the already stored key. Either form sends one synthetic redacted probe and only writes `attn.json`
+when the probe succeeds — a failed probe leaves the existing configuration untouched. `config`
+changes credentials, not consent. `oberth attn on` and `oberth attn off [--forget]` flip the single
+`enabled` boolean and never touch the network. `oberth attn test` probes the current effective
+configuration once. `oberth attn status` reports the resolved state, the fixed reason when it cannot
+be used, and a summary of the local quality ledger; `--json` carries the same data plus the full
+`quality` object. `oberth doctor` gains one offline row for the same state, and a human `status`
+read mentions the feature once every two weeks when it is off and an anomaly is present;
+`BERTH_NO_TIPS=1` silences that hint.
 
 `oberth attn assess` is the one-shot runner. `--dry-run` prints the exact redacted
 request for the current event without sending it, and `--follow` keeps the same
@@ -794,10 +801,10 @@ disables, the way `NO_COLOR` does) turns both the question and sending off.
 
 | Command | What it does |
 |---|---|
-| `oberth feedback status [--json]` | The recorded decision, whether `gh` can file directly, and how many reports this installation filed in the last day |
-| `oberth feedback on` / `oberth feedback off` | Record the decision without waiting for the first screen |
+| `oberth feedback status [--json]` | The recorded decision, the GitHub account `gh` is signed in as, the local report totals, and how many reports this installation filed in the last day |
+| `oberth feedback on` / `oberth feedback off` | Record the decision without waiting for the first screen; `on` names the account that will file |
 | `oberth feedback report [--json] [--dry-run]` | Compose one report and file it |
-| `oberth feedback log [--json]` | The reports this installation filed |
+| `oberth feedback log [--json]` | Each report with its issue's state, close date, labels and URL, read through `gh` |
 
 `report` takes only the fixed vocabulary: `--kind` (`slow`, `stalled`, `coarse`, `misleading`,
 `observation`, `other`), `--command` (an oberth command name), `--error-code` (a code the engine
@@ -806,12 +813,36 @@ publishes), and `--observation` (`observable`, `partial`, `blind`, `bind_denied`
 `--note` is the reporter's own words: it is redacted, capped at 800 bytes, refused outright when it
 looks like it carries a credential, and shown for confirmation unless `--yes` is passed.
 
+With no `--kind` or `--command` on a terminal, `report` asks for them with the arrow keys from the
+same fixed vocabulary, then asks for the optional note; the exact report is shown and confirmed
+before it is filed. `--json`, `--yes` and a pipe keep the flag-only path, so a script never waits
+for a prompt.
+
 The report goes out through `gh issue create` with the person's own GitHub account when `gh` is
 installed and signed in, so that account is visible on the issue; otherwise the command prints a
-prefilled `issues/new` URL for the person to submit, and `--open` opens it. The same complaint from the
-same build is filed at most once in 24 hours, and one installation files at most five reports in a
-rolling day. The local ledger at `BERTH_HOME/feedback/reports.ndjson` records what was filed; it is
-advisory, and deleting it only makes a duplicate possible again.
+prefilled `issues/new` URL for the person to submit, and `--open` opens it. `feedback status` and
+`feedback on` name that account before any report is composed, and `feedback log` reads the filed
+issues through the same login. All three read the local gh credential (`gh auth status --json hosts`)
+and send nothing. The same complaint from the same build is filed at most once in 24 hours, and one
+installation files at most five reports in a rolling day. The local ledger at
+`BERTH_HOME/feedback/reports.ndjson` records what was filed; it is advisory, and deleting it only
+makes a duplicate possible again.
+
+`status` keeps the two kinds of history apart: a `gh` entry is an issue that was filed, while a
+`url` entry is a prefilled page the person still had to submit. The human line reads
+`N recorded · N filed · N prefilled`, so a prefilled page never inflates the filed count. `--json`
+adds `github` (`available`, `account`, `reason`) and `reports` (`total`, `filed`, `prefilled`,
+`last_at`).
+
+`log` is the response half of the loop. For every filed report it reads the issue and prints
+`open`, `resolved`, `closed as not planned`, `unknown`, or `prefilled page only`; next to the state
+it prints the issue number, kind, command, version, report date, close or update date, labels and
+URL. `--json` carries the same data as `github`, `summary` (the local totals plus `open`, `resolved`,
+`not_planned` and `unknown`) and one entry per report with `status`, `reason` and the GitHub `issue`
+object (`number`, `state`, `state_reason`, `title`, `labels`, `updated_at`, `closed_at`, `url`). The
+human view shows the most recent 20 entries while `summary` counts the whole ledger. Without a
+signed-in gh the local record still prints and every filed report says why its state is unknown;
+nothing is guessed.
 
 A report never carries a path, a log line, a manifest field, a command line, a worktree identity or an
 environment variable: it is about the engine, not about the project it was run in. `--dry-run` prints
