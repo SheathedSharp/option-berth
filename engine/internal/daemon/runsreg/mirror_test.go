@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -130,6 +131,31 @@ func TestDelayedMirrorAddKeepsRenamedMetadata(t *testing.T) {
 	want := old
 	want.Group = "renamed"
 	requireMirroredRun(t, r, want)
+}
+
+// The mirror is the only copy of a live run that survives a daemon restart.
+// A detached run's log range belongs to the run's identity: `logs --run
+// current` reads exactly that range, and losing it makes the command answer
+// "no log file" for a process that is still writing to that file.
+func TestRestartKeepsARunsLogRange(t *testing.T) {
+	r, rec := mirroredRegistry(t)
+	want := rec
+	want.LogPath = filepath.Join(t.TempDir(), "worker.log")
+	want.LogOffset = 1234
+	r.Register(want)
+
+	restarted := New()
+	if n, err := restarted.ImportLegacy(); err != nil || n != 1 {
+		t.Fatalf("restart imported %d records, error=%v, want 1/nil", n, err)
+	}
+	got, ok := restarted.Lookup(want.PID)
+	if !ok {
+		t.Fatal("the live run did not survive the restart")
+	}
+	if got.LogPath != want.LogPath || got.LogOffset != want.LogOffset {
+		t.Fatalf("imported log range = (%q, %d), want (%q, %d)",
+			got.LogPath, got.LogOffset, want.LogPath, want.LogOffset)
+	}
 }
 
 func requireMirrorRecovery(t *testing.T, want Record) {

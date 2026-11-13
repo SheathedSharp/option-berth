@@ -40,6 +40,14 @@ type Entry struct {
 	// Launch facts.
 	PPID     int `json:"ppid,omitempty"`
 	PortHint int `json:"portHint,omitempty"`
+
+	// LogPath and LogOffset are this run's own part of the service log: the
+	// file it writes to, and where its output begins in that append-only file.
+	// The mirror is the only copy of a live run that survives a daemon
+	// restart, so leaving them out makes `logs --run current` answer "no log
+	// file" for a process that is still writing to it.
+	LogPath   string `json:"logPath,omitempty"`
+	LogOffset int64  `json:"logOffset,omitempty"`
 }
 
 // GroupOf is the group this run attributes its ports to.

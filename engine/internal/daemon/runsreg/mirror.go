@@ -20,6 +20,7 @@ func mirrorEntry(rec Record) runs.Entry {
 		StartedAt: rec.StartedAt.Format(time.RFC3339Nano),
 		Group:     rec.Group, Name: rec.Name, Cwd: rec.Cwd, PPID: rec.PPID,
 		PortHint: rec.PortHint, SpecHash: rec.SpecHash,
+		LogPath: rec.LogPath, LogOffset: rec.LogOffset,
 	}
 }
 
