@@ -259,3 +259,17 @@ func TestSendsSummaryCoversBothDirections(t *testing.T) {
 		t.Fatal("the human summary does not point at the exact body")
 	}
 }
+
+// Setup stores credentials; it does not opt the person in. `oberth attn on` is
+// the one verb that flips consent, so a `config` run must preserve whatever the
+// person already decided — including the default "not yet".
+func TestSettingsFromNeverGrantsConsent(t *testing.T) {
+	fresh := (EnableOptions{Preset: "openrouter"}).SettingsFrom(LocalConfig{})
+	if fresh.Enabled {
+		t.Fatal("config turned the assessment on")
+	}
+	already := (EnableOptions{Preset: "typesafe"}).SettingsFrom(LocalConfig{Enabled: true})
+	if !already.Enabled {
+		t.Fatal("config dropped a consent the person had already given")
+	}
+}
