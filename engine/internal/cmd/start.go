@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -178,6 +179,7 @@ func startDetached(cmd *cobra.Command, argv []string, cwd string, res spawn.Reso
 	err := daemonCall(ctx, connectDaemon, "runs.spawn", detachedSpawnParams(argv, cwd, res), &out)
 	if err == nil {
 		printStarted(res, out.PID, out.LogPath)
+		printObservedPort(cmd.Context(), out.RunID, out.PID, startPort > 0)
 		recordDetachedRun(cwd, argv, out.RunID, out.PID, out.LogPath, time.Now().UTC())
 		return nil
 	}
@@ -202,6 +204,7 @@ func startDetached(cmd *cobra.Command, argv []string, cwd string, res spawn.Reso
 	}
 	registerRun(h)
 	printStarted(res, h.PID, h.LogPath)
+	printObservedPort(cmd.Context(), h.ID, h.PID, startPort > 0)
 	recordDetachedRun(cwd, argv, h.ID, h.PID, h.LogPath, h.StartedAt)
 	return nil
 }
@@ -238,6 +241,85 @@ func printStarted(res spawn.Resolution, pid int, logPath string) {
 	if logPath != "" {
 		fmt.Printf("%s %s\n", display.Dim("logs"), logPath)
 	}
+}
+
+const (
+	// detachedPortWait bounds the observation after a detached start. The child
+	// binds after the RPC returns, so the port is read from the daemon's run
+	// attribution rather than assumed from --port: the command may bind a
+	// fallback port when the hinted one is taken.
+	detachedPortWait = 2 * time.Second
+	detachedPortPoll = 100 * time.Millisecond
+)
+
+// printObservedPort publishes the listeners the daemon attributes to this run.
+// With a --port hint it waits briefly for the attribution; without one it makes
+// a single read, because a portless worker has nothing to wait for.
+func printObservedPort(ctx context.Context, runID string, pid int, wait bool) {
+	if ports := awaitRunPort(ctx, runID, pid, wait); len(ports) > 0 {
+		label := "port"
+		if len(ports) > 1 {
+			label = "ports"
+		}
+		values := make([]string, len(ports))
+		for i, port := range ports {
+			values[i] = strconv.Itoa(port)
+		}
+		fmt.Printf("%s %s\n", display.Dim(label), display.Cyan(strings.Join(values, ", ")))
+		return
+	}
+	if wait {
+		fmt.Println(display.Dim("port not observed yet; run `oberth status --json --brief`"))
+	}
+}
+
+// awaitRunPort polls the run list for a listener attributed to this run. The
+// list is read from the daemon's live registry, not the log, so a fallback port
+// is reported as the port the process actually holds.
+func awaitRunPort(ctx context.Context, runID string, pid int, wait bool) []int {
+	deadline := time.Now()
+	if wait {
+		deadline = deadline.Add(detachedPortWait)
+	}
+	for {
+		if ctx.Err() != nil {
+			return nil
+		}
+		callCtx, cancel := context.WithTimeout(ctx, time.Second)
+		var listed rpc.RunsListResult
+		err := daemonCall(callCtx, connectDaemon, "runs.list", rpc.Empty{}, &listed)
+		cancel()
+		if err == nil {
+			if ports := portsForRun(listed.Runs, runID, pid); len(ports) > 0 {
+				return ports
+			}
+		}
+		if !time.Now().Before(deadline) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(detachedPortPoll):
+		}
+	}
+}
+
+// portsForRun is the identity match: the run id when the caller has one, the
+// pid only for a daemon that did not name the run.
+func portsForRun(records []rpc.RunRecord, runID string, pid int) []int {
+	for _, rec := range records {
+		if runID != "" {
+			if rec.ID == runID {
+				return rec.Ports
+			}
+			continue
+		}
+		if rec.PID == pid {
+			return rec.Ports
+		}
+	}
+	return nil
 }
 
 // detachedSpawnParams is the runs.spawn request: the caller's command and
