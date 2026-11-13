@@ -482,6 +482,10 @@ JSON 值，不混入诊断。旧 daemon 不认识 `progress`，旧 CLI 也不会
 --json 返回一个值，其中 `stopped` 是停止结果，`services` 和汇总字段是重新启动结果。
 `restart` 不等待就绪，因此 `started` 服务带 `ready:false`，人读同样标注未确认就绪。
 
+只有清单声明的服务可以重启。`oberth start` 启动的运行没有清单条目：如果它仍在运行，先停止，
+再重新执行那条命令。`restart --only` 点名这类运行且运行账本认识它时，`not_found` 的 hint 会
+打印记录下来的启动命令（cwd、group、name、port 与命令），而不是指回 `status`。
+
 ### oberth down [project] [--worktree path | --identity wt_…] [--force] [--json]
 
 停止该项目清单里的全部服务，动作后确认可释放时交还 `port: auto` 的预留。
