@@ -172,34 +172,74 @@ func TestBodyKeepsTheNoteVerbatimInsideACodeBlock(t *testing.T) {
 	}
 }
 
-func TestFingerprintIgnoresTheNoteAndElapsed(t *testing.T) {
+// Elapsed still does not identify a complaint; the note does. Two sightings of
+// one problem at different times are one fingerprint, while two reports that
+// spell out different defects are distinct even when every structured field
+// matches. Without the note the second was silently dropped and answered with
+// the first one's issue.
+func TestFingerprintUsesTheNoteButNotElapsed(t *testing.T) {
 	first := validInput()
 	first.Elapsed = "20s"
 	first.Note = "one"
-	second := validInput()
-	second.Elapsed = "3m"
-	second.Note = "another sighting"
+	same := validInput()
+	same.Elapsed = "3m"
+	same.Note = "one"
+	other := validInput()
+	other.Elapsed = "20s"
+	other.Note = "another defect"
 
 	a, err := Build(first)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := Build(second)
+	b, err := Build(same)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Fingerprint() != b.Fingerprint() {
-		t.Fatalf("fingerprints differ: %q vs %q", a.Fingerprint(), b.Fingerprint())
-	}
-
-	other := validInput()
-	other.Kind = "stalled"
 	c, err := Build(other)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if a.Fingerprint() != b.Fingerprint() {
+		t.Fatalf("the same note must fingerprint the same: %q vs %q", a.Fingerprint(), b.Fingerprint())
+	}
 	if a.Fingerprint() == c.Fingerprint() {
+		t.Fatal("a different note must fingerprint differently")
+	}
+
+	repeated := validInput()
+	repeated.Kind = "stalled"
+	d, err := Build(repeated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Fingerprint() == d.Fingerprint() {
 		t.Fatal("a different kind must fingerprint differently")
+	}
+}
+
+// Every public command can be named by --command; falling back to "other" for
+// a command the CLI really has reported the wrong subject on the issue.
+func TestCommandVocabularyCoversPublicCommands(t *testing.T) {
+	public := []string{
+		"status", "logs", "events", "worktrees",
+		"up", "restart", "down", "start", "kill",
+		"git", "init",
+		"workplace", "agent", "attn",
+		"daemon", "serve", "config", "version", "completion", "doctor", "feedback",
+		"other",
+	}
+	for _, name := range public {
+		in := validInput()
+		in.Command = name
+		report, err := Build(in)
+		if err != nil {
+			t.Errorf("Build refused the public command %q: %v", name, err)
+			continue
+		}
+		if string(report.Command) != name {
+			t.Errorf("command %q became %q", name, report.Command)
+		}
 	}
 }
 
