@@ -349,11 +349,15 @@ func (r Report) Body() string {
 }
 
 // Fingerprint identifies the same complaint from the same build, so a repeat
-// within the dedupe window does not file a second issue. Elapsed and the note
-// are left out on purpose: both vary between sightings of one problem.
+// within the dedupe window does not file a second issue. Elapsed is left out
+// because it varies between sightings of one problem. The redacted note is
+// part of the identity: two reports whose structured fields match can still
+// describe different defects, and the note is the only place that difference
+// is stated. Dropping it silently suppressed the second one and answered with
+// the first one's issue.
 func (r Report) Fingerprint() string {
 	sum := sha256.Sum256([]byte(strings.Join([]string{
-		string(r.Kind), string(r.Command), r.ErrorCode, r.Observation, r.Version,
+		string(r.Kind), string(r.Command), r.ErrorCode, r.Observation, r.Version, r.Note,
 	}, "\x00")))
 	return hex.EncodeToString(sum[:])[:12]
 }
