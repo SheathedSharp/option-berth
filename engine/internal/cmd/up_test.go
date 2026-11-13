@@ -543,6 +543,62 @@ func TestPrintStartChunkMarksIncludedDependencies(t *testing.T) {
 	}
 }
 
+// TestReadinessNextNamesTheConfirmationCall: without --wait the command exits
+// 0 after starting services whose readiness it did not confirm, so it must
+// publish the call that does. `started` plus `ready:false` is not a failure,
+// and polling sockets outside oberth is exactly what this replaces.
+func TestReadinessNextNamesTheConfirmationCall(t *testing.T) {
+	confirmed, unconfirmed := true, false
+	cases := []struct {
+		name   string
+		chunks []rpc.GroupsStartChunk
+		wait   bool
+		want   string
+	}{
+		{"waited", []rpc.GroupsStartChunk{{Service: "api", State: "started", Ready: &unconfirmed}}, true, ""},
+		{"organized names", []rpc.GroupsStartChunk{
+			{Service: "web", State: "started"},
+			{Service: "api", State: "started"},
+		}, false, "oberth up --only api,web --wait --json"},
+		{"explicit false", []rpc.GroupsStartChunk{{Service: "api", State: "started", Ready: &unconfirmed}}, false,
+			"oberth up --only api --wait --json"},
+		{"confirmed chunk", []rpc.GroupsStartChunk{{Service: "api", State: "started", Ready: &confirmed}}, false, ""},
+		{"skipped only", []rpc.GroupsStartChunk{{Service: "api", State: "skipped", Skipped: true}}, false, ""},
+		{"failure is not a readiness wait", []rpc.GroupsStartChunk{{Service: "api", State: "failed", Error: "boom"}}, false, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := readinessNext(tc.chunks, tc.wait); got != tc.want {
+				t.Fatalf("next = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The JSON document carries the same next step; an empty one is absent, not an
+// empty string.
+func TestUpDocumentCarriesTheNextStep(t *testing.T) {
+	raw, err := json.Marshal(upDocument{
+		Services:       []rpc.GroupsStartChunk{{Service: "api", State: "started"}},
+		Next:           "oberth up --only api --wait --json",
+		GroupsStartEnd: rpc.GroupsStartEnd{Started: []string{"api"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"next":"oberth up --only api --wait --json"`) {
+		t.Fatalf("json = %s, want the next step", raw)
+	}
+
+	raw, err = json.Marshal(upDocument{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"next"`) {
+		t.Fatalf("json = %s, want no next key when there is no step", raw)
+	}
+}
+
 // TestPrintStartSummaryListsIncludedDependencies prints the closure only when
 // there is one.
 func TestPrintStartSummaryListsIncludedDependencies(t *testing.T) {
