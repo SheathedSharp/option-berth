@@ -35,6 +35,7 @@ func (r *Registry) importLegacy(consume func(func([]runs.Entry) ([]runs.Entry, e
 				ID: e.ID, PID: e.PID, PPID: e.PPID,
 				Group: e.GroupOf(), Name: e.NameOf(), Cmd: e.Cmd,
 				Cwd: e.Cwd, PortHint: e.PortHint, SpecHash: e.SpecHash,
+				LogPath: e.LogPath, LogOffset: e.LogOffset,
 			}
 			if t, err := time.Parse(time.RFC3339Nano, e.StartedAt); err == nil {
 				rec.StartedAt = t
