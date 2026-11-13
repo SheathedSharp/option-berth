@@ -101,6 +101,10 @@ CLI 按 **agent 想做的事**分层，不按内部模块分：事实是「现�
 监听端口与 `observation`。它不输出 `git`、`drafts`、`changed`、attention 交接或每个服务
 一份的清单字段；需要这些时用完整 `status`。
 
+每服务的事实只在确实存在时出现：观察到健康结论时才有 `health`，已知监听者时才有
+`port_actual`，运行有可读的启动快照时才有 `code_changed_since_start`。缺席表示未知或不适用
+（已停止的服务没有 `health` 与 `port_actual`），绝不是否定结果；先读 `running` 再看这些键。
+
 服务的 `last_exit.reason` 会区分普通崩溃（`crashed`）和固定端口被其他进程占用
 （`port_occupied`），也会标出命令尚未启动就失败的服务（`start_failed`），因此“启动后退出”、
 “端口冲突”和“启动前失败”不会混成同一种状态。
