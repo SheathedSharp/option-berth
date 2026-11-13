@@ -21,6 +21,7 @@ func mirrorEntry(rec Record) runs.Entry {
 		Group:     rec.Group, Name: rec.Name, Cwd: rec.Cwd, PPID: rec.PPID,
 		PortHint: rec.PortHint, SpecHash: rec.SpecHash,
 		LogPath: rec.LogPath, LogOffset: rec.LogOffset,
+		Executable: rec.Executable,
 	}
 }
 

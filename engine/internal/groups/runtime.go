@@ -55,6 +55,7 @@ func serviceRowsWithFacts(cfg *Config, group string, resolver servicefacts.Resol
 			row.RuntimeCmd = optional(run.Cmd)
 			row.RuntimeCwd = optional(run.Cwd)
 			row.RuntimeSpecHash = optional(run.SpecHash)
+			row.ExecutablePath = optional(run.Executable)
 			if run.PID > 0 {
 				pid := run.PID
 				row.PID = &pid

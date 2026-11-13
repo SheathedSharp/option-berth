@@ -62,6 +62,10 @@ type Record struct {
 	// run's part of it begins; the last lines are kept with the exit.
 	LogPath   string
 	LogOffset int64
+	// Executable is the absolute path of the program this run started. A
+	// rebuilt binary run directly is the artifact status compares with the
+	// run's start time; empty means the caller did not report one.
+	Executable string
 	// Session is the agent session that asked for this run, or the zero value
 	// when nothing did. It travels with the run so every port the
 	// run opens can be stamped with it.

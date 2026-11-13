@@ -94,10 +94,10 @@ type statusDocument struct {
 	manifestMissing bool
 	Scope           display.Scope   `json:"scope"`
 	Worktree        state.Group     `json:"worktree"`
-	Ports    []state.Port    `json:"ports"`
-	Git      *git.Tree       `json:"git,omitempty"`
-	Drafts   []draft.Pending `json:"drafts"`
-	Exits    []rpc.RunRecord `json:"exits"`
+	Ports           []state.Port    `json:"ports"`
+	Git             *git.Tree       `json:"git,omitempty"`
+	Drafts          []draft.Pending `json:"drafts"`
+	Exits           []rpc.RunRecord `json:"exits"`
 	// AttnPath points to a derived, fact-only handoff for an optional
 	// agent adapter. It is absent when there is no current anomaly.
 	AttnPath string `json:"attn_path,omitempty"`
@@ -331,10 +331,10 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool, only []stri
 		Scope:           display.Scope{Kind: "worktree", Name: name, Root: root},
 		Worktree:        *group,
 		Ports:           ports,
-		Git:         tree,
-		Drafts:      []draft.Pending{},
-		Exits:       statusExits(ctx, name),
-		Observation: publicObservation(obs),
+		Git:             tree,
+		Drafts:          []draft.Pending{},
+		Exits:           statusExits(ctx, name),
+		Observation:     publicObservation(obs),
 	}
 	// The direct read (no daemon) has no snapshot of its own, and the daemon's
 	// runs.list may be older than the service row. Fill only what is still
@@ -822,9 +822,15 @@ func printStatusServices(doc statusDocument) {
 			}
 			parts = append(parts, display.Yellow(detail))
 		}
+		executableChanged := s.ExecutableChangedSinceStart != nil && *s.ExecutableChangedSinceStart
+		if executableChanged {
+			parts = append(parts, display.Yellow("executable newer than this run"))
+		}
 		statusLine("services", strings.Join(parts, " · "))
 		if codeChanged && s.CodeHint != nil {
 			statusLine("next", display.Dim(*s.CodeHint))
+		} else if executableChanged {
+			statusLine("next", display.Dim("oberth restart --only "+s.Name))
 		}
 	}
 }

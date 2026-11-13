@@ -104,7 +104,9 @@ services, and sources outside the scope are not re-read.
 
 `--brief` keeps only runtime facts: the state of services and dependencies, declared/actual ports,
 health results, the current exit reason and next step, code changes (`code_changed_since_start`,
-`code_changed_files`, `code_hint`), and listening ports plus `observation`. It does not output `git`,
+`code_changed_files`, `code_hint`), the executable facts (`executable_path`,
+`executable_modified_at`, `executable_changed_since_start`), and listening ports plus `observation`.
+It does not output `git`,
 `drafts`, `changed`, the attention handoff, or the per-service manifest fields; use the full `status`
 when you need those.
 
@@ -191,6 +193,14 @@ that already holds the group rows reads the same comparison through the daemon's
 method: the field names and the null-means-unknown rule are the same, and a service absent from the
 reply is unknown, not unchanged.
 
+For a run started by this engine, `executable_path` is the resolved program it started,
+`executable_modified_at` is that file's modification time read now, and
+`executable_changed_since_start` is `true` when the file is newer than the run's start (the published
+start time's second precision is absorbed). This is the compiled-artifact counterpart of the source
+check: a directly-run binary rebuilt after the run began is reported as changed, while an
+interpreter's script is still covered by `sources:`. Absent means **unknown** — the run predates the
+fact, the path could not be resolved, or the file is gone — never "unchanged".
+
 When the listener table cannot be trusted (for example an agent sandbox refuses system introspection),
 `status` still returns the manifest, services, run records, log paths and recent exits; the top level
 carries `observation` (`state`, `code`, `detail`, `hint`, `checked_at`). When fully blind, `ports` is
@@ -234,6 +244,9 @@ truncation, and `files_truncated` being true means the list is only a prefix. Us
        "health": {"status": "ok", "code": 200},
        "code_changed_since_start": true, "code_changed_files": 2,
        "code_hint": "oberth restart --only api",
+       "executable_path": "/work/demo/bin/api",
+       "executable_modified_at": "2026-10-31T10:00:30Z",
+       "executable_changed_since_start": false,
        "stats": {"cpu_percent": 1.2, "memory_rss_bytes": 104857600}},
       {"name": "worker", "running": false, "exit_reason": "crashed", "exit_code": 1,
        "hint": "oberth logs worker --once"},

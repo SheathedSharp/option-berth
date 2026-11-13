@@ -56,6 +56,11 @@ type briefService struct {
 	CodeChangedSinceStart *bool  `json:"code_changed_since_start,omitempty"`
 	CodeChangedFiles      *int   `json:"code_changed_files,omitempty"`
 	CodeHint              string `json:"code_hint,omitempty"`
+	// The executable facts answer the compiled-artifact question for a
+	// directly-run binary; absent means unknown, never "unchanged".
+	ExecutablePath              *string `json:"executable_path,omitempty"`
+	ExecutableModifiedAt        *string `json:"executable_modified_at,omitempty"`
+	ExecutableChangedSinceStart *bool   `json:"executable_changed_since_start,omitempty"`
 	// Starting is the in-flight start attempt, the same transient fact the
 	// full document carries. A brief reader often reads exactly while services
 	// are coming up, and "not running" alone cannot say whether that is a wait
@@ -168,9 +173,12 @@ func briefStatusFrom(doc statusDocument) briefStatusDocument {
 		item := briefService{
 			Name: svc.Name, Running: svc.Running,
 			Port: svc.Port, PortActual: svc.PortActual, PortAuto: svc.PortAuto,
-			ManifestRuntimeMismatch: svc.ManifestRuntimeMismatch,
-			CodeChangedSinceStart:   svc.CodeChangedSinceStart,
-			CodeChangedFiles:        svc.CodeChangedFiles,
+			ManifestRuntimeMismatch:     svc.ManifestRuntimeMismatch,
+			CodeChangedSinceStart:       svc.CodeChangedSinceStart,
+			CodeChangedFiles:            svc.CodeChangedFiles,
+			ExecutablePath:              svc.ExecutablePath,
+			ExecutableModifiedAt:        svc.ExecutableModifiedAt,
+			ExecutableChangedSinceStart: svc.ExecutableChangedSinceStart,
 		}
 		if svc.CodeHint != nil {
 			item.CodeHint = *svc.CodeHint
