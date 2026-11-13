@@ -44,13 +44,15 @@ var attnStatusCmd = &cobra.Command{
 var attnConfigCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Store the endpoint, model and key, proving the key answers",
-	Long: "Write the owner-only attn.json. Give an endpoint and model directly, or use a\n" +
-		"preset that fills both. The key comes from standard input (--key-stdin), an\n" +
-		"environment variable (--key-env NAME), a hidden terminal prompt, or the\n" +
-		"already stored key when no key flag is given. One synthetic redacted request\n" +
-		"proves the configuration before anything is written; a failed probe leaves the\n" +
-		"existing file untouched. This verb changes credentials, not consent: it never\n" +
-		"turns the assessment on.",
+	Long: "Write the owner-only attn.json. With no flags on a terminal it asks for the\n" +
+		"provider, then the model, then the key; every list ends with a custom row, so\n" +
+		"an endpoint or model this build has not heard of is one answer away. Give\n" +
+		"--preset or --endpoint/--model to skip the questions; the key then comes from\n" +
+		"standard input (--key-stdin), an environment variable (--key-env NAME), a\n" +
+		"hidden terminal prompt, or the already stored key when no key flag is given.\n" +
+		"One synthetic redacted request proves the configuration before anything is\n" +
+		"written; a failed probe leaves the existing file untouched. This verb changes\n" +
+		"credentials, not consent: it never turns the assessment on.",
 	Args: cobra.NoArgs,
 	RunE: runAttnConfig,
 }
@@ -129,17 +131,28 @@ func runAttnStatus(cmd *cobra.Command, _ []string) error {
 	state["quality"] = report
 	return attnPrint(state, func() string {
 		var b strings.Builder
-		if consent.Enabled {
+		switch {
+		case consent.Enabled:
 			fmt.Fprintf(&b, "Attention: on (%s)\n", consent.ConsentSource)
-		} else {
+		case !present:
+			// An empty file and an empty endpoint/model table say nothing a
+			// reader can act on; name the state and the one next step instead.
+			b.WriteString("Attention: not configured\n")
+		default:
 			fmt.Fprintf(&b, "Attention: off (%s)\n", firstNonEmptyString(consent.Reason, model.ReasonDisabled))
 		}
 		if consent.Preset != "" {
 			fmt.Fprintf(&b, "  preset    %s\n", consent.Preset)
 		}
-		fmt.Fprintf(&b, "  endpoint  %s\n", consent.Endpoint)
-		fmt.Fprintf(&b, "  model     %s\n", consent.Model)
-		fmt.Fprintf(&b, "  key       %s\n", keySourceLine(consent.KeySource, state["key_fingerprint"]))
+		if consent.Endpoint != "" {
+			fmt.Fprintf(&b, "  endpoint  %s\n", consent.Endpoint)
+		}
+		if consent.Model != "" {
+			fmt.Fprintf(&b, "  model     %s\n", consent.Model)
+		}
+		if present {
+			fmt.Fprintf(&b, "  key       %s\n", keySourceLine(consent.KeySource, state["key_fingerprint"]))
+		}
 		fmt.Fprintf(&b, "  quality   %s\n", qualitySummary(report, attnStatusSinceFlag))
 		if !consent.Enabled {
 			fmt.Fprintf(&b, "  next      %s\n", model.ReasonHint(consent.Reason))
@@ -181,6 +194,12 @@ func runAttnConfig(cmd *cobra.Command, _ []string) error {
 	if attnKeyStdinFlag && attnKeyEnvFlag != "" {
 		return usageError{errors.New("--key-stdin and --key-env are mutually exclusive")}
 	}
+	// A person at a terminal with no fields to set gets the guided form. Any
+	// flag, --json, a pipe or Windows keeps the flag form below, so every
+	// scripted path behaves exactly as before.
+	if attnConfigWizardApplies() {
+		return runAttnConfigWizard(cmd)
+	}
 	current, present, err := model.LoadLocalConfig()
 	if err != nil {
 		// A malformed file is replaceable: config is the repair path.
@@ -189,7 +208,7 @@ func runAttnConfig(cmd *cobra.Command, _ []string) error {
 	if noAttnConfigFlags() {
 		return attnPrint(current.RedactedSettings(), func() string {
 			if !present {
-				return "Attention: not configured. Run `oberth attn config` with --preset or --endpoint/--model."
+				return "Attention: not configured.\n" + attnProviderList()
 			}
 			return humanSettings(current)
 		})
@@ -209,8 +228,19 @@ func runAttnConfig(cmd *cobra.Command, _ []string) error {
 		return keyErr
 	}
 	next.APIKey = key
+	return attnCommitConfig(cmd, next)
+}
+
+// attnCommitConfig is the one end of every setup path: validate, prove the key
+// with one synthetic redacted assessment, and only then write. A new way of
+// choosing the fields cannot skip the proof, and a failed probe leaves an
+// existing configuration untouched.
+func attnCommitConfig(cmd *cobra.Command, next model.LocalConfig) error {
 	if err := next.Validate(); err != nil {
 		return usageError{err}
+	}
+	if strings.TrimSpace(next.APIKey) == "" {
+		return usageError{errors.New("an API key is required; rerun `oberth attn config`")}
 	}
 	ctx, cancel := context.WithTimeout(cmd.Context(), next.Timeout()+time.Second)
 	defer cancel()
@@ -237,10 +267,26 @@ func runAttnConfig(cmd *cobra.Command, _ []string) error {
 		"probe":    map[string]any{"ok": true, "model": probe.Model, "latency_ms": probe.Latency.Milliseconds()},
 		"sends":    model.SendsSummary(),
 	}, func() string {
-		return fmt.Sprintf("Attention: configured (%s, key %s)\n  %s\n\n%s",
-			next.Model, keySourceLine(model.SourceSettings, model.KeyFingerprint(next.APIKey)),
-			path, model.HumanSendsSummary())
+		var b strings.Builder
+		fmt.Fprintf(&b, "Attention: configured (%s, key %s)\n",
+			next.Model, keySourceLine(model.SourceSettings, model.KeyFingerprint(next.APIKey)))
+		fmt.Fprintf(&b, "  %s\n", path)
+		fmt.Fprintf(&b, "  consent   %s\n\n", attnConsentLine(next.Enabled))
+		b.WriteString(model.HumanSendsSummary())
+		b.WriteString("\n\n  next      oberth attn test   send one synthetic event")
+		if !next.Enabled {
+			b.WriteString("\n            oberth attn on     allow assessments")
+		}
+		return b.String()
 	})
+}
+
+// attnConsentLine says plainly that a configured provider is not an opt-in.
+func attnConsentLine(enabled bool) string {
+	if enabled {
+		return "on (kept)"
+	}
+	return "off; `oberth attn on` turns the assessment on"
 }
 
 func noAttnConfigFlags() bool {
