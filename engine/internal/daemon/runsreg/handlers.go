@@ -320,15 +320,16 @@ func runFromHandle(h *spawn.Handle, meta Meta) Record {
 		PID:  h.PID,
 		PPID: h.PPID,
 		// The launch itself, as the spawner observed it.
-		Group:     h.Group,
-		Name:      h.Name,
-		Cmd:       h.Cmd,
-		Cwd:       h.Cwd,
-		PortHint:  h.PortHint,
-		StartedAt: h.StartedAt,
-		Session:   h.Session,
-		LogPath:   h.LogPath,
-		LogOffset: h.LogOffset,
+		Group:      h.Group,
+		Name:       h.Name,
+		Cmd:        h.Cmd,
+		Cwd:        h.Cwd,
+		PortHint:   h.PortHint,
+		StartedAt:  h.StartedAt,
+		Session:    h.Session,
+		LogPath:    h.LogPath,
+		LogOffset:  h.LogOffset,
+		Executable: h.Executable,
 	}
 	// Where the run came from is the caller's knowledge, not the spawner's.
 	rec.ConfigPath, rec.StartID, rec.Origin = meta.ConfigPath, meta.StartID, meta.Origin

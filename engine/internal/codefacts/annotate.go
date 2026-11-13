@@ -11,6 +11,7 @@ package codefacts
 
 import (
 	"context"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -45,7 +46,13 @@ func Annotate(ctx context.Context, group *state.Group, selected map[string]bool)
 		if selected != nil && !selected[svc.Name] {
 			continue
 		}
-		if !svc.Running || svc.RunID == nil || *svc.RunID == "" {
+		if !svc.Running {
+			continue
+		}
+		// The executable question is independent of the source snapshot: a
+		// service may opt out of `sources:` and still run a built binary.
+		annotateExecutable(svc)
+		if svc.RunID == nil || *svc.RunID == "" {
 			continue
 		}
 		if err := ctx.Err(); err != nil {
@@ -88,4 +95,32 @@ func Annotate(ctx context.Context, group *state.Group, selected map[string]bool)
 		hint := "oberth restart --only " + svc.Name
 		svc.CodeHint = &hint
 	}
+}
+
+// executableTolerance absorbs the published start time's second precision:
+// started_at is RFC3339 without fractions, so a file built earlier in the same
+// second must not read as newer than the run.
+const executableTolerance = time.Second
+
+// annotateExecutable answers the compiled-artifact question: is the program
+// this run started still the file on disk? A directly-run binary rebuilt after
+// the run began is the case `sources:` cannot see, because build output is
+// deliberately excluded from the source fingerprint.
+func annotateExecutable(svc *state.Service) {
+	if svc.ExecutablePath == nil || *svc.ExecutablePath == "" || svc.StartedAt == nil {
+		return
+	}
+	start, err := time.Parse(time.RFC3339, *svc.StartedAt)
+	if err != nil {
+		return
+	}
+	info, err := os.Stat(*svc.ExecutablePath)
+	if err != nil {
+		return
+	}
+	at := info.ModTime().UTC()
+	modified := at.Format(time.RFC3339Nano)
+	svc.ExecutableModifiedAt = &modified
+	changed := at.After(start.Add(executableTolerance))
+	svc.ExecutableChangedSinceStart = &changed
 }

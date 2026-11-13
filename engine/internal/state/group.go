@@ -52,6 +52,16 @@ type Service struct {
 	// including when a very large source set was fingerprinted by digest only.
 	CodeChangedFiles *int    `json:"code_changed_files" jsonschema:"nullable"`
 	CodeHint         *string `json:"code_hint" jsonschema:"nullable"`
+	// ExecutablePath is the resolved program this run started, when the
+	// spawner recorded one. ExecutableModifiedAt is that file's modification
+	// time read now, and ExecutableChangedSinceStart is true when the file is
+	// newer than the run started. They answer the compiled-artifact question
+	// that `sources:` cannot: a rebuilt binary run directly. Absent means
+	// unknown (the run predates this fact, the path could not be resolved, or
+	// the file is gone), never "unchanged".
+	ExecutablePath              *string `json:"executable_path" jsonschema:"nullable"`
+	ExecutableModifiedAt        *string `json:"executable_modified_at" jsonschema:"nullable"`
+	ExecutableChangedSinceStart *bool   `json:"executable_changed_since_start" jsonschema:"nullable"`
 	// Presentation metadata the person authored in `oberth.yaml`. The daemon
 	// stores and serves it; what an icon or colour means is the client's
 	// business.
@@ -138,6 +148,11 @@ type ServiceRun struct {
 	Cmd       string `json:"cmd"`
 	Cwd       string `json:"cwd"`
 	SpecHash  string `json:"spec_hash,omitempty"`
+	// Executable is the resolved program path the spawner recorded. It is
+	// runtime evidence, not a manifest field; status compares its current
+	// mtime with StartedAt. Hidden from the wire because the service row
+	// publishes the resolved facts instead.
+	Executable string `json:"-"`
 }
 
 // MachineRef is one entry of a manifest's top-level `machine:` list: a service

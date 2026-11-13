@@ -102,6 +102,11 @@ type Handle struct {
 	LogPath   string
 	LogOffset int64
 
+	// Executable is the absolute path of the program this run started, when it
+	// could be resolved. A rebuilt binary run directly is the artifact this
+	// fact lets status compare with the run's start time.
+	Executable string
+
 	cmd *exec.Cmd
 	log *os.File
 }
@@ -185,12 +190,29 @@ func Spawn(ctx context.Context, req Request) (*Handle, error) {
 
 	handle.cmd = command
 	handle.PID = command.Process.Pid
+	handle.Executable = resolvedExecutable(command.Path, cwd)
 	if handle.log != nil && req.Detach {
 		// The child owns the descriptor now.
 		handle.log.Close()
 		handle.log = nil
 	}
 	return handle, nil
+}
+
+// resolvedExecutable turns the command's path into an absolute one. A path with
+// a separator is resolved by the child against its own working directory; a
+// bare name was found on PATH relative to this process.
+func resolvedExecutable(path, cwd string) string {
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+	if strings.ContainsAny(path, `/\`) {
+		return filepath.Join(cwd, path)
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return path
 }
 
 // resolveWorkingDir turns the request's cwd into an absolute existing

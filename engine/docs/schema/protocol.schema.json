@@ -2149,6 +2149,36 @@
             }
           ]
         },
+        "executable_path": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executable_modified_at": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executable_changed_since_start": {
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "description": {
           "oneOf": [
             {
@@ -2291,6 +2321,9 @@
         "code_changed_since_start",
         "code_changed_files",
         "code_hint",
+        "executable_path",
+        "executable_modified_at",
+        "executable_changed_since_start",
         "description",
         "icon",
         "color",
