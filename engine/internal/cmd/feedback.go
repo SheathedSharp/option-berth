@@ -13,6 +13,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/sheathedsharp/option-berth/engine/internal/feedback"
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
+	"github.com/sheathedsharp/option-berth/engine/internal/terminal"
 	"github.com/sheathedsharp/option-berth/engine/internal/versioncheck"
 	"github.com/spf13/cobra"
 )
@@ -79,8 +80,10 @@ func newFeedbackCommand() *cobra.Command {
 		Short: "Compose one report and file it",
 		Long: "Compose a report from facts the caller states and file it: through `gh` with\n" +
 			"the user's own account when it is signed in, otherwise as a prefilled issue URL\n" +
-			"the person submits. The same complaint from the same build is filed at most\n" +
-			"once a day, and one installation files at most five reports a day.",
+			"the person submits. On a terminal without --kind/--command it asks for them\n" +
+			"from the same fixed vocabulary with the arrow keys, then shows the exact\n" +
+			"report before sending. The same complaint from the same build is filed at\n" +
+			"most once a day, and one installation files at most five reports a day.",
 		Args: cobra.NoArgs,
 		RunE: runFeedbackReport,
 	}
@@ -253,6 +256,20 @@ func runFeedbackReport(cmd *cobra.Command, _ []string) error {
 			"run `oberth feedback on` if you want to send this one")
 	}
 
+	// With no kind or command and a terminal to draw on, ask instead of
+	// refusing: the fixed vocabulary is easier to pick than to memorise.
+	composed := false
+	if feedbackComposeApplies() {
+		if err := composeFeedback(); err != nil {
+			if errors.Is(err, terminal.ErrCancelled) {
+				fmt.Fprintln(cmd.OutOrStdout(), "cancelled; nothing was sent")
+				return nil
+			}
+			return err
+		}
+		composed = true
+	}
+
 	report, err := feedback.Build(feedback.Input{
 		Kind:        feedbackKindFlag,
 		Command:     feedbackCommandFlag,
@@ -297,11 +314,12 @@ func runFeedbackReport(cmd *cobra.Command, _ []string) error {
 				"nothing was sent; the local record is "+paths.FeedbackLedgerPath())
 		}
 		// A note is the reporter's own words, so it never leaves the machine
-		// without the person seeing it. Everything else is a fixed vocabulary
-		// or a bucket and may go once consent is recorded.
-		if report.Note != "" && !feedbackYesFlag {
-			if !confirmFeedbackNote(report.Preview()) {
-				return usageError{errors.New("nothing was sent: the note needs confirmation, or pass --yes after reading it with --dry-run")}
+		// without the person seeing it. A report composed interactively gets
+		// the same look even without a note: the person just built it, so the
+		// last step should show the exact thing that will be filed.
+		if (report.Note != "" || composed) && !feedbackYesFlag {
+			if !confirmFeedbackReport(report.Preview()) {
+				return usageError{errors.New("nothing was sent: the report needs confirmation, or pass --yes after reading it with --dry-run")}
 			}
 		}
 	}
@@ -369,12 +387,12 @@ func runFeedbackReport(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// confirmFeedbackNote shows the exact report on stderr — --json stdout must
+// confirmFeedbackReport shows the exact report on stderr — --json stdout must
 // stay one value — and asks once. A non-terminal answers no.
-func confirmFeedbackNote(preview string) bool {
+func confirmFeedbackReport(preview string) bool {
 	info, err := os.Stdin.Stat()
 	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
-		fmt.Fprintln(os.Stderr, "stdin is not a terminal; pass --yes to send the note after reading it")
+		fmt.Fprintln(os.Stderr, "stdin is not a terminal; pass --yes to send the report after reading it with --dry-run")
 		return false
 	}
 	fmt.Fprintln(os.Stderr, preview)
