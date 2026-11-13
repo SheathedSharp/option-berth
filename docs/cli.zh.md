@@ -674,10 +674,10 @@ stderr 也说明一次。这与 `status` 的规则一致：看不见不是没在
 
 | 命令 | 做什么 |
 |---|---|
-| `oberth feedback status [--json]` | 已记录的决定、`gh` 能否直接提交，以及本安装在最近一天提交了几份 |
-| `oberth feedback on` / `oberth feedback off` | 不用等首屏，直接记录决定 |
+| `oberth feedback status [--json]` | 已记录的决定、`gh` 登录的账号、本安装的报告总数，以及最近一天提交了几份 |
+| `oberth feedback on` / `oberth feedback off` | 不用等首屏，直接记录决定；`on` 会写明将由哪个账号提交 |
 | `oberth feedback report [--json] [--dry-run]` | 组装并提交一份报告 |
-| `oberth feedback log [--json]` | 本安装提交过的报告 |
+| `oberth feedback log [--json]` | 每份报告对应 issue 的状态、关闭时间、标签和链接，经 `gh` 读取 |
 
 `report` 只接受固定词汇：`--kind`（`slow`、`stalled`、`coarse`、`misleading`、`observation`、
 `other`）、`--command`（oberth 的命令名）、`--error-code`（引擎会发布的错误码）和 `--observation`
@@ -689,9 +689,24 @@ stderr 也说明一次。这与 `status` 的规则一致：看不见不是没在
 描述；提交前展示完整报告并要求确认。`--json`、`--yes` 和管道仍走纯参数路径，脚本不会卡在提问上。
 
 `gh` 已安装且已登录时，报告通过 `gh issue create` 用报告人自己的 GitHub 账号提交，因此那个账号在
-issue 上可见；否则命令打印一条预填好的 `issues/new` 链接由人提交，`--open` 会打开它。同一构建的
+issue 上可见；否则命令打印一条预填好的 `issues/new` 链接由人提交，`--open` 会打开它。
+`feedback status` 与 `feedback on` 在组装报告之前就写明这个账号，`feedback log` 用同一个登录读取
+已提交的 issue。三者都只读本地 gh 凭据（`gh auth status --json hosts`），不发送任何东西。同一构建的
 同一个问题 24 小时内最多提交一次，一个安装滚动一天最多提交五份。本地账本在
 `BERTH_HOME/feedback/reports.ndjson`，它只是记录；删掉它只会让重复提交再次成为可能。
+
+`status` 把两类历史分开：`gh` 条目是真正提交的 issue，`url` 条目是人还需要自己按提交的预填页面。
+人读的一行是 `N recorded · N filed · N prefilled`，预填页面不会虚增提交数。`--json` 增加
+`github`（`available`、`account`、`reason`）和 `reports`（`total`、`filed`、`prefilled`、
+`last_at`）。
+
+`log` 是这个回路的另一半。对每份已提交报告，它读取 issue 并打印 `open`、`resolved`、
+`closed as not planned`、`unknown` 或 `prefilled page only`；旁边给出 issue 编号、kind、command、
+版本、报告日期、关闭或更新时间、标签和链接。`--json` 同样给出 `github`、`summary`（本地总数加上
+`open`、`resolved`、`not_planned`、`unknown`）和逐条的 `status`、`reason` 与 GitHub `issue`
+对象（`number`、`state`、`state_reason`、`title`、`labels`、`updated_at`、`closed_at`、`url`）。
+人读视图最多列最近 20 条，`summary` 统计整个账本。`gh` 未登录时本地记录照常打印，每份已提交报告
+说明状态未知的原因，不猜。
 
 报告永远不带路径、日志行、清单字段、命令行、worktree 身份或环境变量：它说的是引擎，不是它跑在
 哪个项目里。`--dry-run` 打印确切的标题和正文，什么都不发。

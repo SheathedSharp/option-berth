@@ -801,10 +801,10 @@ disables, the way `NO_COLOR` does) turns both the question and sending off.
 
 | Command | What it does |
 |---|---|
-| `oberth feedback status [--json]` | The recorded decision, whether `gh` can file directly, and how many reports this installation filed in the last day |
-| `oberth feedback on` / `oberth feedback off` | Record the decision without waiting for the first screen |
+| `oberth feedback status [--json]` | The recorded decision, the GitHub account `gh` is signed in as, the local report totals, and how many reports this installation filed in the last day |
+| `oberth feedback on` / `oberth feedback off` | Record the decision without waiting for the first screen; `on` names the account that will file |
 | `oberth feedback report [--json] [--dry-run]` | Compose one report and file it |
-| `oberth feedback log [--json]` | The reports this installation filed |
+| `oberth feedback log [--json]` | Each report with its issue's state, close date, labels and URL, read through `gh` |
 
 `report` takes only the fixed vocabulary: `--kind` (`slow`, `stalled`, `coarse`, `misleading`,
 `observation`, `other`), `--command` (an oberth command name), `--error-code` (a code the engine
@@ -820,10 +820,29 @@ for a prompt.
 
 The report goes out through `gh issue create` with the person's own GitHub account when `gh` is
 installed and signed in, so that account is visible on the issue; otherwise the command prints a
-prefilled `issues/new` URL for the person to submit, and `--open` opens it. The same complaint from the
-same build is filed at most once in 24 hours, and one installation files at most five reports in a
-rolling day. The local ledger at `BERTH_HOME/feedback/reports.ndjson` records what was filed; it is
-advisory, and deleting it only makes a duplicate possible again.
+prefilled `issues/new` URL for the person to submit, and `--open` opens it. `feedback status` and
+`feedback on` name that account before any report is composed, and `feedback log` reads the filed
+issues through the same login. All three read the local gh credential (`gh auth status --json hosts`)
+and send nothing. The same complaint from the same build is filed at most once in 24 hours, and one
+installation files at most five reports in a rolling day. The local ledger at
+`BERTH_HOME/feedback/reports.ndjson` records what was filed; it is advisory, and deleting it only
+makes a duplicate possible again.
+
+`status` keeps the two kinds of history apart: a `gh` entry is an issue that was filed, while a
+`url` entry is a prefilled page the person still had to submit. The human line reads
+`N recorded · N filed · N prefilled`, so a prefilled page never inflates the filed count. `--json`
+adds `github` (`available`, `account`, `reason`) and `reports` (`total`, `filed`, `prefilled`,
+`last_at`).
+
+`log` is the response half of the loop. For every filed report it reads the issue and prints
+`open`, `resolved`, `closed as not planned`, `unknown`, or `prefilled page only`; next to the state
+it prints the issue number, kind, command, version, report date, close or update date, labels and
+URL. `--json` carries the same data as `github`, `summary` (the local totals plus `open`, `resolved`,
+`not_planned` and `unknown`) and one entry per report with `status`, `reason` and the GitHub `issue`
+object (`number`, `state`, `state_reason`, `title`, `labels`, `updated_at`, `closed_at`, `url`). The
+human view shows the most recent 20 entries while `summary` counts the whole ledger. Without a
+signed-in gh the local record still prints and every filed report says why its state is unknown;
+nothing is guessed.
 
 A report never carries a path, a log line, a manifest field, a command line, a worktree identity or an
 environment variable: it is about the engine, not about the project it was run in. `--dry-run` prints
