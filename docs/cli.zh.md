@@ -257,14 +257,21 @@ oberth attn assess --project "$PWD" \
   --authorize inspect_logs,inspect_port,restart_service,continue_without_action,ask_user_for_context
 ~~~
 
-`oberth attn config` 是唯一写凭据的动词：给出 endpoint 与 model（直接给，或用 preset
-一并填入），从 `--key-stdin`、`--key-env NAME`、终端隐藏输入读取密钥，或保留已存密钥，
-发一次合成的脱敏探测，**只有探测成功才写** `attn.json`；探测失败时已有配置保持不动。
-`config` 改的是凭据，不是同意。`oberth attn on` 与 `oberth attn off [--forget]` 只翻转
-一个 `enabled` 布尔值，不联网。`oberth attn test` 用当前有效配置探测一次。
-`oberth attn status` 报告解析结果、不可用时的固定原因，以及本地质量账本摘要；`--json`
-同时输出完整 `quality` 对象。`oberth doctor` 增加一行离线状态；人读 `status` 在未启用且
-当前有异常时，每两周提示一次，`BERTH_NO_TIPS=1` 可关闭。
+`oberth attn config` 是唯一写凭据的动词。无参数在终端运行时，它用方向键依次问供应商、
+模型、密钥，每个列表末尾都有自定义行：目录没有收录的端点或模型也能配。preset 只是填空
+便利，不是供应商限制：`openrouter` 填入 `https://openrouter.ai/api/alpha/decisions`，默认
+`typesafe/jev-1.14`，列表带上该端点当前提供的决策模型（TypeSafe Jev、OpenAI GPT-6 Luna
+Decisions、Google Gemini Decision 1、Microsoft Decision 1、Perplexity Decider、Cloudflare
+Clef、LiquidAI d1.1、Upstage Solar Decide、Morph Reflex）；`typesafe` 填入
+`https://api.typesafe.ai/v1/systemone`，可选 `jev-latest` 与 `jev-preview`。脚本与 CI 仍走
+参数形式：直接给 endpoint 与 model，或用 `--preset NAME`，密钥从 `--key-stdin`、
+`--key-env NAME`、终端隐藏输入读取，或保留已存密钥。两种形式都发一次合成的脱敏探测，
+**只有探测成功才写** `attn.json`；探测失败时已有配置保持不动。`config` 改的是凭据，不是同意。
+`oberth attn on` 与 `oberth attn off [--forget]` 只翻转一个 `enabled` 布尔值，不联网。
+`oberth attn test` 用当前有效配置探测一次。`oberth attn status` 报告解析结果、不可用时的
+固定原因，以及本地质量账本摘要；`--json` 同时输出完整 `quality` 对象。`oberth doctor`
+增加一行离线状态；人读 `status` 在未启用且当前有异常时，每两周提示一次，`BERTH_NO_TIPS=1`
+可关闭。
 
 `oberth attn assess` 是一次性 runner。`--dry-run` 打印当前事件将要发送的脱敏请求体但不发送；
 `--follow` 让同一循环在任务生命周期内持续运行，以 NDJSON 输出 `subscribed`、仅变化的手递
@@ -677,6 +684,9 @@ stderr 也说明一次。这与 `status` 的规则一致：看不见不是没在
 （`observable`、`partial`、`blind`、`bind_denied`）。`--elapsed` 与 `--services` 按档位提交，不是
 原始数字；构建自己补上版本、提交和平台。`--note` 是报告人自己的话：先脱敏，上限 800 字节，
 看起来像凭据时直接拒绝，并且在传 `--yes` 之前要给人看过并确认。
+
+终端上没有 `--kind` 或 `--command` 时，`report` 用方向键从同一份固定词汇里问，再问可选的
+描述；提交前展示完整报告并要求确认。`--json`、`--yes` 和管道仍走纯参数路径，脚本不会卡在提问上。
 
 `gh` 已安装且已登录时，报告通过 `gh issue create` 用报告人自己的 GitHub 账号提交，因此那个账号在
 issue 上可见；否则命令打印一条预填好的 `issues/new` 链接由人提交，`--open` 会打开它。同一构建的

@@ -12,7 +12,7 @@ It is one `oberth` binary, not a second executable. The verbs split by audience:
 | `oberth attn` | Who | What |
 |---|---|---|
 | `status` | person | resolved state, fixed reason, local quality summary |
-| `config` | person | store endpoint/model/key after a synthetic probe |
+| `config` | person | choose provider/model with the arrow keys, then store endpoint/model/key after a synthetic probe |
 | `on` / `off [--forget]` | person | flip the single consent boolean |
 | `test` | person | probe the effective configuration once |
 | `assess` | agent | one status read, one assessment, one handoff |
@@ -23,24 +23,38 @@ It is one `oberth` binary, not a second executable. The verbs split by audience:
 
 The adapter speaks one wire contract: a structured `state`, `model` and typed
 `questions` request, answered with typed `answers`. TypeSafe's endpoint and
-OpenRouter's Jev Decisions API both implement it; any other endpoint that
-implements the same shape works too. Endpoint, model and key are independent
-fields — the `openrouter` and `typesafe` presets only fill the first two while
-you configure, and are never consulted at runtime. The adapter uses two `noul`
-questions (`task_relevant`, `needs_human`) and a `choice` question for the
-authorized fixed options. See the [OpenRouter Jev guide](https://openrouter.ai/blog/insights/what-is-jev/)
+OpenRouter's Decisions API both implement it, and OpenRouter serves most current
+decision models through the same request; any other endpoint that implements the
+same shape works too. Endpoint, model and key are independent fields — the
+`openrouter` and `typesafe` presets only fill the first two while you configure,
+and are never consulted at runtime. The adapter uses two `noul` questions
+(`task_relevant`, `needs_human`) and a `choice` question for the authorized fixed
+options. See the [OpenRouter Jev guide](https://openrouter.ai/blog/insights/what-is-jev/)
 and [TypeSafe API reference](https://docs.typesafe.ai/api/) for the upstream
 wire contract.
 
 ## Turning it on
 
 `oberth attn config` is the one step that stores credentials, in this order: give
-an endpoint and model (directly, or through a preset that fills both), read the
-key, prove the key answers, then write the owner-only file. It never turns the
-assessment on; `oberth attn on` flips that one boolean, and `oberth attn off`
-flips it back (`--forget` also removes the key).
+an endpoint and model (directly, through a preset, or by picking from the
+catalog), read the key, prove the key answers, then write the owner-only file.
+It never turns the assessment on; `oberth attn on` flips that one boolean, and
+`oberth attn off` flips it back (`--forget` also removes the key).
+
+With no flags on a terminal, the command walks through provider, model and key
+with the arrow keys. Every list ends with a custom row: a deployment or model
+that is not in the catalog is one answer away, and the catalog is a convenience
+rather than a gate. The curated rows are:
+
+| Preset | Endpoint | Models |
+|---|---|---|
+| `openrouter` | `https://openrouter.ai/api/alpha/decisions` | `typesafe/jev-1.14` (default), `openai/gpt-6-luna-decisions`, `google/gemini-decision-1`, `microsoft/microsoft-decision-1`, `perplexity/pplx-decider-v1.3`, `cloudflare/clef`, `liquid/d1.1`, `upstage/solar-decide`, `morph/reflex` |
+| `typesafe` | `https://api.typesafe.ai/v1/systemone` | `jev-latest` (default), `jev-preview` |
 
 ```sh
+# a person at a terminal: provider, model, then hidden key input
+oberth attn config
+
 # a script or CI job: the key never appears in an argument list
 oberth attn config --preset openrouter --key-stdin < key.txt
 oberth attn on
@@ -48,11 +62,8 @@ oberth attn on
 # read it from an existing variable
 oberth attn config --preset typesafe --key-env ATTN_KEY
 
-# any compatible endpoint: no preset, explicit fields
+# any compatible endpoint or model: no preset, explicit fields
 oberth attn config --endpoint https://assess.example/decisions --model team/model --key-env ATTN_KEY
-
-# a person at a terminal: hidden input
-oberth attn config --preset openrouter
 ```
 
 The proof is one synthetic, redacted assessment — the same request shape a real
@@ -73,11 +84,13 @@ will not be sent.
 keys apart. `assess --dry-run` is the honesty check to run before turning it on:
 if the body it shows is not acceptable, do not enable.
 
-Hidden terminal input uses the platform's own termios through `golang.org/x/sys`,
-which the engine already depends on; `golang.org/x/term` is deliberately not
-added for eight lines of the same work. On Windows interactive entry is refused
-with a pointer to `--key-stdin` / `--key-env`, because the engine's Windows
-surface is a native build and a smoke test, not full acceptance.
+Hidden input and the arrow-key picker live in `internal/terminal` and use the
+platform's own termios through `golang.org/x/sys`, which the engine already
+depends on; `golang.org/x/term` is deliberately not added for the same handful
+of lines. Prompts are drawn on standard error, so a command's stdout stays one
+JSON value. On Windows interactive entry and the picker are refused with a
+pointer to the flags, because the engine's Windows surface is a native build and
+a smoke test, not full acceptance.
 
 ## Run it
 
@@ -177,7 +190,7 @@ at `~/.option-berth/attn.json` (or `$BERTH_HOME/attn.json` in an isolated run):
   "enabled": true,
   "preset": "openrouter",
   "endpoint": "https://openrouter.ai/api/alpha/decisions",
-  "model": "typesafe/jev-1.13",
+  "model": "typesafe/jev-1.14",
   "api_key": "…",
   "timeout_ms": 10000
 }
