@@ -108,6 +108,11 @@ health results, the current exit reason and next step, code changes (`code_chang
 `drafts`, `changed`, the attention handoff, or the per-service manifest fields; use the full `status`
 when you need those.
 
+Per-service facts are present only when they exist: `health` when a health verdict was observed,
+`port_actual` while a listener is known, `code_changed_since_start` when the run has a readable start
+snapshot. Absent means unknown or not applicable — a down service has no `health` or `port_actual` —
+never a negative result; read `running` before those keys.
+
 A service's `last_exit.reason` distinguishes an ordinary crash (`crashed`) from a fixed port taken by
 another process (`port_occupied`), and also marks services that failed before the command ever started
 (`start_failed`), so "exited after starting", "port conflict" and "failed before starting" do not
