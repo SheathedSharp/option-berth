@@ -86,7 +86,8 @@ func newFeedbackCommand() *cobra.Command {
 			"the person submits. On a terminal without --kind/--command it asks for them\n" +
 			"from the same fixed vocabulary with the arrow keys, then shows the exact\n" +
 			"report before sending. The same complaint from the same build is filed at\n" +
-			"most once a day, and one installation files at most five reports a day.",
+			"most once a day, and one installation files at most " +
+			fmt.Sprint(feedback.DailyLimit) + " reports a day.",
 		Args: cobra.NoArgs,
 		RunE: runFeedbackReport,
 	}
