@@ -31,6 +31,15 @@ func runeCells(r rune) int {
 	return 1
 }
 
+// StripANSI removes the SGR colour sequences a service may have written into
+// its own output. It is the rendering half of the no-color rule: the log file
+// keeps the bytes the service wrote, while a reader that cannot or must not
+// render colour gets the plain text. Other escape sequences (cursor movement,
+// screen control) are not colour and are left untouched.
+func StripANSI(s string) string {
+	return ansiRegex.ReplaceAllString(s, "")
+}
+
 // DisplayWidth is how many terminal cells s occupies, ignoring ANSI codes and
 // counting a wide rune as two. Counting runes instead would make a column
 // holding both "failed" and a CJK word drift.

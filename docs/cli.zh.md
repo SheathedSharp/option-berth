@@ -525,6 +525,10 @@ daemon 是账本的唯一写者：它在扫描到清单时记录身份，重启�
 {"source":"/path/to/service.log","lines":["..."],"truncated":false,"service":"api","run_id":"...","pid":1234,"status":"running"}
 ~~~
 
+打印出来的行遵循颜色规则：颜色关闭时（`--no-color`、`NO_COLOR`、`color: false`，或 stdout 不是
+终端），服务自己写入的 SGR 颜色序列会从打印的 `lines` 与 `first_error.text` 中移除，日志文件
+仍保留服务写入的字节；颜色开启时按原样打印。其它转义序列（光标移动、屏幕控制）不会被改写。
+
 `--run current --first-error` 的文档：
 
 ~~~json
