@@ -781,7 +781,10 @@ current actual port. So `oberth start -- curl '${api.url}/health'` reaches this 
 does not connect to the other one during two-worktree integration work. A declared reference that
 currently has no address makes the command fail outright rather than executing `${...}` literally;
 bare `${port}` / `${url}` expand only when `--port` is given. Other arguments are passed through
-unchanged. `kill` takes a port or pid as its subject, with `--all` as the batch exception that still
+unchanged. A detached start (`-d`) also publishes the listener the daemon attributes to the run
+(`port N`); with `--port` it waits briefly for that attribution and says when no port has been
+observed yet, because the command may bind a fallback port instead of the hint. `kill` takes a port
+or pid as its subject, with `--all` as the batch exception that still
 needs explicit confirmation; the old group/session selectors are kept only for migration and do not
 appear in public help.
 
