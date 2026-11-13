@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"slices"
+	"sort"
+
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
@@ -24,12 +27,27 @@ type briefStatusDocument struct {
 }
 
 type briefWorktree struct {
-	Name            string           `json:"name"`
-	Identity        string           `json:"identity"`
-	Branch          string           `json:"branch,omitempty"`
-	Services        []briefService   `json:"services"`
+	Name     string         `json:"name"`
+	Identity string         `json:"identity"`
+	Branch   string         `json:"branch,omitempty"`
+	Services []briefService `json:"services"`
+	// AdHocRuns lists `oberth start` runs whose listener belongs to this
+	// worktree but whose name is not a declared service. `services` cannot show
+	// them; without this a brief reader sees only bare port numbers and cannot
+	// tell oberth owns the process.
+	AdHocRuns       []briefAdHocRun  `json:"ad_hoc_runs"`
 	RunningServices int              `json:"running_services"`
 	Resources       *state.Resources `json:"resources,omitempty"`
+}
+
+// briefAdHocRun is one run's attribution: identity plus the listeners it holds.
+// A run may hold several ports; the ports are sorted and never null.
+type briefAdHocRun struct {
+	Name  string `json:"name"`
+	RunID string `json:"run_id,omitempty"`
+	Group string `json:"group,omitempty"`
+	PID   int    `json:"pid,omitempty"`
+	Ports []int  `json:"ports"`
 }
 
 type briefService struct {
@@ -144,6 +162,7 @@ func briefStatusFrom(doc statusDocument) briefStatusDocument {
 			Identity:        doc.Worktree.Identity,
 			Branch:          doc.Worktree.Branch,
 			Services:        make([]briefService, 0, len(doc.Worktree.Services)),
+			AdHocRuns:       briefAdHocRuns(doc),
 			RunningServices: doc.Worktree.RunningServices,
 			Resources:       doc.Worktree.Resources,
 		},
@@ -230,5 +249,49 @@ func briefStatusFrom(doc statusDocument) briefStatusDocument {
 		out.Exits = append(out.Exits, item)
 	}
 
+	return out
+}
+
+// briefAdHocRuns groups the listeners owned by runs the manifest does not
+// declare. The run id is the identity; a record without one falls back to the
+// name. Declared services stay in `services`, where their port already lives.
+func briefAdHocRuns(doc statusDocument) []briefAdHocRun {
+	declared := make(map[string]bool, len(doc.Worktree.Services))
+	for _, svc := range doc.Worktree.Services {
+		declared[svc.Name] = true
+	}
+	byRun := make(map[string]*briefAdHocRun)
+	for _, port := range doc.Ports {
+		run := port.Run
+		if run == nil || declared[run.Name] {
+			continue
+		}
+		key := run.ID
+		if key == "" {
+			key = run.Name
+		}
+		item, ok := byRun[key]
+		if !ok {
+			item = &briefAdHocRun{
+				Name: run.Name, RunID: run.ID, Group: run.Group, PID: run.RootPID,
+				Ports: []int{},
+			}
+			byRun[key] = item
+		}
+		if !slices.Contains(item.Ports, port.Port) {
+			item.Ports = append(item.Ports, port.Port)
+		}
+	}
+	out := make([]briefAdHocRun, 0, len(byRun))
+	for _, item := range byRun {
+		sort.Ints(item.Ports)
+		out = append(out, *item)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].RunID < out[j].RunID
+	})
 	return out
 }

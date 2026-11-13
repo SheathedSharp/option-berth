@@ -257,6 +257,9 @@ truncation, and `files_truncated` being true means the list is only a prefix. Us
        "starting": {"phase": "waiting_dependency", "started_at": "2026-10-31T10:00:00Z",
                     "elapsed_ms": 130000, "ready_timeout": "3m0s",
                     "waiting_on": ["db"], "last_prepare_ms": null}}
+    ],
+    "ad_hoc_runs": [
+      {"name": "finance-web", "run_id": "run-7", "group": "demo", "pid": 64530, "ports": [8082]}
     ]},
   "ports": [3000, 3001],
   "machine": [{"name": "redis", "port": 6379, "listening": true, "listening_known": true}],
@@ -264,6 +267,11 @@ truncation, and `files_truncated` being true means the list is only a prefix. Us
              "exited_at": "2026-10-31T09:00:00Z", "hint": "oberth logs worker --once"}]
 }
 ~~~
+
+`worktree.ad_hoc_runs` lists the runs started with `oberth start` whose listeners belong to this
+worktree but whose names are not declared services: `name`, `run_id`, `group`, `pid` and the `ports`
+each holds. `ports` stays the flat listener list; this is the attribution that list cannot carry, so
+a reader can tell a process oberth owns from a foreign one.
 
 `worktree.identity` is exactly the value `${worktree}` expands to in the manifest. It is derived from
 the checkout's canonicalized root path, so the same checkout reads the same value every time; when a
@@ -583,7 +591,10 @@ that could not be stopped is not success: `--json` still returns the envelope �
 failed rows carrying the reason — and the command exits 1, so a caller that reads only the status
 does not go on as if the project were down. `machine:`
 dependencies declared in the project manifest are read-only as to their listener state; `down` does
-not stop them.
+not stop them. `down` stops every run in the group, including ad-hoc runs started by `oberth start`
+that the manifest does not declare. `up` starts only declared services, so an ad-hoc run removed by
+`down` has to be started again with `oberth start`; `worktree.ad_hoc_runs` in the brief document
+names such runs while they are alive.
 
 `--worktree PATH` stops by checkout root path, `--identity wt_…` by `${worktree}` identity. Neither can
 be combined with a project name or a manifest path. They are the explicit entry point after a worktree
