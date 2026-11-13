@@ -165,3 +165,21 @@ func TestFrameClipsRowsToTheTerminalWidth(t *testing.T) {
 		t.Fatalf("clipped frame carries no ellipsis:\n%s", strings.Join(lines, "\n"))
 	}
 }
+
+// Every prompt has to refuse rather than guess when there is no terminal: a
+// command that reaches this path is expected to fall back to its flags, and a
+// prompt that blocks a pipe would hang it forever.
+func TestPromptsRefuseWithoutATerminal(t *testing.T) {
+	if Interactive() {
+		t.Skip("this test run has a terminal; the refusal path is unreachable")
+	}
+	if _, err := Select(io.Discard, "Pick", []Choice{{Value: "a", Label: "A"}}, 0); err != ErrNotInteractive {
+		t.Fatalf("Select error = %v, want ErrNotInteractive", err)
+	}
+	if _, err := Line(io.Discard, "Endpoint", ""); err != ErrNotInteractive {
+		t.Fatalf("Line error = %v, want ErrNotInteractive", err)
+	}
+	if _, err := ReadSecret(io.Discard, "API key"); err != ErrNotInteractive {
+		t.Fatalf("ReadSecret error = %v, want ErrNotInteractive", err)
+	}
+}

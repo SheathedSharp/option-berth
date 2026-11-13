@@ -19,12 +19,16 @@ const platformSupportsRaw = true
 
 // stdinIsTerminal and stderrIsTerminal answer the two ends of the conversation.
 // A prompt drawn into a pipe is a prompt nobody can answer.
-func stdinIsTerminal() bool  { return isCharDevice(os.Stdin) }
-func stderrIsTerminal() bool { return isCharDevice(os.Stderr) }
+//
+// The test is a termios read, not a character-device bit: /dev/null is a
+// character device too, and a prompt written there would wait forever for a
+// person who is not there.
+func stdinIsTerminal() bool  { return isTerminal(os.Stdin) }
+func stderrIsTerminal() bool { return isTerminal(os.Stderr) }
 
-func isCharDevice(file *os.File) bool {
-	info, err := file.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+func isTerminal(file *os.File) bool {
+	_, err := unix.IoctlGetTermios(int(file.Fd()), ioctlReadTermios)
+	return err == nil
 }
 
 // terminalWidth is the drawable column count, or zero when the terminal will
