@@ -8,9 +8,10 @@ left for the next person or agent to take over. For every other command, oberth 
 authoritative; this document does not build a second contract here.
 
 Running `oberth` with no arguments shows the first screen: the brand mark and wordmark, a one-line
-positioning statement, the local version, the three most-used commands (status / up / down) and a
-pointer to the full help; it is a signpost, not a manual — the grouped command list appears only in
-`oberth --help`. The version line carries `(latest)` or `(latest version vX.Y.Z)` when the release
+positioning statement, the local version, the three commands a work session starts with (status / up /
+down), the optional capabilities a person reaches for next (`attn` and `feedback report`, in their own
+group so they do not read as required) and a pointer to the full help; it is a signpost, not a manual —
+the grouped command list appears only in `oberth --help`. The version line carries `(latest)` or `(latest version vX.Y.Z)` when the release
 version check succeeds; when the check is unknown it prints only the local version and does not write
 "not found" as "latest". When an update is found, the bottom of the first screen gives the install
 command for the corresponding platform and `oberth daemon stop`. When no improvement-report decision
