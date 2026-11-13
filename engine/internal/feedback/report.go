@@ -83,27 +83,35 @@ func KindOptions() []KindOption {
 type Command string
 
 const (
-	CommandStatus    Command = "status"
-	CommandUp        Command = "up"
-	CommandRestart   Command = "restart"
-	CommandDown      Command = "down"
-	CommandStart     Command = "start"
-	CommandKill      Command = "kill"
-	CommandLogs      Command = "logs"
-	CommandEvents    Command = "events"
-	CommandWorktrees Command = "worktrees"
-	CommandWorkplace Command = "workplace"
-	CommandInit      Command = "init"
-	CommandDoctor    Command = "doctor"
-	CommandDaemon    Command = "daemon"
-	CommandVersion   Command = "version"
-	CommandOther     Command = "other"
+	CommandStatus     Command = "status"
+	CommandUp         Command = "up"
+	CommandRestart    Command = "restart"
+	CommandDown       Command = "down"
+	CommandStart      Command = "start"
+	CommandKill       Command = "kill"
+	CommandLogs       Command = "logs"
+	CommandEvents     Command = "events"
+	CommandWorktrees  Command = "worktrees"
+	CommandWorkplace  Command = "workplace"
+	CommandInit       Command = "init"
+	CommandGit        Command = "git"
+	CommandAgent      Command = "agent"
+	CommandAttn       Command = "attn"
+	CommandDoctor     Command = "doctor"
+	CommandDaemon     Command = "daemon"
+	CommandServe      Command = "serve"
+	CommandConfig     Command = "config"
+	CommandVersion    Command = "version"
+	CommandCompletion Command = "completion"
+	CommandFeedback   Command = "feedback"
+	CommandOther      Command = "other"
 )
 
 var commands = []Command{
 	CommandStatus, CommandUp, CommandRestart, CommandDown, CommandStart, CommandKill,
 	CommandLogs, CommandEvents, CommandWorktrees, CommandWorkplace, CommandInit,
-	CommandDoctor, CommandDaemon, CommandVersion, CommandOther,
+	CommandGit, CommandAgent, CommandAttn, CommandDoctor, CommandDaemon, CommandServe,
+	CommandConfig, CommandVersion, CommandCompletion, CommandFeedback, CommandOther,
 }
 
 // observationStates are the values status publishes in observation.state.
