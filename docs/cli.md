@@ -824,7 +824,7 @@ prefilled `issues/new` URL for the person to submit, and `--open` opens it. `fee
 `feedback on` name that account before any report is composed, and `feedback log` reads the filed
 issues through the same login. All three read the local gh credential (`gh auth status --json hosts`)
 and send nothing. The same complaint from the same build is filed at most once in 24 hours, and one
-installation files at most five reports in a rolling day. The local ledger at
+installation files at most twenty reports in a rolling day. The local ledger at
 `BERTH_HOME/feedback/reports.ndjson` records what was filed; it is advisory, and deleting it only
 makes a duplicate possible again.
 

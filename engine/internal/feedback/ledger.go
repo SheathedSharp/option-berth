@@ -15,8 +15,11 @@ const (
 	// remembered. A repeated sighting is common; a repeated issue is noise.
 	DuplicateWindow = 24 * time.Hour
 	// DailyLimit bounds one installation to this many filed reports in a
-	// rolling day, so a loop in an agent cannot turn into a flood.
-	DailyLimit = 5
+	// rolling day, so a loop in an agent cannot turn into a flood. It is a
+	// session-scale number: one working session can legitimately surface a
+	// dozen distinct defects, and the limit must not stop a person from
+	// filing them.
+	DailyLimit = 20
 	// LedgerShow is how many entries `oberth feedback log` prints.
 	LedgerShow = 20
 )
