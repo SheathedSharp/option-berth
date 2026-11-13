@@ -499,7 +499,9 @@ need to look up the process table yourself. `services[]`'s `ready` is the CLI's 
 daemon fact: `true` after `--wait` confirms readiness; when not waiting by default, `started` services
 carry `false` and the human-readable output shows `~` and `started, readiness not confirmed`;
 `skipped`/`failed` do not carry the field. `false` is not a failure, and `state` still describes the
-result of the start action. Wait determination goes by run identity first: this start chunk's
+result of the start action. When an unconfirmed `started` service remains, the command also publishes
+a next step: `next` in the JSON document and a `next:` line in the human output, both naming
+`oberth up --only <services> --wait --json`. Wait determination goes by run identity first: this start chunk's
 `run_id`, the running run a skipped chunk points at, or the same run observed for the first time. Only
 old records with no run_id at all fall back to exit time, with the wait start aligned to the second,
 so an exit recorded within the same second still counts as this round. Old exit records from other

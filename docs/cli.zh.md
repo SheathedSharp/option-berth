@@ -419,7 +419,9 @@ cwd 中执行，按 `cmd:` 的规则拆成 argv（不经过 shell），支持 `$
 托管时另有 `group`/`name`/`run_id`），不需要再自己查进程表。
 `services[]` 的 `ready` 是 CLI 的注释，不是 daemon 事实：`--wait` 确认就绪后为 `true`；
 默认不等待时 `started` 服务带 `false`，人读显示 `~` 和 `started, readiness not confirmed`；
-`skipped`/`failed` 不带该字段。`false` 不是失败，`state` 仍表示启动动作的结果。
+`skipped`/`failed` 不带该字段。`false` 不是失败，`state` 仍表示启动动作的结果。存在未确认的
+`started` 服务时，命令还会发布下一步：JSON 文档的 `next` 字段与人读输出的 `next:` 行，内容为
+`oberth up --only <services> --wait --json`。
 等待判定先按运行身份：本次启动 chunk 的 `run_id`、跳过 chunk 指向的正在运行 run，或第一次观察到的同一 run。
 只有完全没有 run_id 的旧记录才退回退出时间，并把等待开始对齐到秒，因此同一秒内记录的退出也算本轮。
 其他 run 的旧退出记录不会被 `up --wait` 读成本轮启动失败。
