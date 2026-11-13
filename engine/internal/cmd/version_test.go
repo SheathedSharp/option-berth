@@ -159,6 +159,9 @@ func TestPrintWelcomeShowsQuickStartNotTheManual(t *testing.T) {
 
 	for _, want := range []string{
 		"oberth status", "oberth up", "oberth down",
+		// the optional capabilities the first screen also signposts, in their
+		// own group so they do not read as required.
+		"oberth attn", "oberth feedback report", "Optional:",
 		"Start here:", "Learn more:", "oberth --help",
 		// the one-line identity
 		"manifest and runtime",

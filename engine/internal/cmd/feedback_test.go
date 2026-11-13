@@ -339,3 +339,247 @@ func fakeGHSucceeds(t *testing.T) {
 	}
 	t.Setenv("PATH", dir)
 }
+
+// fakeGHForHistory puts a gh on PATH that answers the two reads the status and
+// log surfaces make: who is signed in, and what happened to the report issues.
+// It never touches the network.
+func fakeGHForHistory(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake gh is a shell script")
+	}
+	dir := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"case \"$1 $2\" in\n" +
+		"  \"auth status\")\n" +
+		"    printf '%s\\n' '{\"hosts\":{\"github.com\":[{\"state\":\"success\",\"active\":true,\"login\":\"zayJu\"}]}}'\n" +
+		"    ;;\n" +
+		"  \"issue list\")\n" +
+		"    printf '%s\\n' '[{\"number\":42,\"state\":\"CLOSED\",\"stateReason\":\"COMPLETED\",\"title\":\"[feedback] slow · up · v2.2.0 · darwin/arm64\",\"url\":\"https://github.com/SheathedSharp/option-berth/issues/42\",\"updatedAt\":\"2026-11-13T01:00:00Z\",\"closedAt\":\"2026-11-13T01:00:00Z\",\"labels\":[]}]'\n" +
+		"    ;;\n" +
+		"  *)\n" +
+		"    exit 1\n" +
+		"    ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+}
+
+func appendFeedbackLedger(t *testing.T, entries ...feedback.Entry) {
+	t.Helper()
+	for _, entry := range entries {
+		if err := feedback.AppendLedger(paths.FeedbackLedgerPath(), entry); err != nil {
+			t.Fatalf("AppendLedger: %v", err)
+		}
+	}
+}
+
+// The account is part of the decision, so status names it before any report is
+// composed instead of hiding it in the filing step.
+func TestFeedbackStatusShowsTheGitHubAccountAndLocalTotals(t *testing.T) {
+	feedbackTestEnv(t)
+	fakeGHForHistory(t)
+	appendFeedbackLedger(t,
+		feedback.Entry{At: "2026-11-13T00:00:00Z", Kind: "slow", Command: "up", Channel: "gh", URL: "https://github.com/SheathedSharp/option-berth/issues/42"},
+		feedback.Entry{At: "2026-11-12T00:00:00Z", Kind: "other", Command: "logs", Channel: "url", URL: "https://github.com/SheathedSharp/option-berth/issues/new?title=x"},
+	)
+
+	var err error
+	out := captureStdout(t, func() { err = runFeedbackStatus(testCommand(), nil) })
+	if err != nil {
+		t.Fatalf("runFeedbackStatus: %v", err)
+	}
+	for _, want := range []string{
+		"github     signed in as zayJu",
+		"reports    2 recorded · 1 filed · 1 prefilled · last 2026-11-13",
+		"`oberth feedback log` shows each issue's state",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status is missing %q:\n%s", want, out)
+		}
+	}
+
+	feedbackStatusJSON = true
+	jsonOut := captureStdout(t, func() { err = runFeedbackStatus(testCommand(), nil) })
+	if err != nil {
+		t.Fatalf("runFeedbackStatus --json: %v", err)
+	}
+	var doc struct {
+		Channel string `json:"channel"`
+		GitHub  struct {
+			Available bool   `json:"available"`
+			Account   string `json:"account"`
+		} `json:"github"`
+		Reports struct {
+			Total     int `json:"total"`
+			Filed     int `json:"filed"`
+			Prefilled int `json:"prefilled"`
+		} `json:"reports"`
+	}
+	if err := json.Unmarshal([]byte(jsonOut), &doc); err != nil {
+		t.Fatalf("status JSON: %v\n%s", err, jsonOut)
+	}
+	if doc.Channel != "gh" || !doc.GitHub.Available || doc.GitHub.Account != "zayJu" {
+		t.Fatalf("github = %+v channel = %q", doc.GitHub, doc.Channel)
+	}
+	if doc.Reports.Total != 2 || doc.Reports.Filed != 1 || doc.Reports.Prefilled != 1 {
+		t.Fatalf("reports = %+v", doc.Reports)
+	}
+}
+
+func TestFeedbackStatusSaysWhenGHIsNotAvailable(t *testing.T) {
+	feedbackTestEnv(t)
+
+	var err error
+	out := captureStdout(t, func() { err = runFeedbackStatus(testCommand(), nil) })
+	if err != nil {
+		t.Fatalf("runFeedbackStatus: %v", err)
+	}
+	if !strings.Contains(out, "github     not available (gh is not installed)") {
+		t.Fatalf("status does not name the missing gh:\n%s", out)
+	}
+}
+
+func TestFeedbackOnNamesTheAccountThatWillFile(t *testing.T) {
+	feedbackTestEnv(t)
+	fakeGHForHistory(t)
+
+	var err error
+	out := captureStdout(t, func() { err = runFeedbackOn(testCommand(), nil) })
+	if err != nil {
+		t.Fatalf("runFeedbackOn: %v", err)
+	}
+	if !strings.Contains(out, "github     signed in as zayJu; a filed report uses this account") {
+		t.Fatalf("on does not name the account:\n%s", out)
+	}
+
+	feedbackOnJSON = true
+	jsonOut := captureStdout(t, func() { err = runFeedbackOn(testCommand(), nil) })
+	if err != nil {
+		t.Fatalf("runFeedbackOn --json: %v", err)
+	}
+	var doc struct {
+		GitHub struct {
+			Account string `json:"account"`
+		} `json:"github"`
+	}
+	if err := json.Unmarshal([]byte(jsonOut), &doc); err != nil {
+		t.Fatalf("on JSON: %v\n%s", err, jsonOut)
+	}
+	if doc.GitHub.Account != "zayJu" {
+		t.Fatalf("github account = %q", doc.GitHub.Account)
+	}
+}
+
+// The response half of the loop: one filed issue is resolved, one is not in the
+// listing, and one never left the prefilled page. Each has to read differently.
+func TestFeedbackLogShowsEachIssueOutcome(t *testing.T) {
+	feedbackTestEnv(t)
+	fakeGHForHistory(t)
+	appendFeedbackLedger(t,
+		feedback.Entry{At: "2026-11-13T00:00:00Z", Kind: "slow", Command: "up", Version: "v2.2.0", Channel: "gh", URL: "https://github.com/SheathedSharp/option-berth/issues/42"},
+		feedback.Entry{At: "2026-11-12T00:00:00Z", Kind: "coarse", Command: "status", Version: "v2.2.0", Channel: "gh", URL: "https://github.com/SheathedSharp/option-berth/issues/43"},
+		feedback.Entry{At: "2026-11-11T00:00:00Z", Kind: "other", Command: "logs", Version: "v2.2.0", Channel: "url", URL: "https://github.com/SheathedSharp/option-berth/issues/new?title=x"},
+	)
+
+	var err error
+	out := captureStdout(t, func() { err = runFeedbackLog(testCommand(), nil) })
+	if err != nil {
+		t.Fatalf("runFeedbackLog: %v", err)
+	}
+	for _, want := range []string{
+		"github     signed in as zayJu",
+		"reports    3 recorded · 2 filed · 1 prefilled · last 2026-11-13",
+		"issues     0 open · 1 resolved · 0 closed as not planned · 1 unknown",
+		"#42",
+		"resolved · closed 2026-11-13",
+		"#43",
+		"state unknown (the issue was not in the repository listing)",
+		"prefilled page only; not confirmed filed",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log is missing %q:\n%s", want, out)
+		}
+	}
+
+	feedbackLogJSON = true
+	jsonOut := captureStdout(t, func() { err = runFeedbackLog(testCommand(), nil) })
+	if err != nil {
+		t.Fatalf("runFeedbackLog --json: %v", err)
+	}
+	var doc struct {
+		GitHub  feedback.GHAccount     `json:"github"`
+		Summary feedback.ReportSummary `json:"summary"`
+		Entries []struct {
+			Kind   string          `json:"kind"`
+			Status string          `json:"status"`
+			Reason string          `json:"reason"`
+			Issue  *feedback.Issue `json:"issue"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal([]byte(jsonOut), &doc); err != nil {
+		t.Fatalf("log JSON: %v\n%s", err, jsonOut)
+	}
+	if doc.GitHub.Account != "zayJu" {
+		t.Fatalf("github = %+v", doc.GitHub)
+	}
+	if doc.Summary.Total != 3 || doc.Summary.Filed != 2 || doc.Summary.Prefilled != 1 ||
+		doc.Summary.Resolved != 1 || doc.Summary.Unknown != 1 {
+		t.Fatalf("summary = %+v", doc.Summary)
+	}
+	if len(doc.Entries) != 3 {
+		t.Fatalf("entries = %d", len(doc.Entries))
+	}
+	if doc.Entries[0].Status != feedback.OutcomeResolved || doc.Entries[0].Issue == nil ||
+		doc.Entries[0].Issue.Number != 42 || doc.Entries[0].Issue.Title == "" {
+		t.Fatalf("first entry = %+v", doc.Entries[0])
+	}
+	if doc.Entries[1].Status != feedback.OutcomeUnknown || doc.Entries[1].Reason == "" {
+		t.Fatalf("second entry = %+v", doc.Entries[1])
+	}
+	if doc.Entries[2].Status != feedback.OutcomeNotFiled {
+		t.Fatalf("third entry = %+v", doc.Entries[2])
+	}
+}
+
+// Without gh the local record is still the answer; it just says why the issue
+// state is unknown instead of inventing one.
+func TestFeedbackLogWithoutGHKeepsTheLocalRecord(t *testing.T) {
+	feedbackTestEnv(t)
+	appendFeedbackLedger(t,
+		feedback.Entry{At: "2026-11-13T00:00:00Z", Kind: "slow", Command: "up", Version: "v2.2.0", Channel: "gh", URL: "https://github.com/SheathedSharp/option-berth/issues/42"},
+	)
+
+	var err error
+	out := captureStdout(t, func() { err = runFeedbackLog(testCommand(), nil) })
+	if err != nil {
+		t.Fatalf("runFeedbackLog: %v", err)
+	}
+	for _, want := range []string{
+		"github     not available (gh is not installed)",
+		"issues     0 open · 0 resolved · 0 closed as not planned · 1 unknown",
+		"state unknown (gh is not installed)",
+		"https://github.com/SheathedSharp/option-berth/issues/42",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log is missing %q:\n%s", want, out)
+		}
+	}
+
+	feedbackLogJSON = true
+	jsonOut := captureStdout(t, func() { err = runFeedbackLog(testCommand(), nil) })
+	if err != nil {
+		t.Fatalf("runFeedbackLog --json: %v", err)
+	}
+	var doc struct {
+		IssueReason string `json:"issue_reason"`
+	}
+	if err := json.Unmarshal([]byte(jsonOut), &doc); err != nil {
+		t.Fatalf("log JSON: %v\n%s", err, jsonOut)
+	}
+	if doc.IssueReason != "gh is not installed" {
+		t.Fatalf("issue_reason = %q", doc.IssueReason)
+	}
+}

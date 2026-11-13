@@ -82,3 +82,68 @@ func TestPresetDefaultsFillOnlyWhatTheSetupLeftEmpty(t *testing.T) {
 		t.Fatalf("a custom endpoint kept the stale preset label: %+v", custom)
 	}
 }
+
+// The catalog is what the interactive setup draws. A vendor whose default model
+// is not in its own list would preselect nothing, and a duplicate or empty row
+// would be a choice that cannot be stored.
+func TestVendorCatalogIsInternallyConsistent(t *testing.T) {
+	seen := make(map[string]bool)
+	for _, vendor := range Vendors() {
+		if vendor.Name == "" || vendor.Label == "" || vendor.Endpoint == "" || vendor.Default == "" {
+			t.Errorf("incomplete vendor row: %+v", vendor)
+			continue
+		}
+		if seen[vendor.Name] {
+			t.Errorf("duplicate vendor %q", vendor.Name)
+		}
+		seen[vendor.Name] = true
+		if _, modelName, ok := PresetDefaults(vendor.Name); !ok || modelName != vendor.Default {
+			t.Errorf("preset %q does not resolve its default model", vendor.Name)
+		}
+		hasDefault := false
+		modelIDs := make(map[string]bool, len(vendor.Models))
+		for _, candidate := range vendor.Models {
+			if candidate.ID == "" || candidate.Label == "" {
+				t.Errorf("%s has an incomplete model row: %+v", vendor.Name, candidate)
+				continue
+			}
+			if modelIDs[candidate.ID] {
+				t.Errorf("%s lists %q twice", vendor.Name, candidate.ID)
+			}
+			modelIDs[candidate.ID] = true
+			if candidate.ID == vendor.Default {
+				hasDefault = true
+			}
+		}
+		if !hasDefault {
+			t.Errorf("%s default %q is not one of its models", vendor.Name, vendor.Default)
+		}
+	}
+	if len(seen) < 2 {
+		t.Fatalf("vendors = %v, want the gateway and the direct vendor", seen)
+	}
+}
+
+// The gateway exists to reach more than one maker. Pinning that shape keeps a
+// future edit from quietly collapsing the list back to a single model.
+func TestOpenRouterCarriesMoreThanOneMaker(t *testing.T) {
+	vendor, ok := VendorByName("openrouter")
+	if !ok {
+		t.Fatal("the openrouter preset is missing")
+	}
+	makers := make(map[string]bool)
+	for _, candidate := range vendor.Models {
+		maker, _, found := strings.Cut(candidate.ID, "/")
+		if !found {
+			t.Errorf("model %q has no maker prefix", candidate.ID)
+			continue
+		}
+		makers[maker] = true
+	}
+	if len(makers) < 3 {
+		t.Fatalf("openrouter models cover %d makers, want at least three", len(makers))
+	}
+	if vendor.Default != "typesafe/jev-1.14" {
+		t.Fatalf("default model = %q, want the current Jev", vendor.Default)
+	}
+}

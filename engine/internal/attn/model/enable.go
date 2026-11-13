@@ -58,11 +58,13 @@ type EnableOptions struct {
 	KeyValue string
 }
 
-// SettingsFrom turns the request into the on-disk shape, without the key.
+// SettingsFrom turns the request into the on-disk shape, without the key. The
+// consent bit is the person's: `oberth attn config` stores credentials and
+// leaves `enabled` exactly as it was, so setting up a provider can never grant
+// an opt-in nobody gave. `oberth attn on` is the one verb that flips it.
 func (o EnableOptions) SettingsFrom(cfg LocalConfig) LocalConfig {
 	next := cfg
 	next.Schema = LocalConfigSchema
-	next.Enabled = true
 	if preset := strings.ToLower(strings.TrimSpace(o.Preset)); preset != "" {
 		next.Preset = preset
 		if endpoint, modelName, ok := PresetDefaults(preset); ok {

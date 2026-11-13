@@ -18,7 +18,6 @@ const (
 	// different promise than the one docs/product.md makes.
 	DefaultRepo = "SheathedSharp/option-berth"
 
-	ghAuthTimeout = 3 * time.Second
 	ghSendTimeout = 30 * time.Second
 )
 
@@ -36,15 +35,8 @@ type Delivery struct {
 // GHAvailable reports whether `gh` can create an issue for the user. It is
 // local: `gh auth status` reads the stored credential and calls nothing.
 func GHAvailable(ctx context.Context) (bool, string) {
-	if _, err := exec.LookPath("gh"); err != nil {
-		return false, "gh is not installed"
-	}
-	ctx, cancel := context.WithTimeout(ctx, ghAuthTimeout)
-	defer cancel()
-	if _, err := exec.CommandContext(ctx, "gh", "auth", "status").CombinedOutput(); err != nil {
-		return false, "gh is not signed in"
-	}
-	return true, ""
+	account := GHLogin(ctx)
+	return account.Available, account.Reason
 }
 
 // SubmitWithGH creates the issue through the user's own GitHub account. The
