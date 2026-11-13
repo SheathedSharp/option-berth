@@ -573,6 +573,11 @@ graceful stop. --json returns one value in which `stopped` is the stop result an
 summary fields are the restart result. `restart` does not wait for readiness, so `started` services
 carry `ready:false`, and the human-readable output likewise marks readiness as unconfirmed.
 
+Only services the manifest declares can be restarted. A run started with `oberth start` has no
+manifest entry: stop it first if it is still running, then start that command again. When
+`restart --only` names such a run and the run ledger knows it, the `not_found` hint prints the
+recorded start line (cwd, group, name, port and command) instead of pointing back at `status`.
+
 ### oberth down [project] [--worktree path | --identity wt_…] [--force] [--json]
 
 Stops all services in the project's manifest and, once the action confirms they can be released,

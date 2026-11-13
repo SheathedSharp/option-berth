@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
@@ -24,7 +27,10 @@ var restartCmd = &cobra.Command{
 	GroupID: commandGroupOperations,
 	Long: "Stop and start the project's services again. With --only, only the named\n" +
 		"services are restarted; their port: auto claims stay attached to the\n" +
-		"worktree so the service can reclaim the same addresses.",
+		"worktree so the service can reclaim the same addresses. Only services the\n" +
+		"manifest declares can be restarted: a run started with `oberth start` is\n" +
+		"not a manifest service, so restart it by running that command again; the\n" +
+		"refusal hint names the recorded command.",
 	Args: cobra.MaximumNArgs(1),
 	RunE: restartRun,
 }
@@ -85,7 +91,7 @@ func restartRun(cmd *cobra.Command, args []string) error {
 	}
 	var stopped rpc.KillEnvelope
 	if err := c.Call(cmd.Context(), "groups.kill", stop, &stopped); err != nil {
-		return cliError(err)
+		return restartRefusal(cmd.Context(), c, startParams, err)
 	}
 	if !stopped.OK {
 		if restartJSON {
@@ -159,4 +165,93 @@ func collectStart(stream *client.Stream) ([]rpc.GroupsStartChunk, rpc.GroupsStar
 		return chunks, rpc.GroupsStartEnd{}, err
 	}
 	return chunks, summary, nil
+}
+
+// restartRefusal replaces the daemon's generic "not declared" hint with the
+// equivalent start command when the name belongs to a run started with
+// `oberth start`. Those runs have no manifest entry, so restart cannot rebuild
+// them; the run ledger still carries the command, cwd and port hint the caller
+// needs to do it themselves.
+func restartRefusal(ctx context.Context, c *client.Client, params rpc.GroupsStartParams, err error) error {
+	converted := cliError(err)
+	coded, ok := converted.(*cliErr)
+	if !ok || coded.Code != "not_found" || len(params.Only) == 0 {
+		return converted
+	}
+	var listed rpc.RunsListResult
+	if callErr := c.Call(ctx, "runs.list", rpc.Empty{}, &listed); callErr != nil {
+		return converted
+	}
+	group := ""
+	if params.Name != nil {
+		group = *params.Name
+	} else if wd, wdErr := os.Getwd(); wdErr == nil {
+		group, _ = projectAt(wd)
+	}
+	records := append(append([]rpc.RunRecord{}, listed.Runs...), listed.Exited...)
+	hint := adHocRestartHint(records, params.Only, group)
+	if hint == "" {
+		return converted
+	}
+	return &cliErr{Code: coded.Code, Msg: coded.Msg, Hint: hint}
+}
+
+// adHocRestartHint builds one start line per requested name that the ledger
+// knows. A live run is named as such: starting it again would duplicate it.
+func adHocRestartHint(records []rpc.RunRecord, only []string, group string) string {
+	var hints []string
+	for _, raw := range only {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			continue
+		}
+		rec, ok := newestRunNamed(records, name, group)
+		if !ok {
+			continue
+		}
+		line := "to restart this ad-hoc run: " + adHocStartCommand(rec)
+		if rec.Status != "exited" {
+			line = "this ad-hoc run is still running; stop it first, then: " + adHocStartCommand(rec)
+		}
+		hints = append(hints, line)
+	}
+	return strings.Join(hints, "\n")
+}
+
+// newestRunNamed picks the newest record for a service, preferring the caller's
+// group when it is known. The ledger keeps both live and exited runs, and the
+// newest one is the command that was actually last used.
+func newestRunNamed(records []rpc.RunRecord, name, group string) (rpc.RunRecord, bool) {
+	var best rpc.RunRecord
+	found := false
+	for _, rec := range records {
+		if rec.Name != name {
+			continue
+		}
+		if group != "" && rec.Group != group {
+			continue
+		}
+		if !found || runStartedAt(rec).After(runStartedAt(best)) {
+			best = rec
+			found = true
+		}
+	}
+	return best, found
+}
+
+// adHocStartCommand is the recorded run as a start line. The command is the
+// joined form the ledger keeps; the caller can edit it before running.
+func adHocStartCommand(rec rpc.RunRecord) string {
+	parts := []string{}
+	if rec.Cwd != "" {
+		parts = append(parts, "cd", rec.Cwd, "&&")
+	}
+	parts = append(parts, "oberth", "start", "-d", "--group", rec.Group, "--name", rec.Name)
+	if rec.PortHint != nil && *rec.PortHint > 0 {
+		parts = append(parts, "--port", strconv.Itoa(*rec.PortHint))
+	}
+	if rec.Cmd != "" {
+		parts = append(parts, "--", rec.Cmd)
+	}
+	return strings.Join(parts, " ")
 }
