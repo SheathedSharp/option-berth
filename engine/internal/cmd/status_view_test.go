@@ -239,6 +239,42 @@ func TestBriefStatusCarriesPendingHealth(t *testing.T) {
 	}
 }
 
+// An `oberth start` run is not a declared service, so `services` cannot show
+// it. The brief must name the run and its ports: a bare port number leaves the
+// reader to pkill something oberth owns.
+func TestBriefStatusListsAdHocRuns(t *testing.T) {
+	doc := statusScopeFixture()
+	// A declared service's listener stays in services, not ad_hoc_runs.
+	doc.Ports[0].Run = &state.Run{ID: "api-run", Group: "shop", Name: "api", RootPID: 42}
+	// One ad-hoc run with two listeners.
+	doc.Ports[4].Run = &state.Run{ID: "adhoc-run", Group: "shop", Name: "finance-web", RootPID: 64530}
+	doc.Ports = append(doc.Ports, state.Port{Port: 9998,
+		Run: &state.Run{ID: "adhoc-run", Group: "shop", Name: "finance-web", RootPID: 64530}})
+
+	brief := briefStatusFrom(doc)
+	if len(brief.Worktree.AdHocRuns) != 1 {
+		t.Fatalf("ad hoc runs = %+v, want exactly the undeclared run", brief.Worktree.AdHocRuns)
+	}
+	run := brief.Worktree.AdHocRuns[0]
+	if run.Name != "finance-web" || run.RunID != "adhoc-run" || run.Group != "shop" || run.PID != 64530 {
+		t.Fatalf("ad hoc run = %+v", run)
+	}
+	if got, want := intsText(run.Ports), "9998,9999"; got != want {
+		t.Fatalf("ad hoc ports = %s, want %s", got, want)
+	}
+	// The flat list stays for compatibility.
+	if got, want := intsText(brief.Ports), "3000,3001,5432,8080,9999,9998"; got != want {
+		t.Fatalf("ports = %s, want %s", got, want)
+	}
+	raw, err := json.Marshal(brief)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"ad_hoc_runs":[{"name":"finance-web","run_id":"adhoc-run","group":"shop","pid":64530,"ports":[9998,9999]}]`) {
+		t.Fatalf("brief = %s, want the ad-hoc run attribution", raw)
+	}
+}
+
 // TestBriefStatusCarriesStarting: `--brief --json` is a reader's document for a
 // project that may be mid-start, so the in-flight attempt must be there with
 // the same facts the full document publishes.
