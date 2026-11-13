@@ -1,6 +1,6 @@
 //go:build linux
 
-package cmd
+package terminal
 
 import "golang.org/x/sys/unix"
 

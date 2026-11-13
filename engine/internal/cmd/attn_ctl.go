@@ -16,6 +16,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/attn/model"
 	"github.com/sheathedsharp/option-berth/engine/internal/attn/runner"
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
+	"github.com/sheathedsharp/option-berth/engine/internal/terminal"
 	"github.com/spf13/cobra"
 )
 
@@ -271,7 +272,10 @@ func attnConfigKey(stored string) (string, error) {
 	case strings.TrimSpace(stored) != "":
 		return strings.TrimSpace(stored), nil
 	default:
-		key, err := readSecretFromTerminal()
+		key, err := terminal.ReadSecret(os.Stderr, "API key (input hidden)")
+		if errors.Is(err, terminal.ErrNotInteractive) {
+			return "", usageError{errors.New("standard input is not a terminal; use --key-stdin or --key-env")}
+		}
 		if err != nil {
 			return "", err
 		}
