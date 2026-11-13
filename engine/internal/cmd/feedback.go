@@ -371,7 +371,7 @@ func runFeedbackReport(cmd *cobra.Command, _ []string) error {
 		if count := feedback.CountSince(entries, now, 24*time.Hour); count >= feedback.DailyLimit {
 			return failHint("permission_denied",
 				fmt.Sprintf("%d reports were filed in the last day, which is the limit", count),
-				"nothing was sent; the local record is "+paths.FeedbackLedgerPath())
+				"nothing was sent and nothing was recorded; existing records are at "+paths.FeedbackLedgerPath())
 		}
 		// A note is the reporter's own words, so it never leaves the machine
 		// without the person seeing it. A report composed interactively gets
