@@ -46,12 +46,33 @@ func runAttnConfigWizard(cmd *cobra.Command) error {
 	if err != nil {
 		return attnWizardStop(cmd, err)
 	}
+	// Check the shape before asking for the secret: typing a key only to be
+	// told the URL is wrong is the round trip the guided form exists to remove.
+	if err := attnValidateSelection(next); err != nil {
+		return attnWizardStop(cmd, err)
+	}
 	key, err := attnAskKey(next.APIKey)
 	if err != nil {
 		return attnWizardStop(cmd, err)
 	}
 	next.APIKey = key
 	return attnCommitConfig(cmd, next)
+}
+
+// attnValidateSelection requires a complete endpoint and model even when the
+// stored consent bit is off: a configuration that cannot run is not something
+// to save, whatever the person has decided about turning it on.
+func attnValidateSelection(cfg model.LocalConfig) error {
+	if err := cfg.Validate(); err != nil {
+		return usageError{err}
+	}
+	if strings.TrimSpace(cfg.Endpoint) == "" {
+		return usageError{errors.New("an endpoint is required; rerun `oberth attn config`")}
+	}
+	if strings.TrimSpace(cfg.Model) == "" {
+		return usageError{errors.New("a model is required; rerun `oberth attn config`")}
+	}
+	return nil
 }
 
 // attnWizardStop turns a cancelled question into "nothing was changed" rather

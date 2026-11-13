@@ -220,8 +220,8 @@ func runAttnConfig(cmd *cobra.Command, _ []string) error {
 	next := options.SettingsFrom(current)
 	// Validate the endpoint and model before asking for a secret: a person who
 	// forgot --preset should not type a key only to be told the shape is wrong.
-	if err := next.Validate(); err != nil {
-		return usageError{err}
+	if err := attnValidateSelection(next); err != nil {
+		return err
 	}
 	key, keyErr := attnConfigKey(next.APIKey)
 	if keyErr != nil {
@@ -236,8 +236,8 @@ func runAttnConfig(cmd *cobra.Command, _ []string) error {
 // choosing the fields cannot skip the proof, and a failed probe leaves an
 // existing configuration untouched.
 func attnCommitConfig(cmd *cobra.Command, next model.LocalConfig) error {
-	if err := next.Validate(); err != nil {
-		return usageError{err}
+	if err := attnValidateSelection(next); err != nil {
+		return err
 	}
 	if strings.TrimSpace(next.APIKey) == "" {
 		return usageError{errors.New("an API key is required; rerun `oberth attn config`")}
