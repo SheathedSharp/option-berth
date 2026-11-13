@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -213,6 +214,15 @@ func missingConfigError(index *groups.Index, dir string) error {
 		groups.ConfigName, shortPath(dir))
 }
 
+// upDocument is the `up --json` answer: one entry per service plus the summary
+// fields. Next is the confirmation call when this invocation started services
+// without waiting for readiness; it is absent when the caller already waited.
+type upDocument struct {
+	Services []rpc.GroupsStartChunk `json:"services"`
+	Next     string                 `json:"next,omitempty"`
+	rpc.GroupsStartEnd
+}
+
 // consumeStart prints one line per service as the daemon reports it, then the
 // summary. It exits non-zero when any service failed to start (spec, "Error
 // handling": a partial failure is still a failure).
@@ -240,11 +250,9 @@ func consumeStartWithWait(ctx context.Context, c *client.Client, stream *client.
 		}
 	}
 
+	next := readinessNext(results, wait)
 	if asJSON {
-		if err := printJSON(struct {
-			Services []rpc.GroupsStartChunk `json:"services"`
-			rpc.GroupsStartEnd
-		}{Services: results, GroupsStartEnd: summary}); err != nil {
+		if err := printJSON(upDocument{Services: results, Next: next, GroupsStartEnd: summary}); err != nil {
 			return err
 		}
 	} else {
@@ -254,6 +262,9 @@ func consumeStartWithWait(ctx context.Context, c *client.Client, stream *client.
 			}
 		}
 		printStartSummary(summary)
+		if next != "" {
+			fmt.Println(display.Dim("next: " + next))
+		}
 	}
 	if len(summary.Errors) > 0 {
 		if cleanupErr != nil {
@@ -509,6 +520,31 @@ func printStartChunk(c rpc.GroupsStartChunk) {
 		}
 		fmt.Printf("  %s %s  %s%s\n", marker, display.Bold(c.Service), location, suffix)
 	}
+}
+
+// readinessNext names the call that confirms readiness for the services this
+// invocation only started. Empty when the caller waited or nothing started
+// unconfirmed: `started` plus `ready:false` means "not confirmed", not failed,
+// and the next step must be published rather than left to a socket poll.
+func readinessNext(results []rpc.GroupsStartChunk, wait bool) string {
+	if wait {
+		return ""
+	}
+	var names []string
+	for _, chunk := range results {
+		if chunk.State != "started" {
+			continue
+		}
+		if chunk.Ready != nil && *chunk.Ready {
+			continue
+		}
+		names = append(names, chunk.Service)
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	sort.Strings(names)
+	return "oberth up --only " + strings.Join(names, ",") + " --wait --json"
 }
 
 func printStartSummary(end rpc.GroupsStartEnd) {

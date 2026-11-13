@@ -220,6 +220,9 @@ JSON 顶层固定包含：
        "starting": {"phase": "waiting_dependency", "started_at": "2026-10-31T10:00:00Z",
                     "elapsed_ms": 130000, "ready_timeout": "3m0s",
                     "waiting_on": ["db"], "last_prepare_ms": null}}
+    ],
+    "ad_hoc_runs": [
+      {"name": "finance-web", "run_id": "run-7", "group": "demo", "pid": 64530, "ports": [8082]}
     ]},
   "ports": [3000, 3001],
   "machine": [{"name": "redis", "port": 6379, "listening": true, "listening_known": true}],
@@ -227,6 +230,10 @@ JSON 顶层固定包含：
              "exited_at": "2026-10-31T09:00:00Z", "hint": "oberth logs worker --once"}]
 }
 ~~~
+
+`worktree.ad_hoc_runs` 列出用 `oberth start` 启动、监听属于本 worktree、但名字不在声明服务里的
+运行：`name`、`run_id`、`group`、`pid`，以及它持有的 `ports`。`ports` 仍是扁平的监听列表；
+这是它无法承载的归属信息，读者因此能区分 oberth 管理的进程和外来进程。
 
 `worktree.identity` 就是清单里 `${worktree}` 展开成的值。它由 checkout 的规范化根路径
 派生，所以同一个 checkout 每次读取都相同；人或 agent 要用 `psql` 连这个 worktree 的库时，
@@ -412,7 +419,9 @@ cwd 中执行，按 `cmd:` 的规则拆成 argv（不经过 shell），支持 `$
 托管时另有 `group`/`name`/`run_id`），不需要再自己查进程表。
 `services[]` 的 `ready` 是 CLI 的注释，不是 daemon 事实：`--wait` 确认就绪后为 `true`；
 默认不等待时 `started` 服务带 `false`，人读显示 `~` 和 `started, readiness not confirmed`；
-`skipped`/`failed` 不带该字段。`false` 不是失败，`state` 仍表示启动动作的结果。
+`skipped`/`failed` 不带该字段。`false` 不是失败，`state` 仍表示启动动作的结果。存在未确认的
+`started` 服务时，命令还会发布下一步：JSON 文档的 `next` 字段与人读输出的 `next:` 行，内容为
+`oberth up --only <services> --wait --json`。
 等待判定先按运行身份：本次启动 chunk 的 `run_id`、跳过 chunk 指向的正在运行 run，或第一次观察到的同一 run。
 只有完全没有 run_id 的旧记录才退回退出时间，并把等待开始对齐到秒，因此同一秒内记录的退出也算本轮。
 其他 run 的旧退出记录不会被 `up --wait` 读成本轮启动失败。
@@ -484,7 +493,9 @@ JSON 值，不混入诊断。旧 daemon 不认识 `progress`，旧 CLI 也不会
 成功时 `--json` 返回停止结果和实际释放数量。有服务或运行没能停下就不算成功：`--json`
 仍返回该信封（`ok` 为 false，失败行带原因），但命令以 1 退出，只看退出码的调用方不会
 当作项目已经停下。项目清单中声明的 `machine:` 依赖只读其
-监听状态，`down` 不会停止它们。
+监听状态，`down` 不会停止它们。`down` 会停止该组里的所有运行，包括 `oberth start` 启动、
+清单没有声明的临时 run。`up` 只启动清单里的服务，因此被 `down` 停掉的临时 run 需要用
+`oberth start` 重新启动；它们存活时，brief 文档的 `worktree.ad_hoc_runs` 会列出这些运行。
 
 `--worktree PATH` 按 checkout 根路径、`--identity wt_…` 按 `${worktree}` 身份停止。
 两者都不能和项目名或清单路径同时使用。它们是 worktree 被删除或移动后的明确入口：

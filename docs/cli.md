@@ -257,6 +257,9 @@ truncation, and `files_truncated` being true means the list is only a prefix. Us
        "starting": {"phase": "waiting_dependency", "started_at": "2026-10-31T10:00:00Z",
                     "elapsed_ms": 130000, "ready_timeout": "3m0s",
                     "waiting_on": ["db"], "last_prepare_ms": null}}
+    ],
+    "ad_hoc_runs": [
+      {"name": "finance-web", "run_id": "run-7", "group": "demo", "pid": 64530, "ports": [8082]}
     ]},
   "ports": [3000, 3001],
   "machine": [{"name": "redis", "port": 6379, "listening": true, "listening_known": true}],
@@ -264,6 +267,11 @@ truncation, and `files_truncated` being true means the list is only a prefix. Us
              "exited_at": "2026-10-31T09:00:00Z", "hint": "oberth logs worker --once"}]
 }
 ~~~
+
+`worktree.ad_hoc_runs` lists the runs started with `oberth start` whose listeners belong to this
+worktree but whose names are not declared services: `name`, `run_id`, `group`, `pid` and the `ports`
+each holds. `ports` stays the flat listener list; this is the attribution that list cannot carry, so
+a reader can tell a process oberth owns from a foreign one.
 
 `worktree.identity` is exactly the value `${worktree}` expands to in the manifest. It is derived from
 the checkout's canonicalized root path, so the same checkout reads the same value every time; when a
@@ -491,7 +499,9 @@ need to look up the process table yourself. `services[]`'s `ready` is the CLI's 
 daemon fact: `true` after `--wait` confirms readiness; when not waiting by default, `started` services
 carry `false` and the human-readable output shows `~` and `started, readiness not confirmed`;
 `skipped`/`failed` do not carry the field. `false` is not a failure, and `state` still describes the
-result of the start action. Wait determination goes by run identity first: this start chunk's
+result of the start action. When an unconfirmed `started` service remains, the command also publishes
+a next step: `next` in the JSON document and a `next:` line in the human output, both naming
+`oberth up --only <services> --wait --json`. Wait determination goes by run identity first: this start chunk's
 `run_id`, the running run a skipped chunk points at, or the same run observed for the first time. Only
 old records with no run_id at all fall back to exit time, with the wait start aligned to the second,
 so an exit recorded within the same second still counts as this round. Old exit records from other
@@ -588,7 +598,10 @@ that could not be stopped is not success: `--json` still returns the envelope �
 failed rows carrying the reason — and the command exits 1, so a caller that reads only the status
 does not go on as if the project were down. `machine:`
 dependencies declared in the project manifest are read-only as to their listener state; `down` does
-not stop them.
+not stop them. `down` stops every run in the group, including ad-hoc runs started by `oberth start`
+that the manifest does not declare. `up` starts only declared services, so an ad-hoc run removed by
+`down` has to be started again with `oberth start`; `worktree.ad_hoc_runs` in the brief document
+names such runs while they are alive.
 
 `--worktree PATH` stops by checkout root path, `--identity wt_…` by `${worktree}` identity. Neither can
 be combined with a project name or a manifest path. They are the explicit entry point after a worktree
