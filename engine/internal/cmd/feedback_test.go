@@ -249,6 +249,47 @@ func TestFeedbackReportSkipsADuplicate(t *testing.T) {
 	}
 }
 
+// Two reports with identical structured facts but different notes describe
+// different defects: the second must file, not be answered with the first
+// one's issue. The same note again is still a duplicate.
+func TestFeedbackReportFilesDifferentNotesAndSkipsTheSameOne(t *testing.T) {
+	feedbackTestEnv(t)
+	enableFeedback(t)
+	fakeGHSucceeds(t)
+	feedbackKindFlag, feedbackCommandFlag = "coarse", "status"
+	feedbackYesFlag = true
+
+	file := func(note string) string {
+		t.Helper()
+		feedbackNoteFlag = note
+		var err error
+		out := captureStdout(t, func() { err = runFeedbackReport(testCommand(), nil) })
+		if err != nil {
+			t.Fatalf("report %q: %v", note, err)
+		}
+		return out
+	}
+	file("before the first health probe the brief has no health")
+	file("a scoped restart skipped both services it had stopped")
+
+	entries, _ := feedback.ReadLedger(paths.FeedbackLedgerPath())
+	if len(entries) != 2 {
+		t.Fatalf("ledger has %d entries, want two distinct reports", len(entries))
+	}
+	if entries[0].Fingerprint == entries[1].Fingerprint {
+		t.Fatal("different notes produced the same fingerprint")
+	}
+
+	out := file("before the first health probe the brief has no health")
+	if !strings.Contains(out, "the same report was filed") {
+		t.Fatalf("the same note again was not a duplicate: %q", out)
+	}
+	entries, _ = feedback.ReadLedger(paths.FeedbackLedgerPath())
+	if len(entries) != 2 {
+		t.Fatalf("the repeated note grew the ledger to %d entries", len(entries))
+	}
+}
+
 // A refusal at the daily limit sends nothing and records nothing. The hint has
 // to say both: the old wording ("nothing was sent; the local record is
 // <path>") read as if the refused attempt had been written to the ledger.

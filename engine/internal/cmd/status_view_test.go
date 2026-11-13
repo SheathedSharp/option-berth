@@ -220,6 +220,25 @@ func TestBriefStatusCarriesTheExecutableFacts(t *testing.T) {
 	}
 }
 
+// TestBriefStatusCarriesPendingHealth: the brief document is what an agent
+// reads in the window between run registration and the first health probe.
+// `starting` is already gone by then, so without the pending verdict a running
+// service would carry no health at all and "not probed yet" would be
+// indistinguishable from "probe unavailable".
+func TestBriefStatusCarriesPendingHealth(t *testing.T) {
+	doc := statusScopeFixture()
+	doc.Worktree.Services[0].HealthStatus = &state.Health{Status: state.HealthUnknown, Reason: "pending"}
+
+	brief := briefStatusFrom(doc)
+	raw, err := json.Marshal(brief)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"health":{"status":"unknown","reason":"pending"}`) {
+		t.Fatalf("brief document lost the pending health: %s", raw)
+	}
+}
+
 // TestBriefStatusCarriesStarting: `--brief --json` is a reader's document for a
 // project that may be mid-start, so the in-flight attempt must be there with
 // the same facts the full document publishes.

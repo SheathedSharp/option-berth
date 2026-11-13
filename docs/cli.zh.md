@@ -131,6 +131,8 @@ depends on · listeners · code · failed · next · drafts · last look），�
 人读和 agent 读到同一个指引。即使强制停止留下了非零信号退出码，正常退出和被停止的服务也不进入失败区。
 
 `worktree.services[]` 还带有 `health_status`（`status`、`code`、`reason`、`observed_at`）。
+运行中的服务声明了 `health:`、首次探测还没有结论时，`health_status` 为
+`{status: unknown, reason: pending}`，且没有 `observed_at`；第一次探测结论会替换它。已停止的服务没有结论。
 `health` 是声明的规范形式：HTTP 路径，或 `tcp:<port>`，或 `command:<命令行>`；`prepare_inputs` 是
 prepare 读取的文件列表，没有声明时为空数组。
 启动进行中时，`worktree.services[].starting` 给出这一次启动尝试的瞬时事实：`phase`
@@ -710,7 +712,8 @@ stderr 也说明一次。这与 `status` 的规则一致：看不见不是没在
 issue 上可见；否则命令打印一条预填好的 `issues/new` 链接由人提交，`--open` 会打开它。
 `feedback status` 与 `feedback on` 在组装报告之前就写明这个账号，`feedback log` 用同一个登录读取
 已提交的 issue。三者都只读本地 gh 凭据（`gh auth status --json hosts`），不发送任何东西。同一构建的
-同一个问题 24 小时内最多提交一次，一个安装滚动一天最多提交二十份。本地账本在
+同一个问题 24 小时内最多提交一次，一个安装滚动一天最多提交二十份。判据包含类别、命令、错误码、
+观察状态、版本和脱敏后的描述：任一项不同就是不同的问题。本地账本在
 `BERTH_HOME/feedback/reports.ndjson`，它只是记录；删掉它只会让重复提交再次成为可能。
 
 `status` 把两类历史分开：`gh` 条目是真正提交的 issue，`url` 条目是人还需要自己按提交的预填页面。

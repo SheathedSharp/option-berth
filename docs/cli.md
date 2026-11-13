@@ -148,6 +148,9 @@ guidance. Even if a forced stop left a non-zero signal exit code, services that 
 were stopped do not enter the failure section.
 
 `worktree.services[]` also carries `health_status` (`status`, `code`, `reason`, `observed_at`).
+While a running service declares `health:` and the first probe has not produced a verdict yet,
+`health_status` is `{status: unknown, reason: pending}` with no `observed_at`; the first verdict
+replaces it. A stopped service has no verdict.
 `health` is the declared canonical form: an HTTP path, or `tcp:<port>`, or `command:<command line>`;
 `prepare_inputs` is the list of files prepare reads, an empty array when not declared. While a start
 is in progress, `worktree.services[].starting` gives the instantaneous facts of that start attempt:
@@ -848,7 +851,9 @@ prefilled `issues/new` URL for the person to submit, and `--open` opens it. `fee
 `feedback on` name that account before any report is composed, and `feedback log` reads the filed
 issues through the same login. All three read the local gh credential (`gh auth status --json hosts`)
 and send nothing. The same complaint from the same build is filed at most once in 24 hours, and one
-installation files at most twenty reports in a rolling day. The local ledger at
+installation files at most twenty reports in a rolling day. The identity covers kind, command, error
+code, observation, version and the redacted note: reports that differ in any of those are different
+complaints. The local ledger at
 `BERTH_HOME/feedback/reports.ndjson` records what was filed; it is advisory, and deleting it only
 makes a duplicate possible again.
 
