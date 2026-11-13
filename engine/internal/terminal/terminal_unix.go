@@ -62,16 +62,21 @@ func makeRaw(fd int) (func(), error) {
 	return func() { _ = unix.IoctlSetTermios(fd, ioctlWriteTermios, original) }, nil
 }
 
-// echoOff keeps the typed secret off the screen while leaving line editing to
-// the terminal driver.
+// echoOff makes one keypress at a time reach the caller with nothing drawn.
+// Canonical mode is off as well as echo: in canonical mode Ctrl-C would sit in
+// the line buffer until Enter, so a person who changes their mind at the key
+// prompt would have no way out. ISIG is off for the same reason — a signal
+// would kill the process before the deferred restore put the terminal back.
 func echoOff(fd int) (func(), error) {
 	original, err := unix.IoctlGetTermios(fd, ioctlReadTermios)
 	if err != nil {
 		return nil, fmt.Errorf("read terminal state: %w", err)
 	}
 	quiet := *original
-	quiet.Lflag &^= unix.ECHO
-	quiet.Lflag |= unix.ICANON | unix.ISIG
+	quiet.Lflag &^= unix.ECHO | unix.ICANON | unix.ISIG
+	quiet.Iflag &^= unix.ICRNL
+	quiet.Cc[unix.VMIN] = 1
+	quiet.Cc[unix.VTIME] = 0
 	if err := unix.IoctlSetTermios(fd, ioctlWriteTermios, &quiet); err != nil {
 		return nil, fmt.Errorf("disable terminal echo: %w", err)
 	}

@@ -336,16 +336,26 @@ func ReadSecret(w io.Writer, label string) (string, error) {
 		if n == 0 || readErr != nil {
 			return "", ErrCancelled
 		}
-		if buffer[0] == '\n' {
-			break
-		}
-		if buffer[0] == '\r' {
-			continue
-		}
-		line = append(line, buffer[0])
-		if len(line) > 4096 {
-			return "", errors.New("the value is too long")
+		switch buffer[0] {
+		case 0x03:
+			// Ctrl-C reaches us as a byte because the prompt turned ISIG off;
+			// returning here still runs the deferred echo restore.
+			return "", ErrCancelled
+		case '\n', '\r':
+			return strings.TrimSpace(string(line)), nil
+		case 0x7f, 0x08:
+			// Backspace and Ctrl-H: nothing was drawn, so only the buffer
+			// changes and the screen has nothing to correct.
+			if len(line) > 0 {
+				line = line[:len(line)-1]
+			}
+		case 0x15:
+			line = line[:0]
+		default:
+			line = append(line, buffer[0])
+			if len(line) > 4096 {
+				return "", errors.New("the value is too long")
+			}
 		}
 	}
-	return strings.TrimSpace(string(line)), nil
 }
