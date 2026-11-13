@@ -64,7 +64,7 @@ func Select(w io.Writer, question string, choices []Choice, initial int) (int, e
 		return 0, err
 	}
 	defer restore()
-	return selectFrom(oneByteReader{os.Stdin}, w, question, choices, initial)
+	return selectFrom(oneByteReader{os.Stdin}, w, question, choices, initial, terminalWidth())
 }
 
 // oneByteReader reads exactly one byte at a time. A buffered reader would read
@@ -81,13 +81,15 @@ func (b oneByteReader) ReadByte() (byte, error) {
 }
 
 // selectFrom is Select with the terminal replaced by a byte reader and a
-// writer, so the loop can be driven by a test without a real terminal.
-func selectFrom(in io.ByteReader, out io.Writer, question string, choices []Choice, initial int) (int, error) {
+// writer, so the loop can be driven by a test without a real terminal. width
+// is the drawable columns; zero means "unknown" and drops no text, because a
+// wrong guess is worse than a wrapped line.
+func selectFrom(in io.ByteReader, out io.Writer, question string, choices []Choice, initial, width int) (int, error) {
 	if len(choices) == 0 {
 		return 0, errors.New("terminal: a selection needs at least one choice")
 	}
 	cursor := clampCursor(initial, len(choices))
-	previous := writeFrame(out, question, choices, cursor, true, 0)
+	previous := writeFrame(out, question, choices, cursor, true, 0, width)
 	for {
 		pressed, err := readKey(in)
 		if err != nil {
@@ -97,7 +99,7 @@ func selectFrom(in io.ByteReader, out io.Writer, question string, choices []Choi
 		case keyCancel:
 			return 0, ErrCancelled
 		case keyEnter:
-			writeFrame(out, question, choices, cursor, false, previous)
+			writeFrame(out, question, choices, cursor, false, previous, width)
 			// The finished frame is one line shorter than the live one; the
 			// blank line it leaves keeps the next prompt on its own line.
 			fmt.Fprint(out, "\r\033[K\n")
@@ -109,7 +111,7 @@ func selectFrom(in io.ByteReader, out io.Writer, question string, choices []Choi
 		default:
 			continue
 		}
-		previous = writeFrame(out, question, choices, cursor, true, previous)
+		previous = writeFrame(out, question, choices, cursor, true, previous, width)
 	}
 }
 
@@ -127,11 +129,11 @@ func clampCursor(cursor, length int) int {
 // writeFrame redraws the question and the rows in place and returns how many
 // lines the frame occupies. previous is how many lines the last frame used, so
 // the cursor can be returned to the top before the new one is painted.
-func writeFrame(w io.Writer, question string, choices []Choice, cursor int, hint bool, previous int) int {
+func writeFrame(w io.Writer, question string, choices []Choice, cursor int, hint bool, previous, width int) int {
 	if previous > 0 {
 		fmt.Fprintf(w, "\033[%dA", previous)
 	}
-	lines := frame(question, choices, cursor, hint)
+	lines := frame(question, choices, cursor, hint, width)
 	for _, line := range lines {
 		// The clear is per line: a shorter label must not leave the tail of a
 		// longer one behind.
@@ -145,36 +147,92 @@ func writeFrame(w io.Writer, question string, choices []Choice, cursor int, hint
 	return len(lines) + 1
 }
 
+// Row layout: two-space margin, the cursor cell and a space, the label padded
+// to one column, two spaces, then the detail. Keeping those constants named
+// here is what lets the frame clip to the terminal width without a wrapped line
+// throwing the redraw off by one.
+const (
+	rowPrefix = 4 // "  " + cursor cell + " "
+	rowGap    = 2 // between the label column and its detail
+)
+
 // frame is the picker as plain lines: the question, one row per choice with the
 // cursor marked, and — while it is still asking — the key hint. Labels are
 // padded to one column so the details read as a list rather than as ragged
-// prose.
-func frame(question string, choices []Choice, cursor int, hint bool) []string {
-	width := 0
+// prose. A non-zero width clips each row to that many columns; the terminal
+// would otherwise wrap a long detail and leave the cursor bookkeeping wrong.
+func frame(question string, choices []Choice, cursor int, hint bool, width int) []string {
+	known := width > 0
+	budget := width
+	if known {
+		// Leave the last column empty. Writing the final cell arms the
+		// terminal's pending wrap, and the newline after the row would then
+		// move two rows instead of one.
+		budget = width - 1
+	}
+	labelColumn := 0
 	for _, choice := range choices {
-		if n := display.DisplayWidth(choice.Label); n > width {
-			width = n
+		if n := display.DisplayWidth(choice.Label); n > labelColumn {
+			labelColumn = n
+		}
+	}
+	if known {
+		if room := budget - rowPrefix - rowGap; labelColumn > room {
+			labelColumn = room
+		}
+		if labelColumn < 1 {
+			labelColumn = 1
 		}
 	}
 	lines := make([]string, 0, len(choices)+2)
-	lines = append(lines, "? "+question)
+	lines = append(lines, "? "+clipText(question, budget-2))
 	for i, choice := range choices {
 		marker := "  "
 		label := choice.Label
+		detail := choice.Detail
+		if known {
+			label = clipText(label, labelColumn)
+			if detailRoom := budget - rowPrefix - labelColumn - rowGap; detailRoom > 0 {
+				detail = clipText(detail, detailRoom)
+			} else {
+				detail = ""
+			}
+		}
 		if i == cursor {
 			marker = display.Accent("❯") + " "
 			label = display.Bold(label)
 		}
-		row := "  " + marker + display.PadDisplay(label, width)
-		if choice.Detail != "" {
-			row += "  " + display.Dim(choice.Detail)
+		row := "  " + marker + display.PadDisplay(label, labelColumn)
+		if detail != "" {
+			row += "  " + display.Dim(detail)
 		}
 		lines = append(lines, strings.TrimRight(row, " "))
 	}
 	if hint {
-		lines = append(lines, "  "+display.Dim(hintLine))
+		lines = append(lines, "  "+display.Dim(clipText(hintLine, budget-2)))
 	}
 	return lines
+}
+
+// clipText shortens text to at most width terminal cells, ending in an ellipsis
+// when something was cut. A non-positive width means "no clipping": callers
+// that do not know the terminal pass zero on purpose, and a row with no room
+// left drops its detail rather than calling this.
+func clipText(text string, width int) string {
+	if width <= 0 || display.DisplayWidth(text) <= width {
+		return text
+	}
+	var b strings.Builder
+	used := 0
+	for _, r := range text {
+		cells := display.DisplayWidth(string(r))
+		if used+cells > width-1 {
+			break
+		}
+		b.WriteRune(r)
+		used += cells
+	}
+	return b.String() + "…"
 }
 
 // key is one decoded keypress.

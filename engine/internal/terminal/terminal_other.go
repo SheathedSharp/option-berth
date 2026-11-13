@@ -9,6 +9,7 @@ const platformSupportsRaw = false
 
 func stdinIsTerminal() bool  { return false }
 func stderrIsTerminal() bool { return false }
+func terminalWidth() int     { return 0 }
 
 func makeRaw(int) (func(), error) { return nil, ErrNotInteractive }
 func echoOff(int) (func(), error) { return nil, ErrNotInteractive }

@@ -27,6 +27,17 @@ func isCharDevice(file *os.File) bool {
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
+// terminalWidth is the drawable column count, or zero when the terminal will
+// not say. A zero width means the picker keeps its rows whole rather than
+// guessing and cutting a word.
+func terminalWidth() int {
+	size, err := unix.IoctlGetWinsize(int(os.Stderr.Fd()), unix.TIOCGWINSZ)
+	if err != nil || size.Col == 0 {
+		return 0
+	}
+	return int(size.Col)
+}
+
 // makeRaw turns the terminal into a one-key-at-a-time reader. Canonical mode
 // and echo are off so a key reaches the picker immediately; ISIG is off too, so
 // Ctrl-C arrives as a byte the picker can turn into a clean cancel instead of a

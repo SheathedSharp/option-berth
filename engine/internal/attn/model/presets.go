@@ -49,7 +49,7 @@ var vendorCatalog = []Vendor{
 		Endpoint: "https://openrouter.ai/api/alpha/decisions",
 		Default:  "typesafe/jev-1.14",
 		Models: []VendorModel{
-			{ID: "typesafe/jev-1.14", Label: "TypeSafe Jev 1.14", Note: "the decision model this adapter was built against"},
+			{ID: "typesafe/jev-1.14", Label: "TypeSafe Jev 1.14", Note: "the model this adapter was built against"},
 			{ID: "openai/gpt-6-luna-decisions", Label: "OpenAI GPT-6 Luna Decisions"},
 			{ID: "google/gemini-decision-1", Label: "Google Gemini Decision 1"},
 			{ID: "microsoft/microsoft-decision-1", Label: "Microsoft Decision 1"},

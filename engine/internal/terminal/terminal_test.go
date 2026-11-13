@@ -26,7 +26,7 @@ func TestFrameShowsTheChoicesAndTheSelectedOne(t *testing.T) {
 		{Value: "typesafe", Label: "TypeSafe", Detail: "Jev directly from TypeSafe"},
 		{Value: "", Label: "Custom endpoint", Detail: "any decisions endpoint"},
 	}
-	lines := frame("Provider", choices, 1, true)
+	lines := frame("Provider", choices, 1, true, 0)
 	want := []string{
 		"? Provider",
 		"    OpenRouter       one key, many decision models",
@@ -49,7 +49,7 @@ func TestFrameShowsTheChoicesAndTheSelectedOne(t *testing.T) {
 func TestFrameCanDropTheHint(t *testing.T) {
 	noColor(t)
 	choices := []Choice{{Value: "a", Label: "A"}}
-	lines := frame("Question", choices, 0, false)
+	lines := frame("Question", choices, 0, false, 0)
 	if len(lines) != 2 {
 		t.Fatalf("frame = %q, want the question and one row", lines)
 	}
@@ -92,7 +92,7 @@ func TestSelectMovesWithTheArrowKeysAndAnswersOnEnter(t *testing.T) {
 	choices := []Choice{{Value: "a", Label: "A"}, {Value: "b", Label: "B"}, {Value: "c", Label: "C"}}
 	// down, down, up (k), enter: 0 -> 1 -> 2 -> 1.
 	var out bytes.Buffer
-	index, err := selectFrom(bytes.NewReader([]byte("\x1b[B\x1b[Bk\r")), &out, "Pick", choices, 0)
+	index, err := selectFrom(bytes.NewReader([]byte("\x1b[B\x1b[Bk\r")), &out, "Pick", choices, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestSelectMovesWithTheArrowKeysAndAnswersOnEnter(t *testing.T) {
 func TestSelectWrapsAround(t *testing.T) {
 	noColor(t)
 	choices := []Choice{{Value: "a", Label: "A"}, {Value: "b", Label: "B"}}
-	index, err := selectFrom(strings.NewReader("\x1b[A\r"), io.Discard, "Pick", choices, 0)
+	index, err := selectFrom(strings.NewReader("\x1b[A\r"), io.Discard, "Pick", choices, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestSelectWrapsAround(t *testing.T) {
 func TestSelectCancelsOnQ(t *testing.T) {
 	noColor(t)
 	choices := []Choice{{Value: "a", Label: "A"}}
-	_, err := selectFrom(strings.NewReader("q"), io.Discard, "Pick", choices, 0)
+	_, err := selectFrom(strings.NewReader("q"), io.Discard, "Pick", choices, 0, 0)
 	if err != ErrCancelled {
 		t.Fatalf("err = %v, want ErrCancelled", err)
 	}
@@ -130,7 +130,7 @@ func TestSelectCancelsOnQ(t *testing.T) {
 func TestSelectClampsTheInitialRow(t *testing.T) {
 	noColor(t)
 	choices := []Choice{{Value: "a", Label: "A"}, {Value: "b", Label: "B"}}
-	index, err := selectFrom(strings.NewReader("\r"), io.Discard, "Pick", choices, 99)
+	index, err := selectFrom(strings.NewReader("\r"), io.Discard, "Pick", choices, 99, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,5 +142,26 @@ func TestSelectClampsTheInitialRow(t *testing.T) {
 func TestSelectRefusesAnEmptyList(t *testing.T) {
 	if _, err := Select(io.Discard, "Pick", nil, 0); err == nil {
 		t.Fatal("an empty list was accepted")
+	}
+}
+
+// A narrow terminal must not wrap a row: a wrapped line makes the redraw move
+// up the wrong number of rows. Every line is clipped to the width and marks
+// what it cut.
+func TestFrameClipsRowsToTheTerminalWidth(t *testing.T) {
+	noColor(t)
+	choices := []Choice{{
+		Value:  "a",
+		Label:  "A label long enough that it cannot fit in a narrow frame",
+		Detail: "a detail that also has to be cut",
+	}}
+	lines := frame("A question that is itself too long for the frame", choices, 0, true, 40)
+	for _, line := range lines {
+		if got := display.DisplayWidth(line); got > 40 {
+			t.Errorf("line %q is %d cells, want at most 40", line, got)
+		}
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "…") {
+		t.Fatalf("clipped frame carries no ellipsis:\n%s", strings.Join(lines, "\n"))
 	}
 }
