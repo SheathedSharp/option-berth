@@ -870,6 +870,13 @@ func alreadyRunning(ctx context.Context, rt *daemon.Runtime, group string, svc g
 	if !found || !row.Running {
 		return "", "", false, nil
 	}
+	// The resolved row keeps a signalled run visible until its exit is
+	// observed, which is the right answer for status and the wrong one here:
+	// the registry has already ruled that run out, and this row must not
+	// overrule it. What is left is a listener option-berth did not start.
+	if runsreg.Default.StopPending(group, svc.Name) {
+		return "", "", false, nil
+	}
 	if row.RunID != nil {
 		runID = *row.RunID
 	}

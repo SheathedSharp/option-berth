@@ -3,6 +3,8 @@ package groupstart
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -44,6 +46,63 @@ func TestStartAfterStopDoesNotReuseTheStoppedRun(t *testing.T) {
 	}
 	if up {
 		t.Fatalf("start decision reused the stopped run: %s", reason)
+	}
+}
+
+// A run that has been signalled is still published as running until its exit
+// is observed, because "accepted signal" is not "process exited". The start
+// decision must not read that row as a service that is already up: restart
+// sends the stop and then starts, and the snapshot it sees in between is
+// exactly this row. The registry is the authority on whether this engine has a
+// live run for a service; the snapshot only answers for listeners it did not
+// start.
+func TestStartAfterStopIgnoresTheStoppedSnapshotRow(t *testing.T) {
+	previous := runsreg.Default
+	runsreg.Default = runsreg.New()
+	runsreg.Default.Mirror = false
+	runsreg.Default.Alive = func(int) bool { return true }
+	runsreg.Default.Parents = func() map[int]int { return nil }
+	runsreg.Default.StartTime = nil
+	t.Cleanup(func() { runsreg.Default = previous })
+
+	rec := runsreg.Default.Register(runsreg.Record{
+		PID: 4343, Group: "example", Name: "worker", StartedAt: time.Unix(1, 0),
+	})
+	observe := runsreg.Default.StopSignalObserver([]state.Run{{RootPID: rec.PID, ID: rec.ID}}, runsreg.ReasonStopped)
+	if observe == nil {
+		t.Fatal("no stop observer for the registered run")
+	}
+	observe(rec.PID)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, groups.ConfigName)
+	if err := os.WriteFile(path, []byte("name: example\nservices:\n  - name: worker\n    cmd: sleep 60\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	l := scanner.New(scanner.Options{Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
+		return nil, nil
+	}})
+	if err := l.LoadConfig(path); err != nil {
+		t.Fatal(err)
+	}
+	l.SetRuns(func() groups.Registry { return runsreg.Default })
+	rt := &daemon.Runtime{Scanner: l}
+
+	snap, err := l.SnapshotForReadinessContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, found := serviceRow(snap, "example", "worker")
+	if !found || !row.Running {
+		t.Fatalf("the snapshot no longer reproduces the case: %+v", snap.Groups)
+	}
+
+	reason, _, up, err := alreadyRunning(context.Background(), rt, "example", groups.Service{Name: "worker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if up {
+		t.Fatalf("start decision reused a run that already has a stop signal: %s", reason)
 	}
 }
 
