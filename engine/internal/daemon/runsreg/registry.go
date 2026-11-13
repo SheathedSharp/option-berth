@@ -337,6 +337,33 @@ func (r *Registry) Running(group, service string) (Record, bool) {
 	return newest, found
 }
 
+// StopPending reports whether every run recorded for group and service has an
+// accepted stop signal. It is the other half of Running: a start must not treat
+// such a run as a live service, while the published service row keeps saying
+// running until the exit is observed — a signal receipt is not an exit.
+//
+// The start decision reads two sources: this registry, and the snapshot's
+// service row (which also covers listeners option-berth did not start). When the
+// registry has already ruled a run out, that row must not overrule it, or the
+// start half of a restart reports "already running" for the process the stop
+// half just signalled.
+func (r *Registry) StopPending(group, service string) bool {
+	r.Prune()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	found := false
+	for _, rec := range r.runs {
+		if rec.Group != group || rec.Name != service {
+			continue
+		}
+		if !rec.stopping && rec.stoppingReason == "" {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
 // Lookup returns the run registered for a pid.
 func (r *Registry) Lookup(pid int) (Record, bool) {
 	r.mu.Lock()
