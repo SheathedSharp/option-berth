@@ -57,6 +57,28 @@ func TestRunningIgnoresARunThatReceivedAStopReceipt(t *testing.T) {
 	}
 }
 
+// StopPending is the other half of Running: it tells the start decision that
+// every registered run for the service is on its way out. A live run keeps it
+// false, so a service that really is up cannot be started a second time behind
+// its back.
+func TestStopPendingFollowsTheRunsTheRegistryHolds(t *testing.T) {
+	r, rec, observe := stopReceiptFixture(t)
+	if r.StopPending(rec.Group, rec.Name) {
+		t.Fatal("a live run made the service look pending")
+	}
+	observe(rec.PID)
+	if !r.StopPending(rec.Group, rec.Name) {
+		t.Fatal("a signalled run did not count as pending")
+	}
+	replacement := rec
+	replacement.ID = "replacement"
+	replacement.StartedAt = time.Unix(2, 0)
+	r.Register(replacement)
+	if r.StopPending(rec.Group, rec.Name) {
+		t.Fatal("a live replacement made the service look pending")
+	}
+}
+
 func TestNoStopReceiptPreservesFailureAndCrashFacts(t *testing.T) {
 	r, rec, observe := stopReceiptFixture(t)
 	observe(999) // an unrelated unit cannot mark this run
