@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -245,6 +246,42 @@ func TestFeedbackReportSkipsADuplicate(t *testing.T) {
 	entries, _ := feedback.ReadLedger(paths.FeedbackLedgerPath())
 	if len(entries) != 1 {
 		t.Fatalf("ledger grew to %d entries; a duplicate must not file", len(entries))
+	}
+}
+
+// A refusal at the daily limit sends nothing and records nothing. The hint has
+// to say both: the old wording ("nothing was sent; the local record is
+// <path>") read as if the refused attempt had been written to the ledger.
+func TestFeedbackReportDailyLimitRefusalRecordsNothing(t *testing.T) {
+	feedbackTestEnv(t)
+	enableFeedback(t)
+	now := time.Now().UTC()
+	for i := 0; i < feedback.DailyLimit; i++ {
+		if err := feedback.AppendLedger(paths.FeedbackLedgerPath(), feedback.Entry{
+			At:          now.Add(-time.Duration(i) * time.Minute).Format(time.RFC3339),
+			Fingerprint: fmt.Sprintf("filed-%d", i),
+			Kind:        "slow", Command: "up", Channel: "gh",
+			URL: fmt.Sprintf("https://github.com/SheathedSharp/option-berth/issues/%d", i+1),
+		}); err != nil {
+			t.Fatalf("AppendLedger: %v", err)
+		}
+	}
+	feedbackKindFlag, feedbackCommandFlag = "misleading", "logs"
+
+	err := runFeedbackReport(testCommand(), nil)
+	var coded *cliErr
+	if !errors.As(err, &coded) || coded.Code != "permission_denied" {
+		t.Fatalf("err = %v, want permission_denied", err)
+	}
+	if !strings.Contains(coded.Hint, "nothing was sent and nothing was recorded") {
+		t.Fatalf("hint = %q, want it to say neither sent nor recorded", coded.Hint)
+	}
+	if !strings.Contains(coded.Hint, paths.FeedbackLedgerPath()) {
+		t.Fatalf("hint = %q, want the path of the existing records", coded.Hint)
+	}
+	entries, _ := feedback.ReadLedger(paths.FeedbackLedgerPath())
+	if len(entries) != feedback.DailyLimit {
+		t.Fatalf("ledger grew to %d entries; a refused report must not record", len(entries))
 	}
 }
 
