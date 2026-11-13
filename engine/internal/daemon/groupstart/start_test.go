@@ -413,6 +413,51 @@ services:
 	}
 }
 
+// TestRestartStartsTheServiceItJustStopped is restart's two halves at the RPC
+// level: stop the service, then start it again while the old process is still
+// finishing its graceful shutdown. The start must begin a new generation, not
+// report the process the stop just signalled as "already running" — that skip
+// is what left a scoped restart reporting every service skipped and running
+// none of them.
+func TestRestartStartsTheServiceItJustStopped(t *testing.T) {
+	h := newHarness(t)
+	t.Setenv(envLinger, "2s")
+	port := h.freePort()
+	path := h.manifest(fmt.Sprintf(`name: itest
+services:
+  - cmd: %s
+    name: web
+    port: %d
+`, h.service(), port))
+
+	first, _ := h.startChunks(rpc.GroupsStartParams{ConfigPath: &path})
+	if web := chunkFor(t, first, "web"); web.State != "started" {
+		t.Fatalf("first start = %+v, want started", web)
+	}
+
+	var stopped rpc.KillEnvelope
+	if err := h.call("groups.kill", rpc.GroupsKillParams{
+		ConfigPath: &path, Only: []string{"web"}, Release: true,
+	}, &stopped); err != nil {
+		t.Fatalf("groups.kill: %v", err)
+	}
+	if !stopped.OK {
+		t.Fatalf("stop = %+v, want ok", stopped)
+	}
+
+	chunks, end := h.startChunks(rpc.GroupsStartParams{ConfigPath: &path})
+	web := chunkFor(t, chunks, "web")
+	if web.State == "skipped" {
+		t.Fatalf("the start after the stop reported %q: %s", web.State, web.Reason)
+	}
+	if web.State != "started" {
+		t.Fatalf("start after stop = %+v, want started", web)
+	}
+	if !containsString(end.Started, "web") {
+		t.Fatalf("end = %+v, want web started", end)
+	}
+}
+
 // TestReportsADependencyThatExits: a dependency this same start attempted and
 // that has already exited can never become ready, so its dependent fails at
 // once with the dependency's exit as evidence instead of waiting out the budget.

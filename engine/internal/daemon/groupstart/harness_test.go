@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -31,6 +33,11 @@ import (
 const (
 	envListen = "BERTH_TEST_LISTEN"
 	envDelay  = "BERTH_TEST_LISTEN_DELAY"
+	// envLinger makes the child release its listener on SIGTERM and then keep
+	// running for that long, the way a service with a graceful shutdown does.
+	// It is the gap between "the stop accepted the signal" and "the exit was
+	// observed", where restart used to skip the service it had just stopped.
+	envLinger = "BERTH_TEST_LINGER"
 	// envEcho names variables, comma separated, the child prints as NAME=value
 	// before it listens, so a test can read the environment a service got.
 	envEcho = "BERTH_TEST_ECHO"
@@ -63,9 +70,28 @@ func serveAsChild() {
 	}
 	defer listener.Close()
 	fmt.Println("listening on", os.Getenv("BERTH_PORT"))
+	linger, _ := time.ParseDuration(os.Getenv(envLinger))
+	if linger > 0 {
+		// A graceful service closes its listener first and finishes its work
+		// after. Until the process really exits, it is still a live run, and a
+		// restart must not read it as one that is already up.
+		signals := make(chan os.Signal, 1)
+		signal.Notify(signals, syscall.SIGTERM)
+		go func() {
+			<-signals
+			listener.Close()
+			time.Sleep(linger)
+			os.Exit(0)
+		}()
+	}
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
+			if linger > 0 {
+				// The signal handler owns the exit; returning here would run the
+				// test binary as a test instead.
+				select {}
+			}
 			return
 		}
 		conn.Close()
