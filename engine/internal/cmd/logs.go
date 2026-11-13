@@ -262,6 +262,31 @@ func printLogDocument(doc logsDocument) error {
 	return nil
 }
 
+// visibleLogLine is one service-log line as this process prints it. Colour is
+// off whenever this process may not paint (--no-color, NO_COLOR, color: false)
+// or cannot assume a renderer (stdout is not a terminal); in that case the
+// service's own SGR sequences are removed. The log file keeps every byte the
+// service wrote; only the rendering changes.
+func visibleLogLine(line string) string {
+	if !display.NoColor {
+		return line
+	}
+	return display.StripANSI(line)
+}
+
+// visibleLogLines is visibleLogLine over a batch. It returns the same slice
+// when colour is on, so the terminal path does not copy.
+func visibleLogLines(lines []string) []string {
+	if !display.NoColor || len(lines) == 0 {
+		return lines
+	}
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		out[i] = display.StripANSI(line)
+	}
+	return out
+}
+
 func readFileLogs(path string, lines int) (logsDocument, error) {
 	b, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -275,6 +300,7 @@ func readFileLogs(path string, lines int) (logsDocument, error) {
 	if len(all) == 1 && all[0] == "" {
 		all = []string{}
 	}
+	all = visibleLogLines(all)
 	if lines <= 0 {
 		lines = 10
 	}
@@ -340,12 +366,12 @@ func streamFileLogsFrom(ctx context.Context, path string, rng logRange, asJSON b
 func logLineSink(path string, asJSON bool, meta logMetadata) func(string) error {
 	if !asJSON {
 		return func(line string) error {
-			fmt.Println(line)
+			fmt.Println(visibleLogLine(line))
 			return nil
 		}
 	}
 	enc := json.NewEncoder(os.Stdout)
-	return func(line string) error { return enc.Encode(logLineJSON(path, line, meta)) }
+	return func(line string) error { return enc.Encode(logLineJSON(path, visibleLogLine(line), meta)) }
 }
 
 func printLogLines(path string, lines []string, asJSON bool, meta logMetadata) error {
@@ -455,7 +481,7 @@ func printLogStream(s *client.Stream, source string) error {
 		if err := json.Unmarshal(payload, &entry); err != nil {
 			continue
 		}
-		fmt.Println(entry.Line)
+		fmt.Println(visibleLogLine(entry.Line))
 	}
 	if end := <-s.End(); end.Err != nil {
 		return cliError(end.Err)
@@ -479,7 +505,7 @@ func readLogsOnce(ctx context.Context, c *client.Client, row ports.ListeningPort
 	}
 	doc := logsDocument{
 		Source:    res.Source,
-		Lines:     nonNilStrings(res.Lines),
+		Lines:     visibleLogLines(nonNilStrings(res.Lines)),
 		Truncated: res.Truncated,
 	}
 	applyLogMetadata(&doc, meta)
@@ -639,7 +665,7 @@ func streamLogsJSON(s *client.Stream, meta logMetadata) error {
 		if err := json.Unmarshal(raw, &chunk); err != nil {
 			continue
 		}
-		if err := enc.Encode(logLineJSON(chunk.Source, chunk.Line, meta)); err != nil {
+		if err := enc.Encode(logLineJSON(chunk.Source, visibleLogLine(chunk.Line), meta)); err != nil {
 			return err
 		}
 	}

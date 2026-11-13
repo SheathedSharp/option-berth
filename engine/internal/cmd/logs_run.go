@@ -219,6 +219,7 @@ func readFileLogsFrom(path string, rng logRange, lines int) (logsDocument, error
 	if err != nil {
 		return logsDocument{}, err
 	}
+	all = visibleLogLines(all)
 	if lines <= 0 {
 		lines = 10
 	}
@@ -329,6 +330,7 @@ func logsFirstErrorFromFile(path string, rng logRange, meta logMetadata) error {
 	if err != nil {
 		return err
 	}
+	lines = visibleLogLines(lines)
 	doc := logsDocument{
 		Source:          path,
 		Lines:           []string{},

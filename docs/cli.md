@@ -639,6 +639,12 @@ document:
 {"source":"/path/to/service.log","lines":["..."],"truncated":false,"service":"api","run_id":"...","pid":1234,"status":"running"}
 ~~~
 
+Printed lines follow the color rule: when color is off — `--no-color`, `NO_COLOR`, `color: false`, or
+a stdout that is not a terminal — the service's own SGR color sequences are removed from the printed
+`lines` and `first_error.text`, while the log file keeps the bytes the service wrote. With color on,
+lines are printed as written; other escape sequences (cursor movement, screen control) are never
+rewritten.
+
 `--run current --first-error`'s document:
 
 ~~~json
