@@ -277,24 +277,46 @@ func configuredHealthByPort(rows []state.Port) map[int]*state.Health {
 	return byPort
 }
 
+// pendingHealth is what a declared check reads before its first probe. It uses
+// the published "unknown" word so a reader never mistakes it for a failure, and
+// the reason names the wait. It carries no observed_at because nothing has been
+// observed yet.
+func pendingHealth() *state.Health {
+	return &state.Health{Status: state.HealthUnknown, Reason: "pending"}
+}
+
 // joinServiceHealth copies a listener's configured verdict onto the service
 // that owns that listener. A command check has no port to join through: a
 // stopped service drops the verdict, because running the command would
 // describe the machine, and a running one keeps the verdict the probe wrote.
+//
+// A running service that declares a check but has no verdict yet publishes the
+// pending state instead of nothing. The start attempt ends when the run is
+// registered, so without this the window before the first probe had neither
+// `starting` nor `health`; a reader could not tell "not probed yet" from
+// "probe unavailable".
 func joinServiceHealth(svc *state.Service, byPort map[int]*state.Health) {
-	if svc.Health != nil && groups.ParseHealth(*svc.Health).Kind == groups.HealthCommand {
+	declared := svc.Health != nil && *svc.Health != ""
+	if declared && groups.ParseHealth(*svc.Health).Kind == groups.HealthCommand {
 		if !svc.Running {
 			svc.HealthStatus = nil
+			return
+		}
+		if svc.HealthStatus == nil {
+			svc.HealthStatus = pendingHealth()
 		}
 		return
 	}
 	svc.HealthStatus = nil
-	if svc.PortActual == nil {
-		return
+	if svc.PortActual != nil {
+		if h, ok := byPort[*svc.PortActual]; ok {
+			copy := *h
+			svc.HealthStatus = &copy
+			return
+		}
 	}
-	if h, ok := byPort[*svc.PortActual]; ok {
-		copy := *h
-		svc.HealthStatus = &copy
+	if declared && svc.Running {
+		svc.HealthStatus = pendingHealth()
 	}
 }
 

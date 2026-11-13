@@ -130,6 +130,8 @@ depends on · listeners · code · failed · next · drafts · last look），�
 人读和 agent 读到同一个指引。即使强制停止留下了非零信号退出码，正常退出和被停止的服务也不进入失败区。
 
 `worktree.services[]` 还带有 `health_status`（`status`、`code`、`reason`、`observed_at`）。
+运行中的服务声明了 `health:`、首次探测还没有结论时，`health_status` 为
+`{status: unknown, reason: pending}`，且没有 `observed_at`；第一次探测结论会替换它。已停止的服务没有结论。
 `health` 是声明的规范形式：HTTP 路径，或 `tcp:<port>`，或 `command:<命令行>`；`prepare_inputs` 是
 prepare 读取的文件列表，没有声明时为空数组。
 启动进行中时，`worktree.services[].starting` 给出这一次启动尝试的瞬时事实：`phase`

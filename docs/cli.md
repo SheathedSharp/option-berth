@@ -146,6 +146,9 @@ guidance. Even if a forced stop left a non-zero signal exit code, services that 
 were stopped do not enter the failure section.
 
 `worktree.services[]` also carries `health_status` (`status`, `code`, `reason`, `observed_at`).
+While a running service declares `health:` and the first probe has not produced a verdict yet,
+`health_status` is `{status: unknown, reason: pending}` with no `observed_at`; the first verdict
+replaces it. A stopped service has no verdict.
 `health` is the declared canonical form: an HTTP path, or `tcp:<port>`, or `command:<command line>`;
 `prepare_inputs` is the list of files prepare reads, an empty array when not declared. While a start
 is in progress, `worktree.services[].starting` gives the instantaneous facts of that start attempt:
