@@ -9,6 +9,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
 	"github.com/sheathedsharp/option-berth/engine/internal/servicefacts"
+	"github.com/sheathedsharp/option-berth/engine/internal/state"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -19,7 +20,7 @@ import (
 func fixture(t *testing.T) (*scanner.Loop, *runsreg.Registry, *atomic.Bool, chan struct{}, chan struct{}) {
 	return fixtureWithRegistry(t, func(r *runsreg.Registry) groups.Registry { return r })
 }
-func fixtureWithRegistry(t *testing.T, wrap func(*runsreg.Registry) groups.Registry) (*scanner.Loop, *runsreg.Registry, *atomic.Bool, chan struct{}, chan struct{}) {
+func fixtureWithRegistry(t *testing.T, wrap func(*runsreg.Registry) groups.Registry, configure ...func(*scanner.Options)) (*scanner.Loop, *runsreg.Registry, *atomic.Bool, chan struct{}, chan struct{}) {
 	t.Helper()
 	root := t.TempDir()
 	for _, name := range []string{"a", "b", "c"} {
@@ -39,7 +40,7 @@ func fixtureWithRegistry(t *testing.T, wrap func(*runsreg.Registry) groups.Regis
 	busy := &atomic.Bool{}
 	entered, release := make(chan struct{}, 1), make(chan struct{})
 	provider := wrap(reg)
-	loop := scanner.New(scanner.Options{Runs: func() groups.Registry { return provider }, ScanContext: func(ctx context.Context, _ scanner.Include) ([]ports.ListeningPort, error) {
+	options := scanner.Options{Runs: func() groups.Registry { return provider }, ScanContext: func(ctx context.Context, _ scanner.Include) ([]ports.ListeningPort, error) {
 		if busy.Load() {
 			select {
 			case entered <- struct{}{}:
@@ -52,7 +53,11 @@ func fixtureWithRegistry(t *testing.T, wrap func(*runsreg.Registry) groups.Regis
 			}
 		}
 		return nil, nil
-	}, SampleStats: func([]int) map[int]ports.ProcSample { return nil }})
+	}, SampleStats: func([]int) map[int]ports.ProcSample { return nil }}
+	for _, apply := range configure {
+		apply(&options)
+	}
+	loop := scanner.New(options)
 	for _, name := range []string{"a", "b", "c"} {
 		if err := loop.LoadConfig(filepath.Join(root, name, "oberth.yaml")); err != nil {
 			t.Fatal(err)
@@ -179,6 +184,41 @@ func TestSlowScanCannotRepublishOldRunGeneration(t *testing.T) {
 			if row.Running {
 				t.Fatal("stopped generation stayed active")
 			}
+		}
+	}
+}
+
+func TestOwnedRuntimeWorkerPublishesWhileFakeObserverBlocked(t *testing.T) {
+	changes := make(chan state.Snapshot, 16)
+	loop, reg, busy, entered, release := fixtureWithRegistry(t, func(r *runsreg.Registry) groups.Registry { return r }, func(o *scanner.Options) {
+		o.Demand = func() (int, scanner.Include) { return 1, scanner.Include{} }
+		o.Publish = func(_ state.Snapshot, next state.Snapshot, _ []state.Event) { changes <- next }
+	})
+	busy.Store(true)
+	loop.Invalidate()
+	reg.SetOnChange(loop.RuntimeChanged)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	done := make(chan struct{})
+	go func() { defer close(done); loop.Run(ctx) }()
+	defer func() { cancel(); close(release); <-done; reg.SetOnChange(nil) }()
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal("fake periodic observer never entered")
+	}
+	reg.Register(runsreg.Record{ID: "background-r2", PID: 92011, Group: "a", Name: "worker", StartedAt: time.Now()})
+	for {
+		select {
+		case snapshot := <-changes:
+			for _, g := range snapshot.Groups {
+				for _, s := range g.Services {
+					if g.Name == "a" && s.RunID != nil && *s.RunID == "background-r2" {
+						return
+					}
+				}
+			}
+		case <-ctx.Done():
+			t.Fatal("runtime worker did not independently publish")
 		}
 	}
 }
