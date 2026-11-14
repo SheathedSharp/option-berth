@@ -86,8 +86,8 @@ func TestConfigParses(t *testing.T) {
 		if !row.Fixable {
 			t.Error("a broken config is exactly what --fix exists for")
 		}
-		if !strings.Contains(row.Detail, env.ConfigPath+":1:9") {
-			t.Errorf("detail = %q, want it to carry %s:1:9", row.Detail, env.ConfigPath)
+		if !strings.Contains(row.Detail, env.ConfigPath+":1:18") {
+			t.Errorf("detail = %q, want it to carry %s:1:18", row.Detail, env.ConfigPath)
 		}
 		if !strings.Contains(row.Detail, "^") {
 			t.Errorf("detail = %q, want a caret under the column", row.Detail)
