@@ -254,6 +254,9 @@ func runAttnFollow(cmd *cobra.Command, task model.TaskContext, consent model.Res
 	}
 	subscriptionContext, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	trigger, closeChanges := attentionChanges(subscriptionContext, attnProjectFlag)
+	defer closeChanges()
+	trigger.Check = runner.CheckConfiguration(attnResolvedConsent, client)
 	sessionID := runner.NewSessionID(attnProjectFlag)
 	runner.AppendLifecycleTelemetry(runner.TelemetryHome(), attnProjectFlag, "subscribed", sessionID, nil)
 	stats, err := runner.SubscribeWithStats(subscriptionContext, attnOberthFlag, attnProjectFlag, attnIntervalFlag,
@@ -261,7 +264,7 @@ func runAttnFollow(cmd *cobra.Command, task model.TaskContext, consent model.Res
 		func(result runner.Output, latency time.Duration) {
 			runner.AppendSubscriptionTelemetry(runner.TelemetryHome(), attnProjectFlag, task, result, latency, attnIntervalFlag)
 		},
-		func(value any) error { return writeAttnValue(cmd.OutOrStdout(), value) })
+		func(value any) error { return writeAttnValue(cmd.OutOrStdout(), value) }, trigger)
 	if err != nil {
 		runner.AppendLifecycleTelemetry(runner.TelemetryHome(), attnProjectFlag, "error", sessionID, &stats)
 		return err

@@ -15,13 +15,8 @@ var ErrConfigurationChanged = errors.New("runner: assessment configuration chang
 // it must not keep sending to a provider the task no longer describes.
 func WhileConfigured(resolve func() model.Resolved, expected model.Client, read func(context.Context, string, string) (Status, error)) func(context.Context, string, string) (Status, error) {
 	return func(ctx context.Context, binary, project string) (Status, error) {
-		current := resolve()
-		if !current.Enabled {
-			return Status{}, ErrConsentRevoked
-		}
-		next, err := current.Client()
-		if err != nil || next.Endpoint != expected.Endpoint || next.Model != expected.Model || next.APIKey != expected.APIKey {
-			return Status{}, ErrConfigurationChanged
+		if err := CheckConfiguration(resolve, expected)(); err != nil {
+			return Status{}, err
 		}
 		return read(ctx, binary, project)
 	}
@@ -51,4 +46,20 @@ func withAttempt(out Output, called, cached bool) Output {
 // It attests only to a recent completed poll, never to PID/process liveness.
 func ObservationLease(interval time.Duration) time.Duration {
 	return min(time.Minute, max(15*time.Second, 3*interval))
+}
+
+// CheckConfiguration is also used while an event-driven task is idle. Revocation
+// must not wait for a runtime event or cause an unnecessary status subprocess.
+func CheckConfiguration(resolve func() model.Resolved, expected model.Client) func() error {
+	return func() error {
+		current := resolve()
+		if !current.Enabled {
+			return ErrConsentRevoked
+		}
+		next, err := current.Client()
+		if err != nil || next.Endpoint != expected.Endpoint || next.Model != expected.Model || next.APIKey != expected.APIKey {
+			return ErrConfigurationChanged
+		}
+		return nil
+	}
 }
