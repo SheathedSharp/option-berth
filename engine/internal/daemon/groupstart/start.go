@@ -12,7 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/sheathedsharp/option-berth/engine/internal/runstate"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimecore"
 	"os"
 	"path/filepath"
 	"sort"
@@ -1161,7 +1161,7 @@ func pendingContext(ctx context.Context, rt *daemon.Runtime, group string, deps 
 	for _, dep := range deps {
 		if row, found := serviceRow(snap, group, dep.Name); found {
 			// The same pure readiness verdict drives CLI waits and dependencies.
-			ready, reason := runstate.Ready(state.Group{Name: group, Services: []state.Service{row}}, snap.Ports, dep.Name)
+			ready, reason := runtimecore.Ready(state.Group{Name: group, Services: []state.Service{row}}, snap.Ports, dep.Name)
 			if !ready {
 				missing = append(missing, pendingDependency{Name: dep.Name, Display: dep.Name + " (" + reason + ")"})
 			}

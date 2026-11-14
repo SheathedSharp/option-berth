@@ -1,6 +1,6 @@
-// Package runstate implements Oberth Runtime's pure, generation-bound policies.
+// Package runtimecore implements Oberth Runtime's pure, generation-bound policies.
 // Runtime Service supplies captured facts; this package never observes the OS.
-package runstate
+package runtimecore
 
 import (
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"

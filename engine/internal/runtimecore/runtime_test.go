@@ -1,4 +1,4 @@
-package runstate
+package runtimecore
 
 import (
 	"github.com/sheathedsharp/option-berth/engine/internal/servicefacts"

@@ -2,7 +2,7 @@ package scanner
 
 import (
 	"context"
-	"github.com/sheathedsharp/option-berth/engine/internal/runstate"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimecore"
 	"github.com/sheathedsharp/option-berth/engine/internal/servicefacts"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 	"time"
@@ -34,7 +34,7 @@ func (l *Loop) projectRuntime(ctx context.Context, snap state.Snapshot, fresh bo
 	if !ok {
 		return snap, false, nil
 	}
-	return runstate.Project(snap, provider.ServiceFacts(), fresh), true, nil
+	return runtimecore.Project(snap, provider.ServiceFacts(), fresh), true, nil
 }
 
 // RefreshRuntimeContext publishes registered run progress without entering the

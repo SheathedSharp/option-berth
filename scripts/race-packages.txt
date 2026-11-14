@@ -11,7 +11,7 @@
 ./internal/killer
 ./internal/ports
 ./internal/runs
-./internal/runstate
+./internal/runtimecore
 ./internal/runtimecheck
 ./internal/scanner
 ./internal/servicefacts

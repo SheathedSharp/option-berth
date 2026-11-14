@@ -3,7 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"github.com/sheathedsharp/option-berth/engine/internal/runstate"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimecore"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -72,7 +72,7 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 		needsObservation := false
 		targetGroup := startTargetGroup(params, cfg, gg)
 		for name := range selected {
-			if targetGroup == nil || runstate.RequiresObservation(serviceIn(*targetGroup, name)) {
+			if targetGroup == nil || runtimecore.RequiresObservation(serviceIn(*targetGroup, name)) {
 				needsObservation = true
 				break
 			}
@@ -231,7 +231,7 @@ func startTimeoutMessage(selection startSelection, name string, timeout time.Dur
 // run this wait is about. Only two known run ids can disagree — a missing id
 // on either side is no identity evidence, and the wait keeps reading the row.
 func replacementRun(selection startSelection, svc *state.Service) (string, bool) {
-	return runstate.Replacement(selection.runID, svc)
+	return runtimecore.Replacement(selection.runID, svc)
 }
 
 // startRowConfirms reports whether the service row is evidence about the
@@ -240,7 +240,7 @@ func replacementRun(selection startSelection, svc *state.Service) (string, bool)
 // readiness. A selection with no run id has nothing to compare and keeps
 // reading the row.
 func startRowConfirms(selection startSelection, svc *state.Service) bool {
-	return runstate.Confirms(selection.runID, svc)
+	return runtimecore.Confirms(selection.runID, svc)
 }
 
 // startReplacedMessage states what ended the wait. It does not call the
@@ -343,10 +343,10 @@ func serviceIn(group state.Group, name string) *state.Service {
 }
 
 func serviceReady(group state.Group, rows []state.Port, name string) (bool, string) {
-	return runstate.Ready(group, rows, name)
+	return runtimecore.Ready(group, rows, name)
 }
 func healthVerdict(svc *state.Service, rows []state.Port) (bool, string) {
-	return runstate.HealthVerdict(svc, rows)
+	return runtimecore.HealthVerdict(svc, rows)
 }
 
 // markStartChunkReady records that this invocation waited and confirmed the

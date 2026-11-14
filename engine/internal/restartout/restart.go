@@ -7,7 +7,7 @@ import (
 	"errors"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
-	"github.com/sheathedsharp/option-berth/engine/internal/runstate"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimecore"
 )
 
 type Start struct {
@@ -30,7 +30,7 @@ type Document struct {
 // A stop refusal has no start summary. The original error still belongs to stderr.
 func Execute(ctx context.Context, stop func(context.Context) (rpc.KillEnvelope, error), start func(context.Context) (Start, error), emit func(Document, bool) error) error {
 	knownStop := false
-	stopped, started, err := runstate.Restart(ctx,
+	stopped, started, err := runtimecore.Restart(ctx,
 		func(ctx context.Context) (rpc.KillEnvelope, bool, error) {
 			result, err := stop(ctx)
 			knownStop = err == nil || result.OK || len(result.Results) > 0
