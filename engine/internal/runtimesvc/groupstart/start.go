@@ -1163,7 +1163,7 @@ func pendingContext(ctx context.Context, rt *runtimesvc.Runtime, group string, d
 			// The same pure readiness verdict drives CLI waits and dependencies.
 			ready, reason := runtimecore.Ready(state.Group{Name: group, Services: []state.Service{row}}, snap.Ports, dep.Name)
 			if !ready {
-				missing = append(missing, pendingDependency{Name: dep.Name, Display: dep.Name + " (" + reason + ")"})
+				missing = append(missing, pendingDependency{Name: dep.Name, Display: dependencyPendingDisplay(dep.Name, reason, dep.HasPort())})
 			}
 			continue
 		}
