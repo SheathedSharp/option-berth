@@ -6,6 +6,10 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 class RuntimeNamingContract(unittest.TestCase):
+    def test_no_unapproved_retired_identifiers_on_active_surfaces(self):
+        from check_runtime_naming import audit
+        self.assertEqual(audit(ROOT)["violations"], [])
+
     def test_runtime_domain_and_service_command_tree(self):
         cmd = ROOT / "engine/internal/cmd"
         self.assertFalse((cmd / "daemon.go").exists())
