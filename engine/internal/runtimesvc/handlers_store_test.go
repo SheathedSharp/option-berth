@@ -33,7 +33,7 @@ func storeHarness(t *testing.T, rows ...ports.ListeningPort) (*testHarness, *sto
 	return h, st
 }
 
-func TestConfigRoundTripThroughTheDaemon(t *testing.T) {
+func TestConfigRoundTripThroughTheRuntimeService(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -45,7 +45,7 @@ func TestConfigRoundTripThroughTheDaemon(t *testing.T) {
 	if e := cl.call("config.path", rpc.Empty{}, &configPath); e != nil {
 		t.Fatalf("config.path: %v", e)
 	}
-	// Two things are asserted here: the daemon resolves the path this side
+	// Two things are asserted here: the runtime service resolves the path this side
 	// computes (one cross-process layout), and it lands inside the isolated
 	// home. The `.config/option-berth` shape is deliberately not hard-coded —
 	// the layout moved once, and treating the shape as an invariant would cry
@@ -59,7 +59,7 @@ func TestConfigRoundTripThroughTheDaemon(t *testing.T) {
 
 	var setResult rpc.ConfigSetResult
 	if e := cl.call("config.set", rpc.ConfigSetParams{
-		Patch: map[string]any{"daemon": map[string]any{"log_level": "debug"}},
+		Patch: map[string]any{"runtime_service": map[string]any{"log_level": "debug"}},
 	}, &setResult); e != nil {
 		t.Fatalf("config.set: %v", e)
 	}
@@ -74,13 +74,13 @@ func TestConfigRoundTripThroughTheDaemon(t *testing.T) {
 	if e := cl.call("config.get", rpc.Empty{}, &gotConfig); e != nil {
 		t.Fatalf("config.get: %v", e)
 	}
-	if level := gotConfig.Config["daemon"].(map[string]any)["log_level"]; level != "debug" {
-		t.Errorf("config = %v, want daemon.log_level debug", gotConfig.Config)
+	if level := gotConfig.Config["runtime_service"].(map[string]any)["log_level"]; level != "debug" {
+		t.Errorf("config = %v, want runtime_service.log_level debug", gotConfig.Config)
 	}
 
 	// A second write keeps the previous file next to it.
 	if e := cl.call("config.set", rpc.ConfigSetParams{
-		Patch: map[string]any{"daemon": map[string]any{"log_level": "info"}},
+		Patch: map[string]any{"runtime_service": map[string]any{"log_level": "info"}},
 	}, nil); e != nil {
 		t.Fatalf("the second config.set: %v", e)
 	}
@@ -89,7 +89,7 @@ func TestConfigRoundTripThroughTheDaemon(t *testing.T) {
 	}
 
 	if e := cl.call("config.set", rpc.ConfigSetParams{
-		Patch: map[string]any{"daemon": map[string]any{"log_level": "sideways"}},
+		Patch: map[string]any{"runtime_service": map[string]any{"log_level": "sideways"}},
 	}, nil); e == nil || e.Data.Code != "invalid_params" {
 		t.Errorf("error = %+v, want invalid_params for a rejected value", e)
 	}

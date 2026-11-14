@@ -4,7 +4,7 @@
 // group directly: it exists because a pin, an `oberth start` run, an
 // `oberth.yaml`, a Compose project or a git checkout resolved a port to it.
 // Resolve walks that precedence chain, and Groups turns the result into the
-// `state.Group` rows the daemon publishes.
+// `state.Group` rows the runtime service publishes.
 package groups
 
 import (

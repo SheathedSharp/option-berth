@@ -4,13 +4,23 @@ Product definition: [product.md](../product.md). User interface: [cli.md](../cli
 This document explains the current production implementation; it does not treat past decisions,
 temporary debugging or research tasks as standing requirements.
 
+`runtimecore` owns the Oberth Runtime domain reducers and identities. `runtimesvc` owns the background host and its resources; `HostContext` is the borrowed handler/hook context (`Server.HostContext()` and `Request.HostContext`), not a second runtime domain or a second authority. Endpoint, producer, store and lease lifetimes remain owned by `Server`.
+
 ## Runtime responsibilities
 
-**Oberth Runtime** is the worktree runtime engine; **Runtime Service** is its local background host (`internal/runtimesvc`). These are responsibility names, not a new product, process, Go runtime wrapper or RPC namespace. The product name `oberth`, module, daemon commands, socket, home and schema remain stable; upstream and license history remain intact.
+**Oberth Runtime** is the worktree runtime engine; **Runtime Service** is its local background host (`internal/runtimesvc`). These are responsibility names, not a new product or Go runtime wrapper. Public host names follow the [protocol-3 switch](../cli.md#runtime-service-protocol-3-switch); the product name, public module, home, database schema and origin/license history are not renamed.
 
-The internal Go layout follows these responsibilities: `internal/runtimecore` owns pure readiness/generation/projection policy, and `internal/runtimesvc` owns the background host with its `client`, `rpc`, `runsreg` and `groupstart` adapters. Neither uses the name `runtime`, avoiding confusion with Go's standard library. The public Go module path and daemon wire/CLI names are unchanged.
+The internal Go layout follows these responsibilities: `internal/runtimecore` owns pure readiness/generation/projection policy, and `internal/runtimesvc` owns the background host with its `client`, `rpc`, `runsreg` and `groupstart` adapters. Neither uses the name `runtime`, avoiding confusion with Go's standard library. The public Go module path is unchanged; the wire/CLI contract is owned by [cli.md](../cli.md#runtime-service-protocol-3-switch).
 
 `runsreg` is the live run authority. `servicefacts` reduces a captured registry/exit set; `groups.ApplyServiceFacts` adapts it and `runtimecore.Project` refreshes the same published declaration rows. `ports` is the system-observation adapter: it contributes listeners and ownership evidence, never a second service lifecycle. `groupstart`, `killer` and existing claims transactions retain execution authority. Optional attention remains an agent-side consumer, not part of the host's control loop.
+
+## Storage ownership and read routing
+
+`Server.acquireSingleInstance` first owns the endpoint, then its `storageLease` and `store.OpenOwned` before listen or recovery. SQLite retains one EXCLUSIVE/WAL connection across normal commits. `singleOwnerConnector` cannot reconnect after losing it. Sidecar interlocks supplement this lease; they are not evidence that an arbitrary previous endpoint was enumerated. The filesystem metadata gate runs before storage sidecars are created.
+
+`Serve` installs only that claimed Store. Bad/future databases fail admission without reset. Producers and hooks finish before `closeStore`, storage leases release next, and the endpoint releases last. Early listen/recovery failure follows the same release boundary.
+
+`runtime.storage.read` reads this same Store through context-aware queries. `cmd.storedRead` uses an existing owner online and the same read-only database offline, with no autostart, copied database or swallowed owner failure. Direct mode never secretly connects. Supported filesystems, cutover and direct-read errors belong to the [CLI contract](../cli.md#runtime-service-protocol-3-switch).
 
 ## Independent lifecycle publication
 
@@ -36,7 +46,7 @@ Slow scans rebase service rows against the current registry under the commit mut
 Code identity rides this chain but not the scan hot path: before spawning, `groupstart` captures one
 content fingerprint and HEAD for each path in `sources:`, writing them under `$BERTH_HOME/code` by run
 id and deleting them when the run ends or start cleanup runs. `status` recomputes and compares only for
-running services; the daemon's `groups.code` read uses the same `internal/codefacts` implementation for
+running services; the runtime service's `groups.code` read uses the same `internal/codefacts` implementation for
 a client that already has the group rows, and publishes the same nullable fields. The snapshot is this
 run's input evidence, not a second runtime fact: missing means unknown, not "unchanged".
 
@@ -50,7 +60,7 @@ observation keeps the previous set. It is therefore always transient diagnostic 
 never an input to any decision. Ownership and cleanup live inside the start call: already-running
 creates no attempt; dependency failure, prepare failure, spawn failure, cancellation and success (once
 the run is registered) all delete it. It never enters the run registry, never touches disk, never counts
-as running, never affects group status, and disappears when the daemon restarts. The prepare-duration
+as running, never affects group status, and disappears when the runtime service restarts. The prepare-duration
 sidecar serves diagnostic reads only and never decides whether anything runs or is skipped.
 
 The core is driven by this project's own requirements; databases, syscalls and platform adapters may
@@ -58,7 +68,7 @@ keep mature implementations, and nothing is rewritten for the sake of a "self-au
 licenses and third-party notices carry the origins and copyright that apply.
 
 The closing end of a worktree also rides this chain: `${worktree}` derives from the checkout root path,
-and the daemon records `identity → root path → most recent group name / claim key` in
+and the runtime service records `identity → root path → most recent group name / claim key` in
 `worktree_identities` (migration 010). That is an identity ledger, not a second runtime fact: rows
 survive directory deletion and `exists` is decided by the reading side against the filesystem. `status`
 publishes only the current identity, `worktrees` only reads and enumerates, and only
@@ -74,7 +84,7 @@ preflight and the runner.
 
 `internal/cmd/attention_boundary_test.go` checks that boundary instead of leaving it as a comment:
 
-- `go list -deps` asserts that the dependency closure of `daemon`, `scanner`, `groups`, `ports` and
+- `go list -deps` asserts that the dependency closure of `runtime service`, `scanner`, `groups`, `ports` and
   `servicefacts` contains no `internal/attn/model`;
 - `go/parser` asserts that the imports of `status`, `up`, `down`, `restart`, `logs` and `start`
   contain none either.
@@ -91,7 +101,7 @@ block — the person's refusal is never inferred from whether a local file exist
 ## Read-only addresses and shared environment
 
 `workspace:` references create no new runtime facts, exactly like `machine:`. Addresses resolve only
-from the counterpart manifest's declaration and the daemon's published runtime facts
+from the counterpart manifest's declaration and the runtime service's published runtime facts
 (`state.snapshot` and the run registry); a resolution failure fails the service that uses it rather
 than falling back to a literal or another cache. The targets of `up` / `down` / `restart` still come
 only from this manifest's `services:`; a reference never widens them.
@@ -111,12 +121,12 @@ treated by `status` as runtime truth. Implementation: `internal/workplace` (rule
 `internal/store/workplaces.go` (rows and migration 009) and `cmd/workplace*` (CLI and record wiring).
 The command and field contract is [workplace.md](../workplace.md).
 
-- **One owner writes.** The daemon is the ledger's only writer; when the daemon is absent the CLI's
+- **One owner writes.** The runtime service is the ledger's only writer; when the runtime service is absent the CLI's
   read path opens the same database read-only and write commands go through RPC. Work records never
-  start a daemon for themselves.
+  start a runtime service for themselves.
 - **A block closes only on an observed end.** An attached `oberth start` is closed by the process that
-  waits for it; a detached run is closed by the daemon when it records that run's exit
-  (`daemon.OnRunExit`, outside the registry lock); `agent stream` closes by the outcome of the
+  waits for it; a detached run is closed by the runtime service when it records that run's exit
+  (`runtime.service.OnRunExit`, outside the registry lock); `agent stream` closes by the outcome of the
   `turn.completed` the bridge received. An entry with no end evidence stays `running` and never poses
   as success.
 - **A second observation of the same id is an update, not a second entry.** A recorded result is never
@@ -140,10 +150,10 @@ stage. Operations are refused when reliable control identity is missing.
 `runtimecore.Restart` sequences the existing stop and start adapters without widening either selector. A failed/partial stop or cancellation prevents the start half; per-item results and errors stay visible. These are two acts, not an atomic OS transaction. A failed start cannot resurrect the stopped process, and cancellation after a real spawn does not turn that spawn into a transaction rollback.
 
 A readiness timeout's cleanup is one of those operations: it names the run this invocation started for
-each service (`expect_runs` on `groups.kill`), and the daemon selects only listeners and no-port runs
+each service (`expect_runs` on `groups.kill`), and the runtime service selects only listeners and no-port runs
 whose run id matches. A service another controller restarted during the wait is a different run and is
 left alone; a target whose identity cannot be verified is not selected either. The CLI refuses to send
-a name-only cleanup to a daemon that does not announce the capability, because that daemon would stop
+a name-only cleanup to a runtime service that does not announce the capability, because that runtime service would stop
 whatever answers to the name.
 
 `down` captures reservations before signalling, reuses a fresh scan after the actual stop, checks the
@@ -165,7 +175,7 @@ The in-memory registry is the live authority for one Runtime Service. `runs.json
 
 `runsreg.Restore` does not publish pending rows until the mirror transaction succeeds. Existing memory generations win on retry. Positive process-death or PID-reuse evidence rejects an obsolete imported run before it can appear active; missing birth evidence remains unknown and does not authorize control. Survivors keep run identity, precise start time, log path/offset, executable, spec hash and port hint. Read-only health/stat enrichment for a legacy row without an ID is retained only with an equal positive PID and known nonzero birth time; it never mints a control identity. Restore does not start services, signal processes, reallocate claims or infer readiness. Numerical PID identity still has the OS race window described below.
 
-No database migration or parallel writer is needed for this change. The existing JSON/SQLite layouts, lock inode, socket and home remain unchanged. Upgrade/rollback uses the normal single-writer handoff; never run old/new hosts concurrently, remove a live lock file, delete the ledger or restart the user's services as a recovery shortcut. Compatibility with the specified baseline is tested in both history-reader directions and with typed live-mirror decoding, not by claiming a real old/new daemon handoff was exercised.
+Lifecycle projection requires no database schema migration or parallel writer. History-reader and typed live-mirror tests cover persisted record shapes, not host endpoint or wire compatibility. Protocol 3 changes the public host identifiers and adds database ownership admission; its explicit cutover belongs to the [CLI contract](../cli.md#runtime-service-protocol-3-switch). Never remove a live lock, reset the ledger or restart user services as a recovery shortcut.
 
 ## Scope of support
 
@@ -174,9 +184,9 @@ as the engine's verification environment. Windows verifies x64 native builds, CL
 fact/persistence tests on hosted runners, and cross-builds arm64; these checks are not equivalent to
 full service start/stop or GUI acceptance on Windows.
 
-Each BERTH_HOME uses a single writing instance governed by a daemon lock; upgrades stop the old
+Each BERTH_HOME uses a single writing instance governed by a runtime service lock; upgrades stop the old
 instance first. The following are unsupported: old writers that ignore the lock protocol, multiple
-daemons forcibly sharing a ledger, and external direct database writes. Compatibility code must never
+runtime services forcibly sharing a ledger, and external direct database writes. Compatibility code must never
 be advertised as "old writers may write concurrently".
 
 Ordinary checkouts, regular linked worktrees and explicit manifest paths are supported. Bare

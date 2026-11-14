@@ -163,11 +163,11 @@ func TestAgentSkillIsSelectableOnItsOwn(t *testing.T) {
 }
 
 func TestAgentSkillCheckIsOffline(t *testing.T) {
-	// The check must answer from HOME alone: no daemon, no network, no PATH.
+	// The check must answer from HOME alone: no runtime service, no network, no PATH.
 	env := fakeEnv(t)
-	env.Daemon = func(context.Context) DaemonInfo {
-		t.Error("the skill check must not dial the daemon")
-		return DaemonInfo{}
+	env.RuntimeService = func(context.Context) RuntimeServiceInfo {
+		t.Error("the skill check must not dial the runtime service")
+		return RuntimeServiceInfo{}
 	}
 	writeSkill(t, env.Home, "claude", "0.7.1")
 	run(t, env, checkSkillVersion)

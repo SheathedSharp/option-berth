@@ -9,9 +9,9 @@ import (
 	"testing"
 )
 
-// The gate must match this run's daemons and nobody else's. It used to match
-// any `oberth serve` under the machine's temp directory, so a run killed the
-// daemons of every other worktree building into temp at the same moment and
+// The gate must match this run's runtime services and nobody else's. It used to match
+// any `oberth runtime service run` under the machine's temp directory, so a run killed the
+// runtime services of every other worktree building into temp at the same moment and
 // failed those runs for a leak they had not caused.
 //
 // One directory here has a space in it on purpose: ps quotes nothing, so a gate
@@ -20,21 +20,21 @@ import (
 func TestGateMatchesOnlyThisRunsRoot(t *testing.T) {
 	requiringPS(t)
 
-	ours := fakeDaemon(t, filepath.Join(t.TempDir(), "gate inside"))
-	theirs := fakeDaemon(t, dirOutsideThisRun(t))
+	ours := fakeRuntimeService(t, filepath.Join(t.TempDir(), "gate inside"))
+	theirs := fakeRuntimeService(t, dirOutsideThisRun(t))
 
 	t.Setenv(gateAllEnv, "")
-	leaked := LeakedDaemons()
+	leaked := LeakedRuntimeServices()
 	if !carriesPID(leaked, ours) {
-		t.Errorf("the gate missed pid %d, a `serve` under this run's root %s: %v", ours, Root(), leaked)
+		t.Errorf("the gate missed pid %d, a `runtime service run` under this run's root %s: %v", ours, Root(), leaked)
 	}
 	if carriesPID(leaked, theirs) {
-		t.Errorf("the gate claimed pid %d, a `serve` outside this run's root %s: %v", theirs, Root(), leaked)
+		t.Errorf("the gate claimed pid %d, a `runtime service run` outside this run's root %s: %v", theirs, Root(), leaked)
 	}
 
 	// CI is one runner with one suite, so it opts back into the wide net.
 	t.Setenv(gateAllEnv, "1")
-	if leaked := LeakedDaemons(); !carriesPID(leaked, theirs) {
+	if leaked := LeakedRuntimeServices(); !carriesPID(leaked, theirs) {
 		t.Errorf("%s=1 did not restore the machine-wide match for pid %d: %v", gateAllEnv, theirs, leaked)
 	}
 }
@@ -57,11 +57,11 @@ func TestChildrenInheritTheRunRootAsTMPDIR(t *testing.T) {
 	}
 }
 
-// fakeDaemon starts a process that looks to `ps` exactly like a leaked daemon —
-// a binary named oberth in dir, with `serve` as its first argument — and
+// fakeRuntimeService starts a process that looks to `ps` exactly like a leaked runtime service —
+// a binary named oberth in dir, with `runtime service run` as its first argument — and
 // returns its pid. It is this test binary under another name, told by the
 // environment to sit still rather than run the suite.
-func fakeDaemon(t *testing.T, dir string) int {
+func fakeRuntimeService(t *testing.T, dir string) int {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("creating %s: %v", dir, err)
@@ -108,8 +108,8 @@ func executable(t *testing.T) string {
 	return self
 }
 
-func carriesPID(daemons []Daemon, pid int) bool {
-	for _, d := range daemons {
+func carriesPID(runtimeServices []RuntimeService, pid int) bool {
+	for _, d := range runtimeServices {
 		if d.PID == pid {
 			return true
 		}
@@ -146,12 +146,12 @@ func childTempDir(t *testing.T) (string, error) {
 	return string(out), err
 }
 
-// startStanding starts bin with `serve` as its argument and leaves it running
+// startStanding starts bin with `runtime service run` as its argument and leaves it running
 // until the test ends, returning its pid.
 func startStanding(t *testing.T, bin string) int {
 	t.Helper()
-	cmd := exec.Command(bin, "serve")
-	cmd.Env = append(os.Environ(), helperEnv+"="+helperServe)
+	cmd := exec.Command(bin, "runtime", "service", "run")
+	cmd.Env = append(os.Environ(), helperEnv+"="+helperRuntimeServiceRun)
 	keepAlive, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatalf("opening the stand-in's stdin: %v", err)
@@ -162,7 +162,7 @@ func startStanding(t *testing.T, bin string) int {
 		_ = cmd.Process.Kill()
 	}
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("starting the stand-in daemon: %v", err)
+		t.Fatalf("starting the stand-in runtime_service: %v", err)
 	}
 	t.Cleanup(halt)
 	return cmd.Process.Pid

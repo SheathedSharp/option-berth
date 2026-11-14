@@ -12,7 +12,7 @@ func Apply(s Snapshot, d Delta) Snapshot {
 
 // applyChange rebuilds one collection from the previous rows and one Change.
 // Surviving rows keep their order and new rows are appended, so a collection
-// the daemon publishes sorted stays sorted except at its tail.
+// the runtime service publishes sorted stays sorted except at its tail.
 //
 // A key present in both Removed and Added is a restart — Diff emits that pair
 // when a port's PID changed — and the new row replaces the old one in place

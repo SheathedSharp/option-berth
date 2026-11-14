@@ -101,9 +101,9 @@ func TestScanGroupsObservedKeepsReadableRowsWhenPartial(t *testing.T) {
 
 func TestStatusDocumentKeepsManifestWhenBlind(t *testing.T) {
 	dir := demoManifest(t)
-	prev := noDaemonFlag
-	noDaemonFlag = true
-	t.Cleanup(func() { noDaemonFlag = prev })
+	prev := noRuntimeServiceFlag
+	noRuntimeServiceFlag = true
+	t.Cleanup(func() { noRuntimeServiceFlag = prev })
 	blindObservation(t)
 
 	doc, err := buildStatusDocument(context.Background(), dir, false, nil)
@@ -128,9 +128,9 @@ func TestStatusDocumentKeepsManifestWhenBlind(t *testing.T) {
 // run it just started, when the process cannot see listeners at all.
 func TestWaitForStartReadyFailsFastWhenBlind(t *testing.T) {
 	dir := demoManifest(t)
-	prev := noDaemonFlag
-	noDaemonFlag = true
-	t.Cleanup(func() { noDaemonFlag = prev })
+	prev := noRuntimeServiceFlag
+	noRuntimeServiceFlag = true
+	t.Cleanup(func() { noRuntimeServiceFlag = prev })
 	blindObservation(t)
 
 	path := filepath.Join(dir, groups.ConfigName)

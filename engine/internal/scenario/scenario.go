@@ -49,7 +49,7 @@ func freePort() int {
 }
 
 // holdPort binds port and keeps accepting until the returned closer runs. The
-// daemon's port scan sees the listener, and a service that tries to bind the
+// runtime service's port scan sees the listener, and a service that tries to bind the
 // same port crashes with "address already in use".
 func holdPort(port int) (closer func(), err error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
@@ -143,7 +143,7 @@ while True:
     time.sleep(3600)
 `
 
-// autoServerPy binds the PORT supplied by the daemon for a `port: auto`
+// autoServerPy binds the PORT supplied by the runtime service for a `port: auto`
 // service. Keeping the listener in the fixture makes the assigned port visible
 // to the real scanner and gives the workflow an independent log to compare.
 const autoServerPy = `import os, socket, time
@@ -158,7 +158,7 @@ while True:
 `
 
 // workerPy runs but binds nothing: the no-port half of the "declared and really
-// running" case — the daemon has to see it through its run registry, not a port.
+// running" case — the runtime service has to see it through its run registry, not a port.
 const workerPy = `import time
 print("worker running", flush=True)
 while True:
@@ -287,7 +287,7 @@ services:
 	return b, nil
 }
 
-// RecoveryService provisions one long-lived service whose output makes daemon
+// RecoveryService provisions one long-lived service whose output makes runtime service
 // restart and logs assertions unambiguous. The service binds the returned port
 // and prints a marker before accepting connections.
 func RecoveryService(dir string) (Built, error) {
@@ -314,7 +314,7 @@ while True:
 	if err != nil {
 		return Built{}, err
 	}
-	if err := writeNote(dir, "# recovery\n\nlong-lived api used to verify daemon stop/restart, logs, and down cleanup.\n"); err != nil {
+	if err := writeNote(dir, "# recovery\n\nlong-lived api used to verify runtime service stop/restart, logs, and down cleanup.\n"); err != nil {
 		return Built{}, err
 	}
 	return b, nil
@@ -401,7 +401,7 @@ while True:
 // MachineDependency provisions a project with a long-running `worker` service
 // and a machine-level dependency (the top-level `machine:` section) on a port
 // the fixture does NOT occupy. The worker exists so `up` has something to start
-// and thereby register the project in the daemon's index (a service-less config
+// and thereby register the project in the runtime service's index (a service-less config
 // is never discovered on its own) — a project that leans on a machine dependency
 // usually runs its own services too. The `machine:` ref is a reference
 // (0001/0010): it carries no cmd and `up`/`down` never touch it; it only says
@@ -476,7 +476,7 @@ services:
 	}
 	wt := Built{Root: linkedRoot, Manifest: filepath.Join(linkedRoot, ConfigName), Group: "dual-main@wt", Port: wtPort}
 
-	if err := writeNote(mainRoot, "# dual-worktree\n\nmain checkout (`dual-main`, fixed api port "+strconv.Itoa(mainPort)+") and a linked worktree\n(`dual-main@wt`, fixed api port "+strconv.Itoa(wtPort)+"); both also run the same `worker` service on a daemon-assigned port.\n"); err != nil {
+	if err := writeNote(mainRoot, "# dual-worktree\n\nmain checkout (`dual-main`, fixed api port "+strconv.Itoa(mainPort)+") and a linked worktree\n(`dual-main@wt`, fixed api port "+strconv.Itoa(wtPort)+"); both also run the same `worker` service on a runtime service-assigned port.\n"); err != nil {
 		return Built{}, Built{}, err
 	}
 	return main, wt, nil

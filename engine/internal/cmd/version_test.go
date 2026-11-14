@@ -229,7 +229,7 @@ func TestWelcomeVersionLineAndUpgradeHint(t *testing.T) {
 				"v1.1.2 (latest version v1.2.0)",
 				"Upgrade to v1.2.0:",
 				"install.sh",
-				"oberth daemon stop",
+				"oberth runtime service stop",
 			},
 			absent: []string{"(latest)"},
 		},

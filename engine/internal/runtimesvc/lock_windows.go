@@ -18,11 +18,11 @@ var errLockBusy = errors.New("lock held by another process")
 //
 // LockFileEx makes the range it locks unreadable to every other process, and
 // locking the whole file therefore hid the one thing the file exists to
-// publish: while a daemon ran, LockHolderPID and ErrAlreadyRunning.PID both
+// publish: while a runtime service ran, LockHolderPID and ErrAlreadyRunning.PID both
 // came back 0 and os.ReadFile failed with "another process has locked a
 // portion of the file". A range that cannot overlap the pid keeps the flock
 // semantics wanted here — the lock lives on the open handle and dies with it —
-// while leaving offset 0 readable to anyone asking whose daemon is running.
+// while leaving offset 0 readable to anyone asking whose runtime service is running.
 const (
 	lockBytesHigh  = 0
 	lockBytesLow   = 1
@@ -60,11 +60,11 @@ func isLockedOpenError(cause error) bool {
 		errors.Is(cause, windows.ERROR_SHARING_VIOLATION)
 }
 
-// markNotInheritable clears the handle's inherit flag, so no child the daemon
+// markNotInheritable clears the handle's inherit flag, so no child the runtime service
 // starts can keep the lock (or, on Windows, the lock file) alive after the
-// daemon exits. Go already opens files with O_CLOEXEC here; repeating it costs
+// runtime service exits. Go already opens files with O_CLOEXEC here; repeating it costs
 // one syscall and states the requirement explicitly — a spawned child holding
-// this handle is exactly how an exited daemon keeps looking like a running one.
+// this handle is exactly how an exited runtime service keeps looking like a running one.
 func markNotInheritable(f *os.File) {
 	_ = windows.SetHandleInformation(windows.Handle(f.Fd()), windows.HANDLE_FLAG_INHERIT, 0)
 }

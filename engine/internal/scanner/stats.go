@@ -17,10 +17,10 @@ import (
 // and the port scan they used to ride on is deliberately adaptive: it backs off
 // to 5 s while a subscriber watches an unchanging machine, which is right for
 // ports and useless for a load meter. Sampling them apart lets the meter run at
-// 1 s without pinning the daemon to a full `lsof`/`netstat` scan at that rate.
+// 1 s without pinning the runtime service to a full `lsof`/`netstat` scan at that rate.
 //
-// It parks whenever nothing is subscribed, so a daemon that is only answering
-// `oberth list` and `daemon status` over RPC samples nothing whatsoever.
+// It parks whenever nothing is subscribed, so a runtime service that is only answering
+// `oberth list` and `runtime service status` over RPC samples nothing whatsoever.
 func (l *Loop) runStats(ctx context.Context) {
 	cadence := l.statsInterval()
 	timer := time.NewTimer(cadence)
@@ -89,7 +89,7 @@ func (l *Loop) captureStatsBasis() (statsBasis, bool) {
 // sampleStats runs a single stats-only tick and publishes whatever moved.
 //
 // It leaves the scan interval, the scan counters and `lastScanAt` alone: the
-// port scan's adaptive cadence, the RPC cache TTL and `daemon status` read
+// port scan's adaptive cadence, the RPC cache TTL and `runtime service status` read
 // exactly what they read before this tick existed.
 func (l *Loop) sampleStats(include Include) {
 	l.sampleStatsContext(context.Background(), include)

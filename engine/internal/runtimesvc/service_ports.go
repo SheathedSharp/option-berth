@@ -14,12 +14,12 @@ import (
 //
 // It is exported for internal/runtimesvc/groupstart, which starts services but
 // cannot reach the reservations book itself.
-func AcquireServicePort(rt *Runtime, dir, service string) (int, error) {
+func AcquireServicePort(rt *HostContext, dir, service string) (int, error) {
 	project, worktree := claims.Identity(dir)
 	address := claims.Address{Project: project, Worktree: worktree, Service: service}
 
 	// Observe first, then lock. The listener probe is a full scan (lsof, ps and
-	// docker stats) and the slowest thing on this path; holding the daemon-wide
+	// docker stats) and the slowest thing on this path; holding the runtime service-wide
 	// claims lock across it would make a concurrent `down` fail its TryLock
 	// capture with "claims are changing". The snapshot is one generation old by
 	// the time the table is read, which is the same race every observation on
@@ -45,7 +45,7 @@ func AcquireServicePort(rt *Runtime, dir, service string) (int, error) {
 
 // configForGroup is the oberth.yaml whose services are published under a group
 // name; a group no config describes yields nil.
-func configForGroup(rt *Runtime, name string) *groups.Config {
+func configForGroup(rt *HostContext, name string) *groups.Config {
 	if rt.Scanner == nil {
 		return nil
 	}

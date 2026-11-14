@@ -151,7 +151,7 @@ func OpenChanges(ctx context.Context, worktreeID string, retry time.Duration, co
 func RelevantChange(changed []string) bool {
 	for _, kind := range changed {
 		switch kind {
-		case "port_changed", "health_changed", "service_changed", "service_failed", "worktree_changed", "scan_error", "db_reset", "daemon_stopping", "port_occupied", "ready_timeout", "manifest_runtime_conflict", "repeated_crash":
+		case "port_changed", "health_changed", "service_changed", "service_failed", "worktree_changed", "scan_error", "db_reset", "runtime_service_stopping", "port_occupied", "ready_timeout", "manifest_runtime_conflict", "repeated_crash":
 			return true
 		}
 	}

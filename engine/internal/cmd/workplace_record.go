@@ -25,9 +25,9 @@ import (
 //
 // Two rules keep the recording honest:
 //
-//   - It never starts a daemon. Spawning a background process as a side effect
+//   - It never starts a runtime.service. Spawning a background process as a side effect
 //     of running a command would be a surprise, and the record is not worth
-//     one. No daemon means no record, said out loud once.
+//     one. No runtime service means no record, said out loud once.
 //   - It never blocks the thing it records. Events are queued and written by a
 //     worker; a full queue drops the event and says so, because a record that
 //     quietly misses work reads exactly like a complete one.
@@ -38,7 +38,7 @@ const (
 	recordTimeout = 3 * time.Second
 	// recordQueueDepth is how many events may be waiting to be written. A
 	// bridge emits a handful per turn, so this is far more than a healthy
-	// daemon needs and small enough that a wedged one cannot grow it.
+	// runtime service needs and small enough that a wedged one cannot grow it.
 	recordQueueDepth = 64
 )
 
@@ -101,11 +101,11 @@ func (r *workplaceRecorder) Close() {
 
 func (r *workplaceRecorder) work() {
 	defer close(r.done)
-	// The dial is deliberately `dialDaemon`: a daemon that is not running is
+	// The dial is deliberately `dialRuntimeService`: a runtime service that is not running is
 	// not started here.
-	c, err := dialDaemon(context.Background())
+	c, err := dialRuntimeService(context.Background())
 	if err != nil {
-		r.note("workplace recording is off: no daemon is listening")
+		r.note("workplace recording is off: no runtime service is listening")
 		drain(r.events, r.stop)
 		return
 	}

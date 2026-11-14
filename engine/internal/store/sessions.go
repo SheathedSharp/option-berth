@@ -21,7 +21,7 @@ const sessionColumns = `id, first_seen, last_seen, tool, branch, worktree, label
 
 // SessionRow is one persisted session. It mirrors state.Session plus the two
 // timestamps but does not import the wire package: the store deals in rows,
-// and the daemon maps them onto the collection.
+// and the runtime service maps them onto the collection.
 type SessionRow struct {
 	ID        string
 	FirstSeen time.Time
@@ -129,7 +129,7 @@ func (t SessionStore) Get(id string) (SessionRow, bool, error) {
 }
 
 // Prune deletes sessions last seen before cutoff and reports how many went.
-// The daemon calls it with now-sessions.Retention on a timer.
+// The runtime service calls it with now-sessions.Retention on a timer.
 func (t SessionStore) Prune(cutoff time.Time) (int, error) {
 	removed, err := t.s.execRows(
 		`DELETE FROM sessions WHERE last_seen < ?`, timeToString(cutoff))

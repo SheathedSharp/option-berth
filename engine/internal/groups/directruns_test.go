@@ -83,7 +83,7 @@ func TestDirectRunsCycleGuard(t *testing.T) {
 }
 
 // TestDirectRunsIgnoresARecycledPID: the direct path applies the same identity
-// rule as the daemon registry — an entry whose recorded process is gone and
+// rule as the runtime service registry — an entry whose recorded process is gone and
 // whose pid now names a newer process does not own the listener. Unknown (no
 // live answer) keeps the entry.
 func TestDirectRunsIgnoresARecycledPID(t *testing.T) {

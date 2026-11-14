@@ -8,7 +8,7 @@ import (
 )
 
 // ImportLegacy transfers the disk registry only after its file transaction
-// succeeds. Failure leaves memory unchanged and is fatal to daemon startup:
+// succeeds. Failure leaves memory unchanged and is fatal to runtime service startup:
 // an empty registry is not an adequate substitute for unobserved live runs.
 func (r *Registry) ImportLegacy() (int, error) {
 	return r.Restore(runs.ConsumeLegacy)

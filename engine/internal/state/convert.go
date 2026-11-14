@@ -3,12 +3,12 @@ package state
 import "github.com/sheathedsharp/option-berth/engine/internal/ports"
 
 // FromListening adapts the scanner model to the published contract model. It
-// is the only translation point, so a direct scan and a daemon read emit the
+// is the only translation point, so a direct scan and a runtime service read emit the
 // same rows.
 func FromListening(lp ports.ListeningPort) Port {
 	p := Port{
 		// A row built from a scan is this machine's own; a row that came back
-		// through the daemon already carries its optional host label.
+		// through the runtime service already carries its optional host label.
 		Host:          HostOf(lp.Host),
 		Port:          lp.Port,
 		BindAddress:   lp.BindAddress,

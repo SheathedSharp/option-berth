@@ -269,7 +269,7 @@ func StaleOutput(status Status) Output {
 	return Output{Status: "stale", WorktreeID: model.WorktreeID(status.Scope.Root), Decision: &d, WorktreeRoot: status.Scope.Root}
 }
 
-// Subscribe keeps the optional adapter outside the daemon while giving an
+// Subscribe keeps the optional adapter outside the runtime service while giving an
 // agent a durable event stream for the lifetime of its current task. It emits
 // only when the status/event/assessment state changes; repeated polls of the
 // same revision are deliberately silent.

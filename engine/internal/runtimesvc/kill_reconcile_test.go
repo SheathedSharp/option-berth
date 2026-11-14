@@ -17,7 +17,7 @@ func (r *postStopRegistry) Prune() { r.pruned = true }
 
 func TestAfterKillReconcilesRunsBeforePublishing(t *testing.T) {
 	registry := &postStopRegistry{}
-	rt := &Runtime{}
+	rt := &HostContext{}
 	rt.SetRuns(registry)
 	scans := 0
 	rt.Scanner = scanner.New(scanner.Options{ScanContext: func(context.Context, scanner.Include) ([]ports.ListeningPort, error) {
@@ -27,13 +27,13 @@ func TestAfterKillReconcilesRunsBeforePublishing(t *testing.T) {
 		}
 		return nil, nil
 	}})
-	if _, err := afterKill(&Request{Runtime: rt}, true); err != nil {
+	if _, err := afterKill(&Request{HostContext: rt}, true); err != nil {
 		t.Fatal(err)
 	}
 	if registry.pruned || scans != 0 {
 		t.Fatal("dry run performed reconciliation")
 	}
-	if _, err := afterKill(&Request{Runtime: rt}, false); err != nil {
+	if _, err := afterKill(&Request{HostContext: rt}, false); err != nil {
 		t.Fatal(err)
 	}
 	if !registry.pruned || scans != 1 {

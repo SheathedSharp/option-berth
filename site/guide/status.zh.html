@@ -50,7 +50,7 @@ worker   running   no port
   <figcaption class="fragment-label">检查观察者本身</figcaption>
   <pre><code>oberth doctor --only listener_observation</code></pre>
 </figure>
-<p>在失败的同一种进程里运行这项检查。如果结果是 blind，换到普通终端重试，或在那里运行 <code>oberth serve --detach</code> 再试。不要在沙箱里反复重开，再把超时读成失败。</p>
+<p>在失败的同一种进程里运行这项检查。如果结果是 blind，换到普通终端重试，或在那里运行 <code>oberth runtime service run --detach</code> 再试。不要在沙箱里反复重开，再把超时读成失败。</p>
 
 <h2 id="never">status 永远不说什么</h2>
 <aside class="note">

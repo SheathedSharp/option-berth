@@ -20,7 +20,7 @@ type Service struct {
 	// normalized as a Go duration string ("30s").
 	ReadyTimeout string `json:"ready_timeout"`
 	Port         *int   `json:"port" jsonschema:"nullable"`
-	// PortAuto is `port: auto`: the daemon assigns the port when it starts the
+	// PortAuto is `port: auto`: the runtime service assigns the port when it starts the
 	// service, so Port is null and PortActual says where it is running.
 	PortAuto bool `json:"port_auto"`
 	// Health is the declared check in its published form: an HTTP path
@@ -62,7 +62,7 @@ type Service struct {
 	ExecutablePath              *string `json:"executable_path" jsonschema:"nullable"`
 	ExecutableModifiedAt        *string `json:"executable_modified_at" jsonschema:"nullable"`
 	ExecutableChangedSinceStart *bool   `json:"executable_changed_since_start" jsonschema:"nullable"`
-	// Presentation metadata the person authored in `oberth.yaml`. The daemon
+	// Presentation metadata the person authored in `oberth.yaml`. The runtime service
 	// stores and serves it; what an icon or colour means is the client's
 	// business.
 	Description *string `json:"description" jsonschema:"nullable"`

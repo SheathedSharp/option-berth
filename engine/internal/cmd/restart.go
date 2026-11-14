@@ -67,7 +67,7 @@ func restartRun(cmd *cobra.Command, args []string) error {
 
 	var snapshot []ports.ListeningPort
 	if !restartJSON {
-		snapshot, err = daemonList(cmd.Context(), c)
+		snapshot, err = runtimeServiceList(cmd.Context(), c)
 		if err != nil {
 			return cliError(err)
 		}
@@ -164,7 +164,7 @@ func collectStart(stream *client.Stream) ([]rpc.GroupsStartChunk, rpc.GroupsStar
 	return chunks, summary, nil
 }
 
-// restartRefusal replaces the daemon's generic "not declared" hint with the
+// restartRefusal replaces the runtime service's generic "not declared" hint with the
 // equivalent start command when the name belongs to a run started with
 // `oberth start`. Those runs have no manifest entry, so restart cannot rebuild
 // them; the run ledger still carries the command, cwd and port hint the caller

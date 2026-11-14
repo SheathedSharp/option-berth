@@ -12,7 +12,7 @@ oberth workplace show --limit 20</code></pre>
 
 <h2 id="automatic">What gets recorded</h2>
 <ul>
-  <li><code>oberth start</code> writes the run into the current workplace. The daemon closes a detached run when it records that run's exit.</li>
+  <li><code>oberth start</code> writes the run into the current workplace. The Runtime Service closes a detached run when it records that run's exit.</li>
   <li><code>oberth agent stream</code> writes one entry per round: <code>turn.started</code> opens it, and <code>turn.completed</code> closes it with the outcome the provider reported.</li>
   <li><code>oberth workplace record</code> writes what the engine cannot see: an agent's own attempts, the client's interactive shell, a native agent. Reporting the same <code>--id</code> again updates the entry, so the start and the end of one piece of work may arrive in either order.</li>
 </ul>
@@ -31,7 +31,7 @@ oberth workplace show --limit 20</code></pre>
   <ul>
     <li><code>status</code> never reads it to decide whether a service is running.</li>
     <li><code>show</code> reads back what happened; it does not call the processes of that time back.</li>
-    <li>Without a daemon, reads still open the ledger read-only, and writes need the daemon. <code>up</code> and <code>down</code> write no work record, because a declared lifecycle is not a temporary work entry.</li>
+    <li>Without a Runtime Service, reads still open the ledger read-only, and writes need the Runtime Service. <code>up</code> and <code>down</code> write no work record, because a declared lifecycle is not a temporary work entry.</li>
     <li>A record is evidence of work, not a session restore. It never presents an unobserved ending as a success.</li>
   </ul>
 </aside>

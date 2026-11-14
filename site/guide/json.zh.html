@@ -16,7 +16,7 @@
   <tbody>
     <tr><th scope="row">输入</th><td><code>invalid_params</code>、<code>not_found</code>、<code>invalid_config</code>、<code>ambiguous</code></td><td>请求或声明是错的；消息会点名对象。</td></tr>
     <tr><th scope="row">权限</th><td><code>permission_denied</code></td><td>操作被拒绝；hint 说明要改什么。</td></tr>
-    <tr><th scope="row">时间</th><td><code>timeout</code>、<code>daemon_busy</code></td><td>引擎放弃了，或另一个动作占着 daemon。先读 hint 再重试。</td></tr>
+    <tr><th scope="row">时间</th><td><code>timeout</code>、<code>runtime_service_busy</code></td><td>引擎放弃了，或另一个动作占着 Runtime Service。先读 hint 再重试。</td></tr>
     <tr><th scope="row">观察</th><td><code>observation_empty</code>、<code>observation_unrecognized</code>、<code>observation_incomplete</code>、<code>observation_blind</code>、<code>observation_bind_denied</code></td><td>它们都不表示“没有东西在监听”。检查 <code>observation.state</code> 与 <code>doctor --only listener_observation</code>。</td></tr>
     <tr><th scope="row">内部</th><td><code>internal</code></td><td>意外失败。报告命令和版本，而不是只贴消息。</td></tr>
   </tbody>
@@ -43,7 +43,7 @@
   <dt><code>port_holder</code></dt>
   <dd>在 <code>port_occupied</code> 时出现：占用者的端口、pid、命令和类型；如果占用者是我们的服务，还带组名、服务名和 run id。</dd>
   <dt><code>ready</code></dt>
-  <dd>CLI 的注解，不是 daemon 事实。<code>--wait</code> 确认就绪后为 <code>true</code>，没有等待时为 <code>false</code>。<code>false</code> 不是失败。</dd>
+  <dd>CLI 的注解，不是 Runtime Service 事实。<code>--wait</code> 确认就绪后为 <code>true</code>，没有等待时为 <code>false</code>。<code>false</code> 不是失败。</dd>
 </dl>
 
 <h2 id="absent">字段缺席不代表什么</h2>

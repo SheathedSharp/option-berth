@@ -1,4 +1,4 @@
-// Package userenv recovers the environment a daemon started from the desktop is
+// Package userenv recovers the environment a runtime service started from the desktop is
 // missing.
 //
 // On macOS a process started from the Dock — the app, and every process it
@@ -6,14 +6,14 @@
 // /usr/bin:/bin:/usr/sbin:/sbin. Homebrew, nvm, pyenv, uv and each project's own
 // toolchain live outside those four directories.
 //
-// That matters here more than it would elsewhere, because of what this daemon
+// That matters here more than it would elsewhere, because of what this runtime service
 // is for: it starts the user's services. A service's environment is the
-// daemon's (see the daemon's group start path), so `pnpm run dev` or
+// runtime service's (see the runtime service's group start path), so `pnpm run dev` or
 // `docker compose up` came back "command not found" in the one program whose
 // job is to start it — and "open a terminal and run it from there instead" is
 // exactly the answer this tool exists to make unnecessary.
 //
-// So the daemon asks the login shell what PATH it would have, once, and keeps
+// So the runtime service asks the login shell what PATH it would have, once, and keeps
 // the answer for everything it starts afterwards.
 package userenv
 
@@ -25,8 +25,8 @@ import (
 	"time"
 )
 
-// Timeout bounds the login shell. A profile that hangs must not hang the daemon
-// with it; the daemon comes up with whatever PATH it already had.
+// Timeout bounds the login shell. A profile that hangs must not hang the runtime service
+// with it; the runtime service comes up with whatever PATH it already had.
 const Timeout = 3 * time.Second
 
 // marker fences the answer off from anything a shell profile prints on the way
@@ -96,7 +96,7 @@ func between(s, marker string) (string, bool) {
 }
 
 // Merge puts the login shell's entries first and appends whatever the current
-// PATH adds that is not already there, so a daemon launched from a terminal
+// PATH adds that is not already there, so a runtime service launched from a terminal
 // (whose PATH is already right) keeps its own ordering and loses nothing.
 func Merge(login, current string) string {
 	seen := make(map[string]bool)
@@ -116,8 +116,8 @@ func Merge(login, current string) string {
 // Ensure replaces this process's PATH with Merge(login shell, current) and
 // reports the result plus whether it changed anything.
 //
-// It is called once, by the process that becomes the daemon. Everything the
-// daemon starts afterwards — a service, its children, anything a service shells
+// It is called once, by the process that becomes the runtime.service. Everything the
+// runtime service starts afterwards — a service, its children, anything a service shells
 // out to — inherits the answer, so this is the one place the toolchain has to be
 // got right.
 func Ensure(timeout time.Duration) (string, bool) {

@@ -53,7 +53,7 @@ type Provider interface {
 }
 
 // Capture detaches facts from their inputs. Exits must be newest first, as in
-// both the daemon history and the direct reader's store query. Overlapping live
+// both the runtime service history and the direct reader's store query. Overlapping live
 // runs select the newest non-stopping run, with stable identity tie-breakers;
 // a port hint always belongs to that same selected run.
 func Capture(runs []RunRecord, exits []ExitRecord) Snapshot {

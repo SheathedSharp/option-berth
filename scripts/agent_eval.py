@@ -208,7 +208,7 @@ def preflight(binary: Path, out_root: Path, pass_env: list[str]) -> None:
     env_root = Path(tempfile.mkdtemp(prefix="oberth-eval-", dir=tempfile.gettempdir()))
     env = ScenarioEnv(env_root, binary, os.environ.get("PATH", ""), pass_env=pass_env)
     try:
-        env.start_daemon()
+        env.start_runtime_service()
         port = free_port()
         project = env.write_project("preflight", {
             "oberth.yaml": (
@@ -373,7 +373,7 @@ def execute_run(
         "artifacts": {},
     }
     try:
-        env.start_daemon()
+        env.start_runtime_service()
         state = scenario.setup(env)
         record["ports"] = state.ports
         before = {label: snapshot_tree(root) for label, root in state.worktrees.items()}
@@ -522,7 +522,7 @@ def dry_run(scenario_ids: list[str], *, out_root: Path, binary: Path, args: argp
         env = ScenarioEnv(env_root, binary, os.environ.get("PATH", ""), pass_env=args.pass_env, keep=args.keep)
         state = None
         try:
-            env.start_daemon()
+            env.start_runtime_service()
             state = scenario.setup(env)
             before = {label: snapshot_tree(root) for label, root in state.worktrees.items()}
             print(
@@ -579,7 +579,7 @@ def smoke(
         state = None
         started = time.monotonic()
         try:
-            env.start_daemon()
+            env.start_runtime_service()
             state = scenario.setup(env)
             staged_skill = stage_skill(env, agent_id, skill) if skill is not None else None
             result = run_agent(

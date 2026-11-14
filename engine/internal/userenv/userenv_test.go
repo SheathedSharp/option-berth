@@ -30,7 +30,7 @@ func TestMergePutsTheLoginShellFirstAndKeepsWhatIsThere(t *testing.T) {
 	if got != want {
 		t.Errorf("Merge = %q, want %q", got, want)
 	}
-	// A daemon started from a terminal already has the right PATH: its own
+	// A runtime service started from a terminal already has the right PATH: its own
 	// order is kept, and nothing is appended twice.
 	if got := Merge("/usr/bin:/bin", "/usr/bin:/bin"); got != "/usr/bin:/bin" {
 		t.Errorf("Merge of the same list = %q", got)
@@ -64,7 +64,7 @@ func TestLoginPathSkipsAShellThatIsNotThere(t *testing.T) {
 	}
 }
 
-// A profile that hangs must not take the daemon with it — the daemon comes up
+// A profile that hangs must not take the runtime service with it — the runtime service comes up
 // with the PATH it already had.
 func TestLoginPathGivesUpOnASlowShell(t *testing.T) {
 	slow := filepath.Join(t.TempDir(), "slow-shell")

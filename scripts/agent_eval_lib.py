@@ -10,7 +10,7 @@ likewise supplied explicitly with ``--agent-arg``.
 The PATH shim is a measurement and safety device, not a security sandbox. In
 the ``oberth`` arm it blocks ``kill``/``pkill``/``killall``/``sudo`` and refuses
 to run ``oberth`` against a ``BERTH_HOME`` other than this run's, so a mistaken
-command cannot reach the caller's daemon or unrelated processes. The ``native``
+command cannot reach the caller's runtime service or unrelated processes. The ``native``
 control arm has no oberth (its shim exits 127) and may stop processes with its
 own tools; mis-stops are still detected from preserved PIDs. Agents that bypass
 PATH are outside what the shim can stop; the isolated HOME and disposable
@@ -648,7 +648,7 @@ class ScenarioEnv:
         self.actions_log.write_text("", encoding="utf-8")
         self.projects: list[Path] = []
         self.held: list[HeldListener] = []
-        self.daemon_pid: int | None = None
+        self.runtime_service_pid: int | None = None
         self._create_shims()
 
     # -- environment -------------------------------------------------------
@@ -769,25 +769,25 @@ class ScenarioEnv:
     def status(self, cwd: Path, *, timeout: float = 30) -> tuple[subprocess.CompletedProcess[str], Any]:
         return self.oberth_json(cwd, ["status", "--no-mark"], timeout=timeout)
 
-    def start_daemon(self) -> dict[str, Any]:
-        log = self.logs / "daemon-start.log"
+    def start_runtime_service(self) -> dict[str, Any]:
+        log = self.logs / "runtime-service-start.log"
         with log.open("wb") as handle:
             subprocess.run(
-                [str(self.binary), "serve", "--detach"],
+                [str(self.binary), "runtime", "service", "run", "--detach"],
                 cwd=str(self.run_root), env=self.base_env(shimmed=False),
                 stdout=handle, stderr=subprocess.STDOUT, timeout=30, check=False,
             )
         deadline = time.time() + 15
         last = ""
         while time.time() < deadline:
-            proc, doc = self.oberth_json(self.run_root, ["daemon", "status"], timeout=10)
+            proc, doc = self.oberth_json(self.run_root, ["runtime", "service", "status"], timeout=10)
             if isinstance(doc, dict) and doc.get("running"):
-                self.daemon_pid = int(doc.get("pid") or 0) or None
+                self.runtime_service_pid = int(doc.get("pid") or 0) or None
                 return doc
             last = (proc.stderr or proc.stdout or "").strip()
             time.sleep(0.15)
         tail = log.read_text(errors="replace")[-3000:] if log.exists() else ""
-        raise RuntimeError(f"daemon did not start: {last}\n{tail}")
+        raise RuntimeError(f"runtime service did not start: {last}\n{tail}")
 
     def up(self, cwd: Path, *extra: str, timeout: float = 60) -> tuple[subprocess.CompletedProcess[str], Any]:
         return self.oberth_json(cwd, ["up", "--wait", "--wait-timeout", "25s", *extra], timeout=timeout)
@@ -880,11 +880,11 @@ class ScenarioEnv:
                     if isinstance(pid, int) and pid > 0:
                         known_pids.add(pid)
         try:
-            self.oberth(self.run_root, ["daemon", "stop", "--json"], timeout=15)
+            self.oberth(self.run_root, ["runtime", "service", "stop", "--json"], timeout=15)
         except (OSError, subprocess.SubprocessError):
             pass
-        if self.daemon_pid:
-            known_pids.add(self.daemon_pid)
+        if self.runtime_service_pid:
+            known_pids.add(self.runtime_service_pid)
         # Agent-spawned background processes are not in the run registry; take
         # one cwd-scoped pass so they cannot outlive the scenario.
         known_pids |= pids_under(self.run_root)

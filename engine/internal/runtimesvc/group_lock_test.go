@@ -20,14 +20,14 @@ func (c *groupWaitContext) Done() <-chan struct{} {
 	c.once.Do(func() { close(c.entered) })
 	return c.Context.Done()
 }
-func lockCount(r *Runtime) int {
+func lockCount(r *HostContext) int {
 	r.groupLocksMu.Lock()
 	defer r.groupLocksMu.Unlock()
 	return len(r.groupLocks)
 }
 
 func TestGroupAdmissionIsolationAndReclamation(t *testing.T) {
-	r := &Runtime{}
+	r := &HostContext{}
 	release, err := r.AcquireGroup(context.Background(), "a")
 	if err != nil {
 		t.Fatal(err)
@@ -50,7 +50,7 @@ func TestGroupAdmissionIsolationAndReclamation(t *testing.T) {
 }
 
 func TestGroupAdmissionPreCancelledDoesNotAllocateEntry(t *testing.T) {
-	r := &Runtime{}
+	r := &HostContext{}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	release, err := r.AcquireGroup(ctx, "cancelled")
@@ -60,7 +60,7 @@ func TestGroupAdmissionPreCancelledDoesNotAllocateEntry(t *testing.T) {
 }
 
 func TestGroupAdmissionCancelledWaiterRetainsOwner(t *testing.T) {
-	r := &Runtime{}
+	r := &HostContext{}
 	release, err := r.AcquireGroup(context.Background(), "a")
 	if err != nil {
 		t.Fatal(err)
@@ -101,7 +101,7 @@ func TestGroupAdmissionCancelledWaiterRetainsOwner(t *testing.T) {
 }
 
 func TestGroupAdmissionDeadlineAndLateRelease(t *testing.T) {
-	r := &Runtime{}
+	r := &HostContext{}
 	first, err := r.AcquireGroup(context.Background(), "a")
 	if err != nil {
 		t.Fatal(err)
@@ -130,7 +130,7 @@ func TestGroupAdmissionDeadlineAndLateRelease(t *testing.T) {
 }
 
 func TestGroupAdmissionContentionRemainsExclusive(t *testing.T) {
-	r := &Runtime{}
+	r := &HostContext{}
 	var active, completed atomic.Int32
 	var wg sync.WaitGroup
 	for range 32 {
@@ -159,7 +159,7 @@ func TestGroupAdmissionContentionRemainsExclusive(t *testing.T) {
 }
 
 func TestGroupAdmissionCancellationRaceReturnsReferences(t *testing.T) {
-	r := &Runtime{}
+	r := &HostContext{}
 	for range 64 {
 		release, err := r.AcquireGroup(context.Background(), "shared")
 		if err != nil {
@@ -201,7 +201,7 @@ func TestGroupAdmissionCancellationRaceReturnsReferences(t *testing.T) {
 }
 
 func TestGroupAdmissionChurnDoesNotRetainHistory(t *testing.T) {
-	r := &Runtime{}
+	r := &HostContext{}
 	// The old stable-pointer/zero-allocation lookup contract retained every
 	// historical name. The replacement keeps identity for active operations.
 	for i := range 10000 {

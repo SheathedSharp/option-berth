@@ -3,7 +3,7 @@ package model
 // This file contains the optional, local quality ledger for the agent-side
 // attention adapter.  It is deliberately separate from runtime facts: records
 // describe what the adapter observed and what the agent later reported, but
-// they are never read by status, the daemon, or an execution command.
+// they are never read by status, the runtime service, or an execution command.
 
 import (
 	"bufio"

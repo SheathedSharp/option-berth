@@ -11,7 +11,7 @@ import (
 
 // BenchmarkIndexMatchPort measures the hot attribution lookup without any OS
 // work. The sizes model a small project, a normal multi-worktree checkout and
-// a deliberately large daemon index.
+// a deliberately large runtime service index.
 func BenchmarkIndexMatchPort(b *testing.B) {
 	for _, n := range []int{16, 64, 256, 1024} {
 		b.Run(fmt.Sprintf("configs=%d", n), func(b *testing.B) {

@@ -15,36 +15,36 @@ import (
 )
 
 // This file exists because of how the trim went (docs/history/scope.md,
-// 2026-09-22): `daemonError` and `connectForWrite` used to live at the bottom of
+// 2026-09-22): `runtimeServiceError` and `connectForWrite` used to live at the bottom of
 // a file whose command (`oberth rename`) was one of the port-era tools that
 // went away. Deleting the file took two helpers with it that the commands which
 // stayed had been using all along — the compiler caught it, and they moved here,
-// next to `dialDaemon`, which is the same subject: how a command reaches the
-// daemon.
+// next to `dialRuntimeService`, which is the same subject: how a command reaches the
+// runtime.service.
 //
 // The lesson is worth keeping: in this codebase a file is named after the command
 // it fronts, but it may also be where that area's shared helpers landed. Read a
 // file to its end before deciding it is only one thing.
 
-// connectForWrite dials the daemon, starting it if it is not running. A daemon
+// connectForWrite dials the runtime service, starting it if it is not running. A runtime service
 // that will not start is fatal here: there is nowhere else to write to.
 //
-// It is a variable for the same reason dialDaemon is: the tests point the CLI
-// at a daemon of their own rather than at the user's.
+// It is a variable for the same reason dialRuntimeService is: the tests point the CLI
+// at a runtime service of their own rather than at the user's.
 var connectForWrite = func(ctx context.Context) (*client.Client, error) {
 	info := client.ClientInfo{Name: "cli", Version: buildinfo.Version}
 
-	// A daemon that is already running is used as-is. If it is blind, warn
+	// A runtime service that is already running is used as-is. If it is blind, warn
 	// once and let the command's own observation error carry the next step;
 	// blocking an unrelated write (workplace, events) would not help.
 	if c, err := client.Dial(ctx, info); err == nil {
 		if obs := c.Hello().Observation; obs != nil && obs.State != string(ports.ObservationObservable) {
-			warnBlindDaemon(obs)
+			warnBlindRuntimeService(obs)
 		}
 		return c, nil
 	}
 
-	// Autostart is different: a daemon created from a blind process outlives
+	// Autostart is different: a runtime service created from a blind process outlives
 	// the command and keeps misleading every client that connects to it.
 	if os.Getenv(client.NoAutostartEnv) == "" {
 		if probe := scanProbe(ctx); probe.State != ports.ObservationObservable {
@@ -54,44 +54,44 @@ var connectForWrite = func(ctx context.Context) (*client.Client, error) {
 			}
 			// The probe names its own next step (leave the sandbox, or run
 			// doctor), but the contract for a refused autostart is specific:
-			// the daemon has to be started from a terminal that can observe
+			// the runtime service has to be started from a terminal that can observe
 			// listeners. Lead with that command instead of leaving it to the
 			// empty-probe fallback, which never applied because the probe
 			// always carries a hint.
-			hint := "run `oberth serve --detach` from a normal terminal"
+			hint := "run `oberth runtime service run --detach` from a normal terminal"
 			if probe.Hint != "" {
 				hint += "; " + probe.Hint
 			} else {
 				hint += ", or allow option-berth in the sandbox"
 			}
 			return nil, failHint(code,
-				"refusing to autostart a daemon that cannot see listeners: "+probe.Detail, hint)
+				"refusing to autostart a runtime service that cannot see listeners: "+probe.Detail, hint)
 		}
 	}
 
 	c, err := client.Connect(ctx, info)
 	if err != nil {
-		return nil, withDaemonLogHint(err)
+		return nil, withRuntimeServiceLogHint(err)
 	}
 	return c, nil
 }
 
-var blindDaemonNoteOnce sync.Once
+var blindRuntimeServiceNoteOnce sync.Once
 
-func warnBlindDaemon(obs *rpc.ObservationStatus) {
-	blindDaemonNoteOnce.Do(func() {
+func warnBlindRuntimeService(obs *rpc.ObservationStatus) {
+	blindRuntimeServiceNoteOnce.Do(func() {
 		code := obs.Code
 		if code == "" {
 			code = ports.CodeObservationBlind
 		}
 		fmt.Fprintf(os.Stderr, "%s\n", display.Dim(
-			"note: daemon cannot see listeners ("+code+"); restart it with "+
-				"`oberth daemon restart` from a normal terminal"))
+			"note: runtime service cannot see listeners ("+code+"); restart it with "+
+				"`oberth runtime service restart` from a normal terminal"))
 	})
 }
 
-// withDaemonLogHint points at the log, because a daemon that will not start is
+// withRuntimeServiceLogHint points at the log, because a runtime service that will not start is
 // diagnosed there or nowhere.
-func withDaemonLogHint(err error) error {
-	return fmt.Errorf("%w\nhint: the daemon log is at %s", err, runtimesvc.LogPath())
+func withRuntimeServiceLogHint(err error) error {
+	return fmt.Errorf("%w\nhint: the runtime service log is at %s", err, runtimesvc.LogPath())
 }

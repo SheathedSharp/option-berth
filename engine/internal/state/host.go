@@ -1,11 +1,11 @@
 package state
 
-// LocalhostName is the reserved name used on rows observed by this daemon.
+// LocalhostName is the reserved name used on rows observed by this runtime.service.
 const LocalhostName = "localhost"
 
 // PrefixKey keeps local keys stable while accepting rows that carry an
 // optional host label. This label remains on row types for wire compatibility;
-// this daemon publishes only its own rows.
+// this runtime service publishes only its own rows.
 func PrefixKey(host, key string) string {
 	if IsLocalhost(host) {
 		return key
@@ -13,7 +13,7 @@ func PrefixKey(host, key string) string {
 	return host + "/" + key
 }
 
-// IsLocalhost reports whether a row belongs to this daemon. Empty is accepted
+// IsLocalhost reports whether a row belongs to this runtime.service. Empty is accepted
 // for rows produced by older clients and direct scans.
 func IsLocalhost(host string) bool {
 	return host == "" || host == LocalhostName

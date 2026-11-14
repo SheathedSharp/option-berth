@@ -81,17 +81,17 @@ func TestWorktreeSelectorIncludesSiblingWorktreesInSameRepository(t *testing.T) 
 	}
 }
 
-func TestScopeKeepsDaemonWideEvents(t *testing.T) {
+func TestScopeKeepsRuntimeServiceWideEvents(t *testing.T) {
 	scope := Scope{Worktrees: []string{"/code/example-worker"}}
-	if !scope.MatchEvent(Event{Kind: "daemon_stopping"}, nil) {
-		t.Fatal("daemon-wide event was filtered")
+	if !scope.MatchEvent(Event{Kind: "runtime_service_stopping"}, nil) {
+		t.Fatal("runtime service-wide event was filtered")
 	}
 	group := "example-dashboard"
 	if scope.MatchEvent(Event{Kind: "port_up", Group: &group}, []Group{{Name: group, Repo: group}}) {
 		t.Fatal("unrelated group event passed the scope")
 	}
 	if scope.MatchEvent(Event{Kind: "service_failed"}, nil) {
-		t.Fatal("unattributed object event became daemon-wide")
+		t.Fatal("unattributed object event became runtime service-wide")
 	}
 	selectedRoot := "/code/example-worker"
 	otherRoot := "/code/example-dashboard"
@@ -103,10 +103,10 @@ func TestScopeKeepsDaemonWideEvents(t *testing.T) {
 		t.Fatal("conflicting source and port widened the scope")
 	}
 	if scope.MatchChanged(StateChanged{Changed: []string{"port_changed"}}) {
-		t.Fatal("an unattributed object change became daemon-wide")
+		t.Fatal("an unattributed object change became runtime service-wide")
 	}
-	if !scope.MatchChanged(StateChanged{Changed: []string{"daemon_stopping"}}) {
-		t.Fatal("daemon lifecycle change was filtered")
+	if !scope.MatchChanged(StateChanged{Changed: []string{"runtime_service_stopping"}}) {
+		t.Fatal("runtime service lifecycle change was filtered")
 	}
 	pathless := EventSourceForGroup(Group{Name: "other", Repo: "other"})
 	if (Scope{Worktrees: []string{"."}}).MatchChanged(StateChanged{Source: pathless, Changed: []string{"worktree_changed"}}) {
@@ -472,9 +472,9 @@ func TestStateChangesDropUnattributedObjectChanges(t *testing.T) {
 	if changes := StateChangesForTransition(prev, next, nil); len(changes) != 0 {
 		t.Fatalf("unattributed port changes = %+v, want none", changes)
 	}
-	changes := StateChangesForTransition(prev, prev, []Event{{Kind: "daemon_stopping", At: "now"}})
-	if len(changes) != 1 || changes[0].Source != nil || changes[0].Changed[0] != "daemon_stopping" {
-		t.Fatalf("daemon-wide changes = %+v", changes)
+	changes := StateChangesForTransition(prev, prev, []Event{{Kind: "runtime_service_stopping", At: "now"}})
+	if len(changes) != 1 || changes[0].Source != nil || changes[0].Changed[0] != "runtime_service_stopping" {
+		t.Fatalf("runtime service-wide changes = %+v", changes)
 	}
 }
 

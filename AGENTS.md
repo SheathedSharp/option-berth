@@ -75,7 +75,7 @@ check proves is in [docs/agent/validation.md](docs/agent/validation.md).
 - Performance conclusions need comparable measurements; numbers from different baselines are not
   conclusions.
 - Tests, real services and screenshots use an isolated `HOME`/`BERTH_HOME` and throwaway projects, and
-  you reclaim the processes you started afterwards. Never touch the user's everyday daemon, ledger or
+  you reclaim the processes you started afterwards. Never touch the user's everyday runtime service, ledger or
   real repository writes; installing, releasing, Git writes and repository-visibility changes require
   explicit authorization.
 

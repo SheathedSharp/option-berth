@@ -160,7 +160,7 @@ func shellQuote(s string) string {
 
 // TestSpawnInjectsTheRunEnvironment is the child-side half of "every run is
 // attributable": the BERTH_* variables are visible inside the child and carry
-// this run's identity, not whatever the daemon was started with.
+// this run's identity, not whatever the runtime service was started with.
 func TestSpawnInjectsTheRunEnvironment(t *testing.T) {
 	var out bytes.Buffer
 	handle := mustSpawn(t, Request{
@@ -350,7 +350,7 @@ func startDetachedChild(t *testing.T, layout fixture) {
 }
 
 // TestDetachedRunSurvivesItsStarter is the promise a detached run makes: the
-// daemon that started it can exit and the run keeps serving.
+// runtime service that started it can exit and the run keeps serving.
 func TestDetachedRunSurvivesItsStarter(t *testing.T) {
 	layout := newFixture(t)
 	startDetachedChild(t, layout)

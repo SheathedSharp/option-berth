@@ -1,4 +1,4 @@
-<p class="chapter-intro">The installer does three things: it resolves the latest release, verifies the archive for your platform, and puts the binaries on your PATH. It does not touch your project, and it does not start the daemon.</p>
+<p class="chapter-intro">The installer does three things: it resolves the latest release, verifies the archive for your platform, and puts the binaries on your PATH. It does not touch your project, and it does not start the Runtime Service.</p>
 
 <h2 id="one-line">One line, macOS and Linux</h2>
 <figure class="fragment" data-ui>
@@ -19,7 +19,7 @@
   <figcaption class="fragment-label">install · Windows PowerShell</figcaption>
   <pre><code>irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps1 | iex</code></pre>
 </figure>
-<p>The binaries land in <code>%LOCALAPPDATA%\option-berth\bin</code>, and only the current user's PATH changes. Pin a version with <code>-Version</code>, and leave PATH alone with <code>-NoModifyPath</code>. Before it replaces files, the installer stops a running <code>oberth</code> daemon, but it does not stop your services.</p>
+<p>The binaries land in <code>%LOCALAPPDATA%\option-berth\bin</code>, and only the current user's PATH changes. Pin a version with <code>-Version</code>, and leave PATH alone with <code>-NoModifyPath</code>. Before it replaces files, the installer stops a running <code>oberth</code> Runtime Service, but it does not stop your services.</p>
 
 <h2 id="other-ways">Other ways to install</h2>
 <table class="chapter-table">
@@ -37,13 +37,13 @@
   <pre><code>oberth version --json
 oberth doctor</code></pre>
 </figure>
-<p><code>version --json</code> returns <code>version</code>, <code>commit</code>, <code>built</code> and <code>platform</code> for the binary you actually installed. <code>doctor</code> checks the manifest, the daemon, the CLI path, the log directory, and whether the current process can see listeners. If the listener check cannot run, it reports that it is blind and gives the next step; it never writes “nothing is listening”.</p>
+<p><code>version --json</code> returns <code>version</code>, <code>commit</code>, <code>built</code> and <code>platform</code> for the binary you actually installed. <code>doctor</code> checks the manifest, the Runtime Service, the CLI path, the log directory, and whether the current process can see listeners. If the listener check cannot run, it reports that it is blind and gives the next step; it never writes “nothing is listening”.</p>
 
 <h2 id="platforms">Platform support</h2>
 <p>Full service scenarios are verified on macOS and Linux. Windows gets a native build, a smoke test and an arm64 cross-build, which is not the same as a verified service lifecycle there. The engine has no graphical interface: the macOS client is a separate product, and the coding-agent skill is another one.</p>
 
 <h2 id="upgrade">Upgrade and uninstall</h2>
-<p>Rerun the installer for your platform to upgrade. Afterwards, run <code>oberth daemon stop</code> once and the next call starts the new build. On macOS and Linux, uninstall with <code>uninstall.sh</code>; on Windows, use <code>uninstall.ps1</code>. The uninstaller stops the daemon first and keeps <code>~/.option-berth</code> unless you pass <code>--purge-state</code>. The exact flags and per-platform paths are in <a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/install.md">Install and uninstall</a>.</p>
+<p>Before a protocol-3 switch, stop the previous background host normally with its matching installed CLI, then use the installer for your platform. Protocol 3 renames commands and endpoints without aliases; it retains persistent data and refuses a database still owned by another host. Do not clear locks or reset data to force the switch. Afterwards, the new host uses <code>oberth runtime service run --detach</code>. On macOS and Linux, uninstall with <code>uninstall.sh</code>; on Windows, use <code>uninstall.ps1</code>. The uninstaller stops the Runtime Service first and keeps <code>~/.option-berth</code> unless you pass <code>--purge-state</code>. The exact flags and per-platform paths are in <a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/install.md">Install and uninstall</a>.</p>
 
 <aside class="note">
   <h2 id="not-does">What the installer will not do</h2>

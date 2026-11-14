@@ -8,7 +8,7 @@ func TestIsTestBinary(t *testing.T) {
 		test bool
 	}{
 		{path: "/tmp/go-build123/b001/cmd.test", test: true},
-		{path: "/tmp/go-build123/b001/daemon.test", test: true},
+		{path: "/tmp/go-build123/b001/runtime.service.test", test: true},
 		{path: `C:\Temp\go-build\b001\cmd.test.exe`, test: true},
 		{path: "cmd.test", test: true},
 		{path: "/usr/local/bin/oberth", test: false},
@@ -46,12 +46,12 @@ func TestEnvEnabled(t *testing.T) {
 	}
 }
 
-func TestTestDaemonAllowedFollowsTheEnvironment(t *testing.T) {
-	if TestDaemonAllowed() {
-		t.Fatalf("%s is set during a test run; the guard is disarmed", AllowTestDaemonEnv)
+func TestTestRuntimeServiceAllowedFollowsTheEnvironment(t *testing.T) {
+	if TestRuntimeServiceAllowed() {
+		t.Fatalf("%s is set during a test run; the guard is disarmed", AllowTestRuntimeServiceEnv)
 	}
-	t.Setenv(AllowTestDaemonEnv, "1")
-	if !TestDaemonAllowed() {
+	t.Setenv(AllowTestRuntimeServiceEnv, "1")
+	if !TestRuntimeServiceAllowed() {
 		t.Error("setting the opt-in variable explicitly did not arm the guard")
 	}
 }

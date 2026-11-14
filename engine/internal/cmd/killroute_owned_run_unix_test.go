@@ -162,7 +162,7 @@ func startOwnedRun(t *testing.T) ownedRun {
 
 // TestKillJSONNamesAnOwnedRunForAPIDOnBothPaths is the same parity question for
 // the selector the review found it missing from. Naming the listener's pid has
-// to report what the daemon path reports for that same pid — the run's service
+// to report what the runtime service path reports for that same pid — the run's service
 // name and its port — because the attribution lives in the listener table both
 // paths read, and the direct path used not to read it at all for `--pid`.
 //
@@ -177,21 +177,21 @@ func TestKillJSONNamesAnOwnedRunForAPIDOnBothPaths(t *testing.T) {
 		killPIDFlag = []int{run.listenerID}
 	})
 
-	noDaemonReachable(t)
+	noRuntimeServiceReachable(t)
 	direct, err := runKillCmd(t)
 	if err != nil {
 		t.Fatalf("the direct path failed: %v\n%s", err, direct)
 	}
 
 	resetRouting(t)
-	startScanningDaemon(t)
+	startScanningRuntimeService(t)
 	routed, err := runKillCmd(t)
 	if err != nil {
-		t.Fatalf("the daemon path failed: %v\n%s", err, routed)
+		t.Fatalf("the runtime service path failed: %v\n%s", err, routed)
 	}
 
 	if routed != direct {
-		t.Fatalf("--json for --pid differs between the two paths:\n daemon:\n%s\n direct:\n%s", routed, direct)
+		t.Fatalf("--json for --pid differs between the two paths:\n runtime_service:\n%s\n direct:\n%s", routed, direct)
 	}
 	// A run is one unit: the attributed row names the service and its port,
 	// and the unit it is stopped through is the run root, not the leaf pid the
@@ -219,7 +219,7 @@ func TestKillPIDStopsTheOwnedRunTreeAndReportsTheReleasedURL(t *testing.T) {
 	run := startOwnedRun(t)
 	withKillFlags(t, func() { killPIDFlag = []int{run.listenerID} })
 
-	noDaemonReachable(t)
+	noRuntimeServiceReachable(t)
 	out, err := runKillCmd(t)
 	if err != nil {
 		t.Fatalf("kill --pid: %v\n%s", err, out)

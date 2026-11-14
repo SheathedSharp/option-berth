@@ -97,7 +97,7 @@ func TestServiceRowCarriesTheRunExecutable(t *testing.T) {
 	}
 }
 
-// TestExpandedRuntimeCommandIsNotDrift: the daemon expands ${worktree} and
+// TestExpandedRuntimeCommandIsNotDrift: the runtime service expands ${worktree} and
 // ${port} before spawning, so the recorded command legitimately differs from
 // the manifest spelling. A matching spec hash is the verdict; comparing the
 // two strings would call every correctly started Compose service stale.
@@ -122,7 +122,7 @@ func TestExpandedRuntimeCommandIsNotDrift(t *testing.T) {
 // before the hash encoding changed carries the old format, which differs from
 // the current manifest hash by construction. That is not manifest drift — the
 // command and the cwd are unchanged — and reporting it would send the user to
-// restart every service that survived a daemon upgrade for nothing.
+// restart every service that survived a runtime service upgrade for nothing.
 func TestPreUpgradeSpecHashIsNotDrift(t *testing.T) {
 	cfg := &Config{Name: "shop", Dir: "/nonexistent/shop", Path: "/nonexistent/shop/" + ConfigName,
 		Services: []Service{{Name: "api", Cmd: "serve"}}}

@@ -1,4 +1,4 @@
-// Package client is the Go client for the oberth daemon. The CLI, the agent
+// Package client is the Go client for the oberth runtime service. The CLI, the agent
 // adapter and every other in-process consumer dial through it, so autostart,
 // the protocol check and subscription plumbing exist in one place.
 package client
@@ -10,61 +10,63 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 )
 
-// AutostartTimeout bounds how long a client waits for the daemon it launched
+// AutostartTimeout bounds how long a client waits for the runtime service it launched
 // to accept connections.
 const AutostartTimeout = 3 * time.Second
 
-// ClientInfo names the caller in daemon.hello and chooses the connection.
+// ClientInfo names the caller in runtime.service.hello and chooses the connection.
 type ClientInfo struct {
-	// Name is the caller kind reported in daemon.hello. The engine's own CLI
-	// sends "cli"; the daemon records whatever a client sends.
+	// Name is the caller kind reported in runtime.service.hello. The engine's own CLI
+	// sends "cli"; the runtime service records whatever a client sends.
 	Name string
 	// Version is the caller's own version.
 	Version string
-	// Keepalive disables the daemon's idle timeout for this connection.
+	// Keepalive disables the runtime service's idle timeout for this connection.
 	Keepalive bool
-	// Socket overrides daemon.SocketPath.
+	// Socket overrides runtime.service.SocketPath.
 	Socket string
-	// NoAutostart fails Connect instead of running `oberth serve -d`.
+	// NoAutostart fails Connect instead of running `oberth runtime service run -d`.
 	NoAutostart bool
 	// BinaryPath overrides the executable autostart runs.
 	BinaryPath string
 }
 
-// ErrNotRunning means no daemon is listening and autostart was disabled or
+// ErrNotRunning means no runtime service is listening and autostart was disabled or
 // failed.
-var ErrNotRunning = errors.New("oberth daemon is not running")
+var ErrNotRunning = errors.New("oberth runtime service is not running")
 
-// ProtocolMismatchError reports a daemon whose major protocol version differs
+// ProtocolMismatchError reports a runtime service whose major protocol version differs
 // from the one this client was built for.
 type ProtocolMismatchError struct {
-	Daemon string
-	Client string
+	RuntimeService string
+	Client         string
 }
 
 func (e *ProtocolMismatchError) Error() string {
 	return fmt.Sprintf(
-		"oberth daemon speaks protocol v%s, this client needs v%s. Restart it? (`oberth daemon restart`)",
-		e.Daemon, e.Client)
+		"oberth runtime service speaks protocol v%s, this client needs v%s. Restart it? (`oberth runtime service restart`)",
+		e.RuntimeService, e.Client)
 }
 
-// Client is one connection to the daemon. It is safe for concurrent use.
+// Client is one connection to the runtime.service. It is safe for concurrent use.
 type Client struct {
 	conn io.ReadWriteCloser
 
 	// Wire and identity.
 	enc    *rpc.Encoder
 	socket string
-	hello  rpc.DaemonHelloResult
+	hello  rpc.RuntimeServiceHelloResult
 
 	// The request book and the notification registry.
 	mu      sync.Mutex
@@ -81,9 +83,12 @@ type Client struct {
 	done chan struct{}
 }
 
-// Connect dials the daemon, starting one with `oberth serve --detach` when
-// nothing is listening, then performs the daemon.hello handshake.
+// Connect dials the runtime service, starting one with `oberth runtime service run --detach` when
+// nothing is listening, then performs the runtime.service.hello handshake.
 func Connect(ctx context.Context, info ClientInfo) (*Client, error) {
+	if err := paths.RejectRetiredRuntimeServiceEnvironment(os.Getenv); err != nil {
+		return nil, err
+	}
 	socket := socketFor(info)
 	conn, err := runtimesvc.Dial(socket)
 	if err != nil {
@@ -118,7 +123,7 @@ func startAndDial(ctx context.Context, socket string, info ClientInfo) (net.Conn
 	return conn, nil
 }
 
-// Dial connects to a daemon that is already running and never starts one.
+// Dial connects to a runtime service that is already running and never starts one.
 func Dial(ctx context.Context, info ClientInfo) (*Client, error) {
 	info.NoAutostart = true
 	return Connect(ctx, info)
@@ -141,15 +146,15 @@ func handshake(ctx context.Context, conn io.ReadWriteCloser, socket string, info
 	client.streams = map[string]*Stream{}
 	go client.readLoop()
 
-	var hello rpc.DaemonHelloResult
-	params := rpc.DaemonHelloParams{
+	var hello rpc.RuntimeServiceHelloResult
+	params := rpc.RuntimeServiceHelloParams{
 		Client:        info.Name,
 		ClientVersion: info.Version,
 		Keepalive:     info.Keepalive,
 	}
-	if err := client.Call(ctx, "daemon.hello", params, &hello); err != nil {
+	if err := client.Call(ctx, "runtime.service.hello", params, &hello); err != nil {
 		client.Close()
-		return nil, err
+		return nil, fmt.Errorf("runtime service protocol 3 handshake failed; do not point this client at a previous host or reuse its endpoint; stop previous hosts explicitly with their own matching CLI: %w", err)
 	}
 	if err := CheckProtocol(hello.ProtocolVersion); err != nil {
 		client.Close()
@@ -159,19 +164,19 @@ func handshake(ctx context.Context, conn io.ReadWriteCloser, socket string, info
 	return client, nil
 }
 
-// CheckProtocol compares the daemon's protocol version with this binary's.
+// CheckProtocol compares the runtime service's protocol version with this binary's.
 // Only the major has to match: additive changes bump the minor.
-func CheckProtocol(daemonVersion string) error {
-	daemonMajor, err := majorOf(daemonVersion)
+func CheckProtocol(runtimeServiceVersion string) error {
+	runtimeServiceMajor, err := majorOf(runtimeServiceVersion)
 	if err != nil {
-		return fmt.Errorf("daemon reported an unparseable protocol version %q", daemonVersion)
+		return fmt.Errorf("runtime service reported an unparseable protocol version %q", runtimeServiceVersion)
 	}
 	clientMajor, err := majorOf(rpc.ProtocolVersion)
 	if err != nil {
 		return err
 	}
-	if daemonMajor != clientMajor {
-		return &ProtocolMismatchError{Daemon: daemonVersion, Client: rpc.ProtocolVersion}
+	if runtimeServiceMajor != clientMajor {
+		return &ProtocolMismatchError{RuntimeService: runtimeServiceVersion, Client: rpc.ProtocolVersion}
 	}
 	return nil
 }
@@ -186,7 +191,7 @@ func majorOf(version string) (int, error) {
 }
 
 // Hello is the handshake result: versions, pid, socket and capabilities.
-func (c *Client) Hello() rpc.DaemonHelloResult { return c.hello }
+func (c *Client) Hello() rpc.RuntimeServiceHelloResult { return c.hello }
 
 // Socket is the address this client is connected to.
 func (c *Client) Socket() string { return c.socket }
@@ -276,7 +281,7 @@ func (c *Client) readLoop() {
 	for {
 		msg, err := decoder.Next()
 		if err != nil {
-			c.shutdown(fmt.Errorf("daemon connection closed: %w", err))
+			c.shutdown(fmt.Errorf("runtime service connection closed: %w", err))
 			return
 		}
 		if msg.IsResponse() {
@@ -330,7 +335,7 @@ func (c *Client) shutdown(err error) {
 // Done is closed when the connection drops.
 func (c *Client) Done() <-chan struct{} { return c.done }
 
-// Close disconnects from the daemon. It is safe to call more than once.
+// Close disconnects from the runtime.service. It is safe to call more than once.
 func (c *Client) Close() error {
 	c.shutdown(errors.New("client closed"))
 	return nil

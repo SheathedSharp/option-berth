@@ -11,7 +11,7 @@ import (
 
 // helloCall is the one message the round-trip case puts through the encoder.
 func helloCall() Request {
-	return Request{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: "daemon.hello"}
+	return Request{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: "runtime.service.hello"}
 }
 
 // A message written by the encoder must come back from the decoder as the same
@@ -28,8 +28,8 @@ func TestCodecRoundTripAndOversize(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Next: %v", err)
 		}
-		if msg.Method != "daemon.hello" || !msg.IsRequest() {
-			t.Fatalf("decoded %+v, want the daemon.hello call that was encoded", msg)
+		if msg.Method != "runtime.service.hello" || !msg.IsRequest() {
+			t.Fatalf("decoded %+v, want the runtime.service.hello call that was encoded", msg)
 		}
 	})
 
@@ -83,7 +83,7 @@ func TestDecoderEOF(t *testing.T) {
 // is dropped whole so the message after it is still readable.
 func TestDecoderSkipsBlankLinesAndRecoversAfterOversize(t *testing.T) {
 	oversize := `{"jsonrpc":"2.0","method":"` + strings.Repeat("z", 300) + `"}`
-	next := `{"jsonrpc":"2.0","id":1,"method":"daemon.status"}`
+	next := `{"jsonrpc":"2.0","id":1,"method":"runtime.service.status"}`
 	dec := NewDecoder(strings.NewReader("\n"+oversize+"\n"+next+"\n"), 128)
 
 	if _, err := dec.Next(); !errors.Is(err, ErrOversize) {
@@ -93,8 +93,8 @@ func TestDecoderSkipsBlankLinesAndRecoversAfterOversize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the decoder did not resynchronise after an oversize message: %v", err)
 	}
-	if msg.Method != "daemon.status" {
-		t.Fatalf("message after the oversize one = %+v, want daemon.status", msg)
+	if msg.Method != "runtime.service.status" {
+		t.Fatalf("message after the oversize one = %+v, want runtime.service.status", msg)
 	}
 }
 

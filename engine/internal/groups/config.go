@@ -87,7 +87,7 @@ func TargetIn(dir string) string {
 }
 
 // Service is one entry of a config's `services:` list. Description, Icon and
-// Color are user-authored metadata the daemon never infers and never
+// Color are user-authored metadata the runtime service never infers and never
 // interprets: it carries them onto state.Service so a client can render them.
 type Service struct {
 	Name string `yaml:"name" jsonschema_description:"Short name, unique in this file."`
@@ -113,7 +113,7 @@ type Service struct {
 	// Port is the port the service binds, or 0 when it declares none or when
 	// PortAuto is set.
 	Port int `yaml:"port,omitempty" jsonschema_description:"The port the service binds, or auto to let option-berth pick one."`
-	// PortAuto is `port: auto`: the daemon picks the port when it starts the
+	// PortAuto is `port: auto`: the runtime service picks the port when it starts the
 	// service — the same one every time for the same checkout, and a
 	// different one in every other checkout — and hands it over as PORT,
 	// BERTH_PORT and ${port}.
@@ -144,7 +144,7 @@ func cloneStrings(in []string) []string {
 	return out
 }
 
-// PortAutoValue is the `port:` value that asks the daemon to pick the port.
+// PortAutoValue is the `port:` value that asks the runtime service to pick the port.
 const PortAutoValue = "auto"
 
 // DefaultReadyTimeout is how long a service gets to become ready when its
@@ -315,7 +315,7 @@ type MachineRef struct {
 // It is a reference, not a member: like `machine:`, `up` and `down` never
 // touch it, and it carries no cmd. Unlike `machine:` the address is not fixed —
 // the referenced checkout's own manifest decides the port, including
-// `port: auto`. Resolution reads the other checkout's manifest and the daemon's
+// `port: auto`. Resolution reads the other checkout's manifest and the runtime service's
 // runtime facts; it never starts or stops that service.
 type WorkspaceRef struct {
 	// Name is what this file calls the reference: `${backend.port}`,
@@ -426,7 +426,7 @@ type Candidate struct {
 	Command string
 }
 
-// UsesAssignedPorts reports whether this file needs a daemon that knows the
+// UsesAssignedPorts reports whether this file needs a runtime service that knows the
 // format v0.8.0 introduced: a `port: auto` service, or an `env:`, `prepare:`,
 // `cmd:` or `health:` value carrying a ${...} reference (a port or the
 // worktree identity).
@@ -442,10 +442,10 @@ func (c *Config) UsesAssignedPorts() bool {
 	return false
 }
 
-// UsesManifestExtras reports whether the file uses a field an older daemon
+// UsesManifestExtras reports whether the file uses a field an older runtime service
 // would silently ignore: `env_file` (the service would start without it) or
 // `workspace` references (their addresses would stay unexpanded). The CLI
-// checks the running daemon's capability before handing it such a file.
+// checks the running runtime service's capability before handing it such a file.
 func (c *Config) UsesManifestExtras() bool {
 	if len(c.Workspace) > 0 {
 		return true
@@ -459,7 +459,7 @@ func (c *Config) UsesManifestExtras() bool {
 }
 
 // UsesReadyTimeout reports whether any service declares `ready_timeout:`. An
-// older daemon ignores the field and keeps its fixed 30s dependency wait, so
+// older runtime service ignores the field and keeps its fixed 30s dependency wait, so
 // the CLI checks its capability before handing it such a file instead of
 // letting the declared budget silently not apply.
 func (c *Config) UsesReadyTimeout() bool {

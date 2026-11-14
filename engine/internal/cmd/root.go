@@ -13,6 +13,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/buildinfo"
 	"github.com/sheathedsharp/option-berth/engine/internal/config"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
+	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/sheathedsharp/option-berth/engine/internal/versioncheck"
 	"github.com/spf13/cobra"
@@ -334,13 +335,13 @@ func versionLine(state versioncheck.State) string {
 }
 
 // printUpgrade is the one action the signpost offers when this build is behind:
-// the install command for this platform, and the daemon restart that makes the
+// the install command for this platform, and the runtime service restart that makes the
 // new binary the one that runs next.
 func printUpgrade(w io.Writer, latest string) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "  "+display.Yellow("Upgrade to "+latest+":"))
 	fmt.Fprintf(w, "    %s\n", display.Bold(upgradeCommand(runtime.GOOS)))
-	fmt.Fprintf(w, "    %s  %s\n", display.Bold("oberth daemon stop"), display.Dim("# pick up the new build"))
+	fmt.Fprintf(w, "    %s  %s\n", display.Bold("oberth runtime service stop"), display.Dim("# pick up the new build"))
 }
 
 // upgradeCommand is the published install entry point for goos. It is the same
@@ -384,8 +385,8 @@ func init() {
 	rootCmd.PersistentFlags().Bool("no-color", false, "Disable colored output")
 	rootCmd.Flags().BoolVarP(&versionFlag, "version", "v", false,
 		"Print the version and exit")
-	rootCmd.PersistentFlags().BoolVar(&noDaemonFlag, "no-daemon", false,
-		"Never talk to the oberth daemon; scan directly instead")
+	rootCmd.PersistentFlags().BoolVar(&noRuntimeServiceFlag, "no-runtime-service", false,
+		"Never talk to the oberth runtime service; scan directly instead")
 
 	// Error rendering is ours (docs/cli.md: one shape, and a --json caller gets
 	// JSON on stderr). cobra would otherwise print its own "Error: …" followed
@@ -398,15 +399,22 @@ func init() {
 		return usageError{err}
 	})
 
-	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		if versionFlag {
-			return
+			return nil
 		}
 		// Errors are rendered in Execute, after this command has returned and
 		// its flags are out of reach — so the JSON answer is captured here.
 		// --json is a per-command flag, never a persistent one.
 		if f := cmd.Flags().Lookup("json"); f != nil {
 			jsonMode = f.Value.String() == "true"
+		}
+
+		if err := paths.RejectRetiredRuntimeServiceEnvironment(os.Getenv); err != nil {
+			return usageError{err}
+		}
+		if err := config.CheckRuntimeServiceConfigNames(config.Path()); err != nil {
+			return usageError{err}
 		}
 
 		cfg, warnings := config.Load()
@@ -430,6 +438,7 @@ func init() {
 		// The footer's release check runs beside the command, not before it:
 		// by the time the result is written, the answer is usually waiting.
 		startUpdateProbe(cmd)
+		return nil
 	}
 }
 
@@ -440,6 +449,17 @@ var errSilent = errors.New("")
 // Execute runs the CLI and exits with the status docs/cli.md documents:
 // 0 ok, 1 failure, 2 usage, 130 interrupted.
 func Execute() {
+	if err := rejectRetiredRuntimeCommand(os.Args[1:]); err != nil {
+		for _, arg := range os.Args[1:] {
+			if arg == "--json" || arg == "--json=true" {
+				jsonMode = true
+			}
+			if arg == "--json=false" {
+				jsonMode = false
+			}
+		}
+		os.Exit(reportError(os.Stderr, usageError{err}))
+	}
 	err := rootCmd.Execute()
 	if err == nil {
 		printUpdateNotice()

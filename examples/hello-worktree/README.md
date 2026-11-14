@@ -21,7 +21,7 @@ oberth logs worker --once
 oberth down --force --json
 ```
 
-不要使用全机 `kill` 或停止普通用户 daemon 来清理这个示例。
+不要使用全机 `kill` 或停止普通用户 runtime service 来清理这个示例。
 `down` 只处理此清单所属 worktree 的项目服务。
 
 ## 看见 worktree 隔离

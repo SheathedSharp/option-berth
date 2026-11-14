@@ -38,7 +38,7 @@ func TestExitRemovesTheRunsCodeSnapshot(t *testing.T) {
 	}
 }
 
-// A daemon crash can leave snapshots for runs that are gone. Startup pruning
+// A runtime service crash can leave snapshots for runs that are gone. Startup pruning
 // keeps exactly the live registry's ids.
 func TestPruneCodeSnapshotsKeepsOnlyLiveRuns(t *testing.T) {
 	t.Setenv("BERTH_HOME", t.TempDir())

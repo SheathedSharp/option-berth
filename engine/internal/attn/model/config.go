@@ -3,7 +3,7 @@ package model
 // The local model configuration is intentionally owned by the optional
 // assessment and its setup command. Keeping it outside config.yaml means
 // generic `oberth config get` output can never echo an API key, while the
-// agent-side runner can still find the setting without a daemon or a shell
+// agent-side runner can still find the setting without a runtime service or a shell
 // profile.
 
 import (

@@ -67,7 +67,7 @@ func downRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	rows, err := daemonList(cmd.Context(), c)
+	rows, err := runtimeServiceList(cmd.Context(), c)
 	if err != nil {
 		return cliError(err)
 	}
@@ -82,7 +82,7 @@ func downRun(cmd *cobra.Command, args []string) error {
 		// clean one to a caller that reads only the status, whose next step is
 		// to delete a worktree whose service is still running. The text path
 		// already answers non-zero through reportKill; this branch answers
-		// through the daemon's own verdict, as `restart --json` does for the
+		// through the runtime service's own verdict, as `restart --json` does for the
 		// same envelope.
 		if err := printJSON(envelope); err != nil {
 			return err
@@ -97,7 +97,7 @@ func downRun(cmd *cobra.Command, args []string) error {
 
 // reportDown renders what groups.kill did: the per-process lines for whatever
 // was listening, and then the sentence about the reservations it gave back.
-// The released count is the daemon's, so it is printed whether or not anything
+// The released count is the runtime service's, so it is printed whether or not anything
 // was listening.
 func reportDown(envelope rpc.KillEnvelope, rows []ports.ListeningPort) error {
 	var renderErr error
@@ -112,10 +112,10 @@ func reportDown(envelope rpc.KillEnvelope, rows []ports.ListeningPort) error {
 	return renderErr
 }
 
-// downParams chooses what to stop before any daemon call: one explicit
+// downParams chooses what to stop before any runtime service call: one explicit
 // checkout (path or identity), one named project, or the manifest at or above
 // the working directory. The selectors are mutually exclusive, and a
-// filesystem path is made absolute here because the daemon resolves it
+// filesystem path is made absolute here because the runtime service resolves it
 // against its own working directory, not the shell's.
 func downParams(args []string) (rpc.GroupsKillParams, *groups.Config, error) {
 	params := rpc.GroupsKillParams{Force: downForceFlag, Release: true}
@@ -157,7 +157,7 @@ func exclusiveDownSelector(worktree, identity string, args []string) error {
 
 // downParamsFromManifest is the form with no selector at all: the manifest at
 // or above the working directory is the project, and its parsed config is
-// returned so the stop can be checked against the daemon's capabilities.
+// returned so the stop can be checked against the runtime service's capabilities.
 func downParamsFromManifest(params rpc.GroupsKillParams) (rpc.GroupsKillParams, *groups.Config, error) {
 	wd, err := os.Getwd()
 	if err != nil {

@@ -26,7 +26,7 @@ worktree; they do not change where the core runtime facts come from.
 
 option-berth is **the runtime facts layer for worktrees**.
 
-Oberth Runtime names this worktree engine. Runtime Service names its local background service; `daemon` remains the compatible CLI and implementation term. These names do not expand the product into a general process or container platform.
+Oberth Runtime names this worktree engine. Runtime Service names its local background service; `runtime service` remains the compatible CLI and implementation term. These names do not expand the product into a general process or container platform.
 
 Orchestration tools create workspaces, schedule sessions and often allocate their own ports;
 option-berth owns the part they most easily get wrong and can least easily patch themselves. The
@@ -154,7 +154,7 @@ may only land in an existing layer:
 | Operations | `up` · `restart` · `down` · `start` · `kill` | Make it run, make it stop |
 | Code and declaration | `git` · `init` | Code context, and this worktree's manifest |
 | Handoff | `workplace` · `agent` · `attn` | Leave and retrieve work records; hand a session to an external agent; the optional model assessment, off by default |
-| Infrastructure | `daemon` · `serve` · `config` · `version` · `completion` · `doctor` | The runtime environment, configuration and self-checks |
+| Infrastructure | `runtime` · `config` · `version` · `completion` · `doctor` | The runtime environment, configuration and self-checks |
 
 `events` only subscribes read-only to state changes of explicitly related worktrees; `start` runs a
 single command, and `kill` handles only explicitly named processes. `agent list/plan/run` is the
@@ -229,7 +229,7 @@ product.
   stream from an old RPC client is only a compatibility view and provides no new whole-machine port
   page.
 - **No model judgement in the core**: "why didn't it start" and "whose is this" are never handed to the
-  daemon to infer; facts are observed only by code. An optional external attention adapter may decide
+  runtime service to infer; facts are observed only by code. An optional external attention adapter may decide
   from those facts when to hand the choice back to the user, but it cannot rewrite state or perform
   actions.
 - **No extra integration layer**: no MCP server, no automatic skill install, no hooks. Integration

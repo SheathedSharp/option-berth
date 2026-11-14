@@ -39,7 +39,7 @@ var eventsCmd = &cobra.Command{
 	Long: "Read a filtered machine-local state stream. The first NDJSON record is a snapshot; later records are state.changed summaries.\n\n" +
 		"Selectors are additive. `--worktree` takes a checkout root or worktree ID, `--repository` takes a repository ID, and `--workspace` joins an explicit ephemeral integration relation.\n" +
 		"A workspace is registered by a subscription that also supplies a worktree or repository; later subscribers may use that workspace name alone.\n" +
-		"After a transport drop or queue overflow, `oberth events` reconnects with its last sequence and asks the daemon to replay the missing changes.",
+		"After a transport drop or queue overflow, `oberth events` reconnects with its last sequence and asks the runtime service to replay the missing changes.",
 	Args: cobra.NoArgs,
 	RunE: eventsRun,
 }
@@ -87,11 +87,11 @@ func eventsRun(cmd *cobra.Command, _ []string) error {
 
 	// Keep the last sequence the process actually emitted. If the socket drops
 	// or its bounded delivery queue overflows, the next subscription asks the
-	// daemon to replay from this cursor instead of taking an uncheckable leap to
-	// a fresh state. The daemon identity disambiguates a sequence reset after a
+	// runtime service to replay from this cursor instead of taking an uncheckable leap to
+	// a fresh state. The runtime service identity disambiguates a sequence reset after a
 	// restart.
 	var lastSeq uint64
-	var daemonIdentity string
+	var runtimeServiceIdentity string
 	haveSubscription := false
 	haveSnapshot := false
 	workspaceScoped := strings.TrimSpace(scope.Workspace) != ""
@@ -134,19 +134,19 @@ func eventsRun(cmd *cobra.Command, _ []string) error {
 			continue
 		}
 
-		if !haveSnapshot || workspaceScoped || sub.StreamSnapshot.Seq != lastSeq || identity != daemonIdentity {
+		if !haveSnapshot || workspaceScoped || sub.StreamSnapshot.Seq != lastSeq || identity != runtimeServiceIdentity {
 			if err := enc.Encode(eventsSnapshotRecord{StreamSnapshot: sub.StreamSnapshot}); err != nil {
 				c.Close()
 				return err
 			}
 		}
 		lastSeq = sub.StreamSnapshot.Seq
-		daemonIdentity = identity
+		runtimeServiceIdentity = identity
 		haveSubscription = true
 		haveSnapshot = true
 
 		changes := sub.Changes
-		daemonStopping := false
+		runtimeServiceStopping := false
 		for changes != nil {
 			select {
 			case change, ok := <-changes:
@@ -158,8 +158,8 @@ func eventsRun(cmd *cobra.Command, _ []string) error {
 					changes = nil
 					continue
 				}
-				if slices.Contains(change.Changed, "daemon_stopping") {
-					daemonStopping = true
+				if slices.Contains(change.Changed, "runtime_service_stopping") {
+					runtimeServiceStopping = true
 				}
 				if change.Seq > lastSeq {
 					lastSeq = change.Seq
@@ -174,12 +174,12 @@ func eventsRun(cmd *cobra.Command, _ []string) error {
 			}
 		}
 		c.Close()
-		if daemonStopping {
+		if runtimeServiceStopping {
 			return nil
 		}
 		// The transport dropped or the subscription queue overflowed. Loop back
 		// with lastSeq; a brief delay avoids a tight reconnect loop while a
-		// daemon is being replaced.
+		// runtime service is being replaced.
 	}
 }
 
@@ -203,11 +203,11 @@ func requireScopedState(c *client.Client) error {
 			return nil
 		}
 	}
-	version := c.Hello().DaemonVersion
+	version := c.Hello().RuntimeServiceVersion
 	if version == "" {
 		version = "an older version"
 	}
-	return fmt.Errorf("the running daemon (%s) does not support scoped state events\nhint: restart it with `oberth daemon restart`", version)
+	return fmt.Errorf("the running runtime service (%s) does not support scoped state events\nhint: restart it with `oberth runtime service restart`", version)
 }
 
 func normalizeEventsScope(scope state.Scope) state.Scope {

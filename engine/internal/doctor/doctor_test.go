@@ -33,7 +33,7 @@ func (h isolatedHome) installPaths(env *Env) {
 	env.Project = h.root
 	env.ConfigDir = h.configDir
 	env.ConfigPath = filepath.Join(h.configDir, "config.yaml")
-	env.SocketPath = filepath.Join(h.configDir, "daemon.sock")
+	env.SocketPath = filepath.Join(h.configDir, "runtime-service.sock")
 	env.DBPath = filepath.Join(h.configDir, "option-berth.db")
 }
 
@@ -44,8 +44,8 @@ func refuseEscapes(env *Env) {
 	self := filepath.Join(env.Home, "bin", "option-berth")
 	env.Executable = func() (string, error) { return self, nil }
 	env.LookPath = func(string) (string, error) { return "", exec.ErrNotFound }
-	env.Daemon = func(context.Context) DaemonInfo {
-		return DaemonInfo{Err: errors.New("no daemon")}
+	env.RuntimeService = func(context.Context) RuntimeServiceInfo {
+		return RuntimeServiceInfo{Err: errors.New("no runtime service")}
 	}
 	env.Docker = func(context.Context) (string, error) {
 		return "", errors.New("no docker in tests")
@@ -169,31 +169,31 @@ func requireCheckOrder(t *testing.T, checks []rpc.DoctorCheck, want ...string) {
 	}
 }
 
-func TestRunDialsTheDaemonOnce(t *testing.T) {
+func TestRunDialsTheRuntimeServiceOnce(t *testing.T) {
 	env := *fakeEnv(t)
 	dials := 0
-	env.Daemon = func(context.Context) DaemonInfo {
+	env.RuntimeService = func(context.Context) RuntimeServiceInfo {
 		dials++
-		return DaemonInfo{Reachable: true, Version: "v9.9.9", ProtocolVersion: rpc.ProtocolVersion}
+		return RuntimeServiceInfo{Reachable: true, Version: "v9.9.9", ProtocolVersion: rpc.ProtocolVersion}
 	}
 	result := Run(context.Background(), env, nil)
 	if dials != 1 {
-		t.Fatalf("dialled the daemon %d times, want 1", dials)
+		t.Fatalf("dialled the runtime service %d times, want 1", dials)
 	}
-	if result.DaemonVersion != "v9.9.9" {
-		t.Errorf("daemon version = %q, want the probed answer", result.DaemonVersion)
+	if result.RuntimeServiceVersion != "v9.9.9" {
+		t.Errorf("runtime service version = %q, want the probed answer", result.RuntimeServiceVersion)
 	}
 }
 
-func TestDaemonModeSkipsTheCLIOnlyChecks(t *testing.T) {
+func TestRuntimeServiceModeSkipsTheCLIOnlyChecks(t *testing.T) {
 	env := *fakeEnv(t)
-	env.Mode = ModeDaemon
+	env.Mode = ModeRuntimeService
 	got := Run(context.Background(), env, nil)
 
 	cliOnly := map[string]bool{
-		"cli_on_path":            true,
-		"daemon_version_matches": true,
-		"daemon_build_matches":   true,
+		"cli_on_path":                     true,
+		"runtime_service_version_matches": true,
+		"runtime_service_build_matches":   true,
 	}
 	var seen []string
 	for _, row := range got.Checks {
@@ -248,7 +248,7 @@ func requireCompleteRoster(t *testing.T, checks []rpc.DoctorCheck, roster []stri
 		}
 	}
 	if len(missing) != 0 || len(unexpected) != 0 || len(checks) != len(roster) {
-		t.Errorf("daemon mode roster length %d (want %d); missing %v, unexpected %v",
+		t.Errorf("runtime service mode roster length %d (want %d); missing %v, unexpected %v",
 			len(checks), len(roster), missing, unexpected)
 	}
 }
@@ -258,7 +258,7 @@ func TestRunIsNotOKOnlyWhenSomethingFailed(t *testing.T) {
 		check  string
 		wantOK bool
 	}{
-		{"daemon_reachable", false},
+		{"runtime_service_reachable", false},
 		{"project_config", true},
 	} {
 		env := *fakeEnv(t)

@@ -10,7 +10,7 @@ import (
 
 // fakeKillCaller records the one call a timeout cleanup is allowed to make.
 type fakeKillCaller struct {
-	hello rpc.DaemonHelloResult
+	hello rpc.RuntimeServiceHelloResult
 	calls []struct {
 		method string
 		params any
@@ -28,13 +28,13 @@ func (f *fakeKillCaller) Call(_ context.Context, method string, params, result a
 	return nil
 }
 
-func (f *fakeKillCaller) Hello() rpc.DaemonHelloResult { return f.hello }
+func (f *fakeKillCaller) Hello() rpc.RuntimeServiceHelloResult { return f.hello }
 
 // The cleanup stops the runs this invocation started, not whatever now answers
 // to the service's name; that is the only thing that makes another controller's
 // replacement run safe from this timeout.
 func TestStopTimedOutServicesNamesTheRunsItStarted(t *testing.T) {
-	caller := &fakeKillCaller{hello: rpc.DaemonHelloResult{
+	caller := &fakeKillCaller{hello: rpc.RuntimeServiceHelloResult{
 		Capabilities: []string{rpc.CapabilityKillExpectRuns},
 	}}
 	timedOut := []startTimeout{{service: "api", runID: "run-api"}, {service: "worker", runID: "run-worker"}}
@@ -62,19 +62,19 @@ func TestStopTimedOutServicesNamesTheRunsItStarted(t *testing.T) {
 	}
 }
 
-// A daemon that predates expect_runs ignores it and stops by name. Sending the
+// A runtime service that predates expect_runs ignores it and stops by name. Sending the
 // cleanup anyway is how it reaches the run somebody else started, so the stop
 // is refused instead — and the error says the timed-out runs are still up.
-func TestStopTimedOutServicesRefusesADaemonThatStopsByName(t *testing.T) {
-	caller := &fakeKillCaller{hello: rpc.DaemonHelloResult{DaemonVersion: "0.9.0"}}
+func TestStopTimedOutServicesRefusesARuntimeServiceThatStopsByName(t *testing.T) {
+	caller := &fakeKillCaller{hello: rpc.RuntimeServiceHelloResult{RuntimeServiceVersion: "0.9.0"}}
 
 	err := stopTimedOutServices(context.Background(), caller,
 		rpc.GroupsStartParams{}, []startTimeout{{service: "api", runID: "run-api"}})
 	if err == nil {
-		t.Fatal("a daemon without expect_runs must not receive a name-only cleanup")
+		t.Fatal("a runtime service without expect_runs must not receive a name-only cleanup")
 	}
 	if !strings.Contains(err.Error(), "api") || !strings.Contains(err.Error(), "not stopped") ||
-		!strings.Contains(err.Error(), "daemon restart") {
+		!strings.Contains(err.Error(), "runtime service restart") {
 		t.Fatalf("error = %v, want the services, what was not done, and the way out", err)
 	}
 	if len(caller.calls) != 0 {
@@ -85,7 +85,7 @@ func TestStopTimedOutServicesRefusesADaemonThatStopsByName(t *testing.T) {
 // Same rule for a run this invocation cannot name: without the id there is no
 // way to tell the timed-out run from its replacement, so nothing is signalled.
 func TestStopTimedOutServicesRefusesAnUnnamedRun(t *testing.T) {
-	caller := &fakeKillCaller{hello: rpc.DaemonHelloResult{
+	caller := &fakeKillCaller{hello: rpc.RuntimeServiceHelloResult{
 		Capabilities: []string{rpc.CapabilityKillExpectRuns},
 	}}
 

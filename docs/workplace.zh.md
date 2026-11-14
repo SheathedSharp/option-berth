@@ -53,7 +53,7 @@ oberth workplace record --kind shell|agent [flags] [--worktree PATH] [--json]
 
 记录不需要手动操作：
 
-- `oberth start` 把这次运行写进当前 workplace；非附加（`-d`）的运行由 daemon 在记录它的退出时收尾。
+- `oberth start` 把这次运行写进当前 workplace；非附加（`-d`）的运行由 runtime service 在记录它的退出时收尾。
 - `oberth agent stream` 每一轮写一条：`turn.started` 开，`turn.completed` 按 provider 给的
   outcome 收尾（completed / interrupted / failed）。
 - 引擎看不见的工作用 `oberth workplace record` 写进来：agent 自己的尝试（「我改了 X，测试仍然
@@ -62,11 +62,11 @@ oberth workplace record --kind shell|agent [flags] [--worktree PATH] [--json]
 
 ## 边界
 
-`show` 读回的是做过什么，不是把当时的进程叫回来。daemon 不在时读命令仍从数据库直接读；
-`new` / `use` / `delete` / `record` 需要一个 daemon（按既有规则自启动），而 `oberth start` 与
-`oberth agent stream` 的记录不会为你去起一个 daemon —— 没有 daemon 就没有记录，在 stderr 说明一次。
+`show` 读回的是做过什么，不是把当时的进程叫回来。runtime service 不在时读命令仍从数据库直接读；
+`new` / `use` / `delete` / `record` 需要一个 runtime service（按既有规则自启动），而 `oberth start` 与
+`oberth agent stream` 的记录不会为你去起一个 runtime service —— 没有 runtime service 就没有记录，在 stderr 说明一次。
 清单里的服务起停（`up` / `down`）不写工作记录：那是声明的生命周期，不是临时的工作条目。
 
 实现在 `internal/workplace`（规则、选择器与 RPC）、`internal/store/workplaces.go`（行与迁移 009）
-和 `cmd/workplace*`（CLI 与记录接线）。写入只有一个所有者：daemon 是账本的唯一写者；
-CLI 的读路径在 daemon 不在时只读打开同一份数据库，写命令走 RPC。
+和 `cmd/workplace*`（CLI 与记录接线）。写入只有一个所有者：runtime service 是账本的唯一写者；
+CLI 的读路径在 runtime service 不在时只读打开同一份数据库，写命令走 RPC。

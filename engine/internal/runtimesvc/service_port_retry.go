@@ -18,7 +18,7 @@ func reservationReleaseBusy(err error) bool {
 // Retry only the final release observation after transient registry contention.
 // All signals and the original reservation capture stay outside this loop.
 // Each release attempt drops its locks before another observation is made.
-func (p *servicePortRelease) releaseAfterContention(ctx context.Context, rt *Runtime, group string, after state.Snapshot, scanErr error, results []state.KillResult) (int, error) {
+func (p *servicePortRelease) releaseAfterContention(ctx context.Context, rt *HostContext, group string, after state.Snapshot, scanErr error, results []state.KillResult) (int, error) {
 	n, err := p.release(ctx, rt, group, after, scanErr, results)
 	if n != 0 || !reservationReleaseBusy(err) || rt.Scanner == nil {
 		return n, err

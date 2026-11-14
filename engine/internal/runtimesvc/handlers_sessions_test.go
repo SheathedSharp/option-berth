@@ -85,7 +85,7 @@ func sampleSession(id string) state.Session {
 	}
 }
 
-// sessionHarnessWithOnePort builds a daemon whose scan sees one listener owned
+// sessionHarnessWithOnePort builds a runtime service whose scan sees one listener owned
 // by one agent session, with the registry and the store both wired.
 func sessionHarnessWithOnePort(t *testing.T, ctx context.Context) (*testHarness, *fakeRuns) {
 	t.Helper()
@@ -96,7 +96,7 @@ func sessionHarnessWithOnePort(t *testing.T, ctx context.Context) (*testHarness,
 		StartedAt: time.Date(2026, 9, 6, 9, 0, 0, 0, time.UTC),
 		Session:   sampleSession("claude-code:abc"),
 	}}}
-	h.srv.runtime.SetRuns(registry)
+	h.srv.host.SetRuns(registry)
 	h.publishListener(t, ports.ListeningPort{
 		Port: 3000, BindAddress: "127.0.0.1", PID: 4242, Process: "python3",
 		Command: "python3 -m http.server", IPVersion: "IPv4",
@@ -193,7 +193,7 @@ func TestSweepTouchesLiveSessionsAndPrunesTheGoneOnes(t *testing.T) {
 	h, _ := sessionHarnessWithOnePort(t, ctx)
 	attachSessionStore(t, h, dir)
 
-	table := h.srv.runtime.Store.Sessions()
+	table := h.srv.host.Store.Sessions()
 	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 	old := now.Add(-30 * 24 * time.Hour)
 	for _, id := range []string{"claude-code:abc", "codex:gone"} {
@@ -204,7 +204,7 @@ func TestSweepTouchesLiveSessionsAndPrunesTheGoneOnes(t *testing.T) {
 		}
 	}
 
-	SweepSessions(h.srv.runtime, now)
+	SweepSessions(h.srv.host, now)
 
 	rows := sessionsIn(t, table)
 	if len(rows) != 1 || rows[0].ID != "claude-code:abc" {

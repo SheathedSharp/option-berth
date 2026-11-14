@@ -70,7 +70,7 @@ func TestIsolateRejectsInheritedPathOverrides(t *testing.T) {
 		paths.HomeEnv+"="+callerDir,
 		paths.LogDirEnv+"="+filepath.Join(callerDir, "logs"),
 		paths.DBEnv+"="+filepath.Join(callerDir, "state.db"),
-		paths.SocketEnv+"="+filepath.Join(callerDir, "daemon.sock"),
+		paths.SocketEnv+"="+filepath.Join(callerDir, "runtime-service.sock"),
 		"XDG_RUNTIME_DIR="+filepath.Join(callerDir, "runtime"),
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {

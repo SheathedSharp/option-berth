@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// ErrAlreadyRunning is what AcquireLock returns when another daemon holds the
+// ErrAlreadyRunning is what AcquireLock returns when another runtime service holds the
 // lock. When the lock file could be read, the message names the holder's pid.
 type ErrAlreadyRunning struct {
 	Path string
@@ -19,9 +19,9 @@ type ErrAlreadyRunning struct {
 
 func (e *ErrAlreadyRunning) Error() string {
 	if e.PID <= 0 {
-		return "daemon already running"
+		return "runtime service already running"
 	}
-	return fmt.Sprintf("daemon already running (pid %d)", e.PID)
+	return fmt.Sprintf("runtime service already running (pid %d)", e.PID)
 }
 
 // IsAlreadyRunning reports whether err is, or wraps, ErrAlreadyRunning.
@@ -31,8 +31,8 @@ func IsAlreadyRunning(err error) bool {
 }
 
 // Lock is the single-instance lock: an advisory lock (flock on Unix, LockFileEx
-// on Windows) over <socket dir>/daemon.lock, holding the holder's pid in its
-// contents so a second `oberth serve` can name the process it lost to.
+// on Windows) over <socket dir>/runtime-service.lock, holding the holder's pid in its
+// contents so a second `oberth runtime service run` can name the process it lost to.
 //
 // On Unix the whole file is locked; on Windows one byte far past its end is,
 // since a Windows lock also blocks reads of the range it covers and the pid
@@ -61,9 +61,9 @@ func AcquireLock(path string) (*Lock, error) {
 		}
 		return nil, fmt.Errorf("opening lock file: %w", err)
 	}
-	// A daemon spawns children (`oberth start`, `oberth up`, autostart), and
+	// A runtime service spawns children (`oberth start`, `oberth up`, autostart), and
 	// none of them may inherit the lock handle: an inherited handle would keep
-	// the lock — and on Windows the file itself — alive after the daemon that
+	// the lock — and on Windows the file itself — alive after the runtime service that
 	// took it has exited.
 	markNotInheritable(f)
 
@@ -104,10 +104,10 @@ func (l *Lock) Release() error {
 // Path is the lock file's path.
 func (l *Lock) Path() string { return l.path }
 
-// WaitForLockRelease blocks until the daemon lock at path is free, then
-// returns. It is what `oberth daemon restart` waits on: a daemon closes its
+// WaitForLockRelease blocks until the runtime service lock at path is free, then
+// returns. It is what `oberth runtime service restart` waits on: a runtime service closes its
 // socket well before it releases the lock, so waiting for the socket to stop
-// accepting is not enough — the replacement daemon would start, fail to take
+// accepting is not enough — the replacement runtime service would start, fail to take
 // the lock, exit "already running", and leave nothing running.
 //
 // The lock is taken and immediately released, which is the only honest test
@@ -115,7 +115,7 @@ func (l *Lock) Path() string { return l.path }
 // ownership; the kernel releases a crashed process's lock automatically.
 //
 // On Windows the wait survives one further failure mode: opening a file the
-// outgoing daemon still holds fails outright (ERROR_LOCK_VIOLATION or
+// outgoing runtime service still holds fails outright (ERROR_LOCK_VIOLATION or
 // ERROR_SHARING_VIOLATION) instead of blocking. AcquireLock reports both as
 // ErrAlreadyRunning, so this loop retries them rather than aborting the
 // restart.
@@ -133,7 +133,7 @@ func WaitForLockRelease(path string, timeout time.Duration) error {
 			}
 			last = err
 			if !time.Now().Before(deadline) {
-				return fmt.Errorf("the previous daemon still holds %s after %s: %w", path, timeout, last)
+				return fmt.Errorf("the previous runtime service still holds %s after %s: %w", path, timeout, last)
 			}
 			time.Sleep(25 * time.Millisecond)
 			continue

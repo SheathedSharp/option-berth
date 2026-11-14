@@ -144,7 +144,7 @@ func TestDeclarationsAreCommentMaterial(t *testing.T) {
 	}
 }
 
-// TestUsesAssignedPorts: the CLI asks this before handing a file to a daemon,
+// TestUsesAssignedPorts: the CLI asks this before handing a file to a runtime service,
 // because one that predates the format parses it and blames the file.
 func TestUsesAssignedPorts(t *testing.T) {
 	type assignedCase struct {

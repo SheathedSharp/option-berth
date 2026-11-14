@@ -70,7 +70,7 @@ func (c *Config) MachineAddress(name string) (int, bool) {
 // RuntimeAddress reports whether a name's address can only be known from
 // runtime facts: a local `port: auto` service, or any workspace reference
 // (whose service may itself use an assigned port). Callers use it to avoid a
-// daemon read when every address in hand is already settled by the manifest.
+// runtime service read when every address in hand is already settled by the manifest.
 func (c *Config) RuntimeAddress(name string) bool {
 	if svc, ok := c.ServiceNamed(name); ok {
 		return svc.PortAuto

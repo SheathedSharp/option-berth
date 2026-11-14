@@ -5,9 +5,9 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// The daemon's `oberth.yaml` index lives on the scan loop because the loop is
+// The runtime service's `oberth.yaml` index lives on the scan loop because the loop is
 // the one thing that reads it every tick, and the contract makes it live as
-// long as the daemon. The group handlers reach it through these accessors, so
+// long as the runtime.service. The group handlers reach it through these accessors, so
 // there is never a second copy going stale behind the first.
 
 // withIndex runs fn with the attribution lock held and the index in place.
@@ -20,7 +20,7 @@ func withIndex(l *Loop, fn func(*groups.Index)) {
 	fn(l.attr.index)
 }
 
-// Configs returns every valid `oberth.yaml` the daemon knows, deepest first.
+// Configs returns every valid `oberth.yaml` the runtime service knows, deepest first.
 func (l *Loop) Configs() []*groups.Config {
 	var configs []*groups.Config
 	withIndex(l, func(index *groups.Index) { configs = index.Configs() })
@@ -69,7 +69,7 @@ func (l *Loop) ConfigAt(path string) (*groups.Config, bool) {
 
 // ObserveConfig indexes the `oberth.yaml` files at and above a directory, the
 // way a process cwd does during a scan. `groups.start --config-path` uses it so
-// a project the daemon has never seen still starts.
+// a project the runtime service has never seen still starts.
 func (l *Loop) ObserveConfig(dir string) {
 	withIndex(l, func(index *groups.Index) { index.Observe(dir) })
 }
@@ -84,7 +84,7 @@ func (l *Loop) LoadConfig(path string) error {
 }
 
 // ReloadConfigs re-reads every known root: the ones in the store and the ones
-// the index already holds. Files created, edited or deleted since the daemon
+// the index already holds. Files created, edited or deleted since the runtime service
 // started are picked up here; the result is how many valid configs remain, plus
 // the files that could not be used.
 func (l *Loop) ReloadConfigs() (int, []groups.InvalidConfig) {

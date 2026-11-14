@@ -50,7 +50,7 @@ func healthLoop(t *testing.T, dir string, port int) (*Loop, *[]state.Event, *syn
 	var eventsMu sync.Mutex
 	var events []state.Event
 	loop := New(Options{
-		DaemonVersion: "test",
+		RuntimeServiceVersion: "test",
 		Scan: func(Include) ([]ports.ListeningPort, error) {
 			return []ports.ListeningPort{{
 				Port: port, BindAddress: "127.0.0.1", IPVersion: "ipv4",
@@ -229,7 +229,7 @@ func TestNoHealthPathMeansNoProbe(t *testing.T) {
 	root := resolved(t, t.TempDir())
 	writeConfig(t, root, "name: plain\nservices:\n  - name: api\n    port: "+strconv.Itoa(port)+"\n")
 	loop := New(Options{
-		DaemonVersion: "test",
+		RuntimeServiceVersion: "test",
 		Scan: func(Include) ([]ports.ListeningPort, error) {
 			return []ports.ListeningPort{{Port: port, BindAddress: "127.0.0.1", PID: 4343, Process: "node", Cwd: root}}, nil
 		},
@@ -289,7 +289,7 @@ func TestAConfiguredProbeThatLeavesAbortsTheScan(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	l := New(Options{
-		DaemonVersion: "test",
+		RuntimeServiceVersion: "test",
 		Scan: func(Include) ([]ports.ListeningPort, error) {
 			return []ports.ListeningPort{{Port: port, BindAddress: "127.0.0.1", PID: 4242, Cwd: dir}}, nil
 		},

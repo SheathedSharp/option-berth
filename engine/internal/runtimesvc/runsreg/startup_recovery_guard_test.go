@@ -10,7 +10,7 @@ import (
 )
 
 // These tests exercise startup failure ordering only. They do not replace
-// real SQLite, legacy file locking, or whole-daemon cleanup regression tests.
+// real SQLite, legacy file locking, or whole-runtime service cleanup regression tests.
 type requiredRecoveryFixture struct {
 	calls     []string
 	seenStore *store.Store

@@ -112,7 +112,7 @@ func waitPortClosed(port int, timeout time.Duration) bool {
 
 // startUndeclaredListener runs a python service inside the project that binds
 // port but is NOT declared anywhere — the "running but undeclared" fixture. It
-// lives in the project's working directory, so the daemon attributes it to the
+// lives in the project's working directory, so the runtime service attributes it to the
 // project even though no manifest entry claims the port.
 func startUndeclaredListener(t *testing.T, e *env, dir string, port int) *exec.Cmd {
 	t.Helper()
@@ -146,15 +146,15 @@ while True:
 }
 
 // TestManifestCreatedAfterScanIsDiscovered pins decision 0042 end to end: a
-// directory the daemon's scan already looked at must not keep "no manifest"
+// directory the runtime service's scan already looked at must not keep "no manifest"
 // as a permanent answer. The checkout has no manifest when its listener is
 // first attributed (the group exists by git-root name only); the manifest
-// written afterwards takes the same name as the checkout, so the daemon's
+// written afterwards takes the same name as the checkout, so the runtime service's
 // snapshot already holds that group and nothing but a real re-probe can
 // bring the services in. No restart, no `up`, no command naming the file.
 func TestManifestCreatedAfterScanIsDiscovered(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 
 	dir := filepath.Join(e.home, "late-manifest")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -167,7 +167,7 @@ func TestManifestCreatedAfterScanIsDiscovered(t *testing.T) {
 	port := freePort()
 	startUndeclaredListener(t, e, dir, port)
 
-	// The first status makes the daemon scan: the port is attributed to the
+	// The first status makes the runtime service scan: the port is attributed to the
 	// git-root group and the directory is now a probed, manifest-less one.
 	st := e.waitStatus(dir, func(d statusDoc) bool { return portsContain(d, port) })
 	if st.Worktree.Name != "late-manifest" {
@@ -199,7 +199,7 @@ func TestManifestCreatedAfterScanIsDiscovered(t *testing.T) {
 // project's own worker and must leave the referenced listener alone.
 func TestMachineDependencyDownAndUp(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 
 	b, err := MachineDependency(filepath.Join(e.home, "machine-dep"), "mysql")
 	if err != nil {
@@ -208,7 +208,7 @@ func TestMachineDependencyDownAndUp(t *testing.T) {
 	t.Cleanup(func() { e.cleanupBuilt(b) })
 	refPort := machineRefPort(t, b.Manifest, "mysql")
 	// The worker's `up` registers the project — a service-less config is never
-	// discovered on its own — and leaves the group in the daemon's snapshot.
+	// discovered on its own — and leaves the group in the runtime service's snapshot.
 	var up struct {
 		Errors []string `json:"errors"`
 	}
@@ -253,7 +253,7 @@ func TestMachineDependencyDownAndUp(t *testing.T) {
 // under one name, then renames the checkout and reads status from the new cwd.
 func TestPathRecovery(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 
 	oldDir := filepath.Join(e.home, "api-worker")
 	b, err := APIServerAndWorker(oldDir)
@@ -271,7 +271,7 @@ func TestPathRecovery(t *testing.T) {
 		t.Fatalf("up reported errors: %v", up.Errors)
 	}
 	// Stop the services so nothing keeps the old directory anchored in the
-	// daemon's index (a running process with cwd inside it would re-attribute).
+	// runtime service's index (a running process with cwd inside it would re-attribute).
 	var down struct {
 		OK bool `json:"ok"`
 	}
@@ -285,10 +285,10 @@ func TestPathRecovery(t *testing.T) {
 		t.Fatalf("renaming the project: %v", err)
 	}
 
-	// A daemon restart re-seeds the root index from the DB and prunes the gone
+	// A runtime service restart re-seeds the root index from the DB and prunes the gone
 	// old path; the new path was never recorded. This is where the index is lost.
-	if _, err := e.run("", "daemon", "stop"); err != nil {
-		t.Fatalf("daemon stop: %v", err)
+	if _, err := e.run("", "runtime", "service", "stop"); err != nil {
+		t.Fatalf("runtime service stop: %v", err)
 	}
 	for i := 0; i < 200; i++ { // wait for the socket to free before serving again
 		if _, err := os.Stat(e.socket); err != nil {
@@ -296,7 +296,7 @@ func TestPathRecovery(t *testing.T) {
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	e.serve()
+	e.runRuntimeService()
 
 	// status from the new cwd must still see the project's declaration, not
 	// not_found, after the rename + restart.
@@ -310,7 +310,7 @@ func TestPathRecovery(t *testing.T) {
 // running port, but no declared service claims it.
 func TestRunningButUndeclared(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 
 	b, err := APIServerAndWorker(filepath.Join(e.home, "run-undecl"))
 	if err != nil {

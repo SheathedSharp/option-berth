@@ -21,7 +21,7 @@ func permOf(t *testing.T, path string) os.FileMode {
 }
 
 // TestPrepareSocketDirLeavesAUserDirectoryAlone is the smoke-test regression:
-// `BERTH_SOCKET=/tmp/x.sock` used to fail with "chmod /tmp: operation not
+// `BERTH_RUNTIME_SERVICE_SOCKET=/tmp/x.sock` used to fail with "chmod /tmp: operation not
 // permitted" — and, pointed at a directory it did not own, it would quietly
 // tighten that directory to 0700.
 func TestPrepareSocketDirLeavesAUserDirectoryAlone(t *testing.T) {
@@ -71,7 +71,7 @@ func TestPrepareSocketDirTightensOurOwnDirectory(t *testing.T) {
 }
 
 // TestListenOnAUserSuppliedSocketPath binds a bare socket in a directory the
-// daemon does not own — the `BERTH_SOCKET=/tmp/x.sock` shape — and checks the
+// runtime service does not own — the `BERTH_RUNTIME_SERVICE_SOCKET=/tmp/x.sock` shape — and checks the
 // socket file still ends up 0600.
 func TestListenOnAUserSuppliedSocketPath(t *testing.T) {
 	lnDir, err := os.MkdirTemp("", "oberth")
@@ -105,24 +105,24 @@ func TestListenOnAUserSuppliedSocketPath(t *testing.T) {
 }
 
 // TestOwnsSocketDir separates the directory option-berth makes for itself from
-// one the user pointed BERTH_SOCKET at.
+// one the user pointed BERTH_RUNTIME_SERVICE_SOCKET at.
 func TestOwnsSocketDir(t *testing.T) {
 	homeDir := func() (string, error) { return "/home/dev", nil }
-	vars := map[string]string{"BERTH_SOCKET": "/tmp/x.sock"}
+	vars := map[string]string{"BERTH_RUNTIME_SERVICE_SOCKET": "/tmp/x.sock"}
 	getenv := func(key string) string { return vars[key] }
 
 	if ownsSocketDir("/tmp/x.sock", getenv, homeDir, "linux") {
 		t.Error("/tmp counted as a directory option-berth owns")
 	}
-	if !ownsSocketDir("/home/dev/.option-berth/daemon.sock", getenv, homeDir, "linux") {
+	if !ownsSocketDir("/home/dev/.option-berth/runtime-service.sock", getenv, homeDir, "linux") {
 		t.Error("the default config directory did not count as ours")
 	}
 
 	vars["XDG_RUNTIME_DIR"] = "/run/user/1000"
-	if !ownsSocketDir("/run/user/1000/option-berth/daemon.sock", getenv, homeDir, "linux") {
+	if !ownsSocketDir("/run/user/1000/option-berth/runtime-service.sock", getenv, homeDir, "linux") {
 		t.Error("the XDG runtime subdirectory did not count as ours")
 	}
-	if ownsSocketDir("/run/user/1000/daemon.sock", getenv, homeDir, "linux") {
+	if ownsSocketDir("/run/user/1000/runtime-service.sock", getenv, homeDir, "linux") {
 		t.Error("the XDG runtime directory itself counted as ours")
 	}
 }

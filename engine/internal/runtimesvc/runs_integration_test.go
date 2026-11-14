@@ -1,6 +1,6 @@
 //go:build integration
 
-// Integration coverage for `oberth start` and the daemon's runs registry, which
+// Integration coverage for `oberth start` and the runtime service's runs registry, which
 // is spec integration test 2. Run them with
 // `go test -tags integration ./internal/runtimesvc/...`.
 package runtimesvc_test
@@ -24,7 +24,7 @@ import (
 )
 
 // buildListener compiles a helper that listens on the port it is handed and
-// then blocks. Behind it are a real process and a real socket, so the daemon's
+// then blocks. Behind it are a real process and a real socket, so the runtime service's
 // own scan has to find it and attribute the port through the PPID chain.
 var buildListener = sync.OnceValues(func() (string, error) {
 	dir, err := os.MkdirTemp("", "option-berth-itest-listener")
@@ -177,11 +177,11 @@ func TestStartAttributesItsPortToTheGroup(t *testing.T) {
 	waitForEmptyRunsList(t, ctx, cl, 20*time.Second)
 }
 
-// TestExitedRunSurvivesDaemonRestart is the durable half of the runs registry:
-// a finished run observed by one daemon must still explain itself through
-// runs.list after that daemon has been stopped and a new one has opened the
+// TestExitedRunSurvivesRuntimeServiceRestart is the durable half of the runs registry:
+// a finished run observed by one runtime service must still explain itself through
+// runs.list after that runtime service has been stopped and a new one has opened the
 // same store.
-func TestExitedRunSurvivesDaemonRestart(t *testing.T) {
+func TestExitedRunSurvivesRuntimeServiceRestart(t *testing.T) {
 	sandbox := newEnv(t)
 	first := sandbox.serve()
 
@@ -217,7 +217,7 @@ func TestExitedRunSurvivesDaemonRestart(t *testing.T) {
 		t.Fatalf("run %s never appeared in exited list before restart: %+v", spawned.RunID, before)
 	}
 
-	sandbox.stopDaemon(first.Process.Pid)
+	sandbox.stopRuntimeService(first.Process.Pid)
 	second := sandbox.serve()
 	defer stopCommand(second)
 	reconnected := sandbox.connect(ctx)
@@ -233,7 +233,7 @@ func TestExitedRunSurvivesDaemonRestart(t *testing.T) {
 		}
 	}
 	if reloaded == nil {
-		t.Fatalf("run %s disappeared after daemon restart: %+v", spawned.RunID, after.Exited)
+		t.Fatalf("run %s disappeared after runtime service restart: %+v", spawned.RunID, after.Exited)
 	}
 	if reloaded.ExitCode == nil || *reloaded.ExitCode != 7 || reloaded.Reason != "crashed" {
 		t.Fatalf("reloaded exit = %+v, want code 7/crashed", *reloaded)
@@ -276,8 +276,8 @@ func interrupt(t *testing.T, starter *exec.Cmd) {
 //
 // It waits for the delta that carries the run, not the first delta that
 // mentions the port: a scan tick can land between the child's bind and
-// `oberth start` telling the daemon who owns it, and that tick publishes a real
-// listener that genuinely has no run yet. The daemon corrects it in the very
+// `oberth start` telling the runtime service who owns it, and that tick publishes a real
+// listener that genuinely has no run yet. The runtime service corrects it in the very
 // next delta, which is the row this test is about.
 func waitForAttributedPort(t *testing.T, sub *client.Subscription, port int, timeout time.Duration) (state.Port, bool) {
 	t.Helper()

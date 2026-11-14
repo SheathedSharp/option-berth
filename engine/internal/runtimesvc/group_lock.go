@@ -6,7 +6,7 @@ import (
 )
 
 // groupLock exists only while an operation holds or waits for its token.
-// users is protected by Runtime.groupLocksMu, not by the per-group token.
+// users is protected by HostContext.groupLocksMu, not by the per-group token.
 type groupLock struct {
 	held  chan struct{}
 	users int
@@ -16,7 +16,7 @@ type groupLock struct {
 // Admission references are registered before waiting and released on every
 // failure path. Unrelated groups never share a token. Idle group names are
 // removed, so churn does not retain one lock for every worktree ever observed.
-func (r *Runtime) AcquireGroup(ctx context.Context, group string) (func(), error) {
+func (r *HostContext) AcquireGroup(ctx context.Context, group string) (func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

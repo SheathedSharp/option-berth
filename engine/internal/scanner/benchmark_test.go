@@ -9,7 +9,7 @@ import (
 
 // BenchmarkSnapshot measures the scanner's attribution and publication path
 // with the OS scan replaced by a fixed fixture. It makes the cost of carrying
-// 16..1024 listeners through the daemon visible without folding lsof, ps or
+// 16..1024 listeners through the runtime service visible without folding lsof, ps or
 // Docker latency into the algorithm result.
 func BenchmarkSnapshot(b *testing.B) {
 	for _, n := range []int{16, 64, 256, 1024} {
@@ -22,7 +22,7 @@ func BenchmarkSnapshot(b *testing.B) {
 				}
 			}
 			l := New(Options{
-				DaemonVersion: "bench",
+				RuntimeServiceVersion: "bench",
 				Scan: func(Include) ([]ports.ListeningPort, error) {
 					out := make([]ports.ListeningPort, len(rows))
 					copy(out, rows)

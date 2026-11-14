@@ -45,7 +45,7 @@ func TestStopReleaseQueuesForMirrorHandoffWithinExistingBudget(t *testing.T) {
 		return mutate()
 	}
 	rt.SetRuns(queued)
-	value, err := finishGroupStop(context.Background(), &Request{Runtime: rt}, "demo", plan, state.Snapshot{}, nil, []state.KillResult{{OK: true}})
+	value, err := finishGroupStop(context.Background(), &Request{HostContext: rt}, "demo", plan, state.Snapshot{}, nil, []state.KillResult{{OK: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestStopReleaseHandoffRetainsChangedReservations(t *testing.T) {
 		return mutate()
 	}
 	rt.SetRuns(queued)
-	if _, err := finishGroupStop(context.Background(), &Request{Runtime: rt}, "demo", plan, state.Snapshot{}, nil, []state.KillResult{{OK: true}}); err == nil {
+	if _, err := finishGroupStop(context.Background(), &Request{HostContext: rt}, "demo", plan, state.Snapshot{}, nil, []state.KillResult{{OK: true}}); err == nil {
 		t.Fatal("changed reservation was deleted")
 	}
 	rows, err := rt.Store.Claims().List()

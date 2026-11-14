@@ -14,7 +14,7 @@
   <pre><code>oberth worktrees --gone
 oberth down --identity wt_0123456789ab</code></pre>
 </figure>
-<p>daemon 从未见过的身份返回 <code>not_found</code>，它不会猜一个组。目标已经没有运行或预留时，显式身份仍然是一次成功的空停止。</p>
+<p>Runtime Service 从未见过的身份返回 <code>not_found</code>，它不会猜一个组。目标已经没有运行或预留时，显式身份仍然是一次成功的空停止。</p>
 
 <h2 id="ambiguous">目标有歧义的时候</h2>
 <p>两个 checkout 可能落到同一个组名，比如不同父目录下的两个同名目录。它们的组已经合并，按组停止会同时命中两边。这时 <code>down</code> 返回 <code>ambiguous</code>，不替调用方挑一个。改用端口或 pid 点名进程。</p>

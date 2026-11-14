@@ -281,7 +281,7 @@ func TestExitHintOnlyForARealLog(t *testing.T) {
 	}
 }
 
-func TestApplyExitHintsKeepsDaemonHintAndFillsEmpty(t *testing.T) {
+func TestApplyExitHintsKeepsRuntimeServiceHintAndFillsEmpty(t *testing.T) {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "api.log")
 	if err := os.WriteFile(log, []byte("boom\n"), 0o600); err != nil {
@@ -289,14 +289,14 @@ func TestApplyExitHintsKeepsDaemonHintAndFillsEmpty(t *testing.T) {
 	}
 	records := []rpc.RunRecord{
 		{Name: "api", Reason: "crashed", LogPath: log},
-		{Name: "other", Reason: "crashed", LogPath: log, Hint: "a richer daemon hint"},
+		{Name: "other", Reason: "crashed", LogPath: log, Hint: "a richer runtime service hint"},
 	}
 	applyExitHints(records)
 	if records[0].Hint != "oberth logs api --once" {
 		t.Fatalf("filled hint = %q", records[0].Hint)
 	}
-	if records[1].Hint != "a richer daemon hint" {
-		t.Fatalf("daemon hint overwritten: %q", records[1].Hint)
+	if records[1].Hint != "a richer runtime service hint" {
+		t.Fatalf("runtime service hint overwritten: %q", records[1].Hint)
 	}
 }
 
@@ -398,7 +398,7 @@ func TestPublishAttentionSurvivesTurningItOff(t *testing.T) {
 }
 
 // A checkout can keep its runtime facts after its manifest is deleted, and the
-// daemon's row keeps the path it last read. An empty service list there means
+// runtime service's row keeps the path it last read. An empty service list there means
 // nothing was read, not that nothing was declared, so the document has to say
 // which one it is.
 func TestMissingManifestDistinguishesAbsentFromEmpty(t *testing.T) {

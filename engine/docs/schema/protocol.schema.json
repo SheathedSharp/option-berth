@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/sheathedsharp/option-berth/engine/docs/schema/protocol.schema.json",
-  "title": "option-berth daemon protocol",
+  "title": "option-berth runtime service protocol",
   "description": "Generated from the Go types in internal/state and internal/runtimesvc/rpc. Do not edit by hand; run `go generate ./...`.",
-  "protocol_version": "2.2.0",
+  "protocol_version": "3.0.0",
   "definitions": {
     "ChangeGroup": {
       "properties": {
@@ -150,172 +150,6 @@
       "required": [
         "ok",
         "config"
-      ]
-    },
-    "DaemonDoctorParams": {
-      "properties": {
-        "only": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "project": {
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
-    "DaemonDoctorResult": {
-      "properties": {
-        "ok": {
-          "type": "boolean"
-        },
-        "checks": {
-          "items": {
-            "$ref": "#/definitions/DoctorCheck"
-          },
-          "type": "array"
-        },
-        "version": {
-          "type": "string"
-        },
-        "daemon_version": {
-          "type": "string"
-        }
-      },
-      "type": "object",
-      "required": [
-        "ok",
-        "checks",
-        "version",
-        "daemon_version"
-      ]
-    },
-    "DaemonHelloParams": {
-      "properties": {
-        "client": {
-          "type": "string"
-        },
-        "client_version": {
-          "type": "string"
-        },
-        "keepalive": {
-          "type": "boolean"
-        }
-      },
-      "type": "object",
-      "required": [
-        "client",
-        "client_version"
-      ]
-    },
-    "DaemonHelloResult": {
-      "properties": {
-        "protocol_version": {
-          "type": "string"
-        },
-        "daemon_version": {
-          "type": "string"
-        },
-        "pid": {
-          "type": "integer"
-        },
-        "started_at": {
-          "type": "string"
-        },
-        "capabilities": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "socket": {
-          "type": "string"
-        },
-        "binary_path": {
-          "type": "string"
-        },
-        "keepalive": {
-          "type": "boolean"
-        },
-        "observation": {
-          "$ref": "#/definitions/Observation"
-        }
-      },
-      "type": "object",
-      "required": [
-        "protocol_version",
-        "daemon_version",
-        "pid",
-        "started_at",
-        "capabilities",
-        "socket",
-        "binary_path",
-        "keepalive"
-      ]
-    },
-    "DaemonSchemaResult": {
-      "properties": {
-        "schema": true
-      },
-      "type": "object",
-      "required": [
-        "schema"
-      ]
-    },
-    "DaemonStatusResult": {
-      "properties": {
-        "pid": {
-          "type": "integer"
-        },
-        "uptime": {
-          "type": "string"
-        },
-        "subscribers": {
-          "type": "integer"
-        },
-        "last_scan_at": {
-          "type": "string"
-        },
-        "commit": {
-          "type": "string"
-        },
-        "built": {
-          "type": "string"
-        },
-        "scan_interval_ms": {
-          "type": "integer"
-        },
-        "scan_base_interval_ms": {
-          "type": "integer"
-        },
-        "stats_interval_ms": {
-          "type": "integer"
-        },
-        "scans": {
-          "type": "integer"
-        },
-        "db_path": {
-          "type": "string"
-        },
-        "observation": {
-          "$ref": "#/definitions/Observation"
-        }
-      },
-      "type": "object",
-      "required": [
-        "pid",
-        "uptime",
-        "subscribers",
-        "last_scan_at",
-        "commit",
-        "built",
-        "scan_interval_ms",
-        "scan_base_interval_ms",
-        "stats_interval_ms",
-        "scans",
-        "db_path"
       ]
     },
     "Delta": {
@@ -1960,6 +1794,357 @@
         "pid"
       ]
     },
+    "RuntimeServiceDoctorParams": {
+      "properties": {
+        "only": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "project": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "RuntimeServiceDoctorResult": {
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "checks": {
+          "items": {
+            "$ref": "#/definitions/DoctorCheck"
+          },
+          "type": "array"
+        },
+        "version": {
+          "type": "string"
+        },
+        "runtime_service_version": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "ok",
+        "checks",
+        "version",
+        "runtime_service_version"
+      ]
+    },
+    "RuntimeServiceHelloParams": {
+      "properties": {
+        "client": {
+          "type": "string"
+        },
+        "client_version": {
+          "type": "string"
+        },
+        "keepalive": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "required": [
+        "client",
+        "client_version"
+      ]
+    },
+    "RuntimeServiceHelloResult": {
+      "properties": {
+        "protocol_version": {
+          "type": "string"
+        },
+        "runtime_service_version": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "socket": {
+          "type": "string"
+        },
+        "binary_path": {
+          "type": "string"
+        },
+        "keepalive": {
+          "type": "boolean"
+        },
+        "observation": {
+          "$ref": "#/definitions/Observation"
+        }
+      },
+      "type": "object",
+      "required": [
+        "protocol_version",
+        "runtime_service_version",
+        "pid",
+        "started_at",
+        "capabilities",
+        "socket",
+        "binary_path",
+        "keepalive"
+      ]
+    },
+    "RuntimeServiceSchemaResult": {
+      "properties": {
+        "schema": true
+      },
+      "type": "object",
+      "required": [
+        "schema"
+      ]
+    },
+    "RuntimeServiceStatusResult": {
+      "properties": {
+        "pid": {
+          "type": "integer"
+        },
+        "uptime": {
+          "type": "string"
+        },
+        "subscribers": {
+          "type": "integer"
+        },
+        "last_scan_at": {
+          "type": "string"
+        },
+        "commit": {
+          "type": "string"
+        },
+        "built": {
+          "type": "string"
+        },
+        "scan_interval_ms": {
+          "type": "integer"
+        },
+        "scan_base_interval_ms": {
+          "type": "integer"
+        },
+        "stats_interval_ms": {
+          "type": "integer"
+        },
+        "scans": {
+          "type": "integer"
+        },
+        "db_path": {
+          "type": "string"
+        },
+        "observation": {
+          "$ref": "#/definitions/Observation"
+        }
+      },
+      "type": "object",
+      "required": [
+        "pid",
+        "uptime",
+        "subscribers",
+        "last_scan_at",
+        "commit",
+        "built",
+        "scan_interval_ms",
+        "scan_base_interval_ms",
+        "stats_interval_ms",
+        "scans",
+        "db_path"
+      ]
+    },
+    "RuntimeStorageReadParams": {
+      "properties": {
+        "section": {
+          "type": "string",
+          "enum": [
+            "schema",
+            "worktrees",
+            "run_exits"
+          ]
+        },
+        "expected_db_path": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "section"
+      ]
+    },
+    "RuntimeStorageReadResult": {
+      "properties": {
+        "section": {
+          "type": "string"
+        },
+        "schema": {
+          "$ref": "#/definitions/RuntimeStorageSchema"
+        },
+        "worktrees": {
+          "items": {
+            "$ref": "#/definitions/RuntimeStorageWorktree"
+          },
+          "type": "array"
+        },
+        "run_exits": {
+          "items": {
+            "$ref": "#/definitions/RuntimeStorageRunExit"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "section"
+      ]
+    },
+    "RuntimeStorageRunExit": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "group": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "cmd": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "port_hint": {
+          "type": "integer"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "config_path": {
+          "type": "string"
+        },
+        "start_id": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string"
+        },
+        "log_path": {
+          "type": "string"
+        },
+        "log_offset": {
+          "type": "integer"
+        },
+        "code": {
+          "type": "integer"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "exited_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "last_lines": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "pid",
+        "group",
+        "name",
+        "cmd",
+        "cwd",
+        "port_hint",
+        "started_at",
+        "config_path",
+        "start_id",
+        "origin",
+        "log_path",
+        "log_offset",
+        "code",
+        "reason",
+        "exited_at",
+        "last_lines"
+      ]
+    },
+    "RuntimeStorageSchema": {
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer"
+        },
+        "size": {
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "required": [
+        "path",
+        "version",
+        "size"
+      ]
+    },
+    "RuntimeStorageWorktree": {
+      "properties": {
+        "identity": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        },
+        "group": {
+          "type": "string"
+        },
+        "config_path": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "worktree": {
+          "type": "string"
+        },
+        "first_seen": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "last_seen": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "type": "object",
+      "required": [
+        "identity",
+        "root",
+        "group",
+        "config_path",
+        "project",
+        "worktree",
+        "first_seen",
+        "last_seen"
+      ]
+    },
     "Scope": {
       "properties": {
         "worktrees": {
@@ -2742,7 +2927,7 @@
         "at": {
           "type": "string"
         },
-        "daemon_version": {
+        "runtime_service_version": {
           "type": "string"
         },
         "ports": {
@@ -2771,7 +2956,7 @@
       "required": [
         "seq",
         "at",
-        "daemon_version",
+        "runtime_service_version",
         "ports",
         "groups",
         "sessions"
@@ -2833,7 +3018,7 @@
         "at": {
           "type": "string"
         },
-        "daemon_version": {
+        "runtime_service_version": {
           "type": "string"
         },
         "ports": {
@@ -3502,46 +3687,6 @@
         "$ref": "#/definitions/ConfigSetResult"
       }
     },
-    "daemon.doctor": {
-      "params": {
-        "$ref": "#/definitions/DaemonDoctorParams"
-      },
-      "result": {
-        "$ref": "#/definitions/DaemonDoctorResult"
-      }
-    },
-    "daemon.hello": {
-      "params": {
-        "$ref": "#/definitions/DaemonHelloParams"
-      },
-      "result": {
-        "$ref": "#/definitions/DaemonHelloResult"
-      }
-    },
-    "daemon.schema": {
-      "params": {
-        "$ref": "#/definitions/Empty"
-      },
-      "result": {
-        "$ref": "#/definitions/DaemonSchemaResult"
-      }
-    },
-    "daemon.shutdown": {
-      "params": {
-        "$ref": "#/definitions/Empty"
-      },
-      "result": {
-        "$ref": "#/definitions/OKResult"
-      }
-    },
-    "daemon.status": {
-      "params": {
-        "$ref": "#/definitions/Empty"
-      },
-      "result": {
-        "$ref": "#/definitions/DaemonStatusResult"
-      }
-    },
     "groups.code": {
       "params": {
         "$ref": "#/definitions/GroupsCodeParams"
@@ -3672,6 +3817,54 @@
       },
       "result": {
         "$ref": "#/definitions/OKResult"
+      }
+    },
+    "runtime.service.doctor": {
+      "params": {
+        "$ref": "#/definitions/RuntimeServiceDoctorParams"
+      },
+      "result": {
+        "$ref": "#/definitions/RuntimeServiceDoctorResult"
+      }
+    },
+    "runtime.service.hello": {
+      "params": {
+        "$ref": "#/definitions/RuntimeServiceHelloParams"
+      },
+      "result": {
+        "$ref": "#/definitions/RuntimeServiceHelloResult"
+      }
+    },
+    "runtime.service.schema": {
+      "params": {
+        "$ref": "#/definitions/Empty"
+      },
+      "result": {
+        "$ref": "#/definitions/RuntimeServiceSchemaResult"
+      }
+    },
+    "runtime.service.shutdown": {
+      "params": {
+        "$ref": "#/definitions/Empty"
+      },
+      "result": {
+        "$ref": "#/definitions/OKResult"
+      }
+    },
+    "runtime.service.status": {
+      "params": {
+        "$ref": "#/definitions/Empty"
+      },
+      "result": {
+        "$ref": "#/definitions/RuntimeServiceStatusResult"
+      }
+    },
+    "runtime.storage.read": {
+      "params": {
+        "$ref": "#/definitions/RuntimeStorageReadParams"
+      },
+      "result": {
+        "$ref": "#/definitions/RuntimeStorageReadResult"
       }
     },
     "sessions.kill": {

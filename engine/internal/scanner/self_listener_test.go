@@ -7,10 +7,10 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
-// The daemon's self-probe binds a loopback socket in the daemon process. The
-// production scan must not publish that socket as the daemon's own listener: it
-// is not a service, and attributing it to the daemon's working directory would
-// make it look like an undeclared listener of whatever checkout the daemon was
+// The runtime service's self-probe binds a loopback socket in the runtime service process. The
+// production scan must not publish that socket as the runtime service's own listener: it
+// is not a service, and attributing it to the runtime service's working directory would
+// make it look like an undeclared listener of whatever checkout the runtime service was
 // started in.
 func TestWithoutOwnListenersDropsThisProcess(t *testing.T) {
 	self := ports.ListeningPort{Port: 49123, PID: os.Getpid(), Process: "oberth"}

@@ -99,7 +99,7 @@ func compilePortSchema(t *testing.T) *jsonschema.Schema {
 	return sch
 }
 
-// TestPortRowsCarryResolvedGroups: with no daemon, the resolver's group,
+// TestPortRowsCarryResolvedGroups: with no runtime service, the resolver's group,
 // group_source and project_root reach the wire rows, and the rows still
 // satisfy the checked-in Port definition.
 func TestPortRowsCarryResolvedGroups(t *testing.T) {

@@ -54,8 +54,8 @@ type Meta struct {
 }
 
 // Origin is the client a request came from, as it named itself in
-// daemon.hello. The engine's own client sends "cli"; the field is carried
-// through unchanged so a future caller kind does not need a daemon change.
+// runtime.service.hello. The engine's own client sends "cli"; the field is carried
+// through unchanged so a future caller kind does not need a runtime service change.
 func Origin(req *runtimesvc.Request) string {
 	if req == nil || req.Conn == nil {
 		// A request with no connection has named no client, so the run it is
@@ -126,7 +126,7 @@ func exitReasonForRecord(code int, stopped bool, rec Record) string {
 // StartFailed records a service attempt that failed before a child process was
 // registered. It uses the same exit history as a process that later exits, so
 // status can distinguish "never started" from "could not start" and the
-// evidence survives a daemon restart.
+// evidence survives a runtime service restart.
 func (r *Registry) StartFailed(rec Record, message string) Exit {
 	return r.StartFailedWithReason(rec, ReasonStartFailed, message)
 }

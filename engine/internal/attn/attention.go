@@ -1,5 +1,5 @@
 // Package attention defines the derived handoff artifact an optional adapter
-// can publish for a coding agent. It deliberately has no daemon or model
+// can publish for a coding agent. It deliberately has no runtime service or model
 // dependency: runtime facts remain option-berth's source of truth, while model
 // may enrich an artifact outside the control path.
 package attn
@@ -50,7 +50,7 @@ const (
 
 // Facts is the small, code-produced input needed to derive an attention
 // artifact. It intentionally mirrors evidence rather than importing the
-// command package, so adapters and tests can consume it without a daemon.
+// command package, so adapters and tests can consume it without a runtime.service.
 type Facts struct {
 	StateRevision  string
 	ObservedAt     time.Time

@@ -34,10 +34,10 @@ import (
 const (
 	pipeWrite = 30 * time.Second
 	pipeRead  = 30 * time.Second
-	// settle bounds how long a test may wait for work the daemon schedules on
+	// settle bounds how long a test may wait for work the runtime service schedules on
 	// its own clock: a scan tick, a delta, a stream ending. The scan loop's
 	// base interval is two seconds, so a bound of only a few of those would
-	// measure the runner rather than the daemon.
+	// measure the runner rather than the runtime.service.
 	settle = 30 * time.Second
 )
 
@@ -114,7 +114,7 @@ func newHarness(t *testing.T, ctx context.Context, tunes ...tune) *testHarness {
 // second.
 func (hn *testHarness) scannerOptions() scanner.Options {
 	return scanner.Options{
-		DaemonVersion: "test",
+		RuntimeServiceVersion: "test",
 		// Scan answers from the rows the test installed, copied out so a caller
 		// cannot mutate the harness's own slice.
 		Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
@@ -172,7 +172,7 @@ func (hn *testHarness) sampleStats(pids []int) map[int]ports.ProcSample {
 	return answer
 }
 
-// newClient starts a daemon a test only talks to, on a context that test
+// newClient starts a runtime service a test only talks to, on a context that test
 // cancels when it ends, and returns a connected client. Tests that reach into
 // the harness use newHarness instead.
 func newClient(t *testing.T) *testClient {
@@ -236,13 +236,13 @@ func (cl *testClient) send(method string, params any) string {
 	return string(id)
 }
 
-// read returns the next message from the daemon.
+// read returns the next message from the runtime.service.
 func (cl *testClient) read() rpc.Message {
 	cl.t.Helper()
 	cl.conn.SetReadDeadline(time.Now().Add(pipeRead))
 	line, err := cl.r.ReadBytes('\n')
 	if err != nil {
-		cl.t.Fatalf("reading from daemon: %v", err)
+		cl.t.Fatalf("reading from runtime_service: %v", err)
 	}
 	var msg rpc.Message
 	if err := json.Unmarshal(line, &msg); err != nil {
@@ -295,18 +295,18 @@ func TestHelloOverTheCodec(t *testing.T) {
 	hn := newHarness(t, ctx)
 	cl := hn.dial(ctx)
 
-	var hello rpc.DaemonHelloResult
-	if failure := cl.call("daemon.hello", rpc.DaemonHelloParams{
+	var hello rpc.RuntimeServiceHelloResult
+	if failure := cl.call("runtime.service.hello", rpc.RuntimeServiceHelloParams{
 		Client: "cli", ClientVersion: "1.2.3",
 	}, &hello); failure != nil {
-		t.Fatalf("daemon.hello: %v", failure)
+		t.Fatalf("runtime.service.hello: %v", failure)
 	}
 
 	if hello.ProtocolVersion != rpc.ProtocolVersion {
 		t.Errorf("protocol_version = %q, want %q", hello.ProtocolVersion, rpc.ProtocolVersion)
 	}
-	if hello.DaemonVersion != "test" {
-		t.Errorf("daemon_version = %q; the harness daemon is versioned \"test\"", hello.DaemonVersion)
+	if hello.RuntimeServiceVersion != "test" {
+		t.Errorf("runtime_service_version = %q; the harness runtime service is versioned \"test\"", hello.RuntimeServiceVersion)
 	}
 	if hello.PID == 0 {
 		t.Errorf("hello reported no pid: %+v", hello)
@@ -331,9 +331,9 @@ func TestHelloOverTheCodec(t *testing.T) {
 func TestHelloRequiresAClientName(t *testing.T) {
 	cl := newClient(t)
 
-	e := cl.call("daemon.hello", rpc.DaemonHelloParams{ClientVersion: "1"}, nil)
+	e := cl.call("runtime.service.hello", rpc.RuntimeServiceHelloParams{ClientVersion: "1"}, nil)
 	if e == nil {
-		t.Fatal("daemon.hello accepted a request with no client name")
+		t.Fatal("runtime.service.hello accepted a request with no client name")
 	}
 	if e.Code != rpc.CodeInvalidParams || e.Data.Code != "invalid_params" {
 		t.Errorf("error = %+v, want invalid_params", e)
@@ -384,9 +384,9 @@ func TestSnapshotAndStatus(t *testing.T) {
 		t.Error("a snapshot collection marshalled as null; the contract requires arrays")
 	}
 
-	var status rpc.DaemonStatusResult
-	if e := cl.call("daemon.status", rpc.Empty{}, &status); e != nil {
-		t.Fatalf("daemon.status: %v", e)
+	var status rpc.RuntimeServiceStatusResult
+	if e := cl.call("runtime.service.status", rpc.Empty{}, &status); e != nil {
+		t.Fatalf("runtime.service.status: %v", e)
 	}
 	if got := status.Subscribers; got != 0 {
 		t.Errorf("status reports %d subscribers before any subscribe, want 0", got)
@@ -510,7 +510,7 @@ func TestIncludeFiltersEnrichments(t *testing.T) {
 
 	hn := &testHarness{t: t}
 	hn.loop = scanner.New(scanner.Options{
-		DaemonVersion: "test",
+		RuntimeServiceVersion: "test",
 		Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
 			return []ports.ListeningPort{{
 				Port: 9099, BindAddress: "127.0.0.1", PID: 4242, Process: "ruby",
@@ -607,8 +607,8 @@ func (hn *testHarness) awaitDeregistered(t *testing.T, queued int) {
 	}
 }
 
-// TestShutdownAnswersBeforeClosing checks that daemon.shutdown gets its reply
-// out, and daemon_stopping with it, before the socket goes away.
+// TestShutdownAnswersBeforeClosing checks that runtime.service.shutdown gets its reply
+// out, and runtime_service_stopping with it, before the socket goes away.
 func TestShutdownAnswersBeforeClosing(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -620,7 +620,7 @@ func TestShutdownAnswersBeforeClosing(t *testing.T) {
 		t.Fatalf("state.subscribe: %v", e)
 	}
 
-	id := cl.send("daemon.shutdown", rpc.Empty{})
+	id := cl.send("runtime.service.shutdown", rpc.Empty{})
 
 	sawOK, sawStopping := false, false
 	for !sawOK || !sawStopping {
@@ -630,25 +630,25 @@ func TestShutdownAnswersBeforeClosing(t *testing.T) {
 			var ok rpc.OKResult
 			json.Unmarshal(msg.Result, &ok)
 			if !ok.OK {
-				t.Fatalf("daemon.shutdown returned %+v", ok)
+				t.Fatalf("runtime.service.shutdown returned %+v", ok)
 			}
 			sawOK = true
 		case msg.Method == rpc.MethodStateEvent:
 			var ev state.Event
 			json.Unmarshal(msg.Params, &ev)
-			sawStopping = sawStopping || ev.Kind == "daemon_stopping"
+			sawStopping = sawStopping || ev.Kind == "runtime_service_stopping"
 		}
 	}
 }
 
 // TestOversizeMessageIsRejectedNotFatal covers the 4 MiB framing limit: the
-// daemon answers invalid_params and the connection stays up.
+// runtime service answers invalid_params and the connection stays up.
 func TestOversizeMessageIsRejectedNotFatal(t *testing.T) {
 	cl := newClient(t)
 
 	go func() {
 		cl.conn.SetWriteDeadline(time.Now().Add(pipeWrite))
-		io.WriteString(cl.conn, `{"jsonrpc":"2.0","id":1,"method":"daemon.status","params":{"pad":"`)
+		io.WriteString(cl.conn, `{"jsonrpc":"2.0","id":1,"method":"runtime.service.status","params":{"pad":"`)
 		chunk := strings.Repeat("x", 64<<10)
 		for written := 0; written < MaxMessageBytes+(1<<20); written += len(chunk) {
 			if _, err := io.WriteString(cl.conn, chunk); err != nil {
@@ -664,9 +664,9 @@ func TestOversizeMessageIsRejectedNotFatal(t *testing.T) {
 	}
 
 	// The connection survives: the decoder resynced on the next line.
-	var status rpc.DaemonStatusResult
-	if e := cl.call("daemon.status", rpc.Empty{}, &status); e != nil {
-		t.Fatalf("daemon.status after an oversize message: %v", e)
+	var status rpc.RuntimeServiceStatusResult
+	if e := cl.call("runtime.service.status", rpc.Empty{}, &status); e != nil {
+		t.Fatalf("runtime.service.status after an oversize message: %v", e)
 	}
 }
 
@@ -681,9 +681,9 @@ func TestStreamCancelOnAnUnknownID(t *testing.T) {
 	}
 }
 
-// TestIdleTimeoutStopsTheDaemon and TestKeepaliveDisablesIdleTimeout are the
+// TestIdleTimeoutStopsTheRuntimeService and TestKeepaliveDisablesIdleTimeout are the
 // two halves of the idle rule.
-func TestIdleTimeoutStopsTheDaemon(t *testing.T) {
+func TestIdleTimeoutStopsTheRuntimeService(t *testing.T) {
 	idle := New(Options{Socket: "/test/option-berth.sock", IdleTimeout: 40 * time.Millisecond,
 		Scanner: scanner.New(scanner.Options{})})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -693,7 +693,7 @@ func TestIdleTimeoutStopsTheDaemon(t *testing.T) {
 	select {
 	case <-idle.stopping:
 	case <-time.After(3 * time.Second):
-		t.Fatal("the daemon did not stop after its idle timeout")
+		t.Fatal("the runtime service did not stop after its idle timeout")
 	}
 }
 
@@ -708,7 +708,7 @@ func TestKeepaliveDisablesIdleTimeout(t *testing.T) {
 
 	select {
 	case <-idle.stopping:
-		t.Fatal("the daemon idled out with a keepalive client connected")
+		t.Fatal("the runtime service idled out with a keepalive client connected")
 	case <-time.After(300 * time.Millisecond):
 	}
 }
@@ -735,10 +735,10 @@ func (cl *testClient) subscribeAndSettle(p rpc.StateSubscribeParams) state.Delta
 	return cl.nextDelta()
 }
 
-// TestStatusReportsConfiguredIntervals: `daemon.scan_interval` and
-// `daemon.stats_interval` are both read once at startup, so `daemon.status` is
+// TestStatusReportsConfiguredIntervals: `runtime_service.scan_interval` and
+// `runtime_service.stats_interval` are both read once at startup, so `runtime.service.status` is
 // the only way for a client — or for the person who just edited the config file
-// and restarted — to learn which values the running daemon is actually on.
+// and restarted — to learn which values the running runtime service is actually on.
 func TestStatusReportsConfiguredIntervals(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -749,9 +749,9 @@ func TestStatusReportsConfiguredIntervals(t *testing.T) {
 	})
 	cl := hn.dial(ctx)
 
-	var status rpc.DaemonStatusResult
-	if e := cl.call("daemon.status", rpc.Empty{}, &status); e != nil {
-		t.Fatalf("asking a running daemon for its status: %v", e)
+	var status rpc.RuntimeServiceStatusResult
+	if e := cl.call("runtime.service.status", rpc.Empty{}, &status); e != nil {
+		t.Fatalf("asking a running runtime service for its status: %v", e)
 	}
 	if status.ScanBaseIntervalMs != 4000 {
 		t.Errorf("scan_base_interval_ms = %d, want the configured 4000", status.ScanBaseIntervalMs)

@@ -11,9 +11,9 @@ import (
 )
 
 // attentionChanges reuses the existing Runtime Service stream. It only dials:
-// absent/older daemons keep the existing bounded poll path, never autostart.
+// absent/older runtime services keep the existing bounded poll path, never autostart.
 func attentionChanges(ctx context.Context, project string) (runner.Trigger, func()) {
-	if noDaemonFlag {
+	if noRuntimeServiceFlag {
 		return runner.Trigger{}, func() {}
 	}
 	_, root, err := statusProject(project)
@@ -24,7 +24,7 @@ func attentionChanges(ctx context.Context, project string) (runner.Trigger, func
 	return runner.OpenChanges(ctx, groups.WorktreeTokenFor(root), time.Second, func(ctx context.Context, after uint64) (runner.ChangeStream, error) {
 		connectCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
-		c, err := dialDaemon(connectCtx)
+		c, err := dialRuntimeService(connectCtx)
 		if err != nil {
 			return runner.ChangeStream{}, err
 		}

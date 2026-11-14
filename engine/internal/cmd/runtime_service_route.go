@@ -14,41 +14,41 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// noDaemonFlag is the persistent --no-daemon flag. It pins every read command
+// noRuntimeServiceFlag is the persistent --no-runtime-service flag. It pins every read command
 // to the direct scan path and drops the fallback note with it.
-var noDaemonFlag bool
+var noRuntimeServiceFlag bool
 
-// fallbackNoteOnce keeps the "daemon unavailable" note to one line per
-// invocation, no matter how many times a command reaches for the daemon (spec,
+// fallbackNoteOnce keeps the "runtime service unavailable" note to one line per
+// invocation, no matter how many times a command reaches for the runtime service (spec,
 // "Error handling").
 var fallbackNoteOnce sync.Once
 
 func noteFallback() {
 	fallbackNoteOnce.Do(func() {
-		fmt.Fprintln(os.Stderr, display.Dim("note: daemon unavailable, using direct scan"))
+		fmt.Fprintln(os.Stderr, display.Dim("note: runtime service unavailable, using direct scan"))
 	})
 }
 
-// fallbackCauseOnce is noteFallback for a daemon that answered with an error.
-// The cause is printed, not swallowed: "the daemon could not scan" and "there
-// is no daemon" are different facts.
+// fallbackCauseOnce is noteFallback for a runtime service that answered with an error.
+// The cause is printed, not swallowed: "the runtime service could not scan" and "there
+// is no runtime service" are different facts.
 var fallbackCauseOnce sync.Once
 
 func noteFallbackBecause(err error) {
 	fallbackCauseOnce.Do(func() {
 		_, msg, _ := describe(err)
-		fmt.Fprintf(os.Stderr, "%s\n", display.Dim("note: daemon failed ("+msg+"), using direct scan"))
+		fmt.Fprintf(os.Stderr, "%s\n", display.Dim("note: runtime service failed ("+msg+"), using direct scan"))
 	})
 }
 
-// dialDaemon is the seam the CLI tests replace. It connects to a daemon that is
+// dialRuntimeService is the seam the CLI tests replace. It connects to a runtime service that is
 // already listening and never starts one: every command routed through here
-// works without a daemon — `status --no-daemon` and the `git` commands are the
+// works without a runtime service — `status --no-runtime-service` and the `git` commands are the
 // clear cases — so spawning a background process behind the user's back would
-// buy nothing they did not ask for. `oberth serve` and the commands that
-// genuinely need the daemon are what start it, and those autostart with
-// `oberth serve --detach`
-var dialDaemon = func(ctx context.Context) (*client.Client, error) {
+// buy nothing they did not ask for. `oberth runtime service run` and the commands that
+// genuinely need the runtime service are what start it, and those autostart with
+// `oberth runtime service run --detach`
+var dialRuntimeService = func(ctx context.Context) (*client.Client, error) {
 	return client.Dial(ctx, client.ClientInfo{
 		Name:    "cli",
 		Version: buildinfo.Version,
@@ -56,38 +56,38 @@ var dialDaemon = func(ctx context.Context) (*client.Client, error) {
 }
 
 // dialOrNil returns a connected client, or nil when the caller should fall
-// back to a direct scan. --no-daemon skips the dial entirely; a failed dial is
+// back to a direct scan. --no-runtime-service skips the dial entirely; a failed dial is
 // silent here because whether it deserves a note depends on what the caller
 // does next.
 func dialOrNil(ctx context.Context) *client.Client {
-	if noDaemonFlag {
+	if noRuntimeServiceFlag {
 		return nil
 	}
-	c, err := dialDaemon(ctx)
+	c, err := dialRuntimeService(ctx)
 	if err != nil {
 		return nil
 	}
 	return c
 }
 
-// daemonClient returns a connected client, or nil when the caller should fall
-// back to a direct scan. A nil result with --no-daemon is silent; a daemon that
+// runtimeServiceClient returns a connected client, or nil when the caller should fall
+// back to a direct scan. A nil result with --no-runtime-service is silent; a runtime service that
 // could not be reached prints the one-line note first.
-func daemonClient(ctx context.Context) *client.Client {
+func runtimeServiceClient(ctx context.Context) *client.Client {
 	c := dialOrNil(ctx)
-	if c == nil && !noDaemonFlag {
+	if c == nil && !noRuntimeServiceFlag {
 		noteFallback()
 	}
 	return c
 }
 
-// daemonUp reports whether a daemon is listening, without the note
-// `daemonClient` prints on the way past.
+// runtimeServiceUp reports whether a runtime service is listening, without the note
+// `runtimeServiceClient` prints on the way past.
 //
-// It is for a command that has nothing to fall back to: "daemon unavailable,
+// It is for a command that has nothing to fall back to: "runtime service unavailable,
 // using direct scan" is a useful sentence for `list`, and a false one for a
-// caller about to say that the daemon is required.
-func daemonUp(ctx context.Context) bool {
+// caller about to say that the runtime service is required.
+func runtimeServiceUp(ctx context.Context) bool {
 	c := dialOrNil(ctx)
 	if c == nil {
 		return false
@@ -96,7 +96,7 @@ func daemonUp(ctx context.Context) bool {
 	return true
 }
 
-// daemonList reads the worktree-scoped live snapshot through the daemon and
+// runtimeServiceList reads the worktree-scoped live snapshot through the runtime service and
 // converts its evidence rows back to the scanner shape used by kill and logs.
 // The old whole-machine ports.list endpoint is intentionally gone.
 //
@@ -106,7 +106,7 @@ func daemonUp(ctx context.Context) bool {
 // machine it runs on. The wire carries no host field either: a field every
 // handler ignored was indistinguishable from one that worked, so it was
 // withdrawn rather than kept and filled with "local".
-func daemonList(ctx context.Context, c *client.Client) ([]ports.ListeningPort, error) {
+func runtimeServiceList(ctx context.Context, c *client.Client) ([]ports.ListeningPort, error) {
 	var snap state.Snapshot
 	if err := c.Call(ctx, "state.snapshot", rpc.StateSnapshotParams{}, &snap); err != nil {
 		return nil, err

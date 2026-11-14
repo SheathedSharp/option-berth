@@ -30,7 +30,7 @@ import (
 // TestCwdGroupsPortsUnderTheGitRoot is the demo: two listeners started inside
 // one checkout — one at its root, one in a subdirectory — carry the working
 // directory they were started in, resolve a project_root at the checkout, and
-// land in the same `<repo>` group in the daemon snapshot without any config
+// land in the same `<repo>` group in the runtime service snapshot without any config
 // file claiming them.
 func TestCwdGroupsPortsUnderTheGitRoot(t *testing.T) {
 	helper, err := buildListener()
@@ -62,7 +62,7 @@ func TestCwdGroupsPortsUnderTheGitRoot(t *testing.T) {
 	defer cancel()
 
 	cl := sandbox.connect(ctx)
-	// A subscriber keeps the daemon's scan loop running: with nobody listening
+	// A subscriber keeps the runtime service's scan loop running: with nobody listening
 	// it parks between requests.
 	sub, err := cl.Subscribe(ctx, client.SubscribeOptions{Buffer: 256})
 	if err != nil {
@@ -180,7 +180,7 @@ func waitForCwds(t *testing.T, ctx context.Context, cl *client.Client, want map[
 	for port := range want {
 		row, seen := rows[port]
 		if !seen {
-			t.Errorf("the daemon never reported port %d at all", port)
+			t.Errorf("the runtime service never reported port %d at all", port)
 			continue
 		}
 		t.Errorf("port %d never got a cwd; last row: %+v", port, row)
