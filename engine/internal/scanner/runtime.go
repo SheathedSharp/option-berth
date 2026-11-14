@@ -38,6 +38,9 @@ func (l *Loop) projectRuntime(ctx context.Context, snap state.Snapshot, fresh bo
 // RefreshRuntimeContext publishes registered run progress without entering the
 // OS/health ordering gate. Listener age remains independent and explicit.
 func (l *Loop) RefreshRuntimeContext(ctx context.Context) (state.Snapshot, bool, error) {
+	return l.refreshRuntime(ctx, false)
+}
+func (l *Loop) refreshRuntime(ctx context.Context, busyRead bool) (state.Snapshot, bool, error) {
 	if err := l.commitMu.LockContext(ctx); err != nil {
 		return state.Snapshot{}, false, err
 	}
@@ -50,9 +53,24 @@ func (l *Loop) RefreshRuntimeContext(ctx context.Context) (state.Snapshot, bool,
 	}
 	age := l.now().Sub(at)
 	fresh := age >= 0 && age < CacheTTL
-	next, provided, err := l.projectRuntime(ctx, previous, fresh)
+	next, provided, err := l.projectRuntime(ctx, previous, true)
 	if err != nil || !provided {
 		return previous, false, err
+	}
+	if err = ctx.Err(); err != nil {
+		return previous, false, err
+	}
+	// Cache expiration alone is not a runtime event. An ordinary read will
+	// refresh the observer below; only changed runs or a busy-read fallback
+	// may need to publish explicit listener uncertainty.
+	if !snapshotChanged(previous, next, true) && !busyRead {
+		return previous, true, nil
+	}
+	if !fresh {
+		next, _, err = l.projectRuntime(ctx, previous, false)
+		if err != nil {
+			return previous, false, err
+		}
 	}
 	if err = ctx.Err(); err != nil {
 		return previous, false, err

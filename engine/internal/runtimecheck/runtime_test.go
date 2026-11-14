@@ -91,3 +91,14 @@ func TestRegisteredWorkerProgressWhileObserverBusy(t *testing.T) {
 	cancel()
 	<-done
 }
+
+func TestUnchangedRuntimeRefreshDoesNotInventAnObservationFailure(t *testing.T) {
+	loop, _, _, _, release := fixture(t)
+	defer close(release)
+	before := loop.Cached()
+	loop.Invalidate()
+	after, have, err := loop.RefreshRuntimeContext(context.Background())
+	if err != nil || !have || after.Seq != before.Seq || after.Observation != nil {
+		t.Fatalf("unchanged registry expired ordinary cache: seq=%d/%d obs=%+v err=%v", before.Seq, after.Seq, after.Observation, err)
+	}
+}

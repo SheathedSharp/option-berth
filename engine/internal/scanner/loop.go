@@ -1429,12 +1429,13 @@ func (l *Loop) SnapshotAll(include Include) (state.Snapshot, error) {
 // never for an owner that has cancelled its request.
 func (l *Loop) SnapshotAllContext(ctx context.Context, include Include) (state.Snapshot, error) {
 	// Refresh the same registry projection before reusing a listener cache.
-	snap, have, err := l.RefreshRuntimeContext(ctx)
+	busy := len(l.runGate) > 0
+	snap, have, err := l.refreshRuntime(ctx, busy)
 	if err != nil {
 		return state.Snapshot{}, err
 	}
 	// A busy observer does not own the progress of already-known runs.
-	if have && len(l.runGate) > 0 {
+	if have && busy {
 		return snap, nil
 	}
 	return l.readSnapshot(ctx, include, mayCoalesce, l.cached)
