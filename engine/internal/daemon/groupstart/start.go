@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/sheathedsharp/option-berth/engine/internal/runstate"
 	"os"
 	"path/filepath"
 	"sort"
@@ -1135,12 +1136,37 @@ func reportPending(observed []pendingDependency, onPending func([]string)) {
 }
 
 func pendingContext(ctx context.Context, rt *daemon.Runtime, group string, deps []groups.Service, want map[string]int) []pendingDependency {
-	snap, err := rt.Scanner.SnapshotForReadinessContext(ctx)
+	needsObservation := false
+	for _, dep := range deps {
+		if dep.HasPort() || dep.Health != "" {
+			needsObservation = true
+			break
+		}
+	}
+	var snap state.Snapshot
+	var err error
+	if !needsObservation {
+		var have bool
+		snap, have, err = rt.Scanner.RefreshRuntimeContext(ctx)
+		if err == nil && !have {
+			snap, err = rt.Scanner.SnapshotForReadinessContext(ctx)
+		}
+	} else {
+		snap, err = rt.Scanner.SnapshotForReadinessContext(ctx)
+	}
 	if err != nil {
 		return []pendingDependency{{Display: "fresh dependency state: " + err.Error()}}
 	}
 	var missing []pendingDependency
 	for _, dep := range deps {
+		if row, found := serviceRow(snap, group, dep.Name); found {
+			// The same pure readiness verdict drives CLI waits and dependencies.
+			ready, reason := runstate.Ready(state.Group{Services: []state.Service{row}}, snap.Ports, dep.Name)
+			if !ready {
+				missing = append(missing, pendingDependency{Name: dep.Name, Display: dep.Name + " (" + reason + ")"})
+			}
+			continue
+		}
 		if dep.HasPort() {
 			if !listening(snap, group, dep, want[dep.Name]) {
 				missing = append(missing, pendingDependency{Name: dep.Name, Display: fmt.Sprintf("%s on port %d", dep.Name, want[dep.Name])})

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/sheathedsharp/option-berth/engine/internal/runstate"
 	"os"
 	"strconv"
 	"strings"
@@ -89,9 +90,31 @@ func restartRun(cmd *cobra.Command, args []string) error {
 	} else if startParams.ConfigPath != nil {
 		stop.ConfigPath = startParams.ConfigPath
 	}
-	var stopped rpc.KillEnvelope
-	if err := c.Call(cmd.Context(), "groups.kill", stop, &stopped); err != nil {
-		return restartRefusal(cmd.Context(), c, startParams, err)
+
+	type startResult struct {
+		initial rpc.GroupsStartResult
+		chunks  []rpc.GroupsStartChunk
+		end     rpc.GroupsStartEnd
+	}
+	stopped, started, err := runstate.Restart(cmd.Context(),
+		func(ctx context.Context) (rpc.KillEnvelope, bool, error) {
+			var stopped rpc.KillEnvelope
+			if err := c.Call(ctx, "groups.kill", stop, &stopped); err != nil {
+				return stopped, false, restartRefusal(ctx, c, startParams, err)
+			}
+			return stopped, stopped.OK, nil
+		},
+		func(ctx context.Context) (startResult, error) {
+			var result startResult
+			stream, err := c.Stream(ctx, "groups.start", startParams, &result.initial)
+			if err != nil {
+				return result, cliError(err)
+			}
+			result.chunks, result.end, err = collectStart(stream)
+			return result, err
+		})
+	if err != nil {
+		return err
 	}
 	if !stopped.OK {
 		if restartJSON {
@@ -102,16 +125,7 @@ func restartRun(cmd *cobra.Command, args []string) error {
 		}
 		return reportKill(os.Stdout, stopped.Results, snapshot, false, false)
 	}
-
-	var initial rpc.GroupsStartResult
-	stream, err := c.Stream(cmd.Context(), "groups.start", startParams, &initial)
-	if err != nil {
-		return cliError(err)
-	}
-	chunks, end, err := collectStart(stream)
-	if err != nil {
-		return err
-	}
+	initial, chunks, end := started.initial, started.chunks, started.end
 
 	if restartJSON {
 		if err := printJSON(restartDocument{
