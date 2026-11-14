@@ -49,7 +49,7 @@ func modulePath(t *testing.T) string {
 // neither may acquire a network client. This is the boundary that lets a
 // user run the whole engine with no key and no settings file at all.
 func TestDaemonAndScannerNeverImportTheModelClient(t *testing.T) {
-	for _, pkg := range []string{"../daemon", "../scanner", "../groups", "../ports", "../servicefacts"} {
+	for _, pkg := range []string{"../runtimesvc", "../runtimecore", "../scanner", "../groups", "../ports", "../servicefacts"} {
 		t.Run(filepath.Base(pkg), func(t *testing.T) {
 			for _, dep := range dependencyClosure(t, pkg) {
 				if dep == "internal/attn/model" || strings.HasPrefix(dep, "internal/attn/model/") {

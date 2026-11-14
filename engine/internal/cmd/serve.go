@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/buildinfo"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
 	"github.com/sheathedsharp/option-berth/engine/internal/userenv"
 	"github.com/spf13/cobra"
 )
@@ -54,7 +54,7 @@ func serveRun(command *cobra.Command, _ []string) error {
 	if serveDetach {
 		// The parent only forks; the process that becomes the daemon is the
 		// child, and it is the one that asks for the PATH below.
-		return detachDaemon(command.Context(), daemon.SocketPath())
+		return detachDaemon(command.Context(), runtimesvc.SocketPath())
 	}
 	return runForegroundDaemon(command.Context())
 }
@@ -84,8 +84,8 @@ func runForegroundDaemon(ctx context.Context) error {
 		logger.Info("PATH taken from the login shell", "path", loginPath)
 	}
 
-	srv := daemon.New(daemon.Options{
-		Socket:        daemon.SocketPath(),
+	srv := runtimesvc.New(runtimesvc.Options{
+		Socket:        runtimesvc.SocketPath(),
 		Version:       buildinfo.Version,
 		IdleTimeout:   loadedConfig.Daemon.ResolvedIdleTimeout(),
 		StatsInterval: loadedConfig.Daemon.ResolvedStatsInterval(),
@@ -100,7 +100,7 @@ func runForegroundDaemon(ctx context.Context) error {
 	switch {
 	case serveErr == nil:
 		return nil
-	case daemon.IsAlreadyRunning(serveErr):
+	case runtimesvc.IsAlreadyRunning(serveErr):
 		// Another daemon already does the job; this is a refusal, not a crash.
 		fmt.Fprintln(os.Stderr, "error:", serveErr)
 		fmt.Fprintf(os.Stderr, "hint: `oberth daemon status` shows it, `oberth daemon restart` replaces it\n")
@@ -132,8 +132,8 @@ func enterDaemonWorkDir() error {
 // logger there too would double every line.
 func openDaemonLogger() (*slog.Logger, io.Closer, error) {
 	alsoStderr := os.Getenv(detachedEnv) == ""
-	return daemon.NewLogger(daemon.LogPath(),
-		daemon.ParseLogLevel(loadedConfig.Daemon.ResolvedLogLevel()), alsoStderr)
+	return runtimesvc.NewLogger(runtimesvc.LogPath(),
+		runtimesvc.ParseLogLevel(loadedConfig.Daemon.ResolvedLogLevel()), alsoStderr)
 }
 
 // refuseTestBinaryDaemon keeps a Go test binary from turning into the daemon.
@@ -147,11 +147,11 @@ func openDaemonLogger() (*slog.Logger, io.Closer, error) {
 // never gets far enough to fork.
 func refuseTestBinaryDaemon() error {
 	self, err := os.Executable()
-	if err != nil || !daemon.IsTestBinary(self) || daemon.TestDaemonAllowed() {
+	if err != nil || !runtimesvc.IsTestBinary(self) || runtimesvc.TestDaemonAllowed() {
 		return nil
 	}
 	return fmt.Errorf("refusing to run %s as the oberth daemon: it is a Go test binary, so this would re-run the test suite rather than serve\nhint: start a daemon in-process from the test, or set %s=1 if you really mean it",
-		filepath.Base(self), daemon.AllowTestDaemonEnv)
+		filepath.Base(self), runtimesvc.AllowTestDaemonEnv)
 }
 
 // detachDaemon re-execs this binary as a background `oberth serve` and waits for
@@ -172,7 +172,7 @@ func detachDaemon(ctx context.Context, socket string) error {
 		return err
 	}
 	if err := client.WaitForSocket(ctx, socket, client.AutostartTimeout); err != nil {
-		return fmt.Errorf("%w (see %s)", err, daemon.LogPath())
+		return fmt.Errorf("%w (see %s)", err, runtimesvc.LogPath())
 	}
 	fmt.Printf("oberth daemon started (pid %d), listening on %s\n", pid, socket)
 	return nil
@@ -227,10 +227,10 @@ var startDaemonChild = func(child *exec.Cmd) (int, error) {
 // socket means another daemon already does the job, and the lock holder's pid
 // is part of the answer when it can be read. A free socket returns nil.
 func alreadyRunningError(socket string) error {
-	if !daemon.SocketAlive(socket) {
+	if !runtimesvc.SocketAlive(socket) {
 		return nil
 	}
-	if pid := daemon.LockHolderPID(daemon.LockPath()); pid > 0 {
+	if pid := runtimesvc.LockHolderPID(runtimesvc.LockPath()); pid > 0 {
 		return fmt.Errorf("daemon already running (pid %d)", pid)
 	}
 	return fmt.Errorf("daemon already running")
@@ -239,12 +239,12 @@ func alreadyRunningError(socket string) error {
 // openDaemonLog prepares the log the detached child's stdout and stderr go to.
 // The directory is created owner-only, the same mode the state directory uses.
 func openDaemonLog() (*os.File, error) {
-	if err := os.MkdirAll(filepath.Dir(daemon.LogPath()), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(runtimesvc.LogPath()), 0o700); err != nil {
 		return nil, fmt.Errorf("creating the log directory: %w", err)
 	}
-	f, err := os.OpenFile(daemon.LogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(runtimesvc.LogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
-		return nil, fmt.Errorf("opening %s: %w", daemon.LogPath(), err)
+		return nil, fmt.Errorf("opening %s: %w", runtimesvc.LogPath(), err)
 	}
 	return f, nil
 }
@@ -268,7 +268,7 @@ const stopTimeout = 10 * time.Second
 func waitForSocketGone(socket string, timeout time.Duration) {
 	giveUp := time.Now().Add(timeout)
 	for {
-		if !daemon.SocketAlive(socket) {
+		if !runtimesvc.SocketAlive(socket) {
 			return
 		}
 		if !time.Now().Before(giveUp) {
@@ -291,7 +291,7 @@ func waitForDaemonGone(socket string, timeout time.Duration) error {
 	if left < time.Second {
 		left = time.Second
 	}
-	if err := daemon.WaitForLockRelease(daemon.LockPath(), left); err != nil {
+	if err := runtimesvc.WaitForLockRelease(runtimesvc.LockPath(), left); err != nil {
 		return fmt.Errorf("the running daemon did not shut down: %w\nhint: `oberth daemon status` shows it; kill it and retry", err)
 	}
 	return nil

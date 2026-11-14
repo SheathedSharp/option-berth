@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/buildinfo"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/sheathedsharp/option-berth/engine/internal/runs"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/sessions"
 	"github.com/sheathedsharp/option-berth/engine/internal/spawn"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
@@ -21,7 +21,7 @@ import (
 
 	// The daemon serves runs.register/unregister/list/spawn from this package's
 	// init(); `oberth serve` runs in this binary, so it has to be linked in.
-	_ "github.com/sheathedsharp/option-berth/engine/internal/daemon/runsreg"
+	_ "github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/runsreg"
 )
 
 var (

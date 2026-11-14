@@ -8,10 +8,10 @@ import (
 	"runtime"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/config"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc"
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
@@ -53,8 +53,8 @@ func (e *Env) resolveProcess() {
 // resolvePaths fills the files and the address the checks inspect.
 func (e *Env) resolvePaths() {
 	resolvePath(&e.ConfigPath, config.Path)
-	resolvePath(&e.ConfigDir, daemon.ConfigDir)
-	resolvePath(&e.SocketPath, daemon.SocketPath)
+	resolvePath(&e.ConfigDir, runtimesvc.ConfigDir)
+	resolvePath(&e.SocketPath, runtimesvc.SocketPath)
 	resolvePath(&e.DBPath, store.Path)
 	resolvePath(&e.SettingsPath, paths.AttnConfigPath)
 }

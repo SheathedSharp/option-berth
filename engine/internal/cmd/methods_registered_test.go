@@ -3,8 +3,8 @@ package cmd
 import (
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 )
 
 // The protocol schema and the dispatcher have to name the same methods. This
@@ -14,7 +14,7 @@ import (
 // schema omits is wire nobody can discover.
 func TestDescribedMethodsAreExactlyTheServedOnes(t *testing.T) {
 	served := map[string]bool{}
-	for _, m := range daemon.RegisteredMethods() {
+	for _, m := range runtimesvc.RegisteredMethods() {
 		served[m] = true
 	}
 	described := rpc.Methods()

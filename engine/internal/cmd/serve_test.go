@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 )
 
 // The daemon runs in option-berth's state directory, not in whatever checkout
@@ -112,7 +112,7 @@ func TestOpenDaemonLoggerWritesTheDaemonLog(t *testing.T) {
 	if err := closer.Close(); err != nil {
 		t.Fatalf("closing the log: %v", err)
 	}
-	body, err := os.ReadFile(daemon.LogPath())
+	body, err := os.ReadFile(runtimesvc.LogPath())
 	if err != nil {
 		t.Fatalf("the daemon log was not written: %v", err)
 	}
@@ -222,8 +222,8 @@ func TestDetachDaemonReportsADaemonThatNeverListened(t *testing.T) {
 	if err == nil {
 		t.Fatal("detachDaemon returned nil for a socket nobody answers on")
 	}
-	if !strings.Contains(err.Error(), daemon.LogPath()) {
-		t.Fatalf("err = %v, want it to name the log %s", err, daemon.LogPath())
+	if !strings.Contains(err.Error(), runtimesvc.LogPath()) {
+		t.Fatalf("err = %v, want it to name the log %s", err, runtimesvc.LogPath())
 	}
 }
 

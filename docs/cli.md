@@ -60,7 +60,7 @@ foreground color and the capsule degrades to yellow. Nothing is colored under `N
   of trusting absence, and the human `status` prints `listening unknown`.
 
 - --no-daemon makes read commands collect locally and directly; commands that must record runs and start/stop still need the daemon. When the daemon is unavailable, `status` still shows the most recent exit reason from local read-only history.
-- No wire field is accepted without being read. The protocol schema is generated from the daemon's Go types, so a field declared there is a promise every client may rely on; a field no handler acts on is worse than a missing one, because the call succeeds and the caller cannot tell it was ignored. Every field a method's params can carry is therefore read by this repository's own code, and `internal/daemon/rpc` fails the build otherwise. Withdrawing a published field is a protocol change; the names removed on purpose are recorded in that package so they cannot return silently.
+- No wire field is accepted without being read. The protocol schema is generated from the daemon's Go types, so a field declared there is a promise every client may rely on; a field no handler acts on is worse than a missing one, because the call succeeds and the caller cannot tell it was ignored. Every field a method's params can carry is therefore read by this repository's own code, and `internal/runtimesvc/rpc` fails the build otherwise. Withdrawing a published field is a protocol change; the names removed on purpose are recorded in that package so they cannot return silently.
 
 ## Command surface
 
@@ -209,12 +209,14 @@ When the listener table cannot be trusted (for example an agent sandbox refuses 
 carries `observation` (`state`, `code`, `detail`, `hint`, `checked_at`). When fully blind, `ports` is
 empty and `port_actual` is null; when some lines are unreadable, `ports` contains only the readable
 lines, ports that were not read are not in it, and `observation.state` is partial. `up --wait` returns
-an observation-class error immediately when the observation is not observable and keeps the run it
+an observation-class error immediately when a selected service needs listener/health observation and it is not observable, and keeps the run it
 just started, instead of waiting out the full timeout and then stopping it; `logs <service>` still
 uses the log path registered by the run for managed services and does not depend on the listener
 table. Write commands that need to auto-start the daemon run the self-proof probe first, and when
 blind they refuse to create a daemon from the current process, suggesting that
 `oberth serve --detach` be run in an ordinary terminal.
+
+While system observation is busy, known run/worker state may be published independently. If the last listener batch has expired, `observation.state` is `partial`, code is `observation_incomplete`, and source is `runtime_registry`; missing ports and `machine` availability remain unknown, not free or stopped. A no-port worker without a health check may become ready from its exact run identity alone. Other readiness and forced control paths do not treat this fallback as a fresh listener observation.
 
 The JSON top level always contains:
 
@@ -394,6 +396,8 @@ the configured provider identity before every poll; disabling assessment or chan
 model or credential ends that task session before another request (`disabled` or
 `configuration_changed`). No eligible anomaly means no provider request.
 
+`assess --follow` reuses an existing scoped change stream when available, filters to the exact task worktree and deduplicates its cursor. Relevant changes trigger a status/artifact refresh, not an automatic model request. Reconnection requests a fresh snapshot; connected sessions also reconcile at `max(10s, --interval)`. `--interval` controls local consent checks and fallback polling, not guaranteed model cadence. Absent/older/disconnected services use bounded status polling without starting a daemon. No separate events watcher is needed for the same task. Normal state still makes no provider request, and post-assessment freshness checks remain mandatory.
+
 `quality.model_calls` and `quality.cache_hits` count recorded transport attempts and cache reuse,
 including one-shot assessments and sessions that have not ended; lifecycle summaries are not added
 twice. Validation and status-read failures do not count as model calls. Local errors are recorded
@@ -431,7 +435,7 @@ or renaming one.
 | `manifest_runtime_mismatch` | `status` | Whether the running instance comes from an old manifest. |
 | `worktree.identity` | `status` | The expanded value of `${worktree}`, used to name per-worktree data. |
 | `observation.state` | `status` | Whether the listener table can be trusted; read it before `ports`. |
-| `observation.source` | `status` | The collector that answered when it was not the platform's primary one; non-empty means a missing port is unknown, not free. |
+| `observation.source` | `status` | The non-primary collector or `runtime_registry` fallback; non-empty means a missing port is unknown, not free. |
 | `machine[].listening_known` | `status` | Whether `listening` was observed; false means the table cannot see that port's owner. |
 | `attn_path` | `status` | The derived handoff file for the current abnormality; absent when there is none. |
 | `attn` | `status` | Whether that handoff can be assessed now: `enabled`, fixed `reason`, `assessment` (`assessed`, `pending` or `unavailable`). |
@@ -608,6 +612,8 @@ worktree's `port: auto` reservation so the service gets its original address bac
 graceful stop. --json returns one value in which `stopped` is the stop result and `services` plus the
 summary fields are the restart result. `restart` does not wait for readiness, so `started` services
 carry `ready:false`, and the human-readable output likewise marks readiness as unconfirmed.
+
+If cancellation or a transport failure interrupts the sequence after a stop receipt is known, that receipt and any received service outcomes are still reported. JSON keeps the same `stopped`/`services`/`start_id` shape; without a terminal start reply, `started`, `skipped` and `errors` are null (unknown), not a successful empty summary. The operation error retains the standard stderr error shape and nonzero exit status (130 for interruption). Human output likewise keeps known outcomes without printing a terminal start summary. A failed stop never starts services; failure before any stop receipt does not invent one.
 
 Only services the manifest declares can be restarted. A run started with `oberth start` has no
 manifest entry: stop it first if it is still running, then start that command again. When

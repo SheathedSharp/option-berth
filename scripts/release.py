@@ -16,7 +16,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 VERSION_RE = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z")
-PROTOCOL_FILE = Path("engine/internal/daemon/rpc/types.go")
+PROTOCOL_FILE = Path("engine/internal/runtimesvc/rpc/types.go")
 SCHEMA_FILE = Path("engine/docs/schema/protocol.schema.json")
 RACE_PACKAGES_FILE = Path("scripts/race-packages.txt")
 PROTOCOL_RE = re.compile(r'(?m)^const ProtocolVersion = "([0-9]+\.[0-9]+\.[0-9]+)"$')

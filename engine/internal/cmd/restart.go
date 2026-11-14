@@ -8,9 +8,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/restartout"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/spf13/cobra"
 )
 
@@ -42,13 +43,6 @@ func init() {
 	restartCmd.Flags().BoolVar(&restartAllowOutsideHome, "allow-outside-home", false,
 		"Allow services whose worktree is outside the user's home directory")
 	rootCmd.AddCommand(restartCmd)
-}
-
-type restartDocument struct {
-	Stopped  rpc.KillEnvelope       `json:"stopped"`
-	Services []rpc.GroupsStartChunk `json:"services"`
-	StartID  string                 `json:"start_id,omitempty"`
-	rpc.GroupsStartEnd
 }
 
 func restartRun(cmd *cobra.Command, args []string) error {
@@ -89,55 +83,58 @@ func restartRun(cmd *cobra.Command, args []string) error {
 	} else if startParams.ConfigPath != nil {
 		stop.ConfigPath = startParams.ConfigPath
 	}
-	var stopped rpc.KillEnvelope
-	if err := c.Call(cmd.Context(), "groups.kill", stop, &stopped); err != nil {
-		return restartRefusal(cmd.Context(), c, startParams, err)
-	}
-	if !stopped.OK {
-		if restartJSON {
-			if err := printJSON(restartDocument{Stopped: stopped, Services: []rpc.GroupsStartChunk{}}); err != nil {
-				return err
+
+	return restartout.Execute(cmd.Context(),
+		func(ctx context.Context) (rpc.KillEnvelope, error) {
+			var stopped rpc.KillEnvelope
+			if err := c.Call(ctx, "groups.kill", stop, &stopped); err != nil {
+				return stopped, restartRefusal(ctx, c, startParams, err)
 			}
-			return errSilent
-		}
-		return reportKill(os.Stdout, stopped.Results, snapshot, false, false)
-	}
+			return stopped, nil
+		},
+		func(ctx context.Context) (restartout.Start, error) {
+			var result restartout.Start
+			stream, err := c.Stream(ctx, "groups.start", startParams, &result.Initial)
+			if err != nil {
+				return result, cliError(err)
+			}
+			result.Chunks, result.End, err = collectStart(stream)
+			return result, err
+		},
+		func(doc restartout.Document, complete bool) error {
+			return reportRestart(doc, complete, snapshot)
+		})
+}
 
-	var initial rpc.GroupsStartResult
-	stream, err := c.Stream(cmd.Context(), "groups.start", startParams, &initial)
-	if err != nil {
-		return cliError(err)
-	}
-	chunks, end, err := collectStart(stream)
-	if err != nil {
-		return err
-	}
-
+// reportRestart uses the normal CLI encoders and preserves the operation error
+// for Execute/reportError to print on stderr with its original exit status.
+func reportRestart(doc restartout.Document, complete bool, snapshot []ports.ListeningPort) error {
 	if restartJSON {
-		if err := printJSON(restartDocument{
-			Stopped:        stopped,
-			Services:       chunks,
-			StartID:        initial.StartID,
-			GroupsStartEnd: end,
-		}); err != nil {
+		if err := printJSON(doc); err != nil {
 			return err
 		}
-		if len(end.Errors) > 0 {
+		if complete && (!doc.Stopped.OK || len(doc.Errors) > 0) {
 			return errSilent
 		}
 		return nil
 	}
-	if err := reportKill(os.Stdout, stopped.Results, snapshot, false, false); err != nil {
+	if err := reportKill(os.Stdout, doc.Stopped.Results, snapshot, false, false); err != nil {
 		return err
 	}
-	// The stop half and the start half are two acts; a blank line keeps the
-	// start rows from reading as more rows of the stop report.
+	if !doc.Stopped.OK {
+		if complete {
+			return errSilent
+		}
+		return nil
+	}
 	fmt.Println()
-	for _, chunk := range chunks {
+	for _, chunk := range doc.Services {
 		printStartChunk(chunk)
 	}
-	printStartSummary(end)
-	if len(end.Errors) > 0 {
+	if complete {
+		printStartSummary(doc.GroupsStartEnd)
+	}
+	if complete && len(doc.Errors) > 0 {
 		return errSilent
 	}
 	return nil

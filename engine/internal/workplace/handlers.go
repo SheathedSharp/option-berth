@@ -5,23 +5,23 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 // The daemon side of the workplace record. The package owns the namespace and
 // registers it from its own init(), the way internal/doctor owns daemon.doctor
-// and internal/daemon/runsreg owns runs.*, so internal/daemon never imports
+// and internal/runtimesvc/runsreg owns runs.*, so internal/runtimesvc never imports
 // this package.
 func init() {
-	daemon.RegisterHandler("workplace.list", handleList)
-	daemon.RegisterHandler("workplace.new", handleNew)
-	daemon.RegisterHandler("workplace.use", handleUse)
-	daemon.RegisterHandler("workplace.show", handleShow)
-	daemon.RegisterHandler("workplace.delete", handleDelete)
-	daemon.RegisterHandler("workplace.record", handleRecord)
-	daemon.RegisterCapability("workplace")
+	runtimesvc.RegisterHandler("workplace.list", handleList)
+	runtimesvc.RegisterHandler("workplace.new", handleNew)
+	runtimesvc.RegisterHandler("workplace.use", handleUse)
+	runtimesvc.RegisterHandler("workplace.show", handleShow)
+	runtimesvc.RegisterHandler("workplace.delete", handleDelete)
+	runtimesvc.RegisterHandler("workplace.record", handleRecord)
+	runtimesvc.RegisterCapability("workplace")
 }
 
 // failure renders an error from this package the way the wire expects: the
@@ -33,7 +33,7 @@ func failure(err error) error {
 
 // storeFor is the daemon's database, or the error every database-backed method
 // reports when it came up without one.
-func storeFor(req *daemon.Request) (*store.Store, error) {
+func storeFor(req *runtimesvc.Request) (*store.Store, error) {
 	if req.Runtime == nil || req.Runtime.Store == nil {
 		return nil, rpc.NewError(rpc.CodeInternal, "this daemon has no database open",
 			"check `oberth daemon log` for the error opening option-berth.db, then `oberth daemon restart`")
@@ -56,7 +56,7 @@ func rootOf(path string) (string, error) {
 	return root, nil
 }
 
-func handleList(_ context.Context, req *daemon.Request) (any, error) {
+func handleList(_ context.Context, req *runtimesvc.Request) (any, error) {
 	var p rpc.WorkplaceParams
 	if err := req.Bind(&p); err != nil {
 		return nil, err
@@ -76,7 +76,7 @@ func handleList(_ context.Context, req *daemon.Request) (any, error) {
 	return out, nil
 }
 
-func handleNew(_ context.Context, req *daemon.Request) (any, error) {
+func handleNew(_ context.Context, req *runtimesvc.Request) (any, error) {
 	var p rpc.WorkplaceNewParams
 	if err := req.Bind(&p); err != nil {
 		return nil, err
@@ -111,7 +111,7 @@ func handleNew(_ context.Context, req *daemon.Request) (any, error) {
 	return rpc.WorkplaceNewResult{Workplace: Wire(created)}, nil
 }
 
-func handleUse(_ context.Context, req *daemon.Request) (any, error) {
+func handleUse(_ context.Context, req *runtimesvc.Request) (any, error) {
 	var p rpc.WorkplaceUseParams
 	if err := req.Bind(&p); err != nil {
 		return nil, err
@@ -137,7 +137,7 @@ func handleUse(_ context.Context, req *daemon.Request) (any, error) {
 	return rpc.WorkplaceUseResult{Workplace: Wire(target)}, nil
 }
 
-func handleShow(_ context.Context, req *daemon.Request) (any, error) {
+func handleShow(_ context.Context, req *runtimesvc.Request) (any, error) {
 	var p rpc.WorkplaceShowParams
 	if err := req.Bind(&p); err != nil {
 		return nil, err
@@ -157,7 +157,7 @@ func handleShow(_ context.Context, req *daemon.Request) (any, error) {
 	return out, nil
 }
 
-func handleDelete(_ context.Context, req *daemon.Request) (any, error) {
+func handleDelete(_ context.Context, req *runtimesvc.Request) (any, error) {
 	var p rpc.WorkplaceDeleteParams
 	if err := req.Bind(&p); err != nil {
 		return nil, err
@@ -193,7 +193,7 @@ func handleDelete(_ context.Context, req *daemon.Request) (any, error) {
 	return out, nil
 }
 
-func handleRecord(_ context.Context, req *daemon.Request) (any, error) {
+func handleRecord(_ context.Context, req *runtimesvc.Request) (any, error) {
 	var p rpc.WorkplaceRecordParams
 	if err := req.Bind(&p); err != nil {
 		return nil, err

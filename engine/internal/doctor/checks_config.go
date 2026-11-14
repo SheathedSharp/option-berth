@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/config"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"gopkg.in/yaml.v3"
 )
 

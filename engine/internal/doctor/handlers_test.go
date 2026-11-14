@@ -7,20 +7,20 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 )
 
 // doctorRequest builds the request the daemon dispatch would hand to
 // `daemon.doctor`, with a runtime that answers from its own process.
-func doctorRequest(t *testing.T, params rpc.DaemonDoctorParams) *daemon.Request {
+func doctorRequest(t *testing.T, params rpc.DaemonDoctorParams) *runtimesvc.Request {
 	t.Helper()
 	raw, err := json.Marshal(params)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &daemon.Request{
-		Runtime: &daemon.Runtime{Version: "v1.2.3", Socket: "/tmp/doctor-fixture.sock", PID: 4242},
+	return &runtimesvc.Request{
+		Runtime: &runtimesvc.Runtime{Version: "v1.2.3", Socket: "/tmp/doctor-fixture.sock", PID: 4242},
 		Params:  raw,
 	}
 }

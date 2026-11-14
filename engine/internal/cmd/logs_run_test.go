@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 )
 
 func TestReadFileLogsFromStartsAtTheRunOffset(t *testing.T) {

@@ -336,6 +336,9 @@ func StateChangesForTransition(prev, next Snapshot, events []Event) []StateChang
 	}
 	for _, g := range d.Groups.Updated {
 		old, ok := groupByKey(prev.Groups, g.Key())
+		if ok && groupsEqual(withoutResourceSample(old), withoutResourceSample(g)) {
+			continue
+		}
 		if !ok {
 			old = g
 		}
@@ -498,4 +501,15 @@ func eventSourceKey(source *EventSource) string {
 		return "root:" + source.rootDir
 	}
 	return "source"
+}
+
+// Resource samples remain visible in snapshots/deltas, not task-change signals.
+// Clone the nested slice before stripping fields from already-published rows.
+func withoutResourceSample(g Group) Group {
+	g.Resources = nil
+	g.Services = append([]Service(nil), g.Services...)
+	for i := range g.Services {
+		g.Services[i].Stats = nil
+	}
+	return g
 }

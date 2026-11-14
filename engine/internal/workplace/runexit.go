@@ -3,8 +3,8 @@ package workplace
 import (
 	"sync/atomic"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/runsreg"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/runsreg"
 )
 
 // Closing the block of a run the daemon outlived.
@@ -18,15 +18,15 @@ import (
 // runtime is the daemon this process is serving, while it is serving one. The
 // hook is registered once, at init, and needs a store only while a daemon is
 // up: a run exit arriving with no daemon behind it has nothing to write to.
-var runtime atomic.Pointer[daemon.Runtime]
+var runtime atomic.Pointer[runtimesvc.Runtime]
 
 func init() {
-	daemon.OnStartChecked(func(rt *daemon.Runtime) error {
+	runtimesvc.OnStartChecked(func(rt *runtimesvc.Runtime) error {
 		runtime.Store(rt)
 		return nil
 	})
-	daemon.OnShutdown(func(bool) { runtime.Store(nil) })
-	daemon.OnRunExit(closeBlockForRun)
+	runtimesvc.OnShutdown(func(bool) { runtime.Store(nil) })
+	runtimesvc.OnRunExit(closeBlockForRun)
 }
 
 // closeBlockForRun closes the block that recorded the run which just ended.
@@ -34,7 +34,7 @@ func init() {
 // It runs on the reaper's path and must stay short. A failure is logged and
 // dropped: a record that could not be closed is not a reason to disturb the
 // exit path that every service stop depends on.
-func closeBlockForRun(e daemon.RunExit) {
+func closeBlockForRun(e runtimesvc.RunExit) {
 	rt := runtime.Load()
 	if rt == nil || rt.Store == nil || e.RunID == "" {
 		return

@@ -12,7 +12,7 @@ import (
 )
 
 // sessionRegistry is a run registry that also knows the agent session, the
-// shape internal/daemon/runsreg has once a run carries one.
+// shape internal/runtimesvc/runsreg has once a run carries one.
 type sessionRegistry struct {
 	owner int
 	agent state.Session

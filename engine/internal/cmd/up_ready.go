@@ -3,14 +3,15 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimecore"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
@@ -68,7 +69,15 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 	var timedOut []startTimeout
 	for {
 		pp, gg, obs, err := startRows(ctx)
-		if obs != nil && obs.State != string(ports.ObservationObservable) {
+		needsObservation := false
+		targetGroup := startTargetGroup(params, cfg, gg)
+		for name := range selected {
+			if targetGroup == nil || runtimecore.RequiresObservation(serviceIn(*targetGroup, name)) {
+				needsObservation = true
+				break
+			}
+		}
+		if needsObservation && obs != nil && obs.State != string(ports.ObservationObservable) {
 			// Waiting the full timeout would end by stopping the run it just
 			// started. "Cannot see" is a different outcome from "not ready".
 			code := obs.Code
@@ -222,13 +231,7 @@ func startTimeoutMessage(selection startSelection, name string, timeout time.Dur
 // run this wait is about. Only two known run ids can disagree — a missing id
 // on either side is no identity evidence, and the wait keeps reading the row.
 func replacementRun(selection startSelection, svc *state.Service) (string, bool) {
-	if selection.runID == "" || svc == nil || !svc.Running || svc.RunID == nil {
-		return "", false
-	}
-	if *svc.RunID == "" || *svc.RunID == selection.runID {
-		return "", false
-	}
-	return *svc.RunID, true
+	return runtimecore.Replacement(selection.runID, svc)
 }
 
 // startRowConfirms reports whether the service row is evidence about the
@@ -237,10 +240,7 @@ func replacementRun(selection startSelection, svc *state.Service) (string, bool)
 // readiness. A selection with no run id has nothing to compare and keeps
 // reading the row.
 func startRowConfirms(selection startSelection, svc *state.Service) bool {
-	if selection.runID == "" {
-		return true
-	}
-	return svc != nil && svc.RunID != nil && *svc.RunID == selection.runID
+	return runtimecore.Confirms(selection.runID, svc)
 }
 
 // startReplacedMessage states what ended the wait. It does not call the
@@ -343,61 +343,10 @@ func serviceIn(group state.Group, name string) *state.Service {
 }
 
 func serviceReady(group state.Group, rows []state.Port, name string) (bool, string) {
-	svc := serviceIn(group, name)
-	if svc == nil || !svc.Running {
-		return false, "not_running"
-	}
-	if svc.Health == nil || *svc.Health == "" {
-		if svc.Port != nil || svc.PortAuto {
-			if svc.PortActual == nil {
-				return false, "waiting_for_listener"
-			}
-		}
-		return true, ""
-	}
-	check := groups.ParseHealth(*svc.Health)
-	// A command check answers for itself: it needs no listener of its own, and
-	// its verdict is written straight onto the service row. A service that also
-	// declares a port is not ready until that port exists: Compose publishes
-	// the host port after the container starts, and a caller reading
-	// port_actual right after the wait must not get nil.
-	if check.Kind == groups.HealthCommand {
-		if (svc.Port != nil || svc.PortAuto) && svc.PortActual == nil {
-			return false, "waiting_for_listener"
-		}
-		return healthVerdict(svc, nil)
-	}
-	if svc.PortActual == nil {
-		return false, "waiting_for_listener"
-	}
-	return healthVerdict(svc, rows)
+	return runtimecore.Ready(group, rows, name)
 }
-
-// healthVerdict reads the service's configured verdict, falling back to the
-// port row's when the service row has not been joined yet. rows is nil for a
-// command check, whose result has no port row.
 func healthVerdict(svc *state.Service, rows []state.Port) (bool, string) {
-	if svc.HealthStatus != nil {
-		if svc.HealthStatus.Status == state.HealthOK {
-			return true, ""
-		}
-		return false, "health_" + svc.HealthStatus.Reason
-	}
-	if rows != nil && svc.PortActual != nil {
-		for _, row := range rows {
-			if row.Port != *svc.PortActual {
-				continue
-			}
-			if row.Health == nil {
-				break
-			}
-			if row.Health.Status == state.HealthOK {
-				return true, ""
-			}
-			return false, "health_" + row.Health.Reason
-		}
-	}
-	return false, "waiting_for_health"
+	return runtimecore.HealthVerdict(svc, rows)
 }
 
 // markStartChunkReady records that this invocation waited and confirmed the

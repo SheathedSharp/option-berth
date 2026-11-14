@@ -1,6 +1,6 @@
 package doctor
 
-import "github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+import "github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 
 // A check reports three things and occasionally two more: what it saw, how bad
 // it is, and what to do next. Writing that as a struct literal repeats

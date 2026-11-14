@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
 	"github.com/sheathedsharp/option-berth/engine/internal/killer"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
 	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
 	"github.com/spf13/cobra"
 )
@@ -148,7 +148,7 @@ func startScanningDaemonWithScan(t *testing.T, scan func(scanner.Include) ([]por
 	t.Cleanup(func() { os.RemoveAll(socketDir) })
 	socket := filepath.Join(socketDir, "d.sock")
 
-	srv := daemon.New(daemon.Options{
+	srv := runtimesvc.New(runtimesvc.Options{
 		Socket:  socket,
 		Version: "test",
 		Scanner: scanner.New(scanner.Options{

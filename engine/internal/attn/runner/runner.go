@@ -291,7 +291,7 @@ func SubscribeWithObserver(ctx context.Context, binary, project string, interval
 
 func SubscribeWithStats(ctx context.Context, binary, project string, interval time.Duration, client model.Client,
 	task model.TaskContext, readStatus func(context.Context, string, string) (Status, error),
-	sessionID string, observe func(Output, time.Duration), emit func(any) error) (SubscriptionStats, error) {
+	sessionID string, observe func(Output, time.Duration), emit func(any) error, triggers ...Trigger) (SubscriptionStats, error) {
 	stats := SubscriptionStats{seen: make(map[string]bool)}
 	if interval <= 0 {
 		return stats, errors.New("runner: subscription interval must be positive")
@@ -304,6 +304,11 @@ func SubscribeWithStats(ctx context.Context, binary, project string, interval ti
 		return stats, err
 	}
 	lastKey := ""
+	var trigger Trigger
+	if len(triggers) > 0 {
+		trigger = triggers[0]
+	}
+	var pending error
 	for {
 		if err := ctx.Err(); err != nil {
 			_ = emit(SubscriptionStopped(sessionID))
@@ -311,7 +316,11 @@ func SubscribeWithStats(ctx context.Context, binary, project string, interval ti
 		}
 		stats.Polls++
 		started := time.Now()
-		result, err := Auto(ctx, binary, project, client, task, readStatus)
+		var result Output
+		err := pending
+		if err == nil {
+			result, err = Auto(ctx, binary, project, client, task, readStatus)
+		}
 		latency := time.Since(started)
 		if err != nil {
 			result.Status, result.Reason = "error", SubscriptionReason(err)
@@ -355,16 +364,7 @@ func SubscribeWithStats(ctx context.Context, binary, project string, interval ti
 		if errors.Is(err, ErrConsentRevoked) || errors.Is(err, ErrConfigurationChanged) {
 			return stats, nil
 		}
-		timer := time.NewTimer(interval)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
-			_ = emit(SubscriptionStopped(sessionID))
-			return stats, nil
-		case <-timer.C:
-		}
+		pending = trigger.wait(ctx, interval)
 	}
 }
 

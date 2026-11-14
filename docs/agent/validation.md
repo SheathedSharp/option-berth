@@ -39,6 +39,8 @@ checkout it skips explicitly instead of pretending a comparison happened.
 The basic Windows service scenarios and the selected native tests are not acceptance of the full
 service tree, the Windows GUI, or native arm64 execution.
 
+Internal package paths in historical records below refer to their recorded revisions. Current host/domain paths are `internal/runtimesvc` and `internal/runtimecore`; public protocol and disk names have not migrated.
+
 ## Reproducing locally
 
 The Go version follows `engine/go.mod`. Service tests use an isolated HOME/BERTH_HOME, socket, and
@@ -57,6 +59,14 @@ go test -tags integration -count=1 -timeout=8m ./internal/scenario/...
 The Mage and brand checks live in their respective PRs and CI. Building, installing, and starting or
 stopping services are distinct side effects; ordinary checks do not touch the user's day-to-day
 services.
+
+### Isolated Runtime policy and comparative checks
+
+`internal/runtimecheck` imports production packages without their `_test.go`/`TestMain` entry points. Its collectors, PID identity/liveness/ancestry, statistics and publisher are injected; its manifests, SQLite files and locks are temporary. A fully injected in-memory scanner loop verifies independent background publication and cancellation/join, not a real daemon or service handoff. `internal/runtimecore` pins shared readiness/generation/restart policies; `internal/attn/runner` uses fake status/streams and local fake providers. These tests neither scan/signal user services nor contact a real model. Run them under an owned temporary HOME/BERTH_HOME; they are not permission to execute whole-package daemon/cmd TestMain on a shared development machine.
+
+`scripts/measure_runtime.py --baseline <existing-local-commit>` archives that local engine into its own temporary directory and runs the same isolated harness on both trees. It measures one worker update across three real linked Git worktrees in a temporary repository with synthetic declarations while a fake collector is held for 15ms, plus full-status reads on a scaled 250ms attention timeline (5ms checks, 50ms candidate calibration, two changes). It also checks current/prior SQLite writer-to-read-only-reader compatibility in both directions and typed live-mirror decoding without PID probes. It executes no product binary, daemon, Docker or remote provider, and does not clone/fetch. A failed correctness check invalidates timing; these figures do not establish real-service throughput, actual platform lifecycle behavior or an overall product speed-up.
+
+The normal unit gate includes these packages. The shared race manifest adds the pure Runtime policy, fake-source harness and optional attention packages; existing packages and requirements are not removed. Changing that manifest still requires the repository's maintainer-owned gate. Cross-compilation and `go test -c` only establish compilation, never native execution or real service acceptance.
 
 ### Agent contract and skill coverage
 
@@ -82,7 +92,7 @@ python3 scripts/check_skill_contract.py --skill-dir ../option-berth-skill
 The unit tests in `internal/groups` cover the line format, quoting, and escaping of `env_file`, that
 errors do not echo values, and `workspace:` address resolution (the other side's fixed port, the
 other side's live state, rejection when `port: auto` is not running), name conflicts, and reference
-validation. `internal/daemon/groupstart` uses a real daemon and child processes to verify `env_file`
+validation. `internal/runtimesvc/groupstart` uses a real daemon and child processes to verify `env_file`
 precedence (caller < `env_file` < `PORT` < service `env:`) and `machine:` / `workspace:` addresses;
 `TestExpandStart*` / `TestOverlayRunAddresses*` in `internal/cmd` cover address expansion for
 `oberth start`, rejection of unknown references, and filling in with the run's assigned port when
@@ -102,7 +112,7 @@ and refusal to read another run's snapshot. `internal/groups` covers parsing of 
 out-of-bounds validation, the difference between `sources: []` and omitting it, and that a YAML
 round trip does not lose `sources: []`; the field coverage tests in `internal/state` ensure that new
 fields take part in equality comparison.
-`internal/daemon/groupstart` uses a real daemon to verify that the snapshot is actually written at
+`internal/runtimesvc/groupstart` uses a real daemon to verify that the snapshot is actually written at
 start, and that `sources: []` writes nothing; `TestAnnotateCodeFacts*` in `internal/cmd` covers the
 three states "changed / unchanged / unknown", `TestStatusOnly*` confirms that code comparison
 follows the `--only` selection, and `TestBriefStatus*` confirms that `--brief` keeps the code
@@ -111,10 +121,10 @@ fields. Executed on this machine on 2026-10-31:
 ```sh
 cd engine
 go vet ./internal/codeid ./internal/groups ./internal/state ./internal/cmd \
-  ./internal/daemon/runsreg ./internal/daemon/groupstart ./internal/runs
+  ./internal/runtimesvc/runsreg ./internal/runtimesvc/groupstart ./internal/runs
 go test ./internal/codeid ./internal/groups ./internal/state ./internal/servicefacts \
-  ./internal/paths ./internal/daemon/runsreg -count=1
-go test ./internal/daemon/groupstart -count=1
+  ./internal/paths ./internal/runtimesvc/runsreg -count=1
+go test ./internal/runtimesvc/groupstart -count=1
 go test ./internal/cmd -run 'TestAnnotateCodeFacts|TestStatus' -count=1
 go generate ./...
 ```

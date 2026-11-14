@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/config"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 	"github.com/sheathedsharp/option-berth/engine/internal/testenv"
 	"github.com/spf13/cobra"
@@ -19,10 +19,10 @@ import (
 // check goes through the production resolvers rather than a restatement.
 func TestEverythingTheCLIResolvesIsIsolated(t *testing.T) {
 	resolved := []string{
-		daemon.SocketPath(),
-		daemon.LockPath(),
-		daemon.LogPath(),
-		daemon.ConfigDir(),
+		runtimesvc.SocketPath(),
+		runtimesvc.LockPath(),
+		runtimesvc.LogPath(),
+		runtimesvc.ConfigDir(),
 		config.Path(),
 		store.Path(),
 	}
@@ -55,7 +55,7 @@ func under(path, dir string) bool {
 // been enough to prevent the 2,150 leaked processes.
 func TestAutostartIsRefusedInTests(t *testing.T) {
 	// Guard one: the process-wide ban TestMain installs.
-	firstErr := client.Autostart(context.Background(), "", daemon.SocketPath())
+	firstErr := client.Autostart(context.Background(), "", runtimesvc.SocketPath())
 	if firstErr == nil {
 		t.Fatal("Autostart succeeded in a test binary")
 	}
@@ -65,7 +65,7 @@ func TestAutostartIsRefusedInTests(t *testing.T) {
 
 	// Guard two: even with the ban lifted, the executable is a test binary.
 	testenv.AllowAutostart(t)
-	secondErr := client.Autostart(context.Background(), "", daemon.SocketPath())
+	secondErr := client.Autostart(context.Background(), "", runtimesvc.SocketPath())
 	if secondErr == nil {
 		t.Fatal("Autostart succeeded with a Go test binary as the daemon")
 	}
@@ -84,11 +84,11 @@ func TestServeRefusesToRunAsATestBinary(t *testing.T) {
 	if runErr == nil {
 		t.Fatal("serve started inside a test binary")
 	}
-	if !strings.Contains(runErr.Error(), daemon.AllowTestDaemonEnv) {
-		t.Errorf("error = %v, want it to name the opt-out %s", runErr, daemon.AllowTestDaemonEnv)
+	if !strings.Contains(runErr.Error(), runtimesvc.AllowTestDaemonEnv) {
+		t.Errorf("error = %v, want it to name the opt-out %s", runErr, runtimesvc.AllowTestDaemonEnv)
 	}
 
-	t.Setenv(daemon.AllowTestDaemonEnv, "1")
+	t.Setenv(runtimesvc.AllowTestDaemonEnv, "1")
 	if err := refuseTestBinaryDaemon(); err != nil {
 		t.Errorf("the explicit opt-in did not lift the guard: %v", err)
 	}

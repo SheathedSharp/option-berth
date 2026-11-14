@@ -26,6 +26,8 @@ worktree; they do not change where the core runtime facts come from.
 
 option-berth is **the runtime facts layer for worktrees**.
 
+Oberth Runtime names this worktree engine. Runtime Service names its local background service; `daemon` remains the compatible CLI and implementation term. These names do not expand the product into a general process or container platform.
+
 Orchestration tools create workspaces, schedule sessions and often allocate their own ports;
 option-berth owns the part they most easily get wrong and can least easily patch themselves. The
 following are not add-on features but this chain of facts' product promises:

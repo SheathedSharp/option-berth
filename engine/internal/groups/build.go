@@ -283,7 +283,10 @@ func machineRows(cfg *Config, ports map[int]struct{}, narrow bool) []state.Machi
 // status is running when every declared service is up, stopped when none is,
 // and partial otherwise; a group that declares no services is running while it
 // has a listening port.
-func status(g state.Group) string {
+func status(g state.Group) string { return RuntimeStatus(g) }
+
+// RuntimeStatus reduces known service and listener facts without observation.
+func RuntimeStatus(g state.Group) string {
 	declared := len(g.Services)
 	if declared == 0 {
 		if len(g.Members) > 0 {

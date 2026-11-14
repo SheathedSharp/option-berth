@@ -9,7 +9,7 @@ import (
 	"context"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/attn/model"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 )
 
 func checkAttn(_ context.Context, env *Env) rpc.DoctorCheck {

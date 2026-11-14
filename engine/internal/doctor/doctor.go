@@ -13,8 +13,8 @@ package doctor
 import (
 	"context"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 )
 
 // The four verdicts a check can return, in the order a reader should worry

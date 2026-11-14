@@ -1,15 +1,18 @@
 # Packages covered by the race gate. Paths are relative to engine/.
 # This file is the single source for .github/workflows/engine.yml and
 # scripts/release.py; do not duplicate the list in either caller.
+./internal/attn/...
 ./internal/claims
 ./internal/cmd
-./internal/daemon/...
+./internal/runtimesvc/...
 ./internal/doctor
 ./internal/git
 ./internal/groups
 ./internal/killer
 ./internal/ports
 ./internal/runs
+./internal/runtimecore
+./internal/runtimecheck
 ./internal/scanner
 ./internal/servicefacts
 ./internal/spawn

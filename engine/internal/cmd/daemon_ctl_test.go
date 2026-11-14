@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
@@ -198,7 +198,7 @@ func runDaemonAt(t *testing.T, socket string) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the unix-socket harness does not apply to named pipes")
 	}
-	srv := daemon.New(daemon.Options{
+	srv := runtimesvc.New(runtimesvc.Options{
 		Socket:  socket,
 		Version: "test",
 		Scanner: scanner.New(scanner.Options{
@@ -357,7 +357,7 @@ func TestDaemonStopStopsTheDaemonItFound(t *testing.T) {
 	if !strings.Contains(out, "oberth daemon stopped") {
 		t.Fatalf("stdout = %q, want the stopped sentence", out)
 	}
-	if daemon.SocketAlive(socket) {
+	if runtimesvc.SocketAlive(socket) {
 		t.Fatal("the socket is still alive after daemon stop returned")
 	}
 }

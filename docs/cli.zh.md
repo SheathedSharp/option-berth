@@ -59,7 +59,7 @@
 - 不接受任何不被读取的线缆字段。协议 schema 由 daemon 的 Go 类型生成，因此在那里声明的字段是
   每个客户端都可以依赖的承诺；一个没有任何 handler 处理的字段比缺一个更糟，因为调用会成功，
   调用方无法知道它被忽略了。因此方法参数可能携带的每个字段都由本仓库自己的代码读取，
-  否则 `internal/daemon/rpc` 让构建失败。撤回一个已发布字段属于协议变更；有意删除的名字记录在
+  否则 `internal/runtimesvc/rpc` 让构建失败。撤回一个已发布字段属于协议变更；有意删除的名字记录在
   该包里，使它们不会悄悄回来。
 
 ## 命令面
@@ -175,10 +175,12 @@ worktree 汇总（`cpu_percent`、`memory_rss_bytes`、`services` 为贡献样�
 监听表不可信时（例如 agent 沙箱拒绝系统内省），`status` 仍然返回清单、服务、运行记录、
 日志路径和最近退出；顶层带 `observation`（`state`、`code`、`detail`、`hint`、`checked_at`）。
 完全失明时 `ports` 为空、`port_actual` 为 null；部分行不可读时 `ports` 只含可读行，
-未读到的端口不在其中，`observation.state` 为 partial。`up --wait` 在观察不是 observable 时
+未读到的端口不在其中，`observation.state` 为 partial。`up --wait` 在所选服务需要监听或健康观察、且观察不是 observable 时
 立即返回观察类错误并保留刚启动的运行，不会等满超时再把它停掉；`logs <service>` 对托管服务
 仍使用运行登记的日志路径，不依赖监听表。需要自启 daemon 的写命令会先跑自证探针，失明时
 拒绝从当前进程创建 daemon，提示在普通终端运行 `oberth serve --detach`。
+
+系统观察繁忙时，已知运行和 worker 状态可以独立发布。上一批监听信息过期时，`observation.state` 为 `partial`，code 为 `observation_incomplete`，source 为 `runtime_registry`；缺失端口和 `machine` 可用性仍为未知，不是空闲或已停止。无端口且无健康检查的 worker 可以仅凭精确运行身份就绪。其他就绪判断及强制控制路径不会把这种回退当作新鲜监听观察。
 
 JSON 顶层固定包含：
 
@@ -334,6 +336,8 @@ worktree 的规范路径、脱敏任务摘要和固定评估选项后，接入�
 在每轮读取前重新检查同意及供应商身份；关闭评估，或修改 endpoint、model、凭据，都会在下次
 请求前结束该任务会话，原因是 `disabled` 或 `configuration_changed`。没有合资格异常就不请求模型。
 
+`assess --follow` 在可用时复用已有作用域变化流，按任务的精确工作树过滤并对游标去重。相关变化触发状态和 artifact 刷新，不直接触发模型请求。重连后补取快照；连接正常时也按 `max(10s, --interval)` 校准。`--interval` 控制本地同意检查和回退轮询，不代表模型调用周期。后台服务缺失、版本较旧或断线时使用有界状态轮询，不会为此启动 daemon。同一任务不需要再建独立 events 观察器。正常状态仍无 provider 请求，评估后的新鲜度核验仍然保留。
+
 `quality.model_calls` 和 `quality.cache_hits` 统计已记录的传输尝试及缓存复用，包含单次评估
 和尚未结束的会话，不再叠加生命周期汇总。校验失败、状态读取失败不算模型调用；本地错误会
 记录，但不保存私密错误原文。旧会话累计数只在全时段或完整覆盖会话的窗口中复用；
@@ -366,7 +370,7 @@ worktree 的规范路径、脱敏任务摘要和固定评估选项后，接入�
 | `manifest_runtime_mismatch` | `status` | 运行实例是否来自旧清单。 |
 | `worktree.identity` | `status` | `${worktree}` 的展开值，用于命名 per-worktree 数据。 |
 | `observation.state` | `status` | 监听表是否可信；先读它再读 `ports`。 |
-| `observation.source` | `status` | 不是主采集器时回答本轮采集器；非空表示缺失的端口是未知，不是空闲。 |
+| `observation.source` | `status` | 非主采集器或 `runtime_registry` 回退；非空表示缺失的端口是未知，不是空闲。 |
 | `machine[].listening_known` | `status` | `listening` 是否是观察到的；false 表示这张表看不到该端口的所有者。 |
 | `attn_path` | `status` | 当前异常的派生交接文件；没有异常时缺省。 |
 | `attn` | `status` | 这份交接现在能否被评估：`enabled`、固定 `reason`、`assessment`（`assessed`、`pending` 或 `unavailable`）。 |
@@ -501,6 +505,8 @@ JSON 值，不混入诊断。旧 daemon 不认识 `progress`，旧 CLI 也不会
 这类重启保留 `port: auto` 的 worktree 占用，让服务重新拿回原地址。`--force` 跳过优雅停止。
 --json 返回一个值，其中 `stopped` 是停止结果，`services` 和汇总字段是重新启动结果。
 `restart` 不等待就绪，因此 `started` 服务带 `ready:false`，人读同样标注未确认就绪。
+
+取消或传输失败若发生在已获得停止回执之后，仍会报告该回执及已经收到的逐服务结果。JSON 保持既有 `stopped`/`services`/`start_id` 结构；没有启动终结回复时，`started`、`skipped` 和 `errors` 为 null（未知），而不是成功的空汇总。操作错误仍按标准错误结构写入 stderr，并保留非零退出码（中断为 130）。人读输出同样保留已知结果，不打印启动终结汇总。停止失败绝不启动服务；尚未获得任何停止回执就失败时，不会捏造回执。
 
 只有清单声明的服务可以重启。`oberth start` 启动的运行没有清单条目：如果它仍在运行，先停止，
 再重新执行那条命令。`restart --only` 点名这类运行且运行账本认识它时，`not_found` 的 hint 会
