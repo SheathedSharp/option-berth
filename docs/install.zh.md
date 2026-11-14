@@ -78,7 +78,7 @@ irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps
 
 固定版本或不改 PATH：`.\install.ps1 -Version v1.0.0 -NoModifyPath`。
 Windows 安装器在替换文件前会检查 `oberth` 是否正在运行；
-正在运行就先执行 `oberth daemon stop`，再重新安装。
+正在运行就先执行 `oberth runtime service stop`，再重新安装。
 
 ## 手动下载发布包
 
@@ -113,7 +113,7 @@ sudo dnf remove option-berth
 
 安装包把 `oberth` 放到 `/usr/bin`，许可与构建清单放到
 `/usr/share/doc/option-berth`。`apt remove` / `dnf remove` 不删除 `~/.option-berth` 运行状态；
-确认不再需要后再执行 `oberth daemon stop` 并删除该目录。arm64 使用 `_arm64.deb` 与
+确认不再需要后再执行 `oberth runtime service stop` 并删除该目录。arm64 使用 `_arm64.deb` 与
 `.aarch64.rpm` 文件名。
 
 ## 卸载
@@ -132,7 +132,7 @@ irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uninstall.
 
 卸载器会：
 
-- 尽量先执行 `oberth daemon stop`，避免留下正在运行的旧进程；
+- 尽量先执行 `oberth runtime service stop`，避免留下正在运行的旧进程；
 - 删除 `oberth`；
 - 删除安装器放在 `~/.local/share/option-berth` 的许可与构建清单；
 - 删除安装器写进 shell 启动文件的那一行（只删自己写的精确行，不动其他 PATH 配置）。
@@ -156,7 +156,7 @@ curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uni
 手动卸载等价于：
 
 ```sh
-oberth daemon stop
+oberth runtime service stop
 rm -f ~/.local/bin/oberth
 rm -rf ~/.local/share/option-berth
 # Remove runtime state only when needed
@@ -167,11 +167,11 @@ rm -rf ~/.option-berth
 
 ## 升级
 
-重新执行对应平台的安装命令即可替换二进制；升级后执行一次 `oberth daemon stop`，下一次
+重新执行对应平台的安装命令即可替换二进制；升级后执行一次 `oberth runtime service stop`，下一次
 CLI 调用会启动新版本。Windows 先停止正在运行的 `oberth`，再重新安装。需要固定版本时使用
 `--version` / `-Version`。
 
-`oberth` 首屏会显示本机版本；有更新时底部直接给出本平台的安装命令和 `oberth daemon stop`。
+`oberth` 首屏会显示本机版本；有更新时底部直接给出本平台的安装命令和 `oberth runtime service stop`。
 其他输出给人看的终端命令也会以同样的两行升级提示收尾，同一发布只提示一次。
 也可以随时运行 `oberth version --check` 主动检查。自动检查只读发布元数据，
 成功结果缓存 5 分钟、失败结果缓存 30 分钟，单次命令最多等待 1 秒，不下载、不安装任何东西；

@@ -21,7 +21,7 @@
 
 option-berth 是 **worktree 的运行事实层**。
 
-Oberth Runtime 指这个工作树运行引擎，Runtime Service 指它的本地后台服务；`daemon` 仍是兼容的命令和实现术语。这些职责名称不把产品扩张为通用进程或容器平台。
+Oberth Runtime 指这个工作树运行引擎，Runtime Service 指它的本地后台服务；`runtime service` 仍是兼容的命令和实现术语。这些职责名称不把产品扩张为通用进程或容器平台。
 
 编排工具负责创建工作区、调度会话，也常常分配自己的端口；option-berth 负责它们最容易搞错、
 也最难自己补上的部分。下面这些不是附加功能，而是这条事实链的产品承诺：
@@ -124,7 +124,7 @@ oberth down      stop every service in this project
 | 操作 | `up` · `restart` · `down` · `start` · `kill` | 让它跑起来、停下来 |
 | 代码与声明 | `git` · `init` | 代码上下文，以及这份 worktree 的清单 |
 | 交接 | `workplace` · `agent` · `attn` | 留下和取回工作记录，把会话交给外部 agent；可选的模型评估，默认关闭 |
-| 基础设施 | `daemon` · `serve` · `config` · `version` · `completion` · `doctor` | 运行环境、配置与自检 |
+| 基础设施 | `runtime` · `config` · `version` · `completion` · `doctor` | 运行环境、配置与自检 |
 
 `events` 只读订阅明确关系的状态变化；`start` 只跑单个命令，`kill` 只处理明确点名的进程。
 `agent list/plan/run` 是外部 coding-agent 的显式启动适配；不实现模型、工具循环或会话推理系统。
@@ -184,7 +184,7 @@ Repo 关系包含同仓库 worktree）、repository ID 和显式 workspace 关�
 - **整机端口雷达**：全部端口、系统端口、四档分类、机器服务注册表。`events` 必须带有
   worktree、repository 或已注册 workspace 的 filter；旧 RPC 客户端的无 filter 流只是兼容视图，
   不提供新的整机端口页面。
-- **核心不做模型判断**：不把「为什么没起来」「这是谁的」交给 daemon 推断；事实只由代码采。
+- **核心不做模型判断**：不把「为什么没起来」「这是谁的」交给 runtime service 推断；事实只由代码采。
   可选的外部 attention adapter 可以根据这些事实决定何时把选择交还给用户，但不能改写状态或执行动作。
 - **额外的接入层**：MCP 服务端、自动安装 skill、hooks。接入配方只给命令和脚本片段，由用户粘进
   自己的工具；产品不分发集成代码。

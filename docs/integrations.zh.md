@@ -32,12 +32,12 @@ oberth up --wait
   `ready_timeout:`；慢服务应把预算写进清单，而不是只调大这个开关。
 - `ready_timeout:` 约束**启动之后**的监听与健康等待，包括依赖等待和 `up --wait`；
   `--wait-timeout` 只约束 `up --wait` 自己的等待（它在 `groups.start` 流结束后才开始计时，
-  不影响 daemon 的依赖等待）。两者都不约束 `prepare:`。依赖安装慢要靠 `prepare_inputs:`
+  不影响 runtime service 的依赖等待）。两者都不约束 `prepare:`。依赖安装慢要靠 `prepare_inputs:`
   缓存（内容未变时跳过），或调大编排工具自己的脚本超时。
 - 失败时退出码为 1，逐服务给出 `state`、`reason` 和 `hint`；只有进程真的起过，`hint` 才指向
   `oberth logs <service> --once`。
 - 观察失明时 `up --wait` 会立即返回 `observation_*` 错误并保留刚启动的运行。这不是“没起来”。
-  按 `hint` 在普通终端运行 `oberth serve --detach` 后再试；不要在沙箱里反复重试。
+  按 `hint` 在普通终端运行 `oberth runtime service run --detach` 后再试；不要在沙箱里反复重试。
 - `up` 默认拒绝服务工作目录在 `$HOME` 之外。编排工具把 workspace 放在 home 外时，确认后加
   `--allow-outside-home`；`down` 没有这个开关。
 - 清单要由人确认：`oberth init`，或 `oberth init draft` 起草、人 `oberth init adopt` 采纳。
@@ -72,12 +72,12 @@ oberth down --identity wt_...                       # by identity, when the dire
 
 - `--worktree` 要的是 **checkout 根路径**，不是子目录；从 `status --json` 的 `scope.root`
   或 `git rev-parse --show-toplevel` 取。
-- 目录已经删除时，daemon 仍能按身份账本停止它留下的运行与监听，并交还 `port: auto` 预留；
-  前提是 daemon 之前见过这个 checkout。
+- 目录已经删除时，runtime service 仍能按身份账本停止它留下的运行与监听，并交还 `port: auto` 预留；
+  前提是 runtime service 之前见过这个 checkout。
 - `down` 只有在确认停止后才交还预留。取消、停止不完整、动作后观察失败、仍有登记运行/监听或
   预留已被刷新时，它会保留预留并报错；不要把错误当成已经释放。
 - 目标已经没有任何运行或预留时，显式身份仍是一次成功的空停止。
-- `oberth worktrees --gone` 只列出 daemon 记过的身份，不是孤儿进程的全量清单。账本里没有清单
+- `oberth worktrees --gone` 只列出 runtime service 记过的身份，不是孤儿进程的全量清单。账本里没有清单
   的行没有可停的服务组，`down --identity` 会返回 `not_found`。
 - 两个 checkout 占用同一组名时，组作用域的停止返回 `ambiguous`；此时按端口或 pid 点名
   `kill`，不要替调用者猜一个。
@@ -87,7 +87,7 @@ oberth down --identity wt_...                       # by identity, when the dire
 | 工具的槽位 | 放什么 |
 |---|---|
 | 创建 / setup | `oberth up --wait`（需要机器读输出时加 `--json`） |
-| 运行 / run | 不要再启动同一批服务。`oberth` 起的服务归 daemon，工具停止 run 脚本不会停它们 |
+| 运行 / run | 不要再启动同一批服务。`oberth` 起的服务归 runtime service，工具停止 run 脚本不会停它们 |
 | 归档 / 删除 / cleanup | `oberth down --worktree <checkout 根>`；没有该能力时在删除前进入目录 `oberth down` |
 | 只有单一 run 槽位 | 把启动放 setup；不要用 run 槽位伪装 setup，否则工具会按住或杀掉它 |
 
@@ -136,7 +136,7 @@ archive = 'PATH="$HOME/.local/bin:$PATH" oberth down --worktree "$CONDUCTOR_WORK
 ```
 
 - 不要把 `oberth up --wait` 放进 `scripts.run.<id>`。那是 Run 按钮的 action，Conductor 在
-  Stop 时向它的进程组发 SIGTERM；而 oberth 起的服务属于 daemon，不由这个 action 持有。
+  Stop 时向它的进程组发 SIGTERM；而 oberth 起的服务属于 runtime service，不由这个 action 持有。
 - setup / archive 从工作区目录执行；Conductor 为工作区创建 Git worktree，
   `CONDUCTOR_WORKSPACE_PATH` 通常就是这个 checkout 根。先确认它与 `oberth status --json` 的
   `scope.root` 一致，再把同一个值传给 `down --worktree`；不一致时用 `scope.root`。
@@ -197,7 +197,7 @@ oberth up --wait
 claude "$@"
 ```
 
-`trap` 保证 `claude` 失败或被中断时也会清理；`oberth` 起的服务是 daemon 持有的，不会随
+`trap` 保证 `claude` 失败或被中断时也会清理；`oberth` 起的服务是 runtime service 持有的，不会随
 脚本退出自动消失。慢服务（例如首次编译的 Next.js）在清单里用 `ready_timeout:` 声明预算；
 `--wait-timeout` 只能收紧它，不能代替它。
 
@@ -419,7 +419,7 @@ services:
 
 | 现象 | 先看什么 |
 |---|---|
-| `up --wait` 报 `observation_*` | 当前进程看不见监听表，不是服务没起来。按 `hint` 在普通终端运行 `oberth serve --detach`，或运行 `oberth doctor --only listener_observation` |
+| `up --wait` 报 `observation_*` | 当前进程看不见监听表，不是服务没起来。按 `hint` 在普通终端运行 `oberth runtime service run --detach`，或运行 `oberth doctor --only listener_observation` |
 | `up --wait` 超时 `ready_timeout` | 服务没有监听清单端口，或健康检查未通过。看 `oberth logs <service> --once`；框架悄悄换端口时改用严格端口选项 |
 | 失败原因是 `port_occupied` | 固定端口被别的进程占用。停掉占用者或换端口；不要用 `pkill` 扩大目标 |
 | `down --worktree` 返回 `not_found` | 传入的不是记录的 checkout 根，或账本行没有清单可停。用 `status --json` 的 `scope.root`；删除前优先 `oberth down` |

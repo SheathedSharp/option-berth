@@ -82,7 +82,7 @@ irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps
 | Runtime state | `%USERPROFILE%\.option-berth` |
 
 Pin a version or leave PATH alone: `.\install.ps1 -Version v1.0.0 -NoModifyPath`.
-Before replacing files, the Windows installer checks whether `oberth` is running; if it is, it runs `oberth daemon stop` first and then reinstalls.
+Before replacing files, the Windows installer checks whether `oberth` is running; if it is, it runs `oberth runtime service stop` first and then reinstalls.
 
 ## Download a release manually
 
@@ -119,7 +119,7 @@ sudo dnf remove option-berth
 
 The package puts `oberth` in `/usr/bin` and the licenses and build manifest in
 `/usr/share/doc/option-berth`. `apt remove` / `dnf remove` do not delete `~/.option-berth` runtime
-state; once you are sure it is no longer needed, run `oberth daemon stop` and delete that directory.
+state; once you are sure it is no longer needed, run `oberth runtime service stop` and delete that directory.
 arm64 uses the `_arm64.deb` and `.aarch64.rpm` file names.
 
 ## Uninstall
@@ -138,7 +138,7 @@ irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uninstall.
 
 The uninstaller:
 
-- Tries `oberth daemon stop` first, so no old process keeps running;
+- Tries `oberth runtime service stop` first, so no old process keeps running;
 - Removes `oberth`;
 - Removes the licenses and build manifest the installer placed in `~/.local/share/option-berth`;
 - Removes the exact line the installer wrote into a shell startup file (only that line; other PATH
@@ -165,7 +165,7 @@ points at the directory being deleted. To keep only the PATH configuration, use
 A manual uninstall is equivalent to:
 
 ```sh
-oberth daemon stop
+oberth runtime service stop
 rm -f ~/.local/bin/oberth
 rm -rf ~/.local/share/option-berth
 # Remove runtime state only when needed
@@ -177,11 +177,11 @@ Then delete the PATH line the installer added from your shell startup file.
 ## Upgrade
 
 Rerun the install command for your platform to replace the binaries; after upgrading, run
-`oberth daemon stop` once, and the next CLI call starts the new version. On Windows, stop the running
+`oberth runtime service stop` once, and the next CLI call starts the new version. On Windows, stop the running
 `oberth` first, then reinstall. Pin a version with `--version` / `-Version`.
 
 `oberth`'s first screen shows the local version; when an update exists, its footer gives the install
-command for this platform and `oberth daemon stop`. Every other terminal command that writes human
+command for this platform and `oberth runtime service stop`. Every other terminal command that writes human
 output ends with the same upgrade information as a two-line footer, once per release. You can also run
 `oberth version --check` at any time. The automatic check reads release metadata only, caches success
 for 5 minutes and failure for 30 minutes, waits at most one second per command, and downloads or
@@ -201,4 +201,4 @@ Linux `.deb`/`.rpm`. A Windows MSI is not available yet.
 
 Full service scenarios are verified on **macOS / Linux**. Windows has an independent native build, smoke
 tests and some fact/persistence tests, but is not full lifecycle support. No platform provides an
-auto-upgrade daemon or a background updater.
+auto-upgrade runtime service or a background updater.
