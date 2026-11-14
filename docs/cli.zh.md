@@ -753,7 +753,11 @@ Runtime 运行领域仍是 worktree → manifest → service → run → runtime
 `daemon.lock` 只能作为额外的跨代门闩，绝不是传输回退。可选的 `runtime_service.previous_service_lock_dirs` 为已知旧端点增加持续持有的门闩；数据库安全不依赖枚举这些目录。新宿主在监听、恢复或发布之前，以单个不超时连接取得 SQLite EXCLUSIVE/WAL 所有权。未修改的 v2 Store 已持有数据库时，新宿主拒绝进入；新拥有者运行期间，旧/新写者即使换端点、`BERTH_HOME` 或文件别名也不能重开。没有打开 SQL 连接的静默旧进程不被宣称已识别或停止：新拥有者持有 SQLite 时，它不能恢复数据库写入，显式关闭旧宿主的切换步骤仍然适用。每次写入正常提交，不会把事务一直留到退出。拥有者连接丢失后直接失败，不偷偷重连。所有生产者停止后才关闭存储，端点锁最后释放。
 <!-- retired-runtime-v2-end -->
 
-`runtime.storage.read` 从现有拥有者 Store 读取，`section` 为 `schema`、`worktrees` 或 `run_exits`。响应重复 `section`，并携带该部分的回执（`schema` 对象、`worktrees` 数组或 `run_exits` 数组）；观察到的空集合是 `[]`，不能省略回执。schema 包含路径、版本及文件大小。worktree 行和最多 100 条持久退出记录使用生成 schema 中的 snake_case 字段。不接受 SQL 文本或写入。CLI 历史、worktree 身份及 doctor 在线时走此路径；只有拥有者缺席时，才离线只读打开同一个数据库。已连接拥有者的错误、缺失/错误回执、取消及所有权失败都不是成功的空结果。等待拥有者连接的读取遵守取消。
+`runtime.storage.read` 从现有拥有者 Store 读取，`section` 为 `schema`、`worktrees` 或 `run_exits`。响应重复 `section`，并携带该部分的回执（`schema` 对象、`worktrees` 数组或 `run_exits` 数组）；观察到的空集合是 `[]`，不能省略回执。schema 包含路径、版本及文件大小。worktree 行和最多 100 条持久退出记录使用生成 schema 中的 snake_case 字段。不接受 SQL 文本或写入。本地 CLI 读取发送绝对路径 `expected_db_path`；拥有者核对文件身份，同一端点对应不同或缺失数据库时拒绝，同文件路径别名则接受。其他 RPC 调用者若明确要读取所选端点，可省略这项本地路径断言。CLI 历史、worktree 身份及 doctor 在线时走此路径；只有拥有者缺席时，才离线只读打开同一个数据库。已连接拥有者的错误、缺失/错误回执、取消及所有权失败都不是成功的空结果。等待拥有者连接的读取遵守取消。
+
+离线只读访问不迁移或修改数据库/WAL 内容，但读取崩溃后遗留的 WAL 时，SQLite 可能创建或更新 `-shm` 协调文件；这不是零文件系统写入模式。
+
+拥有者在单连接上串行执行 SQL 读写，不再保证原有连接池的并行读取。持有所有权期间，外部 SQLite 读取及在线 SQLite 备份连接会被拒绝。离线备份数据库前，须用匹配 CLI 正常停止 Runtime Service；仅复制运行中数据库的主文件不是受支持的备份。
 
 Runtime Service 的存储及控制文件目录必须位于已验证的本地文件系统：macOS 为带本地标记的 APFS/HFS/tmpfs，Linux 为明确支持的本地文件系统类型，Windows 为本地固定/可移动/RAM 卷。网络、FUSE 及未知文件系统在创建存储 sidecar 前被拒绝；换 socket 不能削弱数据库所有权。坏库及未来 schema 阻止启动并保留可检查证据，不会静默挪走、重置或替换。命名改造不改变数据库 schema 及历史记录。
 

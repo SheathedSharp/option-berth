@@ -5,6 +5,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 	"os"
+	"path/filepath"
 )
 
 func init() {
@@ -27,6 +28,19 @@ func readStorage(ctx context.Context, db *store.Store, params rpc.RuntimeStorage
 	}
 	if db == nil {
 		return out, rpc.NewError(rpc.CodeBusy, "Runtime Service storage is unavailable", "preserve the database and inspect startup diagnostics")
+	}
+	if params.ExpectedDBPath != "" {
+		if !filepath.IsAbs(params.ExpectedDBPath) {
+			return out, rpc.NewError(rpc.CodeInvalidParams, "expected storage database path must be absolute", "resolve the selected local database before sending the request")
+		}
+		expected, err := os.Stat(params.ExpectedDBPath)
+		if err != nil {
+			return out, rpc.NewError(rpc.CodeInvalidParams, "runtime storage database does not match the selected local database", "use the endpoint of the Runtime Service owning BERTH_DB")
+		}
+		actual, err := os.Stat(db.DBPath())
+		if err != nil || !os.SameFile(expected, actual) {
+			return out, rpc.NewError(rpc.CodeInvalidParams, "runtime storage database does not match the selected local database", "use the endpoint of the Runtime Service owning BERTH_DB")
+		}
 	}
 	switch params.Section {
 	case "schema":

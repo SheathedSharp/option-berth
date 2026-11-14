@@ -102,9 +102,9 @@ def verify(binary, legacy, report):
             stream.seek(0)
             text = stream.read().decode()
             assert "already" in text or "owned" in text, text
-        def cli(*args, code=0):
+        def cli(*args, code=0, extra=None):
             result = subprocess.run(prefix + [str(binary), *args], cwd=project,
-                                    env=env, capture_output=True, text=True, timeout=8)
+                                    env=dict(env, **(extra or {})), capture_output=True, text=True, timeout=8)
             assert result.returncode == code, (args, result.returncode, result.stdout, result.stderr)
             return result
         current = None
@@ -155,6 +155,21 @@ def verify(binary, legacy, report):
             assert any(row["id"] == "db_ok" and row["status"] == "ok" for row in doctor["checks"]), doctor
             busy = cli("worktrees", "--no-runtime-service", "--json", code=1)
             assert not busy.stdout and "runtime_service_busy" in busy.stderr, busy
+            mismatch = cli("worktrees", "--json", code=1,
+                           extra={"BERTH_DB": str(root / "wrong.db")})
+            assert not mismatch.stdout and "storage" in mismatch.stderr.lower(), mismatch
+            other_db = root / "different.db"
+            other_db.write_bytes(b"not-the-owned-database")
+            mismatch = cli("worktrees", "--json", code=1, extra={"BERTH_DB": str(other_db)})
+            assert not mismatch.stdout and "storage" in mismatch.stderr.lower(), mismatch
+            assert other_db.read_bytes() == b"not-the-owned-database"
+            assert "wt_123456789abc" in cli("worktrees", "--json",
+                extra={"BERTH_DB": "../state/option-berth.db"}).stdout
+            alias = root / "db-alias.db"
+            alias.symlink_to(db)
+            assert "wt_123456789abc" in cli("worktrees", "--json",
+                                           extra={"BERTH_DB": str(alias)}).stdout
+            checks.append("wrong DB at live socket refused; same-inode DB symlink accepted")
             checks.append("production CLI online ledger and doctor db_ok read through owner; direct mode returns nonzero busy JSON, never false empty history")
             for _ in range(2):
                 c = RPC(endpoint)

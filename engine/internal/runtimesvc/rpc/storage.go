@@ -6,6 +6,8 @@ import "github.com/sheathedsharp/option-berth/engine/internal/store"
 // owning Store. It never accepts SQL or opens a second database connection.
 type RuntimeStorageReadParams struct {
 	Section string `json:"section" jsonschema:"enum=schema,enum=worktrees,enum=run_exits"`
+	// ExpectedDBPath binds a local reader to the database it selected.
+	ExpectedDBPath string `json:"expected_db_path,omitempty"`
 }
 type RuntimeStorageSchema struct {
 	Path    string `json:"path"`

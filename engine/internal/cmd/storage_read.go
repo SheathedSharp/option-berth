@@ -10,19 +10,24 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 	"os"
+	"path/filepath"
 	"time"
 )
 
 func existingStorageOwner(ctx context.Context, section string) (rpc.RuntimeStorageReadResult, bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
+	expectedPath, err := filepath.Abs(store.Path())
+	if err != nil {
+		return rpc.RuntimeStorageReadResult{}, true, err
+	}
 	c, err := client.Dial(ctx, client.ClientInfo{Name: "cli", Version: buildinfo.Version})
 	if err != nil {
 		return rpc.RuntimeStorageReadResult{}, !errors.Is(err, client.ErrNotRunning), err
 	}
 	defer c.Close()
 	var result rpc.RuntimeStorageReadResult
-	err = c.Call(ctx, "runtime.storage.read", rpc.RuntimeStorageReadParams{Section: section}, &result)
+	err = c.Call(ctx, "runtime.storage.read", rpc.RuntimeStorageReadParams{Section: section, ExpectedDBPath: expectedPath}, &result)
 	return result, true, err
 }
 func storageReadError(err error) error {

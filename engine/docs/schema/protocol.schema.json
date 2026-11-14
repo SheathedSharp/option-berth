@@ -1969,6 +1969,9 @@
             "worktrees",
             "run_exits"
           ]
+        },
+        "expected_db_path": {
+          "type": "string"
         }
       },
       "type": "object",
