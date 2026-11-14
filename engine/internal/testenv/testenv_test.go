@@ -88,7 +88,7 @@ func TestTheOwnershipRules(t *testing.T) {
 		mine    bool
 	}
 	cases := []processCase{
-		{"serve --detach from this binary", exe + " runtime service run --detach", true},
+		{"runtime service run --detach from this binary", exe + " runtime service run --detach", true},
 		{"serve from this binary", exe + " runtime service run", true},
 		{"a test run of this binary", exe + " -test.run=TestX", false},
 		{"this binary with no argument", exe, false},

@@ -15,7 +15,7 @@ import (
 // against whatever HOME it inherited. Any test reaching the autostart path
 // thus forks a copy of itself on every run, and any test in that copy reaching
 // the same path forks again — one afternoon of `go test` left 2,150
-// `cmd.test serve --detach` processes behind and exhausted swap that way.
+// `cmd.test runtime service run --detach` processes behind and exhausted swap that way.
 //
 // Both ends need the guard, which is why it lives here: the client that would
 // spawn the runtime service (internal/runtimesvc/client.Autostart) and the `oberth runtime service run`

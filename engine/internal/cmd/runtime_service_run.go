@@ -139,7 +139,7 @@ func openRuntimeServiceLogger() (*slog.Logger, io.Closer, error) {
 // refuseTestBinaryRuntimeService keeps a Go test binary from turning into the runtime.service.
 //
 // `go test` links a package into <pkg>.test, and Go's flag parser stops at the
-// first non-flag argument — so `cmd.test serve --detach` silently ignores both
+// first non-flag argument — so `cmd.test runtime service run --detach` silently ignores both
 // words and runs the entire test suite in the background against the config
 // directory it inherited. A process like that is a stray test run holding the
 // user's real ~/.oberth open, not a runtime.service. Both entry points are covered:

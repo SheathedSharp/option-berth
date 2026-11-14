@@ -50,7 +50,7 @@ func under(path, dir string) bool {
 	return !strings.HasPrefix(rest, "..")
 }
 
-// The autostart path is what forked `cmd.test serve --detach`. Two independent
+// The autostart path is what forked `cmd.test runtime service run --detach`. Two independent
 // guards stop it now, and both are checked here: either one alone would have
 // been enough to prevent the 2,150 leaked processes.
 func TestAutostartIsRefusedInTests(t *testing.T) {

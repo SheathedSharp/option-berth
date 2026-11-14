@@ -40,7 +40,7 @@ func Autostart(ctx context.Context, binary, socket string) error {
 
 	output, err := spawnDetached(executable, socket)
 	if err != nil {
-		return fmt.Errorf("%w: starting `%s serve --detach` failed: %v: %s",
+		return fmt.Errorf("%w: starting `%s runtime service run --detach` failed: %v: %s",
 			ErrNotRunning, filepath.Base(executable), err, clip(output))
 	}
 	return WaitForSocket(ctx, socket, AutostartTimeout)
@@ -58,7 +58,7 @@ func refuseTestBinary(executable string) error {
 	if !runtimesvc.IsTestBinary(executable) || runtimesvc.TestRuntimeServiceAllowed() {
 		return nil
 	}
-	return fmt.Errorf("%w: refusing to autostart %s: it is a Go test binary, and `%s serve --detach` re-runs the whole test suite in the background instead of starting a runtime service\nhint: a test needs an in-process runtime service, or %s=1 to override",
+	return fmt.Errorf("%w: refusing to autostart %s: it is a Go test binary, and `%s runtime service run --detach` re-runs the whole test suite in the background instead of starting a runtime service\nhint: a test needs an in-process runtime service, or %s=1 to override",
 		ErrNotRunning, filepath.Base(executable), filepath.Base(executable), runtimesvc.AllowTestRuntimeServiceEnv)
 }
 
