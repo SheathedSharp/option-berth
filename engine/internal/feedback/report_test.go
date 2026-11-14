@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 )
 
 func validInput() Input {
@@ -77,7 +79,7 @@ func TestBuildRefusesWhatTheVocabularyDoesNotName(t *testing.T) {
 	}{
 		{"unknown kind", func(in *Input) { in.Kind = "annoying" }},
 		{"unknown command", func(in *Input) { in.Command = "deploy" }},
-		{"unknown error code", func(in *Input) { in.ErrorCode = "timeout" }},
+		{"unknown error code", func(in *Input) { in.ErrorCode = "not_a_published_code" }},
 		{"unknown observation", func(in *Input) { in.Observation = "empty" }},
 		{"elapsed without a unit", func(in *Input) { in.Elapsed = "45" }},
 		{"negative elapsed", func(in *Input) { in.Elapsed = "-5s" }},
@@ -92,6 +94,59 @@ func TestBuildRefusesWhatTheVocabularyDoesNotName(t *testing.T) {
 				t.Fatalf("Build accepted %+v", in)
 			}
 		})
+	}
+}
+
+// A report may name a code the CLI itself publishes. `oberth logs --run`
+// without a daemon answers daemon_unavailable, and attn has conditions of its
+// own; refusing them means the report cannot carry the exact code that
+// triggered it. The daemon vocabulary is not where these live, so they are
+// listed here from the CLI's side.
+func TestBuildAcceptsTheCodesTheCLIPublishes(t *testing.T) {
+	for _, code := range []string{
+		"attn_disabled",
+		"attn_invalid_config",
+		"attn_no_key",
+		"attn_not_configured",
+		"attn_probe_failed",
+		"daemon_not_running",
+		"daemon_unavailable",
+		"interrupted",
+		"stale",
+		"timeout",
+	} {
+		in := validInput()
+		in.Command = "logs"
+		in.ErrorCode = code
+		report, err := Build(in)
+		if err != nil {
+			t.Errorf("Build refused the CLI-published code %q: %v", code, err)
+			continue
+		}
+		if report.ErrorCode != code {
+			t.Errorf("error code %q became %q", code, report.ErrorCode)
+		}
+	}
+
+	in := validInput()
+	in.ErrorCode = "not_a_published_code"
+	if _, err := Build(in); err == nil {
+		t.Fatal("Build accepted a code neither the daemon nor the CLI publishes")
+	}
+}
+
+// The CLI codes cannot move into rpc.failures: that table is the daemon's
+// vocabulary, where every entry must have a daemon producer and a line in the
+// contract. A code that appears in both lists means one of the two is wrong.
+func TestTheCLIErrorCodesAreNotDaemonFailures(t *testing.T) {
+	published := map[string]bool{}
+	for _, code := range cliErrorCodes {
+		published[code] = true
+	}
+	for _, name := range rpc.FailureNames() {
+		if published[name] {
+			t.Errorf("%q is a daemon failure and must not be listed as a CLI-only code", name)
+		}
 	}
 }
 

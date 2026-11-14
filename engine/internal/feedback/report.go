@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -255,15 +256,31 @@ func parseCommand(raw string) (Command, error) {
 	return "", fmt.Errorf("command %q is not one of %s", raw, strings.Join(CommandNames(), ", "))
 }
 
-// knownErrorCode accepts the engine's whole published vocabulary. It is read
-// from the RPC package so the report cannot drift from the contract.
+// cliErrorCodes are the stable codes the CLI itself puts in its JSON error
+// envelope (fail / failHint in internal/cmd). The daemon never returns them,
+// so they cannot live in rpc.failures: that table is the daemon's vocabulary,
+// and every entry there must have a daemon producer and a line in the
+// contract. A feedback report about the command that returned one still has to
+// be able to name it, so the CLI's half is kept here, beside the check that
+// reads both.
+var cliErrorCodes = []string{
+	"attn_disabled",
+	"attn_invalid_config",
+	"attn_no_key",
+	"attn_not_configured",
+	"attn_probe_failed",
+	"daemon_not_running",
+	"daemon_unavailable",
+	"interrupted",
+	"stale",
+	"timeout",
+}
+
+// knownErrorCode accepts the engine's whole published vocabulary: the daemon's
+// failures, read from the RPC package so the report cannot drift from that
+// contract, plus the codes only the CLI's own envelope carries.
 func knownErrorCode(code string) bool {
-	for _, name := range rpc.FailureNames() {
-		if name == code {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(rpc.FailureNames(), code) || slices.Contains(cliErrorCodes, code)
 }
 
 func elapsedBucket(d time.Duration) string {
