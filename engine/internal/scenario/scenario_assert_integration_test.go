@@ -154,7 +154,7 @@ while True:
 // bring the services in. No restart, no `up`, no command naming the file.
 func TestManifestCreatedAfterScanIsDiscovered(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 
 	dir := filepath.Join(e.home, "late-manifest")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -199,7 +199,7 @@ func TestManifestCreatedAfterScanIsDiscovered(t *testing.T) {
 // project's own worker and must leave the referenced listener alone.
 func TestMachineDependencyDownAndUp(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 
 	b, err := MachineDependency(filepath.Join(e.home, "machine-dep"), "mysql")
 	if err != nil {
@@ -253,7 +253,7 @@ func TestMachineDependencyDownAndUp(t *testing.T) {
 // under one name, then renames the checkout and reads status from the new cwd.
 func TestPathRecovery(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 
 	oldDir := filepath.Join(e.home, "api-worker")
 	b, err := APIServerAndWorker(oldDir)
@@ -287,7 +287,7 @@ func TestPathRecovery(t *testing.T) {
 
 	// A runtime service restart re-seeds the root index from the DB and prunes the gone
 	// old path; the new path was never recorded. This is where the index is lost.
-	if _, err := e.run("", "runtime_service", "stop"); err != nil {
+	if _, err := e.run("", "runtime", "service", "stop"); err != nil {
 		t.Fatalf("runtime service stop: %v", err)
 	}
 	for i := 0; i < 200; i++ { // wait for the socket to free before serving again
@@ -296,7 +296,7 @@ func TestPathRecovery(t *testing.T) {
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	e.serve()
+	e.runRuntimeService()
 
 	// status from the new cwd must still see the project's declaration, not
 	// not_found, after the rename + restart.
@@ -310,7 +310,7 @@ func TestPathRecovery(t *testing.T) {
 // running port, but no declared service claims it.
 func TestRunningButUndeclared(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 
 	b, err := APIServerAndWorker(filepath.Join(e.home, "run-undecl"))
 	if err != nil {

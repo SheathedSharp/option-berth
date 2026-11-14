@@ -102,7 +102,7 @@ func attnServices(a attnDoc) map[string]string {
 // repeated reads of the same run keep both stable.
 func TestAttentionFailureMatrix(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 	enableAttentionIn(t, e)
 	b, err := FailureMatrix(filepath.Join(e.home, "attention-failures"))
 	if err != nil {
@@ -110,7 +110,7 @@ func TestAttentionFailureMatrix(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		e.cleanupBuilt(b)
-		_, _ = e.run("", "runtime_service", "stop", "--json")
+		_, _ = e.run("", "runtime", "service", "stop", "--json")
 	})
 
 	var up struct {
@@ -199,7 +199,7 @@ func TestAttentionFailureMatrix(t *testing.T) {
 // expensive detour in the core loop. A normal down then leaves nothing behind.
 func TestAttentionNormalAndUndeclaredBoundaries(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 	enableAttentionIn(t, e)
 	b, err := APIServerAndWorker(filepath.Join(e.home, "attention-normal"))
 	if err != nil {
@@ -207,7 +207,7 @@ func TestAttentionNormalAndUndeclaredBoundaries(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		e.cleanupBuilt(b)
-		_, _ = e.run("", "runtime_service", "stop", "--json")
+		_, _ = e.run("", "runtime", "service", "stop", "--json")
 	})
 	var up struct {
 		Errors []string `json:"errors"`
@@ -270,7 +270,7 @@ func TestAttentionNormalAndUndeclaredBoundaries(t *testing.T) {
 // service action or a new attention artifact.
 func TestAttentionManifestConflictIsNotActionable(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 	enableAttentionIn(t, e)
 	b, err := APIServerAndWorker(filepath.Join(e.home, "attention-conflict"))
 	if err != nil {
@@ -278,7 +278,7 @@ func TestAttentionManifestConflictIsNotActionable(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		e.cleanupBuilt(b)
-		_, _ = e.run("", "runtime_service", "stop", "--json")
+		_, _ = e.run("", "runtime", "service", "stop", "--json")
 	})
 	var up struct {
 		Errors []string `json:"errors"`
@@ -300,7 +300,7 @@ func TestAttentionManifestConflictIsNotActionable(t *testing.T) {
 	}
 	// Stop the runtime service so status must parse the changed manifest rather than
 	// serving the old indexed group snapshot.
-	if _, err := e.run("", "runtime_service", "stop", "--json"); err != nil {
+	if _, err := e.run("", "runtime", "service", "stop", "--json"); err != nil {
 		t.Fatalf("runtime service stop: %v", err)
 	}
 	stdout, stderr, err := e.runCapture(b.Root, "status", "--json", "--no-mark")

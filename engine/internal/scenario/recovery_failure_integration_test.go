@@ -25,7 +25,7 @@ func TestRecoveryFailurePreventsRuntimeServiceReadiness(t *testing.T) {
 	if err := os.WriteFile(path, original, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cmd := e.command("", "serve")
+	cmd := e.command("", "runtime", "service", "run")
 	var output bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &output, &output
 	if err := cmd.Start(); err != nil {
@@ -36,7 +36,7 @@ func TestRecoveryFailurePreventsRuntimeServiceReadiness(t *testing.T) {
 	select {
 	case err := <-done:
 		if err == nil || !strings.Contains(output.String(), "importing runs.json") {
-			t.Fatalf("recovery failure not returned by serve: %v, %s", err, output.String())
+			t.Fatalf("recovery failure not returned by runtime service run: %v, %s", err, output.String())
 		}
 	case <-time.After(5 * time.Second):
 		_ = cmd.Process.Kill()
@@ -45,7 +45,7 @@ func TestRecoveryFailurePreventsRuntimeServiceReadiness(t *testing.T) {
 	}
 	after, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(after, original) {
-		t.Fatalf("serve discarded recovery evidence: %q, %v", after, err)
+		t.Fatalf("runtime service run discarded recovery evidence: %q, %v", after, err)
 	}
 	if _, err := os.Stat(e.socket); !os.IsNotExist(err) {
 		t.Fatalf("failed startup left socket: %v", err)
@@ -55,8 +55,8 @@ func TestRecoveryFailurePreventsRuntimeServiceReadiness(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"runs":{}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	e.serve()
-	if _, err := e.run("", "runtime_service", "stop", "--json"); err != nil {
+	e.runRuntimeService()
+	if _, err := e.run("", "runtime", "service", "stop", "--json"); err != nil {
 		t.Fatalf("corrected fixture did not restart: %v", err)
 	}
 }

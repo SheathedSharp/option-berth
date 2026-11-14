@@ -21,14 +21,14 @@ import (
 // logs must remain available throughout.
 func TestRuntimeServiceStopRestartKeepsServiceEvidence(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 	b, err := RecoveryService(filepath.Join(e.home, "recovery"))
 	if err != nil {
 		t.Fatalf("provision: %v", err)
 	}
 	t.Cleanup(func() {
 		e.cleanupBuilt(b)
-		_, _ = e.run("", "runtime_service", "stop", "--json")
+		_, _ = e.run("", "runtime", "service", "stop", "--json")
 	})
 
 	var up struct {
@@ -95,7 +95,7 @@ func TestRuntimeServiceStopRestartKeepsServiceEvidence(t *testing.T) {
 		var runtimeServiceStatus struct {
 			Scans int `json:"scans"`
 		}
-		if err := e.runJSON("", &runtimeServiceStatus, "runtime_service", "status", "--json"); err != nil {
+		if err := e.runJSON("", &runtimeServiceStatus, "runtime", "service", "status", "--json"); err != nil {
 			t.Fatalf("runtime service status during continuous run: %v", err)
 		}
 		if previousScans >= 0 && runtimeServiceStatus.Scans > previousScans {
@@ -126,7 +126,7 @@ func TestRuntimeServiceStopRestartKeepsServiceEvidence(t *testing.T) {
 		t.Fatalf("logs metadata before stop = %+v, want the running api run", logs)
 	}
 
-	if _, err := e.run("", "runtime_service", "stop", "--json"); err != nil {
+	if _, err := e.run("", "runtime", "service", "stop", "--json"); err != nil {
 		t.Fatalf("runtime service stop: %v", err)
 	}
 	stdout, _, err := e.runCapture(b.Root, "status", "--json", "--no-mark")
@@ -141,7 +141,7 @@ func TestRuntimeServiceStopRestartKeepsServiceEvidence(t *testing.T) {
 		t.Fatalf("direct status after runtime service stop = %+v, want api still running", direct.Worktree.Services)
 	}
 
-	if _, err := e.run("", "runtime_service", "restart", "--json"); err != nil {
+	if _, err := e.run("", "runtime", "service", "restart", "--json"); err != nil {
 		t.Fatalf("runtime service restart: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -167,7 +167,7 @@ func TestRuntimeServiceStopRestartKeepsServiceEvidence(t *testing.T) {
 // and the child's undeclared listener disappears with it.
 func TestSIGTERMEscalatesAndCleansServiceTree(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 	b, err := ForceTree(filepath.Join(e.home, "force-tree"))
 	if err != nil {
 		t.Fatalf("provision: %v", err)

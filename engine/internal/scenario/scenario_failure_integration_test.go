@@ -43,14 +43,14 @@ func matrixService(st statusDoc, name string) (running bool, exit *struct {
 // was never started and one that crashed, and logs remains useful after exit.
 func TestFailureRecoveryMatrix(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 	b, err := FailureMatrix(filepath.Join(e.home, "failure-matrix"))
 	if err != nil {
 		t.Fatalf("provision: %v", err)
 	}
 	t.Cleanup(func() {
 		e.cleanupBuilt(b)
-		_, _ = e.run("", "runtime_service", "stop", "--json")
+		_, _ = e.run("", "runtime", "service", "stop", "--json")
 	})
 
 	// A terminal-evidence test must also cover a real bind failure arriving
@@ -175,7 +175,7 @@ func TestFailureRecoveryMatrix(t *testing.T) {
 
 	// The runtime service may be down while a person is diagnosing the failure. Direct
 	// status must still read the durable exit evidence from the local database.
-	if _, err := e.run("", "runtime_service", "stop", "--json"); err != nil {
+	if _, err := e.run("", "runtime", "service", "stop", "--json"); err != nil {
 		t.Fatalf("runtime service stop: %v", err)
 	}
 	directStdout, _, err := e.runCapture(b.Root, "status", "--json", "--no-mark")

@@ -19,14 +19,14 @@ import (
 // scanner or a scan_error-only transport smoke. Run only in an isolated runner.
 func TestSystemScanAndScopedCursorReplay(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 	b, err := RecoveryService(filepath.Join(e.home, "cursor-replay"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		e.cleanupBuilt(b)
-		_, _ = e.run("", "runtime_service", "stop", "--json")
+		_, _ = e.run("", "runtime", "service", "stop", "--json")
 	})
 	var up struct {
 		Errors []string `json:"errors"`

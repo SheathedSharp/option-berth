@@ -24,6 +24,12 @@ class RuntimeNamingContract(unittest.TestCase):
         self.assertTrue("type HostContext struct" in source, "host lifecycle must use HostContext, not the Runtime domain name")
         self.assertFalse("type Runtime struct" in source)
 
+    def test_integration_helpers_and_argv_use_the_production_command_tree(self):
+        for source in (ROOT / "engine/internal/scenario").glob("*_integration_test.go"):
+            text = source.read_text()
+            self.assertIsNone(re.search(r"\be\.serve\(", text), str(source))
+            self.assertIsNone(re.search(r'\be\.(?:runJSON|run|command|runCapture)\([^\n]*,\s*"(?:runtime_service|daemon|serve)"', text), str(source))
+
     def test_new_endpoint_and_configuration_contract(self):
         paths = (ROOT / "engine/internal/paths/paths.go").read_text()
         for name in ["runtime-service.sock", "runtime-service.log", "runtime-service.lock", "BERTH_RUNTIME_SERVICE_SOCKET"]:
