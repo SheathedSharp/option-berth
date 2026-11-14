@@ -24,7 +24,7 @@ func fixtureLog(t *testing.T) *os.File {
 	t.Cleanup(func() { f.Close() })
 	return f
 }
-func TestDaemonLogsPropagateClosedOutput(t *testing.T) {
+func TestRuntimeServiceLogsPropagateClosedOutput(t *testing.T) {
 	for _, follow := range []bool{false, true} {
 		t.Run(map[bool]string{false: "tail", true: "follow"}[follow], func(t *testing.T) {
 			f := fixtureLog(t)
@@ -53,7 +53,7 @@ func TestDaemonLogsPropagateClosedOutput(t *testing.T) {
 type shortLogWriter struct{}
 
 func (shortLogWriter) Write(p []byte) (int, error) { return len(p) - 1, nil }
-func TestDaemonLogShortWriteAndCancellation(t *testing.T) {
+func TestRuntimeServiceLogShortWriteAndCancellation(t *testing.T) {
 	if err := printTailTo(fixtureLog(t), 2, shortLogWriter{}); !errors.Is(err, io.ErrShortWrite) {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestDaemonLogShortWriteAndCancellation(t *testing.T) {
 		t.Fatal("wrote output after pre-cancellation")
 	}
 }
-func TestDaemonLogTailOrdering(t *testing.T) {
+func TestRuntimeServiceLogTailOrdering(t *testing.T) {
 	for _, tc := range []struct {
 		n    int
 		want string

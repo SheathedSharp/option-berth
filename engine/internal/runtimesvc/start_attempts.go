@@ -7,10 +7,10 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// StartAttempt is one in-flight `groups.start` service attempt as the daemon
+// StartAttempt is one in-flight `groups.start` service attempt as the runtime service
 // can describe it. It is memory-only, owned and cleaned up by the start call
 // (internal/runtimesvc/groupstart): it is not a run, is never written to the store,
-// never counts as running, and disappears with the daemon. The daemon package
+// never counts as running, and disappears with the runtime.service. The runtime service package
 // only reads it to join a reader-visible `starting` object onto a snapshot.
 type StartAttempt struct {
 	Phase         string
@@ -22,7 +22,7 @@ type StartAttempt struct {
 
 // StartAttemptLookup answers with the current attempt for one group+service.
 // The owning package installs it so this package never imports groupstart
-// (the daemon must not depend on the package that registers a
+// (the runtime service must not depend on the package that registers a
 // handler).
 type StartAttemptLookup func(rt *Runtime, group, service string) (StartAttempt, bool)
 

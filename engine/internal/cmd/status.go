@@ -193,15 +193,15 @@ func statusProject(dir string) (name, root string, err error) {
 		"`oberth init` writes one; run status inside a directory that contains it")
 }
 
-// refreshConfigIndex asks the daemon to read dir's oberth.yaml into its index —
+// refreshConfigIndex asks the runtime service to read dir's oberth.yaml into its index —
 // the read-once that brings a manifest into the list (UPSTREAM). `status` does
-// this when the daemon has lost a project's path, which is what a renamed or
+// this when the runtime service has lost a project's path, which is what a renamed or
 // moved directory leaves behind. It reports whether a manifest existed to read;
 // a registration that fails is not worth failing the whole read over.
 func refreshConfigIndex(ctx context.Context, dir string) bool {
-	c := daemonClient(ctx)
+	c := runtimeServiceClient(ctx)
 	if c == nil {
-		return false // no daemon: the direct-scan path is its own authority
+		return false // no runtime_service: the direct-scan path is its own authority
 	}
 	defer c.Close()
 	path := manifestAt(dir)
@@ -237,7 +237,7 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool, only []stri
 		return statusDocument{}, err
 	}
 
-	// One snapshot for everything the daemon knows: the group row already
+	// One snapshot for everything the runtime service knows: the group row already
 	// carries the join between the manifest and reality (running, port_actual,
 	// last_exit), and its ports are the "actually listening" half.
 	pp, gg, obs, err := groupRowsObserved(ctx)
@@ -252,9 +252,9 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool, only []stri
 		}
 	}
 	if group == nil {
-		// The daemon may have lost this project: it only knows roots it has read
+		// The runtime service may have lost this project: it only knows roots it has read
 		// once (UPSTREAM), so a directory that was renamed or moved keeps its
-		// manifest here while the daemon's index still points at the gone path.
+		// manifest here while the runtime service's index still points at the gone path.
 		// Reading the manifest once brings it into the index; then re-read.
 		if refreshConfigIndex(ctx, root) {
 			pp, gg, obs, err = groupRowsObserved(ctx)
@@ -269,7 +269,7 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool, only []stri
 			}
 		}
 		if group == nil {
-			// A stopped project with no listener may not have reached the daemon's
+			// A stopped project with no listener may not have reached the runtime service's
 			// long-lived index yet. Read the manifest directly so the primary
 			// command works on a fresh worktree without a separate discovery step.
 			if local, ok := localStatusGroup(root, name, pp, obs.Narrow()); ok {
@@ -285,13 +285,13 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool, only []stri
 	if group.RootDir != nil && *group.RootDir != "" {
 		root = *group.RootDir
 	}
-	// An older daemon does not publish the checkout identity yet; the value is
+	// An older runtime service does not publish the checkout identity yet; the value is
 	// a pure function of the root, so status can still answer where to read it.
 	if group.Identity == "" {
 		group.Identity = groups.WorktreeTokenFor(root)
 	}
 	// This is the one expensive read status performs, and it is bounded and
-	// limited to running services. The daemon's scan path never does it. A
+	// limited to running services. The runtime service's scan path never does it. A
 	// scoped read resolves its selection first so services outside `--only`
 	// are never hashed.
 	var codeSelection map[string]bool
@@ -336,7 +336,7 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool, only []stri
 		Exits:           statusExits(ctx, name),
 		Observation:     publicObservation(obs),
 	}
-	// The direct read (no daemon) has no snapshot of its own, and the daemon's
+	// The direct read (no runtime service) has no snapshot of its own, and the runtime service's
 	// runs.list may be older than the service row. Fill only what is still
 	// missing, from the full scan rather than doc.Ports: the occupier may
 	// belong to another worktree.
@@ -494,10 +494,10 @@ func attnState(path string) *statusAttn {
 	return state
 }
 
-// localStatusGroup is the cold-start fallback for a manifest the daemon has
+// localStatusGroup is the cold-start fallback for a manifest the runtime service has
 // not indexed yet. It uses the same resolver and state conversion as the
-// normal scan path, but does not pretend that a local read knows daemon run
-// history; that history is added as soon as the daemon sees the project.
+// normal scan path, but does not pretend that a local read knows runtime service run
+// history; that history is added as soon as the runtime service sees the project.
 func localStatusGroup(root, name string, pp []ports.ListeningPort, narrow bool) (*state.Group, bool) {
 	index := groups.NewIndex()
 	index.Observe(root)
@@ -529,11 +529,11 @@ func publicObservation(obs *rpc.ObservationStatus) *rpc.ObservationStatus {
 }
 
 // statusExits is the finished runs of one group, newest first. A registry that
-// is gone (no daemon) has nothing to say, and that is not an error: the rest of
+// is gone (no runtime service) has nothing to say, and that is not an error: the rest of
 // the answer stands on its own.
 func statusExits(ctx context.Context, group string) []rpc.RunRecord {
 	records := []rpc.RunRecord{}
-	c := daemonClient(ctx)
+	c := runtimeServiceClient(ctx)
 	if c == nil {
 		return statusExitsDirect(group)
 	}
@@ -557,8 +557,8 @@ func statusExits(ctx context.Context, group string) []rpc.RunRecord {
 	return records
 }
 
-// statusExitsDirect reads the daemon's durable exit history without opening it
-// for writes. A stopped daemon still leaves the local status command able to
+// statusExitsDirect reads the runtime service's durable exit history without opening it
+// for writes. A stopped runtime service still leaves the local status command able to
 // answer why a declared service is down.
 func statusExitsDirect(group string) []rpc.RunRecord {
 	history, err := store.OpenReadOnly("")
@@ -615,8 +615,8 @@ func exitHint(run rpc.RunRecord) string {
 	return logsHint(run.Name)
 }
 
-// applyExitHints fills a next step the daemon did not supply. Only empty fields
-// are written, so a newer daemon's richer hint wins.
+// applyExitHints fills a next step the runtime service did not supply. Only empty fields
+// are written, so a newer runtime service's richer hint wins.
 func applyExitHints(records []rpc.RunRecord) {
 	for i := range records {
 		if records[i].Hint == "" {
@@ -626,7 +626,7 @@ func applyExitHints(records []rpc.RunRecord) {
 }
 
 // applyExitPortHolders fills port_holder evidence that the read path could not
-// attach. records is modified in place; a holder a daemon already joined from
+// attach. records is modified in place; a holder a runtime service already joined from
 // its own snapshot is never overwritten. listening is the full scan, not the
 // worktree's own ports: the occupier may belong to another worktree.
 func applyExitPortHolders(records []rpc.RunRecord, listening []ports.ListeningPort) {
@@ -768,7 +768,7 @@ func statusLine(label, value string) {
 }
 
 // missingManifest reports whether nothing on disk declares this group's
-// services. The daemon's row keeps the path it last read, so a deleted or moved
+// services. The runtime service's row keeps the path it last read, so a deleted or moved
 // manifest leaves a config path that no longer exists; an empty service list
 // then means nothing was read, not that nothing was declared.
 func missingManifest(group state.Group) bool {
@@ -874,7 +874,7 @@ func serviceStateText(s state.Service) string {
 // — which needs how long the attempt has been going and the budget it is being
 // measured against. elapsed_ms is read-time arithmetic, so it is rounded to
 // whole seconds here rather than printed to the millisecond; ready_timeout is
-// the daemon's published value and is not reformatted.
+// the runtime service's published value and is not reformatted.
 func startingStateText(starting state.ServiceStarting) string {
 	parts := []string{"starting"}
 	if starting.Phase != "" {

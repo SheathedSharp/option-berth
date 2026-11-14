@@ -13,7 +13,7 @@ import (
 )
 
 // pipeBindTimeout caps the retry in listen. It is generous on purpose: a
-// restart is already waiting on the outgoing daemon's lock, so spending an
+// restart is already waiting on the outgoing runtime service's lock, so spending an
 // extra second here only turns a failed restart into one that succeeds.
 const pipeBindTimeout = 5 * time.Second
 
@@ -22,7 +22,7 @@ const pipeBindTimeout = 5 * time.Second
 // counterpart of the 0600 unix socket (spec, "Transport details").
 //
 // A pipe instance outlives the process that created it for as long as Windows
-// needs to tear the last instance down, so a daemon replacing another one can
+// needs to tear the last instance down, so a runtime service replacing another one can
 // meet "Access is denied" on a name that is about to become free. That is a
 // race rather than a refusal: retry for a few seconds before giving up.
 func listen(path string) (net.Listener, error) {
@@ -63,7 +63,7 @@ func dial(path string) (net.Conn, error) {
 func removeStaleSocket(string) error { return nil }
 
 // userOnlySDDL builds "D:P(A;;GA;;;<user SID>)(A;;GA;;;SY)": a protected DACL
-// that grants generic-all to the daemon's own user and to LocalSystem.
+// that grants generic-all to the runtime service's own user and to LocalSystem.
 func userOnlySDDL() (string, error) {
 	processToken := windows.GetCurrentProcessToken()
 	tokenUser, err := processToken.GetTokenUser()

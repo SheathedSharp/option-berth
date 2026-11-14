@@ -13,8 +13,8 @@ import (
 
 // Exercise the real CLI's registered recovery hook, not only a synthetic
 // failing callback. Corruption must remain inspectable and never become a
-// successfully running empty daemon. Once fixed, the same endpoint can start.
-func TestRecoveryFailurePreventsDaemonReadiness(t *testing.T) {
+// successfully running empty runtime.service. Once fixed, the same endpoint can start.
+func TestRecoveryFailurePreventsRuntimeServiceReadiness(t *testing.T) {
 	e := newEnv(t)
 	stateDir := filepath.Join(e.home, ".option-berth")
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
@@ -41,7 +41,7 @@ func TestRecoveryFailurePreventsDaemonReadiness(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		_ = cmd.Process.Kill()
 		<-done
-		t.Fatalf("failed recovery left daemon running: %s", output.String())
+		t.Fatalf("failed recovery left runtime service running: %s", output.String())
 	}
 	after, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(after, original) {
@@ -56,7 +56,7 @@ func TestRecoveryFailurePreventsDaemonReadiness(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.serve()
-	if _, err := e.run("", "daemon", "stop", "--json"); err != nil {
+	if _, err := e.run("", "runtime_service", "stop", "--json"); err != nil {
 		t.Fatalf("corrected fixture did not restart: %v", err)
 	}
 }

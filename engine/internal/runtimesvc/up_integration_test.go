@@ -45,7 +45,7 @@ func TestUpStartsAGroupInOrderAndDownStopsIt(t *testing.T) {
 	}
 
 	sandbox := newEnv(t)
-	// The project lives inside the temp HOME: the daemon refuses to start a
+	// The project lives inside the temp HOME: the runtime service refuses to start a
 	// command outside the user's home unless it is asked to.
 	project := filepath.Join(sandbox.home, "demo")
 	if err := os.MkdirAll(project, 0o755); err != nil {
@@ -81,7 +81,7 @@ services:
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 
-	// A subscriber keeps the daemon's scan loop running: with nobody listening
+	// A subscriber keeps the runtime service's scan loop running: with nobody listening
 	// it parks, and the down events below are published from deltas.
 	cl := sandbox.connect(ctx)
 	sub, err := cl.Subscribe(ctx, client.SubscribeOptions{Events: true, Buffer: 512})
@@ -133,7 +133,7 @@ services:
 	}
 
 	// api only starts once db is listening; seeing all three ports in the
-	// daemon snapshot confirms the dependency order reached its running state.
+	// runtime service snapshot confirms the dependency order reached its running state.
 	waitForPorts(t, ctx, cl, []int{dbPort, apiPort, webPort}, 45*time.Second)
 
 	// Running `up` again is a no-op: everything is already running.
@@ -167,11 +167,11 @@ services:
 		}
 	}
 
-	// The daemon publishes the three port_down events as the services leave.
+	// The runtime service publishes the three port_down events as the services leave.
 	waitForDownEvents(t, sub, []int{dbPort, apiPort, webPort}, 45*time.Second)
 }
 
-// waitForDownEvents drains the subscription until the daemon has reported every
+// waitForDownEvents drains the subscription until the runtime service has reported every
 // port as gone.
 func waitForDownEvents(t *testing.T, sub *client.Subscription, want []int, timeout time.Duration) {
 	t.Helper()

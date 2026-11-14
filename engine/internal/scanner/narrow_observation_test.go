@@ -21,8 +21,8 @@ machine:
     port: 6379
 `)
 	l := New(Options{
-		DaemonVersion: "test",
-		Store:         st,
+		RuntimeServiceVersion: "test",
+		Store:                 st,
 		ScanSource: func(context.Context, Include) ([]ports.ListeningPort, string, error) {
 			return []ports.ListeningPort{{Port: 8123, PID: 42, Process: "python3", Cwd: dir}}, "lsof", nil
 		},

@@ -23,9 +23,9 @@ func newStopRuntime(t *testing.T) (*Runtime, *store.Store) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	loop := scanner.New(scanner.Options{
-		DaemonVersion: "test",
-		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Scan:          func(scanner.Include) ([]ports.ListeningPort, error) { return nil, nil },
+		RuntimeServiceVersion: "test",
+		Logger:                slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Scan:                  func(scanner.Include) ([]ports.ListeningPort, error) { return nil, nil },
 	})
 	return &Runtime{
 		Store:   st,

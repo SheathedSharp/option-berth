@@ -13,7 +13,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
-// Session attribution reaches the daemon through three doors: the scanner's
+// Session attribution reaches the runtime service through three doors: the scanner's
 // snapshot collection, the `sessions.kill` RPC, and the periodic sweep that
 // keeps recorded sessions inside their retention window. All three read the
 // same two sources — the live run registry and the store — so a session can
@@ -38,7 +38,7 @@ type sessionRegistry interface {
 	SessionRuns() []sessions.Live
 }
 
-// sessionFacts joins the daemon's two session sources for the domain package.
+// sessionFacts joins the runtime service's two session sources for the domain package.
 type sessionFacts struct {
 	rt *Runtime
 }
@@ -191,7 +191,7 @@ func sessionNotFound(id string) error {
 // neither is urgent, and the retention window has a minute of slack in it.
 const sessionSweepInterval = time.Minute
 
-// sessionMaintenance owns the daemon's only session sweep goroutine. It holds
+// sessionMaintenance owns the runtime service's only session sweep goroutine. It holds
 // the stop channel behind a mutex so a restart cannot leave two sweeps
 // touching the same table.
 type sessionMaintenance struct {

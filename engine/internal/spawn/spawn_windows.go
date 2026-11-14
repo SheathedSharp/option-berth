@@ -32,7 +32,7 @@ func configure(command *exec.Cmd, detach bool) {
 //
 // An attached run's job is killed when its last handle closes, so an
 // `oberth start` that exits takes the tree with it. A detached run's job has no
-// such limit and outlives the daemon that created it.
+// such limit and outlives the runtime service that created it.
 func adopt(command *exec.Cmd, detach bool) error {
 	if command.Process == nil {
 		return nil

@@ -241,13 +241,13 @@ func TestKillEnvelopeStaysOKWhenTheTargetWasAlreadyGone(t *testing.T) {
 	}
 }
 
-// TestKillResolvesAgainstTheDaemonsOwnScan: the handler resolves targets
+// TestKillResolvesAgainstTheRuntimeServicesOwnScan: the handler resolves targets
 // against the rows it just scanned rather than letting killer.KillPorts scan
 // the machine a second time inside the RPC. The proof is a listener that only
-// exists in the daemon's scan — a killer that went looking for itself would
+// exists in the runtime service's scan — a killer that went looking for itself would
 // find nothing on that port and answer a failed "none" row — so a planned
-// signal carrying the snapshot's pid and name is the daemon's scan being used.
-func TestKillResolvesAgainstTheDaemonsOwnScan(t *testing.T) {
+// signal carrying the snapshot's pid and name is the runtime service's scan being used.
+func TestKillResolvesAgainstTheRuntimeServicesOwnScan(t *testing.T) {
 	harness, cl := killHarness(t)
 
 	const fakePID = 424242
@@ -267,7 +267,7 @@ func TestKillResolvesAgainstTheDaemonsOwnScan(t *testing.T) {
 	}
 	row := envelope.Results[0]
 	if row.Method == state.MethodNone {
-		t.Fatalf("row = %+v, want a planned signal: the killer resolved against its own scan, not the daemon's", row)
+		t.Fatalf("row = %+v, want a planned signal: the killer resolved against its own scan, not the runtime service's", row)
 	}
 	if row.PID != fakePID {
 		t.Errorf("pid = %d, want the snapshot's fake pid %d", row.PID, fakePID)

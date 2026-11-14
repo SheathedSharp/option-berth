@@ -161,7 +161,7 @@ services:
 	stopOnce := func(chunks []rpc.GroupsStartChunk) {
 		t.Helper()
 		// probeScan attributes the listener to this test process, so the
-		// daemon's kill selector would signal the test itself. Stop the child
+		// runtime service's kill selector would signal the test itself. Stop the child
 		// the chunk names and drop its run record instead.
 		for _, ch := range chunks {
 			if ch.PID <= 0 {

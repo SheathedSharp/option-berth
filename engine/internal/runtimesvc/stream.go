@@ -21,7 +21,7 @@ func nextStreamID() string {
 	return fmt.Sprintf("sub-%d", n)
 }
 
-// Stream is a running streaming method: the daemon answers the call with a
+// Stream is a running streaming method: the runtime service answers the call with a
 // subscription id, pushes `stream.chunk {id, data}` notifications, and closes
 // with `stream.end {id, data?, error?}`.
 //
@@ -42,7 +42,7 @@ type Stream struct {
 func (s *Stream) ID() string { return s.id }
 
 // Context is cancelled by stream.cancel, by the client disconnecting and by a
-// daemon shutdown. Producers must select on it.
+// runtime service shutdown. Producers must select on it.
 func (s *Stream) Context() context.Context { return s.ctx }
 
 // Done is closed once the stream is cancelled.

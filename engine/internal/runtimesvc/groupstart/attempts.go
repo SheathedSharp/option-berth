@@ -21,11 +21,11 @@ func init() {
 }
 
 // startAttempt is one service's in-flight start, owned by this package. It is
-// memory-only diagnostic state keyed by daemon runtime + group + service: it
+// memory-only diagnostic state keyed by runtime service runtime + group + service: it
 // never enters the run registry, never reaches the store, and is removed on
 // every exit path (already-running isn't attempted at all; a dependency or
 // prepare failure, a spawn failure, cancellation and success all call finish).
-// Once the run is registered the run record is the only owner; a daemon restart
+// Once the run is registered the run record is the only owner; a runtime service restart
 // simply loses every attempt.
 type startAttempt struct {
 	rt            *runtimesvc.Runtime
@@ -154,7 +154,7 @@ func startAttemptChunk(a *startAttempt) rpc.GroupsStartChunk {
 	}
 }
 
-// lookupStartAttempt answers the daemon's snapshot join. It copies the attempt
+// lookupStartAttempt answers the runtime service's snapshot join. It copies the attempt
 // so the caller cannot race the start call's updates.
 func lookupStartAttempt(rt *runtimesvc.Runtime, group, service string) (runtimesvc.StartAttempt, bool) {
 	startAttempts.Lock()

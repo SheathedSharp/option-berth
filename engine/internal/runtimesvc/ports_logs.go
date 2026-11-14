@@ -24,7 +24,7 @@ const defaultLogLines = 100
 //
 // Two kinds exist and they are genuinely different. A native service's output is
 // a file on this machine, so it is read here. A container's output lives inside
-// Docker, so the daemon asks Docker for it — that is a fact only the container
+// Docker, so the runtime service asks Docker for it — that is a fact only the container
 // runtime holds, not a program the engine could avoid needing.
 type logSource interface {
 	// Label names the source for the client.
@@ -170,7 +170,7 @@ func runDockerLog(ctx context.Context, lines int, follow bool, container string)
 }
 
 // streamCommand runs one external command and hands each of its output lines to
-// emit. This is the only place the daemon reads a log by running a program: it
+// emit. This is the only place the runtime service reads a log by running a program: it
 // exists for a container's output, which only the container runtime can supply.
 //
 // Killing the child is the context's job: exec.CommandContext does it on

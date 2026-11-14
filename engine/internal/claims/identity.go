@@ -11,7 +11,7 @@ import (
 // repository and the worktree is the checkout within it, so two linked
 // worktrees of one repository are two identities and get different addresses.
 //
-// The daemon and the scanner both ask this question, from a directory that may
+// The runtime service and the scanner both ask this question, from a directory that may
 // be the manifest's or a service's, so the derivation lives here rather than
 // being spelled out at each call site: a key that came out differently between
 // two callers would hand one worktree two sets of ports, which is exactly what

@@ -13,7 +13,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
-// withStore opens the daemon's database at path the way Serve does and hands
+// withStore opens the runtime service's database at path the way Serve does and hands
 // back the store. Closing it stays the harness's job (testHarness.shutdown):
 // the store has to outlive the scan loop that writes history into it, so a
 // cleanup registered here would run first and pull the database out from under
@@ -24,7 +24,7 @@ func (h *testHarness) withStore(path string) *store.Store {
 	h.srv.openStore()
 	st := h.srv.runtime.Store
 	if st == nil {
-		h.t.Fatalf("the daemon opened no store at %s", path)
+		h.t.Fatalf("the runtime service opened no store at %s", path)
 	}
 	return st
 }
@@ -36,9 +36,9 @@ func TestStatusReportsTheDatabasePath(t *testing.T) {
 	h := newHarness(t, t.Context())
 	cl := h.dial(t.Context())
 
-	var before rpc.DaemonStatusResult
-	if e := cl.call("daemon.status", rpc.Empty{}, &before); e != nil {
-		t.Fatalf("daemon.status before the store is open: %v", e)
+	var before rpc.RuntimeServiceStatusResult
+	if e := cl.call("runtime.service.status", rpc.Empty{}, &before); e != nil {
+		t.Fatalf("runtime.service.status before the store is open: %v", e)
 	}
 	if before.DBPath != "" {
 		t.Errorf("db_path = %q with no store open, want empty", before.DBPath)
@@ -46,9 +46,9 @@ func TestStatusReportsTheDatabasePath(t *testing.T) {
 
 	h.withStore(dbPath)
 
-	var after rpc.DaemonStatusResult
-	if e := cl.call("daemon.status", rpc.Empty{}, &after); e != nil {
-		t.Fatalf("daemon.status after the store is open: %v", e)
+	var after rpc.RuntimeServiceStatusResult
+	if e := cl.call("runtime.service.status", rpc.Empty{}, &after); e != nil {
+		t.Fatalf("runtime.service.status after the store is open: %v", e)
 	}
 	if after.DBPath != dbPath {
 		t.Errorf("db_path = %q, want %q", after.DBPath, dbPath)

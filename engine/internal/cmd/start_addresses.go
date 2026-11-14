@@ -45,7 +45,7 @@ func expandStartAddresses(ctx context.Context, cfg *groups.Config, argv []string
 	book := cfg.AddressBook(nil)
 	// Runtime facts are only needed for an address the declarations do not
 	// settle: a local `port: auto` service, or a workspace whose service is on
-	// an assigned port. Asking the daemon (and scanning) when every reference is
+	// an assigned port. Asking the runtime service (and scanning) when every reference is
 	// already fixed would slow down commands that do not need it.
 	if needsRuntime(cfg, book, names) {
 		runtime, err := startRuntimeGroups(ctx)
@@ -108,7 +108,7 @@ func startReferences(argv []string) (names []string, hasWorktree, hasBare bool) 
 // needsRuntime reports whether a named reference is both unresolved in the
 // declaration-only book and capable of being resolved from runtime facts. An
 // unknown name or a service with no port cannot be, so it does not justify a
-// daemon read or a scan.
+// runtime service read or a scan.
 func needsRuntime(cfg *groups.Config, book groups.AddressBook, names []string) bool {
 	for _, name := range names {
 		if _, ok := book.Ports[name]; ok {
@@ -121,9 +121,9 @@ func needsRuntime(cfg *groups.Config, book groups.AddressBook, names []string) b
 	return false
 }
 
-// startRuntimeGroups reads the same runtime facts status does: the daemon's
+// startRuntimeGroups reads the same runtime facts status does: the runtime service's
 // snapshot when it is running, otherwise one direct scan. It never starts a
-// daemon; `oberth start` registering the run may do that afterwards.
+// runtime service; `oberth start` registering the run may do that afterwards.
 //
 // The run registry is folded in because `up` returns as soon as a service has
 // been spawned and survived the startup window, while the scanner publishes its
@@ -131,7 +131,7 @@ func needsRuntime(cfg *groups.Config, book groups.AddressBook, names []string) b
 // without it an agent running `up` then `oberth start -- curl ${api.url}`
 // would race the scan and be told its service is not running.
 func startRuntimeGroups(ctx context.Context) ([]state.Group, error) {
-	if c, err := dialDaemon(ctx); err == nil {
+	if c, err := dialRuntimeService(ctx); err == nil {
 		defer c.Close()
 		var snap state.Snapshot
 		if err := c.Call(ctx, "state.snapshot", rpc.StateSnapshotParams{}, &snap); err == nil {

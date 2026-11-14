@@ -212,7 +212,7 @@ func TestAddServiceCreatesTheServicesKey(t *testing.T) {
 }
 
 // A rename that missed a depends_on would leave an invalid file behind, which
-// is the whole reason this runs in the daemon.
+// is the whole reason this runs in the runtime.service.
 func TestRenameServiceRewritesEveryReference(t *testing.T) {
 	path := writeManifest(t, untidyManifest)
 

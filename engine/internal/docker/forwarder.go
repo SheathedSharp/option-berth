@@ -9,7 +9,7 @@ import (
 // Docker never hands a host port to a container: a helper on the host holds the
 // listening socket and forwards what arrives. That helper is the only honest
 // sign — without asking Docker anything — that a host port is really a
-// container's. It is what lets the daemon tell a stale container claim from a
+// container's. It is what lets the runtime service tell a stale container claim from a
 // live one while Docker is wedged and the cached container list cannot be
 // refreshed.
 //

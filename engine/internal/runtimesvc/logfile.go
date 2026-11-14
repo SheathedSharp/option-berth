@@ -15,8 +15,8 @@ import (
 // Reading a log file without running a program.
 //
 // A service's output is a file on this machine, written by the process the
-// daemon started. Reading the last lines of a file is ordinary IO, so it is done
-// here rather than by spawning `tail`: the daemon then has no PATH dependency for
+// runtime service started. Reading the last lines of a file is ordinary IO, so it is done
+// here rather than by spawning `tail`: the runtime service then has no PATH dependency for
 // a fact it already owns, and no platform can be without it.
 //
 // The follow poll interval is a compromise between latency and syscalls. It is a

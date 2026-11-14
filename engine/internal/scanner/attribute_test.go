@@ -27,8 +27,8 @@ func openStore(t *testing.T) *store.Store {
 func loopWith(st Store, rows ...ports.ListeningPort) *Loop {
 	fixed := append([]ports.ListeningPort(nil), rows...)
 	return New(Options{
-		DaemonVersion: "test",
-		Store:         st,
+		RuntimeServiceVersion: "test",
+		Store:                 st,
 		Scan: func(Include) ([]ports.ListeningPort, error) {
 			out := make([]ports.ListeningPort, len(fixed))
 			copy(out, fixed)
@@ -64,8 +64,8 @@ func TestScanRecordsHistoryFromTheDiff(t *testing.T) {
 	listener := ports.ListeningPort{Port: 8234, PID: 42, Process: "node", Command: "node server.js"}
 	var feed []ports.ListeningPort
 	loop := New(Options{
-		DaemonVersion: "test",
-		Store:         st,
+		RuntimeServiceVersion: "test",
+		Store:                 st,
 		Scan: func(Include) ([]ports.ListeningPort, error) {
 			out := make([]ports.ListeningPort, len(feed))
 			copy(out, feed)
@@ -137,7 +137,7 @@ func TestSeedsTheIndexFromKnownRoots(t *testing.T) {
 // A root whose directory is gone is dropped when the index is seeded. The
 // store only ever gains rows (rememberRoots), so nothing else would ever
 // forget a project that was deleted or moved — it would be re-seeded on every
-// daemon start for as long as the database lives.
+// runtime service start for as long as the database lives.
 func TestDropsVanishedRootsOnSeed(t *testing.T) {
 	st := openStore(t)
 	live := t.TempDir()
@@ -207,7 +207,7 @@ func TestRemembersNewlySeenRoots(t *testing.T) {
 func TestInvalidateForcesTheNextReadToRescan(t *testing.T) {
 	calls := 0
 	loop := New(Options{
-		DaemonVersion: "test",
+		RuntimeServiceVersion: "test",
 		Scan: func(Include) ([]ports.ListeningPort, error) {
 			calls++
 			return nil, nil
@@ -236,7 +236,7 @@ func TestSetStoreInstallsOneAfterConstruction(t *testing.T) {
 	dir := t.TempDir()
 	l := loopWith(nil, ports.ListeningPort{Port: 8123, PID: 42, Process: "python3", Cwd: dir})
 
-	// The daemon hands the loop its store after the loop is already scanning,
+	// The runtime service hands the loop its store after the loop is already scanning,
 	// and from then on a `oberth.yaml` it sees is remembered.
 	l.SetStore(st)
 	writeConfig(t, dir, "name: shop\n")

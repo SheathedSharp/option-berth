@@ -1,8 +1,8 @@
 // Package codefacts answers "is this process running the code that is on disk
 // now?" on demand, for a reader that already has the runtime group.
 //
-// The daemon's scan loop never calls this: it runs every few seconds and must
-// not re-read source trees. Both `oberth status` and the daemon's groups.code
+// The runtime service's scan loop never calls this: it runs every few seconds and must
+// not re-read source trees. Both `oberth status` and the runtime service's groups.code
 // read share this one implementation, so a client cannot get a different
 // answer from the CLI and the app. A missing snapshot, an unreadable source,
 // or a run from before this feature leaves the fields nil (unknown), never

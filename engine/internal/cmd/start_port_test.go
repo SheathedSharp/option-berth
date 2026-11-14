@@ -7,7 +7,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 )
 
-// The run id is the identity; the pid is only the fallback for a daemon that
+// The run id is the identity; the pid is only the fallback for a runtime service that
 // did not name the run. A pid that now belongs to another process must not
 // borrow the old run's ports.
 func TestPortsForRunUsesTheRunIdentity(t *testing.T) {

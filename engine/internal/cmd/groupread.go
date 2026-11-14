@@ -31,7 +31,7 @@ var (
 )
 
 // groupRows joins the worktree's live port evidence with its manifest index.
-// Status uses the same source whether the daemon is warm or the caller asks
+// Status uses the same source whether the runtime service is warm or the caller asks
 // for a direct scan.
 func groupRows(ctx context.Context) ([]ports.ListeningPort, []state.Group, error) {
 	got, groups, _, err := groupRowsObserved(ctx)
@@ -43,15 +43,15 @@ func groupRows(ctx context.Context) ([]ports.ListeningPort, []state.Group, error
 // that cannot degrade use groupRows and get the same rows, while status can
 // say why the port list is unknown.
 func groupRowsObserved(ctx context.Context) ([]ports.ListeningPort, []state.Group, *rpc.ObservationStatus, error) {
-	var daemonErr error
-	if !noDaemonFlag {
-		if c, err := dialDaemon(ctx); err == nil {
+	var runtimeServiceErr error
+	if !noRuntimeServiceFlag {
+		if c, err := dialRuntimeService(ctx); err == nil {
 			defer c.Close()
 			var snap state.Snapshot
 			if err := c.Call(ctx, "state.snapshot", rpc.StateSnapshotParams{}, &snap); err == nil {
 				probe := c.Hello().Observation
 				if probe == nil || probe.State == string(ports.ObservationObservable) {
-					// The snapshot may still be partial: the daemon's collector
+					// The snapshot may still be partial: the runtime service's collector
 					// could read some rows and not others. Carry that verdict,
 					// falling back to the probe's healthy one.
 					obs := snap.Observation
@@ -60,30 +60,30 @@ func groupRowsObserved(ctx context.Context) ([]ports.ListeningPort, []state.Grou
 					}
 					return state.ToListeningAll(snap.Ports), snap.Groups, obs, nil
 				}
-				// A blind daemon can still serve its last-good snapshot. Treat
+				// A blind runtime service can still serve its last-good snapshot. Treat
 				// those ports as unknown, not as current facts; try this process
-				// and keep the daemon's reason for the fallback note.
-				daemonErr = &cliErr{Code: probe.Code, Msg: "daemon cannot see listeners: " + probe.Detail, Hint: probe.Hint}
+				// and keep the runtime service's reason for the fallback note.
+				runtimeServiceErr = &cliErr{Code: probe.Code, Msg: "runtime service cannot see listeners: " + probe.Detail, Hint: probe.Hint}
 			} else {
-				daemonErr = cliError(err)
+				runtimeServiceErr = cliError(err)
 			}
 		}
 	}
 	got, groups, obs, err := scanGroupsObserved(ctx)
 	if err != nil {
-		if daemonErr == nil {
+		if runtimeServiceErr == nil {
 			return nil, nil, obs, err
 		}
 		// Both paths failed: keep the local code and hint, but do not lose the
-		// daemon's reason. "Daemon is blind" and "this CLI is blind" are two
+		// runtime service's reason. "Runtime Service is blind" and "this CLI is blind" are two
 		// facts a reader needs to choose the next step.
-		dcode, dmsg, _ := describe(daemonErr)
+		dcode, dmsg, _ := describe(runtimeServiceErr)
 		lcode, lmsg, lhint := describe(err)
 		return nil, nil, obs, failHint(lcode,
-			fmt.Sprintf("%s; daemon also failed: %s: %s", lmsg, dcode, dmsg), lhint)
+			fmt.Sprintf("%s; runtime service also failed: %s: %s", lmsg, dcode, dmsg), lhint)
 	}
-	if daemonErr != nil {
-		noteFallbackBecause(daemonErr)
+	if runtimeServiceErr != nil {
+		noteFallbackBecause(runtimeServiceErr)
 	}
 	return got, groups, obs, nil
 }
@@ -162,7 +162,7 @@ func scanGroupsObserved(ctx context.Context) ([]ports.ListeningPort, []state.Gro
 	scanner.ProbeConfigured(resolved, groupRows, ports.ProbeHealth, scanner.ConfiguredHealthBudget)
 	// Copy the probed verdict back to the scanner rows while retaining direct
 	// scan-only evidence (parent command and Compose working directory). The
-	// direct path must expose the same health fact as the daemon snapshot;
+	// direct path must expose the same health fact as the runtime service snapshot;
 	// returning the pre-probe rows would silently drop it from status' ports.
 	for i := range resolved {
 		if i >= len(results) || resolved[i].Health == nil {
@@ -216,7 +216,7 @@ func observationFromProbe(probe ports.ProbeResult, scanErr *ports.ObservationErr
 	}
 }
 
-// directRunRegistry is the no-daemon view of option-berth's own live runs.
+// directRunRegistry is the no-runtime-service view of option-berth's own live runs.
 // ports.Enrich has already stamped run attribution onto listening rows from
 // the same runs.json file; this adapter adds the other half the group builder
 // needs: a worker with no port is still running when its recorded PID is alive.
@@ -232,7 +232,7 @@ func (r directRunRegistry) Run(p state.Port) (state.Run, bool) {
 var _ servicefacts.Provider = directRunRegistry{}
 
 // ServiceFacts projects the already-loaded, pruned registry and durable exit
-// history once. Both direct and daemon publication use the same pure reducer.
+// history once. Both direct and runtime service publication use the same pure reducer.
 func (r directRunRegistry) ServiceFacts() servicefacts.Snapshot {
 	capacity := len(r.exits)
 	if r.reg != nil {

@@ -8,10 +8,10 @@ import (
 
 // CLITimeout bounds one `docker` invocation.
 //
-// The docker CLI has no timeout of its own: it talks to a daemon over a socket,
+// The docker CLI has no timeout of its own: it talks to a runtime service over a socket,
 // and when Docker Desktop is starting, paused or wedged, `docker stats` does
 // not fail — it waits. Ten seconds is well beyond a healthy
-// `docker stats --no-stream` (about two) and short enough that a wedged daemon
+// `docker stats --no-stream` (about two) and short enough that a wedged runtime service
 // degrades to "no container data" rather than to a hung command.
 //
 // Scans no longer pay this cost; they read the container list a Watcher keeps

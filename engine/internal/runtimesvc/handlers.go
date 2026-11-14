@@ -14,16 +14,16 @@ import (
 // The core method set. Other packages own further namespaces and register
 // those handlers from their own init(), so this list only ever grows sideways.
 func init() {
-	registerDaemonHandlers()
+	registerRuntimeServiceHandlers()
 	registerStateHandlers()
 	registerStreamHandlers()
 }
 
-func registerDaemonHandlers() {
-	RegisterHandler("daemon.hello", handleHello)
-	RegisterHandler("daemon.status", handleStatus)
-	RegisterHandler("daemon.shutdown", handleShutdown)
-	RegisterHandler("daemon.schema", handleSchema)
+func registerRuntimeServiceHandlers() {
+	RegisterHandler("runtime.service.hello", handleHello)
+	RegisterHandler("runtime.service.status", handleStatus)
+	RegisterHandler("runtime.service.shutdown", handleShutdown)
+	RegisterHandler("runtime.service.schema", handleSchema)
 }
 
 func registerStateHandlers() {
@@ -58,7 +58,7 @@ func parseInclude(in rpc.Include) (scanner.Include, error) {
 }
 
 func handleHello(ctx context.Context, req *Request) (any, error) {
-	var p rpc.DaemonHelloParams
+	var p rpc.RuntimeServiceHelloParams
 	err := req.Bind(&p)
 	if err != nil {
 		return nil, err
@@ -73,16 +73,16 @@ func handleHello(ctx context.Context, req *Request) (any, error) {
 	rt.Logger.Debug("hello", "conn", req.Conn.ID(),
 		"client", p.Client, "client_version", p.ClientVersion, "keepalive", p.Keepalive)
 
-	return rpc.DaemonHelloResult{
-		Capabilities:    Capabilities(),
-		ProtocolVersion: rpc.ProtocolVersion,
-		DaemonVersion:   rt.Version,
-		PID:             rt.PID,
-		StartedAt:       rt.StartedAt.Format(time.RFC3339),
-		Socket:          rt.Socket,
-		BinaryPath:      rt.BinaryPath,
-		Keepalive:       p.Keepalive,
-		Observation:     rt.RefreshObservation(ctx),
+	return rpc.RuntimeServiceHelloResult{
+		Capabilities:          Capabilities(),
+		ProtocolVersion:       rpc.ProtocolVersion,
+		RuntimeServiceVersion: rt.Version,
+		PID:                   rt.PID,
+		StartedAt:             rt.StartedAt.Format(time.RFC3339),
+		Socket:                rt.Socket,
+		BinaryPath:            rt.BinaryPath,
+		Keepalive:             p.Keepalive,
+		Observation:           rt.RefreshObservation(ctx),
 	}, nil
 }
 
@@ -93,7 +93,7 @@ func handleStatus(ctx context.Context, req *Request) (any, error) {
 	if !status.LastScanAt.IsZero() {
 		lastScan = status.LastScanAt.Format(time.RFC3339)
 	}
-	return rpc.DaemonStatusResult{
+	return rpc.RuntimeServiceStatusResult{
 		Scans:              status.Scans,
 		ScanIntervalMs:     status.IntervalMs,
 		ScanBaseIntervalMs: status.BaseIntervalMs,
@@ -111,14 +111,14 @@ func handleStatus(ctx context.Context, req *Request) (any, error) {
 
 func handleShutdown(_ context.Context, req *Request) (any, error) {
 	req.Runtime.Logger.Info("shutdown requested by client", "conn", req.Conn.ID())
-	// The dispatcher stops the daemon only after this reply has been queued, so
+	// The dispatcher stops the runtime service only after this reply has been queued, so
 	// the client sees its {ok: true} before the socket goes away.
 	req.Conn.requestShutdown()
 	return rpc.OKResult{OK: true}, nil
 }
 
 func handleSchema(_ context.Context, _ *Request) (any, error) {
-	schema := rpc.DaemonSchemaResult{Schema: rpc.Marshal()}
+	schema := rpc.RuntimeServiceSchemaResult{Schema: rpc.Marshal()}
 	return schema, nil
 }
 

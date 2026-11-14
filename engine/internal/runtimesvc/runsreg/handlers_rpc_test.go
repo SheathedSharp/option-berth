@@ -43,7 +43,7 @@ func handlerRuntimeScan(t *testing.T, logger *slog.Logger, scan func(scanner.Inc
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
-	loop := scanner.New(scanner.Options{DaemonVersion: "test", Logger: logger, Scan: scan})
+	loop := scanner.New(scanner.Options{RuntimeServiceVersion: "test", Logger: logger, Scan: scan})
 	return &runtimesvc.Runtime{Version: "test", Logger: logger, Scanner: loop}
 }
 
@@ -418,7 +418,7 @@ func TestRememberSessionWarnsOnlyWhenTheWriteFails(t *testing.T) {
 }
 
 // TestHandleSpawnStartsAndReapsARun pins the success path end to end: the reply
-// carries an ok mutation and the new run's id, and the daemon reaps the process
+// carries an ok mutation and the new run's id, and the runtime service reaps the process
 // into exit history. The test waits for the reaper before it lets the registry
 // be restored, so the reaping goroutine cannot race the cleanup.
 //
@@ -455,7 +455,7 @@ func TestHandleSpawnStartsAndReapsARun(t *testing.T) {
 		for _, exit := range Default.Exits() {
 			if exit.ID == spawned.RunID {
 				// The process ended on its own with success, which is what
-				// "exited" means; a stop the daemon initiated is a different
+				// "exited" means; a stop the runtime service initiated is a different
 				// reason and would hide a spawn that never detached.
 				if exit.Code != 0 || exit.Reason != ReasonExited {
 					t.Fatalf("natural exit = %+v", exit)

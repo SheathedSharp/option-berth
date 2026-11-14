@@ -13,7 +13,7 @@ import (
 // matched repository to sibling worktrees; repositories accepts repository IDs
 // (and the existing internal label as a transition alias), and Workspace names
 // an ephemeral explicit integration relation.
-// An entirely empty scope preserves the daemon's historical machine-wide view.
+// An entirely empty scope preserves the runtime service's historical machine-wide view.
 //
 // Scope is an ephemeral read filter. It is not persisted in oberth.yaml and
 // does not create a second relationship model between projects.
@@ -23,7 +23,7 @@ type Scope struct {
 	Workspace    string   `json:"workspace,omitempty"`
 }
 
-// Empty reports whether the scope leaves the daemon's machine-wide view
+// Empty reports whether the scope leaves the runtime service's machine-wide view
 // unchanged.
 func (s Scope) Empty() bool {
 	return !hasSelector(s.Worktrees) && !hasSelector(s.Repositories) && strings.TrimSpace(s.Workspace) == ""
@@ -37,7 +37,7 @@ func (s Scope) HasSelectors() bool {
 }
 
 // Concrete returns only the explicit relation selectors, without its
-// workspace label. It is used by the daemon's in-memory workspace registry.
+// workspace label. It is used by the runtime service's in-memory workspace registry.
 func (s Scope) Concrete() Scope {
 	return Scope{Worktrees: append([]string(nil), s.Worktrees...), Repositories: append([]string(nil), s.Repositories...)}
 }
@@ -236,7 +236,7 @@ func (s Scope) MatchPort(p Port, groups []Group) bool {
 }
 
 // MatchEvent reports whether an event belongs to this scope. Events without a
-// port or group are daemon-wide lifecycle events and remain visible to every
+// port or group are runtime service-wide lifecycle events and remain visible to every
 // subscriber.
 func (s Scope) MatchEvent(ev Event, groups []Group) bool {
 	if s.Empty() {
@@ -245,7 +245,7 @@ func (s Scope) MatchEvent(ev Event, groups []Group) bool {
 	s = s.ExpandRepositories(groups)
 	if ev.Source == nil && ev.Port == nil && ev.Group != nil {
 		// A group-only event is safe to route only when its name identifies one
-		// worktree on this daemon. Duplicate names across repositories are
+		// worktree on this runtime.service. Duplicate names across repositories are
 		// intentionally treated as unattributed.
 		if source := EventSourceForEvent(ev, groups); source != nil {
 			return s.MatchChanged(StateChanged{Source: source, Changed: []string{eventChangeKind(ev.Kind)}})
@@ -270,7 +270,7 @@ func (s Scope) MatchEvent(ev Event, groups []Group) bool {
 		return false
 	}
 	if ev.Port == nil && ev.Group == nil {
-		return daemonWideChange(ev.Kind)
+		return runtimeServiceWideChange(ev.Kind)
 	}
 	if ev.Port != nil && s.MatchPort(*ev.Port, groups) {
 		return true
@@ -286,7 +286,7 @@ func (s Scope) MatchEvent(ev Event, groups []Group) bool {
 }
 
 // MatchChanged reports whether a redacted scoped notification belongs to this
-// relation. The daemon calls it before JSON encoding, while the source's
+// relation. The runtime service calls it before JSON encoding, while the source's
 // private routing aliases are still available.
 func (s Scope) MatchChanged(ch StateChanged) bool {
 	if s.Empty() {
@@ -294,7 +294,7 @@ func (s Scope) MatchChanged(ch StateChanged) bool {
 	}
 	if ch.Source == nil {
 		for _, kind := range ch.Changed {
-			if daemonWideChange(kind) {
+			if runtimeServiceWideChange(kind) {
 				return true
 			}
 		}
@@ -308,13 +308,13 @@ func (s Scope) MatchChanged(ch StateChanged) bool {
 
 // MatchChangedIn applies the same-repository relation before matching a
 // redacted notification. The source keeps private routing aliases until the
-// daemon serializes it, so no path is added to the wire payload.
+// runtime service serializes it, so no path is added to the wire payload.
 func (s Scope) MatchChangedIn(ch StateChanged, groups []Group) bool {
 	return s.ExpandRepositories(groups).MatchChanged(ch)
 }
 
 // FilterSnapshot returns a snapshot containing only rows selected by scope.
-// It preserves the daemon sequence and keeps session rows attached to selected
+// It preserves the runtime service sequence and keeps session rows attached to selected
 // ports. Sessions do not carry a canonical root, so matching by their short
 // worktree name would risk leaking a same-named checkout from another repo.
 func (s Scope) FilterSnapshot(snap Snapshot) Snapshot {

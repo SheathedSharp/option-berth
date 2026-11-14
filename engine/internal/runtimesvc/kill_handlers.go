@@ -13,7 +13,7 @@ import (
 )
 
 // The kill namespace. These methods stay thin on purpose: wire selectors are
-// resolved against the daemon's latest snapshot, then killer.KillPorts does the
+// resolved against the runtime service's latest snapshot, then killer.KillPorts does the
 // work — the very path `oberth kill` takes — so CLI, app and MCP cannot drift.
 func init() {
 	RegisterHandler("ports.kill", handlePortsKill)
@@ -69,7 +69,7 @@ func afterKill(req *Request, dryRun bool) (state.Snapshot, error) {
 		return state.Snapshot{}, nil
 	}
 	// Imported runs that exited are reconciled before the post-stop snapshot is
-	// published: this daemon has no child reaper for them, and a stale Running
+	// published: this runtime service has no child reaper for them, and a stale Running
 	// row would make the next restart skip a worker that is already gone.
 	req.Runtime.Runs().Prune()
 	return rescanAfterKill(req.Runtime)
@@ -107,10 +107,10 @@ func killSnapshot(ctx context.Context, req *Request) (state.Snapshot, error) {
 // the RPC, so a single `ports.kill` cost two full scans: the §25
 // rescan-before-select plus the killer's own. The second is pure duplication —
 // the rows come from the same enriched pipeline (ports.Scan + Docker + Enrich)
-// the daemon's scanner ran a moment earlier — and it made a dry run of an
+// the runtime service's scanner ran a moment earlier — and it made a dry run of an
 // unknown port take seconds. Every other caller of the killer (`oberth kill`,
 // `kill-all`, `down`) already passes the snapshot its targets were resolved
-// against; the daemon does the same now, which also keeps the two paths'
+// against; the runtime service does the same now, which also keeps the two paths'
 // output identical.
 func killerRows(snap state.Snapshot) []ports.ListeningPort {
 	rows := state.ToListeningAll(snap.Ports)

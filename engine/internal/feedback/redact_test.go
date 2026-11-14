@@ -11,7 +11,7 @@ func TestRedactBlanksIdentifyingShapes(t *testing.T) {
 	cases := []struct{ name, in, want string }{
 		{"home path", "up failed in /Users/alice/code/proj", "up failed in <path>"},
 		{"tilde path", "cd ~/code/proj && oberth up", "cd <path> && oberth up"},
-		{"other absolute path", "see /var/log/oberth/daemon.log", "see <path>"},
+		{"other absolute path", "see /var/log/oberth/runtime-service.log", "see <path>"},
 		{"windows path", `C:\Users\alice\proj failed`, `<path> failed`},
 		{"email", "alice@example.com reported it", "<email> reported it"},
 		{"url", "helper at https://internal.example.com/x kept timing out", "helper at <url> kept timing out"},

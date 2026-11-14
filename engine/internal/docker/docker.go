@@ -38,7 +38,7 @@ type portMapping struct {
 }
 
 // EnrichPorts marks the rows Docker publishes. It asks Docker inline, bounded
-// by CLITimeout, which suits a one-shot CLI command; the daemon holds a Watcher
+// by CLITimeout, which suits a one-shot CLI command; the runtime service holds a Watcher
 // instead so no scan waits on Docker. A missing or unanswering Docker leaves
 // every row as it was — an absent fact, not a native one.
 func EnrichPorts(pp []ports.ListeningPort) {
@@ -211,7 +211,7 @@ func AllContainerStats() map[string]*ContainerStats {
 // statsFor samples the given containers.
 //
 // On Linux the Engine API over the local socket is used, one request per
-// container in parallel: /stats?stream=false makes the daemon collect a CPU
+// container in parallel: /stats?stream=false makes the runtime service collect a CPU
 // sample for about a second before answering, so serialising the calls would
 // cost a second per container. Everything else — Windows, or a host with no
 // socket (Docker Desktop forwards through it only for some configurations) —
@@ -265,7 +265,7 @@ func sampleViaAPI(containers []container) map[string]*ContainerStats {
 }
 
 // Timeouts for the two Engine API calls one container needs. A stats request
-// makes the daemon collect a CPU sample, so it is allowed longer than the
+// makes the runtime service collect a CPU sample, so it is allowed longer than the
 // inspect call that only reads metadata.
 const (
 	statsRequestTimeout   = 5 * time.Second
@@ -322,7 +322,7 @@ func dockerAPIGet(endpoint string, timeout time.Duration) ([]byte, error) {
 // measurements turns one /stats response into the numbers this package reports.
 //
 // CPU is the share of the host's CPU time the container used between the two
-// samples the daemon took, scaled by the number of online CPUs so the figure is
+// samples the runtime service took, scaled by the number of online CPUs so the figure is
 // comparable to what `docker stats` prints. A zero system delta means the two
 // samples are unusable, and no percentage is reported rather than an infinite
 // one.

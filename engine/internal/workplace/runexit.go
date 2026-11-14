@@ -7,17 +7,17 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/runsreg"
 )
 
-// Closing the block of a run the daemon outlived.
+// Closing the block of a run the runtime service outlived.
 //
-// `oberth start -d` hands a command to the daemon and returns. The CLI that
+// `oberth start -d` hands a command to the runtime service and returns. The CLI that
 // asked for it is gone before the command ends, so the block it opened would
-// stay `running` for good. The daemon is the process that owns the run and
+// stay `running` for good. The runtime service is the process that owns the run and
 // learns how it ended, so it is the one that closes the block — through the
 // run's own id, which is the link between the two records.
 
-// runtime is the daemon this process is serving, while it is serving one. The
-// hook is registered once, at init, and needs a store only while a daemon is
-// up: a run exit arriving with no daemon behind it has nothing to write to.
+// runtime is the runtime service this process is serving, while it is serving one. The
+// hook is registered once, at init, and needs a store only while a runtime service is
+// up: a run exit arriving with no runtime service behind it has nothing to write to.
 var runtime atomic.Pointer[runtimesvc.Runtime]
 
 func init() {

@@ -9,7 +9,7 @@ import (
 )
 
 // sessionRunSet is a Registry that also implements SessionRegistry: the shape
-// the daemon's run registry takes once a run carries a session.
+// the runtime service's run registry takes once a run carries a session.
 type sessionRunSet struct {
 	runSet
 	session state.Session

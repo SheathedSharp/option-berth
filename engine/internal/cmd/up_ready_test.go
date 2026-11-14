@@ -13,7 +13,7 @@ import (
 )
 
 // startRowsFrom replaces the wait's observation with one group row set, so a
-// readiness rule is decided on rows a test controls instead of a daemon or the
+// readiness rule is decided on rows a test controls instead of a runtime service or the
 // host's listener table.
 func startRowsFrom(t *testing.T, groups ...state.Group) {
 	t.Helper()
@@ -157,9 +157,9 @@ func TestWaitForStartReadyWillNotReadAnUnattributedListener(t *testing.T) {
 	}
 }
 
-// TestWaitForStartReadyKeepsLegacyChunksUsable: a daemon that predates run ids
+// TestWaitForStartReadyKeepsLegacyChunksUsable: a runtime service that predates run ids
 // names no run to compare against. There is no identity evidence, so the wait
-// keeps reading the service row rather than refusing every old daemon.
+// keeps reading the service row rather than refusing every old runtime.service.
 func TestWaitForStartReadyKeepsLegacyChunksUsable(t *testing.T) {
 	port, healthz := 19001, "/healthz"
 	path := startManifest(t, "  - name: api\n    cmd: echo api\n")

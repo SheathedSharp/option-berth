@@ -253,7 +253,7 @@ func TestImportLegacyRewritesTheFileItOwns(t *testing.T) {
 		t.Fatalf("writing the legacy runs.json: %v", err)
 	}
 
-	reg := New() // mirroring on: the daemon owns the file from here
+	reg := New() // mirroring on: the runtime service owns the file from here
 	moved, err := reg.ImportLegacy()
 	if err != nil || moved != 1 {
 		t.Fatalf("ImportLegacy = %d/%v, want 1/nil", moved, err)
@@ -264,7 +264,7 @@ func TestImportLegacyRewritesTheFileItOwns(t *testing.T) {
 	}
 	data, err := os.ReadFile(runs.Path())
 	if err != nil {
-		t.Fatalf("the daemon did not rewrite runs.json: %v", err)
+		t.Fatalf("the runtime service did not rewrite runs.json: %v", err)
 	}
 	if err := json.Unmarshal(data, &rewritten); err != nil {
 		t.Fatalf("runs.json is not the documented shape: %v", err)
@@ -281,7 +281,7 @@ func TestImportLegacyRewritesTheFileItOwns(t *testing.T) {
 func itoa(i int) string { return strconv.Itoa(i) }
 
 // TestPruneDropsARecycledPID: a pid that now belongs to a newer process is not
-// the run the record names. This is the imported-runs case after a daemon
+// the run the record names. This is the imported-runs case after a runtime service
 // restart — nothing reaps those processes, so liveness alone cannot tell. Only
 // positive evidence prunes; an absent answer keeps the run.
 func TestPruneDropsARecycledPID(t *testing.T) {

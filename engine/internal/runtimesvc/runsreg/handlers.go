@@ -23,7 +23,7 @@ import (
 // started; the registry is where it lives, and these four methods are the only
 // way a client adds one, ends one or reads them back.
 
-// Default is the registry this daemon serves. One daemon, one registry: the
+// Default is the registry this runtime service serves. One runtime service, one registry: the
 // handlers close over it, and the startup hook publishes it to the runtime so
 // port attribution and the group resolver read the same records.
 var Default = New()
@@ -49,7 +49,7 @@ func init() {
 		Default.SetLogger(rt.Logger)
 		// Both recovery stages are required before installing the registry or
 		// starting its worker. A failed LoadExits must not leave history nil
-		// while the daemon accepts writes it can no longer persist.
+		// while the runtime service accepts writes it can no longer persist.
 		n, err := restoreRequiredRegistry(Default, rt.Store)
 		if err != nil {
 			return err
@@ -67,7 +67,7 @@ func init() {
 }
 
 // registryStartupRecovery is the existing registry's startup work, kept small
-// so failure ordering can be checked without starting a daemon or touching a
+// so failure ordering can be checked without starting a runtime service or touching a
 // real user's runs.json. It is not a second registry or a runtime fallback.
 type registryStartupRecovery interface {
 	LoadExits(*store.Store) error
@@ -78,7 +78,7 @@ type registryStartupRecovery interface {
 // Nil store retains the existing storeless mode; an actual read failure does
 // not select that mode. Preserve the cause for diagnostics and do not import
 // or rewrite runs.json after an exit-history failure. The enclosing checked
-// startup hook returns the error to the daemon's existing cleanup path.
+// startup hook returns the error to the runtime service's existing cleanup path.
 func restoreRequiredRegistry(r registryStartupRecovery, st *store.Store) (int, error) {
 	if err := r.LoadExits(st); err != nil {
 		return 0, fmt.Errorf("restore run exit history: %w", err)
@@ -175,7 +175,7 @@ func handleUnregister(ctx context.Context, req *runtimesvc.Request) (any, error)
 	}
 	req.Runtime.Scanner.Invalidate()
 	// Forgetting a run nobody registered is not an error: `oberth start` always
-	// cleans up after itself, whether or not the daemon saw the registration.
+	// cleans up after itself, whether or not the runtime service saw the registration.
 	return rpc.OKResult{OK: true}, nil
 }
 
@@ -248,7 +248,7 @@ func handleSpawn(ctx context.Context, req *runtimesvc.Request) (any, error) {
 // sent, or — when it sent none, or sent one that names no agent — the one the
 // request's own environment names.
 //
-// The daemon's environment says nothing about the agent that called it, which
+// The runtime service's environment says nothing about the agent that called it, which
 // is why the session has to come over the wire at all; the env fallback exists
 // only for a caller that forwarded its environment instead of capturing one.
 //
@@ -274,7 +274,7 @@ func sessionOf(p rpc.RunsSpawnParams, cwd string) state.Session {
 }
 
 // Spawn starts a detached run, registers it and reaps it. It is the one spawn
-// path the daemon has: `runs.spawn` calls it for a single command and
+// path the runtime service has: `runs.spawn` calls it for a single command and
 // `groups.start` calls it once per service, so a service started from the
 // desktop is attributed exactly like one started from the CLI.
 //
@@ -339,7 +339,7 @@ func runFromHandle(h *spawn.Handle, meta Meta) Record {
 }
 
 // rememberSession writes a session through to the store the moment a run
-// carries one. That is what keeps an agent's session readable across a daemon
+// carries one. That is what keeps an agent's session readable across a runtime service
 // restart, and for the seven days after its last run exits.
 func rememberSession(rt *runtimesvc.Runtime, s state.Session) {
 	if s.ID == "" || rt == nil || rt.Store == nil {
@@ -369,9 +369,9 @@ func envPairs(env map[string]string) []string {
 	return pairs
 }
 
-// mergedEnv is the daemon's own environment with the caller's entries taking
+// mergedEnv is the runtime service's own environment with the caller's entries taking
 // the place of the keys they name. Nothing is merged when the caller sent no
-// overrides: the child then inherits the daemon's environment as it is.
+// overrides: the child then inherits the runtime service's environment as it is.
 func mergedEnv(over map[string]string) []string {
 	if len(over) == 0 {
 		return nil
@@ -392,7 +392,7 @@ func mergedEnv(over map[string]string) []string {
 }
 
 // CheckCwd cleans a working directory and enforces the home-directory rule.
-// `groups.start` reuses it so one place decides what the daemon may run.
+// `groups.start` reuses it so one place decides what the runtime service may run.
 func CheckCwd(cwd string, allowOutsideHome bool) (string, error) {
 	abs, err := absoluteCwd(cwd)
 	if err != nil {
@@ -421,12 +421,12 @@ func CheckCwd(cwd string, allowOutsideHome bool) (string, error) {
 }
 
 // absoluteCwd resolves a client-supplied path to one real absolute directory,
-// using the daemon's own working directory when the caller named none. Both
+// using the runtime service's own working directory when the caller named none. Both
 // spellings of one directory — through a symlink or not — come out the same,
 // so the home check cannot pass one and fail the other.
 func absoluteCwd(cwd string) (string, error) {
 	if strings.TrimSpace(cwd) == "" {
-		// No directory was named, so the daemon's own is the one meant.
+		// No directory was named, so the runtime service's own is the one meant.
 		wd, err := os.Getwd()
 		if err != nil {
 			return "", invalidCwd("cwd is required")
@@ -457,7 +457,7 @@ func row(rec Record, snap state.Snapshot, portsKnown bool) rpc.RunRecord {
 	out.Ports = portsOf(rec, snap)
 	out.Status = runStatus(rec, out.Ports, portsKnown)
 	if rec.PortHint > 0 {
-		// The desktop and `daemon.status` key off the hint: it is the one thing
+		// The desktop and `runtime.service.status` key off the hint: it is the one thing
 		// a run can say about itself before any scan sees it listening.
 		hint := rec.PortHint
 		out.PortHint = &hint

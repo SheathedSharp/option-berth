@@ -11,7 +11,7 @@ import (
 )
 
 // Only the major protocol version has to match: additive changes bump the
-// minor, so a client accepts any daemon on its own major.
+// minor, so a client accepts any runtime service on its own major.
 func TestCheckProtocolMajorOnly(t *testing.T) {
 	major, err := strconv.Atoi(strings.Split(rpc.ProtocolVersion, ".")[0])
 	if err != nil {
@@ -27,9 +27,9 @@ func TestCheckProtocolMajorOnly(t *testing.T) {
 		"v" + atMinor(".2.3"),
 		" " + atMinor(".2.3") + " ",
 	}
-	for _, daemon := range accepted {
-		if err := CheckProtocol(daemon); err != nil {
-			t.Errorf("CheckProtocol(%q) = %v, want nil", daemon, err)
+	for _, runtimeService := range accepted {
+		if err := CheckProtocol(runtimeService); err != nil {
+			t.Errorf("CheckProtocol(%q) = %v, want nil", runtimeService, err)
 		}
 	}
 
@@ -37,14 +37,14 @@ func TestCheckProtocolMajorOnly(t *testing.T) {
 		fmt.Sprintf("%d.0.0", major+1),
 		fmt.Sprintf("%d.9.0", major+2),
 	}
-	for _, daemon := range refused {
-		err := CheckProtocol(daemon)
+	for _, runtimeService := range refused {
+		err := CheckProtocol(runtimeService)
 		var mismatch *ProtocolMismatchError
 		if !errors.As(err, &mismatch) {
-			t.Errorf("CheckProtocol(%q) = %v, want a ProtocolMismatchError", daemon, err)
+			t.Errorf("CheckProtocol(%q) = %v, want a ProtocolMismatchError", runtimeService, err)
 			continue
 		}
-		if !strings.Contains(mismatch.Error(), "oberth daemon restart") {
+		if !strings.Contains(mismatch.Error(), "oberth runtime service restart") {
 			t.Errorf("mismatch message has no restart hint: %q", mismatch.Error())
 		}
 	}

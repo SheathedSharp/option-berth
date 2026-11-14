@@ -44,8 +44,8 @@ func resolvedDir(t *testing.T, dir string) string {
 	return real
 }
 
-// configRig is one daemon, a client bound to it and the manifest file it was
-// pointed at. Cancelling the test's context shuts the daemon down and the
+// configRig is one runtime service, a client bound to it and the manifest file it was
+// pointed at. Cancelling the test's context shuts the runtime service down and the
 // constructors arrange that themselves, so a test body starts at the call it
 // means to make.
 type configRig struct {
@@ -56,7 +56,7 @@ type configRig struct {
 	file string
 }
 
-// newConfigRig builds a daemon whose index already holds demoManifest, seen the
+// newConfigRig builds a runtime service whose index already holds demoManifest, seen the
 // way the scanner sees one: through a listening process's cwd.
 func newConfigRig(t *testing.T) *configRig {
 	t.Helper()
@@ -79,7 +79,7 @@ func newConfigRig(t *testing.T) *configRig {
 }
 
 // newBareRig is newConfigRig without the fixture manifest: the test writes its
-// own file, so the daemon has never scanned the directory.
+// own file, so the runtime service has never scanned the directory.
 func newBareRig(t *testing.T) *configRig {
 	t.Helper()
 	dir := resolvedDir(t, t.TempDir())
@@ -150,7 +150,7 @@ func TestGroupsConfigGetByName(t *testing.T) {
 	}
 }
 
-// TestGroupsConfigGetByPath also indexes a manifest the daemon has never
+// TestGroupsConfigGetByPath also indexes a manifest the runtime service has never
 // scanned.
 func TestGroupsConfigGetByPath(t *testing.T) {
 	rig := newBareRig(t)
@@ -164,7 +164,7 @@ func TestGroupsConfigGetByPath(t *testing.T) {
 		t.Fatalf("groups.config.get by path: %v", e)
 	}
 	if res.Config.Name != "demo" {
-		t.Fatalf("config = %+v, want the file the daemon never scanned", res.Config)
+		t.Fatalf("config = %+v, want the file the runtime service never scanned", res.Config)
 	}
 }
 
@@ -316,7 +316,7 @@ func TestGroupsConfigSetErrors(t *testing.T) {
 }
 
 // TestGroupsReloadPicksUpANewFile: the index is long-lived, so this is the
-// method that makes a project created after the daemon started a group.
+// method that makes a project created after the runtime service started a group.
 func TestGroupsReloadPicksUpANewFile(t *testing.T) {
 	rig := newConfigRig(t)
 
@@ -329,7 +329,7 @@ func TestGroupsReloadPicksUpANewFile(t *testing.T) {
 		[]byte("name: nested\nservices:\n  - name: worker\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// The daemon only knows the parent directory, so nothing has seen this file
+	// The runtime service only knows the parent directory, so nothing has seen this file
 	// yet; the reload has to walk the roots it remembers.
 	rig.h.loop.ObserveConfig(sub)
 
@@ -393,7 +393,7 @@ func awaitGroup(t *testing.T, cl *testClient, name string) *state.Group {
 	return nil
 }
 
-// TestGroupsConfigSetAddsRenamesAndRemoves is why the call exists: the daemon
+// TestGroupsConfigSetAddsRenamesAndRemoves is why the call exists: the runtime service
 // owns every edit to an oberth.yaml, so a client never has to write the file
 // itself to add a service or rename one.
 func TestGroupsConfigSetAddsRenamesAndRemoves(t *testing.T) {

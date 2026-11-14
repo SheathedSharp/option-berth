@@ -81,7 +81,7 @@ func checkConfigDirWritable(_ context.Context, env *Env) rpc.DoctorCheck {
 	probe, err := os.CreateTemp(dir, ".doctor-*")
 	if err != nil {
 		return fail("config directory is not writable", fmt.Sprintf("%s: %v", dir, err),
-			fmt.Sprintf("chmod u+w %s (the daemon writes its log, lock and database here)", dir))
+			fmt.Sprintf("chmod u+w %s (the runtime service writes its log, lock and database here)", dir))
 	}
 	probe.Close()
 	os.Remove(probe.Name())

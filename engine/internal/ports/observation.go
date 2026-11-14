@@ -34,7 +34,7 @@ const (
 )
 
 // Observation hints name the next step, not just the symptom. They are shown
-// verbatim by the CLI, the daemon and `oberth doctor`.
+// verbatim by the CLI, the runtime service and `oberth doctor`.
 const (
 	observationEmptyHint = "the collector exited successfully but returned no listening table; " +
 		"run `oberth doctor --only listener_observation` to determine whether this process can see its own listener"

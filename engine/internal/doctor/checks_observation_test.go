@@ -57,27 +57,27 @@ func TestListenerObservation(t *testing.T) {
 		}
 	})
 
-	t.Run("a blind daemon fails even when the cli can see", func(t *testing.T) {
+	t.Run("a blind runtime service fails even when the cli can see", func(t *testing.T) {
 		env := fakeEnv(t)
 		env.ProbeObservation = func(context.Context) ports.ProbeResult {
 			return ports.ProbeResult{State: ports.ObservationObservable}
 		}
-		env.Daemon = func(context.Context) DaemonInfo {
-			return DaemonInfo{
+		env.RuntimeService = func(context.Context) RuntimeServiceInfo {
+			return RuntimeServiceInfo{
 				Reachable: true,
 				Observation: &rpc.ObservationStatus{
 					State: "blind", Code: ports.CodeObservationBlind,
-					Detail: "bound but unseen", Hint: "restart the daemon outside the sandbox",
+					Detail: "bound but unseen", Hint: "restart the runtime service outside the sandbox",
 				},
 			}
 		}
 		got := run(t, env, checkListenerObservation)
 		wantStatus(t, got, StatusFail)
-		if got.Fix != "restart the daemon outside the sandbox" {
-			t.Errorf("fix = %q, want the daemon hint", got.Fix)
+		if got.Fix != "restart the runtime service outside the sandbox" {
+			t.Errorf("fix = %q, want the runtime service hint", got.Fix)
 		}
-		if !strings.Contains(got.Detail, "daemon: blind") {
-			t.Errorf("detail = %q, want the daemon verdict", got.Detail)
+		if !strings.Contains(got.Detail, "runtime_service: blind") {
+			t.Errorf("detail = %q, want the runtime service verdict", got.Detail)
 		}
 	})
 }

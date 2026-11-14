@@ -15,17 +15,17 @@ import (
 const pollInterval = 25 * time.Millisecond
 
 // NoAutostartEnv disables autostart for a whole process tree. The test harness
-// and CI set it so a build never leaves a daemon behind on the machine.
-const NoAutostartEnv = "BERTH_NO_AUTOSTART"
+// and CI set it so a build never leaves a runtime service behind on the machine.
+const NoAutostartEnv = "BERTH_RUNTIME_SERVICE_NO_AUTOSTART"
 
-// Autostart spawns `oberth serve --detach` and waits up to AutostartTimeout
+// Autostart spawns `oberth runtime service run --detach` and waits up to AutostartTimeout
 // for the socket to accept connections. binary defaults to the running
-// executable, so a client starts the daemon it was built with.
+// executable, so a client starts the runtime service it was built with.
 //
 // It refuses in two cases, both meaning "this is not an oberth install": when
 // NoAutostartEnv is set, and when the executable is a Go test binary (spawning
 // it would re-run the test suite in the background rather than start a
-// daemon).
+// runtime service).
 func Autostart(ctx context.Context, binary, socket string) error {
 	if reason := disabledReason(); reason != nil {
 		return reason
@@ -55,24 +55,24 @@ func disabledReason() error {
 }
 
 func refuseTestBinary(executable string) error {
-	if !runtimesvc.IsTestBinary(executable) || runtimesvc.TestDaemonAllowed() {
+	if !runtimesvc.IsTestBinary(executable) || runtimesvc.TestRuntimeServiceAllowed() {
 		return nil
 	}
-	return fmt.Errorf("%w: refusing to autostart %s: it is a Go test binary, and `%s serve --detach` re-runs the whole test suite in the background instead of starting a daemon\nhint: a test needs an in-process daemon, or %s=1 to override",
-		ErrNotRunning, filepath.Base(executable), filepath.Base(executable), runtimesvc.AllowTestDaemonEnv)
+	return fmt.Errorf("%w: refusing to autostart %s: it is a Go test binary, and `%s serve --detach` re-runs the whole test suite in the background instead of starting a runtime service\nhint: a test needs an in-process runtime service, or %s=1 to override",
+		ErrNotRunning, filepath.Base(executable), filepath.Base(executable), runtimesvc.AllowTestRuntimeServiceEnv)
 }
 
 func spawnDetached(executable, socket string) ([]byte, error) {
-	command := exec.Command(executable, "serve", "--detach")
+	command := exec.Command(executable, "runtime", "service", "run", "--detach")
 	command.Env = os.Environ()
 	if socket != "" {
-		command.Env = append(command.Env, "BERTH_SOCKET="+socket)
+		command.Env = append(command.Env, "BERTH_RUNTIME_SERVICE_SOCKET="+socket)
 	}
-	// `serve --detach` forks the real daemon and exits, so this wait is short.
+	// `runtime service run --detach` forks the real runtime service and exits, so this wait is short.
 	return command.CombinedOutput()
 }
 
-// WaitForSocket blocks until the daemon accepts connections at socket or the
+// WaitForSocket blocks until the runtime service accepts connections at socket or the
 // timeout expires.
 func WaitForSocket(ctx context.Context, socket string, timeout time.Duration) error {
 	if socket == "" {

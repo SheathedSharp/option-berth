@@ -50,7 +50,7 @@ func TestFailureRecoveryMatrix(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		e.cleanupBuilt(b)
-		_, _ = e.run("", "daemon", "stop", "--json")
+		_, _ = e.run("", "runtime_service", "stop", "--json")
 	})
 
 	// A terminal-evidence test must also cover a real bind failure arriving
@@ -88,7 +88,7 @@ func TestFailureRecoveryMatrix(t *testing.T) {
 		t.Fatal("up succeeded even though every selected service should fail")
 	}
 	if len(stderr) != 0 {
-		t.Fatalf("up wrote a daemon-level error to stderr: %s", stderr)
+		t.Fatalf("up wrote a runtime service-level error to stderr: %s", stderr)
 	}
 	var up struct {
 		Services []struct {
@@ -155,7 +155,7 @@ func TestFailureRecoveryMatrix(t *testing.T) {
 		t.Fatalf("logs = %q, want the exit marker", logs.Lines)
 	}
 
-	// A missing log is a service-level not_found answer, not a daemon failure.
+	// A missing log is a service-level not_found answer, not a runtime service failure.
 	var logPath string
 	for _, svc := range st.Worktree.Services {
 		if svc.Name == "exited" && svc.LogPath != nil {
@@ -173,14 +173,14 @@ func TestFailureRecoveryMatrix(t *testing.T) {
 		t.Fatalf("logs missing file = err %v, stderr %q; want not_found", err, logErr)
 	}
 
-	// The daemon may be down while a person is diagnosing the failure. Direct
+	// The runtime service may be down while a person is diagnosing the failure. Direct
 	// status must still read the durable exit evidence from the local database.
-	if _, err := e.run("", "daemon", "stop", "--json"); err != nil {
-		t.Fatalf("daemon stop: %v", err)
+	if _, err := e.run("", "runtime_service", "stop", "--json"); err != nil {
+		t.Fatalf("runtime service stop: %v", err)
 	}
 	directStdout, _, err := e.runCapture(b.Root, "status", "--json", "--no-mark")
 	if err != nil {
-		t.Fatalf("direct status after daemon stop: %v", err)
+		t.Fatalf("direct status after runtime service stop: %v", err)
 	}
 	var direct statusDoc
 	if err := json.Unmarshal(directStdout, &direct); err != nil {

@@ -7,14 +7,14 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
-// openStore opens the daemon's SQLite database and installs it on the runtime
+// openStore opens the runtime service's SQLite database and installs it on the runtime
 // and the scanner. A database that cannot be opened is not fatal: live state is
 // still served, only renames, pins and history go missing — strictly better
 // than refusing to report ports over a disk problem.
 //
 // A database that was unusable and had to be recreated raises
 // state.event{kind: "db_reset"}, queued so that the first subscriber sees it
-// even though nobody is connected this early (daemon spec, "Error handling").
+// even though nobody is connected this early (runtime service spec, "Error handling").
 func (s *Server) openStore() {
 	path := s.opts.DBPath
 	if path == "" {
@@ -55,7 +55,7 @@ func (s *Server) setStore(db *store.Store) {
 	s.loop.SetStore(db)
 }
 
-// closeStore releases the database when the daemon shuts down.
+// closeStore releases the database when the runtime service shuts down.
 func (s *Server) closeStore() {
 	db := s.runtime.Store
 	if db == nil {

@@ -80,7 +80,7 @@ func TestConfigParses(t *testing.T) {
 
 	t.Run("broken YAML fails with a position and a caret", func(t *testing.T) {
 		env := fakeEnv(t)
-		write(t, env.ConfigPath, "daemon: [broken")
+		write(t, env.ConfigPath, "runtime_service: [broken")
 		row := run(t, env, checkConfigParses)
 		wantStatus(t, row, StatusFail)
 		if !row.Fixable {
@@ -96,13 +96,13 @@ func TestConfigParses(t *testing.T) {
 
 	t.Run("valid YAML parses", func(t *testing.T) {
 		env := fakeEnv(t)
-		write(t, env.ConfigPath, "daemon:\n  log_level: info\n")
+		write(t, env.ConfigPath, "runtime_service:\n  log_level: info\n")
 		wantStatus(t, run(t, env, checkConfigParses), StatusOK)
 	})
 
 	t.Run("well-formed YAML of the wrong shape only warns", func(t *testing.T) {
 		env := fakeEnv(t)
-		write(t, env.ConfigPath, "daemon: 3\n")
+		write(t, env.ConfigPath, "runtime_service: 3\n")
 		wantStatus(t, run(t, env, checkConfigParses), StatusWarn)
 	})
 }
@@ -208,65 +208,65 @@ func TestProjectConfigFilesFindsNestedManifest(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------- daemon ---
+// ---------------------------------------------------------------- runtime service ---
 
-func aliveDaemon() DaemonInfo {
-	info := DaemonInfo{Reachable: true, PID: 4242, Socket: "/tmp/option-berth.sock"}
+func aliveRuntimeService() RuntimeServiceInfo {
+	info := RuntimeServiceInfo{Reachable: true, PID: 4242, Socket: "/tmp/option-berth.sock"}
 	info.Version = "v1.2.3"
 	info.ProtocolVersion = rpc.ProtocolVersion
 	return info
 }
 
-func TestDaemonReachable(t *testing.T) {
-	t.Run("a stopped daemon fails and is fixable", func(t *testing.T) {
-		row := run(t, fakeEnv(t), checkDaemonReachable)
+func TestRuntimeServiceReachable(t *testing.T) {
+	t.Run("a stopped runtime service fails and is fixable", func(t *testing.T) {
+		row := run(t, fakeEnv(t), checkRuntimeServiceReachable)
 		wantStatus(t, row, StatusFail)
 		if !row.Fixable {
-			t.Error("a stopped daemon is exactly what --fix restarts")
+			t.Error("a stopped runtime service is exactly what --fix restarts")
 		}
 	})
 
-	t.Run("a listening daemon", func(t *testing.T) {
+	t.Run("a listening runtime service", func(t *testing.T) {
 		env := fakeEnv(t)
-		env.Daemon = func(context.Context) DaemonInfo { return aliveDaemon() }
-		row := run(t, env, checkDaemonReachable)
+		env.RuntimeService = func(context.Context) RuntimeServiceInfo { return aliveRuntimeService() }
+		row := run(t, env, checkRuntimeServiceReachable)
 		wantStatus(t, row, StatusOK)
 		if !strings.Contains(row.Detail, "4242") {
 			t.Errorf("detail = %q, want the pid", row.Detail)
 		}
 	})
 
-	t.Run("answered from inside the daemon", func(t *testing.T) {
+	t.Run("answered from inside the runtime service", func(t *testing.T) {
 		env := fakeEnv(t)
-		env.Daemon = func(context.Context) DaemonInfo {
-			info := aliveDaemon()
+		env.RuntimeService = func(context.Context) RuntimeServiceInfo {
+			info := aliveRuntimeService()
 			info.Local = true
 			return info
 		}
-		wantStatus(t, run(t, env, checkDaemonReachable), StatusOK)
+		wantStatus(t, run(t, env, checkRuntimeServiceReachable), StatusOK)
 	})
 }
 
-func TestDaemonVersionMatches(t *testing.T) {
+func TestRuntimeServiceVersionMatches(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		daemon func() DaemonInfo
-		want   string
+		name           string
+		runtimeService func() RuntimeServiceInfo
+		want           string
 	}{
-		{"no daemon", nil, StatusSkip},
-		{"same version", aliveDaemon, StatusOK},
-		{"a stale daemon", func() DaemonInfo {
-			info := aliveDaemon()
+		{"no runtime service", nil, StatusSkip},
+		{"same version", aliveRuntimeService, StatusOK},
+		{"a stale runtime service", func() RuntimeServiceInfo {
+			info := aliveRuntimeService()
 			info.Version = "v0.9.0"
 			return info
 		}, StatusWarn},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			env := fakeEnv(t)
-			if tc.daemon != nil {
-				env.Daemon = func(context.Context) DaemonInfo { return tc.daemon() }
+			if tc.runtimeService != nil {
+				env.RuntimeService = func(context.Context) RuntimeServiceInfo { return tc.runtimeService() }
 			}
-			row := run(t, env, checkDaemonVersionMatches)
+			row := run(t, env, checkRuntimeServiceVersionMatches)
 			wantStatus(t, row, tc.want)
 			if tc.want != StatusWarn {
 				return
@@ -274,14 +274,14 @@ func TestDaemonVersionMatches(t *testing.T) {
 			if !strings.Contains(row.Summary, "v0.9.0") || !strings.Contains(row.Summary, "v1.2.3") {
 				t.Errorf("summary = %q, want both versions", row.Summary)
 			}
-			if row.Fix != "oberth daemon restart" {
+			if row.Fix != "oberth runtime service restart" {
 				t.Errorf("fix = %q", row.Fix)
 			}
 		})
 	}
 }
 
-func TestDaemonProtocol(t *testing.T) {
+func TestRuntimeServiceProtocol(t *testing.T) {
 	major, _ := protocolMajor(rpc.ProtocolVersion)
 	for _, tc := range []struct {
 		name     string
@@ -294,14 +294,14 @@ func TestDaemonProtocol(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			env := fakeEnv(t)
-			env.Daemon = func(context.Context) DaemonInfo {
-				info := aliveDaemon()
+			env.RuntimeService = func(context.Context) RuntimeServiceInfo {
+				info := aliveRuntimeService()
 				info.ProtocolVersion = tc.protocol
 				return info
 			}
-			row := run(t, env, checkDaemonProtocol)
+			row := run(t, env, checkRuntimeServiceProtocol)
 			wantStatus(t, row, tc.want)
-			if tc.want == StatusFail && row.Fix != "oberth daemon restart" {
+			if tc.want == StatusFail && row.Fix != "oberth runtime service restart" {
 				t.Errorf("fix = %q", row.Fix)
 			}
 		})
@@ -309,12 +309,12 @@ func TestDaemonProtocol(t *testing.T) {
 
 	t.Run("an unreadable version fails", func(t *testing.T) {
 		env := fakeEnv(t)
-		env.Daemon = func(context.Context) DaemonInfo {
-			info := aliveDaemon()
+		env.RuntimeService = func(context.Context) RuntimeServiceInfo {
+			info := aliveRuntimeService()
 			info.ProtocolVersion = "not-a-version"
 			return info
 		}
-		row := run(t, env, checkDaemonProtocol)
+		row := run(t, env, checkRuntimeServiceProtocol)
 		wantStatus(t, row, StatusFail)
 		if !strings.Contains(row.Summary, "unreadable protocol version") {
 			t.Errorf("summary = %q, want it to name the unreadable version", row.Summary)
@@ -338,7 +338,7 @@ func TestSocketPermissions(t *testing.T) {
 		return
 	}
 
-	t.Run("an absent socket is a skip when no daemon answers", func(t *testing.T) {
+	t.Run("an absent socket is a skip when no runtime service answers", func(t *testing.T) {
 		row := run(t, fakeEnv(t), checkSocketPermissions)
 		wantStatus(t, row, StatusSkip)
 		if !strings.Contains(row.Summary, "no socket to check") {
@@ -346,16 +346,16 @@ func TestSocketPermissions(t *testing.T) {
 		}
 	})
 
-	t.Run("an absent socket fails when the daemon still answers", func(t *testing.T) {
+	t.Run("an absent socket fails when the runtime service still answers", func(t *testing.T) {
 		env := fakeEnv(t)
-		env.Daemon = func(context.Context) DaemonInfo { return aliveDaemon() }
+		env.RuntimeService = func(context.Context) RuntimeServiceInfo { return aliveRuntimeService() }
 		row := run(t, env, checkSocketPermissions)
 		wantStatus(t, row, StatusFail)
 		if !strings.Contains(row.Summary, "socket is gone") {
 			t.Errorf("summary = %q, want it to say the socket is gone", row.Summary)
 		}
-		if row.Fix != "oberth daemon restart" {
-			t.Errorf("fix = %q, want a daemon restart", row.Fix)
+		if row.Fix != "oberth runtime service restart" {
+			t.Errorf("fix = %q, want a runtime service restart", row.Fix)
 		}
 	})
 
@@ -423,7 +423,7 @@ func TestDocker(t *testing.T) {
 	}{
 		{"not installed", false, nil, StatusSkip, "", ""},
 		{"installed but not responding", true, func(context.Context) (string, error) {
-			return "", errors.New("daemon down")
+			return "", errors.New("runtime service down")
 		}, StatusWarn, "", ""},
 		{"hanging", true, func(context.Context) (string, error) {
 			return "", fmt.Errorf("%w: `docker info` did not answer within 2s", ErrDockerNotAnswering)

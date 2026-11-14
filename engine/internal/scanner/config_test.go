@@ -9,7 +9,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 )
 
-// TestScanPicksUpAnEditedConfig: the index a daemon keeps is long-lived, so a
+// TestScanPicksUpAnEditedConfig: the index a runtime service keeps is long-lived, so a
 // file edited underneath it would otherwise stay as it was first read. The
 // stat it costs per known file on each tick is what keeps it honest — no
 // watcher, no new dependency.

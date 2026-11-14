@@ -67,36 +67,36 @@ func TestAutostartIsRefusedInTests(t *testing.T) {
 	testenv.AllowAutostart(t)
 	secondErr := client.Autostart(context.Background(), "", runtimesvc.SocketPath())
 	if secondErr == nil {
-		t.Fatal("Autostart succeeded with a Go test binary as the daemon")
+		t.Fatal("Autostart succeeded with a Go test binary as the runtime service")
 	}
 	if !strings.Contains(secondErr.Error(), "test binary") {
 		t.Errorf("error = %v, want it to say the binary is a test binary", secondErr)
 	}
 }
 
-// The production seam on the other side: `oberth serve` inside a test binary
+// The production seam on the other side: `oberth runtime service run` inside a test binary
 // refuses instead of re-running the suite in the background.
 func TestServeRefusesToRunAsATestBinary(t *testing.T) {
 	command := &cobra.Command{}
 	command.SetContext(context.Background())
 
-	runErr := serveRun(command, nil)
+	runErr := runtimeServiceRun(command, nil)
 	if runErr == nil {
 		t.Fatal("serve started inside a test binary")
 	}
-	if !strings.Contains(runErr.Error(), runtimesvc.AllowTestDaemonEnv) {
-		t.Errorf("error = %v, want it to name the opt-out %s", runErr, runtimesvc.AllowTestDaemonEnv)
+	if !strings.Contains(runErr.Error(), runtimesvc.AllowTestRuntimeServiceEnv) {
+		t.Errorf("error = %v, want it to name the opt-out %s", runErr, runtimesvc.AllowTestRuntimeServiceEnv)
 	}
 
-	t.Setenv(runtimesvc.AllowTestDaemonEnv, "1")
-	if err := refuseTestBinaryDaemon(); err != nil {
+	t.Setenv(runtimesvc.AllowTestRuntimeServiceEnv, "1")
+	if err := refuseTestBinaryRuntimeService(); err != nil {
 		t.Errorf("the explicit opt-in did not lift the guard: %v", err)
 	}
 }
 
-// Nothing here starts a daemon of its own, so nothing may be left running.
+// Nothing here starts a runtime service of its own, so nothing may be left running.
 // TestMain checks that for the whole binary; this lands the failure on a named
 // test when the fault is this package's.
-func TestNoDaemonSurvivesThisPackage(t *testing.T) {
-	testenv.RequireNoLeakedDaemons(t)
+func TestNoRuntimeServiceSurvivesThisPackage(t *testing.T) {
+	testenv.RequireNoLeakedRuntimeServices(t)
 }

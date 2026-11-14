@@ -13,11 +13,11 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// A daemon that predates ready_timeout omits it; the client must keep the same
+// A runtime service that predates ready_timeout omits it; the client must keep the same
 // 30s default the manifest would have applied.
 func TestStartChunkReadyTimeoutFallsBackToDefault(t *testing.T) {
 	if got := startChunkReadyTimeout(rpc.GroupsStartChunk{Service: "api"}); got != groups.DefaultReadyTimeout {
-		t.Fatalf("old-daemon budget = %s, want %s", got, groups.DefaultReadyTimeout)
+		t.Fatalf("old-runtime service budget = %s, want %s", got, groups.DefaultReadyTimeout)
 	}
 	if got := startChunkReadyTimeout(rpc.GroupsStartChunk{Service: "api", ReadyTimeout: "45s"}); got != 45*time.Second {
 		t.Fatalf("declared budget = %s, want 45s", got)
@@ -95,9 +95,9 @@ func TestStartTimeoutMessageDistinguishesCeilingFromBudget(t *testing.T) {
 func TestWaitForStartReadyUsesEachServiceBudget(t *testing.T) {
 	observableProbe(t)
 	t.Setenv("BERTH_HOME", t.TempDir())
-	old := noDaemonFlag
-	noDaemonFlag = true
-	t.Cleanup(func() { noDaemonFlag = old })
+	old := noRuntimeServiceFlag
+	noRuntimeServiceFlag = true
+	t.Cleanup(func() { noRuntimeServiceFlag = old })
 	dir := t.TempDir()
 	path := filepath.Join(dir, groups.ConfigName)
 	data := "name: demo\nservices:\n  - name: api\n    cmd: echo api\n    port: 19001\n  - name: worker\n    cmd: echo worker\n    port: 19002\n"

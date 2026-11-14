@@ -19,7 +19,7 @@ func AcquireServicePort(rt *Runtime, dir, service string) (int, error) {
 	address := claims.Address{Project: project, Worktree: worktree, Service: service}
 
 	// Observe first, then lock. The listener probe is a full scan (lsof, ps and
-	// docker stats) and the slowest thing on this path; holding the daemon-wide
+	// docker stats) and the slowest thing on this path; holding the runtime service-wide
 	// claims lock across it would make a concurrent `down` fail its TryLock
 	// capture with "claims are changing". The snapshot is one generation old by
 	// the time the table is read, which is the same race every observation on

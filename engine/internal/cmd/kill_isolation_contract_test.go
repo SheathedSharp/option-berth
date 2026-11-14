@@ -16,7 +16,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// These contracts are pure memory: no listener, subprocess, daemon, scan, ps,
+// These contracts are pure memory: no listener, subprocess, runtime service, scan, ps,
 // signal or real killer is reachable from this file. Every hook installed here is
 // a closure that only counts and returns rows or errors it built in memory, and
 // every snapshot row and target is a synthetic, nonzero identity that is never
@@ -36,8 +36,8 @@ func requirePreinstalledKillHooks(t *testing.T) {
 	if killHere == nil || reflect.ValueOf(killHere).Pointer() != reflect.ValueOf(refuseUnscopedKillSignal).Pointer() {
 		t.Fatalf("killHere is not the preinstalled refusing executor; the test-binary init in kill_isolation_test.go must install refuseUnscopedKillSignal, or a missed replacement reaches the real killer.KillPorts")
 	}
-	if guardDaemonKill == nil || reflect.ValueOf(guardDaemonKill).Pointer() != reflect.ValueOf(refuseUnscopedDaemonKill).Pointer() {
-		t.Fatalf("guardDaemonKill is not the preinstalled refusing daemon guard; the test-binary init in kill_isolation_test.go must install refuseUnscopedDaemonKill, or a forgotten daemon fixture reaches an arbitrary daemon's kill RPC")
+	if guardRuntimeServiceKill == nil || reflect.ValueOf(guardRuntimeServiceKill).Pointer() != reflect.ValueOf(refuseUnscopedRuntimeServiceKill).Pointer() {
+		t.Fatalf("guardRuntimeServiceKill is not the preinstalled refusing runtime service guard; the test-binary init in kill_isolation_test.go must install refuseUnscopedRuntimeServiceKill, or a forgotten runtime service fixture reaches an arbitrary runtime service's kill RPC")
 	}
 }
 
@@ -88,29 +88,29 @@ func TestKillHookDefaultsRefuseMissingHooks(t *testing.T) {
 	}
 }
 
-// These daemon-route contracts are pure memory too: the guard and the registry
+// These runtime service-route contracts are pure memory too: the guard and the registry
 // only look at a client pointer, and a *client.Client zero value is never
 // dialled, called or closed here. A refusal is required to be the sentinel, so
 // a round that reached the RPC would fail the contract with a different answer.
 
-// fakeDaemonKillClient is an instance identity, never a connection: it is only
+// fakeRuntimeServiceKillClient is an instance identity, never a connection: it is only
 // ever compared by pointer and never handed to Call.
-func fakeDaemonKillClient() *client.Client { return &client.Client{} }
+func fakeRuntimeServiceKillClient() *client.Client { return &client.Client{} }
 
-// fakeDaemonKillScan is an in-memory Scan that is never invoked; the guard only
+// fakeRuntimeServiceKillScan is an in-memory Scan that is never invoked; the guard only
 // requires that a fixture supplied one.
-func fakeDaemonKillScan() func(scanner.Include) ([]ports.ListeningPort, error) {
+func fakeRuntimeServiceKillScan() func(scanner.Include) ([]ports.ListeningPort, error) {
 	return func(scanner.Include) ([]ports.ListeningPort, error) {
 		return nil, errors.New("pure contract: the fixture scan must not be called by the guard")
 	}
 }
 
-// TestKillDaemonRoutesRefuseWithoutABoundFixture: with the preinstalled guard and
-// no fixture binding, both daemon executors must stop before their kill RPC, in
+// TestKillRuntimeServiceRoutesRefuseWithoutABoundFixture: with the preinstalled guard and
+// no fixture binding, both runtime service executors must stop before their kill RPC, in
 // a real round and in a dry run, so a forgotten fixture cannot signal through an
-// arbitrary or shared daemon even when the round is only a plan. The command's
+// arbitrary or shared runtime service even when the round is only a plan. The command's
 // read-only snapshot call is not what this contract gates.
-func TestKillDaemonRoutesRefuseWithoutABoundFixture(t *testing.T) {
+func TestKillRuntimeServiceRoutesRefuseWithoutABoundFixture(t *testing.T) {
 	requirePreinstalledKillHooks(t)
 
 	for _, tc := range []struct {
@@ -121,100 +121,100 @@ func TestKillDaemonRoutesRefuseWithoutABoundFixture(t *testing.T) {
 		{"a dry run", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			c := fakeDaemonKillClient()
+			c := fakeRuntimeServiceKillClient()
 			targets := []killer.Target{{Port: 3100, PID: 4242}}
 
-			results, err := killInDaemon(c)(context.Background(), targets, killer.Options{}, tc.dryRun)
-			if !errors.Is(err, errUnscopedDaemonKill) {
-				t.Fatalf("killInDaemon err = %v, want %v", err, errUnscopedDaemonKill)
+			results, err := killInRuntimeService(c)(context.Background(), targets, killer.Options{}, tc.dryRun)
+			if !errors.Is(err, errUnscopedRuntimeServiceKill) {
+				t.Fatalf("killInRuntimeService err = %v, want %v", err, errUnscopedRuntimeServiceKill)
 			}
 			if results != nil {
-				t.Fatalf("killInDaemon results = %+v, want nothing: a refusal is not a kill result", results)
+				t.Fatalf("killInRuntimeService results = %+v, want nothing: a refusal is not a kill result", results)
 			}
 
-			results, err = killSessionInDaemon(c, "sess-synthetic")(context.Background(), nil, killer.Options{}, tc.dryRun)
-			if !errors.Is(err, errUnscopedDaemonKill) {
-				t.Fatalf("killSessionInDaemon err = %v, want %v", err, errUnscopedDaemonKill)
+			results, err = killSessionInRuntimeService(c, "sess-synthetic")(context.Background(), nil, killer.Options{}, tc.dryRun)
+			if !errors.Is(err, errUnscopedRuntimeServiceKill) {
+				t.Fatalf("killSessionInRuntimeService err = %v, want %v", err, errUnscopedRuntimeServiceKill)
 			}
 			if results != nil {
-				t.Fatalf("killSessionInDaemon results = %+v, want nothing: a refusal is not a kill result", results)
+				t.Fatalf("killSessionInRuntimeService results = %+v, want nothing: a refusal is not a kill result", results)
 			}
 		})
 	}
 }
 
-// TestKillDaemonRoutesRefuseAnUnboundClientInstance binds one fixture client and
+// TestKillRuntimeServiceRoutesRefuseAnUnboundClientInstance binds one fixture client and
 // drives the routes with a different instance: instance scope, not target or
 // pid, is what the guard checks, so the bound client does not lend its
 // authorization to anyone else and naming a pid on the round changes nothing.
-func TestKillDaemonRoutesRefuseAnUnboundClientInstance(t *testing.T) {
+func TestKillRuntimeServiceRoutesRefuseAnUnboundClientInstance(t *testing.T) {
 	requirePreinstalledKillHooks(t)
 
-	bound, stranger := fakeDaemonKillClient(), fakeDaemonKillClient()
-	if err := bindDaemonKillClient(bound, fakeDaemonKillScan()); err != nil {
+	bound, stranger := fakeRuntimeServiceKillClient(), fakeRuntimeServiceKillClient()
+	if err := bindRuntimeServiceKillClient(bound, fakeRuntimeServiceKillScan()); err != nil {
 		t.Fatalf("binding the fixture client: %v", err)
 	}
-	t.Cleanup(func() { releaseDaemonKillClient(bound) })
+	t.Cleanup(func() { releaseRuntimeServiceKillClient(bound) })
 
-	if err := guardDaemonKill(bound); err != nil {
+	if err := guardRuntimeServiceKill(bound); err != nil {
 		t.Fatalf("the bound fixture instance was refused: %v", err)
 	}
 
 	targets := []killer.Target{{PID: 4242}}
-	if _, err := killInDaemon(stranger)(context.Background(), targets, killer.Options{}, false); !errors.Is(err, errUnscopedDaemonKill) {
-		t.Fatalf("killInDaemon on an unbound instance err = %v, want %v", err, errUnscopedDaemonKill)
+	if _, err := killInRuntimeService(stranger)(context.Background(), targets, killer.Options{}, false); !errors.Is(err, errUnscopedRuntimeServiceKill) {
+		t.Fatalf("killInRuntimeService on an unbound instance err = %v, want %v", err, errUnscopedRuntimeServiceKill)
 	}
-	if _, err := killSessionInDaemon(stranger, "sess-synthetic")(context.Background(), nil, killer.Options{}, false); !errors.Is(err, errUnscopedDaemonKill) {
-		t.Fatalf("killSessionInDaemon on an unbound instance err = %v, want %v", err, errUnscopedDaemonKill)
+	if _, err := killSessionInRuntimeService(stranger, "sess-synthetic")(context.Background(), nil, killer.Options{}, false); !errors.Is(err, errUnscopedRuntimeServiceKill) {
+		t.Fatalf("killSessionInRuntimeService on an unbound instance err = %v, want %v", err, errUnscopedRuntimeServiceKill)
 	}
 }
 
-// TestKillDaemonFixtureBindingRequiresAnExplicitScan: the fixture boundary
-// refuses a nil client and a missing Scan, so no daemon with a fallback scanner
+// TestKillRuntimeServiceFixtureBindingRequiresAnExplicitScan: the fixture boundary
+// refuses a nil client and a missing Scan, so no runtime service with a fallback scanner
 // is ever constructed or authorized. A released instance is refused again.
-func TestKillDaemonFixtureBindingRequiresAnExplicitScan(t *testing.T) {
+func TestKillRuntimeServiceFixtureBindingRequiresAnExplicitScan(t *testing.T) {
 	requirePreinstalledKillHooks(t)
 
-	if err := bindDaemonKillClient(nil, fakeDaemonKillScan()); !errors.Is(err, errUnscopedDaemonKill) {
-		t.Fatalf("bindDaemonKillClient(nil, scan) err = %v, want %v", err, errUnscopedDaemonKill)
+	if err := bindRuntimeServiceKillClient(nil, fakeRuntimeServiceKillScan()); !errors.Is(err, errUnscopedRuntimeServiceKill) {
+		t.Fatalf("bindRuntimeServiceKillClient(nil, scan) err = %v, want %v", err, errUnscopedRuntimeServiceKill)
 	}
-	if err := bindDaemonKillClient(fakeDaemonKillClient(), nil); !errors.Is(err, errUnscopedDaemonKill) {
-		t.Fatalf("bindDaemonKillClient(client, nil) err = %v, want %v", err, errUnscopedDaemonKill)
+	if err := bindRuntimeServiceKillClient(fakeRuntimeServiceKillClient(), nil); !errors.Is(err, errUnscopedRuntimeServiceKill) {
+		t.Fatalf("bindRuntimeServiceKillClient(client, nil) err = %v, want %v", err, errUnscopedRuntimeServiceKill)
 	}
-	if err := guardDaemonKill(nil); !errors.Is(err, errUnscopedDaemonKill) {
-		t.Fatalf("guardDaemonKill(nil) err = %v, want %v", err, errUnscopedDaemonKill)
+	if err := guardRuntimeServiceKill(nil); !errors.Is(err, errUnscopedRuntimeServiceKill) {
+		t.Fatalf("guardRuntimeServiceKill(nil) err = %v, want %v", err, errUnscopedRuntimeServiceKill)
 	}
 
-	c := fakeDaemonKillClient()
-	if err := bindDaemonKillClient(c, fakeDaemonKillScan()); err != nil {
+	c := fakeRuntimeServiceKillClient()
+	if err := bindRuntimeServiceKillClient(c, fakeRuntimeServiceKillScan()); err != nil {
 		t.Fatalf("binding a fixture client: %v", err)
 	}
-	if err := guardDaemonKill(c); err != nil {
+	if err := guardRuntimeServiceKill(c); err != nil {
 		t.Fatalf("the bound fixture instance was refused: %v", err)
 	}
-	releaseDaemonKillClient(c)
-	if err := guardDaemonKill(c); !errors.Is(err, errUnscopedDaemonKill) {
-		t.Fatalf("guardDaemonKill after release err = %v, want %v", err, errUnscopedDaemonKill)
+	releaseRuntimeServiceKillClient(c)
+	if err := guardRuntimeServiceKill(c); !errors.Is(err, errUnscopedRuntimeServiceKill) {
+		t.Fatalf("guardRuntimeServiceKill after release err = %v, want %v", err, errUnscopedRuntimeServiceKill)
 	}
 }
 
-// TestKillDaemonExecutorsUseInjectedGuard pins the injection point itself: both
-// daemon executors must consult whatever guard the seam currently holds, on the
+// TestKillRuntimeServiceExecutorsUseInjectedGuard pins the injection point itself: both
+// runtime service executors must consult whatever guard the seam currently holds, on the
 // instance they were built with, in a real round. The installed guard is a fake
 // that returns its own sentinel, so an executor that skipped the seam would
 // return a different answer (or a real RPC error), each path's error is required
 // to be that exact sentinel, and the count proves both routes ran it once.
 // Nothing here dials, calls, scans or builds a fixture: the client is inert.
-func TestKillDaemonExecutorsUseInjectedGuard(t *testing.T) {
+func TestKillRuntimeServiceExecutorsUseInjectedGuard(t *testing.T) {
 	requirePreinstalledKillHooks(t)
 
 	injected := errors.New("injected guard: this round was refused by the installed fake")
-	c := fakeDaemonKillClient()
+	c := fakeRuntimeServiceKillClient()
 	calls := 0
 
-	previous := guardDaemonKill
-	t.Cleanup(func() { guardDaemonKill = previous })
-	guardDaemonKill = func(got *client.Client) error {
+	previous := guardRuntimeServiceKill
+	t.Cleanup(func() { guardRuntimeServiceKill = previous })
+	guardRuntimeServiceKill = func(got *client.Client) error {
 		calls++
 		if got != c {
 			t.Errorf("guard received client %p, want the inert instance %p the executor was built with", got, c)
@@ -224,20 +224,20 @@ func TestKillDaemonExecutorsUseInjectedGuard(t *testing.T) {
 
 	targets := []killer.Target{{Port: 3100, PID: 4242}}
 
-	results, err := killInDaemon(c)(context.Background(), targets, killer.Options{}, false)
+	results, err := killInRuntimeService(c)(context.Background(), targets, killer.Options{}, false)
 	if err != injected {
-		t.Fatalf("killInDaemon err = %v, want the injected guard error %v", err, injected)
+		t.Fatalf("killInRuntimeService err = %v, want the injected guard error %v", err, injected)
 	}
 	if results != nil {
-		t.Fatalf("killInDaemon results = %+v, want nothing: a refusal is not a kill result", results)
+		t.Fatalf("killInRuntimeService results = %+v, want nothing: a refusal is not a kill result", results)
 	}
 
-	results, err = killSessionInDaemon(c, "sess-synthetic")(context.Background(), nil, killer.Options{}, false)
+	results, err = killSessionInRuntimeService(c, "sess-synthetic")(context.Background(), nil, killer.Options{}, false)
 	if err != injected {
-		t.Fatalf("killSessionInDaemon err = %v, want the injected guard error %v", err, injected)
+		t.Fatalf("killSessionInRuntimeService err = %v, want the injected guard error %v", err, injected)
 	}
 	if results != nil {
-		t.Fatalf("killSessionInDaemon results = %+v, want nothing: a refusal is not a kill result", results)
+		t.Fatalf("killSessionInRuntimeService results = %+v, want nothing: a refusal is not a kill result", results)
 	}
 
 	if calls != 2 {
@@ -334,7 +334,7 @@ func requireOneReportedRow(t *testing.T, out string, want killer.Result) {
 }
 
 // TestKillDirectForwardsTheAttributedSnapshotForAPositionalPort drives the actual
-// no-daemon path with a fake scanner and a fake executor: the supplied port
+// no-runtime-service path with a fake scanner and a fake executor: the supplied port
 // resolves against the attributed table, and the executor receives that very
 // snapshot with the real round (not a dry-run plan) requested.
 func TestKillDirectForwardsTheAttributedSnapshotForAPositionalPort(t *testing.T) {

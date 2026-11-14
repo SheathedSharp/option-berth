@@ -8,7 +8,7 @@ import (
 )
 
 // ParentTable maps every visible process to its parent. The scanner builds the
-// same table while enriching listeners; exporting it lets the daemon's run
+// same table while enriching listeners; exporting it lets the runtime service's run
 // registry walk a listener's ancestry back to the `oberth start` that owns it
 // without scanning ports first.
 //

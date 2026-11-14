@@ -13,7 +13,7 @@ import (
 
 // renameWorld builds a project with a main checkout and a worktree, both
 // running, plus an unrelated repository called "store" — all resolved and built
-// the way the daemon publishes them.
+// the way the runtime service publishes them.
 func renameWorld(t *testing.T, withConfig bool) (checkouts, *Index, []state.Group) {
 	t.Helper()
 	c := newCheckouts(t, "shop", "feat")

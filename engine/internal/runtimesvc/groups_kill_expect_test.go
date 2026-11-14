@@ -15,7 +15,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
-// killRuntime is a daemon runtime whose only observation is the rows the test
+// killRuntime is a runtime service runtime whose only observation is the rows the test
 // hands it: no process is scanned, no signal can be sent, and every stop in
 // these tests is a dry run.
 func killRuntime(t *testing.T, rows []ports.ListeningPort) *Runtime {
@@ -26,9 +26,9 @@ func killRuntime(t *testing.T, rows []ports.ListeningPort) *Runtime {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	loop := scanner.New(scanner.Options{
-		DaemonVersion: "test",
-		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Scan:          func(scanner.Include) ([]ports.ListeningPort, error) { return rows, nil },
+		RuntimeServiceVersion: "test",
+		Logger:                slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Scan:                  func(scanner.Include) ([]ports.ListeningPort, error) { return rows, nil },
 	})
 	return &Runtime{
 		Store:   st,
@@ -39,7 +39,7 @@ func killRuntime(t *testing.T, rows []ports.ListeningPort) *Runtime {
 
 // timeoutCleanup sends the groups.kill a readiness timeout would send, as raw
 // params so an unknown field is ignored rather than rejected: that is the only
-// way a regression can show what the daemon does when it does not know the
+// way a regression can show what the runtime service does when it does not know the
 // cleanup's run identity.
 func timeoutCleanup(t *testing.T, rt *Runtime, params string) rpc.KillEnvelope {
 	t.Helper()

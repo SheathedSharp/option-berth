@@ -44,16 +44,16 @@ func TestCurrentSessionWithoutAnAgentIsAnError(t *testing.T) {
 	}
 }
 
-func TestSessionsCommandWithoutADaemonSaysSo(t *testing.T) {
-	saved := dialDaemon
-	dialDaemon = func(context.Context) (*client.Client, error) { return nil, client.ErrNotRunning }
-	t.Cleanup(func() { dialDaemon = saved })
+func TestSessionsCommandWithoutARuntimeServiceSaysSo(t *testing.T) {
+	saved := dialRuntimeService
+	dialRuntimeService = func(context.Context) (*client.Client, error) { return nil, client.ErrNotRunning }
+	t.Cleanup(func() { dialRuntimeService = saved })
 
-	_, runErr := sessionsDaemon(context.Background())
+	_, runErr := sessionsRuntimeService(context.Background())
 	if runErr == nil {
-		t.Fatal("sessionsDaemon without a daemon did not fail")
+		t.Fatal("sessionsRuntimeService without a runtime service did not fail")
 	}
-	if !strings.Contains(runErr.Error(), "oberth serve") {
-		t.Errorf("error = %q, want it to name the command that starts a daemon", runErr)
+	if !strings.Contains(runErr.Error(), "oberth runtime service run") {
+		t.Errorf("error = %q, want it to name the command that starts a runtime service", runErr)
 	}
 }

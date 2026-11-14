@@ -15,11 +15,11 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
 )
 
-// TestDaemonStopRestartKeepsServiceEvidence proves that stopping the
+// TestRuntimeServiceStopRestartKeepsServiceEvidence proves that stopping the
 // collector does not silently stop a service it started. Both the direct scan
-// while the daemon is down and the resumed daemon must describe the same run;
+// while the runtime service is down and the resumed runtime service must describe the same run;
 // logs must remain available throughout.
-func TestDaemonStopRestartKeepsServiceEvidence(t *testing.T) {
+func TestRuntimeServiceStopRestartKeepsServiceEvidence(t *testing.T) {
 	e := newEnv(t)
 	e.serve()
 	b, err := RecoveryService(filepath.Join(e.home, "recovery"))
@@ -28,7 +28,7 @@ func TestDaemonStopRestartKeepsServiceEvidence(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		e.cleanupBuilt(b)
-		_, _ = e.run("", "daemon", "stop", "--json")
+		_, _ = e.run("", "runtime_service", "stop", "--json")
 	})
 
 	var up struct {
@@ -60,9 +60,9 @@ func TestDaemonStopRestartKeepsServiceEvidence(t *testing.T) {
 		t.Fatalf("status --no-mark baseline = %+v, want an empty comparison with an anchor", peek.Changed)
 	}
 
-	// Several independent CLI processes may ask the daemon for the same state
+	// Several independent CLI processes may ask the runtime service for the same state
 	// at once. Every response must remain valid and retain the service's
-	// attribution; a transient SQLite/daemon serialization error is a failure.
+	// attribution; a transient SQLite/runtime service serialization error is a failure.
 	const callers = 8
 	var wg sync.WaitGroup
 	errCh := make(chan error, callers)
@@ -86,22 +86,22 @@ func TestDaemonStopRestartKeepsServiceEvidence(t *testing.T) {
 		t.Error(err)
 	}
 
-	// Keep the daemon alive across several scanner ticks. The scan counter must
+	// Keep the runtime service alive across several scanner ticks. The scan counter must
 	// advance while the service remains attributed and its log remains readable.
 	var previousScans = -1
 	advances := 0
 	deadline := time.Now().Add(25 * time.Second)
 	for advances < 3 && time.Now().Before(deadline) {
-		var daemonStatus struct {
+		var runtimeServiceStatus struct {
 			Scans int `json:"scans"`
 		}
-		if err := e.runJSON("", &daemonStatus, "daemon", "status", "--json"); err != nil {
-			t.Fatalf("daemon status during continuous run: %v", err)
+		if err := e.runJSON("", &runtimeServiceStatus, "runtime_service", "status", "--json"); err != nil {
+			t.Fatalf("runtime service status during continuous run: %v", err)
 		}
-		if previousScans >= 0 && daemonStatus.Scans > previousScans {
+		if previousScans >= 0 && runtimeServiceStatus.Scans > previousScans {
 			advances++
 		}
-		previousScans = daemonStatus.Scans
+		previousScans = runtimeServiceStatus.Scans
 		e.waitStatus(b.Root, func(st statusDoc) bool { return st.serviceRunning("api", b.Port, true) })
 		time.Sleep(250 * time.Millisecond)
 	}
@@ -126,28 +126,28 @@ func TestDaemonStopRestartKeepsServiceEvidence(t *testing.T) {
 		t.Fatalf("logs metadata before stop = %+v, want the running api run", logs)
 	}
 
-	if _, err := e.run("", "daemon", "stop", "--json"); err != nil {
-		t.Fatalf("daemon stop: %v", err)
+	if _, err := e.run("", "runtime_service", "stop", "--json"); err != nil {
+		t.Fatalf("runtime service stop: %v", err)
 	}
 	stdout, _, err := e.runCapture(b.Root, "status", "--json", "--no-mark")
 	if err != nil {
-		t.Fatalf("status with daemon stopped: %v", err)
+		t.Fatalf("status with runtime service stopped: %v", err)
 	}
 	var direct statusDoc
 	if err := json.Unmarshal(stdout, &direct); err != nil {
 		t.Fatalf("decode direct status: %v\n%s", err, stdout)
 	}
 	if !direct.serviceRunning("api", b.Port, true) {
-		t.Fatalf("direct status after daemon stop = %+v, want api still running", direct.Worktree.Services)
+		t.Fatalf("direct status after runtime service stop = %+v, want api still running", direct.Worktree.Services)
 	}
 
-	if _, err := e.run("", "daemon", "restart", "--json"); err != nil {
-		t.Fatalf("daemon restart: %v", err)
+	if _, err := e.run("", "runtime_service", "restart", "--json"); err != nil {
+		t.Fatalf("runtime service restart: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := client.WaitForSocket(ctx, e.socket, 10*time.Second); err != nil {
-		t.Fatalf("replacement daemon never came up: %v", err)
+		t.Fatalf("replacement runtime service never came up: %v", err)
 	}
 	e.waitStatus(b.Root, func(st statusDoc) bool { return st.serviceRunning("api", b.Port, true) })
 

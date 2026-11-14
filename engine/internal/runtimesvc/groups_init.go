@@ -21,10 +21,10 @@ import (
 // ports into services, and it is the same function `oberth init` uses with its
 // own scan, because a proposal that differs between the two paths is a bug the
 // user sees as a file they did not mean to write. This handler owns only what
-// the daemon can know better than a one-shot CLI: the live snapshot, the
+// the runtime service can know better than a one-shot CLI: the live snapshot, the
 // group it already publishes, and the write.
 //
-// The daemon has no working directory of the caller's, so unlike the CLI it
+// The runtime service has no working directory of the caller's, so unlike the CLI it
 // cannot default the root: `root_dir` is required.
 
 func init() {
@@ -127,7 +127,7 @@ func planInit(p rpc.GroupsInitParams, rt *Runtime) (initPlan, error) {
 	// merged into or overwritten in place; only a project without one gets a
 	// new file.
 	path := groups.TargetIn(root)
-	// The daemon writes exactly one filename on a client's say-so, and this
+	// The runtime service writes exactly one filename on a client's say-so, and this
 	// check is made here too rather than trusted to the join above.
 	if err := checkConfigPath(path); err != nil {
 		return initPlan{}, err
@@ -184,7 +184,7 @@ func buildInitPlan(p rpc.GroupsInitParams, root, path string, snap state.Snapsho
 		rendered, err := groups.Marshal(cfg)
 		if err != nil {
 			return initPlan{}, rpc.NewError(rpc.CodeInternal,
-				"rendering "+groups.ConfigName+": "+err.Error(), "check `oberth daemon log`")
+				"rendering "+groups.ConfigName+": "+err.Error(), "check `oberth runtime service log`")
 		}
 		plan.data = rendered
 	}
@@ -251,7 +251,7 @@ func (plan initPlan) result() rpc.GroupsInitResult {
 func (plan initPlan) write(req *Request) error {
 	if err := groups.WriteConfigFile(plan.path, plan.data); err != nil {
 		return rpc.NewError(rpc.CodeInternal, "writing "+plan.path+": "+err.Error(),
-			"check that the daemon may write to "+filepath.Dir(plan.path))
+			"check that the runtime service may write to "+filepath.Dir(plan.path))
 	}
 	publishConfig(req, plan.path, plan.proposal.Name, plan.declared)
 	return nil
@@ -275,7 +275,7 @@ func proposedConfig(p rpc.GroupsInitParams, root string, snap state.Snapshot) *g
 	return groups.Curate(cfg, p.Services)
 }
 
-// publishConfig indexes a file the daemon just wrote and republishes, so the
+// publishConfig indexes a file the runtime service just wrote and republishes, so the
 // group reaches subscribers as a groups delta before the caller's own next read
 // (the same order `groups.config.set` keeps).
 func publishConfig(req *Request, path, group string, services int) {
@@ -319,13 +319,13 @@ func initRoot(raw string) (string, error) {
 }
 
 // absoluteRoot is the caller's root as one cleaned absolute path. The empty
-// spelling is refused rather than defaulted: the daemon's own working directory
+// spelling is refused rather than defaulted: the runtime service's own working directory
 // is not the caller's project.
 func absoluteRoot(raw string) (string, error) {
 	named := strings.TrimSpace(raw)
 	if named == "" {
 		return "", rpc.NewError(rpc.CodeInvalidParams, "root_dir is required",
-			`the daemon has no working directory of yours; send {"root_dir": "/path/to/repo"}`)
+			`the runtime service has no working directory of yours; send {"root_dir": "/path/to/repo"}`)
 	}
 	if !filepath.IsAbs(named) {
 		return "", rpc.NewError(rpc.CodeInvalidParams, "root_dir must be an absolute path: "+named,

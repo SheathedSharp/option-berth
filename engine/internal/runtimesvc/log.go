@@ -11,8 +11,8 @@ import (
 )
 
 // Log rotation policy from the spec's "Error handling" section: each file holds
-// 5 MiB and three generations are kept (daemon.log, daemon.log.1,
-// daemon.log.2).
+// 5 MiB and three generations are kept (runtime-service.log, runtime-service.log.1,
+// runtime-service.log.2).
 const (
 	LogMaxBytes = 5 << 20
 	LogKeep     = 3
@@ -76,7 +76,7 @@ func (w *RotatingWriter) Write(p []byte) (int, error) {
 	return written, err
 }
 
-// rotate renames daemon.log.N-1 → daemon.log.N and opens a fresh daemon.log.
+// rotate renames runtime-service.log.N-1 → runtime-service.log.N and opens a fresh runtime-service.log.
 // w.mu is held by the caller.
 func (w *RotatingWriter) rotate() error {
 	if err := w.f.Close(); err != nil {
@@ -109,7 +109,7 @@ func (w *RotatingWriter) Close() error {
 	return closeErr
 }
 
-// ParseLogLevel turns the config's daemon.log_level into a slog level. Every
+// ParseLogLevel turns the config's runtime_service.log_level into a slog level. Every
 // value it does not recognise — the empty string included — means info.
 func ParseLogLevel(s string) slog.Level {
 	switch strings.ToLower(strings.TrimSpace(s)) {
@@ -124,9 +124,9 @@ func ParseLogLevel(s string) slog.Level {
 	}
 }
 
-// NewLogger builds the daemon's logger. It always writes to the rotated log
-// file, so `oberth daemon log` has something to show, and additionally to
-// stderr when the daemon runs in the foreground.
+// NewLogger builds the runtime service's logger. It always writes to the rotated log
+// file, so `oberth runtime service log` has something to show, and additionally to
+// stderr when the runtime service runs in the foreground.
 func NewLogger(path string, level slog.Level, alsoStderr bool) (*slog.Logger, io.Closer, error) {
 	file, err := NewRotatingWriter(path, LogMaxBytes, LogKeep)
 	if err != nil {

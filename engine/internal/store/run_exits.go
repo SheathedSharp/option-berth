@@ -11,7 +11,7 @@ import (
 
 // RunExitRow is the durable form of one run that has ended. It deliberately
 // carries the fields needed to render runs.list and status without importing
-// the daemon's run registry into the store package.
+// the runtime service's run registry into the store package.
 type RunExitRow struct {
 	ID         string
 	PID        int
@@ -32,7 +32,7 @@ type RunExitRow struct {
 	LastLines  []string
 }
 
-// RunExitLimit is the number of finished runs retained by the daemon. The
+// RunExitLimit is the number of finished runs retained by the runtime.service. The
 // registry applies the same bound in memory; keeping it here makes the SQL
 // query's retention contract explicit at the storage boundary.
 const RunExitLimit = 100

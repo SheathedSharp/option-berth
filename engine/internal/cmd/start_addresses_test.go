@@ -211,15 +211,15 @@ func TestDetachedSpawnParamsCarryOnlyWhatIsSet(t *testing.T) {
 	}
 }
 
-// TestStartDetachedHandsTheRunToTheDaemon: with a daemon, a detached start is
-// the daemon's spawn — the run exists in its registry afterwards, which is what
+// TestStartDetachedHandsTheRunToTheRuntimeService: with a runtime service, a detached start is
+// the runtime service's spawn — the run exists in its registry afterwards, which is what
 // makes it outlive this shell.
-func TestStartDetachedHandsTheRunToTheDaemon(t *testing.T) {
+func TestStartDetachedHandsTheRunToTheRuntimeService(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the run spool harness is unix-only")
 	}
 	resetRouting(t)
-	socket := startDaemonWhereTheCommandLooks(t)
+	socket := startRuntimeServiceWhereTheCommandLooks(t)
 	dir := t.TempDir()
 	argv := []string{"sh", "-c", "exit 0"}
 	res := spawn.Resolve(dir, argv, "demo", "worker")
@@ -247,11 +247,11 @@ func TestStartDetachedHandsTheRunToTheDaemon(t *testing.T) {
 			return
 		}
 	}
-	t.Fatalf("the daemon does not know the run it spawned: %+v", listed)
+	t.Fatalf("the runtime service does not know the run it spawned: %+v", listed)
 }
 
-// TestStartDetachedFallsBackToTheRunFile: with no daemon the command still
-// starts the run (detached) and records it where the next daemon will adopt it,
+// TestStartDetachedFallsBackToTheRunFile: with no runtime service the command still
+// starts the run (detached) and records it where the next runtime service will adopt it,
 // instead of losing it behind a failed RPC.
 func TestStartDetachedFallsBackToTheRunFile(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -270,7 +270,7 @@ func TestStartDetachedFallsBackToTheRunFile(t *testing.T) {
 	var err error
 	out := captureStdout(t, func() { err = startDetached(testCommand(), argv, dir, res) })
 	if err != nil {
-		t.Fatalf("start --detach without a daemon: %v", err)
+		t.Fatalf("start --detach without a runtime_service: %v", err)
 	}
 	if !strings.Contains(out, "demo/worker") {
 		t.Fatalf("stdout = %q, want the started line naming the run", out)
@@ -282,14 +282,14 @@ func TestStartDetachedFallsBackToTheRunFile(t *testing.T) {
 		}
 	}
 	if !recorded {
-		t.Fatal("the run was not recorded in runs.json, so no daemon will adopt it")
+		t.Fatal("the run was not recorded in runs.json, so no runtime service will adopt it")
 	}
 }
 
-// TestStartDetachedReportsADaemonFailure: a daemon that answers with an error is
-// not the same as no daemon — the command reports it instead of spawning a
+// TestStartDetachedReportsARuntimeServiceFailure: a runtime service that answers with an error is
+// not the same as no runtime service — the command reports it instead of spawning a
 // second copy of the run locally.
-func TestStartDetachedReportsADaemonFailure(t *testing.T) {
+func TestStartDetachedReportsARuntimeServiceFailure(t *testing.T) {
 	resetRouting(t)
 	prev := connectForWrite
 	connectForWrite = func(context.Context) (*client.Client, error) {
@@ -302,6 +302,6 @@ func TestStartDetachedReportsADaemonFailure(t *testing.T) {
 	res := spawn.Resolve(dir, argv, "demo", "worker")
 	err := startDetached(testCommand(), argv, dir, res)
 	if err == nil || !strings.Contains(err.Error(), "permission denied") {
-		t.Fatalf("err = %v, want the daemon's own failure", err)
+		t.Fatalf("err = %v, want the runtime service's own failure", err)
 	}
 }

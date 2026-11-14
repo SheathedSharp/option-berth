@@ -26,7 +26,7 @@ func TestSystemScanAndScopedCursorReplay(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		e.cleanupBuilt(b)
-		_, _ = e.run("", "daemon", "stop", "--json")
+		_, _ = e.run("", "runtime_service", "stop", "--json")
 	})
 	var up struct {
 		Errors []string `json:"errors"`
@@ -98,8 +98,8 @@ func TestSystemScanAndScopedCursorReplay(t *testing.T) {
 	if err := replay.Unsubscribe(ctx); err != nil {
 		t.Fatal(err)
 	}
-	var status rpc.DaemonStatusResult
-	if err := monitor.Call(ctx, "daemon.status", rpc.Empty{}, &status); err != nil {
+	var status rpc.RuntimeServiceStatusResult
+	if err := monitor.Call(ctx, "runtime.service.status", rpc.Empty{}, &status); err != nil {
 		t.Fatal(err)
 	}
 	if status.Subscribers != 0 {
@@ -119,13 +119,13 @@ func scopedAPIIsRunning(s state.StreamSnapshot) bool {
 	return false
 }
 
-func waitNativeListener(t *testing.T, ctx context.Context, c *client.Client, port int, present bool, afterScans int64) (rpc.StateSnapshotResult, rpc.DaemonStatusResult) {
+func waitNativeListener(t *testing.T, ctx context.Context, c *client.Client, port int, present bool, afterScans int64) (rpc.StateSnapshotResult, rpc.RuntimeServiceStatusResult) {
 	t.Helper()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		var status rpc.DaemonStatusResult
-		if err := c.Call(ctx, "daemon.status", rpc.Empty{}, &status); err != nil {
+		var status rpc.RuntimeServiceStatusResult
+		if err := c.Call(ctx, "runtime.service.status", rpc.Empty{}, &status); err != nil {
 			t.Fatal(err)
 		}
 		var snap rpc.StateSnapshotResult

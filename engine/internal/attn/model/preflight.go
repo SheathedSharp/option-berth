@@ -2,7 +2,7 @@ package model
 
 // Preflight is an optional adapter handoff before an agent's proposed side
 // effect. Its schema distinguishes agent intent from code-produced runtime
-// events, and it never becomes a daemon request or an executable command.
+// events, and it never becomes a runtime service request or an executable command.
 
 import (
 	"crypto/sha256"

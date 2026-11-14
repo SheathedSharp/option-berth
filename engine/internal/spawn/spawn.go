@@ -1,10 +1,10 @@
 // Package spawn launches a child for `oberth start`, `oberth up` and the
-// daemon's `runs.spawn` so the whole tree stays killable and attributable: the
+// runtime service's `runs.spawn` so the whole tree stays killable and attributable: the
 // child gets its own process group (a Job Object on Windows), the run identity
 // in its environment, and, when detached, a rotated log under
 // ~/.option-berth/logs.
 //
-// The package knows nothing about the daemon or the run registry: callers
+// The package knows nothing about the runtime service or the run registry: callers
 // register the returned Handle wherever it belongs.
 package spawn
 

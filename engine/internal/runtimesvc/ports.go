@@ -55,7 +55,7 @@ func readSnapshot(rt *Runtime, include scanner.Include) (state.Snapshot, error) 
 //
 // The question is about the snapshot as a whole, not about every row in it, and
 // asking it row by row was wrong. `stats` is null for a process whose numbers
-// are all zero — a listener ps cannot see, a container the daemon has no
+// are all zero — a listener ps cannot see, a container the runtime service has no
 // reading for — and `health` is null for anything not probed, so on a machine
 // with one such row every stats read missed the cache and scanned the machine
 // again, while a subscriber was already collecting stats every second. One row

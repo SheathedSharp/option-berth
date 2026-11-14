@@ -81,7 +81,7 @@ func TestCheckedStartupFailureUnwindsBeforeServing(t *testing.T) {
 	default:
 		t.Fatal("Serve did not finish")
 	}
-	// Bind and lock again: cleanup must not leave a wedged daemon endpoint.
+	// Bind and lock again: cleanup must not leave a wedged runtime service endpoint.
 	ln, err := listen(socket)
 	if err != nil {
 		t.Fatalf("failed startup retained listener: %v", err)

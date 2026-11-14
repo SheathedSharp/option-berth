@@ -226,7 +226,7 @@ func TestCommandVocabularyCoversPublicCommands(t *testing.T) {
 		"up", "restart", "down", "start", "kill",
 		"git", "init",
 		"workplace", "agent", "attn",
-		"daemon", "serve", "config", "version", "completion", "doctor", "feedback",
+		"runtime", "config", "version", "completion", "doctor", "feedback",
 		"other",
 	}
 	for _, name := range public {

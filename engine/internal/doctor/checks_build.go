@@ -7,23 +7,23 @@ import (
 	"strings"
 )
 
-func checkDaemonBuildMatches(ctx context.Context, env *Env) rpc.DoctorCheck {
-	info := env.Daemon(ctx)
+func checkRuntimeServiceBuildMatches(ctx context.Context, env *Env) rpc.DoctorCheck {
+	info := env.RuntimeService(ctx)
 	switch {
 	case !info.Reachable:
-		return skip("no daemon build to compare", "")
+		return skip("no runtime service build to compare", "")
 	case info.StatusErr != nil:
-		return warn("daemon build could not be observed", info.StatusErr.Error(), "oberth daemon status --json")
+		return warn("runtime service build could not be observed", info.StatusErr.Error(), "oberth runtime service status --json")
 	case !knownCommit(env.Commit) || !knownCommit(info.Commit):
 		return warn("build identity is unknown",
 			"a missing or development commit cannot confirm a build match",
-			"oberth version --json; oberth daemon status --json")
+			"oberth version --json; oberth runtime service status --json")
 	case env.Commit != info.Commit:
-		return warn("daemon and CLI come from different builds",
-			fmt.Sprintf("daemon commit %s; CLI commit %s", info.Commit, env.Commit),
-			"oberth daemon restart")
+		return warn("runtime service and CLI come from different builds",
+			fmt.Sprintf("runtime service commit %s; CLI commit %s", info.Commit, env.Commit),
+			"oberth runtime service restart")
 	}
-	return ok("daemon and CLI build identities match", "commit "+env.Commit)
+	return ok("runtime service and CLI build identities match", "commit "+env.Commit)
 }
 
 func knownCommit(commit string) bool {

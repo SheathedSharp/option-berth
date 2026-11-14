@@ -14,12 +14,12 @@ import (
 
 // Every reservations call runs under one lock: reserving reads the table, picks
 // a port and writes it back, and two of those interleaving would hand the same
-// port to two services. The calls are rare and short, so a daemon-wide mutex is
+// port to two services. The calls are rare and short, so a runtime service-wide mutex is
 // the whole concurrency story. (The unique constraint on claims.port is the
 // second line of defence, for a second writer on the same database.)
 var claimsMu sync.Mutex
 
-// reservationsBook builds the book for this request, or reports the daemon that
+// reservationsBook builds the book for this request, or reports the runtime service that
 // came up without a database.
 //
 // The caller hands in the listener table it already observed, because the probe
@@ -102,7 +102,7 @@ func ipv6Usable() bool {
 // that names nothing.
 //
 // The full-range hint names a real next step — a person can widen the range
-// only through the daemon's configuration, so it sends them to the two things
+// only through the runtime service's configuration, so it sends them to the two things
 // they can actually do.
 func claimsError(what string, err error) error {
 	switch {
@@ -111,7 +111,7 @@ func claimsError(what string, err error) error {
 			"another service reserved that port first; start again to take the next free one")
 	case errors.Is(err, claims.ErrExhausted):
 		return rpc.NewError(rpc.CodeNotFound, err.Error(),
-			"stop services this worktree no longer needs with `oberth down`, or check the daemon's claims range")
+			"stop services this worktree no longer needs with `oberth down`, or check the runtime service's claims range")
 	case errors.Is(err, claims.ErrNoAddress):
 		return rpc.NewError(rpc.CodeInvalidParams, err.Error(),
 			"a `port: auto` service needs its manifest's project and its own name to reserve a port")

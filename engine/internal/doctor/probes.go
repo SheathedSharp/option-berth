@@ -25,7 +25,7 @@ var ErrDockerNotAnswering = errors.New("docker CLI not answering")
 
 // DockerProbe asks the local docker daemon for its server version, within
 // NetworkBudget. A failed or empty answer means the CLI is installed while its
-// daemon is not answering — the state that quietly strips container names off
+// runtime service is not answering — the state that quietly strips container names off
 // every listing.
 func DockerProbe(ctx context.Context) (string, error) {
 	ctx, stop := context.WithTimeout(ctx, NetworkBudget)

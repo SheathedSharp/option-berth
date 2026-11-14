@@ -218,7 +218,7 @@ func (x *Index) within(cfg *Config, co Checkout) bool {
 
 // runGroup is the post-step that keeps an `oberth start` run in its checkout's
 // group. A run records the group its client inferred when it started, and a
-// client knows neither the daemon's aliases nor, if it predates that rule, that
+// client knows neither the runtime service's aliases nor, if it predates that rule, that
 // a worktree is not its main checkout. So a run group that is the project's own
 // name — with or without the worktree — is the checkout's group under its
 // current name. Any other name was chosen with --group and stays.

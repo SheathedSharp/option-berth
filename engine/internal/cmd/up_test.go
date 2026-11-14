@@ -49,7 +49,7 @@ func TestNormalizeStartChunkAddsStructuredFailure(t *testing.T) {
 	}
 }
 
-// A daemon that sends the structured outcome fields also decides its own next
+// A runtime service that sends the structured outcome fields also decides its own next
 // step, so the compatibility projection must not put a log hint back on a
 // service that never started.
 func TestNormalizeStartChunkLeavesAStructuredChunkAlone(t *testing.T) {
@@ -152,9 +152,9 @@ func TestServiceReadyWaitsForListenerWithoutHealth(t *testing.T) {
 func TestWaitForStartReadyUsesTimeoutAsStructuredFailure(t *testing.T) {
 	observableProbe(t)
 	t.Setenv("BERTH_HOME", t.TempDir())
-	old := noDaemonFlag
-	noDaemonFlag = true
-	t.Cleanup(func() { noDaemonFlag = old })
+	old := noRuntimeServiceFlag
+	noRuntimeServiceFlag = true
+	t.Cleanup(func() { noRuntimeServiceFlag = old })
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, groups.ConfigName), []byte("name: demo\nservices:\n  - name: api\n    cmd: echo api\n    port: 19001\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -316,7 +316,7 @@ func TestUpParamsPassesOutsideHomeOptIn(t *testing.T) {
 	}
 }
 
-// TestUpParamsPassesTheGroupName straight through, so the daemon resolves it
+// TestUpParamsPassesTheGroupName straight through, so the runtime service resolves it
 // against every config it knows and not only the one under the cwd.
 func TestUpParamsPassesTheGroupName(t *testing.T) {
 	upOnly = []string{"web", "db"}
@@ -376,9 +376,9 @@ func TestUpParamsReportsABrokenConfig(t *testing.T) {
 func TestWaitForStartReadyChecksSkippedWithoutAuthorizingCleanup(t *testing.T) {
 	observableProbe(t)
 	t.Setenv("BERTH_HOME", t.TempDir())
-	old := noDaemonFlag
-	noDaemonFlag = true
-	t.Cleanup(func() { noDaemonFlag = old })
+	old := noRuntimeServiceFlag
+	noRuntimeServiceFlag = true
+	t.Cleanup(func() { noRuntimeServiceFlag = old })
 	dir := t.TempDir()
 	path := filepath.Join(dir, groups.ConfigName)
 	if err := os.WriteFile(path, []byte("name: demo\nservices:\n  - name: api\n    cmd: echo api\n    port: 19001\n"), 0600); err != nil {
@@ -405,9 +405,9 @@ func TestWaitForStartReadyChecksSkippedWithoutAuthorizingCleanup(t *testing.T) {
 func TestWaitForStartReadyMixedTimeoutCleansOnlyNewStarts(t *testing.T) {
 	observableProbe(t)
 	t.Setenv("BERTH_HOME", t.TempDir())
-	old := noDaemonFlag
-	noDaemonFlag = true
-	t.Cleanup(func() { noDaemonFlag = old })
+	old := noRuntimeServiceFlag
+	noRuntimeServiceFlag = true
+	t.Cleanup(func() { noRuntimeServiceFlag = old })
 	dir := t.TempDir()
 	path := filepath.Join(dir, groups.ConfigName)
 	data := "name: demo\nservices:\n  - name: old\n    cmd: echo old\n    port: 19001\n  - name: new\n    cmd: echo new\n    port: 19002\n"
@@ -430,7 +430,7 @@ func TestWaitForStartReadyMixedTimeoutCleansOnlyNewStarts(t *testing.T) {
 }
 
 // TestUpParamsSendsDependencyClosureByDefault: `up` asks for the closure;
-// --no-deps turns it off for a daemon that cannot do it, or for a caller that
+// --no-deps turns it off for a runtime service that cannot do it, or for a caller that
 // wants exactly what it named.
 func TestUpParamsSendsDependencyClosureByDefault(t *testing.T) {
 	dir := t.TempDir()
@@ -461,7 +461,7 @@ func TestUpParamsSendsDependencyClosureByDefault(t *testing.T) {
 	}
 
 	// Without --only the field cannot change the plan, and asking for it would
-	// break a plain `up` against a daemon that predates the closure.
+	// break a plain `up` against a runtime service that predates the closure.
 	upNoDeps = false
 	upOnly = nil
 	params, _, err = upParams(nil)
@@ -482,30 +482,30 @@ func TestUpParamsSendsDependencyClosureByDefault(t *testing.T) {
 	}
 }
 
-// TestStartDependencyCapabilityGate refuses a daemon that would ignore the
+// TestStartDependencyCapabilityGate refuses a runtime service that would ignore the
 // field, instead of letting the missing services fail after the dependency
 // timeout. A request that does not need the field is unaffected.
 func TestStartDependencyCapabilityGate(t *testing.T) {
-	old := rpc.DaemonHelloResult{DaemonVersion: "v0.9.0", Capabilities: []string{"groups"}}
+	old := rpc.RuntimeServiceHelloResult{RuntimeServiceVersion: "v0.9.0", Capabilities: []string{"groups"}}
 	if err := requireStartDependencySupportFor(old, false); err != nil {
 		t.Fatalf("a request without include_dependencies must pass: %v", err)
 	}
 	err := requireStartDependencySupportFor(old, true)
 	if err == nil {
-		t.Fatal("expected an error from a daemon without the capability")
+		t.Fatal("expected an error from a runtime service without the capability")
 	}
-	for _, want := range []string{"depends_on closure", "oberth daemon restart", "--no-deps", "v0.9.0"} {
+	for _, want := range []string{"depends_on closure", "oberth runtime service restart", "--no-deps", "v0.9.0"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %v, want it to mention %q", err, want)
 		}
 	}
 
-	newer := rpc.DaemonHelloResult{
-		DaemonVersion: "v0.10.0",
-		Capabilities:  []string{"groups", rpc.CapabilityStartDependencies},
+	newer := rpc.RuntimeServiceHelloResult{
+		RuntimeServiceVersion: "v0.10.0",
+		Capabilities:          []string{"groups", rpc.CapabilityStartDependencies},
 	}
 	if err := requireStartDependencySupportFor(newer, true); err != nil {
-		t.Fatalf("a daemon announcing the capability must pass: %v", err)
+		t.Fatalf("a runtime service announcing the capability must pass: %v", err)
 	}
 }
 
@@ -733,11 +733,11 @@ func TestUpRejectsANonPositiveTimeout(t *testing.T) {
 }
 
 // TestUpWithoutAManifestFails: outside a project there is nothing to start and
-// the error says what to do, without dialling the daemon.
+// the error says what to do, without dialling the runtime.service.
 func TestUpWithoutAManifestFails(t *testing.T) {
 	t.Chdir(t.TempDir())
 	withUpFlags(t, func() {})
-	noDaemonReachable(t)
+	noRuntimeServiceReachable(t)
 
 	err := upRun(upTestCommand(), nil)
 	if err == nil || !strings.Contains(err.Error(), "oberth.yaml") {
@@ -745,23 +745,23 @@ func TestUpWithoutAManifestFails(t *testing.T) {
 	}
 }
 
-// TestUpWithoutADaemonFails: starting services is the daemon's work; with none
+// TestUpWithoutARuntimeServiceFails: starting services is the runtime service's work; with none
 // reachable the command reports the connection failure rather than claiming the
 // project came up.
-func TestUpWithoutADaemonFails(t *testing.T) {
+func TestUpWithoutARuntimeServiceFails(t *testing.T) {
 	demoProject(t)
 	withUpFlags(t, func() {})
 	resetRouting(t)
-	noDaemonReachable(t)
+	noRuntimeServiceReachable(t)
 
 	if err := upRun(upTestCommand(), nil); err == nil {
-		t.Fatal("up without a daemon returned nil")
+		t.Fatal("up without a runtime service returned nil")
 	}
 }
 
-// TestUpStartsAProjectService drives the whole command against a real daemon:
+// TestUpStartsAProjectService drives the whole command against a real runtime_service:
 // the manifest is resolved here, groups.start runs there, and the summary
-// reports the service the daemon actually started. The service is a short sleep,
+// reports the service the runtime service actually started. The service is a short sleep,
 // so it reclaims itself and leaves nothing behind.
 func TestUpStartsAProjectService(t *testing.T) {
 	dir := t.TempDir()
@@ -773,7 +773,7 @@ func TestUpStartsAProjectService(t *testing.T) {
 	// The checkout is a test temp directory, outside the user's home.
 	withUpFlags(t, func() { upAllowOutsideHome = true })
 	resetRouting(t)
-	startDaemonWhereTheCommandLooks(t)
+	startRuntimeServiceWhereTheCommandLooks(t)
 
 	var err error
 	out := captureStdout(t, func() { err = upRun(upTestCommand(), nil) })
@@ -784,16 +784,16 @@ func TestUpStartsAProjectService(t *testing.T) {
 		t.Fatalf("stdout = %q, want the started service named", out)
 	}
 	if !strings.Contains(out, "1 started") {
-		t.Fatalf("stdout = %q, want the summary of what the daemon started", out)
+		t.Fatalf("stdout = %q, want the summary of what the runtime service started", out)
 	}
 }
 
-// TestUpNamedProjectMustBeResolvable: a named project is the daemon's to find,
-// so the failure is the daemon's own and is reported as such.
+// TestUpNamedProjectMustBeResolvable: a named project is the runtime service's to find,
+// so the failure is the runtime service's own and is reported as such.
 func TestUpNamedProjectMustBeResolvable(t *testing.T) {
 	withUpFlags(t, func() {})
 	resetRouting(t)
-	startDaemonWhereTheCommandLooks(t)
+	startRuntimeServiceWhereTheCommandLooks(t)
 
 	err := upRun(upTestCommand(), []string{"no-such-project"})
 	if err == nil {

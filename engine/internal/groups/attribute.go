@@ -13,10 +13,10 @@ import (
 // Every port gets Group, GroupSource and ProjectRoot written back onto its
 // scanner row; the returned slice is the contract rows and the index.
 //
-// `oberth status`, `oberth kill` and `oberth init` take this no-daemon path.
+// `oberth status`, `oberth kill` and `oberth init` take this no-runtime-service path.
 // Run ownership is settled here too, from runs.json and the ancestry walk
 // (DirectRuns): the collector reports what the OS shows, this layer decides
-// the worktree, service and run. The daemon's scanner calls AttributeWith
+// the worktree, service and run. The runtime service's scanner calls AttributeWith
 // instead, with a long-lived index and the `oberth start` registry.
 func Attribute(pp []ports.ListeningPort) ([]state.Port, *Index) {
 	index := NewIndex()
@@ -27,12 +27,12 @@ func Attribute(pp []ports.ListeningPort) ([]state.Port, *Index) {
 }
 
 // AttributeWith is Attribute with the run registry and the index supplied by
-// the caller, so the daemon can keep one index for its lifetime and feed the
+// the caller, so the runtime service can keep one index for its lifetime and feed the
 // resolver the registry it knows this tick. A nil index or registry falls back
 // to an empty one.
 //
 // Unlike Attribute it does not index the process's own working directory: the
-// daemon's cwd says nothing about the ports it is watching.
+// runtime service's cwd says nothing about the ports it is watching.
 func AttributeWith(pp []ports.ListeningPort, runs Registry, index *Index) ([]state.Port, *Index) {
 	if index == nil {
 		index = NewIndex()
@@ -101,7 +101,7 @@ func deref[T ~string](s *T) string {
 // stampSessions writes the owning run's agent session onto every port that run
 // owns. The registry and the ancestry walk are the same ones that decided the
 // run, and the stamp lands on contract rows rather than scanner rows — which
-// is why it runs after Resolve. `session` is a daemon concept that runs.json
+// is why it runs after Resolve. `session` is a runtime service concept that runs.json
 // does not carry, so the direct-scan path has nothing to stamp.
 func stampSessions(resolved []state.Port, runs Registry) {
 	registry, ok := runs.(SessionRegistry)
@@ -124,7 +124,7 @@ func stampSessions(resolved []state.Port, runs Registry) {
 // stampRuns writes the registry's run attribution onto the scan rows before
 // they are converted, so `run`, `display_name` and `group` are all derived
 // from the same lookup at the same instant. It runs in the attribution layer
-// for both paths: the direct scan brings DirectRuns, the daemon brings its
+// for both paths: the direct scan brings DirectRuns, the runtime service brings its
 // in-memory registry, and scanning itself no longer reads runs.json.
 func stampRuns(pp []ports.ListeningPort, runs Registry) {
 	for i := range pp {

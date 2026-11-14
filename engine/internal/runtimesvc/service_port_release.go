@@ -206,7 +206,7 @@ func finishGroupStop(ctx context.Context, req *Request, group string, plan *serv
 		// Preserve the existing wire schema and report failure to CLI clients too;
 		// down's text path does not inspect envelope.OK. Signals already sent and
 		// registry observations are not undone by this reservation failure.
-		// The code travels: a contention the caller can retry is daemon_busy,
+		// The code travels: a contention the caller can retry is runtime_service_busy,
 		// and everything else here is a real fault. Reporting both as
 		// "internal" told an agent to distrust its own retry.
 		code := rpc.CodeInternal
@@ -215,7 +215,7 @@ func finishGroupStop(ctx context.Context, req *Request, group string, plan *serv
 			code = rpcErr.Code
 		}
 		return nil, rpc.NewError(code, "stop attempted; port reservations retained: "+err.Error(),
-			"inspect status and daemon log, then retry down; already sent signals were not undone")
+			"inspect status and runtime service log, then retry down; already sent signals were not undone")
 	}
 	env.Released = released
 	return env, nil
@@ -224,8 +224,8 @@ func finishGroupStop(ctx context.Context, req *Request, group string, plan *serv
 // busy is the failure a caller is asked to retry: another operation holds what
 // this one needs, and the hold is short. It is a condition, not an engine fault,
 // which is the whole difference between an agent retrying and an agent giving
-// up on the daemon.
+// up on the runtime.service.
 func busy(what string) error {
 	return rpc.NewError(rpc.CodeBusy, what,
-		"retry in a moment; the daemon is finishing another reservation operation")
+		"retry in a moment; the runtime service is finishing another reservation operation")
 }

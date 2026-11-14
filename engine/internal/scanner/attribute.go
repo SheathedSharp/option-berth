@@ -12,7 +12,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
-// Store is the slice of the daemon's SQLite store the scan tick uses: the
+// Store is the slice of the runtime service's SQLite store the scan tick uses: the
 // `oberth.yaml` roots it remembers and the history ring it appends to.
 // It is an interface so the loop can run without a database — the CLI's
 // direct-scan path and most tests do.
@@ -32,7 +32,7 @@ type Store interface {
 }
 
 // attribution is the per-loop group state: the index of known `oberth.yaml`
-// files, which lives as long as the daemon, and the roots already written to
+// files, which lives as long as the runtime service, and the roots already written to
 // the store.
 type attribution struct {
 	mu     contextMutex
@@ -45,7 +45,7 @@ type attribution struct {
 	identities map[string]string
 }
 
-// SetStore installs the store after construction. The daemon calls it from
+// SetStore installs the store after construction. The runtime service calls it from
 // Serve once the database is open; leaving the store nil keeps the loop
 // unpersisted.
 func (l *Loop) SetStore(s Store) {
@@ -77,7 +77,7 @@ func setSeam[T any](l *Loop, target *T, value T) {
 }
 
 // SetRuns installs the run-registry accessor. It is a function because
-// `oberth start` hands the daemon its registry after the loop is already
+// `oberth start` hands the runtime service its registry after the loop is already
 // scanning.
 func (l *Loop) SetRuns(f func() groups.Registry) {
 	if f != nil {
@@ -86,7 +86,7 @@ func (l *Loop) SetRuns(f func() groups.Registry) {
 }
 
 // SetSessions installs the sessions-collection builder. Like SetRuns it is a
-// setter because the daemon extension that owns sessions registers itself
+// setter because the runtime service extension that owns sessions registers itself
 // after the loop is already scanning.
 func (l *Loop) SetSessions(f func(ports []state.Port) []state.SessionRecord) {
 	if f != nil {
@@ -249,7 +249,7 @@ func classifyRoot(root string) (rootState, error) {
 // A root whose directory is gone is dropped from the store on the way in.
 // Nothing else ever removes one — rememberRoots only adds — so without this a
 // project that was deleted or moved is remembered forever and re-seeded on
-// every daemon start: a demo checkout that moved, or a test's temporary
+// every runtime service start: a demo checkout that moved, or a test's temporary
 // directory, which is how dead paths end up in a real database.
 func (l *Loop) seedRoots(st Store) {
 	if st == nil || l.attr.seeded {
@@ -372,7 +372,7 @@ func (l *Loop) registry() groups.Registry {
 }
 
 // rememberRoots persists an `oberth.yaml` directory the first time it is seen,
-// so the next daemon start knows about the project without walking the disk.
+// so the next runtime service start knows about the project without walking the disk.
 // It also keeps each checkout's `${worktree}` identity current: the ledger
 // survives the directory, and a group rename updates the name a later
 // `down --identity` resolves.

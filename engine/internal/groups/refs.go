@@ -13,7 +13,7 @@ import (
 
 // A reference is how a service's `prepare`, `cmd` and `env` name a port: its
 // own with ${port} and ${url}, another's with ${<service>.port} and
-// ${<service>.url}. The daemon expands them when it starts the service, after
+// ${<service>.url}. The runtime service expands them when it starts the service, after
 // the port of every service they name is known.
 //
 // ${worktree} is the fifth shape: a stable token for the checkout holding the
@@ -128,7 +128,7 @@ func HasWorktreeRef(text string) bool {
 	return strings.Contains(text, "${"+refWorktree+"}")
 }
 
-// isReference reports whether the inside of ${...} is a shape the daemon
+// isReference reports whether the inside of ${...} is a shape the runtime service
 // expands. ${worktree} names no service, so callers resolving service names
 // use parseReference instead.
 func isReference(inner string) bool {

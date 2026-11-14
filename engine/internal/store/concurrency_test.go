@@ -115,7 +115,7 @@ func TestReadersDoNotWaitForTheWriter(t *testing.T) {
 	}
 }
 
-// Two Store handles on one file — the daemon plus a one-shot CLI — must neither
+// Two Store handles on one file — the runtime service plus a one-shot CLI — must neither
 // deadlock nor lose writes.
 func TestTwoStoresOnOneFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "option-berth.db")

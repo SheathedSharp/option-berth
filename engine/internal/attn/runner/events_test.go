@@ -113,7 +113,7 @@ func TestEventFeedScopeDedupReconnectAndJoin(t *testing.T) {
 	select {
 	case <-trigger.Wake:
 	case <-ctx.Done():
-		t.Fatal("new daemon sequence not reset")
+		t.Fatal("new runtime service sequence not reset")
 	}
 	stop()
 	if closed.Load() != 2 {

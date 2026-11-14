@@ -23,11 +23,11 @@ func registerSettingsHandlers() {
 	RegisterHandler("config.path", handleConfigPath)
 }
 
-// errNoStore is the reply of every database-backed method when the daemon came
+// errNoStore is the reply of every database-backed method when the runtime service came
 // up with no database.
 func errNoStore() error {
-	return rpc.NewError(rpc.CodeInternal, "this daemon has no database open",
-		"check `oberth daemon log` for the error opening option-berth.db, then `oberth daemon restart`")
+	return rpc.NewError(rpc.CodeInternal, "this runtime service has no database open",
+		"check `oberth runtime service log` for the error opening option-berth.db, then `oberth runtime service restart`")
 }
 
 func handleConfigGet(_ context.Context, _ *Request) (any, error) {
@@ -80,7 +80,7 @@ func handleConfigPath(_ context.Context, _ *Request) (any, error) {
 // cannot be served state from before its own write.
 //
 // The machine is not scanned. A rename, a group pin and a `oberth.yaml` edit
-// change how ports the daemon already knows are named and grouped, not which
+// change how ports the runtime service already knows are named and grouped, not which
 // ports exist, so re-running attribution over the last scan's rows answers the
 // question in microseconds instead of behind `lsof`, `ps` and `docker stats`.
 // `Republish` wakes the loop, so a real scan follows.
@@ -110,5 +110,5 @@ func storeError(operation string, cause error) error {
 			"names are a single word: no whitespace, no / and no \\")
 	}
 	return rpc.NewError(rpc.CodeInternal, operation+": "+cause.Error(),
-		"check `oberth daemon log`")
+		"check `oberth runtime service log`")
 }

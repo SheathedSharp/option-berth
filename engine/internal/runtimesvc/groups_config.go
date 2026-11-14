@@ -14,7 +14,7 @@ import (
 )
 
 // Read/write namespace for `oberth.yaml`, together with the reload that keeps
-// the daemon's long-lived index in step with what is on disk. `groups.start`
+// the runtime service's long-lived index in step with what is on disk. `groups.start`
 // is deliberately elsewhere (internal/runtimesvc/groupstart): starting a service
 // needs the run registry, and this package must not import it.
 func init() {
@@ -173,7 +173,7 @@ func handleGroupsReload(_ context.Context, req *Request) (any, error) {
 
 // resolveConfig turns "path or group name" into the config a request names.
 // A path the index has never seen is loaded there and then, so the desktop can
-// open a project the daemon has not scanned a process in.
+// open a project the runtime service has not scanned a process in.
 func resolveConfig(rt *Runtime, name, path *string) (*groups.Config, error) {
 	if path != nil {
 		if p := strings.TrimSpace(*path); p != "" {
@@ -217,7 +217,7 @@ func configNamed(rt *Runtime, n string) (*groups.Config, error) {
 }
 
 // checkConfigPath refuses to read or write anything that is not a `oberth.yaml`.
-// The daemon writes files because a client asked it to, so the single filename
+// The runtime service writes files because a client asked it to, so the single filename
 // it will touch is fixed here instead of being taken from the caller.
 func checkConfigPath(path string) error {
 	if groups.IsConfigName(filepath.Base(path)) {
@@ -253,11 +253,11 @@ func configError(path string, err error) error {
 		return rpc.NewError(rpc.CodeNotFound, "no such file: "+path,
 			"`oberth init` writes a "+groups.ConfigName+" at the repository root")
 	}
-	return rpc.NewError(rpc.CodeInternal, err.Error(), "check `oberth daemon log`")
+	return rpc.NewError(rpc.CodeInternal, err.Error(), "check `oberth runtime service log`")
 }
 
 // configRow renders a config for the wire. Running and port_actual are joined
-// from state the daemon already holds, so an editor reading a config back sees
+// from state the runtime service already holds, so an editor reading a config back sees
 // the same service rows `groups.list` publishes.
 func configRow(rt *Runtime, cfg *groups.Config) rpc.GroupConfig {
 	out := rpc.GroupConfig{

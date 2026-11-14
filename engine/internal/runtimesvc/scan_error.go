@@ -30,5 +30,5 @@ func scanFailure(err error) *rpc.Error {
 		}
 	}
 	return rpc.NewError(rpc.CodeInternal, "scan failed: "+err.Error(),
-		"check `oberth daemon log` for the scanner error")
+		"check `oberth runtime service log` for the scanner error")
 }

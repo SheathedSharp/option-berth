@@ -1,4 +1,4 @@
-// Package store is the daemon's SQLite database: renames, group pins, the
+// Package store is the runtime service's SQLite database: renames, group pins, the
 // port-event history ring, the set of known oberth.yaml roots, and the tables
 // sibling packages register for themselves.
 //
@@ -6,8 +6,8 @@
 // created on first use. modernc.org/sqlite is the driver — pure Go, so
 // CGO_ENABLED=0 release builds still work.
 //
-// The daemon normally owns the store. The CLI's no-daemon path may open it
-// read-only to keep durable run-exit evidence while the daemon is down; see
+// The runtime service normally owns the store. The CLI's no-runtime-service path may open it
+// read-only to keep durable run-exit evidence while the runtime service is down; see
 // OpenReadOnly.
 package store
 
@@ -46,7 +46,7 @@ func timeFromString(s string) (time.Time, error) {
 }
 
 // ResetInfo records a database that was thrown away because the file on disk
-// was not one SQLite could read. The daemon reports it as a db_reset event, so
+// was not one SQLite could read. The runtime service reports it as a db_reset event, so
 // a person can find the parked file.
 type ResetInfo struct {
 	Path    string // the database that was reset
@@ -86,7 +86,7 @@ type Store struct {
 
 // Path is the default database location: option-berth.db in the directory
 // internal/paths owns, next to config.yaml. BERTH_DB overrides it, which is what
-// the tests and `oberth serve` with a temp root use.
+// the tests and `oberth runtime service run` with a temp root use.
 func Path() string { return paths.DB() }
 
 // Open opens the database at path, creating it if needed and migrating it to
@@ -99,7 +99,7 @@ func Open(path string) (*Store, error) { return OpenWith(path, Options{}) }
 
 // OpenReadOnly opens an existing database without running migrations or
 // changing journal mode. It is for local readers that need durable evidence
-// while the daemon is stopped; callers must close the returned store.
+// while the runtime service is stopped; callers must close the returned store.
 func OpenReadOnly(path string) (*Store, error) {
 	path = databasePath(path)
 	if _, err := os.Stat(path); err != nil {
@@ -169,7 +169,7 @@ func databasePath(path string) string {
 }
 
 // recreate parks an unusable database and opens a fresh one in its place,
-// recording what happened so the daemon can report a db_reset event.
+// recording what happened so the runtime service can report a db_reset event.
 func recreate(path string, opts Options, cause error) (*Store, error) {
 	movedTo, err := moveAside(path)
 	if err != nil {
@@ -197,7 +197,7 @@ func openAt(path string, opts Options) (*Store, error) {
 		return nil, fmt.Errorf("opening %s: %w", path, err)
 	}
 	// Writes are serialised in Go and readers are short, so a small pool is
-	// enough; the idle timeout keeps a quiet daemon from holding connections.
+	// enough; the idle timeout keeps a quiet runtime service from holding connections.
 	db.SetMaxOpenConns(8)
 	db.SetMaxIdleConns(4)
 	db.SetConnMaxIdleTime(5 * time.Minute)
@@ -340,7 +340,7 @@ var corruptionPhrases = []string{
 //
 // WAL keeps a `-wal` and a `-shm` beside the database, and whichever pooled
 // connection closes last writes them again — after Close has returned, as far
-// as the caller can tell. A daemon that has stopped, or a test removing its
+// as the caller can tell. A runtime service that has stopped, or a test removing its
 // temp directory, cannot wait for that: the removal fails with "directory not
 // empty" against a sidecar recreated behind it. Checkpointing and leaving WAL
 // mode deletes both while we still hold the connection that owns them. A busy
@@ -359,7 +359,7 @@ func (s *Store) Close() error {
 
 // checkpointTimeout bounds the wait for the connection checkpointing needs. A
 // leaked or stuck connection is a bug, but it must not make Close hang forever:
-// daemon shutdown and a test's temp-directory cleanup both depend on Close
+// runtime service shutdown and a test's temp-directory cleanup both depend on Close
 // returning.
 const checkpointTimeout = 5 * time.Second
 
@@ -391,12 +391,12 @@ func (s *Store) checkpointAndLeaveWALWithin(budget time.Duration) {
 // DBPath is the file this store is backed by.
 func (s *Store) DBPath() string { return s.path }
 
-// DB exposes the raw handle. The cross-spec contract hands this to daemon
+// DB exposes the raw handle. The cross-spec contract hands this to runtime service
 // extensions through Runtime; nothing inside option-berth should reach for it.
 func (s *Store) DB() *sql.DB { return s.db }
 
 // Reset reports the database Open had to throw away, or nil when none was. The
-// daemon reads it right after Open and reports a db_reset event.
+// runtime service reads it right after Open and reports a db_reset event.
 func (s *Store) Reset() *ResetInfo {
 	if s == nil || s.reset == nil {
 		return nil

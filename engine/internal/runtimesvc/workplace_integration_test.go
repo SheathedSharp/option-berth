@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// The workplace record end to end, against the real binary and a real daemon.
+// The workplace record end to end, against the real binary and a real runtime.service.
 //
 // The unit tests cover each piece — the CLI records a run, the registry
 // announces its exit, the workplace closes the block that run opened. This is
@@ -85,7 +85,7 @@ type workplaceShowDoc struct {
 	} `json:"blocks"`
 }
 
-func TestDetachedRunIsRecordedAndClosedByTheDaemon(t *testing.T) {
+func TestDetachedRunIsRecordedAndClosedByTheRuntimeService(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the detach harness is unix-shaped: it needs a socket and /bin/echo")
 	}
@@ -96,8 +96,8 @@ func TestDetachedRunIsRecordedAndClosedByTheDaemon(t *testing.T) {
 	e.serve()
 	repo := workplaceRepo(t)
 
-	// A command the daemon owns: this process hands it over and returns, so it
-	// is the daemon that will learn how it ended.
+	// A command the runtime service owns: this process hands it over and returns, so it
+	// is the runtime service that will learn how it ended.
 	if out, err := e.in(repo, "start", "-d", "--", "/bin/echo", "hello"); err != nil {
 		t.Fatalf("start -d: %v\n%s", err, out)
 	}
@@ -122,8 +122,8 @@ func TestDetachedRunIsRecordedAndClosedByTheDaemon(t *testing.T) {
 		t.Fatalf("the log the block points at is not there: %v", err)
 	}
 
-	// Then the run ends, and the daemon closes the block. Nothing in this test
-	// observes the exit: the daemon is the only thing that can.
+	// Then the run ends, and the runtime service closes the block. Nothing in this test
+	// observes the exit: the runtime service is the only thing that can.
 	deadline := time.Now().Add(20 * time.Second)
 	for {
 		doc = e.workplaceShow(repo)
@@ -131,7 +131,7 @@ func TestDetachedRunIsRecordedAndClosedByTheDaemon(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("the daemon never closed the block: %+v", doc.Blocks)
+			t.Fatalf("the runtime service never closed the block: %+v", doc.Blocks)
 		}
 		time.Sleep(200 * time.Millisecond)
 	}

@@ -48,7 +48,7 @@ func hungCommand(t *testing.T, name string) {
 }
 
 // TestHungListenerCommandFailsTheScan: a wedged `lsof` used to freeze the
-// daemon's only scan goroutine. It must surface as a failed scan — not as an
+// runtime service's only scan goroutine. It must surface as a failed scan — not as an
 // empty healthy one, and not as an unbounded wait.
 func TestHungListenerCommandFailsTheScan(t *testing.T) {
 	withCommandTimeout(t, 100*time.Millisecond)

@@ -1,4 +1,4 @@
-// Command gen-schema writes the checked-in JSON Schemas to disk: the daemon
+// Command gen-schema writes the checked-in JSON Schemas to disk: the runtime service
 // protocol schema, generated from the Go types in internal/state and
 // internal/runtimesvc/rpc, and the oberth.yaml manifest schema, generated from
 // internal/groups. It is driven by a //go:generate directive in

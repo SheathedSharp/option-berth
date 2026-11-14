@@ -80,7 +80,7 @@ func TestIsolatedRejectsPathsOutside(t *testing.T) {
 // gate that quietly matched nothing would be worse than no gate.
 func TestTheOwnershipRules(t *testing.T) {
 	const exe = "/tmp/go-build123/b001/cmd.test"
-	// argv[1] is what makes a process a daemon, and whose binary it is decides
+	// argv[1] is what makes a process a runtime service, and whose binary it is decides
 	// whether it is this run's business.
 	type processCase struct {
 		what    string
@@ -88,16 +88,16 @@ func TestTheOwnershipRules(t *testing.T) {
 		mine    bool
 	}
 	cases := []processCase{
-		{"serve --detach from this binary", exe + " serve --detach", true},
-		{"serve from this binary", exe + " serve", true},
+		{"serve --detach from this binary", exe + " runtime service run --detach", true},
+		{"serve from this binary", exe + " runtime service run", true},
 		{"a test run of this binary", exe + " -test.run=TestX", false},
 		{"this binary with no argument", exe, false},
 		// Another package's test binary is another package's problem: `go test
 		// ./...` runs them at the same time, under names that differ only in
 		// their build directory.
-		{"another package's test binary", "/tmp/go-build123/b002/cmd.test serve --detach", false},
+		{"another package's test binary", "/tmp/go-build123/b002/cmd.test runtime service run --detach", false},
 		{"a bare relative path", "cmd.test serve", false},
-		{"the developer's own daemon", "/usr/local/bin/oberth serve", false},
+		{"the developer's own runtime service", "/usr/local/bin/oberth runtime service run", false},
 		{"a grep", "grep serve", false},
 		{"an empty row", "", false},
 	}
@@ -108,83 +108,83 @@ func TestTheOwnershipRules(t *testing.T) {
 	}
 }
 
-// Anything running `serve` from under this run's root is this run's, and nothing
+// Anything running `runtime service run` from under this run's root is this run's, and nothing
 // else is: nothing else put anything there.
 func TestThisRunsRootIsOwned(t *testing.T) {
 	const notMine = "/some/build/oberth"
 	inRoot := filepath.Join(Root(), "option-berth-itest-bin123", "oberth")
-	if !isOwnedProcess(notMine, inRoot+" serve", false) {
-		t.Errorf("%s serve was not recognised as this run's daemon", inRoot)
+	if !isOwnedProcess(notMine, inRoot+" runtime service run", false) {
+		t.Errorf("%s runtime service run was not recognised as this run's runtime service", inRoot)
 	}
 	if isOwnedProcess(notMine, inRoot+" list", false) {
-		t.Error("`oberth list` was mistaken for a daemon")
+		t.Error("`oberth list` was mistaken for a runtime service")
 	}
-	if isOwnedProcess(notMine, "/usr/local/bin/oberth serve", false) {
-		t.Error("an installed oberth daemon was mistaken for a test leak")
+	if isOwnedProcess(notMine, "/usr/local/bin/oberth runtime service run", false) {
+		t.Error("an installed oberth runtime service was mistaken for a test leak")
 	}
 	// Another run's binary is under the machine's temp directory too, and must
 	// not be touched.
 	other := filepath.Join(machineTempDir(), "snrun999", "option-berth-itest-bin", "oberth")
-	if isOwnedProcess(notMine, other+" serve", false) {
-		t.Errorf("%s serve, which belongs to another test run, matched", other)
+	if isOwnedProcess(notMine, other+" runtime service run", false) {
+		t.Errorf("%s runtime service run, which belongs to another test run, matched", other)
 	}
 }
 
-// The opt-in wide net for CI is any `oberth` named `serve` from anywhere under
+// The opt-in wide net for CI is any `oberth` named `runtime service run` from anywhere under
 // the machine's temp directory.
 func TestTheOptInWideNetIsMachineWide(t *testing.T) {
 	const notMine = "/some/build/oberth"
 	inTemp := filepath.Join(machineTempDir(), "option-berth-itest-bin123", "oberth")
-	if !isOwnedProcess(notMine, inTemp+" serve", true) {
-		t.Errorf("%s serve was not recognised as a test-built daemon", inTemp)
+	if !isOwnedProcess(notMine, inTemp+" runtime service run", true) {
+		t.Errorf("%s runtime service run was not recognised as a test-built runtime service", inTemp)
 	}
-	if isOwnedProcess(notMine, "/usr/local/bin/oberth serve", true) {
-		t.Error("an installed oberth daemon was mistaken for a test leak")
+	if isOwnedProcess(notMine, "/usr/local/bin/oberth runtime service run", true) {
+		t.Error("an installed oberth runtime service was mistaken for a test leak")
 	}
 	if isOwnedProcess(notMine, inTemp+" list", true) {
-		t.Error("`oberth list` was mistaken for a daemon")
+		t.Error("`oberth list` was mistaken for a runtime service")
 	}
 	// The wide net still wants a binary called oberth: a random temp binary is
 	// someone else's business.
-	if isOwnedProcess(notMine, filepath.Join(machineTempDir(), "other-bin", "tool")+" serve", true) {
+	if isOwnedProcess(notMine, filepath.Join(machineTempDir(), "other-bin", "tool")+" runtime service run", true) {
 		t.Error("a non-oberth temp binary was counted as a leak")
 	}
 }
 
 // `ps -axo command=` joins argv with spaces and quotes nothing, so the
-// executable of a `serve` has to be found by the argument boundary rather than
+// executable of a `runtime service run` has to be found by the argument boundary rather than
 // by splitting on whitespace.
-func TestSplitServeFindsTheExecutableBoundary(t *testing.T) {
+func TestSplitRuntimeServiceRunFindsTheExecutableBoundary(t *testing.T) {
 	cases := []struct {
 		cmdline   string
 		execution string
 		ok        bool
 	}{
-		{"/tmp/x/oberth serve", "/tmp/x/oberth", true},
-		{"/tmp/x/oberth serve --detach", "/tmp/x/oberth", true},
-		{"/tmp/my dir/oberth serve --detach", "/tmp/my dir/oberth", true},
+		{"/tmp/x/oberth runtime service run", "/tmp/x/oberth", true},
+		{"/tmp/x/oberth runtime service run --detach", "/tmp/x/oberth", true},
+		{"/tmp/my dir/oberth runtime service run --detach", "/tmp/my dir/oberth", true},
 		// A directory called "serve" is not the argument.
-		{"/tmp/a serve/oberth serve", "/tmp/a serve/oberth", true},
-		{"/tmp/x/oberth serveall", "", false},
+		{"/tmp/a serve/oberth runtime service run", "/tmp/a serve/oberth", true},
+		{"/tmp/x/oberth runtime service runall", "", false},
 		{"/tmp/x/oberth list", "", false},
 		{"/tmp/x/oberth", "", false},
 		{"serve", "", false},
 		{"", "", false},
 	}
 	for _, c := range cases {
-		got, ok := splitServe(c.cmdline)
+		got, ok := splitRuntimeServiceRun(c.cmdline)
 		if got != c.execution || ok != c.ok {
-			t.Errorf("splitServe(%q) = (%q, %v), want (%q, %v)", c.cmdline, got, ok, c.execution, c.ok)
+			t.Errorf("splitRuntimeServiceRun(%q) = (%q, %v), want (%q, %v)", c.cmdline, got, ok, c.execution, c.ok)
 		}
 	}
 }
 
 func TestSplitPSReadsAPSRow(t *testing.T) {
-	pid, cmdline, readable := splitPS("  4242 /path/to/cmd.test serve --detach")
+	pid, cmdline, readable := splitPS("  4242 /path/to/cmd.test runtime service run --detach")
 	if !readable {
 		t.Fatal("a well-formed ps row did not parse")
 	}
-	if pid != 4242 || cmdline != "/path/to/cmd.test serve --detach" {
+	if pid != 4242 || cmdline != "/path/to/cmd.test runtime service run --detach" {
 		t.Errorf("splitPS = (%d, %q), want (4242, the command line)", pid, cmdline)
 	}
 	if _, _, readable := splitPS("not-a-row"); readable {
@@ -192,9 +192,9 @@ func TestSplitPSReadsAPSRow(t *testing.T) {
 	}
 }
 
-// Nothing in this package starts a daemon, so the gate has to agree.
-func TestNoDaemonsLeakFromThisBinary(t *testing.T) {
-	RequireNoLeakedDaemons(t)
+// Nothing in this package starts a runtime service, so the gate has to agree.
+func TestNoRuntimeServicesLeakFromThisBinary(t *testing.T) {
+	RequireNoLeakedRuntimeServices(t)
 }
 
 func executableHome(t *testing.T) string {

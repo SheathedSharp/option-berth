@@ -13,7 +13,7 @@ import (
 // lockPathInTemp hands back a lock file path inside a directory of its own.
 func lockPathInTemp(t *testing.T) string {
 	t.Helper()
-	return filepath.Join(t.TempDir(), "daemon.lock")
+	return filepath.Join(t.TempDir(), "runtime-service.lock")
 }
 
 func TestAcquireLockRefusesASecondInstance(t *testing.T) {
@@ -41,7 +41,7 @@ func TestAcquireLockRefusesASecondInstance(t *testing.T) {
 		t.Errorf("ErrAlreadyRunning.PID = %d, want the holder %d", clash.PID, os.Getpid())
 	}
 
-	// The file names the holder's pid, which is how `oberth serve` can tell the
+	// The file names the holder's pid, which is how `oberth runtime service run` can tell the
 	// second instance who it lost to.
 	if got := LockHolderPID(path); got != os.Getpid() {
 		t.Errorf("LockHolderPID = %d, want %d", got, os.Getpid())
@@ -86,7 +86,7 @@ func TestLockHolderPIDOnMissingFile(t *testing.T) {
 
 func TestErrAlreadyRunningMessage(t *testing.T) {
 	clash := &ErrAlreadyRunning{PID: 6789}
-	if got, want := clash.Error(), "daemon already running (pid 6789)"; got != want {
+	if got, want := clash.Error(), "runtime service already running (pid 6789)"; got != want {
 		t.Errorf("Error() = %q, want %q", got, want)
 	}
 	if !IsAlreadyRunning(clash) {
@@ -98,7 +98,7 @@ func TestErrAlreadyRunningMessage(t *testing.T) {
 }
 
 // TestWaitForLockReleaseBlocksUntilTheHolderLetsGo covers the mechanism behind
-// the `daemon restart` fix: a daemon closes its socket before it releases its
+// the `runtime service restart` fix: a runtime service closes its socket before it releases its
 // lock, so its replacement has to wait for the lock to go.
 func TestWaitForLockReleaseBlocksUntilTheHolderLetsGo(t *testing.T) {
 	path := lockPathInTemp(t)

@@ -11,7 +11,7 @@ import (
 )
 
 // The workplace command family, driven the way the CLI drives it: the root
-// command with args, a real daemon over a socket, and a real git worktree.
+// command with args, a real runtime service over a socket, and a real git worktree.
 //
 // The JSON documents are what these tests read. The human output is a view of
 // the same value, and asserting on it would pin the table rather than the
@@ -76,9 +76,9 @@ func decodeShow(t *testing.T, out string) rpc.WorkplaceShowResult {
 
 func TestWorkplaceLifecycleThroughTheCLI(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("the unix-socket daemon harness does not apply to named pipes")
+		t.Skip("the unix-socket runtime service harness does not apply to named pipes")
 	}
-	startTestDaemon(t, nil)
+	startTestRuntimeService(t, nil)
 	repo := gitTestRepo(t)
 	chdir(t, repo)
 
@@ -196,9 +196,9 @@ func TestWorkplaceLifecycleThroughTheCLI(t *testing.T) {
 
 func TestWorkplaceRecordAndShowThroughTheCLI(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("the unix-socket daemon harness does not apply to named pipes")
+		t.Skip("the unix-socket runtime service harness does not apply to named pipes")
 	}
-	startTestDaemon(t, nil)
+	startTestRuntimeService(t, nil)
 	repo := gitTestRepo(t)
 	chdir(t, repo)
 
@@ -277,14 +277,14 @@ func TestWorkplaceRecordAndShowThroughTheCLI(t *testing.T) {
 	}
 }
 
-// TestWorkplaceReadsWorkWithoutADaemon covers the read path the CLI keeps for a
+// TestWorkplaceReadsWorkWithoutARuntimeService covers the read path the CLI keeps for a
 // machine where nothing is running: "what is recorded here" is a question the
 // database answers on its own.
-func TestWorkplaceReadsWorkWithoutADaemon(t *testing.T) {
+func TestWorkplaceReadsWorkWithoutARuntimeService(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("the unix-socket daemon harness does not apply to named pipes")
+		t.Skip("the unix-socket runtime service harness does not apply to named pipes")
 	}
-	startTestDaemon(t, nil)
+	startTestRuntimeService(t, nil)
 	repo := gitTestRepo(t)
 	chdir(t, repo)
 
@@ -295,11 +295,11 @@ func TestWorkplaceReadsWorkWithoutADaemon(t *testing.T) {
 		t.Fatalf("workplace new: %v", err)
 	}
 
-	// With the daemon unreachable, the same reads still answer from the file.
-	noDaemonReachable(t)
+	// With the runtime service unreachable, the same reads still answer from the file.
+	noRuntimeServiceReachable(t)
 	out, err := workplaceRun(t, true, "list")
 	if err != nil {
-		t.Fatalf("workplace list without a daemon: %v", err)
+		t.Fatalf("workplace list without a runtime_service: %v", err)
 	}
 	res := decodeList(t, out)
 	if len(res.Workplaces) != 2 || res.Active == "" {
@@ -307,16 +307,16 @@ func TestWorkplaceReadsWorkWithoutADaemon(t *testing.T) {
 	}
 	out, err = workplaceRun(t, true, "show", "default")
 	if err != nil {
-		t.Fatalf("workplace show without a daemon: %v", err)
+		t.Fatalf("workplace show without a runtime_service: %v", err)
 	}
 	if shown := decodeShow(t, out); len(shown.Blocks) != 1 || shown.Blocks[0].Input != "ls" {
 		t.Fatalf("the direct read lost the blocks: %+v", shown)
 	}
 
-	// A write has nowhere else to go: without a daemon it is refused rather
+	// A write has nowhere else to go: without a runtime service it is refused rather
 	// than written by a second writer.
 	if _, err := workplaceRun(t, true, "new", "another"); err == nil {
-		t.Fatal("a write was accepted with no daemon to own it")
+		t.Fatal("a write was accepted with no runtime service to own it")
 	}
 }
 
@@ -325,12 +325,12 @@ func TestWorkplaceReadsWorkWithoutADaemon(t *testing.T) {
 // the run identity and the log path that make it checkable afterwards.
 func TestStartRecordsIntoTheWorkplace(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("the unix-socket daemon harness does not apply to named pipes")
+		t.Skip("the unix-socket runtime service harness does not apply to named pipes")
 	}
 	if _, err := os.Stat("/bin/echo"); err != nil {
 		t.Skip("/bin/echo is not available")
 	}
-	startTestDaemon(t, nil)
+	startTestRuntimeService(t, nil)
 	repo := gitTestRepo(t)
 	chdir(t, repo)
 
@@ -389,9 +389,9 @@ func runCommandLine(t *testing.T, args ...string) (string, error) {
 // when the turn starts and closed with the outcome the provider reported.
 func TestAgentStreamRecordsItsTurns(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("the unix-socket daemon harness does not apply to named pipes")
+		t.Skip("the unix-socket runtime service harness does not apply to named pipes")
 	}
-	startTestDaemon(t, nil)
+	startTestRuntimeService(t, nil)
 	repo := gitTestRepo(t)
 	chdir(t, repo)
 	t.Setenv("BERTH_AGENT_STREAM_FAKE", "codex")

@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Worktree identities are the `${worktree}` tokens the daemon has seen, with
+// Worktree identities are the `${worktree}` tokens the runtime service has seen, with
 // the canonical root each token was derived from and the group the checkout was
 // published under. The row outlives the directory: after a checkout is deleted
 // or moved, its databases and data directories still carry the token, and this

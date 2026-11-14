@@ -8,30 +8,32 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// DefaultIdleTimeout is the config default for daemon.idle_timeout; zero means
-// the daemon never idles out.
+// DefaultIdleTimeout is the config default for runtime_service.idle_timeout; zero means
+// the runtime service never idles out.
 const DefaultIdleTimeout = 30 * time.Minute
 
 // idleCheckInterval caps how often the idle watchdog can wake.
 const idleCheckInterval = 5 * time.Second
 
 // stateReplayCapacity bounds the in-memory resume window. A cursor older than
-// this window safely falls back to a fresh snapshot; the daemon never pretends
+// this window safely falls back to a fresh snapshot; the runtime service never pretends
 // to replay a partial stream.
 const stateReplayCapacity = 256
 
 // Capabilities lists the method families this build serves. Clients read it
-// from daemon.hello to tell whether, say, share.* exists before calling it.
+// from runtime.service.hello to tell whether, say, share.* exists before calling it.
 // Later steps append their own family as they land.
 func Capabilities() []string {
 	return append([]string{"state", rpc.CapabilityStateScope, "ports.read", "ports.kill", "store", "streams"},
@@ -42,18 +44,19 @@ func Capabilities() []string {
 // empty ones.
 type Options struct {
 	// Identity and location.
-	Socket     string // listen address; empty means SocketPath()
-	Version    string // the daemon's own version, reported by daemon.hello
-	BinaryPath string // what a client re-execs to autostart us
-	DBPath     string // SQLite file; empty means store.Path()
+	Socket                  string   // listen address; empty means SocketPath()
+	Version                 string   // the runtime service's own version, reported by runtime.service.hello
+	BinaryPath              string   // what a client re-execs to autostart us
+	DBPath                  string   // SQLite file; empty means store.Path()
+	PreviousServiceLockDirs []string // extra previous-host exclusion guards; never endpoints
 
 	// Lifetime.
 	IdleTimeout time.Duration // stop after this long with nobody watching; zero disables
 
 	// Cadence. Both are ignored when Scanner is set: the caller then built the
 	// loop and chose its own intervals.
-	StatsInterval time.Duration // `daemon.stats_interval`; zero means the scanner default
-	ScanInterval  time.Duration // `daemon.scan_interval`; zero means the scanner default
+	StatsInterval time.Duration // `runtime_service.stats_interval`; zero means the scanner default
+	ScanInterval  time.Duration // `runtime_service.scan_interval`; zero means the scanner default
 
 	// Collaborators. Logger is required in production and may be nil in tests,
 	// which get a discard logger.
@@ -62,7 +65,7 @@ type Options struct {
 	Scanner *scanner.Loop // an injected loop; nil means the OS scanner
 }
 
-// Server is the daemon: the listener it owns, the connections it tracks, the
+// Server is the runtime_service: the listener it owns, the connections it tracks, the
 // fan-out that feeds subscribers, and its own lifecycle.
 type Server struct {
 	opts    Options
@@ -74,6 +77,7 @@ type Server struct {
 
 	ownLock bool
 	lock    *Lock
+	storage *storageLease
 
 	nextConnID         atomic.Uint64
 	nextWorkspaceEvent atomic.Uint64
@@ -157,10 +161,10 @@ func (s *Server) scannerFor(opts Options) *scanner.Loop {
 		return opts.Scanner
 	}
 	return scanner.New(scanner.Options{
-		DaemonVersion: opts.Version,
-		Logger:        opts.Logger,
-		StatsInterval: opts.StatsInterval,
-		ScanInterval:  opts.ScanInterval,
+		RuntimeServiceVersion: opts.Version,
+		Logger:                opts.Logger,
+		StatsInterval:         opts.StatsInterval,
+		ScanInterval:          opts.ScanInterval,
 	})
 }
 
@@ -191,16 +195,30 @@ func (s *Server) Runtime() *Runtime { return s.runtime }
 // Socket is the address the server listens on.
 func (s *Server) Socket() string { return s.socket }
 
-// acquireSingleInstance takes the lock that makes this process the only daemon
+// acquireSingleInstance takes the lock that makes this process the only runtime service
 // on this socket. A lock the caller injected is borrowed, so Serve does not own
 // it and must not release it.
 func (s *Server) acquireSingleInstance() error {
+	dbPath := s.opts.DBPath
+	if dbPath == "" {
+		dbPath = paths.DB()
+	}
+	previousDirs := append([]string(nil), s.opts.PreviousServiceLockDirs...)
+	if previous := paths.SocketWithoutEnv(); !isNamedPipe(previous) {
+		previousDirs = append(previousDirs, filepath.Dir(previous))
+	}
+	lease, err := acquireStorageLease(paths.Dir(), dbPath, s.socket, previousDirs)
+	if err != nil {
+		return err
+	}
+	s.storage = lease
 	if s.opts.Lock != nil {
 		s.lock = s.opts.Lock
 		return nil
 	}
 	lock, err := AcquireLock(lockPathFor(s.socket))
 	if err != nil {
+		_ = s.storage.Release()
 		return err
 	}
 	s.lock, s.ownLock = lock, true
@@ -209,16 +227,22 @@ func (s *Server) acquireSingleInstance() error {
 
 // releaseSingleInstance gives up the lock, but only when this server took it.
 func (s *Server) releaseSingleInstance() {
+	// The endpoint lock goes last: restart waits on it, so seeing it free
+	// must also mean every storage interlock has been released.
+	_ = s.storage.Release()
 	if s.ownLock {
 		_ = s.lock.Release()
 	}
 }
 
 // Serve takes the single-instance lock, listens, then accepts connections until
-// ctx is cancelled or Shutdown is called. A second daemon on the same socket
+// ctx is cancelled or Shutdown is called. A second runtime service on the same socket
 // gets ErrAlreadyRunning.
 func (s *Server) Serve(ctx context.Context) error {
 	defer close(s.done)
+	if err := paths.RejectRetiredRuntimeServiceEnvironment(os.Getenv); err != nil {
+		return err
+	}
 
 	if err := s.acquireSingleInstance(); err != nil {
 		return err
@@ -226,7 +250,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	defer s.releaseSingleInstance()
 
 	// The lock is ours, so a socket file still on disk was left behind by a
-	// daemon that died without cleaning up.
+	// runtime service that died without cleaning up.
 	err := removeStaleSocket(s.socket)
 	if err != nil {
 		return fmt.Errorf("removing stale socket %s: %w", s.socket, err)
@@ -247,18 +271,18 @@ func (s *Server) Serve(ctx context.Context) error {
 
 	// Restore required ownership before starting the scanner or accepting RPC.
 	// Optional hooks retain their existing adapter, but failed required work
-	// must not be presented as an empty successful daemon.
+	// must not be presented as an empty successful runtime.service.
 	if err := runStartHooks(s.runtime); err != nil {
 		_ = s.ln.Close()
 		runShutdownHooks(false)
 		_ = removeStaleSocket(s.socket)
-		return fmt.Errorf("starting daemon: %w", err)
+		return fmt.Errorf("starting runtime_service: %w", err)
 	}
 
 	s.runBackground(func() { s.loop.Run(ctx) })
 	s.runBackground(func() { s.watchIdle(ctx) })
 
-	s.logger.Info("daemon listening",
+	s.logger.Info("runtime service listening",
 		"socket", s.socket, "pid", s.runtime.PID, "version", s.opts.Version,
 		"idle_timeout", s.opts.IdleTimeout.String())
 
@@ -267,7 +291,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	acceptErr := s.accept(ctx)
 
 	cancel()
-	s.closeAllConns("daemon stopping")
+	s.closeAllConns("runtime service stopping")
 	s.wg.Wait()
 	// A stream producer outlives the handler that started it and writes run and
 	// exit facts. closeAllConns only asks it to stop; it has to be waited for
@@ -275,7 +299,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	s.waitProducers()
 	runShutdownHooks(s.graceful.Load())
 	_ = removeStaleSocket(s.socket)
-	s.logger.Info("daemon stopped", "graceful", s.graceful.Load())
+	s.logger.Info("runtime service stopped", "graceful", s.graceful.Load())
 	return acceptErr
 }
 
@@ -294,7 +318,7 @@ func (s *Server) runBackground(work func()) {
 	}()
 }
 
-// shutdownWhenDone stops the daemon when the serve context ends. A shutdown
+// shutdownWhenDone stops the runtime service when the serve context ends. A shutdown
 // that is already under way needs nothing from here.
 func (s *Server) shutdownWhenDone(ctx context.Context) {
 	select {
@@ -372,7 +396,7 @@ func (s *Server) removeConn(c *Conn, reason string) {
 	}
 
 	// The keepalive count is recomputed before anything can ask whether an idle
-	// daemon may stop, and the wake makes the next scan see the ports this
+	// runtime service may stop, and the wake makes the next scan see the ports this
 	// client was watching go quiet.
 	s.markDisconnected()
 	s.logger.Debug("client disconnected", "conn", c.id, "reason", reason)
@@ -418,8 +442,8 @@ func (s *Server) closeAllConns(reason string) {
 	}
 }
 
-// Shutdown stops the daemon. Subscribers first get
-// state.event{daemon_stopping} (spec, daemon.shutdown), the writers then get a
+// Shutdown stops the runtime.service. Subscribers first get
+// state.event{runtime_service_stopping} (spec, runtime.service.shutdown), the writers then get a
 // moment to flush, and only after that does the listener close.
 func (s *Server) Shutdown() {
 	s.stopOnce.Do(func() {
@@ -433,11 +457,11 @@ func (s *Server) Shutdown() {
 	})
 }
 
-// announceStopping tells every subscriber the daemon is going away, so a client
+// announceStopping tells every subscriber the runtime service is going away, so a client
 // learns it before the socket does rather than seeing an unexplained close.
 func (s *Server) announceStopping() {
 	s.broadcastEvent(state.Event{
-		Kind: "daemon_stopping",
+		Kind: "runtime_service_stopping",
 		At:   time.Now().Format(time.RFC3339),
 	})
 }
@@ -446,7 +470,7 @@ func (s *Server) announceStopping() {
 func (s *Server) Done() <-chan struct{} { return s.done }
 
 // drainQueues gives every connection's outbound queue up to timeout to empty,
-// so daemon_stopping (and the reply to daemon.shutdown) reaches a client before
+// so runtime_service_stopping (and the reply to runtime.service.shutdown) reaches a client before
 // the socket goes away.
 func (s *Server) drainQueues(timeout time.Duration) {
 	deadline := time.Now().Add(timeout)
@@ -525,7 +549,7 @@ func subscribedReply(base state.Snapshot, include scanner.Include, scope state.S
 }
 
 // marshalSnapshot frames the opening reply of a state.subscribe. It is a
-// variable because that frame is the one reply the daemon marshals by hand, and
+// variable because that frame is the one reply the runtime service marshals by hand, and
 // the failure path is a contract worth a regression: a value that cannot be
 // encoded must be answered with an error and must leave nothing registered.
 // Nothing outside this package can hand subscribe an unencodable snapshot, so
@@ -542,7 +566,7 @@ var marshalSnapshot = json.Marshal
 // with stats and health null while the loop is not collecting them. Wake makes
 // the loop scan at once, so the fields a subscriber asked for arrive in the
 // first delta instead of holding the reply back by a scan. A scoped view keeps
-// the daemon's global sequence; gaps are expected when an intervening publish
+// the runtime service's global sequence; gaps are expected when an intervening publish
 // changed only rows outside the selected scope.
 //
 // Nothing is registered until the opening frame has been encoded: the old
@@ -923,7 +947,7 @@ type viewSpec struct {
 	events  bool
 }
 
-// scoped reports whether this view is narrower than the daemon's machine-wide
+// scoped reports whether this view is narrower than the runtime service's machine-wide
 // view. A scoped view is served redacted summaries and never the raw delta.
 func (v viewSpec) scoped() bool { return !v.scope.Empty() }
 
@@ -1243,7 +1267,7 @@ func filterPorts(rows []state.Port, include scanner.Include) []state.Port {
 
 // filterPort strips what this subscriber did not ask for.
 //
-// Health that an `oberth.yaml` asked the daemon to poll is the exception: the
+// Health that an `oberth.yaml` asked the runtime service to poll is the exception: the
 // config declared it, so it is state every subscriber sees whether or not it
 // asked for `include: ["health"]`.
 func filterPort(row state.Port, include scanner.Include) state.Port {
@@ -1262,12 +1286,12 @@ func filterPort(row state.Port, include scanner.Include) state.Port {
 func (s *Server) touch() { s.lastActive.Store(time.Now().UnixNano()) }
 
 // recountKeepalive recomputes the number of connected clients that asked the
-// daemon to stay up (daemon.hello{keepalive:true}).
+// runtime service to stay up (runtime.service.hello{keepalive:true}).
 func (s *Server) recountKeepalive() {
 	s.keepalives.Store(s.countKeepalive())
 }
 
-// countKeepalive is how many connected clients asked the daemon to stay up. It
+// countKeepalive is how many connected clients asked the runtime service to stay up. It
 // is counted rather than derived because each connection may change its mind,
 // and the idle watcher reads the number without holding the registry lock.
 func (s *Server) countKeepalive() int64 {
@@ -1297,9 +1321,9 @@ func (s *Server) idleCheckEvery() time.Duration {
 	return tick
 }
 
-// watchIdle stops the daemon after IdleTimeout without activity. A keepalive
+// watchIdle stops the runtime service after IdleTimeout without activity. A keepalive
 // client or any subscriber counts as activity, so the desktop app keeps the
-// daemon alive just by staying connected.
+// runtime service alive just by staying connected.
 func (s *Server) watchIdle(ctx context.Context) {
 	if s.opts.IdleTimeout <= 0 {
 		return
@@ -1330,7 +1354,7 @@ func (s *Server) watchIdle(ctx context.Context) {
 }
 
 // watched reports whether a keepalive client or a subscriber is still watching,
-// which is what keeps an idle daemon up.
+// which is what keeps an idle runtime service up.
 func (s *Server) watched() bool {
 	return s.keepalives.Load() > 0 || s.Subscribers() > 0
 }

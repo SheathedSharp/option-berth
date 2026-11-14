@@ -1,17 +1,17 @@
 // Package testenv gives a Go test binary a private machine to run on.
 //
 // Every path option-berth resolves from the environment — the config directory,
-// the database, the socket, the daemon log, the run logs — hangs off HOME, so a
+// the database, the socket, the runtime service log, the run logs — hangs off HOME, so a
 // test that reaches any of them reaches the developer's live install. Isolation
 // is therefore a property of the whole binary, not of individual tests: every
-// package whose tests can reach the daemon or the config directory calls Run
+// package whose tests can reach the runtime service or the config directory calls Run
 // from its TestMain, and from then on nothing in that binary can find the real
 // install even if it tries.
 //
 // A run also gets a private root under the machine's temp directory, which
 // becomes its TMPDIR (Root). t.TempDir, os.CreateTemp and a harness that builds
 // the real binary with `go build -o` all write inside it, so the leak gate can
-// name the daemons this run is responsible for without touching another
+// name the runtime services this run is responsible for without touching another
 // `go test` running beside it on the same machine.
 //
 // A package adopts it with one line in TestMain — `os.Exit(testenv.Run(m))` —
@@ -19,7 +19,7 @@
 // for the rest.
 //
 // It imports nothing from the module on purpose: this package is linked into
-// every test binary that uses it, and a helper that pulled in the daemon and
+// every test binary that uses it, and a helper that pulled in the runtime service and
 // SQLite would make a display-only test binary far heavier than its subject. A
 // package that wants to prove its own resolvers agree calls Isolated.
 package testenv
@@ -36,12 +36,12 @@ import (
 // what makes a run private; anything added to the product's own list has to be
 // added here too.
 const (
-	noAutostartEnv = "BERTH_NO_AUTOSTART"
-	socketEnv      = "BERTH_SOCKET"
+	noAutostartEnv = "BERTH_RUNTIME_SERVICE_NO_AUTOSTART"
+	socketEnv      = "BERTH_RUNTIME_SERVICE_SOCKET"
 	homeEnv        = "BERTH_HOME"
 	logDirEnv      = "BERTH_LOG_DIR"
 	dbEnv          = "BERTH_DB"
-	allowTestEnv   = "BERTH_ALLOW_TEST_DAEMON"
+	allowTestEnv   = "BERTH_RUNTIME_SERVICE_ALLOW_TEST_BINARY"
 	gateAllEnv     = "BERTH_TESTENV_GATE_ALL"
 )
 
@@ -54,7 +54,7 @@ type Layout struct {
 	Root string
 	// Home is the isolated HOME, inside Root.
 	Home string
-	// socketDir holds the daemon socket. It is a sibling of Home rather than a
+	// socketDir holds the runtime service socket. It is a sibling of Home rather than a
 	// child because macOS caps a unix socket path at about 104 bytes.
 	socketDir string
 	// realHome and realTemp are what this run displaced. Isolate is the only
@@ -71,15 +71,15 @@ var current Layout
 func Run(m *testing.M) int {
 	session := begin()
 	failures := m.Run()
-	leaked := AssertNoLeakedDaemons()
+	leaked := AssertNoLeakedRuntimeServices()
 	session.end()
 	return exitCode(failures, leaked)
 }
 
 // exitCode keeps a failing run failing, and turns "every test passed but the
-// suite left a daemon behind" into a failure of its own. Both reasons are a
+// suite left a runtime service behind" into a failure of its own. Both reasons are a
 // failure; neither may mask the other.
-func exitCode(failures int, leaked []Daemon) int {
+func exitCode(failures int, leaked []RuntimeService) int {
 	if failures != 0 || len(leaked) == 0 {
 		return failures
 	}
@@ -100,7 +100,7 @@ func (s session) end() {
 }
 
 // Isolate points every path option-berth resolves from the environment at a
-// private temp directory, switches daemon autostart off, and returns the layout
+// private temp directory, switches runtime service autostart off, and returns the layout
 // it built.
 //
 // It exits the process rather than returning an error when it cannot make the
@@ -151,7 +151,7 @@ func adopt(l Layout) {
 	// explicit overrides without sharing another test's state and logs.
 	unset(homeEnv, logDirEnv)
 	// A leftover opt-in from the developer's shell must not disarm the guard
-	// that keeps a test binary from becoming a daemon.
+	// that keeps a test binary from becoming a runtime.service.
 	unset(allowTestEnv)
 
 	set("XDG_CONFIG_HOME", filepath.Join(l.Home, ".config")) // freedesktop
@@ -249,7 +249,7 @@ func ConfigDir() string { return filepath.Join(current.Home, ".option-berth") }
 // Isolated reports whether every path lies inside this run's own temp root. It
 // is what a package's own TestMain uses to check the real resolvers agree:
 //
-//	if !testenv.Isolated(config.Path(), store.Path(), daemon.SocketPath()) { ... }
+//	if !testenv.Isolated(config.Path(), store.Path(), runtime.service.SocketPath()) { ... }
 func Isolated(paths ...string) bool {
 	if len(paths) == 0 || current.Root == "" {
 		return false
@@ -282,7 +282,7 @@ func RequireIsolatedPath(t testing.TB, path string) {
 }
 
 // AllowAutostart lets one test use the real autostart path, and restores the ban
-// afterwards. Only a test that owns the daemon it starts and stops it in a
+// afterwards. Only a test that owns the runtime service it starts and stops it in a
 // cleanup may call it.
 func AllowAutostart(t testing.TB) {
 	t.Helper()
@@ -290,12 +290,12 @@ func AllowAutostart(t testing.TB) {
 }
 
 // ChildEnv is what a harness appends to a child process's environment when that
-// child is the real `oberth` binary and is allowed to autostart a daemon of its
+// child is the real `oberth` binary and is allowed to autostart a runtime service of its
 // own. The child is not a test binary, so only the process-wide ban has to be
 // lifted.
 func ChildEnv() string { return noAutostartEnv + "=" }
 
-// socketPath is where this run's daemon socket lives. Named pipes share one
+// socketPath is where this run's runtime service socket lives. Named pipes share one
 // flat namespace on Windows, so a test binary there takes an address stamped
 // with its pid instead of a path.
 func socketPath(dir string) string {

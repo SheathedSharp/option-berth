@@ -8,7 +8,7 @@ import (
 
 // ToListening is the inverse of FromListening: it turns a published row back
 // into the scanner model that renderers and OS helpers take. The read handlers
-// and every daemon-backed CLI command use it, so a table printed from socket
+// and every runtime service-backed CLI command use it, so a table printed from socket
 // rows matches one printed from a direct scan.
 //
 // The round trip is lossless for everything the CLI renders. Two scanner-only

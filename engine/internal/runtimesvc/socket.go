@@ -1,4 +1,4 @@
-// Package daemon implements `oberth serve`: the socket listener, the JSON-RPC
+// Package runtime service implements `oberth runtime service run`: the socket listener, the JSON-RPC
 // dispatcher, the subscription fan-out and the process lifecycle. Handlers for
 // namespaces owned by other packages register themselves with RegisterHandler
 // from their own init(), so this package never imports them.
@@ -10,13 +10,13 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 )
 
-// WindowsPipe is the named pipe the daemon listens on under Windows
+// WindowsPipe is the named pipe the runtime service listens on under Windows
 // .
 const WindowsPipe = paths.WindowsPipe
 
-// SocketPath resolves the address the daemon listens on and every client
+// SocketPath resolves the address the runtime service listens on and every client
 // dials. The resolution order lives in internal/paths, which owns the whole
-// layout — this is only the daemon's name for it.
+// layout — this is only the runtime service's name for it.
 func SocketPath() string { return paths.Socket() }
 
 // socketPathFrom is SocketPath with its environment injected, so the resolution
@@ -25,13 +25,13 @@ func socketPathFrom(getenv func(string) string, home func() (string, error), goo
 	return paths.SocketFrom(getenv, home, goos)
 }
 
-// defaultSocketPath is where the daemon would listen with BERTH_SOCKET unset:
+// defaultSocketPath is where the runtime service would listen with BERTH_RUNTIME_SERVICE_SOCKET unset:
 // the directory option-berth creates and owns.
 func defaultSocketPath() string { return paths.SocketWithoutEnv() }
 
 // OwnsSocketDir reports whether the directory holding path is one option-berth makes
-// for itself, rather than a directory the user pointed BERTH_SOCKET at.
-// Only a directory we own may be tightened to 0700: `BERTH_SOCKET=/tmp/x.sock`
+// for itself, rather than a directory the user pointed BERTH_RUNTIME_SERVICE_SOCKET at.
+// Only a directory we own may be tightened to 0700: `BERTH_RUNTIME_SERVICE_SOCKET=/tmp/x.sock`
 // must not chmod /tmp.
 func OwnsSocketDir(path string) bool { return paths.OwnsSocketDir(path) }
 
@@ -45,7 +45,7 @@ func ownsSocketDir(path string, getenv func(string) string, home func() (string,
 // config, the database, the log, the lock and everything else live.
 func ConfigDir() string { return paths.Dir() }
 
-// LogPath is the daemon's rotated log file.
+// LogPath is the runtime service's rotated log file.
 func LogPath() string { return paths.LogPath() }
 
 // LockPath is the single-instance lock. It sits beside the socket so that a
@@ -54,13 +54,13 @@ func LockPath() string { return lockPathFor(SocketPath()) }
 
 func lockPathFor(socket string) string { return paths.Lock(socket) }
 
-// Dial connects to a listening daemon at path. Clients learn from this one
+// Dial connects to a listening runtime service at path. Clients learn from this one
 // place whether the address is a unix socket or a named pipe.
 func Dial(path string) (net.Conn, error) {
 	return dial(path)
 }
 
-// Listen binds the daemon's socket at path under the platform's
+// Listen binds the runtime service's socket at path under the platform's
 // same-user-only permissions: on Unix a 0700 directory holding a 0600 socket,
 // on Windows a pipe whose DACL grants only the current user and SYSTEM.
 func Listen(path string) (net.Listener, error) {

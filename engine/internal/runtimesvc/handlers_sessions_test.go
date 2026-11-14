@@ -85,7 +85,7 @@ func sampleSession(id string) state.Session {
 	}
 }
 
-// sessionHarnessWithOnePort builds a daemon whose scan sees one listener owned
+// sessionHarnessWithOnePort builds a runtime service whose scan sees one listener owned
 // by one agent session, with the registry and the store both wired.
 func sessionHarnessWithOnePort(t *testing.T, ctx context.Context) (*testHarness, *fakeRuns) {
 	t.Helper()

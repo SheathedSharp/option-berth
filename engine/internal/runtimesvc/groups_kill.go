@@ -397,7 +397,7 @@ func resolveExplicitStop(rt *Runtime, worktree, identity string) (groupStopTarge
 			detail += " (" + root + ")"
 		}
 		return groupStopTarget{}, rpc.NewError(rpc.CodeNotFound, detail,
-			"run `oberth worktrees` to list the identities this daemon has seen")
+			"run `oberth worktrees` to list the identities this runtime service has seen")
 	}
 	if strings.TrimSpace(rec.Group) == "" {
 		return groupStopTarget{}, rpc.NewError(rpc.CodeNotFound,
@@ -429,7 +429,7 @@ func targetFromConfig(rt *Runtime, cfg *groups.Config) (groupStopTarget, error) 
 }
 
 // ensureUniqueGroup refuses to act on a group name that more than one checkout
-// is published under. The daemon's snapshot merges such checkouts, so a
+// is published under. The runtime service's snapshot merges such checkouts, so a
 // by-name stop would reach both; naming one by path or identity cannot make
 // group-scoped process selection sharper than the published group.
 func ensureUniqueGroup(rt *Runtime, group, self string) error {
@@ -536,7 +536,7 @@ func configAtDir(rt *Runtime, dir string) *groups.Config {
 }
 
 // killGroupName resolves the group a groups.kill call is about: either the name
-// it sent, or the group the daemon publishes a config's services under. When
+// it sent, or the group the runtime service publishes a config's services under. When
 // the call named a config, that config comes back with it.
 func killGroupName(rt *Runtime, p rpc.GroupsKillParams) (string, *groups.Config, error) {
 	groupName := strings.TrimSpace(p.Name)

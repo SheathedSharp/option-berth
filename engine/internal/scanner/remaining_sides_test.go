@@ -191,13 +191,13 @@ func TestMachineOnlyGroupStillNamesItsPort(t *testing.T) {
 	}
 }
 
-func TestIdleDaemonDoesNotScanWhenTheCallerHasLeft(t *testing.T) {
+func TestIdleRuntimeServiceDoesNotScanWhenTheCallerHasLeft(t *testing.T) {
 	l := New(Options{})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, scanNow, finished := l.waitForDemand(ctx)
 	if scanNow || !finished {
-		t.Fatalf("scanNow=%v finished=%v, an idle daemon started a scan for a caller who had left", scanNow, finished)
+		t.Fatalf("scanNow=%v finished=%v, an idle runtime service started a scan for a caller who had left", scanNow, finished)
 	}
 }
 

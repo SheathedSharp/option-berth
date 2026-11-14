@@ -2,10 +2,10 @@
 // questions, each answered with a status, a one-line finding and, where it
 // applies, a repair step.
 //
-// `oberth doctor` and the `daemon.doctor` RPC execute the same table, so the
+// `oberth doctor` and the `runtime.service.doctor` RPC execute the same table, so the
 // desktop app reads the same rows without shelling out to a CLI it may not have
 // found. A question about the invoking process — which binary PATH resolves,
-// which build it is — still gets a row when the daemon answers; it comes back
+// which build it is — still gets a row when the runtime service answers; it comes back
 // as `skip` with the reason instead of disappearing, so the table never changes
 // shape depending on who answered.
 package doctor
@@ -39,31 +39,31 @@ type Mode string
 const (
 	// ModeCLI is a `oberth doctor` run in the CLI process.
 	ModeCLI Mode = "cli"
-	// ModeDaemon is a `daemon.doctor` call answered inside the daemon.
-	ModeDaemon Mode = "daemon"
+	// ModeRuntimeService is a `runtime.service.doctor` call answered inside the runtime.service.
+	ModeRuntimeService Mode = "runtime_service"
 )
 
-// cliOnlyDetail is what a process-only check says when the daemon answered.
+// cliOnlyDetail is what a process-only check says when the runtime service answered.
 const cliOnlyDetail = "CLI-only: this check is about the option-berth binary you invoked, " +
-	"which the daemon cannot see from its own process. Run `oberth doctor` for it."
+	"which the runtime service cannot see from its own process. Run `oberth doctor` for it."
 
-// DaemonInfo is what one daemon probe established. The CLI fills it by
-// dialling; the daemon fills it from its own runtime. That is why this is a
+// RuntimeServiceInfo is what one runtime service probe established. The CLI fills it by
+// dialling; the runtime service fills it from its own runtime. That is why this is a
 // plain value and not a client handle.
-type DaemonInfo struct {
+type RuntimeServiceInfo struct {
 	// Reachable is false when nothing answered on the socket; Err then says why.
 	Reachable bool
 	Err       error
-	// Local marks an answer produced inside the daemon process itself.
+	// Local marks an answer produced inside the runtime service process itself.
 	Local bool
 
-	// Commit is the build identity the daemon reports, when it has one.
+	// Commit is the build identity the runtime service reports, when it has one.
 	Commit string
-	// StatusErr is why the daemon could not answer a status call.
+	// StatusErr is why the runtime service could not answer a status call.
 	StatusErr error
-	// Version is the daemon's own version string.
+	// Version is the runtime service's own version string.
 	Version string
-	// ProtocolVersion is the protocol the daemon speaks.
+	// ProtocolVersion is the protocol the runtime service speaks.
 	ProtocolVersion string
 	// Socket is the address it listens on.
 	Socket string
@@ -71,7 +71,7 @@ type DaemonInfo struct {
 	PID int
 	// DBPath is the database it opened, when it has one.
 	DBPath string
-	// Observation is the daemon's own listener self-probe, when it reports one.
+	// Observation is the runtime service's own listener self-probe, when it reports one.
 	Observation *rpc.ObservationStatus
 }
 
@@ -114,10 +114,10 @@ type Env struct {
 	UID    int
 	uidSet bool
 
-	// Daemon reports the daemon's identity, or why it could not be reached.
-	Daemon func(context.Context) DaemonInfo
+	// RuntimeService reports the runtime service's identity, or why it could not be reached.
+	RuntimeService func(context.Context) RuntimeServiceInfo
 	// Docker reports the docker daemon's server version, or an error when the
-	// CLI is there but its daemon is not answering.
+	// CLI is there but its runtime service is not answering.
 	Docker func(context.Context) (string, error)
 	// ProbeObservation binds a real local port and asks the collector whether
 	// it can see it as this process.
@@ -140,17 +140,17 @@ type check struct {
 	ask   func(context.Context, *Env) rpc.DoctorCheck
 }
 
-// catalog is the table, in print order: the binary, then the daemon, then its
+// catalog is the table, in print order: the binary, then the runtime service, then its
 // storage and this process's listener observation, then the integrations, then
 // the project, and last the optional extras.
 var catalog = []check{
 	{id: "cli_on_path", scope: scopeCLI, ask: checkCLIOnPath},
 	{id: "config_parses", ask: checkConfigParses},
 	{id: "config_dir_writable", ask: checkConfigDirWritable},
-	{id: "daemon_reachable", ask: checkDaemonReachable},
-	{id: "daemon_version_matches", scope: scopeCLI, ask: checkDaemonVersionMatches},
-	{id: "daemon_build_matches", scope: scopeCLI, ask: checkDaemonBuildMatches},
-	{id: "daemon_protocol", ask: checkDaemonProtocol},
+	{id: "runtime_service_reachable", ask: checkRuntimeServiceReachable},
+	{id: "runtime_service_version_matches", scope: scopeCLI, ask: checkRuntimeServiceVersionMatches},
+	{id: "runtime_service_build_matches", scope: scopeCLI, ask: checkRuntimeServiceBuildMatches},
+	{id: "runtime_service_protocol", ask: checkRuntimeServiceProtocol},
 	{id: "socket_permissions", ask: checkSocketPermissions},
 	{id: "db_ok", ask: checkDBOK},
 	{id: "listener_observation", ask: checkListenerObservation},
@@ -176,17 +176,17 @@ func IDs() []string {
 }
 
 // Run executes the selected checks and assembles the reply both `oberth doctor`
-// and `daemon.doctor` return.
-func Run(ctx context.Context, env Env, only []string) rpc.DaemonDoctorResult {
+// and `runtime.service.doctor` return.
+func Run(ctx context.Context, env Env, only []string) rpc.RuntimeServiceDoctorResult {
 	env.resolve()
 	selected := newSelection(only)
 
-	// The daemon is dialled at most once per run, however many checks ask about
+	// The runtime service is dialled at most once per run, however many checks ask about
 	// it. A run that selects only project checks never dials at all.
-	probe := once(env.Daemon)
-	env.Daemon = probe.ask
+	probe := once(env.RuntimeService)
+	env.RuntimeService = probe.ask
 
-	result := rpc.DaemonDoctorResult{
+	result := rpc.RuntimeServiceDoctorResult{
 		OK:      true,
 		Checks:  make([]rpc.DoctorCheck, 0, len(catalog)),
 		Version: env.Version,
@@ -202,7 +202,7 @@ func Run(ctx context.Context, env Env, only []string) rpc.DaemonDoctorResult {
 		result.Checks = append(result.Checks, row)
 	}
 	if reached, asked := probe.last(); asked && reached.Reachable {
-		result.DaemonVersion = reached.Version
+		result.RuntimeServiceVersion = reached.Version
 	}
 	return result
 }
@@ -210,11 +210,11 @@ func Run(ctx context.Context, env Env, only []string) rpc.DaemonDoctorResult {
 // answer runs one check, or reports why this process cannot run it. The id is
 // set here so no check can drift from the table.
 func answer(ctx context.Context, env *Env, c check) rpc.DoctorCheck {
-	if c.scope == scopeCLI && env.Mode == ModeDaemon {
+	if c.scope == scopeCLI && env.Mode == ModeRuntimeService {
 		return rpc.DoctorCheck{
 			ID:      c.id,
 			Status:  StatusSkip,
-			Summary: "not checked from the daemon",
+			Summary: "not checked from the runtime service",
 			Detail:  cliOnlyDetail,
 		}
 	}
@@ -223,24 +223,24 @@ func answer(ctx context.Context, env *Env, c check) rpc.DoctorCheck {
 	return row
 }
 
-// probeCache remembers one answer so a run asks the daemon once. last reports
+// probeCache remembers one answer so a run asks the runtime service once. last reports
 // whether anything was asked at all, which decides whether the result carries
-// the daemon's version.
-func once(probe func(context.Context) DaemonInfo) *probeCache {
+// the runtime service's version.
+func once(probe func(context.Context) RuntimeServiceInfo) *probeCache {
 	return &probeCache{probe: probe}
 }
 
 type probeCache struct {
-	probe  func(context.Context) DaemonInfo
-	answer DaemonInfo
+	probe  func(context.Context) RuntimeServiceInfo
+	answer RuntimeServiceInfo
 	asked  bool
 }
 
-func (c *probeCache) ask(ctx context.Context) DaemonInfo {
+func (c *probeCache) ask(ctx context.Context) RuntimeServiceInfo {
 	if !c.asked {
 		c.answer, c.asked = c.probe(ctx), true
 	}
 	return c.answer
 }
 
-func (c *probeCache) last() (DaemonInfo, bool) { return c.answer, c.asked }
+func (c *probeCache) last() (RuntimeServiceInfo, bool) { return c.answer, c.asked }

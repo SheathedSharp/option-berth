@@ -19,7 +19,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
-// This adapter tests daemon wiring only. Raw-record exclusion is tested against
+// This adapter tests runtime service wiring only. Raw-record exclusion is tested against
 // the actual production registry in runsreg/group_quiescence_test.go.
 type releaseGuardFixture struct {
 	noRuns

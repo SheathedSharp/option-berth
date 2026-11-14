@@ -3,7 +3,7 @@
 // per service as it goes.
 //
 // It lives outside internal/runtimesvc because starting a service needs the run
-// registry, and the daemon package must not import it. Linking
+// registry, and the runtime service package must not import it. Linking
 // this package in is what makes `groups.start` exist; internal/cmd does that
 // for the `option-berth` binary.
 package groupstart
@@ -42,7 +42,7 @@ const DependencyTimeout = 30 * time.Second
 // timeout is observable without sitting out the real budget.
 var dependencyTimeout = DependencyTimeout
 
-// dependencyPoll paces the re-reads of the daemon's state while the wait for a
+// dependencyPoll paces the re-reads of the runtime service's state while the wait for a
 // dependency runs. A poll costs nothing until the scanner's cache goes stale.
 const dependencyPoll = 250 * time.Millisecond
 
@@ -617,7 +617,7 @@ func recordStartFailureReason(cfg *groups.Config, group string, svc groups.Servi
 }
 
 // serviceEnv is the environment a service starts in, each layer winning over
-// the one before: the daemon's own, the caller's (the CLI sends its shell's),
+// the one before: the runtime service's own, the caller's (the CLI sends its shell's),
 // the service's `env_file`, PORT for a service with a port, and the service's
 // own `env:` with its references expanded. BERTH_PORT and the other run
 // variables are added by spawn on top of all of it.
@@ -915,7 +915,7 @@ func groupRows(snap state.Snapshot, group string) []state.Service {
 }
 
 // waitFor blocks until every dependency is ready, or gives up after
-// DependencyTimeout. Waiting on the daemon's own state rather than on a socket
+// DependencyTimeout. Waiting on the runtime service's own state rather than on a socket
 // dial is deliberate: the thing that decides a service is up has to be the
 // thing every client reads. A no-port dependency uses the run registry's live
 // record because it has no listener to wait for.
@@ -1071,7 +1071,7 @@ func dependencyBudget(deps []groups.Service) time.Duration {
 }
 
 // dependencyExitRegistry is the part of the run registry the dependency wait
-// needs. daemon.RunRegistry stays small; a runtime whose registry cannot answer
+// needs. runtime.service.RunRegistry stays small; a runtime whose registry cannot answer
 // both questions keeps the original timeout behavior.
 type dependencyExitRegistry interface {
 	LatestExit(group, service string) (runsreg.Exit, bool)

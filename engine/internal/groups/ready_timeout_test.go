@@ -38,7 +38,7 @@ services:
 	}
 }
 
-// UsesReadyTimeout is what lets the CLI refuse an old daemon: that daemon
+// UsesReadyTimeout is what lets the CLI refuse an old runtime_service: that runtime service
 // would ignore the declared budget and keep its fixed dependency wait. A file
 // that only relies on the default must stay usable with it.
 func TestUsesReadyTimeoutOnlyWhenDeclared(t *testing.T) {

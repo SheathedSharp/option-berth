@@ -22,12 +22,12 @@ import (
 // read refreshes it while a hello reuses it.
 const observationTTL = 30 * time.Second
 
-// observationProbeTimeout stops daemon.hello from waiting out a wedged
+// observationProbeTimeout stops runtime.service.hello from waiting out a wedged
 // collector. A probe that cannot answer within this budget is reported as
 // blind, which is the safe direction: an unknown table must not look healthy.
 const observationProbeTimeout = 2 * time.Second
 
-// Runtime is the handle the daemon hands to extension packages: the scanner,
+// Runtime is the handle the runtime service hands to extension packages: the scanner,
 // the logger and the process identity came first, the store followed; the
 // process table, the port allocator and the spawn function are added by the
 // steps that introduce them.
@@ -40,7 +40,7 @@ type Runtime struct {
 	Socket     string
 	Version    string
 
-	// Store is the daemon's SQLite database: renames, group pins, the port
+	// Store is the runtime service's SQLite database: renames, group pins, the port
 	// history ring and the known `oberth.yaml` roots. Nil when the database
 	// could not be opened; every user of it must cope with that.
 	Store *store.Store
@@ -56,15 +56,15 @@ type Runtime struct {
 	groupLocksMu sync.Mutex
 	groupLocks   map[string]*groupLock
 
-	// The self-probe verdict, cached so daemon.hello does not scan on every
-	// connection. A blind daemon must say so before a client trusts an empty
+	// The self-probe verdict, cached so runtime.service.hello does not scan on every
+	// connection. A blind runtime service must say so before a client trusts an empty
 	// port list.
 	observationMu sync.Mutex
 	observation   *rpc.ObservationStatus
 	observedAt    time.Time
 }
 
-// RefreshObservation returns the daemon's self-probe verdict, running the probe
+// RefreshObservation returns the runtime service's self-probe verdict, running the probe
 // when the cached answer is stale. It is a fact: it binds a real socket and
 // looks for it with the same collector the scanner uses.
 func (r *Runtime) RefreshObservation(ctx context.Context) *rpc.ObservationStatus {
@@ -152,12 +152,12 @@ func (r *Runtime) Runs() RunRegistry {
 }
 
 // RunRegistry is the installed registry in the shape the resolver expects. The
-// scanner reads it once per tick, so a registry installed while the daemon is
+// scanner reads it once per tick, so a registry installed while the runtime service is
 // already up takes effect on the next scan.
 func (r *Runtime) RunRegistry() groups.Registry { return r.Runs() }
 
-// DBPath names the database file behind this daemon, or "" when it has none.
-// daemon.status reports it.
+// DBPath names the database file behind this runtime service, or "" when it has none.
+// runtime.service.status reports it.
 func (r *Runtime) DBPath() string {
 	db := r.Store
 	if db == nil {
@@ -173,7 +173,7 @@ func (r *Runtime) Server() *Server { return r.srv }
 // Subscribers counts the connections subscribed to state right now.
 func (r *Runtime) Subscribers() int { return r.srv.Subscribers() }
 
-// Uptime is the time since this daemon started.
+// Uptime is the time since this runtime service started.
 func (r *Runtime) Uptime() time.Duration { return time.Since(r.StartedAt) }
 
 var (
@@ -184,7 +184,7 @@ var (
 	disconnectHooks []func(conn uint64)
 )
 
-// RegisterCapability announces a family name in daemon.hello's capabilities —
+// RegisterCapability announces a family name in runtime.service.hello's capabilities —
 // the list clients use for feature detection. A package holding handlers for a
 // namespace announces that namespace here, from the same init().
 func RegisterCapability(name string) {
@@ -218,7 +218,7 @@ func OnStart(f func(*Runtime)) {
 }
 
 // OnStartChecked registers required startup work. An error prevents accepting
-// any RPC and triggers non-graceful cleanup; callers can retry a fresh daemon
+// any RPC and triggers non-graceful cleanup; callers can retry a fresh runtime service
 // after the underlying failure is resolved, never a half-recovered registry.
 func OnStartChecked(f func(*Runtime) error) {
 	hooksMu.Lock()
@@ -252,8 +252,8 @@ func disconnectHooksSnapshot() []func(uint64) {
 	return append([]func(uint64){}, disconnectHooks...)
 }
 
-// OnShutdown registers a callback run as the daemon stops; graceful is false
-// while the daemon is unwinding after a failure.
+// OnShutdown registers a callback run as the runtime service stops; graceful is false
+// while the runtime service is unwinding after a failure.
 func OnShutdown(f func(graceful bool)) {
 	hooksMu.Lock()
 	shutdownHooks = append(shutdownHooks, f)
