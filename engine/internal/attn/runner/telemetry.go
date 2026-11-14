@@ -21,6 +21,15 @@ func TelemetryHome() string { return paths.Dir() }
 // AppendRunnerTelemetry is best effort by design. A diagnostics failure must
 // never turn a safe HIL result into a runtime failure or execute an action.
 func AppendRunnerTelemetry(home, project string, task model.TaskContext, result Output, runErr error, source string, latency time.Duration) string {
+	return appendRunnerTelemetry(home, project, task, result, runErr, source, latency, 0)
+}
+
+// AppendSubscriptionTelemetry accounts for each poll, independently of NDJSON deduplication.
+func AppendSubscriptionTelemetry(home, project string, task model.TaskContext, result Output, latency, interval time.Duration) string {
+	return appendRunnerTelemetry(home, project, task, result, nil, "subscription", latency, ObservationLease(interval))
+}
+
+func appendRunnerTelemetry(home, project string, task model.TaskContext, result Output, runErr error, source string, latency, lease time.Duration) string {
 	root := result.WorktreeRoot
 	if strings.TrimSpace(root) == "" {
 		root, _ = filepath.Abs(project)
@@ -32,6 +41,15 @@ func AppendRunnerTelemetry(home, project string, task model.TaskContext, result 
 		SessionID:  result.SessionID,
 		FreshUntil: result.FreshUntil, Cached: result.Cached,
 		LatencyMS: latency.Milliseconds(), AuthorizedOptions: append([]string(nil), task.AuthorizedOptions...),
+	}
+	if lease > 0 && result.SessionID != "" {
+		record.PerPoll = true
+		at := time.Now().UTC()
+		record.RecordedAt = at.Format(time.RFC3339Nano)
+		record.ObservationUntil = at.Add(lease).Format(time.RFC3339Nano)
+	}
+	if result.Request == nil && result.Assessment == nil {
+		record.Kind = "observation"
 	}
 	if result.ModelCalled {
 		record.ModelCalls = 1
@@ -78,7 +96,7 @@ func AppendRunnerTelemetry(home, project string, task model.TaskContext, result 
 func AppendLifecycleTelemetry(home, project, status, sessionID string, stats *SubscriptionStats) {
 	root, _ := filepath.Abs(project)
 	record := model.TelemetryRecord{
-		Kind: "lifecycle", Source: "subscription", Project: model.ProjectLabel(root),
+		Kind: "lifecycle", PerPoll: true, Source: "subscription", Project: model.ProjectLabel(root),
 		WorktreeID: model.WorktreeID(root), SessionID: sessionID, Status: status,
 	}
 	if stats != nil {
@@ -120,13 +138,16 @@ func RecordManualAssessment(home, artifactPath string, artifact attn.Artifact, t
 	return model.TelemetryPath(home)
 }
 
-func RecordPreflightAssessment(home string, request model.Preflight, task model.TaskContext, result *model.Result, callErr error) string {
+func RecordPreflightAssessment(home string, request model.Preflight, task model.TaskContext, result *model.Result, callErr error, attempted ...bool) string {
 	record := model.TelemetryRecord{
 		Kind: "assessment", Source: "preflight", Project: model.ProjectLabel(request.WorktreeRoot),
 		WorktreeID: model.WorktreeID(request.WorktreeRoot), EventID: request.RequestID,
 		StateRevision: request.StateRevision, EventKind: "agent_action_intent", Service: request.Target.Service,
 		FirstSeen: request.GeneratedAt, FreshUntil: request.FreshUntil,
 		CandidateOptions: make([]string, 0, len(request.Options)), AuthorizedOptions: append([]string(nil), task.AuthorizedOptions...),
+	}
+	if len(attempted) > 0 && attempted[0] {
+		record.ModelCalls = 1
 	}
 	for _, option := range request.Options {
 		record.CandidateOptions = append(record.CandidateOptions, option.ID)
@@ -142,6 +163,10 @@ func RecordPreflightAssessment(home string, request model.Preflight, task model.
 		record.Status = "unavailable"
 		record.Reason = TelemetryErrorReason(callErr)
 	}
+	if result != nil && callErr != nil {
+		record.Status = "error"
+		record.Reason = TelemetryErrorReason(callErr)
+	}
 	if _, err := model.AppendTelemetry(home, record); err != nil {
 		fmt.Fprintf(os.Stderr, "oberth attn: quality telemetry unavailable: %v\n", err)
 	}
@@ -151,6 +176,10 @@ func RecordPreflightAssessment(home string, request model.Preflight, task model.
 func TelemetryErrorReason(err error) string {
 	if err == nil {
 		return ""
+	}
+	var classified model.ReasonError
+	if errors.As(err, &classified) {
+		return model.ReasonFor(err)
 	}
 	if errors.Is(err, model.ErrUnavailable) {
 		return "model_unavailable"
@@ -255,7 +284,7 @@ func QualityReport(lookback time.Duration, projectFilter string) (model.QualityR
 	filter := strings.TrimSpace(projectFilter)
 	if filepath.IsAbs(filter) || strings.ContainsRune(filter, filepath.Separator) {
 		if root, absErr := filepath.Abs(filter); absErr == nil && filter != "" {
-			filter = model.ProjectLabel(root)
+			filter = model.WorktreeID(root)
 		}
 	}
 	report := model.BuildQualityReport(records, since, filter, time.Now().UTC())

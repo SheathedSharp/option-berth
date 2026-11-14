@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/attn"
@@ -73,8 +72,8 @@ type Output struct {
 }
 
 // SubscriptionStats are emitted once when a session stops. Keeping counters
-// in the session summary makes a quiet ledger explainable without appending a
-// record for every polling tick.
+// in the session summary preserves legacy readers; per-poll records account
+// for calls and bounded observation freshness while a session is still open.
 type SubscriptionStats struct {
 	Polls        int
 	EventsSeen   int
@@ -200,34 +199,33 @@ func Auto(ctx context.Context, binary, project string, client model.Client, task
 	var callErr error
 	modelCalled := false
 	if !cached {
-		modelCalled = strings.TrimSpace(client.APIKey) != ""
-		result, callErr = client.Evaluate(ctx, a, task)
+		result, callErr = client.EvaluateObserved(ctx, a, task, func() { modelCalled = true })
 	}
 	if callErr != nil && !errors.Is(callErr, model.ErrUnavailable) && !errors.Is(callErr, model.ErrStale) {
-		return Output{}, callErr
+		return attemptOutput(s, modelCalled, cached), callErr
 	}
 	// A remote call can take seconds. Refresh facts before publishing the HIL
 	// output, even on fallback or cache reuse; do not present an old request.
 	fresh, err := readStatus(ctx, binary, project)
 	if err != nil {
-		return Output{}, err
+		return attemptOutput(s, modelCalled, cached), err
 	}
 	if fresh.AttnPath == "" {
-		return Output{Status: "clear", WorktreeID: model.WorktreeID(fresh.Scope.Root), WorktreeRoot: fresh.Scope.Root}, nil
+		return Output{Status: "clear", WorktreeID: model.WorktreeID(fresh.Scope.Root), WorktreeRoot: fresh.Scope.Root, ModelCalled: modelCalled, Cached: cached}, nil
 	}
 	latest, err := ArtifactFor(fresh)
 	if err != nil || fresh.AttnPath != s.AttnPath || latest.EventID != a.EventID || latest.StateRevision != a.StateRevision {
-		return StaleOutput(fresh), nil
+		return withAttempt(StaleOutput(fresh), modelCalled, cached), nil
 	}
 	if errors.Is(callErr, model.ErrStale) {
-		return StaleOutput(fresh), nil
+		return withAttempt(StaleOutput(fresh), modelCalled, cached), nil
 	}
 	if callErr == nil && !cached {
 		if err := model.Persist(s.AttnPath, a, result); err != nil {
 			if errors.Is(err, model.ErrStale) {
-				return StaleOutput(fresh), nil
+				return withAttempt(StaleOutput(fresh), modelCalled, cached), nil
 			}
-			return Output{}, err
+			return attemptOutput(s, modelCalled, cached), err
 		}
 	}
 	out := Output{AttnPath: s.AttnPath, AttnRevision: a.StateRevision, EventID: a.EventID, FreshUntil: latest.FreshUntil, Cached: cached, WorktreeID: model.WorktreeID(fresh.Scope.Root), WorktreeRoot: fresh.Scope.Root}
@@ -316,7 +314,13 @@ func SubscribeWithStats(ctx context.Context, binary, project string, interval ti
 		result, err := Auto(ctx, binary, project, client, task, readStatus)
 		latency := time.Since(started)
 		if err != nil {
-			result = Output{Status: "error", Reason: SubscriptionReason(err)}
+			result.Status, result.Reason = "error", SubscriptionReason(err)
+			if errors.Is(err, ErrConsentRevoked) {
+				result.Status, result.Reason = "unavailable", model.ReasonDisabled
+			}
+			if errors.Is(err, ErrConfigurationChanged) {
+				result.Status, result.Reason = "unavailable", "configuration_changed"
+			}
 		}
 		result.SessionID = sessionID
 		if result.Status == "clear" && result.EventID == "" {
@@ -338,15 +342,18 @@ func SubscribeWithStats(ctx context.Context, binary, project string, interval ti
 		if result.Status == "unavailable" {
 			stats.Unavailable++
 		}
+		if observe != nil {
+			observe(result, latency)
+		}
 		key := SubscriptionKey(result)
 		if key != lastKey {
-			if observe != nil {
-				observe(result, latency)
-			}
 			if err := emit(result); err != nil {
 				return stats, err
 			}
 			lastKey = key
+		}
+		if errors.Is(err, ErrConsentRevoked) || errors.Is(err, ErrConfigurationChanged) {
+			return stats, nil
 		}
 		timer := time.NewTimer(interval)
 		select {

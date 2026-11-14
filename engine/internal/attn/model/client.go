@@ -190,6 +190,12 @@ type Result struct {
 // authorized option, one Choice question. The caller must persist the result
 // with Persist; this method never mutates an artifact or executes an action.
 func (c Client) Evaluate(ctx context.Context, artifact attn.Artifact, task TaskContext) (Result, error) {
+	return c.EvaluateObserved(ctx, artifact, task, nil)
+}
+
+// EvaluateObserved reports an actual transport attempt, after validation.
+// The observer is local accounting only and receives no request contents.
+func (c Client) EvaluateObserved(ctx context.Context, artifact attn.Artifact, task TaskContext, attempted func()) (Result, error) {
 	client, err := c.normalized()
 	if err != nil {
 		return Result{}, err
@@ -253,6 +259,12 @@ func (c Client) Evaluate(ctx context.Context, artifact attn.Artifact, task TaskC
 	}
 	req.Header.Set("Authorization", "Bearer "+client.APIKey)
 	req.Header.Set("Content-Type", "application/json")
+	if err := ctx.Err(); err != nil {
+		return Result{}, WithReason(reasonFromTransport(ctx, err), err)
+	}
+	if attempted != nil {
+		attempted()
+	}
 	resp, err := client.HTTPClient.Do(req)
 	if err != nil {
 		// A timeout, an unreachable host and a cancelled context are three
