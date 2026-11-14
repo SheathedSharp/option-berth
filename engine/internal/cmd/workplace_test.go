@@ -284,7 +284,7 @@ func TestWorkplaceReadsWorkWithoutARuntimeService(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the unix-socket runtime service harness does not apply to named pipes")
 	}
-	startTestRuntimeService(t, nil)
+	stopRuntimeService := startTestRuntimeService(t, nil)
 	repo := gitTestRepo(t)
 	chdir(t, repo)
 
@@ -295,7 +295,10 @@ func TestWorkplaceReadsWorkWithoutARuntimeService(t *testing.T) {
 		t.Fatalf("workplace new: %v", err)
 	}
 
-	// With the runtime service unreachable, the same reads still answer from the file.
+	// An unreachable socket is not an absent owner: the storage lease is
+	// exclusive, so the owner must exit before the same database can be read
+	// offline.
+	stopRuntimeService()
 	noRuntimeServiceReachable(t)
 	out, err := workplaceRun(t, true, "list")
 	if err != nil {

@@ -44,8 +44,10 @@ func routedRows() []ports.ListeningPort {
 }
 
 // startTestRuntimeService brings up a runtime service over a real socket whose scan answers with
-// rows, and points the CLI's dialers at it for the rest of the test.
-func startTestRuntimeService(t *testing.T, table []ports.ListeningPort) {
+// rows, and points the CLI's dialers at it for the rest of the test. The
+// returned stop is idempotent and also runs at cleanup: stopping the owner is
+// the only way an offline reader may open its database.
+func startTestRuntimeService(t *testing.T, table []ports.ListeningPort) func() {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the unix-socket harness does not apply to named pipes")
@@ -70,12 +72,16 @@ func startTestRuntimeService(t *testing.T, table []ports.ListeningPort) {
 		Socket:  socket,
 		Version: "test",
 	})
-	ctx, stop := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = server.Serve(ctx) }()
-	t.Cleanup(func() {
-		stop()
-		<-server.Done()
-	})
+	var stopOnce sync.Once
+	stop := func() {
+		stopOnce.Do(func() {
+			cancel()
+			<-server.Done()
+		})
+	}
+	t.Cleanup(stop)
 	if err := client.WaitForSocket(ctx, socket, 5*time.Second); err != nil {
 		t.Fatalf("runtime service did not come up: %v", err)
 	}
@@ -93,6 +99,8 @@ func startTestRuntimeService(t *testing.T, table []ports.ListeningPort) {
 	savedWrite := connectForWrite
 	connectForWrite = reach
 	t.Cleanup(func() { connectForWrite = savedWrite })
+
+	return stop
 }
 
 // noRuntimeServiceReachable makes every connection attempt fail, the way an empty
