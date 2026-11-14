@@ -21,7 +21,11 @@ const Version = "2.0"
 // 2.1.0 added the groups.code method and GroupsKillParams.ExpectRuns. Both are
 // additive, so a client must gate them on the daemon's advertised capabilities
 // (CapabilityKillExpectRuns) rather than on this version.
-const ProtocolVersion = "2.1.0"
+//
+// 2.2.0 added the executable facts to the published service row:
+// executable_path, executable_modified_at and executable_changed_since_start.
+// The change is additive: a client that does not read them is unaffected.
+const ProtocolVersion = "2.2.0"
 
 // Request is a client call. ID is raw so a client can use numbers or strings.
 type Request struct {
