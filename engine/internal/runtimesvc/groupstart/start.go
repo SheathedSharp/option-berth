@@ -1176,7 +1176,7 @@ func pendingContext(ctx context.Context, rt *runtimesvc.Runtime, group string, d
 			continue
 		}
 		if !liveService(rt, snap, group, dep.Name) {
-			missing = append(missing, pendingDependency{Name: dep.Name, Display: fmt.Sprintf("%s to be running (no port)", dep.Name)})
+			missing = append(missing, pendingDependency{Name: dep.Name, Display: dependencyPendingDisplay(dep.Name, "not_running", false)})
 			continue
 		}
 		// A portless worker can still declare a command check (for example a
