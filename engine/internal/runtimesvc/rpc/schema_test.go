@@ -23,7 +23,7 @@ import (
 // nothing said so (backlog H8).
 var contractMethods = []string{
 	"runtime.service.hello", "runtime.service.shutdown", "runtime.service.status", "runtime.service.schema",
-	"runtime.service.doctor",
+	"runtime.service.doctor", "runtime.storage.read",
 	"state.snapshot", "state.subscribe", "state.unsubscribe", "stream.cancel",
 	"ports.kill", "ports.logs",
 	"groups.list", "groups.code", "groups.kill", "groups.start",
