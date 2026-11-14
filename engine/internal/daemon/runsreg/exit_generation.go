@@ -26,6 +26,7 @@ func (r *Registry) Exited(pid, code int, stopped bool) (Exit, bool) {
 func (r *Registry) ExitedRun(expected Record, code int, stopped bool) (Exit, bool) {
 	e, ok := r.exitedRun(expected, code, stopped, tailLines)
 	if ok {
+		r.changed()
 		daemon.NotifyRunExit(daemon.RunExit{
 			RunID: e.ID, PID: e.PID, Code: e.Code, Reason: e.Reason, ExitedAt: e.ExitedAt,
 		})

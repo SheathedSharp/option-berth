@@ -57,12 +57,13 @@ func init() {
 		if n > 0 {
 			rt.Logger.Info("imported runs.json into the run registry", "runs", n)
 		}
+		Default.SetOnChange(rt.Scanner.RuntimeChanged)
 		rt.SetRuns(Default)
 		Default.PruneCodeSnapshots()
 		startPruning(rt)
 		return nil
 	})
-	daemon.OnShutdown(func(bool) { stopPruning() })
+	daemon.OnShutdown(func(bool) { Default.SetOnChange(nil); stopPruning() })
 }
 
 // registryStartupRecovery is the existing registry's startup work, kept small
@@ -290,7 +291,7 @@ func Spawn(ctx context.Context, rt *daemon.Runtime, req spawn.Request, meta Meta
 	rememberSession(rt, h.Session)
 	rt.Logger.Info("spawned a run", "id", h.ID, "pid", h.PID, "group", h.Group,
 		"name", h.Name, "log", h.LogPath)
-	rt.Scanner.Wake()
+	rt.Scanner.RuntimeChanged()
 
 	// Reap it. An unwaited child stays a zombie, and a zombie pid still passes
 	// every liveness test, so such a run would never be pruned.
@@ -299,7 +300,7 @@ func Spawn(ctx context.Context, rt *daemon.Runtime, req spawn.Request, meta Meta
 		e, _ := Default.ExitedRun(record, code, false)
 		rt.Logger.Info("run exited",
 			"id", h.ID, "pid", h.PID, "code", code, "reason", e.Reason, "error", err)
-		rt.Scanner.Invalidate()
+		rt.Scanner.RuntimeChanged()
 	}(rt, h)
 	return h, nil
 }

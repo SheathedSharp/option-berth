@@ -188,7 +188,8 @@ type Loop struct {
 	wake chan struct{}
 	// statsWake unparks the stats-only tick when a subscriber connects. It is
 	// separate from wake so the two ticks park and resume independently.
-	statsWake chan struct{}
+	statsWake   chan struct{}
+	runtimeWake chan struct{}
 
 	attr attribution
 
@@ -287,15 +288,16 @@ func New(opts Options) *Loop {
 	opts = withDefaults(opts)
 	base := resolveScanInterval(opts.ScanInterval)
 	l := &Loop{
-		opts:      opts,
-		now:       opts.Now,
-		base:      base,
-		interval:  base,
-		wake:      make(chan struct{}, 1),
-		statsWake: make(chan struct{}, 1),
-		runGate:   make(chan struct{}, 1),
-		orderGate: make(chan struct{}, 1),
-		rpcGate:   make(chan struct{}, 1),
+		opts:        opts,
+		now:         opts.Now,
+		base:        base,
+		interval:    base,
+		wake:        make(chan struct{}, 1),
+		statsWake:   make(chan struct{}, 1),
+		runtimeWake: make(chan struct{}, 1),
+		runGate:     make(chan struct{}, 1),
+		orderGate:   make(chan struct{}, 1),
+		rpcGate:     make(chan struct{}, 1),
 	}
 	l.attachDockerWatcher(base)
 	return l
@@ -505,6 +507,7 @@ func runInBackground(background *sync.WaitGroup, ctx context.Context, work func(
 func (l *Loop) Run(ctx context.Context) {
 	var background sync.WaitGroup
 	runInBackground(&background, ctx, l.runStats)
+	runInBackground(&background, ctx, l.runRuntime)
 	if l.docker != nil {
 		// The watcher refreshes the container list scans read, in its own
 		// goroutine for the same reason as the stats tick: nothing on the scan
@@ -824,6 +827,13 @@ func (l *Loop) commitOwnedScan(
 		return l.abandoned(err)
 	}
 
+	// Rebase after slow observation: a captured old run must not overwrite a
+	// lifecycle projection published while that observation was in flight.
+	projected, _, projectErr := l.projectRuntime(ctx, state.Snapshot{Ports: rows, Groups: groupRows}, true)
+	if projectErr != nil {
+		return l.abandoned(projectErr)
+	}
+	rows, groupRows = projected.Ports, projected.Groups
 	next, prev, changed = l.commitScan(commit{
 		subs:        subs,
 		collect:     collect,
@@ -1418,6 +1428,15 @@ func (l *Loop) SnapshotAll(include Include) (state.Snapshot, error) {
 // SnapshotAllContext permits last-good fallback only for collection failures,
 // never for an owner that has cancelled its request.
 func (l *Loop) SnapshotAllContext(ctx context.Context, include Include) (state.Snapshot, error) {
+	// Refresh the same registry projection before reusing a listener cache.
+	snap, have, err := l.RefreshRuntimeContext(ctx)
+	if err != nil {
+		return state.Snapshot{}, err
+	}
+	// A busy observer does not own the progress of already-known runs.
+	if have && len(l.runGate) > 0 {
+		return snap, nil
+	}
 	return l.readSnapshot(ctx, include, mayCoalesce, l.cached)
 }
 

@@ -81,8 +81,9 @@ type Record struct {
 
 // Registry holds the live runs. The zero value is not usable; call New.
 type Registry struct {
-	mu   sync.Mutex
-	runs map[int]Record
+	mu       sync.Mutex
+	onChange func()
+	runs     map[int]Record
 
 	// mirrorMu orders each mirrored mutation through its disk effect. Reads
 	// use mu only. Lock order is mirrorMu -> mu; never hold mu during I/O.
@@ -169,7 +170,7 @@ func (r *Registry) LoadExits(st *store.Store) error {
 // pid twice replaces the entry: a re-registered pid is the same process.
 func (r *Registry) Register(rec Record) Record {
 	r.mirrorMu.Lock()
-	defer r.mirrorMu.Unlock()
+	defer func() { r.mirrorMu.Unlock(); r.changed() }()
 	if rec.StartedAt.IsZero() {
 		rec.StartedAt = r.clock()
 	}
@@ -196,7 +197,7 @@ func (r *Registry) keepIDLocked(rec Record) Record {
 // Unregister drops the run with this pid, reporting whether there was one.
 func (r *Registry) Unregister(pid int) bool {
 	r.mirrorMu.Lock()
-	defer r.mirrorMu.Unlock()
+	defer func() { r.mirrorMu.Unlock(); r.changed() }()
 	r.mu.Lock()
 	rec, ok := r.runs[pid]
 	delete(r.runs, pid)
@@ -235,7 +236,7 @@ func (r *Registry) RenameGroups(renames map[string]string) int {
 		return 0
 	}
 	r.mirrorMu.Lock()
-	defer r.mirrorMu.Unlock()
+	defer func() { r.mirrorMu.Unlock(); r.changed() }()
 	r.mu.Lock()
 	moved := r.renameRunsLocked(renames)
 	r.renameExitsLocked(renames)
@@ -412,7 +413,7 @@ func (r *Registry) Prune() {
 	}
 
 	r.mirrorMu.Lock()
-	defer r.mirrorMu.Unlock()
+	defer func() { r.mirrorMu.Unlock(); r.changed() }()
 	r.mu.Lock()
 	removed := dead[:0]
 	for _, judged := range dead {
@@ -605,4 +606,16 @@ func (r *Registry) clock() time.Time {
 		return time.Now()
 	}
 	return r.now()
+}
+
+// SetOnChange attaches the Runtime Service publication wakeup, never an observer
+// that probes processes or writes facts. It is invoked outside registry locks.
+func (r *Registry) SetOnChange(f func()) { r.mu.Lock(); r.onChange = f; r.mu.Unlock() }
+func (r *Registry) changed() {
+	r.mu.Lock()
+	f := r.onChange
+	r.mu.Unlock()
+	if f != nil {
+		f()
+	}
 }

@@ -141,6 +141,7 @@ func (r *Registry) StartFailed(rec Record, message string) Exit {
 // would put their work on this registry's critical path.
 func (r *Registry) StartFailedWithReason(rec Record, reason, message string) Exit {
 	e := r.startFailed(rec, reason, message)
+	r.changed()
 	daemon.NotifyRunExit(daemon.RunExit{
 		RunID: e.ID, PID: e.PID, Code: e.Code, Reason: e.Reason, ExitedAt: e.ExitedAt,
 	})
