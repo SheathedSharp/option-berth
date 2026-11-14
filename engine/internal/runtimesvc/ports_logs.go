@@ -126,7 +126,7 @@ func handlePortsLogs(ctx context.Context, req *Request) (any, error) {
 		requested = defaultLogLines
 	}
 
-	listening, err := readPorts(req.Runtime, scanner.Include{})
+	listening, err := readPorts(req.HostContext, scanner.Include{})
 	if err != nil {
 		return nil, err
 	}

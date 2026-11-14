@@ -32,7 +32,7 @@ type servicePortRelease struct {
 	observed   store.ClaimObservation
 }
 
-func captureServicePortRelease(ctx context.Context, rt *Runtime, cfg *groups.Config) (*servicePortRelease, error) {
+func captureServicePortRelease(ctx context.Context, rt *HostContext, cfg *groups.Config) (*servicePortRelease, error) {
 	if cfg == nil {
 		return nil, nil
 	}
@@ -73,7 +73,7 @@ func captureServicePortRelease(ctx context.Context, rt *Runtime, cfg *groups.Con
 // is gone. It selects every reservation recorded for the identity's claim key,
 // not just the services a manifest would name, because there is no manifest
 // left to enumerate.
-func captureWorktreePortRelease(ctx context.Context, rt *Runtime, project, worktree string) (*servicePortRelease, error) {
+func captureWorktreePortRelease(ctx context.Context, rt *HostContext, project, worktree string) (*servicePortRelease, error) {
 	if project == "" {
 		return nil, nil
 	}
@@ -101,11 +101,11 @@ func captureWorktreePortRelease(ctx context.Context, rt *Runtime, project, workt
 	return &servicePortRelease{store: rt.Store, configPath: "", observed: observed}, nil
 }
 
-func (p *servicePortRelease) release(ctx context.Context, rt *Runtime, group string, after state.Snapshot, scanErr error, results []state.KillResult) (int, error) {
+func (p *servicePortRelease) release(ctx context.Context, rt *HostContext, group string, after state.Snapshot, scanErr error, results []state.KillResult) (int, error) {
 	return p.releaseWithWait(ctx, rt, group, after, scanErr, results, false)
 }
 
-func (p *servicePortRelease) releaseWithWait(ctx context.Context, rt *Runtime, group string, after state.Snapshot, scanErr error, results []state.KillResult, wait bool) (int, error) {
+func (p *servicePortRelease) releaseWithWait(ctx context.Context, rt *HostContext, group string, after state.Snapshot, scanErr error, results []state.KillResult, wait bool) (int, error) {
 	if p == nil || len(p.observed.Rows) == 0 {
 		return 0, nil
 	}
@@ -198,10 +198,10 @@ func retryingBusy(ctx context.Context, work func() error) error {
 
 func finishGroupStop(ctx context.Context, req *Request, group string, plan *servicePortRelease, after state.Snapshot, scanErr error, results []state.KillResult) (any, error) {
 	env := killEnvelope(results)
-	released, err := plan.releaseAfterContention(ctx, req.Runtime, group, after, scanErr, results)
+	released, err := plan.releaseAfterContention(ctx, req.HostContext, group, after, scanErr, results)
 	if err != nil {
-		if req.Runtime.Logger != nil {
-			req.Runtime.Logger.Warn("retaining group port reservations after stop", "group", group, "error", err)
+		if req.HostContext.Logger != nil {
+			req.HostContext.Logger.Warn("retaining group port reservations after stop", "group", group, "error", err)
 		}
 		// Preserve the existing wire schema and report failure to CLI clients too;
 		// down's text path does not inspect envelope.OK. Signals already sent and

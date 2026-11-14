@@ -14,11 +14,11 @@ import (
 // Request is what a Handler receives: the decoded call, the connection it came
 // in on, and the runtime service runtime it may act through.
 type Request struct {
-	Runtime *Runtime
-	Method  string
-	ID      json.RawMessage
-	Params  json.RawMessage
-	Conn    *Conn
+	HostContext *HostContext
+	Method      string
+	ID          json.RawMessage
+	Params      json.RawMessage
+	Conn        *Conn
 }
 
 // Bind unmarshals the request's params into v. When params are absent, v is

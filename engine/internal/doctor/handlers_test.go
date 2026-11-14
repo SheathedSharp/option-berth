@@ -20,8 +20,8 @@ func doctorRequest(t *testing.T, params rpc.RuntimeServiceDoctorParams) *runtime
 		t.Fatal(err)
 	}
 	return &runtimesvc.Request{
-		Runtime: &runtimesvc.Runtime{Version: "v1.2.3", Socket: "/tmp/doctor-fixture.sock", PID: 4242},
-		Params:  raw,
+		HostContext: &runtimesvc.HostContext{Version: "v1.2.3", Socket: "/tmp/doctor-fixture.sock", PID: 4242},
+		Params:      raw,
 	}
 }
 

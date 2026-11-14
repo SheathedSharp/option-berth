@@ -24,7 +24,7 @@ type StartAttempt struct {
 // The owning package installs it so this package never imports groupstart
 // (the runtime service must not depend on the package that registers a
 // handler).
-type StartAttemptLookup func(rt *Runtime, group, service string) (StartAttempt, bool)
+type StartAttemptLookup func(rt *HostContext, group, service string) (StartAttempt, bool)
 
 var startAttemptLookup struct {
 	sync.RWMutex
@@ -39,7 +39,7 @@ func RegisterStartAttemptLookup(fn StartAttemptLookup) {
 	startAttemptLookup.fn = fn
 }
 
-func lookupStartAttempt(rt *Runtime, group, service string) (StartAttempt, bool) {
+func lookupStartAttempt(rt *HostContext, group, service string) (StartAttempt, bool) {
 	startAttemptLookup.RLock()
 	fn := startAttemptLookup.fn
 	startAttemptLookup.RUnlock()
@@ -54,7 +54,7 @@ func lookupStartAttempt(rt *Runtime, group, service string) (StartAttempt, bool)
 // must stay attempt-free so a delta cannot publish it and a later reader cannot
 // mistake it for a run. Only the groups and service slices that actually carry
 // an attempt are copied.
-func joinStartAttempts(rt *Runtime, groups []state.Group) []state.Group {
+func joinStartAttempts(rt *HostContext, groups []state.Group) []state.Group {
 	if len(groups) == 0 {
 		return groups
 	}

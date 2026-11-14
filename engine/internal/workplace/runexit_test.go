@@ -18,7 +18,7 @@ import (
 func serveStore(t *testing.T, s *store.Store) {
 	t.Helper()
 	prev := runtime.Load()
-	runtime.Store(&runtimesvc.Runtime{
+	runtime.Store(&runtimesvc.HostContext{
 		Store:  s,
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})

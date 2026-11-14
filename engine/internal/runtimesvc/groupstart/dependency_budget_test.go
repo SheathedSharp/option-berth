@@ -25,7 +25,7 @@ func setDependencyBudget(t *testing.T, budget time.Duration) {
 }
 
 func budgetWait(ctx context.Context, l *scanner.Loop) error {
-	return waitFor(ctx, &runtimesvc.Runtime{Scanner: l}, "test",
+	return waitFor(ctx, &runtimesvc.HostContext{Scanner: l}, "test",
 		[]groups.Service{{Name: "api", Port: 18000}},
 		&addressBook{ports: map[string]int{"api": 18000}}, "")
 }
@@ -255,7 +255,7 @@ func TestDependencyExitFailsFastOnlyForThisStart(t *testing.T) {
 	reg.Alive = func(int) bool { return false }
 	reg.StartFailedWithReason(runsreg.Record{Group: "demo", Name: "seed", StartID: "start-1"},
 		runsreg.ReasonStartFailed, "boom")
-	rt := &runtimesvc.Runtime{Scanner: l}
+	rt := &runtimesvc.HostContext{Scanner: l}
 	rt.SetRuns(reg)
 	deps := []groups.Service{{Name: "seed"}}
 

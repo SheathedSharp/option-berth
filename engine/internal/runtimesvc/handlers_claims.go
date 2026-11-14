@@ -29,7 +29,7 @@ var claimsMu sync.Mutex
 // narrow says the table cannot see every socket owner. A reservation then
 // verifies each candidate by binding it; absence from the table is unknown, not
 // free.
-func reservationsBook(rt *Runtime, listening map[int]bool, narrow bool) (*claims.Book, error) {
+func reservationsBook(rt *HostContext, listening map[int]bool, narrow bool) (*claims.Book, error) {
 	st := rt.Store
 	if st == nil {
 		return nil, errNoStore()
@@ -45,7 +45,7 @@ func reservationsBook(rt *Runtime, listening map[int]bool, narrow bool) (*claims
 // every socket owner. The set is how the reservation probe skips ports
 // something is already serving on; the coverage says whether absence from the
 // set is a fact.
-func listeningState(rt *Runtime) (map[int]bool, bool, error) {
+func listeningState(rt *HostContext) (map[int]bool, bool, error) {
 	snap, err := readSnapshot(rt, scanner.Include{})
 	if err != nil {
 		return nil, false, err

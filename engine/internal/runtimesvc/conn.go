@@ -381,11 +381,11 @@ func (c *Conn) serve(ctx context.Context, msg rpc.Message) {
 	}
 
 	request := &Request{
-		Method:  msg.Method,
-		ID:      msg.ID,
-		Params:  msg.Params,
-		Conn:    c,
-		Runtime: c.srv.runtime,
+		Method:      msg.Method,
+		ID:          msg.ID,
+		Params:      msg.Params,
+		Conn:        c,
+		HostContext: c.srv.host,
 	}
 	result, err := handler(ctx, request)
 	if err != nil && !errors.Is(err, ErrResponseSent) {

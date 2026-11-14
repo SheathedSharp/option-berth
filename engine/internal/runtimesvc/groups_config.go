@@ -41,13 +41,13 @@ func handleGroupsConfigGet(_ context.Context, req *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := resolveConfig(req.Runtime, p.Name, p.Path)
+	cfg, err := resolveConfig(req.HostContext, p.Name, p.Path)
 	if err != nil {
 		return nil, err
 	}
 	result := rpc.GroupsConfigGetResult{
 		Path:   cfg.Path,
-		Config: configRow(req.Runtime, cfg),
+		Config: configRow(req.HostContext, cfg),
 	}
 	return result, nil
 }
@@ -95,17 +95,17 @@ func handleGroupsConfigSet(_ context.Context, req *Request) (any, error) {
 	// The file just written is re-indexed and republished, so the edit shows up
 	// as a groups delta for subscribers before the caller reads again.
 	affected := edit.Affected()
-	err = req.Runtime.Scanner.LoadConfig(cfg.Path)
+	err = req.HostContext.Scanner.LoadConfig(cfg.Path)
 	if err != nil {
-		req.Runtime.Logger.Warn("reloading a config after writing it", "path", cfg.Path, "error", err)
+		req.HostContext.Logger.Warn("reloading a config after writing it", "path", cfg.Path, "error", err)
 	}
-	req.Runtime.Logger.Info("config written", "path", cfg.Path, "services", len(affected))
-	republish(req.Runtime)
+	req.HostContext.Logger.Info("config written", "path", cfg.Path, "services", len(affected))
+	republish(req.HostContext)
 
 	result := rpc.GroupsConfigSetResult{
 		MutationResult: rpc.MutationResult{OK: true, Affected: affected},
 		Path:           cfg.Path,
-		Config:         configRow(req.Runtime, cfg),
+		Config:         configRow(req.HostContext, cfg),
 	}
 	return result, nil
 }
@@ -158,7 +158,7 @@ func checkEditNames(edit groups.ConfigEdit) error {
 }
 
 func handleGroupsReload(_ context.Context, req *Request) (any, error) {
-	loaded, rejected := req.Runtime.Scanner.ReloadConfigs()
+	loaded, rejected := req.HostContext.Scanner.ReloadConfigs()
 	problems := make([]rpc.ConfigProblem, 0, len(rejected))
 	for i := range rejected {
 		problems = append(problems, rpc.ConfigProblem{
@@ -166,15 +166,15 @@ func handleGroupsReload(_ context.Context, req *Request) (any, error) {
 			Error: rejected[i].Err.Error(),
 		})
 	}
-	req.Runtime.Logger.Info("reloaded oberth.yaml files", "configs", loaded, "invalid", len(problems))
-	republish(req.Runtime)
+	req.HostContext.Logger.Info("reloaded oberth.yaml files", "configs", loaded, "invalid", len(problems))
+	republish(req.HostContext)
 	return rpc.GroupsReloadResult{Loaded: loaded, Errors: problems}, nil
 }
 
 // resolveConfig turns "path or group name" into the config a request names.
 // A path the index has never seen is loaded there and then, so the desktop can
 // open a project the runtime service has not scanned a process in.
-func resolveConfig(rt *Runtime, name, path *string) (*groups.Config, error) {
+func resolveConfig(rt *HostContext, name, path *string) (*groups.Config, error) {
 	if path != nil {
 		if p := strings.TrimSpace(*path); p != "" {
 			return configAtPath(rt, p)
@@ -189,7 +189,7 @@ func resolveConfig(rt *Runtime, name, path *string) (*groups.Config, error) {
 		`send {"name": "my-app"} or {"path": "/repo/oberth.yaml"}`)
 }
 
-func configAtPath(rt *Runtime, p string) (*groups.Config, error) {
+func configAtPath(rt *HostContext, p string) (*groups.Config, error) {
 	if err := checkConfigPath(p); err != nil {
 		return nil, err
 	}
@@ -208,7 +208,7 @@ func configAtPath(rt *Runtime, p string) (*groups.Config, error) {
 	return cfg, nil
 }
 
-func configNamed(rt *Runtime, n string) (*groups.Config, error) {
+func configNamed(rt *HostContext, n string) (*groups.Config, error) {
 	if cfg, ok := rt.Scanner.ConfigNamed(n); ok {
 		return cfg, nil
 	}
@@ -259,7 +259,7 @@ func configError(path string, err error) error {
 // configRow renders a config for the wire. Running and port_actual are joined
 // from state the runtime service already holds, so an editor reading a config back sees
 // the same service rows `groups.list` publishes.
-func configRow(rt *Runtime, cfg *groups.Config) rpc.GroupConfig {
+func configRow(rt *HostContext, cfg *groups.Config) rpc.GroupConfig {
 	out := rpc.GroupConfig{
 		Ports:    append([]int{}, cfg.Ports...),
 		Name:     cfg.Name,
@@ -284,7 +284,7 @@ func configRow(rt *Runtime, cfg *groups.Config) rpc.GroupConfig {
 }
 
 // liveServices is the group's services as the last snapshot saw them.
-func liveServices(rt *Runtime, name string) map[string]state.Service {
+func liveServices(rt *HostContext, name string) map[string]state.Service {
 	live := make(map[string]state.Service)
 	for _, g := range rt.Scanner.Cached().Groups {
 		if g.Name == name {

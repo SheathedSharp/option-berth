@@ -420,7 +420,7 @@ func TestKillRepublishesSoTheNextReadIsFresh(t *testing.T) {
 func TestGroupsKillResolvesAgainstAFreshScan(t *testing.T) {
 	harness, cl := killHarness(t)
 	// Ownership comes from the installed registry, not untrusted OS rows.
-	harness.srv.runtime.SetRuns(&fakeRuns{live: []sessions.Live{
+	harness.srv.host.SetRuns(&fakeRuns{live: []sessions.Live{
 		{RunID: "run-1", PID: 900 + 4331, Group: "demo", Name: "svc-1"},
 		{RunID: "run-2", PID: 900 + 4332, Group: "demo", Name: "svc-2"},
 	}})

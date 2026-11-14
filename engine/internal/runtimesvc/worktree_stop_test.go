@@ -15,7 +15,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
-func newStopRuntime(t *testing.T) (*Runtime, *store.Store) {
+func newStopRuntime(t *testing.T) (*HostContext, *store.Store) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
@@ -27,7 +27,7 @@ func newStopRuntime(t *testing.T) (*Runtime, *store.Store) {
 		Logger:                slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Scan:                  func(scanner.Include) ([]ports.ListeningPort, error) { return nil, nil },
 	})
-	return &Runtime{
+	return &HostContext{
 		Store:   st,
 		Scanner: loop,
 		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),

@@ -18,10 +18,10 @@ import (
 // runtime is the runtime service this process is serving, while it is serving one. The
 // hook is registered once, at init, and needs a store only while a runtime service is
 // up: a run exit arriving with no runtime service behind it has nothing to write to.
-var runtime atomic.Pointer[runtimesvc.Runtime]
+var runtime atomic.Pointer[runtimesvc.HostContext]
 
 func init() {
-	runtimesvc.OnStartChecked(func(rt *runtimesvc.Runtime) error {
+	runtimesvc.OnStartChecked(func(rt *runtimesvc.HostContext) error {
 		runtime.Store(rt)
 		return nil
 	})

@@ -22,7 +22,7 @@ func TestDependencyWaitDoesNotReuseIdleObservation(t *testing.T) {
 		}
 		return []ports.ListeningPort{{Port: 8080, PID: 42, Cwd: dir}}, nil
 	}})
-	rt := &runtimesvc.Runtime{Scanner: l}
+	rt := &runtimesvc.HostContext{Scanner: l}
 	if _, err := l.Snapshot(scanner.Include{}); err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestDependencyWaitDoesNotAcceptLastGoodAfterCollectorFailure(t *testing.T) 
 		}
 		return []ports.ListeningPort{{Port: 8080, PID: 42, Cwd: dir}}, nil
 	}})
-	rt := &runtimesvc.Runtime{Scanner: l}
+	rt := &runtimesvc.HostContext{Scanner: l}
 	if _, err := l.Snapshot(scanner.Include{}); err != nil {
 		t.Fatal(err)
 	}

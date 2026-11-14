@@ -34,11 +34,11 @@ func failure(err error) error {
 // storeFor is the runtime service's database, or the error every database-backed method
 // reports when it came up without one.
 func storeFor(req *runtimesvc.Request) (*store.Store, error) {
-	if req.Runtime == nil || req.Runtime.Store == nil {
+	if req.HostContext == nil || req.HostContext.Store == nil {
 		return nil, rpc.NewError(rpc.CodeInternal, "this runtime service has no database open",
 			"check `oberth runtime service log` for the error opening option-berth.db, then `oberth runtime service restart`")
 	}
-	return req.Runtime.Store, nil
+	return req.HostContext.Store, nil
 }
 
 // rootOf is the worktree a call is about, in the one spelling the tables use.

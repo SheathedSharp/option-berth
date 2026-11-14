@@ -22,7 +22,7 @@ func init() {
 	RegisterHandler("sessions.kill", handleSessionsKill)
 	RegisterCapability("sessions")
 
-	OnStart(func(rt *Runtime) {
+	OnStart(func(rt *HostContext) {
 		rt.Scanner.SetSessions(func(ports []state.Port) []state.SessionRecord {
 			return sessionFacts{rt: rt}.records(ports)
 		})
@@ -40,7 +40,7 @@ type sessionRegistry interface {
 
 // sessionFacts joins the runtime service's two session sources for the domain package.
 type sessionFacts struct {
-	rt *Runtime
+	rt *HostContext
 }
 
 // live is every run that still carries a session.
@@ -109,9 +109,9 @@ func handleSessionsKill(ctx context.Context, req *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	facts := sessionFacts{rt: req.Runtime}
+	facts := sessionFacts{rt: req.HostContext}
 	live := sessions.RunsOf(facts.live(), id)
-	targets := sessionTargets(snapshot, live, id, req.Runtime.Runs().RunStart)
+	targets := sessionTargets(snapshot, live, id, req.HostContext.Runs().RunStart)
 	if len(targets) == 0 {
 		if _, known := findSession(facts.records(snapshot.Ports), id); !known {
 			return nil, sessionNotFound(id)
@@ -127,7 +127,7 @@ func handleSessionsKill(ctx context.Context, req *Request) (any, error) {
 		DryRun: params.DryRun,
 		Ports:  killerRows(snapshot),
 	}
-	options.OnSignal = stopSignalObserver(req.Runtime, snapshot, targets, options.DryRun, "")
+	options.OnSignal = stopSignalObserver(req.HostContext, snapshot, targets, options.DryRun, "")
 	results := killer.KillPorts(ctx, targets, options)
 	afterKill(req, options.DryRun)
 	return killEnvelope(results), nil
@@ -201,7 +201,7 @@ type sessionMaintenance struct {
 
 var sessionSweep sessionMaintenance
 
-func (m *sessionMaintenance) begin(rt *Runtime) {
+func (m *sessionMaintenance) begin(rt *HostContext) {
 	m.halt()
 	if rt.Store == nil {
 		return
@@ -223,7 +223,7 @@ func (m *sessionMaintenance) halt() {
 	m.stop = nil
 }
 
-func (m *sessionMaintenance) run(rt *Runtime, stop chan struct{}) {
+func (m *sessionMaintenance) run(rt *HostContext, stop chan struct{}) {
 	ticker := time.NewTicker(sessionSweepInterval)
 	defer ticker.Stop()
 	for {
@@ -239,7 +239,7 @@ func (m *sessionMaintenance) run(rt *Runtime, stop chan struct{}) {
 // SweepSessions runs one maintenance pass: touch every live session and prune
 // the ones last seen longer than sessions.Retention ago. It is exported so a
 // test can run a pass without waiting for the ticker.
-func SweepSessions(rt *Runtime, now time.Time) {
+func SweepSessions(rt *HostContext, now time.Time) {
 	if rt == nil || rt.Store == nil {
 		return
 	}

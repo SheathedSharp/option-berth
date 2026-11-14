@@ -31,31 +31,31 @@ func resetRegistry(t *testing.T) {
 // handlerRuntime builds the runtime the handlers act through: a logger and a
 // loop whose collector returns nothing, so a handler that invalidates or reads
 // the snapshot makes no OS call.
-func handlerRuntime(t *testing.T) *runtimesvc.Runtime {
+func handlerRuntime(t *testing.T) *runtimesvc.HostContext {
 	t.Helper()
 	return handlerRuntimeScan(t, nil, func(scanner.Include) ([]ports.ListeningPort, error) { return nil, nil })
 }
 
 // handlerRuntimeScan is handlerRuntime with an injected collector and logger,
 // for the tests that need to see a snapshot row or a warning.
-func handlerRuntimeScan(t *testing.T, logger *slog.Logger, scan func(scanner.Include) ([]ports.ListeningPort, error)) *runtimesvc.Runtime {
+func handlerRuntimeScan(t *testing.T, logger *slog.Logger, scan func(scanner.Include) ([]ports.ListeningPort, error)) *runtimesvc.HostContext {
 	t.Helper()
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
 	loop := scanner.New(scanner.Options{RuntimeServiceVersion: "test", Logger: logger, Scan: scan})
-	return &runtimesvc.Runtime{Version: "test", Logger: logger, Scanner: loop}
+	return &runtimesvc.HostContext{Version: "test", Logger: logger, Scanner: loop}
 }
 
 // handlerRequest frames one call the way the dispatcher does: params under the
 // method the handler sees.
-func handlerRequest(t *testing.T, rt *runtimesvc.Runtime, method string, params any) *runtimesvc.Request {
+func handlerRequest(t *testing.T, rt *runtimesvc.HostContext, method string, params any) *runtimesvc.Request {
 	t.Helper()
 	raw, err := json.Marshal(params)
 	if err != nil {
 		t.Fatalf("marshalling %s params: %v", method, err)
 	}
-	return &runtimesvc.Request{Method: method, ID: json.RawMessage("1"), Params: raw, Runtime: rt}
+	return &runtimesvc.Request{Method: method, ID: json.RawMessage("1"), Params: raw, HostContext: rt}
 }
 
 // TestHandleRegisterRecordsRunAndSession pins the whole registration path: the

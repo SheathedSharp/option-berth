@@ -50,21 +50,21 @@ func (s *Server) openStore() {
 // setStore installs an open store on the runtime and the scan loop. Tests hand
 // a harness its temp database through it.
 func (s *Server) setStore(db *store.Store) {
-	s.runtime.Store = db
-	s.runtime.DB = db.DB()
+	s.host.Store = db
+	s.host.DB = db.DB()
 	s.loop.SetStore(db)
 }
 
 // closeStore releases the database when the runtime service shuts down.
 func (s *Server) closeStore() {
-	db := s.runtime.Store
+	db := s.host.Store
 	if db == nil {
 		return
 	}
 	if err := db.Close(); err != nil {
 		s.logger.Warn("closing the database", "error", err)
 	}
-	s.runtime.Store, s.runtime.DB = nil, nil
+	s.host.Store, s.host.DB = nil, nil
 }
 
 // queueEvent holds an event until the next publish carries it out. Events can

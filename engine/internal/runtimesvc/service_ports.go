@@ -14,7 +14,7 @@ import (
 //
 // It is exported for internal/runtimesvc/groupstart, which starts services but
 // cannot reach the reservations book itself.
-func AcquireServicePort(rt *Runtime, dir, service string) (int, error) {
+func AcquireServicePort(rt *HostContext, dir, service string) (int, error) {
 	project, worktree := claims.Identity(dir)
 	address := claims.Address{Project: project, Worktree: worktree, Service: service}
 
@@ -45,7 +45,7 @@ func AcquireServicePort(rt *Runtime, dir, service string) (int, error) {
 
 // configForGroup is the oberth.yaml whose services are published under a group
 // name; a group no config describes yields nil.
-func configForGroup(rt *Runtime, name string) *groups.Config {
+func configForGroup(rt *HostContext, name string) *groups.Config {
 	if rt.Scanner == nil {
 		return nil
 	}

@@ -68,20 +68,20 @@ func handleGroupsStart(ctx context.Context, req *runtimesvc.Request) (any, error
 	if err := req.Bind(&p); err != nil {
 		return nil, err
 	}
-	cfg, err := resolveConfig(req.Runtime, p)
+	cfg, err := resolveConfig(req.HostContext, p)
 	if err != nil {
 		return nil, err
 	}
 	// The group the services run under is the one the file's ports are
 	// published in: `<project>@<worktree>` for a worktree's copy of a
 	// committed file, never the `name:` the copy carries.
-	group := req.Runtime.Scanner.GroupOf(cfg)
+	group := req.HostContext.Scanner.GroupOf(cfg)
 	plan, err := startPlan(cfg, p)
 	if err != nil {
 		return nil, err
 	}
 	call := &startCall{
-		rt:     req.Runtime,
+		rt:     req.HostContext,
 		cfg:    cfg,
 		group:  group,
 		params: p,
@@ -127,7 +127,7 @@ func startPlan(cfg *groups.Config, p rpc.GroupsStartParams) ([]groups.Step, erro
 // length of the stream, and the in-flight attempt it publishes is the memory-only
 // fact attempts.go owns.
 type startCall struct {
-	rt     *runtimesvc.Runtime
+	rt     *runtimesvc.HostContext
 	cfg    *groups.Config
 	group  string
 	params rpc.GroupsStartParams
@@ -698,7 +698,7 @@ func (e *envSet) render() []string {
 // holding the manifest.
 type addressBook struct {
 	ctx      context.Context
-	rt       *runtimesvc.Runtime
+	rt       *runtimesvc.HostContext
 	cfg      *groups.Config
 	group    string
 	worktree string
@@ -711,7 +711,7 @@ type addressBook struct {
 	groups []state.Group
 }
 
-func newAddressBook(ctx context.Context, rt *runtimesvc.Runtime, cfg *groups.Config, group string) (*addressBook, error) {
+func newAddressBook(ctx context.Context, rt *runtimesvc.HostContext, cfg *groups.Config, group string) (*addressBook, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -856,7 +856,7 @@ func serviceRefs(svc groups.Service) []string {
 // The group's resolved state answers for everything option-berth did not start — it
 // already joins declared ports, run names and display names against what is
 // listening.
-func alreadyRunning(ctx context.Context, rt *runtimesvc.Runtime, group string, svc groups.Service) (reason, runID string, up bool, err error) {
+func alreadyRunning(ctx context.Context, rt *runtimesvc.HostContext, group string, svc groups.Service) (reason, runID string, up bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return "", "", false, err
 	}
@@ -922,7 +922,7 @@ func groupRows(snap state.Snapshot, group string) []state.Service {
 //
 // It is waitForProgress without a progress callback, kept so existing callers
 // and tests read the same as before.
-func waitFor(ctx context.Context, rt *runtimesvc.Runtime, group string, deps []groups.Service, book *addressBook, startID string) error {
+func waitFor(ctx context.Context, rt *runtimesvc.HostContext, group string, deps []groups.Service, book *addressBook, startID string) error {
 	return waitForProgress(ctx, rt, group, deps, book, startID, nil)
 }
 
@@ -936,7 +936,7 @@ func waitFor(ctx context.Context, rt *runtimesvc.Runtime, group string, deps []g
 // failed. The last case matters: "the fresh dependency state could not be
 // read" is not evidence that nothing is being waited on, and rendering that
 // unknown as an empty set would claim the opposite of what happened.
-func waitForProgress(ctx context.Context, rt *runtimesvc.Runtime, group string, deps []groups.Service, book *addressBook, startID string, onPending func([]string)) error {
+func waitForProgress(ctx context.Context, rt *runtimesvc.HostContext, group string, deps []groups.Service, book *addressBook, startID string, onPending func([]string)) error {
 	if len(deps) == 0 {
 		return nil
 	}
@@ -1082,7 +1082,7 @@ type dependencyExitRegistry interface {
 // dependency was attempted by this same groups.start (its exit carries this
 // call's StartID) and no run of it is live now. An older exit, or a live run
 // that has not begun listening yet, is not evidence of failure.
-func dependencyExited(rt *runtimesvc.Runtime, group, service, startID string) (state.ServiceExit, bool) {
+func dependencyExited(rt *runtimesvc.HostContext, group, service, startID string) (state.ServiceExit, bool) {
 	if rt == nil || startID == "" {
 		return state.ServiceExit{}, false
 	}
@@ -1098,7 +1098,7 @@ func dependencyExited(rt *runtimesvc.Runtime, group, service, startID string) (s
 }
 
 // pending lists the dependencies that are not ready yet.
-func pending(rt *runtimesvc.Runtime, group string, deps []groups.Service, want map[string]int) []pendingDependency {
+func pending(rt *runtimesvc.HostContext, group string, deps []groups.Service, want map[string]int) []pendingDependency {
 	return pendingContext(context.Background(), rt, group, deps, want)
 }
 
@@ -1135,7 +1135,7 @@ func reportPending(observed []pendingDependency, onPending func([]string)) {
 	onPending(names)
 }
 
-func pendingContext(ctx context.Context, rt *runtimesvc.Runtime, group string, deps []groups.Service, want map[string]int) []pendingDependency {
+func pendingContext(ctx context.Context, rt *runtimesvc.HostContext, group string, deps []groups.Service, want map[string]int) []pendingDependency {
 	needsObservation := false
 	for _, dep := range deps {
 		if dep.HasPort() || dep.Health != "" {
@@ -1202,7 +1202,7 @@ func healthy(snap state.Snapshot, group, service string) bool {
 // group row. The direct check closes the scanner's refresh gap after a worker
 // is spawned; the row fallback keeps the wait useful with a registry that only
 // exposes the resolver-facing state.
-func liveService(rt *runtimesvc.Runtime, snap state.Snapshot, group, service string) bool {
+func liveService(rt *runtimesvc.HostContext, snap state.Snapshot, group, service string) bool {
 	reg := rt.Runs()
 	if live, ok := reg.(groups.Liveness); ok {
 		reg.Prune()
@@ -1240,13 +1240,13 @@ func listening(snap state.Snapshot, group string, dep groups.Service, port int) 
 
 // snapshotContext is a control observation: cancellation and collector failure
 // must not turn into an empty/last-good input that authorizes another spawn.
-func snapshotContext(ctx context.Context, rt *runtimesvc.Runtime) (state.Snapshot, error) {
+func snapshotContext(ctx context.Context, rt *runtimesvc.HostContext) (state.Snapshot, error) {
 	return rt.Scanner.SnapshotForReadinessContext(ctx)
 }
 
 // resolveConfig finds the `oberth.yaml` this call is about, by path or by
 // group name.
-func resolveConfig(rt *runtimesvc.Runtime, p rpc.GroupsStartParams) (*groups.Config, error) {
+func resolveConfig(rt *runtimesvc.HostContext, p rpc.GroupsStartParams) (*groups.Config, error) {
 	if path := trimmed(p.ConfigPath); path != "" {
 		return configAtPath(rt, path)
 	}
@@ -1265,7 +1265,7 @@ func resolveConfig(rt *runtimesvc.Runtime, p rpc.GroupsStartParams) (*groups.Con
 // configAtPath answers with the file at path, loading it when the scanner has
 // not seen it yet. A file that cannot be read is the caller's path to fix; a
 // file that reads but declares nothing usable is a different answer.
-func configAtPath(rt *runtimesvc.Runtime, path string) (*groups.Config, error) {
+func configAtPath(rt *runtimesvc.HostContext, path string) (*groups.Config, error) {
 	cfg, known := rt.Scanner.ConfigAt(path)
 	if !known {
 		if err := rt.Scanner.LoadConfig(path); err != nil {

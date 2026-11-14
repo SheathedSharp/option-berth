@@ -69,7 +69,7 @@ func handleHello(ctx context.Context, req *Request) (any, error) {
 			`send {"client": "cli", "client_version": "..."}`)
 	}
 	req.Conn.setHello(p.Client, p.ClientVersion, p.Keepalive)
-	rt := req.Runtime
+	rt := req.HostContext
 	rt.Logger.Debug("hello", "conn", req.Conn.ID(),
 		"client", p.Client, "client_version", p.ClientVersion, "keepalive", p.Keepalive)
 
@@ -87,7 +87,7 @@ func handleHello(ctx context.Context, req *Request) (any, error) {
 }
 
 func handleStatus(ctx context.Context, req *Request) (any, error) {
-	rt := req.Runtime
+	rt := req.HostContext
 	status := rt.Scanner.Status()
 	lastScan := ""
 	if !status.LastScanAt.IsZero() {
@@ -110,7 +110,7 @@ func handleStatus(ctx context.Context, req *Request) (any, error) {
 }
 
 func handleShutdown(_ context.Context, req *Request) (any, error) {
-	req.Runtime.Logger.Info("shutdown requested by client", "conn", req.Conn.ID())
+	req.HostContext.Logger.Info("shutdown requested by client", "conn", req.Conn.ID())
 	// The dispatcher stops the runtime service only after this reply has been queued, so
 	// the client sees its {ok: true} before the socket goes away.
 	req.Conn.requestShutdown()
@@ -132,22 +132,22 @@ func handleSnapshot(_ context.Context, req *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	snapshot, err := req.Runtime.Scanner.SnapshotAll(include)
+	snapshot, err := req.HostContext.Scanner.SnapshotAll(include)
 	if err != nil {
 		return nil, scanFailure(err)
 	}
 	// Attach in-flight start attempts on a copy. The cached snapshot stays
 	// attempt-free, so a delta never carries one and a later scan cannot
 	// mistake the attempt for a run.
-	snapshot.Groups = joinStartAttempts(req.Runtime, snapshot.Groups)
+	snapshot.Groups = joinStartAttempts(req.HostContext, snapshot.Groups)
 	scope := scopeOf(p.Scope)
 	if !scope.Empty() {
-		if scope.Workspace != "" && !scope.HasSelectors() && !req.Runtime.Server().workspaceAvailable(scope.Workspace) {
+		if scope.Workspace != "" && !scope.HasSelectors() && !req.HostContext.Server().workspaceAvailable(scope.Workspace) {
 			return nil, rpc.NewError(rpc.CodeInvalidParams,
 				"workspace has no registered worktrees or repositories",
 				"subscribe once with --workspace and an explicit --worktree or --repository")
 		}
-		scope = req.Runtime.Server().effectiveScope(scope)
+		scope = req.HostContext.Server().effectiveScope(scope)
 		snapshot.Ports = filterPorts(snapshot.Ports, include)
 		return state.StreamSnapshotFor(snapshot, scope), nil
 	}
@@ -177,7 +177,7 @@ func handleSubscribe(_ context.Context, req *Request) (any, error) {
 	// Scanning first would hold the reply for a whole stats collection — seconds
 	// on a busy machine — and the first snapshot would trail by a delta anyway
 	// by the time it arrived.
-	if err := req.Runtime.Server().subscribe(req.Conn, req.ID, include, p.Events, scope, p.AfterSeq); err != nil {
+	if err := req.HostContext.Server().subscribe(req.Conn, req.ID, include, p.Events, scope, p.AfterSeq); err != nil {
 		return nil, err
 	}
 	return nil, ErrResponseSent
@@ -191,7 +191,7 @@ func scopeOf(scope *state.Scope) state.Scope {
 }
 
 func handleUnsubscribe(_ context.Context, req *Request) (any, error) {
-	srv := req.Runtime.Server()
+	srv := req.HostContext.Server()
 	srv.unsubscribe(req.Conn)
 	return rpc.OKResult{OK: true}, nil
 }

@@ -30,7 +30,7 @@ func TestPendingWaitsForNoPortDependencyRun(t *testing.T) {
 	reg.Alive = func(int) bool { return true }
 	reg.Register(runsreg.Record{PID: 123, Group: "demo", Name: "worker"})
 
-	rt := &runtimesvc.Runtime{Scanner: scanner.New(scanner.Options{
+	rt := &runtimesvc.HostContext{Scanner: scanner.New(scanner.Options{
 		Scan: func(scanner.Include) ([]ports.ListeningPort, error) { return nil, nil },
 	})}
 	rt.SetRuns(reg)

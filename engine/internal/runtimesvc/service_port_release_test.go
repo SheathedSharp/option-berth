@@ -39,7 +39,7 @@ func (g *releaseGuardFixture) WithNoGroupRuns(ctx context.Context, group, path s
 	return mutate()
 }
 
-func releaseFixture(t *testing.T) (*Runtime, *servicePortRelease, *releaseGuardFixture) {
+func releaseFixture(t *testing.T) (*HostContext, *servicePortRelease, *releaseGuardFixture) {
 	t.Helper()
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(t.TempDir(), "fixture.db"))
@@ -54,7 +54,7 @@ func releaseFixture(t *testing.T) (*Runtime, *servicePortRelease, *releaseGuardF
 	if err := st.Claims().Put(row); err != nil {
 		t.Fatal(err)
 	}
-	rt := &Runtime{Store: st}
+	rt := &HostContext{Store: st}
 	guard := &releaseGuardFixture{}
 	rt.SetRuns(guard)
 	plan, err := captureServicePortRelease(context.Background(), rt, cfg)
@@ -87,7 +87,7 @@ func TestWorktreePortReleaseUsesTheRecordedClaimKey(t *testing.T) {
 		}
 	}
 
-	rt := &Runtime{Store: st}
+	rt := &HostContext{Store: st}
 	guard := &releaseGuardFixture{}
 	rt.SetRuns(guard)
 	plan, err := captureWorktreePortRelease(context.Background(), rt, project, worktree)
@@ -97,7 +97,7 @@ func TestWorktreePortReleaseUsesTheRecordedClaimKey(t *testing.T) {
 	if plan == nil || len(plan.observed.Rows) != 2 {
 		t.Fatalf("plan = %+v, want the two reservations of one worktree", plan)
 	}
-	result, err := finishGroupStop(context.Background(), &Request{Runtime: rt}, "demo@feat", plan, state.Snapshot{}, nil, nil)
+	result, err := finishGroupStop(context.Background(), &Request{HostContext: rt}, "demo@feat", plan, state.Snapshot{}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestServicePortReleaseUsesOriginalReservationAndAuthority(t *testing.T) {
 
 func TestServicePortReleaseSuccessAndRepeatedDown(t *testing.T) {
 	rt, plan, guard := releaseFixture(t)
-	result, err := finishGroupStop(context.Background(), &Request{Runtime: rt}, "demo", plan, state.Snapshot{}, nil, []state.KillResult{{OK: true}})
+	result, err := finishGroupStop(context.Background(), &Request{HostContext: rt}, "demo", plan, state.Snapshot{}, nil, []state.KillResult{{OK: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestServicePortReleaseSuccessAndRepeatedDown(t *testing.T) {
 
 func TestFinishGroupStopReportsRetainedReservationsAsRPCFailure(t *testing.T) {
 	rt, plan, _ := releaseFixture(t)
-	result, err := finishGroupStop(context.Background(), &Request{Runtime: rt}, "demo", plan, state.Snapshot{}, errors.New("incomplete observation"), nil)
+	result, err := finishGroupStop(context.Background(), &Request{HostContext: rt}, "demo", plan, state.Snapshot{}, errors.New("incomplete observation"), nil)
 	var rpcErr *rpc.Error
 	if result != nil || !errors.As(err, &rpcErr) || rpcErr.Code != rpc.CodeInternal {
 		t.Fatalf("result=%+v error=%v", result, err)
@@ -219,7 +219,7 @@ func TestFinishGroupStopReportsRetainedReservationsAsRPCFailure(t *testing.T) {
 func TestNilReleasePlanNeverTouchesStore(t *testing.T) {
 	// Dry runs, scoped stops and manifests without auto ports have no plan.
 	var plan *servicePortRelease
-	if n, err := plan.release(context.Background(), &Runtime{}, "demo", state.Snapshot{}, nil, nil); n != 0 || err != nil {
+	if n, err := plan.release(context.Background(), &HostContext{}, "demo", state.Snapshot{}, nil, nil); n != 0 || err != nil {
 		t.Fatalf("release = %d, %v", n, err)
 	}
 }
@@ -260,7 +260,7 @@ func TestGroupsKillEmptyStopUsesReservationGuard(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			request := &Request{Runtime: rt, Method: "groups.kill", Params: raw}
+			request := &Request{HostContext: rt, Method: "groups.kill", Params: raw}
 			value, err := handleGroupsKill(context.Background(), request)
 			if kind == "guard rejects" || kind == "refresh during scan" {
 				if err == nil {

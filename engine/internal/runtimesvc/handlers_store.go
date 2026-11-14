@@ -57,7 +57,7 @@ func handleConfigSet(_ context.Context, req *Request) (any, error) {
 		return nil, rpc.NewError(rpc.CodeInvalidParams, err.Error(),
 			"the config was left as it was; `oberth config path` shows the file")
 	}
-	req.Runtime.Logger.Info("config written", "path", config.Path())
+	req.HostContext.Logger.Info("config written", "path", config.Path())
 	return rpc.ConfigSetResult{OK: true, Config: settings}, nil
 }
 
@@ -84,7 +84,7 @@ func handleConfigPath(_ context.Context, _ *Request) (any, error) {
 // ports exist, so re-running attribution over the last scan's rows answers the
 // question in microseconds instead of behind `lsof`, `ps` and `docker stats`.
 // `Republish` wakes the loop, so a real scan follows.
-func republish(rt *Runtime) {
+func republish(rt *HostContext) {
 	err := rt.Scanner.Republish()
 	if err != nil {
 		rt.Logger.Warn("republishing after a write", "error", err)
@@ -95,7 +95,7 @@ func republish(rt *Runtime) {
 // change which ports exist. A kill must be followed by a real scan: the ports
 // that just went away leave the snapshot only once the OS has been asked
 // again, and their port_down rows reach the history ring from that delta.
-func rescanAfterKill(rt *Runtime) (state.Snapshot, error) {
+func rescanAfterKill(rt *HostContext) (state.Snapshot, error) {
 	snapshot, err := rt.Scanner.Rescan(scanner.Include{})
 	if err != nil {
 		rt.Logger.Warn("rescanning after a kill", "error", err)

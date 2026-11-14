@@ -18,7 +18,7 @@ import (
 // killRuntime is a runtime service runtime whose only observation is the rows the test
 // hands it: no process is scanned, no signal can be sent, and every stop in
 // these tests is a dry run.
-func killRuntime(t *testing.T, rows []ports.ListeningPort) *Runtime {
+func killRuntime(t *testing.T, rows []ports.ListeningPort) *HostContext {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
@@ -30,7 +30,7 @@ func killRuntime(t *testing.T, rows []ports.ListeningPort) *Runtime {
 		Logger:                slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Scan:                  func(scanner.Include) ([]ports.ListeningPort, error) { return rows, nil },
 	})
-	return &Runtime{
+	return &HostContext{
 		Store:   st,
 		Scanner: loop,
 		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -41,12 +41,12 @@ func killRuntime(t *testing.T, rows []ports.ListeningPort) *Runtime {
 // params so an unknown field is ignored rather than rejected: that is the only
 // way a regression can show what the runtime service does when it does not know the
 // cleanup's run identity.
-func timeoutCleanup(t *testing.T, rt *Runtime, params string) rpc.KillEnvelope {
+func timeoutCleanup(t *testing.T, rt *HostContext, params string) rpc.KillEnvelope {
 	t.Helper()
 	out, err := handleGroupsKill(context.Background(), &Request{
-		Method:  "groups.kill",
-		Params:  json.RawMessage(params),
-		Runtime: rt,
+		Method:      "groups.kill",
+		Params:      json.RawMessage(params),
+		HostContext: rt,
 	})
 	if err != nil {
 		t.Fatalf("groups.kill: %v", err)
@@ -132,7 +132,7 @@ func TestTimeoutCleanupRejectsAnIncompleteClaim(t *testing.T) {
 			rt := killRuntime(t, nil)
 			rt.Scanner.ObserveConfig(checkoutWithManifest(t, manifest))
 			_, err := handleGroupsKill(context.Background(), &Request{
-				Method: "groups.kill", Params: json.RawMessage(tc.params), Runtime: rt,
+				Method: "groups.kill", Params: json.RawMessage(tc.params), HostContext: rt,
 			})
 			if err == nil {
 				t.Fatal("want a refusal")

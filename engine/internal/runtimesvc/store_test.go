@@ -22,7 +22,7 @@ func (h *testHarness) withStore(path string) *store.Store {
 	h.t.Helper()
 	h.srv.opts.DBPath = path
 	h.srv.openStore()
-	st := h.srv.runtime.Store
+	st := h.srv.host.Store
 	if st == nil {
 		h.t.Fatalf("the runtime service opened no store at %s", path)
 	}
@@ -53,7 +53,7 @@ func TestStatusReportsTheDatabasePath(t *testing.T) {
 	if after.DBPath != dbPath {
 		t.Errorf("db_path = %q, want %q", after.DBPath, dbPath)
 	}
-	if h.srv.runtime.DB == nil {
+	if h.srv.host.DB == nil {
 		t.Error("Runtime.DB is nil; the runtime hands extensions the raw handle")
 	}
 }

@@ -24,7 +24,7 @@ func TestAcquireServicePortDoesNotHoldClaimsLockAcrossTheScan(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
-	rt := &Runtime{Store: st}
+	rt := &HostContext{Store: st}
 	srv := &Server{conns: map[uint64]*Conn{}}
 	rt.srv = srv
 	rt.Scanner = scanner.New(scanner.Options{

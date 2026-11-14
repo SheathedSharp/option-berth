@@ -104,7 +104,7 @@ func handleGroupsInit(_ context.Context, req *Request) (any, error) {
 		return nil, err
 	}
 
-	plan, err := planInit(p, req.Runtime)
+	plan, err := planInit(p, req.HostContext)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +118,7 @@ func handleGroupsInit(_ context.Context, req *Request) (any, error) {
 // proposal is built from, and renders the bytes this call would write. It is
 // the read half of `groups.init`: nothing here touches the config file, so a
 // preview and a write start from exactly the same plan.
-func planInit(p rpc.GroupsInitParams, rt *Runtime) (initPlan, error) {
+func planInit(p rpc.GroupsInitParams, rt *HostContext) (initPlan, error) {
 	root, err := initRoot(p.RootDir)
 	if err != nil {
 		return initPlan{}, err
@@ -279,13 +279,13 @@ func proposedConfig(p rpc.GroupsInitParams, root string, snap state.Snapshot) *g
 // group reaches subscribers as a groups delta before the caller's own next read
 // (the same order `groups.config.set` keeps).
 func publishConfig(req *Request, path, group string, services int) {
-	scanner := req.Runtime.Scanner
+	scanner := req.HostContext.Scanner
 	if err := scanner.LoadConfig(path); err != nil {
-		req.Runtime.Logger.Warn("reloading a config after writing it", "path", path, "error", err)
+		req.HostContext.Logger.Warn("reloading a config after writing it", "path", path, "error", err)
 	}
-	req.Runtime.Logger.Info("wrote "+groups.ConfigName,
+	req.HostContext.Logger.Info("wrote "+groups.ConfigName,
 		"path", path, "group", group, "services", services)
-	republish(req.Runtime)
+	republish(req.HostContext)
 }
 
 // listeningPorts is the set of ports the snapshot this call read saw listening.
@@ -356,7 +356,7 @@ func existingDirectory(abs, raw string) error {
 // A warm cache is only trusted while a subscriber is reading it — that is the
 // one reader whose deltas would otherwise disagree with the file this call is
 // about to write.
-func initSnapshot(rt *Runtime) (state.Snapshot, error) {
+func initSnapshot(rt *HostContext) (state.Snapshot, error) {
 	if warm := rt.Scanner.Cached(); warm.Seq > 0 && rt.Subscribers() > 0 {
 		return warm, nil
 	}

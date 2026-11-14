@@ -68,12 +68,12 @@ type Options struct {
 // Server is the runtime_service: the listener it owns, the connections it tracks, the
 // fan-out that feeds subscribers, and its own lifecycle.
 type Server struct {
-	opts    Options
-	logger  *slog.Logger
-	socket  string
-	runtime *Runtime
-	loop    *scanner.Loop
-	ln      net.Listener
+	opts   Options
+	logger *slog.Logger
+	socket string
+	host   *HostContext
+	loop   *scanner.Loop
+	ln     net.Listener
 
 	ownLock bool
 	lock    *Lock
@@ -134,8 +134,8 @@ func New(opts Options) *Server {
 	server.loop = server.scannerFor(opts)
 	server.loop.SetDemand(server.demand)
 	server.loop.SetPublisher(server.publish)
-	server.runtime = server.buildRuntime(opts)
-	server.loop.SetRuns(server.runtime.RunRegistry)
+	server.host = server.buildHostContext(opts)
+	server.loop.SetRuns(server.host.RunRegistry)
 	return server
 }
 
@@ -170,14 +170,14 @@ func (s *Server) scannerFor(opts Options) *scanner.Loop {
 
 // buildRuntime records what this process is: its version, socket, binary and
 // start time, plus the handle the run registry hangs off.
-func (s *Server) buildRuntime(opts Options) *Runtime {
+func (s *Server) buildHostContext(opts Options) *HostContext {
 	binary := opts.BinaryPath
 	if binary == "" {
 		// Best effort: a process that cannot name its own binary still serves,
 		// it just cannot tell a client where the CLI lives.
 		binary, _ = os.Executable()
 	}
-	return &Runtime{
+	return &HostContext{
 		StartedAt:  time.Now(),
 		Version:    opts.Version,
 		Socket:     s.socket,
@@ -189,8 +189,8 @@ func (s *Server) buildRuntime(opts Options) *Runtime {
 	}
 }
 
-// Runtime is the runtime handed to handlers and extension hooks.
-func (s *Server) Runtime() *Runtime { return s.runtime }
+// HostContext is the runtime handed to handlers and extension hooks.
+func (s *Server) HostContext() *HostContext { return s.host }
 
 // Socket is the address the server listens on.
 func (s *Server) Socket() string { return s.socket }
@@ -272,7 +272,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	// Restore required ownership before starting the scanner or accepting RPC.
 	// Optional hooks retain their existing adapter, but failed required work
 	// must not be presented as an empty successful runtime.service.
-	if err := runStartHooks(s.runtime); err != nil {
+	if err := runStartHooks(s.host); err != nil {
 		_ = s.ln.Close()
 		runShutdownHooks(false)
 		_ = removeStaleSocket(s.socket)
@@ -283,7 +283,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	s.runBackground(func() { s.watchIdle(ctx) })
 
 	s.logger.Info("runtime service listening",
-		"socket", s.socket, "pid", s.runtime.PID, "version", s.opts.Version,
+		"socket", s.socket, "pid", s.host.PID, "version", s.opts.Version,
 		"idle_timeout", s.opts.IdleTimeout.String())
 
 	go s.shutdownWhenDone(ctx)

@@ -29,7 +29,7 @@ func handleDoctor(ctx context.Context, req *runtimesvc.Request) (any, error) {
 	if err := doctorParamsProblem(params); err != nil {
 		return nil, err
 	}
-	return Run(ctx, runtimeServiceEnv(req.Runtime, params), params.Only), nil
+	return Run(ctx, runtimeServiceEnv(req.HostContext, params), params.Only), nil
 }
 
 // doctorParamsProblem rejects a request the runtime service cannot answer as asked,
@@ -50,7 +50,7 @@ func doctorParamsProblem(params rpc.RuntimeServiceDoctorParams) error {
 
 // runtimeServiceEnv describes this runtime service process from the inside: its own identity,
 // its own paths, and no CLI-only seams.
-func runtimeServiceEnv(rt *runtimesvc.Runtime, params rpc.RuntimeServiceDoctorParams) Env {
+func runtimeServiceEnv(rt *runtimesvc.HostContext, params rpc.RuntimeServiceDoctorParams) Env {
 	self := RuntimeServiceInfo{Reachable: true, Local: true, PID: rt.PID}
 	self.Version = rt.Version
 	self.ProtocolVersion = rpc.ProtocolVersion

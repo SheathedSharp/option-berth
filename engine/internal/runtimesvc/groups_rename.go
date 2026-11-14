@@ -75,7 +75,7 @@ func handleGroupsRename(_ context.Context, req *Request) (any, error) {
 			"a project name is one word with no @, / or whitespace; a worktree's group adds @<worktree> to it")
 	}
 
-	rt := req.Runtime
+	rt := req.HostContext
 	snapshot, err := rt.Scanner.Snapshot(scanner.Include{})
 	if err != nil {
 		return nil, scanFailure(err)

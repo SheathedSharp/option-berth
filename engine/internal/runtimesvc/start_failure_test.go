@@ -43,13 +43,13 @@ func TestCheckedStartupFailureUnwindsBeforeServing(t *testing.T) {
 	var order []string
 	var ready bool
 	boom := errors.New("required recovery failed")
-	OnStart(func(*Runtime) { order = append(order, "optional") })
-	OnStartChecked(func(rt *Runtime) error {
+	OnStart(func(*HostContext) { order = append(order, "optional") })
+	OnStartChecked(func(rt *HostContext) error {
 		ready = rt.Store != nil && rt.DB != nil
 		order = append(order, "required")
 		return boom
 	})
-	OnStart(func(*Runtime) { order = append(order, "too-late") })
+	OnStart(func(*HostContext) { order = append(order, "too-late") })
 	OnShutdown(func(graceful bool) {
 		order = append(order, "cleanup")
 		if graceful {
@@ -93,7 +93,7 @@ func TestCheckedStartupFailureUnwindsBeforeServing(t *testing.T) {
 		t.Fatalf("failed startup retained instance lock: %v", err)
 	}
 	_ = lock.Release()
-	if srv.runtime.DB != nil && srv.runtime.DB.Ping() == nil {
+	if srv.host.DB != nil && srv.host.DB.Ping() == nil {
 		t.Fatal("failed startup retained open database")
 	}
 }

@@ -54,7 +54,7 @@ func handlePortsKill(ctx context.Context, req *Request) (any, error) {
 		Grace:    time.Duration(p.GraceMs) * time.Millisecond,
 		Ports:    killerRows(snap),
 	}
-	opts.OnSignal = stopSignalObserver(req.Runtime, snap, targets, opts.DryRun, "")
+	opts.OnSignal = stopSignalObserver(req.HostContext, snap, targets, opts.DryRun, "")
 	rows := killer.KillPorts(ctx, targets, opts)
 	afterKill(req, opts.DryRun)
 	return killEnvelope(rows), nil
@@ -71,8 +71,8 @@ func afterKill(req *Request, dryRun bool) (state.Snapshot, error) {
 	// Imported runs that exited are reconciled before the post-stop snapshot is
 	// published: this runtime service has no child reaper for them, and a stale Running
 	// row would make the next restart skip a worker that is already gone.
-	req.Runtime.Runs().Prune()
-	return rescanAfterKill(req.Runtime)
+	req.HostContext.Runs().Prune()
+	return rescanAfterKill(req.HostContext)
 }
 
 // killSnapshot is the state that selectors and group members resolve against.
@@ -91,7 +91,7 @@ func afterKill(req *Request, dryRun bool) (state.Snapshot, error) {
 // cancellation stops observation before selectors resolve; it does not cancel
 // publication of a kill that already happened.
 func killSnapshot(ctx context.Context, req *Request) (state.Snapshot, error) {
-	snap, err := req.Runtime.Scanner.RescanContext(ctx, scanner.Include{})
+	snap, err := req.HostContext.Scanner.RescanContext(ctx, scanner.Include{})
 	if err := ctx.Err(); err != nil {
 		return state.Snapshot{}, err
 	}
