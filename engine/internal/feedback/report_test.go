@@ -98,10 +98,10 @@ func TestBuildRefusesWhatTheVocabularyDoesNotName(t *testing.T) {
 }
 
 // A report may name a code the CLI itself publishes. `oberth logs --run`
-// without a daemon answers daemon_unavailable, and attn has conditions of its
-// own; refusing them means the report cannot carry the exact code that
-// triggered it. The daemon vocabulary is not where these live, so they are
-// listed here from the CLI's side.
+// without a runtime service answers runtime_service_unavailable, and attn has
+// conditions of its own; refusing them means the report cannot carry the exact
+// code that triggered it. The runtime service vocabulary is not where these
+// live, so they are listed here from the CLI's side.
 func TestBuildAcceptsTheCodesTheCLIPublishes(t *testing.T) {
 	for _, code := range []string{
 		"attn_disabled",
@@ -109,9 +109,9 @@ func TestBuildAcceptsTheCodesTheCLIPublishes(t *testing.T) {
 		"attn_no_key",
 		"attn_not_configured",
 		"attn_probe_failed",
-		"daemon_not_running",
-		"daemon_unavailable",
 		"interrupted",
+		"runtime_service_not_running",
+		"runtime_service_unavailable",
 		"stale",
 		"timeout",
 	} {
@@ -131,21 +131,22 @@ func TestBuildAcceptsTheCodesTheCLIPublishes(t *testing.T) {
 	in := validInput()
 	in.ErrorCode = "not_a_published_code"
 	if _, err := Build(in); err == nil {
-		t.Fatal("Build accepted a code neither the daemon nor the CLI publishes")
+		t.Fatal("Build accepted a code neither the runtime service nor the CLI publishes")
 	}
 }
 
-// The CLI codes cannot move into rpc.failures: that table is the daemon's
-// vocabulary, where every entry must have a daemon producer and a line in the
-// contract. A code that appears in both lists means one of the two is wrong.
-func TestTheCLIErrorCodesAreNotDaemonFailures(t *testing.T) {
+// The CLI codes cannot move into rpc.failures: that table is the runtime
+// service's vocabulary, where every entry must have a runtime service producer
+// and a line in the contract. A code that appears in both lists means one of
+// the two is wrong.
+func TestTheCLIErrorCodesAreNotRuntimeServiceFailures(t *testing.T) {
 	published := map[string]bool{}
 	for _, code := range cliErrorCodes {
 		published[code] = true
 	}
 	for _, name := range rpc.FailureNames() {
 		if published[name] {
-			t.Errorf("%q is a daemon failure and must not be listed as a CLI-only code", name)
+			t.Errorf("%q is a runtime service failure and must not be listed as a CLI-only code", name)
 		}
 	}
 }
