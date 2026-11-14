@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
+	"github.com/spf13/cobra"
 )
 
 func withWorktreeFlags(t *testing.T, jsonOut, gone bool) {
@@ -15,6 +17,15 @@ func withWorktreeFlags(t *testing.T, jsonOut, gone bool) {
 	prevJSON, prevGone := worktreesJSONFlag, worktreesGoneFlag
 	worktreesJSONFlag, worktreesGoneFlag = jsonOut, gone
 	t.Cleanup(func() { worktreesJSONFlag, worktreesGoneFlag = prevJSON, prevGone })
+}
+
+// worktreesTestCommand is the command worktreesRun expects under cobra. The
+// stored read takes a context, and a command that never went through Execute
+// has none; the product path always has one.
+func worktreesTestCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "worktrees"}
+	cmd.SetContext(context.Background())
+	return cmd
 }
 
 func TestWorktreesListsPresentAndGoneCheckouts(t *testing.T) {
@@ -42,7 +53,7 @@ func TestWorktreesListsPresentAndGoneCheckouts(t *testing.T) {
 	withWorktreeFlags(t, true, false)
 	var decode worktreesDocument
 	out := captureStdout(t, func() {
-		if err := worktreesRun(worktreesCmd, nil); err != nil {
+		if err := worktreesRun(worktreesTestCommand(), nil); err != nil {
 			t.Fatalf("worktreesRun: %v", err)
 		}
 	})
@@ -65,7 +76,7 @@ func TestWorktreesListsPresentAndGoneCheckouts(t *testing.T) {
 
 	withWorktreeFlags(t, true, true)
 	out = captureStdout(t, func() {
-		if err := worktreesRun(worktreesCmd, nil); err != nil {
+		if err := worktreesRun(worktreesTestCommand(), nil); err != nil {
 			t.Fatalf("worktreesRun --gone: %v", err)
 		}
 	})
@@ -81,7 +92,7 @@ func TestWorktreesWithoutADatabaseIsAnEmptyList(t *testing.T) {
 	t.Setenv("BERTH_DB", filepath.Join(t.TempDir(), "absent.db"))
 	withWorktreeFlags(t, true, false)
 	out := captureStdout(t, func() {
-		if err := worktreesRun(worktreesCmd, nil); err != nil {
+		if err := worktreesRun(worktreesTestCommand(), nil); err != nil {
 			t.Fatalf("worktreesRun: %v", err)
 		}
 	})
@@ -99,7 +110,7 @@ func TestWorktreesReadsWithoutCreatingADatabase(t *testing.T) {
 	t.Setenv("BERTH_DB", db)
 	withWorktreeFlags(t, true, false)
 	_ = captureStdout(t, func() {
-		_ = worktreesRun(worktreesCmd, nil)
+		_ = worktreesRun(worktreesTestCommand(), nil)
 	})
 	if _, err := os.Stat(db); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("database was created by a read-only command: %v", err)
