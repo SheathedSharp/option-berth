@@ -4,9 +4,9 @@ package runtimecheck
 
 import (
 	"context"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/runsreg"
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/runsreg"
 	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
 	"github.com/sheathedsharp/option-berth/engine/internal/servicefacts"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"

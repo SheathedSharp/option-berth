@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/buildinfo"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/spf13/cobra"
 )
 
@@ -127,7 +127,7 @@ func runningClient(ctx context.Context) (*client.Client, error) {
 	c, err := connectRunning(ctx)
 	if err != nil {
 		if errors.Is(err, client.ErrNotRunning) {
-			return nil, notRunning(daemon.SocketPath())
+			return nil, notRunning(runtimesvc.SocketPath())
 		}
 		return nil, err
 	}
@@ -224,7 +224,7 @@ func orUnknown(s string) string {
 }
 
 func daemonStopRun(cmd *cobra.Command, _ []string) error {
-	socket := daemon.SocketPath()
+	socket := runtimesvc.SocketPath()
 	conn, err := runningClient(cmd.Context())
 	if err != nil {
 		return err
@@ -246,7 +246,7 @@ func daemonStopRun(cmd *cobra.Command, _ []string) error {
 }
 
 func daemonRestartRun(cmd *cobra.Command, _ []string) error {
-	socket := daemon.SocketPath()
+	socket := runtimesvc.SocketPath()
 	if conn, dialErr := connectRunning(cmd.Context()); dialErr == nil {
 		var ack rpc.OKResult
 		_ = conn.Call(cmd.Context(), "daemon.shutdown", rpc.Empty{}, &ack)
@@ -267,12 +267,12 @@ func daemonRestartRun(cmd *cobra.Command, _ []string) error {
 }
 
 func daemonPathRun(*cobra.Command, []string) error {
-	socket := daemon.SocketPath()
+	socket := runtimesvc.SocketPath()
 	if daemonJSONFlag {
 		return printJSON(map[string]any{
 			"socket": socket,
-			"lock":   daemon.LockPath(),
-			"log":    daemon.LogPath(),
+			"lock":   runtimesvc.LockPath(),
+			"log":    runtimesvc.LogPath(),
 		})
 	}
 	fmt.Println(socket)
@@ -280,7 +280,7 @@ func daemonPathRun(*cobra.Command, []string) error {
 }
 
 func daemonLogRun(cmd *cobra.Command, _ []string) error {
-	logPath := daemon.LogPath()
+	logPath := runtimesvc.LogPath()
 	logFile, openErr := os.Open(logPath)
 	if openErr != nil {
 		if os.IsNotExist(openErr) {

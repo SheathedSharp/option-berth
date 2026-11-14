@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 )
 
 // checkDocker is about enrichment, never about health: option-berth runs fine

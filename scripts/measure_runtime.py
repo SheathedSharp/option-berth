@@ -8,7 +8,6 @@ files are not linked. Timings are scaled synthetic cases, not a product SLA.
 import argparse
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -35,7 +34,11 @@ def main():
         target = baseline / "engine/internal/runtimecheck"
         target.mkdir()
         for name in ("measure_test.go", "measure_poll_test.go"):
-            shutil.copyfile(repo / "engine/internal/runtimecheck" / name, target / name)
+            # Adapt only shared harness imports when the archive predates the host rename.
+            fixture = (repo / "engine/internal/runtimecheck" / name).read_text()
+            if (baseline / "engine/internal/daemon").is_dir():
+                fixture = fixture.replace("/engine/internal/runtimesvc/", "/engine/internal/daemon/")
+            (target / name).write_text(fixture)
         env = os.environ.copy()
         env.update(HOME=str(root / "home"), BERTH_HOME=str(root / "state"), BERTH_ATTN="0",
                    GOPROXY="off", GOTOOLCHAIN="local", GOCACHE=cache, GOPATH=gopath,

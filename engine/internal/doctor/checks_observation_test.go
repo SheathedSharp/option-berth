@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 )
 
 func TestListenerObservation(t *testing.T) {

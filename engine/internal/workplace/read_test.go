@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/runsreg"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/runsreg"
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 

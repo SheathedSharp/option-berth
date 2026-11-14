@@ -7,11 +7,11 @@ import (
 	"sync"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/buildinfo"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 )
 
 // This file exists because of how the trim went (docs/history/scope.md,
@@ -93,5 +93,5 @@ func warnBlindDaemon(obs *rpc.ObservationStatus) {
 // withDaemonLogHint points at the log, because a daemon that will not start is
 // diagnosed there or nowhere.
 func withDaemonLogHint(err error) error {
-	return fmt.Errorf("%w\nhint: the daemon log is at %s", err, daemon.LogPath())
+	return fmt.Errorf("%w\nhint: the daemon log is at %s", err, runtimesvc.LogPath())
 }

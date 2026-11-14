@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/runsreg"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/runsreg"
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
@@ -18,7 +18,7 @@ import (
 func serveStore(t *testing.T, s *store.Store) {
 	t.Helper()
 	prev := runtime.Load()
-	runtime.Store(&daemon.Runtime{
+	runtime.Store(&runtimesvc.Runtime{
 		Store:  s,
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
@@ -41,7 +41,7 @@ func TestRunExitClosesTheBlockThatRecordedIt(t *testing.T) {
 		t.Fatalf("AppendBlock: %v", err)
 	}
 
-	daemon.NotifyRunExit(daemon.RunExit{
+	runtimesvc.NotifyRunExit(runtimesvc.RunExit{
 		RunID: "run-1", PID: 42, Code: 2, Reason: runsreg.ReasonCrashed,
 		ExitedAt: started.Add(30 * time.Second),
 	})
@@ -82,8 +82,8 @@ func TestRunExitIgnoresWhatItCannotAttribute(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("AppendBlock: %v", err)
 	}
-	daemon.NotifyRunExit(daemon.RunExit{RunID: "", PID: 7, Code: 0, Reason: runsreg.ReasonExited})
-	daemon.NotifyRunExit(daemon.RunExit{RunID: "run-unknown", PID: 8, Code: 0, Reason: runsreg.ReasonExited})
+	runtimesvc.NotifyRunExit(runtimesvc.RunExit{RunID: "", PID: 7, Code: 0, Reason: runsreg.ReasonExited})
+	runtimesvc.NotifyRunExit(runtimesvc.RunExit{RunID: "run-unknown", PID: 8, Code: 0, Reason: runsreg.ReasonExited})
 
 	blocks, err := s.Workplaces().Blocks(wp.ID, 0)
 	if err != nil {
@@ -100,5 +100,5 @@ func TestRunExitWithNoDaemonIsIgnored(t *testing.T) {
 	t.Cleanup(func() { runtime.Store(prev) })
 	// The hook runs on the reaper's path, where there is no error to return to:
 	// an exit arriving with no store behind it must do nothing at all.
-	daemon.NotifyRunExit(daemon.RunExit{RunID: "run-1", Code: 0, Reason: runsreg.ReasonExited})
+	runtimesvc.NotifyRunExit(runtimesvc.RunExit{RunID: "run-1", Code: 0, Reason: runsreg.ReasonExited})
 }

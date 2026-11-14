@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
 	"github.com/sheathedsharp/option-berth/engine/internal/testenv"
 )
 

@@ -5,15 +5,15 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 )
 
 const doctorMethod = "daemon.doctor"
 
 func init() {
-	daemon.RegisterHandler(doctorMethod, handleDoctor)
-	daemon.RegisterCapability("doctor")
+	runtimesvc.RegisterHandler(doctorMethod, handleDoctor)
+	runtimesvc.RegisterCapability("doctor")
 }
 
 // `daemon.doctor` lets the desktop app diagnose an installation without
@@ -21,7 +21,7 @@ func init() {
 // `oberth doctor`; rows that describe the invoking process come back as `skip`
 // with a reason. The handler lives here so the daemon package never imports the
 // doctor.
-func handleDoctor(ctx context.Context, req *daemon.Request) (any, error) {
+func handleDoctor(ctx context.Context, req *runtimesvc.Request) (any, error) {
 	var params rpc.DaemonDoctorParams
 	if err := req.Bind(&params); err != nil {
 		return nil, err
@@ -50,7 +50,7 @@ func doctorParamsProblem(params rpc.DaemonDoctorParams) error {
 
 // daemonEnv describes this daemon process from the inside: its own identity,
 // its own paths, and no CLI-only seams.
-func daemonEnv(rt *daemon.Runtime, params rpc.DaemonDoctorParams) Env {
+func daemonEnv(rt *runtimesvc.Runtime, params rpc.DaemonDoctorParams) Env {
 	self := DaemonInfo{Reachable: true, Local: true, PID: rt.PID}
 	self.Version = rt.Version
 	self.ProtocolVersion = rpc.ProtocolVersion

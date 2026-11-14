@@ -1,7 +1,7 @@
 package runtimecheck
 
 import (
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc"
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 	"os"
 	"path/filepath"
@@ -53,19 +53,19 @@ func TestRuntimeStoreReopenPreservesClaimsExitAndGoneIdentity(t *testing.T) {
 }
 func TestRuntimeServiceLockHandoffUsesSameStablePath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "daemon.lock")
-	first, err := daemon.AcquireLock(path)
+	first, err := runtimesvc.AcquireLock(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer first.Release()
-	if second, err := daemon.AcquireLock(path); err == nil {
+	if second, err := runtimesvc.AcquireLock(path); err == nil {
 		second.Release()
 		t.Fatal("two runtime service writers admitted")
 	}
 	if err = first.Release(); err != nil {
 		t.Fatal(err)
 	}
-	second, err := daemon.AcquireLock(path)
+	second, err := runtimesvc.AcquireLock(path)
 	if err != nil {
 		t.Fatal(err)
 	}

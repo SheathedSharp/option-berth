@@ -16,7 +16,7 @@ import (
 // The schema is generated from the same Go types parsing uses, so a key that
 // appears here is exactly a key Load accepts. It is written to
 // docs/schema/manifest.schema.json by the //go:generate directive in
-// internal/daemon/rpc/schema.go (that command renders both schemas).
+// internal/runtimesvc/rpc/schema.go (that command renders both schemas).
 const (
 	ManifestSchemaID  = "https://github.com/sheathedsharp/option-berth/engine/docs/schema/manifest.schema.json"
 	ManifestSchemaURL = "https://raw.githubusercontent.com/SheathedSharp/option-berth/main/engine/docs/schema/manifest.schema.json"

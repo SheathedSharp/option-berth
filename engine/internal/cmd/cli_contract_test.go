@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 )
 
 // The exit codes docs/cli.md documents, and the classification behind them.

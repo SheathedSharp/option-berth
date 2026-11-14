@@ -39,6 +39,8 @@ checkout it skips explicitly instead of pretending a comparison happened.
 The basic Windows service scenarios and the selected native tests are not acceptance of the full
 service tree, the Windows GUI, or native arm64 execution.
 
+Internal package paths in historical records below refer to their recorded revisions. Current host/domain paths are `internal/runtimesvc` and `internal/runtimecore`; public protocol and disk names have not migrated.
+
 ## Reproducing locally
 
 The Go version follows `engine/go.mod`. Service tests use an isolated HOME/BERTH_HOME, socket, and
@@ -90,7 +92,7 @@ python3 scripts/check_skill_contract.py --skill-dir ../option-berth-skill
 The unit tests in `internal/groups` cover the line format, quoting, and escaping of `env_file`, that
 errors do not echo values, and `workspace:` address resolution (the other side's fixed port, the
 other side's live state, rejection when `port: auto` is not running), name conflicts, and reference
-validation. `internal/daemon/groupstart` uses a real daemon and child processes to verify `env_file`
+validation. `internal/runtimesvc/groupstart` uses a real daemon and child processes to verify `env_file`
 precedence (caller < `env_file` < `PORT` < service `env:`) and `machine:` / `workspace:` addresses;
 `TestExpandStart*` / `TestOverlayRunAddresses*` in `internal/cmd` cover address expansion for
 `oberth start`, rejection of unknown references, and filling in with the run's assigned port when
@@ -110,7 +112,7 @@ and refusal to read another run's snapshot. `internal/groups` covers parsing of 
 out-of-bounds validation, the difference between `sources: []` and omitting it, and that a YAML
 round trip does not lose `sources: []`; the field coverage tests in `internal/state` ensure that new
 fields take part in equality comparison.
-`internal/daemon/groupstart` uses a real daemon to verify that the snapshot is actually written at
+`internal/runtimesvc/groupstart` uses a real daemon to verify that the snapshot is actually written at
 start, and that `sources: []` writes nothing; `TestAnnotateCodeFacts*` in `internal/cmd` covers the
 three states "changed / unchanged / unknown", `TestStatusOnly*` confirms that code comparison
 follows the `--only` selection, and `TestBriefStatus*` confirms that `--brief` keeps the code
@@ -119,10 +121,10 @@ fields. Executed on this machine on 2026-10-31:
 ```sh
 cd engine
 go vet ./internal/codeid ./internal/groups ./internal/state ./internal/cmd \
-  ./internal/daemon/runsreg ./internal/daemon/groupstart ./internal/runs
+  ./internal/runtimesvc/runsreg ./internal/runtimesvc/groupstart ./internal/runs
 go test ./internal/codeid ./internal/groups ./internal/state ./internal/servicefacts \
-  ./internal/paths ./internal/daemon/runsreg -count=1
-go test ./internal/daemon/groupstart -count=1
+  ./internal/paths ./internal/runtimesvc/runsreg -count=1
+go test ./internal/runtimesvc/groupstart -count=1
 go test ./internal/cmd -run 'TestAnnotateCodeFacts|TestStatus' -count=1
 go generate ./...
 ```

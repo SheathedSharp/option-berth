@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 )
 
 // checkSocketPermissions reads the socket's mode and owner back off the disk:
@@ -20,7 +20,7 @@ func checkSocketPermissions(ctx context.Context, env *Env) rpc.DoctorCheck {
 	socket := env.SocketPath
 	if env.GOOS == "windows" || strings.HasPrefix(socket, `\\`) {
 		return skip("named pipe, not a file",
-			"on Windows the daemon listens on "+daemon.WindowsPipe+
+			"on Windows the daemon listens on "+runtimesvc.WindowsPipe+
 				", whose DACL grants only this user and SYSTEM when it is bound; there are no file modes to check")
 	}
 	if socket == "" {
@@ -60,7 +60,7 @@ func socketFacts(info os.FileInfo, env *Env, socket string) (note string, proble
 		problems = append(problems, fmt.Sprintf("owned by uid %d, you are uid %d", owner, env.UID))
 	}
 	dir := filepath.Dir(socket)
-	if !daemon.OwnsSocketDir(socket) {
+	if !runtimesvc.OwnsSocketDir(socket) {
 		return "", problems
 	}
 	dirInfo, err := os.Stat(dir)

@@ -2,8 +2,8 @@ package runtimecheck
 
 import (
 	"errors"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/runsreg"
 	"github.com/sheathedsharp/option-berth/engine/internal/runs"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/runsreg"
 	"testing"
 	"time"
 )

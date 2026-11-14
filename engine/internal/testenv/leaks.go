@@ -15,7 +15,7 @@ import (
 // The leak gate.
 //
 // A test that reaches the CLI's autostart path spawns "<this binary> serve
-// --detach". The guards in internal/daemon and internal/daemon/client stop that
+// --detach". The guards in internal/runtimesvc and internal/runtimesvc/client stop that
 // spawn from happening at all, but a guard can be bypassed (a harness sets
 // BERTH_ALLOW_TEST_DAEMON, a new code path forgets to consult it), and a leak is
 // silent: the parent test passes and the stray process lives on. So every

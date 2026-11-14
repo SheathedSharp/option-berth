@@ -60,7 +60,7 @@ foreground color and the capsule degrades to yellow. Nothing is colored under `N
   of trusting absence, and the human `status` prints `listening unknown`.
 
 - --no-daemon makes read commands collect locally and directly; commands that must record runs and start/stop still need the daemon. When the daemon is unavailable, `status` still shows the most recent exit reason from local read-only history.
-- No wire field is accepted without being read. The protocol schema is generated from the daemon's Go types, so a field declared there is a promise every client may rely on; a field no handler acts on is worse than a missing one, because the call succeeds and the caller cannot tell it was ignored. Every field a method's params can carry is therefore read by this repository's own code, and `internal/daemon/rpc` fails the build otherwise. Withdrawing a published field is a protocol change; the names removed on purpose are recorded in that package so they cannot return silently.
+- No wire field is accepted without being read. The protocol schema is generated from the daemon's Go types, so a field declared there is a promise every client may rely on; a field no handler acts on is worse than a missing one, because the call succeeds and the caller cannot tell it was ignored. Every field a method's params can carry is therefore read by this repository's own code, and `internal/runtimesvc/rpc` fails the build otherwise. Withdrawing a published field is a protocol change; the names removed on purpose are recorded in that package so they cannot return silently.
 
 ## Command surface
 

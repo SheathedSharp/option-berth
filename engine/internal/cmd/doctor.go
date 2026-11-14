@@ -15,11 +15,11 @@ import (
 
 	"github.com/sheathedsharp/option-berth/engine/internal/buildinfo"
 	"github.com/sheathedsharp/option-berth/engine/internal/config"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/sheathedsharp/option-berth/engine/internal/doctor"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/spf13/cobra"
 )
 
@@ -133,7 +133,7 @@ func doctorEnv(project string) doctor.Env {
 }
 
 func doctorDaemonProbe(ctx context.Context) doctor.DaemonInfo {
-	socket := daemon.SocketPath()
+	socket := runtimesvc.SocketPath()
 	conn, dialErr := client.Dial(ctx, client.ClientInfo{Name: "cli", Version: buildinfo.Version})
 	if dialErr != nil {
 		// Another protocol major is a daemon that is running, not one that is

@@ -39,7 +39,7 @@ func Schema() error {
 	if err != nil {
 		return err
 	}
-	return command(p.engine, "go", "generate", "./internal/daemon/rpc")
+	return command(p.engine, "go", "generate", "./internal/runtimesvc/rpc")
 }
 
 // Shot renders current state, optionally limited by -scope=services:NAME.

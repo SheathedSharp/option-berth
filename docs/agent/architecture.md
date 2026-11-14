@@ -6,7 +6,9 @@ temporary debugging or research tasks as standing requirements.
 
 ## Runtime responsibilities
 
-**Oberth Runtime** is the worktree runtime engine; **Runtime Service** is its local background host (`internal/daemon`). These are responsibility names, not a new product, process, Go runtime wrapper or RPC namespace. The product name `oberth`, module, daemon commands, socket, home and schema remain stable; upstream and license history remain intact.
+**Oberth Runtime** is the worktree runtime engine; **Runtime Service** is its local background host (`internal/runtimesvc`). These are responsibility names, not a new product, process, Go runtime wrapper or RPC namespace. The product name `oberth`, module, daemon commands, socket, home and schema remain stable; upstream and license history remain intact.
+
+The internal Go layout follows these responsibilities: `internal/runtimecore` owns pure readiness/generation/projection policy, and `internal/runtimesvc` owns the background host with its `client`, `rpc`, `runsreg` and `groupstart` adapters. Neither uses the name `runtime`, avoiding confusion with Go's standard library. The public Go module path and daemon wire/CLI names are unchanged.
 
 `runsreg` is the live run authority. `servicefacts` reduces a captured registry/exit set; `groups.ApplyServiceFacts` adapts it and `runtimecore.Project` refreshes the same published declaration rows. `ports` is the system-observation adapter: it contributes listeners and ownership evidence, never a second service lifecycle. `groupstart`, `killer` and existing claims transactions retain execution authority. Optional attention remains an agent-side consumer, not part of the host's control loop.
 

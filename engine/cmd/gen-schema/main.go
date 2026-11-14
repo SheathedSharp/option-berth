@@ -1,8 +1,8 @@
 // Command gen-schema writes the checked-in JSON Schemas to disk: the daemon
 // protocol schema, generated from the Go types in internal/state and
-// internal/daemon/rpc, and the oberth.yaml manifest schema, generated from
+// internal/runtimesvc/rpc, and the oberth.yaml manifest schema, generated from
 // internal/groups. It is driven by a //go:generate directive in
-// internal/daemon/rpc/schema.go; CI fails when a checked-in file differs from
+// internal/runtimesvc/rpc/schema.go; CI fails when a checked-in file differs from
 // what this command produces.
 package main
 
@@ -12,8 +12,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 )
 
 func main() {

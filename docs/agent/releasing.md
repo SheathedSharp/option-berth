@@ -68,7 +68,7 @@ is not published as a Go module, and a release creates no `engine/` tag.
 
 This is this project's version convention; it does not equate "feature update" with protocol
 compatibility. A change to the daemon wire contract counts as a protocol update. RPC has its own
-historically independent counter: `ProtocolVersion` in `engine/internal/daemon/rpc/types.go`. A
+historically independent counter: `ProtocolVersion` in `engine/internal/runtimesvc/rpc/types.go`. A
 protocol-level release raises that RPC major at the same time and regenerates the existing protocol
 schema; feature and fix releases do not change the RPC version on their own. For example, product 0.1.0
 with RPC 1.1.0 stepping the protocol yields product 1.0.0 and RPC 2.0.0 — the two need not match as

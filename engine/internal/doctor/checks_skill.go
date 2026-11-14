@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 )
 
 // skillInstall is one copy of the option-berth skill found under HOME:

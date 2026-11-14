@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
 )
 
 // A blind process must not create a daemon that outlives it, and the hint has

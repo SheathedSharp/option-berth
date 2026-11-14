@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
 	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
 )
 
@@ -60,7 +60,7 @@ func startTestDaemon(t *testing.T, table []ports.ListeningPort) {
 	t.Cleanup(func() { os.RemoveAll(socketDir) })
 	socket := filepath.Join(socketDir, "d.sock")
 
-	server := daemon.New(daemon.Options{
+	server := runtimesvc.New(runtimesvc.Options{
 		Scanner: scanner.New(scanner.Options{
 			DaemonVersion: "test",
 			Scan: func(scanner.Include) ([]ports.ListeningPort, error) {

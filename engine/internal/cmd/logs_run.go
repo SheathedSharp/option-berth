@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/client"
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 )
 
 // firstErrorPattern is the fixed vocabulary --first-error locates. It is a

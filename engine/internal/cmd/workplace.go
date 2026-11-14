@@ -9,9 +9,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/daemon/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/sheathedsharp/option-berth/engine/internal/git"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 	"github.com/sheathedsharp/option-berth/engine/internal/workplace"
 	"github.com/spf13/cobra"
