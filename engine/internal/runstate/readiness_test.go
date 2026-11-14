@@ -2,6 +2,7 @@ package runstate
 
 import (
 	"context"
+	"errors"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 	"testing"
 )
@@ -95,5 +96,24 @@ func TestHealthFallbackBindsHostAndKnownRunIdentity(t *testing.T) {
 	rows[0].Host = state.LocalhostName
 	if ready, _ := Ready(group, rows, "api"); !ready {
 		t.Fatal("exact identity healthy listener rejected")
+	}
+}
+
+func TestRestartRetainsPartialReceiptsAndFailure(t *testing.T) {
+	cause := errors.New("synthetic transport failure")
+	stopped, started, err := Restart(context.Background(), func(context.Context) (int, bool, error) { return 7, true, nil }, func(context.Context) (int, error) { return 3, cause })
+	if stopped != 7 || started != 3 || !errors.Is(err, cause) {
+		t.Fatalf("lost partial start/stop receipts: %d %d %v", stopped, started, err)
+	}
+	calls := 0
+	stopped, _, err = Restart(context.Background(), func(context.Context) (int, bool, error) { return 7, false, cause }, func(context.Context) (int, error) { calls++; return 0, nil })
+	if stopped != 7 || calls != 0 || !errors.Is(err, cause) {
+		t.Fatal("failed stop escaped or lost its receipt")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err = Restart(ctx, func(context.Context) (int, bool, error) { calls++; return 0, true, nil }, func(context.Context) (int, error) { calls++; return 0, nil })
+	if calls != 0 || !errors.Is(err, context.Canceled) {
+		t.Fatal("cancelled request invoked an operation")
 	}
 }
