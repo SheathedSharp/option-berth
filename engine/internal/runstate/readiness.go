@@ -48,13 +48,16 @@ func Ready(group state.Group, rows []state.Port, name string) (bool, string) {
 	if svc.PortActual == nil {
 		return false, "waiting_for_listener"
 	}
-	return HealthVerdict(svc, rows)
+	return healthVerdictFor(svc, rows, &group)
 }
 
 // healthVerdict reads the service's configured verdict, falling back to the
 // port row's when the service row has not been joined yet. rows is nil for a
 // command check, whose result has no port row.
 func HealthVerdict(svc *state.Service, rows []state.Port) (bool, string) {
+	return healthVerdictFor(svc, rows, nil)
+}
+func healthVerdictFor(svc *state.Service, rows []state.Port, group *state.Group) (bool, string) {
 	if svc.HealthStatus != nil {
 		if svc.HealthStatus.Status == state.HealthOK {
 			return true, ""
@@ -63,6 +66,12 @@ func HealthVerdict(svc *state.Service, rows []state.Port) (bool, string) {
 	}
 	if rows != nil && svc.PortActual != nil {
 		for _, row := range rows {
+			if group != nil && (state.HostOf(row.Host) != state.HostOf(group.Host) || (group.Name != "" && (row.Group == nil || *row.Group != group.Name))) {
+				continue
+			}
+			if svc.RunID != nil && row.Run != nil && row.Run.ID != "" && row.Run.ID != *svc.RunID {
+				continue
+			}
 			if row.Port != *svc.PortActual {
 				continue
 			}

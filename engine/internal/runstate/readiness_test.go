@@ -68,3 +68,32 @@ func TestReadinessGenerationMatrix(t *testing.T) {
 		})
 	}
 }
+
+func TestHealthFallbackCannotBorrowAnotherWorktreeListener(t *testing.T) {
+	group := state.Group{Name: "a", Services: []state.Service{{Name: "api", Running: true, Port: ptr(8000), PortActual: ptr(8000), Health: ptr("/health")}}}
+	rows := []state.Port{{Port: 8000, Group: ptr("b"), Health: &state.Health{Status: state.HealthOK}}}
+	if ready, _ := Ready(group, rows, "api"); ready {
+		t.Fatal("borrowed healthy listener from another worktree")
+	}
+	rows[0].Group = ptr("a")
+	if ready, _ := Ready(group, rows, "api"); !ready {
+		t.Fatal("same-worktree legacy health fallback lost")
+	}
+}
+
+func TestHealthFallbackBindsHostAndKnownRunIdentity(t *testing.T) {
+	group := state.Group{Name: "a", Services: []state.Service{{Name: "api", Running: true, RunID: ptr("r2"), PortActual: ptr(8000), Health: ptr("/health")}}}
+	rows := []state.Port{{Port: 8000, Group: ptr("a"), Run: &state.Run{ID: "r1"}, Health: &state.Health{Status: state.HealthOK}}}
+	if ready, _ := Ready(group, rows, "api"); ready {
+		t.Fatal("old generation health borrowed")
+	}
+	rows[0].Run.ID = "r2"
+	rows[0].Host = "other"
+	if ready, _ := Ready(group, rows, "api"); ready {
+		t.Fatal("other host health borrowed")
+	}
+	rows[0].Host = state.LocalhostName
+	if ready, _ := Ready(group, rows, "api"); !ready {
+		t.Fatal("exact identity healthy listener rejected")
+	}
+}
