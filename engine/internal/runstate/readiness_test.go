@@ -48,3 +48,23 @@ func TestRestartNeverStartsAfterFailedOrCancelledStop(t *testing.T) {
 		t.Fatal(a, b, err)
 	}
 }
+
+func TestReadinessGenerationMatrix(t *testing.T) {
+	for _, tc := range []struct {
+		name, expected, actual string
+		running, want          bool
+	}{
+		{"same ready", "r1", "r1", true, true}, {"replacement cannot satisfy old wait", "r1", "r2", true, false}, {"unknown identity cannot satisfy", "r1", "", true, false}, {"exited cannot satisfy", "r1", "r1", false, false}, {"legacy unbound wait", "", "r2", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			row := state.Service{Name: "worker", Running: tc.running}
+			if tc.actual != "" {
+				row.RunID = ptr(tc.actual)
+			}
+			ready, _ := Ready(state.Group{Services: []state.Service{row}}, nil, "worker")
+			if got := Confirms(tc.expected, &row) && ready; got != tc.want {
+				t.Fatalf("ready for selected generation =%v", got)
+			}
+		})
+	}
+}
