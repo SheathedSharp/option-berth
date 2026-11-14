@@ -613,6 +613,8 @@ graceful stop. --json returns one value in which `stopped` is the stop result an
 summary fields are the restart result. `restart` does not wait for readiness, so `started` services
 carry `ready:false`, and the human-readable output likewise marks readiness as unconfirmed.
 
+If cancellation or a transport failure interrupts the sequence after a stop receipt is known, that receipt and any received service outcomes are still reported. JSON keeps the same `stopped`/`services`/`start_id` shape; without a terminal start reply, `started`, `skipped` and `errors` are null (unknown), not a successful empty summary. The operation error retains the standard stderr error shape and nonzero exit status (130 for interruption). Human output likewise keeps known outcomes without printing a terminal start summary. A failed stop never starts services; failure before any stop receipt does not invent one.
+
 Only services the manifest declares can be restarted. A run started with `oberth start` has no
 manifest entry: stop it first if it is still running, then start that command again. When
 `restart --only` names such a run and the run ledger knows it, the `not_found` hint prints the

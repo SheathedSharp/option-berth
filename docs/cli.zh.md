@@ -506,6 +506,8 @@ JSON 值，不混入诊断。旧 daemon 不认识 `progress`，旧 CLI 也不会
 --json 返回一个值，其中 `stopped` 是停止结果，`services` 和汇总字段是重新启动结果。
 `restart` 不等待就绪，因此 `started` 服务带 `ready:false`，人读同样标注未确认就绪。
 
+取消或传输失败若发生在已获得停止回执之后，仍会报告该回执及已经收到的逐服务结果。JSON 保持既有 `stopped`/`services`/`start_id` 结构；没有启动终结回复时，`started`、`skipped` 和 `errors` 为 null（未知），而不是成功的空汇总。操作错误仍按标准错误结构写入 stderr，并保留非零退出码（中断为 130）。人读输出同样保留已知结果，不打印启动终结汇总。停止失败绝不启动服务；尚未获得任何停止回执就失败时，不会捏造回执。
+
 只有清单声明的服务可以重启。`oberth start` 启动的运行没有清单条目：如果它仍在运行，先停止，
 再重新执行那条命令。`restart --only` 点名这类运行且运行账本认识它时，`not_found` 的 hint 会
 打印记录下来的启动命令（cwd、group、name、port 与命令），而不是指回 `status`。
