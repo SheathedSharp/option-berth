@@ -25,12 +25,13 @@ var AllPortHolderKinds = []PortHolderKind{
 }
 
 // PortHolder is the process observed holding a service's declared port when
-// that service could not bind it. It is evidence for one port_occupied exit,
-// scoped to the one port the service named — not a machine-wide port list.
+// that service's own run does not own it: a port_occupied exit, or a running
+// service whose listener belongs to another process. It is scoped to the one
+// port the service named — not a machine-wide port list.
 //
-// It is a read-time join of a run exit fact with the listener batch from the
-// same observation. It is not persisted: absence means no holder was observed
-// at read time, never that the port is free.
+// It is a read-time join of a run fact with the listener batch from the same
+// observation. It is not persisted: absence means no holder was observed at
+// read time, never that the port is free.
 type PortHolder struct {
 	Port        int    `json:"port"`
 	BindAddress string `json:"bind_address,omitempty"`
@@ -38,12 +39,12 @@ type PortHolder struct {
 	// Command is the holder's command line, the fact a reader needs before
 	// deciding whether it may stop it. It can be empty when the process table
 	// was unreadable; PID and Kind still stand.
-	Command string          `json:"command"`
-	Cwd     string          `json:"cwd,omitempty"`
-	Kind    PortHolderKind  `json:"kind" jsonschema:"enum=oberth_run,enum=previous_run,enum=worktree_listener,enum=unknown"`
-	Group   string          `json:"group,omitempty"`
-	Name    string          `json:"name,omitempty"`
-	RunID   string          `json:"run_id,omitempty"`
+	Command string         `json:"command"`
+	Cwd     string         `json:"cwd,omitempty"`
+	Kind    PortHolderKind `json:"kind" jsonschema:"enum=oberth_run,enum=previous_run,enum=worktree_listener,enum=unknown"`
+	Group   string         `json:"group,omitempty"`
+	Name    string         `json:"name,omitempty"`
+	RunID   string         `json:"run_id,omitempty"`
 }
 
 // samePortHolder compares two holders by value. A pointer comparison would

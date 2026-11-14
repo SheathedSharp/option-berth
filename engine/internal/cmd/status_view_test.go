@@ -16,14 +16,15 @@ import (
 func statusScopeFixture() statusDocument {
 	apiPort, apiActual := 3000, 3001
 	dbPort, webPort := 5432, 8080
+	apiRun := "api-run"
 	crashed := 2
 	return statusDocument{
 		Scope: display.Scope{Kind: "worktree", Name: "shop", Root: "/work/shop"},
 		Worktree: state.Group{
 			Name: "shop", Identity: "wt_0123456789ab", Branch: "main",
 			Services: []state.Service{
-				{Name: "api", Port: &apiPort, PortActual: &apiActual, Running: true, DependsOn: []string{"worker"},
-					Stats: &state.Stats{CPUPercent: 2, MemoryRSS: 20}},
+				{Name: "api", Port: &apiPort, PortActual: &apiActual, Running: true, RunID: &apiRun,
+					DependsOn: []string{"worker"}, Stats: &state.Stats{CPUPercent: 2, MemoryRSS: 20}},
 				{Name: "worker", DependsOn: []string{"db"}},
 				{Name: "db", Port: &dbPort, LastExit: &state.ServiceExit{Reason: "crashed", Code: crashed, RunID: "db-run"}},
 				{Name: "web", Port: &webPort, Running: true,
@@ -32,7 +33,8 @@ func statusScopeFixture() statusDocument {
 			Machine: []state.MachineRef{{Name: "redis", Port: 6379}},
 		},
 		Ports: []state.Port{
-			{Port: apiPort}, {Port: apiActual}, {Port: dbPort}, {Port: webPort}, {Port: 9999},
+			{Port: apiPort}, {Port: apiActual, Run: &state.Run{ID: apiRun, Group: "shop", Name: "api"}},
+			{Port: dbPort}, {Port: webPort}, {Port: 9999},
 		},
 		Exits: []rpc.RunRecord{
 			{ID: "api-run", Name: "api", Reason: "running"},
@@ -192,6 +194,73 @@ func TestBriefStatusKeepsOnlyRuntimeFacts(t *testing.T) {
 	// field.
 	if got := strings.Count(text, `"code_changed_since_start"`); got != 1 {
 		t.Fatalf("code_changed_since_start appears %d times, want only the checked service: %s", got, text)
+	}
+}
+
+// TestBriefStatusMarksAListenerNotStartedByOberth: `running` says a listener
+// exists, not that option-berth owns it. When the run record is gone and a
+// foreign process holds the declared port, the brief document must name that
+// process; otherwise a restart reads as if it acted on a run option-berth owns.
+func TestBriefStatusMarksAListenerNotStartedByOberth(t *testing.T) {
+	doc := statusScopeFixture()
+	// api's own run is gone; the listener on its actual port remains.
+	doc.Worktree.Services[0].RunID = nil
+	doc.Ports[1] = state.Port{
+		Port: 3001, PID: 20792, Command: "python3 -u svc.py 3001",
+		Group: strPtrOrNil("shop"),
+	}
+
+	brief := briefStatusFrom(doc)
+	svc := brief.Worktree.Services[0]
+	if svc.PortHolder == nil {
+		t.Fatal("brief service has no holder for a listener owned by another process")
+	}
+	if svc.PortHolder.Kind != state.PortHolderListener ||
+		svc.PortHolder.PID != 20792 || svc.PortHolder.Port != 3001 {
+		t.Fatalf("holder = %+v, want the foreign listener on 3001", svc.PortHolder)
+	}
+	raw, err := json.Marshal(brief)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"port_holder":{"port":3001,`) {
+		t.Fatalf("brief = %s, want the holder on the running service", raw)
+	}
+
+	// A managed listener is not a holder; the fixture's api run owns 3001.
+	if holder := briefStatusFrom(statusScopeFixture()).Worktree.Services[0].PortHolder; holder != nil {
+		t.Fatalf("managed listener reported holder %+v", holder)
+	}
+}
+
+// TestBriefStatusNamesAnotherRunsListener: a listener attributed to a run of
+// another worktree is still not this service's run. The holder's kind and
+// run identity say which run it is, so a reader does not have to guess from a
+// bare port number.
+func TestBriefStatusNamesAnotherRunsListener(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		run   *state.Run
+		kind  state.PortHolderKind
+		group string
+	}{
+		{"another worktree", &state.Run{ID: "other-run", Group: "shop@other", Name: "api"},
+			state.PortHolderRun, "shop@other"},
+		{"an earlier generation", &state.Run{ID: "old-run", Group: "shop", Name: "api"},
+			state.PortHolderPrevious, "shop"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := statusScopeFixture()
+			doc.Worktree.Services[0].RunID = nil
+			doc.Ports[1].Run = tc.run
+			doc.Ports[1].PID = 20792
+
+			holder := briefStatusFrom(doc).Worktree.Services[0].PortHolder
+			if holder == nil || holder.Kind != tc.kind ||
+				holder.Group != tc.group || holder.RunID != tc.run.ID {
+				t.Fatalf("holder = %+v, want %s run %s", holder, tc.kind, tc.run.ID)
+			}
+		})
 	}
 }
 
