@@ -386,6 +386,32 @@ resolution rate and detection latency under `quality`. Quality records are not `
 change no execution permission; the `sessions` object explains the number of sessions, polls, events,
 the model calls, cache hits and no-event polls; with no real feedback the metrics stay `null`.
 
+`on` means permission to assess, not that a task session is running. A development skill may attach
+one existing runner to a relevant runtime task after binding its canonical worktree, redacted task
+summary and fixed evaluation options. It must reuse its own task handle, close it on task exit, and
+never create global monitoring or grant permission for side effects. The runner checks consent and
+the configured provider identity before every poll; disabling assessment or changing the endpoint,
+model or credential ends that task session before another request (`disabled` or
+`configuration_changed`). No eligible anomaly means no provider request.
+
+`quality.model_calls` and `quality.cache_hits` count recorded transport attempts and cache reuse,
+including one-shot assessments and sessions that have not ended; lifecycle summaries are not added
+twice. Validation and status-read failures do not count as model calls. Local errors are recorded
+without their private error text. Old cumulative session totals are reused only for an all-time or
+fully covered session window; `legacy_counts_unallocated: true` flags older totals that cannot be
+located inside a partial window, so displayed counts are lower bounds. `--quality-project` accepts
+a label (which may aggregate names) or an exact worktree root/identity.
+
+`quality.activity` separates consent from observation. Its `state` is `no_session` (no observation
+record in this home/window/filter), `observing` (a completed task poll has an unexpired lease),
+`failed` (the last observation failed), or `recent` (history only, no fresh lease). It includes
+`observing_sessions`, `last_observed_at`, `last_status`, `reason`, and `no_event`. Observation leases
+last between 15 and 60 seconds depending on the polling interval; they are evidence of a recent
+completed poll, not proof of process liveness. A historical `subscribed` record is never an active
+session. Each poll leaves a local `observation` or `assessment` record even when NDJSON output is
+unchanged; no-event observations do not inflate `assessment_records`. Rotation remains bounded,
+so an absent record is not a provider billing statement or proof that a request never occurred.
+
 ### Agent-facing JSON fields
 
 The fields below are the minimal set an agent needs to make decisions from the `--json` output of

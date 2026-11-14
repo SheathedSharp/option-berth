@@ -48,6 +48,8 @@ type TelemetryRecord struct {
 	StateRevision     string             `json:"state_revision,omitempty"`
 	ContextID         string             `json:"context_id,omitempty"`
 	SessionID         string             `json:"session_id,omitempty"`
+	PerPoll           bool               `json:"per_poll,omitempty"`
+	ObservationUntil  string             `json:"observation_until,omitempty"`
 	EventKind         string             `json:"event_kind,omitempty"`
 	Service           string             `json:"service,omitempty"`
 	Status            string             `json:"status,omitempty"`
@@ -111,35 +113,39 @@ type FeedbackInput struct {
 // nil metric means that there are not enough labels to calculate it; callers
 // must never interpret an absent metric as zero quality or perfect quality.
 type QualityReport struct {
-	Schema             string               `json:"schema"`
-	GeneratedAt        string               `json:"generated_at"`
-	Source             string               `json:"source"`
-	WindowStart        string               `json:"window_start,omitempty"`
-	ProjectFilter      string               `json:"project_filter,omitempty"`
-	RecordsRead        int                  `json:"records_read"`
-	AssessmentRecords  int                  `json:"assessment_records"`
-	FeedbackRecords    int                  `json:"feedback_records"`
-	UniqueCases        int                  `json:"unique_cases"`
-	LabeledCases       int                  `json:"labeled_cases"`
-	UnlabeledCases     int                  `json:"unlabeled_cases"`
-	LabelCoverage      *float64             `json:"label_coverage"`
-	TaskRelevantLabels int                  `json:"task_relevant_labels"`
-	StatusCounts       map[string]int       `json:"status_counts"`
-	EventCounts        map[string]int       `json:"event_counts"`
-	ProjectCounts      map[string]int       `json:"project_counts"`
-	DecisionReasons    map[string]int       `json:"decision_reason_counts"`
-	RecommendedOptions map[string]int       `json:"recommended_option_counts"`
-	ModelCounts        map[string]int       `json:"model_counts"`
-	UserDecisions      map[string]int       `json:"user_decision_counts"`
-	Availability       AvailabilityMetric   `json:"assessment_availability"`
-	HumanDecision      ClassificationMetric `json:"human_decision"`
-	ModelNeedsHuman    CalibrationMetric    `json:"model_needs_human"`
-	ModelTaskRelevant  CalibrationMetric    `json:"model_task_relevant"`
-	Recommendation     RateMetric           `json:"recommendation"`
-	Actions            ActionMetric         `json:"actions"`
-	Resolution         ResolutionMetric     `json:"resolution"`
-	DetectionLatency   LatencyMetric        `json:"detection_latency"`
-	Sessions           SessionMetric        `json:"sessions"`
+	Schema                  string               `json:"schema"`
+	GeneratedAt             string               `json:"generated_at"`
+	Source                  string               `json:"source"`
+	WindowStart             string               `json:"window_start,omitempty"`
+	ProjectFilter           string               `json:"project_filter,omitempty"`
+	RecordsRead             int                  `json:"records_read"`
+	AssessmentRecords       int                  `json:"assessment_records"`
+	ModelCalls              int                  `json:"model_calls"`
+	CacheHits               int                  `json:"cache_hits"`
+	LegacyCountsUnallocated bool                 `json:"legacy_counts_unallocated,omitempty"`
+	Activity                ActivityMetric       `json:"activity"`
+	FeedbackRecords         int                  `json:"feedback_records"`
+	UniqueCases             int                  `json:"unique_cases"`
+	LabeledCases            int                  `json:"labeled_cases"`
+	UnlabeledCases          int                  `json:"unlabeled_cases"`
+	LabelCoverage           *float64             `json:"label_coverage"`
+	TaskRelevantLabels      int                  `json:"task_relevant_labels"`
+	StatusCounts            map[string]int       `json:"status_counts"`
+	EventCounts             map[string]int       `json:"event_counts"`
+	ProjectCounts           map[string]int       `json:"project_counts"`
+	DecisionReasons         map[string]int       `json:"decision_reason_counts"`
+	RecommendedOptions      map[string]int       `json:"recommended_option_counts"`
+	ModelCounts             map[string]int       `json:"model_counts"`
+	UserDecisions           map[string]int       `json:"user_decision_counts"`
+	Availability            AvailabilityMetric   `json:"assessment_availability"`
+	HumanDecision           ClassificationMetric `json:"human_decision"`
+	ModelNeedsHuman         CalibrationMetric    `json:"model_needs_human"`
+	ModelTaskRelevant       CalibrationMetric    `json:"model_task_relevant"`
+	Recommendation          RateMetric           `json:"recommendation"`
+	Actions                 ActionMetric         `json:"actions"`
+	Resolution              ResolutionMetric     `json:"resolution"`
+	DetectionLatency        LatencyMetric        `json:"detection_latency"`
+	Sessions                SessionMetric        `json:"sessions"`
 }
 
 // SessionMetric explains why a quality ledger has no model calls. The counts
@@ -420,7 +426,7 @@ func normalizeTelemetry(record TelemetryRecord, now time.Time) (TelemetryRecord,
 	if record.Schema != TelemetrySchema {
 		return TelemetryRecord{}, fmt.Errorf("attention: unsupported telemetry schema %q", record.Schema)
 	}
-	if record.Kind != "assessment" && record.Kind != "feedback" && record.Kind != "lifecycle" {
+	if record.Kind != "assessment" && record.Kind != "observation" && record.Kind != "feedback" && record.Kind != "lifecycle" {
 		return TelemetryRecord{}, fmt.Errorf("attention: unsupported telemetry kind %q", record.Kind)
 	}
 	if record.Source == "" {
@@ -433,6 +439,13 @@ func normalizeTelemetry(record TelemetryRecord, now time.Time) (TelemetryRecord,
 		record.RecordedAt = now.UTC().Format(time.RFC3339Nano)
 	} else if _, err := time.Parse(time.RFC3339Nano, record.RecordedAt); err != nil {
 		return TelemetryRecord{}, errors.New("attention: invalid telemetry recorded_at")
+	}
+	if record.ObservationUntil != "" {
+		until, err := time.Parse(time.RFC3339Nano, record.ObservationUntil)
+		at, _ := time.Parse(time.RFC3339Nano, record.RecordedAt)
+		if err != nil || until.Before(at) || until.Sub(at) > time.Minute {
+			return TelemetryRecord{}, errors.New("attention: invalid observation lease")
+		}
 	}
 	if record.RecordID == "" {
 		record.RecordID = telemetryID(record.Kind, record.EventID, record.StateRevision, record.ContextID, now)
@@ -476,7 +489,12 @@ func normalizeTelemetry(record TelemetryRecord, now time.Time) (TelemetryRecord,
 			return TelemetryRecord{}, fmt.Errorf("attention: unsupported chosen option %q", record.Feedback.ChosenOption)
 		}
 	}
-	if len(record.EventID) == 0 && record.Kind != "lifecycle" && record.Status != "clear" && record.Status != "error" && record.Status != "stale" {
+	if record.Kind == "observation" {
+		if record.Assessment != nil || (record.Status != "clear" && record.Status != "error" && record.Status != "stale" && record.Status != "unavailable") {
+			return TelemetryRecord{}, errors.New("attention: invalid event-free observation")
+		}
+	}
+	if len(record.EventID) == 0 && record.Kind != "lifecycle" && record.Kind != "observation" && record.Status != "clear" && record.Status != "error" && record.Status != "stale" {
 		return TelemetryRecord{}, errors.New("attention: non-clear telemetry requires event_id")
 	}
 	return record, nil
@@ -614,6 +632,7 @@ func BuildQualityReport(records []TelemetryRecord, since time.Time, projectFilte
 			report.Sessions.Unavailable += record.Unavailable
 		}
 	}
+	summarizeObservations(&report, selected, since, now)
 	// A feedback record may be written after an agent has acted, and rotated
 	// ledgers can be read in an order different from the original append order.
 	// Resolve context-less feedback against the newest assessment for its case
