@@ -73,6 +73,7 @@ func TestRegisteredWorkerProgressWhileObserverBusy(t *testing.T) {
 	go func() { defer close(done); _, _ = loop.RescanContext(ctx, scanner.Include{}) }()
 	<-entered
 	reg.Register(runsreg.Record{ID: "r2", PID: 90210, Group: "a", Name: "worker", StartedAt: time.Now()})
+	loop.Invalidate()
 	read, stop := context.WithTimeout(ctx, 100*time.Millisecond)
 	defer stop()
 	snap, err := loop.SnapshotAllContext(read, scanner.Include{})

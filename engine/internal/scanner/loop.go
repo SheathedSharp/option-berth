@@ -1429,7 +1429,8 @@ func (l *Loop) SnapshotAll(include Include) (state.Snapshot, error) {
 // never for an owner that has cancelled its request.
 func (l *Loop) SnapshotAllContext(ctx context.Context, include Include) (state.Snapshot, error) {
 	// Refresh the same registry projection before reusing a listener cache.
-	busy := len(l.runGate) > 0
+	// Periodic and RPC-owned observations have distinct admission gates.
+	busy := len(l.runGate) > 0 || len(l.rpcGate) > 0
 	snap, have, err := l.refreshRuntime(ctx, busy)
 	if err != nil {
 		return state.Snapshot{}, err
