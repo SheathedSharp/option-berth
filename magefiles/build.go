@@ -76,8 +76,8 @@ func RunCLI(args string) error {
 	return commandWithIO(p.root, filepath.Join(p.root, "bin", "oberth"), argv...)
 }
 
-// RunDaemon builds the CLI and starts the background collector.
-func RunDaemon() error {
+// RunRuntimeService builds the CLI and starts the background collector.
+func RunRuntimeService() error {
 	p, err := loadProject()
 	if err != nil {
 		return err
