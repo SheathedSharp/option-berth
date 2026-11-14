@@ -31,3 +31,19 @@ func TestStaleListenersAreUnknownNotReady(t *testing.T) {
 		t.Fatalf("stale observation promoted: %+v", got)
 	}
 }
+
+func TestLegacyRunPreservesHealthOnlyWithMatchingBirthEvidence(t *testing.T) {
+	stamp := "2026-11-14T00:00:00Z"
+	old := state.Snapshot{Groups: []state.Group{{Name: "a", Services: []state.Service{{Name: "worker", Running: true, PID: ptr(42), StartedAt: &stamp, HealthStatus: &state.Health{Status: state.HealthOK}}}}}}
+	makeFacts := func(at string) servicefacts.Snapshot {
+		return servicefacts.Capture([]servicefacts.RunRecord{{Key: servicefacts.Key{Group: "a", Service: "worker"}, Run: state.ServiceRun{PID: 42, StartedAt: at}}}, nil)
+	}
+	if got := Project(old, makeFacts(stamp), true).Groups[0].Services[0]; got.HealthStatus == nil {
+		t.Fatal("legacy matching birth lost computed health")
+	}
+	for _, at := range []string{"2026-11-14T00:01:00Z", "0001-01-01T00:00:00Z"} {
+		if got := Project(old, makeFacts(at), true).Groups[0].Services[0]; got.HealthStatus != nil {
+			t.Fatal("changed or unknown legacy birth inherited health")
+		}
+	}
+}

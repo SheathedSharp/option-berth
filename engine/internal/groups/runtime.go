@@ -3,6 +3,7 @@ package groups
 import (
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 	"github.com/sheathedsharp/option-berth/engine/internal/servicefacts"
@@ -109,7 +110,7 @@ func ApplyServiceFacts(row state.Service, result servicefacts.Result, expectedCw
 		}
 		row.ManifestRuntimeMismatch = drift
 	}
-	if row.Running && row.RunID != nil && previous.RunID != nil && *row.RunID == *previous.RunID {
+	if row.Running && sameRuntimeGeneration(row, previous) {
 		if row.HealthStatus == nil {
 			row.HealthStatus = previous.HealthStatus
 		}
@@ -118,4 +119,18 @@ func ApplyServiceFacts(row state.Service, result servicefacts.Result, expectedCw
 		}
 	}
 	return row
+}
+
+// Older mirrors may lack a run ID. A positive PID plus equal known birth time
+// can retain read-only enrichment; a numeric PID alone cannot. This does not
+// mint an ID or change identity-bound control/readiness capability checks.
+func sameRuntimeGeneration(a, b state.Service) bool {
+	if a.RunID != nil || b.RunID != nil {
+		return a.RunID != nil && b.RunID != nil && *a.RunID != "" && *a.RunID == *b.RunID
+	}
+	if a.PID == nil || b.PID == nil || *a.PID <= 0 || *a.PID != *b.PID || a.StartedAt == nil || b.StartedAt == nil {
+		return false
+	}
+	birth, err := time.Parse(time.RFC3339Nano, *a.StartedAt)
+	return err == nil && !birth.IsZero() && *a.StartedAt == *b.StartedAt
 }
