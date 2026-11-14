@@ -789,10 +789,12 @@ Runtime Service 的存储及控制文件目录必须位于已验证的本地文�
 | `oberth feedback log [--json]` | 每份报告对应 issue 的状态、关闭时间、标签和链接，经 `gh` 读取 |
 
 `report` 只接受固定词汇：`--kind`（`slow`、`stalled`、`coarse`、`misleading`、`observation`、
-`other`）、`--command`（oberth 的命令名）、`--error-code`（引擎会发布的错误码）和 `--observation`
-（`observable`、`partial`、`blind`、`bind_denied`）。`--elapsed` 与 `--services` 按档位提交，不是
-原始数字；构建自己补上版本、提交和平台。`--note` 是报告人自己的话：先脱敏，上限 800 字节，
-看起来像凭据时直接拒绝，并且在传 `--yes` 之前要给人看过并确认。
+`other`）、`--command`（oberth 的命令名）、`--error-code`（引擎会发布的错误码，包括只有 CLI 才会
+报告的 `runtime_service_unavailable`、`runtime_service_not_running`、`interrupted`、`timeout`、
+`stale` 和 `attn_*` 系列）和 `--observation`（`observable`、`partial`、`blind`、`bind_denied`）。
+`--elapsed` 与
+`--services` 按档位提交，不是原始数字；构建自己补上版本、提交和平台。`--note` 是报告人自己的话：
+先脱敏，上限 800 字节，看起来像凭据时直接拒绝，并且在传 `--yes` 之前要给人看过并确认。
 
 终端上没有 `--kind` 或 `--command` 时，`report` 用方向键从同一份固定词汇里问，再问可选的
 描述；提交前展示完整报告并要求确认。`--json`、`--yes` 和管道仍走纯参数路径，脚本不会卡在提问上。
