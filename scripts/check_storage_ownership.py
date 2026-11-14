@@ -41,9 +41,17 @@ class Probe:
                 self.lines.put(line)
             self.lines.put(None)
         threading.Thread(target=read, daemon=True).start()
-        self.opened = self.receive()
-        if not self.opened["opened"]:
-            assert self.process.wait(timeout=3) == 2
+        try:
+            self.opened = self.receive()
+            if not self.opened["opened"]:
+                assert self.process.wait(timeout=3) == 2
+        except BaseException:
+            if self.process.poll() is None:
+                self.process.kill()  # only this directly-created probe handle
+                self.process.wait(timeout=3)
+            for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
+                stream.close()
+            raise
 
     def receive(self):
         line = self.lines.get(timeout=5)

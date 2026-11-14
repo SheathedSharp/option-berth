@@ -4,9 +4,11 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
-// Pure advisory-lock regressions: no Server, DB, process scan, socket or child.
+// Private SQLite/advisory-lock regressions: no Server, scan, socket or child.
 func TestStorageLeaseExcludesDifferentEndpoints(t *testing.T) {
 	root := t.TempDir()
 	db := filepath.Join(root, "data.db")
@@ -102,7 +104,11 @@ func TestStorageLeasePreservesGuardInodeAndReleases(t *testing.T) {
 
 func TestStorageLeaseResolvesDatabaseSymlink(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "data.db")
-	if err := os.WriteFile(target, []byte("fixture-not-a-real-database"), 0600); err != nil {
+	fixture, err := store.Open(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.Close(); err != nil {
 		t.Fatal(err)
 	}
 	alias := filepath.Join(t.TempDir(), "alias.db")

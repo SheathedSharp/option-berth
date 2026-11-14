@@ -4,10 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
-	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
@@ -21,8 +19,11 @@ import (
 func (h *testHarness) withStore(path string) *store.Store {
 	h.t.Helper()
 	h.srv.opts.DBPath = path
-	h.srv.openStore()
-	st := h.srv.host.Store
+	st, err := store.OpenOwned(path)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	h.srv.setStore(st)
 	if st == nil {
 		h.t.Fatalf("the runtime service opened no store at %s", path)
 	}
@@ -54,47 +55,34 @@ func TestStatusReportsTheDatabasePath(t *testing.T) {
 		t.Errorf("db_path = %q, want %q", after.DBPath, dbPath)
 	}
 	if h.srv.host.DB == nil {
-		t.Error("Runtime.DB is nil; the runtime hands extensions the raw handle")
+		t.Error("HostContext.DB is nil; the host hands extensions the owning handle")
 	}
 }
 
-func TestCorruptDatabaseIsRecreatedAndAnnounced(t *testing.T) {
+func TestCorruptDatabaseRefusesOwnershipAndKeepsEvidence(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "option-berth.db")
-	if err := os.WriteFile(dbPath, []byte("this is not a SQLite database"), 0o600); err != nil {
+	original := []byte("this is not a SQLite database")
+	if err := os.WriteFile(dbPath, original, 0600); err != nil {
 		t.Fatal(err)
 	}
-
-	h := newHarness(t, t.Context())
-	cl := h.dial(t.Context())
-	if e := cl.call("state.subscribe", rpc.StateSubscribeParams{Events: true}, nil); e != nil {
-		t.Fatalf("state.subscribe: %v", e)
+	if lease, err := acquireStorageLease(dir, dbPath, filepath.Join(dir, "runtime-service.sock"), nil); err == nil {
+		_ = lease.Release()
+		t.Fatal("started ownership on an unreadable database")
 	}
-
-	h.withStore(dbPath)
-
-	// A change gives the queued event something to ride out on.
-	h.setRows(ports.ListeningPort{Port: 8123, PID: 42, Process: "python3"})
-	h.loop.Wake()
-
-	ev := cl.waitForEvent(t, "db_reset")
-	if ev.Data["moved_to"] == nil {
-		t.Errorf("db_reset reported no moved_to: %+v", ev.Data)
+	after, err := os.ReadFile(dbPath)
+	if err != nil || string(after) != string(original) {
+		t.Fatalf("startup changed corrupt evidence: %q %v", after, err)
 	}
-
-	entries, err := os.ReadDir(dir)
+	moved, err := filepath.Glob(dbPath + ".corrupt-*")
+	if err != nil || len(moved) != 0 {
+		t.Fatalf("startup parked/reset database: %v %v", moved, err)
+	}
+	lock, err := AcquireLock(filepath.Join(dir, "storage.lock"))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("failed startup leaked storage guard: %v", err)
 	}
-	movedAside := ""
-	for _, entry := range entries {
-		if rest, ok := strings.CutPrefix(entry.Name(), "option-berth.db.corrupt-"); ok && rest != "" {
-			movedAside = entry.Name()
-		}
-	}
-	if movedAside == "" {
-		t.Errorf("the unusable database was not moved aside: %v", entries)
-	}
+	_ = lock.Release()
 }
 
 // waitForEvent reads notifications until a state.event of the named kind

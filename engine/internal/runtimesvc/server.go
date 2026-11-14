@@ -96,9 +96,6 @@ type Server struct {
 	// Oldest physical slot; logical replay order is reconstructed only on read.
 	replayStart int
 
-	pendingMu sync.Mutex
-	pending   []state.Event
-
 	graceful atomic.Bool
 	wg       sync.WaitGroup
 	stopOnce sync.Once
@@ -168,7 +165,7 @@ func (s *Server) scannerFor(opts Options) *scanner.Loop {
 	})
 }
 
-// buildRuntime records what this process is: its version, socket, binary and
+// buildHostContext records what this process is: its version, socket, binary and
 // start time, plus the handle the run registry hangs off.
 func (s *Server) buildHostContext(opts Options) *HostContext {
 	binary := opts.BinaryPath
@@ -199,6 +196,15 @@ func (s *Server) Socket() string { return s.socket }
 // on this socket. A lock the caller injected is borrowed, so Serve does not own
 // it and must not release it.
 func (s *Server) acquireSingleInstance() error {
+	if s.opts.Lock != nil {
+		s.lock = s.opts.Lock
+	} else {
+		lock, err := AcquireLock(lockPathFor(s.socket))
+		if err != nil {
+			return err
+		}
+		s.lock, s.ownLock = lock, true
+	}
 	dbPath := s.opts.DBPath
 	if dbPath == "" {
 		dbPath = paths.DB()
@@ -209,19 +215,12 @@ func (s *Server) acquireSingleInstance() error {
 	}
 	lease, err := acquireStorageLease(paths.Dir(), dbPath, s.socket, previousDirs)
 	if err != nil {
+		if s.ownLock {
+			_ = s.lock.Release()
+		}
 		return err
 	}
 	s.storage = lease
-	if s.opts.Lock != nil {
-		s.lock = s.opts.Lock
-		return nil
-	}
-	lock, err := AcquireLock(lockPathFor(s.socket))
-	if err != nil {
-		_ = s.storage.Release()
-		return err
-	}
-	s.lock, s.ownLock = lock, true
 	return nil
 }
 
@@ -266,7 +265,11 @@ func (s *Server) Serve(ctx context.Context) error {
 
 	// Opening the store before the scanner lets the very first tick resolve
 	// groups with the stored pins and publish the stored names.
-	s.openStore()
+	if err := s.openStore(); err != nil {
+		_ = s.ln.Close()
+		_ = removeStaleSocket(s.socket)
+		return err
+	}
 	defer s.closeStore()
 
 	// Restore required ownership before starting the scanner or accepting RPC.
@@ -1083,7 +1086,6 @@ func (s *Server) publish(prev, next state.Snapshot, events []state.Event) {
 	// Events raised before anyone was listening ride out with the first publish
 	// that has an events viewer to carry them to.
 	if aud.events {
-		events = append(s.takePending(), events...)
 	}
 	if !aud.subscribers {
 		return

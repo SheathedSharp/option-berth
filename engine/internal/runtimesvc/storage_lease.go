@@ -5,23 +5,38 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 // storageLease owns all storage and cross-generation exclusion handles. Its
 // lifetime encloses store opening, restoration, producers, and store closing.
 // Endpoint ownership alone cannot protect a DB shared by different sockets.
-type storageLease struct{ locks []*Lock }
+type storageLease struct {
+	locks    []*Lock
+	database *store.Store
+}
 
 // acquireStorageLease never dials an older host or removes any lock inode.
 // previousDirs must include the previous default endpoint directory and any
-// explicitly configured previous endpoint locations. An unknown arbitrary old
-// endpoint cannot be discovered from a DB: callers must not claim otherwise.
+// explicitly configured previous endpoint locations. SQLite ownership, not this
+// directory inventory, excludes older writers at arbitrary endpoint locations.
 func acquireStorageLease(stateDir, dbPath, socket string, previousDirs []string) (*storageLease, error) {
 	// Validate before creating even a neutral lock: a relative old guard would
 	// resolve against the host working directory and could protect the wrong DB.
 	for _, dir := range previousDirs {
 		if dir == "" || !filepath.IsAbs(dir) {
 			return nil, fmt.Errorf("runtime_service.previous_service_lock_dirs requires non-empty absolute directories; storage was not opened")
+		}
+	}
+	// Refuse unsupported network/user-space storage before creating sidecars.
+	locations := append([]string{stateDir, dbPath}, previousDirs...)
+	if !isNamedPipe(socket) {
+		locations = append(locations, filepath.Dir(socket))
+	}
+	for _, location := range locations {
+		if err := store.ValidateStorageFilesystem(location); err != nil {
+			return nil, err
 		}
 	}
 	// Existing DB symlinks must name the same lease as the underlying file.
@@ -63,6 +78,12 @@ func acquireStorageLease(stateDir, dbPath, socket string, previousDirs []string)
 		}
 		lease.locks = append(lease.locks, lock)
 	}
+	database, err := store.OpenOwned(dbPath)
+	if err != nil {
+		_ = lease.Release()
+		return nil, fmt.Errorf("claiming Runtime Service database ownership: %w", err)
+	}
+	lease.database = database
 	return lease, nil
 }
 
@@ -75,6 +96,10 @@ func (l *storageLease) Release() error {
 		return nil
 	}
 	var errs []error
+	if l.database != nil {
+		errs = append(errs, l.database.Close())
+		l.database = nil
+	}
 	for i := len(l.locks) - 1; i >= 0; i-- {
 		errs = append(errs, l.locks[i].Release())
 	}
