@@ -37,7 +37,10 @@ func TestSystemScanAndScopedCursorReplay(t *testing.T) {
 	if len(up.Errors) != 0 {
 		t.Fatalf("up errors: %v", up.Errors)
 	}
-	e.waitStatus(b.Root, func(s statusDoc) bool { return s.serviceRunning("api", b.Port, true) })
+	st := e.waitStatus(b.Root, func(s statusDoc) bool { return s.serviceRunning("api", b.Port, true) })
+	if st.Scope.Root == "" {
+		t.Fatal("CLI omitted canonical scope.root")
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
@@ -52,7 +55,8 @@ func TestSystemScanAndScopedCursorReplay(t *testing.T) {
 	}
 	c := dial()
 	live, before := waitNativeListener(t, ctx, c, b.Port, true, 0)
-	scope := &state.Scope{Worktrees: []string{b.Root}}
+	// Use the real CLI contract, not a possibly symlinked temporary path.
+	scope := &state.Scope{Worktrees: []string{st.Scope.Root}}
 	sub, err := c.Subscribe(ctx, client.SubscribeOptions{Events: true, Scope: scope})
 	if err != nil {
 		t.Fatal(err)
