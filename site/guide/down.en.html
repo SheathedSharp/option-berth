@@ -14,7 +14,7 @@
   <pre><code>oberth worktrees --gone
 oberth down --identity wt_0123456789ab</code></pre>
 </figure>
-<p>An identity the daemon has never seen returns <code>not_found</code>; it does not guess a group. When the target already has no runs or reservations, an explicit identity is still a successful empty stop.</p>
+<p>An identity the Runtime Service has never seen returns <code>not_found</code>; it does not guess a group. When the target already has no runs or reservations, an explicit identity is still a successful empty stop.</p>
 
 <h2 id="ambiguous">When the target is ambiguous</h2>
 <p>Two checkouts can end up with the same group name, for example two directories with the same name under different parents. Their groups are already merged, so a group-scoped stop would hit both. <code>down</code> returns <code>ambiguous</code> instead of picking one for the caller. Name the process by port or pid with <code>kill</code>.</p>

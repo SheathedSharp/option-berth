@@ -12,7 +12,7 @@ oberth workplace show --limit 20</code></pre>
 
 <h2 id="automatic">什么会被自动记录</h2>
 <ul>
-  <li><code>oberth start</code> 把这次运行写进当前 workplace。分离模式（<code>-d</code>）的运行，由 daemon 在记录到退出时关闭。</li>
+  <li><code>oberth start</code> 把这次运行写进当前 workplace。分离模式（<code>-d</code>）的运行，由 Runtime Service 在记录到退出时关闭。</li>
   <li><code>oberth agent stream</code> 每轮写一个条目：<code>turn.started</code> 打开它，<code>turn.completed</code> 用提供方报告的结果关闭它。</li>
   <li><code>oberth workplace record</code> 写引擎看不见的工作：agent 自己的尝试、客户端里的交互 shell、原生 agent。重复报告同一个 <code>--id</code> 会更新条目，所以同一件事的开始和结束可以按任意顺序到达。</li>
 </ul>
@@ -31,7 +31,7 @@ oberth workplace show --limit 20</code></pre>
   <ul>
     <li><code>status</code> 从不读它来判断服务在不在跑。</li>
     <li><code>show</code> 读回当时发生了什么；它不会把当时的进程叫回来。</li>
-    <li>没有 daemon 时，读取仍以只读方式打开账本，写入需要 daemon。<code>up</code> 与 <code>down</code> 不写工作记录，因为声明的生命周期不是一条临时工作条目。</li>
+    <li>没有 Runtime Service 时，读取仍以只读方式打开账本，写入需要 Runtime Service。<code>up</code> 与 <code>down</code> 不写工作记录，因为声明的生命周期不是一条临时工作条目。</li>
     <li>记录是工作的证据，不是会话恢复。它从不把没观察到的结束说成成功。</li>
   </ul>
 </aside>
