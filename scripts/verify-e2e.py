@@ -83,7 +83,7 @@ class RPC:
         self.file = self.socket.makefile("rb")
         self.pending: deque[dict[str, Any]] = deque()
         self.number = 0
-        self.call("daemon.hello", {"client": "cli", "client_version": "p4", "keepalive": True})
+        self.call("runtime.service.hello", {"client": "cli", "client_version": "p4", "keepalive": True})
 
     def close(self) -> None:
         self.file.close()
@@ -168,7 +168,7 @@ class StatsDrain:
             self.conn.number += 1
             request_id = self.conn.number
             self.conn.socket.sendall((json.dumps({"jsonrpc": "2.0", "id": request_id,
-                "method": "daemon.status", "params": {}}) + "\n").encode())
+                "method": "runtime.service.status", "params": {}}) + "\n").encode())
             reply = self.responses.get(timeout=20)
             if reply.get("id") != request_id or reply.get("error") or "result" not in reply:
                 raise RuntimeError(f"statistics subscription barrier failed: {reply}")
@@ -312,10 +312,10 @@ class Trial:
                 target.chmod(0o700)
         self.env = dict(os.environ, HOME=str(self.home), USERPROFILE=str(self.home),
                         BERTH_HOME=str(self.state), BERTH_DB="", BERTH_LOG_DIR=str(self.state / "logs"),
-                        BERTH_SOCKET=str(self.sock), BERTH_NO_AUTOSTART="1", XDG_RUNTIME_DIR="",
+                        BERTH_RUNTIME_SERVICE_SOCKET=str(self.sock), BERTH_RUNTIME_SERVICE_NO_AUTOSTART="1", XDG_RUNTIME_DIR="",
                         SHELL="/nonexistent", PATH=str(shim) + os.pathsep + os.environ["PATH"])
         self.proc: subprocess.Popen[bytes] | None = None
-        self.log = (root / "daemon.log").open("wb")
+        self.log = (root / "runtime-service.log").open("wb")
         self.connections: list[RPC] = []
 
     def command(self, cwd: Path, *args: str) -> dict[str, Any]:
@@ -342,12 +342,12 @@ class Trial:
                      ("-c", "user.name=P4 Fixture", "-c", "user.email=p4@example.invalid", "commit", "-qm", "fixture"),
                      ("worktree", "add", "--detach", str(linked), "HEAD")):
             subprocess.run(["git", *args], cwd=main, env=self.env, capture_output=True, check=True, timeout=10)
-        self.proc = subprocess.Popen([str(self.binary), "serve"], cwd=self.home, env=self.env,
+        self.proc = subprocess.Popen([str(self.binary), "runtime", "service", "run"], cwd=self.home, env=self.env,
                                      stdout=self.log, stderr=self.log, start_new_session=True)
         deadline = time.monotonic() + 15
         while not self.sock.exists():
             if self.proc.poll() is not None or time.monotonic() >= deadline:
-                raise RuntimeError("daemon did not open isolated socket")
+                raise RuntimeError("runtime service did not open isolated socket")
             time.sleep(.05)
 
     def rpc(self) -> RPC:
@@ -377,7 +377,7 @@ class Trial:
         out: queue.Queue[dict[str, Any] | BaseException] = queue.Queue()
         errors = (self.root / "events.stderr").open("wb")
         cmd = subprocess.Popen([str(self.binary), "events", "--worktree", str(self.roots[0])],
-            cwd=self.roots[0], env=dict(self.env, BERTH_SOCKET=str(proxy.path)),
+            cwd=self.roots[0], env=dict(self.env, BERTH_RUNTIME_SERVICE_SOCKET=str(proxy.path)),
             stdout=subprocess.PIPE, stderr=errors)
         assert cmd.stdout is not None
 
@@ -475,7 +475,7 @@ class Trial:
                 "before": before, "after": after, "instrumented_direct_commands": dict(counts)}
 
     def owned_pids(self) -> list[int]:
-        needle = "BERTH_SOCKET=" + str(self.sock)
+        needle = "BERTH_RUNTIME_SERVICE_SOCKET=" + str(self.sock)
         result = []
         if sys.platform.startswith("linux"):
             for entry in Path("/proc").iterdir():
@@ -509,7 +509,7 @@ class Trial:
                 except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
                     pass
             try:
-                self.command(self.home, "daemon", "stop", "--json")
+                self.command(self.home, "runtime", "service", "stop", "--json")
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
                 pass
         # Only this trial's unguessable socket marker authorizes fallback cleanup.
@@ -634,7 +634,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as diagnostic:
                         sys.stderr.write(f"\nstatus unavailable: {diagnostic}\n")
             trial.log.flush()
-            sys.stderr.write((Path(tmp) / "daemon.log").read_text(errors="replace")[-12000:])
+            sys.stderr.write((Path(tmp) / "runtime-service.log").read_text(errors="replace")[-12000:])
             raise
         finally:
             try:

@@ -6,6 +6,8 @@ an allowlist, not copied from the caller; HOME/state/socket are disposable.
 """
 import argparse
 import json
+import os
+import uuid
 import pathlib
 import subprocess
 import tempfile
@@ -13,20 +15,24 @@ import tempfile
 
 def check(binary):
     results = []
-    with tempfile.TemporaryDirectory(prefix="oberth-naming-cli-", dir="/tmp") as tmp:
+    with tempfile.TemporaryDirectory(prefix="oberth-naming-cli-", dir="/tmp" if os.name != "nt" else None) as tmp:
         root = pathlib.Path(tmp)
         home, state = root / "home", root / "state"
         home.mkdir(); state.mkdir()
         env = {
-            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin" if os.name != "nt" else os.environ.get("SystemRoot", r"C:\Windows") + r"\System32",
             "HOME": str(home), "USERPROFILE": str(home),
             "SHELL": str(home / "no-login-shell"),
             "XDG_CONFIG_HOME": str(home / ".config"),
             "XDG_RUNTIME_DIR": "", "BERTH_HOME": str(state),
-            "BERTH_RUNTIME_SERVICE_SOCKET": str(root / "service.sock"),
+            "BERTH_RUNTIME_SERVICE_SOCKET": str(root / "service.sock") if os.name != "nt" else r"\\.\pipe\oberth-runtime-service-naming-" + uuid.uuid4().hex,
             "BERTH_RUNTIME_SERVICE_NO_AUTOSTART": "1", "BERTH_NO_UPDATE_CHECK": "1",
             "NO_COLOR": "1", "TERM": "dumb",
         }
+
+        if os.name == "nt":
+            env["SystemRoot"] = os.environ.get("SystemRoot", r"C:\Windows")
+            env["TEMP"] = env["TMP"] = str(root)
 
         def run(args, code=0, extra=None):
             command_env = dict(env)
@@ -46,7 +52,7 @@ def check(binary):
             assert any(line.split()[:1] == [leaf] for line in service_help.splitlines()), leaf
         run(["runtime", "service", "run", "--help"])
         path = json.loads(run(["runtime", "service", "path", "--json"]).stdout)
-        assert str(root / "service.sock") in json.dumps(path)
+        assert path == env["BERTH_RUNTIME_SERVICE_SOCKET"] or isinstance(path, dict) and path.get("socket") == env["BERTH_RUNTIME_SERVICE_SOCKET"]
         stopped = run(["runtime", "service", "status", "--json"], code=1)
         assert json.loads(stopped.stdout)["running"] is False
         assert not stopped.stderr.strip(), "JSON status must not mix in diagnostics"

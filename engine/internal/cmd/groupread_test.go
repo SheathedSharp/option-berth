@@ -102,7 +102,7 @@ func TestDirectAndRuntimeServiceServiceFactsProduceTheSameRows(t *testing.T) {
 	want := groups.GroupsWith(listeners, index, runtimeService, false)
 	got := groups.GroupsWith(listeners, index, direct, false)
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("direct=%+v\ndaemon=%+v", got, want)
+		t.Fatalf("direct=%+v\nruntime_service=%+v", got, want)
 	}
 	if got[1].Services[0].LastExit != nil || !got[1].Services[0].Running {
 		t.Fatal("old api exit overrode the current run")

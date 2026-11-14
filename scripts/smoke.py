@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The per-PR smoke check: run the minimal sample in two disposable worktrees.
 
-Never touches the caller's daemon, HOME or BERTH_HOME. The complex sample
+Never touches the caller's runtime service, HOME or BERTH_HOME. The complex sample
 (`examples/stack-workshop`) is not run here; it is the input of the manual
 benchmark, which is the only consumer that needs Docker.
 """
@@ -16,6 +16,8 @@ import sys
 import tempfile
 from pathlib import Path
 from urllib.request import build_opener, ProxyHandler
+
+from check_runtime_naming_cli import check as check_runtime_naming
 
 
 def trial_module():
@@ -67,6 +69,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
     binary = parser.parse_args().binary.resolve(strict=True)
+    print(json.dumps({"runtime_naming": check_runtime_naming(binary), "service_started_for_naming": False}))
     sample = Path(__file__).resolve().parent.parent / "examples" / "hello-worktree"
     print(json.dumps(smoke(trial_module(), binary, sample)))
     print("isolated smoke processes and temporary files cleaned up")

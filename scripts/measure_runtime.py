@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Native fake-source before/after measurements. No product/daemon is executed.
+"""Native fake-source before/after measurements. No product/Runtime Service is executed.
 
 Archive a specified existing local commit into an owned temporary directory (no
 clone/fetch). Only the isolated runtimecheck package runs; dependency TestMain

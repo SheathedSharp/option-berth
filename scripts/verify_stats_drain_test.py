@@ -34,7 +34,7 @@ class StatsDrainTests(unittest.TestCase):
                             "memory_rss_bytes": seq}}]}}}) + "\n").encode())
                 with server.makefile("rb") as reader:
                     request = json.loads(reader.readline())
-                    if request["method"] != "daemon.status":
+                    if request["method"] != "runtime.service.status":
                         raise AssertionError(request)
                     server.sendall((json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": {
                         "subscribers": 1}}) + "\n").encode())

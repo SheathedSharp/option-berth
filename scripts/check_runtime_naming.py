@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 import subprocess
 
-RETIRED = re.compile(r"daemon|BERTH_SOCKET|BERTH_NO_AUTOSTART|BERTH_ALLOW_TEST_DAEMON|oberth serve", re.I)
+RETIRED = re.compile(r"daemon|BERTH_SOCKET|BERTH_NO_AUTOSTART|BERTH_ALLOW_TEST_DAEMON|\bserve\s+--detach|internal/runtime service|oberth serve", re.I)
 REJECTION = {
  "engine/internal/paths/runtime_service_env.go", "engine/internal/paths/runtime_service_env_test.go",
  "engine/internal/cmd/runtime_service_rejection.go", "engine/internal/cmd/runtime_service_rejection_test.go",
@@ -27,11 +27,11 @@ GUARDS = {"engine/internal/runtimesvc/storage_lease.go", "engine/internal/runtim
 DOCKER = {"scripts/agent_eval.py", "docs/agent/validation.md", "engine/internal/docker/watch_test.go",
           "engine/internal/doctor/probes.go", "engine/internal/doctor/doctor.go", "engine/internal/doctor/checks_test.go", "engine/internal/doctor/probes_test.go"}
 THREADS = {"scripts/check_storage_ownership.py","scripts/example_api_test.py", "scripts/verify-e2e.py", "scripts/install_test.py", "scripts/verify_stats_drain_test.py"}
-SUFFIXES = {".go", ".py", ".md", ".sh", ".ps1", ".yml", ".yaml", ".json", ".sql", ".tmpl"}
+SUFFIXES = {".go", ".py", ".md", ".sh", ".ps1", ".yml", ".yaml", ".json", ".sql", ".tmpl", ".html"}
 
 
 def audit(root):
-    names = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z", "--", "engine", "scripts", "docs", ".github", ".agents", "AGENTS.md", "CLAUDE.md", "README.md", "README.zh.md", "install.sh", "uninstall.sh", "install.ps1", "uninstall.ps1"], text=True).split("\0")
+    names = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z", "--", "engine", "scripts", "docs", "site", "examples", ".github", ".agents", "AGENTS.md", "CLAUDE.md", "README.md", "README.zh.md", "install.sh", "uninstall.sh", "install.ps1", "uninstall.ps1"], text=True).split("\0")
     checked, allowed, violations = 0, [], []
     for name in filter(None, names):
         path = Path(name)

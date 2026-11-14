@@ -31,7 +31,7 @@ QUALITATIVE_ANCHORS = (
     ("observation.state", "the published observation status"),
     ("health_status", "the service health fact"),
     ("manifest_runtime_mismatch", "a run that predates the current manifest"),
-    ("oberth serve --detach", "starting a daemon outside an agent sandbox"),
+    ("oberth runtime service run --detach", "starting a Runtime Service outside an agent sandbox"),
     ("--only listener_observation", "the doctor self-probe"),
     ("BERTH_STRICT_MANIFEST", "strict unknown-key parsing"),
     ("worktree.identity", "the stable identity published by status"),
@@ -121,7 +121,7 @@ def manifest_anchors(schema: dict) -> list[str]:
 
 
 def observation_states(go_text: str) -> list[str]:
-    """The observation.state values published by status and daemon.hello."""
+    """The observation.state values published by status and runtime.service.hello."""
     return sorted(set(re.findall(r'Observation\w+\s*=\s*"([a-z_]+)"', go_text)))
 
 

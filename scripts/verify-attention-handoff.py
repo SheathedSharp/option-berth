@@ -285,7 +285,7 @@ services:
         return 0
     finally:
         run(binary, project, home, "down", "--json", check=False)
-        run(binary, project, home, "daemon", "stop", check=False)
+        run(binary, project, home, "runtime", "service", "stop", check=False)
         shutil.rmtree(project, ignore_errors=True)
         shutil.rmtree(home, ignore_errors=True)
 

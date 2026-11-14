@@ -564,10 +564,10 @@ args = sys.argv[1:]
 cmd = args[0] if args else ""
 if cmd == "version":
     print(json.dumps({"version": "v0.0.0-test", "commit": "test", "built": "now", "platform": "test"}))
-elif cmd == "serve":
+elif args[:3] == ["runtime", "service", "run"]:
     pass
-elif cmd == "daemon":
-    if args[1:2] == ["status"]:
+elif args[:2] == ["runtime", "service"]:
+    if args[2:3] == ["status"]:
         print(json.dumps({"running": True, "pid": 0}))
 elif cmd == "up":
     print(json.dumps({"services": [{"service": "api", "state": "failed", "reason": "port_occupied"}],
@@ -587,7 +587,7 @@ FAKE_OBERTH_UP_FAILS = '''#!/usr/bin/env python3
 import json, sys
 args = sys.argv[1:]
 cmd = args[0] if args else ""
-if cmd == "daemon" and args[1:2] == ["status"]:
+if args[:3] == ["runtime", "service", "status"]:
     print(json.dumps({"running": True, "pid": 0}))
 elif cmd == "up":
     print(json.dumps({"error": {"code": "observation_empty", "message": "no table",

@@ -2,7 +2,7 @@ package rpc
 
 import "github.com/sheathedsharp/option-berth/engine/internal/store"
 
-// RuntimeStorageReadParams selects one bounded read from the authoritative
+// RuntimeStorageReadParams selects one explicit read from the authoritative
 // owning Store. It never accepts SQL or opens a second database connection.
 type RuntimeStorageReadParams struct {
 	Section string `json:"section" jsonschema:"enum=schema,enum=worktrees,enum=run_exits"`
