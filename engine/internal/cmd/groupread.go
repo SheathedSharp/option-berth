@@ -100,6 +100,10 @@ func scanGroups() ([]ports.ListeningPort, []state.Group, error) {
 // collector cannot produce a trustworthy table, the manifest and run registry
 // still describe what is declared and what was started; the ports are unknown.
 func scanGroupsObserved(ctx context.Context) ([]ports.ListeningPort, []state.Group, *rpc.ObservationStatus, error) {
+	history, historyErr := directRunHistory(ctx)
+	if historyErr != nil {
+		return nil, nil, nil, storageReadError(historyErr)
+	}
 	results, source, scanErr := scanPorts()
 	var obs *rpc.ObservationStatus
 	if scanErr != nil {
@@ -155,7 +159,7 @@ func scanGroupsObserved(ctx context.Context) ([]ports.ListeningPort, []state.Gro
 
 	resolved, index := groups.Attribute(results)
 	reportInvalidConfigs(index)
-	groupRows := groups.GroupsWith(resolved, index, directRunHistory(), narrow)
+	groupRows := groups.GroupsWith(resolved, index, history, narrow)
 	groups.StampServicePortRuns(resolved, groupRows)
 	scanner.FillServiceStatsContext(ctx, groupRows, nil)
 	groups.FinalizeResources(groupRows)
@@ -264,13 +268,12 @@ func (r directRunRegistry) ServiceFacts() servicefacts.Snapshot {
 	return collector.Snapshot()
 }
 
-func directRunHistory() directRunRegistry {
-	out := directRunRegistry{reg: runs.Load()}
-	if history, err := store.OpenReadOnly(""); err == nil {
-		out.exits, _ = history.RunExits(0)
-		_ = history.Close()
+func directRunHistory(ctx context.Context) (directRunRegistry, error) {
+	exits, err := storedRunExits(ctx)
+	if err != nil {
+		return directRunRegistry{}, err
 	}
-	return out
+	return directRunRegistry{reg: runs.Load(), exits: exits}, nil
 }
 
 func reportInvalidConfigs(index *groups.Index) {

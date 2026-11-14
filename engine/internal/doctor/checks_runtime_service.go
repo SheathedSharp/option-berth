@@ -77,44 +77,54 @@ func protocolMajor(version string) (int, error) {
 // and size. It never creates or migrates one: a machine whose runtime service has never
 // run has no database, which is normal, and a diagnosis must not change the
 // patient.
-func checkDBOK(_ context.Context, env *Env) rpc.DoctorCheck {
+func checkDBOK(ctx context.Context, env *Env) rpc.DoctorCheck {
 	path := env.DBPath
 	if path == "" {
 		return skip("no database path resolved", "")
 	}
-	info, err := os.Stat(path)
+	var info rpc.RuntimeStorageSchema
+	var err error
+	if env.ReadDatabase != nil {
+		info, err = env.ReadDatabase(ctx)
+	} else {
+		var db *store.Store
+		db, err = store.OpenReadOnly(path)
+		if err == nil {
+			info, err = InspectDatabase(ctx, db)
+			_ = db.Close()
+		}
+	}
 	if os.IsNotExist(err) {
-		return warn("no database yet",
-			path+" is created the first time the runtime service runs", "oberth runtime service run --detach")
+		return warn("no database yet", path+" is created the first time the runtime service runs", "oberth runtime service run --detach")
 	}
 	if err != nil {
-		return fail("cannot stat the database", err.Error(), "")
+		return fail("cannot read the database", fmt.Sprintf("%s: %v", path, err), "preserve the database and inspect it before choosing a repair")
 	}
-
-	db, err := store.OpenReadOnly(path)
-	if err != nil {
-		return fail("cannot open the database", fmt.Sprintf("%s: %v", path, err),
-			"preserve the database and inspect it before choosing a repair")
-	}
-	defer db.Close()
-
-	version, err := db.Version()
-	if err != nil {
-		return fail("cannot read the schema version", fmt.Sprintf("%s: %v", path, err), "")
-	}
-	latest := store.LatestVersion()
-	size := humanBytes(info.Size())
+	version, latest := info.Version, store.LatestVersion()
+	size := humanBytes(info.Size)
 	if version > latest {
-		return fail(fmt.Sprintf("schema v%d is newer than supported v%d", version, latest),
-			path+" was left unchanged",
-			"upgrade the CLI to match the database; do not restart an older runtime service")
+		return fail(fmt.Sprintf("schema v%d is newer than supported v%d", version, latest), info.Path+" was left unchanged", "upgrade the CLI to match the database; do not restart an older runtime service")
 	}
 	if version != latest {
-		return warn(fmt.Sprintf("schema v%d, this build expects v%d", version, latest),
-			fmt.Sprintf("%s (%s)", path, size),
-			"oberth runtime service restart — the runtime service migrates on open")
+		return warn(fmt.Sprintf("schema v%d, this build expects v%d", version, latest), fmt.Sprintf("%s (%s)", info.Path, size), "oberth runtime service restart — the runtime service migrates on open")
 	}
-	return ok(fmt.Sprintf("schema v%d, %s", version, size), path)
+	return ok(fmt.Sprintf("schema v%d, %s", version, size), info.Path)
+}
+
+// InspectDatabase reads the already-owning handle without opening another one.
+func InspectDatabase(ctx context.Context, db *store.Store) (rpc.RuntimeStorageSchema, error) {
+	if db == nil {
+		return rpc.RuntimeStorageSchema{}, fmt.Errorf("Runtime Service storage is unavailable")
+	}
+	version, err := db.VersionContext(ctx)
+	if err != nil {
+		return rpc.RuntimeStorageSchema{}, err
+	}
+	info, err := os.Stat(db.DBPath())
+	if err != nil {
+		return rpc.RuntimeStorageSchema{}, err
+	}
+	return rpc.RuntimeStorageSchema{Path: db.DBPath(), Version: version, Size: info.Size()}, nil
 }
 
 // byteUnits is the ladder humanBytes climbs: bytes, then the binary prefixes.

@@ -128,6 +128,7 @@ func doctorEnv(project string) doctor.Env {
 		Commit:         buildinfo.Commit,
 		Project:        project,
 		RuntimeService: doctorRuntimeServiceProbe,
+		ReadDatabase:   doctorStorageInfo,
 		Docker:         doctor.DockerProbe,
 	}
 }

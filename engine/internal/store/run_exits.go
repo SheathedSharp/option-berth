@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -13,23 +14,23 @@ import (
 // carries the fields needed to render runs.list and status without importing
 // the runtime service's run registry into the store package.
 type RunExitRow struct {
-	ID         string
-	PID        int
-	Group      string
-	Name       string
-	Cmd        string
-	Cwd        string
-	PortHint   int
-	StartedAt  time.Time
-	ConfigPath string
-	StartID    string
-	Origin     string
-	LogPath    string
-	LogOffset  int64
-	Code       int
-	Reason     string
-	ExitedAt   time.Time
-	LastLines  []string
+	ID         string    `json:"id"`
+	PID        int       `json:"pid"`
+	Group      string    `json:"group"`
+	Name       string    `json:"name"`
+	Cmd        string    `json:"cmd"`
+	Cwd        string    `json:"cwd"`
+	PortHint   int       `json:"port_hint"`
+	StartedAt  time.Time `json:"started_at"`
+	ConfigPath string    `json:"config_path"`
+	StartID    string    `json:"start_id"`
+	Origin     string    `json:"origin"`
+	LogPath    string    `json:"log_path"`
+	LogOffset  int64     `json:"log_offset"`
+	Code       int       `json:"code"`
+	Reason     string    `json:"reason"`
+	ExitedAt   time.Time `json:"exited_at"`
+	LastLines  []string  `json:"last_lines"`
 }
 
 // RunExitLimit is the number of finished runs retained by the runtime.service. The
@@ -94,13 +95,17 @@ func (s *Store) AppendRunExit(row RunExitRow) error {
 // RunExits returns finished runs newest first. A non-positive limit uses the
 // registry's bounded history size.
 func (s *Store) RunExits(limit int) ([]RunExitRow, error) {
+	return s.RunExitsContext(context.Background(), limit)
+}
+
+func (s *Store) RunExitsContext(ctx context.Context, limit int) ([]RunExitRow, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("store: run exit store is not open")
 	}
 	if limit <= 0 {
 		limit = RunExitLimit
 	}
-	rows, err := s.db.Query(`
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT run_id, pid, group_name, service_name, cmd, cwd, port_hint,
 		       started_at, config_path, start_id, origin, log_path, log_offset,
 		       code, reason, exited_at, last_lines

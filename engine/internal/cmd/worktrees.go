@@ -5,12 +5,10 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
-	"github.com/sheathedsharp/option-berth/engine/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -67,9 +65,9 @@ type worktreesDocument struct {
 }
 
 func worktreesRun(cmd *cobra.Command, _ []string) error {
-	identities, err := knownWorktreeIdentities()
+	identities, err := storedWorktrees(cmd.Context())
 	if err != nil {
-		return err
+		return storageReadError(err)
 	}
 	running := runningServicesByIdentity(cmd.Context())
 	rows := make([]worktreeIdentityRow, 0, len(identities))
@@ -131,26 +129,6 @@ func runningServicesByIdentity(ctx context.Context) map[string]int {
 		out[group.Identity] += group.RunningServices
 	}
 	return out
-}
-
-// knownWorktreeIdentities reads the ledger without starting or asking the
-// runtime.service. A database that does not exist yet, or one from before the ledger
-// existed, has no identities rather than an error: there is nothing to clean up
-// and nothing to report.
-func knownWorktreeIdentities() ([]store.WorktreeIdentity, error) {
-	st, err := store.OpenReadOnly("")
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	defer st.Close()
-	identities, err := st.WorktreeIdentities()
-	if err != nil && strings.Contains(err.Error(), "no such table") {
-		return nil, nil
-	}
-	return identities, err
 }
 
 // checkoutExists is the only definition of "gone" this command uses: the

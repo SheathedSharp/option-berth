@@ -22,7 +22,6 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/servicefacts"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
-	"github.com/sheathedsharp/option-berth/engine/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -272,7 +271,11 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool, only []stri
 			// A stopped project with no listener may not have reached the runtime service's
 			// long-lived index yet. Read the manifest directly so the primary
 			// command works on a fresh worktree without a separate discovery step.
-			if local, ok := localStatusGroup(root, name, pp, obs.Narrow()); ok {
+			local, ok, readErr := localStatusGroup(ctx, root, name, pp, obs.Narrow())
+			if readErr != nil {
+				return statusDocument{}, storageReadError(readErr)
+			}
+			if ok {
 				group = local
 			}
 		}
@@ -326,6 +329,10 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool, only []stri
 		tree = &capped
 	}
 
+	exits, exitErr := statusExits(ctx, name)
+	if exitErr != nil {
+		return statusDocument{}, storageReadError(exitErr)
+	}
 	doc := statusDocument{
 		manifestMissing: missingManifest(*group),
 		Scope:           display.Scope{Kind: "worktree", Name: name, Root: root},
@@ -333,7 +340,7 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool, only []stri
 		Ports:           ports,
 		Git:             tree,
 		Drafts:          []draft.Pending{},
-		Exits:           statusExits(ctx, name),
+		Exits:           exits,
 		Observation:     publicObservation(obs),
 	}
 	// The direct read (no runtime service) has no snapshot of its own, and the runtime service's
@@ -496,9 +503,9 @@ func attnState(path string) *statusAttn {
 
 // localStatusGroup is the cold-start fallback for a manifest the runtime service has
 // not indexed yet. It uses the same resolver and state conversion as the
-// normal scan path, but does not pretend that a local read knows runtime service run
-// history; that history is added as soon as the runtime service sees the project.
-func localStatusGroup(root, name string, pp []ports.ListeningPort, narrow bool) (*state.Group, bool) {
+// normal scan path, joined to authoritative durable history through the owner
+// online or the same read-only database offline.
+func localStatusGroup(ctx context.Context, root, name string, pp []ports.ListeningPort, narrow bool) (*state.Group, bool, error) {
 	index := groups.NewIndex()
 	index.Observe(root)
 	rows := make([]state.Port, 0, len(pp))
@@ -507,13 +514,17 @@ func localStatusGroup(root, name string, pp []ports.ListeningPort, narrow bool) 
 	}
 	// Include local run history: when the listener table is unavailable this
 	// is the only evidence that a declared service was started and is alive.
-	for _, candidate := range groups.GroupsWith(rows, index, directRunHistory(), narrow) {
+	history, err := directRunHistory(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, candidate := range groups.GroupsWith(rows, index, history, narrow) {
 		if candidate.Name == name {
 			copy := candidate
-			return &copy, true
+			return &copy, true, nil
 		}
 	}
-	return nil, false
+	return nil, false, nil
 }
 
 // publicObservation keeps the healthy wire shape unchanged: an observable
@@ -528,47 +539,12 @@ func publicObservation(obs *rpc.ObservationStatus) *rpc.ObservationStatus {
 	return obs
 }
 
-// statusExits is the finished runs of one group, newest first. A registry that
-// is gone (no runtime service) has nothing to say, and that is not an error: the rest of
-// the answer stands on its own.
-func statusExits(ctx context.Context, group string) []rpc.RunRecord {
-	records := []rpc.RunRecord{}
-	c := runtimeServiceClient(ctx)
-	if c == nil {
-		return statusExitsDirect(group)
-	}
-	defer c.Close()
-	var out rpc.RunsListResult
-	if err := c.Call(ctx, "runs.list", rpc.Empty{}, &out); err != nil {
-		return records
-	}
-	for _, run := range out.Exited {
-		if run.Group == group {
-			records = append(records, run)
-		}
-	}
-	sort.SliceStable(records, func(i, j int) bool {
-		return exitTime(records[i]).After(exitTime(records[j]))
-	})
-	if len(records) > statusExitsShown {
-		records = records[:statusExitsShown]
-	}
-	applyExitHints(records)
-	return records
-}
-
-// statusExitsDirect reads the runtime service's durable exit history without opening it
-// for writes. A stopped runtime service still leaves the local status command able to
-// answer why a declared service is down.
-func statusExitsDirect(group string) []rpc.RunRecord {
-	history, err := store.OpenReadOnly("")
+// statusExits reads durable ended-run evidence through the owning Store online,
+// or the same database read-only offline. Failure is never an empty success.
+func statusExits(ctx context.Context, group string) ([]rpc.RunRecord, error) {
+	rows, err := storedRunExits(ctx)
 	if err != nil {
-		return []rpc.RunRecord{}
-	}
-	defer history.Close()
-	rows, err := history.RunExits(0)
-	if err != nil {
-		return []rpc.RunRecord{}
+		return nil, err
 	}
 	records := make([]rpc.RunRecord, 0, len(rows))
 	for _, row := range rows {
@@ -597,7 +573,7 @@ func statusExitsDirect(group string) []rpc.RunRecord {
 		records = records[:statusExitsShown]
 	}
 	applyExitHints(records)
-	return records
+	return records, nil
 }
 
 // exitHint is the next command for one finished run, or empty when the run

@@ -62,6 +62,7 @@ func runtimeServiceEnv(rt *runtimesvc.HostContext, params rpc.RuntimeServiceDoct
 		Project:        params.Project,
 		SocketPath:     rt.Socket,
 		DBPath:         rt.DBPath(),
+		ReadDatabase:   func(ctx context.Context) (rpc.RuntimeStorageSchema, error) { return InspectDatabase(ctx, rt.Store) },
 		RuntimeService: func(context.Context) RuntimeServiceInfo { return self },
 		Docker:         DockerProbe,
 	}

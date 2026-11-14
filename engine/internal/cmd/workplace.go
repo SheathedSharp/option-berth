@@ -139,6 +139,9 @@ func withRecord[T any](ctx context.Context, method string, params any, fn func(*
 	}
 	st, err := store.OpenReadOnly(store.Path())
 	if err != nil {
+		if errors.Is(err, store.ErrStorageOwned) {
+			return zero, storageReadError(err)
+		}
 		if !errors.Is(err, fs.ErrNotExist) {
 			return zero, failHint("runtime_service_unavailable",
 				fmt.Sprintf("no runtime service is listening and the record cannot be read directly: %v", err),

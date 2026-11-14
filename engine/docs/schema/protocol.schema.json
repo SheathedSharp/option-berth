@@ -1960,6 +1960,188 @@
         "db_path"
       ]
     },
+    "RuntimeStorageReadParams": {
+      "properties": {
+        "section": {
+          "type": "string",
+          "enum": [
+            "schema",
+            "worktrees",
+            "run_exits"
+          ]
+        }
+      },
+      "type": "object",
+      "required": [
+        "section"
+      ]
+    },
+    "RuntimeStorageReadResult": {
+      "properties": {
+        "section": {
+          "type": "string"
+        },
+        "schema": {
+          "$ref": "#/definitions/RuntimeStorageSchema"
+        },
+        "worktrees": {
+          "items": {
+            "$ref": "#/definitions/RuntimeStorageWorktree"
+          },
+          "type": "array"
+        },
+        "run_exits": {
+          "items": {
+            "$ref": "#/definitions/RuntimeStorageRunExit"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "section"
+      ]
+    },
+    "RuntimeStorageRunExit": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "group": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "cmd": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "port_hint": {
+          "type": "integer"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "config_path": {
+          "type": "string"
+        },
+        "start_id": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string"
+        },
+        "log_path": {
+          "type": "string"
+        },
+        "log_offset": {
+          "type": "integer"
+        },
+        "code": {
+          "type": "integer"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "exited_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "last_lines": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "pid",
+        "group",
+        "name",
+        "cmd",
+        "cwd",
+        "port_hint",
+        "started_at",
+        "config_path",
+        "start_id",
+        "origin",
+        "log_path",
+        "log_offset",
+        "code",
+        "reason",
+        "exited_at",
+        "last_lines"
+      ]
+    },
+    "RuntimeStorageSchema": {
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer"
+        },
+        "size": {
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "required": [
+        "path",
+        "version",
+        "size"
+      ]
+    },
+    "RuntimeStorageWorktree": {
+      "properties": {
+        "identity": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        },
+        "group": {
+          "type": "string"
+        },
+        "config_path": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "worktree": {
+          "type": "string"
+        },
+        "first_seen": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "last_seen": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "type": "object",
+      "required": [
+        "identity",
+        "root",
+        "group",
+        "config_path",
+        "project",
+        "worktree",
+        "first_seen",
+        "last_seen"
+      ]
+    },
     "Scope": {
       "properties": {
         "worktrees": {
@@ -3672,6 +3854,14 @@
       },
       "result": {
         "$ref": "#/definitions/RuntimeServiceStatusResult"
+      }
+    },
+    "runtime.storage.read": {
+      "params": {
+        "$ref": "#/definitions/RuntimeStorageReadParams"
+      },
+      "result": {
+        "$ref": "#/definitions/RuntimeStorageReadResult"
       }
     },
     "sessions.kill": {

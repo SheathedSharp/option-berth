@@ -102,6 +102,8 @@ type Env struct {
 	ConfigDir  string
 	SocketPath string
 	DBPath     string
+	// ReadDatabase observes the existing owning Store; it never starts a host.
+	ReadDatabase func(context.Context) (rpc.RuntimeStorageSchema, error)
 
 	// Executable resolves the running binary's own path. os.Executable is the
 	// real implementation; a test substitutes its own.
