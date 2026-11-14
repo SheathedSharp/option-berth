@@ -16,6 +16,9 @@ func TestRetiredRuntimeServiceConfigNames(t *testing.T) {
 		{"new", "runtime_service:\n  idle_timeout: 0\n", false},
 		{"unrelated", "agent:\n  args: [daemon]\n", false},
 		{"merged", "old: &old\n  daemon: {}\n<<: *old\n", true},
+		{"relative_guard", "runtime_service:\n  previous_service_lock_dirs: [relative]\n", true},
+		{"invalid_guard_type", "runtime_service:\n  previous_service_lock_dirs: not-a-list\n", true},
+		{"malformed", "runtime_service: [\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.yaml")
@@ -28,6 +31,11 @@ func TestRetiredRuntimeServiceConfigNames(t *testing.T) {
 			}
 			if err != nil && !strings.Contains(err.Error(), "runtime_service") {
 				t.Fatal(err)
+			}
+			if tc.retired {
+				if _, warnings := LoadFrom(path); len(warnings) == 0 {
+					t.Fatal("doctor/config loader silently accepted an invalid host safety configuration")
+				}
 			}
 			after, _ := os.ReadFile(path)
 			if string(after) != tc.text {

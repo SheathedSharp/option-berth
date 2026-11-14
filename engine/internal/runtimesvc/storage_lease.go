@@ -17,6 +17,13 @@ type storageLease struct{ locks []*Lock }
 // explicitly configured previous endpoint locations. An unknown arbitrary old
 // endpoint cannot be discovered from a DB: callers must not claim otherwise.
 func acquireStorageLease(stateDir, dbPath, socket string, previousDirs []string) (*storageLease, error) {
+	// Validate before creating even a neutral lock: a relative old guard would
+	// resolve against the host working directory and could protect the wrong DB.
+	for _, dir := range previousDirs {
+		if dir == "" || !filepath.IsAbs(dir) {
+			return nil, fmt.Errorf("runtime_service.previous_service_lock_dirs requires non-empty absolute directories; storage was not opened")
+		}
+	}
 	// Existing DB symlinks must name the same lease as the underlying file.
 	if resolved, err := filepath.EvalSymlinks(dbPath); err == nil {
 		dbPath = resolved

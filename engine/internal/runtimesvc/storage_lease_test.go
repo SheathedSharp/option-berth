@@ -121,3 +121,33 @@ func TestStorageLeaseResolvesDatabaseSymlink(t *testing.T) {
 		t.Fatalf("wrong error: %v", err)
 	}
 }
+
+func TestStorageLeaseHoldsBothNeutralKeys(t *testing.T) {
+	root := t.TempDir()
+	db := filepath.Join(t.TempDir(), "data.db")
+	lease, err := acquireStorageLease(root, db, filepath.Join(t.TempDir(), "service.sock"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Release()
+	for _, path := range []string{filepath.Join(root, "storage.lock"), db + ".storage.lock"} {
+		if other, err := AcquireLock(path); err == nil {
+			other.Release()
+			t.Fatalf("neutral lease not held: %s", path)
+		}
+	}
+}
+
+func TestStorageLeaseRejectsRelativePreviousGuards(t *testing.T) {
+	t.Chdir(t.TempDir()) // even a regression cannot write a guard in the checkout.
+	for _, previous := range []string{"", "relative"} {
+		root := t.TempDir()
+		if lease, err := acquireStorageLease(root, filepath.Join(root, "data.db"), filepath.Join(root, "service.sock"), []string{previous}); err == nil {
+			lease.Release()
+			t.Fatalf("invalid previous guard directory was accepted: %q", previous)
+		}
+		if _, err := os.Stat(filepath.Join(root, "storage.lock")); !os.IsNotExist(err) {
+			t.Fatalf("validation happened after locks were opened: %v", err)
+		}
+	}
+}

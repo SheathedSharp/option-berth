@@ -163,6 +163,9 @@ func LoadFrom(path string) (*Config, []string) {
 		// A missing or unreadable file is not an error: run on defaults.
 		return cfg, nil
 	}
+	if err := checkRuntimeServiceConfigNames(data); err != nil {
+		return &Config{}, []string{fmt.Sprintf("ignoring %s: %v", path, err)}
+	}
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return &Config{}, []string{fmt.Sprintf("ignoring %s: %v", path, err)}
 	}
@@ -175,6 +178,8 @@ const template = `# option-berth configuration
 # default. Command-line flags always win over this file.
 
 # runtime_service:
+#   # Hold exclusion guards for previous custom endpoint directories; no dial.
+#   previous_service_lock_dirs: []
 #   # Stop oberth runtime service run after this long without a client, a subscriber or
 #   # a keepalive connection. 0 keeps it running until stopped by hand.
 #   idle_timeout: 30m

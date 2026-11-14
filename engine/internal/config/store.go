@@ -164,12 +164,12 @@ func merge(base, patch map[string]any) map[string]any {
 // validateMap decodes a merged config back into Config and rejects one whose
 // settings this build would repair.
 func validateMap(m map[string]any) error {
-	if _, retired := m["daemon"]; retired {
-		return fmt.Errorf("config key daemon was removed; use runtime_service")
-	}
 	body, err := yaml.Marshal(denormalize(m))
 	if err != nil {
 		return fmt.Errorf("encoding the config: %w", err)
+	}
+	if err := checkRuntimeServiceConfigNames(body); err != nil {
+		return err
 	}
 	decoded := &Config{}
 	if err := yaml.Unmarshal(body, decoded); err != nil {
