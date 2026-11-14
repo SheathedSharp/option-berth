@@ -8,7 +8,10 @@ import (
 )
 
 func TestOwnedStorageFailureReleasesConnectionAndPreservesPath(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "literal ?#&%.db")
+	// ? is not a legal Windows filename character, and CreateFile rejects it
+	// before SQLite can exercise the injected failure. # and % are legal there
+	// and still catch a path that was re-encoded as a URI.
+	path := filepath.Join(t.TempDir(), "literal #&%.db")
 	original := chmodFile
 	chmodFile = func(string, os.FileMode) error { return errors.New("injected owned permission failure") }
 	_, err := OpenOwned(path)
