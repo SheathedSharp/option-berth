@@ -31,7 +31,7 @@ SUFFIXES = {".go", ".py", ".md", ".sh", ".ps1", ".yml", ".yaml", ".json", ".sql"
 
 
 def audit(root):
-    names = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z", "--", "engine", "scripts", "docs", "site", "examples", ".github", ".agents", "AGENTS.md", "CLAUDE.md", "README.md", "README.zh.md", "install.sh", "uninstall.sh", "install.ps1", "uninstall.ps1"], text=True).split("\0")
+    names = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z", "--", "engine", "scripts", "docs", "site", "examples", "magefiles", ".github", ".agents", "AGENTS.md", "CLAUDE.md", "README.md", "README.zh.md", "install.sh", "uninstall.sh", "install.ps1", "uninstall.ps1"], text=True).split("\0")
     checked, allowed, violations = 0, [], []
     for name in filter(None, names):
         path = Path(name)

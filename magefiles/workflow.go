@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Engine builds only the CLI/daemon; the canonical BuildEngine name remains.
+// Engine builds only the CLI/Runtime Service; the canonical BuildEngine name remains.
 func Engine() error { return BuildEngine() }
 
 // Client builds only the macOS client.
