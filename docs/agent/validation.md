@@ -58,6 +58,14 @@ The Mage and brand checks live in their respective PRs and CI. Building, install
 stopping services are distinct side effects; ordinary checks do not touch the user's day-to-day
 services.
 
+### Isolated Runtime policy and comparative checks
+
+`internal/runtimecheck` imports production packages without their `_test.go`/`TestMain` entry points. Its collectors, PID identity/liveness/ancestry, statistics and publisher are injected; its manifests, SQLite files and locks are temporary. A fully injected in-memory scanner loop verifies independent background publication and cancellation/join, not a real daemon or service handoff. `internal/runstate` pins shared readiness/generation/restart policies; `internal/attn/runner` uses fake status/streams and local fake providers. These tests neither scan/signal user services nor contact a real model. Run them under an owned temporary HOME/BERTH_HOME; they are not permission to execute whole-package daemon/cmd TestMain on a shared development machine.
+
+`scripts/measure_runtime.py --baseline <existing-local-commit>` archives that local engine into its own temporary directory and runs the same isolated harness on both trees. It measures one worker update across three synthetic worktree declarations while a fake collector is held for 15ms, plus full-status reads on a scaled 250ms attention timeline (5ms checks, 50ms candidate calibration, two changes). It also checks current/prior SQLite writer-to-read-only-reader compatibility in both directions and typed live-mirror decoding without PID probes. It executes no product binary, daemon, Docker or remote provider, and does not clone/fetch. A failed correctness check invalidates timing; these figures do not establish real-service throughput, actual platform lifecycle behavior or an overall product speed-up.
+
+The normal unit gate includes these packages. The shared race manifest adds the pure Runtime policy, fake-source harness and optional attention packages; existing packages and requirements are not removed. Changing that manifest still requires the repository's maintainer-owned gate. Cross-compilation and `go test -c` only establish compilation, never native execution or real service acceptance.
+
 ### Agent contract and skill coverage
 
 `scripts/check_skill_contract.py` extracts anchors from `docs/cli.md` (stable error codes, the

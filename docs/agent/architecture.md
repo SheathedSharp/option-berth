@@ -16,7 +16,7 @@ temporary debugging or research tasks as standing requirements.
 
 A run projection never renews listener freshness. When the last batch is stale, the projection explicitly marks observation partial, removes stale listener rows and marks machine dependencies unknown; absence is not port-free. It does not generate port-down history from that loss of observation. Readiness without a listener or health requirement may use the run fact; listener/health-dependent readiness and forced control observations retain their original observation requirements. Snapshot callers requesting optional samples may receive only already-known samples during this fallback, not a promise of a newly collected batch.
 
-Slow scans rebase service rows against the current registry under the commit mutex after attribution and configured health finish. A newer run ID wins; an old generation's health/stats cannot migrate to it. Captures and published snapshots are immutable. The runtime worker is cancelled and joined with the existing scanner workers, not detached on timeout. Coalesced notifications carry no persisted duplicate state.
+Slow scans rebase service rows against the current registry under the commit mutex after attribution and configured health finish. A newer run ID wins; an old generation's health/stats cannot migrate to it. Captures and published snapshots are immutable. The runtime worker is cancelled and joined with the existing scanner workers, not detached on timeout. Coalesced notifications carry no persisted duplicate state. The projection starts from declarations already published by the normal manifest index; it does not discover new roots, reload manifests or replace the initial observation/control admission path.
 
 ## One chain of facts
 
