@@ -106,6 +106,11 @@ CLI 按 **agent 想做的事**分层，不按内部模块分：事实是「现�
 `port_actual`，运行有可读的启动快照时才有 `code_changed_since_start`。缺席表示未知或不适用
 （已停止的服务没有 `health` 与 `port_actual`），绝不是否定结果；先读 `running` 再看这些键。
 
+运行中的服务，如果其 `port_actual` 上的监听者不是它自己的运行（另一个运行的监听者，或
+option-berth 没启动的进程），就带 `port_holder`：与失败记录相同的 `port`、`pid`、`command`、
+`kind` 形状，另一个运行持有时另有 `group`、`name` 和 `run_id`。这是端口背后进程的肯定事实；
+缺省表示这次快照没有显示别的归属者，不代表 option-berth 启动了这个监听者。
+
 服务的 `last_exit.reason` 会区分普通崩溃（`crashed`）和固定端口被其他进程占用
 （`port_occupied`），也会标出命令尚未启动就失败的服务（`start_failed`），因此“启动后退出”、
 “端口冲突”和“启动前失败”不会混成同一种状态。
@@ -235,7 +240,8 @@ JSON 顶层固定包含：
 
 `worktree.ad_hoc_runs` 列出用 `oberth start` 启动、监听属于本 worktree、但名字不在声明服务里的
 运行：`name`、`run_id`、`group`、`pid`，以及它持有的 `ports`。`ports` 仍是扁平的监听列表；
-这是它无法承载的归属信息，读者因此能区分 oberth 管理的进程和外来进程。
+这是它无法承载的归属信息，读者因此能区分 oberth 管理的进程和外来进程。声明服务的监听者若属于
+别的进程，由该服务的 `port_holder` 指明；`ad_hoc_runs` 只列清单没有声明的运行。
 
 `worktree.identity` 就是清单里 `${worktree}` 展开成的值。它由 checkout 的规范化根路径
 派生，所以同一个 checkout 每次读取都相同；人或 agent 要用 `psql` 连这个 worktree 的库时，
@@ -365,7 +371,7 @@ worktree 的规范路径、脱敏任务摘要和固定评估选项后，接入�
 | `last_exit.port_holder` | `status` | 读取时仍占着失败端口的进程；缺省表示没观察到，不是端口空闲。 |
 | `exits[].hint` | `status` | 历史退出记录里由日志文件是否存在决定的下一步。 |
 | `services[].ready` | `up` / `restart` | CLI 的就绪注释；`false` 表示未确认，不是失败。 |
-| `services[].port_holder` | `up` | 端口冲突时与 `status` 同形状的占用者证据。 |
+| `services[].port_holder` | `up` / `status --brief` | 声明端口冲突，或运行中服务的监听者不是它自己的运行时，与 `status` 同形状的占用者证据。 |
 | `health_status` | `status` | 声明健康检查的结果与原因。 |
 | `manifest_runtime_mismatch` | `status` | 运行实例是否来自旧清单。 |
 | `worktree.identity` | `status` | `${worktree}` 的展开值，用于命名 per-worktree 数据。 |
@@ -418,7 +424,9 @@ Git 检出中只纳入已跟踪文件和未被 ignore 的未跟踪文件，`node
 显式写上各自真正读取的 `sources:`。显式写 `sources: []` 关闭这项检查，适用于自己热重载代码的服务。
 带端口的依赖等待监听，无端口的 worker 等待其运行记录变为活跃；
 已经在运行的服务跳过；每个服务有自己的
-日志文件和运行记录。无参数时使用当前目录最近的清单，也可以显式给项目名。
+日志文件和运行记录。监听者不是 option-berth 启动的进程时仍是跳过，但原因会写明这一点，
+`hint` 会给出要释放的端口；option-berth 不会接管自己没启动的进程。无参数时使用当前目录最近的
+清单，也可以显式给项目名。
 `ready_timeout:` 声明一个服务的就绪预算（Go duration 字符串，例如 `90s`，缺省 30s，必须为正）：
 `depends_on` 的后继服务等待该服务时使用它，`up --wait` 也使用它。`prepare:` 不计入这个预算。
 清单声明了 `ready_timeout:` 时，CLI 要求 daemon 宣告 `groups.start.ready_timeout` 能力；旧 daemon
@@ -511,6 +519,9 @@ JSON 值，不混入诊断。旧 daemon 不认识 `progress`，旧 CLI 也不会
 只有清单声明的服务可以重启。`oberth start` 启动的运行没有清单条目：如果它仍在运行，先停止，
 再重新执行那条命令。`restart --only` 点名这类运行且运行账本认识它时，`not_found` 的 hint 会
 打印记录下来的启动命令（cwd、group、name、port 与命令），而不是指回 `status`。
+
+启动半段对「监听者不是 option-berth 启动的进程」的报告方式与 `up` 相同：跳过，并在原因和
+hint 里写出进程与端口。`--force` 只跳过优雅停止，不会接管 option-berth 没启动的进程。
 
 ### oberth down [project] [--worktree path | --identity wt_…] [--force] [--json]
 
