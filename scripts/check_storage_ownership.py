@@ -2,7 +2,7 @@
 """Compare real candidate ownership against an unmodified pinned v2 Store.
 
 Builds disposable adapters with Go's compiler overlay; never edits the legacy
-checkout or runs a product daemon/TestMain. Every database and process belongs
+checkout or runs a product Runtime Service/TestMain. Every database and process belongs
 to this script. Online read tests query the owning production Store, not a copy.
 """
 import argparse
@@ -80,11 +80,13 @@ class Probe:
 
 def build(legacy, source, outputs):
     template = (ROOT / "engine/internal/store/testdata/ownership_probe.go.tmpl").read_text()
-    env = dict(os.environ, GOPROXY="off", GOTOOLCHAIN="local")
+    env = dict(os.environ, GOPROXY="off", GOTOOLCHAIN="local", GOWORK="off", GOFLAGS="")
     binaries = {}
     for name, engine, expression in [
         ("legacy", legacy, "return store.OpenWith(path, store.Options{BusyTimeout: 30_000_000})"),
         ("owned", ROOT / "engine", "return store.OpenOwned(path)")]:
+        actual = json.loads(subprocess.check_output([GO, "list", "-json", "./internal/store"], cwd=engine, env=env))
+        assert Path(actual["Dir"]).resolve() == (engine / "internal/store").resolve(), "Go must resolve this checkout's real Store, not a workspace replacement"
         main = source / (name + "_main.go")
         main.write_text(template.replace("/*PRODUCTION_OPEN*/", expression))
         overlay = source / (name + "_overlay.json")
@@ -212,7 +214,7 @@ def verify(legacy, report=None):
             for probe in reversed(active):
                 probe.close()
     result = {**provenance, "checks": checks, "all_passed": True,
-              "boundary": "Store production APIs across real processes, not full daemon/scan/replay acceptance"}
+              "boundary": "Store production APIs across real processes, not full Runtime Service/scan/replay acceptance"}
     if report:
         report.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps(result, ensure_ascii=False, indent=2))

@@ -6,6 +6,7 @@ import (
  "os"
  "path/filepath"
  "strings"
+ "time"
  "github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 func openProbe(path, mode string) (*store.Store, error) {
@@ -47,6 +48,11 @@ func main() {
   case "reopen":
    other,e:=openProbe(path,mode); result["reopened"]=e==nil
    if other!=nil { _=other.Close() }; if e!=nil { result["reopen_error"]=e.Error() }
+  case "seed_fixture":
+   project:=filepath.Join(root,"project")
+   err=db.RecordWorktreeIdentity(store.WorktreeIdentity{Identity:"wt_123456789abc",Root:project,Group:"fixture",ConfigPath:filepath.Join(project,"oberth.yaml")})
+   if err==nil { err=db.AddRoot(project) }
+   if err==nil { err=db.AppendRunExit(store.RunExitRow{ID:"fixture-exit",PID:42424242,Group:"fixture",Name:"worker",Cmd:"fixture-not-executed",Cwd:project,Code:42,Reason:"failed",ExitedAt:time.Now()}) }
   case "future_schema": _,err=db.DB().Exec("UPDATE schema_version SET version=999 WHERE version=(SELECT max(version) FROM schema_version)")
   case "close": err=db.Close(); if err!=nil { result["ok"]=false; result["error"]=err.Error() }; emit(result); return
   case "exit_without_close": os.Exit(17)
