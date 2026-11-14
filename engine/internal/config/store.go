@@ -10,10 +10,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The daemon's `config.get`, `config.set` and `config.path` methods operate
+// The runtime service's `config.get`, `config.set` and `config.path` methods operate
 // on a plain map rather than the Config struct, so a key this build does not
 // know survives a round trip: a newer client writing `remote.hosts` must not
-// lose it to an older daemon.
+// lose it to an older runtime.service.
 //
 // Comments do not survive re-marshalling. The copy at <path>.bak is what makes
 // that recoverable.
@@ -44,8 +44,8 @@ func Map() (map[string]any, error) {
 }
 
 // Apply merges patch into the config file and writes it back. A null removes
-// the key; nested maps merge key by key, so setting `daemon.log_level` leaves
-// `daemon.idle_timeout` alone. The written config is returned.
+// the key; nested maps merge key by key, so setting `runtime_service.log_level` leaves
+// `runtime_service.idle_timeout` alone. The written config is returned.
 //
 // The merged result must parse and validate as a Config. When it does not,
 // nothing is written and the validation messages become the error.
@@ -167,6 +167,9 @@ func validateMap(m map[string]any) error {
 	body, err := yaml.Marshal(denormalize(m))
 	if err != nil {
 		return fmt.Errorf("encoding the config: %w", err)
+	}
+	if err := checkRuntimeServiceConfigNames(body); err != nil {
+		return err
 	}
 	decoded := &Config{}
 	if err := yaml.Unmarshal(body, decoded); err != nil {

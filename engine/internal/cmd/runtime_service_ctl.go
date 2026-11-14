@@ -20,59 +20,59 @@ import (
 
 var (
 	// JSON prints the contract document instead of the human text.
-	daemonJSONFlag bool
+	runtimeServiceJSONFlag bool
 	// Follow keeps the log open after the tail has been printed.
-	daemonFollowFlag bool
+	runtimeServiceFollowFlag bool
 	// Lines is how much of the log the tail prints first.
-	daemonLinesFlag int
+	runtimeServiceLinesFlag int
 )
 
-var daemonStatusCmd = &cobra.Command{
+var runtimeServiceStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show whether the daemon is running, and what it is doing",
-	RunE:  daemonStatusRun,
+	Short: "Show whether the runtime service is running, and what it is doing",
+	RunE:  runtimeServiceStatusRun,
 	Args:  cobra.NoArgs,
 }
 
-var daemonStopCmd = &cobra.Command{
+var runtimeServiceStopCmd = &cobra.Command{
 	Use:   "stop",
-	Short: "Stop the running daemon",
-	RunE:  daemonStopRun,
+	Short: "Stop the running runtime service",
+	RunE:  runtimeServiceStopRun,
 	Args:  cobra.NoArgs,
 }
 
-var daemonRestartCmd = &cobra.Command{
+var runtimeServiceRestartCmd = &cobra.Command{
 	Use:   "restart",
-	Short: "Stop the daemon if it is running, then start it detached",
-	RunE:  daemonRestartRun,
+	Short: "Stop the runtime service if it is running, then start it detached",
+	RunE:  runtimeServiceRestartRun,
 	Args:  cobra.NoArgs,
 }
 
-var daemonPathCmd = &cobra.Command{
+var runtimeServicePathCmd = &cobra.Command{
 	Use:   "path",
-	Short: "Print the socket path the daemon listens on",
-	RunE:  daemonPathRun,
+	Short: "Print the socket path the runtime service listens on",
+	RunE:  runtimeServicePathRun,
 	Args:  cobra.NoArgs,
 }
 
-var daemonLogCmd = &cobra.Command{
+var runtimeServiceLogCmd = &cobra.Command{
 	Use:   "log",
-	Short: "Print the daemon log",
-	RunE:  daemonLogRun,
+	Short: "Print the runtime service log",
+	RunE:  runtimeServiceLogRun,
 	Args:  cobra.NoArgs,
 }
 
 func init() {
-	for _, command := range []*cobra.Command{daemonStatusCmd, daemonPathCmd, daemonStopCmd, daemonRestartCmd} {
-		command.Flags().BoolVar(&daemonJSONFlag, "json", false, "Output as JSON")
+	for _, command := range []*cobra.Command{runtimeServiceStatusCmd, runtimeServicePathCmd, runtimeServiceStopCmd, runtimeServiceRestartCmd} {
+		command.Flags().BoolVar(&runtimeServiceJSONFlag, "json", false, "Output as JSON")
 	}
-	daemonLogCmd.Flags().BoolVarP(&daemonFollowFlag, "follow", "f", false, "Follow the log as it grows")
-	daemonLogCmd.Flags().IntVarP(&daemonLinesFlag, "lines", "n", 50, "Number of trailing lines to print")
-	daemonCmd.AddCommand(daemonStatusCmd, daemonStopCmd, daemonRestartCmd, daemonPathCmd, daemonLogCmd)
+	runtimeServiceLogCmd.Flags().BoolVarP(&runtimeServiceFollowFlag, "follow", "f", false, "Follow the log as it grows")
+	runtimeServiceLogCmd.Flags().IntVarP(&runtimeServiceLinesFlag, "lines", "n", 50, "Number of trailing lines to print")
+	runtimeServiceCmd.AddCommand(runtimeServiceStatusCmd, runtimeServiceStopCmd, runtimeServiceRestartCmd, runtimeServicePathCmd, runtimeServiceLogCmd)
 }
 
-// connectRunning dials an already-running daemon. `oberth daemon` never
-// autostarts: asking a daemon about itself must not create one.
+// connectRunning dials an already-running runtime.service. `oberth runtime service` never
+// autostarts: asking a runtime service about itself must not create one.
 func connectRunning(ctx context.Context) (*client.Client, error) {
 	return client.Dial(ctx, client.ClientInfo{
 		Name:        "cli",
@@ -81,48 +81,48 @@ func connectRunning(ctx context.Context) (*client.Client, error) {
 	})
 }
 
-// notRunning is the answer when no daemon is listening. In JSON mode that is
-// still an answer rather than an error — `daemon status --json` documents
+// notRunning is the answer when no runtime service is listening. In JSON mode that is
+// still an answer rather than an error — `runtime service status --json` documents
 // `{"running": false}` on stdout — so it prints and exits 1 quietly; otherwise
 // it becomes the standard error-plus-hint on stderr.
 func notRunning(socket string) error {
-	if daemonJSONFlag {
+	if runtimeServiceJSONFlag {
 		if err := printJSON(map[string]any{"running": false, "socket": socket}); err != nil {
 			return err
 		}
 		return errSilent
 	}
-	return failHint("daemon_not_running",
-		"oberth daemon is not running",
-		"start it with `oberth serve` (or `oberth serve -d` to detach)")
+	return failHint("runtime_service_not_running",
+		"oberth runtime service is not running",
+		"start it with `oberth runtime service run` (or `oberth runtime service run -d` to detach)")
 }
 
-func daemonStatusRun(cmd *cobra.Command, _ []string) error {
+func runtimeServiceStatusRun(cmd *cobra.Command, _ []string) error {
 	conn, err := runningClient(cmd.Context())
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
-	var status rpc.DaemonStatusResult
-	if callErr := conn.Call(cmd.Context(), "daemon.status", rpc.Empty{}, &status); callErr != nil {
+	var status rpc.RuntimeServiceStatusResult
+	if callErr := conn.Call(cmd.Context(), "runtime.service.status", rpc.Empty{}, &status); callErr != nil {
 		return callErr
 	}
-	doc := daemonStatus{status: status, hello: conn.Hello(), cliCommit: buildinfo.Commit}
+	doc := runtimeServiceStatus{status: status, hello: conn.Hello(), cliCommit: buildinfo.Commit}
 
-	if daemonJSONFlag {
+	if runtimeServiceJSONFlag {
 		return printJSON(doc.jsonDoc())
 	}
 	doc.writeText(os.Stdout)
-	if note := staleDaemonNote(status.Commit, buildinfo.Commit); note != "" {
+	if note := staleRuntimeServiceNote(status.Commit, buildinfo.Commit); note != "" {
 		fmt.Fprintln(os.Stderr, display.Dim(note))
 	}
 	return nil
 }
 
-// runningClient dials a daemon that must already be running. Absence is the
+// runningClient dials a runtime service that must already be running. Absence is the
 // documented not-running answer, not an error to autostart around: `oberth
-// daemon` never creates the daemon it is inspecting.
+// runtime service` never creates the runtime service it is inspecting.
 func runningClient(ctx context.Context) (*client.Client, error) {
 	c, err := connectRunning(ctx)
 	if err != nil {
@@ -134,34 +134,34 @@ func runningClient(ctx context.Context) (*client.Client, error) {
 	return c, nil
 }
 
-// daemonStatus is one read of the daemon, built once so the JSON document and
+// runtimeServiceStatus is one read of the runtime service, built once so the JSON document and
 // the text lines can never describe different values. cliCommit is this
-// process's build; the comparison with the daemon's is part of the answer.
-type daemonStatus struct {
-	status    rpc.DaemonStatusResult
-	hello     rpc.DaemonHelloResult
+// process's build; the comparison with the runtime service's is part of the answer.
+type runtimeServiceStatus struct {
+	status    rpc.RuntimeServiceStatusResult
+	hello     rpc.RuntimeServiceHelloResult
 	cliCommit string
 }
 
-func (s daemonStatus) jsonDoc() map[string]any {
+func (s runtimeServiceStatus) jsonDoc() map[string]any {
 	body := map[string]any{
-		"running":               true,
-		"pid":                   s.status.PID,
-		"uptime":                s.status.Uptime,
-		"subscribers":           s.status.Subscribers,
-		"last_scan_at":          s.status.LastScanAt,
-		"scan_interval_ms":      s.status.ScanIntervalMs,
-		"scan_base_interval_ms": s.status.ScanBaseIntervalMs,
-		"stats_interval_ms":     s.status.StatsIntervalMs,
-		"scans":                 s.status.Scans,
-		"db_path":               s.status.DBPath,
-		"socket":                s.hello.Socket,
-		"daemon_version":        s.hello.DaemonVersion,
-		"protocol_version":      s.hello.ProtocolVersion,
-		"capabilities":          s.hello.Capabilities,
-		"build_commit":          s.status.Commit,
-		"build_date":            s.status.Built,
-		"build_matches":         s.status.Commit == "" || s.status.Commit == s.cliCommit,
+		"running":                 true,
+		"pid":                     s.status.PID,
+		"uptime":                  s.status.Uptime,
+		"subscribers":             s.status.Subscribers,
+		"last_scan_at":            s.status.LastScanAt,
+		"scan_interval_ms":        s.status.ScanIntervalMs,
+		"scan_base_interval_ms":   s.status.ScanBaseIntervalMs,
+		"stats_interval_ms":       s.status.StatsIntervalMs,
+		"scans":                   s.status.Scans,
+		"db_path":                 s.status.DBPath,
+		"socket":                  s.hello.Socket,
+		"runtime_service_version": s.hello.RuntimeServiceVersion,
+		"protocol_version":        s.hello.ProtocolVersion,
+		"capabilities":            s.hello.Capabilities,
+		"build_commit":            s.status.Commit,
+		"build_date":              s.status.Built,
+		"build_matches":           s.status.Commit == "" || s.status.Commit == s.cliCommit,
 	}
 	if s.status.Observation != nil {
 		body["observation"] = s.status.Observation
@@ -169,11 +169,11 @@ func (s daemonStatus) jsonDoc() map[string]any {
 	return body
 }
 
-func (s daemonStatus) writeText(w io.Writer) {
+func (s runtimeServiceStatus) writeText(w io.Writer) {
 	line := func(format string, args ...any) { fmt.Fprintf(w, format+"\n", args...) }
 	line("running       yes")
 	line("pid           %d", s.status.PID)
-	line("version       %s (protocol %s)", s.hello.DaemonVersion, s.hello.ProtocolVersion)
+	line("version       %s (protocol %s)", s.hello.RuntimeServiceVersion, s.hello.ProtocolVersion)
 	line("build         %s, built %s", orUnknown(s.status.Commit), orUnknown(s.status.Built))
 	line("uptime        %s", s.status.Uptime)
 	line("subscribers   %d", s.status.Subscribers)
@@ -185,8 +185,8 @@ func (s daemonStatus) writeText(w io.Writer) {
 		line("last scan     %s", s.status.LastScanAt)
 	}
 	line("socket        %s", s.hello.Socket)
-	// An observable daemon needs no row: the socket line already says the
-	// daemon is working. Anything else is the fact a caller must not miss.
+	// An observable runtime service needs no row: the socket line already says the
+	// runtime service is working. Anything else is the fact a caller must not miss.
 	if obs := s.status.Observation; obs != nil && obs.State != string(ports.ObservationObservable) {
 		line("observation   %s (%s)", obs.State, orUnknown(obs.Code))
 		if obs.Hint != "" {
@@ -199,20 +199,20 @@ func (s daemonStatus) writeText(w io.Writer) {
 	line("capabilities  %v", s.hello.Capabilities)
 }
 
-// staleDaemonNote is empty when the daemon is this build, and otherwise says
+// staleRuntimeServiceNote is empty when the runtime service is this build, and otherwise says
 // what to do about it.
 //
-// A daemon is started once and keeps running: after any change to the engine it
-// is still answering from the previous build, and nothing else in `daemon
+// A runtime service is started once and keeps running: after any change to the engine it
+// is still answering from the previous build, and nothing else in `runtime service
 // status` shows that — the version string is the same either way. It is the one
 // failure this software cannot detect from the inside, so it is checked here,
 // where the two builds meet.
-func staleDaemonNote(daemonCommit, cliCommit string) string {
-	if daemonCommit == "" || cliCommit == "" || daemonCommit == cliCommit {
+func staleRuntimeServiceNote(runtimeServiceCommit, cliCommit string) string {
+	if runtimeServiceCommit == "" || cliCommit == "" || runtimeServiceCommit == cliCommit {
 		return ""
 	}
-	return fmt.Sprintf("note: the running daemon is from another build (%s; this CLI is %s) — "+
-		"restart it to get this one: oberth daemon restart", daemonCommit, cliCommit)
+	return fmt.Sprintf("note: the running runtime service is from another build (%s; this CLI is %s) — "+
+		"restart it to get this one: oberth runtime service restart", runtimeServiceCommit, cliCommit)
 }
 
 // orUnknown keeps a missing field from printing as an empty gap.
@@ -223,7 +223,7 @@ func orUnknown(s string) string {
 	return s
 }
 
-func daemonStopRun(cmd *cobra.Command, _ []string) error {
+func runtimeServiceStopRun(cmd *cobra.Command, _ []string) error {
 	socket := runtimesvc.SocketPath()
 	conn, err := runningClient(cmd.Context())
 	if err != nil {
@@ -232,43 +232,43 @@ func daemonStopRun(cmd *cobra.Command, _ []string) error {
 	defer conn.Close()
 
 	var ack rpc.OKResult
-	if callErr := conn.Call(cmd.Context(), "daemon.shutdown", rpc.Empty{}, &ack); callErr != nil {
+	if callErr := conn.Call(cmd.Context(), "runtime.service.shutdown", rpc.Empty{}, &ack); callErr != nil {
 		return callErr
 	}
-	if waitErr := waitForDaemonGone(socket, stopTimeout); waitErr != nil {
+	if waitErr := waitForRuntimeServiceGone(socket, stopTimeout); waitErr != nil {
 		return waitErr
 	}
-	if daemonJSONFlag {
+	if runtimeServiceJSONFlag {
 		return printJSON(map[string]any{"stopped": true, "socket": socket})
 	}
-	fmt.Println("oberth daemon stopped")
+	fmt.Println("oberth runtime service stopped")
 	return nil
 }
 
-func daemonRestartRun(cmd *cobra.Command, _ []string) error {
+func runtimeServiceRestartRun(cmd *cobra.Command, _ []string) error {
 	socket := runtimesvc.SocketPath()
 	if conn, dialErr := connectRunning(cmd.Context()); dialErr == nil {
 		var ack rpc.OKResult
-		_ = conn.Call(cmd.Context(), "daemon.shutdown", rpc.Empty{}, &ack)
+		_ = conn.Call(cmd.Context(), "runtime.service.shutdown", rpc.Empty{}, &ack)
 		conn.Close()
-		// The old daemon releases its lock only after closing its socket, so the
+		// The old runtime service releases its lock only after closing its socket, so the
 		// replacement waits for the lock rather than for the socket.
-		if waitErr := waitForDaemonGone(socket, stopTimeout); waitErr != nil {
+		if waitErr := waitForRuntimeServiceGone(socket, stopTimeout); waitErr != nil {
 			return waitErr
 		}
 	}
-	if detachErr := detachDaemon(cmd.Context(), socket); detachErr != nil {
+	if detachErr := detachRuntimeService(cmd.Context(), socket); detachErr != nil {
 		return detachErr
 	}
-	if daemonJSONFlag {
+	if runtimeServiceJSONFlag {
 		return printJSON(map[string]any{"restarted": true, "socket": socket})
 	}
 	return nil
 }
 
-func daemonPathRun(*cobra.Command, []string) error {
+func runtimeServicePathRun(*cobra.Command, []string) error {
 	socket := runtimesvc.SocketPath()
-	if daemonJSONFlag {
+	if runtimeServiceJSONFlag {
 		return printJSON(map[string]any{
 			"socket": socket,
 			"lock":   runtimesvc.LockPath(),
@@ -279,21 +279,21 @@ func daemonPathRun(*cobra.Command, []string) error {
 	return nil
 }
 
-func daemonLogRun(cmd *cobra.Command, _ []string) error {
+func runtimeServiceLogRun(cmd *cobra.Command, _ []string) error {
 	logPath := runtimesvc.LogPath()
 	logFile, openErr := os.Open(logPath)
 	if openErr != nil {
 		if os.IsNotExist(openErr) {
-			return fmt.Errorf("no daemon log at %s yet — start the daemon with `oberth serve`", logPath)
+			return fmt.Errorf("no runtime service log at %s yet — start the runtime service with `oberth runtime service run`", logPath)
 		}
 		return openErr
 	}
 	defer logFile.Close()
 
-	if tailErr := printTail(logFile, daemonLinesFlag); tailErr != nil {
+	if tailErr := printTail(logFile, runtimeServiceLinesFlag); tailErr != nil {
 		return tailErr
 	}
-	if !daemonFollowFlag {
+	if !runtimeServiceFollowFlag {
 		return nil
 	}
 	return followFile(cmd.Context(), logFile)

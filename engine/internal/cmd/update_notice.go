@@ -119,5 +119,5 @@ func updateNotice(state versioncheck.State) string {
 		display.Yellow("A new release of oberth is available:"),
 		display.Dim(state.Current), display.Bold(state.Latest),
 		display.Dim("To upgrade, run:"), display.Bold(upgradeCommand(runtime.GOOS)),
-		display.Bold("oberth daemon stop"))
+		display.Bold("oberth runtime service stop"))
 }

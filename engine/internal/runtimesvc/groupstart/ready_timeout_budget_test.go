@@ -28,7 +28,7 @@ func TestDependencyBudgetUsesDependencyReadyTimeout(t *testing.T) {
 	setDependencyBudget(t, time.Second)
 	l := waitingScanner()
 	start := time.Now()
-	err := waitFor(context.Background(), &runtimesvc.Runtime{Scanner: l}, "test",
+	err := waitFor(context.Background(), &runtimesvc.HostContext{Scanner: l}, "test",
 		[]groups.Service{{Name: "api", Port: 18000, ReadyTimeout: "20ms"}},
 		&addressBook{ports: map[string]int{"api": 18000}}, "")
 	requireDependencyTimeout(t, err)
@@ -46,7 +46,7 @@ func TestDependencyBudgetExtendsPastPackageDefault(t *testing.T) {
 	setDependencyBudget(t, 10*time.Millisecond)
 	l := waitingScanner()
 	start := time.Now()
-	err := waitFor(context.Background(), &runtimesvc.Runtime{Scanner: l}, "test",
+	err := waitFor(context.Background(), &runtimesvc.HostContext{Scanner: l}, "test",
 		[]groups.Service{{Name: "api", Port: 18000, ReadyTimeout: "80ms"}},
 		&addressBook{ports: map[string]int{"api": 18000}}, "")
 	requireDependencyTimeout(t, err)
@@ -67,7 +67,7 @@ func TestDependencyBudgetTakesMaximumAcrossDependencies(t *testing.T) {
 		{Name: "db", Port: 18001, ReadyTimeout: "10ms"},
 		{Name: "api", Port: 18002, ReadyTimeout: "70ms"},
 	}
-	err := waitFor(context.Background(), &runtimesvc.Runtime{Scanner: l}, "test", deps,
+	err := waitFor(context.Background(), &runtimesvc.HostContext{Scanner: l}, "test", deps,
 		&addressBook{ports: map[string]int{"db": 18001, "api": 18002}}, "")
 	requireDependencyTimeout(t, err)
 	if !strings.Contains(err.Error(), "70ms") {

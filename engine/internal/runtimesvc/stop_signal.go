@@ -11,7 +11,7 @@ type stopSignalRegistry interface {
 
 // Capture the selected run identities, without marking anything stopped.
 // An older extension lacking this seam gets no speculative PID-only marker.
-func stopSignalObserver(rt *Runtime, snap state.Snapshot, targets []killer.Target, dryRun bool, reason string) func(int) {
+func stopSignalObserver(rt *HostContext, snap state.Snapshot, targets []killer.Target, dryRun bool, reason string) func(int) {
 	if dryRun {
 		return nil
 	}

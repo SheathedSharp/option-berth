@@ -114,7 +114,7 @@ func TestSessionChangeAlonePublishes(t *testing.T) {
 }
 
 // TestASessionBuilderThatLeavesAbortsTheScan: the sessions builder is a seam
-// the daemon installs after the loop exists. A caller withdrawn inside it ends
+// the runtime service installs after the loop exists. A caller withdrawn inside it ends
 // the scan: nothing is attributed, nothing is published, and the error is the
 // caller's own cancellation rather than a stale snapshot.
 func TestASessionBuilderThatLeavesAbortsTheScan(t *testing.T) {

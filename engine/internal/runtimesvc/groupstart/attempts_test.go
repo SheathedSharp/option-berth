@@ -14,7 +14,7 @@ import (
 )
 
 // snapshotService returns the group and service row for a config path, or nil
-// when the daemon has not published them yet.
+// when the runtime service has not published them yet.
 func snapshotService(t *testing.T, ctx context.Context, c *client.Client, configPath, service string) (*state.Group, *state.Service) {
 	t.Helper()
 	var snap state.Snapshot
@@ -240,7 +240,7 @@ services:
 // and the attempt must disappear with it.
 func TestStartAttemptIsClearedOnCancellation(t *testing.T) {
 	h := newHarness(t)
-	daemonCtx, c := h.ctx, h.client
+	runtimeServiceCtx, c := h.ctx, h.client
 	path := h.manifest(fmt.Sprintf(`name: phases
 services:
   - name: web
@@ -251,7 +251,7 @@ services:
 
 	s, _ := h.open(rpc.GroupsStartParams{ConfigPath: &path, Progress: true})
 	result := h.drainAsync(s)
-	waitForStarting(t, daemonCtx, c, path, "web", "prepare")
+	waitForStarting(t, runtimeServiceCtx, c, path, "web", "prepare")
 	if err := s.Cancel(context.Background()); err != nil {
 		t.Fatalf("stream.cancel: %v", err)
 	}
@@ -259,7 +259,7 @@ services:
 	if got.err != nil {
 		t.Fatalf("cancelled stream reported %v", got.err)
 	}
-	waitForNoStarting(t, daemonCtx, c, path, "web")
+	waitForNoStarting(t, runtimeServiceCtx, c, path, "web")
 }
 
 // TestStartProgressIsGatedByProgress: without progress the stream carries no
@@ -334,7 +334,7 @@ services:
 	if !found {
 		t.Fatalf("scoped snapshot did not include web: %+v", scoped.Worktrees)
 	}
-	// Let the start finish before the harness tears the daemon down.
+	// Let the start finish before the harness tears the runtime service down.
 	if got := <-result; got.err != nil {
 		t.Fatalf("stream error: %v", got.err)
 	}

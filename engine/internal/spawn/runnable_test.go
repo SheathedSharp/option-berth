@@ -54,7 +54,7 @@ func TestCheckRunnable(t *testing.T) {
 	}
 }
 
-// A service inherits the daemon's environment, so the PATH that decides is the
+// A service inherits the runtime service's environment, so the PATH that decides is the
 // one passed in — not this process's.
 func TestCheckRunnableUsesTheGivenEnvironment(t *testing.T) {
 	dir := t.TempDir()
@@ -78,6 +78,6 @@ func TestCheckRunnableInDirResolvesRelativeWrapper(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := CheckRunnableInDir("./mvnw", dir, []string{"PATH=/nowhere"}); err != nil {
-		t.Fatalf("relative wrapper was checked against the daemon cwd: %v", err)
+		t.Fatalf("relative wrapper was checked against the runtime service cwd: %v", err)
 	}
 }

@@ -23,7 +23,7 @@ const readChunk = 64 << 10
 
 // Encoder writes newline-delimited JSON.
 //
-// The lock is not incidental. The daemon answers calls and pushes broadcast
+// The lock is not incidental. The runtime service answers calls and pushes broadcast
 // notifications from different goroutines onto one connection, and two
 // concurrent Encodes would interleave their bytes into a line neither side can
 // parse.

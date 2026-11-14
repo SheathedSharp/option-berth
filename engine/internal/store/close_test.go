@@ -36,7 +36,7 @@ func TestCheckpointLeavesOneConnectionAndNoIdleConnection(t *testing.T) {
 }
 
 // Close must return even when a caller still holds the only connection. A
-// leaked connection is a bug, not a reason to hang daemon shutdown or a test's
+// leaked connection is a bug, not a reason to hang runtime service shutdown or a test's
 // temp-directory cleanup forever.
 func TestCheckpointGivesUpOnALeakedConnection(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "option-berth.db"))

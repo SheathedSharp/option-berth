@@ -18,8 +18,8 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
 )
 
-// routedRows is the scan the in-process daemon serves. None of it is enriched,
-// so the rows the daemon publishes and the rows the direct path renders are
+// routedRows is the scan the in-process runtime service serves. None of it is enriched,
+// so the rows the runtime service publishes and the rows the direct path renders are
 // comparable byte for byte. Groups stay unset: both paths run the resolver, and
 // it is the resolver's answer that has to agree.
 func routedRows() []ports.ListeningPort {
@@ -43,9 +43,11 @@ func routedRows() []ports.ListeningPort {
 	}
 }
 
-// startTestDaemon brings up a daemon over a real socket whose scan answers with
-// rows, and points the CLI's dialers at it for the rest of the test.
-func startTestDaemon(t *testing.T, table []ports.ListeningPort) {
+// startTestRuntimeService brings up a runtime service over a real socket whose scan answers with
+// rows, and points the CLI's dialers at it for the rest of the test. The
+// returned stop is idempotent and also runs at cleanup: stopping the owner is
+// the only way an offline reader may open its database.
+func startTestRuntimeService(t *testing.T, table []ports.ListeningPort) func() {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the unix-socket harness does not apply to named pipes")
@@ -62,7 +64,7 @@ func startTestDaemon(t *testing.T, table []ports.ListeningPort) {
 
 	server := runtimesvc.New(runtimesvc.Options{
 		Scanner: scanner.New(scanner.Options{
-			DaemonVersion: "test",
+			RuntimeServiceVersion: "test",
 			Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
 				return append([]ports.ListeningPort{}, table...), nil
 			},
@@ -70,43 +72,49 @@ func startTestDaemon(t *testing.T, table []ports.ListeningPort) {
 		Socket:  socket,
 		Version: "test",
 	})
-	ctx, stop := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = server.Serve(ctx) }()
-	t.Cleanup(func() {
-		stop()
-		<-server.Done()
-	})
+	var stopOnce sync.Once
+	stop := func() {
+		stopOnce.Do(func() {
+			cancel()
+			<-server.Done()
+		})
+	}
+	t.Cleanup(stop)
 	if err := client.WaitForSocket(ctx, socket, 5*time.Second); err != nil {
-		t.Fatalf("daemon did not come up: %v", err)
+		t.Fatalf("runtime service did not come up: %v", err)
 	}
 
-	savedDialer := dialDaemon
+	savedDialer := dialRuntimeService
 	reach := func(ctx context.Context) (*client.Client, error) {
 		return client.Dial(ctx, client.ClientInfo{Name: "cli", Version: "test", Socket: socket})
 	}
-	dialDaemon = reach
-	t.Cleanup(func() { dialDaemon = savedDialer })
+	dialRuntimeService = reach
+	t.Cleanup(func() { dialRuntimeService = savedDialer })
 
-	// Reads and writes must both land on this daemon: a command that autostarts
-	// would otherwise start a second daemon of its own instead of reaching this
+	// Reads and writes must both land on this runtime_service: a command that autostarts
+	// would otherwise start a second runtime service of its own instead of reaching this
 	// one, which is precisely what the harness exists to prevent.
 	savedWrite := connectForWrite
 	connectForWrite = reach
 	t.Cleanup(func() { connectForWrite = savedWrite })
+
+	return stop
 }
 
-// noDaemonReachable makes every connection attempt fail, the way an empty
+// noRuntimeServiceReachable makes every connection attempt fail, the way an empty
 // socket path does — including the ones a write command makes, which otherwise
-// would autostart a daemon of their own.
-func noDaemonReachable(t *testing.T) {
+// would autostart a runtime service of their own.
+func noRuntimeServiceReachable(t *testing.T) {
 	t.Helper()
 	unreachable := func(context.Context) (*client.Client, error) {
-		return nil, errors.New("oberth daemon is not running")
+		return nil, errors.New("oberth runtime service is not running")
 	}
-	prev, prevWrite := dialDaemon, connectForWrite
-	dialDaemon, connectForWrite = unreachable, unreachable
+	prev, prevWrite := dialRuntimeService, connectForWrite
+	dialRuntimeService, connectForWrite = unreachable, unreachable
 	t.Cleanup(func() {
-		dialDaemon, connectForWrite = prev, prevWrite
+		dialRuntimeService, connectForWrite = prev, prevWrite
 	})
 }
 
@@ -114,11 +122,11 @@ func noDaemonReachable(t *testing.T) {
 // keep, so tests do not leak into each other.
 func resetRouting(t *testing.T) {
 	t.Helper()
-	savedFlag := noDaemonFlag
-	noDaemonFlag = false
+	savedFlag := noRuntimeServiceFlag
+	noRuntimeServiceFlag = false
 	fallbackNoteOnce = sync.Once{}
 	t.Cleanup(func() {
-		noDaemonFlag = savedFlag
+		noRuntimeServiceFlag = savedFlag
 		fallbackNoteOnce = sync.Once{}
 	})
 }
@@ -152,56 +160,56 @@ func captureStderr(t *testing.T, fn func()) string {
 
 func TestFallbackNoteIsPrintedOncePerInvocation(t *testing.T) {
 	resetRouting(t)
-	noDaemonReachable(t)
+	noRuntimeServiceReachable(t)
 
 	stderrText := captureStderr(t, func() {
 		for range 3 {
-			if conn := daemonClient(context.Background()); conn != nil {
-				t.Error("daemonClient returned a client with no daemon reachable")
+			if conn := runtimeServiceClient(context.Background()); conn != nil {
+				t.Error("runtimeServiceClient returned a client with no runtime service reachable")
 				conn.Close()
 			}
 		}
 	})
-	if count := bytes.Count([]byte(stderrText), []byte("note: daemon unavailable, using direct scan")); count != 1 {
+	if count := bytes.Count([]byte(stderrText), []byte("note: runtime service unavailable, using direct scan")); count != 1 {
 		t.Fatalf("the fallback note appeared %d times, want exactly 1:\n%s", count, stderrText)
 	}
 }
 
-// TestDaemonUpStaysSilentAboutTheFallback: a command that has nothing to fall
-// back to asks whether a daemon is there; "using direct scan" would be a false
+// TestRuntimeServiceUpStaysSilentAboutTheFallback: a command that has nothing to fall
+// back to asks whether a runtime service is there; "using direct scan" would be a false
 // sentence for it, so the answer is a quiet false.
-func TestDaemonUpStaysSilentAboutTheFallback(t *testing.T) {
+func TestRuntimeServiceUpStaysSilentAboutTheFallback(t *testing.T) {
 	resetRouting(t)
-	noDaemonReachable(t)
+	noRuntimeServiceReachable(t)
 
 	out := captureStderr(t, func() {
-		if daemonUp(context.Background()) {
-			t.Error("daemonUp reported a daemon that cannot be reached")
+		if runtimeServiceUp(context.Background()) {
+			t.Error("runtimeServiceUp reported a runtime service that cannot be reached")
 		}
 	})
 	if out != "" {
-		t.Fatalf("daemonUp wrote %q, want no note", out)
+		t.Fatalf("runtimeServiceUp wrote %q, want no note", out)
 	}
 }
 
-func TestNoDaemonFlagNeverDialsAndSaysNothing(t *testing.T) {
+func TestNoRuntimeServiceFlagNeverDialsAndSaysNothing(t *testing.T) {
 	resetRouting(t)
-	noDaemonFlag = true
+	noRuntimeServiceFlag = true
 
-	saved := dialDaemon
-	dialDaemon = func(context.Context) (*client.Client, error) {
-		t.Error("--no-daemon still dialled the daemon")
+	saved := dialRuntimeService
+	dialRuntimeService = func(context.Context) (*client.Client, error) {
+		t.Error("--no-runtime-service still dialled the runtime service")
 		return nil, errors.New("unreachable")
 	}
-	t.Cleanup(func() { dialDaemon = saved })
+	t.Cleanup(func() { dialRuntimeService = saved })
 
 	stderrText := captureStderr(t, func() {
-		if conn := daemonClient(context.Background()); conn != nil {
-			t.Error("--no-daemon returned a client")
+		if conn := runtimeServiceClient(context.Background()); conn != nil {
+			t.Error("--no-runtime-service returned a client")
 			conn.Close()
 		}
 	})
 	if stderrText != "" {
-		t.Fatalf("--no-daemon printed %q; it is a deliberate choice, not a fallback", stderrText)
+		t.Fatalf("--no-runtime-service printed %q; it is a deliberate choice, not a fallback", stderrText)
 	}
 }

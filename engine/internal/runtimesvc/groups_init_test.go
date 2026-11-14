@@ -16,7 +16,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// initRig is a daemon that can see two services listening inside a git
+// initRig is a runtime service that can see two services listening inside a git
 // checkout that has no manifest yet — the state groups.init exists to get out
 // of.
 type initRig struct {
@@ -92,7 +92,7 @@ func (r *initRig) onDisk() string {
 }
 
 // load writes a proposal to a scratch file and reads it back through the real
-// loader, which is the check that matters: the daemon must never propose
+// loader, which is the check that matters: the runtime service must never propose
 // something groups.Load would reject.
 func (r *initRig) load(text string) *groups.Config {
 	r.t.Helper()
@@ -285,7 +285,7 @@ func TestGroupsInitForceOverwrites(t *testing.T) {
 	}
 }
 
-// TestGroupsInitRejectsABadRoot: the daemon has no working directory of the
+// TestGroupsInitRejectsABadRoot: the runtime service has no working directory of the
 // caller's, so a root it cannot use is a parameter error, not a guess.
 func TestGroupsInitRejectsABadRoot(t *testing.T) {
 	rig := newInitRig(t)
@@ -615,16 +615,16 @@ func TestGroupsInitRefusesYAMLNextToAList(t *testing.T) {
 // Otherwise the call reads state the ordinary way, and an absent cache is never
 // mistaken for a warm one.
 func TestInitSnapshotTrustsAWarmCacheOnlyWhileSubscribed(t *testing.T) {
-	countingRuntime := func(t *testing.T, scans *int) (*Runtime, *scanner.Loop) {
+	countingRuntime := func(t *testing.T, scans *int) (*HostContext, *scanner.Loop) {
 		t.Helper()
 		loop := scanner.New(scanner.Options{
-			DaemonVersion: "test",
+			RuntimeServiceVersion: "test",
 			Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
 				*scans++
 				return []ports.ListeningPort{{Port: 8000, PID: 1, Process: "python3"}}, nil
 			},
 		})
-		return New(Options{Socket: "/test/init-snapshot.sock", Version: "test", Scanner: loop}).Runtime(), loop
+		return New(Options{Socket: "/test/init-snapshot.sock", Version: "test", Scanner: loop}).HostContext(), loop
 	}
 
 	t.Run("no subscriber forces a read", func(t *testing.T) {
@@ -699,10 +699,10 @@ func TestPublishConfigWarnsOnlyOnReloadFailure(t *testing.T) {
 	}
 
 	// The runtime publishConfig needs is the scanner and a logger; giving it a
-	// private one keeps this test's diagnostics out of the daemon's log.
+	// private one keeps this test's diagnostics out of the runtime service's log.
 	var logged bytes.Buffer
-	rt := &Runtime{Scanner: rig.h.loop, Logger: slog.New(slog.NewTextHandler(&logged, nil))}
-	req := &Request{Runtime: rt}
+	rt := &HostContext{Scanner: rig.h.loop, Logger: slog.New(slog.NewTextHandler(&logged, nil))}
+	req := &Request{HostContext: rt}
 
 	publishConfig(req, rig.file, proposal.Proposal.Name, 0)
 	if strings.Contains(logged.String(), "reloading a config after writing it") {

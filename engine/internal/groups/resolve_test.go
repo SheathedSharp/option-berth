@@ -8,7 +8,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// fakeRuns stands in for the daemon's registry: a port number maps to the run
+// fakeRuns stands in for the runtime service's registry: a port number maps to the run
 // recorded against it.
 type fakeRun struct {
 	group string

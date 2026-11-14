@@ -29,7 +29,7 @@ import (
 func TestKillHelperListener(t *testing.T) {
 	listenOn := os.Getenv("BERTH_TEST_LISTEN")
 	if listenOn == "" {
-		t.Skip("helper process, driven by TestKillRoutesThroughTheDaemon")
+		t.Skip("helper process, driven by TestKillRoutesThroughTheRuntimeService")
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:"+listenOn)
 	if err != nil {
@@ -114,29 +114,29 @@ func startListener(t *testing.T) int {
 	return port
 }
 
-// startScanningDaemon runs a daemon over a real socket with the test-isolated
+// startScanningRuntimeService runs a runtime service over a real socket with the test-isolated
 // scanner, so it sees the same registered listeners the direct path scans. The
 // returned stop function shuts it down early, which is how a test ends a follow.
-func startScanningDaemon(t *testing.T) func() {
+func startScanningRuntimeService(t *testing.T) func() {
 	t.Helper()
-	return startScanningDaemonWithScan(t, func(scanner.Include) ([]ports.ListeningPort, error) {
-		// Daemon tests are the isolated real-fixture tier, not the pure-memory
+	return startScanningRuntimeServiceWithScan(t, func(scanner.Include) ([]ports.ListeningPort, error) {
+		// RuntimeService tests are the isolated real-fixture tier, not the pure-memory
 		// layer; they opt into enrichment explicitly and see a stopped fixture
 		// leave the table.
 		return isolatedListeningSnapshot(t), nil
 	})
 }
 
-// startScanningDaemonWithScan is the only way a fixture may construct this
-// daemon: the scan is explicit and required. A nil scan is refused before the
-// socket, the scanner or the daemon exists, so a forgotten scan can never fall
+// startScanningRuntimeServiceWithScan is the only way a fixture may construct this
+// runtime_service: the scan is explicit and required. A nil scan is refused before the
+// socket, the scanner or the runtime service exists, so a forgotten scan can never fall
 // back to a machine-wide ports.Scan. Every client this fixture dials is bound to
-// the fixture and its Scan, which is what the test-binary daemon kill guard
-// checks; a daemon round from a client this fixture did not dial is refused.
-func startScanningDaemonWithScan(t *testing.T, scan func(scanner.Include) ([]ports.ListeningPort, error)) func() {
+// the fixture and its Scan, which is what the test-binary runtime service kill guard
+// checks; a runtime service round from a client this fixture did not dial is refused.
+func startScanningRuntimeServiceWithScan(t *testing.T, scan func(scanner.Include) ([]ports.ListeningPort, error)) func() {
 	t.Helper()
 	if scan == nil {
-		t.Fatal("a scanning daemon fixture needs an explicit Scan; refusing to build a daemon that could scan the machine")
+		t.Fatal("a scanning runtime service fixture needs an explicit Scan; refusing to build a runtime service that could scan the machine")
 	}
 	if runtime.GOOS == "windows" {
 		t.Skip("the unix-socket harness does not apply to named pipes")
@@ -152,8 +152,8 @@ func startScanningDaemonWithScan(t *testing.T, scan func(scanner.Include) ([]por
 		Socket:  socket,
 		Version: "test",
 		Scanner: scanner.New(scanner.Options{
-			DaemonVersion: "test",
-			Scan:          scan,
+			RuntimeServiceVersion: "test",
+			Scan:                  scan,
 		}),
 	})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -164,23 +164,23 @@ func startScanningDaemonWithScan(t *testing.T, scan func(scanner.Include) ([]por
 	}
 	t.Cleanup(stop)
 	if err := client.WaitForSocket(ctx, socket, 5*time.Second); err != nil {
-		t.Fatalf("daemon did not come up: %v", err)
+		t.Fatalf("runtime service did not come up: %v", err)
 	}
 
-	prev := dialDaemon
-	dialDaemon = func(ctx context.Context) (*client.Client, error) {
+	prev := dialRuntimeService
+	dialRuntimeService = func(ctx context.Context) (*client.Client, error) {
 		c, err := client.Dial(ctx, client.ClientInfo{Name: "cli", Version: "test", Socket: socket})
 		if err != nil {
 			return nil, err
 		}
-		if err := bindDaemonKillClient(c, scan); err != nil {
+		if err := bindRuntimeServiceKillClient(c, scan); err != nil {
 			c.Close()
 			return nil, err
 		}
-		t.Cleanup(func() { releaseDaemonKillClient(c) })
+		t.Cleanup(func() { releaseRuntimeServiceKillClient(c) })
 		return c, nil
 	}
-	t.Cleanup(func() { dialDaemon = prev })
+	t.Cleanup(func() { dialRuntimeService = prev })
 	return stop
 }
 
@@ -241,7 +241,7 @@ func answerNextPrompt(t *testing.T) {
 }
 
 // runKillCmd drives the real command, so what the test exercises is the routing
-// decision itself: daemon when one answers, direct scan otherwise.
+// decision itself: runtime service when one answers, direct scan otherwise.
 func runKillCmd(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	c := &cobra.Command{RunE: runKill}
@@ -253,7 +253,7 @@ func runKillCmd(t *testing.T, args ...string) (string, error) {
 }
 
 // TestKillJSONIsIdenticalOnBothPaths is the golden for the third follow-up:
-// routing `oberth kill` through the daemon must not change one byte of what the
+// routing `oberth kill` through the runtime service must not change one byte of what the
 // user sees. The dry run is what makes the comparison possible — the same
 // process is planned twice, so pid, name and method are identical and both JSON
 // documents have to match exactly.
@@ -263,7 +263,7 @@ func TestKillJSONIsIdenticalOnBothPaths(t *testing.T) {
 	port := startListener(t)
 	target := []string{strconv.Itoa(port)}
 
-	noDaemonReachable(t)
+	noRuntimeServiceReachable(t)
 	directOut, err := runKillCmd(t, target...)
 	if err != nil {
 		t.Fatalf("the direct path failed: %v", err)
@@ -273,56 +273,56 @@ func TestKillJSONIsIdenticalOnBothPaths(t *testing.T) {
 	}
 
 	resetRouting(t)
-	startScanningDaemon(t)
-	daemonOut, err := runKillCmd(t, target...)
+	startScanningRuntimeService(t)
+	runtimeServiceOut, err := runKillCmd(t, target...)
 	if err != nil {
-		t.Fatalf("the daemon path failed: %v", err)
+		t.Fatalf("the runtime service path failed: %v", err)
 	}
 
-	if daemonOut != directOut {
-		t.Fatalf("--json differs between the two paths:\n daemon:\n%s\n direct:\n%s", daemonOut, directOut)
+	if runtimeServiceOut != directOut {
+		t.Fatalf("--json differs between the two paths:\n runtime_service:\n%s\n direct:\n%s", runtimeServiceOut, directOut)
 	}
 }
 
-// TestKillRoutesThroughTheDaemon: with a daemon reachable the kill happens
+// TestKillRoutesThroughTheRuntimeService: with a runtime service reachable the kill happens
 // inside it, and it rescans straight afterwards. The port therefore leaves the
-// daemon's own table at once instead of lingering in its cache for up to
+// runtime service's own table at once instead of lingering in its cache for up to
 // CacheTTL, which is what happened while the CLI killed directly.
-func TestKillRoutesThroughTheDaemon(t *testing.T) {
+func TestKillRoutesThroughTheRuntimeService(t *testing.T) {
 	resetRouting(t)
 	setKillFlags(t, false, true)
 	listenPort := startListener(t)
-	startScanningDaemon(t)
+	startScanningRuntimeService(t)
 
 	printed, err := runKillCmd(t, strconv.Itoa(listenPort))
 	if err != nil {
-		t.Fatalf("kill through the daemon: %v\n%s", err, printed)
+		t.Fatalf("kill through the runtime_service: %v\n%s", err, printed)
 	}
 	if !bytes.Contains([]byte(printed), []byte(`"ok": true`)) {
 		t.Fatalf("nothing was stopped:\n%s", printed)
 	}
 
 	ctx := context.Background()
-	conn, err := dialDaemon(ctx)
+	conn, err := dialRuntimeService(ctx)
 	if err != nil {
 		t.Fatalf("connecting: %v", err)
 	}
 	defer conn.Close()
 
-	// Nothing has to wait out the cache: the daemon's view already moved on.
-	rows, err := daemonList(ctx, conn)
+	// Nothing has to wait out the cache: the runtime service's view already moved on.
+	rows, err := runtimeServiceList(ctx, conn)
 	if err != nil {
 		t.Fatalf("state.snapshot: %v", err)
 	}
 	for _, row := range rows {
 		if row.Port == listenPort {
-			t.Fatalf("port %d is still in the daemon's table right after the kill", listenPort)
+			t.Fatalf("port %d is still in the runtime service's table right after the kill", listenPort)
 		}
 	}
 }
 
 // TestKillSelectorsCarryExactlyOneSubject pins the wire shape: a selector names
-// either a run, a pid or a port+bind, never a mixture. The daemon resolves that
+// either a run, a pid or a port+bind, never a mixture. The runtime service resolves that
 // one field; a selector carrying two would make which one wins an accident.
 func TestKillSelectorsCarryExactlyOneSubject(t *testing.T) {
 	got := killSelectors([]killer.Target{
@@ -348,10 +348,10 @@ func TestKillSelectorsCarryExactlyOneSubject(t *testing.T) {
 	}
 }
 
-// TestGraceMsKeepsTheDaemonDefault: zero is the wire spelling for "use the
-// daemon's default grace", and a negative duration must not become a huge
+// TestGraceMsKeepsTheRuntimeServiceDefault: zero is the wire spelling for "use the
+// runtime service's default grace", and a negative duration must not become a huge
 // unsigned millisecond count.
-func TestGraceMsKeepsTheDaemonDefault(t *testing.T) {
+func TestGraceMsKeepsTheRuntimeServiceDefault(t *testing.T) {
 	for _, tc := range []struct {
 		grace time.Duration
 		want  int
@@ -366,7 +366,7 @@ func TestGraceMsKeepsTheDaemonDefault(t *testing.T) {
 	}
 }
 
-// TestKillMethodFollowsTheSelection: only a group selection the daemon can
+// TestKillMethodFollowsTheSelection: only a group selection the runtime service can
 // resolve by name uses groups.kill. The tree and no-escalate options have no
 // groups.kill field, so those rounds must fall back to the already-resolved
 // port targets.
@@ -379,7 +379,7 @@ func TestKillMethodFollowsTheSelection(t *testing.T) {
 		want  string
 	}{
 		{"a port selection", "", killer.Options{}, "ports.kill"},
-		{"a group the daemon can resolve", "storefront", killer.Options{}, "groups.kill"},
+		{"a group the runtime service can resolve", "storefront", killer.Options{}, "groups.kill"},
 		{"a group that needs the tree flag", "storefront", killer.Options{Tree: true}, "ports.kill"},
 		{"a group that must not escalate", "storefront", killer.Options{Escalate: &noEscalate}, "ports.kill"},
 	} {

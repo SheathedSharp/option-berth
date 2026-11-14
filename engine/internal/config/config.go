@@ -13,7 +13,7 @@ import (
 
 // Config is the user's preferences file, ~/.option-berth/config.yaml.
 type Config struct {
-	Daemon DaemonConfig `yaml:"daemon"`
+	RuntimeService RuntimeServiceConfig `yaml:"runtime_service"`
 
 	// Color is a pointer so "unset" and an explicit false stay distinct.
 	Color *bool `yaml:"color"`
@@ -26,11 +26,11 @@ type Config struct {
 	Agent AgentConfig `yaml:"agent"`
 }
 
-// DefaultIdleTimeout is how long `oberth serve` stays up with no clients, no
+// DefaultIdleTimeout is how long `oberth runtime service run` stays up with no clients, no
 // subscribers and no keepalive connection.
 const DefaultIdleTimeout = 30 * time.Minute
 
-// The cadence bounds for `daemon.stats_interval` and `daemon.scan_interval`.
+// The cadence bounds for `runtime_service.stats_interval` and `runtime_service.scan_interval`.
 // These mirror the scanner's own constants; config does not import the
 // scanner, which would drag the whole port pipeline into every CLI command
 // that reads a config file.
@@ -44,8 +44,12 @@ const (
 	MinScanInterval     = 1 * time.Second
 )
 
-// DaemonConfig holds `oberth serve` settings.
-type DaemonConfig struct {
+// RuntimeServiceConfig holds `oberth runtime service run` settings.
+type RuntimeServiceConfig struct {
+	// PreviousServiceLockDirs holds safety interlocks for explicitly selected
+	// custom v2 endpoint directories. No socket in them is dialled or removed.
+	PreviousServiceLockDirs []string `yaml:"previous_service_lock_dirs,omitempty"`
+
 	// IdleTimeout is a Go duration ("30m", "2h"). "0" disables idle
 	// shutdown; empty means DefaultIdleTimeout.
 	IdleTimeout string `yaml:"idle_timeout"`
@@ -71,7 +75,7 @@ type DaemonConfig struct {
 // ResolvedIdleTimeout returns the parsed idle timeout, falling back to
 // DefaultIdleTimeout when the setting is absent or unusable. Zero means
 // "never shut down".
-func (d DaemonConfig) ResolvedIdleTimeout() time.Duration {
+func (d RuntimeServiceConfig) ResolvedIdleTimeout() time.Duration {
 	raw := strings.TrimSpace(d.IdleTimeout)
 	if raw == "" {
 		return DefaultIdleTimeout
@@ -85,7 +89,7 @@ func (d DaemonConfig) ResolvedIdleTimeout() time.Duration {
 
 // ResolvedStatsInterval returns the stats cadence, defaulting to
 // DefaultStatsInterval and never below MinStatsInterval.
-func (d DaemonConfig) ResolvedStatsInterval() time.Duration {
+func (d RuntimeServiceConfig) ResolvedStatsInterval() time.Duration {
 	value, ok := positiveDuration(d.StatsInterval)
 	if !ok {
 		// Including the unset case. There is no "off": the sampler parks
@@ -100,7 +104,7 @@ func (d DaemonConfig) ResolvedStatsInterval() time.Duration {
 
 // ResolvedScanInterval returns the base scan cadence, defaulting to
 // DefaultScanInterval and never below MinScanInterval.
-func (d DaemonConfig) ResolvedScanInterval() time.Duration {
+func (d RuntimeServiceConfig) ResolvedScanInterval() time.Duration {
 	value, ok := positiveDuration(d.ScanInterval)
 	if !ok {
 		// Including the unset case. There is no "off": the loop parks
@@ -114,7 +118,7 @@ func (d DaemonConfig) ResolvedScanInterval() time.Duration {
 }
 
 // ResolvedLogLevel returns the configured level, defaulting to "info".
-func (d DaemonConfig) ResolvedLogLevel() string {
+func (d RuntimeServiceConfig) ResolvedLogLevel() string {
 	level := strings.ToLower(strings.TrimSpace(d.LogLevel))
 	if !knownLogLevel(level) {
 		return "info"
@@ -159,6 +163,9 @@ func LoadFrom(path string) (*Config, []string) {
 		// A missing or unreadable file is not an error: run on defaults.
 		return cfg, nil
 	}
+	if err := checkRuntimeServiceConfigNames(data); err != nil {
+		return &Config{}, []string{fmt.Sprintf("ignoring %s: %v", path, err)}
+	}
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return &Config{}, []string{fmt.Sprintf("ignoring %s: %v", path, err)}
 	}
@@ -170,11 +177,13 @@ const template = `# option-berth configuration
 # Every setting is optional. Uncomment a line to override the built-in
 # default. Command-line flags always win over this file.
 
-# daemon:
-#   # Stop oberth serve after this long without a client, a subscriber or
+# runtime_service:
+#   # Hold exclusion guards for previous custom endpoint directories; no dial.
+#   previous_service_lock_dirs: []
+#   # Stop oberth runtime service run after this long without a client, a subscriber or
 #   # a keepalive connection. 0 keeps it running until stopped by hand.
 #   idle_timeout: 30m
-#   # How much the daemon writes to ~/.option-berth/daemon.log.
+#   # How much the runtime service writes to ~/.option-berth/runtime-service.log.
 #   log_level: info     # debug | info | warn | error
 #   # How often cpu, memory and the host load row refresh while something
 #   # is watching. The floor is 250ms.
@@ -183,7 +192,7 @@ const template = `# option-berth configuration
 #   # unchanged machine — to 2.5x this while a subscriber is connected and
 #   # 5x when only RPC reads are served — so this moves the whole curve.
 #   # The floor is 1s. Both cadences are read at startup: restart the
-#   # daemon after changing them; oberth daemon status shows the values
+#   # runtime service after changing them; oberth runtime service status shows the values
 #   # in effect.
 #   scan_interval: 2s
 
@@ -213,10 +222,10 @@ const template = `# option-berth configuration
 # Environment overrides (no config key; set them in your shell):
 #   BERTH_DB       database for names, pins and history
 #                  (default: option-berth.db beside this file)
-#   BERTH_SOCKET   socket the daemon listens on and clients dial
-#                  (default: what oberth daemon path prints)
-#   BERTH_NO_AUTOSTART
-#                  1 stops clients from starting a daemon that is not
+#   BERTH_RUNTIME_SERVICE_SOCKET   socket the runtime service listens on and clients dial
+#                  (default: what oberth runtime service path prints)
+#   BERTH_RUNTIME_SERVICE_NO_AUTOSTART
+#                  1 stops clients from starting a runtime service that is not
 #                  already running; they report it as unavailable
 #   BERTH_STRICT_MANIFEST
 #                  1 makes an unknown oberth.yaml key a load error with its
@@ -288,22 +297,22 @@ func repairDuration(raw *string, rule durationRule, warnings *[]string) {
 func validate(cfg *Config) []string {
 	var warnings []string
 
-	repairDuration(&cfg.Daemon.IdleTimeout, durationRule{
-		key: "daemon.idle_timeout", fallback: DefaultIdleTimeout, allowZero: true,
+	repairDuration(&cfg.RuntimeService.IdleTimeout, durationRule{
+		key: "runtime_service.idle_timeout", fallback: DefaultIdleTimeout, allowZero: true,
 	}, &warnings)
-	repairDuration(&cfg.Daemon.StatsInterval, durationRule{
-		key: "daemon.stats_interval", fallback: DefaultStatsInterval, floor: MinStatsInterval,
+	repairDuration(&cfg.RuntimeService.StatsInterval, durationRule{
+		key: "runtime_service.stats_interval", fallback: DefaultStatsInterval, floor: MinStatsInterval,
 	}, &warnings)
-	repairDuration(&cfg.Daemon.ScanInterval, durationRule{
-		key: "daemon.scan_interval", fallback: DefaultScanInterval, floor: MinScanInterval,
+	repairDuration(&cfg.RuntimeService.ScanInterval, durationRule{
+		key: "runtime_service.scan_interval", fallback: DefaultScanInterval, floor: MinScanInterval,
 	}, &warnings)
 	repairDuration(&cfg.Agent.Timeout, durationRule{
 		key: "agent.timeout", fallback: DefaultAgentTimeout,
 	}, &warnings)
 
-	if level := strings.TrimSpace(cfg.Daemon.LogLevel); level != "" && !knownLogLevel(strings.ToLower(level)) {
-		warnings = append(warnings, fmt.Sprintf("config: invalid daemon.log_level %q — using info", level))
-		cfg.Daemon.LogLevel = ""
+	if level := strings.TrimSpace(cfg.RuntimeService.LogLevel); level != "" && !knownLogLevel(strings.ToLower(level)) {
+		warnings = append(warnings, fmt.Sprintf("config: invalid runtime_service.log_level %q — using info", level))
+		cfg.RuntimeService.LogLevel = ""
 	}
 
 	for port := range cfg.Services {

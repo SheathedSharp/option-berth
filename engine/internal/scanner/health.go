@@ -28,9 +28,9 @@ type Probe func(host string, port int, path string, timeout time.Duration) ports
 type ProbeContext func(ctx context.Context, host string, port int, path string, timeout time.Duration) ports.HealthResult
 
 // ProbeConfigured applies the manifest health contract to an already
-// attributed snapshot. The daemon uses the same operation through its scan
+// attributed snapshot. The runtime service uses the same operation through its scan
 // loop; the direct CLI path uses it so `status` has the same service-level
-// readiness fact when no daemon is available.
+// readiness fact when no runtime service is available.
 func ProbeConfigured(rows []state.Port, gg []state.Group, probe Probe, budget time.Duration) {
 	probeConfigured(rows, gg, probe, budget)
 }
@@ -378,7 +378,7 @@ func serviceHealthTargets(group state.Group, gi int, checks map[int]portCheck) [
 }
 
 // commandHealthTarget builds one command probe. Without the project root
-// there is no cwd to run it in, and the daemon's own directory is not the
+// there is no cwd to run it in, and the runtime service's own directory is not the
 // service's: report no verdict rather than a wrong one. A service that is
 // not running is the same refusal.
 func commandHealthTarget(group state.Group, svc *state.Service, h groups.HealthCheck, portMap map[string]int, gi, si int) (healthTarget, bool) {
@@ -471,7 +471,7 @@ func groupPortMap(g state.Group) map[string]int {
 	return ports
 }
 
-// commandEnv is the minimal environment a health command gets: the daemon's
+// commandEnv is the minimal environment a health command gets: the runtime service's
 // own plus the service's port, so a command may read either PORT or use the
 // ${port} reference expanded into its arguments.
 func commandEnv(port *int) []string {

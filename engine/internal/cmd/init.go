@@ -260,7 +260,7 @@ func initRoot() (string, error) {
 
 // resolveAgent picks the CLI to run: the flag's name, else agent.command,
 // else the single supported CLI on PATH. The choice itself lives in
-// internal/draft — the daemon resolves the same way through the same function —
+// internal/draft — the runtime service resolves the same way through the same function —
 // and this only maps its failures onto the CLI's own vocabulary: a name that is
 // not supported is the caller's mistake (exit 2), everything else is a fact
 // about this machine (not_found).
@@ -292,7 +292,7 @@ func initAgentRun(cmd *cobra.Command, root string, cfg *groups.Config, agent str
 	if err != nil {
 		// The desktop app starts this CLI with launchd's minimal PATH. Recover the
 		// user's login-shell PATH before giving up on claude/codex, just as the
-		// daemon does for project services. A terminal invocation that already
+		// runtime service does for project services. A terminal invocation that already
 		// resolves an agent pays no shell-startup cost.
 		if _, changed := userenv.Ensure(userenv.Timeout); changed {
 			cli, err = resolveAgent(agent)

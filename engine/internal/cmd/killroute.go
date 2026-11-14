@@ -10,27 +10,27 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 )
 
-// guardDaemonKill is the seam every daemon executor round passes before its
-// RPC. Production leaves it permissive: the client was dialled by dialDaemon
-// for the daemon the user asked for, so there is no wider scope to check. The
+// guardRuntimeServiceKill is the seam every runtime service executor round passes before its
+// RPC. Production leaves it permissive: the client was dialled by dialRuntimeService
+// for the runtime service the user asked for, so there is no wider scope to check. The
 // test binary replaces it with a guard that admits only the client instance a
-// test-owned fixture registered together with an explicit Scan, so a daemon
+// test-owned fixture registered together with an explicit Scan, so a runtime service
 // round whose fixture was forgotten refuses before its kill RPC instead of
-// acting through an arbitrary or shared daemon. The command has already made
+// acting through an arbitrary or shared runtime.service. The command has already made
 // its read-only snapshot call by then; it is only the signalling round that is
 // gated. It takes no target, pid or selector: naming a subject is not
 // ownership.
-var guardDaemonKill = func(*client.Client) error { return nil }
+var guardRuntimeServiceKill = func(*client.Client) error { return nil }
 
-// killThroughDaemon runs `oberth kill` as `ports.kill` / `groups.kill`.
+// killThroughRuntimeService runs `oberth kill` as `ports.kill` / `groups.kill`.
 //
-// Selection runs here, against the table the daemon serves, so the sentences a
+// Selection runs here, against the table the runtime service serves, so the sentences a
 // user sees — invalid selector, "no listening port belongs to group X", the
 // confirmation list, result lines and the --json list — come from the same code
-// as the direct path. Only signalling moves: the daemon kills, rescans and
+// as the direct path. Only signalling moves: the runtime service kills, rescans and
 // records the port going down, which the CLI's own killer could not do.
-func killThroughDaemon(ctx context.Context, conn *client.Client, args []string, bindIP string) error {
-	rows, err := daemonList(ctx, conn)
+func killThroughRuntimeService(ctx context.Context, conn *client.Client, args []string, bindIP string) error {
+	rows, err := runtimeServiceList(ctx, conn)
 	if err != nil {
 		return cliError(err)
 	}
@@ -44,7 +44,7 @@ func killThroughDaemon(ctx context.Context, conn *client.Client, args []string, 
 
 	opts := killOptions()
 	return killRequest{
-		exec:     killInDaemon(conn),
+		exec:     killInRuntimeService(conn),
 		targets:  targets,
 		snapshot: rows,
 		opts:     opts,
@@ -53,12 +53,12 @@ func killThroughDaemon(ctx context.Context, conn *client.Client, args []string, 
 	}.execute(ctx)
 }
 
-// killInDaemon is the executor that asks the daemon to signal and then
+// killInRuntimeService is the executor that asks the runtime service to signal and then
 // rescan. The method choice is made once per round from the same selection
 // the direct path would use.
-func killInDaemon(c *client.Client) killExecutor {
+func killInRuntimeService(c *client.Client) killExecutor {
 	return func(ctx context.Context, targets []killer.Target, opts killer.Options, dryRun bool) ([]killer.Result, error) {
-		if err := guardDaemonKill(c); err != nil {
+		if err := guardRuntimeServiceKill(c); err != nil {
 			return nil, err
 		}
 		switch killMethodFor(killGroupFlag, opts) {
@@ -86,7 +86,7 @@ func killInDaemon(c *client.Client) killExecutor {
 	}
 }
 
-// killMethodFor picks the RPC. `-g` goes to groups.kill so the daemon that
+// killMethodFor picks the RPC. `-g` goes to groups.kill so the runtime service that
 // owns the snapshot resolves the group itself; the flags groups.kill has no
 // field for (--tree, --no-escalate) send the group's members to ports.kill,
 // which supports them and acts on exactly the targets killTargets already
@@ -125,7 +125,7 @@ func killSelectors(resolved []killer.Target) []rpc.Selector {
 	return selectors
 }
 
-// graceMs is --grace on the wire. Zero means "the daemon's default", the same
+// graceMs is --grace on the wire. Zero means "the runtime service's default", the same
 // default the killer applies locally.
 func graceMs(opts killer.Options) int {
 	if opts.Grace > 0 {
@@ -136,26 +136,26 @@ func graceMs(opts killer.Options) int {
 
 // killSession is `oberth kill --session <id>`, the session form of `-g`. It is
 // answered by `sessions.kill` for the same reason `-g` is answered by
-// `groups.kill`: the daemon owns the membership and therefore selects. No
-// direct-scan path exists, because a session only exists in the daemon.
+// `groups.kill`: the runtime service owns the membership and therefore selects. No
+// direct-scan path exists, because a session only exists in the runtime.service.
 func killSession(ctx context.Context) error {
 	sessionID, err := currentSession(killSessionFlag)
 	if err != nil {
 		return err
 	}
-	conn, err := sessionsDaemon(ctx)
+	conn, err := sessionsRuntimeService(ctx)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
-	snapshot, err := daemonList(ctx, conn)
+	snapshot, err := runtimeServiceList(ctx, conn)
 	if err != nil {
 		return cliError(err)
 	}
 
 	return killRequest{
-		exec:     killSessionInDaemon(conn, sessionID),
+		exec:     killSessionInRuntimeService(conn, sessionID),
 		snapshot: snapshot,
 		opts:     killOptions(),
 		confirm:  !killYesFlag && !killDryRunFlag,
@@ -166,12 +166,12 @@ func killSession(ctx context.Context) error {
 	}.execute(ctx)
 }
 
-// killSessionInDaemon is the executor for the hidden session selector. It
+// killSessionInRuntimeService is the executor for the hidden session selector. It
 // ignores the resolved targets: a session's membership exists only inside the
-// daemon, so the daemon does the selecting.
-func killSessionInDaemon(c *client.Client, id string) killExecutor {
+// runtime service, so the runtime service does the selecting.
+func killSessionInRuntimeService(c *client.Client, id string) killExecutor {
 	return func(ctx context.Context, _ []killer.Target, opts killer.Options, dryRun bool) ([]killer.Result, error) {
-		if err := guardDaemonKill(c); err != nil {
+		if err := guardRuntimeServiceKill(c); err != nil {
 			return nil, err
 		}
 		var env rpc.KillEnvelope

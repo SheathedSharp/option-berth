@@ -7,7 +7,7 @@ import (
 )
 
 // HEAD can change without changing its timestamp or length. This used to
-// retain the previous branch forever in the daemon's Index.
+// retain the previous branch forever in the runtime service's Index.
 func TestBranchReadsSameStampReplacement(t *testing.T) {
 	c := newCheckouts(t, "project", "feature")
 	co, _ := Locate(c.wt)

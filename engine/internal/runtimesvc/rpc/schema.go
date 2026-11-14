@@ -54,7 +54,7 @@ func Describe(method string, params, result, chunk, end any) {
 	registry[method] = Description{Method: method, Params: params, Result: result, Chunk: chunk, End: end}
 }
 
-// DescribeNotification registers a notification the daemon pushes. Without it
+// DescribeNotification registers a notification the runtime service pushes. Without it
 // the schema would describe only the request/response half of the protocol, and
 // every client would have to hand-write `stream.chunk`, `stream.end` and the
 // state broadcasts.
@@ -113,7 +113,7 @@ type NotificationSchema struct {
 	Params json.RawMessage `json:"params"`
 }
 
-// Document is the bundle `oberth daemon schema` prints and
+// Document is the bundle `oberth runtime service schema` prints and
 // docs/schema/protocol.schema.json holds.
 type Document struct {
 	Schema string `json:"$schema"`
@@ -125,7 +125,7 @@ type Document struct {
 	ProtocolVersion string `json:"protocol_version"`
 	// The collections a client generates from: the named data-model types, each
 	// method's params and result (with the two stream payloads), and the
-	// notifications the daemon pushes.
+	// notifications the runtime service pushes.
 	Definitions   map[string]json.RawMessage    `json:"definitions"`
 	Methods       map[string]MethodSchema       `json:"methods"`
 	Notifications map[string]NotificationSchema `json:"notifications"`
@@ -182,7 +182,7 @@ func BuildSchema() *Document {
 	return &Document{
 		Schema:          "https://json-schema.org/draft/2020-12/schema",
 		ID:              schemaID,
-		Title:           "option-berth daemon protocol",
+		Title:           "option-berth runtime service protocol",
 		Description:     "Generated from the Go types in internal/state and internal/runtimesvc/rpc. Do not edit by hand; run `go generate ./...`.",
 		ProtocolVersion: ProtocolVersion,
 		Definitions:     refs.definitions,
@@ -192,7 +192,7 @@ func BuildSchema() *Document {
 }
 
 // Marshal returns the canonical bytes written to
-// docs/schema/protocol.schema.json and printed by `oberth daemon schema`.
+// docs/schema/protocol.schema.json and printed by `oberth runtime service schema`.
 func Marshal() []byte {
 	var buffer bytes.Buffer
 	encoder := json.NewEncoder(&buffer)
@@ -297,12 +297,12 @@ func sanitizeDefName(name string) string {
 // init registers the core namespaces. The packages that own the share, map,
 // sessions and claims namespaces register theirs from their own init().
 func init() {
-	// Daemon lifecycle.
-	Describe("daemon.hello", DaemonHelloParams{}, DaemonHelloResult{}, nil, nil)
-	Describe("daemon.shutdown", Empty{}, OKResult{}, nil, nil)
-	Describe("daemon.status", Empty{}, DaemonStatusResult{}, nil, nil)
-	Describe("daemon.schema", Empty{}, DaemonSchemaResult{}, nil, nil)
-	Describe("daemon.doctor", DaemonDoctorParams{}, DaemonDoctorResult{}, nil, nil)
+	// RuntimeService lifecycle.
+	Describe("runtime.service.hello", RuntimeServiceHelloParams{}, RuntimeServiceHelloResult{}, nil, nil)
+	Describe("runtime.service.shutdown", Empty{}, OKResult{}, nil, nil)
+	Describe("runtime.service.status", Empty{}, RuntimeServiceStatusResult{}, nil, nil)
+	Describe("runtime.service.schema", Empty{}, RuntimeServiceSchemaResult{}, nil, nil)
+	Describe("runtime.service.doctor", RuntimeServiceDoctorParams{}, RuntimeServiceDoctorResult{}, nil, nil)
 
 	// State: a one-shot snapshot, a subscription, and cancelling either.
 	Describe("state.snapshot", StateSnapshotParams{}, StateSnapshotResult{}, nil, nil)
@@ -327,7 +327,7 @@ func init() {
 	Describe("groups.config.set", GroupsConfigSetParams{}, GroupsConfigSetResult{}, nil, nil)
 	Describe("groups.init", GroupsInitParams{}, GroupsInitResult{}, nil, nil)
 
-	// Runs: what `oberth start` registers, and what the daemon reports back.
+	// Runs: what `oberth start` registers, and what the runtime service reports back.
 	Describe("runs.register", RunsRegisterParams{}, RunsRegisterResult{}, nil, nil)
 	Describe("runs.unregister", RunsUnregisterParams{}, OKResult{}, nil, nil)
 	Describe("runs.list", Empty{}, RunsListResult{}, nil, nil)
@@ -349,7 +349,7 @@ func init() {
 	Describe("config.set", ConfigSetParams{}, ConfigSetResult{}, nil, nil)
 	Describe("config.path", Empty{}, ConfigPathResult{}, nil, nil)
 
-	// Notifications the daemon pushes. state.subscribe keeps its own broadcast
+	// Notifications the runtime service pushes. state.subscribe keeps its own broadcast
 	// names; every streaming method shares stream.chunk and stream.end, whose
 	// `data` is the chunk or end type of the method that opened the stream.
 	// state.changed is the redacted scoped stream; the legacy state.delta and

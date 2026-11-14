@@ -8,7 +8,7 @@ import (
 
 // Registry attributes a port to a process option-berth started. It hands back
 // the whole run rather than just its group, because `run`, `display_name` and
-// `group_source: start` must come from one lookup: a daemon that took the group
+// `group_source: start` must come from one lookup: a runtime service that took the group
 // from its live registry and the run from the runs.json mirror could publish
 // `group_source: "start"` beside a null `run`.
 type Registry interface {
@@ -25,7 +25,7 @@ type SessionRegistry interface {
 
 // PortRuns reads the run attribution already stamped on the port row. It is
 // not a registry of its own: the fields it reads are written by stampRuns from
-// whichever registry the path brought (the daemon's live one, DirectRuns for a
+// whichever registry the path brought (the runtime service's live one, DirectRuns for a
 // direct scan). Downstream adapters use it after attribution, and the scanner
 // falls back to it when it runs without a registry at all.
 type PortRuns struct{}
@@ -47,7 +47,7 @@ type NoRuns struct{}
 func (NoRuns) Run(state.Port) (state.Run, bool) { return state.Run{}, false }
 
 // Resolve fills Group, GroupSource and ProjectRoot on a copy of pp, applying
-// the precedence chain from the daemon spec, first match wins:
+// the precedence chain from the runtime service spec, first match wins:
 //
 //  1. start  — a `oberth start` run that owns the process
 //  2. file   — a known `oberth.yaml` that claims the port

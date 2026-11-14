@@ -29,7 +29,7 @@ func handleGroupsCode(ctx context.Context, req *Request) (any, error) {
 		return nil, rpc.NewError(rpc.CodeInvalidParams, "name is required",
 			`send {"name": "<group>"}`)
 	}
-	groups, err := readGroups(req.Runtime)
+	groups, err := readGroups(req.HostContext)
 	if err != nil {
 		return nil, err
 	}

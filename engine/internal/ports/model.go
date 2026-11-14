@@ -49,10 +49,10 @@ type ListeningPort struct {
 	Type          PortType
 
 	// Host names the machine the row was seen on: empty or "localhost" for a
-	// direct scan, the registered name for a row that came through a daemon.
+	// direct scan, the registered name for a row that came through a runtime.service.
 	Host string
 
-	// Display is a name already resolved elsewhere. The daemon sets it when it
+	// Display is a name already resolved elsewhere. The runtime service sets it when it
 	// turns a published state.Port back into a scanner row, because the wire
 	// does not carry the parent command line DisplayName would need. Empty on
 	// a direct scan.

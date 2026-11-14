@@ -16,7 +16,7 @@
   <tbody>
     <tr><th scope="row">Input</th><td><code>invalid_params</code>, <code>not_found</code>, <code>invalid_config</code>, <code>ambiguous</code></td><td>The request or the declaration is wrong; the message names the object.</td></tr>
     <tr><th scope="row">Permission</th><td><code>permission_denied</code></td><td>An operation was refused; the hint says what to change.</td></tr>
-    <tr><th scope="row">Time</th><td><code>timeout</code>, <code>daemon_busy</code></td><td>The engine gave up, or another action holds the daemon. Read the hint, then retry.</td></tr>
+    <tr><th scope="row">Time</th><td><code>timeout</code>, <code>runtime_service_busy</code></td><td>The engine gave up, or another action holds the Runtime Service. Read the hint, then retry.</td></tr>
     <tr><th scope="row">Observation</th><td><code>observation_empty</code>, <code>observation_unrecognized</code>, <code>observation_incomplete</code>, <code>observation_blind</code>, <code>observation_bind_denied</code></td><td>None of them means “nothing is listening”. Check <code>observation.state</code> and <code>doctor --only listener_observation</code>.</td></tr>
     <tr><th scope="row">Internal</th><td><code>internal</code></td><td>An unexpected failure. Report the command and the version, not just the message.</td></tr>
   </tbody>
@@ -43,7 +43,7 @@
   <dt><code>port_holder</code></dt>
   <dd>Present on <code>port_occupied</code>: the port, pid, command and kind of the holder, plus the managed group, service name and run id when the holder is one of ours.</dd>
   <dt><code>ready</code></dt>
-  <dd>The CLI's annotation, not a daemon fact. It is <code>true</code> after <code>--wait</code> confirms readiness, and <code>false</code> when no wait was requested. <code>false</code> is not a failure.</dd>
+  <dd>The CLI's annotation, not a Runtime Service fact. It is <code>true</code> after <code>--wait</code> confirms readiness, and <code>false</code> when no wait was requested. <code>false</code> is not a failure.</dd>
 </dl>
 
 <h2 id="absent">What an absent field does not mean</h2>

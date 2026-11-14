@@ -34,28 +34,28 @@ func TestMapOfAMissingFileIsEmpty(t *testing.T) {
 
 func TestApplyMergesKeysAndKeepsThePreviousFile(t *testing.T) {
 	configDir(t)
-	original := "daemon:\n  log_level: info\n  idle_timeout: 5m\n"
+	original := "runtime_service:\n  log_level: info\n  idle_timeout: 5m\n"
 	if err := os.WriteFile(Path(), []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	merged, err := Apply(map[string]any{"daemon": map[string]any{"log_level": "debug"}})
+	merged, err := Apply(map[string]any{"runtime_service": map[string]any{"log_level": "debug"}})
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
-	daemon, _ := merged["daemon"].(map[string]any)
-	if daemon["log_level"] != "debug" {
-		t.Errorf("daemon.log_level = %v, want debug", daemon["log_level"])
+	runtimeService, _ := merged["runtime_service"].(map[string]any)
+	if runtimeService["log_level"] != "debug" {
+		t.Errorf("runtime_service.log_level = %v, want debug", runtimeService["log_level"])
 	}
-	if daemon["idle_timeout"] != "5m" {
-		t.Errorf("daemon.idle_timeout = %v, want 5m: patches merge, they do not replace", daemon["idle_timeout"])
+	if runtimeService["idle_timeout"] != "5m" {
+		t.Errorf("runtime_service.idle_timeout = %v, want 5m: patches merge, they do not replace", runtimeService["idle_timeout"])
 	}
 
 	reread, err := Map()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reread["daemon"].(map[string]any)["log_level"] != "debug" {
+	if reread["runtime_service"].(map[string]any)["log_level"] != "debug" {
 		t.Errorf("reread config = %v", reread)
 	}
 
@@ -84,15 +84,15 @@ func TestApplyNullRemovesAKey(t *testing.T) {
 
 func TestApplyRejectsAnInvalidValueWithoutWriting(t *testing.T) {
 	configDir(t)
-	if _, err := Apply(map[string]any{"daemon": map[string]any{"log_level": "warn"}}); err != nil {
+	if _, err := Apply(map[string]any{"runtime_service": map[string]any{"log_level": "warn"}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Apply(map[string]any{"daemon": map[string]any{"log_level": "sideways"}}); err == nil {
+	if _, err := Apply(map[string]any{"runtime_service": map[string]any{"log_level": "sideways"}}); err == nil {
 		t.Fatal("Apply accepted an invalid log level")
 	}
 	cfg, _ := Load()
-	if cfg.Daemon.LogLevel != "warn" {
-		t.Errorf("daemon.log_level = %q, want the rejected write to change nothing", cfg.Daemon.LogLevel)
+	if cfg.RuntimeService.LogLevel != "warn" {
+		t.Errorf("runtime_service.log_level = %q, want the rejected write to change nothing", cfg.RuntimeService.LogLevel)
 	}
 }
 

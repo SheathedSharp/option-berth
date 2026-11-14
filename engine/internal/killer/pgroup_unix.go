@@ -89,7 +89,7 @@ func pidAlive(pid int) bool {
 
 // SetProcessGroup puts a child in its own process group so that the whole tree
 // it spawns can later be stopped with one signal. Spawners (`oberth start`, the
-// daemon's runs.spawn) call this; the killer then finds the group through
+// runtime service's runs.spawn) call this; the killer then finds the group through
 // processGroup and signals it instead of walking the PPID table.
 func SetProcessGroup(command *exec.Cmd) {
 	if command.SysProcAttr == nil {

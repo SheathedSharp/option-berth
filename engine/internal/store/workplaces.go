@@ -196,7 +196,7 @@ func (t WorkplaceStore) SetActive(worktree, id string) error {
 	return nil
 }
 
-// Errors SetActive reports. They are sentinel values so the daemon can map
+// Errors SetActive reports. They are sentinel values so the runtime service can map
 // them onto the wire codes without matching on message text.
 var (
 	ErrWorkplaceNotFound  = errors.New("no such workplace")
@@ -228,7 +228,7 @@ func (t WorkplaceStore) Delete(id string) (bool, string, error) {
 	if err != nil {
 		return false, "", fmt.Errorf("deleting workplace: %w", err)
 	}
-	// Blocks go explicitly rather than through ON DELETE CASCADE: the daemon
+	// Blocks go explicitly rather than through ON DELETE CASCADE: the runtime service
 	// opens the database with foreign keys on, the CLI's read-only path does
 	// not, and the record must not depend on which of them ran the delete.
 	if _, err := tx.Exec(`DELETE FROM workplace_blocks WHERE workplace = ?`, id); err != nil {
@@ -428,7 +428,7 @@ func (t WorkplaceStore) BlockCount(workplace string) (int, error) {
 // reports how many it closed.
 //
 // It is how a run the CLI did not wait for — a detached `oberth start` — gets
-// an outcome: the daemon owns that process and learns how it ended, and the
+// an outcome: the runtime service owns that process and learns how it ended, and the
 // run's id is what ties the two together. outcomes is the same vocabulary
 // UpsertBlock takes, and it is what keeps this from overwriting an observation
 // that already arrived: a block that has one is not closed again.

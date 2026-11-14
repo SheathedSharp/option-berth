@@ -28,7 +28,7 @@ func TestAutostartRespectsTheEnvironmentSwitch(t *testing.T) {
 }
 
 // Even with autostart allowed, a Go test binary is never spawned as the
-// daemon: `serve --detach` would re-run the suite in the background.
+// runtime_service: `runtime service run --detach` would re-run the suite in the background.
 func TestAutostartRefusesATestBinary(t *testing.T) {
 	t.Setenv(NoAutostartEnv, "")
 	// It exits non-zero, so the opt-in case fails at the spawn instead of
@@ -40,14 +40,14 @@ func TestAutostartRefusesATestBinary(t *testing.T) {
 
 	err := Autostart(context.Background(), testBinary, "")
 	if err == nil {
-		t.Fatal("Autostart spawned a Go test binary as the daemon")
+		t.Fatal("Autostart spawned a Go test binary as the runtime service")
 	}
 	if !strings.Contains(err.Error(), "test binary") ||
-		!strings.Contains(err.Error(), runtimesvc.AllowTestDaemonEnv) {
+		!strings.Contains(err.Error(), runtimesvc.AllowTestRuntimeServiceEnv) {
 		t.Errorf("error = %v, want the refusal and the opt-in named", err)
 	}
 
-	t.Setenv(runtimesvc.AllowTestDaemonEnv, "1")
+	t.Setenv(runtimesvc.AllowTestRuntimeServiceEnv, "1")
 	err = Autostart(context.Background(), testBinary, filepath.Join(t.TempDir(), "d.sock"))
 	if err != nil && strings.Contains(err.Error(), "test binary") {
 		t.Errorf("the opt-in did not lift the guard: %v", err)

@@ -431,8 +431,8 @@ func TestKillAllWithABlindTableIsTheDocumentedCLIFailure(t *testing.T) {
 	// exit, not a planned no-op. Isolation, not dry-run, is what keeps a
 	// missed hook from signalling anything.
 	withKillFlags(t, func() { killAllFlag, killJSONFlag, killYesFlag = true, true, true })
-	// No daemon: the command takes the direct path, which is the one that scans.
-	noDaemonReachable(t)
+	// No runtime_service: the command takes the direct path, which is the one that scans.
+	noRuntimeServiceReachable(t)
 	// The hook the direct path actually calls is scanForKill, not scanPorts
 	// (that seam belongs to status/group observation). A missed injection
 	// stays on the package test default, which refuses ports.Scan.
@@ -619,7 +619,7 @@ func TestKillConfirmationShowsThePlanAndStopsNothingWithoutAConsent(t *testing.T
 	withKillFlags(t, func() {
 		killAllFlag, killYesFlag = true, false
 	})
-	noDaemonReachable(t)
+	noRuntimeServiceReachable(t)
 	answerNextPrompt(t)
 
 	port := startListener(t)
@@ -662,36 +662,36 @@ func TestKillSessionCurrentWithoutAnAgentFails(t *testing.T) {
 	}
 }
 
-// TestKillSessionNeedsTheDaemon: a session only exists in the daemon's run
+// TestKillSessionNeedsTheRuntimeService: a session only exists in the runtime service's run
 // registry, so the selector says so instead of falling back to a local scan.
-func TestKillSessionNeedsTheDaemon(t *testing.T) {
+func TestKillSessionNeedsTheRuntimeService(t *testing.T) {
 	resetRouting(t)
 	withKillFlags(t, func() { killSessionFlag = "sess-1" })
-	prev := dialDaemon
-	dialDaemon = func(context.Context) (*client.Client, error) { return nil, client.ErrNotRunning }
-	t.Cleanup(func() { dialDaemon = prev })
+	prev := dialRuntimeService
+	dialRuntimeService = func(context.Context) (*client.Client, error) { return nil, client.ErrNotRunning }
+	t.Cleanup(func() { dialRuntimeService = prev })
 
 	err := killSession(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "sessions need a running daemon") {
-		t.Fatalf("err = %v, want the daemon requirement", err)
+	if err == nil || !strings.Contains(err.Error(), "sessions need a running runtime service") {
+		t.Fatalf("err = %v, want the runtime service requirement", err)
 	}
 }
 
-// TestKillSessionReportsASessionTheDaemonDoesNotKnow: the daemon owns session
+// TestKillSessionReportsASessionTheRuntimeServiceDoesNotKnow: the runtime service owns session
 // membership, so its not_found for an unknown id is the answer the caller gets.
-func TestKillSessionReportsASessionTheDaemonDoesNotKnow(t *testing.T) {
+func TestKillSessionReportsASessionTheRuntimeServiceDoesNotKnow(t *testing.T) {
 	resetRouting(t)
 	withKillFlags(t, func() { killSessionFlag = "sess-nobody" })
 	if runtime.GOOS == "windows" {
 		t.Skip("the unix-socket harness does not apply to named pipes")
 	}
-	startScanningDaemon(t)
+	startScanningRuntimeService(t)
 
 	err := killSession(context.Background())
 	if err == nil {
 		t.Fatal("killing an unknown session returned nil")
 	}
 	if code, _, _ := describe(err); code != "session_not_found" {
-		t.Fatalf("code = %q (%v), want the daemon's own session_not_found", code, err)
+		t.Fatalf("code = %q (%v), want the runtime service's own session_not_found", code, err)
 	}
 }

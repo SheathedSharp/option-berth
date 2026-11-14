@@ -11,7 +11,7 @@ import (
 // Every JSON code path in the CLI goes through here, because docs/cli.md
 // promises one shape. This file used to compete with three other spellings of
 // the same idea — `writeJSON` in groups.go, a hand-rolled MarshalIndent in
-// daemon_ctl.go, and display.RenderJSON's own encoder — which is exactly how
+// runtime_service_ctl.go, and display.RenderJSON's own encoder — which is exactly how
 // two commands end up disagreeing about what `--json` prints.
 func encodeJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)

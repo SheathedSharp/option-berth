@@ -74,30 +74,30 @@ func applyLogsFlags(bindIP string) error {
 	return nil
 }
 
-// logsFromRunTarget reads one run's output. Runs exist only inside the daemon,
+// logsFromRunTarget reads one run's output. Runs exist only inside the runtime service,
 // so this form has no direct fallback.
 func logsFromRunTarget(ctx context.Context, target, runID string) error {
-	c := daemonClient(ctx)
+	c := runtimeServiceClient(ctx)
 	if c == nil {
-		return failHint("daemon_unavailable", "logs --run needs the daemon",
-			"start one with `oberth serve --detach`")
+		return failHint("runtime_service_unavailable", "logs --run needs the runtime service",
+			"start one with `oberth runtime service run --detach`")
 	}
 	defer c.Close()
 	return logsFromRun(ctx, c, target, runID)
 }
 
 // logsFromResolvedTarget reads a listener's output or a service's log file: from
-// the file when the service declares one, through the daemon when it owns the
-// reader, and with the local process tools when there is no daemon.
+// the file when the service declares one, through the runtime service when it owns the
+// reader, and with the local process tools when there is no runtime.service.
 func logsFromResolvedTarget(ctx context.Context, target, bindIP string) error {
-	c := daemonClient(ctx)
+	c := runtimeServiceClient(ctx)
 	defer func() {
 		if c != nil {
 			c.Close()
 		}
 	}()
 	// Keep the direct port path's contract: structured output needs the
-	// daemon, while human output may fall back to the local process tools.
+	// runtime service, while human output may fall back to the local process tools.
 	if c == nil {
 		if port, err := strconv.Atoi(target); err == nil {
 			return logsDirect(ctx, port, bindIP)
@@ -113,7 +113,7 @@ func logsFromResolvedTarget(ctx context.Context, target, bindIP string) error {
 		return logsFromFile(ctx, logPath, meta)
 	}
 	if c != nil {
-		return logsThroughDaemon(ctx, c, row.Port, bindIP, meta)
+		return logsThroughRuntimeService(ctx, c, row.Port, bindIP, meta)
 	}
 	return logsDirect(ctx, row.Port, bindIP)
 }
@@ -121,11 +121,11 @@ func logsFromResolvedTarget(ctx context.Context, target, bindIP string) error {
 func logsDirect(_ context.Context, port int, bindIP string) error {
 	// The direct path execs into tail/docker/log, handing the terminal to
 	// another process: it has no output of its own left to structure, so --json
-	// is served by the daemon only.
+	// is served by the runtime service only.
 	if logsJSONFlag {
-		return failHint("daemon_unavailable",
-			"logs --json needs the daemon",
-			"start one with `oberth serve --detach`")
+		return failHint("runtime_service_unavailable",
+			"logs --json needs the runtime service",
+			"start one with `oberth runtime service run --detach`")
 	}
 	lp, err := ports.FindByPort(port, bindIP)
 	if err != nil {
@@ -167,11 +167,11 @@ func logsDirect(_ context.Context, port int, bindIP string) error {
 
 // logTarget is either a listening process selected by port, or a service log
 // file. Services without a port (workers) still have a log path because the
-// daemon records every declared run, not only listeners.
+// runtime service records every declared run, not only listeners.
 func resolveLogTarget(ctx context.Context, c *client.Client, target, bindIP string) (*ports.ListeningPort, string, error) {
 	if port, err := strconv.Atoi(target); err == nil {
 		if c != nil {
-			row, err := daemonFindPort(ctx, c, port, bindIP)
+			row, err := runtimeServiceFindPort(ctx, c, port, bindIP)
 			return row, "", err
 		}
 		row, err := ports.FindByPort(port, bindIP)
@@ -210,7 +210,7 @@ func resolveLogTarget(ctx context.Context, c *client.Client, target, bindIP stri
 			}
 			if service.PortActual != nil {
 				if c != nil {
-					row, err := daemonFindPort(ctx, c, *service.PortActual, bindIP)
+					row, err := runtimeServiceFindPort(ctx, c, *service.PortActual, bindIP)
 					return row, "", err
 				}
 				row, err := ports.FindByPort(*service.PortActual, bindIP)
@@ -410,23 +410,23 @@ func followFileLogs(ctx context.Context, path string, args []string, asJSON bool
 	return sc.Err()
 }
 
-// logsThroughDaemon tails a port's output over the socket. The daemon owns the
+// logsThroughRuntimeService tails a port's output over the socket. The runtime service owns the
 // `tail` (or `docker logs`) process, so several clients watching the same port
 // cost one reader, and the lines reach every one of them.
-func logsThroughDaemon(ctx context.Context, c *client.Client, port int, bindIP string, meta logMetadata) error {
-	row, err := daemonFindPort(ctx, c, port, bindIP)
+func logsThroughRuntimeService(ctx context.Context, c *client.Client, port int, bindIP string, meta logMetadata) error {
+	row, err := runtimeServiceFindPort(ctx, c, port, bindIP)
 	if err != nil {
 		return err
 	}
 	if !logsFollow {
-		return logsOnceThroughDaemon(ctx, c, *row, meta)
+		return logsOnceThroughRuntimeService(ctx, c, *row, meta)
 	}
-	return logsFollowThroughDaemon(ctx, c, *row, meta)
+	return logsFollowThroughRuntimeService(ctx, c, *row, meta)
 }
 
-// logsOnceThroughDaemon reads a listener's output once, through the daemon: no
+// logsOnceThroughRuntimeService reads a listener's output once, through the runtime_service: no
 // terminal to hand to tail, so the reader stays here.
-func logsOnceThroughDaemon(ctx context.Context, c *client.Client, row ports.ListeningPort, meta logMetadata) error {
+func logsOnceThroughRuntimeService(ctx context.Context, c *client.Client, row ports.ListeningPort, meta logMetadata) error {
 	doc, err := readLogsOnce(ctx, c, row, logsLinesFlag, meta)
 	if err != nil {
 		return err
@@ -434,10 +434,10 @@ func logsOnceThroughDaemon(ctx context.Context, c *client.Client, row ports.List
 	return printLogDocument(doc)
 }
 
-// logsFollowThroughDaemon attaches to a listener's output over the daemon's
-// stream. The daemon owns the `tail` (or `docker logs`), so several clients
+// logsFollowThroughRuntimeService attaches to a listener's output over the runtime service's
+// stream. The runtime service owns the `tail` (or `docker logs`), so several clients
 // watching the same port cost one reader, and the lines reach every one of them.
-func logsFollowThroughDaemon(ctx context.Context, c *client.Client, row ports.ListeningPort, meta logMetadata) error {
+func logsFollowThroughRuntimeService(ctx context.Context, c *client.Client, row ports.ListeningPort, meta logMetadata) error {
 	if !logsJSONFlag {
 		// In JSON mode this header would be plain text in front of a JSON
 		// document.
@@ -473,7 +473,7 @@ func printAttachHeader(name string, pid int) {
 }
 
 // printLogStream writes one log line per chunk as it arrives, under the header
-// naming the source the daemon reported.
+// naming the source the runtime service reported.
 func printLogStream(s *client.Stream, source string) error {
 	printLogHeader(source)
 	for payload := range s.Chunks() {
@@ -492,7 +492,7 @@ func printLogStream(s *client.Stream, source string) error {
 // readLogsOnce reads a port's output and stops: no following, no terminal.
 //
 // It is the half behind `--once`: no terminal to hand to `tail`, so it reads
-// through the daemon once.
+// through the runtime service once.
 func readLogsOnce(ctx context.Context, c *client.Client, row ports.ListeningPort, lines int, meta logMetadata) (logsDocument, error) {
 	params := rpc.PortsLogsParams{
 		Selector: logSelector(row),
@@ -589,7 +589,7 @@ func logLineJSON(source, line string, meta logMetadata) map[string]any {
 }
 
 // logMetadataForTarget is best effort: the log itself remains useful when a
-// daemon is between scans or a legacy runs.json entry lacks the newer fields.
+// runtime service is between scans or a legacy runs.json entry lacks the newer fields.
 // The extra context lets an agent join output back to the service and run it
 // came from without parsing a human header or guessing from a file path.
 func logMetadataForTarget(ctx context.Context, c *client.Client, target string, row *ports.ListeningPort) logMetadata {
@@ -695,10 +695,10 @@ func logSelector(row ports.ListeningPort) rpc.Selector {
 	return rpc.Selector{Port: &row.Port, BindAddress: strPtrOrNil(row.BindAddress)}
 }
 
-// daemonFindPort resolves one port through state.snapshot, so the header a command
-// prints names the same process the daemon is about to act on.
-func daemonFindPort(ctx context.Context, c *client.Client, port int, bindIP string) (*ports.ListeningPort, error) {
-	rows, err := daemonList(ctx, c)
+// runtimeServiceFindPort resolves one port through state.snapshot, so the header a command
+// prints names the same process the runtime service is about to act on.
+func runtimeServiceFindPort(ctx context.Context, c *client.Client, port int, bindIP string) (*ports.ListeningPort, error) {
+	rows, err := runtimeServiceList(ctx, c)
 	if err != nil {
 		return nil, cliError(err)
 	}

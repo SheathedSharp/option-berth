@@ -61,7 +61,7 @@ func TestLoadReadsServices(t *testing.T) {
 }
 
 func TestLoadReportsMalformedYAML(t *testing.T) {
-	writeUserConfig(t, "daemon: [this is not: valid")
+	writeUserConfig(t, "runtime_service: [this is not: valid")
 	cfg, warnings := Load()
 	if cfg == nil {
 		t.Fatal("Load returned nil")
@@ -134,12 +134,12 @@ func TestWriteTemplateWillNotClobberWithoutForce(t *testing.T) {
 }
 
 // The template is the only documentation many users read, so it must mention
-// every daemon setting and environment override the binary honours.
-func TestTemplateMentionsDaemonAndEnvironment(t *testing.T) {
+// every runtime service setting and environment override the binary honours.
+func TestTemplateMentionsRuntimeServiceAndEnvironment(t *testing.T) {
 	anchors := []string{
-		"# daemon:", "idle_timeout: 30m", "log_level: info",
+		"# runtime_service:", "idle_timeout: 30m", "log_level: info",
 		"stats_interval: 1s", "scan_interval: 2s",
-		"BERTH_DB", "BERTH_SOCKET", "BERTH_STRICT_MANIFEST",
+		"BERTH_DB", "BERTH_RUNTIME_SERVICE_SOCKET", "BERTH_STRICT_MANIFEST",
 	}
 	for _, anchor := range anchors {
 		if !strings.Contains(template, anchor) {
@@ -172,7 +172,7 @@ func TestResolvedStatsInterval(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
-			got := DaemonConfig{StatsInterval: tc.raw}.ResolvedStatsInterval()
+			got := RuntimeServiceConfig{StatsInterval: tc.raw}.ResolvedStatsInterval()
 			if got != tc.want {
 				t.Errorf("ResolvedStatsInterval(%q) = %s, want %s", tc.raw, got, tc.want)
 			}
@@ -181,16 +181,16 @@ func TestResolvedStatsInterval(t *testing.T) {
 }
 
 func TestValidateClampsStatsIntervalAndKeepsNeighbours(t *testing.T) {
-	cfg := &Config{Daemon: DaemonConfig{StatsInterval: "5ms", LogLevel: "debug"}}
+	cfg := &Config{RuntimeService: RuntimeServiceConfig{StatsInterval: "5ms", LogLevel: "debug"}}
 	warnings := validate(cfg)
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "stats_interval") {
 		t.Fatalf("warnings = %v, want one naming stats_interval", warnings)
 	}
-	if got := cfg.Daemon.ResolvedStatsInterval(); got != MinStatsInterval {
+	if got := cfg.RuntimeService.ResolvedStatsInterval(); got != MinStatsInterval {
 		t.Errorf("stats_interval = %s, want the floor %s", got, MinStatsInterval)
 	}
-	if cfg.Daemon.LogLevel != "debug" {
-		t.Errorf("log_level = %q, a valid neighbour was dropped", cfg.Daemon.LogLevel)
+	if cfg.RuntimeService.LogLevel != "debug" {
+		t.Errorf("log_level = %q, a valid neighbour was dropped", cfg.RuntimeService.LogLevel)
 	}
 }
 
@@ -209,7 +209,7 @@ func TestResolvedScanInterval(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
-			got := DaemonConfig{ScanInterval: tc.raw}.ResolvedScanInterval()
+			got := RuntimeServiceConfig{ScanInterval: tc.raw}.ResolvedScanInterval()
 			if got != tc.want {
 				t.Errorf("ResolvedScanInterval(%q) = %s, want %s", tc.raw, got, tc.want)
 			}
@@ -218,29 +218,29 @@ func TestResolvedScanInterval(t *testing.T) {
 }
 
 func TestValidateClampsScanIntervalAndKeepsNeighbours(t *testing.T) {
-	cfg := &Config{Daemon: DaemonConfig{ScanInterval: "50ms", StatsInterval: "1s"}}
+	cfg := &Config{RuntimeService: RuntimeServiceConfig{ScanInterval: "50ms", StatsInterval: "1s"}}
 	warnings := validate(cfg)
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "scan_interval") {
 		t.Fatalf("warnings = %v, want one naming scan_interval", warnings)
 	}
-	if got := cfg.Daemon.ResolvedScanInterval(); got != MinScanInterval {
+	if got := cfg.RuntimeService.ResolvedScanInterval(); got != MinScanInterval {
 		t.Errorf("scan_interval = %s, want the floor %s", got, MinScanInterval)
 	}
-	if cfg.Daemon.StatsInterval != "1s" {
-		t.Errorf("stats_interval = %q, a valid neighbour was dropped", cfg.Daemon.StatsInterval)
+	if cfg.RuntimeService.StatsInterval != "1s" {
+		t.Errorf("stats_interval = %q, a valid neighbour was dropped", cfg.RuntimeService.StatsInterval)
 	}
 }
 
 func TestValidateDropsUnparseableScanInterval(t *testing.T) {
-	cfg := &Config{Daemon: DaemonConfig{ScanInterval: "every so often"}}
+	cfg := &Config{RuntimeService: RuntimeServiceConfig{ScanInterval: "every so often"}}
 	warnings := validate(cfg)
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "scan_interval") {
 		t.Fatalf("warnings = %v, want one naming scan_interval", warnings)
 	}
-	if cfg.Daemon.ScanInterval != "" {
-		t.Errorf("scan_interval = %q, want it dropped", cfg.Daemon.ScanInterval)
+	if cfg.RuntimeService.ScanInterval != "" {
+		t.Errorf("scan_interval = %q, want it dropped", cfg.RuntimeService.ScanInterval)
 	}
-	if got := cfg.Daemon.ResolvedScanInterval(); got != DefaultScanInterval {
+	if got := cfg.RuntimeService.ResolvedScanInterval(); got != DefaultScanInterval {
 		t.Errorf("scan_interval = %s, want the default %s", got, DefaultScanInterval)
 	}
 }

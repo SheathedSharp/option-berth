@@ -8,7 +8,7 @@ import (
 )
 
 // Error codes from the contract's error model (§2). The killer emits only the
-// subset it can hit; the daemon and CLI map them onto their transports.
+// subset it can hit; the runtime service and CLI map them onto their transports.
 const (
 	// The selector matched nothing.
 	CodeNotFound = "not_found"

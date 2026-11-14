@@ -7,7 +7,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// Live is one running run that belongs to a session, as the daemon's run
+// Live is one running run that belongs to a session, as the runtime service's run
 // registry reports it. The whole run travels rather than its id because
 // `sessions.inspect` lists a session's runs from here; there is no second
 // registry to consult.

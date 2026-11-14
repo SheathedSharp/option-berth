@@ -1,5 +1,5 @@
 // Package killer is option-berth's one implementation of "stop what is listening
-// here". The CLI's `kill` and the daemon's kill requests both go through
+// here". The CLI's `kill` and the runtime service's kill requests both go through
 // KillPorts, so these rules hold for every caller:
 //
 //   - A Docker-published port is stopped with `docker stop`, never signalled. A

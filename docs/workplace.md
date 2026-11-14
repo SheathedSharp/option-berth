@@ -62,7 +62,7 @@ checkout nor has a manifest, it returns not_found.
 Records need no manual work:
 
 - `oberth start` writes this run into the current workplace; a detached (`-d`) run is closed by the
-  daemon when it records that run's exit.
+  runtime service when it records that run's exit.
 - `oberth agent stream` writes one entry per round: `turn.started` opens it, and `turn.completed`
   closes it with the outcome the provider reported (completed / interrupted / failed).
 - Work the engine cannot see is written in with `oberth workplace record`: an agent's own attempts
@@ -73,12 +73,12 @@ Records need no manual work:
 ## Boundaries
 
 `show` reads back what happened; it does not call the processes of that time back. Read commands still
-read the database directly when the daemon is absent; `new` / `use` / `delete` / `record` need a daemon
+read the database directly when the runtime service is absent; `new` / `use` / `delete` / `record` need a runtime service
 (which auto-starts under the usual rules), while records from `oberth start` and `oberth agent stream`
-never start one for you — no daemon means no record, stated once on stderr. Service start and stop
+never start one for you — no runtime service means no record, stated once on stderr. Service start and stop
 (`up` / `down`) writes no work record: that is a declared lifecycle, not a temporary work entry.
 
 Implementation lives in `internal/workplace` (rules, selectors and RPC),
 `internal/store/workplaces.go` (rows and migration 009) and `cmd/workplace*` (CLI and record wiring).
-There is one writer: the daemon is the ledger's only writer, while the CLI's read path opens the same
-database read-only when the daemon is absent and write commands go through RPC.
+There is one writer: the runtime service is the ledger's only writer, while the CLI's read path opens the same
+database read-only when the runtime service is absent and write commands go through RPC.

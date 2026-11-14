@@ -7,7 +7,7 @@ import (
 )
 
 // ErrInvalidName is returned when a name is empty or holds a separator. Same
-// rule as oberth.yaml service names in the daemon spec.
+// rule as oberth.yaml service names in the runtime service spec.
 var ErrInvalidName = errors.New("name must be non-empty and free of whitespace, / and \\")
 
 func validName(name string) error {

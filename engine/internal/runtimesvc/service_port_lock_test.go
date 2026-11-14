@@ -14,7 +14,7 @@ import (
 // port. That read is a full OS scan, and the claims lock must not span it:
 // a concurrent `down` captures its release plan with TryLock and would report
 // "claims are changing; retry down" for as long as the scan runs. The scan
-// itself is also the slowest thing on this path, so holding the daemon-wide
+// itself is also the slowest thing on this path, so holding the runtime service-wide
 // claims lock across it is exactly the "no lock spans IO" boundary.
 func TestAcquireServicePortDoesNotHoldClaimsLockAcrossTheScan(t *testing.T) {
 	dir := t.TempDir()
@@ -24,7 +24,7 @@ func TestAcquireServicePortDoesNotHoldClaimsLockAcrossTheScan(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
-	rt := &Runtime{Store: st}
+	rt := &HostContext{Store: st}
 	srv := &Server{conns: map[uint64]*Conn{}}
 	rt.srv = srv
 	rt.Scanner = scanner.New(scanner.Options{

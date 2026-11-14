@@ -121,9 +121,9 @@ func TestResolveLogTargetFindsPortlessServiceLog(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(dir)
-	prev := noDaemonFlag
-	noDaemonFlag = true
-	t.Cleanup(func() { noDaemonFlag = prev })
+	prev := noRuntimeServiceFlag
+	noRuntimeServiceFlag = true
+	t.Cleanup(func() { noRuntimeServiceFlag = prev })
 
 	row, path, err := resolveLogTarget(context.Background(), nil, "worker", "")
 	if err != nil {
@@ -171,8 +171,8 @@ func demoProject(t *testing.T) string {
 }
 
 // demoProjectNamed is demoProject with a project name chosen by the test. A
-// test that asks a daemon to stop the manifest by config path shares the
-// process-wide run registry with every other daemon in this binary, so a unique
+// test that asks a runtime service to stop the manifest by config path shares the
+// process-wide run registry with every other runtime service in this binary, so a unique
 // name keeps an earlier test's same-named run out of the answer.
 func demoProjectNamed(t *testing.T, name string) string {
 	t.Helper()
@@ -202,7 +202,7 @@ func TestLogsOnceReadsTheDeclaredServiceLog(t *testing.T) {
 	}
 
 	resetRouting(t)
-	noDaemonReachable(t)
+	noRuntimeServiceReachable(t)
 	withLogsFlags(t, func() { logsOnceFlag, logsLinesFlag = true, 10 })
 
 	var err error
@@ -216,11 +216,11 @@ func TestLogsOnceReadsTheDeclaredServiceLog(t *testing.T) {
 	}
 }
 
-// TestLogsJSONNeedsTheDaemon: the direct path hands the terminal to tail, so a
-// structured answer has to come from the daemon — and says so.
-func TestLogsJSONNeedsTheDaemon(t *testing.T) {
+// TestLogsJSONNeedsTheRuntimeService: the direct path hands the terminal to tail, so a
+// structured answer has to come from the runtime service — and says so.
+func TestLogsJSONNeedsTheRuntimeService(t *testing.T) {
 	resetRouting(t)
-	noDaemonReachable(t)
+	noRuntimeServiceReachable(t)
 	withLogsFlags(t, func() { logsJSONFlag = true })
 
 	var err error
@@ -229,10 +229,10 @@ func TestLogsJSONNeedsTheDaemon(t *testing.T) {
 		t.Fatalf("stdout = %q, want nothing", out)
 	}
 	code, msg, hint := describe(err)
-	if code != "daemon_unavailable" || !strings.Contains(msg, "logs --json needs the daemon") {
-		t.Fatalf("code = %q msg = %q, want the daemon requirement", code, msg)
+	if code != "runtime_service_unavailable" || !strings.Contains(msg, "logs --json needs the runtime service") {
+		t.Fatalf("code = %q msg = %q, want the runtime service requirement", code, msg)
 	}
-	if !strings.Contains(hint, "oberth serve") {
+	if !strings.Contains(hint, "oberth runtime service run") {
 		t.Errorf("hint = %q, want the way to start one", hint)
 	}
 }
@@ -241,7 +241,7 @@ func TestLogsJSONNeedsTheDaemon(t *testing.T) {
 // successful read.
 func TestLogsMissingPortFails(t *testing.T) {
 	resetRouting(t)
-	noDaemonReachable(t)
+	noRuntimeServiceReachable(t)
 	withLogsFlags(t, func() { logsOnceFlag = true })
 
 	err := logsRun(logsTestCommand(), []string{"1"})
@@ -288,19 +288,19 @@ func TestLogsRunCannotBeCombinedWithIP(t *testing.T) {
 	}
 }
 
-// TestLogsRunNeedsTheDaemon: a run exists only inside the daemon, so the run
+// TestLogsRunNeedsTheRuntimeService: a run exists only inside the runtime service, so the run
 // form cannot fall back to the local scan.
-func TestLogsRunNeedsTheDaemon(t *testing.T) {
+func TestLogsRunNeedsTheRuntimeService(t *testing.T) {
 	resetRouting(t)
-	noDaemonReachable(t)
+	noRuntimeServiceReachable(t)
 	withLogsFlags(t, func() { logsRunFlag = "current" })
 
 	err := logsRun(logsTestCommand(), []string{"api"})
 	code, msg, hint := describe(err)
-	if code != "daemon_unavailable" || !strings.Contains(msg, "logs --run needs the daemon") {
-		t.Fatalf("code = %q msg = %q, want the daemon requirement", code, msg)
+	if code != "runtime_service_unavailable" || !strings.Contains(msg, "logs --run needs the runtime service") {
+		t.Fatalf("code = %q msg = %q, want the runtime service requirement", code, msg)
 	}
-	if !strings.Contains(hint, "oberth serve") {
+	if !strings.Contains(hint, "oberth runtime service run") {
 		t.Errorf("hint = %q, want the way to start one", hint)
 	}
 }
@@ -310,7 +310,7 @@ func TestLogsRunNeedsTheDaemon(t *testing.T) {
 func TestLogsUnknownServiceIsNotFound(t *testing.T) {
 	demoProject(t)
 	resetRouting(t)
-	noDaemonReachable(t)
+	noRuntimeServiceReachable(t)
 	withLogsFlags(t, func() { logsOnceFlag = true })
 
 	err := logsRun(logsTestCommand(), []string{"nope"})
@@ -321,12 +321,12 @@ func TestLogsUnknownServiceIsNotFound(t *testing.T) {
 }
 
 // TestLogsHelperService is not a test: re-executing the test binary with
-// BERTH_TEST_LOG_PORT set gives the daemon a real listener whose output really
+// BERTH_TEST_LOG_PORT set gives the runtime service a real listener whose output really
 // goes to a file, which is what a log read needs.
 func TestLogsHelperService(t *testing.T) {
 	port := os.Getenv("BERTH_TEST_LOG_PORT")
 	if port == "" {
-		t.Skip("helper process, driven by TestLogsOnceReadsAListenerThroughTheDaemon")
+		t.Skip("helper process, driven by TestLogsOnceReadsAListenerThroughTheRuntimeService")
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:"+port)
 	if err != nil {
@@ -392,13 +392,13 @@ func startLoggingService(t *testing.T) int {
 	return 0
 }
 
-// TestLogsOnceReadsAListenerThroughTheDaemon: one read of a listener's log goes
-// to the daemon, which owns the log source, and comes back as one JSON document
+// TestLogsOnceReadsAListenerThroughTheRuntimeService: one read of a listener's log goes
+// to the runtime service, which owns the log source, and comes back as one JSON document
 // naming that source and carrying its lines.
-func TestLogsOnceReadsAListenerThroughTheDaemon(t *testing.T) {
+func TestLogsOnceReadsAListenerThroughTheRuntimeService(t *testing.T) {
 	port := startLoggingService(t)
 	resetRouting(t)
-	startScanningDaemon(t)
+	startScanningRuntimeService(t)
 	withLogsFlags(t, func() { logsOnceFlag, logsJSONFlag, logsLinesFlag = true, true, 10 })
 
 	var err error
@@ -411,30 +411,30 @@ func TestLogsOnceReadsAListenerThroughTheDaemon(t *testing.T) {
 		t.Fatalf("stdout is not one JSON document: %v\n%s", err, out)
 	}
 	if doc.Source == "" {
-		t.Fatalf("source = %q, want the file the daemon read", doc.Source)
+		t.Fatalf("source = %q, want the file the runtime service read", doc.Source)
 	}
 	if got := strings.Join(doc.Lines, "|"); !strings.Contains(got, "ready on a port") {
 		t.Fatalf("lines = %q, want the listener's own output", got)
 	}
 }
 
-// TestLogsFollowThroughTheDaemonStreamsTheListenersOutput: following prints the
-// attaching header and the lines as they arrive. The follow ends when the daemon
+// TestLogsFollowThroughTheRuntimeServiceStreamsTheListenersOutput: following prints the
+// attaching header and the lines as they arrive. The follow ends when the runtime service
 // that owned the reader stops; the client delivers that close as an ordinary end
 // of stream, so the invocation returns without an error.
-func TestLogsFollowThroughTheDaemonStreamsTheListenersOutput(t *testing.T) {
+func TestLogsFollowThroughTheRuntimeServiceStreamsTheListenersOutput(t *testing.T) {
 	restore := display.NoColor
 	display.NoColor = true
 	t.Cleanup(func() { display.NoColor = restore })
 
 	port := startLoggingService(t)
 	resetRouting(t)
-	stopDaemon := startScanningDaemon(t)
+	stopRuntimeService := startScanningRuntimeService(t)
 	withLogsFlags(t, func() { logsFollow, logsLinesFlag = true, 10 })
 
 	go func() {
 		time.Sleep(700 * time.Millisecond)
-		stopDaemon()
+		stopRuntimeService()
 	}()
 
 	var err error
@@ -446,27 +446,27 @@ func TestLogsFollowThroughTheDaemonStreamsTheListenersOutput(t *testing.T) {
 		t.Fatalf("stdout = %q, want the streamed line", out)
 	}
 	if err != nil {
-		t.Fatalf("err = %v, want the daemon's close reported as the end of the stream", err)
+		t.Fatalf("err = %v, want the runtime service's close reported as the end of the stream", err)
 	}
 }
 
-// TestLogsFollowJSONThroughTheDaemon: in JSON mode the follow is one object per
+// TestLogsFollowJSONThroughTheRuntimeService: in JSON mode the follow is one object per
 // line and the attaching header stays off stdout.
-func TestLogsFollowJSONThroughTheDaemon(t *testing.T) {
+func TestLogsFollowJSONThroughTheRuntimeService(t *testing.T) {
 	port := startLoggingService(t)
 	resetRouting(t)
-	stopDaemon := startScanningDaemon(t)
+	stopRuntimeService := startScanningRuntimeService(t)
 	withLogsFlags(t, func() { logsFollow, logsJSONFlag, logsLinesFlag = true, true, 10 })
 
 	go func() {
 		time.Sleep(700 * time.Millisecond)
-		stopDaemon()
+		stopRuntimeService()
 	}()
 
 	var err error
 	out := captureStdout(t, func() { err = logsRun(logsTestCommand(), []string{strconv.Itoa(port)}) })
 	if err != nil {
-		t.Fatalf("err = %v, want the daemon's close reported as the end of the stream", err)
+		t.Fatalf("err = %v, want the runtime service's close reported as the end of the stream", err)
 	}
 	if strings.Contains(out, "Attaching to") {
 		t.Fatal("the plain-text header appeared in JSON mode")

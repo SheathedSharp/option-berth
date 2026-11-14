@@ -44,11 +44,11 @@ func modulePath(t *testing.T) string {
 	return strings.TrimSpace(string(out))
 }
 
-// TestDaemonAndScannerNeverImportTheModelClient pins the two long-running
-// processes: the daemon observes facts and the scanner reduces them, and
+// TestRuntimeServiceAndScannerNeverImportTheModelClient pins the two long-running
+// processes: the runtime service observes facts and the scanner reduces them, and
 // neither may acquire a network client. This is the boundary that lets a
 // user run the whole engine with no key and no settings file at all.
-func TestDaemonAndScannerNeverImportTheModelClient(t *testing.T) {
+func TestRuntimeServiceAndScannerNeverImportTheModelClient(t *testing.T) {
 	for _, pkg := range []string{"../runtimesvc", "../runtimecore", "../scanner", "../groups", "../ports", "../servicefacts"} {
 		t.Run(filepath.Base(pkg), func(t *testing.T) {
 			for _, dep := range dependencyClosure(t, pkg) {

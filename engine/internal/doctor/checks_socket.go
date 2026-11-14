@@ -20,7 +20,7 @@ func checkSocketPermissions(ctx context.Context, env *Env) rpc.DoctorCheck {
 	socket := env.SocketPath
 	if env.GOOS == "windows" || strings.HasPrefix(socket, `\\`) {
 		return skip("named pipe, not a file",
-			"on Windows the daemon listens on "+runtimesvc.WindowsPipe+
+			"on Windows the runtime service listens on "+runtimesvc.WindowsPipe+
 				", whose DACL grants only this user and SYSTEM when it is bound; there are no file modes to check")
 	}
 	if socket == "" {
@@ -29,11 +29,11 @@ func checkSocketPermissions(ctx context.Context, env *Env) rpc.DoctorCheck {
 
 	info, err := os.Stat(socket)
 	if os.IsNotExist(err) {
-		if env.Daemon(ctx).Reachable {
-			return fail("the daemon answers but its socket is gone",
-				socket+" does not exist", "oberth daemon restart")
+		if env.RuntimeService(ctx).Reachable {
+			return fail("the runtime service answers but its socket is gone",
+				socket+" does not exist", "oberth runtime service restart")
 		}
-		return skip("no socket to check", socket+" appears when the daemon starts")
+		return skip("no socket to check", socket+" appears when the runtime service starts")
 	}
 	if err != nil {
 		return fail("cannot stat the socket", err.Error(), "")
@@ -49,7 +49,7 @@ func checkSocketPermissions(ctx context.Context, env *Env) rpc.DoctorCheck {
 }
 
 // socketFacts checks the three things a reader must trust: the socket mode, its
-// owner, and — when the daemon owns the directory — the directory mode. It
+// owner, and — when the runtime service owns the directory — the directory mode. It
 // returns a readable note for the healthy case and one line per problem.
 func socketFacts(info os.FileInfo, env *Env, socket string) (note string, problems []string) {
 	mode := info.Mode().Perm()

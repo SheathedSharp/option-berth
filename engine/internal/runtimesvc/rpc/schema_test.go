@@ -12,18 +12,18 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// contractMethods is every method the daemon describes: the core table,
+// contractMethods is every method the runtime service describes: the core table,
 // every namespace another package registers, and the names
 // relay session reserve. It is the whole protocol, not a sample.
 //
 // The direction is checked both ways (below): a method in this list that the
-// daemon does not describe fails, and so does a method the daemon describes
+// runtime service does not describe fails, and so does a method the runtime service describes
 // that this list has never heard of. That second half is what was missing —
 // `decide.status` and `decide.configure` shipped without ever being listed, and
 // nothing said so (backlog H8).
 var contractMethods = []string{
-	"daemon.hello", "daemon.shutdown", "daemon.status", "daemon.schema",
-	"daemon.doctor",
+	"runtime.service.hello", "runtime.service.shutdown", "runtime.service.status", "runtime.service.schema",
+	"runtime.service.doctor", "runtime.storage.read",
 	"state.snapshot", "state.subscribe", "state.unsubscribe", "stream.cancel",
 	"ports.kill", "ports.logs",
 	"groups.list", "groups.code", "groups.kill", "groups.start",
@@ -120,7 +120,7 @@ func TestEveryDescribedMethodIsInTheContract(t *testing.T) {
 		}
 	}
 	if len(MethodNames()) != len(contractMethods) {
-		t.Errorf("the daemon describes %d methods, contractMethods lists %d",
+		t.Errorf("the runtime service describes %d methods, contractMethods lists %d",
 			len(MethodNames()), len(contractMethods))
 	}
 }
@@ -203,7 +203,7 @@ func TestStateFilterUsesTheAgreedWireField(t *testing.T) {
 	}
 }
 
-// The document a client reads and the document the daemon generates must be the
+// The document a client reads and the document the runtime service generates must be the
 // same bytes, so a type change cannot ship beside a stale schema file.
 func TestCheckedInSchemaIsUpToDate(t *testing.T) {
 	path := filepath.Join("..", "..", "..", "docs", "schema", "protocol.schema.json")
@@ -273,7 +273,7 @@ func assertEnum(t *testing.T, raw json.RawMessage, want []string) {
 	}
 }
 
-// contractNotifications is every message the daemon pushes without being asked
+// contractNotifications is every message the runtime service pushes without being asked
 // . They are half the protocol, and until they were described a
 // client had to hand-write them from prose.
 var contractNotifications = []string{

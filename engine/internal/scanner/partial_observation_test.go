@@ -118,7 +118,7 @@ func TestNarrowPartialRowsKeepTheCoverageVerdict(t *testing.T) {
 		Rows:    []ports.ListeningPort{{Port: 8123, PID: 42, BindAddress: "127.0.0.1"}},
 	}
 	l := New(Options{
-		DaemonVersion: "test",
+		RuntimeServiceVersion: "test",
 		ScanSource: func(context.Context, Include) ([]ports.ListeningPort, string, error) {
 			return partial.Rows, "lsof", partial
 		},

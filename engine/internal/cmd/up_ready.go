@@ -17,7 +17,7 @@ import (
 
 // startRows reads the state a readiness wait decides on. Production reads the
 // same snapshot status exposes; a test replaces it so a readiness rule can be
-// checked without a daemon or the host's listener table.
+// checked without a runtime service or the host's listener table.
 var startRows = groupRowsObserved
 
 // startTimeout is one service this wait gave up on: the name it was started
@@ -33,7 +33,7 @@ type startTimeout struct {
 // with a configured health path is ready only after its listener reports ok;
 // every other service is ready once its run is live (or its listener is up).
 // This keeps `up --wait` useful to both humans and agents without adding a
-// second readiness protocol to the daemon.
+// second readiness protocol to the runtime.service.
 func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *groups.Config,
 	chunks []rpc.GroupsStartChunk, summary *rpc.GroupsStartEnd, timeout time.Duration,
 	timeoutSet bool) ([]startTimeout, error) {
@@ -125,7 +125,7 @@ func waitForStartReady(ctx context.Context, params rpc.GroupsStartParams, cfg *g
 					delete(selected, name)
 					continue
 				}
-				// An older daemon may omit run_id on a skipped chunk. Once
+				// An older runtime service may omit run_id on a skipped chunk. Once
 				// the service is live, the group row names its run, and
 				// that run is what this wait is about. Only a run this
 				// invocation did not start is read from the live row: for
@@ -251,8 +251,8 @@ func startReplacedMessage(selection startSelection, replacement string) string {
 		selection.runID, replacement)
 }
 
-// startChunkReadyTimeout is the readiness budget the daemon published for one
-// service. A daemon predating ready_timeout omits it; the client then falls
+// startChunkReadyTimeout is the readiness budget the runtime service published for one
+// service. A runtime service predating ready_timeout omits it; the client then falls
 // back to the same default the manifest uses.
 func startChunkReadyTimeout(c rpc.GroupsStartChunk) time.Duration {
 	if d, err := time.ParseDuration(strings.TrimSpace(c.ReadyTimeout)); err == nil && d > 0 {
@@ -298,7 +298,7 @@ func selectedExit(exit *state.ServiceExit, runID string, since time.Time) bool {
 // exitAfter is the fallback for a legacy record that names no run. It reports
 // whether the exit was recorded at or after the wait began. A nil exit is no
 // evidence either way; an unparseable timestamp is treated as fresh, because a
-// malformed record the daemon did produce is more likely this run's than a
+// malformed record the runtime service did produce is more likely this run's than a
 // stale one's. since must be truncated to the timestamp's own precision.
 func exitAfter(exit *state.ServiceExit, since time.Time) bool {
 	if exit == nil {

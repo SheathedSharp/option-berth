@@ -1,7 +1,7 @@
 package model
 
 // This file contains the optional model adapter. It is intentionally separate
-// from status and the daemon: a missing key, a network failure, or an invalid
+// from status and the runtime_service: a missing key, a network failure, or an invalid
 // model response must never change the runtime facts or the CLI control path.
 
 import (

@@ -38,7 +38,7 @@ a fixed order (defaults `https://ghfast.top`, `https://gh-proxy.com`; override o
 source must report the same digest, and a failed verification writes nothing. A mirror changes only the
 transport path, never the definition of a release asset.
 
-The uninstaller tries `oberth daemon stop` first, then removes the binaries, licenses and the PATH line
+The uninstaller tries `oberth runtime service stop` first, then removes the binaries, licenses and the PATH line
 the installer wrote; it keeps `~/.option-berth` runtime state by default, and only
 `--purge-state` / `-PurgeState` deletes it. Full details in [install.md](../install.md).
 
@@ -67,7 +67,7 @@ is not published as a Go module, and a release creates no `engine/` tag.
 | Defect fix | X3 + 1 | 1.2.3 → 1.2.4 |
 
 This is this project's version convention; it does not equate "feature update" with protocol
-compatibility. A change to the daemon wire contract counts as a protocol update. RPC has its own
+compatibility. A change to the runtime service wire contract counts as a protocol update. RPC has its own
 historically independent counter: `ProtocolVersion` in `engine/internal/runtimesvc/rpc/types.go`. A
 protocol-level release raises that RPC major at the same time and regenerates the existing protocol
 schema; feature and fix releases do not change the RPC version on their own. For example, product 0.1.0
@@ -80,7 +80,7 @@ substitute for protocol design and compatibility review.
 Features merged into `main` ship as a weekly feature version (X2); several feature changes are not
 piled into one. Within the support scope, a wrong stop, an attribution error, ledger corruption, or a
 service that is listening but reported as not ready ships as a separate fix version (X3) without
-waiting for the weekly window. Only an incompatible daemon protocol change raises X1.
+waiting for the weekly window. Only an incompatible runtime service protocol change raises X1.
 
 ## Release path
 
@@ -174,7 +174,7 @@ and run identity, repeated `up`, read-only status after the collector exits, col
 project `down`, and unrelated listeners staying alive. On Windows it validates the fixture executable at
 launch time and holds a kernel process handle, then confirms exit through the same handle instead of
 re-selecting a stop target from an old PID. On failure it cleans up only its own temporary fixtures and
-explicitly started daemons, and every fixture has its own bounded self-exit deadline.
+explicitly started runtime services, and every fixture has its own bounded self-exit deadline.
 
 This check does not cover Windows/Linux desktop endpoints, every terminal/permission/service-tree
 scenario, or native execution on Windows arm64.

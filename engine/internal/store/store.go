@@ -1,4 +1,4 @@
-// Package store is the daemon's SQLite database: renames, group pins, the
+// Package store is the runtime service's SQLite database: renames, group pins, the
 // port-event history ring, the set of known oberth.yaml roots, and the tables
 // sibling packages register for themselves.
 //
@@ -6,8 +6,8 @@
 // created on first use. modernc.org/sqlite is the driver — pure Go, so
 // CGO_ENABLED=0 release builds still work.
 //
-// The daemon normally owns the store. The CLI's no-daemon path may open it
-// read-only to keep durable run-exit evidence while the daemon is down; see
+// The runtime service normally owns the store. The CLI's no-runtime-service path may open it
+// read-only to keep durable run-exit evidence while the runtime service is down; see
 // OpenReadOnly.
 package store
 
@@ -46,7 +46,7 @@ func timeFromString(s string) (time.Time, error) {
 }
 
 // ResetInfo records a database that was thrown away because the file on disk
-// was not one SQLite could read. The daemon reports it as a db_reset event, so
+// was not one SQLite could read. The runtime service reports it as a db_reset event, so
 // a person can find the parked file.
 type ResetInfo struct {
 	Path    string // the database that was reset
@@ -56,6 +56,8 @@ type ResetInfo struct {
 
 // Options tunes Open. The zero value is what Open uses.
 type Options struct {
+	// owned retains SQLite exclusive ownership on one non-expiring connection.
+	owned bool
 	// OnReset runs after a corrupt database has been parked and replaced, and
 	// before Open returns. Nil is fine.
 	OnReset func(ResetInfo)
@@ -64,15 +66,16 @@ type Options struct {
 	BusyTimeout time.Duration
 }
 
-// Store is an open option-berth database. It is safe for concurrent use: reads
-// run on the connection pool, which WAL lets proceed while a write is in
-// flight, and ordinary writes are serialised behind one mutex. A conditional
+// Store is an open option-berth database, safe for concurrent use. OpenOwned
+// serializes SQL on one lifetime connection; ordinary Open uses a WAL read
+// pool. Ordinary writes are additionally serialized behind one mutex. A conditional
 // write (the reservation release) refuses contention instead of queueing behind
 // it; another Store handle on the same file can still cause SQLITE_BUSY.
 type Store struct {
 	db       *sql.DB
 	path     string
 	readOnly bool
+	owned    bool
 
 	wmu sync.Mutex
 
@@ -86,7 +89,7 @@ type Store struct {
 
 // Path is the default database location: option-berth.db in the directory
 // internal/paths owns, next to config.yaml. BERTH_DB overrides it, which is what
-// the tests and `oberth serve` with a temp root use.
+// the tests and `oberth runtime service run` with a temp root use.
 func Path() string { return paths.DB() }
 
 // Open opens the database at path, creating it if needed and migrating it to
@@ -99,9 +102,12 @@ func Open(path string) (*Store, error) { return OpenWith(path, Options{}) }
 
 // OpenReadOnly opens an existing database without running migrations or
 // changing journal mode. It is for local readers that need durable evidence
-// while the daemon is stopped; callers must close the returned store.
+// while the runtime service is stopped; callers must close the returned store.
 func OpenReadOnly(path string) (*Store, error) {
 	path = databasePath(path)
+	if err := ValidateStorageFilesystem(path); err != nil {
+		return nil, err
+	}
 	if _, err := os.Stat(path); err != nil {
 		return nil, err
 	}
@@ -109,18 +115,18 @@ func OpenReadOnly(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	uri := url.URL{Scheme: "file", Path: readOnlyURIPath(abs), RawQuery: "mode=ro&_pragma=busy_timeout(1000)"}
+	uri := url.URL{Scheme: "file", Path: readOnlyURIPath(abs), RawQuery: "mode=ro&_pragma=busy_timeout(50)"}
 	dsn := uri.String()
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("opening %s read-only: %w", path, err)
+		return nil, ownershipError(path, fmt.Errorf("opening %s read-only: %w", path, err))
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	var n int
 	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master`).Scan(&n); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("opening %s read-only: %w", path, err)
+		return nil, ownershipError(path, fmt.Errorf("opening %s read-only: %w", path, err))
 	}
 	return &Store{db: db, path: path, readOnly: true}, nil
 }
@@ -149,7 +155,7 @@ func OpenWith(path string, opts Options) (*Store, error) {
 		return nil, err
 	}
 	store, err := openAt(path, opts)
-	if err == nil || !isCorruption(err) {
+	if err == nil || opts.owned || !isCorruption(err) {
 		return store, err
 	}
 	return recreate(path, opts, err)
@@ -169,7 +175,7 @@ func databasePath(path string) string {
 }
 
 // recreate parks an unusable database and opens a fresh one in its place,
-// recording what happened so the daemon can report a db_reset event.
+// recording what happened so the runtime service can report a db_reset event.
 func recreate(path string, opts Options, cause error) (*Store, error) {
 	movedTo, err := moveAside(path)
 	if err != nil {
@@ -192,15 +198,47 @@ func recreate(path string, opts Options, cause error) (*Store, error) {
 // openAt opens and migrates, with no corruption recovery: it is openAt's caller
 // that decides whether a failure is worth starting over from.
 func openAt(path string, opts Options) (*Store, error) {
-	db, err := sql.Open("sqlite", dsnFor(path, opts.BusyTimeout))
+	dsn := dsnForOptions(path, opts.BusyTimeout, opts.owned)
+	var db *sql.DB
+	var err error
+	if opts.owned {
+		db, err = newOwnedDB(dsn)
+	} else {
+		db, err = sql.Open("sqlite", dsn)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", path, err)
 	}
 	// Writes are serialised in Go and readers are short, so a small pool is
-	// enough; the idle timeout keeps a quiet daemon from holding connections.
-	db.SetMaxOpenConns(8)
-	db.SetMaxIdleConns(4)
-	db.SetConnMaxIdleTime(5 * time.Minute)
+	// enough; the idle timeout keeps a quiet runtime service from holding connections.
+	if opts.owned {
+		db.SetMaxOpenConns(1)
+		db.SetMaxIdleConns(1)
+		// Do not expire the connection: SQLite owns the lifetime lease.
+		// BEGIN EXCLUSIVE forces acquisition even on an already-current schema;
+		// COMMIT ends the empty transaction, retaining EXCLUSIVE-mode locks.
+		if _, err := db.Exec(`BEGIN EXCLUSIVE`); err != nil {
+			return nil, closeAfterFailure(db, err)
+		}
+		if _, err := db.Exec(`COMMIT`); err != nil {
+			return nil, closeAfterFailure(db, err)
+		}
+		var locking, journal string
+		if err := db.QueryRow(`PRAGMA locking_mode`).Scan(&locking); err != nil {
+			return nil, closeAfterFailure(db, err)
+		}
+		if err := db.QueryRow(`PRAGMA journal_mode`).Scan(&journal); err != nil {
+			return nil, closeAfterFailure(db, err)
+		}
+		if locking != "exclusive" || journal != "wal" {
+			return nil, closeAfterFailure(db, fmt.Errorf("SQLite did not retain required exclusive WAL ownership"))
+		}
+
+	} else {
+		db.SetMaxOpenConns(8)
+		db.SetMaxIdleConns(4)
+		db.SetConnMaxIdleTime(5 * time.Minute)
+	}
 
 	// Touch the schema first: a file that is not a database fails here, where
 	// the caller can still recover, rather than on the first real query.
@@ -216,7 +254,7 @@ func openAt(path string, opts Options) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("securing %s: %w", path, err)
 	}
-	return &Store{db: db, path: path}, nil
+	return &Store{db: db, path: path, owned: opts.owned}, nil
 }
 
 // closeAfterFailure releases a handle that never became a usable Store, keeping
@@ -231,14 +269,24 @@ const defaultBusyTimeout = 5 * time.Second
 
 // dsnFor is the connection string: WAL so readers proceed during a write, and
 // foreign keys on so a migration's constraints are real.
-func dsnFor(path string, busy time.Duration) string {
+func dsnFor(path string, busy time.Duration) string { return dsnForOptions(path, busy, false) }
+
+func dsnForOptions(path string, busy time.Duration, owned bool) string {
 	if busy <= 0 {
 		busy = defaultBusyTimeout
 	}
-	return fmt.Sprintf(
-		"file:%s?_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)",
-		path, busy.Milliseconds(),
-	)
+	pragmas := fmt.Sprintf("_pragma=busy_timeout(%d)", busy.Milliseconds())
+	if owned {
+		pragmas += "&_pragma=locking_mode(EXCLUSIVE)"
+	}
+	pragmas += "&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)"
+	uri := url.URL{Scheme: "file", RawQuery: pragmas}
+	if filepath.IsAbs(path) {
+		uri.Path = readOnlyURIPath(path)
+	} else {
+		uri.Opaque = url.PathEscape(filepath.ToSlash(path))
+	}
+	return uri.String()
 }
 
 // prepareFile makes the parent directory (0700) and creates the database file
@@ -340,7 +388,7 @@ var corruptionPhrases = []string{
 //
 // WAL keeps a `-wal` and a `-shm` beside the database, and whichever pooled
 // connection closes last writes them again — after Close has returned, as far
-// as the caller can tell. A daemon that has stopped, or a test removing its
+// as the caller can tell. A runtime service that has stopped, or a test removing its
 // temp directory, cannot wait for that: the removal fails with "directory not
 // empty" against a sidecar recreated behind it. Checkpointing and leaving WAL
 // mode deletes both while we still hold the connection that owns them. A busy
@@ -359,7 +407,7 @@ func (s *Store) Close() error {
 
 // checkpointTimeout bounds the wait for the connection checkpointing needs. A
 // leaked or stuck connection is a bug, but it must not make Close hang forever:
-// daemon shutdown and a test's temp-directory cleanup both depend on Close
+// runtime service shutdown and a test's temp-directory cleanup both depend on Close
 // returning.
 const checkpointTimeout = 5 * time.Second
 
@@ -375,8 +423,10 @@ func (s *Store) checkpointAndLeaveWAL() {
 // The budget covers acquiring the connection and both pragmas: if a caller
 // holds the only connection, Close gives up instead of waiting forever.
 func (s *Store) checkpointAndLeaveWALWithin(budget time.Duration) {
-	s.db.SetMaxIdleConns(0)
-	s.db.SetMaxOpenConns(1)
+	if !s.owned {
+		s.db.SetMaxIdleConns(0)
+		s.db.SetMaxOpenConns(1)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	conn, err := s.db.Conn(ctx)
@@ -391,12 +441,12 @@ func (s *Store) checkpointAndLeaveWALWithin(budget time.Duration) {
 // DBPath is the file this store is backed by.
 func (s *Store) DBPath() string { return s.path }
 
-// DB exposes the raw handle. The cross-spec contract hands this to daemon
-// extensions through Runtime; nothing inside option-berth should reach for it.
+// DB exposes the raw handle. The cross-spec contract hands this to runtime service
+// extensions through HostContext; nothing inside option-berth should reach for it.
 func (s *Store) DB() *sql.DB { return s.db }
 
 // Reset reports the database Open had to throw away, or nil when none was. The
-// daemon reads it right after Open and reports a db_reset event.
+// runtime service reads it right after Open and reports a db_reset event.
 func (s *Store) Reset() *ResetInfo {
 	if s == nil || s.reset == nil {
 		return nil

@@ -3,7 +3,7 @@
 // rules that decide what a record means.
 //
 // It owns the vocabulary and the naming rules; internal/store owns the rows.
-// The daemon serves it as the workplace.* methods and `oberth workplace` is
+// The runtime service serves it as the workplace.* methods and `oberth workplace` is
 // the CLI over them, so the same record is available to a person, to an agent
 // and to the desktop client without any of them keeping a second copy.
 //
@@ -135,7 +135,7 @@ type Block struct {
 type Record struct {
 	// ID identifies the work item. An engine-launched run uses the run's own
 	// id; a bridge turn uses the session id and turn id together. When empty
-	// the daemon assigns one.
+	// the runtime service assigns one.
 	ID string
 	// Kind is required: shell or agent.
 	Kind Kind
@@ -249,7 +249,7 @@ func BlockFromRow(r store.BlockRow) Block {
 }
 
 // The named failures this package reports. They are sentinels rather than
-// message text so the daemon and the CLI can classify the same failure the
+// message text so the runtime service and the CLI can classify the same failure the
 // same way; errors.go maps them onto the wire codes and the next step.
 var (
 	// ErrNotFound is returned when a selector names no workplace.

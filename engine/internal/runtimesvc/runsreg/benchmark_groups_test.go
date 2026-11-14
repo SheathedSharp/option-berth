@@ -11,7 +11,7 @@ import (
 
 // BenchmarkGroupsWithRegistry includes the registry reads omitted by the
 // listener-only join benchmark. Half the services have exited; the live half
-// mixes listeners and portless workers. No OS processes or daemon are started.
+// mixes listeners and portless workers. No OS processes or runtime service are started.
 func BenchmarkGroupsWithRegistry(b *testing.B) {
 	for _, n := range []int{32, 256, 1024} {
 		b.Run(fmt.Sprintf("services=%d", n), func(b *testing.B) {

@@ -145,7 +145,7 @@ oberth attn assess --follow --project "$PWD" --interval 2s \
 
 It emits NDJSON: one `subscribed` record, then only changed event/revision/
 assessment handoffs, and `stopped` when the agent cancels the process. It reads
-`oberth status --json --no-mark` when needed, so the daemon and core CLI remain model free
+`oberth status --json --no-mark` when needed, so the runtime service and core CLI remain model free
 and no hook or MCP registration is needed. A task-owning skill may attach this
 runner automatically when existing local consent enables assessment for that
 relevant runtime task. It must bind a redacted task and explicit evaluation
@@ -154,9 +154,9 @@ No global watcher is installed. Before every poll, consent and the original
 endpoint/model/credential identity are checked again; revocation or a changed
 configuration terminates the old task session without another provider call.
 
-The runner's `OpenChanges` adapter only dials an existing Runtime Service. It reuses scoped redacted summaries, filters their source to the task worktree and ignores resource-only changes. Sequence cursors are relative to the daemon identity, not the attention artifact revision; disconnect/drop/restart causes a reconnect snapshot wake. `Trigger` retains low-frequency full reconciliation and local configuration checks while connected, and safely falls back to the original polling path when capability or connectivity is absent. The public timing behavior belongs to [cli.md](../cli.md). Do not add a second events process for the same follow session.
+The runner's `OpenChanges` adapter only dials an existing Runtime Service. It reuses scoped redacted summaries, filters their source to the task worktree and ignores resource-only changes. Sequence cursors are relative to the runtime service identity, not the attention artifact revision; disconnect/drop/restart causes a reconnect snapshot wake. `Trigger` retains low-frequency full reconciliation and local configuration checks while connected, and safely falls back to the original polling path when capability or connectivity is absent. The public timing behavior belongs to [cli.md](../cli.md). Do not add a second events process for the same follow session.
 
-The feed only schedules fact reads. `Auto` still validates the exact artifact and authorized task context, calls a provider only for an eligible uncached assessment, and re-reads facts after model/cache return. The optional model packages must remain outside the dependency closure of daemon/scanner/control packages. Cancellation closes only the task's own socket and joins its reconnect worker; no broad process cleanup or global listener is installed.
+The feed only schedules fact reads. `Auto` still validates the exact artifact and authorized task context, calls a provider only for an eligible uncached assessment, and re-reads facts after model/cache return. The optional model packages must remain outside the dependency closure of runtime service/scanner/control packages. Cancellation closes only the task's own socket and joins its reconnect worker; no broad process cleanup or global listener is installed.
 
 For CI and one-off runs the same three fields come from the environment:
 `BERTH_ATTN_ENDPOINT`, `BERTH_ATTN_MODEL` and `BERTH_ATTN_KEY`. They override
@@ -211,7 +211,7 @@ re-export a shell variable for every task. This file is the only persistent
 consent: an environment key supplies the secret but does not enable the model,
 and `enabled: false` keeps it off even when a key is present in the environment.
 The key never
-appears in attention artifacts, quality telemetry, or daemon output.
+appears in attention artifacts, quality telemetry, or runtime service output.
 
 For one-off use, `--task` and `--authorize inspect_logs,restart_service` can
 replace `--task-context`. `--authorize` (or `authorized_options` in the JSON)
@@ -333,7 +333,7 @@ Ledger write failures are diagnostic only and do not change the runner result.
 When an agent is preparing a side effect that is not itself a runtime fact, a
 preflight request can be derived from a freshly saved `oberth status --json`
 response. The request is an external adapter artifact under
-`BERTH_HOME/attention/preflight/`; it never enters the daemon or replaces the
+`BERTH_HOME/attention/preflight/`; it never enters the runtime service or replaces the
 runtime attention artifact:
 
 ```sh

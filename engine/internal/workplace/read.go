@@ -11,8 +11,8 @@ import (
 
 // The reads behind the workplace methods, written once.
 //
-// The daemon serves them over RPC and the CLI runs them itself when there is
-// no daemon to ask, so both answer a question about a worktree from the same
+// The runtime service serves them over RPC and the CLI runs them itself when there is
+// no runtime service to ask, so both answer a question about a worktree from the same
 // rules: which workplace is active, what a selector resolves to, and how a
 // truncated record is reported. Only the transport differs.
 
@@ -65,7 +65,7 @@ func Find(st *store.Store, root, selector string) ([]Workplace, Workplace, error
 // only: looking at the record must not bring a workplace into being.
 func Target(st *store.Store, root string) (Workplace, error) {
 	if st == nil {
-		return Workplace{}, fmt.Errorf("recording needs the daemon's database, and there is none")
+		return Workplace{}, fmt.Errorf("recording needs the runtime service's database, and there is none")
 	}
 	all, err := List(st, root)
 	if err != nil {
@@ -101,7 +101,7 @@ func Create(st *store.Store, root, name string) (Workplace, error) {
 }
 
 // ListResult is the answer to workplace.list and to `oberth workplace list`
-// without a daemon.
+// without a runtime.service.
 func ListResult(st *store.Store, root string) (rpc.WorkplaceListResult, error) {
 	all, err := List(st, root)
 	if err != nil {
@@ -118,7 +118,7 @@ func ListResult(st *store.Store, root string) (rpc.WorkplaceListResult, error) {
 }
 
 // ShowResult is the answer to workplace.show and to `oberth workplace show`
-// without a daemon. An empty selector means the workplace the worktree is on;
+// without a runtime.service. An empty selector means the workplace the worktree is on;
 // limit above zero caps how many of the newest blocks come back.
 //
 // Reading never changes anything: no selector picks the active workplace, or

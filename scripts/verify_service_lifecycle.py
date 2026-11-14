@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the real CLI/daemon with disposable native API and no-port workers.
+"""Exercise the real CLI/Runtime Service with disposable native API and no-port workers.
 
 Windows uses a unique named pipe. Unix uses a short private socket. No process
 is located or killed by a guessed PID; fallback cleanup is a fixture-owned stop
@@ -126,8 +126,8 @@ def verify(binary: Path, workspace: Path) -> dict:
     for key in list(env):
         if key.startswith("BERTH_") or key.startswith("OBERTH_"):
             env.pop(key)
-    env.update(HOME=str(home), USERPROFILE=str(home), BERTH_HOME=str(state), BERTH_SOCKET=pipe,
-               BERTH_NO_AUTOSTART="1", XDG_RUNTIME_DIR="", GIT_CONFIG_NOSYSTEM="1")
+    env.update(HOME=str(home), USERPROFILE=str(home), BERTH_HOME=str(state), BERTH_RUNTIME_SERVICE_SOCKET=pipe,
+               BERTH_RUNTIME_SERVICE_NO_AUTOSTART="1", XDG_RUNTIME_DIR="", GIT_CONFIG_NOSYSTEM="1")
     # Building the fixture is not an engine command and may use the caller's
     # existing Go build cache. The fixture itself receives only the isolated HOME.
     source = workspace / "fixture.go"
@@ -143,9 +143,9 @@ def verify(binary: Path, workspace: Path) -> dict:
     sentinel = socket.socket()
     sentinel.bind(("127.0.0.1", 0)); sentinel.listen()
     sentinel_port = sentinel.getsockname()[1]
-    daemons = []
+    runtime_services = []
     owned = None
-    log = (workspace / "daemon.log").open("wb")
+    log = (workspace / "runtime-service.log").open("wb")
 
     def cli(*arguments, cwd=project, accept_failure=False):
         result = subprocess.run([str(binary), *arguments], cwd=cwd, env=env,
@@ -162,14 +162,14 @@ def verify(binary: Path, workspace: Path) -> dict:
         services = {item["name"]: item for item in doc.get("worktree", {}).get("services", [])}
         return services if services.get("api", {}).get("running") and services.get("worker", {}).get("running") else False
 
-    def start_daemon():
-        process = subprocess.Popen([str(binary), "serve"], cwd=home, env=env, stdout=log, stderr=log)
-        daemons.append(process)
-        wait_until("daemon readiness", lambda: cli("daemon", "status", "--json", cwd=home, accept_failure=True).get("running") is True)
+    def start_runtime_service():
+        process = subprocess.Popen([str(binary), "runtime", "service", "run"], cwd=home, env=env, stdout=log, stderr=log)
+        runtime_services.append(process)
+        wait_until("runtime service readiness", lambda: cli("runtime", "service", "status", "--json", cwd=home, accept_failure=True).get("running") is True)
         return process
 
     try:
-        first = start_daemon()
+        first = start_runtime_service()
         up = cli("up", "--json")
         if up.get("errors"):
             raise RuntimeError(f"up reported errors: {up['errors']}")
@@ -187,13 +187,13 @@ def verify(binary: Path, workspace: Path) -> dict:
         again = {mode: json.loads((project / f"identity-{mode}.json").read_text()) for mode in identity}
         if again != identity:
             raise RuntimeError("idempotent up restarted a native service")
-        cli("daemon", "stop", "--json", cwd=home)
+        cli("runtime", "service", "stop", "--json", cwd=home)
         first.wait(timeout=10)
-        direct = wait_until("direct observation after daemon stop", running)
+        direct = wait_until("direct observation after runtime service stop", running)
         if not direct:
-            raise RuntimeError("no-daemon status lost native workers")
-        start_daemon()
-        wait_until("daemon restart rehydrates services", running)
+            raise RuntimeError("no-runtime-service status lost native workers")
+        start_runtime_service()
+        wait_until("runtime service restart rehydrates services", running)
         rehydrated = {mode: json.loads((project / f"identity-{mode}.json").read_text()) for mode in identity}
         if rehydrated != identity:
             raise RuntimeError("collector restart replaced a running service")
@@ -214,7 +214,7 @@ def verify(binary: Path, workspace: Path) -> dict:
         owned.assert_exited()
         with socket.create_connection(("127.0.0.1", sentinel_port), timeout=1):
             pass
-        print("PASS: native API/no-port worker, idempotent up, direct status, daemon rehydration, scoped down and unrelated listener survival")
+        print("PASS: native API/no-port worker, idempotent up, direct status, runtime service rehydration, scoped down and unrelated listener survival")
         return {"platform": os.name, "api_port": port, "checks": 7}
     finally:
         # Only fixtures read these private per-project control files.
@@ -225,10 +225,10 @@ def verify(binary: Path, workspace: Path) -> dict:
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
             pass
         try:
-            cli("daemon", "stop", "--json", cwd=home, accept_failure=True)
+            cli("runtime", "service", "stop", "--json", cwd=home, accept_failure=True)
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
             pass
-        for process in daemons:
+        for process in runtime_services:
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:

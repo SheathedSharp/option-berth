@@ -14,11 +14,11 @@ import (
 // lines and readiness events cannot be resent, so the reader is made to wait.
 const StreamBuffer = 256
 
-// End is a stream's final payload and, when it failed, the daemon's error.
+// End is a stream's final payload and, when it failed, the runtime service's error.
 type End struct {
 	// Data is stream.end's payload; nil for a method with no final result.
 	Data json.RawMessage
-	// Err is the daemon's error, when the stream ended in failure.
+	// Err is the runtime service's error, when the stream ended in failure.
 	Err *rpc.Error
 }
 
@@ -31,7 +31,7 @@ func (end End) Decode(out any) error {
 }
 
 // Stream is the client half of the streaming convention: the subscription id
-// the daemon assigned, the chunks that follow, and the end.
+// the runtime service assigned, the chunks that follow, and the end.
 type Stream struct {
 	client *Client
 	id     string
@@ -60,7 +60,7 @@ func (s *Stream) finishedAlready() bool {
 	return s.finished
 }
 
-// ID is the subscription id the daemon assigned.
+// ID is the subscription id the runtime service assigned.
 func (s *Stream) ID() string { return s.id }
 
 // Chunks carries every stream.chunk payload and closes when the stream ends.
@@ -70,7 +70,7 @@ func (s *Stream) Chunks() <-chan json.RawMessage { return s.chunks }
 // connection drops without one.
 func (s *Stream) End() <-chan End { return s.end }
 
-// Cancel asks the daemon to stop the stream. The daemon still sends a final
+// Cancel asks the runtime service to stop the stream. The runtime service still sends a final
 // stream.end, so a draining caller keeps reading until End closes.
 func (s *Stream) Cancel(ctx context.Context) error {
 	err := s.client.Call(ctx, rpc.MethodStreamCancel, rpc.StreamCancel{ID: s.id}, nil)
@@ -83,7 +83,7 @@ func (s *Stream) Cancel(ctx context.Context) error {
 }
 
 // Stream calls a streaming method, decodes the reply into result (which may be
-// nil) and returns the Stream carrying the chunks that follow. The daemon
+// nil) and returns the Stream carrying the chunks that follow. The runtime service
 // queues the reply before the first chunk, and chunks that arrive while the
 // reply is being decoded wait under the subscription id, so none are lost.
 func (c *Client) Stream(ctx context.Context, method string, params, result any) (*Stream, error) {
@@ -92,7 +92,7 @@ func (c *Client) Stream(ctx context.Context, method string, params, result any) 
 		return nil, err
 	}
 	if stream == nil {
-		return nil, errors.New("daemon: " + method + " did not return a subscription_id")
+		return nil, errors.New("runtime_service: " + method + " did not return a subscription_id")
 	}
 	if result != nil {
 		if err := json.Unmarshal(raw, result); err != nil {
@@ -217,7 +217,7 @@ func (c *Client) acceptEnd(raw json.RawMessage) bool {
 // bufferChunk queues one chunk. It never blocks the connection's read loop: a
 // slow consumer would otherwise stall every other call on the socket,
 // including the stream.cancel that could free it. Chunks are queued rather
-// than dropped because a log line the daemon already read cannot be resent.
+// than dropped because a log line the runtime service already read cannot be resent.
 func (s *Stream) bufferChunk(data json.RawMessage) {
 	s.mu.Lock()
 	if s.finished {

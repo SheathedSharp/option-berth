@@ -10,7 +10,7 @@ import (
 // The protocol schema and the dispatcher have to name the same methods. This
 // package links every package that registers a handler, so the registry here
 // is the one the shipped binary serves: a method the schema describes but
-// nothing serves is a promise the daemon cannot keep, and a served method the
+// nothing serves is a promise the runtime service cannot keep, and a served method the
 // schema omits is wire nobody can discover.
 func TestDescribedMethodsAreExactlyTheServedOnes(t *testing.T) {
 	served := map[string]bool{}

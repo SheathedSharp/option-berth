@@ -397,7 +397,7 @@ func columnIndexes(header []string) map[string]int {
 }
 
 // batchEnrichProcessStats fetches CPU, memory, state and uptime for every
-// non-Docker port through the same one-call sampler the daemon's stats-only
+// non-Docker port through the same one-call sampler the runtime service's stats-only
 // tick uses, so a scanned row and a refreshed row are filled from identical
 // parsing. The sample is keyed by pid and applied to every row that pid owns:
 // a per-row sample would leave every socket but the last of a process empty.

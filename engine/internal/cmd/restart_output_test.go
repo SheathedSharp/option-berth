@@ -1,7 +1,7 @@
 package cmd
 
 // This suite calls only the production stop/start result adapter and renderers.
-// Its RPC callbacks are in-memory; it never invokes a command, daemon or signal.
+// Its RPC callbacks are in-memory; it never invokes a command, runtime service or signal.
 import (
 	"bytes"
 	"context"

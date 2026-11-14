@@ -1,4 +1,4 @@
-// Package state holds the daemon's published data model. These structs are the
+// Package state holds the runtime service's published data model. These structs are the
 // JSON wire shape for `oberth list --json`, state.snapshot and state.delta.
 // Field names and JSON tags are the contract: docs/schema/protocol.schema.json
 // is generated from them and clients in other repositories are built against
@@ -64,7 +64,7 @@ type Health struct {
 	// result without reading listener internals.
 	ObservedAt string `json:"observed_at"`
 
-	// Configured marks a probe the daemon ran because a manifest declares a
+	// Configured marks a probe the runtime service ran because a manifest declares a
 	// `health:` path. That is state rather than an opt-in statistic, so it
 	// survives the subscriber's include filter. The flag never reaches the
 	// wire: a client sees the health object either way.
@@ -117,7 +117,7 @@ type Run struct {
 	RootPID int `json:"root_pid"`
 }
 
-// Session is owned by the session contract; the daemon only carries it.
+// Session is owned by the session contract; the runtime service only carries it.
 type Session struct {
 	// Who.
 	ID    string `json:"id"`
@@ -132,7 +132,7 @@ type Session struct {
 	Detected bool `json:"detected"`
 }
 
-// Port is one listening socket as the daemon publishes it. A client renders
+// Port is one listening socket as the runtime service publishes it. A client renders
 // DisplayName and never invents a name of its own.
 type Port struct {
 	// Host names the machine this row was observed on: "localhost" for this

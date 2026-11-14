@@ -4,7 +4,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uninstall.sh | sh
 #
-# The script stops the daemon if it can, removes oberth and the
+# The script stops the Runtime Service if it can, removes oberth and the
 # notices install.sh placed under ~/.local/share/option-berth, and removes the
 # PATH lines the installer added. It keeps ~/.option-berth state unless
 # --purge-state is passed.
@@ -79,8 +79,17 @@ case "$DATA_DIR" in
 esac
 
 if [ -x "$DIR/oberth" ]; then
-	if "$DIR/oberth" daemon stop >/dev/null 2>&1; then
-		echo "daemon     stopped"
+	# A retired CLI must never be silently treated as an absent new host.
+	# Only metadata/help is probed; no old command or RPC is attempted.
+	"$DIR/oberth" runtime service --help >/dev/null 2>&1 ||
+		fail "the installed CLI predates runtime service; stop its host explicitly with its matching CLI and use its matching uninstaller"
+	if stopped=$("$DIR/oberth" runtime service stop --json 2>/dev/null); then
+		echo "runtime service stopped"
+	else
+		case "$stopped" in
+		*'"running": false'*|*'"running":false'*) echo "runtime service not running" ;;
+		*) fail "Runtime Service stop failed; installation and state were left unchanged" ;;
+		esac
 	fi
 fi
 

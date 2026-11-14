@@ -23,7 +23,7 @@ func nearestConfig(dir string) (*groups.Config, error) {
 		groups.ConfigName, shortPath(dir))
 }
 
-// projectAt names the project a directory sits in, the way the daemon's
+// projectAt names the project a directory sits in, the way the runtime service's
 // resolver does: a oberth.yaml at or above it names the project outright,
 // otherwise the git checkout it belongs to names it — `<repo>`, or
 // `<repo>@<worktree>` for a linked worktree.

@@ -78,7 +78,7 @@ func snapshotReader(t *testing.T, ctx context.Context, cl *client.Client) func()
 }
 
 // TestAHungDockerDoesNotStallKillOrSnapshot is the regression test. The fake
-// Docker never answers, so `docker ps` hangs; the daemon's scans used to wait
+// Docker never answers, so `docker ps` hangs; the runtime service's scans used to wait
 // out the CLI timeout on every call, which stretched a `ports.kill` past 25 s
 // and timed out the `state.snapshot` calls queued behind it.
 func TestAHungDockerDoesNotStallKillOrSnapshot(t *testing.T) {
@@ -100,7 +100,7 @@ func TestAHungDockerDoesNotStallKillOrSnapshot(t *testing.T) {
 	startListener(t, helper, sandbox.home, port)
 
 	// The kill has to land while a `docker ps` is hanging, so first give the
-	// daemon a moment to ask the fake. A daemon that asks Docker only from
+	// runtime service a moment to ask the fake. A runtime service that asks Docker only from
 	// inside a scan (the bug) has not asked yet, and its kill pays for the
 	// hang itself.
 	asked := time.Now().Add(5 * time.Second)
@@ -152,7 +152,7 @@ func TestAHungDockerDoesNotStallKillOrSnapshot(t *testing.T) {
 	attempts := dockerCalls(logPath, "ps")
 	t.Logf("docker ps ran %d times in the %s since the kill began", attempts, time.Since(killBegan))
 	if attempts == 0 {
-		t.Error("the daemon never ran docker ps, so this test proved nothing")
+		t.Error("the runtime service never ran docker ps, so this test proved nothing")
 	}
 	if attempts > 3 {
 		t.Errorf("docker ps ran %d times against a hung Docker; the watcher is not backing off", attempts)

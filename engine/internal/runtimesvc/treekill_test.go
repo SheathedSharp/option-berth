@@ -11,7 +11,7 @@ import (
 // stopCommand takes a `option-berth` invocation down for good and reaps it.
 //
 // Killing only the process the test started is not enough. `oberth start` puts
-// the command it supervises in a process group of its own (daemon spec), so
+// the command it supervises in a process group of its own (runtime service spec), so
 // that child survives its parent while still holding the inherited stdout pipe.
 // Wait then blocks copying from a pipe nobody will close — which is how a
 // failed assertion became a ten-minute CI timeout. So the whole tree goes, and

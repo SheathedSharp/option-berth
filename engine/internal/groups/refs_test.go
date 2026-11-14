@@ -38,7 +38,7 @@ func TestExpand(t *testing.T) {
 		t.Errorf("URL(21408) = %q, want http://localhost:21408", got)
 	}
 	// Without an identity the reference is left as written, like an unresolved
-	// port reference: a daemon that does not know the checkout must not guess.
+	// port reference: a runtime service that does not know the checkout must not guess.
 	unknown := Values{Self: "api", Ports: values.Ports}
 	if got := Expand("app_${worktree}", unknown); got != "app_${worktree}" {
 		t.Errorf("Expand with no identity = %q, want the reference unchanged", got)
@@ -210,7 +210,7 @@ services:
 		"    cmd: uv run worker\n")
 }
 
-// TestLoadAcceptsWorktreeReference: ${worktree} is a reference the daemon
+// TestLoadAcceptsWorktreeReference: ${worktree} is a reference the runtime service
 // resolves from the checkout, not a service name, so a manifest may use it in
 // cmd, prepare and env without declaring a service called "worktree".
 func TestLoadAcceptsWorktreeReference(t *testing.T) {

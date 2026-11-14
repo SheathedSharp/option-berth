@@ -8,9 +8,9 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
-// DirectRuns resolves run ownership without a daemon: the on-disk runs.json
+// DirectRuns resolves run ownership without a runtime_service: the on-disk runs.json
 // registry plus the process table the scan already read. It is the direct-scan
-// counterpart of the daemon's in-memory registry, and it is what keeps run
+// counterpart of the runtime service's in-memory registry, and it is what keeps run
 // attribution in the attribution layer: scanning reads process facts,
 // attribution decides which run owns them.
 //
@@ -21,7 +21,7 @@ type DirectRuns struct {
 	reg     *runs.Registry
 	parents map[int]int
 	// startedAt reports when a pid's current process began. It is the same
-	// identity check the daemon registry prunes with; tests replace it.
+	// identity check the runtime service registry prunes with; tests replace it.
 	startedAt func(pid int) (time.Time, bool)
 	// resolved memoizes whole walk results per pid: every pid visited on a
 	// walk shares its endpoint, so sibling listeners in one process tree are
@@ -45,7 +45,7 @@ func newDirectRuns(reg *runs.Registry, parents map[int]int) *DirectRuns {
 }
 
 // Run implements Registry by walking the listener's ancestry to the nearest
-// pid the registry knows, the same walk the daemon's registry uses.
+// pid the registry knows, the same walk the runtime service's registry uses.
 func (d *DirectRuns) Run(p state.Port) (state.Run, bool) {
 	return d.runForPID(p.PID)
 }

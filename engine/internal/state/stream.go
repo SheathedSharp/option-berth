@@ -90,7 +90,7 @@ type StateChanged struct {
 }
 
 // StateRevisionForSeq is the stable textual revision shared by snapshots and
-// changes. The daemon sequence remains the ordering primitive.
+// changes. The runtime service sequence remains the ordering primitive.
 func StateRevisionForSeq(seq uint64) string { return strconv.FormatUint(seq, 10) }
 
 // StreamSnapshotFor builds the redacted snapshot after scope filtering.
@@ -245,7 +245,7 @@ func eventChangeKind(kind string) string {
 	case "health_changed":
 		return "health_changed"
 	case "service_changed", "service_failed", "worktree_changed",
-		"daemon_stopping", "scan_error", "db_reset",
+		"runtime_service_stopping", "scan_error", "db_reset",
 		"port_occupied", "ready_timeout", "machine_unavailable",
 		"undeclared_listener", "manifest_runtime_conflict", "repeated_crash":
 		return strings.TrimSpace(kind)
@@ -254,9 +254,9 @@ func eventChangeKind(kind string) string {
 	}
 }
 
-func daemonWideChange(kind string) bool {
+func runtimeServiceWideChange(kind string) bool {
 	switch strings.TrimSpace(kind) {
-	case "daemon_stopping", "scan_error", "db_reset":
+	case "runtime_service_stopping", "scan_error", "db_reset":
 		return true
 	default:
 		return false
@@ -280,10 +280,10 @@ func StateChangesForTransition(prev, next Snapshot, events []Event) []StateChang
 	buckets := map[string]*bucket{}
 	add := func(source *EventSource, kind, at string) {
 		kind = eventChangeKind(kind)
-		if source == nil && !daemonWideChange(kind) {
+		if source == nil && !runtimeServiceWideChange(kind) {
 			return
 		}
-		key := "daemon"
+		key := "runtime_service"
 		if source != nil {
 			key = eventSourceKey(source)
 		}
@@ -489,7 +489,7 @@ func groupByKey(groups []Group, key string) (Group, bool) {
 
 func eventSourceKey(source *EventSource) string {
 	if source == nil {
-		return "daemon"
+		return "runtime_service"
 	}
 	if source.WorktreeID != "" {
 		return "worktree:" + source.WorktreeID

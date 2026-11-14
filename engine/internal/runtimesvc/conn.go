@@ -55,7 +55,7 @@ type Conn struct {
 
 // newConn builds a connection with its queues ready. The outbound queue is
 // bounded right here rather than by the caller: a client that stops reading
-// must not be able to grow the daemon's memory one message at a time.
+// must not be able to grow the runtime service's memory one message at a time.
 func newConn(id uint64, srv *Server, nc net.Conn) *Conn {
 	return &Conn{
 		nc:      nc,
@@ -67,10 +67,10 @@ func newConn(id uint64, srv *Server, nc net.Conn) *Conn {
 	}
 }
 
-// ID is the daemon-assigned identifier of this connection, used in log lines.
+// ID is the runtime service-assigned identifier of this connection, used in log lines.
 func (c *Conn) ID() uint64 { return c.id }
 
-// Client is the {name, version, keepalive} triple sent with daemon.hello.
+// Client is the {name, version, keepalive} triple sent with runtime.service.hello.
 func (c *Conn) Client() (name, version string, keepalive bool) {
 	c.mu.Lock()
 	name, version, keepalive = c.client, c.clientVersion, c.keepalive
@@ -87,12 +87,12 @@ func (c *Conn) setHello(name, version string, keepalive bool) {
 	c.keepalive = keepalive
 	c.helloDone = true
 	c.mu.Unlock()
-	// The keepalive count is what decides whether an idle daemon may stop, so it
+	// The keepalive count is what decides whether an idle runtime service may stop, so it
 	// is recomputed after every hello rather than derived on demand.
 	c.srv.recountKeepalive()
 }
 
-// Keepalive reports whether this client asked the daemon to stay up.
+// Keepalive reports whether this client asked the runtime service to stay up.
 func (c *Conn) Keepalive() bool {
 	c.mu.Lock()
 	keepalive := c.keepalive
@@ -147,8 +147,8 @@ func (c *Conn) replaceStreams(next map[string]context.CancelFunc) map[string]con
 	return previous
 }
 
-// requestShutdown records that this connection asked the daemon to stop, so the
-// stop happens after the reply has been queued rather than before. daemon.shutdown
+// requestShutdown records that this connection asked the runtime service to stop, so the
+// stop happens after the reply has been queued rather than before. runtime.service.shutdown
 // relies on that ordering to answer at all.
 func (c *Conn) requestShutdown() {
 	c.mu.Lock()
@@ -210,13 +210,13 @@ func (c *Conn) Notify(method string, params any) error {
 		return err
 	}
 	if !c.enqueue(framed) {
-		return errors.New("daemon: connection closed")
+		return errors.New("runtime_service: connection closed")
 	}
 	return nil
 }
 
 // marshalNotification frames one notification for the wire: params first, then
-// the envelope that names the method. It is the only place the daemon builds
+// the envelope that names the method. It is the only place the runtime service builds
 // that envelope, so a payload that cannot be encoded reaches every caller as an
 // error — to be dropped, not sent as a frame whose params are absent — instead
 // of each call site deciding for itself. It is a variable because the fan-out's
@@ -355,7 +355,7 @@ func (c *Conn) dispatch(ctx context.Context, msg rpc.Message) {
 	case msg.IsRequest():
 		c.serve(ctx, msg)
 	case msg.IsNotification():
-		// The daemon accepts no client notifications yet. Ignoring them keeps a
+		// The runtime service accepts no client notifications yet. Ignoring them keeps a
 		// future client compatible instead of getting it disconnected.
 		c.srv.logger.Debug("ignoring client notification", "conn", c.id, "method", msg.Method)
 	default:
@@ -368,20 +368,24 @@ func (c *Conn) dispatch(ctx context.Context, msg rpc.Message) {
 func (c *Conn) serve(ctx context.Context, msg rpc.Message) {
 	c.srv.touch()
 
+	if err := rpc.RetiredRuntimeServiceMethodError(msg.Method); err != nil {
+		c.replyError(msg.ID, err)
+		return
+	}
 	handler, served := lookupHandler(msg.Method)
 	if !served {
 		c.replyError(msg.ID, rpc.NewError(rpc.CodeNotFound,
 			"unknown method "+msg.Method,
-			"run `oberth daemon schema` to see the methods this daemon serves"))
+			"run `oberth runtime service schema` to see the methods this runtime service serves"))
 		return
 	}
 
 	request := &Request{
-		Method:  msg.Method,
-		ID:      msg.ID,
-		Params:  msg.Params,
-		Conn:    c,
-		Runtime: c.srv.runtime,
+		Method:      msg.Method,
+		ID:          msg.ID,
+		Params:      msg.Params,
+		Conn:        c,
+		HostContext: c.srv.host,
 	}
 	result, err := handler(ctx, request)
 	if err != nil && !errors.Is(err, ErrResponseSent) {

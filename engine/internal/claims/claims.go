@@ -101,7 +101,7 @@ type Options struct {
 	// Clock is the clock, replaced in tests.
 	Clock func() time.Time
 	// Listening reports the ports something is bound to right now — the
-	// daemon's scan snapshot. A reservation never hands out a port that is
+	// runtime service's scan snapshot. A reservation never hands out a port that is
 	// already serving, except one this same service already holds: that
 	// listener is very likely its own process, and taking the port away from it
 	// would break the idempotency the whole feature exists for.
@@ -119,7 +119,7 @@ type Options struct {
 	Lease time.Duration
 }
 
-// Book issues the reservations. One lives in the daemon, per database.
+// Book issues the reservations. One lives in the runtime service, per database.
 //
 // A Book holds one row per service rather than a block per checkout: the
 // product's unit is one `port: auto` service, and a service needs exactly one

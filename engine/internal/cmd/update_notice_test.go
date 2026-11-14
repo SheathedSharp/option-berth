@@ -22,7 +22,7 @@ func TestUpdateNoticeNamesTheReleaseAndTheUpgrade(t *testing.T) {
 		"v1.4.0",
 		"v2.0.0",
 		upgradeCommand(runtime.GOOS),
-		"oberth daemon stop",
+		"oberth runtime service stop",
 	} {
 		if !strings.Contains(notice, want) {
 			t.Errorf("notice = %q, want it to name %q", notice, want)

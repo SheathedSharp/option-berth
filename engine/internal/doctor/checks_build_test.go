@@ -14,7 +14,7 @@ func TestDoctorBuildIdentity(t *testing.T) {
 	}{
 		{"same version different commit", "aaaaaaa", "bbbbbbb", StatusWarn, true, nil},
 		{"matching", "aaaaaaa", "aaaaaaa", StatusOK, true, nil},
-		{"missing daemon identity", "aaaaaaa", "", StatusWarn, true, nil},
+		{"missing runtime service identity", "aaaaaaa", "", StatusWarn, true, nil},
 		{"unknown on both sides", "unknown", "unknown", StatusWarn, true, nil},
 		{"local build", "local", "local", StatusWarn, true, nil},
 		{"probe failed", "aaaaaaa", "aaaaaaa", StatusWarn, true, errors.New("fixture RPC failed")},
@@ -24,11 +24,11 @@ func TestDoctorBuildIdentity(t *testing.T) {
 			env := fakeEnv(t)
 			env.Commit = tc.cli
 			calls := 0
-			env.Daemon = func(context.Context) DaemonInfo {
+			env.RuntimeService = func(context.Context) RuntimeServiceInfo {
 				calls++
-				return DaemonInfo{Reachable: tc.reachable, Version: env.Version, Commit: tc.remote, StatusErr: tc.err}
+				return RuntimeServiceInfo{Reachable: tc.reachable, Version: env.Version, Commit: tc.remote, StatusErr: tc.err}
 			}
-			got := Run(context.Background(), *env, []string{"daemon_build_matches"})
+			got := Run(context.Background(), *env, []string{"runtime_service_build_matches"})
 			if len(got.Checks) != 1 {
 				t.Fatalf("missing build check: %+v", got)
 			}
@@ -43,10 +43,10 @@ func TestDoctorBuildIdentity(t *testing.T) {
 	}
 }
 
-func TestBuildCheckSkipsDaemonMode(t *testing.T) {
+func TestBuildCheckSkipsRuntimeServiceMode(t *testing.T) {
 	env := fakeEnv(t)
-	env.Mode = ModeDaemon
-	result := Run(context.Background(), *env, []string{"daemon_build_matches"})
+	env.Mode = ModeRuntimeService
+	result := Run(context.Background(), *env, []string{"runtime_service_build_matches"})
 	if len(result.Checks) != 1 {
 		t.Fatal(result)
 	}

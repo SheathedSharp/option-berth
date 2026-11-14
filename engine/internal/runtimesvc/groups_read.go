@@ -21,7 +21,7 @@ func registerGroupsReadHandler() {
 }
 
 func handleGroupsList(_ context.Context, req *Request) (any, error) {
-	rows, err := readGroups(req.Runtime)
+	rows, err := readGroups(req.HostContext)
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +30,7 @@ func handleGroupsList(_ context.Context, req *Request) (any, error) {
 
 // readGroups is readPorts' twin: it is served from the cache while a subscriber
 // keeps that cache fresh, and from a scan otherwise.
-func readGroups(rt *Runtime) ([]state.Group, error) {
+func readGroups(rt *HostContext) ([]state.Group, error) {
 	if rt.Subscribers() > 0 {
 		if snap := rt.Scanner.Cached(); snap.Seq > 0 {
 			return orEmptyGroups(joinStartAttempts(rt, snap.Groups)), nil

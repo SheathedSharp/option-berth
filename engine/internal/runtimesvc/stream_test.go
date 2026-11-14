@@ -252,7 +252,7 @@ func TestSubscribeRepliesWithoutWaitingForAScan(t *testing.T) {
 		Port: 8123, PID: 42, Process: "python3", Command: "python3 -m http.server",
 	}}
 	hn.loop = scanner.New(scanner.Options{
-		DaemonVersion: "test",
+		RuntimeServiceVersion: "test",
 		Scan: func(inc scanner.Include) ([]ports.ListeningPort, error) {
 			time.Sleep(scanDelay)
 			hn.mu.Lock()
