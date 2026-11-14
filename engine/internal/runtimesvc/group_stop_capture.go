@@ -27,7 +27,7 @@ type groupStopCapturer interface {
 // captureSilentGroupStop selects the runs that hold no port. only selects by
 // service name and expect by run identity; the caller never passes both, and
 // whichever is set narrows the list before any identity is captured.
-func captureSilentGroupStop(rt *Runtime, snap state.Snapshot, group string, only map[string]bool, expect map[string]string, reason string, dryRun bool) ([]killer.Target, func(int), error) {
+func captureSilentGroupStop(rt *HostContext, snap state.Snapshot, group string, only map[string]bool, expect map[string]string, reason string, dryRun bool) ([]killer.Target, func(int), error) {
 	reg := rt.Runs()
 	capturer, ok := reg.(groupStopCapturer)
 	if !ok {

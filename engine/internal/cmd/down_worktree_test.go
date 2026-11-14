@@ -32,7 +32,7 @@ func TestDownRefusesCombinedWorktreeSelectors(t *testing.T) {
 	}
 }
 
-// TestDownParamsChoosesOneTarget pins target selection without a daemon: the
+// TestDownParamsChoosesOneTarget pins target selection without a runtime_service: the
 // four forms produce exactly one selector each, and a relative worktree path
 // is resolved before it crosses the socket.
 func TestDownParamsChoosesOneTarget(t *testing.T) {
@@ -115,7 +115,7 @@ func withDownFlags(t *testing.T, set func()) {
 
 // TestDownParamsFallsBackToTheNearestManifest: with no selector at all the
 // project is the manifest at or above the working directory, and that file is
-// what the daemon is asked to stop.
+// what the runtime service is asked to stop.
 func TestDownParamsFallsBackToTheNearestManifest(t *testing.T) {
 	dir := demoProject(t)
 	withDownFlags(t, func() {})
@@ -150,13 +150,13 @@ func TestDownParamsWithoutAManifestFails(t *testing.T) {
 	}
 }
 
-// TestDownStopsTheNearestProjectThroughTheDaemon drives the whole command
-// against a real daemon: the manifest is chosen here, the stop happens there,
+// TestDownStopsTheNearestProjectThroughTheRuntimeService drives the whole command
+// against a real runtime_service: the manifest is chosen here, the stop happens there,
 // and the answer is the documented "nothing was running" sentence.
-func TestDownStopsTheNearestProjectThroughTheDaemon(t *testing.T) {
+func TestDownStopsTheNearestProjectThroughTheRuntimeService(t *testing.T) {
 	demoProjectNamed(t, "down-stop")
 	resetRouting(t)
-	startDaemonWhereTheCommandLooks(t)
+	startRuntimeServiceWhereTheCommandLooks(t)
 	withDownFlags(t, func() {})
 
 	var err error
@@ -169,12 +169,12 @@ func TestDownStopsTheNearestProjectThroughTheDaemon(t *testing.T) {
 	}
 }
 
-// TestDownJSONAnswersWithTheEnvelope: --json prints the daemon's own answer, so
+// TestDownJSONAnswersWithTheEnvelope: --json prints the runtime service's own answer, so
 // a caller reads the same results and released count the text path renders.
 func TestDownJSONAnswersWithTheEnvelope(t *testing.T) {
 	demoProjectNamed(t, "down-envelope")
 	resetRouting(t)
-	startDaemonWhereTheCommandLooks(t)
+	startRuntimeServiceWhereTheCommandLooks(t)
 	withDownFlags(t, func() { downJSONFlag = true })
 
 	var err error
@@ -194,7 +194,7 @@ func TestDownJSONAnswersWithTheEnvelope(t *testing.T) {
 // TestDownJSONExitsNonZeroWhenAStopFails: the envelope is the explanation, the
 // exit status is the gate. A caller that only reads the status must not delete
 // the worktree while a service is still running, so `--json` has to answer
-// non-zero whenever the daemon reports a failed stop. The listener is one the
+// non-zero whenever the runtime service reports a failed stop. The listener is one the
 // killer must refuse — no PID to signal, and not a Docker port — which comes
 // back as a permission_denied row rather than the not_found that already means
 // "not running".
@@ -208,8 +208,8 @@ func TestDownJSONExitsNonZeroWhenAStopFails(t *testing.T) {
 	}
 	t.Chdir(dir)
 	resetRouting(t)
-	isolateDaemonPaths(t)
-	startTestDaemon(t, []ports.ListeningPort{{
+	isolateRuntimeServicePaths(t)
+	startTestRuntimeService(t, []ports.ListeningPort{{
 		Port: 34567, PID: 0, Process: "node", BindAddress: "127.0.0.1",
 		Cwd: dir,
 	}})
@@ -235,11 +235,11 @@ func TestDownJSONExitsNonZeroWhenAStopFails(t *testing.T) {
 	}
 }
 
-// TestDownReportsAnUnknownProject: a name the daemon cannot resolve is its
+// TestDownReportsAnUnknownProject: a name the runtime service cannot resolve is its
 // error, carried through with the wire's code.
 func TestDownReportsAnUnknownProject(t *testing.T) {
 	resetRouting(t)
-	startDaemonWhereTheCommandLooks(t)
+	startRuntimeServiceWhereTheCommandLooks(t)
 	withDownFlags(t, func() {})
 
 	err := downRun(testCommand(), []string{"no-such-project"})
@@ -251,16 +251,16 @@ func TestDownReportsAnUnknownProject(t *testing.T) {
 	}
 }
 
-// TestDownWithoutADaemonFails: stopping is a daemon operation; with none
+// TestDownWithoutARuntimeServiceFails: stopping is a runtime service operation; with none
 // reachable the command reports the connection failure instead of pretending
 // the project is down.
-func TestDownWithoutADaemonFails(t *testing.T) {
+func TestDownWithoutARuntimeServiceFails(t *testing.T) {
 	demoProject(t)
 	resetRouting(t)
-	noDaemonReachable(t)
+	noRuntimeServiceReachable(t)
 	withDownFlags(t, func() {})
 
 	if err := downRun(testCommand(), nil); err == nil {
-		t.Fatal("down without a daemon returned nil")
+		t.Fatal("down without a runtime service returned nil")
 	}
 }

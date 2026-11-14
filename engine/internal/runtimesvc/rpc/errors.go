@@ -4,14 +4,14 @@ import "fmt"
 
 // The failure vocabulary.
 //
-// Every failure the daemon can report is declared exactly once, here, with the
+// Every failure the runtime service can report is declared exactly once, here, with the
 // one thing a caller needs in order to act: whether repeating the request can
 // help. An agent reads the wire code, looks up its kind, and decides; it never
 // has to hold a list of names.
 //
 // Three rules keep this table honest, and each one is a test:
 //
-//   - every entry has a producer somewhere in the engine, so the daemon cannot
+//   - every entry has a producer somewhere in the engine, so the runtime service cannot
 //     promise a code it never returns;
 //   - every entry is named in docs/cli.md's "stable codes" sentence, so an agent
 //     that reads the contract can branch on every failure it may receive;
@@ -64,16 +64,16 @@ const (
 	// only the base spec still classifies a bad request correctly.
 	CodeInvalidParams = -32602
 
-	CodeInternal          = 1000 // an engine fault, not a caller mistake
-	CodeNotFound          = 1001
-	CodeAmbiguous         = 1002 // the selector matched more than one thing
-	CodePermission        = 1003
-	CodeUnsupported       = 1004 // this platform cannot do it
-	CodeBusy              = 1005 // another operation holds what this one needs
-	CodeInvalidConfig     = 1006 // the manifest does not parse or validate
-	CodeInvalidSelector   = 1009
-	CodeOutsideHome       = 1010 // a path the daemon refuses to touch
-	CodeConflict          = 1011 // the name is taken
+	CodeInternal        = 1000 // an engine fault, not a caller mistake
+	CodeNotFound        = 1001
+	CodeAmbiguous       = 1002 // the selector matched more than one thing
+	CodePermission      = 1003
+	CodeUnsupported     = 1004 // this platform cannot do it
+	CodeBusy            = 1005 // another operation holds what this one needs
+	CodeInvalidConfig   = 1006 // the manifest does not parse or validate
+	CodeInvalidSelector = 1009
+	CodeOutsideHome     = 1010 // a path the runtime service refuses to touch
+	CodeConflict        = 1011 // the name is taken
 
 	// Observation failures belong to the collector, not to the engine. They are
 	// conditions rather than refusals because a sandboxed caller can retry
@@ -92,7 +92,7 @@ const (
 
 // failures is the whole vocabulary, in numeric order. Numbers retired from a
 // shipped build are not reused, and numbers that never shipped are not kept:
-// this table lists what the daemon can return today.
+// this table lists what the runtime service can return today.
 var failures = []failure{
 	{CodeInvalidParams, "invalid_params", Refusal},
 
@@ -101,7 +101,7 @@ var failures = []failure{
 	{CodeAmbiguous, "ambiguous", Refusal},
 	{CodePermission, "permission_denied", Refusal},
 	{CodeUnsupported, "unsupported_platform", Refusal},
-	{CodeBusy, "daemon_busy", Condition},
+	{CodeBusy, "runtime_service_busy", Condition},
 	{CodeInvalidConfig, "invalid_config", Refusal},
 	{CodeInvalidSelector, "invalid_selector", Refusal},
 	{CodeOutsideHome, "outside_home", Refusal},
@@ -137,7 +137,7 @@ func CodeName(code int) string {
 }
 
 // KindOf returns what a caller should do about a failure with this number. An
-// unknown number is a fault: the daemon sent something it cannot account for.
+// unknown number is a fault: the runtime service sent something it cannot account for.
 func KindOf(code int) Kind {
 	if entry, known := vocabulary[code]; known {
 		return entry.kind

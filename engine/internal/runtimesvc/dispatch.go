@@ -12,13 +12,13 @@ import (
 )
 
 // Request is what a Handler receives: the decoded call, the connection it came
-// in on, and the daemon runtime it may act through.
+// in on, and the runtime service runtime it may act through.
 type Request struct {
-	Runtime *Runtime
-	Method  string
-	ID      json.RawMessage
-	Params  json.RawMessage
-	Conn    *Conn
+	HostContext *HostContext
+	Method      string
+	ID          json.RawMessage
+	Params      json.RawMessage
+	Conn        *Conn
 }
 
 // Bind unmarshals the request's params into v. When params are absent, v is
@@ -43,7 +43,7 @@ func (r *Request) Bind(v any) error {
 type Handler func(ctx context.Context, req *Request) (any, error)
 
 // ErrResponseSent tells the dispatcher not to write a reply.
-var ErrResponseSent = errors.New("daemon: response already sent")
+var ErrResponseSent = errors.New("runtime_service: response already sent")
 
 var (
 	handlers   = map[string]Handler{}
@@ -58,7 +58,7 @@ func RegisterHandler(method string, h Handler) {
 	handlersMu.Lock()
 	defer handlersMu.Unlock()
 	if _, taken := handlers[method]; taken {
-		panic("daemon: duplicate handler for method " + method)
+		panic("runtime_service: duplicate handler for method " + method)
 	}
 	handlers[method] = h
 }

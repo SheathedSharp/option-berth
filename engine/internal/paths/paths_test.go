@@ -69,7 +69,7 @@ func TestDirPrefersTheEnvThenHome(t *testing.T) {
 	if got := dirFrom(envOf(nil), homeOf("/home/dev")); got != "/home/dev/"+DirName {
 		t.Errorf("default: %q", got)
 	}
-	// HOME unset: the daemon should start in the working directory, never at /.
+	// HOME unset: the runtime service should start in the working directory, never at /.
 	failing := func() (string, error) { return "", os.ErrNotExist }
 	if got := dirFrom(envOf(nil), failing); got != DirName {
 		t.Errorf("no home: %q, want %q", got, DirName)

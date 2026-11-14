@@ -1,7 +1,7 @@
 // Package paths is the one place that knows where option-berth keeps its files.
 //
 // Before this package existed the layout was spelled out eight times — config,
-// db, logs, profiles, runs and the daemon's socket each built
+// db, logs, profiles, runs and the runtime service's socket each built
 // `~/.option-berth/...` for themselves, with comments explaining that they
 // mirrored internal/config "to avoid an import cycle".
 // Copying a path eight times is how a codebase ends up with a state directory
@@ -45,9 +45,9 @@ const (
 	DirName    = ".option-berth"
 	ConfigFile = "config.yaml"
 	DBFile     = "option-berth.db"
-	SocketFile = "daemon.sock"
-	LockFile   = "daemon.lock"
-	LogFile    = "daemon.log"
+	SocketFile = "runtime-service.sock"
+	LockFile   = "runtime-service.lock"
+	LogFile    = "runtime-service.log"
 	RunsFile   = "runs.json"
 	// AttnConfigFile is the owner-only local configuration of the optional
 	// model assessment. It is deliberately separate from config.yaml: that
@@ -99,24 +99,24 @@ const (
 	// $CARGO_HOME does: BERTH_HOME=/tmp/x means files land in /tmp/x, not
 	// /tmp/x/.option-berth.
 	HomeEnv = "BERTH_HOME"
-	// SocketEnv points the daemon somewhere specific, for a socket on a tmpfs
+	// SocketEnv points the runtime service somewhere specific, for a socket on a tmpfs
 	// or a caller that already knows where to look.
-	SocketEnv = "BERTH_SOCKET"
+	SocketEnv = "BERTH_RUNTIME_SERVICE_SOCKET"
 	// DBEnv points the database somewhere specific.
 	DBEnv = "BERTH_DB"
 	// LogDirEnv relocates the per-service logs `oberth start` writes.
 	LogDirEnv = "BERTH_LOG_DIR"
 )
 
-// WindowsPipe is the named pipe the daemon listens on under Windows. A pipe has
+// WindowsPipe is the named pipe the runtime service listens on under Windows. A pipe has
 // no directory of its own, so the socket-related helpers below have to special
 // case it.
-const WindowsPipe = `\\.\pipe\option-berth`
+const WindowsPipe = `\\.\pipe\option-berth-runtime-service`
 
 // Dir is the directory option-berth owns: $BERTH_HOME if set, else ~/.option-berth.
 //
 // A home that cannot be resolved falls back to the working directory rather than
-// to the filesystem root: the daemon should start, not create /.option-berth.
+// to the filesystem root: the runtime service should start, not create /.option-berth.
 func Dir() string {
 	return dirFrom(os.Getenv, os.UserHomeDir)
 }
@@ -142,14 +142,14 @@ func EnsureDir() (string, error) {
 	return dir, nil
 }
 
-// Socket is the address the daemon listens on.
+// Socket is the address the runtime service listens on.
 //
-//	$BERTH_SOCKET                       if set and non-empty (all platforms)
+//	$BERTH_RUNTIME_SERVICE_SOCKET                       if set and non-empty (all platforms)
 //	\\.\pipe\option-berth                     on Windows
-//	$XDG_RUNTIME_DIR/option-berth/daemon.sock if that variable is set
-//	~/.option-berth/daemon.sock               otherwise
+//	$XDG_RUNTIME_DIR/option-berth/runtime-service.sock if that variable is set
+//	~/.option-berth/runtime-service.sock               otherwise
 //
-// `oberth daemon path` prints the result, so no client has to hardcode it.
+// `oberth runtime service path` prints the result, so no client has to hardcode it.
 func Socket() string {
 	return SocketFrom(os.Getenv, os.UserHomeDir, runtime.GOOS)
 }
@@ -169,7 +169,7 @@ func SocketFrom(getenv func(string) string, home func() (string, error), goos st
 	return filepath.Join(dirFrom(getenv, home), SocketFile)
 }
 
-// SocketWithoutEnv is Socket with $BERTH_SOCKET hidden, i.e. where the daemon
+// SocketWithoutEnv is Socket with $BERTH_RUNTIME_SERVICE_SOCKET hidden, i.e. where the runtime service
 // would listen if the caller had not pointed it elsewhere. Ownership rules and
 // `doctor` need that distinction.
 func SocketWithoutEnv() string {
@@ -177,8 +177,8 @@ func SocketWithoutEnv() string {
 }
 
 // OwnsSocketDir reports whether the directory holding path is one option-berth
-// makes for itself, rather than one a caller pointed $BERTH_SOCKET at. Only a
-// directory we own may be tightened to 0700: `BERTH_SOCKET=/tmp/x.sock` must not
+// makes for itself, rather than one a caller pointed $BERTH_RUNTIME_SERVICE_SOCKET at. Only a
+// directory we own may be tightened to 0700: `BERTH_RUNTIME_SERVICE_SOCKET=/tmp/x.sock` must not
 // chmod /tmp.
 func OwnsSocketDir(path string) bool {
 	return OwnsSocketDirFrom(os.Getenv, os.UserHomeDir, runtime.GOOS, path)
@@ -213,7 +213,7 @@ func DB() string {
 func ConfigPath() string { return filepath.Join(Dir(), ConfigFile) }
 
 // AttnConfigPath is the local attention settings file. The file is owned by
-// the optional model assessment, not by the daemon.
+// the optional model assessment, not by the runtime.service.
 func AttnConfigPath() string { return filepath.Join(Dir(), AttnConfigFile) }
 
 // FeedbackPath is the consent record for optional improvement reports.
@@ -229,7 +229,7 @@ func FeedbackLedgerPath() string {
 // assessment, so a tip shown in one session does not repeat every read.
 func AttnTipPath() string { return filepath.Join(Dir(), AttnTipFile) }
 
-// LogPath is the daemon's rotated log file.
+// LogPath is the runtime service's rotated log file.
 func LogPath() string { return filepath.Join(Dir(), LogFile) }
 
 // Logs is the directory of per-service logs that `oberth start` writes.

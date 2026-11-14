@@ -37,7 +37,7 @@ func TestStartAfterStopDoesNotReuseTheStoppedRun(t *testing.T) {
 	}
 	observe(rec.PID)
 
-	rt := &runtimesvc.Runtime{Scanner: scanner.New(scanner.Options{Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
+	rt := &runtimesvc.HostContext{Scanner: scanner.New(scanner.Options{Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
 		return nil, nil
 	}})}
 	reason, _, _, up, err := alreadyRunning(context.Background(), rt, "example", groups.Service{Name: "worker"})
@@ -86,7 +86,7 @@ func TestStartAfterStopIgnoresTheStoppedSnapshotRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	l.SetRuns(func() groups.Registry { return runsreg.Default })
-	rt := &runtimesvc.Runtime{Scanner: l}
+	rt := &runtimesvc.HostContext{Scanner: l}
 
 	snap, err := l.SnapshotForReadinessContext(context.Background())
 	if err != nil {
@@ -118,7 +118,7 @@ func TestLifecycleObservationPropagatesOwnerCancellation(t *testing.T) {
 			<-ctx.Done()
 			return nil, ctx.Err()
 		}})
-		rt := &runtimesvc.Runtime{Scanner: l}
+		rt := &runtimesvc.HostContext{Scanner: l}
 		var err error
 		if book {
 			var b *addressBook
@@ -142,7 +142,7 @@ func TestLifecycleObservationPropagatesOwnerCancellation(t *testing.T) {
 
 func TestLifecycleObservationDoesNotHideCollectorFailure(t *testing.T) {
 	sentinel := errors.New("collector unavailable")
-	rt := &runtimesvc.Runtime{Scanner: scanner.New(scanner.Options{Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
+	rt := &runtimesvc.HostContext{Scanner: scanner.New(scanner.Options{Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
 		return nil, sentinel
 	}})}
 	b, err := newAddressBook(context.Background(), rt, &groups.Config{}, "example")

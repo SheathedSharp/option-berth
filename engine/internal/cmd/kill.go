@@ -98,20 +98,20 @@ func runKill(cmd *cobra.Command, args []string) error {
 		return killSession(cmd.Context())
 	}
 
-	// A reachable daemon does the killing, so it rescans straight afterwards
+	// A reachable runtime service does the killing, so it rescans straight afterwards
 	// and the history ring sees the port go down. Without this
-	// the daemon's own cache could still show the port for up to CacheTTL after
+	// the runtime service's own cache could still show the port for up to CacheTTL after
 	// `oberth kill` returned. The connect is dial-only, like the read commands
-	// in §20: killing is not a reason to start a daemon.
-	if c := daemonClient(cmd.Context()); c != nil {
+	// in §20: killing is not a reason to start a runtime.service.
+	if c := runtimeServiceClient(cmd.Context()); c != nil {
 		defer c.Close()
-		return killThroughDaemon(cmd.Context(), c, args, bind)
+		return killThroughRuntimeService(cmd.Context(), c, args, bind)
 	}
 	return killDirect(cmd.Context(), args, bind)
 }
 
-// killDirect is the no-daemon path: scan here, kill here. It is also what runs
-// under --no-daemon and whenever the daemon is down, which is why it stays a
+// killDirect is the no-runtime-service path: scan here, kill here. It is also what runs
+// under --no-runtime-service and whenever the runtime service is down, which is why it stays a
 // complete implementation rather than a degraded one.
 func killDirect(ctx context.Context, args []string, bindIP string) error {
 	rows, targets, confirm, complete, err := killSelection(ctx, args, bindIP, scanForKill)
@@ -183,7 +183,7 @@ func killRequiresObservation(args []string) bool {
 }
 
 // killOptions is the killer configuration the flags describe, shared by both
-// paths so the daemon is asked for exactly what the direct path would do.
+// paths so the runtime service is asked for exactly what the direct path would do.
 func killOptions() killer.Options {
 	opts := killer.Options{
 		DryRun: killDryRunFlag,
@@ -201,7 +201,7 @@ func killOptions() killer.Options {
 // killExecutor performs one round against the selected targets. dryRun asks
 // only for the plan, which is what the confirmation shows before the real
 // round; the caller decides where signalling happens (this process or the
-// daemon), while every prompt and report stays above this seam.
+// runtime service), while every prompt and report stays above this seam.
 type killExecutor func(ctx context.Context, targets []killer.Target, opts killer.Options, dryRun bool) ([]killer.Result, error)
 
 // killHere is the executor that signals from this process. Production points
@@ -218,7 +218,7 @@ func signalListenersForKill(ctx context.Context, targets []killer.Target, opts k
 
 // killRequest is one kill operation after its targets have been chosen:
 // optionally confirm the plan, run it once, report the result. The port and
-// group forms, the hidden session form and the daemon and direct routes all
+// group forms, the hidden session form and the runtime service and direct routes all
 // differ in how targets are selected or where the signal is sent, never in
 // this decision order.
 type killRequest struct {

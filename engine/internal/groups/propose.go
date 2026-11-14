@@ -121,11 +121,11 @@ func candidateName(p ports.ListeningPort) string {
 // container's Compose working directory, or — with neither at hand — the
 // project root the resolver already gave the port.
 //
-// That last arm is what lets the daemon propose from a published snapshot.
+// That last arm is what lets the runtime service propose from a published snapshot.
 // state.Port carries no Compose working directory, because the resolver
 // consumes it before publishing a row, but it does carry project_root; for a
 // Compose container that is the git root above the working directory. Without
-// the arm, a daemon-served `groups.init` would silently drop every container
+// the arm, a runtime service-served `groups.init` would silently drop every container
 // the CLI sees. It fires only when the two better answers are absent, so the
 // direct path does not change.
 func portDir(p ports.ListeningPort, index *Index) string {

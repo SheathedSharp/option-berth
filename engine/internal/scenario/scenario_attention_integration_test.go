@@ -3,7 +3,7 @@
 package scenario
 
 // These tests exercise the attention handoff at the boundary where a real
-// daemon and CLI produce the facts. model itself is covered with an injectable
+// runtime service and CLI produce the facts. model itself is covered with an injectable
 // HTTP server in internal/attn; this file deliberately never calls a
 // remote model. The only human step in the product remains the fixed option
 // mapping documented by the skill and exercised by scripts/verify-attention-
@@ -64,7 +64,7 @@ func readAttnDoc(t *testing.T, status statusDoc) attnDoc {
 	return artifact
 }
 
-// enableAttentionIn is the person's consent, written where the daemon's child
+// enableAttentionIn is the person's consent, written where the runtime service's child
 // processes read it. `status` publishes `attn_path` only once the
 // enhancement is enabled, so every test here that expects an artifact has to
 // state that the person turned it on — the same precondition a real install
@@ -102,7 +102,7 @@ func attnServices(a attnDoc) map[string]string {
 // repeated reads of the same run keep both stable.
 func TestAttentionFailureMatrix(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 	enableAttentionIn(t, e)
 	b, err := FailureMatrix(filepath.Join(e.home, "attention-failures"))
 	if err != nil {
@@ -110,7 +110,7 @@ func TestAttentionFailureMatrix(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		e.cleanupBuilt(b)
-		_, _ = e.run("", "daemon", "stop", "--json")
+		_, _ = e.run("", "runtime", "service", "stop", "--json")
 	})
 
 	var up struct {
@@ -199,7 +199,7 @@ func TestAttentionFailureMatrix(t *testing.T) {
 // expensive detour in the core loop. A normal down then leaves nothing behind.
 func TestAttentionNormalAndUndeclaredBoundaries(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 	enableAttentionIn(t, e)
 	b, err := APIServerAndWorker(filepath.Join(e.home, "attention-normal"))
 	if err != nil {
@@ -207,7 +207,7 @@ func TestAttentionNormalAndUndeclaredBoundaries(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		e.cleanupBuilt(b)
-		_, _ = e.run("", "daemon", "stop", "--json")
+		_, _ = e.run("", "runtime", "service", "stop", "--json")
 	})
 	var up struct {
 		Errors []string `json:"errors"`
@@ -270,7 +270,7 @@ func TestAttentionNormalAndUndeclaredBoundaries(t *testing.T) {
 // service action or a new attention artifact.
 func TestAttentionManifestConflictIsNotActionable(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 	enableAttentionIn(t, e)
 	b, err := APIServerAndWorker(filepath.Join(e.home, "attention-conflict"))
 	if err != nil {
@@ -278,7 +278,7 @@ func TestAttentionManifestConflictIsNotActionable(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		e.cleanupBuilt(b)
-		_, _ = e.run("", "daemon", "stop", "--json")
+		_, _ = e.run("", "runtime", "service", "stop", "--json")
 	})
 	var up struct {
 		Errors []string `json:"errors"`
@@ -298,10 +298,10 @@ func TestAttentionManifestConflictIsNotActionable(t *testing.T) {
 	if err := os.WriteFile(b.Manifest, []byte(conflict), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Stop the daemon so status must parse the changed manifest rather than
+	// Stop the runtime service so status must parse the changed manifest rather than
 	// serving the old indexed group snapshot.
-	if _, err := e.run("", "daemon", "stop", "--json"); err != nil {
-		t.Fatalf("daemon stop: %v", err)
+	if _, err := e.run("", "runtime", "service", "stop", "--json"); err != nil {
+		t.Fatalf("runtime service stop: %v", err)
 	}
 	stdout, stderr, err := e.runCapture(b.Root, "status", "--json", "--no-mark")
 	if err == nil || len(stdout) != 0 || !strings.Contains(string(stderr), "duplicate") {

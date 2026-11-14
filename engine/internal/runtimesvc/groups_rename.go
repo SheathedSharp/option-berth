@@ -17,7 +17,7 @@ import (
 // project: the main checkout's group and each linked worktree's
 // `<project>@<wt>`. The name stays where the project already keeps it — the
 // `name:` of the main checkout's `oberth.yaml` — or, when a project has no
-// file, in the daemon's store, keyed by the main checkout's root.
+// file, in the runtime service's store, keyed by the main checkout's root.
 func init() {
 	registerRenameHandler()
 }
@@ -75,7 +75,7 @@ func handleGroupsRename(_ context.Context, req *Request) (any, error) {
 			"a project name is one word with no @, / or whitespace; a worktree's group adds @<worktree> to it")
 	}
 
-	rt := req.Runtime
+	rt := req.HostContext
 	snapshot, err := rt.Scanner.Snapshot(scanner.Include{})
 	if err != nil {
 		return nil, scanFailure(err)
@@ -148,7 +148,7 @@ func handleGroupsRename(_ context.Context, req *Request) (any, error) {
 func renameError(err error) error {
 	var refusal *groups.RenameError
 	if !errors.As(err, &refusal) {
-		return rpc.NewError(rpc.CodeInternal, err.Error(), "check `oberth daemon log`")
+		return rpc.NewError(rpc.CodeInternal, err.Error(), "check `oberth runtime service log`")
 	}
 	return renameKindError(refusal)
 }

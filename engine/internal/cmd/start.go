@@ -19,8 +19,8 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 	"github.com/spf13/cobra"
 
-	// The daemon serves runs.register/unregister/list/spawn from this package's
-	// init(); `oberth serve` runs in this binary, so it has to be linked in.
+	// The runtime service serves runs.register/unregister/list/spawn from this package's
+	// init(); `oberth runtime service run` runs in this binary, so it has to be linked in.
 	_ "github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/runsreg"
 )
 
@@ -30,7 +30,7 @@ var (
 	startName  string
 	startPort  int
 
-	// Whether to hand the run to the daemon instead of staying in this shell.
+	// Whether to hand the run to the runtime service instead of staying in this shell.
 	startDetach bool
 
 	// startSession is the agent session this invocation belongs to: detected
@@ -38,8 +38,8 @@ var (
 	startSession state.Session
 )
 
-// registerTimeout bounds the daemon round-trips around a run; a slow or absent
-// daemon must never delay the command the user asked for.
+// registerTimeout bounds the runtime service round-trips around a run; a slow or absent
+// runtime service must never delay the command the user asked for.
 const registerTimeout = 5 * time.Second
 
 var startCmd = &cobra.Command{
@@ -101,7 +101,7 @@ func startRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	// The agent session is detected here, in the process the agent actually
-	// spawned: the daemon's own environment is a service manager's, not an
+	// spawned: the runtime service's own environment is a service manager's, not an
 	// agent's, so it could never detect this.
 	session, _ := sessions.Capture(cwd, sessions.Options{})
 
@@ -137,8 +137,8 @@ func startAttached(cmd *cobra.Command, argv []string, cwd string, res spawn.Reso
 	}
 	fwd.Forward(h)
 
-	inDaemon := registerRun(h)
-	defer unregisterRun(h.PID, inDaemon)
+	inRuntimeService := registerRun(h)
+	defer unregisterRun(h.PID, inRuntimeService)
 
 	// The run is recorded in the worktree's active workplace as it happens,
 	// with the run identity and log path that make the block checkable later.
@@ -149,9 +149,9 @@ func startAttached(cmd *cobra.Command, argv []string, cwd string, res spawn.Reso
 	if err != nil {
 		return fmt.Errorf("running %q: %w", argv[0], err)
 	}
-	// The daemon keeps how it ended, and knows a Ctrl+C we forwarded is not a
+	// The runtime service keeps how it ended, and knows a Ctrl+C we forwarded is not a
 	// crash however the child chose to exit.
-	finishRun(h.PID, inDaemon, exitCode, fwd.Interrupted())
+	finishRun(h.PID, inRuntimeService, exitCode, fwd.Interrupted())
 	recorder.endShell(blockID, exitCode, fwd.Interrupted())
 	// The record is flushed before the exit below, which skips deferred work.
 	recorder.Close()
@@ -164,19 +164,19 @@ func startAttached(cmd *cobra.Command, argv []string, cwd string, res spawn.Reso
 	return nil
 }
 
-// startDetached hands the run to the daemon so it is parented by something that
-// outlives this shell, falling back to spawning it here when there is no daemon.
+// startDetached hands the run to the runtime service so it is parented by something that
+// outlives this shell, falling back to spawning it here when there is no runtime.service.
 //
 // The run is recorded in the worktree's workplace, and the record is flushed
 // before this returns: this command exits immediately afterwards, so a record
 // still in a queue would go with it. The block is left open — the run is still
-// going — and the daemon closes it when it records how the run ended.
+// going — and the runtime service closes it when it records how the run ended.
 func startDetached(cmd *cobra.Command, argv []string, cwd string, res spawn.Resolution) error {
 	ctx, cancel := context.WithTimeout(cmd.Context(), registerTimeout)
 	defer cancel()
 
 	var out rpc.RunsSpawnResult
-	err := daemonCall(ctx, connectDaemon, "runs.spawn", detachedSpawnParams(argv, cwd, res), &out)
+	err := runtimeServiceCall(ctx, connectRuntimeService, "runs.spawn", detachedSpawnParams(argv, cwd, res), &out)
 	if err == nil {
 		printStarted(res, out.PID, out.LogPath)
 		printObservedPort(cmd.Context(), out.RunID, out.PID, startPort > 0)
@@ -187,8 +187,8 @@ func startDetached(cmd *cobra.Command, argv []string, cwd string, res spawn.Reso
 		return err
 	}
 
-	// No daemon: start it here anyway. The run is recorded in runs.json and
-	// adopted by the next daemon that starts.
+	// No runtime_service: start it here anyway. The run is recorded in runs.json and
+	// adopted by the next runtime service that starts.
 	request := spawn.Request{
 		Detach:   true,
 		PortHint: startPort,
@@ -212,7 +212,7 @@ func startDetached(cmd *cobra.Command, argv []string, cwd string, res spawn.Reso
 // recordDetachedRun records one detached run and waits for the record to land.
 //
 // The recorder is created here rather than at the top of startDetached because
-// the daemon this command reaches may have been started by the line above it:
+// the runtime service this command reaches may have been started by the line above it:
 // a recorder that dialled before that would find nothing listening, give up,
 // and drop the very record it exists for.
 func recordDetachedRun(cwd string, argv []string, runID string, pid int, logPath string, started time.Time) {
@@ -222,8 +222,8 @@ func recordDetachedRun(cwd string, argv []string, runID string, pid int, logPath
 }
 
 // callerEnv is this process's environment as the map runs.spawn and
-// groups.start take, so what the daemon starts runs with the user's PATH,
-// toolchain and virtualenv rather than the daemon's own.
+// groups.start take, so what the runtime service starts runs with the user's PATH,
+// toolchain and virtualenv rather than the runtime service's own.
 func callerEnv() map[string]string {
 	env := make(map[string]string)
 	for _, entry := range os.Environ() {
@@ -245,14 +245,14 @@ func printStarted(res spawn.Resolution, pid int, logPath string) {
 
 const (
 	// detachedPortWait bounds the observation after a detached start. The child
-	// binds after the RPC returns, so the port is read from the daemon's run
+	// binds after the RPC returns, so the port is read from the runtime service's run
 	// attribution rather than assumed from --port: the command may bind a
 	// fallback port when the hinted one is taken.
 	detachedPortWait = 2 * time.Second
 	detachedPortPoll = 100 * time.Millisecond
 )
 
-// printObservedPort publishes the listeners the daemon attributes to this run.
+// printObservedPort publishes the listeners the runtime service attributes to this run.
 // With a --port hint it waits briefly for the attribution; without one it makes
 // a single read, because a portless worker has nothing to wait for.
 func printObservedPort(ctx context.Context, runID string, pid int, wait bool) {
@@ -274,7 +274,7 @@ func printObservedPort(ctx context.Context, runID string, pid int, wait bool) {
 }
 
 // awaitRunPort polls the run list for a listener attributed to this run. The
-// list is read from the daemon's live registry, not the log, so a fallback port
+// list is read from the runtime service's live registry, not the log, so a fallback port
 // is reported as the port the process actually holds.
 func awaitRunPort(ctx context.Context, runID string, pid int, wait bool) []int {
 	deadline := time.Now()
@@ -287,7 +287,7 @@ func awaitRunPort(ctx context.Context, runID string, pid int, wait bool) []int {
 		}
 		callCtx, cancel := context.WithTimeout(ctx, time.Second)
 		var listed rpc.RunsListResult
-		err := daemonCall(callCtx, connectDaemon, "runs.list", rpc.Empty{}, &listed)
+		err := runtimeServiceCall(callCtx, connectRuntimeService, "runs.list", rpc.Empty{}, &listed)
 		cancel()
 		if err == nil {
 			if ports := portsForRun(listed.Runs, runID, pid); len(ports) > 0 {
@@ -306,7 +306,7 @@ func awaitRunPort(ctx context.Context, runID string, pid int, wait bool) []int {
 }
 
 // portsForRun is the identity match: the run id when the caller has one, the
-// pid only for a daemon that did not name the run.
+// pid only for a runtime service that did not name the run.
 func portsForRun(records []rpc.RunRecord, runID string, pid int) []int {
 	for _, rec := range records {
 		if runID != "" {
@@ -346,13 +346,13 @@ func detachedSpawnParams(argv []string, cwd string, res spawn.Resolution) rpc.Ru
 	return params
 }
 
-// registerRun records the run with the daemon, falling back to runs.json when
-// there is none. It reports whether the daemon took it. Registration is the
-// one call allowed to autostart a daemon: the record has to outlive this
+// registerRun records the run with the runtime service, falling back to runs.json when
+// there is none. It reports whether the runtime service took it. Registration is the
+// one call allowed to autostart a runtime_service: the record has to outlive this
 // command, and a failure of any kind falls back rather than losing the run.
 func registerRun(h *spawn.Handle) bool {
 	var out rpc.RunsRegisterResult
-	err := daemonCall(context.Background(), connectDaemon, "runs.register", registerParams(h), &out)
+	err := runtimeServiceCall(context.Background(), connectRuntimeService, "runs.register", registerParams(h), &out)
 	if err == nil {
 		return true
 	}
@@ -388,36 +388,36 @@ func registerParams(h *spawn.Handle) rpc.RunsRegisterParams {
 }
 
 // unregisterRun removes the run again, wherever it was recorded.
-func unregisterRun(pid int, inDaemon bool) {
-	endRun(pid, inDaemon, rpc.RunsUnregisterParams{PID: pid})
+func unregisterRun(pid int, inRuntimeService bool) {
+	endRun(pid, inRuntimeService, rpc.RunsUnregisterParams{PID: pid})
 }
 
-// finishRun reports how an attached run ended, so the daemon keeps it among
-// the runs that exited. Without a daemon there is nowhere to keep it and the
+// finishRun reports how an attached run ended, so the runtime service keeps it among
+// the runs that exited. Without a runtime service there is nowhere to keep it and the
 // runs.json entry is simply removed.
-func finishRun(pid int, inDaemon bool, code int, stopped bool) {
-	endRun(pid, inDaemon, rpc.RunsUnregisterParams{PID: pid, ExitCode: &code, Stopped: stopped})
+func finishRun(pid int, inRuntimeService bool, code int, stopped bool) {
+	endRun(pid, inRuntimeService, rpc.RunsUnregisterParams{PID: pid, ExitCode: &code, Stopped: stopped})
 }
 
 // endRun removes the run from wherever it was recorded. params carries the
 // exit facts only when this call ends a run. Cleanup never autostarts a
-// daemon, and losing the daemon after registration leaves runs.json as the
+// runtime service, and losing the runtime service after registration leaves runs.json as the
 // place to remove from.
-func endRun(pid int, inDaemon bool, params rpc.RunsUnregisterParams) {
-	if inDaemon {
+func endRun(pid int, inRuntimeService bool, params rpc.RunsUnregisterParams) {
+	if inRuntimeService {
 		var out rpc.OKResult
-		if err := daemonCall(context.Background(), connectRunningDaemon, "runs.unregister", params, &out); err == nil {
+		if err := runtimeServiceCall(context.Background(), connectRunningRuntimeService, "runs.unregister", params, &out); err == nil {
 			return
 		}
 	}
 	_ = runs.Remove(pid)
 }
 
-// daemonCall dials, makes exactly one call, and closes. Each caller chooses
-// the dial policy: registration and detached spawn may start a daemon, while
-// cleanup must not. The timeout bounds the whole round trip so a slow daemon
+// runtimeServiceCall dials, makes exactly one call, and closes. Each caller chooses
+// the dial policy: registration and detached spawn may start a runtime service, while
+// cleanup must not. The timeout bounds the whole round trip so a slow runtime service
 // cannot delay the command the user asked for.
-func daemonCall(ctx context.Context, dial func(context.Context) (*client.Client, error),
+func runtimeServiceCall(ctx context.Context, dial func(context.Context) (*client.Client, error),
 	method string, params, result any) error {
 	ctx, cancel := context.WithTimeout(ctx, registerTimeout)
 	defer cancel()
@@ -429,7 +429,7 @@ func daemonCall(ctx context.Context, dial func(context.Context) (*client.Client,
 	return c.Call(ctx, method, params, result)
 }
 
-// fallbackEntry is the runs.json row for a run the daemon never saw. Tag holds
+// fallbackEntry is the runs.json row for a run the runtime service never saw. Tag holds
 // the group so an older `oberth list` still attributes the ports.
 func fallbackEntry(h *spawn.Handle) runs.Entry {
 	return runs.Entry{
@@ -446,14 +446,14 @@ func fallbackEntry(h *spawn.Handle) runs.Entry {
 	}
 }
 
-// connectDaemon dials the daemon, starting one if needed: a run has to be
+// connectRuntimeService dials the runtime service, starting one if needed: a run has to be
 // registered somewhere that outlives the command.
-func connectDaemon(ctx context.Context) (*client.Client, error) {
+func connectRuntimeService(ctx context.Context) (*client.Client, error) {
 	return connectForWrite(ctx)
 }
 
-// connectRunningDaemon dials without autostarting: cleaning up a run is no
-// reason to start a daemon.
-func connectRunningDaemon(ctx context.Context) (*client.Client, error) {
+// connectRunningRuntimeService dials without autostarting: cleaning up a run is no
+// reason to start a runtime.service.
+func connectRunningRuntimeService(ctx context.Context) (*client.Client, error) {
 	return client.Dial(ctx, client.ClientInfo{Name: "cli", Version: buildinfo.Version})
 }

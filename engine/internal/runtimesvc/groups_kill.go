@@ -33,7 +33,7 @@ func handleGroupsKill(ctx context.Context, req *Request) (any, error) {
 		return nil, rpc.NewError(rpc.CodeInvalidParams, "only and expect_runs are mutually exclusive",
 			"expect_runs names the runs to stop; only names services, whatever run each is")
 	}
-	target, err := killGroupTarget(req.Runtime, p)
+	target, err := killGroupTarget(req.HostContext, p)
 	if err != nil {
 		return nil, err
 	}
@@ -41,16 +41,16 @@ func handleGroupsKill(ctx context.Context, req *Request) (any, error) {
 	// The group's lifecycle lock: a stop cannot interleave with a start's
 	// spawns, and two stops take turns. The snapshot below is read under the
 	// lock, so a start that just finished is already part of it.
-	release, err := req.Runtime.AcquireGroup(ctx, name)
+	release, err := req.HostContext.AcquireGroup(ctx, name)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
-	only, err := serviceFilter(req.Runtime, name, cfg, p.Only)
+	only, err := serviceFilter(req.HostContext, name, cfg, p.Only)
 	if err != nil {
 		return nil, err
 	}
-	expect, err := expectFilter(req.Runtime, name, cfg, p.ExpectRuns)
+	expect, err := expectFilter(req.HostContext, name, cfg, p.ExpectRuns)
 	if err != nil {
 		return nil, err
 	}
@@ -61,15 +61,15 @@ func handleGroupsKill(ctx context.Context, req *Request) (any, error) {
 	var portRelease *servicePortRelease
 	if p.Release && !p.DryRun && !scoped {
 		if cfg == nil {
-			cfg = configForGroup(req.Runtime, name)
+			cfg = configForGroup(req.HostContext, name)
 		}
 		if cfg != nil {
-			portRelease, err = captureServicePortRelease(ctx, req.Runtime, cfg)
+			portRelease, err = captureServicePortRelease(ctx, req.HostContext, cfg)
 		} else if target.claimProject != "" {
 			// The manifest is gone with the checkout, so services cannot be
 			// enumerated. The identity ledger still names the claim key whose
 			// reservations belong to this worktree.
-			portRelease, err = captureWorktreePortRelease(ctx, req.Runtime,
+			portRelease, err = captureWorktreePortRelease(ctx, req.HostContext,
 				target.claimProject, target.claimWorktree)
 		}
 		if err != nil {
@@ -96,9 +96,9 @@ func handleGroupsKill(ctx context.Context, req *Request) (any, error) {
 		// manifest is exempt — a service the machine owns is not a service of
 		// this project at all (decision 0010), so it never reaches this list.
 		if cfg == nil {
-			cfg = configForGroup(req.Runtime, name)
+			cfg = configForGroup(req.HostContext, name)
 		}
-		pidTargets, runSignal, err = captureSilentGroupStop(req.Runtime, snap, name, only, expect, p.Reason, p.DryRun)
+		pidTargets, runSignal, err = captureSilentGroupStop(req.HostContext, snap, name, only, expect, p.Reason, p.DryRun)
 		if err != nil {
 			return nil, rpc.NewError(rpc.CodeInternal, err.Error(), "inspect status before retrying down")
 		}
@@ -127,7 +127,7 @@ func handleGroupsKill(ctx context.Context, req *Request) (any, error) {
 	}
 	var rows []state.KillResult
 	if len(targets) > 0 {
-		opts.OnSignal = stopSignalObserver(req.Runtime, snap, targets, opts.DryRun, p.Reason)
+		opts.OnSignal = stopSignalObserver(req.HostContext, snap, targets, opts.DryRun, p.Reason)
 		rows = killer.KillPorts(ctx, targets, opts)
 	}
 	if p.Release && !p.DryRun {
@@ -147,7 +147,7 @@ func handleGroupsKill(ctx context.Context, req *Request) (any, error) {
 // serviceFilter validates a scoped stop against the project's manifest and
 // returns the selected service names. A missing or unknown service is a
 // caller error rather than a silent no-op that could make restart misleading.
-func serviceFilter(rt *Runtime, name string, cfg *groups.Config, requested []string) (map[string]bool, error) {
+func serviceFilter(rt *HostContext, name string, cfg *groups.Config, requested []string) (map[string]bool, error) {
 	if len(requested) == 0 {
 		return nil, nil
 	}
@@ -184,7 +184,7 @@ func serviceFilter(rt *Runtime, name string, cfg *groups.Config, requested []str
 // stop a replacement run that another controller started, which is the race
 // this selector exists to close. The service is still checked against the
 // manifest so a typo is a caller error, not a quiet no-op.
-func expectFilter(rt *Runtime, name string, cfg *groups.Config, requested []rpc.RunExpectation) (map[string]string, error) {
+func expectFilter(rt *HostContext, name string, cfg *groups.Config, requested []rpc.RunExpectation) (map[string]string, error) {
 	if len(requested) == 0 {
 		return nil, nil
 	}
@@ -299,7 +299,7 @@ type groupStopTarget struct {
 // killGroupTarget resolves every accepted way of naming a stop target. Name and
 // ConfigPath are name-shaped and keep their historical behaviour. Worktree and
 // Identity are the explicit entries for a checkout whose directory may be gone.
-func killGroupTarget(rt *Runtime, p rpc.GroupsKillParams) (groupStopTarget, error) {
+func killGroupTarget(rt *HostContext, p rpc.GroupsKillParams) (groupStopTarget, error) {
 	name := strings.TrimSpace(p.Name)
 	configPath := trimmed(p.ConfigPath)
 	worktree := trimmed(p.WorktreePath)
@@ -341,7 +341,7 @@ func killGroupTarget(rt *Runtime, p rpc.GroupsKillParams) (groupStopTarget, erro
 // is re-read (the most precise target, and the only one that can name every
 // `port: auto` service); when it is gone, the identity ledger supplies the group
 // and claim key recorded before deletion.
-func resolveExplicitStop(rt *Runtime, worktree, identity string) (groupStopTarget, error) {
+func resolveExplicitStop(rt *HostContext, worktree, identity string) (groupStopTarget, error) {
 	if rt.Store == nil {
 		return groupStopTarget{}, errNoStore()
 	}
@@ -397,7 +397,7 @@ func resolveExplicitStop(rt *Runtime, worktree, identity string) (groupStopTarge
 			detail += " (" + root + ")"
 		}
 		return groupStopTarget{}, rpc.NewError(rpc.CodeNotFound, detail,
-			"run `oberth worktrees` to list the identities this daemon has seen")
+			"run `oberth worktrees` to list the identities this runtime service has seen")
 	}
 	if strings.TrimSpace(rec.Group) == "" {
 		return groupStopTarget{}, rpc.NewError(rpc.CodeNotFound,
@@ -414,7 +414,7 @@ func resolveExplicitStop(rt *Runtime, worktree, identity string) (groupStopTarge
 	}, nil
 }
 
-func targetFromConfig(rt *Runtime, cfg *groups.Config) (groupStopTarget, error) {
+func targetFromConfig(rt *HostContext, cfg *groups.Config) (groupStopTarget, error) {
 	group := rt.Scanner.GroupOf(cfg)
 	identity, _ := groups.WorktreeIdentityFor(cfg.Dir)
 	if err := ensureUniqueGroup(rt, group, identity); err != nil {
@@ -429,10 +429,10 @@ func targetFromConfig(rt *Runtime, cfg *groups.Config) (groupStopTarget, error) 
 }
 
 // ensureUniqueGroup refuses to act on a group name that more than one checkout
-// is published under. The daemon's snapshot merges such checkouts, so a
+// is published under. The runtime service's snapshot merges such checkouts, so a
 // by-name stop would reach both; naming one by path or identity cannot make
 // group-scoped process selection sharper than the published group.
-func ensureUniqueGroup(rt *Runtime, group, self string) error {
+func ensureUniqueGroup(rt *HostContext, group, self string) error {
 	if group == "" {
 		return nil
 	}
@@ -487,7 +487,7 @@ func trimmed(v *string) string {
 
 // loadConfig re-reads one manifest into the index. A file that no longer exists
 // or no longer parses is reported with the config error, not as a group miss.
-func loadConfig(rt *Runtime, path string) (*groups.Config, error) {
+func loadConfig(rt *HostContext, path string) (*groups.Config, error) {
 	if rt.Scanner == nil {
 		return nil, rpc.NewError(rpc.CodeNotFound, "no scanner is available to read "+path, "")
 	}
@@ -506,7 +506,7 @@ func loadConfig(rt *Runtime, path string) (*groups.Config, error) {
 // reloadConfig re-reads one manifest even when the index already holds a parsed
 // copy. An explicit stop is worth a fresh read: the services named there decide
 // which claims are released.
-func reloadConfig(rt *Runtime, path string) (*groups.Config, error) {
+func reloadConfig(rt *HostContext, path string) (*groups.Config, error) {
 	if rt.Scanner == nil {
 		return nil, rpc.NewError(rpc.CodeNotFound, "no scanner is available to read "+path, "")
 	}
@@ -522,7 +522,7 @@ func reloadConfig(rt *Runtime, path string) (*groups.Config, error) {
 
 // configAtDir is loadConfig for the manifest at a checkout root, accepting the
 // legacy file name too.
-func configAtDir(rt *Runtime, dir string) *groups.Config {
+func configAtDir(rt *HostContext, dir string) *groups.Config {
 	for _, name := range []string{groups.ConfigName, groups.LegacyConfigName} {
 		path := filepath.Join(dir, name)
 		if info, err := os.Stat(path); err != nil || info.IsDir() {
@@ -536,9 +536,9 @@ func configAtDir(rt *Runtime, dir string) *groups.Config {
 }
 
 // killGroupName resolves the group a groups.kill call is about: either the name
-// it sent, or the group the daemon publishes a config's services under. When
+// it sent, or the group the runtime service publishes a config's services under. When
 // the call named a config, that config comes back with it.
-func killGroupName(rt *Runtime, p rpc.GroupsKillParams) (string, *groups.Config, error) {
+func killGroupName(rt *HostContext, p rpc.GroupsKillParams) (string, *groups.Config, error) {
 	groupName := strings.TrimSpace(p.Name)
 	if groupName != "" {
 		return groupName, nil, nil

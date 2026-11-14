@@ -65,7 +65,7 @@ func TestRunFromWireDropsUntrustworthyEvidence(t *testing.T) {
 }
 
 // TestCheckCwdReportsAnUnavailableWorkingDirectory covers the cwd the caller
-// did not name, so the daemon's own working directory stands in for it. When
+// did not name, so the runtime service's own working directory stands in for it. When
 // that directory is gone the registration must not be answered with a path
 // that means nothing: both spellings of "no usable cwd" are their own error,
 // and the message is asserted because the code alone cannot tell them apart —
@@ -74,7 +74,7 @@ func TestRunFromWireDropsUntrustworthyEvidence(t *testing.T) {
 //
 // The deletion is of this process's own t.TempDir, restored by the cleanup
 // registered before it. Removing the active directory does not by itself make
-// the daemon's own cwd unavailable — macOS CI has been observed to still name
+// the runtime service's own cwd unavailable — macOS CI has been observed to still name
 // the removed directory through os.Getwd — so the lookup is asked which case
 // this is and each one is held to its own contract: a named directory is
 // accepted as the cwd, an unnamed one is the two errors below. A filesystem
@@ -96,14 +96,14 @@ func TestCheckCwdReportsAnUnavailableWorkingDirectory(t *testing.T) {
 	if err := os.Remove(dir); err != nil {
 		t.Skipf("filesystem cannot remove the active cwd: %v", err)
 	}
-	// Both cases below are real: the daemon either can or cannot name its own
+	// Both cases below are real: the runtime service either can or cannot name its own
 	// cwd, and it is the platform's lookup — not the removal — that decides
 	// which one this run is in.
 	if wd, err := os.Getwd(); err == nil {
 		// The directory is unlinked but still named, so CheckCwd has a usable
 		// path and must accept it: the empty cwd resolves to the named
 		// directory, and a relative cwd resolves below it. The expectation
-		// goes through groups.Canonical because the daemon canonicalises what
+		// goes through groups.Canonical because the runtime service canonicalises what
 		// it returns and the named spelling need not be the real one — on
 		// macOS a temp directory can be reached through /var while its real
 		// spelling starts with /private/var.
@@ -210,7 +210,7 @@ func TestCheckCwdKeepsHomeBoundaryWhenLookupNeedsFallbacks(t *testing.T) {
 	})
 }
 
-// The home rule is the daemon's own boundary, so it is checked against the
+// The home rule is the runtime service's own boundary, so it is checked against the
 // environment it runs in: inside is allowed, outside is refused, and the
 // refusal is the caller's to lift.
 //
@@ -321,14 +321,14 @@ func TestSessionOfFallsBackToTheEnvironmentWhenTheWireSessionHasNoID(t *testing.
 	}
 }
 
-// mergedEnv layers the caller's entries over the daemon's environment. With no
+// mergedEnv layers the caller's entries over the runtime service's environment. With no
 // overrides it returns nil, which is what tells the spawner to inherit.
 func TestMergedEnvReplacesKeysInsteadOfDuplicating(t *testing.T) {
 	if got := mergedEnv(nil); got != nil {
 		t.Fatalf("mergedEnv(nil) = %v, want nil", got)
 	}
 
-	t.Setenv("OB_TEST_REPLACED", "daemon")
+	t.Setenv("OB_TEST_REPLACED", "runtime_service")
 	got := mergedEnv(map[string]string{"OB_TEST_REPLACED": "caller", "OB_TEST_NEW": "value"})
 
 	values := envValues(t, got)
@@ -347,15 +347,15 @@ func TestMergedEnvReplacesKeysInsteadOfDuplicating(t *testing.T) {
 // carries do not lengthen the list, they replace.
 func TestMergedEnvEmitsOneWellFormedEntryPerKey(t *testing.T) {
 	const inherited = "OB_TEST_INHERITED"
-	t.Setenv(inherited, "daemon")
+	t.Setenv(inherited, "runtime_service")
 
 	over := map[string]string{"OB_TEST_OVER": "caller", "OB_TEST_EXTRA": "second"}
 	got := mergedEnv(over)
 
 	values := envValues(t, got)
 	inheritedKeys := envValues(t, os.Environ())
-	if v := values[inherited]; len(v) != 1 || v[0] != "daemon" {
-		t.Errorf("%s = %v, want exactly the daemon's value", inherited, v)
+	if v := values[inherited]; len(v) != 1 || v[0] != "runtime_service" {
+		t.Errorf("%s = %v, want exactly the runtime service's value", inherited, v)
 	}
 	for key, want := range over {
 		if v := values[key]; len(v) != 1 || v[0] != want {
@@ -375,7 +375,7 @@ func TestMergedEnvEmitsOneWellFormedEntryPerKey(t *testing.T) {
 }
 
 // The inherited environment is not an upper bound on the caller's overrides: a
-// request that sends more variables than the daemon inherited still merges
+// request that sends more variables than the runtime service inherited still merges
 // every one of them, and does so without deciding the result's size up front.
 func TestMergedEnvMergesMoreOverridesThanTheInheritedEnvironment(t *testing.T) {
 	inherited := len(os.Environ())

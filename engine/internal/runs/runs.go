@@ -43,7 +43,7 @@ type Entry struct {
 
 	// LogPath and LogOffset are this run's own part of the service log: the
 	// file it writes to, and where its output begins in that append-only file.
-	// The mirror is the only copy of a live run that survives a daemon
+	// The mirror is the only copy of a live run that survives a runtime service
 	// restart, so leaving them out makes `logs --run current` answer "no log
 	// file" for a process that is still writing to it.
 	LogPath   string `json:"logPath,omitempty"`
@@ -52,7 +52,7 @@ type Entry struct {
 	// Executable is the absolute path of the program this run started. It is
 	// what status compares with the run's start time to tell a process running
 	// the current artifact from one still on an older build; the mirror keeps
-	// it across a daemon restart.
+	// it across a runtime service restart.
 	Executable string `json:"executable,omitempty"`
 }
 
@@ -191,7 +191,7 @@ func Remove(pid int) error {
 // it, rename into place. The caller must already hold the lock.
 //
 // The directory is created owner-only. This mirror can be the first writer of
-// ~/.option-berth (a CLI run before any daemon), and it must match the mode
+// ~/.option-berth (a CLI run before any runtime service), and it must match the mode
 // paths.EnsureDir uses rather than leave a listable directory behind.
 func save(reg *Registry) error {
 	path := Path()
@@ -237,6 +237,6 @@ func writeAtomic(path string, data []byte) error {
 	return nil
 }
 
-// PIDAlive reports whether a process is still running. The daemon's in-memory
+// PIDAlive reports whether a process is still running. The runtime service's in-memory
 // registry prunes with the same test.
 func PIDAlive(pid int) bool { return pidAlive(pid) }

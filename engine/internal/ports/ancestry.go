@@ -10,7 +10,7 @@ const MaxAncestry = 64
 // or below init, and a cycle all end the walk; the returned bool reports
 // whether visit ever answered true.
 //
-// This is the one ancestry walk the engine uses: the daemon's run registry and
+// This is the one ancestry walk the engine uses: the runtime service's run registry and
 // the direct-scan registry both resolve "which run owns this pid" through it,
 // so the walk's bounds and cycle rules cannot drift apart.
 func Ancestor[T any](pid int, parents map[int]int, visit func(int) (T, bool)) (T, bool) {

@@ -24,14 +24,14 @@ import (
 // The readiness questions below are answered from two facts that are not the
 // scanner's: the run registry knows a no-port worker is alive the instant it is
 // registered, and the manifest's health check is a verdict the listener cannot
-// stand in for. These two scenarios pin those two answers without a daemon.
+// stand in for. These two scenarios pin those two answers without a runtime.service.
 func TestPendingWaitsForNoPortDependencyRun(t *testing.T) {
 	reg := runsreg.New()
 	reg.Mirror = false
 	reg.Alive = func(int) bool { return true }
 	reg.Register(runsreg.Record{PID: 123, Group: "demo", Name: "worker"})
 
-	rt := &runtimesvc.Runtime{Scanner: scanner.New(scanner.Options{
+	rt := &runtimesvc.HostContext{Scanner: scanner.New(scanner.Options{
 		Scan: func(scanner.Include) ([]ports.ListeningPort, error) { return nil, nil },
 	})}
 	rt.SetRuns(reg)
@@ -647,10 +647,10 @@ services:
 	}
 }
 
-// TestDaemonAnnouncesStartDependencyCapability: the CLI feature-detects the
-// closure field on this capability, so a daemon serving groups.start must
+// TestRuntimeServiceAnnouncesStartDependencyCapability: the CLI feature-detects the
+// closure field on this capability, so a runtime service serving groups.start must
 // announce it.
-func TestDaemonAnnouncesStartDependencyCapability(t *testing.T) {
+func TestRuntimeServiceAnnouncesStartDependencyCapability(t *testing.T) {
 	h := newHarness(t)
 	if !slices.Contains(h.client.Hello().Capabilities, rpc.CapabilityStartDependencies) {
 		t.Fatalf("capabilities = %v, want %s",

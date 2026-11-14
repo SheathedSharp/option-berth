@@ -9,7 +9,7 @@ import (
 // CommandTimeout bounds one system command the collector runs: `lsof`, `ss`,
 // `netstat`, `ps`, `tasklist` and the Windows CIM query.
 //
-// The daemon's scan goroutine has nobody to notice a wedged command and no
+// The runtime service's scan goroutine has nobody to notice a wedged command and no
 // second chance to scan: a hung `lsof` on a dead mount would freeze state
 // publication for every subscriber until the process happened to return. Ten
 // seconds is far longer than any healthy invocation on this machine (tens of

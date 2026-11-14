@@ -67,42 +67,42 @@ func TestDirectRunRegistryCarriesRuntimeDriftEvidence(t *testing.T) {
 	}
 }
 
-func TestDirectAndDaemonServiceFactsProduceTheSameRows(t *testing.T) {
+func TestDirectAndRuntimeServiceServiceFactsProduceTheSameRows(t *testing.T) {
 	index := groups.NewIndex()
 	for _, name := range []string{"left", "right"} {
 		index.Add(&groups.Config{Name: name, Dir: "/nonexistent/" + name, Services: []groups.Service{
 			{Name: "api", Cmd: "serve", PortAuto: true}, {Name: "worker", Cmd: "work"},
 		}})
 	}
-	daemon := runsreg.New()
-	daemon.Mirror = false
+	runtimeService := runsreg.New()
+	runtimeService.Mirror = false
 	now := time.Unix(10, 0)
 	direct := directRunRegistry{reg: &runs.Registry{Runs: map[int]runs.Entry{}}}
 	for i, group := range []string{"left", "right"} {
 		record := runsreg.Record{ID: group + "-api", PID: i + 1, Group: group, Name: "api", Cmd: "serve", PortHint: 8100 + i, StartedAt: now}
-		daemon.Register(record)
+		runtimeService.Register(record)
 		direct.reg.Runs[record.PID] = runs.Entry{
 			ID: record.ID, PID: record.PID, Group: group, Name: record.Name, Cmd: record.Cmd,
 			PortHint: record.PortHint, StartedAt: now.UTC().Format(time.RFC3339),
 		}
 	}
 	worker := runsreg.Record{ID: "left-worker", PID: 3, Group: "left", Name: "worker", StartedAt: now}
-	daemon.Register(worker)
+	runtimeService.Register(worker)
 	direct.reg.Runs[worker.PID] = runs.Entry{ID: worker.ID, PID: worker.PID, Group: worker.Group, Name: worker.Name, StartedAt: now.UTC().Format(time.RFC3339)}
 	for i, name := range []string{"worker", "api"} {
 		record := runsreg.Record{ID: "old-" + name, PID: 10 + i, Group: "right", Name: name, StartedAt: now}
-		daemon.Register(record)
-		exit, _ := daemon.Exited(record.PID, 1, false)
+		runtimeService.Register(record)
+		exit, _ := runtimeService.Exited(record.PID, 1, false)
 		direct.exits = append([]store.RunExitRow{{
 			ID: record.ID, Group: record.Group, Name: name, Code: exit.Code, Reason: exit.Reason, ExitedAt: exit.ExitedAt,
 		}}, direct.exits...)
 	}
 	left, right := "left", "right"
 	listeners := []state.Port{{Group: &left, Port: 8100, PID: 100}, {Group: &right, Port: 8101, PID: 101}}
-	want := groups.GroupsWith(listeners, index, daemon, false)
+	want := groups.GroupsWith(listeners, index, runtimeService, false)
 	got := groups.GroupsWith(listeners, index, direct, false)
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("direct=%+v\ndaemon=%+v", got, want)
+		t.Fatalf("direct=%+v\nruntime_service=%+v", got, want)
 	}
 	if got[1].Services[0].LastExit != nil || !got[1].Services[0].Running {
 		t.Fatal("old api exit overrode the current run")

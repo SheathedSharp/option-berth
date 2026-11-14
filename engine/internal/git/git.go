@@ -235,7 +235,7 @@ func gitOutDiff(ctx context.Context, dir string, args ...string) ([]byte, error)
 // gitRun keeps stdout/stderr separate and suppresses optional index refresh
 // writes. It never changes repository configuration or stages user files.
 func gitRun(ctx context.Context, dir string, args ...string) ([]byte, []byte, error) {
-	// Optional locks alone do not stop a configured fsmonitor hook/daemon.
+	// Optional locks alone do not stop a configured fsmonitor hook/runtime.service.
 	// UI reads must not start repository monitoring or background maintenance.
 	// These overrides belong to this invocation (including Git's children), not
 	// .git/config. Keep ignore/attribute/index semantics and existing filters.

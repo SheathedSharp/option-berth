@@ -46,7 +46,7 @@ var doctorCmd = &cobra.Command{
 	// "Error:" line beneath it; Execute still prints a real error.
 	SilenceUsage:  true,
 	SilenceErrors: true,
-	Long: "Run every self-check option-berth has: the binary on PATH, the config file, the\ndaemon and its socket, the database, this project's\n" +
+	Long: "Run every self-check option-berth has: the binary on PATH, the config file, the\nruntime service and its socket, the database, this project's\n" +
 		"oberth.yaml and docker.\n\nEach check is ok, warn, fail or skip. The exit code is 0 unless something\n" +
 		"failed, so `oberth doctor` works in a script. `--fix` applies the repairs\n" +
 		"that are safe to make unattended and runs the checks again.",
@@ -116,44 +116,45 @@ func doctorProject() (string, error) {
 }
 
 // doctorEnv is the CLI's view of the world: the running binary, docker, and a
-// daemon dialled once without ever autostarting one — a diagnosis must report
+// runtime service dialled once without ever autostarting one — a diagnosis must report
 // the machine as it found it, not as it left it.
 //
 // Nothing here reaches the network. This fork is built from source, so there is
 // no release feed for a check to consult.
 func doctorEnv(project string) doctor.Env {
 	return doctor.Env{
-		Mode:    doctor.ModeCLI,
-		Version: buildinfo.Version,
-		Commit:  buildinfo.Commit,
-		Project: project,
-		Daemon:  doctorDaemonProbe,
-		Docker:  doctor.DockerProbe,
+		Mode:           doctor.ModeCLI,
+		Version:        buildinfo.Version,
+		Commit:         buildinfo.Commit,
+		Project:        project,
+		RuntimeService: doctorRuntimeServiceProbe,
+		ReadDatabase:   doctorStorageInfo,
+		Docker:         doctor.DockerProbe,
 	}
 }
 
-func doctorDaemonProbe(ctx context.Context) doctor.DaemonInfo {
+func doctorRuntimeServiceProbe(ctx context.Context) doctor.RuntimeServiceInfo {
 	socket := runtimesvc.SocketPath()
 	conn, dialErr := client.Dial(ctx, client.ClientInfo{Name: "cli", Version: buildinfo.Version})
 	if dialErr != nil {
-		// Another protocol major is a daemon that is running, not one that is
+		// Another protocol major is a runtime service that is running, not one that is
 		// absent; calling it unreachable would hide the check that explains it.
 		var versionMismatch *client.ProtocolMismatchError
 		if errors.As(dialErr, &versionMismatch) {
-			return doctor.DaemonInfo{Reachable: true, ProtocolVersion: versionMismatch.Daemon, Socket: socket}
+			return doctor.RuntimeServiceInfo{Reachable: true, ProtocolVersion: versionMismatch.RuntimeService, Socket: socket}
 		}
-		return doctor.DaemonInfo{Err: dialErr, Socket: socket}
+		return doctor.RuntimeServiceInfo{Err: dialErr, Socket: socket}
 	}
 	defer conn.Close()
 
 	hello := conn.Hello()
-	var status rpc.DaemonStatusResult
-	statusErr := conn.Call(ctx, "daemon.status", rpc.Empty{}, &status)
-	probe := doctor.DaemonInfo{
+	var status rpc.RuntimeServiceStatusResult
+	statusErr := conn.Call(ctx, "runtime.service.status", rpc.Empty{}, &status)
+	probe := doctor.RuntimeServiceInfo{
 		Reachable:       true,
 		Socket:          hello.Socket,
 		PID:             hello.PID,
-		Version:         hello.DaemonVersion,
+		Version:         hello.RuntimeServiceVersion,
 		ProtocolVersion: hello.ProtocolVersion,
 		Commit:          status.Commit,
 		DBPath:          status.DBPath,
@@ -184,7 +185,7 @@ type doctorRow struct {
 	detail []string
 }
 
-func doctorRows(report rpc.DaemonDoctorResult) []doctorRow {
+func doctorRows(report rpc.RuntimeServiceDoctorResult) []doctorRow {
 	rows := make([]doctorRow, 0, len(report.Checks))
 	for _, check := range report.Checks {
 		row := doctorRow{check: check}
@@ -202,7 +203,7 @@ func doctorRows(report rpc.DaemonDoctorResult) []doctorRow {
 	return rows
 }
 
-func renderDoctor(w io.Writer, report rpc.DaemonDoctorResult) {
+func renderDoctor(w io.Writer, report rpc.RuntimeServiceDoctorResult) {
 	rows := doctorRows(report)
 	idWidth, summaryWidth := 0, 0
 	for _, row := range rows {
@@ -232,7 +233,7 @@ func renderDoctor(w io.Writer, report rpc.DaemonDoctorResult) {
 	fmt.Fprintln(w, doctorVerdict(report, counts))
 }
 
-func doctorVerdict(report rpc.DaemonDoctorResult, counts map[string]int) string {
+func doctorVerdict(report rpc.RuntimeServiceDoctorResult, counts map[string]int) string {
 	var summaryParts []string
 	for _, status := range []string{doctor.StatusFail, doctor.StatusWarn, doctor.StatusOK, doctor.StatusSkip} {
 		if n := counts[status]; n != 0 {
@@ -306,7 +307,7 @@ func doctorFixes() []doctorFix {
 	fixes := []doctorFix{
 		{id: "config_parses", run: fixBrokenConfig},
 		{id: "project_config", run: fixLegacyConfigName},
-		{id: "daemon_reachable", run: restartDaemonFix},
+		{id: "runtime_service_reachable", run: restartRuntimeServiceFix},
 	}
 	// A fix repairs this machine's own setup only; none writes into another
 	// tool's configuration.
@@ -314,12 +315,12 @@ func doctorFixes() []doctorFix {
 	return fixes
 }
 
-// restartDaemonFix is the repair behind a failed daemon check.
-func restartDaemonFix(_ context.Context, cmd *cobra.Command) (string, error) {
-	if err := daemonRestartRun(cmd, nil); err != nil {
+// restartRuntimeServiceFix is the repair behind a failed runtime service check.
+func restartRuntimeServiceFix(_ context.Context, cmd *cobra.Command) (string, error) {
+	if err := runtimeServiceRestartRun(cmd, nil); err != nil {
 		return "", err
 	}
-	return "restarted the daemon", nil
+	return "restarted the runtime service", nil
 }
 
 // fixBrokenConfig moves an unparseable config.yaml aside and writes a fresh
@@ -340,7 +341,7 @@ func fixBrokenConfig(context.Context, *cobra.Command) (string, error) {
 // selectDoctorFixes is the repair list for the checks that failed or warned
 // and advertised themselves as fixable, in report order. A fixable check with
 // no registered repair contributes nothing here; --fix cannot invent one.
-func selectDoctorFixes(report rpc.DaemonDoctorResult) []doctorFix {
+func selectDoctorFixes(report rpc.RuntimeServiceDoctorResult) []doctorFix {
 	fixes := doctorFixes()
 	var todo []doctorFix
 	for _, check := range report.Checks {
@@ -358,7 +359,7 @@ func selectDoctorFixes(report rpc.DaemonDoctorResult) []doctorFix {
 
 // applyDoctorFixes runs every safe fix for a check that is not ok, after
 // confirmation. It returns how many it applied.
-func applyDoctorFixes(ctx context.Context, cmd *cobra.Command, report rpc.DaemonDoctorResult) (int, error) {
+func applyDoctorFixes(ctx context.Context, cmd *cobra.Command, report rpc.RuntimeServiceDoctorResult) (int, error) {
 	planned := selectDoctorFixes(report)
 	if len(planned) == 0 {
 		fmt.Fprintln(os.Stderr, "nothing to fix automatically")

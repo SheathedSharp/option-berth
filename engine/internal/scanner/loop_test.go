@@ -19,7 +19,7 @@ import (
 // TestCadenceConstantsArePinned pins the cadence contract in literals. The
 // other cadence tests compare against the constants themselves, so a constant
 // that moved would move its own expectation with it; these are the values
-// `daemon.status` and the spec promise.
+// `runtime.service.status` and the spec promise.
 func TestCadenceConstantsArePinned(t *testing.T) {
 	cases := []struct {
 		name string
@@ -387,7 +387,7 @@ func TestScanIntervalIsClampedToTheFloor(t *testing.T) {
 }
 
 // TestStatusReportsTheEffectiveIntervals: both cadences are fixed at startup,
-// so `daemon.status` is the only way to tell what a running daemon settled on.
+// so `runtime.service.status` is the only way to tell what a running runtime service settled on.
 func TestStatusReportsTheEffectiveIntervals(t *testing.T) {
 	st := New(Options{ScanInterval: 3 * time.Second, StatsInterval: 500 * time.Millisecond}).Status()
 	if st.BaseIntervalMs != 3000 || st.StatsIntervalMs != 500 {

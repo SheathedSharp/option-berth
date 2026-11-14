@@ -82,7 +82,7 @@ func TestAttributeWithAppliesTheRegistry(t *testing.T) {
 	requireScannerStamp(t, pp[1], "itest", "start", "r1", "itest", "web", 12)
 }
 
-// TestAttributeWithPublishesTheRegistrysRun pins the invariant the daemon
+// TestAttributeWithPublishesTheRegistrysRun pins the invariant the runtime service
 // broke: whatever the registry says owns a port has to reach the published row
 // as `run` and as the name clients render, not only as the group. A registry
 // answer that set `group_source: start` next to a null `run` is what a

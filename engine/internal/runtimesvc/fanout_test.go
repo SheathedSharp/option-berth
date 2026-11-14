@@ -71,9 +71,9 @@ func TestUnsubscribeForgetsTheWholeViewAndStopsPublication(t *testing.T) {
 }
 
 // unencodable fails json.Marshal on every field, which is the one thing a
-// state.changed payload from this daemon cannot do. It stands in for an encoder
+// state.changed payload from this runtime service cannot do. It stands in for an encoder
 // fault so the fan-out's handling of one can be seen without a payload shape
-// that the daemon could actually produce.
+// that the runtime service could actually produce.
 type unencodable struct{}
 
 func (unencodable) MarshalJSON() ([]byte, error) { return nil, errUnencodable }
@@ -129,7 +129,7 @@ func cachedGroups(t *testing.T) *scanner.Loop {
 		t.Fatal(err)
 	}
 	loop := scanner.New(scanner.Options{
-		DaemonVersion: "test",
+		RuntimeServiceVersion: "test",
 		Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
 			return []ports.ListeningPort{{Port: 8000, PID: 42, Process: "python3", Cwd: dir}}, nil
 		},
@@ -155,7 +155,7 @@ func notificationMethod(t *testing.T, raw []byte) string {
 
 // TestBroadcastEventSendsNoDeltaToUnscopedViewers pins that a standalone event
 // is not a state transition. broadcastEvent exists for events that do not come
-// from a scan — daemon_stopping, a bridged event — so an unscoped events
+// from a scan — runtime_service_stopping, a bridged event — so an unscoped events
 // subscriber must receive the state.event and nothing else. Reusing the
 // transition path here would spread an empty previous snapshot against the
 // cached groups and hand every subscriber a delta whose "added" list is the
@@ -305,7 +305,7 @@ func TestOneScopedViewIsEncodedOnce(t *testing.T) {
 // TestUnencodableScopedChangeIsDropped pins what the fan-out does when the
 // encoder refuses a change: nothing. Sending a notification whose params are
 // absent would hand the client a frame it cannot decode as a state.changed,
-// and the correct behavior for a fault the daemon cannot describe on this
+// and the correct behavior for a fault the runtime service cannot describe on this
 // channel is to drop the frame rather than emit a malformed one.
 func TestUnencodableScopedChangeIsDropped(t *testing.T) {
 	s := New(Options{Socket: "/test/fanout-encode.sock", Version: "test"})
@@ -435,7 +435,7 @@ func TestWorkspaceSubscriptionIgnoresAReplayCursor(t *testing.T) {
 
 	rows := []ports.ListeningPort{{Port: 8000, PID: 1, Process: "python3", Cwd: dir}}
 	loop := scanner.New(scanner.Options{
-		DaemonVersion: "test",
+		RuntimeServiceVersion: "test",
 		Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
 			return rows, nil
 		},

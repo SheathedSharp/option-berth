@@ -55,8 +55,8 @@ func TestPublicCommandSurfaceLandsInTheDocumentedLayers(t *testing.T) {
 		// 交接
 		"workplace": commandGroupHandoff, "agent": commandGroupHandoff, "attn": commandGroupHandoff,
 		// 基础设施
-		"daemon": commandGroupInfra, "serve": commandGroupInfra,
-		"config": commandGroupInfra, "version": commandGroupInfra,
+		"runtime": commandGroupInfra,
+		"config":  commandGroupInfra, "version": commandGroupInfra,
 		"completion": commandGroupInfra, "doctor": commandGroupInfra,
 		"feedback": commandGroupInfra,
 	}
@@ -93,9 +93,9 @@ func TestLowLevelCommandSurfacesStayNarrow(t *testing.T) {
 	}
 }
 
-// A daemon error keeps the code the wire promised: callers branch
+// A runtime service error keeps the code the wire promised: callers branch
 // on error.data.code, so the CLI must not flatten it into "internal".
-func TestDaemonErrorKeepsItsCode(t *testing.T) {
+func TestRuntimeServiceErrorKeepsItsCode(t *testing.T) {
 	const detail = "no process is listening on 127.0.0.1:3000"
 	err := cliError(rpc.NewError(rpc.CodeNotFound, detail, "check the port"))
 
@@ -108,7 +108,7 @@ func TestDaemonErrorKeepsItsCode(t *testing.T) {
 	}
 }
 
-// The no-daemon direct scan returns a collector error, not an rpc.Error. A
+// The no-runtime-service direct scan returns a collector error, not an rpc.Error. A
 // sandboxed agent must read observation_empty rather than "internal".
 func TestObservationErrorKeepsItsCode(t *testing.T) {
 	err := &ports.ObservationError{
@@ -220,7 +220,7 @@ func TestErrSilentReportsNothing(t *testing.T) {
 }
 
 // A oberth.yaml at or above the directory names the project outright, and
-// that name is what the daemon resolves ports to — so it is what the scope has
+// that name is what the runtime service resolves ports to — so it is what the scope has
 // to carry, not the directory name.
 func TestProjectAtPrefersTheConfigName(t *testing.T) {
 	dir := t.TempDir()
@@ -245,17 +245,17 @@ func TestProjectAtPrefersTheConfigName(t *testing.T) {
 	}
 }
 
-// `logs --json` is served by the daemon only: the direct path execs into tail,
+// `logs --json` is served by the runtime service only: the direct path execs into tail,
 // leaving no output of its own to structure. Saying so beats printing nothing.
-func TestLogsJSONWithoutADaemonIsRefused(t *testing.T) {
+func TestLogsJSONWithoutARuntimeServiceIsRefused(t *testing.T) {
 	resetRouting(t)
 	t.Cleanup(func() { rootCmd.SetArgs(nil) })
 	rootCmd.SetArgs([]string{"logs", "3000", "--json"})
 
 	err := rootCmd.Execute()
 	var ce *cliErr
-	if !errors.As(err, &ce) || ce.Code != "daemon_unavailable" {
-		t.Fatalf("err = %v, want a daemon_unavailable cliErr", err)
+	if !errors.As(err, &ce) || ce.Code != "runtime_service_unavailable" {
+		t.Fatalf("err = %v, want a runtime_service_unavailable cliErr", err)
 	}
 }
 

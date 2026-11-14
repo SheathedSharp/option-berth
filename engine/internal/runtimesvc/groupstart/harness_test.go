@@ -99,8 +99,8 @@ func serveAsChild() {
 }
 
 // startHarness is one isolated universe for a groups.start scenario: a throwaway
-// HOME, one project directory inside it, a daemon on a private socket, and the
-// listener table that daemon's scan answers from.
+// HOME, one project directory inside it, a runtime service on a private socket, and the
+// listener table that runtime service's scan answers from.
 //
 // The harness owns everything a scenario must not have to remember: the child
 // processes it caused, the log dump that makes a failure readable, and the
@@ -120,7 +120,7 @@ type startHarness struct {
 	chunks  []rpc.GroupsStartChunk
 }
 
-// newHarness isolates the process and starts the daemon a scenario talks to.
+// newHarness isolates the process and starts the runtime service a scenario talks to.
 // Every scenario starts from its own empty world: two of them never share a
 // HOME, a socket, a ledger or a port claim.
 func newHarness(t *testing.T) *startHarness {
@@ -142,7 +142,7 @@ func newHarness(t *testing.T) *startHarness {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	h := &startHarness{t: t, ctx: ctx, home: home, dir: dir, ports: newPortTable(dir)}
-	h.client = h.daemon()
+	h.client = h.runtimeService()
 
 	t.Cleanup(func() {
 		cancel()
@@ -152,10 +152,10 @@ func newHarness(t *testing.T) *startHarness {
 	return h
 }
 
-// daemon starts the product's own server on a private socket and connects to it
+// runtime service starts the product's own server on a private socket and connects to it
 // as a client would. The RPC below it is the same one the CLI and the macOS
 // client call; nothing here reaches into an internal entry point.
-func (h *startHarness) daemon() *client.Client {
+func (h *startHarness) runtimeService() *client.Client {
 	h.t.Helper()
 	// A unix socket path is capped at ~104 bytes and t.TempDir spells the test's
 	// name into the path, so the socket gets its own short directory.
@@ -171,8 +171,8 @@ func (h *startHarness) daemon() *client.Client {
 		Version: "test",
 		DBPath:  filepath.Join(sockDir, "option-berth.db"),
 		Scanner: scanner.New(scanner.Options{
-			DaemonVersion: "test",
-			Scan:          h.ports.scan,
+			RuntimeServiceVersion: "test",
+			Scan:                  h.ports.scan,
 		}),
 	})
 	served := make(chan error, 1)
@@ -193,10 +193,10 @@ func (h *startHarness) daemon() *client.Client {
 	}
 	select {
 	case serveErr := <-served:
-		h.t.Fatalf("the test daemon did not start: %v (dial: %v)", serveErr, err)
+		h.t.Fatalf("the test runtime service did not start: %v (dial: %v)", serveErr, err)
 	default:
 	}
-	h.t.Fatalf("connecting to the test daemon: %v", err)
+	h.t.Fatalf("connecting to the test runtime_service: %v", err)
 	return nil
 }
 
@@ -257,7 +257,7 @@ func (h *startHarness) occupiedPort() (int, net.Listener) {
 	return port, listener
 }
 
-// start runs one groups.start and drains its stream: the reply the daemon gave,
+// start runs one groups.start and drains its stream: the reply the runtime service gave,
 // every chunk in the order it arrived, and the end payload.
 func (h *startHarness) start(params rpc.GroupsStartParams) (rpc.GroupsStartResult, []rpc.GroupsStartChunk, rpc.GroupsStartEnd) {
 	h.t.Helper()
@@ -291,7 +291,7 @@ func (h *startHarness) open(params rpc.GroupsStartParams) (*client.Stream, rpc.G
 	return stream, reply
 }
 
-// startError is the call a client makes when it expects the daemon to refuse:
+// startError is the call a client makes when it expects the runtime service to refuse:
 // the error is the answer, and there is no stream to drain.
 func (h *startHarness) startError(params rpc.GroupsStartParams) error {
 	h.t.Helper()
@@ -345,7 +345,7 @@ type startResult struct {
 	err    error
 }
 
-// drainAsync is drain on a goroutine, for the scenarios that inspect the daemon
+// drainAsync is drain on a goroutine, for the scenarios that inspect the runtime service
 // while the start is still running. The chunks still go through observe, so the
 // harness knows every process and port this call produced.
 func (h *startHarness) drainAsync(stream *client.Stream) <-chan startResult {
@@ -373,7 +373,7 @@ func (h *startHarness) drainAsync(stream *client.Stream) <-chan startResult {
 	return out
 }
 
-// observe applies one chunk as it arrives. A started chunk is the daemon saying
+// observe applies one chunk as it arrives. A started chunk is the runtime service saying
 // "this process runs on this port", which is exactly the listener a real host
 // would show on its next scan — so the harness feeds it back into the table
 // while the start is still running, instead of after it ends. That is what lets
@@ -394,7 +394,7 @@ func (h *startHarness) call(method string, params, out any) error {
 	return h.client.Call(h.ctx, method, params, out)
 }
 
-// logPath is where the daemon appends one service's output. A service whose
+// logPath is where the runtime service appends one service's output. A service whose
 // prepare failed has no started chunk to name it, so that path is built here.
 func (h *startHarness) logPath(group, service string) string {
 	return filepath.Join(os.Getenv("BERTH_LOG_DIR"), group, service+".log")
@@ -477,7 +477,7 @@ func (h *startHarness) dumpLogs() {
 
 // portTable is the listener table the harness's scan publishes. A scenario adds
 // the ports it declared or occupied; every service the stream reports adds its
-// own port with the pid the daemon spawned.
+// own port with the pid the runtime service spawned.
 type portTable struct {
 	mu   sync.Mutex
 	dir  string

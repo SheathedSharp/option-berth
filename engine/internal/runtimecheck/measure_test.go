@@ -1,7 +1,7 @@
 package runtimecheck
 
 // Opt-in native measurements: all collectors/process facts/providers are fake.
-// No daemon Run, real process, socket, probe, credential or network is used.
+// No runtime service Run, real process, socket, probe, credential or network is used.
 import (
 	"context"
 	"encoding/json"

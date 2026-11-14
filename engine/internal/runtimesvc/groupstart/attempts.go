@@ -21,14 +21,14 @@ func init() {
 }
 
 // startAttempt is one service's in-flight start, owned by this package. It is
-// memory-only diagnostic state keyed by daemon runtime + group + service: it
+// memory-only diagnostic state keyed by runtime service runtime + group + service: it
 // never enters the run registry, never reaches the store, and is removed on
 // every exit path (already-running isn't attempted at all; a dependency or
 // prepare failure, a spawn failure, cancellation and success all call finish).
-// Once the run is registered the run record is the only owner; a daemon restart
+// Once the run is registered the run record is the only owner; a runtime service restart
 // simply loses every attempt.
 type startAttempt struct {
-	rt            *runtimesvc.Runtime
+	rt            *runtimesvc.HostContext
 	group         string
 	service       string
 	startID       string
@@ -40,7 +40,7 @@ type startAttempt struct {
 }
 
 type startAttemptKey struct {
-	rt      *runtimesvc.Runtime
+	rt      *runtimesvc.HostContext
 	group   string
 	service string
 }
@@ -56,7 +56,7 @@ func (a *startAttempt) key() startAttemptKey {
 
 // beginStartAttempt records the attempt and returns its handle. waitingOn names
 // the dependencies this service is about to wait for (empty when it has none).
-func beginStartAttempt(rt *runtimesvc.Runtime, group, startID string, svc groups.Service, waitingOn []string, lastPrepareMS *int64) *startAttempt {
+func beginStartAttempt(rt *runtimesvc.HostContext, group, startID string, svc groups.Service, waitingOn []string, lastPrepareMS *int64) *startAttempt {
 	a := &startAttempt{
 		rt:            rt,
 		group:         group,
@@ -154,9 +154,9 @@ func startAttemptChunk(a *startAttempt) rpc.GroupsStartChunk {
 	}
 }
 
-// lookupStartAttempt answers the daemon's snapshot join. It copies the attempt
+// lookupStartAttempt answers the runtime service's snapshot join. It copies the attempt
 // so the caller cannot race the start call's updates.
-func lookupStartAttempt(rt *runtimesvc.Runtime, group, service string) (runtimesvc.StartAttempt, bool) {
+func lookupStartAttempt(rt *runtimesvc.HostContext, group, service string) (runtimesvc.StartAttempt, bool) {
 	startAttempts.Lock()
 	defer startAttempts.Unlock()
 	a := startAttempts.byKey[startAttemptKey{rt: rt, group: group, service: service}]

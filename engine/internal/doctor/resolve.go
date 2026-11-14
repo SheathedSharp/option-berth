@@ -69,8 +69,8 @@ func (e *Env) resolveSeams() {
 	if e.LookPath == nil {
 		e.LookPath = exec.LookPath
 	}
-	if e.Daemon == nil {
-		e.Daemon = func(context.Context) DaemonInfo { return DaemonInfo{Err: errNoProbe} }
+	if e.RuntimeService == nil {
+		e.RuntimeService = func(context.Context) RuntimeServiceInfo { return RuntimeServiceInfo{Err: errNoProbe} }
 	}
 	if e.Docker == nil {
 		e.Docker = func(context.Context) (string, error) { return "", errNoProbe }

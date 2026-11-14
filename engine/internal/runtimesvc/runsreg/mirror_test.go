@@ -133,7 +133,7 @@ func TestDelayedMirrorAddKeepsRenamedMetadata(t *testing.T) {
 	requireMirroredRun(t, r, want)
 }
 
-// The mirror is the only copy of a live run that survives a daemon restart.
+// The mirror is the only copy of a live run that survives a runtime service restart.
 // A detached run's log range belongs to the run's identity: `logs --run
 // current` reads exactly that range, and losing it makes the command answer
 // "no log file" for a process that is still writing to that file.

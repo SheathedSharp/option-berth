@@ -11,7 +11,7 @@ import (
 // where the process exit, the exit code and the reason are already decided —
 // while what that end *means* to a record belongs to whoever recorded the run.
 // The workplace record uses it to close the block a detached run opened: the
-// CLI that asked for the run is long gone by then, and the daemon is the only
+// CLI that asked for the run is long gone by then, and the runtime service is the only
 // thing left that can say how it finished.
 //
 // A callback must not block: it runs on the reaper's path, after the exit has
@@ -28,7 +28,7 @@ type RunExit struct {
 	// constants). A run that never started has a code of its own making.
 	Code   int
 	Reason string
-	// ExitedAt is when the daemon recorded the end.
+	// ExitedAt is when the runtime service recorded the end.
 	ExitedAt time.Time
 }
 
@@ -37,7 +37,7 @@ var (
 	runExitHooks []func(RunExit)
 )
 
-// OnRunExit registers a callback run for every run whose end this daemon
+// OnRunExit registers a callback run for every run whose end this runtime service
 // records.
 func OnRunExit(f func(RunExit)) {
 	if f == nil {

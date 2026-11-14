@@ -17,7 +17,7 @@ import (
 var errInjectedMarshal = errors.New("injected marshal failure")
 
 // stubMarshalFailure makes every hand-framed subscribe reply fail to encode
-// until restore is called. No snapshot the daemon can produce makes
+// until restore is called. No snapshot the runtime service can produce makes
 // encoding/json refuse to encode, so the failure is injected at the seam rather
 // than forced through the wire. Nothing in this package runs in parallel, so the
 // stub cannot leak into a concurrent test; restore is idempotent.
@@ -30,7 +30,7 @@ func stubMarshalFailure(t *testing.T) (restore func()) {
 	return restore
 }
 
-// subscriberOn returns the daemon side of the one open connection, with the
+// subscriberOn returns the runtime service side of the one open connection, with the
 // subscription fields read under the lock that guards them.
 func subscriberOn(t *testing.T, s *Server) (conn *Conn, subscribed bool) {
 	t.Helper()
@@ -44,7 +44,7 @@ func subscriberOn(t *testing.T, s *Server) (conn *Conn, subscribed bool) {
 }
 
 // TestSubscribeMarshalFailureAnswersAndRegistersNothing pins the contract of the
-// one reply the daemon frames by hand. A snapshot that cannot be encoded is an
+// one reply the runtime service frames by hand. A snapshot that cannot be encoded is an
 // engine fault: the request must be answered with an internal error, and the
 // connection must not be left subscribed. A client told its subscribe failed but
 // kept on the subscriber list would have the scanner keep collecting demand for

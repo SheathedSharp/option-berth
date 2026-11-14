@@ -53,7 +53,7 @@ type Plan struct {
 type Options struct{ Provider, Worktree, Prompt, Mode, ResumeFile string }
 
 // Build is read-only. It never runs --help, logs in, creates a profile or starts a
-// daemon. The caller must explicitly execute the returned argv in its own PTY.
+// runtime.service. The caller must explicitly execute the returned argv in its own PTY.
 func Build(opts Options, lookPath func(string) (string, error)) (Plan, error) {
 	var plan Plan
 	if lookPath == nil {

@@ -4,7 +4,7 @@
 Remove an option-berth CLI installed by install.ps1.
 
 .DESCRIPTION
-Stops the daemon if it can, removes oberth.exe, removes the
+Stops the Runtime Service if it can, removes oberth.exe, removes the
 notices install.ps1 left in %LOCALAPPDATA%\option-berth, and removes the install
 directory from the user PATH. It keeps the %USERPROFILE%\.option-berth state
 directory unless -PurgeState is passed.
@@ -40,7 +40,20 @@ function Uninstall-Oberth {
 
     $oberth = Join-Path $Dir 'oberth.exe'
     if (Test-Path -LiteralPath $oberth -PathType Leaf) {
-        & $oberth daemon stop 2>$null | Out-Null
+        # Refuse retired clients; never try an old command or RPC fallback.
+        & $oberth runtime service --help 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw 'the installed CLI predates runtime service; stop its host explicitly with its matching CLI and use its matching uninstaller'
+        }
+        $stopJSON = & $oberth runtime service stop --json 2>$null
+        $stopExit = $LASTEXITCODE
+        if ($stopExit -ne 0) {
+            $stopResult = $null
+            try { $stopResult = ($stopJSON -join "`n") | ConvertFrom-Json } catch { }
+            if ($null -eq $stopResult -or $stopResult.running -ne $false) {
+                throw 'Runtime Service stop failed; installation and state were left unchanged'
+            }
+        }
         Start-Sleep -Milliseconds 300
     }
 

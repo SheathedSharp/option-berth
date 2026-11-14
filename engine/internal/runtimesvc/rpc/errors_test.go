@@ -41,24 +41,24 @@ func TestEveryFailureAnswersWithANameAndAKind(t *testing.T) {
 
 // The vocabulary is the contract. Two directions, two different answers.
 //
-// The contract may not name a code the daemon cannot return: that is a promise
+// The contract may not name a code the runtime service cannot return: that is a promise
 // with no producer, and it is how "timeout" survived here long after readiness
 // expiry became a service state. That direction is absolute.
-func TestTheContractNamesNoCodeTheDaemonCannotReturn(t *testing.T) {
+func TestTheContractNamesNoCodeTheRuntimeServiceCannotReturn(t *testing.T) {
 	declared := map[string]bool{}
 	for _, name := range FailureNames() {
 		declared[name] = true
 	}
 	for _, name := range documentedCodes(t) {
 		if !declared[name] {
-			t.Errorf("docs/cli.md promises %q, which the daemon never returns", name)
+			t.Errorf("docs/cli.md promises %q, which the runtime service never returns", name)
 		}
 	}
 }
 
 // undocumented is the part of the vocabulary docs/cli.md does not name yet.
 //
-// These are real failures the daemon returns today. They are not in the
+// These are real failures the runtime service returns today. They are not in the
 // contract's sentence because that sentence is checked against the agent skill
 // (scripts/check_skill_contract.py), and the skill is a separate product that
 // has to cover a code before the engine may advertise it. Until it does, this
@@ -166,7 +166,7 @@ func TestTheRetiredShareNumbersAreUnused(t *testing.T) {
 	}
 }
 
-// A failure the daemon can report must be one a caller can act on, so the table
+// A failure the runtime service can report must be one a caller can act on, so the table
 // holds no entry without a kind and no duplicate number or name.
 func TestTheVocabularyIsWellFormed(t *testing.T) {
 	numbers := map[int]bool{}

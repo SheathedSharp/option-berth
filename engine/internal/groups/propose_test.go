@@ -242,11 +242,11 @@ func TestProposeEmptyRepo(t *testing.T) {
 	requireLoadedProposal(t, loaded, "option-berth", path)
 }
 
-// TestProposeUsesProjectRootWhenTheComposeDirIsGone is the daemon's case. A
+// TestProposeUsesProjectRootWhenTheComposeDirIsGone is the runtime service's case. A
 // published state.Port carries no Compose working directory — the resolver
 // consumes it before publishing — so a report built from a snapshot has only
 // project_root to go on. Without the fallback every container silently drops out
-// of a `groups.init` served by the daemon.
+// of a `groups.init` served by the runtime.service.
 func TestProposeUsesProjectRootWhenTheComposeDirIsGone(t *testing.T) {
 	f := newFixture(t)
 

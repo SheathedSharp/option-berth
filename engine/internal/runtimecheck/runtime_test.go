@@ -1,5 +1,5 @@
 // These tests import production packages, not their TestMain fixtures. They
-// never Serve/Run a daemon, signal a PID or invoke an OS/process adapter.
+// never Serve/Run a runtime service, signal a PID or invoke an OS/process adapter.
 package runtimecheck
 
 import (

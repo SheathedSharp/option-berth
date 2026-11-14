@@ -554,9 +554,9 @@ cmd = args[0] if args else ""
 if cmd == "version":
     print(json.dumps({"version": "v0.0.0-test", "commit": "test", "built": "now",
                       "platform": "test"}))
-elif cmd == "serve":
+elif args[:3] == ["runtime", "service", "run"]:
     pass
-elif cmd == "daemon" and args[1:2] == ["status"]:
+elif args[:3] == ["runtime", "service", "status"]:
     print(json.dumps({"running": True, "pid": 0}))
 elif cmd == "init" and args[1:2] == ["adopt"]:
     # Both the preview and the write succeed, and the write leaves a manifest.

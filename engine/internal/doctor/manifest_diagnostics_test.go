@@ -48,12 +48,12 @@ func TestDoctorFailsUnknownManifestFieldsInStrictMode(t *testing.T) {
 	}
 }
 
-func TestProjectOnlyDoctorDoesNotProbeDaemon(t *testing.T) {
+func TestProjectOnlyDoctorDoesNotProbeRuntimeService(t *testing.T) {
 	env := fakeEnv(t)
 	write(t, filepath.Join(env.Project, groups.ConfigName), "name: demo\n")
-	env.Daemon = func(context.Context) DaemonInfo {
-		t.Error("project-only preflight contacted daemon")
-		return DaemonInfo{}
+	env.RuntimeService = func(context.Context) RuntimeServiceInfo {
+		t.Error("project-only preflight contacted runtime service")
+		return RuntimeServiceInfo{}
 	}
 	result := Run(context.Background(), *env, []string{"project_config"})
 	if len(result.Checks) != 1 {

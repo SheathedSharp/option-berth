@@ -54,9 +54,9 @@ func failHint(code, msg, hint string) error {
 	return &cliErr{Code: code, Msg: msg, Hint: hint}
 }
 
-// cliError turns a daemon error into one this package can render. It keeps the
+// cliError turns a runtime service error into one this package can render. It keeps the
 // wire's own stable code: clients branch on error.data.code, never
-// on the numeric JSON-RPC code) and the hint the daemon attached.
+// on the numeric JSON-RPC code) and the hint the runtime service attached.
 func cliError(err error) error {
 	if err == nil {
 		return nil
@@ -78,7 +78,7 @@ func describe(err error) (code, msg, hint string) {
 	if errors.As(err, &re) {
 		return re.Data.Code, re.Data.Detail, re.Data.Hint
 	}
-	// The direct-scan path (no daemon) returns the collector's own error. Keep
+	// The direct-scan path (no runtime service) returns the collector's own error. Keep
 	// its code and hint instead of letting describe flatten it into "internal".
 	var oe *ports.ObservationError
 	if errors.As(err, &oe) {
@@ -107,7 +107,7 @@ func exitCodeFor(err error) int {
 }
 
 // errorLine renders err the way reportError does, as one string — for the
-// places that print a daemon error themselves instead of returning it.
+// places that print a runtime service error themselves instead of returning it.
 func errorLine(err error) string {
 	_, msg, hint := describe(err)
 	if hint == "" {

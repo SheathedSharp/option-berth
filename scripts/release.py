@@ -38,7 +38,7 @@ def run(root: Path, *args: str, capture: bool = True, environment: dict[str, str
 def protocol(root: Path) -> str:
     matches = PROTOCOL_RE.findall((root / PROTOCOL_FILE).read_text())
     if len(matches) != 1:
-        raise ValueError("expected one daemon protocol version declaration")
+        raise ValueError("expected one runtime service protocol version declaration")
     return matches[0]
 
 
@@ -46,7 +46,7 @@ def check_versions(root: Path) -> None:
     if not VERSION_RE.fullmatch((root / "VERSION").read_text().strip()):
         raise ValueError("invalid VERSION")
     if json.loads((root / SCHEMA_FILE).read_text())["protocol_version"] != protocol(root):
-        raise ValueError("generated schema does not match daemon protocol version")
+        raise ValueError("generated schema does not match runtime service protocol version")
 
 
 def race_packages(root: Path) -> tuple[str, ...]:

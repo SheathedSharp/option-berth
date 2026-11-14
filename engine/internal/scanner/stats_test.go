@@ -42,8 +42,8 @@ func newStatsRig(t *testing.T) *statsRig {
 		{Port: 5277, BindAddress: "127.0.0.1", PID: 202, Process: "esbuild", CPUPercent: 2, MemoryRSS: 2 << 20, Connections: 3, ThreadCount: 9},
 	}
 	r.loop = New(Options{
-		DaemonVersion: "test",
-		StatsInterval: 30 * time.Millisecond,
+		RuntimeServiceVersion: "test",
+		StatsInterval:         30 * time.Millisecond,
 		Demand: func() (int, Include) {
 			wanted := Include{Stats: r.include.Load()}
 			return int(r.subs.Load()), wanted
@@ -129,7 +129,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 }
 
 // TestStatsTickParksUntilSomeoneSubscribes: an RPC read wakes the loop, but a
-// daemon nobody watches must not start a per-second process sampler.
+// runtime service nobody watches must not start a per-second process sampler.
 func TestStatsTickParksUntilSomeoneSubscribes(t *testing.T) {
 	r := newStatsRig(t)
 	r.run(t)
@@ -400,7 +400,7 @@ func TestAStaleStatsSampleIsNotPublished(t *testing.T) {
 	var advance sync.Once
 	var loop *Loop
 	loop = New(Options{
-		DaemonVersion: "test",
+		RuntimeServiceVersion: "test",
 		Scan: func(Include) ([]ports.ListeningPort, error) {
 			return []ports.ListeningPort{{Port: 4000, PID: 42, Process: "worker", CPUPercent: 1, MemoryRSS: 100}}, nil
 		},

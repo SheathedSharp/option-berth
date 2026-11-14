@@ -10,7 +10,7 @@
 （status / up / down）、接着可能会用到的可选能力（`attn` 与 `feedback report`，单独成组，免得读成
 必需）和到完整帮助的指引；它是指路牌不是手册，分组命令清单只在 `oberth --help`。版本行在发布版本检查
 成功时带 `(latest)` 或 `(latest version vX.Y.Z)`；检查未知时只打印本机版本，不把“没查到”写成
-“最新”。发现更新时，首屏底部给出对应平台的安装命令和 `oberth daemon stop`。还没有记录过改进报告
+“最新”。发现更新时，首屏底部给出对应平台的安装命令和 `oberth runtime service stop`。还没有记录过改进报告
 的决定时，首屏也可能问一次是否发送关于 oberth 自身的脱敏报告；这个问题和报告携带什么，写在
 基础设施命令一节的 `oberth feedback` 里。标记由
 `scripts/brand_export.py` 从客户端几何源生成到 `engine/internal/cmd/mark_gen.go`，
@@ -30,7 +30,7 @@
 - 退出码：0 成功，1 运行失败，2 参数或选项错误，130 被 Ctrl-C 中断。
 - JSON 错误形状为 {"error":{"code":"...","message":"...","hint":"..."}}。
   稳定的 code 包括 invalid_params、not_found、invalid_config、ambiguous、
-  permission_denied、daemon_busy、observation_empty、observation_unrecognized、
+  permission_denied、runtime_service_busy、observation_empty、observation_unrecognized、
   observation_incomplete、observation_blind、observation_bind_denied 和 internal。
   每个 code 属于三类之一：拒绝表示请求本身不对、原样重发不会成功；条件表示当时
   环境未就绪、重试可能成功；故障表示引擎自身有问题。就绪超时不在其中：
@@ -48,15 +48,14 @@
   会以 0 退出却拿不到 TCP 表。这种「一条行都没有」仍按 observation_empty 处理，由自证探针判定；
   探针能看到自己的监听时，本轮改用 `lsof` 采集并照常报 observable。采集器不是主采集器时，
   `observation.source` 写出它的名字（`lsof`）；主采集器留空。`doctor` 的 detail 与
-  `daemon status` 的 `observation` 描述的是同一轮观察。
+  `runtime service status` 的 `observation` 描述的是同一轮观察。
 - 这条回退比 `netstat` 窄，读取时要知道两件事：非 root 的 `lsof` 看不到其他用户的 socket，
   root 进程持有的端口可能不在表里；同一个 `lsof` 也只把双栈通配 socket 报成 `::`，不补另一个
   地址族。表里出现的行仍是事实，但缺失不是：消费者先读 `observation.source`，再判断端口是否空闲。
   窄表里缺失的端口 `machine[].listening_known` 为 false，`port: auto` 逐个用绑定实测而不是
   信任缺失，人读的 `status` 打印 `listening unknown`。
-- --no-daemon 让读命令在本地直接采集；需要记录运行和起停的命令仍需要 daemon。
-  daemon 不可用时，`status` 仍从本地只读历史显示最近的退出原因。
-- 不接受任何不被读取的线缆字段。协议 schema 由 daemon 的 Go 类型生成，因此在那里声明的字段是
+- --no-runtime-service 让事实读取在本地采集，不连接或启动 Runtime Service；记录及起停 run 的操作仍需要宿主。历史记录只在离线时从同一数据库只读读取；活跃拥有者持有数据库时，直接读取返回 `runtime_service_busy`，不能假装历史为空。在线读取应去掉该参数，通过拥有者宿主查询。
+- 不接受任何不被读取的线缆字段。协议 schema 由 runtime service 的 Go 类型生成，因此在那里声明的字段是
   每个客户端都可以依赖的承诺；一个没有任何 handler 处理的字段比缺一个更糟，因为调用会成功，
   调用方无法知道它被忽略了。因此方法参数可能携带的每个字段都由本仓库自己的代码读取，
   否则 `internal/runtimesvc/rpc` 让构建失败。撤回一个已发布字段属于协议变更；有意删除的名字记录在
@@ -75,7 +74,7 @@ CLI 按 **agent 想做的事**分层，不按内部模块分：事实是「现�
 | 操作 | `up` · `restart` · `down` · `start` · `kill` | 按清单起停，或明确点名一个低级进程入口 |
 | 代码与声明 | `git` · `init` | 只读代码上下文，以及这份 worktree 的清单 |
 | 交接 | `workplace` · `agent` · `attn` | 工作记录，把会话交给外部 coding agent；可选的模型评估（默认关闭） |
-| 基础设施 | `daemon` · `serve` · `config` · `version` · `completion` · `doctor` · `feedback` | 后台采集器、安装配置、自检与可选的改进报告 |
+| 基础设施 | `runtime` · `config` · `version` · `completion` · `doctor` · `feedback` | 后台采集器、安装配置、自检与可选的改进报告 |
 
 `oberth --help` 末尾另有一节 **For agents**，给的是读法而不是命令：一次会话开头的三条读
 （`status --json --brief`、`up --wait --json`、`logs <service> --once --json --run current
@@ -144,7 +143,7 @@ prepare 读取的文件列表，没有声明时为空数组。
 （`waiting_dependency`、`prepare` 或 `spawning`）、`started_at`、有效的 `ready_timeout`、
 读取时计算的 `elapsed_ms`、本次等待的 `waiting_on`，以及上一次 prepare 耗时的
 `last_prepare_ms`（未知时为 null）。它不是一个 run：不进入运行记录、不落盘、不算
-`running`、不影响 `worktree.status`，daemon 重启即消失；依赖等待、prepare 与 spawn 期间可读，
+`running`、不影响 `worktree.status`，runtime service 重启即消失；依赖等待、prepare 与 spawn 期间可读，
 run 注册后消失。`--brief --json` 也带同一个 `starting`（字段相同，读取时复制，不与完整文档
 共享可变数据），所以精简读者同样能分辨“正在启动”和“从未启动”。人读输出把该服务显示为
 `starting · <phase> · for <已启动时长> · budget <ready_timeout> · waiting on <依赖…>`：
@@ -168,7 +167,7 @@ worktree 汇总（`cpu_percent`、`memory_rss_bytes`、`services` 为贡献样�
 `code_changed_files`，并给出可直接执行的 `code_hint`（`oberth restart --only <service>`）。
 `code_head` 是启动时 checkout 的 commit，没有提交或不在 Git 检出中时缺省。这些字段缺省表示**未知**
 ——旧版本启动的运行、快照已删除、或源码当前读不到——不是“没变”。逐文件快照超过保存上限时，
-仍能回答是否变化，但文件数缺省。已经持有 group 行的客户端通过 daemon 的 `groups.code` 方法读
+仍能回答是否变化，但文件数缺省。已经持有 group 行的客户端通过 runtime service 的 `groups.code` 方法读
 同一份比较：字段名与「null 即未知」的规则相同，回复里没有的服务是未知，不是没变。
 
 由本引擎启动的运行，`executable_path` 是它启动的程序的解析路径，`executable_modified_at` 是读取时
@@ -182,8 +181,8 @@ worktree 汇总（`cpu_percent`、`memory_rss_bytes`、`services` 为贡献样�
 完全失明时 `ports` 为空、`port_actual` 为 null；部分行不可读时 `ports` 只含可读行，
 未读到的端口不在其中，`observation.state` 为 partial。`up --wait` 在所选服务需要监听或健康观察、且观察不是 observable 时
 立即返回观察类错误并保留刚启动的运行，不会等满超时再把它停掉；`logs <service>` 对托管服务
-仍使用运行登记的日志路径，不依赖监听表。需要自启 daemon 的写命令会先跑自证探针，失明时
-拒绝从当前进程创建 daemon，提示在普通终端运行 `oberth serve --detach`。
+仍使用运行登记的日志路径，不依赖监听表。需要自启 runtime service 的写命令会先跑自证探针，失明时
+拒绝从当前进程创建 runtime service，提示在普通终端运行 `oberth runtime service run --detach`。
 
 系统观察繁忙时，已知运行和 worker 状态可以独立发布。上一批监听信息过期时，`observation.state` 为 `partial`，code 为 `observation_incomplete`，source 为 `runtime_registry`；缺失端口和 `machine` 可用性仍为未知，不是空闲或已停止。无端口且无健康检查的 worker 可以仅凭精确运行身份就绪。其他就绪判断及强制控制路径不会把这种回退当作新鲜监听观察。
 
@@ -275,7 +274,7 @@ changed 是第一次运行时缺省的可选字段。ports 仍是给脚本核对
 `assessment.context_id`（若存在）只是 adapter 对当前任务和授权选项 allow-list 的哈希缓存键，
 不属于运行事实，也不授予执行权限。
 这个文件是派生通知，不是新的运行事实来源；
-模型客户端不在 daemon 或 `status` 的控制路径里：确定性部分在 `internal/attn`，模型客户端在
+模型客户端不在 runtime service 或 `status` 的控制路径里：确定性部分在 `internal/attn`，模型客户端在
 `internal/attn/model`，这条依赖边界由 `internal/cmd/attention_boundary_test.go` 检查。
 
 可选的模型评估是交接层的 `oberth attn`。agent 应使用一次调用完成状态读取、异常验证、评估
@@ -342,7 +341,7 @@ worktree 的规范路径、脱敏任务摘要和固定评估选项后，接入�
 在每轮读取前重新检查同意及供应商身份；关闭评估，或修改 endpoint、model、凭据，都会在下次
 请求前结束该任务会话，原因是 `disabled` 或 `configuration_changed`。没有合资格异常就不请求模型。
 
-`assess --follow` 在可用时复用已有作用域变化流，按任务的精确工作树过滤并对游标去重。相关变化触发状态和 artifact 刷新，不直接触发模型请求。重连后补取快照；连接正常时也按 `max(10s, --interval)` 校准。`--interval` 控制本地同意检查和回退轮询，不代表模型调用周期。后台服务缺失、版本较旧或断线时使用有界状态轮询，不会为此启动 daemon。同一任务不需要再建独立 events 观察器。正常状态仍无 provider 请求，评估后的新鲜度核验仍然保留。
+`assess --follow` 在可用时复用已有作用域变化流，按任务的精确工作树过滤并对游标去重。相关变化触发状态和 artifact 刷新，不直接触发模型请求。重连后补取快照；连接正常时也按 `max(10s, --interval)` 校准。`--interval` 控制本地同意检查和回退轮询，不代表模型调用周期。后台服务缺失、版本较旧或断线时使用有界状态轮询，不会为此启动 runtime service。同一任务不需要再建独立 events 观察器。正常状态仍无 provider 请求，评估后的新鲜度核验仍然保留。
 
 `quality.model_calls` 和 `quality.cache_hits` 统计已记录的传输尝试及缓存复用，包含单次评估
 和尚未结束的会话，不再叠加生命周期汇总。校验失败、状态读取失败不算模型调用；本地错误会
@@ -406,9 +405,9 @@ worktree 的规范路径、脱敏任务摘要和固定评估选项后，接入�
 `--no-deps` 只启动点名的服务本身，不展开依赖闭包；没有 `--only` 时它不改变行为（本来就启动全部）。
 人类可读输出中被带上的行附加 dim 说明（如 `started (dependency of web)`、`skipped · required by web`），
 汇总在非空时另起一行 `included dependencies: api, db`。`--json` 中它们仍是普通 `services[]` 条目，
-带 `included_by`（排序后的点名根服务）；汇总带 `included`（排序）。能力协商：旧 daemon 不认识
-`include_dependencies`，新 CLI 只在 `--only` 点名了至少一个服务时才发送它，此时遇到旧 daemon
-会直接报错并提示重启 daemon 或传 `--no-deps`；没有 `--only`（或 `--no-deps`）时不发送，普通 `up` 不受影响。
+带 `included_by`（排序后的点名根服务）；汇总带 `included`（排序）。能力协商：旧 runtime service 不认识
+`include_dependencies`，新 CLI 只在 `--only` 点名了至少一个服务时才发送它，此时遇到旧 runtime service
+会直接报错并提示重启 runtime service 或传 `--no-deps`；没有 `--only`（或 `--no-deps`）时不发送，普通 `up` 不受影响。
 服务有 `prepare:` 时，先在同一 cwd 直接执行这个前置命令，
 成功后才启动长驻的 `cmd:`；前置命令的输出写入该服务日志，失败时服务不会启动。
 服务有 `env_file:` 时，prepare 与长驻命令都会先读到文件里的变量（见「共享环境文件」）。
@@ -429,11 +428,11 @@ Git 检出中只纳入已跟踪文件和未被 ignore 的未跟踪文件，`node
 清单，也可以显式给项目名。
 `ready_timeout:` 声明一个服务的就绪预算（Go duration 字符串，例如 `90s`，缺省 30s，必须为正）：
 `depends_on` 的后继服务等待该服务时使用它，`up --wait` 也使用它。`prepare:` 不计入这个预算。
-清单声明了 `ready_timeout:` 时，CLI 要求 daemon 宣告 `groups.start.ready_timeout` 能力；旧 daemon
-会提示 `oberth daemon restart`，而不是静默按 30s 等待。按项目名启动（`oberth up <project>`、
-`oberth restart <project>`）时 CLI 手上没有清单，这项检查改为向 daemon 的 `state.snapshot`
+清单声明了 `ready_timeout:` 时，CLI 要求 runtime service 宣告 `groups.start.ready_timeout` 能力；旧 runtime service
+会提示 `oberth runtime service restart`，而不是静默按 30s 等待。按项目名启动（`oberth up <project>`、
+`oberth restart <project>`）时 CLI 手上没有清单，这项检查改为向 runtime service 的 `state.snapshot`
 找到该项目的清单路径后本地解析，再套同一套能力规则；清单找不到或读不出来时不阻断启动，
-由 daemon 报它自己的错误。
+由 runtime service 报它自己的错误。
 
 `health:` 有三种写法：HTTP 路径（`/healthz`，缺省形式）、TCP 连接（`health: {tcp: 5432}`，端口必须与
 服务声明的端口一致）和命令（`health: {command: pg_isready -h 127.0.0.1 -p ${port}}`）。命令在服务
@@ -449,7 +448,7 @@ cwd 中执行，按 `cmd:` 的规则拆成 argv（不经过 shell），支持 `$
 在 home 之外）时给拒绝本身带的做法，没有可执行的下一步时不给。失败原因为 `port_occupied` 时，
 `services[]` 还带与 status 相同形状的 `port_holder`（`port`、`pid`、`command`、`kind`，
 托管时另有 `group`/`name`/`run_id`），不需要再自己查进程表。
-`services[]` 的 `ready` 是 CLI 的注释，不是 daemon 事实：`--wait` 确认就绪后为 `true`；
+`services[]` 的 `ready` 是 CLI 的注释，不是 runtime service 事实：`--wait` 确认就绪后为 `true`；
 默认不等待时 `started` 服务带 `false`，人读显示 `~` 和 `started, readiness not confirmed`；
 `skipped`/`failed` 不带该字段。`false` 不是失败，`state` 仍表示启动动作的结果。存在未确认的
 `started` 服务时，命令还会发布下一步：JSON 文档的 `next` 字段与人读输出的 `next:` 行，内容为
@@ -467,7 +466,7 @@ cwd 中执行，按 `cmd:` 的规则拆成 argv（不经过 shell），支持 `$
 `--wait-timeout` 上限，并点名该抬高哪一个（预算对应 `ready_timeout:`，上限对应 `--wait-timeout`），
 命令退出码为 1。只有本次新启动的超时运行才进入停止清理；
 已经存在的运行不会因这次等待失败而被停止或重启。清理按 `run_id` 只停止本次启动的那个运行：
-等待期间另一个控制者为同一服务启动的新运行是另一个运行，不会被停掉。daemon 若未声明
+等待期间另一个控制者为同一服务启动的新运行是另一个运行，不会被停掉。runtime service 若未声明
 `groups.kill.expect_runs`，就无法把停止限定到指定运行，因此不会收到只带服务名的清理：
 命令失败，并说明超时的运行仍在运行。就绪判定同样按运行身份归属：状态行里的运行不是这次等待所指的
 运行时就立即以状态 `failed`、原因 `run_replaced` 结束，因为替换运行的监听与健康是它自己的证据，
@@ -486,14 +485,14 @@ cwd 中执行，按 `cmd:` 的规则拆成 argv（不经过 shell），支持 `$
 任何服务启动失败都会以退出码 1 返回，失败服务仍保留其退出原因供 status 查看。
 默认只允许在用户 home 目录内启动服务；明确使用 `--allow-outside-home` 才会放开这个限制。
 
-daemon 宣告 `groups.start.phases` 能力时，`up` 会在请求里带上 `progress: true`，并在服务进入
+runtime service 宣告 `groups.start.phases` 能力时，`up` 会在请求里带上 `progress: true`，并在服务进入
 `waiting_dependency`、`prepare`、`spawning` 阶段时收到 `state: "starting"` 的进度 chunk：
 `phase`、`started_at`、`ready_timeout`、`elapsed_ms`、`waiting_on`、`last_prepare_ms`。
 `waiting_on` 随依赖轮询收缩：每次观察到某个声明的依赖已经就绪，它就从集合里消失，
 全部就绪时为空；观察本身失败时保留上一次已知集合，不会把“读不到”显示成“没有在等”。
 这些 chunk 是诊断，不是结果：它们不计入 `services[]`、不参与就绪等待，也不影响汇总。
 人读模式把它们打印成 dim 进度行；`--json` 时进度行只写 stderr，stdout 仍然只有一个最终
-JSON 值，不混入诊断。旧 daemon 不认识 `progress`，旧 CLI 也不会发送，行为与之前一致。
+JSON 值，不混入诊断。旧 runtime service 不认识 `progress`，旧 CLI 也不会发送，行为与之前一致。
 
 例如一次部分成功的结果仍是一个 JSON 值：
 
@@ -536,14 +535,14 @@ hint 里写出进程与端口。`--force` 只跳过优雅停止，不会接管 o
 
 `--worktree PATH` 按 checkout 根路径、`--identity wt_…` 按 `${worktree}` 身份停止。
 两者都不能和项目名或清单路径同时使用。它们是 worktree 被删除或移动后的明确入口：
-目录还在时 daemon 重新读取该清单；目录已不在时按身份账本里记录的组名停止仍属于它的
+目录还在时 runtime service 重新读取该清单；目录已不在时按身份账本里记录的组名停止仍属于它的
 监听与运行，并交还该 worktree 记录的 `port: auto` 预留。找不到身份返回 not_found，
 不会猜一个组。目标已经没有任何运行或预留时，显式身份仍然是一次成功的空停止。
 `--identity` 的值来自 `status --json` 的 `worktree.identity` 或 `oberth worktrees`。
 
 按项目名停止是组名作用域：同一仓库的不同 worktree 发布为 `<project>` 与
 `<project>@<worktree>`，名字不同时互不影响。两个 checkout 真把同一组名占了（例如不同
-仓库目录同名，或两个不同父目录下同名的 linked worktree）时，daemon 的组已经合并，
+仓库目录同名，或两个不同父目录下同名的 linked worktree）时，runtime service 的组已经合并，
 任何组作用域的停止都会同时打到两者；此时 `down <project>` 和显式身份都返回 ambiguous，
 提示改用 `kill` 按端口或 pid 点名，而不是替调用者挑一个。
 
@@ -555,17 +554,17 @@ hint 里写出进程与端口。`--force` 只跳过优雅停止，不会接管 o
 
 ### oberth worktrees [--gone] [--json]
 
-只读列出本机 daemon 见过的 `${worktree}` 身份、派生它的 checkout 根路径、最近一次发布的
+只读列出本机 runtime service 见过的 `${worktree}` 身份、派生它的 checkout 根路径、最近一次发布的
 组名和该路径现在是否还存在。它是身份账本，不是运行事实：行在 checkout 删除或移动后保留，
 `exists` 在每次读取时按文件系统重新判断，所以同一路径重新出现时身份也重新存在；
-`last_seen` 只是最近一次写入账本（daemon 启动或组名变化）的时间，不是每次扫描的心跳。
+`last_seen` 只是最近一次写入账本（runtime service 启动或组名变化）的时间，不是每次扫描的心跳。
 
 `--gone` 只保留 checkout 已不存在的身份，供人或 agent 找到按旧身份留下的数据库和数据目录
 （`app_${worktree}`、`.data/${worktree}`）。删除动作仍由人执行：命令不删除账本行、数据库、
 数据目录或正在运行的进程；要停止仍在跑的服务用 `oberth down --identity <wt_…>`。
 
-有 daemon 应答时，每行还带 `running_services`：该身份下正在运行的声明服务数。它是读取时
-对组事实的一次连接，不写回账本。没有 daemon 时字段缺省——账本不存运行状态，缺省表示
+有 runtime service 应答时，每行还带 `running_services`：该身份下正在运行的声明服务数。它是读取时
+对组事实的一次连接，不写回账本。没有 runtime service 时字段缺省——账本不存运行状态，缺省表示
 **未观察**，不是 0。
 
 ~~~json
@@ -575,8 +574,8 @@ hint 里写出进程与端口。`--force` 只跳过优雅停止，不会接管 o
 ]}
 ~~~
 
-没有 daemon 或还没有账本时返回空列表，不会为了读这份事实启动 daemon 或新建数据库。
-daemon 是账本的唯一写者：它在扫描到清单时记录身份，重启后按已记录的根路径补齐；
+没有 runtime service 或还没有账本时返回空列表，不会为了读这份事实启动 runtime service 或新建数据库。
+runtime service 是账本的唯一写者：它在扫描到清单时记录身份，重启后按已记录的根路径补齐；
 `status` 等读命令和 `down` 都不写账本。
 
 ### oberth logs <service|port> [--once] [--lines N] [--follow] [--ip address] [--json] [--run current|<id>] [--first-error]
@@ -608,7 +607,7 @@ daemon 是账本的唯一写者：它在扫描到清单时记录身份，重启�
 打印后返回，而不是等待一次尚未开始的运行。`--run current` 选该服务当前这次运行，其他值则是
 `status --json` 里的精确 `run_id`。`current` 优先选仍在运行的进程，没有时才选最近结束的一次。
 跟随一次已经结束的运行会打印它的行然后停止：之后不会再有属于它的输出。`--run` 只接受服务名，
-不能和 `--ip` 同时使用；它需要 daemon，daemon 不可用时返回 `daemon_unavailable`。旧运行记录
+不能和 `--ip` 同时使用；它需要 runtime service，runtime service 不可用时返回 `runtime_service_unavailable`。旧运行记录
 没有 offset 时返回 not_found 并提示重启一次服务。文件被轮转、记录的那一段已不在文件里时，
 读取回退到文件开头，并在 JSON 里用 `run_start_unknown: true` 说明这次的行可能混入其他运行。
 
@@ -665,16 +664,16 @@ stderr 也说明一次。这与 `status` 的规则一致：看不见不是没在
 
 核心闭环之外的命令按层列在这里，契约同样是这份文档：
 
-- oberth doctor：检查清单、daemon、CLI 路径、日志目录和当前进程能否看见监听，给出可操作的修复提示。
+- oberth doctor：检查清单、runtime service、CLI 路径、日志目录和当前进程能否看见监听，给出可操作的修复提示。
   `--only listener_observation` 绑定一个真实本地端口，再用与 `status` 相同的采集器确认能否看到它：
-  报告 observable / blind / bind_denied；CLI 模式下同时附带 daemon 的自证结果，daemon 失明也会失败。
-  `--only daemon_build_matches` 对比 CLI 与 daemon 的构建提交；同版本号不代表同构建。
-  缺少提交身份或状态 RPC 失败会报告 warn，不会标记匹配，也不会自动重启 daemon。
+  报告 observable / blind / bind_denied；CLI 模式下同时附带 runtime service 的自证结果，runtime service 失明也会失败。
+  `--only runtime_service_build_matches` 对比 CLI 与 runtime service 的构建提交；同版本号不代表同构建。
+  缺少提交身份或状态 RPC 失败会报告 warn，不会标记匹配，也不会自动重启 runtime service。
   `--only agent_skill` 只读 `HOME` 下已安装的 skill（`~/.claude`、`~/.codex`、`~/.config/opencode`
   的技能目录），比较各份 `SKILL.md` 的 `metadata.version`：没装是 `skip`，只有一份永远 `ok`，
   多份版本不一致或软链指向已不存在的 checkout 才 `warn`。它不联网，不知道哪个版本是最新的，
   因此不会把单独一份说成「落后」，也不安装、不更新、不修复 skill。
-- oberth events：供 agent 订阅本机 daemon 的状态变化。并行联调时 agent 应根据任务中明确给出的
+- oberth events：供 agent 订阅本机 runtime service 的状态变化。并行联调时 agent 应根据任务中明确给出的
   关系主动建立并消费订阅；人手执行此命令主要用于排障。`--worktree PATH_OR_ID` 会沿已有 Repo 关系包含同仓库
   的其他 worktree；`--repository REPO_ID` 是可重复的加法过滤器，`--workspace NAME` 加入显式的临时联调关系；
   首条 NDJSON 直接是 `{"type":"state.snapshot",...}`，后续每行直接是 `{"type":"state.changed",...}`。
@@ -684,11 +683,11 @@ stderr 也说明一次。这与 `status` 的规则一致：看不见不是没在
   `events` 设为 `true`；只取一次快照时使用 `state.snapshot`。
   快照和变更只包含 worktree、服务、端口的运行事实摘要，不包含命令、工作目录、日志或环境变量；
   需要细节时回到对应 worktree 执行 `oberth status --json`。客户端应保存快照或变更中的 `seq`，
-  断线重连时把最后应用的序号作为 `after_seq` 传给 `state.subscribe`；daemon 能覆盖时会先返回该序号的
+  断线重连时把最后应用的序号作为 `after_seq` 传给 `state.subscribe`；runtime service 能覆盖时会先返回该序号的
   基准快照，再按顺序补发增量，窗口已过期或状态链不连续时则返回当前完整快照。`oberth events` 会在传输断开或队列溢出后
   自动带着最后的 `seq` 重连；workspace 成员变化仍要以新快照为准，队列窗口过期时也会回到完整快照；
-  成员变化会以 `changed: ["workspace_changed"]` 提醒现有订阅者。若连接到旧 daemon，先执行
-  `oberth daemon restart` 以取得 `state.scope` 能力。
+  成员变化会以 `changed: ["workspace_changed"]` 提醒现有订阅者。若连接到旧 runtime service，先执行
+  `oberth runtime service restart` 以取得 `state.scope` 能力。
 - oberth kill <port|pid>...：点名停止监听者；--all 是明确的整批操作，仍会确认。
   人读的结果行用读者词汇：`stopped (SIGTERM)` / `stopped (SIGKILL)` / `stopped container`，
   不直接打印信号名；`down` 停无端口 run 时显示服务名（清单里的名字），不是进程表里的解释器名。
@@ -709,10 +708,10 @@ stderr 也说明一次。这与 `status` 的规则一致：看不见不是没在
 
 ## 基础设施命令
 
-- oberth daemon status|path|stop|restart|log|schema：管理或查看后台采集器。`daemon status --json`
-  带 `observation`（`state`、`code`、`detail`、`hint`、`checked_at`），表示 daemon 自己能否看见监听；
-  `daemon.hello` 也带同一份结果，客户端不能把失明 daemon 的空端口表当成事实。
-- `oberth -v` / `oberth --version`：简洁地打印当前 CLI 版本；`oberth config init|path|edit`、`oberth serve`、`oberth version`、`oberth completion`：配置与运行环境入口。
+- oberth runtime service run|status|path|stop|restart|log|schema：管理或查看后台采集器。`runtime service status --json`
+  带 `observation`（`state`、`code`、`detail`、`hint`、`checked_at`），表示 runtime service 自己能否看见监听；
+  `runtime.service.hello` 也带同一份结果，客户端不能把失明 runtime service 的空端口表当成事实。
+- `oberth -v` / `oberth --version`：简洁地打印当前 CLI 版本；`oberth config init|path|edit`、`oberth runtime service run`、`oberth version`、`oberth completion`：配置与运行环境入口。
 - `oberth version --json` 输出当前构建的 `version`、`commit`、`built` 和 `platform`，供安装检查脚本确认实际运行的构建。
 - `oberth version --check` 读取最新发布标签，报告本机是否落后；`--check --json` 在原来的字段上增加
   `latest`。它只读发布信息，不下载、不安装，也不替换正在运行的二进制。终端命令复用同一份检查结果：
@@ -738,6 +737,42 @@ stderr 也说明一次。这与 `status` 的规则一致：看不见不是没在
 
 `latest.version` 是发布源报告的最新标签；只有本机版本严格更旧时 `update_available` 才为 `true`，
 本机版本更新（例如从 `main` 构建）或无法比较（例如 `dev`）都为 `false`。
+
+### Runtime Service 协议 3 切换
+
+Runtime 运行领域仍是 worktree → manifest → service → run → runtime-facts 事实链，Runtime Service 是后台宿主。产品 3.0.0 / 协议 3.0.0 直接移除旧公共宿主命名空间，不保留别名。能力协商仅适用于协议主版本一致的双方，不能让 v2 宿主变成可接受的目标。
+
+<!-- retired-runtime-v2-begin: refused names and manual switching only -->
+| 退役的 v2 输入 | 协议 3 替代项 |
+|---|---|
+| `oberth daemon …` | `oberth runtime service …` |
+| `oberth serve [--detach]` | `oberth runtime service run [--detach]` |
+| `--no-daemon` | `--no-runtime-service` |
+| `daemon.*` RPC methods | `runtime.service.*` RPC methods |
+| `daemon_*` JSON fields/check IDs; `Daemon*` wire definitions | `runtime_service_*`; `RuntimeService*` |
+| `daemon:` config stanza | `runtime_service:` |
+| `daemon.sock`, `daemon.log`, endpoint `daemon.lock` | `runtime-service.sock`, `runtime-service.log`, endpoint `runtime-service.lock` |
+| `BERTH_SOCKET` | `BERTH_RUNTIME_SERVICE_SOCKET` |
+| `BERTH_DAEMON_DETACHED` | `BERTH_RUNTIME_SERVICE_DETACHED` |
+| `BERTH_NO_AUTOSTART` | `BERTH_RUNTIME_SERVICE_NO_AUTOSTART` |
+| `BERTH_ALLOW_TEST_DAEMON` | `BERTH_RUNTIME_SERVICE_ALLOW_TEST_BINARY` |
+
+新 CLI 对旧命令、参数、配置键及非空的旧环境变量明确报迁移错误，不输出环境变量值。 无法解析的 YAML 以及无效/相对的 `previous_service_lock_dirs` 在操作前直接拒绝，不会改用默认安全门闩；配置读写共用同一校验。旧 `daemon.*` 请求得到带协议 3 提示的 `not_found`。没有旧 socket 探测、命令别名、RPC 双路、自动关闭旧宿主或删除数据。
+
+真正切换之前，必须使用匹配的 v2 CLI 显式停止旧宿主（`oberth daemon stop`；若是自定义端点，则使用旧端点设置），并确认状态已经停止。之后再改 shell/配置键，保留数据库及 run ledger，用配套新 CLI 执行 `oberth runtime service run --detach`。不要用新 `restart` 或 `doctor --fix` 停止 v2 宿主。本次源码改造不执行该切换，也不安装任何东西。
+
+`daemon.lock` 只能作为额外的跨代门闩，绝不是传输回退。可选的 `runtime_service.previous_service_lock_dirs` 为已知旧端点增加持续持有的门闩；数据库安全不依赖枚举这些目录。新宿主在监听、恢复或发布之前，以单个不超时连接取得 SQLite EXCLUSIVE/WAL 所有权。未修改的 v2 Store 已持有数据库时，新宿主拒绝进入；新拥有者运行期间，旧/新写者即使换端点、`BERTH_HOME` 或文件别名也不能重开。没有打开 SQL 连接的静默旧进程不被宣称已识别或停止：新拥有者持有 SQLite 时，它不能恢复数据库写入，显式关闭旧宿主的切换步骤仍然适用。每次写入正常提交，不会把事务一直留到退出。拥有者连接丢失后直接失败，不偷偷重连。所有生产者停止后才关闭存储，端点锁最后释放。
+<!-- retired-runtime-v2-end -->
+
+`runtime.storage.read` 从现有拥有者 Store 读取，`section` 为 `schema`、`worktrees` 或 `run_exits`。响应重复 `section`，并携带该部分的回执（`schema` 对象、`worktrees` 数组或 `run_exits` 数组）；观察到的空集合是 `[]`，不能省略回执。schema 包含路径、版本及文件大小。worktree 行和最多 100 条持久退出记录使用生成 schema 中的 snake_case 字段。不接受 SQL 文本或写入。本地 CLI 读取发送绝对路径 `expected_db_path`；拥有者核对文件身份，同一端点对应不同或缺失数据库时拒绝，同文件路径别名则接受。其他 RPC 调用者若明确要读取所选端点，可省略这项本地路径断言。CLI 历史、worktree 身份及 doctor 在线时走此路径；只有拥有者缺席时，才离线只读打开同一个数据库。已连接拥有者的错误、缺失/错误回执、取消及所有权失败都不是成功的空结果。等待拥有者连接的读取遵守取消。
+
+离线只读访问不迁移或修改数据库/WAL 内容，但读取崩溃后遗留的 WAL 时，SQLite 可能创建或更新 `-shm` 协调文件；这不是零文件系统写入模式。
+
+拥有者在单连接上串行执行 SQL 读写，不再保证原有连接池的并行读取。持有所有权期间，外部 SQLite 读取及在线 SQLite 备份连接会被拒绝。离线备份数据库前，须用匹配 CLI 正常停止 Runtime Service；仅复制运行中数据库的主文件不是受支持的备份。
+
+Runtime Service 的存储及控制文件目录必须位于已验证的本地文件系统：macOS 为带本地标记的 APFS/HFS/tmpfs，Linux 为明确支持的本地文件系统类型，Windows 为本地固定/可移动/RAM 卷。网络、FUSE 及未知文件系统在创建存储 sidecar 前被拒绝；换 socket 不能削弱数据库所有权。坏库及未来 schema 阻止启动并保留可检查证据，不会静默挪走、重置或替换。命名改造不改变数据库 schema 及历史记录。
+
+默认根 `BERTH_HOME` / `.option-berth`、数据库 schema/内容、`oberth` 可执行文件和公共 Go module 路径不变。Windows 使用 `\\.\pipe\option-berth-runtime-service`。独立的 macOS app 必须先适配协议 3、新端点及字段/检查名才能控制此宿主，本次不改 app。
 
 ### oberth feedback
 
@@ -807,7 +842,7 @@ issue 上可见；否则命令打印一条预填好的 `issues/new` 链接由人
 
 ### 清单中的引用
 
-`prepare:`、`cmd:`、`env:` 的值和命令式 `health:` 可以引用端口和 checkout 身份，daemon 在
+`prepare:`、`cmd:`、`env:` 的值和命令式 `health:` 可以引用端口和 checkout 身份，runtime service 在
 启动服务前展开：
 
 | 引用 | 展开为 |
@@ -842,9 +877,9 @@ issue 上可见；否则命令打印一条预填好的 `issues/new` 链接由人
 
 空行和 `#` 开头的整行注释会被忽略；支持可选的 `export ` 前缀、单引号原样值和双引号
 （转义 `\n`、`\r`、`\t`、`\\`、`\"`）。值不做变量插值，`${...}` 原样保留。写入环境的优先级
-从低到高是：daemon 自身环境、调用者环境、`env_file`、`PORT`、服务自己的 `env:`。文件缺失、
+从低到高是：runtime service 自身环境、调用者环境、`env_file`、`PORT`、服务自己的 `env:`。文件缺失、
 不是普通文件或某一行的格式错误会让该服务启动失败；错误只指出文件和行号，不回显值。文件内容
-不进入 `status`、日志或 `spec_hash`，修改它不需要重启 daemon，但已启动的服务要重启才会读到。
+不进入 `status`、日志或 `spec_hash`，修改它不需要重启 runtime service，但已启动的服务要重启才会读到。
 
 ### 跨 worktree 的地址引用
 
@@ -859,7 +894,7 @@ workspace:
 
 `worktree` 是另一 checkout 的根目录（相对本清单目录或绝对路径），也可以直接指向它的清单文件；
 `service` 是那份清单里的服务名。之后 `prepare:`、`cmd:` 和 `env:` 可以用 `${backend.port}` /
-`${backend.url}`。解析时读取对方清单和 daemon 的运行实况：对方服务正在运行就用实际端口
+`${backend.url}`。解析时读取对方清单和 runtime service 的运行实况：对方服务正在运行就用实际端口
 （包括 `port: auto`）；不在运行但声明了固定端口就用声明的地址；`port: auto` 且没有运行则引用
 无法解析，使用它的服务启动失败并说明原因。`up` / `down` / `restart` 不会启动或停止对方的服务，
 也不建立 `depends_on` 关系。`workspace:` 名称不能与本清单的服务或 `machine:` 引用重名；
@@ -880,11 +915,11 @@ workspace:
 手写清单可以自行加同一行。
 
 默认解析仍忽略未知键以保持兼容。设 `BERTH_STRICT_MANIFEST=1`（也接受 `true`、`yes`、`on`）后，
-未知键变成带行列位置的加载错误，覆盖 CLI、daemon 和 `oberth init adopt` 的所有清单读取路径；
+未知键变成带行列位置的加载错误，覆盖 CLI、runtime service 和 `oberth init adopt` 的所有清单读取路径；
 顶层 `x-` 与 `$schema` 仍然是合法元数据。
 
 `doctor --only project_config` 在默认模式下以 warn 报告被忽略的清单键及行列位置，不回显字段值；
-`env` 自定义键与顶层 `x-` 扩展不被误报。不改写清单、不执行命令，也不为补充报告元数据连接 daemon。
+`env` 自定义键与顶层 `x-` 扩展不被误报。不改写清单、不执行命令，也不为补充报告元数据连接 runtime service。
 
 ### oberth agent: external coding-agent handoff
 

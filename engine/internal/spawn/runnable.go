@@ -17,7 +17,7 @@ import (
 // that points at something gone" (this machine had seven of those), and only
 // the second is a thing they can fix by looking.
 //
-// The PATH consulted is the one the service will actually see — the daemon's,
+// The PATH consulted is the one the service will actually see — the runtime service's,
 // not the caller's — because that is the one that decides whether the command
 // runs.
 func CheckRunnable(argv0 string, env []string) error {
@@ -49,7 +49,7 @@ func CheckRunnable(argv0 string, env []string) error {
 
 // CheckRunnableInDir is CheckRunnable for a command that will be launched
 // with cwd. Relative paths such as ./mvnw are resolved against that cwd, just
-// as exec.Command does; checking them against the daemon's own cwd would make
+// as exec.Command does; checking them against the runtime service's own cwd would make
 // perfectly valid project wrappers fail before they ever start.
 func CheckRunnableInDir(argv0, cwd string, env []string) error {
 	if cwd != "" && !filepath.IsAbs(argv0) && strings.ContainsAny(argv0, `/\\`) {

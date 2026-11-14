@@ -39,13 +39,13 @@ oberth up --wait
   raising this flag.
 - `ready_timeout:` constrains the listen and health waits **after startup**, including dependency
   waits and `up --wait`; `--wait-timeout` only constrains `up --wait`'s own wait (it starts counting
-  after the `groups.start` stream ends, and does not affect the daemon's dependency waits). Neither
+  after the `groups.start` stream ends, and does not affect the runtime service's dependency waits). Neither
   constrains `prepare:`. Slow dependency installation needs the `prepare_inputs:` cache (skipped when
   the content is unchanged), or a larger script timeout on the orchestration tool's own side.
 - On failure the exit code is 1, with `state`, `reason`, and `hint` given per service; `hint` points
   at `oberth logs <service> --once` only if the process really did start.
 - When observation is blind, `up --wait` returns an `observation_*` error immediately and keeps the
-  run it just started. This is not "it didn't start". Follow the `hint`, run `oberth serve --detach`
+  run it just started. This is not "it didn't start". Follow the `hint`, run `oberth runtime service run --detach`
   in a normal terminal, then retry; do not retry repeatedly inside a sandbox.
 - `up` by default refuses service working directories outside `$HOME`. When an orchestration tool
   puts the workspace outside home, confirm and add `--allow-outside-home`; `down` has no such flag.
@@ -84,16 +84,16 @@ oberth down --identity wt_...                       # by identity, when the dire
 
 - `--worktree` wants the **checkout root path**, not a subdirectory; take it from `scope.root` in
   `status --json`, or from `git rev-parse --show-toplevel`.
-- When the directory is already deleted, the daemon can still stop the runs and listeners it left
+- When the directory is already deleted, the runtime service can still stop the runs and listeners it left
   behind by identity ledger and hand back the `port: auto` reservation; the precondition is that the
-  daemon has seen this checkout before.
+  runtime service has seen this checkout before.
 - `down` hands back the reservation only after it has confirmed the stop. On cancellation, an
   incomplete stop, an observation failure after the action, runs/listeners still registered, or a
   reservation that has already been refreshed, it keeps the reservation and errors; do not take the
   error as a release.
 - When the target no longer has any runs or reservations, an explicit identity is still a successful
   empty stop.
-- `oberth worktrees --gone` lists only the identities the daemon has recorded; it is not a complete
+- `oberth worktrees --gone` lists only the identities the runtime service has recorded; it is not a complete
   inventory of orphan processes. A ledger row with no manifest has no service group to stop, and
   `down --identity` returns `not_found`.
 - When two checkouts occupy the same group name, a group-scoped stop returns `ambiguous`; in that
@@ -104,7 +104,7 @@ oberth down --identity wt_...                       # by identity, when the dire
 | Tool slot | What to put there |
 |---|---|
 | Create / setup | `oberth up --wait` (add `--json` when a machine needs to read the output) |
-| Run / run | Do not start the same set of services again. Services started by `oberth` belong to the daemon; the tool stopping the run script will not stop them |
+| Run / run | Do not start the same set of services again. Services started by `oberth` belong to the runtime service; the tool stopping the run script will not stop them |
 | Archive / delete / cleanup | `oberth down --worktree <checkout root>`; where that is not available, enter the directory and run `oberth down` before deleting |
 | Only a single run slot | Put the start into setup; do not disguise setup as the run slot, or the tool will hold onto it or kill it |
 
@@ -161,7 +161,7 @@ archive = 'PATH="$HOME/.local/bin:$PATH" oberth down --worktree "$CONDUCTOR_WORK
 
 - Do not put `oberth up --wait` into `scripts.run.<id>`. That is the action behind the Run button,
   and Conductor sends SIGTERM to its process group on Stop; services started by oberth belong to the
-  daemon and are not held by this action.
+  runtime service and are not held by this action.
 - setup / archive run from the workspace directory; Conductor creates a Git worktree for the
   workspace, and `CONDUCTOR_WORKSPACE_PATH` is usually that checkout root. First confirm it matches
   `scope.root` from `oberth status --json`, then pass the same value to `down --worktree`; if they do
@@ -232,7 +232,7 @@ claude "$@"
 ```
 
 `trap` guarantees cleanup even when `claude` fails or is interrupted; services started by `oberth` are
-held by the daemon and do not disappear automatically when the script exits. For slow services (for
+held by the runtime service and do not disappear automatically when the script exits. For slow services (for
 example a Next.js first compile), declare the budget with `ready_timeout:` in the manifest;
 `--wait-timeout` can only tighten it, not replace it.
 
@@ -472,7 +472,7 @@ services:
 
 | Symptom | What to check first |
 |---|---|
-| `up --wait` reports `observation_*` | The current process cannot see the listener table; it is not that the service failed to start. Following the `hint`, run `oberth serve --detach` in a normal terminal, or run `oberth doctor --only listener_observation` |
+| `up --wait` reports `observation_*` | The current process cannot see the listener table; it is not that the service failed to start. Following the `hint`, run `oberth runtime service run --detach` in a normal terminal, or run `oberth doctor --only listener_observation` |
 | `up --wait` times out on `ready_timeout` | The service is not listening on the manifest port, or the health check did not pass. Check `oberth logs <service> --once`; when the framework quietly switches ports, switch to a strict-port option |
 | The failure reason is `port_occupied` | A fixed port is taken by another process. Stop the occupant or change the port; do not widen the target with `pkill` |
 | `down --worktree` returns `not_found` | What you passed is not the recorded checkout root, or the ledger row has no manifest to stop. Use `scope.root` from `status --json`; prefer `oberth down` before deletion |

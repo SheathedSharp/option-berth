@@ -25,7 +25,7 @@ func TestSilentGroupStopUsesCapturedBirthAndScope(t *testing.T) {
 		{Owner: state.Run{ID: "worker", Group: "demo", Name: "worker", RootPID: 424242}, StartedAt: at},
 		{Owner: state.Run{ID: "unselected", Group: "demo", Name: "other", RootPID: 424243}, StartedAt: at},
 	}, OnSignal: func(pid int) { signaled = pid }}}
-	rt := &Runtime{}
+	rt := &HostContext{}
 	rt.SetRuns(reg)
 	snap := state.Snapshot{Ports: []state.Port{{PID: 424241, Port: 12501, Group: ptr("demo")}}}
 	targets, receipt, err := captureSilentGroupStop(rt, snap, "demo", map[string]bool{"web": true, "worker": true}, nil, "stopped", false)
@@ -51,7 +51,7 @@ func TestSilentGroupStopFollowsTheExpectedRunNotTheService(t *testing.T) {
 		{Owner: state.Run{ID: "run-timed-out", Group: "demo", Name: "worker", RootPID: 424242}, StartedAt: at},
 		{Owner: state.Run{ID: "run-replacement", Group: "demo", Name: "worker", RootPID: 424243}, StartedAt: at},
 	}}}
-	rt := &Runtime{}
+	rt := &HostContext{}
 	rt.SetRuns(reg)
 	targets, _, err := captureSilentGroupStop(rt, state.Snapshot{}, "demo", nil,
 		map[string]string{"worker": "run-timed-out"}, "", false)
@@ -64,7 +64,7 @@ func TestSilentGroupStopFollowsTheExpectedRunNotTheService(t *testing.T) {
 }
 
 func TestSilentGroupStopRejectsMissingIdentityBeforeSignals(t *testing.T) {
-	rt := &Runtime{}
+	rt := &HostContext{}
 	rt.SetRuns(&capturedStopFixture{capture: GroupStopCapture{Runs: []GroupStopRun{{Owner: state.Run{RootPID: 424242}}}}})
 	targets, receipt, err := captureSilentGroupStop(rt, state.Snapshot{}, "demo", nil, nil, "", false)
 	if err == nil || len(targets) != 0 || receipt != nil {

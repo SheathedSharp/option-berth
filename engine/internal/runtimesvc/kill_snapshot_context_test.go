@@ -19,7 +19,7 @@ func TestKillSnapshotPreCancelledSkipsSelectionScan(t *testing.T) {
 	}})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	snap, err := killSnapshot(ctx, &Request{Runtime: &Runtime{Scanner: l}})
+	snap, err := killSnapshot(ctx, &Request{HostContext: &HostContext{Scanner: l}})
 	if !errors.Is(err, context.Canceled) || snap.Seq != 0 {
 		t.Fatalf("cancelled selection snapshot=%+v error=%v", snap, err)
 	}
@@ -35,7 +35,7 @@ func TestKillSnapshotCancellationReachesObservation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { _, err := killSnapshot(ctx, &Request{Runtime: &Runtime{Scanner: l}}); done <- err }()
+	go func() { _, err := killSnapshot(ctx, &Request{HostContext: &HostContext{Scanner: l}}); done <- err }()
 	select {
 	case <-entered:
 	case <-time.After(2 * time.Second):
@@ -62,7 +62,7 @@ func TestKillSnapshotCancelledLegacyObservationCannotSelect(t *testing.T) {
 		cancel()
 		return []ports.ListeningPort{{PID: 123, Port: 18000}}, nil
 	}})
-	snap, err := killSnapshot(ctx, &Request{Runtime: &Runtime{Scanner: l}})
+	snap, err := killSnapshot(ctx, &Request{HostContext: &HostContext{Scanner: l}})
 	if !errors.Is(err, context.Canceled) || len(snap.Ports) != 0 || l.Status().Seq != 0 {
 		t.Fatalf("cancelled observation selected targets: snapshot=%+v error=%v status=%+v", snap, err, l.Status())
 	}
@@ -72,7 +72,7 @@ func TestKillSnapshotCollectorFailureRetainsRPCError(t *testing.T) {
 	l := scanner.New(scanner.Options{Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
 		return nil, errors.New("collector unavailable")
 	}})
-	_, err := killSnapshot(context.Background(), &Request{Runtime: &Runtime{Scanner: l}})
+	_, err := killSnapshot(context.Background(), &Request{HostContext: &HostContext{Scanner: l}})
 	var re *rpc.Error
 	if !errors.As(err, &re) || re.Code != rpc.CodeInternal || !strings.Contains(re.Message, "scan failed: collector unavailable") {
 		t.Fatalf("ordinary collector error contract changed: %v", err)
@@ -85,7 +85,7 @@ func TestKillSnapshotStillForcesEachControlObservation(t *testing.T) {
 		calls++
 		return nil, nil
 	}})
-	req := &Request{Runtime: &Runtime{Scanner: l}}
+	req := &Request{HostContext: &HostContext{Scanner: l}}
 	for i := 0; i < 2; i++ {
 		if _, err := killSnapshot(context.Background(), req); err != nil {
 			t.Fatal(err)

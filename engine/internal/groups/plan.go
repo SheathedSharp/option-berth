@@ -29,7 +29,7 @@ type PlanOptions struct {
 	Only []string
 	// IncludeDependencies adds the transitive depends_on closure of Only to the
 	// plan. With it false the named services are kept as named — an older
-	// daemon's behaviour, which `oberth restart --only` still relies on.
+	// runtime service's behaviour, which `oberth restart --only` still relies on.
 	IncludeDependencies bool
 }
 

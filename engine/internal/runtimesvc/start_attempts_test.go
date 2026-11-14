@@ -8,9 +8,9 @@ import (
 )
 
 func TestJoinStartAttemptsCopiesWithoutTouchingTheSnapshot(t *testing.T) {
-	rt := &Runtime{}
+	rt := &HostContext{}
 	prepareMS := int64(800)
-	RegisterStartAttemptLookup(func(got *Runtime, group, service string) (StartAttempt, bool) {
+	RegisterStartAttemptLookup(func(got *HostContext, group, service string) (StartAttempt, bool) {
 		if got != rt || group != "demo" || service != "web" {
 			return StartAttempt{}, false
 		}
@@ -58,7 +58,7 @@ func TestJoinStartAttemptsCopiesWithoutTouchingTheSnapshot(t *testing.T) {
 }
 
 func TestJoinStartAttemptsWithoutALookupIsANoOp(t *testing.T) {
-	rt := &Runtime{}
+	rt := &HostContext{}
 	cached := []state.Group{{Name: "demo", Services: []state.Service{{Name: "web"}}}}
 	joined := joinStartAttempts(rt, cached)
 	if joined[0].Services[0].Starting != nil {

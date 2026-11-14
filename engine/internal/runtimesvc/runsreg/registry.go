@@ -1,12 +1,12 @@
-// Package runsreg is the daemon's registry of processes started through
+// Package runsreg is the runtime service's registry of processes started through
 // `oberth start` (and `runs.spawn`). It answers three questions: what is
 // running, which run owns a listening port, and where does a detached run log.
 //
-// The registry is in memory and authoritative while the daemon lives. Live
+// The registry is in memory and authoritative while the runtime service lives. Live
 // runs also mirror themselves into ~/.option-berth/runs.json for the direct
-// reader and restart recovery; the daemon attributes from this registry.
-// Finished runs are persisted in the daemon store so their evidence survives
-// a daemon restart.
+// reader and restart recovery; the runtime service attributes from this registry.
+// Finished runs are persisted in the runtime service store so their evidence survives
+// a runtime service restart.
 package runsreg
 
 import (
@@ -53,7 +53,7 @@ type Record struct {
 	StartedAt time.Time
 	// ConfigPath, StartID and Origin say where a run came from: the
 	// oberth.yaml it was started from, the groups.start that started it with
-	// its siblings, and the client name daemon.hello reported for it.
+	// its siblings, and the client name runtime.service.hello reported for it.
 	ConfigPath string
 	StartID    string
 	Origin     string
@@ -110,7 +110,7 @@ type Registry struct {
 	now              func() time.Time
 
 	// exits is the history of runs that ended, oldest first, capped at
-	// maxExits. The daemon store is the durable copy; this slice is the hot
+	// maxExits. The runtime service store is the durable copy; this slice is the hot
 	// view used by RPC and group resolution.
 	exits   []Exit
 	history *store.Store
@@ -130,9 +130,9 @@ func New() *Registry {
 	}
 }
 
-// SetHistoryStore attaches the daemon store used for finished-run evidence.
+// SetHistoryStore attaches the runtime service store used for finished-run evidence.
 // The registry remains usable without a store (for example in a read-only
-// fallback or a unit test), but a daemon with a store calls this before it
+// fallback or a unit test), but a runtime service with a store calls this before it
 // accepts clients.
 func (r *Registry) SetHistoryStore(st *store.Store) {
 	r.mu.Lock()
@@ -210,7 +210,7 @@ func (r *Registry) Unregister(pid int) bool {
 }
 
 // PruneCodeSnapshots removes source snapshots whose run is no longer live.
-// A daemon crash can leave a snapshot behind; startup is when the live set is
+// A runtime service crash can leave a snapshot behind; startup is when the live set is
 // known and no new run has been started yet.
 func (r *Registry) PruneCodeSnapshots() {
 	r.mu.Lock()
@@ -381,8 +381,8 @@ func (r *Registry) Lookup(pid int) (Record, bool) {
 // belongs to a different process. The scanner calls it each tick; List and the
 // resolver call it too, so a stale run never survives a read.
 //
-// The pid check matters for runs imported from runs.json after a daemon
-// restart: those were not the daemon's children, so nothing reaps them and a
+// The pid check matters for runs imported from runs.json after a runtime service
+// restart: those were not the runtime service's children, so nothing reaps them and a
 // recycled pid would otherwise keep a dead run "alive" — long enough for a
 // later `down` to signal a process this tool never started.
 func (r *Registry) Prune() {
@@ -450,7 +450,7 @@ func (r *Registry) pidReused(pid int, rec Record) bool {
 // esbuild all resolve to the run that started them.
 //
 // It answers with the whole run because the resolver stamps it onto the row:
-// this registry is the daemon's authority on its own runs, and it knows a
+// this registry is the runtime service's authority on its own runs, and it knows a
 // registration the moment `runs.register` returns.
 func (r *Registry) Run(p state.Port) (state.Run, bool) {
 	if rec, found := r.ancestor(p.PID, p.PPID); found {
@@ -535,9 +535,9 @@ func (r *Registry) Session(p state.Port) (state.Session, bool) {
 	return state.Session{}, false
 }
 
-// SessionRuns lists every live run that carries a session. The daemon's
+// SessionRuns lists every live run that carries a session. The runtime service's
 // sessions handlers read it through an interface assertion on the installed run
-// registry, which is how package daemon reaches this data without importing the
+// registry, which is how package runtime service reaches this data without importing the
 // package that registers itself into it.
 func (r *Registry) SessionRuns() []sessions.Live {
 	out := []sessions.Live{}

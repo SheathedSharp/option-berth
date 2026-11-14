@@ -10,7 +10,7 @@ import (
 )
 
 func TestLateReleaseCannotUnlinkSuccessorLock(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "daemon.lock")
+	path := filepath.Join(t.TempDir(), "runtime-service.lock")
 	first, err := AcquireLock(path)
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +48,7 @@ func TestLateReleaseCannotUnlinkSuccessorLock(t *testing.T) {
 }
 
 func TestWaitForLockReleaseTrustsKernelNotDiagnosticPID(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "daemon.lock")
+	path := filepath.Join(t.TempDir(), "runtime-service.lock")
 	held, err := AcquireLock(path)
 	if err != nil {
 		t.Fatal(err)

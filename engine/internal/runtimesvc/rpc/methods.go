@@ -20,7 +20,7 @@ import (
 // apart.
 //
 // A client holding a port key from the stream takes it apart itself and sends
-// Port with BindAddress. The daemon reads the fields it acts on and nothing
+// Port with BindAddress. The runtime service reads the fields it acts on and nothing
 // else: a joined spelling it would have to expand first is the shape that gets
 // accepted and ignored, so no such field is published.
 type Selector struct {
@@ -39,7 +39,7 @@ type MutationResult struct {
 }
 
 // KillEnvelope wraps the per-target outcome of a kill-shaped method. The rows
-// are state.KillResult — one Go type the killer, the CLI and the daemon all
+// are state.KillResult — one Go type the killer, the CLI and the runtime service all
 // fill in — so the schema publishes it under its plain name and this envelope
 // stays named for what it wraps.
 type KillEnvelope struct {
@@ -58,30 +58,30 @@ type OKResult struct {
 	OK bool `json:"ok"`
 }
 
-// Capabilities are the optional behaviours a daemon announces in
-// daemon.hello. A client checks for one before sending a manifest or a field an
-// older daemon would drop without saying so: that silent drop, not the older
-// daemon itself, is what every name here exists to prevent.
+// Capabilities are the optional behaviours a runtime service announces in
+// runtime.service.hello. A client checks for one before sending a manifest or a field an
+// older runtime service would drop without saying so: that silent drop, not the older
+// runtime service itself, is what every name here exists to prevent.
 const (
 	// CapabilityAutoPorts covers `port: auto`, `env:` and ${…} references. An
-	// older daemon parses such a file itself and reports it invalid, which
-	// blames the file for the daemon's age.
+	// older runtime service parses such a file itself and reports it invalid, which
+	// blames the file for the runtime service's age.
 	CapabilityAutoPorts = "groups.autoports"
 
 	// CapabilityManifestExtras covers the manifest's `env_file:` and
-	// `workspace:` references. An older daemon ignores both, so a service would
+	// `workspace:` references. An older runtime service ignores both, so a service would
 	// start without the env file's values and a workspace address would stay
 	// unexpanded.
 	CapabilityManifestExtras = "groups.manifest.extras"
 
 	// CapabilityStartDependencies covers `include_dependencies: true` in
 	// groups.start: growing the named services' plan with their transitive
-	// depends_on closure. An older daemon starts only the named services.
+	// depends_on closure. An older runtime service starts only the named services.
 	CapabilityStartDependencies = "groups.start.dependencies"
 
 	// CapabilityReadyTimeout covers the manifest's per-service `ready_timeout:`
 	// — both the dependency waits and the budget a start chunk publishes. An
-	// older daemon keeps its fixed 30s and would fail a slow dependency at the
+	// older runtime service keeps its fixed 30s and would fail a slow dependency at the
 	// wrong deadline.
 	CapabilityReadyTimeout = "groups.start.ready_timeout"
 
@@ -93,13 +93,13 @@ const (
 	// progress chunks on `groups.start` when the caller asks for them, and a
 	// `starting` object on the service row. It is diagnostic, never a
 	// prerequisite — an old client that does not set progress keeps the old
-	// stream, and a new client talking to an old daemon simply gets no
+	// stream, and a new client talking to an old runtime service simply gets no
 	// progress.
 	CapabilityStartPhases = "groups.start.phases"
 
 	// CapabilityKillExpectRuns covers `expect_runs` in groups.kill: a stop
 	// scoped to the runs the caller started, so a service another controller
-	// restarted in the meantime is left alone. An older daemon ignores the
+	// restarted in the meantime is left alone. An older runtime service ignores the
 	// field and stops whatever answers to the service's name, which is exactly
 	// the replacement run that field exists to protect.
 	CapabilityKillExpectRuns = "groups.kill.expect_runs"
@@ -108,9 +108,9 @@ const (
 // Include lists the optional per-subscriber enrichments ("stats", "health").
 type Include []string
 
-// ---------------------------------------------------------------- daemon ---
+// ---------------------------------------------------------------- runtime service ---
 
-type DaemonHelloParams struct {
+type RuntimeServiceHelloParams struct {
 	Client        string `json:"client"` // the engine's own client sends "cli"
 	ClientVersion string `json:"client_version"`
 	Keepalive     bool   `json:"keepalive,omitempty"`
@@ -121,19 +121,19 @@ type DaemonHelloParams struct {
 // the alias keeps existing callers on the same wire shape.
 type ObservationStatus = state.Observation
 
-type DaemonHelloResult struct {
-	ProtocolVersion string             `json:"protocol_version"`
-	DaemonVersion   string             `json:"daemon_version"`
-	PID             int                `json:"pid"`
-	StartedAt       string             `json:"started_at"`
-	Capabilities    []string           `json:"capabilities"`
-	Socket          string             `json:"socket"`
-	BinaryPath      string             `json:"binary_path"`
-	Keepalive       bool               `json:"keepalive"`
-	Observation     *ObservationStatus `json:"observation,omitempty"`
+type RuntimeServiceHelloResult struct {
+	ProtocolVersion       string             `json:"protocol_version"`
+	RuntimeServiceVersion string             `json:"runtime_service_version"`
+	PID                   int                `json:"pid"`
+	StartedAt             string             `json:"started_at"`
+	Capabilities          []string           `json:"capabilities"`
+	Socket                string             `json:"socket"`
+	BinaryPath            string             `json:"binary_path"`
+	Keepalive             bool               `json:"keepalive"`
+	Observation           *ObservationStatus `json:"observation,omitempty"`
 }
 
-type DaemonStatusResult struct {
+type RuntimeServiceStatusResult struct {
 	// PID and Uptime identify the process and say how long it has been
 	// answering; Subscribers counts the live state subscriptions, and LastScanAt
 	// is when the port scanner last finished a pass.
@@ -141,7 +141,7 @@ type DaemonStatusResult struct {
 	Uptime      string `json:"uptime"`
 	Subscribers int    `json:"subscribers"`
 	LastScanAt  string `json:"last_scan_at"`
-	// Commit and Built are what this daemon was compiled from. A daemon is
+	// Commit and Built are what this runtime service was compiled from. A runtime service is
 	// started once and keeps running, so after any change to the engine it is
 	// answering from the previous build — and a reader comparing these with its
 	// own is the only way to see that. The CLI does exactly that.
@@ -151,27 +151,27 @@ type DaemonStatusResult struct {
 	// moves between the base and a ceiling as scans come back unchanged.
 	ScanIntervalMs int `json:"scan_interval_ms"`
 	// ScanBaseIntervalMs and StatsIntervalMs are the settings behind that
-	// cadence: `daemon.scan_interval` and `daemon.stats_interval` as this daemon
+	// cadence: `runtime_service.scan_interval` and `runtime_service.stats_interval` as this runtime service
 	// resolved them at startup. Both are read once, so checking them is how you
-	// tell whether a config edit took without restarting the daemon to guess.
+	// tell whether a config edit took without restarting the runtime service to guess.
 	ScanBaseIntervalMs int `json:"scan_base_interval_ms"`
 	StatsIntervalMs    int `json:"stats_interval_ms"`
-	// Scans counts the port scans this daemon has run. Two clients reading
-	// through the daemon must not make it grow faster than one does.
+	// Scans counts the port scans this runtime service has run. Two clients reading
+	// through the runtime service must not make it grow faster than one does.
 	Scans  int64  `json:"scans"`
 	DBPath string `json:"db_path"`
-	// Observation says whether this daemon can see its own listeners. A daemon
+	// Observation says whether this runtime service can see its own listeners. A runtime service
 	// started inside a sandbox can run while blind; the CLI and the desktop app
 	// need to see that before trusting an empty port list.
 	Observation *ObservationStatus `json:"observation,omitempty"`
 }
 
-// DaemonSchemaResult is the JSON Schema bundle this package generates.
-type DaemonSchemaResult struct {
+// RuntimeServiceSchemaResult is the JSON Schema bundle this package generates.
+type RuntimeServiceSchemaResult struct {
 	Schema json.RawMessage `json:"schema"`
 }
 
-// DoctorCheck is one diagnostic `oberth doctor` and `daemon.doctor` report. It
+// DoctorCheck is one diagnostic `oberth doctor` and `runtime.service.doctor` report. It
 // is the single Go type behind the table, the CLI's `--json` and the wire
 // result, so a client that renders one renders the other.
 type DoctorCheck struct {
@@ -184,7 +184,7 @@ type DoctorCheck struct {
 	// Summary is the one line a table row shows.
 	Summary string `json:"summary"`
 	// Detail is the evidence: paths, versions, the parse error. It is also where
-	// a check the daemon cannot run from its own process says so.
+	// a check the runtime service cannot run from its own process says so.
 	Detail string `json:"detail,omitempty"`
 	// Fix is the human hint: what to run, or what to edit.
 	Fix string `json:"fix,omitempty"`
@@ -192,28 +192,28 @@ type DoctorCheck struct {
 	Fixable bool `json:"fixable"`
 }
 
-type DaemonDoctorParams struct {
+type RuntimeServiceDoctorParams struct {
 	// Only keeps just these checks. An entry matches a check id exactly, or
 	// every check under it when the id names a tool and a single check with a
 	// dot (`mcp_registered`).
 	Only []string `json:"only,omitempty"`
 	// Project is the directory the project-scoped checks look at. Empty means
-	// the process's own working directory — for the daemon, wherever it was
+	// the process's own working directory — for the runtime service, wherever it was
 	// started — so a client that cares sends it.
 	Project string `json:"project,omitempty"`
 }
 
-// DaemonDoctorResult is what both `oberth doctor --json` and `daemon.doctor`
+// RuntimeServiceDoctorResult is what both `oberth doctor --json` and `runtime.service.doctor`
 // return. OK is false when at least one check failed.
-type DaemonDoctorResult struct {
+type RuntimeServiceDoctorResult struct {
 	OK     bool          `json:"ok"`
 	Checks []DoctorCheck `json:"checks"`
 	// Version is the version of the process that ran the checks: the CLI for
-	// `oberth doctor`, the daemon for `daemon.doctor`.
+	// `oberth doctor`, the runtime service for `runtime.service.doctor`.
 	Version string `json:"version"`
-	// DaemonVersion is the version the daemon answered with, empty when no
-	// daemon is reachable: `oberth doctor` still runs with none up.
-	DaemonVersion string `json:"daemon_version"`
+	// RuntimeServiceVersion is the version the runtime service answered with, empty when no
+	// runtime service is reachable: `oberth doctor` still runs with none up.
+	RuntimeServiceVersion string `json:"runtime_service_version"`
 }
 
 // ----------------------------------------------------------------- state ---
@@ -232,12 +232,12 @@ type StateSnapshotParams struct {
 // snapshot while new clients can opt into the safe projection.
 type StateSnapshotResult struct {
 	// Legacy state.snapshot fields.
-	Seq           uint64                `json:"seq,omitempty"`
-	At            string                `json:"at,omitempty"`
-	DaemonVersion string                `json:"daemon_version,omitempty"`
-	Ports         []state.Port          `json:"ports,omitempty"`
-	Groups        []state.Group         `json:"groups,omitempty"`
-	Sessions      []state.SessionRecord `json:"sessions,omitempty"`
+	Seq                   uint64                `json:"seq,omitempty"`
+	At                    string                `json:"at,omitempty"`
+	RuntimeServiceVersion string                `json:"runtime_service_version,omitempty"`
+	Ports                 []state.Port          `json:"ports,omitempty"`
+	Groups                []state.Group         `json:"groups,omitempty"`
+	Sessions              []state.SessionRecord `json:"sessions,omitempty"`
 
 	// Scoped stream fields.
 	Type          string                 `json:"type,omitempty"`
@@ -247,7 +247,7 @@ type StateSnapshotResult struct {
 }
 
 func (r StateSnapshotResult) Legacy() state.Snapshot {
-	return state.Snapshot{Seq: r.Seq, At: r.At, DaemonVersion: r.DaemonVersion, Ports: r.Ports, Groups: r.Groups, Sessions: r.Sessions}
+	return state.Snapshot{Seq: r.Seq, At: r.At, RuntimeServiceVersion: r.RuntimeServiceVersion, Ports: r.Ports, Groups: r.Groups, Sessions: r.Sessions}
 }
 
 func (r StateSnapshotResult) Stream() state.StreamSnapshot {
@@ -257,7 +257,7 @@ func (r StateSnapshotResult) Stream() state.StreamSnapshot {
 type StateSubscribeParams struct {
 	Include Include `json:"include,omitempty"`
 	Events  bool    `json:"events,omitempty"`
-	// AfterSeq asks the daemon to resume from this published sequence. When the
+	// AfterSeq asks the runtime service to resume from this published sequence. When the
 	// in-memory replay window no longer covers it, subscribe safely falls back
 	// to a fresh snapshot.
 	AfterSeq uint64 `json:"after_seq,omitempty"`
@@ -349,12 +349,12 @@ type ServiceCode struct {
 type GroupsKillParams struct {
 	Name string `json:"name"`
 	// ConfigPath names the group by its oberth.yaml instead of by name, for a
-	// caller that knows the file but not the name the daemon publishes its
+	// caller that knows the file but not the name the runtime service publishes its
 	// group under (`<project>@<worktree>` in a linked worktree, an alias).
 	ConfigPath *string `json:"config_path,omitempty"`
 	// Worktree names the checkout by its root path. It is the explicit stop
 	// entry for an orchestrator after the directory was deleted or moved: the
-	// daemon resolves the recorded group from the identity ledger instead of
+	// runtime service resolves the recorded group from the identity ledger instead of
 	// reading a manifest that may no longer exist. Mutually exclusive with
 	// Name, ConfigPath and Identity.
 	WorktreePath *string `json:"worktree_path,omitempty"`
@@ -408,12 +408,12 @@ type GroupsStartParams struct {
 	// it false and keeps restarting exactly what it names. Unknown names in
 	// Only are still not_found with or without it.
 	IncludeDependencies bool `json:"include_dependencies,omitempty"`
-	// Env is what the services start in, layered over the daemon's own
+	// Env is what the services start in, layered over the runtime service's own
 	// environment. The CLI sends its shell's, so a service sees the PATH,
-	// toolchain and virtualenv it was started from rather than the daemon's.
-	// Omitted, the services inherit the daemon's.
+	// toolchain and virtualenv it was started from rather than the runtime service's.
+	// Omitted, the services inherit the runtime service's.
 	Env map[string]string `json:"env,omitempty"`
-	// Progress asks the daemon to push in-flight `starting` chunks while a
+	// Progress asks the runtime service to push in-flight `starting` chunks while a
 	// service waits for a dependency, runs prepare, or is being spawned. They
 	// are diagnostic, not outcomes: the per-service outcome chunks and
 	// GroupsStartEnd are unchanged. Omitted (the historical shape) means no
@@ -440,7 +440,7 @@ type GroupsStartChunk struct {
 	// `starting` is an in-flight progress observation requested with
 	// GroupsStartParams.Progress; it never appears in the final summary.
 	State string `json:"state,omitempty" jsonschema:"enum=started,enum=skipped,enum=failed,enum=ready_timeout,enum=starting"`
-	// Ready is the CLI's readiness annotation, not a daemon fact: true only
+	// Ready is the CLI's readiness annotation, not a runtime service fact: true only
 	// when this invocation waited and confirmed the service. false on a
 	// started service means "started, readiness not confirmed". Absent for
 	// skipped and failed services.
@@ -451,11 +451,11 @@ type GroupsStartChunk struct {
 	Port    int    `json:"port,omitempty"`
 	LogPath string `json:"log_path,omitempty"`
 	// RunID is the run this chunk is about: the run a started service became,
-	// or the live run a skipped chunk matched. It is empty when the daemon
-	// cannot name one (an unmanaged listener, or an older daemon).
+	// or the live run a skipped chunk matched. It is empty when the runtime service
+	// cannot name one (an unmanaged listener, or an older runtime service).
 	RunID string `json:"run_id,omitempty"`
 	// ReadyTimeout is this service's effective readiness budget, a normalized
-	// Go duration ("30s"). A daemon that predates the field omits it, and a
+	// Go duration ("30s"). A runtime service that predates the field omits it, and a
 	// client falls back to 30s.
 	ReadyTimeout string `json:"ready_timeout,omitempty"`
 	// The remaining fields are present only on a `starting` progress chunk.
@@ -507,7 +507,7 @@ type GroupsStartEnd struct {
 // project, so the main checkout's group becomes To and every linked worktree's
 // group becomes `<To>@<worktree>`. A project whose main checkout has a
 // `oberth.yaml` is renamed by writing `name:` into that file; one without keeps
-// the new name in the daemon.
+// the new name in the runtime.service.
 //
 // Errors: invalid_params for an empty name or a To that is empty or holds `@`,
 // `/` or whitespace, and for a group whose name is not a project's to change —
@@ -542,7 +542,7 @@ type GroupConfig struct {
 }
 
 type GroupsConfigGetParams struct {
-	// Name and Path name the file to read: the group as the daemon publishes it,
+	// Name and Path name the file to read: the group as the runtime service publishes it,
 	// or the oberth.yaml itself. A path wins when both are sent.
 	Name *string `json:"name,omitempty"`
 	Path *string `json:"path,omitempty"`
@@ -699,9 +699,9 @@ type RunsRegisterParams struct {
 	ID *string `json:"id,omitempty"`
 	// Session is the agent session that asked for this run. The caller detects
 	// it: `oberth start` reads its own environment, which is the agent's, while
-	// the daemon's is not.
+	// the runtime service's is not.
 	Session *state.Session `json:"session,omitempty"`
-	// AllowOutsideHome opts out of the daemon's refusal to record a run whose
+	// AllowOutsideHome opts out of the runtime service's refusal to record a run whose
 	// cwd is outside the user's home. `oberth start` sets it unconditionally:
 	// that command runs as the user and has no `--allow-outside-home` flag, so
 	// the refusal here protects callers that do not already speak for the user.
@@ -725,7 +725,7 @@ type RunsUnregisterParams struct {
 type RunsListResult struct {
 	Runs []RunRecord `json:"runs"`
 	// Exited is the runs that have ended, newest first, with the code each one
-	// exited on and the last lines it logged. The daemon keeps a bounded history
+	// exited on and the last lines it logged. The runtime service keeps a bounded history
 	// in its store and restores it when it restarts.
 	Exited []RunRecord `json:"exited"`
 }
@@ -753,7 +753,7 @@ type RunRecord struct {
 	Status string `json:"status"`
 	// ConfigPath, StartID and Origin say where the run came from: the
 	// oberth.yaml it was started from, the `groups.start` that started it with
-	// its siblings, and the client name reported in daemon.hello.
+	// its siblings, and the client name reported in runtime.service.hello.
 	ConfigPath string `json:"config_path,omitempty"`
 	StartID    string `json:"start_id,omitempty"`
 	Origin     string `json:"origin,omitempty"`
@@ -764,7 +764,7 @@ type RunRecord struct {
 	LogPath string `json:"log_path,omitempty"`
 	// LogOffset is where this run's part of LogPath begins. The file is
 	// appended to across runs, so a reader starts here to show one run and not
-	// the generations before it. It is null when an older daemon did not record
+	// the generations before it. It is null when an older runtime service did not record
 	// the offset: zero is a real value (the file was empty at start), so the
 	// two must not share a spelling.
 	LogOffset *int64 `json:"log_offset,omitempty"`
@@ -789,10 +789,10 @@ type RunRecord struct {
 
 type RunsSpawnParams struct {
 	Argv []string `json:"argv"`
-	// Cwd is where the command runs. Omitted, the daemon resolves its own
+	// Cwd is where the command runs. Omitted, the runtime service resolves its own
 	// working directory.
 	Cwd string `json:"cwd"`
-	// Env is layered over the daemon's own environment.
+	// Env is layered over the runtime service's own environment.
 	Env map[string]string `json:"env,omitempty"`
 	// Group and Name are the identity the caller wants the run recorded under;
 	// they are resolved, not taken literally.
@@ -801,7 +801,7 @@ type RunsSpawnParams struct {
 	// PortHint is the port the caller expects this run to bind.
 	PortHint *int `json:"port_hint,omitempty"`
 	// Session is the agent session that asked for the run, and AllowOutsideHome
-	// opts out of the daemon's home-directory refusal.
+	// opts out of the runtime service's home-directory refusal.
 	Session          *state.Session `json:"session,omitempty"`
 	AllowOutsideHome bool           `json:"allow_outside_home,omitempty"`
 }
@@ -829,7 +829,7 @@ type SessionsKillParams struct {
 
 // ---------------------------------------------------------------- config ---
 
-// ConfigGetResult is the daemon's config file as a plain map, so a key this
+// ConfigGetResult is the runtime service's config file as a plain map, so a key this
 // build does not know survives a round trip through it.
 type ConfigGetResult struct {
 	Config map[string]any `json:"config"`
@@ -847,7 +847,7 @@ type ConfigSetResult struct {
 	Config map[string]any `json:"config"`
 }
 
-// ConfigPathResult is where the daemon reads and writes its config.
+// ConfigPathResult is where the runtime service reads and writes its config.
 type ConfigPathResult struct {
 	Path string `json:"path"`
 }

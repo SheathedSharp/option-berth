@@ -41,6 +41,14 @@ service tree, the Windows GUI, or native arm64 execution.
 
 Internal package paths in historical records below refer to their recorded revisions. Current host/domain paths are `internal/runtimesvc` and `internal/runtimecore`; public protocol and disk names have not migrated.
 
+## Protocol-3 naming and storage verification
+
+The naming audit (`scripts/check_runtime_naming.py`, also used by `runtime_naming_test.py`) rejects active retired product identifiers and explains bounded rejection/migration, SQL-history, Docker and standard-library exceptions. The per-PR smoke calls `check_runtime_naming_cli.py` against the actual candidate before service scenarios; it checks public help, usage rejection, JSON and doctor IDs without starting a host.
+
+`scripts/check_storage_ownership.py --legacy-engine <released-v2.4.0-engine-checkout>` compiles disposable adapters against the exact unmodified released Store and the candidate Store. It verifies kernel-enforced exclusion, owner reads, failure/connection-loss/exit release and data preservation using private databases, not product services. `scripts/check_runtime_availability.py --binary <candidate> --legacy-engine <released-engine>` additionally requires macOS `sandbox-exec`: user-tree access, outbound IP and other-process inspection/signalling stay denied while the real candidate starts, refuses duplicate writers, serves storage reads, accepts subscription reconnect and stops over RPC. Neither is evidence of successful system scanning or real service-change cursor replay.
+
+Historical execution records below predate the protocol-3 rename. Package paths and command spellings have been normalized for reproduction; their old results do **not** establish validation of the current candidate or a new release. Run only checks whose side effects are authorized in the current environment.
+
 ## Reproducing locally
 
 The Go version follows `engine/go.mod`. Service tests use an isolated HOME/BERTH_HOME, socket, and
@@ -62,9 +70,9 @@ services.
 
 ### Isolated Runtime policy and comparative checks
 
-`internal/runtimecheck` imports production packages without their `_test.go`/`TestMain` entry points. Its collectors, PID identity/liveness/ancestry, statistics and publisher are injected; its manifests, SQLite files and locks are temporary. A fully injected in-memory scanner loop verifies independent background publication and cancellation/join, not a real daemon or service handoff. `internal/runtimecore` pins shared readiness/generation/restart policies; `internal/attn/runner` uses fake status/streams and local fake providers. These tests neither scan/signal user services nor contact a real model. Run them under an owned temporary HOME/BERTH_HOME; they are not permission to execute whole-package daemon/cmd TestMain on a shared development machine.
+`internal/runtimecheck` imports production packages without their `_test.go`/`TestMain` entry points. Its collectors, PID identity/liveness/ancestry, statistics and publisher are injected; its manifests, SQLite files and locks are temporary. A fully injected in-memory scanner loop verifies independent background publication and cancellation/join, not a real runtime service or service handoff. `internal/runtimecore` pins shared readiness/generation/restart policies; `internal/attn/runner` uses fake status/streams and local fake providers. These tests neither scan/signal user services nor contact a real model. Run them under an owned temporary HOME/BERTH_HOME; they are not permission to execute whole-package runtime service/cmd TestMain on a shared development machine.
 
-`scripts/measure_runtime.py --baseline <existing-local-commit>` archives that local engine into its own temporary directory and runs the same isolated harness on both trees. It measures one worker update across three real linked Git worktrees in a temporary repository with synthetic declarations while a fake collector is held for 15ms, plus full-status reads on a scaled 250ms attention timeline (5ms checks, 50ms candidate calibration, two changes). It also checks current/prior SQLite writer-to-read-only-reader compatibility in both directions and typed live-mirror decoding without PID probes. It executes no product binary, daemon, Docker or remote provider, and does not clone/fetch. A failed correctness check invalidates timing; these figures do not establish real-service throughput, actual platform lifecycle behavior or an overall product speed-up.
+`scripts/measure_runtime.py --baseline <existing-local-commit>` archives that local engine into its own temporary directory and runs the same isolated harness on both trees. It measures one worker update across three real linked Git worktrees in a temporary repository with synthetic declarations while a fake collector is held for 15ms, plus full-status reads on a scaled 250ms attention timeline (5ms checks, 50ms candidate calibration, two changes). It also checks current/prior SQLite writer-to-read-only-reader compatibility in both directions and typed live-mirror decoding without PID probes. It executes no product binary, runtime service, Docker or remote provider, and does not clone/fetch. A failed correctness check invalidates timing; these figures do not establish real-service throughput, actual platform lifecycle behavior or an overall product speed-up.
 
 The normal unit gate includes these packages. The shared race manifest adds the pure Runtime policy, fake-source harness and optional attention packages; existing packages and requirements are not removed. Changing that manifest still requires the repository's maintainer-owned gate. Cross-compilation and `go test -c` only establish compilation, never native execution or real service acceptance.
 
@@ -92,7 +100,7 @@ python3 scripts/check_skill_contract.py --skill-dir ../option-berth-skill
 The unit tests in `internal/groups` cover the line format, quoting, and escaping of `env_file`, that
 errors do not echo values, and `workspace:` address resolution (the other side's fixed port, the
 other side's live state, rejection when `port: auto` is not running), name conflicts, and reference
-validation. `internal/runtimesvc/groupstart` uses a real daemon and child processes to verify `env_file`
+validation. `internal/runtimesvc/groupstart` uses a real runtime service and child processes to verify `env_file`
 precedence (caller < `env_file` < `PORT` < service `env:`) and `machine:` / `workspace:` addresses;
 `TestExpandStart*` / `TestOverlayRunAddresses*` in `internal/cmd` cover address expansion for
 `oberth start`, rejection of unknown references, and filling in with the run's assigned port when
@@ -112,7 +120,7 @@ and refusal to read another run's snapshot. `internal/groups` covers parsing of 
 out-of-bounds validation, the difference between `sources: []` and omitting it, and that a YAML
 round trip does not lose `sources: []`; the field coverage tests in `internal/state` ensure that new
 fields take part in equality comparison.
-`internal/runtimesvc/groupstart` uses a real daemon to verify that the snapshot is actually written at
+`internal/runtimesvc/groupstart` uses a real runtime service to verify that the snapshot is actually written at
 start, and that `sources: []` writes nothing; `TestAnnotateCodeFacts*` in `internal/cmd` covers the
 three states "changed / unchanged / unknown", `TestStatusOnly*` confirms that code comparison
 follows the `--only` selection, and `TestBriefStatus*` confirms that `--brief` keeps the code
@@ -137,11 +145,11 @@ the init/kill cases in `internal/cmd` were limited by this machine's listener ta
 `netstat -anvl -p tcp` fork/exec'd from a Go process exits 0 with 0 bytes on stdout, and
 `sysctl net.inet.tcp.pcblist_n` is likewise empty. Running it directly in the same shell yields about
 74KB, and netstat started through `sh -c exec`, Apple `/usr/bin/python3`, `perl`, `ruby` and `env`
-works normally; only `bash -c` is reliably empty. The daemon and CLI on this machine therefore always
+works normally; only `bash -c` is reliably empty. The runtime service and CLI on this machine therefore always
 report `observation_blind`. The collector now falls back to `lsof`
 (`-a -n -P -w +c 0 -iTCP -sTCP:LISTEN -Fpcltn`) when "netstat ran successfully but printed not one
 row"; when the probe can see its own listener it still reports observable, and the detail and
-`daemon status` state that this round was observed through lsof. Actual inputs and results:
+`runtime service status` state that this round was observed through lsof. Actual inputs and results:
 
 - `go test ./internal/ports -run TestScanFindsIsolatedListener`: failed before the fallback
   (`netstat: exited 0 but printed no listening table`), passes after it.
@@ -157,7 +165,7 @@ row"; when the probe can see its own listener it still reports observable, and t
   `internal/ports/testdata/darwin_netstat_tcp46.txt` (pure decoding, no readable real table needed).
 - The fallback is narrower: a non-root `lsof` cannot see other users' sockets. On this machine
   `netstat` has 54 listening ports and `lsof` only 49; the 5 missing ones are all held by root
-  processes (launchd's 445/88/8021, QQPCMgrDaemon's 58827, verge-mihomo's 7897). option-berth's own
+  processes (launchd's 445/88/8021, QQPCMgrRuntimeService's 58827, verge-mihomo's 7897). option-berth's own
   services run as the same user and are unaffected; when judging whether a foreign port is taken, read
   this difference as `docs/cli.md` describes.
 
@@ -174,7 +182,7 @@ with a throwaway git project that runs no services:
   stderr note, and `init --dry-run --json` still parses.
 - With the shims removed (this machine then takes A1's netstat→lsof fallback) the comment returns to
   `Nothing was listening inside this project` and stderr says `0 listening ports`.
-- `go test ./internal/cmd ./internal/groups ./internal/draft ./internal/daemon/...` passes. New
+- `go test ./internal/cmd ./internal/groups ./internal/draft ./internal/runtimesvc/...` passes. New
   cases: `TestInitSaysListeningIsUnknownWhenTheScanFails`, `TestInitDraftRunsWhenTheScanIsBlind`,
   `TestProposeSaysListeningIsUnknownWhenTheScanFailed`,
   `TestProposePartialObservationKeepsTheIdleSentence`, `TestBriefSaysTheListenerTableIsUnknown`.
@@ -184,7 +192,7 @@ example project lives inside `HOME`, because the engine refuses to start command
 the `oberth` built from this branch:
 
 - `doctor --only listener_observation` → `ok  this process can see its own listener`.
-- `serve --detach`, then `daemon status --json`'s `observation` →
+- `runtime service run --detach`, then `runtime service status --json`'s `observation` →
   `{"state":"observable","detail":"saw this process's listener on 127.0.0.1:60344 (pid 32739) via lsof"}`.
   The `via lsof` in the detail is A1's collector source; no extra JSON field was added.
 - `examples/hello-worktree`: `up --wait --json` brings both services up as `started`/`ready` (api on
@@ -196,24 +204,24 @@ the `oberth` built from this branch:
   failed run made `down` report `ambiguous: group hello-worktree is shared by wt_…, wt_…`; a fresh
   `BERTH_HOME` cleared it, so it was leftover registration of the same directory, not this change.
 - `go test -tags integration ./internal/scenario/... -count=1` → passes (63.6s).
-- `daemon stop` afterwards; temporary directories collected; no daemon left running.
+- `runtime service stop` afterwards; temporary directories collected; no runtime service left running.
 
-Not covered here: the daemon's `groups.init` is unchanged. Its scan failure already returns an
+Not covered here: the runtime service's `groups.init` is unchanged. Its scan failure already returns an
 `observation_*` RPC error rather than an empty table, so it has no "empty table read as idle" path,
-and the CLI's `oberth init` does not go through the daemon.
+and the CLI's `oberth init` does not go through the runtime.service.
 
 **Narrow-table coverage (2026-11-04)**: the lsof fallback still answers "can this process see its own
 listener", but it can no longer be read as "this port is free". Same machine (macOS 27.2 / 26B123),
 commits `94a90f6` and `9d863f1`, isolated `HOME`/`BERTH_HOME`, throwaway git project declaring
 `machine:` 445 (launchd), 12101 (another user) and 6379 (this user's redis):
 
-- `status --json --no-daemon` → `observation: {"state":"observable","source":"lsof",…}`; 445 and
+- `status --json --no-runtime-service` → `observation: {"state":"observable","source":"lsof",…}`; 445 and
   12101 are `"listening": false, "listening_known": false`; 6379 is `"listening": true,
   "listening_known": true`.
 - `status` → `listeners limited · …`, `depends on ldap 445 listening unknown · qq 12101 listening
   unknown · redis 6379 listening`.
-- `serve --detach`, then `daemon status --json` → `observation.source: "lsof"` with the probe detail;
-  `status --json` through the daemon returns the same three rows; `daemon stop` afterwards, no daemon
+- `runtime service run --detach`, then `runtime service status --json` → `observation.source: "lsof"` with the probe detail;
+  `status --json` through the runtime service returns the same three rows; `runtime service stop` afterwards, no runtime service
   left running.
 - `go test -count=1 -timeout=8m ./...` → clean. New cases:
   `TestNarrowScanPublishesItsCollectorAndUnknownMachinePorts`,
@@ -249,7 +257,7 @@ Verified on this machine (macOS 27.2 / 26B123), all three re-run against this br
   the helper is what the passing case depends on, not a coincidental green.
 - `go test -tags integration -count=1 ./internal/scenario/` → passes (48.4s), the whole real-service
   suite rather than the three attention cases alone.
-- `go test ./internal/ports/... ./internal/daemon/... ./internal/cmd -count=1` → passes.
+- `go test ./internal/ports/... ./internal/runtimesvc/... ./internal/cmd -count=1` → passes.
 - `scripts/verify-attention-handoff.py --choice continue_without_action` → `status: passed`.
 
 Not run: the nightly workflow itself, and `-race` on the scenario package.
@@ -286,9 +294,9 @@ throwaway git project whose only service exits 1):
 Not run: `-race` on `internal/cmd`.
 
 **Real CLI smoke (2026-10-31)**: on this machine, `netstat` prints a table in an ordinary shell, but
-the stdout a Go process reads through a pipe is empty, so the daemon reports `observation_blind`. So
+the stdout a Go process reads through a pipe is empty, so the runtime service reports `observation_blind`. So
 that listener observation would not block the code identity chain, which is unrelated to it, a
-temporary daemon that **only replaces the listener scan with an empty table** drove the real CLI;
+temporary runtime service that **only replaces the listener scan with an empty table** drove the real CLI;
 spawn, the run registry, snapshots, status, and restart were all production code. Under the same
 isolated `HOME`/`BERTH_HOME`/git project, the following was actually observed:
 
@@ -305,7 +313,7 @@ This smoke run did not verify listener observation itself, and did not prove the
 of `up --wait`; both still require an ordinary terminal or CI that can read the full listener table.
 The newly added `stale-code` scenario likewise has not yet been executed with a real agent.
 
-The targeted tests for start attempts are in `internal/daemon/groupstart`: success, prepare failure,
+The targeted tests for start attempts are in `internal/runtimesvc/groupstart`: success, prepare failure,
 dependency failure, spawn failure, cleanup after cancellation, the `starting` snapshot and scope
 filtering, and `progress` gating;
 `TestWaitingOnShrinksAsDependenciesBecomeReady` uses a fake scanner to make two dependencies become
@@ -321,7 +329,7 @@ line text in the three forms with/without `waiting_on` and with/without `elapsed
 `TestConfigPathForProject` covers the manifest path matching rules when starting by project name
 (main checkout first, linked worktree, Repo match, no ConfigPath), and the capability rules
 themselves are still covered by `TestConfigSupport...`.
-The cases that use a real daemon all run under an isolated HOME/`BERTH_HOME`; race was not run on
+The cases that use a real runtime service all run under an isolated HOME/`BERTH_HOME`; race was not run on
 this machine.
 
 ### Listener observation: dual stack, probes, and the sandbox
@@ -333,7 +341,7 @@ table decodes all 12 ports (a merged result of 53 rows);
 `internal/ports/testdata/darwin_netstat_tcp46.txt` keeps a synthetic fixture with the same column
 layout. `TestDualStackServiceBecomesReadyEndToEnd` runs a real `up --wait` with a dual-stack service,
 but it cannot be executed on this machine: a Go process reading `sysctl net.inet.tcp.pcblist_n` gets
-only a truncated result, and the daemon sees no listeners at all; this integration test has to pass
+only a truncated result, and the runtime service sees no listeners at all; this integration test has to pass
 in a macOS/Linux build environment that can read the full listener table.
 
 In a sandbox, `netstat` may exit 0 with an empty table (under Codex's read-only seatbelt it also
@@ -345,7 +353,7 @@ not call the model because of a 401), Claude Code (a non-interactive session wit
 `sandbox.enabled`), and Cursor (a non-interactive session with `--sandbox enabled`) all return
 `observation_bind_denied`; `status --json` still exits 0 and returns the manifest, services, log
 paths, and `observation`, with `ports` empty and `port_actual` null. `up --wait` is rejected by the
-gate before self-start and points to running `oberth serve --detach` in an ordinary terminal;
+gate before self-start and points to running `oberth runtime service run --detach` in an ordinary terminal;
 `doctor --only listener_observation` reports the same conclusion. On that basis the agent in the
 Claude session explained that it "knew what the project declared but could not confirm the
 listeners", and did not retry or relay internals.
@@ -385,7 +393,7 @@ Windows ships only a zip and `install.ps1`.
 
 ### Worktree identity and the stopping side
 
-`go test ./internal/store ./internal/scanner ./internal/groups ./internal/daemon ./internal/cmd`
+`go test ./internal/store ./internal/scanner ./internal/groups ./internal/runtimesvc ./internal/cmd`
 covers: writing, reopening, and read-only reading of the identity ledger; recording `${worktree}`
 together with the root path, the group name, and the manifest path when a scan finds a manifest;
 identity rows still being kept after the directory disappears; the `worktree.identity` published by
@@ -399,7 +407,7 @@ with real processes still has to run on macOS/Linux where listeners can be obser
 ### The doctor's agent-skill row
 
 `internal/doctor`'s `checkSkillVersion` only reads the `SKILL.md` of the skill already installed in
-three places under `HOME`; it does not go online, dial the daemon, or install and change anything.
+three places under `HOME`; it does not go online, dial the runtime service, or install and change anything.
 Unit tests (`checks_skill_test.go`) cover: a nested `metadata.version` is not confused with a
 top-level `version:`; missing frontmatter, unclosed frontmatter, a missing version field and an empty
 value each report an error instead of guessing a version; nothing installed is `skip`; a single copy
@@ -407,7 +415,7 @@ is always `ok` and carries no `fix`; two copies at the same version are `ok`; tw
 versions `warn` and name both versions in `fix`; a copy whose frontmatter cannot be read is not a
 version conflict and is only marked `unreadable` in the detail; a symlink into a live checkout is
 called a `link`; a dangling symlink `warn`s and prints the original target; `--only agent_skill` runs
-just this row; and the check never dials the daemon.
+just this row; and the check never dials the runtime.service.
 
 Executed on this machine (macOS 27.2 / 26B123) on 2026-11-01:
 
@@ -445,7 +453,7 @@ cannot replace a security review or a full distribution audit.
 
 ## Work log
 
-`go test ./internal/workplace/ ./internal/store/ ./internal/daemon/runsreg/ ./internal/cmd/`
+`go test ./internal/workplace/ ./internal/store/ ./internal/runtimesvc/runsreg/ ./internal/cmd/`
 (`-race` as above) covers:
 
 - Creating, listing, switching, and deleting workplaces and the selector: name conflicts, `ambiguous`
@@ -458,14 +466,14 @@ cannot replace a security review or a full distribution audit.
 - Closing blocks when a run exits: `runsreg` notifies both when recording an exit and when recording
   a start failure (outside the registry lock), `internal/workplace` closes the corresponding block
   by run_id, and closes only those that are still running.
-- CLI end to end: run `list` / `new` / `use` / `show` / `delete` / `record` against a real daemon
+- CLI end to end: run `list` / `new` / `use` / `show` / `delete` / `record` against a real runtime service
   socket and a git worktree the test creates, and check the JSON documents; `oberth start -- /bin/echo hello`
   checks the recorded run_id, pid, and exit code; `oberth agent stream` under
-  `BERTH_AGENT_STREAM_FAKE=codex` checks the prompt and outcome of one turn; when the daemon is
+  `BERTH_AGENT_STREAM_FAKE=codex` checks the prompt and outcome of one turn; when the runtime service is
   unreachable, read commands still read from the same database and write commands are rejected.
-- Both ends of a detached run: `go test -tags integration -run TestDetachedRunIsRecorded ./internal/daemon/`
-  runs `oberth start -d` with the real binary and a real daemon, checking that the record appears
-  first and is running, and is then closed to completed by the daemon (also checking the exit code,
+- Both ends of a detached run: `go test -tags integration -run TestDetachedRunIsRecorded ./internal/runtimesvc/`
+  runs `oberth start -d` with the real binary and a real runtime service, checking that the record appears
+  first and is running, and is then closed to completed by the runtime service (also checking the exit code,
   the end time, and that the log it points to actually exists).
 
 The client-side workplace reporting check is not in this repository: it lives with the client code in
@@ -652,7 +660,7 @@ the manual benchmark uses; it is not part of the per-PR Examples check.
 
 Environment: macOS 27.2 / 26B123, arm64; OpenJDK 21.0.12; Maven 3.9; Node 26.9.0; Docker 29.8.2
 through colima, Compose 5.5.1. Every run used a throwaway `HOME` / `BERTH_HOME` under `/tmp` and a
-disposable git repository, and every daemon and container was removed at the end.
+disposable git repository, and every runtime service and container was removed at the end.
 
 - **Maven / JVM**: `pom.xml` with `maven-jar-plugin` and a `Main-Class`; the service is a
   `com.sun.net.httpserver.HttpServer` answering `/health`. Manifest:
@@ -804,13 +812,13 @@ arm64 (host hash `b009fd81c24a`), Go 1.27.1 darwin/arm64.
 |---|---|---|
 | Vet | `go vet ./...` and `go vet -tags integration ./...` | exit 0 |
 | Staticcheck | `staticcheck ./internal/testenv ./internal/store` | no findings |
-| Duplication | `dupl -t 100` on `store`, `testenv`, `killer`, `scenario`, `daemon` | 2 pre-existing clone pairs, identical to `main` |
+| Duplication | `dupl -t 100` on `store`, `testenv`, `killer`, `scenario`, `runtime service` | 2 pre-existing clone pairs, identical to `main` |
 | Full tests | `go test -count=1 -timeout=20m ./...` | all packages `ok` |
-| Race | `go test -race -count=1 ./internal/store ./internal/testenv ./internal/killer ./internal/daemon` | all packages `ok` |
-| Integration | `go test -tags integration -count=1 ./internal/daemon/... ./internal/scenario` | all packages `ok`, no stray `serve` process |
+| Race | `go test -race -count=1 ./internal/store ./internal/testenv ./internal/killer ./internal/runtimesvc` | all packages `ok` |
+| Integration | `go test -tags integration -count=1 ./internal/runtimesvc/... ./internal/scenario` | all packages `ok`, no stray `runtime service run` process |
 | Cross build | `GOOS={linux,windows} GOARCH={amd64,arm64} go build ./...` and `go vet` on the changed packages | exit 0 for all four targets; not native execution |
 
-`staticcheck ./internal/killer ./internal/daemon` still reports pre-existing `U1000` findings
+`staticcheck ./internal/killer ./internal/runtimesvc` still reports pre-existing `U1000` findings
 (`signalTree`, `fastStats`, `setProbe`, `defaultSocketPath`); they are unchanged from `main` and not
 part of this acceptance.
 
@@ -825,10 +833,10 @@ Cleanup may only signal a process the run still owns. Three paths were narrowed:
 - The killer fixture starts its shell with `Setpgid` and cleans up the held process group; the old
   fresh-table descendant walk (`killTreeNow`) is gone. The wedged-listener fixture follows the same
   rule. `go test ./internal/killer` passes.
-- `daemon`'s `killTree` refuses numeric-pid signals once `cmd.ProcessState` is set: a waited-on pid may
+- `runtime service`'s `killTree` refuses numeric-pid signals once `cmd.ProcessState` is set: a waited-on pid may
   already belong to another process, and there is nothing of that command left to stop.
 
-The integration suites above start real daemons and services, then assert no `serve` process survives;
+The integration suites above start real runtime services and services, then assert no `runtime service run` process survives;
 the measurement harness additionally re-reads each candidate pid before any signal and recorded no
 stray in either phase.
 
@@ -858,11 +866,11 @@ was made testable by extracting `readOnlyURIPath` and is now killed. No survivor
 ### Cold and warm startup
 
 Protocol: project is `examples/hello-worktree`, copied under a fresh isolated `HOME`; the socket is
-under a short `/tmp` path. Cold = fresh `HOME`, no daemon, no database, no reservations; the measured
-command is the first `oberth up --wait --json`, so daemon startup is inside it. Warm = one `HOME` for
-the phase, daemon started once and kept, services brought up and stopped once unmeasured; the measured
+under a short `/tmp` path. Cold = fresh `HOME`, no runtime service, no database, no reservations; the measured
+command is the first `oberth up --wait --json`, so runtime service startup is inside it. Warm = one `HOME` for
+the phase, runtime service started once and kept, services brought up and stopped once unmeasured; the measured
 command is `up --wait --json` with no service running. Cleanup used only the binary's own `down` and
-`daemon stop` against that `HOME`/socket, then a fresh `ps` re-check before any signal; no process-name
+`runtime service stop` against that `HOME`/socket, then a fresh `ps` re-check before any signal; no process-name
 or port sweep.
 
 | Arm | Phase | n | min ms | median ms | max ms |
@@ -878,16 +886,16 @@ Every successful sample reported `observation.state = observable` with source `l
 unobservable runs were not counted. The candidate cold median sits inside the baseline's own
 round-to-round spread, and the warm median is about 2.7% below the second baseline round; neither is
 a controlled speedup claim. The 2242.8 ms candidate cold sample is a host-noise outlier and is kept
-in the table rather than discarded. No `serve` process survived the phase.
+in the table rather than discarded. No `runtime service run` process survived the phase.
 
 ### Fault injection
 
 - A fake `lsof` earlier in `PATH` that exits 1 with no output: `up --wait --json` exits 1 with
   `code: observation_blind`; `status --json` reports `observation.state: blind` and `ports: []`, not
   "nothing is listening".
-- `TestSecondServeRefusesAndStaleSocketIsCleaned`: a SIGKILLed daemon leaves a stale socket, the
-  second `serve` refuses, and the socket is cleaned. PASS.
-- `TestDaemonStopRestartKeepsServiceEvidence` and `TestSIGTERMEscalatesAndCleansServiceTree`: PASS.
+- `TestSecondServeRefusesAndStaleSocketIsCleaned`: a SIGKILLed runtime service leaves a stale socket, the
+  second `runtime service run` refuses, and the socket is cleaned. PASS.
+- `TestRuntimeServiceStopRestartKeepsServiceEvidence` and `TestSIGTERMEscalatesAndCleansServiceTree`: PASS.
 - `TestCrashRecoveryKeepsWholeCommittedBatches`: the child writer is SIGKILLed mid-transaction, the
   database reopens cleanly, every visible batch is whole, and the sentinel survives. PASS.
 

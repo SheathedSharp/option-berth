@@ -20,7 +20,7 @@ func fixtureSession() state.Session {
 }
 
 // A session registered with a run comes back on the run, on the ports the run
-// owns, and in the list the daemon's sessions handlers read.
+// owns, and in the list the runtime service's sessions handlers read.
 func TestSessionRoundTrip(t *testing.T) {
 	reg := testRegistry(500)
 	startedAt := time.Date(2026, 4, 17, 14, 30, 0, 0, time.UTC)

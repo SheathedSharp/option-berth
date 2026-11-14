@@ -11,14 +11,14 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
-// A run the CLI did not wait for — `oberth start -d` — is closed by the daemon
+// A run the CLI did not wait for — `oberth start -d` — is closed by the runtime service
 // when it records how the run ended. Without this the block would say `running`
 // for good, which is a record that outlives the truth.
 
 func serveStore(t *testing.T, s *store.Store) {
 	t.Helper()
 	prev := runtime.Load()
-	runtime.Store(&runtimesvc.Runtime{
+	runtime.Store(&runtimesvc.HostContext{
 		Store:  s,
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
@@ -94,7 +94,7 @@ func TestRunExitIgnoresWhatItCannotAttribute(t *testing.T) {
 	}
 }
 
-func TestRunExitWithNoDaemonIsIgnored(t *testing.T) {
+func TestRunExitWithNoRuntimeServiceIsIgnored(t *testing.T) {
 	prev := runtime.Load()
 	runtime.Store(nil)
 	t.Cleanup(func() { runtime.Store(prev) })

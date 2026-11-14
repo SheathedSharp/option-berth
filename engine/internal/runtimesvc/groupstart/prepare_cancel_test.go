@@ -50,7 +50,7 @@ services:
 		t.Fatal("the prepare process never started")
 	}
 
-	// The stream API's cancellation path: `Stream.Cancel` asks the daemon to
+	// The stream API's cancellation path: `Stream.Cancel` asks the runtime service to
 	// stop the produce loop (the CLI's Ctrl-C closes the connection, which
 	// tears the stream down the same way server-side).
 	if err := s.Cancel(context.Background()); err != nil {

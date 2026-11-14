@@ -25,7 +25,7 @@ type SubscribeOptions struct {
 	AfterSeq uint64
 
 	// Scope limits the snapshot and notifications to selected worktrees,
-	// repositories or an ephemeral workspace. Nil keeps the daemon-wide view.
+	// repositories or an ephemeral workspace. Nil keeps the runtime service-wide view.
 	Scope *state.Scope
 
 	// Buffer sizes the delta and event channels. Zero means 64.
@@ -43,7 +43,7 @@ func (o SubscribeOptions) include() rpc.Include {
 	return include
 }
 
-// Subscription is a live view of daemon state: the snapshot that opened it and
+// Subscription is a live view of runtime service state: the snapshot that opened it and
 // the notification channels. The channels close when the subscription is
 // cancelled or the connection drops.
 type Subscription struct {
@@ -83,7 +83,7 @@ type Subscription struct {
 func (c *Client) Subscribe(ctx context.Context, opts SubscribeOptions) (*Subscription, error) {
 	subscription := newSubscription(c, opts, channelBuffer(opts.Buffer))
 
-	// Register before calling, so a delta that arrives between the daemon
+	// Register before calling, so a delta that arrives between the runtime service
 	// queuing the snapshot and this client reading the reply is not lost.
 	c.mu.Lock()
 	c.subs = append(c.subs, subscription)

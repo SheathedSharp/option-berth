@@ -14,11 +14,11 @@ import (
 )
 
 // Watcher timing. Every value here trades freshness against the cost of a
-// refresh, which is a process launch plus a socket round trip to the daemon.
+// refresh, which is a process launch plus a socket round trip to the runtime.service.
 const (
 	// DefaultRefreshInterval is the least time between two routine refreshes.
 	// Refreshes are driven by scans, so this only caps how often scans can ask;
-	// the daemon passes its base scan interval.
+	// the runtime service passes its base scan interval.
 	DefaultRefreshInterval = 2 * time.Second
 	// PSTimeout bounds one background `docker ps`. Nothing waits on it — it
 	// only decides how soon a wedged Docker is noticed.
@@ -58,7 +58,7 @@ type WatcherOptions struct {
 	Now func() time.Time
 }
 
-// Watcher owns the daemon's cached view of Docker, off the scan path.
+// Watcher owns the runtime service's cached view of Docker, off the scan path.
 //
 // Scans used to run `docker ps` inline, inside the gate that `ports.kill` and
 // `state.snapshot` queue behind, so a wedged Docker Desktop that never answered

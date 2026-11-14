@@ -20,10 +20,10 @@ import (
 // The workplace record: what work has been done in this worktree, and which
 // workplace new work lands in.
 //
-// The command is the thin half. It resolves the worktree, asks the daemon, and
+// The command is the thin half. It resolves the worktree, asks the runtime service, and
 // prints; every rule about what a workplace is, what a selector matches and
 // what a block means lives in internal/workplace, which is also what the
-// daemon serves. Reads fall back to the database directly when no daemon is
+// runtime service serves. Reads fall back to the database directly when no runtime service is
 // running, because "which workplace is this and what is in it" is a question
 // the record on disk can answer on its own.
 
@@ -113,7 +113,7 @@ func resolveWorktree(dir string) (string, error) {
 }
 
 // workplaceError renders a failure from internal/workplace the way every other
-// command renders one: the same code and the same hint the daemon would send.
+// command renders one: the same code and the same hint the runtime service would send.
 func workplaceError(err error) error {
 	if err == nil {
 		return nil
@@ -121,14 +121,14 @@ func workplaceError(err error) error {
 	return failHint(rpc.CodeName(workplace.Code(err)), err.Error(), workplace.Hint(err))
 }
 
-// withRecord runs fn against the daemon when one is listening, and against the
-// database directly when none is. Only a daemon that cannot be reached falls
+// withRecord runs fn against the runtime service when one is listening, and against the
+// database directly when none is. Only a runtime service that cannot be reached falls
 // back: one that answered with an error answered the question, and asking the
 // file instead would turn a refusal into a second opinion.
 func withRecord[T any](ctx context.Context, method string, params any, fn func(*store.Store) (T, error)) (T, error) {
 	var zero T
-	if !noDaemonFlag {
-		if c, err := dialDaemon(ctx); err == nil {
+	if !noRuntimeServiceFlag {
+		if c, err := dialRuntimeService(ctx); err == nil {
 			defer c.Close()
 			var out T
 			if err := c.Call(ctx, method, params, &out); err != nil {
@@ -139,10 +139,13 @@ func withRecord[T any](ctx context.Context, method string, params any, fn func(*
 	}
 	st, err := store.OpenReadOnly(store.Path())
 	if err != nil {
+		if errors.Is(err, store.ErrStorageOwned) {
+			return zero, storageReadError(err)
+		}
 		if !errors.Is(err, fs.ErrNotExist) {
-			return zero, failHint("daemon_unavailable",
-				fmt.Sprintf("no daemon is listening and the record cannot be read directly: %v", err),
-				"start one with `oberth serve --detach`")
+			return zero, failHint("runtime_service_unavailable",
+				fmt.Sprintf("no runtime service is listening and the record cannot be read directly: %v", err),
+				"start one with `oberth runtime service run --detach`")
 		}
 		// No database file at all: nothing has ever been recorded on this
 		// machine, which is the same answer as an empty record. A database that
@@ -159,10 +162,10 @@ func withRecord[T any](ctx context.Context, method string, params any, fn func(*
 	return out, nil
 }
 
-// withDaemonWrite runs a write through the daemon, starting one if needed.
-// A write has nowhere else to go: the daemon is the single writer of the
+// withRuntimeServiceWrite runs a write through the runtime service, starting one if needed.
+// A write has nowhere else to go: the runtime service is the single writer of the
 // record, and a second writer is how two clients lose each other's work.
-func withDaemonWrite[T any](ctx context.Context, method string, params any) (T, error) {
+func withRuntimeServiceWrite[T any](ctx context.Context, method string, params any) (T, error) {
 	var zero T
 	c, err := connectForWrite(ctx)
 	if err != nil {
@@ -247,7 +250,7 @@ func newWorkplaceNewCommand() *cobra.Command {
 			if len(args) == 1 {
 				name = args[0]
 			}
-			res, err := withDaemonWrite[rpc.WorkplaceNewResult](cmd.Context(), "workplace.new",
+			res, err := withRuntimeServiceWrite[rpc.WorkplaceNewResult](cmd.Context(), "workplace.new",
 				rpc.WorkplaceNewParams{Worktree: root, Name: name})
 			if err != nil {
 				return err
@@ -276,7 +279,7 @@ func newWorkplaceUseCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			res, err := withDaemonWrite[rpc.WorkplaceUseResult](cmd.Context(), "workplace.use",
+			res, err := withRuntimeServiceWrite[rpc.WorkplaceUseResult](cmd.Context(), "workplace.use",
 				rpc.WorkplaceUseParams{Worktree: root, Selector: args[0]})
 			if err != nil {
 				return err
@@ -405,7 +408,7 @@ func newWorkplaceDeleteCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			res, err := withDaemonWrite[rpc.WorkplaceDeleteResult](cmd.Context(), "workplace.delete",
+			res, err := withRuntimeServiceWrite[rpc.WorkplaceDeleteResult](cmd.Context(), "workplace.delete",
 				rpc.WorkplaceDeleteParams{Worktree: root, Selector: args[0]})
 			if err != nil {
 				return err
@@ -473,7 +476,7 @@ func newWorkplaceRecordCommand() *cobra.Command {
 				code := workplaceRecordExitCode
 				block.ExitCode = &code
 			}
-			res, err := withDaemonWrite[rpc.WorkplaceRecordResult](cmd.Context(), "workplace.record",
+			res, err := withRuntimeServiceWrite[rpc.WorkplaceRecordResult](cmd.Context(), "workplace.record",
 				rpc.WorkplaceRecordParams{Worktree: root, Block: *block})
 			if err != nil {
 				return err

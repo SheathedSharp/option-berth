@@ -47,7 +47,7 @@ func TestStopSignalOwnersFollowSelectedRuntime(t *testing.T) {
 }
 
 func TestStopSignalObserverIsOptionalAndNeverPremarks(t *testing.T) {
-	rt := &Runtime{}
+	rt := &HostContext{}
 	if stopSignalObserver(rt, state.Snapshot{}, nil, false, "") != nil {
 		t.Fatal("noRuns unexpectedly observes")
 	}

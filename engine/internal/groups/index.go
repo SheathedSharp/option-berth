@@ -14,7 +14,7 @@ import (
 // working directory of each Compose project.
 //
 // It is in-memory and rebuilt per command in the CLI's direct-scan path; the
-// daemon keeps one for its lifetime and the store step persists the known roots
+// runtime service keeps one for its lifetime and the store step persists the known roots
 // so a config is remembered across restarts.
 type Index struct {
 	configs map[string]*Config // config directory -> config

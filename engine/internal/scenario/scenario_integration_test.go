@@ -1,7 +1,7 @@
 //go:build integration
 
 // The smoke for R1.1's fixtures: each scenario is provisioned, a real
-// `option-berth` binary is built and started as `serve` in an isolated HOME,
+// `option-berth` binary is built and started as `runtime service run` in an isolated HOME,
 // and the scenario is driven with `up`/`status`/`down` to prove it yields a
 // deterministic verdict — no text parsing, no model call. Run with
 // `go test -tags integration ./internal/scenario/...`.
@@ -28,7 +28,7 @@ import (
 func TestMain(m *testing.M) { os.Exit(testenv.Run(m)) }
 
 // buildBinary compiles the real CLI once per run, into this run's own temp root
-// so the leak gate recognises (and claims) a daemon that lives there.
+// so the leak gate recognises (and claims) a runtime service that lives there.
 var buildBinary = sync.OnceValues(func() (string, error) {
 	dir, err := os.MkdirTemp(testenv.Root(), "option-berth-scenario-bin")
 	if err != nil {
@@ -61,7 +61,7 @@ func repoRoot() string {
 	return "."
 }
 
-// env is one isolated daemon: its own HOME, its own short socket, its own DB.
+// env is one isolated runtime_service: its own HOME, its own short socket, its own DB.
 type env struct {
 	t      *testing.T
 	bin    string
@@ -82,8 +82,8 @@ func newEnv(t *testing.T) *env {
 	}
 	t.Cleanup(func() { os.RemoveAll(sockDir) })
 	e := &env{t: t, bin: bin, home: home, socket: filepath.Join(sockDir, "d.sock")}
-	// Services are real detached processes. A test that stops the daemon on
-	// purpose makes `down` unreachable (the run registry lives in the daemon,
+	// Services are real detached processes. A test that stops the runtime service on
+	// purpose makes `down` unreachable (the run registry lives in the runtime service,
 	// and autostart is off in this harness), and a test that forgets
 	// cleanupBuilt leaks the same way. The socket is unique to this env and
 	// every process started through it carries it in its environment, so one
@@ -106,7 +106,7 @@ func (e *env) killLeakedServices() {
 	if err != nil {
 		return
 	}
-	needle := "BERTH_SOCKET=" + e.socket
+	needle := "BERTH_RUNTIME_SERVICE_SOCKET=" + e.socket
 	for _, line := range strings.Split(string(out), "\n") {
 		if !strings.Contains(line, needle) {
 			continue
@@ -126,8 +126,8 @@ func (e *env) killLeakedServices() {
 	}
 }
 
-// cleanupBuilt stops services before the isolated daemon is torn down. A run
-// is deliberately detached from the daemon, so killing only `serve` would
+// cleanupBuilt stops services before the isolated runtime service is torn down. A run
+// is deliberately detached from the runtime service, so killing only `runtime service run` would
 // reparent the fixture's worker to launchd and leave it behind after the test.
 func (e *env) cleanupBuilt(b Built) {
 	if b.Root != "" {
@@ -137,12 +137,12 @@ func (e *env) cleanupBuilt(b Built) {
 }
 
 // childEnv is the environment every child of this env inherits: its own HOME,
-// its own socket and database, daemon autostart off.
+// its own socket and database, runtime service autostart off.
 func (e *env) childEnv() []string {
 	return append(os.Environ(),
 		"HOME="+e.home,
 		"USERPROFILE="+e.home,
-		"BERTH_SOCKET="+e.socket,
+		"BERTH_RUNTIME_SERVICE_SOCKET="+e.socket,
 		"XDG_RUNTIME_DIR=",
 		"BERTH_DB=",
 		testenv.ChildEnv(),
@@ -162,26 +162,26 @@ func (e *env) command(dir string, args ...string) *exec.Cmd {
 	return cmd
 }
 
-// serve starts `oberth serve` in the background and waits for the socket.
-func (e *env) serve() {
+// serve starts `oberth runtime service run` in the background and waits for the socket.
+func (e *env) runRuntimeService() {
 	e.t.Helper()
-	cmd := e.command("", "serve")
+	cmd := e.command("", "runtime", "service", "run")
 	var out strings.Builder
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Start(); err != nil {
-		e.t.Fatalf("starting oberth serve: %v", err)
+		e.t.Fatalf("starting oberth runtime service run: %v", err)
 	}
 	e.t.Cleanup(func() {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 		if e.t.Failed() && out.Len() > 0 {
-			e.t.Logf("daemon output:\n%s", out.String())
+			e.t.Logf("runtime service output:\n%s", out.String())
 		}
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := client.WaitForSocket(ctx, e.socket, 10*time.Second); err != nil {
-		e.t.Fatalf("daemon never came up: %v", err)
+		e.t.Fatalf("runtime service never came up: %v", err)
 	}
 }
 
@@ -258,12 +258,12 @@ type serviceStatus struct {
 }
 
 // waitStatus polls `status --json` until the predicate holds or times out. The
-// daemon's scan lags an `up` by one interval, so instead of racing it the smoke
-// reads the truth as the daemon publishes it.
+// runtime service's scan lags an `up` by one interval, so instead of racing it the smoke
+// reads the truth as the runtime service publishes it.
 func (e *env) waitStatus(dir string, want func(statusDoc) bool) statusDoc {
 	e.t.Helper()
 	// Long enough to absorb both a project's registration scan and a status
-	// change the daemon publishes a scan interval later.
+	// change the runtime service publishes a scan interval later.
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		var st statusDoc
@@ -319,9 +319,9 @@ func namedClean(t *testing.T, got []string, want ...string) bool {
 
 func TestAPIServerAndWorkerEndToEnd(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 
-	// The project lives inside this env's HOME: the daemon refuses to start a
+	// The project lives inside this env's HOME: the runtime service refuses to start a
 	// command whose project root is outside the user's home (outside_home).
 	b, err := APIServerAndWorker(filepath.Join(e.home, "api-worker"))
 	if err != nil {
@@ -329,7 +329,7 @@ func TestAPIServerAndWorkerEndToEnd(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		e.cleanupBuilt(b)
-		_, _ = e.run("", "daemon", "stop", "--json")
+		_, _ = e.run("", "runtime", "service", "stop", "--json")
 	})
 	var up struct {
 		Started []string `json:"started"`
@@ -357,12 +357,12 @@ func TestAPIServerAndWorkerEndToEnd(t *testing.T) {
 	// The worker has no listener, so this is the case a direct port-only scan
 	// used to lose. Stop only the collector; the run itself stays alive and the
 	// fallback status must still report both services.
-	if _, err := e.run("", "daemon", "stop", "--json"); err != nil {
-		t.Fatalf("daemon stop: %v", err)
+	if _, err := e.run("", "runtime", "service", "stop", "--json"); err != nil {
+		t.Fatalf("runtime service stop: %v", err)
 	}
 	stdout, _, err := e.runCapture(b.Root, "status", "--json", "--no-mark")
 	if err != nil {
-		t.Fatalf("direct status after daemon stop: %v", err)
+		t.Fatalf("direct status after runtime service stop: %v", err)
 	}
 	var direct statusDoc
 	if err := json.Unmarshal(stdout, &direct); err != nil {
@@ -375,13 +375,13 @@ func TestAPIServerAndWorkerEndToEnd(t *testing.T) {
 		t.Fatalf("direct status lost api: %+v", direct.Worktree.Services)
 	}
 
-	if _, err := e.run("", "daemon", "restart", "--json"); err != nil {
-		t.Fatalf("daemon restart before cleanup: %v", err)
+	if _, err := e.run("", "runtime", "service", "restart", "--json"); err != nil {
+		t.Fatalf("runtime service restart before cleanup: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := client.WaitForSocket(ctx, e.socket, 10*time.Second); err != nil {
-		t.Fatalf("replacement daemon never came up: %v", err)
+		t.Fatalf("replacement runtime service never came up: %v", err)
 	}
 	var restarted struct {
 		Stopped struct {
@@ -417,7 +417,7 @@ func TestAPIServerAndWorkerEndToEnd(t *testing.T) {
 // it had just started. This is the default bind of Go, Node and Java.
 func TestDualStackServiceBecomesReadyEndToEnd(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 
 	b, err := DualStackAPIServer(filepath.Join(e.home, "dual-stack"))
 	if err != nil {
@@ -425,7 +425,7 @@ func TestDualStackServiceBecomesReadyEndToEnd(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		e.cleanupBuilt(b)
-		_, _ = e.run("", "daemon", "stop", "--json")
+		_, _ = e.run("", "runtime", "service", "stop", "--json")
 	})
 
 	var up struct {
@@ -499,7 +499,7 @@ func TestDualStackServiceBecomesReadyEndToEnd(t *testing.T) {
 
 func TestStartupFailureEndToEnd(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 
 	b, err := StartupFailure(filepath.Join(e.home, "startup-failure"))
 	if err != nil {
@@ -565,7 +565,7 @@ func (e *env) waitExit(dir, name string) {
 
 func TestDualWorktreeEndToEnd(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 
 	// Both checkouts live inside this env's HOME (see the outside_home guard);
 	// they are siblings, so the linked worktree is not nested in the main one.
@@ -577,9 +577,9 @@ func TestDualWorktreeEndToEnd(t *testing.T) {
 	t.Cleanup(func() {
 		e.cleanupBuilt(main)
 		e.cleanupBuilt(wt)
-		_, _ = e.run("", "daemon", "stop", "--json")
+		_, _ = e.run("", "runtime", "service", "stop", "--json")
 	})
-	// The daemon's canonical identity for a linked checkout is derived from
+	// The runtime service's canonical identity for a linked checkout is derived from
 	// the repository and worktree path. Keep the manifest name different here
 	// so status must join the same identity that up used.
 	manifest, err := os.ReadFile(wt.Manifest)
@@ -591,7 +591,7 @@ func TestDualWorktreeEndToEnd(t *testing.T) {
 		t.Fatalf("rewrite linked manifest: %v", err)
 	}
 	// Each checkout reads its own identity: the two projects do not blur into one.
-	// `up` first — a project's manifest enters the daemon's index when it is read or
+	// `up` first — a project's manifest enters the runtime service's index when it is read or
 	// started, not on an obsolete machine-wide list; and the point is that two started checkouts
 	// each report their own group and their own port, never the other's.
 	for _, d := range []string{main.Root, wt.Root} {
@@ -618,13 +618,13 @@ func TestDualWorktreeEndToEnd(t *testing.T) {
 
 // TestDualWorktreeIsolationWorkflow is the V3 acceptance flow. It uses two
 // real checkouts of one repository and drives the same commands an agent uses:
-// both up, both status, one down, daemon restart, then a linked-worktree move
+// both up, both status, one down, runtime service restart, then a linked-worktree move
 // and re-discovery. Fixed and auto ports, service names, process liveness and
 // log sources are checked at every boundary so a passing fixture alone cannot
 // hide cross-worktree state.
 func TestDualWorktreeIsolationWorkflow(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 
 	root := filepath.Join(e.home, "dual-workflow")
 	main, linked, err := DualWorktree(filepath.Join(root, "main"), filepath.Join(root, "wt"))
@@ -637,7 +637,7 @@ func TestDualWorktreeIsolationWorkflow(t *testing.T) {
 	t.Cleanup(func() {
 		e.cleanupBuilt(main)
 		e.cleanupBuilt(*eMoved)
-		_, _ = e.run("", "daemon", "stop", "--json")
+		_, _ = e.run("", "runtime", "service", "stop", "--json")
 	})
 
 	start := func(dir string) {
@@ -664,7 +664,7 @@ func TestDualWorktreeIsolationWorkflow(t *testing.T) {
 	}
 
 	// Both worktrees use the same service names. Each has one fixed api port
-	// and one daemon-assigned worker port, and all four listeners must differ.
+	// and one runtime service-assigned worker port, and all four listeners must differ.
 	start(main.Root)
 	start(linked.Root)
 	mainSt := e.waitStatus(main.Root, func(d statusDoc) bool {
@@ -736,11 +736,11 @@ func TestDualWorktreeIsolationWorkflow(t *testing.T) {
 
 	// Restart the collector while B remains up. Its status and logs must still
 	// point at B's worktree and run records.
-	if _, err := e.run("", "daemon", "restart", "--json"); err != nil {
-		t.Fatalf("daemon restart: %v", err)
+	if _, err := e.run("", "runtime", "service", "restart", "--json"); err != nil {
+		t.Fatalf("runtime service restart: %v", err)
 	}
 	if err := client.WaitForSocket(context.Background(), e.socket, 10*time.Second); err != nil {
-		t.Fatalf("daemon after restart: %v", err)
+		t.Fatalf("runtime service after restart: %v", err)
 	}
 	e.waitStatus(linked.Root, func(d statusDoc) bool {
 		return d.Worktree.Name == "dual-main@wt" && d.serviceRunning("api", linked.Port, true)
@@ -761,11 +761,11 @@ func TestDualWorktreeIsolationWorkflow(t *testing.T) {
 	linked.Root = movedRoot
 	linked.Manifest = filepath.Join(movedRoot, ConfigName)
 	*eMoved = linked
-	if _, err := e.run("", "daemon", "restart", "--json"); err != nil {
-		t.Fatalf("daemon restart after move: %v", err)
+	if _, err := e.run("", "runtime", "service", "restart", "--json"); err != nil {
+		t.Fatalf("runtime service restart after move: %v", err)
 	}
 	if err := client.WaitForSocket(context.Background(), e.socket, 10*time.Second); err != nil {
-		t.Fatalf("daemon after move restart: %v", err)
+		t.Fatalf("runtime service after move restart: %v", err)
 	}
 	wantMovedRoot, _ := filepath.EvalSymlinks(movedRoot)
 	e.waitStatus(movedRoot, func(d statusDoc) bool {
@@ -796,7 +796,7 @@ func TestDualWorktreeIsolationWorkflow(t *testing.T) {
 // runs before the lock).
 func TestConcurrentUpIsSerialized(t *testing.T) {
 	e := newEnv(t)
-	e.serve()
+	e.runRuntimeService()
 
 	b, err := APIServerAndWorker(filepath.Join(e.home, "concurrent-up"))
 	if err != nil {

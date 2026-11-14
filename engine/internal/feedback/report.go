@@ -98,8 +98,7 @@ const (
 	CommandAgent      Command = "agent"
 	CommandAttn       Command = "attn"
 	CommandDoctor     Command = "doctor"
-	CommandDaemon     Command = "daemon"
-	CommandServe      Command = "serve"
+	CommandRuntime    Command = "runtime"
 	CommandConfig     Command = "config"
 	CommandVersion    Command = "version"
 	CommandCompletion Command = "completion"
@@ -110,7 +109,7 @@ const (
 var commands = []Command{
 	CommandStatus, CommandUp, CommandRestart, CommandDown, CommandStart, CommandKill,
 	CommandLogs, CommandEvents, CommandWorktrees, CommandWorkplace, CommandInit,
-	CommandGit, CommandAgent, CommandAttn, CommandDoctor, CommandDaemon, CommandServe,
+	CommandGit, CommandAgent, CommandAttn, CommandDoctor, CommandRuntime,
 	CommandConfig, CommandVersion, CommandCompletion, CommandFeedback, CommandOther,
 }
 

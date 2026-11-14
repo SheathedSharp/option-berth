@@ -10,7 +10,7 @@ import (
 )
 
 // ProcSample is one process's live resource usage, keyed by pid rather than by
-// socket. It is what the daemon's stats-only tick reads for the pids a
+// socket. It is what the runtime service's stats-only tick reads for the pids a
 // snapshot already names: no port scan behind it, no attribution, no health.
 //
 // The fields answer three different questions, so they are grouped that way:

@@ -19,11 +19,11 @@ import (
 
 // doctorSample is one report with a row of every status: ok, skip, fail and
 // warn, each carrying the fields the table renders for it.
-func doctorSample() rpc.DaemonDoctorResult {
-	return rpc.DaemonDoctorResult{
-		OK:            false,
-		Version:       "v2.3.4",
-		DaemonVersion: "v2.3.4",
+func doctorSample() rpc.RuntimeServiceDoctorResult {
+	return rpc.RuntimeServiceDoctorResult{
+		OK:                    false,
+		Version:               "v2.3.4",
+		RuntimeServiceVersion: "v2.3.4",
 		Checks: []rpc.DoctorCheck{
 			{ID: "cli_on_path", Status: doctor.StatusOK, Summary: "oberth resolves from PATH", Detail: "/usr/local/bin/oberth"},
 			{ID: "docker", Status: doctor.StatusSkip, Summary: "docker is not installed"},
@@ -82,19 +82,19 @@ func TestRenderDoctorVerdicts(t *testing.T) {
 
 	cases := []struct {
 		label   string
-		input   rpc.DaemonDoctorResult
+		input   rpc.RuntimeServiceDoctorResult
 		verdict string
 	}{
 		{
 			label: "all ok",
-			input: rpc.DaemonDoctorResult{OK: true, Checks: []rpc.DoctorCheck{
+			input: rpc.RuntimeServiceDoctorResult{OK: true, Checks: []rpc.DoctorCheck{
 				{ID: "only", Status: doctor.StatusOK, Summary: "nothing to report"},
 			}},
 			verdict: "all good: 1 ok",
 		},
 		{
 			label: "warnings only",
-			input: rpc.DaemonDoctorResult{OK: true, Checks: []rpc.DoctorCheck{
+			input: rpc.RuntimeServiceDoctorResult{OK: true, Checks: []rpc.DoctorCheck{
 				{ID: "only", Status: doctor.StatusWarn, Summary: "check the port table"},
 			}},
 			verdict: "mostly healthy: 1 warn",
@@ -125,7 +125,7 @@ func TestDoctorJSON(t *testing.T) {
 		}
 	})
 
-	var doc rpc.DaemonDoctorResult
+	var doc rpc.RuntimeServiceDoctorResult
 	if err := json.Unmarshal([]byte(out), &doc); err != nil {
 		t.Fatalf("output is not JSON: %v\n%s", err, out)
 	}
@@ -153,8 +153,8 @@ func TestDoctorJSON(t *testing.T) {
 // output.
 func TestDoctorExitsNonZeroOnAFailure(t *testing.T) {
 	withDoctorFlags(t, func() {
-		// No daemon runs in an isolated test binary, so this one fails.
-		doctorOnlyFlag = []string{"daemon_reachable"}
+		// No runtime service runs in an isolated test binary, so this one fails.
+		doctorOnlyFlag = []string{"runtime_service_reachable"}
 	})
 	runErr := errors.New("")
 	captureStdout(t, func() { runErr = doctorRun(testCommand(), nil) })
@@ -190,7 +190,7 @@ func TestEveryFixableCheckHasAFix(t *testing.T) {
 	// The ids the doctor package marks fixable, spelled out here so a new one
 	// has to be considered rather than silently unhandled.
 	for _, id := range []string{
-		"config_parses", "project_config", "daemon_reachable",
+		"config_parses", "project_config", "runtime_service_reachable",
 	} {
 		if !registered[id] {
 			t.Errorf("no fix registered for %s", id)
@@ -268,7 +268,7 @@ func testCommand() *cobra.Command {
 
 // applyDoctorFixesReport drives the repair round around one report and returns
 // what it said on stderr plus how many repairs it applied.
-func applyDoctorFixesReport(t *testing.T, report rpc.DaemonDoctorResult) (string, int, error) {
+func applyDoctorFixesReport(t *testing.T, report rpc.RuntimeServiceDoctorResult) (string, int, error) {
 	t.Helper()
 	var applied int
 	var err error
@@ -281,7 +281,7 @@ func applyDoctorFixesReport(t *testing.T, report rpc.DaemonDoctorResult) (string
 // TestApplyDoctorFixesRepairsNothingWhenEveryCheckIsFine: ok and skip rows are
 // not repairs, however fixable the check says it is.
 func TestApplyDoctorFixesRepairsNothingWhenEveryCheckIsFine(t *testing.T) {
-	out, applied, err := applyDoctorFixesReport(t, rpc.DaemonDoctorResult{
+	out, applied, err := applyDoctorFixesReport(t, rpc.RuntimeServiceDoctorResult{
 		OK: true,
 		Checks: []rpc.DoctorCheck{
 			{ID: "config_parses", Status: doctor.StatusOK, Fixable: true},
@@ -336,7 +336,7 @@ func TestApplyDoctorFixesRepairsTheBrokenConfig(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatalf("creating the config directory: %v", err)
 	}
-	if err := os.WriteFile(path, []byte("daemon: [broken\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("runtime_service: [broken\n"), 0o600); err != nil {
 		t.Fatalf("writing the broken config: %v", err)
 	}
 
@@ -371,7 +371,7 @@ func TestApplyDoctorFixesRepairsTheBrokenConfig(t *testing.T) {
 	if strings.Contains(string(fresh), "[broken") {
 		t.Fatal("the broken contents are still the config")
 	}
-	if !strings.Contains(string(fresh), "daemon:") {
+	if !strings.Contains(string(fresh), "runtime_service:") {
 		t.Fatalf("fresh config = %q, want the template", fresh)
 	}
 }
@@ -382,7 +382,7 @@ func TestApplyDoctorFixesReportsAFailedRepair(t *testing.T) {
 	t.Setenv("BERTH_HOME", t.TempDir())
 	withDoctorFlags(t, func() { doctorYesFlag = true })
 
-	out, applied, err := applyDoctorFixesReport(t, rpc.DaemonDoctorResult{
+	out, applied, err := applyDoctorFixesReport(t, rpc.RuntimeServiceDoctorResult{
 		Checks: []rpc.DoctorCheck{{ID: "config_parses", Status: doctor.StatusFail, Fixable: true}},
 	})
 	if err != nil {

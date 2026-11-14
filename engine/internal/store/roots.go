@@ -8,7 +8,7 @@ import (
 )
 
 // Known roots are the directories where an oberth.yaml has been seen. The groups
-// resolver rebuilds its index from them on daemon start instead of walking the
+// resolver rebuilds its index from them on runtime service start instead of walking the
 // filesystem, and the config watcher watches them.
 
 // addRootSQL records a root once. A second observation of the same directory is

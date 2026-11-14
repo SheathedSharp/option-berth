@@ -12,14 +12,14 @@ import (
 )
 
 // worktreePortsEditor edits one project's manifest and reads the
-// worktree_ports value back out of what the daemon serves.
+// worktree_ports value back out of what the runtime service serves.
 type worktreePortsEditor struct {
 	t    *testing.T
 	cl   *testClient
 	path string
 }
 
-// read returns worktree_ports as the daemon serves it, as raw JSON so "absent"
+// read returns worktree_ports as the runtime service serves it, as raw JSON so "absent"
 // and "null" stay distinguishable.
 func (e *worktreePortsEditor) read() string {
 	e.t.Helper()

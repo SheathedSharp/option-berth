@@ -17,7 +17,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/spf13/cobra"
 
-	// The daemon serves groups.start from this package's init(); `oberth serve`
+	// The runtime service serves groups.start from this package's init(); `oberth runtime service run`
 	// runs in this binary, so it has to be linked in.
 	_ "github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/groupstart"
 )
@@ -93,8 +93,8 @@ func upRun(cmd *cobra.Command, args []string) error {
 	if err := requireStartSupport(cmd.Context(), c, params, cfg); err != nil {
 		return err
 	}
-	// Progress is an enhancement: ask for in-flight chunks only from a daemon
-	// that advertises them. An older daemon ignores the field entirely; a CLI
+	// Progress is an enhancement: ask for in-flight chunks only from a runtime service
+	// that advertises them. An older runtime service ignores the field entirely; a CLI
 	// that cannot see the capability simply keeps the old stream. A --json
 	// invocation never asks: its one JSON value is the whole answer, and a
 	// diagnostic line on stderr would break the contract for callers that
@@ -112,17 +112,17 @@ func upRun(cmd *cobra.Command, args []string) error {
 		mode.timeoutSet, params, cfg)
 }
 
-// requireStartSupport refuses a request the running daemon cannot honour, before
+// requireStartSupport refuses a request the running runtime service cannot honour, before
 // any of it is sent: the manifest's own features, the file a named project
-// resolves to, and the depends_on closure each need a capability a daemon may
-// predate. Sending the request anyway would turn a daemon too old for the file
+// resolves to, and the depends_on closure each need a capability a runtime service may
+// predate. Sending the request anyway would turn a runtime service too old for the file
 // into an error about the file.
 func requireStartSupport(ctx context.Context, c *client.Client, params rpc.GroupsStartParams, cfg *groups.Config) error {
 	if err := requireConfigSupport(c, cfg); err != nil {
 		return err
 	}
 	// A named project carries no manifest here, so the same capability rules
-	// run against the file the daemon will actually read.
+	// run against the file the runtime service will actually read.
 	if err := requireNamedProjectSupport(ctx, c, params); err != nil {
 		return err
 	}
@@ -158,7 +158,7 @@ func upParams(args []string) (rpc.GroupsStartParams, *groups.Config, error) {
 	// `up` brings a named service's dependencies with it unless asked not to.
 	// Without --only the field cannot change the plan (everything is started
 	// anyway), so it is not sent: that keeps a plain `up` working against a
-	// daemon that predates the closure and does not announce the capability.
+	// runtime service that predates the closure and does not announce the capability.
 	params.IncludeDependencies = !upNoDeps && namesServices(upOnly)
 	return params, cfg, nil
 }
@@ -183,7 +183,7 @@ func projectStartParams(args []string, only []string, allowOutsideHome bool) (rp
 	// machine's, and there is no other machine to be confused about.
 	params.Env = callerEnv()
 	if len(args) == 1 {
-		// A named project is resolved by the daemon, which is the side that
+		// A named project is resolved by the runtime service, which is the side that
 		// reads the file, so nothing here has to check it first.
 		named := strings.TrimSpace(args[0])
 		params.Name = &named
@@ -223,7 +223,7 @@ type upDocument struct {
 	rpc.GroupsStartEnd
 }
 
-// consumeStart prints one line per service as the daemon reports it, then the
+// consumeStart prints one line per service as the runtime service reports it, then the
 // summary. It exits non-zero when any service failed to start (spec, "Error
 // handling": a partial failure is still a failure).
 func consumeStart(stream *client.Stream, asJSON bool) error {
@@ -278,12 +278,12 @@ func consumeStartWithWait(ctx context.Context, c *client.Client, stream *client.
 	return nil
 }
 
-// killCaller is the part of the daemon client a timeout cleanup needs: one
+// killCaller is the part of the runtime service client a timeout cleanup needs: one
 // call and the capability list. It is an interface so the stop request can be
-// tested without a live daemon.
+// tested without a live runtime.service.
 type killCaller interface {
 	Call(ctx context.Context, method string, params, result any) error
-	Hello() rpc.DaemonHelloResult
+	Hello() rpc.RuntimeServiceHelloResult
 }
 
 // stopTimedOutServices makes a readiness timeout terminal. The same group
@@ -294,7 +294,7 @@ type killCaller interface {
 // survive the timeout. `expect_runs` also keeps the stop scoped, so
 // already-running or skipped services and their `port: auto` claims stay.
 //
-// A daemon that does not know `expect_runs` would silently drop the field and
+// A runtime service that does not know `expect_runs` would silently drop the field and
 // stop by name, which is exactly the wrong run; the cleanup is refused then,
 // and an invocation that cannot name the run it started refuses too.
 func stopTimedOutServices(ctx context.Context, c killCaller, params rpc.GroupsStartParams, timedOut []startTimeout) error {
@@ -330,8 +330,8 @@ func stopTimedOutServices(ctx context.Context, c killCaller, params rpc.GroupsSt
 // timeoutCleanupRefused says plainly that the timed-out runs were left running
 // and why: a cleanup that stops the wrong run must not read as success, and an
 // agent needs the state it is actually in.
-func timeoutCleanupRefused(hello rpc.DaemonHelloResult, timedOut []startTimeout, why string) error {
-	version := hello.DaemonVersion
+func timeoutCleanupRefused(hello rpc.RuntimeServiceHelloResult, timedOut []startTimeout, why string) error {
+	version := hello.RuntimeServiceVersion
 	if version == "" {
 		version = "an older version"
 	}
@@ -339,7 +339,7 @@ func timeoutCleanupRefused(hello rpc.DaemonHelloResult, timedOut []startTimeout,
 	for _, service := range timedOut {
 		services = append(services, service.service)
 	}
-	return fmt.Errorf("the timed-out runs for %s were not stopped: the running daemon (%s) %s\nhint: they may still be running; stop them with `oberth down`, or restart the daemon with `oberth daemon restart`",
+	return fmt.Errorf("the timed-out runs for %s were not stopped: the running runtime service (%s) %s\nhint: they may still be running; stop them with `oberth down`, or restart the runtime service with `oberth runtime service restart`",
 		strings.Join(services, ", "), version, why)
 }
 
@@ -351,7 +351,7 @@ func valueOrEmpty(value *string) string {
 }
 
 // startChunkStream is the bit of client.Stream this command reads. It lets the
-// chunk handling be tested without a live daemon.
+// chunk handling be tested without a live runtime.service.
 type startChunkStream interface {
 	Chunks() <-chan json.RawMessage
 	End() <-chan client.End
@@ -369,7 +369,7 @@ func collectStartChunks(stream startChunkStream, progress io.Writer, wait, asJSO
 			continue
 		}
 		if isStartProgressChunk(outcome) {
-			// A daemon may still send progress when a peer asked for it;
+			// A runtime service may still send progress when a peer asked for it;
 			// this invocation's own contract decides whether it is shown.
 			if !asJSON {
 				printStartProgress(progress, outcome)
@@ -379,7 +379,7 @@ func collectStartChunks(stream startChunkStream, progress io.Writer, wait, asJSO
 		normalizeStartChunk(&outcome)
 		if !wait {
 			// This invocation did not wait, so it cannot claim readiness.
-			// Say only what it knows: the daemon reported a started process.
+			// Say only what it knows: the runtime service reported a started process.
 			markStartChunkUnconfirmed(&outcome)
 		}
 		outcomes = append(outcomes, outcome)
@@ -428,13 +428,13 @@ func printStartProgress(w io.Writer, c rpc.GroupsStartChunk) {
 	fmt.Fprintf(w, "  %s %s  %s\n", display.Dim("…"), display.Bold(c.Service), display.Dim(line))
 }
 
-// normalizeStartChunk keeps a new CLI useful with a daemon that predates the
-// structured outcome fields. The daemon remains the source of facts; this is
+// normalizeStartChunk keeps a new CLI useful with a runtime service that predates the
+// structured outcome fields. The runtime service remains the source of facts; this is
 // only a compatibility projection for the client-side JSON document.
 func normalizeStartChunk(c *rpc.GroupsStartChunk) {
-	// A daemon that sends the structured outcome fields also decides its own
+	// A runtime service that sends the structured outcome fields also decides its own
 	// next step: it knows whether a log exists, and it knows when a refusal
-	// carries its own way out. Only a daemon predating those fields needs the
+	// carries its own way out. Only a runtime service predating those fields needs the
 	// projection below — second-guessing the new one put a "read the logs" hint
 	// on services that never started.
 	structured := c.State != ""
@@ -454,9 +454,9 @@ func normalizeStartChunk(c *rpc.GroupsStartChunk) {
 	}
 }
 
-// markStartChunkUnconfirmed states what this invocation knows: the daemon
+// markStartChunkUnconfirmed states what this invocation knows: the runtime service
 // reported the process started, but this command did not wait for readiness.
-// It is an annotation on the CLI's own output, not a daemon fact.
+// It is an annotation on the CLI's own output, not a runtime service fact.
 func markStartChunkUnconfirmed(c *rpc.GroupsStartChunk) {
 	if c.State != "started" {
 		return

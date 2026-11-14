@@ -15,7 +15,7 @@ var pruning struct {
 
 // startPruning owns one worker, as before. Replacement and shutdown join the
 // old worker before closing its store or starting another owner.
-func startPruning(rt *runtimesvc.Runtime) {
+func startPruning(rt *runtimesvc.HostContext) {
 	pruning.Lock()
 	defer pruning.Unlock()
 	stopPruningLocked()

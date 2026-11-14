@@ -47,7 +47,7 @@ type Event struct {
 
 // EventSource is the compact, non-path identity of the worktree that produced
 // a scoped state.changed notification. The unexported fields are used by the
-// daemon while routing and never cross the wire.
+// runtime service while routing and never cross the wire.
 type EventSource struct {
 	RepoID     string `json:"repo_id,omitempty"`
 	WorktreeID string `json:"worktree_id,omitempty"`
@@ -223,7 +223,7 @@ func EventSourceForEvent(ev Event, groups []Group) *EventSource {
 }
 
 // NewEventID returns a stable identity for one state transition. Seq is the
-// daemon's global publish sequence; key identifies the affected object.
+// runtime service's global publish sequence; key identifies the affected object.
 func NewEventID(seq uint64, kind, key string) string {
 	return strings.Join([]string{strconv.FormatUint(seq, 10), strings.TrimSpace(kind), strings.TrimSpace(key)}, ":")
 }
@@ -234,7 +234,7 @@ func NewStateChangedID(seq uint64, source *EventSource, changed []string) string
 	parts := make([]string, len(changed))
 	copy(parts, changed)
 	sort.Strings(parts)
-	identity := "daemon"
+	identity := "runtime_service"
 	if source != nil {
 		identity = source.WorktreeID
 		if identity == "" {

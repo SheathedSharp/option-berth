@@ -50,7 +50,7 @@ worker   running   no port
   <figcaption class="fragment-label">check the observer itself</figcaption>
   <pre><code>oberth doctor --only listener_observation</code></pre>
 </figure>
-<p>Run this check in the same kind of process that failed. If the result is blind, retry from a normal terminal, or run <code>oberth serve --detach</code> there and retry. Do not loop the same start inside the sandbox and read timeouts as failures.</p>
+<p>Run this check in the same kind of process that failed. If the result is blind, retry from a normal terminal, or run <code>oberth runtime service run --detach</code> there and retry. Do not loop the same start inside the sandbox and read timeouts as failures.</p>
 
 <h2 id="never">What status never says</h2>
 <aside class="note">

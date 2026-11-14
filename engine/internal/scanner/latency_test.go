@@ -13,7 +13,7 @@ import (
 )
 
 // What a handler pays for, not what it publishes: each test below checks the
-// latency rule the daemon promises (republish re-attributes instead of
+// latency rule the runtime service promises (republish re-attributes instead of
 // scanning, forced scans never coalesce, an older observation never wins).
 
 // project is a throwaway checkout with one manifest, and a store that knows it.
@@ -36,8 +36,8 @@ func TestRepublishDoesNotScan(t *testing.T) {
 	store, root := project(t, "name: before\nports: [8123]\n")
 	var collections atomic.Int64
 	loop := New(Options{
-		DaemonVersion: "test",
-		Store:         store,
+		RuntimeServiceVersion: "test",
+		Store:                 store,
 		Scan: func(include Include) ([]ports.ListeningPort, error) {
 			collections.Add(1)
 			return onePort(root)(include)
@@ -70,10 +70,10 @@ func TestRepublishPublishesBeforeItReturns(t *testing.T) {
 	var mu sync.Mutex
 	var groups []string
 	l := New(Options{
-		DaemonVersion: "test",
-		Store:         st,
-		Demand:        oneSubscriber,
-		Scan:          onePort(dir),
+		RuntimeServiceVersion: "test",
+		Store:                 st,
+		Demand:                oneSubscriber,
+		Scan:                  onePort(dir),
 		Publish: func(_, next state.Snapshot, _ []state.Event) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -101,7 +101,7 @@ func TestRepublishPublishesBeforeItReturns(t *testing.T) {
 func TestRepublishBeforeAnyScanFallsBackToOne(t *testing.T) {
 	var collections atomic.Int64
 	loop := New(Options{
-		DaemonVersion: "test",
+		RuntimeServiceVersion: "test",
 		Scan: func(Include) ([]ports.ListeningPort, error) {
 			collections.Add(1)
 			return []ports.ListeningPort{{Port: 8234, Process: "node", PID: 42}}, nil
@@ -121,8 +121,8 @@ func TestRPCScanDoesNotInheritDemandButKeepsIt(t *testing.T) {
 	var requestsMu sync.Mutex
 	var requests []Include
 	loop := New(Options{
-		DaemonVersion: "test",
-		Demand:        func() (int, Include) { return 1, Include{Stats: true, Health: true} },
+		RuntimeServiceVersion: "test",
+		Demand:                func() (int, Include) { return 1, Include{Stats: true, Health: true} },
 		Scan: func(want Include) ([]ports.ListeningPort, error) {
 			requestsMu.Lock()
 			requests = append(requests, want)
@@ -175,7 +175,7 @@ func TestOlderScanNeverOvertakesANewerOne(t *testing.T) {
 	resume := make(chan struct{})
 	var blocked atomic.Bool
 	loop := New(Options{
-		DaemonVersion: "test",
+		RuntimeServiceVersion: "test",
 		Scan: func(want Include) ([]ports.ListeningPort, error) {
 			if want.Stats {
 				blocked.Store(true)
@@ -265,8 +265,8 @@ func TestRescanAlwaysScansOnAStoppedClock(t *testing.T) {
 	frozen := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	var collections atomic.Int64
 	loop := New(Options{
-		DaemonVersion: "test",
-		Now:           func() time.Time { return frozen },
+		RuntimeServiceVersion: "test",
+		Now:                   func() time.Time { return frozen },
 		Scan: func(Include) ([]ports.ListeningPort, error) {
 			collections.Add(1)
 			return []ports.ListeningPort{{Port: 8234, Process: "node", PID: 42}}, nil
@@ -294,8 +294,8 @@ func TestReadDoesNotCoalesceOntoAScanThatBeganBeforeIt(t *testing.T) {
 	resume := make(chan struct{})
 	var collections atomic.Int64
 	loop := New(Options{
-		DaemonVersion: "test",
-		Now:           func() time.Time { return frozen },
+		RuntimeServiceVersion: "test",
+		Now:                   func() time.Time { return frozen },
 		Scan: func(want Include) ([]ports.ListeningPort, error) {
 			collections.Add(1)
 			if want.Stats {
@@ -331,9 +331,9 @@ func TestReadDoesNotCoalesceOntoAScanThatBeganBeforeIt(t *testing.T) {
 func TestCoalescingComparesScanNumbersNotTheClock(t *testing.T) {
 	frozen := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	l := New(Options{
-		DaemonVersion: "test",
-		Now:           func() time.Time { return frozen },
-		Scan:          fixedRows(ports.ListeningPort{Port: 8123, PID: 42, Process: "python3"}),
+		RuntimeServiceVersion: "test",
+		Now:                   func() time.Time { return frozen },
+		Scan:                  fixedRows(ports.ListeningPort{Port: 8123, PID: 42, Process: "python3"}),
 	})
 	if _, err := l.Snapshot(Include{}); err != nil {
 		t.Fatalf("Snapshot: %v", err)
@@ -364,9 +364,9 @@ func TestAWriteDuringASlowScanStillPublishesItsChange(t *testing.T) {
 	releaseScan := make(chan struct{})
 	var calls atomic.Int32
 	l := New(Options{
-		DaemonVersion: "test",
-		Store:         st,
-		Demand:        oneSubscriber,
+		RuntimeServiceVersion: "test",
+		Store:                 st,
+		Demand:                oneSubscriber,
 		Scan: func(Include) ([]ports.ListeningPort, error) {
 			if calls.Add(1) == 2 {
 				close(scanStarted)
@@ -405,8 +405,8 @@ func TestAWriteDuringASlowScanStillPublishesItsChange(t *testing.T) {
 // without believing the change was lost.
 func TestRepublishBusySaysTheChangeIsSaved(t *testing.T) {
 	l := New(Options{
-		DaemonVersion: "test",
-		Scan:          fixedRows(ports.ListeningPort{Port: 8123, PID: 42, Process: "python3"}),
+		RuntimeServiceVersion: "test",
+		Scan:                  fixedRows(ports.ListeningPort{Port: 8123, PID: 42, Process: "python3"}),
 	})
 	lock(l.orderGate)
 	defer unlock(l.orderGate)

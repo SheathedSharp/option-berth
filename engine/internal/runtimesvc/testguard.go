@@ -6,26 +6,26 @@ import (
 	"strings"
 )
 
-// A Go test binary must never turn into a oberth daemon.
+// A Go test binary must never turn into a oberth runtime service.
 //
 // `go test` links each package into an executable named <pkg>.test. Passing
-// that executable `serve --detach` does not start a daemon: Go's flag package
-// stops parsing at the first non-flag argument, so `serve` and `--detach` are
+// that executable `runtime service run --detach` does not start a runtime_service: Go's flag package
+// stops parsing at the first non-flag argument, so `runtime service run` and `--detach` are
 // ignored and the binary re-runs the whole test suite in the background
 // against whatever HOME it inherited. Any test reaching the autostart path
 // thus forks a copy of itself on every run, and any test in that copy reaching
 // the same path forks again — one afternoon of `go test` left 2,150
-// `cmd.test serve --detach` processes behind and exhausted swap that way.
+// `cmd.test runtime service run --detach` processes behind and exhausted swap that way.
 //
 // Both ends need the guard, which is why it lives here: the client that would
-// spawn the daemon (internal/runtimesvc/client.Autostart) and the `oberth serve`
+// spawn the runtime service (internal/runtimesvc/client.Autostart) and the `oberth runtime service run`
 // that would become one (internal/cmd).
 
-// AllowTestDaemonEnv opts a test binary back in to acting as a daemon. It
+// AllowTestRuntimeServiceEnv opts a test binary back in to acting as a runtime.service. It
 // exists so the guard itself can be exercised, and so a future harness that
-// really wants a test binary as its daemon can say so out loud. Nothing in the
+// really wants a test binary as its runtime service can say so out loud. Nothing in the
 // tree sets it.
-const AllowTestDaemonEnv = "BERTH_ALLOW_TEST_DAEMON"
+const AllowTestRuntimeServiceEnv = "BERTH_RUNTIME_SERVICE_ALLOW_TEST_BINARY"
 
 // IsTestBinary reports whether path names a Go test binary. `go test` always
 // names one <pkg>.test (<pkg>.test.exe on Windows), whether it runs it out of
@@ -37,9 +37,9 @@ func IsTestBinary(path string) bool {
 	return strings.HasSuffix(name, ".test")
 }
 
-// TestDaemonAllowed reports whether AllowTestDaemonEnv opts this process in.
-func TestDaemonAllowed() bool {
-	return EnvEnabled(os.Getenv(AllowTestDaemonEnv))
+// TestRuntimeServiceAllowed reports whether AllowTestRuntimeServiceEnv opts this process in.
+func TestRuntimeServiceAllowed() bool {
+	return EnvEnabled(os.Getenv(AllowTestRuntimeServiceEnv))
 }
 
 // EnvEnabled reads a boolean environment variable the way a shell does: unset,

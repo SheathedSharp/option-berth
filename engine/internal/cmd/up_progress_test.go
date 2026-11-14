@@ -10,7 +10,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 )
 
-// fakeStartStream is the read half of groups.start without a daemon.
+// fakeStartStream is the read half of groups.start without a runtime.service.
 type fakeStartStream struct {
 	chunks chan json.RawMessage
 	end    chan client.End

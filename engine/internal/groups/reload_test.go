@@ -182,7 +182,7 @@ func TestReloadReportsInvalidFiles(t *testing.T) {
 	})
 }
 
-// TestKnownAndByPath are what the daemon's config handlers resolve through.
+// TestKnownAndByPath are what the runtime service's config handlers resolve through.
 func TestKnownAndByPath(t *testing.T) {
 	root := t.TempDir()
 	configPath := writeConfig(t, root, "name: demo\nservices:\n  - name: api\n")
@@ -190,7 +190,7 @@ func TestKnownAndByPath(t *testing.T) {
 	x.Observe(root)
 
 	// Observe resolves symlinks, so on macOS the indexed path is the
-	// /private/var spelling of the temp dir — the path the daemon serves.
+	// /private/var spelling of the temp dir — the path the runtime service serves.
 	want := &Config{
 		Name: "demo", Dir: Canonical(root), Path: Canonical(configPath),
 		Services: []Service{{Name: "api"}},

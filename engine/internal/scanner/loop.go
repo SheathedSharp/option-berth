@@ -1,11 +1,11 @@
-// Package scanner is the daemon's one scan goroutine.
+// Package scanner is the runtime service's one scan goroutine.
 //
 // A scan is an OS sweep plus a Docker round trip, and two of them on one
 // machine measure each other; there is exactly one. The loop owns four things:
 // asking for an observation, numbering it in the order it began, deciding
 // whether it may still be published, and publishing it as one
 // (previous, next) pair. Turning that pair into deltas, events and
-// per-subscriber filters is the daemon's business, not this package's.
+// per-subscriber filters is the runtime service's business, not this package's.
 package scanner
 
 import (
@@ -28,14 +28,14 @@ import (
 // The port scan samples at BaseInterval while something is changing, backs off
 // by BackoffFactor per unchanged tick, and stops at SubscribedMaxInterval when
 // somebody is watching or MaxInterval when only RPC reads are left. Both
-// ceilings scale with the configured base, so changing `daemon.scan_interval`
+// ceilings scale with the configured base, so changing `runtime_service.scan_interval`
 // moves the whole curve rather than just its floor.
 const (
 	// BaseInterval is the cadence while something is changing, and the default
-	// for `daemon.scan_interval`.
+	// for `runtime_service.scan_interval`.
 	BaseInterval = 2 * time.Second
 
-	// MinScanInterval is as fast as `daemon.scan_interval` may be set. A scan
+	// MinScanInterval is as fast as `runtime_service.scan_interval` may be set. A scan
 	// is an `lsof`/`ss`/`netstat` sweep plus a Docker round trip; below a
 	// second the machine spends more time being measured than running.
 	MinScanInterval = 1 * time.Second
@@ -81,7 +81,7 @@ const (
 	// It never backs off, and only runs while somebody is subscribed.
 	StatsInterval = 1 * time.Second
 
-	// MinStatsInterval is as fast as `daemon.stats_interval` may be set. Below
+	// MinStatsInterval is as fast as `runtime_service.stats_interval` may be set. Below
 	// it the sampler costs more than the numbers it publishes: every tick is a
 	// `ps` per machine on Unix and a PowerShell on Windows.
 	MinStatsInterval = 250 * time.Millisecond
@@ -94,7 +94,7 @@ type Include struct {
 	Health bool
 }
 
-// Demand reports what the daemon's subscribers currently want. Zero
+// Demand reports what the runtime service's subscribers currently want. Zero
 // subscribers park the loop until Wake is called.
 type Demand func() (subscribers int, include Include)
 
@@ -105,10 +105,10 @@ type Publisher func(prev, next state.Snapshot, events []state.Event)
 // Options configures a Loop. Only a collector is defaulted; the rest may be
 // zero.
 type Options struct {
-	DaemonVersion string
-	Logger        *slog.Logger
-	Demand        Demand
-	Publish       Publisher
+	RuntimeServiceVersion string
+	Logger                *slog.Logger
+	Demand                Demand
+	Publish               Publisher
 
 	// Store persists renames, group pins, known `oberth.yaml` roots and the
 	// port history ring. Nil means the loop scans without a database.
@@ -121,14 +121,14 @@ type Options struct {
 
 	// Sessions builds the snapshot's `sessions` collection out of the ports the
 	// tick just resolved. It is a function for the same reason Runs is: the
-	// daemon installs it from an OnStart hook, once the loop exists. Nil
+	// runtime service installs it from an OnStart hook, once the loop exists. Nil
 	// publishes an empty collection.
 	Sessions func(ports []state.Port) []state.SessionRecord
 
 	// Scan overrides the OS scan with a synchronous callback. Tests use it;
 	// production leaves it nil and gets ports.Scan with container data from a
 	// docker.Watcher's cached list rather than an inline `docker ps`. The
-	// daemon never waits on the Docker CLI for a scan.
+	// runtime service never waits on the Docker CLI for a scan.
 	Scan func(include Include) ([]ports.ListeningPort, error)
 
 	// ScanContext takes precedence over Scan and carries the observation's
@@ -161,13 +161,13 @@ type Options struct {
 	SampleStats func(pids []int) map[int]ports.ProcSample
 
 	// ScanInterval overrides the base port-scan cadence
-	// (`daemon.scan_interval`): the interval used while something is changing
+	// (`runtime_service.scan_interval`): the interval used while something is changing
 	// and the floor the backoff returns to. Zero means BaseInterval; anything
 	// below MinScanInterval is clamped to it.
 	ScanInterval time.Duration
 
 	// StatsInterval overrides the stats-only tick's cadence
-	// (`daemon.stats_interval`): zero means StatsInterval, and anything under
+	// (`runtime_service.stats_interval`): zero means StatsInterval, and anything under
 	// MinStatsInterval is clamped up to it.
 	StatsInterval time.Duration
 
@@ -180,7 +180,7 @@ type Options struct {
 type Loop struct {
 	opts Options
 	now  func() time.Time
-	// base is the resolved `daemon.scan_interval`: the cadence while something
+	// base is the resolved `runtime_service.scan_interval`: the cadence while something
 	// is changing and the floor the backoff returns to. Fixed at construction,
 	// so nothing locks to read it.
 	base time.Duration
@@ -323,7 +323,7 @@ func withDefaults(opts Options) Options {
 }
 
 // collect asks this loop's collector for the listener table. The seam is read
-// per call, never cached, because both the daemon and tests install a collector
+// per call, never cached, because both the runtime service and tests install a collector
 // after New.
 //
 // Precedence is the documented one: source, then context, then the legacy
@@ -382,9 +382,9 @@ func (l *Loop) osScanSourceContext(ctx context.Context, include Include) ([]port
 	if err != nil {
 		return nil, source, err
 	}
-	// The daemon's own self-probe binds a short-lived loopback socket. A
+	// The runtime service's own self-probe binds a short-lived loopback socket. A
 	// regular scan that overlaps it would otherwise publish that socket as an
-	// undeclared listener of the checkout the daemon was started in. The probe
+	// undeclared listener of the checkout the runtime service was started in. The probe
 	// keeps using the raw collector, because seeing this process's own
 	// listener is exactly what it tests.
 	pp = withoutOwnListeners(pp)
@@ -406,7 +406,7 @@ func (l *Loop) osScanSourceContext(ctx context.Context, include Include) ([]port
 	return pp, source, ctx.Err()
 }
 
-// withoutOwnListeners drops rows owned by the daemon process. In production
+// withoutOwnListeners drops rows owned by the runtime service process. In production
 // option-berth has no TCP listener of its own, so a row with this PID is the
 // self-probe's transient socket; publishing it would make the probe look like a
 // service the user never declared. Test-injected collectors do not pass through
@@ -442,7 +442,7 @@ func (l *Loop) ProbeContext(ctx context.Context, host string, port int, path str
 	return result
 }
 
-// SetDemand installs the demand callback after construction. The daemon needs
+// SetDemand installs the demand callback after construction. The runtime service needs
 // the setter because the server and the loop refer to each other.
 func (l *Loop) SetDemand(d Demand) {
 	if d == nil {
@@ -464,7 +464,7 @@ func (l *Loop) Cached() state.Snapshot {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if !l.haveSnap {
-		return state.Rows{}.Normalize().Into(state.Snapshot{At: l.now().Format(time.RFC3339), DaemonVersion: l.opts.DaemonVersion})
+		return state.Rows{}.Normalize().Into(state.Snapshot{At: l.now().Format(time.RFC3339), RuntimeServiceVersion: l.opts.RuntimeServiceVersion})
 	}
 	return l.snap
 }
@@ -596,7 +596,7 @@ func (l *Loop) waitForDemand(ctx context.Context) (include Include, scanNow, fin
 	if subscribers > 0 {
 		return wanted, true, false
 	}
-	// Parked: no scanning and no timer, so an idle daemon costs nothing.
+	// Parked: no scanning and no timer, so an idle runtime service costs nothing.
 	select {
 	case <-ctx.Done():
 		return Include{}, false, true
@@ -646,7 +646,7 @@ func (l *Loop) admit(ctx context.Context) (release func(), admitted bool) {
 	return func() { unlock(l.runGate) }, true
 }
 
-// publish hands the transition to the daemon and then writes its port
+// publish hands the transition to the runtime service and then writes its port
 // transitions to the history ring, in that order: a client sees the change
 // before the disk does.
 func (l *Loop) publish(prev, next state.Snapshot, events []state.Event) {
@@ -1006,9 +1006,9 @@ func (l *Loop) storeCommitted(prev state.Snapshot, rows []state.Port, groupRows 
 		Sessions: c.sessions,
 	}.Tag(state.LocalhostName).Normalize()
 	next = local.Into(state.Snapshot{
-		At:            l.lastScanAt.Format(time.RFC3339),
-		DaemonVersion: l.opts.DaemonVersion,
-		Observation:   c.observation,
+		At:                    l.lastScanAt.Format(time.RFC3339),
+		RuntimeServiceVersion: l.opts.RuntimeServiceVersion,
+		Observation:           c.observation,
 	})
 	if l.haveSnap && !snapshotChanged(prev, next, withStats) {
 		next.Seq = prev.Seq
@@ -1056,7 +1056,7 @@ func (l *Loop) healthDue() bool {
 
 // maxIntervalLocked is the ceiling the backoff may reach right now: 2.5x the
 // base while anyone is subscribed, so a live view never lags a change by more
-// than that, and 5x when the daemon only answers RPC reads. At the default 2 s
+// than that, and 5x when the runtime service only answers RPC reads. At the default 2 s
 // base those are the 5 s and 10 s of the contract. Caller holds the mutex.
 func (l *Loop) maxIntervalLocked() time.Duration {
 	scale := float64(IdleMaxFactor)
@@ -1081,7 +1081,7 @@ func backoff(d, base, max time.Duration) time.Duration {
 }
 
 // observationEqual keeps the verdict comparison in the state package: the
-// daemon must use the same rule to decide whether a delta needs a frame.
+// runtime service must use the same rule to decide whether a delta needs a frame.
 func observationEqual(a, b *state.Observation) bool {
 	return state.SameObservation(a, b)
 }
@@ -1502,7 +1502,7 @@ func (l *Loop) RescanContext(ctx context.Context, include Include) (state.Snapsh
 // Republish makes a store or `oberth.yaml` write visible on the wire without
 // scanning the machine.
 //
-// The write changed how the ports the daemon already knows are named and
+// The write changed how the ports the runtime service already knows are named and
 // grouped, not which ports exist, so re-running attribution over the last
 // scan's own OS rows answers it exactly. It takes the ordering gate, so it
 // still cannot interleave with a scan: a scan that started before the write
@@ -1527,7 +1527,7 @@ func (l *Loop) Republish() error {
 // commitRepublish swaps a re-attributed snapshot into the cache. It is
 // commitScan minus everything that belongs to an OS scan: it does not touch the
 // scan counters, `lastScanAt`, the interval or the machine's load row, so the
-// RPC cache TTL and `daemon status` read exactly what they would have if the
+// RPC cache TTL and `runtime service status` read exactly what they would have if the
 // write had never happened. Caller holds the ordering gate and commitMu.
 func (l *Loop) commitRepublish(
 	subscribers int, carry Include,
@@ -1550,8 +1550,8 @@ func (l *Loop) commitRepublish(
 	}.Tag(state.LocalhostName).Normalize()
 
 	next = local.Into(state.Snapshot{
-		At:            l.now().Format(time.RFC3339),
-		DaemonVersion: l.opts.DaemonVersion,
+		At:                    l.now().Format(time.RFC3339),
+		RuntimeServiceVersion: l.opts.RuntimeServiceVersion,
 		// Republishing re-attributes the last scan; it does not re-read the
 		// table, so the partial/healthy verdict stays whatever that scan said.
 		Observation: prev.Observation,
@@ -1780,7 +1780,7 @@ func (l *Loop) snapHasStats() bool {
 	return len(l.snap.Ports) == 0
 }
 
-// Status is what `daemon.status` reports about the scanner.
+// Status is what `runtime.service.status` reports about the scanner.
 type Status struct {
 	LastScanAt time.Time
 
@@ -1792,7 +1792,7 @@ type Status struct {
 	// IntervalMs is the adaptive cadence at this instant — somewhere between
 	// the base and whichever ceiling currently applies. BaseIntervalMs and
 	// StatsIntervalMs are the effective settings behind it, after clamping;
-	// both are fixed for the daemon's life, so this is where you confirm that
+	// both are fixed for the runtime service's life, so this is where you confirm that
 	// an edit to the config file took effect.
 	IntervalMs      int
 	BaseIntervalMs  int
@@ -1819,5 +1819,5 @@ func (l *Loop) Status() Status {
 }
 
 // milliseconds renders a duration in whole milliseconds, the unit
-// `daemon.status` reports intervals in.
+// `runtime.service.status` reports intervals in.
 func milliseconds(d time.Duration) int { return int(d / time.Millisecond) }

@@ -8,6 +8,6 @@ import (
 )
 
 // Every path option-berth resolves from the environment points at a private temp
-// directory for the whole of this test binary, daemon autostart is off, and
-// the run fails if a test leaves a daemon behind.
+// directory for the whole of this test binary, runtime service autostart is off, and
+// the run fails if a test leaves a runtime service behind.
 func TestMain(m *testing.M) { os.Exit(testenv.Run(m)) }

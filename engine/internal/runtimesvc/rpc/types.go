@@ -2,7 +2,7 @@
 // the error registry and the method-description registry the protocol schema is
 // generated from.
 //
-// It carries no daemon logic: a client reads the shape from here or from the
+// It carries no runtime service logic: a client reads the shape from here or from the
 // generated schema, and the handlers live elsewhere.
 package rpc
 
@@ -11,7 +11,7 @@ import "encoding/json"
 // Version is the JSON-RPC version string carried by every message.
 const Version = "2.0"
 
-// ProtocolVersion is the daemon protocol version. An additive change bumps the
+// ProtocolVersion is the runtime service protocol version. An additive change bumps the
 // minor; a change that removes a field a client can send or read bumps the
 // major.
 //
@@ -19,13 +19,14 @@ const Version = "2.0"
 // that every params type used to embed.
 //
 // 2.1.0 added the groups.code method and GroupsKillParams.ExpectRuns. Both are
-// additive, so a client must gate them on the daemon's advertised capabilities
+// additive, so a client must gate them on the runtime service's advertised capabilities
 // (CapabilityKillExpectRuns) rather than on this version.
 //
 // 2.2.0 added the executable facts to the published service row:
 // executable_path, executable_modified_at and executable_changed_since_start.
 // The change is additive: a client that does not read them is unaffected.
-const ProtocolVersion = "2.2.0"
+// 3.0.0 replaces the retired host namespace, endpoint and public field names.
+const ProtocolVersion = "3.0.0"
 
 // Request is a client call. ID is raw so a client can use numbers or strings.
 type Request struct {

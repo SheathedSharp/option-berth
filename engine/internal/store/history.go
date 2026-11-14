@@ -13,7 +13,7 @@ import (
 // writing a batch of them.
 
 // The event kinds this ring records. They are the port-scoped subset of the
-// events the daemon publishes.
+// events the runtime service publishes.
 const (
 	EventPortUp        = "port_up"
 	EventPortDown      = "port_down"

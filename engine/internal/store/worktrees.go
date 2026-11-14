@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -8,7 +9,7 @@ import (
 	"time"
 )
 
-// Worktree identities are the `${worktree}` tokens the daemon has seen, with
+// Worktree identities are the `${worktree}` tokens the runtime service has seen, with
 // the canonical root each token was derived from and the group the checkout was
 // published under. The row outlives the directory: after a checkout is deleted
 // or moved, its databases and data directories still carry the token, and this
@@ -21,26 +22,26 @@ import (
 // WorktreeIdentity is one observed checkout identity.
 type WorktreeIdentity struct {
 	// Identity is the `${worktree}` token: "wt_" and twelve hex digits.
-	Identity string
+	Identity string `json:"identity"`
 	// Root is the canonical directory the token was derived from.
-	Root string
+	Root string `json:"root"`
 	// Group is the group name the checkout's manifest was published under.
 	// Empty when the identity was recorded before a manifest named it.
-	Group string
+	Group string `json:"group"`
 	// ConfigPath is the manifest the identity was observed through. When the
 	// directory still exists this is the exact manifest to re-read; when it is
 	// gone the path is evidence, not something to open.
-	ConfigPath string
+	ConfigPath string `json:"config_path"`
 	// Project and Worktree are the claim key's two halves for this checkout,
 	// kept so a deleted checkout's auto-port reservations can still be found.
-	Project  string
-	Worktree string
+	Project  string `json:"project"`
+	Worktree string `json:"worktree"`
 	// FirstSeen is when the ledger first recorded the checkout. LastSeen is
 	// the last write, not a per-scan heartbeat: an unchanged identity is not
 	// rewritten on every tick. Existence is always decided by the reader
 	// against the filesystem, never by these timestamps.
-	FirstSeen time.Time
-	LastSeen  time.Time
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
 }
 
 // worktreeIdentityColumns is the column list in scan order, shared by every
@@ -86,8 +87,12 @@ func (s *Store) RecordWorktreeIdentity(rec WorktreeIdentity) error {
 
 // WorktreeIdentities returns every recorded identity, oldest first.
 func (s *Store) WorktreeIdentities() ([]WorktreeIdentity, error) {
-	rows, err := s.db.Query(
-		`SELECT ` + worktreeIdentityColumns + `
+	return s.WorktreeIdentitiesContext(context.Background())
+}
+
+func (s *Store) WorktreeIdentitiesContext(ctx context.Context) ([]WorktreeIdentity, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+worktreeIdentityColumns+`
 		 FROM worktree_identities ORDER BY first_seen, identity`)
 	if err != nil {
 		return nil, fmt.Errorf("reading worktree identities: %w", err)

@@ -8,7 +8,7 @@ import (
 
 // How a failure out of this package is reported.
 //
-// The daemon and the CLI both report the same failures — a selector that
+// The runtime service and the CLI both report the same failures — a selector that
 // matched nothing, a name already taken — and they must report them the same
 // way. The mapping therefore lives here once, next to the errors it classifies,
 // rather than in each of the two callers.

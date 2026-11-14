@@ -68,7 +68,7 @@ func TestWaitingOnShrinksAsDependenciesBecomeReady(t *testing.T) {
 			}, nil
 		}
 	})
-	rt := &runtimesvc.Runtime{Scanner: l}
+	rt := &runtimesvc.HostContext{Scanner: l}
 
 	var observed [][]string
 	err := waitForProgress(context.Background(), rt, "demo", dependencySet(), dependencyBook(), "",
@@ -101,7 +101,7 @@ func TestWaitingOnKeepsLastSetWhenObservationIsUnknown(t *testing.T) {
 	l, _ := scanCalls(t, func(int) ([]ports.ListeningPort, error) {
 		return nil, unreadable
 	})
-	rt := &runtimesvc.Runtime{Scanner: l}
+	rt := &runtimesvc.HostContext{Scanner: l}
 	attempt := beginStartAttempt(rt, "demo", "start-1", groups.Service{Name: "web"},
 		dependencyNames(dependencySet()), nil)
 	defer attempt.finish()
@@ -146,7 +146,7 @@ func TestReportPendingNeverReportsUnknownAsEmpty(t *testing.T) {
 // updates what is being waited on, and a poll landing after the attempt ended
 // must not resurrect it.
 func TestSetWaitingOnDoesNotTouchPhaseOrOutliveTheAttempt(t *testing.T) {
-	rt := &runtimesvc.Runtime{}
+	rt := &runtimesvc.HostContext{}
 	attempt := beginStartAttempt(rt, "demo", "start-1", groups.Service{Name: "web"}, []string{"db", "cache"}, nil)
 	defer attempt.finish()
 

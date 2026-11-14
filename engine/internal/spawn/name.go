@@ -163,7 +163,7 @@ func launcherName(token string) string {
 }
 
 // lastElement is the final path element of a token, honouring both separators
-// so a Windows path resolves on a Unix daemon and the other way round.
+// so a Windows path resolves on a Unix runtime service and the other way round.
 func lastElement(token string) string {
 	token = strings.TrimSuffix(strings.TrimSuffix(token, "/"), `\`)
 	if i := strings.LastIndexAny(token, `/\`); i >= 0 {

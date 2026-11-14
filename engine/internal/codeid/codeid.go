@@ -225,7 +225,7 @@ func Remove(runID string) error {
 }
 
 // PruneExcept deletes snapshots whose run is no longer in the live registry.
-// It runs at daemon startup: a crash can leave a run's file behind, and the
+// It runs at runtime service startup: a crash can leave a run's file behind, and the
 // files belong to runs, not to the directory.
 func PruneExcept(keep map[string]bool) error {
 	entries, err := os.ReadDir(paths.Code())

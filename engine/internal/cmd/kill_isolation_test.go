@@ -25,7 +25,7 @@ import (
 func init() {
 	scanForKill = refuseUnscopedKillScan
 	killHere = refuseUnscopedKillSignal
-	guardDaemonKill = refuseUnscopedDaemonKill
+	guardRuntimeServiceKill = refuseUnscopedRuntimeServiceKill
 }
 
 var (
@@ -49,62 +49,62 @@ func refuseUnscopedKillSignal(context.Context, []killer.Target, killer.Options, 
 	return nil, errUnscopedKillSignal
 }
 
-// errUnscopedDaemonKill is the refusal a daemon executor round gets when no
+// errUnscopedRuntimeServiceKill is the refusal a runtime service executor round gets when no
 // test-owned fixture bound the client it was built with. It is a sentinel so a
 // contract can prove the round failed at the guard, not at an RPC.
-var errUnscopedDaemonKill = errors.New("test isolation: refused daemon kill round for a client no test-owned fixture bound")
+var errUnscopedRuntimeServiceKill = errors.New("test isolation: refused runtime service kill round for a client no test-owned fixture bound")
 
-// daemonKillScope is the test-only ownership proof for one daemon client: the
+// runtimeServiceKillScope is the test-only ownership proof for one runtime service client: the
 // instance a fixture dialled, together with the explicit Scan that fixture's
-// daemon was built with. Keying on the client instance means two daemons in one
+// runtime service was built with. Keying on the client instance means two runtime services in one
 // test binary never authorize each other, and a round that names a pid or a
 // selector is still refused because the guard never looks at targets.
-type daemonKillScope struct {
+type runtimeServiceKillScope struct {
 	scan func(scanner.Include) ([]ports.ListeningPort, error)
 }
 
 var (
-	daemonKillScopeMu sync.Mutex
-	daemonKillScopes  = map[*client.Client]daemonKillScope{}
+	runtimeServiceKillScopeMu sync.Mutex
+	runtimeServiceKillScopes  = map[*client.Client]runtimeServiceKillScope{}
 )
 
-// bindDaemonKillClient records one instance and its explicit scan. A nil client
-// or a nil scan is refused: a daemon that would fall back to its own scanner is
+// bindRuntimeServiceKillClient records one instance and its explicit scan. A nil client
+// or a nil scan is refused: a runtime service that would fall back to its own scanner is
 // exactly the thing the fixture rule exists to keep out.
-func bindDaemonKillClient(c *client.Client, scan func(scanner.Include) ([]ports.ListeningPort, error)) error {
+func bindRuntimeServiceKillClient(c *client.Client, scan func(scanner.Include) ([]ports.ListeningPort, error)) error {
 	if c == nil {
-		return fmt.Errorf("%w: nil client", errUnscopedDaemonKill)
+		return fmt.Errorf("%w: nil client", errUnscopedRuntimeServiceKill)
 	}
 	if scan == nil {
-		return fmt.Errorf("%w: client %p was bound without an explicit Scan", errUnscopedDaemonKill, c)
+		return fmt.Errorf("%w: client %p was bound without an explicit Scan", errUnscopedRuntimeServiceKill, c)
 	}
-	daemonKillScopeMu.Lock()
-	daemonKillScopes[c] = daemonKillScope{scan: scan}
-	daemonKillScopeMu.Unlock()
+	runtimeServiceKillScopeMu.Lock()
+	runtimeServiceKillScopes[c] = runtimeServiceKillScope{scan: scan}
+	runtimeServiceKillScopeMu.Unlock()
 	return nil
 }
 
-// releaseDaemonKillClient forgets an instance, so a later test cannot inherit
+// releaseRuntimeServiceKillClient forgets an instance, so a later test cannot inherit
 // another fixture's authorization.
-func releaseDaemonKillClient(c *client.Client) {
-	daemonKillScopeMu.Lock()
-	delete(daemonKillScopes, c)
-	daemonKillScopeMu.Unlock()
+func releaseRuntimeServiceKillClient(c *client.Client) {
+	runtimeServiceKillScopeMu.Lock()
+	delete(runtimeServiceKillScopes, c)
+	runtimeServiceKillScopeMu.Unlock()
 }
 
-// refuseUnscopedDaemonKill is the test-binary guard installed by init. It admits
+// refuseUnscopedRuntimeServiceKill is the test-binary guard installed by init. It admits
 // only the client instances a fixture bound together with a Scan; every other
-// client, including one a missed fixture dialled from a shared or real daemon,
+// client, including one a missed fixture dialled from a shared or real runtime service,
 // is refused before the executor reaches its RPC.
-func refuseUnscopedDaemonKill(c *client.Client) error {
+func refuseUnscopedRuntimeServiceKill(c *client.Client) error {
 	if c == nil {
-		return fmt.Errorf("%w: nil client", errUnscopedDaemonKill)
+		return fmt.Errorf("%w: nil client", errUnscopedRuntimeServiceKill)
 	}
-	daemonKillScopeMu.Lock()
-	scope, ok := daemonKillScopes[c]
-	daemonKillScopeMu.Unlock()
+	runtimeServiceKillScopeMu.Lock()
+	scope, ok := runtimeServiceKillScopes[c]
+	runtimeServiceKillScopeMu.Unlock()
 	if !ok || scope.scan == nil {
-		return fmt.Errorf("%w: client %p is not owned by a test fixture", errUnscopedDaemonKill, c)
+		return fmt.Errorf("%w: client %p is not owned by a test fixture", errUnscopedRuntimeServiceKill, c)
 	}
 	return nil
 }
@@ -466,10 +466,10 @@ func isolatedEnrichedSnapshot(t *testing.T) []ports.ListeningPort {
 	return enrichIsolatedSnapshot(isolatedRegisteredSnapshot(t))
 }
 
-// isolatedListeningSnapshot is the real-fixture daemon tier: it takes the
+// isolatedListeningSnapshot is the real-fixture runtime service tier: it takes the
 // enriched rows and keeps only the listeners that still accept a connection.
-// A fixture the test stopped must disappear from the next daemon scan the way a
-// production scan loses a closed socket; a static row would make the daemon's
+// A fixture the test stopped must disappear from the next runtime service scan the way a
+// production scan loses a closed socket; a static row would make the runtime service's
 // "rescan straight after the kill" look stale when it is not.
 func isolatedListeningSnapshot(t *testing.T) []ports.ListeningPort {
 	t.Helper()

@@ -1,6 +1,6 @@
 # Engine website / 引擎官网
 
-`site/` 是 `oberth` 引擎的静态官网和指南，只讲引擎本身。中文产品页在 `/`，英文在 `/en/`；指南英文在 `/guide/`，中文在 `/guide/zh/`。页面不连接 daemon，也不带遥测、外部字体或图片服务。唯一的第三方脚本是随站点同源发布的 GSAP 3.15.1，只用于动效，许可与来源记在仓库根的 `THIRD_PARTY_NOTICES.md`；CSP 仍然是 `script-src 'self'`。图标、浅色字标和深色字标的站点副本在 `site/assets/`。
+`site/` 是 `oberth` 引擎的静态官网和指南，只讲引擎本身。中文产品页在 `/`，英文在 `/en/`；指南英文在 `/guide/`，中文在 `/guide/zh/`。页面不连接 runtime service，也不带遥测、外部字体或图片服务。唯一的第三方脚本是随站点同源发布的 GSAP 3.15.1，只用于动效，许可与来源记在仓库根的 `THIRD_PARTY_NOTICES.md`；CSP 仍然是 `script-src 'self'`。图标、浅色字标和深色字标的站点副本在 `site/assets/`。
 
 禁用 JavaScript 时，正文、目录、语言切换和下载入口仍然可用。只有靠脚本才有意义的控件（产品页的舞台切换、指南的搜索、主题和抽屉）在没有脚本时不出现，而不是留下点了没反应的按钮。
 

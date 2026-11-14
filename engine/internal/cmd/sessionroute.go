@@ -9,14 +9,14 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/sessions"
 )
 
-// sessionsDaemon connects without autostarting. Session membership lives in
-// the daemon's run registry, so commands that act on a session must say when
+// sessionsRuntimeService connects without autostarting. Session membership lives in
+// the runtime service's run registry, so commands that act on a session must say when
 // that registry is unavailable.
-func sessionsDaemon(ctx context.Context) (*client.Client, error) {
-	c, err := dialDaemon(ctx)
+func sessionsRuntimeService(ctx context.Context) (*client.Client, error) {
+	c, err := dialRuntimeService(ctx)
 	if err != nil {
 		if errors.Is(err, client.ErrNotRunning) {
-			return nil, errors.New("sessions need a running daemon; start one with `oberth serve --detach`")
+			return nil, errors.New("sessions need a running runtime service; start one with `oberth runtime service run --detach`")
 		}
 		return nil, err
 	}

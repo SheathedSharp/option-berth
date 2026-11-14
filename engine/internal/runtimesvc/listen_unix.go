@@ -38,9 +38,9 @@ func dial(path string) (net.Conn, error) {
 	return net.Dial("unix", path)
 }
 
-// removeStaleSocket deletes a socket file a daemon that died without cleaning
+// removeStaleSocket deletes a socket file a runtime service that died without cleaning
 // up left behind. It is only called once the lock has been acquired, so the
-// file provably belongs to no live daemon.
+// file provably belongs to no live runtime.service.
 func removeStaleSocket(path string) error {
 	err := os.Remove(path)
 	if err != nil && !os.IsNotExist(err) {
@@ -52,8 +52,8 @@ func removeStaleSocket(path string) error {
 // prepareSocketDir makes sure dir exists before the socket is bound. A
 // directory option-berth owns (the default location) is created 0700 and
 // tightened to 0700 even when it was already there. A directory the user
-// pointed BERTH_SOCKET at is created 0700 when missing, but an existing one is
-// left exactly as it is: `BERTH_SOCKET=/tmp/x.sock` must neither fail on
+// pointed BERTH_RUNTIME_SERVICE_SOCKET at is created 0700 when missing, but an existing one is
+// left exactly as it is: `BERTH_RUNTIME_SERVICE_SOCKET=/tmp/x.sock` must neither fail on
 // "chmod /tmp: operation not permitted" nor silently tighten /tmp. Either way
 // the socket file itself is 0600, which is what keeps other users out.
 func prepareSocketDir(dir string, ours bool) error {

@@ -31,7 +31,7 @@ type project struct {
 	date    string
 }
 
-// Build compiles the engine: the CLI, its daemon, and every optional module.
+// Build compiles the engine: the CLI, its Runtime Service, and every optional module.
 func Build() error {
 	p, err := loadProject()
 	if err != nil {
@@ -40,7 +40,7 @@ func Build() error {
 	return buildEngine(p)
 }
 
-// BuildEngine compiles the Go CLI and daemon.
+// BuildEngine compiles the Go CLI and Runtime Service.
 func BuildEngine() error {
 	p, err := loadProject()
 	if err != nil {
@@ -76,8 +76,8 @@ func RunCLI(args string) error {
 	return commandWithIO(p.root, filepath.Join(p.root, "bin", "oberth"), argv...)
 }
 
-// RunDaemon builds the CLI and starts the background collector.
-func RunDaemon() error {
+// RunRuntimeService builds the CLI and starts the background collector.
+func RunRuntimeService() error {
 	p, err := loadProject()
 	if err != nil {
 		return err
@@ -85,7 +85,7 @@ func RunDaemon() error {
 	if err := buildEngine(p); err != nil {
 		return err
 	}
-	return commandWithIO(p.root, filepath.Join(p.root, "bin", "oberth"), "serve", "--detach")
+	return commandWithIO(p.root, filepath.Join(p.root, "bin", "oberth"), "runtime", "service", "run", "--detach")
 }
 
 // RunApp builds, installs, and opens the macOS application.
@@ -155,7 +155,7 @@ func InstallApp() error {
 	return installApp(p)
 }
 
-// Stop stops the daemon belonging to this checkout.
+// Stop stops the Runtime Service belonging to this checkout.
 func Stop() error {
 	p, err := loadProject()
 	if err != nil {
@@ -172,7 +172,7 @@ func Stop() error {
 	if !fileExists(bin) {
 		return errors.New("oberth is not built or installed; run mage install or mage buildEngine first")
 	}
-	return commandWithIO(p.root, bin, "daemon", "stop")
+	return commandWithIO(p.root, bin, "runtime", "service", "stop")
 }
 
 // Clean removes generated binaries, app bundles, and image snapshots.
@@ -191,7 +191,7 @@ func Clean() error {
 	return nil
 }
 
-// Snapshot renders current daemon state with an already-built client.
+// Snapshot renders current Runtime Service state with an already-built client.
 func Snapshot() error { return Shot(nil) }
 
 // States renders frozen UI fixtures. Rebuilds the macOS client so snapshot code stays current.

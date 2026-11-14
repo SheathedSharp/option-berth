@@ -13,9 +13,9 @@ import (
 // by themselves. The deadline is shared with guard acquisition.
 func withLegacyLockUntil(deadline time.Time, fn func() error) error {
 	lp := lockPath()
-	// Owner-only, matching the daemon's paths.EnsureDir: this file may be the
+	// Owner-only, matching the runtime service's paths.EnsureDir: this file may be the
 	// first thing to create ~/.option-berth (a CLI `oberth run` before any
-	// daemon), and the directory must not be listable by other users.
+	// runtime service), and the directory must not be listable by other users.
 	if err := os.MkdirAll(parentDir(lp), 0o700); err != nil {
 		return fmt.Errorf("runs: could not create config dir: %w", err)
 	}

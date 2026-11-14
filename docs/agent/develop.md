@@ -31,10 +31,10 @@ this page covers only how to move these files.
 From the repository root:
 
 ```sh
-mage build          # engine (CLI + daemon + optional modules)
+mage build          # engine (CLI + runtime service + optional modules)
 mage buildEngine    # engine only → ./bin/oberth
 mage runCLI "status --json"
-mage runDaemon      # start a daemon with the CLI just built (isolated use)
+mage runRuntimeService      # start a runtime service with the CLI just built (isolated use)
 mage stop
 mage schema         # regenerate the protocol and manifest JSON Schema
 ```
@@ -104,11 +104,11 @@ on a local macOS 27 machine. Do not present a local record as CI evidence. Steps
 export HOME=$(mktemp -d) BERTH_HOME=$(mktemp -d)
 cd engine && go build -o /tmp/oberth-mac27 ./cmd/oberth
 /tmp/oberth-mac27 doctor --only listener_observation     # expect observable, detail naming lsof
-/tmp/oberth-mac27 serve --detach && /tmp/oberth-mac27 daemon status
+/tmp/oberth-mac27 runtime service run --detach && /tmp/oberth-mac27 runtime service status
 cd ../examples/hello-worktree
 /tmp/oberth-mac27 up --wait --json && /tmp/oberth-mac27 status --json && /tmp/oberth-mac27 down --json
 cd ../../engine && go test -tags integration ./internal/scenario/... -count=1
-/tmp/oberth-mac27 daemon stop    # do not leave a daemon behind
+/tmp/oberth-mac27 runtime service stop    # do not leave a runtime service behind
 ```
 
 Record the result in [validation.md](validation.md) "Listener observation", with the commit, the

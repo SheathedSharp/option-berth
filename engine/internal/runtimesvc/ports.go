@@ -25,7 +25,7 @@ func init() {
 // A read asking for stats or health cannot use the cache unless a subscriber is
 // already collecting them, and a read with no loop behind it scans for itself
 // (reusing a scan younger than scanner.CacheTTL).
-func readPorts(rt *Runtime, include scanner.Include) ([]state.Port, error) {
+func readPorts(rt *HostContext, include scanner.Include) ([]state.Port, error) {
 	snap, err := readSnapshot(rt, include)
 	if err != nil {
 		return nil, err
@@ -36,7 +36,7 @@ func readPorts(rt *Runtime, include scanner.Include) ([]state.Port, error) {
 // readSnapshot is readPorts plus the observation the rows came with: a caller
 // deciding whether an absent port is free needs the table's coverage, not just
 // its rows.
-func readSnapshot(rt *Runtime, include scanner.Include) (state.Snapshot, error) {
+func readSnapshot(rt *HostContext, include scanner.Include) (state.Snapshot, error) {
 	if rt.Subscribers() > 0 {
 		if snap := rt.Scanner.Cached(); snap.Seq > 0 && cacheCovers(snap, include) {
 			return snap, nil
@@ -55,7 +55,7 @@ func readSnapshot(rt *Runtime, include scanner.Include) (state.Snapshot, error) 
 //
 // The question is about the snapshot as a whole, not about every row in it, and
 // asking it row by row was wrong. `stats` is null for a process whose numbers
-// are all zero — a listener ps cannot see, a container the daemon has no
+// are all zero — a listener ps cannot see, a container the runtime service has no
 // reading for — and `health` is null for anything not probed, so on a machine
 // with one such row every stats read missed the cache and scanned the machine
 // again, while a subscriber was already collecting stats every second. One row

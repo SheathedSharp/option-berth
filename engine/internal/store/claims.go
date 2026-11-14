@@ -10,11 +10,11 @@ import (
 
 // The claims table holds one row per reserved port. A reservation is
 // book-keeping, not a bind: nothing here touches a socket, it only records who
-// may use which port, so the daemon's allocator and `ports.next` step around it
+// may use which port, so the runtime service's allocator and `ports.next` step around it
 // and a service that is started again finds its address unchanged.
 
 // ErrClaimed reports that a port is already held by a different key. The
-// daemon maps it to the contract's claim_conflict (1201).
+// runtime service maps it to the contract's claim_conflict (1201).
 var ErrClaimed = errors.New("port is claimed by another key")
 
 // claimColumns is the column list in scan order. Every statement here reads it

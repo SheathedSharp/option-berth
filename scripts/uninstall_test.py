@@ -30,7 +30,7 @@ class UninstallTests(unittest.TestCase):
         (self.state / "option-berth.db").write_text("state\n")
 
     def run_uninstaller(self, *args, extra_env=None):
-        env = dict(os.environ, HOME=str(self.home))
+        env = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(self.home)}
         env.update(
             BERTH_INSTALL_DIR=str(self.bin),
             BERTH_INSTALL_DATA_DIR=str(self.data),
@@ -54,6 +54,31 @@ class UninstallTests(unittest.TestCase):
             'export PATH="$HOME/tools/bin:$PATH"\n'
         )
         return rc
+
+    def test_retired_cli_is_refused_before_any_removal(self):
+        binary = self.bin / "oberth"
+        binary.write_text('#!/bin/sh\ncase "$*" in "runtime service --help") exit 2;; *) exit 0;; esac\n')
+        result = self.run_uninstaller()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(binary.exists())
+        self.assertTrue(self.data.exists())
+        self.assertTrue(self.state.exists())
+
+    def test_failed_service_stop_preserves_installation(self):
+        binary = self.bin / "oberth"
+        binary.write_text('#!/bin/sh\ncase "$*" in "runtime service --help") exit 0;; *) echo "protocol mismatch" >&2; exit 1;; esac\n')
+        result = self.run_uninstaller()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(binary.exists())
+        self.assertTrue(self.data.exists())
+
+    def test_explicit_not_running_json_can_be_uninstalled(self):
+        binary = self.bin / "oberth"
+        binary.write_text('#!/bin/sh\ncase "$*" in "runtime service --help") exit 0;; *) echo \'{"running": false, "socket": "fixture.sock"}\'; exit 1;; esac\n')
+        result = self.run_uninstaller()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(binary.exists())
+        self.assertTrue(self.state.exists())
 
     def test_removes_binaries_notices_and_installer_path_lines(self):
         rc = self.write_shell_config()

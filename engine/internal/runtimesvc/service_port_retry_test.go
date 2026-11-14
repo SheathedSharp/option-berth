@@ -28,7 +28,7 @@ func TestFinishGroupStopReobservesTransientRegistryContention(t *testing.T) {
 		guard.err = nil
 		return nil, nil
 	}})
-	value, err := finishGroupStop(context.Background(), &Request{Runtime: rt}, "demo", plan, state.Snapshot{}, nil, []state.KillResult{{OK: true}})
+	value, err := finishGroupStop(context.Background(), &Request{HostContext: rt}, "demo", plan, state.Snapshot{}, nil, []state.KillResult{{OK: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestFinishGroupStopRetryNeverSkipsNewEvidence(t *testing.T) {
 				}
 				return nil, nil
 			}})
-			if _, err := finishGroupStop(context.Background(), &Request{Runtime: rt}, "demo", plan, state.Snapshot{}, nil, []state.KillResult{{OK: true}}); err == nil {
+			if _, err := finishGroupStop(context.Background(), &Request{HostContext: rt}, "demo", plan, state.Snapshot{}, nil, []state.KillResult{{OK: true}}); err == nil {
 				t.Fatal("unconfirmed release succeeded")
 			}
 			if scans < 1 || scans > 3 {
@@ -93,7 +93,7 @@ func TestFinishGroupStopNeverRetriesPermanentFailureOrCancellation(t *testing.T)
 			t.Error("unexpected retry scan")
 			return nil, nil
 		}})
-		if _, err := finishGroupStop(ctx, &Request{Runtime: rt}, "demo", plan, state.Snapshot{}, nil, nil); err == nil {
+		if _, err := finishGroupStop(ctx, &Request{HostContext: rt}, "demo", plan, state.Snapshot{}, nil, nil); err == nil {
 			t.Fatal("failure became success")
 		}
 		held, _ := rt.Store.Claims().List()

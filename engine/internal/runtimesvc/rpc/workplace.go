@@ -1,6 +1,6 @@
 package rpc
 
-// The workplace.* methods: a worktree's recorded work, as the daemon serves
+// The workplace.* methods: a worktree's recorded work, as the runtime service serves
 // it. A workplace is a named scope under one worktree; its blocks are the
 // shell commands and agent tasks recorded in it.
 //
