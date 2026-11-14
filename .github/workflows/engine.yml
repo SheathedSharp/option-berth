@@ -101,7 +101,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          go test -tags integration -count=1 -timeout=8m ./internal/scenario/... 2>&1 | tee ../verification/scenario.log
+          go test -tags integration -v -count=1 -timeout=8m ./internal/scenario/... 2>&1 | tee ../verification/scenario.log
       - name: Mage workflow regression tests
         shell: bash
         run: go test -race -count=1 magefiles/build.go magefiles/workflow.go magefiles/workflow_test.go
