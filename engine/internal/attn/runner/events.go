@@ -108,10 +108,10 @@ func OpenChanges(ctx context.Context, worktreeID string, retry time.Duration, co
 					if change.Seq <= seq {
 						continue
 					}
-					seq = change.Seq
 					if change.Source != nil && change.Source.WorktreeID != worktreeID {
 						continue
 					}
+					seq = change.Seq
 					if RelevantChange(change.Changed) {
 						notify()
 					}
