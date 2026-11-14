@@ -105,7 +105,7 @@ give each task its own — a fixed `/tmp` name lets two parallel agents overwrit
 each other's allow-list.
 
 `--follow` is the long-lived form of `assess`. The agent starts it after the
-initial status read and stops it with the task. It polls facts continuously but
+initial status read and stops it with the task. It refreshes facts on scoped changes and bounded reconciliation, but
 calls the model only for a new event/revision or an uncached assessment.
 
 The agent-side runner performs the status read and exact artifact lookup in one
@@ -144,8 +144,8 @@ oberth attn assess --follow --project "$PWD" --interval 2s \
 ```
 
 It emits NDJSON: one `subscribed` record, then only changed event/revision/
-assessment handoffs, and `stopped` when the agent cancels the process. It polls
-`oberth status --json --no-mark`, so the daemon and core CLI remain model free
+assessment handoffs, and `stopped` when the agent cancels the process. It reads
+`oberth status --json --no-mark` when needed, so the daemon and core CLI remain model free
 and no hook or MCP registration is needed. A task-owning skill may attach this
 runner automatically when existing local consent enables assessment for that
 relevant runtime task. It must bind a redacted task and explicit evaluation
@@ -153,6 +153,10 @@ options, reuse only its own worktree/task handle, and cancel/join it at task end
 No global watcher is installed. Before every poll, consent and the original
 endpoint/model/credential identity are checked again; revocation or a changed
 configuration terminates the old task session without another provider call.
+
+The runner's `OpenChanges` adapter only dials an existing Runtime Service. It reuses scoped redacted summaries, filters their source to the task worktree and ignores resource-only changes. Sequence cursors are relative to the daemon identity, not the attention artifact revision; disconnect/drop/restart causes a reconnect snapshot wake. `Trigger` retains low-frequency full reconciliation and local configuration checks while connected, and safely falls back to the original polling path when capability or connectivity is absent. The public timing behavior belongs to [cli.md](../cli.md). Do not add a second events process for the same follow session.
+
+The feed only schedules fact reads. `Auto` still validates the exact artifact and authorized task context, calls a provider only for an eligible uncached assessment, and re-reads facts after model/cache return. The optional model packages must remain outside the dependency closure of daemon/scanner/control packages. Cancellation closes only the task's own socket and joins its reconnect worker; no broad process cleanup or global listener is installed.
 
 For CI and one-off runs the same three fields come from the environment:
 `BERTH_ATTN_ENDPOINT`, `BERTH_ATTN_MODEL` and `BERTH_ATTN_KEY`. They override

@@ -81,7 +81,7 @@ var attnAssessCmd = &cobra.Command{
 		"revision, ask the configured endpoint, and print the handoff. The authorized\n" +
 		"option IDs are the agent's explicit allow-list; artifact options are\n" +
 		"candidates, never permission.\n\n" +
-		"With --follow, keep polling for the lifetime of a task and emit NDJSON: one\n" +
+		"With --follow, observe runtime changes for this task and emit NDJSON: one\n" +
 		"`subscribed` record, then only changed handoffs, and `stopped` on\n" +
 		"cancellation. With --dry-run, print the exact redacted request for the\n" +
 		"current event without contacting anything.",
@@ -123,11 +123,11 @@ func init() {
 		"Authorized option IDs for this task (comma separated); overrides the context file")
 
 	attnAssessCmd.Flags().BoolVar(&attnFollowFlag, "follow", false,
-		"Keep polling and emit only changed handoffs as NDJSON")
+		"Observe task changes and emit only changed handoffs as NDJSON")
 	attnAssessCmd.Flags().BoolVar(&attnDryRunFlag, "dry-run", false,
 		"Print the redacted request for the current event without sending it")
 	attnAssessCmd.Flags().DurationVar(&attnIntervalFlag, "interval", 2*time.Second,
-		"Poll interval (with --follow)")
+		"Consent check / offline poll interval (with --follow)")
 
 	attnStatusCmd.Flags().DurationVar(&attnStatusSinceFlag, "since", 168*time.Hour,
 		"Quality ledger lookback window (0 means all records)")
@@ -237,7 +237,7 @@ func runAttnAssess(cmd *cobra.Command, _ []string) error {
 	return writeAttnOutput(cmd.OutOrStdout(), result)
 }
 
-// runAttnFollow is the long-lived form of assess. It polls the facts and emits
+// runAttnFollow is the long-lived form of assess. It observes facts and emits
 // only changed handoffs, so an agent does not rebuild the request by hand.
 func runAttnFollow(cmd *cobra.Command, task model.TaskContext, consent model.Resolved) error {
 	if attnIntervalFlag <= 0 {

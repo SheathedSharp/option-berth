@@ -209,12 +209,14 @@ When the listener table cannot be trusted (for example an agent sandbox refuses 
 carries `observation` (`state`, `code`, `detail`, `hint`, `checked_at`). When fully blind, `ports` is
 empty and `port_actual` is null; when some lines are unreadable, `ports` contains only the readable
 lines, ports that were not read are not in it, and `observation.state` is partial. `up --wait` returns
-an observation-class error immediately when the observation is not observable and keeps the run it
+an observation-class error immediately when a selected service needs listener/health observation and it is not observable, and keeps the run it
 just started, instead of waiting out the full timeout and then stopping it; `logs <service>` still
 uses the log path registered by the run for managed services and does not depend on the listener
 table. Write commands that need to auto-start the daemon run the self-proof probe first, and when
 blind they refuse to create a daemon from the current process, suggesting that
 `oberth serve --detach` be run in an ordinary terminal.
+
+While system observation is busy, known run/worker state may be published independently. If the last listener batch has expired, `observation.state` is `partial`, code is `observation_incomplete`, and source is `runtime_registry`; missing ports and `machine` availability remain unknown, not free or stopped. A no-port worker without a health check may become ready from its exact run identity alone. Other readiness and forced control paths do not treat this fallback as a fresh listener observation.
 
 The JSON top level always contains:
 
@@ -394,6 +396,8 @@ the configured provider identity before every poll; disabling assessment or chan
 model or credential ends that task session before another request (`disabled` or
 `configuration_changed`). No eligible anomaly means no provider request.
 
+`assess --follow` reuses an existing scoped change stream when available, filters to the exact task worktree and deduplicates its cursor. Relevant changes trigger a status/artifact refresh, not an automatic model request. Reconnection requests a fresh snapshot; connected sessions also reconcile at `max(10s, --interval)`. `--interval` controls local consent checks and fallback polling, not guaranteed model cadence. Absent/older/disconnected services use bounded status polling without starting a daemon. No separate events watcher is needed for the same task. Normal state still makes no provider request, and post-assessment freshness checks remain mandatory.
+
 `quality.model_calls` and `quality.cache_hits` count recorded transport attempts and cache reuse,
 including one-shot assessments and sessions that have not ended; lifecycle summaries are not added
 twice. Validation and status-read failures do not count as model calls. Local errors are recorded
@@ -431,7 +435,7 @@ or renaming one.
 | `manifest_runtime_mismatch` | `status` | Whether the running instance comes from an old manifest. |
 | `worktree.identity` | `status` | The expanded value of `${worktree}`, used to name per-worktree data. |
 | `observation.state` | `status` | Whether the listener table can be trusted; read it before `ports`. |
-| `observation.source` | `status` | The collector that answered when it was not the platform's primary one; non-empty means a missing port is unknown, not free. |
+| `observation.source` | `status` | The non-primary collector or `runtime_registry` fallback; non-empty means a missing port is unknown, not free. |
 | `machine[].listening_known` | `status` | Whether `listening` was observed; false means the table cannot see that port's owner. |
 | `attn_path` | `status` | The derived handoff file for the current abnormality; absent when there is none. |
 | `attn` | `status` | Whether that handoff can be assessed now: `enabled`, fixed `reason`, `assessment` (`assessed`, `pending` or `unavailable`). |

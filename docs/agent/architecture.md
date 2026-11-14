@@ -4,6 +4,20 @@ Product definition: [product.md](../product.md). User interface: [cli.md](../cli
 This document explains the current production implementation; it does not treat past decisions,
 temporary debugging or research tasks as standing requirements.
 
+## Runtime responsibilities
+
+**Oberth Runtime** is the worktree runtime engine; **Runtime Service** is its local background host (`internal/daemon`). These are responsibility names, not a new product, process, Go runtime wrapper or RPC namespace. The product name `oberth`, module, daemon commands, socket, home and schema remain stable; upstream and license history remain intact.
+
+`runsreg` is the live run authority. `servicefacts` reduces a captured registry/exit set; `groups.ApplyServiceFacts` adapts it and `runstate.Project` refreshes the same published declaration rows. `ports` is the system-observation adapter: it contributes listeners and ownership evidence, never a second service lifecycle. `groupstart`, `killer` and existing claims transactions retain execution authority. Optional attention remains an agent-side consumer, not part of the host's control loop.
+
+## Independent lifecycle publication
+
+`scanner.RuntimeChanged` coalesces lifecycle wakeups. Its owned worker captures registry facts without OS/process/store probes, and commits under the same publication mutex as scans. It does not acquire the attribution or OS/health ordering gate. A normal snapshot can therefore return known worker progress while a periodic or RPC-owned observation is busy. An unchanged registry does not manufacture an observation failure merely because the listener cache expired.
+
+A run projection never renews listener freshness. When the last batch is stale, the projection explicitly marks observation partial, removes stale listener rows and marks machine dependencies unknown; absence is not port-free. It does not generate port-down history from that loss of observation. Readiness without a listener or health requirement may use the run fact; listener/health-dependent readiness and forced control observations retain their original observation requirements. Snapshot callers requesting optional samples may receive only already-known samples during this fallback, not a promise of a newly collected batch.
+
+Slow scans rebase service rows against the current registry under the commit mutex after attribution and configured health finish. A newer run ID wins; an old generation's health/stats cannot migrate to it. Captures and published snapshots are immutable. The runtime worker is cancelled and joined with the existing scanner workers, not detached on timeout. Coalesced notifications carry no persisted duplicate state.
+
 ## One chain of facts
 
 `worktree → manifest → service → run → runtime facts`
@@ -119,6 +133,10 @@ A start accepts only readiness evidence for the current service. The no-port run
 the stop receipt are fixed before the first signal and are not re-derived from the same PID in a later
 stage. Operations are refused when reliable control identity is missing.
 
+`runstate` owns the shared pure readiness, generation-confirmation and replacement rules used by CLI waiting and background dependency waiting. An accepted request is not a registered start, a registered start is not ready, and a healthy replacement cannot satisfy the wait for its predecessor. Unknown run identity cannot satisfy an identity-bound wait. Existing capability checks and `expect_runs` selection stay fail-closed.
+
+`runstate.Restart` sequences the existing stop and start adapters without widening either selector. A failed/partial stop or cancellation prevents the start half; per-item results and errors stay visible. These are two acts, not an atomic OS transaction. A failed start cannot resurrect the stopped process, and cancellation after a real spawn does not turn that spawn into a transaction rollback.
+
 A readiness timeout's cleanup is one of those operations: it names the run this invocation started for
 each service (`expect_runs` on `groups.kill`), and the daemon selects only listeners and no-port runs
 whose run id matches. A service another controller restarted during the wait is a different run and is
@@ -138,6 +156,14 @@ database transaction or claims lock is held across a stop; final writes order as
 claimsMu → runtime.runsMu read lock → registry.mirrorMu → Store.wmu, and the metadata mu never spans IO.
 A lock conflict keeps the reservation and prompts a fresh observation and retry. Callbacks must not
 re-enter the scanner, the claims manager or registry writes.
+
+## Recovery and compatibility
+
+The in-memory registry is the live authority for one Runtime Service. `runs.json` is its compatible live-run recovery mirror, not a second owner; SQLite stores exit history, reservations and worktree identities. Startup acquires the existing single-writer lock, loads durable exits, then imports the mirror transactionally before admitting normal work or pruning. A required read/commit failure blocks startup rather than replacing evidence with an empty store.
+
+`runsreg.Restore` does not publish pending rows until the mirror transaction succeeds. Existing memory generations win on retry. Positive process-death or PID-reuse evidence rejects an obsolete imported run before it can appear active; missing birth evidence remains unknown and does not authorize control. Survivors keep run identity, precise start time, log path/offset, executable, spec hash and port hint. Restore does not start services, signal processes, reallocate claims or infer readiness. Numerical PID identity still has the OS race window described below.
+
+No database migration or parallel writer is needed for this change. The existing JSON/SQLite layouts, lock inode, socket and home remain unchanged. Upgrade/rollback uses the normal single-writer handoff; never run old/new hosts concurrently, remove a live lock file, delete the ledger or restart the user's services as a recovery shortcut. Compatibility with the specified baseline is tested in both history-reader directions and with typed live-mirror decoding, not by claiming a real old/new daemon handoff was exercised.
 
 ## Scope of support
 
