@@ -478,9 +478,10 @@ type GroupsStartChunk struct {
 	Skipped   bool   `json:"skipped,omitempty"`
 	Reason    string `json:"reason,omitempty"`
 	Error     string `json:"error,omitempty"`
-	// Hint is a deterministic next command for a failed service. It contains
-	// no model judgement; it points at the run evidence option-berth already
-	// collected.
+	// Hint is a deterministic next command for a failed service, or for a
+	// skipped service whose listener belongs to a process the start did not
+	// create. It contains no model judgement; it points at evidence
+	// option-berth already collected.
 	Hint string `json:"hint,omitempty"`
 	// PortHolder names the process observed on the declared port when this
 	// service failed with port_occupied. Absent for every other outcome.

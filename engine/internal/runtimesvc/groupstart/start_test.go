@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -407,6 +408,19 @@ services:
 	}
 	if !strings.Contains(web.Reason, "already running") {
 		t.Errorf("reason = %q", web.Reason)
+	}
+	// The listener belongs to a process option-berth did not start. Saying only
+	// "already running" would claim ownership the engine does not have, and the
+	// start half of restart would look like it restarted something.
+	if !strings.Contains(web.Reason, "not started by option-berth") ||
+		!strings.Contains(web.Reason, strconv.Itoa(taken)) {
+		t.Errorf("reason = %q, want the port and the ownership caveat", web.Reason)
+	}
+	if web.RunID != "" {
+		t.Errorf("run_id = %q, want no run for an unowned listener", web.RunID)
+	}
+	if !strings.Contains(web.Hint, strconv.Itoa(taken)) {
+		t.Errorf("hint = %q, want the port to free", web.Hint)
 	}
 	if len(end.Skipped) != 1 || len(end.Started) != 0 {
 		t.Fatalf("end = %+v", end)

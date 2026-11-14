@@ -502,6 +502,9 @@ func printStartChunk(c rpc.GroupsStartChunk) {
 			note = "  " + display.Dim("· required by "+strings.Join(c.IncludedBy, ", "))
 		}
 		fmt.Printf("  %s %s  %s%s\n", display.Dim("-"), display.Bold(c.Service), display.Dim(reason), note)
+		if c.Hint != "" {
+			fmt.Printf("    %s\n", display.Dim("next: "+c.Hint))
+		}
 	default:
 		// The address, not the port number: a terminal makes a URL clickable,
 		// and opening the thing you just started is the next thing you do.
@@ -551,7 +554,9 @@ func printStartSummary(end rpc.GroupsStartEnd) {
 	parts := []string{fmt.Sprintf("%d started", len(end.Started))}
 	switch {
 	case len(end.Skipped) > 0:
-		parts = append(parts, fmt.Sprintf("%d already running", len(end.Skipped)))
+		// The per-service line carries why it was skipped; "already running"
+		// here would claim ownership for a listener option-berth did not start.
+		parts = append(parts, fmt.Sprintf("%d skipped", len(end.Skipped)))
 	}
 	if len(end.Errors) > 0 {
 		parts = append(parts, display.Red(fmt.Sprintf("%d failed", len(end.Errors))))

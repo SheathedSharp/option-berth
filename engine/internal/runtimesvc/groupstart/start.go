@@ -219,14 +219,14 @@ func (c *startCall) run(ctx context.Context, s *runtimesvc.Stream, plan []groups
 // is registered: from then on the run record is the only truth.
 func (c *startCall) startService(step groups.Step) (bool, error) {
 	svc := step.Service
-	reason, runID, up, err := alreadyRunning(c.ctx, c.rt, c.group, svc)
+	reason, runID, hint, up, err := alreadyRunning(c.ctx, c.rt, c.group, svc)
 	if err != nil {
 		return false, err
 	}
 	if up {
 		if err := c.stream.Send(rpc.GroupsStartChunk{
 			Service: svc.Name, State: "skipped", Skipped: true, Reason: reason, RunID: runID,
-			IncludedBy: step.IncludedBy, ReadyTimeout: svc.EffectiveReadyTimeout().String(),
+			Hint: hint, IncludedBy: step.IncludedBy, ReadyTimeout: svc.EffectiveReadyTimeout().String(),
 		}); err != nil {
 			return false, err
 		}
@@ -853,38 +853,76 @@ func serviceRefs(svc groups.Service) []string {
 // The question is asked with Running, not List: a run that has already been
 // told to stop stays in the registry until its reap, and a restart's start
 // half must not read the process it just stopped as one that is still up.
-// The group's resolved state answers for everything option-berth did not start — it
-// already joins declared ports, run names and display names against what is
-// listening.
-func alreadyRunning(ctx context.Context, rt *runtimesvc.Runtime, group string, svc groups.Service) (reason, runID string, up bool, err error) {
+// The group's resolved state answers for a listener the registry does not
+// report. The holder evidence distinguishes another option-berth run from a
+// process option-berth did not start, and the skip reason says which so the
+// start half of restart never claims a run it did not restart.
+func alreadyRunning(ctx context.Context, rt *runtimesvc.Runtime, group string, svc groups.Service) (reason, runID, hint string, up bool, err error) {
 	if err := ctx.Err(); err != nil {
-		return "", "", false, err
+		return "", "", "", false, err
 	}
 	if newest, found := runsreg.Default.Running(group, svc.Name); found {
-		return fmt.Sprintf("already started by option-berth (pid %d)", newest.PID), newest.ID, true, ctx.Err()
+		return fmt.Sprintf("already started by option-berth (pid %d)", newest.PID), newest.ID, "", true, ctx.Err()
 	}
 	snap, err := snapshotContext(ctx, rt)
 	if err != nil {
-		return "", "", false, err
+		return "", "", "", false, err
 	}
 	row, found := serviceRow(snap, group, svc.Name)
 	if !found || !row.Running {
-		return "", "", false, nil
+		return "", "", "", false, nil
 	}
 	// The resolved row keeps a signalled run visible until its exit is
 	// observed, which is the right answer for status and the wrong one here:
 	// the registry has already ruled that run out, and this row must not
 	// overrule it. What is left is a listener option-berth did not start.
 	if runsreg.Default.StopPending(group, svc.Name) {
-		return "", "", false, nil
+		return "", "", "", false, nil
 	}
-	if row.RunID != nil {
-		runID = *row.RunID
+	if row.RunID == nil {
+		// The registry has no live run for this service. The listener may still
+		// belong to an option-berth run (an earlier generation the registry no
+		// longer reports), or to a process option-berth did not start. The
+		// holder evidence says which; only the second case may say so.
+		holder := (*state.PortHolder)(nil)
+		if row.PortActual != nil {
+			holder = servicefacts.FindPortHolder(snap.Ports, servicefacts.PortHolderQuery{
+				Port: *row.PortActual, Group: group, Service: svc.Name,
+			})
+		}
+		if holder != nil && (holder.Kind == state.PortHolderRun || holder.Kind == state.PortHolderPrevious) {
+			run := "that run"
+			if holder.RunID != "" {
+				run = "run " + holder.RunID
+			}
+			reason := "already running"
+			hint := fmt.Sprintf("stop %s or free the port, then retry", run)
+			if row.PortActual != nil {
+				reason = fmt.Sprintf("already running on port %d", *row.PortActual)
+				hint = fmt.Sprintf("stop %s or free port %d, then retry", run, *row.PortActual)
+			}
+			return reason, "", hint, true, nil
+		}
+		// The listener is not a run of this service. "Already running" alone
+		// would claim ownership option-berth does not have, and the start half
+		// of restart would read as if it had restarted something. Name the
+		// process instead; --force is a stop flag, not a takeover.
+		reason := "already running"
+		hint := "stop that process or free the port, then retry; option-berth does not take over a process it did not start"
+		if row.PortActual != nil {
+			reason = fmt.Sprintf("already running on port %d", *row.PortActual)
+			hint = fmt.Sprintf("stop that process or free port %d, then retry; option-berth does not take over a process it did not start", *row.PortActual)
+		}
+		if row.PID != nil && *row.PID > 0 {
+			reason += fmt.Sprintf(" (pid %d)", *row.PID)
+		}
+		return reason + ", but not started by option-berth", "", hint, true, nil
 	}
+	runID = *row.RunID
 	if row.PortActual != nil {
-		return fmt.Sprintf("already running on port %d", *row.PortActual), runID, true, nil
+		return fmt.Sprintf("already running on port %d", *row.PortActual), runID, "", true, nil
 	}
-	return "already running", runID, true, nil
+	return "already running", runID, "", true, nil
 }
 
 // serviceRow is the one place a snapshot's row for one service is looked up.
