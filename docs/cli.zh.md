@@ -328,6 +328,26 @@ Clef、LiquidAI d1.1、Upstage Solar Decide、Morph Reflex）；`typesafe` 填�
 质量记录不属于 `status` 事实，也不改变任何执行权限；报告的 `sessions` 对象会说明会话、轮询、事件、
 模型调用、缓存命中和无事件轮询数量；没有真实反馈时指标保持 `null`。
 
+`on` 表示允许评估，不表示已有任务会话运行。开发 skill 可以在相关运行任务中，明确当前
+worktree 的规范路径、脱敏任务摘要和固定评估选项后，接入一个现有 runner。它必须复用自己
+拥有的任务句柄，任务结束时回收，不能建立全局监听，也不能授予执行副作用的权限。runner
+在每轮读取前重新检查同意及供应商身份；关闭评估，或修改 endpoint、model、凭据，都会在下次
+请求前结束该任务会话，原因是 `disabled` 或 `configuration_changed`。没有合资格异常就不请求模型。
+
+`quality.model_calls` 和 `quality.cache_hits` 统计已记录的传输尝试及缓存复用，包含单次评估
+和尚未结束的会话，不再叠加生命周期汇总。校验失败、状态读取失败不算模型调用；本地错误会
+记录，但不保存私密错误原文。旧会话累计数只在全时段或完整覆盖会话的窗口中复用；
+`legacy_counts_unallocated: true` 表示旧累计数无法分配到部分时间窗，此时显示的是下界。
+`--quality-project` 可以传项目名（可能合并同名目录）或准确的 worktree 根路径、身份标识。
+
+`quality.activity` 单独说明观测：`state` 为 `no_session`（该目录、时间窗、过滤条件下没有观测
+记录）、`observing`（任务完成过一轮观测且短租约未过期）、`failed`（最近观测失败）或
+`recent`（只有历史记录，没有新鲜租约）。还包含 `observing_sessions`、`last_observed_at`、
+`last_status`、`reason` 和 `no_event`。观测租约依轮询间隔持续15至60秒，仅证明最近完成过
+观测，不证明进程仍存活。历史 `subscribed` 绝不代表当前活跃；即便 NDJSON 没有变化，每轮
+仍写本地 `observation` 或 `assessment`。无事件观测不增加 `assessment_records`。账本仍按
+上限轮转，所以没有记录不等于供应商账单中没有请求，也不能保证从未请求过。
+
 ### agent 读取的 JSON 字段
 
 下面这些字段是 agent 在 `status`、`up`、`restart` 的 `--json` 输出里做判断所需的最小集合。

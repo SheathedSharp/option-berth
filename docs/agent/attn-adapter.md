@@ -146,7 +146,13 @@ oberth attn assess --follow --project "$PWD" --interval 2s \
 It emits NDJSON: one `subscribed` record, then only changed event/revision/
 assessment handoffs, and `stopped` when the agent cancels the process. It polls
 `oberth status --json --no-mark`, so the daemon and core CLI remain model free
-and no hook or MCP registration is needed.
+and no hook or MCP registration is needed. A task-owning skill may attach this
+runner automatically when existing local consent enables assessment for that
+relevant runtime task. It must bind a redacted task and explicit evaluation
+options, reuse only its own worktree/task handle, and cancel/join it at task end.
+No global watcher is installed. Before every poll, consent and the original
+endpoint/model/credential identity are checked again; revocation or a changed
+configuration terminates the old task session without another provider call.
 
 For CI and one-off runs the same three fields come from the environment:
 `BERTH_ATTN_ENDPOINT`, `BERTH_ATTN_MODEL` and `BERTH_ATTN_KEY`. They override
@@ -243,8 +249,9 @@ always requires a fresh status read.
 
 The adapter keeps a local, owner-readable quality ledger at
 `$BERTH_HOME/quality/events.ndjson`, or `~/.option-berth/quality/events.ndjson`
-when `BERTH_HOME` is unset. `--auto` and `--subscribe` append a redacted
-assessment observation after each new runner state. The record contains the
+when `BERTH_HOME` is unset. `assess` records its outcome, including early
+status failures. `assess --follow` records every poll independently of NDJSON
+change suppression; a clear/no-event poll is an `observation`, not an assessment. The record contains the
 event/revision, fixed options, the model typed values, the conservative HIL decision,
 and timestamps; it does not contain task text, log contents, absolute paths,
 commands, environment variables, or API keys. The file is mode `0600` and is
@@ -294,7 +301,21 @@ oberth attn status --json --since 168h --quality-project example-worker
 oberth attn status --json --since 168h --quality-project example-api
 ```
 
-The `quality` object includes session lifecycle and polling counts, observation/status counts, labelled/unlabelled-case
+The `quality.model_calls` and `quality.cache_hits` counters include single calls
+and active subscriptions; per-poll records do not get added a second time from
+a stopped lifecycle summary. Legacy aggregates are allocated only to all-time
+or fully covered session windows; `legacy_counts_unallocated` identifies partial
+windows with only lower-bound counts. Exact root-path filters use the hashed
+worktree identity, not the potentially shared basename.
+
+`quality.activity` is recent-observation evidence, not a PID check: only a valid
+15–60 second per-poll lease establishes `observing`; historical subscriptions
+remain `recent`. No ledger gives `no_session`; observation failures give `failed`.
+The CLI contract in `docs/cli.md` owns the field meanings. The ledger never
+contains raw errors or credentials, and a missing record does not prove no
+external request happened.
+
+The `quality` object also includes session lifecycle and polling counts, observation/status counts, labelled/unlabelled-case
 coverage, assessment availability, routing-reason and model/option breakdowns,
 user decisions, the conservative human-routing precision/recall/F1, the model's
 `needs_human` and `task_relevant` Brier scores and mean absolute errors,

@@ -62,8 +62,8 @@ var attnCmd = &cobra.Command{
 		"Off by default. Only `enabled: true` in the owner-only attn.json under\n" +
 		"BERTH_HOME, or a one-shot BERTH_ATTN=1 for this process, lets this command\n" +
 		"contact a configured endpoint; a key in the environment supplies the secret\n" +
-		"but is not consent. `oberth status` only publishes `attn_path` when the\n" +
-		"assessment is enabled, so its presence already means the person opted in.\n\n" +
+		"but is not consent. `oberth status` publishes fact-only `attn_path` for\n" +
+		"an anomaly; its presence does not grant consent or start a session.\n\n" +
 		"The command never starts, stops or restarts a service. It reads\n" +
 		"`oberth status --json`, validates the published artifact against that exact\n" +
 		"revision, sends a redacted summary, and prints one JSON value when the model\n" +
@@ -211,6 +211,7 @@ func runAttnAssess(cmd *cobra.Command, _ []string) error {
 	}
 	task, err := attnTaskContext()
 	if err != nil {
+		runner.AppendRunnerTelemetry(runner.TelemetryHome(), attnProjectFlag, model.TaskContext{}, runner.Output{Status: "error", Reason: "invalid_task_context"}, nil, "runner", 0)
 		return err
 	}
 	if attnDryRunFlag {
@@ -220,7 +221,6 @@ func runAttnAssess(cmd *cobra.Command, _ []string) error {
 	if attnFollowFlag {
 		return runAttnFollow(cmd, task, consent)
 	}
-	started := time.Now()
 	// The assessment being off does not mean "no handoff": the runner still reads
 	// status and builds the fact-only request, then reports the fixed reason. Only
 	// the provider call is skipped, which is what the person refused.
@@ -230,15 +230,10 @@ func runAttnAssess(cmd *cobra.Command, _ []string) error {
 		// calls out, and the reason it prints is the consent decision.
 		client = model.Client{}
 	}
-	result, err := runner.Auto(cmd.Context(), attnOberthFlag, attnProjectFlag, client, task, runner.ReadStatus)
+	result, err := runner.AssessRecorded(cmd.Context(), attnOberthFlag, attnProjectFlag, runner.TelemetryHome(), client, task, runner.ReadStatus, consent.Reason)
 	if err != nil {
 		return err
 	}
-	if consent.Reason != "" {
-		result.Status, result.Reason = "unavailable", consent.Reason
-	}
-	telemetryPath := runner.AppendRunnerTelemetry(runner.TelemetryHome(), attnProjectFlag, task, result, err, "runner", time.Since(started))
-	result.TelemetryPath = telemetryPath
 	return writeAttnOutput(cmd.OutOrStdout(), result)
 }
 
@@ -253,16 +248,18 @@ func runAttnFollow(cmd *cobra.Command, task model.TaskContext, consent model.Res
 	// never arrive.
 	client, clientErr := consent.Client()
 	if clientErr != nil {
-		return writeAttnOutput(cmd.OutOrStdout(), runner.Output{Status: "unavailable", Reason: consent.ReasonOr(clientErr)})
+		result := runner.Output{Status: "unavailable", Reason: consent.ReasonOr(clientErr)}
+		runner.AppendRunnerTelemetry(runner.TelemetryHome(), attnProjectFlag, task, result, nil, "subscription", 0)
+		return writeAttnOutput(cmd.OutOrStdout(), result)
 	}
 	subscriptionContext, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	sessionID := runner.NewSessionID(attnProjectFlag)
 	runner.AppendLifecycleTelemetry(runner.TelemetryHome(), attnProjectFlag, "subscribed", sessionID, nil)
 	stats, err := runner.SubscribeWithStats(subscriptionContext, attnOberthFlag, attnProjectFlag, attnIntervalFlag,
-		client, task, runner.ReadStatus, sessionID,
+		client, task, runner.WhileConfigured(attnResolvedConsent, client, runner.ReadStatus), sessionID,
 		func(result runner.Output, latency time.Duration) {
-			runner.AppendRunnerTelemetry(runner.TelemetryHome(), attnProjectFlag, task, result, nil, "subscription", latency)
+			runner.AppendSubscriptionTelemetry(runner.TelemetryHome(), attnProjectFlag, task, result, latency, attnIntervalFlag)
 		},
 		func(value any) error { return writeAttnValue(cmd.OutOrStdout(), value) })
 	if err != nil {
@@ -389,10 +386,16 @@ func runAttnPreflight(cmd *cobra.Command, _ []string) error {
 		task.Task = "Evaluate whether this proposed worktree action needs the user's choice"
 	}
 	task = preflightTaskContext(request, task)
-	result, callErr := client.Evaluate(cmd.Context(), artifact, task)
+	attempted := false
+	result, callErr := client.EvaluateObserved(cmd.Context(), artifact, task, func() { attempted = true })
+	var recordedResult *model.Result
+	if callErr == nil {
+		recordedResult = &result
+	}
+	telemetryPath := model.TelemetryPath(home)
+	defer func() { runner.RecordPreflightAssessment(home, request, task, recordedResult, callErr, attempted) }()
 	if callErr != nil {
 		if errors.Is(callErr, model.ErrUnavailable) || errors.Is(callErr, model.ErrStale) {
-			telemetryPath := runner.RecordPreflightAssessment(home, request, task, nil, callErr)
 			return writeAttnValue(cmd.OutOrStdout(), attnPreflightOutput{
 				Status: "unavailable", PreflightPath: path, TelemetryPath: telemetryPath,
 				RequestID: request.RequestID, Reason: model.ReasonFor(callErr),
@@ -401,12 +404,13 @@ func runAttnPreflight(cmd *cobra.Command, _ []string) error {
 		return callErr
 	}
 	if err := request.AttachAssessment(result.Assessment); err != nil {
+		callErr = err
 		return err
 	}
 	if _, err := model.WritePreflight(home, request); err != nil {
+		callErr = err
 		return err
 	}
-	telemetryPath := runner.RecordPreflightAssessment(home, request, task, &result, nil)
 	return writeAttnValue(cmd.OutOrStdout(), attnPreflightOutput{
 		Status: "assessed", PreflightPath: path, TelemetryPath: telemetryPath,
 		RequestID: request.RequestID, Assessment: &result.Assessment,

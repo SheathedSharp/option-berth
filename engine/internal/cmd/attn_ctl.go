@@ -133,7 +133,7 @@ func runAttnStatus(cmd *cobra.Command, _ []string) error {
 		var b strings.Builder
 		switch {
 		case consent.Enabled:
-			fmt.Fprintf(&b, "Attention: on (%s)\n", consent.ConsentSource)
+			fmt.Fprintf(&b, "Attention: on (%s; assessment allowed, not an automatic session)\n", consent.ConsentSource)
 		case !present:
 			// An empty file and an empty endpoint/model table say nothing a
 			// reader can act on; name the state and the one next step instead.
@@ -154,7 +154,14 @@ func runAttnStatus(cmd *cobra.Command, _ []string) error {
 			fmt.Fprintf(&b, "  key       %s\n", keySourceLine(consent.KeySource, state["key_fingerprint"]))
 		}
 		fmt.Fprintf(&b, "  quality   %s\n", qualitySummary(report, attnStatusSinceFlag))
-		if !consent.Enabled {
+		if consent.Enabled && consent.Reason != "" {
+			fmt.Fprintf(&b, "  assessment unavailable (%s)\n", consent.Reason)
+		}
+		fmt.Fprintf(&b, "  activity  %s\n", model.ActivitySummary(report.Activity))
+		if consent.Enabled && consent.Reason == "" && report.Activity.State == "no_session" {
+			b.WriteString("  next      attach a task-scoped `oberth attn assess --follow --project <worktree> --task <summary> --authorize <fixed-options>`; no background session was started\n")
+		}
+		if !consent.Enabled || consent.Reason != "" {
 			fmt.Fprintf(&b, "  next      %s\n", model.ReasonHint(consent.Reason))
 		}
 		return strings.TrimRight(b.String(), "\n")
@@ -166,12 +173,19 @@ func qualitySummary(report model.QualityReport, since time.Duration) string {
 	if since > 0 {
 		window = strings.TrimSuffix(strings.TrimSuffix(since.String(), "0m0s"), "0s")
 	}
+	bound := ""
+	if report.LegacyCountsUnallocated {
+		bound = ">="
+	}
 	parts := []string{
 		fmt.Sprintf("window %s", window),
 		fmt.Sprintf("assessments %d", report.AssessmentRecords),
-		fmt.Sprintf("model calls %d", report.Sessions.ModelCalls),
-		fmt.Sprintf("cache hits %d", report.Sessions.CacheHits),
+		fmt.Sprintf("model calls %s%d", bound, report.ModelCalls),
+		fmt.Sprintf("cache hits %s%d", bound, report.CacheHits),
 		fmt.Sprintf("labeled %d/%d", report.LabeledCases, report.UniqueCases),
+	}
+	if report.LegacyCountsUnallocated {
+		parts = append(parts, "legacy session totals cannot be allocated to this window")
 	}
 	if report.HumanDecision.Precision != nil && report.HumanDecision.Recall != nil {
 		parts = append(parts, fmt.Sprintf("precision %.2f recall %.2f",
