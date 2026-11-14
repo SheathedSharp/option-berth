@@ -888,8 +888,10 @@ disables, the way `NO_COLOR` does) turns both the question and sending off.
 
 `report` takes only the fixed vocabulary: `--kind` (`slow`, `stalled`, `coarse`, `misleading`,
 `observation`, `other`), `--command` (an oberth command name), `--error-code` (a code the engine
-publishes), and `--observation` (`observable`, `partial`, `blind`, `bind_denied`). `--elapsed` and
-`--services` are filed as buckets, not as numbers; the build adds its own version, commit and platform.
+publishes, including the ones only the CLI reports: `daemon_unavailable`, `daemon_not_running`,
+`interrupted`, `timeout`, `stale` and the `attn_*` codes), and `--observation` (`observable`,
+`partial`, `blind`, `bind_denied`). `--elapsed` and `--services` are filed as buckets, not as
+numbers; the build adds its own version, commit and platform.
 `--note` is the reporter's own words: it is redacted, capped at 800 bytes, refused outright when it
 looks like it carries a credential, and shown for confirmation unless `--yes` is passed.
 
