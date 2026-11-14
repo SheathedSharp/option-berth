@@ -14,6 +14,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -21,6 +22,30 @@ import (
 	"testing"
 	"time"
 )
+
+// measurementWorktrees uses actual linked Git worktrees in an owned temp repo.
+// Git gets no credential/session environment or user/system configuration.
+func measurementWorktrees(t *testing.T, root string) []string {
+	t.Helper()
+	base := filepath.Join(root, "base")
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "TMPDIR=" + os.Getenv("TMPDIR"), "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", "GIT_AUTHOR_NAME=Synthetic", "GIT_AUTHOR_EMAIL=synthetic@example.invalid", "GIT_COMMITTER_NAME=Synthetic", "GIT_COMMITTER_EMAIL=synthetic@example.invalid"}
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("fixture git: %v: %s", err, out)
+		}
+	}
+	git("init", "--quiet", base)
+	git("-C", base, "commit", "--quiet", "--allow-empty", "-m", "fixture")
+	var roots []string
+	for _, name := range []string{"a", "b", "c"} {
+		dir := filepath.Join(root, name)
+		git("-C", base, "worktree", "add", "--quiet", "-b", name, dir)
+		roots = append(roots, dir)
+	}
+	return roots
+}
 
 func TestRuntimeMeasurement(t *testing.T) {
 	if os.Getenv("OBERTH_RUNTIME_MEASURE") != "1" {
@@ -50,13 +75,11 @@ func TestRuntimeMeasurement(t *testing.T) {
 			}
 			return nil, nil
 		}})
-		for _, name := range []string{"a", "b", "c"} {
-			dir := filepath.Join(root, name)
-			if err := os.MkdirAll(dir, 0700); err != nil {
-				t.Fatal(err)
-			}
+
+		roots := measurementWorktrees(t, root)
+		for _, dir := range roots {
 			file := filepath.Join(dir, "oberth.yaml")
-			if err := os.WriteFile(file, []byte("name: "+name+"\nservices:\n  - name: worker\n    cmd: synthetic-worker\n"), 0600); err != nil {
+			if err := os.WriteFile(file, []byte("name: project\nservices:\n  - name: worker\n    cmd: synthetic-worker\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
 			if err := loop.LoadConfig(file); err != nil {
@@ -68,6 +91,24 @@ func TestRuntimeMeasurement(t *testing.T) {
 			cancel()
 			t.Fatal(err)
 		}
+
+		cfg, known := loop.ConfigAt(filepath.Join(roots[0], "oberth.yaml"))
+		if !known {
+			t.Fatal("fixture manifest not indexed")
+		}
+		targetGroup := loop.GroupOf(cfg)
+		distinct := map[string]bool{}
+		for _, dir := range roots {
+			manifest, ok := loop.ConfigAt(filepath.Join(dir, "oberth.yaml"))
+			if !ok {
+				t.Fatal("worktree manifest missing")
+			}
+			name := loop.GroupOf(manifest)
+			if distinct[name] {
+				t.Fatal("linked worktrees collapsed into one group")
+			}
+			distinct[name] = true
+		}
 		blocked.Store(true)
 		done := make(chan error, 1)
 		go func() { _, err := loop.RescanContext(ctx, scanner.Include{}); done <- err }()
@@ -77,7 +118,7 @@ func TestRuntimeMeasurement(t *testing.T) {
 			cancel()
 			t.Fatal("fake collector did not enter")
 		}
-		reg.Register(runsreg.Record{ID: "r2", PID: 92010, Group: "a", Name: "worker", StartedAt: time.Now()})
+		reg.Register(runsreg.Record{ID: "r2", PID: 92010, Group: targetGroup, Name: "worker", StartedAt: time.Now()})
 		// Match lifecycle invalidation in the baseline production handler.
 		loop.Invalidate()
 		timer := time.AfterFunc(15*time.Millisecond, func() { blocked.Store(false); close(release) })
@@ -97,7 +138,7 @@ func TestRuntimeMeasurement(t *testing.T) {
 		found := false
 		for _, g := range snap.Groups {
 			for _, s := range g.Services {
-				if g.Name == "a" {
+				if g.Name == targetGroup {
 					found = s.Running && s.RunID != nil && *s.RunID == "r2"
 				} else if s.Running {
 					t.Fatal("cross-worktree ownership")
