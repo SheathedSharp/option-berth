@@ -66,9 +66,9 @@ type Options struct {
 	BusyTimeout time.Duration
 }
 
-// Store is an open option-berth database. It is safe for concurrent use: reads
-// run on the connection pool, which WAL lets proceed while a write is in
-// flight, and ordinary writes are serialised behind one mutex. A conditional
+// Store is an open option-berth database, safe for concurrent use. OpenOwned
+// serializes SQL on one lifetime connection; ordinary Open uses a WAL read
+// pool. Ordinary writes are additionally serialized behind one mutex. A conditional
 // write (the reservation release) refuses contention instead of queueing behind
 // it; another Store handle on the same file can still cause SQLITE_BUSY.
 type Store struct {

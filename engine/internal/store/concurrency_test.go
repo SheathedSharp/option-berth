@@ -43,6 +43,22 @@ func recordOne(s *Store, port, pid int) error {
 // and fails on the first error either side sees.
 func TestReadersDoNotWaitForTheWriter(t *testing.T) {
 	s := openTemp(t)
+	concurrentReadersAndWriter(t, s)
+}
+
+// The production owner uses one connection, not the normal WAL read pool.
+// All queues must drain and readers must still make progress during writes.
+func TestOwnedConcurrentReadersAndWriter(t *testing.T) {
+	s, err := OpenOwned(filepath.Join(t.TempDir(), "owned.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	concurrentReadersAndWriter(t, s)
+}
+
+func concurrentReadersAndWriter(t *testing.T, s *Store) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	var (
 		wg       sync.WaitGroup

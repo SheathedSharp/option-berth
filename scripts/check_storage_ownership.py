@@ -189,6 +189,14 @@ def verify(legacy, report=None):
             assert current.command("write", name="committed-before-exit")["ok"]
             current.process.stdin.write('{"op":"exit_without_close"}\n'); current.process.stdin.flush()
             assert current.process.wait(timeout=3) == 17  # no signals, no Close
+            crash_db = root / "abrupt-exit.db"
+            crash_wal = root / "abrupt-exit.db-wal"
+            before_db, before_wal = crash_db.read_bytes(), crash_wal.read_bytes()
+            reader = start("owned", "abrupt-exit.db", readonly=True)
+            assert len(reader.command("read")["roots"]) == 1
+            reader.close()
+            assert crash_db.read_bytes() == before_db and crash_wal.read_bytes() == before_wal
+            checks.append("offline read after abrupt exit preserves main DB/WAL bytes and committed data; SQLite may create a shared-memory sidecar")
             replacement = start("owned", "abrupt-exit.db")
             assert len(replacement.command("read")["roots"]) == 1, "writes must commit before shutdown"
             replacement.close()
