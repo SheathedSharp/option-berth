@@ -71,13 +71,13 @@ func summarizeObservations(report *QualityReport, records []TelemetryRecord, sin
 		}
 	}
 	for _, c := range counts {
-		if !c.perPoll && (c.legacyCalls > c.calls || c.legacyHits > c.hits) {
+		if c.legacyCalls > c.calls || c.legacyHits > c.hits {
 			// Legacy cumulative snapshots cannot locate calls inside a partial window.
 			// Preserve all-time/full-session compatibility; never invent their timing.
 			if since.IsZero() || c.started {
 				c.calls = max(c.calls, c.legacyCalls)
 				c.hits = max(c.hits, c.legacyHits)
-			} else {
+			} else if !c.perPoll {
 				report.LegacyCountsUnallocated = true
 			}
 		}

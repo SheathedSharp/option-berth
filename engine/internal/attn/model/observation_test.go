@@ -118,3 +118,17 @@ func TestActivitySummaryExplainsQuietAndFailedStatesWithoutPrivateText(t *testin
 		}
 	}
 }
+
+func TestCompletedSessionCountsSurviveRotatedPollRecords(t *testing.T) {
+	now := time.Now().UTC()
+	terminal := TelemetryRecord{Kind: "lifecycle", Status: "stopped", SessionID: "completed", PerPoll: true, RecordedAt: now.Format(time.RFC3339Nano), ModelCalls: 3, CacheHits: 8}
+	report := BuildQualityReport([]TelemetryRecord{terminal}, time.Time{}, "", now)
+	if report.ModelCalls != 3 || report.CacheHits != 8 || report.Activity.ObservingSessions != 0 {
+		t.Fatalf("retained summary=%+v", report)
+	}
+	// A partial window cannot assign the cumulative snapshot to its stop time.
+	report = BuildQualityReport([]TelemetryRecord{terminal}, now.Add(-time.Second), "", now)
+	if report.ModelCalls != 0 || report.CacheHits != 0 {
+		t.Fatalf("invented window calls=%+v", report)
+	}
+}
