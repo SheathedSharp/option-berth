@@ -147,10 +147,18 @@ func TestSlowScanCannotRepublishOldRunGeneration(t *testing.T) {
 	}
 	reg.Unregister(7010)
 	reg.Register(runsreg.Record{ID: "r2", PID: 7011, Group: "a", Name: "worker", StartedAt: started.Add(time.Second)})
+
+	read, stop := context.WithTimeout(ctx, 100*time.Millisecond)
+	_, have, readErr := loop.RefreshRuntimeContext(read)
+	stop()
 	close(staged.release)
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
+	if readErr != nil || !have {
+		t.Fatalf("runtime progress blocked behind attribution: %v", readErr)
+	}
+
 	for _, g := range loop.Cached().Groups {
 		for _, row := range g.Services {
 			if g.Name == "a" && (row.RunID == nil || *row.RunID != "r2") {

@@ -23,11 +23,13 @@ func (l *Loop) runRuntime(ctx context.Context) {
 	}
 }
 func (l *Loop) projectRuntime(ctx context.Context, snap state.Snapshot, fresh bool) (state.Snapshot, bool, error) {
-	if err := l.attr.mu.LockContext(ctx); err != nil {
+
+	if err := ctx.Err(); err != nil {
 		return snap, false, err
 	}
+	// Options.Runs is immutable after New. Obtaining the provider must not
+	// take the attribution mutex, whose filesystem/store work can be slow.
 	reg := l.registry()
-	l.attr.mu.Unlock()
 	provider, ok := reg.(servicefacts.Provider)
 	if !ok {
 		return snap, false, nil

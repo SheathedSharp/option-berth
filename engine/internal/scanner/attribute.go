@@ -475,8 +475,11 @@ func (l *Loop) recordIdentityRoot(st Store, root string) {
 // ring. Just the three port-scoped kinds are persisted; health_changed and
 // scan_error remain in-memory notifications.
 func (l *Loop) record(events []state.Event) {
+	if len(events) == 0 {
+		return
+	}
 	st := l.store()
-	if st == nil || len(events) == 0 {
+	if st == nil {
 		return
 	}
 	rows := historyRows(events, l.now)
