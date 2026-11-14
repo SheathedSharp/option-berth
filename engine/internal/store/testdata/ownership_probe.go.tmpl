@@ -1,0 +1,57 @@
+// Disposable process adapter, built against either pinned v2 source or this
+// candidate via a Go compiler overlay. Never imports cmd/testenv or starts a host.
+package main
+import (
+ "encoding/json"
+ "os"
+ "path/filepath"
+ "strings"
+ "github.com/sheathedsharp/option-berth/engine/internal/store"
+)
+func openProbe(path, mode string) (*store.Store, error) {
+ if mode == "readonly" { return store.OpenReadOnly(path) }
+ /*PRODUCTION_OPEN*/
+}
+func main() {
+ emit := func(v any) { if err := json.NewEncoder(os.Stdout).Encode(v); err != nil { os.Exit(91) } }
+ if len(os.Args) != 4 { os.Exit(90) }
+ root, err := filepath.EvalSymlinks(os.Args[1]); if err != nil { os.Exit(90) }
+ if !strings.HasPrefix(filepath.Base(root), "oberth-storage-probe-") { os.Exit(90) }
+ if data, err := os.ReadFile(filepath.Join(root,".owned-fixture")); err != nil || string(data)!="disposable-store-probe\n" { os.Exit(90) }
+ path, err := filepath.Abs(os.Args[2]); if err != nil { os.Exit(90) }
+ if existing, e := filepath.EvalSymlinks(path); e == nil { path = existing }
+ relative, err := filepath.Rel(root,path)
+ if err != nil || relative=="." || relative==".." || strings.HasPrefix(relative,".."+string(os.PathSeparator)) { os.Exit(90) }
+ mode:=os.Args[3]
+ db, err := openProbe(path,mode)
+ if err != nil { emit(map[string]any{"opened":false,"error":err.Error()}); os.Exit(2) }
+ defer db.Close()
+ var journal,locking string
+ _=db.DB().QueryRow("PRAGMA journal_mode").Scan(&journal)
+ _=db.DB().QueryRow("PRAGMA locking_mode").Scan(&locking)
+ emit(map[string]any{"opened":true,"journal":journal,"locking":locking,"max_connections":db.DB().Stats().MaxOpenConnections})
+ input:=json.NewDecoder(os.Stdin)
+ for {
+  var command struct { Op string `json:"op"`; Name string `json:"name"` }
+  if err:=input.Decode(&command); err!=nil { return }
+  result:=map[string]any{"ok":true}
+  var err error
+  switch command.Op {
+  case "write":
+   if filepath.Base(command.Name)!=command.Name || command.Name==".." || command.Name=="." { os.Exit(90) }
+   err=db.AddRoot(filepath.Join(root,command.Name))
+  case "read": result["roots"],err=db.Roots()
+  case "stats":
+   stats:=db.DB().Stats(); result["open"]=stats.OpenConnections; result["idle"]=stats.Idle; result["max"]=stats.MaxOpenConnections
+  case "drop_idle": db.DB().SetMaxIdleConns(0)
+  case "reopen":
+   other,e:=openProbe(path,mode); result["reopened"]=e==nil
+   if other!=nil { _=other.Close() }; if e!=nil { result["reopen_error"]=e.Error() }
+  case "future_schema": _,err=db.DB().Exec("UPDATE schema_version SET version=999 WHERE version=(SELECT max(version) FROM schema_version)")
+  case "close": err=db.Close(); if err!=nil { result["ok"]=false; result["error"]=err.Error() }; emit(result); return
+  case "exit_without_close": os.Exit(17)
+  default: os.Exit(90)
+  }
+  if err!=nil { result["ok"]=false; result["error"]=err.Error() }; emit(result)
+ }
+}

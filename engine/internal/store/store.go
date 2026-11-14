@@ -56,6 +56,8 @@ type ResetInfo struct {
 
 // Options tunes Open. The zero value is what Open uses.
 type Options struct {
+	// owned retains SQLite exclusive ownership on one non-expiring connection.
+	owned bool
 	// OnReset runs after a corrupt database has been parked and replaced, and
 	// before Open returns. Nil is fine.
 	OnReset func(ResetInfo)
@@ -73,6 +75,7 @@ type Store struct {
 	db       *sql.DB
 	path     string
 	readOnly bool
+	owned    bool
 
 	wmu sync.Mutex
 
@@ -102,6 +105,9 @@ func Open(path string) (*Store, error) { return OpenWith(path, Options{}) }
 // while the runtime service is stopped; callers must close the returned store.
 func OpenReadOnly(path string) (*Store, error) {
 	path = databasePath(path)
+	if err := ValidateStorageFilesystem(path); err != nil {
+		return nil, err
+	}
 	if _, err := os.Stat(path); err != nil {
 		return nil, err
 	}
@@ -109,18 +115,18 @@ func OpenReadOnly(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	uri := url.URL{Scheme: "file", Path: readOnlyURIPath(abs), RawQuery: "mode=ro&_pragma=busy_timeout(1000)"}
+	uri := url.URL{Scheme: "file", Path: readOnlyURIPath(abs), RawQuery: "mode=ro&_pragma=busy_timeout(50)"}
 	dsn := uri.String()
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("opening %s read-only: %w", path, err)
+		return nil, ownershipError(path, fmt.Errorf("opening %s read-only: %w", path, err))
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	var n int
 	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master`).Scan(&n); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("opening %s read-only: %w", path, err)
+		return nil, ownershipError(path, fmt.Errorf("opening %s read-only: %w", path, err))
 	}
 	return &Store{db: db, path: path, readOnly: true}, nil
 }
@@ -149,7 +155,7 @@ func OpenWith(path string, opts Options) (*Store, error) {
 		return nil, err
 	}
 	store, err := openAt(path, opts)
-	if err == nil || !isCorruption(err) {
+	if err == nil || opts.owned || !isCorruption(err) {
 		return store, err
 	}
 	return recreate(path, opts, err)
@@ -192,15 +198,47 @@ func recreate(path string, opts Options, cause error) (*Store, error) {
 // openAt opens and migrates, with no corruption recovery: it is openAt's caller
 // that decides whether a failure is worth starting over from.
 func openAt(path string, opts Options) (*Store, error) {
-	db, err := sql.Open("sqlite", dsnFor(path, opts.BusyTimeout))
+	dsn := dsnForOptions(path, opts.BusyTimeout, opts.owned)
+	var db *sql.DB
+	var err error
+	if opts.owned {
+		db, err = newOwnedDB(dsn)
+	} else {
+		db, err = sql.Open("sqlite", dsn)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", path, err)
 	}
 	// Writes are serialised in Go and readers are short, so a small pool is
 	// enough; the idle timeout keeps a quiet runtime service from holding connections.
-	db.SetMaxOpenConns(8)
-	db.SetMaxIdleConns(4)
-	db.SetConnMaxIdleTime(5 * time.Minute)
+	if opts.owned {
+		db.SetMaxOpenConns(1)
+		db.SetMaxIdleConns(1)
+		// Do not expire the connection: SQLite owns the lifetime lease.
+		// BEGIN EXCLUSIVE forces acquisition even on an already-current schema;
+		// COMMIT ends the empty transaction, retaining EXCLUSIVE-mode locks.
+		if _, err := db.Exec(`BEGIN EXCLUSIVE`); err != nil {
+			return nil, closeAfterFailure(db, err)
+		}
+		if _, err := db.Exec(`COMMIT`); err != nil {
+			return nil, closeAfterFailure(db, err)
+		}
+		var locking, journal string
+		if err := db.QueryRow(`PRAGMA locking_mode`).Scan(&locking); err != nil {
+			return nil, closeAfterFailure(db, err)
+		}
+		if err := db.QueryRow(`PRAGMA journal_mode`).Scan(&journal); err != nil {
+			return nil, closeAfterFailure(db, err)
+		}
+		if locking != "exclusive" || journal != "wal" {
+			return nil, closeAfterFailure(db, fmt.Errorf("SQLite did not retain required exclusive WAL ownership"))
+		}
+
+	} else {
+		db.SetMaxOpenConns(8)
+		db.SetMaxIdleConns(4)
+		db.SetConnMaxIdleTime(5 * time.Minute)
+	}
 
 	// Touch the schema first: a file that is not a database fails here, where
 	// the caller can still recover, rather than on the first real query.
@@ -216,7 +254,7 @@ func openAt(path string, opts Options) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("securing %s: %w", path, err)
 	}
-	return &Store{db: db, path: path}, nil
+	return &Store{db: db, path: path, owned: opts.owned}, nil
 }
 
 // closeAfterFailure releases a handle that never became a usable Store, keeping
@@ -231,14 +269,24 @@ const defaultBusyTimeout = 5 * time.Second
 
 // dsnFor is the connection string: WAL so readers proceed during a write, and
 // foreign keys on so a migration's constraints are real.
-func dsnFor(path string, busy time.Duration) string {
+func dsnFor(path string, busy time.Duration) string { return dsnForOptions(path, busy, false) }
+
+func dsnForOptions(path string, busy time.Duration, owned bool) string {
 	if busy <= 0 {
 		busy = defaultBusyTimeout
 	}
-	return fmt.Sprintf(
-		"file:%s?_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)",
-		path, busy.Milliseconds(),
-	)
+	pragmas := fmt.Sprintf("_pragma=busy_timeout(%d)", busy.Milliseconds())
+	if owned {
+		pragmas += "&_pragma=locking_mode(EXCLUSIVE)"
+	}
+	pragmas += "&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)"
+	uri := url.URL{Scheme: "file", RawQuery: pragmas}
+	if filepath.IsAbs(path) {
+		uri.Path = readOnlyURIPath(path)
+	} else {
+		uri.Opaque = url.PathEscape(filepath.ToSlash(path))
+	}
+	return uri.String()
 }
 
 // prepareFile makes the parent directory (0700) and creates the database file
@@ -375,8 +423,10 @@ func (s *Store) checkpointAndLeaveWAL() {
 // The budget covers acquiring the connection and both pragmas: if a caller
 // holds the only connection, Close gives up instead of waiting forever.
 func (s *Store) checkpointAndLeaveWALWithin(budget time.Duration) {
-	s.db.SetMaxIdleConns(0)
-	s.db.SetMaxOpenConns(1)
+	if !s.owned {
+		s.db.SetMaxIdleConns(0)
+		s.db.SetMaxOpenConns(1)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	conn, err := s.db.Conn(ctx)
@@ -392,7 +442,7 @@ func (s *Store) checkpointAndLeaveWALWithin(budget time.Duration) {
 func (s *Store) DBPath() string { return s.path }
 
 // DB exposes the raw handle. The cross-spec contract hands this to runtime service
-// extensions through Runtime; nothing inside option-berth should reach for it.
+// extensions through HostContext; nothing inside option-berth should reach for it.
 func (s *Store) DB() *sql.DB { return s.db }
 
 // Reset reports the database Open had to throw away, or nil when none was. The
