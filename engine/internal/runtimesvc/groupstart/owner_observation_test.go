@@ -40,7 +40,7 @@ func TestStartAfterStopDoesNotReuseTheStoppedRun(t *testing.T) {
 	rt := &runtimesvc.HostContext{Scanner: scanner.New(scanner.Options{Scan: func(scanner.Include) ([]ports.ListeningPort, error) {
 		return nil, nil
 	}})}
-	reason, _, up, err := alreadyRunning(context.Background(), rt, "example", groups.Service{Name: "worker"})
+	reason, _, _, up, err := alreadyRunning(context.Background(), rt, "example", groups.Service{Name: "worker"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestStartAfterStopIgnoresTheStoppedSnapshotRow(t *testing.T) {
 		t.Fatalf("the snapshot no longer reproduces the case: %+v", snap.Groups)
 	}
 
-	reason, _, up, err := alreadyRunning(context.Background(), rt, "example", groups.Service{Name: "worker"})
+	reason, _, _, up, err := alreadyRunning(context.Background(), rt, "example", groups.Service{Name: "worker"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestLifecycleObservationPropagatesOwnerCancellation(t *testing.T) {
 			}
 		} else {
 			var up bool
-			_, _, up, err = alreadyRunning(ctx, rt, "example", groups.Service{Name: "worker"})
+			_, _, _, up, err = alreadyRunning(ctx, rt, "example", groups.Service{Name: "worker"})
 			if up {
 				t.Fatal("cancelled observation declared readiness")
 			}

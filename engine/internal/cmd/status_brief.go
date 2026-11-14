@@ -6,6 +6,7 @@ import (
 
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/servicefacts"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
@@ -55,10 +56,16 @@ type briefService struct {
 	Running bool   `json:"running"`
 	// Port is the declared port; PortActual is where the service is listening
 	// now, including a port assigned to `port: auto`.
-	Port       *int         `json:"port,omitempty"`
-	PortActual *int         `json:"port_actual,omitempty"`
-	PortAuto   bool         `json:"port_auto,omitempty"`
-	Health     *briefHealth `json:"health,omitempty"`
+	Port       *int `json:"port,omitempty"`
+	PortActual *int `json:"port_actual,omitempty"`
+	PortAuto   bool `json:"port_auto,omitempty"`
+	// PortHolder is present when this service is running, but the listener on
+	// PortActual is not this service's own run: another run's listener, or a
+	// process option-berth did not start. It is the same shape the failure
+	// record publishes. Absent means the listener was this service's run or the
+	// snapshot did not explain it, never that the port is free.
+	PortHolder *state.PortHolder `json:"port_holder,omitempty"`
+	Health     *briefHealth      `json:"health,omitempty"`
 	// ExitReason and ExitCode are the service's current last_exit. Hint is the
 	// deterministic next command, when that exit left a log to read.
 	ExitReason string      `json:"exit_reason,omitempty"`
@@ -192,6 +199,7 @@ func briefStatusFrom(doc statusDocument) briefStatusDocument {
 		item := briefService{
 			Name: svc.Name, Running: svc.Running,
 			Port: svc.Port, PortActual: svc.PortActual, PortAuto: svc.PortAuto,
+			PortHolder:                  briefUnownedPortHolder(doc, svc),
 			ManifestRuntimeMismatch:     svc.ManifestRuntimeMismatch,
 			CodeChangedSinceStart:       svc.CodeChangedSinceStart,
 			CodeChangedFiles:            svc.CodeChangedFiles,
@@ -250,6 +258,47 @@ func briefStatusFrom(doc statusDocument) briefStatusDocument {
 	}
 
 	return out
+}
+
+// briefUnownedPortHolder says whether the listener behind a running service is
+// some other process. The brief document already carries the port; without this
+// a reader cannot tell a service option-berth started from a foreign process
+// that happens to hold the declared port, and the full document's `ports[].run`
+// is exactly the join the brief view exists to spare the reader.
+//
+// It returns nil when the listener belongs to this service's own run, or when
+// the snapshot did not explain the port. A nil answer is not proof of
+// ownership; it means the brief has no holder to report.
+func briefUnownedPortHolder(doc statusDocument, svc state.Service) *state.PortHolder {
+	if !svc.Running || svc.PortActual == nil {
+		return nil
+	}
+	listener := listenerOnPort(doc.Ports, *svc.PortActual)
+	if listener == nil {
+		return nil
+	}
+	// The service's live run is the only owner that makes this its own
+	// listener. A listener attributed to an earlier generation, another run or
+	// no run at all is evidence the port is not this run's.
+	if owner := listener.Run; owner != nil && svc.RunID != nil && owner.ID == *svc.RunID {
+		return nil
+	}
+	return servicefacts.FindPortHolder(doc.Ports, servicefacts.PortHolderQuery{
+		Port:    *svc.PortActual,
+		Group:   doc.Worktree.Name,
+		Service: svc.Name,
+	})
+}
+
+// listenerOnPort is the row the service's PortActual resolved against. The
+// first row wins, matching the resolver's input-order tie-breaker.
+func listenerOnPort(ports []state.Port, port int) *state.Port {
+	for i := range ports {
+		if ports[i].Port == port {
+			return &ports[i]
+		}
+	}
+	return nil
 }
 
 // briefAdHocRuns groups the listeners owned by runs the manifest does not

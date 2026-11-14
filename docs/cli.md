@@ -115,6 +115,12 @@ Per-service facts are present only when they exist: `health` when a health verdi
 snapshot. Absent means unknown or not applicable — a down service has no `health` or `port_actual` —
 never a negative result; read `running` before those keys.
 
+A running service carries `port_holder` when the listener on its `port_actual` is not that service's
+own run: another run's listener, or a process option-berth did not start. It is the same `port`,
+`pid`, `command` and `kind` shape as a failure record, with `group`, `name` and `run_id` when another
+run owns it. It is a positive fact about the process behind the port; when it is absent the snapshot
+did not show another owner, which is not proof that option-berth started the listener.
+
 A service's `last_exit.reason` distinguishes an ordinary crash (`crashed`) from a fixed port taken by
 another process (`port_occupied`), and also marks services that failed before the command ever started
 (`start_failed`), so "exited after starting", "port conflict" and "failed before starting" do not
@@ -273,7 +279,9 @@ truncation, and `files_truncated` being true means the list is only a prefix. Us
 `worktree.ad_hoc_runs` lists the runs started with `oberth start` whose listeners belong to this
 worktree but whose names are not declared services: `name`, `run_id`, `group`, `pid` and the `ports`
 each holds. `ports` stays the flat listener list; this is the attribution that list cannot carry, so
-a reader can tell a process oberth owns from a foreign one.
+a reader can tell a process oberth owns from a foreign one. A declared service's listener that another
+process owns is named by that service's `port_holder`; `ad_hoc_runs` is only for runs the manifest
+does not declare.
 
 `worktree.identity` is exactly the value `${worktree}` expands to in the manifest. It is derived from
 the checkout's canonicalized root path, so the same checkout reads the same value every time; when a
@@ -430,7 +438,7 @@ or renaming one.
 | `last_exit.port_holder` | `status` | The process still holding the failing port at read time; absent means not observed, not that the port is free. |
 | `exits[].hint` | `status` | The next step in a historical exit record, decided by whether a log file exists. |
 | `services[].ready` | `up` / `restart` | The CLI's readiness annotation; `false` means unconfirmed, not failed. |
-| `services[].port_holder` | `up` | Holder evidence, same shape as in `status`, when the port conflicts. |
+| `services[].port_holder` | `up` / `status --brief` | Holder evidence, same shape as in `status`, when the declared port conflicts or when a running service's listener is not its own run. |
 | `health_status` | `status` | The result and reason of the declared health check. |
 | `manifest_runtime_mismatch` | `status` | Whether the running instance comes from an old manifest. |
 | `worktree.identity` | `status` | The expanded value of `${worktree}`, used to name per-worktree data. |
@@ -495,7 +503,9 @@ repository root) report changes together; to distinguish them, write the `source
 reads. Explicitly writing `sources: []` turns this check off, which suits services that hot-reload
 their own code. Dependencies with a port wait for a listener and portless workers wait for their run
 record to become active; services already running are skipped; each service has its own log file and
-run record. With no arguments the nearest manifest from the current directory is used, and a project
+run record. A listener option-berth did not start is still a skip, but its reason says so and its
+`hint` names the port to free; option-berth does not take over a process it did not start. With no
+arguments the nearest manifest from the current directory is used, and a project
 name may be given explicitly. `ready_timeout:` declares a service's readiness budget (a Go duration
 string such as `90s`, default 30s, must be positive): successors in `depends_on` use it when waiting
 for that service, and `up --wait` uses it too. `prepare:` does not count against this budget. When the
@@ -619,6 +629,10 @@ Only services the manifest declares can be restarted. A run started with `oberth
 manifest entry: stop it first if it is still running, then start that command again. When
 `restart --only` names such a run and the run ledger knows it, the `not_found` hint prints the
 recorded start line (cwd, group, name, port and command) instead of pointing back at `status`.
+
+A listener option-berth did not start is reported by the start half the same way `up` reports it:
+skipped, with a reason and hint naming the process and port. `--force` only skips the graceful stop;
+it does not take over a process option-berth did not start.
 
 ### oberth down [project] [--worktree path | --identity wt_…] [--force] [--json]
 
