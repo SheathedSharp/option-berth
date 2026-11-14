@@ -5,6 +5,8 @@
 本页只讲引擎 CLI 的安装、升级与卸载。macOS 客户端与 coding agent skill 是独立产品，
 各自在自己的仓库分发。
 
+协议 3 是后台接口的破坏性切换。替换旧安装前，先用匹配旧后台的 CLI 正常停止它。新命令不能停止旧端点；不要删除锁、socket 或数据来强起第二个实例。持久数据仍保存在同一根目录和数据库。见[切换合同](cli.md#runtime-service-protocol-3-switch)。
+
 ## 一行脚本（macOS / Linux）
 
 ```sh

@@ -5,6 +5,8 @@ English | [中文](install.zh.md)
 This page covers installing, upgrading and uninstalling the engine CLI only. The macOS client and the
 coding-agent skill are independent products distributed from their own repositories.
 
+Protocol 3 is a breaking host-interface switch. Before replacing an older installation, use that older host's matching CLI to stop it normally. New commands cannot stop old endpoints; do not delete locks, sockets or data to force a second instance. Persistent data stays in the same home/database. See [the switch contract](cli.md#runtime-service-protocol-3-switch).
+
 ## One-line script (macOS / Linux)
 
 ```sh
