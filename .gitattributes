@@ -1,0 +1,11 @@
+# Preserve original archive and legal-document bytes on every checkout.
+third_party/sources/** -text
+third_party/licenses/** -text
+third_party/sources.json text eol=lf
+third_party/source-trees.json text eol=lf
+third_party/module-graph.txt text eol=lf
+engine/go.mod text eol=lf
+engine/go.sum text eol=lf
+site/package-lock.json text eol=lf
+site/assets/gsap.min.js -text
+.github/workflows/*.yml text eol=lf
