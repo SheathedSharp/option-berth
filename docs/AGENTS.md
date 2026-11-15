@@ -22,7 +22,7 @@ A contract lives in exactly one place. Everything else links to it.
 | Task entry points and shortest first success | `docs/index.md`, `docs/quickstart.md` | Exhaustive reference tables |
 | Runtime-service user operations and lifecycle | `docs/runtime-service.md` | Architecture internals |
 | Attention consent and user controls | `docs/attention.md` | Engineering adapter detail |
-| Third-party source scope and update procedure | `docs/third-party.md`, generated `third_party/README.md` | Root README beyond a pointer |
+| Third-party source scope / fixed-version records | `docs/third-party.md` / human-maintained `third_party/README.md` | Root README beyond a pointer |
 | Product definition, what the product refuses to do | `docs/product.md` | `docs/agent/` |
 | CLI surface, error codes, JSON fields, manifest references | `docs/cli.md` | `docs/agent/`, the skill repository |
 | Work records and handoff | `docs/workplace.md` | `docs/cli.md` beyond a pointer |
@@ -87,7 +87,6 @@ transcripts, not marketing, not a teaching sequence. A reader arrives looking up
 blocks, the language switcher and that every relative link target exists. It runs as part of
 `python3 -m unittest discover -s scripts -p '*_test.py'`.
 
-`python3 scripts/check_doc_links.py` additionally checks README/docs relative targets and heading or explicit-ID fragments, including historical pages. `python3 scripts/check_third_party.py` verifies the separate generated source inventory without executing it.
 
 The check proves the pair was consistent at these exact contents; it cannot judge whether the two sides
 say the same thing, or whether the wording is accurate. That is the reviewer's half of the contract.

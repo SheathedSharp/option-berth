@@ -6,11 +6,11 @@
 
 `site/assets/gsap.min.js` 是 GSAP 3.15.1 的原样副本，随站点发布，已与固定上游快照中的 `dist/gsap.min.js` 核对。它适用自己的标准“不收费”许可，不是本项目的 MIT，也不应擅自标为 OSI 开源许可。原版权及许可文件头保持原样。
 
-官方许可：<https://gsap.com/standard-license>。本仓库保留[许可正文](third_party/licenses/gsap-standard-license.txt)及[网页原始快照](third_party/licenses/gsap-standard-license.html)及其哈希，抓取日期为 2026-11-15 Asia/Shanghai；这是当时的官方页面，不冒充带版本号的历史法律文本。GSAP 完整上游源码也在清单中，不能因为上游归档没有单独 LICENSE 文件就忽略文件头和正式条款。
+官方许可：<https://gsap.com/standard-license>。本仓库保留[许可正文](third_party/licenses/gsap-standard-license.txt)及[网页原始快照](third_party/licenses/gsap-standard-license.html)，抓取日期为 2026-11-15 Asia/Shanghai；这是当时的官方页面，不冒充带版本号的历史法律文本。GSAP 完整上游源码也在清单中，不能因为上游归档没有单独 LICENSE 文件就忽略文件头和正式条款。
 
 ## Go 依赖、标准库与 SQLite
 
-引擎的实际模块版本由 [engine/go.mod](engine/go.mod) 和 [engine/go.sum](engine/go.sum) 固定。`third_party` 现在保存选中依赖图的直接、间接、测试及生成依赖的完整上游源码包，另保留可取得且通过 h1 校验的完整模块 ZIP。它们只是源码资料，不启用 vendor、不修改构建解析，也不更新依赖版本。
+引擎的实际模块版本由 [engine/go.mod](engine/go.mod) 和 [engine/go.sum](engine/go.sum) 固定。`third_party` 现在保存选中依赖图的直接、间接、测试及生成依赖的完整上游源码包，另保留可取得的完整模块 ZIP。它们只是源码资料，不启用 vendor、不修改构建解析，也不更新依赖版本。
 
 清单另列六种目标平台生产导入的并集，不能将“模块图选中”理解为每个二进制都链接了它。Go 标准库/工具链的源码按 go.mod 声明版本保存；具体产物使用的编译器版本仍以构建清单为准。SQLite 同时保留 modernc 的生成实现和原始 SQLite 对应版本源码，原始公共领域说明及嵌入材料许可均不删除。
 
@@ -58,4 +58,4 @@ macOS 客户端及其字体（Monaspace，SIL Open Font License 1.1）、终端�
 
 ## 名称、商标与后续变更
 
-第三方名称仅说明来源、依赖或兼容性，不表示背书，代码许可也不授予商标权。新增素材应先记录来源与分发许可；来源未知就标注不确定，不凭相似率或猜测指定许可。更新归档与声明必须可复现，并保留所有仍适用的版权和许可内容。
+第三方名称仅说明来源、依赖或兼容性，不表示背书，代码许可也不授予商标权。新增素材应先记录来源与分发许可；来源未知就标注不确定，不凭相似率或猜测指定许可。有意更新时，直接维护来源、版本和本地修改记录，保留所有仍适用的版权和许可内容；不另设源码管理框架或额外门禁。

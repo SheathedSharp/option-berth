@@ -27,9 +27,6 @@ Do not bypass denied `/bin/ps`, listener inspection or binding restrictions. A `
 
 ```sh
 python3 scripts/check_docs.py
-python3 scripts/check_doc_links.py
-python3 scripts/check_doc_examples.py
-python3 scripts/check_third_party.py
 python3 scripts/check_skill_contract.py --skill-dir ../option-berth-skill
 ```
 

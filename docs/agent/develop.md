@@ -43,9 +43,6 @@ For documentation and source data, the offline/static entry points are:
 
 ```sh
 python3 scripts/check_docs.py
-python3 scripts/check_doc_links.py
-python3 scripts/check_doc_examples.py
-python3 scripts/check_third_party.py
 python3 scripts/check_skill_contract.py --skill-dir ../option-berth-skill
 ```
 
