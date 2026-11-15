@@ -53,4 +53,4 @@ oberth down
 
 ## 许可与来源
 
-项目贡献适用 [MIT](LICENSE)。第三方组件及历史来源各自保留版权和许可，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 与[源码归档说明](docs/third-party.zh.md)。归档用于核查和开发，不改变 Go 的依赖解析。外部工具名称只说明兼容性，不代表背书。
+项目贡献适用 [MIT](LICENSE)。实际第三方组件各自保留版权和许可，见[归属与源码清单](third_party/README.md) 与[源码归档说明](docs/third-party.zh.md)。归档用于核查和开发，不改变 Go 的依赖解析。外部工具名称只说明兼容性，不代表背书。

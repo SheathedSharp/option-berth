@@ -1,11 +1,35 @@
-# Third-party source / 第三方源码
+# Third-party notices and source / 第三方归属与源码
+
+本项目贡献适用 MIT；第三方材料保留各自版权和许可，不因收进仓库而改为 MIT。下面集中说明本仓实际使用、分发的第三方材料；原始 LICENSE、NOTICE、版权文件及文件头保留在各源码包内，方便阅读的副本在源码清单对应的许可目录中。没有单独的根目录声明文件。
+
+## 站点资产：GSAP
+
+`site/assets/gsap.min.js` 是 GSAP 3.15.1 的原样副本，由 `site/build.py` 随站点发布，版权归 GreenSock；已经与固定上游源码中的 `dist/gsap.min.js` 核对。它适用 GreenSock Standard “No Charge” License（https://gsap.com/standard-license），不是本项目的 MIT，也不应标为 OSI 开源许可。原文件头保留，不手工修改或去掉声明。站点不加载外部脚本。
+
+官方许可网页原始快照和便于阅读的正文记录于源码资料；抓取时间为 2026-11-15 Asia/Shanghai，只代表当时的正式网页，不冒充带版本号的历史法律文本。分发或修改该资产仍应遵守原条款。
+
+## Go 依赖、标准库与 SQLite
+
+引擎依赖版本由 `engine/go.mod`、`engine/go.sum` 固定。Go 标准库及第三方模块各自保留原许可；SQLite 既有其原始公共领域说明，也有生成实现和嵌入材料的独立许可，不能一概重新标为 MIT。
+
+原生二进制发布保留实际目标运行依赖的完整许可与 NOTICE，以及构建清单；现有 `go-runtime-licenses.txt` 是保留许可输入，不是所有开发依赖和所有平台的完整物料清单。发布包内 `licenses/retained-runtime-notices.txt` 保留该输入，`licenses/target-runtime-notices.txt` 按实际目标收集原文，`build-manifest.json` 记录编译器与运行模块。发布源码、二进制或安装包时，须核对实际分发范围并携带适用原文；归档源码不替代这项责任。
+
+## 开发工具与独立客户端
+
+站点的 `@playwright/test`、`playwright`、`playwright-core` 来自同一固定版本 Playwright，原 LICENSE/NOTICE 随源码保留。Mage、nfpm、actionlint 的完整工具源码和 JSONSchema 测试套件单独保存；工具的独立开发依赖、托管 Actions、操作系统 SDK、外部浏览器、agent 与模型服务不是本项目引擎依赖，不冒称整个执行环境都已归档。
+
+macOS 客户端、Monaspace 字体（SIL Open Font License 1.1）及 SwiftTerm（MIT）由独立仓库 https://github.com/SheathedSharp/option-berth-macos 分发并维护许可。本仓源码和原生引擎发布包不包含这些客户端资产，不能替另一个仓库重新许可。
+
+第三方名称只说明来源、兼容或依赖，不表示认可或背书；代码许可不授予商标权。新增或升级材料时，直接维护下方来源、版本和本地修改记录，保留适用版权、LICENSE 和 NOTICE；不另设源码管理框架或开发门禁。
+
+## 源码资料
 
 这里保存固定版本的完整上游源码，供直接查看、解压和继续开发。所有归档均为上游原样，未作本地修改（no local modifications）。不启用 vendor，不改变 Go 的依赖解析，也没有专用下载、同步或校验流程。
 
 ## 范围
 
 - 引擎按当前 Go 模块图保留 59 个选中模块的完整上游源码，其中 22 个出现在六目标生产导入并集中；另附可取得的 24 份模块发行 ZIP。模块 ZIP 是完整模块快照，不等于整个上游仓库。
-- 另有站点 GSAP、Playwright，历史来源 Sonar，modernc 对应的原始 SQLite，以及仓库声明的 Go 和固定构建工具源码。共 68 条顶层来源记录、91 个去重源码包，约 299 MiB 压缩数据。
+- 另有站点 GSAP、Playwright，modernc 对应的原始 SQLite，以及仓库声明的 Go 和固定构建工具源码。共 67 条顶层来源记录、90 个去重源码包。
 - Go 源码对应 go.mod 声明的 go1.25.0，不代表每个发布产物的编译器版本。Mage/nfpm/actionlint 是工具完整源码，不宣称封闭复制其独立开发依赖或整个 CI 环境。
 - 上游自带 vendor、测试资产及各自声明保留在原源码包中；下表的根许可不覆盖子树的独立许可。客户端字体/SwiftTerm 属于独立 macOS 仓库，不在本仓产品中分发。
 
@@ -82,7 +106,6 @@ jsonschema 的 `testdata/JSON-Schema-Test-Suite` 是上游子模块；对应源�
 | `modernc.org/token` | `v1.1.0` | [固定来源](https://gitlab.com/cznic/token/-/tree/v1.1.0) | [完整上游](sources/upstream/cznic--token--v1.1.0.tar.gz) | [原文](licenses/components/modernc.org--token@v1.1.0) |
 | `GSAP` | `3.15.1` | [固定来源](https://github.com/greensock/GSAP/tree/5e6c35ff8eedea12d4f229129def635277d8b0f2) | [完整上游](sources/upstream/greensock--GSAP--5e6c35ff8eedea12d4f229129def635277d8b0f2.tar.gz) | [原文](licenses/gsap-standard-license.txt) |
 | `Playwright` | `1.63.0` | [固定来源](https://github.com/microsoft/playwright/tree/1b025d7e20a026371cd5f98ba0cdce48892737c8) | [完整上游](sources/upstream/microsoft--playwright--1b025d7e20a026371cd5f98ba0cdce48892737c8.tar.gz) | [原文](licenses/components/Playwright@1.63.0) |
-| `Sonar` | `be48afbee89fd2381d0e2c8b0aa9ec1d81194546` | [固定来源](https://github.com/raskrebs/sonar/tree/be48afbee89fd2381d0e2c8b0aa9ec1d81194546) | [完整上游](sources/upstream/raskrebs--sonar--be48afbee89fd2381d0e2c8b0aa9ec1d81194546.tar.gz) | [原文](licenses/components/Sonar@be48afbee89fd2381d0e2c8b0aa9ec1d81194546) |
 | `SQLite` | `3.51.2` | [固定来源](https://github.com/sqlite/sqlite/tree/ba76c160c735437de974c6ea24c890a663214c6b) | [完整上游](sources/upstream/sqlite--sqlite--ba76c160c735437de974c6ea24c890a663214c6b.tar.gz) | [原文](licenses/components/SQLite@3.51.2) |
 | `JSON-Schema-Test-Suite` | `83e866b46c9f9e7082fd51e83a61c5f2145a1ab7` | [固定来源](https://github.com/json-schema-org/JSON-Schema-Test-Suite/tree/83e866b46c9f9e7082fd51e83a61c5f2145a1ab7) | [完整上游](sources/upstream/json-schema-org--JSON-Schema-Test-Suite--83e866b46c9f9e7082fd51e83a61c5f2145a1ab7.tar.gz) | [原文](licenses/components/JSON-Schema-Test-Suite@83e866b46c9f9e7082fd51e83a61c5f2145a1ab7) |
 | `Go` | `go1.25.0` | [固定来源](https://github.com/golang/go/tree/6e676ab2b809d46623acb5988248d95d1eb7939c) | [完整上游](sources/upstream/golang--go--6e676ab2b809d46623acb5988248d95d1eb7939c.tar.gz) | [原文](licenses/components/Go@go1.25.0) |
@@ -90,4 +113,4 @@ jsonschema 的 `testdata/JSON-Schema-Test-Suite` 是上游子模块；对应源�
 | `nfpm` | `v2.46.0` | [固定来源](https://github.com/goreleaser/nfpm/tree/8a958ae83323164c347966d511f09b6c742c5dde) | [完整上游](sources/upstream/goreleaser--nfpm--8a958ae83323164c347966d511f09b6c742c5dde.tar.gz) | [原文](licenses/components/nfpm@v2.46.0) |
 | `actionlint` | `v1.7.7` | [固定来源](https://github.com/rhysd/actionlint/tree/03d0035246f3e81f36aed592ffb4bebf33a03106) | [完整上游](sources/upstream/rhysd--actionlint--03d0035246f3e81f36aed592ffb4bebf33a03106.tar.gz) | [原文](licenses/components/actionlint@v1.7.7) |
 
-更多许可与历史说明：[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)；[中文指南](../docs/third-party.zh.md) / [English](../docs/third-party.md)。
+阅读指南：[中文指南](../docs/third-party.zh.md) / [English](../docs/third-party.md)。

@@ -2,7 +2,7 @@
 
 English | [中文](third-party.zh.md)
 
-This repository does use third-party software: Go libraries, the website's copied GSAP file, and Playwright for site development. Historical engine work also referenced Sonar. Their source and notices belong here; a custom source-management framework does not.
+This repository does use third-party software: Go libraries, the website's copied GSAP file, and Playwright for site development. Their source and notices belong here; a custom source-management framework does not.
 
 ## What is stored here
 
@@ -11,11 +11,11 @@ This repository does use third-party software: Go libraries, the website's copie
 | Versions, official sources and local modifications | [Source directory](../third_party/README.md) | A human-maintained list, not an extra development gate |
 | Complete source archives | [sources/](../third_party/sources/) | Fixed upstream source for inspection and development |
 | Original legal text | [licenses/](../third_party/licenses/) | Convenient reading copies; all original files also remain in the archives |
-| Distribution responsibilities | [Third-party notices](../THIRD_PARTY_NOTICES.md) | Attribution and the existing binary-release license boundary |
+| Distribution responsibilities | [Third-party notices](../third_party/README.md) | Attribution and the existing binary-release license boundary |
 
 ## Scope and completeness
 
-The archives cover all 59 modules selected by the engine's Go module graph, including indirect and selected test/tool modules. They separately include original SQLite source, GSAP, Playwright, historical Sonar, and the declared Go/build-tool sources. The directory records the exact version and official tag or commit for each component. All snapshots are unmodified locally.
+The archives cover all 59 modules selected by the engine's Go module graph, including indirect and selected test/tool modules. They separately include original SQLite source, GSAP, Playwright, and the declared Go/build-tool sources. The directory records the exact version and official tag or commit for each component. All snapshots are unmodified locally.
 
 A module ZIP is the complete published module, not a whole upstream repository. The 24 retained module ZIPs supplement the full upstream archives; the other selected modules also have full upstream source. The actual JSONSchema test-suite submodule is included separately at its fixed commit rather than moving main.
 
@@ -31,6 +31,6 @@ Archives are not vendored into builds. Go still resolves the unchanged `engine/g
 
 ## License and provenance decisions
 
-GSAP uses its own Standard “No Charge” License, not this project's MIT and not an assumed OSI license. The original file header, official license-page snapshot and readable legal text are retained. Sonar's historical MIT attribution and complete license remain; a code-similarity percentage cannot establish that attribution may be deleted, nor does this imply every current file is derived from Sonar.
+GSAP uses its own Standard “No Charge” License, not this project's MIT and not an assumed OSI license. The original file header, official license-page snapshot and readable legal text are retained. Previous source-history records remain in Git history; they are not reintroduced as current dependency archives.
 
 The independent macOS client maintains its own fonts and terminal dependencies. They are not this repository's shipped client assets. Root project licenses do not replace upstream or embedded-subtree terms. Preserve applicable notices; mark uncertain provenance as uncertain rather than inventing a license.

@@ -53,4 +53,4 @@ Release requirements are maintained in the [release process](docs/agent/releasin
 
 ## License and provenance
 
-Project contributions use [MIT](LICENSE). Third-party components and historical origins retain their own notices: see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [source archives](docs/third-party.md). Archives support inspection and development without changing Go dependency resolution. Third-party tool names do not imply endorsement.
+Project contributions use [MIT](LICENSE). Third-party components retain their own notices: see [attribution and source](third_party/README.md) and [source archives](docs/third-party.md). Archives support inspection and development without changing Go dependency resolution. Third-party tool names do not imply endorsement.

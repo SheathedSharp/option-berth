@@ -24,4 +24,4 @@ python3 scripts/brand_export.py           # rewrite the SVGs and the Go constant
 
 Commit the regenerated files with the geometry change. The macOS app icons, empty states and small
 sizes belong to the client and are built by its own native pipeline; they are not exported here.
-Third-party assets keep their own licences, listed in [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
+Third-party assets keep their own licences, listed in [third-party attribution](../third_party/README.md).
