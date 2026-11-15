@@ -1,5 +1,7 @@
 # Agent benchmark
 
+This is the benchmark-method reference, not an installation guide or a current scorecard. Choose [scenarios](#scenario-library), [isolation](#isolation-and-authorization), [metrics](#metrics) or [running](#running). A report must name its revision and inputs; this page does not grant permission to call a paid agent.
+
 `scripts/agent_eval.py` is the manual benchmark. It asks an agent to perform one task on a sample
 project, with and without oberth, reruns the same build every time, and reports completion rate, step
 count, duration, output bytes, process probes, wrongful stops and boundary violations.
