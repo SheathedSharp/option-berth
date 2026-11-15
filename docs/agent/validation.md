@@ -2,6 +2,8 @@
 
 This page selects checks and defines what they establish. It is not a pass report. Historical runs are in [dated records](history/validation-through-20261114.md); a result only applies to its recorded revision, input, platform and environment.
 
+For exact per-target promises, edge cases and platform limits, use the [detailed verification matrix](validation-reference.md). The task-oriented guide below does not replace or reduce that contract.
+
 ## Choose a check by the change
 
 | Change | Evidence to collect | What it does not prove |

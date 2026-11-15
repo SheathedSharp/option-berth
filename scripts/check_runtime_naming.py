@@ -24,7 +24,7 @@ MIGRATIONS = {
 }
 GUARDS = {"engine/internal/runtimesvc/storage_lease.go", "engine/internal/runtimesvc/storage_lease_test.go",
           "engine/internal/runtimesvc/storage_lease_legacy_test.go"}
-DOCKER = {"scripts/agent_eval.py", "examples/stack-workshop/README.md", "docs/agent/validation.md", "engine/internal/docker/watch_test.go",
+DOCKER = {"scripts/agent_eval.py", "examples/stack-workshop/README.md", "docs/agent/validation.md", "docs/agent/validation-reference.md", "engine/internal/docker/watch_test.go",
           "engine/internal/doctor/probes.go", "engine/internal/doctor/doctor.go", "engine/internal/doctor/checks_test.go", "engine/internal/doctor/probes_test.go"}
 THREADS = {"scripts/check_storage_ownership.py","scripts/example_api_test.py", "scripts/verify-e2e.py", "scripts/install_test.py", "scripts/verify_stats_drain_test.py"}
 HISTORICAL = {"docs/agent/history/validation-through-20261114.md", "docs/agent/history/agent-traces-20261102.md", "docs/agent/history/backlog-20261114.md", "docs/agent/history/backlog-20261114.zh.md"}
