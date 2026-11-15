@@ -5,6 +5,8 @@ import tarfile
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+import collect_third_party as collector
 import zipfile
 
 from check_third_party import audit_archive, verify_manifest, verify_source_bindings
@@ -120,6 +122,35 @@ class SourceIntegrityTests(unittest.TestCase):
         self.manifest["components"][0]["archives"].pop()
         self.upstream.unlink()
         self.assertTrue(any("full upstream" in error for error in self.errors()))
+
+    def offline_fixture(self):
+        commit = "a" * 40
+        target = self.root / "third_party/sources/upstream"; target.mkdir()
+        path = target / ("example--lib--" + commit + ".tar.gz")
+        path.write_bytes(self.upstream.read_bytes())
+        inventory = {"components":[{"archives":[{"repository":"https://github.com/example/lib","ref":"v1.0.0","commit":commit,"sha256":sha(path)}]}]}
+        (self.root / "third_party/sources.json").write_text(json.dumps(inventory))
+        return target,path
+
+    def test_offline_collection_reuses_real_pinned_archive_without_network(self):
+        target,path = self.offline_fixture()
+        with patch.object(collector,"ROOT",self.root), patch.object(collector,"OFFLINE",True), patch.object(collector,"public_gh",side_effect=AssertionError("network forbidden")):
+            result = collector.github_source_serial("example/lib","v1.0.0",target)
+        self.assertEqual(sha(path),result["sha256"])
+
+    def test_offline_missing_archive_is_not_downloaded(self):
+        target,path = self.offline_fixture(); path.unlink()
+        with patch.object(collector,"ROOT",self.root), patch.object(collector,"OFFLINE",True), patch.object(collector,"public_gh",side_effect=AssertionError("network forbidden")):
+            with self.assertRaisesRegex(ValueError,"missing or changed"):
+                collector.github_source_serial("example/lib","v1.0.0",target)
+        self.assertFalse(path.exists())
+
+    def test_offline_tamper_is_not_overwritten_or_downloaded(self):
+        target,path = self.offline_fixture(); path.write_bytes(b"changed")
+        with patch.object(collector,"ROOT",self.root), patch.object(collector,"OFFLINE",True), patch.object(collector,"public_gh",side_effect=AssertionError("network forbidden")):
+            with self.assertRaisesRegex(ValueError,"missing or changed"):
+                collector.github_source_serial("example/lib","v1.0.0",target)
+        self.assertEqual(b"changed",path.read_bytes())
 
 
 if __name__ == "__main__":

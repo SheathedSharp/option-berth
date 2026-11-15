@@ -22,6 +22,7 @@ import threading
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+OFFLINE = False
 GO = "/opt/homebrew/bin/go" if Path("/opt/homebrew/bin/go").exists() else "go"
 
 
@@ -69,8 +70,17 @@ def github_source(repo, ref, target):
         return github_source_serial(repo, ref, target)
 
 def github_source_serial(repo, ref, target):
-    commit = public_gh("repos/" + repo + "/commits/" + ref)["sha"]
+    pin = None
+    if OFFLINE:
+        inventory = json.loads((ROOT/"third_party/sources.json").read_text())
+        pin = next((a for c in inventory["components"] for a in c["archives"] if a.get("repository") == "https://github.com/" + repo and a.get("ref") == ref),None)
+        if pin is None: raise ValueError("No existing offline source pin: " + repo + "@" + ref)
+        commit = pin["commit"]
+    else:
+        commit = public_gh("repos/" + repo + "/commits/" + ref)["sha"]
     file = target / (repo.replace("/", "--") + "--" + commit + ".tar.gz")
+    if OFFLINE and (not file.exists() or sha(file) != pin["sha256"]):
+        raise ValueError("Offline pinned source missing or changed: " + repo)
     if not file.exists():
         partial = file.with_suffix(file.suffix + ".partial")
         try:
@@ -123,7 +133,7 @@ def render_inventory(manifest):
         links = [f"[{('module' if 'go_sum_h1' in a else 'upstream')}]({a['path'].removeprefix('third_party/')})" for a in c["archives"]]
         legal = [f"[{Path(n).name}]({n.removeprefix('third_party/')})" for n in c.get("license_documents",[])]
         text.append(f"| `{c['id']}` | `{c['version']}` | {c['scope']} | {' · '.join(links)} | {' · '.join(legal)} |")
-    text += ["", "## Verification and intentional updates", "", "The JSON inventory retains original source URLs, commit/tag, archive SHA-256, sizes, file counts, license paths, submodule relationship and exceptional symlinks. Input hashes bind it to the module files, site lockfile, copied GSAP asset and tool-pinning workflows.", "", "Run `python3 scripts/check_third_party.py` for offline integrity, selected-graph and six-target production-closure checks; Go and the existing module metadata cache are required. It does not run archived code. `python3 -m unittest discover -s scripts -p check_third_party_test.py` exercises corruption, missing source, h1 binding, unsafe paths, LFS placeholders, submodules and legal-document checks using synthetic temporary data.", "", "After an intentional dependency/tool-version change, review and update the collector's explicit source pins, then run `python3 scripts/collect_third_party.py --collect` (Go, gh and curl required). It reads official public sources and verified cached module ZIPs, does not install anything, and fails verification if a source gap remains. Review all provenance/license/hash changes; do not update a checksum just to silence failure.", "", "Network record: the public Go proxy timed out, so no alternate proxy was used; canonical modernc GitLab source archives were available. SQLite's official download host hit an SSL timeout; its official GitHub mirror at the fixed version commit supplied the full original source. The official GSAP license-page snapshot was retrieved on 2026-11-15 Asia/Shanghai and is a current page snapshot, not a historically versioned license.", ""]
+    text += ["", "## Verification and intentional updates", "", "The JSON inventory retains original source URLs, commit/tag, archive SHA-256, sizes, file counts, license paths, submodule relationship and exceptional symlinks. Input hashes bind it to the module files, site lockfile, copied GSAP asset and tool-pinning workflows.", "", "Run `python3 scripts/check_third_party.py` for offline integrity, selected-graph and six-target production-closure checks; Go and the existing module metadata cache are required. It does not run archived code. `python3 -m unittest discover -s scripts -p check_third_party_test.py` exercises corruption, missing source, h1 binding, unsafe paths, LFS placeholders, submodules and legal-document checks using synthetic temporary data.", "", "To reproduce from the existing verified archives without downloads, run `python3 scripts/collect_third_party.py --collect --offline`; a missing pin or archive is an error. The base revision records the last engine-source commit, not a new value for every documentation commit. After an intentional dependency/tool-version change, review and update the collector's explicit source pins, then run `python3 scripts/collect_third_party.py --collect` (Go, gh and curl required). It reads official public sources and verified cached module ZIPs, does not install anything, and fails verification if a source gap remains. Review all provenance/license/hash changes; do not update a checksum just to silence failure.", "", "Network record: the public Go proxy timed out, so no alternate proxy was used; canonical modernc GitLab source archives were available. SQLite's official download host hit an SSL timeout; its official GitHub mirror at the fixed version commit supplied the full original source. The official GSAP license-page snapshot was retrieved on 2026-11-15 Asia/Shanghai and is a current page snapshot, not a historically versioned license.", ""]
     return "\n".join(text)
 
 
@@ -160,6 +170,7 @@ def collect_source_trees(manifest):
     def tree(item):
         name, archive = item
         if name in previous: return name, previous[name]
+        if OFFLINE: raise ValueError("No offline fixed Git tree evidence: " + name)
         repo = archive["repository"].removeprefix("https://github.com/")
         endpoint = "repos/" + repo + "/git/trees/" + archive["commit"] + "?recursive=1"
         row = public_gh(endpoint)
@@ -234,6 +245,7 @@ def collect():
             repo=module.split('/')[1];url="https://gitlab.com/cznic/"+repo+"/-/archive/"+version+"/"+repo+"-"+version+".tar.gz"
             output=target/"upstream"/("cznic--"+repo+"--"+version+".tar.gz")
             try:
+                if OFFLINE and not output.exists(): raise ValueError("Offline canonical source archive missing")
                 if not output.exists(): subprocess.run(["curl","--fail","--location","--connect-timeout","8","--max-time","30","--silent","--show-error",url,"-o",str(output)],check=True,timeout=35)
                 entry["archives"].append({"kind":"full-upstream-source-archive","repository":"https://gitlab.com/cznic/"+repo,"ref":version,"url":url,**archive_info(output)})
             except (subprocess.SubprocessError,ValueError,OSError,tarfile.TarError):
@@ -248,7 +260,7 @@ def collect():
         components.append(entry)
     parent = next(c for c in components if c["id"] == "github.com/santhosh-tekuri/jsonschema/v6")
     parent["submodule_dependencies"] = [{"path":"testdata/JSON-Schema-Test-Suite","repository":"https://github.com/json-schema-org/JSON-Schema-Test-Suite","commit":"83e866b46c9f9e7082fd51e83a61c5f2145a1ab7","component":"JSON-Schema-Test-Suite","evidence":"GitHub recursive tree at parent b0fc661f4939578bc429f408c18202573dbafcc4, mode 160000"}]
-    manifest={"format_version":1,"base_revision":subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip(),"inputs":{p:sha(ROOT/p) for p in [".gitattributes","engine/go.mod","engine/go.sum","site/package-lock.json","site/assets/gsap.min.js",".github/workflows/engine.yml",".github/workflows/release.yml",".github/workflows/ci-config.yml",".github/workflows/agent-eval.yml"]},"platforms":["darwin/arm64","darwin/amd64","linux/amd64","linux/arm64","windows/amd64","windows/arm64"],"resolution":"Source archives only. No replace directive, vendor mode, dependency update, downloaded scripts or source execution.","components":components}
+    manifest={"format_version":1,"base_revision":subprocess.check_output(["git","log","-1","--format=%H","--","engine"],cwd=ROOT,text=True).strip(),"inputs":{p:sha(ROOT/p) for p in [".gitattributes","engine/go.mod","engine/go.sum","site/package-lock.json","site/assets/gsap.min.js",".github/workflows/engine.yml",".github/workflows/release.yml",".github/workflows/ci-config.yml",".github/workflows/agent-eval.yml"]},"platforms":["darwin/arm64","darwin/amd64","linux/amd64","linux/arm64","windows/amd64","windows/arm64"],"resolution":"Source archives only. No replace directive, vendor mode, dependency update, downloaded scripts or source execution.","components":components}
     licenses = ROOT / "third_party/licenses"
     licenses.mkdir(exist_ok=True)
     sonar = next(x for x in components if x["id"] == "Sonar")
@@ -257,6 +269,7 @@ def collect():
         (licenses / "Sonar-MIT.txt").write_bytes(archive.extractfile(name).read())
     gsap_license = licenses / "gsap-standard-license.html"
     if not gsap_license.exists():
+        if OFFLINE: raise ValueError("Offline original GSAP license missing")
         subprocess.run(["curl", "--fail", "--location", "--connect-timeout", "8", "--max-time", "30", "--silent", "--show-error", "https://gsap.com/standard-license", "-o", str(gsap_license)], check=True, timeout=35)
     if 'Standard "No Charge" GSAP License' not in html.unescape(gsap_license.read_text()):
         raise ValueError("GSAP license response is not the actual license")
@@ -269,4 +282,7 @@ def collect():
     print('SOURCE MANIFEST',len(components),'components; gaps:',sum(bool(x['gaps']) for x in components),flush=True)
 
 if __name__=="__main__":
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--collect',action='store_true',required=True);p.parse_args();collect()
+    p=argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--collect",action="store_true",required=True)
+    p.add_argument("--offline",action="store_true",help="Reuse existing fixed source pins and archives; never download")
+    args=p.parse_args();OFFLINE=args.offline;collect()

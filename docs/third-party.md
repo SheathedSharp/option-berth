@@ -45,6 +45,8 @@ python3 scripts/check_third_party.py
 
 Collection reads public official sources and the existing verified module cache; it does not install dependencies or alter module resolution. Review the version, source URL, commit or tag, hash and license changes before committing. A missing download is an explicit gap, never a successful empty placeholder. The inventory is generated; do not hand-edit it to conceal a failed check.
 
+To reproduce the existing inventory without network access or downloads, use `python3 scripts/collect_third_party.py --collect --offline`. It reuses fixed source pins and rejects missing or altered archives rather than replacing them.
+
 ## License and provenance decisions
 
 GSAP uses its own Standard “No Charge” License, not this project's MIT license and not an assumed OSI license. The unmodified file header and an official license-page snapshot are retained. The page snapshot is dated; it is not misrepresented as a historically versioned legal text.
