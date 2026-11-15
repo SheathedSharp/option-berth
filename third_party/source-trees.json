@@ -1,0 +1,484 @@
+{
+  "third_party/sources/upstream/Microsoft--go-winio--3c9576c9346a1892dee136329e7e15309e82fb4f.tar.gz": {
+    "blob_count": 109,
+    "commit": "3c9576c9346a1892dee136329e7e15309e82fb4f",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/Microsoft/go-winio/git/trees/3c9576c9346a1892dee136329e7e15309e82fb4f?recursive=1",
+    "tree_sha": "3c9576c9346a1892dee136329e7e15309e82fb4f",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/bahlo--generic-list-go--89fb9b4cdfd4b5295651f72e9f892f1595b4d6c9.tar.gz": {
+    "blob_count": 7,
+    "commit": "89fb9b4cdfd4b5295651f72e9f892f1595b4d6c9",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/bahlo/generic-list-go/git/trees/89fb9b4cdfd4b5295651f72e9f892f1595b4d6c9?recursive=1",
+    "tree_sha": "89fb9b4cdfd4b5295651f72e9f892f1595b4d6c9",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/buger--jsonparser--a69e7e01cd4ad67bdfd3ac2c080b9212af16f4b0.tar.gz": {
+    "blob_count": 33,
+    "commit": "a69e7e01cd4ad67bdfd3ac2c080b9212af16f4b0",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/buger/jsonparser/git/trees/a69e7e01cd4ad67bdfd3ac2c080b9212af16f4b0?recursive=1",
+    "tree_sha": "a69e7e01cd4ad67bdfd3ac2c080b9212af16f4b0",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/cpuguy83--go-md2man--441631534462b74c098953dbd8d5f6210994b0bf.tar.gz": {
+    "blob_count": 16,
+    "commit": "441631534462b74c098953dbd8d5f6210994b0bf",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/cpuguy83/go-md2man/git/trees/441631534462b74c098953dbd8d5f6210994b0bf?recursive=1",
+    "tree_sha": "441631534462b74c098953dbd8d5f6210994b0bf",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/creack--pty--3a6a957789163cacdfe0e291617a1c8e80612c11.tar.gz": {
+    "blob_count": 40,
+    "commit": "3a6a957789163cacdfe0e291617a1c8e80612c11",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/creack/pty/git/trees/3a6a957789163cacdfe0e291617a1c8e80612c11?recursive=1",
+    "tree_sha": "3a6a957789163cacdfe0e291617a1c8e80612c11",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/davecgh--go-spew--8991bc29aa16c548c550c7ff78260e27b9ab7c73.tar.gz": {
+    "blob_count": 24,
+    "commit": "8991bc29aa16c548c550c7ff78260e27b9ab7c73",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/davecgh/go-spew/git/trees/8991bc29aa16c548c550c7ff78260e27b9ab7c73?recursive=1",
+    "tree_sha": "8991bc29aa16c548c550c7ff78260e27b9ab7c73",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/dlclark--regexp2--05e6ac2ab64bbfb3b0ece82156906edbe794b140.tar.gz": {
+    "blob_count": 1913,
+    "commit": "05e6ac2ab64bbfb3b0ece82156906edbe794b140",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/dlclark/regexp2/git/trees/05e6ac2ab64bbfb3b0ece82156906edbe794b140?recursive=1",
+    "tree_sha": "05e6ac2ab64bbfb3b0ece82156906edbe794b140",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/dustin--go-humanize--9ec74ab2f7a7161664182fd4e5e292fccffbc75f.tar.gz": {
+    "blob_count": 27,
+    "commit": "9ec74ab2f7a7161664182fd4e5e292fccffbc75f",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/dustin/go-humanize/git/trees/9ec74ab2f7a7161664182fd4e5e292fccffbc75f?recursive=1",
+    "tree_sha": "9ec74ab2f7a7161664182fd4e5e292fccffbc75f",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/go-check--check--10cb98267c6cb43ea9cd6793f29ff4089c306974.tar.gz": {
+    "blob_count": 27,
+    "commit": "10cb98267c6cb43ea9cd6793f29ff4089c306974",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/go-check/check/git/trees/10cb98267c6cb43ea9cd6793f29ff4089c306974?recursive=1",
+    "tree_sha": "10cb98267c6cb43ea9cd6793f29ff4089c306974",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/go-errgo--errgo--f768c5ab0476c50e978b039312180859c10fe8c0.tar.gz": {
+    "blob_count": 12,
+    "commit": "f768c5ab0476c50e978b039312180859c10fe8c0",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/go-errgo/errgo/git/trees/f768c5ab0476c50e978b039312180859c10fe8c0?recursive=1",
+    "tree_sha": "f768c5ab0476c50e978b039312180859c10fe8c0",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/go-yaml--yaml--f6f7691b1fdeb513f56608cd2c32c51f8194bf51.tar.gz": {
+    "blob_count": 24,
+    "commit": "f6f7691b1fdeb513f56608cd2c32c51f8194bf51",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/go-yaml/yaml/git/trees/f6f7691b1fdeb513f56608cd2c32c51f8194bf51?recursive=1",
+    "tree_sha": "f6f7691b1fdeb513f56608cd2c32c51f8194bf51",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/golang--exp--a4bb9ffd2546b4ac9773d60f1e9a6ff4ba82ad23.tar.gz": {
+    "blob_count": 835,
+    "commit": "a4bb9ffd2546b4ac9773d60f1e9a6ff4ba82ad23",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/golang/exp/git/trees/a4bb9ffd2546b4ac9773d60f1e9a6ff4ba82ad23?recursive=1",
+    "tree_sha": "a4bb9ffd2546b4ac9773d60f1e9a6ff4ba82ad23",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/golang--go--6e676ab2b809d46623acb5988248d95d1eb7939c.tar.gz": {
+    "blob_count": 14490,
+    "commit": "6e676ab2b809d46623acb5988248d95d1eb7939c",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/golang/go/git/trees/6e676ab2b809d46623acb5988248d95d1eb7939c?recursive=1",
+    "tree_sha": "6e676ab2b809d46623acb5988248d95d1eb7939c",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/golang--mod--27761a2ad800eabb86324226bb5e39adb07759da.tar.gz": {
+    "blob_count": 133,
+    "commit": "27761a2ad800eabb86324226bb5e39adb07759da",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/golang/mod/git/trees/27761a2ad800eabb86324226bb5e39adb07759da?recursive=1",
+    "tree_sha": "27761a2ad800eabb86324226bb5e39adb07759da",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/golang--net--ebddb99633e0fc35d135f62e9400678492c1d3be.tar.gz": {
+    "blob_count": 828,
+    "commit": "ebddb99633e0fc35d135f62e9400678492c1d3be",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/golang/net/git/trees/ebddb99633e0fc35d135f62e9400678492c1d3be?recursive=1",
+    "tree_sha": "ebddb99633e0fc35d135f62e9400678492c1d3be",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/golang--sync--ec11c4a93de22cde2abe2bf74d70791033c2464c.tar.gz": {
+    "blob_count": 19,
+    "commit": "ec11c4a93de22cde2abe2bf74d70791033c2464c",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/golang/sync/git/trees/ec11c4a93de22cde2abe2bf74d70791033c2464c?recursive=1",
+    "tree_sha": "ec11c4a93de22cde2abe2bf74d70791033c2464c",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/golang--sys--fc646e489fd944b6f77d327ab77f1a4bab81d5ad.tar.gz": {
+    "blob_count": 540,
+    "commit": "fc646e489fd944b6f77d327ab77f1a4bab81d5ad",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/golang/sys/git/trees/fc646e489fd944b6f77d327ab77f1a4bab81d5ad?recursive=1",
+    "tree_sha": "fc646e489fd944b6f77d327ab77f1a4bab81d5ad",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/golang--telemetry--e7419c687ee41e0f7037de5124a0d02c1a09341d.tar.gz": {
+    "blob_count": 205,
+    "commit": "e7419c687ee41e0f7037de5124a0d02c1a09341d",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/golang/telemetry/git/trees/e7419c687ee41e0f7037de5124a0d02c1a09341d?recursive=1",
+    "tree_sha": "e7419c687ee41e0f7037de5124a0d02c1a09341d",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/golang--text--e69f31bf9cf2f46bd3325bc9bad37fe9001731c2.tar.gz": {
+    "blob_count": 540,
+    "commit": "e69f31bf9cf2f46bd3325bc9bad37fe9001731c2",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/golang/text/git/trees/e69f31bf9cf2f46bd3325bc9bad37fe9001731c2?recursive=1",
+    "tree_sha": "e69f31bf9cf2f46bd3325bc9bad37fe9001731c2",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/golang--tools--009367f5c17a8d4c45a961a3a509277190a9a6f0.tar.gz": {
+    "blob_count": 2637,
+    "commit": "009367f5c17a8d4c45a961a3a509277190a9a6f0",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/golang/tools/git/trees/009367f5c17a8d4c45a961a3a509277190a9a6f0?recursive=1",
+    "tree_sha": "009367f5c17a8d4c45a961a3a509277190a9a6f0",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/golang--tools--9b68bc9966ee62cbe4704dea268ca17f0d2cd8a7.tar.gz": {
+    "blob_count": 2755,
+    "commit": "9b68bc9966ee62cbe4704dea268ca17f0d2cd8a7",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/golang/tools/git/trees/9b68bc9966ee62cbe4704dea268ca17f0d2cd8a7?recursive=1",
+    "tree_sha": "9b68bc9966ee62cbe4704dea268ca17f0d2cd8a7",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/google--go-cmp--c3ad8435e7bef96af35732bc0789e5a2278c6d5f.tar.gz": {
+    "blob_count": 48,
+    "commit": "c3ad8435e7bef96af35732bc0789e5a2278c6d5f",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/google/go-cmp/git/trees/c3ad8435e7bef96af35732bc0789e5a2278c6d5f?recursive=1",
+    "tree_sha": "c3ad8435e7bef96af35732bc0789e5a2278c6d5f",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/google--pprof--a4b03ec1a45e1b7f16c441907485dd0efb33cccb.tar.gz": {
+    "blob_count": 249,
+    "commit": "a4b03ec1a45e1b7f16c441907485dd0efb33cccb",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/google/pprof/git/trees/a4b03ec1a45e1b7f16c441907485dd0efb33cccb?recursive=1",
+    "tree_sha": "a4b03ec1a45e1b7f16c441907485dd0efb33cccb",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/google--uuid--0f11ee6918f41a04c201eceeadf612a377bc7fbc.tar.gz": {
+    "blob_count": 31,
+    "commit": "0f11ee6918f41a04c201eceeadf612a377bc7fbc",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/google/uuid/git/trees/0f11ee6918f41a04c201eceeadf612a377bc7fbc?recursive=1",
+    "tree_sha": "0f11ee6918f41a04c201eceeadf612a377bc7fbc",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/goreleaser--nfpm--8a958ae83323164c347966d511f09b6c742c5dde.tar.gz": {
+    "blob_count": 280,
+    "commit": "8a958ae83323164c347966d511f09b6c742c5dde",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/goreleaser/nfpm/git/trees/8a958ae83323164c347966d511f09b6c742c5dde?recursive=1",
+    "tree_sha": "8a958ae83323164c347966d511f09b6c742c5dde",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/greensock--GSAP--5e6c35ff8eedea12d4f229129def635277d8b0f2.tar.gz": {
+    "blob_count": 180,
+    "commit": "5e6c35ff8eedea12d4f229129def635277d8b0f2",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/greensock/GSAP/git/trees/5e6c35ff8eedea12d4f229129def635277d8b0f2?recursive=1",
+    "tree_sha": "5e6c35ff8eedea12d4f229129def635277d8b0f2",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/hashicorp--golang-lru--d8515860cebc7b25ff2d29fada3f10a43611c28b.tar.gz": {
+    "blob_count": 23,
+    "commit": "d8515860cebc7b25ff2d29fada3f10a43611c28b",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/hashicorp/golang-lru/git/trees/d8515860cebc7b25ff2d29fada3f10a43611c28b?recursive=1",
+    "tree_sha": "d8515860cebc7b25ff2d29fada3f10a43611c28b",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/inconshreveable--mousetrap--4e8053ee7ef85a6bd26368364a6d27f1641c1d21.tar.gz": {
+    "blob_count": 5,
+    "commit": "4e8053ee7ef85a6bd26368364a6d27f1641c1d21",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/inconshreveable/mousetrap/git/trees/4e8053ee7ef85a6bd26368364a6d27f1641c1d21?recursive=1",
+    "tree_sha": "4e8053ee7ef85a6bd26368364a6d27f1641c1d21",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/invopop--jsonschema--2c57d6074bf9004aaaf1fc9c07ff0ea730b23de7.tar.gz": {
+    "blob_count": 73,
+    "commit": "2c57d6074bf9004aaaf1fc9c07ff0ea730b23de7",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/invopop/jsonschema/git/trees/2c57d6074bf9004aaaf1fc9c07ff0ea730b23de7?recursive=1",
+    "tree_sha": "2c57d6074bf9004aaaf1fc9c07ff0ea730b23de7",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/json-schema-org--JSON-Schema-Test-Suite--83e866b46c9f9e7082fd51e83a61c5f2145a1ab7.tar.gz": {
+    "blob_count": 547,
+    "commit": "83e866b46c9f9e7082fd51e83a61c5f2145a1ab7",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/json-schema-org/JSON-Schema-Test-Suite/git/trees/83e866b46c9f9e7082fd51e83a61c5f2145a1ab7?recursive=1",
+    "tree_sha": "83e866b46c9f9e7082fd51e83a61c5f2145a1ab7",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/kr--pretty--a883a8422cd235c67c6c4fdcb7bbb022143e10b1.tar.gz": {
+    "blob_count": 13,
+    "commit": "a883a8422cd235c67c6c4fdcb7bbb022143e10b1",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/kr/pretty/git/trees/a883a8422cd235c67c6c4fdcb7bbb022143e10b1?recursive=1",
+    "tree_sha": "a883a8422cd235c67c6c4fdcb7bbb022143e10b1",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/kr--pty--282ce0e5322c82529687d609ee670fac7c7d917c.tar.gz": {
+    "blob_count": 32,
+    "commit": "282ce0e5322c82529687d609ee670fac7c7d917c",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/kr/pty/git/trees/282ce0e5322c82529687d609ee670fac7c7d917c?recursive=1",
+    "tree_sha": "282ce0e5322c82529687d609ee670fac7c7d917c",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/kr--text--702c74938df48b97370179f33ce2107bd7ff3b3e.tar.gz": {
+    "blob_count": 17,
+    "commit": "702c74938df48b97370179f33ce2107bd7ff3b3e",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/kr/text/git/trees/702c74938df48b97370179f33ce2107bd7ff3b3e?recursive=1",
+    "tree_sha": "702c74938df48b97370179f33ce2107bd7ff3b3e",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/magefile--mage--0953947c1673fd745a51c032aadeb3c63f9f3368.tar.gz": {
+    "blob_count": 362,
+    "commit": "0953947c1673fd745a51c032aadeb3c63f9f3368",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/magefile/mage/git/trees/0953947c1673fd745a51c032aadeb3c63f9f3368?recursive=1",
+    "tree_sha": "0953947c1673fd745a51c032aadeb3c63f9f3368",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/mattn--go-isatty--a7c02353c47bc4ec6b30dc9628154ae4fe760c11.tar.gz": {
+    "blob_count": 17,
+    "commit": "a7c02353c47bc4ec6b30dc9628154ae4fe760c11",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/mattn/go-isatty/git/trees/a7c02353c47bc4ec6b30dc9628154ae4fe760c11?recursive=1",
+    "tree_sha": "a7c02353c47bc4ec6b30dc9628154ae4fe760c11",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/microsoft--playwright--1b025d7e20a026371cd5f98ba0cdce48892737c8.tar.gz": {
+    "blob_count": 3093,
+    "commit": "1b025d7e20a026371cd5f98ba0cdce48892737c8",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/microsoft/playwright/git/trees/1b025d7e20a026371cd5f98ba0cdce48892737c8?recursive=1",
+    "tree_sha": "1b025d7e20a026371cd5f98ba0cdce48892737c8",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/ncruces--go-strftime--7be8eef566cc7f1ae99e76af8f8208913758a28d.tar.gz": {
+    "blob_count": 16,
+    "commit": "7be8eef566cc7f1ae99e76af8f8208913758a28d",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/ncruces/go-strftime/git/trees/7be8eef566cc7f1ae99e76af8f8208913758a28d?recursive=1",
+    "tree_sha": "7be8eef566cc7f1ae99e76af8f8208913758a28d",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/pb33f--ordered-map--a94c5774d0a85efe4cea88ea45e67d0619919044.tar.gz": {
+    "blob_count": 22,
+    "commit": "a94c5774d0a85efe4cea88ea45e67d0619919044",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/pb33f/ordered-map/git/trees/a94c5774d0a85efe4cea88ea45e67d0619919044?recursive=1",
+    "tree_sha": "a94c5774d0a85efe4cea88ea45e67d0619919044",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/pmezard--go-difflib--792786c7400a136282c1664665ae0a8db921c6c2.tar.gz": {
+    "blob_count": 5,
+    "commit": "792786c7400a136282c1664665ae0a8db921c6c2",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/pmezard/go-difflib/git/trees/792786c7400a136282c1664665ae0a8db921c6c2?recursive=1",
+    "tree_sha": "792786c7400a136282c1664665ae0a8db921c6c2",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/raskrebs--sonar--be48afbee89fd2381d0e2c8b0aa9ec1d81194546.tar.gz": {
+    "blob_count": 625,
+    "commit": "be48afbee89fd2381d0e2c8b0aa9ec1d81194546",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/raskrebs/sonar/git/trees/be48afbee89fd2381d0e2c8b0aa9ec1d81194546?recursive=1",
+    "tree_sha": "be48afbee89fd2381d0e2c8b0aa9ec1d81194546",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/remyoudompheng--bigfft--24d4a6f8daece64d3c9a7660d4ee0974c4e31021.tar.gz": {
+    "blob_count": 18,
+    "commit": "24d4a6f8daece64d3c9a7660d4ee0974c4e31021",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/remyoudompheng/bigfft/git/trees/24d4a6f8daece64d3c9a7660d4ee0974c4e31021?recursive=1",
+    "tree_sha": "24d4a6f8daece64d3c9a7660d4ee0974c4e31021",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/rhysd--actionlint--03d0035246f3e81f36aed592ffb4bebf33a03106.tar.gz": {
+    "blob_count": 737,
+    "commit": "03d0035246f3e81f36aed592ffb4bebf33a03106",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/rhysd/actionlint/git/trees/03d0035246f3e81f36aed592ffb4bebf33a03106?recursive=1",
+    "tree_sha": "03d0035246f3e81f36aed592ffb4bebf33a03106",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/rogpeppe--go-internal--76dc4b3fc37c97df8520f01985a79bbac5d1585d.tar.gz": {
+    "blob_count": 173,
+    "commit": "76dc4b3fc37c97df8520f01985a79bbac5d1585d",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/rogpeppe/go-internal/git/trees/76dc4b3fc37c97df8520f01985a79bbac5d1585d?recursive=1",
+    "tree_sha": "76dc4b3fc37c97df8520f01985a79bbac5d1585d",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/russross--blackfriday--4c9bf9512682b995722660a4196c0013228e2049.tar.gz": {
+    "blob_count": 66,
+    "commit": "4c9bf9512682b995722660a4196c0013228e2049",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/russross/blackfriday/git/trees/4c9bf9512682b995722660a4196c0013228e2049?recursive=1",
+    "tree_sha": "4c9bf9512682b995722660a4196c0013228e2049",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/santhosh-tekuri--jsonschema--b0fc661f4939578bc429f408c18202573dbafcc4.tar.gz": {
+    "blob_count": 93,
+    "commit": "b0fc661f4939578bc429f408c18202573dbafcc4",
+    "gitlinks": [
+      {
+        "commit": "83e866b46c9f9e7082fd51e83a61c5f2145a1ab7",
+        "path": "testdata/JSON-Schema-Test-Suite"
+      }
+    ],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/santhosh-tekuri/jsonschema/git/trees/b0fc661f4939578bc429f408c18202573dbafcc4?recursive=1",
+    "tree_sha": "b0fc661f4939578bc429f408c18202573dbafcc4",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/sirupsen--logrus--d40e25cd45ed9c6b2b66e6b97573a0413e4c23bd.tar.gz": {
+    "blob_count": 63,
+    "commit": "d40e25cd45ed9c6b2b66e6b97573a0413e4c23bd",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/sirupsen/logrus/git/trees/d40e25cd45ed9c6b2b66e6b97573a0413e4c23bd?recursive=1",
+    "tree_sha": "d40e25cd45ed9c6b2b66e6b97573a0413e4c23bd",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/spf13--cobra--88b30ab89da2d0d0abb153818746c5a2d30eccec.tar.gz": {
+    "blob_count": 66,
+    "commit": "88b30ab89da2d0d0abb153818746c5a2d30eccec",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/spf13/cobra/git/trees/88b30ab89da2d0d0abb153818746c5a2d30eccec?recursive=1",
+    "tree_sha": "88b30ab89da2d0d0abb153818746c5a2d30eccec",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/spf13--pflag--10438578954bba2527fe5cae3684d4532b064bbe.tar.gz": {
+    "blob_count": 86,
+    "commit": "10438578954bba2527fe5cae3684d4532b064bbe",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/spf13/pflag/git/trees/10438578954bba2527fe5cae3684d4532b064bbe?recursive=1",
+    "tree_sha": "10438578954bba2527fe5cae3684d4532b064bbe",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/sqlite--sqlite--ba76c160c735437de974c6ea24c890a663214c6b.tar.gz": {
+    "blob_count": 2174,
+    "commit": "ba76c160c735437de974c6ea24c890a663214c6b",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/sqlite/sqlite/git/trees/ba76c160c735437de974c6ea24c890a663214c6b?recursive=1",
+    "tree_sha": "ba76c160c735437de974c6ea24c890a663214c6b",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/stretchr--testify--2a57335dc9cd6833daa820bc94d9b40c26a7917d.tar.gz": {
+    "blob_count": 67,
+    "commit": "2a57335dc9cd6833daa820bc94d9b40c26a7917d",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/stretchr/testify/git/trees/2a57335dc9cd6833daa820bc94d9b40c26a7917d?recursive=1",
+    "tree_sha": "2a57335dc9cd6833daa820bc94d9b40c26a7917d",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/yaml--go-yaml--79a895ba05137f58781f9f6ff38a0f04c02816bc.tar.gz": {
+    "blob_count": 33,
+    "commit": "79a895ba05137f58781f9f6ff38a0f04c02816bc",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/yaml/go-yaml/git/trees/79a895ba05137f58781f9f6ff38a0f04c02816bc?recursive=1",
+    "tree_sha": "79a895ba05137f58781f9f6ff38a0f04c02816bc",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/yaml--go-yaml--c3552c15f996075a7634df5159d9161c67bf3d76.tar.gz": {
+    "blob_count": 25,
+    "commit": "c3552c15f996075a7634df5159d9161c67bf3d76",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/yaml/go-yaml/git/trees/c3552c15f996075a7634df5159d9161c67bf3d76?recursive=1",
+    "tree_sha": "c3552c15f996075a7634df5159d9161c67bf3d76",
+    "unexpected_archive_files": []
+  },
+  "third_party/sources/upstream/yuin--goldmark--c0856327b39b00b39b5d7e1f5ed0eed8bb1b6a23.tar.gz": {
+    "blob_count": 89,
+    "commit": "c0856327b39b00b39b5d7e1f5ed0eed8bb1b6a23",
+    "gitlinks": [],
+    "omitted_tracked_files": [],
+    "source": "https://api.github.com/repos/yuin/goldmark/git/trees/c0856327b39b00b39b5d7e1f5ed0eed8bb1b6a23?recursive=1",
+    "tree_sha": "c0856327b39b00b39b5d7e1f5ed0eed8bb1b6a23",
+    "unexpected_archive_files": []
+  }
+}
