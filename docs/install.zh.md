@@ -2,6 +2,10 @@
 
 [English](install.md) | 中文
 
+## 选择一种安装方式
+
+下面的脚本、手动发布包、系统安装包是不同选择，不是要依次执行。首次安装后先用 `oberth version --json` 确认实际版本，再按[快速开始](quickstart.zh.md)运行示例。已经安装过的用户，替换前先读协议切换提示。安装不会启动项目服务；失败时看[常见问题](troubleshooting.zh.md)。
+
 本页只讲引擎 CLI 的安装、升级与卸载。macOS 客户端与 coding agent skill 是独立产品，
 各自在自己的仓库分发。
 
@@ -27,7 +31,7 @@ curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/ins
 
 ```sh
 # Pin a version
-curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh -s -- --version v1.0.0
+curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh -s -- --version v3.0.0
 
 # Change the install directory
 curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh -s -- --dir "$HOME/tools/bin"
@@ -78,7 +82,7 @@ irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps
 | PATH | 当前用户的 PATH（不改系统 PATH） |
 | 运行状态 | `%USERPROFILE%\.option-berth` |
 
-固定版本或不改 PATH：`.\install.ps1 -Version v1.0.0 -NoModifyPath`。
+固定版本或不改 PATH：`.\install.ps1 -Version v3.0.0 -NoModifyPath`。
 Windows 安装器在替换文件前会检查 `oberth` 是否正在运行；
 正在运行就先执行 `oberth runtime service stop`，再重新安装。
 
@@ -88,19 +92,19 @@ Windows 安装器在替换文件前会检查 `oberth` 是否正在运行；
 下载对应平台的压缩包，先核对 `SHA256SUMS`，再把 `oberth` 放到 PATH 中的目录：
 
 ```sh
-# darwin-arm64 and v1.0.0 as an example
-curl -fLO https://github.com/SheathedSharp/option-berth/releases/download/v1.0.0/option-berth-v1.0.0-darwin-arm64.tar.gz
-curl -fLO https://github.com/SheathedSharp/option-berth/releases/download/v1.0.0/option-berth-v1.0.0-darwin-arm64.tar.gz.sha256
-shasum -a 256 -c option-berth-v1.0.0-darwin-arm64.tar.gz.sha256
-tar -xzf option-berth-v1.0.0-darwin-arm64.tar.gz
-install -m 0755 option-berth-v1.0.0-darwin-arm64/oberth ~/.local/bin/oberth
+# darwin-arm64 and v3.0.0 as an example
+curl -fLO https://github.com/SheathedSharp/option-berth/releases/download/v3.0.0/option-berth-v3.0.0-darwin-arm64.tar.gz
+curl -fLO https://github.com/SheathedSharp/option-berth/releases/download/v3.0.0/option-berth-v3.0.0-darwin-arm64.tar.gz.sha256
+shasum -a 256 -c option-berth-v3.0.0-darwin-arm64.tar.gz.sha256
+tar -xzf option-berth-v3.0.0-darwin-arm64.tar.gz
+install -m 0755 option-berth-v3.0.0-darwin-arm64/oberth ~/.local/bin/oberth
 ```
 
 压缩包内的 `LICENSE`、`licenses/` 与 `build-manifest.json` 建议保留；手动安装时它们不会自动复制。
 
 ## Linux 安装包（.deb / .rpm）
 
-发布流程会为 amd64/arm64 生成 `.deb` 与 `.rpm`，和压缩包放在同一个 Release。`v1.0.0` 还没有
+发布流程会为 amd64/arm64 生成 `.deb` 与 `.rpm`，和压缩包放在同一个 Release。`v3.0.0` 还没有
 这些资产，从 v1.1.2 开始提供：
 
 ```sh
@@ -109,7 +113,7 @@ sudo apt install ./option-berth_1.0.0_amd64.deb
 sudo apt remove option-berth
 
 # Fedora / RHEL
-sudo dnf install ./option-berth-1.0.0-1.x86_64.rpm
+sudo dnf install ./option-berth-3.0.0-1.x86_64.rpm
 sudo dnf remove option-berth
 ```
 

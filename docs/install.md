@@ -2,6 +2,10 @@
 
 English | [中文](install.zh.md)
 
+## Choose an installation method
+
+The script and manual-package methods below are alternatives, not a sequence. First-time users should install the CLI, check `oberth version --json`, then follow the [quick start](quickstart.md). Existing users should read the protocol-switch warning before replacing anything. Installation does not start project services. For failures, use [troubleshooting](troubleshooting.md).
+
 This page covers installing, upgrading and uninstalling the engine CLI only. The macOS client and the
 coding-agent skill are independent products distributed from their own repositories.
 
@@ -27,7 +31,7 @@ Pin a version, change the directory, or leave PATH alone:
 
 ```sh
 # Pin a version
-curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh -s -- --version v1.0.0
+curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh -s -- --version v3.0.0
 
 # Change the install directory
 curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh -s -- --dir "$HOME/tools/bin"
@@ -83,7 +87,7 @@ irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps
 | PATH | The current user's PATH (the system PATH is never modified) |
 | Runtime state | `%USERPROFILE%\.option-berth` |
 
-Pin a version or leave PATH alone: `.\install.ps1 -Version v1.0.0 -NoModifyPath`.
+Pin a version or leave PATH alone: `.\install.ps1 -Version v3.0.0 -NoModifyPath`.
 Before replacing files, the Windows installer checks whether `oberth` is running; if it is, it runs `oberth runtime service stop` first and then reinstalls.
 
 ## Download a release manually
@@ -93,12 +97,12 @@ When you would rather not run a script, download the archive for your platform f
 `oberth` in a directory on PATH:
 
 ```sh
-# darwin-arm64 and v1.0.0 as an example
-curl -fLO https://github.com/SheathedSharp/option-berth/releases/download/v1.0.0/option-berth-v1.0.0-darwin-arm64.tar.gz
-curl -fLO https://github.com/SheathedSharp/option-berth/releases/download/v1.0.0/option-berth-v1.0.0-darwin-arm64.tar.gz.sha256
-shasum -a 256 -c option-berth-v1.0.0-darwin-arm64.tar.gz.sha256
-tar -xzf option-berth-v1.0.0-darwin-arm64.tar.gz
-install -m 0755 option-berth-v1.0.0-darwin-arm64/oberth ~/.local/bin/oberth
+# darwin-arm64 and v3.0.0 as an example
+curl -fLO https://github.com/SheathedSharp/option-berth/releases/download/v3.0.0/option-berth-v3.0.0-darwin-arm64.tar.gz
+curl -fLO https://github.com/SheathedSharp/option-berth/releases/download/v3.0.0/option-berth-v3.0.0-darwin-arm64.tar.gz.sha256
+shasum -a 256 -c option-berth-v3.0.0-darwin-arm64.tar.gz.sha256
+tar -xzf option-berth-v3.0.0-darwin-arm64.tar.gz
+install -m 0755 option-berth-v3.0.0-darwin-arm64/oberth ~/.local/bin/oberth
 ```
 
 Keeping the archive's `LICENSE`, `licenses/` and `build-manifest.json` is recommended; a manual install
@@ -107,7 +111,7 @@ does not copy them for you.
 ## Linux packages (.deb / .rpm)
 
 The release process produces `.deb` and `.rpm` for amd64/arm64 in the same release as the archives.
-`v1.0.0` does not have these assets yet; they are available from v1.1.2:
+`v3.0.0` does not have these assets yet; they are available from v1.1.2:
 
 ```sh
 # Debian / Ubuntu
@@ -115,7 +119,7 @@ sudo apt install ./option-berth_1.0.0_amd64.deb
 sudo apt remove option-berth
 
 # Fedora / RHEL
-sudo dnf install ./option-berth-1.0.0-1.x86_64.rpm
+sudo dnf install ./option-berth-3.0.0-1.x86_64.rpm
 sudo dnf remove option-berth
 ```
 
