@@ -107,6 +107,14 @@ another process (`port_occupied`), and also marks services that failed before th
 (`start_failed`), so "exited after starting", "port conflict" and "failed before starting" do not
 collapse into one state.
 
+A recorded run whose process disappears while no runtime service is watching — the host was stopped,
+or the run outlived a crash — has its own terminal reason, `ended_unobserved`. The end is known; the
+exit status is not, so `code` is `-1` and must not be read as a process status. `at` is when a host
+recorded the ending; a read with no host at all leaves it empty because no observation time exists.
+The ending is the newest generation under its name, so an older crash from the same name is not
+presented as the current outcome. When the runtime service next starts, it records the same ending
+durably and removes the mirror entry that carried the evidence.
+
 Under `port_occupied`, `last_exit.port_hint` is the port this run was told to bind, and
 `last_exit.port_holder` describes the process still holding that port at read time: `port`, `pid`,
 `command`, `kind`, with `group`, `name`, `run_id` additionally for a managed run and `cwd` and

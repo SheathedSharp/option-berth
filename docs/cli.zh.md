@@ -104,6 +104,12 @@ option-berth 没启动的进程），就带 `port_holder`：与失败记录相�
 （`port_occupied`），也会标出命令尚未启动就失败的服务（`start_failed`），因此“启动后退出”、
 “端口冲突”和“启动前失败”不会混成同一种状态。
 
+已记录运行的进程在没有任何 runtime service 观察时消失——宿主已停止，或该运行比一次崩溃活得更久——
+会有自己的终结原因 `ended_unobserved`。结束这件事是已知的，退出状态不是，因此 `code` 为 `-1`，
+不能当成进程状态读取。`at` 是宿主记录该结束的时间；完全没有宿主参与的读取会让它为空，因为不存在
+观察时间。这个结束是该名字下最新的一代，因此同名更早的崩溃不会再被当成当前结果。runtime service
+下次启动时会把同一个结束持久化，并删除承载该证据的 mirror 条目。
+
 `port_occupied` 时，`last_exit.port_hint` 是这次运行被告知要绑定的端口，
 `last_exit.port_holder` 描述读取时仍占着该端口的进程：`port`、`pid`、`command`、`kind`，
 托管运行时另有 `group`、`name`、`run_id`，可读时另有 `cwd` 和 `bind_address`。
