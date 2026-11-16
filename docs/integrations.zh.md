@@ -330,7 +330,8 @@ Codex 自己管理的 worktree（`codex --worktree`、`/worktree`）会按保留
 
 把下面这段放进仓库根目录的 `AGENTS.md`（Claude Code 也读 `CLAUDE.md`，可按工具追加）。
 它解决的是最常见的问题：agent 在端口被占时先跑 `ss`、直接执行 `python3 app.py`、翻 `/proc`，
-很久之后才想到 `oberth`。
+很久之后才想到 `oberth`。仓库里有 `oberth.yaml`、但 agent 指令文件从未提到 oberth，正是这种
+失败；`oberth doctor --only agent_integration` 会报告它，且不改任何文件。
 
 ````md
 ## Local services

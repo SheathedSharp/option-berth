@@ -18,6 +18,7 @@
 | 返回 `runtime_service_busy` | 匹配的后台与数据库拥有者 | 通过拥有者读取；切版本前先正常停止旧后台 |
 | 组名或身份选择有歧义 | `worktrees --json` 和精确项目路径 | 指定工作树或身份，不要操作所有同名项 |
 | 没有更新提示 | PATH 指向的安装、版本及 `version --check` | 自动提示不保证每次出现；显式检查不会执行安装 |
+| agent 用 `nohup` 起服务或手工 kill | `oberth doctor --only agent_integration` 与工作树的 `AGENTS.md` / `CLAUDE.md` | 粘贴[接入指南](integrations.zh.md)里的段落；不要加 hook，也不要让 agent 继续绕过 oberth |
 
 ## 只报告有证据的结论
 

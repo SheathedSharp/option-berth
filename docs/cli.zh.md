@@ -663,6 +663,9 @@ stderr 也说明一次。这与 `status` 的规则一致：看不见不是没在
   的技能目录），比较各份 `SKILL.md` 的 `metadata.version`：没装是 `skip`，只有一份永远 `ok`，
   多份版本不一致或软链指向已不存在的 checkout 才 `warn`。它不联网，不知道哪个版本是最新的，
   因此不会把单独一份说成「落后」，也不安装、不更新、不修复 skill。
+  `--only agent_integration` 读取最近清单所在目录的 `AGENTS.md` 与 `CLAUDE.md`，任一提到 oberth
+  即 `ok`；没有清单是 `skip`，有清单但两个文件都没提到 oberth 是 `warn`，fix 指向
+  [接入编排工具](integrations.zh.md) 的粘贴段落。它只读不改，也不知道某个工具是否真的会加载这些文件。
 - oberth events：供 agent 订阅本机 runtime service 的状态变化。并行联调时 agent 应根据任务中明确给出的
   关系主动建立并消费订阅；人手执行此命令主要用于排障。`--worktree PATH_OR_ID` 会沿已有 Repo 关系包含同仓库
   的其他 worktree；`--repository REPO_ID` 是可重复的加法过滤器，`--workspace NAME` 加入显式的临时联调关系；

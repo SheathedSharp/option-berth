@@ -18,6 +18,7 @@ Run `oberth doctor`, then `oberth status --json` in the affected worktree. Keep 
 | `runtime_service_busy` | Matching host and database owner | Read through the owner, or stop a previous host normally before a version switch |
 | A group or identity is ambiguous | `worktrees --json` and the exact checkout path | Select the worktree/identity, not every matching name |
 | No update is announced | Installed PATH/version and `version --check` | An automatic notice is not guaranteed on every invocation; explicit checking does not install |
+| An agent starts services with `nohup` or kills them by hand | `oberth doctor --only agent_integration` and the worktree's `AGENTS.md` / `CLAUDE.md` | Paste the section from the [integration guide](integrations.md); do not add a hook or let the agent keep bypassing oberth |
 
 ## Report only what you can establish
 
