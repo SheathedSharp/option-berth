@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -66,7 +67,11 @@ func TestMergeExitRecordsLetsTheDurableExitWin(t *testing.T) {
 // ordered by the run's start; otherwise the older durable crash stays the
 // service's last outcome.
 func TestLocalServiceFactsPreferTheUnobservedEnding(t *testing.T) {
-	t.Setenv("BERTH_HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("BERTH_HOME", home)
+	// BERTH_DB overrides BERTH_HOME for the database; without it this test
+	// would write into the shared test home and see another test's exits.
+	t.Setenv("BERTH_DB", filepath.Join(home, "option-berth.db"))
 	base := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
 	db, err := store.Open(store.Path())
 	if err != nil {
