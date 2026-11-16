@@ -773,7 +773,7 @@ Runtime Service 的存储及控制文件目录必须位于已验证的本地文�
 
 | 命令 | 做什么 |
 |---|---|
-| `oberth feedback status [--json]` | 已记录的决定、`gh` 登录的账号、本安装的报告总数，以及最近一天提交了几份 |
+| `oberth feedback status [--json]` | 已记录的决定、`gh` 持有的 github.com 凭据、一份报告会走的通道、本安装的报告总数，以及最近一天提交了几份 |
 | `oberth feedback on` / `oberth feedback off` | 不用等首屏，直接记录决定；`on` 会写明将由哪个账号提交 |
 | `oberth feedback report [--json] [--dry-run]` | 组装并提交一份报告 |
 | `oberth feedback log [--json]` | 每份报告对应 issue 的状态、关闭时间、标签和链接，经 `gh` 读取 |
@@ -789,25 +789,33 @@ Runtime Service 的存储及控制文件目录必须位于已验证的本地文�
 终端上没有 `--kind` 或 `--command` 时，`report` 用方向键从同一份固定词汇里问，再问可选的
 描述；提交前展示完整报告并要求确认。`--json`、`--yes` 和管道仍走纯参数路径，脚本不会卡在提问上。
 
-`gh` 已安装且已登录时，报告通过 `gh issue create` 用报告人自己的 GitHub 账号提交，因此那个账号在
-issue 上可见；否则命令打印一条预填好的 `issues/new` 链接由人提交，`--open` 会打开它。
-`feedback status` 与 `feedback on` 在组装报告之前就写明这个账号，`feedback log` 用同一个登录读取
+`gh` 已安装并持有凭据时，报告通过 `gh issue create` 用报告人自己的 GitHub 凭据提交，因此那个账号在
+issue 上可见；只有没有凭据时，命令才打印一条预填好的 `issues/new` 链接由人提交，`--open` 会打开它。
+是否真的提交由 `gh issue create` 自己决定：本地探测只说明这次尝试值不值得做，所以探测不到
+github.com 也照样提交，提交失败才退回链接并给出真正发生的错误。
+`feedback status` 与 `feedback on` 在组装报告之前就写明这份凭据，`feedback log` 用同一个登录读取
 已提交的 issue。三者都只读本地 gh 凭据（`gh auth status --json hosts`），不发送任何东西。同一构建的
 同一个问题 24 小时内最多提交一次，一个安装滚动一天最多提交二十份。判据包含类别、命令、错误码、
 观察状态、版本和脱敏后的描述：任一项不同就是不同的问题。本地账本在
 `BERTH_HOME/feedback/reports.ndjson`，它只是记录；删掉它只会让重复提交再次成为可能。
 
-`status` 把两类历史分开：`gh` 条目是真正提交的 issue，`url` 条目是人还需要自己按提交的预填页面。
+`status` 给出的是预测，不是承诺：`channel` 是此刻一份报告会走的通道，和投递路径共用同一个判据。
+它把两类历史分开：`gh` 条目是真正提交的 issue，`url` 条目是人还需要自己按提交的预填页面。
 人读的一行是 `N recorded · N filed · N prefilled`，预填页面不会虚增提交数。`--json` 增加
-`github`（`available`、`account`、`reason`）和 `reports`（`total`、`filed`、`prefilled`、
-`last_at`）。
+`github`（`available`、`state`、`account`、`reason`）和 `reports`（`total`、`filed`、
+`prefilled`、`last_at`）。`state` 取 `signed_in`、`credential_unconfirmed`、`signed_out`、
+`not_installed` 或 `unknown`；`available` 为真表示这份报告会尝试经 gh 提交，所以凭据已存在、只是
+探测没能连上 github.com 时是 `credential_unconfirmed` 且仍然 `available`——连不上不等于未登录。
+人读的 `github` 一行是 `signed in as <account>`、`credential stored for <account> but github.com is
+unreachable; a report is still attempted through gh`、`not signed in (...)` 或 `not available
+(gh is not installed)`。
 
 `log` 是这个回路的另一半。对每份已提交报告，它读取 issue 并打印 `open`、`resolved`、
 `closed as not planned`、`unknown` 或 `prefilled page only`；旁边给出 issue 编号、kind、command、
 版本、报告日期、关闭或更新时间、标签和链接。`--json` 同样给出 `github`、`summary`（本地总数加上
 `open`、`resolved`、`not_planned`、`unknown`）和逐条的 `status`、`reason` 与 GitHub `issue`
 对象（`number`、`state`、`state_reason`、`title`、`labels`、`updated_at`、`closed_at`、`url`）。
-人读视图最多列最近 20 条，`summary` 统计整个账本。`gh` 未登录时本地记录照常打印，每份已提交报告
+人读视图最多列最近 20 条，`summary` 统计整个账本。没有 gh 凭据时本地记录照常打印，每份已提交报告
 说明状态未知的原因，不猜。
 
 报告永远不带路径、日志行、清单字段、命令行、worktree 身份或环境变量：它说的是引擎，不是它跑在

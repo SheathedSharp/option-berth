@@ -59,10 +59,12 @@ func newFeedbackCommand() *cobra.Command {
 	statusCmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show whether reports are on, who files them, and how many there are",
-		Long: "Report the recorded decision, the GitHub account `gh` is signed in as, the\n" +
-			"local count of reports this installation produced, and the daily limit. It\n" +
-			"reads the local gh credential only; `oberth feedback log` reads each filed\n" +
-			"issue's state through the same login.",
+		Long: "Report the recorded decision, the credential `gh` holds for github.com, the\n" +
+			"channel a report would take, the local count of reports this installation\n" +
+			"produced, and the daily limit. The channel is a prediction from the local\n" +
+			"credential: a report is attempted through gh whenever one is stored, and a\n" +
+			"github.com the probe cannot reach does not change that. `oberth feedback log`\n" +
+			"reads each filed issue's state through the same login.",
 		Args: cobra.NoArgs,
 		RunE: runFeedbackStatus,
 	}
@@ -82,8 +84,8 @@ func newFeedbackCommand() *cobra.Command {
 		Use:   "report",
 		Short: "Compose one report and file it",
 		Long: "Compose a report from facts the caller states and file it: through `gh` with\n" +
-			"the user's own account when it is signed in, otherwise as a prefilled issue URL\n" +
-			"the person submits. On a terminal without --kind/--command it asks for them\n" +
+			"the user's own credential whenever gh holds one, otherwise as a prefilled issue\n" +
+			"URL the person submits. On a terminal without --kind/--command it asks for them\n" +
 			"from the same fixed vocabulary with the arrow keys, then shows the exact\n" +
 			"report before sending. The same complaint from the same build is filed at\n" +
 			"most once a day, and one installation files at most " +
@@ -95,7 +97,7 @@ func newFeedbackCommand() *cobra.Command {
 		Use:   "log",
 		Short: "Show what this installation reported and what happened to each issue",
 		Long: "List the reports this installation produced with the issue's state, close date\n" +
-			"and labels, read through the person's own gh login. Without a signed-in gh the\n" +
+			"and labels, read through the person's own gh login. Without a gh credential the\n" +
 			"local record still prints and each filed report says why its state is unknown.\n" +
 			"--json carries the same data plus a summary, for an agent reading the loop.",
 		Args: cobra.NoArgs,
