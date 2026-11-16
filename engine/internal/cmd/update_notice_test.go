@@ -43,7 +43,8 @@ func TestUpdateNoticeStaysQuiet(t *testing.T) {
 		{"same release", versioncheck.State{Current: "v2.0.0", Latest: "v2.0.0"}},
 		{"newer build", versioncheck.State{Current: "v2.1.0", Latest: "v2.0.0"}},
 		{"development build", versioncheck.State{Current: "dev", Latest: "v2.0.0"}},
-		{"failed check", versioncheck.State{Current: "v1.4.0", Error: "network down"}},
+		{"failed check", versioncheck.State{Current: "v1.4.0", Error: "network down", Failure: versioncheck.FailureUnreachable}},
+		{"timed-out check", versioncheck.State{Current: "v1.4.0", Error: "context deadline exceeded", Failure: versioncheck.FailureTimeout}},
 		{"already announced", versioncheck.State{Current: "v1.4.0", Latest: "v2.0.0", Notified: "v2.0.0"}},
 		{"empty", versioncheck.State{}},
 	} {

@@ -113,7 +113,9 @@ func awaitUpdateNotice(probe *noticeProbe) (versioncheck.State, bool) {
 // updateNotice is the two lines a terminal command ends with when this build
 // is behind: what is newer, and the exact commands that make the running
 // installation newer. It stays quiet for an unknown answer — "not checked"
-// never becomes "update available" — and for a release already announced.
+// never becomes "update available", and a failed check is not the footer's news
+// to break: the welcome screen is where the version was asked for, and that is
+// where the failure is named — and for a release already announced.
 func updateNotice(state versioncheck.State) string {
 	if !state.UpdateAvailable() || state.Notified == state.Latest {
 		return ""
