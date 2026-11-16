@@ -69,10 +69,31 @@ func TestAwaitUpdateNoticeTakesAReadyAnswer(t *testing.T) {
 func TestAwaitUpdateNoticeDropsAnAnswerPastTheBudget(t *testing.T) {
 	probe := &noticeProbe{
 		result: make(chan versioncheck.State, 1),
-		start:  time.Now().Add(-2 * versioncheck.WelcomeTimeout),
+		start:  time.Now().Add(-2 * versioncheck.FooterGrace),
 	}
 	if _, ok := awaitUpdateNotice(probe); ok {
 		t.Fatal("awaitUpdateNotice waited past the budget for an answer")
+	}
+}
+
+// The footer is read by a command that has already written its own result, so
+// it may only wait for an answer that is ready or nearly ready. The welcome
+// screen's patience belongs to the welcome screen: a command must not inherit it.
+func TestAwaitUpdateNoticeWaitsOnlyTheFooterGrace(t *testing.T) {
+	probe := &noticeProbe{result: make(chan versioncheck.State, 1), start: time.Now()}
+	begin := time.Now()
+	state, ok := awaitUpdateNotice(probe)
+	elapsed := time.Since(begin)
+
+	if ok {
+		t.Fatalf("awaitUpdateNotice = %+v, want no answer", state)
+	}
+	if elapsed < versioncheck.FooterGrace/2 {
+		t.Fatalf("waited %s, want roughly the %s footer grace", elapsed, versioncheck.FooterGrace)
+	}
+	if elapsed > versioncheck.WelcomeTimeout/2 {
+		t.Fatalf("waited %s, want at most the %s footer grace, not the %s welcome budget",
+			elapsed, versioncheck.FooterGrace, versioncheck.WelcomeTimeout)
 	}
 }
 

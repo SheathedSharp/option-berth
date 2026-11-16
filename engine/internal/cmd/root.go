@@ -284,6 +284,11 @@ var rootCmd = &cobra.Command{
 // welcomeVersion is the version line the signpost can show. It only reaches the
 // release feed when a terminal is attached, the user has not opted out, and
 // this build is a release; an unknown answer stays unknown.
+//
+// This is the one call site that may wait for a real answer: the reader asked
+// for the version by running the bare command, and the budget is sized from the
+// sources it races. Every other command reads the same check for a few hundred
+// milliseconds at most.
 func welcomeVersion() versioncheck.State {
 	current := buildinfo.VersionValue()
 	state := versioncheck.State{Current: current}
