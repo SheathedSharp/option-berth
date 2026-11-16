@@ -20,6 +20,7 @@ import (
 
 var (
 	restartOnly             []string
+	restartRunFlag          string
 	restartForce            bool
 	restartJSON             bool
 	restartAllowOutsideHome bool
@@ -31,16 +32,19 @@ var restartCmd = &cobra.Command{
 	GroupID: commandGroupOperations,
 	Long: "Stop and start the project's services again. With --only, only the named\n" +
 		"services are restarted; their port: auto claims stay attached to the\n" +
-		"worktree so the service can reclaim the same addresses. Only services the\n" +
-		"manifest declares can be restarted: a run started with `oberth start` is\n" +
-		"not a manifest service, so restart it by running that command again; the\n" +
-		"refusal hint names the recorded command.",
+		"worktree so the service can reclaim the same addresses. With --run, one run\n" +
+		"is restarted by id or unique live name, including a run `oberth start`\n" +
+		"created that the manifest does not declare: its recorded argv, cwd, group,\n" +
+		"name and port hint are replayed exactly. A run that predates recorded argv\n" +
+		"is not guessed at; the refusal prints its recorded start line instead.",
 	Args: cobra.MaximumNArgs(1),
 	RunE: restartRun,
 }
 
 func init() {
 	restartCmd.Flags().StringSliceVar(&restartOnly, "only", nil, "Restart only these services (comma separated)")
+	restartCmd.Flags().StringVar(&restartRunFlag, "run", "",
+		"Restart one run by id or unique live name, including a run the manifest does not declare")
 	restartCmd.Flags().BoolVarP(&restartForce, "force", "f", false, "Send SIGKILL instead of SIGTERM")
 	restartCmd.Flags().BoolVar(&restartJSON, "json", false, "Output as JSON")
 	restartCmd.Flags().BoolVar(&restartAllowOutsideHome, "allow-outside-home", false,
@@ -49,6 +53,9 @@ func init() {
 }
 
 func restartRun(cmd *cobra.Command, args []string) error {
+	if restartRunFlag != "" {
+		return restartAdHocRun(cmd, args)
+	}
 	startParams, cfg, err := projectStartParams(args, restartOnly, restartAllowOutsideHome)
 	if err != nil {
 		return restartWithoutManifest(cmd.Context(), startParams, err)
