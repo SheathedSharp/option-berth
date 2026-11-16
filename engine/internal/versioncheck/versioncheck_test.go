@@ -248,6 +248,148 @@ func TestLookupRemembersAFailureLongerThanASuccess(t *testing.T) {
 	}
 }
 
+// A budget this program set is not evidence about the feed. The next welcome
+// screen has to be allowed to try again long before an unreachable feed would
+// be retried, otherwise one slow answer hides a release for half an hour.
+func TestLookupRetriesATimeoutLongBeforeAnUnreachableFeed(t *testing.T) {
+	now := time.Date(2026, 10, 29, 8, 0, 0, 0, time.UTC)
+	checker := newTestChecker(t, "http://127.0.0.1:1")
+	checker.now = func() time.Time { return now }
+	calls := 0
+	checker.fetch = func(ctx context.Context) (string, error) {
+		calls++
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+
+	state, err := checker.lookup(context.Background(), "v1.1.2", false, 10*time.Millisecond)
+	if err == nil {
+		t.Fatal("lookup returned nil error for a check its own budget cut off")
+	}
+	if state.Failure != FailureTimeout {
+		t.Fatalf("failure = %q, want %q", state.Failure, FailureTimeout)
+	}
+	if state.Latest != "" || state.Error == "" {
+		t.Fatalf("state = %+v, want no latest and a recorded failure", state)
+	}
+
+	// Recorded, so the next welcome does not pay for the same slow answer twice.
+	cached, err := checker.lookup(context.Background(), "v1.1.2", false, 10*time.Millisecond)
+	if err != nil {
+		t.Fatalf("cached timeout: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("fetches = %d, want the recorded timeout to be reused", calls)
+	}
+	if cached.Failure != FailureTimeout {
+		t.Fatalf("cached failure = %q, want it kept", cached.Failure)
+	}
+
+	now = now.Add(TimeoutTTL + time.Second)
+	if _, err := checker.lookup(context.Background(), "v1.1.2", false, 10*time.Millisecond); err == nil {
+		t.Fatal("lookup did not retry after the timeout TTL")
+	}
+	if calls != 2 {
+		t.Fatalf("fetches = %d, want a retry after the timeout TTL", calls)
+	}
+}
+
+// A feed that cannot be reached at all keeps the long window: retrying it every
+// couple of minutes would only add its timeout to more runs.
+func TestLookupKeepsAnUnreachableFeedForTheLongWindow(t *testing.T) {
+	now := time.Date(2026, 10, 29, 8, 0, 0, 0, time.UTC)
+	checker := newTestChecker(t, "http://127.0.0.1:1")
+	checker.now = func() time.Time { return now }
+	calls := 0
+	checker.fetch = func(context.Context) (string, error) {
+		calls++
+		return "", errors.New("dial tcp: connection refused")
+	}
+
+	state, err := checker.lookup(context.Background(), "v1.1.2", false, time.Second)
+	if err == nil {
+		t.Fatal("lookup returned nil error for an unreachable feed")
+	}
+	if state.Failure != FailureUnreachable {
+		t.Fatalf("failure = %q, want %q", state.Failure, FailureUnreachable)
+	}
+	now = now.Add(TimeoutTTL + time.Second)
+	if _, err := checker.lookup(context.Background(), "v1.1.2", false, time.Second); err != nil {
+		t.Fatalf("cached unreachable feed: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("fetches = %d, want the unreachable feed to stay cached past the timeout TTL", calls)
+	}
+}
+
+// Every source answering, but with something that is not a release, is a
+// different failure again: the feed is reachable and the answer is unusable.
+func TestLookupClassifiesAnUnusableAnswer(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	state, err := newTestChecker(t, server.URL).lookup(context.Background(), "v1.1.2", false, time.Second)
+	if err == nil {
+		t.Fatal("lookup returned nil error for sources that answered with 500")
+	}
+	if state.Failure != FailureProtocol {
+		t.Fatalf("failure = %q, want %q", state.Failure, FailureProtocol)
+	}
+	if !strings.Contains(state.Error, "500") {
+		t.Fatalf("error = %q, want the answer that could not be used", state.Error)
+	}
+}
+
+// The production path, not the fetch seam: every source is still silent when
+// the budget ends, which is the failure #348 saw on a slow link.
+func TestLookupTimesOutOnSlowSources(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	state, err := newTestChecker(t, server.URL).lookup(context.Background(), "v1.1.2", false, 20*time.Millisecond)
+	if err == nil {
+		t.Fatal("lookup returned nil error for sources that never answered")
+	}
+	if state.Failure != FailureTimeout {
+		t.Fatalf("failure = %q, want %q", state.Failure, FailureTimeout)
+	}
+}
+
+// One source losing the race must not outlive the answer: cancelling the rest is
+// what keeps a fast source from leaving three requests running behind it, and
+// the classification must not turn that cancellation into a feed failure.
+func TestLookupCancelsTheSourcesThatLoseTheRace(t *testing.T) {
+	finished := make(chan struct{})
+	checker := newTestChecker(t, "http://127.0.0.1:1")
+	checker.fetch = func(ctx context.Context) (string, error) {
+		return firstRelease(ctx,
+			func(ctx context.Context) (string, error) {
+				<-ctx.Done()
+				close(finished)
+				return "", ctx.Err()
+			},
+			func(context.Context) (string, error) { return "v1.2.0", nil },
+		)
+	}
+
+	state, err := checker.lookup(context.Background(), "v1.1.2", false, time.Second)
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if state.Latest != "v1.2.0" || state.Failure != FailureNone {
+		t.Fatalf("state = %+v, want the winning release and no failure", state)
+	}
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the source that lost the race was never cancelled")
+	}
+}
+
 func TestLookupForceSkipsCache(t *testing.T) {
 	now := time.Date(2026, 10, 29, 8, 0, 0, 0, time.UTC)
 	checker := newTestChecker(t, "http://127.0.0.1:1")
@@ -437,6 +579,25 @@ func TestEnabledFrom(t *testing.T) {
 	}
 }
 
+// The three budgets answer three different questions: how long the first screen
+// may wait for a real answer, how long a command that has already done its work
+// may wait for the same answer, and how long the caller who explicitly asked
+// may wait. docs/cli.md states all three, so they are pinned here.
+func TestBudgetsAreOrderedForTheirCallSites(t *testing.T) {
+	if WelcomeTimeout <= FooterGrace {
+		t.Fatalf("welcome budget %s, footer grace %s: a command that already ran must not wait as long as the first screen",
+			WelcomeTimeout, FooterGrace)
+	}
+	if CheckTimeout <= WelcomeTimeout {
+		t.Fatalf("explicit check %s, welcome budget %s: the caller who asked for the answer gets the longest wait",
+			CheckTimeout, WelcomeTimeout)
+	}
+	if WelcomeTimeout != 2*time.Second || FooterGrace != 250*time.Millisecond || CheckTimeout != 6*time.Second {
+		t.Fatalf("budgets = %s / %s / %s, want the 2s / 250ms / 6s docs/cli.md states",
+			WelcomeTimeout, FooterGrace, CheckTimeout)
+	}
+}
+
 func newTestChecker(t *testing.T, baseURL string) *checker {
 	t.Helper()
 	return &checker{
@@ -448,5 +609,6 @@ func newTestChecker(t *testing.T, baseURL string) *checker {
 		now:        time.Now,
 		successTTL: SuccessTTL,
 		failureTTL: FailureTTL,
+		timeoutTTL: TimeoutTTL,
 	}
 }
