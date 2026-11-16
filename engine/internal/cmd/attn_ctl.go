@@ -36,7 +36,12 @@ var attnStatusCmd = &cobra.Command{
 	Long: "Report the resolved configuration without contacting a provider: on or off,\n" +
 		"endpoint, model, where the key came from, the fixed reason when it cannot be\n" +
 		"used, and a summary of the local quality ledger. The key itself is never\n" +
-		"printed, only a short fingerprint.",
+		"printed, only a short fingerprint.\n\n" +
+		"With --json an agent gets the decision document: consent plus the quality\n" +
+		"counters that say whether a task runner is observing and whether anything is\n" +
+		"happening. `--quality` adds the full ledger report (label coverage,\n" +
+		"calibration, routing and action metrics); `--since` and `--quality-project`\n" +
+		"narrow that report, so they imply `--quality`.",
 	Args: cobra.NoArgs,
 	RunE: runAttnStatus,
 }
@@ -128,7 +133,7 @@ func runAttnStatus(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	state["quality"] = report
+	state["quality"] = attnStatusQuality(cmd, report)
 	return attnPrint(state, func() string {
 		var b strings.Builder
 		switch {
@@ -166,6 +171,18 @@ func runAttnStatus(cmd *cobra.Command, _ []string) error {
 		}
 		return strings.TrimRight(b.String(), "\n")
 	})
+}
+
+// attnStatusQuality decides which document the `quality` field carries. The
+// default is the summary, because a task-entry read came for "is a runner
+// observing, and is anything happening". A window or a project filter narrows
+// the ledger, and a filter with no subject is meaningless, so asking for either
+// asks for the full report they narrow.
+func attnStatusQuality(cmd *cobra.Command, report model.QualityReport) any {
+	if attnQualityFlag || cmd.Flags().Changed("since") || cmd.Flags().Changed("quality-project") {
+		return report
+	}
+	return report.Summary()
 }
 
 func qualitySummary(report model.QualityReport, since time.Duration) string {
