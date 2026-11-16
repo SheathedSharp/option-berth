@@ -676,6 +676,12 @@
           },
           "type": "array"
         },
+        "runs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "expect_runs": {
           "items": {
             "$ref": "#/definitions/RunExpectation"

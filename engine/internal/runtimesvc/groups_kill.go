@@ -33,6 +33,14 @@ func handleGroupsKill(ctx context.Context, req *Request) (any, error) {
 		return nil, rpc.NewError(rpc.CodeInvalidParams, "only and expect_runs are mutually exclusive",
 			"expect_runs names the runs to stop; only names services, whatever run each is")
 	}
+	runs, err := runIDFilter(p.Runs)
+	if err != nil {
+		return nil, err
+	}
+	if len(runs) > 0 && (len(p.Only) > 0 || len(p.ExpectRuns) > 0) {
+		return nil, rpc.NewError(rpc.CodeInvalidParams, "runs and only/expect_runs are mutually exclusive",
+			"runs names exact run ids; the other selectors name services")
+	}
 	target, err := killGroupTarget(req.HostContext, p)
 	if err != nil {
 		return nil, err
@@ -54,9 +62,9 @@ func handleGroupsKill(ctx context.Context, req *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Either selector makes the stop scoped, which is what keeps the group's
+	// Any selector makes the stop scoped, which is what keeps the group's
 	// `port: auto` claims attached to the services that keep running.
-	scoped := len(only) > 0 || len(expect) > 0
+	scoped := len(only) > 0 || len(expect) > 0 || len(runs) > 0
 
 	var portRelease *servicePortRelease
 	if p.Release && !p.DryRun && !scoped {
@@ -83,14 +91,26 @@ func handleGroupsKill(ctx context.Context, req *Request) (any, error) {
 	}
 
 	var targets []killer.Target
-	if len(expect) > 0 {
+	switch {
+	case len(runs) > 0:
+		targets = runGroupTargets(snap, name, runs)
+	case len(expect) > 0:
 		targets = expectedGroupTargets(snap, name, expect)
-	} else {
+	default:
 		targets = groupTargetsFor(snap, name, only)
 	}
 	var pidTargets []killer.Target
 	var runSignal func(int)
-	if p.Release {
+	if len(runs) > 0 {
+		// An exact-run stop covers runs with and without a listener. The
+		// capture pins each selected generation and returns the receipt that
+		// records the ending as stopped, rather than a crash.
+		pidTargets, runSignal, err = captureSilentGroupStop(req.HostContext, snap, name,
+			nil, nil, runs, p.Reason, p.DryRun)
+		if err != nil {
+			return nil, err
+		}
+	} else if p.Release {
 		// `down` is the declarative stop: every run option-berth started in the
 		// group goes, ports first and then whatever holds none. Nothing in the
 		// manifest is exempt — a service the machine owns is not a service of
@@ -98,7 +118,8 @@ func handleGroupsKill(ctx context.Context, req *Request) (any, error) {
 		if cfg == nil {
 			cfg = configForGroup(req.HostContext, name)
 		}
-		pidTargets, runSignal, err = captureSilentGroupStop(req.HostContext, snap, name, only, expect, p.Reason, p.DryRun)
+		pidTargets, runSignal, err = captureSilentGroupStop(req.HostContext, snap, name,
+			only, expect, nil, p.Reason, p.DryRun)
 		if err != nil {
 			return nil, rpc.NewError(rpc.CodeInternal, err.Error(), "inspect status before retrying down")
 		}
@@ -130,7 +151,7 @@ func handleGroupsKill(ctx context.Context, req *Request) (any, error) {
 		opts.OnSignal = stopSignalObserver(req.HostContext, snap, targets, opts.DryRun, p.Reason)
 		rows = killer.KillPorts(ctx, targets, opts)
 	}
-	if p.Release && !p.DryRun {
+	if (p.Release || len(runs) > 0) && !p.DryRun {
 		// Reuse the identities and receipt captured before the port pass.
 		// Never fetch a replacement generation by PID between the two passes.
 		if len(pidTargets) > 0 {
@@ -553,4 +574,27 @@ func killGroupName(rt *HostContext, p rpc.GroupsKillParams) (string, *groups.Con
 	}
 	return "", nil, rpc.NewError(rpc.CodeInvalidParams, "name or config_path is required",
 		`send {"name": "my-app"} or {"config_path": "/repo/oberth.yaml"}`)
+}
+
+// runIDFilter validates exact run ids. An empty or repeated id is a caller
+// error, not a wider stop.
+func runIDFilter(raw []string) (map[string]bool, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]bool, len(raw))
+	for _, value := range raw {
+		id := strings.TrimSpace(value)
+		if id == "" {
+			return nil, rpc.NewError(rpc.CodeInvalidParams, "runs contains an empty run id",
+				"name the run id from `oberth status --json`")
+		}
+		if out[id] {
+			return nil, rpc.NewError(rpc.CodeInvalidParams,
+				fmt.Sprintf("runs names run %q more than once", id),
+				"send one entry per run")
+		}
+		out[id] = true
+	}
+	return out, nil
 }

@@ -103,6 +103,12 @@ const (
 	// field and stops whatever answers to the service's name, which is exactly
 	// the replacement run that field exists to protect.
 	CapabilityKillExpectRuns = "groups.kill.expect_runs"
+
+	// CapabilityKillRuns covers `runs` in groups.kill: stop exact run ids,
+	// including a run the manifest does not declare and a run with no port.
+	// An older host ignores the field and would widen the stop, so the CLI
+	// must refuse instead.
+	CapabilityKillRuns = "groups.kill.runs"
 )
 
 // Include lists the optional per-subscriber enrichments ("stats", "health").
@@ -374,6 +380,10 @@ type GroupsKillParams struct {
 	// Only narrows a project stop to these declared services. It is used by
 	// `oberth restart --only`; scoped stops keep auto-port claims.
 	Only []string `json:"only,omitempty"`
+	// Runs names exact live run ids in the group. It stops those runs, with a
+	// listener or without one, and nothing else; it is what gives an ad-hoc
+	// run a first-class stop. Mutually exclusive with Only and ExpectRuns.
+	Runs []string `json:"runs,omitempty"`
 	// ExpectRuns names the run each service must still be for this stop to
 	// touch it. It is the cleanup a readiness timeout uses: it stops the runs
 	// the caller started, not whatever now answers to the service's name, so a
