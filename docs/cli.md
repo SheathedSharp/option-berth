@@ -700,9 +700,13 @@ and `down` do not write the ledger.
 
 Views logs by the service name in the manifest; the port form continues to work. When the service has
 a listening port, the command reads that process's logs; a portless worker reads that run's service
-log file. By default it prints the most recent lines first and keeps following; --once reads once and
-exits. --ip disambiguates when the same port is bound on several addresses. --json --once outputs one
-document:
+log file. By default it prints the current run's most recent lines first and keeps following while
+that run is still writing; --once reads once and exits. The read is scoped to the current generation
+whenever its start offset was recorded — online or with no runtime service at all — so a file
+appended to across runs does not mix the previous day's lines into this run. When no current
+generation has a recorded start, it reads the whole file and marks the document
+`run_start_unknown: true`, and the human output says the scope is unknown. --ip disambiguates when
+the same port is bound on several addresses. --json --once outputs one document:
 
 ~~~json
 {"source":"/path/to/service.log","lines":["..."],"truncated":false,"service":"api","run_id":"...","pid":1234,"status":"running"}
@@ -731,8 +735,10 @@ the file as it is when read, so following it prints and returns instead of waiti
 that has not started yet. `--run current` selects the service's current run, and any other value is an
 exact historical `run_id` from `status --json`. `current` prefers a process that is still running and
 only falls back to the most recently finished one when there is none. Following a run that has ended
-prints its lines and stops: nothing arrives for it afterwards. `--run` accepts only service names,
-cannot be combined with `--ip`, and needs the runtime service; when the runtime service is unavailable it returns
+prints its lines and stops: nothing arrives for it afterwards. `--run` accepts only service names and
+cannot be combined with `--ip`. A service's part of its log file is recorded on disk — the mirror for
+a live run and the exit row for a finished one — so the form works without the runtime service for a
+service log file; only listener output needs a host, and with none reachable that case returns
 `runtime_service_unavailable`. Old run records without an offset return not_found with a suggestion to restart
 the service once. When the file has been rotated and the recorded part is no longer in it, reading
 falls back to the beginning of the file, and the JSON uses `run_start_unknown: true` to say that the
